@@ -1,11 +1,11 @@
-"""Nachgestellte Angriffe aus der Reifeprüfung vom 2026-09-21 (und den Runden danach).
+"""Re-enacted attacks from the maturity review of 2026-09-21 (and the rounds after it).
 
-Jede Prüfung hier hält einen Angriff fest, der einmal funktioniert hat. Sie sind bewusst nach dem
-ANGRIFF benannt, nicht nach der Funktion — wer eine davon rot sieht, soll sofort wissen, was
-wieder möglich ist.
+Every check here records an attack that once worked. They are deliberately named after the
+ATTACK, not after the function — whoever sees one of them red should immediately know what is
+possible again.
 
-Alles läuft auf Vorgabewerten. Ein Fund, der nur unter einer Konfiguration auftritt, die niemand
-wählt, wäre keiner gewesen.
+Everything runs on default values. A finding that only occurs under a configuration nobody
+chooses would not have been one.
 """
 from __future__ import annotations
 
@@ -31,7 +31,7 @@ r = Report("Sicherheit — nachgestellte Angriffe")
 
 
 def _app(**cfg):
-    """Eine Instanz auf Vorgabewerten, nur mit eigenem Datenbankpfad."""
+    """An instance on default values, only with its own database path."""
     tmp = tempfile.mkdtemp()
     grund = dict(db_path=str(Path(tmp) / "t.db"), cookie_secure=False)
     grund.update(cfg)
@@ -41,10 +41,10 @@ def _app(**cfg):
     return auth, app
 
 
-# ── Rollen-Eskalation über selbst ausgestellte API-Keys ────────────────────────
-# Angriff: Ein angemeldeter Nutzer ohne jede Rolle ruft POST /auth/apikeys mit
-# {"roles": ["buchhaltung"]} auf und bekommt einen Key, der genau diese Rolle trägt.
-# Der Scope überschrieb die Kontorollen, statt sie zu schneiden.
+# ── Role escalation via self-issued API keys ───────────────────────────────────
+# Attack: A signed-in user without any role calls POST /auth/apikeys with
+# {"roles": ["buchhaltung"]} and gets a key that carries exactly this role.
+# The scope overwrote the account roles instead of intersecting them.
 auth, app = _app()
 auth.create_user("mitarbeiter", password="Geheim12345!abc")
 nutzer = auth.store.get_user_by_name("mitarbeiter")
@@ -55,52 +55,52 @@ def _geschuetzt(u=Depends(auth.require_role("buchhaltung"))):
     return {"gesehen_von": u["username"]}
 
 
-r.check("Ausgangslage: das Konto hat keine Rollen", auth.user_roles(nutzer) == [])
+r.check("Starting point: the account has no roles", auth.user_roles(nutzer) == [])
 
-# Seit dem zweiten Audit wird der Versuch schon beim AUSSTELLEN abgewiesen, nicht erst beim
-# Prüfen. Grund: Ein auf `[]` zusammengeschrumpfter Scope hiess in der Datenbank „kein Scope,
-# erbt alles" — die Beschneidung hätte den Key also mächtiger gemacht statt schwächer. Ein
-# Fehler ist hier die einzige ehrliche Antwort; was gemeint war, weiss nur der Aufrufer.
+# Since the second audit the attempt is rejected already at ISSUING, not only at checking.
+# Reason: a scope shrunk to `[]` meant "no scope, inherits everything" in the database — so the
+# trimming would have made the key more powerful instead of weaker. An error is the only honest
+# answer here; only the caller knows what was meant.
 try:
     auth.create_api_key(nutzer["id"], name="probe", roles=["buchhaltung"])
     abgewiesen = None
 except ConfigError as e:
     abgewiesen = e
-r.check("ein Key mit einer Rolle, die der Besitzer nicht hat, entsteht gar nicht erst",
+r.check("a key with a role the owner does not have is not created in the first place",
         abgewiesen is not None,
-        "der Key wurde ausgestellt — und ein leerer Scope erbt in der Datenbank ALLE Rollen")
-r.check("und die Meldung nennt die verlangte Rolle", "buchhaltung" in str(abgewiesen or ""),
+        "the key was issued — and an empty scope inherits ALL roles in the database")
+r.check("and the message names the requested role", "buchhaltung" in str(abgewiesen or ""),
         f"{str(abgewiesen)[:80]!r}")
 
-# Der Key darf auch über die HTTP-Route nicht entstehen — dort kommt der Wunsch her.
+# The key must not come into being via the HTTP route either — that is where the request comes from.
 with TestClient(app) as c:
     c.cookies.set(auth.cfg.session_cookie,
                   auth.store.create_session(nutzer["id"], 3600, True, "password"))
     ueber_http = c.post("/auth/apikeys", json={"name": "probe", "roles": ["buchhaltung"]})
-r.check("auch über POST /auth/apikeys entsteht er nicht", ueber_http.status_code >= 400,
-        f"HTTP {ueber_http.status_code} — der Weg, über den der Angriff lief")
+r.check("it is not created via POST /auth/apikeys either", ueber_http.status_code >= 400,
+        f"HTTP {ueber_http.status_code} — the way the attack ran")
 
-# Gegenprobe: Wer die Rolle wirklich hat, bekommt sie auch im Key — sonst wäre der Fix
-# eine Funktionsbremse statt einer Absicherung.
+# Counter-check: whoever really has the role also gets it in the key — otherwise the fix would be
+# a brake on functionality instead of a safeguard.
 auth.set_roles(nutzer["id"], ["buchhaltung"]) if hasattr(auth, "set_roles") else None
 nutzer2 = auth.store.get_user_by_name("mitarbeiter")
 if auth.user_roles(nutzer2) == ["buchhaltung"]:
     key2 = auth.create_api_key(nutzer2["id"], name="echt", roles=["buchhaltung"])
-    r.check("wer die Rolle hat, behält sie im Key", key2.get("roles") == ["buchhaltung"])
+    r.check("whoever has the role keeps it in the key", key2.get("roles") == ["buchhaltung"])
     with TestClient(app) as c:
         a2 = c.get("/nur-buchhaltung", headers={"Authorization": f"Bearer {key2['key']}"})
-    r.check("und kommt damit durch", a2.status_code == 200, f"HTTP {a2.status_code}")
+    r.check("and gets through with it", a2.status_code == 200, f"HTTP {a2.status_code}")
 
-# ── OIDC: der Flow muss an den Browser gebunden sein ──────────────────────────
-# Angriff: Der Angreifer startet den Flow bei sich, meldet sich beim IdP als er selbst an und
-# lockt das Opfer auf die Callback-URL. Das Opfer landet still im Konto des Angreifers. Ein
-# gewöhnlicher Top-Level-GET genügt — SameSite hilft nicht, weil gar kein Cookie gebraucht wird.
-# Geprüft wird die Bindung selbst; ein echter IdP ist dafür nicht nötig.
+# ── OIDC: the flow must be bound to the browser ───────────────────────────────
+# Attack: The attacker starts the flow on their side, signs in at the IdP as themselves and
+# lures the victim to the callback URL. The victim silently lands in the attacker's account. An
+# ordinary top-level GET suffices — SameSite does not help, because no cookie is needed at all.
+# What is tested is the binding itself; a real IdP is not needed for that.
 auth_o, app_o = _app(oidc_enabled=True, oidc_issuer="https://idp.example.invalid",
                      oidc_client_id="probe", oidc_client_secret="geheim",
                      base_url="http://testserver")
-# Metadaten vorbefüllen, damit kein Netz nötig ist: Geprüft wird die Browser-Bindung,
-# nicht die Discovery. `meta()` holt sonst beim ersten Aufruf die well-known-URL.
+# Pre-fill the metadata so that no network is needed: what is tested is the browser binding,
+# not the discovery. Otherwise `meta()` fetches the well-known URL on the first call.
 auth_o.oidc._meta = {
     "issuer": "https://idp.example.invalid",
     "authorization_endpoint": "https://idp.example.invalid/authorize",
@@ -111,27 +111,27 @@ auth_o.oidc._meta = {
 
 with TestClient(app_o) as c:
     start = c.get("/auth/oidc/start", follow_redirects=False)
-r.check("der Start setzt ein Flow-Cookie", "tinysesam_oidc_flow" in start.headers.get("set-cookie", ""),
-        f"keins gesetzt: {start.headers.get('set-cookie', '—')[:60]}")
-r.check("und zwar httponly (kein Zugriff aus JavaScript)",
+r.check("the start sets a flow cookie", "tinysesam_oidc_flow" in start.headers.get("set-cookie", ""),
+        f"none set: {start.headers.get('set-cookie', '—')[:60]}")
+r.check("and it is httponly (no access from JavaScript)",
         "httponly" in start.headers.get("set-cookie", "").lower())
 
-# Den state aus der Weiterleitung lesen — genau das, was ein Angreifer kann.
+# Read the state from the redirect — exactly what an attacker can do.
 from urllib.parse import parse_qs, urlparse  # noqa: E402
 state = parse_qs(urlparse(start.headers["location"]).query).get("state", [""])[0]
-r.check("der state steht wie erwartet in der Weiterleitung", bool(state))
+r.check("the state is in the redirect as expected", bool(state))
 
-# Callback aus einem FREMDEN Browser (eigene Cookie-Sammlung, ohne das Flow-Cookie).
+# Callback from a FOREIGN browser (own cookie jar, without the flow cookie).
 with TestClient(app_o) as fremd:
     antwort = fremd.get(f"/auth/oidc/callback?code=egal&state={state}", follow_redirects=False)
-r.check("ein Callback ohne passendes Flow-Cookie wird abgewiesen",
+r.check("a callback without a matching flow cookie is rejected",
         antwort.status_code == 400,
-        f"HTTP {antwort.status_code} — die Konto-Unterschiebung ist zurück")
+        f"HTTP {antwort.status_code} — the account substitution is back")
 
-# Dieselbe Unterschiebung per Cookie-Tossing (A-1): Eine Nachbar-Subdomain kann ein Cookie
-# `Domain=.example.com` setzen — aber keines mit `__Host-`. Das Flow-Cookie muss also das
-# Präfix tragen, sonst schiebt sie dem Opfer den Flow des Angreifers samt Wert unter, und das
-# Opfer landet trotz gepräfixtem Sitzungs-Cookie im Konto des Angreifers.
+# The same substitution via cookie tossing (A-1): a neighbouring subdomain can set a cookie
+# `Domain=.example.com` — but none with `__Host-`. So the flow cookie must carry the
+# prefix, otherwise it plants the attacker's flow, value included, on the victim, and the
+# victim lands in the attacker's account despite the prefixed session cookie.
 auth_s, app_s = _app(oidc_enabled=True, oidc_issuer="https://idp.example.invalid",
                      oidc_client_id="probe", oidc_client_secret="geheim", cookie_secure=True,
                      base_url="https://auth.example.com")
@@ -139,35 +139,35 @@ auth_s.oidc._meta = dict(auth_o.oidc._meta)
 with TestClient(app_s, base_url="https://auth.example.com") as angreifer:
     start = angreifer.get("/auth/oidc/start", follow_redirects=False)
     flow_wert = angreifer.cookies.get("__Host-tinysesam_oidc_flow")
-r.check("mit Secure heisst das Flow-Cookie __Host-tinysesam_oidc_flow", bool(flow_wert),
-        f"gesetzt: {start.headers.get('set-cookie', '—')[:60]}")
+r.check("with Secure the flow cookie is called __Host-tinysesam_oidc_flow", bool(flow_wert),
+        f"set: {start.headers.get('set-cookie', '—')[:60]}")
 state_s = parse_qs(urlparse(start.headers["location"]).query).get("state", [""])[0]
 with TestClient(app_s, base_url="https://auth.example.com") as opfer_b:
-    opfer_b.cookies.set("tinysesam_oidc_flow", flow_wert or "")   # was eine Nachbar-Subdomain setzen kann
+    opfer_b.cookies.set("tinysesam_oidc_flow", flow_wert or "")   # what a neighbouring subdomain can set
     antwort = opfer_b.get(f"/auth/oidc/callback?code=egal&state={state_s}", follow_redirects=False)
-r.check("ein ungepräfixtes (untergeschobenes) Flow-Cookie bindet den Callback nicht",
+r.check("an unprefixed (planted) flow cookie does not bind the callback",
         antwort.status_code == 400 and auth_s.t("api.oidc_browser") in antwort.text,
-        f"HTTP {antwort.status_code} {antwort.text[:80]} — Login-CSRF per Cookie-Tossing")
-# Gegenprobe: Mit dem echten, gepräfixten Cookie kommt der Callback an der Bindung vorbei
-# (und scheitert erst am Tausch mit dem attrappenlosen IdP) — sonst prüfte der Fall oben nichts.
+        f"HTTP {antwort.status_code} {antwort.text[:80]} — login CSRF via cookie tossing")
+# Counter-check: with the real, prefixed cookie the callback gets past the binding
+# (and only fails at the exchange with the dummy-less IdP) — otherwise the case above tested nothing.
 with TestClient(app_s, base_url="https://auth.example.com") as selbst:
     start = selbst.get("/auth/oidc/start", follow_redirects=False)
     state_s = parse_qs(urlparse(start.headers["location"]).query).get("state", [""])[0]
     try:
         antwort = selbst.get(f"/auth/oidc/callback?code=egal&state={state_s}", follow_redirects=False)
         text = antwort.text
-    except Exception as e:      # der Tausch gegen idp.example.invalid darf werfen
+    except Exception as e:      # the exchange with idp.example.invalid may raise
         text = repr(e)
-r.check("…das gepräfixte Cookie des eigenen Browsers bindet ihn weiterhin",
+r.check("…the prefixed cookie of the own browser still binds it",
         auth_s.t("api.oidc_browser") not in text, text[:80])
-r.check("SAML- und Passkey-Flow-Cookie tragen das Präfix ebenso",
+r.check("SAML and passkey flow cookies carry the prefix as well",
         auth_s.flow_cookie_name("tinysesam_saml_flow") == "__Host-tinysesam_saml_flow"
         and auth_s.flow_cookie_name("tinysesam_waflow") == "__Host-tinysesam_waflow")
 
-# ── Schreibende Routen ohne CSRF-Prüfung ──────────────────────────────────────
-# Angriff: Ein <form method=POST> auf einer fremden Seite, ohne Body, ohne Preflight.
-# `POST /auth/totp/disable` löschte damit TOTP UND alle Recovery-Codes — ohne Rückfrage,
-# ohne frische Faktor-Bestätigung und ohne Audit-Eintrag.
+# ── Writing routes without CSRF check ─────────────────────────────────────────
+# Attack: A <form method=POST> on a foreign page, without body, without preflight.
+# `POST /auth/totp/disable` thereby deleted TOTP AND all recovery codes — without confirmation,
+# without fresh factor confirmation and without an audit entry.
 auth_c, app_c = _app(pin_enabled=True)
 auth_c.create_user("opfer", password="Geheim12345!abc")
 opfer = auth_c.store.get_user_by_name("opfer")
@@ -178,59 +178,59 @@ with TestClient(app_c) as c:
     c.post("/auth/login", data={"username": "opfer", "password": "Geheim12345!abc"},
            follow_redirects=False)
     for pfad in OHNE_CSRF:
-        antwort = c.post(pfad)          # kein X-CSRF-Token, kein Body — wie ein fremdes Formular
-        r.check(f"{pfad} verlangt einen CSRF-Token", antwort.status_code == 403,
-                f"HTTP {antwort.status_code} — ohne Token durchgekommen")
+        antwort = c.post(pfad)          # no X-CSRF-Token, no body — like a foreign form
+        r.check(f"{pfad} requires a CSRF token", antwort.status_code == 403,
+                f"HTTP {antwort.status_code} — got through without a token")
 
-# Das Abschalten des zweiten Faktors muss eine Spur hinterlassen. Ohne Eintrag ist hinterher
-# nicht nachvollziehbar, dass jemandem der zweite Faktor abhandenkam.
+# Disabling the second factor must leave a trace. Without an entry it cannot be reconstructed
+# afterwards that someone lost their second factor.
 auth_c.totp_disable(opfer["id"])
 ereignisse = [e["event"] for e in auth_c.store.recent_audit(limit=20)]
-r.check("das Abschalten von TOTP wird protokolliert", "totp_disable" in ereignisse,
-        f"kein Eintrag — gefunden: {ereignisse[:6]}")
+r.check("disabling TOTP is logged", "totp_disable" in ereignisse,
+        f"no entry — found: {ereignisse[:6]}")
 auth_c.disable_pin(opfer["id"])
-r.check("das Abschalten der PIN ebenso",
+r.check("disabling the PIN likewise",
         "pin_disable" in [e["event"] for e in auth_c.store.recent_audit(limit=20)])
 
-# ── Brute-Force-Sperre per erfolgreichem Erstfaktor zurücksetzbar ─────────────
-# Angriff: Wer das Passwort kennt (Leak, Wiederverwendung, Phishing), meldet sich vor jedem
-# TOTP-Rateversuch einmal korrekt an. Der Erfolg löschte ALLE Fehlversuche des Kontos — auch die
-# der TOTP-Versuche. Die Sperre griff für den zweiten Faktor damit nie.
+# ── Brute-force lockout resettable by a successful first factor ───────────────
+# Attack: Whoever knows the password (leak, reuse, phishing) signs in correctly once before every
+# TOTP guess. The success deleted ALL failed attempts of the account — including those
+# of the TOTP attempts. The lockout thus never applied to the second factor.
 auth_b, _app_b = _app()
 auth_b.create_user("ziel", password="Geheim12345!abc")
 
-# Fünf Fehlversuche beim zweiten Faktor …
+# Five failed attempts at the second factor …
 for _ in range(5):
     auth_b._record_login("ziel", "203.0.113.9", success=False, method="totp")
 offen_vorher = len(auth_b.store.recent_fails("ziel")) if hasattr(auth_b.store, "recent_fails") else None
 
-# … dann ein ERFOLGREICHER Passwort-Login.
+# … then a SUCCESSFUL password login.
 auth_b._record_login("ziel", "203.0.113.9", success=True, method="password")
 
-# Die TOTP-Fehlversuche müssen stehen bleiben.
+# The failed TOTP attempts must remain.
 rest = auth_b.store._all(
     "SELECT method FROM login_attempt WHERE username=? COLLATE NOCASE AND success=0", ("ziel",))
 totp_übrig = [z["method"] for z in rest].count("totp")
-r.check("ein Passwort-Erfolg räumt die TOTP-Fehlversuche NICHT weg", totp_übrig == 5,
-        f"{totp_übrig} von 5 übrig — der zweite Faktor ist wieder ratbar")
+r.check("a password success does NOT clear the failed TOTP attempts", totp_übrig == 5,
+        f"{totp_übrig} of 5 left — the second factor is guessable again")
 
-# Gegenprobe: Passwort-Fehlversuche räumt er sehr wohl weg, sonst wäre der Fix eine Bremse.
+# Counter-check: it does clear failed password attempts, otherwise the fix would be a brake.
 for _ in range(3):
     auth_b._record_login("ziel2", "203.0.113.9", success=False, method="password")
 auth_b._record_login("ziel2", "203.0.113.9", success=True, method="password")
 pw_übrig = [z["method"] for z in auth_b.store._all(
     "SELECT method FROM login_attempt WHERE username=? COLLATE NOCASE AND success=0",
     ("ziel2",))].count("password")
-r.check("eigene Fehlversuche räumt ein Erfolg weiterhin weg", pw_übrig == 0,
-        f"{pw_übrig} übrig — der Fix bremst mehr als nötig")
+r.check("own failed attempts are still cleared by a success", pw_übrig == 0,
+        f"{pw_übrig} left — the fix brakes more than necessary")
 
 
-# ── Erst-Admin kapern: Allowlist-Name + offene Selbst-Registrierung ────────────
-# `admin_identifiers` verbürgt nur, WELCHER Name Admin wird — nicht, wer ihn bekommt. Mit
-# `allow_signup=True` registriert sich der Erste, der die Adresse errät, genau darunter und ist
-# beim ersten Login Admin. Der Konstruktor lässt diese Kombination nicht mehr zu.
+# ── Hijacking the first admin: allowlist name + open self-registration ─────────
+# `admin_identifiers` only vouches for WHICH name becomes admin — not for who gets it. With
+# `allow_signup=True` the first one to guess the address registers exactly under it and is admin
+# at the first login. The constructor no longer permits this combination.
 def _baut(**cfg):
-    """(gebaut?, Fehlertext) — ohne die Prüfung zum Fehlschlag der Suite zu machen."""
+    """(built?, error text) — without turning the check into a failure of the suite."""
     tmp = tempfile.mkdtemp()
     grund = dict(db_path=str(Path(tmp) / "t.db"), cookie_secure=False)
     grund.update(cfg)
@@ -242,41 +242,41 @@ def _baut(**cfg):
 
 
 gebaut, text = _baut(admin_identifiers=["chef"], allow_signup=True)
-r.check("Allowlist-BENUTZERNAME + allow_signup wird abgewiesen", not gebaut,
-        "die Instanz baut — wer sich als 'chef' registriert, wird Erst-Admin")
-r.check("die Abweisung nennt den betroffenen Eintrag", "chef" in text,
-        f"Meldung nennt ihn nicht: {text[:80]!r}")
+r.check("allowlist USERNAME + allow_signup is rejected", not gebaut,
+        "the instance builds — whoever registers as 'chef' becomes first admin")
+r.check("the rejection names the affected entry", "chef" in text,
+        f"message does not name it: {text[:80]!r}")
 
-# Auch eine E-Mail reicht nicht, solange sie niemand bestätigt: bei der Registrierung ist sie
-# ein frei eintippbares Feld.
+# An e-mail is not enough either as long as nobody confirms it: at registration it is
+# a freely typeable field.
 gebaut, _ = _baut(admin_identifiers=["chef@example.com"], allow_signup=True,
                   signup_require_email=True, signup_verify_email=False)
-r.check("Allowlist-E-MAIL ohne Bestätigungspflicht wird abgewiesen", not gebaut,
-        "die Instanz baut — die Adresse ist unbestätigt und damit frei wählbar")
+r.check("allowlist E-MAIL without mandatory confirmation is rejected", not gebaut,
+        "the instance builds — the address is unconfirmed and thus freely choosable")
 
-# Gegenproben — der Wächter darf die tragfähigen Aufbauten nicht mitnehmen.
+# Counter-checks — the guard must not take the viable setups down with it.
 gebaut, text = _baut(admin_identifiers=["chef@example.com"], allow_signup=True,
                      signup_require_email=True, signup_verify_email=True,
-                     # Pflicht seit der base_url-Nacharbeit; ohne sie scheiterte der Aufbau aus
-                     # einem Grund, der mit dem Erst-Admin-Wächter nichts zu tun hat.
+                     # Mandatory since the base_url rework; without it the setup would fail for
+                     # a reason that has nothing to do with the first-admin guard.
                      base_url="https://auth.example.com")
-r.check("bestätigte E-Mail + offene Registrierung bleibt erlaubt", gebaut,
-        f"zu streng, der belegte Weg ist zu: {text[:120]}")
+r.check("confirmed e-mail + open registration stays allowed", gebaut,
+        f"too strict, the proven path is closed: {text[:120]}")
 
 gebaut, text = _baut(admin_identifiers=["chef"], allow_signup=False)
-r.check("Allowlist ohne Selbst-Registrierung bleibt erlaubt", gebaut,
-        f"zu streng, der Normalfall ist zu: {text[:120]}")
+r.check("allowlist without self-registration stays allowed", gebaut,
+        f"too strict, the normal case is closed: {text[:120]}")
 
 
-# ── Untergeschobene SAML-Assertion (Login-CSRF / unsolicited Response) ─────────
-# Die ACS nahm jede signierte Assertion an. `InResponseTo` band sie an nichts: python3-saml
-# prüft das Feld nur, wenn es dasteht — eine Antwort ganz ohne es ging durch. Ein Angreifer mit
-# einer gültigen Assertion für SEIN Konto konnte sie so in den Browser des Opfers POSTen.
+# ── Planted SAML assertion (login CSRF / unsolicited response) ─────────────────
+# The ACS accepted every signed assertion. `InResponseTo` bound it to nothing: python3-saml
+# only checks the field if it is there — a response without it went through. An attacker with
+# a valid assertion for THEIR account could thus POST it into the victim's browser.
 from tinysesam.saml_ import SAMLClient  # noqa: E402
 
 
 class _Antwort:
-    """Ein IdP, dessen Assertion Signatur und Conditions besteht — nur der Bezug wechselt."""
+    """An IdP whose assertion passes signature and conditions — only the reference changes."""
 
     def __init__(self, in_response_to):
         self.irt = in_response_to
@@ -313,26 +313,26 @@ def _saml_lauf(in_response_to, request_id):
 
 
 daten, _ = _saml_lauf(None, "_meine-id")
-r.check("Assertion OHNE InResponseTo wird abgelehnt", daten is None,
-        "angenommen — jede signierte Assertion loggt jeden ein (Login-CSRF)")
+r.check("assertion WITHOUT InResponseTo is rejected", daten is None,
+        "accepted — every signed assertion logs everybody in (login CSRF)")
 
 daten, _ = _saml_lauf("_fremde-id", "_meine-id")
-r.check("Assertion mit FREMDEM InResponseTo wird abgelehnt", daten is None,
-        "angenommen — die Antwort gehört zu einem anderen Anmeldeversuch")
+r.check("assertion with a FOREIGN InResponseTo is rejected", daten is None,
+        "accepted — the response belongs to a different sign-in attempt")
 
 daten, _ = _saml_lauf("_meine-id", "")
-r.check("ohne angeforderten Request bleibt die ACS zu", daten is None,
-        "angenommen — ohne eigene Anforderung darf nichts eingelöst werden")
+r.check("without a requested request the ACS stays closed", daten is None,
+        "accepted — nothing may be redeemed without an own request")
 
-# Gegenprobe: der reguläre Weg muss durchkommen, sonst ist der Fix eine Mauer.
+# Counter-check: the regular path must get through, otherwise the fix is a wall.
 daten, idp = _saml_lauf("_meine-id", "_meine-id")
-r.check("die angeforderte Assertion kommt weiterhin durch", daten is not None,
-        "der reguläre SAML-Login ist zu")
-r.check("die Request-ID wird auch an die Bibliothek durchgereicht", idp.gesehen == "_meine-id",
-        f"process_response sah {idp.gesehen!r} — die Prüfung liefe nur in TinySesam, nicht in python3-saml")
+r.check("the requested assertion still gets through", daten is not None,
+        "the regular SAML login is closed")
+r.check("the request ID is also passed on to the library", idp.gesehen == "_meine-id",
+        f"process_response saw {idp.gesehen!r} — the check would only run in TinySesam, not in python3-saml")
 
 
-# Und der Anker muss VERDRAHTET sein: Der Router legt die Request-ID ab und reicht sie wieder an.
+# And the anchor must be WIRED: the router stores the request ID and hands it back again.
 class _FakeSAML:
     def __init__(self):
         self.gesehene_request_id = "__nie_gesetzt__"
@@ -342,7 +342,7 @@ class _FakeSAML:
 
     def process(self, req, base, request_id=""):
         self.gesehene_request_id = request_id
-        return None          # der Rest des Flows interessiert hier nicht
+        return None          # the rest of the flow does not matter here
 
     def metadata(self, base):
         return "<md:EntityDescriptor/>"
@@ -357,71 +357,71 @@ cr = TestClient(app_r)
 
 antwort = cr.get("/auth/saml/login?next=/", follow_redirects=False)
 keks = antwort.cookies.get("tinysesam_saml_flow")
-r.check("der Login legt die Request-ID in ein Flow-Cookie", keks == "_authnreq-4711",
-        f"Cookie ist {keks!r} — ohne Ablage gibt es bei der ACS nichts zu vergleichen")
-r.check("das Flow-Cookie ist httponly", "httponly" in antwort.headers.get("set-cookie", "").lower(),
-        "per JavaScript lesbar")
+r.check("the login stores the request ID in a flow cookie", keks == "_authnreq-4711",
+        f"cookie is {keks!r} — without storage there is nothing to compare at the ACS")
+r.check("the flow cookie is httponly", "httponly" in antwort.headers.get("set-cookie", "").lower(),
+        "readable via JavaScript")
 
 cr.post("/auth/saml/acs", data={"SAMLResponse": "x"}, follow_redirects=False)
-r.check("die ACS reicht die abgelegte Request-ID an die Prüfung weiter",
+r.check("the ACS passes the stored request ID on to the check",
         auth_r.saml.gesehene_request_id == "_authnreq-4711",
-        f"sie sah {auth_r.saml.gesehene_request_id!r} — der Anker hängt an keinem Draht")
+        f"it saw {auth_r.saml.gesehene_request_id!r} — the anchor is attached to no wire")
 
 
-# ── Sitzungen übernehmen: aus der Datei oder aus dem Admin-Panel ───────────────
-# Sitzungs-Token lagen im Klartext in der Datenbank, und `GET /admin/api/sessions` gab sie
-# obendrein an den Browser. Beides zusammen heisst: Wer die Datei liest (sie lag bei 0644) oder
-# eine Panel-Antwort sieht, meldet sich als beliebiger Nutzer an. Gespeichert wird jetzt nur der
-# sha256; das Panel bekommt dieses Handle, mit dem man beenden, aber nicht anmelden kann.
+# ── Taking over sessions: from the file or from the admin panel ────────────────
+# Session tokens lay in plain text in the database, and `GET /admin/api/sessions` also handed
+# them to the browser. Both together mean: whoever reads the file (it was 0644) or sees a panel
+# response signs in as any user. Now only the sha256 is stored; the panel gets this handle, with
+# which one can terminate but not sign in.
 auth_t, app_t = _app()
 auth_t.create_user("opfer", password="geheim12345")
 opfer_id = auth_t.store.get_user_by_name("opfer")["id"]
-# `create_session` gibt zurück, was ins Cookie geht — genau der Wert, um den es geht.
+# `create_session` returns what goes into the cookie — exactly the value in question.
 cookie_wert = auth_t.store.create_session(opfer_id, 3600, True, "password")
 
 gespeichert = [z["token_hash"] for z in auth_t.store._all("SELECT token_hash FROM session")]
-# sha256 hier selbst rechnen: ein Test, der `store.session_hash()` fragt, misst gegen dieselbe
-# Funktion, die er prüft — und bliebe grün, wenn die zur Identität mutiert.
+# Compute the sha256 ourselves: a test that asks `store.session_hash()` measures against the same
+# function it is checking — and would stay green if that mutated to the identity.
 erwartet = hashlib.sha256(cookie_wert.encode()).hexdigest()
-r.check("in der Datenbank steht kein Klartext-Token", gespeichert == [erwartet],
-        f"gespeichert: {gespeichert[:1]} — erwartet war der sha256 des Cookies")
-r.check("das Cookie ist NICHT der gespeicherte Wert",
+r.check("no plain-text token is in the database", gespeichert == [erwartet],
+        f"stored: {gespeichert[:1]} — the sha256 of the cookie was expected")
+r.check("the cookie is NOT the stored value",
         bool(cookie_wert) and cookie_wert not in gespeichert,
-        "wer die Datei liest, hat das Anmelde-Token")
+        "whoever reads the file has the sign-in token")
 
-# Das Handle darf sich nicht als Cookie einsetzen lassen.
+# The handle must not be usable as a cookie.
 handle = gespeichert[0]
-r.check("das Handle taugt nicht als Sitzungs-Cookie",
+r.check("the handle is no good as a session cookie",
         auth_t.store.get_session(handle) is None,
-        "der gespeicherte Wert meldet an — dann ist das Hashen wirkungslos")
-r.check("das echte Cookie meldet weiterhin an",
+        "the stored value signs in — then the hashing is ineffective")
+r.check("the real cookie still signs in",
         auth_t.store.get_session(cookie_wert) is not None,
-        "die Sitzung ist gar nicht auffindbar — dann misst der Test nichts")
+        "the session cannot be found at all — then the test measures nothing")
 
-# Und das Panel gibt genau dieses Handle heraus, nicht das Token.
+# And the panel hands out exactly this handle, not the token.
 panel = [z["token_hash"] for z in auth_t.store.list_sessions()]
-r.check("das Admin-Panel bekommt nur Handles zu sehen", panel == [handle],
-        f"list_sessions liefert {panel[:1]}")
+r.check("the admin panel only gets to see handles", panel == [handle],
+        f"list_sessions returns {panel[:1]}")
 
-# ... aber sehr wohl zum Beenden, sonst wäre das Panel kaputt.
+# ... but it works for terminating, otherwise the panel would be broken.
 auth_t.store.delete_session_by_handle(handle)
-r.check("das Handle beendet die Sitzung weiterhin",
+r.check("the handle still terminates the session",
         auth_t.store.get_session(cookie_wert) is None,
-        "das Panel kann keine Sitzung mehr beenden")
+        "the panel can no longer terminate any session")
 
-# Und ein Klartext-Token an einer Handle-Stelle ist ein Fehler, kein stiller No-Op:
-# ein UPDATE, das keine Zeile trifft, liesse einen bestätigten Faktor lautlos verschwinden.
+# And a plain-text token at a handle position is an error, not a silent no-op:
+# an UPDATE that hits no row would let a confirmed factor vanish silently.
 try:
     auth_t.store.set_session_mfa("nicht-ein-hash", True)
     lautlos = True
 except ValueError:
     lautlos = False
-r.check("ein Klartext-Token an einer Handle-Stelle fliegt auf", not lautlos,
-        "läuft ins Leere — die Sitzung behielte still ihren alten Stand")
+r.check("a plain-text token at a handle position is noticed", not lautlos,
+        "runs into nothing — the session would silently keep its old state")
 
 
-# Die Umstellung darf niemanden auswerfen: der Hash ist aus dem Klartext berechenbar, also lassen
-# sich bestehende Zeilen migrieren. Eine Datenbank im alten Format nachbauen und öffnen.
+# The switchover must not throw anybody out: the hash is computable from the plain text, so existing
+# rows can be migrated. Rebuild a database in the old format and open it.
 import sqlite3 as _sq  # noqa: E402
 
 from tinysesam.store import Store  # noqa: E402
@@ -434,7 +434,7 @@ altes_token = auth_alt.store.create_session(
 altes_handle = hashlib.sha256(altes_token.encode()).hexdigest()
 auth_alt.store.db.close()
 
-# zurück ins Format vor 0.18.0: Spalte heisst `token` und trägt den Klartext
+# back to the format before 0.18.0: the column is called `token` and holds the plain text
 roh = _sq.connect(alt_pfad)
 roh.execute("ALTER TABLE session RENAME COLUMN token_hash TO token")
 roh.execute("UPDATE session SET token=?", (altes_token,))
@@ -443,20 +443,20 @@ roh.close()
 
 neu_store = Store(alt_pfad)
 spalten = {z[1] for z in neu_store.db.execute("PRAGMA table_info(session)")}
-r.check("die alte Spalte `token` wird auf `token_hash` migriert",
+r.check("the old column `token` is migrated to `token_hash`",
         "token_hash" in spalten and "token" not in spalten,
-        f"Spalten: {sorted(spalten)}")
-r.check("bestehende Anmeldungen überleben die Umstellung",
+        f"columns: {sorted(spalten)}")
+r.check("existing sign-ins survive the switchover",
         neu_store.get_session(altes_token) is not None,
-        "das alte Cookie gilt nicht mehr — ein Update hätte alle Nutzer ausgeloggt")
-r.check("und der Klartext ist danach aus der Datei verschwunden",
+        "the old cookie is no longer valid — an update would have logged out all users")
+r.check("and the plain text is gone from the file afterwards",
         [z["token_hash"] for z in neu_store._all("SELECT token_hash FROM session")] == [altes_handle],
-        "der Klartext steht weiterhin in der Datenbank")
+        "the plain text is still in the database")
 
 
-# ── Die Auth-Datenbank lag offen (0644) ───────────────────────────────────────
-# Darin stehen Passwort-Hashes, TOTP-Geheimnisse und E-Mail-Adressen. Auf einem geteilten Host
-# konnte sie jedes andere Konto lesen — WAL und SHM mit denselben Daten ebenso.
+# ── The auth database was open (0644) ─────────────────────────────────────────
+# It contains password hashes, TOTP secrets and e-mail addresses. On a shared host every other
+# account could read it — WAL and SHM with the same data likewise.
 import os as _os  # noqa: E402
 import stat as _stat  # noqa: E402
 
@@ -473,14 +473,14 @@ def _modus(datei):
 
 offen = {f: oct(_modus(Path(ordner) / f)) for f in sorted(_os.listdir(ordner))
          if _modus(Path(ordner) / f) & 0o077}
-r.check("Datenbank, WAL und SHM sind nur für den eigenen Benutzer lesbar", not offen,
-        f"für andere lesbar: {offen}")
-r.check("die Prüfung sah überhaupt eine WAL-Datei",
+r.check("database, WAL and SHM are readable only by the own user", not offen,
+        f"readable by others: {offen}")
+r.check("the check saw a WAL file at all",
         any(f.endswith("-wal") for f in _os.listdir(ordner)),
-        f"nur {_os.listdir(ordner)} — dann sagt der Test über WAL/SHM nichts aus")
+        f"only {_os.listdir(ordner)} — then the test says nothing about WAL/SHM")
 
-# Eine bestehende, zu offene Datenbank wird NICHT umgeschrieben (eine bewusste Gruppenfreigabe
-# ist die Entscheidung des Betreibers) — aber sie wird laut benannt.
+# An existing, too open database is NOT rewritten (a deliberate group share is the
+# operator's decision) — but it is named loudly.
 auth_d.store.db.close()
 _os.chmod(pfad, 0o644)
 puffer = io.StringIO()
@@ -491,78 +491,78 @@ try:
     Store(pfad)
 finally:
     log_ts.removeHandler(haken)
-r.check("eine bestehende, offene Datenbank wird gemeldet", "chmod 600" in puffer.getvalue(),
-        f"keine Warnung: {puffer.getvalue()[:100]!r}")
-r.check("und dabei nicht hinter dem Rücken umgestellt", _modus(pfad) == 0o644,
-        f"auf {oct(_modus(pfad))} geändert — das überfährt eine bewusste Freigabe")
+r.check("an existing, open database is reported", "chmod 600" in puffer.getvalue(),
+        f"no warning: {puffer.getvalue()[:100]!r}")
+r.check("and not changed behind one's back", _modus(pfad) == 0o644,
+        f"changed to {oct(_modus(pfad))} — that overrides a deliberate share")
 
 
-# ── API-Keys als zweite Tür: Aussperren sperrte sie nicht aus ─────────────────
-# Ein Key hängt an keiner Sitzung. Wer ein Konto zurücksetzt oder sperrt, schloss bis 0.18.0 nur
-# die Haustür. (Der Key eines DEAKTIVIERTEN Kontos war schon immer wertlos — `verify_api_key`
-# prüft das Flag; hier geht es um Reset, Sperre und die Panik-Taste des Nutzers.)
+# ── API keys as a second door: locking out did not lock them out ──────────────
+# A key hangs on no session. Whoever reset or blocked an account only closed the front door up to
+# 0.18.0. (The key of a DEACTIVATED account was always worthless — `verify_api_key`
+# checks the flag; this is about reset, block and the user's panic button.)
 auth_k, app_k = _app(apikey_enabled=True)
 uid_k = auth_k.create_user("bot-halter", password="geheim12345")
 
 
 def _key_gilt(auth_obj, schluessel):
-    # verify_api_key gibt (user, roles) zurück — ein Tupel ist IMMER truthy. Nur [0] zählt.
+    # verify_api_key returns (user, roles) — a tuple is ALWAYS truthy. Only [0] counts.
     return auth_obj.verify_api_key(schluessel)[0] is not None
 
 
 schluessel = auth_k.create_api_key(uid_k, "bot")["key"]
-r.check("ein frischer API-Key gilt", _key_gilt(auth_k, schluessel), "schon der Ausgangspunkt fehlt")
+r.check("a fresh API key is valid", _key_gilt(auth_k, schluessel), "even the starting point is missing")
 
-# Selbst-Passwortwechsel lässt ihn absichtlich stehen — sonst legt jede Routine die Automatiken
-# still. Aber der Zustand muss abfragbar sein, sonst ist „absichtlich" nur „unbemerkt".
+# Own password change deliberately leaves it in place — otherwise every routine disables the
+# automations. But the state must be queryable, otherwise "deliberately" is only "unnoticed".
 auth_k.set_password(uid_k, "nochgeheimer99")
-r.check("der eigene Passwortwechsel lässt Automatiken laufen", _key_gilt(auth_k, schluessel),
-        "der Key ist tot — jede Passwort-Routine legt die Integrationen still")
-r.check("und die Zahl der weiter gültigen Keys ist abfragbar",
+r.check("the own password change lets automations run", _key_gilt(auth_k, schluessel),
+        "the key is dead — every password routine disables the integrations")
+r.check("and the number of keys that remain valid is queryable",
         auth_k.store.count_active_api_keys(uid_k) == 1,
-        f"gezählt: {auth_k.store.count_active_api_keys(uid_k)}")
+        f"counted: {auth_k.store.count_active_api_keys(uid_k)}")
 
-# Der Massenwiderruf entwertet, und er sagt wie viele.
+# The mass revocation invalidates, and it says how many.
 anzahl = auth_k.store.revoke_user_api_keys(uid_k)
-r.check("der Massenwiderruf nennt die Zahl", anzahl == 1, f"meldete {anzahl}")
-r.check("danach gilt der Key nicht mehr", not _key_gilt(auth_k, schluessel),
-        "widerrufen und trotzdem gültig")
-r.check("ein zweiter Widerruf zählt nichts doppelt",
+r.check("the mass revocation names the number", anzahl == 1, f"reported {anzahl}")
+r.check("afterwards the key is no longer valid", not _key_gilt(auth_k, schluessel),
+        "revoked and still valid")
+r.check("a second revocation does not count anything twice",
         auth_k.store.revoke_user_api_keys(uid_k) == 0,
-        "zählt schon widerrufene Keys erneut")
+        "counts already revoked keys again")
 
-# Admin-Passwort-Reset: dort ist die Absicht Aussperren. CSRF ist für diesen Block abgeschaltet
-# — der Schutz des Panels hat seine eigene Prüfung weiter oben, hier geht es um die Keys.
+# Admin password reset: there the intent is locking out. CSRF is switched off for this block
+# — the panel's protection has its own check further up, here it is about the keys.
 auth_a, _ = _app(apikey_enabled=True, csrf_enabled=False)
 uid_a = auth_a.create_user("bot-halter", password="geheim12345")
 zweit = auth_a.create_api_key(uid_a, "bot2")["key"]
 admin_a = auth_a.create_user("chefin", password="geheim12345", is_admin=True)
 app_a = FastAPI()
-app_a.include_router(auth_a.router())          # Admin-Panel hängt per Auto-Mount unter /auth/admin
+app_a.include_router(auth_a.router())          # admin panel hangs under /auth/admin via auto-mount
 ca = TestClient(app_a)
 ca.cookies.set(auth_a.cfg.session_cookie,
                auth_a.store.create_session(admin_a, 3600, True, "password"))
 
 antwort = ca.post(f"/auth/admin/api/users/{uid_a}/password", json={"password": "ganzneu12345abc"})
-r.check("der Admin-Reset läuft überhaupt durch", antwort.status_code == 200,
+r.check("the admin reset goes through at all", antwort.status_code == 200,
         f"HTTP {antwort.status_code}: {antwort.text[:120]}")
-r.check("der Admin-Reset entwertet die API-Keys des Kontos", not _key_gilt(auth_a, zweit),
-        "Key gilt weiter — Aussperren schloss nur die Haustür")
-r.check("und sagt, wie viele es waren", antwort.json().get("api_keys_revoked") == 1,
-        f"Antwort: {antwort.text[:120]}")
+r.check("the admin reset invalidates the API keys of the account", not _key_gilt(auth_a, zweit),
+        "key remains valid — locking out only closed the front door")
+r.check("and says how many there were", antwort.json().get("api_keys_revoked") == 1,
+        f"response: {antwort.text[:120]}")
 
-# Konto sperren: Keys sind über das `disabled`-Flag ohnehin tot — aber sie müssen auch
-# widerrufen SEIN, sonst leben sie beim Entsperren wieder auf.
+# Blocking an account: keys are dead anyway via the `disabled` flag — but they must also
+# BE revoked, otherwise they revive on unblocking.
 dritt = auth_a.create_api_key(uid_a, "bot3")["key"]
 ca.post(f"/auth/admin/api/users/{uid_a}/disable", json={"disabled": True})
 ca.post(f"/auth/admin/api/users/{uid_a}/disable", json={"disabled": False})
-r.check("ein Key lebt nach Sperren und Entsperren nicht wieder auf", not _key_gilt(auth_a, dritt),
-        "der Key gilt wieder — gesperrt und entsperrt ist kein Freifahrtschein")
+r.check("a key does not revive after blocking and unblocking", not _key_gilt(auth_a, dritt),
+        "the key is valid again — blocked and unblocked is no free pass")
 
 
-# ── Admin-Aktionen ohne Akteur und ohne IP ────────────────────────────────────
-# Das Protokoll hielt fest, DASS ein Konto gesperrt wurde — nicht von wem und von wo. Bei
-# mehreren Admins ist das genau die Frage, die man hinterher stellt.
+# ── Admin actions without actor and without IP ────────────────────────────────
+# The log recorded THAT an account was blocked — not by whom and from where. With several
+# admins that is exactly the question one asks afterwards.
 auth_p, _ = _app(csrf_enabled=False)
 opfer_p = auth_p.create_user("betroffen", password="geheim12345")
 chef_p = auth_p.create_user("chefin2", password="geheim12345", is_admin=True)
@@ -575,25 +575,25 @@ cp.cookies.set(auth_p.cfg.session_cookie,
 cp.post(f"/auth/admin/api/users/{opfer_p}/disable", json={"disabled": True},
         headers={"X-Forwarded-For": "203.0.113.42"})
 eintrag = next((z for z in auth_p.store.recent_audit(50) if z["event"] == "user_disable"), None)
-r.check("das Sperren steht überhaupt im Protokoll", eintrag is not None,
-        "keine Zeile — dann sagt der Test über den Rest nichts")
-r.check("und nennt den Admin, der es getan hat",
+r.check("the blocking appears in the log at all", eintrag is not None,
+        "no row — then the test says nothing about the rest")
+r.check("and names the admin who did it",
         bool(eintrag) and eintrag["username"] == "chefin2",
         f"username={eintrag['username'] if eintrag else None!r}")
-r.check("und die IP, von der aus", bool(eintrag) and bool(eintrag["ip"]),
+r.check("and the IP it came from", bool(eintrag) and bool(eintrag["ip"]),
         f"ip={eintrag['ip'] if eintrag else None!r}")
 
-# Nicht nur diese eine Route: auch der Passwort-Reset.
+# Not only this one route: the password reset as well.
 cp.post(f"/auth/admin/api/users/{opfer_p}/password", json={"password": "ganzneu12345abc"})
 reset = next((z for z in auth_p.store.recent_audit(50) if z["event"] == "user_password_reset"), None)
-r.check("auch der Admin-Passwort-Reset nennt Akteur und IP",
+r.check("the admin password reset also names actor and IP",
         bool(reset) and reset["username"] == "chefin2" and bool(reset["ip"]),
         f"{dict(reset) if reset else None}")
 
 
-# ── Der Wächter, der ab der ersten Logrotation nicht mehr wacht ───────────────
-# `logging.FileHandler` hält den Inode offen. logrotate benennt um und legt neu an — ab da
-# schreibt der Prozess in die UMBENANNTE Datei, die fail2ban-Jail liest die leere neue.
+# ── The guard that stops guarding after the first log rotation ─────────────────
+# `logging.FileHandler` keeps the inode open. logrotate renames and creates anew — from then on
+# the process writes into the RENAMED file, the fail2ban jail reads the empty new one.
 import os as _os2  # noqa: E402
 
 from tinysesam.security import attach_security_log, seclog  # noqa: E402
@@ -602,21 +602,21 @@ log_ordner = tempfile.mkdtemp()
 log_datei = str(Path(log_ordner) / "security.log")
 attach_security_log(log_datei)
 seclog.warning("failed login user=vorher ip=203.0.113.1 method=password")
-_os2.rename(log_datei, log_datei + ".1")          # genau das macht logrotate
+_os2.rename(log_datei, log_datei + ".1")          # exactly what logrotate does
 open(log_datei, "w").close()
 seclog.warning("failed login user=nachher ip=203.0.113.2 method=password")
 
-r.check("nach einer Logrotation landet die nächste Zeile in der NEUEN Datei",
+r.check("after a log rotation the next line lands in the NEW file",
         "nachher" in Path(log_datei).read_text(encoding="utf-8"),
-        "sie steht in der umbenannten Datei — die Jail liest ab jetzt ins Leere")
-r.check("und nicht mehr in der rotierten",
+        "it is in the renamed file — from now on the jail reads into the void")
+r.check("and no longer in the rotated one",
         "nachher" not in Path(log_datei + ".1").read_text(encoding="utf-8"),
-        "der alte Inode bekommt weiter Zeilen")
+        "the old inode keeps receiving lines")
 
 
-# ── Der App-Lockout blendete fail2ban aus ────────────────────────────────────
-# Solange gesperrt war, rief niemand mehr `record_login()`: Die App antwortete 429 und schrieb
-# keine Zeile. Das Log verstummte genau dann, wenn die IP hätte gebannt werden sollen.
+# ── The app lockout blinded fail2ban ─────────────────────────────────────────
+# As long as it was locked, nobody called `record_login()` any more: the app answered 429 and wrote
+# no line. The log fell silent exactly when the IP should have been banned.
 auth_l, _ = _app()
 auth_l.create_user("ziel3", password="geheim12345")
 for _ in range(10):
@@ -631,15 +631,15 @@ finally:
     seclog.removeHandler(haken_l)
 zeile_l = puffer_l.getvalue()
 
-r.check("das Konto ist überhaupt gesperrt", gesperrt, "kein Lockout — dann misst der Test nichts")
-r.check("die Abweisung schreibt eine Zeile ins Sicherheits-Log", "failed login" in zeile_l,
-        f"Log schweigt: {zeile_l[:80]!r} — fail2ban sieht keinen Grund zu bannen")
-r.check("und nennt den Grund", "reason=lockout" in zeile_l, f"ohne Grund: {zeile_l[:100]!r}")
-r.check("die Zeile passt auf den mitgelieferten fail2ban-Filter",
+r.check("the account is locked at all", gesperrt, "no lockout — then the test measures nothing")
+r.check("the rejection writes a line to the security log", "failed login" in zeile_l,
+        f"log is silent: {zeile_l[:80]!r} — fail2ban sees no reason to ban")
+r.check("and names the reason", "reason=lockout" in zeile_l, f"without reason: {zeile_l[:100]!r}")
+r.check("the line matches the shipped fail2ban filter",
         bool(re.search(r"failed login user=.* ip=(\S+) method=.*", zeile_l)),
-        f"Filter greift nicht: {zeile_l[:100]!r}")
+        f"filter does not match: {zeile_l[:100]!r}")
 
-# Auch das Rate-Limit darf nicht stumm abweisen.
+# The rate limit must not reject silently either.
 puffer_r = io.StringIO()
 haken_r = logging.StreamHandler(puffer_r)
 seclog.addHandler(haken_r)
@@ -648,20 +648,20 @@ try:
         auth_l._rate_ok("203.0.113.78")
 finally:
     seclog.removeHandler(haken_r)
-r.check("auch ein Rate-Limit-Treffer steht im Log",
+r.check("a rate-limit hit is in the log as well",
         "reason=ratelimit" in puffer_r.getvalue(),
-        f"stumm: {puffer_r.getvalue()[:80]!r}")
+        f"silent: {puffer_r.getvalue()[:80]!r}")
 
 
-# ── Hinter dem Proxy: alle Nutzer unter einer IP ──────────────────────────────
-# Im Container ist der Proxy ein anderer Container, also nicht 127.0.0.1. Die Vorgabe passt
-# dann nicht, X-Forwarded-For wird verworfen, und JEDER erscheint unter der Proxy-IP: Sperre
-# und Rate-Limit wirken ab da kollektiv. Nichts davon sieht nach einem Fehler aus.
+# ── Behind the proxy: all users under one IP ──────────────────────────────────
+# In the container the proxy is another container, i.e. not 127.0.0.1. The default does not fit
+# then, X-Forwarded-For is discarded, and EVERYONE appears under the proxy IP: lockout
+# and rate limit act collectively from then on. None of this looks like an error.
 #
-# Als Proxy-Adresse steht hier 192.0.2.x (RFC 5737, für Dokumentation) statt einer echten
-# Docker-Bridge-Adresse: Das Verhalten hängt allein daran, ob der Peer in `trusted_proxies`
-# steht, nicht am Adressbereich — und der Hygiene-Test fängt nackte RFC1918-Hostadressen, zu
-# Recht. In einem echten Compose steht dort das Netz des Proxys (s. deploy/forward-auth/).
+# The proxy address here is 192.0.2.x (RFC 5737, for documentation) instead of a real
+# Docker bridge address: the behaviour depends solely on whether the peer is in `trusted_proxies`,
+# not on the address range — and the hygiene test catches bare RFC1918 host addresses, rightly so.
+# In a real compose file the network of the proxy stands there (see deploy/forward-auth/).
 from tinysesam import security as _sec  # noqa: E402
 
 
@@ -672,8 +672,8 @@ class _Anfrage:
 
 
 def _mit_log(fn):
-    """(Rückgabe, Log-Text) — und der Merker wird vorher geleert, damit die Prüfungen sich
-    nicht gegenseitig die Meldung wegnehmen (jede Warnung kommt nur einmal je Peer)."""
+    """(Return value, log text) — and the marker is cleared beforehand so that the checks do
+    not take the message away from each other (each warning comes only once per peer)."""
     _sec._GEMELDETE_PEERS.clear()
     puffer = io.StringIO()
     haken = logging.StreamHandler(puffer)
@@ -686,30 +686,30 @@ def _mit_log(fn):
 
 echte_ip, log_a = _mit_log(lambda: _sec.client_ip(_Anfrage("192.0.2.5", "203.0.113.9"),
                                                   ["127.0.0.1/32"]))
-r.check("mit der Vorgabe hinter einem Container-Proxy bleibt es bei der Proxy-IP",
-        echte_ip == "192.0.2.5", f"ergab {echte_ip} — dann misst der Test das Falsche")
-r.check("...und das wird gemeldet statt still hingenommen",
+r.check("with the default behind a container proxy it stays at the proxy IP",
+        echte_ip == "192.0.2.5", f"yielded {echte_ip} — then the test measures the wrong thing")
+r.check("...and this is reported instead of silently accepted",
         "trusted_proxies" in log_a and "ignoriert" in log_a,
-        f"kein Hinweis: {log_a[:90]!r}")
+        f"no hint: {log_a[:90]!r}")
 
-# 0.0.0.0/0 klingt großzügig und entwertet XFF vollständig: Gilt jede Adresse als Proxy,
-# bleibt keine als Client übrig.
+# 0.0.0.0/0 sounds generous and devalues XFF completely: if every address counts as a proxy,
+# none is left as a client.
 alles, log_b = _mit_log(lambda: _sec.client_ip(_Anfrage("192.0.2.7", "203.0.113.9"),
                                                ["0.0.0.0/0"]))
-r.check("0.0.0.0/0 liefert NICHT die Client-IP", alles == "192.0.2.7",
-        f"ergab {alles} — dann wäre XFF fälschbar")
-r.check("...und auch das wird gemeldet", "entwertet" in log_b,
-        f"kein Hinweis: {log_b[:90]!r}")
+r.check("0.0.0.0/0 does NOT yield the client IP", alles == "192.0.2.7",
+        f"yielded {alles} — then XFF would be forgeable")
+r.check("...and this is reported too", "entwertet" in log_b,
+        f"no hint: {log_b[:90]!r}")
 
-# Richtig konfiguriert kommt die echte Adresse durch — und dann gibt es nichts zu melden.
+# Configured correctly the real address comes through — and then there is nothing to report.
 richtig, log_c = _mit_log(lambda: _sec.client_ip(_Anfrage("192.0.2.5", "203.0.113.9"),
                                                  ["192.0.2.0/24"]))
-r.check("mit dem Netz des Proxys kommt die echte Client-IP an", richtig == "203.0.113.9",
-        f"ergab {richtig}")
-r.check("und der Normalbetrieb schweigt", log_c.strip() == "",
-        f"warnt ohne Anlass: {log_c[:90]!r}")
+r.check("with the network of the proxy the real client IP arrives", richtig == "203.0.113.9",
+        f"yielded {richtig}")
+r.check("and normal operation stays silent", log_c.strip() == "",
+        f"warns without cause: {log_c[:90]!r}")
 
-# Die Meldung kommt einmal je Peer, nicht pro Request — sonst erschlägt sie das Log.
+# The message comes once per peer, not per request — otherwise it floods the log.
 _sec._GEMELDETE_PEERS.clear()
 puffer_w = io.StringIO()
 haken_w = logging.StreamHandler(puffer_w)
@@ -719,32 +719,32 @@ try:
         _sec.client_ip(_Anfrage("192.0.2.9", "203.0.113.9"), ["127.0.0.1/32"])
 finally:
     _sec.seclog.removeHandler(haken_w)
-# Gezählt werden MELDUNGEN, nicht Wörter: Die Meldung nennt `trusted_proxies` selbst zweimal
-# (einmal als Befund, einmal im Rat), ein Wort-Zähler stünde also immer auf 2.
+# MESSAGES are counted, not words: the message itself names `trusted_proxies` twice
+# (once as finding, once in the advice), so a word counter would always stand at 2.
 _zeilen = [z for z in puffer_w.getvalue().splitlines() if "X-Forwarded-For" in z]
-r.check("die Warnung kommt einmal je Peer, nicht bei jedem Request", len(_zeilen) == 1,
-        f"{len(_zeilen)} Meldungen für 5 Anfragen")
+r.check("the warning comes once per peer, not at every request", len(_zeilen) == 1,
+        f"{len(_zeilen)} messages for 5 requests")
 
-# SSO- und Passkey-Login schrieben die rohe Peer-IP in die Sitzung und ins Protokoll.
+# SSO and passkey login wrote the raw peer IP into the session and into the log.
 for modul in ("oidc.py", "webauthn_.py"):
     quelle = (Path(__file__).resolve().parent.parent / "tinysesam" / modul).read_text(encoding="utf-8")
     code = "\n".join(z for z in quelle.splitlines() if not z.lstrip().startswith("#"))
-    r.check(f"{modul} nimmt client_ip, nicht die rohe Peer-IP",
+    r.check(f"{modul} uses client_ip, not the raw peer IP",
             "request.client.host" not in code and "client_ip(request)" in code,
-            "greift wieder direkt auf request.client zu — hinter einem Proxy ist das der Proxy")
+            "accesses request.client directly again — behind a proxy that is the proxy")
 
-# Und das mitgelieferte Compose darf nicht vormachen, was hier gerade widerlegt wurde.
+# And the shipped compose file must not pretend what has just been refuted here.
 compose = (Path(__file__).resolve().parent.parent / "deploy" / "forward-auth"
            / "docker-compose.yml").read_text(encoding="utf-8")
-r.check("das Compose-Beispiel setzt trusted_proxies nicht auf 0.0.0.0/0",
+r.check("the compose example does not set trusted_proxies to 0.0.0.0/0",
         'TINYSESAM_TRUSTED_PROXIES: "0.0.0.0/0"' not in compose,
-        "das Beispiel macht jede Client-IP zur Proxy-IP")
+        "the example turns every client IP into the proxy IP")
 
 
-# ── Forward-Auth: der Anzeigename ging roh in einen HTTP-Header ───────────────
-# Der Name kommt bei OIDC/SAML vom fremden IdP. Zwei Dinge brachen daran: ein Zeilenumbruch
-# (Header-Injection — h11 fängt sie ab, aber mit Abbruch, also Selbstsperre) und ein Name
-# jenseits von Latin-1 (500, ganz ohne Angreifer).
+# ── Forward-auth: the display name went raw into an HTTP header ────────────────
+# With OIDC/SAML the name comes from the foreign IdP. Two things broke on it: a line break
+# (header injection — h11 catches it, but with an abort, i.e. self-lockout) and a name
+# beyond Latin-1 (500, entirely without an attacker).
 auth_h, _ = _app(forward_auth_enabled=True)
 uid_h = auth_h.create_user("intl", password="geheim12345")
 
@@ -756,11 +756,11 @@ def _kopfwert(roh):
 
 
 boes = _kopfwert("Bose\r\nX-Remote-Groups: admin")
-r.check("Zeilenumbrüche fliegen aus dem Header-Wert",
+r.check("line breaks are removed from the header value",
         "\r" not in boes and "\n" not in boes, f"{boes!r}")
 
-# Der Wert muss durch einen ECHTEN HTTP-Serialisierer gehen, nicht nur durch den TestClient:
-# der In-Process-Client reicht auch durch, was auf der Leitung nie ankäme.
+# The value must go through a REAL HTTP serializer, not only through the TestClient:
+# the in-process client also lets through what would never arrive on the wire.
 import h11  # noqa: E402
 
 
@@ -776,32 +776,32 @@ for roh, was in (("Bose\r\nX-Remote-Groups: admin", "Zeilenumbruch"),
                  ("Müller", "Umlaut"), ("Иван", "Kyrillisch"), ("测试 Wang", "Chinesisch")):
     wert = _kopfwert(roh)
     geht, fehler = _geht_raus(wert)
-    r.check(f"{was} im Anzeigenamen kommt durch den HTTP-Serialisierer", geht, fehler)
+    r.check(f"{was} in the display name gets through the HTTP serializer", geht, fehler)
 
-# Und verlustfrei: die App liest den Header als UTF-8 und hat den Namen zurück.
+# And losslessly: the app reads the header as UTF-8 and has the name back.
 for roh in ("Müller", "Иван", "测试 Wang", "alice"):
     zurueck = _kopfwert(roh).encode("latin-1").decode("utf-8")
-    r.check(f"{roh!r} kommt beim Empfänger unverändert an", zurueck == roh,
-            f"wurde {zurueck!r}")
+    r.check(f"{roh!r} arrives unchanged at the recipient", zurueck == roh,
+            f"became {zurueck!r}")
 
-# Die Kodierung ist EINHEITLICH — sonst wüsste keine App, was sie gerade hat.
-r.check("auch ein Latin-1-fähiger Name geht als UTF-8 über die Leitung",
+# The encoding is UNIFORM — otherwise no app would know what it currently has.
+r.check("even a Latin-1-capable name goes over the wire as UTF-8",
         _kopfwert("Müller").encode("latin-1") == "Müller".encode("utf-8"),
-        "mal Latin-1, mal UTF-8 — die App kann es nicht auseinanderhalten")
+        "sometimes Latin-1, sometimes UTF-8 — the app cannot tell them apart")
 
 
-# ── Ein Sicherheitsschalter, der nie etwas tat ───────────────────────────────
-# `totp_required` stand in der Config, in beiden READMEs („2FA erzwingen") und auf der Website —
-# und wurde an keiner Stelle im Code gelesen. Wer ihn setzte, glaubte den zweiten Faktor
-# erzwungen zu haben und hatte ihn nicht.
+# ── A security switch that never did anything ─────────────────────────────────
+# `totp_required` stood in the config, in both READMEs ("enforce 2FA") and on the website —
+# and was read nowhere in the code. Whoever set it believed the second factor
+# enforced and did not have it.
 gebaut, text = _baut(totp_required=True)
-r.check("totp_required=True wird abgewiesen statt stumm ignoriert", not gebaut,
-        "die Instanz baut — der Betreiber glaubt weiter an einen Schutz, den es nicht gibt")
-r.check("und die Meldung nennt den Weg, der wirklich greift", "login_chain" in text,
-        f"ohne Hinweis: {text[:90]!r}")
+r.check("totp_required=True is rejected instead of silently ignored", not gebaut,
+        "the instance builds — the operator keeps believing in a protection that does not exist")
+r.check("and the message names the way that really applies", "login_chain" in text,
+        f"without hint: {text[:90]!r}")
 
-# Der Schalter darf auch nirgends mehr beworben werden. `web/` gibt es nur im Repo, nicht im
-# Quellpaket — geprüft wird, was da ist, und die Prüfung sagt, was sie gesehen hat.
+# The switch must not be advertised anywhere any more either. `web/` exists only in the repo, not in the
+# source package — what is there gets checked, and the check says what it saw.
 wurzel = Path(__file__).resolve().parent.parent
 gesehen = []
 for datei in ("README.md", "i18n/README.de.md", "web/flows.py"):
@@ -809,56 +809,56 @@ for datei in ("README.md", "i18n/README.de.md", "web/flows.py"):
     if not pfad.exists():
         continue
     gesehen.append(datei)
-    r.check(f"{datei} bewirbt totp_required nicht mehr",
+    r.check(f"{datei} no longer advertises totp_required",
             "totp_required" not in pfad.read_text(encoding="utf-8"),
-            "der tote Schalter wird weiter als 2FA angepriesen")
-r.check("dabei waren mindestens beide READMEs",
-        {"README.md", "i18n/README.de.md"} <= set(gesehen), f"nur gesehen: {gesehen}")
+            "the dead switch is still touted as 2FA")
+r.check("both READMEs were among them",
+        {"README.md", "i18n/README.de.md"} <= set(gesehen), f"only saw: {gesehen}")
 
-# Die Faktor-Kette ist der beworbene Weg — sie muss also gehen.
+# The factor chain is the advertised way — so it must work.
 gebaut, text = _baut(login_chain=["password", "totp"], login_chain_strict=True)
-r.check("die empfohlene Faktor-Kette baut", gebaut, f"empfohlen und kaputt: {text[:110]}")
+r.check("the recommended factor chain builds", gebaut, f"recommended and broken: {text[:110]}")
 
 
-# ── set_template nahm Namen an, die es nicht gab ─────────────────────────────
-# Der Docstring nannte 'magic_sent' und 'resource_pin' — beide hat es nie gegeben — und liess
-# sieben echte Seiten weg. Ein Tippfehler blieb folgenlos-still: eingetragen, nie aufgerufen.
+# ── set_template accepted names that did not exist ────────────────────────────
+# The docstring named 'magic_sent' and 'resource_pin' — neither ever existed — and left out
+# seven real pages. A typo stayed silently without consequence: registered, never called.
 auth_tpl, _ = _app()
 try:
     auth_tpl.set_template("magic_sent", lambda *a, **k: "x")
     still = True
 except ValueError:
     still = False
-r.check("ein unbekannter Seitenname fliegt auf", not still,
-        "wird angenommen und nie aufgerufen — man sucht den Fehler woanders")
+r.check("an unknown page name is noticed", not still,
+        "accepted and never called — one looks for the error elsewhere")
 
 try:
     auth_tpl.set_template("login", lambda *a, **k: "x")
     echte_geht = True
 except ValueError:
     echte_geht = False
-r.check("ein echter Seitenname geht weiterhin", echte_geht, "die Liste ist zu eng")
+r.check("a real page name still works", echte_geht, "the list is too narrow")
 
-# Die Liste im Code muss zu den Seiten passen, die render_page wirklich bedient — sonst
-# veraltet sie wieder still.
+# The list in the code must match the pages that render_page really serves — otherwise it
+# silently goes stale again.
 quelle = "\n".join((wurzel / "tinysesam" / f).read_text(encoding="utf-8")
                     for f in ("router.py", "manager.py", "admin.py"))
 gerendert = set(re.findall(r'render_page\(\s*"([a-z_]+)"', quelle))
 fehlend = sorted(gerendert - set(auth_tpl.PAGES))
-r.check("jede gerenderte Seite steht in TinySesam.PAGES", not fehlend,
-        f"nicht ersetzbar, obwohl es sie gibt: {fehlend}")
+r.check("every rendered page is in TinySesam.PAGES", not fehlend,
+        f"not replaceable although it exists: {fehlend}")
 
 
-# ── Deutsche Fehlertexte bei lang="en" ───────────────────────────────────────
-# 32 HTTP-Antworten trugen festen deutschen Text — auch in einer Installation, die auf Englisch
-# steht. Die UI war zweisprachig, die Antworten an Maschinen und Proxys nicht.
+# ── German error texts with lang="en" ──────────────────────────────────────────
+# 32 HTTP responses carried fixed German text — even in an installation set to English. The UI
+# was bilingual, the responses to machines and proxies were not.
 auth_en, app_en = _app(lang="en")
 auth_en.create_user("someone", password="geheim12345")
 cen = TestClient(app_en)
 
-# Echte Antworten messen, nicht die Übersetzungstabelle abfragen. Dafür braucht es eine
-# angemeldete Sitzung: Ohne sie antwortet jeder Endpunkt mit 401 „Unauthorized", und der Test
-# sähe grün aus, ohne je eine übersetzte Meldung gesehen zu haben.
+# Measure real responses, do not query the translation table. That needs a signed-in
+# session: without it every endpoint answers 401 "Unauthorized", and the test would look
+# green without ever having seen a translated message.
 def _antworten(auth_obj, app_obj, benutzer):
     klient = TestClient(app_obj)
     uid = auth_obj.store.get_user_by_name(benutzer)["id"]
@@ -875,54 +875,54 @@ umlaute = "äöüßÄÖÜ"
 deutsch = [f"{was}: {a.text[:70]}" for was, a in antworten
            if any(z in (a.text or "") for z in umlaute)
            or "nötig" in (a.text or "") or "ungültig" in (a.text or "")]
-r.check("bei lang='en' kommt kein deutscher Text aus den Endpunkten", not deutsch,
+r.check("with lang='en' no German text comes from the endpoints", not deutsch,
         " | ".join(deutsch))
-r.check("und die Antworten tragen überhaupt eine eigene Meldung",
+r.check("and the responses carry a message of their own at all",
         all(a.status_code >= 400 for _, a in antworten)
         and any("Unauthorized" not in (a.text or "") for _, a in antworten),
-        f"Status {[a.status_code for _, a in antworten]}, Texte "
-        f"{[(a.text or '')[:40] for _, a in antworten]} — misst sonst nichts")
+        f"Status {[a.status_code for _, a in antworten]}, texts "
+        f"{[(a.text or '')[:40] for _, a in antworten]} — otherwise measures nothing")
 
-# Und auf Deutsch muss weiterhin Deutsch kommen, sonst wäre die Übersetzung nur verschoben.
+# And with German, German must still come out, otherwise the translation would only be moved.
 auth_de, app_de = _app(lang="de")
 auth_de.create_user("jemand", password="geheim12345")
 deutsche = " ".join((a.text or "") for _, a in _antworten(auth_de, app_de, "jemand"))
-r.check("bei lang='de' kommt weiterhin Deutsch",
+r.check("with lang='de' German still comes out",
         any(z in deutsche for z in umlaute) or "nötig" in deutsche,
         f"{deutsche[:100]!r}")
 
-# Hygiene: kein roher Text mehr in einer HTTPException — sonst wächst die Lücke von selbst nach.
+# Hygiene: no raw text in an HTTPException any more — otherwise the gap grows back by itself.
 roh = []
 for modul in ("manager.py", "router.py", "admin.py", "oidc.py", "webauthn_.py", "saml_.py"):
     quelle = (Path(__file__).resolve().parent.parent / "tinysesam" / modul).read_text(encoding="utf-8")
     for nr, zeile in enumerate(quelle.splitlines(), 1):
         if re.search(r'HTTPException\(\s*\d+\s*,\s*[fr]?"', zeile):
             roh.append(f"{modul}:{nr}")
-r.check("keine HTTPException mit festem Text mehr", not roh, ", ".join(roh[:5]))
+r.check("no HTTPException with fixed text any more", not roh, ", ".join(roh[:5]))
 
 
-# ── Recovery-Codes trugen 48 Bit ─────────────────────────────────────────────
-# Ein Recovery-Code ERSETZT den zweiten Faktor und gilt, bis er benutzt wird. Ein TOTP-Code hat
-# nur eine Million Möglichkeiten, ist aber nach 30 Sekunden wertlos — der Vergleich trägt nicht.
+# ── Recovery codes carried 48 bits ────────────────────────────────────────────
+# A recovery code REPLACES the second factor and is valid until used. A TOTP code has only
+# a million possibilities, but is worthless after 30 seconds — the comparison does not hold.
 auth_rc, _ = _app()
 uid_rc = auth_rc.create_user("rc", password="geheim12345")
 codes = auth_rc.generate_recovery_codes(uid_rc)
 hexzeichen = sum(1 for z in codes[0] if z in "0123456789abcdef")
-r.check("ein Recovery-Code trägt mindestens 64 Bit", hexzeichen * 4 >= 64,
-        f"{codes[0]} = {hexzeichen * 4} Bit")
-r.check("die Codes sind untereinander verschieden", len(set(codes)) == len(codes),
-        f"{len(codes)} Codes, {len(set(codes))} verschiedene")
-r.check("und ein frisch erzeugter Code löst den zweiten Faktor aus",
+r.check("a recovery code carries at least 64 bits", hexzeichen * 4 >= 64,
+        f"{codes[0]} = {hexzeichen * 4} bits")
+r.check("the codes differ from one another", len(set(codes)) == len(codes),
+        f"{len(codes)} codes, {len(set(codes))} distinct")
+r.check("and a freshly generated code satisfies the second factor",
         auth_rc._verify_recovery_code(uid_rc, codes[0]),
-        "der Code wird nicht angenommen — dann misst der Test nur Zeichen")
-r.check("ein Code gilt genau einmal", not auth_rc._verify_recovery_code(uid_rc, codes[0]),
-        "derselbe Code geht ein zweites Mal")
+        "the code is not accepted — then the test only measures characters")
+r.check("a code is valid exactly once", not auth_rc._verify_recovery_code(uid_rc, codes[0]),
+        "the same code works a second time")
 
 
-# ── Es gab keine Fehlertypen, auf die man reagieren kann ─────────────────────
-# Geworfen wurde `ValueError` (Konfiguration) und `RuntimeError` (fehlendes Extra). Wer beim
-# Starten unterscheiden wollte, ob die Konfiguration falsch ist oder ein Paket fehlt, musste den
-# Meldungstext lesen — und der ist seit dieser Version übersetzt.
+# ── There were no error types one can react to ────────────────────────────────
+# What was raised was `ValueError` (configuration) and `RuntimeError` (missing extra). Whoever
+# wanted to distinguish at startup whether the configuration is wrong or a package is missing had to
+# read the message text — and that is translated since this version.
 from tinysesam import ConfigError, MissingExtra, TinySesamError  # noqa: E402
 
 try:
@@ -930,20 +930,20 @@ try:
     art = None
 except Exception as e:
     art = e
-r.check("ein Konfigurationsfehler ist ein ConfigError", isinstance(art, ConfigError),
+r.check("a configuration error is a ConfigError", isinstance(art, ConfigError),
         f"{type(art).__name__}")
-r.check("...und weiterhin ein ValueError (bestehender Code fängt ihn)",
-        isinstance(art, ValueError), "bestehendes `except ValueError` bricht")
-r.check("...und ein TinySesamError", isinstance(art, TinySesamError), f"{type(art).__mro__}")
+r.check("...and still a ValueError (existing code catches it)",
+        isinstance(art, ValueError), "existing `except ValueError` breaks")
+r.check("...and a TinySesamError", isinstance(art, TinySesamError), f"{type(art).__mro__}")
 
-# Der Extra-Wächter, zweistufig. Werfen darf nur, wo es nie falsch sein kann: Ein Client ist
-# ersetzbar (`auth.ldap = eigener_client`, so arbeiten vier eigene Suiten), also bricht der
-# Aufbau NICHT ab — er warnt. Geworfen wird am lazy Import, also beim ersten echten Gebrauch.
+# The extra guard, two-stage. It may only raise where it can never be wrong: a client is
+# replaceable (`auth.ldap = own_client`, four own suites work that way), so the setup does
+# NOT abort — it warns. It raises at the lazy import, i.e. on the first real use.
 import importlib  # noqa: E402
 
 
 class _Blockiert:
-    """Ein Import-Finder, der genau ein Modul „nicht findet"."""
+    """An import finder that deliberately "does not find" exactly one module."""
 
     def __init__(self, name):
         self.name = name
@@ -955,7 +955,7 @@ class _Blockiert:
 
 
 def _ohne_modul(name, fn):
-    """`fn()` ausführen, als wäre `name` nicht installiert."""
+    """Run `fn()` as if `name` were not installed."""
     blocker = _Blockiert(name)
     sys.meta_path.insert(0, blocker)
     weg = {n: m for n, m in list(sys.modules.items()) if n == name or n.startswith(name + ".")}
@@ -973,12 +973,12 @@ puffer_x = io.StringIO()
 haken_x = logging.StreamHandler(puffer_x)
 _sec.seclog.addHandler(haken_x)
 try:
-    # `password_enabled` bleibt an: LDAP prüft Passwörter und erfüllt den Faktor `password` —
-    # ohne den Schalter gäbe es keine einzige Anmelde-Methode, und die Konfigurationsprüfung
-    # bricht (zu Recht) vorher ab. Hier geht es um das fehlende Extra, nicht um das.
-    # `ldap_allow_plaintext=True`: Seit F-12 ist `ldap://` ohne TLS ein Aufbaufehler. Hier soll
-    # aber das FEHLENDE EXTRA gemessen werden, nicht der Transport — ohne den Schalter bräche
-    # der Aufbau aus dem anderen Grund ab und die Prüfung darunter wäre grün, ohne zu messen.
+    # `password_enabled` stays on: LDAP checks passwords and satisfies the `password` factor —
+    # without the switch there would be no sign-in method at all, and the configuration check
+    # aborts (rightly) beforehand. This is about the missing extra, not about that.
+    # `ldap_allow_plaintext=True`: since F-12 `ldap://` without TLS is a setup error. Here, however,
+    # the MISSING EXTRA is to be measured, not the transport — without the switch the
+    # setup would abort for the other reason and the check below would be green without measuring.
     auth_x, _ = _ohne_modul("ldap3", lambda: _app(
         ldap_enabled=True, ldap_url="ldap://ldap.example.com", ldap_allow_plaintext=True))
     gebaut_x = True
@@ -987,12 +987,12 @@ except Exception as e:
 finally:
     _sec.seclog.removeHandler(haken_x)
 
-r.check("ein fehlendes Extra bricht den Aufbau NICHT ab", gebaut_x is True,
-        f"{type(gebaut_x).__name__} — dann kann niemand mehr seinen eigenen Client setzen")
-r.check("...wird aber beim Start gemeldet", "tinysesam[ldap]" in puffer_x.getvalue(),
-        f"schweigt: {puffer_x.getvalue()[:90]!r}")
+r.check("a missing extra does NOT abort the setup", gebaut_x is True,
+        f"{type(gebaut_x).__name__} — then nobody can set their own client any more")
+r.check("...but it is reported at startup", "tinysesam[ldap]" in puffer_x.getvalue(),
+        f"silent: {puffer_x.getvalue()[:90]!r}")
 
-# Und beim ersten echten Gebrauch ein lesbarer Fehler statt eines nackten ModuleNotFoundError.
+# And on the first real use a readable error instead of a bare ModuleNotFoundError.
 from tinysesam.ldap_ import LDAPClient  # noqa: E402
 
 klient = LDAPClient(auth_x.cfg if auth_x else None)
@@ -1001,38 +1001,38 @@ try:
     gebrauch = None
 except Exception as e:
     gebrauch = e
-r.check("beim Gebrauch fliegt ein MissingExtra", isinstance(gebrauch, MissingExtra),
+r.check("on use a MissingExtra is raised", isinstance(gebrauch, MissingExtra),
         f"{type(gebrauch).__name__}: {str(gebrauch)[:70]}")
-r.check("...mit maschinenlesbarem Extra-Namen", getattr(gebrauch, "extra", None) == "ldap",
+r.check("...with a machine-readable extra name", getattr(gebrauch, "extra", None) == "ldap",
         f"extra={getattr(gebrauch, 'extra', None)!r}")
-r.check("...und weiterhin ein RuntimeError", isinstance(gebrauch, RuntimeError),
-        "bestehendes `except RuntimeError` bricht")
+r.check("...and still a RuntimeError", isinstance(gebrauch, RuntimeError),
+        "existing `except RuntimeError` breaks")
 
-# Gegenprobe: Wer das Verfahren unvollständig lässt, bringt den Client selbst mit.
+# Counter-check: whoever leaves the method incomplete brings the client along themselves.
 gebaut, text = _baut(ldap_enabled=True)
-r.check("ein halb konfiguriertes Verfahren bleibt baubar (eigener Client)", gebaut,
-        f"abgewiesen: {text[:110]}")
+r.check("a half-configured method stays buildable (own client)", gebaut,
+        f"rejected: {text[:110]}")
 
-# Nach der Gegenprobe muss der Normalfall wieder bauen — sonst hätte der Test die Tabelle
-# kaputt zurückgegeben und alles Folgende wäre Unsinn.
+# After the counter-check the normal case must build again — otherwise the test would have returned the
+# table broken and everything that follows would be nonsense.
 gebaut, _ = _baut()
-r.check("die Tabelle ist nach der Gegenprobe wieder heil", gebaut,
-        "der Test hat den Zustand nicht sauber zurückgesetzt")
+r.check("the table is intact again after the counter-check", gebaut,
+        "the test did not reset the state cleanly")
 
 
-# ── Die Datenbank trug keinen Schema-Stempel ─────────────────────────────────
-# Welchen Stand eine Datei hat, war nur an ihren Spaltennamen zu erraten. Eine Datei aus einer
-# NEUEREN Fassung öffnete eine ältere Version stillschweigend — mit Tabellen, die sie nicht
-# kennt, und Schreibvorgängen, die Lücken hinterlassen.
+# ── The database carried no schema stamp ──────────────────────────────────────
+# Which state a file had could only be guessed from its column names. A file from a
+# NEWER version opened an older version silently — with tables it does not
+# know, and writes that leave gaps.
 stempel_pfad = str(Path(tempfile.mkdtemp()) / "stempel.db")
 st = Store(stempel_pfad)
 gestempelt = int(st.db.execute("PRAGMA user_version").fetchone()[0] or 0)
-r.check("eine frische Datenbank trägt die Schema-Version",
+r.check("a fresh database carries the schema version",
         gestempelt == Store.SCHEMA_VERSION and gestempelt > 0,
-        f"user_version={gestempelt}, erwartet {Store.SCHEMA_VERSION}")
+        f"user_version={gestempelt}, expected {Store.SCHEMA_VERSION}")
 st.db.close()
 
-# Eine Datei aus der Zukunft muss sich melden.
+# A file from the future must speak up.
 roh_st = _sq.connect(stempel_pfad)
 roh_st.execute(f"PRAGMA user_version = {Store.SCHEMA_VERSION + 50}")
 roh_st.commit()
@@ -1045,41 +1045,41 @@ try:
     zukunft = Store(stempel_pfad)
 finally:
     log_st.removeHandler(haken_st)
-r.check("eine Datei aus einer neueren Version wird gemeldet",
+r.check("a file from a newer version is reported",
         "neueren Version" in puffer_st.getvalue(),
-        f"schweigt: {puffer_st.getvalue()[:80]!r}")
-r.check("...und der höhere Stempel wird NICHT zurückgesetzt",
+        f"silent: {puffer_st.getvalue()[:80]!r}")
+r.check("...and the higher stamp is NOT reset",
         int(zukunft.db.execute("PRAGMA user_version").fetchone()[0]) == Store.SCHEMA_VERSION + 50,
-        "die Version wurde heruntergestempelt — beim nächsten Öffnen fehlt die Warnung")
+        "the version was stamped down — at the next open the warning is missing")
 
 
-# ── Widersprüche fielen erst beim Login auf ──────────────────────────────────
-# Eine App ohne eine einzige Anmelde-Methode startete klaglos; eine `login_chain`, die ein
-# abgeschaltetes Verfahren nennt, ist unerfüllbar und schickt den Nutzer im Kreis.
+# ── Contradictions were only noticed at login ─────────────────────────────────
+# An app without a single sign-in method started without complaint; a `login_chain` naming a
+# disabled method is unsatisfiable and sends the user in circles.
 gebaut, text = _baut(password_enabled=False)
-r.check("eine Instanz ohne jede Anmelde-Methode wird abgewiesen", not gebaut,
-        "baut — niemand kann sich anmelden, und nichts sagt es")
-r.check("...mit dem Hinweis, welche Schalter es gäbe", "password_enabled=True" in text,
+r.check("an instance without any sign-in method is rejected", not gebaut,
+        "builds — nobody can sign in, and nothing says so")
+r.check("...with a hint which switches there would be", "password_enabled=True" in text,
         f"{text[:90]!r}")
 
 gebaut, text = _baut(login_chain=["password", "pin"], pin_enabled=False)
-r.check("eine unerfüllbare Faktor-Kette wird abgewiesen", not gebaut,
-        "baut — der Nutzer landet in einer Schleife")
-r.check("...und nennt den blockierenden Schritt", "pin_enabled=False" in text, f"{text[:90]!r}")
+r.check("an unsatisfiable factor chain is rejected", not gebaut,
+        "builds — the user ends up in a loop")
+r.check("...and names the blocking step", "pin_enabled=False" in text, f"{text[:90]!r}")
 
 gebaut, text = _baut(login_chain=["password", "gibtsnicht"])
-r.check("ein unbekannter Schritt in der Kette wird abgewiesen", not gebaut,
-        "ein Tippfehler in der Kette bliebe folgenlos-still")
+r.check("an unknown step in the chain is rejected", not gebaut,
+        "a typo in the chain would stay silently without consequence")
 
-# Alle Befunde auf einmal — wer drei Dinge falsch hat, soll sie einmal lesen.
+# All findings at once — whoever has three things wrong should read them once.
 gebaut, text = _baut(password_enabled=False, login_chain=["password", "pin"], pin_enabled=False)
-r.check("mehrere Widersprüche werden zusammen gemeldet", text.count("\n  - ") >= 2,
-        f"nur einer: {text[:120]!r}")
+r.check("several contradictions are reported together", text.count("\n  - ") >= 2,
+        f"only one: {text[:120]!r}")
 
-# Was später noch kommen kann, ist eine Warnung — kein Abbruch. `set_mailer` nach dem
-# Konstruktor ist eine völlig übliche Reihenfolge. `base_url` ist der Gegenfall und steht
-# deshalb hier: Sie muss beim Aufbau stehen (Fehler, nicht Warnung — s. R4-01-Nacharbeit),
-# sonst liefe „Passwort vergessen" still ins Leere.
+# What can still come later is a warning — not an abort. `set_mailer` after the
+# constructor is a perfectly common order. `base_url` is the opposite case and is therefore
+# here: it must be present at setup (error, not warning — see R4-01 rework),
+# otherwise "forgot password" would silently run into nothing.
 puffer_k = io.StringIO()
 haken_k = logging.StreamHandler(puffer_k)
 _sec.seclog.addHandler(haken_k)
@@ -1087,12 +1087,12 @@ try:
     gebaut, text = _baut(magiclink_enabled=True, base_url="https://auth.example.com")
 finally:
     _sec.seclog.removeHandler(haken_k)
-r.check("ein fehlender Mailer verhindert den Start NICHT", gebaut,
-        f"bricht ab: {text[:90]} — set_mailer() kommt oft erst danach")
-r.check("...wird aber gemeldet", "smtp_host" in puffer_k.getvalue(),
-        f"schweigt: {puffer_k.getvalue()[:80]!r}")
+r.check("a missing mailer does NOT prevent startup", gebaut,
+        f"aborts: {text[:90]} — set_mailer() often comes only afterwards")
+r.check("...but it is reported", "smtp_host" in puffer_k.getvalue(),
+        f"silent: {puffer_k.getvalue()[:80]!r}")
 
-# Und der Normalfall darf weder brechen noch lärmen.
+# And the normal case must neither break nor make noise.
 puffer_n = io.StringIO()
 haken_n = logging.StreamHandler(puffer_n)
 _sec.seclog.addHandler(haken_n)
@@ -1100,22 +1100,22 @@ try:
     gebaut, text = _baut()
 finally:
     _sec.seclog.removeHandler(haken_n)
-r.check("die Vorgabe-Konfiguration baut ohne Befund", gebaut, text[:110])
-r.check("...und ohne Konfigurations-Warnung", "Konfiguration:" not in puffer_n.getvalue(),
-        f"warnt ohne Anlass: {puffer_n.getvalue()[:90]!r}")
+r.check("the default configuration builds without finding", gebaut, text[:110])
+r.check("...and without configuration warning", "Konfiguration:" not in puffer_n.getvalue(),
+        f"warns without cause: {puffer_n.getvalue()[:90]!r}")
 
 
-# ── complete_mfa versprach mehr, als die Methode tut ─────────────────────────
-# Der Docstring nannte den Namen selbst „rückwärtskompatibel" — und er blieb trotzdem der
-# einzige. MFA ist die ganze Kette; die Methode hängt genau einen Faktor an.
+# ── complete_mfa promised more than the method does ───────────────────────────
+# The docstring itself called the name "backwards compatible" — and it nevertheless remained the
+# only one. MFA is the whole chain; the method appends exactly one factor.
 auth_cm, _ = _app()
-r.check("es gibt den klaren Namen complete_totp", hasattr(auth_cm, "complete_totp"),
-        "nur der alte Name — dann ist nichts gewonnen")
-r.check("der alte Name complete_mfa bleibt bis 1.0 erhalten", hasattr(auth_cm, "complete_mfa"),
-        "entfernt — das bricht bestehende Aufrufe für einen Namen")
+r.check("the clear name complete_totp exists", hasattr(auth_cm, "complete_totp"),
+        "only the old name — then nothing is gained")
+r.check("the old name complete_mfa is kept until 1.0", hasattr(auth_cm, "complete_mfa"),
+        "removed — that breaks existing calls for the sake of a name")
 
-# Und der Alias muss wirklich dasselbe tun, nicht nur existieren. Seit 0.22.0 ist er Stufe C:
-# Er warnt beim Aufruf (Wortlaut und Ziel prüft der Wächter tests/test_api_surface.py).
+# And the alias must really do the same, not only exist. Since 0.22.0 it is level C:
+# It warns when called (wording and target are checked by the guard tests/test_api_surface.py).
 import warnings as _warnungen  # noqa: E402
 
 uid_cm = auth_cm.create_user("cm", password="geheim12345")
@@ -1123,7 +1123,7 @@ tok_alt = auth_cm.store.create_session(uid_cm, 3600, False, "password")
 with _warnungen.catch_warnings(record=True) as _gewarnt:
     _warnungen.simplefilter("always")
     auth_cm.complete_mfa(tok_alt)
-r.check("complete_mfa warnt als veralteter Alias von complete_totp",
+r.check("complete_mfa warns as a deprecated alias of complete_totp",
         [w.category for w in _gewarnt] == [DeprecationWarning]
         and "complete_totp" in str(_gewarnt[0].message),
         [str(w.message) for w in _gewarnt])
@@ -1133,25 +1133,25 @@ import json as _json  # noqa: E402
 
 faktoren = [sorted(_json.loads(auth_cm.store.get_session(t)["factors_done"] or "[]"))
             for t in (tok_alt, tok_neu)]
-r.check("beide Namen hängen denselben Faktor an", faktoren[0] == faktoren[1] == ["totp"],
-        f"alt={faktoren[0]} neu={faktoren[1]} — ein Alias, der etwas anderes tut, ist schlimmer "
-        "als zwei Methoden")
+r.check("both names append the same factor", faktoren[0] == faktoren[1] == ["totp"],
+        f"old={faktoren[0]} new={faktoren[1]} — an alias that does something else is worse "
+        "than two methods")
 
 
-# ── Der Host-Header vergiftete Reset-, Anmelde- und Bestätigungslink (R4-01/R8-4) ──────────
-# Angriff: Der Angreifer stößt „Passwort vergessen" für ein FREMDES Postfach an und setzt dabei
-# den rohen `Host`-Header. TinySesam baute die Mail-Adresse aus `str(request.base_url)`, also aus
-# genau diesem Header — das Opfer bekam eine echte Mail der echten App mit einem gültigen Token
-# in einem Link auf den Server des Angreifers (CWE-644). `trusted_redirect_hosts` schützte nur
-# `?next=`, nicht diesen Weg; `X-Forwarded-Host` braucht es dafür nicht.
+# ── The Host header poisoned the reset, sign-in and confirmation link (R4-01/R8-4) ──────────
+# Attack: The attacker triggers "forgot password" for a FOREIGN mailbox and sets the raw `Host`
+# header while doing so. TinySesam built the mail address from `str(request.base_url)`, i.e. from
+# exactly this header — the victim received a real mail from the real app with a valid token
+# in a link to the attacker's server (CWE-644). `trusted_redirect_hosts` only protected
+# `?next=`, not this path; `X-Forwarded-Host` is not needed for it.
 BOESE = "angreifer.example"
 ECHT = "https://auth.example.com"
 
 
 def _mailapp(**cfg):
     post: list = []
-    # `base_url` steht jetzt in der Grundausstattung: Seit der Nacharbeit ist sie Pflicht, sobald
-    # ein Mail-Weg an ist — eine Instanz ohne sie gibt es nicht mehr (Prüfung dazu weiter unten).
+    # `base_url` is now part of the basic equipment: since the rework it is mandatory as soon as
+    # a mail path is on — an instance without it no longer exists (check for that further down).
     grund = dict(csrf_enabled=False, magiclink_enabled=True, password_reset_enabled=True,
                  signup_verify_email=True, allow_signup=True, signup_require_email=True,
                  passkey_enabled=False, trusted_redirect_hosts=["nur-das-hier.example"],
@@ -1167,15 +1167,15 @@ def _links(post) -> list[str]:
     return re.findall(r"https?://[^\s]+", "\n".join(post))
 
 
-# Vorbedingung: Ohne diese Prüfung wäre „keine Mail auf dem Angreifer-Host" auch dann grün,
-# wenn der Mailer gar nicht verdrahtet ist — der Angriff würde dann nichts belegen.
+# Precondition: without this check "no mail to the attacker host" would be green even if
+# the mailer is not wired at all — the attack would then prove nothing.
 _a, _c, _post = _mailapp()
 _c.post("/auth/forgot", data={"email": "opfer@example.com"})
-r.check("Vorbedingung: der Weg funktioniert überhaupt (Mail geht raus)",
+r.check("precondition: the path works at all (mail goes out)",
         len(_post) == 1 and _links(_post)[0].startswith(ECHT + "/auth/reset"),
-        f"{_post!r} — ohne diese Zusage prüft der Angriff unten nichts")
+        f"{_post!r} — without this assurance the attack below checks nothing")
 
-# Der Angriff selbst, an allen drei Stellen, die eine Mail mit Token verschicken.
+# The attack itself, at all three places that send a mail with a token.
 for pfad, daten, name in (
         ("/auth/forgot", {"email": "opfer@example.com"}, "Reset-Link"),
         ("/auth/magic/request", {"email": "opfer@example.com", "next": "/"}, "Magic-Link"),
@@ -1183,32 +1183,32 @@ for pfad, daten, name in (
                             "email": "neu@example.com"}, "Bestätigungslink")):
     auth_x, c_x, post_x = _mailapp()
     antwort_x = c_x.post(pfad, data=daten, headers={"host": BOESE})
-    r.check(f"{name}: gefälschter Host-Header erzeugt keine Mail auf {BOESE}",
+    r.check(f"{name}: forged Host header produces no mail to {BOESE}",
             not any(BOESE in u for u in _links(post_x)),
-            f"{_links(post_x)!r} — das Opfer bekäme ein gültiges Token auf {BOESE}")
-    r.check(f"...und der Weg bleibt heil (Mail auf {ECHT}, HTTP {antwort_x.status_code})",
+            f"{_links(post_x)!r} — the victim would get a valid token at {BOESE}")
+    r.check(f"...and the path stays intact (mail to {ECHT}, HTTP {antwort_x.status_code})",
             len(post_x) == 1 and _links(post_x)[0].startswith(ECHT),
-            f"{_links(post_x)!r} — base_url gewinnt, der Header zählt nicht mit")
+            f"{_links(post_x)!r} — base_url wins, the header does not count")
 
-# ── Nacharbeit N1: der Host-Header darf nicht einmal unter MEHREREN eigenen Hosts wählen ──
-# Befund A-umgehung-4: `base_url` war nur eine Warnung. Blieb sie leer und standen — beim
-# Forward-Auth/SSO der Normalfall — mehrere Namen in `trusted_redirect_hosts`, dann galt der
-# Laufzeit-Prüfung JEDER davon: Der Angreifer stieß „Passwort vergessen" für ein fremdes Postfach
-# an und setzte `Host:` auf einen anderen mitvertrauten Host. Ist der schwächer (fremdes Team,
-# offener Redirect, mitgeschnittenes Access-Log), leckt der Reset-Token dort. Jetzt ist `base_url`
-# Pflicht und gewinnt immer — der Header hat keine Stimme mehr.
+# ── Rework N1: the Host header must not choose even among SEVERAL own hosts ──
+# Finding A-umgehung-4: `base_url` was only a warning. If it stayed empty and — with
+# forward-auth/SSO the normal case — several names stood in `trusted_redirect_hosts`, the
+# runtime check accepted EACH of them: the attacker triggered "forgot password" for a foreign mailbox
+# and set `Host:` to another co-trusted host. If that one is weaker (foreign team,
+# open redirect, captured access log), the reset token leaks there. Now `base_url`
+# is mandatory and always wins — the header no longer has a say.
 auth_m, c_m, post_m = _mailapp(trusted_redirect_hosts=["app-a.example.com", "app-b.example.com"])
 c_m.post("/auth/forgot", data={"email": "opfer@example.com"},
          headers={"host": "app-b.example.com"})
-r.check("zweiter mitvertrauter Host im Header gewinnt nicht gegen base_url",
+r.check("a second co-trusted host in the header does not win against base_url",
         len(post_m) == 1 and _links(post_m)[0].startswith(ECHT + "/auth/reset"),
-        f"{_links(post_m)!r} — der Reset-Token ginge auf den vom Angreifer gewählten Host")
+        f"{_links(post_m)!r} — the reset token would go to the host chosen by the attacker")
 
-# Befund A-regression-1/A-vollstaendigkeit-3: Ohne Basis rendeten `/auth/forgot` und
-# `/auth/magic/request` weiter die ERFOLGSSEITE — HTTP 200, „Mail ist unterwegs", keine Mail.
-# Sichtbar war der Totalausfall nur in einer Logzeile. Zwei Schlösser dagegen:
+# Finding A-regression-1/A-vollstaendigkeit-3: without a base `/auth/forgot` and
+# `/auth/magic/request` kept rendering the SUCCESS page — HTTP 200, "mail is on its way", no mail.
+# The total failure was visible only in a log line. Two locks against it:
 #
-# (1) Die Konfigurationsprüfung lässt diesen Aufbau nicht mehr entstehen (Fehler, nicht Warnung).
+# (1) The configuration check no longer lets this setup come into being (error, not warning).
 from tinysesam import konfigpruefung as _kp  # noqa: E402
 
 for _feld, _zusatz in (("magiclink_enabled", {}),
@@ -1219,75 +1219,75 @@ for _feld, _zusatz in (("magiclink_enabled", {}),
                        ("saml_enabled", {"saml_idp_sso_url": "https://idp.example.com/sso",
                                          "saml_idp_x509cert": "PEM"})):
     _f, _w = _kp.pruefe(TinySesamConfig(db_path=":memory:", **{_feld: True}, **_zusatz))
-    r.check(f"ohne base_url ist {_feld} ein FEHLER, keine Warnung",
+    r.check(f"without base_url {_feld} is an ERROR, not a warning",
             any("base_url ist leer" in x for x in _f),
-            f"nur Warnungen: {[x[:60] for x in _w]!r} — eine Warnung startet durch")
+            f"only warnings: {[x[:60] for x in _w]!r} — a warning starts up anyway")
 _f_hosts, _w_hosts = _kp.pruefe(TinySesamConfig(
     db_path=":memory:", magiclink_enabled=True,
     trusted_redirect_hosts=["app-a.example.com", "app-b.example.com"]))
-r.check("trusted_redirect_hosts ersetzt base_url NICHT",
+r.check("trusted_redirect_hosts does NOT replace base_url",
         any("base_url ist leer" in x for x in _f_hosts),
-        "mit mehreren mitvertrauten Hosts wählt sonst der Header aus (A-umgehung-4)")
+        "with several co-trusted hosts the header chooses otherwise (A-umgehung-4)")
 _gebaut_ohne, _text_ohne = _baut(magiclink_enabled=True, password_reset_enabled=True)
-r.check("...und der Konstruktor bricht damit ab (ConfigError statt stillem Betrieb)",
-        not _gebaut_ohne and "base_url" in _text_ohne, f"gebaut={_gebaut_ohne}")
-r.check("...die Meldung sagt, was einzutragen ist",
-        "base_url=" in _text_ohne, f"nur Diagnose, keine Abhilfe: {_text_ohne[:160]!r}")
-# Gegenprobe: Der Wächter darf nicht jeden Aufbau treffen. Nur Passwort/PIN braucht keine Basis.
+r.check("...and the constructor aborts with it (ConfigError instead of silent operation)",
+        not _gebaut_ohne and "base_url" in _text_ohne, f"built={_gebaut_ohne}")
+r.check("...the message says what to enter",
+        "base_url=" in _text_ohne, f"only diagnosis, no remedy: {_text_ohne[:160]!r}")
+# Counter-check: the guard must not hit every setup. Only password/PIN needs no base.
 _f_pw, _w_pw = _kp.pruefe(TinySesamConfig(db_path=":memory:"))
-r.check("ohne linkbauende Funktion verlangt niemand ein base_url",
+r.check("without a link-building function nobody demands a base_url",
         not any("base_url" in x for x in _f_pw + _w_pw), f"{(_f_pw, _w_pw)!r}")
-# Forward-Auth allein bleibt eine Warnung: Die Umleitung bleibt ohne Basis relativ und trifft
-# denselben Browser, es geht nichts an Dritte hinaus.
+# Forward-auth alone stays a warning: without a base the redirect stays relative and hits
+# the same browser, nothing goes out to third parties.
 _f_fa, _w_fa = _kp.pruefe(TinySesamConfig(db_path=":memory:", forward_auth_enabled=True))
-r.check("forward_auth allein bleibt eine Warnung (die Umleitung bleibt relativ)",
+r.check("forward_auth alone stays a warning (the redirect stays relative)",
         not any("base_url" in x for x in _f_fa) and any("base_url" in x for x in _w_fa),
-        f"Fehler={[x[:50] for x in _f_fa]!r} Warnungen={[x[:50] for x in _w_fa]!r}")
+        f"errors={[x[:50] for x in _f_fa]!r} warnings={[x[:50] for x in _w_fa]!r}")
 
-# (2) Zweites Schloss für die Config, die NACH dem Konstruktor geändert wurde (sie wird zur
-# Request-Zeit gelesen): kein stiller Erfolg, sondern ein Abbruch mit klarer Meldung — seit der
-# Nacharbeit zu „base_url nach dem Konstruktor geleert" als HTTP 503 aus der Route
-# (`router._mail_basis`), nicht mehr als ungefangener ConfigError.
+# (2) Second lock for the config that was changed AFTER the constructor (it is read at
+# request time): no silent success, but an abort with a clear message — since the
+# rework for "base_url cleared after the constructor" as HTTP 503 from the route
+# (`router._mail_basis`), no longer as an uncaught ConfigError.
 from tinysesam import ConfigError as _CfgErr  # noqa: E402
 
 for _pfad, _daten, _name in (("/auth/forgot", {"email": "opfer@example.com"}, "Passwort vergessen"),
                              ("/auth/magic/request", {"email": "opfer@example.com", "next": "/"},
                               "Magic-Link")):
     auth_l, c_l, post_l = _mailapp()
-    auth_l.cfg.base_url = ""            # Mutationsprobe: die Basis fällt zur Laufzeit weg
+    auth_l.cfg.base_url = ""            # mutation probe: the base drops away at runtime
     try:
         _antwort_l = c_l.post(_pfad, data=_daten)
         _ergebnis = f"HTTP {_antwort_l.status_code}, Erfolgsseite: {'unterwegs' in _antwort_l.text}"
         _hart = _antwort_l.status_code == 503 and "unterwegs" not in _antwort_l.text
     except _CfgErr as _e:
         _ergebnis, _hart = f"ungefangen: {str(_e)[:60]}", False
-    r.check(f"{_name} ohne Basis: 503 statt „Mail ist unterwegs\" (und statt eines 500)",
+    r.check(f"{_name} without a base: 503 instead of \"mail is on its way\" (and instead of a 500)",
             _hart and not post_l,
-            f"{_ergebnis} — 200 mit Erfolgsseite verdeckt den Totalausfall (A-regression-1)")
+            f"{_ergebnis} — 200 with a success page hides the total failure (A-regression-1)")
 
-# Und was der Betreiber dabei WIRKLICH zu sehen bekommt — im Betrieb, ohne TestClient, der eine
-# Ausnahme durchreicht. Bis zur Nacharbeit fing keine Route den `ConfigError`, und der ASGI-Server
-# machte daraus einen HTTP 500 (so stand es im CHANGELOG). Jetzt fängt `_mail_basis()` ihn und
-# antwortet 503: Der Dienst ist so nicht einsatzbereit, und das sagt die Antwort auch. Gemessen
-# wird beides: kein stiller Erfolg, und genau 503 — nicht 500, nicht 200.
-# (Mutationsprobe: `_mail_basis` durch `auth.require_public_base(request)` ersetzen → 500, rot.)
+# And what the operator REALLY gets to see in this case — in operation, without a TestClient that passes
+# an exception through. Until the rework no route caught the `ConfigError`, and the ASGI server
+# turned it into an HTTP 500 (so it said in the CHANGELOG). Now `_mail_basis()` catches it and
+# answers 503: the service is not ready for use like this, and the answer says so. Both are
+# measured: no silent success, and exactly 503 — not 500, not 200.
+# (Mutation probe: replace `_mail_basis` by `auth.require_public_base(request)` → 500, red.)
 auth_500, app_500 = _app(csrf_enabled=False, magiclink_enabled=True, password_reset_enabled=True,
                          passkey_enabled=False, base_url=ECHT)
 _post_500: list = []
 auth_500.set_mailer(lambda to, betreff, text, html=None: _post_500.append(text))
 auth_500.create_user("opfer", password="Geheim12345!abc", email="opfer@example.com")
-auth_500.cfg.base_url = ""              # die Lage, für die das zweite Schloss gebaut ist
+auth_500.cfg.base_url = ""              # the situation the second lock is built for
 _c500 = TestClient(app_500, raise_server_exceptions=False)
 _antwort_500 = _c500.post("/auth/forgot", data={"email": "opfer@example.com"})
-r.check("kein stiller Erfolg: ohne Basis meldet /auth/forgot nicht „Mail ist unterwegs\"",
+r.check("no silent success: without a base /auth/forgot does not report \"mail is on its way\"",
         _antwort_500.status_code != 200 and not _post_500,
-        f"HTTP {_antwort_500.status_code}, Mails={len(_post_500)} — dieselbe Antwort verhindert "
-        "die Benutzer-Enumeration und verdeckte deshalb den Totalausfall (A-regression-1)")
-r.check("...sondern HTTP 503 aus der Route, kein ungefangener 500",
+        f"HTTP {_antwort_500.status_code}, mails={len(_post_500)} — the same answer prevents "
+        "user enumeration and therefore hid the total failure (A-regression-1)")
+r.check("...but HTTP 503 from the route, no uncaught 500",
         _antwort_500.status_code == 503,
-        f"HTTP {_antwort_500.status_code} — 500 heisst: der ConfigError läuft wieder ungefangen "
-        "bis zum ASGI-Server (CHANGELOG-Satz dazu mitändern)")
-# Einladung aus dem Panel: dieselbe Klasse, derselbe Riegel.
+        f"HTTP {_antwort_500.status_code} — 500 means: the ConfigError runs uncaught again "
+        "up to the ASGI server (change the CHANGELOG sentence accordingly)")
+# Invitation from the panel: the same class, the same bolt.
 auth_inv, app_inv = _app(csrf_enabled=False, magiclink_enabled=True, passkey_enabled=False,
                          base_url=ECHT)
 auth_inv.set_mailer(lambda *a, **k: None)
@@ -1296,34 +1296,34 @@ _ci = TestClient(app_inv, raise_server_exceptions=False)
 _ci.post("/auth/login", data={"username": "chefin", "password": "Geheim12345!abc"})
 auth_inv.cfg.base_url = ""
 _inv = _ci.post("/auth/admin/api/invite", json={"email": "gast@example.com"})
-r.check("Admin-Einladung ohne Basis: 503, kein 500 und kein Link",
+r.check("admin invitation without a base: 503, no 500 and no link",
         _inv.status_code == 503 and "claim" not in _inv.text and "/auth/" not in _inv.text,
         f"HTTP {_inv.status_code}: {_inv.text[:120]!r}")
 
-# Befund A-regression-4: Dieselben Stellen antworteten sonst mit 500 mitten im Anmeldeversuch —
-# `/auth/oidc/start` ist der Einstieg, auf den ein Gateway jeden Besucher schickt. Jetzt steht
-# der Abbruch beim Aufbau, also bevor ein Nutzer klickt.
+# Finding A-regression-4: the same places otherwise answered with 500 in the middle of a sign-in attempt —
+# `/auth/oidc/start` is the entry point to which a gateway sends every visitor. Now the
+# abort happens at setup, i.e. before a user clicks.
 for _name, _an in (("OIDC", dict(oidc_enabled=True, oidc_issuer="https://idp.example.com",
                                  oidc_client_id="c", oidc_client_secret="s")),
                    ("SAML", dict(saml_enabled=True, saml_idp_sso_url="https://idp.example.com/sso",
                                  saml_idp_x509cert="PEM")),
                    ("Einladung/Magic", dict(magiclink_enabled=True))):
     _gebaut, _text = _baut(**_an)
-    r.check(f"{_name} ohne base_url: Abbruch beim Aufbau, kein 500 zur Laufzeit",
-            not _gebaut and "base_url" in _text, f"gebaut={_gebaut}: {_text[:90]!r}")
+    r.check(f"{_name} without base_url: abort at setup, no 500 at runtime",
+            not _gebaut and "base_url" in _text, f"built={_gebaut}: {_text[:90]!r}")
 
-# Der legitime Weg bleibt: mit zugesagter base_url geht die Mail hinaus, und der gefälschte
-# Host steht nicht drin. Ohne diese Prüfung wäre der Fix „nie wieder eine Mail" auch grün.
+# The legitimate path stays: with a committed base_url the mail goes out, and the forged
+# host is not in it. Without this check the fix "never a mail again" would be green too.
 auth_ok, c_ok, post_ok = _mailapp(base_url=ECHT)
 c_ok.post("/auth/forgot", data={"email": "opfer@example.com"}, headers={"host": BOESE})
-r.check("legitimer Weg: base_url gesetzt → Mail geht raus und trägt die echte Adresse",
+r.check("legitimate path: base_url set → mail goes out and carries the real address",
         len(post_ok) == 1 and _links(post_ok)[0].startswith(ECHT + "/auth/reset"),
         f"{_links(post_ok)!r}")
-r.check("und der gefälschte Host taucht nirgends auf", BOESE not in "\n".join(post_ok),
+r.check("and the forged host appears nowhere", BOESE not in "\n".join(post_ok),
         f"{post_ok!r}")
 
-# Der Einladungslink des Admin-Panels geht ebenfalls per Mail an einen Dritten und trägt ein
-# Token — er kam aus derselben Zeile und blieb in einer früheren Runde beim Flicken liegen.
+# The invitation link of the admin panel likewise goes by mail to a third party and carries a
+# token — it came from the same line and was left lying in an earlier round of patching.
 auth_inv, app_inv = _app(csrf_enabled=False, magiclink_enabled=True, passkey_enabled=False,
                          base_url=ECHT)
 auth_inv.set_mailer(lambda *a, **k: None)
@@ -1334,104 +1334,104 @@ with TestClient(app_inv) as c_inv:
                                                     3600, True, "password"))
     einladung = c_inv.post("/auth/admin/api/invite", json={"email": "gast@example.com"},
                            headers={"host": BOESE})
-r.check("Admin-Einladung: der Link kommt aus base_url, nicht aus dem Host-Header",
+r.check("admin invitation: the link comes from base_url, not from the Host header",
         einladung.status_code == 200 and BOESE not in einladung.text
         and ECHT + "/auth/invite/" in einladung.text,
         f"HTTP {einladung.status_code}: {einladung.text[:120]!r}")
 
-# Die Regel selbst, direkt geprüft — sie entscheidet auch für OIDC-Redirect-URI, SAML-Metadaten
-# und die Forward-Auth-Umleitung, die alle über `public_base()` gehen.
+# The rule itself, checked directly — it also decides for the OIDC redirect URI, SAML metadata
+# and the forward-auth redirect, which all go through `public_base()`.
 from tinysesam import security as _sec  # noqa: E402
 
-r.check("fremder Host gilt nicht als eigener", _sec.eigener_host(BOESE, []) is False)
-r.check("Host aus trusted_redirect_hosts gilt", _sec.eigener_host("a.example.com", ["a.example.com"]))
-r.check("Loopback gilt (Link nützt nur dem Empfänger selbst)",
+r.check("a foreign host does not count as own", _sec.eigener_host(BOESE, []) is False)
+r.check("a host from trusted_redirect_hosts counts", _sec.eigener_host("a.example.com", ["a.example.com"]))
+r.check("loopback counts (the link only benefits the recipient themselves)",
         _sec.eigener_host("127.0.0.1", []) and _sec.eigener_host("::1", []))
-r.check("Benutzerangabe im Host täuscht die Prüfung nicht",
+r.check("user info in the host does not fool the check",
         _sec.sichere_basis("https://a.example.com@" + BOESE, ["a.example.com"]) == "",
-        "urlsplit liest hier den Host hinter dem @ — die Prüfung muss genau den sehen")
-r.check("und die geprüfte Basis trägt keine Benutzerangabe weiter",
+        "urlsplit reads the host behind the @ here — the check must see exactly that")
+r.check("and the checked base carries no user info on",
         _sec.sichere_basis("https://wer@a.example.com:8443", ["a.example.com"])
         == "https://a.example.com:8443")
 auth_pb, _app_pb = _app(passkey_enabled=False)
-r.check("public_base() liefert leer statt zu raten (fail closed)",
+r.check("public_base() returns empty instead of guessing (fail closed)",
         auth_pb.public_base(candidate="https://" + BOESE) == "")
 try:
     auth_pb.require_public_base(candidate="https://" + BOESE)
     _pb_hart = False
 except _CfgErr:
     _pb_hart = True
-r.check("require_public_base() wirft statt zu raten",
-        _pb_hart, "wer eine Basis BRAUCHT, darf keinen leeren String bekommen")
+r.check("require_public_base() raises instead of guessing",
+        _pb_hart, "whoever NEEDS a base must not get an empty string")
 
-# Befund A-regression-12: Der `root_path` des Servers fiel weg — eine unter einem Unterpfad
-# montierte App verschickte Mail-Links ohne Präfix, also 404 statt Reset-Formular.
+# Finding A-regression-12: the server's `root_path` was dropped — an app mounted under a subpath
+# sent mail links without prefix, i.e. 404 instead of the reset form.
 _auth_pfad = TinySesam(TinySesamConfig(db_path=":memory:",
                                       base_url="https://app.example.com/sso/"))
-r.check("der Unterpfad (root_path) kommt aus base_url mit",
+r.check("the subpath (root_path) comes along from base_url",
         _auth_pfad.public_base() == "https://app.example.com/sso",
-        f"{_auth_pfad.public_base()!r} — Mail-Links ohne Präfix landen im 404")
-r.check("...und auch aus einer abgeleiteten Basis",
+        f"{_auth_pfad.public_base()!r} — mail links without prefix end up in a 404")
+r.check("...and from a derived base as well",
         _sec.sichere_basis("https://a.example.com/sso/", ["a.example.com"])
         == "https://a.example.com/sso",
-        "bis 0.18.x warf sichere_basis den Pfad weg")
-r.check("...aber nichts, was wir nicht sauber zusammensetzen können (fail closed)",
+        "up to 0.18.x sichere_basis dropped the path")
+r.check("...but nothing we cannot assemble cleanly (fail closed)",
         all(_sec.sichere_basis("https://a.example.com" + _p, ["a.example.com"]) == ""
             for _p in ("/../etc", "/sso/../x", "/a//b", "/s so", "/a%2fb")),
-        "ein halb geratenes Präfix ginge in jede ausgehende Mail")
+        "a half-guessed prefix would go into every outgoing mail")
 
-# Zuletzt: Die Konfigurationsprüfung schwieg zu `base_url` komplett — wer die Lücke offen ließ,
-# erfuhr es nirgends.
+# Finally: the configuration check was completely silent on `base_url` — whoever left the gap open
+# learned it nowhere.
 from tinysesam import konfigpruefung as _kp  # noqa: E402
 
 _fehler, _warn = _kp.pruefe(TinySesamConfig(password_reset_enabled=True))
-r.check("konfigpruefung nennt das fehlende base_url",
+r.check("konfigpruefung names the missing base_url",
         any("base_url ist leer" in f for f in _fehler), f"{_fehler!r}")
 _fehler2, _warn2 = _kp.pruefe(auth_ok.cfg)
-r.check("mit gesetztem base_url schweigt sie dazu",
+r.check("with base_url set it stays silent about it",
         not any("base_url ist leer" in m for m in _fehler2 + _warn2), f"{_fehler2!r} {_warn2!r}")
 
-# Gemessen wird die Warnung für JEDEN Schalter, der eine absolute Adresse baut — nicht nur für
-# die Mail-Wege. Vorher deckte die Suite drei der sechs Einträge ab: `BRAUCHT_BASE_URL` ließ
-# sich um `oidc_enabled`, `saml_enabled` und `forward_auth_enabled` kürzen, ohne dass eine
-# einzige Prüfung rot wurde (Mutationsprobe N4, volle Suite 46/46 grün).
+# The warning is measured for EVERY switch that builds an absolute address — not only for
+# the mail paths. Before, the suite covered three of the six entries: `BRAUCHT_BASE_URL` could
+# be shortened by `oidc_enabled`, `saml_enabled` and `forward_auth_enabled` without a
+# single check turning red (mutation probe N4, full suite 46/46 green).
 #
-# Die sechs Schalter stehen deshalb AUSGESCHRIEBEN, nicht als Schleife über die Tabelle selbst:
-# eine Schleife über `BRAUCHT_BASE_URL` prüfte nur die Einträge, die noch drin sind — wer einen
-# entfernt, nähme sich damit auch die Prüfung weg. (Genau das fiel beim Nachstellen der
-# Mutationsprobe auf.) Gefragt wird eine nackte Config, keine Instanz: `pruefe` liest nur
-# Felder, und so braucht die Zeile weder [oidc] noch [saml].
+# The six switches are therefore WRITTEN OUT, not a loop over the table itself:
+# a loop over `BRAUCHT_BASE_URL` would only check the entries still in it — whoever removes
+# one would take the check away with it. (Exactly that was noticed when reproducing the
+# mutation probe.) What is asked is a bare config, no instance: `pruefe` only reads
+# fields, and so the line needs neither [oidc] nor [saml].
 #
-# Seit der Nacharbeit N1 ist die Meldung nach Schwere getrennt: Die fünf Wege, die eine absolute
-# Adresse in FREMDE Hand geben (Mail, IdP), sind ein **Fehler** — der Aufbau scheitert, weil eine
-# Warnung durchstartet und `/auth/forgot` sonst weiter die Erfolgsseite ohne Mail rendert.
-# Forward-Auth bleibt eine **Warnung**: Die Umleitung bleibt ohne Basis relativ, trifft denselben
-# Browser und gibt nichts an Dritte. Beide Tabellen werden hier gemessen, jede in ihrer Schwere.
+# Since rework N1 the message is separated by severity: the five paths that hand an absolute
+# address into FOREIGN hands (mail, IdP) are an **error** — the setup fails, because a
+# warning starts up and `/auth/forgot` otherwise keeps rendering the success page without a mail.
+# Forward-auth stays a **warning**: without a base the redirect stays relative, hits the same
+# browser and gives nothing to third parties. Both tables are measured here, each in its severity.
 _BRAUCHT_BASIS = ("magiclink_enabled", "password_reset_enabled", "signup_verify_email",
                   "oidc_enabled", "saml_enabled")
 _EMPFIEHLT_BASIS = ("forward_auth_enabled",)
-r.check("die Tabelle nennt alle sechs Funktionen, die absolute Adressen bauen",
+r.check("the table names all six functions that build absolute addresses",
         set(_BRAUCHT_BASIS) <= set(_kp.BRAUCHT_BASE_URL)
         and set(_EMPFIEHLT_BASIS) <= set(_kp.BASE_URL_EMPFOHLEN),
-        f"nicht genannt: {sorted((set(_BRAUCHT_BASIS) - set(_kp.BRAUCHT_BASE_URL)) | (set(_EMPFIEHLT_BASIS) - set(_kp.BASE_URL_EMPFOHLEN)))}")
+        f"not named: {sorted((set(_BRAUCHT_BASIS) - set(_kp.BRAUCHT_BASE_URL)) | (set(_EMPFIEHLT_BASIS) - set(_kp.BASE_URL_EMPFOHLEN)))}")
 for _feld in _BRAUCHT_BASIS:
     _f3, _w3 = _kp.pruefe(TinySesamConfig(**{_feld: True}))
-    r.check(f"konfigpruefung meldet {_feld} ohne base_url als FEHLER",
+    r.check(f"konfigpruefung reports {_feld} without base_url as an ERROR",
             any("base_url ist leer" in f for f in _f3),
-            f"{_f3!r} — dieser Schalter gibt eine absolute Adresse aus der Hand, sagt es aber niemandem")
+            f"{_f3!r} — this switch hands an absolute address out of hand but tells nobody")
 for _feld in _EMPFIEHLT_BASIS:
     _f3, _w3 = _kp.pruefe(TinySesamConfig(**{_feld: True}))
-    r.check(f"konfigpruefung warnt bei {_feld} ohne base_url (kein Fehler)",
+    r.check(f"konfigpruefung warns for {_feld} without base_url (not an error)",
             any("base_url ist leer" in w for w in _w3)
             and not any("base_url ist leer" in f for f in _f3),
-            f"F={_f3!r} W={_w3!r} — die Umleitung bleibt relativ, das darf den Start nicht verweigern")
+            f"E={_f3!r} W={_w3!r} — the redirect stays relative, this must not refuse the start")
 
-# ── R4-01, die sechs Stellen ohne Mail: OIDC, SAML, Forward-Auth ───────────────
-# Dieselbe Regel, andere Wege. Getestet waren bis hierher nur die vier Mail-Wege; die übrigen
-# Stellen verhielten sich richtig, aber ungemessen — jede ließ sich auf die alte Form
-# `cfg.base_url or <aus dem Request>` zurückbauen, ohne dass die volle Suite rot wurde
-# (Mutationsproben N5–N8, je 46/46 grün). Genau hier arbeitet F-16 weiter, das die
-# SAML-SP-Identität betrifft: ohne diese Prüfungen reißt ein Umbau R4-01 still wieder auf.
+# ── R4-01, the six places without mail: OIDC, SAML, forward-auth ───────────────
+# The same rule, other paths. Up to here only the four mail paths were tested; the remaining
+# places behaved correctly, but unmeasured — each could be rebuilt to the old form
+# `cfg.base_url or <from the request>` without the full suite turning red
+# (mutation probes N5–N8, 46/46 green each). F-16, which concerns the SAML SP
+# identity, continues to work exactly here: without these checks a rework silently reopens R4-01.
 from urllib.parse import unquote, urlsplit  # noqa: E402
 
 _OIDC_META = {
@@ -1448,33 +1448,33 @@ def _oidc_app(**cfg):
     auth_x, app_x = _app(oidc_enabled=True, oidc_issuer="https://idp.example.invalid",
                          oidc_client_id="probe", oidc_client_secret="geheim",
                          csrf_enabled=False, passkey_enabled=False, **cfg)
-    auth_x.oidc._meta = dict(_OIDC_META)   # kein Netz nötig: geprüft wird die Basis, nicht Discovery
+    auth_x.oidc._meta = dict(_OIDC_META)   # no network needed: what is checked is the base, not discovery
     return auth_x, app_x
 
 
 def _oidc_app_ohne_basis(**cfg):
-    """Dieselbe App, aber mit leerer Basis zur REQUEST-Zeit.
+    """The same app, but with an empty base at REQUEST time.
 
-    Seit N1 verweigert der Konstruktor `oidc_enabled` ohne `base_url` rundheraus — diese Lage ist
-    also gar nicht mehr aufzubauen. Gemessen wird deshalb das zweite Schloss, das genau dafür da
-    ist: eine Config, die nach dem Konstruktor geändert wurde (sie wird zur Request-Zeit
-    gelesen). Ohne dieses Schloss fiele der Router auf den Host-Header zurück.
+    Since N1 the constructor flatly refuses `oidc_enabled` without `base_url` — this situation
+    can therefore no longer be built at all. What is measured is the second lock, which is there
+    for exactly that: a config changed after the constructor (it is read at request time).
+    Without this lock the router would fall back to the Host header.
     """
     auth_x, app_x = _oidc_app(**cfg)
     auth_x.cfg.base_url = ""
     return auth_x, app_x
 
 
-# (1) OIDC-Redirect-URI. Sie entscheidet, wohin der IdP den Autorisierungs-Code schickt — aus dem
-# Host-Header abgeleitet würde ein IdP mit locker gepflegten Redirect-URIs den Code an den Host
-# des Angreifers ausliefern.
+# (1) OIDC redirect URI. It decides where the IdP sends the authorization code — derived from the
+# Host header, an IdP with loosely maintained redirect URIs would deliver the code to the
+# attacker's host.
 def _bricht_ab(ruf):
-    """(brach mit ConfigError ab, Text der Antwort bzw. der Ausnahme).
+    """(aborted with ConfigError, text of the response or of the exception).
 
-    Seit N1 werfen diese Wege `ConfigError` statt `HTTPException(500)`: Ein Serverfehler mitten
-    im Anmeldeversuch war der falsche Ort für ein Problem, das schon beim Aufbau feststand.
-    Gemessen wird deshalb der Abbruch, nicht mehr eine Statuszeile — und in beiden Fällen, dass
-    der fremde Host nirgends durchschlägt.
+    Since N1 these paths raise `ConfigError` instead of `HTTPException(500)`: a server error in the middle
+    of a sign-in attempt was the wrong place for a problem that was already settled at setup.
+    What is measured is therefore the abort, no longer a status line — and in both cases that
+    the foreign host does not show through anywhere.
     """
     try:
         antwort = ruf()
@@ -1487,22 +1487,22 @@ _a_oi, _app_oi = _oidc_app_ohne_basis()
 with TestClient(_app_oi) as _c:
     _oi_ab, _oi_text = _bricht_ab(
         lambda: _c.get("/auth/oidc/start", headers={"host": BOESE}, follow_redirects=False))
-r.check("OIDC-Start: gefälschter Host baut keine Redirect-URI (fail closed)",
+r.check("OIDC start: forged host builds no redirect URI (fail closed)",
         _oi_ab and BOESE not in unquote(_oi_text),
-        f"abgebrochen={_oi_ab}: {_oi_text[:160]!r}")
+        f"aborted={_oi_ab}: {_oi_text[:160]!r}")
 
 _a_oi2, _app_oi2 = _oidc_app(base_url=ECHT)
 with TestClient(_app_oi2) as _c:
     _start_gut = _c.get("/auth/oidc/start", headers={"host": BOESE}, follow_redirects=False)
 _ziel_gut = unquote(_start_gut.headers.get("location", ""))
-r.check("...und mit base_url läuft der Flow weiter, auf der eigenen Adresse",
+r.check("...and with base_url the flow continues, on the own address",
         _start_gut.status_code == 303 and ECHT + "/auth/oidc/callback" in _ziel_gut
         and BOESE not in _ziel_gut,
-        f"HTTP {_start_gut.status_code}: {_ziel_gut[:160]!r} — sonst prüft die Zeile darüber nur, "
-        "dass der Start überhaupt kaputt ist")
+        f"HTTP {_start_gut.status_code}: {_ziel_gut[:160]!r} — otherwise the line above only checks "
+        "that the start is broken at all")
 
-# (2) OIDC-Post-Logout. Der `post_logout_redirect_uri` geht an den IdP; aus dem Host-Header
-# abgeleitet schickt der IdP das Opfer nach dem Abmelden auf den Server des Angreifers.
+# (2) OIDC post-logout. The `post_logout_redirect_uri` goes to the IdP; derived from the Host
+# header, the IdP sends the victim to the attacker's server after signing out.
 def _abmelden(auth_x, app_x):
     uid = auth_x.create_user("wer", password="Geheim12345!abc")
     tok = auth_x.store.create_session(uid, 3600, True, "oidc")
@@ -1514,29 +1514,29 @@ def _abmelden(auth_x, app_x):
 _a_pl, _app_pl = _oidc_app_ohne_basis(oidc_rp_logout=True)
 _logout_boese = _abmelden(_a_pl, _app_pl)
 _loc_boese = unquote(_logout_boese.headers.get("location", ""))
-r.check("OIDC-Logout: kein post_logout_redirect_uri aus dem Host-Header",
+r.check("OIDC logout: no post_logout_redirect_uri from the Host header",
         BOESE not in _loc_boese and _loc_boese == _a_pl.cfg.logout_redirect,
-        f"{_loc_boese!r} — der IdP schickte das Opfer danach zum Angreifer")
+        f"{_loc_boese!r} — the IdP then sent the victim to the attacker")
 
 _a_pl2, _app_pl2 = _oidc_app(oidc_rp_logout=True, base_url=ECHT)
 _loc_gut = unquote(_abmelden(_a_pl2, _app_pl2).headers.get("location", ""))
-r.check("...und mit base_url meldet der Provider-Logout weiter ab (der Weg lebt)",
+r.check("...and with base_url the provider logout still signs out (the path lives)",
         _loc_gut.startswith("https://idp.example.invalid/logout")
         and ECHT + _a_pl2.cfg.logout_redirect in _loc_gut and BOESE not in _loc_gut,
         f"{_loc_gut!r}")
 
 
-# (3) SAML: Entity-ID und ACS-URL. Beides ist die IDENTITÄT des SP — ein fremder Name darin
-# wandert in den AuthnRequest und in die Metadaten, die der Betreiber beim IdP hinterlegt.
-# Die Attrappe steht für den echten Client: geprüft wird die Basis, die der Router ihm gibt,
-# nicht die Signaturarbeit von python3-saml. So braucht diese Zeile das Extra [saml] nicht —
-# ein Überspringen wäre hier kein Grün.
+# (3) SAML: entity ID and ACS URL. Both are the IDENTITY of the SP — a foreign name in them
+# travels into the AuthnRequest and into the metadata that the operator registers at the IdP.
+# The dummy stands for the real client: what is checked is the base the router gives it,
+# not the signature work of python3-saml. So this line does not need the [saml] extra —
+# a skip would not be a green here.
 class _SamlAttrappe:
     def login_url(self, req, base, return_to="/"):
         return f"https://idp.example.invalid/sso?sp={base}&RelayState={return_to}", "rid-1"
 
     def process(self, req, base, request_id=""):
-        return None      # „Assertion abgelehnt" → 400; ein 500 hieße: es gab gar keine Basis
+        return None      # "assertion rejected" → 400; a 500 would mean: there was no base at all
 
     def metadata(self, base):
         return f'<EntityDescriptor entityID="{base}/auth/saml/metadata"/>'
@@ -1548,7 +1548,7 @@ def _saml_app(**cfg):
                  passkey_enabled=False)
     grund.update(cfg)
     auth_x = TinySesam(TinySesamConfig(**grund))
-    auth_x.saml = _SamlAttrappe()    # VOR router(): die SAML-Routen hängen an auth.saml
+    auth_x.saml = _SamlAttrappe()    # BEFORE router(): the SAML routes hang on auth.saml
     app_x = FastAPI()
     app_x.include_router(auth_x.router())
     return auth_x, app_x
@@ -1561,31 +1561,31 @@ with TestClient(_app_sa) as _c:
         lambda: _c.get("/auth/saml/login", headers={"host": BOESE}, follow_redirects=False))
     _acs_ab, _ = _bricht_ab(
         lambda: _c.post("/auth/saml/acs", data={"SAMLResponse": "x"}, headers={"host": BOESE}))
-r.check("SAML-Metadaten: keine Entity-ID aus dem Host-Header",
-        _md_ab and BOESE not in _md_text, f"abgebrochen={_md_ab}: {_md_text[:160]!r}")
-r.check("SAML-Login: kein AuthnRequest mit fremder SP-Adresse",
+r.check("SAML metadata: no entity ID from the Host header",
+        _md_ab and BOESE not in _md_text, f"aborted={_md_ab}: {_md_text[:160]!r}")
+r.check("SAML login: no AuthnRequest with a foreign SP address",
         _lg_ab and BOESE not in unquote(_lg_text),
-        f"abgebrochen={_lg_ab}: {_lg_text[:160]!r}")
-r.check("SAML-ACS: bricht ab, bevor eine Assertion gegen eine fremde ACS-URL geprüft wird",
-        _acs_ab, "die Assertion wäre gegen eine fremde ACS-URL geprüft worden")
+        f"aborted={_lg_ab}: {_lg_text[:160]!r}")
+r.check("SAML ACS: aborts before an assertion is checked against a foreign ACS URL",
+        _acs_ab, "the assertion would have been checked against a foreign ACS URL")
 
 _a_sa2, _app_sa2 = _saml_app(base_url=ECHT)
 with TestClient(_app_sa2) as _c:
     _md_gut = _c.get("/auth/saml/metadata", headers={"host": BOESE})
     _lg_gut = _c.get("/auth/saml/login", headers={"host": BOESE}, follow_redirects=False)
     _acs_gut = _c.post("/auth/saml/acs", data={"SAMLResponse": "x"}, headers={"host": BOESE})
-r.check("...und mit base_url trägt SAML die eigene Adresse (Metadaten, Login, ACS leben)",
+r.check("...and with base_url SAML carries the own address (metadata, login, ACS live)",
         _md_gut.status_code == 200 and f'entityID="{ECHT}/auth/saml/metadata"' in _md_gut.text
         and _lg_gut.status_code == 303 and f"sp={ECHT}" in unquote(_lg_gut.headers["location"])
         and _acs_gut.status_code == 400 and BOESE not in _md_gut.text,
-        f"Metadaten HTTP {_md_gut.status_code}: {_md_gut.text[:90]!r}; Login HTTP "
-        f"{_lg_gut.status_code}; ACS HTTP {_acs_gut.status_code} (400 = Basis stand, Assertion "
-        "abgelehnt; 500 = keine Basis)")
+        f"Metadata HTTP {_md_gut.status_code}: {_md_gut.text[:90]!r}; Login HTTP "
+        f"{_lg_gut.status_code}; ACS HTTP {_acs_gut.status_code} (400 = base was there, assertion "
+        "rejected; 500 = no base)")
 
-# (4) Forward-Auth-Umleitung. Der Proxy schickt jeden nicht angemeldeten Besucher auf die
-# Adresse aus `X-TinySesam-Location` — stünde dort ein fremder Host, führte der Proxy das Opfer
-# selbst auf die Anmeldeseite des Angreifers. Geprüft wird der HOST der Umleitung: das `next=`
-# trägt die angefragte URL und darf das auch, `safe_next` verwirft sie später.
+# (4) Forward-auth redirect. The proxy sends every non-signed-in visitor to the
+# address from `X-TinySesam-Location` — if a foreign host stood there, the proxy would itself lead the victim
+# to the attacker's sign-in page. What is checked is the HOST of the redirect: the `next=`
+# carries the requested URL and may do so, `safe_next` discards it later.
 _a_fa, _app_fa = _app(forward_auth_enabled=True, csrf_enabled=False, passkey_enabled=False,
                       trusted_redirect_hosts=["app.example.com"])
 with TestClient(_app_fa) as _c:
@@ -1597,37 +1597,37 @@ with TestClient(_app_fa) as _c:
                                                "x-forwarded-proto": "https",
                                                "x-forwarded-uri": "/geheim"})
 _loc_fa = _fa_boese.headers.get("X-TinySesam-Location", "")
-r.check("Forward-Auth: die 401-Umleitung zeigt auf keinen fremden Host",
+r.check("Forward-Auth: the 401 redirect points to no foreign host",
         _fa_boese.status_code == 401 and not (urlsplit(_loc_fa).hostname or "")
         and _loc_fa.startswith(_a_fa.cfg.login_path + "?next="),
-        f"HTTP {_fa_boese.status_code}: {_loc_fa[:140]!r} — der Proxy selbst führte das Opfer hin")
+        f"HTTP {_fa_boese.status_code}: {_loc_fa[:140]!r} — the proxy itself led the victim there")
 _loc_fa_gut = _fa_gut.headers.get("X-TinySesam-Location", "")
-r.check("...und auf einem Host aus trusted_redirect_hosts bleibt sie absolut (Cookie-Host)",
+r.check("...and on a host from trusted_redirect_hosts it stays absolute (cookie host)",
         _fa_gut.status_code == 401
         and _loc_fa_gut.startswith("https://app.example.com" + _a_fa.cfg.login_path),
         f"HTTP {_fa_gut.status_code}: {_loc_fa_gut[:140]!r}")
 
-# ── Dieselbe EINE Regel für die dokumentierten Methoden, nicht nur für die Routen ───
-# `public_base()` sass nur in den Routen. Eine App mit eigenem „Passwort vergessen"-Formular —
-# der in beiden READMEs und in API.md gezeigte Weg — rief `send_password_reset(mail, basis)`
-# selbst auf und war mit `str(request.base_url)` weiter voll angreifbar, während ihr die
-# eingebaute Route längst weggebrochen war. Die Prüfung sitzt jetzt in `magic_url()`, wo alle
-# vier Mail-Wege zusammenlaufen, und zusätzlich vor der Token-Vergabe in jedem Absender.
+# ── The same ONE rule for the documented methods, not only for the routes ───
+# `public_base()` sat only in the routes. An app with its own "forgot password" form —
+# the path shown in both READMEs and in API.md — called `send_password_reset(mail, basis)`
+# itself and was still fully attackable with `str(request.base_url)`, while the
+# built-in route had long since been fixed. The check now sits in `magic_url()`, where all
+# four mail paths converge, and additionally before the token is issued in every sender.
 #
-# Gemessen wird die REGEL, nicht ihr Mechanismus: Steht `base_url`, gewinnt sie — auch gegen
-# einen zweiten mitvertrauten Namen. Genau das war Befund B-umgehung-3: Hier entschied noch der
-# übergebene Host, solange er in `trusted_redirect_hosts` stand. Der `Host`-Header wählte damit
-# weiter aus, welcher der eigenen Namen in den Reset-Link kommt — der Kern von R4-01, eine Ebene
-# tiefer. Ohne `base_url` — der einzige Aufbau, in dem überhaupt abgeleitet wird — bleibt es
-# beim harten `ConfigError`.
+# What is measured is the RULE, not its mechanism: If `base_url` is set, it wins — even against
+# a second co-trusted name. That was exactly finding B-umgehung-3: Here the
+# passed host still decided as long as it was in `trusted_redirect_hosts`. The `Host` header thus
+# still chose which of the own names ends up in the reset link — the core of R4-01, one level
+# deeper. Without `base_url` — the only setup in which anything is derived at all — it stays
+# with the hard `ConfigError`.
 _a_api, _app_api = _app(magiclink_enabled=True, password_reset_enabled=True, passkey_enabled=False,
                         base_url=ECHT,
                         trusted_redirect_hosts=["auth.example.com", "app-b.example.com"])
 _mails_api: list = []
 _a_api.set_mailer(lambda to, betreff, text, html=None: _mails_api.append(text))
 _a_api.create_user("opfer", password="Geheim12345!abc", email="opfer@example.com")
-# Diese Runde schickt ein Dutzend Mails an dieselbe Adresse; gemessen wird die Basis, nicht die
-# Drossel je Zieladresse (R4-04, eigener Test in test_magic.py) — die bekommt hier Luft.
+# This round sends a dozen mails to the same address; what is measured is the base, not the
+# throttle per target address (R4-04, own test in test_magic.py) — it gets room here.
 _a_api.set_security("mail_per_address_max", 100)
 
 
@@ -1636,29 +1636,29 @@ def _tokenzeilen(auth_x) -> int:
 
 
 def _versende(senden):
-    """Den Versand ausführen, den `_verify_mail` zurückgibt (None: kein Mailer)."""
+    """Run the send that `_verify_mail` returns (None: no mailer)."""
     return senden() if senden else senden
 
 
 def _wege(auth_x, basis):
-    """Die dokumentierten Wege, alle mit DERSELBEN übergebenen Basis."""
+    """The documented paths, all with the SAME passed base."""
     return (
         ("magic_url", lambda: auth_x.magic_url("rohtoken", basis, "reset_password")),
         ("send_password_reset", lambda: auth_x.send_password_reset("opfer@example.com", basis)),
         ("send_login_link", lambda: auth_x.send_login_link("opfer@example.com", basis)),
         ("send_verify_email", lambda: auth_x.send_verify_email(1, "opfer@example.com", basis)),
-        # Die Registrierung legt den Token in der Anfrage an und verschickt später (T-13-Angriff,
-        # mail × betrieb) — sie ruft `_verify_mail` direkt, also wird es auch direkt gemessen.
+        # Registration creates the token in the request and sends later (T-13 attack,
+        # mail × operation) — it calls `_verify_mail` directly, so it is also measured directly.
         ("_verify_mail", lambda: _versende(auth_x._verify_mail(1, "opfer@example.com", basis))),
         ("create_invite", lambda: auth_x.create_invite("gast@example.com", basis)),
-        # R4-03: der Hinweis an den Inhaber einer vergebenen Adresse trägt den Weg zur Anmeldung.
+        # R4-03: the notice to the owner of a taken address carries the way to sign in.
         ("_send_signup_notice", lambda: auth_x._send_signup_notice("opfer@example.com", basis)),
-        # Selbstbedienung (2026-09-25): der Link an die NEUE Adresse; auch der Bestätigungsweg für
-        # Adressen aus LDAP/SAML läuft hier durch (`_adresse_aus_quelle_belegen`).
+        # Self-service (2026-09-25): the link to the NEW address; the confirmation path for
+        # addresses from LDAP/SAML also runs through here (`_adresse_aus_quelle_belegen`).
         ("request_email_change", lambda: _versende(auth_x.request_email_change(
             auth_x.store.get_user_by_name("opfer")["id"], "opfer-neu@example.com", basis))),
-        # …und seit der Angriffsrunde 2026-09-26 über die Hülle mit der Quelle, die
-        # `_adresse_aus_quelle_belegen` ruft (Detail `konto=<id> quelle=…`). Derselbe Link.
+        # …and since the attack round of 2026-09-26 via the wrapper with the source that
+        # `_adresse_aus_quelle_belegen` calls (detail `konto=<id> quelle=…`). The same link.
         ("_wechsel_beantragen", lambda: _versende(auth_x._wechsel_beantragen(
             auth_x.store.get_user_by_name("opfer")["id"], "opfer-quelle@example.com", basis,
             quelle="ldap"))),
@@ -1666,7 +1666,7 @@ def _wege(auth_x, basis):
 
 
 def _spur(erg, mails) -> str:
-    """Alles, was der Aufruf nach aussen gegeben hat: Rückgabe plus verschickte Mailtexte."""
+    """Everything the call gave to the outside: return value plus sent mail texts."""
     return repr(erg) + " " + " ".join(mails)
 
 
@@ -1674,17 +1674,17 @@ for _fremd, _was in (("https://" + BOESE, "einen fremden Host"),
                      ("https://app-b.example.com", "einen ZWEITEN eigenen Namen")):
     for _name, _ruf in _wege(_a_api, _fremd):
         _mails_api.clear()
-        try:                            # ein ConfigError wäre auch hier ein Befund, kein Abbruch
+        try:                            # a ConfigError would be a finding here too, not an abort
             _s = _spur(_ruf(), _mails_api)
         except ConfigError as e:
             _s = f"ConfigError: {e}"[:140]
-        r.check(f"{_name}: base_url gewinnt gegen {_was}",
+        r.check(f"{_name}: base_url wins against {_was}",
                 (urlsplit(_fremd).hostname or "") not in _s and ECHT in _s,
-                f"{_s[:140]!r} — sonst wählt der Host-Header aus, was in den Link kommt")
+                f"{_s[:140]!r} — otherwise the Host header chooses what goes into the link")
 
-# Ohne `base_url` bleibt es beim harten Abbruch: kein Link, keine Mail, kein Token. Diesen Aufbau
-# lässt `konfigpruefung` als einzigen ohne `base_url` durch (kein Mail-Schalter an), und genau ihn
-# nennt der Befund als Anlass — eine einbettende App mit eigenem Formular.
+# Without `base_url` it stays with the hard abort: no link, no mail, no token. This setup
+# is the only one that `konfigpruefung` lets through without `base_url` (no mail switch on), and exactly it
+# is named by the finding as the occasion — an embedding app with its own form.
 _a_ohne, _app_ohne = _app(passkey_enabled=False, trusted_redirect_hosts=["auth.example.com"])
 _mails_ohne: list = []
 _a_ohne.set_mailer(lambda to, betreff, text, html=None: _mails_ohne.append(text))
@@ -1694,48 +1694,48 @@ for _name, _ruf in _wege(_a_ohne, "https://" + BOESE):
         _abgewiesen, _wie = False, repr(_ruf())
     except ConfigError as e:
         _abgewiesen, _wie = True, str(e)[:60]
-    r.check(f"ohne base_url: {_name}(fremde Basis) wird abgewiesen, nicht ausgeliefert",
-            _abgewiesen, f"kam durch: {_wie} — die App mit eigenem Formular bleibt angreifbar")
+    r.check(f"without base_url: {_name}(foreign base) is rejected, not delivered",
+            _abgewiesen, f"got through: {_wie} — the app with its own form stays attackable")
 
-r.check("dabei geht keine Mail hinaus", _mails_ohne == [], f"{_mails_ohne!r}")
-r.check("und es bleibt kein unbrauchbarer Token in der Datenbank",
+r.check("no mail goes out in the process", _mails_ohne == [], f"{_mails_ohne!r}")
+r.check("and no unusable token remains in the database",
         _tokenzeilen(_a_ohne) == 0,
-        f"{_tokenzeilen(_a_ohne)} Zeilen — geprüft wird vor der Token-Vergabe, nicht danach")
+        f"{_tokenzeilen(_a_ohne)} rows — the check happens before the token is issued, not after")
 
-# Der legitime Weg der App: die zugesagte Basis. Ohne diese Zusage wäre „nie wieder ein Link"
-# auch grün. Der Host der eigenen base_url genügt — ein `http://` aus einem TLS-terminierenden
-# Proxy wird dabei auf die konfigurierte Adresse gehoben, statt still unverschlüsselt zu bleiben.
+# The legitimate path of the app: the promised base. Without this promise, "never a link again"
+# would also be green. The host of the own base_url suffices — an `http://` from a TLS-terminating
+# proxy is lifted to the configured address instead of silently staying unencrypted.
 _mails_api.clear()
-r.check("legitimer Weg: base_url liefert den Link",
+r.check("legitimate path: base_url supplies the link",
         _a_api.magic_url("rohtoken", ECHT, "reset_password") == ECHT + "/auth/reset?token=rohtoken",
         _a_api.magic_url("rohtoken", ECHT, "reset_password"))
-r.check("str(request.base_url) auf dem eigenen Host bleibt benutzbar — und wird nicht http",
+r.check("str(request.base_url) on the own host stays usable — and does not become http",
         _a_api.magic_url("rohtoken", "http://auth.example.com/", "reset_password")
         == ECHT + "/auth/reset?token=rohtoken",
         _a_api.magic_url("rohtoken", "http://auth.example.com/", "reset_password"))
-r.check("und der Absender schickt damit wieder (die Methode lebt)",
+r.check("and the sender sends with it again (the method lives)",
         _a_api.send_password_reset("opfer@example.com", ECHT) is True
         and len(_mails_api) == 1 and ECHT + "/auth/reset" in _mails_api[0],
         f"{_mails_api!r}")
-r.check("auch ohne base_url trägt der legitime Weg (abgeleitete, belegte Basis)",
+r.check("the legitimate path works even without base_url (derived, proven base)",
         _a_ohne.magic_url("rohtoken", "https://auth.example.com", "reset_password")
         == ECHT + "/auth/reset?token=rohtoken",
         _a_ohne.magic_url("rohtoken", "https://auth.example.com", "reset_password"))
 
-# Befund B-regression-2: Der Pfadanteil stand VIERFACH im verschickten Link. `sichere_basis()`
-# gibt ihn seit N1 selbst zurück, `_gepruefte_basis()` hängte ihn trotzdem noch einmal an — und
-# weil die vier Absender erst selbst prüfen und danach `magic_url()` ein zweites Mal, wuchs
-# `https://portal.example.com/portal` zu `…/portal/portal/portal/portal/auth/reset?token=…`.
-# Die Mail ging hinaus, der Empfänger klickte, der Link war 404: kein Fehler, keine Logzeile.
-# Deshalb wird GEZÄHLT, nicht `startswith` geprüft — genau das hielt den Befund verborgen.
+# Finding B-regression-2: The path part appeared FOUR times in the sent link. `sichere_basis()`
+# has returned it itself since N1, `_gepruefte_basis()` still appended it once more — and
+# because the four senders check themselves first and `magic_url()` a second time afterwards,
+# `https://portal.example.com/portal` grew to `…/portal/portal/portal/portal/auth/reset?token=…`.
+# The mail went out, the recipient clicked, the link was 404: no error, no log line.
+# Therefore COUNTING is used, not `startswith` — exactly that kept the finding hidden.
 _UNTER = "https://portal.example.com/portal"
 _a_pfad, _app_pfad = _app(passkey_enabled=False, trusted_redirect_hosts=["portal.example.com"])
 _mails_pfad: list = []
 _a_pfad.set_mailer(lambda to, betreff, text, html=None: _mails_pfad.append(text))
 _a_pfad.create_user("opfer", password="Geheim12345!abc", email="opfer@example.com")
-_a_pfad.set_security("mail_per_address_max", 100)   # wie oben: gemessen wird der Pfad, nicht R4-04
+_a_pfad.set_security("mail_per_address_max", 100)   # as above: the path is measured, not R4-04
 def _links(texte) -> list:
-    """Alle Adressen auf dem Unterpfad-Host, die ein Aufruf nach aussen gegeben hat."""
+    """All addresses on the subpath host that a call gave to the outside."""
     return [g for t in texte for g in re.findall(r"https://portal\.example\.com[^\s'\"]*", t)]
 
 
@@ -1743,24 +1743,24 @@ for _name, _ruf in _wege(_a_pfad, _UNTER):
     _mails_pfad.clear()
     _erg = _ruf()
     _gefunden = _links([repr(_erg)] + list(_mails_pfad))
-    # Gezählt wird im PFAD, nicht im ganzen String: In "https://portal…" steckt "/portal"
-    # schon durch das "//" — eine Zählung darüber hätte auch den Vierfach-Link durchgelassen.
+    # Counting happens in the PATH, not in the whole string: "https://portal…" already contains "/portal"
+    # through the "//" — a count over that would also have let the fourfold link through.
     _zaehl = [urlsplit(u).path.count("/portal") for u in _gefunden]
-    r.check(f"{_name}: der Unterpfad steht genau EINMAL im Link",
+    r.check(f"{_name}: the subpath appears exactly ONCE in the link",
             bool(_zaehl) and all(z == 1 for z in _zaehl)
             and all(u.startswith(_UNTER + "/auth/") for u in _gefunden),
-            f"{_zaehl} Vorkommen in {[u[:90] for u in _gefunden]!r}")
-r.check("die Prüfung ist idempotent (zweimal angewandt wächst der Pfad nicht)",
+            f"{_zaehl} occurrences in {[u[:90] for u in _gefunden]!r}")
+r.check("the check is idempotent (applied twice, the path does not grow)",
         _a_pfad._gepruefte_basis(_a_pfad._gepruefte_basis(_UNTER)) == _UNTER,
-        f"{_a_pfad._gepruefte_basis(_a_pfad._gepruefte_basis(_UNTER))!r} — die vier Absender "
-        "prüfen vor der Token-Vergabe, magic_url danach noch einmal")
+        f"{_a_pfad._gepruefte_basis(_a_pfad._gepruefte_basis(_UNTER))!r} — the four senders "
+        "check before the token is issued, magic_url once more afterwards")
 
-# Befund B-regression-3: Was eine Montage unter einem Unterpfad WIRKLICH trägt — gemessen an
-# einer echten Montage (`FastAPI(root_path="/sso")`), nicht an einer nachgebauten URL. Der
-# verschickte Link trägt das Präfix genau einmal; seit T-15 tragen es auch die eingebauten Seiten
-# und ihre Umleitungen (`auth.pfad`, Platzhalter `__TS_P__` in `templates.py`). Bis dahin stand die
-# Grenze in README, KONFIGURATION und CHANGELOG, und dieser Test hielt sie ehrlich; die volle
-# Messung (Mount und uvicorn --root-path, alle Seiten) steht in tests/test_unterpfad.py.
+# Finding B-regression-3: What a mount under a subpath REALLY carries — measured on
+# a real mount (`FastAPI(root_path="/sso")`), not on a replicated URL. The
+# sent link carries the prefix exactly once; since T-15 the built-in pages
+# and their redirects carry it too (`auth.pfad`, placeholder `__TS_P__` in `templates.py`). Until then the
+# limit was in README, KONFIGURATION and CHANGELOG, and this test kept it honest; the full
+# measurement (mount and uvicorn --root-path, all pages) is in tests/test_unterpfad.py.
 _a_mnt = TinySesam(TinySesamConfig(db_path=str(Path(tempfile.mkdtemp()) / "t.db"),
                                    cookie_secure=False, csrf_enabled=False, passkey_enabled=False,
                                    password_reset_enabled=True,
@@ -1773,22 +1773,22 @@ _app_mnt.include_router(_a_mnt.router())
 _c_mnt = TestClient(_app_mnt, root_path="/sso", follow_redirects=False)
 _c_mnt.post("/auth/forgot", data={"email": "anna@example.com"}, headers={"accept": "text/html"})
 _link_mnt = [w for w in " ".join(_mails_mnt).split() if w.startswith("http")]
-r.check("echte Montage unter /sso: der Mail-Link trägt das Präfix genau einmal",
+r.check("real mount under /sso: the mail link carries the prefix exactly once",
         len(_link_mnt) == 1 and _link_mnt[0].startswith("https://example.com/sso/auth/reset?")
         and urlsplit(_link_mnt[0]).path.count("/sso") == 1,
-        f"{_link_mnt!r} — ohne Präfix ist es ein 404, mehrfach auch")
+        f"{_link_mnt!r} — without prefix it is a 404, repeated too")
 _seite_mnt = _c_mnt.get("/auth/login", headers={"accept": "text/html"}).text
 _ziel_mnt = _c_mnt.get("/auth/account", headers={"accept": "text/html"}).headers.get("location", "")
 _wurzel_mnt = re.findall(r"(?:href|action)='(/[^']*)'", _seite_mnt)
-r.check("...und die eingebauten Seiten tragen es auch (T-15): Formular, Links, Umleitung",
+r.check("...and the built-in pages carry it too (T-15): form, links, redirect",
         "action='/sso/auth/login'" in _seite_mnt and _wurzel_mnt
         and all(z.startswith("/sso/") for z in _wurzel_mnt)
         and _ziel_mnt.startswith("/sso/auth/login?next=/sso/auth/account"),
-        f"{_ziel_mnt!r} / ohne Präfix: {[z for z in _wurzel_mnt if not z.startswith('/sso/')]}")
+        f"{_ziel_mnt!r} / without prefix: {[z for z in _wurzel_mnt if not z.startswith('/sso/')]}")
 
-# Und die Regel selbst, mechanisch: Wo `public_base()` eine Basis liefert, liefert
-# `_gepruefte_basis()` GENAU dieselbe, und wo sie leer bleibt, wirft die Methode. Zwei Wege,
-# ein Ergebnis — sonst sind es wieder zwei Regeln, und die Lücke sitzt im Unterschied.
+# And the rule itself, mechanically: Where `public_base()` supplies a base,
+# `_gepruefte_basis()` supplies EXACTLY the same, and where it stays empty, the method raises. Two paths,
+# one result — otherwise they are two rules again, and the gap sits in the difference.
 for _lab, _auth_x in (("mit base_url", _a_api), ("ohne base_url", _a_pfad)):
     for _fall in (ECHT, "http://auth.example.com/", "https://app-b.example.com",
                   "https://" + BOESE, _UNTER, ""):
@@ -1797,16 +1797,16 @@ for _lab, _auth_x in (("mit base_url", _a_api), ("ohne base_url", _a_pfad)):
             _gb, _warf = _auth_x._gepruefte_basis(_fall), False
         except ConfigError:
             _gb, _warf = "", True
-        r.check(f"eine Regel ({_lab}): public_base == _gepruefte_basis für {_fall!r}",
+        r.check(f"one rule ({_lab}): public_base == _gepruefte_basis for {_fall!r}",
                 _gb == _pb and _warf == (not _pb),
-                f"public_base={_pb!r} _gepruefte_basis={_gb!r} warf={_warf}")
+                f"public_base={_pb!r} _gepruefte_basis={_gb!r} raised={_warf}")
 
-# ── Eine fremde Registrierung besetzte die Login-Kennung eines Kontos ────────
-# Fund R4-12 (drittes Audit). Die Registrierung prüfte die beiden Namensräume nur GETRENNT:
-# `email_taken` gegen users.email, `get_user_by_name` gegen users.username. `find_user` sucht im
-# Vorgabe-Modus "both" aber in BEIDEN Spalten und lässt bei einem @ die E-Mail gewinnen. Damit
-# besetzte ein Fremder die Kennung eines bestehenden Kontos — der Inhaber (auch ein Admin) bekam
-# 401 trotz richtigem Passwort, und /auth/password prüfte fortan ein fremdes Geheimnis.
+# ── A foreign registration occupied the login identifier of an account ────────
+# Finding R4-12 (third audit). Registration checked the two name spaces only SEPARATELY:
+# `email_taken` against users.email, `get_user_by_name` against users.username. But `find_user` in the
+# default mode "both" searches BOTH columns and lets the e-mail win with an @. Thereby
+# a stranger occupied the identifier of an existing account — the owner (even an admin) got
+# 401 despite the correct password, and /auth/password from then on checked a foreign secret.
 
 PW_INHABER, PW_EVE = "Geheim12345!abc", "Angreifer12345!"
 
@@ -1816,61 +1816,61 @@ def _anmelden(client, kennung, passwort=PW_INHABER):
                        follow_redirects=False)
 
 
-# Richtung 1: die E-MAIL des Fremden ist der Benutzername des Inhabers.
+# Direction 1: the stranger's E-MAIL is the owner's username.
 auth_n1, app_n1 = _app(allow_signup=True, signup_require_email=True, csrf_enabled=False)
 chef1 = auth_n1.create_user("chef@example.com", password=PW_INHABER, is_admin=True)
 c_n1 = TestClient(app_n1)
-r.check("Vorbedingung: der Inhaber kommt mit seiner Kennung hinein",
+r.check("precondition: the owner gets in with his identifier",
         _anmelden(c_n1, "chef@example.com").status_code == 303,
-        "ohne diesen Ausgangspunkt sagt der Rest der Prüfung nichts")
+        "without this starting point the rest of the check says nothing")
 c_n1.cookies.clear()
 
 angriff1 = c_n1.post("/auth/register",
                      data={"username": "eve", "password": PW_EVE,
                            "email": "chef@example.com", "next": "/"}, follow_redirects=False)
-r.check("eine Registrierung, deren E-MAIL der Benutzername eines Kontos ist, wird abgewiesen",
-        angriff1.status_code == 409, f"HTTP {angriff1.status_code} — die Kennung ist vergeben")
-r.check("...und legt kein Konto an", auth_n1.store.get_user_by_name("eve") is None,
-        "das Konto steht trotz Abweisung in der Datenbank")
-r.check("...die Kennung zeigt weiter auf den Inhaber",
+r.check("a registration whose E-MAIL is the username of an account is rejected",
+        angriff1.status_code == 409, f"HTTP {angriff1.status_code} — the identifier is taken")
+r.check("...and creates no account", auth_n1.store.get_user_by_name("eve") is None,
+        "the account is in the database despite the rejection")
+r.check("...the identifier still points to the owner",
         (auth_n1.find_user("chef@example.com") or {}).get("id") == chef1,
-        "find_user löst auf ein fremdes Konto auf")
-r.check("...und der Inhaber meldet sich weiter an",
+        "find_user resolves to a foreign account")
+r.check("...and the owner can still sign in",
         _anmelden(c_n1, "chef@example.com").status_code == 303,
-        "ausgesperrt — mit dem richtigen Passwort")
+        "locked out — with the correct password")
 
-# Richtung 2 (die gefährlichere): der BENUTZERNAME des Fremden ist die E-Mail des Inhabers.
+# Direction 2 (the more dangerous one): the stranger's USERNAME is the owner's e-mail.
 auth_n2, app_n2 = _app(allow_signup=True, signup_require_email=True, csrf_enabled=False)
 chef2 = auth_n2.create_user("chef", password=PW_INHABER, email="chef@example.com", is_admin=True)
 c_n2 = TestClient(app_n2)
 angriff2 = c_n2.post("/auth/register",
                      data={"username": "chef@example.com", "password": PW_EVE,
                            "email": "eve@example.com", "next": "/"}, follow_redirects=False)
-r.check("eine Registrierung, deren BENUTZERNAME die E-Mail eines Kontos ist, wird abgewiesen",
-        angriff2.status_code == 409, f"HTTP {angriff2.status_code} — die Kennung ist vergeben")
-r.check("...und die E-Mail-Kennung zeigt weiter auf den Inhaber",
+r.check("a registration whose USERNAME is the e-mail of an account is rejected",
+        angriff2.status_code == 409, f"HTTP {angriff2.status_code} — the identifier is taken")
+r.check("...and the e-mail identifier still points to the owner",
         (auth_n2.find_user("chef@example.com") or {}).get("id") == chef2,
-        "die Kennung wurde übernommen")
+        "the identifier was taken over")
 
-# Der legitime Weg bleibt offen — sonst wäre der Wächter nur eine kaputte Registrierung.
+# The legitimate path stays open — otherwise the guard would just be a broken registration.
 frisch = c_n2.post("/auth/register",
                    data={"username": "neu", "password": "Neues12345!abcd",
                          "email": "neu@example.com", "next": "/"}, follow_redirects=False)
-r.check("eine Registrierung mit freien Kennungen geht weiterhin durch", frisch.status_code == 303,
+r.check("a registration with free identifiers still goes through", frisch.status_code == 303,
         f"HTTP {frisch.status_code}: {frisch.text[:120]}")
 
-# Und dieselbe Zeichenfolge in beiden Spalten DESSELBEN Kontos ist keine Kollision — im
-# E-Mail-Modus ist die Adresse der Benutzername, das ist der vorgesehene Weg.
+# And the same character string in both columns of the SAME account is no collision — in
+# e-mail mode the address is the username, that is the intended path.
 auth_n3, app_n3 = _app(allow_signup=True, signup_require_email=True,
                        login_identifier="email", csrf_enabled=False)
 solo = TestClient(app_n3).post("/auth/register",
                                data={"password": "Einzel-Weg-2468!", "email": "solo@example.com",
                                      "next": "/"}, follow_redirects=False)
-r.check("im E-Mail-Modus bleibt die Adresse zugleich Benutzername", solo.status_code == 303,
+r.check("in e-mail mode the address remains the username at the same time", solo.status_code == 303,
         f"HTTP {solo.status_code}: {solo.text[:120]}")
 
-# Der Wächter sitzt in create_user, nicht nur in der Route: CLI, Einladung und die Anlage aus
-# OIDC/LDAP/SAML kommen hier vorbei.
+# The guard sits in create_user, not only in the route: CLI, invitation and creation from
+# OIDC/LDAP/SAML pass through here.
 for was, ruf in (("einen Benutzernamen, der fremde E-Mail ist",
                   lambda: auth_n2.create_user("chef@example.com", password=PW_EVE)),
                  ("eine E-Mail, die fremder Benutzername ist",
@@ -1880,80 +1880,80 @@ for was, ruf in (("einen Benutzernamen, der fremde E-Mail ist",
         entstanden = True
     except ConfigError:
         entstanden = False
-    r.check(f"create_user nimmt {was} nicht an", not entstanden,
-            "das Konto entsteht — dann hilft die Prüfung in der Route allein nichts")
+    r.check(f"create_user does not accept {was}", not entstanden,
+            "the account is created — then the check in the route alone does not help")
 
-# Auch über das Admin-Panel darf die Kollision nicht entstehen.
+# The collision must not arise via the admin panel either.
 c_adm = TestClient(app_n2)
 c_adm.cookies.set(auth_n2.cfg.session_cookie,
                   auth_n2.store.create_session(chef2, 3600, True, "password"))
 for feld, koerper in (("E-Mail", {"username": "eve2", "email": "chef@example.com"}),
                       ("Benutzername", {"username": "chef@example.com", "email": "e2@example.com"})):
     antwort_adm = c_adm.post("/auth/admin/api/users", json=koerper)
-    r.check(f"die Admin-API weist eine vergebene Kennung im Feld {feld} ab",
+    r.check(f"the admin API rejects a taken identifier in the field {feld}",
             antwort_adm.status_code == 409,
             f"HTTP {antwort_adm.status_code}: {antwort_adm.text[:120]}")
 
-# Einladung: Die Adresse kommt dort aus dem Token, nicht aus dem Formular — der Wächter muss
-# auch diesen Weg treffen, sonst legt eine Einladung auf eine vergebene Kennung ein Konto an.
-# Die Basis muss seit N6 selbst belegt sein (`_gepruefte_basis`) — ein frei erfundener Host
-# geht nicht mehr in einen verschickten Link. Hier steht Loopback dafür; geprüft wird ohnehin
-# nur der Token, nicht der Link.
+# Invitation: The address comes from the token there, not from the form — the guard must
+# hit this path too, otherwise an invitation creates an account on a taken identifier.
+# Since N6 the base must itself be proven (`_gepruefte_basis`) — a freely invented host
+# no longer goes into a sent link. Loopback stands for it here; only the token is checked
+# anyway, not the link.
 _einladung = auth_n2.create_invite("chef@example.com", "http://127.0.0.1:8000")["token"]
 antwort_inv = c_n2.post("/auth/register",
                         data={"username": "eve3", "password": PW_EVE, "invite": _einladung,
                               "next": "/"}, follow_redirects=False)
-r.check("eine Einladung auf eine vergebene Kennung wird abgewiesen",
+r.check("an invitation to a taken identifier is rejected",
         antwort_inv.status_code == 409,
         f"HTTP {antwort_inv.status_code}: {antwort_inv.text[:120]}")
-r.check("...und legt kein Konto an", auth_n2.store.get_user_by_name("eve3") is None,
-        "das Konto steht trotz Abweisung in der Datenbank")
+r.check("...and creates no account", auth_n2.store.get_user_by_name("eve3") is None,
+        "the account is in the database despite the rejection")
 
-# Und der Maschinen-Weg: ein Dienstkonto hat keinen Login, sein Name ist aber trotzdem eine
-# Kennung im gemeinsamen Raum (`find_user` sucht auch ihn).
+# And the machine path: a service account has no login, but its name is still an
+# identifier in the shared space (`find_user` searches it too).
 try:
     auth_n2.create_service("chef@example.com")
     _dienst_entstand = True
 except ConfigError:
     _dienst_entstand = False
-r.check("create_service nimmt eine vergebene Kennung nicht an", not _dienst_entstand,
-        "das Dienstkonto entsteht — und besetzt die Kennung des Admins")
+r.check("create_service does not accept a taken identifier", not _dienst_entstand,
+        "the service account is created — and occupies the admin's identifier")
 
-# Altbestand: in einer Datenbank von VOR dem Fix steht die Kollision schon. Dann darf
-# /auth/password wenigstens nicht das Geheimnis des anderen prüfen (Kette R4-12 + R4-10).
+# Legacy stock: in a database from BEFORE the fix the collision is already there. Then
+# /auth/password at least must not check the other person's secret (chain R4-12 + R4-10).
 auth_alt, app_alt = _app(csrf_enabled=False)
 opfer_alt = auth_alt.create_user("chef", password=PW_INHABER, email="chef@example.com")
-# Am Wächter vorbei = Altbestand: ein rohes INSERT ohne Topf (seit G12c weist auch der Store
-# selbst die Kollision ab — der Weg eines fremden Schreibers bleibt).
+# Past the guard = legacy stock: a raw INSERT without bucket (since G12c the store
+# itself rejects the collision — the path of a foreign writer remains).
 from tinysesam.store import jetzt as _jetzt  # noqa: E402
 eve_alt = auth_alt.store._exec("INSERT INTO users(username, display_name, created_at) VALUES (?,?,?)",
                                ("chef@example.com", "chef@example.com", _jetzt())).lastrowid
 auth_alt.set_password(eve_alt, PW_EVE)
-r.check("Vorbedingung: die Kennung des Angreifers löst auf das fremde Konto auf",
+r.check("precondition: the attacker's identifier resolves to the foreign account",
         (auth_alt.find_user("chef@example.com") or {}).get("id") == opfer_alt,
-        "ohne diese Zweideutigkeit prüft der Test nichts")
+        "without this ambiguity the test checks nothing")
 c_alt = TestClient(app_alt)
 c_alt.cookies.set(auth_alt.cfg.session_cookie,
                   auth_alt.store.create_session(eve_alt, 3600, True, "password"))
 fremd = c_alt.post("/auth/password", json={"current": PW_INHABER, "new": "Neues12345!abcd"})
-r.check("/auth/password nimmt das Passwort eines FREMDEN Kontos nicht an",
+r.check("/auth/password does not accept the password of a FOREIGN account",
         fremd.status_code == 403,
-        f"HTTP {fremd.status_code} — die Route ist ein Orakel für fremde Passwörter")
-r.check("...und das fremde Passwort gilt unverändert weiter",
+        f"HTTP {fremd.status_code} — the route is an oracle for foreign passwords")
+r.check("...and the foreign password remains valid unchanged",
         auth_alt._check_password("chef", PW_INHABER) is not None,
-        "das Geheimnis des Opfers wurde überschrieben")
+        "the victim's secret was overwritten")
 eigen = c_alt.post("/auth/password", json={"current": PW_EVE, "new": "Neues12345!abcd"})
-r.check("...prüft aber weiterhin das eigene", eigen.status_code == 200,
+r.check("...but still checks the own one", eigen.status_code == 200,
         f"HTTP {eigen.status_code}: {eigen.text[:120]}")
 
-# Und der Bestand selbst? Neue Kollisionen verhindert seit G12c die Datenbank (Trigger über die
-# Zähl-Töpfe, tests/test_kennungsraum.py); eine, die schon drinsteht (hier: rohes INSERT eines
-# fremden Schreibers), kann der Wächter nur MELDEN, und genau das muss er beim Start tun: Ohne
-# Zeile bleibt ein ausgesperrter Inhaber unerklärlich.
+# And the stock itself? New collisions have been prevented by the database since G12c (trigger over the
+# counting buckets, tests/test_kennungsraum.py); one that is already in there (here: raw INSERT of a
+# foreign writer) the guard can only REPORT, and exactly that it must do at startup: Without a
+# line, a locked-out owner stays inexplicable.
 
 
 def _start_log(db_pfad):
-    """Eine Instanz auf dieser Datenbank aufbauen und mitschreiben, was sie beim Start sagt."""
+    """Build an instance on this database and record what it says at startup."""
     puffer = io.StringIO()
     haken = logging.StreamHandler(puffer)
     seclog.addHandler(haken)
@@ -1964,84 +1964,84 @@ def _start_log(db_pfad):
     return puffer.getvalue()
 
 
-# Die Zeile des fremden Schreibers wieder ohne Topf, wie direkt nach dem rohen INSERT: Seitdem hat
-# ihn ein anderer Weg nachgetragen (seit G2 räumt jede erfolgreiche Anmeldung ab der Wasserlinie des
-# Kontos und sucht es dafür über `konto_mit_topf`). Ohne das misst die Probe nicht mehr, ob
-# `kennungs_kollisionen` selbst nachträgt.
+# The foreign writer's row without bucket again, as directly after the raw INSERT: Since then
+# another path has filled it in (since G2 every successful sign-in cleans up from the account's watermark
+# and looks it up via `konto_mit_topf`). Without this the probe no longer measures whether
+# `kennungs_kollisionen` fills it in itself.
 auth_alt.store._exec("UPDATE users SET topf_name = NULL, topf_mail = NULL WHERE id = ?", (eve_alt,))
-r.check("Vorbedingung: die Kreuz-Kollision steht wirklich in der Datenbank",
+r.check("precondition: the cross collision really is in the database",
         len(auth_alt.store.kennungs_kollisionen()) == 1,
-        f"{[dict(z) for z in auth_alt.store.kennungs_kollisionen()]} — dann misst der Test nichts")
+        f"{[dict(z) for z in auth_alt.store.kennungs_kollisionen()]} — then the test measures nothing")
 _text_k = _start_log(auth_alt.cfg.db_path)
-r.check("der Start meldet eine Kennungs-Kollision im Bestand", "Kennungs-Kollision" in _text_k,
-        f"stumm: {_text_k[:120]!r} — niemand erfährt, warum ein Konto nicht mehr hereinkommt")
-r.check("...und nennt beide beteiligten Konten",
+r.check("startup reports an identifier collision in the existing stock", "Kennungs-Kollision" in _text_k,
+        f"silent: {_text_k[:120]!r} — nobody learns why an account can no longer get in")
+r.check("...and names both accounts involved",
         f"user_id={eve_alt}" in _text_k and f"user_id={opfer_alt}" in _text_k,
-        f"ohne IDs ist die Meldung nicht abarbeitbar: {_text_k[:200]!r}")
-# B-regression-7: Bis zu dieser Runde riet dieselbe Meldung „Eine der beiden Kennungen ändern
-# (Admin-Panel oder CLI)" — und keins von beiden kann das. Die Admin-API kennt Anlegen, Sperren,
-# Rollen, Passwort und Keys, aber keine Route zum Umbenennen; das CLI legt überhaupt keine Konten
-# an. Der Betreiber, dem der Start gerade eine Kollision gemeldet hat, lief damit gegen zwei
-# Türen, die es nicht gibt. Gemessen wird deshalb nicht der Wortlaut, sondern dass die genannten
-# Wege existieren. Seit der Selbstbedienung (2026-09-25) gibt es `change_username` — die Meldung
-# nennt sie statt des `UPDATE users` von Hand, und der Weg löst die Kollision wirklich (unten).
-r.check("...und nennt Wege, die es wirklich gibt (change_username, store.set_email)",
+        f"without IDs the message cannot be worked through: {_text_k[:200]!r}")
+# B-regression-7: Until this round the same message advised "Change one of the two identifiers
+# (admin panel or CLI)" — and neither of them can do that. The admin API knows create, lock,
+# roles, password and keys, but no route for renaming; the CLI does not create accounts
+# at all. The operator to whom startup had just reported a collision thus ran into two
+# doors that do not exist. Therefore not the wording is measured, but that the named
+# paths exist. Since self-service (2026-09-25) there is `change_username` — the message
+# names it instead of the `UPDATE users` by hand, and the path really resolves the collision (below).
+r.check("...and names paths that really exist (change_username, store.set_email)",
         "store.set_email" in _text_k and hasattr(auth_alt.store, "set_email")
         and "auth.change_username" in _text_k and hasattr(auth_alt, "change_username"),
         f"{_text_k[:320]!r}")
-r.check("...und schickt niemanden mehr ins UPDATE von Hand",
+r.check("...and no longer sends anybody to the UPDATE by hand",
         "UPDATE users" not in _text_k, f"{_text_k[:320]!r}")
-# Seit G13 (2026-09-26) können Panel und CLI umbenennen — die Meldung nennt beide, und gemessen
-# wird wieder, dass es die genannten Wege gibt: die Route im Admin-Router und das Kommando im CLI.
-# Bis dahin hielt diese Prüfung das Gegenteil fest („weder im Admin-Panel noch im CLI"), weil es
-# damals stimmte.
+# Since G13 (2026-09-26) panel and CLI can rename — the message names both, and what is measured
+# again is that the named paths exist: the route in the admin router and the command in the CLI.
+# Until then this check recorded the opposite ("neither in the admin panel nor in the CLI"), because it
+# was true at the time.
 from tinysesam.admin import build_admin_router as _bar  # noqa: E402
 import tinysesam.__main__ as _cli_modul  # noqa: E402
 _routen_k = {getattr(_rt, "path", "") for _rt in _bar(auth_alt).routes}
-r.check("...und nennt Panel und CLI — beide Wege gibt es wirklich",
+r.check("...and names panel and CLI — both paths really exist",
         "/api/users/<id>/username" in _text_k and "/api/users/{uid}/username" in _routen_k
         and "tinysesam rename" in _text_k and callable(getattr(_cli_modul, "_rename", None))
         and "weder im Admin-Panel noch im CLI" not in _text_k,
-        f"{_text_k[:420]!r}, Routen: {sorted(p for p in _routen_k if 'username' in p)}")
-# Der genannte Weg wirkt: Umbenennen löst die Kollision auf, der Start schweigt danach.
+        f"{_text_k[:420]!r}, routes: {sorted(p for p in _routen_k if 'username' in p)}")
+# The named path works: renaming resolves the collision, startup is silent afterwards.
 auth_alt.change_username(eve_alt, "eve-umbenannt")
-r.check("...und auth.change_username löst die Kollision tatsächlich auf",
+r.check("...and auth.change_username really resolves the collision",
         not auth_alt.store.kennungs_kollisionen()
         and "Kennungs-Kollision" not in _start_log(auth_alt.cfg.db_path),
         f"{[dict(z) for z in auth_alt.store.kennungs_kollisionen()]}")
 
-# Integration der Runde: Die Meldung nennt `store.set_email(...)` — und genau diese Methode nimmt
-# seit B-umgehung-8 den Bestätigungs-Vermerk MIT (Vorgabe: unbestätigt). Wer der Meldung folgt, um
-# eine Kollision am Konto eines Admins aufzulösen, löscht damit nebenbei den Beleg seiner Adresse.
-# Das ist fail-closed und richtig — aber es darf den Betreiber nicht überraschen, und `verified=True`
-# ist der Weg, einen echten Beleg zu behalten. Gemessen wird beides zusammen: der Satz in der
-# Meldung UND das Verhalten dahinter. Fällt eines weg, wird die Prüfung rot.
-r.check("...und sagt, dass store.set_email den Bestätigungs-Vermerk mitnimmt",
+# Integration of the round: The message names `store.set_email(...)` — and exactly this method takes
+# the confirmation note ALONG since B-umgehung-8 (default: unconfirmed). Whoever follows the message to
+# resolve a collision on an admin's account thereby incidentally deletes the proof of his address.
+# That is fail-closed and right — but it must not surprise the operator, and `verified=True`
+# is the way to keep a real proof. Both are measured together: the sentence in the
+# message AND the behavior behind it. If either goes away, the check turns red.
+r.check("...and says that store.set_email takes the confirmation note along",
         "email_verified=0" in _text_k and "verified=True" in _text_k,
-        f"{_text_k[:400]!r} — der Betreiber folgt der Meldung und verliert stillschweigend den Beleg")
+        f"{_text_k[:400]!r} — the operator follows the message and silently loses the proof")
 auth_alt.store.set_email_verified(opfer_alt, True)
 auth_alt.store.set_email(opfer_alt, "chef-neu@example.com")
-r.check("...und so ist es auch: der genannte Weg legt die neue Adresse unbestätigt ab",
+r.check("...and so it is: the named path stores the new address unconfirmed",
         auth_alt.store.get_user(opfer_alt)["email_verified"] == 0,
-        "set_email lässt den Beleg der ALTEN Adresse stehen — dann ist die Meldung falsch, "
-        "und ein Adresswechsel ist wieder ein Bootstrap-Weg (B-umgehung-8)")
+        "set_email leaves the proof of the OLD address in place — then the message is wrong, "
+        "and an address change is a bootstrap path again (B-umgehung-8)")
 auth_alt.store.set_email(opfer_alt, "chef-belegt@example.com", verified=True)
-r.check("...und verified=True behält ihn, wie die Meldung verspricht",
+r.check("...and verified=True keeps it, as the message promises",
         auth_alt.store.get_user(opfer_alt)["email_verified"] == 1,
-        "verified=True trägt den Beleg nicht — dann nennt die Meldung einen Weg, den es nicht gibt")
+        "verified=True does not carry the proof — then the message names a path that does not exist")
 
-# Gegenprobe, sonst wäre die Meldung Rauschen: In auth_n2 trägt EIN Konto denselben Wert in
-# beiden eigenen Spalten (chef / chef@example.com) — das ist der vorgesehene Weg, keine Kollision.
-r.check("eine Datenbank ohne Kreuz-Kollision schweigt",
+# Counter-check, otherwise the message would be noise: In auth_n2 ONE account carries the same value in
+# both own columns (chef / chef@example.com) — that is the intended path, no collision.
+r.check("a database without cross collision stays silent",
         "Kennungs-Kollision" not in _start_log(auth_n2.cfg.db_path),
-        "dieselbe Zeichenfolge in beiden Spalten DESSELBEN Kontos wird als Kollision gemeldet")
-# ── Ein GET entfernt den bestätigten zweiten Faktor (B2-1, Audit-Runde 3) ────
-# Angriff: Das Opfer ist voll angemeldet (Passwort + TOTP) und klickt auf einer fremden Seite
-# einen Link auf /auth/totp/setup. Die Seite rief `totp_begin()` unbedingt und schrieb damit ein
-# neues, unbestätigtes Geheimnis über das alte: TOTP fiel auf „unbestätigt", die zehn
-# Recovery-Codes blieben verwaist liegen, es entstand keine Audit-Zeile — und danach genügte das
-# Passwort allein. CSRF schützt hier nichts: Ein GET trägt kein Token, und `SameSite=Lax`
-# (Vorgabe) schickt das Sitzungscookie bei einer Top-Level-Navigation mit.
+        "the same character string in both columns of the SAME account is reported as a collision")
+# ── A GET removes the confirmed second factor (B2-1, audit round 3) ────
+# Attack: The victim is fully signed in (password + TOTP) and clicks a link to /auth/totp/setup
+# on a foreign page. The page called `totp_begin()` unconditionally and thereby wrote a
+# new, unconfirmed secret over the old one: TOTP fell back to "unconfirmed", the ten
+# recovery codes stayed orphaned, no audit line was created — and afterwards the
+# password alone sufficed. CSRF protects nothing here: A GET carries no token, and `SameSite=Lax`
+# (default) sends the session cookie along with a top-level navigation.
 import pyotp  # noqa: E402
 import time
 
@@ -2060,143 +2060,143 @@ c_b21.post("/auth/totp", data={"code": pyotp.TOTP(geheim_b21).now(), "next": "/"
            follow_redirects=False)
 sitzung_b21 = auth_b21.store.get_session(c_b21.cookies.get(auth_b21.cfg.session_cookie))
 
-# Vorbedingung: Ohne diese drei Zeilen misst der Angriff unten nichts. Sie halten fest, dass
-# hier wirklich ein vollwertiger zweiter Faktor steht, der verloren gehen KÖNNTE.
-r.check("Vorbedingung: der zweite Faktor ist bestätigt",
-        auth_b21.store.has_confirmed_totp(uid_b21), "ohne TOTP prüft der Angriff nichts")
-r.check("Vorbedingung: zehn Recovery-Codes liegen dazu",
+# Precondition: Without these three lines the attack below measures nothing. They establish that
+# a fully valid second factor really stands here that COULD be lost.
+r.check("precondition: the second factor is confirmed",
+        auth_b21.store.has_confirmed_totp(uid_b21), "without TOTP the attack checks nothing")
+r.check("precondition: ten recovery codes are present",
         auth_b21.store.count_recovery_codes(uid_b21) == len(codes_b21) == 10,
         f"{auth_b21.store.count_recovery_codes(uid_b21)}")
-r.check("Vorbedingung: die Sitzung ist vollwertig (CSRF an, SameSite=Lax)",
+r.check("precondition: the session is fully valid (CSRF on, SameSite=Lax)",
         bool(sitzung_b21 and sitzung_b21["mfa_ok"]) and auth_b21.cfg.csrf_enabled
         and auth_b21.cfg.cookie_samesite == "lax",
         f"mfa_ok={sitzung_b21 and sitzung_b21['mfa_ok']} csrf={auth_b21.cfg.csrf_enabled}")
 
 ant_b21 = c_b21.get("/auth/totp/setup", headers={"Sec-Fetch-Site": "cross-site",
                                                  "Sec-Fetch-Mode": "navigate"})
-r.check("ein GET auf die Einrichtungsseite nimmt kein bestätigtes TOTP zurück",
+r.check("a GET on the setup page does not revoke a confirmed TOTP",
         ant_b21.status_code == 409,
-        f"HTTP {ant_b21.status_code} — ein Klick auf einen fremden Link genügt sonst")
-r.check("...der zweite Faktor steht danach noch", auth_b21.store.has_confirmed_totp(uid_b21),
-        "TOTP ist auf unbestätigt zurückgefallen, das Passwort allein reicht wieder")
-r.check("...und die Recovery-Codes gehören weiter zu einem gültigen Faktor",
+        f"HTTP {ant_b21.status_code} — otherwise a click on a foreign link suffices")
+r.check("...the second factor is still there afterwards", auth_b21.store.has_confirmed_totp(uid_b21),
+        "TOTP fell back to unconfirmed, the password alone suffices again")
+r.check("...and the recovery codes still belong to a valid factor",
         auth_b21.store.count_recovery_codes(uid_b21) == 10
         and auth_b21.store.has_confirmed_totp(uid_b21)
         and auth_b21._verify_recovery_code(uid_b21, codes_b21[0]),
-        f"{auth_b21.store.count_recovery_codes(uid_b21)} Codes ohne bestätigtes TOTP = verwaist")
+        f"{auth_b21.store.count_recovery_codes(uid_b21)} codes without confirmed TOTP = orphaned")
 
-# Nicht nur die Route: Der Wächter sitzt im Manager, damit ihn keine eigene Oberfläche umgeht.
+# Not only the route: The guard sits in the manager so that no own interface bypasses it.
 try:
     auth_b21.totp_begin(uid_b21)
     geworfen = ""
 except StateError as exc:
     geworfen = str(exc)
-r.check("auch totp_begin() selbst verweigert das Überschreiben", bool(geworfen),
-        "die Methode schreibt weiter durch — jede eigene Oberfläche reisst dieselbe Lücke auf")
-r.check("der abgewehrte Versuch steht im Audit-Log",
+r.check("totp_begin() itself also refuses the overwrite", bool(geworfen),
+        "the method still writes through — every own interface opens the same gap")
+r.check("the repelled attempt appears in the audit log",
         any(z["event"] == "totp_setup_denied" for z in auth_b21.store.recent_audit(50)),
-        "der Versuch hinterlässt keine Spur")
+        "the attempt leaves no trace")
 
-# ── Dieselbe Tür, zweite Hälfte: der GET erzeugte weiter Geheimnisse ─────────
-# Der Fundtext zu B2-1 verlangt ZWEI Dinge: bei bestätigtem TOTP verweigern **und** die
-# Einrichtung nur auf ausdrückliche Anforderung (POST mit CSRF-Token) beginnen. Zunächst war
-# nur das Erste umgesetzt: Für ein Konto OHNE bestätigtes TOTP erzeugte jeder GET auf
-# /auth/totp/setup ein frisches Geheimnis und ersetzte damit einen laufenden
-# Einrichtungsversuch. Kein Faktor-Verlust — aber ein fremder Link entwertete das eben
-# gescannte QR-Bild (die Bestätigung schlug danach unerklärlich fehl) und stiess
-# Audit-Zeilen von aussen an.
+# ── The same door, second half: the GET still generated secrets ─────────
+# The finding text on B2-1 demands TWO things: refuse with confirmed TOTP **and** begin the
+# setup only on explicit request (POST with CSRF token). At first only the
+# first was implemented: For an account WITHOUT confirmed TOTP, every GET on
+# /auth/totp/setup generated a fresh secret and thereby replaced a running
+# setup attempt. No factor loss — but a foreign link invalidated the QR image just
+# scanned (the confirmation then failed inexplicably) and triggered audit lines
+# from outside.
 auth_b7, app_b7 = _app()
 uid_b7 = auth_b7.create_user("paul", password="geheim12345")
 c_b7 = TestClient(app_b7, base_url="https://app.example.com")
 c_b7.cookies.set(auth_b7.cfg.session_cookie,
                  auth_b7.store.create_session(uid_b7, 3600, True, "password"))
-r.check("Vorbedingung: CSRF ist an und das Sitzungscookie ist SameSite=Lax",
+r.check("precondition: CSRF is on and the session cookie is SameSite=Lax",
         auth_b7.cfg.csrf_enabled and auth_b7.cfg.cookie_samesite == "lax",
-        "ohne diese Lage trägt ein fremder Link das Cookie nicht mit — der Test misst nichts")
+        "without this situation a foreign link does not carry the cookie along — the test measures nothing")
 seite_b7 = c_b7.get("/auth/totp/setup")
-r.check("ein GET auf die Einrichtungsseite erzeugt kein Geheimnis",
+r.check("a GET on the setup page generates no secret",
         seite_b7.status_code == 200 and auth_b7.store.get_totp(uid_b7) is None,
-        f"HTTP {seite_b7.status_code}, Geheimnis={auth_b7.store.get_totp(uid_b7) is not None} "
-        "— ein GET, der schreibt, ist von aussen anstossbar")
-r.check("...die Seite zeigt stattdessen den Knopf, der sie ausdrücklich startet",
-        "/auth/totp/setup/start" in seite_b7.text, "ohne Knopf ist die Einrichtung zugemauert")
-r.check("...und hinterlässt keine Audit-Zeile",
+        f"HTTP {seite_b7.status_code}, secret={auth_b7.store.get_totp(uid_b7) is not None} "
+        "— a GET that writes can be triggered from outside")
+r.check("...the page shows instead the button that starts it explicitly",
+        "/auth/totp/setup/start" in seite_b7.text, "without the button the setup is walled off")
+r.check("...and leaves no audit line",
         not any(z["event"] == "totp_setup_start" for z in auth_b7.store.recent_audit(20)),
-        "Audit-Rauschen, das jeder von aussen erzeugen kann")
+        "audit noise that anybody can produce from outside")
 csrf_b7 = c_b7.cookies.get(auth_b7.cfg.csrf_cookie)
 start_b7 = c_b7.post("/auth/totp/setup/start", data={"_csrf": csrf_b7})
 zeile_b7 = auth_b7.store.get_totp(uid_b7)
-r.check("der POST mit CSRF-Token richtet ein", start_b7.status_code == 200 and zeile_b7 is not None,
+r.check("the POST with CSRF token sets up", start_b7.status_code == 200 and zeile_b7 is not None,
         f"HTTP {start_b7.status_code}: {start_b7.text[:120]}")
-# B2-1 hat auch die Audit-Zeile versprochen — bis 0.18.x war die TOTP-Einrichtung unsichtbar.
-r.check("...und die Einrichtung steht im Audit-Log",
+# B2-1 also promised the audit line — until 0.18.x the TOTP setup was invisible.
+r.check("...and the setup appears in the audit log",
         any(z["event"] == "totp_setup_start" for z in auth_b7.store.recent_audit(20)),
-        "die Einrichtung eines zweiten Faktors hinterlässt keine Spur")
+        "the setup of a second factor leaves no trace")
 vorher_b7 = zeile_b7["secret"]
-fremd_b7 = c_b7.post("/auth/totp/setup/start", data={})           # kein Token = fremde Seite
-r.check("ein POST ohne CSRF-Token ersetzt das laufende Geheimnis nicht",
+fremd_b7 = c_b7.post("/auth/totp/setup/start", data={})           # no token = foreign page
+r.check("a POST without CSRF token does not replace the running secret",
         fremd_b7.status_code == 403 and auth_b7.store.get_totp(uid_b7)["secret"] == vorher_b7,
-        f"HTTP {fremd_b7.status_code} — das gescannte QR-Bild ist von aussen entwertbar")
+        f"HTTP {fremd_b7.status_code} — the scanned QR image can be invalidated from outside")
 quer_b7 = c_b7.get("/auth/totp/setup", headers={"Sec-Fetch-Site": "cross-site",
                                                 "Sec-Fetch-Mode": "navigate"})
-r.check("...und ein Klick auf einen fremden Link genauso wenig",
+r.check("...and a click on a foreign link just as little",
         quer_b7.status_code == 200 and auth_b7.store.get_totp(uid_b7)["secret"] == vorher_b7,
-        "der GET hat das Geheimnis ersetzt")
-r.check("...die Bestätigung mit dem Code aus DIESEM Geheimnis schaltet scharf",
+        "the GET replaced the secret")
+r.check("...the confirmation with the code from THIS secret arms it",
         auth_b7.totp_confirm(uid_b7, pyotp.TOTP(vorher_b7).at(time.time() - 30))
         and auth_b7.store.has_confirmed_totp(uid_b7),
-        "der legitime Weg ist unterbrochen")
+        "the legitimate path is interrupted")
 
-# Der legitime Weg muss bleiben: einrichten, wo noch nichts ist …
+# The legitimate path must remain: set up where nothing exists yet …
 auth_ok, app_ok = _app(csrf_enabled=False)
 uid_ok = auth_ok.create_user("tom", password="geheim12345")
 c_ok = TestClient(app_ok, follow_redirects=False)
 c_ok.cookies.set(auth_ok.cfg.session_cookie,
                  auth_ok.store.create_session(uid_ok, 3600, True, "password"))
-r.check("ohne eingerichtetes TOTP ist die Einrichtungsseite weiter erreichbar",
-        c_ok.get("/auth/totp/setup").status_code == 200, "die Einrichtung ist zugemauert")
-r.check("...und der Start-Knopf richtet ein",
+r.check("without set-up TOTP the setup page is still reachable",
+        c_ok.get("/auth/totp/setup").status_code == 200, "the setup is walled off")
+r.check("...and the start button sets up",
         c_ok.post("/auth/totp/setup/start").status_code == 200
-        and auth_ok.store.get_totp(uid_ok) is not None, "die Einrichtung ist zugemauert")
+        and auth_ok.store.get_totp(uid_ok) is not None, "the setup is walled off")
 neu_ok = auth_ok.store.get_totp(uid_ok)["secret"]
-r.check("...und die Bestätigung schaltet den Faktor scharf",
+r.check("...and the confirmation arms the factor",
         auth_ok.totp_confirm(uid_ok, pyotp.TOTP(neu_ok).at(time.time() - 30))
         and auth_ok.store.has_confirmed_totp(uid_ok))
 
-# … und nach dem regulären Abschalten wieder neu einrichten (sonst wäre der Fix eine Sackgasse).
+# … and set up again after the regular switch-off (otherwise the fix would be a dead end).
 auth_ok.totp_disable(uid_ok)
-r.check("nach dem regulären Abschalten ist die Einrichtung wieder offen",
+r.check("after the regular switch-off the setup is open again",
         c_ok.get("/auth/totp/setup").status_code == 200
         and c_ok.post("/auth/totp/setup/start").status_code == 200,
-        "der Wechsel des Authenticators wäre unmöglich")
+        "changing the authenticator would be impossible")
 
-# Verwaiste Recovery-Codes (Geheimnis weg, Codes noch da) räumt die Einrichtung ab.
+# Orphaned recovery codes (secret gone, codes still there) are cleaned up by the setup.
 auth_v, _ = _app()
 uid_v = auth_v.create_user("vera", password="geheim12345")
 geheim_v = auth_v.totp_begin(uid_v)["secret"]
 auth_v.totp_confirm(uid_v, pyotp.TOTP(geheim_v).at(time.time() - 30))
 auth_v.generate_recovery_codes(uid_v)
-auth_v.store.delete_totp(uid_v)          # nur das Geheimnis weg — die Codes bleiben zurück
+auth_v.store.delete_totp(uid_v)          # only the secret gone — the codes remain
 auth_v.totp_begin(uid_v)
-r.check("eine neue Einrichtung lässt keine verwaisten Recovery-Codes stehen",
+r.check("a new setup leaves no orphaned recovery codes",
         auth_v.store.count_recovery_codes(uid_v) == 0,
-        f"{auth_v.store.count_recovery_codes(uid_v)} Codes gelten weiter, "
-        "obwohl sie zu keinem Authenticator mehr passen")
-# ── Ein Rückwärtssprung der Uhr belebte Abgelaufenes (B6-9) ──────────────────
-# NTP-Korrektur, ein Pi ohne Pufferbatterie, ein VM-Snapshot: Die Wanduhr springt zurück, und
-# jede Frist in der Datenbank wurde neu verhandelt — abgelaufene Sitzungen galten wieder, ein
-# verfallener Magic-Link liess sich einlösen, ein alter Step-up war wieder „frisch".
+        f"{auth_v.store.count_recovery_codes(uid_v)} codes remain valid, "
+        "although they no longer fit any authenticator")
+# ── A backward jump of the clock revived expired things (B6-9) ──────────────────
+# NTP correction, a Pi without a backup battery, a VM snapshot: The wall clock jumps back, and
+# every deadline in the database was renegotiated — expired sessions counted again, an
+# expired magic link could be redeemed, an old step-up was "fresh" again.
 from tinysesam import store as _store_mod  # noqa: E402
 
-# Die Uhr für sich, mit gestellter Wand- und Monotonzeit.
+# The clock on its own, with set wall and monotonic time.
 _w, _m = [1000.0], [0.0]
 _u = _store_mod._Uhr(wand=lambda: _w[0], mono=lambda: _m[0])
 _folge = [_u.jetzt()]
-_w[0], _m[0] = 400.0, 10.0          # Sprung 600 s zurück, 10 s sind wirklich vergangen
+_w[0], _m[0] = 400.0, 10.0          # jump 600 s back, 10 s really elapsed
 _folge.append(_u.jetzt())
-_w[0], _m[0] = 2000.0, 20.0         # die Wanduhr springt nach vorn (NTP nach dem Boot)
+_w[0], _m[0] = 2000.0, 20.0         # the wall clock jumps forward (NTP after boot)
 _folge.append(_u.jetzt())
-r.check("die Uhr zählt nach einem Rückwärtssprung monoton weiter und folgt nach vorn",
+r.check("after a backward jump the clock keeps counting monotonically and follows forward",
         _folge == [1000, 1010, 2000], f"{_folge}")
 
 auth_u, _ = _app()
@@ -2204,22 +2204,22 @@ uid_u = auth_u.create_user("uhrzeit", password="geheim12345")
 tok_u = auth_u.store.create_session(uid_u, 3600, True, "password")
 roh_magic = auth_u.create_magic_token("login", user_id=uid_u, ttl_min=10)
 jetzt_u = _store_mod.jetzt()
-# Beides ist vor 60 s abgelaufen …
+# Both expired 60 s ago …
 auth_u.store._exec("UPDATE session SET expires_at=? WHERE token_hash=?",
                    (jetzt_u - 60, auth_u.store.session_hash(tok_u)))
 auth_u.store._exec("UPDATE magic_token SET expires_at=?", (jetzt_u - 60,))
-# … und dann springt die Wanduhr eine Stunde zurück.
+# … and then the wall clock jumps back an hour.
 _echt = _store_mod._UHR.wand
 _store_mod._UHR.wand = lambda: _echt() - 3600
 try:
-    r.check("eine abgelaufene Sitzung bleibt nach einem Rückwärtssprung abgelaufen",
-            auth_u.store.get_session(tok_u) is None, "die Sitzung lebt wieder auf")
-    r.check("ein verfallener Magic-Link bleibt verfallen",
-            auth_u.redeem_magic(roh_magic, "login") is None, "der Link lässt sich wieder einlösen")
+    r.check("an expired session stays expired after a backward jump",
+            auth_u.store.get_session(tok_u) is None, "the session revives")
+    r.check("an expired magic link stays expired",
+            auth_u.redeem_magic(roh_magic, "login") is None, "the link can be redeemed again")
 finally:
     _store_mod._UHR.wand = _echt
 
-# Über einen Neustart: Die Datenbank trägt den Stand. Frische Uhr, Wanduhr eine Stunde zurück.
+# Across a restart: The database carries the state. Fresh clock, wall clock back an hour.
 auth_n, _ = _app()
 uid_n = auth_n.create_user("neustart", password="geheim12345")
 tok_n = auth_n.store.create_session(uid_n, 3600, True, "password")
@@ -2234,27 +2234,27 @@ _uhr_h = logging.StreamHandler(_uhr_log)
 logging.getLogger("tinysesam").addHandler(_uhr_h)
 try:
     st_n = _store_mod.Store(auth_n.cfg.db_path)
-    r.check("nach einem Neustart mit zurückgestellter Uhr bleibt die Sitzung abgelaufen",
-            st_n.get_session(tok_n) is None, "der Neustart hat die Frist vergessen")
-    r.check("…und der Rückstand der Systemuhr steht im Log",
+    r.check("after a restart with the clock set back, the session stays expired",
+            st_n.get_session(tok_n) is None, "the restart forgot the deadline")
+    r.check("…and the lag of the system clock appears in the log",
             "Systemuhr" in _uhr_log.getvalue(), _uhr_log.getvalue()[:200])
     st_n.db.close()
 finally:
     _store_mod._UHR = _alte_uhr
     logging.getLogger("tinysesam").removeHandler(_uhr_h)
 
-# Über einen Neustart bis zum zuletzt GESICHERTEN Stand, nicht nur bis zum letzten Ereignis
-# (A-B6-9-neustart): Ein Link und eine Sitzung, zwei Stunden vor dem Neustart abgelaufen, ohne
-# dass danach etwas angelegt wurde. Der Pi bootet mit einem Datum ein Jahr zurück. Vorher kannte
-# `Store()` nur MAX(created_at/ts) und hob die Uhr auf den Zeitpunkt der Anlage — beide galten
-# wieder für ihre volle Restfrist.
+# Across a restart up to the last SAVED state, not only up to the last event
+# (A-B6-9-neustart): A link and a session, expired two hours before the restart, without
+# anything having been created afterwards. The Pi boots with a date a year back. Before, `Store()`
+# knew only MAX(created_at/ts) and raised the clock to the time of creation — both counted
+# again for their full remaining period.
 _T = 1_800_000_000.0
 _wand_n = [_T]
 
 
 def _neustart_nach_2h(sichern):
-    """Legt Link + Sitzung bei T an, lässt 2 h vergehen, `sichern(store)` sichert (oder nicht),
-    startet mit einem Jahr zurückgestellter Uhr neu. → (link gilt?, sitzung gilt?, uhr_stand)"""
+    """Creates link + session at T, lets 2 h pass, `sichern(store)` saves (or not),
+    restarts with the clock set back a year. → (link valid?, session valid?, uhr_stand)"""
     _store_mod._UHR = _store_mod._Uhr(wand=lambda: _wand_n[0])
     _wand_n[0] = _T
     a = TinySesam(TinySesamConfig(db_path=str(Path(tempfile.mkdtemp()) / "n.db"),
@@ -2268,8 +2268,8 @@ def _neustart_nach_2h(sichern):
     _store_mod._UHR = _store_mod._Uhr(wand=lambda: _T - 365 * 86400)
     a.store = _store_mod.Store(a.cfg.db_path)
     gilt = (a.peek_magic(roh, purpose="login") is not None, a.store.get_session(tok) is not None)
-    # Ein Schreiber, dessen Uhr NICHT gehoben ist (ein zweiter Prozess auf derselben Datei, vor
-    # der Sicherung gestartet), darf den gesicherten Stand nicht nach unten überschreiben.
+    # A writer whose clock is NOT raised (a second process on the same file, started before
+    # the backup) must not overwrite the saved state downwards.
     _store_mod._UHR = _store_mod._Uhr(wand=lambda: _T - 365 * 86400)
     a.store.UHR_SICHERN_SEK = 0
     a.create_user("nach-dem-boot")
@@ -2279,12 +2279,12 @@ def _neustart_nach_2h(sichern):
 
 
 def _per_healthcheck(st):
-    st._geschrieben = None                   # die Probe ist fällig, wie alle 30 s im Container
+    st._geschrieben = None                   # the probe is due, like every 30 s in the container
     st.schreibprobe()
 
 
 def _per_schreibzugriff(st):
-    st.UHR_SICHERN_SEK = 0                   # „eine Minute ist vergangen"
+    st.UHR_SICHERN_SEK = 0                   # "a minute has passed"
     st.set_setting("irgendwas", "1")
 
 
@@ -2295,20 +2295,20 @@ try:
 finally:
     _store_mod._UHR = _alte_uhr
     logging.getLogger("tinysesam").removeHandler(_uhr_h)
-r.check("nach einem Neustart bleibt, was NACH dem letzten Ereignis ablief, abgelaufen "
-        "(Stand aus der Schreibprobe des Healthchecks)",
-        _hc[:2] == (False, False), f"Link gilt: {_hc[0]}, Sitzung gilt: {_hc[1]}")
-r.check("…ebenso mit dem Stand, den ein gewöhnlicher Schreibzugriff mitsichert",
-        _sz[:2] == (False, False), f"Link gilt: {_sz[0]}, Sitzung gilt: {_sz[1]}")
-r.check("ein Schreiber mit ungehobener Uhr setzt den gesicherten Stand nicht zurück",
+r.check("after a restart, what expired AFTER the last event stays expired "
+        "(state from the write probe of the healthcheck)",
+        _hc[:2] == (False, False), f"link valid: {_hc[0]}, session valid: {_hc[1]}")
+r.check("…likewise with the state that an ordinary write access saves along",
+        _sz[:2] == (False, False), f"link valid: {_sz[0]}, session valid: {_sz[1]}")
+r.check("a writer with a non-raised clock does not reset the saved state",
         _hc[2] >= _T + 7200 and _sz[2] >= _T + 7200, f"uhr_stand={_hc[2]}/{_sz[2]}")
 
-# `time.time` wird nicht beim Import gebunden (A-B6-9-zeitpatch): Eine einbettende App, die in
-# ihren Tests die Zeit vorstellt, stellt damit auch TinySesams Uhr vor. Gebunden sah TinySesam den
-# Patch nie — Sitzungen und Tokens liefen im Test der App nie ab.
+# `time.time` is not bound at import (A-B6-9-zeitpatch): An embedding app that sets the time forward
+# in its tests thereby also sets TinySesam's clock forward. Bound, TinySesam never saw the
+# patch — sessions and tokens never expired in the app's test.
 from unittest import mock  # noqa: E402
 import time as _time  # noqa: E402
-_store_mod._UHR = _store_mod._Uhr()          # frische Uhr: der Sprung soll im Prozess nicht bleiben
+_store_mod._UHR = _store_mod._Uhr()          # fresh clock: the jump should not remain in the process
 try:
     auth_p, _ = _app()
     uid_p = auth_p.create_user("zeitpatch", password="geheim12345")
@@ -2318,62 +2318,62 @@ try:
         _gilt_p = auth_p.store.get_session(tok_p) is not None
 finally:
     _store_mod._UHR = _alte_uhr
-r.check("mock.patch('time.time') nach vorn lässt eine Sitzung ablaufen",
-        not _gilt_p, "TinySesam sieht die gepatchte Zeit nicht (beim Import gebunden)")
+r.check("mock.patch('time.time') forward lets a session expire",
+        not _gilt_p, "TinySesam does not see the patched time (bound at import)")
 
-# freezegun ersetzt auch `time.monotonic` — durch die eingefrorene Zeit auf der EPOCH-Skala
-# (`calendar.timegm`, ≈1,8e9), nicht durch die Betriebszeit (T-13-Angriff, Hinweis zu B6-9). Die
-# Uhr schrieb diesen Schritt als vergangene Zeit fort und sprang um rund 57 Jahre nach vorn; beim
-# Verlassen von freeze_time fiel sie zurück, und `uhr_stand` hob jede spätere Öffnung der Datenbank
-# dauerhaft ins Jahr 2083. Nachgestellt mit gestellten Quellen, genau in freezegun-Werten.
-_T21, _BETRIEB = 1_790_000_000.0, 200_000.0     # Wanduhr / echte monotone Zeit (Betriebszeit)
+# freezegun also replaces `time.monotonic` — by the frozen time on the EPOCH scale
+# (`calendar.timegm`, ≈1.8e9), not by the uptime (T-13 attack, note on B6-9). The
+# clock carried this step forward as elapsed time and jumped about 57 years ahead; on
+# leaving freeze_time it fell back, and `uhr_stand` raised every later opening of the database
+# permanently into the year 2083. Reproduced with set sources, exactly in freezegun values.
+_T21, _BETRIEB = 1_790_000_000.0, 200_000.0     # wall clock / real monotonic time (uptime)
 _w21, _m21 = [_T21], [_BETRIEB]
 _u21 = _store_mod._Uhr(wand=lambda: _w21[0], mono=lambda: _m21[0])
 _f21 = [_u21.jetzt()]
-_w21[0] = _m21[0] = _T21 + 3600                  # with freeze_time(+1 h): beide Quellen eingefroren
+_w21[0] = _m21[0] = _T21 + 3600                  # with freeze_time(+1 h): both sources frozen
 _f21.append(_u21.jetzt())
 _w21[0] = _m21[0] = _T21 + 3660                  # freezer.tick(60)
 _f21.append(_u21.jetzt())
-_w21[0], _m21[0] = _T21 + 5, _BETRIEB + 5        # freeze_time verlassen: echte Quellen wieder da
+_w21[0], _m21[0] = _T21 + 5, _BETRIEB + 5        # left freeze_time: real sources are back
 _f21.append(_u21.jetzt())
-r.check("freezegun (monotonic auf der Epoch-Skala) stellt die Uhr genau vor und nicht um Jahrzehnte",
+r.check("freezegun (monotonic on the epoch scale) sets the clock forward exactly and not by decades",
         _f21[1:3] == [int(_T21) + 3600, int(_T21) + 3660],
-        f"{[int(x - _T21) for x in _f21]} s ab Start — erwartet [0, 3600, 3660, …]")
-r.check("…und nach dem Verlassen läuft sie nicht rückwärts",
+        f"{[int(x - _T21) for x in _f21]} s from start — expected [0, 3600, 3660, …]")
+r.check("…and after leaving it does not run backwards",
         _f21[3] >= _f21[2], f"{[int(x - _T21) for x in _f21]} s ab Start")
-# (Mutationsprobe: die Plausibilitätsprüfung des Monotonie-Schritts in `_Uhr.jetzt` entfernen →
-# beide rot; nur die Obergrenze prüfen, einen negativen Schritt also fortschreiben → die zweite rot.)
+# (Mutation probe: remove the plausibility check of the monotonic step in `_Uhr.jetzt` →
+# both red; check only the upper limit, i.e. carry a negative step forward → the second red.)
 
-# Die Gegenprobe zur Plausibilitätsgrenze: Der Schutz aus B6-9 hält auch nach einer langen
-# Pause. Monate ohne Anfrage, und währenddessen springt die Wanduhr eine Stunde zurück — die
-# Uhr schreibt die echte vergangene Zeit fort, statt der zurückgesprungenen Wanduhr zu folgen.
+# The counter-check to the plausibility limit: The protection from B6-9 also holds after a long
+# pause. Months without a request, and meanwhile the wall clock jumps back an hour — the
+# clock carries the real elapsed time forward instead of following the wall clock that jumped back.
 _w22, _m22 = [_T21], [_BETRIEB]
 _u22 = _store_mod._Uhr(wand=lambda: _w22[0], mono=lambda: _m22[0])
 _u22.jetzt()
 _pause = 200 * 86400
 _w22[0], _m22[0] = _T21 + _pause - 3600, _BETRIEB + _pause
-r.check("nach 200 Tagen Pause schützt die Uhr weiter vor einem Rückwärtssprung",
-        _u22.jetzt() == int(_T21) + _pause, f"{_u22.jetzt() - int(_T21) - _pause} s daneben")
-# (Mutationsprobe: die Grenze auf einen Tag setzen → rot.)
+r.check("after a 200-day pause the clock still protects against a backward jump",
+        _u22.jetzt() == int(_T21) + _pause, f"{_u22.jetzt() - int(_T21) - _pause} s off")
+# (Mutation probe: set the limit to one day → red.)
 
-# Dieselbe Klasse im Store (zweite Angriffsrunde, konfig): `_uhr_gesichert` und `_geschrieben`
-# führen eigene monotone Stempel. Nach einem Schreibzugriff unter freezegun standen sie auf der
-# Epoch-Skala (≈1,8e9); danach war der Abstand zur echten monotonen Zeit negativ und damit immer
-# „kürzer als die Frist“ — `uhr_stand` wurde im ganzen Prozess nicht mehr gesichert (rechnerisch
-# 57 Jahre lang), und die Schreibprobe von /healthz prüfte nur noch die Verbindung.
+# The same class in the store (second attack round, konfig): `_uhr_gesichert` and `_geschrieben`
+# keep their own monotonic stamps. After a write under freezegun they stood on the
+# epoch scale (≈1.8e9); afterwards the distance to the real monotonic time was negative and thus always
+# "shorter than the period" — `uhr_stand` was no longer saved in the whole process (arithmetically
+# for 57 years), and the write probe of /healthz checked only the connection.
 _st23 = _store_mod.Store(str(Path(tempfile.mkdtemp()) / "uhr23.db"))
 _st23.set_setting("x", "0")
 
 
 def _unter_freezegun_schreiben():
-    # freezegun liefert `time.monotonic` auf der Epoch-Skala; nachgestellt ohne die Abhängigkeit.
+    # freezegun supplies `time.monotonic` on the epoch scale; reproduced without the dependency.
     with mock.patch("time.monotonic", _time.time):
         _st23.set_setting("x", "fg")
 
 
 def _uhr_stand_zurueck():
-    # So, als wäre `uhr_stand` vor zwei Minuten zuletzt gesichert worden (ohne `_exec`, damit
-    # die Stempel stehen bleiben, wie der Schreibzugriff unter freezegun sie hinterliess).
+    # As if `uhr_stand` had last been saved two minutes ago (without `_exec`, so that
+    # the stamps stay as the write under freezegun left them).
     _st23.db.execute("UPDATE setting SET value=? WHERE key=?",
                      (str(_store_mod.jetzt() - 120), _st23.UHR_STAND))
     _st23.db.commit()
@@ -2383,25 +2383,25 @@ def _uhr_stand_zurueck():
 _unter_freezegun_schreiben()
 _alt23 = _uhr_stand_zurueck()
 _st23.schreibprobe()
-r.check("nach einem Schreibzugriff unter freezegun schreibt die Schreibprobe von /healthz wieder",
+r.check("after a write access under freezegun the write probe of /healthz writes again",
         int(_st23.get_setting(_st23.UHR_STAND)) > _alt23,
-        f"uhr_stand blieb {int(_st23.get_setting(_st23.UHR_STAND)) - _store_mod.jetzt()} s zurück — "
-        "nur die Verbindung geprüft")
+        f"uhr_stand stayed {int(_st23.get_setting(_st23.UHR_STAND)) - _store_mod.jetzt()} s behind — "
+        "only the connection checked")
 _unter_freezegun_schreiben()
 _alt23 = _uhr_stand_zurueck()
 _st23.set_setting("x", "1")
-r.check("…und ein gewöhnlicher Schreibzugriff sichert uhr_stand wieder mit",
+r.check("…and an ordinary write access saves uhr_stand along again",
         int(_st23.get_setting(_st23.UHR_STAND)) > _alt23,
-        f"uhr_stand blieb {int(_st23.get_setting(_st23.UHR_STAND)) - _store_mod.jetzt()} s zurück")
+        f"uhr_stand stayed {int(_st23.get_setting(_st23.UHR_STAND)) - _store_mod.jetzt()} s behind")
 _st23.db.close()
-# (Mutationsprobe: in `Store._frisch` die Bedingung `0 <=` streichen → beide rot.)
+# (Mutation probe: remove the condition `0 <=` in `Store._frisch` → both red.)
 
 
-# ── pop_flow gab dieselbe Challenge zweimal heraus (R3-8) ────────────────────
-# Lesen und Löschen waren zwei Schritte. Zwei Callbacks mit demselben OIDC-`state` (zwei
-# Threads, zwei Worker auf derselben Datei) lasen beide, bevor einer löschte. Nachgestellt
-# deterministisch: Zwischen dem SELECT des ersten und seinem DELETE verbraucht ein zweiter
-# Worker (eigene Verbindung, dieselbe Datei) denselben Schlüssel.
+# ── pop_flow returned the same challenge twice (R3-8) ────────────────────
+# Reading and deleting were two steps. Two callbacks with the same OIDC `state` (two
+# threads, two workers on the same file) both read before one deleted. Reproduced
+# deterministically: Between the SELECT of the first and its DELETE, a second
+# worker (own connection, same file) consumes the same key.
 auth_f, _ = _app()
 st_a = auth_f.store
 st_b = _store_mod.Store(auth_f.cfg.db_path)
@@ -2409,7 +2409,7 @@ st_a.put_flow("oidc:zustand", {"nonce": "n-1"})
 
 
 class _Dazwischen:
-    """Verbindung, die nach dem Lesen des Flows den zweiten Worker zum Zug kommen lässt."""
+    """Connection that lets the second worker take its turn after the flow is read."""
 
     def __init__(self, db):
         self._db, self.zweiter = db, None
@@ -2428,44 +2428,44 @@ _zw = _Dazwischen(st_a.db)
 st_a.db = _zw
 erster = st_a.pop_flow("oidc:zustand")
 st_a.db = _zw._db
-r.check("der zweite Worker bekommt den Flow-State", _zw.zweiter == {"nonce": "n-1"}, f"{_zw.zweiter}")
-r.check("…und der erste dann nicht mehr — genau einer gewinnt",
-        erster is None, f"beide haben {erster} bekommen: Challenge/state doppelt verbraucht")
+r.check("the second worker gets the flow state", _zw.zweiter == {"nonce": "n-1"}, f"{_zw.zweiter}")
+r.check("…and the first then no longer — exactly one wins",
+        erster is None, f"both got {erster}: challenge/state consumed twice")
 st_a.put_flow("oidc:einfach", {"x": 1})
-r.check("ohne Wettlauf kommt der Flow genau einmal heraus",
+r.check("without a race the flow comes out exactly once",
         st_a.pop_flow("oidc:einfach") == {"x": 1} and st_a.pop_flow("oidc:einfach") is None)
 st_b.db.close()
 
 
-# ── SQLite wartete nach einer unbewussten Vorgabe (B6-11) ─────────────────────
-# Wie lange ein zweiter Schreiber wartet, bevor eine Anmeldung mit „database is locked"
-# scheitert, war Pythons stille Vorgabe (5 s). Jetzt ausdrücklich — und an der Verbindung lesbar.
+# ── SQLite waited according to an unconscious default (B6-11) ─────────────────────
+# How long a second writer waits before a sign-in fails with "database is locked"
+# was Python's silent default (5 s). Now explicit — and readable on the connection.
 import sqlite3 as _sqlite3  # noqa: E402
 import threading as _threading  # noqa: E402
 
 auth_b, _ = _app()
 bt = auth_b.store.db.execute("PRAGMA busy_timeout").fetchone()[0]
-r.check("busy_timeout ist bewusst gesetzt (Store.BUSY_TIMEOUT_MS, über Pythons 5 s)",
+r.check("busy_timeout is set deliberately (Store.BUSY_TIMEOUT_MS, above Python's 5 s)",
         bt == _store_mod.Store.BUSY_TIMEOUT_MS and bt > 5000, f"busy_timeout={bt}")
 fremd = _sqlite3.connect(auth_b.cfg.db_path, isolation_level=None, check_same_thread=False)
-fremd.execute("BEGIN IMMEDIATE")                  # ein zweiter Schreiber hält die Sperre …
+fremd.execute("BEGIN IMMEDIATE")                  # a second writer holds the lock …
 _frei = _threading.Timer(0.5, lambda: fremd.execute("COMMIT"))
 _frei.start()
 try:
-    auth_b.store.put_flow("warten", {"ok": True})  # … und dieser Schreiber wartet, statt zu scheitern
+    auth_b.store.put_flow("warten", {"ok": True})  # … and this writer waits instead of failing
     gewartet = True
 except _sqlite3.OperationalError as e:
     gewartet = str(e)
 _frei.join(timeout=5)
 fremd.close()
-r.check("ein Schreiber wartet auf eine kurz gehaltene Sperre, statt abzubrechen",
+r.check("a writer waits for a briefly held lock instead of aborting",
         gewartet is True, f"{gewartet}")
 
-# ── H-18 (a): ein gesperrtes Konto kommt über KEINEN Weg zu einer Sitzung ────────
-# Jeder Weg hatte seine eigene `disabled`-Prüfung — oder eben nicht: Anmelde-Link und Passkey
-# legten für ein gesperrtes Konto eine Sitzung an (erst `current_user()` verwarf sie wieder),
-# und ein offener Bestätigungslink aus der Registrierung hob die Sperre des Betreibers sogar
-# auf. Gemessen wird deshalb die Klasse: alle Wege, danach die Frage „gibt es eine neue Sitzung?".
+# ── H-18 (a): a locked account gets a session via NO path ────────
+# Every path had its own `disabled` check — or none: Sign-in link and passkey
+# created a session for a locked account (only `current_user()` discarded it again),
+# and an open confirmation link from registration even lifted the operator's lock.
+# What is measured is therefore the class: all paths, then the question "is there a new session?".
 from fastapi import HTTPException as _HTTPException  # noqa: E402
 from starlette.requests import Request as _Request  # noqa: E402
 
@@ -2479,8 +2479,8 @@ auth_g.set_pin(uid_g, "471193")
 key_g = auth_g.create_api_key(uid_g, "bot")["key"]
 alt_g = auth_g.store.create_session(uid_g, 3600, True, "password")
 magic_g = auth_g.create_magic_token("login", user_id=uid_g, email="gesperrt@example.com")
-# Direkt im Store gesperrt, nicht über das Panel: Die Token und die alte Sitzung bleiben so
-# stehen — geprüft wird, dass kein WEG sie nutzen kann, nicht, dass das Panel aufräumt.
+# Locked directly in the store, not via the panel: The tokens and the old session thus
+# remain — what is checked is that no PATH can use them, not that the panel cleans up.
 auth_g.store.set_disabled(uid_g, True)
 
 
@@ -2499,12 +2499,12 @@ cg.post("/auth/login", data={"username": "gesperrt", "password": "Geheim12345!ab
         follow_redirects=False)
 cg.post("/auth/pin", data={"username": "gesperrt", "pin": "471193", "next": "/"},
         follow_redirects=False)
-magic_antwort = cg.post(f"/auth/magic/{magic_g}", follow_redirects=False)   # R4-02: POST löst ein
-r.check("Anmelde-Link eines gesperrten Kontos wird abgewiesen",
+magic_antwort = cg.post(f"/auth/magic/{magic_g}", follow_redirects=False)   # R4-02: POST redeems
+r.check("sign-in link of a locked account is rejected",
         magic_antwort.status_code == 403, f"HTTP {magic_antwort.status_code}")
 
-# Die Wege, die hier nicht als Route laufen (Passkey, OIDC, SAML, LDAP, Kette), enden alle in
-# `apply_factor` — dort sitzt der Riegel für die ganze Klasse.
+# The paths that do not run as a route here (passkey, OIDC, SAML, LDAP, chain) all end in
+# `apply_factor` — the guard for the whole class sits there.
 _leer = _Request({"type": "http", "method": "GET", "path": "/", "headers": [], "query_string": b""})
 _durch = []
 for _faktor in ("password", "pin", "passkey", "oidc", "saml", "magic", "totp"):
@@ -2514,55 +2514,55 @@ for _faktor in ("password", "pin", "passkey", "oidc", "saml", "magic", "totp"):
     except _HTTPException as e:
         if e.status_code != 403:
             _durch.append(f"{_faktor}:{e.status_code}")
-r.check("apply_factor verweigert einem gesperrten Konto jeden Faktor", not _durch,
-        f"durchgelassen: {_durch}")
-r.check("…und jeder abgewiesene Versuch steht im Audit-Log (login_disabled)",
+r.check("apply_factor refuses every factor to a locked account", not _durch,
+        f"let through: {_durch}")
+r.check("…and every rejected attempt appears in the audit log (login_disabled)",
         sum(z["event"] == "login_disabled" for z in auth_g.store.recent_audit(50)) >= 8,
         f"{[z['event'] for z in auth_g.store.recent_audit(20)]}")
-r.check("…und über keinen Weg ist eine neue Sitzung entstanden", _sitzungen_g() == vorher_g,
-        f"{len(_sitzungen_g() - vorher_g)} neue Sitzung(en) für ein gesperrtes Konto")
+r.check("…and no new session arose via any path", _sitzungen_g() == vorher_g,
+        f"{len(_sitzungen_g() - vorher_g)} new session(s) for a locked account")
 cg.cookies.set(auth_g.cfg.session_cookie, alt_g)
-r.check("eine Sitzung von vor der Sperre öffnet nichts mehr",
+r.check("a session from before the lock opens nothing any more",
         cg.get("/geschuetzt").status_code == 401)
 cg.cookies.clear()
-r.check("ein API-Key des gesperrten Kontos öffnet nichts",
+r.check("an API key of the locked account opens nothing",
         cg.get("/geschuetzt", headers={"X-API-Key": key_g}).status_code == 401)
 
-# Die halbe Sitzung (erster Faktor erbracht, TOTP offen) wird nach einer Sperre nicht vollwertig.
+# The half session (first factor provided, TOTP open) does not become fully valid after a lock.
 uid_h = auth_g.create_user("halb", password="Geheim12345!abc")
 halb_tok = auth_g.store.create_session(uid_h, 3600, False, "password")
 auth_g.store.set_disabled(uid_h, True)
-r.check("eine halbe Sitzung wird nach der Sperre nicht über TOTP vollwertig",
+r.check("a half session does not become fully valid via TOTP after the lock",
         auth_g.complete_totp(halb_tok) is None and auth_g.store.get_session(halb_tok) is None,
-        "complete_totp stellte einem gesperrten Konto eine volle Sitzung aus")
+        "complete_totp issued a full session to a locked account")
 
-# Die Sperre durch den Betreiber hält gegen einen offenen Bestätigungslink.
+# The operator's lock holds against an open confirmation link.
 admin_g = auth_g.create_user("chefin-g", password="Geheim12345!abc", is_admin=True)
 uid_v = auth_g.create_user("wartend", password="Geheim12345!abc", email="wartend@example.com")
-auth_g.store.set_disabled(uid_v, True)                      # wie nach der Registrierung
+auth_g.store.set_disabled(uid_v, True)                      # as after registration
 verify_g = auth_g.create_magic_token("verify_email", user_id=uid_v, email="wartend@example.com")
 ca_g = TestClient(app_g)
 ca_g.cookies.set(auth_g.cfg.session_cookie, auth_g.store.create_session(admin_g, 3600, True, "password"))
 ca_g.post(f"/auth/admin/api/users/{uid_v}/disable", json={"disabled": True})
 cv = TestClient(app_g)
-r.check("die Sperre durch den Betreiber verwirft den offenen Bestätigungslink",
+r.check("the lock by the operator discards the open confirmation link",
         auth_g.peek_magic(verify_g, purpose="verify_email") is None,
-        "der Bestätigungstoken ist nach der Sperre noch einlösbar")
-# (Mutationsprobe: `auth.store.revoke_user_magic_tokens(uid)` in admin.user_disable → `pass` → rot.
-# Die Prüfung darunter bleibt dabei grün: Seit der zweiten Angriffsrunde hält die Sperre auch ohne
-# den Widerruf, weil `/auth/verify` eine Sperre des Betreibers nicht mehr aufhebt — zwei Riegel.)
-# POST, nicht GET: Seit R4-02 zeigt GET nur die Bestätigungsseite und löst nichts ein.
+        "the confirmation token can still be redeemed after the lock")
+# (Mutation probe: `auth.store.revoke_user_magic_tokens(uid)` in admin.user_disable → `pass` → red.
+# The check below stays green: Since the second attack round the lock holds even without
+# the revocation, because `/auth/verify` no longer lifts an operator's lock — two guards.)
+# POST, not GET: Since R4-02, GET only shows the confirmation page and redeems nothing.
 cv.post(f"/auth/verify/{verify_g}", follow_redirects=False)
-r.check("ein Bestätigungslink hebt eine Sperre des Betreibers nicht auf",
+r.check("a confirmation link does not lift an operator's lock",
         bool(auth_g.store.get_user(uid_v)["disabled"]),
-        "der Link aus der Registrierung hat das gesperrte Konto wieder freigeschaltet")
+        "the link from registration unlocked the locked account again")
 
-# Dasselbe über die echte Registrierung, mit wartendem Postausgang (T-13-Angriff, mail × betrieb):
-# Der Bestätigungstoken entstand erst im Mail-Arbeiter. Sperrte der Admin das neue Konto, solange
-# der Auftrag wartete (belegte Arbeiter, langsamer Mailserver), fand die Sperre nichts zu
-# verwerfen — danach entstand der Token, die Mail ging hinaus, und der Link hob die Sperre auf.
-# Nachgestellt ohne Threads: Der Auftrag wird festgehalten statt gestartet und erst nach der
-# Sperre ausgeführt — genau die Reihenfolge, die ein Rückstau erzeugt.
+# The same via the real registration, with a waiting outbox (T-13 attack, mail × operation):
+# The confirmation token arose only in the mail worker. If the admin locked the new account while
+# the job was waiting (busy workers, slow mail server), the lock found nothing to
+# discard — afterwards the token arose, the mail went out, and the link lifted the lock.
+# Reproduced without threads: The job is held instead of started and executed only after the
+# lock — exactly the order that a backlog produces.
 _auftraege_w: list = []
 
 
@@ -2584,36 +2584,36 @@ try:
     _neu_w = auth_g.store.get_user_by_name("wartet-noch")
     _tok_w = auth_g.store._all("SELECT 1 FROM magic_token WHERE user_id=? AND purpose='verify_email' "
                                "AND used_at IS NULL", (_neu_w["id"],)) if _neu_w else []
-    r.check("der Bestätigungstoken existiert, wenn die Antwort der Registrierung hinausgeht",
+    r.check("the confirmation token exists when the registration response goes out",
             bool(_neu_w) and len(_auftraege_w) == 1 and bool(_tok_w),
-            f"Konto={bool(_neu_w)}, Aufträge={len(_auftraege_w)}, Token={len(_tok_w)} — "
-            "entsteht er erst im Postausgang, findet eine Sperre im Wartefenster nichts")
-    # (Mutationsprobe: den Token wieder in `_versand` anlegen — `auth.send_verify_email(...)` im
-    # Auftrag statt `_verify_mail` in der Anfrage → rot, hier und bei der Mail-Prüfung unten. Die
-    # Sperre selbst hält seit der zweiten Angriffsrunde auch dann: `/auth/verify` hebt eine Sperre
-    # des Betreibers nicht mehr auf — der zweite Riegel, geprüft über die öffentliche API unten.)
+            f"account={bool(_neu_w)}, jobs={len(_auftraege_w)}, token={len(_tok_w)} — "
+            "if it arises only in the outbox, a lock in the waiting window finds nothing")
+    # (Mutation probe: create the token in `_versand` again — `auth.send_verify_email(...)` in the
+    # job instead of `_verify_mail` in the request → red, here and in the mail check below. The
+    # lock itself holds even then since the second attack round: `/auth/verify` no longer lifts a lock
+    # of the operator — the second guard, checked via the public API below.)
     ca_g.post(f"/auth/admin/api/users/{_neu_w['id']}/disable", json={"disabled": True})
     for _a in _auftraege_w:
-        _a()                                     # jetzt erst ist der Mail-Arbeiter an der Reihe
+        _a()                                     # only now is the mail worker's turn
     _link_w = [re.search(r"/auth/verify/([\w\-]+)", t) for to, t in _mails_w if to == "wartet@example.org"]
     for _m in filter(None, _link_w):
         cv.post(f"/auth/verify/{_m.group(1)}", follow_redirects=False)
-    r.check("eine Sperre im Wartefenster des Postausgangs hält gegen den Bestätigungslink",
+    r.check("a lock in the outbox's waiting window holds against the confirmation link",
             bool(auth_g.store.get_user(_neu_w["id"])["disabled"])
             and not auth_g.store.list_sessions(_neu_w["id"]),
-            "der verspätet angelegte Token hat die Sperre des Betreibers aufgehoben")
-    r.check("…und für den verworfenen Token geht keine Mail mit totem Link hinaus",
-            not _link_w, f"{len(_link_w)} Bestätigungsmail(s) nach der Sperre verschickt")
-    # (Mutationsprobe: die Prüfung auf einen offenen Token in `_token_mail` entfernen → rot.)
+            "the belatedly created token lifted the operator's lock")
+    r.check("…and no mail with a dead link goes out for the discarded token",
+            not _link_w, f"{len(_link_w)} confirmation mail(s) sent after the lock")
+    # (Mutation probe: remove the check for an open token in `_token_mail` → red.)
 finally:
-    del auth_g._postausgang.nachher              # zurück zur Klassenmethode
+    del auth_g._postausgang.nachher              # back to the class method
 
-# Dasselbe über die ÖFFENTLICHE API (zweite Angriffsrunde, konfig): Eine einbettende App mit
-# eigener Registrierung hat nur `create_user`, `store.set_disabled` und `after_response(…
-# send_verify_email …)` — genau das Muster, das der Kern bis T-13 selbst benutzte. Der Token
-# entsteht dort weiterhin im Mail-Arbeiter, also NACH einer Sperre im Wartefenster, und die Sperre
-# findet nichts zu verwerfen. Die Ursache sass in `/auth/verify`: Es setzte `disabled`
-# bedingungslos auf 0, ob die Sperre vom Betreiber kam oder nur die Bestätigung ausstand.
+# The same via the PUBLIC API (second attack round, konfig): An embedding app with
+# its own registration has only `create_user`, `store.set_disabled` and `after_response(…
+# send_verify_email …)` — exactly the pattern the core itself used until T-13. The token
+# still arises in the mail worker there, i.e. AFTER a lock in the waiting window, and the lock
+# finds nothing to discard. The cause sat in `/auth/verify`: It set `disabled`
+# unconditionally to 0, whether the lock came from the operator or the confirmation was merely outstanding.
 from fastapi.responses import PlainTextResponse as _TextAntwort  # noqa: E402
 
 _auftraege_p: list = []
@@ -2628,7 +2628,7 @@ def _festhalten_p(auftrag, bei_ueberlauf=None):
 @app_g.post("/app/signup")
 def _app_signup_p(name: str):
     _uid = auth_g.create_user(name, password="Neues-Passwort#lang-7", email=f"{name}@example.org")
-    auth_g.store.set_disabled(_uid, True)                   # wartet auf die Bestätigung
+    auth_g.store.set_disabled(_uid, True)                   # waits for the confirmation
     return auth_g.after_response(
         _TextAntwort("Mail unterwegs"),
         lambda: auth_g.send_verify_email(_uid, f"{name}@example.org", ECHT))
@@ -2647,62 +2647,62 @@ try:
     _uid_p = auth_g.store.get_user_by_name("app-gesperrt")["id"]
     ca_g.post(f"/auth/admin/api/users/{_uid_p}/disable", json={"disabled": True})
     for _a in _auftraege_p:
-        _a()                                     # der Mail-Arbeiter legt den Token erst jetzt an
+        _a()                                     # the mail worker creates the token only now
     _auftraege_p.clear()
     _link_p = _app_link_p("app-gesperrt")
-    r.check("Wächter: die App verschickt ihren Bestätigungslink erst nach der Sperre",
+    r.check("Guard: the app sends its confirmation link only after the lock",
             bool(_link_p), f"Mails: {len(_mails_p)}")
     _antwort_p = cv.post(f"/auth/verify/{_link_p}", follow_redirects=False) if _link_p else None
-    r.check("ein NACH der Sperre angelegter Bestätigungslink hebt die Sperre des Betreibers nicht auf",
+    r.check("a confirmation link created AFTER the lock does not lift the operator's lock",
             bool(auth_g.store.get_user(_uid_p)["disabled"]) and not auth_g.store.list_sessions(_uid_p),
             f"HTTP {getattr(_antwort_p, 'status_code', None)}, disabled="
-            f"{auth_g.store.get_user(_uid_p)['disabled']}, Sitzungen={len(auth_g.store.list_sessions(_uid_p))}")
-    r.check("…der Versuch steht im Audit-Log (verify_blocked)",
+            f"{auth_g.store.get_user(_uid_p)['disabled']}, sessions={len(auth_g.store.list_sessions(_uid_p))}")
+    r.check("…the attempt appears in the audit log (verify_blocked)",
             any(z["event"] == "verify_blocked" and z["username"] == "app-gesperrt"
                 for z in auth_g.store.recent_audit(30)),
             f"{[z['event'] for z in auth_g.store.recent_audit(8)]}")
-    # (Mutationsprobe: in `/auth/verify` wieder `auth.store.set_disabled(uid, False)` statt
-    # `bestaetigung_freischalten` → rot.)
+    # (Mutation probe: in `/auth/verify` again `auth.store.set_disabled(uid, False)` instead of
+    # `bestaetigung_freischalten` → red.)
 
-    # Gegenprobe: Ohne Sperre des Betreibers schaltet derselbe Weg das Konto frei — die
-    # öffentliche API behält ihre Zusage.
+    # Counter-check: Without an operator lock the same path unlocks the account — the
+    # public API keeps its promise.
     TestClient(app_g).post("/app/signup", params={"name": "app-frei"})
     _uid_f = auth_g.store.get_user_by_name("app-frei")["id"]
     for _a in _auftraege_p:
         _a()
     _link_f = _app_link_p("app-frei")
     _antwort_f = TestClient(app_g).post(f"/auth/verify/{_link_f}", follow_redirects=False)
-    r.check("…ohne Sperre des Betreibers schaltet der Link das Konto der App frei und meldet an",
+    r.check("…without an operator lock the link unlocks the app's account and signs in",
             _antwort_f.status_code == 303 and not auth_g.store.get_user(_uid_f)["disabled"]
             and bool(auth_g.store.list_sessions(_uid_f)),
             f"HTTP {_antwort_f.status_code}, disabled={auth_g.store.get_user(_uid_f)['disabled']}")
-    # Eine erneute Sperre ohne Betreiber-Vermerk (`set_disabled(uid, True)`) stuft eine Sperre des
-    # Betreibers nicht auf „wartet auf Bestätigung“ herab.
+    # A renewed lock without operator note (`set_disabled(uid, True)`) does not downgrade an operator's
+    # lock to "waiting for confirmation".
     auth_g.store.set_disabled(_uid_p, True)
     auth_g.send_verify_email(_uid_p, "app-gesperrt@example.org", ECHT)
     cv.post(f"/auth/verify/{_app_link_p('app-gesperrt')}", follow_redirects=False)
-    r.check("…und ein späteres set_disabled(uid, True) macht aus der Betreiber-Sperre keine aufhebbare",
+    r.check("…and a later set_disabled(uid, True) does not turn the operator lock into a liftable one",
             bool(auth_g.store.get_user(_uid_p)["disabled"]),
             f"disabled={auth_g.store.get_user(_uid_p)['disabled']}")
-    # (Mutationsprobe: `set_disabled` setzt ohne `durch_betreiber` wieder blind 1 → rot.)
+    # (Mutation probe: `set_disabled` without `durch_betreiber` sets a blind 1 again → red.)
 finally:
     del auth_g._postausgang.nachher
 
 
-# ── H-18 (c): jeder Mail-Link entsteht aus `base_url` — auch künftige ─────────────
-# Die Wege oben (`_wege`) sind eine Liste von Hand. Ein sechster Absender fiele dort nicht
-# auf. Deshalb mechanisch: Jede Funktion im Paket, die `send_mail()` oder `magic_url()` ruft,
-# muss in dieser Liste stehen — sonst verschickt sie Links, deren Basis niemand gemessen hat.
+# ── H-18 (c): every mail link arises from `base_url` — future ones too ─────────────
+# The paths above (`_wege`) are a list by hand. A sixth sender would not be noticed
+# there. Therefore mechanically: Every function in the package that calls `send_mail()` or `magic_url()`
+# must be in this list — otherwise it sends links whose base nobody has measured.
 import ast as _ast  # noqa: E402
 
-# `_token_mail` ist nur die Hülle um `send_mail` (B6-12: Token verfällt, wenn der Versand
-# scheitert) — den Text samt Link bauen ihre Aufrufer, und die stehen in `_wege`.
+# `_token_mail` is only the wrapper around `send_mail` (B6-12: token expires if sending
+# fails) — the text including the link is built by its callers, and those are in `_wege`.
 _GEMESSEN = {name for name, _ in _wege(_a_api, ECHT)} | {"send_mail", "magic_url", "_token_mail"}
-# Der Sperr-Hinweis (ASVS 6.3.5, `_sperrhinweis` mit dem inneren `_senden`) trägt KEINEN Link — es
-# gibt keine Basis zu messen. Dass das so bleibt, prüft tests/test_t13_entscheide.py (kein „://").
+# The lock notice (ASVS 6.3.5, `_sperrhinweis` with the inner `_senden`) carries NO link — there
+# is no base to measure. That this stays so is checked by tests/test_t13_entscheide.py (no "://").
 _GEMESSEN |= {"_sperrhinweis", "_senden"}
-# Ebenso der Hinweis an die ALTE Adresse nach einem Wechsel (`confirm_email_change` mit dem inneren
-# `hinweis`, ASVS 6.3.7) — ohne Link; das prüft tests/test_selbstbedienung.py (kein „://").
+# Likewise the notice to the OLD address after a change (`confirm_email_change` with the inner
+# `hinweis`, ASVS 6.3.7) — without a link; tests/test_selbstbedienung.py checks that (no "://").
 _GEMESSEN |= {"confirm_email_change", "hinweis", "_wechsel_antrag_hinweis"}
 _absender = set()
 for _datei in sorted((ROOT / "tinysesam").glob("*.py")):
@@ -2714,19 +2714,19 @@ for _datei in sorted((ROOT / "tinysesam").glob("*.py")):
             if (isinstance(_k, _ast.Call) and isinstance(_k.func, _ast.Attribute)
                     and _k.func.attr in ("send_mail", "magic_url")):
                 _absender.add(_fn.name)
-r.check("Wächter: er findet die bekannten Absender überhaupt",
+r.check("Guard: it finds the known senders at all",
         {"send_password_reset", "send_login_link", "_verify_mail", "create_invite"} <= _absender,
-        f"gefunden: {sorted(_absender)} — ohne Treffer prüft die Zeile darunter nichts")
-r.check("jeder Absender von Mail-Links steht in der gemessenen Liste",
-        _absender <= _GEMESSEN, f"ungemessen: {sorted(_absender - _GEMESSEN)} — in `_wege` aufnehmen")
+        f"found: {sorted(_absender)} — without a hit the line below checks nothing")
+r.check("every sender of mail links is in the measured list",
+        _absender <= _GEMESSEN, f"unmeasured: {sorted(_absender - _GEMESSEN)} — add to `_wege`")
 
 
-# ── Konfigurationsprüfung, T-13-Bereich „Admin und Konfiguration" ──────────────
+# ── Configuration check, T-13 area "Admin and configuration" ──────────────
 from tinysesam import konfigpruefung as _kp2, security as _sec2  # noqa: E402
 
 
 def _befund(**cfg):
-    """(Fehler, Warnungen) für eine Config mit Wegwerf-Datenbank."""
+    """(errors, warnings) for a config with a throwaway database."""
     cfg.setdefault("db_path", ":memory:")
     return _kp2.pruefe(TinySesamConfig(**cfg))
 
@@ -2735,85 +2735,85 @@ def _nennt(liste, *woerter):
     return any(all(w in x for w in woerter) for x in liste)
 
 
-# B3-3: ein ungültiger trusted_proxies-Eintrag entwertet nicht mehr die ganze Liste …
-r.check("B3-3: gültiger Eintrag trägt neben einem ungültigen",
+# B3-3: an invalid trusted_proxies entry no longer invalidates the whole list …
+r.check("B3-3: a valid entry works next to an invalid one",
         _sec2.is_trusted("198.51.100.7", ["proxy.intern", "198.51.100.0/24"]),
-        "ein Hostname in der Liste warf, und der echte Proxy galt als fremd")
-# (Mutationsprobe: is_trusted wieder mit einem `try` um das ganze any() → rot.)
-r.check("...und die Konfigurationsprüfung weist die Liste ab",
+        "a hostname in the list raised, and the real proxy counted as foreign")
+# (Mutation probe: is_trusted with a `try` around the whole any() again → red.)
+r.check("...and the configuration check rejects the list",
         _nennt(_befund(trusted_proxies=["proxy.intern", "198.51.100.0/24"])[0], "trusted_proxies", "proxy.intern"))
-r.check("...die Vorgabe und echte Netze bleiben ohne Befund",
+r.check("...the default and real networks remain without finding",
         not _nennt(sum(_befund(trusted_proxies=["198.51.100.0/24", "::1"]), []), "trusted_proxies"))
 
-# B3-6: stepup_methods wird geprüft — ein Tippfehler entfernt den zweiten Faktor nicht mehr still.
-r.check("B3-6: unbekanntes Step-up-Verfahren ist ein Fehler",
+# B3-6: stepup_methods is checked — a typo no longer silently removes the second factor.
+r.check("B3-6: unknown step-up method is an error",
         _nennt(_befund(stepup_methods=["topt"])[0], "stepup_methods", "topt"))
-r.check("...ein abgeschaltetes ebenso (pin ohne pin_enabled)",
+r.check("...a switched-off one likewise (pin without pin_enabled)",
         _nennt(_befund(stepup_methods=["pin"])[0], "pin_enabled=False"))
-r.check("...gültige Werte bleiben ohne Befund",
+r.check("...valid values remain without finding",
         not _nennt(sum(_befund(stepup_methods=["totp", "pin"], pin_enabled=True), []), "stepup_methods"))
 try:
     TinySesam(TinySesamConfig(db_path=str(Path(tempfile.mkdtemp()) / "t.db"), stepup_methods=["topt"]))
     _b36 = False
 except _CfgErr:
     _b36 = True
-r.check("...und der Aufbau scheitert daran", _b36)
+r.check("...and the setup fails on it", _b36)
 
-# B3-10: rp_id/origin werden betrachtet.
-r.check("B3-10: rp_id, die nicht zum origin passt, ist ein Fehler",
+# B3-10: rp_id/origin are examined.
+r.check("B3-10: rp_id that does not match the origin is an error",
         _nennt(_befund(passkey_enabled=True, rp_id="example.org", origin="https://auth.example.com")[0],
                "rp_id", "passt nicht"))
-r.check("...origin mit Pfad ist kein Origin",
+r.check("...origin with path is not an origin",
         _nennt(_befund(passkey_enabled=True, rp_id="example.com",
                        origin="https://auth.example.com/login")[0], "ist kein Origin"))
-r.check("...Entwicklerwerte neben einer öffentlichen base_url werden gemeldet",
+r.check("...developer values next to a public base_url are reported",
         _nennt(_befund(passkey_enabled=True, base_url="https://auth.example.com")[1], "origin", "base_url"))
-r.check("...passende Werte bleiben ohne Befund",
+r.check("...matching values remain without finding",
         not _nennt(sum(_befund(passkey_enabled=True, rp_id="example.com", origin="https://auth.example.com",
                                base_url="https://auth.example.com"), []), "origin"))
 
-# B3-12: Zahlenfelder mit Grenzen.
+# B3-12: number fields with limits.
 for _feld, _wert in (("session_ttl_hours", 0), ("magiclink_ttl_min", 0), ("recovery_code_count", 0),
                      ("stepup_max_age_sec", -1), ("smtp_port", 70000), ("pin_min_length", 2),
                      ("session_ttl_hours", True)):
-    r.check(f"B3-12: {_feld}={_wert!r} ist ein Fehler", _nennt(_befund(**{_feld: _wert})[0], _feld))
-r.check("...die Vorgaben selbst liegen alle in ihren Grenzen",
+    r.check(f"B3-12: {_feld}={_wert!r} is an error", _nennt(_befund(**{_feld: _wert})[0], _feld))
+r.check("...the defaults themselves all lie within their limits",
         not any(f in x for x in _befund()[0] for f in _kp2.ZAHLENGRENZEN))
-# (Mutationsprobe: `_zahlengrenzen(config, fehler)` in pruefe() auskommentieren → rot.)
+# (Mutation probe: comment out `_zahlengrenzen(config, fehler)` in pruefe() → red.)
 
-# T-13-Angriff (audit × konfiguration): `audit_retention_days` kam nach ZAHLENGRENZEN dazu und
-# stand nicht darin — seine eigene Prüfung wies nur `< 0` ab. `True` galt als ein Tag (gc()
-# löschte das Audit-Log bis auf den letzten Tag), Sekunden statt Tagen hebelten die Frist aus,
-# 10**20 liess gc() mit OverflowError abbrechen. `oidc_revalidate_minutes` fehlte ebenso. Deshalb
-# jetzt die Klasse: Jedes Zahlenfeld der Config hat eine Grenze oder steht, begründet, hier.
+# T-13 attack (audit × configuration): `audit_retention_days` was added after NUMBER LIMITS and
+# was not in it — its own check rejected only `< 0`. `True` counted as one day (gc()
+# deleted the audit log down to the last day), seconds instead of days defeated the period,
+# 10**20 made gc() abort with OverflowError. `oidc_revalidate_minutes` was missing likewise. Therefore
+# now the class: Every number field of the config has a limit or stands here, with a reason.
 import dataclasses as _dc  # noqa: E402
 import typing as _typing  # noqa: E402
 
-_OHNE_ZAHLENGRENZE: dict = {}      # Feld → Begründung. Leer: Jedes Zahlenfeld hat eine Grenze.
+_OHNE_ZAHLENGRENZE: dict = {}      # field → reason. Empty: Every number field has a limit.
 _typen_cfg = _typing.get_type_hints(TinySesamConfig)
 _zahlfelder = {f.name for f in _dc.fields(TinySesamConfig) if _typen_cfg[f.name] in (int, float)}
-r.check("Wächter: er findet Zahlenfelder der Config überhaupt",
+r.check("Guard: it finds number fields of the config at all",
         {"session_ttl_hours", "smtp_port"} <= _zahlfelder, f"{sorted(_zahlfelder)}")
-r.check("jedes Zahlenfeld der Config hat eine Grenze in ZAHLENGRENZEN (oder eine begründete Ausnahme)",
+r.check("every number field of the config has a limit in ZAHLENGRENZEN (or a justified exception)",
         not (_zahlfelder - set(_kp2.ZAHLENGRENZEN) - set(_OHNE_ZAHLENGRENZE)),
-        f"ohne Grenze: {sorted(_zahlfelder - set(_kp2.ZAHLENGRENZEN) - set(_OHNE_ZAHLENGRENZE))}")
-r.check("…und die Ausnahmeliste nennt nur Zahlenfelder ohne Grenze, jedes mit Begründung",
+        f"without limit: {sorted(_zahlfelder - set(_kp2.ZAHLENGRENZEN) - set(_OHNE_ZAHLENGRENZE))}")
+r.check("…and the exception list names only number fields without limit, each with a reason",
         all(f in _zahlfelder and f not in _kp2.ZAHLENGRENZEN and str(g).strip()
             for f, g in _OHNE_ZAHLENGRENZE.items()), f"{_OHNE_ZAHLENGRENZE!r}")
-# (Mutationsprobe: `audit_retention_days` aus ZAHLENGRENZEN streichen → rot.)
+# (Mutation probe: remove `audit_retention_days` from ZAHLENGRENZEN → red.)
 for _feld, _wert in (("audit_retention_days", True), ("audit_retention_days", 30 * 86400),
                      ("audit_retention_days", 10 ** 20), ("audit_retention_days", -1),
                      ("oidc_revalidate_minutes", True), ("oidc_revalidate_minutes", 86400),
                      ("oidc_revalidate_minutes", -1)):
-    r.check(f"{_feld}={_wert!r} ist ein Fehler", _nennt(_befund(**{_feld: _wert})[0], _feld))
+    r.check(f"{_feld}={_wert!r} is an error", _nennt(_befund(**{_feld: _wert})[0], _feld))
 for _feld, _wert in (("audit_retention_days", 3650), ("oidc_revalidate_minutes", 60)):
-    r.check(f"…{_feld}={_wert} bleibt ohne Fehler", not _nennt(_befund(**{_feld: _wert})[0], _feld))
+    r.check(f"…{_feld}={_wert} remains without error", not _nennt(_befund(**{_feld: _wert})[0], _feld))
 
-# Die Obergrenze (43200) fängt eine Frist in Sekunden erst ab einem Tag (86400) — die Vorgabe des
-# Presets, eine Stunde, in Sekunden geschrieben (3600) ging still durch: Nachprüfung alle 60
-# Stunden statt jede Stunde, ein Entzug beim Provider kam 60-mal später an (zweite Angriffsrunde,
-# konfig). Eine Frist über einem Tag bekommt deshalb eine Warnung, die nach der Einheit fragt.
-# 300 oder 900 (fünf oder 15 Minuten in Sekunden) fängt keine Grenze — das sagt die Doku jetzt auch.
+# The upper limit (43200) catches a period in seconds only from one day (86400) — the preset's
+# default, one hour, written in seconds (3600) passed silently: revalidation every 60
+# hours instead of every hour, a revocation at the provider arrived 60 times later (second attack round,
+# konfig). A period over one day therefore gets a warning that asks about the unit.
+# 300 or 900 (five or 15 minutes in seconds) is caught by no limit — the docs now say so too.
 def _rv_befund(minuten):
     return _kp2.pruefe(TinySesamConfig.oidc_gateway(
         issuer="https://id.example.com", client_id="g", client_secret="s", base_url=ECHT,
@@ -2823,31 +2823,31 @@ def _rv_befund(minuten):
 
 for _min in (3600, 7200, 43200):
     _f, _w = _rv_befund(_min)
-    r.check(f"oidc_revalidate_minutes={_min} (über einem Tag) warnt vor Sekunden statt Minuten",
+    r.check(f"oidc_revalidate_minutes={_min} (over a day) warns about seconds instead of minutes",
             _nennt(_w, "oidc_revalidate_minutes", "Sekunden") and not _nennt(_f, "oidc_revalidate_minutes"),
-            f"Warnungen: {[x[:80] for x in _w]}")
+            f"warnings: {[x[:80] for x in _w]}")
 for _min in (60, 1440):
-    r.check(f"…{_min} Minuten bleiben ohne Warnung",
+    r.check(f"…{_min} minutes remain without warning",
             not _nennt(_rv_befund(_min)[1], "oidc_revalidate_minutes"))
-# (Mutationsprobe: die Warnung in `pruefe` streichen → rot; die Schwelle auf 43200 setzen → rot.)
+# (Mutation probe: remove the warning in `pruefe` → red; set the threshold to 43200 → red.)
 _rv_kaputt = "keine Zahl"
 try:
     _rv_fund = _nennt(_befund(oidc_revalidate_minutes=_rv_kaputt)[0], "oidc_revalidate_minutes")
-except Exception as e:   # noqa: BLE001 — ein Absturz der Prüfung ist hier der Befund
+except Exception as e:   # noqa: BLE001 — a crash of the check is the finding here
     _rv_fund = f"{type(e).__name__}: {e}"
-r.check("…und ein Text statt einer Zahl ist ein Befund, kein Absturz der Prüfung",
+r.check("…and a text instead of a number is a finding, not a crash of the check",
         _rv_fund is True, f"{_rv_fund!r}")
 
-# Dieselbe Klasse an den übrigen Kombinationsprüfungen, die ein ZAHLENGRENZEN-Feld lesen (zweite
-# Angriffsrunde, konfig): `int()` auf `admin_claim_ttl_min` und `mfa_enrollment_grace_days` stürzte
-# ab, bevor `_zahlengrenzen` den Typ melden konnte — `TinySesam(cfg)` warf ValueError bzw.
-# OverflowError statt eines gesammelten ConfigError. Bis zur Schlussrunde deckte diese Probe nur
-# die drei damals bekannten Felder; eine neue Kombination mit `int()` über eine Zwischenvariable
-# (`w = getattr(config, "magiclink_ttl_min", 15); int(w)`) liess pruefe() wieder abstürzen, und
-# die Suite blieb grün (Schlussfund konfig-3). Jetzt über JEDES Feld aus ZAHLENGRENZEN, je mit
-# Text, inf und nan, einmal mit Vorgaben und einmal hinter den Schaltern, hinter denen heutige
-# Kombinationsprüfungen liegen (`_TORE`). Grenze: Eine neue Kombination hinter einem Schalter,
-# der nicht in `_TORE` steht, erreicht nur der Syntaxbaum-Wächter weiter unten.
+# The same class in the remaining combination checks that read a ZAHLENGRENZEN field (second
+# attack round, konfig): `int()` on `admin_claim_ttl_min` and `mfa_enrollment_grace_days` crashed
+# before `_zahlengrenzen` could report the type — `TinySesam(cfg)` raised ValueError or
+# OverflowError instead of a collected ConfigError. Until the final round this probe covered only
+# the three fields known at the time; a new combination with `int()` via an intermediate variable
+# (`w = getattr(config, "magiclink_ttl_min", 15); int(w)`) made pruefe() crash again, and
+# the suite stayed green (final finding konfig-3). Now over EVERY field from ZAHLENGRENZEN, each with
+# text, inf and nan, once with defaults and once behind the switches behind which today's
+# combination checks lie (`_TORE`). Limit: A new combination behind a switch
+# that is not in `_TORE` is reached only by the syntax-tree guard further below.
 _TORE = {"admin_claim_token_file": "/run/x/admin.token", "mfa_enrollment": "grace"}
 for _feld in _kp2.ZAHLENGRENZEN:
     _abstuerze = []
@@ -2855,7 +2855,7 @@ for _feld in _kp2.ZAHLENGRENZEN:
         for _dazu in ({}, _TORE):
             try:
                 _kf = _nennt(_befund(**{_feld: _wert}, **_dazu)[0], _feld, "keine ganze Zahl")
-            except Exception as e:   # noqa: BLE001 — ein Absturz der Prüfung ist hier der Befund
+            except Exception as e:   # noqa: BLE001 — a crash of the check is the finding here
                 _kf = f"{type(e).__name__}: {e}"
             try:
                 TinySesam(TinySesamConfig(db_path=str(Path(tempfile.mkdtemp()) / "k.db"),
@@ -2867,37 +2867,37 @@ for _feld in _kp2.ZAHLENGRENZEN:
                 _kb = f"{type(e).__name__}: {e}"
             if _kf is not True or _kb is not True:
                 _abstuerze.append(f"{_wert!r}{' mit Schaltern' if _dazu else ''}: pruefe {_kf!r} · Aufbau {_kb!r}")
-    r.check(f"{_feld}=Text/inf/nan: gesammelter ConfigError statt Absturz der Prüfung",
+    r.check(f"{_feld}=text/inf/nan: collected ConfigError instead of a crash of the check",
             not _abstuerze, "; ".join(_abstuerze[:3]))
-r.check("…die Probe läuft über die Felder aus ZAHLENGRENZEN (nicht über eine leere Liste)", len(_kp2.ZAHLENGRENZEN) >= 10,
-        f"{len(_kp2.ZAHLENGRENZEN)} Felder")
-# (Mutationsprobe: die Fund-Mutation `_mt = getattr(config, "magiclink_ttl_min", 15)` +
-# `if int(_mt) > 600:` in pruefe → rot, `magiclink_ttl_min … ValueError`.)
-# Die Kombinationsprüfungen selbst gelten weiter:
-r.check("…mfa_enrollment='grace' mit 0 Tagen bleibt ein Fehler",
+r.check("…the probe runs over the fields from ZAHLENGRENZEN (not over an empty list)", len(_kp2.ZAHLENGRENZEN) >= 10,
+        f"{len(_kp2.ZAHLENGRENZEN)} fields")
+# (Mutation probe: the finding mutation `_mt = getattr(config, "magiclink_ttl_min", 15)` +
+# `if int(_mt) > 600:` in pruefe → red, `magiclink_ttl_min … ValueError`.)
+# The combination checks themselves still apply:
+r.check("…mfa_enrollment='grace' with 0 days remains an error",
         _nennt(_befund(mfa_enrollment="grace", mfa_enrollment_grace_days=0)[0], "mfa_enrollment='grace'"))
-r.check("…admin_claim_token_file mit admin_claim_ttl_min=0 bleibt eine Warnung",
+r.check("…admin_claim_token_file with admin_claim_ttl_min=0 remains a warning",
         _nennt(_befund(admin_claim_token_file="/run/x/admin.token", admin_claim_ttl_min=0)[1],
                "admin_claim_token_file"))
-# (Mutationsprobe: `_ganzzahl` durch `int(getattr(config, feld, 0) or 0)` ersetzen → rot.)
-# Die Klasse im Code: Ein Feld aus ZAHLENGRENZEN liest die Prüfung nur über `_ganzzahl` (eine
-# ganze Zahl oder None) oder in `_zahlengrenzen` selbst. Was eine Kombination danach tut (int(),
-# Vergleich, Rechnung), geschieht dann mit einer ganzen Zahl. Bis zur Schlussrunde meldete der
-# Wächter ein int() nur, wenn getattr(config, …) direkt darin stand — die Zwischenvariable kam
-# durch (Schlussfund konfig-3). Jetzt am Syntaxbaum nach Klassen, nicht nach Schreibweise:
-# 1. Ein String, der genau ein ZAHLENGRENZEN-Feld nennt, steht als Schlüssel in ZAHLENGRENZEN oder
-#    als Feldname in `_ganzzahl(config, "<feld>")` — sonst liest ihn etwas anderes (`getattr`,
-#    `_an`, `vars(config)[…]`, `attrgetter`, ein Tupel, über das eine Schleife läuft).
-# 2. Kein Attribut `.<feld>`, gleich unter welchem Namen die Config steht.
-# 3. Ein `getattr` mit Feldnamen zur Laufzeit nutzt den Wert nur als Wahrheitswert oder Text
-#    (direkt in `bool()`/`str()` oder in einer Bedingung, auch über `and`/`or`) — das stürzt bei
-#    keinem Wert ab. `vars`, `__dict__`, `asdict`, `attrgetter`, `__getattribute__` sind verboten.
-# 4. Kein `int()`/`float()`, gleich worauf.
-# `_ganzzahl` und `_zahlengrenzen` sind davon ausgenommen: Sie SIND der Leseweg.
-# Grenze: Ein Feldname, der erst zur Laufzeit entsteht und durch einen Wahrheitswert-Helfer geht
-# (`_an(config, name)`), stürzt nicht ab, wird aber falsch bewertet; ein Helfer ausserhalb von
-# konfigpruefung.py, dem die Prüfung `config` übergibt, liegt ausserhalb dieses Baums. Beides sieht
-# nur die Funktionsprobe oben — und die nur ohne Schalter bzw. mit `_TORE`.
+# (Mutation probe: replace `_ganzzahl` with `int(getattr(config, feld, 0) or 0)` → red.)
+# The class in the code: A field from ZAHLENGRENZEN is read by the check only via `_ganzzahl` (an
+# integer or None) or in `_zahlengrenzen` itself. What a combination does afterwards (int(),
+# comparison, calculation) then happens with an integer. Until the final round the
+# guard reported an int() only if getattr(config, …) stood directly in it — the intermediate variable got
+# through (final finding konfig-3). Now on the syntax tree by class, not by spelling:
+# 1. A string that names exactly one ZAHLENGRENZEN field stands as a key in ZAHLENGRENZEN or
+#    as a field name in `_ganzzahl(config, "<feld>")` — otherwise something else reads it (`getattr`,
+#    `_an`, `vars(config)[…]`, `attrgetter`, a tuple over which a loop runs).
+# 2. No attribute `.<feld>`, no matter under which name the config stands.
+# 3. A `getattr` with a field name at runtime uses the value only as a truth value or text
+#    (directly in `bool()`/`str()` or in a condition, also via `and`/`or`) — that crashes with
+#    no value. `vars`, `__dict__`, `asdict`, `attrgetter`, `__getattribute__` are forbidden.
+# 4. No `int()`/`float()`, regardless of on what.
+# `_ganzzahl` and `_zahlengrenzen` are excluded from this: They ARE the read path.
+# Limit: A field name that arises only at runtime and goes through a truth-value helper
+# (`_an(config, name)`) does not crash but is evaluated wrongly; a helper outside
+# konfigpruefung.py to which the check passes `config` lies outside this tree. Only
+# the function probe above sees both — and only without switch or with `_TORE`.
 import ast as _ast_k  # noqa: E402
 
 _KP_LESEWEG = {"_ganzzahl", "_zahlengrenzen"}
@@ -2905,7 +2905,7 @@ _KP_VERBOTEN = {"vars", "__dict__", "asdict", "attrgetter", "__getattribute__"}
 
 
 def _kp_rohe_zahlen(baum):
-    """Stellen in konfigpruefung.py, die ein Zahlenfeld am Leseweg vorbei lesen oder umwandeln."""
+    """Places in konfigpruefung.py that read or convert a number field past the read path."""
     felder = set(_kp2.ZAHLENGRENZEN)
     eltern = {c: k for k in _ast_k.walk(baum) for c in _ast_k.iter_child_nodes(k)}
 
@@ -2961,15 +2961,15 @@ _kp_getattr = [k for k in _ast_k.walk(_kp_baum) if isinstance(k, _ast_k.Call)
                and isinstance(k.func, _ast_k.Name) and k.func.id == "getattr"]
 _kp_ganzzahl = [k for k in _ast_k.walk(_kp_baum) if isinstance(k, _ast_k.Call)
                 and isinstance(k.func, _ast_k.Name) and k.func.id == "_ganzzahl"]
-r.check("Wächter: er findet die Lesezugriffe der Prüfung überhaupt",
+r.check("Guard: it finds the read accesses of the check at all",
         len(_kp_getattr) >= 20 and len(_kp_ganzzahl) >= 3, f"getattr {len(_kp_getattr)}, _ganzzahl {len(_kp_ganzzahl)}")
 _kp_roh = _kp_rohe_zahlen(_kp_baum)
-r.check("keine Kombinationsprüfung liest ein Zahlenfeld am Leseweg _ganzzahl vorbei oder wandelt selbst um",
+r.check("no combination check reads a number field past the read path _ganzzahl or converts itself",
         not _kp_roh, f"{_kp_roh}")
 
 
-# Selbstprobe am Syntaxbaum (ohne Textanker): Jede Schreibweise wird vorn in pruefe() eingesetzt;
-# gezählt werden nur die Befunde, die sie NEU bringt (ein Befund im Bestand trüge sonst die Probe).
+# Self-probe on the syntax tree (without text anchor): Every spelling is inserted at the front of pruefe();
+# only the findings it brings NEW are counted (a finding in the existing stock would otherwise carry the probe).
 def _kp_mit(schnipsel):
     baum = _ast_k.parse((ROOT / "tinysesam" / "konfigpruefung.py").read_text(encoding="utf-8"))
     fn = next(k for k in baum.body if isinstance(k, _ast_k.FunctionDef) and k.name == "pruefe")
@@ -2978,8 +2978,8 @@ def _kp_mit(schnipsel):
 
 
 _kp_uebersehen = [x for x in (
-    '_mt = getattr(config, "magiclink_ttl_min", 15)\nif int(_mt) > 600:\n    pass',   # der Fund
-    '_mt = getattr(config, "magiclink_ttl_min", 15)\nif _mt > 600:\n    pass',        # ohne int()
+    '_mt = getattr(config, "magiclink_ttl_min", 15)\nif int(_mt) > 600:\n    pass',   # the finding
+    '_mt = getattr(config, "magiclink_ttl_min", 15)\nif _mt > 600:\n    pass',        # without int()
     'if config.magiclink_ttl_min > 600:\n    pass',
     '_f = "smtp_port"\nif getattr(config, _f) > 1:\n    pass',
     'for _f in ("smtp_port",):\n    if getattr(config, _f) > 1:\n        pass',
@@ -2992,54 +2992,54 @@ _kp_uebersehen = [x for x in (
     'if _an(config, "smtp_timeout"):\n    pass',
     'if float(str(getattr(config, "admin_path", ""))) > 1:\n    pass',
     'n = getattr(config, name, 0) or 0\nif n > 5:\n    pass') if not _kp_mit(x)]
-r.check("Wächter-Selbstprobe: jede Schreibweise eines rohen Zahlen-Lesewegs fällt auf",
-        not _kp_uebersehen, f"übersehen: {_kp_uebersehen}")
+r.check("Guard self-probe: every spelling of a raw number read path is noticed",
+        not _kp_uebersehen, f"overlooked: {_kp_uebersehen}")
 _kp_fehlalarm = [x for x in (
     '_x = _ganzzahl(config, "magiclink_ttl_min")\nif _x is not None and _x > 600:\n    pass',
     'if str(getattr(config, name, "") or "").strip():\n    pass',
     'if not getattr(config, name, None) or _an(config, "demo_mode"):\n    pass') if _kp_mit(x)]
-r.check("…und der Leseweg selbst bleibt ohne Befund", not _kp_fehlalarm, f"Fehlalarm: {_kp_fehlalarm}")
-# (Mutationsproben, je einzeln → rot: Regel 1 streichen; Regel 2 streichen; Regel 3 streichen;
-# die verbotenen Namen (`vars`, `asdict`) übergehen; `int`/`float` aus Regel 4 nehmen;
-# `nur_wahrheit_oder_text` immer wahr; den Abzug des Bestands in `_kp_mit` streichen; in
-# `_kombinationen` wieder `getattr(config, "session_ttl_hours", 0)` → der Wächter nennt die Zeile;
-# in pruefe `if (getattr(config, "smtp_timeout", 0) or 0) > 200:` (Vergleich ohne int()) → rot.)
+r.check("…and the read path itself remains without finding", not _kp_fehlalarm, f"false alarm: {_kp_fehlalarm}")
+# (Mutation probes, each individually → red: remove rule 1; remove rule 2; remove rule 3;
+# skip the forbidden names (`vars`, `asdict`); take `int`/`float` out of rule 4;
+# `nur_wahrheit_oder_text` always true; remove the deduction of the stock in `_kp_mit`; in
+# `_kombinationen` `getattr(config, "session_ttl_hours", 0)` again → the guard names the line;
+# in pruefe `if (getattr(config, "smtp_timeout", 0) or 0) > 200:` (comparison without int()) → red.)
 
-# H-11 / B3-9: deny-by-default am Forward-Auth-Tor.
+# H-11 / B3-9: deny-by-default at the forward-auth gate.
 _gw = TinySesamConfig.oidc_gateway(issuer="https://id.example.com", client_id="g", client_secret="s",
                                    base_url="https://auth.example.com", db_path=":memory:")
-r.check("H-11/B3-9: Gateway-Preset ohne Gruppen und ohne Clients warnt vor dem offenen Tor",
+r.check("H-11/B3-9: gateway preset without groups and without clients warns about the open gate",
         _nennt(_kp2.pruefe(_gw)[1], "offenem Tor", "OIDC"))
 _gw2 = TinySesamConfig.oidc_gateway(issuer="https://id.example.com", client_id="g", client_secret="s",
                                     base_url="https://auth.example.com", db_path=":memory:",
                                     allowed_groups=["mitarbeiter"])
-r.check("...mit allowed_groups schweigt die Warnung", not _nennt(_kp2.pruefe(_gw2)[1], "offenem Tor"))
-r.check("...offene Registrierung vor Forward-Auth wird gemeldet",
+r.check("...with allowed_groups the warning stays silent", not _nennt(_kp2.pruefe(_gw2)[1], "offenem Tor"))
+r.check("...open registration in front of forward-auth is reported",
         _nennt(_befund(forward_auth_enabled=True, allow_signup=True)[1], "Selbst-Registrierung"))
-r.check("...ohne Forward-Auth kein Tor, keine Meldung",
+r.check("...without forward-auth no gate, no message",
         not _nennt(_befund(allow_signup=True)[1], "Selbst-Registrierung"))
 
-# B3-16: Kombinationen.
-r.check("B3-16: E-Mail-Bestätigung ohne Pflicht-Adresse ist ein Fehler",
+# B3-16: combinations.
+r.check("B3-16: e-mail confirmation without mandatory address is an error",
         _nennt(_befund(allow_signup=True, signup_verify_email=True, signup_require_email=False,
                        base_url="https://auth.example.com")[0], "signup_require_email=False"))
-r.check("...cookie_domain, die base_url nicht umfasst, ist ein Fehler",
+r.check("...cookie_domain that does not cover base_url is an error",
         _nennt(_befund(cookie_domain=".example.org", base_url="https://auth.example.com")[0], "cookie_domain"))
-r.check("...admin_path ohne führenden Schrägstrich ist ein Fehler",
+r.check("...admin_path without leading slash is an error",
         _nennt(_befund(admin_path="admin")[0], "admin_path"))
-r.check("...kürzere Sitzung ohne „Angemeldet bleiben“ als mit wird gemeldet",
+r.check("...a shorter session without \"stay signed in\" than with it is reported",
         _nennt(_befund(session_ttl_hours=2, session_ttl_transient_hours=12)[1], "session_ttl_transient_hours"))
-# `True` ist keine Stundenzahl: Den Typfehler meldet `_zahlengrenzen`, eine Kombinationswarnung
-# „länger als session_ttl_hours=True“ kam bis zur Schlussrunde trotzdem dazu (die Kombination las
-# am Leseweg `_ganzzahl` vorbei). (Mutationsprobe: in `_kombinationen` wieder
-# `getattr(config, "session_ttl_hours", 0)` mit `isinstance(…, int)` → rot.)
+# `True` is not an hour count: `_zahlengrenzen` reports the type error, a combination warning
+# "longer than session_ttl_hours=True" was nevertheless added until the final round (the combination read
+# past the read path `_ganzzahl`). (Mutation probe: in `_kombinationen` again
+# `getattr(config, "session_ttl_hours", 0)` with `isinstance(…, int)` → red.)
 _tt_f, _tt_w = _befund(session_ttl_hours=True, session_ttl_transient_hours=12)
-r.check("...session_ttl_hours=True: nur der Typfehler, keine Kombinationswarnung daneben",
+r.check("...session_ttl_hours=True: only the type error, no combination warning beside it",
         _nennt(_tt_f, "session_ttl_hours=True", "keine ganze Zahl") and not _nennt(_tt_w, "länger als"),
-        f"Fehler {_tt_f} · Warnungen {_tt_w}")
+        f"errors {_tt_f} · warnings {_tt_w}")
 
-# B3-8: Demo-Modus hat technische Schranken.
-r.check("B3-8: demo_mode neben einem echten Anmeldeweg ist ein Fehler",
+# B3-8: demo mode has technical barriers.
+r.check("B3-8: demo_mode next to a real sign-in path is an error",
         _nennt(_befund(demo_mode=True, forward_auth_enabled=True)[0], "demo_mode"))
 _demo_db = str(Path(tempfile.mkdtemp()) / "t.db")
 _bestand = TinySesam(TinySesamConfig(db_path=_demo_db))
@@ -3049,10 +3049,10 @@ try:
     _b38 = False
 except _CfgErr:
     _b38 = True
-r.check("...demo_mode auf einer Datenbank mit Bestandskonten scheitert beim Aufbau",
+r.check("...demo_mode on a database with existing accounts fails at setup",
         _b38 and _bestand.store.get_user_by_name("demoadmin") is None,
-        "vorher entstand dort still ein Admin mit bekanntem Passwort")
-# Gegenprobe: Eine echte Demo startet wieder, auch mit inzwischen registrierten Besuchern.
+        "before, an admin with a known password silently arose there")
+# Counter-check: A real demo starts again, even with visitors registered in the meantime.
 _demo_db2 = str(Path(tempfile.mkdtemp()) / "t.db")
 _d1 = TinySesam(TinySesamConfig(db_path=_demo_db2, demo_mode=True))
 _d1.create_user("besucher", password="Geheim12345!abc")
@@ -3061,10 +3061,10 @@ try:
     _b38b = True
 except _CfgErr:
     _b38b = False
-r.check("...eine echte Demo startet trotzdem neu (auch mit Besuchern)", _b38b)
-# (Mutationsprobe: die Bestandsprüfung vor seed_demo im Konstruktor entfernen → rot.)
+r.check("...a real demo restarts nevertheless (also with visitors)", _b38b)
+# (Mutation probe: remove the existing-stock check before seed_demo in the constructor → red.)
 
-# B3-14: validate() hat einen Aufrufer — router() prüft vor dem Bau erneut.
+# B3-14: validate() has a caller — router() checks again before building.
 _a314, _ = _app()
 _a314.cfg.cookie_samesite = "Strict"
 try:
@@ -3072,24 +3072,24 @@ try:
     _b314 = False
 except _CfgErr as _e:
     _b314 = "cookie_samesite" in str(_e)
-r.check("B3-14: eine nach dem Konstruktor kaputt gestellte Config scheitert an router()", _b314)
+r.check("B3-14: a config broken after the constructor fails at router()", _b314)
 _a314b, _ = _app()
-_a314b.cfg.base_url = "https://auth.example.com"          # erlaubte Änderung
+_a314b.cfg.base_url = "https://auth.example.com"          # permitted change
 _a314b.cfg.lang = "de"
 try:
     _a314b.router()
     _b314b = True
 except _CfgErr:
     _b314b = False
-r.check("...eine erlaubte Änderung (Sprache, Adresse) baut weiter", _b314b)
-r.check("...und validate() liefert weiter eine Liste (Fehler + Warnungen)",
+r.check("...a permitted change (language, address) still builds", _b314b)
+r.check("...and validate() still returns a list (errors + warnings)",
         isinstance(TinySesamConfig(db_path=":memory:").validate(), list))
-# (Mutationsprobe: `self._nachpruefen()` in router() entfernen → rot.)
+# (Mutation probe: remove `self._nachpruefen()` in router() → red.)
 
-# A2: Auch die Riegel des Konstruktors gelten vor router()/admin_router(), nicht nur konfigpruefung.
-# Angriff: admin_identifiers=["chef"] ist sicher, solange Konten nicht von selbst entstehen. Wer
-# NACH dem Konstruktor allow_signup einschaltete, baute trotzdem einen Router — der erste Besucher
-# registrierte sich als „chef" und war Erst-Admin mit Zugriff auf die Admin-API.
+# A2: The constructor's guards also apply before router()/admin_router(), not only konfigpruefung.
+# Attack: admin_identifiers=["chef"] is safe as long as accounts do not arise by themselves. Whoever
+# switched on allow_signup AFTER the constructor still built a router — the first visitor
+# registered as "chef" and was first admin with access to the admin API.
 def _nachtraeglich(aenderung, **cfg):
     a, _ = _app(**cfg)
     for k, v in aenderung.items():
@@ -3114,9 +3114,9 @@ for _titel, _aend, _cfg, _wort in (
          "forward_headers"),
         ("totp_required=True", {"totp_required": True}, {}, "totp_required")):
     _erg = _nachtraeglich(_aend, **_cfg)
-    r.check(f"A2: nachträglich {_titel} scheitert an router() und admin_router()",
+    r.check(f"A2: {_titel} added afterwards fails at router() and admin_router()",
             all(_wort in x and "nach dem Aufbau" in x for x in _erg), f"{_erg}")
-# Der Angriff selbst: Mit dem Riegel entsteht gar kein Router, also auch keine Registrierung.
+# The attack itself: With the guard, no router arises at all, so no registration either.
 _a2, _ = _app(admin_identifiers=["chef"], csrf_enabled=False, signup_require_email=False)
 _a2.cfg.allow_signup = True
 _admin_api = None
@@ -3128,34 +3128,34 @@ try:
         _c2.post("/auth/login", data={"username": "chef", "password": "Fremder-123456"})
         _admin_api = _c2.get("/auth/admin/api/users").status_code
 except _CfgErr:
-    pass   # der Aufbau darf abgelehnt werden — geprüft wird unten, dass niemand Admin wurde
+    pass   # the setup may be rejected — what is checked below is that nobody became admin
 _chef = _a2.store.get_user_by_name("chef")
-r.check("...und niemand registriert sich als 'chef' zum Erst-Admin",
+r.check("...and nobody registers as 'chef' to become first admin",
         (_chef is None or not _chef["is_admin"]) and _admin_api != 200,
-        f"Konto={dict(_chef) if _chef else None}, Admin-API={_admin_api}")
-r.check("...eine erlaubte Änderung neben admin_identifiers baut weiter",
+        f"account={dict(_chef) if _chef else None}, Admin-API={_admin_api}")
+r.check("...a permitted change next to admin_identifiers still builds",
         _nachtraeglich({"lang": "en"}, admin_identifiers=["chef"]) == ["", ""])
-# (Mutationsprobe: den `_riegel`-Aufruf in _nachpruefen entfernen → rot.)
+# (Mutation probe: remove the `_riegel` call in _nachpruefen → red.)
 
-# A5: origin darf eine Liste sein — py_webauthn nimmt als expected_origin auch mehrere.
+# A5: origin may be a list — py_webauthn also accepts several as expected_origin.
 _zwei = ["https://a.example.com", "https://b.example.com"]
 _f5, _w5 = _befund(passkey_enabled=True, rp_id="example.com", origin=_zwei, base_url="https://a.example.com")
-r.check("A5: origin als Liste passender Origins ist kein Fehler",
+r.check("A5: origin as a list of matching origins is no error",
         not _nennt(_f5, "origin") and not _nennt(_w5, "origin"), f"{_f5} {_w5}")
-# (Mutationsprobe: in _proxies_und_passkey wieder `str(origin)` statt der Liste prüfen → rot.)
-r.check("...ein schlechter Eintrag in der Liste bleibt ein Fehler",
+# (Mutation probe: in _proxies_und_passkey check `str(origin)` instead of the list again → red.)
+r.check("...a bad entry in the list remains an error",
         _nennt(_befund(passkey_enabled=True, rp_id="example.com",
                        origin=["https://a.example.com", "https://b.example.com/pfad"])[0], "ist kein Origin"))
-r.check("...ein Eintrag ausserhalb der rp_id ebenso",
+r.check("...an entry outside the rp_id likewise",
         _nennt(_befund(passkey_enabled=True, rp_id="example.com",
                        origin=["https://a.example.com", "https://a.example.org"])[0], "passt nicht"))
-r.check("...eine leere Liste auch",
+r.check("...an empty list too",
         _nennt(_befund(passkey_enabled=True, rp_id="example.com", origin=[])[0], "leere Liste"))
-r.check("...und base_url ausserhalb der Liste wird weiter gemeldet",
+r.check("...and base_url outside the list is still reported",
         _nennt(_befund(passkey_enabled=True, rp_id="example.com", origin=_zwei,
                        base_url="https://c.example.com")[1], "base_url"))
 
-# R5-1: Schema und Benutzerangabe der Login-URL kommen nicht mehr ungeprüft aus der Anfrage.
+# R5-1: scheme and user information of the login URL no longer come unchecked from the request.
 _a51, _app51 = _app(forward_auth_enabled=True, trusted_redirect_hosts=["app.example.com"],
                     cookie_secure=True)
 with TestClient(_app51) as _c51:
@@ -3165,15 +3165,15 @@ with TestClient(_app51) as _c51:
     _l2 = _c51.get("/auth/forward", headers={"host": "127.0.0.1",
                                              "x-original-url": "http://fremd.example@app.example.com/x"}
                    ).headers.get("x-tinysesam-location", "")
-r.check("R5-1: X-Forwarded-Proto: http stuft die Login-URL bei cookie_secure nicht herab",
+r.check("R5-1: X-Forwarded-Proto: http does not downgrade the login URL with cookie_secure",
         _l1.startswith("https://app.example.com/auth/login"), _l1)
-r.check("...eine Benutzerangabe aus X-Original-URL landet nicht vor dem Host der Login-URL",
+r.check("...user information from X-Original-URL does not end up in front of the host of the login URL",
         _l2.startswith("https://app.example.com/auth/login") and "fremd.example@" not in _l2.split("?")[0],
         _l2)
 _a51b, _app51b = _app(forward_auth_enabled=True, cookie_secure=False)
 with TestClient(_app51b) as _c51b:
     _l3 = _c51b.get("/auth/forward", headers={"host": "127.0.0.1:8000", "x-forwarded-proto": "http"}
                     ).headers.get("x-tinysesam-location", "")
-r.check("...lokal (Loopback, ohne Zertifikat) bleibt http erlaubt", _l3.startswith("http://127.0.0.1:8000/"), _l3)
-# (Mutationsprobe: `_login_schema` durch das rohe Schema ersetzen → die ersten beiden rot.)
+r.check("...local (loopback, without certificate) http remains allowed", _l3.startswith("http://127.0.0.1:8000/"), _l3)
+# (Mutation probe: replace `_login_schema` with the raw scheme → the first two red.)
 sys.exit(r.done())

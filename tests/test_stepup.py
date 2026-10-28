@@ -1,4 +1,4 @@
-"""Phase 2: Step-up / per-Route-MFA (Flag am Guard), Reauth-Frische, admin_require_mfa."""
+"""Phase 2: step-up / per-route MFA (flag on the guard), reauth freshness, admin_require_mfa."""
 import ast
 import os
 import pathlib
@@ -10,9 +10,9 @@ import pyotp
 import importlib.util
 from tinysesam import TinySesam, TinySesamConfig
 
-#: Ohne das Extra [passkey] gibt es keine Passkey-Routen — `build_router` wirft dann
-#: `MissingExtra`. Die Suite prüft hier Step-up und Faktor-Abbau, nicht WebAuthn selbst:
-#: Sie läuft deshalb auch im Kern-Betrieb und lässt nur die Passkey-Route aus.
+#: Without the [passkey] extra there are no passkey routes — `build_router` then raises
+#: `MissingExtra`. The suite checks step-up and factor removal here, not WebAuthn itself:
+#: it therefore also runs in core operation and only skips the passkey route.
 HAT_PASSKEY = importlib.util.find_spec("webauthn") is not None
 
 
@@ -23,8 +23,8 @@ def ok(name):
 db = os.path.join(tempfile.mkdtemp(), "t.db")
 auth = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db, rp_name="Test", passkey_enabled=False, oidc_enabled=False,
                                  cookie_secure=False, stepup_max_age_sec=900,
-                                 # F-06 selbst (altes Token sofort tot) — die Gnadenfrist (A-6)
-                                 # hat unten eigene Prüfungen.
+                                 # F-06 itself (old token dead immediately) — the grace period (A-6)
+                                 # has its own checks below.
                                  session_rotation_grace_sec=0))
 auth.ensure_admin("admin", "geheim123")
 app = FastAPI()
@@ -47,81 +47,81 @@ uid = auth.store.get_user_by_name("admin")["id"]
 
 
 def stale():
-    """mfa_at der aktuellen Sitzung künstlich altern lassen."""
+    """Artificially age the mfa_at of the current session."""
     tok = c.cookies.get("tinysesam_session")
     auth.store._exec("UPDATE session SET mfa_at=? WHERE token_hash=?",
                      (int(time.time()) - 100000, auth.store.session_hash(tok)))
 
 
-# ---------- frisch nach Login → sudo erreichbar ----------
+# ---------- fresh after login → sudo reachable ----------
 c.post("/auth/login", data={"username": "admin", "password": "geheim123", "next": "/"}, follow_redirects=False)
 assert c.get("/normal", headers=JSON).status_code == 200
 assert c.get("/sudo", headers=JSON).status_code == 200
-ok("frische Sitzung: require_user UND require(mfa=True) erreichbar")
+ok("fresh session: require_user AND require(mfa=True) reachable")
 
-# ---------- Frische abgelaufen → normal ok, sudo blockt (403 + Reauth-Header) ----------
+# ---------- Freshness expired → normal ok, sudo blocks (403 + reauth header) ----------
 stale()
-assert c.get("/normal", headers=JSON).status_code == 200, "normale Route bleibt erreichbar"
+assert c.get("/normal", headers=JSON).status_code == 200, "normal route stays reachable"
 r = c.get("/sudo", headers=JSON)
 assert r.status_code == 403 and r.headers.get("X-TinySesam-Reauth") == "/auth/reauth", (r.status_code, dict(r.headers))
-ok("abgelaufene Frische: JSON-Client → 403 + X-TinySesam-Reauth")
+ok("expired freshness: JSON client → 403 + X-TinySesam-Reauth")
 
-# Browser (Accept: text/html) → Redirect auf /auth/reauth
+# Browser (Accept: text/html) → redirect to /auth/reauth
 r = c.get("/sudo", headers={"Accept": "text/html"}, follow_redirects=False)
 assert r.status_code == 307 and r.headers["location"] == "/auth/reauth?next=/sudo", r.headers.get("location")
-ok("abgelaufene Frische: Browser → 307 /auth/reauth?next=/sudo")
+ok("expired freshness: browser → 307 /auth/reauth?next=/sudo")
 
-# ---------- Reauth per Passwort (User ohne TOTP) → wieder frisch ----------
+# ---------- Reauth via password (user without TOTP) → fresh again ----------
 r = c.get("/auth/reauth", follow_redirects=False)
 assert r.status_code == 200 and "Passwort" in r.text
 assert c.post("/auth/reauth", data={"password": "falsch", "next": "/sudo"}).status_code == 401
 r = c.post("/auth/reauth", data={"password": "geheim123", "next": "/sudo"}, follow_redirects=False)
 assert r.status_code == 303 and r.headers["location"] == "/sudo"
 assert c.get("/sudo", headers=JSON).status_code == 200
-ok("Reauth per Passwort → sudo wieder erreichbar")
+ok("reauth via password → sudo reachable again")
 
-# ---------- F-06: der Step-up erneuert das Sitzungs-Token ----------
-# Wer das alte Cookie mitgelesen hat, darf nach der Bestätigung keine Sudo-Sitzung halten.
-# Laufzeit und Anmeldezeitpunkt bleiben — ein Step-up verlängert die Sitzung nicht.
+# ---------- F-06: the step-up renews the session token ----------
+# Whoever has read the old cookie along must not hold a sudo session after the confirmation.
+# Lifetime and sign-in time stay — a step-up does not extend the session.
 stale()
 vorher = c.cookies.get("tinysesam_session")
 zeile_vorher = auth.store.get_session(vorher)
 r = c.post("/auth/reauth", data={"password": "geheim123", "next": "/sudo"}, follow_redirects=False)
 assert r.status_code == 303 and "tinysesam_session=" in r.headers.get("set-cookie", ""), r.headers
 nachher = c.cookies.get("tinysesam_session")
-assert nachher and nachher != vorher, "Reauth muss ein neues Token ausgeben"
-assert auth.store.get_session(vorher) is None, "das alte Token muss tot sein"
+assert nachher and nachher != vorher, "reauth must issue a new token"
+assert auth.store.get_session(vorher) is None, "the old token must be dead"
 zeile = auth.store.get_session(nachher)
 assert zeile["created_at"] == zeile_vorher["created_at"] and zeile["expires_at"] == zeile_vorher["expires_at"]
 assert zeile["remember"] == zeile_vorher["remember"] and zeile["mfa_ok"] == 1
 assert c.get("/sudo", headers=JSON).status_code == 200
 dieb = TestClient(app)
 dieb.cookies.set("tinysesam_session", vorher)
-assert dieb.get("/normal", headers=JSON).status_code == 401, "altes Cookie trägt nicht mehr"
-ok("F-06: Reauth rotiert das Token (altes tot, Laufzeit und created_at unverändert)")
+assert dieb.get("/normal", headers=JSON).status_code == 401, "old cookie no longer works"
+ok("F-06: reauth rotates the token (old one dead, lifetime and created_at unchanged)")
 
-# Dasselbe, wenn der Step-up über einen erneuten Login mit einem Faktor läuft (apply_factor auf
-# einer schon vollwertigen Sitzung): neues Token, alte Sitzung weg, keine zweite daneben.
+# The same when the step-up runs via a renewed login with a factor (apply_factor on
+# an already full session): new token, old session gone, no second one alongside.
 vorher = c.cookies.get("tinysesam_session")
 anzahl = len(auth.store.list_sessions(uid))
 r = c.post("/auth/login", data={"username": "admin", "password": "geheim123", "next": "/"},
            follow_redirects=False)
 assert r.status_code == 303 and c.cookies.get("tinysesam_session") != vorher
 assert auth.store.get_session(vorher) is None and len(auth.store.list_sessions(uid)) == anzahl
-ok("F-06: erneuter Faktor auf vollwertiger Sitzung → Token rotiert, Sitzungszahl gleich")
+ok("F-06: renewed factor on a full session → token rotated, session count unchanged")
 
-# Der dritte Step-up-Weg: POST /auth/totp auf einer VOLLEN Sitzung (Routen-Kette mit TOTP, oder
-# jemand ruft die Seite einfach auf). `complete_totp` machte die Sitzung wieder frisch, drehte
-# das Token aber nur beim Übergang halb → voll — ein vorher mitgelesenes Cookie bekam so frische
-# Sudo-Rechte. Eigene Instanz: Ein TOTP am Admin oben änderte jeden Login dieser Suite.
-# (Mutationsprobe: in complete_totp den Zweig `ok and war_ok` → rotate_session streichen → rot.)
+# The third step-up path: POST /auth/totp on a FULL session (route chain with TOTP, or
+# someone simply opens the page). `complete_totp` made the session fresh again but only rotated
+# the token on the half → full transition — a cookie read beforehand thus got fresh
+# sudo rights. Own instance: a TOTP on the admin above would change every login of this suite.
+# (Mutation probe: remove the branch `ok and war_ok` → rotate_session in complete_totp → red.)
 db_t = os.path.join(tempfile.mkdtemp(), "t.db")
 auth_t = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db_t, passkey_enabled=False,
                                    oidc_enabled=False, cookie_secure=False, stepup_max_age_sec=900,
                                    session_rotation_grace_sec=0))
 uid_t = auth_t.create_user("eva", password="Eva-Geheim-2026")
 assert auth_t.totp_confirm(uid_t, pyotp.TOTP(auth_t.totp_begin(uid_t)["secret"]).now())
-codes_t = auth_t.generate_recovery_codes(uid_t)   # zwei Codes ohne Warten auf das nächste TOTP-Fenster
+codes_t = auth_t.generate_recovery_codes(uid_t)   # two codes without waiting for the next TOTP window
 app_t = FastAPI()
 app_t.include_router(auth_t.router())
 
@@ -136,34 +136,34 @@ c_t.post("/auth/login", data={"username": "eva", "password": "Eva-Geheim-2026", 
          follow_redirects=False)
 assert c_t.post("/auth/totp", data={"code": codes_t[0], "next": "/"}, follow_redirects=False
                 ).status_code == 303
-assert c_t.get("/sudo", headers=JSON).status_code == 200, "nach TOTP voll angemeldet"
+assert c_t.get("/sudo", headers=JSON).status_code == 200, "fully signed in after TOTP"
 vorher = c_t.cookies.get("tinysesam_session")
 auth_t.store._exec("UPDATE session SET mfa_at=? WHERE token_hash=?",
                    (int(time.time()) - 100000, auth_t.store.session_hash(vorher)))
-assert c_t.get("/sudo", headers=JSON).status_code == 403, "Frische muss abgelaufen sein"
+assert c_t.get("/sudo", headers=JSON).status_code == 403, "freshness must have expired"
 zeile_vorher = auth_t.store.get_session(vorher)
 anzahl = len(auth_t.store.list_sessions(uid_t))
 r = c_t.post("/auth/totp", data={"code": codes_t[1], "next": "/sudo"}, follow_redirects=False)
 assert r.status_code == 303 and r.headers["location"] == "/sudo", (r.status_code, r.headers)
 assert any(z.startswith("tinysesam_session=") for z in r.headers.get_list("set-cookie")), \
-    "Step-up über /auth/totp setzt kein neues Sitzungs-Cookie"
+    "step-up via /auth/totp sets no new session cookie"
 nachher = c_t.cookies.get("tinysesam_session")
-assert nachher and nachher != vorher and auth_t.store.get_session(vorher) is None, "altes Token lebt"
+assert nachher and nachher != vorher and auth_t.store.get_session(vorher) is None, "old token still alive"
 zeile = auth_t.store.get_session(nachher)
 assert zeile["created_at"] == zeile_vorher["created_at"] and zeile["expires_at"] == zeile_vorher["expires_at"]
-assert len(auth_t.store.list_sessions(uid_t)) == anzahl, "Step-up legt eine zweite Sitzung an"
+assert len(auth_t.store.list_sessions(uid_t)) == anzahl, "step-up creates a second session"
 assert c_t.get("/sudo", headers=JSON).status_code == 200
 dieb = TestClient(app_t)
 dieb.cookies.set("tinysesam_session", vorher)
-assert dieb.get("/sudo", headers=JSON).status_code == 401, "das mitgelesene Cookie trägt noch"
-ok("F-06: Step-up über /auth/totp auf voller Sitzung rotiert das Token (altes tot, Laufzeit gleich)")
+assert dieb.get("/sudo", headers=JSON).status_code == 401, "the cookie read along still works"
+ok("F-06: step-up via /auth/totp on a full session rotates the token (old one dead, lifetime unchanged)")
 
-# Eigene Oberfläche (README „Your own login page"): `complete_totp` gibt beim Step-up jetzt ein
-# neues Token zurück, und das alte ist danach tot. Wer den Rückgabewert ins Cookie setzt, bleibt
-# angemeldet — der Weg, den die Doku zeigen muss. (Wer ihn ignoriert, hat seit F-06 eine tote
-# Sitzung im Cookie; beim Login halb → voll war das schon immer so.)
-# (Mutationsprobe: in complete_totp den Zweig `ok and war_ok` streichen → rot, schon im Block
-# davor; hier bliebe das alte Token am Leben.)
+# Own UI (README „Your own login page"): `complete_totp` now returns a new token on step-up,
+# and the old one is dead afterwards. Whoever puts the return value into the cookie stays
+# signed in — the way the docs must show. (Whoever ignores it has had a dead session in the
+# cookie since F-06; at login half → full that was always so.)
+# (Mutation probe: remove the branch `ok and war_ok` in complete_totp → red, already in the block
+# before; here the old token would stay alive.)
 from fastapi import Request as _Req, Response as _Resp   # noqa: E402
 
 
@@ -186,14 +186,14 @@ assert c_t.get("/sudo", headers=JSON).status_code == 403
 codes_t2 = auth_t.generate_recovery_codes(uid_t)
 assert c_t.post("/eigen/stepup", params={"code": codes_t2[0]}).status_code == 200
 assert c_t.cookies.get("tinysesam_session") != vorher and auth_t.store.get_session(vorher) is None
-assert c_t.get("/sudo", headers=JSON).status_code == 200, "eigener Step-up nach Doku-Muster meldet ab"
-ok("F-06: eigene Step-up-Route mit `neu = complete_totp(tok); set_cookie(resp, neu)` bleibt angemeldet")
+assert c_t.get("/sudo", headers=JSON).status_code == 200, "own step-up following the docs pattern signs out"
+ok("F-06: own step-up route with `neu = complete_totp(tok); set_cookie(resp, neu)` stays signed in")
 os.remove(db_t)
 
-# Beim Step-up über /auth/totp dreht TinySesam das Sitzungs-Token, das CSRF-Token aber nicht —
-# wie `/auth/reauth`: Ein neues entwertete nur die Formulare in den anderen offenen Reitern.
-# Beim Login (halb → voll) dagegen ein frisches (csrf_rotieren, cookie injection).
-# (Mutationsprobe: in router.totp_submit das `if not s["mfa_ok"]` vor csrf_rotieren streichen → rot.)
+# On step-up via /auth/totp TinySesam rotates the session token but not the CSRF token —
+# like `/auth/reauth`: a new one would only invalidate the forms in the other open tabs.
+# At login (half → full), by contrast, a fresh one (csrf_rotieren, cookie injection).
+# (Mutation probe: remove the `if not s["mfa_ok"]` before csrf_rotieren in router.totp_submit → red.)
 db_x = os.path.join(tempfile.mkdtemp(), "t.db")
 auth_x = TinySesam(TinySesamConfig(lang="de", db_path=db_x, passkey_enabled=False, oidc_enabled=False,
                                    cookie_secure=False, stepup_max_age_sec=900,
@@ -221,7 +221,7 @@ c_x.post("/auth/login", data={"username": "eva", "password": "Eva-Geheim-2026", 
 r = c_x.post("/auth/totp", data={"code": codes_x[0], "next": "/", "_csrf": c_x.cookies.get("tinysesam_csrf")},
              follow_redirects=False)
 assert r.status_code == 303 and {"tinysesam_session", "tinysesam_csrf"} <= _gesetzt(r), \
-    ("beim Login (halb → voll) gehört ein frisches CSRF-Token dazu", _gesetzt(r))
+    ("at login (half → full) a fresh CSRF token belongs with it", _gesetzt(r))
 csrf_vorher = c_x.cookies.get("tinysesam_csrf")
 tok_x = c_x.cookies.get("tinysesam_session")
 auth_x.store._exec("UPDATE session SET mfa_at=? WHERE token_hash=?",
@@ -230,52 +230,52 @@ assert c_x.get("/sudo", headers=JSON).status_code == 403
 r = c_x.post("/auth/totp", data={"code": codes_x[1], "next": "/sudo", "_csrf": csrf_vorher},
              follow_redirects=False)
 assert r.status_code == 303 and "tinysesam_session" in _gesetzt(r), (r.status_code, _gesetzt(r))
-assert "tinysesam_csrf" not in _gesetzt(r), "der Step-up dreht das CSRF-Token (andere Reiter brechen)"
+assert "tinysesam_csrf" not in _gesetzt(r), "the step-up rotates the CSRF token (other tabs break)"
 assert c_x.cookies.get("tinysesam_csrf") == csrf_vorher and c_x.get("/sudo", headers=JSON).status_code == 200
-ok("F-06: Step-up über /auth/totp dreht das Sitzungs-, nicht das CSRF-Token; der Login dreht beide")
+ok("F-06: step-up via /auth/totp rotates the session token, not the CSRF token; login rotates both")
 os.remove(db_x)
 
-# ---------- API-Key erfüllt Step-up NICHT ----------
+# ---------- API key does NOT satisfy step-up ----------
 key = auth.create_api_key(uid, name="k")["key"]
 assert c.get("/normal", headers={**JSON, "Authorization": f"Bearer {key}"}).status_code == 200
-# frische Session-Cookies raus, nur Key
+# remove fresh session cookies, key only
 c2 = TestClient(app)
 assert c2.get("/normal", headers={**JSON, "Authorization": f"Bearer {key}"}).status_code == 200
 assert c2.get("/sudo", headers={**JSON, "Authorization": f"Bearer {key}"}).status_code == 403
-ok("API-Key: require_user ok, require(mfa=True) → 403 (kein interaktiver Faktor)")
+ok("API key: require_user ok, require(mfa=True) → 403 (no interactive factor)")
 
-# ---------- admin_require_mfa mit TOTP-User ----------
+# ---------- admin_require_mfa with TOTP user ----------
 secret = auth.totp_begin(uid)["secret"]
 auth.totp_confirm(uid, pyotp.TOTP(secret).at(time.time() - 30))
 auth.cfg.admin_require_mfa = True
 c3 = TestClient(app)
-# Login → TOTP-Schritt → voll eingeloggt (frisch)
+# Login → TOTP step → fully logged in (fresh)
 c3.post("/auth/login", data={"username": "admin", "password": "geheim123", "next": "/"}, follow_redirects=False)
 c3.post("/auth/totp", data={"code": pyotp.TOTP(secret).now(), "next": "/"}, follow_redirects=False)
 r = c3.get("/auth/admin", headers={"Accept": "text/html"}, follow_redirects=False)
 assert r.status_code == 200, r.status_code
-# altern → Admin-Panel verlangt Reauth
+# age → admin panel demands reauth
 tok = c3.cookies.get("tinysesam_session")
 auth.store._exec("UPDATE session SET mfa_at=? WHERE token_hash=?",
                      (int(time.time()) - 100000, auth.store.session_hash(tok)))
 r = c3.get("/auth/admin", headers={"Accept": "text/html"}, follow_redirects=False)
 assert r.status_code == 307 and "/auth/reauth" in r.headers["location"], r.headers.get("location")
-# Reauth verlangt jetzt TOTP (nicht Passwort)
+# Reauth now demands TOTP (not password)
 assert "Authenticator" in c3.get("/auth/reauth").text
-# Frischer Zeitschritt: Der Code vom Login ist verbraucht (ein TOTP-Code gilt genau einmal).
+# Fresh time step: the code from login is used up (a TOTP code is valid exactly once).
 r = c3.post("/auth/reauth", data={"code": pyotp.TOTP(secret).at(int(time.time()) + 30),
                                   "next": "/auth/admin"}, follow_redirects=False)
 assert r.status_code == 303
 assert c3.get("/auth/admin", headers={"Accept": "text/html"}).status_code == 200
-ok("admin_require_mfa: Panel altert → Reauth per TOTP → wieder frei")
+ok("admin_require_mfa: panel ages → reauth via TOTP → free again")
 
-# ---------- R3-3: Faktor-Verwaltung verlangt Frische — und scheitert am API-Key ----------
-# Angriff (Befund R3-3, Runde 3): Eine übernommene oder lange offene Sitzung bekam auf jedem
-# `require(mfa=True)`-Guard 403, durfte aber weiterhin TOTP löschen, sich zehn frische
-# Recovery-Codes ausstellen, die PIN setzen/entfernen und Passkeys löschen. Dieselben Routen
-# hingen an `current_user()` — und das akzeptiert auch einen **API-Key**: ein abgeflossenes
-# Maschinen-Credential, das nie einen interaktiven Faktor erbracht hat, baute den zweiten
-# Faktor seines Besitzers lautlos ab.
+# ---------- R3-3: factor management demands freshness — and fails with an API key ----------
+# Attack (finding R3-3, round 3): a taken-over or long-open session got 403 on every
+# `require(mfa=True)` guard but could still delete TOTP, issue itself ten fresh
+# recovery codes, set/remove the PIN and delete passkeys. The same routes
+# hung on `current_user()` — and that also accepts an **API key**: a leaked
+# machine credential that never provided an interactive factor silently removed its owner's
+# second factor.
 db2 = os.path.join(tempfile.mkdtemp(), "t.db")
 auth2 = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db2, rp_name="Test",
                                   cookie_secure=False, oidc_enabled=False, pin_enabled=True,
@@ -302,7 +302,7 @@ def sudo2(u=Depends(auth2.require(mfa=True))):
 
 
 def koerper(pfad, pin="9876", pk=None):
-    """Was die jeweilige Route als Body erwartet (die anderen ignorieren ihn)."""
+    """What the respective route expects as body (the others ignore it)."""
     if pfad == "/auth/pin/set":
         return {"pin": pin}
     if pfad == "/auth/passkey/delete":
@@ -310,13 +310,13 @@ def koerper(pfad, pin="9876", pk=None):
     return {}
 
 
-#: Die fünf Routen, die einen Anmeldefaktor abbauen oder ersetzen.
+#: The five routes that remove or replace a sign-in factor.
 VERWALTUNG = ("/auth/totp/recovery", "/auth/totp/disable", "/auth/pin/set",
               "/auth/pin/disable") + (("/auth/passkey/delete",) if HAT_PASSKEY else ())
 
 
 def faktoren(a, uid):
-    """Womit kann sich dieses Konto gerade anmelden? (TOTP, PIN, Anzahl Passkeys)"""
+    """What can this account currently sign in with? (TOTP, PIN, number of passkeys)"""
     return (a.store.has_confirmed_totp(uid), a.has_pin(uid), len(a.store.list_webauthn(uid)))
 
 
@@ -328,39 +328,39 @@ assert c4.get("/sudo2", headers=JSON).status_code == 200
 assert c4.post("/auth/totp/recovery", json={}, headers=JSON).status_code == 200
 assert c4.post("/auth/pin/set", json={"pin": "9876"}, headers=JSON).status_code == 200
 assert auth2._verify_user_pin(uid2, "9876")
-ok("frische Sitzung: Recovery-Codes und PIN-Änderung gehen weiter durch (legitimer Weg)")
+ok("fresh session: recovery codes and PIN change still go through (legitimate path)")
 
 tok2 = c4.cookies.get("tinysesam_session")
 auth2.store._exec("UPDATE session SET mfa_at=? WHERE token_hash=?",
                   (int(time.time()) - 100000, auth2.store.session_hash(tok2)))
-# Vorbedingung — ohne sie prüfte der Block nichts: Die Sitzung LEBT weiter, `current_user()`
-# liefert sie, nur die Frische fehlt. Genau darauf stützten sich die fünf Routen vorher; mit
-# den alten `current_user()`-Zeilen wäre jede der folgenden Zusicherungen rot.
-assert c4.get("/normal2", headers=JSON).status_code == 200, "die Sitzung muss gültig bleiben"
-assert c4.get("/sudo2", headers=JSON).status_code == 403, "die Frische muss wirklich weg sein"
+# Precondition — without it the block checked nothing: the session LIVES on, `current_user()`
+# returns it, only the freshness is missing. That is exactly what the five routes relied on before; with
+# the old `current_user()` lines every one of the following assertions would be red.
+assert c4.get("/normal2", headers=JSON).status_code == 200, "the session must stay valid"
+assert c4.get("/sudo2", headers=JSON).status_code == 403, "the freshness must really be gone"
 vorher2 = faktoren(auth2, uid2)
 for pfad in VERWALTUNG:
     antwort = c4.post(pfad, json=koerper(pfad, pk=pk2), headers=JSON)
     assert antwort.status_code == 403, (pfad, antwort.status_code, antwort.text[:90])
     assert antwort.headers.get("X-TinySesam-Reauth") == "/auth/reauth", (pfad, dict(antwort.headers))
-assert faktoren(auth2, uid2) == vorher2, "aus einer veralteten Sitzung darf sich kein Faktor ändern"
-ok(f"veraltete Sitzung: alle {len(VERWALTUNG)} Faktor-Routen → 403 + Reauth-Hinweis, nichts geändert")
+assert faktoren(auth2, uid2) == vorher2, "no factor may change from a stale session"
+ok(f"stale session: all {len(VERWALTUNG)} factor routes → 403 + reauth hint, nothing changed")
 
-# Frischer Zeitschritt: der Code vom Login ist verbraucht (ein TOTP-Code gilt genau einmal).
+# Fresh time step: the code from login is used up (a TOTP code is valid exactly once).
 r = c4.post("/auth/reauth", data={"code": pyotp.TOTP(sec2).at(int(time.time()) + 30), "next": "/"},
             follow_redirects=False)
 assert r.status_code == 303, r.status_code
 if HAT_PASSKEY:
     assert c4.post("/auth/passkey/delete", json={"id": pk2}, headers=JSON).status_code == 200
-    assert auth2.store.list_webauthn(uid2) == [], "nach dem Step-up muss der legitime Weg offen sein"
+    assert auth2.store.list_webauthn(uid2) == [], "after the step-up the legitimate path must be open"
 else:
     assert c4.post("/auth/pin/disable", json={}, headers=JSON).status_code == 200
-    assert not auth2.has_pin(uid2), "nach dem Step-up muss der legitime Weg offen sein"
-ok("nach Reauth: derselbe Aufruf geht wieder durch (Faktor abgebaut)")
+    assert not auth2.has_pin(uid2), "after the step-up the legitimate path must be open"
+ok("after reauth: the same call goes through again (factor removed)")
 
-# ---------- Derselbe Angriff per API-Key, mit eingeschaltetem CSRF ----------
-# CSRF bleibt hier AN (Vorgabe): Für einen echten API-Key greift `_csrf_entbehrlich`, die
-# CSRF-Schicht hält ihn also nicht auf. Was ihn aufhält, muss die Frische-Schranke sein.
+# ---------- The same attack via API key, with CSRF switched on ----------
+# CSRF stays ON here (default): for a real API key `_csrf_entbehrlich` applies, so the
+# CSRF layer does not stop it. What stops it must be the freshness barrier.
 db3 = os.path.join(tempfile.mkdtemp(), "t.db")
 auth3 = TinySesam(TinySesamConfig(lang="de", db_path=db3, rp_name="Test", cookie_secure=False,
                                   oidc_enabled=False, pin_enabled=True, apikey_enabled=True,
@@ -383,41 +383,41 @@ def normal3(u=Depends(auth3.require_user)):
 
 c5 = TestClient(app3)
 KEY = {"X-API-Key": schluessel, "Accept": "application/json"}
-# Vorbedingung: Der Key ist gültig und `current_user()` liefert damit das Konto — genau die
-# Grundlage, auf der die fünf Routen den Faktor-Abbau vorher zuliessen.
-assert c5.get("/normal3", headers=KEY).status_code == 200, "der API-Key muss gültig sein"
+# Precondition: the key is valid and `current_user()` thus returns the account — exactly the
+# basis on which the five routes previously allowed factor removal.
+assert c5.get("/normal3", headers=KEY).status_code == 200, "the API key must be valid"
 vorher3 = faktoren(auth3, uid3)
-#: Welche Meldung die Abweisung tragen MUSS. `/auth/pin/set` läuft in den Sitzungs-Riegel
-#: (er steht dort vor der Fallunterscheidung erste/weitere PIN), die vier reinen Abbau-Routen
-#: in die Frische-Schranke. Beides ist 403 — geprüft wird der Grund, nicht nur die Zahl,
-#: sonst hielte auch ein zufälliges CSRF-403 den Test grün.
+#: Which message the rejection MUST carry. `/auth/pin/set` runs into the session latch
+#: (it sits there before the first/further PIN case distinction), the four pure removal routes
+#: into the freshness barrier. Both are 403 — what is checked is the reason, not just the number,
+#: otherwise a random CSRF 403 would also keep the test green.
 GRUND = {"/auth/pin/set": "api.needs_session"}
 for pfad in VERWALTUNG:
     antwort = c5.post(pfad, json=koerper(pfad, pin="1111", pk=pk3), headers=KEY)
     assert antwort.status_code == 403, (pfad, antwort.status_code, antwort.text[:90])
     erwartet = auth3.t(GRUND.get(pfad, "api.stepup_session"))
     assert antwort.json().get("detail") == erwartet, (pfad, antwort.text[:90])
-assert faktoren(auth3, uid3) == vorher3, "ein API-Key darf keinen Faktor abbauen"
-assert auth3._verify_user_pin(uid3, "1357"), "die PIN darf sich per API-Key nicht ändern lassen"
-ok(f"API-Key (CSRF an): alle {len(VERWALTUNG)} Faktor-Routen → 403, jede mit ihrem Grund")
+assert faktoren(auth3, uid3) == vorher3, "an API key must not remove a factor"
+assert auth3._verify_user_pin(uid3, "1357"), "the PIN must not be changeable via API key"
+ok(f"API key (CSRF on): all {len(VERWALTUNG)} factor routes → 403, each with its reason")
 
-# ---------- A-umgehung-2: derselbe Riegel gilt für die ANLAGE eines Faktors ----------
-# Der R3-3-Fix deckte nur den ABBAU. Die Anlage hing weiter an `current_user()`, und das
-# akzeptiert einen API-Key; die CSRF-Prüfung entfällt für einen echten Key ohnehin
-# (`_csrf_entbehrlich`). Zwei Wege standen damit offen:
-#   (1) `GET /auth/totp/setup` gibt das Geheimnis im Klartext zurück, `POST` bestätigt es →
-#       das Konto trug danach ein TOTP, dessen Geheimnis der KEY-Inhaber kennt.
-#   (2) Ein selbst registrierter Passkey ist ein vollwertiger Login → frische interaktive
-#       Sitzung → und damit stand der Key doch vor den fünf Abbau-Routen.
-# Nachgestellt in `A2b_r3-3_apikey_totp.py` / `A2_r3-3_apikey_passkey.py` (Runde 3, Angriff
-# gegen die Fixes). Mutationsprobe: `auth.require_session(...)` in `totp_setup` oder
-# `reg_begin` wieder durch `auth.current_user(request)` ersetzt → dieser Block wird rot
-# (GET 200 mit Geheimnis bzw. begin 200), der Rest der Suite bleibt grün.
+# ---------- A-umgehung-2: the same latch applies to CREATING a factor ----------
+# The R3-3 fix only covered REMOVAL. Creation still hung on `current_user()`, and that
+# accepts an API key; the CSRF check is skipped for a real key anyway
+# (`_csrf_entbehrlich`). Two paths were thus open:
+#   (1) `GET /auth/totp/setup` returns the secret in plain text, `POST` confirms it →
+#       the account then carried a TOTP whose secret the KEY holder knows.
+#   (2) A self-registered passkey is a full login → fresh interactive
+#       session → and thus the key stood in front of the five removal routes after all.
+# Reproduced in `A2b_r3-3_apikey_totp.py` / `A2_r3-3_apikey_passkey.py` (round 3, attack
+# against the fixes). Mutation probe: replacing `auth.require_session(...)` in `totp_setup` or
+# `reg_begin` by `auth.current_user(request)` again → this block turns red
+# (GET 200 with secret or begin 200), the rest of the suite stays green.
 db4 = os.path.join(tempfile.mkdtemp(), "t.db")
 auth4 = TinySesam(TinySesamConfig(lang="de", db_path=db4, rp_name="Test", cookie_secure=False,
                                   oidc_enabled=False, pin_enabled=True, apikey_enabled=True,
                                   passkey_enabled=HAT_PASSKEY))
-uid4 = auth4.create_user("opfer", password="geheim123")      # KEIN TOTP, KEINE PIN
+uid4 = auth4.create_user("opfer", password="geheim123")      # NO TOTP, NO PIN
 app4 = FastAPI()
 app4.include_router(auth4.router())
 c6 = TestClient(app4)
@@ -426,36 +426,36 @@ KEY4 = {"X-API-Key": auth4.create_api_key(uid4, name="ci")["key"], "Accept": "ap
 r = c6.get("/auth/totp/setup", headers=KEY4)
 assert r.status_code == 403, (r.status_code, r.text[:90])
 assert r.json().get("detail") == auth4.t("api.needs_session"), r.text[:120]
-assert auth4.store.get_totp(uid4) is None, "der Aufruf darf nicht einmal ein Geheimnis anlegen"
-# Ohne Geheimnis kann der Key auch nichts bestätigen — geprüft wird trotzdem die Route selbst.
+assert auth4.store.get_totp(uid4) is None, "the call must not even create a secret"
+# Without a secret the key cannot confirm anything either — the route itself is checked anyway.
 r = c6.post("/auth/totp/setup", data={"code": "000000"}, headers=KEY4)
 assert r.status_code == 403 and r.json().get("detail") == auth4.t("api.needs_session"), r.text[:120]
-assert not auth4.store.has_confirmed_totp(uid4), "per API-Key darf kein TOTP scharf werden"
-# Seit N7 entsteht das Geheimnis in einer EIGENEN Route. Sie ist der Weg, den der Riegel oben
-# eigentlich meint — ohne diese Zeile wäre er nach dem Umbau umgehbar geblieben.
+assert not auth4.store.has_confirmed_totp(uid4), "no TOTP may become active via API key"
+# Since N7 the secret is created in its OWN route. It is the path the latch above
+# really means — without this line it would have remained bypassable after the rework.
 r = c6.post("/auth/totp/setup/start", data={}, headers=KEY4)
 assert r.status_code == 403 and r.json().get("detail") == auth4.t("api.needs_session"), r.text[:120]
-assert auth4.store.get_totp(uid4) is None, "auch der neue Start darf per Key kein Geheimnis anlegen"
+assert auth4.store.get_totp(uid4) is None, "the new start must not create a secret via key either"
 for pfad in (("/auth/passkey/register/begin", "/auth/passkey/register/finish")
              if HAT_PASSKEY else ()):
     r = c6.post(pfad, json={}, headers=KEY4)
     assert r.status_code == 403, (pfad, r.status_code, r.text[:90])
     assert r.json().get("detail") == auth4.t("api.needs_session"), (pfad, r.text[:120])
     assert "tinysesam_waflow" not in r.cookies, pfad
-assert auth4.store.list_webauthn(uid4) == [], "per API-Key darf kein Passkey dazukommen"
-assert auth4.list_api_keys(uid4), "Vorbedingung: der Key ist ausgestellt und gültig"
-ok("API-Key: auch die ANLAGE (totp/setup" + (", passkey/register" if HAT_PASSKEY else "")
-   + ") → 403 'nur mit Sitzung'")
+assert auth4.store.list_webauthn(uid4) == [], "no passkey may be added via API key"
+assert auth4.list_api_keys(uid4), "precondition: the key is issued and valid"
+ok("API key: CREATION too (totp/setup" + (", passkey/register" if HAT_PASSKEY else "")
+   + ") → 403 'session only'")
 
-# Und der legitime Weg desselben Kontos läuft weiter — sonst wäre der Riegel eine Sackgasse.
+# And the legitimate path of the same account keeps working — otherwise the latch would be a dead end.
 c7 = TestClient(app4)
-c7.get("/auth/login", headers={"Accept": "text/html"})     # holt das CSRF-Cookie
+c7.get("/auth/login", headers={"Accept": "text/html"})     # fetches the CSRF cookie
 assert c7.post("/auth/login", data={"username": "opfer", "password": "geheim123", "next": "/",
                                     "_csrf": c7.cookies.get("tinysesam_csrf") or ""},
                follow_redirects=False).status_code == 303
 seite = c7.get("/auth/totp/setup", headers={"Accept": "text/html"})
 assert seite.status_code == 200, seite.status_code
-# Seit N7 zeigt der GET nur den Knopf; das Geheimnis entsteht erst im CSRF-geschützten POST.
+# Since N7 the GET only shows the button; the secret is only created in the CSRF-protected POST.
 assert "/auth/totp/setup/start" in seite.text, seite.text[:200]
 seite = c7.post("/auth/totp/setup/start",
                 data={"_csrf": c7.cookies.get("tinysesam_csrf") or ""},
@@ -466,21 +466,21 @@ assert geheim, seite.text[:200]
 r = c7.post("/auth/totp/setup", data={"code": pyotp.TOTP(geheim.group(1)).now()},
             headers={"X-CSRF-Token": c7.cookies.get("tinysesam_csrf") or "", "Accept": "application/json"})
 assert r.status_code == 200 and r.json() == {"ok": True, "other_sessions": 0}, r.text[:120]
-assert auth4.store.has_confirmed_totp(uid4), "die Einrichtung aus der Sitzung muss durchgehen"
-ok("Sitzung desselben Kontos: TOTP einrichten geht unverändert (Geheimnis, Bestätigung)")
+assert auth4.store.has_confirmed_totp(uid4), "setup from the session must go through"
+ok("session of the same account: setting up TOTP works unchanged (secret, confirmation)")
 
-# ---------- Runde 2: Fehlversuche an der Reauth-Seite sperren die ANMELDUNG nicht ----------
-# `/auth/reauth` verbuchte seine Fehlgriffe als `record_login(…, "reauth")`, und `is_locked`
-# zählte sie mit: Fünf Tippfehler bei der Step-up-Bestätigung sperrten dem Nutzer die
-# Anmeldung für `lockout_window_sec` — auch mit dem richtigen Passwort. Eine Bestätigung ist
-# aber keine Anmeldung; wer sie leistet, ist bereits angemeldet. Jetzt hat sie ihren eigenen
-# Topf (`is_reauth_locked`, `reauth_max_attempts`), und der kennt keine IP-Dimension: Das
-# Raten trifft nur das eigene Konto. (Mutationsprobe: in `reauth_submit` wieder `is_locked`
-# prüfen und "reauth" aus `security.EIGENE_SPERRE` nehmen → (a) wird rot.)
+# ---------- Round 2: failed attempts on the reauth page do not lock the SIGN-IN ----------
+# `/auth/reauth` recorded its misses as `record_login(…, "reauth")`, and `is_locked`
+# counted them: five typos on the step-up confirmation locked the user's
+# sign-in for `lockout_window_sec` — even with the correct password. A confirmation is
+# not a sign-in, though; whoever performs it is already signed in. Now it has its own
+# bucket (`is_reauth_locked`, `reauth_max_attempts`), and that has no IP dimension: guessing
+# only hits the own account. (Mutation probe: check `is_locked` in `reauth_submit` again
+# and remove "reauth" from `security.EIGENE_SPERRE` → (a) turns red.)
 db5 = os.path.join(tempfile.mkdtemp(), "t.db")
 auth5 = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db5, passkey_enabled=False,
                                   oidc_enabled=False, cookie_secure=False, stepup_max_age_sec=900))
-PW_ANNA, PW_BEA = "Anna-Passwort-2026", "Bea-Passwort-2026"      # Literale: nicht neben `password=`
+PW_ANNA, PW_BEA = "Anna-Passwort-2026", "Bea-Passwort-2026"      # literals: not next to `password=`
 auth5.create_user("anna", PW_ANNA)
 auth5.create_user("bea", PW_BEA)
 app5 = FastAPI()
@@ -493,46 +493,46 @@ for i in range(GRENZE_R):
     r = c8.post("/auth/reauth", data={"password": f"tippfehler{i}", "next": "/"})
     assert r.status_code == 401, (i, r.status_code)
 assert auth5.store.count_fails(0, username="anna", method="reauth") >= GRENZE_R, \
-    "die Fehlversuche wurden gar nicht verbucht — der Test misst dann nichts"
+    "the failed attempts were not recorded at all — then the test measures nothing"
 
-# (a) Der Angriff: Die Anmeldung desselben Kontos bleibt offen.
-assert not auth5._is_locked("anna", "testclient"), "Step-up-Tippfehler sperren den Login"
+# (a) The attack: the sign-in of the same account stays open.
+assert not auth5._is_locked("anna", "testclient"), "step-up typos lock the login"
 frisch5 = TestClient(app5)
 r = frisch5.post("/auth/login", data={"username": "anna", "password": PW_ANNA, "next": "/"},
                  follow_redirects=False)
-assert r.status_code == 303, f"Login nach Step-up-Tippfehlern gesperrt: {r.status_code}"
-ok("Fehlversuche an der Reauth-Seite sperren die Anmeldung nicht (eigener Topf)")
+assert r.status_code == 303, f"login locked after step-up typos: {r.status_code}"
+ok("failed attempts on the reauth page do not lock the sign-in (own bucket)")
 
-# (b) Gebremst wird trotzdem — dort, wo geraten wurde: Der nächste Versuch läuft in die Sperre,
-# auch mit dem richtigen Passwort. Die Schwelle ist verdrahtet, nicht nur vorhanden.
-assert auth5._is_reauth_locked("anna", "testclient"), "kein eigener Lockout für die Bestätigung"
+# (b) It is throttled anyway — where the guessing happened: the next attempt runs into the lock,
+# even with the correct password. The threshold is wired up, not merely present.
+assert auth5._is_reauth_locked("anna", "testclient"), "no own lockout for the confirmation"
 r = c8.post("/auth/reauth", data={"password": PW_ANNA, "next": "/"})
-assert r.status_code == 429, f"Step-up-Raten läuft nicht in die Sperre: {r.status_code}"
-ok("…die Bestätigung selbst ist nach reauth_max_attempts gesperrt (429)")
+assert r.status_code == 429, f"step-up guessing does not run into the lock: {r.status_code}"
+ok("…the confirmation itself is locked after reauth_max_attempts (429)")
 
-# (c) Keine IP-Dimension: Ein zweiter Nutzer hinter derselben Adresse bestätigt weiter.
+# (c) No IP dimension: a second user behind the same address can still confirm.
 c9 = TestClient(app5)
 assert c9.post("/auth/login", data={"username": "bea", "password": PW_BEA, "next": "/"},
                follow_redirects=False).status_code == 303
 assert not auth5._is_reauth_locked("bea", "testclient"), \
-    "die Fehlversuche eines Kollegen sperren hinter NAT die Bestätigung eines Unbeteiligten"
+    "a colleague's failed attempts lock an uninvolved person's confirmation behind NAT"
 r = c9.post("/auth/reauth", data={"password": PW_BEA, "next": "/"}, follow_redirects=False)
-assert r.status_code == 303, f"Bestätigung des Unbeteiligten gesperrt: {r.status_code}"
-ok("…und sie sperrt pro Konto, nicht pro Anschluss")
+assert r.status_code == 303, f"uninvolved person's confirmation locked: {r.status_code}"
+ok("…and it locks per account, not per connection")
 
-# (d) Der legitime Weg von anna ist nach dem Abtragen wieder offen (Admin-Weg wie beim Login).
+# (d) anna's legitimate path is open again after clearing (admin route as with login).
 auth5.store.clear_fails(username="anna", method="reauth")
 r = c8.post("/auth/reauth", data={"password": PW_ANNA, "next": "/"}, follow_redirects=False)
-assert r.status_code == 303, f"Bestätigung nach Entsperren scheitert: {r.status_code}"
-ok("…entsperrbar, danach bestätigt dasselbe Konto wieder")
+assert r.status_code == 303, f"confirmation fails after unlocking: {r.status_code}"
+ok("…unlockable, afterwards the same account confirms again")
 os.remove(db5)
 
 
-# ---------- H-18 (b): jede Selbstverwaltungsroute ist eingeordnet und hält ihre Klasse ----------
-# R3-3 hat fünf Routen an die Step-up-Frische gebunden — einzeln. Eine sechste Route, die einen
-# Faktor anlegt oder abbaut, fiele keinem Test auf. Deshalb: Jede POST-Route des Routers, die
-# nicht zum Anmeldefluss gehört, steht in genau einer Klasse, und jede Klasse wird gemessen.
-# Eine neue Route ohne Einordnung macht diese Prüfung rot — das ist der Zweck.
+# ---------- H-18 (b): every self-service route is classified and holds its class ----------
+# R3-3 bound five routes to step-up freshness — individually. A sixth route that creates or
+# removes a factor would escape every test. Hence: every POST route of the router that
+# does not belong to the sign-in flow is in exactly one class, and every class is measured.
+# A new route without classification turns this check red — that is the purpose.
 db6 = os.path.join(tempfile.mkdtemp(), "t.db")
 auth6 = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db6, rp_name="Test",
                                   passkey_enabled=HAT_PASSKEY, oidc_enabled=False,
@@ -548,46 +548,46 @@ _sec6 = auth6.totp_begin(uid6)["secret"]
 assert auth6.totp_confirm(uid6, pyotp.TOTP(_sec6).now())
 key6 = auth6.create_api_key(uid6, "bot")["key"]
 
-#: Anmeldefluss: Diese Routen SIND die Bestätigung, sie verwalten nichts.
+#: Sign-in flow: these routes ARE the confirmation, they manage nothing.
 ANMELDEFLUSS = {"/auth/login", "/auth/totp", "/auth/pin", "/auth/magic/request", "/auth/reauth",
                 "/auth/forgot", "/auth/reset", "/auth/register", "/auth/resource/{name}",
                 "/auth/saml/acs", "/auth/passkey/login/begin", "/auth/passkey/login/finish",
-                "/auth/logout",   # Abmelden (F-07) beendet nur die eigene Sitzung, verwaltet nichts
-                # Grenze d: nur für eine HALBE Anmeldung, vermerkt nur — beendet wird erst, wenn der
-                # letzte Faktor bestätigt ist; eine volle Sitzung nimmt /auth/sessions/revoke.
+                "/auth/logout",   # sign-out (F-07) only ends the own session, manages nothing
+                # Limit d: only for a HALF sign-in, merely records — it ends only once the
+                # last factor is confirmed; a full session uses /auth/sessions/revoke.
                 "/auth/sessions/revoke-after-login",
-                # Der Link an die neue Adresse IST die Bestätigung (Besitz des Postfachs), wie
-                # /auth/reset — beantragt wurde der Wechsel mit Step-up (/auth/account/email).
+                # The link to the new address IS the confirmation (possession of the mailbox), like
+                # /auth/reset — the change was requested with step-up (/auth/account/email).
                 "/auth/email/{token}"}
-#: Verlangen frische Bestätigung (require_mfa): abgelaufene Sitzung → 403 + X-TinySesam-Reauth.
+#: Demand fresh confirmation (require_mfa): expired session → 403 + X-TinySesam-Reauth.
 STEPUP = {"/auth/totp/disable", "/auth/totp/recovery", "/auth/pin/set", "/auth/pin/disable",
           "/auth/passkey/delete", "/auth/sessions/revoke",   # sessions/revoke: F-09
-          "/auth/account/username", "/auth/account/email"}   # Selbstbedienung (2026-09-25)
-#: Das alte Passwort ist die Bestätigung (gedrosselt, gesperrt, protokolliert — R4-10).
+          "/auth/account/username", "/auth/account/email"}   # self-service (2026-09-25)
+#: The old password is the confirmation (throttled, locked, logged — R4-10).
 PASSWORT = {"/auth/password"}
-#: Einrichtung eines Faktors: nur mit interaktiver Sitzung, nie mit API-Key (R3-1/R3-3).
+#: Setting up a factor: only with an interactive session, never with an API key (R3-1/R3-3).
 NUR_SITZUNG = {"/auth/totp/setup/start", "/auth/totp/setup", "/auth/passkey/register/begin",
                "/auth/passkey/register/finish"}
-#: Bekannt offen — mit Begründung. Wird eine davon gebunden, gehört sie nach STEPUP.
+#: Known open — with justification. If one of them gets bound, it belongs in STEPUP.
 OFFEN = {"/auth/apikeys": "Key-Ausgabe ohne Step-up (gemeldet mit H-18)",
          "/auth/apikeys/{key_id}/revoke": "Key-Widerruf ohne Step-up (gemeldet mit H-18)"}
 
-# Aus dem Router selbst, nicht aus `app6.routes`: Neuere FastAPI-Fassungen legen eingebundene
-# Router dort als ein Objekt ohne Pfad ab — die Liste wäre leer und die Prüfung still grün.
+# From the router itself, not from `app6.routes`: newer FastAPI versions store included
+# routers there as an object without a path — the list would be empty and the check silently green.
 _post6 = {rt.path for rt in router6.routes
           if "POST" in (getattr(rt, "methods", None) or ())
           and not str(getattr(rt, "path", "")).startswith(auth6.cfg.admin_path)}
 _klassen = [ANMELDEFLUSS, STEPUP, PASSWORT, NUR_SITZUNG, set(OFFEN)]
 _uneingeordnet = sorted(p for p in _post6 if not any(p in k for k in _klassen))
-assert not _uneingeordnet, f"Selbstverwaltungsroute ohne Einordnung: {_uneingeordnet}"
+assert not _uneingeordnet, f"self-service route without classification: {_uneingeordnet}"
 _doppelt = [p for p in _post6 if sum(p in k for k in _klassen) > 1]
 assert not _doppelt, _doppelt
-assert STEPUP & _post6 and NUR_SITZUNG & _post6, f"Wächter ohne Treffer: Router-Aufbau geändert? {sorted(_post6)}"
-ok(f"H-18: alle {len(_post6)} POST-Routen eingeordnet (Anmeldefluss, Step-up, Passwort, Sitzung, offen)")
+assert STEPUP & _post6 and NUR_SITZUNG & _post6, f"guard without hits: router setup changed? {sorted(_post6)}"
+ok(f"H-18: all {len(_post6)} POST routes classified (sign-in flow, step-up, password, session, open)")
 
 
 def _abgestanden_client():
-    """Voll angemeldet, aber Anmeldung UND letzte Bestätigung liegen lange zurück."""
+    """Fully signed in, but sign-in AND last confirmation lie far back."""
     cl = TestClient(app6)
     tok = auth6.store.create_session(uid6, 3600, True, "password")
     alt = int(time.time()) - 100000
@@ -606,28 +606,28 @@ _nutzlast = {"/auth/pin/set": {"json": {"pin": "999999"}}, "/auth/totp/setup": {
 for pfad in sorted(STEPUP & _post6):
     r = _abgestanden_client().post(pfad, headers=JSON, **_nutzlast.get(pfad, {}))
     assert r.status_code == 403 and r.headers.get("X-TinySesam-Reauth"), \
-        f"{pfad}: abgelaufene Bestätigung kam durch ({r.status_code}) — Step-up fehlt"
+        f"{pfad}: expired confirmation got through ({r.status_code}) — step-up missing"
 for pfad in sorted(NUR_SITZUNG & _post6):
     r = TestClient(app6).post(pfad, headers={**JSON, "X-API-Key": key6}, **_nutzlast.get(pfad, {}))
-    assert r.status_code in (401, 403), f"{pfad}: API-Key richtet einen Faktor ein ({r.status_code})"
+    assert r.status_code in (401, 403), f"{pfad}: API key sets up a factor ({r.status_code})"
 r = _abgestanden_client().post("/auth/password", headers=JSON, **_nutzlast["/auth/password"])
 assert r.status_code == 403 and auth6._check_password("selbst", "Geheim12345!"), \
-    f"/auth/password ohne das alte Passwort: {r.status_code}"
+    f"/auth/password without the old password: {r.status_code}"
 for pfad in sorted(set(OFFEN) & _post6):
     ziel = pfad.replace("{key_id}", str(auth6.list_api_keys(uid6)[0]["id"]))
     r = _abgestanden_client().post(ziel, headers=JSON, **_nutzlast.get(pfad, {}))
     assert r.status_code == 200, (
-        f"{pfad} verlangt jetzt eine Bestätigung ({r.status_code}) — aus OFFEN nach STEPUP "
-        f"verschieben ({OFFEN[pfad]})")
-ok(f"H-18: {len(STEPUP & _post6)} Routen verlangen Step-up, {len(NUR_SITZUNG & _post6)} nur eine "
-   f"Sitzung, {len(set(OFFEN) & _post6)} bekannt offen ({', '.join(sorted(set(OFFEN.values())))})")
+        f"{pfad} now demands a confirmation ({r.status_code}) — move from OFFEN to STEPUP "
+        f"({OFFEN[pfad]})")
+ok(f"H-18: {len(STEPUP & _post6)} routes demand step-up, {len(NUR_SITZUNG & _post6)} only a "
+   f"session, {len(set(OFFEN) & _post6)} known open ({', '.join(sorted(set(OFFEN.values())))})")
 os.remove(db6)
 
-# ---------- A-2: der Step-up behält die Art des Sitzungs-Cookies ----------
-# Seit F-06 dreht ein Step-up das Token, und der Aufrufer setzt das Cookie neu. Mit der
-# Vorgabe `remember=True` bekam eine Sitzung OHNE „Angemeldet bleiben" dabei ein Cookie für
-# sieben Tage, das das Schließen des Browsers am geteilten Rechner überlebte; umgekehrt machte
-# die PIN-Route mit leerem Formularfeld aus einer gemerkten Sitzung ein Session-Cookie.
+# ---------- A-2: the step-up keeps the kind of the session cookie ----------
+# Since F-06 a step-up rotates the token, and the caller sets the cookie anew. With the
+# default `remember=True` a session WITHOUT "stay signed in" got a cookie for
+# seven days, which survived closing the browser on a shared computer; conversely
+# the PIN route with an empty form field turned a remembered session into a session cookie.
 db6 = os.path.join(tempfile.mkdtemp(), "t.db")
 auth6 = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db6, passkey_enabled=False,
                                   oidc_enabled=False, cookie_secure=False, magiclink_enabled=True,
@@ -654,37 +654,37 @@ for merken in ("", "on"):
     vorher = c6.cookies.get("tinysesam_session")
     roh = auth6.create_magic_token("login", user_id=uid6, email="x@example.com", ttl_min=15,
                                    payload={"next": "/"})
-    r = c6.post(f"/auth/magic/{roh}", follow_redirects=False)   # R4-02: erst der POST löst ein
-    assert c6.cookies.get("tinysesam_session") != vorher, "Step-up muss rotieren (F-06)"
+    r = c6.post(f"/auth/magic/{roh}", follow_redirects=False)   # R4-02: only the POST redeems
+    assert c6.cookies.get("tinysesam_session") != vorher, "step-up must rotate (F-06)"
     assert ("max-age" in _sitzungs_cookie(r)) == bool(merken), \
-        f"Magic-Step-up (remember={merken!r}) ändert die Cookie-Art: {_sitzungs_cookie(r)}"
-    # PIN mit dem GEGENTEIL im Formular — die Sitzung hat ihre Art beim ersten Faktor bekommen.
+        f"magic step-up (remember={merken!r}) changes the cookie kind: {_sitzungs_cookie(r)}"
+    # PIN with the OPPOSITE in the form — the session got its kind at the first factor.
     r = c6.post("/auth/pin", data={"username": "admin", "pin": "24680", "next": "/",
                                    "remember": "" if merken else "on"}, follow_redirects=False)
     assert r.status_code == 303, r.status_code
     assert ("max-age" in _sitzungs_cookie(r)) == bool(merken), \
-        f"PIN-Step-up (Sitzung remember={merken!r}) ändert die Cookie-Art: {_sitzungs_cookie(r)}"
+        f"PIN step-up (session remember={merken!r}) changes the cookie kind: {_sitzungs_cookie(r)}"
     zeile = auth6.store.get_session(c6.cookies.get("tinysesam_session"))
     assert bool(zeile["remember"]) == bool(merken)
-ok("A-2: Step-up per Magic-Link und PIN behält die Cookie-Art der Sitzung (merken ja/nein)")
+ok("A-2: step-up via magic link and PIN keeps the cookie kind of the session (remember yes/no)")
 os.remove(db6)
 
-# ---------- 0.20.1: /auth/reauth bestätigt nur eine Sitzung, nie einen API-Key ----------
-# Angriff (Nachbesserung 0.20.1, vorbestehend bis 0.20.0): Die Route prüfte den Faktor des
-# Kontos aus `current_user()` und setzte danach die Sitzung aus `session_from_request()` auf
-# „voll". Bei einer HALBEN Sitzung (Passwort ja, TOTP offen) fällt `current_user()` auf den
-# API-Key zurück — Autorisierung und Wirkung trafen zwei verschiedene Konten:
-#   (a) Halbe Sitzung des Opfers + eigener Automaten-Key + eigenes Passwort → die Sitzung des
-#       OPFERS war voll angemeldet, sein TOTP nie gefragt.
-#   (b) Dasselbe im eigenen Konto: Automaten-Key (trägt das Admin-Flag nicht, R6-5) + Passwort
-#       → volle Admin-Sitzung ohne TOTP. Key + Passwort ersetzten den zweiten Faktor.
-# Ein API-Key kann Step-up-Frische ohnehin nie erreichen (`stepup_fresh`), die Route hat für
-# ihn nichts zu bestätigen: 403 `api.stepup_session`, bevor ein Faktor geprüft wird.
-# (Mutationsprobe: den Riegel in `reauth_submit` streichen → (a) und (b) rot; den in
-# `reauth_page` streichen → der GET-Teil rot. Seit der zweiten Runde ist der Riegel
-# `_nur_sitzung(request)` mit `session_user()`: dort wieder `current_user()` in
-# `reauth_submit` → (a) rot und der Wächter unten; in `reauth_page` → der GET-Teil rot; die 403
-# in `_nur_sitzung` gestrichen → (a) rot.)
+# ---------- 0.20.1: /auth/reauth confirms only a session, never an API key ----------
+# Attack (0.20.1 follow-up, pre-existing up to 0.20.0): the route checked the factor of the
+# account from `current_user()` and then set the session from `session_from_request()` to
+# "full". With a HALF session (password yes, TOTP open) `current_user()` falls back to the
+# API key — authorization and effect hit two different accounts:
+#   (a) half session of the victim + own automation key + own password → the VICTIM's
+#       session was fully signed in, its TOTP never asked.
+#   (b) the same in the own account: automation key (does not carry the admin flag, R6-5) + password
+#       → full admin session without TOTP. Key + password replaced the second factor.
+# An API key can never reach step-up freshness anyway (`stepup_fresh`), the route has nothing to
+# confirm for it: 403 `api.stepup_session`, before any factor is checked.
+# (Mutation probe: remove the latch in `reauth_submit` → (a) and (b) red; the one in
+# `reauth_page` → the GET part red. Since the second round the latch is
+# `_nur_sitzung(request)` with `session_user()`: there `current_user()` again in
+# `reauth_submit` → (a) red and the guard below; in `reauth_page` → the GET part red; the 403
+# in `_nur_sitzung` removed → (a) red.)
 db7 = os.path.join(tempfile.mkdtemp(), "t.db")
 auth7 = TinySesam(TinySesamConfig(lang="de", db_path=db7, rp_name="Test", cookie_secure=False,
                                   oidc_enabled=False, passkey_enabled=False, apikey_enabled=True))
@@ -703,17 +703,17 @@ app7.include_router(auth7.router())
 
 
 def _halb_angemeldet(name, passwort):
-    """Erster Faktor erbracht, TOTP offen — die Lage mitten in der Anmeldung."""
+    """First factor provided, TOTP open — the situation in the middle of the sign-in."""
     cl = TestClient(app7)
-    cl.get("/auth/login", headers={"Accept": "text/html"})     # holt das CSRF-Cookie
+    cl.get("/auth/login", headers={"Accept": "text/html"})     # fetches the CSRF cookie
     r = cl.post("/auth/login", data={"username": name, "password": passwort, "next": "/",
                                      "_csrf": cl.cookies.get("tinysesam_csrf") or ""},
                 follow_redirects=False)
     assert r.status_code == 303 and r.headers["location"].startswith("/auth/totp"), \
         (r.status_code, r.headers.get("location"))
     s = auth7.store.get_session(cl.cookies.get("tinysesam_session"))
-    assert s and not s["mfa_ok"], "Vorbedingung: die Sitzung ist halb"
-    assert cl.get("/auth/me", headers=JSON).status_code == 401, "Vorbedingung: halb = nicht angemeldet"
+    assert s and not s["mfa_ok"], "precondition: the session is half"
+    assert cl.get("/auth/me", headers=JSON).status_code == 401, "precondition: half = not signed in"
     return cl
 
 
@@ -723,31 +723,31 @@ def _reauth_mit_key(cl, key, passwort):
                    headers={**JSON, "X-API-Key": key}, follow_redirects=False)
 
 
-# (a) fremdes Konto
+# (a) foreign account
 c7 = _halb_angemeldet("opfer", "Geheim-Opfer-1")
 r = _reauth_mit_key(c7, key7_taeter, "Geheim-Taeter-1")
 assert r.status_code == 403 and r.json().get("detail") == auth7.t("api.stepup_session"), \
     (r.status_code, r.text[:120])
 s = auth7.store.get_session(c7.cookies.get("tinysesam_session"))
-assert s and not s["mfa_ok"], "die halbe Sitzung des Opfers wurde per fremdem Key voll gemacht"
-assert c7.get("/auth/me", headers=JSON).status_code == 401, "Opfer ohne TOTP angemeldet"
-# (b) eigenes Konto: Key + Passwort ersetzen den zweiten Faktor nicht
+assert s and not s["mfa_ok"], "the victim's half session was made full via a foreign key"
+assert c7.get("/auth/me", headers=JSON).status_code == 401, "victim signed in without TOTP"
+# (b) own account: key + password do not replace the second factor
 c7 = _halb_angemeldet("chefin", "Geheim-Admin-1")
 r = _reauth_mit_key(c7, key7_adm, "Geheim-Admin-1")
 assert r.status_code == 403 and r.json().get("detail") == auth7.t("api.stepup_session"), \
     (r.status_code, r.text[:120])
 s = auth7.store.get_session(c7.cookies.get("tinysesam_session"))
-assert s and not s["mfa_ok"], "Automaten-Key + Passwort haben TOTP ersetzt"
+assert s and not s["mfa_ok"], "automation key + password replaced TOTP"
 assert c7.get("/auth/admin", headers={"Accept": "text/html"},
-              follow_redirects=False).status_code != 200, "Admin-Panel ohne TOTP erreichbar"
-# GET: ein Key allein bekommt keine Bestätigungsseite (es gäbe nichts zu bestätigen).
+              follow_redirects=False).status_code != 200, "admin panel reachable without TOTP"
+# GET: a key alone gets no confirmation page (there would be nothing to confirm).
 r = TestClient(app7).get("/auth/reauth", headers={**JSON, "X-API-Key": key7_taeter},
                          follow_redirects=False)
 assert r.status_code == 403 and r.json().get("detail") == auth7.t("api.stepup_session"), \
     (r.status_code, r.text[:120])
-ok("0.20.1: /auth/reauth mit API-Key → 403, eine halbe Sitzung (fremd oder eigen) bleibt halb")
+ok("0.20.1: /auth/reauth with API key → 403, a half session (foreign or own) stays half")
 
-# Der legitime Weg bleibt offen: volle Sitzung, Frische abgelaufen, Bestätigung per TOTP.
+# The legitimate route stays open: full session, freshness expired, confirmation via TOTP.
 c7 = _halb_angemeldet("opfer", "Geheim-Opfer-1")
 _totp7 = pyotp.TOTP(_geheim7[uid7_opfer])
 r = c7.post("/auth/totp", data={"code": _totp7.now(), "next": "/",
@@ -762,21 +762,21 @@ r = c7.post("/auth/reauth", data={"code": _totp7.at(int(time.time()) + 30), "nex
             follow_redirects=False)
 assert r.status_code == 303, (r.status_code, r.text[:120])
 s = auth7.store.get_session(c7.cookies.get("tinysesam_session"))
-assert s and s["mfa_ok"] and int(time.time()) - s["mfa_at"] < 60, "Step-up hat die Sitzung nicht aufgefrischt"
-ok("0.20.1: Step-up einer vollen Sitzung per TOTP läuft weiter")
+assert s and s["mfa_ok"] and int(time.time()) - s["mfa_at"] < 60, "step-up did not refresh the session"
+ok("0.20.1: step-up of a full session via TOTP keeps working")
 os.remove(db7)
 
-# ---------- 0.20.1: /auth/pin nimmt „schon angemeldet" aus der Sitzung, nie aus einem API-Key ----------
-# Angriff (zweite Runde gegen 0.20.1, vorbestehend bis 0.20.0), dieselbe Klasse wie
-# `/auth/reauth` oben: `pin_submit` las „schon eingeloggt" aus `current_user()`. Eine reine
-# API-Key-Anfrage (kein Cookie) galt damit als angemeldet: Der Riegel `pin_login=False` (die
-# PIN ist kein Erstfaktor) griff nicht, geprüft wurde die PIN des Key-Kontos, und
-# `apply_factor()` legte mangels Sitzung eine NEUE, volle Sitzung an. Aus dem Automaten-Key,
-# der das Admin-Flag nie trägt (R6-5), wurden so Key + PIN eine Admin-Sitzung mit Panel,
-# Schlüsselverwaltung und Faktor-Anlage. Mit einer halben fremden Sitzung im Cookie ersetzte
-# dieselbe Anfrage deren Cookie durch die des Key-Kontos.
-# (Mutationsprobe: in `login_pin` wieder `me = self.current_user(request)` → (a), (b) und
-# (d) rot, dazu der Wächter unten; in `pin_page` → (c) rot.)
+# ---------- 0.20.1: /auth/pin takes "already signed in" from the session, never from an API key ----------
+# Attack (second round against 0.20.1, pre-existing up to 0.20.0), the same class as
+# `/auth/reauth` above: `pin_submit` read "already logged in" from `current_user()`. A pure
+# API-key request (no cookie) thereby counted as signed in: the latch `pin_login=False` (the
+# PIN is no first factor) did not apply, the PIN of the key account was checked, and
+# `apply_factor()` created a NEW, full session for lack of one. From the automation key,
+# which never carries the admin flag (R6-5), key + PIN thus became an admin session with panel,
+# key management and factor setup. With a half foreign session in the cookie the
+# same request replaced its cookie with that of the key account.
+# (Mutation probe: in `login_pin` again `me = self.current_user(request)` → (a), (b) and
+# (d) red, plus the guard below; in `pin_page` → (c) red.)
 db8 = os.path.join(tempfile.mkdtemp(), "t.db")
 auth8 = TinySesam(TinySesamConfig(lang="de", db_path=db8, rp_name="Test", cookie_secure=False,
                                   oidc_enabled=False, passkey_enabled=False, apikey_enabled=True,
@@ -792,52 +792,52 @@ app8 = FastAPI()
 app8.include_router(auth8.router())
 r = TestClient(app8).get("/auth/me", headers={**JSON, **KEY8})
 assert r.status_code == 200 and r.json()["is_admin"] is False, \
-    ("Vorbedingung: gültiger Automaten-Key ohne Admin-Flag", r.status_code, r.text[:120])
+    ("precondition: valid automation key without admin flag", r.status_code, r.text[:120])
 _sitzungen8 = len(auth8.store.list_sessions())
 
-# (a) Key + PIN, kein Cookie (für einen echten Key entfällt die CSRF-Prüfung): 404 wie jeder Gast.
+# (a) Key + PIN, no cookie (for a real key the CSRF check is dropped): 404 like any guest.
 c8a = TestClient(app8)
 r = c8a.post("/auth/pin", data={"pin": "4711", "next": "/"}, headers=KEY8, follow_redirects=False)
 assert r.status_code == 404, (r.status_code, r.headers.get("location"), r.text[:120])
-assert not c8a.cookies.get("tinysesam_session"), "Key + PIN haben ein Sitzungs-Cookie bekommen"
-assert len(auth8.store.list_sessions()) == _sitzungen8, "Key + PIN haben eine Sitzung angelegt"
+assert not c8a.cookies.get("tinysesam_session"), "key + PIN received a session cookie"
+assert len(auth8.store.list_sessions()) == _sitzungen8, "key + PIN created a session"
 assert c8a.get("/auth/admin/api/users", headers=JSON).status_code in (401, 403)
-# (b) dasselbe mit Benutzerfeld — der Key macht aus dem Gast keinen Angemeldeten.
+# (b) the same with a user field — the key does not turn the guest into a signed-in user.
 r = c8a.post("/auth/pin", data={"pin": "4711", "username": "chef", "next": "/"}, headers=KEY8,
              follow_redirects=False)
 assert r.status_code == 404, (r.status_code, r.text[:120])
 assert len(auth8.store.list_sessions()) == _sitzungen8
-# (c) Der GET bietet dem Key kein PIN-Formular an (es wäre ohnehin ein 404 beim Absenden).
+# (c) The GET offers the key no PIN form (it would be a 404 on submit anyway).
 r = c8a.get("/auth/pin", headers={**KEY8, "Accept": "text/html"}, follow_redirects=False)
 assert r.status_code == 303 and r.headers["location"].startswith("/auth/login"), \
     (r.status_code, r.headers.get("location"))
-ok("0.20.1: /auth/pin mit Automaten-Key + PIN bei pin_login=False → 404, keine Sitzung, kein Admin")
+ok("0.20.1: /auth/pin with automation key + PIN at pin_login=False → 404, no session, no admin")
 
-# (d) Halbe Sitzung eines anderen im Cookie + eigener Key + eigene PIN: Das Cookie bleibt, wie es war.
+# (d) Half session of another in the cookie + own key + own PIN: the cookie stays as it was.
 c8d = TestClient(app8)
-c8d.get("/auth/login", headers={"Accept": "text/html"})     # holt das CSRF-Cookie
+c8d.get("/auth/login", headers={"Accept": "text/html"})     # fetches the CSRF cookie
 r = c8d.post("/auth/login", data={"username": "opfer", "password": "Geheim-Opfer-8", "next": "/",
                                   "_csrf": c8d.cookies.get("tinysesam_csrf") or ""},
              follow_redirects=False)
 assert r.status_code == 303 and r.headers["location"].startswith("/auth/totp"), r.headers.get("location")
 _halb8 = c8d.cookies.get("tinysesam_session")
-# Seit G7 (2026-09-26) ist eine halbe Sitzung im Cookie kein Gast mehr, WENN die PIN ihr
-# Kettenschritt ist (`_pin_kettenschritt`). Hier gibt es keine Kette, der nächste Schritt von
-# „opfer" ist TOTP: Die halbe Sitzung zählt nicht, der Key auch nicht → 404 wie jeder Gast bei
-# `pin_login=False`. (Zwischen G7 und p2 F1 stand hier 401 — die halbe Sitzung prüfte PINs, deren
-# Schritt gar nicht offen war; das hielt den Fehler fest.) Worum es hier geht, bleibt: Der Key
-# zählt nicht, Cookie und Sitzung bleiben, wie sie waren, und niemand bekommt eine neue.
+# Since G7 (2026-09-26) a half session in the cookie is no guest anymore IF the PIN is its
+# chain step (`_pin_kettenschritt`). Here there is no chain, the next step of
+# "opfer" is TOTP: the half session does not count, the key does not either → 404 like any guest at
+# `pin_login=False`. (Between G7 and p2 F1 this was 401 — the half session checked PINs whose
+# step was not even open; that fixed the error in place.) What matters here remains: the key
+# does not count, cookie and session stay as they were, and nobody gets a new one.
 r = c8d.post("/auth/pin", data={"pin": "4711", "next": "/", "_csrf": c8d.cookies.get("tinysesam_csrf")},
              headers=KEY8, follow_redirects=False)
 assert r.status_code == 404, (r.status_code, r.text[:120])
-assert c8d.cookies.get("tinysesam_session") == _halb8, "das Cookie der halben Sitzung wurde ersetzt"
+assert c8d.cookies.get("tinysesam_session") == _halb8, "the cookie of the half session was replaced"
 _s8 = auth8.store.get_session(_halb8)
-assert _s8 and _s8["user_id"] == uid8_opfer and not _s8["mfa_ok"], "die halbe Sitzung hat sich verändert"
-assert not any(z["user_id"] == uid8 for z in auth8.store.list_sessions()), "das Key-Konto hat eine Sitzung"
-ok("0.20.1: halbe fremde Sitzung (nächster Schritt TOTP) + Key + PIN → 404, Cookie und "
-   "Sitzung unverändert, keine für das Key-Konto")
+assert _s8 and _s8["user_id"] == uid8_opfer and not _s8["mfa_ok"], "the half session has changed"
+assert not any(z["user_id"] == uid8 for z in auth8.store.list_sessions()), "the key account has a session"
+ok("0.20.1: half foreign session (next step TOTP) + key + PIN → 404, cookie and "
+   "session unchanged, none for the key account")
 
-# (e) Der legitime Weg bleibt: volle Sitzung, PIN als Zusatzfaktor bei pin_login=False.
+# (e) The legitimate route stays: full session, PIN as additional factor at pin_login=False.
 c8e = TestClient(app8)
 c8e.get("/auth/login", headers={"Accept": "text/html"})
 assert c8e.post("/auth/login", data={"username": "chef", "password": "Geheim-Chef-2026", "next": "/",
@@ -849,37 +849,37 @@ r = c8e.post("/auth/pin", data={"pin": "4711", "next": "/", "_csrf": c8e.cookies
 assert r.status_code == 303, (r.status_code, r.text[:120])
 _s8 = auth8.store.get_session(c8e.cookies.get("tinysesam_session"))
 assert _s8 and _s8["user_id"] == uid8 and "pin" in _s8["factors_done"], dict(_s8) if _s8 else None
-ok("0.20.1: volle Sitzung + PIN als Zusatzfaktor läuft bei pin_login=False weiter")
+ok("0.20.1: full session + PIN as additional factor keeps working at pin_login=False")
 os.remove(db8)
 
-# ---------- Wächter: keine Stelle mit Sitzungswirkung nimmt ihr Konto aus einer Key-Quelle ----------
-# Die Klasse hinter `/auth/reauth` und `/auth/pin`: Eine Route prüft einen Faktor für das Konto
-# aus `current_user()` und wendet ihn auf die Sitzung an. `current_user()` fällt ohne volle
-# Sitzung auf den API-Key zurück — geprüft wird dann das Konto des Keys, und die Wirkung trifft
-# das Cookie oder legt eine neue Sitzung an. Die Regel steht an EINER Stelle: Wer eine Sitzung
-# anlegt, ihr einen Faktor anhängt, sie auffrischt oder beendet, nimmt das Konto aus
-# `session_user()` (oder `pending_user()`/`totp_enrollment_user()`, oder aus dem Faktor selbst).
-# Geprüft wird jede Funktion des Pakets; lokale Helfer (ein nackter Aufruf wie `_nur_sitzung(…)`)
-# zählen mit, auch eine Erwähnung ohne Aufruf (`Depends(auth.current_user)`).
-# `require_session`/`require_mfa` stehen bewusst NICHT in der Liste: Sie weisen einen Key ab.
-# (Mutationsproben, je einzeln: `current_user` statt `session_user` in `login_pin`,
-# `login_totp`, `totp_setup_confirm`, `_abmelden` → Wächter rot; in `_nur_sitzung` → rot nur
-# dank der Helfer-Verfolgung (ohne sie grün, deshalb die Probe `helfer` im Selbsttest);
-# `session_user()` selbst auf `current_user()` umgebogen → der Wächter bleibt grün, die
-# Verhaltensblöcke oben werden rot — beide Schichten sind nötig.)
-# Seit 0.22.0 stehen die Anmeldeschritte in `login_password`/`login_pin`/`login_totp`
-# (die Routen rufen sie): Sie sind selbst Senken — eine Route, die sie mit einem Konto aus einer
-# Key-Quelle umgibt, fällt hier auf wie eine, die `apply_factor` ruft. Ebenso der Step-up
-# (`confirm_*`, `POST /auth/reauth` ruft sie) und der Passwortwechsel (`change_password`, beendet
-# die anderen Sitzungen des Kontos). Seit diesen Bausteinen misst der Wächter drei Formen mehr:
-# eine Senke, die nur ÜBERGEBEN wird (`run_in_threadpool(auth.change_password, …)` in
-# `POST /auth/password` — kein Aufruf am Attribut, bis dahin unsichtbar); Helfer, die als
-# Methode gerufen werden (`self._nur_mit_sitzung(…)` — sonst prüfte er die Quelle der Bausteine
-# nicht, nur die der Routen); und eine Funktion, die selbst so heisst wie eine Senke: Ihr Rumpf
-# hat Sitzungswirkung, auch wenn er keine andere Senke ruft (`change_password` beendet Sitzungen
-# über den Store). (Mutationsprobe: in `TinySesam._nur_mit_sitzung` `current_user` statt
-# `session_user` → rot an `_bestaetigen`, `confirm_*` und `change_password`; ohne die
-# Methoden-Helfer grün.)
+# ---------- Guard: no spot with session effect takes its account from a key source ----------
+# The class behind `/auth/reauth` and `/auth/pin`: a route checks a factor for the account
+# from `current_user()` and applies it to the session. Without a full session `current_user()` falls
+# back to the API key — the key's account is then checked, and the effect hits
+# the cookie or creates a new session. The rule stands in ONE place: whoever
+# creates a session, attaches a factor to it, refreshes or ends it, takes the account from
+# `session_user()` (or `pending_user()`/`totp_enrollment_user()`, or from the factor itself).
+# Every function of the package is checked; local helpers (a bare call like `_nur_sitzung(…)`)
+# count too, as does a mention without a call (`Depends(auth.current_user)`).
+# `require_session`/`require_mfa` are deliberately NOT in the list: they reject a key.
+# (Mutation probes, each individually: `current_user` instead of `session_user` in `login_pin`,
+# `login_totp`, `totp_setup_confirm`, `_abmelden` → guard red; in `_nur_sitzung` → red only
+# thanks to the helper tracking (green without it, hence the probe `helfer` in the self-test);
+# `session_user()` itself bent to `current_user()` → the guard stays green, the
+# behaviour blocks above turn red — both layers are needed.)
+# Since 0.22.0 the sign-in steps live in `login_password`/`login_pin`/`login_totp`
+# (the routes call them): they are sinks themselves — a route that surrounds them with an account from a
+# key source is caught here like one that calls `apply_factor`. So is the step-up
+# (`confirm_*`, `POST /auth/reauth` calls them) and the password change (`change_password`, ends
+# the other sessions of the account). Since these building blocks the guard measures three more forms:
+# a sink that is only PASSED (`run_in_threadpool(auth.change_password, …)` in
+# `POST /auth/password` — no call on the attribute, invisible until then); helpers called as a
+# method (`self._nur_mit_sitzung(…)` — otherwise it would not check the source of the building blocks,
+# only that of the routes); and a function that is itself named like a sink: its body
+# has session effect even if it calls no other sink (`change_password` ends sessions
+# via the store). (Mutation probe: in `TinySesam._nur_mit_sitzung` `current_user` instead of
+# `session_user` → red at `_bestaetigen`, `confirm_*` and `change_password`; green without the
+# method helper.)
 SENKEN = {"apply_factor", "start_session", "complete_totp", "complete_mfa", "rotate_session",
           "set_session_mfa", "set_session_factors", "logout",
           "login_password", "login_pin", "login_totp",
@@ -889,7 +889,7 @@ KEY_QUELLEN = {"current_user", "_current_user_ermitteln", "require_user", "requi
 
 
 def _eigene_knoten(fn):
-    """Die Knoten im Rumpf von `fn` — ohne verschachtelte Funktionen, die zählen für sich."""
+    """The nodes in the body of `fn` — without nested functions, which count for themselves."""
     offen = list(ast.iter_child_nodes(fn))
     while offen:
         k = offen.pop()
@@ -900,7 +900,7 @@ def _eigene_knoten(fn):
 
 
 def _sitzungswirkung(quelltext, datei="?"):
-    """(Namen der Funktionen mit Sitzungswirkung, Verstösse) für einen Modul-Quelltext."""
+    """(Names of the functions with session effect, violations) for a module source."""
     fns = [k for k in ast.walk(ast.parse(quelltext)) if isinstance(k, (ast.FunctionDef, ast.AsyncFunctionDef))]
     je_name: dict = {}
     for fn in fns:
@@ -909,7 +909,7 @@ def _sitzungswirkung(quelltext, datei="?"):
     for fn in fns:
         senke, quelle, helfer = False, set(), set()
         for k in _eigene_knoten(fn):
-            # Aufgerufen oder nur übergeben (`run_in_threadpool(auth.change_password, …)`).
+            # Called or merely passed (`run_in_threadpool(auth.change_password, …)`).
             if isinstance(k, ast.Attribute) and k.attr in SENKEN:
                 senke = True
             if isinstance(k, ast.Call) and isinstance(k.func, ast.Name) and k.func.id in je_name:
@@ -917,14 +917,14 @@ def _sitzungswirkung(quelltext, datei="?"):
             if (isinstance(k, ast.Call) and isinstance(k.func, ast.Attribute)
                     and isinstance(k.func.value, ast.Name) and k.func.value.id == "self"
                     and k.func.attr in je_name):
-                helfer.add(k.func.attr)          # `self._nur_mit_sitzung(…)`: Methode desselben Moduls
+                helfer.add(k.func.attr)          # `self._nur_mit_sitzung(…)`: method of the same module
             name = k.attr if isinstance(k, ast.Attribute) else k.id if isinstance(k, ast.Name) else None
             if name in KEY_QUELLEN:
                 quelle.add(name)
         direkt[id(fn)] = (senke, quelle, helfer)
 
     def huelle(fn, gesehen):
-        """(Senke erreichbar?, erreichbare Key-Quellen) über lokale Helfer, zyklenfest."""
+        """(Sink reachable?, reachable key sources) via local helpers, cycle-proof."""
         if id(fn) in gesehen:
             return False, set()
         gesehen.add(id(fn))
@@ -939,15 +939,15 @@ def _sitzungswirkung(quelltext, datei="?"):
     wirkend, verstoesse = set(), []
     for fn in fns:
         senke, quelle = huelle(fn, set())
-        if senke or fn.name in SENKEN:        # eine Senke selbst: ihr Rumpf zählt
+        if senke or fn.name in SENKEN:        # a sink itself: its body counts
             wirkend.add(fn.name)
             if quelle:
                 verstoesse.append(f"{datei}:{fn.lineno} {fn.name} ← {sorted(quelle)}")
     return wirkend, verstoesse
 
 
-# Selbsttest: Der Wächter muss die Klasse in jeder Form sehen, die er zusagt — sonst ist sein
-# Grün keine Aussage (eine abgeschaltete Helfer-Verfolgung fiel sonst niemandem auf).
+# Self-test: the guard must see the class in every form it promises — otherwise its
+# green says nothing (a switched-off helper tracking would otherwise go unnoticed).
 _PROBEN = {
     "direkt": ("def r(request):\n    me = auth.current_user(request)\n"
                "    auth.apply_factor(request, me['id'], 'pin')\n", True),
@@ -968,7 +968,7 @@ _PROBEN = {
                       "    def innen(request):\n        auth.complete_totp(t)\n", False),
 }
 for _probe, (_text, _erwartet_rot) in _PROBEN.items():
-    assert bool(_sitzungswirkung(_text)[1]) == _erwartet_rot, f"Wächter-Selbsttest '{_probe}' falsch"
+    assert bool(_sitzungswirkung(_text)[1]) == _erwartet_rot, f"guard self-test '{_probe}' wrong"
 
 _paket = pathlib.Path(__file__).resolve().parent.parent / "tinysesam"
 _wirkend, _verstoesse = set(), []
@@ -976,25 +976,25 @@ for _datei in sorted(_paket.glob("*.py")):
     _w, _v = _sitzungswirkung(_datei.read_text(encoding="utf-8"), _datei.name)
     _wirkend |= _w
     _verstoesse += _v
-assert not _verstoesse, ("Konto aus einer Quelle, die einen API-Key annimmt, an einer Stelle mit "
-                         "Sitzungswirkung — `session_user()` nehmen: " + "; ".join(_verstoesse))
-# Ohne Treffer misst der Wächter nichts: Die bekannten Stellen müssen gefunden werden.
+assert not _verstoesse, ("account from a source that accepts an API key, at a spot with "
+                         "session effect — use `session_user()`: " + "; ".join(_verstoesse))
+# Without hits the guard measures nothing: the known spots must be found.
 _erwartet = {"pin_submit", "reauth_submit", "totp_submit", "totp_setup_confirm", "login_submit",
              "_abmelden", "apply_factor", "login_password", "login_pin", "login_totp",
              "_bestaetigen", "confirm_password", "confirm_pin", "confirm_totp", "change_password",
              "change_own_password"}
-assert _erwartet <= _wirkend, f"Wächter findet {sorted(_erwartet - _wirkend)} nicht mehr — Aufbau geändert?"
-ok(f"Wächter: {len(_wirkend)} Stellen mit Sitzungswirkung, keine nimmt ihr Konto aus einer Key-Quelle "
-   f"({len(_PROBEN)} Selbstproben)")
+assert _erwartet <= _wirkend, f"guard no longer finds {sorted(_erwartet - _wirkend)} — setup changed?"
+ok(f"guard: {len(_wirkend)} spots with session effect, none takes its account from a key source "
+   f"({len(_PROBEN)} self-probes)")
 
-# ---------- A-6: Gnadenfrist des alten Tokens nach dem Step-up (PO-Entscheid 2026-09-25) ----------
-# Eine Anfrage, die im Moment des Step-ups schon unterwegs war (zweiter Tab), trägt noch das alte
-# Token. Es gilt `session_rotation_grace_sec` (Vorgabe 10) weiter — aber OHNE Step-up-Frische, und
-# es endet mit der neuen Sitzung.
+# ---------- A-6: grace period of the old token after the step-up (PO decision 2026-09-25) ----------
+# A request that was already under way at the moment of the step-up (second tab) still carries the old
+# token. `session_rotation_grace_sec` (default 10) keeps applying — but WITHOUT step-up freshness, and
+# it ends with the new session.
 db_g = os.path.join(tempfile.mkdtemp(), "g.db")
 auth_g = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db_g, passkey_enabled=False,
                                    oidc_enabled=False, cookie_secure=False, stepup_max_age_sec=900))
-assert auth_g.cfg.session_rotation_grace_sec == 10, "Vorgabe der Gnadenfrist ist 10 Sekunden"
+assert auth_g.cfg.session_rotation_grace_sec == 10, "default of the grace period is 10 seconds"
 uid_g = auth_g.create_user("gina", password="Gin-Geheim-2026")
 app_g = FastAPI()
 app_g.include_router(auth_g.router())
@@ -1019,26 +1019,26 @@ neu_g = cg.cookies.get("tinysesam_session")
 assert neu_g and neu_g != alt_g and cg.get("/sudo", headers=JSON).status_code == 200
 zweiter_tab = TestClient(app_g)
 zweiter_tab.cookies.set("tinysesam_session", alt_g)
-assert zweiter_tab.get("/normal", headers=JSON).status_code == 200, "die Anfrage im zweiten Tab scheitert"
-assert zweiter_tab.get("/sudo", headers=JSON).status_code != 200, "das alte Token hat frische Sudo-Rechte"
-assert len(auth_g.store.list_sessions(uid_g)) == 1, "das abgelöste Token zählt als eigene Sitzung"
-ok("A-6: altes Token gilt kurz weiter (normale Route), ohne Step-up-Frische, keine zweite Sitzung")
+assert zweiter_tab.get("/normal", headers=JSON).status_code == 200, "the request in the second tab fails"
+assert zweiter_tab.get("/sudo", headers=JSON).status_code != 200, "the old token has fresh sudo rights"
+assert len(auth_g.store.list_sessions(uid_g)) == 1, "the superseded token counts as a session of its own"
+ok("A-6: old token keeps working briefly (normal route), without step-up freshness, no second session")
 auth_g.store._exec("UPDATE session SET expires_at=? WHERE token_hash=?",
                    (int(time.time()) - 1, auth_g.store.session_hash(alt_g)))
-assert zweiter_tab.get("/normal", headers=JSON).status_code == 401, "nach der Frist trägt es nicht mehr"
-ok("A-6: nach Ablauf der Frist ist das alte Token tot")
-# Abmelden der neuen Sitzung nimmt das abgelöste Token mit.
+assert zweiter_tab.get("/normal", headers=JSON).status_code == 401, "after the period it no longer works"
+ok("A-6: after the period has elapsed the old token is dead")
+# Signing out the new session takes the superseded token along.
 cg.post("/auth/login", data={"username": "gina", "password": "Gin-Geheim-2026"}, follow_redirects=False)
 alt2 = cg.cookies.get("tinysesam_session")
 auth_g.store._exec("UPDATE session SET mfa_at=?", (int(time.time()) - 100000,))
 cg.post("/auth/reauth", data={"password": "Gin-Geheim-2026", "next": "/"}, follow_redirects=False)
 auth_g.store.delete_session_by_handle(auth_g.store.session_hash(cg.cookies.get("tinysesam_session")))
-assert auth_g.store.get_session(alt2) is None, "das abgelöste Token überlebt das Abmelden"
-ok("A-6: Abmelden/Widerruf der neuen Sitzung beendet auch das abgelöste Token")
+assert auth_g.store.get_session(alt2) is None, "the superseded token survives the sign-out"
+ok("A-6: sign-out/revocation of the new session also ends the superseded token")
 os.remove(db_g)
-# (Mutationsproben: `gnade_sek` ignoriert → erste Prüfung rot; `mfa_at=NULL` weggelassen → Sudo
-#  rot; der Filter in `list_sessions` weg → Sitzungszahl rot; `OR nachfolger=?` beim Löschen weg →
-#  Abmelden rot.)
+# (Mutation probes: `gnade_sek` ignored → first check red; `mfa_at=NULL` omitted → sudo
+#  red; the filter in `list_sessions` removed → session count red; `OR nachfolger=?` on deletion removed →
+#  sign-out red.)
 
 os.remove(db)
 os.remove(db2)

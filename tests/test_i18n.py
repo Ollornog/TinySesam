@@ -1,4 +1,4 @@
-"""E3: i18n — englische Default-Texte, Umschaltung auf de, auth.t()/add_messages."""
+"""E3: i18n — English default texts, switching to de, auth.t()/add_messages."""
 import os
 import tempfile, os
 from fastapi import FastAPI
@@ -27,21 +27,21 @@ html = c.get("/auth/login").text
 assert "Username" in html and "Password" in html and "Sign in" in html
 assert "lang=en" in html
 assert "Benutzer" not in html
-ok("Default-Sprache Englisch: Login-Seite auf Englisch")
+ok("default language English: login page in English")
 
 # englische Fehlermeldung
 r = c.post("/auth/login", data={"username": "admin", "password": "falsch"})
 assert "Invalid credentials" in r.text
-ok("Fehlermeldung auf Englisch (Invalid credentials)")
+ok("error message in English (Invalid credentials)")
 os.remove(db)
 
-# ---------- Umschaltung auf Deutsch ----------
+# ---------- Switching to German ----------
 db, auth, c = build(lang="de")
 html = c.get("/auth/login").text
 assert "Benutzer" in html and "Passwort" in html and "Anmelden" in html and "lang=de" in html
 r = c.post("/auth/login", data={"username": "admin", "password": "falsch"})
 assert "Falsche Zugangsdaten" in r.text
-ok("lang='de': Login-Seite + Fehlermeldung auf Deutsch")
+ok("lang='de': login page + error message in German")
 os.remove(db)
 
 # ---------- auth.t(): Platzhalter, Fallback, unbekannter Key ----------
@@ -51,29 +51,29 @@ assert auth.t("login.user") == "Username"
 assert auth.t("gibt.es.nicht") == "gibt.es.nicht"       # unbekannter Key → Key selbst
 auth.cfg.lang = "de"
 assert auth.t("login.user") == "Benutzer"
-auth.cfg.lang = "fr"                                     # keine fr-Tabelle → Fallback en
+auth.cfg.lang = "fr"                                     # no fr table → fallback en
 assert auth.t("login.submit") == "Sign in"
-ok("auth.t(): Platzhalter, de/en, Fallback auf en, Key-Fallback")
+ok("auth.t(): placeholders, de/en, fallback to en, key fallback")
 
-# ---------- add_messages: eigene Sprache/Überschreibung ----------
+# ---------- add_messages: own language/override ----------
 auth.add_messages("fr", {"login.submit": "Se connecter", "login.user": "Utilisateur"})
 auth.cfg.lang = "fr"
 assert auth.t("login.submit") == "Se connecter" and auth.t("login.user") == "Utilisateur"
-assert auth.t("login.password") == "Password"           # nicht übersetzt → en-Fallback
-ok("add_messages: eigene Sprache ergänzen (Rest fällt auf en zurück)")
+assert auth.t("login.password") == "Password"           # not translated → en fallback
+ok("add_messages: add an own language (the rest falls back to en)")
 os.remove(db)
 
-# ---------- Die Tabellen sind vollständig ----------
-# Ein fehlender de-Schlüssel fiele stumm auf Englisch zurück: die Seite wirkt übersetzt,
-# einzelne Wörter sind es nicht. Genau so blieb das Admin-Panel bis 0.13.1 unbemerkt deutsch.
+# ---------- The tables are complete ----------
+# A missing de key would silently fall back to English: the page looks translated,
+# single words are not. This is exactly how the admin panel stayed unnoticed in German until 0.13.1.
 from tinysesam.messages import MESSAGES                                     # noqa: E402
 en, de = set(MESSAGES["en"]), set(MESSAGES["de"])
-assert not en - de, f"nur auf Englisch: {sorted(en - de)}"
-assert not de - en, f"nur auf Deutsch: {sorted(de - en)}"
-assert all(v.strip() for v in MESSAGES["de"].values()), "leere Übersetzung"
-ok(f"en/de decken dieselben {len(en)} Schlüssel ab")
+assert not en - de, f"only in English: {sorted(en - de)}"
+assert not de - en, f"only in German: {sorted(de - en)}"
+assert all(v.strip() for v in MESSAGES["de"].values()), "empty translation"
+ok(f"en/de cover the same {len(en)} keys")
 
-# ---------- Das Admin-Panel übersetzt sich mit ----------
+# ---------- The admin panel translates along ----------
 from tinysesam.admin import panel_texts, render_panel                        # noqa: E402
 db, auth, c = build(lang="en")
 assert set(panel_texts(auth)) >= {"tab.users", "hardening", "cancel", "logout", "locale"}
@@ -82,15 +82,15 @@ for lang, want, nope in (("en", "Hardening", "Härtung"), ("de", "Härtung", "Ha
     html = render_panel(auth, "/auth/admin")
     assert f"lang={lang}" in html, lang
     assert want in html and nope not in html, (lang, want, nope)
-    # `toLocaleString()` folgt der Sprache, sonst steht ein englisches Datum im deutschen Panel.
+    # `toLocaleString()` follows the language, otherwise an English date appears in the German panel.
     assert ("en-GB" if lang == "en" else "de-DE") in html, lang
 
-# Eigene Übersetzungen greifen auch im Panel — und `</script>` darf es nicht zerlegen.
+# Own translations also take effect in the panel — and `</script>` must not break it.
 auth.cfg.lang = "en"
 auth.add_messages("en", {"admin.tab.users": "Accounts", "admin.save": "</script>x"})
 html = render_panel(auth, "/auth/admin")
 assert "Accounts" in html
-assert html.count("</script>") == 1, "eigene Übersetzung darf den Skriptblock nicht beenden"
+assert html.count("</script>") == 1, "own translation must not end the script block"
 assert "\\u003c/script>x" in html
 ok("Admin-Panel: de/en, Locale, add_messages, `<` maskiert")
 os.remove(db)

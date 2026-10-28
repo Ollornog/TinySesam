@@ -1,31 +1,31 @@
-"""Das Paket, wie es beim Nutzer ankommt — nicht die Absicht im `pyproject.toml`.
+"""The package as it reaches the user — not the intent in `pyproject.toml`.
 
-Seit 0.19.0 ist PyPI der Installationsweg ([ADR-6](../backlog/ADR-6-pypi-veroeffentlichen.md)).
-Damit zählt nicht mehr, was im Repo liegt, sondern was im Wheel und im sdist landet — und die
-beiden werden aus verschiedenen Regeln gebaut. Ein Wheel, dem eine Datei fehlt, installiert
-sauber und stürzt erst beim Nutzer ab; eine Version, die auf PyPI steht, lässt sich nicht
-zurückholen. Beides fällt hier auf, bevor ein Tag gesetzt wird.
+Since 0.19.0 PyPI is the installation route ([ADR-6](../backlog/ADR-6-pypi-veroeffentlichen.md)).
+So what counts is no longer what lies in the repo but what ends up in the wheel and the sdist — and the
+two are built from different rules. A wheel missing a file installs
+cleanly and only crashes at the user; a version that is on PyPI cannot be
+taken back. Both show up here, before a tag is set.
 
-Deshalb wird wirklich **gebaut**, statt das `pyproject.toml` zu lesen: Gebaut wird der
-versionierte Baum (`git ls-files`) in einer Kopie ausserhalb des Repos — offline, ohne
-Bau-Isolierung, damit nichts nachgeladen werden muss und der Arbeitsbaum unberührt bleibt
-(die CI prüft danach, dass er es ist).
+That is why it really **builds**, instead of reading `pyproject.toml`: the
+versioned tree (`git ls-files`) is built in a copy outside the repo — offline, without
+build isolation, so nothing has to be downloaded and the working tree stays untouched
+(CI afterwards checks that it is).
 
-Gefunden hat dieser Test gleich beim ersten Lauf, wofür er gedacht war: Das sdist enthielt
-`tests/test_*.py`, aber weder `tests/run_all.py` noch `tests/_kit/` — eine Suite, die sich
-nicht starten lässt. Siehe `MANIFEST.in`.
+On its very first run this test found what it was meant for: the sdist contained
+`tests/test_*.py`, but neither `tests/run_all.py` nor `tests/_kit/` — a suite that cannot
+be started. See `MANIFEST.in`.
 """
 
-# Diese Suite liest den Repo-Zustand ueber git. Ohne git ist sie nicht aussagekraeftig —
-# eine fehlende Voraussetzung, kein Fehlschlag.
+# This suite reads the repo state via git. Without git it is not meaningful —
+# a missing precondition, not a failure.
 import re as _re_pkg
 import shutil  # noqa: E402
 from voraussetzung import braucht  # noqa: E402
 import pathlib  # noqa: E402
 
 braucht(shutil.which("git"), "git fehlt")
-# git im PATH genügt nicht: Gemessen wird gegen `git ls-files`, und das braucht ein
-# Repo. Im ausgepackten sdist gibt es keins — dort absagen statt rot werden.
+# git on the PATH is not enough: measuring is done against `git ls-files`, and that needs a
+# repo. The unpacked sdist has none — decline there instead of turning red.
 braucht((pathlib.Path(__file__).resolve().parent.parent / ".git").exists(),
         "kein Git-Repo (z.B. ausgepacktes sdist) — der Paket-Test vergleicht gegen `git ls-files`")
 import email.parser
@@ -43,20 +43,20 @@ from _kit import hygiene  # noqa: E402
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts"))
 import _artefakte_normalisieren  # noqa: E402
 
-# Ohne setuptools lässt sich nichts bauen — und ohne Bau prüft dieser Test nichts. Ein
-# stilles „übersprungen" wäre hier die schlechteste Antwort: Es sähe grün aus und wäre leer.
+# Without setuptools nothing can be built — and without a build this test checks nothing. A
+# silent "skipped" would be the worst answer here: it would look green and be empty.
 try:
     import setuptools
     from setuptools import build_meta
 except ImportError:  # pragma: no cover
-    print("  setuptools fehlt — ohne Bau-Backend ist diese Suite nicht aussagekräftig.")
+    print("  setuptools is missing — without a build backend this suite is not meaningful.")
     print("  → pip install setuptools wheel")
     sys.exit(1)
-# Der SPDX-Lizenzausdruck (PEP 639, T-7) braucht setuptools >= 77. Mit einem älteren scheitert
-# der Bau unten mit einer Meldung über `project.license`, die niemand auf die Version bezieht —
-# deshalb hier laut und mit dem Grund.
+# The SPDX license expression (PEP 639, T-7) needs setuptools >= 77. With an older one the
+# build below fails with a message about `project.license` that nobody relates to the version —
+# hence loud here and with the reason.
 if int(setuptools.__version__.split(".")[0]) < 77:  # pragma: no cover
-    print(f"  setuptools {setuptools.__version__} ist zu alt — der Lizenzausdruck braucht >= 77.")
+    print(f"  setuptools {setuptools.__version__} is too old — the license expression needs >= 77.")
     print("  → pip install -U setuptools")
     sys.exit(1)
 
@@ -67,14 +67,14 @@ def ok(name):
     print(f"  ✓ {name}")
 
 
-# Feste Bauzeit für den Reproduzierbarkeits-Vergleich unten. Der Wert ist beliebig — es zählt,
-# dass beide Bauläufe denselben sehen, wie im Release-Workflow der Zeitstempel des Commits.
+# Fixed build time for the reproducibility comparison below. The value is arbitrary — what counts
+# is that both builds see the same one, like the commit timestamp in the release workflow.
 BAUZEIT = 1700000000
-GEGRAFTET = ("tests", "examples", "deploy")   # die `graft`-Bäume aus MANIFEST.in
+GEGRAFTET = ("tests", "examples", "deploy")   # the `graft` trees from MANIFEST.in
 
 
 def attrappen_aus_gitignore() -> list[str]:
-    """Für jedes Muster aus .gitignore je eine Attrappe in jedem gegrafteten Baum (B4-13)."""
+    """For each pattern from .gitignore one dummy in every grafted tree (B4-13)."""
     pfade = []
     for zeile in pathlib.Path(ROOT, ".gitignore").read_text(encoding="utf-8").splitlines():
         muster = zeile.strip()
@@ -88,12 +88,12 @@ def attrappen_aus_gitignore() -> list[str]:
 
 def baue(verschiebung: float = 0.0, attrappen: tuple[str, ...] = (),
          gruppe_schreibt: bool = False) -> tuple[str, str, str]:
-    """(verzeichnis, wheel, sdist) — aus einer Kopie der versionierten Dateien.
+    """(directory, wheel, sdist) — from a copy of the versioned files.
 
-    `verschiebung` setzt die Datei-Zeitstempel der Kopie um so viele Sekunden anders — so sieht
-    ein zweiter Checkout desselben Commits aus. `gruppe_schreibt` gibt jeder Datei g+w, so wie ein
-    Checkout unter umask 0002 (Ubuntu/Mint) sie anlegt. `attrappen` legt ungetrackte Dateien dazu,
-    so wie sie in einem benutzten Arbeitsbaum liegen.
+    `verschiebung` shifts the file timestamps of the copy by that many seconds — this is what
+    a second checkout of the same commit looks like. `gruppe_schreibt` gives every file g+w, as a
+    checkout under umask 0002 (Ubuntu/Mint) creates it. `attrappen` adds untracked files,
+    as they lie in a used working tree.
     """
     arbeit = tempfile.mkdtemp(prefix="tinysesam-pack-")
     quelle, ziel = os.path.join(arbeit, "src"), os.path.join(arbeit, "dist")
@@ -109,8 +109,8 @@ def baue(verschiebung: float = 0.0, attrappen: tuple[str, ...] = (),
         if verschiebung:
             stempel = os.stat(pfad).st_mtime + verschiebung
             os.utime(pfad, (stempel, stempel))
-        # Die Rechte in BEIDE Richtungen setzen: Die Quelle selbst liegt je nach umask schon auf
-        # 0664 oder 0644 — nur „g+w dazu" wäre auf einem 0002-Rechner kein Unterschied.
+        # Set the permissions in BOTH directions: the source itself already sits at
+        # 0664 or 0644 depending on umask — only "add g+w" would make no difference on a 0002 machine.
         modus = os.stat(pfad).st_mode
         os.chmod(pfad, (modus | 0o020) if gruppe_schreibt else (modus & ~0o022))
 
@@ -126,8 +126,8 @@ def baue(verschiebung: float = 0.0, attrappen: tuple[str, ...] = (),
             os.environ.pop("SOURCE_DATE_EPOCH", None)
         else:
             os.environ["SOURCE_DATE_EPOCH"] = sde
-    # Derselbe Schritt wie im Release-Workflow — ohne ihn hinge das sdist an Zeitstempeln und
-    # Rechten des Checkouts, das Wheel an dessen Rechten (umask).
+    # The same step as in the release workflow — without it the sdist would depend on timestamps and
+    # permissions of the checkout, the wheel on its permissions (umask).
     _artefakte_normalisieren.sdist_normalisieren(os.path.join(ziel, sdist), BAUZEIT)
     _artefakte_normalisieren.wheel_normalisieren(os.path.join(ziel, whl))
     return arbeit, os.path.join(ziel, whl), os.path.join(ziel, sdist)
@@ -155,89 +155,89 @@ try:
     VERSION = META["Version"]
     KLASSEN = META.get_all("Classifier") or []
 
-    # ---------- Wheel: was zur Laufzeit gebraucht wird, ist auch drin ----------
-    # Der eigentliche Grund für diese Suite. Heute besteht das Paket nur aus `.py` und
-    # `py.typed`; sobald jemand eine Vorlage, ein Bild oder eine Übersetzungsdatei dazulegt,
-    # fehlt sie ohne Eintrag in `[tool.setuptools.package-data]` — im Repo sichtbar, im Wheel
-    # nicht, und der Fehler entsteht auf einem fremden Rechner.
+    # ---------- Wheel: what is needed at runtime is also in it ----------
+    # The actual reason for this suite. Today the package consists only of `.py` and
+    # `py.typed`; as soon as someone adds a template, an image or a translation file,
+    # it is missing without an entry in `[tool.setuptools.package-data]` — visible in the repo, not in the wheel,
+    # and the error occurs on somebody else's machine.
     paketdateien = [f for f in hygiene.getrackte_dateien(ROOT) if f.startswith("tinysesam/")]
-    assert paketdateien, "keine versionierten Dateien unter tinysesam/ gefunden"
+    assert paketdateien, "no versioned files found under tinysesam/"
     fehlend = [f for f in paketdateien if f not in wheel_dateien]
-    assert not fehlend, ("diese versionierten Dateien fehlen im Wheel — ohne Eintrag unter "
-                         f"[tool.setuptools.package-data] werden sie nicht mitgepackt: {fehlend}")
+    assert not fehlend, ("these versioned files are missing from the wheel — without an entry under "
+                         f"[tool.setuptools.package-data] they are not packed: {fehlend}")
     nicht_py = [f for f in paketdateien if not f.endswith(".py")]
-    ok(f"Wheel vollständig: {len(paketdateien)} Dateien, davon {len(nicht_py)} ohne .py "
+    ok(f"Wheel complete: {len(paketdateien)} files, of which {len(nicht_py)} without .py "
        f"({', '.join(os.path.basename(f) for f in nicht_py)})")
 
     assert f"tinysesam-{VERSION}.dist-info/entry_points.txt" in wheel_dateien, \
-        "das Konsolenkommando `tinysesam` fehlt im Wheel"
-    # Seit T-7 (setuptools >= 77, PEP 639) liegt die Lizenz unter `dist-info/licenses/`, und die
-    # Metadaten nennen sie als `License-File`. Bis dahin lag sie je nach Bau-Werkzeug direkt im
-    # `dist-info` — der Test kannte beide Orte, weil lokal ein älteres setuptools baute.
+        "the console command `tinysesam` is missing from the wheel"
+    # Since T-7 (setuptools >= 77, PEP 639) the license lies under `dist-info/licenses/`, and the
+    # metadata names it as `License-File`. Until then it lay directly in `dist-info`, depending on the build tool
+    # — the test knew both places because an older setuptools was building locally.
     lizenzen = [n for n in wheel_dateien if ".dist-info/licenses/" in n and "LICENSE" in n.upper()]
-    assert lizenzen, "die Lizenz liegt nicht im Wheel — erwartet unter <name>.dist-info/licenses/LICENSE"
+    assert lizenzen, "the license is not in the wheel — expected under <name>.dist-info/licenses/LICENSE"
     assert "LICENSE" in (META.get_all("License-File") or []), \
-        f"die Metadaten nennen die Lizenzdatei nicht (License-File: {META.get_all('License-File')})"
-    ok(f"Wheel enthält Konsolenkommando und Lizenz ({lizenzen[0].split('.dist-info/')[1]})")
+        f"the metadata does not name the license file (License-File: {META.get_all('License-File')})"
+    ok(f"Wheel contains console command and license ({lizenzen[0].split('.dist-info/')[1]})")
 
-    # ---------- Version: eine Zahl, überall dieselbe ----------
+    # ---------- Version: one number, the same everywhere ----------
     modul = re.search(r'^__version__ = "([^"]+)"',
                       pathlib.Path(ROOT, "tinysesam/__init__.py").read_text(encoding="utf-8"),
                       re.M).group(1)
     assert VERSION == modul == PKG["Version"], (VERSION, modul, PKG["Version"])
-    ok(f"Version {VERSION}: Wheel = sdist = tinysesam.__version__")
+    ok(f"Version {VERSION}: wheel = sdist = tinysesam.__version__")
 
-    # ---------- Der Sperrriegel ist weg, und er darf nicht zurückkommen ----------
-    # `Private :: Do Not Upload` liess PyPI jeden Upload ablehnen — richtig, solange nicht
-    # veröffentlicht wurde. Seit 1.0 wäre er ein Release, das erst am Index scheitert.
+    # ---------- The upload lock is gone, and it must not come back ----------
+    # `Private :: Do Not Upload` made PyPI reject every upload — right, as long as nothing was
+    # published. Since 1.0 it would be a release that only fails at the index.
     privat = [k for k in KLASSEN if k.startswith("Private ::")]
-    assert not privat, f"Upload-Sperre noch im Paket: {privat}"
+    assert not privat, f"upload lock still in the package: {privat}"
 
-    # Der Reifegrad ist kein Gefühl: ab 1.0 sagt das Paket „stabil", davor „Beta".
+    # Maturity is not a feeling: from 1.0 the package says "stable", before that "Beta".
     haupt = int(VERSION.split(".")[0])
     erwartet = ("Development Status :: 5 - Production/Stable" if haupt >= 1
                 else "Development Status :: 4 - Beta")
-    assert erwartet in KLASSEN, f"bei Version {VERSION} gehört '{erwartet}' in die Classifier"
-    ok(f"keine Upload-Sperre; Reifegrad passt zur Version ({erwartet.split(' :: ')[1]})")
+    assert erwartet in KLASSEN, f"for version {VERSION} '{erwartet}' belongs in the classifiers"
+    ok(f"no upload lock; maturity matches the version ({erwartet.split(' :: ')[1]})")
 
-    # ---------- Python-Versionen: Zusage und Prüflauf sind dasselbe ----------
-    # Ein Classifier ist ein Versprechen. Eines, das die CI nicht fährt, ist geraten.
+    # ---------- Python versions: the promise and the test run are the same thing ----------
+    # A classifier is a promise. One that CI does not run is a guess.
     ci = pathlib.Path(ROOT, ".github/workflows/ci.yml").read_text(encoding="utf-8")
     matrix = re.search(r"python-version:\s*\[([^\]]+)\]", ci)
-    assert matrix, "ci.yml hat keine python-version-Matrix mehr — dann prüft hier niemand mehr mit"
+    assert matrix, "ci.yml has no python-version matrix any more — then nobody checks here any more"
     gefahren = re.findall(r'"(\d+\.\d+)"', matrix.group(1))
     genannt = [k.rsplit(" :: ", 1)[1] for k in KLASSEN
                if re.fullmatch(r"Programming Language :: Python :: \d+\.\d+", k)]
     ungedeckt = [v for v in gefahren if v not in genannt]
-    assert not ungedeckt, f"die CI fährt {ungedeckt}, das Paket nennt sie nicht als Classifier"
+    assert not ungedeckt, f"CI runs {ungedeckt}, the package does not name them as a classifier"
 
     untergrenze = re.search(r">=\s*(\d+)\.(\d+)", META["Requires-Python"])
-    assert untergrenze, f"Requires-Python ohne Untergrenze: {META['Requires-Python']!r}"
+    assert untergrenze, f"Requires-Python without lower bound: {META['Requires-Python']!r}"
     kleinste = min(tuple(int(x) for x in v.split(".")) for v in genannt)
     assert kleinste == (int(untergrenze.group(1)), int(untergrenze.group(2))), (
-        f"Requires-Python sagt {META['Requires-Python']}, der kleinste Classifier nennt "
+        f"Requires-Python says {META['Requires-Python']}, the smallest classifier names "
         f"{'.'.join(str(x) for x in kleinste)}")
-    ok(f"Python {META['Requires-Python']}: Classifier {genannt[0]}–{genannt[-1]}, "
-       f"CI fährt {', '.join(gefahren)}")
+    ok(f"Python {META['Requires-Python']}: classifiers {genannt[0]}–{genannt[-1]}, "
+       f"CI runs {', '.join(gefahren)}")
 
-    # ---------- Untergrenzen: der Boden ist gemessen, nicht geraten ----------
-    # Ein `>=` ohne Deckel ist eine Zusage an jeden, der eine Fassung festhält (Lockfile,
-    # Constraints, Distributionspaket): „ab hier wird es unterstützt". Lag der Boden unter einem
-    # Sicherheitsfix, war die Zusage falsch — und niemand merkte es, weil eine Neuinstallation
-    # ohnehin das Neueste zieht. Bis 0.18.0 löste die niedrigste erlaubte Auflösung nach
-    # authlib 1.3.0, python-multipart 0.0.9 und (über FastAPI) starlette 0.36.3 auf, alle drei
-    # mit offenen Advisories (B4-1 aus T-13).
+    # ---------- Lower bounds: the floor is measured, not guessed ----------
+    # A `>=` without a cap is a promise to everyone who pins a version (lockfile,
+    # constraints, distribution package): "supported from here". If the floor lay below a
+    # security fix, the promise was false — and nobody noticed, because a fresh install
+    # pulls the newest anyway. Up to 0.18.0 the lowest allowed resolution resolved to
+    # authlib 1.3.0, python-multipart 0.0.9 and (via FastAPI) starlette 0.36.3, all three
+    # with open advisories (B4-1 from T-13).
     #
-    # Gemessen wird gegen eine Tabelle, nicht gegen das Netz: Ein Test, der OSV befragt, ist
-    # weder offline lauffähig noch bei zwei Läufen gleich. Die Tabelle entsteht bei jeder
-    # Abhängigkeitsrunde neu (`uv pip compile --resolution=lowest-direct` + OSV-Batch) und wird
-    # hier eingefroren. Dieser Test hält also NICHT die Welt aktuell — er hält fest, dass der
-    # einmal gemessene Boden nicht wieder abrutscht.
-    GEMESSENER_BODEN = {          # Stand 2026-09-22, authlib 2026-10-28; Quelle OSV.dev
-        "fastapi": (0, 133, 0),        # erst ab hier ist starlette >= 1.3.1 erlaubt
+    # Measured against a table, not against the network: a test that queries OSV is
+    # neither runnable offline nor identical across two runs. The table is rebuilt in every
+    # dependency round (`uv pip compile --resolution=lowest-direct` + OSV batch) and is frozen
+    # here. So this test does NOT keep the world up to date — it makes sure that the
+    # once-measured floor does not slip again.
+    GEMESSENER_BODEN = {          # as of 2026-09-22, authlib 2026-10-28; source OSV.dev
+        "fastapi": (0, 133, 0),        # only from here on is starlette >= 1.3.1 allowed
         "python-multipart": (0, 0, 31),
-        # 1.6.12: GHSA-5357-c2jx-v7qh u.a. (Algorithmen-Konfusion). 1.9.1: CVE-2026-96760,
-        # CVE-2026-114614 bis -114618 und -114620 (Fixes in 1.8.0, 1.9.0 und 1.9.1).
+        # 1.6.12: GHSA-5357-c2jx-v7qh et al. (algorithm confusion). 1.9.1: CVE-2026-96760,
+        # CVE-2026-114614 to -114618 and -114620 (fixes in 1.8.0, 1.9.0 and 1.9.1).
         "authlib": (1, 9, 1),
     }
 
@@ -246,7 +246,7 @@ try:
 
     gemessen = []
     for zeile in (META.get_all("Requires-Dist") or []):
-        # "authlib>=1.6.12; extra == \"oidc\"" → Name, Untergrenze
+        # "authlib>=1.6.12; extra == \"oidc\"" → name, lower bound
         anforderung = zeile.split(";", 1)[0].strip()
         treffer = _re_pkg.match(r"^([A-Za-z0-9._-]+)\s*(?:\[[^\]]*\])?\s*>=\s*([0-9.]+)", anforderung)
         if not treffer:
@@ -256,165 +256,165 @@ try:
             continue
         ist, soll = _zahlen(treffer.group(2)), GEMESSENER_BODEN[name]
         assert ist >= soll, (
-            f"{name}>={treffer.group(2)} liegt unter dem gemessenen lückenfreien Boden "
-            f"{'.'.join(str(x) for x in soll)} — eine Installation, die die Untergrenze "
-            "festhält, bekommt eine Fassung mit bekannter Lücke")
+            f"{name}>={treffer.group(2)} is below the measured gap-free floor "
+            f"{'.'.join(str(x) for x in soll)} — an installation that pins the lower bound "
+            "gets a version with a known gap")
         gemessen.append(name)
     fehlend = sorted(set(GEMESSENER_BODEN) - set(gemessen))
-    assert not fehlend, (f"für {fehlend} steht keine `>=`-Untergrenze im Paket — ohne Boden "
-                         "installiert der Nutzer, was er gerade festhält")
-    # Eine obere Schranke gehört NICHT hierher: Ein Deckel in einer Bibliothek blockiert genau
-    # die Aktualisierung, die den nächsten Sicherheitsfix bringt, und vererbt sich an jede App.
+    assert not fehlend, (f"for {fehlend} there is no `>=` lower bound in the package — without a floor "
+                         "the user installs whatever they happen to pin")
+    # An upper bound does NOT belong here: a cap in a library blocks exactly
+    # the update that brings the next security fix, and is inherited by every app.
     deckel = [z for z in (META.get_all("Requires-Dist") or []) if "<" in z.split(";", 1)[0]]
-    assert not deckel, f"obere Schranken im Paket: {deckel} — eine Bibliothek deckelt nicht"
-    ok(f"Untergrenzen über dem gemessenen Boden ({', '.join(sorted(set(gemessen)))}), keine obere Schranke")
+    assert not deckel, f"upper bounds in the package: {deckel} — a library does not cap"
+    ok(f"Lower bounds above the measured floor ({', '.join(sorted(set(gemessen)))}), no upper bound")
 
-    # ---------- Die Projektseite im Index ----------
+    # ---------- The project page on the index ----------
     urls = dict(z.split(", ", 1) for z in (META.get_all("Project-URL") or []))
     for pflicht in ("Homepage", "Documentation", "Repository", "Changelog", "Issues"):
-        assert pflicht in urls, f"[project.urls] ohne '{pflicht}' — die Leiste im Index bleibt leer"
-        assert urls[pflicht].startswith("https://"), f"{pflicht} zeigt nicht auf https"
-    assert META["Summary"] and len(META["Summary"]) > 20, "Kurzbeschreibung fehlt oder ist zu knapp"
-    # Die Lizenz steht als SPDX-Ausdruck in den Metadaten (PEP 639) — und NICHT zusätzlich als
-    # Classifier: Beides nebeneinander lehnt PEP 639 ab, und der Index zeigt sonst zwei Quellen.
-    assert META["License-Expression"] == "MIT", f"License-Expression ist {META['License-Expression']!r}"
-    assert not [k for k in KLASSEN if k.startswith("License ::")], "Lizenz-Classifier neben dem SPDX-Ausdruck"
-    ok(f"Projektseite vollständig: {', '.join(sorted(urls))}")
+        assert pflicht in urls, f"[project.urls] without '{pflicht}' — the sidebar on the index stays empty"
+        assert urls[pflicht].startswith("https://"), f"{pflicht} does not point to https"
+    assert META["Summary"] and len(META["Summary"]) > 20, "short description missing or too short"
+    # The license is in the metadata as an SPDX expression (PEP 639) — and NOT additionally as a
+    # classifier: PEP 639 rejects both side by side, and the index would otherwise show two sources.
+    assert META["License-Expression"] == "MIT", f"License-Expression is {META['License-Expression']!r}"
+    assert not [k for k in KLASSEN if k.startswith("License ::")], "license classifier next to the SPDX expression"
+    ok(f"Project page complete: {', '.join(sorted(urls))}")
 
-    # ---------- Die lange Beschreibung wird gerendert, nicht als Text abgeladen ----------
-    # Ohne `Description-Content-Type` zeigt PyPI die README als Rohtext — mit allen Auszeichnungen.
+    # ---------- The long description is rendered, not dumped as text ----------
+    # Without `Description-Content-Type` PyPI shows the README as raw text — with all the markup.
     assert (META["Description-Content-Type"] or "").startswith("text/markdown"), \
-        f"Description-Content-Type ist {META['Description-Content-Type']!r}"
+        f"Description-Content-Type is {META['Description-Content-Type']!r}"
     beschreibung = META.get_payload() or ""
-    assert len(beschreibung) > 2000, f"die README kam nicht ins Paket ({len(beschreibung)} Zeichen)"
+    assert len(beschreibung) > 2000, f"the README did not make it into the package ({len(beschreibung)} characters)"
     assert float((META["Metadata-Version"] or "0")) >= 2.1, META["Metadata-Version"]
-    ok(f"README als Markdown im Paket ({len(beschreibung) // 1000} kB), "
+    ok(f"README as Markdown in the package ({len(beschreibung) // 1000} kB), "
        f"Metadata {META['Metadata-Version']}")
 
-    # ---------- sdist: die Quelle der Bibliothek, vollständig oder gar nicht ----------
+    # ---------- sdist: the library source, complete or not at all ----------
     for pflicht in ("pyproject.toml", "README.md", "LICENSE", "CHANGELOG.md", "SECURITY.md",
                     "i18n/README.de.md", "i18n/SECURITY.de.md"):
-        assert pflicht in sdist_dateien, f"{pflicht} fehlt im sdist"
+        assert pflicht in sdist_dateien, f"{pflicht} is missing from the sdist"
     fehlend = [f for f in paketdateien if f not in sdist_dateien]
-    assert not fehlend, f"diese Paketdateien fehlen im sdist: {fehlend}"
+    assert not fehlend, f"these package files are missing from the sdist: {fehlend}"
 
-    # Die Testsuite liegt im sdist — VOLLSTÄNDIG oder gar nicht. setuptools zieht nach einer
-    # alten Heuristik nur `tests/test_*.py` hinein, ohne `run_all.py`, ohne `_kit/`, ohne
-    # `api_surface.json`: Eine halbe Suite ist schlimmer als keine, weil sie behauptet, man
-    # könne das Quellpaket prüfen, und am Import scheitert. `MANIFEST.in` nimmt deshalb `graft
-    # tests`. Wer TinySesam neu paketiert, soll den Bau prüfen können — das ist der Sinn eines
-    # Quellpakets; die repo-gebundenen Suiten sagen dort von selbst ab (Exit 77).
+    # The test suite is in the sdist — COMPLETE or not at all. By an old heuristic setuptools
+    # pulls in only `tests/test_*.py`, without `run_all.py`, without `_kit/`, without
+    # `api_surface.json`: half a suite is worse than none, because it claims one
+    # can test the source package, and fails at the import. `MANIFEST.in` therefore takes `graft
+    # tests`. Whoever repackages TinySesam should be able to verify the build — that is the point of a
+    # source package; the repo-bound suites decline there on their own (exit 77).
     tests_drin = {f for f in sdist_dateien if f.startswith("tests/")}
-    assert tests_drin, "das sdist enthält keine Testsuite — `graft tests` in MANIFEST.in prüfen"
+    assert tests_drin, "the sdist contains no test suite — check `graft tests` in MANIFEST.in"
     for pflicht in ("tests/run_all.py", "tests/_starter.py", "tests/voraussetzung.py",
                     "tests/api_surface.json", "tests/_kit/report.py", "tests/_kit/hygiene.py"):
-        assert pflicht in tests_drin, (f"{pflicht} fehlt im sdist — ohne diese Datei startet die "
-                                       "Suite dort nicht, und eine halbe Suite ist schlimmer als keine")
-    # Jede Suite, die der Sammellauf im Repo kennt, muss auch im Quellpaket liegen.
+        assert pflicht in tests_drin, (f"{pflicht} is missing from the sdist — without this file the "
+                                       "suite does not start there, and half a suite is worse than none")
+    # Every suite the collective run knows in the repo must also be in the source package.
     im_repo = {f"tests/{n}" for n in os.listdir(os.path.join(str(ROOT), "tests"))
               if n.startswith("test_") and n.endswith(".py")}
     fehlende_suiten = sorted(im_repo - tests_drin)
-    assert not fehlende_suiten, f"diese Suiten fehlen im sdist: {fehlende_suiten}"
-    ok(f"sdist trägt die vollständige Suite ({len(tests_drin)} Dateien, {len(im_repo)} Suiten)")
+    assert not fehlende_suiten, f"these suites are missing from the sdist: {fehlende_suiten}"
+    ok(f"sdist carries the complete suite ({len(tests_drin)} files, {len(im_repo)} suites)")
 
-    # Was die README verlinkt, soll im Quellpaket auch liegen — ein toter Verweis ist in einem
-    # Tarball ärgerlicher als im Web, dort gibt es kein GitHub daneben.
+    # What the README links to should also be in the source package — a dead link is more annoying in a
+    # tarball than on the web, where there is no GitHub next to it.
     for pflicht in ("examples/showcase.py", "deploy/forward-auth/docker-compose.yml",
                     "deploy/fail2ban/tinysesam-jail.conf"):
-        assert pflicht in sdist_dateien, f"{pflicht} fehlt im sdist (in der README verlinkt)"
+        assert pflicht in sdist_dateien, f"{pflicht} is missing from the sdist (linked in the README)"
     muell = sorted(f for f in sdist_dateien | wheel_dateien
                    if "__pycache__" in f or f.endswith((".pyc", ".pyo")))
-    assert not muell, f"Bauartefakte im Paket: {muell[:3]}"
-    ok(f"sdist: {len(sdist_dateien)} Dateien, Lizenz/CHANGELOG/SECURITY dabei, "
-       "keine halbe Testsuite, kein Bytecode")
+    assert not muell, f"build artifacts in the package: {muell[:3]}"
+    ok(f"sdist: {len(sdist_dateien)} files, license/CHANGELOG/SECURITY included, "
+       "no half test suite, no bytecode")
 
-    # ---------- Was .gitignore ausschliesst, bleibt draussen (B4-13) ----------
-    # Gebaut wurde oben MIT einer Attrappe je .gitignore-Muster in jedem gegrafteten Baum — so
-    # sieht ein benutzter Arbeitsbaum aus (eine `examples/app.db`, eine `deploy/…/.env`). Der
-    # Release baut aus einem frischen Checkout; wer selbst paketiert, nicht.
-    assert len(ATTRAPPEN) >= 3 * len(GEGRAFTET), f"zu wenige Attrappen aus .gitignore: {ATTRAPPEN}"
+    # ---------- What .gitignore excludes stays out (B4-13) ----------
+    # Above, the build was done WITH a dummy per .gitignore pattern in every grafted tree — this is how
+    # a used working tree looks (an `examples/app.db`, a `deploy/…/.env`). The
+    # release builds from a fresh checkout; whoever packages themselves does not.
+    assert len(ATTRAPPEN) >= 3 * len(GEGRAFTET), f"too few dummies from .gitignore: {ATTRAPPEN}"
     durchgerutscht = sorted(a for a in ATTRAPPEN if a in sdist_dateien or a in wheel_dateien)
-    assert not durchgerutscht, ("gitignorierte Dateien im Paket — Muster in MANIFEST.in "
-                                f"nachziehen: {durchgerutscht[:6]}")
-    ok(f"keine der {len(ATTRAPPEN)} gitignorierten Attrappen im sdist oder Wheel")
+    assert not durchgerutscht, ("gitignored files in the package — adjust the pattern in MANIFEST.in: "
+                                f"{durchgerutscht[:6]}")
+    ok(f"none of the {len(ATTRAPPEN)} gitignored dummies in the sdist or wheel")
 
-    # ---------- Bit-reproduzierbar: zweiter Checkout, gleiche Prüfsummen (B4-8) ----------
-    # Ein zweiter Bau mit anderen Datei-Zeitstempeln und g+w-Rechten — so unterscheiden sich zwei
-    # Checkouts desselben Commits (anderer Zeitpunkt, andere umask). Mit gleicher
-    # `SOURCE_DATE_EPOCH` müssen Wheel und sdist Byte für Byte gleich sein, sonst kann niemand die
-    # veröffentlichte Prüfsumme nachstellen. Bis zur Nachprüfung (A-3) kopierte der zweite Bau die
-    # Rechte mit — der Unterschied 0644/0664 im Wheel fiel so nie auf.
+    # ---------- Bit-reproducible: second checkout, same checksums (B4-8) ----------
+    # A second build with different file timestamps and g+w permissions — this is how two
+    # checkouts of the same commit differ (different time, different umask). With the same
+    # `SOURCE_DATE_EPOCH` wheel and sdist must be byte-for-byte identical, otherwise nobody can reproduce the
+    # published checksum. Until the re-check (A-3) the second build copied the
+    # permissions along — the 0644/0664 difference in the wheel thus never showed up.
     import hashlib  # noqa: E402
     ZWEITER, WHEEL2, SDIST2 = baue(verschiebung=86400.0, attrappen=ATTRAPPEN, gruppe_schreibt=True)
 
     def _sha(pfad: str) -> str:
         return hashlib.sha256(pathlib.Path(pfad).read_bytes()).hexdigest()
 
-    assert _sha(WHEEL) == _sha(WHEEL2), ("Wheel nicht reproduzierbar (SOURCE_DATE_EPOCH oder "
-                                         "die Rechte-Normalisierung wirkt nicht)")
-    assert _sha(SDIST) == _sha(SDIST2), ("sdist nicht reproduzierbar — "
-                                         "scripts/_artefakte_normalisieren.py greift nicht")
-    # Der Release-Workflow macht dasselbe, in dieser Reihenfolge und im selben Schritt: Zeit
-    # exportieren, ohne Isolierung bauen, beide Artefakte normalisieren. Ein blosses „kommt irgendwo
-    # vor" (bis zur Nachprüfung, A-6) hielt weder die Reihenfolge noch `--no-isolation` fest.
+    assert _sha(WHEEL) == _sha(WHEEL2), ("wheel not reproducible (SOURCE_DATE_EPOCH or "
+                                         "the permission normalization has no effect)")
+    assert _sha(SDIST) == _sha(SDIST2), ("sdist not reproducible — "
+                                         "scripts/_artefakte_normalisieren.py has no effect")
+    # The release workflow does the same, in this order and in the same step: export time,
+    # build without isolation, normalize both artifacts. A mere "appears somewhere"
+    # (until the re-check, A-6) pinned down neither the order nor `--no-isolation`.
     rel_zeilen = [hygiene.ohne_yaml_kommentar(z).strip() for z in
                   pathlib.Path(ROOT, ".github/workflows/release.yml").read_text(encoding="utf-8").splitlines()]
     bau = next((i for i, z in enumerate(rel_zeilen) if re.search(r"-m\s+build\b", z)), None)
-    assert bau is not None, "release.yml baut nicht mit `-m build`"
-    assert "--no-isolation" in rel_zeilen[bau], f"release.yml baut mit Isolierung: {rel_zeilen[bau]}"
+    assert bau is not None, "release.yml does not build with `-m build`"
+    assert "--no-isolation" in rel_zeilen[bau], f"release.yml builds with isolation: {rel_zeilen[bau]}"
     anfang = max(i for i in range(bau) if re.match(r"^(- )?(name|run|uses):", rel_zeilen[i]))
     ende = next((i for i in range(bau + 1, len(rel_zeilen))
                  if re.match(r"^- (name|uses|run):", rel_zeilen[i])), len(rel_zeilen))
     davor, danach = rel_zeilen[anfang:bau], rel_zeilen[bau + 1:ende]
-    assert "export SOURCE_DATE_EPOCH" in davor, "release.yml: SOURCE_DATE_EPOCH nicht vor dem Bau exportiert"
+    assert "export SOURCE_DATE_EPOCH" in davor, "release.yml: SOURCE_DATE_EPOCH not exported before the build"
     assert any(re.match(r"^SOURCE_DATE_EPOCH=\"\$\(git log -1 --format=%ct\)\"$", z) for z in davor), \
-        "release.yml: SOURCE_DATE_EPOCH nicht aus dem Commit-Zeitstempel"
+        "release.yml: SOURCE_DATE_EPOCH not from the commit timestamp"
     assert any("scripts/_artefakte_normalisieren.py" in z and "dist/*.whl" in z and "dist/*.tar.gz" in z
-               for z in danach), "release.yml: Wheel und sdist werden nach dem Bau nicht normalisiert"
-    ok(f"Wheel und sdist bit-reproduzierbar (sha256 {_sha(SDIST)[:12]}…), Release baut genauso")
+               for z in danach), "release.yml: wheel and sdist are not normalized after the build"
+    ok(f"Wheel and sdist bit-reproducible (sha256 {_sha(SDIST)[:12]}…), release builds the same way")
 
-    # ---------- Veröffentlicht wird ohne Geheimnis ----------
-    # Trusted Publishing (OIDC) statt API-Token: kein Wert im Repo, keiner, der rotiert werden
-    # muss, und keiner, den ein Fork-PR abgreifen könnte.
+    # ---------- Publishing happens without a secret ----------
+    # Trusted Publishing (OIDC) instead of an API token: no value in the repo, none that has to be
+    # rotated, and none that a fork PR could grab.
     zeilen = pathlib.Path(ROOT, ".github/workflows/release.yml").read_text(encoding="utf-8").splitlines()
     rel = "\n".join(zeilen)
-    assert 'tags: ["v*"]' in rel, "veröffentlicht würde ohne Tag — den Knopf drückt ein Mensch"
-    assert "id-token: write" in rel, "ohne id-token-Recht gibt es keine OIDC-Identität"
-    assert "name: pypi" in rel, ("dem Upload fehlt das Environment `pypi` — es ist der Name, "
-                                "den der Publisher auf pypi.org nennt, und der Ort für eine "
-                                "zweite Hand vor der Veröffentlichung")
+    assert 'tags: ["v*"]' in rel, "it would publish without a tag — a human presses the button"
+    assert "id-token: write" in rel, "without the id-token permission there is no OIDC identity"
+    assert "name: pypi" in rel, ("the upload lacks the environment `pypi` — it is the name "
+                                "the publisher names on pypi.org, and the place for a "
+                                "second pair of hands before publishing")
 
-    # Den Schritt selbst ansehen, nicht die ganze Datei: Ein `password:` gibt es hier
-    # legitim — beim Anmelden an der Container-Registry. Nur der PyPI-Schritt darf keins haben.
+    # Look at the step itself, not the whole file: a `password:` is legitimate here
+    # — when logging in to the container registry. Only the PyPI step may not have one.
     i = next((n for n, z in enumerate(zeilen) if "pypa/gh-action-pypi-publish" in z), None)
-    assert i is not None, "das Release veröffentlicht nicht nach PyPI"
+    assert i is not None, "the release does not publish to PyPI"
 
-    # Geprüft wird die GANZE Datei, nicht nur „der Block unter der uses-Zeile".
+    # The WHOLE file is checked, not just "the block under the uses line".
     #
-    # Die erste Fassung schnitt den Schritt an der Einrückung der `uses:`-Zeile ab. Steht dort
-    # wie üblich ein `name:` davor, rückt `uses:` eine Ebene tiefer — und alles darunter,
-    # inklusive eines `password: ${{ secrets.PYPI_API_TOKEN }}`, galt als „nicht mehr im
-    # Schritt". Der gewöhnlichste YAML-Umbau schaltete die Prüfung also stumm ab. Vor einer
-    # Erstveröffentlichung ist das der teuerste denkbare Fehlalarm-in-Gegenrichtung: Sie meldet
-    # grün, während ein Token im Workflow steht.
+    # The first version cut the step off at the indentation of the `uses:` line. If a `name:`
+    # precedes it, as is usual, `uses:` moves one level deeper — and everything below it,
+    # including a `password: ${{ secrets.PYPI_API_TOKEN }}`, counted as "no longer in the
+    # step". The most ordinary YAML restructuring thus silently switched the check off. Before a
+    # first publication that is the most expensive conceivable false alarm in reverse: it reports
+    # green while a token sits in the workflow.
     #
-    # Ein Token gehört nirgends in diese Datei, also braucht es die Abgrenzung gar nicht.
+    # A token belongs nowhere in this file, so the delimitation is not needed at all.
     for verboten in ("PYPI_API_TOKEN", "TWINE_", "TWINE_PASSWORD", "twine upload"):
         treffer = [f"Zeile {n + 1}: {z.strip()}" for n, z in enumerate(zeilen) if verboten in z]
-        assert not treffer, (f"'{verboten}' im Release-Workflow: {treffer} — Trusted Publishing "
-                             "braucht kein Geheimnis")
-    # `password:` kommt in Kommentaren vor (die Datei erklärt, warum es keins gibt) — deshalb
-    # nur echte YAML-Zuweisungen. Ausgenommen ist `secrets.GITHUB_TOKEN`: Der wird von GitHub
-    # je Lauf erzeugt, ist kein gepflegtes Geheimnis und meldet hier das Abbild an GHCR an.
-    # Ausgenommen auch der Wegwerf-Wert der Generalprobe (`password: generalprobe`, seit 2026-10-11):
-    # Er meldet nur an der lokalen Registry und am lokalen Paket-Server auf dem Runner an — genau
-    # dieses Wort, kein Ausdruck, kein Geheimnis. Der echte Upload (Job `pypi`) bleibt ohne Passwort.
+        assert not treffer, (f"'{verboten}' in the release workflow: {treffer} — Trusted Publishing "
+                             "needs no secret")
+    # `password:` appears in comments (the file explains why there is none) — hence
+    # only real YAML assignments. Excepted is `secrets.GITHUB_TOKEN`: it is generated by GitHub
+    # per run, is not a maintained secret and logs the image in to GHCR here.
+    # Also excepted is the throwaway value of the dress rehearsal (`password: generalprobe`, since 2026-10-11):
+    # it only logs in at the local registry and the local package server on the runner — exactly
+    # this word, no expression, no secret. The real upload (job `pypi`) stays without a password.
     pw_zeilen = [f"Zeile {n + 1}: {z.strip()}" for n, z in enumerate(zeilen)
                  if _re_pkg.match(r"^\s*password\s*:", z) and "secrets.GITHUB_TOKEN" not in z
                  and z.strip() != "password: generalprobe"]
-    assert not pw_zeilen, (f"`password:` im Release-Workflow: {pw_zeilen} — Trusted Publishing "
-                           "braucht kein Geheimnis")
-    ok("Release veröffentlicht per Trusted Publishing, nur auf einen Tag hin, ohne Geheimnis")
+    assert not pw_zeilen, (f"`password:` in the release workflow: {pw_zeilen} — Trusted Publishing "
+                           "needs no secret")
+    ok("Release publishes via Trusted Publishing, only on a tag, without a secret")
 
 finally:
     shutil.rmtree(ARBEIT, ignore_errors=True)

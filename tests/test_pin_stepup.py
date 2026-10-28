@@ -1,4 +1,4 @@
-"""Drei Aufbauten ohne E-Mail: nur User+Passwort, PIN als Route-Faktor, PIN als Step-up."""
+"""Three setups without email: user+password only, PIN as route factor, PIN as step-up."""
 import os
 import re
 import sys
@@ -19,7 +19,7 @@ def login(c, u="max", pw="geheim12345-lang-genug"):
     return c.post("/auth/login", data={"username": u, "password": pw, "next": "/"}, follow_redirects=False)
 
 
-# ---------- 1) Nur Benutzername + Passwort, keine E-Mail im Spiel ----------
+# ---------- 1) Username + password only, no email involved ----------
 db = os.path.join(tempfile.mkdtemp(), "t.db")
 auth = TinySesam(TinySesamConfig.local_accounts(db_path=db, csrf_enabled=False, lang="de",
                                                 passkey_enabled=False, allow_signup=True,
@@ -40,17 +40,17 @@ assert auth.store.get_user_by_name("max")["email"] is None
 c.cookies.clear()
 
 lp = c.get("/auth/login").text
-assert "Benutzer</label>" in lp, "kein Kombi-Feld"
+assert "Benutzer</label>" in lp, "no combined field"
 for gone in ("/auth/magic/request", "/auth/forgot"):
-    assert gone not in lp, f"{gone} darf nicht angeboten werden"
+    assert gone not in lp, f"{gone} must not be offered"
 assert c.get("/auth/magic/request").status_code == 404
 assert c.get("/auth/forgot").status_code == 404
 assert login(c).status_code == 303
 os.unlink(db)
-print("  local_accounts(): User+Passwort, keine E-Mail-Wege ok")
+print("  local_accounts(): user+password, no email routes ok")
 
 
-# ---------- 2) PIN als Zusatzfaktor einer Route (schon eingeloggt) ----------
+# ---------- 2) PIN as additional factor of a route (already signed in) ----------
 db = os.path.join(tempfile.mkdtemp(), "t.db")
 auth = TinySesam(TinySesamConfig.local_accounts(db_path=db, csrf_enabled=False, lang="de",
                                                 passkey_enabled=False, pin_enabled=True,
@@ -68,21 +68,21 @@ def tresor(user=Depends(auth.require(factors=["password", "pin"]))):
 
 c = TestClient(app, headers=HTML)
 assert login(c).status_code == 303
-# Passwort allein reicht nicht — Route schickt zum PIN-Schritt
+# Password alone is not enough — the route sends to the PIN step
 r = c.get("/tresor", follow_redirects=False)
 assert r.status_code in (303, 307) and r.headers["location"].startswith("/auth/pin"), r.headers
 page = c.get("/auth/pin?next=/tresor").text
-assert "name=pin" in page and "name=username" not in page, "eingeloggt → kein Benutzerfeld"
+assert "name=pin" in page and "name=username" not in page, "signed in → no user field"
 r = c.post("/auth/pin", data={"pin": "1111", "next": "/tresor"})
 assert r.status_code == 401 and "name=username" not in r.text
 r = c.post("/auth/pin", data={"pin": "2468", "next": "/tresor"}, follow_redirects=False)
 assert r.status_code == 303 and r.headers["location"] == "/tresor"
 assert c.get("/tresor", headers={"accept": "application/json"}).json() == {"ok": "max"}
 os.unlink(db)
-print("  require(factors=[password,pin]): PIN ohne Benutzerfeld, Route danach offen ok")
+print("  require(factors=[password,pin]): PIN without user field, route open afterwards ok")
 
 
-# ---------- 3) PIN als Step-up für sensible Bereiche ----------
+# ---------- 3) PIN as step-up for sensitive areas ----------
 db = os.path.join(tempfile.mkdtemp(), "t.db")
 auth = TinySesam(TinySesamConfig.local_accounts(db_path=db, csrf_enabled=False, lang="de",
                                                 passkey_enabled=False, pin_enabled=True,
@@ -104,7 +104,7 @@ assert login(c).status_code == 303
 u = auth.store.get_user_by_name("max")
 assert auth.stepup_options(u) == ["pin"], auth.stepup_options(u)
 
-# Frische künstlich abgelaufen lassen → Step-up wird verlangt
+# Let the freshness expire artificially → step-up is required
 s = auth.store.list_sessions()[0]
 auth.store.set_session_mfa(s["token_hash"], True)
 auth.store.db.execute("UPDATE session SET mfa_at=0 WHERE token_hash=?", (s["token_hash"],))
@@ -114,36 +114,36 @@ r = c.get("/sensibel", follow_redirects=False)
 assert r.status_code == 307 and r.headers["location"].startswith("/auth/reauth"), r.headers
 page = c.get("/auth/reauth?next=/sensibel").text
 assert "name=pin" in page and "PIN zur Bestätigung" in page
-assert "name=password" not in page, "stepup_methods=['pin'] → kein Passwortfeld"
+assert "name=password" not in page, "stepup_methods=['pin'] → no password field"
 r = c.post("/auth/reauth", data={"pin": "9999", "next": "/sensibel"})
 assert r.status_code == 401
-# Passwort wird NICHT akzeptiert, wenn nur PIN erlaubt ist. Seit 0.22.0 (`confirm_password`)
-# ist das 403 `method_disabled` und kein Fehlversuch: Geprüft wird ein nicht angebotenes Verfahren
-# gar nicht erst — bis dahin 401, und die Anfrage zählte in den Topf `reauth`.
+# Password is NOT accepted if only PIN is allowed. Since 0.22.0 (`confirm_password`)
+# that is 403 `method_disabled` and not a failed attempt: a method that is not offered is
+# not checked at all — until then 401, and the request counted in the bucket `reauth`.
 _vorher = auth.store.count_fails(0, username="max", method="reauth")
 r = c.post("/auth/reauth", data={"password": "geheim12345-lang-genug", "next": "/sensibel"})
-assert r.status_code == 403, "Passwort darf hier nicht durchgehen"
-assert auth.store.count_fails(0, username="max", method="reauth") == _vorher, "kein Fehlversuch"
-assert c.get("/sensibel", follow_redirects=False).status_code == 307, "die Sitzung ist nicht frisch"
+assert r.status_code == 403, "password must not pass here"
+assert auth.store.count_fails(0, username="max", method="reauth") == _vorher, "no failed attempt"
+assert c.get("/sensibel", follow_redirects=False).status_code == 307, "the session is not fresh"
 r = c.post("/auth/reauth", data={"pin": "2468", "next": "/sensibel"}, follow_redirects=False)
 assert r.status_code == 303 and r.headers["location"] == "/sensibel"
 assert c.get("/sensibel", headers={"accept": "application/json"}).json() == {"ok": "max"}
 os.unlink(db)
-print("  stepup_methods=['pin']: sensibler Bereich verlangt PIN trotz Login ok")
+print("  stepup_methods=['pin']: sensitive area requires PIN despite login ok")
 
 
-# ---------- 4) Fallback: gewünschte Methode nicht eingerichtet ----------
+# ---------- 4) Fallback: desired method not set up ----------
 db = os.path.join(tempfile.mkdtemp(), "t.db")
 auth = TinySesam(TinySesamConfig.local_accounts(db_path=db, csrf_enabled=False, lang="de",
                                                 passkey_enabled=False, pin_enabled=True,
                                                 stepup_methods=["pin"], cookie_secure=False))
-uid = auth.create_user("ohnepin", password="geheim12345-lang-genug")   # keine PIN gesetzt
+uid = auth.create_user("ohnepin", password="geheim12345-lang-genug")   # no PIN set
 u = auth.store.get_user(uid)
-assert auth.stepup_options(u) == ["password"], "ohne PIN → Passwort statt Sackgasse"
+assert auth.stepup_options(u) == ["password"], "without PIN → password instead of a dead end"
 os.unlink(db)
-print("  Fallback ohne eingerichtete PIN → Passwort ok")
+print("  fallback without a set-up PIN → password ok")
 
-# ---------- 5) pin_login=False: PIN ist kein Erstfaktor ----------
+# ---------- 5) pin_login=False: PIN is not a first factor ----------
 db = os.path.join(tempfile.mkdtemp(), "t.db")
 auth = TinySesam(TinySesamConfig.local_accounts(db_path=db, csrf_enabled=False, lang="de",
                                                 passkey_enabled=False, pin_enabled=True,
@@ -154,21 +154,21 @@ app = FastAPI(); app.include_router(auth.router())
 c = TestClient(app, headers=HTML)
 assert "pin" not in auth.cfg.enabled_methods()
 lp = c.get("/auth/login").text
-assert "name=pin" not in lp, "PIN-Formular darf nicht auf der Login-Seite stehen"
-# Gast kann sich nicht per PIN anmelden
+assert "name=pin" not in lp, "PIN form must not be on the login page"
+# A guest cannot sign in by PIN
 r = c.get("/auth/pin", follow_redirects=False)
 assert r.status_code == 303 and r.headers["location"].startswith("/auth/login")
 r = c.post("/auth/pin", data={"username": "max", "pin": "2468", "next": "/"}, follow_redirects=False)
 assert r.status_code == 404, r.status_code
-# eingeloggt darf die PIN weiterhin bestätigen
+# signed in may keep confirming the PIN
 assert login(c).status_code == 303
 assert "name=pin" in c.get("/auth/pin").text
 os.unlink(db)
-print("  pin_login=False: PIN nur noch als Zusatzfaktor ok")
+print("  pin_login=False: PIN only as an additional factor ok")
 
 
 
-# ---------- 6) Demo-Modus + Erst-Admin-Bootstrap ----------
+# ---------- 6) Demo mode + first-admin bootstrap ----------
 db = os.path.join(tempfile.mkdtemp(), "t.db")
 kw = dict(db_path=db, csrf_enabled=False, lang="de", passkey_enabled=False,
           cookie_secure=False, pin_enabled=True, demo_mode=True)
@@ -177,17 +177,17 @@ app = FastAPI(); app.include_router(auth.router())
 c = TestClient(app, headers=HTML)
 assert auth.store.get_user_by_name("demo") and auth.store.get_user_by_name("demoadmin")["is_admin"]
 lp = c.get("/auth/login").text
-assert "Demo-Modus" in lp and "demoadmin" in lp and "demo_mode" in lp, "Zugangsdaten + Warnung"
+assert "Demo-Modus" in lp and "demoadmin" in lp and "demo_mode" in lp, "credentials + warning"
 assert c.post("/auth/login", data={"username": "demo", "password": "demo1234", "next": "/"},
               follow_redirects=False).status_code == 303
 assert "Demo-PIN" in c.get("/auth/pin").text
-# abschalten → Konten weg
+# switch off → accounts gone
 auth2 = TinySesam(TinySesamConfig.local_accounts(**{**kw, "demo_mode": False}))
 assert not auth2.store.get_user_by_name("demo") and not auth2.store.get_user_by_name("demoadmin")
 os.unlink(db)
-print("  demo_mode: Konten + Hinweis, beim Abschalten gelöscht ok")
+print("  demo_mode: accounts + notice, deleted when switched off ok")
 
-# Allowlist: nur wer draufsteht wird Admin — und nur solange keiner existiert
+# Allowlist: only whoever is on it becomes admin — and only as long as none exists
 db = os.path.join(tempfile.mkdtemp(), "t.db")
 auth = TinySesam(TinySesamConfig.local_accounts(db_path=db, csrf_enabled=False, lang="de",
                                                 passkey_enabled=False, cookie_secure=False,
@@ -196,13 +196,13 @@ auth.create_user("fremder", password="geheim12345-lang-genug")
 auth.create_user("chef", password="geheim12345-lang-genug")
 app = FastAPI(); app.include_router(auth.router()); c = TestClient(app, headers=HTML)
 c.post("/auth/login", data={"username": "fremder", "password": "geheim12345-lang-genug", "next": "/"})
-assert not auth.store.get_user_by_name("fremder")["is_admin"], "Fremder darf kein Admin werden"
+assert not auth.store.get_user_by_name("fremder")["is_admin"], "a stranger must not become admin"
 c.cookies.clear()
 c.post("/auth/login", data={"username": "chef", "password": "geheim12345-lang-genug", "next": "/"})
 assert auth.store.get_user_by_name("chef")["is_admin"]
 os.unlink(db)
 
-# Einmal-Token: genau einmal, danach ist die Route weg
+# One-time token: exactly once, afterwards the route is gone
 db = os.path.join(tempfile.mkdtemp(), "t.db")
 auth = TinySesam(TinySesamConfig.local_accounts(db_path=db, csrf_enabled=False, lang="de",
                                                 passkey_enabled=False, cookie_secure=False))
@@ -211,31 +211,31 @@ assert tok
 auth.create_user("erster", password="geheim12345-lang-genug")
 app = FastAPI(); app.include_router(auth.router()); c = TestClient(app, headers=HTML)
 r = c.get(f"/auth/claim-admin?token={tok}", follow_redirects=False)
-assert r.status_code == 303 and "/auth/login" in r.headers["location"], "ohne Login erst anmelden"
+assert r.status_code == 303 and "/auth/login" in r.headers["location"], "sign in first without login"
 c.post("/auth/login", data={"username": "erster", "password": "geheim12345-lang-genug", "next": "/"})
 assert c.get("/auth/claim-admin?token=falsch").status_code == 403
 r = c.get(f"/auth/claim-admin?token={tok}", follow_redirects=False)
 assert r.status_code == 303 and r.headers["location"] == "/auth/admin"
 assert auth.store.get_user_by_name("erster")["is_admin"]
-assert c.get(f"/auth/claim-admin?token={tok}").status_code == 404, "Route verschwindet mit dem ersten Admin"
+assert c.get(f"/auth/claim-admin?token={tok}").status_code == 404, "route disappears with the first admin"
 assert auth.admin_claim_token() is None
 os.unlink(db)
-print("  Erst-Admin: Allowlist + Einmal-Token, kein 'erster User gewinnt' ok")
+print("  first admin: allowlist + one-time token, no 'first user wins' ok")
 
 
-# ---------- 7) Die ERSTE PIN eines Kontos ohne jeden Faktor ----------
-# `/auth/pin/set` ist nicht nur der Weg, eine PIN zu ersetzen, sondern der einzige, sie
-# anzulegen. Hinter `require_mfa()` war das für ein rein föderiertes Konto (kein Passwort,
-# keine PIN, kein TOTP) eine Sackgasse: `stepup_options()` ist leer, es gibt also nichts,
-# womit dieses Konto einen Step-up leisten könnte, und nach Ablauf von `stepup_max_age_sec`
-# kam es nie mehr an die Einrichtung. Nachgestellt in `a2_r33_pin_sackgasse.py` (Runde 3).
-# Jetzt: ANLEGEN hängt am Alter der Anmeldung, ERSETZEN und Abbauen bleiben hinter
-# `require_mfa()`. Mutationsprobe: die Fallunterscheidung in `pin_set` wieder auf ein
-# nacktes `require_mfa()` zurückgedreht → (a) wird rot; `login_fresh` immer True → (b) wird rot.
+# ---------- 7) The FIRST PIN of an account without any factor ----------
+# `/auth/pin/set` is not only the way to replace a PIN but the only one to create it.
+# Behind `require_mfa()` this was a dead end for a purely federated account (no password,
+# no PIN, no TOTP): `stepup_options()` is empty, so there is nothing
+# with which this account could perform a step-up, and after `stepup_max_age_sec` had expired
+# it never got to the set-up again. Reproduced in `a2_r33_pin_sackgasse.py` (round 3).
+# Now: CREATING depends on the age of the sign-in, REPLACING and removing stay behind
+# `require_mfa()`. Mutation probe: the case distinction in `pin_set` turned back into a
+# bare `require_mfa()` → (a) turns red; `login_fresh` always True → (b) turns red.
 db = os.path.join(tempfile.mkdtemp(), "t.db")
 auth = TinySesam(TinySesamConfig(db_path=db, csrf_enabled=False, lang="de", cookie_secure=False,
                                  passkey_enabled=False, oidc_enabled=False,
-                                 password_enabled=False,      # rein föderiertes Konto
+                                 password_enabled=False,      # purely federated account
                                  pin_enabled=True, totp_enabled=True, stepup_max_age_sec=900))
 uid = auth.create_user("sso-nutzer")
 app = FastAPI(); app.include_router(auth.router())
@@ -243,39 +243,39 @@ c = TestClient(app, headers=HTML)
 J = {"Accept": "application/json"}
 assert not auth.store.get_password_hash(uid) and not auth.has_pin(uid)
 assert not auth.store.has_confirmed_totp(uid)
-assert auth.stepup_options(auth.get_user(uid)) == [], "Vorbedingung: nichts zum Bestätigen da"
+assert auth.stepup_options(auth.get_user(uid)) == [], "precondition: nothing to confirm with"
 
 tok, mfa_ok = auth.start_session(uid, "oidc", remember=True)
-assert mfa_ok, "der föderierte Login allein macht die Sitzung vollwertig"
+assert mfa_ok, "the federated login alone makes the session fully valid"
 c.cookies.set(auth.cfg.session_cookie, tok)
-# Die Frische ist abgelaufen (das Fenster ist 15 Minuten, die Sitzung hält Tage) — genau die
-# Lage, in der die Sackgasse zuschnappte. Die Anmeldung selbst ist noch jung.
+# The freshness has expired (the window is 15 minutes, the session lasts days) — exactly the
+# situation in which the dead end snapped shut. The sign-in itself is still young.
 auth.store._exec("UPDATE session SET mfa_at=? WHERE token_hash=?",
                  (int(time.time()) - 100000, auth.store.session_hash(tok)))
-assert c.get("/auth/me", headers=J).status_code == 200, "die Sitzung muss gültig bleiben"
+assert c.get("/auth/me", headers=J).status_code == 200, "the session must stay valid"
 r = c.post("/auth/pin/set", json={"pin": "2468"}, headers=J)
 assert r.status_code == 200, (r.status_code, r.text[:120])       # (a)
-assert auth._verify_user_pin(uid, "2468"), "die erste PIN muss ankommen"
-print("  (a) erste PIN ohne jeden Faktor: frische Anmeldung genügt ok")
+assert auth._verify_user_pin(uid, "2468"), "the first PIN must arrive"
+print("  (a) first PIN without any factor: fresh sign-in suffices ok")
 
-# Jetzt HAT das Konto einen Faktor → das Ersetzen verlangt wieder eine Bestätigung, und die
-# ist über die PIN auch leistbar. Die Zusage „Faktor ändern verlangt Frische" bleibt intakt.
+# Now the account HAS a factor → replacing requires a confirmation again, and that
+# can be provided via the PIN. The promise "changing a factor requires freshness" stays intact.
 r = c.post("/auth/pin/set", json={"pin": "1357"}, headers=J)
 assert r.status_code == 403, (r.status_code, r.text[:120])
 assert r.headers.get("X-TinySesam-Reauth") == "/auth/reauth", dict(r.headers)
-assert auth._verify_user_pin(uid, "2468"), "die alte PIN darf stehen bleiben"
+assert auth._verify_user_pin(uid, "2468"), "the old PIN may stay"
 seite = c.get("/auth/reauth").text
-assert "name=pin" in seite, "die Reauth-Seite muss jetzt ein PIN-Feld haben"
+assert "name=pin" in seite, "the reauth page must now have a PIN field"
 r = c.post("/auth/reauth", data={"pin": "2468", "next": "/"}, follow_redirects=False)
 assert r.status_code == 303, r.status_code
 assert c.post("/auth/pin/set", json={"pin": "1357"}, headers=J).status_code == 200
 assert auth._verify_user_pin(uid, "1357")
-print("  PIN ERSETZEN bleibt hinter require_mfa (403 → Reauth per PIN → 200) ok")
+print("  REPLACING the PIN stays behind require_mfa (403 → reauth by PIN → 200) ok")
 os.unlink(db)
 
-# Und die alte Anmeldung öffnet nichts mehr: Ist auch der Login zu alt, bleibt es bei 403 —
-# aber mit dem Hinweis, der hilft (neu anmelden), und OHNE den Verweis auf eine Reauth-Seite,
-# die diesem Konto kein Feld anbieten kann.
+# And the old sign-in opens nothing any more: if the login is too old as well, it stays at 403 —
+# but with the hint that helps (sign in again), and WITHOUT the reference to a reauth page
+# that cannot offer this account a field.
 db = os.path.join(tempfile.mkdtemp(), "t.db")
 auth = TinySesam(TinySesamConfig(db_path=db, csrf_enabled=False, lang="de", cookie_secure=False,
                                  passkey_enabled=False, oidc_enabled=False, password_enabled=False,
@@ -292,30 +292,30 @@ r = c.post("/auth/pin/set", json={"pin": "2468"}, headers={"Accept": "applicatio
 assert r.status_code == 403, (r.status_code, r.text[:120])       # (b)
 assert r.json().get("detail") == auth.t("api.stepup_relogin"), r.text[:160]
 assert "X-TinySesam-Reauth" not in r.headers, dict(r.headers)
-assert not auth.has_pin(uid), "ohne frische Anmeldung darf keine PIN gesetzt werden"
-# Die Reauth-Seite sagt dem Konto die Wahrheit, statt ein Passwortfeld anzubieten, das es
-# nicht hat (jeder Versuch wäre aussichtslos — und zählte in denselben Sperr-Topf).
+assert not auth.has_pin(uid), "without a fresh sign-in no PIN may be set"
+# The reauth page tells the account the truth, instead of offering a password field that it does
+# not have (every attempt would be hopeless — and would count in the same lockout bucket).
 seite = c.get("/auth/reauth")
 felder = re.findall(r"<input[^>]*name=[\"\']?(\w+)", seite.text)
 assert felder == [], felder
 assert auth.t("err.stepup_none") in seite.text, seite.text[:300]
 antwort = c.post("/auth/reauth", data={"password": "geraten", "next": "/"})
 assert antwort.status_code == 403, antwort.status_code
-assert auth.store.count_fails(0, username="sso-nutzer") == 0, "kein Fehlversuch im Sperr-Topf"
+assert auth.store.count_fails(0, username="sso-nutzer") == 0, "no failed attempt in the lockout bucket"
 os.unlink(db)
-print("  (b) zu alte Anmeldung: 403 'neu anmelden', Reauth-Seite ohne Feld ok")
+print("  (b) sign-in too old: 403 'sign in again', reauth page without field ok")
 
 
-# ---------- 8) Dieselbe Route für ein Konto MIT Passwort: die Regel, genau ----------
-# Die Ausnahme aus (7) gilt schmal: Sie ist für ein Konto gedacht, das gar nichts hat, womit
-# es bestätigen könnte. Sobald `stepup_options()` etwas hergibt — und das tut sie für jedes
-# Konto mit Passwort —, verlangt auch das ANLEGEN der ersten PIN eine frische Bestätigung.
-# Das ist Absicht und keine Nachlässigkeit: Mit `pin_login` ist eine PIN ein vollwertiger
-# Erstfaktor, ein gestohlenes Sitzungscookie richtete sich damit sonst einen eigenen Zugang
-# ein, der den Diebstahl überdauert. Eine frische Anmeldung allein genügt dafür NICHT.
-# Bis zur zweiten Runde behauptete der CHANGELOG pauschal, das Anlegen hänge am Alter der
-# Anmeldung; gemessen wurde die Regel von keiner Suite. Jetzt hier. (Mutationsprobe:
-# `or auth.stepup_options(u)` in `pin_set` streichen → (b) wird rot.)
+# ---------- 8) The same route for an account WITH a password: the rule, exactly ----------
+# The exception from (7) applies narrowly: it is meant for an account that has nothing at all with which
+# it could confirm. As soon as `stepup_options()` returns something — and it does for every
+# account with a password —, CREATING the first PIN also requires a fresh confirmation.
+# That is intentional and not negligence: with `pin_login` a PIN is a full first
+# factor, a stolen session cookie would otherwise set up its own access that
+# outlasts the theft. A fresh sign-in alone is NOT enough for that.
+# Until the second round the CHANGELOG claimed across the board that creating depends on the age of the
+# sign-in; the rule was measured by no suite. Now here. (Mutation probe:
+# remove `or auth.stepup_options(u)` in `pin_set` → (b) turns red.)
 db = os.path.join(tempfile.mkdtemp(), "t.db")
 auth = TinySesam(TinySesamConfig(db_path=db, csrf_enabled=False, lang="de", cookie_secure=False,
                                  passkey_enabled=False, oidc_enabled=False, pin_enabled=True,
@@ -325,43 +325,43 @@ uid = auth.create_user("anna", PW)
 app = FastAPI(); app.include_router(auth.router())
 c = TestClient(app, headers=HTML)
 J = {"Accept": "application/json"}
-assert auth.stepup_options(auth.get_user(uid)) == ["password"], "Vorbedingung: das Konto kann bestätigen"
+assert auth.stepup_options(auth.get_user(uid)) == ["password"], "precondition: the account can confirm"
 assert c.post("/auth/login", data={"username": "anna", "password": PW, "next": "/"},
               follow_redirects=False).status_code == 303
 
-# (a) Frisch angemeldet: Die erste PIN geht durch — die Anmeldung IST hier die Bestätigung.
+# (a) Freshly signed in: the first PIN goes through — the sign-in IS the confirmation here.
 r = c.post("/auth/pin/set", json={"pin": "2468"}, headers=J)
 assert r.status_code == 200, (r.status_code, r.text[:120])
 assert auth._verify_user_pin(uid, "2468")
-print("  (a) Passwort-Konto, frisch angemeldet: erste PIN geht durch ok")
+print("  (a) password account, freshly signed in: first PIN goes through ok")
 
-# (b) Bestätigung abgelaufen, Anmeldung noch jung: 403 — und zwar der, der weiterhilft.
+# (b) Confirmation expired, sign-in still young: 403 — and indeed the one that helps.
 auth.disable_pin(uid)
 _hash = auth.store.session_hash(c.cookies.get(auth.cfg.session_cookie))
 auth.store._exec("UPDATE session SET mfa_at=? WHERE token_hash=?", (int(time.time()) - 100000, _hash))
 _sitzung = auth.store._one("SELECT created_at, mfa_at FROM session WHERE token_hash=?", (_hash,))
-# Vorbedingung, sonst misst (b) den falschen Riegel: Die ANMELDUNG ist noch jung, nur die
-# Bestätigung ist abgelaufen. Genau diese Lage trennt `login_fresh()` von `stepup_fresh()`.
+# Precondition, otherwise (b) measures the wrong bolt: the SIGN-IN is still young, only the
+# confirmation has expired. Exactly this situation separates `login_fresh()` from `stepup_fresh()`.
 assert int(time.time()) - _sitzung["created_at"] < auth.cfg.stepup_max_age_sec, dict(_sitzung)
 assert int(time.time()) - _sitzung["mfa_at"] > auth.cfg.stepup_max_age_sec, dict(_sitzung)
 r = c.post("/auth/pin/set", json={"pin": "1357"}, headers=J)
 assert r.status_code == 403, (r.status_code, r.text[:120])
 assert r.headers.get("X-TinySesam-Reauth") == "/auth/reauth", dict(r.headers)
-assert not auth.has_pin(uid), "ohne Bestätigung darf kein Anmeldefaktor entstehen"
-print("  (b) Passwort-Konto, Bestätigung abgelaufen: 403 + Verweis auf die Reauth-Seite ok")
+assert not auth.has_pin(uid), "without confirmation no sign-in factor may arise"
+print("  (b) password account, confirmation expired: 403 + reference to the reauth page ok")
 
-# (c) Und der Weg, auf den der Verweis zeigt, führt zum Ziel: Passwort bestätigen → PIN setzen.
+# (c) And the path the reference points to leads to the goal: confirm password → set PIN.
 r = c.post("/auth/reauth", data={"password": PW, "next": "/"}, follow_redirects=False)
 assert r.status_code == 303, r.status_code
 r = c.post("/auth/pin/set", json={"pin": "1357"}, headers=J)
 assert r.status_code == 200, (r.status_code, r.text[:120])
 assert auth._verify_user_pin(uid, "1357")
-print("  (c) nach der Bestätigung auf /auth/reauth: erste PIN geht durch ok")
+print("  (c) after confirmation on /auth/reauth: first PIN goes through ok")
 os.unlink(db)
 
-# ---------- 5) Eine an der PIN-Anmeldung gesperrte PIN lässt sich auf /auth/reauth nicht weiterraten (C-3) ----------
-# Die Step-up-Seite hat ihren eigenen Topf (`is_reauth_locked`); der darf die PIN-Sperre der
-# Anmeldung nicht aushebeln — sonst verdoppelt sich der Keyspace-Vorrat eines Angreifers.
+# ---------- 5) A PIN locked at the PIN sign-in cannot be guessed further on /auth/reauth (C-3) ----------
+# The step-up page has its own bucket (`is_reauth_locked`); it must not undermine the PIN lockout
+# of the sign-in — otherwise the keyspace supply of an attacker doubles.
 db = os.path.join(tempfile.mkdtemp(), "t.db")
 auth = TinySesam(TinySesamConfig.local_accounts(db_path=db, csrf_enabled=False, lang="de",
                                                 passkey_enabled=False, pin_enabled=True,
@@ -375,11 +375,11 @@ c = TestClient(app, headers=HTML)
 assert login(c).status_code == 303
 for _ in range(int(auth._sec("pin_max_attempts")) + 1):
     c.post("/auth/pin", data={"pin": "0000", "next": "/"})
-assert auth._is_pin_locked("max", "testclient"), "Vorbedingung: die PIN-Anmeldung ist gesperrt"
+assert auth._is_pin_locked("max", "testclient"), "precondition: the PIN sign-in is locked"
 time.sleep(1.1)
 r = c.post("/auth/reauth", data={"pin": "2468", "next": "/"}, follow_redirects=False)
-assert r.status_code == 429, f"gesperrte PIN wird auf /auth/reauth weiter angenommen: {r.status_code}"
+assert r.status_code == 429, f"locked PIN is still accepted on /auth/reauth: {r.status_code}"
 os.unlink(db)
-print("  (C-3) PIN-Sperre der Anmeldung gilt auch auf der Step-up-Seite ok")
+print("  (C-3) PIN lockout of the sign-in also applies on the step-up page ok")
 
 print("OK test_pin_stepup")

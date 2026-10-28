@@ -1,11 +1,11 @@
-"""Die Seiten im ECHTEN Browser prüfen — Design und Verhalten, nicht nur HTML-Strings.
+"""Check the pages in a REAL browser — design and behaviour, not just HTML strings.
 
-Startet das Showcase mit uvicorn, fährt Chrome headless über das DevTools-Protokoll und misst,
-was der Nutzer sieht: Konsolenfehler, kaputte Anfragen, Breiten, Sprachwechsel, Hell/Dunkel bis in
-die Vorschau-iframes, den Login und die Fehlerbehandlung leerer Formulare.
+Starts the showcase with uvicorn, drives headless Chrome over the DevTools protocol and measures
+what the user sees: console errors, broken requests, widths, language switching, light/dark down to
+the preview iframes, the login and the error handling of empty forms.
 
-Wird übersprungen, wenn Chrome oder `websockets` fehlen (`run_all.py` kennt das).
-Deshalb bricht kein Entwickler-Setup, aber die CI führt es aus.
+Skipped when Chrome or `websockets` are missing (`run_all.py` knows about that).
+So no developer setup breaks, but CI runs it.
 """
 import asyncio
 import json
@@ -24,20 +24,20 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import pathlib  # noqa: E402
 from voraussetzung import braucht, braucht_modul  # noqa: E402
 
-# Drei Voraussetzungen, alle drei als Zusage DIESER Suite — nicht als Rateaufgabe für den Runner.
-# Der raubte sich das früher aus dem stderr zusammen und konnte „dem Test fehlt etwas" nicht von
-# „die Bibliothek stürzt ab" unterscheiden.
+# Three prerequisites, all three declared by THIS suite — not a guessing game for the runner.
+# It used to piece this together from stderr and could not tell „the test is missing something" from
+# „the library crashes".
 braucht_modul("websockets")
 braucht_modul("uvicorn")
 
 import websockets            # noqa: E402
 import uvicorn               # noqa: E402
 
-# `browser-actions/setup-chrome` legt die Binärdatei als `chrome` ab, Debian als `chromium`.
+# `browser-actions/setup-chrome` installs the binary as `chrome`, Debian as `chromium`.
 CHROME = next((b for b in ("google-chrome", "chrome", "chromium", "chromium-browser")
                if shutil.which(b)), None)
 braucht(CHROME, "kein Chrome gefunden")
-# Das Showcase liegt im Repo, nicht im sdist — dort absagen statt rot werden.
+# The showcase lives in the repo, not in the sdist — skip there instead of going red.
 braucht((pathlib.Path(__file__).resolve().parent.parent / "examples").is_dir(),
         "kein `examples/` — der Browser-Test fährt das Showcase aus dem Repo")
 braucht((pathlib.Path(__file__).resolve().parent.parent / "web").is_dir(),
@@ -45,16 +45,16 @@ braucht((pathlib.Path(__file__).resolve().parent.parent / "web").is_dir(),
 
 
 def _server_socket():
-    """Lauschenden Socket für den Testserver aufmachen — und **gebunden lassen**.
+    """Open a listening socket for the test server — and **keep it bound**.
 
-    Die naheliegende Fassung (binden, schließen, Nummer merken, uvicorn damit starten) hat ein
-    Fenster: zwischen Schließen und erneutem Binden kann ein anderer Prozess denselben Port
-    nehmen. Auf einem Runner mit parallelen Jobs ist das kein Gedankenspiel, und rot wird der
-    Test dann selten und unerklärlich. uvicorn nimmt fertige Sockets entgegen (`run(sockets=…)`),
-    also geben wir diesen hier nie wieder her — damit gibt es das Fenster nicht.
+    The obvious version (bind, close, remember the number, start uvicorn with it) has a
+    window: between closing and binding again another process can take the same port.
+    On a runner with parallel jobs that is no thought experiment, and the test then goes red
+    rarely and inexplicably. uvicorn accepts ready-made sockets (`run(sockets=…)`),
+    so we never give this one up again — that way the window does not exist.
 
-    Chrome löst dasselbe Problem auf seinem Weg: `--remote-debugging-port=0` und die tatsächliche
-    Nummer aus `DevToolsActivePort` (siehe `_cdp_port`).
+    Chrome solves the same problem its own way: `--remote-debugging-port=0` and the actual
+    number from `DevToolsActivePort` (see `_cdp_port`).
     """
     s = socket.socket()
     s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -67,14 +67,14 @@ _app_sock = _server_socket()
 APP_PORT = _app_sock.getsockname()[1]
 BASE = f"http://127.0.0.1:{APP_PORT}"
 
-# Eigene DB, damit ein laufendes Demo-Showcase nicht dazwischenfunkt
+# Own DB so that a running demo showcase does not interfere
 _db = os.path.join(tempfile.mkdtemp(), "t.db")
 os.environ["TINYSESAM_SHOWCASE_DB"] = _db
 import examples.showcase as showcase   # noqa: E402
 
 _server = uvicorn.Server(uvicorn.Config(showcase.app, log_level="critical"))
-# Den bereits gebundenen Socket übergeben, nicht host/port — sonst bindet uvicorn neu und die
-# Lücke von oben wäre wieder da (dann sogar als "Address already in use").
+# Pass the already bound socket, not host/port — otherwise uvicorn binds anew and the
+# gap from above would be back (even as "Address already in use").
 threading.Thread(target=lambda: _server.run(sockets=[_app_sock]), daemon=True).start()
 for _ in range(100):
     try:
@@ -87,20 +87,20 @@ else:
 
 _profile = tempfile.mkdtemp()
 
-# Chromes Ausgabe NICHT nach DEVNULL: stirbt er beim Start, war die Fehlermeldung
-# bisher weg und der Test meldete nur "Chrome antwortet nicht" — ohne Grund.
-# In eine Datei (nicht PIPE): ein volllaufender Pipe-Puffer würde Chrome blockieren.
+# Do NOT send Chrome's output to DEVNULL: if it dies at startup, the error message used to
+# be gone and the test only reported "Chrome antwortet nicht" — without a reason.
+# Into a file (not PIPE): a full pipe buffer would block Chrome.
 _chrome_log = tempfile.NamedTemporaryFile(prefix="chrome-", suffix=".log", delete=False)
 _chrome = subprocess.Popen(
-    # --disable-dev-shm-usage: CI-Container haben ein winziges /dev/shm, sonst stirbt der Renderer.
+    # --disable-dev-shm-usage: CI containers have a tiny /dev/shm, otherwise the renderer dies.
     [CHROME, "--headless=new", "--disable-gpu", "--no-sandbox", "--disable-dev-shm-usage",
      "--window-size=1280,900", f"--user-data-dir={_profile}",
      "--remote-debugging-port=0", "about:blank"],
     stdout=_chrome_log, stderr=subprocess.STDOUT)
 
-# Auf einem kalten CI-Runner braucht der erste Chrome-Start regelmäßig länger als
-# die früheren 10 s — daher der großzügigere Deckel. Der Test wartet nur, solange
-# Chrome wirklich startet: ist der Prozess tot, bricht er sofort ab.
+# On a cold CI runner the first Chrome start regularly takes longer than
+# the earlier 10 s — hence the more generous cap. The test only waits while
+# Chrome is actually starting: if the process is dead, it aborts immediately.
 CHROME_START_TIMEOUT = float(os.environ.get("CHROME_START_TIMEOUT", "30"))
 
 
@@ -114,11 +114,11 @@ def _chrome_output():
 
 
 def _cdp_port():
-    """Chrome wählt den Port selbst und schreibt ihn ins Profil.
+    """Chrome picks the port itself and writes it into the profile.
 
-    Ein vorab reservierter Port ist ein Wettlauf: zwischen dem Schließen des Probe-Sockets
-    und dem Start von Chrome kann ihn ein anderer Prozess belegen. Auf einem CI-Runner mit
-    parallelen Jobs ist das kein Gedankenspiel.
+    A port reserved in advance is a race: between closing the probe socket
+    and starting Chrome another process can claim it. On a CI runner with
+    parallel jobs that is no thought experiment.
     """
     port_file = os.path.join(_profile, "DevToolsActivePort")
     deadline = time.time() + CHROME_START_TIMEOUT
@@ -133,7 +133,7 @@ def _cdp_port():
             if erste.isdigit():
                 return int(erste)
         except OSError:
-            pass  # Port-Datei noch nicht da — Chrome startet noch
+            pass  # Port file not there yet — Chrome is still starting
         time.sleep(0.1)
     raise RuntimeError(
         f"Chrome schrieb keinen DevTools-Port (nach {CHROME_START_TIMEOUT:.0f}s).\n"
@@ -159,7 +159,7 @@ def _ws_url():
 
 
 class Page:
-    """Ein sehr kleiner CDP-Client: navigieren, JS auswerten, Konsole und Netzwerk mitschneiden."""
+    """A very small CDP client: navigate, evaluate JS, record console and network."""
 
     def __init__(self, ws):
         self.ws, self._id = ws, 0
@@ -190,8 +190,8 @@ class Page:
     async def go(self, path, wait=1.4):
         await self.cmd("Page.navigate", url=BASE + path)
         await asyncio.sleep(wait)
-        # Nicht nur eine feste Pause: Auf einem kalten Runner war die erste Seite nach Chromes Start nach 1,4 s
-        # noch nicht fertig (PR #142, `header.shell` fehlte). Bis zu 15 s auf ein fertiges Dokument warten.
+        # Not just a fixed pause: on a cold runner the first page after Chrome's start was not
+        # ready after 1.4 s (PR #142, `header.shell` was missing). Wait up to 15 s for a complete document.
         for _ in range(60):
             if await self.js("document.readyState") == "complete":
                 break
@@ -212,34 +212,34 @@ async def run():
         await p.cmd("Runtime.enable")
         await p.cmd("Network.enable")
 
-        # CSP-Verstoesse laufen NICHT ueber die JS-Konsole (Runtime), sondern muessen im
-        # Dokument abgefangen werden. Der Listener wird bei JEDEM neuen Dokument frisch
-        # installiert (window.__csp startet leer) → nach dem Laden ist er der Beleg, ob
-        # die strenge nonce-CSP der eingebauten Seiten ein <script>/<style> geblockt hat.
+        # CSP violations do NOT go through the JS console (Runtime); they must be caught in the
+        # document. The listener is installed fresh on EVERY new document
+        # (window.__csp starts empty) → after loading it is the proof whether
+        # the strict nonce CSP of the built-in pages blocked a <script>/<style>.
         await p.cmd("Page.addScriptToEvaluateOnNewDocument", source=(
             "window.__csp=[];addEventListener('securitypolicyviolation',function(e){"
             "window.__csp.push(e.effectiveDirective+' blockte '+(e.blockedURI||'inline'))})"))
 
-        # ---------- 1) Jede Seite lädt, ohne Konsolenfehler und ohne kaputte Anfragen ----------
+        # ---------- 1) Every page loads, without console errors and without broken requests ----------
         for path in PAGES:
             await p.go(path)
             assert await p.js("document.querySelectorAll('header.shell').length") == 1, path
             assert await p.js("document.querySelectorAll('nav.row').length") == 2, path
             assert await p.js("document.querySelectorAll('footer').length") == 1, path
-        assert not p.console, f"Konsolenfehler: {p.console[:2]}"
-        assert not p.failed, f"kaputte Anfragen: {p.failed[:3]}"
-        print("  jede Seite: ein Kopf, zwei Navreihen, eine Fußzeile; keine Konsolenfehler")
+        assert not p.console, f"console errors: {p.console[:2]}"
+        assert not p.failed, f"broken requests: {p.failed[:3]}"
+        print("  every page: one header, two nav rows, one footer; no console errors")
 
-        # ---------- CSP: die eingebauten Auth-Seiten laufen unter strenger nonce-CSP ----------
-        # Kein Verstoss = der Browser hat jedes <script>/<style> per Nonce akzeptiert; ein
-        # falscher/fehlender Nonce haette sie geblockt und hier einen Eintrag erzeugt.
+        # ---------- CSP: the built-in auth pages run under a strict nonce CSP ----------
+        # No violation = the browser accepted every <script>/<style> via nonce; a
+        # wrong/missing nonce would have blocked them and produced an entry here.
         for path in ("/auth/login", "/auth/register"):
             await p.go(path)
             viol = await p.js("JSON.stringify(window.__csp===undefined?['(kein Listener)']:window.__csp)")
-            assert viol == "[]", f"CSP-Verstoss auf {path}: {viol}"
-        print("  Auth-Seiten unter strenger CSP: kein Verstoss (Nonce akzeptiert)")
+            assert viol == "[]", f"CSP violation on {path}: {viol}"
+        print("  auth pages under strict CSP: no violation (nonce accepted)")
 
-        # ---------- 2) Kopf, Inhalt und Fußzeile sind gleich breit ----------
+        # ---------- 2) Header, content and footer are equally wide ----------
         for path in ("/demo", "/legal", "/demo/flows"):
             await p.go(path)
             w = json.loads(await p.js("""JSON.stringify({
@@ -247,9 +247,9 @@ async def run():
                 main:Math.round(document.querySelector('main').getBoundingClientRect().width),
                 foot:Math.round(document.querySelector('footer .inner').getBoundingClientRect().width)})"""))
             assert w["nav"] == w["main"] == w["foot"], (path, w)
-        print("  Breiten: Nav = Inhalt = Fußzeile, auf jeder Seite")
+        print("  widths: nav = content = footer, on every page")
 
-        # ---------- 3) Icons so groß wie gedacht (nicht vom Nav-Polster gequetscht) ----------
+        # ---------- 3) Icons as large as intended (not squeezed by the nav padding) ----------
         await p.go("/demo")
         box = json.loads(await p.js("""JSON.stringify((function(){
             const a=document.querySelector('.ilink'), s=a.querySelector('svg');
@@ -259,9 +259,9 @@ async def run():
                     icon_h:Math.round(ra.height), pill_h:Math.round(rp.height)};})())"""))
         assert box["svg"] == [20, 20], box
         assert box["icon_h"] == box["pill_h"], box
-        print(f"  Icons {box['svg']} in {box['icon_h']}px-Rahmen = Pillenhöhe {box['pill_h']}px")
+        print(f"  icons {box['svg']} in {box['icon_h']}px frame = pill height {box['pill_h']}px")
 
-        # ---------- 4) Ein Sprachsystem: `?lang=` auf jeder Seite ----------
+        # ---------- 4) One language system: `?lang=` on every page ----------
         for path in ("/", "/demo", "/demo/flows", "/legal"):
             await p.cmd("Network.clearBrowserCookies")
             await p.go(path + "?lang=en")
@@ -270,11 +270,11 @@ async def run():
             de = await p.js("document.title")
             assert en != de, (path, en)
             assert await p.js("document.documentElement.lang") == "de", path
-        print("  Sprache: `?lang=` schaltet auf allen Seiten, `<html lang>` folgt")
+        print("  language: `?lang=` switches on all pages, `<html lang>` follows")
 
-        # ---------- 4b) …und bis in die Panels hinein ----------
-        # Das Admin-Panel baut seine Oberfläche im Browser. Nur hier sieht man, ob die Texte
-        # wirklich ankommen — im Quelltext stehen sie als JSON, nicht als Markup.
+        # ---------- 4b) …and down into the panels ----------
+        # The admin panel builds its UI in the browser. Only here can one see whether the texts
+        # really arrive — in the source they are JSON, not markup.
         panel = """(function(){const f=[...document.querySelectorAll('.frame iframe')]
             .find(f=>f.src.includes('admin'));
             const d=f&&f.contentDocument; if(!d||!d.body) return '';
@@ -283,13 +283,13 @@ async def run():
             await p.cmd("Network.clearBrowserCookies")
             await p.go(f"/demo?lang={lang}", wait=2.4)
             got = await p.js(panel)
-            assert got, f"Admin-Vorschau nicht lesbar ({lang})"
+            assert got, f"admin preview not readable ({lang})"
             head, text = got.split("|", 1)
             assert head == lang, (lang, head)
             assert want in text and nope not in text, (lang, text[:120])
-        print("  Admin-Panel folgt `?lang=` wie jede andere Seite (Reiter, Karten, `<html lang>`)")
+        print("  admin panel follows `?lang=` like any other page (tabs, cards, `<html lang>`)")
 
-        # ---------- 5) Hell/Dunkel bis in die Vorschau-iframes ----------
+        # ---------- 5) Light/dark down to the preview iframes ----------
         await p.go("/demo")
         await p.js("localStorage.setItem('ts-theme','dark')")
         await p.go("/demo", wait=3.0)
@@ -301,14 +301,14 @@ async def run():
         assert len(frames) == 3, frames
         for f in frames:
             assert f.get("theme") == "dark", frames
-            assert f["bg"] != "rgb(246, 241, 236)", "iframe blieb hell"
-        print("  Dunkelmodus greift auch in allen drei Vorschau-iframes")
+            assert f["bg"] != "rgb(246, 241, 236)", "iframe stayed light"
+        print("  dark mode also applies in all three preview iframes")
 
-        # ---------- 5b) Codeblöcke folgen dem Thema und lassen sich kopieren ----------
-        # Der Knopf braucht `navigator.clipboard`; wir ersetzen es, um zu sehen, WAS ankommt.
-        # Kopiert gehört der reine Text — ohne die Spans der Syntaxfarbe.
-        # Gemessen wird an `.cw`: der Kasten (Hintergrund, Rahmen) sitzt dort, `.code` ist
-        # transparent — nur so kann der Kopierknopf in einer eigenen Zeile im Block stehen.
+        # ---------- 5b) Code blocks follow the theme and can be copied ----------
+        # The button needs `navigator.clipboard`; we replace it to see WHAT arrives.
+        # What gets copied must be the plain text — without the syntax-colour spans.
+        # Measured on `.cw`: the box (background, border) sits there, `.code` is
+        # transparent — only that way can the copy button sit on its own line in the block.
         lum = """(function(s){const m=getComputedStyle(document.querySelector(s)).backgroundColor
             .match(/\\d+/g).map(Number); return (m[0]*.299+m[1]*.587+m[2]*.114)/255;})('.cw')"""
         for theme, hell in (("light", True), ("dark", False)):
@@ -316,94 +316,94 @@ async def run():
             await p.go("/", wait=1.6)
             assert await p.js("document.querySelectorAll('.cw .copy').length") == 2, theme
             l = await p.js(lum)
-            assert (l > 0.85 if hell else l < 0.2), f"Codeblock im {theme}-Thema: Helligkeit {l:.2f}"
-            # Der Knopf steht in einer eigenen Zeile über dem Code — er überlappt ihn nicht.
+            assert (l > 0.85 if hell else l < 0.2), f"code block in the {theme} theme: brightness {l:.2f}"
+            # The button sits on its own line above the code — it does not overlap it.
             over = await p.js("""(function(){
                 const b=document.querySelector('.cw .copy').getBoundingClientRect(),
                       c=document.querySelector('.cw .code').getBoundingClientRect();
                 return b.bottom <= c.top + 1;})()""")
-            assert over, f"Kopierknopf überlappt den Code ({theme})"
-        # Der Klick — im dunklen Thema, egal, es geht um die Zwischenablage.
+            assert over, f"copy button overlaps the code ({theme})"
+        # The click — in the dark theme, no matter, it is about the clipboard.
         await p.js("window.__copied=null;"
                    "navigator.clipboard.writeText=t=>{window.__copied=t;return Promise.resolve();}")
         await p.js("document.querySelector('.cw .copy').click()")
-        await asyncio.sleep(0.3)          # unter den 1,6 s, die der Haken stehen bleibt
+        await asyncio.sleep(0.3)          # below the 1.6 s the checkmark stays
         got = await p.js("window.__copied")
-        assert got and got.startswith("pip install "), f"kopiert: {got!r}"
-        assert "<span" not in got, "die Auszeichnung ist mitkopiert worden"
+        assert got and got.startswith("pip install "), f"copied: {got!r}"
+        assert "<span" not in got, "the markup was copied along"
         assert await p.js("document.querySelector('.cw .copy').classList.contains('done')")
-        # Zweiter Block: mehrzeilig — beweist, dass `white-space:pre` die Umbrüche erhält.
+        # Second block: multi-line — proves that `white-space:pre` preserves the line breaks.
         await p.js("document.querySelectorAll('.cw .copy')[1].click()")
         await asyncio.sleep(0.2)
         code2 = await p.js("window.__copied")
-        assert code2.count("\n") >= 4, f"Umbrüche verloren: {code2!r}"
+        assert code2.count("\n") >= 4, f"line breaks lost: {code2!r}"
         assert code2.startswith("auth = TinySesam("), code2[:40]
         await p.js("localStorage.removeItem('ts-theme')")
-        print("  Codeblöcke: hell im hellen Thema, dunkel im dunklen; Kopierknopf liefert Klartext")
+        print("  code blocks: light in the light theme, dark in the dark one; copy button delivers plain text")
 
-        # ---------- 6) Die Vorschauen sind gesperrt und ohne Demo-Hinweis ----------
+        # ---------- 6) The previews are locked and carry no demo notice ----------
         await p.go("/demo/preview/login")
         assert await p.js("getComputedStyle(document.documentElement).pointerEvents") == "none"
-        assert await p.js("!document.querySelector('.demobar')"), "Hinweis gehört auf die echte Seite"
-        print("  Vorschauen: read-only, ohne Demo-Hinweis")
+        assert await p.js("!document.querySelector('.demobar')"), "the notice belongs on the real page"
+        print("  previews: read-only, without demo notice")
 
-        # ---------- 7) Leeres Formular → Fehlermeldung, kein JSON ----------
-        # Ab hier ist genau ein 400 erwartet (das leere Formular) — alles andere bleibt ein Fehler.
+        # ---------- 7) Empty form → error message, no JSON ----------
+        # From here on exactly one 400 is expected (the empty form) — everything else remains an error.
         p.failed.clear()
         await p.js("localStorage.removeItem('ts-theme')")
         await p.cmd("Network.clearBrowserCookies")
         await p.go("/auth/login")
-        assert await p.js("!document.querySelector('form').checkValidity()"), "required fehlt"
+        assert await p.js("!document.querySelector('form').checkValidity()"), "required is missing"
         await p.js("document.querySelectorAll('form [required]').forEach(e=>e.removeAttribute('required'));"
                    "document.querySelector('form').submit()")
         await asyncio.sleep(1.5)
-        assert not await p.js("!!document.querySelector('pre')"), "422-JSON statt Seite"
-        # Seit 0.24.6 stehen Fehler als Meldung UNTER der Karte (eigener Kasten mit Symbol), nicht mehr in ihr.
+        assert not await p.js("!!document.querySelector('pre')"), "422 JSON instead of a page"
+        # Since 0.24.6 errors appear as a message BELOW the card (own box with an icon), no longer inside it.
         err = (await p.js("(document.querySelector('.meldungen .meldung.fehler')||{textContent:''}).textContent")).strip()
-        assert err, "keine Fehlermeldung"
+        assert err, "no error message"
         assert await p.js("!document.querySelector('.card .meldung') && !!document.querySelector('.meldung.fehler svg')"), \
-            "Meldung in der Karte oder ohne Symbol"
-        print(f"  leeres Formular: {err!r} statt JSON")
+            "message inside the card or without an icon"
+        print(f"  empty form: {err!r} instead of JSON")
 
-        # ---------- 8) Login funktioniert — auch wenn der Browser ein Passwort einfüllt ----------
+        # ---------- 8) Login works — even when the browser fills in a password ----------
         await p.cmd("Page.addScriptToEvaluateOnNewDocument", source="""
             (function(){var n=0,iv=setInterval(function(){var f=document.querySelector('[name=password]');
               if(f){f.value='falschesAltesPasswort';clearInterval(iv);} if(++n>40)clearInterval(iv);},5);})();""")
         await p.go("/auth/login", wait=2.0)
-        assert await p.js("document.querySelector('[name=password]').value") == "", "Autofill nicht verworfen"
+        assert await p.js("document.querySelector('[name=password]').value") == "", "autofill not discarded"
         await p.click(".demofill[data-u=demoadmin]")
         assert await p.js("document.querySelector('[name=username]').value") == "demoadmin"
         await p.js("document.querySelector('form').submit()")
         await asyncio.sleep(2.0)
         who = (await p.js("(document.querySelector('.dd.r summary')||{textContent:''}).textContent")).strip()
-        assert who == "demoadmin", f"nicht angemeldet: {who!r}"
+        assert who == "demoadmin", f"not signed in: {who!r}"
         await p.go("/app")
         assert "demoadmin" in await p.js("document.querySelector('h1').textContent")
-        print("  Login: Autofill verworfen, Knopf füllt, angemeldet, /app erreichbar")
+        print("  login: autofill discarded, button fills, signed in, /app reachable")
 
-        # ---------- 8b) Admin-Panel unter strenger CSP: die Knöpfe laufen trotzdem ----------
-        # R8-1: Das Panel bekam die CSP erst, als seine Inline-Handler verschwanden. Ob die
-        # delegierten `data-on`-Knöpfe wirklich greifen, zeigt nur ein Browser mit echter Policy.
+        # ---------- 8b) Admin panel under strict CSP: the buttons work anyway ----------
+        # R8-1: The panel only got the CSP once its inline handlers were gone. Whether the
+        # delegated `data-on` buttons really work, only a browser with a real policy shows.
         await p.go("/auth/admin", wait=1.5)
-        assert await p.js("document.querySelectorAll('#view tr').length") > 1, "Benutzerliste leer"
+        assert await p.js("document.querySelectorAll('#view tr').length") > 1, "user list empty"
         await p.click("[data-on=keys]")
         await asyncio.sleep(0.6)
-        assert await p.js("!!document.querySelector('#view #kn')"), "Keys-Knopf ohne Wirkung"
-        # G13/G3: „Umbenennen“ und „Zum Owner machen“ wirken im Browser. Der Owner-Knopf war nie
-        # verdrahtet (fehlte in ACT, der Klick tat nichts), und seine Beschriftung kam nicht an.
-        # Dialoge ersetzt, damit kein echter prompt/confirm/alert die Seite anhält; danach zurück.
+        assert await p.js("!!document.querySelector('#view #kn')"), "keys button without effect"
+        # G13/G3: „Rename“ and „Make owner“ work in the browser. The owner button was never
+        # wired up (missing in ACT, the click did nothing), and its label did not arrive.
+        # Dialogs replaced so that no real prompt/confirm/alert halts the page; restored afterwards.
         _st = showcase.auth.store
         _demo = _st.get_user_by_name("demo")["id"]
         await p.js("window.prompt=()=>window.__name;window.confirm=()=>true;"
                    "window.alert=m=>{window.__alert=m};window.__name='demo-probe';true")
         await p.click(f'[data-on=ren][data-a^="[{_demo},"]')
         assert _st.get_user(_demo)["username"] == "demo-probe", \
-            f"Umbenennen ohne Wirkung: {_st.get_user(_demo)['username']!r} {await p.js('window.__alert')!r}"
+            f"rename without effect: {_st.get_user(_demo)['username']!r} {await p.js('window.__alert')!r}"
         await p.js("window.__name='demo';true")
         await p.click(f'[data-on=ren][data-a^="[{_demo},"]')
-        assert _st.get_user(_demo)["username"] == "demo", "Zurückbenennen ohne Wirkung"
-        # Die Owner-Rolle vergibt nur ein Owner — das Demo-Konto ist keiner, also für diese Probe
-        # dazu gemacht und danach auf den Stand davor zurückgesetzt.
+        assert _st.get_user(_demo)["username"] == "demo", "renaming back without effect"
+        # Only an owner can grant the owner role — the demo account is not one, so for this probe
+        # it is made one and afterwards reset to its previous state.
         _demoadmin = _st.get_user_by_name("demoadmin")["id"]
         _war_owner = bool(_st.get_user(_demoadmin)["is_owner"])
         _st.set_owner(_demoadmin, True)
@@ -411,68 +411,68 @@ async def run():
             await p.go("/auth/admin", wait=1.5)
             await p.js("window.confirm=()=>true;window.alert=m=>{window.__alert=m};true")
             _knopf = await p.js(f"document.querySelector('[data-on=own][data-a^=\"[{_demo},\"]').textContent.trim()")
-            assert _knopf, "Owner-Knopf ohne Beschriftung"
+            assert _knopf, "owner button without label"
             await p.click(f'[data-on=own][data-a^="[{_demo},"]')
             assert _st.get_user(_demo)["is_owner"], \
-                f"„Zum Owner machen“ ohne Wirkung: {await p.js('window.__alert')!r}"
+                f"„Make owner“ without effect: {await p.js('window.__alert')!r}"
             await p.click(f'[data-on=own][data-a^="[{_demo},"]')
-            assert not _st.get_user(_demo)["is_owner"], "„Owner abgeben“ ohne Wirkung"
+            assert not _st.get_user(_demo)["is_owner"], "„Give up owner“ without effect"
         finally:
             _st.set_owner(_demoadmin, _war_owner)
-        print("  Admin-Panel: Umbenennen und Owner-Knopf wirken (G13, G3)")
+        print("  admin panel: rename and owner button work (G13, G3)")
         await p.click(".tab[data-on=go]:nth-child(2)")
         await asyncio.sleep(0.6)
         assert await p.js("document.querySelector('.tab.on').textContent") != \
-            await p.js("document.querySelector('.tab').textContent"), "Reiter-Wechsel ohne Wirkung"
+            await p.js("document.querySelector('.tab').textContent"), "tab switch without effect"
         viol = await p.js("JSON.stringify(window.__csp===undefined?['(kein Listener)']:window.__csp)")
-        assert viol == "[]", f"CSP-Verstoss im Admin-Panel: {viol}"
-        print("  Admin-Panel unter strenger CSP: Knöpfe und Reiter wirken, kein Verstoss")
+        assert viol == "[]", f"CSP violation in the admin panel: {viol}"
+        print("  admin panel under strict CSP: buttons and tabs work, no violation")
 
-        # ---------- 9) Abgelaufene Step-up-Frische: der Knopf schickt zur Reauth ----------
-        # R3-3 legte die Faktor-Verwaltung hinter `require_mfa()`. Seither antwortet
-        # /auth/totp/disable mit 403 + `X-TinySesam-Reauth`, sobald die Step-up-Frische
-        # abgelaufen ist — und der Knopf auf der Konto-Seite scheiterte **stumm**: Die Seite lud
-        # einfach neu, der Faktor stand noch. Die Weiche im Konto-JS ist die einzige
-        # Oberflächen-Änderung dieser Runde; nur im Browser ist sie überhaupt messbar.
+        # ---------- 9) Expired step-up freshness: the button sends the user to reauth ----------
+        # R3-3 put factor management behind `require_mfa()`. Since then
+        # /auth/totp/disable answers with 403 + `X-TinySesam-Reauth` once the step-up freshness
+        # has expired — and the button on the account page failed **silently**: the page simply
+        # reloaded, the factor was still there. The switch in the account JS is the only
+        # UI change of this round; only in the browser is it measurable at all.
         vorher_frische = showcase.auth.cfg.stepup_max_age_sec
         demoadmin_id = showcase.auth.store.get_user_by_name("demoadmin")["id"]
-        # Einen zweiten Faktor einrichten, damit die Konto-Seite den Knopf „2FA abschalten"
-        # überhaupt zeigt — er ist der Weg, den R3-3 hinter die Frische gelegt hat.
+        # Set up a second factor so that the account page shows the „disable 2FA" button at all
+        # — it is the path that R3-3 put behind the freshness check.
         showcase.auth.totp_begin(demoadmin_id)
         showcase.auth.store.confirm_totp(demoadmin_id)
         try:
-            showcase.auth.cfg.stepup_max_age_sec = 1        # die Frische künstlich altern lassen
+            showcase.auth.cfg.stepup_max_age_sec = 1        # artificially age the freshness
             await p.go("/auth/account", wait=1.6)
             assert await p.js("!!document.querySelector('[data-act=deltotp]')"), \
-                "kein 2FA-Knopf auf der Konto-Seite — dann misst der Test nichts"
-            await p.js("window.confirm=()=>true")           # die Rückfrage des Knopfes bejahen
-            await asyncio.sleep(1.5)                        # … jetzt ist die Bestätigung zu alt
+                "no 2FA button on the account page — then the test measures nothing"
+            await p.js("window.confirm=()=>true")           # confirm the button's prompt
+            await asyncio.sleep(1.5)                        # … now the confirmation is too old
             await p.click("[data-act=deltotp]")
             ziel = await p.js("location.pathname + location.search")
             assert ziel.startswith("/auth/reauth"), \
-                f"blieb auf {ziel!r} — der 403 scheitert stumm, die Seite lädt bloss neu"
+                f"stayed on {ziel!r} — the 403 fails silently, the page merely reloads"
             assert "auth%2Faccount" in ziel or "/auth/account" in ziel, ziel
-            assert await p.js("!!document.querySelector('form')"), "Reauth-Seite ohne Formular"
+            assert await p.js("!!document.querySelector('form')"), "reauth page without a form"
             assert showcase.auth.store.has_confirmed_totp(demoadmin_id), \
-                "der zweite Faktor wurde ohne frische Bestätigung entfernt"
+                "the second factor was removed without fresh confirmation"
         finally:
             showcase.auth.cfg.stepup_max_age_sec = vorher_frische
-        print("  Konto-Seite: abgelaufene Frische → Reauth-Seite statt stummem 403")
+        print("  account page: expired freshness → reauth page instead of a silent 403")
 
-        # ---------- 10) Angebot nach Faktor-Änderung: `offer()` wirklich ausführen (B1-7, A-5) ----------
-        # Vorher prüfte nur ein String-Test, dass `offer(` im HTML steht. Gemessen wird hier, was
-        # der Nutzer erlebt: Die Zustimmung beendet die andere Sitzung — und geht bei
-        # abgelaufener Frische nicht verloren, sondern kommt nach der Reauth als Rückfrage wieder.
+        # ---------- 10) Offer after a factor change: actually execute `offer()` (B1-7, A-5) ----------
+        # Previously only a string test checked that `offer(` is in the HTML. Here we measure what
+        # the user experiences: consent ends the other session — and with expired
+        # freshness it is not lost but comes back as a prompt after the reauth.
         antwort = "new Response(JSON.stringify({ok:true,other_sessions:1}),{status:200})"
         andere, _ = showcase.auth.start_session(demoadmin_id, "password")
         await p.go("/auth/account", wait=1.6)
         await p.js("window.confirm=()=>true")
         await p.js(f"offer({antwort}).then(()=>{{window.__offer_fertig=true}});1")
         await asyncio.sleep(1.2)
-        assert await p.js("window.__offer_fertig===true"), "offer() kam nicht zurück"
+        assert await p.js("window.__offer_fertig===true"), "offer() did not return"
         assert showcase.auth.store.get_session(andere) is None, \
-            "bestätigtes Angebot, die andere Sitzung läuft trotzdem weiter"
-        # Frische abgelaufen: Umweg über die Reauth, die Zustimmung reist als ?revoke_others=1 mit.
+            "offer confirmed, yet the other session keeps running"
+        # Freshness expired: detour via reauth, the consent travels along as ?revoke_others=1.
         andere, _ = showcase.auth.start_session(demoadmin_id, "password")
         try:
             showcase.auth.cfg.stepup_max_age_sec = 1
@@ -481,25 +481,25 @@ async def run():
             await asyncio.sleep(1.4)
             ziel = await p.js("location.pathname + decodeURIComponent(location.search)")
             assert ziel.startswith("/auth/reauth") and "/auth/account?revoke_others=1" in ziel, \
-                f"blieb auf {ziel!r} — die Zustimmung ginge verloren"
-            assert showcase.auth.store.get_session(andere) is not None, "ohne Frische beendet"
+                f"stayed on {ziel!r} — the consent would be lost"
+            assert showcase.auth.store.get_session(andere) is not None, "ended without freshness"
         finally:
-            showcase.auth.cfg.stepup_max_age_sec = vorher_frische   # ≙ Reauth bestanden
+            showcase.auth.cfg.stepup_max_age_sec = vorher_frische   # ≙ reauth passed
         await p.cmd("Page.addScriptToEvaluateOnNewDocument", source="window.confirm=()=>true")
         await p.go("/auth/account?revoke_others=1", wait=1.8)
         assert showcase.auth.store.get_session(andere) is None, \
-            "nach der Reauth nicht nachgefragt/beendet — die Zustimmung ist verloren"
-        assert await p.js("location.search") == "", "?revoke_others bleibt in der Adresse stehen"
-        print("  Konto-Seite: Angebot beendet die anderen Sitzungen, auch über den Reauth-Umweg")
+            "not asked/ended after the reauth — the consent is lost"
+        assert await p.js("location.search") == "", "?revoke_others stays in the address"
+        print("  account page: offer ends the other sessions, also via the reauth detour")
 
-        assert not p.console, f"Konsolenfehler: {p.console[:2]}"
-        # Erwartet sind genau drei Fehlschläge: das leere Formular (400) und die 403, mit denen
-        # Faktor-Verwaltung und Sitzungs-Beenden die abgelaufene Frische abweisen (Abschnitt 9, 10).
+        assert not p.console, f"console errors: {p.console[:2]}"
+        # Exactly three failures are expected: the empty form (400) and the 403s with which
+        # factor management and ending sessions reject the expired freshness (sections 9, 10).
         unexpected = [f for f in p.failed
                       if not (f[0] == 400 and f[1].endswith("/auth/login"))
                       and not (f[0] == 403 and f[1].endswith("/auth/totp/disable"))
                       and not (f[0] == 403 and f[1].endswith("/auth/sessions/revoke"))]
-        assert not unexpected, f"kaputte Anfragen: {unexpected[:3]}"
+        assert not unexpected, f"broken requests: {unexpected[:3]}"
 
 
 try:
@@ -509,14 +509,14 @@ finally:
     _chrome.terminate()
     _server.should_exit = True
     shutil.rmtree(_profile, ignore_errors=True)
-    # Chrome-Logdatei mit abräumen — der Test darf nichts hinterlassen.
+    # Also clean up the Chrome log file — the test must leave nothing behind.
     try:
         _chrome_log.close()
         os.unlink(_chrome_log.name)
     except OSError:
-        pass  # Log schon weg — nichts aufzuräumen
+        pass  # Log already gone — nothing to clean up
     for suffix in ("", "-wal", "-shm"):
         try:
             os.unlink(_db + suffix)
         except OSError:
-            pass  # Datei gab es nicht — beim Aufräumen kein Fehler
+            pass  # file did not exist — not an error when cleaning up

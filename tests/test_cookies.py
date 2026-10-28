@@ -1,31 +1,31 @@
-"""E2: Cookie-Flags — HttpOnly/Secure/SameSite/Max-Age an jedem Cookie, das TinySesam setzt.
+"""E2: cookie flags — HttpOnly/Secure/SameSite/Max-Age on every cookie TinySesam sets.
 
-Nagelt fest, was im Code steht, aber bisher kein Test hielt: Ein Refactor, der am
-Session-Cookie `httponly=True` verliert, fiele sonst niemandem auf — die Bibliothek
-bliebe grün und gäbe die Sitzung an jedes XSS weiter.
+Pins down what is in the code but was held by no test so far: a refactor that loses
+`httponly=True` on the session cookie would otherwise go unnoticed — the library
+would stay green and hand the session to any XSS.
 
-Geprüft wird der ROHE `Set-Cookie`-Header, nicht der Cookie-Jar des Clients: nur der
-zeigt, was wirklich beim Browser ankommt. Ein Jar verschluckt Attribute.
+The RAW `Set-Cookie` header is checked, not the client's cookie jar: only it
+shows what really reaches the browser. A jar swallows attributes.
 
-Parser und Prüfregel kommen aus dem geteilten Kit (`_kit/headers.py`, via `repokit sync`);
-hier steht nur, was TinySesam-eigen ist: welche Cookies es gibt und was jedes mitbringen
-muss (`ERWARTUNG`). Ein Cookie, das gesetzt wird und in `ERWARTUNG` fehlt, ist ein
-Verstoß — wer eins einführt, muss seine Flags erklären.
+Parser and check rule come from the shared kit (`_kit/headers.py`, via `repokit sync`);
+only what is TinySesam's own stands here: which cookies exist and what each one has to
+carry (`ERWARTUNG`). A cookie that is set and missing from `ERWARTUNG` is a
+violation — whoever introduces one has to explain its flags.
 
-Die wichtigste Aussage steht bei `tinysesam_csrf`: das Cookie ist ABSICHTLICH nicht
-HttpOnly — Double-Submit braucht JS-Lesezugriff (siehe test_csrf.py). Ein pauschales
-„alle Cookies HttpOnly" wäre also falsch und würde genau das richtige Cookie anmeckern.
-Darum je Cookie eine eigene Erwartung, nicht eine Regel für alle.
+The most important statement is at `tinysesam_csrf`: the cookie is DELIBERATELY not
+HttpOnly — double-submit needs JS read access (see test_csrf.py). A blanket
+"all cookies HttpOnly" would therefore be wrong and would complain about exactly the right cookie.
+Hence one expectation per cookie, not one rule for all.
 
-Nicht abgedeckt, bewusst:
+Deliberately not covered:
 
-* `tinysesam_waflow` (webauthn_.py) nur, wenn das Extra [passkey] da ist (Block D2c). Ein
-  harter `webauthn`-Import ließe run_all.py die GANZE Suite überspringen, sobald das Extra
-  fehlt, und die Flags oben wären ungeprüft — deshalb fehlt ohne das Extra nur dieser Block.
-* Der CSRF-Setzer im Admin-Panel. Seit 0.20.1 schreibt eine einzige Stelle das CSRF-Cookie
-  (`manager._csrf_cookie_setzen`) — für `render_page`, `issue_csrf`, `ensure_csrf` und das
-  Panel, das über `ensure_csrf` geht. Diese Suite prüft die ersten beiden; `ensure_csrf` misst
-  test_csrf.py gegen die Attribute von `issue_csrf`, das Panel bräuchte das gemountete Panel
+* `tinysesam_waflow` (webauthn_.py) only if the extra [passkey] is present (block D2c). A
+  hard `webauthn` import would make run_all.py skip the WHOLE suite as soon as the extra
+  is missing, and the flags above would be unchecked — so without the extra only this block is missing.
+* The CSRF setter in the admin panel. Since 0.20.1 a single place writes the CSRF cookie
+  (`manager._csrf_cookie_setzen`) — for `render_page`, `issue_csrf`, `ensure_csrf` and the
+  panel, which goes through `ensure_csrf`. This suite checks the first two; `ensure_csrf` is measured by
+  test_csrf.py against the attributes of `issue_csrf`, the panel would need the mounted panel
   (test_adminmount.py).
 """
 import importlib.util
@@ -49,13 +49,13 @@ def ok(name):
 
 
 def gesetzte_cookies(response) -> dict:
-    """Set-Cookie-Header der Antwort → {name: {attribut: wert}}. Parser kommt aus dem Kit."""
+    """Set-Cookie headers of the response → {name: {attribute: value}}. The parser comes from the kit."""
     return headers.parse_set_cookie(headers.rohe_set_cookie(response))
 
 
-# Was jedes Cookie mitbringen MUSS — je Cookie eigens, nicht als eine Regel für alle.
-# `httponly: False` beim CSRF-Cookie ist kein Versehen, sondern die Bedingung dafür, dass
-# Double-Submit überhaupt funktioniert (JS muss es lesen, siehe test_csrf.py).
+# What every cookie MUST carry — individually per cookie, not as one rule for all.
+# `httponly: False` on the CSRF cookie is no oversight but the condition for
+# double-submit to work at all (JS has to read it, see test_csrf.py).
 ERWARTUNG = {
     "__Host-tinysesam_session": {"httponly": True, "secure": True, "samesite": "lax", "path": "/"},
     "__Host-tinysesam_csrf":    {"httponly": False, "secure": True, "samesite": "lax", "path": "/"},
@@ -64,11 +64,11 @@ ERWARTUNG = {
 
 
 def baue(**cfg_kw):
-    """Frische Instanz mit eigener DB. Gibt (auth, client).
+    """Fresh instance with its own DB. Returns (auth, client).
 
-    base_url richtet sich nach cookie_secure: ein Secure-Cookie legt httpx über http://
-    gar nicht erst ab (RFC 6265) — der Login-Flow bräche dann am CSRF-Cookie, nicht am
-    Prüfgegenstand.
+    base_url follows cookie_secure: httpx does not store a Secure cookie over http://
+    at all (RFC 6265) — the login flow would then break at the CSRF cookie, not at the
+    subject under test.
     """
     kw = dict(db_path=os.path.join(tempfile.mkdtemp(), "t.db"), rp_name="Test",
               passkey_enabled=False, oidc_enabled=False)
@@ -87,7 +87,7 @@ def baue(**cfg_kw):
 
 
 def login(client, remember="on"):
-    """Echter Login über den Router (Double-Submit). Gibt die 303-Antwort ungefolgt zurück."""
+    """Real login via the router (double-submit). Returns the 303 response unfollowed."""
     html = client.get("/auth/login").text
     field = re.search(r"name=_csrf value='([^']+)'", html).group(1)
     return client.post("/auth/login",
@@ -97,79 +97,79 @@ def login(client, remember="on"):
 
 
 class _FakeReq:
-    """Minimale Request-Attrappe: unlock_resource() liest nur .cookies."""
+    """Minimal request stand-in: unlock_resource() reads only .cookies."""
     cookies: dict = {}
 
 
-# ---------- A. Echter Login-Flow: die Flags überleben den Router ----------
+# ---------- A. Real login flow: the flags survive the router ----------
 auth, c = baue()
 
 r = c.get("/auth/login")
 gesetzt = gesetzte_cookies(r)
-assert "__Host-tinysesam_csrf" in gesetzt, "Login-Seite muss das CSRF-Cookie setzen"
+assert "__Host-tinysesam_csrf" in gesetzt, "login page must set the CSRF cookie"
 verstoesse = headers.pruefe_cookie_flags(gesetzt, ERWARTUNG)
 assert not verstoesse, verstoesse
-ok("CSRF-Cookie: bewusst kein HttpOnly, aber Secure + SameSite=lax + Path")
+ok("CSRF cookie: deliberately no HttpOnly, but Secure + SameSite=lax + Path")
 
 r = login(c)
 assert r.status_code == 303, r.status_code
 gesetzt = gesetzte_cookies(r)
-assert "__Host-tinysesam_session" in gesetzt, "Login muss das Session-Cookie setzen"
+assert "__Host-tinysesam_session" in gesetzt, "login must set the session cookie"
 verstoesse = headers.pruefe_cookie_flags(gesetzt, ERWARTUNG)
 assert not verstoesse, verstoesse
-assert "max-age" in gesetzt["__Host-tinysesam_session"], "remember=on muss persistent sein"
-ok("Session-Cookie im echten Login: HttpOnly + Secure + SameSite=lax + Path + Max-Age")
+assert "max-age" in gesetzt["__Host-tinysesam_session"], "remember=on must be persistent"
+ok("Session cookie in the real login: HttpOnly + Secure + SameSite=lax + Path + Max-Age")
 
 assert c.get("/geheim").json() == {"u": "admin"}
-ok("Session trägt: /geheim erreichbar (das Cookie ist echt, nicht nur ein Header)")
+ok("Session holds: /geheim reachable (the cookie is real, not just a header)")
 
 
-# ---------- B. Flag-Matrix direkt an set_cookie() ----------
-# Ohne Login-Flow: der Cookie-Jar des Clients würde Secure/Domain-Varianten verschlucken.
+# ---------- B. Flag matrix directly on set_cookie() ----------
+# Without login flow: the client's cookie jar would swallow Secure/Domain variants.
 auth, _ = baue()
 
 resp = Response()
 auth.set_cookie(resp, "tok123", remember=True)
 sess = gesetzte_cookies(resp)["__Host-tinysesam_session"]
 assert sess["_wert"] == "tok123" and "max-age" in sess
-ok("set_cookie(remember=True) → Max-Age gesetzt (persistent)")
+ok("set_cookie(remember=True) → Max-Age set (persistent)")
 
 resp = Response()
 auth.set_cookie(resp, "tok123", remember=False)
 sess = gesetzte_cookies(resp)["__Host-tinysesam_session"]
-assert "max-age" not in sess, "remember=False muss ein reines Session-Cookie sein"
-assert sess.get("httponly") is True, "HttpOnly darf bei remember=False nicht verloren gehen"
-ok("set_cookie(remember=False) → kein Max-Age, HttpOnly bleibt")
+assert "max-age" not in sess, "remember=False must be a pure session cookie"
+assert sess.get("httponly") is True, "HttpOnly must not be lost with remember=False"
+ok("set_cookie(remember=False) → no Max-Age, HttpOnly stays")
 
 auth, _ = baue(cookie_secure=False)
 resp = Response()
 auth.set_cookie(resp, "tok123")
 sess = gesetzte_cookies(resp)["tinysesam_session"]
-assert "secure" not in sess, "cookie_secure=False muss das Secure-Flag weglassen"
-assert sess.get("httponly") is True, "HttpOnly hängt NICHT an cookie_secure"
-ok("cookie_secure=False (lokal/Demo) → kein Secure, HttpOnly bleibt")
+assert "secure" not in sess, "cookie_secure=False must omit the Secure flag"
+assert sess.get("httponly") is True, "HttpOnly does NOT depend on cookie_secure"
+ok("cookie_secure=False (local/demo) → no Secure, HttpOnly stays")
 
 auth, _ = baue(cookie_samesite="strict")
 resp = Response()
 auth.set_cookie(resp, "tok123")
 assert gesetzte_cookies(resp)["__Host-tinysesam_session"].get("samesite") == "strict"
-ok("cookie_samesite wird durchgereicht (strict)")
+ok("cookie_samesite is passed through (strict)")
 
 auth, _ = baue(cookie_domain=".example.com")
 resp = Response()
 auth.set_cookie(resp, "tok123")
 assert gesetzte_cookies(resp)["tinysesam_session"].get("domain") == ".example.com"
-ok("cookie_domain wird gesetzt (SSO über Subdomains)")
+ok("cookie_domain is set (SSO across subdomains)")
 
 auth, _ = baue(cookie_path="/app")
 resp = Response()
 auth.set_cookie(resp, "tok123")
 assert gesetzte_cookies(resp)["tinysesam_session"].get("path") == "/app"
-ok("cookie_path wird durchgereicht")
+ok("cookie_path is passed through")
 
-# issue_csrf() ist der zweite CSRF-Setzer: öffentliche API für fremde Templates, die nicht
-# über render_page() laufen. Er muss dieselben Flags setzen wie der interne Pfad — täte er
-# es nicht, wäre ausgerechnet die Fremd-Integration die schwächste.
+# issue_csrf() is the second CSRF setter: public API for foreign templates that do not run
+# through render_page(). It must set the same flags as the internal path — if it did not,
+# the third-party integration would be the weakest.
 auth, _ = baue()
 resp = Response()
 tok = auth.issue_csrf(resp)
@@ -177,17 +177,17 @@ gesetzt = gesetzte_cookies(resp)
 assert tok and "__Host-tinysesam_csrf" in gesetzt
 verstoesse = headers.pruefe_cookie_flags(gesetzt, ERWARTUNG)
 assert not verstoesse, verstoesse
-ok("issue_csrf() setzt dieselben Flags wie der interne Pfad")
+ok("issue_csrf() sets the same flags as the internal path")
 
-# Ist CSRF aus, darf auch kein Cookie entstehen — sonst behauptet die Antwort Schutz, den es nicht gibt.
+# If CSRF is off, no cookie may arise either — otherwise the response claims protection that does not exist.
 auth, _ = baue(csrf_enabled=False)
 resp = Response()
 assert auth.issue_csrf(resp) == ""
 assert gesetzte_cookies(resp) == {}
-ok("csrf_enabled=False → issue_csrf() setzt gar kein Cookie")
+ok("csrf_enabled=False → issue_csrf() sets no cookie at all")
 
 
-# ---------- C. Ressourcen-Cookie ----------
+# ---------- C. Resource cookie ----------
 auth, _ = baue()
 resp = Response()
 auth._unlock_resource(_FakeReq(), resp, "fotos")
@@ -195,37 +195,37 @@ gesetzt = gesetzte_cookies(resp)
 assert "__Host-tinysesam_runlock" in gesetzt
 verstoesse = headers.pruefe_cookie_flags(gesetzt, ERWARTUNG)
 assert not verstoesse, verstoesse
-assert "max-age" in gesetzt["__Host-tinysesam_runlock"], "Ressourcen-Freischaltung muss ablaufen"
-ok("Ressourcen-Cookie: HttpOnly + Secure + SameSite + Max-Age")
+assert "max-age" in gesetzt["__Host-tinysesam_runlock"], "resource unlock must expire"
+ok("Resource cookie: HttpOnly + Secure + SameSite + Max-Age")
 
 
-# ---------- D. Logout räumt das Cookie ab ----------
+# ---------- D. Logout clears the cookie ----------
 auth, c = baue()
 login(c)
 r = c.get("/auth/logout", follow_redirects=False)
 sess = gesetzte_cookies(r).get("__Host-tinysesam_session")
-assert sess is not None, "Logout muss das Session-Cookie überschreiben, nicht nur die DB-Zeile leeren"
-assert sess["_wert"] in ("", '""'), f"Logout muss den Cookie-Wert leeren, ist: {sess['_wert']!r}"
-# Ein `__Host-`-Set-Cookie ohne Secure verwirft der Browser — auch das löschende. Ohne das
-# Flag bliebe das Cookie nach dem Logout einfach stehen.
+assert sess is not None, "logout must overwrite the session cookie, not just empty the DB row"
+assert sess["_wert"] in ("", '""'), f"logout must empty the cookie value, is: {sess['_wert']!r}"
+# A `__Host-` Set-Cookie without Secure is discarded by the browser — the deleting one too. Without the
+# flag the cookie would simply remain after logout.
 assert sess.get("secure") is True and sess.get("path") == "/", sess
-ok("Logout leert das Session-Cookie beim Browser (mit Secure + Path, sonst nimmt er das __Host-Löschen nicht an)")
+ok("Logout empties the session cookie at the browser (with Secure + Path, otherwise it does not accept the __Host- deletion)")
 
-# ---------- D2. `__Host-`-Präfix nur, wo der Browser es zulässt (H-1) ----------
-# Ein `__Host-`-Cookie kann keine Nachbar-Subdomain setzen oder überschatten — das ist der
-# Riegel gegen untergeschobene Sitzungs-, CSRF- und Freigabe-Tokens (F-01, F-02). Der Browser
-# nimmt es aber nur mit Secure, ohne Domain und mit Path=/ an; überall sonst hiesse das Präfix:
-# gar kein Cookie.
+# ---------- D2. `__Host-` prefix only where the browser allows it (H-1) ----------
+# A `__Host-` cookie cannot be set or shadowed by a neighbouring subdomain — that is the
+# bolt against planted session, CSRF and unlock tokens (F-01, F-02). The browser
+# accepts it only with Secure, without Domain and with Path=/; anywhere else the prefix would mean:
+# no cookie at all.
 for kw, erwartet in (({}, True), ({"cookie_samesite": "strict"}, True),
                      ({"cookie_secure": False}, False), ({"cookie_domain": ".example.com"}, False),
                      ({"cookie_path": "/app"}, False), ({"cookie_host_prefix": False}, False),
-                     # A-7: Pfad "" schickt gar kein Path-Attribut — `__Host-` verlangt Path=/.
+                     # A-7: path "" sends no Path attribute at all — `__Host-` requires Path=/.
                      ({"cookie_path": ""}, False)):
     a, _ = baue(**kw)
     namen = (a.session_cookie_name, a.csrf_cookie_name, a.resource_cookie_name)
-    # Die Flow-Cookies (OIDC/SAML/Passkey) und das CSRF-Cookie setzen nie eine Domain — sie
-    # tragen das Präfix auch bei gesetztem cookie_domain (A-1; das CSRF-Cookie seit der
-    # Nacharbeit zu H-1: ohne Präfix setzte jede Nachbar-Subdomain ein passendes Paar).
+    # The flow cookies (OIDC/SAML/passkey) and the CSRF cookie never set a Domain — they
+    # carry the prefix even with cookie_domain set (A-1; the CSRF cookie since the
+    # rework on H-1: without the prefix every neighbouring subdomain would set a matching pair).
     flow_erwartet = erwartet or kw == {"cookie_domain": ".example.com"}
     assert a.session_cookie_name.startswith("__Host-") == erwartet, (kw, namen)
     assert a.resource_cookie_name.startswith("__Host-") == erwartet, (kw, namen)
@@ -237,13 +237,13 @@ for kw, erwartet in (({}, True), ({"cookie_samesite": "strict"}, True),
     a._unlock_resource(_FakeReq(), resp, "fotos")
     gesetzt = gesetzte_cookies(resp)
     assert set(gesetzt) == set(namen), (kw, gesetzt.keys())
-    # Jedes `__Host-`-Cookie so, wie der Browser es annimmt — auch das CSRF-Cookie neben einer
-    # Sitzung mit Domain: Trüge es selbst eine Domain, verwürfe der Browser es still.
+    # Every `__Host-` cookie as the browser accepts it — also the CSRF cookie next to a
+    # session with Domain: if it carried a Domain itself, the browser would silently discard it.
     for n in namen:
         if n.startswith("__Host-"):
             assert gesetzt[n].get("secure") is True and gesetzt[n].get("path") == "/" \
                 and "domain" not in gesetzt[n], (n, gesetzt[n])
-    # Kein `__Host-`-Cookie ohne Path=/ — das verwirft der Browser still (A-7).
+    # No `__Host-` cookie without Path=/ — the browser silently discards that (A-7).
     for n in namen:
         assert not n.startswith("__Host-") or gesetzt[n].get("path") == "/", (kw, n, gesetzt[n])
     fr = Response()
@@ -251,41 +251,41 @@ for kw, erwartet in (({}, True), ({"cookie_samesite": "strict"}, True),
     f_n, f_c = next(iter(gesetzte_cookies(fr).items()))
     assert f_n == a.flow_cookie_name("tinysesam_oidc_flow") and "domain" not in f_c, (kw, f_n, f_c)
     assert not f_n.startswith("__Host-") or (f_c.get("secure") is True and f_c.get("path") == "/"), f_c
-ok("__Host- an Sitzung, CSRF und Freigabe genau dann, wenn Secure + host-only + Path=/ (sonst ohne)")
-ok("A-1/A-7: Flow-Cookies mit __Host- auch bei cookie_domain; cookie_path='' bekommt kein Präfix")
+ok("__Host- on session, CSRF and unlock exactly when Secure + host-only + Path=/ (otherwise without)")
+ok("A-1/A-7: flow cookies with __Host- also with cookie_domain; cookie_path='' gets no prefix")
 
-# Ein Cookie gleichen Namens OHNE Präfix — das, was eine Nachbar-Subdomain setzen kann —
-# meldet niemanden an.
+# A cookie of the same name WITHOUT prefix — what a neighbouring subdomain can set —
+# signs nobody in.
 auth, c = baue()
 login(c)
 echt = c.cookies.get("__Host-tinysesam_session")
 assert echt and c.get("/geheim").status_code == 200
 c.cookies.clear()
 c.cookies.set("tinysesam_session", echt)
-assert c.get("/geheim").status_code in (401, 307), "ungepräfixtes Cookie darf nicht zählen"
-ok("ein ungepräfixtes Sitzungs-Cookie (Subdomain-Wurf) wird nicht gelesen")
+assert c.get("/geheim").status_code in (401, 307), "unprefixed cookie must not count"
+ok("an unprefixed session cookie (subdomain throw) is not read")
 
-# ---------- D2b. Die Altnamen von vor dem Präfix räumt TinySesam weg (H-1, B-20) ----------
-# Nach dem Update liest TinySesam nur noch `__Host-…`. Die Cookies unter den alten Namen lagen
-# bis zu ihrem Ablauf daneben (Sitzung bis 7 Tage, Freigabe 12 h) — gelöscht hat sie niemand,
-# auch nicht der Logout. Zusammen mit den neuen trug ein Browser so sieben und mehr
-# tinysesam-Cookies, und die nginx-Vorlagen reichten das überzählige an die App durch.
-# Jetzt löscht jede Antwort, die das Sitzungs-Cookie schreibt (Anmelden, Abmelden, Step-up),
-# die Altnamen, die der Browser mitgeschickt hat — host-only, wie sie gesetzt waren.
-# (Mutationsprobe: den Aufruf von `_altnamen_loeschen` in der Routen-Klasse streichen → rot;
-# den in `logout()` streichen → rot beim Abmelden über eine eigene Route.)
+# ---------- D2b. TinySesam clears the legacy names from before the prefix (H-1, B-20) ----------
+# After the update TinySesam reads only `__Host-…`. The cookies under the old names lay
+# next to them until their expiry (session up to 7 days, unlock 12 h) — nobody deleted them,
+# not even logout. Together with the new ones a browser thus carried seven and more
+# tinysesam cookies, and the nginx templates passed the surplus on to the app.
+# Now every response that writes the session cookie (sign-in, sign-out, step-up) deletes
+# the legacy names that the browser sent along — host-only, as they were set.
+# (Mutation probe: remove the call of `_altnamen_loeschen` in the route class → red;
+# remove the one in `logout()` → red when signing out via an own route.)
 ALT = ("tinysesam_session", "tinysesam_csrf", "tinysesam_runlock")
 
 
 def geloescht(response) -> set:
-    """Die Namen, die diese Antwort beim Browser löscht (leerer Wert, Max-Age=0)."""
+    """The names this response deletes at the browser (empty value, Max-Age=0)."""
     return {n for n, c in gesetzte_cookies(response).items()
             if c["_wert"] in ("", '""') and str(c.get("max-age")) == "0"}
 
 
 auth, c = baue()
 _uid = auth.store.get_user_by_name("admin")["id"]
-_alt_sitzung = auth.store.create_session(_uid, 3600, True, "password")   # aus der Zeit vor dem Update
+_alt_sitzung = auth.store.create_session(_uid, 3600, True, "password")   # from the time before the update
 _alt_freigabe = "alte-freigabe-vor-dem-update"
 auth.store.add_resource_unlock(_alt_freigabe, "fotos", int(time.time()) + 3600)
 for n in ALT:
@@ -295,16 +295,16 @@ c.cookies.set("tinysesam_runlock", _alt_freigabe)
 assert auth.store.get_session(_alt_sitzung) and auth.store.is_resource_unlocked(_alt_freigabe, "fotos")
 r = login(c)
 assert r.status_code == 303 and "__Host-tinysesam_session" in gesetzte_cookies(r)
-assert geloescht(r) >= set(ALT), f"Login löscht die Altnamen nicht: {geloescht(r)}"
+assert geloescht(r) >= set(ALT), f"login does not delete the legacy names: {geloescht(r)}"
 for n in ALT:
     zeile = gesetzte_cookies(r)[n]
     assert zeile.get("path") == "/" and "domain" not in zeile, (n, zeile)
-ok("H-1: der Login löscht die mitgeschickten Cookies unter den Altnamen (host-only, Path=/)")
-# Und die Sitzung dahinter: Das alte Token hätte unter dem neuen Namen noch sieben Tage angemeldet.
-# (Mutationsprobe: in `_altnamen_loeschen` delete_session/delete_resource_unlocks streichen → rot.)
-assert auth.store.get_session(_alt_sitzung) is None, "die Sitzung hinter dem Altnamen lebt weiter"
-assert not auth.store.is_resource_unlocked(_alt_freigabe, "fotos"), "die alte Freigabe lebt weiter"
-ok("H-1: …und beendet die Sitzung und die Freigaben dahinter")
+ok("H-1: the login deletes the cookies sent along under the legacy names (host-only, Path=/)")
+# And the session behind it: the old token would still have signed in for seven days under the new name.
+# (Mutation probe: remove delete_session/delete_resource_unlocks in `_altnamen_loeschen` → red.)
+assert auth.store.get_session(_alt_sitzung) is None, "the session behind the legacy name lives on"
+assert not auth.store.is_resource_unlocked(_alt_freigabe, "fotos"), "the old unlock lives on"
+ok("H-1: …and ends the session and the unlocks behind it")
 
 auth, c = baue()
 login(c)
@@ -312,10 +312,10 @@ c.cookies.set("tinysesam_runlock", "ALT")
 r = c.get("/auth/logout", follow_redirects=False)
 assert "tinysesam_runlock" in geloescht(r) and "__Host-tinysesam_session" in geloescht(r), geloescht(r)
 assert not {"tinysesam_session", "tinysesam_csrf"} & set(gesetzte_cookies(r)), \
-    "gelöscht wird nur, was der Browser mitgeschickt hat"
-ok("H-1: der Logout löscht sie ebenso — und nur die, die der Browser wirklich hat")
+    "only what the browser sent along is deleted"
+ok("H-1: logout deletes them likewise — and only those the browser really has")
 
-# Auch ein Abmelden über eine EIGENE Route der App (`auth.logout()` direkt, ohne die Routen-Klasse).
+# Also a sign-out via an app's OWN route (`auth.logout()` directly, without the route class).
 auth, c = baue()
 _app_eigen = c.app
 
@@ -330,12 +330,12 @@ def _eigen_abmelden(request: Request):
 login(c)
 c.cookies.set("tinysesam_session", "ALT")
 assert "tinysesam_session" in geloescht(c.post("/eigen/abmelden")), \
-    "auth.logout() in einer eigenen Route lässt die Altnamen stehen"
-ok("H-1: auth.logout() in einer eigenen Route räumt die Altnamen ebenfalls")
+    "auth.logout() in an own route leaves the legacy names standing"
+ok("H-1: auth.logout() in an own route clears the legacy names too")
 
-# Ebenso ein Step-up über die öffentliche Methode `auth.rotate_session(request, response)` in einer
-# eigenen Route: Sie schreibt die Sitzung und hat den Request — also gehen die Altnamen mit.
-# (Mutationsprobe: den Aufruf von `_altnamen_loeschen` in `rotate_session` streichen → rot.)
+# Likewise a step-up via the public method `auth.rotate_session(request, response)` in an
+# own route: it writes the session and has the request — so the legacy names go along.
+# (Mutation probe: remove the call of `_altnamen_loeschen` in `rotate_session` → red.)
 
 
 @_app_eigen.post("/eigen/stepup")
@@ -349,15 +349,15 @@ login(c)
 _alt_su = auth.store.create_session(auth.store.get_user_by_name("admin")["id"], 3600, True, "password")
 c.cookies.set("tinysesam_session", _alt_su)
 r = c.post("/eigen/stepup")
-assert "__Host-tinysesam_session" in gesetzte_cookies(r), "rotate_session setzt kein Cookie"
-assert "tinysesam_session" in geloescht(r), "auth.rotate_session() lässt die Altnamen stehen"
-assert auth.store.get_session(_alt_su) is None, "die Sitzung hinter dem Altnamen lebt weiter"
-ok("H-1: auth.rotate_session() in einer eigenen Route räumt die Altnamen ebenfalls")
+assert "__Host-tinysesam_session" in gesetzte_cookies(r), "rotate_session sets no cookie"
+assert "tinysesam_session" in geloescht(r), "auth.rotate_session() leaves the legacy names standing"
+assert auth.store.get_session(_alt_su) is None, "the session behind the legacy name lives on"
+ok("H-1: auth.rotate_session() in an own route clears the legacy names too")
 
-# Gelöscht wird nur, wenn die Antwort die Sitzung schreibt. Eine Seite, die bloss das CSRF-Cookie
-# setzt (GET /auth/login), lässt die Altnamen stehen — sonst beendete jeder Seitenaufruf, auch ein
-# eingebettetes Bild von fremder Hand, die Sitzung hinter dem alten Cookie.
-# (Mutationsprobe: in `_altnamen_loeschen` die Bedingung „Sitzungs-Cookie gesetzt" streichen → rot.)
+# Deleting happens only if the response writes the session. A page that merely sets the CSRF cookie
+# (GET /auth/login) leaves the legacy names standing — otherwise every page view, even an
+# embedded image from a foreign hand, would end the session behind the old cookie.
+# (Mutation probe: remove the condition "session cookie set" in `_altnamen_loeschen` → red.)
 auth, c = baue()
 _alt_get = auth.store.create_session(auth.store.get_user_by_name("admin")["id"], 3600, True, "password")
 for n in ALT:
@@ -366,42 +366,42 @@ c.cookies.set("tinysesam_session", _alt_get)
 r = c.get("/auth/login")
 assert r.status_code == 200 and "__Host-tinysesam_csrf" in gesetzte_cookies(r), gesetzte_cookies(r)
 assert not geloescht(r) and not set(ALT) & set(gesetzte_cookies(r)), gesetzte_cookies(r)
-assert auth.store.get_session(_alt_get), "ein blosser Seitenaufruf beendet die Altsitzung"
-ok("H-1: eine Antwort ohne Sitzungs-Cookie (GET /auth/login) löscht keine Altnamen")
+assert auth.store.get_session(_alt_get), "a mere page view ends the legacy session"
+ok("H-1: a response without a session cookie (GET /auth/login) deletes no legacy names")
 
-# Mit `cookie_domain` (Forward-Auth über Subdomains) greift das Präfix nur am CSRF-Cookie — der
-# Altname ist dann `tinysesam_csrf`. Den setzte TinySesam auch vorher nie mit Domain; gelöscht
-# wird er also host-only. Ein `Domain=`-Attribut träfe ein anderes Cookie und liesse das echte
-# liegen.
-# (Mutationsprobe: in `_altnamen_loeschen` `_cookie_loeschen` statt der host-only-Löschung → rot.)
+# With `cookie_domain` (forward auth across subdomains) the prefix applies only to the CSRF cookie — the
+# legacy name is then `tinysesam_csrf`. TinySesam never set that one with a Domain before either; it is
+# therefore deleted host-only. A `Domain=` attribute would hit a different cookie and leave the real one
+# standing.
+# (Mutation probe: in `_altnamen_loeschen` `_cookie_loeschen` instead of the host-only deletion → red.)
 auth, c = baue(cookie_domain=".example.com")
 assert auth.session_cookie_name == "tinysesam_session" and auth.csrf_cookie_name == "__Host-tinysesam_csrf"
 assert auth._altnamen() == ["tinysesam_csrf"], auth._altnamen()
 c.cookies.set("tinysesam_csrf", "ALT")
 r = login(c)
 assert r.status_code == 303 and "tinysesam_session" in gesetzte_cookies(r)
-assert "tinysesam_csrf" in geloescht(r), f"Altname tinysesam_csrf nicht gelöscht: {geloescht(r)}"
+assert "tinysesam_csrf" in geloescht(r), f"legacy name tinysesam_csrf not deleted: {geloescht(r)}"
 _zeile = gesetzte_cookies(r)["tinysesam_csrf"]
 assert "domain" not in _zeile and _zeile.get("path") == "/", _zeile
 assert gesetzte_cookies(r)["tinysesam_session"].get("domain") in (".example.com", "example.com")
-ok("H-1: mit cookie_domain wird der Altname tinysesam_csrf host-only gelöscht, die Sitzung bleibt Domain-weit")
+ok("H-1: with cookie_domain the legacy name tinysesam_csrf is deleted host-only, the session stays domain-wide")
 
-# Wo das Präfix nicht greift, SIND die Altnamen die aktuellen Namen — die dürfen nicht fallen.
+# Where the prefix does not apply, the legacy names ARE the current names — they must not fall.
 auth, c = baue(cookie_secure=False)
 c.cookies.set("tinysesam_runlock", "AKTUELL")
 r = login(c)
 assert r.status_code == 303 and not geloescht(r), geloescht(r)
 assert gesetzte_cookies(r)["tinysesam_session"]["_wert"] not in ("", '""')
-ok("ohne Präfix (cookie_secure=False) löscht der Login keins der eigenen Cookies")
+ok("without prefix (cookie_secure=False) the login deletes none of its own cookies")
 
-# ---------- D2c. Das Passkey-Flow-Cookie endet mit seinem Flow ----------
-# Der Flow-Satz ist nach `finish` verbraucht (pop_flow), das Cookie dazu blieb aber 300 s
-# liegen — ein tinysesam-Cookie mehr, das nichts mehr bindet und an jede App mitging. OIDC und
-# SAML löschten ihres schon am Rückweg. Der Block braucht das Extra [passkey]; ohne es fehlt nur
-# er, nicht die Suite. Geprüft wird die Route, nicht WebAuthn: die Signaturprüfung ist ersetzt.
-# (Mutationsprobe: `_flow_cookie_loeschen` in login_finish bzw. reg_finish streichen → rot.)
+# ---------- D2c. The passkey flow cookie ends with its flow ----------
+# The flow record is used up after `finish` (pop_flow), but the cookie stayed for 300 s
+# — one more tinysesam cookie that binds nothing any more and went along to every app. OIDC and
+# SAML deleted theirs on the way back. The block needs the extra [passkey]; without it only
+# it is missing, not the suite. The route is checked, not WebAuthn: the signature check is replaced.
+# (Mutation probe: remove `_flow_cookie_loeschen` in login_finish or reg_finish → red.)
 if importlib.util.find_spec("webauthn") is None:
-    print("  - D2c ausgelassen: Extra [passkey] (webauthn) fehlt")
+    print("  - D2c skipped: extra [passkey] (webauthn) missing")
 else:
     import json
     import types
@@ -426,21 +426,21 @@ else:
     r = c.post("/auth/passkey/login/finish", content=json.dumps({"id": "Y3JlZC10ZXN0"}), headers=kopf)
     assert r.status_code == 200 and r.json()["ok"], r.text[:200]
     assert "__Host-tinysesam_session" in gesetzte_cookies(r)
-    assert "__Host-tinysesam_waflow" in geloescht(r), f"Flow-Cookie bleibt nach dem Login: {gesetzte_cookies(r)}"
-    ok("Passkey-Login: das Flow-Cookie (httponly, __Host-) endet mit dem Flow")
+    assert "__Host-tinysesam_waflow" in geloescht(r), f"flow cookie remains after login: {gesetzte_cookies(r)}"
+    ok("Passkey login: the flow cookie (httponly, __Host-) ends with the flow")
 
-    # Der Login hat das CSRF-Token gedreht (0.20.1) — das von vor der Anmeldung gilt nicht mehr.
-    # Bis 0.20.0 lief dieser Block mit dem alten weiter; genau das hielt die fehlende Rotation fest.
+    # The login rotated the CSRF token (0.20.1) — the one from before sign-in no longer applies.
+    # Until 0.20.0 this block continued with the old one; exactly that pinned down the missing rotation.
     kopf["X-CSRF-Token"] = c.cookies.get("__Host-tinysesam_csrf")
     r = c.post("/auth/passkey/register/begin", headers=kopf)
     assert r.status_code == 200 and "__Host-tinysesam_waflow" in gesetzte_cookies(r), r.text[:120]
     r = c.post("/auth/passkey/register/finish", content=json.dumps({"id": "neu", "response": {}}),
                headers=kopf)
     assert r.status_code == 200 and r.json()["ok"], r.text[:200]
-    assert "__Host-tinysesam_waflow" in geloescht(r), f"Flow-Cookie bleibt nach der Anlage: {gesetzte_cookies(r)}"
-    ok("Passkey-Anlage: das Flow-Cookie endet ebenso")
+    assert "__Host-tinysesam_waflow" in geloescht(r), f"flow cookie remains after registration: {gesetzte_cookies(r)}"
+    ok("Passkey registration: the flow cookie ends likewise")
 
-# ---------- D3. cookie_secure=False über HTTPS fällt auf (F-04) ----------
+# ---------- D3. cookie_secure=False over HTTPS gets noticed (F-04) ----------
 import logging  # noqa: E402
 
 
@@ -470,26 +470,26 @@ def secure_warnungen(cookie_secure, base, headers_=None, n=2):
 
 
 assert len(secure_warnungen(False, "http://testserver",
-                            {"X-Forwarded-Proto": "https"})) == 1, "TLS-Proxy davor: genau eine Warnung"
-assert len(secure_warnungen(False, "https://testserver")) == 1, "direkt HTTPS: genau eine Warnung"
-assert secure_warnungen(False, "http://testserver") == [], "lokal ohne TLS ist der erlaubte Fall"
-assert secure_warnungen(True, "https://testserver") == [], "mit Secure gibt es nichts zu melden"
-ok("cookie_secure=False + HTTPS-Request → eine Warnung je Instanz; lokal über HTTP still")
+                            {"X-Forwarded-Proto": "https"})) == 1, "TLS proxy in front: exactly one warning"
+assert len(secure_warnungen(False, "https://testserver")) == 1, "direct HTTPS: exactly one warning"
+assert secure_warnungen(False, "http://testserver") == [], "local without TLS is the permitted case"
+assert secure_warnungen(True, "https://testserver") == [], "with Secure there is nothing to report"
+ok("cookie_secure=False + HTTPS request → one warning per instance; local over HTTP silent")
 
-# ---------- E. Widersprüchliche Config wird beim Bau abgelehnt ----------
-# `cookie_secure=False` ist für lokale Aufbauten ohne Zertifikat richtig und bleibt erlaubt.
-# Zusammen mit `https_mode='force'` widerspricht es sich: Die App leitet dann jeden Request
-# auf HTTPS um und gibt das Session-Cookie trotzdem ohne Secure-Flag heraus.
+# ---------- E. Contradictory config is rejected at construction ----------
+# `cookie_secure=False` is right for local setups without a certificate and remains allowed.
+# Together with `https_mode='force'` it contradicts itself: the app then redirects every request
+# to HTTPS and still issues the session cookie without the Secure flag.
 #
-# Geprüft wird nur, was die App über ihr EIGENES Verhalten sagt — nicht, was sie über die
-# Außenwelt behauptet. `base_url='https://…' + cookie_secure=False` sieht nach demselben
-# Fehler aus, ist aber keiner: `base_url` ist die öffentliche Adresse (SAML/OIDC bauen daraus
-# Callbacks), nicht der Transport zwischen Browser und App. Genau diese Kombination brauchen
-# test_saml, test_matrix, test_forward_auth und test_sessions_logout.
+# Only what the app says about its OWN behaviour is checked — not what it claims about the
+# outside world. `base_url='https://…' + cookie_secure=False` looks like the same
+# error but is none: `base_url` is the public address (SAML/OIDC build callbacks from it),
+# not the transport between browser and app. Exactly this combination is needed by
+# test_saml, test_matrix, test_forward_auth and test_sessions_logout.
 
 
 def baut(**kw) -> bool:
-    """True, wenn die Config angenommen wird; False bei ValueError."""
+    """True if the config is accepted; False on ValueError."""
     try:
         baue(**kw)
         return True
@@ -497,30 +497,30 @@ def baut(**kw) -> bool:
         return False
 
 
-assert baut(cookie_secure=False), "cookie_secure=False muss lokal erlaubt bleiben"
-assert baut(cookie_secure=True, https_mode="force"), "die saubere Prod-Kombination muss gehen"
+assert baut(cookie_secure=False), "cookie_secure=False must remain allowed locally"
+assert baut(cookie_secure=True, https_mode="force"), "the clean prod combination must work"
 assert baut(cookie_secure=False, base_url="https://app.example.com"), \
-    "HTTPS-base_url + cookie_secure=False ist KEIN Widerspruch — vier Suiten brauchen das"
-ok("erlaubt: cookie_secure=False lokal, cookie_secure=True + https_mode='force' in Prod")
+    "HTTPS base_url + cookie_secure=False is NOT a contradiction — four suites need it"
+ok("allowed: cookie_secure=False locally, cookie_secure=True + https_mode='force' in prod")
 
 assert not baut(cookie_secure=False, https_mode="force"), \
-    "https_mode='force' + cookie_secure=False muss abgelehnt werden"
-ok("abgelehnt: die App leitet auf HTTPS um, gibt das Cookie aber ohne Secure heraus")
+    "https_mode='force' + cookie_secure=False must be rejected"
+ok("rejected: the app redirects to HTTPS but issues the cookie without Secure")
 
-# Ein Tippfehler in https_mode schaltete den HTTPS-Zwang bisher STILL ab: Ausgewertet wird
-# nur `== "force"`, alles andere heißt „kein Redirect". Kein Fehler, kein Hinweis.
-assert not baut(https_mode="forse"), "Tippfehler in https_mode muss auffallen"
-assert not baut(https_mode=""), "leeres https_mode muss auffallen"
+# A typo in https_mode used to switch the HTTPS enforcement off SILENTLY: only
+# `== "force"` is evaluated, everything else means "no redirect". No error, no notice.
+assert not baut(https_mode="forse"), "typo in https_mode must be noticed"
+assert not baut(https_mode=""), "empty https_mode must be noticed"
 assert baut(https_mode="off") and baut(https_mode="warn")
-ok("https_mode wird validiert — ein Tippfehler schaltet den Redirect nicht mehr still ab")
+ok("https_mode is validated — a typo no longer silently switches the redirect off")
 
 
-# CSRF aus UND SameSite=None: dann schützt gar nichts mehr (F-03). Einzeln bleibt beides erlaubt.
-assert baut(csrf_enabled=False), "csrf_enabled=False allein bleibt erlaubt (SameSite=Lax trägt)"
-assert baut(cookie_samesite="none", cookie_secure=True), "SameSite=None mit CSRF bleibt erlaubt"
+# CSRF off AND SameSite=None: then nothing protects any more (F-03). Each alone remains allowed.
+assert baut(csrf_enabled=False), "csrf_enabled=False alone remains allowed (SameSite=Lax carries)"
+assert baut(cookie_samesite="none", cookie_secure=True), "SameSite=None with CSRF remains allowed"
 assert not baut(csrf_enabled=False, cookie_samesite="none", cookie_secure=True), \
-    "csrf_enabled=False + cookie_samesite='none' muss abgelehnt werden"
-ok("abgelehnt: csrf_enabled=False zusammen mit cookie_samesite='none' (kein CSRF-Schutz übrig)")
+    "csrf_enabled=False + cookie_samesite='none' must be rejected"
+ok("rejected: csrf_enabled=False together with cookie_samesite='none' (no CSRF protection left)")
 
 
-print("\ntest_cookies: alle Prüfungen grün")
+print("\ntest_cookies: all checks green")

@@ -1,23 +1,23 @@
-"""Gespeicherte Werte englisch (Schema 12) — und die Sperre des Betreibers als öffentliche Methode.
+"""Stored values in English (schema 12) — and the operator's lockout as a public method.
 
-PO-Entscheid 2026-09-27, „Alles übersetzen, auch DB-Werte“: Seit 0.22.0 heissen auch die Werte der
-öffentlichen Oberfläche englisch, ohne Alias. Zwei davon stehen in der Datenbank:
+PO decision 2026-09-27, “translate everything, DB values too”: since 0.22.0 the values of the
+public interface are also English, without alias. Two of them are in the database:
 
 - `api_key.kind` — `automat`/`mensch` → `automation`/`human`;
-- der Payload offener Adresswechsel-Links (`magic_token`, `purpose='email_change'`) — `alt` → `old`.
+- the payload of open address-change links (`magic_token`, `purpose='email_change'`) — `alt` → `old`.
 
-Die Migration schreibt sie beim Start um (`Store._werte_englisch`, Stempel 12), der Code liest einen
-alten Wert trotzdem richtig — eine ältere Fassung, die nach einem Rückschritt auf derselben Datei
-lief, hat wieder alte hinterlassen — und schreibt nur neue. Der Rückweg auf 0.21.x steht als SQL in
-`docs/BETRIEB.md`; diese Suite führt genau diesen Block aus, damit Doku und Wirkung nicht
-auseinanderlaufen. Was 0.21.0 selbst mit einer Datei auf Stempel 12 tut, ist einmal mit dem echten
-Code aus dem Tag gemessen (CHANGELOG 0.22.0) — hier nicht, weil der CI-Checkout keine Tags hat.
+The migration rewrites them at start (`Store._werte_englisch`, stamp 12), the code still reads an
+old value correctly — an older version that ran on the same file after a rollback
+has left old ones behind again — and writes only new ones. The way back to 0.21.x is stated as SQL in
+`docs/BETRIEB.md`; this suite runs exactly this block so that docs and effect do not
+drift apart. What 0.21.0 itself does with a file at stamp 12 was measured once with the real
+code from the tag (CHANGELOG 0.22.0) — not here, because the CI checkout has no tags.
 
-Dazu `auth.set_disabled(user_id, disabled)` (Stufe A): dieselbe Wirkung wie die Sperre im Panel,
-das die Methode ruft — bis 0.21.x zeigte die Doku `auth.store.set_disabled(…, durch_betreiber=True)`,
-das nur den Vermerk setzte.
+In addition `auth.set_disabled(user_id, disabled)` (stage A): the same effect as the lockout in the panel,
+which calls the method — up to 0.21.x the docs showed `auth.store.set_disabled(…, durch_betreiber=True)`,
+which only set the mark.
 
-Alle Prüfungen kommen ohne Extras aus.
+All checks work without extras.
 """
 from __future__ import annotations
 
@@ -72,7 +72,7 @@ def _app(a: TinySesam) -> FastAPI:
 
 
 def _mitschreiben(fn):
-    """(Ergebnis, Text) — was der Logger `tinysesam` dabei sagt, ab INFO."""
+    """(result, text) — what the logger `tinysesam` says meanwhile, from INFO."""
     puffer = io.StringIO()
     haken = logging.StreamHandler(puffer)
     log = logging.getLogger("tinysesam")
@@ -93,7 +93,7 @@ def _link(post: list) -> str:
 
 
 def _roh(pfad: str, *sql) -> None:
-    """Wie eine ältere Fassung (oder der Betreiber mit `sqlite3`) direkt in die Datei schreiben."""
+    """Write directly into the file like an older version (or the operator with `sqlite3`)."""
     con = sqlite3.connect(pfad)
     try:
         for s in sql:
@@ -104,7 +104,7 @@ def _roh(pfad: str, *sql) -> None:
 
 
 def _stand(pfad: str) -> tuple:
-    """(Stempel, Key-Arten, Payloads der Adresswechsel-Links) — roh aus der Datei."""
+    """(stamp, key kinds, payloads of the address-change links) — raw from the file."""
     con = sqlite3.connect(pfad)
     try:
         return (con.execute("PRAGMA user_version").fetchone()[0],
@@ -116,7 +116,7 @@ def _stand(pfad: str) -> tuple:
 
 
 def _key_einfuegen(pfad: str, uid: int, kind: str) -> str:
-    """Einen Key so anlegen, wie ihn 0.21.x ausstellt (`kind` wie dort) — gibt den Klartext zurück."""
+    """Create a key the way 0.21.x issues it (`kind` as there) — returns the plaintext."""
     roh = "tsk_" + secrets.token_urlsafe(32)
     _roh(pfad, ("INSERT INTO api_key(user_id, name, prefix, key_hash, roles, kind, created_at, "
                 "expires_at) VALUES (?,?,?,?,?,?,strftime('%s','now'),strftime('%s','now')+86400)",
@@ -125,7 +125,7 @@ def _key_einfuegen(pfad: str, uid: int, kind: str) -> str:
 
 
 def _link_einfuegen(pfad: str, uid: int, alt: str, neu: str) -> str:
-    """Einen Adresswechsel-Link so anlegen, wie ihn 0.21.x ausstellt (Payload `{"alt": …}`)."""
+    """Create an address-change link the way 0.21.x issues it (payload `{"alt": …}`)."""
     roh = secrets.token_urlsafe(32)
     _roh(pfad, ("INSERT INTO magic_token(token_hash, purpose, user_id, email, payload, created_at, "
                 "expires_at) VALUES (?,?,?,?,?,strftime('%s','now'),strftime('%s','now')+3600)",
@@ -135,8 +135,8 @@ def _link_einfuegen(pfad: str, uid: int, alt: str, neu: str) -> str:
 
 
 def _wirkung(a: TinySesam, mensch: str, automat: str) -> dict:
-    """Was die beiden Keys an einer Route bewirken: der Menschen-Key allein und mit Sitzung, der
-    Automaten-Key allein."""
+    """What the two keys do on a route: the human key alone and with a session, the
+    automation key alone."""
     app = _app(a)
     ohne = TestClient(app)
     mit = TestClient(app)
@@ -148,10 +148,10 @@ def _wirkung(a: TinySesam, mensch: str, automat: str) -> dict:
             "automat_kind": a_allein.json().get("kind") if a_allein.status_code == 200 else None}
 
 
-# ── (a) Eine Datei aus 0.21.x: der Start migriert, die Keys wirken wie vorher ──────────────────────
-# (Mutationsproben: den Aufruf von `_werte_englisch` in `_migrate` streichen → (a) rot, die Arten
-# bleiben alt; `KEY_ARTEN_ALT` leeren → (a)/(b) rot, `mensch` gilt als Automaten-Key und der Key
-# wirkt ohne Sitzung — genau das, was 0.21.x mit einem `human`-Key tut.)
+# ── (a) A file from 0.21.x: the start migrates, the keys work as before ──────────────────────────
+# (Mutation probes: remove the call of `_werte_englisch` in `_migrate` → (a) red, the kinds
+# stay old; empty `KEY_ARTEN_ALT` → (a)/(b) red, `mensch` counts as an automation key and the key
+# works without a session — exactly what 0.21.x does with a `human` key.)
 pfad_a = os.path.join(tempfile.mkdtemp(), "a.db")
 post_a: list = []
 a = _aufbau(pfad_a, post_a)
@@ -161,7 +161,7 @@ automat_a = a.create_api_key(anna, name="ci")["key"]
 a.request_email_change(anna, "anna.neu@example.com", BASIS)()
 link_a = _link(post_a)
 a.store.db.close()
-# So lag die Datei unter 0.21.x: alte Werte, Stempel 11.
+# This is how the file lay under 0.21.x: old values, stamp 11.
 _roh(pfad_a, "UPDATE api_key SET kind='mensch' WHERE kind='human';"
              "UPDATE api_key SET kind='automat' WHERE kind='automation';"
              "UPDATE magic_token SET payload=json_object('alt', json_extract(payload, '$.old')) "
@@ -170,32 +170,32 @@ _roh(pfad_a, "UPDATE api_key SET kind='mensch' WHERE kind='human';"
 vorher_a = _stand(pfad_a)
 a, log_a = _mitschreiben(lambda: _aufbau(pfad_a, post_a))
 nachher_a = _stand(pfad_a)
-r.check("Vorbedingung: die Datei trägt die Werte von 0.21.x und den Stempel 11",
+r.check("precondition: the file carries the values of 0.21.x and the stamp 11",
         vorher_a == (11, ["mensch", "automat"], [{"alt": "anna@example.com"}]), str(vorher_a))
-r.check("(a) der Start migriert: aktueller Stempel (ab 12), `automation`/`human`, Payload `old` — und sagt es im Log",
+r.check("(a) the start migrates: current stamp (from 12), `automation`/`human`, payload `old` — and says so in the log",
         nachher_a == (Store.SCHEMA_VERSION, ["human", "automation"], [{"old": "anna@example.com"}])
         and "3 gespeicherte Werte auf die englischen Namen umgeschrieben" in log_a,
         f"{nachher_a} {log_a[-300:]!r}")
 w_a = _wirkung(a, mensch_a, automat_a)
-r.check("(a) … die Keys wirken wie vorher: der Menschen-Key nur mit Sitzung, der Automaten-Key allein",
+r.check("(a) … the keys work as before: the human key only with a session, the automation key alone",
         w_a == {"mensch_allein": 401, "mensch_mit_sitzung": 200, "automat_allein": 200,
                 "automat_kind": "automation"}, str(w_a))
-r.check("(a) … `api_key_kind`, `list_api_keys` und der offene Link nennen die englischen Werte",
+r.check("(a) … `api_key_kind`, `list_api_keys` and the open link name the English values",
         a.api_key_kind(mensch_a) == "human" and a.api_key_kind(automat_a) == "automation"
         and sorted(k["kind"] for k in a.list_api_keys(anna)) == ["automation", "human"]
         and a.peek_magic(link_a, purpose="email_change")["payload"] == {"old": "anna@example.com"})
 a.store.db.close()
 a, log_a2 = _mitschreiben(lambda: _aufbau(pfad_a, post_a))
-r.check("(a) zweiter Start: nichts mehr umzuschreiben (idempotent), dieselbe Datei",
+r.check("(a) second start: nothing left to rewrite (idempotent), same file",
         _stand(pfad_a) == nachher_a and "umgeschrieben" not in log_a2, log_a2[-300:])
-r.check("(a) … und der Link aus 0.21.x löst sich ein wie jeder andere",
+r.check("(a) … and the link from 0.21.x redeems like any other",
         a.confirm_email_change(link_a) == "ok" and a.get_user(anna)["email"] == "anna.neu@example.com")
 a.store.db.close()
 
-# ── (a') Audit- und Log-Zeilen bleiben, wie sie waren ────────────────────────────────────────────
-# Filter der Betreiber hängen an ihnen (PO-Entscheid 2026-09-27): Die Art eines Keys steht dort
-# weiter als `art=automat`/`art=mensch`, die Zeile im Sicherheits-Log nennt `'mensch'`.
-# (Mutationsprobe: `_key_art_audit` gibt den englischen Namen zurück → (a') rot.)
+# ── (a') Audit and log lines stay as they were ────────────────────────────────────────────────
+# Operators' filters hang on them (PO decision 2026-09-27): the kind of a key still appears there
+# as `art=automat`/`art=mensch`, the line in the security log names `'mensch'`.
+# (Mutation probe: `_key_art_audit` returns the English name → (a') red.)
 pfad_g = os.path.join(tempfile.mkdtemp(), "g.db")
 g = _aufbau(pfad_g)
 anna_g = g.create_user("anna", password=PW)
@@ -214,19 +214,19 @@ finally:
 _details = {f"{z['event']}:{m.group(1)}"
             for z in g.store._all("SELECT event, detail FROM audit WHERE event IN ('apikey_create', 'apikey_use')")
             for m in [re.search(r"(?:^| )art=(\S+)", z["detail"] or "")] if m}
-r.check("(a') Audit: `apikey_create`/`apikey_use` nennen die Art weiter mit `art=automat|mensch`",
+r.check("(a') audit: `apikey_create`/`apikey_use` still name the kind with `art=automat|mensch`",
         {"apikey_create:mensch", "apikey_create:automat", "apikey_use:automat"} <= _details, str(_details))
-r.check("(a') Sicherheits-Log: der Menschen-Key ohne Sitzung heisst dort weiter `'mensch'`",
+r.check("(a') security log: the human key without a session is still called `'mensch'` there",
         "API-Key der Art 'mensch' ohne passende Sitzung" in _sec.getvalue(), _sec.getvalue()[-300:])
 g.store.db.close()
 
-# ── (b) Rückschritt: 0.21.x hat auf der Datei (Stempel 12) wieder alte Werte geschrieben ──────────
-# Eine ältere Fassung senkt den Stempel nicht. Gelesen wird ein alter Wert trotzdem richtig, auch
-# ohne Neustart (ein zweiter Prozess, der noch 0.21.x fährt); der nächste Start schreibt die Keys um.
-# Den Payload eines Links nur beim Sprung auf 12 (die Suche ginge sonst bei jedem Start durch alle
-# Einmal-Token, tests/test_bestandsdaten.py „Aufwand") — `peek_magic` bildet ihn beim Lesen ab.
-# (Mutationsprobe: in `TinySesam._key_kind` die Abbildung weglassen → (b) rot: der `mensch`-Key
-# wirkt ohne Sitzung.)
+# ── (b) Rollback: 0.21.x wrote old values again on the file (stamp 12) ─────────────────────────
+# An older version does not lower the stamp. An old value is still read correctly, even
+# without a restart (a second process still running 0.21.x); the next start rewrites the keys.
+# The payload of a link only on the jump to 12 (the search would otherwise go through all
+# one-time tokens at every start, tests/test_bestandsdaten.py “Aufwand”) — `peek_magic` maps it when reading.
+# (Mutation probe: leave out the mapping in `TinySesam._key_kind` → (b) red: the `mensch` key
+# works without a session.)
 pfad_b = os.path.join(tempfile.mkdtemp(), "b.db")
 b = _aufbau(pfad_b)
 anna_b = b.create_user("anna", password=PW, email="anna@example.com")
@@ -234,14 +234,14 @@ neu_b = b.create_api_key(anna_b, name="neu", kind="human")["key"]
 mensch_b = _key_einfuegen(pfad_b, anna_b, "mensch")
 automat_b = _key_einfuegen(pfad_b, anna_b, "automat")
 link_b = _link_einfuegen(pfad_b, anna_b, "anna@example.com", "anna.b@example.com")
-r.check("Vorbedingung: gemischte Werte beim aktuellen Stempel (ab 12)",
+r.check("precondition: mixed values at the current stamp (from 12)",
         _stand(pfad_b)[:2] == (Store.SCHEMA_VERSION, ["human", "mensch", "automat"]), str(_stand(pfad_b)))
 w_b = _wirkung(b, mensch_b, automat_b)
-# `list_api_keys` sortiert nach `created_at` (Sekunden) absteigend. Der Key aus der Bibliothek und
-# die beiden roh eingefügten entstehen nicht in derselben Sekunde, wenn der Rechner ausgelastet ist
-# (parallele Suiten) — dann stand der jüngste vorn, und die Prüfung der Reihenfolge wurde rot,
-# obwohl jede Art stimmte. Geprüft wird deshalb je Key über seinen Namen.
-r.check("(b) gemischt, ohne Neustart: `mensch` gilt als `human` (nur mit Sitzung), `automat` als "
+# `list_api_keys` sorts by `created_at` (seconds) descending. The key from the library and
+# the two inserted raw do not arise in the same second when the machine is busy
+# (parallel suites) — then the newest came first, and the order check turned red
+# although every kind was right. Therefore each key is checked by its name.
+r.check("(b) mixed, without restart: `mensch` counts as `human` (only with a session), `automat` as "
         "`automation`",
         w_b == {"mensch_allein": 401, "mensch_mit_sitzung": 200, "automat_allein": 200,
                 "automat_kind": "automation"}
@@ -249,24 +249,24 @@ r.check("(b) gemischt, ohne Neustart: `mensch` gilt als `human` (nur mit Sitzung
         and {k["name"]: k["kind"] for k in b.list_api_keys(anna_b)}
         == {"neu": "human", "alt-mensch": "human", "alt-automat": "automation"},
         f"{w_b} {[(k['name'], k['kind']) for k in b.list_api_keys(anna_b)]}")
-r.check("(b) … der Link aus 0.21.x zeigt `old`, nicht `alt`",
+r.check("(b) … the link from 0.21.x shows `old`, not `alt`",
         b.peek_magic(link_b, purpose="email_change")["payload"] == {"old": "anna@example.com"})
 b.store.db.close()
 b, log_b = _mitschreiben(lambda: _aufbau(pfad_b))
-r.check("(b) der nächste Start schreibt die Keys um (bei jedem Start), den Link nicht (Stempel schon 12)",
+r.check("(b) the next start rewrites the keys (at every start), the link not (stamp already 12)",
         _stand(pfad_b) == (Store.SCHEMA_VERSION, ["human", "human", "automation"], [{"alt": "anna@example.com"}])
         and "2 gespeicherte Werte" in log_b, f"{_stand(pfad_b)} {log_b[-200:]!r}")
-r.check("(b) … und er gilt weiter, eingelöst mit `old` im Ergebnis",
+r.check("(b) … and it remains valid, redeemed with `old` in the result",
         b.redeem_magic(link_b, purpose="email_change")["payload"] == {"old": "anna@example.com"})
 b.store.db.close()
 
-# ── (c) Der Rückweg aus docs/BETRIEB.md: genau der Block, der dort steht ──────────────────────────
-# (Mutationsprobe: im SQL-Block der Doku die Zeile für `mensch` streichen → (c) rot.)
+# ── (c) The way back from docs/BETRIEB.md: exactly the block that is stated there ──────────────
+# (Mutation probe: remove the line for `mensch` in the SQL block of the docs → (c) red.)
 _doku = (ROOT / "docs" / "BETRIEB.md").read_text(encoding="utf-8")
 _abschnitt = _doku.split("## Rückschritt auf 0.21.x", 1)[-1] if "## Rückschritt auf 0.21.x" in _doku else ""
 _sql = re.search(r"```sql\n(.*?)```", _abschnitt, re.S)
-r.check("docs/BETRIEB.md hat den Abschnitt „Rückschritt auf 0.21.x“ mit einem SQL-Block",
-        bool(_sql), "Abschnitt oder ```sql-Block fehlt")
+r.check("docs/BETRIEB.md has the section “Rollback to 0.21.x” with an SQL block",
+        bool(_sql), "section or ```sql block missing")
 if _sql:
     pfad_c = os.path.join(tempfile.mkdtemp(), "c.db")
     post_c: list = []
@@ -277,19 +277,19 @@ if _sql:
     c.request_email_change(anna_c, "anna.c@example.com", BASIS)()
     c.store.db.close()
     _roh(pfad_c, _sql.group(1))
-    r.check("(c) das SQL aus der Doku stellt die Werte von 0.21.x her und senkt den Stempel auf 11",
+    r.check("(c) the SQL from the docs restores the values of 0.21.x and lowers the stamp to 11",
             _stand(pfad_c) == (11, ["mensch", "automat"], [{"alt": "anna@example.com"}]), str(_stand(pfad_c)))
     c = _aufbau(pfad_c, post_c)
-    r.check("(c) … und ein Start von 0.22.0 danach migriert wieder (Hin und Rück ohne Verlust)",
+    r.check("(c) … and a start of 0.22.0 afterwards migrates again (there and back without loss)",
             _stand(pfad_c) == (Store.SCHEMA_VERSION, ["human", "automation"], [{"old": "anna@example.com"}]), str(_stand(pfad_c)))
     c.store.db.close()
 
-# ── (d) Nur lesbar ────────────────────────────────────────────────────────────────────────────────
-# Alte Werte bei Stempel 12 (Rückschritt) auf einer Datei ohne Schreibrecht: Der Start darf nicht
-# scheitern, der bisher ging — gelesen wird ohnehin richtig. Ein Upgrade (Stempel 11) dagegen braucht
-# Schreibrecht wie jede Migration. Nur lesbar macht der Test den Schritt selbst, echt über
-# `PRAGMA query_only` (die übrigen Schritte des Starts schreiben nichts, was hier zählt).
-# (Mutationsprobe: das `try` um `_werte_englisch` streichen → (d) rot, der Start scheitert.)
+# ── (d) Read-only ─────────────────────────────────────────────────────────────────────────────
+# Old values at stamp 12 (rollback) on a file without write permission: the start must not
+# fail, which worked before — reading is correct anyway. An upgrade (stamp 11), on the other hand, needs
+# write permission like any migration. The test makes it read-only itself, really via
+# `PRAGMA query_only` (the other steps of the start write nothing that counts here).
+# (Mutation probe: remove the `try` around `_werte_englisch` → (d) red, the start fails.)
 _original = Store._werte_englisch
 
 
@@ -311,9 +311,9 @@ try:
     try:
         d, log_d = _mitschreiben(lambda: _aufbau(pfad_d))
         start_d = "ok"
-    except Exception as fehler:          # der Start selbst scheitert
+    except Exception as fehler:          # the start itself fails
         log_d, start_d = "", f"{type(fehler).__name__}: {fehler}"
-    r.check("(d) nur lesbar, Stempel 12, alte Werte: der Start gelingt, sagt es, liest `mensch` als `human`",
+    r.check("(d) read-only, stamp 12, old values: the start succeeds, says so, reads `mensch` as `human`",
             start_d == "ok" and "nicht auf die englischen Namen umgeschrieben" in log_d
             and d.api_key_kind(mensch_d) == "human" and _stand(pfad_d)[1] == ["mensch"],
             f"{start_d} {log_d[-200:]!r}")
@@ -325,12 +325,12 @@ try:
         upgrade_d = "ok"
     except sqlite3.OperationalError as fehler:
         upgrade_d = f"OperationalError: {fehler}"
-    r.check("(d) … ein Upgrade (Stempel 11) ohne Schreibrecht bricht ab, wie jede Migration",
+    r.check("(d) … an upgrade (stamp 11) without write permission aborts, like any migration",
             upgrade_d.startswith("OperationalError"), upgrade_d)
 finally:
     Store._werte_englisch = _original
 
-# ── (e) Die alten Namen sind Eingabefehler, deren Text den neuen nennt — kein Alias ────────────────
+# ── (e) The old names are input errors whose text names the new ones — no alias ────────────────
 pfad_e = os.path.join(tempfile.mkdtemp(), "e.db")
 e = _aufbau(pfad_e)
 bert = e.create_user("bert", password=PW)
@@ -341,23 +341,23 @@ for alt_name, neu_name in (("automat", "automation"), ("mensch", "human")):
         _texte[alt_name] = "angenommen"
     except ConfigError as fehler:
         _texte[alt_name] = str(fehler)
-r.check("(e) `create_api_key(kind='automat'|'mensch')` → ConfigError, der den neuen Namen nennt",
+r.check("(e) `create_api_key(kind='automat'|'mensch')` → ConfigError that names the new name",
         all(f"heisst seit 0.22.0 {neu!r}" in _texte[alt] for alt, neu in
             (("automat", "automation"), ("mensch", "human"))), str(_texte))
 _ce = TestClient(_app(e))
 _ce.post("/auth/login", data={"username": "bert", "password": PW}, follow_redirects=False)
 _antwort = _ce.post("/auth/apikeys", json={"name": "x", "kind": "mensch"})
 _standard = _ce.post("/auth/apikeys", json={"name": "y"})
-r.check("(e) … über `POST /auth/apikeys` 400 mit demselben Hinweis; ohne `kind` ein `automation`-Key",
+r.check("(e) … via `POST /auth/apikeys` 400 with the same hint; without `kind` an `automation` key",
         _antwort.status_code == 400 and "'human'" in _antwort.json()["detail"]
         and _standard.status_code == 200 and _standard.json()["kind"] == "automation"
         and "dropped_roles" in _standard.json(), f"{_antwort.text[:200]} {_standard.text[:200]}")
 e.store.db.close()
 
-# ── (f) auth.set_disabled: die Sperre des Betreibers mit der ganzen Wirkung ────────────────────────
-# (Mutationsproben, je einzeln: in `set_disabled` das Beenden der Sitzungen streichen → rot; den
-# Widerruf der Keys → rot; `revoke_user_magic_tokens` → rot; `durch_betreiber=True` weglassen → rot
-# (der Bestätigungslink hebt die Sperre auf); die Audit-Zeile → rot.)
+# ── (f) auth.set_disabled: the operator's lockout with its full effect ─────────────────────────
+# (Mutation probes, each individually: remove the ending of sessions in `set_disabled` → red; the
+# revocation of the keys → red; `revoke_user_magic_tokens` → red; omit `durch_betreiber=True` → red
+# (the confirmation link lifts the lockout); the audit line → red.)
 pfad_f = os.path.join(tempfile.mkdtemp(), "f.db")
 f = _aufbau(pfad_f)
 ereignisse_f: list = []
@@ -370,28 +370,28 @@ cb = TestClient(app_f)
 cb.post("/auth/login", data={"username": "bert", "password": PW}, follow_redirects=False)
 key_f = f.create_api_key(bert_f, name="ci")["key"]
 link_f = f.create_magic_token("login", user_id=bert_f, email="bert@example.com")
-r.check("Vorbedingung: bert ist angemeldet, sein Key wirkt, sein Anmelde-Link ist offen",
+r.check("precondition: bert is signed in, his key works, his sign-in link is open",
         cb.get("/wer").status_code == 200 and f.verify_api_key(key_f)[0] is not None
         and f.peek_magic(link_f) is not None)
 _vor = f.store._one("SELECT MAX(id) AS m FROM audit")["m"]
-r.check("(f) `set_disabled(uid, True)` ohne Anfrage → True", f.set_disabled(bert_f, True) is True)
+r.check("(f) `set_disabled(uid, True)` without a request → True", f.set_disabled(bert_f, True) is True)
 _zeile = f.store._one("SELECT event, username, ip, detail FROM audit WHERE id > ? AND event='user_disable'",
                       (_vor,))
-r.check("(f) … mit Betreiber-Vermerk, Sitzung beendet, Key widerrufen, Link verworfen",
+r.check("(f) … with operator mark, session ended, key revoked, link discarded",
         f.get_user(bert_f)["disabled"] == Store.GESPERRT_BETREIBER and cb.get("/wer").status_code == 401
         and f.verify_api_key(key_f) == (None, None) and f.peek_magic(link_f) is None
         and [k["revoked"] for k in f.list_api_keys(bert_f)] == [1])
-r.check("(f) … Audit `user_disable` unter dem betroffenen Konto, Ereignis `api_keys_revoked` mit `reason`",
+r.check("(f) … audit `user_disable` under the affected account, event `api_keys_revoked` with `reason`",
         _zeile is not None and dict(_zeile) == {"event": "user_disable", "username": "bert", "ip": None,
                                                 "detail": f"uid={bert_f} api_keys_revoked=1"}
         and ("api_keys_revoked", {"count": 1, "reason": "account_disabled"}) in ereignisse_f,
         f"{_zeile and dict(_zeile)} {ereignisse_f}")
 _verify = f.create_magic_token("verify_email", user_id=bert_f, email="bert@example.com")
 _v = TestClient(app_f).post(f"/auth/verify/{_verify}", follow_redirects=False)
-r.check("(f) … ein Bestätigungslink, der erst danach entsteht, hebt die Sperre nicht auf (H-18)",
+r.check("(f) … a confirmation link that only arises afterwards does not lift the lockout (H-18)",
         _v.status_code == 403 and f.get_user(bert_f)["disabled"] == Store.GESPERRT_BETREIBER, str(_v.status_code))
-r.check("(f) `set_disabled(uid, False)` entsperrt; der widerrufene Key bleibt widerrufen, die beendete "
-        "Sitzung beendet (sonst lebte sie mit dem Entsperren wieder auf)",
+r.check("(f) `set_disabled(uid, False)` unlocks; the revoked key stays revoked, the ended "
+        "session stays ended (otherwise it would revive with the unlock)",
         f.set_disabled(bert_f, False) is True and f.get_user(bert_f)["disabled"] == 0
         and f.verify_api_key(key_f) == (None, None) and cb.get("/wer").status_code == 401
         and f.store.list_sessions(bert_f) == []
@@ -403,14 +403,14 @@ try:
     _owner = "gesperrt"
 except StateError:
     _owner = "StateError"
-r.check("(f) ein Owner lässt sich nicht sperren: StateError, und nichts ist geschehen",
+r.check("(f) an owner cannot be locked: StateError, and nothing happened",
         _owner == "StateError" and f.get_user(chefin)["disabled"] == 0
         and f.store._one("SELECT 1 FROM audit WHERE id > ?", (_vor,)) is None, _owner)
-r.check("(f) ein unbekanntes Konto: False, keine Audit-Zeile",
+r.check("(f) an unknown account: False, no audit row",
         f.set_disabled(9999, True) is False
         and f.store._one("SELECT 1 FROM audit WHERE id > ?", (_vor,)) is None)
 
-# Das Panel ruft genau diese Methode — und schreibt dieselbe Zeile wie bis 0.21.x: der Admin als
+# The panel calls exactly this method — and writes the same line as up to 0.21.x: the admin as
 # Konto, seine IP, `uid=… api_keys_revoked=…`.
 ca = TestClient(app_f)
 ca.post("/auth/login", data={"username": "chefin", "password": PW}, follow_redirects=False)
@@ -419,23 +419,23 @@ _vor = f.store._one("SELECT MAX(id) AS m FROM audit")["m"]
 _p = ca.post(f"/auth/admin/api/users/{bert_f}/disable", json={"disabled": True})
 _zeile = f.store._one("SELECT event, username, ip, detail FROM audit WHERE id > ? AND event='user_disable'",
                       (_vor,))
-r.check("(f) Panel: 200, dieselbe Wirkung, Audit unter dem Admin mit seiner IP (wie bis 0.21.x)",
+r.check("(f) panel: 200, same effect, audit under the admin with his IP (as up to 0.21.x)",
         _p.status_code == 200 and f.get_user(bert_f)["disabled"] == Store.GESPERRT_BETREIBER
         and _zeile is not None and dict(_zeile) == {"event": "user_disable", "username": "chefin",
                                                     "ip": "testclient",
                                                     "detail": f"uid={bert_f} api_keys_revoked=1"},
         f"{_p.status_code} {_zeile and dict(_zeile)}")
-r.check("(f) Panel: ein unbekanntes Konto → 404 statt 200 (bis 0.21.x „ok“ und eine Audit-Zeile)",
+r.check("(f) panel: an unknown account → 404 instead of 200 (up to 0.21.x “ok” and an audit row)",
         ca.post("/auth/admin/api/users/9999/disable", json={"disabled": True}).status_code == 404)
 f.store.db.close()
 
-# Eine Quelle: Die Panel-Route ruft `auth.set_disabled` und keinen der Schritte selbst.
+# One source: the panel route calls `auth.set_disabled` and none of the steps itself.
 _admin = ast.parse((ROOT / "tinysesam" / "admin.py").read_text(encoding="utf-8"))
 _route = next(k for k in ast.walk(_admin) if isinstance(k, ast.AsyncFunctionDef) and k.name == "user_disable")
 _rufe = {ast.unparse(k.func) for k in ast.walk(_route) if isinstance(k, ast.Call)}
 _ueberall = {ast.unparse(k.func) for k in ast.walk(_admin) if isinstance(k, ast.Call)}
-r.check("(f) eine Quelle: `user_disable` ruft `auth.set_disabled`, keinen Schritt selbst; admin.py ruft "
-        "`store.set_disabled` nirgends",
+r.check("(f) one source: `user_disable` calls `auth.set_disabled`, no step itself; admin.py calls "
+        "`store.set_disabled` nowhere",
         "auth.set_disabled" in _rufe
         and not _rufe & {"auth.store.set_disabled", "auth.store.delete_user_sessions", "auth._keys_widerrufen",
                          "auth.store.revoke_user_magic_tokens", "protokoll"}

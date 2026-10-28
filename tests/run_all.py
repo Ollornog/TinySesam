@@ -1,34 +1,34 @@
 #!/usr/bin/env python3
-"""Test-Runner für TinySesam — führt alle (oder ausgewählte) tests/test_*.py aus.
+"""Test runner for TinySesam — runs all (or selected) tests/test_*.py.
 
-    python tests/run_all.py                # alle Suiten
-    python tests/run_all.py test_core.py   # nur bestimmte
+    python tests/run_all.py                # all suites
+    python tests/run_all.py test_core.py   # only specific ones
 
-Exit-Code 0 = alles grün, 1 = mind. ein Fehlschlag. Kein pytest nötig (Suiten sind
-eigenständige assert-Skripte).
+Exit code 0 = all green, 1 = at least one failure. No pytest needed (suites are
+standalone assert scripts).
 
-Eine Suite, der eine optionale Abhängigkeit fehlt, beendet sich SELBST mit Exit 77
-(`tests/_kit/voraussetzung.py`) — dann gilt sie als übersprungen. Jeder andere
-Fehlschlag ist ein Fehlschlag. Diese Unterscheidung ist wichtiger, als sie aussieht:
-Vorher riet der Runner am stderr, und konnte „der Test braucht ein Extra" nicht von
-„die Bibliothek stürzt ohne ein Extra ab" trennen — der zweite Fall blieb dadurch
-monatelang unsichtbar.
+A suite that lacks an optional dependency ends ITSELF with exit 77
+(`tests/_kit/voraussetzung.py`) — then it counts as skipped. Every other
+failure is a failure. This distinction matters more than it looks:
+previously the runner guessed from stderr and could not tell "the test needs an extra" from
+"the library crashes without an extra" — which kept the second case
+invisible for months.
 
-Jede Suite läuft in einem EIGENEN Wegwerf-Verzeichnis (TMPDIR/HOME/XDG_* zeigen
-dorthin, danach wird es gelöscht). So kann kein Zustand aus einem Lauf den nächsten
-beeinflussen und keine Suite die andere stören — die Tests sind wiederholbar.
-Nachweis: `ci-local --full` fährt die Suite zweimal im selben Baum.
+Each suite runs in its OWN throwaway directory (TMPDIR/HOME/XDG_* point
+there, afterwards it is deleted). That way no state from one run can influence the next
+and no suite can disturb another — the tests are repeatable.
+Proof: `ci-local --full` runs the suite twice in the same tree.
 
-PARALLEL: Die Suiten laufen gleichzeitig, `CI_TEST_JOBS` (ganze Zahl ≥ 1) legt fest, wie
-viele; ohne sie `CI_KERNE` (setzt der CI-Runner), ohne beide 2. Die Ausgabe jeder Suite wird
-gepuffert und in der festen Reihenfolge der Dateinamen ausgegeben — das Protokoll liest sich wie
-ein serieller Lauf und ist bei gleichem Ergebnis Zeile für Zeile gleich. `CI_TEST_JOBS=1`
-ist der serielle Lauf von früher: eine Suite nach der anderen, in dieser Reihenfolge.
-Voraussetzung dafür: Keine Suite schreibt in feste Pfade im Baum oder teilt sich etwas mit einer
-anderen (Port, Datei, Datenbank) — jede hat ihr eigenes Wegwerf-Verzeichnis (s. o.).
+PARALLEL: The suites run concurrently, `CI_TEST_JOBS` (integer ≥ 1) sets how
+many; without it `CI_KERNE` (set by the CI runner), without both 2. The output of each suite is
+buffered and printed in the fixed order of the file names — the log reads like
+a serial run and, for the same result, is identical line by line. `CI_TEST_JOBS=1`
+is the serial run of old: one suite after the other, in that order.
+Prerequisite: no suite writes to fixed paths in the tree or shares anything with
+another (port, file, database) — each has its own throwaway directory (see above).
 
-Gestartet wird jede Suite über `tests/_starter.py`: Der senkt die Hash-Parameter im Testprozess
-ab (dort steht, warum und für welche Suiten nicht). Das Paket selbst hat dafür keinen Schalter.
+Each suite is started via `tests/_starter.py`: it lowers the hash parameters in the test process
+(it explains why and for which suites not). The package itself has no switch for this.
 """
 import sys
 import os
@@ -40,36 +40,36 @@ from concurrent.futures import ThreadPoolExecutor
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
-# Exit-Code, mit dem eine Suite SELBST sagt: "mir fehlt eine Voraussetzung, wertet mich nicht".
-# 77 ist die Konvention aus automake. Warum ein Code und keine Textsuche im stderr:
+# Exit code with which a suite says ITSELF: "a prerequisite is missing, do not count me".
+# 77 is the automake convention. Why a code and not a text search in stderr:
 #
-# Bis 2026-09-21 riet der Runner anhand von `ModuleNotFoundError` + einer Namensliste, ob ein
-# Fehlschlag "nur" eine fehlende optionale Abhaengigkeit war. Das kann zwei Faelle nicht
-# unterscheiden, die voellig verschieden sind:
-#   (a) Die SUITE braucht ein Extra, das nicht da ist  -> ueberspringen ist richtig.
-#   (b) Die BIBLIOTHEK stuerzt ab, weil sie ein Extra braucht, das sie nicht haben duerfte
-#       -> das ist ein Fehler, und zwar ein schwerer.
-# Fall (b) trat real ein: `pip install tinysesam` + Vorgabe-Konfiguration endete mit
-# `ModuleNotFoundError: webauthn` (passkey_enabled stand auf True), und der Runner verbuchte
-# das als "uebersprungen". Die Suite war gruen, weil sie nicht gemessen hat.
+# Until 2026-09-21 the runner guessed from `ModuleNotFoundError` + a list of names whether a
+# failure was "only" a missing optional dependency. That cannot tell apart two cases
+# that are completely different:
+#   (a) The SUITE needs an extra that is not there  -> skipping is right.
+#   (b) The LIBRARY crashes because it needs an extra it should not have needed
+#       -> that is a bug, and a serious one.
+# Case (b) really happened: `pip install tinysesam` + default configuration ended with
+# `ModuleNotFoundError: webauthn` (passkey_enabled was True), and the runner booked
+# that as "skipped". The suite was green because it did not measure.
 #
-# Jetzt ist "uebersprungen" eine ZUSAGE der Suite, kein Ratespiel ueber fremdes stderr.
+# Now "skipped" is a PLEDGE of the suite, not a guessing game over foreign stderr.
 SKIP_EXIT = 77
 
-#: Startet jede Suite (senkt die Hash-Parameter im Testprozess ab, s. dort).
+#: Starts each suite (lowers the hash parameters in the test process, see there).
 STARTER = os.path.join(HERE, "_starter.py")
 JOBS_VARIABLE = "CI_TEST_JOBS"
-#: Die Worker-Zahl, die der CI-Runner vorgibt. Gilt, wenn `CI_TEST_JOBS` fehlt.
+#: The worker count the CI runner prescribes. Applies when `CI_TEST_JOBS` is missing.
 KERNE_VARIABLE = "CI_KERNE"
-#: Ohne beide Variablen: zwei Jobs — eine sichere Vorgabe, keine Erkennung (s. `jobs_bestimmen`).
+#: Without both variables: two jobs — a safe default, not a detection (see `jobs_bestimmen`).
 JOBS_VORGABE = 2
 
-#: Diese Suiten starten bei parallelem Lauf ZUERST — die langsamsten, gemessen 2026-09-27 (0.22.0).
-#: Die Liste bestimmt nur, WANN eine Suite anfängt; Ergebnis und Reihenfolge der Ausgabe bleiben
-#: gleich. Ohne sie begannen `test_browser.py` (~80 s, fast nur Warten auf Chrome) und
-#: `test_vorbuchung_schwebe.py` (10 s, absichtliche Wartezeit) als letzte und legten das Ende des
-#: ganzen Laufs fest. Mit einem Job gilt sie nicht — das ist der serielle Lauf von früher. Ein
-#: veralteter Eintrag kostet Zeit, nie ein Ergebnis; dass jeder Eintrag noch eine Suite ist, prüft
+#: These suites start FIRST in a parallel run — the slowest, measured 2026-09-27 (0.22.0).
+#: The list only determines WHEN a suite starts; result and order of the output stay
+#: the same. Without it `test_browser.py` (~80 s, almost only waiting for Chrome) and
+#: `test_vorbuchung_schwebe.py` (10 s, deliberate wait) started last and fixed the end of the
+#: whole run. With one job it does not apply — that is the serial run of old. A
+#: stale entry costs time, never a result; that every entry is still a suite is checked by
 #: `tests/test_testlauf.py`.
 LANGE_ZUERST = ("test_browser.py", "test_ldap.py", "test_vorbuchung_schwebe.py",
                 "test_audit_runde2.py", "test_t13_entscheide.py", "test_repo.py",
@@ -77,41 +77,41 @@ LANGE_ZUERST = ("test_browser.py", "test_ldap.py", "test_vorbuchung_schwebe.py",
 
 
 
-#: So viel vom Ende der Ausgabe einer roten Suite steht im Protokoll — der Zusammenhang.
+#: This much of the end of a red suite's output goes into the log — the context.
 FAIL_ENDE = 2000
 
 
 def _fail_ausgabe(aus: str) -> str:
-    """Was unter `FAIL <suite>` steht: jede gescheiterte Prüfung (`FEHL …`) ungekürzt, dann das Ende
-    der Ausgabe ab einer Zeilengrenze.
+    """What goes under `FAIL <suite>`: every failed check (`FEHL …`) in full, then the end
+    of the output from a line boundary.
 
-    Bis 2026-09-28 stand hier nur das Ende (2000 Zeichen). Eine Suite druckt ihre Prüfungen in der
-    Reihenfolge, in der sie laufen — scheiterte eine frühe, stand ihre `FEHL`-Zeile vor dem Ausschnitt
-    und fehlte im Protokoll. Gesehen im CI-Job `repeat`: `FAIL test_vorbuchung_schwebe.py`, darunter
-    „ufschub“ und 42 ok-Zeilen, aber nicht, WAS rot war. Ein Wackeltest, der sich lokal nicht
-    nachstellen lässt, ist ohne diese Zeile nicht aufzuklären.
+    Until 2026-09-28 only the end (2000 characters) was shown here. A suite prints its checks in the
+    order in which they run — if an early one failed, its `FEHL` line was before the excerpt
+    and missing from the log. Seen in the CI job `repeat`: `FAIL test_vorbuchung_schwebe.py`, below it
+    "ufschub" and 42 ok lines, but not WHAT was red. A flaky test that cannot be reproduced
+    locally cannot be explained without this line.
     """
     ende = aus[-FAIL_ENDE:]
     if len(aus) > FAIL_ENDE and "\n" in ende:
-        ende = ende.split("\n", 1)[1]          # nicht mitten im Wort beginnen
+        ende = ende.split("\n", 1)[1]          # do not start in the middle of a word
     davor = [z for z in aus[: len(aus) - len(ende)].splitlines() if z.lstrip().startswith("FEHL ")]
     kopf = ("  ── gescheiterte Prüfungen oberhalb des Ausschnitts ──\n" + "\n".join(davor) + "\n"
             "  ── Ende der Ausgabe ──\n") if davor else ""
     return kopf + ende
 
 def warnfilter() -> str:
-    """`PYTHONWARNINGS`: Ein veralteter TinySesam-Name (Stufe C), gerufen AUS dem Paket selbst, ist
-    ein Fehler — in jeder Suite, nicht nur in einer (0.22.0, PO-Entscheid 2026-09-26).
+    """`PYTHONWARNINGS`: a deprecated TinySesam name (stage C), called FROM the package itself, is
+    an error — in every suite, not just in one (0.22.0, PO decision 2026-09-26).
 
-    Seit 0.22.0 heisst die Implementierung der internen Namen `_name`; der alte Name ist ein
-    Alias, der warnt. Ruft Code im Paket noch den alten Namen, sähe das niemand: Eine
-    `DeprecationWarning` aus einem Bibliotheksmodul zeigt Python ohne Filter gar nicht an. Die
-    AST-Suche in `tests/test_api_surface.py` findet `auth.check_password(…)`, aber kein
-    `getattr(auth, name)` — dieser Filter findet beides, sobald eine Suite den Weg durchläuft.
+    Since 0.22.0 the implementation of the internal names is called `_name`; the old name is an
+    alias that warns. If code in the package still calls the old name, nobody would see it: a
+    `DeprecationWarning` from a library module is not shown by Python at all without a filter. The
+    AST search in `tests/test_api_surface.py` finds `auth.check_password(…)`, but not
+    `getattr(auth, name)` — this filter finds both as soon as a suite goes through the path.
 
-    Ein `-W`-Filter vergleicht das Modul WÖRTLICH (kein Präfix), deshalb eine Zeile je Modul; die
-    Meldung beginnt mit `TinySesam.` (siehe `tinysesam/_veraltet.py`). Fremde Warnungen, auch
-    fremde `DeprecationWarning`s aus tinysesam-Code, bleiben unberührt.
+    A `-W` filter compares the module LITERALLY (no prefix), hence one line per module; the
+    message begins with `TinySesam.` (see `tinysesam/_veraltet.py`). Foreign warnings, including
+    foreign `DeprecationWarning`s from tinysesam code, are left untouched.
     """
     module = set()
     for wurzel, ordner, dateien in os.walk(os.path.join(ROOT, "tinysesam")):
@@ -125,7 +125,7 @@ def warnfilter() -> str:
 
 
 def umgebung(sandbox: str) -> dict:
-    """Die Umgebung einer Suite: eigenes Wegwerf-Verzeichnis, Paket im Pfad, Warnfilter."""
+    """The environment of a suite: own throwaway directory, package on the path, warning filter."""
     vorher = os.environ.get("PYTHONWARNINGS", "")
     return {
         **os.environ,
@@ -140,17 +140,17 @@ def umgebung(sandbox: str) -> dict:
 
 
 def jobs_bestimmen(roh=None, kerne=None) -> int:
-    """Wie viele Suiten gleichzeitig laufen: `CI_TEST_JOBS`, sonst `CI_KERNE`, sonst 2.
+    """How many suites run concurrently: `CI_TEST_JOBS`, else `CI_KERNE`, else 2.
 
-    Keine Erkennung der Kerne: Bis 2026-10-01 stand hier `os.cpu_count() // 2`. Im Container sieht
-    `os.cpu_count()` alle Kerne des Hosts, nicht die CPU-Quote des Containers — ein Runner mit zwei
-    Kernen Quote auf einem Host mit zwölf startete sechs Jobs, und mehrere Runner einer Maschine
-    erdrückten sich gegenseitig. Die Zahl kommt deshalb von dem, der die Quote kennt: dem Runner
-    (`CI_KERNE`). `CI_TEST_JOBS` bleibt der Schalter von Hand, z. B. `1` für den seriellen Lauf.
+    No detection of the cores: until 2026-10-01 this had `os.cpu_count() // 2`. In a container
+    `os.cpu_count()` sees all cores of the host, not the CPU quota of the container — a runner with a
+    two-core quota on a host with twelve started six jobs, and several runners on one machine
+    crushed each other. The number therefore comes from the one who knows the quota: the runner
+    (`CI_KERNE`). `CI_TEST_JOBS` remains the manual switch, e.g. `1` for the serial run.
 
-    Ein gesetzter Wert, der keine ganze Zahl ≥ 1 ist, ist ein Fehler (`ValueError`) — nicht still
-    die Vorgabe: Wer `CI_TEST_JOBS=1` für einen seriellen Lauf setzt und sich vertippt, soll
-    das erfahren, statt einen parallelen Lauf für einen seriellen zu halten.
+    A set value that is not an integer ≥ 1 is an error (`ValueError`) — not silently
+    the default: whoever sets `CI_TEST_JOBS=1` for a serial run and makes a typo should
+    learn about it, instead of taking a parallel run for a serial one.
     """
     roh = os.environ.get(JOBS_VARIABLE, "") if roh is None else roh
     kerne = os.environ.get(KERNE_VARIABLE, "") if kerne is None else kerne
@@ -168,10 +168,10 @@ def jobs_bestimmen(roh=None, kerne=None) -> int:
 
 
 def startreihenfolge(files, jobs) -> list:
-    """Die Indizes von `files` in der Reihenfolge, in der die Suiten starten.
+    """The indices of `files` in the order in which the suites start.
 
-    Ein Job: genau die Reihenfolge der Liste (der serielle Lauf). Mehrere: erst `LANGE_ZUERST`,
-    dann der Rest in Listenreihenfolge."""
+    One job: exactly the order of the list (the serial run). Several: first `LANGE_ZUERST`,
+    then the rest in list order."""
     if jobs <= 1:
         return list(range(len(files)))
     rang = {name: i for i, name in enumerate(LANGE_ZUERST)}
@@ -180,12 +180,12 @@ def startreihenfolge(files, jobs) -> list:
 
 
 def suite_fahren(path):
-    """Eine Suite in ihrem eigenen Wegwerf-Verzeichnis; Ausgabe gepuffert (`CompletedProcess`)."""
+    """One suite in its own throwaway directory; output buffered (`CompletedProcess`)."""
     name = os.path.basename(path)
-    # Jede Suite bekommt ein EIGENES Wegwerf-Verzeichnis: TMPDIR, HOME und die
-    # XDG-Pfade zeigen dorthin. Damit kann kein Zustand einen zweiten Lauf
-    # beeinflussen -- und keine Suite die naechste stoeren. Danach wird es geloescht.
-    # (Policy: "Tests sind wiederholbar"; Nachweis: `ci-local --full`.)
+    # Each suite gets its OWN throwaway directory: TMPDIR, HOME and the
+    # XDG paths point there. That way no state can influence a second run
+    # -- and no suite can disturb the next. Afterwards it is deleted.
+    # (Policy: "tests are repeatable"; proof: `ci-local --full`.)
     sandbox = tempfile.mkdtemp(prefix=f"tinysesam-{name[:-3]}-")
     env = umgebung(sandbox)
     try:
@@ -196,7 +196,7 @@ def suite_fahren(path):
 
 
 def main(argv):
-    # --no-browser: der Browser-Test ist der langsamste. Nur für Zwischenläufe, nie vor einem Push.
+    # --no-browser: the browser test is the slowest. Only for interim runs, never before a push.
     skip_browser = "--no-browser" in argv
     argv = [a for a in argv if a != "--no-browser"]
     if argv:
@@ -212,9 +212,9 @@ def main(argv):
         return 2
     print(f"▸ Test-Jobs: {jobs}", flush=True)
     ok, skipped, failed = [], [], []
-    # Gestartet wird nach `startreihenfolge` (mit einem Job: die Liste, also der serielle Lauf).
-    # Ausgegeben wird in der Reihenfolge der Liste, sobald eine Suite UND alle vor ihr fertig
-    # sind — nie in der Reihenfolge, in der sie zufällig fertig werden.
+    # Started according to `startreihenfolge` (with one job: the list, i.e. the serial run).
+    # Printed in the order of the list, as soon as a suite AND all before it are done
+    # — never in the order in which they happen to finish.
     pool = ThreadPoolExecutor(max_workers=jobs)
     try:
         laufend = [None] * len(files)
@@ -232,10 +232,10 @@ def main(argv):
                 print(f"  ok   {name}", flush=True)
                 ok.append(name)
             elif r.returncode == SKIP_EXIT:
-                # Die Suite hat selbst abgewunken — der Grund steht in ihrer eigenen Ausgabe.
+                # The suite bailed out itself — the reason is in its own output.
                 grund = (r.stdout or r.stderr or "").strip().splitlines()
-                # Nicht kürzen: Die Zeile nennt den Befehl zum Nachinstallieren (`pip install 'tinysesam[…]'`),
-                # und eine Kürzung vor der schliessenden Klammer sah aus wie ein Tippfehler im Befehl.
+                # Do not truncate: the line names the command to install it (`pip install 'tinysesam[…]'`),
+                # and a truncation before the closing bracket looked like a typo in the command.
                 print(f"  skip {name}" + (f" ({grund[-1]})" if grund else ""), flush=True)
                 skipped.append(name)
             else:
@@ -246,20 +246,20 @@ def main(argv):
                 sys.stderr.flush()
                 failed.append(name)
     finally:
-        # Bei Strg-C keine wartenden Suiten mehr anfangen; laufende zu Ende kommen lassen.
+        # On Ctrl-C do not start any more waiting suites; let running ones finish.
         pool.shutdown(wait=True, cancel_futures=True)
     total = len(files)
     print(f"\n{len(ok)}/{total} grün, {len(skipped)} übersprungen, {len(failed)} fehlgeschlagen")
     if failed:
         return 1
 
-    # Ein Boden gegen „grün, weil nichts gemessen wurde".
+    # A floor against "green because nothing was measured".
     #
-    # Bis hierher genügte „nichts fehlgeschlagen" für Exit 0 — auch bei „0 grün, alles
-    # übersprungen". Genau so sah der Lauf in einem git-worktree aus: Die Hygiene-Suiten hielten
-    # `.git` (dort eine Datei) für „kein Repo", wanden ab, und `scripts/check.sh` druckte
-    # darüber „✓ alles grün". Dieselbe Klasse Fehler, gegen die Exit 77 eingeführt wurde, nur
-    # eine Ebene höher.
+    # Up to here "nothing failed" was enough for exit 0 — even for "0 green, everything
+    # skipped". That is exactly what the run looked like in a git worktree: the hygiene suites took
+    # `.git` (a file there) for "no repo", bailed out, and `scripts/check.sh` printed
+    # "✓ alles grün" above it. The same class of bug that exit 77 was introduced against, just
+    # one level higher.
     if not ok:
         print("\nFEHLER: keine einzige Suite ist gelaufen — das ist kein grüner Lauf.",
               file=sys.stderr)

@@ -17,27 +17,27 @@ cfg = TinySesamConfig.oidc_gateway(csrf_enabled=False,
     base_url="https://auth.example.com", cookie_domain=".example.com",
     trusted_redirect_hosts=["app.example.com"], db_path=db)
 
-# ---------- Preset setzt die richtigen Flags ----------
+# ---------- Preset sets the right flags ----------
 assert cfg.oidc_enabled and cfg.forward_auth_enabled
 assert not (cfg.password_enabled or cfg.pin_enabled or cfg.passkey_enabled or cfg.magiclink_enabled)
 assert not (cfg.admin_enabled or cfg.account_enabled or cfg.apikey_enabled or cfg.allow_signup
             or cfg.resource_locks_enabled or cfg.totp_enabled)
 assert cfg.enabled_methods() == ["oidc"]
-ok("oidc_gateway-Preset: nur OIDC + Forward-Auth aktiv, sonst alles aus")
+ok("oidc_gateway preset: only OIDC + forward auth active, everything else off")
 
 app = gateway.build_app(cfg)
 c = TestClient(app, raise_server_exceptions=False)
 
-# ---------- OIDC-only: nur OIDC-Login, keine anderen Methoden/Routen ----------
+# ---------- OIDC-only: only OIDC login, no other methods/routes ----------
 html = c.get("/auth/login").text
 assert "/auth/oidc/start" in html and "name=password" not in html
-ok("Login-Seite: nur OIDC-Button, keine Passwort-Form")
+ok("login page: only OIDC button, no password form")
 assert c.post("/auth/login", data={"username": "x", "password": "y"}).status_code == 404
 for path in ("/auth/pin", "/auth/register", "/auth/account", "/auth/magic/request"):
     assert c.get(path, follow_redirects=False).status_code == 404, path
-ok("Passwort/PIN/Register/Account/Magic sind aus (404)")
+ok("password/PIN/register/account/magic are off (404)")
 
-# ---------- Forward-Auth: nicht eingeloggt → 401 + Login-URL zurück auf die App ----------
+# ---------- Forward auth: not logged in → 401 + login URL back to the app ----------
 r = c.get("/auth/forward", headers={"X-Forwarded-Proto": "https", "X-Forwarded-Host": "app.example.com",
                                     "X-Forwarded-Uri": "/geheim"})
 assert r.status_code == 401
@@ -45,7 +45,7 @@ loc = r.headers.get("X-TinySesam-Location")
 assert loc and loc.startswith("https://auth.example.com/auth/login?next=") and urlparse(parse_qs(urlparse(loc).query)["next"][0]).netloc == "app.example.com"
 ok("Forward-Auth: 401 + X-TinySesam-Location (zentraler Login, next=App-URL)")
 
-# ---------- Config aus Env ----------
+# ---------- Config from env ----------
 os.environ.update({
     "TINYSESAM_OIDC_ISSUER": "https://id.example.invalid", "TINYSESAM_OIDC_CLIENT_ID": "cid",
     "TINYSESAM_OIDC_CLIENT_SECRET": "sec", "TINYSESAM_BASE_URL": "https://auth.example.com",
@@ -68,12 +68,12 @@ os.environ["TINYSESAM_OIDC_NAME"] = "PocketID"
 assert gateway.config_from_env().oidc_name == "PocketID"
 del os.environ["TINYSESAM_OIDC_NAME"]
 assert gateway.config_from_env().oidc_name == "SSO"
-ok("TINYSESAM_LANG: Vorgabe en, de wählbar, Unbekanntes → Startfehler; TINYSESAM_OIDC_NAME benennt den Knopf")
+ok("TINYSESAM_LANG: default en, de selectable, unknown → start error; TINYSESAM_OIDC_NAME names the button")
 assert gateway.config_from_env().gate_brand == ""
 os.environ["TINYSESAM_GATE_BRAND"] = "  Firma A  "
 assert gateway.config_from_env().gate_brand == "Firma A"
 del os.environ["TINYSESAM_GATE_BRAND"]
-ok("TINYSESAM_GATE_BRAND: leer per Vorgabe, gesetzt ohne Rand")
+ok("TINYSESAM_GATE_BRAND: empty by default, set without margin")
 assert gateway.config_from_env().brand_icon == ""
 for gut in ("/favicon.svg", "data:image/png;base64,iVBORw0KGgo="):
     os.environ["TINYSESAM_BRAND_ICON"] = gut
@@ -85,9 +85,9 @@ for fremd in ("https://cdn.example.com/icon.png", "//cdn.example.com/icon.png", 
     except SystemExit as e:
         assert "TINYSESAM_BRAND_ICON" in str(e)
 del os.environ["TINYSESAM_BRAND_ICON"]
-ok("TINYSESAM_BRAND_ICON: Pfad und data:image/ ja; fremde URL, //, javascript:, data:text/ → Startfehler")
+ok("TINYSESAM_BRAND_ICON: path and data:image/ yes; foreign URL, //, javascript:, data:text/ → start error")
 
-# Mit dem Code-Austausch ist host-only gewollt — die Warnung „ohne cookie_domain“ wäre ein Fehlalarm.
+# With the code exchange host-only is intended — the warning “without cookie_domain” would be a false alarm.
 import logging as _logging
 _gefangen = []
 _h = _logging.Handler(); _h.emit = lambda rec: _gefangen.append(rec.getMessage())
@@ -102,7 +102,7 @@ try:
         assert warnt is (not link), (link, _gefangen)
 finally:
     security.seclog.removeHandler(_h)
-ok("Warnung „ohne cookie_domain“ ohne Code-Austausch ja, mit ihm nicht (kein Fehlalarm)")
+ok("warning “without cookie_domain” yes without code exchange, not with it (no false alarm)")
 
 del os.environ["TINYSESAM_OIDC_ISSUER"]
 try:
@@ -110,7 +110,7 @@ try:
 except SystemExit:
     ok("fehlende Pflicht-Env → SystemExit (klare Fehlermeldung)")
 
-# ---------- Startseite und Fehlerseiten (0.24.2) ----------
+# ---------- Start page and error pages (0.24.2) ----------
 sapp = gateway.build_app(TinySesamConfig.oidc_gateway(
     issuer="https://id.example.invalid", client_id="cid", client_secret="sec",
     base_url="https://auth.example.com", db_path=os.path.join(tempfile.mkdtemp(), "s.db"), lang="de"))
@@ -120,74 +120,74 @@ assert r.status_code == 303 and r.headers["location"] == "/auth/login", (r.statu
 r = sc.get("/gibtsnicht", headers={"Accept": "text/html"})
 assert r.status_code == 404 and r.headers["content-type"].startswith("text/html") and "<html" in r.text.lower(), r.text[:120]
 assert '"detail"' not in r.text
-assert "Diese Seite gibt es nicht." in r.text and "Not Found" not in r.text, "404-Text nicht übersetzt"
+assert "Diese Seite gibt es nicht." in r.text and "Not Found" not in r.text, "404 text not translated"
 r = sc.get("/gibtsnicht", headers={"Accept": "application/json"})
 assert r.status_code == 404 and r.json() == {"detail": "Not Found"}
 sauth = sapp.state.auth
 sauth.session_user = lambda request: {"username": "anna", "display_name": "Anna A."}
 r = sc.get("/", headers={"Accept": "text/html"})
 assert r.status_code == 200 and "Angemeldet als Anna A.<" in r.text and "action='/auth/logout'" in r.text, r.text[:300]
-assert "name=_csrf" in r.text or "name='_csrf'" in r.text, "Abmelden-Formular ohne CSRF"
-ok("Gateway: / → Anmeldung bzw. „Angemeldet als …“ mit Abmelden; Browser bekommen die Fehlerseite, API weiter JSON")
+assert "name=_csrf" in r.text or "name='_csrf'" in r.text, "sign-out form without CSRF"
+ok("gateway: / → sign-in or “Signed in as …” with sign-out; browsers get the error page, API still JSON")
 
-# ---------- /healthz: ohne Anmeldung, auch wenn HTTPS erzwungen wird ----------
-# Der Container-HEALTHCHECK spricht den Prozess von innen über HTTP an. Würde die
-# Redirect-Middleware auch ihn umleiten, prüfte der Check nur noch den Redirect.
+# ---------- /healthz: without sign-in, even when HTTPS is enforced ----------
+# The container HEALTHCHECK talks to the process from inside over HTTP. If the
+# redirect middleware redirected it too, the check would only check the redirect.
 hdb = os.path.join(tempfile.mkdtemp(), "t.db")
 happ = gateway.build_app(TinySesamConfig.oidc_gateway(
     issuer="https://id.example.invalid", client_id="cid", client_secret="sec",
     base_url="https://auth.example.com", db_path=hdb, https_mode="force"))
 r = TestClient(happ, base_url="http://auth.example.com").get("/healthz", follow_redirects=False)
-assert r.status_code == 200, f"/healthz → {r.status_code} (Redirect statt Antwort?)"
+assert r.status_code == 200, f"/healthz → {r.status_code} (redirect instead of response?)"
 assert r.json()["status"] == "ok" and r.json()["version"][0].isdigit(), r.json()
-# Gegenprobe: jeder andere Pfad wird bei force sehr wohl auf HTTPS umgeleitet.
+# Counter-check: every other path is indeed redirected to HTTPS with force.
 r2 = TestClient(happ, base_url="http://auth.example.com").get("/auth/login", follow_redirects=False)
-assert r2.status_code in (301, 307, 308), f"HTTPS-Zwang greift nicht mehr: {r2.status_code}"
-ok("/healthz: ohne Auth, 200 auch bei https_mode=force; andere Pfade werden umgeleitet")
+assert r2.status_code in (301, 307, 308), f"HTTPS enforcement no longer applies: {r2.status_code}"
+ok("/healthz: without auth, 200 also with https_mode=force; other paths are redirected")
 
-# ---------- /healthz sieht eine nur noch lesbare Datenbank (B6-4) ----------
-# Read-only-Mount, Rechte nach einem Rückspielen: Lesen geht, jede Anmeldung scheitert an ihrem
-# ersten INSERT. Ein `SELECT 1` meldete dabei 200 — Docker hielt den Container für gesund.
+# ---------- /healthz sees a database that has become read-only (B6-4) ----------
+# Read-only mount, permissions after a restore: reading works, every sign-in fails at its
+# first INSERT. A `SELECT 1` reported 200 meanwhile — Docker considered the container healthy.
 import sqlite3  # noqa: E402
 hstore = happ.state.auth.store
 nur_lesen = sqlite3.connect(f"file:{hdb}?mode=ro", uri=True, check_same_thread=False)
 nur_lesen.row_factory = sqlite3.Row
 alt_db, hstore.db = hstore.db, nur_lesen
-# Ohne die Drossel der Probe (s. unten): Hier geht es um das Erkennen, nicht um die Frist.
+# Without the probe's throttle (see below): this is about detection, not about the deadline.
 hstore.SCHREIBPROBE_SEK = 0
 hc = TestClient(happ, base_url="http://auth.example.com")
 r = hc.get("/healthz")
 assert r.status_code == 503 and r.json()["status"] == "degraded", (r.status_code, r.text)
-assert "readonly" not in r.text and "database" not in r.text, "Fehlertext gehört nicht ins Netz"
-assert hstore._one("SELECT 1 AS eins")["eins"] == 1, "Gegenprobe: Lesen muss hier noch gehen"
-# Dasselbe über den Schalter, den SQLite selbst dafür hat.
+assert "readonly" not in r.text and "database" not in r.text, "error text does not belong on the network"
+assert hstore._one("SELECT 1 AS eins")["eins"] == 1, "counter-check: reading must still work here"
+# The same via the switch that SQLite itself has for it.
 hstore.db = alt_db
 hstore.db.execute("PRAGMA query_only=ON")
 assert hc.get("/healthz").status_code == 503
 hstore.db.execute("PRAGMA query_only=OFF")
-assert hc.get("/healthz").status_code == 200, "nach der Heilung wieder gesund"
+assert hc.get("/healthz").status_code == 200, "healthy again after the recovery"
 nur_lesen.close()
-ok("/healthz: nur lesbare Datenbank → 503 degraded (Lesen allein zählt nicht als gesund)")
+ok("/healthz: read-only database → 503 degraded (reading alone does not count as healthy)")
 
-# ---------- /healthz ist flutbar, aber nicht teuer (A-B6-4-schreiblast) ----------
-# Ohne Anmeldung erreichbar: Ein Commit mit fsync unter Store._lock je Aufruf liess jeden, der
-# /healthz flutet, die Schreibsperre belegen, auf die Anmeldungen warten, und das WAL wachsen.
-del hstore.SCHREIBPROBE_SEK                     # zurück auf die Vorgabe der Klasse
+# ---------- /healthz can be flooded, but is not expensive (A-B6-4-schreiblast) ----------
+# Reachable without sign-in: a commit with fsync under Store._lock per call let anyone who
+# floods /healthz occupy the write lock that sign-ins wait for, and the WAL grow.
+del hstore.SCHREIBPROBE_SEK                     # back to the class default
 assert hstore.SCHREIBPROBE_SEK >= 1
-hstore._geschrieben = None                      # nächste Probe schreibt wirklich
+hstore._geschrieben = None                      # the next probe really writes
 _befehle = []
 hstore.db.set_trace_callback(_befehle.append)
 for _ in range(200):
     assert hc.get("/healthz").status_code == 200
 hstore.db.set_trace_callback(None)
 _schreibvorgaenge = sum(1 for b in _befehle if b.strip().upper() == "COMMIT")
-assert 1 <= _schreibvorgaenge <= 2, f"{_schreibvorgaenge} Schreibvorgänge für 200 Proben"
-# Die Drossel verdeckt keine kaputte Verbindung: Die Zwischenprobe liest trotzdem.
+assert 1 <= _schreibvorgaenge <= 2, f"{_schreibvorgaenge} write operations for 200 probes"
+# The throttle does not hide a broken connection: the intermediate probe reads anyway.
 _zu = sqlite3.connect(":memory:", check_same_thread=False); _zu.close()
 alt_db, hstore.db = hstore.db, _zu
-assert hc.get("/healthz").status_code == 503, "geschlossene Verbindung hinter der Drossel versteckt"
+assert hc.get("/healthz").status_code == 503, "closed connection hidden behind the throttle"
 hstore.db = alt_db
-ok(f"/healthz: 200 Proben → {_schreibvorgaenge} Commit(s); eine tote Verbindung fällt trotzdem sofort auf")
+ok(f"/healthz: 200 Proben → {_schreibvorgaenge} commit(s); a dead connection is still noticed immediately")
 os.remove(hdb)
 
 os.remove(db)

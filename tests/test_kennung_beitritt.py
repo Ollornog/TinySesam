@@ -1,19 +1,19 @@
-"""Grenze a vollständig: Eine Kennung gehört dem Konto ab ihrem BEITRITT, nicht ab der Anlage (G2).
+"""Limit a in full: an identifier belongs to the account from its JOINING, not from creation (G2).
 
-Grenze a aus dem Integrationsangriff hielt die Anlage des Kontos als Grenze fest: Fehlversuche und
-Audit-Zeilen von davor gehören nicht dem Konto. Ein Konto bekommt Name und Adresse aber auch später
-— beim Umbenennen, beim Adresswechsel, beim Nachtrag einer Adresse. Bis 2026-09-26 räumte die erste
-volle Anmeldung danach die Fehlversuche, die ein Fremder vorher unter der damals freien Kennung
-gemacht hatte, auch aus der Drosselung seiner IP; die Kontoseite zeigte die Anmeldung des
-Vorbesitzers samt dessen IP, und das Löschen schrieb dessen Zeilen um. Die Grenze ist jetzt eine
-Id-Wasserlinie je Kennung (`users.name_versuch_ab` …): exakt auch in der Sekunde des Beitritts.
+Limit a from the integration attack fixed the creation of the account as the limit: failed attempts and
+audit rows from before do not belong to the account. But an account also gets name and address later
+— on rename, on address change, on the addition of an address. Until 2026-09-26 the first
+full sign-in afterwards cleared the failed attempts that a stranger had made earlier under the then free identifier,
+also from the throttling of his IP; the account page showed the sign-in of the
+previous owner including his IP, and deleting rewrote his rows. The limit is now an
+id watermark per identifier (`users.name_versuch_ab` …): exact even in the second of joining.
 
-a  Umbenennen          f  Löschen nach dem Umbenennen
-b  Adresswechsel       g  Kontoseite und Audit nach Übernahme eines freien Namens
-c  Sekunde der Anlage  h  Bestand ohne Wasserlinie: wie bisher (Anlage)
-d  eigene Fehlversuche i  fremder Schreiber (rohes SQL): Wasserlinie auf den aktuellen Stand
-e  nur Schreibweise    j  die Serie (B2-6) wird bewusst ganz geräumt
-                       i  auch einer, der den Topf selbst mitführt (0.20.1, Prüfrunde 2026-09-27)
+a  rename              f  deleting after the rename
+b  address change      g  account page and audit after takeover of a free name
+c  second of creation  h  existing data without watermark: as before (creation)
+d  own failed attempts i  foreign writer (raw SQL): watermark to the current state
+e  spelling only       j  the series (B2-6) is deliberately cleared completely
+                       i  also one that carries the bucket itself (0.20.1, review round 2026-09-27)
 """
 from __future__ import annotations
 
@@ -60,8 +60,8 @@ def _login(app, name, ip="testclient"):
 
 
 def _fehlversuche(auth, kennung, ip, n, vorher=0):
-    """`n` Fehlversuche unter `kennung` von `ip` — über den Weg der Routen (mit Vorbuchung der
-    Serie) —, datiert `vorher` Sekunden zurück."""
+    """`n` failed attempts under `kennung` from `ip` — via the path of the routes (with pre-booking of the
+    series) —, dated `vorher` seconds back."""
     for _ in range(n):
         v = auth._versuch_beginnen(kennung, ip, "password")
         auth._record_login(kennung, ip, False, "password", versuch=v)
@@ -74,28 +74,28 @@ def _zeile(auth, uid):
 
 
 # ── a: Umbenennen ────────────────────────────────────────────────────────────────────────────────
-# (Mutationsproben: in `lift_lockout` nur `seit` statt `ab_id` → rot; in `_raeumgrenze` immer
-#  ohne Grenze (`{}`) → rot: die Anmeldung unter `frei` räumt dann schon beim ersten Faktor.)
+# (Mutation probes: in `lift_lockout` only `seit` instead of `ab_id` → red; in `_raeumgrenze` always
+#  without limit (`{}`) → red: the sign-in under `frei` then already clears at the first factor.)
 a, app, _ = _app()
 uid = a.create_user("alt", password=PW)
 a.store._exec("UPDATE users SET created_at = created_at - 7200")
 _fehlversuche(a, "frei", SPRAYER, 3, vorher=3600)
 a.change_username(uid, "frei")
 anm = _login(app, "frei")
-r.check("a: Umbenennen — die Fehlversuche eines Fremden unter dem damals freien Namen bleiben "
-        "nach der vollen Anmeldung stehen",
+r.check("a: rename — the failed attempts of a stranger under the then free name remain "
+        "after the full sign-in",
         anm.status_code == 303 and a.store.count_fails(0, username="frei") == 3,
         f"HTTP {anm.status_code}, {a.store.count_fails(0, username='frei')}")
-r.check("… auch in der Drosselung SEINER IP", a.store.count_fails(0, ip=SPRAYER) == 3,
+r.check("… also in the throttling of HIS IP", a.store.count_fails(0, ip=SPRAYER) == 3,
         str(a.store.count_fails(0, ip=SPRAYER)))
 _fehlversuche(a, "frei", EIGEN, 2)
 _login(app, "frei")
-r.check("… die eigenen nach dem Umbenennen räumt die Anmeldung wie bisher",
+r.check("… the own ones after the rename are cleared by the sign-in as before",
         a.store.count_fails(0, ip=EIGEN) == 0 and a.store.count_fails(0, ip=SPRAYER) == 3,
         f"{a.store.count_fails(0, ip=EIGEN)} / {a.store.count_fails(0, ip=SPRAYER)}")
 
-# ── b: Adresswechsel über den echten Link, und der Nachtrag einer Adresse (OIDC) ──────────────────
-# (Mutationsprobe: in `_kennung_setzen` die Wasserlinien nicht setzen → beide rot.)
+# ── b: address change via the real link, and the addition of an address (OIDC) ───────────────
+# (Mutation probe: do not set the watermarks in `_kennung_setzen` → both red.)
 a, app, post = _app()
 uid = a.create_user("mia", password=PW, email="mia@example.com")
 a.store._exec("UPDATE users SET created_at = created_at - 7200")
@@ -106,47 +106,47 @@ link = next((t.group(1) for ziel, _b, text in post if ziel == "neu@example.com"
              for t in [re.search(re.escape(BASIS) + r"(/auth/email/\S+)", text)] if t), "")
 bestaetigt = TestClient(app).post(link, follow_redirects=False) if link else None
 anm = _login(app, "neu@example.com")
-r.check("b: Adresswechsel über den Link — die Fehlversuche unter der neuen Adresse von davor bleiben",
+r.check("b: address change via the link — the failed attempts under the new address from before remain",
         bestaetigt is not None and bestaetigt.status_code == 303 and a.get_user(uid)["email"] == "neu@example.com"
         and anm.status_code == 303 and a.store.count_fails(0, username="neu@example.com") == 2,
         f"Link {bool(link)}, HTTP {anm.status_code}, {a.store.count_fails(0, username='neu@example.com')}")
 _fehlversuche(a, "nachtrag@example.com", "203.0.113.10", 2, vorher=3600)
-a.store.set_email(uid, "nachtrag@example.com", verified=True)      # der Weg des OIDC-Nachtrags
+a.store.set_email(uid, "nachtrag@example.com", verified=True)      # the path of the OIDC addition
 _login(app, "mia")
-r.check("… ebenso beim Nachtrag einer Adresse (store.set_email, der Weg von OIDC)",
+r.check("… likewise on the addition of an address (store.set_email, the path of OIDC)",
         a.store.count_fails(0, username="nachtrag@example.com") == 2,
         str(a.store.count_fails(0, username="nachtrag@example.com")))
 
-# ── c: die Sekunde der Anlage ─────────────────────────────────────────────────────────────────────
-# Ein Zeitstempel kann nicht entscheiden, ob ein Versuch derselben Sekunde vor oder nach der Anlage
-# kam; die Id kann es. (Mutationsprobe: `kennung_grenzen` liefert immer None → Rückfall auf die
-# Anlage mit `ts >= seit` → rot.)
+# ── c: the second of creation ─────────────────────────────────────────────────────────────────
+# A timestamp cannot decide whether an attempt of the same second came before or after the creation;
+# the id can. (Mutation probe: `kennung_grenzen` always returns None → fallback to the
+# creation with `ts >= seit` → red.)
 a, app, _ = _app()
 _fehlversuche(a, "sek@example.com", SPRAYER, 1)
 uid = a.create_user("sek", password=PW, email="sek@example.com")
 a.store._exec("UPDATE login_attempt SET ts = (SELECT created_at FROM users WHERE id = ?) WHERE ip = ?",
               (uid, SPRAYER))
 anm = _login(app, "sek@example.com")
-r.check("c: ein fremder Fehlversuch aus der Sekunde der Anlage, aber VOR ihr, bleibt stehen",
+r.check("c: a foreign failed attempt from the second of creation, but BEFORE it, remains",
         anm.status_code == 303 and a.store.count_fails(0, username="sek@example.com") == 1,
         f"HTTP {anm.status_code}, {a.store.count_fails(0, username='sek@example.com')}")
 
-# ── d: Gegenprobe — keine Überkorrektur ──────────────────────────────────────────────────────────
-# (Mutationsprobe: Wasserlinie + 1 in `WL_VERSUCH` → rot; das hält auch eine zeitabhängige Fassung
-#  mit `ts > seit` draussen, die eigene Versuche derselben Sekunde stehen liesse.)
+# ── d: counter-check — no overcorrection ──────────────────────────────────────────────────────
+# (Mutation probe: watermark + 1 in `WL_VERSUCH` → red; that also keeps out a time-dependent version
+#  with `ts > seit`, which would leave own attempts of the same second standing.)
 a, app, _ = _app()
 a.create_user("sofort", password=PW, email="sofort@example.com")
 _fehlversuche(a, "sofort", EIGEN, 1)
 _fehlversuche(a, "sofort@example.com", EIGEN, 1)
 anm = _login(app, "sofort")
-r.check("d: eigene Fehlversuche direkt nach der Anlage (dieselbe Sekunde) räumt die volle Anmeldung",
+r.check("d: own failed attempts directly after creation (same second) are cleared by the full sign-in",
         anm.status_code == 303 and a.store.count_fails(0, ip=EIGEN) == 0, str(a.store.count_fails(0, ip=EIGEN)))
 
-# ── e: nur die Schreibweise geändert ─────────────────────────────────────────────────────────────
-# Dieselbe Kennung im Zähl-Topf — die Grenze bleibt. Der Nachrechnen-Trigger kann einen eigenen
-# Schreiber nicht von einem fremden unterscheiden; `_kennung_setzen` sorgt dafür, dass er hier nicht
-# feuert. (Mutationsproben: den CASE für die Wasserlinie weglassen → rot; den Topf in der ersten
-# Anweisung stehen lassen statt NULL → der Trigger feuert und hebt die Wasserlinie → rot.)
+# ── e: only the spelling changed ──────────────────────────────────────────────────────────────
+# The same identifier in the counting bucket — the limit stays. The recalculation trigger cannot tell an own
+# writer from a foreign one; `_kennung_setzen` makes sure it does not
+# fire here. (Mutation probes: leave out the CASE for the watermark → red; leave the bucket in the first
+# statement instead of NULL → the trigger fires and raises the watermark → red.)
 a, app, _ = _app()
 uid = a.create_user("Gross", password=PW, email="gross@example.com")
 vorher = _zeile(a, uid)
@@ -156,21 +156,21 @@ a.change_username(uid, "gross")
 a.store.set_email(uid, "GROSS@example.com", verified=True)
 nachher = _zeile(a, uid)
 _spalten = ("name_versuch_ab", "name_audit_ab", "mail_versuch_ab", "mail_audit_ab")
-r.check("e: Umbenennen nur in Gross-/Kleinschreibung (Name und Adresse) verschiebt keine Wasserlinie",
+r.check("e: renaming only in upper/lower case (name and address) moves no watermark",
         all(vorher[s] is not None and vorher[s] == nachher[s] for s in _spalten)
         and nachher["username"] == "gross" and nachher["topf_name"] == "gross"
         and nachher["topf_mail"] == "gross@example.com",
         f"{[vorher[s] for s in _spalten]} → {[nachher[s] for s in _spalten]}, Topf {nachher['topf_name']!r}")
 a.change_username(uid, "gross-neu")
 neu_z = _zeile(a, uid)
-r.check("… ein neuer Name setzt sie auf den aktuellen Stand",
+r.check("… a new name sets it to the current state",
         neu_z["name_versuch_ab"] == a.store._one("SELECT MAX(id) AS m FROM login_attempt")["m"]
         and neu_z["name_audit_ab"] is not None and neu_z["name_audit_ab"] > vorher["name_audit_ab"]
         and neu_z["mail_versuch_ab"] == vorher["mail_versuch_ab"],
         str(dict(neu_z)))
 
-# ── f: Löschen nach dem Umbenennen ───────────────────────────────────────────────────────────────
-# (Mutationsprobe: `konto_entfernen` reicht keine `ab_ids` an `delete_attempts_for` → rot.)
+# ── f: deleting after the rename ─────────────────────────────────────────────────────────────
+# (Mutation probe: `konto_entfernen` passes no `ab_ids` to `delete_attempts_for` → red.)
 a, app, _ = _app()
 uid = a.create_user("fx", password=PW)
 a.store._exec("UPDATE users SET created_at = created_at - 7200")
@@ -178,13 +178,13 @@ _fehlversuche(a, "fneu", SPRAYER, 2, vorher=3600)
 a.change_username(uid, "fneu")
 _fehlversuche(a, "fneu", EIGEN, 2)
 a.delete_user(uid)
-r.check("f: Löschen nach dem Umbenennen — die Versuche des Fremden unter dem neuen Namen bleiben, "
-        "die eigenen gehen",
+r.check("f: deleting after the rename — the stranger's attempts under the new name remain, "
+        "the own ones go",
         a.store.count_fails(0, ip=SPRAYER) == 2 and a.store.count_fails(0, ip=EIGEN) == 0,
         f"{a.store.count_fails(0, ip=SPRAYER)} / {a.store.count_fails(0, ip=EIGEN)}")
 
-# ── g: Übernahme eines freigewordenen Namens — Kontoseite und Audit ─────────────────────────────
-# (Mutationsproben: `own_events` nur mit `anlage_grenze` → rot; `konto_entfernen` reicht keine
+# ── g: takeover of a freed name — account page and audit ─────────────────────────────────────
+# (Mutation probes: `own_events` only with `anlage_grenze` → red; `konto_entfernen` passes no
 #  `ab_ids` an `audit_anonymisieren` → rot.)
 a, app, _ = _app()
 b = a.create_user("bert", password=PW)
@@ -194,20 +194,20 @@ _login(app, "xaver", ip="198.51.100.77")
 a.change_username(x, "xaver-neu")
 a.change_username(b, "xaver")
 eigene = a.own_events(b)
-r.check("g: wer einen freien Namen übernimmt, sieht auf der Kontoseite nicht die Anmeldung des "
-        "Vorbesitzers (samt dessen IP)",
+r.check("g: whoever takes over a free name does not see the sign-in of the "
+        "previous owner (including his IP) on the account page",
         not any(e["ip"] == "198.51.100.77" or e["event"] == "login" for e in eigene)
         and any(e["event"] == "username_changed" for e in eigene), str(eigene))
 a.delete_user(b)
-r.check("… und sein Löschen schreibt die Zeilen des Vorbesitzers nicht um",
+r.check("… and his deleting does not rewrite the previous owner's rows",
         a.store._one("SELECT username FROM audit WHERE event='login' AND ip='198.51.100.77'")["username"] == "xaver",
         str([dict(z) for z in a.store._all("SELECT event, username, ip FROM audit")]))
 
-# ── h: Bestand ohne Wasserlinie ──────────────────────────────────────────────────────────────────
-# Eine Datei von vor dieser Spalte (Schema 11 ohne sie; mitgeschnitten wird die spätere
-# `name_selbst_gewaehlt`, G2-N, die dahinter steht): Die Spalten kommen dazu und bleiben NULL,
-# die Grenze ist dann wie bisher die Anlage. (Mutationsproben: der Rückfall in `lift_lockout`
-# räumt ab Id 0 statt ab der Anlage → rot; ebenso in `_raeumgrenze` → rot.)
+# ── h: existing data without watermark ───────────────────────────────────────────────────────
+# A file from before this column (schema 11 without it; the later
+# `name_selbst_gewaehlt`, G2-N, behind it is recorded along): the columns are added and stay NULL,
+# the limit is then the creation as before. (Mutation probes: the fallback in `lift_lockout`
+# clears from id 0 instead of from the creation → red; likewise in `_raeumgrenze` → red.)
 _bestand = str(Path(tempfile.mkdtemp()) / "t.db")
 _alt_schema, _n_users = re.subn(r"(idp_bestaetigt_at INTEGER), (--[^\n]*)\n\s*-- Ab wann gehört die Kennung.*?"
                                 r"mail_audit_ab\s+INTEGER,\n.*?name_selbst_gewaehlt INTEGER NOT NULL DEFAULT 0\n",
@@ -231,22 +231,22 @@ _uid = a.store.get_user_by_name("bestand")["id"]
 a.set_password(_uid, PW)
 _hb = _zeile(a, _uid)
 _fi = {z["name"] for z in a.store.db.execute("PRAGMA table_info(federated_identity)")}
-r.check("h: Bestand — die Spalten kommen dazu und bleiben NULL (keine Grenze erfunden)",
+r.check("h: existing data — the columns are added and stay NULL (no limit invented)",
         _n_users == 1 and _n_fi == 1 and all(_hb[s] is None for s in _spalten) and "name_topf" in _fi,
         f"Schnitt {_n_users}/{_n_fi}, {[_hb[s] for s in _spalten]}, {_fi}")
 anm = _login(app, "bestand@example.com")
-r.check("… Grenze ist dann wie bisher die Anlage: Fremdes von davor bleibt, Eigenes geht",
+r.check("… limit is then the creation as before: foreign data from before remains, own data goes",
         anm.status_code == 303 and a.store.count_fails(0, ip=SPRAYER) == 3 and a.store.count_fails(0, ip=EIGEN) == 0,
         f"HTTP {anm.status_code}, {a.store.count_fails(0, ip=SPRAYER)} / {a.store.count_fails(0, ip=EIGEN)}")
 a2, _, _ = _app(db_path=_bestand)
 _zweit = _zeile(a2, _uid)
 _trigger = a2.store._all("SELECT name FROM sqlite_master WHERE type='trigger' AND name LIKE 'trg_users_topf_%'")
-r.check("… ein zweiter Start ändert nichts (idempotent, Trigger je einmal)",
+r.check("… a second start changes nothing (idempotent, trigger once each)",
         all(_zweit[s] is None for s in _spalten) and len(_trigger) == 2, f"{dict(_zweit)} {len(_trigger)}")
 
-# ── i: ein fremder Schreiber (rohes SQL, ältere Fassung) ─────────────────────────────────────────
-# Der Nachrechnen-Trigger hebt die Wasserlinien — die strengere Richtung. (Mutationsprobe: der
-# Trigger in der Fassung von G12c, nur `topf = NULL` → rot.)
+# ── i: a foreign writer (raw SQL, older version) ──────────────────────────────────────────────
+# The recalculation trigger raises the watermarks — the stricter direction. (Mutation probe: the
+# trigger in the version of G12c, only `topf = NULL` → red.)
 a, app, _ = _app()
 uid = a.create_user("roh-alt", password=PW, email="roh@example.com")
 a.store._exec("UPDATE users SET created_at = created_at - 7200")
@@ -257,20 +257,20 @@ a.store._exec("UPDATE users SET email = 'roh2@example.com' WHERE id = ?", (uid,)
 _ri = _zeile(a, uid)
 _max_v = a.store._one("SELECT MAX(id) AS m FROM login_attempt")["m"]
 _max_a = a.store._one("SELECT MAX(id) AS m FROM audit")["m"]
-r.check("i: rohes UPDATE von Name und Adresse → Wasserlinien auf dem aktuellen Stand, Topf nachzurechnen",
+r.check("i: raw UPDATE of name and address → watermarks at the current state, bucket recalculated",
         _ri["name_versuch_ab"] == _max_v == _ri["mail_versuch_ab"] and _ri["name_audit_ab"] == _max_a
         and _ri["mail_audit_ab"] == _max_a and _ri["topf_name"] is None and _ri["topf_mail"] is None,
         f"{dict(_ri)} MAX {_max_v}/{_max_a}")
 anm = _login(app, "roh-neu")
-r.check("… und die Anmeldung unter dem neuen Namen lässt die Versuche von davor stehen",
+r.check("… and the sign-in under the new name leaves the attempts from before standing",
         anm.status_code == 303 and a.store.count_fails(0, ip=SPRAYER) == 3,
         f"HTTP {anm.status_code}, {a.store.count_fails(0, ip=SPRAYER)}")
 
-# Ein fremder Schreiber, der den Topf SELBST mitführt — `store.set_email` aus 0.20.1 setzt Adresse und
-# `topf_mail` in EINER Anweisung (Prüfrunde 2026-09-27, p1-c). Der Nachrechnen-Trigger feuert dann
-# nicht (der Topf ändert sich ja), und bis dahin blieb die Wasserlinie auf dem Stand der ALTEN
-# Adresse: Die erste volle Anmeldung räumte die Fehlversuche des Fremden unter der neuen, auch aus
-# der Drosselung seiner IP. (Mutationsprobe: `trg_users_wechsel_mail` weglassen → rot.)
+# A foreign writer that carries the bucket ITSELF — `store.set_email` from 0.20.1 sets address and
+# `topf_mail` in ONE statement (review round 2026-09-27, p1-c). The recalculation trigger then does
+# not fire (the bucket does change), and until then the watermark stayed at the state of the OLD
+# address: the first full sign-in cleared the stranger's failed attempts under the new one, also from
+# the throttling of his IP. (Mutation probe: leave out `trg_users_wechsel_mail` → red.)
 from tinysesam.store import norm_email, norm_kennung  # noqa: E402
 
 a, app, _ = _app()
@@ -283,34 +283,34 @@ a.store._exec("UPDATE users SET email=?, email_verified=?, topf_mail=? WHERE id=
               (_neu_c, 1, norm_kennung(_neu_c), uid))
 _rc = _zeile(a, uid)
 anm = _login(app, "neu@example.com")
-r.check("i: der Schreiber aus 0.20.1 (Adresse und Topf in einer Anweisung) hebt die Wasserlinie auch — "
-        "die Fehlversuche unter der neuen Adresse bleiben stehen",
+r.check("i: the writer from 0.20.1 (address and bucket in one statement) raises the watermark too — "
+        "the failed attempts under the new address remain",
         _rc["mail_versuch_ab"] == a.store._one("SELECT MAX(id) AS m FROM login_attempt")["m"] > _wl_c
         and _rc["topf_mail"] == "neu@example.com" and anm.status_code == 303
         and a.store.count_fails(0, username="neu@example.com") == 3 and a.store.count_fails(0, ip=SPRAYER) == 3,
         f"WL {_wl_c} → {_rc['mail_versuch_ab']}, HTTP {anm.status_code}, {a.store.count_fails(0, ip=SPRAYER)}")
-# Gegenproben: Der Nachtrag (nur der Topf, NULL → Topf) und die eigene Umschreibung `B1` → `b1` (derselbe
+# Counter-checks: the addition (only the bucket, NULL → bucket) and the own rewrite `B1` → `b1` (the same
 # Topf) verschieben nichts.
 _vor_n = (_rc["name_versuch_ab"], _rc["mail_versuch_ab"])
-_fehlversuche(a, "anderswo", SPRAYER, 1)                 # sonst stünde der Höchststand schon dort
+_fehlversuche(a, "anderswo", SPRAYER, 1)                 # otherwise the high-water mark would already stand there
 a.store._exec("UPDATE users SET topf_name = NULL WHERE id = ?", (uid,))
 a.store._exec("UPDATE users SET topf_name = ? WHERE id = ?", ("mia", uid))
 a.store.set_username(uid, "MIA")
 _rn = _zeile(a, uid)
-r.check("… der Nachtrag eines Topfs und `mia` → `MIA` (derselbe Topf) lassen die Wasserlinien stehen",
+r.check("… the addition of a bucket and `mia` → `MIA` (the same bucket) leave the watermarks standing",
         (_rn["name_versuch_ab"], _rn["mail_versuch_ab"]) == _vor_n and _rn["topf_name"] == "mia",
         f"{_vor_n} → {(_rn['name_versuch_ab'], _rn['mail_versuch_ab'])}")
 
-# ── j: die Serie (B2-6) ──────────────────────────────────────────────────────────────────────────
-# Bewusst OHNE Grenze a (Begründung in `lift_lockout`): Die Serie hat keine IP, und vor dem
-# Beitritt schützte sie kein Konto. Eine Grenze in der Zeit liesse eine vor dem Beitritt begonnene
-# Serie für den neuen Inhaber unbeendbar. (Mutationsprobe: `fehlserie_loeschen(…, arten=())` → rot.)
+# ── j: the series (B2-6) ─────────────────────────────────────────────────────────────────────
+# Deliberately WITHOUT limit a (reasoning in `lift_lockout`): the series has no IP, and before the
+# join it protected no account. A limit in time would leave a series begun before the join
+# unendable for the new owner. (Mutation probe: `fehlserie_loeschen(…, arten=())` → red.)
 a, app, _ = _app()
 _fehlversuche(a, "serie@example.com", SPRAYER, 3, vorher=3600)
 uid = a.create_user("serienkonto", password=PW, email="serie@example.com")
 serie_vorher = a.store.fehlserie("serie@example.com")
 _login(app, "serienkonto")
-r.check("j: die Serie unter der Adresse von vor der Anlage endet mit der ersten vollen Anmeldung",
+r.check("j: the series under the address from before creation ends with the first full sign-in",
         serie_vorher == 3 and a.store.fehlserie("serie@example.com") == 0
         and a.store.count_fails(0, ip=SPRAYER) == 3,
         f"{serie_vorher} → {a.store.fehlserie('serie@example.com')}, Fenster {a.store.count_fails(0, ip=SPRAYER)}")

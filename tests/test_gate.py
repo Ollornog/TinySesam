@@ -1,8 +1,8 @@
-"""Gate-Token (ADR-9, T-19): Ausstellen in /auth/forward, Zielgruppe, Claims, Schlüssel, Prüfung.
+"""Gate token (ADR-9, T-19): issuing in /auth/forward, audience, claims, keys, verification.
 
-Der Weg durch einen echten Caddy mit caddy-jwt steht in `tests/test_gate_caddy.py`. Hier geht es
-um die Seite von TinySesam: wann ein Token entsteht, was darin steht, und dass ein Prüfer, der es
-so prüft wie der Proxy, jede Verfälschung ablehnt.
+The path through a real Caddy with caddy-jwt is in `tests/test_gate_caddy.py`. Here it is about
+the TinySesam side: when a token is created, what is in it, and that a verifier that checks it
+like the proxy rejects every forgery.
 """
 import base64
 import json
@@ -78,57 +78,57 @@ for teil in ("Path=/", "Max-Age=300", "Secure", "HttpOnly", "SameSite=Lax"):
     assert teil in kopf, (teil, kopf)
 assert "domain" not in kopf.lower(), kopf
 inhalt = pruefe(tok)
-assert inhalt, "das frische Token besteht die Prüfung nicht"
+assert inhalt, "the fresh token does not pass the check"
 assert inhalt["sub"] == str(uid) and inhalt["ts_user"] == "anna" and inhalt["ts_id"] == str(uid)
 assert inhalt["ts_name"] == "Anna Berg" and inhalt["ts_email"] == "anna@example.com"
 assert inhalt["ts_groups"] == "redaktion"
 assert inhalt["exp"] - inhalt["iat"] == 300 and inhalt["nbf"] == inhalt["iat"]
-ok("Sitzung → 200 mit Gate-Cookie (__Host-, Secure, HttpOnly, ohne Domain); Claims = Forward-Header")
+ok("session → 200 with gate cookie (__Host-, Secure, HttpOnly, without Domain); claims = forward headers")
 
-# Dieselbe Identität auf beiden Wegen: was die Header sagen, sagen die Claims.
+# The same identity on both paths: what the headers say, the claims say.
 assert r.headers["Remote-User"] == inhalt["ts_user"]
 assert r.headers["Remote-Id"] == inhalt["ts_id"]
-ok("Header und Claims nennen dieselbe Identität")
+ok("headers and claims name the same identity")
 
-# Kein Token für einen Host, den diese Installation nicht schützt.
+# No token for a host that this installation does not protect.
 r = c.get("/auth/forward", headers={**PROXY, "X-Forwarded-Host": "fremd.example.net"})
 assert token_aus(r) == (None, None)
-ok("fremder Host → kein Gate-Token")
+ok("foreign host → no gate token")
 
-# Kein Token ohne Anmeldung.
+# No token without sign-in.
 r = TestClient(app).get("/auth/forward", headers=PROXY)
 assert r.status_code == 401 and token_aus(r) == (None, None)
-ok("ohne Anmeldung → 401, kein Gate-Token")
+ok("without sign-in → 401, no gate token")
 
-# Kein Token für einen API-Key: Ein Automat hält kein Cookie, und eines aus einem Key überlebte
+# No token for an API key: an automation holds no cookie, and one from a key would survive
 # im Browser dessen Widerruf.
 key = auth.create_api_key(uid, name="k")["key"]
 r = TestClient(app).get("/auth/forward", headers={**PROXY, "Authorization": f"Bearer {key}"})
 assert r.status_code == 200 and token_aus(r) == (None, None)
-ok("API-Key → 200, aber kein Gate-Token")
+ok("API key → 200, but no gate token")
 
-# Fehlende Rolle → 403, kein Token.
+# Missing role → 403, no token.
 r = c.get("/auth/forward?roles=chef", headers=PROXY)
 assert r.status_code == 403 and token_aus(r) == (None, None)
-ok("Rolle fehlt → 403, kein Gate-Token")
+ok("role missing → 403, no gate token")
 
-# ---------- Zielgruppe mit Rollen ----------
+# ---------- Audience with roles ----------
 r = c.get("/auth/forward?roles=redaktion,chef", headers=PROXY)
 _, tok_r = token_aus(r)
-assert pruefe(tok_r) is None, "ein Token aus einer Prüfung MIT Rollen gilt am Pfad ohne Rollen"
+assert pruefe(tok_r) is None, "a token from a check WITH roles applies on the path without roles"
 assert pruefe(tok_r, aud="app.example.com|roles=chef,redaktion")
-ok("Rollen stehen in der Zielgruppe (kanonisch sortiert)")
+ok("roles are in the audience (canonically sorted)")
 
-# Umgekehrt der eigentliche Angriff: Ein Token ohne Rollenangabe darf an einem Pfad mit Rollen
-# nicht gelten — der Proxy sieht nur die Zielgruppe.
+# Conversely the actual attack: a token without role information must not apply on a path with roles
+# — the proxy sees only the audience.
 assert pruefe(tok, aud="app.example.com|roles=redaktion") is None
-ok("Token ohne Rollenangabe gilt nicht an einem Pfad mit Rollen")
+ok("token without role information does not apply on a path with roles")
 
 assert gate.zielgruppe("App.Example.com.", [["b", "a", "a"], ["c"], []]) == "app.example.com|roles=a,b;c"
 assert gate.zielgruppe("app.example.com", [["c"], ["a", "b"]]) == gate.zielgruppe("app.example.com", [["b", "a"], ["c"]])
-ok("zielgruppe(): gross/klein, Punkt am Ende, Dubletten und Reihenfolge ändern nichts")
+ok("zielgruppe(): upper/lower case, trailing dot, duplicates and order change nothing")
 
-# ---------- Prüfung wie am Proxy: jede Verfälschung fällt ----------
+# ---------- Check as at the proxy: every forgery fails ----------
 k, i, s = tok.split(".")
 jetzt = int(time.time())
 
@@ -143,14 +143,14 @@ def neu_signiert(inhalt_neu, kopf_neu=None, schluessel=None):
 basis = json.loads(gate._b64u_lesen(i))
 fremd = gate.schluessel_ableiten(b"\x00" * 32)
 faelle = {
-    # Ein BYTE der Signatur kippen, nicht die letzten Zeichen ersetzen: Die letzten Base64-Zeichen
-    # tragen Füllbits, und `…AA` statt `…AB` ist mitunter dieselbe Signatur (1 in 256 Läufen).
+    # Flip a BYTE of the signature, do not replace the last characters: the last base64 characters
+    # carry padding bits, and `…AA` instead of `…AB` is sometimes the same signature (1 in 256 runs).
     "Signatur verändert": f"{k}.{i}." + gate._b64u(bytes([gate._b64u_lesen(s)[0] ^ 1]) + gate._b64u_lesen(s)[1:]),
     "Inhalt verändert (anderes Konto)": f"{k}.{gate._b64u(json.dumps({**basis, 'sub': '1'}).encode())}.{s}",
     "alg none": f"{gate._b64u(json.dumps({'alg': 'none'}).encode())}.{i}.",
     "alg HS256": f"{gate._b64u(json.dumps({'alg': 'HS256'}).encode())}.{i}.{s}",
-    # Gültig signiert, aber der Kopf nennt einen anderen Algorithmus: Nur der Vergleich mit
-    # `EdDSA` fängt das — die Signatur selbst stimmt.
+    # Validly signed, but the header names another algorithm: only the comparison with
+    # `EdDSA` catches that — the signature itself is correct.
     "alg HS256, gültig signiert": neu_signiert(basis, kopf_neu={"alg": "HS256", "typ": "JWT"}),
     "fremder Schlüssel": neu_signiert(basis, schluessel=fremd),
     "abgelaufen": neu_signiert({**basis, "exp": jetzt - 1}),
@@ -162,21 +162,21 @@ faelle = {
 }
 for was, falsch in faelle.items():
     assert pruefe(falsch) is None, was
-assert pruefe(neu_signiert(basis)), "die Gegenprobe (unverändert neu signiert) muss bestehen"
-ok(f"Prüfung lehnt {len(faelle)} Verfälschungen ab, die unveränderte Gegenprobe besteht")
+assert pruefe(neu_signiert(basis)), "the counter-check (re-signed unchanged) must pass"
+ok(f"check rejects {len(faelle)} forgeries, the unchanged counter-check passes")
 
-# Unabhängige Gegenprobe: eine fremde JOSE-Implementierung (authlib, Extra [oidc]) liest das Token
-# genauso. Fehlt sie, entfällt nur dieser Teil — die Suite prüft das Format sonst selbst.
+# Independent counter-check: a foreign JOSE implementation (authlib, extra [oidc]) reads the token
+# the same way. If it is missing, only this part is omitted — otherwise the suite checks the format itself.
 try:
     from authlib.jose import JsonWebToken, OKPKey
 except ImportError:
-    print("  – authlib fehlt: Gegenprobe mit fremder JOSE-Implementierung entfällt")
+    print("  – authlib missing: counter-check with foreign JOSE implementation omitted")
 else:
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
     claims = JsonWebToken(["EdDSA"]).decode(tok, OKPKey.import_key(Ed25519PublicKey.from_public_bytes(PUB)))
     claims.validate()
     assert claims["ts_user"] == "anna" and claims["aud"] == "app.example.com"
-    ok("authlib (fremde JOSE-Implementierung) prüft das Token und liest dieselben Claims")
+    ok("authlib (foreign JOSE implementation) checks the token and reads the same claims")
 
 # ---------- Claims folgen forward_headers ----------
 auth2, app2 = instanz(forward_headers={"user": "X-WEBAUTH-USER"})
@@ -186,11 +186,11 @@ _, t2 = token_aus(r)
 inh2 = gate.pruefen(base64.b64decode(auth2.gate_public_key()), t2, aud="app.example.com", iss=ISS,
                     jetzt=int(time.time()))
 assert {k for k in inh2 if k.startswith("ts_")} == {"ts_user"}, inh2
-ok("forward_headers ist die vollständige Liste — auch für die Claims (keine Adresse, wenn sie fehlt)")
+ok("forward_headers is the complete list — also for the claims (no address if it is missing)")
 
-# Namen jenseits von ASCII und mit Steuerzeichen (kommen bei OIDC/SAML vom fremden IdP). Direkt
-# an `_gate_cookie`: Der TestClient (httpx) lehnt Header ausserhalb von ASCII ab und könnte die
-# Antwort mit `Remote-Name` gar nicht lesen — der Weg über die Leitung steht in test_gate_caddy.py.
+# Names beyond ASCII and with control characters (come from the foreign IdP with OIDC/SAML). Directly
+# at `_gate_cookie`: the TestClient (httpx) rejects headers outside ASCII and could not read
+# the response with `Remote-Name` at all — the path over the wire is in test_gate_caddy.py.
 from starlette.requests import Request  # noqa: E402
 
 
@@ -209,18 +209,18 @@ for roh, soll in (("Anna Ärger", "Anna Ärger"), ("Иван", "Иван"),
     auth.store._exec("UPDATE users SET display_name=? WHERE id=?", (roh, uid))
     assert gate_direkt()["ts_name"] == soll, (roh, gate_direkt()["ts_name"])
 auth.store._exec("UPDATE users SET display_name=? WHERE id=?", ("Anna Berg", uid))
-ok("Claims: Umlaute und Kyrillisch unverändert (UTF-8), Steuerzeichen fallen heraus")
+ok("claims: umlauts and Cyrillic unchanged (UTF-8), control characters drop out")
 
 # ---------- Ausgeschaltet ----------
 auth.cfg.gate_token_enabled = False
 r = c.get("/auth/forward", headers=PROXY)
 assert r.status_code == 200 and token_aus(r) == (None, None)
 auth.cfg.gate_token_enabled = True
-ok("gate_token_enabled=False → /auth/forward wie bisher, ohne Gate-Token")
+ok("gate_token_enabled=False → /auth/forward as before, without gate token")
 
-# ---------- Schlüssel ----------
-# Derselbe Grundschlüssel → derselbe Signaturschlüssel (alle Worker, jeder Neustart); ein anderer
-# → ein anderer. Der Proxy-Schlüssel ändert sich also genau dann, wenn der Grundschlüssel wechselt.
+# ---------- Keys ----------
+# The same base key → the same signing key (all workers, every restart); a different one
+# → a different one. The proxy key therefore changes exactly when the base key changes.
 alt = os.environ.get("TINYSESAM_SECRETS_KEY")
 try:
     os.environ["TINYSESAM_SECRETS_KEY"] = base64.b64encode(b"\x07" * 32).decode()
@@ -234,16 +234,16 @@ finally:
     else:
         os.environ["TINYSESAM_SECRETS_KEY"] = alt
 assert a1.gate_public_key() == a2.gate_public_key() != a3.gate_public_key()
-ok("Signaturschlüssel folgt dem Grundschlüssel: gleich bei gleichem, anders bei anderem")
+ok("signing key follows the base key: same for the same, different for a different one")
 
-# Der Signaturschlüssel ist abgeleitet, nicht der Grundschlüssel selbst: Wer ihn kennt (etwa aus
-# einem Speicherabzug des Signierens), kennt damit nicht den Schlüssel der TOTP-Geheimnisse.
+# The signing key is derived, not the base key itself: whoever knows it (say from
+# a memory dump of the signing) does not thereby know the key of the TOTP secrets.
 g = b"\x07" * 32
 from cryptography.hazmat.primitives import serialization  # noqa: E402
 saat = gate.schluessel_ableiten(g).private_bytes(serialization.Encoding.Raw, serialization.PrivateFormat.Raw,
                                                  serialization.NoEncryption())
 assert saat != g and len(saat) == 32
-ok("Signaturschlüssel ist abgeleitet (HKDF mit eigenem Kontext), nicht der Grundschlüssel")
+ok("signing key is derived (HKDF with its own context), not the base key")
 
 # ---------- CLI: tinysesam gate-key ----------
 db = auth.cfg.db_path
@@ -253,15 +253,15 @@ r = subprocess.run([sys.executable, "-m", "tinysesam", "gate-key", "--db", db],
                    capture_output=True, text=True, env=umg, timeout=60)
 assert r.returncode == 0, r.stderr
 assert r.stdout.strip() == auth.gate_public_key()
-ok("`tinysesam gate-key` gibt denselben öffentlichen Schlüssel aus wie der Dienst")
+ok("`tinysesam gate-key` prints the same public key as the service")
 
 leer = os.path.join(tempfile.mkdtemp(), "x.db")
 r = subprocess.run([sys.executable, "-m", "tinysesam", "gate-key", "--db", leer],
                    capture_output=True, text=True, env=umg, timeout=60)
 assert r.returncode == 1 and not os.path.exists(leer + ".key"), (r.returncode, r.stderr)
-ok("`gate-key` ohne Grundschlüssel: Fehler, und es legt KEINEN neuen an")
+ok("`gate-key` without base key: error, and it creates NO new one")
 
-# ---------- Konfigurationsprüfung ----------
+# ---------- Configuration check ----------
 def befunde(**extra):
     werte = dict(db_path=":memory:", forward_auth_enabled=True, gate_token_enabled=True)
     werte.update(extra)
@@ -282,41 +282,41 @@ except ConfigError as e:
     assert "forward_auth_enabled" in str(e)
 else:
     raise AssertionError("gate_token_enabled ohne forward_auth_enabled startet")
-ok("Konfigurationsprüfung: ohne forward_auth, falscher Cookie-Name, Laufzeit ausserhalb 30–3600")
+ok("configuration check: without forward_auth, wrong cookie name, lifetime outside 30–3600")
 
-# ---------- Vorlage: der Proxy setzt die Identität, nicht der Browser ----------
-# Jeder Header, den TinySesam als Identität schickt, wird in der Vorlage zuerst aus der Anfrage
-# entfernt. Im Verhalten ist das unsichtbar, solange beide Wege ihn danach setzen — es ist die
-# Absicherung für den Tag, an dem jemand eine `header_up`-Zeile streicht oder ein Feld aus
-# forward_headers nimmt. Deshalb hier als Wächter über die Datei, nicht als Probe.
+# ---------- Template: the proxy sets the identity, not the browser ----------
+# Every header that TinySesam sends as identity is removed from the request first in the template.
+# In behaviour that is invisible as long as both paths set it afterwards — it is the
+# safeguard for the day someone deletes a `header_up` line or takes a field out of
+# forward_headers. Therefore here as a guard over the file, not as a probe.
 import pathlib  # noqa: E402
 import re  # noqa: E402
 vorlage = (pathlib.Path(__file__).resolve().parent.parent / "deploy/forward-auth/Caddyfile.gate").read_text(encoding="utf-8")
 code = "\n".join(z.split("#", 1)[0] for z in vorlage.splitlines())
 site = code[code.index("app.example.com {"):]
 for kopfname in TinySesam.FORWARD_HEADERS_DEFAULT.values():
-    assert re.search(rf"^\trequest_header -{kopfname}\s*$", site, re.M), f"Vorlage entfernt {kopfname} nicht"
-    assert re.search(rf"header_up {kopfname} \{{http\.auth\.user\.ts_", site), f"schneller Weg setzt {kopfname} nicht"
-    assert f"request_header {kopfname} {{rp.header.{kopfname}}}" in site, f"Rückweg setzt {kopfname} nicht"
-assert site.index("request_header -Remote-User") < site.index("route {"), "Entfernen erst nach dem Weiterleiten"
-assert re.search(r"^\t\t\tsign_alg EdDSA\s*$", site, re.M), "jwtauth ohne festen Algorithmus"
+    assert re.search(rf"^\trequest_header -{kopfname}\s*$", site, re.M), f"template does not remove {kopfname}"
+    assert re.search(rf"header_up {kopfname} \{{http\.auth\.user\.ts_", site), f"fast path does not set {kopfname}"
+    assert f"request_header {kopfname} {{rp.header.{kopfname}}}" in site, f"rollback path does not set {kopfname}"
+assert site.index("request_header -Remote-User") < site.index("route {"), "removal only after forwarding"
+assert re.search(r"^\t\t\tsign_alg EdDSA\s*$", site, re.M), "jwtauth without fixed algorithm"
 assert "from_cookies __Host-tinysesam_gate" in site
-ok("Vorlage: jeder Remote-*-Header wird erst entfernt, dann auf beiden Wegen gesetzt; sign_alg fest")
+ok("template: every Remote-* header is removed first, then set on both paths; sign_alg fixed")
 
-# Share-Ausnahme (T-20), in BEIDEN Vorlagen: aus, solange niemand sie setzt; und ohne Identität —
-# auch die normale Vorlage entfernt die Remote-*-Header sonst nirgends vor der Anwendung.
+# Share exception (T-20), in BOTH templates: off as long as nobody sets it; and without identity —
+# the normal template, too, otherwise removes the Remote-* headers nowhere before the application.
 for _datei in ("deploy/forward-auth/Caddyfile", "deploy/forward-auth/Caddyfile.gate"):
     _t = (pathlib.Path(__file__).resolve().parent.parent / _datei).read_text(encoding="utf-8")
     _code = "\n".join(z.split("#", 1)[0] if not z.lstrip().startswith("header_up Cookie") else z
                       for z in _t.splitlines())
     _block = re.search(r"handle @share \{(.*?)\n\t\}", _code, re.S)
-    assert _block, f"{_datei}: kein handle @share"
-    assert "{$TS_SHARE_PRAEFIX:^$}" in _code, f"{_datei}: die Share-Ausnahme ist nicht von sich aus aus"
-    assert "vars_regexp share {http.request.orig_uri.path}" in _code, f"{_datei}: Share prüft nicht den rohen Pfad"
-    assert re.search(r"not vars_regexp \{http\.request\.orig_uri\.path\} ", _code), f"{_datei}: ohne Sperre für Pfad-Tricks"
+    assert _block, f"{_datei}: no handle @share"
+    assert "{$TS_SHARE_PRAEFIX:^$}" in _code, f"{_datei}: the share exception is not off by itself"
+    assert "vars_regexp share {http.request.orig_uri.path}" in _code, f"{_datei}: share does not check the raw path"
+    assert re.search(r"not vars_regexp \{http\.request\.orig_uri\.path\} ", _code), f"{_datei}: without a block for path tricks"
     for kopfname in TinySesam.FORWARD_HEADERS_DEFAULT.values():
-        assert f"header_up -{kopfname}" in _block.group(1), f"{_datei}: Share reicht {kopfname} vom Browser durch"
-    assert _code.index("handle @share") < _code.index("route {"), f"{_datei}: Share erst nach dem Gate"
-ok("Vorlagen: Share-Ausnahme von sich aus aus, prüft den rohen Pfad, reicht keine Identität durch")
+        assert f"header_up -{kopfname}" in _block.group(1), f"{_datei}: share passes {kopfname} through from the browser"
+    assert _code.index("handle @share") < _code.index("route {"), f"{_datei}: share only after the gate"
+ok("templates: share exception off by itself, checks the raw path, passes no identity through")
 
 print("Gate-Token OK")

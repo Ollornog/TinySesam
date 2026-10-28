@@ -1,7 +1,7 @@
-"""Phase 9: Kombinations-Matrix — Features einzeln/aus/kombiniert, ohne gegenseitige Störung.
+"""Phase 9: combination matrix — features individually/off/combined, without interfering with each other.
 
-Prüft die Leitlinie: jede Fähigkeit funktioniert allein, ist abschaltbar (dann keine Route/kein
-Verhalten) und lässt sich mit den anderen kombinieren."""
+Checks the guideline: every capability works alone, can be switched off (then no route/no
+behaviour) and can be combined with the others."""
 import os
 import tempfile
 from fastapi import FastAPI
@@ -16,11 +16,11 @@ def ok(name):
 
 
 def absent(c, path):
-    """True, wenn die Route nicht existiert (404). GET, ohne Redirects folgen."""
+    """True if the route does not exist (404). GET, without following redirects."""
     return c.get(path, follow_redirects=False).status_code == 404
 
 
-# ---------- ALLES AUS: nur Basis-Routen, keine optionalen ----------
+# ---------- EVERYTHING OFF: only base routes, no optional ones ----------
 db = os.path.join(tempfile.mkdtemp(), "t.db")
 a = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db, passkey_enabled=False, oidc_enabled=False,
                               pin_enabled=False, magiclink_enabled=False, allow_signup=False,
@@ -34,9 +34,9 @@ for path in ("/auth/pin", "/auth/magic/request", "/auth/register", "/auth/resour
 assert c.get("/auth/login").status_code == 200
 assert c.get("/auth/logout", follow_redirects=False).status_code in (303, 307)
 os.remove(db)
-ok("alle optionalen Features aus → zugehörige Routen fehlen (404), Basis bleibt")
+ok("all optional features off → associated routes are missing (404), base stays")
 
-# ---------- ALLES AN: Routen vorhanden, keine Kollision ----------
+# ---------- EVERYTHING ON: routes present, no collision ----------
 db = os.path.join(tempfile.mkdtemp(), "t.db")
 a = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", 
     db_path=db, passkey_enabled=False, oidc_enabled=False,
@@ -55,11 +55,11 @@ for path in ("/auth/pin", "/auth/magic/request", "/auth/register", "/auth/resour
              "/auth/forward", "/auth/account", "/auth/reauth"):
     assert not absent(c, path), f"{path} sollte vorhanden sein"
 assert c.get("/auth/login").status_code == 200
-ok("alle Features an → alle Routen erreichbar, keine Kollision")
+ok("all features on → all routes reachable, no collision")
 secret = a.totp_begin(uid)["secret"]
 a.totp_confirm(uid, pyotp.TOTP(secret).at(time.time() - 30))
 
-# PIN-Login → TOTP-Schritt (klassisch: PIN identifiziert, TOTP als 2. Faktor)
+# PIN login → TOTP step (classic: PIN identifies, TOTP as 2nd factor)
 r = c.post("/auth/pin", data={"username": "admin", "pin": "2468", "next": "/"}, follow_redirects=False)
 assert r.status_code == 303 and "/auth/totp" in r.headers["location"]
 r = c.post("/auth/totp", data={"code": pyotp.TOTP(secret).now(), "next": "/"}, follow_redirects=False)
@@ -67,13 +67,13 @@ assert r.status_code == 303
 # eingeloggt: Konto-Seite + Forward-Auth ok
 assert "Konto · admin" in c.get("/auth/account").text
 assert c.get("/auth/forward", headers={"X-Forwarded-Host": "app", "X-Forwarded-Uri": "/x"}).status_code == 200
-# Ressourcen-PIN unabhängig vom Login
+# resource PIN independent of the login
 c2 = TestClient(app)
 assert c2.post("/auth/resource/z", data={"secret": "1234", "next": "/"}, follow_redirects=False).status_code == 303
-ok("PIN+TOTP-Login, Konto-Seite, Forward-Auth und Ressourcen-PIN gleichzeitig nutzbar")
+ok("PIN+TOTP login, account page, forward auth and resource PIN usable at the same time")
 os.remove(db)
 
-# ---------- Feature einzeln: nur Magic-Link (kein Passwort) ----------
+# ---------- Feature on its own: only magic link (no password) ----------
 db = os.path.join(tempfile.mkdtemp(), "t.db")
 sent = []
 a = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db, password_enabled=False, passkey_enabled=False,
@@ -83,14 +83,14 @@ a.set_mailer(lambda to, s, t, html=None: sent.append(t))
 a.create_user("nurmail", email="m@example.com")
 app = FastAPI(); app.include_router(a.router())
 c = TestClient(app)
-# kein Passwort-Login
+# no password login
 assert c.post("/auth/login", data={"username": "nurmail", "password": "x"}).status_code == 404
 # Magic-Link funktioniert allein
 c.post("/auth/magic/request", data={"email": "m@example.com", "next": "/"})
 import re
 tok = re.search(r"/auth/magic/([\w\-]+)", sent[0]).group(1)
-assert c.post(f"/auth/magic/{tok}", follow_redirects=False).status_code == 303   # R4-02: POST löst ein
+assert c.post(f"/auth/magic/{tok}", follow_redirects=False).status_code == 303   # R4-02: POST redeems
 os.remove(db)
-ok("nur Magic-Link (Passwort aus): Passwort-Login 404, Magic-Login funktioniert allein")
+ok("only magic link (password off): password login 404, magic login works alone")
 
 print("\nKOMBINATIONS-MATRIX OK ✅")

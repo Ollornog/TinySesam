@@ -1,4 +1,4 @@
-"""Phase 7: Eingebaute Account-Seite (Selbstverwaltung) + Selbst-Passwortänderung + Override."""
+"""Phase 7: built-in account page (self-service) + self-service password change + override."""
 import os
 import tempfile, os
 from fastapi import FastAPI
@@ -14,77 +14,77 @@ def ok(name):
 db = os.path.join(tempfile.mkdtemp(), "t.db")
 auth = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db, rp_name="Test", passkey_enabled=False, oidc_enabled=False,
                                  cookie_secure=False, pin_enabled=True))
-# Diese Suite prüft Blockliste, Kontextwörter und Höchstlänge — nicht die Einfaktor-Länge (B2-4,
-# die prüft test_t13_entscheide.py). Mit 15 Zeichen Mindestlänge fiele jedes kurze schwache
-# Beispiel schon an der Länge durch, und die Regel dahinter bliebe ungeprüft.
+# This suite checks the blocklist, context words and maximum length — not the single-factor length (B2-4,
+# that is checked by test_t13_entscheide.py). With a minimum length of 15 characters every short weak
+# example would already fail on length, and the rule behind it would stay unchecked.
 auth.set_security("password_min_length_single_factor", 8)
 auth.ensure_admin("admin", "geheim123")
 app = FastAPI()
 app.include_router(auth.router())
 c = TestClient(app)
 
-# nicht eingeloggt → Redirect zum Login
+# not logged in → redirect to the login
 r = c.get("/auth/account", follow_redirects=False)
 assert r.status_code == 303 and "/auth/login" in r.headers["location"]
-ok("Account-Seite verlangt Login")
+ok("Account page requires login")
 
 c.post("/auth/login", data={"username": "admin", "password": "geheim123", "next": "/"}, follow_redirects=False)
 html = c.get("/auth/account").text
 assert "Konto · admin" in html
 assert "Passwort" in html and "PIN" in html and "Zwei-Faktor" in html and "API-Keys" in html
-assert "Admin-Panel" in html   # admin sieht den Link
-ok("Account-Seite zeigt Abschnitte (Passwort/PIN/2FA/API-Keys) + Admin-Link")
+assert "Admin-Panel" in html   # admin sees the link
+ok("Account page shows sections (password/PIN/2FA/API keys) + admin link")
 
-# Passwort ändern: falsches aktuelles → 403
+# Change password: wrong current one → 403
 assert c.post("/auth/password", json={"current": "falsch", "new": "neuespasswort"}).status_code == 403
-# zu kurz → 400
+# too short → 400
 assert c.post("/auth/password", json={"current": "geheim123", "new": "x"}).status_code == 400
-# korrekt → 200, danach neuer Login funktioniert
+# correct → 200, afterwards the new login works
 _pw = c.post("/auth/password", json={"current": "geheim123", "new": "neuespasswort"}).json()
-# Die Antwort trägt seit 0.18.0 zusätzlich `api_keys_active`: API-Keys überleben den eigenen
-# Passwortwechsel mit Absicht, und wer nach einem Einbruch das Passwort tauscht, soll sehen,
-# dass da noch eine zweite Tür offen ist. Deshalb kein Gleichheitsvergleich mehr.
+# Since 0.18.0 the response additionally carries `api_keys_active`: API keys deliberately survive
+# the user's own password change, and whoever changes the password after a break-in should see
+# that a second door is still open. Hence no equality comparison any more.
 assert _pw["ok"] is True and _pw["api_keys_active"] == 0, _pw
 c.get("/auth/logout")
 assert c.post("/auth/login", data={"username": "admin", "password": "geheim123"}, follow_redirects=False).status_code == 401
 assert c.post("/auth/login", data={"username": "admin", "password": "neuespasswort"}, follow_redirects=False).status_code == 303
-ok("Selbst-Passwortänderung (aktuelles Passwort nötig, Mindestlänge)")
+ok("Self-service password change (current password required, minimum length)")
 
-# Robustheit: kaputter JSON-Body → 400 (nicht 500)
+# Robustness: broken JSON body → 400 (not 500)
 r = c.post("/auth/password", content="{kaputt}", headers={"Content-Type": "application/json"})
 assert r.status_code == 400, r.status_code
-ok("kaputter JSON-Body → 400 (nicht 500)")
+ok("broken JSON body → 400 (not 500)")
 
 # ---------- Passwortregel an der Kontoseite (B2-5/H-17, R4-07) ----------
-# Dieselbe Regel wie an jeder Setzstelle: bekannte Passwörter, triviale Folgen und Wörter aus dem
-# Kontext (Benutzername, Dienstname) fallen durch, auch aufgehübscht; zu lange ebenso.
-# (Mutationsprobe: `return None` an den Anfang von `passwords.passwort_mangel` → rot.)
+# The same rule as at every place that sets a password: known passwords, trivial sequences and words from
+# the context (username, service name) fail, even dressed up; too long ones as well.
+# (Mutation probe: `return None` at the start of `passwords.passwort_mangel` → red.)
 for _schwach in ("password123", "Passwort2026!", "12345678", "qwertzuiop", "aaaaaaaaaa",
                  "Admin2026!", "test!Test1", "45678901"):
     _r = c.post("/auth/password", json={"current": "neuespasswort", "new": _schwach})
     assert _r.status_code == 400 and "leicht zu erraten" in _r.json()["detail"], (_schwach, _r.text)
-# `test!Test1` → Kern `testtest` (Blockliste); `Test` ist der rp_name dieser Instanz.
+# `test!Test1` → core `testtest` (blocklist); `Test` is the rp_name of this instance.
 _r = c.post("/auth/password", json={"current": "neuespasswort", "new": "Test-2026"})
-assert _r.status_code == 400, "der Dienstname (rp_name) ist ein Kontextwort"
+assert _r.status_code == 400, "the service name (rp_name) is a context word"
 _r = c.post("/auth/password", json={"current": "neuespasswort", "new": "x" * 257})
 assert _r.status_code == 400 and "zu lang" in _r.json()["detail"], _r.text
-_r = c.post("/auth/password", json={"current": "neuespasswort", "new": "k" + "e1" * 127 + "!"})   # 256 Zeichen
-assert _r.status_code == 200, "genau die Höchstlänge ist erlaubt"
+_r = c.post("/auth/password", json={"current": "neuespasswort", "new": "k" + "e1" * 127 + "!"})   # 256 characters
+assert _r.status_code == 200, "exactly the maximum length is allowed"
 _r = c.post("/auth/password", json={"current": "k" + "e1" * 127 + "!", "new": "neuespasswort"})
 assert _r.status_code == 200, _r.text
-ok("Kontoseite: Blockliste, Kontextwörter und Höchstlänge (256) greifen")
+ok("Account page: blocklist, context words and maximum length (256) take effect")
 
-# Eigene Blockliste des Betreibers (`password_blocklist_file`) — ergänzt die eingebaute.
+# The operator's own blocklist (`password_blocklist_file`) — supplements the built-in one.
 _liste = os.path.join(tempfile.mkdtemp(), "block.txt")
 with open(_liste, "w", encoding="utf-8") as _f:
     _f.write("# Kommentar\nFirmenname2026\n")
 _ab = TinySesam(TinySesamConfig(db_path=os.path.join(tempfile.mkdtemp(), "b.db"), passkey_enabled=False,
                                 password_blocklist_file=_liste))
-_ab.set_security("password_min_length_single_factor", 8)       # geprüft wird die Liste, nicht die Länge
+_ab.set_security("password_min_length_single_factor", 8)       # the list is checked, not the length
 assert _ab.password_policy_error("firmenname2026") and _ab.password_policy_error("Firmenname!!")
 assert _ab.password_policy_error("ein-ganz-eigenes-wort") is None
-# Gegenprobe gegen Übereifer: keine Zusammensetzungsregeln (NIST), eine Ziffernfolge ohne Muster
-# und eine Passphrase gehen durch.
+# Counter-check against over-eagerness: no composition rules (NIST), a digit sequence without a pattern
+# and a passphrase pass.
 for _gut in ("24681357", "correct horse battery", "9384756102"):
     assert _ab.password_policy_error(_gut) is None, _gut
 try:
@@ -93,14 +93,14 @@ try:
     raise AssertionError("fehlende Blockliste wurde still übergangen")
 except ConfigError as _e:
     assert "password_blocklist_file" in str(_e)
-ok("password_blocklist_file ergänzt die Liste; fehlt die Datei, bricht der Start ab")
+ok("password_blocklist_file supplements the list; if the file is missing, startup aborts")
 
-# A-3: Leak-Listen wie rockyou.txt mischen UTF-8 und Latin-1. Ein striktes UTF-8-Lesen brach den
-# Start mit einem rohen UnicodeDecodeError ab — genau an den Listen, für die das Feld gedacht ist.
-# (Mutationsprobe: in `passwords.blockliste_lesen` die Latin-1-Ausweichzeile streichen → rot.)
+# A-3: leak lists like rockyou.txt mix UTF-8 and Latin-1. Strict UTF-8 reading aborted
+# startup with a raw UnicodeDecodeError — exactly on the lists the field is meant for.
+# (Mutation probe: delete the Latin-1 fallback line in `passwords.blockliste_lesen` → red.)
 _misch = os.path.join(tempfile.mkdtemp(), "leak.txt")
 with open(_misch, "wb") as _f:
-    _f.write(b"password\nsch\xf6n123\n" + "möhrenkuchen\n".encode("utf-8"))   # Latin-1, dann UTF-8
+    _f.write(b"password\nsch\xf6n123\n" + "möhrenkuchen\n".encode("utf-8"))   # Latin-1, then UTF-8
 _am = TinySesam(TinySesamConfig(db_path=os.path.join(tempfile.mkdtemp(), "b.db"), passkey_enabled=False,
                                 password_blocklist_file=_misch))
 assert _am.password_policy_error("Schön123!") and _am.password_policy_error("Möhrenkuchen99")
@@ -110,34 +110,34 @@ try:
     raise AssertionError("ein Verzeichnis als Blockliste wurde still übergangen")
 except ConfigError as _e:
     assert "password_blocklist_file" in str(_e)
-ok("A-3: Blockliste mit Latin-1- und UTF-8-Zeilen lädt; unlesbarer Pfad bleibt ConfigError")
+ok("A-3: blocklist with Latin-1 and UTF-8 lines loads; unreadable path stays ConfigError")
 
-# A-5: Kontextwörter auch in ihren Teilen — der Nachname allein ist das naheliegendste Wort eines
-# Kontos `max.mustermann`, und der Vergleich des ganzen Namens liess ihn durch.
-# (Mutationsprobe: in `passwords._kontextteile` nur `{_kern(roh)}` zurückgeben → rot.)
+# A-5: context words also in their parts — the surname alone is the most obvious word of an
+# account `max.mustermann`, and comparing the whole name let it through.
+# (Mutation probe: return only `{_kern(roh)}` in `passwords._kontextteile` → red.)
 for _pw, _name, _mail in (("Mustermann1990!", "maxm", "max.mustermann@example.com"),
                           ("Schmidt1985!", "anna.schmidt", None),
                           ("Mueller2026!", "km", "k.mueller@example.com"),
                           ("Mustermann1990!", "MaxMustermann", None)):
     assert _ab.password_policy_error(_pw, username=_name, email=_mail), (_pw, _name, _mail)
-# Gegenprobe: Teile unter vier Buchstaben (`max`, `k`) tragen nichts.
+# Counter-check: parts under four letters (`max`, `k`) count for nothing.
 assert _ab.password_policy_error("Maximal-Ruhig-7", username="max.mustermann") is None
-ok("A-5: Namensteile aus Benutzername und E-Mail (Trenner, Binnenmajuskel) sind Kontextwörter")
+ok("A-5: name parts from username and e-mail (separators, inner capitals) are context words")
 
-# A-6: Die übrigen trivialen Muster aus den Leak-Listen — absteigend mit Umbruch, wiederholte
-# Blöcke, gedoppelte Folgen, Tastaturwege.
-# (Mutationsprobe: in `passwords._trivial` alles nach der ±1-Prüfung durch `return False` ersetzen → rot.)
+# A-6: The remaining trivial patterns from the leak lists — descending with wrap-around, repeated
+# blocks, doubled sequences, keyboard walks.
+# (Mutation probe: replace everything after the ±1 check in `passwords._trivial` with `return False` → red.)
 for _muster in ("0987654321", "12341234", "asdfasdf", "abcabcabc", "12121212", "11112222",
                 "qwerasdf", "Asdf1234", "7890123456", "aabbccdd", "yxcvbnm123"):
     assert _ab.password_policy_error(_muster), _muster
 for _gut in ("24681357", "correct horse battery", "9384756102", "Zauberwald-17", "Tischlampe42"):
     assert _ab.password_policy_error(_gut) is None, _gut
-ok("A-6: Wiederholungsblöcke, Tastatur- und Zählreihen gelten als trivial")
+ok("A-6: repeated blocks, keyboard and counting sequences count as trivial")
 
 # ---------- on_security_event (B2-2/H-6) ----------
-# Jede Änderung an einem Anmeldefaktor erreicht den Hook — der Inhaber soll davon erfahren.
-# (Mutationsprobe: `self.sicherheitsereignis("password_changed", …)` aus `set_password`
-# streichen → rot; ebenso je Ereignis.)
+# Every change to a sign-in factor reaches the hook — the owner should learn about it.
+# (Mutation probe: delete `self.sicherheitsereignis("password_changed", …)` from `set_password`
+# → red; likewise for each event.)
 _ereignisse = []
 auth.on_security_event = lambda e, konto, d: _ereignisse.append((e, konto["username"], d))
 _uid = auth.store.get_user_by_name("admin")["id"]
@@ -149,10 +149,10 @@ _namen = [e for e, _, _ in _ereignisse]
 assert _namen == ["password_changed", "pin_set", "pin_disabled", "api_key_created"], _ereignisse
 assert all(n == "admin" for _, n, _ in _ereignisse)
 assert set(_namen) <= set(auth.SECURITY_EVENTS)
-ok("on_security_event: Passwort, PIN setzen/entfernen und neuer API-Key melden sich")
+ok("on_security_event: password, PIN set/remove and a new API key report in")
 
-# Jedes zugesagte Ereignis hat einen Aufrufer im Paket — auch die, die dieser Test nicht fährt
-# (Passkey braucht das Extra). Per AST, nicht per Textsuche: ein Docstring zählt nicht.
+# Every promised event has a caller in the package — also those this test does not drive
+# (passkey needs the extra). Via AST, not text search: a docstring does not count.
 import ast as _ast
 import pathlib as _pl
 _gerufen = set()
@@ -163,18 +163,18 @@ for _datei in (_pl.Path(__file__).resolve().parent.parent / "tinysesam").glob("*
                 and isinstance(_k.args[0], _ast.Constant)):
             _gerufen.add(_k.args[0].value)
 assert _gerufen == set(auth.SECURITY_EVENTS), (sorted(_gerufen), auth.SECURITY_EVENTS)
-ok("jedes Ereignis aus SECURITY_EVENTS wird irgendwo ausgelöst (und kein anderes)")
+ok("every event from SECURITY_EVENTS is triggered somewhere (and no other)")
 
-# A-2: Der Hook stand nur im generierten API.md — ein Integrator erfuhr nirgends, welche
-# Ereignisse kommen. Die Betriebshinweise (beide Sprachen) nennen jetzt jedes einzelne.
+# A-2: The hook was only in the generated API.md — an integrator nowhere learned which
+# events come. The operations notes (both languages) now name each one.
 _wurzel = _pl.Path(__file__).resolve().parent.parent
 for _doku in ("SECURITY.md", "i18n/SECURITY.de.md"):
     _txt = (_wurzel / _doku).read_text(encoding="utf-8")
     _fehlt = [e for e in auth.SECURITY_EVENTS if f"`{e}`" not in _txt]
     assert "on_security_event" in _txt and not _fehlt, (_doku, _fehlt)
-ok("A-2: SECURITY.md (en/de) beschreibt on_security_event mit allen Ereignissen")
+ok("A-2: SECURITY.md (en/de) describes on_security_event with all events")
 
-# Ein kaputter Hook bricht nichts ab, bleibt aber nicht still.
+# A broken hook aborts nothing, but is not silent.
 import logging as _logging
 from tinysesam import security as _sec
 _zeilen = []
@@ -191,25 +191,25 @@ auth.on_security_event = _kaputt
 _r = c.post("/auth/password", json={"current": "wieder-ein-neues", "new": "neuespasswort"})
 _sec.seclog.removeHandler(_h)
 auth.on_security_event = None
-assert _r.status_code == 200, "ein fehlschlagender Hook darf den Passwortwechsel nicht kippen"
+assert _r.status_code == 200, "a failing hook must not break the password change"
 assert any("on_security_event fehlgeschlagen" in z and "password_changed" in z for z in _zeilen), _zeilen
 assert auth._check_password("admin", "neuespasswort")
-ok("on_security_event: Fehler im Hook → Vorgang gilt, Zeile im Sicherheits-Log")
+ok("on_security_event: error in the hook → operation stands, line in the security log")
 
-# ---------- Die Lösch-Knöpfe prüfen die Antwort, bevor sie Erfolg melden (R3-3) ----------
-# Beide Knöpfe der Konto-Seite meldeten UNBEDINGT „✓ entfernt" und luden neu — auch bei 403
-# (abgelaufene Step-up-Frische, fehlendes CSRF-Token) oder 500. Der Nutzer sah „entfernt", der
-# Faktor stand noch. Der CHANGELOG sagt das für BEIDE Knöpfe zu; gedeckt war nur `deltotp()`,
-# und zwar im Browser-Test — der fährt eine Demo mit `pin_login=False` und zeigt die
-# PIN-Sektion deshalb gar nicht. Mutation M32 (`delpin()` meldet wieder unbedingt Erfolg) lief
-# mit 46/46 grün durch. Geprüft wird hier der Quelltext, den der Browser wirklich bekommt:
-# billiger als ein zweiter Browser-Lauf und unabhängig davon, welche Sektion die Demo zeigt.
-# Muss VOR dem Template-Override weiter unten stehen — danach liefert die Seite kein JS mehr.
+# ---------- The delete buttons check the response before they report success (R3-3) ----------
+# Both buttons of the account page UNCONDITIONALLY reported "✓ entfernt" and reloaded — even on 403
+# (expired step-up freshness, missing CSRF token) or 500. The user saw "removed", the
+# factor was still there. The CHANGELOG promises this for BOTH buttons; only `deltotp()` was covered,
+# and that in the browser test — which runs a demo with `pin_login=False` and therefore does not show
+# the PIN section at all. Mutation M32 (`delpin()` reports success unconditionally again) passed
+# 46/46 green. What is checked here is the source the browser actually receives:
+# cheaper than a second browser run and independent of which section the demo shows.
+# Must come BEFORE the template override further down — after it the page no longer delivers any JS.
 import re as _re  # noqa: E402
 
-# Beide Sektionen sichtbar machen: Die PIN-Sektion hängt an `pin_login`, die 2FA-Sektion an
-# einem bestätigten Geheimnis. Genau daran ging die Browser-Abdeckung vorbei — die Demo fährt
-# `pin_login=False` und zeigt den PIN-Knopf nie.
+# Make both sections visible: the PIN section depends on `pin_login`, the 2FA section on
+# a confirmed secret. This is exactly what the browser coverage missed — the demo runs
+# `pin_login=False` and never shows the PIN button.
 _uid = auth.store.get_user_by_name("admin")["id"]
 auth.cfg.pin_login = True
 auth.totp_begin(_uid)
@@ -220,54 +220,54 @@ _ERFOLG = "\u2713 entfernt"
 
 
 def _funktion(quelle, name):
-    """Der Körper von `async function <name>(){…}` bis zur nächsten Funktion."""
+    """The body of `async function <name>(){…}` up to the next function."""
     _m = _re.search(r"async function " + name + r"\(\)\{(.*?)(?=\nasync function |\n</script>)",
                     quelle, _re.S)
-    assert _m, f"{name}() steht nicht mehr im Konto-JS — sonst prüft dieser Wächter nichts"
+    assert _m, f"{name}() is no longer in the account JS — otherwise this guard checks nothing"
     return _m.group(1)
 
 
 for _knopf in ("delpin", "deltotp"):
     _koerper = _funktion(_js, _knopf)
-    assert "r.ok" in _koerper, f"{_knopf}() sieht die Antwort gar nicht an"
+    assert "r.ok" in _koerper, f"{_knopf}() does not look at the response at all"
     for _zeile in _koerper.splitlines():
         if _ERFOLG in _zeile:
             assert "r.ok?" in _zeile, \
-                f"{_knopf}() meldet Erfolg unbedingt: {_zeile.strip()!r}"
+                f"{_knopf}() reports success unconditionally: {_zeile.strip()!r}"
         if "location.reload()" in _zeile:
             assert "if(r.ok)" in _zeile, \
-                (f"{_knopf}() lädt unbedingt neu: {_zeile.strip()!r} — ein 403 sähe für den "
-                 "Nutzer damit genauso aus wie ein Erfolg")
-# Gegenprobe: Beide Knöpfe stehen auf der Seite — sonst misst der Wächter Text, den niemand
-# bekommt, und der Erfolgspfad wäre nirgends belegt.
-assert "data-act=delpin" in _js and "data-act=deltotp" in _js, "kein Lösch-Knopf auf der Seite"
-assert _ERFOLG in _funktion(_js, "delpin"), "delpin() meldet gar keinen Erfolg mehr"
-ok("Lösch-Knöpfe (PIN und 2FA) melden erst nach `r.ok` Erfolg")
+                (f"{_knopf}() reloads unconditionally: {_zeile.strip()!r} — a 403 would then look "
+                 "to the user exactly like a success")
+# Counter-check: both buttons are on the page — otherwise the guard measures text nobody
+# receives, and the success path would be proven nowhere.
+assert "data-act=delpin" in _js and "data-act=deltotp" in _js, "no delete button on the page"
+assert _ERFOLG in _funktion(_js, "delpin"), "delpin() no longer reports success at all"
+ok("Delete buttons (PIN and 2FA) report success only after `r.ok`")
 
-# Template-Override der Account-Seite
+# Template override of the account page
 auth.set_template("account", lambda a, ctx: f"<html>MEIN-KONTO {ctx['user']['username']}</html>")
 assert "MEIN-KONTO admin" in c.get("/auth/account").text
-ok("Account-Seite per set_template ersetzbar")
+ok("Account page replaceable via set_template")
 
-# R8-6: Key- und Passkey-Namen setzt der Nutzer selbst, und die Konto-Seite schrieb sie roh in
-# innerHTML. Ein Key namens <img src=x onerror=…> lief als Code — auch im Browser eines Admins,
-# der sich die Seite ansieht. Jedes API-Feld, das dort ins Markup geht, muss durch esc0.
+# R8-6: The user sets key and passkey names themselves, and the account page wrote them raw into
+# innerHTML. A key named <img src=x onerror=…> ran as code — also in the browser of an admin
+# who looks at the page. Every API field that goes into the markup there must pass through esc0.
 from tinysesam.templates import _ACCOUNT_JS  # noqa: E402
 
 _felder = _re.findall(r"(\S{0,6})\b([kps])\.(name|prefix|id|method|ip|user_agent)\b", _ACCOUNT_JS)
 _roh = [f"{v}{o}.{f}" for v, o, f in _felder if not v.endswith("esc0(")]
-assert _felder and not _roh, f"API-Felder roh im Markup: {_roh}"
-assert "replace(/[&<>\"']/g" in _ACCOUNT_JS, "esc0 deckt nicht alle fünf Zeichen ab"
-ok("Konto-Seite: jedes API-Feld im Markup läuft durch esc0")
+assert _felder and not _roh, f"API fields raw in the markup: {_roh}"
+assert "replace(/[&<>\"']/g" in _ACCOUNT_JS, "esc0 does not cover all five characters"
+ok("Account page: every API field in the markup passes through esc0")
 
-# Mit node die echten Listen-Funktionen gegen präparierte Namen laufen lassen — die Wirkung,
-# nicht nur der Quelltext.
+# Run the real list functions against prepared names with node — the effect,
+# not just the source text.
 import json as _json  # noqa: E402
 import subprocess as _sp  # noqa: E402
 from voraussetzung import pflicht_werkzeug  # noqa: E402
 
-# Fehlt node, ist das rot, nicht still übersprungen (s. `pflicht_werkzeug`).
-# (Mutationsprobe: mit PATH ohne node laufen lassen → rot; mit TINYSESAM_OHNE_NODE=1 → ⚠-Zeile.)
+# If node is missing, that is red, not silently skipped (see `pflicht_werkzeug`).
+# (Mutation probe: run with a PATH without node → red; with TINYSESAM_OHNE_NODE=1 → ⚠ line.)
 _node = pflicht_werkzeug("node", "Konto-Seite: Listen-Funktionen gegen präparierte Namen")
 if _node:
     _boese = '<img src=x onerror=alert(1)>"\'&'
@@ -275,7 +275,7 @@ if _node:
               "/auth/passkey/list": [{"id": 3, "name": _boese}],
               "/auth/sessions": [{"created_at": 0, "method": _boese, "ip": _boese,
                                   "user_agent": _boese, "current": 0}]}
-    # Wie `render_page` für eine App an der Wurzel: der Montage-Präfix (T-15) ist dann leer.
+    # Like `render_page` for an app at the root: the mount prefix (T-15) is then empty.
     from tinysesam.templates import PRAEFIX_PLATZHALTER as _PP  # noqa: E402
     _skript = _ACCOUNT_JS.split("<script>", 1)[1].rsplit("</script>", 1)[0].replace(_PP, "")
     _probe = ("const E={};const document={cookie:'',addEventListener(){},"
@@ -290,7 +290,7 @@ if _node:
     _listen = _json.loads(_aus.stdout)
     for _l in _listen:
         assert "<img" not in _l and "&lt;img src=x onerror=alert(1)&gt;&quot;&#39;&amp;" in _l, _l
-    ok("Konto-Seite (node): präparierte Key-/Passkey-/Sitzungswerte bleiben Text")
+    ok("Account page (node): prepared key/passkey/session values stay text")
 
 os.remove(db)
 print("\nACCOUNT OK ✅")

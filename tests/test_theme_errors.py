@@ -43,41 +43,41 @@ JSON = {"Accept": "application/json"}
 # ---------- brand_css landet in ALLEN eingebauten Seiten ----------
 for path in ["/auth/login", "/auth/register"]:
     assert BRAND in c.get(path).text, path
-# auch Konto-Seite (eigenes Layout) + eingeloggt
+# also account page (own layout) + logged in
 c.post("/auth/login", data={"username": "admin", "password": "geheim123"}, follow_redirects=False)
 assert BRAND in c.get("/auth/account").text
 assert BRAND in c.get("/auth/admin", headers=HTML).text
-ok("brand_css re-skinnt Login/Register/Konto/Admin-Panel (ein Hook)")
+ok("brand_css re-skins login/register/account/admin panel (one hook)")
 
-# ---------- themed Fehlerseiten für Browser, JSON für API ----------
+# ---------- themed error pages for browsers, JSON for API ----------
 r = c.get("/gibtsnicht", headers=HTML)
 assert r.status_code == 404 and "404" in r.text and BRAND in r.text
-ok("404: themed HTML-Fehlerseite (mit Branding)")
+ok("404: themed HTML error page (with branding)")
 
 r = c.get("/forbidden", headers=HTML)
 assert r.status_code == 403 and "403" in r.text and "kein Zugriff" in r.text
-ok("403: themed Fehlerseite mit Meldung")
+ok("403: themed error page with message")
 
 r = c.get("/boom", headers=HTML)
 assert r.status_code == 500 and "500" in r.text
 ok("500: unbehandelte Exception → themed 500-Seite")
 
-# API-Clients bekommen JSON, keine HTML-Seite
+# API clients get JSON, no HTML page
 r = c.get("/gibtsnicht", headers=JSON)
 assert r.status_code == 404 and r.headers["content-type"].startswith("application/json")
-ok("API-Client (Accept json): 404 als JSON, nicht HTML")
+ok("API client (Accept json): 404 as JSON, not HTML")
 
 # ---------- Redirects (Login) bleiben Redirects trotz Error-Handler ----------
 c2 = TestClient(app, raise_server_exceptions=False)
 r = c2.get("/geheim", headers=HTML, follow_redirects=False)
 assert r.status_code == 307 and "/auth/login" in r.headers["location"]
-ok("Login-Redirect (307) bleibt Redirect (nicht als Fehlerseite abgefangen)")
+ok("login redirect (307) stays a redirect (not caught as an error page)")
 
 os.remove(db)
 print("\nTHEME + ERROR-PAGES OK ✅")
 
 
-# ---------- brand_icon: ein Wert, Favicon auf allen eingebauten Seiten ----------
+# ---------- brand_icon: one value, favicon on all built-in pages ----------
 import os as _os
 import tempfile as _tf
 from tinysesam.admin import render_panel as _rp
@@ -97,32 +97,32 @@ _db = _os.path.join(_tf.mkdtemp(), "t.db")
 _a = TinySesam(TinySesamConfig(db_path=_db, csrf_enabled=False, lang="de", passkey_enabled=False))
 _app = FastAPI(); _app.include_router(_a.router())
 assert "rel=icon href='data:image/svg+xml;base64," in TestClient(_app).get("/auth/login").text, \
-    "ohne brand_icon das eingebaute Standard-Favicon (seit 0.24.8)"
+    "without brand_icon the built-in default favicon (since 0.24.8)"
 os.unlink(_db)
-print("OK brand_icon: Favicon zentral auf allen eingebauten Seiten")
+print("OK brand_icon: favicon centrally on all built-in pages")
 
 
-# ---------- Demo-Hinweis steht außerhalb der Login-Karte ----------
+# ---------- Demo notice stands outside the login card ----------
 _db = _os.path.join(_tf.mkdtemp(), "t.db")
 _a = TinySesam(TinySesamConfig(db_path=_db, csrf_enabled=False, lang="de", passkey_enabled=False,
                                pin_enabled=True, demo_mode=True, cookie_secure=False))
 _app = FastAPI(); _app.include_router(_a.router())
 _c = TestClient(_app, headers={"accept": "text/html"})
 _lp = _c.get("/auth/login").text
-assert _lp.index("class=demobar") < _lp.index("<div class=card>"), "Hinweis vor der Karte"
-assert "<div class=card>" not in _lp[:_lp.index("class=demobar")], "und außerhalb"
-assert "demo_mode" in _lp, "Warnung, dass er produktiv aus gehört"
+assert _lp.index("class=demobar") < _lp.index("<div class=card>"), "notice before the card"
+assert "<div class=card>" not in _lp[:_lp.index("class=demobar")], "and outside"
+assert "demo_mode" in _lp, "warning that it belongs off in production"
 os.unlink(_db)
 
-# ohne demo_mode kein Hinweis
+# without demo_mode no notice
 _db = _os.path.join(_tf.mkdtemp(), "t.db")
 _a = TinySesam(TinySesamConfig(db_path=_db, csrf_enabled=False, lang="de", passkey_enabled=False))
 _app = FastAPI(); _app.include_router(_a.router())
 assert "class=demobar" not in TestClient(_app).get("/auth/login").text
 os.unlink(_db)
-print("OK Demo-Hinweis: außerhalb der Karte, nur bei demo_mode")
+print("OK demo notice: outside the card, only with demo_mode")
 
-# ---------- brand_header / brand_footer: Rumpf der Host-App um JEDE eingebaute Seite ----------
+# ---------- brand_header / brand_footer: body of the host app around EVERY built-in page ----------
 _db = _os.path.join(_tf.mkdtemp(), "t.db")
 _calls = []
 
@@ -144,23 +144,23 @@ for _p in ("/auth/login", "/auth/register", "/gibtsnicht"):
     _t = _c.get(_p).text
     assert "meinenav" in _t and "meinfooter" in _t, _p
     assert _t.index("meinenav") < _t.index("class=tsmain") < _t.index("meinfooter"), _p
-assert _calls, "Callable wird pro Aufruf ausgewertet"
+assert _calls, "callable is evaluated per call"
 
 _c.post("/auth/login", data={"username": "max", "password": "geheim12345", "next": "/"})
 for _p in ("/auth/account", "/auth/admin"):
     _t = _c.get(_p).text
     assert "meinenav" in _t and "meinfooter" in _t, _p
 
-# kaputter Rumpf reisst die Login-Seite nicht mit
+# a broken body does not drag the login page down with it
 _a.cfg.brand_header = lambda a: 1 / 0
 assert "<div class=card>" in _c.get("/auth/login").text
 os.unlink(_db)
 
-# ohne brand_header/-footer bleibt alles wie bisher
+# without brand_header/-footer everything stays as before
 _db = _os.path.join(_tf.mkdtemp(), "t.db")
 _a = TinySesam(TinySesamConfig(db_path=_db, csrf_enabled=False, lang="de", passkey_enabled=False))
 _app = FastAPI(); _app.include_router(_a.router())
 _t = TestClient(_app).get("/auth/login").text
 assert "<body><div class=tsmain>" in _t
 os.unlink(_db)
-print("OK brand_header/brand_footer: Rumpf um Login, Konto, Admin und Fehlerseiten")
+print("OK brand_header/brand_footer: body around login, account, admin and error pages")

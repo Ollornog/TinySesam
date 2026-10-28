@@ -1,8 +1,8 @@
-"""Login-Modi vor dem Gate (T-21) und die Schleife bei fehlender App-Freigabe (B-2).
+"""Login modes before the gate (T-21) and the loop on a missing app unlock (B-2).
 
-`forward_login` / `forward_apps[host].login`: "page" schickt einen nicht Angemeldeten auf die
-Login-Seite (mit dem Namen der Anwendung), "direct" einen Seitenaufruf gleich zum Provider.
-Hintergrund-Anfragen gehen immer zur Login-Seite — sonst begänne jede einen eigenen OIDC-Flow.
+`forward_login` / `forward_apps[host].login`: "page" sends someone not signed in to the
+login page (with the name of the application), "direct" sends a page request straight to the provider.
+Background requests always go to the login page — otherwise each would begin an OIDC flow of its own.
 """
 import os
 import re
@@ -66,12 +66,12 @@ r = c.get("/auth/forward", headers={**PROXY, **SEITE})
 assert r.status_code == 401
 assert ort(r).path == "/auth/oidc/start", r.headers.get("X-TinySesam-Location")
 assert parse_qs(ort(r).query)["next"] == ["https://app.example.com/seite"]
-ok("Gateway (Vorgabe direct): Seitenaufruf → direkt /auth/oidc/start mit next")
+ok("gateway (default direct): page request → straight to /auth/oidc/start with next")
 
-# Wohin führt dieser Einstieg? Zum Provider, mit genau einer Umleitung.
+# Where does this entry point lead? To the provider, with exactly one redirect.
 a = c.get(ort(r).path + "?" + ort(r).query, follow_redirects=False)
 assert a.status_code == 303 and a.headers["location"].startswith("https://id.example.com/auth?"), a.status_code
-ok("… und von dort mit einer Umleitung zum Provider")
+ok("… and from there with one redirect to the provider")
 
 for name, kopf in (("XHR (Sec-Fetch-Mode: cors)", {"Sec-Fetch-Mode": "cors", "Accept": "*/*"}),
                    ("Skript (no-cors)", {"Sec-Fetch-Mode": "no-cors", "Accept": "*/*"}),
@@ -80,39 +80,39 @@ for name, kopf in (("XHR (Sec-Fetch-Mode: cors)", {"Sec-Fetch-Mode": "cors", "Ac
     assert ort(r).path == "/auth/login", (name, r.headers.get("X-TinySesam-Location"))
 r = c.get("/auth/forward", headers={**PROXY, "Accept": "text/html,application/xhtml+xml"})
 assert ort(r).path == "/auth/oidc/start"
-ok("Hintergrund-Anfragen → Login-Seite (kein Flow); ohne Sec-Fetch entscheidet Accept: text/html")
+ok("background requests → login page (no flow); without Sec-Fetch, Accept: text/html decides")
 
-# Zur Laufzeit eine zweite Methode dazu (`auth.cfg` ist veränderlich): Dann gibt es Wege, die nur
-# die Login-Seite zeigt — direct darf sie nicht überspringen, auch wenn die Prüfung beim Start
+# Add a second method at runtime (`auth.cfg` is mutable): then there are paths that only
+# the login page shows — direct must not skip it, even if the check at start
 # davon nichts wusste.
 auth.cfg.password_enabled = True
 r = c.get("/auth/forward", headers={**PROXY, **SEITE})
 auth.cfg.password_enabled = False
 assert ort(r).path == "/auth/login", r.headers.get("X-TinySesam-Location")
-ok("direct, aber OIDC nicht mehr die einzige Methode → Login-Seite")
+ok("direct, but OIDC no longer the only method → login page")
 
-# Je Anwendung überschrieben: wiki.example.com will das Fenster.
+# Overridden per application: wiki.example.com wants the window.
 r = c.get("/auth/forward", headers={**PROXY, **SEITE, "X-Forwarded-Host": "wiki.example.com"})
 assert ort(r).path == "/auth/login", r.headers.get("X-TinySesam-Location")
 seite = c.get(ort(r).path + "?" + ort(r).query)
 assert "<h1>Anmelden bei Wiki</h1>" in seite.text, re.findall(r"<h1>.*?</h1>", seite.text)
-ok("forward_apps: wiki.example.com mit login=page → Login-Seite „Anmelden bei Wiki“")
+ok("forward_apps: wiki.example.com with login=page → login page “Anmelden bei Wiki”")
 
-# Ohne Namen bleibt die Überschrift der Dienstname.
+# Without a name the heading stays the service name.
 seite = c.get("/auth/login?next=" + "https%3A%2F%2Fapp.example.com%2Fx")
 assert f"<h1>{auth.cfg.rp_name}</h1>" in seite.text
-ok("ohne Namen: Überschrift wie bisher (rp_name)")
+ok("without name: heading as before (rp_name)")
 
-# Bibliothek: Vorgabe bleibt page.
+# Library: the default stays page.
 assert TinySesamConfig(db_path=":memory:").forward_login == "page"
-ok("Bibliothek: Vorgabe bleibt page")
+ok("library: default stays page")
 
-# ---------- Fehler beim Provider: keine Schleife ----------
+# ---------- Error at the provider: no loop ----------
 r = c.get("/auth/oidc/callback?error=access_denied&state=x", follow_redirects=False)
 assert r.status_code == 400 and "location" not in r.headers, r.status_code
-ok("Absage des Providers → Fehlerseite (400), keine Umleitung zurück in die Runde")
+ok("provider refusal → error page (400), no redirect back into the round")
 
-# ---------- Konfigurationsprüfung ----------
+# ---------- Configuration check ----------
 def befunde(**w):
     werte = dict(db_path=":memory:", forward_auth_enabled=True)
     werte.update(w)
@@ -120,7 +120,7 @@ def befunde(**w):
 
 
 assert any("forward_login" in b for b in befunde(forward_login="unsichtbar"))
-assert any("einzige Anmeldemethode" in b for b in befunde(forward_login="direct"))   # Passwort ist an
+assert any("einzige Anmeldemethode" in b for b in befunde(forward_login="direct"))   # password is on
 assert any("einzige Anmeldemethode" in b
            for b in befunde(forward_apps={"app.example.com": {"login": "direct"}}))
 assert any("logn" in b for b in befunde(forward_apps={"app.example.com": {"logn": "page"}}))
@@ -133,13 +133,13 @@ except ConfigError as e:
     assert "einzige Anmeldemethode" in str(e)
 else:
     raise AssertionError("direct neben der Passwort-Anmeldung startet")
-ok("Konfigurationsprüfung: unbekannter Modus, direct neben anderen Methoden, Tippfehler im Schlüssel")
+ok("configuration check: unknown mode, direct next to other methods, typo in the key")
 
 # ---------- B-2: mehrere Clients, Freigabe fehlt ----------
 auth2, app2 = gateway(trusted_redirect_hosts=["app-a.example.com", "app-b.example.com"],
                       clients={"app-a.example.com": {"client_id": "a", "client_secret": "x"},
                                "app-b.example.com": {"client_id": "b", "client_secret": "y"}})
-# Eine Sitzung ohne Provider-Runde (wie nach einer Anmeldung für eine ANDERE Anwendung).
+# A session without a provider round (as after a sign-in for ANOTHER application).
 uid = auth2.create_user("anna")
 token = auth2.store.create_session(uid, 3600, True, "oidc")
 c2 = TestClient(app2)
@@ -153,15 +153,15 @@ r = c2.get("/auth/forward", headers=PB)
 assert r.status_code == 401 and r.headers.get("X-TinySesam-Reason") == "app-fehlt"
 assert ort(r).path == "/auth/oidc/start", r.headers.get("X-TinySesam-Location")
 assert parse_qs(ort(r).query)["app"] == ["app-b.example.com"]
-ok("B-2: Freigabe für B fehlt → direkt /auth/oidc/start mit app=B (nicht die Login-Seite)")
+ok("B-2: unlock for B missing → straight to /auth/oidc/start with app=B (not the login page)")
 
-# Die Login-Seite mit Sitzung, aber ohne Freigabe: früher 303 zurück zu next → Schleife.
+# The login page with session but without unlock: earlier 303 back to next → loop.
 r = c2.get("/auth/login?next=https%3A%2F%2Fapp-b.example.com%2Fx&app=app-b.example.com",
            follow_redirects=False)
 assert r.status_code == 303
 ziel = urlsplit(r.headers["location"])
 assert ziel.path == "/auth/oidc/start" and parse_qs(ziel.query)["app"] == ["app-b.example.com"], r.headers["location"]
-ok("B-2: Login-Seite mit Sitzung ohne Freigabe → zum Provider, nicht zurück zur Anwendung")
+ok("B-2: login page with session without unlock → to the provider, not back to the application")
 
 r = c2.get("/auth/login?next=https%3A%2F%2Fapp-a.example.com%2Fx&app=app-a.example.com",
            follow_redirects=False)
@@ -169,20 +169,20 @@ assert r.status_code == 303 and r.headers["location"] == "https://app-a.example.
 r = c2.get("/auth/login?next=https%3A%2F%2Fapp-b.example.com%2Fx&app=erfunden.example.com",
            follow_redirects=False)
 assert r.status_code == 303 and r.headers["location"] == "https://app-b.example.com/x"
-ok("B-2: mit Freigabe → zurück zu next; ein unbekannter app-Name wird nicht weitergetragen")
+ok("B-2: with unlock → back to next; an unknown app name is not carried on")
 
-# Der Knopf trägt app= mit (vorher fehlte es, die Runde lief über den Vorgabe-Client).
+# The button carries app= along (before it was missing, the round ran via the default client).
 leer = TestClient(app2)
 seite = leer.get("/auth/login?next=https%3A%2F%2Fapp-b.example.com%2Fx&app=app-b.example.com").text
 knopf = re.findall(r"href='([^']*oidc/start[^']*)'", seite)
 assert knopf and "app=app-b.example.com" in knopf[0], knopf
-ok("B-2: der OIDC-Knopf der Login-Seite trägt app=")
+ok("B-2: the OIDC button of the login page carries app=")
 
-# /auth/oidc/start ohne app: der Host von next entscheidet.
+# /auth/oidc/start without app: the host of next decides.
 a = leer.get("/auth/oidc/start?next=https%3A%2F%2Fapp-b.example.com%2Fx", follow_redirects=False)
 assert parse_qs(urlsplit(a.headers["location"]).query)["client_id"] == ["b"]
 a = leer.get("/auth/oidc/start?next=/lokal", follow_redirects=False)
 assert parse_qs(urlsplit(a.headers["location"]).query)["client_id"] == ["haupt"]
-ok("B-2: /auth/oidc/start ohne app nimmt den Client zum Host von next (sonst den Vorgabe-Client)")
+ok("B-2: /auth/oidc/start without app takes the client for the host of next (otherwise the default client)")
 
 print("Login-Modi OK")

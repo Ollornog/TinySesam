@@ -1,10 +1,10 @@
-"""Funde aus dem Betrieb (2026-09-27) — beim Einbau in eine App mit PocketID und im Container.
+"""Findings from operation (2026-09-27) — when embedding into an app with PocketID and in the container.
 
-  (a) Gruppen-Scope: Eine Gruppenregel über den Claim `groups` ohne den Scope `groups` weist bei
-      PocketID jeden still ab — die Konfigurationsprüfung warnt, fordert aber nichts nach.
-  (b) Claim-Token im Container-Log: Ohne Admin ging das Einmal-Token für /auth/claim-admin auf
-      stderr — im Container ist das `docker logs`. Ist stderr keine Konsole, steht es jetzt in
-      `<db_path>.claim` (0600), das Log nennt nur den Pfad und sagt die Wahrheit.
+  (a) Group scope: A group rule on the `groups` claim without the `groups` scope silently rejects
+      everyone with PocketID — the configuration check warns, but does not request anything.
+  (b) Claim token in the container log: Without an admin, the one-time token for /auth/claim-admin went
+      to stderr — in a container that is `docker logs`. If stderr is not a console, it now goes to
+      `<db_path>.claim` (0600); the log only names the path and tells the truth.
 """
 from __future__ import annotations
 
@@ -34,11 +34,11 @@ r = Report("Funde aus dem Betrieb (Gruppen-Scope, Claim-Token)")
 
 
 # ── (a) Gruppen-Scope ────────────────────────────────────────────────────────────────────────────
-# PocketID (und jeder Provider, der Claims an Scopes bindet) schickt `groups` nur mit dem Scope
-# `groups`. Die Vorgabe `oidc_scopes="openid profile email"` verlangt ihn nicht: Mit
-# `oidc_allowed_groups` kam niemand herein, mit `oidc_group_role_map` bekam niemand eine Rolle —
-# und der Start sagte nichts.
-# (Mutationsprobe: in `konfigpruefung.pruefe` den Aufruf `_gruppen_scope(...)` streichen → rot.)
+# PocketID (and every provider that ties claims to scopes) sends `groups` only with the scope
+# `groups`. The default `oidc_scopes="openid profile email"` does not request it: with
+# `oidc_allowed_groups` nobody got in, with `oidc_group_role_map` nobody got a role —
+# and startup said nothing.
+# (Mutation probe: remove the call `_gruppen_scope(...)` in `konfigpruefung.pruefe` → red.)
 OIDC = dict(oidc_enabled=True, oidc_issuer="https://id.example.com", oidc_client_id="app",
             oidc_client_secret="geheim", base_url="https://app.example.com")
 MERKMAL = "der Scope 'groups' wird nicht angefordert"
@@ -50,17 +50,17 @@ def _warnungen(**felder):
 
 
 _f, _w = _warnungen(oidc_allowed_groups=["mitarbeiter"])
-r.check("(a) oidc_allowed_groups + Claim 'groups' + Vorgabe-Scopes → genau eine Warnung, kein Fehler; "
-        "sie nennt oidc_scopes, PocketID und den Weg (Gateway: TINYSESAM_OIDC_SCOPES)",
+r.check("(a) oidc_allowed_groups + claim 'groups' + default scopes → exactly one warning, no error; "
+        "it names oidc_scopes, PocketID and the way out (gateway: TINYSESAM_OIDC_SCOPES)",
         not [x for x in _f if "groups" in x] and len(_w) == 1
         and "oidc_scopes='openid profile email'" in _w[0] and "PocketID" in _w[0]
         and "TINYSESAM_OIDC_SCOPES" in _w[0], str(_w))
 _, _w = _warnungen(oidc_group_role_map={"redaktion": "editor"})
-r.check("(a) … ebenso mit oidc_group_role_map allein (keine Rolle statt Abweisung)", len(_w) == 1, str(_w))
+r.check("(a) … likewise with oidc_group_role_map alone (no role instead of rejection)", len(_w) == 1, str(_w))
 _, _w = _warnungen(oidc_allowed_groups=["mitarbeiter"], oidc_scopes="openid profile email groups")
-r.check("(a) mit dem Scope 'groups' → keine Warnung", not _w, str(_w))
+r.check("(a) with the scope 'groups' → no warning", not _w, str(_w))
 _cfg = TinySesamConfig(**{**OIDC, "oidc_allowed_groups": ["mitarbeiter"]})
-r.check("(a) nichts wird nachgefordert: oidc_scopes bleibt, wie gesetzt",
+r.check("(a) nothing is requested additionally: oidc_scopes stays as set",
         _cfg.oidc_scopes == "openid profile email")
 for _name, _felder in (("ohne Gruppenregel", {}),
                        ("anderer Claim (oidc_group_claim='roles')",
@@ -71,9 +71,9 @@ for _name, _felder in (("ohne Gruppenregel", {}),
                         {"oidc_allowed_groups": ["x"],
                          "oidc_issuer": "https://login.microsoftonline.com/mandant/v2.0"})):
     _, _w = _warnungen(**_felder)
-    r.check(f"(a) keine Warnung: {_name}", not _w, str(_w))
+    r.check(f"(a) no warning: {_name}", not _w, str(_w))
 
-# Je Anwendung (T-14): eigene `scopes`, sonst die globalen; eigene Gruppenregel, sonst die globale.
+# Per application (T-14): own `scopes`, otherwise the global ones; own group rule, otherwise the global one.
 _clients = {"app.example.com": {"client_id": "a", "client_secret": "s"},
             "wiki.example.com": {"client_id": "w", "client_secret": "s",
                                  "scopes": "openid profile email groups"}}
@@ -81,17 +81,17 @@ _, _w = _warnungen(oidc_allowed_groups=["x"], oidc_scopes="openid groups",
                    oidc_clients={**_clients, "neu.example.com": {"client_id": "n", "client_secret": "s",
                                                                    "scopes": "openid email"}},
                    forward_auth_enabled=True, trusted_redirect_hosts=[])
-r.check("(a) je Anwendung: eine eigene `scopes`-Angabe ohne 'groups' wird benannt, die anderen nicht",
+r.check("(a) per application: an own `scopes` entry without 'groups' is named, the others are not",
         len(_w) == 1 and "oidc_clients['neu.example.com']" in _w[0]
         and "app.example.com" not in _w[0] and "oidc_scopes=" not in _w[0], str(_w))
 _, _w = _warnungen(oidc_clients={"app.example.com": {"client_id": "a", "client_secret": "s",
                                                      "allowed_groups": ["team-a"]}},
                    forward_auth_enabled=True)
-r.check("(a) … eine Gruppenregel nur am Eintrag, Scopes geerbt ohne 'groups' → gewarnt (nur dieser Client)",
+r.check("(a) … a group rule only on the entry, scopes inherited without 'groups' → warned (this client only)",
         len(_w) == 1 and "oidc_clients['app.example.com']" in _w[0] and "oidc_scopes=" not in _w[0], str(_w))
 
-# Gateway: ohne eigene Variable wäre der Rat nicht umsetzbar gewesen — das Preset nahm immer die
-# Vorgabe-Scopes.
+# Gateway: without its own variable the advice could not have been followed — the preset always took the
+# default scopes.
 from tinysesam import gateway  # noqa: E402
 
 _env = {"TINYSESAM_OIDC_ISSUER": "https://id.example.com", "TINYSESAM_OIDC_CLIENT_ID": "gw",
@@ -112,31 +112,31 @@ finally:
             os.environ[_k] = _v
 _w_vorgabe = [w for w in konfigpruefung.pruefe(_g_vorgabe)[1] if MERKMAL in w]
 _w_mit = [w for w in konfigpruefung.pruefe(_g_mit)[1] if MERKMAL in w]
-r.check("(a) Gateway: TINYSESAM_ALLOWED_GROUPS ohne TINYSESAM_OIDC_SCOPES warnt; mit "
-        "TINYSESAM_OIDC_SCOPES='… groups' kommt der Scope an und die Warnung entfällt",
+r.check("(a) gateway: TINYSESAM_ALLOWED_GROUPS without TINYSESAM_OIDC_SCOPES warns; with "
+        "TINYSESAM_OIDC_SCOPES='… groups' the scope arrives and the warning goes away",
         _g_vorgabe.oidc_scopes == "openid profile email" and len(_w_vorgabe) == 1
         and _g_mit.oidc_scopes == "openid profile email groups" and not _w_mit,
         f"{_g_vorgabe.oidc_scopes!r} {_w_vorgabe} {_g_mit.oidc_scopes!r} {_w_mit}")
 
 
 # ── (b) Claim-Token im Container-Log ─────────────────────────────────────────────────────────────
-# Gemessen im Container (2026-09-27): stderr IST das Log. Dort stand erst der Token im Klartext,
-# dann die Zeile „Der Wert steht bewusst NICHT im Log". Nachgestellt wird der Container, indem
-# stderr UND der Sicherheits-Logger in denselben Puffer schreiben — das ist `docker logs`.
-# (Mutationsprobe: in `_admin_claim_bekanntgeben` die Bedingung `not konsole` streichen bzw. den
-# Rückfall auf die Datei weglassen → der Token steht wieder im Puffer → rot.)
-PW = "Betrieb-Pw-2026"          # 15 Zeichen: das Passwort meldet allein an
+# Measured in the container (2026-09-27): stderr IS the log. First the token stood there in plain text,
+# then the line „Der Wert steht bewusst NICHT im Log". The container is simulated by having
+# stderr AND the security logger write into the same buffer — that is `docker logs`.
+# (Mutation probe: remove the condition `not konsole` in `_admin_claim_bekanntgeben`, or drop the
+# fallback to the file → the token is in the buffer again → red.)
+PW = "Betrieb-Pw-2026"          # 15 characters: the password alone signs in
 
 
 class _Konsole(io.StringIO):
-    """stderr an einem Terminal — `isatty()` wahr, sonst ein Puffer wie jeder andere."""
+    """stderr on a terminal — `isatty()` is true, otherwise a buffer like any other."""
 
     def isatty(self):
         return True
 
 
 def _start(stderr, **felder):
-    """TinySesam ohne Admin bauen; stderr und Sicherheits-Log landen gemeinsam in `stderr`."""
+    """Build TinySesam without an admin; stderr and the security log end up together in `stderr`."""
     grund = dict(db_path=str(Path(tempfile.mkdtemp()) / "app.db"), cookie_secure=False,
                  csrf_enabled=False, passkey_enabled=False, allow_signup=True,
                  signup_require_email=False)
@@ -151,52 +151,52 @@ def _start(stderr, **felder):
     return auth
 
 
-# Konsole: wie bisher auf stderr — dort liest ein Mensch mit. Keine Datei.
+# Console: as before on stderr — a human is reading there. No file.
 _k = _Konsole()
 auth_k = _start(_k)
 _tok_k = auth_k.admin_claim_token()
 _datei_k = auth_k.cfg.db_path + ".claim"
-r.check("(b) stderr ist eine Konsole: der Token steht dort, keine Datei neben der Datenbank, und "
-        "die Log-Zeile sagt „auf der Konsole“ ohne den Wert",
+r.check("(b) stderr is a console: the token is there, no file next to the database, and "
+        "the log line says „on the console“ without the value",
         f"/auth/claim-admin?token={_tok_k}" in _k.getvalue() and not os.path.exists(_datei_k)
         and "steht auf der Konsole (stderr), nicht in dieser Zeile" in _k.getvalue()
         and _k.getvalue().count(_tok_k) == 1, _k.getvalue()[-300:])
 
-# Kein Terminal (Container, journal, Pipe): Datei mit 0600, im „Log" nur der Pfad.
+# No terminal (container, journal, pipe): file with 0600, only the path in the „log".
 _c = io.StringIO()
 auth_c = _start(_c)
 _tok_c = auth_c.admin_claim_token()
 _datei_c = auth_c.cfg.db_path + ".claim"
 _inhalt_c = Path(_datei_c).read_text(encoding="utf-8") if os.path.exists(_datei_c) else ""
-r.check("(b) stderr keine Konsole: das Token steht in <db_path>.claim — nur dort",
+r.check("(b) stderr is not a console: the token is in <db_path>.claim — only there",
         bool(_tok_c) and _inhalt_c == _tok_c + "\n", repr(_inhalt_c))
-r.check("(b) … die Datei hat die Rechte 0600",
+r.check("(b) … the file has mode 0600",
         os.path.exists(_datei_c) and stat.S_IMODE(os.stat(_datei_c).st_mode) == 0o600,
         oct(stat.S_IMODE(os.stat(_datei_c).st_mode)) if os.path.exists(_datei_c) else "fehlt")
-r.check("(b) … im Log (stderr + Sicherheits-Log) steht der Wert NICHT, wohl aber der Pfad, und der "
-        "Text sagt, wo das Token steht",
+r.check("(b) … the value is NOT in the log (stderr + security log), but the path is, and the "
+        "text says where the token is",
         _tok_c not in _c.getvalue() and "claim-admin?token=" not in _c.getvalue()
         and f"steht in {_datei_c} (Rechte 0600), nicht im Log" in _c.getvalue()
         and "bewusst NICHT" not in _c.getvalue(), _c.getvalue()[-300:])
 
-# Die Datei trägt, was sie soll: Einlösen macht zum Admin und räumt sie weg.
+# The file carries what it should: redeeming makes the user admin and removes the file.
 _app_c = FastAPI()
 _app_c.include_router(auth_c.router())
 _cl = TestClient(_app_c)
 _reg = _cl.post("/auth/register", data={"username": "betreiber", "password": PW}, follow_redirects=False)
 _ein = _cl.get(f"/auth/claim-admin?token={_inhalt_c.strip()}", follow_redirects=False)
-r.check("(b) der Token aus der Datei macht den Erst-Admin, danach ist die Datei weg",
+r.check("(b) the token from the file makes the first admin, afterwards the file is gone",
         _reg.status_code == 303 and _ein.status_code == 303
         and auth_c.store.get_user_by_name("betreiber")["is_admin"] and not os.path.exists(_datei_c),
         f"{_reg.status_code} {_ein.status_code} {os.path.exists(_datei_c)}")
 
-# Ein Rest aus einem früheren Lauf (etwa: Admin später per CLI gesetzt) verschwindet beim Start.
+# A leftover from an earlier run (e.g. admin set later via CLI) disappears at startup.
 Path(_datei_c).write_text("ALT\n", encoding="utf-8")
 _start(io.StringIO(), db_path=auth_c.cfg.db_path)
-r.check("(b) gibt es einen Admin, entfernt der Start eine liegengebliebene <db_path>.claim",
+r.check("(b) if an admin exists, startup removes a leftover <db_path>.claim",
         not os.path.exists(_datei_c))
 
-# Verfall: Das abgelaufene Token in der Datei gilt nicht mehr; der nächste Start schreibt das neue.
+# Expiry: The expired token in the file is no longer valid; the next start writes a new one.
 _v = io.StringIO()
 auth_v = _start(_v)
 _datei_v = auth_v.cfg.db_path + ".claim"
@@ -206,39 +206,39 @@ _uid_v = auth_v.create_user("spaet", password=PW)
 _abgelaufen = auth_v._consume_admin_claim(_alt_v, auth_v.store.get_user(_uid_v))
 _start(io.StringIO(), db_path=auth_v.cfg.db_path)
 _neu_v = Path(_datei_v).read_text(encoding="utf-8").strip()
-r.check("(b) nach dem Verfall ist der Dateiinhalt ungültig, der nächste Start ersetzt ihn",
+r.check("(b) after expiry the file content is invalid, the next start replaces it",
         not _abgelaufen and _neu_v and _neu_v != _alt_v
         and _neu_v == auth_v.admin_claim_token(), f"{_abgelaufen} {_alt_v[:6]} {_neu_v[:6]}")
 
-# Rückfall ohne Datei: `:memory:` — dann bleibt nur stderr, und der Text sagt ehrlich, was das heisst.
+# Fallback without a file: `:memory:` — then only stderr remains, and the text honestly says what that means.
 _m = io.StringIO()
 auth_m = _start(_m, db_path=":memory:")
 _tok_m = auth_m.admin_claim_token()
-r.check("(b) :memory: ohne Konsole: Rückfall auf stderr, und die Log-Zeile sagt, dass der Wert "
-        "damit im Log des Dienstes steht (statt „nicht im Log“)",
+r.check("(b) :memory: without a console: fallback to stderr, and the log line says that the value "
+        "is therefore in the service log (instead of „nicht im Log“)",
         f"claim-admin?token={_tok_m}" in _m.getvalue()
         and "stderr ist hier KEINE Konsole: Der Wert steht damit im Log des Dienstes" in _m.getvalue()
         and "nicht im Log" not in _m.getvalue(), _m.getvalue()[-400:])
 
-# Rückfall, wenn die Datei nicht entsteht (an ihrer Stelle liegt ein Verzeichnis).
+# Fallback when the file cannot be created (a directory is in its place).
 _s = io.StringIO()
 _db_s = str(Path(tempfile.mkdtemp()) / "app.db")
 os.mkdir(_db_s + ".claim")
 auth_s = _start(_s, db_path=_db_s)
 _tok_s = auth_s.admin_claim_token()
-r.check("(b) Datei nicht anlegbar: Rückfall auf stderr mit Grund, ehrlich benannt",
+r.check("(b) file cannot be created: fallback to stderr with reason, honestly named",
         f"claim-admin?token={_tok_s}" in _s.getvalue() and "nicht schreibbar" in _s.getvalue()
         and "Log des Dienstes" in _s.getvalue(), _s.getvalue()[-400:])
 
-# Eine selbst gewählte Datei hat Vorrang — auch an einer Konsole —, und bleibt nach dem Einlösen.
+# A file chosen by the operator takes precedence — even on a console — and remains after redeeming.
 _eigen = str(Path(tempfile.mkdtemp()) / "claim.token")
 _e = _Konsole()
 auth_e = _start(_e, admin_claim_token_file=_eigen)
 _tok_e = auth_e.admin_claim_token()
 _uid_e = auth_e.create_user("chefin", password=PW)
 _ok_e = auth_e._consume_admin_claim(_tok_e, auth_e.store.get_user(_uid_e))
-r.check("(b) admin_claim_token_file geht vor (auch an einer Konsole): Wert in der Datei, nicht auf "
-        "stderr, keine <db_path>.claim; die eigene Datei bleibt nach dem Einlösen (Inhalt ungültig)",
+r.check("(b) admin_claim_token_file takes precedence (even on a console): value in the file, not on "
+        "stderr, no <db_path>.claim; the own file remains after redeeming (content invalid)",
         Path(_eigen).read_text(encoding="utf-8") == _tok_e + "\n" and _tok_e not in _e.getvalue()
         and not os.path.exists(auth_e.cfg.db_path + ".claim") and _ok_e and os.path.exists(_eigen)
         and not auth_e._consume_admin_claim(_tok_e, auth_e.store.get_user(_uid_e)),

@@ -1,12 +1,12 @@
-"""Nachgestellte Befunde des zweiten Audits (2026-09-21).
+"""Reproduced findings of the second audit (2026-09-21).
 
-Der erste Durchgang reparierte sechs Lücken. Dieser hier prüft die **Reparaturen** — und drei
-davon hatten ihr eigenes Loch aufgerissen: Der Erst-Admin-Wächter verschob die Lücke nur, die
-API-Key-Beschneidung machte einen Key mächtiger statt schwächer, und `tinysesam backup`
-migrierte die Datei, die es sichern sollte.
+The first pass repaired six gaps. This one checks the **repairs** — and three of
+them had torn open a hole of their own: the first-admin guard only moved the gap, the
+API-key pruning made a key more powerful instead of weaker, and `tinysesam backup`
+migrated the very file it was meant to back up.
 
-Wie in `test_sicherheit_befunde.py`: benannt nach dem ANGRIFF bzw. dem Betriebsfall, nicht nach
-der Funktion. Wer eine Zeile hier rot sieht, weiss sofort, was wieder möglich ist.
+As in `test_sicherheit_befunde.py`: named after the ATTACK or the operating case, not after
+the function. Whoever sees a line here go red knows at once what has become possible again.
 """
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
-_FALSCH = _itertools.count()   # immer NEUE falsche Passwörter: eine Wiederholung zählt seit 0.24.9 nur einmal
+_FALSCH = _itertools.count()   # always NEW wrong passwords: a repetition counts only once since 0.24.9
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -40,9 +40,9 @@ r = Report("Audit Runde 2 — die Reparaturen der Reparaturen")
 
 def _app(**cfg):
     tmp = tempfile.mkdtemp()
-    # `base_url` gehört in die Grundausstattung, seit sie bei Mail-Wegen/OIDC/SAML Pflicht ist:
-    # ohne sie scheiterte hier jeder Aufbau — und zwar aus einem Grund, der mit dem geprüften
-    # Befund nichts zu tun hat. Ein einzelner Aufruf überschreibt sie weiterhin.
+    # `base_url` belongs in the basic setup since it became mandatory for mail paths/OIDC/SAML:
+    # without it every setup failed here — for a reason that has nothing to do with the
+    # finding under test. A single call still overrides it.
     grund = dict(db_path=str(Path(tmp) / "t.db"), cookie_secure=False,
                  base_url="http://testserver")
     grund.update(cfg)
@@ -52,63 +52,63 @@ def _app(**cfg):
     return auth, app
 
 
-# ── Erst-Admin über den BENUTZERNAMEN ─────────────────────────────────────────
-# Der Wächter aus Runde 1 verlangt bei offener Registrierung eine E-MAIL in `admin_identifiers`
-# („den Namen hat, wer das Postfach hat"). `maybe_promote_admin` verglich aber weiter Name ODER
-# E-Mail — und der Benutzername ist ein freies Textfeld. Die Lücke war nur verschoben.
+# ── First admin via the USERNAME ──────────────────────────────────────────────
+# The guard from round 1 demands an E-MAIL in `admin_identifiers` when registration is open
+# ("whoever has the mailbox has the name"). But `maybe_promote_admin` still compared name OR
+# e-mail — and the username is a free text field. The gap had only been moved.
 auth_a, _ = _app(admin_identifiers=["chef@example.com"], allow_signup=True,
                  signup_require_email=True, signup_verify_email=True,
                  magiclink_enabled=True, smtp_host="mail.example.com")
 angreifer = auth_a.create_user("chef@example.com", password="geheim12345",
                                email="angreifer@evil.example")
-r.check("wer sich unter der Admin-ADRESSE als Benutzername registriert, wird nicht Admin",
+r.check("whoever registers under the admin ADDRESS as username does not become admin",
         not auth_a._maybe_promote_admin(auth_a.get_user(angreifer)),
-        "er ist Admin — der Wächter prüft die Konfiguration, der Vergleich etwas anderes")
+        "he is admin — the guard checks the configuration, the comparison something else")
 
-# Eigene Instanz: seit R4-12 kann dieselbe Zeichenfolge nicht Benutzername des einen und
-# E-Mail des anderen sein. Der rechtmäßige Inhaber wird deshalb in einem sauberen Bestand
-# geprüft — die Frage hier ist die Beförderung, nicht die Eindeutigkeit.
+# Own instance: since R4-12 the same string cannot be the username of one account and the
+# e-mail of another. The rightful owner is therefore checked in a clean inventory —
+# the question here is the promotion, not the uniqueness.
 auth_a2, _ = _app(admin_identifiers=["chef@example.com"], allow_signup=True,
                   signup_require_email=True, signup_verify_email=True,
                   magiclink_enabled=True, smtp_host="mail.example.com")
 inhaber = auth_a2.create_user("chefin", password="geheim12345", email="chef@example.com")
-r.check("wer die Adresse wirklich hat, wird es weiterhin",
+r.check("whoever really has the address still becomes admin",
         auth_a2._maybe_promote_admin(auth_a2.get_user(inhaber)),
-        "der vorgesehene Weg ist zu")
+        "the intended path is closed")
 
-# Und umgekehrt: Ein Eintrag OHNE @ gilt nur für den Benutzernamen.
+# And conversely: an entry WITHOUT @ applies only to the username.
 auth_b, _ = _app(admin_identifiers=["chef"])
 mit_mail = auth_b.create_user("jemand", password="geheim12345", email="chef")
-r.check("ein Allowlist-Name ohne @ wird nicht gegen die E-Mail geprüft",
+r.check("an allowlist name without @ is not checked against the e-mail",
         not auth_b._maybe_promote_admin(auth_b.get_user(mit_mail)),
-        "eine E-Mail, die zufällig wie der Name aussieht, befördert")
+        "an e-mail that happens to look like the name promotes")
 
 
-# ── Erst-Admin über eine IdP-Adresse, die niemand bestätigt hat (Runde 3, F-14) ──
-# Der T-9-Fix oben reparierte den VERGLEICH (Adresse gegen Adresse) — der BELEG fehlte weiter.
-# `oidc.py` las `email` bedingungslos und übersah den Standard-Claim `email_verified` (OIDC
-# Core 5.1): Wer sich bei einem IdP mit Selbstregistrierung oder in einem zweiten Mandanten
-# die Admin-Adresse einträgt, war beim ersten Login Erst-Admin. Und der Wächter, der
-# Allowlist-BENUTZERNAMEN verbietet, hing allein an `allow_signup` — beim Auto-Anlegen durch
-# einen IdP griff er gar nicht, obwohl auch dort der Name aus fremder Hand kommt.
+# ── First admin via an IdP address that nobody has confirmed (round 3, F-14) ──
+# The T-9 fix above repaired the COMPARISON (address against address) — the PROOF was still missing.
+# `oidc.py` read `email` unconditionally and overlooked the standard claim `email_verified` (OIDC
+# Core 5.1): whoever entered the admin address at an IdP with self-registration or in a second
+# tenant was first admin at the first login. And the guard that forbids allowlist USERNAMES
+# depended solely on `allow_signup` — it did not apply at all when an IdP auto-creates accounts,
+# although there too the name comes from a foreign hand.
 from urllib.parse import parse_qs, urlparse  # noqa: E402
 
 IDP = "https://idp.example.invalid"
 
 
 class _Claims(dict):
-    """Was `exchange()` zurückgibt. Die Signaturprüfung selbst prüft test_oidc_jwks.py —
-    hier geht es um das, was TinySesam MIT den Claims macht."""
+    """What `exchange()` returns. The signature check itself is tested by test_oidc_jwks.py —
+    here it is about what TinySesam does WITH the claims."""
 
     def validate(self, *a, **k):
         pass
 
 
 def _oidc_app(claims, nutzerinfo=None, **cfg):
-    """Eine App mit OIDC, aber ohne Netz: Discovery vorbefüllt, Token-Tausch als Attrappe.
+    """An app with OIDC but without network: discovery prefilled, token exchange as a dummy.
 
-    `nutzerinfo` ist das, was der /userinfo-Endpunkt zurückgibt — getrennt vom ID-Token,
-    weil genau diese Trennung geprüft wird."""
+    `nutzerinfo` is what the /userinfo endpoint returns — kept separate from the ID token,
+    because exactly this separation is under test."""
     auth, app = _app(oidc_enabled=True, oidc_issuer=IDP, oidc_client_id="probe",
                      oidc_client_secret="geheim", base_url="http://testserver",
                      csrf_enabled=False, **cfg)
@@ -117,9 +117,9 @@ def _oidc_app(claims, nutzerinfo=None, **cfg):
                        "jwks_uri": IDP + "/jwks"}
     auth.oidc.exchange = lambda code, redirect_uri, nonce, t=None, **_: (
         _Claims({**claims, "nonce": nonce}), {"access_token": "at"})
-    # Ersetzt wird nur der HTTP-Abruf; der `sub`-Abgleich aus F-18 läuft über die ECHTE
-    # Funktion. Eine Attrappe, die ihn nachbaut, prüft sonst den Nachbau statt den Code —
-    # eine entfernte Prüfung fiele dann hier nicht auf.
+    # Only the HTTP fetch is replaced; the `sub` comparison from F-18 runs through the REAL
+    # function. A dummy that rebuilds it would check the rebuild instead of the code —
+    # a removed check would then go unnoticed here.
     def _userinfo(at, erwartetes_sub=""):
         from tinysesam.oidc import OIDCClient
         return OIDCClient.userinfo_pruefen(dict(nutzerinfo or {}) or {}, erwartetes_sub)
@@ -129,7 +129,7 @@ def _oidc_app(claims, nutzerinfo=None, **cfg):
 
 
 def _oidc_login(app):
-    """Einmal durch den echten Flow — Start, state, Callback aus demselben Browser."""
+    """Once through the real flow — start, state, callback from the same browser."""
     c = TestClient(app)
     start = c.get("/auth/oidc/start", follow_redirects=False)
     state = parse_qs(urlparse(start.headers["location"]).query)["state"][0]
@@ -142,125 +142,125 @@ ANGRIFF = {"sub": "angreifer-123", "preferred_username": "angreifer", "name": "A
 auth_f, app_f = _oidc_app(ANGRIFF, admin_identifiers=["chef@example.com"])
 antwort = _oidc_login(app_f)
 konto = auth_f.store.get_user_by_name("angreifer")
-r.check("der Angreifer kommt herein (die Anmeldung selbst bleibt erlaubt)",
+r.check("the attacker gets in (the sign-in itself stays allowed)",
         antwort.status_code == 303 and konto is not None,
-        f"HTTP {antwort.status_code} — dann misst der Rest nichts")
-r.check("wer eine UNBESTÄTIGTE IdP-Adresse mitbringt, wird nicht Erst-Admin",
+        f"HTTP {antwort.status_code} — then the rest measures nothing")
+r.check("whoever brings an UNCONFIRMED IdP address does not become first admin",
         konto is not None and not konto["is_admin"],
-        "er ist Admin — email_verified wird wieder ignoriert")
-r.check("die Instanz hat danach immer noch keinen Admin", not auth_f.admin_exists(),
-        "irgendein Weg hat doch befördert")
-# Die Adresse wird NICHT verwendet (H-3, PO-Entscheid 2026-09-24). Bis dahin wurde sie geführt
-# und als `Remote-Email` weitergereicht, nur ohne Rechte in TinySesam — eine geschützte App, die
-# Nutzer über die Adresse zuordnet, sah den Vermerk aber nie. Für einen Provider, der den Claim
-# nie schickt, sagt der Betreiber es ausdrücklich (`oidc_email_verified_default=True`).
-r.check("die unbestätigte Adresse wird nicht übernommen und geht nicht als Remote-Email weiter",
+        "he is admin — email_verified is ignored again")
+r.check("afterwards the instance still has no admin", not auth_f.admin_exists(),
+        "some path promoted after all")
+# The address is NOT used (H-3, PO decision 2026-09-24). Until then it was kept
+# and passed on as `Remote-Email`, only without rights in TinySesam — but a protected app that
+# assigns users by address never saw the note. For a provider that never sends the claim,
+# the operator says so explicitly (`oidc_email_verified_default=True`).
+r.check("the unconfirmed address is not adopted and is not passed on as Remote-Email",
         konto is not None and not konto["email"]
         and not auth_f._forward_response_headers(konto).get("Remote-Email"),
-        f"gespeichert: {konto['email'] if konto else '—'} — die fremde Adresse erreicht die App")
-r.check("… ist aber als unbestätigt vermerkt", konto is not None and not konto["email_verified"],
-        "der Vermerk fehlt — dann trägt sie beim nächsten Login wieder Rechte")
-# Der Vermerk steht in der Datenbank, nicht im Anmeldeweg: Genau hier wäre der Schutz sonst
-# offen. Derselbe Datensatz über einen lokalen Weg (Magic-Link, Passwort) angemeldet reist mit
-# `email_bestaetigt=None` an — vor dem Vermerk hätte das befördert.
-r.check("auch ein Login OHNE Beleg im Gepäck befördert dieses Konto nicht",
+        f"stored: {konto['email'] if konto else '—'} — the foreign address reaches the app")
+r.check("… but is noted as unconfirmed", konto is not None and not konto["email_verified"],
+        "the note is missing — then it carries rights again at the next login")
+# The note is in the database, not in the sign-in path: otherwise the protection would be open
+# exactly here. The same record signed in via a local path (magic link, password) arrives with
+# `email_bestaetigt=None` — before the note this would have promoted.
+r.check("even a login WITHOUT proof in its luggage does not promote this account",
         not auth_f._maybe_promote_admin(auth_f.get_user(konto["id"])),
-        "über einen lokalen Weg ist die unbestätigte Adresse doch Erst-Admin-fähig")
+        "via a local path the unconfirmed address is first-admin-capable after all")
 
-# Gegenprobe — ohne sie wäre die Prüfung oben auch dann grün, wenn OIDC gar nichts täte.
+# Counter-check — without it the check above would also be green if OIDC did nothing at all.
 auth_g, app_g = _oidc_app({**ANGRIFF, "sub": "chefin-1", "preferred_username": "chefin",
                            "email_verified": True},
                           admin_identifiers=["chef@example.com"])
 _oidc_login(app_g)
 chefin = auth_g.store.get_user_by_name("chefin")
-r.check("mit email_verified=true wird der vorgesehene Erst-Admin weiterhin vergeben",
+r.check("with email_verified=true the intended first admin is still granted",
         chefin is not None and chefin["is_admin"] == 1,
-        "der dokumentierte Bootstrap-Weg ist zu")
-r.check("und die bestätigte Adresse steht im Konto",
+        "the documented bootstrap path is closed")
+r.check("and the confirmed address is in the account",
         chefin is not None and chefin["email"] == "chef@example.com"
         and bool(chefin["email_verified"]),
-        f"gespeichert: {chefin['email'] if chefin else '—'}")
+        f"stored: {chefin['email'] if chefin else '—'}")
 
-# Der Claim ist in OIDC Core 5.1 OPTIONAL, und manche IdPs schicken ihn nie (Entra ID nennt der
-# Code selbst). Wer seine Adressen selbst verantwortet, dreht das Nein für den FEHLENDEN Claim
-# um — sonst wäre `admin_identifiers` für diese IdPs dauerhaft zu.
+# The claim is OPTIONAL in OIDC Core 5.1, and some IdPs never send it (the code itself names Entra ID).
+# Whoever vouches for their addresses turns the No for the MISSING claim
+# around — otherwise `admin_identifiers` would be permanently closed for these IdPs.
 auth_v, app_v = _oidc_app({"sub": "entra-1", "preferred_username": "chefin",
-                           "email": "chef@example.com"},        # Claim fehlt ganz
+                           "email": "chef@example.com"},        # claim missing entirely
                           admin_identifiers=["chef@example.com"],
                           oidc_email_verified_default=True)
 _oidc_login(app_v)
 entra = auth_v.store.get_user_by_name("chefin")
-r.check("mit oidc_email_verified_default=True zählt eine Adresse ohne Claim als belegt",
+r.check("with oidc_email_verified_default=True an address without claim counts as proven",
         entra is not None and entra["is_admin"] == 1 and bool(entra["email_verified"]),
-        f"Konto: {dict(entra) if entra else None} — für Entra-IdPs bliebe der Weg zu")
-# Der Schalter gilt nur für das SCHWEIGEN des Providers. Sagt er ausdrücklich „nicht bestätigt",
-# wäre ein Ja daraus eine Umgehung seiner Aussage.
+        f"Account: {dict(entra) if entra else None} — the path would stay closed for Entra IdPs")
+# The switch applies only to the SILENCE of the provider. If it says explicitly "not confirmed",
+# a Yes derived from that would be a circumvention of its statement.
 auth_v2, app_v2 = _oidc_app({"sub": "entra-2", "preferred_username": "luegner",
                              "email": "chef@example.com", "email_verified": False},
                             admin_identifiers=["chef@example.com"],
                             oidc_email_verified_default=True)
 _oidc_login(app_v2)
 luegner = auth_v2.store.get_user_by_name("luegner")
-r.check("der Schalter überschreibt aber kein ausdrückliches email_verified=false",
+r.check("but the switch does not override an explicit email_verified=false",
         luegner is not None and not luegner["is_admin"] and not luegner["email_verified"],
-        "die Vorgabe schlägt die Aussage des Providers")
+        "the default beats the statement of the provider")
 
-# Bestandskonto: Die Adresse steht schon in der Datenbank (vor dem Fix angelegt). Auch dann darf
-# ein Login ohne Beleg nicht befördern — sonst hinge der Schutz allein an der Adresse im Konto.
+# Existing account: the address is already in the database (created before the fix). Even then
+# a login without proof must not promote — otherwise the protection would hang solely on the address in the account.
 auth_b3, app_b3 = _oidc_app({"sub": "alt-1", "preferred_username": "altkonto",
-                             "email": "chef@example.com"},   # Claim fehlt ganz
+                             "email": "chef@example.com"},   # claim missing entirely
                             admin_identifiers=["chef@example.com"])
 alt_uid = auth_b3.create_user("altkonto", email="chef@example.com")
 auth_b3.store.link_oidc(IDP, "alt-1", alt_uid)
 _oidc_login(app_b3)
-r.check("ein Bestandskonto mit der Adresse wird ohne Beleg nicht nachträglich befördert",
+r.check("an existing account with the address is not promoted retroactively without proof",
         not auth_b3.get_user(alt_uid)["is_admin"],
-        "der fehlende Claim gilt wieder als bestätigt")
-# Dieselbe Entscheidung direkt an der Quelle — zeigt, dass der Beleg sie trägt und nicht
-# irgendein Nebeneffekt des Flows: dieselbe Zeile, einmal ohne und einmal mit Beleg.
-r.check("maybe_promote_admin verweigert bei email_bestaetigt=False",
+        "the missing claim counts as confirmed again")
+# The same decision directly at the source — shows that the proof carries it and not
+# some side effect of the flow: the same line, once without and once with proof.
+r.check("maybe_promote_admin refuses with email_bestaetigt=False",
         not auth_b3._maybe_promote_admin(auth_b3.get_user(alt_uid), email_bestaetigt=False))
-r.check("und befördert bei einem lokalen Login (kein IdP im Spiel) weiterhin",
+r.check("and still promotes on a local login (no IdP involved)",
         auth_b3._maybe_promote_admin(auth_b3.get_user(alt_uid)),
-        "der lokale Weg ist zu — dort verbürgt der Konstruktor-Wächter die Bestätigungsmail")
-# Dass der Beleg dieses Bestandskontos den OIDC-Login mit FEHLENDEM Claim überlebt hat, ist die
-# zweite Hälfte derselben Regel: Schweigen ist keine Aussage. Wäre es eine, hätte der Login
-# gerade die Bestätigung gelöscht, die der Betreiber beim Anlegen verbürgt hat.
-r.check("ein fehlender Claim löscht den Vermerk eines Bestandskontos nicht",
+        "the local path is closed — there the constructor guard vouches for the confirmation mail")
+# That the proof of this existing account survived the OIDC login with a MISSING claim is the
+# second half of the same rule: silence is not a statement. If it were, the login would
+# just have deleted the confirmation that the operator vouched for at creation.
+r.check("a missing claim does not delete the note of an existing account",
         bool(auth_b3.get_user(alt_uid)["email_verified"]),
-        "das Schweigen des Providers hat den lokalen Beleg überschrieben")
+        "the silence of the provider overwrote the local proof")
 
-# Umgekehrt zählt eine ausdrückliche Aussage — in beide Richtungen, sonst wäre der Vermerk ein
-# Einwegventil: Ein nachgeliefertes `email_verified=true` müsste ewig ohne Wirkung bleiben, und
-# ein zurückgenommener Beleg bliebe für immer stehen.
+# Conversely an explicit statement counts — in both directions, otherwise the note would be a
+# one-way valve: a later-delivered `email_verified=true` would have to stay without effect forever, and
+# a withdrawn proof would stay in place forever.
 def _claims_setzen(auth, claims):
     auth.oidc.exchange = lambda code, ru, nonce, t=None, **_: (
         _Claims({**claims, "nonce": nonce}), {"access_token": "at"})
 
 
 NACH = {"sub": "nach-1", "preferred_username": "nachtrag", "email": "nach@example.com"}
-auth_s, app_s = _oidc_app(NACH)                      # erster Login: Claim fehlt → unbestätigt
+auth_s, app_s = _oidc_app(NACH)                      # first login: claim missing → unconfirmed
 _oidc_login(app_s)
 nach = auth_s.store.get_user_by_name("nachtrag")
 vorher = bool(nach["email_verified"])
 _claims_setzen(auth_s, {**NACH, "email_verified": True})
 _oidc_login(app_s)
 nachher = bool(auth_s.get_user(nach["id"])["email_verified"])
-# Seit H-3 legt der erste Login das Konto OHNE Adresse an; der nachgelieferte Beleg trägt sie ein.
-r.check("liefert der Provider den Beleg nach, kommt die Adresse belegt ins Konto",
+# Since H-3 the first login creates the account WITHOUT address; the later-delivered proof enters it.
+r.check("if the provider delivers the proof later, the address enters the account as proven",
         not vorher and nachher and auth_s.get_user(nach["id"])["email"] == "nach@example.com",
         f"vorher={vorher} nachher={nachher} adresse={auth_s.get_user(nach['id'])['email']}")
 _claims_setzen(auth_s, {**NACH, "email_verified": False})
 _oidc_login(app_s)
-r.check("und nimmt er ihn zurück, fällt der Vermerk wieder",
+r.check("and if it withdraws it, the note falls again",
         not bool(auth_s.get_user(nach["id"])["email_verified"]),
-        "ein einmal erteilter Beleg bleibt für immer stehen")
+        "a proof once granted stays in place forever")
 
-# `_flag_wahr` ist der einzige Ort, der aus dem Claim ein Ja/Nein macht. Die Formen stammen aus
-# dem, was echte Provider senden. Entscheidend ist die Zeile `"false"` → Nein: Sie ist der
-# Unterschied zu jeder Wahrheitsprüfung auf dem rohen Wert (`bool("false")` ist wahr), und mit
-# so einer Mutation blieb die Suite vorher grün — eine als „false" gemeldete Adresse wäre
-# wieder Erst-Admin-fähig gewesen.
+# `_flag_wahr` is the only place that turns the claim into a yes/no. The forms come from
+# what real providers send. Decisive is the line `"false"` → No: it is the
+# difference to any truth test on the raw value (`bool("false")` is true), and with
+# such a mutation the suite used to stay green — an address reported as "false" would
+# have been first-admin-capable again.
 from tinysesam.oidc import _flag_wahr  # noqa: E402
 
 for wert, erwartet in [(True, True), ("true", True), ("True", True), (" TRUE ", True),
@@ -268,56 +268,56 @@ for wert, erwartet in [(True, True), ("true", True), ("True", True), (" TRUE ", 
                        (False, False), ("false", False), ("False", False), (0, False),
                        ("0", False), ("", False), (None, False), ("ja", False), ([], False)]:
     r.check(f"_flag_wahr({wert!r}) → {erwartet}", _flag_wahr(wert) is erwartet,
-            f"ergibt {_flag_wahr(wert)!r}")
+            f"yields {_flag_wahr(wert)!r}")
 
 
-# Der Beleg gehört zu SEINER Adresse — nicht zu der aus dem anderen Dokument.
-# Der Callback legt userinfo-Dokument und ID-Token zusammen (`{**nutzerinfo, **claims}`), und
-# beim Mischen gewann bis hierher die Adresse aus dem ID-Token, der Beleg aber konnte aus dem
-# userinfo-Dokument stammen: `email_verified=true` für eine ANDERE Adresse hätte die ungeprüfte
-# mit durchgetragen. OIDC Core 5.1 meint mit `email_verified` immer die `email` DERSELBEN Antwort.
+# The proof belongs to ITS address — not to the one from the other document.
+# The callback merges userinfo document and ID token (`{**nutzerinfo, **claims}`), and
+# when merging the address from the ID token won so far, but the proof could come from the
+# userinfo document: `email_verified=true` for a DIFFERENT address would have carried the
+# unchecked one along. OIDC Core 5.1 means by `email_verified` always the `email` of the SAME response.
 auth_m, app_m = _oidc_app({"sub": "misch-1", "preferred_username": "mischer",
-                           "email": "chef@example.com"},              # ID-Token: ohne Beleg
-                          nutzerinfo={"sub": "misch-1",            # Pflicht seit F-18
+                           "email": "chef@example.com"},              # ID token: without proof
+                          nutzerinfo={"sub": "misch-1",            # mandatory since F-18
                                       "email": "mischer@fremd.example",
-                                      "email_verified": True},        # Beleg gehört HIERHIN
+                                      "email_verified": True},        # the proof belongs HERE
                           admin_identifiers=["chef@example.com"])
 _oidc_login(app_m)
 mischer = auth_m.store.get_user_by_name("mischer")
-r.check("ein Beleg aus dem userinfo-Dokument trägt nicht die Adresse aus dem ID-Token",
+r.check("a proof from the userinfo document does not carry the address from the ID token",
         mischer is not None and not mischer["is_admin"],
-        "Admin — der fremde email_verified wurde auf die ungeprüfte Adresse gemünzt")
-r.check("… und sie wird gar nicht übernommen (H-3)",
+        "Admin — the foreign email_verified was applied to the unchecked address")
+r.check("… and it is not adopted at all (H-3)",
         mischer is not None and not mischer["email"] and not mischer["email_verified"],
-        f"Konto: {dict(mischer) if mischer else None}")
+        f"Account: {dict(mischer) if mischer else None}")
 
-# Gegenprobe: Liefert der IdP die Adresse NUR im userinfo-Dokument (verbreiteter Aufbau),
-# muss der dortige Beleg ganz normal zählen — sonst wäre der Schutz eine Sperre für alle.
-# Seit F-18 trägt die Antwort ihr `sub`: Ohne passendes wird sie verworfen (OIDC Core 5.3.2),
-# was der Abschnitt unten gesondert misst.
+# Counter-check: if the IdP delivers the address ONLY in the userinfo document (common setup),
+# the proof there must count normally — otherwise the protection would be a block for everyone.
+# Since F-18 the response carries its `sub`: without a matching one it is discarded (OIDC Core 5.3.2),
+# which the section below measures separately.
 auth_n, app_n = _oidc_app({"sub": "nur-ui-1", "preferred_username": "nurui"},
-                          nutzerinfo={"sub": "nur-ui-1",           # Pflicht seit F-18
+                          nutzerinfo={"sub": "nur-ui-1",           # mandatory since F-18
                                       "email": "chef@example.com", "email_verified": True},
                           admin_identifiers=["chef@example.com"])
 _oidc_login(app_n)
 nurui = auth_n.store.get_user_by_name("nurui")
-r.check("eine bestätigte Adresse aus dem userinfo-Dokument zählt weiterhin",
+r.check("a confirmed address from the userinfo document still counts",
         nurui is not None and nurui["is_admin"] == 1 and nurui["email"] == "chef@example.com",
-        f"Konto: {dict(nurui) if nurui else None}")
+        f"Account: {dict(nurui) if nurui else None}")
 
 
-# Der Beleg gibt es aber NUR bei OIDC. SAML kennt kein `email_verified`, und ein LDAP-`mail`
-# pflegt in vielen Verzeichnissen der Nutzer selbst — über diese Wege darf eine
-# Allowlist-ADRESSE deshalb NIE befördern. Bis zur Nacharbeit N4 hing der Riegel allein am
-# OIDC-Callback: SAML und LDAP riefen `apply_factor` ohne das Argument, und `None` hiess
-# „kein IdP im Spiel" — es lief am Riegel vorbei. Jetzt entscheidet der FAKTOR mit: ein
-# föderierter Weg ohne ausdrücklichen Beleg befördert nicht (fail-closed), das Vergessen des
-# Arguments ist also kein Loch mehr.
+# The proof exists ONLY with OIDC. SAML has no `email_verified`, and an LDAP `mail`
+# is maintained by the user themselves in many directories — via these paths an
+# allowlist ADDRESS must therefore NEVER promote. Until rework N4 the latch hung solely on the
+# OIDC callback: SAML and LDAP called `apply_factor` without the argument, and `None` meant
+# "no IdP involved" — it ran past the latch. Now the FACTOR decides as well: a
+# federated path without explicit proof does not promote (fail-closed), so forgetting the
+# argument is no longer a hole.
 def _bootstrap_probe():
-    """Frische Instanz mit Allowlist-ADRESSE und einem Konto, das sie trägt.
+    """Fresh instance with allowlist ADDRESS and an account that carries it.
 
-    Jede Probe braucht ihre eigene: `maybe_promote_admin` ist nicht folgenlos — ein Erfolg
-    setzt das Admin-Flag, und danach messen alle weiteren Aufrufe nur noch `admin_exists`."""
+    Each probe needs its own: `maybe_promote_admin` is not without consequences — a success
+    sets the admin flag, and afterwards all further calls only measure `admin_exists`."""
     a, _ = _app(admin_identifiers=["chef@example.com"])
     return a, a.create_user("chefin", email="chef@example.com")
 
@@ -329,21 +329,20 @@ for faktor, beleg, soll, was in (("saml", None, False, "SAML ohne Beleg (Argumen
                                  ("oidc", True, True, "OIDC mit email_verified=true")):
     a_p, uid_p = _bootstrap_probe()
     ergebnis = a_p._maybe_promote_admin(a_p.get_user(uid_p), beleg, faktor=faktor)
-    r.check(f"{was} → Erst-Admin {'JA' if soll else 'NEIN'}", ergebnis is soll,
-            f"maybe_promote_admin gab {ergebnis!r} zurück")
+    r.check(f"{was} → first admin {'YES' if soll else 'NO'}", ergebnis is soll,
+            f"maybe_promote_admin returned {ergebnis!r}")
 
 
-# Der Riegel muss auch den ZWEITEN Login halten — sonst ist er nur eine Verzögerung.
-# `maybe_promote_admin` fragt ohne ausdrücklichen Beleg den Vermerk am Konto
-# (`users.email_verified`), und genau den legten `check_ldap`/`check_saml` mit der Vorgabe
-# `True` an, obwohl über diese Wege per Definition nichts belegt ist. Der Angreifer meldete
-# sich einmal an (die Beförderung wurde korrekt verweigert), richtete sich in seiner frisch
-# angemeldeten Sitzung eine PIN oder einen Passkey ein — Selbstbedienung — und war beim
-# zweiten Login Erst-Admin, mit einem Faktor, der selbst nichts behauptet (B-umgehung-1 aus T-13).
-# Die vollständigen Wege über die Routen stehen in `test_ldap.py`/`test_saml.py`; hier die
-# Quelle des Fehlers: das frisch angelegte Konto.
+# The latch must also hold the SECOND login — otherwise it is only a delay.
+# Without explicit proof `maybe_promote_admin` asks for the note on the account
+# (`users.email_verified`), and exactly that was created by `check_ldap`/`check_saml` with the default
+# `True`, although via these paths nothing is proven by definition. The attacker signed
+# in once (the promotion was correctly refused), set up a PIN or a passkey in his freshly
+# signed-in session — self-service — and was first admin at the second login, with a factor that itself claims nothing (B-umgehung-1 from T-13).
+# The complete paths via the routes are in `test_ldap.py`/`test_saml.py`; here the
+# source of the error: the freshly created account.
 class _FakeLDAP:
-    """Verzeichnis, in dem der Nutzer sein `mail`-Attribut selbst pflegt — der F-14-Fall."""
+    """Directory in which the user maintains their `mail` attribute themselves — the F-14 case."""
 
     @staticmethod
     def authenticate(username, password):
@@ -354,56 +353,56 @@ class _FakeLDAP:
 for weg, anlegen in (
         ("LDAP", lambda a: (setattr(a, "ldap", _FakeLDAP()), a._check_ldap("mallory", "x"))[1]),
         ("SAML", lambda a: a._check_saml("mallory", {"email": ["chef@example.com"]}))):
-    # Seit dem PO-Entscheid 2026-09-24 sagt der Betreiber, ob er einer Quelle traut
-    # (`ldap_email_trusted`, Vorgabe ja; `saml_email_trusted`, Vorgabe nein). Der F-14-Fall ist
-    # die Quelle, der er NICHT traut — dann wird die Adresse gar nicht verwendet (wie H-3).
+    # Since the PO decision 2026-09-24 the operator says whether he trusts a source
+    # (`ldap_email_trusted`, default yes; `saml_email_trusted`, default no). The F-14 case is
+    # the source he does NOT trust — then the address is not used at all (as with H-3).
     a_v, _ = _app(admin_identifiers=["chef@example.com"], ldap_enabled=True,
                   ldap_url="ldaps://dir.example.invalid", ldap_email_trusted=False)
     konto = anlegen(a_v)
-    r.check(f"ein über {weg} angelegtes Konto (Quelle nicht vertraut) trägt die Adresse nicht",
+    r.check(f"an account created via {weg} (source not trusted) does not carry the address",
             konto is not None and not konto["email"] and not konto["email_verified"],
-            f"Konto: {konto} — die Adresse einer nicht vertrauten Quelle landet am Konto")
-    # Der zweite Sprung: ein Faktor, den sich der Angreifer selbst einrichtet (PIN, Passkey).
-    # Er ist nicht föderiert und reicht keinen Beleg — es entscheidet allein der Vermerk.
-    r.check(f"… und ein zweiter, selbst eingerichteter Faktor befördert sie nach dem {weg}-Login nicht",
+            f"Account: {konto} — the address of an untrusted source ends up on the account")
+    # The second jump: a factor the attacker sets up himself (PIN, passkey).
+    # It is not federated and hands over no proof — the note alone decides.
+    r.check(f"… and a second, self-set-up factor does not promote it after the {weg} login",
             a_v._maybe_promote_admin(a_v.get_user(konto["id"]), faktor="pin") is False,
-            "Erst-Admin über einen Umweg — der Riegel hielt nur den ersten Login")
-    # Gegenprobe auf derselben Instanz: Trägt die Adresse einen Beleg (Bestätigungsmail,
-    # Betreiber), befördert genau derselbe Aufruf. Ohne sie wäre oben auch eine kaputte
-    # Beförderung grün.
+            "first admin via a detour — the latch only held the first login")
+    # Counter-check on the same instance: if the address carries a proof (confirmation mail,
+    # operator), exactly the same call promotes. Without it the check above would also
+    # be green for a broken promotion.
     a_v.store.set_email(konto["id"], "chef@example.com", verified=True)
-    r.check(f"… Gegenprobe: mit Beleg am Konto befördert derselbe Aufruf ({weg})",
+    r.check(f"… counter-check: with proof on the account the same call promotes ({weg})",
             a_v._maybe_promote_admin(a_v.get_user(konto["id"]), faktor="pin") is True,
-            "der Bootstrap-Weg ist ganz zu — dann misst die Prüfung darüber nichts")
+            "the bootstrap path is entirely closed — then the check above measures nothing")
 
 
-# Ein Adresswechsel überträgt den Beleg der ALTEN Adresse nicht auf die NEUE. Seit der Vermerk
-# über Rechte entscheidet, ist `store.set_email` sonst ein Bootstrap-Weg: Konto mit belegter
-# `eve@example.com` → Adresse auf die Allowlist-Adresse ändern → der alte Beleg trägt sie
-# (B-umgehung-8 aus T-13). Der Docstring nannte das „fail-closed" und meinte nur die andere Richtung.
+# An address change does not transfer the proof of the OLD address to the NEW one. Since the note
+# decides about rights, `store.set_email` would otherwise be a bootstrap path: account with proven
+# `eve@example.com` → change the address to the allowlist address → the old proof carries it
+# (B-umgehung-8 from T-13). The docstring called that "fail-closed" and meant only the other direction.
 a_se, _ = _app(admin_identifiers=["chef@example.com"])
-uid_se = a_se.create_user("eve", email="eve@example.com")          # belegt (Betreiber)
+uid_se = a_se.create_user("eve", email="eve@example.com")          # proven (operator)
 a_se.store.set_email(uid_se, "chef@example.com")
-r.check("ein Adresswechsel per set_email nimmt den Beleg mit weg",
+r.check("an address change via set_email takes the proof away with it",
         not a_se.get_user(uid_se)["email_verified"],
-        "die neue Adresse trägt den Beleg der alten")
-r.check("… und trägt deshalb auch die Erst-Admin-Entscheidung nicht",
+        "the new address carries the proof of the old one")
+r.check("… and therefore does not carry the first-admin decision either",
         a_se._maybe_promote_admin(a_se.get_user(uid_se), faktor="password") is False,
-        "Erst-Admin allein durch das Umschreiben einer Adresse")
-# Gegenprobe: Wer einen Beleg für die NEUE Adresse hat, sagt es — dann zählt sie wie immer.
+        "first admin merely by rewriting an address")
+# Counter-check: whoever has a proof for the NEW address says so — then it counts as usual.
 a_se2, _ = _app(admin_identifiers=["chef@example.com"])
 uid_se2 = a_se2.create_user("eve", email="eve@example.com")
 a_se2.store.set_email(uid_se2, "chef@example.com", verified=True)
-r.check("… mit ausdrücklichem verified=True bleibt der Beleg an der neuen Adresse",
+r.check("… with explicit verified=True the proof stays on the new address",
         a_se2.get_user(uid_se2)["email_verified"] == 1
         and a_se2._maybe_promote_admin(a_se2.get_user(uid_se2), faktor="password") is True,
-        "der belegte Weg ist zu")
+        "the proven path is closed")
 
 
-# Der Betreiber soll das beim Aufbau erfahren und nicht beim vergeblichen Warten auf den
-# ersten Admin: Die Konfigurationsprüfung nennt die Kombination und den belegten Weg. Warnung,
-# nicht Fehler — mit einem lokalen Passwort-Login (bestätigte Adresse) ist derselbe Aufbau
-# tragfähig, nur eben nicht über SAML/LDAP.
+# The operator should learn about this at setup and not while waiting in vain for the
+# first admin: the configuration check names the combination and the proven path. Warning,
+# not error — with a local password login (confirmed address) the same setup is
+# viable, just not via SAML/LDAP.
 from tinysesam import konfigpruefung as _kp_f14  # noqa: E402
 
 OIDC_AN = dict(oidc_enabled=True, oidc_issuer=IDP, oidc_client_id="c", oidc_client_secret="s")
@@ -413,67 +412,67 @@ for kurz, an in (("SAML", SAML_AN), ("LDAP", LDAP_AN)):
     _f14, _w14 = _kp_f14.pruefe(TinySesamConfig(db_path=":memory:", base_url="https://app.example",
                                                 admin_identifiers=["chef@example.com"], **an))
     treffer = [w for w in _w14 if "/auth/claim-admin" in w and kurz in w]
-    r.check(f"konfigpruefung nennt bei admin_identifiers + {kurz} den Weg über /auth/claim-admin",
-            len(treffer) == 1, f"Warnungen: {_w14!r}")
-    r.check(f"...und macht aus dem {kurz}-Aufbau keinen Fehler", not _f14, f"Fehler: {_f14!r}")
+    r.check(f"konfigpruefung with admin_identifiers + {kurz} names the path via /auth/claim-admin",
+            len(treffer) == 1, f"Warnings: {_w14!r}")
+    r.check(f"...and does not turn the {kurz} setup into an error", not _f14, f"Errors: {_f14!r}")
 
-# Gegenproben: OIDC hat den Beleg (dort trägt die Adresse weiterhin), und ohne IdP ist gar
-# nichts zu melden. Eine Warnung, die immer feuert, liest am Ende niemand mehr.
+# Counter-checks: OIDC has the proof (there the address continues to carry), and without an IdP
+# there is nothing to report at all. A warning that always fires is read by nobody in the end.
 _f14b, _w14b = _kp_f14.pruefe(TinySesamConfig(db_path=":memory:", base_url="https://app.example",
                                               admin_identifiers=["chef@example.com"], **OIDC_AN))
-r.check("bei OIDC schweigt sie (der Claim email_verified ist der Beleg)",
+r.check("with OIDC it is silent (the claim email_verified is the proof)",
         not any("/auth/claim-admin" in w for w in _w14b), f"{_w14b!r}")
 _f14c, _w14c = _kp_f14.pruefe(TinySesamConfig(db_path=":memory:", base_url="https://app.example",
                                               admin_identifiers=["chef@example.com"]))
-r.check("und ohne föderierten Weg ebenfalls",
+r.check("and without a federated path as well",
         not any("/auth/claim-admin" in w for w in _w14c), f"{_w14c!r}")
 
 
-# ── R4-12 über die föderierten Wege: die Login-Kennung ist EIN Raum ──────────
-# Die Kreuzprüfung sitzt in `create_user` und gilt damit auch für das Auto-Anlegen aus
-# OIDC/LDAP/SAML. Gemessen war diese Hälfte nie: Vier Mutationen (Ausweichname → harte 409,
-# saubere Abweisung → roher 500) liessen die volle Suite grün.
+# ── R4-12 via the federated paths: the login identifier is ONE space ─────────
+# The cross-check sits in `create_user` and thus also applies to the auto-creation from
+# OIDC/LDAP/SAML. This half was never measured: four mutations (fallback name → hard 409,
+# clean rejection → raw 500) left the full suite green.
 auth_k9, app_k9 = _oidc_app({"sub": "k9", "preferred_username": "chef@example.com",
                              "email": "neu@example.com", "email_verified": True})
 lokal9 = auth_k9.create_user("chef", password="geheim12345", email="chef@example.com")
 antw9 = _oidc_login(app_k9)
-r.check("ein OIDC-Name, der die E-Mail eines Kontos ist, weicht auf einen freien Namen aus",
-        antw9.status_code == 303, f"HTTP {antw9.status_code} — der Nutzer kommt nicht mehr herein")
-# Seit dem Angriff auf H-3 (2026-09-24) gilt ein `preferred_username` mit `@` nur, wenn er die
-# belegte Adresse ist — hier ist er eine FREMDE Adresse, das Konto heisst also nach der belegten
-# (`neu@example.com`), nicht mehr `chef@example.com2`. Die Zusage bleibt dieselbe: eine eigene,
-# freie Kennung, keine besetzte.
+r.check("an OIDC name that is the e-mail of an account falls back to a free name",
+        antw9.status_code == 303, f"HTTP {antw9.status_code} — the user no longer gets in")
+# Since the attack on H-3 (2026-09-24) a `preferred_username` with `@` counts only if it is the
+# proven address — here it is a FOREIGN address, so the account is named after the proven one
+# (`neu@example.com`), no longer `chef@example.com2`. The promise stays the same: an own,
+# free identifier, not an occupied one.
 _k9_uid = auth_k9.store.get_oidc_user(IDP, "k9")
 _k9_name = auth_k9.store.get_user(_k9_uid)["username"] if _k9_uid else None
-r.check("...das neue Konto heisst anders", _k9_name not in (None, "chef@example.com", "chef"),
-        f"Name {_k9_name!r} — dann wurde entweder abgewiesen oder eine Kennung besetzt")
-r.check("...und die Kennung zeigt weiter auf das lokale Konto",
+r.check("...the new account is named differently", _k9_name not in (None, "chef@example.com", "chef"),
+        f"Name {_k9_name!r} — then either rejected or an identifier occupied")
+r.check("...and the identifier still points to the local account",
         (auth_k9.find_user("chef@example.com") or {}).get("id") == lokal9,
-        "die fremde Anmeldung hat die Kennung übernommen")
+        "the foreign sign-in took over the identifier")
 
-# Was sich NICHT ausweichen lässt: die E-Mail der Identität. Dann bleibt nur fail-closed —
-# und zwar als saubere Abweisung, nicht als 500 mitten im Anmeldevorgang.
+# What cannot be evaded: the e-mail of the identity. Then only fail-closed remains —
+# as a clean rejection, not as a 500 in the middle of the sign-in process.
 auth_k11, app_k11 = _oidc_app({"sub": "k11", "preferred_username": "fremd",
                                "email": "kollision@example.com", "email_verified": True})
 lokal11 = auth_k11.create_user("kollision@example.com", password="geheim12345")
 antw11 = _oidc_login(app_k11)
-r.check("eine OIDC-Adresse, die lokal schon Login-Kennung ist, wird mit 409 abgewiesen",
-        antw11.status_code == 409, f"HTTP {antw11.status_code} — 500 wäre ein Defekt, 303 ein Loch")
-r.check("...und legt kein Konto an", auth_k11.store.get_user_by_name("fremd") is None,
-        "das Konto steht trotz Abweisung in der Datenbank")
-r.check("...der Inhaber behält seine Kennung",
+r.check("an OIDC address that is already a login identifier locally is rejected with 409",
+        antw11.status_code == 409, f"HTTP {antw11.status_code} — 500 would be a defect, 303 a hole")
+r.check("...and creates no account", auth_k11.store.get_user_by_name("fremd") is None,
+        "the account is in the database despite the rejection")
+r.check("...the owner keeps their identifier",
         (auth_k11.find_user("kollision@example.com") or {}).get("id") == lokal11,
-        "die Kennung wurde besetzt")
+        "the identifier was occupied")
 
 
-# ── Allowlist-BENUTZERNAME, während ein IdP Konten von selbst anlegt (F-14 b) ──
-# Der Name eines auto-angelegten Kontos kommt aus `preferred_username` bzw. dem
-# SAML-/LDAP-Feld — von niemandem bestätigt, genau wie bei der offenen Registrierung.
+# ── Allowlist USERNAME while an IdP creates accounts by itself (F-14 b) ──
+# The name of an auto-created account comes from `preferred_username` or the
+# SAML/LDAP field — confirmed by nobody, just like with open registration.
 def _baut_f14(**cfg):
     tmp = tempfile.mkdtemp()
-    # `base_url` ist hier nicht Beiwerk, sondern nötig, damit die Probe überhaupt etwas
-    # aussagt: Ohne sie wirft der Konstruktor bei OIDC/SAML wegen der fehlenden Basis —
-    # `gebaut=False` sähe dann aus wie ein Treffer des F-14-Wächters.
+    # `base_url` is not an accessory here but necessary for the probe to say anything at all:
+    # without it the constructor throws for OIDC/SAML because of the missing base —
+    # `gebaut=False` would then look like a hit of the F-14 guard.
     grund = dict(db_path=str(Path(tmp) / "t.db"), cookie_secure=False,
                  base_url="http://testserver")
     grund.update(cfg)
@@ -485,32 +484,32 @@ def _baut_f14(**cfg):
 
 
 gebaut, text = _baut_f14(admin_identifiers=["chef"], allow_signup=False, **OIDC_AN)
-r.check("Allowlist-BENUTZERNAME + oidc_auto_create wird abgewiesen", not gebaut,
-        "die Instanz baut — wer beim IdP 'chef' heisst, wird Erst-Admin")
-r.check("die Abweisung nennt die offene Tür", "oidc_auto_create" in text,
-        f"Meldung nennt sie nicht: {text[:110]!r}")
+r.check("allowlist USERNAME + oidc_auto_create is rejected", not gebaut,
+        "the instance builds — whoever is called 'chef' at the IdP becomes first admin")
+r.check("the rejection names the open door", "oidc_auto_create" in text,
+        f"message does not name it: {text[:110]!r}")
 for feld, an in (("saml_auto_create", dict(saml_enabled=True,
                                            saml_idp_sso_url=IDP + "/sso",
                                            saml_idp_x509cert="PEM")),
                  ("ldap_auto_create", dict(ldap_enabled=True,
                                            ldap_url="ldaps://dir.example.invalid"))):
     gebaut, text = _baut_f14(admin_identifiers=["chef"], allow_signup=False, **an)
-    r.check(f"dasselbe für {feld}", not gebaut and feld in text,
-            f"gebaut={gebaut}, Meldung: {text[:110]!r}")
+    r.check(f"the same for {feld}", not gebaut and feld in text,
+            f"gebaut={gebaut}, message: {text[:110]!r}")
 
-# Gegenproben — der Wächter darf die tragfähigen Aufbauten nicht mitnehmen.
+# Counter-checks — the guard must not take the viable setups down with it.
 gebaut, text = _baut_f14(admin_identifiers=["chef"], allow_signup=False,
                          oidc_auto_create=False, **OIDC_AN)
-r.check("ohne Auto-Anlegen bleibt der Allowlist-Name erlaubt", gebaut,
-        f"zu streng: {text[:120]}")
+r.check("without auto-creation the allowlist name stays allowed", gebaut,
+        f"too strict: {text[:120]}")
 gebaut, text = _baut_f14(admin_identifiers=["chef@example.com"], allow_signup=False, **OIDC_AN)
-r.check("eine Allowlist-ADRESSE bleibt mit OIDC erlaubt (sie braucht den Claim, nicht ein Verbot)",
-        gebaut, f"zu streng, der dokumentierte Bootstrap ist zu: {text[:120]}")
+r.check("an allowlist ADDRESS stays allowed with OIDC (it needs the claim, not a ban)",
+        gebaut, f"too strict, the documented bootstrap is closed: {text[:120]}")
 
 
-# ── Ein API-Key-Scope, der zu nichts zusammenschrumpft ───────────────────────
-# `["tippfehler"]` wurde zu `[]`, und `[]` heisst in der Datenbank „kein Scope, erbt alles".
-# Die Beschneidung, die begrenzen sollte, machte den Key mächtiger.
+# ── An API key scope that shrinks to nothing ─────────────────────────────────
+# `["tippfehler"]` became `[]`, and `[]` in the database means "no scope, inherits everything".
+# The pruning that was meant to limit made the key more powerful.
 auth_k, _ = _app(apikey_enabled=True)
 uid_k = auth_k.create_user("bob", password="geheim12345", roles=["kasse", "lager"])
 
@@ -520,20 +519,20 @@ for wunsch, was in ((["lagre"], "Tippfehler"), ([], "ausdrücklich leer")):
         entstanden = True
     except ConfigError:
         entstanden = False
-    r.check(f"ein Scope, der zu nichts wird ({was}), erzeugt keinen Key", not entstanden,
-            "der Key entsteht — und erbt in der Datenbank ALLE Rollen des Kontos")
+    r.check(f"a scope that becomes nothing ({was}) creates no key", not entstanden,
+            "the key is created — and in the database inherits ALL roles of the account")
 
 schluessel = auth_k.create_api_key(uid_k, "echt", roles=["lager"])
 _, rollen = auth_k.verify_api_key(schluessel["key"])
-r.check("eine gültige Teilmenge geht weiterhin", rollen == ["lager"], f"{rollen}")
+r.check("a valid subset still works", rollen == ["lager"], f"{rollen}")
 ohne = auth_k.create_api_key(uid_k, "ohne")
 _, rollen2 = auth_k.verify_api_key(ohne["key"])
-r.check("ohne `roles` erbt der Key wie bisher", rollen2 is None, f"{rollen2}")
+r.check("without `roles` the key inherits as before", rollen2 is None, f"{rollen2}")
 
 
-# ── Der CSRF-Ausschalter im Header ───────────────────────────────────────────
-# `require_csrf` übersprang, sobald irgendein `X-API-Key` dastand — ungeprüft, und danach lief
-# die Anmeldung über das Sitzungs-Cookie weiter. Auch bei apikey_enabled=False.
+# ── The CSRF off switch in the header ────────────────────────────────────────
+# `require_csrf` skipped as soon as any `X-API-Key` was present — unchecked, and afterwards
+# the sign-in via the session cookie continued. Also with apikey_enabled=False.
 for apikey_an in (False, True):
     auth_c, _ = _app(apikey_enabled=apikey_an)
     chef = auth_c.create_user("chefin", password="geheim12345", is_admin=True)
@@ -544,47 +543,47 @@ for apikey_an in (False, True):
                    auth_c.store.create_session(chef, 3600, True, "password"))
     mit = cc.post("/auth/admin/api/security", json={"max_login_attempts": 7},
                   headers={"X-API-Key": "voellig-erfunden"})
-    r.check(f"ein erfundener X-API-Key schaltet CSRF nicht ab (apikey_enabled={apikey_an})",
-            mit.status_code == 403, f"HTTP {mit.status_code} — die Prüfung ist abschaltbar")
+    r.check(f"an invented X-API-Key does not switch CSRF off (apikey_enabled={apikey_an})",
+            mit.status_code == 403, f"HTTP {mit.status_code} — the check can be switched off")
 
-# Gegenprobe: ein ECHTER Key ohne Cookie darf weiterhin ohne CSRF-Token arbeiten.
+# Counter-check: a REAL key without cookie may still work without a CSRF token.
 auth_d, app_d = _app(apikey_enabled=True)
 uid_d = auth_d.create_user("daemon", password="geheim12345")
 echt = auth_d.create_api_key(uid_d, "bot")["key"]
 cd = TestClient(app_d)
-r.check("ein echter Key kommt ohne CSRF-Token durch",
+r.check("a real key gets through without a CSRF token",
         cd.get("/auth/apikeys", headers={"X-API-Key": echt}).status_code == 200,
-        "der Daemon-Weg ist zu")
+        "the daemon path is closed")
 
 
-# ── Ein Schlüssel stellt sich selbst einen mächtigeren aus ───────────────────
+# ── A key issues itself a more powerful one ──────────────────────────────────
 auth_e, app_e = _app(apikey_enabled=True)
 uid_e = auth_e.create_user("bob", password="geheim12345", roles=["kasse", "lager"])
 eng = auth_e.create_api_key(uid_e, "eng", roles=["lager"])["key"]
 ce = TestClient(app_e)
 antwort = ce.post("/auth/apikeys", json={"name": "selbst"}, headers={"X-API-Key": eng})
-r.check("ein API-Key kann keinen API-Key ausstellen", antwort.status_code == 403,
-        f"HTTP {antwort.status_code} — er hebt damit seine eigene Begrenzung auf")
+r.check("an API key cannot issue an API key", antwort.status_code == 403,
+        f"HTTP {antwort.status_code} — with it he lifts his own limitation")
 
 
-# ── Ein TOTP-Code, der mehrfach gilt ─────────────────────────────────────────
+# ── A TOTP code that is valid several times ──────────────────────────────────
 auth_t, _ = _app()
 uid_t = auth_t.create_user("bob", password="geheim12345")
 auth_t.totp_begin(uid_t)
 geheim = auth_t.store.get_totp(uid_t)["secret"]
 auth_t.store.set_totp(uid_t, geheim, confirmed=True)
 code = pyotp.TOTP(geheim).now()
-r.check("ein TOTP-Code gilt beim ersten Mal", auth_t._verify_totp(uid_t, code))
-r.check("derselbe Code gilt kein zweites Mal", not auth_t._verify_totp(uid_t, code),
+r.check("a TOTP code is valid the first time", auth_t._verify_totp(uid_t, code))
+r.check("the same code is not valid a second time", not auth_t._verify_totp(uid_t, code),
         "NIST SP 800-63B: „SHALL accept a given OTP only once while it is valid\"")
 import time as _t  # noqa: E402
 
-r.check("der nächste Zeitschritt geht weiterhin",
+r.check("the next time step still works",
         auth_t._verify_totp(uid_t, pyotp.TOTP(geheim).at(int(_t.time()) + 30)),
-        "die Einmal-Buchung sperrt zu viel")
+        "the one-time booking locks too much")
 
 
-# ── Freigeschaltete Ressourcen im Klartext ───────────────────────────────────
+# ── Unlocked resources in plain text ─────────────────────────────────────────
 auth_r2, app_r2 = _app(csrf_enabled=False, resource_locks_enabled=True, pin_enabled=True)
 uid_r = auth_r2.create_user("bob", password="geheim12345")
 auth_r2.set_resource_secret("tresor", "geheimwort", kind="password", label="Tresor")
@@ -593,15 +592,15 @@ cr.cookies.set(auth_r2.cfg.session_cookie, auth_r2.store.create_session(uid_r, 3
 cr.post("/auth/resource/tresor", data={"secret": "geheimwort", "next": "/"}, follow_redirects=False)
 keks = cr.cookies.get(auth_r2.cfg.resource_cookie)
 in_db = [z["token"] for z in auth_r2.store._all("SELECT token FROM resource_unlock")]
-r.check("der Freigabe-Token steht nicht im Klartext in der Datenbank",
+r.check("the unlock token is not in plain text in the database",
         keks not in in_db and in_db and len(in_db[0]) == 64,
-        f"DB: {in_db[:1]} — wer die Datei liest, öffnet jede freigeschaltete Ressource")
-r.check("die Freigabe gilt trotzdem",
+        f"DB: {in_db[:1]} — whoever reads the file opens every unlocked resource")
+r.check("the unlock still works",
         auth_r2.store.is_resource_unlocked(keks, "tresor"),
-        "das Hashen hat die Funktion gebrochen")
+        "the hashing broke the function")
 
 
-# ── Eine Logzeile, die fail2ban gegen Dritte richtet ─────────────────────────
+# ── A log line that points fail2ban at third parties ─────────────────────────
 puffer = io.StringIO()
 haken = logging.StreamHandler(puffer)
 haken.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
@@ -614,19 +613,19 @@ try:
 finally:
     _sec.seclog.removeHandler(haken)
 zeilen = [z for z in puffer.getvalue().splitlines() if "failed login" in z]
-r.check("ein Benutzername mit Zeilenumbruch erzeugt genau EINE Logzeile", len(zeilen) == 1,
-        f"{len(zeilen)} Zeilen — fail2ban zählt dann eine fremde IP")
+r.check("a username with a line break produces exactly ONE log line", len(zeilen) == 1,
+        f"{len(zeilen)} lines — fail2ban then counts a foreign IP")
 muster = re.compile(r"^\S+ \S+ WARNING failed login user=.* ip=(\S+) method=\S+(?: reason=\S+)?$")
 gesehen = [m.group(1) for m in (muster.match(z) for z in zeilen) if m]
-r.check("und der mitgelieferte Filter sieht nur die echte IP", gesehen == ["203.0.113.11"],
+r.check("and the bundled filter sees only the real IP", gesehen == ["203.0.113.11"],
         f"{gesehen}")
 filter_datei = (ROOT / "deploy" / "fail2ban" / "tinysesam-filter.conf").read_text(encoding="utf-8")
-r.check("der Filter ist auf die ganze Zeile verankert",
+r.check("the filter is anchored to the whole line",
         "^" in filter_datei.split("failregex =")[1].split("\n")[0],
-        "ohne Verankerung zählt eine eingeschobene Zeile mit")
+        "without anchoring an inserted line is counted too")
 
 
-# ── Die Anmeldung scheitert — und das Protokoll sagt nicht, warum ────────────
+# ── The sign-in fails — and the log does not say why ─────────────────────────
 auth_g, _ = _app()
 auth_g.create_user("anna", password="geheim12345")
 gesperrt = auth_g.create_user("bert", password="geheim12345")
@@ -635,14 +634,14 @@ for name in ("anna", "bert", "carla"):
     auth_g._record_login(name, "203.0.113.9", success=False, method="password")
 gruende = {z["username"]: (z["detail"] or "") for z in auth_g.store.recent_audit(20)
            if z["event"] == "login_fail"}
-r.check("das Protokoll unterscheidet falsches Geheimnis, gesperrtes und fehlendes Konto",
+r.check("the log distinguishes wrong secret, locked and missing account",
         "falsches_geheimnis" in gruende.get("anna", "")
         and "konto_gesperrt" in gruende.get("bert", "")
         and "kein_konto" in gruende.get("carla", ""),
         f"{gruende}")
 
 
-# ── Die Sicherung, die ihre Quelle verändert ─────────────────────────────────
+# ── The backup that changes its source ───────────────────────────────────────
 ordner = Path(tempfile.mkdtemp())
 alt_pfad = ordner / "alt.db"
 roh = sqlite3.connect(str(alt_pfad))
@@ -663,19 +662,19 @@ lauf = subprocess.run([sys.executable, "-m", "tinysesam", "backup", "--db", str(
                        str(ordner / "kopie.db")], cwd=ROOT, capture_output=True, text=True)
 nachher = ([z[1] for z in sqlite3.connect(str(alt_pfad)).execute("PRAGMA table_info(session)")],
            sqlite3.connect(str(alt_pfad)).execute("PRAGMA user_version").fetchone()[0])
-r.check("`tinysesam backup` läuft durch", lauf.returncode == 0, lauf.stderr[:120])
-r.check("...und lässt die QUELLE unverändert", vorher == nachher,
-        f"vorher {vorher} → nachher {nachher}. Wer vor einem Update sichert, hätte damit die "
-        "laufende Installation migriert — und den Rückweg zugemacht.")
+r.check("`tinysesam backup` runs through", lauf.returncode == 0, lauf.stderr[:120])
+r.check("...and leaves the SOURCE unchanged", vorher == nachher,
+        f"before {vorher} → after {nachher}. Whoever backs up before an update would have migrated "
+        "the running installation with it — and closed the way back.")
 kopie = sqlite3.connect(str(ordner / "kopie.db"))
-r.check("die Kopie ist vollständig und im alten Schema",
+r.check("the copy is complete and in the old schema",
         kopie.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 1
         and "token" in [z[1] for z in kopie.execute("PRAGMA table_info(session)")],
-        "die Sicherung taugt nicht zum Zurückspielen")
+        "the backup is not fit for restoring")
 
 
-# ── Die Rücksicherung, die stillschweigend nichts tut ────────────────────────
-# Nach einem Absturz liegen -wal/-shm daneben; ein blosses `cp` wird davon überschrieben.
+# ── The restore that silently does nothing ───────────────────────────────────
+# After a crash -wal/-shm are lying next to it; a plain `cp` is overwritten by them.
 ordner2 = Path(tempfile.mkdtemp())
 ziel = ordner2 / "auth.db"
 auth_s = TinySesam(TinySesamConfig(db_path=str(ziel), cookie_secure=False))
@@ -684,9 +683,9 @@ for n in ("alt0", "alt1"):
 subprocess.run([sys.executable, "-m", "tinysesam", "backup", "--db", str(ziel),
                 str(ordner2 / "sicherung.db")], cwd=ROOT, capture_output=True)
 auth_s.store.db.close()
-# Ein echter Absturz, kein sauberes Schliessen: Letzteres checkt die WAL ein und löscht sie —
-# dann misst der Test den entscheidenden Fall gar nicht. Also ein Unterprozess, der mitten im
-# Betrieb per SIGKILL endet.
+# A real crash, not a clean close: the latter checkpoints the WAL and deletes it —
+# then the test does not measure the decisive case at all. So a subprocess that ends
+# with SIGKILL in the middle of operation.
 absturz = (
     "import os, signal\n"
     "from tinysesam import TinySesam, TinySesamConfig\n"
@@ -694,11 +693,11 @@ absturz = (
     "a.create_user('neu0', password='geheim12345')\n"
     "os.kill(os.getpid(), signal.SIGKILL)\n")
 subprocess.run([sys.executable, "-c", absturz], cwd=ROOT, capture_output=True)
-r.check("die Ausgangslage hat eine liegengebliebene WAL",
+r.check("the starting position has a leftover WAL",
         (ordner2 / "auth.db-wal").exists(),
-        "ohne WAL misst der Test den entscheidenden Fall nicht")
+        "without a WAL the test does not measure the decisive case")
 
-# Gegenprobe: Ein blosses `cp` holt hier den alten Stand zurück — genau der Befund.
+# Counter-check: A plain `cp` brings the old state back here — exactly the finding.
 import shutil as _sh  # noqa: E402
 
 probe = ordner2 / "probe.db"
@@ -707,20 +706,20 @@ for teil in ("", "-wal", "-shm"):
         _sh.copyfile(ordner2 / f"auth.db{teil}", ordner2 / f"probe.db{teil}")
 _sh.copyfile(ordner2 / "sicherung.db", probe)
 naiv = [z[0] for z in sqlite3.connect(str(probe)).execute("SELECT username FROM users")]
-r.check("ein blosses `cp` der Sicherung wirkt NICHT (die WAL überschreibt es)",
+r.check("a plain `cp` of the backup does NOT work (the WAL overwrites it)",
         "neu0" in naiv,
-        f"{naiv} — dann misst der Test den Unterschied nicht, den `restore` ausmacht")
+        f"{naiv} — then the test does not measure the difference that `restore` makes")
 
 lauf2 = subprocess.run([sys.executable, "-m", "tinysesam", "restore", "--db", str(ziel),
                         str(ordner2 / "sicherung.db"), "--ja"],
                        cwd=ROOT, capture_output=True, text=True)
-r.check("`tinysesam restore` läuft durch", lauf2.returncode == 0, lauf2.stderr[:140])
+r.check("`tinysesam restore` runs through", lauf2.returncode == 0, lauf2.stderr[:140])
 namen = [z[0] for z in sqlite3.connect(str(ziel)).execute("SELECT username FROM users")]
-r.check("nach dem Zurückspielen steht der gesicherte Stand da", namen == ["alt0", "alt1"],
-        f"{namen} — die WAL hat den alten Stand wieder eingespielt")
+r.check("after restoring, the backed-up state is there", namen == ["alt0", "alt1"],
+        f"{namen} — the WAL replayed the old state")
 
 
-# ── Eine Migration, die auf halbem Weg abbricht ──────────────────────────────
+# ── A migration that aborts halfway ──────────────────────────────
 ordner3 = Path(tempfile.mkdtemp())
 halb = ordner3 / "halb.db"
 roh3 = sqlite3.connect(str(halb))
@@ -737,16 +736,16 @@ roh3.commit()
 roh3.close()
 st3 = Store(str(halb))
 werte = [z["token_hash"] for z in st3._all("SELECT token_hash FROM session")]
-r.check("eine halb migrierte Datei wird beim nächsten Start geheilt",
+r.check("a half-migrated file is healed at the next start",
         all(len(w) == 64 for w in werte),
-        f"{werte} — Klartext bleibt für immer, weil die Erkennung nie wieder greift")
-r.check("und das alte Cookie gilt danach weiter",
+        f"{werte} — plaintext stays forever because the detection never applies again")
+r.check("and the old cookie remains valid afterwards",
         st3.get_session("IMMER-NOCH-KLARTEXT") is not None,
-        "die Heilung hat die Sitzung verworfen")
+        "the healing discarded the session")
 st3.db.close()
 
 
-# ── Der Healthcheck, der einen Datenbankschaden nicht sieht ──────────────────
+# ── The healthcheck that does not see database damage ──────────────────
 umgebung = dict(os.environ, TINYSESAM_OIDC_ISSUER="https://id.example.com",
                 TINYSESAM_OIDC_CLIENT_ID="x", TINYSESAM_OIDC_CLIENT_SECRET="y",
                 TINYSESAM_BASE_URL="https://a.example.com",
@@ -761,14 +760,14 @@ skript = (
 lauf3 = subprocess.run([sys.executable, "-c", skript], cwd=ROOT, capture_output=True,
                        text=True, env=umgebung)
 ausgabe = lauf3.stdout
-r.check("der Healthcheck meldet eine gesunde Instanz mit 200", "gesund 200" in ausgabe,
+r.check("the healthcheck reports a healthy instance with 200", "gesund 200" in ausgabe,
         ausgabe[:120] + lauf3.stderr[-120:])
-r.check("...und eine kaputte Datenbank mit 503", "kaputt 503" in ausgabe,
-        f"{ausgabe[:160]} — Docker führte den Container dauerhaft als healthy, "
-        "während jede angemeldete Anfrage 500 lieferte")
+r.check("...and a broken database with 503", "kaputt 503" in ausgabe,
+        f"{ausgabe[:160]} — Docker kept the container permanently as healthy, "
+        "while every signed-in request returned 500")
 
 
-# ── Das Sitzungs-Token beim Rechtewechsel ───────────────────────────────────
+# ── The session token on a change of rights ───────────────────────────────────
 auth_w, app_w = _app(csrf_enabled=False)
 uid_w = auth_w.create_user("bob", password="geheim12345")
 auth_w.totp_begin(uid_w)
@@ -781,63 +780,63 @@ vor = cw.cookies.get(auth_w.cfg.session_cookie)
 cw.post("/auth/totp", data={"code": pyotp.TOTP(geheim_w).now(), "next": "/"},
         follow_redirects=False)
 nach = cw.cookies.get(auth_w.cfg.session_cookie)
-r.check("das Sitzungs-Token wird beim Rechtewechsel erneuert", vor != nach,
+r.check("the session token is renewed on a change of rights", vor != nach,
         "OWASP: „must be renewed after any privilege level change\"")
-r.check("die neue Sitzung ist vollwertig",
+r.check("the new session is fully valid",
         bool(auth_w.store.get_session(nach) and auth_w.store.get_session(nach)["mfa_ok"]),
-        "der zweite Faktor ist verloren gegangen")
-r.check("und die alte ist weg", auth_w.store.get_session(vor) is None,
-        "beide Token gelten — dann war die Erneuerung nur Kosmetik")
+        "the second factor was lost")
+r.check("and the old one is gone", auth_w.store.get_session(vor) is None,
+        "both tokens are valid — then the renewal was only cosmetic")
 
 
-# ── Der Konfigurations-Prüfer, der ein Feld nennt, das es nicht gibt ─────────
+# ── The configuration checker that names a field that does not exist ─────────
 from tinysesam.konfigpruefung import BRAUCHT_MAILER, PFLICHTFELDER, VERFAHREN  # noqa: E402
 
 felder = TinySesamConfig(db_path=":memory:")
 unbekannt = sorted({f for fs in PFLICHTFELDER.values() for f in fs if not hasattr(felder, f)}
                    | {v for v in VERFAHREN.values() if not hasattr(felder, v)}
                    | {f for f in BRAUCHT_MAILER if not hasattr(felder, f)})
-r.check("jeder Feldname der Konfigurationsprüfung existiert wirklich", not unbekannt,
-        f"{unbekannt} — die Warnung feuert dann immer und prüft nie, was gemeint war")
+r.check("every field name of the configuration check really exists", not unbekannt,
+        f"{unbekannt} — the warning then always fires and never checks what was meant")
 
 preset = TinySesamConfig.active_directory(ldap_url="ldaps://dc.example.com:636",
                                           upn_suffix="corp.example.com", db_path=":memory:")
 from tinysesam.konfigpruefung import pruefe  # noqa: E402
 
 f_p, w_p = pruefe(preset)
-r.check("das eigene active_directory-Preset löst keine Warnung aus", not f_p and not w_p,
-        f"Fehler={f_p} Warnungen={w_p}")
+r.check("the own active_directory preset triggers no warning", not f_p and not w_p,
+        f"errors={f_p} warnings={w_p}")
 
 
-# ── Gespeichertes XSS im Admin-Panel über den Benutzernamen ──────────────────
-# Das Panel-JS baute Daten in `onclick`-Attribute, und `esc()` ersetzte nur `<`. HTML-Escaping
-# genügt dort ohnehin nicht: Der Browser dekodiert das Attribut ZUERST und lässt den JS-Parser
-# danach über das Ergebnis laufen — aus `&#39;` wird wieder ein Apostroph, der den String
-# schliesst. Ein Nutzer, der sich passend registriert, führte damit Code im Browser der
-# angemeldeten Administratorin aus. (CodeQL fand das nicht: Es sieht Python, nicht das
-# JavaScript in einem Python-String.)
+# ── Stored XSS in the admin panel via the username ──────────────────
+# The panel JS built data into `onclick` attributes, and `esc()` replaced only `<`. HTML escaping
+# is not enough there anyway: The browser decodes the attribute FIRST and then lets the JS parser
+# run over the result — `&#39;` becomes an apostrophe again, which closes the
+# string. A user who registered suitably thereby executed code in the browser of the
+# signed-in administrator. (CodeQL did not find this: It sees Python, not the
+# JavaScript in a Python string.)
 panel_js = (ROOT / "tinysesam" / "admin.py").read_text(encoding="utf-8")
 
-r.check("esc() ersetzt alle HTML-Sonderzeichen, nicht nur '<'",
+r.check("esc() replaces all HTML special characters, not just '<'",
         all(z in panel_js for z in ('"&":"&amp;"', "'\"':\"&quot;\"", '"\'":"&#39;"')),
-        "esc() deckt nicht alle Zeichen ab — in einem Attribut reicht `<` nicht")
+        "esc() does not cover all characters — in an attribute `<` is not enough")
 
-# Seit R8-1 steht gar kein Datum mehr in einem Inline-Handler: Die CSP des Panels liesse ihn
-# nicht laufen, und ein onclick ist Code. Die Knöpfe tragen `data-on` (Aktionsname) und
-# `data-a` (Argumente als JSON), ein delegierter Listener liest sie mit JSON.parse.
-r.check("kein onclick mehr im Panel", not re.search(r"\bon[a-z]+=", panel_js.split("_PAGE = ")[1]),
-        "ein Inline-Handler ist zurück — unter der CSP läuft er nicht, und Daten darin sind Code")
-r.check("Knöpfe laufen über on() (JSON in data-a, Attribut-escaped)",
+# Since R8-1, no datum stands in an inline handler at all any more: The panel's CSP would not let it
+# run, and an onclick is code. The buttons carry `data-on` (action name) and
+# `data-a` (arguments as JSON), a delegated listener reads them with JSON.parse.
+r.check("no onclick in the panel any more", not re.search(r"\bon[a-z]+=", panel_js.split("_PAGE = ")[1]),
+        "an inline handler is back — under the CSP it does not run, and data in it is code")
+r.check("buttons go through on() (JSON in data-a, attribute-escaped)",
         'const on=(f,...a)=>`data-on="${f}" data-a="${esc(JSON.stringify(a))}"`;' in panel_js
-        and panel_js.count("${on(") >= 10, f"{panel_js.count('${on(')} Verwendungen")
-r.check("der Listener ruft nur Aktionen aus ACT auf und liest data-a mit JSON.parse",
+        and panel_js.count("${on(") >= 10, f"{panel_js.count('${on(')} uses")
+r.check("the listener calls only actions from ACT and reads data-a with JSON.parse",
         "const ACT={" in panel_js and 'JSON.parse(el.dataset.a||"[]")' in panel_js)
 
-# Die Wirkung messen, nicht im Quelltext raten.
+# Measure the effect, do not guess in the source text.
 #
-# Der Kern ist prüfbar ohne JS-Laufzeit: `on` = JSON-Liste + HTML-Escaping in einem
-# doppelt-gequoteten Attribut. Darin darf KEIN rohes `"` stehen (sonst endet das Attribut), und
-# nach der Dekodierung durch den Browser muss JSON.parse genau den Namen zurückgeben.
+# The core can be checked without a JS runtime: `on` = JSON list + HTML escaping in a
+# double-quoted attribute. There must be NO raw `"` in it (otherwise the attribute ends), and
+# after decoding by the browser, JSON.parse must return exactly the name.
 ZEICHEN = {"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}
 
 
@@ -853,70 +852,70 @@ def _on(f, *a):
 angriff = "bob\");alert(document.cookie);//'\"><img src=x onerror=alert(1)>"
 attribut = _on("keys", 1, angriff)
 _wert = attribut.split('data-a="', 1)[1]
-r.check("ein präparierter Benutzername lässt kein rohes Anführungszeichen im Attribut",
+r.check("a crafted username leaves no raw quotation mark in the attribute",
         '"' not in _wert[:-1] and "<" not in _wert and "'" not in _wert, attribut)
 import html as _html  # noqa: E402
 import json as _json_a  # noqa: E402
 
-r.check("nach der HTML-Dekodierung liefert JSON.parse genau die Argumente zurück",
+r.check("after HTML decoding, JSON.parse returns exactly the arguments",
         _json_a.loads(_html.unescape(_wert[:-1])) == [1, angriff], _wert)
 
-# Wenn node da ist, dasselbe gegen die ECHTEN Helfer aus dem Panel — die stärkere Messung.
+# If node is present, the same against the REAL helpers from the panel — the stronger measurement.
 from voraussetzung import pflicht_werkzeug  # noqa: E402
 
-# Fehlt node, ist das rot statt still weniger geprüft (s. `pflicht_werkzeug`).
+# If node is missing, this is red rather than silently less checked (see `pflicht_werkzeug`).
 node = pflicht_werkzeug("node", "Panel-Helfer esc/on gegen präparierte Namen")
 if node:
     import json as _json2
 
     defs = re.search(r"const esc=.*?\);\n", panel_js, re.S)
     ondef = re.search(r"const on=.*?;\n", panel_js)
-    r.check("die JS-Helfer sind im Panel auffindbar", defs is not None and ondef is not None,
-            "esc/on nicht gefunden")
+    r.check("the JS helpers can be found in the panel", defs is not None and ondef is not None,
+            "esc/on not found")
     if defs and ondef:
         probe = defs.group(0) + ondef.group(0) + (
             f"\nprocess.stdout.write(`<button ${{on('keys',1,{_json2.dumps(angriff)})}}>x</button>`);")
         aus = subprocess.run([node, "-e", probe], capture_output=True, text=True).stdout
-        r.check("auch das echte Panel-JS bricht nicht aus dem Attribut aus",
-                "<img" not in aus and "&quot;" in aus, f"erzeugt: {aus[:110]}")
-        r.check("und der Nachbau oben stimmt mit dem echten JS überein",
+        r.check("the real panel JS does not break out of the attribute either",
+                "<img" not in aus and "&quot;" in aus, f"produced: {aus[:110]}")
+        r.check("and the replica above matches the real JS",
                 _on("keys", 1, angriff) in aus,
-                f"Nachbau: {_on('keys', 1, angriff)!r} — dann misst die Prüfung ohne node etwas anderes")
+                f"replica: {_on('keys', 1, angriff)!r} — then the check without node measures something else")
 
-# ---------- F-17: ein gesperrtes Konto bekommt beim SSO-Login gar nichts mehr ----------
-# Bis 0.18.x lief der Callback für ein `disabled=1`-Konto vollständig durch: Gruppen wurden
-# übernommen, das Admin-Flag konnte gesetzt werden, ein Login-Eintrag entstand — nur die Sitzung
-# blieb aus. Sperren heisst aber „diese Person soll nichts mehr können"; dass ihre Rollen sich
-# dabei noch ändern, ist das Gegenteil. Im Protokoll sah es zudem aus wie eine Anmeldung.
+# ---------- F-17: a locked account gets nothing at all at SSO login any more ----------
+# Up to 0.18.x the callback for a `disabled=1` account ran through completely: Groups were
+# taken over, the admin flag could be set, a login entry was created — only the session
+# stayed out. But locking means "this person should no longer be able to do anything"; that their roles
+# still change meanwhile is the opposite. In the log it also looked like a sign-in.
 auth_d, app_d = _oidc_app({"sub": "gesperrt-1", "preferred_username": "gesperrt",
                            "email": "gesperrt@example.com", "email_verified": True,
                            "groups": ["admins"]},
                           oidc_group_role_map={"admins": "chef"})
-_oidc_login(app_d)                                   # erster Login legt das Konto an
+_oidc_login(app_d)                                   # first login creates the account
 _uid_d = auth_d.store.get_user_by_name("gesperrt")["id"]
 auth_d.store.set_disabled(_uid_d, True)
 auth_d.store._exec("UPDATE users SET roles='[]' WHERE id=?", (_uid_d,))
 
 _antwort_d = _oidc_login(app_d)
 _konto_d = auth_d.store.get_user(_uid_d)
-r.check("gesperrtes Konto: der SSO-Callback weist ab (403, keine Sitzung)",
+r.check("locked account: the SSO callback rejects (403, no session)",
         _antwort_d.status_code == 403, f"HTTP {_antwort_d.status_code}")
-r.check("… und die Rollen aus dem IdP werden NICHT mehr übernommen",
+r.check("… and the roles from the IdP are NO LONGER taken over",
         _konto_d["roles"] == "[]", f"roles={_konto_d['roles']!r}")
-r.check("… das Konto bleibt gesperrt", bool(_konto_d["disabled"]))
+r.check("… the account stays locked", bool(_konto_d["disabled"]))
 _ereignisse_d = [e["event"] for e in auth_d.store.recent_audit(limit=20)]
-r.check("… und es gibt eine Audit-Zeile mit dem Grund",
-        "oidc_disabled" in _ereignisse_d, f"Ereignisse: {_ereignisse_d}")
+r.check("… and there is an audit line with the reason",
+        "oidc_disabled" in _ereignisse_d, f"events: {_ereignisse_d}")
 
-# Gegenprobe: entsperrt läuft derselbe Weg wieder durch — sonst wäre der Riegel eine Sackgasse.
+# Counter-check: unlocked, the same path runs through again — otherwise the guard would be a dead end.
 auth_d.store.set_disabled(_uid_d, False)
-r.check("entsperrt: derselbe Login geht wieder durch",
+r.check("unlocked: the same login goes through again",
         _oidc_login(app_d).status_code == 303)
 
-# ---------- F-18: die UserInfo-Antwort muss zum ID-Token passen ----------
-# Die Antwort ist nicht signiert und wird über die Claims gelegt — sie liefert Gruppen, E-Mail
-# und damit mittelbar Rollen und das Admin-Flag. Passt ihr `sub` nicht, gilt sie gar nicht
-# (OIDC Core 5.3.2). Geprüft wird hier der Weg durch den echten Callback.
+# ---------- F-18: the UserInfo response must match the ID token ----------
+# The response is not signed and is laid over the claims — it supplies groups, e-mail
+# and thereby indirectly roles and the admin flag. If its `sub` does not match, it does not apply at all
+# (OIDC Core 5.3.2). What is checked here is the path through the real callback.
 auth_x, app_x = _oidc_app({"sub": "echt-1", "preferred_username": "echt"},
                           nutzerinfo={"sub": "JEMAND-ANDERS", "email": "chef@example.com",
                                       "email_verified": True, "groups": ["admins"]},
@@ -924,14 +923,14 @@ auth_x, app_x = _oidc_app({"sub": "echt-1", "preferred_username": "echt"},
                           oidc_group_role_map={"admins": "chef"})
 _oidc_login(app_x)
 _echt = auth_x.store.get_user_by_name("echt")
-r.check("fremdes sub im userinfo-Dokument: weder Adresse noch Rollen wandern ins Konto",
+r.check("foreign sub in the userinfo document: neither address nor roles move into the account",
         _echt is not None and not _echt["is_admin"] and _echt["roles"] == "[]"
         and (_echt["email"] or "") != "chef@example.com",
-        f"Konto: {dict(_echt) if _echt else None}")
+        f"account: {dict(_echt) if _echt else None}")
 
 
 # ══════════════════════════════════════════════════════════════════════════════════════════
-# T-13, Bereich „Audit und Forensik": Wer, von wo, was genau — und was das Log verfälscht.
+# T-13, area "Audit and forensics": Who, from where, what exactly — and what falsifies the log.
 # ══════════════════════════════════════════════════════════════════════════════════════════
 import contextlib as _ctxlib  # noqa: E402
 from tinysesam.__main__ import _audit as _cli_audit, _gc as _cli_gc  # noqa: E402
@@ -955,177 +954,177 @@ def _zeilen_t(event, n=500):
 
 c_anna, c_chef = _sitzung_t(_anna_t), _sitzung_t(_chef_t)
 
-# ── B5-02: Konto-Ereignisse tragen Konto und IP ──────────────────────────────────────────
+# ── B5-02: account events carry account and IP ──────────────────────────────────────────
 _start = c_anna.post("/auth/totp/setup/start")
 _geheim = auth_t.store.get_totp(_anna_t)["secret"]
 _best = c_anna.post("/auth/totp/setup", data={"code": pyotp.TOTP(_geheim).now()})
 _rc = c_anna.post("/auth/totp/recovery")
-r.check("Aufbau: TOTP eingerichtet, Recovery-Codes ausgestellt",
+r.check("Setup: TOTP set up, recovery codes issued",
         _start.status_code == 200 and _best.json().get("ok") and _rc.status_code == 200,
         f"{_start.status_code} {_best.text[:80]} {_rc.status_code} {_rc.text[:80]}")
 _konto_ev = ("totp_setup_start", "totp_enable", "recovery_generate")
 _ohne = [(e, z["username"], z["ip"]) for e in _konto_ev for z in _zeilen_t(e)
          if z["username"] != "anna" or not z["ip"]]
-r.check("B5-02: jede Konto-Zeile nennt das Konto UND die IP", not _ohne and all(
-    _zeilen_t(e) for e in _konto_ev), f"ohne Konto/IP: {_ohne}")
-r.check("B5-02: `tinysesam audit --user anna` findet sie (Filter in SQL auf username)",
+r.check("B5-02: every account row names the account AND the IP", not _ohne and all(
+    _zeilen_t(e) for e in _konto_ev), f"without account/IP: {_ohne}")
+r.check("B5-02: `tinysesam audit --user anna` finds them (filter in SQL on username)",
         {"totp_setup_start", "totp_enable", "recovery_generate"}
         <= {z["event"] for z in auth_t.store.recent_audit(50, username="anna")})
 
-# ── B5-07: TOTP-Einrichtung protokolliert, Recovery-Code ≠ TOTP ────────────────────────────
-r.check("B5-07: das Bestätigen der TOTP-Einrichtung hinterlässt `totp_enable`",
+# ── B5-07: TOTP setup is logged, recovery code ≠ TOTP ────────────────────────────
+r.check("B5-07: confirming the TOTP setup leaves `totp_enable`",
         len(_zeilen_t("totp_enable")) == 1)
 _login_rc = TestClient(app_t)
 _login_rc.post("/auth/login", data={"username": "anna", "password": "Geheim12345!-lang"})
 _rc_antwort = _login_rc.post("/auth/totp", data={"code": _rc.json()["codes"][0]},
                              follow_redirects=False)
 _rc_zeilen = _zeilen_t("recovery_used")
-r.check("B5-07: ein Recovery-Code im TOTP-Schritt steht als `recovery_used` im Log",
+r.check("B5-07: a recovery code in the TOTP step appears as `recovery_used` in the log",
         _rc_antwort.status_code == 303 and len(_rc_zeilen) == 1
         and _rc_zeilen[0]["username"] == "anna" and _rc_zeilen[0]["ip"]
         and "verbleibend=9" in (_rc_zeilen[0]["detail"] or ""),
-        f"HTTP {_rc_antwort.status_code}, Zeilen {_rc_zeilen}")
+        f"HTTP {_rc_antwort.status_code}, rows {_rc_zeilen}")
 
-# ── B5-04 / R6-3: die drei Panel-Routen ohne Akteur ───────────────────────────────────────
+# ── B5-04 / R6-3: the three panel routes without an actor ───────────────────────────────────────
 _key_t = c_chef.post(f"/auth/admin/api/users/{_anna_t}/keys", json={"name": "ci"}).json()
 c_chef.post(f"/auth/admin/api/keys/{_key_t['id']}/revoke")
 c_chef.post("/auth/admin/api/invite", json={"email": "gast@example.com"})
 _panel = {e: (_zeilen_t(e) or [{}])[0] for e in ("apikey_create", "apikey_revoke", "invite_create")}
-r.check("B5-04/R6-3: Key anlegen/widerrufen nennt Besitzer, IP und den Admin als akteur=",
+r.check("B5-04/R6-3: creating/revoking a key names owner, IP and the admin as akteur=",
         all(_panel[e].get("username") == "anna" and _panel[e].get("ip")
             and "akteur=chef" in (_panel[e].get("detail") or "")
             for e in ("apikey_create", "apikey_revoke")), f"{_panel}")
-r.check("B5-04: die Einladung nennt den einladenden Admin und seine IP",
+r.check("B5-04: the invitation names the inviting admin and his IP",
         _panel["invite_create"].get("username") == "chef" and _panel["invite_create"].get("ip"),
         f"{_panel['invite_create']}")
 
-# ── B5-05: Key-Nutzung und -Abweisung ─────────────────────────────────────────────────────
+# ── B5-05: key use and key rejection ─────────────────────────────────────────────────────
 _key2 = auth_t.create_api_key(_anna_t, name="sync")
 for _ in range(3):
     TestClient(app_t).get("/auth/me", headers={"X-API-Key": _key2["key"]})
 _nutzung = [z for z in _zeilen_t("apikey_use") if f"key={_key2['id']} " in z["detail"] + " "]
-r.check("B5-05: die Nutzung eines Keys steht mit Besitzer und IP im Log — gedrosselt, 1× statt 3×",
+r.check("B5-05: the use of a key appears in the log with owner and IP — throttled, 1× instead of 3×",
         len(_nutzung) == 1 and _nutzung[0]["username"] == "anna" and _nutzung[0]["ip"],
         f"{_nutzung}")
 _sl_puffer = io.StringIO()
 _sl_h = logging.StreamHandler(_sl_puffer)
 _sec.seclog.addHandler(_sl_h)
 try:
-    TestClient(app_t).get("/auth/me", headers={"X-API-Key": _key_t["key"]})     # widerrufen
-    TestClient(app_t).get("/auth/me", headers={"X-API-Key": "tsk_" + "x" * 40})  # unbekannt
+    TestClient(app_t).get("/auth/me", headers={"X-API-Key": _key_t["key"]})     # revoked
+    TestClient(app_t).get("/auth/me", headers={"X-API-Key": "tsk_" + "x" * 40})  # unknown
 finally:
     _sec.seclog.removeHandler(_sl_h)
 _abgewiesen = {z["detail"].split("grund=")[-1]: z for z in _zeilen_t("apikey_denied")}
-r.check("B5-05: ein WIDERRUFENER Key, der weiter anklopft, steht im Log (Konto, IP, Grund)",
+r.check("B5-05: a REVOKED key that keeps knocking appears in the log (account, IP, reason)",
         _abgewiesen.get("widerrufen", {}).get("username") == "anna"
         and _abgewiesen["widerrufen"].get("ip"), f"{_abgewiesen}")
-r.check("B5-05: ein unbekannter Key ebenfalls — und beide im Sicherheits-Log",
+r.check("B5-05: an unknown key likewise — and both in the security log",
         "unbekannt" in _abgewiesen and _sl_puffer.getvalue().count("api key denied") == 2,
         _sl_puffer.getvalue())
 
-# ── R6-7: Vorher/Nachher ──────────────────────────────────────────────────────────────────
+# ── R6-7: Before/after ──────────────────────────────────────────────────────────────────
 c_chef.post(f"/auth/admin/api/users/{_anna_t}/roles", json={"roles": ["redaktion"], "is_admin": True})
 _rollen_z = _zeilen_t("user_roles")[0]["detail"] or ""
-r.check("R6-7: die Rollenänderung nennt vorher → nachher, samt Admin-Flag",
+r.check("R6-7: the role change names before → after, including admin flag",
         "rollen=-->redaktion" in _rollen_z and "admin=0->1" in _rollen_z, _rollen_z)
 c_chef.post(f"/auth/admin/api/users/{_anna_t}/roles", json={"roles": [], "is_admin": False})
 _vorher_ma = auth_t._sec("max_login_attempts")
 c_chef.post("/auth/admin/api/security", json={"max_login_attempts": _vorher_ma + 995})
 _sec_z = _zeilen_t("security_update")[0]["detail"] or ""
-r.check("R6-7: die Härtungsänderung nennt den alten und den neuen Wert",
+r.check("R6-7: the hardening change names the old and the new value",
         f"max_login_attempts={_vorher_ma}->{_vorher_ma + 995}" in _sec_z, _sec_z)
 auth_t.set_security("max_login_attempts", _vorher_ma)
 
-# ── B5-12: Lesen wird protokolliert ───────────────────────────────────────────────────────
+# ── B5-12: reading is logged ───────────────────────────────────────────────────────
 c_chef.get("/auth/admin/api/sessions")
 c_chef.get("/auth/admin/api/audit")
-r.check("B5-12: Sitzungsliste und Audit-Log lesen hinterlässt eine Zeile mit dem Leser",
+r.check("B5-12: reading the session list and audit log leaves a row with the reader",
         (_zeilen_t("sessions_read") or [{}])[0].get("username") == "chef"
         and (_zeilen_t("audit_read") or [{}])[0].get("username") == "chef")
 
-# ── H-7: eigene Ereignisse auf der Kontoseite ─────────────────────────────────────────────
+# ── H-7: own events on the account page ─────────────────────────────────────────────
 _konto_seite = c_anna.get("/auth/account").text
-r.check("H-7: die Kontoseite zeigt die eigenen Ereignisse",
+r.check("H-7: the account page shows the own events",
         "Recent activity" in _konto_seite and "totp_enable" in _konto_seite
         and "recovery_used" in _konto_seite)
-r.check("H-7: … ohne Detailtext (dort stehen bei Admin-Aktionen fremde Konten)",
+r.check("H-7: … without detail text (for admin actions, foreign accounts stand there)",
         "akteur=" not in _konto_seite and "verbleibend=" not in _konto_seite)
 
-# ── B5-17: abgewiesene Forward-Auth ───────────────────────────────────────────────────────
+# ── B5-17: rejected forward-auth ───────────────────────────────────────────────────────
 _vorher_fw = len(_zeilen_t("forward_denied"))
-TestClient(app_t).get("/auth/forward")                                   # ohne Nachweis
+TestClient(app_t).get("/auth/forward")                                   # without proof
 _ohne_nachweis = len(_zeilen_t("forward_denied")) - _vorher_fw
 _fw = TestClient(app_t)
 _fw.cookies.set(auth_t.cfg.session_cookie, "abgelaufen-oder-geraten")
 _fw_status = [_fw.get("/auth/forward").status_code for _ in range(3)]
 _fw_z = _zeilen_t("forward_denied")
-r.check("B5-17: eine 401 mit ungültigem Sitzungscookie steht im Log (gedrosselt: 1× für 3 Anfragen)",
+r.check("B5-17: a 401 with an invalid session cookie appears in the log (throttled: 1× for 3 requests)",
         _fw_status == [401] * 3 and len(_fw_z) - _vorher_fw == 1
         and "grund=sitzung_ungueltig" in _fw_z[0]["detail"] and _fw_z[0]["ip"],
         f"{_fw_status} {_fw_z}")
-r.check("B5-17: … ein Aufruf ganz ohne Nachweis (der erste Besuch) dagegen nicht", _ohne_nachweis == 0)
+r.check("B5-17: … a call without any proof (the first visit), by contrast, does not", _ohne_nachweis == 0)
 
-# ── B5-08 / H-13: Passkey widerrufen, Konto löschen, Log anonymisieren ────────────────────
+# ── B5-08 / H-13: revoke passkey, delete account, anonymize log ────────────────────
 auth_t.store.add_webauthn(_anna_t, "credid-b5-08", "pubkey", 0, ["usb"], "Stick")
 _pk = c_chef.get(f"/auth/admin/api/users/{_anna_t}/passkeys").json()
 _pk_weg = c_chef.post(f"/auth/admin/api/users/{_anna_t}/passkeys/{_pk[0]['id']}/delete")
 _pk_z = _zeilen_t("passkey_delete")[0]
-r.check("B5-08: der Admin widerruft einen fremden Passkey — protokolliert beim Inhaber",
+r.check("B5-08: the admin revokes a foreign passkey — logged for the owner",
         len(_pk) == 1 and _pk_weg.status_code == 200 and not auth_t.store.list_webauthn(_anna_t)
         and _pk_z["username"] == "anna" and "akteur=chef" in _pk_z["detail"], f"{_pk} {_pk_z}")
-r.check("B5-08: fremder Passkey über die falsche Konto-ID → 404, nichts gelöscht",
+r.check("B5-08: foreign passkey via the wrong account ID → 404, nothing deleted",
         c_chef.post(f"/auth/admin/api/users/{_chef_t}/passkeys/999/delete").status_code == 404)
-r.check("B5-08: das eigene Konto lässt sich im Panel nicht löschen",
+r.check("B5-08: the own account cannot be deleted in the panel",
         c_chef.post(f"/auth/admin/api/users/{_chef_t}/delete").status_code == 400)
 _try_last = None
 try:
     auth_t.delete_user(_chef_t)
 except Exception as e:        # noqa: BLE001
     _try_last = type(e).__name__
-r.check("B5-08: der letzte Admin lässt sich nicht löschen (StateError)", _try_last == "StateError",
+r.check("B5-08: the last admin cannot be deleted (StateError)", _try_last == "StateError",
         str(_try_last))
 auth_t.store.audit_log("invite_create", "chef", None, "an anna@example.com und annabell")
 _weg = c_chef.post(f"/auth/admin/api/users/{_anna_t}/delete")
 _rest = [dict(z) for z in auth_t.store.recent_audit(1000)]
-r.check("B5-08: Konto gelöscht", _weg.status_code == 200 and auth_t.store.get_user(_anna_t) is None,
+r.check("B5-08: account deleted", _weg.status_code == 200 and auth_t.store.get_user(_anna_t) is None,
         f"HTTP {_weg.status_code} {_weg.text[:80]}")
-r.check("H-13: im Audit-Log steht der Name nirgends mehr, weder als Konto noch im Detail",
+r.check("H-13: the name appears nowhere in the audit log any more, neither as account nor in the detail",
         not any("anna" == (z["username"] or "") or "anna@example.com" in (z["detail"] or "")
                 for z in _rest),
         f"{[z for z in _rest if 'anna' in str(z)][:3]}")
-r.check("H-13: … die Zeilen selbst bleiben stehen (Forensik), unter `gelöscht#<id>`",
+r.check("H-13: … the rows themselves remain (forensics), under `gelöscht#<id>`",
         len(auth_t.store.recent_audit(1000, username=f"gelöscht#{_anna_t}")) >= 10)
-r.check("H-13: … und nur ganze Wörter werden ersetzt („annabell“ bleibt)",
+r.check("H-13: … and only whole words are replaced ('annabell' stays)",
         any("annabell" in (z["detail"] or "") for z in _rest))
 
-# ── B5-11: Aufbewahrungsfrist und IP-Kürzung ──────────────────────────────────────────────
+# ── B5-11: retention period and IP truncation ──────────────────────────────────────────────
 auth_f, _ = _app(audit_retention_days=30, audit_ip_pseudonymize=True)
 auth_f.store.audit_log("alt", "x", "203.0.113.77")
 auth_f.store.audit_log("neu", "x", "2001:DB8:1234:5678::1")
 auth_f.store._exec("UPDATE audit SET ts = ts - 31*86400 WHERE event='alt'")
 _ips_f = {z["event"]: z["ip"] for z in auth_f.store.recent_audit(10)}
-r.check("B5-11: audit_ip_pseudonymize kürzt IPv4 auf /24 und IPv6 auf /48",
+r.check("B5-11: audit_ip_pseudonymize truncates IPv4 to /24 and IPv6 to /48",
         _ips_f == {"alt": "203.0.113.0/24", "neu": "2001:db8:1234::/48"}, f"{_ips_f}")
 _gc_f = auth_f.gc()
-r.check("B5-11: gc() löscht Audit-Zeilen jenseits der Frist, die jüngeren bleiben",
+r.check("B5-11: gc() deletes audit rows beyond the period, the younger ones stay",
         _gc_f.get("audit") == 1 and [z["event"] for z in auth_f.store.recent_audit(10)] == ["neu"],
         f"{_gc_f}")
 auth_g, _ = _app()
 auth_g.store.audit_log("alt", "x", "203.0.113.77")
 auth_g.store._exec("UPDATE audit SET ts = ts - 3650*86400")
-r.check("B5-11: ohne Frist (Vorgabe) bleibt das Log unangetastet, und die IP voll",
+r.check("B5-11: without a period (default) the log stays untouched, and the IP complete",
         "audit" not in auth_g.gc() and auth_g.store.recent_audit(5)[0]["ip"] == "203.0.113.77")
 _cli_out = io.StringIO()
 with _ctxlib.redirect_stdout(_cli_out):
     _cli_gc(["--db", auth_g.cfg.db_path, "--audit-days", "30"])
-r.check("B5-11: `tinysesam gc --audit-days N` räumt dasselbe von der Kommandozeile",
+r.check("B5-11: `tinysesam gc --audit-days N` cleans up the same from the command line",
         "audit=1" in _cli_out.getvalue() and not auth_g.store.recent_audit(5), _cli_out.getvalue())
 try:
     _app(audit_retention_days=-1)
     _neg = "angenommen"
 except ConfigError:
     _neg = "abgewiesen"
-r.check("B5-11: eine negative Frist (löschte ALLES) wird beim Aufbau abgewiesen", _neg == "abgewiesen")
+r.check("B5-11: a negative period (would delete EVERYTHING) is rejected at setup", _neg == "abgewiesen")
 
 # ── B5-06: Log-Injection in `tinysesam audit` ─────────────────────────────────────────────
 auth_i, _ = _app()
@@ -1135,11 +1134,11 @@ _cli_out = io.StringIO()
 with _ctxlib.redirect_stdout(_cli_out):
     _cli_audit(["--db", auth_i.cfg.db_path])
 _cli_zeilen = _cli_out.getvalue().splitlines()
-r.check("B5-06: ein Umbruch im Benutzernamen erzeugt in `tinysesam audit` KEINE zweite Zeile",
+r.check("B5-06: a line break in the username produces NO second line in `tinysesam audit`",
         len(_cli_zeilen) == 1 and "\\n" in _cli_zeilen[0] and "\x1b" not in _cli_out.getvalue(),
         repr(_cli_out.getvalue()))
 
-# ── B5-14: Steuerzeichen in JEDER seclog-Zeile, auch ohne fuer_log an der Aufrufstelle ────
+# ── B5-14: control characters in EVERY seclog line, even without fuer_log at the call site ────
 _sl_puffer = io.StringIO()
 _sl_h = logging.StreamHandler(_sl_puffer)
 _sec.seclog.addHandler(_sl_h)
@@ -1147,12 +1146,12 @@ try:
     _sec.seclog.warning("probe user=%s ip=%s", "x\nfailed login user=y ip=192.0.2.66", "192.0.2.1")
 finally:
     _sec.seclog.removeHandler(_sl_h)
-r.check("B5-14: der Logger selbst neutralisiert Umbrüche in den Argumenten (eine Zeile, nicht zwei)",
+r.check("B5-14: the logger itself neutralizes line breaks in the arguments (one line, not two)",
         _sl_puffer.getvalue().count("\n") == 1 and "192.0.2.66" in _sl_puffer.getvalue(),
         repr(_sl_puffer.getvalue()))
 
 
-# ── B5-15: das Feld `ip` enthält eine IP ─────────────────────────────────────────────────
+# ── B5-15: the field `ip` contains an IP ─────────────────────────────────────────────────
 class _Anfr:
     def __init__(self, peer, xff):
         self.client = type("C", (), {"host": peer})()
@@ -1161,38 +1160,38 @@ class _Anfr:
 
 _sec.einmal_melden_zuruecksetzen()
 _proxy = ["127.0.0.1/32"]
-r.check("B5-15: ein X-Forwarded-For ohne gültige Adresse wird nicht zur Client-IP",
+r.check("B5-15: an X-Forwarded-For without a valid address does not become the client IP",
         _sec.client_ip(_Anfr("127.0.0.1", "evil\nfailed login"), _proxy) == "127.0.0.1")
-r.check("B5-15: gültige Adressen kommen kanonisch an (Schreibweise ≠ neuer Client)",
+r.check("B5-15: valid addresses arrive canonical (spelling ≠ new client)",
         _sec.client_ip(_Anfr("127.0.0.1", "2001:DB8:0::1"), _proxy) == "2001:db8::1"
         and _sec.client_ip(_Anfr("127.0.0.1", "198.51.100.7:4711"), _proxy) == "198.51.100.7")
 auth_i.store.audit_log("probe", "x", "kein\nip")
-r.check("B5-15: das Audit-Log nimmt in der ip-Spalte nichts mit Zeilenumbruch an",
+r.check("B5-15: the audit log accepts nothing with a line break in the ip column",
         "\n" not in auth_i.store.recent_audit(1)[0]["ip"])
 
 
 # ══════════════════════════════════════════════════════════════════════════════════════════
-# T-13, Angriff auf die Audit-Fixes (A-1 … A-7): was die Reparaturen selbst aufrissen.
+# T-13, attack on the audit fixes (A-1 … A-7): what the repairs themselves tore open.
 # ══════════════════════════════════════════════════════════════════════════════════════════
 
-# ── A-1: IPv6-Zonenangabe als frei drehbarer Schlüssel ────────────────────────────────────
-# `ipaddress` nimmt hinter dem `%` jeden Text. Über einen Proxy, der XFF nur durchreicht, wäre
-# jede Zone ein neuer Client — für Rate-Limit, Sperre und Log-Drossel.
+# ── A-1: IPv6 zone identifier as a freely adjustable key ────────────────────────────────────
+# `ipaddress` accepts any text after the `%`. Through a proxy that merely passes XFF on, every
+# zone would be a new client — for rate limit, lockout and log throttle.
 _sec.einmal_melden_zuruecksetzen()
 _zonen = {_sec.client_ip(_Anfr("127.0.0.1", f"2001:db8::2%z{i}"), _proxy) for i in range(20)}
-r.check("A-1: wechselnde IPv6-Zonen ergeben EINE Client-IP (ohne Zone)",
+r.check("A-1: changing IPv6 zones yield ONE client IP (without zone)",
         _zonen == {"2001:db8::2"}, f"{_zonen}")
 auth_z, _ = _app(trusted_proxies=["127.0.0.1/32"])
 _erlaubt = sum(auth_z._rate_ok(_sec.client_ip(_Anfr("127.0.0.1", f"2001:db8::3%q{i}"), _proxy))
                for i in range(60))
 _fest = sum(auth_z._rate_ok("2001:db8::4") for _ in range(60))
-r.check("A-1: das Rate-Limit greift bei Zonen-Rotation genauso wie bei fester Adresse",
+r.check("A-1: the rate limit applies with zone rotation just as with a fixed address",
         _erlaubt == _fest < 60, f"Rotation {_erlaubt}/60, fest {_fest}/60")
 auth_i.store.audit_log("probe_zone", "x", "fe80::1%a\nFAKE 2026-01-01 login admin")
-r.check("A-1: eine Zone mit Zeilenumbruch landet nicht in der ip-Spalte",
+r.check("A-1: a zone with a line break does not end up in the ip column",
         auth_i.store.recent_audit(1)[0]["ip"] == "fe80::1", repr(auth_i.store.recent_audit(1)[0]["ip"]))
 
-# ── A-2 / A-3: Konto löschen trifft fremde Zeilen nicht, dafür die Anmeldeversuche per Mail ──
+# ── A-2 / A-3: deleting an account does not hit foreign rows, but the sign-in attempts by mail do ──
 auth_d, app_d2 = _app(csrf_enabled=False)
 auth_d.create_user("chef", password="Geheim12345!-lang", is_admin=True)
 _adm = auth_d.create_user("admin", password="Geheim12345!-lang", email="Anna.Admin@example.com",
@@ -1207,30 +1206,30 @@ auth_d._record_login("Anna.Admin@example.com", "198.51.100.4", False, "password"
 auth_d.delete_user(_adm)
 _zd = [dict(z) for z in auth_d.store.recent_audit(200)]
 _rollen_d = next(z for z in _zd if z["event"] == "user_roles")
-r.check("A-2: ein gelöschtes Konto `admin` verstümmelt `admin=0->1` einer FREMDEN Zeile nicht",
+r.check("A-2: a deleted account `admin` does not mangle `admin=0->1` of a FOREIGN row",
         "admin=0->1" in _rollen_d["detail"] and "gelöscht" not in _rollen_d["detail"],
         _rollen_d["detail"])
-r.check("A-2: … dieselbe Zeile nennt den gelöschten Admin als Täter nicht mehr",
+r.check("A-2: … the same row no longer names the deleted admin as the actor",
         _rollen_d["username"] == f"gelöscht#{_adm}", f"{_rollen_d}")
 _bob_fail = next(z for z in _zd if z["event"] == "login_fail" and z["username"] == "bob")
-r.check("A-2: die Methode im Detail fremder Fehlversuche bleibt unberührt",
+r.check("A-2: the method in the detail of foreign failed attempts stays untouched",
         _bob_fail["detail"].startswith("password "), _bob_fail["detail"])
 _mail_rest = [z for z in _zd if "anna.admin@example.com" in str(z).lower()]
-r.check("A-3: Anmeldeversuche unter der E-Mail-Adresse sind im Audit-Log anonymisiert",
+r.check("A-3: sign-in attempts under the e-mail address are anonymized in the audit log",
         not _mail_rest and sum(1 for z in _zd if z["event"] == "login_fail"
                                and z["username"] == f"gelöscht#{_adm}") == 2, f"{_mail_rest}")
 _versuche = auth_d.store._all("SELECT username FROM login_attempt", ())
-r.check("A-3: … und ihre login_attempt-Zeilen sind gelöscht (nur bob bleibt)",
+r.check("A-3: … and their login_attempt rows are deleted (only bob remains)",
         [v["username"] for v in _versuche] == ["bob"], f"{[dict(v) for v in _versuche]}")
 auth_d.store.audit_log("apikey_create", "bob", None, "key=9 akteur=Admin")
 auth_d.store.audit_log("user_create", "chef", None, "admin service=False")
 auth_d.store.audit_anonymisieren("admin", "gelöscht#99")
 _nach = {z["event"]: z["detail"] for z in auth_d.store.recent_audit(2)}
-r.check("A-2: dort, wo ein Name steht (akteur=, Kopf von user_create), wird er weiter ersetzt",
+r.check("A-2: where a name stands (akteur=, head of user_create), it is still replaced",
         _nach == {"apikey_create": "key=9 akteur=gelöscht#99",
                   "user_create": "gelöscht#99 service=False"}, f"{_nach}")
 
-# ── A-4: die CSRF-Ausnahme prüft den Key VOR current_user — die IP muss schon da sein ─────
+# ── A-4: the CSRF exception checks the key BEFORE current_user — the IP must already be there ─────
 auth_k, app_k = _app()
 _kchef = auth_k.create_user("chef", password="Geheim12345!-lang", is_admin=True)
 _k_weg = auth_k.create_api_key(_kchef, name="alt")
@@ -1241,14 +1240,14 @@ for _k in (_k_weg["key"], _k_ok["key"]):
     _kc.post(f"/auth/admin/api/users/{_kchef}/roles", json={"roles": []}, headers={"X-API-Key": _k})
 _kz = [dict(z) for z in auth_k.store.recent_audit(50) if z["event"].startswith("apikey_")
        and z["event"] != "apikey_create" and z["event"] != "apikey_revoke"]
-r.check("A-4: widerrufener Key an einer POST-Route: apikey_denied MIT IP",
+r.check("A-4: revoked key on a POST route: apikey_denied WITH IP",
         [(z["event"], z["ip"]) for z in _kz if z["event"] == "apikey_denied"]
         == [("apikey_denied", "198.51.100.50")], f"{_kz}")
-r.check("A-4: gültiger Key an einer POST-Route: EINE apikey_use-Zeile, mit IP",
+r.check("A-4: valid key on a POST route: ONE apikey_use row, with IP",
         [(z["event"], z["ip"]) for z in _kz if z["event"] == "apikey_use"]
         == [("apikey_use", "198.51.100.50")], f"{_kz}")
 
-# ── A-5: die Kontoseite zeigt nicht die IP des Admins ─────────────────────────────────────
+# ── A-5: the account page does not show the admin's IP ─────────────────────────────────────
 auth_e, app_e = _app(csrf_enabled=False)
 _echef = auth_e.create_user("chef", password="Geheim12345!-lang", is_admin=True)
 _eanna = auth_e.create_user("anna", password="Geheim12345!-lang")
@@ -1260,27 +1259,27 @@ _ec.post(f"/auth/admin/api/users/{_eanna}/keys", json={"name": "ci"})
 auth_e.audit("password_change", "anna", "203.0.113.9")
 _eigene = auth_e.own_events(_eanna)
 _seite_e = _ea.get("/auth/account").text
-r.check("A-5: eine Admin-Aktion am eigenen Konto zeigt die Admin-IP nicht, nur „durch einen Admin“",
+r.check("A-5: an admin action on the own account does not show the admin IP, only 'by an admin'",
         ("apikey_create", None, True) in [(e["event"], e["ip"], e["by_admin"]) for e in _eigene]
         and "198.51.100.50" not in _seite_e and "by an administrator" in _seite_e, f"{_eigene}")
-r.check("A-5: … die eigenen Zeilen behalten ihre IP",
+r.check("A-5: … the own rows keep their IP",
         ("password_change", "203.0.113.9", False) in
         [(e["event"], e["ip"], e["by_admin"]) for e in _eigene] and "203.0.113.9" in _seite_e)
 
-# ── A-6: kein Query-String (Freigabe-Token) im Audit-Log ─────────────────────────────────
+# ── A-6: no query string (approval token) in the audit log ─────────────────────────────────
 _fw6 = TestClient(app_t, client=("198.51.100.66", 1))
 _fw6.cookies.set(auth_t.cfg.session_cookie, "abgelaufen")
 _fw6.get("/auth/forward", headers={"x-forwarded-proto": "https", "x-forwarded-host": "app.example.com",
                                    "x-forwarded-uri": "/share?t=GEHEIM#frag"})
 _fw6_z = [z["detail"] for z in auth_t.store.recent_audit(50) if z["event"] == "forward_denied"
           and z["ip"] == "198.51.100.66"]
-r.check("A-6: forward_denied nennt Host und Pfad, aber nicht den Query-String",
+r.check("A-6: forward_denied names host and path, but not the query string",
         len(_fw6_z) == 1 and "GEHEIM" not in _fw6_z[0] and "/share?…" in _fw6_z[0], f"{_fw6_z}")
-r.check("A-6: url_fuer_log auch für relative Ziele und ohne Query",
+r.check("A-6: url_fuer_log also for relative targets and without query",
         _sec.url_fuer_log("/a/b?code=x") == "/a/b?…" and _sec.url_fuer_log("https://h.example/p")
         == "https://h.example/p" and _sec.url_fuer_log("/x#t") == "/x?…")
 
-# ── A-7: C1-Steuerzeichen, Zeilentrenner und Bidi-Overrides ──────────────────────────────
+# ── A-7: C1 control characters, line separators and bidi overrides ──────────────────────────────
 auth_c, _ = _app()
 auth_c.store.audit_log("login_fail", "x\x852026-01-01 login admin zeile\x9b2J‮evil",
                        "198.51.100.9", "d ")
@@ -1288,8 +1287,8 @@ _cli_out = io.StringIO()
 with _ctxlib.redirect_stdout(_cli_out):
     _cli_audit(["--db", auth_c.cfg.db_path])
 _c7 = _cli_out.getvalue()
-r.check("A-7: NEL/U+2028/U+2029 erzeugen in `tinysesam audit` keine weitere Zeile, CSI und "
-        "U+202E kommen nicht roh an",
+r.check("A-7: NEL/U+2028/U+2029 produce no further line in `tinysesam audit`, CSI and "
+        "U+202E do not arrive raw",
         len(_c7.splitlines()) == 1 and not any(z in _c7 for z in "\x85\x9b  ‮"),
         repr(_c7))
 _sl_puffer = io.StringIO()
@@ -1300,15 +1299,15 @@ try:
                         "192.0.2.1")
 finally:
     _sec.seclog.removeHandler(_sl_h)
-r.check("A-7: auch im Sicherheits-Log (Filter am Logger) und in fuer_log",
+r.check("A-7: also in the security log (filter on the logger) and in fuer_log",
         len(_sl_puffer.getvalue().splitlines()) == 1 and "\x85" not in _sl_puffer.getvalue()
         and "‮" not in _sl_puffer.getvalue()
         and _sec.fuer_log("a\x9bb c‮d") == "abcd", repr(_sl_puffer.getvalue()))
 
-# ── F-20/H-12: PKCE über den echten Flow ──────────────────────────────────────
-# `oidc.py` misst die Mechanik (Challenge, Verifier im POST). Hier der Draht dazwischen: Die
-# Challenge in der Umleitung zum Provider muss zu dem Verifier passen, den der Callback beim
-# Tausch mitgibt — und der Verifier darf nie in der Adresszeile stehen.
+# ── F-20/H-12: PKCE through the real flow ──────────────────────────────────────
+# `oidc.py` measures the mechanics (challenge, verifier in the POST). Here the wire in between: The
+# challenge in the redirect to the provider must match the verifier that the callback passes along at the
+# exchange — and the verifier must never appear in the address bar.
 import base64 as _b64p  # noqa: E402
 import hashlib as _hlp  # noqa: E402
 
@@ -1328,30 +1327,30 @@ _q_p = parse_qs(urlparse(_start_p.headers["location"]).query)
 _antwort_p = _cp.get(f"/auth/oidc/callback?code=x&state={_q_p['state'][0]}", follow_redirects=False)
 _v_p = _gesehen_p.get("verifier") or ""
 _passend = _b64p.urlsafe_b64encode(_hlp.sha256(_v_p.encode()).digest()).rstrip(b"=").decode()
-r.check("PKCE: die Umleitung zum Provider verlangt S256",
+r.check("PKCE: the redirect to the provider requires S256",
         _q_p.get("code_challenge_method") == ["S256"] and bool(_q_p.get("code_challenge")), _q_p)
-r.check("PKCE: der Callback tauscht mit DEM Verifier, der zur Challenge gehört",
+r.check("PKCE: the callback exchanges with THE verifier that belongs to the challenge",
         _antwort_p.status_code == 303 and _v_p and _q_p.get("code_challenge") == [_passend],
         f"HTTP {_antwort_p.status_code}, Verifier={_v_p!r}")
-r.check("PKCE: der Verifier steht nie in der Adresszeile",
+r.check("PKCE: the verifier never appears in the address bar",
         _v_p and _v_p not in _start_p.headers["location"])
 
-# ══ Angriff auf die T-13-Integration: Lücken an den Nähten der Zweige ══════════════════════════
-# Jeder Zweig war für sich stimmig; die Lücken entstanden, weil ein Zweig einen Weg einführte und
-# ein anderer eine Zusage, die diesen Weg nicht kannte. Die Blöcke hier prüfen deshalb die ZUSAGE
-# über alle Wege, die es heute gibt — und je ein Wächter hält fest, dass es nur EINEN Weg gibt,
-# damit der nächste Zweig nicht still einen zweiten dazubaut.
+# ══ Attack on the T-13 integration: gaps at the seams of the branches ══════════════════════════
+# Every branch was consistent on its own; the gaps arose because one branch introduced a path and
+# another a guarantee that did not know that path. The blocks here therefore check the GUARANTEE
+# across all paths that exist today — and a guard each records that there is only ONE path,
+# so that the next branch does not silently build in a second one.
 import ast as _ast  # noqa: E402
 import importlib.util as _ilu  # noqa: E402
 
 
 def _aufrufe_ausserhalb(methode: str, empfaenger, erlaubt: set, quellen=None) -> list:
-    """Wo in `tinysesam/` steht ein Aufruf `<empfaenger>.<methode>(…)` ausserhalb von `erlaubt`?
+    """Where in `tinysesam/` is there a call `<empfaenger>.<methode>(…)` outside `erlaubt`?
 
-    `erlaubt` sind Paare (innerste Klasse, innerste Funktion). Per AST und nicht per Textsuche:
-    Docstrings und Kommentare nennen die Methode ebenfalls, und eine verschachtelte Funktion wie
-    `_zuruecknehmen` muss als sie selbst erkannt werden, nicht als die Route um sie herum.
-    `quellen` (Liste aus (Dateiname, Text)) ersetzt `tinysesam/*.py` — für die Selbsttests."""
+    `erlaubt` are pairs (innermost class, innermost function). By AST and not by text search:
+    Docstrings and comments name the method too, and a nested function like
+    `_zuruecknehmen` must be recognized as itself, not as the route around it.
+    `quellen` (list of (file name, text)) replaces `tinysesam/*.py` — for the self-tests."""
     funde = []
     if quellen is None:
         quellen = [(p.name, p.read_text(encoding="utf-8"))
@@ -1376,23 +1375,23 @@ def _aufrufe_ausserhalb(methode: str, empfaenger, erlaubt: set, quellen=None) ->
 
 
 def _ist_store(knoten, klasse) -> bool:
-    """`auth.store.x`, `self.store.x`, `store.x` — und im Store selbst `self.x`."""
+    """`auth.store.x`, `self.store.x`, `store.x` — and within the store itself `self.x`."""
     return ((isinstance(knoten, _ast.Attribute) and knoten.attr == "store")
             or (isinstance(knoten, _ast.Name) and knoten.id == "store")
             or (isinstance(knoten, _ast.Name) and knoten.id == "self" and klasse == "Store"))
 
 
-# Der Wächter muss selbst anschlagen können — sonst misst er nichts (Negativtest).
-r.check("Wächter-Selbsttest: ein Aufruf ausserhalb der Erlaubnis wird gefunden",
+# The guard must be able to trigger itself — otherwise it measures nothing (negative test).
+r.check("Guard self-test: a call outside the permission is found",
         any("admin.py" in f for f in _aufrufe_ausserhalb("delete_user_sessions", _ist_store, set()))
         and not _aufrufe_ausserhalb("gibt_es_nicht", _ist_store, set()))
 
-# ── Fund 3: der Admin-Widerruf eines Passkeys meldet sich beim Inhaber ────────────────────────
-# Der Zweig audit brachte die Panel-Route, der Zweig faktoren hängte `passkey_removed` nur an die
-# Selbstbedienung. Nach dem Merge war der einzige Faktor-Wechsel ohne Benachrichtigung genau der,
-# den ein übernommenes Admin-Konto an einem FREMDEN Konto vornimmt.
-# (Mutationsproben: in `remove_passkey` den `sicherheitsereignis`-Aufruf streichen → rot; die
-#  Panel-Route wieder direkt `store.delete_webauthn` + `audit` rufen lassen → rot, Hook UND Wächter.)
+# ── Finding 3: the admin revocation of a passkey notifies the owner ────────────────────────
+# The audit branch brought the panel route, the factors branch attached `passkey_removed` only to
+# self-service. After the merge, the only factor change without notification was exactly the one
+# that a taken-over admin account performs on a FOREIGN account.
+# (Mutation probes: remove the `sicherheitsereignis` call in `remove_passkey` → red; let the
+#  panel route call `store.delete_webauthn` + `audit` directly again → red, hook AND guard.)
 auth_f3, app_f3 = _app(csrf_enabled=False)
 _f3_chef = auth_f3.create_user("chef", password="Geheim12345!-lang", is_admin=True)
 _f3_anna = auth_f3.create_user("anna", password="Geheim12345!-lang")
@@ -1405,7 +1404,7 @@ _f3_c = TestClient(app_f3, client=("198.51.100.70", 1))
 _f3_c.cookies.set(auth_f3.cfg.session_cookie,
                   auth_f3.store.create_session(_f3_chef, 3600, True, "password"))
 _f3_r = _f3_c.post(f"/auth/admin/api/users/{_f3_anna}/passkeys/{_f3_pk}/delete")
-r.check("Fund 3: der Admin-Widerruf entfernt den Passkey und meldet passkey_removed an den Inhaber",
+r.check("Finding 3: the admin revocation removes the passkey and reports passkey_removed to the owner",
         _f3_r.status_code == 200
         and [c["id"] for c in auth_f3.store.list_webauthn(_f3_anna)] == [_f3_pk2]
         and [(e, u) for e, u, _ in _f3_ereig] == [("passkey_removed", "anna")]
@@ -1413,21 +1412,21 @@ r.check("Fund 3: der Admin-Widerruf entfernt den Passkey und meldet passkey_remo
         f"HTTP {_f3_r.status_code}, Hook {_f3_ereig}")
 _f3_audit = [(z["username"], z["detail"]) for z in auth_f3.store.recent_audit(20)
              if z["event"] == "passkey_delete"]
-r.check("Fund 3: … die Audit-Zeile steht unter dem Inhaber, der Admin als akteur=",
+r.check("Finding 3: … the audit row stands under the owner, the admin as akteur=",
         _f3_audit == [("anna", f"id={_f3_pk} akteur=chef")], f"{_f3_audit}")
 _f3_ereig.clear()
 _f3_r2 = _f3_c.post(f"/auth/admin/api/users/{_f3_anna}/passkeys/{_f3_pk}/delete")
-r.check("Fund 3: ein Passkey, den das Konto nicht (mehr) hat → 404, keine Meldung, keine Zeile",
+r.check("Finding 3: a passkey the account does not (any more) have → 404, no notification, no row",
         _f3_r2.status_code == 404 and _f3_ereig == []
         and len([z for z in auth_f3.store.recent_audit(20) if z["event"] == "passkey_delete"]) == 1,
         f"HTTP {_f3_r2.status_code}, Hook {_f3_ereig}")
-# Derselbe Weg ohne HTTP — und für ein fremdes Konto greift er nicht.
-r.check("Fund 3: remove_passkey trifft nur Passkeys DIESES Kontos",
+# The same path without HTTP — and for a foreign account it does not apply.
+r.check("Finding 3: remove_passkey only affects passkeys of THIS account",
         auth_f3.remove_passkey(_f3_chef, _f3_pk2) is False
         and [c["id"] for c in auth_f3.store.list_webauthn(_f3_anna)] == [_f3_pk2] and _f3_ereig == [])
 if _ilu.find_spec("webauthn") is not None:
-    # Die Selbstbedienung läuft über dieselbe Methode (vorher: eigene Zeilen in webauthn_.py —
-    # und ein fremder oder erfundener Passkey schrieb trotzdem Zeile UND Ereignis).
+    # Self-service runs through the same method (before: own rows in webauthn_.py —
+    # and a foreign or invented passkey still wrote a row AND an event).
     auth_f3s, app_f3s = _app(csrf_enabled=False, passkey_enabled=True, rp_id="localhost",
                              origin="http://localhost")
     _f3s_anna = auth_f3s.create_user("anna", password="Geheim12345!-lang")
@@ -1440,31 +1439,31 @@ if _ilu.find_spec("webauthn") is not None:
                        auth_f3s.store.create_session(_f3s_anna, 3600, True, "password"))
     _f3s_fremd = _f3s_c.post("/auth/passkey/delete", json={"id": _f3s_pk + 99})
     _f3s_r = _f3s_c.post("/auth/passkey/delete", json={"id": _f3s_pk})
-    r.check("Fund 3: Selbstbedienung — unbekannter Passkey 404 ohne Ereignis, eigener 200 mit Ereignis",
+    r.check("Finding 3: self-service — unknown passkey 404 without event, own 200 with event",
             _f3s_fremd.status_code == 404 and _f3s_r.status_code == 200
             and _f3s_ereig == [("passkey_removed", "anna", {"passkey_id": _f3s_pk})]
             and [(z["username"], z["detail"]) for z in auth_f3s.store.recent_audit(20)
                  if z["event"] == "passkey_delete"] == [("anna", f"id={_f3s_pk}")],
             f"{_f3s_fremd.status_code}/{_f3s_r.status_code}, Hook {_f3s_ereig}")
 _f3_weg = _aufrufe_ausserhalb("delete_webauthn", _ist_store, {("TinySesam", "remove_passkey")})
-r.check("Fund 3 (Wächter): einen Passkey löscht nur TinySesam.remove_passkey — jede Route geht darüber",
-        not _f3_weg, f"direkte Aufrufe: {_f3_weg}")
+r.check("Finding 3 (guard): only TinySesam.remove_passkey deletes a passkey — every route goes through it",
+        not _f3_weg, f"direct calls: {_f3_weg}")
 
-# ── Funde 12/18: EIN Löschweg für Konten (H-13 × R4-09/B6-5) ──────────────────────────────────
-# H-13 (Zweig audit) nahm ein gelöschtes Konto nur in `TinySesam.delete_user` aus dem Audit-Log.
-# Der Zweig mailwege brachte weitere Löschwege — `gc()`, `tinysesam gc` (Store) und die Rücknahme
-# bei gescheitertem Bestätigungsversand (B6-5) —, die direkt `store.delete_user` riefen. Name,
-# fremde IP und die Adresse des Opfers blieben im Log, und die Kontoseite eines späteren
-# Namensvetters zeigte die Registrierung des Fremden samt IP als eigenes Ereignis (H-7).
-# (Mutationsproben: in `Store.konto_entfernen` `audit_anonymisieren` streichen → rot für alle
-#  Wege; `gc_unbestaetigte_konten` wieder `self.delete_user` rufen lassen → rot, Spuren UND
-#  Wächter; `signup_expired` wieder mit dem Klarnamen schreiben → rot; `_zuruecknehmen` wieder
-#  `store.delete_user` rufen lassen → rot, Spuren UND Wächter.)
+# ── Findings 12/18: ONE deletion path for accounts (H-13 × R4-09/B6-5) ──────────────────────────────────
+# H-13 (audit branch) took a deleted account out of the audit log only in `TinySesam.delete_user`.
+# The mailwege branch brought further deletion paths — `gc()`, `tinysesam gc` (store) and the rollback
+# on a failed confirmation send (B6-5) — which called `store.delete_user` directly. Name,
+# foreign IP and the victim's address stayed in the log, and the account page of a later
+# namesake showed the stranger's registration including IP as its own event (H-7).
+# (Mutation probes: remove `audit_anonymisieren` in `Store.konto_entfernen` → red for all
+#  paths; let `gc_unbestaetigte_konten` call `self.delete_user` again → red, traces AND
+#  guard; write `signup_expired` with the plain name again → red; let `_zuruecknehmen` call
+#  `store.delete_user` again → red, traces AND guard.)
 _F12_NAME, _F12_MAIL = "squatter", "opfer@example.com"
 
 
 def _f12_spuren(a) -> tuple:
-    """Was vom gelöschten Konto noch unter Name oder Adresse im Log und in den Versuchen steht."""
+    """What remains of the deleted account under name or address in the log and in the attempts."""
     kennungen = (_F12_NAME, _F12_MAIL)
     zeilen = [(z["event"], z["username"], z["detail"]) for z in a.store._all("SELECT * FROM audit")
               if (z["username"] or "").lower() in kennungen
@@ -1475,22 +1474,22 @@ def _f12_spuren(a) -> tuple:
 
 
 def _f12_unbestaetigt():
-    """Ein Konto, wie es die Registrierung mit Bestätigungspflicht hinterlässt, samt Spuren: die
-    Registrierung des Fremden (mit seiner IP) und ein Fehlversuch des echten Adressinhabers."""
+    """An account as left behind by registration with a confirmation requirement, with traces: the
+    stranger's registration (with his IP) and a failed attempt by the real address owner."""
     a, app_ = _app(csrf_enabled=False)
     uid = a.create_user(_F12_NAME, password="Geheim12345!-lang", email=_F12_MAIL)
     a.store.set_disabled(uid, True)
     a.create_magic_token("verify_email", user_id=uid)
-    # Die Spuren entstehen NACH der Sekunde der Anlage (das Konto ist eine Minute alt): Ein
-    # Anmeldeversuch aus der Anlage-Sekunde selbst lässt `delete_attempts_for` bewusst stehen —
-    # ob er davor oder danach kam, ist nicht zu entscheiden (Nachbesserung N-1).
+    # The traces arise AFTER the second of creation (the account is a minute old): A
+    # sign-in attempt from the creation second itself is deliberately left by `delete_attempts_for` —
+    # whether it came before or after cannot be decided (follow-up N-1).
     a.store._exec("UPDATE users SET created_at=created_at-60 WHERE id=?", (uid,))
     a.audit("signup", _F12_NAME, "203.0.113.66")
     TestClient(app_, client=("198.51.100.7", 1)).post(
         "/auth/login", data={"username": _F12_MAIL, "password": f"falsch-falsch-{next(_FALSCH)}"})
     a.store._exec("UPDATE magic_token SET expires_at=0 WHERE user_id=?", (uid,))
     vorher = _f12_spuren(a)
-    assert vorher[0] and vorher[1], f"Vorbedingung: Spuren müssen da sein, sonst misst das nichts: {vorher}"
+    assert vorher[0] and vorher[1], f"precondition: traces must be there, otherwise this measures nothing: {vorher}"
     return a, app_, uid
 
 
@@ -1499,23 +1498,23 @@ for _f12_weg, _f12_lauf in (("gc()", lambda a: a.gc()["unverified_accounts"]),
     _f12_a, _, _f12_uid = _f12_unbestaetigt()
     _f12_n = _f12_lauf(_f12_a)
     _f12_rest = _f12_spuren(_f12_a)
-    r.check(f"Funde 12/18: {_f12_weg} entfernt das Konto und nimmt es aus Audit-Log und Versuchen",
+    r.check(f"Findings 12/18: {_f12_weg} removes the account and takes it out of audit log and attempts",
             _f12_n == 1 and _f12_a.store.get_user(_f12_uid) is None and _f12_rest == ([], []),
-            f"n={_f12_n}, übrig: {_f12_rest}")
+            f"n={_f12_n}, remaining: {_f12_rest}")
     _f12_ablauf = [z["username"] for z in _f12_a.store.recent_audit(20) if z["event"] == "signup_expired"]
-    r.check(f"Funde 12/18: {_f12_weg} schreibt signup_expired unter dem Ersatznamen",
+    r.check(f"Findings 12/18: {_f12_weg} writes signup_expired under the substitute name",
             _f12_ablauf == [f"gelöscht#{_f12_uid}"], f"{_f12_ablauf}")
 
-# Und die Kontoseite der echten Carol danach (Fund 12 im Wortlaut): nur ihre eigenen Zeilen.
+# And the account page of the real Carol afterwards (finding 12 verbatim): only her own rows.
 _f12_a, _f12_app, _ = _f12_unbestaetigt()
 _f12_a.gc()
 _f12_neu = _f12_a.create_user(_F12_NAME, password="Geheim12345!-lang", email="echt@example.com")
 _f12_a.audit("signup", _F12_NAME, "198.51.100.8")
 _f12_eigene = [(e["event"], e["ip"]) for e in _f12_a.own_events(_f12_neu)]
-r.check("Fund 12: ein späterer Namensvetter sieht die Registrierung des Fremden nicht",
+r.check("Finding 12: a later namesake does not see the stranger's registration",
         _f12_eigene == [("signup", "198.51.100.8")], f"{_f12_eigene}")
 
-# B6-5: der Bestätigungsversand scheitert → das Konto wird zurückgenommen, ebenfalls über den Weg.
+# B6-5: the confirmation send fails → the account is rolled back, likewise via the path.
 _f12_b, _f12_bapp = _app(allow_signup=True, signup_verify_email=True, signup_require_email=True,
                          csrf_enabled=False)
 
@@ -1530,53 +1529,53 @@ _f12_br = _f12_bc.post("/auth/register", data={"username": _F12_NAME, "password"
                                                 "email": _F12_MAIL, "next": "/"})
 _f12_brest = _f12_spuren(_f12_b)
 _f12_bzeile = [z["username"] for z in _f12_b.store.recent_audit(20) if z["event"] == "verify_send_error"]
-r.check("Funde 12/18: die B6-5-Rücknahme nimmt das Konto aus dem Log, verify_send_error unter Ersatznamen",
+r.check("Findings 12/18: the B6-5 rollback takes the account out of the log, verify_send_error under substitute name",
         _f12_br.status_code == 200 and _f12_b.store.get_user_by_name(_F12_NAME) is None
         and _f12_brest == ([], []) and len(_f12_bzeile) == 1
-        and _f12_bzeile[0].startswith("gelöscht#"), f"HTTP {_f12_br.status_code}, übrig {_f12_brest}, {_f12_bzeile}")
+        and _f12_bzeile[0].startswith("gelöscht#"), f"HTTP {_f12_br.status_code}, remaining {_f12_brest}, {_f12_bzeile}")
 
-# purge_demo (Demo-Modus aus) — derselbe Weg, auch wenn der Fund ihn nicht nannte.
+# purge_demo (demo mode off) — the same path, even if the finding did not name it.
 _f12_d, _ = _app(demo_mode=True)
 _f12_d.audit("login", "demo", "198.51.100.9")
 _f12_d._purge_demo()
-r.check("Funde 12/18: purge_demo nimmt die Demo-Konten ebenso aus dem Log",
+r.check("Findings 12/18: purge_demo likewise takes the demo accounts out of the log",
         not [z for z in _f12_d.store._all("SELECT * FROM audit") if z["username"] in _f12_d._DEMO_USERS],
         f"{[dict(z) for z in _f12_d.store._all('SELECT * FROM audit')]}")
 
 _f12_weg = _aufrufe_ausserhalb("delete_user", _ist_store, {("Store", "konto_entfernen")})
-r.check("Funde 12/18 (Wächter): ein Konto löscht nur Store.konto_entfernen — kein Weg an H-13 vorbei",
-        not _f12_weg, f"direkte Aufrufe: {_f12_weg}")
+r.check("Findings 12/18 (guard): only Store.konto_entfernen deletes an account — no way past H-13",
+        not _f12_weg, f"direct calls: {_f12_weg}")
 
-# Zeilen, die VOR dem Konto entstanden, gehören nicht ihm — auch aus Beständen, die ein älterer
-# Stand an H-13 vorbei gelöscht hat, und ein Fehlversuch unter einem damals freien Namen.
-# (Mutationsprobe: in `own_events` `seit=` nicht übergeben → rot.)
+# Rows that arose BEFORE the account do not belong to it — also from stocks that an older
+# state deleted past H-13, and a failed attempt under a then-free name.
+# (Mutation probe: do not pass `seit=` in `own_events` → red.)
 _f12_c, _ = _app()
 _f12_c.store.audit_log("login_fail", "berta", "203.0.113.66", "password")
 _f12_c.store._exec("UPDATE audit SET ts=ts-3600 WHERE username='berta'")
 _f12_berta = _f12_c.create_user("berta", password="Geheim12345!-lang")
 _f12_c.audit("signup", "berta", "198.51.100.10")
 _f12_bev = [(e["event"], e["ip"]) for e in _f12_c.own_events(_f12_berta)]
-r.check("Fund 12: die Kontoseite zeigt keine Zeilen von vor der Anlage des Kontos",
+r.check("Finding 12: the account page shows no rows from before the creation of the account",
         _f12_bev == [("signup", "198.51.100.10")], f"{_f12_bev}")
 
 # ══════════════════════════════════════════════════════════════════════════════════════════
-# Nachbesserung: Angriff auf die Integrationsfixes (Löschweg, Einladung, Passkey-ID, Wächter)
+# Follow-up: attack on the integration fixes (deletion path, invitation, passkey ID, guard)
 # ══════════════════════════════════════════════════════════════════════════════════════════
 
-# ── N-1/N-6: der eine Löschweg rührt nur an, was ab der Anlage des Kontos entstand ─────────
-# Seit `gc()`, `tinysesam gc` und die B6-5-Rücknahme über `Store.konto_entfernen` löschen, löst
-# diesen Weg ein Fremder ohne Konto aus: registrieren, nie bestätigen. Ohne Grenze schrieb er
-# dabei Zeilen um, die VOR seinem Konto entstanden und anderen gehören — die Einladung des
-# Admins (Adresse im Detail), den Fehlversuch eines Sprayers unter dem damals freien Namen, den
-# der echten Adressinhaberin — und ihre login_attempt-Zeilen (Drosselung je IP) verschwanden.
-# Geprüft in zwei Lagen: die fremden Zeilen eine Minute vor der Registrierung (der Normalfall)
-# und in DERSELBEN Sekunde (angehaltene Uhr — so lief der Nachweis des Angreifers). Eine nur
-# sekundengenaue Grenze hält die zweite Lage nicht; dort entscheidet die Registrierungszeile
+# ── N-1/N-6: the one deletion path touches only what arose from the creation of the account ─────────
+# Since `gc()`, `tinysesam gc` and the B6-5 rollback delete via `Store.konto_entfernen`, a
+# stranger without an account triggers this path: register, never confirm. Without a limit it
+# rewrote rows that arose BEFORE his account and belong to others — the admin's invitation
+# (address in the detail), a sprayer's failed attempt under the then-free name, that
+# of the real address owner — and her login_attempt rows (throttling per IP) vanished.
+# Checked in two situations: the foreign rows a minute before the registration (the normal case)
+# and in the SAME second (stopped clock — this is how the attacker's proof ran). A limit that is
+# only accurate to the second does not hold the second situation; there the registration row decides
 # (`Store.anlage_grenze`).
-# (Mutationsproben: in `konto_entfernen` `seit=`/`nach=` nicht weitergeben → rot in beiden
-#  Lagen; `seit_id` nicht weitergeben → rot nur in „dieselbe Sekunde"; in `delete_attempts_for`
-#  `ts > ?` zu `ts >= ?` → rot in „dieselbe Sekunde"; in `TinySesam.delete_user`
-#  `adresse_unbefristet=True` streichen → rot bei N-6.)
+# (Mutation probes: do not pass `seit=`/`nach=` in `konto_entfernen` → red in both
+#  situations; do not pass `seit_id` → red only in "same second"; in `delete_attempts_for`
+#  `ts > ?` to `ts >= ?` → red in "same second"; in `TinySesam.delete_user`
+#  remove `adresse_unbefristet=True` → red at N-6.)
 from tinysesam import store as _store_mod  # noqa: E402
 
 _N1_NAME, _N1_MAIL = "root", "carol@example.com"
@@ -1585,8 +1584,8 @@ _N1_IPS = ("203.0.113.9", "198.51.100.50")
 
 @_ctxlib.contextmanager
 def _uhr_steht():
-    """Die Store-Uhr anhalten: Alles darin trägt denselben Zeitstempel (dieselbe Sekunde).
-    Danach läuft sie ab dort weiter — ohne Vorlauf gegenüber der Wanduhr."""
+    """Stop the store clock: Everything in it carries the same timestamp (the same second).
+    Afterwards it continues from there — without lead over the wall clock."""
     uhr = _store_mod._UHR
     alt = (uhr.wand, uhr.mono)
     wand, mono = float(uhr.wand()), float(uhr.mono())
@@ -1598,7 +1597,7 @@ def _uhr_steht():
 
 
 def _n1_fremde(a) -> tuple:
-    """Die Zeilen, die vor dem Konto entstanden: Einladung, zwei Fehlversuche, zwei Versuche."""
+    """The rows that arose before the account: invitation, two failed attempts, two attempts."""
     audit = [(z["event"], z["username"], z["ip"], z["detail"]) for z in a.store._all(
         "SELECT * FROM audit WHERE event IN ('invite_create', 'login_fail') AND ip IN (?, ?, ?) "
         "ORDER BY id", ("198.51.100.1", *_N1_IPS))]
@@ -1612,25 +1611,25 @@ def _n1_kaputt(*a, **k):
 
 
 def _n1_lauf(mailer, gleiche_sekunde: bool):
-    """Einladung, Sprayer, echte Inhaberin — dann registriert ein Fremder Name und Adresse."""
+    """Invitation, sprayer, real owner — then a stranger registers name and address."""
     a, app_ = _app(allow_signup=True, signup_verify_email=True, signup_require_email=True,
                    magiclink_enabled=True, csrf_enabled=False)
-    a.set_mailer(lambda *x, **k: True)   # die Einladung geht hinaus; `mailer` gilt danach
+    a.set_mailer(lambda *x, **k: True)   # the invitation goes out; `mailer` applies afterwards
     chef = a.create_user("chef", password="Geheim12345!-lang", is_admin=True)
     ca = TestClient(app_, client=("198.51.100.1", 1))
     ca.cookies.set(a.cfg.session_cookie, a.store.create_session(chef, 3600, True, "password"))
     vor_id = a.store._one("SELECT COALESCE(MAX(id), 0) AS m FROM audit")["m"]
     with (_uhr_steht() if gleiche_sekunde else _ctxlib.nullcontext()):
         assert ca.post("/auth/admin/api/invite", json={"email": _N1_MAIL}).status_code == 200
-        TestClient(app_, client=(_N1_IPS[0], 1)).post(                # Sprayer, Name noch frei
+        TestClient(app_, client=(_N1_IPS[0], 1)).post(                # sprayer, name still free
             "/auth/login", data={"username": _N1_NAME, "password": "Passwort1!"})
-        TestClient(app_, client=(_N1_IPS[1], 1)).post(                # die echte Carol, ohne Konto
+        TestClient(app_, client=(_N1_IPS[1], 1)).post(                # the real Carol, without an account
             "/auth/login", data={"username": _N1_MAIL, "password": "irgendwas-langes"})
         if not gleiche_sekunde:
-            a.store._exec("UPDATE audit SET ts=ts-60")                # eine Minute davor
+            a.store._exec("UPDATE audit SET ts=ts-60")                # one minute before
             a.store._exec("UPDATE login_attempt SET ts=ts-60")
         vorher = _n1_fremde(a)
-        assert len(vorher[0]) == 3 and len(vorher[1]) == 2, f"Vorbedingung: {vorher}"
+        assert len(vorher[0]) == 3 and len(vorher[1]) == 2, f"precondition: {vorher}"
         a.set_mailer(mailer)
         reg = TestClient(app_, client=("192.0.2.66", 1), raise_server_exceptions=False).post(
             "/auth/register", data={"username": _N1_NAME, "password": "Fremder-Langes-77",
@@ -1639,21 +1638,21 @@ def _n1_lauf(mailer, gleiche_sekunde: bool):
             _konto = a.store.get_user_by_name(_N1_NAME)
             _ts = {z["ts"] for z in a.store._all("SELECT ts FROM audit WHERE id > ?", (vor_id,))}
             assert len(_ts) == 1 and (_konto is None or {_konto["created_at"]} == _ts), \
-                f"Vorbedingung: alles in einer Sekunde ({_ts})"
+                f"precondition: everything in one second ({_ts})"
     return a, app_, reg, vorher
 
 
 for _n1_lage, _n1_gleich in (("eine Minute davor", False), ("dieselbe Sekunde", True)):
     _n1_a, _n1_app, _n1_reg, _n1_vorher = _n1_lauf(lambda *x, **k: True, _n1_gleich)
     _n1_uid = _n1_a.store.get_user_by_name(_N1_NAME)["id"]
-    # Dieselbe Grenze auf der Kontoseite (H-7): Der Fehlversuch des Sprayers unter dem damals
-    # freien Namen ist nicht das Ereignis dieses Kontos — auch nicht aus derselben Sekunde.
-    # (Mutationsprobe: in `own_events` `seit_id` nicht weitergeben → rot in „dieselbe Sekunde".)
+    # The same limit on the account page (H-7): The sprayer's failed attempt under the then
+    # free name is not an event of this account — not even from the same second.
+    # (Mutation probe: do not pass `seit_id` in `own_events` → red in "same second".)
     _n1_eigen = [(e["event"], e["ip"]) for e in _n1_a.own_events(_n1_uid)]
-    r.check(f"N-1 ({_n1_lage}): die Kontoseite zeigt nur die eigene Registrierung, nicht den Sprayer",
+    r.check(f"N-1 ({_n1_lage}): the account page shows only the own registration, not the sprayer",
             _n1_eigen == [("signup", "192.0.2.66")], f"{_n1_eigen}")
-    # Nach der Anlage: ein Fehlversuch unter dem Namen — der trifft DIESES Konto und geht mit.
-    # Er kommt Sekunden später (die Sekunde der Anlage selbst lässt `delete_attempts_for` stehen).
+    # After creation: a failed attempt under the name — it hits THIS account and goes along.
+    # It comes seconds later (the second of creation itself is left by `delete_attempts_for`).
     TestClient(_n1_app, client=("203.0.113.77", 1)).post(
         "/auth/login", data={"username": _N1_NAME, "password": f"falsch-falsch-{next(_FALSCH)}"})
     _n1_a.store._exec("UPDATE audit SET ts=ts+5 WHERE ip='203.0.113.77'")
@@ -1662,42 +1661,42 @@ for _n1_lage, _n1_gleich in (("eine Minute davor", False), ("dieselbe Sekunde", 
                       (_n1_uid,))
     _n1_gc = _n1_a.gc()["unverified_accounts"]
     _n1_nach = _n1_fremde(_n1_a)
-    r.check(f"N-1 ({_n1_lage}): gc() eines nie bestätigten Kontos lässt Zeilen von VOR seiner Anlage "
-            "stehen (Einladung des Admins, Sprayer, echte Adressinhaberin — samt Versuchszeilen)",
+    r.check(f"N-1 ({_n1_lage}): gc() of a never-confirmed account leaves rows from BEFORE its creation "
+            "(admin's invitation, sprayer, real address owner — including attempt rows)",
             _n1_reg.status_code == 200 and _n1_gc == 1 and _n1_nach == _n1_vorher,
-            f"HTTP {_n1_reg.status_code}, gc={_n1_gc}\nvorher {_n1_vorher}\nnachher {_n1_nach}")
+            f"HTTP {_n1_reg.status_code}, gc={_n1_gc}\nbefore {_n1_vorher}\nafter {_n1_nach}")
     _n1_danach = [(z["event"], z["username"]) for z in _n1_a.store._all(
         "SELECT * FROM audit WHERE ip IN ('192.0.2.66', '203.0.113.77') ORDER BY id")]
     _n1_versuch77 = _n1_a.store._all("SELECT * FROM login_attempt WHERE ip='203.0.113.77'")
-    r.check(f"N-1 ({_n1_lage}): … was ab der Anlage entstand, geht weiter mit (Registrierung, "
-            "späterer Fehlversuch)",
+    r.check(f"N-1 ({_n1_lage}): … what arose from the creation on is still taken along (registration, "
+            "later failed attempt)",
             _n1_danach == [("signup", f"gelöscht#{_n1_uid}"), ("login_fail", f"gelöscht#{_n1_uid}")]
-            and not _n1_versuch77, f"{_n1_danach}, Versuche {[dict(v) for v in _n1_versuch77]}")
+            and not _n1_versuch77, f"{_n1_danach}, attempts {[dict(v) for v in _n1_versuch77]}")
 
     _n1_b, _, _n1_breg, _n1_bvorher = _n1_lauf(_n1_kaputt, _n1_gleich)
     _n1_bnach = _n1_fremde(_n1_b)
     _n1_bsignup = [z["username"] for z in _n1_b.store._all("SELECT * FROM audit WHERE event='signup'")]
-    r.check(f"N-1 ({_n1_lage}): die B6-5-Rücknahme (Versand scheitert) lässt dieselben fremden "
-            "Zeilen stehen — und nimmt die eigene Registrierung aus dem Log",
+    r.check(f"N-1 ({_n1_lage}): the B6-5 rollback (send fails) leaves the same foreign "
+            "rows — and takes the own registration out of the log",
             _n1_breg.status_code == 200 and _n1_b.store.get_user_by_name(_N1_NAME) is None
             and _n1_bnach == _n1_bvorher and len(_n1_bsignup) == 1
             and _n1_bsignup[0].startswith("gelöscht#"),
-            f"HTTP {_n1_breg.status_code}, signup {_n1_bsignup}\nvorher {_n1_bvorher}\n"
-            f"nachher {_n1_bnach}")
+            f"HTTP {_n1_breg.status_code}, signup {_n1_bsignup}\nbefore {_n1_bvorher}\n"
+            f"after {_n1_bnach}")
 
-# Der Anker ist die Registrierungszeile aus der Sekunde der Anlage (oder der nächsten) — nicht
-# irgendeine spätere. Eine Registrierung mit der Adresse als Name, die schon einem Konto als
-# Benutzername gehört, schreibt `signup_taken` unter genau diesem Namen; als Anker genommen, fiele
-# die Zeile des Admins aus der Anlage-Sekunde aus der Anonymisierung.
-# S-3 (Schlussrunde): Die erste Fassung prüfte das nur mit +5 s. In der Anlage-Sekunde selbst und
-# in der nächsten nahm `anlage_grenze` die fremde Zeile doch als Anker — der Docstring sagte das
-# Gegenteil. Jetzt zählt `signup_taken` nur als Anlage eines Platzhalters (keine Adresse am Konto,
-# Detail ≠ Name); geprüft mit +0, +1 und +5 s.
-# (Mutationsproben: die Platzhalter-Bedingung streichen, also jede `signup_taken`-Zeile als Anker
-#  nehmen → rot bei +0 und +1; nur die Bedingung „Konto ohne Adresse“ behalten → ebenso rot. Die
-#  Zeilen-Bedingung trägt allein: Die Bedingung „Konto ohne Adresse“ ist ein zweiter Riegel, den
-#  heute kein Weg erreicht — gestrichen bleibt die Suite grün (gemessen). Das Zeitfenster misst der
-#  Fall mit einer späteren `signup`-Zeile: `ts BETWEEN ? AND ?` zu `ts >= ?` → rot nur dort.)
+# The anchor is the registration row from the second of creation (or the next) — not
+# some later one. A registration with the address as name, which already belongs to an account as
+# username, writes `signup_taken` under exactly this name; taken as the anchor, the admin's
+# row from the creation second would fall out of the anonymization.
+# S-3 (final round): The first version checked this only with +5 s. In the creation second itself and
+# in the next, `anlage_grenze` did take the foreign row as an anchor — the docstring said the
+# opposite. Now `signup_taken` counts only as the creation of a placeholder (no address on the account,
+# detail ≠ name); checked with +0, +1 and +5 s.
+# (Mutation probes: remove the placeholder condition, i.e. take every `signup_taken` row as the anchor
+#  → red at +0 and +1; keep only the condition "account without address" → likewise red. The
+#  row condition alone carries: The condition "account without address" is a second guard that
+#  no path reaches today — removed, the suite stays green (measured). The time window is measured by the
+#  case with a later `signup` row: `ts BETWEEN ? AND ?` to `ts >= ?` → red only there.)
 def _n7_lauf(versatz: int, ereignis: str = "signup_taken"):
     a, app_ = _app(allow_signup=True, signup_verify_email=True, signup_require_email=True,
                    csrf_enabled=False)
@@ -1705,7 +1704,7 @@ def _n7_lauf(versatz: int, ereignis: str = "signup_taken"):
     chef = a.create_user("chef", password="Geheim12345!-lang", is_admin=True)
     ca = TestClient(app_, client=("198.51.100.1", 1))
     ca.cookies.set(a.cfg.session_cookie, a.store.create_session(chef, 3600, True, "password"))
-    with _uhr_steht():                 # Anlage und `user_create` in einer Sekunde
+    with _uhr_steht():                 # creation and `user_create` in one second
         assert ca.post("/auth/admin/api/users", json={"username": "kasse@example.com"}).status_code == 200
     konto = a.store.get_user_by_name("kasse@example.com")
     if ereignis == "signup_taken":
@@ -1713,7 +1712,7 @@ def _n7_lauf(versatz: int, ereignis: str = "signup_taken"):
             "/auth/register", data={"username": "kasse@example.com", "password": "Anderes-77!-lang-genug",
                                     "email": "kasse@example.com", "next": "/"})
         status = antwort.status_code
-    else:                              # eine einbettende App protokolliert ihre eigene Anmeldung
+    else:                              # an embedding app logs its own sign-in
         a.audit(ereignis, "kasse@example.com", "203.0.113.66")
         status = 200
     a.store._exec("UPDATE audit SET ts=? WHERE event=?", (konto["created_at"] + versatz, ereignis))
@@ -1726,21 +1725,21 @@ def _n7_lauf(versatz: int, ereignis: str = "signup_taken"):
 for _n7_ereignis, _n7_versatz in (("signup_taken", 0), ("signup_taken", 1), ("signup_taken", 5),
                                   ("signup", 5)):
     _n7_status, _n7_uid, _n7_anker, _n7_z = _n7_lauf(_n7_versatz, _n7_ereignis)
-    r.check(f"N-1/S-3: eine fremde {_n7_ereignis}-Zeile (+{_n7_versatz} s nach der Anlage) unter dem "
-            "Namen verschiebt die Grenze nicht (user_create aus der Anlage-Sekunde wird anonymisiert)",
+    r.check(f"N-1/S-3: a foreign {_n7_ereignis} row (+{_n7_versatz} s after creation) under the "
+            "name does not move the limit (user_create from the creation second is anonymized)",
             _n7_status == 200 and _n7_anker[1] == 0 and _n7_z == [f"gelöscht#{_n7_uid} service=False"],
             f"HTTP {_n7_status}, anlage_grenze {_n7_anker}, {_n7_z}")
 
-# Gegenprobe: Die signup_taken-Zeile EINES PLATZHALTERS ist seine Anlage und bleibt der Anker —
-# sonst zählte die ganze Sekunde, und `gc()` schriebe den Fehlversuch eines Sprayers, der in
-# derselben Sekunde den damals freien Namen probierte, dem Platzhalter zu (wie N-1, nur über den
-# Zweig „Adresse vergeben“, R4-03).
+# Counter-check: The signup_taken row OF A PLACEHOLDER is its creation and stays the anchor —
+# otherwise the whole second would count, and `gc()` would attribute the failed attempt of a sprayer who tried the then-free
+# name in the same second to the placeholder (like N-1, only via the
+# branch "address taken", R4-03).
 _s3_a, _s3_app = _app(allow_signup=True, signup_verify_email=True, signup_require_email=True,
                       csrf_enabled=False)
 _s3_a.set_mailer(lambda *x, **k: True)
 _s3_a.create_user("inhaberin", password="Geheim12345!-lang", email="belegt@example.com")
 with _uhr_steht():
-    TestClient(_s3_app, client=("203.0.113.9", 1)).post(          # Sprayer, Name noch frei
+    TestClient(_s3_app, client=("203.0.113.9", 1)).post(          # sprayer, name still free
         "/auth/login", data={"username": "platz", "password": "Passwort1!"})
     _s3_reg = TestClient(_s3_app, client=("192.0.2.66", 1)).post(
         "/auth/register", data={"username": "platz", "password": "Fremder-Langes-77",
@@ -1751,17 +1750,17 @@ _s3_a.store._exec("UPDATE magic_token SET expires_at=0 WHERE purpose='verify_ema
 _s3_gc = _s3_a.gc()["unverified_accounts"]
 _s3_zeilen = [(z["event"], z["username"]) for z in _s3_a.store._all(
     "SELECT * FROM audit WHERE event IN ('login_fail', 'signup_taken') ORDER BY id")]
-r.check("S-3: … die signup_taken-Zeile eines Platzhalters bleibt sein Anker — gc() lässt den Sprayer "
-        "aus derselben Sekunde stehen und nimmt nur die eigene Zeile",
+r.check("S-3: … the signup_taken row of a placeholder stays its anchor — gc() leaves the sprayer "
+        "from the same second alone and takes only the own row",
         _s3_reg.status_code == 200 and _s3_platz is not None and not _s3_platz["email"]
         and _s3_anker[1] > 0 and _s3_gc == 1
         and _s3_zeilen == [("login_fail", "platz"), ("signup_taken", f"gelöscht#{_s3_platz['id']}")],
-        f"HTTP {_s3_reg.status_code}, Anker {_s3_anker}, gc={_s3_gc}, {_s3_zeilen}")
+        f"HTTP {_s3_reg.status_code}, anchor {_s3_anker}, gc={_s3_gc}, {_s3_zeilen}")
 
-# Die bewusste Löschung eines Kontos, dessen Adresse BESTÄTIGT ist, bleibt so gründlich wie
-# H-13 sie zusagt: Die Adresse gehört nachweislich dem Konto, also verschwindet sie auch aus
-# älteren Zeilen (die Einladung, die zu dem Konto führte). Der NAME dagegen gehörte vor der
-# Anlage niemandem — der Fehlversuch darunter bleibt, wie er war.
+# The deliberate deletion of an account whose address is CONFIRMED stays as thorough as
+# H-13 promises: The address demonstrably belongs to the account, so it also disappears from
+# older rows (the invitation that led to the account). The NAME, however, belonged to nobody before
+# creation — the failed attempt under it stays as it was.
 _n6_a, _ = _app(csrf_enabled=False)
 _n6_a.create_user("chef", password="Geheim12345!-lang", is_admin=True)
 _n6_a.store.audit_log("invite_create", "chef", "198.51.100.1", "dora@example.com")
@@ -1773,25 +1772,25 @@ _n6_dora = _n6_a.create_user("dora", password="Geheim12345!-lang", email="dora@e
 _n6_a.delete_user(_n6_dora)
 _n6_zeilen = {z["event"]: (z["username"], z["detail"]) for z in _n6_a.store._all(
     "SELECT * FROM audit WHERE event IN ('invite_create', 'login_fail')")}
-r.check("N-6: die Löschung durch einen Admin nimmt eine bestätigte Adresse auch aus älteren Zeilen (H-13)",
+r.check("N-6: deletion by an admin also takes a confirmed address out of older rows (H-13)",
         _n6_zeilen.get("invite_create") == ("chef", f"gelöscht#{_n6_dora}"), f"{_n6_zeilen}")
-r.check("N-6: … den Namen aber erst ab der Anlage — der Fehlversuch unter dem freien Namen bleibt samt Versuch",
+r.check("N-6: … but the name only from creation on — the failed attempt under the free name stays together with the attempt",
         _n6_zeilen.get("login_fail") == ("dora", "password grund=kein_konto")
         and len(_n6_a.store._all("SELECT id FROM login_attempt WHERE username='dora'")) == 1,
         f"{_n6_zeilen}")
 
-# ── S-2: unbefristet ersetzt wird nur eine BELEGTE Adresse ─────────────────────────────────────
-# N-6 prüfte nur ein Konto, dessen Adresse der Admin angelegt hatte. Die Registrierung legte die
-# eingetippte Adresse aber als „bestätigt“ an, solange der Link ausstand — ohne
-# Bestätigungspflicht sogar für immer. Löschte ein Admin ein solches Konto (Aufräumen, Löschwunsch
-# des Fremden), gingen die Einladung des Admins und der Fehlversuch der echten Inhaberin von VOR der
-# Anlage auf `gelöscht#<id>` über — der Schaden aus N-1, nur über den bewussten Löschweg.
-# Jetzt setzt erst der eingelöste Link den Beleg, und `Store.adresse_belegt` sieht ein offenes Konto
-# (gesperrt, Token offen) auch dann, wenn eine App es mit der Vorgabe `email_verified=True` anlegt.
-# (Mutationsproben: in `register_submit` wieder ohne `email_verified=` anlegen → rot bei „ohne
-#  Bestätigungspflicht“ und „offen“; in `adresse_belegt` die Token-Prüfung streichen → rot bei
-#  „App-Weg“; in `konto_entfernen` wieder nur den Vermerk fragen → rot bei „App-Weg“; in
-#  `/auth/verify` `set_email_verified` streichen → rot bei „nach dem Link“.)
+# ── S-2: only a PROVEN address is replaced without time limit ─────────────────────────────────────
+# N-6 checked only an account whose address the admin had created. But registration created the
+# typed-in address as "confirmed" as long as the link was outstanding — without
+# confirmation requirement even forever. If an admin deleted such an account (cleanup, deletion request
+# of the stranger), the admin's invitation and the failed attempt of the real owner from BEFORE the
+# creation passed to `gelöscht#<id>` — the damage from N-1, only via the deliberate deletion path.
+# Now only the redeemed link sets the proof, and `Store.adresse_belegt` sees an open account
+# (locked, token open) even if an app creates it with the default `email_verified=True`.
+# (Mutation probes: create again without `email_verified=` in `register_submit` → red at "without
+#  confirmation requirement" and "open"; remove the token check in `adresse_belegt` → red at
+#  "app path"; ask only the note again in `konto_entfernen` → red at "app path"; remove
+#  `set_email_verified` in `/auth/verify` → red at "after the link".)
 _S2_MAIL = "carol@example.com"
 
 
@@ -1804,9 +1803,9 @@ def _s2_lauf(verify: bool):
     ca = TestClient(app_, client=("198.51.100.1", 1))
     ca.cookies.set(a.cfg.session_cookie, a.store.create_session(chef, 3600, True, "password"))
     assert ca.post("/auth/admin/api/invite", json={"email": _S2_MAIL}).status_code == 200
-    TestClient(app_, client=("198.51.100.50", 1)).post(          # die echte Carol, ohne Konto
+    TestClient(app_, client=("198.51.100.50", 1)).post(          # the real Carol, without an account
         "/auth/login", data={"username": _S2_MAIL, "password": "irgendwas-langes"})
-    a.store._exec("UPDATE audit SET ts=ts-60")                    # eine Minute vor der Anlage
+    a.store._exec("UPDATE audit SET ts=ts-60")                    # one minute before creation
     a.store._exec("UPDATE login_attempt SET ts=ts-60")
     return a, app_, ca, post
 
@@ -1822,7 +1821,7 @@ def _s2_registrieren(app_):
                                 "email": _S2_MAIL, "next": "/"}, follow_redirects=False)
 
 
-# (a) Bestätigung verlangt, Link nie eingelöst — der Admin löscht das offene Konto im Panel.
+# (a) Confirmation required, link never redeemed — the admin deletes the open account in the panel.
 _s2_a, _s2_app, _s2_ca, _ = _s2_lauf(True)
 _s2_vorher = _s2_fremde(_s2_a)
 _s2_reg = _s2_registrieren(_s2_app)
@@ -1830,27 +1829,27 @@ _s2_u = _s2_a.store.get_user_by_name("fremder")
 _s2_del = _s2_ca.post(f"/auth/admin/api/users/{_s2_u['id']}/delete")
 _s2_nach = _s2_fremde(_s2_a)
 _s2_versuch = _s2_a.store._all("SELECT * FROM login_attempt WHERE ip='198.51.100.50'")
-r.check("S-2 (offen): die Registrierung legt die eingetippte Adresse ohne Beleg an, und die "
-        "Löschung im Panel lässt Einladung und Fehlversuch der Inhaberin von vor der Anlage stehen",
+r.check("S-2 (open): registration creates the typed-in address without proof, and the "
+        "deletion in the panel leaves the invitation and failed attempt of the owner from before creation",
         _s2_reg.status_code == 200 and _s2_u["email_verified"] == 0 and _s2_del.status_code == 200
         and _s2_nach == _s2_vorher and len(_s2_versuch) == 1,
         f"HTTP {_s2_reg.status_code}/{_s2_del.status_code}, email_verified={_s2_u['email_verified']}\n"
-        f"vorher {_s2_vorher}\nnachher {_s2_nach}, Versuche {len(_s2_versuch)}")
+        f"before {_s2_vorher}\nafter {_s2_nach}, attempts {len(_s2_versuch)}")
 
-# (b) Ohne Bestätigungspflicht: angemeldet, aber die Adresse ist nie belegt.
+# (b) Without confirmation requirement: signed in, but the address is never proven.
 _s2_b, _s2_bapp, _, _ = _s2_lauf(False)
 _s2_bvorher = _s2_fremde(_s2_b)
 _s2_breg = _s2_registrieren(_s2_bapp)
 _s2_bu = _s2_b.store.get_user_by_name("fremder")
 _s2_b.delete_user(_s2_bu["id"])
 _s2_bnach = _s2_fremde(_s2_b)
-r.check("S-2 (ohne Bestätigungspflicht): unbelegt — delete_user lässt die Zeilen von vor der Anlage stehen",
+r.check("S-2 (without confirmation requirement): unproven — delete_user leaves the rows from before creation",
         _s2_breg.status_code == 303 and _s2_bu["email_verified"] == 0 and _s2_bnach == _s2_bvorher,
         f"HTTP {_s2_breg.status_code}, email_verified={_s2_bu['email_verified']}\n"
-        f"vorher {_s2_bvorher}\nnachher {_s2_bnach}")
+        f"before {_s2_bvorher}\nafter {_s2_bnach}")
 
-# (c) Gegenprobe: Nach dem eingelösten Link ist die Adresse belegt — H-13 bleibt so gründlich wie
-# bisher und nimmt sie auch aus der Einladung, die zu dem Konto führte.
+# (c) Counter-check: After the redeemed link the address is proven — H-13 stays as thorough as
+# before and also takes it out of the invitation that led to the account.
 _s2_c, _s2_capp, _, _s2_post = _s2_lauf(True)
 _s2_creg = _s2_registrieren(_s2_capp)
 _s2_link = [m.group(1) for zu, text in _s2_post if zu == _S2_MAIL
@@ -1860,16 +1859,16 @@ _s2_cver = TestClient(_s2_capp, client=("192.0.2.66", 1)).post(
 _s2_cu = _s2_c.store.get_user_by_name("fremder")
 _s2_c.delete_user(_s2_cu["id"])
 _s2_cnach = dict((e, (u, d)) for e, u, d in _s2_fremde(_s2_c))
-r.check("S-2 (nach dem Link): der eingelöste Link setzt den Beleg, und die Löschung nimmt die "
-        "Adresse auch aus der älteren Einladung (H-13)",
+r.check("S-2 (after the link): the redeemed link sets the proof, and the deletion takes the "
+        "address out of the older invitation too (H-13)",
         _s2_creg.status_code == 200 and _s2_cver is not None and _s2_cver.status_code == 303
         and _s2_cu["email_verified"] == 1
         and _s2_cnach.get("invite_create") == ("chef", f"gelöscht#{_s2_cu['id']}"),
         f"HTTP {_s2_creg.status_code}/{getattr(_s2_cver, 'status_code', None)}, "
         f"email_verified={_s2_cu['email_verified']}, {_s2_cnach}")
 
-# (d) Der App-Weg: `create_user` mit der Vorgabe `email_verified=True`, gesperrt, eigener
-# Bestätigungslink ausstehend. Der Vermerk sagt „belegt“, der offene Token widerspricht.
+# (d) The app path: `create_user` with the default `email_verified=True`, locked, own
+# confirmation link pending. The note says "proven", the open token contradicts.
 _s2_d, _, _, _ = _s2_lauf(True)
 _s2_dvorher = _s2_fremde(_s2_d)
 _s2_duid = _s2_d.create_user("fremder", password="Geheim12345!-lang", email=_S2_MAIL)
@@ -1877,28 +1876,28 @@ _s2_d.store.set_disabled(_s2_duid, True)
 _s2_d.create_magic_token("verify_email", user_id=_s2_duid, email=_S2_MAIL)
 _s2_offen_belegt = _s2_d.store.adresse_belegt(_s2_d.store.get_user(_s2_duid))
 _s2_d.delete_user(_s2_duid)
-r.check("S-2 (App-Weg): ein offenes Konto mit dem Vermerk „bestätigt“ gilt nicht als belegt",
+r.check("S-2 (app path): an open account with the note 'confirmed' does not count as proven",
         _s2_offen_belegt is False and _s2_fremde(_s2_d) == _s2_dvorher,
-        f"belegt={_s2_offen_belegt}\nvorher {_s2_dvorher}\nnachher {_s2_fremde(_s2_d)}")
+        f"proven={_s2_offen_belegt}\nbefore {_s2_dvorher}\nafter {_s2_fremde(_s2_d)}")
 
-# ── S-1: die Topf-Prüfung darf die Registrierung nicht zum Adress-Orakel machen ─────────────────
-# `Store.konto_mit_topf` (N-5) faltete bei JEDEM Aufruf alle Konten in Python. Die Registrierung
-# mit einer FREIEN Adresse ruft sie öfter als die mit einer vergebenen (dort trifft
-# `get_user_by_email` vorher) — gemessen bei 20 000 Konten: 118 ms gegen 151 ms, die Bereiche
-# überlappten nicht, eine Anfrage reichte (R4-03 gekippt). `gc()` wuchs mit offenen × allen
-# Konten. Jetzt stehen die Töpfe als indizierte Spalten in `users` (Schema 10), und auch die
-# NOCASE-Suche nach Name und Adresse läuft über einen Index (vorher las SQLite dort jede Zeile,
-# bei einem Treffer bis zu ihm — derselbe Unterschied, nur kleiner).
-# Gemessen wird nicht die Wanduhr, sondern die Arbeit der Datenbank: die Zahl der SQLite-Schritte
-# (`set_progress_handler(…, 1)`) bei 100 und bei 3000 Konten. Ein Scan über die Konten kostet
-# mindestens einen Schritt je Zeile, also Tausende; ein Index-Zugriff ist ein Schritt, egal wie
-# tief der Baum ist. Die Konten kommen per rohem INSERT ohne Topf — wie von einem anderen
-# Schreiber —, der erste Aufruf trägt die Töpfe nach (`_toepfe_nachtragen`).
-# (Mutationsproben: `konto_mit_topf` wieder als Python-Schleife über alle Konten → rot, „frei“
-#  1 662 → 48 062 Schritte bei 100 → 3000 Konten; die Indizes `ix_users_name_nocase`/
-#  `ix_users_email_nocase` nicht anlegen → rot, „vergeben (erstes Konto)“ 430 gegen „letztes
-#  Konto“ 33 122 — genau das Orakel; `_toepfe_nachtragen` schreibt nichts → rot, 3000 Zeilen
-#  ohne Topf und wieder die Schleife über alle.)
+# ── S-1: the bucket check must not turn registration into an address oracle ─────────────────
+# `Store.konto_mit_topf` (N-5) folded all accounts in Python on EVERY call. Registration
+# with a FREE address calls it more often than the one with a taken address (there
+# `get_user_by_email` hits earlier) — measured with 20 000 accounts: 118 ms versus 151 ms, the ranges
+# did not overlap, one request was enough (R4-03 overturned). `gc()` grew with open × all
+# accounts. Now the buckets are indexed columns in `users` (schema 10), and the
+# NOCASE search by name and address also runs through an index (before, SQLite read every row there,
+# on a hit up to it — the same difference, only smaller).
+# What is measured is not the wall clock but the database's work: the number of SQLite steps
+# (`set_progress_handler(…, 1)`) with 100 and with 3000 accounts. A scan over the accounts costs
+# at least one step per row, i.e. thousands; an index access is one step, no matter how
+# deep the tree is. The accounts arrive by raw INSERT without a bucket — as from another
+# writer —, the first call fills in the buckets (`_toepfe_nachtragen`).
+# (Mutation probes: `konto_mit_topf` as a Python loop over all accounts again → red, "free"
+#  1 662 → 48 062 steps with 100 → 3000 accounts; do not create the indexes `ix_users_name_nocase`/
+#  `ix_users_email_nocase` → red, "taken (first account)" 430 versus "last
+#  account" 33 122 — exactly the oracle; `_toepfe_nachtragen` writes nothing → red, 3000 rows
+#  without bucket and again the loop over all.)
 def _s1_app(n: int):
     a, app_ = _app(allow_signup=True, signup_verify_email=True, signup_require_email=True,
                    csrf_enabled=False)
@@ -1908,7 +1907,7 @@ def _s1_app(n: int):
         "VALUES (?,?,?,?,?,?,?)",
         [(f"konto{i}", None, f"konto{i}@example.com", 0, "[]", 0, 1) for i in range(n)])
     a.store.db.commit()
-    a.identifier_taken("aufwaermen")          # trägt die Töpfe der rohen Zeilen nach
+    a.identifier_taken("aufwaermen")          # fills in the buckets of the raw rows
     return a, app_
 
 
@@ -1927,11 +1926,11 @@ def _s1_schritte(a, fn) -> int:
 
 
 def _s1_messen(n: int) -> dict:
-    # Bei stehender Uhr: Das Löschen eines Kontos durchsucht das Audit-Log ab seiner Anlage
-    # (`ts > seit OR (ts = seit AND id >= …)`, über `idx_audit_ts`). Mit laufender Uhr las der
-    # Bereich je nach Lage der Sekundengrenze ein paar Zeilen aus derselben Sekunde mehr oder
-    # weniger — bis 120 Schritte, unabhängig von der Kontozahl, und der Test schwankte. Steht die
-    # Uhr, trägt jede Zeile dieselbe Sekunde, und gemessen wird nur noch, was die Kontozahl macht.
+    # With a stopped clock: Deleting an account searches the audit log from its creation
+    # (`ts > seit OR (ts = seit AND id >= …)`, via `idx_audit_ts`). With a running clock, the
+    # range read a few more or fewer rows from the same second, depending on the position of the second boundary —
+    # up to 120 steps, independent of the number of accounts, and the test fluctuated. If the
+    # clock stands, every row carries the same second, and only what the number of accounts causes is measured.
     with _uhr_steht():
         return _s1_messen_bei(n)
 
@@ -1952,7 +1951,7 @@ def _s1_messen_bei(n: int) -> dict:
          "Registrierung vergeben": _s1_schritte(a, lambda: TestClient(app_, client=("192.0.2.32", 1)).post(
              "/auth/register", data={"username": "probevergeben", "password": "Sehr-Langes-Passwort-77",
                                      "email": letzte, "next": "/"}))}
-    for i in range(5):                        # fünf offene Konten, Link abgelaufen
+    for i in range(5):                        # five open accounts, link expired
         uid = a.store.create_user(f"offen{i}", None, f"offen{i}@example.org", False, [], False)
         a.store.set_disabled(uid, True)
         a.create_magic_token("verify_email", user_id=uid)
@@ -1962,36 +1961,36 @@ def _s1_messen_bei(n: int) -> dict:
 
 
 _s1_klein, _s1_gross = _s1_messen(100), _s1_messen(3000)
-# Spielraum 100 Schritte: ein Mitschreiben des Uhrstands (`_uhr_mitschreiben`) mehr oder weniger.
-# Ein Scan über 2900 zusätzliche Konten liegt weit darüber.
+# Margin of 100 steps: one more or fewer recording of the clock state (`_uhr_mitschreiben`).
+# A scan over 2900 additional accounts lies far above.
 _s1_wachsen = {k: (_s1_klein[k], _s1_gross[k]) for k in _s1_klein
                if k != "ohne_topf" and abs(_s1_gross[k] - _s1_klein[k]) > 100}
-r.check("S-1: die Datenbankarbeit von identifier_taken, der Registrierung (frei und vergeben) und "
-        "gc() hängt nicht von der Zahl der Konten ab (100 vs. 3000, SQLite-Schritte)",
+r.check("S-1: the database work of identifier_taken, of registration (free and taken) and of "
+        "gc() does not depend on the number of accounts (100 vs. 3000, SQLite steps)",
         not _s1_wachsen and _s1_gross["ohne_topf"] == 0,
-        f"wächst: {_s1_wachsen}\n100: {_s1_klein}\n3000: {_s1_gross}")
-r.check("S-1: … frei und vergeben unterscheiden sich bei 3000 Konten nur um einen festen, kleinen Betrag",
+        f"grows: {_s1_wachsen}\n100: {_s1_klein}\n3000: {_s1_gross}")
+r.check("S-1: … free and taken differ with 3000 accounts only by a fixed, small amount",
         abs(_s1_gross["Registrierung frei"] - _s1_gross["Registrierung vergeben"]) <= 200
         and abs(_s1_gross["frei"] - _s1_gross["vergeben (letztes Konto)"]) <= 200,
         f"{_s1_gross}")
-# Die Topf-Prüfung selbst muss weiter greifen, auch für eine Zeile eines anderen Schreibers, die
-# jemand umbenennt: Der Trigger setzt den Topf auf NULL, der nächste Aufruf rechnet ihn neu.
-# (Mutationsprobe: der Trigger setzt nichts → rot, „ärmel“ bleibt unerkannt, „konto3“ trifft.)
+# The bucket check itself must keep working, also for a row of another writer that
+# someone renames: The trigger sets the bucket to NULL, the next call recomputes it.
+# (Mutation probe: the trigger sets nothing → red, "ärmel" goes unrecognized, "konto3" hits.)
 _s1_a, _ = _s1_app(10)
 _s1_a.store.db.execute("UPDATE users SET username='Ärmel' WHERE username='konto3'")
 _s1_a.store.db.execute("INSERT INTO users(username, email, created_at) VALUES ('Özlem', NULL, 1)")
 _s1_a.store.db.commit()
 _s1_treffer = {k: (_s1_a.store.konto_mit_topf(k) or {"username": None})["username"]
                for k in ("ärmel", "özlem", "konto3", "KONTO4@EXAMPLE.COM")}
-r.check("S-1: … und findet Namensvetter weiter — auch nach Umbenennung und INSERT am Store vorbei",
+r.check("S-1: … and still finds namesakes — also after renaming and INSERT past the store",
         _s1_treffer == {"ärmel": "Ärmel", "özlem": "Özlem", "konto3": None,
                         "KONTO4@EXAMPLE.COM": "konto4"}, f"{_s1_treffer}")
-# Nur lesbar (Volume schreibgeschützt): Ein Topf, der sich nicht nachtragen lässt, darf weder den
-# Start verhindern (der ging vorher auch) noch einen Namensvetter übersehen lassen. Zur Laufzeit
-# echt über `PRAGMA query_only`, beim Start über einen Nachtrag, der wie auf einer nur lesbaren
-# Datei scheitert (eine Datei per chmod zu sperren hält einen Test unter root nicht auf).
-# (Mutationsproben: in `_migrate` das Abfangen streichen → rot, der Start scheitert; in
-#  `_toepfe_nachtragen` bei einem Fehler `[]` statt der Zeilen zurückgeben → rot bei „Özlem“.)
+# Read-only (volume write-protected): A bucket that cannot be filled in must neither prevent the
+# start (that did not happen before either) nor let a namesake be overlooked. At runtime
+# genuinely via `PRAGMA query_only`, at startup via a fill-in that fails as on a read-only
+# file (locking a file with chmod does not stop a test as root).
+# (Mutation probes: remove the catch in `_migrate` → red, startup fails; return `[]` instead of the rows
+#  on an error in `_toepfe_nachtragen` → red at "Özlem".)
 _s1_a.store.db.execute("INSERT INTO users(username, email, created_at) VALUES ('Ündine', NULL, 1)")
 _s1_a.store.db.commit()
 _s1_a.store.db.execute("PRAGMA query_only = ON")
@@ -2018,52 +2017,52 @@ try:
     _s1_ro2 = Store(_s1_ro_db)
     _s1_start = [(_s1_ro2.konto_mit_topf(k) or {"username": None})["username"] for k in ("özlem", "ANNA")]
     _s1_ro2.db.close()
-except Exception as _e:        # der Start selbst scheitert
+except Exception as _e:        # the start itself fails
     _s1_start = f"{type(_e).__name__}: {_e}"
 finally:
     Store._toepfe_schreiben = _s1_schreiben
-r.check("S-1: … auch ohne Schreibrecht: der Start gelingt, und Zeilen ohne Topf prüft Python selbst",
+r.check("S-1: … also without write permission: startup succeeds, and rows without bucket are checked by Python itself",
         _s1_nur_lesend == "Ündine" and _s1_start == ["Özlem", "anna"],
-        f"Laufzeit {_s1_nur_lesend}, Start {_s1_start}")
-# Die Schreiber im Store führen den Topf selbst mit, in derselben Anweisung — der Nachtrag ist
-# für fremde Schreiber da, nicht für die eigenen.
-# (Mutationsproben: in `Store.create_user` bzw. `Store.set_email` den Topf weglassen → rot.)
+        f"runtime {_s1_nur_lesend}, Start {_s1_start}")
+# The writers in the store carry the bucket along themselves, in the same statement — the fill-in is
+# there for foreign writers, not for its own.
+# (Mutation probes: omit the bucket in `Store.create_user` or `Store.set_email` → red.)
 _s1_uid = _s1_a.store.create_user("Ärger", None, "X@Bücher.example")
 _s1_nach_anlage = tuple(_s1_a.store._one("SELECT topf_name, topf_mail FROM users WHERE id=?", (_s1_uid,)))
 _s1_a.store.set_email(_s1_uid, "Neu@Example.com")
 _s1_nach_wechsel = _s1_a.store._one("SELECT topf_mail FROM users WHERE id=?", (_s1_uid,))["topf_mail"]
-r.check("S-1: … create_user und set_email schreiben den Topf gleich mit",
+r.check("S-1: … create_user and set_email write the bucket along right away",
         _s1_nach_anlage == ("ärger", "x@xn--bcher-kva.example") and _s1_nach_wechsel == "neu@example.com",
-        f"nach Anlage {_s1_nach_anlage}, nach Adresswechsel {_s1_nach_wechsel}")
+        f"after creation {_s1_nach_anlage}, after address change {_s1_nach_wechsel}")
 
-# ── N-5: Nicht-ASCII-Namensvetter teilen einen Zähl-Topf ──────────────────────────────────────
-# Der Sperrzähler faltet mit Python-`lower()` (`norm_kennung`), `identifier_taken` und
-# `get_user_by_name` mit SQLite-NOCASE — das faltet nur ASCII. Neben `Émile` liess sich deshalb
-# `émile` anlegen, beide zählten im Topf `émile`. Über `konto_entfernen` (gc, B6-5 — anonym
-# auslösbar) löschte das Entfernen von `émile` die Fehlversuche von `Émile`: Die Konto-Schwelle
-# gegen verteiltes Raten (R7-6/H-8) liess sich für jedes Konto mit Ö/Ü/Ä/É … beliebig oft leeren.
-# (Mutationsproben: in `identifier_taken` die Topf-Prüfung streichen → rot bei der Registrierung;
-#  in `delete_attempts_for` die Prüfung auf ein verbleibendes Konto im Topf streichen → rot beim
-#  Bestand; `delete_attempts_for` wieder nur mit SQLite-`lower()` vergleichen → rot beim Admin.)
+# ── N-5: non-ASCII namesakes share a counting bucket ──────────────────────────────────────
+# The lockout counter folds with Python `lower()` (`norm_kennung`), `identifier_taken` and
+# `get_user_by_name` with SQLite NOCASE — which folds only ASCII. Next to `Émile`, `émile` could therefore
+# be created, both counted in the bucket `émile`. Via `konto_entfernen` (gc, B6-5 — anonymously
+# triggerable), removing `émile` deleted the failed attempts of `Émile`: The account threshold
+# against distributed guessing (R7-6/H-8) could be emptied any number of times for every account with Ö/Ü/Ä/É …
+# (Mutation probes: remove the bucket check in `identifier_taken` → red at registration;
+#  remove the check for a remaining account in the bucket in `delete_attempts_for` → red at
+#  existing stock; compare `delete_attempts_for` only with SQLite `lower()` again → red at the admin.)
 _n5_a, _n5_app = _app(allow_signup=True, signup_verify_email=True, signup_require_email=True,
                       csrf_enabled=False)
-_n5_a.set_mailer(_n1_kaputt)          # scheiterte die Registrierung doch, griffe B6-5 sofort
+_n5_a.set_mailer(_n1_kaputt)          # if the registration failed after all, B6-5 would take effect immediately
 _n5_a.create_user("Émile", password="Geheim12345!-lang", email="emile@example.com")
 _n5_reg = TestClient(_n5_app, client=("203.0.113.99", 1), raise_server_exceptions=False).post(
     "/auth/register", data={"username": "émile", "password": "Irgendwas-Langes-77",
                             "email": "gibtsnicht@example.org", "next": "/"})
 _n5_kein = None
 try:
-    # Klein-é: SQLite-NOCASE sieht darin einen anderen Namen (anders als bei „ÉMILE“, das
-    # schon an ASCII-Faltung scheitert) — der Weg, den die Registrierung oben nimmt.
+    # Lowercase é: SQLite NOCASE sees a different name in it (unlike "ÉMILE", which
+    # already fails at ASCII folding) — the path that registration takes above.
     _n5_a.create_user("émile", password="Anderes-77!-lang-genug")
 except ConfigError as _e:
     _n5_kein = getattr(_e, "field", "?")
-r.check("N-5: „émile“ neben „Émile“ ist vergeben (derselbe Zähl-Topf) — 409, kein zweites Konto",
+r.check("N-5: 'émile' next to 'Émile' is taken (same counting bucket) — 409, no second account",
         _n5_reg.status_code == 409 and _n5_kein == "username"
         and len(_n5_a.store._all("SELECT id FROM users")) == 1,
         f"HTTP {_n5_reg.status_code}, create_user: {_n5_kein}")
-r.check("N-5: … ein anderer Topf bleibt frei („Emile“ ohne Akzent)",
+r.check("N-5: … a different bucket stays free ('Emile' without accent)",
         bool(_n5_a.create_user("Emile", password="Anderes-77!-lang-genug")))
 
 
@@ -2074,15 +2073,15 @@ def _n5_rate(a, app_, name):
             _cl.post("/auth/login", data={"username": name, "password": f"falsch-falsch-{next(_FALSCH)}"})
 
 
-# Bestand aus einem Stand vor dieser Prüfung: der Namensvetter liegt schon in der Datenbank.
+# Existing stock from a state before this check: the namesake is already in the database.
 _n5_b, _n5_bapp = _app(csrf_enabled=False)
 _n5_b.create_user("Özlem", password="Geheim12345!-lang", email="oezlem@example.com")
-# Rohes INSERT ohne Topf (fremder Schreiber): Seit G12c weist `store.create_user` den
-# Namensvetter selbst ab.
+# Raw INSERT without bucket (foreign writer): Since G12c `store.create_user` itself rejects the
+# namesake.
 _n5_platz = _n5_b.store._exec("INSERT INTO users(username, display_name, created_at) VALUES (?,?,?)",
                               ("özlem", "özlem", _store_mod.jetzt())).lastrowid
-# Eine Minute vor den Rateversuchen angelegt — sonst blieben sie schon als Versuche aus der
-# Anlage-Sekunde stehen, und die Probe mässe die Topf-Prüfung nicht.
+# Created a minute before the guess attempts — otherwise they would remain as attempts from the
+# creation second, and the probe would not measure the bucket check.
 _n5_b.store._exec("UPDATE users SET created_at=created_at-60 WHERE id=?", (_n5_platz,))
 _n5_b.store.set_disabled(_n5_platz, True)
 _n5_b.create_magic_token("verify_email", user_id=_n5_platz)
@@ -2099,15 +2098,15 @@ _n5_b.store._exec("UPDATE magic_token SET expires_at=1 WHERE purpose='verify_ema
 _n5_gc = _n5_b.gc()["unverified_accounts"]
 _n5_frisch = TestClient(_n5_bapp, client=("198.51.100.200", 1)).post(
     "/auth/login", data={"username": "Özlem", "password": "falsch"})
-r.check("N-5: gc() eines Namensvetters aus dem Bestand leert den Topf des verbleibenden Kontos nicht",
+r.check("N-5: gc() of a namesake from the existing stock does not empty the bucket of the remaining account",
         _n5_vor >= 15 and _n5_gc == 1 and _n5_topf(_n5_b, "özlem") == _n5_vor
         and _n5_frisch.status_code == 429,
-        f"vorher {_n5_vor}, gc={_n5_gc}, nachher {_n5_topf(_n5_b, 'özlem')}, "
-        f"nächster Versuch HTTP {_n5_frisch.status_code}")
+        f"before {_n5_vor}, gc={_n5_gc}, after {_n5_topf(_n5_b, 'özlem')}, "
+        f"next attempt HTTP {_n5_frisch.status_code}")
 
-# Und in die andere Richtung: Der Topf von `Émile` heisst `émile`, SQLite-`lower('Émile')`
-# ist `Émile`. Eine Löschung durch den Admin liess die Versuchszeilen deshalb liegen — die
-# Zusage von H-13 („deren Versuchszeilen werden gelöscht") galt nur für ASCII-Namen.
+# And in the other direction: The bucket of `Émile` is `émile`, SQLite `lower('Émile')`
+# is `Émile`. A deletion by the admin therefore left the attempt rows lying — the
+# promise of H-13 ("their attempt rows are deleted") applied only to ASCII names.
 _n5_c, _n5_capp = _app(csrf_enabled=False)
 _n5_c.create_user("chef", password="Geheim12345!-lang", is_admin=True)
 _n5_ae = _n5_c.create_user("Ärmel", password="Geheim12345!-lang")
@@ -2115,15 +2114,15 @@ _n5_c.store._exec("UPDATE users SET created_at=created_at-60 WHERE id=?", (_n5_a
 _n5_rate(_n5_c, _n5_capp, "Ärmel")
 _n5_cvor = _n5_topf(_n5_c, "ärmel")
 _n5_c.delete_user(_n5_ae)
-r.check("N-5: die Löschung eines Kontos mit Nicht-ASCII-Grossbuchstaben räumt auch seinen Zähl-Topf",
+r.check("N-5: deleting an account with non-ASCII capital letters also clears its counting bucket",
         _n5_cvor >= 15 and _n5_topf(_n5_c, "ärmel") == 0,
-        f"vorher {_n5_cvor}, nachher {_n5_topf(_n5_c, 'ärmel')}")
+        f"before {_n5_cvor}, after {_n5_topf(_n5_c, 'ärmel')}")
 
-# ── N-2: auch der GET mit Einladungs-Token hinterlässt eine Spur (B5-18) ──────────────────────
-# `/auth/register?invite=<t>` prüft den Token per peek und antwortet unterschiedlich (403/200
-# samt vorausgefüllter Adresse) — ohne Audit- und fail2ban-Zeile. /auth/invite/<t> und der POST
-# protokollieren; wer Einladungs-Token durchprobieren wollte, nahm den stillen Weg.
-# (Mutationsprobe: den `token_abgewiesen`-Aufruf in `register_page` streichen → rot.)
+# ── N-2: the GET with an invitation token also leaves a trace (B5-18) ──────────────────────
+# `/auth/register?invite=<t>` checks the token via peek and answers differently (403/200
+# including the prefilled address) — without audit and fail2ban line. /auth/invite/<t> and the POST
+# log; whoever wanted to probe invitation tokens took the silent path.
+# (Mutation probe: remove the `token_abgewiesen` call in `register_page` → red.)
 _n2_a, _n2_app = _app(allow_signup=True, signup_invite_only=True, magiclink_enabled=True,
                       csrf_enabled=False)
 _n2_a.set_mailer(lambda *x, **k: True)
@@ -2149,16 +2148,16 @@ try:
                  if z.startswith(_sec.LOG_PRUEFUNG) and "token_invite" in z]) - _n2_l0)
 finally:
     _sec.seclog.removeHandler(_n2_haken)
-r.check("N-2: GET /auth/register mit erfundenem Einladungs-Token → token_invalid + „failed verification“",
+r.check("N-2: GET /auth/register with an invented invitation token → token_invalid + 'failed verification'",
         _n2_erg.get("geraten") == (403, 1, 1), f"{_n2_erg}")
-r.check("N-2: … mit gültigem Token und ganz ohne Token dagegen keine Zeile",
+r.check("N-2: … with a valid token and without any token, by contrast, no row",
         _n2_erg.get("echt") == (200, 0, 0) and _n2_erg.get("ohne") == (403, 0, 0), f"{_n2_erg}")
 
-# ── N-3: die Passkey-ID der Selbstbedienung ist eine ganze Zahl — sonst 400 ──────────────────
-# Gefangen wurden nur TypeError/ValueError. `1e400`, `Infinity` und `-Infinity` macht json.loads
-# zu float('inf'), `int()` wirft OverflowError → HTTP 500. `true` las `int()` als Passkey 1 und
-# löschte ihn, `1.9` als Passkey 1.
-# (Mutationsprobe: in `passkey_delete` wieder `int(b.get("id"))` mit TypeError/ValueError → rot.)
+# ── N-3: the self-service passkey ID is an integer — otherwise 400 ──────────────────
+# Only TypeError/ValueError were caught. `1e400`, `Infinity` and `-Infinity` are turned by json.loads
+# into float('inf'), `int()` raises OverflowError → HTTP 500. `true` was read by `int()` as passkey 1 and
+# deleted it, `1.9` as passkey 1.
+# (Mutation probe: in `passkey_delete` again `int(b.get("id"))` with TypeError/ValueError → red.)
 if _ilu.find_spec("webauthn") is not None:
     _n3_a, _n3_app = _app(csrf_enabled=False, passkey_enabled=True, rp_id="localhost",
                           origin="http://localhost")
@@ -2176,39 +2175,39 @@ if _ilu.find_spec("webauthn") is not None:
                      '{"id": 99999999999999999999999999}'):
         _n3_status[_n3_body] = _n3_c.post("/auth/passkey/delete", content=_n3_body,
                                           headers={"content-type": "application/json"}).status_code
-    r.check("N-3: id aus 1e400/Infinity/true/Kommazahl/Hochzahl → 400, nichts gelöscht, kein Ereignis",
+    r.check("N-3: id from 1e400/Infinity/true/decimal/exponent → 400, nothing deleted, no event",
             all(s in (400, 404) for s in _n3_status.values())
             and all(_n3_status[b] == 400 for b in list(_n3_status)[:8])
             and len(_n3_a.store.list_webauthn(_n3_anna)) == 1 and _n3_ereig == [],
-            f"{_n3_status}, übrig {len(_n3_a.store.list_webauthn(_n3_anna))}, Hook {_n3_ereig}")
+            f"{_n3_status}, remaining {len(_n3_a.store.list_webauthn(_n3_anna))}, hook {_n3_ereig}")
     _n3_ok = _n3_c.post("/auth/passkey/delete", json={"id": str(_n3_pk)})
-    r.check("N-3: … eine ganze Zahl (auch als Ziffernfolge) löscht wie bisher",
+    r.check("N-3: … an integer (also as a digit string) deletes as before",
             _n3_ok.status_code == 200 and not _n3_a.store.list_webauthn(_n3_anna)
             and _n3_ereig == ["passkey_removed"], f"HTTP {_n3_ok.status_code}, Hook {_n3_ereig}")
 
-# ── N-8: der Löschweg-Wächter sieht auch Alias, getattr und rohes SQL ──────────────────────
-# `_ist_store` erkannte nur die wörtlichen Formen `auth.store.x`, `self.store.x`, `store.x`.
-# `st = self.store; st.delete_user(uid)` oder ein `DELETE FROM users` am Store vorbei blieben
-# grün — genau der „nächste neue Weg", gegen den der Wächter stehen soll. Jetzt umgekehrt: Ein
-# Aufruf von `delete_user` gilt als Store-Aufruf, solange sein Empfänger nicht nachweislich der
-# Manager ist (`auth`, `self` in TinySesam), und rohes SQL, das Konten oder Passkeys löscht
-# (auch mit einem Tabellennamen aus einer Variable), steht nur in den Store-Bausteinen.
-# Grenze, die der Wächter nicht sieht: ein Methodenname, der erst zur Laufzeit entsteht, und
-# SQL, dessen Schlüsselwort erst zur Laufzeit aus Bruchstücken entsteht (`"DEL" + "ETE FROM …"`).
-# (Mutationsproben: die Empfänger-Prüfung wieder auf `_ist_store` stellen → rot beim Alias;
-#  `_sql_ausserhalb` leer zurückgeben → rot beim SQL-Selbsttest.)
+# ── N-8: the deletion-path guard also sees alias, getattr and raw SQL ──────────────────────
+# `_ist_store` recognized only the literal forms `auth.store.x`, `self.store.x`, `store.x`.
+# `st = self.store; st.delete_user(uid)` or a `DELETE FROM users` past the store stayed
+# green — exactly the "next new path" that the guard is supposed to stand against. Now reversed: A
+# call of `delete_user` counts as a store call as long as its receiver is not demonstrably the
+# manager (`auth`, `self` in TinySesam), and raw SQL that deletes accounts or passkeys
+# (also with a table name from a variable) stands only in the store building blocks.
+# Limit that the guard does not see: a method name that arises only at runtime, and
+# SQL whose keyword arises only at runtime from fragments (`"DEL" + "ETE FROM …"`).
+# (Mutation probes: set the receiver check back to `_ist_store` → red at the alias;
+#  return `_sql_ausserhalb` empty → red at the SQL self-test.)
 #
-# S-4 (Schlussrunde): Die erste Fassung suchte nach `DELETE FROM` direkt den Tabellennamen oder
-# das String-Ende — das String-Ende passt nur beim Konstantenteil eines f-Strings. `'DELETE FROM
-# %s' % t`, `'DELETE FROM {}'.format('users')` und `DELETE FROM main.users` blieben grün.
-# Jetzt umgedreht: JEDES löschende SQL (`DELETE FROM`, `DROP TABLE`, `REPLACE INTO`) meldet sich,
-# es sei denn, danach steht der Name einer Tabelle, die kein Konto und keinen Passkey trägt
-# (aus `store.SCHEMA` gelesen, ohne `users`/`webauthn_cred`). Ein Platzhalter (`%s`, `{}`,
-# `{t}`, String-Ende), ein Schema-Präfix (`main.`), Anführungszeichen, ein SQL-Kommentar
-# dazwischen und ein unbekannter Name gelten als Konten-Tabelle bzw. als Name aus einer Variable.
-# (Mutationsproben: `_sql_loeschziele` wieder nur `users|webauthn_cred|$` erkennen lassen → rot
-#  beim Selbsttest „%-Format, .format(), Schema-Präfix“; ein zweiter Löschweg in `manager.py` mit
-#  genau diesen drei Schreibweisen → rot beim Wächter, drei Funde.)
+# S-4 (final round): The first version searched after `DELETE FROM` directly for the table name or
+# the end of the string — the end of the string fits only for the constant part of an f-string. `'DELETE FROM
+# %s' % t`, `'DELETE FROM {}'.format('users')` and `DELETE FROM main.users` stayed green.
+# Now reversed: EVERY deleting SQL (`DELETE FROM`, `DROP TABLE`, `REPLACE INTO`) reports itself,
+# unless a table name follows that carries neither account nor passkey
+# (read from `store.SCHEMA`, without `users`/`webauthn_cred`). A placeholder (`%s`, `{}`,
+# `{t}`, end of string), a schema prefix (`main.`), quotation marks, an SQL comment
+# in between and an unknown name count as the accounts table or as a name from a variable.
+# (Mutation probes: let `_sql_loeschziele` recognize only `users|webauthn_cred|$` again → red
+#  at the self-test "%-format, .format(), schema prefix"; a second deletion path in `manager.py` with
+#  exactly these three spellings → red at the guard, three findings.)
 from tinysesam import store as _store_s4  # noqa: E402
 
 _SQL_KOMMENTAR = re.compile(r"/\*.*?\*/|--[^\n]*", re.S)
@@ -2221,9 +2220,9 @@ _SQL_HARMLOS = frozenset(re.findall(r"CREATE TABLE IF NOT EXISTS (\w+)", _store_
 
 
 def _sql_loeschziele(text: str) -> list:
-    """Die Tabellen, aus denen `text` löscht und die NICHT bekannt harmlos sind: `users`,
-    `webauthn_cred`, oder `""` für einen Namen, der erst zur Laufzeit feststeht (Platzhalter,
-    unbekannter Name)."""
+    """The tables from which `text` deletes and which are NOT known to be harmless: `users`,
+    `webauthn_cred`, or `""` for a name that is only fixed at runtime (placeholder,
+    unknown name)."""
     aus = []
     for treffer in _SQL_LOESCHT.finditer(_SQL_KOMMENTAR.sub(" ", text)):
         ziel = treffer.group("ziel") or ""
@@ -2235,14 +2234,14 @@ def _sql_loeschziele(text: str) -> list:
 
 
 def _ist_manager(knoten, klasse) -> bool:
-    """`auth.x`, `self.auth.x` und in TinySesam `self.x` — der Manager, nicht der Store."""
+    """`auth.x`, `self.auth.x` and in TinySesam `self.x` — the manager, not the store."""
     return ((isinstance(knoten, _ast.Name) and knoten.id == "auth")
             or (isinstance(knoten, _ast.Attribute) and knoten.attr == "auth")
             or (isinstance(knoten, _ast.Name) and knoten.id == "self" and klasse == "TinySesam"))
 
 
 def _getattr_ausserhalb(methode, erlaubt, quellen=None) -> list:
-    """`getattr(x, "<methode>")` ausserhalb von `erlaubt` — der Umweg um jede Empfänger-Prüfung."""
+    """`getattr(x, "<methode>")` outside `erlaubt` — the detour around every receiver check."""
     funde = []
     for name, text in (quellen if quellen is not None else _quelltexte()):
         for pfad, knoten, k, f in _knoten_mit_ort(name, text):
@@ -2255,10 +2254,10 @@ def _getattr_ausserhalb(methode, erlaubt, quellen=None) -> list:
 
 
 def _sql_ausserhalb(erlaubt: dict, quellen=None) -> list:
-    """Rohes SQL, das Konten/Passkeys löschen kann (`_sql_loeschziele`: jede löschende
-    Anweisung, deren Tabelle nicht bekannt harmlos ist), ausserhalb der erlaubten Stellen.
-    `erlaubt` ordnet der Tabelle (`""` = Name aus einer Variable) die Paare (Klasse, Funktion)
-    zu. Docstrings zählen nicht."""
+    """Raw SQL that can delete accounts/passkeys (`_sql_loeschziele`: every deleting
+    statement whose table is not known to be harmless), outside the permitted places.
+    `erlaubt` assigns to the table (`""` = name from a variable) the pairs (class, function).
+    Docstrings do not count."""
     funde = []
     for name, text in (quellen if quellen is not None else _quelltexte()):
         for pfad, knoten, k, f in _knoten_mit_ort(name, text):
@@ -2277,7 +2276,7 @@ def _quelltexte():
 
 
 def _knoten_mit_ort(name, text):
-    """Jeder AST-Knoten mit (Datei, Knoten, innerste Klasse, innerste Funktion); Docstrings markiert."""
+    """Every AST node with (file, node, innermost class, innermost function); docstrings marked."""
     baum = _ast.parse(text)
     for traeger in _ast.walk(baum):
         if isinstance(traeger, (_ast.Module, _ast.ClassDef, _ast.FunctionDef, _ast.AsyncFunctionDef)):
@@ -2325,16 +2324,16 @@ for _n8_art, _n8_text in _N8_PROBEN.items():
         or _sql_ausserhalb(_N8_ERLAUBT_SQL, _n8_q))
 _n8_harmlos = [("probe.py", "def route(auth, uid):\n    '''DELETE FROM users steht nur im Docstring'''\n"
                             "    auth.delete_user(uid)\n")]
-r.check("N-8 (Wächter-Selbsttest): Alias, fremdes Attribut, getattr und rohes SQL schlagen an",
+r.check("N-8 (guard self-test): alias, foreign attribute, getattr and raw SQL trigger",
         all(_n8_selbst.values()), f"{_n8_selbst}")
-r.check("N-8 (Wächter-Selbsttest): … der Manager-Aufruf und ein Docstring nicht",
+r.check("N-8 (guard self-test): … the manager call and a docstring do not",
         not (_aufrufe_ausserhalb("delete_user", _nicht_manager, {("Store", "konto_entfernen")}, _n8_harmlos)
              or _sql_ausserhalb(_N8_ERLAUBT_SQL, _n8_harmlos)))
 
-# S-4: die Schreibweisen, an denen die erste Fassung vorbeisah — jede allein gegen die SQL-Prüfung
-# (die Aufruf-Prüfungen sähen `_exec`/`execute` ohnehin nicht). Dazu Gegenproben: löschendes SQL
-# auf einer harmlosen Tabelle, auch mit Schema-Präfix, bleibt still — sonst meldet der Wächter
-# jede Sitzungsbereinigung, und am Ende liest ihn niemand mehr.
+# S-4: the spellings the first version overlooked — each alone against the SQL check
+# (the call checks would not see `_exec`/`execute` anyway). Plus counter-checks: deleting SQL
+# on a harmless table, also with a schema prefix, stays silent — otherwise the guard reports
+# every session cleanup, and in the end nobody reads it any more.
 _S4_PROBEN = {
     "%-Format": "class TinySesam:\n    def w(self, t, uid):\n        self.store._exec('DELETE FROM %s WHERE id=?' % t, (uid,))\n",
     ".format()": "class TinySesam:\n    def w(self, uid):\n        self.store._exec('DELETE FROM {} WHERE id=?'.format('users'), (uid,))\n",
@@ -2348,30 +2347,30 @@ _S4_PROBEN = {
 }
 _s4_selbst = {art: bool(_sql_ausserhalb(_N8_ERLAUBT_SQL, [("probe.py", text)]))
               for art, text in _S4_PROBEN.items()}
-r.check("S-4 (Wächter-Selbsttest): %-Format, .format(), Schema-Präfix, Kommentar, Verkettung, "
-        "DROP TABLE und REPLACE INTO schlagen an",
+r.check("S-4 (guard self-test): %-format, .format(), schema prefix, comment, concatenation, "
+        "DROP TABLE and REPLACE INTO trigger",
         all(_s4_selbst.values()), f"{_s4_selbst}")
 _s4_harmlos = [("probe.py", "def w(db):\n    db.execute('DELETE FROM session WHERE user_id=?', (1,))\n"
                             "    db.execute('DELETE FROM main.login_attempt WHERE ts < 1')\n"
                             "    db.execute('DELETE FROM \"magic_token\" WHERE used_at IS NOT NULL')\n")]
-r.check("S-4 (Wächter-Selbsttest): … löschendes SQL auf Sitzungen, Versuchen und Token nicht",
+r.check("S-4 (guard self-test): … deleting SQL on sessions, attempts and tokens does not",
         not _sql_ausserhalb(_N8_ERLAUBT_SQL, _s4_harmlos) and len(_SQL_HARMLOS) >= 10,
-        f"{_sql_ausserhalb(_N8_ERLAUBT_SQL, _s4_harmlos)}, harmlos: {sorted(_SQL_HARMLOS)}")
+        f"{_sql_ausserhalb(_N8_ERLAUBT_SQL, _s4_harmlos)}, harmless: {sorted(_SQL_HARMLOS)}")
 _n8_funde = (_aufrufe_ausserhalb("delete_user", _nicht_manager, {("Store", "konto_entfernen")})
              + _aufrufe_ausserhalb("delete_webauthn", lambda k, c: True, {("TinySesam", "remove_passkey")})
              + _getattr_ausserhalb("delete_user", set()) + _getattr_ausserhalb("delete_webauthn", set())
              + _sql_ausserhalb(_N8_ERLAUBT_SQL))
-r.check("N-8 (Wächter): Konten und Passkeys löschen nur die Bausteine — auch nicht per Alias oder SQL",
+r.check("N-8 (guard): only the building blocks delete accounts and passkeys — not via alias or SQL either",
         not _n8_funde, f"{_n8_funde}")
 
-# ── G4: die Detailsuche beim Anonymisieren hält die Schreibsperre nicht über die ganze Suche ─────
-# Die Suche im Detailtext (`instr`) grenzt kein Index ein; bei einer unbefristeten Adresse (Löschen
-# durch einen Admin) liest sie das ganze Audit-Log. Bis 2026-09-26 tat sie das in EINER
-# Schreibtransaktion unter `_lock` — jede Anmeldung, jeder Audit-Eintrag und jeder andere Worker
-# wartete die ganze Suche ab. Gemessen wird nicht die Uhr, sondern der Ablauf: Ein Schloss, das bei
-# jeder Freigabe einen parallelen Schreiber vorlässt — über dieselbe Instanz (anderer Thread im
-# selben Worker) UND über eine zweite Verbindung ohne Wartezeit (anderer Worker, `timeout=0`; sie
-# scheitert sofort, solange eine Schreibtransaktion offen ist).
+# ── G4: the detail search during anonymization does not hold the write lock over the whole search ─────
+# No index narrows the search in the detail text (`instr`); with an unlimited address (deletion
+# by an admin) it reads the whole audit log. Until 2026-09-26 it did so in ONE
+# write transaction under `_lock` — every sign-in, every audit entry and every other worker
+# waited out the whole search. What is measured is not the clock but the sequence: A lock that lets a
+# parallel writer in at every release — via the same instance (another thread in the
+# same worker) AND via a second connection without wait time (another worker, `timeout=0`; it
+# fails immediately as long as a write transaction is open).
 auth_g4, _ = _app()
 st4 = auth_g4.store
 _G4_ZEILEN = 120_000
@@ -2387,7 +2386,7 @@ _g4_treffer = st4._one("SELECT count(*) AS n FROM audit WHERE instr(detail, 'g4o
 
 
 class _G4Schloss:
-    """`Store._lock` mit Haken: Nach jeder Freigabe schreibt ein paralleler Schreiber."""
+    """`Store._lock` with a hook: After every release, a parallel writer writes."""
 
     def __init__(self, echt):
         self.echt, self.freigaben, self.haken, self._im_haken = echt, 0, None, False
@@ -2413,18 +2412,18 @@ _g4_mess = {"intern": 0, "zweite_verbindung": 0, "gesperrt": 0, "block_gelesen":
 
 
 def _g4_parallel():
-    st4.audit_log("g4_parallel", "fremd", None, "intern")            # derselbe Worker, anderer Thread
+    st4.audit_log("g4_parallel", "fremd", None, "intern")            # the same worker, another thread
     _g4_mess["intern"] += 1
     try:
-        _g4_fremd.execute("BEGIN IMMEDIATE")                          # anderer Worker, ohne zu warten
+        _g4_fremd.execute("BEGIN IMMEDIATE")                          # another worker, without waiting
         _g4_fremd.execute("INSERT INTO audit(ts, event, username, detail) VALUES (?,?,?,?)",
                           (int(_t.time()), "g4_parallel", "fremd", "zweite_verbindung"))
         _g4_fremd.execute("COMMIT")
         _g4_mess["zweite_verbindung"] += 1
     except sqlite3.OperationalError:
         _g4_mess["gesperrt"] += 1
-    # Zwischen Lesen und Schreiben eines Blocks ändert ein anderer die erste Trefferzeile: Das
-    # Schreiben muss die frische Zeile nehmen, nicht den gelesenen Stand.
+    # Between reading and writing a block, another one changes the first hit row: The
+    # write must take the fresh row, not the state that was read.
     if _g4_mess["block_gelesen"] and not _g4_mess["nachgetragen"]:
         _g4_fremd.execute("UPDATE audit SET detail = detail || ' nachtrag=1' WHERE id = ?", (_g4_erste,))
         _g4_mess["nachgetragen"] = True
@@ -2433,7 +2432,7 @@ def _g4_parallel():
 
 
 def _g4_spur(sql):
-    if "instr(lower(detail)" in sql:        # ein Block der Detailsuche (Parameter eingesetzt)
+    if "instr(lower(detail)" in sql:        # a block of the detail search (parameters substituted)
         _g4_mess["block_gelesen"] = True
         _g4_mess["block_sql"] = _g4_mess["block_sql"] or sql
 
@@ -2450,37 +2449,37 @@ finally:
     st4._lock = _g4_schloss.echt
     st4.db.set_trace_callback(None)
     _g4_fremd.close()
-# Mindestens 20 Freigaben bei 120 000 Zeilen: höchstens 6000 Zeilen unter einer Sperre. Fest, nicht
-# aus `_ANONYM_BLOCK` gerechnet — sonst ginge die Grenze mit, wenn jemand den Block vergrössert.
+# At least 20 releases with 120 000 rows: at most 6000 rows under one lock. Fixed, not
+# computed from `_ANONYM_BLOCK` — otherwise the limit would move along if someone enlarges the block.
 _g4_bloecke = 20
-r.check(f"G4: {_G4_ZEILEN} Zeilen — die Suche gibt die Schreibsperre zwischen den Blöcken frei, und "
-        "parallele Schreiber kommen durch (derselbe Worker und ein zweiter ohne Wartezeit)",
+r.check(f"G4: {_G4_ZEILEN} rows — the search releases the write lock between the blocks, and "
+        "parallel writers get through (the same worker and a second one without wait time)",
         _g4_schloss.freigaben >= _g4_bloecke and _g4_mess["intern"] >= _g4_bloecke
         and _g4_mess["zweite_verbindung"] >= _g4_bloecke and _g4_mess["gesperrt"] == 0,
-        f"{_g4_schloss.freigaben} Freigaben, {_g4_mess} bei {_g4_bloecke} Blöcken")
+        f"{_g4_schloss.freigaben} releases, {_g4_mess} with {_g4_bloecke} blocks")
 _g4_rest = st4._one("SELECT count(*) AS n FROM audit WHERE instr(detail, 'g4opfer') > 0")["n"]
 _g4_ersetzt = st4._one("SELECT count(*) AS n FROM audit WHERE instr(detail, 'gelöscht#77') > 0")["n"]
-r.check("… und ersetzt trotzdem jeden Treffer im Detailtext (Name als akteur=, Adresse überall)",
+r.check("… and still replaces every hit in the detail text (name as akteur=, address everywhere)",
         _g4_treffer > 150 and _g4_rest == 0 and _g4_ersetzt == _g4_treffer,
-        f"vorher {_g4_treffer}, übrig {_g4_rest}, ersetzt {_g4_ersetzt}")
-r.check("… und nimmt beim Schreiben die frische Zeile (ein Nachtrag dazwischen geht nicht verloren)",
+        f"before {_g4_treffer}, remaining {_g4_rest}, replaced {_g4_ersetzt}")
+r.check("… and takes the fresh row when writing (an addition in between is not lost)",
         _g4_mess["nachgetragen"] and st4._one("SELECT detail FROM audit WHERE id=?", (_g4_erste,))["detail"]
         == "key=1 akteur=gelöscht#77 nachtrag=1",
         str(dict(st4._one("SELECT detail FROM audit WHERE id=?", (_g4_erste,)))))
-r.check("… die Zeilen der parallelen Schreiber bleiben, wie sie waren",
+r.check("… the rows of the parallel writers stay as they were",
         st4._one("SELECT count(*) AS n FROM audit WHERE event='g4_parallel' AND username='fremd' "
                  "AND detail IN ('intern', 'zweite_verbindung')")["n"]
         == _g4_mess["intern"] + _g4_mess["zweite_verbindung"])
-# Und die Suche bleibt linear: Ein Block wird über den Primärschlüssel gelesen (der Plan der
-# Anweisung, wie sie lief), nicht über einen Index auf `ts` — sonst läse jeder Block alles ab `seit`.
+# And the search stays linear: A block is read via the primary key (the plan of the
+# statement as it ran), not via an index on `ts` — otherwise every block would read everything from `seit`.
 _g4_plan = [str(tuple(z)) for z in st4.db.execute("EXPLAIN QUERY PLAN " + _g4_mess["block_sql"]).fetchall()] \
     if _g4_mess["block_sql"] else []
-r.check("G4: ein Block liest über den Primärschlüssel (id-Bereich), nicht über einen Index auf ts",
+r.check("G4: a block reads via the primary key (id range), not via an index on ts",
         len(_g4_plan) == 1 and "INTEGER PRIMARY KEY (rowid>? AND rowid<?)" in _g4_plan[0], str(_g4_plan))
 
 def _g4_schritte_beim_entfernen(name, bestand):
     uid = auth_g4.create_user(name, password="Geheim-G4-Pw15!")
-    if bestand:   # Konto aus der Zeit vor G2: keine Wasserlinie, es gilt die Anlage (`seit`)
+    if bestand:   # account from the time before G2: no watermark, the creation (`seit`) applies
         st4._exec("UPDATE users SET name_audit_ab = NULL, name_versuch_ab = NULL WHERE id = ?", (uid,))
     st4.audit_log("apikey_create", "chef", None, f"key=2 akteur={name}")
     zaehler = [0]
@@ -2499,19 +2498,19 @@ def _g4_schritte_beim_entfernen(name, bestand):
 
 _g4_jung = {"Wasserlinie": _g4_schritte_beim_entfernen("g4jung", False),
             "Bestand (seit)": _g4_schritte_beim_entfernen("g4bestand", True)}
-r.check("G4: ein junges Konto liest nicht das ganze Log — mit Wasserlinie und im Bestand ab `seit`",
+r.check("G4: a young account does not read the whole log — with watermark and in existing stock from `seit`",
         all(n < 60 and rest == 0 for n, rest in _g4_jung.values()),
-        f"{_g4_jung} (× 1000 SQLite-Schritte, Zeilen übrig) bei {_G4_ZEILEN} Zeilen")
-# (Mutationsproben, einzeln gefahren: `_ANONYM_BLOCK` auf 10**9 → die erste Prüfung rot
-#  (eine Freigabe statt einer je Block); die Zeile beim Schreiben nicht frisch lesen, sondern den
-#  gelesenen Stand nehmen → „frische Zeile“ rot; `id + 0` → `id` (der Beginn ab `seit` läuft dann
-#  die Tabelle von vorn entlang) → „junges Konto“ rot; den Beginn ganz ignorieren → ebenso; den id-Bereich des Blocks am Primärschlüssel vorbei schreiben (`+id`) →
-#  „über den Primärschlüssel“ rot; die alte Fassung (eine Schreibtransaktion) → die ersten drei rot.)
+        f"{_g4_jung} (× 1000 SQLite steps, rows remaining) with {_G4_ZEILEN} rows")
+# (Mutation probes, run individually: `_ANONYM_BLOCK` to 10**9 → the first check red
+#  (one release instead of one per block); do not read the row fresh when writing, but take the
+#  state that was read → "fresh row" red; `id + 0` → `id` (the start from `seit` then runs
+#  along the table from the beginning) → "young account" red; ignore the start entirely → likewise; write the id range of the block past the primary key (`+id`) →
+#  "via the primary key" red; the old version (one write transaction) → the first three red.)
 
 
-# ── F4 (Prüfrunde Sperren/Zähler 2026-09-27): was die Löschzusage H-13 noch ausliess ───────────────
-# Schon auf main so: Nach dem Löschen standen eingetippte Schreibweisen (4a), frühere Namen und
-# Adressen (4b) und die Werte in den eigenen Zeilen (4c) weiter im Audit-Log.
+# ── F4 (review round locks/counters 2026-09-27): what the deletion promise H-13 still left out ───────────────
+# Already so on main: After deletion, typed-in spellings (4a), earlier names and
+# addresses (4b) and the values in the own rows (4c) still stood in the audit log.
 _F4_PW = "Loesch-Pw-15xy"
 
 
@@ -2526,7 +2525,7 @@ def _f4_app():
 
 
 def _f4_rest(a, *spuren):
-    """Alle Audit-Zeilen, in denen eine der Spuren (casefold) noch in Name oder Detail steht."""
+    """All audit rows in which one of the traces (casefold) still appears in name or detail."""
     aus = []
     for z in a.store._all("SELECT id, event, username, detail FROM audit ORDER BY id"):
         text = f"{z['username'] or ''} {z['detail'] or ''}".casefold()
@@ -2535,7 +2534,7 @@ def _f4_rest(a, *spuren):
     return aus
 
 
-# 4a: `login_fail` schreibt die ROHE Eingabe; gezählt wird im Topf (strip, NFKC, lower).
+# 4a: `login_fail` writes the RAW input; counting happens in the bucket (strip, NFKC, lower).
 _f4a, _f4a_app, _ = _f4_app()
 _f4a_uid = _f4a.create_user("Émile", password=_F4_PW, email="emile@example.com")
 _f4a_c = TestClient(_f4a_app, client=("192.0.2.9", 4000))
@@ -2544,23 +2543,23 @@ for _eingabe in ("Émile", "émile", "Émile ", " emile@example.com", "ＥＭＩ
 _f4a_vor = len(_f4_rest(_f4a, "émile", "emile@", "ｅｍｉｌｅ"))
 _f4a.delete_user(_f4a_uid)
 _f4a_rest = _f4_rest(_f4a, "émile", "emile@", "ｅｍｉｌｅ")
-# (Mutationsprobe: den Vergleich im Topf aus dem Blockscan nehmen (`auch_name` leer, `name_trifft`
-#  immer falsch) → vier Zeilen bleiben → rot.)
-r.check("F4a: jede eingetippte Schreibweise (Leerraum, Akzent-Grossbuchstabe, Vollbreite) ist nach dem "
-        "Löschen aus dem Audit-Log", _f4a_vor >= 6 and _f4a_rest == [], f"vorher {_f4a_vor}, übrig {_f4a_rest}")
-# Gegenprobe: Teilt ein VERBLEIBENDES Konto den Topf (Namensvetter aus dem Bestand, rohes INSERT),
-# bleibt eine gefaltete Schreibweise stehen — sie kann ihm gehören (wie bei `delete_attempts_for`).
+# (Mutation probe: take the comparison in the bucket out of the block scan (`auch_name` empty, `name_trifft`
+#  always false) → four rows remain → red.)
+r.check("F4a: every typed spelling (whitespace, accented capital, full width) is out of the audit log after "
+        "deletion", _f4a_vor >= 6 and _f4a_rest == [], f"before {_f4a_vor}, remaining {_f4a_rest}")
+# Counter-check: If a REMAINING account shares the bucket (namesake from the existing stock, raw INSERT),
+# a folded spelling stays — it may belong to it (as with `delete_attempts_for`).
 _f4n, _f4n_app, _ = _f4_app()
 _f4n.create_user("Karl", password=_F4_PW)
 _f4n_platz = _f4n.store._exec("INSERT INTO users(username, display_name, created_at) VALUES (?,?,?)",
                               ("karl", "karl", _store_mod.jetzt() - 60)).lastrowid
 TestClient(_f4n_app, client=("192.0.2.10", 1)).post("/auth/login", data={"username": " KARL ", "password": "x"})
 _f4n.delete_user(_f4n_platz)
-r.check("… ein Topf, den ein verbleibendes Konto teilt, wird nicht gefaltet verglichen (Gegenprobe)",
+r.check("… a bucket shared by a remaining account is not compared folded (counter-check)",
         [z for z in _f4_rest(_f4n, " KARL ") if z[0] == "login_fail"] != [],
         str(_f4_rest(_f4n, "karl")))
 
-# 4b: frühere Namen und Adressen desselben Kontos — umbenannt, Adresse gewechselt, dann gelöscht.
+# 4b: earlier names and addresses of the same account — renamed, address changed, then deleted.
 _f4b, _f4b_app, _f4b_post = _f4_app()
 _f4b_uid = _f4b.create_user("bob", password=_F4_PW, email="bob.alt@example.com")
 _f4b_c = TestClient(_f4b_app, client=("192.0.2.11", 1))
@@ -2571,7 +2570,7 @@ _f4b.request_email_change(_f4b_uid, "robert@example.com", "http://testserver")()
 _f4b_link = [t for an, t in _f4b_post if an == "robert@example.com"]
 _f4b_raw = re.search(r"https?://\S+/([A-Za-z0-9_-]{20,})", _f4b_link[-1]).group(1) if _f4b_link else ""
 _f4b_ok = _f4b.confirm_email_change(_f4b_raw)
-# Danach übernimmt jemand den freien Namen und die freie Adresse — dessen Zeilen gehören nicht zum Konto.
+# Afterwards someone takes over the free name and the free address — their rows do not belong to the account.
 _f4b_grenze = _f4b.store._one("SELECT max(id) AS m FROM audit")["m"]
 _f4b.create_user("bob", password=_F4_PW, email="bob.alt@example.com")
 TestClient(_f4b_app, client=("192.0.2.12", 1)).post("/auth/login", data={"username": "bob", "password": _F4_PW},
@@ -2582,31 +2581,31 @@ _f4b_rest = [z for z in _f4b.store._all("SELECT id, event, username, ip, detail 
              if z["username"] == "bob" or any(s in f"{z['username']} {z['detail']}".casefold()
                                                for s in ("robert", "bob.alt@", "alt=bob"))]
 _f4b_spaeter = _f4b.store._all("SELECT event, ip FROM audit WHERE id > ? AND username = 'bob'", (_f4b_grenze,))
-# (Mutationsprobe: `_fruehere_kennungen` gibt [] zurück → die Anmeldung unter `bob` samt IP und der
-#  Fehlversuch unter der alten Adresse bleiben → rot.)
-r.check("F4b: frühere Namen und Adressen — umbenannt, Adresse gewechselt, gelöscht: keine Spur mehr",
-        _f4b_ok == "ok" and _f4b_rest == [], f"{_f4b_ok}, übrig {[dict(z) for z in _f4b_rest]}")
-r.check("… nur in ihrer Spanne: die Zeilen des späteren Trägers von Name und Adresse bleiben (Gegenprobe)",
+# (Mutation probe: `_fruehere_kennungen` returns [] → the sign-in under `bob` including IP and the
+#  failed attempt under the old address remain → red.)
+r.check("F4b: earlier names and addresses — renamed, address changed, deleted: no trace any more",
+        _f4b_ok == "ok" and _f4b_rest == [], f"{_f4b_ok}, remaining {[dict(z) for z in _f4b_rest]}")
+r.check("… only in their span: the rows of the later holder of name and address stay (counter-check)",
         any(z["event"] == "login" and z["ip"] == "192.0.2.12" for z in _f4b_spaeter),
         str([dict(z) for z in _f4b_spaeter]))
 
-# 4c: die Werte in den eigenen Zeilen — ein nie eingelöster Adresswechsel (`neu=`), die Adresse aus
-# LDAP/SAML (`an=`, wie `_adresse_aus_quelle_belegen` sie schreibt), der alte Name (`alt=`).
+# 4c: the values in the own rows — a never redeemed address change (`neu=`), the address from
+# LDAP/SAML (`an=`, as `_adresse_aus_quelle_belegen` writes it), the old name (`alt=`).
 _f4c, _f4c_app, _ = _f4_app()
 _f4c_uid = _f4c.create_user("carla", password=_F4_PW, email="carla@example.com")
 _f4c.request_email_change(_f4c_uid, "carla.neu@example.com", "http://testserver")()
 _f4c.audit("federation_email_confirm", "carla", None, f"konto={_f4c_uid} quelle=ldap an=carla.ldap@example.com")
 _f4c.audit("username_changed", "carla", None, "alt=frueher-carla durch=betreiber akteur=root")
-_f4c.audit("email_change_requested", "root", None, "neu=root.neu@example.com")      # fremde Zeile
+_f4c.audit("email_change_requested", "root", None, "neu=root.neu@example.com")      # foreign row
 _f4c.delete_user(_f4c_uid)
 _f4c_eigen = [z["detail"] for z in _f4c.store._all("SELECT detail FROM audit WHERE username=?",
                                                     (f"gelöscht#{_f4c_uid}",))]
-# (Mutationsprobe: `_eigene_werte_ersetzen` abschalten → `neu=carla.neu@…`, `an=…`, `alt=…` bleiben → rot.)
-r.check("F4c: in den eigenen Zeilen sind `neu=`, `an=` und `alt=` ersetzt",
+# (Mutation probe: switch off `_eigene_werte_ersetzen` → `neu=carla.neu@…`, `an=…`, `alt=…` remain → red.)
+r.check("F4c: in the own rows `neu=`, `an=` and `alt=` are replaced",
         _f4_rest(_f4c, "carla") == [] and any("neu=gelöscht#" in d for d in _f4c_eigen)
         and any("an=gelöscht#" in d for d in _f4c_eigen) and any("alt=gelöscht#" in d for d in _f4c_eigen),
         f"{_f4_rest(_f4c, 'carla')} {_f4c_eigen}")
-r.check("… `akteur=` in den eigenen Zeilen und die Werte in fremden Zeilen bleiben (Gegenprobe)",
+r.check("… `akteur=` in the own rows and the values in foreign rows stay (counter-check)",
         any("akteur=root" in d for d in _f4c_eigen)
         and bool(_f4c.store._one("SELECT 1 AS x FROM audit WHERE username='root' AND detail='neu=root.neu@example.com'")),
         str(_f4c_eigen))

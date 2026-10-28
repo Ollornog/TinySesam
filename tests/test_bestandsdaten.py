@@ -1,11 +1,11 @@
-"""Was beim UPGRADE einer bestehenden Installation passiert — und was nicht passieren darf.
+"""What happens on an UPGRADE of an existing installation — and what must not happen.
 
-Der Doku-Abgleich vom 2026-09-21 hat sieben Stellen gefunden, an denen die Doku etwas anderes
-sagte als der Code. Fünf davon waren keine Schreibfehler, sondern echte Mängel; diese Suite hält
-sie fest, damit sie nicht zurückkommen. Der schwerste: die Anhebung der scrypt-Parameter in
-0.18.0 hätte jedes Konto ausgesperrt, das ohne das Extra `[argon2]` läuft.
+The docs cross-check of 2026-09-21 found seven places where the docs said something different
+from the code. Five of them were not typos but real defects; this suite pins
+them down so they do not come back. The worst: raising the scrypt parameters in
+0.18.0 would have locked out every account running without the `[argon2]` extra.
 
-Alle Prüfungen kommen ohne Extras aus.
+All checks work without extras.
 """
 from __future__ import annotations
 
@@ -44,13 +44,13 @@ def frisch(**cfg) -> tuple[TinySesam, str]:
     return TinySesam(TinySesamConfig(**kw)), db
 
 
-# ---------------------------------------------------------------- scrypt-Bestandshashes
-# Bis 0.17.0 lautete das Format `scrypt$salt$dk` und es trug seine Parameter NICHT mit; gerechnet
-# wurde mit n=2^15, r=8, p=1. 0.18.0 hob p auf 3 — und `verify_password` rechnete jeden Altbestand
-# mit dem neuen p nach. Ergebnis wäre "Passwort stimmt nicht" für jedes Konto ohne `[argon2]`
-# gewesen, ohne eine einzige Fehlermeldung, die den Grund nennt.
+# ---------------------------------------------------------------- existing scrypt hashes
+# Up to 0.17.0 the format was `scrypt$salt$dk` and it did NOT carry its parameters; hashing
+# used n=2^15, r=8, p=1. 0.18.0 raised p to 3 — and `verify_password` recomputed every old
+# hash with the new p. The result would have been "wrong password" for every account without `[argon2]`,
+# without a single error message naming the reason.
 def alt_hash(pw: str) -> str:
-    """Einen Hash im Format von 0.17.0 erzeugen (p=1, ohne Parameter im String)."""
+    """Create a hash in the 0.17.0 format (p=1, without parameters in the string)."""
     salt = os.urandom(16)
     dk = hashlib.scrypt(pw.encode(), salt=salt, n=2 ** 15, r=8, p=1, dklen=32,
                         maxmem=132 * 1024 * 1024)
@@ -58,47 +58,47 @@ def alt_hash(pw: str) -> str:
 
 
 bestand = alt_hash("geheim123")
-r.check("Bestandshash aus 0.17.0 verifiziert weiter",
+r.check("existing hash from 0.17.0 still verifies",
         passwords.verify_password("geheim123", bestand),
-        "die Parameter-Anhebung sperrt alle scrypt-Konten aus")
-r.check("… und ein falsches Passwort dagegen nicht",
+        "the parameter increase locks out all scrypt accounts")
+r.check("… and a wrong password, on the other hand, does not",
         not passwords.verify_password("falsch", bestand))
-r.check("Bestandshash gilt als erneuerungsbedürftig",
+r.check("existing hash counts as needing renewal",
         passwords.needs_rehash(bestand),
-        "sonst bleibt das Konto für immer auf den schwächeren Parametern")
+        "otherwise the account stays on the weaker parameters forever")
 
 neu = "scrypt$%d$%d$%d$%s$%s" % (
     passwords._SCRYPT["n"], passwords._SCRYPT["r"], passwords._SCRYPT["p"],
     base64.b64encode(b"0123456789abcdef").decode(),
     base64.b64encode(hashlib.scrypt(b"geheim123", salt=b"0123456789abcdef",
                                     **passwords._SCRYPT)).decode())
-r.check("Hash im heutigen Format verifiziert", passwords.verify_password("geheim123", neu))
+r.check("hash in today's format verifies", passwords.verify_password("geheim123", neu))
 if not passwords._ARGON:
-    # Ohne argon2 erzeugt hash_password selbst scrypt — dann muss das neue Format herauskommen
-    # und darf nicht sofort wieder als veraltet gelten.
+    # Without argon2 hash_password itself produces scrypt — then the new format must come out
+    # and must not immediately count as outdated again.
     eigen = passwords.hash_password("geheim123")
-    r.check("selbst erzeugter Hash trägt seine Parameter", eigen.count("$") == 5, eigen[:24])
-    r.check("… und gilt nicht als erneuerungsbedürftig", not passwords.needs_rehash(eigen))
+    r.check("self-generated hash carries its parameters", eigen.count("$") == 5, eigen[:24])
+    r.check("… and does not count as needing renewal", not passwords.needs_rehash(eigen))
 else:
-    r.check("ohne argon2 trägt ein neuer Hash 5 Trenner",
+    r.check("without argon2 a new hash carries 5 separators",
             passwords.hash_password.__module__ == "tinysesam.passwords")
 
-# Und der Weg, der im Betrieb zählt: Ein Konto, dessen Hash aus 0.17.0 stammt, meldet sich an.
+# And the path that counts in operation: an account whose hash comes from 0.17.0 signs in.
 auth, db = frisch()
 uid = auth.create_user("bestand", password="geheim123")
 auth.store.set_password_hash(uid, bestand)
-r.check("Anmeldung mit 0.17.0-Hash gelingt", bool(auth._check_password("bestand", "geheim123")),
-        "der Login-Pfad rechnet anders als verify_password")
+r.check("sign-in with a 0.17.0 hash succeeds", bool(auth._check_password("bestand", "geheim123")),
+        "the login path computes differently from verify_password")
 
-# ---------------------------------------------------------------- Migration einer Altdatei
-# `resource_unlock.token` trägt seit 0.18.0 den sha256 statt des Klartexts. Die Bereinigung hing
-# an `0 < PRAGMA user_version < 4` — und `user_version` kam selbst erst mit 0.18.0, eine Datei aus
-# 0.17.0 trägt dort die 0. Die Bedingung war also in genau dem Fall falsch, für den sie geschrieben
-# war: Der Klartext wäre liegengeblieben und hätte nie wieder gematcht.
+# ---------------------------------------------------------------- migration of an old file
+# Since 0.18.0 `resource_unlock.token` carries the sha256 instead of the plain text. The cleanup depended
+# on `0 < PRAGMA user_version < 4` — and `user_version` itself only arrived with 0.18.0, a file from
+# 0.17.0 has a 0 there. So the condition was wrong in exactly the case it was written for:
+# the plain text would have been left behind and never matched again.
 alt_db = os.path.join(tempfile.mkdtemp(), "alt.db")
 auth0, _ = frisch(db_path=alt_db, resource_locks_enabled=True)
 auth0.store.add_resource_unlock("klartext-token", "akte-7", 4102444800)
-auth0.store.db.execute("PRAGMA user_version = 0")            # Stand einer 0.17.0-Datei
+auth0.store.db.execute("PRAGMA user_version = 0")            # state of a 0.17.0 file
 auth0.store.db.execute("UPDATE resource_unlock SET token='klartext-token'")
 auth0.store.db.commit()
 auth0.store.db.close()
@@ -106,42 +106,42 @@ auth0.store.db.close()
 roh = sqlite3.connect(alt_db)
 vorher = roh.execute("SELECT count(*) FROM resource_unlock").fetchone()[0]
 roh.close()
-r.check("Vorbedingung: die Altdatei trägt einen Klartext-Eintrag", vorher == 1, f"{vorher}")
+r.check("precondition: the old file carries a plain-text entry", vorher == 1, f"{vorher}")
 
-Store(alt_db).db.close()                                      # = Upgrade auf 0.18.0
+Store(alt_db).db.close()                                      # = upgrade to 0.18.0
 roh = sqlite3.connect(alt_db)
 nachher = roh.execute("SELECT count(*) FROM resource_unlock").fetchone()[0]
 stempel = roh.execute("PRAGMA user_version").fetchone()[0]
 roh.close()
-r.check("Klartext-Freigabe wird beim Upgrade verworfen", nachher == 0,
-        f"{nachher} Einträge geblieben — sie matchen nie wieder")
-r.check("… und die Datei trägt danach den Schema-Stempel", stempel == Store.SCHEMA_VERSION,
+r.check("plain-text unlock is discarded on upgrade", nachher == 0,
+        f"{nachher} entries remained — they never match again")
+r.check("… and the file then carries the schema stamp", stempel == Store.SCHEMA_VERSION,
         f"{stempel}")
 
-# Eine gehashte Freigabe darf die Bereinigung NICHT treffen (sonst räumt jeder Start ab).
+# A hashed unlock must NOT be hit by the cleanup (otherwise every start clears it out).
 auth1, db1 = frisch(resource_locks_enabled=True)
 auth1.store.add_resource_unlock("frisch-token", "akte-8", 4102444800)
 auth1.store.db.close()
 s2 = Store(db1)
-r.check("gehashte Freigabe überlebt einen Neustart",
+r.check("hashed unlock survives a restart",
         s2.is_resource_unlocked("frisch-token", "akte-8"),
-        "die Bereinigung greift zu weit")
+        "the cleanup reaches too far")
 s2.db.close()
 
 # ---------------------------------------------------------------- Schema 9 → 10
-# Was die Migration auf Schema 10 mit einem Bestand macht — an einer Datei im Stand von Schema 9
-# (heutiges Schema ohne das, was 10 hinzufügt; die Vorbedingung prüft, dass nichts davon übrig ist).
+# What the migration to schema 10 does with existing data — on a file in the state of schema 9
+# (today's schema without what 10 adds; the precondition checks that none of it is left).
 #
-# (a) Betreiber-Sperren aus früheren Fassungen (S-5). Bis 0.19.x schrieb die Sperre im Panel
-#     `disabled=1` und verwarf die offenen Token NICHT. Nach dem Upgrade hob der alte
-#     Bestätigungslink einer ausstehenden Registrierung die Sperre auf und meldete an — die
-#     Aussage „ihre offenen Token hat die Sperre damals schon verworfen“ stimmte für kein Release.
-# (b) Die Zähl-Töpfe (S-1) werden für jede Bestandszeile gerechnet, Indizes und Trigger angelegt.
-# (c) Adressen offener Registrierungen verlieren den Vermerk „belegt“ (S-2), bis der Link kommt.
-# (Mutationsproben: den Panel-Schritt streichen → rot bei (a), der alte Link gibt 303; dort die
-#  Token nicht verwerfen → rot bei (a); nur `detail = 'uid=<id>'` erkennen, nicht `'uid=<id> …'`
-#  → rot bei (a); den Schritt für offene Registrierungen streichen → rot bei (c); in `/auth/verify`
-#  den Beleg nicht setzen → rot bei (c); den Topf-Schritt der Migration streichen → rot bei (b).)
+# (a) Operator locks from earlier versions (S-5). Up to 0.19.x the lock in the panel wrote
+#     `disabled=1` and did NOT discard the open tokens. After the upgrade the old
+#     confirmation link of a pending signup lifted the lock and signed the user in — the
+#     statement „the lock had already discarded its open tokens back then“ was true for no release.
+# (b) The counting buckets (S-1) are computed for every existing row, indexes and triggers created.
+# (c) Addresses of open signups lose the „verified“ mark (S-2) until the link arrives.
+# (Mutation probes: remove the panel step → red at (a), the old link gives 303; do not discard
+#  the tokens there → red at (a); only recognise `detail = 'uid=<id>'`, not `'uid=<id> …'`
+#  → red at (a); remove the step for open signups → red at (c); do not set the proof in `/auth/verify`
+#  → red at (c); remove the bucket step of the migration → red at (b).)
 _s10_ordner = tempfile.mkdtemp()
 _s10_db = os.path.join(_s10_ordner, "schema9.db")
 _s10_cfg = dict(db_path=os.path.join(_s10_ordner, "quelle.db"), allow_signup=True,
@@ -151,34 +151,34 @@ _s10_alt, _ = frisch(**_s10_cfg)
 _s10_alt.create_user("chefin", password="Geheim12345!", is_admin=True)
 _s10_ids, _s10_links = {}, {}
 for _name in ("verdacht", "wartend", "wieder", "altsperre"):
-    _uid = _s10_alt.store.create_user(_name, None, f"{_name}@example.org")   # Vermerk 1, wie damals
+    _uid = _s10_alt.store.create_user(_name, None, f"{_name}@example.org")   # mark 1, as back then
     _s10_ids[_name] = _uid
-    _s10_alt.store.set_disabled(_uid, True)                                # damals: immer 1
+    _s10_alt.store.set_disabled(_uid, True)                                # back then: always 1
     if _name != "altsperre":
         _s10_links[_name] = _s10_alt.create_magic_token("verify_email", user_id=_uid,
                                                         email=f"{_name}@example.org")
-# Die Panel-Sperre von damals: Audit-Zeile mit `uid=<id>`, Token bleiben liegen.
+# The panel lock from back then: audit row with `uid=<id>`, tokens stay in place.
 _s10_alt.store.audit_log("user_disable", "chefin", None, f"uid={_s10_ids['verdacht']} api_keys_revoked=1")
 _s10_alt.store.audit_log("user_disable", "chefin", None, f"uid={_s10_ids['altsperre']}")
 _s10_alt.store.audit_log("user_disable", "chefin", None, f"uid={_s10_ids['wieder']}")
 _s10_alt.store.audit_log("user_enable", "chefin", None, f"uid={_s10_ids['wieder']}")
 _s10_emile = _s10_alt.store.create_user("Émile", None, "Emile@Bücher.example")
 _s10_alt.store.db.close()
-# Die Datei im Stand von Schema 9: das Schema ohne die Topf-Spalten (Indizes und Trigger legt erst
-# `_migrate` an), die Daten per ATTACH aus der eben gefüllten Datei. Nicht per `ALTER TABLE …
-# DROP COLUMN`: SQLite sucht beim Entfernen der letzten Spalte das Komma davor rückwärts im Text
-# und findet eines im Kommentar darüber („incomplete input“).
+# The file in the state of schema 9: the schema without the bucket columns (indexes and triggers are only
+# created by `_migrate`), the data via ATTACH from the file just filled. Not via `ALTER TABLE …
+# DROP COLUMN`: when removing the last column SQLite searches backwards in the text for the comma before it
+# and finds one in the comment above („incomplete input“).
 from tinysesam.store import SCHEMA as _S10_SCHEMA  # noqa: E402
-# Mitgeschnitten werden `idp_bestaetigt_at` (Schema 11, Fund 8) und die Wasserlinien der Kennungen
-# (Schema 11, G2), die seitdem hinter `topf_mail` stehen, samt `name_selbst_gewaehlt` dahinter
-# (Schema 11, G2-N) — und `federated_identity.name_topf` (Schema 11, G5), dessen Name und Kommentar
-# sonst die Probe „keine Reste mit topf" träfen.
+# Cut out along with it: `idp_bestaetigt_at` (schema 11, finding 8) and the high-water marks of the identifiers
+# (schema 11, G2), which have since stood behind `topf_mail`, plus `name_selbst_gewaehlt` behind them
+# (schema 11, G2-N) — and `federated_identity.name_topf` (schema 11, G5), whose name and comment
+# would otherwise hit the „no leftovers with topf" probe.
 _s10_schema9, _s10_n = re.subn(r",\n\s*-- Der Zähl-Topf.*?topf_mail\s+TEXT,\n\s*idp_bestaetigt_at INTEGER.*?"
                                r"mail_audit_ab\s+INTEGER,\n.*?name_selbst_gewaehlt INTEGER NOT NULL DEFAULT 0\n",
                                "\n", _S10_SCHEMA, flags=re.S)
 _s10_schema9, _s10_nfi = re.subn(r"\n\s*-- Der Name, unter dem sich das Konto zuletzt.*?name_topf\s+TEXT,", "",
                                  _s10_schema9, flags=re.S)
-# Schema 11 (B2-6) kam danach: Eine Datei im Stand von 9 hat die Tabelle `fehlserie` noch nicht.
+# Schema 11 (B2-6) came afterwards: a file in the state of 9 does not have the table `fehlserie` yet.
 _s10_schema9, _s10_n11 = re.subn(r"CREATE TABLE IF NOT EXISTS fehlserie \(.*?\n\);\n", "", _s10_schema9,
                                  flags=re.S)
 os.close(os.open(_s10_db, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600))
@@ -198,13 +198,13 @@ _s10_zahl = _s10_roh.execute("SELECT COUNT(*) FROM users").fetchone()[0]
 _s10_roh.commit()
 _s10_roh.close()
 _s10_cfg["db_path"] = _s10_db
-r.check("Vorbedingung: die Datei steht auf Schema 9, ohne Topf-Spalten, Indizes und Trigger, mit allen Konten",
+r.check("precondition: the file is at schema 9, without bucket columns, indexes and triggers, with all accounts",
         _s10_n == 1 and _s10_n11 == 1 and _s10_nfi == 1 and not _s10_rest and _s10_zahl == 6
         and Store.SCHEMA_VERSION >= 10,
         f"Schnitt {_s10_n}/{_s10_n11}/{_s10_nfi}, Reste {_s10_rest}, Konten {_s10_zahl}, "
         f"SCHEMA_VERSION={Store.SCHEMA_VERSION}")
 
-_s10, _ = frisch(**_s10_cfg)                                      # = Upgrade auf Schema 10
+_s10, _ = frisch(**_s10_cfg)                                      # = upgrade to schema 10
 _s10_app = FastAPI()
 _s10_app.include_router(_s10.router())
 _s10_u = {n: _s10.store.get_user(i) for n, i in _s10_ids.items()}
@@ -212,8 +212,8 @@ _s10_offen = {n: _s10.store._one("SELECT COUNT(*) AS n FROM magic_token WHERE us
                                  (i,))["n"] for n, i in _s10_ids.items()}
 _s10_link = TestClient(_s10_app, client=("192.0.2.66", 1)).post(
     f"/auth/verify/{_s10_links['verdacht']}", follow_redirects=False)
-r.check("S-5 (a): eine Panel-Sperre von damals trägt nach dem Upgrade den Betreiber-Vermerk, ihre "
-        "offenen Token sind verworfen — der alte Bestätigungslink schaltet nicht frei",
+r.check("S-5 (a): a panel lock from back then carries the operator mark after the upgrade, its "
+        "open tokens are discarded — the old confirmation link does not unlock",
         _s10_u["verdacht"]["disabled"] == 2 and _s10_offen["verdacht"] == 0
         and _s10_u["altsperre"]["disabled"] == 2
         and _s10_link.status_code != 303 and _s10.store.get_user(_s10_ids["verdacht"])["disabled"] == 2
@@ -221,14 +221,14 @@ r.check("S-5 (a): eine Panel-Sperre von damals trägt nach dem Upgrade den Betre
         f"verdacht {dict(_s10_u['verdacht'])}, offen {_s10_offen}, Link HTTP {_s10_link.status_code}")
 _s10_wartet = TestClient(_s10_app, client=("192.0.2.67", 1)).post(
     f"/auth/verify/{_s10_links['wartend']}", follow_redirects=False)
-r.check("S-5 (a): … eine ausstehende Registrierung ohne Panel-Sperre bleibt freischaltbar, eine "
-        "wieder entsperrte Sperre bleibt die der App (1)",
+r.check("S-5 (a): … a pending signup without a panel lock remains unlockable, a "
+        "lock that was lifted again remains the app's (1)",
         _s10_u["wartend"]["disabled"] == 1 and _s10_offen["wartend"] == 1
         and _s10_wartet.status_code == 303 and _s10.store.get_user(_s10_ids["wartend"])["disabled"] == 0
         and _s10_u["wieder"]["disabled"] == 1 and _s10_offen["wieder"] == 1,
         f"wartend {dict(_s10_u['wartend'])}, Link HTTP {_s10_wartet.status_code}, wieder {dict(_s10_u['wieder'])}")
-r.check("S-2 (c): Adressen offener Registrierungen tragen nach dem Upgrade keinen Beleg, bis der "
-        "Link kommt — dann wieder",
+r.check("S-2 (c): addresses of open signups carry no proof after the upgrade until the "
+        "link arrives — then again",
         _s10_u["verdacht"]["email_verified"] == 0 and _s10_u["wartend"]["email_verified"] == 0
         and _s10.store.get_user(_s10_ids["wartend"])["email_verified"] == 1
         and _s10.store.get_user(_s10_emile)["email_verified"] == 1,
@@ -237,57 +237,57 @@ r.check("S-2 (c): Adressen offener Registrierungen tragen nach dem Upgrade keine
 _s10_objekte = {z["name"] for z in _s10.store._all("SELECT name FROM sqlite_master WHERE tbl_name='users'")}
 _s10_e = _s10.store.get_user(_s10_emile)
 _s10_ohne = _s10.store._one("SELECT COUNT(*) AS n FROM users WHERE topf_name IS NULL OR topf_mail IS NULL")["n"]
-r.check("S-1 (b): jede Bestandszeile bekommt ihren Zähl-Topf, Indizes und Trigger stehen",
+r.check("S-1 (b): every existing row gets its counting bucket, indexes and triggers exist",
         _s10_ohne == 0 and _s10_e["topf_name"] == "émile"
         and _s10_e["topf_mail"] == "emile@xn--bcher-kva.example"
         and {"ix_users_topf_name", "ix_users_topf_mail", "ix_users_name_nocase", "ix_users_email_nocase",
              "trg_users_topf_name", "trg_users_topf_mail"} <= _s10_objekte
         and (_s10.store.konto_mit_topf("émile") or {"id": None})["id"] == _s10_emile,
-        f"ohne Topf {_s10_ohne}, Émile {(_s10_e['topf_name'], _s10_e['topf_mail'])}, Objekte {_s10_objekte}")
+        f"without bucket {_s10_ohne}, Émile {(_s10_e['topf_name'], _s10_e['topf_mail'])}, objects {_s10_objekte}")
 _s10.store.db.close()
-# Wer die Faltung in `norm_kennung` ändert, hebt das Schema — dann rechnet der Start ALLE Töpfe neu
-# (`Store.TOPF_SCHEMA`), nicht nur die fehlenden. Nachgestellt mit einem veralteten Topf in einer
-# Datei, deren Stempel unter `TOPF_SCHEMA` liegt.
-# (Mutationsprobe: in `_migrate` immer nur die NULL-Zeilen rechnen → rot.)
+# Whoever changes the folding in `norm_kennung` raises the schema — then startup recomputes ALL buckets
+# (`Store.TOPF_SCHEMA`), not just the missing ones. Simulated with an outdated bucket in a
+# file whose stamp is below `TOPF_SCHEMA`.
+# (Mutation probe: in `_migrate` only ever compute the NULL rows → red.)
 _s10_veraltet = sqlite3.connect(_s10_db)
 _s10_veraltet.execute("UPDATE users SET topf_name='alte-faltung' WHERE id=?", (_s10_emile,))
 _s10_veraltet.execute(f"PRAGMA user_version = {Store.TOPF_SCHEMA - 1}")
 _s10_veraltet.commit()
 _s10_veraltet.close()
 _s10_neu = Store(_s10_db)
-r.check("S-1 (b): … ein Stempel unter TOPF_SCHEMA rechnet auch vorhandene Töpfe neu",
+r.check("S-1 (b): … a stamp below TOPF_SCHEMA also recomputes existing buckets",
         _s10_neu.get_user(_s10_emile)["topf_name"] == "émile",
         f"{_s10_neu.get_user(_s10_emile)['topf_name']}")
 _s10_neu.db.close()
 _s10_zweit = Store(_s10_db)
-r.check("… ein zweiter Start ändert nichts mehr (Stempel aktuell, keine weitere Sperre, kein Vermerk)",
+r.check("… a second start changes nothing more (stamp current, no further lock, no mark)",
         int(_s10_zweit.db.execute("PRAGMA user_version").fetchone()[0]) == Store.SCHEMA_VERSION
         and _s10_zweit.get_user(_s10_ids["wieder"])["disabled"] == 1
         and _s10_zweit.get_user(_s10_ids["wartend"])["email_verified"] == 1)
 _s10_zweit.db.close()
 
-# ---------------------------------------------------------------- Rückschritt-Fenster
-# Eine ältere Fassung öffnet eine Schema-10-Datei, warnt und schreibt weiter; den Stempel lässt sie
-# auf 10. Sperrt sie in diesem Fenster im Panel, steht wieder `disabled=1` mit offenem
-# Bestätigungslink da. Die Bestandsschritte, die das beim Upgrade beheben, hingen am Stempel und
-# liefen danach nie wieder: Der alte Link hob die Sperre auf und meldete an (Schlussrunde W1,
-# nachgestellt mit echtem 0.19.0). Hier schreibt die ältere Fassung mit rohem SQL genau das, was
-# 0.19.0 schreibt: Registrierung ohne Topf, mit Vermerk 1, gesperrt, Token offen; die Panel-Sperre
-# als `disabled=1` plus Audit-Zeile `user_disable uid=<id>`, die Token bleiben liegen.
+# ---------------------------------------------------------------- downgrade window
+# An older version opens a schema-10 file, warns and keeps writing; it leaves the stamp
+# at 10. If it locks in the panel during this window, `disabled=1` is back with an open
+# confirmation link. The migration steps that fix this on upgrade depended on the stamp and
+# never ran again afterwards: the old link lifted the lock and signed the user in (final round W1,
+# reproduced with a real 0.19.0). Here the older version writes with raw SQL exactly what
+# 0.19.0 writes: signup without bucket, with mark 1, locked, token open; the panel lock
+# as `disabled=1` plus audit row `user_disable uid=<id>`, the tokens stay in place.
 _rs_cfg = dict(db_path=os.path.join(tempfile.mkdtemp(), "rueckschritt.db"), allow_signup=True,
                signup_require_email=True, signup_verify_email=True, csrf_enabled=False,
                base_url="https://auth.example.com")
-_rs_heute, _ = frisch(**_rs_cfg)                              # die heutige Fassung legt die Datei an
+_rs_heute, _ = frisch(**_rs_cfg)                              # today's version creates the file
 _rs_heute.create_user("chefin", password="Geheim12345!", is_admin=True)
 _rs_ids, _rs_links = {}, {}
-for _name in ("vorher", "hin"):                              # offene Registrierungen von heute
+for _name in ("vorher", "hin"):                              # open signups from today
     _uid = _rs_heute.store.create_user(_name, None, f"{_name}@example.org", email_verified=False)
     _rs_heute.store.set_disabled(_uid, True)
     _rs_ids[_name] = _uid
     _rs_links[_name] = _rs_heute.create_magic_token("verify_email", user_id=_uid, email=f"{_name}@example.org")
 _rs_heute.store.db.close()
 
-_rs_roh = sqlite3.connect(_rs_cfg["db_path"])                # ab hier: die ältere Fassung
+_rs_roh = sqlite3.connect(_rs_cfg["db_path"])                # from here on: the older version
 _rs_jetzt = int(time.time())
 for _name in ("rueck", "offen_alt"):
     _uid = _rs_roh.execute("INSERT INTO users(username, display_name, email, email_verified, disabled, "
@@ -308,7 +308,7 @@ _rs_stempel = _rs_roh.execute("PRAGMA user_version").fetchone()[0]
 _rs_roh.commit()
 _rs_roh.close()
 
-_rs, _ = frisch(**_rs_cfg)                                     # wieder die heutige Fassung
+_rs, _ = frisch(**_rs_cfg)                                     # today's version again
 _rs_app = FastAPI()
 _rs_app.include_router(_rs.router())
 
@@ -326,41 +326,41 @@ _rs_antwort = {n: TestClient(_rs_app, client=(f"192.0.2.{70 + k}", 1)).post(
     f"/auth/verify/{_rs_links[n]}", follow_redirects=False).status_code
     for k, n in enumerate(("rueck", "vorher", "hin", "offen_alt"))}
 _rs_danach = {n: dict(_rs.store.get_user(i)) for n, i in _rs_ids.items()}
-# (Mutationsproben, ausgeführt: die Bestandsschritte wieder nur bei `vorhanden_vorab < 10` fahren
-#  → rot, der alte Link gibt 303 und meldet an; die Token nicht verwerfen → rot; im Panel-Schritt
-#  nur Konten ohne Topf nehmen → rot bei „vorher“; das erste statt des jüngsten Ereignisses je
-#  Konto nehmen → rot bei „hin“; die Wasserlinie ignorieren → hier grün, rot im Aufwands-Test unten.)
-r.check("Rückschritt: eine Panel-Sperre der älteren Fassung auf einer Schema-10-Datei trägt nach dem "
-        "nächsten Start den Betreiber-Vermerk, ihre Token sind verworfen — der alte Link schaltet nicht frei",
+# (Mutation probes, executed: run the migration steps only when `vorhanden_vorab < 10` again
+#  → red, the old link gives 303 and signs in; do not discard the tokens → red; in the panel step
+#  take only accounts without a bucket → red at „vorher“; take the first instead of the latest event per
+#  account → red at „hin“; ignore the high-water mark → green here, red in the effort test below.)
+r.check("downgrade: a panel lock of the older version on a schema-10 file carries the operator mark after the "
+        "next start, its tokens are discarded — the old link does not unlock",
         _rs_stempel == Store.SCHEMA_VERSION and _rs_u["rueck"]["disabled"] == 2 and _rs_tok["rueck"] == 0
         and _rs_u["vorher"]["disabled"] == 2 and _rs_tok["vorher"] == 0
         and _rs_antwort["rueck"] != 303 and _rs_antwort["vorher"] != 303
         and _rs_danach["rueck"]["disabled"] == 2 and _rs_danach["vorher"]["disabled"] == 2
         and not _rs.store.list_sessions(_rs_ids["rueck"]) and not _rs.store.list_sessions(_rs_ids["vorher"]),
         f"Stempel {_rs_stempel}, vorher {_rs_u}, Token {_rs_tok}, Links {_rs_antwort}")
-r.check("Rückschritt: … eine Sperre, die die ältere Fassung wieder aufgehoben hat, bleibt die der App "
-        "(1), ihr Link schaltet frei",
+r.check("downgrade: … a lock that the older version lifted again remains the app's "
+        "(1), its link unlocks",
         _rs_u["hin"]["disabled"] == 1 and _rs_tok["hin"] == 1 and _rs_antwort["hin"] == 303
         and _rs_danach["hin"]["disabled"] == 0, f"hin {_rs_u['hin']}, Link {_rs_antwort['hin']}")
-# Schritt 2 im selben Fenster: Die ältere Fassung legt die Adresse einer offenen Registrierung mit
-# Vermerk 1 an. Die Spur dafür ist die Zeile ohne Topf, die nur ein fremder Schreiber hinterlässt.
-# (Mutationsproben, ausgeführt: den Adress-Schritt bei einem Stempel ab 10 streichen → rot; ihn nur
-#  für die Konten aus dem Panel-Schritt fahren, ohne die Topf-Spur → rot bei „offen_alt“; ihn NACH
-#  dem Panel-Schritt fahren, der die Token verwirft → rot bei „rueck“.)
-r.check("Rückschritt: … die Adresse einer offenen Registrierung der älteren Fassung trägt nach dem "
-        "Start keinen Beleg, bis der Link kommt — die Panel-Sperre verliert ihn vor dem Verwerfen der Token",
+# Step 2 in the same window: the older version creates the address of an open signup with
+# mark 1. The trace for that is the row without a bucket, which only a foreign writer leaves behind.
+# (Mutation probes, executed: remove the address step for a stamp of 10 or higher → red; run it only
+#  for the accounts from the panel step, without the bucket trace → red at „offen_alt“; run it AFTER
+#  the panel step that discards the tokens → red at „rueck“.)
+r.check("downgrade: … the address of an open signup of the older version carries no proof after "
+        "startup until the link arrives — the panel lock loses it before the tokens are discarded",
         _rs_u["offen_alt"]["email_verified"] == 0 and _rs_u["offen_alt"]["disabled"] == 1
         and _rs_antwort["offen_alt"] == 303 and _rs_danach["offen_alt"]["email_verified"] == 1
         and _rs_u["rueck"]["email_verified"] == 0,
         f"offen_alt vorher {_rs_u['offen_alt']}, nachher {_rs_danach['offen_alt']}, rueck {_rs_u['rueck']}")
-r.check("Rückschritt: … die Wasserlinie steht nach dem Start auf der jüngsten Audit-Zeile",
+r.check("downgrade: … the high-water mark is at the latest audit row after startup",
         _rs_bis is not None and _rs_max is not None and int(_rs_bis) == int(_rs_max),
-        f"Wasserlinie {_rs_bis}, jüngste Zeile {_rs_max}")
+        f"watermark {_rs_bis}, latest row {_rs_max}")
 _rs.store.db.close()
-# Randfall: Die Wasserlinie steht über dem Zähler des Audit-Logs (Tabelle von Hand geleert und der
-# Zähler zurückgesetzt, Setting von Hand gesetzt). Dann liest der Start alles, statt jede neue Zeile
-# bis zur alten Höhe zu überspringen.
-# (Mutationsprobe, ausgeführt: die Rückstellung auf 0 streichen → rot.)
+# Edge case: the high-water mark is above the audit log's counter (table emptied by hand and the
+# counter reset, setting set by hand). Then startup reads everything instead of skipping every new row
+# up to the old height.
+# (Mutation probe, executed: remove the reset to 0 → red.)
 _rs_roh = sqlite3.connect(_rs_cfg["db_path"])
 _rs_roh.execute("INSERT OR REPLACE INTO setting(key, value) VALUES (?, ?)",
                 (getattr(Store, "PANEL_WASSERLINIE", "panel_sperren_bis"), "1000000000"))
@@ -372,24 +372,24 @@ _rs_roh.execute("INSERT INTO audit(ts, event, username, ip, detail) VALUES (?,?,
 _rs_roh.commit()
 _rs_roh.close()
 _rs_hoch = Store(_rs_cfg["db_path"])
-r.check("Rückschritt: … eine Wasserlinie über dem Zähler des Audit-Logs überspringt keine Sperre",
+r.check("downgrade: … a high-water mark above the audit log counter skips no lock",
         _rs_hoch.get_user(_rs_spaet)["disabled"] == 2
         and int(_rs_hoch.get_setting(getattr(Store, "PANEL_WASSERLINIE", "panel_sperren_bis"))) < 1000000000,
         f"{dict(_rs_hoch.get_user(_rs_spaet))}")
 _rs_hoch.db.close()
 
-# ---------------------------------------------------------------- Aufwand der Bestandsschritte
-# Die erste Fassung suchte für JEDES Konto mit `disabled=1` im ganzen Audit-Log nach seiner
-# jüngsten Zeile (korrelierte Unterabfrage, kein Index auf `event`/`detail`): gesperrt × Audit.
-# Gemessen beim Angriff: 1 000 000 Zeilen × 1 000 gesperrte Konten 60 s, unter der Schreibsperre;
-# ein zweiter Worker scheiterte nach `BUSY_TIMEOUT_MS` mit „database is locked“. Ebenso der
-# Adress-Schritt: offene Registrierungen × Einmal-Token. Gemessen wird nicht die Wanduhr, sondern
-# die Arbeit der Datenbank (SQLite-Schritte, `set_progress_handler`), wie bei S-1 in
-# tests/test_audit_runde2.py — deterministisch, auch auf einem langsamen Runner.
+# ---------------------------------------------------------------- effort of the migration steps
+# The first version searched the whole audit log for the latest row of EVERY account with `disabled=1`
+# (correlated subquery, no index on `event`/`detail`): locked × audit.
+# Measured during the attack: 1,000,000 rows × 1,000 locked accounts 60 s, under the write lock;
+# a second worker failed after `BUSY_TIMEOUT_MS` with „database is locked“. Likewise the
+# address step: open signups × one-time tokens. What is measured is not the wall clock but
+# the database's work (SQLite steps, `set_progress_handler`), as with S-1 in
+# tests/test_audit_runde2.py — deterministic, even on a slow runner.
 def _rs_bestand(n_audit: int, n_gesperrt: int) -> Store:
-    """Datei im Stand von Schema 9: `n_audit` Rauschzeilen im Audit-Log und ebenso viele
-    Anmelde-Links, `n_gesperrt` offene Registrierungen (gesperrt, Token offen) und `n_gesperrt`
-    Panel-Sperren von damals."""
+    """File in the state of schema 9: `n_audit` noise rows in the audit log and as many
+    sign-in links, `n_gesperrt` open signups (locked, token open) and `n_gesperrt`
+    panel locks from back then."""
     st = Store(os.path.join(tempfile.mkdtemp(), "aufwand.db"))
     jetzt = int(time.time())
     with st._lock:
@@ -414,7 +414,7 @@ def _rs_bestand(n_audit: int, n_gesperrt: int) -> Store:
 
 
 def _rs_schritte(st: Store) -> int:
-    """SQLite-Schritte (je 100 VM-Befehle) eines Starts auf der offenen Datei (`_migrate`)."""
+    """SQLite steps (per 100 VM instructions) of a start on the open file (`_migrate`)."""
     zaehler = [0]
 
     def schritt():
@@ -435,151 +435,151 @@ for _a, _g in ((20000, 10), (20000, 200), (2000, 10)):
     _rs_mess[(_a, _g, "Panel")] = _st._one("SELECT COUNT(*) AS n FROM users WHERE disabled=2")["n"]
     _rs_mess[(_a, _g, "Neustart")] = _rs_schritte(_st)
     _st.db.close()
-# Je zusätzlichem gesperrten Konto (190 Panel-Sperren und 190 offene Registrierungen mehr) darf das
-# Upgrade höchstens einen kleinen, festen Betrag mehr kosten — nicht einen Lauf durchs Audit-Log
-# oder durch die Einmal-Token (je 20 000 Zeilen). Gemessen mit der Fassung davor: rund 1 500
-# Schritte je Konto, jetzt gut einer. Und ein Start nach dem Upgrade liest das Audit-Log nicht noch einmal: bei
-# 20 000 Zeilen nicht mehr als bei 2 000.
-# (Mutationsproben, ausgeführt: den Panel-Schritt wieder als korrelierte Unterabfrage je Konto → rot;
-#  den Adress-Schritt wieder als EXISTS je Konto → rot; die Wasserlinie nicht lesen, jeder Start ab
-#  0 → rot beim Neustart, 1 080 Schritte mehr.)
+# Per additional locked account (190 more panel locks and 190 more open signups) the
+# upgrade may cost at most a small, fixed amount more — not a pass through the audit log
+# or through the one-time tokens (20,000 rows each). Measured with the previous version: about 1,500
+# steps per account, now a little over one. And a start after the upgrade does not read the audit log again: with
+# 20,000 rows no more than with 2,000.
+# (Mutation probes, executed: make the panel step a correlated subquery per account again → red;
+#  make the address step an EXISTS per account again → red; do not read the high-water mark, every start from
+#  0 → red on restart, 1,080 steps more.)
 _rs_je_konto = (_rs_mess[(20000, 200, "Upgrade")] - _rs_mess[(20000, 10, "Upgrade")]) / 380
 _rs_neustart = _rs_mess[(20000, 10, "Neustart")] - _rs_mess[(2000, 10, "Neustart")]
-r.check("Aufwand: das Upgrade wächst mit Audit-Log PLUS gesperrten Konten, nicht mit ihrem Produkt "
-        "(SQLite-Schritte je zusätzlichem gesperrten Konto bei 20 000 Audit-Zeilen)",
+r.check("effort: the upgrade grows with audit log PLUS locked accounts, not with their product "
+        "(SQLite steps per additional locked account at 20,000 audit rows)",
         _rs_je_konto < 20 and _rs_mess[(20000, 200, "Panel")] == 200,
         f"je Konto {_rs_je_konto:.1f} Schritte, Messung {_rs_mess}")
-r.check("Aufwand: … ein Start nach dem Upgrade liest nur die Audit-Zeilen seit dem letzten Start",
+r.check("effort: … a start after the upgrade reads only the audit rows since the last start",
         _rs_neustart < 20, f"Neustart bei 20 000 statt 2 000 Zeilen: {_rs_neustart} Schritte mehr, "
         f"Messung {_rs_mess}")
 
 # ---------------------------------------------------------------- audit --user
-# Das Kommando siebte die jüngsten Zeilen nach, statt in SQL zu filtern: Wer im Anlassfall suchte
-# (Brute-Force-Welle), bekam "Keine Einträge zu 'X'." und Exit 0, obwohl sie dastanden.
+# The command filtered the latest rows afterwards instead of filtering in SQL: whoever searched in the
+# incident case (brute-force wave) got "Keine Einträge zu 'X'." and exit 0, although they were there.
 auth2, _ = frisch()
 auth2.audit("login_ok", username="opfer", detail="alt")
 for i in range(300):
     auth2.audit("login_fail", username="rauschen", detail=str(i))
 treffer = auth2.store.recent_audit(30, username="opfer")
-r.check("audit --user findet Einträge hinter 300 Zeilen Rauschen", len(treffer) == 1,
+r.check("audit --user finds entries behind 300 rows of noise", len(treffer) == 1,
         f"{len(treffer)} gefunden")
-r.check("… und filtert unabhängig von der Schreibweise",
+r.check("… and filters independently of capitalisation",
         len(auth2.store.recent_audit(30, username="OPFER")) == 1)
-r.check("ohne Filter kommen weiter die jüngsten Zeilen",
+r.check("without a filter the latest rows still come back",
         len(auth2.store.recent_audit(5)) == 5)
 
 # ---------------------------------------------------------------- seed_demo
-# Der Docstring versprach "nur bei demo_mode=True", der Rumpf prüfte es nicht: Ein direkter Aufruf
-# legte `demoadmin` mit bekanntem Passwort und is_admin=1 an — anmeldefähig, ohne Warnung im Log.
+# The docstring promised "only with demo_mode=True", the body did not check it: a direct call
+# created `demoadmin` with a known password and is_admin=1 — able to sign in, without a warning in the log.
 auth3, _ = frisch()
 try:
     auth3._seed_demo()
-    r.check("seed_demo() ohne demo_mode wird abgewiesen", False, "es lief durch")
+    r.check("seed_demo() without demo_mode is rejected", False, "it went through")
 except ConfigError:
-    r.check("seed_demo() ohne demo_mode wird abgewiesen", True)
-r.check("… und legt dabei kein Admin-Konto an",
+    r.check("seed_demo() without demo_mode is rejected", True)
+r.check("… and creates no admin account in the process",
         auth3.store.get_user_by_name("demoadmin") is None)
 
 # ---------------------------------------------------------------- stepup_strict
-# `stepup_methods` war immer nur ein Wunsch: Wer keines der genannten Verfahren eingerichtet hatte,
-# bestätigte mit allem, was er hatte — inklusive des Passworts, mit dem er sich gerade angemeldet
-# hatte. Das ist kein Step-up. Die Schranke gibt es jetzt, die Vorgabe bleibt der alte Weg.
+# `stepup_methods` was only ever a wish: whoever had none of the named methods set up
+# confirmed with whatever they had — including the password they had just signed in with.
+# That is no step-up. The barrier exists now, the default remains the old way.
 auth4, _ = frisch(stepup_methods=["totp"])
 u4 = auth4.store.get_user(auth4.create_user("ohne_totp", password="pw123456"))
-r.check("stepup_methods bleibt per Vorgabe ein Wunsch",
+r.check("stepup_methods remains a wish by default",
         auth4.stepup_options(u4) == ["password"], f"{auth4.stepup_options(u4)}")
 auth5, _ = frisch(stepup_methods=["totp"], stepup_strict=True)
 u5 = auth5.store.get_user(auth5.create_user("ohne_totp", password="pw123456"))
-r.check("stepup_strict=True lässt nichts durch, was nicht gewünscht war",
+r.check("stepup_strict=True lets nothing through that was not wished for",
         auth5.stepup_options(u5) == [], f"{auth5.stepup_options(u5)}")
 auth6, _ = frisch(stepup_methods=[], stepup_strict=True)
 u6 = auth6.store.get_user(auth6.create_user("normal", password="pw123456"))
-r.check("stepup_strict ohne stepup_methods ändert nichts",
+r.check("stepup_strict without stepup_methods changes nothing",
         auth6.stepup_options(u6) == ["password"], f"{auth6.stepup_options(u6)}")
 
-# ---------------------------------------------------------------- login_chain-Sackgasse
-# `login_chain=["password","totp"]` sperrte jedes Konto OHNE eingerichtetes TOTP dauerhaft aus:
-# Das richtige Passwort führte auf /auth/totp, das mangels Geheimnis auf die Login-Seite
-# zurückleitete — und die Einrichtungsseite verlangte einen voll angemeldeten Nutzer, den es unter
-# dieser Kette nie geben kann. Weder herein noch an die Einrichtung.
+# ---------------------------------------------------------------- login_chain dead end
+# `login_chain=["password","totp"]` permanently locked out every account WITHOUT TOTP set up:
+# the correct password led to /auth/totp, which, lacking a secret, redirected back to the login
+# page — and the setup page demanded a fully signed-in user, which cannot exist under
+# this chain. Neither in nor to the setup.
 auth7, _ = frisch(login_chain=["password", "totp"], csrf_enabled=False)
 auth7.create_user("kette", password="pw123456")
 app7 = FastAPI()
 app7.include_router(auth7.router())
 c7 = TestClient(app7, follow_redirects=False)
 ant = c7.post("/auth/login", data={"username": "kette", "password": "pw123456"})
-r.check("richtiges Passwort führt zum zweiten Faktor",
+r.check("correct password leads to the second factor",
         ant.status_code == 303 and "/auth/totp" in ant.headers.get("location", ""),
         f"{ant.status_code} {ant.headers.get('location')}")
 ant = c7.get("/auth/totp")
-r.check("/auth/totp schickt ohne Geheimnis zur EINRICHTUNG, nicht zurück zum Login",
+r.check("/auth/totp without a secret sends to SETUP, not back to the login",
         ant.status_code == 303 and "/auth/totp/setup" in ant.headers.get("location", ""),
         f"{ant.status_code} {ant.headers.get('location')} — Sackgasse")
 ant = c7.get("/auth/totp/setup")
-r.check("die Einrichtungsseite ist in diesem Zustand erreichbar", ant.status_code == 200,
+r.check("the setup page is reachable in this state", ant.status_code == 200,
         f"{ant.status_code}")
 
-# Ohne Kette bleibt es beim alten Verhalten: keine Einrichtung ohne volle Anmeldung.
+# Without a chain the old behaviour remains: no setup without a full sign-in.
 auth8, _ = frisch(csrf_enabled=False)
 auth8.create_user("klassisch", password="pw123456")
 app8 = FastAPI()
 app8.include_router(auth8.router())
 c8 = TestClient(app8, follow_redirects=False)
 ant = c8.get("/auth/totp/setup")
-r.check("ohne Sitzung führt die Einrichtungsseite weiter zum Login",
+r.check("without a session the setup page leads on to the login",
         ant.status_code == 303 and "/auth/login" in ant.headers.get("location", ""),
         f"{ant.status_code} {ant.headers.get('location')}")
 
-# ---------------------------------------------------------------- B-1: Admin-Panel und CSRF
-# Das Panel würfelte bei JEDEM Aufruf ein neues CSRF-Token. Wer es im zweiten Reiter öffnete,
-# machte damit das offene Formular im ersten ungültig — 403 ohne Erklärung. Geprüft wird der
-# ROHE Set-Cookie-Header: `TestClient` führt den Cookie-Jar mit und würde ein erneutes Setzen
-# desselben Werts verschlucken.
+# ---------------------------------------------------------------- B-1: admin panel and CSRF
+# The panel rolled a new CSRF token on EVERY request. Whoever opened it in a second tab
+# invalidated the open form in the first — 403 without explanation. What is checked is the
+# RAW Set-Cookie header: `TestClient` keeps a cookie jar and would swallow a renewed setting
+# of the same value.
 auth9, _ = frisch(csrf_enabled=True, admin_enabled=True)
 auth9.ensure_admin("chef", "pw123456")
 app9 = FastAPI()
 app9.include_router(auth9.router())
 c9 = TestClient(app9)
-c9.get("/auth/login")                       # setzt erst das CSRF-Cookie
+c9.get("/auth/login")                       # only now sets the CSRF cookie
 anm = c9.post("/auth/login", data={"username": "chef", "password": "pw123456",
                                    "_csrf": c9.cookies.get(auth9.cfg.csrf_cookie, "")},
               follow_redirects=False)
-# 303 = angemeldet. Ohne `follow_redirects=False` liefe der Client dem `next` hinterher und
-# meldete die 404 der Zielseite — diese App hat kein "/".
-r.check("Vorbedingung: die Anmeldung gelingt", anm.status_code == 303, f"{anm.status_code}")
+# 303 = signed in. Without `follow_redirects=False` the client would follow `next` and
+# report the 404 of the target page — this app has no "/".
+r.check("precondition: the sign-in succeeds", anm.status_code == 303, f"{anm.status_code}")
 erste = c9.get(auth9.cfg.admin_path)
-# Ohne diese Vorbedingung prüfte der Test darunter nichts: Ein 401 setzt natürlich auch kein
-# CSRF-Cookie, und die Suite wäre grün geblieben, ohne den Fall je gesehen zu haben.
-r.check("Vorbedingung: das Panel ist erreichbar", erste.status_code == 200, f"{erste.status_code}")
-r.check("Vorbedingung: der erste Aufruf SETZT ein CSRF-Cookie",
+# Without this precondition the test below would check nothing: a 401 naturally sets no
+# CSRF cookie either, and the suite would have stayed green without ever having seen the case.
+r.check("precondition: the panel is reachable", erste.status_code == 200, f"{erste.status_code}")
+r.check("precondition: the first request SETS a CSRF cookie",
         any(k.lower() == "set-cookie" and v.startswith(auth9.cfg.csrf_cookie + "=")
             for k, v in erste.headers.items())
         or bool(c9.cookies.get(auth9.cfg.csrf_cookie)),
-        "kein Cookie — dann misst die Prüfung darunter nichts")
+        "no cookie — then the check below measures nothing")
 zweite = c9.get(auth9.cfg.admin_path)
 gesetzt = [v for k, v in zweite.headers.items() if k.lower() == "set-cookie"
            and v.startswith(auth9.cfg.csrf_cookie + "=")]
-r.check("ein zweiter Panel-Aufruf setzt KEIN neues CSRF-Cookie", not gesetzt,
-        f"{gesetzt} — das Formular im ersten Reiter ist damit tot")
+r.check("a second panel request sets NO new CSRF cookie", not gesetzt,
+        f"{gesetzt} — the form in the first tab is therefore dead")
 
-# ---------------------------------------------------------------- Proxy-Vorlagen
-# Ein in der Vorlage nicht gesetzter Remote-Header wird nicht weggelassen, sondern der des CLIENTS
-# durchgereicht. Die Vorlagen müssen FORWARD_HEADERS_DEFAULT deshalb vollständig abdecken.
+# ---------------------------------------------------------------- proxy templates
+# A remote header not set in the template is not omitted but the CLIENT's own is
+# passed through. The templates must therefore cover FORWARD_HEADERS_DEFAULT completely.
 def fehlende_header(datei: str) -> list[str]:
-    """Welche Remote-Header nennt diese Vorlage nicht? (In einer Funktion, damit der Text nicht
-    im Modul-Scope steht — dort läse ihn nur die Comprehension, und CodeQL zählt das nicht als
-    Nutzung: `py/unused-global-variable`.)"""
+    """Which remote headers does this template not name? (In a function so that the text is not
+    in module scope — there only the comprehension would read it, and CodeQL does not count that as
+    use: `py/unused-global-variable`.)"""
     text = (ROOT / datei).read_text(encoding="utf-8").lower()
     return [h for h in TinySesam.FORWARD_HEADERS_DEFAULT.values() if h.lower() not in text]
 
 
-# ------------------------------------- Das Extra [argon2] fehlt nach einem Upgrade (B6-8)
-# Neues Abbild ohne das Extra, ein venv neu aufgesetzt: Jede Anmeldung gegen einen argon2-Hash
-# scheiterte als „falsches Passwort" — für alle Bestandskonten, ohne eine einzige Logzeile.
-# Nachgestellt ohne das Extra zu deinstallieren: `_ARGON` für die Dauer der Prüfung aus.
+# ------------------------------------- The [argon2] extra is missing after an upgrade (B6-8)
+# New image without the extra, a venv set up anew: every sign-in against an argon2 hash
+# failed as „wrong password" — for all existing accounts, without a single log line.
+# Simulated without uninstalling the extra: `_ARGON` switched off for the duration of the check.
 import logging  # noqa: E402
 
-# Ein argon2id-Hash von „geheim123" mit Minimalparametern (nur Testdaten, kein Geheimnis).
+# An argon2id hash of „geheim123" with minimal parameters (test data only, no secret).
 ARGON_HASH = "$argon2id$v=19$m=8,t=1,p=1$lwj6WKW+poScm3635SRZ9Q$GB7yXwpoOqfsI27pXnI9FDaNWilsn2lwG85zAqfypFo"
 
 
@@ -604,17 +604,17 @@ passwords._ARGON2_GEMELDET["ja"] = False
 try:
     auth_b, _ = frisch(db_path=db_a)
     beim_start = [z for z in fang.zeilen if "[argon2]" in z]
-    r.check("fehlt [argon2], nennt der Start die betroffenen Hashes samt Abhilfe",
+    r.check("if [argon2] is missing, startup names the affected hashes along with the remedy",
             any("1 betroffene" in z and "pip install" in z for z in beim_start),
-            f"{fang.zeilen} — alle Bestandskonten gesperrt, und niemand erfährt warum")
+            f"{fang.zeilen} — all existing accounts locked, and nobody learns why")
     fang.zeilen.clear()
-    r.check("die Anmeldung scheitert weiter (ein argon2-Hash ist ohne argon2 nicht prüfbar)",
+    r.check("sign-in keeps failing (an argon2 hash cannot be checked without argon2)",
             not auth_b._check_password("altkonto", "geheim123"))
-    r.check("…aber nicht mehr still: der Fehlschlag schreibt eine Zeile",
+    r.check("…but no longer silent: the failure writes a line",
             any("[argon2]" in z for z in fang.zeilen), f"{fang.zeilen}")
     fang.zeilen.clear()
     auth_b._check_password("altkonto", "geheim123")
-    r.check("…und zwar einmal, nicht eine je Anmeldeversuch",
+    r.check("…and only once, not one per sign-in attempt",
             not any("[argon2]" in z for z in fang.zeilen), f"{fang.zeilen}")
 finally:
     passwords._ARGON = war_argon
@@ -623,22 +623,22 @@ fang2 = _Fang()
 logging.getLogger("tinysesam").addHandler(fang2)
 frisch(db_path=db_a)
 logging.getLogger("tinysesam").removeHandler(fang2)
-r.check("mit [argon2] bleibt der Start still (Gegenprobe, sofern das Extra da ist)",
+r.check("with [argon2] startup stays quiet (control, provided the extra is present)",
         not war_argon or not any("[argon2]" in z for z in fang2.zeilen), f"{fang2.zeilen}")
 
 
 CADDYFILES = ("deploy/forward-auth/Caddyfile", "deploy/forward-auth/Caddyfile.gate")
 for datei in ("deploy/forward-auth/nginx.conf", *CADDYFILES):
     fehlt = fehlende_header(datei)
-    r.check(f"{datei} setzt alle Remote-Header", not fehlt, f"fehlt: {fehlt}")
+    r.check(f"{datei} sets all remote headers", not fehlt, f"fehlt: {fehlt}")
 
 
-# NEU-1: Jeder Sub-Request an TinySesam setzt X-Forwarded-For selbst. Tut er es nicht, reicht nginx
-# den Header des CLIENTS durch — und weil nginx in trusted_proxies steht, bestimmte der Anfragende
-# die IP für Rate-Limit, Sperre und fail2ban. Nachgestellt mit nginx:alpine: ohne die Zeile kam
-# ein mitgeschickter `X-Forwarded-For: 6.6.6.6` bei TinySesam an, mit ihr 127.0.0.1.
+# NEU-1: Every sub-request to TinySesam sets X-Forwarded-For itself. If it does not, nginx passes
+# the CLIENT's header through — and because nginx is in trusted_proxies, the requester determined
+# the IP for rate limit, lock and fail2ban. Reproduced with nginx:alpine: without the line an
+# `X-Forwarded-For: 6.6.6.6` sent along arrived at TinySesam, with it 127.0.0.1.
 def ungeschuetzte_subrequests(datei: str) -> list[str]:
-    """Die `location`-Blöcke, die an TinySesam weiterreichen, ohne X-Forwarded-For zu setzen."""
+    """The `location` blocks that pass on to TinySesam without setting X-Forwarded-For."""
     text = (ROOT / datei).read_text(encoding="utf-8")
     fehlend = []
     for kopf, rumpf in re.findall(r"location\s+([^{]+)\{(.*?)\n\s*\}", text, re.S):
@@ -650,13 +650,13 @@ def ungeschuetzte_subrequests(datei: str) -> list[str]:
 
 
 for datei in ("deploy/forward-auth/nginx.conf", "deploy/forward-auth/nginx-pfad.conf"):
-    r.check(f"{datei}: jeder Weg zu TinySesam setzt X-Forwarded-For selbst (NEU-1)",
+    r.check(f"{datei}: every path to TinySesam sets X-Forwarded-For itself (NEU-1)",
             not ungeschuetzte_subrequests(datei), f"ohne: {ungeschuetzte_subrequests(datei)}")
 
 
-# B-20: Das Sitzungs-Cookie geht nicht an die geschützte App. Gemessen wird die Regel selbst:
-# die `header_up Cookie`-Zeilen der Vorlage, in ihrer Reihenfolge angewandt (Go-RE2 und Pythons
-# `re` lesen diese Muster gleich; gegen echtes Caddy 2.11 nachgestellt).
+# B-20: The session cookie does not go to the protected app. What is measured is the rule itself:
+# the `header_up Cookie` lines of the template, applied in their order (Go RE2 and Python's
+# `re` read these patterns the same way; reproduced against real Caddy 2.11).
 def caddy_cookie_regeln(datei="deploy/forward-auth/Caddyfile") -> list[tuple[str, str]]:
     text = (ROOT / datei).read_text(encoding="utf-8")
     return [(muster.replace("\\\\", "\\"), ersatz)
@@ -665,8 +665,8 @@ def caddy_cookie_regeln(datei="deploy/forward-auth/Caddyfile") -> list[tuple[str
 
 
 def cookie_nach_caddy(cookie: str, datei="deploy/forward-auth/Caddyfile") -> str:
-    # Die Gate-Vorlage trägt die Regeln zweimal (schneller Weg, Rückweg); doppelt angewandt
-    # ändern sie nichts mehr — gemessen wird so auch, dass sie das nicht tun.
+    # The gate template carries the rules twice (fast path, return path); applied twice
+    # they change nothing more — this also measures that they do not.
     for muster, ersatz in caddy_cookie_regeln(datei):
         cookie = re.sub(muster, ersatz, cookie)
     return cookie
@@ -681,33 +681,33 @@ _faelle = {
     f"__Host-{_sitzung}=GEHEIM; x=1": "x=1",
     f"{_sitzung}=A; {_sitzung}=B; c=3": "c=3",
     f"x{_sitzung}=bleibt; y=2": f"x{_sitzung}=bleibt; y=2",
-    # A-5: auch das Freigabe- und das CSRF-Cookie gehen nicht an die App.
+    # A-5: the unlock and the CSRF cookie do not go to the app either.
     "a=1; tinysesam_runlock=R; __Secure-tinysesam_csrf=C; b=2": "a=1; b=2",
     ("tinysesam_oidc_flow=1; tinysesam_saml_flow=2; tinysesam_waflow=3; tinysesam_session=4; "
      "tinysesam_runlock=5; tinysesam_csrf=6; x=7"): "x=7",
-    # Die Lage nach dem Umstieg auf `__Host-` (H-1): Die Altnamen liegen im Browser, bis sie
-    # ablaufen oder TinySesam sie beim nächsten Anmelden löscht, daneben die neuen — sieben
-    # tinysesam-Cookies. Die sechsstufige nginx-Kette liess das siebte (hier die neue Sitzung)
-    # zur App durch. (Mutationsprobe: die nginx-Kette auf sechs Stufen ohne Riegel → rot.)
+    # The situation after the switch to `__Host-` (H-1): the old names remain in the browser until they
+    # expire or TinySesam deletes them at the next sign-in, alongside the new ones — seven
+    # tinysesam cookies. The six-stage nginx chain let the seventh (here the new session)
+    # through to the app. (Mutation probe: the nginx chain at six stages without a latch → red.)
     ("tinysesam_session=ALT; tinysesam_csrf=A; tinysesam_runlock=A; __Host-tinysesam_csrf=c; "
      "__Host-tinysesam_runlock=r; __Host-tinysesam_waflow=w; __Host-tinysesam_session=NEU; a=1"): "a=1",
     ("a=1; tinysesam_session=ALT; tinysesam_csrf=A; tinysesam_runlock=A; __Host-tinysesam_csrf=c; "
      "__Host-tinysesam_runlock=r; __Host-tinysesam_waflow=w; b=2; __Host-tinysesam_session=NEU"): "a=1; b=2",
 }
-# Das Gate-Cookie (ADR-9) heisst ebenfalls tinysesam_* und fällt unter dieselbe Regel.
+# The gate cookie (ADR-9) is also called tinysesam_* and falls under the same rule.
 _faelle["a=1; __Host-tinysesam_gate=eyJ.x.y; b=2"] = "a=1; b=2"
 for datei in CADDYFILES:
-    r.check(f"{datei}: es gibt die Cookie-Regel vor der App (B-20)", bool(caddy_cookie_regeln(datei)),
-            "keine header_up-Cookie-Zeile — die App bekommt das Sitzungs-Cookie")
+    r.check(f"{datei}: the cookie rule in front of the app exists (B-20)", bool(caddy_cookie_regeln(datei)),
+            "no header_up cookie line — the app receives the session cookie")
     _falsch = {ein: cookie_nach_caddy(ein, datei) for ein, aus in _faelle.items()
                if cookie_nach_caddy(ein, datei) != aus}
-    r.check(f"{datei}: die TinySesam-Cookies werden entfernt, andere bleiben unberührt", not _falsch,
+    r.check(f"{datei}: the TinySesam cookies are removed, others stay untouched", not _falsch,
             f"{_falsch}")
 
 
-# A-2: nginx reicht die TinySesam-Cookies ebenso wenig an die App (oder an PHP) weiter. Gemessen
-# wird die map-Kette der Vorlage selbst, in Python nachgespielt (PCRE und `re` lesen diese Muster
-# gleich; gegen echtes nginx 1.29 + php-fpm 8.3 nachgestellt).
+# A-2: nginx likewise does not pass the TinySesam cookies on to the app (or to PHP). What is measured
+# is the template's map chain itself, replayed in Python (PCRE and `re` read these patterns
+# the same way; reproduced against real nginx 1.29 + php-fpm 8.3).
 def nginx_app_cookie(datei: str, cookie: str) -> str:
     text = (ROOT / datei).read_text(encoding="utf-8")
     werte = {"http_cookie": cookie}
@@ -722,16 +722,16 @@ def nginx_app_cookie(datei: str, cookie: str) -> str:
 for datei in ("deploy/forward-auth/nginx.conf", "deploy/forward-auth/nginx-pfad.conf"):
     _nfalsch = {ein: nginx_app_cookie(datei, ein) for ein, aus in _faelle.items()
                 if nginx_app_cookie(datei, ein) != aus}
-    r.check(f"{datei}: die TinySesam-Cookies werden entfernt, andere bleiben unberührt (A-2)",
+    r.check(f"{datei}: the TinySesam cookies are removed, others stay untouched (A-2)",
             not _nfalsch, f"{_nfalsch}")
-    # Wie viele tinysesam-Cookies ein Browser trägt, steht nicht fest: sechs Namen, jeder in der
-    # Übergangszeit nach H-1 doppelt (alt und `__Host-`), dazu umbenannte Cookies mehrerer
-    # Instanzen. Die Kette muss die Übergangslage ganz abdecken, und was darüber hinausgeht,
-    # darf nie zur App durchrutschen — dann lieber gar kein Cookie (fail closed). Gegen echtes
-    # nginx 1.31 nachgestellt: 12 Stück → nur die eigenen, 13 → leer.
-    # (Mutationsprobe: den Riegel `$ts_ck_zu` wirkungslos machen → rot ab 13 Cookies.)
+    # How many tinysesam cookies a browser carries is not fixed: six names, each doubled in the
+    # transition period after H-1 (old and `__Host-`), plus renamed cookies of several
+    # instances. The chain must cover the transition situation completely, and anything beyond that
+    # must never slip through to the app — better no cookie at all then (fail closed). Reproduced against real
+    # nginx 1.31: 12 pieces → only the own ones, 13 → empty.
+    # (Mutation probe: make the latch `$ts_ck_zu` ineffective → red from 13 cookies.)
     _stufen = len(re.findall(r'^map \$\w+ \$ts_ck\d+ ', (ROOT / datei).read_text(encoding="utf-8"), re.M))
-    r.check(f"{datei}: die Kette deckt die Übergangslage ab (sechs Namen, alt und __Host-)",
+    r.check(f"{datei}: the chain covers the transition situation (six names, old and __Host-)",
             _stufen >= 12, f"nur {_stufen} Stufen")
     _durch = {}
     for _n in range(0, 2 * _stufen + 3):
@@ -741,31 +741,31 @@ for datei in ("deploy/forward-auth/nginx.conf", "deploy/forward-auth/nginx-pfad.
         _aus = nginx_app_cookie(datei, _ein)
         if "tinysesam_" in _aus or (_n <= _stufen and _aus != "eigen0=v; eigen1=v; eigen9=v"):
             _durch[_n] = _aus
-    r.check(f"{datei}: beliebig viele tinysesam-Cookies — keins erreicht die App (fail closed)",
+    r.check(f"{datei}: arbitrarily many tinysesam cookies — none reaches the app (fail closed)",
             not _durch, f"{_durch}")
 _ngx = (ROOT / "deploy/forward-auth/nginx.conf").read_text(encoding="utf-8")
 _ngx_app = _ngx.split("location / {")[1].split("proxy_pass")[0]
-r.check("nginx.conf: die App bekommt das gefilterte Cookie", "proxy_set_header Cookie $ts_app_cookie;" in _ngx_app)
+r.check("nginx.conf: the app gets the filtered cookie", "proxy_set_header Cookie $ts_app_cookie;" in _ngx_app)
 _ngx_auth = _ngx.split("location = /auth/forward {")[1].split("}")[0]
-r.check("nginx.conf: der Sub-Request an /auth/forward behält das Cookie",
+r.check("nginx.conf: the sub-request to /auth/forward keeps the cookie",
         "proxy_set_header Cookie $http_cookie;" in _ngx_auth)
 _pfad = (ROOT / "deploy/forward-auth/nginx-pfad.conf").read_text(encoding="utf-8")
-r.check("nginx-pfad.conf: jede PHP-Location bekommt das gefilterte Cookie (auch die offene)",
+r.check("nginx-pfad.conf: every PHP location gets the filtered cookie (also the open one)",
         _pfad.count("fastcgi_pass") == _pfad.count("fastcgi_param HTTP_COOKIE        $ts_app_cookie;"),
-        "eine fastcgi_pass-Location reicht das Cookie ungefiltert an PHP")
+        "a fastcgi_pass location passes the cookie unfiltered to PHP")
 _traefik = (ROOT / "deploy/forward-auth/traefik.yml").read_text(encoding="utf-8")
-r.check("traefik.yml: die Cookie-Lücke ist benannt und der Ausweg vorhanden (A-2)",
+r.check("traefik.yml: the cookie gap is named and the way out is present (A-2)",
         "B-20" in _traefik and 'Cookie: ""' in _traefik)
 for datei in CADDYFILES:
     _text = (ROOT / datei).read_text(encoding="utf-8")
     _auth_block = _text.split("rewrite /auth/forward")[1].split("handle_response @ok")[0]
-    r.check(f"{datei}: der Sub-Request an /auth/forward behält das Cookie (sonst ist jeder abgemeldet)",
+    r.check(f"{datei}: the sub-request to /auth/forward keeps the cookie (otherwise everyone is signed out)",
             "header_up Cookie" not in _auth_block)
 
 
-# H-16: Caddy findet einen Antwort-Header in `{rp.header.…}` nur in der Schreibweise, die Gos
-# textproto daraus macht (jedes Wort gross, der Rest klein). Mit `X-TinySesam-Location` kam eine
-# 302 mit LEEREM Location heraus — ohne Fehler, ohne Logzeile.
+# H-16: Caddy finds a response header in `{rp.header.…}` only in the spelling that Go's
+# textproto makes of it (each word capitalised, the rest lower case). With `X-TinySesam-Location` a
+# 302 with an EMPTY Location came out — without an error, without a log line.
 def go_kanonisch(name: str) -> str:
     return "-".join(w[:1].upper() + w[1:].lower() for w in name.split("-"))
 
@@ -773,11 +773,11 @@ def go_kanonisch(name: str) -> str:
 for datei, extra in ((CADDYFILES[0], set()), (CADDYFILES[1], {"X-TinySesam-Gate-Cookie"})):
     _platzhalter = re.findall(r"\{rp\.header\.([A-Za-z0-9-]+)\}", (ROOT / datei).read_text(encoding="utf-8"))
     _schief = [p for p in _platzhalter if p != go_kanonisch(p)]
-    r.check(f"{datei}: jeder {{rp.header.…}}-Platzhalter steht in Go-kanonischer Form (H-16)",
+    r.check(f"{datei}: every {{rp.header.…}} placeholder is in Go-canonical form (H-16)",
             _platzhalter and not _schief, f"nicht kanonisch: {_schief}")
     _gesendet = set(TinySesam.FORWARD_HEADERS_DEFAULT.values()) | {"X-TinySesam-Location"} | extra
     _fehlt = [h for h in _gesendet if go_kanonisch(h) not in _platzhalter]
-    r.check(f"{datei}: jeder Header, den TinySesam schickt, hat seinen Platzhalter", not _fehlt,
+    r.check(f"{datei}: every header TinySesam sends has its placeholder", not _fehlt,
             f"fehlt: {_fehlt}")
 
 raise SystemExit(r.done())

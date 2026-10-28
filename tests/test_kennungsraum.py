@@ -1,18 +1,18 @@
-"""Kennungsraum: Benutzername und Adresse sind EIN Raum — von der Datenbank erzwungen (G12c).
+"""Identifier space: username and address are ONE space — enforced by the database (G12c).
 
-`find_user` sucht in beiden Spalten, und der Zähl-Topf (`norm_kennung`) faltet gröber als NOCASE.
-Bis 2026-09-26 prüfte das nur `identifier_taken` VOR dem Schreiben; die Datenbank kannte
-`UNIQUE(username)` (BINARY) und `ux_users_email`. Zwei gleichzeitige Anfragen derselben Kennung —
-eine als Name, eine als Adresse — kamen beide durch, oder eine endete mit einer 500. Gemessen wird:
+`find_user` searches in both columns, and the counting bucket (`norm_kennung`) folds more coarsely than NOCASE.
+Until 2026-09-26 only `identifier_taken` checked that BEFORE writing; the database knew
+`UNIQUE(username)` (BINARY) and `ux_users_email`. Two simultaneous requests for the same identifier —
+one as name, one as address — both got through, or one ended with a 500. What is measured:
 
-A  der Store selbst weist jede neue Kollision ab und lässt das Vorgesehene durch;
-B  der Wettlauf, deterministisch: Eine zweite Instanz auf derselben Datei legt an, NACHDEM die
-   erste geprüft hat und BEVOR sie schreibt — jeder Weg antwortet fachlich, nie mit 500;
-C  dasselbe echt parallel;
-D  ein Bestand mit Kollisionen: Start, vollständige Meldung, auflösbar;
-E  der Adresswechsel im Mail-Modus ist eine Transaktion;
-F  eine Datei, auf der die Trigger nicht anzulegen sind, startet trotzdem;
-G  die Prüfung kostet nicht mit der Zahl der Konten mehr (SQLite-Schritte).
+A  the store itself rejects every new collision and lets the intended through;
+B  the race, deterministic: a second instance on the same file creates AFTER the
+   first has checked and BEFORE it writes — every path answers in substance, never with a 500;
+C  the same for real in parallel;
+D  existing data with collisions: start, complete message, resolvable;
+E  the address change in mail mode is one transaction;
+F  a file on which the triggers cannot be created starts anyway;
+G  the check does not cost more with the number of accounts (SQLite steps).
 """
 from __future__ import annotations
 
@@ -49,7 +49,7 @@ def _datei() -> str:
 
 
 def _abgewiesen(fn) -> str:
-    """„durch", oder der Text des IntegrityError, mit dem die Datenbank abweist."""
+    """“durch”, or the text of the IntegrityError with which the database rejects."""
     try:
         fn()
     except sqlite3.IntegrityError as e:
@@ -58,14 +58,14 @@ def _abgewiesen(fn) -> str:
 
 
 def _roh(store, name, mail=None) -> int:
-    """Ein Konto per rohem INSERT ohne Topf — der Weg eines fremden Schreibers (ältere Fassung,
-    sqlite3-Werkzeug), den die Kennungs-Trigger nicht sehen."""
+    """An account via raw INSERT without bucket — the path of a foreign writer (older version,
+    sqlite3 tool) which the identifier triggers do not see."""
     return store._exec("INSERT INTO users(username, display_name, email, created_at) VALUES (?,?,?,?)",
                        (name, name, mail, jetzt())).lastrowid
 
 
 def _paar(**cfg):
-    """Zwei Instanzen auf DERSELBEN Datei — zwei Worker (`uvicorn --workers 2`)."""
+    """Two instances on the SAME file — two workers (`uvicorn --workers 2`)."""
     grund = dict(db_path=_datei(), cookie_secure=False, csrf_enabled=False, passkey_enabled=False,
                  base_url=BASIS, lang="de")
     grund.update(cfg)
@@ -77,10 +77,10 @@ def _paar(**cfg):
 
 
 def _dazwischen(auth, methode, vorher, nachher=None):
-    """Einmalig: `vorher()` (die gleichzeitige Anfrage der ANDEREN Instanz) läuft, NACHDEM `auth`
-    alle Prüfungen hinter sich hat und BEVOR sein Store schreibt. `nachher()` läuft direkt nach
-    dem Schreiben (auch wenn es scheitert) — noch bevor der Manager den Fehler sieht. Ein Haken,
-    den keine Anfrage ausgelöst hat, wird ersetzt, nicht verschachtelt."""
+    """Once: `vorher()` (the simultaneous request of the OTHER instance) runs AFTER `auth`
+    has passed all checks and BEFORE its store writes. `nachher()` runs directly after
+    the write (even if it fails) — before the manager sees the error. A hook
+    that no request has triggered is replaced, not nested."""
     auth.store.__dict__.pop(methode, None)
     original = getattr(auth.store, methode)
 
@@ -120,10 +120,10 @@ def _link(post, an):
     return ""
 
 
-# ── A: der Store weist jede neue Kollision ab ────────────────────────────────────────────────────
-# (Mutationsproben: INSERT-Trigger nicht anlegen → rot; UPDATE-Trigger nicht anlegen → rot;
-#  `id IS NOT NEW.id` streichen → rot beim Wechsel im Mail-Modus; die zweite Anweisung in
-#  `_kennung_setzen`, die den Topf zurücksetzt, streichen → rot bei „B1 → b1".)
+# ── A: the store rejects every new collision ──────────────────────────────────────────────────
+# (Mutation probes: do not create the INSERT trigger → red; do not create the UPDATE trigger → red;
+#  remove `id IS NOT NEW.id` → red on the change in mail mode; remove the second statement in
+#  `_kennung_setzen` that resets the bucket → red on “B1 → b1".)
 s = Store(_datei())
 blockiert = {}
 s.create_user("Alice")
@@ -144,10 +144,10 @@ blockiert["set_email → fremde Adresse"] = _abgewiesen(lambda: s.set_email(b_id
 blockiert["set_email → fremder Name"] = _abgewiesen(lambda: s.set_email(b_id, "q@example.com"))
 blockiert["set_username → fremde Adresse"] = _abgewiesen(lambda: s.set_username(b_id, "x@example.com"))
 blockiert["set_username → Namensvetter"] = _abgewiesen(lambda: s.set_username(b_id, "ALICE"))
-r.check("A: jede neue Kollision im Kennungsraum weist die Datenbank ab (IntegrityError)",
+r.check("A: the database rejects every new collision in the identifier space (IntegrityError)",
         set(blockiert.values()) == {VERGEBEN}, str(blockiert))
 _b = s.get_user(b_id)
-r.check("A: … dabei ändert sich nichts, und keine Transaktion bleibt offen",
+r.check("A: … nothing changes in the process, and no transaction stays open",
         _b["username"] == "b1" and not _b["email"] and not s.db.in_transaction
         and len(s._all("SELECT id FROM users")) == 8, f"{dict(_b)} offen={s.db.in_transaction}")
 durch = {}
@@ -159,19 +159,19 @@ _e = s.create_user("em@example.com", email="em@example.com")
 durch["Mail-Modus: Adresse und Name wechseln"] = _abgewiesen(
     lambda: s.adresse_wechseln(_e, "em2@example.com", name_folgt=True))
 durch["die alte Adresse ist danach frei"] = _abgewiesen(lambda: s.create_user("em@example.com"))
-r.check("A: … durch gehen Name = eigene Adresse, dieselbe Adresse erneut, ein Name im eigenen Topf, "
-        "der Wechsel im Mail-Modus", set(durch.values()) == {"durch"}, str(durch))
+r.check("A: … these pass: name = own address, the same address again, a name in the own bucket, "
+        "the change in mail mode", set(durch.values()) == {"durch"}, str(durch))
 _toepfe = tuple(s._one("SELECT topf_name, topf_mail FROM users WHERE id=?", (b_id,)))
-r.check("A: … „B1“ behält seinen Topf (der Nachrechnen-Trigger setzt ihn sonst auf NULL), „b1“ bleibt vergeben",
+r.check("A: … “B1” keeps its bucket (the recalculation trigger otherwise sets it to NULL), “b1” stays taken",
         _toepfe == ("b1", "") and _abgewiesen(lambda: s.create_user("b1")) == VERGEBEN, str(_toepfe))
-# Ein fremder Schreiber, der denselben Wert erneut setzt, nimmt dem Konto den Topf nicht (bis
-# 2026-09-26 stand er danach bis zum nächsten Nachtrag auf NULL, und die Trigger sahen das Konto
-# nicht). (Mutationsprobe: im Nachrechnen-Trigger `NEW.<spalte> IS NOT OLD.<spalte>` streichen → rot.)
+# A foreign writer that sets the same value again does not take the bucket from the account (until
+# 2026-09-26 it stood at NULL afterwards until the next addition, and the triggers did not see the
+# account). (Mutation probe: remove `NEW.<spalte> IS NOT OLD.<spalte>` in the recalculation trigger → red.)
 s._exec("UPDATE users SET username=username, email=email WHERE id=?", (a_id,))
-r.check("A: … ein UPDATE auf denselben Wert lässt den Topf stehen",
+r.check("A: … an UPDATE to the same value leaves the bucket standing",
         tuple(s._one("SELECT topf_name, topf_mail FROM users WHERE id=?", (a_id,))) == ("a1", "frei@example.com"))
-# Ein Trigger aus Schema 10 (die Fassung von 0.20.1) wird durch den heutigen ersetzt — mit
-# `IF NOT EXISTS` allein stünde er für immer so da. (Mutationsprobe: jeden vorhandenen Trigger stehen
+# A trigger from schema 10 (the version of 0.20.1) is replaced by today's — with
+# `IF NOT EXISTS` alone it would stand there forever. (Mutation probe: leave every existing trigger standing
 # lassen → rot.)
 _alt_db = _datei()
 _alt = Store(_alt_db)
@@ -181,13 +181,13 @@ _alt._exec("CREATE TRIGGER trg_users_topf_name AFTER UPDATE OF username ON users
 _alt.db.close()
 _neu = Store(_alt_db)
 _sql = _neu._one("SELECT sql FROM sqlite_master WHERE name='trg_users_topf_name'")["sql"]
-r.check("A: ein Trigger aus einer älteren Fassung wird beim Start ersetzt",
+r.check("A: a trigger from an older version is replaced at start",
         "NEW.username IS NOT OLD.username" in _sql, _sql)
 
 # ── B: Wettlauf, deterministisch ─────────────────────────────────────────────────────────────────
-# (Mutationsproben: die Abbildung des IntegrityError in `create_user`, `confirm_email_change`,
-#  `change_username`, im OIDC-Nachtrag, in `_adresse_aus_quelle_belegen` und in den Routen
-#  `register`/Admin streichen → je rot, meist mit einer 500.)
+# (Mutation probes: remove the mapping of the IntegrityError in `create_user`, `confirm_email_change`,
+#  `change_username`, in the OIDC addition, in `_adresse_aus_quelle_belegen` and in the routes
+#  `register`/admin → each red, mostly with a 500.)
 a, b, _ = _paar()
 _dazwischen(a, "create_user", lambda: b.create_user("rb", password=PW, email="race@example.com"))
 try:
@@ -195,7 +195,7 @@ try:
     b1 = None
 except ConfigError as fehler:
     b1 = (fehler.field, fehler.owner_id)
-r.check("B1: Name gegen eine gleichzeitig angelegte Adresse → ConfigError, Feld und Besitzer stimmen",
+r.check("B1: name against a simultaneously created address → ConfigError, field and owner correct",
         b1 == ("username", b.store.get_user_by_name("rb")["id"]), str(b1))
 _dazwischen(a, "create_user", lambda: b.create_user("race2@example.com", password=PW))
 try:
@@ -203,7 +203,7 @@ try:
     b1b = None
 except ConfigError as fehler:
     b1b = (fehler.field, fehler.owner_id)
-r.check("B1: … Adresse gegen einen gleichzeitig angelegten Namen → Feld „email“",
+r.check("B1: … address against a simultaneously created name → field “email”",
         b1b == ("email", b.store.get_user_by_name("race2@example.com")["id"]), str(b1b))
 _dazwischen(a, "create_user", lambda: b.create_user("weg", password=PW),
             nachher=lambda: b.delete_user(b.store.get_user_by_name("weg")["id"]))
@@ -212,11 +212,11 @@ try:
     b1c = None
 except ConfigError as fehler:
     b1c = (fehler.field, fehler.owner_id, str(fehler))
-r.check("B1: … ist das andere Konto schon wieder weg: ConfigError ohne Besitzer, nicht IntegrityError",
+r.check("B1: … if the other account is already gone again: ConfigError without owner, not IntegrityError",
         b1c == ("username", None, "Benutzername ist bereits vergeben"), str(b1c))
-r.check("B1: … keine Kollision in der Datenbank", a.store.topf_kollisionen() == [], str(a.store.topf_kollisionen()))
+r.check("B1: … no collision in the database", a.store.topf_kollisionen() == [], str(a.store.topf_kollisionen()))
 
-# B2: Adresswechsel gegen eine Registrierung mit Name = Adresse.
+# B2: address change against a registration with name = address.
 a, b, app_a = _paar()
 post: list = []
 a.set_mailer(lambda to, betreff, text, html=None: post.append((to, text)))
@@ -224,33 +224,33 @@ carla = a.create_user("carla", password=PW, email="carla@example.com")
 a.request_email_change(carla, "neu@example.com", BASIS)()
 _dazwischen(a, "adresse_wechseln", lambda: b.create_user("neu@example.com", password=PW))
 b2 = TestClient(app_a, raise_server_exceptions=False).post(_link(post, "neu@example.com"), follow_redirects=False)
-r.check("B2: confirm_email_change im Wettlauf → 409, die Adresse bleibt, Audit-Zeile mit wettlauf=1",
+r.check("B2: confirm_email_change in a race → 409, the address stays, audit row with wettlauf=1",
         b2.status_code == 409 and a.get_user(carla)["email"] == "carla@example.com"
         and "wettlauf=1" in (_audit(a, "email_change_taken") or "") and a.store.topf_kollisionen() == [],
         f"HTTP {b2.status_code}, {a.get_user(carla)['email']}, {_audit(a, 'email_change_taken')}")
 
-# B3: Umbenennen auf der Konto-Seite.
+# B3: rename on the account page.
 a, b, app_a = _paar()
 dora = a.create_user("dora", password=PW)
 c = TestClient(app_a, raise_server_exceptions=False)
 c.post("/auth/login", data={"username": "dora", "password": PW}, follow_redirects=False)
 _dazwischen(a, "set_username", lambda: b.create_user("Zeta", password=PW))
 b3 = c.post("/auth/account/username", json={"username": "zeta"})
-r.check("B3: change_username im Wettlauf → 400 „existiert schon“, der Name bleibt",
+r.check("B3: change_username in a race → 400 “existiert schon”, the name stays",
         b3.status_code == 400 and b3.json().get("detail") == a.t("api.user_exists")
         and a.get_user(dora)["username"] == "dora" and a.store.topf_kollisionen() == [],
         f"HTTP {b3.status_code} {b3.text[:120]}")
 
-# B4: Adresse nachtragen — aus LDAP/SAML …
+# B4: add an address — from LDAP/SAML …
 a, b, _ = _paar()
 lars = a.create_user("lars", password=PW)
 _dazwischen(a, "set_email", lambda: b.create_user("lars2", password=PW, email="lars@example.com"))
 a._adresse_aus_quelle_belegen(a.store.get_user(lars), "lars@example.com", True, "ldap")
-r.check("B4: Adresse aus LDAP im Wettlauf → das Konto bleibt ohne, Audit-Zeile",
+r.check("B4: address from LDAP in a race → the account stays without, audit row",
         not a.get_user(lars)["email"] and "wettlauf=1" in (_audit(a, "ldap_email_taken") or ""),
         f"{a.get_user(lars)['email']} {_audit(a, 'ldap_email_taken')}")
 
-# … und aus OIDC (liefert der Provider den Beleg nach, kommt die Adresse ins Konto — H-3).
+# … and from OIDC (if the provider supplies the proof afterwards, the address enters the account — H-3).
 IDP = "https://idp.example.invalid"
 
 
@@ -282,12 +282,12 @@ _setze(a, {"sub": "g12c-1", "preferred_username": "olga", "email": "olga@example
 _dazwischen(a, "set_email", lambda: b.create_user("olga@example.com", password=PW))
 b4 = _oidc_login(app_a)
 _olga = a.store.get_user_by_name("olga")
-r.check("B4: Adresse aus OIDC im Wettlauf → kein 500, das Konto bleibt ohne, Audit-Zeile",
+r.check("B4: address from OIDC in a race → no 500, the account stays without, audit row",
         b4.status_code == 303 and _olga is not None and not _olga["email"]
         and "wettlauf=1" in (_audit(a, "oidc_email_taken") or ""),
         f"HTTP {b4.status_code} {dict(_olga) if _olga else None} {_audit(a, 'oidc_email_taken')}")
 
-# B5: die Routen — Registrierung und Admin-API antworten fachlich, nie mit 500.
+# B5: the routes — registration and admin API answer in substance, never with a 500.
 def _registrieren(app, **daten):
     return TestClient(app, raise_server_exceptions=False).post(
         "/auth/register", data={"password": PW, "next": "/", **daten}, follow_redirects=False)
@@ -298,7 +298,7 @@ _dazwischen(a, "create_user", lambda: b.create_user("Rennen", password=PW))
 b5a = _registrieren(app_a, username="rennen", email="r1@example.com")
 _dazwischen(a, "create_user", lambda: b.create_user("zweiter", password=PW, email="r2@example.com"))
 b5b = _registrieren(app_a, username="rennen2", email="r2@example.com")
-r.check("B5: Registrierung im Wettlauf ohne Bestätigung → 409 (Name vergeben / Adresse vergeben)",
+r.check("B5: registration in a race without confirmation → 409 (name taken / address taken)",
         b5a.status_code == 409 and html.escape(a.t("err.username_taken")) in b5a.text
         and b5b.status_code == 409 and html.escape(a.t("err.email_taken")) in b5b.text
         and a.store.get_user_by_name("rennen2") is None,
@@ -308,7 +308,7 @@ a, b, app_a = _paar(allow_signup=True, signup_verify_email=True)
 a.set_mailer(lambda *x, **k: True)
 _dazwischen(a, "create_user", lambda: b.create_user("dritter", password=PW, email="r3@example.com"))
 b5c = _registrieren(app_a, username="rennen3", email="r3@example.com")
-r.check("B5: … mit Bestätigung: eine im Wettlauf vergebene Adresse bekommt die neutrale Seite (R4-03), "
+r.check("B5: … with confirmation: an address taken in a race gets the neutral page (R4-03), "
         "Audit signup_taken wettlauf=1",
         b5c.status_code == 200 and html.escape(a.t("reg.verify")) in b5c.text
         and a.store.get_user_by_name("rennen3") is None
@@ -317,7 +317,7 @@ r.check("B5: … mit Bestätigung: eine im Wettlauf vergebene Adresse bekommt di
 a.create_user("inhaber", password=PW, email="besetzt@example.com")
 _dazwischen(a, "create_user", lambda: b.create_user("platz", password=PW))
 b5d = _registrieren(app_a, username="platz", email="besetzt@example.com")
-r.check("B5: … der Platzhalter für eine vergebene Adresse, dessen Name im Wettlauf vergeben wird → 409",
+r.check("B5: … the placeholder for a taken address whose name is taken in a race → 409",
         b5d.status_code == 409 and html.escape(a.t("err.username_taken")) in b5d.text, f"HTTP {b5d.status_code}")
 
 a, b, app_a = _paar(allow_signup=True, signup_verify_email=True, login_identifier="email",
@@ -325,7 +325,7 @@ a, b, app_a = _paar(allow_signup=True, signup_verify_email=True, login_identifie
 a.set_mailer(lambda *x, **k: True)
 _dazwischen(a, "create_user", lambda: b.create_user("r4@example.com", password=PW, email="r4@example.com"))
 b5e = _registrieren(app_a, email="r4@example.com")
-r.check("B5: … im Mail-Modus (Name = Adresse): die neutrale Seite, kein „Name vergeben“, das die Adresse verriete",
+r.check("B5: … in mail mode (name = address): the neutral page, no “name taken” that would reveal the address",
         b5e.status_code == 200 and html.escape(a.t("reg.verify")) in b5e.text, f"HTTP {b5e.status_code}")
 
 a, b, app_a = _paar()
@@ -336,13 +336,13 @@ _dazwischen(a, "create_user", lambda: b.create_user("svc-rennen", password=PW))
 b5f = adm.post("/auth/admin/api/users", json={"username": "svc-rennen", "is_service": True})
 _dazwischen(a, "create_user", lambda: b.create_user("x5", password=PW, email="adm@example.com"))
 b5g = adm.post("/auth/admin/api/users", json={"username": "neu-adm", "email": "adm@example.com"})
-r.check("B5: Admin-API im Wettlauf → 409 „existiert schon“ bzw. „E-Mail vergeben“",
+r.check("B5: admin API in a race → 409 “existiert schon” or “E-Mail vergeben”",
         b5f.status_code == 409 and b5f.json().get("detail") == a.t("api.user_exists")
         and b5g.status_code == 409 and b5g.json().get("detail") == a.t("api.email_taken"),
         f"HTTP {b5f.status_code} {b5f.text[:80]} / {b5g.status_code} {b5g.text[:80]}")
 
 # ── C: echt parallel ─────────────────────────────────────────────────────────────────────────────
-# Zwei Worker, je 20 Threads, alle auf dieselbe Kennung — die Hälfte als Name, die andere als Adresse.
+# Two workers, 20 threads each, all on the same identifier — half as name, the other as address.
 a, b, app_a = _paar(allow_signup=True)
 app_b = FastAPI()
 app_b.include_router(b.router())
@@ -362,7 +362,7 @@ def _lauf(i):
         schranke.wait(timeout=30)
         antworten.append(cl.post("/auth/register", data={"password": PW, "next": "/", **daten},
                                  follow_redirects=False).status_code)
-    except Exception as fehler:        # ein Thread, der scheitert, darf nicht still fehlen
+    except Exception as fehler:        # a thread that fails must not silently be missing
         antworten.append(repr(fehler))
 
 
@@ -372,16 +372,16 @@ for _t in _threads:
 for _t in _threads:
     _t.join(timeout=120)
 _halter = a.store._all("SELECT id FROM users WHERE topf_name=? OR topf_mail=?", (KENNUNG, KENNUNG))
-r.check("C: 40 gleichzeitige Registrierungen derselben Kennung (Name und Adresse, zwei Worker): "
-        "nur 303/409, genau ein Konto hält sie, keine Kollision",
+r.check("C: 40 simultaneous registrations of the same identifier (name and address, two workers): "
+        "only 303/409, exactly one account holds it, no collision",
         len(antworten) == N and set(antworten) <= {303, 409} and antworten.count(303) == 1
         and len(_halter) == 1 and a.store.topf_kollisionen() == [],
         f"{sorted(map(str, antworten))} Halter {len(_halter)} {a.store.topf_kollisionen()}")
 
-# ── D: Bestand mit Kollisionen ───────────────────────────────────────────────────────────────────
-# (Mutationsproben: `NEW IS NOT OLD` streichen → rot beim Umbenennen, der eigenen Adresse und dem
-#  rohen UPDATE; den UPDATE-Trigger auf `OF topf_name, topf_mail` → rot, der Start scheitert am
-#  Nachtrag; die Startmeldung zurück auf „Name = fremde Adresse“ per NOCASE → rot.)
+# ── D: existing data with collisions ──────────────────────────────────────────────────────────
+# (Mutation probes: remove `NEW IS NOT OLD` → red on renaming, the own address and the
+#  raw UPDATE; the UPDATE trigger on `OF topf_name, topf_mail` → red, the start fails on the
+#  addition; the start message back to “name = foreign address” via NOCASE → red.)
 _db_d = _datei()
 _st = Store(_db_d)
 oe1, oe2 = _roh(_st, "Özlem"), _roh(_st, "özlem")
@@ -399,12 +399,12 @@ try:
     start_d = "ok"
 except Exception as fehler:
     auth_d, text_d, start_d = None, "", f"{type(fehler).__name__}: {fehler}"
-r.check("D: ein Bestand mit Kollisionen startet, kein Topf bleibt leer",
+r.check("D: existing data with collisions starts, no bucket stays empty",
         start_d == "ok" and auth_d.store._one("SELECT COUNT(*) AS n FROM users WHERE topf_name IS NULL "
                                               "OR topf_mail IS NULL")["n"] == 0, start_d)
 _zeile = next((z for z in text_d.splitlines() if "Kennungs-Kollision" in z), "")
-r.check("D: … die Startmeldung nennt alle drei (Namensvetter, Name = fremde Adresse, zwei Schreibweisen "
-        "einer Adresse) mit ihren Konten",
+r.check("D: … the start message names all three (namesakes, name = foreign address, two spellings "
+        "of one address) with their accounts",
         _zeile.startswith("3 Kennungs-Kollision")
         and all(f"user_id={i}" in _zeile for i in (oe1, oe2, chef, eve, ubu, uxn)), _zeile[:400])
 if auth_d is not None:
@@ -412,7 +412,7 @@ if auth_d is not None:
         "neues Konto „ÖZLEM“": _abgewiesen(lambda: auth_d.store.create_user("ÖZLEM")),
         "Name → belegter Topf": _abgewiesen(lambda: auth_d.store.set_username(chef, "özlem")),
     }
-    r.check("D: … eine Kollision verschlimmert niemand mehr", set(in_kollision.values()) == {VERGEBEN},
+    r.check("D: … nobody makes a collision worse any more", set(in_kollision.values()) == {VERGEBEN},
             str(in_kollision))
     aufloesen = {
         "eigene Adresse erneut": _abgewiesen(lambda: auth_d.store.set_email(chef, "chef@example.com", verified=True)),
@@ -422,22 +422,22 @@ if auth_d is not None:
         "rohes UPDATE des Betreibers": _abgewiesen(
             lambda: auth_d.store._exec("UPDATE users SET username='eve-umbenannt' WHERE id=?", (eve,))),
     }
-    r.check("D: … auflösen geht: umbenennen, die eigene Adresse neu setzen, eine freie Adresse, das rohe UPDATE",
+    r.check("D: … resolving works: rename, set the own address anew, a free address, the raw UPDATE",
             set(aufloesen.values()) == {"durch"}, str(aufloesen))
     _, text_d2 = _start(_db_d)
-    r.check("D: … danach schweigt die Startmeldung", "Kennungs-Kollision" not in text_d2
+    r.check("D: … afterwards the start message is silent", "Kennungs-Kollision" not in text_d2
             and auth_d.store.topf_kollisionen() == [], text_d2[:300])
-    # Eine Zeile eines fremden Schreibers zählt, sobald jemand nachsieht — nicht erst beim Start.
-    # (Mutationsprobe: in `topf_kollisionen` den Nachtrag streichen → rot.)
+    # A row of a foreign writer counts as soon as someone looks — not only at start.
+    # (Mutation probe: remove the addition in `topf_kollisionen` → red.)
     _spaet = _roh(auth_d.store, "ANNA-Maria")
     _roh(auth_d.store, "anna-maria")
-    r.check("D: … eine Kollision, die ein fremder Schreiber zur Laufzeit anlegt, nennt topf_kollisionen sofort",
+    r.check("D: … a collision that a foreign writer creates at runtime is named by topf_kollisionen immediately",
             [z["kennung"] for z in auth_d.store.topf_kollisionen()] == ["anna-maria"], str(_spaet))
 
-# ── E: der Adresswechsel im Mail-Modus ist eine Transaktion ──────────────────────────────────────
-# Ein TEMP-Trigger lässt das Umbenennen scheitern. Getrennt geschrieben stand danach die neue
-# Adresse neben dem alten Namen — und der alte Name hielt die alte Adresse besetzt.
-# (Mutationsprobe: in `_umschreiben` nach jeder Anweisung committen → rot.)
+# ── E: the address change in mail mode is one transaction ─────────────────────────────────────
+# A TEMP trigger makes the rename fail. Written separately, the new address then stood
+# next to the old name — and the old name kept the old address occupied.
+# (Mutation probe: commit after every statement in `_umschreiben` → red.)
 a, _, app_a = _paar(login_identifier="email", signup_require_email=True)
 post = []
 a.set_mailer(lambda to, betreff, text, html=None: post.append((to, text)))
@@ -447,7 +447,7 @@ a.store.db.execute("CREATE TEMP TRIGGER t_probe_kaputt BEFORE UPDATE OF username
                    "BEGIN SELECT RAISE(ABORT, 'probe: name scheitert'); END")
 e1 = TestClient(app_a, raise_server_exceptions=False).post(_link(post, "ella2@example.com"), follow_redirects=False)
 _ella = a.get_user(ella)
-r.check("E: scheitert im Mail-Modus das Umbenennen, bleibt auch die Adresse — kein 500, nichts halb",
+r.check("E: if the rename fails in mail mode, the address stays too — no 500, nothing half-done",
         e1.status_code == 409 and _ella["email"] == "ella@example.com" and _ella["username"] == "ella@example.com"
         and not a.store.db.in_transaction, f"HTTP {e1.status_code} {dict(_ella)}")
 a.store.db.execute("DROP TRIGGER temp.t_probe_kaputt")
@@ -455,11 +455,11 @@ post.clear()
 a.request_email_change(ella, "ella3@example.com", BASIS)()
 e2 = TestClient(app_a).post(_link(post, "ella3@example.com"), follow_redirects=False)
 _ella = a.get_user(ella)
-r.check("E: … ohne Störung wechseln Adresse und Name zusammen",
+r.check("E: … without disturbance address and name change together",
         e2.status_code == 303 and _ella["email"] == _ella["username"] == "ella3@example.com", str(dict(_ella)))
 
-# ── F: eine Datei, auf der sich die Trigger nicht anlegen lassen ─────────────────────────────────
-# (Mutationsprobe: das `try` um die Anlage streichen → rot, der Start scheitert.)
+# ── F: a file on which the triggers cannot be created ─────────────────────────────────────────
+# (Mutation probe: remove the `try` around the creation → red, the start fails.)
 _setzen = Store._trigger_setzen
 
 
@@ -475,14 +475,14 @@ except Exception as fehler:
     text_f, start_f = "", f"{type(fehler).__name__}: {fehler}"
 finally:
     Store._trigger_setzen = _setzen
-r.check("F: lassen sich die Trigger nicht anlegen (nur lesbar), startet der Store trotzdem und sagt es",
+r.check("F: if the triggers cannot be created (read-only), the store starts anyway and says so",
         start_f == "ok" and "Kennungsraum erst nach einem Start mit Schreibzugriff" in text_f,
         f"{start_f} {text_f[:200]!r}")
 
-# ── G: die Prüfung kostet nicht mit der Zahl der Konten mehr ─────────────────────────────────────
-# Gezählt werden SQLite-Schritte (wie S-1 in tests/test_audit_runde2.py): Ein Scan über die Konten
-# kostet mindestens einen Schritt je Zeile, ein Index-Zugriff einen, egal wie tief der Baum ist.
-# (Mutationsprobe: im Trigger `topf_name || '' = …` statt `topf_name = …` — kein Index mehr → rot.)
+# ── G: the check does not cost more with the number of accounts ───────────────────────────────
+# SQLite steps are counted (like S-1 in tests/test_audit_runde2.py): a scan over the accounts
+# costs at least one step per row, an index access one, no matter how deep the tree is.
+# (Mutation probe: in the trigger `topf_name || '' = …` instead of `topf_name = …` — no index any more → red.)
 def _schritte(st, fn) -> int:
     zaehler = [0]
 
@@ -512,7 +512,7 @@ def _messen(n: int) -> dict:
 
 _klein, _gross = _messen(100), _messen(3000)
 _waechst = {k: (_klein[k], _gross[k]) for k in _klein if abs(_gross[k] - _klein[k]) > 100}
-r.check("G: Anlegen, Umbenennen, Adresse setzen und Abweisen kosten bei 3000 Konten nicht mehr als bei 100",
-        not _waechst, f"wächst: {_waechst}\n100: {_klein}\n3000: {_gross}")
+r.check("G: creating, renaming, setting an address and rejecting cost no more with 3000 accounts than with 100",
+        not _waechst, f"grows: {_waechst}\n100: {_klein}\n3000: {_gross}")
 
 sys.exit(r.done())

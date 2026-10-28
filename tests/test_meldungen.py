@@ -1,8 +1,8 @@
-"""Meldungen (0.24.6): Hinweise, Erfolg, Warnungen und Fehler stehen als eigene Kästen UNTER der Karte, je mit Symbol.
+"""Messages (0.24.6): notices, success, warnings and errors appear as boxes of their own BELOW the card, each with a symbol.
 
-Bis 0.24.5 stand jede Seite ihre Fehlerzeile selbst in die Karte (`<div class=err>`), Erfolg als `class=ok`, die
-Anmeldeseite den Hinweis nach dem Abmelden als graue Zeile. Geprüft wird je Seite: Der Text steht NICHT in der Karte,
-sondern im Kasten `.meldungen` dahinter, mit Art und Symbol; ohne Meldung gibt es keinen leeren Kasten.
+Until 0.24.5 every page put its error line into the card itself (`<div class=err>`), success as `class=ok`, the
+sign-in page the notice after signing out as a grey line. Checked per page: the text is NOT in the card,
+but in the box `.meldungen` behind it, with kind and symbol; without a message there is no empty box.
 """
 import os
 import re
@@ -24,13 +24,13 @@ PROBE = "Probe-Meldung 4711"
 
 
 def zerlegen(html: str):
-    """(Karte, Rest nach der Karte) — die Karte ist das erste <div class=card>…, die Meldungen folgen ihr."""
+    """(card, rest after the card) — the card is the first <div class=card>…, the messages follow it."""
     i = html.index("<div class=card>")
     j = html.index("<div class=meldungen>") if "<div class=meldungen>" in html else len(html)
     karte = html[i:j]
-    # Die Karte muss VOR dem Kasten geschlossen sein — sonst stünden die Meldungen in ihr (gleich viele <div wie </div>).
+    # The card must be closed BEFORE the box — otherwise the messages would be inside it (equally many <div as </div>).
     if j < len(html):
-        assert karte.count("<div") == karte.count("</div>"), "Meldungen stehen IN der Karte, nicht darunter"
+        assert karte.count("<div") == karte.count("</div>"), "messages are IN the card, not below it"
     return karte, html[j:]
 
 
@@ -38,7 +38,7 @@ def seite(seitenname, **ctx):
     return auth.render_page(seitenname, **ctx).body.decode()
 
 
-# ---------- Fehler auf jeder Seite ----------
+# ---------- Error on every page ----------
 FEHLER_SEITEN = {
     "login": {"next": "/"}, "totp": {"next": "/"}, "register": {"next": "/"}, "magic_request": {"next": "/"},
     "forgot": {}, "reset": {"token": "x"}, "reauth": {"next": "/"}, "pin": {"next": "/"},
@@ -47,15 +47,15 @@ FEHLER_SEITEN = {
 for name, ctx in FEHLER_SEITEN.items():
     html = seite(name, error=PROBE, **ctx)
     karte, rest = zerlegen(html)
-    assert PROBE not in karte, f"{name}: Fehler steht noch in der Karte"
+    assert PROBE not in karte, f"{name}: error is still in the card"
     m = re.search(r"<div class='meldung fehler' role=alert><svg[^>]*>.*?</svg><span>([^<]*)</span></div>", rest)
-    assert m and m.group(1) == PROBE, f"{name}: keine Fehler-Meldung mit Symbol unter der Karte"
+    assert m and m.group(1) == PROBE, f"{name}: no error message with symbol below the card"
     assert "class=err" not in html, f"{name}: alte Fehlerzeile"
     leer = seite(name, **ctx)
-    assert "<div class=meldungen>" not in leer, f"{name}: leerer Meldungskasten ohne Meldung"
-ok(f"Fehler auf {len(FEHLER_SEITEN)} Seiten: als Meldung mit Symbol unter der Karte, keine in der Karte, kein leerer Kasten")
+    assert "<div class=meldungen>" not in leer, f"{name}: empty message box without a message"
+ok(f"errors on {len(FEHLER_SEITEN)} pages: as message with symbol below the card, none in the card, no empty box")
 
-# ---------- Erfolg und „Link ungültig“ ----------
+# ---------- Success and “Link ungültig” ----------
 for name, ctx, art, schluessel in (
         ("register", {"next": "/", "sent_verify": True}, "ok", "reg.verify"),
         ("magic_request", {"next": "/", "sent": True}, "ok", "magic.sent"),
@@ -66,20 +66,20 @@ for name, ctx, art, schluessel in (
     text = auth.t(schluessel)
     assert text not in karte and f"<div class='meldung {art}'" in rest and text in rest, f"{name}: {art}-Meldung"
     assert "class=ok>" not in html, f"{name}: alte Erfolgszeile"
-ok("Erfolg (Registrierung, Login-Link, Reset-Link) und „Link ungültig“ als Meldung unter der Karte")
+ok("success (registration, login link, reset link) and “Link ungültig” as message below the card")
 
-# ---------- Anmeldeseite: alle Arten, in fester Reihenfolge ----------
+# ---------- Sign-in page: all kinds, in fixed order ----------
 html = seite("login", next="/", info="I-Text", warn="W-Text", error="F-Text")
 karte, rest = zerlegen(html)
 arten = re.findall(r"<div class='meldung (\w+)'", rest)
 assert arten == ["info", "warn", "fehler"], arten
 assert all(t not in karte for t in ("I-Text", "W-Text", "F-Text"))
 assert html.count("<svg") >= 3 and "role=status" in rest and "role=alert" in rest
-ok("Anmeldeseite: Hinweis, Warnung, Fehler je als eigener Kasten, Reihenfolge info → warn → fehler, mit Rolle")
+ok("sign-in page: notice, warning, error each as a box of its own, order info → warn → fehler, with role")
 
-# ---------- der Text wird maskiert ----------
+# ---------- the text is masked ----------
 html = seite("login", next="/", error="<script>x</script>")
 assert "<script>x</script>" not in html and "&lt;script&gt;" in html
-ok("Meldungstext wird maskiert")
+ok("message text is masked")
 
 print("Meldungen OK")

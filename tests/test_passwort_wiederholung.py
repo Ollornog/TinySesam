@@ -1,18 +1,18 @@
-"""Dasselbe falsche Passwort zählt nur einmal (0.24.9, `password_repeat_memory`).
+"""The same wrong password counts only once (0.24.9, `password_repeat_memory`).
 
-PO 2026-10-09: „gleiches passwort 10 mal eintippen ist wohl weniger ein hack versuch.“ Ein Handy mit altem Passwort
-fragt im Takt immer wieder mit demselben Wert an — bisher sperrte es nach fünf Anläufen Konto und Heim-IP, und fail2ban
-bannte die IP obendrein. Jetzt:
+PO 2026-10-09: “typing the same password 10 times is hardly a hack attempt.” A phone with an old password
+asks again and again in rhythm with the same value — until now it locked account and home IP after five tries, and fail2ban
+banned the IP on top. Now:
 
-  (a) zehnmal dasselbe falsche Passwort von derselben IP: ein Fehlversuch, neunmal `repeated login`, keine Sperre,
-      das richtige Passwort kommt danach durch, die Antwort bleibt jedes Mal dieselbe 401
-  (b) sechs VERSCHIEDENE falsche Passwörter sperren wie bisher (Gegenprobe)
-  (c) dieselbe Wiederholung von einer anderen IP zählt dort einmal neu
-  (d) `password_repeat_memory=0` schaltet es ab — dann sperrt die Wiederholung wie früher
-  (e) gemerkt werden nur N Fingerabdrücke: wer N+1 Passwörter im Kreis schickt, zählt jedes Mal
-  (f) Sicherheits-Log: `WARNING failed login` nur für den ersten, `INFO repeated login` danach, `INFO login ok` beim
-      Erfolg — und nur die erste Zeile trifft die mitgelieferte failregex
-  (g) im Speicher steht kein Passwort, nur 8-Byte-Fingerabdrücke
+  (a) ten times the same wrong password from the same IP: one failed attempt, nine times `repeated login`, no lockout,
+      the correct password gets through afterwards, the response stays the same 401 every time
+  (b) six DIFFERENT wrong passwords lock as before (counter-check)
+  (c) the same repetition from another IP counts there once anew
+  (d) `password_repeat_memory=0` switches it off — then the repetition locks as before
+  (e) only N fingerprints are remembered: whoever sends N+1 passwords in a circle counts every time
+  (f) security log: `WARNING failed login` only for the first, `INFO repeated login` afterwards, `INFO login ok` on
+      success — and only the first line hits the shipped failregex
+  (g) no password is in memory, only 8-byte fingerprints
 """
 from __future__ import annotations
 
@@ -65,7 +65,7 @@ def _zeilen(log, wort):
 
 
 def _audit(auth, ereignis):
-    """`login_fail` = gezählte Fehlversuche, `login_repeat` = Wiederholungen (Audit `login_fail … grund=wiederholt`)."""
+    """`login_fail` = counted failed attempts, `login_repeat` = repetitions (audit `login_fail … grund=wiederholt`)."""
     alle = [e for e in auth.store.recent_audit(limit=500) if e["event"] == "login_fail"]
     wdh = [e for e in alle if "grund=wiederholt" in (e["detail"] or "")]
     return wdh if ereignis == "login_repeat" else [e for e in alle if e not in wdh]
@@ -78,13 +78,13 @@ auth, app, log = _app()
 antworten = [_login(app, ALT) for _ in range(10)]
 assert all(r.status_code == antworten[0].status_code for r in antworten), [r.status_code for r in antworten]
 assert antworten[0].status_code in (200, 401), antworten[0].status_code
-assert len({re.sub(r"[A-Za-z0-9_-]{20,}", "", r.text) for r in antworten}) == 1, "die Antwort auf eine Wiederholung unterscheidet sich vom ersten Fehlversuch"
-ok("zehnmal dasselbe falsche Passwort: jedes Mal dieselbe Antwort (bis auf Nonce)")
+assert len({re.sub(r"[A-Za-z0-9_-]{20,}", "", r.text) for r in antworten}) == 1, "the response to a repetition differs from the first failed attempt"
+ok("ten times the same wrong password: the same response every time (except for the nonce)")
 assert len(_audit(auth, "login_fail")) == 1 and len(_audit(auth, "login_repeat")) == 9
-ok("Audit: zehnmal login_fail, davon neun mit grund=wiederholt")
+ok("audit: ten times login_fail, nine of them with grund=wiederholt")
 r = _login(app, PW)
 assert r.status_code in (302, 303) and "set-cookie" in r.headers, (r.status_code, r.text[:200])
-ok("danach kommt das richtige Passwort durch — keine Sperre (Fenster 5)")
+ok("afterwards the correct password gets through — no lockout (window 5)")
 assert len(_zeilen(log, "failed login")) == 1 and len(_zeilen(log, "repeated login")) == 9
 assert len(_zeilen(log, "login ok")) == 1, _zeilen(log, "login ok")
 FAILREGEX = re.compile(r"^\s*WARNING failed login user=.* ip=(?P<host>\S+) method=\S+(?: reason=\S+)?$")
@@ -93,13 +93,13 @@ with open(ROOT / "deploy" / "fail2ban" / "tinysesam-filter.conf", encoding="utf-
 with open(log, encoding="utf-8") as fh:
     treffer = [z for z in fh.read().splitlines() if FAILREGEX.match(z.split(" ", 2)[2])]
 assert len(treffer) == 1, treffer
-ok("Sicherheits-Log: 1× failed login, 9× repeated login, 1× login ok — nur der erste trifft die failregex")
+ok("security log: 1× failed login, 9× repeated login, 1× login ok — only the first hits the failregex")
 
 # (g)
 roh = repr(auth._pw_wiederholung)
 assert ALT not in roh and PW not in roh
 assert all(len(f) == 8 for liste in auth._pw_wiederholung.values() for f, _ in liste)
-ok("im Speicher stehen 8-Byte-Fingerabdrücke, kein Passwort")
+ok("8-byte fingerprints are in memory, no password")
 
 # (b) Gegenprobe
 auth, app, log = _app()
@@ -107,15 +107,15 @@ for i in range(6):
     _login(app, f"falsch-{i}-xxxxxxxx")
 r = _login(app, PW)
 assert not (r.status_code in (302, 303) and "set-cookie" in r.headers), r.status_code
-ok("sechs verschiedene falsche Passwörter sperren wie bisher")
+ok("six different wrong passwords lock as before")
 
-# (c) andere IP zählt neu, aber auch dort nur einmal
+# (c) another IP counts anew, but also only once there
 auth, app, log = _app()
 for _ in range(3):
     _login(app, ALT, IP_A)
     _login(app, ALT, IP_B)
 assert len(_audit(auth, "login_fail")) == 2 and len(_audit(auth, "login_repeat")) == 4
-ok("je IP einmal: zwei Fehlversuche, vier Wiederholungen")
+ok("once per IP: two failed attempts, four repetitions")
 
 # (d) abgeschaltet
 auth, app, log = _app(password_repeat_memory=0)
@@ -124,20 +124,20 @@ for _ in range(6):
 assert len(_audit(auth, "login_fail")) >= 5 and not _audit(auth, "login_repeat")
 r = _login(app, PW)
 assert not (r.status_code in (302, 303) and "set-cookie" in r.headers), r.status_code
-ok("password_repeat_memory=0: jede Wiederholung zählt, die Sperre greift")
+ok("password_repeat_memory=0: every repetition counts, the lockout applies")
 
-# (e) Kreis aus N+1 Passwörtern
+# (e) circle of N+1 passwords
 auth, app, log = _app(password_repeat_memory=2, max_login_attempts=20)
 for _ in range(2):
     for i in range(3):
         _login(app, f"kreis-{i}-xxxxxxxx")
 assert len(_audit(auth, "login_fail")) == 6 and not _audit(auth, "login_repeat"), (
     len(_audit(auth, "login_fail")), len(_audit(auth, "login_repeat")))
-ok("drei Passwörter im Kreis bei Gedächtnis 2: jedes zählt")
+ok("three passwords in a circle with memory 2: each counts")
 
 print("Passwort-Wiederholung OK")
 
-# (h) `login ok … unban=ja|nein` (0.24.10): ja nur ohne Fehlversuche gegen ANDERE Konten von derselben IP
+# (h) `login ok … unban=ja|nein` (0.24.10): ja only without failed attempts against OTHER accounts from the same IP
 print("login ok: unban")
 
 
@@ -149,7 +149,7 @@ def _unban(log):
 auth, app, log = _app()
 _login(app, PW)
 assert _unban(log) == "ja", _zeilen(log, "login ok")
-ok("ohne Fehlversuche: unban=ja")
+ok("without failed attempts: unban=ja")
 for i in range(3):
     _login(app, f"vertippt-{i}-xxxxxxxx")
 _login(app, PW)
@@ -160,8 +160,8 @@ for i in range(3):
     TestClient(app, client=IP_A).post("/auth/login", data={"username": "bob", "password": f"rate-{i}-xxxxxx"})
 _login(app, PW)
 assert _unban(log) == "nein", _zeilen(log, "login ok")
-ok("Fehlversuche gegen ein fremdes Konto von derselben IP: unban=nein")
+ok("failed attempts against a foreign account from the same IP: unban=nein")
 _login(app, PW, IP_B)
 assert _unban(log) == "ja"
-ok("dieselbe Anmeldung von einer anderen IP: unban=ja")
+ok("the same sign-in from another IP: unban=ja")
 print("login ok: unban OK")

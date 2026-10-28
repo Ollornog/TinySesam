@@ -1,4 +1,4 @@
-"""Phase 0/1: Template-Override-Schicht, next-Redirect-Härtung (Open-Redirect), Remember-me."""
+"""Phase 0/1: template override layer, next-redirect hardening (open redirect), remember-me."""
 import os
 import tempfile, os
 from fastapi import FastAPI, Depends
@@ -38,11 +38,11 @@ def geheim(u=Depends(auth.require_user)):
 
 c = TestClient(app)
 
-# ---------- Login mit Open-Redirect-next → landet auf / statt beim Angreifer ----------
+# ---------- Login with open-redirect next → lands on / instead of at the attacker ----------
 r = c.post("/auth/login", data={"username": "admin", "password": "geheim123", "next": "https://evil.example"},
            follow_redirects=False)
 assert r.status_code == 303 and r.headers["location"] == "/", r.headers.get("location")
-ok("Login mit fremdem next → Redirect auf / (kein Open-Redirect)")
+ok("login with foreign next → redirect to / (no open redirect)")
 
 # ---------- Remember-me: persistentes Cookie (Max-Age gesetzt) ----------
 c.get("/auth/logout")
@@ -52,29 +52,29 @@ sc = r.headers.get("set-cookie", "")
 assert "tinysesam_session=" in sc and "Max-Age=" in sc, sc
 ok("Remember an → persistentes Cookie (Max-Age)")
 
-# ---------- Ohne Remember: reines Session-Cookie (kein Max-Age/Expires) ----------
+# ---------- Without remember: pure session cookie (no Max-Age/Expires) ----------
 c.get("/auth/logout")
 r = c.post("/auth/login", data={"username": "admin", "password": "geheim123", "next": "/", "remember": ""},
            follow_redirects=False)
 sc = r.headers.get("set-cookie", "")
 assert "tinysesam_session=" in sc and "Max-Age=" not in sc and "Expires=" not in sc, sc
-ok("Remember aus → reines Session-Cookie (kein Max-Age)")
+ok("remember off → pure session cookie (no Max-Age)")
 
 # Server-Session-TTL folgt Transient-Wert
 tok = c.cookies.get("tinysesam_session")
 s = auth.store.get_session(tok)
 assert (s["expires_at"] - s["created_at"]) <= 6 * 3600 + 5, "Transient-TTL zu lang"
 assert s["remember"] == 0
-ok("Remember aus → kurze Transient-TTL server-side")
+ok("remember off → short transient TTL server-side")
 
-# ---------- Template-Override: eigene Login-Seite ersetzt die eingebaute ----------
+# ---------- Template override: own login page replaces the built-in one ----------
 auth.set_template("login", lambda a, ctx: f"<html>MEINE-LOGIN next={ctx['next']}</html>")
 c.get("/auth/logout")
 html = c.get("/auth/login?next=/geheim").text
 assert "MEINE-LOGIN" in html and "next=/geheim" in html, html
-ok("Template-Override: eigene Login-Seite wird ausgeliefert")
+ok("template override: own login page is served")
 
-# Override darf auch eine eigene Response (mit Status/Redirect) liefern
+# Override may also return its own response (with status/redirect)
 from fastapi.responses import JSONResponse
 auth.set_template("login", lambda a, ctx: JSONResponse({"custom": True}, status_code=418))
 r = c.get("/auth/login")

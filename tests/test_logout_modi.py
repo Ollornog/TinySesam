@@ -1,8 +1,8 @@
-"""Abmelden an der Anwendung (T-22): /.tinysesam/logout mit "app", "all" und "ask".
+"""Signing out at the application (T-22): /.tinysesam/logout with "app", "all" and "ask".
 
-"app" lässt die Sitzung stehen, sperrt aber DIESEN Host, bis der Mensch auf der Login-Seite
-„Weiter als …" wählt. "all" beendet die Sitzung und — bei einer OIDC-Anmeldung mit
-oidc_rp_logout — die beim Provider, mit dem ID-Token als `id_token_hint`.
+"app" leaves the session standing, but locks THIS host until the person chooses
+"Weiter als …" on the login page. "all" ends the session and — for an OIDC sign-in with
+oidc_rp_logout — the one at the provider, with the ID token as `id_token_hint`.
 """
 import os
 import re
@@ -49,7 +49,7 @@ def instanz(**extra):
 
 
 def angemeldet(auth, app, name="anna", id_token=None):
-    """Eine OIDC-Sitzung wie nach dem Callback: Methode oidc, Freigabe, ID-Token."""
+    """An OIDC session as after the callback: method oidc, unlock, ID token."""
     uid = auth.create_user(name)
     token = auth.store.create_session(uid, 3600, True, "oidc")
     auth._vermerke_oidc_freigabe(token, VORGABE_CLIENT)
@@ -75,50 +75,50 @@ auth, app = instanz(gate_token_enabled=True,
 assert auth.cfg.forward_logout == "all" and auth.cfg.oidc_rp_logout is True
 ok("Gateway: Vorgabe forward_logout=all, oidc_rp_logout=True")
 
-# ---------- nur von einer Anwendung abmelden ----------
+# ---------- sign out of one application only ----------
 c, token, uid = angemeldet(auth, app)
 assert forward(c, WIKI).status_code == 200 and forward(c, APP).status_code == 200
 r = c.get("/.tinysesam/logout", headers=WIKI, follow_redirects=False)
 assert r.status_code == 303 and r.headers["location"] == "/", (r.status_code, r.headers.get("location"))
 assert gate_geloescht(r, auth), r.headers.get_list("set-cookie")
-assert auth.store.get_session(token), "die Sitzung muss bleiben"
-ok("logout=app: 303 zurück zur Anwendung, Gate-Cookie gelöscht, Sitzung bleibt")
+assert auth.store.get_session(token), "the session must stay"
+ok("logout=app: 303 back to the application, gate cookie deleted, session stays")
 
 r = forward(c, WIKI)
 assert r.status_code == 401 and r.headers.get("X-TinySesam-Reason") == "app-abgemeldet", dict(r.headers)
 loc = urlsplit(r.headers["X-TinySesam-Location"])
-assert loc.path == "/auth/login", "nach „nur hier abmelden“ nie direkt zum Provider (der meldete lautlos an)"
+assert loc.path == "/auth/login", "after “sign out here only” never straight to the provider (it signed in silently)"
 assert forward(c, APP).status_code == 200
 assert "X-TinySesam-Gate-Cookie" not in forward(c, WIKI).headers
-ok("danach: Wiki → 401 app-abgemeldet zur Login-Seite (nicht direct), App weiter 200, kein Gate-Token für Wiki")
+ok("afterwards: wiki → 401 app-abgemeldet to the login page (not direct), app still 200, no gate token for wiki")
 
 seite = c.get(loc.path + "?" + loc.query)
 assert seite.status_code == 200, seite.status_code
 assert "<h1>Anmelden bei Wiki</h1>" in seite.text and "Weiter als anna" in seite.text, \
     re.findall(r"<h1>.*?</h1>|<button[^>]*>[^<]*", seite.text)
-ok("Login-Seite statt Rücksprung (keine Schleife): „Anmelden bei Wiki“ mit „Weiter als anna“")
+ok("login page instead of jump back (no loop): “Anmelden bei Wiki” with “Weiter als anna”")
 
 nxt = parse_qs(loc.query)["next"][0]
 r = c.post("/auth/gate/resume", data={"next": nxt}, follow_redirects=False)
 assert r.status_code == 303 and r.headers["location"] == nxt
 assert forward(c, WIKI).status_code == 200
-ok("„Weiter als …“ → zurück zur Anwendung, Wiki lässt wieder durch")
+ok("“Weiter als …” → back to the application, wiki lets through again")
 
-# Eine neue Anmeldung mit Ziel Wiki hebt die Sperre ebenso auf (der Abschluss jedes Logins).
+# A new sign-in with target wiki lifts the lockout just the same (the completion of every login).
 c.get("/.tinysesam/logout", headers=WIKI, follow_redirects=False)
 assert forward(c, WIKI).status_code == 401
 assert auth._login_redirect_after(None, token, uid, "https://wiki.example.com/x") == "https://wiki.example.com/x"
 assert forward(c, WIKI).status_code == 200
-ok("eine abgeschlossene Anmeldung mit Ziel Wiki hebt „nur hier abgemeldet“ auf")
+ok("a completed sign-in with target wiki lifts “signed out here only”")
 
-# Die Sperre überlebt das Drehen der Sitzung (Step-up) — sonst wäre sie mit dem nächsten Faktor weg.
+# The lockout survives the rotation of the session (step-up) — otherwise it would be gone with the next factor.
 c.get("/.tinysesam/logout", headers=WIKI, follow_redirects=False)
 neu = auth.store.rotate_session(auth.store.session_hash(token))
 c.cookies.set(auth.session_cookie_name, neu)
 assert forward(c, WIKI).status_code == 401 and forward(c, APP).status_code == 200
-ok("„nur hier abgemeldet“ zieht beim Drehen der Sitzung mit")
+ok("“signed out here only” moves along when the session is rotated")
 
-# ---------- überall abmelden, mit id_token_hint ----------
+# ---------- sign out everywhere, with id_token_hint ----------
 c2, token2, _ = angemeldet(auth, app, "bea", id_token="eyJ.ID.TOKEN")
 r = c2.get("/.tinysesam/logout?scope=all", headers=APP, follow_redirects=False)
 assert r.status_code == 303, r.status_code
@@ -127,27 +127,27 @@ q = parse_qs(ziel.query)
 assert f"{ziel.scheme}://{ziel.netloc}{ziel.path}" == META["end_session_endpoint"], r.headers["location"]
 assert q["id_token_hint"] == ["eyJ.ID.TOKEN"] and q["client_id"] == ["haupt"], q
 assert q["post_logout_redirect_uri"] == ["https://app.example.com/.tinysesam/after-logout"], q
-assert not auth.store.get_session(token2), "die Sitzung muss enden"
+assert not auth.store.get_session(token2), "the session must end"
 assert gate_geloescht(r, auth)
-ok("scope=all: Sitzung beendet, Gate-Cookie gelöscht, zum Provider mit id_token_hint, client_id und Rückweg")
+ok("scope=all: session ended, gate cookie deleted, to the provider with id_token_hint, client_id and way back")
 
-# Rückweg vom Provider: ohne Sitzung eine Seite „Abgemeldet“, keine Umleitung in eine neue Runde.
+# Way back from the provider: without a session a page “Abgemeldet”, no redirect into a new round.
 r = TestClient(app).get("/.tinysesam/after-logout", headers=APP, follow_redirects=False)
 assert r.status_code == 200 and "Abgemeldet" in r.text and gate_geloescht(r, auth)
-assert "content='10;url=/'" in r.text, "Modus direct (oidc_gateway): nach 10 s zurück zur Anwendung"
+assert "content='10;url=/'" in r.text, "mode direct (oidc_gateway): after 10 s back to the application"
 _pa, _papp = instanz(forward_login="page")
 _pr = TestClient(_papp).get("/.tinysesam/after-logout", headers=APP, follow_redirects=False)
-assert "http-equiv=refresh" not in _pr.text and "Wieder anmelden" in _pr.text, "Modus page: die Seite führt nicht von selbst weiter"
-ok("after-logout ohne Sitzung: Seite „Abgemeldet“ (keine neue Runde), Gate-Cookie gelöscht")
+assert "http-equiv=refresh" not in _pr.text and "Wieder anmelden" in _pr.text, "mode page: the page does not continue on its own"
+ok("after-logout without session: page “Abgemeldet” (no new round), gate cookie deleted")
 
-# Kette von der Anwendung aus (deren RP-Logout → Provider → after-logout): die Sitzung lebt noch.
+# Chain from the application (its RP logout → provider → after-logout): the session is still alive.
 c3, token3, _ = angemeldet(auth, app, "cleo", id_token="eyJ.C")
 r = c3.get("/.tinysesam/after-logout", headers={**APP, "Sec-Fetch-Site": "same-site"}, follow_redirects=False)
-assert not auth.store.get_session(token3), "after-logout muss die noch lebende Sitzung beenden"
+assert not auth.store.get_session(token3), "after-logout must end the still living session"
 assert r.status_code == 303 and r.headers["location"].startswith(META["end_session_endpoint"]), r.headers.get("location")
-ok("after-logout mit noch lebender Sitzung (Kette von der App): Sitzung endet")
+ok("after-logout with still living session (chain from the app): session ends")
 
-# Von einer fremden Seite: erst fragen (Logout-CSRF, F-07).
+# From a foreign page: ask first (logout CSRF, F-07).
 c4, token4, _ = angemeldet(auth, app, "dora")
 r = c4.get("/.tinysesam/logout?scope=all", headers={**APP, "Sec-Fetch-Site": "cross-site"}, follow_redirects=False)
 assert r.status_code == 200 and "Überall abmelden?" in r.text and auth.store.get_session(token4)
@@ -155,16 +155,16 @@ r = c4.get("/.tinysesam/after-logout", headers={**APP, "Sec-Fetch-Site": "cross-
 assert r.status_code == 200 and auth.store.get_session(token4)
 r = c4.post("/.tinysesam/logout", data={"scope": "all", "next": "/"}, headers=APP, follow_redirects=False)
 assert r.status_code == 303 and not auth.store.get_session(token4)
-ok("von einer fremden Seite: Rückfrage statt Abmelden; der POST meldet ab")
+ok("from a foreign page: confirmation instead of signing out; the POST signs out")
 
-# Ohne OIDC-Anmeldung (Passwort-Sitzung o. ä.) kein Umweg über den Provider.
+# Without OIDC sign-in (password session or similar) no detour via the provider.
 uid5 = auth.create_user("emil")
 t5 = auth.store.create_session(uid5, 3600, True, "password")
 c5 = TestClient(app)
 c5.cookies.set(auth.session_cookie_name, t5)
 r = c5.get("/.tinysesam/logout?scope=all", headers=APP, follow_redirects=False)
 assert r.headers["location"] == "/.tinysesam/after-logout" and not auth.store.get_session(t5)
-ok("Sitzung ohne OIDC: abmelden ohne Provider-Umweg")
+ok("session without OIDC: sign out without a provider detour")
 
 # ---------- fragen ----------
 auth2, app2 = instanz(forward_logout="ask", forward_apps={"wiki.example.com": {"name": "Wiki"}})
@@ -174,17 +174,17 @@ assert r.status_code == 200 and "Nur von Wiki abmelden oder überall?" in r.text
 assert "Nur von Wiki" in r.text and "Überall" in r.text and auth2.store.get_session(t6)
 r = c6.post("/.tinysesam/logout", data={"scope": "app", "next": "/"}, headers=WIKI, follow_redirects=False)
 assert r.status_code == 303 and auth2.store.get_session(t6) and forward(c6, WIKI).status_code == 401
-ok("logout=ask: Seite mit beiden Wegen; „Nur von Wiki“ per POST sperrt nur Wiki")
+ok("logout=ask: page with both paths; “Nur von Wiki” by POST locks only wiki")
 
 assert c6.post("/.tinysesam/logout", data={"scope": "egal"}, headers=WIKI).status_code == 400
-ok("POST mit unbekanntem scope → 400")
+ok("POST with unknown scope → 400")
 
 # ---------- fremder Host ----------
 r = TestClient(app).get("/.tinysesam/logout", headers={**APP, "X-Forwarded-Host": "fremd.example.net"})
 assert r.status_code == 404
-ok("ein Host, den diese Installation nicht schützt → 404")
+ok("a host that this installation does not protect → 404")
 
-# ---------- Konfigurationsprüfung ----------
+# ---------- Configuration check ----------
 def befunde(**w):
     return konfigpruefung.pruefe(TinySesamConfig(db_path=":memory:", **w))[0]
 
@@ -193,6 +193,6 @@ assert any("forward_logout" in b for b in befunde(forward_logout="nur_hier"))
 assert any("['logout']" in b for b in befunde(forward_apps={"a.example.com": {"logout": "jetzt"}}))
 assert not [b for b in befunde(forward_logout="ask", forward_apps={"a.example.com": {"logout": "app"}})
             if "logout" in b]
-ok("Konfigurationsprüfung: unbekannter Logout-Modus (global und je App)")
+ok("configuration check: unknown logout mode (global and per app)")
 
 print("Logout-Modi OK")

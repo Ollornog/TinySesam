@@ -1,4 +1,4 @@
-"""API-Keys + Service-/Daemon-Accounts: Zugang per Key, Rollen-Scope, Widerruf (sperren), Ablauf."""
+"""API keys + service/daemon accounts: access by key, role scope, revocation (blocking), expiry."""
 import os
 import tempfile, os
 from fastapi import FastAPI, Depends
@@ -25,44 +25,44 @@ def editor(u=Depends(auth.require_role("editor"))):
 
 c = TestClient(app)
 
-# System-/Service-Account für einen Daemon: kein Login, nur Key, Rolle 'editor'
+# System/service account for a daemon: no login, key only, role 'editor'
 svc = auth.create_service("backup-daemon", roles=["editor"])
 res = auth.create_api_key(svc, name="nightly-backup")
 key = res["key"]
 assert key.startswith("tsk_") and res["prefix"].startswith("tsk_")
-print("  ✓ Service-Account + API-Key erzeugt:", res["prefix"])
+print("  ✓ Service account + API key created:", res["prefix"])
 
-# Zugang per Key — ganz ohne Session/Login
+# Access by key — entirely without session/login
 r = c.get("/who", headers={"Authorization": f"Bearer {key}"})
 assert r.status_code == 200 and r.json() == {"user": "backup-daemon", "via": "apikey"}
 assert c.get("/who", headers={"X-API-Key": key}).status_code == 200
-print("  ✓ Zugang per Bearer- und X-API-Key-Header")
+print("  ✓ Access via Bearer and X-API-Key header")
 
-# Rollen-Scope greift auch per Key
+# Role scope also applies via key
 assert c.get("/editor", headers={"X-API-Key": key}).status_code == 200
-print("  ✓ require_role über Key (Service hat 'editor')")
+print("  ✓ require_role via key (service has 'editor')")
 
-# kein/falscher Key → 401
+# missing/wrong key → 401
 assert c.get("/who").status_code == 401
 assert c.get("/who", headers={"X-API-Key": "tsk_falsch"}).status_code == 401
-print("  ✓ kein/ungültiger Key → 401")
+print("  ✓ missing/invalid key → 401")
 
-# Widerruf = sperren (nicht löschen) → sofort ungültig, Key bleibt in der Liste
+# Revocation = blocking (not deleting) → invalid immediately, key stays in the list
 kid = auth.list_api_keys(svc)[0]["id"]
 auth.revoke_api_key(kid)
 assert c.get("/who", headers={"X-API-Key": key}).status_code == 401
 assert any(k["revoked"] for k in auth.list_api_keys(svc))
-print("  ✓ Widerruf wirkt sofort (Key gesperrt, nicht gelöscht)")
+print("  ✓ Revocation takes effect immediately (key blocked, not deleted)")
 
-# Ablauf
-exp = auth.create_api_key(svc, name="temp", expires_days=-1)   # bereits abgelaufen
+# Expiry
+exp = auth.create_api_key(svc, name="temp", expires_days=-1)   # already expired
 assert c.get("/who", headers={"X-API-Key": exp["key"]}).status_code == 401
-print("  ✓ abgelaufener Key → 401")
+print("  ✓ expired key → 401")
 
-# ---------- R6-5: zwei Arten Key ----------
-# Ein Key war bis 0.18.x eine vollständige Schreib-API im Namen seines Besitzers — bei einem
-# Admin also: Nutzer anlegen, is_admin setzen, Passwörter zurücksetzen, Schwellen ändern. Ohne
-# zweiten Faktor, ohne CSRF-Schicht. Ein abgeflossener CI-Key war die Instanz.
+# ---------- R6-5: two kinds of key ----------
+# Up to 0.18.x a key was a full write API in the name of its owner — for an admin that means:
+# create users, set is_admin, reset passwords, change thresholds. Without a second factor,
+# without a CSRF layer. A leaked CI key was the instance.
 from tinysesam.errors import ConfigError                                   # noqa: E402
 
 app2 = FastAPI()
@@ -84,31 +84,31 @@ _admin_id = auth.store.get_user_by_name("admin")["id"]
 _automat = auth.create_api_key(_admin_id, name="ci", kind="automation")
 _mensch = auth.create_api_key(_admin_id, name="cli", kind="human")
 
-# Der Automaten-Key kommt herein, aber ohne das Admin-Flag seines Besitzers.
+# The automation key gets in, but without the admin flag of its owner.
 _a = c2.get("/wer", headers={"X-API-Key": _automat["key"]})
 assert _a.status_code == 200 and _a.json()["user"] == "admin", _a.text[:120]
-assert _a.json()["admin"] is False, "der Automaten-Key trägt das Admin-Flag weiter"
+assert _a.json()["admin"] is False, "the automation key carries the admin flag along"
 assert c2.get("/nur-admin", headers={"X-API-Key": _automat["key"]}).status_code == 403
-print("  ✓ Automaten-Key: angemeldet ja, Admin nein (R6-5)")
+print("  ✓ Automation key: signed in yes, admin no (R6-5)")
 
-# Der Menschen-Key allein ist wertlos — er gilt nur mit einer Sitzung desselben Kontos.
+# The human key alone is worthless — it only counts together with a session of the same account.
 assert c2.get("/wer", headers={"X-API-Key": _mensch["key"]}).status_code == 401
 c3 = TestClient(app2)
 c3.post("/auth/login", data={"username": "admin", "password": "pw", "next": "/"}, follow_redirects=False)
 _m = c3.get("/wer", headers={"X-API-Key": _mensch["key"]})
 assert _m.status_code == 200 and _m.json()["admin"] is True, _m.text[:120]
-print("  ✓ Menschen-Key: allein wertlos, mit Sitzung voll wirksam")
+print("  ✓ Human key: worthless alone, fully effective with a session")
 
-# Und er gilt nur für SEIN Konto, nicht für irgendeine Sitzung.
+# And it only counts for ITS account, not for any session.
 auth.create_user("zweitkonto", password="pw2")
 c4 = TestClient(app2)
 c4.post("/auth/login", data={"username": "zweitkonto", "password": "pw2", "next": "/"},
         follow_redirects=False)
 assert c4.get("/wer", headers={"X-API-Key": _mensch["key"]}).json()["user"] == "zweitkonto", \
-    "die fremde Sitzung darf den Key nicht aktivieren — sonst genügt IRGENDEINE Anmeldung"
-print("  ✓ …und nur zusammen mit der Sitzung SEINES Kontos")
+    "a foreign session must not activate the key — otherwise ANY sign-in would suffice"
+print("  ✓ …and only together with the session of ITS account")
 
-# Ablauf: Vorgabe greift, unbefristet braucht die ausdrückliche Erlaubnis.
+# Expiry: the default applies, unlimited needs explicit permission.
 _mit_vorgabe = auth.create_api_key(svc, name="mit-vorgabe")
 assert _mit_vorgabe["expires_at"] is not None
 assert abs((_mit_vorgabe["expires_at"] - int(__import__("time").time())) / 86400 - 90) < 1
@@ -122,15 +122,15 @@ _frei = TinySesam(TinySesamConfig(db_path=os.path.join(tempfile.mkdtemp(), "t.db
                                   apikey_allow_unlimited=True))
 _uid_frei = _frei.create_service("geraet")
 assert _frei.create_api_key(_uid_frei, name="dauer", expires_days=0)["expires_at"] is None
-print("  ✓ Ablauf: 90 Tage als Vorgabe, unbefristet nur mit apikey_allow_unlimited")
+print("  ✓ Expiry: 90 days as default, unlimited only with apikey_allow_unlimited")
 
-# Eine unbekannte Art ist ein Fehler, keine stille Annahme.
+# An unknown kind is an error, not a silent assumption.
 try:
     auth.create_api_key(svc, name="quatsch", kind="halbstark")
     raise AssertionError("unbekannte Art kam durch")
 except ConfigError:
     pass
-print("  ✓ eine unbekannte Key-Art bricht ab, statt als Automat durchzugehen")
+print("  ✓ an unknown key kind aborts instead of passing as automation")
 
 os.remove(db)
 print("\nAPI-KEYS OK ✅")
