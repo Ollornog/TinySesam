@@ -233,10 +233,12 @@ try:
     # Abhängigkeitsrunde neu (`uv pip compile --resolution=lowest-direct` + OSV-Batch) und wird
     # hier eingefroren. Dieser Test hält also NICHT die Welt aktuell — er hält fest, dass der
     # einmal gemessene Boden nicht wieder abrutscht.
-    GEMESSENER_BODEN = {          # Stand 2026-09-22, Quelle OSV.dev
+    GEMESSENER_BODEN = {          # Stand 2026-09-22, authlib 2026-10-28; Quelle OSV.dev
         "fastapi": (0, 133, 0),        # erst ab hier ist starlette >= 1.3.1 erlaubt
         "python-multipart": (0, 0, 31),
-        "authlib": (1, 6, 12),         # GHSA-5357-c2jx-v7qh u.a. (Algorithmen-Konfusion)
+        # 1.6.12: GHSA-5357-c2jx-v7qh u.a. (Algorithmen-Konfusion). 1.9.1: CVE-2026-96760,
+        # CVE-2026-114614 bis -114618 und -114620 (Fixes in 1.8.0, 1.9.0 und 1.9.1).
+        "authlib": (1, 9, 1),
     }
 
     def _zahlen(text: str) -> tuple:
