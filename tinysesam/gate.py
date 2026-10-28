@@ -1,27 +1,27 @@
-"""Gate-Token: der Proxy prüft selbst, TinySesam nur beim Ausstellen (ADR-9, T-19).
+"""Gate token: the proxy checks by itself, TinySesam only at issuing (ADR-9, T-19).
 
-Vor einer fremden Anwendung fragte der Proxy bis hierhin für JEDE Anfrage `/auth/forward` —
-auch für jedes Skript, jedes Stylesheet, jedes Icon. Jetzt legt eine erfolgreiche Prüfung
-zusätzlich ein kurzlebiges, signiertes Token in ein Cookie auf dem Host der Anwendung. Der
-Proxy prüft dessen Signatur selbst (Caddy mit dem Plugin `caddy-jwt`) und fragt TinySesam erst
-wieder, wenn es fehlt oder abgelaufen ist. Das Token ist damit das zwischengespeicherte
-Ergebnis von `/auth/forward`, nicht mehr.
+In front of a foreign application the proxy used to ask `/auth/forward` for EVERY request —
+even for every script, every stylesheet, every icon. Now a successful check
+additionally puts a short-lived, signed token into a cookie on the application's host. The
+proxy checks its signature itself (Caddy with the plugin `caddy-jwt`) and asks TinySesam again
+only when it is missing or expired. The token is thus the cached
+result of `/auth/forward`, nothing more.
 
-Die Bausteine, bewusst klein und ohne eigene Abhängigkeit (`cryptography` ist Pflicht):
+The building blocks, deliberately small and without a dependency of their own (`cryptography` is mandatory):
 
-* **Ed25519 (`EdDSA`)**, kein HMAC: Der Proxy bekommt nur den öffentlichen Schlüssel. Mit einem
-  geteilten HMAC-Geheimnis könnte jeder, der die Proxy-Konfiguration liest, Token für jedes Konto
-  ausstellen. `caddy-jwt` erzwingt den Algorithmus, wenn `sign_alg EdDSA` gesetzt ist — ein
-  Token mit `alg: none` oder `HS256` im Kopf wird damit nicht anders geprüft.
-* **Der Schlüssel wird abgeleitet**, nicht eigens verwaltet: HKDF-SHA256 aus dem Schlüssel, der
-  schon die TOTP-Geheimnisse schützt (`geheimnis.schluessel_laden`). Damit gibt es kein zweites
-  Geheimnis, das gesichert, verteilt und vergessen werden kann, und alle Worker derselben
-  Installation signieren mit demselben Schlüssel. Wer den Grundschlüssel wechselt, wechselt auch
-  diesen — der Proxy braucht dann den neuen öffentlichen Schlüssel (`tinysesam gate-key`).
-* **`aud` trägt den Host UND die verlangten Rollen.** Ein Token, das für eine Prüfung ohne
-  Rollenangabe ausgestellt wurde, darf an einem Pfad, der `?roles=admin` verlangt, nicht
-  gelten — der Proxy sieht keine Rollen, nur die Zielgruppe. Deshalb steht die Rollenangabe in
-  der Zielgruppe selbst (`zielgruppe()`), und der Proxy nennt dort genau diese Zeichenkette.
+* **Ed25519 (`EdDSA`)**, not HMAC: the proxy gets only the public key. With a
+  shared HMAC secret anyone who reads the proxy configuration could issue tokens for any
+  account. `caddy-jwt` enforces the algorithm when `sign_alg EdDSA` is set — a
+  token with `alg: none` or `HS256` in its header is therefore not checked any differently.
+* **The key is derived**, not managed separately: HKDF-SHA256 from the key that
+  already protects the TOTP secrets (`geheimnis.schluessel_laden`). So there is no second
+  secret that can be backed up, distributed and forgotten, and all workers of the same
+  installation sign with the same key. Whoever changes the base key changes
+  this one too — the proxy then needs the new public key (`tinysesam gate-key`).
+* **`aud` carries the host AND the required roles.** A token issued for a check without
+  role specification must not be valid on a path that requires `?roles=admin` —
+  the proxy sees no roles, only the audience. That is why the role specification is in
+  the audience itself (`zielgruppe()`), and the proxy names exactly this string there.
 """
 from __future__ import annotations
 
@@ -31,16 +31,16 @@ import json
 import secrets
 from typing import Optional
 
-#: Fester Kontext der Ableitung. Eine neue Fassung bekäme einen neuen Wert — und damit einen
-#: neuen Schlüssel, ohne dass der Grundschlüssel wechseln muss.
+#: Fixed context of the derivation. A new version would get a new value — and thus a
+#: new key, without the base key having to change.
 _HKDF_INFO = b"tinysesam gate-token v1"
 
-#: Die Grenzen der Laufzeit. Darunter fragt der Proxy fast so oft wie ohne Token, darüber wird
-#: aus „Widerruf greift nach Ablauf" ein Widerruf, der zu spät kommt (ADR-9, Konsequenzen).
+#: The limits of the lifetime. Below, the proxy asks almost as often as without a token; above,
+#: "revocation takes effect after expiry" becomes a revocation that comes too late (ADR-9, consequences).
 TTL_MIN, TTL_MAX = 30, 3600
 
-#: Präfix der Claims, die TinySesam selbst setzt — damit sie mit keinem registrierten Claim
-#: (RFC 7519) und keinem eines Fremdsystems zusammenfallen.
+#: Prefix of the claims TinySesam sets itself — so they collide with no registered claim
+#: (RFC 7519) and none of a foreign system.
 CLAIM_PRAEFIX = "ts_"
 
 
@@ -53,7 +53,7 @@ def _b64u_lesen(text: str) -> bytes:
 
 
 def schluessel_ableiten(grundschluessel: bytes):
-    """Den Ed25519-Signaturschlüssel aus dem Grundschlüssel der Installation ableiten."""
+    """Derive the Ed25519 signing key from the installation's base key."""
     from cryptography.hazmat.primitives import hashes
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
     from cryptography.hazmat.primitives.kdf.hkdf import HKDF
@@ -67,24 +67,24 @@ def oeffentlich_roh(privat) -> bytes:
 
 
 def oeffentlich_b64(privat) -> str:
-    """Der öffentliche Schlüssel so, wie `caddy-jwt` ihn bei `sign_alg EdDSA` erwartet:
-    die 32 Rohbytes, Standard-Base64."""
+    """The public key the way `caddy-jwt` expects it with `sign_alg EdDSA`:
+    the 32 raw bytes, standard Base64."""
     return base64.b64encode(oeffentlich_roh(privat)).decode("ascii")
 
 
 def schluessel_id(oeffentlich: bytes) -> str:
-    """Kurze Kennung des Schlüssels (`kid`). Der Proxy braucht sie nicht; sie sagt beim Lesen
-    eines Tokens, mit welchem Schlüssel es entstand — nach einem Wechsel die erste Frage."""
+    """Short identifier of the key (`kid`). The proxy does not need it; when reading
+    a token it says which key produced it — the first question after a rotation."""
     return hashlib.sha256(oeffentlich).hexdigest()[:16]
 
 
 def zielgruppe(host: str, rollen_gruppen=()) -> str:
-    """Die Zielgruppe (`aud`) eines Tokens: Host, bei verlangten Rollen samt deren Angabe.
+    """The audience (`aud`) of a token: host, with required roles together with their specification.
 
-    `rollen_gruppen` ist die Form aus `?roles=` bzw. `X-TinySesam-Roles`: eine Liste von Gruppen,
-    innerhalb einer Gruppe genügt EINE Rolle, die Gruppen gelten zusammen. Die Darstellung ist
-    kanonisch (sortiert, ohne Dubletten), damit dieselbe Anforderung immer dieselbe Zeichenkette
-    ergibt — der Proxy vergleicht sie Zeichen für Zeichen:
+    `rollen_gruppen` is the form from `?roles=` or `X-TinySesam-Roles`: a list of groups,
+    within a group ONE role suffices, the groups apply together. The representation is
+    canonical (sorted, without duplicates) so the same requirement always yields the same string
+    — the proxy compares it character by character:
 
         zielgruppe("app.example.com")                          → "app.example.com"
         zielgruppe("app.example.com", [["redaktion", "admin"]]) → "app.example.com|roles=admin,redaktion"
@@ -95,8 +95,8 @@ def zielgruppe(host: str, rollen_gruppen=()) -> str:
 
 
 def ausstellen(privat, *, iss: str, aud: str, sub: str, claims: dict, ttl: int, jetzt: int) -> str:
-    """Ein signiertes Token (JWS Compact, `EdDSA`). `claims` sind die TinySesam-eigenen Felder
-    ohne Präfix; sie landen als `ts_<name>`."""
+    """A signed token (JWS Compact, `EdDSA`). `claims` are TinySesam's own fields
+    without prefix; they end up as `ts_<name>`."""
     kopf = {"alg": "EdDSA", "typ": "JWT", "kid": schluessel_id(oeffentlich_roh(privat))}
     inhalt = {"iss": iss, "aud": aud, "sub": str(sub), "iat": int(jetzt), "nbf": int(jetzt),
               "exp": int(jetzt) + int(ttl), "jti": secrets.token_urlsafe(12)}
@@ -108,10 +108,10 @@ def ausstellen(privat, *, iss: str, aud: str, sub: str, claims: dict, ttl: int, 
 
 
 def pruefen(oeffentlich: bytes, token: str, *, aud: str, iss: str, jetzt: int) -> Optional[dict]:
-    """Ein Token so prüfen, wie der Proxy es tut — für Tests und Diagnose. None bei jedem Fehler.
+    """Check a token the way the proxy does — for tests and diagnostics. None on any error.
 
-    Fail-closed: Algorithmus fest `EdDSA` (der Kopf wird nicht befragt, nur verglichen), Signatur,
-    `iss`, `aud`, `nbf`, `exp`. Ohne Uhrenspielraum — den gibt der Proxy, wenn überhaupt."""
+    Fail-closed: algorithm fixed to `EdDSA` (the header is not consulted, only compared), signature,
+    `iss`, `aud`, `nbf`, `exp`. Without clock tolerance — the proxy gives that, if at all."""
     from cryptography.exceptions import InvalidSignature
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
     try:
@@ -137,10 +137,10 @@ def pruefen(oeffentlich: bytes, token: str, *, aud: str, iss: str, jetzt: int) -
 
 
 def set_cookie(name: str, token: str, ttl: int) -> str:
-    """Der Wert eines `Set-Cookie`-Headers für das Gate-Cookie.
+    """The value of a `Set-Cookie` header for the gate cookie.
 
-    Immer `Secure` und `Path=/`, nie `Domain`: Das Präfix `__Host-` verlangt genau das, und der
-    Browser verwirft ein `__Host-`-Cookie, dem eines davon fehlt. Ohne `Domain` gilt es nur für
-    den Host, für den es ausgestellt wurde — ein Token für app-a erreicht app-b gar nicht erst.
-    `HttpOnly`: Das Skript der fremden Anwendung hat es nicht zu lesen."""
+    Always `Secure` and `Path=/`, never `Domain`: the `__Host-` prefix demands exactly that, and the
+    browser discards a `__Host-` cookie that lacks one of them. Without `Domain` it applies only to
+    the host it was issued for — a token for app-a never even reaches app-b.
+    `HttpOnly`: the foreign application's script must not read it."""
     return f"{name}={token}; Path=/; Max-Age={int(ttl)}; Secure; HttpOnly; SameSite=Lax"

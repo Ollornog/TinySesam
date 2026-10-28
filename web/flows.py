@@ -1,16 +1,16 @@
-"""Die Login-Wege als Diagramm — EINE Quelle für zwei Ausgaben.
+"""The login paths as a diagram — ONE source for two outputs.
 
-* Die Demo rendert sie unter `/demo/flows` und markiert, was in ihrer Config aktiv ist.
-* `python -m web.build <ziel>` backt daraus `<ziel>/flows.html` für GitHub Pages (statisch, ohne
-  Server); dort steht statt der Markierung der Config-Schalter, mit dem man den Weg einschaltet.
-  Gebaut wird das von `.github/workflows/pages.yml`.
+* The demo renders them under `/demo/flows` and marks what is active in its config.
+* `python -m web.build <target>` bakes `<target>/flows.html` for GitHub Pages from them (static, without
+  a server); there, instead of the marker, the config switch that enables the path is shown.
+  `.github/workflows/pages.yml` does the build.
 
-Kein FastAPI-Import — deshalb kann der Generator die Datei ohne laufende App benutzen.
+No FastAPI import — so the generator can use the file without a running app.
 """
 
-# Jeder Weg: Kette aus Kästchen (do = du tust etwas, srv = TinySesam, end = Ergebnis),
-# der Config-Schalter, und ein Hinweis. `note` darf eine Funktion sein: note(cfg) mit cfg=None
-# für die statische Seite.
+# Each path: a chain of boxes (do = you do something, srv = TinySesam, end = result),
+# the config switch, and a note. `note` may be a function: note(cfg) with cfg=None
+# for the static page.
 FLOWS = [
     {
         "key": "password",
@@ -267,7 +267,7 @@ def chain(steps) -> str:
 
 
 def render(lang="de", cfg=None) -> str:
-    """Alle Flows als HTML. `cfg` gesetzt → Markierung aktiv/aus; `cfg=None` → Config-Schalter."""
+    """All flows as HTML. `cfg` set → marker active/off; `cfg=None` → config switch."""
     t = TEXT[lang]
     parts = [
         f"<div class=legend><span><i class='box do'></i> {t['legend_do']}</span>"

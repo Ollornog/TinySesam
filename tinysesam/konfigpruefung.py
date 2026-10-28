@@ -1,22 +1,22 @@
-"""Alle Widersprüche einer Konfiguration auf einmal — beim Aufbau, nicht beim ersten Login.
+"""All contradictions of a configuration at once — at construction, not at the first login.
 
-Bis 0.18.0 prüfte der Konstruktor ein halbes Dutzend Kombinationen und warf beim ersten Fund.
-Der Rest fiel erst im Betrieb auf, und zwar dort, wo man ihn am wenigsten sucht: Eine App ohne
-eine einzige aktive Login-Methode startete klaglos; eine `login_chain`, die ein abgeschaltetes
-Verfahren nennt, ist unerfüllbar — der Nutzer landet in einer Schleife; OIDC ohne `issuer`
-scheitert erst beim Klick auf „Anmelden".
+Up to 0.18.0 the constructor checked half a dozen combinations and raised at the first finding.
+The rest only showed up in operation, and exactly where you look for it least: an app without
+a single active login method started without complaint; a `login_chain` that names a disabled
+method is unsatisfiable — the user ends up in a loop; OIDC without `issuer`
+only fails at the click on "Sign in".
 
-Zwei Ränge, und die Grenze ist nicht Strenge, sondern **Reparierbarkeit**:
+Two ranks, and the line between them is not severity but **repairability**:
 
-* **Fehler** — die Lage ist aus sich heraus unerfüllbar und wird es auch nicht mehr. Niemand
-  kommt herein, oder ein Schutz ist stillschweigend aus. Das bricht den Aufbau ab.
-* **Warnung** — es fehlt etwas, das später noch kommen kann. Ein Mailer wird typischerweise
-  nach dem Konstruktor gesetzt (`auth.set_mailer(...)`); daraus einen Fehler zu machen hiesse,
-  eine völlig übliche Reihenfolge zu verbieten. Geloggt wird trotzdem, denn „still" ist genau
-  das Problem, das hier behoben wird.
+* **Error** — the situation is unsatisfiable by itself and will not become satisfiable. Nobody
+  gets in, or a protection is silently off. This aborts construction.
+* **Warning** — something is missing that may still arrive later. A mailer is typically
+  set after the constructor (`auth.set_mailer(...)`); turning that into an error would mean
+  forbidding a perfectly common order. It is logged anyway, because "silent" is exactly
+  the problem solved here.
 
-Alle Funde kommen **gemeinsam** heraus. Wer drei Dinge falsch hat, soll sie einmal lesen und
-nicht dreimal starten.
+All findings come out **together**. Whoever has three things wrong should read them once
+and not start three times.
 """
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ import re
 
 from . import security
 
-#: Verfahren → welches Config-Feld es einschaltet. Dieselbe Liste bedient die Ketten-Prüfung.
+#: Method → which config field switches it on. The same list serves the chain check.
 VERFAHREN = {
     "password": "password_enabled",
     "pin": "pin_enabled",
@@ -37,33 +37,33 @@ VERFAHREN = {
     "apikey": "apikey_enabled",
 }
 
-#: Was in einer `login_chain` stehen darf: die Faktoren, die eine Sitzung wirklich bekommen
-#: kann (`TinySesam._IDENTIFYING`) plus `totp`. Bewusst NICHT `VERFAHREN` — dort stehen auch
-#: `ldap` (schreibt den Faktor `password`) und `apikey` (wird nie zum Faktor).
+#: What may appear in a `login_chain`: the factors a session can really get
+#: (`TinySesam._IDENTIFYING`) plus `totp`. Deliberately NOT `VERFAHREN` — that also holds
+#: `ldap` (writes the factor `password`) and `apikey` (never becomes a factor).
 KETTENSCHRITTE = frozenset({"password", "pin", "oidc", "passkey", "magic", "saml", "totp"})
 
-#: Verfahren, mit dem sich ein Mensch ANMELDEN kann. `apikey` zählt nicht: Ein Schlüssel wird
-#: von einem Konto ausgestellt, das es erst geben muss.
+#: Methods with which a human can SIGN IN. `apikey` does not count: a key is issued
+#: by an account, which has to exist first.
 ANMELDEND = ("password", "pin", "passkey", "oidc", "saml", "ldap", "magic")
 
-#: Verfahren → Felder, ohne die es nicht funktionieren kann.
+#: Method → fields without which it cannot work.
 PFLICHTFELDER = {
     "oidc": ("oidc_issuer", "oidc_client_id"),
     "saml": ("saml_idp_sso_url", "saml_idp_x509cert"),
     "ldap": ("ldap_url",),
 }
 
-#: Was einen Mailer braucht. Kein Fehler — `set_mailer` kommt oft später.
+#: What needs a mailer. Not an error — `set_mailer` often comes later.
 BRAUCHT_MAILER = {
     "magiclink_enabled": "Magic-Link-Anmeldung",
     "password_reset_enabled": "„Passwort vergessen\"",
     "signup_verify_email": "E-Mail-Bestätigung bei der Registrierung",
 }
 
-#: Was eine **absolute** Adresse in fremde Hand gibt — den Link in einer Mail an ein Postfach,
-#: die Redirect-URI beim IdP, die Entity-ID in SAML-Metadaten. Fehlt `base_url`, bliebe dafür
-#: nur der `Host`-Header, und den setzt der Anfragende (R4-01). Diese Schalter machen `base_url`
-#: zur **Pflicht**: ohne sie scheitert der Aufbau, nicht erst der erste Anmeldeversuch.
+#: What hands an **absolute** address to third parties — the link in a mail to a mailbox,
+#: the redirect URI at the IdP, the entity ID in SAML metadata. Without `base_url` only
+#: the `Host` header would remain for it, and the requester sets that (R4-01). These switches make `base_url`
+#: **mandatory**: without it construction fails, not only the first sign-in attempt.
 BRAUCHT_BASE_URL = {
     "magiclink_enabled": "Magic-Link und Einladung (Link in der Mail)",
     "password_reset_enabled": "„Passwort vergessen\" (Reset-Link in der Mail)",
@@ -72,11 +72,11 @@ BRAUCHT_BASE_URL = {
     "saml_enabled": "SAML (Entity-ID und ACS-URL)",
 }
 
-#: Derselbe Gedanke, aber nur eine Warnung: Die Forward-Auth-Umleitung schickt **denselben**
-#: Browser auf die eigene Login-Seite. Ohne geprüfte Basis bleibt sie relativ (`/auth/login?…`)
-#: und der Browser löst sie gegen den aufgerufenen Host auf — das funktioniert, solange App und
-#: TinySesam unter einem Namen liegen. Ein fremder Name kommt so nicht in die Umleitung, es geht
-#: nichts an Dritte hinaus, und deshalb ist das kein Grund, den Start zu verweigern.
+#: The same thought, but only a warning: the forward-auth redirect sends the **same**
+#: browser to its own login page. Without a checked base it stays relative (`/auth/login?…`)
+#: and the browser resolves it against the requested host — that works as long as app and
+#: TinySesam live under one name. A foreign name does not get into the redirect this way, nothing
+#: goes out to third parties, and therefore this is no reason to refuse to start.
 BASE_URL_EMPFOHLEN = {
     "forward_auth_enabled": "Forward-Auth (Umleitung des Proxys auf die Login-Seite)",
 }
@@ -96,12 +96,12 @@ def _an(config, feld: str) -> bool:
 
 
 def _ganzzahl(config, feld: str, fehlt: int | None = 0):
-    """Ein Zahlenfeld für eine Kombinationsprüfung lesen — oder None, wenn es keine ganze Zahl ist.
+    """Read a number field for a combination check — or None if it is not an integer.
 
-    Typ und Bereich meldet `_zahlengrenzen` (samt `True`, Text, `inf`, `nan`); die Kombination
-    wird dann nicht bewertet. Ein `int()` auf den Rohwert liess die ganze Prüfung abstürzen,
-    bevor die Typmeldung kam, und `TinySesam(cfg)` warf ValueError/OverflowError statt eines
-    gesammelten ConfigError (zweite Angriffsrunde, konfig)."""
+    Type and range are reported by `_zahlengrenzen` (including `True`, text, `inf`, `nan`); the combination
+    is then not evaluated. An `int()` on the raw value crashed the whole check
+    before the type message came, and `TinySesam(cfg)` raised ValueError/OverflowError instead of a
+    collected ConfigError (second attack round, config)."""
     wert = getattr(config, feld, fehlt)
     if wert is None:
         return fehlt
@@ -110,8 +110,8 @@ def _ganzzahl(config, feld: str, fehlt: int | None = 0):
     return wert
 
 
-#: Die Direktiven, die eine Content-Security-Policy kennt (CSP Level 3 plus die verbreiteten
-#: Altlasten). Eine eigene Policy braucht mindestens eine davon; jede andere gibt eine Warnung.
+#: The directives a Content-Security-Policy knows (CSP Level 3 plus the common
+#: legacy ones). A custom policy needs at least one of them; every other one gives a warning.
 CSP_DIREKTIVEN = frozenset({
     "default-src", "script-src", "script-src-elem", "script-src-attr", "style-src",
     "style-src-elem", "style-src-attr", "img-src", "font-src", "connect-src", "media-src",
@@ -123,7 +123,7 @@ CSP_DIREKTIVEN = frozenset({
 
 
 def _csp_namen(wert) -> list[str] | None:
-    """Die Direktivnamen einer eigenen Policy, klein geschrieben — None für 'strict'/'off'/leer."""
+    """The directive names of a custom policy, lower-cased — None for 'strict'/'off'/empty."""
     if not isinstance(wert, str):
         return None
     roh = wert.strip()
@@ -133,19 +133,19 @@ def _csp_namen(wert) -> list[str] | None:
 
 
 def csp_fehler(wert) -> str:
-    """Der Befund zu `csp`, leer wenn in Ordnung (B3-2).
+    """The finding for `csp`, empty if fine (B3-2).
 
-    Alles ausser 'strict' und 'off' ging bis 0.19.0 ungeprüft 1:1 in den Header. Ein Tippfehler
-    wie 'Strict' oder 'stirct' war damit eine „eigene Policy" ohne eine einzige Direktive — der
-    Browser verwirft so einen Header, und die Seiten liefen **ohne jede CSP**, ohne dass es
-    irgendwo auffiel. Ein Fehler ist deshalb nur die Policy ohne eine **einzige** bekannte
-    Direktive. Steht eine unbekannte neben bekannten, überspringt der Browser nur sie und wendet
-    den Rest an — das ist `csp_warnung` (A3: `require-sri-for`, `disown-opener` hielten eine
-    bisher wirksame Policy sonst vom Start ab).
+    Everything except 'strict' and 'off' went unchecked 1:1 into the header up to 0.19.0. A typo
+    like 'Strict' or 'stirct' thus was a "custom policy" without a single directive — the
+    browser discards such a header, and the pages ran **without any CSP**, without anyone
+    noticing. An error is therefore only the policy without a **single** known
+    directive. If an unknown one stands next to known ones, the browser skips only it and applies
+    the rest — that is `csp_warnung` (A3: `require-sri-for`, `disown-opener` otherwise kept a
+    previously working policy from starting).
     """
     namen = _csp_namen(wert)
     if namen is None:
-        return ""                  # kein String meldet der Konstruktor eigens
+        return ""                  # the constructor reports a non-string separately
     roh = wert.strip()
     if roh.lower() in ("strict", "off"):
         return (f"csp={wert!r} — gemeint ist wohl {roh.lower()!r} (klein geschrieben). So wäre es "
@@ -158,11 +158,11 @@ def csp_fehler(wert) -> str:
 
 
 def csp_warnung(wert) -> str:
-    """Unbekannte Direktiven neben bekannten: kein Fehler, aber wohl ein Tippfehler.
+    """Unknown directives next to known ones: not an error, but probably a typo.
 
-    Der Browser wendet die Policy ohne sie an. Bei 'scirpt-src' greift dann `default-src` statt
-    der gemeinten Regel — das soll im Log stehen. Eine echte, nur hier nicht gelistete Direktive
-    geht ebenso durch.
+    The browser applies the policy without them. With 'scirpt-src', `default-src` then applies instead of
+    the intended rule — that should be in the log. A real directive that is merely not listed here
+    passes just the same.
     """
     namen = _csp_namen(wert)
     if not namen or csp_fehler(wert):
@@ -176,12 +176,12 @@ def csp_warnung(wert) -> str:
 
 
 def pruefe(config) -> tuple[list[str], list[str]]:
-    """(Fehler, Warnungen) — beide vollständig, nicht beim ersten Fund abgebrochen."""
+    """(errors, warnings) — both complete, not aborted at the first finding."""
     fehler: list[str] = []
     warnungen: list[str] = []
 
-    # Hintergrundbilder (0.24.8): Eine Adresse landet in einer CSS-url() — ein Anführungszeichen oder eine Klammer wäre
-    # ein Ausbruch aus dem Stylesheet. Hier und nicht erst beim Router, damit auch render_page() ohne Router geschützt ist.
+    # Background images (0.24.8): an address lands in a CSS url() — a quote or a parenthesis would be
+    # a breakout from the stylesheet. Here and not only at the router, so render_page() is protected without a router too.
     for b in getattr(config, "brand_backgrounds", None) or []:
         if not isinstance(b, str) or not b or any(z in b for z in "'\"()\\<> \t\n"):
             fehler.append(f"brand_backgrounds: {b!r} — eine Adresse ohne Anführungszeichen, Klammern, Backslash "
@@ -192,8 +192,8 @@ def pruefe(config) -> tuple[list[str], list[str]]:
     if _ziel and not str(_ziel).startswith(("https://", "http://")):
         fehler.append("brand_background_credit_url: nur http(s)-Adressen")
 
-    # Cookie-Präfix (0.24.12): ein Cookie-Name-Anfang, kein `__` (das reservieren `__Host-`/`__Secure-`), und ein Gateway
-    # bleibt bei `tinysesam_` — dessen Sitzung entfernen die Proxy-Vorlagen nur unter diesem Namen vor der App.
+    # Cookie prefix (0.24.12): the start of a cookie name, no `__` (`__Host-`/`__Secure-` reserve that), and a gateway
+    # stays at `tinysesam_` — the proxy templates strip its session in front of the app only under that name.
     _praefix = getattr(config, "cookie_prefix", "tinysesam_")
     if not isinstance(_praefix, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,31}", _praefix):
         fehler.append(f"cookie_prefix={_praefix!r}: 1–32 Zeichen aus Buchstaben, Ziffern, _ und -, am Anfang ein "
@@ -204,18 +204,18 @@ def pruefe(config) -> tuple[list[str], list[str]]:
                       f"App an. Ein Gateway bleibt bei cookie_prefix=\"tinysesam_\"; das Präfix ist für die App dahinter.")
 
 
-    # Gefragt wird `enabled_methods()` — dieselbe Liste, aus der die Login-Seite ihre Felder
-    # baut. Eine zweite, eigene Liste hier hatte genau den Fehler, den sie fangen soll: Sie sah
-    # `pin_enabled=True` und übersah `pin_login=False`, und liess damit eine leere Login-Seite
-    # durchgehen (PIN nur als Step-up ist der dokumentierte Weg, kein exotischer Wert).
+    # `enabled_methods()` is asked — the same list from which the login page
+    # builds its fields. A second list of its own here had exactly the error it is meant to catch: it saw
+    # `pin_enabled=True` and overlooked `pin_login=False`, and thereby let an empty login page
+    # through (PIN only as step-up is the documented way, not an exotic value).
     try:
         aktive = list(config.enabled_methods())
     except Exception:
         aktive = [name for name in ANMELDEND if _an(config, VERFAHREN[name])]
     if not aktive:
-        # `ldap_enabled=True` steht NICHT in der Abhilfe (F-30): LDAP ist kein eigenes Feld auf
-        # der Login-Seite, sondern prüft das Passwortformular gegen das Verzeichnis. Die Meldung
-        # nannte es trotzdem — und wer es befolgte, bekam dieselbe Meldung wieder.
+        # `ldap_enabled=True` is NOT in the remedy (F-30): LDAP is not a field of its own on
+        # the login page, but checks the password form against the directory. The message
+        # named it anyway — and whoever followed it got the same message again.
         fehler.append(
             "Keine einzige Anmelde-Methode ist eingeschaltet — die Login-Seite hätte kein "
             "einziges Feld, niemand kann sich anmelden. Mindestens eines von: "
@@ -224,22 +224,22 @@ def pruefe(config) -> tuple[list[str], list[str]]:
             "genügt nicht: ldap_enabled=True prüft das Passwortformular gegen das Verzeichnis "
             "und braucht deshalb password_enabled=True.")
     if _an(config, "ldap_enabled") and not _an(config, "password_enabled"):
-        # Warnung, kein Fehler: Mit einem zweiten Verfahren (OIDC, Passkey) startet der Aufbau
-        # sinnvoll — nur der LDAP-Weg ist dann tot, und das soll der Betreiber wissen.
+        # Warning, not error: with a second method (OIDC, passkey) construction starts
+        # sensibly — only the LDAP path is dead then, and the operator should know.
         warnungen.append(
             "ldap_enabled=True, aber password_enabled=False. LDAP hat kein eigenes Formular, es "
             "prüft das Passwortfeld der Login-Seite gegen das Verzeichnis — ohne "
             "password_enabled=True meldet sich niemand über LDAP an.")
 
-    # Warnung, nicht Fehler: Die Clients für OIDC, SAML und LDAP lassen sich ersetzen
-    # (`auth.ldap = eigener_client`), und genau so arbeiten auch die eigenen Suiten. Ein harter
-    # Wächter verböte damit einen legitimen Aufbau. Still bleibt es trotzdem nicht — der
-    # Normalfall „eingeschaltet und vergessen zu konfigurieren" scheiterte sonst erst beim
-    # ersten Klick auf „Anmelden".
-    # Ein Feldname, den es gar nicht gibt, wäre die schlimmste Sorte Fehlalarm: Er feuert bei
-    # JEDER Konfiguration des Verfahrens und prüft gleichzeitig nie das, was gemeint war. Genau
-    # das ist passiert (`ldap_server` statt `ldap_url`, und das Feld kam im ganzen Repo nur in
-    # dieser Zeile vor). Deshalb hier eine Zusicherung statt Vertrauen.
+    # Warning, not error: the clients for OIDC, SAML and LDAP can be replaced
+    # (`auth.ldap = own_client`), and the own suites work exactly that way. A hard
+    # guard would thereby forbid a legitimate setup. It does not stay silent anyway — the
+    # normal case "switched on and forgotten to configure" would otherwise only fail at the
+    # first click on "Sign in".
+    # A field name that does not exist at all would be the worst kind of false alarm: it fires on
+    # EVERY configuration of the method and at the same time never checks what was meant. Exactly
+    # that happened (`ldap_server` instead of `ldap_url`, and the field appeared in the whole repo only in
+    # this line). Hence an assertion here instead of trust.
     unbekannt = sorted({f for felder in PFLICHTFELDER.values() for f in felder
                         if not hasattr(config, f)}
                        | {v for v in VERFAHREN.values() if not hasattr(config, v)}
@@ -263,11 +263,11 @@ def pruefe(config) -> tuple[list[str], list[str]]:
                 "nicht arbeiten und scheitert beim ersten Anmeldeversuch — es sei denn, der "
                 "Client wird zur Laufzeit ersetzt.")
 
-    # Nebenbefund aus demselben Audit (F-28): Ein Dienstkonto-DN ohne Passwort ist keine
-    # anonyme Suche, sondern eine Kombination, die ldap3 von sich aus ablehnt
-    # (`LDAPPasswordIsMandatoryError`). Der Fehler fliegt mitten im Login und wird dort
-    # verschluckt — der Betreiber sieht für JEDEN Nutzer „Passwort falsch" und sucht am
-    # falschen Ende. Warnung statt Fehler, weil der Client zur Laufzeit ersetzbar ist.
+    # Side finding from the same audit (F-28): a service-account DN without password is not an
+    # anonymous search, but a combination that ldap3 rejects on its own
+    # (`LDAPPasswordIsMandatoryError`). The error is raised in the middle of the login and swallowed there
+    # — the operator sees "wrong password" for EVERY user and looks at the
+    # wrong end. Warning instead of error, because the client is replaceable at runtime.
     if _an(config, "ldap_enabled") and str(getattr(config, "ldap_bind_dn", "") or "").strip() \
             and not str(getattr(config, "ldap_bind_password", "") or "").strip():
         warnungen.append(
@@ -276,10 +276,10 @@ def pruefe(config) -> tuple[list[str], list[str]]:
             "für jeden Nutzer wie ein falsches Passwort aus. Entweder das Passwort des "
             "Dienstkontos setzen oder ldap_bind_dn leeren (dann wird wirklich anonym gesucht).")
 
-    # Ein Kettenschritt muss ein Faktor sein, den eine Sitzung auch bekommen kann. `ldap` ist
-    # keiner (es schreibt den Faktor `password`), `apikey` ebenso wenig — beide standen trotzdem
-    # in der Whitelist, und `login_chain=["ldap","totp"]` ist für einen LDAP-Betreiber die
-    # naheliegendste Schreibweise. Sie führte in genau die Schleife, vor der dieses Modul warnt.
+    # A chain step must be a factor that a session can actually get. `ldap` is
+    # none (it writes the factor `password`), neither is `apikey` — both were in the
+    # whitelist anyway, and `login_chain=["ldap","totp"]` is the most obvious spelling for an
+    # LDAP operator. It led into exactly the loop this module warns about.
     kette = list(getattr(config, "login_chain", None) or [])
     unbekannt = [s for s in kette if s not in KETTENSCHRITTE]
     if unbekannt:
@@ -296,11 +296,11 @@ def pruefe(config) -> tuple[list[str], list[str]]:
             " — die Kette ist unerfüllbar, niemand kommt über diesen Schritt hinaus.")
     if "totp" in kette and not _an(config, "totp_enabled"):
         fehler.append("login_chain verlangt 'totp', aber totp_enabled=False — unerfüllbar.")
-    # Eine PIN hinter einem anderen Faktor ist in einer NICHT strikten Kette mit `pin_login`
-    # zugleich Erstfaktor (`pin_as_first_factor`): Wer mit ihr beginnt, erfüllt die Kette danach
-    # mit dem Passwort. Dann rät jeder die PIN ohne das Passwort, und ein Selbstbedienungs-Reset
-    # räumt diese Fehlgriffe aus der Serie (R2-2) — die Konfiguration sagt „Folgefaktor", das
-    # Verhalten „Erstfaktor" (G7). In einer strikten Kette schliesst TinySesam den Gästeweg selbst.
+    # A PIN behind another factor is, in a NON-strict chain with `pin_login`,
+    # at the same time a first factor (`pin_as_first_factor`): whoever starts with it then satisfies the chain
+    # with the password. Then anyone guesses the PIN without the password, and a self-service reset
+    # clears these wrong guesses from the series (R2-2) — the configuration says "follow-up factor", the
+    # behaviour "first factor" (G7). In a strict chain TinySesam closes the guest path itself.
     if ("pin" in kette and kette[0] != "pin" and _an(config, "pin_enabled")
             and _an(config, "pin_login") and not getattr(config, "login_chain_strict", True)):
         warnungen.append(
@@ -311,11 +311,11 @@ def pruefe(config) -> tuple[list[str], list[str]]:
             "Folgefaktor sein: pin_login=False — der PIN-Schritt nach dem ersten Faktor bleibt "
             "erreichbar.")
 
-    # Hier stand kurzzeitig „resource_locks_enabled braucht pin_enabled". Das war falsch und
-    # eine eigene Suite hat es sofort widerlegt: Eine gesperrte Ressource wird mit ihrem EIGENEN
-    # Geheimnis freigegeben (`store.get_resource_secret`), nicht mit der Login-PIN. Ein
-    # Fehlalarm kostet dasselbe Vertrauen wie ein übersehener Fund — deshalb steht die Notiz
-    # hier statt der Prüfung.
+    # Here once stood "resource_locks_enabled needs pin_enabled". That was wrong and
+    # a suite of its own refuted it immediately: a locked resource is released with its OWN
+    # secret (`store.get_resource_secret`), not with the login PIN. A
+    # false alarm costs the same trust as an overlooked finding — hence the note stands
+    # here instead of the check.
 
     if _an(config, "password_reset_enabled") and not _an(config, "magiclink_enabled"):
         warnungen.append(
@@ -326,12 +326,12 @@ def pruefe(config) -> tuple[list[str], list[str]]:
         fehler.append(
             "allow_signup=True mit password_enabled=False legt Konten an, die sich nie anmelden "
             "können — die Registrierung vergibt ein Passwort, und der Passwort-Login ist aus.")
-    # Offene Registrierung neben LDAP (PO-Entscheid 2026-09-27): Eine Kennung gehört genau einem
-    # Konto — liefert das Verzeichnis unter einer lokal vergebenen Kennung eine andere Person,
-    # weist TinySesam die Anmeldung ab (Prüfrunde p1-d). Wer sich vorab mit dem Namen oder der
-    # Verzeichnisadresse einer Person registriert, die sich noch nie angemeldet hat, sperrte sie
-    # damit aus. TinySesam kennt diese Namen nicht, bevor das Verzeichnis sie nennt — also gibt
-    # es die Kombination nicht. Konten legt dort der Betreiber an (Panel, `create_user`).
+    # Open registration next to LDAP (PO decision 2026-09-27): an identifier belongs to exactly one
+    # account — if the directory returns another person under a locally assigned identifier,
+    # TinySesam rejects the sign-in (review round p1-d). Whoever registers in advance with the name or the
+    # directory address of a person who has never signed in would lock them
+    # out. TinySesam does not know these names before the directory names them — so
+    # the combination does not exist. There the operator creates accounts (panel, `create_user`).
     if _an(config, "allow_signup") and _an(config, "ldap_enabled"):
         fehler.append(
             "allow_signup=True neben ldap_enabled=True: Wer sich mit dem Namen oder der Adresse "
@@ -339,41 +339,41 @@ def pruefe(config) -> tuple[list[str], list[str]]:
             "unter dieser Kennung aus (eine Kennung gehört genau einem Konto). Registrierung "
             "ausschalten und Konten im Admin-Panel bzw. mit auth.create_user(...) anlegen.")
 
-    # `base_url` fehlte in diesem Modul komplett — und damit fehlte der einzige Hinweis auf
-    # den Weg, den R4-01/R8-4 ausnutzt: Ohne sie baut TinySesam absolute Adressen aus dem
-    # `Host`-Header, also aus einer Eingabe des Anfragenden.
+    # `base_url` was missing entirely from this module — and with it the only hint at
+    # the path that R4-01/R8-4 exploits: without it TinySesam builds absolute addresses from the
+    # `Host` header, that is, from an input of the requester.
     #
-    # Hier stand eine **Warnung**, mit zwei Begründungen — der lokale Aufbau (Loopback zählt als
-    # eigener Host) und ein `base_url`, das erst nach dem Konstruktor gesetzt wird. Beide haben
-    # nicht getragen, die Nacharbeit hat es gemessen:
+    # Here once stood a **warning**, with two reasons — the local setup (loopback counts as its
+    # own host) and a `base_url` that is only set after the constructor. Neither
+    # held up, the follow-up measured it:
     #
-    # * Eine Warnung startet durch. Wer ohne `base_url` aktualisierte, verlor „Passwort
-    #   vergessen" und Magic-Link für ALLE Nutzer — und zwar still: Die Route rendete weiter die
-    #   Erfolgsseite („Mail ist unterwegs", HTTP 200), weil dieselbe Antwort die
-    #   Benutzer-Enumeration verhindert. Sichtbar war es in einer Logzeile.
-    # * Stehen mehrere Hosts in `trusted_redirect_hosts` — beim Forward-Auth/SSO der Normalfall —
-    #   genügte der Laufzeit-Prüfung JEDER davon. Der Angreifer stieß „Passwort vergessen" für
-    #   ein fremdes Postfach an und setzte `Host:` auf einen anderen mitvertrauten Host; der
-    #   Reset-Link ging dorthin hinaus. `base_url` schließt genau diese Wahlfreiheit: Steht sie,
-    #   kommt gar nichts aus dem Request.
+    # * A warning starts anyway. Whoever updated without `base_url` lost "forgot
+    #   password" and magic link for ALL users — and silently: the route kept rendering the
+    #   success page ("mail is on its way", HTTP 200), because the same reply prevents
+    #   user enumeration. It was visible in one log line.
+    # * If several hosts are in `trusted_redirect_hosts` — the normal case with forward auth/SSO —
+    #   the runtime check was satisfied by ANY of them. The attacker triggered "forgot password" for
+    #   a foreign mailbox and set `Host:` to another co-trusted host; the
+    #   reset link went out there. `base_url` closes exactly this freedom of choice: when it is set,
+    #   nothing at all comes from the request.
     #
-    # Deshalb jetzt ein **Fehler**: Der Aufbau scheitert mit `ConfigError`, statt einen Betrieb
-    # zu erlauben, der still das Falsche tut. Der lokale Aufbau trägt seine Adresse einfach ein
-    # (`base_url="http://127.0.0.1:8000"`), und wer sie erst spät kennt, schreibt sie ans
-    # Config-Objekt, BEVOR `TinySesam(config)` läuft — anders als `set_mailer()` gibt es dafür
-    # keinen Nachreich-Weg, denn ohne Basis endet der erste Klick auf „Passwort vergessen"
-    # bereits im Nichts.
-    # Geprüft wird mit **derselben** Funktion, die `public_base()` später anwendet
-    # (`security.normalisiere_basis`), nicht mit einem eigenen, schwächeren Muster: Ein grobes
-    # Schema-und-Host-Muster nahm `https://wer:was@auth.example` und `https://auth.example/x#y`
-    # ab — beides stünde danach in jedem Reset-Link, und der Teil hinter `#` erreicht nicht
-    # einmal den Server. Zwei Regelwerke für dieselbe Frage sind eines zu viel (C-7).
+    # Therefore now an **error**: construction fails with `ConfigError` instead of allowing
+    # an operation that silently does the wrong thing. The local setup simply enters its address
+    # (`base_url="http://127.0.0.1:8000"`), and whoever learns it late writes it on the
+    # config object BEFORE `TinySesam(config)` runs — unlike `set_mailer()` there is
+    # no way to supply it later, because without a base the first click on "forgot password"
+    # ends in nothing.
+    # The check uses the **same** function that `public_base()` applies later
+    # (`security.normalisiere_basis`), not a weaker pattern of its own: a coarse
+    # scheme-and-host pattern accepted `https://wer:was@auth.example` and `https://auth.example/x#y`
+    # — both would then stand in every reset link, and the part behind `#` does not even
+    # reach the server. Two rule sets for the same question are one too many (C-7).
     _basis = str(getattr(config, "base_url", "") or "").strip()
     _kanonisch = security.normalisiere_basis(_basis)
     if _basis and _kanonisch and _kanonisch != _basis.rstrip("/"):
-        # Die Adresse ist brauchbar, aber sie wird unterwegs verändert — das sagen wir hier,
-        # statt es still zu tun. Häufigster Fall: eine Benutzerangabe im Host
-        # (`https://wer:was@auth.example`), die aus jedem ausgehenden Link entfernt wird.
+        # The address is usable, but it is altered on the way — we say so here
+        # instead of doing it silently. Most common case: user info in the host
+        # (`https://wer:was@auth.example`), which is removed from every outgoing link.
         fehler.append(
             f"base_url={_basis!r} wird als {_kanonisch!r} verwendet — die Adresse ist nicht in "
             "der Form, in der sie in Links steht. Bitte genau den zweiten Wert eintragen, damit "
@@ -408,8 +408,8 @@ def pruefe(config) -> tuple[list[str], list[str]]:
                 + ". Ohne geprüfte Basis bleibt die Umleitung relativ — das trägt, solange App "
                 "und Login-Seite unter demselben Host liegen. Für SSO über mehrere Hosts "
                 "base_url (und cookie_domain) setzen.")
-    # Erst-Admin-Token: Der Wert darf nicht dort landen, wo ihn Fremde lesen. Genau das war
-    # B5-03 — er stand in der Datei, die die fail2ban-Jail liest und logrotate archiviert.
+    # First-admin token: the value must not land where strangers can read it. That was exactly
+    # B5-03 — it stood in the file that the fail2ban jail reads and logrotate archives.
     token_datei = str(getattr(config, "admin_claim_token_file", "") or "").strip()
     seclog_datei = str(getattr(config, "security_log", "") or "").strip()
     if token_datei and seclog_datei and os.path.abspath(token_datei) == os.path.abspath(seclog_datei):
@@ -428,15 +428,15 @@ def pruefe(config) -> tuple[list[str], list[str]]:
             "Der Erst-Admin kommt dann nur über admin_identifiers oder einen eigenen Aufruf "
             "von auth.ensure_admin(…) zustande — das CLI kann keine Konten anlegen.")
 
-    # Erst-Admin per Allowlist-ADRESSE, während SAML oder LDAP Konten selbst anlegt: Der
-    # Konstruktor verbietet an dieser Stelle Allowlist-*Namen* (die bestätigt niemand). Eine
-    # Adresse bleibt erlaubt — sie trägt die Entscheidung aber nur mit Beleg. SAML und LDAP
-    # liefern keinen; seit den PO-Entscheiden 2026-09-24/25 sagt der Betreiber je Quelle, ob er
-    # ihren Adressen traut (`*_email_trusted`, Vorgabe nein) oder welches Attribut sie belegt
-    # (`*_attr_email_verified`). Nicht vertraut: Die Laufzeit befördert nie (fail-closed, F-14) —
-    # und der Bestätigungslink geht an keine Allowlist-Adresse. Vertraut oder per Attribut
-    # belegbar: Die Adresse befördert — richtig nur, wenn niemand sie oder das Attribut selbst
-    # eintragen kann.
+    # First admin via allowlist ADDRESS while SAML or LDAP create accounts themselves: the
+    # constructor forbids allowlist *names* here (nobody confirms them). An
+    # address stays allowed — but it carries the decision only with proof. SAML and LDAP
+    # deliver none; since the PO decisions 2026-09-24/25 the operator says per source whether they trust
+    # its addresses (`*_email_trusted`, default no) or which attribute vouches for them
+    # (`*_attr_email_verified`). Not trusted: the runtime never promotes (fail-closed, F-14) —
+    # and the confirmation link goes to no allowlist address. Trusted or provable
+    # by attribute: the address promotes — correct only if nobody can enter it or the attribute
+    # themselves.
     allowlist_adressen = sorted({str(i).strip() for i in
                                  (getattr(config, "admin_identifiers", None) or [])
                                  if "@" in str(i)})
@@ -466,9 +466,9 @@ def pruefe(config) -> tuple[list[str], list[str]]:
             "Login Erst-Admin. Das ist nur richtig, wenn niemand seine Adresse (bzw. das "
             "Beleg-Attribut) in dieser Quelle selbst ändern kann (kein Self-Service für das "
             "mail-Attribut, kein IdP mit Selbstregistrierung) — sonst beides aus und /auth/claim-admin.")
-    # LDAP nicht vertraut, aber der Suchfilter findet Konten über die Adresse: Dann ist die
-    # Eingabe beim Login eine Adresse, die niemand belegt. TinySesam nimmt sie nicht als
-    # Kontonamen (Ersatzname `ldap-…`), braucht dafür aber eine stabile Kennung.
+    # LDAP not trusted, but the search filter finds accounts via the address: then the
+    # input at login is an address that nobody vouches for. TinySesam does not take it as an
+    # account name (substitute name `ldap-…`), but needs a stable identifier for that.
     _filter = str(getattr(config, "ldap_user_filter", "") or "")
     _mail_attr = str(getattr(config, "ldap_attr_email", "") or "mail")
     if _an(config, "ldap_enabled") and not _an(config, "ldap_email_trusted") \
@@ -478,8 +478,8 @@ def pruefe(config) -> tuple[list[str], list[str]]:
             f"seinem {_mail_attr}-Wert anmeldet, bekommt einen Ersatznamen (ldap-…) statt dieses "
             "Werts als Kontonamen und wird nie über den Namen einem vorhandenen Konto zugeordnet; "
             "ohne stabile Kennung (ldap_attr_id) wird die Anmeldung abgewiesen.")
-    # G1: Unbegrenzt über den Namen binden ist der Stand bis 0.20.x — und genau die Lücke, die die
-    # Frist schliesst. Erlaubt (Rückweg), aber nicht still.
+    # G1: binding indefinitely via the name is the state up to 0.20.x — and exactly the gap that the
+    # deadline closes. Allowed (way back), but not silently.
     _foederiert = [name for an, name in (("ldap_enabled", "LDAP"), ("saml_enabled", "SAML"))
                    if _an(config, an)]
     _tage = _ganzzahl(config, "federation_name_binding_days", 30)
@@ -491,10 +491,10 @@ def pruefe(config) -> tuple[list[str], list[str]]:
             "bekommt — samt Rollen und Admin-Recht. Besser: den Bestand einmal binden "
             "(auth.federation_bind_existing(source), erst als Trockenlauf) und die Vorgabe (30) lassen.")
 
-    # Pfade der App tragen seit T-15 keinen Montage-Präfix mehr — TinySesam setzt ihn aus dem Pfad
-    # der base_url davor. Wer ihn für die alte Fassung von Hand eingetragen hat (`/sso/auth/login`),
-    # bekäme jetzt `/sso/sso/auth/login` (404). Eine Warnung, kein Fehler: Ein Pfad der App kann
-    # rein zufällig so heissen wie der Präfix.
+    # Paths of the app have carried no mount prefix since T-15 — TinySesam puts it in front from the path
+    # of the base_url. Whoever entered it by hand for the old version (`/sso/auth/login`)
+    # would now get `/sso/sso/auth/login` (404). A warning, not an error: a path of the app can
+    # by pure chance be named like the prefix.
     from urllib.parse import urlsplit as _urlsplit
     _praefix = _urlsplit(str(getattr(config, "base_url", "") or "")).path.rstrip("/")
     if _praefix:
@@ -509,10 +509,10 @@ def pruefe(config) -> tuple[list[str], list[str]]:
                 "sind Pfade der App ohne Präfix — TinySesam setzt ihn seit 0.21 selbst davor, sonst "
                 f"entsteht {_praefix}{_praefix}/…. Den Präfix aus dem Wert nehmen.")
 
-    # --- Mehrere Anwendungen hinter einer Installation (T-14) ---
+    # --- Several applications behind one installation (T-14) ---
     _clients = getattr(config, "oidc_clients", None) or {}
-    # Typ und Bereich prüft ZAHLENGRENZEN (unten, samt negativer Werte); hier nur die
-    # Kombination. Ein `int()` auf einen Text liess die ganze Prüfung abstürzen.
+    # Type and range are checked by ZAHLENGRENZEN (below, including negative values); here only the
+    # combination. An `int()` on a text crashed the whole check.
     _revalidate = _ganzzahl(config, "oidc_revalidate_minutes") or 0
     if _clients and not _an(config, "oidc_enabled"):
         fehler.append(
@@ -525,11 +525,11 @@ def pruefe(config) -> tuple[list[str], list[str]]:
             "betrifft die Freigabe je Anwendung — ohne mehrere Clients gibt es keine, und der "
             "Wert bleibt folgenlos. Gemeint war vermutlich session_ttl_hours (Lebensdauer der "
             "Sitzung) oder stepup_max_age_sec (Frische für heikle Routen).")
-    # Die Obergrenze in ZAHLENGRENZEN (30 Tage) fängt eine Frist in Sekunden erst ab einem Tag
-    # (86400). Die Vorgabe des Presets, eine Stunde, in Sekunden geschrieben (3600) ging still
-    # durch — Nachprüfung alle 60 Stunden, ein Entzug beim Provider kam 60-mal später an. Eine
-    # Frist über einem Tag ist ungewöhnlich genug, um nach der Einheit zu fragen; 300 oder 900
-    # (fünf oder 15 Minuten in Sekunden) fängt keine Grenze.
+    # The upper bound in ZAHLENGRENZEN (30 days) catches a period in seconds only from one day
+    # (86400). The preset's default, one hour, written in seconds (3600) passed
+    # silently — re-check every 60 hours, a revocation at the provider arrived 60 times later. A
+    # period above one day is unusual enough to ask about the unit; 300 or 900
+    # (five or 15 minutes in seconds) are caught by no bound.
     if _revalidate > 24 * 60:
         warnungen.append(
             f"oidc_revalidate_minutes={_revalidate} heisst: Nachprüfung beim Provider alle "
@@ -564,7 +564,7 @@ def pruefe(config) -> tuple[list[str], list[str]]:
             "wird in /auth/forward geprüft — ohne Forward-Auth entsteht sie beim Login, wird "
             "danach aber von nichts abgefragt.")
 
-    # --- Selbst-Enrollment des zweiten Faktors (R3-1) ---
+    # --- Self-enrollment of the second factor (R3-1) ---
     _arten = ("first_login", "grace", "strict")
     _art = str(getattr(config, "mfa_enrollment", "") or "first_login")
     if _art not in _arten:
@@ -580,11 +580,11 @@ def pruefe(config) -> tuple[list[str], list[str]]:
             "verhält sich 'grace' wie 'strict', nur unauffälliger — entweder eine Frist setzen "
             "oder gleich mfa_enrollment='strict' schreiben.")
 
-    # --- CSRF-Schutz ganz aus (F-03) ---
-    # Einzeln ist jeder Wert vertretbar: `csrf_enabled=False`, weil SameSite=Lax die
-    # Cross-Site-POSTs schon abfängt; `cookie_samesite='none'` für eine eingebettete App, weil
-    # das CSRF-Token dann schützt. Zusammen bleibt NICHTS: Das Sitzungs-Cookie fährt bei jedem
-    # fremden Formular mit, und niemand prüft ein Token. Das ist kein Kompromiss, das ist ein Loch.
+    # --- CSRF protection fully off (F-03) ---
+    # Individually each value is defensible: `csrf_enabled=False`, because SameSite=Lax already
+    # stops cross-site POSTs; `cookie_samesite='none'` for an embedded app, because
+    # the CSRF token then protects. Together NOTHING remains: the session cookie rides along with every
+    # foreign form, and nobody checks a token. That is not a compromise, that is a hole.
     if (not _an(config, "csrf_enabled")
             and str(getattr(config, "cookie_samesite", "lax") or "").lower() == "none"):
         fehler.append(
@@ -594,7 +594,7 @@ def pruefe(config) -> tuple[list[str], list[str]]:
             "csrf_enabled=True (nötig, sobald SameSite=None gebraucht wird) oder "
             "cookie_samesite='lax'.")
 
-    # --- Nutzerprüfung bei Passkeys (B2-10) ---
+    # --- User verification for passkeys (B2-10) ---
     _uv = str(getattr(config, "passkey_user_verification", "required") or "required")
     if _uv not in ("required", "preferred"):
         fehler.append(
@@ -608,7 +608,7 @@ def pruefe(config) -> tuple[list[str], list[str]]:
             "eingesteckter Stick genügt. Das ist eine bewusste Entscheidung für einen Bestand "
             "alter Authentikatoren; für einen neuen gehört der Wert auf 'required'.")
 
-    # --- LDAP-Transport (F-12) ---
+    # --- LDAP transport (F-12) ---
     if _an(config, "ldap_enabled"):
         _url = str(getattr(config, "ldap_url", "") or "").strip().lower()
         _tls_an = _url.startswith("ldaps://") or _an(config, "ldap_start_tls")
@@ -652,9 +652,9 @@ def pruefe(config) -> tuple[list[str], list[str]]:
     _forward_apps(config, fehler, warnungen)
 
     hat_mailer = bool(str(getattr(config, "smtp_host", "") or "").strip())
-    # --- SMTP-TLS (B3-1, Angriff A4): Seit das Zertifikat geprüft wird, scheitert ein falscher
-    # CA-Pfad oder ein Relay per IP-Adresse bei JEDER Mail — und zwar still, nur als
-    # *_send_error im Audit-Log. Beides lässt sich schon beim Aufbau erkennen.
+    # --- SMTP TLS (B3-1, attack A4): since the certificate is checked, a wrong
+    # CA path or a relay by IP address fails on EVERY mail — and silently, only as
+    # *_send_error in the audit log. Both can be detected at construction.
     _smtp_ca = str(getattr(config, "smtp_ca_file", "") or "").strip()
     if _smtp_ca and not os.path.isfile(_smtp_ca):
         fehler.append(
@@ -675,24 +675,24 @@ def pruefe(config) -> tuple[list[str], list[str]]:
                 "hinaus und das Verfahren endet still. Entweder smtp_host setzen oder zur "
                 "Laufzeit auth.set_mailer(...) aufrufen — dann ist diese Meldung gegenstandslos.")
 
-    # `audit_retention_days` prüft ZAHLENGRENZEN (unten): Eine negative Frist wäre in `gc()` ein
-    # Zeitpunkt in der Zukunft — das ganze Audit-Log fiele beim nächsten Lauf weg. Die eigene
-    # Prüfung, die hier stand, kannte nur `< 0` und liess `True`, Sekunden statt Tagen und
-    # Riesenwerte (OverflowError in gc()) durch.
+    # `audit_retention_days` is checked by ZAHLENGRENZEN (below): a negative period would be in `gc()` a
+    # point in time in the future — the whole audit log would vanish on the next run. The own
+    # check that stood here knew only `< 0` and let `True`, seconds instead of days and
+    # huge values (OverflowError in gc()) through.
 
     return fehler, warnungen
 
 
-#: Zahlenfelder der Config → erlaubter Bereich, beide Grenzen eingeschlossen (B3-12).
+#: Number fields of the config → allowed range, both bounds inclusive (B3-12).
 #:
-#: Vorher hatte kein einziges eine Grenze, und die Fehlbilder sind alle still: `session_ttl_hours=0`
-#: lässt jede Sitzung im Moment ihrer Entstehung ablaufen (Anmeldung „klappt", der nächste Klick
-#: ist wieder die Login-Seite), `magiclink_ttl_min=0` verschickt tote Links, `recovery_code_count=0`
-#: stellt keine Codes aus und meldet trotzdem Erfolg, ein negatives `stepup_max_age_sec` macht
-#: jede Step-up-Bestätigung sofort alt. Die Obergrenzen fangen den Einheitenfehler (Minuten statt
-#: Stunden, Sekunden statt Minuten), der eine Frist unbemerkt ver-sechzigfacht.
+#: Before, not a single one had a bound, and the failure modes are all silent: `session_ttl_hours=0`
+#: lets every session expire the moment it is created (sign-in "works", the next click
+#: is the login page again), `magiclink_ttl_min=0` sends dead links, `recovery_code_count=0`
+#: issues no codes and still reports success, a negative `stepup_max_age_sec` makes
+#: every step-up confirmation instantly old. The upper bounds catch the unit error (minutes instead of
+#: hours, seconds instead of minutes), which silently multiplies a period by sixty.
 ZAHLENGRENZEN = {
-    "brand_background_seconds": (4, 600),   # Standzeit je Hintergrundbild (0.24.8)
+    "brand_background_seconds": (4, 600),   # dwell time per background image (0.24.8)
     "pin_min_length": (4, 64),
     "apikey_default_days": (0, 3650),
     "admin_claim_ttl_min": (0, 7 * 24 * 60),
@@ -705,33 +705,33 @@ ZAHLENGRENZEN = {
     "stepup_max_age_sec": (0, 7 * 86400),
     "session_ttl_hours": (1, 24 * 400),
     "session_ttl_transient_hours": (1, 24 * 400),
-    # 0 = keine Frist. Zehn Jahre (samt Schalttagen) reichen für jede Aufbewahrungspflicht;
-    # darüber liegt fast immer die Frist in Sekunden (2592000 für 30 Tage), die nie griffe.
-    # `True` galt hier als ein Tag, und gc() löschte das Audit-Log bis auf den letzten Tag.
+    # 0 = no deadline. Ten years (including leap days) suffice for any retention duty;
+    # above that is almost always the period in seconds (2592000 for 30 days), which would never apply.
+    # `True` counted as one day here, and gc() deleted the audit log except for the last day.
     "audit_retention_days": (0, 3660),
-    # 0 = keine Nachprüfung. Ein Entzug beim Provider, der erst nach mehr als 30 Tagen ankommt,
-    # ist keine Nachprüfung mehr; `86400` (ein Tag in Sekunden statt Minuten) fällt so auf.
-    # Kürzere Fristen in Sekunden (3600 für eine Stunde) nicht — dafür warnt `pruefe` über 1440.
+    # 0 = no re-check. A revocation at the provider that arrives only after more than 30 days
+    # is no longer a re-check; `86400` (one day in seconds instead of minutes) stands out this way.
+    # Shorter periods in seconds (3600 for one hour) do not — for that `pruefe` warns above 1440.
     "oidc_revalidate_minutes": (0, 30 * 24 * 60),
     "oidc_session_refresh_minutes": (0, 24 * 60),
-    # Ein Jahr ist das Äusserste, was noch eine Grenze ist; 0 = aus.
+    # One year is the utmost that is still a bound; 0 = off.
     "oidc_session_max_unverified_hours": (0, 365 * 24),
-    # Länger als eine Minute ist keine Gnadenfrist mehr, sondern ein zweites Token.
+    # Longer than a minute is no longer a grace period but a second token.
     "session_rotation_grace_sec": (0, 60),
-    # Ein Bestätigungslink ist ein Schlüssel zum Konto — länger als eine Woche ist keine Frist mehr.
+    # A confirmation link is a key to the account — longer than a week is no longer a deadline.
     "email_change_ttl_min": (5, 7 * 24 * 60),
-    # 0 = keine Frist. Zehn Jahre sind das Äusserste, was noch eine Frist ist.
+    # 0 = no deadline. Ten years is the utmost that is still a deadline.
     "oidc_apikey_confirm_days": (0, 3660),
     "session_idle_minutes": (0, 365 * 24 * 60),
     "session_idle_minutes_remember": (0, 365 * 24 * 60),
-    # -1 = unbegrenzt (Verhalten bis 0.20.x), 0 = nur ausdrücklich. Darunter ist kein Wert gemeint;
-    # zehn Jahre sind das Äusserste, was noch eine Frist ist.
+    # -1 = unlimited (behaviour up to 0.20.x), 0 = only explicitly. Below that no value is meant;
+    # ten years is the utmost that is still a deadline.
     "federation_name_binding_days": (-1, 3660),
-    # Laufzeit des Gate-Tokens (ADR-9) = Widerrufsverzug am Proxy. Unter 30 s fragt der Proxy fast
-    # so oft wie ohne Token; über einer Stunde kommt ein Widerruf zu spät, um einer zu sein.
+    # Lifetime of the gate token (ADR-9) = revocation delay at the proxy. Below 30 s the proxy asks almost
+    # as often as without a token; above an hour a revocation comes too late to be one.
     "gate_token_ttl_sec": (30, 3600),
-    # Wartezeit auf der Seite „Abgemeldet“, bevor sie zur Anwendung zurückführt. Über fünf Minuten wartet
-    # niemand mehr, dafür gibt es 0 (stehen lassen).
+    # Waiting time on the "Signed out" page before it leads back to the application. Above five minutes
+    # nobody waits any more, for that there is 0 (leave standing).
     "forward_logged_out_sec": (0, 300),
 }
 
@@ -743,7 +743,7 @@ def _zahlengrenzen(config, fehler: list) -> None:
                           "TinySesamConfig nicht gibt — ein Fehler in TinySesam selbst.")
             continue
         wert = getattr(config, feld)
-        # bool ist ein int: `session_ttl_hours=True` hiesse eine Stunde, gemeint war es nie.
+        # bool is an int: `session_ttl_hours=True` would mean one hour, which was never intended.
         if isinstance(wert, bool) or not isinstance(wert, int):
             fehler.append(f"{feld}={wert!r} ist keine ganze Zahl.")
             continue
@@ -754,9 +754,9 @@ def _zahlengrenzen(config, fehler: list) -> None:
 
 def _proxies_und_passkey(config, fehler: list, warnungen: list) -> None:
     # --- trusted_proxies (B3-3) ---
-    # Ein ungültiger Eintrag warf zur Laufzeit mitten in der Prüfung und entwertete die GANZE
-    # Liste; die Warnung danach riet, das Proxy-Netz einzutragen, das längst dastand. Ein
-    # Hostname ist der häufigste Fall — Proxys werden hier als Netz angegeben, nicht als Name.
+    # An invalid entry raised at runtime in the middle of the check and invalidated the WHOLE
+    # list; the warning afterwards advised entering the proxy network that was long there. A
+    # hostname is the most common case — proxies are given here as a network, not as a name.
     schlecht = security.ungueltige_netze(getattr(config, "trusted_proxies", None) or [])
     if schlecht:
         fehler.append(
@@ -765,20 +765,20 @@ def _proxies_und_passkey(config, fehler: list, warnungen: list) -> None:
             "Ein ungültiger Eintrag darf nicht mitgelesen werden: Er entschiede sonst, ob der "
             "Proxy als vertrauenswürdig gilt.")
 
-    # --- WebAuthn: rp_id und origin (B3-10) ---
-    # Beide Felder tragen Entwicklerwerte als Vorgabe (`localhost`, `http://localhost:8000`).
-    # Produktiv vergessen scheitert JEDE Passkey-Zeremonie — erst im Browser, mit einer Meldung,
-    # die nach einem Problem des Authenticators aussieht. Geprüft wird, was sich ohne die
-    # Aussenwelt beweisen lässt: Form, Zusammenpassen, und der Abgleich mit `base_url`.
+    # --- WebAuthn: rp_id and origin (B3-10) ---
+    # Both fields carry developer values as default (`localhost`, `http://localhost:8000`).
+    # Forgotten in production, EVERY passkey ceremony fails — only in the browser, with a message
+    # that looks like a problem of the authenticator. What is checked is what can be proven without the
+    # outside world: form, matching, and the comparison with `base_url`.
     if not _an(config, "passkey_enabled"):
         return
     from urllib.parse import urlsplit
     rp_id = str(getattr(config, "rp_id", "") or "").strip().lower()
     roh = getattr(config, "origin", "")
     roh = "" if roh is None else roh
-    # py_webauthn nimmt als `expected_origin` auch eine Liste (A5): Wer die Anmeldeseite unter
-    # mehreren Namen ausliefert, trägt sie alle ein. Geprüft wird dann jeder Eintrag einzeln —
-    # `str(liste)` ist nie ein Origin, und so wurde aus einer funktionierenden Config ein Fehler.
+    # py_webauthn also accepts a list as `expected_origin` (A5): whoever serves the sign-in page under
+    # several names enters them all. Each entry is then checked individually —
+    # `str(list)` is never an origin, and so a working config became an error.
     origins = [str(o).strip() for o in roh] if isinstance(roh, (list, tuple)) else [str(roh).strip()]
     if not origins:
         fehler.append("origin ist eine leere Liste — mindestens ein Origin wie "
@@ -811,8 +811,8 @@ def _proxies_und_passkey(config, fehler: list, warnungen: list) -> None:
         b = urlsplit(basis)
         soll = f"{b.scheme}://{b.netloc}"
         if soll.lower() not in [o.lower() for o in origins]:
-            # Warnung, kein Fehler: Wer die Anmeldeseite unter einem zweiten eigenen Namen
-            # ausliefert (base_url nur für die Mail-Links), kann es so wollen.
+            # Warning, not error: whoever serves the sign-in page under a second name of their own
+            # (base_url only for the mail links) may want it that way.
             anzeige = origins[0] if len(origins) == 1 else origins
             warnungen.append(
                 f"origin={anzeige!r} weicht von base_url ab ({soll}). Die Anmeldeseite läuft unter "
@@ -825,15 +825,15 @@ def _proxies_und_passkey(config, fehler: list, warnungen: list) -> None:
             "die öffentliche Adresse setzen (und base_url dazu).")
 
 
-#: Was in `stepup_methods` stehen darf, und welcher Schalter das Verfahren einschaltet.
+#: What may appear in `stepup_methods`, and which switch turns the method on.
 STEPUP_VERFAHREN = {"totp": "totp_enabled", "pin": "pin_enabled", "password": "password_enabled"}
 
 
 def _stepup(config, fehler: list, warnungen: list) -> None:
-    # B3-6: `stepup_methods` ist ein Wunsch, und ein Wunsch, den es nicht gibt, wird still
-    # übergangen — `["topt"]` fiel auf „alles, was der Nutzer hat" zurück, also auf das Passwort,
-    # mit dem er sich gerade angemeldet hat. Der zweite Faktor vor dem sensiblen Bereich war weg,
-    # und nichts hat es gesagt. Mit `stepup_strict=True` war es umgekehrt: niemand kam je hinein.
+    # B3-6: `stepup_methods` is a wish, and a wish that does not exist is silently
+    # passed over — `["topt"]` fell back to "everything the user has", that is, to the password
+    # with which they had just signed in. The second factor before the sensitive area was gone,
+    # and nothing said so. With `stepup_strict=True` it was the other way round: nobody ever got in.
     gewuenscht = [str(m) for m in (getattr(config, "stepup_methods", None) or [])]
     unbekannt = [m for m in gewuenscht if m not in STEPUP_VERFAHREN]
     if unbekannt:
@@ -855,17 +855,17 @@ def _stepup(config, fehler: list, warnungen: list) -> None:
 
 
 def _offene_tore(config, warnungen: list) -> None:
-    """Deny-by-default für das Tor vor fremden Anwendungen (H-11, B3-9).
+    """Deny-by-default for the gate in front of foreign applications (H-11, B3-9).
 
-    Forward-Auth beantwortet für jede angemeldete Sitzung „durch" — ohne `?roles=` am Proxy
-    reicht es also, ein Konto zu HABEN. Woher Konten kommen, entscheidet damit über den Kreis:
-    Legt ein IdP-Weg Konten selbst an und begrenzt keine Gruppe, ist jedes Konto beim Provider
-    ein Schlüssel für jede geschützte Anwendung; bei offener Registrierung jeder Besucher.
+    Forward auth answers "through" for every signed-in session — without `?roles=` at the proxy
+    it is therefore enough to HAVE an account. Where accounts come from thus decides the circle:
+    if an IdP path creates accounts itself and no group limits it, every account at the provider is
+    a key to every protected application; with open registration, every visitor.
 
-    Warnung, kein Fehler: Genau so ist ein Gateway vor einem Provider mit eigenem, geschlossenem
-    Nutzerkreis gedacht, und die Freigabe je Anwendung kann auch beim Provider liegen
-    (`oidc_clients`, T-14). Ein Fehler hiesse, diesen Aufbau zu verbieten — das zu entscheiden
-    wäre ein neuer Schalter (bewusstes „alle"), nicht eine Prüfung.
+    Warning, not error: this is exactly how a gateway in front of a provider with its own, closed
+    user circle is meant, and the approval per application may also lie with the provider
+    (`oidc_clients`, T-14). An error would mean forbidding this setup — deciding that
+    would be a new switch (a deliberate "all"), not a check.
     """
     if not _an(config, "forward_auth_enabled"):
         return
@@ -876,9 +876,9 @@ def _offene_tore(config, warnungen: list) -> None:
         if not (_an(config, an) and _an(config, anlegen)) or getattr(config, gruppen, None):
             continue
         if name == "OIDC" and getattr(config, "oidc_clients", None):
-            # Je Anwendung ein eigener Client (T-14): Die Freigabe liegt beim Provider, und
-            # `/auth/forward` prüft sie je Host. Das ist ein geschlossenes Tor — nur eben eines,
-            # dessen Schlüssel der Provider verwaltet.
+            # One client of its own per application (T-14): the approval lies with the provider, and
+            # `/auth/forward` checks it per host. That is a closed gate — just one
+            # whose key the provider manages.
             continue
         offen.append(f"{name} ({anlegen}=True, {gruppen} leer)")
     if offen:
@@ -895,30 +895,30 @@ def _offene_tore(config, warnungen: list) -> None:
             "signup_invite_only=True, allow_signup=False oder Rollen am Proxy verlangen.")
 
 
-#: Provider, die den Gruppen-Claim ohne eigenen Scope liefern und einen unbekannten Scope
-#: ABLEHNEN: Entra ID nimmt `groups` als Berechtigung der Graph-API und bricht die Anmeldung ab
-#: (AADSTS650053 „scope 'groups' that doesn't exist"; die Gruppen kommen dort über „optional
-#: claims" der App-Registrierung). Der Rat „`groups` in
-#: oidc_scopes aufnehmen" wäre dort falsch, die Warnung ein Dauer-Fehlalarm fürs `entra_id`-Preset.
+#: Providers that deliver the group claim without a scope of their own and
+#: REJECT an unknown scope: Entra ID takes `groups` as a Graph API permission and aborts the sign-in
+#: (AADSTS650053 "scope 'groups' that doesn't exist"; the groups come there via "optional
+#: claims" of the app registration). The advice "add `groups` to
+#: oidc_scopes" would be wrong there, the warning a permanent false alarm for the `entra_id` preset.
 _GRUPPEN_OHNE_SCOPE = ("login.microsoftonline.com",)
 
 
 def _gruppen_scope(config, warnungen: list) -> None:
-    """Gruppenregel über den Claim `groups`, aber der Scope `groups` wird nicht angefordert.
+    """Group rule via the claim `groups`, but the scope `groups` is not requested.
 
-    Fund aus dem Betrieb (2026-09-27): PocketID — und andere Provider, die Claims an Scopes
-    binden — schickt den Claim `groups` nur, wenn der Client den Scope `groups` verlangt. Ohne
-    ihn weist `oidc_allowed_groups` jeden ab („keine passende Gruppe", im Audit
-    `oidc_group_denied`), und `oidc_group_role_map` vergibt still keine Rolle. Die Vorgabe
-    `oidc_scopes="openid profile email"` fordert ihn nicht an.
+    Finding from operation (2026-09-27): PocketID — and other providers that tie claims to
+    scopes — sends the claim `groups` only if the client asks for the scope `groups`. Without
+    it `oidc_allowed_groups` rejects everyone ("no matching group", in the audit
+    `oidc_group_denied`), and `oidc_group_role_map` silently assigns no role. The default
+    `oidc_scopes="openid profile email"` does not request it.
 
-    Warnung, kein Fehler, und kein stilles Nachfordern: Andere Provider (Keycloak, Authentik)
-    liefern den Claim über einen Mapper ohne eigenen Scope, und manche lehnen einen Scope ab,
-    den sie nicht kennen — TinySesam kann das aus der Konfiguration nicht ablesen. Geprüft wird
-    je Client: der Einzel-Client mit `oidc_scopes`, jede Anwendung aus `oidc_clients` mit ihren
-    eigenen `scopes` (sonst `oidc_scopes`) und ihrer Gruppenregel (sonst der globalen), genau
-    wie `OIDCClients` sie zusammensetzt. SAML und LDAP haben kein Gegenstück: Dort gibt es keine
-    Scopes, ob der IdP das Gruppenattribut freigibt, steht in SEINER Konfiguration.
+    Warning, not error, and no silent re-requesting: other providers (Keycloak, Authentik)
+    deliver the claim via a mapper without a scope of their own, and some reject a scope
+    they do not know — TinySesam cannot read that from the configuration. The check is done
+    per client: the single client with `oidc_scopes`, each application from `oidc_clients` with its
+    own `scopes` (otherwise `oidc_scopes`) and its group rule (otherwise the global one), exactly
+    as `OIDCClients` composes them. SAML and LDAP have no counterpart: there are no
+    scopes there, whether the IdP releases the group attribute is in ITS configuration.
     """
     if not _an(config, "oidc_enabled"):
         return
@@ -964,7 +964,7 @@ FORWARD_LOGOUT = ("all", "app", "ask")
 
 
 def _forward_apps(config, fehler: list, warnungen: list) -> None:
-    """Login-Modus und Einstellungen je Anwendung vor dem Gate (T-21)."""
+    """Login mode and settings per application in front of the gate (T-21)."""
     modus = getattr(config, "forward_login", "page")
     if modus not in FORWARD_LOGIN:
         fehler.append(f"forward_login={modus!r}: erlaubt sind {', '.join(FORWARD_LOGIN)}.")
@@ -984,8 +984,8 @@ def _forward_apps(config, fehler: list, warnungen: list) -> None:
             continue
         fremd = sorted(set(e) - set(FORWARD_APP_SCHLUESSEL))
         if fremd:
-            # Ein vertippter Schlüssel (`logn`) gälte sonst still nicht — die Anwendung bekäme
-            # den globalen Modus, und niemand wüsste, warum.
+            # A mistyped key (`logn`) would otherwise silently not apply — the application would get
+            # the global mode, and nobody would know why.
             fehler.append(f"{wo} kennt {', '.join(fremd)} nicht (erlaubt: {', '.join(FORWARD_APP_SCHLUESSEL)}).")
         if "login" in e and e["login"] not in FORWARD_LOGIN:
             fehler.append(f"{wo}['login']={e['login']!r}: erlaubt sind {', '.join(FORWARD_LOGIN)}.")
@@ -999,8 +999,8 @@ def _forward_apps(config, fehler: list, warnungen: list) -> None:
     if apps and not _an(config, "forward_auth_enabled"):
         warnungen.append("forward_apps ist gesetzt, forward_auth_enabled aber False — die Einstellungen "
                          "je Anwendung liest nur die Forward-Auth.")
-    # „Überall abmelden" ohne den Provider, vor einem Gate, das direkt zum Provider schickt: Der
-    # nächste Seitenaufruf meldet lautlos wieder an — das Abmelden wirkt wie ein Neuladen.
+    # "Sign out everywhere" without the provider, in front of a gate that sends directly to the provider: the
+    # next page request silently signs in again — signing out looks like a reload.
     abmeldungen = [abmelden] + [str(e.get("logout")) for e in apps.values() if isinstance(e, dict) and e.get("logout")]
     if (direkt and _an(config, "oidc_enabled") and not _an(config, "oidc_rp_logout")
             and any(a in ("all", "ask") for a in abmeldungen)):
@@ -1021,11 +1021,11 @@ def _forward_apps(config, fehler: list, warnungen: list) -> None:
 
 
 def _gate(config, fehler: list, warnungen: list) -> None:
-    """Gate-Token (ADR-9, T-19): nur als Teil der Forward-Auth, nur mit einem Cookie, das der
-    Browser ausschliesslich dem Host der Anwendung zurückgibt."""
+    """Gate token (ADR-9, T-19): only as part of forward auth, only with a cookie that the
+    browser returns exclusively to the application's host."""
     if _an(config, "gate_link_enabled"):
-        # Code-Austausch (T-26): Er ersetzt das Sitzungs-Cookie auf der Elterndomain. Beides zugleich
-        # hiesse, die Sitzung doch wieder an jede App zu schicken — und der Austausch wäre nur Umweg.
+        # Code exchange (T-26): it replaces the session cookie on the parent domain. Both at once
+        # would mean sending the session to every app after all — and the exchange would be only a detour.
         if not _an(config, "gate_token_enabled"):
             fehler.append("gate_link_enabled=True ohne gate_token_enabled=True: Der Code-Austausch gibt dem "
                           "App-Host eine Verbindung, mit der er Gate-Token bekommt — ohne Gate-Token hat sie "
@@ -1045,11 +1045,11 @@ def _gate(config, fehler: list, warnungen: list) -> None:
             "Antwort von /auth/forward — ohne die Route gibt es keins, und der Proxy fiele bei jeder "
             "Anfrage auf eine Prüfung zurück, die nicht existiert.")
     name = str(getattr(config, "gate_cookie_name", "") or "")
-    # `__Host-`: Der Browser nimmt das Cookie nur mit Secure, Path=/ und OHNE Domain an — es gilt
-    # dann für genau den Host, der es gesetzt hat. Ohne das Präfix verhindert nur unsere eigene
-    # Set-Cookie-Zeile ein Domain-Cookie; mit ihm verhindert es der Browser.
-    # `tinysesam_` danach: Die Vorlagen entfernen jedes `tinysesam_*`-Cookie, bevor die Anfrage
-    # die Anwendung erreicht (B-20). Ein anders benanntes Gate-Cookie läse die Anwendung mit.
+    # `__Host-`: the browser accepts the cookie only with Secure, Path=/ and WITHOUT Domain — it then applies
+    # to exactly the host that set it. Without the prefix only our own
+    # Set-Cookie line prevents a domain cookie; with it, the browser prevents it.
+    # `tinysesam_` after it: the templates strip every `tinysesam_*` cookie before the request
+    # reaches the application (B-20). A differently named gate cookie would be read along by the application.
     if not re.fullmatch(r"__Host-tinysesam_[A-Za-z0-9_]+", name):
         fehler.append(
             f"gate_cookie_name={name!r} muss die Form __Host-tinysesam_<name> haben: __Host- bindet "
@@ -1073,20 +1073,20 @@ def _gate(config, fehler: list, warnungen: list) -> None:
 
 
 def _kombinationen(config, fehler: list, warnungen: list) -> None:
-    """Kombinationen, die einzeln erlaubt sind und zusammen nicht tun, was sie sagen (B3-16)."""
-    # E-Mail-Bestätigung ohne Pflicht-Adresse: Wer das Feld leer lässt, bekommt ein SOFORT
-    # aktives Konto — die Bestätigung gilt nur für die, die eine Adresse angeben. Die Schranke
-    # hat also eine Tür daneben.
+    """Combinations that are allowed individually and together do not do what they say (B3-16)."""
+    # E-mail confirmation without a mandatory address: whoever leaves the field empty gets an IMMEDIATELY
+    # active account — the confirmation applies only to those who give an address. The barrier
+    # thus has a door next to it.
     if _an(config, "allow_signup") and _an(config, "signup_verify_email") \
             and not _an(config, "signup_require_email"):
         fehler.append(
             "signup_verify_email=True, aber signup_require_email=False: Wer bei der Registrierung "
             "keine Adresse angibt, ist ohne jede Bestätigung sofort aktiv. Entweder "
             "signup_require_email=True oder auf die Bestätigung verzichten.")
-    # ASVS 6.3.8 (B1-12): Ohne Bestätigung meldet eine freie Registrierung sofort an, eine
-    # vergebene Adresse antwortet mit 409 — der Unterschied lässt sich nicht verstecken, und
-    # jeder erfährt so, welche Adressen hier ein Konto haben. Mit Bestätigung antworten beide
-    # gleich (R4-03), auch in der Laufzeit.
+    # ASVS 6.3.8 (B1-12): without confirmation a free registration signs in immediately, a
+    # taken address answers with 409 — the difference cannot be hidden, and
+    # everyone learns which addresses have an account here. With confirmation both answer
+    # the same (R4-03), at runtime too.
     if _an(config, "allow_signup") and not _an(config, "signup_invite_only") \
             and not _an(config, "signup_verify_email") \
             and (_an(config, "signup_require_email") or getattr(config, "login_identifier", "") == "email"):
@@ -1097,8 +1097,8 @@ def _kombinationen(config, fehler: list, warnungen: list) -> None:
     if _an(config, "signup_invite_only") and not _an(config, "allow_signup"):
         warnungen.append("signup_invite_only=True ohne allow_signup=True ist wirkungslos — die "
                          "Registrierung ist ohnehin aus.")
-    # Über `_ganzzahl` wie jede Kombination (tests/test_sicherheit_befunde.py prüft das): Text,
-    # inf, nan und True meldet `_zahlengrenzen`; hier bleibt die Kombination dann unbewertet.
+    # Via `_ganzzahl` like every combination (tests/test_sicherheit_befunde.py checks that): text,
+    # inf, nan and True are reported by `_zahlengrenzen`; here the combination then stays unevaluated.
     lang = _ganzzahl(config, "session_ttl_hours", None)
     kurz = _ganzzahl(config, "session_ttl_transient_hours", None)
     if lang is not None and kurz is not None and kurz > lang:
@@ -1110,8 +1110,8 @@ def _kombinationen(config, fehler: list, warnungen: list) -> None:
         if wert and not wert.startswith("/"):
             fehler.append(f"{feld}={wert!r} muss mit '/' beginnen — sonst ist es kein Pfad, und "
                           "Routen wie Links zeigen ins Leere.")
-    # cookie_domain, die den eigenen Host nicht umfasst: Der Browser verwirft das Cookie, jede
-    # Anmeldung „klappt" und der nächste Klick ist wieder die Login-Seite.
+    # cookie_domain that does not cover the own host: the browser discards the cookie, every
+    # sign-in "works" and the next click is the login page again.
     dom = str(getattr(config, "cookie_domain", "") or "").strip().lower().lstrip(".")
     basis = security.normalisiere_basis(str(getattr(config, "base_url", "") or "").strip())
     if dom and basis:
@@ -1122,9 +1122,9 @@ def _kombinationen(config, fehler: list, warnungen: list) -> None:
                 f"cookie_domain={getattr(config, 'cookie_domain')!r} umfasst den Host von base_url "
                 f"({host}) nicht. Der Browser verwirft ein Cookie für eine fremde Domain — "
                 "niemand bliebe angemeldet.")
-    # Demo-Modus neben einem echten Anmeldeweg (B3-8): Die Demo-Konten haben ein bekanntes
-    # Passwort, eines ist Admin. Neben OIDC/SAML/LDAP ist das keine Demo mehr, sondern eine
-    # Produktivinstanz mit einer Hintertür.
+    # Demo mode next to a real sign-in path (B3-8): the demo accounts have a known
+    # password, one is admin. Next to OIDC/SAML/LDAP that is no demo any more, but a
+    # production instance with a back door.
     if _an(config, "demo_mode"):
         echt = [feld for feld in ("oidc_enabled", "saml_enabled", "ldap_enabled", "forward_auth_enabled")
                 if _an(config, feld)]

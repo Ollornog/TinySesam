@@ -1,25 +1,25 @@
-"""CLI: `python -m tinysesam <kommando>` (auch als Konsolenskript `tinysesam`).
+"""CLI: `python -m tinysesam <command>` (also as the console script `tinysesam`).
 
-    version                          die installierte Version
-    passwd --db auth.db <benutzer>   Passwort offline neu setzen (Wartung; --blocklist-file,
-                                     --rp-name: dieselbe Passwortregel wie die Config)
-    backup --db auth.db <ziel>       konsistente Kopie ziehen (NICHT die Datei kopieren!)
-    restore --db auth.db <quelle>    eine Sicherung zurückspielen (Dienst vorher stoppen!)
-    gc --db auth.db                  Abgelaufenes wegräumen (für Cron/Timer)
-    audit --db auth.db [--user X]    ins Protokoll sehen (auch wenn niemand hereinkommt)
-    unlock --db auth.db <benutzer>   eine Brute-Force-Sperre aufheben
-    owner --db auth.db <benutzer>    ein Konto zum Owner machen (Notweg)
-    rename --db auth.db <alt> <neu>  ein Konto umbenennen (Kennungs-Kollision auflösen)
-    gate-key --db auth.db            öffentlicher Schlüssel der Gate-Token (für den Proxy, ADR-9)
+    version                          the installed version
+    passwd --db auth.db <user>       reset a password offline (maintenance; --blocklist-file,
+                                     --rp-name: the same password rule as the config)
+    backup --db auth.db <target>     take a consistent copy (do NOT copy the file!)
+    restore --db auth.db <source>    restore a backup (stop the service first!)
+    gc --db auth.db                  clear out what has expired (for cron/timer)
+    audit --db auth.db [--user X]    look into the log (even if nobody gets in)
+    unlock --db auth.db <user>       lift a brute-force lockout
+    owner --db auth.db <user>        make an account an owner (emergency route)
+    rename --db auth.db <old> <new>  rename an account (resolve an identifier collision)
+    gate-key --db auth.db            public key of the gate tokens (for the proxy, ADR-9)
 
-Bewusst mager. TinySesam installiert sich nicht selbst — ein Auth-Modul, das zur Laufzeit
-Code nachlädt, ist eine Hintertür mit Bedienungsanleitung. Aktualisiert wird von außen:
-Tag hochziehen, neu installieren, Dienst neu starten. Siehe README, „Installation und Updates".
+Deliberately lean. TinySesam does not install itself — an auth module that reloads
+code at runtime is a back door with an instruction manual. Updating is done from outside:
+pull the tag, reinstall, restart the service. See README, "Installation and updates".
 
-`passwd` widerspricht dem nicht (ADR-2): Es lädt nichts nach und spricht keinen laufenden Dienst
-an, sondern öffnet eine Datenbankdatei, auf die man ohnehin Dateizugriff braucht. Es ist der
-Ausweg für den Fall, für den die Presets ohne Mailer gedacht sind — internes Werkzeug, Admin-
-Passwort weg, kein „Passwort vergessen"-Link und kein zweiter Admin.
+`passwd` does not contradict this (ADR-2): it loads nothing and talks to no running service,
+but opens a database file to which one needs file access anyway. It is the
+way out for the case the presets without a mailer are meant for — internal tool, admin
+password gone, no "forgot password" link and no second admin.
 """
 import sys
 import getpass
@@ -37,23 +37,23 @@ def _passwd(argv) -> int:
                     help="Passwort von der Standardeingabe lesen statt interaktiv fragen")
     ap.add_argument("--keep-sessions", action="store_true",
                     help="offene Sitzungen des Kontos NICHT beenden (Vorgabe: beenden)")
-    # Das CLI liest keine Config — was dort für die Passwortregel steht, bekommt es hier.
-    # Ohne diese beiden Schalter galt offline eine schwächere Regel als im Web (A-7).
+    # The CLI reads no config — what stands there for the password rule, it gets here.
+    # Without these two switches a weaker rule applied offline than on the web (A-7).
     ap.add_argument("--blocklist-file", default="",
                     help="eigene Blockliste wie config.password_blocklist_file")
     ap.add_argument("--rp-name", default="",
                     help="Dienstname wie config.rp_name (gilt als Kontextwort)")
     a = ap.parse_args(argv)
 
-    # Store statt TinySesam: kein FastAPI nötig, und die Instanz hätte Nebenwirkungen
-    # (Demo-Seeding, Erst-Admin-Token) — beides hat in einem Wartungsbefehl nichts verloren.
+    # Store instead of TinySesam: no FastAPI needed, and the instance would have side effects
+    # (demo seeding, first-admin token) — neither has any business in a maintenance command.
     import os
     from .store import Store
     from .passwords import hash_password, passwort_mangel, blockliste_lesen
     from .security import haertung_lesen
 
-    # Ohne diese Prüfung legt sqlite3 die Datei stillschweigend an und der Tippfehler im Pfad
-    # käme als „Kein Konto 'admin'" zurück — die ratloseste aller Fehlermeldungen.
+    # Without this check sqlite3 silently creates the file and the typo in the path
+    # would come back as "Kein Konto 'admin'" — the most baffling of all error messages.
     if not os.path.exists(a.db):
         print(f"Keine Datenbank unter {a.db}.", file=sys.stderr)
         return 1
@@ -70,18 +70,18 @@ def _passwd(argv) -> int:
         if pw != getpass.getpass("Wiederholen:    "):
             print("Die beiden Eingaben sind verschieden.", file=sys.stderr)
             return 1
-    # Die Mindestlänge über DENSELBEN Leseweg wie `TinySesam._sec()`: Roh gelesen galt ein
-    # Altwert ohne Grenzen (4, 0) hier weiter, während das Web ihn auf 8 zog.
+    # The minimum length via THE SAME read path as `TinySesam._sec()`: read raw, a
+    # legacy value without bounds (4, 0) kept applying here, while the web pulled it up to 8.
     #
-    # Und die STRENGERE der beiden Längen (B2-4): Das CLI liest keine Konfiguration und weiss
-    # deshalb nicht, ob eine Kette einen zweiten Faktor erzwingt. Im Zweifel gilt die Regel für
-    # ein Passwort, das allein anmelden kann; wer das nicht will, stellt
-    # `password_min_length_single_factor` im Panel herunter.
+    # And the STRICTER of the two lengths (B2-4): the CLI reads no configuration and therefore
+    # does not know whether a chain enforces a second factor. When in doubt the rule for
+    # a password that can sign in on its own applies; whoever does not want that lowers
+    # `password_min_length_single_factor` in the panel.
     minlen = max(haertung_lesen(store, "password_min_length"),
                  haertung_lesen(store, "password_min_length_single_factor"))
-    # Dieselbe Regel wie im Web (Länge, Höchstlänge, eingebaute Blockliste, Benutzername,
-    # E-Mail-Name) — das CLI ist ein Setzweg wie die anderen. Blockliste und Dienstname des
-    # Betreibers kommen über `--blocklist-file` und `--rp-name`, weil das CLI keine Config liest.
+    # The same rule as on the web (length, maximum length, built-in blocklist, username,
+    # e-mail name) — the CLI is a way of setting like the others. The operator's blocklist and service
+    # name come via `--blocklist-file` and `--rp-name`, because the CLI reads no config.
     blockliste: frozenset = frozenset()
     if a.blocklist_file:
         try:
@@ -100,13 +100,13 @@ def _passwd(argv) -> int:
         return 1
 
     store.set_password_hash(user["id"], hash_password(pw))
-    # Neu gebunden: Eine Serien-Sperre (B2-6) endet hier wie bei jedem anderen Reset — unter
-    # Name, Adresse und dem Namen im Verzeichnis (G5, `Store.zaehl_kennungen`).
+    # Bound anew: a series lockout (B2-6) ends here like with any other reset — under
+    # name, address and the name in the directory (G5, `Store.zaehl_kennungen`).
     for kennung in store.zaehl_kennungen(user["id"]):
         store.fehlserie_loeschen(kennung)
     note = ""
     if not a.keep_sessions:
-        # Standard nach jedem Credential-Wechsel: offene Sitzungen gelten nicht weiter.
+        # Standard after every credential change: open sessions no longer count.
         store.delete_user_sessions(user["id"])
         note = " (offene Sitzungen beendet)"
     store.audit_log("password_reset_cli", a.username, None, "offline")
@@ -115,8 +115,8 @@ def _passwd(argv) -> int:
 
 
 def _oeffne(pfad: str):
-    """Store auf einer BESTEHENDEN Datei. Wie bei `passwd`: kein TinySesam, damit ein
-    Wartungsbefehl kein Demo-Seeding und kein Erst-Admin-Token auslöst."""
+    """Store on an EXISTING file. As with `passwd`: no TinySesam, so that a
+    maintenance command triggers no demo seeding and no first-admin token."""
     import os
     from .store import Store
     if not os.path.exists(pfad):
@@ -144,8 +144,8 @@ def _backup(argv) -> int:
     if os.path.exists(a.ziel):
         print(f"{a.ziel} gibt es schon — nichts überschrieben.", file=sys.stderr)
         return 1
-    # NICHT über `_oeffne()`: Der Store-Konstruktor migriert die Datei, bevor eine Kopie
-    # existiert — eine Sicherung, die die Quelle verändert, ist keine. `sichere_datei` öffnet
+    # NOT via `_oeffne()`: the Store constructor migrates the file before a copy
+    # exists — a backup that changes its source is none. `sichere_datei` opens
     # read-only.
     try:
         Store.sichere_datei(a.db, a.ziel)
@@ -153,11 +153,11 @@ def _backup(argv) -> int:
         print(f"Sicherung fehlgeschlagen: {type(e).__name__}: {e}", file=sys.stderr)
         for rest in ("", "-wal", "-shm"):
             if os.path.exists(a.ziel + rest):
-                os.remove(a.ziel + rest)      # keine halbe Datei zurücklassen
+                os.remove(a.ziel + rest)      # leave no half file behind
         return 1
     print(f"Sicherung geschrieben: {a.ziel} ({os.path.getsize(a.ziel)} Bytes, Rechte 0600).")
-    # Die Sicherung enthält die TOTP-Geheimnisse nur verschlüsselt (H-14/H-15). Ohne den Schlüssel
-    # ist sie für TOTP wertlos — er gehört getrennt mitgesichert, nicht in dieselbe Ablage.
+    # The backup contains the TOTP secrets only encrypted (H-14/H-15). Without the key
+    # it is worthless for TOTP — it belongs backed up separately, not in the same storage.
     if os.path.exists(a.db + ".key"):
         print(f"Hinweis: Der Schlüssel der TOTP-Geheimnisse liegt in {a.db}.key und ist NICHT in der "
               "Sicherung. Getrennt sichern — ohne ihn müssen alle Konten TOTP neu einrichten.")
@@ -187,7 +187,7 @@ def _restore(argv) -> int:
     if not os.path.exists(a.quelle):
         print(f"Keine Sicherung unter {a.quelle}.", file=sys.stderr)
         return 1
-    # Erst prüfen, ob die Sicherung überhaupt taugt — nicht erst nach dem Überschreiben.
+    # First check whether the backup is any good at all — not only after overwriting.
     try:
         pruef = sqlite3.connect(f"file:{a.quelle}?mode=ro", uri=True)
         heil = pruef.execute("PRAGMA integrity_check").fetchone()[0]
@@ -215,7 +215,7 @@ def _restore(argv) -> int:
             print("Abgebrochen.")
             return 1
 
-    # Die Reihenfolge ist der eigentliche Inhalt dieses Kommandos.
+    # The order is the actual content of this command.
     for rest in ("-wal", "-shm"):
         if os.path.exists(a.db + rest):
             os.remove(a.db + rest)
@@ -223,7 +223,7 @@ def _restore(argv) -> int:
     try:
         os.chmod(a.db, Store.DATEIRECHTE)
     except OSError:
-        pass  # Dateisystem ohne Unix-Rechte — die Kopie selbst ist vollständig
+        pass  # file system without Unix permissions — the copy itself is complete
     print(f"Zurückgespielt: {a.db} (Rechte 0600). Dienst wieder starten.")
     return 0
 
@@ -241,14 +241,14 @@ def _gc(argv) -> int:
                     help="Audit-Einträge älter als N Tage löschen (Vorgabe: 0 = keine; "
                          "Gegenstück zu config.audit_retention_days)")
     a = ap.parse_args(argv)
-    # Dieselbe Grenze wie `audit_retention_days` — geprüft, bevor irgendetwas gelöscht wird.
-    # 10**20 brach sonst mit OverflowError ab, als Sitzungen und Tokens schon weg waren.
+    # The same bound as `audit_retention_days` — checked before anything is deleted.
+    # 10**20 otherwise aborted with OverflowError when sessions and tokens were already gone.
     from .konfigpruefung import ZAHLENGRENZEN
     unten, oben = ZAHLENGRENZEN["audit_retention_days"]
     if not unten <= a.audit_days <= oben:
         ap.error(f"--audit-days muss zwischen {unten} und {oben} liegen (Tage, nicht Sekunden)")
-    # Dasselbe für die Login-Versuche (zweite Angriffsrunde): ±10**20 brach nach den ersten
-    # Löschschritten ab, ein negativer Wert räumte auch das laufende Sperrfenster weg.
+    # The same for the login attempts (second attack round): ±10**20 aborted after the first
+    # deletion steps, a negative value also cleared the running lockout window.
     from .store import versuchsfrist, VERSUCHSFRIST_MAX_SEK
     try:
         versuchsfrist(a.attempts_older_than)
@@ -287,17 +287,17 @@ def _audit(argv) -> int:
     if store is None:
         return 1
     import datetime as _dt
-    # In SQL filtern, nicht hier: Ein Nachsieben der jüngsten Zeilen fand die Einträge eines
-    # Kontos nur, wenn sie zufällig ins Fenster fielen — bei einer Brute-Force-Welle also gerade
-    # nicht. Das Kommando meldete dann „Keine Einträge zu 'X'." und Exit 0, obwohl sie dastanden.
+    # Filter in SQL, not here: post-filtering the most recent rows found an account's entries
+    # only if they happened to fall into the window — so precisely not during a brute-force wave.
+    # The command then reported "Keine Einträge zu 'X'." and exit 0, although they were there.
     zeilen = store.recent_audit(a.n, username=a.user or None)
     if not zeilen:
         print("Keine Einträge." if not a.user else f"Keine Einträge zu '{a.user}'.")
         return 0
-    # Jedes Feld durch `zeilenfest` (B5-06): Benutzername und Detail stammen aus Formularen und
-    # fremden Antworten. Ein `\n` darin druckte hier eine zweite, frei erfundene Zeile — mit
-    # Zeitstempel, Ereignis und IP nach Wahl — genau in der Ansicht, auf die man sich im
-    # Anlassfall verlässt. Ein Steuerzeichen (ESC) konnte zudem das Terminal selbst umstellen.
+    # Every field through `zeilenfest` (B5-06): username and detail come from forms and
+    # foreign responses. A `\n` in them printed a second, freely invented line here — with
+    # timestamp, event and IP of choice — exactly in the view one relies on in
+    # the case at hand. A control character (ESC) could moreover reconfigure the terminal itself.
     from .security import zeilenfest as _z
     for z in reversed(zeilen):
         zeit = _dt.datetime.fromtimestamp(z["ts"]).strftime("%Y-%m-%d %H:%M:%S")
@@ -320,25 +320,25 @@ def _unlock(argv) -> int:
     store = _oeffne(a.db)
     if store is None:
         return 1
-    # Gezählt wird unter der gefalteten Kennung (`norm_kennung`), also auch so räumen.
+    # Counting is done under the folded identifier (`norm_kennung`), so clear it that way, too.
     from .store import norm_kennung
     topf = norm_kennung(a.username)
-    # Das Konto zur Kennung: über den Namen, über Name oder Adresse im Zähl-Topf, oder über den
-    # Namen, unter dem es sich zuletzt im Verzeichnis angemeldet hat (G5). Bis 2026-09-26 nur
-    # über den Namen — nach einer Umbenennung im Verzeichnis (lokal `alice`, dort `alice.neu`)
-    # brach `unlock alice.neu` mit „Kein Konto" ab, obwohl genau unter diesem Namen gezählt wurde.
+    # The account for the identifier: via the name, via name or address in the counting bucket, or via the
+    # name under which it last signed in in the directory (G5). Until 2026-09-26 only
+    # via the name — after a rename in the directory (locally `alice`, there `alice.neu`)
+    # `unlock alice.neu` aborted with "Kein Konto", although counting was done under exactly that name.
     konto = (store.get_user_by_name(a.username) or store.konto_mit_topf(topf)
              or store.konto_mit_bindungsname(topf))
     offen = store.count_fails(0, username=topf)
     store.clear_fails(username=topf)
-    # Auch die Serien-Sperre (B2-6), unter allen Kennungen des Kontos — gezählt wird unter dem,
-    # was jemand eingetippt hat — und immer unter der eingetippten selbst.
+    # The series lockout (B2-6) as well, under all identifiers of the account — counting is done under what
+    # someone typed — and always under the typed one itself.
     serie = sum(store.fehlserie_loeschen(k) for k in
                 ({topf} | (store.zaehl_kennungen(konto["id"]) if konto else set())) - {""})
     if konto is None:
-        # Kein Konto — gezählt wird aber auch für Kennungen ohne Konto (B2-6 verrät nicht, ob es
-        # eins gibt), und ein Bestand kennt den Namen im Verzeichnis noch nicht (er entsteht erst
-        # mit der nächsten erfolgreichen Anmeldung). Was unter der Kennung stand, ist geräumt.
+        # No account — but counting is also done for identifiers without an account (B2-6 does not reveal whether there
+        # is one), and an existing database does not know the name in the directory yet (it only comes into being
+        # with the next successful sign-in). What stood under the identifier is cleared.
         if not (offen or serie):
             print(f"Kein Konto '{a.username}' in {a.db}, und unter dieser Kennung steht keine Sperre.",
                   file=sys.stderr)
@@ -381,8 +381,8 @@ def _owner(argv) -> int:
     return 0
 
 
-#: Höchstlänge eines Benutzernamens — dieselbe wie `TinySesam.NAME_MAX` (das CLI importiert den
-#: Manager nicht, er zieht FastAPI nach; tests/test_admin_konto.py hält beide gleich).
+#: Maximum length of a username — the same as `TinySesam.NAME_MAX` (the CLI does not import the
+#: manager, it pulls in FastAPI; tests/test_admin_konto.py keeps both equal).
 _NAME_MAX = 150
 
 
@@ -410,8 +410,8 @@ def _rename(argv) -> int:
     from .store import name_ungueltig, norm_email, norm_kennung
     konto = store.get_user_by_name(a.username)
     if konto is None and a.username[:1] == "#" and a.username[1:].isascii() and a.username[1:].isdigit():
-        # Über die ID: Ein Name mit Steuerzeichen (Bestand) lässt sich nicht eintippen, und bei
-        # einer Kollision nennt die Startmeldung die Konten ohnehin über ihre user_id.
+        # Via the ID: a name with control characters (existing data) cannot be typed in, and on
+        # a collision the startup message names the accounts via their user_id anyway.
         konto = store.get_user(int(a.username[1:]))
     if not konto:
         print(f"Kein Konto '{a.username}' in {a.db}.", file=sys.stderr)
@@ -423,8 +423,8 @@ def _rename(argv) -> int:
         return 1
     eigene = norm_email(konto["email"]) if konto["email"] and konto["email_verified"] else None
     if "@" in norm_kennung(neu) and norm_email(neu) != eigene:
-        # Wie `change_username`: Ein Name, der eine fremde Adresse ist, besetzte das Postfach
-        # einer Person, die es hier noch nicht gibt.
+        # As with `change_username`: a name that is a foreign address would occupy the mailbox
+        # of a person who does not exist here yet.
         print(f"'{neu}' ist eine Adresse — als Name nur die eigene bestätigte Adresse des Kontos.",
               file=sys.stderr)
         return 1
@@ -432,8 +432,8 @@ def _rename(argv) -> int:
     if neu == alt:
         print(f"'{alt}' heisst schon so — nichts geändert.")
         return 0
-    # Kreuzweise, wie `TinySesam.identifier_taken`: Name, Adresse, Zähl-Topf und der Name im
-    # Verzeichnis eines anderen Kontos (Prüfrunde 2026-09-27).
+    # Cross-wise, like `TinySesam.identifier_taken`: name, address, counting bucket and the name in the
+    # directory of another account (review round 2026-09-27).
     for treffer in (store.get_user_by_name(neu), store.get_user_by_email(neu),
                     store.konto_mit_topf(neu, ausser=konto["id"]),
                     store.konto_mit_verzeichnisname(neu, ausser=konto["id"])):
@@ -442,11 +442,11 @@ def _rename(argv) -> int:
                   "im Verzeichnis).", file=sys.stderr)
             return 1
     try:
-        # Als Betreiber: Der Merker „selbst gewählt" (G2-N) fällt — der Name steht für den
-        # Betreiber, und die Anmeldung über LDAP/SAML darf das Konto wieder über ihn binden.
+        # As operator: the marker "chosen by themselves" (G2-N) is dropped — the name stands for the
+        # operator, and the sign-in via LDAP/SAML may bind the account via it again.
         store.set_username(konto["id"], neu, selbst_gewaehlt=False)
     except sqlite3.IntegrityError:
-        # Wettlauf mit dem laufenden Dienst: dazwischen vergeben — die Datenbank entscheidet (G12c).
+        # Race with the running service: assigned in between — the database decides (G12c).
         print(f"'{neu}' ist schon vergeben — die Datenbank hat das Umbenennen abgewiesen, nichts "
               "geändert.", file=sys.stderr)
         return 1
@@ -466,9 +466,9 @@ def _gate_key(argv) -> int:
     a = ap.parse_args(argv)
     import os
     from . import gate, geheimnis
-    # Der Schlüssel wird aus dem Grundschlüssel abgeleitet. Gibt es den noch nicht, legt ihn
-    # `schluessel_laden` an — das darf ein Lesebefehl nicht: Der Proxy bekäme einen Schlüssel,
-    # den der Dienst (mit seiner Umgebung) gar nicht benutzt.
+    # The key is derived from the base key. If that does not exist yet, `schluessel_laden`
+    # creates it — a read command must not do that: the proxy would get a key
+    # that the service (with its environment) does not use at all.
     if not (os.environ.get(geheimnis.UMGEBUNG, "").strip() or a.secrets_key_file
             or os.path.exists(a.db + ".key")):
         print(f"Kein Grundschlüssel: weder {geheimnis.UMGEBUNG} noch --secrets-key-file noch "
@@ -507,8 +507,8 @@ def main(argv=None):
     elif cmd == "gate-key":
         sys.exit(_gate_key(argv[1:]))
     else:
-        # `--help` ist eine Frage, kein Fehler: Sie gehört nach stdout und endet mit 0. Ein
-        # Tippfehler dagegen nach stderr und endet mit 2, sonst merkt kein Skript den Unterschied.
+        # `--help` is a question, not an error: it belongs on stdout and ends with 0. A
+        # typo, on the other hand, goes to stderr and ends with 2, otherwise no script notices the difference.
         hilfe = cmd in ("--help", "-h", "help")
         print("usage: python -m tinysesam version\n"
               "       python -m tinysesam passwd --db <datei> <benutzer>\n"

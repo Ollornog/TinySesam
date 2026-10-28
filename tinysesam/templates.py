@@ -1,11 +1,11 @@
-"""Eingebaute Login-/Auth-Views (dark/light) — und die Template-Registry, über die sich
-JEDE Seite ersetzen lässt.
+"""Built-in login/auth views (dark/light) — and the template registry through which
+EVERY page can be replaced.
 
-Frontend komplett austauschbar:
-    auth.set_template("login", meine_login_funktion)   # fn(auth, ctx) -> str | Response
-Die eingebauten Renderer bleiben als Fallback. `ctx` ist ein dict mit allen Variablen der Seite
-(dokumentiert je Renderer). Gibt ein Override eine Starlette-`Response` zurück, wird sie unverändert
-ausgeliefert; ein String wird als HTML mit dem jeweiligen Status verpackt.
+Frontend fully replaceable:
+    auth.set_template("login", my_login_function)   # fn(auth, ctx) -> str | Response
+The built-in renderers stay as fallback. `ctx` is a dict with all variables of the page
+(documented per renderer). If an override returns a Starlette `Response`, it is delivered
+unchanged; a string is wrapped as HTML with the respective status.
 """
 from __future__ import annotations
 import html
@@ -19,28 +19,28 @@ _NONCE_TAG = re.compile(r'<(script|style)(?![^>]*\bnonce=)(?=[\s>])')
 
 
 def inject_nonce(html_str: str, nonce: str) -> str:
-    """Jedem `<script>`/`<style>` ohne eigene Nonce die der Antwort geben (CSP 'strict').
+    """Give every `<script>`/`<style>` without its own nonce the response's nonce (CSP 'strict').
 
-    Hier und nicht im Manager: Das Admin-Panel braucht dieselbe Funktion, und ein Import aus dem
-    Manager machte `admin` ↔ `manager` zu einem Import-Kreis."""
+    Here and not in the manager: the admin panel needs the same function, and an import from the
+    manager would make `admin` ↔ `manager` an import cycle."""
     return _NONCE_TAG.sub(rf'<\g<1> nonce="{nonce}"', html_str)
 
 
 class Templates:
-    """Registry benannter Seiten-Renderer. `render(name, auth, ctx)` nimmt einen Override
-    (falls gesetzt) oder den eingebauten Default."""
+    """Registry of named page renderers. `render(name, auth, ctx)` takes an override
+    (if set) or the built-in default."""
     def __init__(self):
         self._overrides: dict = {}
 
     def set(self, name: str, fn):
-        """Einen Renderer überschreiben. fn(auth, ctx) -> str | Response."""
+        """Override a renderer. fn(auth, ctx) -> str | Response."""
         self._overrides[name] = fn
 
     def has(self, name: str) -> bool:
         return name in self._overrides or name in DEFAULTS
 
     def ueberschrieben(self, name: str) -> bool:
-        """Hat die App diese Seite durch ein eigenes Template ersetzt?"""
+        """Has the app replaced this page with its own template?"""
         return name in self._overrides
 
     def render(self, name: str, auth, ctx: dict):
@@ -50,9 +50,9 @@ class Templates:
         return fn(auth, ctx)
 
 
-#: Platzhalter vor jedem Pfad der App in den eingebauten Seiten (Formulare, Links, fetch-Aufrufe).
-#: `TinySesam.render_page` setzt dafür den Montage-Präfix (`root_path`) ein (T-15); ein eigenes
-#: Template, das ihn nicht nennt, bleibt unberührt.
+#: Placeholder before every path of the app in the built-in pages (forms, links, fetch calls).
+#: `TinySesam.render_page` inserts the mount prefix (`root_path`) for it (T-15); a custom
+#: template that does not name it stays untouched.
 PRAEFIX_PLATZHALTER = "__TS_P__"
 
 _CSS = TOKENS + """
@@ -124,8 +124,8 @@ body{font-family:var(--ts-font);margin:0;min-height:100vh;display:flex;flex-dire
 """
 
 
-#: Eingebautes Favicon (seit 0.24.8): ein schlichter Schlüssel, hell/dunkel umschaltend — als data:-URI, also ohne
-#: Abruf. Ohne Favicon fragt der Browser /favicon.ico an; vor einem Gate ist das ein geschützter Pfad.
+#: Built-in favicon (since 0.24.8): a plain key, switching light/dark — as a data: URI, so without
+#: a fetch. Without a favicon the browser requests /favicon.ico; behind a gate that is a protected path.
 STANDARD_FAVICON = "data:image/svg+xml;base64," + __import__("base64").b64encode(
     b"<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><style>path,circle{stroke:#111}"
     b"@media(prefers-color-scheme:dark){path,circle{stroke:#eee}}</style><g fill='none' stroke-width='3' "
@@ -133,21 +133,21 @@ STANDARD_FAVICON = "data:image/svg+xml;base64," + __import__("base64").b64encode
 
 
 def favicon_link(icon: str) -> str:
-    """Favicon-<link> für die eingebauten Seiten. Eine Stelle, damit keine Seite es vergisst. Leer = das eingebaute
-    Standard-Symbol, "none" = keins."""
+    """Favicon `<link>` for the built-in pages. One place, so no page forgets it. Empty = the built-in
+    default icon, "none" = none."""
     if icon == "none":
         return ""
     return f"<link rel=icon href='{html.escape(icon or STANDARD_FAVICON)}'>"
 
 
 def hintergrund(cfg) -> tuple[str, str]:
-    """(CSS, HTML) der rotierenden Hintergrundbilder aus `brand_backgrounds` — leer, wenn keine gesetzt sind. Das Bild
-    steht im (nonce-geschützten) Seiten-<style>, nicht in style=: Die strenge CSP verbietet Inline-Attribute."""
+    """(CSS, HTML) of the rotating background images from `brand_backgrounds` — empty if none are set. The image
+    sits in the (nonce-protected) page `<style>`, not in style=: the strict CSP forbids inline attributes."""
     bilder = [b for b in (getattr(cfg, "brand_backgrounds", None) or []) if b]
     if not bilder:
         return "", ""
-    # f = Überblendzeit zwischen zwei Bildern. Alle Verzögerungen sind um (f − 0,5 s) vorgezogen: Das erste Bild steht nach
-    # einer halben Sekunde, statt erst nach f Sekunden aus dem Schwarz aufzutauchen (PO 2026-10-09).
+    # f = cross-fade time between two images. All delays are pulled forward by (f − 0.5 s): the first image appears after
+    # half a second, instead of emerging from black only after f seconds (PO 2026-10-09).
     n, d, f = len(bilder), int(getattr(cfg, "brand_background_seconds", 12) or 12), 3
     t = n * d
     css = [".tsbg{position:fixed;inset:0;z-index:-1;background:var(--ts-bild-grund);overflow:hidden}",
@@ -179,21 +179,21 @@ def hintergrund(cfg) -> tuple[str, str]:
 
 
 def brand(value, auth):
-    """`brand_header`/`brand_footer` dürfen ein String oder `fn(auth) -> str` sein — Letzteres,
-    wenn der Rumpf vom Request abhängt (Login-Status, Sprache)."""
+    """`brand_header`/`brand_footer` may be a string or `fn(auth) -> str` — the latter
+    when the body depends on the request (login state, language)."""
     if callable(value):
         try:
             return value(auth) or ""
-        except Exception:      # ein kaputter Rumpf darf die Login-Seite nicht mitreißen
+        except Exception:      # a broken body must not take the login page down with it
             return ""
     return value or ""
 
 
 def _doc(title, body, lang="en", brand_css="", brand_head="", card=True, brand_icon="", top="",
          header="", footer="", unten="", hg=("", ""), kopf=""):
-    """`top` steht außerhalb der Karte (z.B. der Demo-Hinweis) — direkt darüber, gleich breit; `unten` direkt
-    darunter (die Meldungen). `header`/`footer` umschließen die Seite, damit die Host-App ihre Navigation
-    drumherum legen kann. `kopf` landet im <head> vor dem Branding (etwa ein meta refresh)."""
+    """`top` sits outside the card (e.g. the demo notice) — directly above it, same width; `unten` directly
+    below it (the messages). `header`/`footer` enclose the page so the host app can put its navigation
+    around it. `kopf` lands in `<head>` before the branding (e.g. a meta refresh)."""
     inner = (f"<div class=card>{body}</div>" if card else body) + (unten or "")
     return (f"<!doctype html><html lang={html.escape(lang)}><head><meta charset=utf-8>"
             f"<meta name=viewport content='width=device-width,initial-scale=1'>"
@@ -207,8 +207,8 @@ def _shell(title, body, lang="en"):
 
 
 def _page(auth, title, body, card=True, top="", unten="", kopf=""):
-    """Wie _shell, aber mit Branding aus der Config (brand_css/brand_head/brand_icon/brand_header/
-    brand_footer) — re-skinnt und umrahmt alle Seiten zentral. `top` landet über der Karte, `unten` darunter."""
+    """Like _shell, but with branding from the config (brand_css/brand_head/brand_icon/brand_header/
+    brand_footer) — re-skins and frames all pages centrally. `top` lands above the card, `unten` below it."""
     cfg = auth.cfg
     return _doc(title, body, cfg.lang, getattr(cfg, "brand_css", ""), getattr(cfg, "brand_head", ""),
                 card, getattr(cfg, "brand_icon", ""), top,
@@ -216,7 +216,7 @@ def _page(auth, title, body, card=True, top="", unten="", kopf=""):
                 hintergrund(cfg), kopf)
 
 
-#: Symbole der Meldungen — Inline-SVG in currentColor (nichts wird nachgeladen), 24er-Raster, nur Striche.
+#: Message icons — inline SVG in currentColor (nothing is fetched), 24 grid, strokes only.
 _SYMBOL = {
     "info": "<circle cx='12' cy='12' r='9'/><path d='M12 11v5'/><path d='M12 7.5v.5'/>",
     "warn": "<path d='M12 3.5 21 19.5H3z'/><path d='M12 10v4'/><path d='M12 16.5v.5'/>",
@@ -226,8 +226,8 @@ _SYMBOL = {
 
 
 def _meldungen(liste) -> str:
-    """Meldungen als eigener Kasten unter der Karte: `[(art, text), …]`, art ∈ info | ok | warn | fehler.
-    Leere Texte fallen weg; ohne Meldung kein Kasten."""
+    """Messages as a separate box below the card: `[(art, text), …]`, art ∈ info | ok | warn | fehler.
+    Empty texts are dropped; without a message there is no box."""
     teile = []
     for art, text in liste:
         if not text:
@@ -245,7 +245,7 @@ def _e(s) -> str:
 
 
 def _ident(auth) -> tuple[str, str]:
-    """Beschriftung + autocomplete fürs Kennungsfeld, je nach `config.login_identifier`."""
+    """Label + autocomplete for the identifier field, depending on `config.login_identifier`."""
     mode = getattr(auth.cfg, "login_identifier", "both")
     if mode == "email":
         return auth.t("login.email"), "email"
@@ -254,9 +254,9 @@ def _ident(auth) -> tuple[str, str]:
     return auth.t("login.identifier"), "username"
 
 
-# Klick auf einen Namen setzt die Zugangsdaten ins Formular. Und: ein vom Browser eingefülltes
-# Passwort wird verworfen — sonst tippt man den Benutzernamen über die Autofill-Vorgabe und der
-# Login scheitert mit „falsche Zugangsdaten", ohne dass man den Grund sieht.
+# A click on a name puts the credentials into the form. And: a password filled in by the browser
+# is discarded — otherwise you type the username over the autofill default and the
+# login fails with "wrong credentials" without you seeing the reason.
 _DEMO_JS = """<script>
 (function(){
   // Browser fuellen gespeicherte Passwoerter zu unterschiedlichen Zeitpunkten ein — deshalb mehrfach
@@ -293,8 +293,8 @@ def _fill(user, pw) -> str:
 
 
 def _demobar(auth, pin=False, ctx=None) -> str:
-    """Zugangsdaten + unmissverständliche Warnung — nur wenn `demo_mode` an ist.
-    `ctx['demo_hint']=False` unterdrückt ihn (z.B. in einer Vorschau, wo er nur stört)."""
+    """Credentials + unmistakable warning — only if `demo_mode` is on.
+    `ctx['demo_hint']=False` suppresses it (e.g. in a preview, where it only gets in the way)."""
     cfg = auth.cfg
     if not cfg.demo_mode or (ctx is not None and not ctx.get("demo_hint", True)):
         return ""
@@ -310,27 +310,27 @@ def _demobar(auth, pin=False, ctx=None) -> str:
 
 
 def _cf(ctx) -> str:
-    """Verstecktes CSRF-Feld für Formulare (leer, wenn CSRF aus → ctx ohne 'csrf')."""
+    """Hidden CSRF field for forms (empty if CSRF is off → ctx without 'csrf')."""
     return f"<input type=hidden name=_csrf value='{_e(ctx.get('csrf', ''))}'>"
 
 
 def _csrf_js(auth) -> str:
-    """JS-Helfer: liest das CSRF-Cookie → tsCsrf(); die fetch-Aufrufe senden X-CSRF-Token."""
+    """JS helper: reads the CSRF cookie → tsCsrf(); the fetch calls send X-CSRF-Token."""
     return ("<script>function tsCsrf(){return (document.cookie.match("
             f"/(?:^|; ){_e(auth.csrf_cookie_name)}=([^;]+)/)||[])[1]||''}}</script>")
 
 
-# ---------- Default-Renderer  (fn(auth, ctx) -> str) ----------
+# ---------- Default renderers  (fn(auth, ctx) -> str) ----------
 
 def _login(auth, ctx) -> str:
-    """ctx: next, error, warn(optional). Zeigt alle aktiven Login-Methoden."""
+    """ctx: next, error, warn (optional). Shows all active login methods."""
     cfg = auth.cfg
     t = auth.t
     next_ = ctx.get("next", "/")
     error = ctx.get("error", "")
     methods = cfg.enabled_methods()
-    # Meldungen (PO 2026-10-08): Hinweis („Du wurdest abgemeldet“), Warnung und Fehler eines Anmeldeversuchs stehen
-    # gemeinsam in einem eigenen Kasten unter der Karte, je mit Symbol — nicht mehr verstreut in der Karte.
+    # Messages (PO 2026-10-08): notice ("You have been signed out"), warning and error of a sign-in attempt stand
+    # together in a separate box below the card, each with an icon — no longer scattered in the card.
     meldungen = _meldungen([("info", ctx.get("info")), ("warn", ctx.get("warn")), ("fehler", error)])
     _or = f"<div class=or>{_e(t('or'))}</div>"
     remember = ""
@@ -338,7 +338,7 @@ def _login(auth, ctx) -> str:
         remember = ("<label class=remember><input type=checkbox name=remember value=1 checked> "
                     f"{_e(t('login.remember'))}</label>")
     id_label, id_ac = _ident(auth)
-    # Im Demo-Modus fuellt der Browser sonst ein gespeichertes Passwort ein und der Login schlaegt fehl.
+    # In demo mode the browser would otherwise fill in a saved password and the login fails.
     pw_ac = "new-password" if cfg.demo_mode else "current-password"
     pw = ""
     if "password" in methods:
@@ -359,8 +359,8 @@ def _login(auth, ctx) -> str:
     magic = ""
     if "magic" in methods:
         magic = f"<a class=btn2 href='__TS_P__/auth/magic/request?next={_e(next_)}'>{_e(t('login.magic'))}</a>"
-    # `app` (T-14) wandert mit: Ohne die Angabe begänne der Knopf die Runde mit dem Vorgabe-Client,
-    # und die Freigabe für DIESE Anwendung entstünde nie (B-2).
+    # `app` (T-14) travels along: without it the button would start the round with the default client,
+    # and the approval for THIS application would never come about (B-2).
     app_q = f"&app={_e(_quote(ctx['app']))}" if ctx.get("app") else ""
     oidc = (f"<a class=btn2 href='__TS_P__/auth/oidc/start?next={_e(next_)}{app_q}'>{_e(cfg.oidc_name)}</a>"
             if "oidc" in methods else "")
@@ -376,8 +376,8 @@ def _login(auth, ctx) -> str:
         links.append(f"<a href='__TS_P__/auth/forgot'>{_e(t('login.forgot'))}</a>")
     signup = f"<div class=hint>{' · '.join(links)}</div>" if links else ""
     js = (_csrf_js(auth) + _PASSKEY_LOGIN_JS.replace("__NEXT__", _e(next_))) if "passkey" in methods else ""
-    # Vor einer Anwendung (forward_apps[host].name, T-21) sagt die Seite, wofür man sich anmeldet. Mit einer Marke
-    # (gate_brand) steht die Marke oben und die Anwendung als eigene Zeile darunter.
+    # In front of an application (forward_apps[host].name, T-21) the page says what you sign in for. With a brand
+    # (gate_brand) the brand stands on top and the application as its own line below.
     marke = getattr(cfg, "gate_brand", "") or ""
     if marke:
         titel = t("login.for_app", name=marke)
@@ -385,7 +385,7 @@ def _login(auth, ctx) -> str:
         titel = t("login.for_app", name=ctx["app_name"]) if ctx.get("app_name") else cfg.rp_name
     app_zeile = (f"<p class=app>{_e(t('login.app_line', name=ctx['app_name']))}</p>"
                  if marke and ctx.get("app_name") else "")
-    # Nur von dieser Anwendung abgemeldet (T-22): wieder hinein mit einem Klick, ohne neue Anmeldung.
+    # Signed out of this application only (T-22): back in with one click, without a new sign-in.
     weiter = ""
     if ctx.get("resume_user"):
         gh = f"<input type=hidden name=gate_host value='{_e(ctx['gate_host'])}'>" if ctx.get("gate_host") else ""
@@ -413,16 +413,16 @@ def _totp(auth, ctx) -> str:
 
 
 def _account(auth, ctx) -> str:
-    """ctx: user, methods, has_totp, has_pin, is_admin, admin_path, events. Selbstverwaltung + Logout.
-    Über auth.set_template('account', fn) komplett ersetzbar."""
+    """ctx: user, methods, has_totp, has_pin, is_admin, admin_path, events. Self-service + logout.
+    Fully replaceable via auth.set_template('account', fn)."""
     u = ctx["user"]
     t = auth.t
     methods = ctx.get("methods", [])
     name = _e(u["display_name"] or u["username"])
     sections = []
 
-    # Benutzername und Adresse selbst ändern (PO-Entscheid 2026-09-25) — frischer Step-up; die
-    # Adresse gilt erst nach dem Bestätigungslink an sie.
+    # Change username and address yourself (PO decision 2026-09-25) — fresh step-up; the
+    # address only counts after the confirmation link sent to it.
     if ctx.get("username_change"):
         sections.append(
             f"<div class=sec><h2>{_e(t('acc.username'))}</h2>"
@@ -436,7 +436,7 @@ def _account(auth, ctx) -> str:
             + f"<input id=mail_new type=email autocomplete=email placeholder='{_e(t('acc.email_new'))}'>"
             f"<button data-act=setmail>{_e(t('acc.email_change'))}</button><span id=mail_msg class=msg></span></div>")
 
-    # Passwort ändern
+    # Change password
     if "password" in methods:
         sections.append(
             f"<div class=sec><h2>{_e(t('acc.password'))}</h2>"
@@ -456,9 +456,9 @@ def _account(auth, ctx) -> str:
     # TOTP / 2FA
     if auth.cfg.totp_enabled:
         if ctx.get("has_totp"):
-            # Wie viele Einmal-Codes bleiben, sagt die Seite von sich aus (B2-7): Ein
-            # verbrauchter Code wurde bis T-13 nirgends nachgehalten, und wer den letzten
-            # aufbrauchte, erfuhr es erst, als er ihn brauchte.
+            # How many one-time codes remain, the page says on its own (B2-7): a
+            # used code was not tracked anywhere until T-13, and whoever used up the last one
+            # only learned of it when they needed it.
             rest = ctx.get("recovery_left")
             hinweis = ""
             if rest is not None:
@@ -479,25 +479,25 @@ def _account(auth, ctx) -> str:
             f"<div class=sec><h2>{_e(t('acc.passkeys'))}</h2><ul id=pklist></ul>"
             f"<button data-act=addpk>{_e(t('acc.passkey_add'))}</button><span id=pk_msg class=msg></span></div>")
 
-    # API-Keys
+    # API keys
     if auth.cfg.apikey_enabled:
         sections.append(
             f"<div class=sec><h2>{_e(t('acc.keys'))}</h2><ul id=keylist></ul>"
             f"<input id=key_name placeholder='{_e(t('acc.key_name'))}'>"
             f"<button data-act=mkkey>{_e(t('acc.key_create'))}</button><span id=key_msg class=msg></span></div>")
 
-    # Aktive Sitzungen (immer)
+    # Active sessions (always)
     sections.append(
         f"<div class=sec><h2>{_e(t('acc.sessions'))}</h2><ul id=sesslist></ul>"
         f"<button class=warn data-act=revokeothers>{_e(t('acc.sessions_revoke'))}</button>"
         "<span id=sess_msg class=msg></span></div>")
 
-    # Eigene Ereignisse (H-7): Wer sieht, dass um 3 Uhr nachts von einer fremden Adresse
-    # angemeldet wurde, meldet sich — das Protokoll lag bisher nur beim Betreiber. Serverseitig
-    # gerendert (kein weiterer Endpunkt), Zeit als UTC, weil die Seite die Zone des Lesers
-    # nicht kennt. `events` fehlt im ctx einer eigenen Vorlage/Vorschau → Abschnitt entfällt.
-    # Der Abstand kommt aus einer Klasse im Seiten-<style>, nicht aus `style=`: Die strenge CSP
-    # erlaubt Stile nur per Nonce, und die gilt nicht für Attribute (Integrationsfund 9).
+    # Own events (H-7): whoever sees that a sign-in happened at 3 a.m. from a foreign address
+    # speaks up — the log so far lay only with the operator. Rendered
+    # server-side (no further endpoint), time as UTC, because the page does not know the
+    # reader's zone. `events` missing in the ctx of a custom template/preview → section omitted.
+    # The spacing comes from a class in the page `<style>`, not from `style=`: the strict CSP
+    # allows styles only via nonce, and that does not apply to attributes (integration finding 9).
     events = ctx.get("events")
     if events is not None:
         import datetime as _dt
@@ -537,7 +537,7 @@ def _account(auth, ctx) -> str:
     .tsmain a{color:var(--ts-link)}
     .tsmain .rcout{white-space:pre-wrap;margin-top:10px}
     """
-    # `static=True`: nur die Seite zeigen, nichts nachladen (Vorschau/Screenshot).
+    # `static=True`: only show the page, fetch nothing (preview/screenshot).
     static = bool(ctx.get("static"))
     pkjs = "" if static else (_PASSKEY_REGISTER_JS if "passkey" in methods else "")
     body = (f"<header><h1>{_e(t('acc.title'))} · {name}</h1>"
@@ -547,7 +547,7 @@ def _account(auth, ctx) -> str:
                + _revoke_js(auth, "location.pathname+'?revoke_others=1'") + _ACCOUNT_RUECKKEHR_JS
                .replace("__CONFIRM__", json.dumps(t("acc.sessions_confirm"))))
             + pkjs)
-    # Account nutzt volle Breite (kein Card) + Account-CSS + Branding
+    # Account uses full width (no card) + account CSS + branding
     return _page(auth, t("acc.title"), f"<style>{css}</style>{body}", card=False)
 
 
@@ -632,7 +632,7 @@ async function addpk(){
 
 
 def _register(auth, ctx) -> str:
-    """ctx: next, invite, email, error, invite_only, sent_verify(optional)."""
+    """ctx: next, invite, email, error, invite_only, sent_verify (optional)."""
     t = auth.t
     if ctx.get("sent_verify"):
         body = (f"<h1>{_e(t('reg.verify_title'))}</h1>"
@@ -642,9 +642,9 @@ def _register(auth, ctx) -> str:
     cfg = auth.cfg
     meldungen = _meldungen([("fehler", ctx.get("error"))])
     emailro = " readonly" if ctx.get("invite") and ctx.get("email") else ""
-    # Die Felder folgen der Config: im E-Mail-Modus ist die Adresse die Kennung; ein optionales
-    # E-Mail-Feld erscheint nur, wenn die App überhaupt etwas damit anfängt (Login-Link,
-    # Passwort-vergessen, Bestätigung). Sonst fragt man nach Daten, die man nie benutzt.
+    # The fields follow the config: in e-mail mode the address is the identifier; an optional
+    # e-mail field appears only if the app does anything with it at all (login link,
+    # forgot password, confirmation). Otherwise you ask for data you never use.
     email_mode = cfg.login_identifier == "email"
     email_used = (cfg.signup_require_email or email_mode or cfg.magiclink_enabled
                   or getattr(cfg, "password_reset_enabled", False) or cfg.signup_verify_email)
@@ -666,7 +666,7 @@ def _register(auth, ctx) -> str:
 
 
 def _magic_request(auth, ctx) -> str:
-    """ctx: next, sent (bool), error. E-Mail-Adresse für den Login-Link."""
+    """ctx: next, sent (bool), error. E-mail address for the login link."""
     t = auth.t
     if ctx.get("sent"):
         body = (f"<h1>{_e(t('magic.sent_title'))}</h1>"
@@ -686,7 +686,7 @@ def _magic_request(auth, ctx) -> str:
 
 
 def _forgot(auth, ctx) -> str:
-    """ctx: sent (bool), error. E-Mail für den Reset-Link."""
+    """ctx: sent (bool), error. E-mail for the reset link."""
     t = auth.t
     if ctx.get("sent"):
         return _page(auth, t("magic.sent_title"),
@@ -704,7 +704,7 @@ def _forgot(auth, ctx) -> str:
 
 
 def _reset(auth, ctx) -> str:
-    """ctx: token, error. Neues Passwort setzen."""
+    """ctx: token, error. Set a new password."""
     t = auth.t
     meldungen = _meldungen([("fehler", ctx.get("error"))])
     body = (f"<h1>{_e(t('reset.title'))}</h1>"
@@ -717,7 +717,7 @@ def _reset(auth, ctx) -> str:
 
 
 def _error(auth, ctx) -> str:
-    """ctx: code, message. Themed Fehlerseite (403/404/429/500 …). Über set_template('error') ersetzbar."""
+    """ctx: code, message. Themed error page (403/404/429/500 …). Replaceable via set_template('error')."""
     t = auth.t
     code = ctx.get("code", 500)
     msg = ctx.get("message") or t("error.oops")
@@ -728,11 +728,11 @@ def _error(auth, ctx) -> str:
 
 
 def _magic_confirm(auth, ctx) -> str:
-    """ctx: purpose ('login'|'verify_email'|'email_change'), action. Ein Knopf, der den
-    Einmal-Link einlöst (R4-02).
+    """ctx: purpose ('login'|'verify_email'|'email_change'), action. A button that redeems the
+    one-time link (R4-02).
 
-    Der Link aus der Mail löst nicht mehr per GET ein — Mail-Scanner rufen jeden Link auf und
-    hätten ihn sonst verbraucht. Erst dieser POST (mit CSRF-Token) tut es."""
+    The link from the mail no longer redeems on GET — mail scanners open every link and
+    would otherwise have consumed it. Only this POST (with CSRF token) does it."""
     t = auth.t
     knopf = {"verify_email": t("magic.confirm_verify"),
              "email_change": t("magic.confirm_email_change")}.get(ctx.get("purpose"), t("magic.confirm_login"))
@@ -744,16 +744,16 @@ def _magic_confirm(auth, ctx) -> str:
 
 
 def _revoke_js(auth, zurueck: str) -> str:
-    """JS für das Angebot nach einer Faktor-Änderung (B1-7, ASVS 7.4.3): `offer(r)` liest
-    `other_sessions` aus der Antwort und fragt nach, `tsRevokeOthers()` beendet die übrigen
-    Sitzungen. Braucht `tsCsrf()` auf der Seite.
+    """JS for the offer after a factor change (B1-7, ASVS 7.4.3): `offer(r)` reads
+    `other_sessions` from the response and asks, `tsRevokeOthers()` ends the remaining
+    sessions. Needs `tsCsrf()` on the page.
 
-    Das Beenden verlangt eine frische Bestätigung (F-09), die Anlage eines Faktors nicht immer
-    (Passkey, TOTP brauchen nur eine Sitzung). Ist die Frische abgelaufen, führt der Weg über
-    die Reauth-Seite — und `zurueck` (ein JS-Ausdruck, oder leer) sagt, wohin es danach geht,
-    damit die schon gegebene Zustimmung nicht stillschweigend verloren geht (A-5). Während
-    dieser Umleitung kehrt `tsRevokeOthers` nie zurück: Ein Aufrufer, der danach neu lädt,
-    bräche die Navigation sonst ab."""
+    Ending requires a fresh confirmation (F-09), creating a factor does not always
+    (passkey, TOTP need only a session). If the freshness has expired, the path leads through
+    the reauth page — and `zurueck` (a JS expression, or empty) says where to go afterwards,
+    so that the consent already given is not silently lost (A-5). During
+    this redirect `tsRevokeOthers` never returns: a caller that reloads afterwards
+    would otherwise abort the navigation."""
     t = auth.t
     ziel = (f"location.href=re+'?next='+encodeURIComponent({zurueck});return new Promise(()=>{{}})"
             if zurueck else f"alert({json.dumps(t('api.stepup'))});return false")
@@ -766,14 +766,14 @@ def _revoke_js(auth, zurueck: str) -> str:
             "async function offer(r){let j={};try{j=await r.clone().json()}catch(e){}"
             f"if(r.ok&&j.other_sessions>0&&confirm({json.dumps(t('acc.sessions_offer'))}))"
             "await tsRevokeOthers();"
-            # Grenze d: mitten in der Kette — vermerken, eingelöst beim Abschluss.
+            # Boundary d: in the middle of the chain — note it, redeemed at the end.
             f"if(r.ok&&j.other_sessions_after>0&&confirm({json.dumps(t('acc.sessions_offer'))}))"
             "await fetch('__TS_P__/auth/sessions/revoke-after-login',{method:'POST',"
             "headers:{'Content-Type':'application/json','X-CSRF-Token':tsCsrf()},body:'{}'})}</script>")
 
 
-# Zurück von der Reauth mit `?revoke_others=1`: noch einmal fragen, dann beenden. Nicht still
-# ausführen — sonst beendete jeder fremde Link auf diese Adresse die anderen Sitzungen.
+# Back from reauth with `?revoke_others=1`: ask once more, then end. Not silently
+# executed — otherwise every foreign link to this address would end the other sessions.
 _ACCOUNT_RUECKKEHR_JS = """<script>
 if(new URLSearchParams(location.search).get('revoke_others')==='1'){
   history.replaceState(null,'',location.pathname);
@@ -782,8 +782,8 @@ if(new URLSearchParams(location.search).get('revoke_others')==='1'){
 
 
 def _logout(auth, ctx) -> str:
-    """ctx: — . Rückfrage vor dem Abmelden, wenn der Link von einer fremden Seite kam (F-07).
-    Ein POST-Formular mit CSRF-Feld; der GET selbst meldet in diesem Fall nicht ab."""
+    """ctx: — . Confirmation prompt before signing out, when the link came from a foreign page (F-07).
+    A POST form with a CSRF field; the GET itself does not sign out in this case."""
     t = auth.t
     body = (f"<h1>{_e(t('logout'))}</h1>"
             f"<div class=hint>{_e(t('logout.confirm'))}</div>"
@@ -794,8 +794,8 @@ def _logout(auth, ctx) -> str:
 
 
 def _gate_logout(auth, ctx) -> str:
-    """ctx: scope ("" = fragen, sonst "app"/"all" zur Bestätigung), app_name, next. Liegt auf dem
-    Host der Anwendung unter /.tinysesam/ — die Formulare zielen deshalb relativ auf `logout`."""
+    """ctx: scope ("" = ask, otherwise "app"/"all" for confirmation), app_name, next. Lives on the
+    app's host under /.tinysesam/ — the forms therefore target `logout` relatively."""
     t = auth.t
     name = ctx.get("app_name") or t("gate.this_app")
 
@@ -817,9 +817,9 @@ def _gate_logout(auth, ctx) -> str:
 
 
 def _gate_logged_out(auth, ctx) -> str:
-    """ctx: app_name, again_url (optional, Vorgabe „/“ des Hosts), redirect_sec (optional). Nach dem Abmelden — mit
-    einem Weg zurück, der eine NEUE Anmeldung beginnt. Mit `redirect_sec` > 0 (Modus „direct“, PO 2026-10-10) geht
-    es nach so vielen Sekunden von selbst dorthin: ein meta refresh, kein Skript; der Balken läuft nur in CSS ab."""
+    """ctx: app_name, again_url (optional, default "/" of the host), redirect_sec (optional). After signing out — with
+    a way back that starts a NEW sign-in. With `redirect_sec` > 0 ("direct" mode, PO 2026-10-10) it goes
+    there by itself after that many seconds: a meta refresh, no script; the bar runs down in CSS only."""
     t = auth.t
     ziel = ctx.get("again_url") or "/"
     try:
@@ -839,8 +839,8 @@ def _gate_logged_out(auth, ctx) -> str:
 
 
 def _gateway_home(auth, ctx) -> str:
-    """ctx: user_name. Startseite des Gateways für Angemeldete — wer `/` aufruft, sieht, mit wem er
-    angemeldet ist, und kann sich abmelden. (Bis 0.24.1 antwortete `/` mit JSON-404.)"""
+    """ctx: user_name. Gateway start page for signed-in users — whoever opens `/` sees who they are
+    signed in as, and can sign out. (Until 0.24.1 `/` answered with a JSON 404.)"""
     t = auth.t
     body = (f"<h1>{_e(t('gw.title'))}</h1>"
             f"<div class=hint>{_e(t('gw.signed_in_as', name=ctx.get('user_name', '')))}</div>"
@@ -858,7 +858,7 @@ def _magic_invalid(auth, ctx) -> str:
 
 
 def _resource_unlock(auth, ctx) -> str:
-    """ctx: name, kind ('pin'|'password'), label, next, error. Geteiltes Ressourcen-Geheimnis."""
+    """ctx: name, kind ('pin'|'password'), label, next, error. Shared resource secret."""
     t = auth.t
     meldungen = _meldungen([("fehler", ctx.get("error"))])
     if ctx.get("kind") == "pin":
@@ -877,7 +877,7 @@ def _resource_unlock(auth, ctx) -> str:
 
 
 def _stepup_field(auth, method, first) -> str:
-    """Ein Eingabefeld je Step-up-Verfahren. `first` bekommt den Fokus."""
+    """One input field per step-up method. `first` gets the focus."""
     t = auth.t
     fc = " autofocus" if first else ""
     if method == "totp":
@@ -891,16 +891,16 @@ def _stepup_field(auth, method, first) -> str:
 
 
 def _reauth(auth, ctx) -> str:
-    """ctx: next, error, username, methods (Liste aus auth.stepup_options).
-    Sudo-Frische: erneut einen Faktor bestätigen (Step-up).
+    """ctx: next, error, username, methods (list from auth.stepup_options).
+    Sudo freshness: confirm a factor again (step-up).
 
-    Eine **leere** Methodenliste ist eine Aussage und kein fehlender Wert: Dieses Konto hat
-    nichts, womit es hier bestätigen könnte (`stepup_strict`, oder noch gar kein Faktor
-    eingerichtet). Dann steht hier KEIN Formular. Vorher fiel die leere Liste auf
-    `["password"]` zurück und die Seite bot ein Passwortfeld an, das ein rein föderiertes
-    Konto nicht hat — der Nutzer probierte etwas, das nicht gelingen kann, und jeder Versuch
-    zählte in denselben Sperr-Topf. Fehlt der Schlüssel ganz (eigene Aufrufer, Vorschau),
-    bleibt es beim Passwortfeld.
+    An **empty** methods list is a statement and not a missing value: this account has
+    nothing with which it could confirm here (`stepup_strict`, or no factor
+    set up yet). Then there is NO form here. Before, the empty list fell back to
+    `["password"]` and the page offered a password field that a purely federated
+    account does not have — the user tried something that cannot succeed, and every attempt
+    counted into the same lockout bucket. If the key is missing entirely (custom callers, preview),
+    the password field stays.
     """
     t = auth.t
     meldungen = _meldungen([("fehler", ctx.get("error"))])
@@ -922,7 +922,7 @@ def _reauth(auth, ctx) -> str:
 
 
 def _pin(auth, ctx) -> str:
-    """ctx: next, error, username(optional). PIN-Eingabe — ohne Benutzerfeld, wenn schon eingeloggt."""
+    """ctx: next, error, username (optional). PIN entry — without a user field if already signed in."""
     t = auth.t
     meldungen = _meldungen([("fehler", ctx.get("error"))])
     known = bool(ctx.get("username"))
@@ -943,11 +943,11 @@ def _pin(auth, ctx) -> str:
 
 
 def _totp_setup(auth, ctx) -> str:
-    """ctx: data = {secret, uri, qr} — oder `None`/fehlend für den ersten Schritt.
+    """ctx: data = {secret, uri, qr} — or `None`/missing for the first step.
 
-    Zwei Zustände, eine Seite: Ohne `data` steht hier nur ein POST-Formular, das die Einrichtung
-    ausdrücklich startet. Das Geheimnis entsteht erst mit diesem Klick (B2-1) — ein GET, der eines
-    erzeugt, lässt sich von einer fremden Seite anstossen und entwertet einen laufenden Versuch.
+    Two states, one page: without `data` there is only a POST form that explicitly
+    starts the setup. The secret is created only with this click (B2-1) — a GET that creates
+    one can be triggered from a foreign page and invalidates an attempt in progress.
     """
     t = auth.t
     data = ctx.get("data")
@@ -976,10 +976,10 @@ def _totp_setup(auth, ctx) -> str:
             "body:'code='+encodeURIComponent(c)+'&next='+encodeURIComponent(e.target.dataset.next||'/')});"
             "const j=await r.clone().json();"
             f"document.getElementById('msg').textContent=j.ok?'{ok_msg}':'{bad_msg}';"
-            # B1-7 auch auf dieser Seite (A-5): Sie ist der Weg, auf dem TOTP entsteht.
+            # B1-7 on this page too (A-5): it is the path on which TOTP comes into being.
             "await offer(r);"
-            # Unter der Pflicht-Kette ist die Anmeldung mit der Bestätigung fertig (A-1) —
-            # weiter zum Ziel statt einer Seite, die zum erneuten Code-Tippen einlädt.
+            # Under the mandatory chain the sign-in is complete with the confirmation (A-1) —
+            # on to the target instead of a page that invites typing the code again.
             "if(j.ok&&j.next){location.href=j.next}return false}"
             "document.getElementById('tstotp').addEventListener('submit',conf)</script>"
             + _revoke_js(auth, "'__TS_P__/auth/account?revoke_others=1'"
@@ -987,7 +987,7 @@ def _totp_setup(auth, ctx) -> str:
     return _page(auth, t("setup.title"), body)
 
 
-# Passkey-Login-JS (WebAuthn) — nur eingebunden, wenn passkey aktiv.
+# Passkey login JS (WebAuthn) — only included when passkey is active.
 _PASSKEY_LOGIN_JS = """
 <script>
 document.getElementById('pkbtn')?.addEventListener('click', async () => {

@@ -1,21 +1,21 @@
-"""Das Ergebnis eines Passwortwechsels: `change_password` (0.22.0).
+"""The result of a password change: `change_password` (0.22.0).
 
-PO-Entscheid 2026-09-27: Nach dem Login-Baustein (`login_*` → `LoginResult`) bekommt auch der
-eigene Passwortwechsel einen Baustein für eigene Seiten. Bis dahin gab es nur die Route
-`POST /auth/password`; wer eine eigene Kontoseite baute, setzte ihn aus `set_password` und den
-inneren Prüfern zusammen — ohne die eigene Sperre für das alte Passwort (R4-10), ohne das Beenden
-der anderen Sitzungen und ohne die Protokollzeilen.
+PO decision 2026-09-27: after the login building block (`login_*` → `LoginResult`) the
+password change also gets a building block for custom pages. Until then there was only the route
+`POST /auth/password`; whoever built a custom account page assembled it from `set_password` and the
+inner checkers — without the own lockout for the old password (R4-10), without ending
+the other sessions and without the log lines.
 
-Ein eigener Typ und nicht `LoginResult`: Ein Passwortwechsel meldet niemanden an und dreht kein
-Sitzungs-Token — `next_url`, `next_factor`, `done`, `set_cookie()` und `redirect()` hätten hier
-keine Bedeutung. Dafür trägt er, was nur er zu sagen hat: wie viele API-Keys des Kontos den
-Wechsel überleben (`api_keys_active`). Die Form ist dieselbe wie bei `LoginResult` — `ok`,
-`reason`, `status`, `message`, `bool(result)`, eingefroren, fail-closed: Bei einem Misserfolg
-hat sich nichts geändert.
+A type of its own and not `LoginResult`: a password change signs nobody in and rotates no
+session token — `next_url`, `next_factor`, `done`, `set_cookie()` and `redirect()` would have
+no meaning here. Instead it carries what only it has to say: how many of the account's API keys
+survive the change (`api_keys_active`). The shape is the same as for `LoginResult` — `ok`,
+`reason`, `status`, `message`, `bool(result)`, frozen, fail-closed: on a failure
+nothing has changed.
 
-Erwartbare Ausgänge — altes Passwort falsch, Sperre, Drossel, neues Passwort zu schwach — sind
-**Ergebnisse, keine Ausnahmen**; `status` und `message` sind das, was `POST /auth/password`
-antwortet (die Route ruft genau diesen Baustein).
+Expected outcomes — old password wrong, lockout, throttle, new password too weak — are
+**results, not exceptions**; `status` and `message` are what `POST /auth/password`
+answers (the route calls exactly this building block).
 """
 from __future__ import annotations
 
@@ -25,32 +25,32 @@ from typing import ClassVar
 
 @dataclass(frozen=True)
 class PasswordChangeResult:
-    """Was ein Passwortwechsel ergeben hat: Erfolg oder der Grund dagegen, mit HTTP-Status und Text.
+    """What a password change resulted in: success or the reason against it, with HTTP status and text.
 
-    `if not result:` fragt nach dem Erfolg (`ok`). Bei Erfolg gilt das neue Passwort, die anderen
-    Sitzungen des Kontos sind beendet (die eigene läuft weiter, ihr Cookie bleibt gültig), und
-    `api_keys_active` sagt, wie viele API-Keys weiter gelten. Bei einem Misserfolg hat sich nichts
-    geändert; `status`/`message` sind das, was `POST /auth/password` antworten würde.
+    `if not result:` asks for success (`ok`). On success the new password applies, the account's
+    other sessions are ended (the own one continues, its cookie stays valid), and
+    `api_keys_active` says how many API keys remain valid. On a failure nothing has
+    changed; `status`/`message` are what `POST /auth/password` would answer.
     """
 
-    #: Ist das neue Passwort gesetzt? Genau dann, wenn `reason == "ok"`; `bool(result)` ist derselbe Wert.
+    #: Is the new password set? Exactly when `reason == "ok"`; `bool(result)` is the same value.
     ok: bool
-    #: Warum (nicht): einer der Werte aus `REASONS`. Für Programme — der Text steht in `message`.
+    #: Why (not): one of the values in `REASONS`. For programs — the text is in `message`.
     reason: str
-    #: Der HTTP-Status von `POST /auth/password`: 200 bei Erfolg, sonst 400, 401, 403 oder 429.
+    #: The HTTP status of `POST /auth/password`: 200 on success, otherwise 400, 401, 403 or 429.
     status: int
-    #: Der übersetzte Text für den Nutzer (Sprache aus `config.lang`); leer bei Erfolg.
+    #: The translated text for the user (language from `config.lang`); empty on success.
     message: str = ""
-    #: Wie viele API-Keys des Kontos weiter gelten — sie überleben den Wechsel mit Absicht (sie
-    #: gehören Automatiken), verschwiegen wird es nicht. Nur bei Erfolg, sonst 0.
+    #: How many of the account's API keys remain valid — they survive the change on purpose (they
+    #: belong to automations), it is not concealed. Only on success, otherwise 0.
     api_keys_active: int = 0
 
-    #: Jeder Wert, den `reason` annehmen kann: `ok`; `missing` (altes Passwort leer, 400, zählt
-    #: nicht als Fehlversuch); `invalid` (altes Passwort falsch, 403); `locked` (Sperre nach
-    #: `password_change_max_attempts` Fehlversuchen, 429); `ratelimit` (Drossel je IP, 429);
-    #: `policy` (das neue Passwort verletzt die Passwortregel, 400 — der Grund steht in `message`);
-    #: `no_session` (keine volle Sitzung, 401; 403, wenn die Anfrage statt einer Sitzung einen
-    #: API-Key zeigt).
+    #: Every value `reason` can take: `ok`; `missing` (old password empty, 400, does not count
+    #: as a failed attempt); `invalid` (old password wrong, 403); `locked` (lockout after
+    #: `password_change_max_attempts` failed attempts, 429); `ratelimit` (throttle per IP, 429);
+    #: `policy` (the new password violates the password policy, 400 — the reason is in `message`);
+    #: `no_session` (no full session, 401; 403 if the request shows an
+    #: API key instead of a session).
     REASONS: ClassVar[tuple] = ("ok", "missing", "invalid", "locked", "ratelimit", "policy", "no_session")
 
     def __post_init__(self) -> None:

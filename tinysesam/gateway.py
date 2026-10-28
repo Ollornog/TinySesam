@@ -1,69 +1,69 @@
-"""TinySesam als reines **OIDC-Forward-Auth-Gateway** — deploy-and-go, ohne eigene App zu schreiben.
+"""TinySesam as a pure **OIDC forward-auth gateway** — deploy-and-go, without writing an app of your own.
 
-Startvarianten:
-    python -m tinysesam.gateway                 # nutzt uvicorn (aus Env konfiguriert)
-    uvicorn tinysesam.gateway:app               # app wird beim Zugriff aus Env gebaut
+Ways to start:
+    python -m tinysesam.gateway                 # uses uvicorn (configured from env)
+    uvicorn tinysesam.gateway:app               # app is built from env on access
 
-Konfiguration per Umgebungsvariablen:
-    TINYSESAM_OIDC_ISSUER          (Pflicht)  z.B. https://id.example.com
-    TINYSESAM_OIDC_CLIENT_ID       (Pflicht)
-    TINYSESAM_OIDC_CLIENT_SECRET   (Pflicht)
-    TINYSESAM_BASE_URL             (Pflicht)  öffentliche URL DIESES Gateways, z.B. https://auth.example.com
-    TINYSESAM_COOKIE_DOMAIN                    z.B. .example.com  (SSO über Subdomains)
-    TINYSESAM_PROTECTED_HOSTS                  Komma-Liste erlaubter Redirect-Ziele: app.example.com,wiki.example.com
-    TINYSESAM_ALLOWED_GROUPS                   Komma-Liste. Leer = JEDES Konto beim Provider kommt
-                                               durch das Tor — ohne Freigabe je Client (unten)
-                                               warnt der Start deshalb laut (B3-9)
-    TINYSESAM_OIDC_NAME                        Beschriftung des Anmelde-Knopfs (Default "SSO"), z. B. "PocketID"
-    TINYSESAM_BRAND_ICON                       Favicon aller Seiten: Pfad (/…) oder data:image/…-URI, nie eine fremde URL
-    TINYSESAM_BRAND_BACKGROUNDS                Hintergrundbilder (Leerzeichen-getrennt), blenden über; sehr dunkel abgedeckt
-    TINYSESAM_BRAND_BACKGROUNDS_EXTERN         1 = https-Adressen erlaubt (Abruf bei Dritten; sonst Startfehler)
-    TINYSESAM_BRAND_BACKGROUND_SECONDS         Standzeit je Bild (Default 12)
-    TINYSESAM_BRAND_BACKGROUND_CREDIT_TEXT/URL Dezenter Hinweis unten rechts, z. B. "Fotos: Unsplash"
-    TINYSESAM_GATE_BRAND                       Marke vor den Anwendungen: Anmeldeseite „Anmelden bei <Marke>“
-                                               mit „App: <Name>“ darunter (leer = „Anmelden bei <Name>“)
-    TINYSESAM_OIDC_SCOPES                      Default "openid profile email". Mit Gruppen bei
-                                               PocketID u. a.: "openid profile email groups" —
-                                               ohne den Scope fehlt der Claim, und das Tor weist
-                                               jeden ab (der Start warnt)
-    TINYSESAM_TRUSTED_PROXIES                  Komma-Liste; Default 127.0.0.1/32,::1/128
-    TINYSESAM_OIDC_CLIENTS                     JSON: mehrere Anwendungen, je eine mit eigenem
-                                               Client beim selben Provider (T-14). Beispiel:
+Configuration via environment variables:
+    TINYSESAM_OIDC_ISSUER          (required)  e.g. https://id.example.com
+    TINYSESAM_OIDC_CLIENT_ID       (required)
+    TINYSESAM_OIDC_CLIENT_SECRET   (required)
+    TINYSESAM_BASE_URL             (required)  public URL of THIS gateway, e.g. https://auth.example.com
+    TINYSESAM_COOKIE_DOMAIN                    e.g. .example.com  (SSO across subdomains)
+    TINYSESAM_PROTECTED_HOSTS                  comma list of permitted redirect targets: app.example.com,wiki.example.com
+    TINYSESAM_ALLOWED_GROUPS                   comma list. Empty = EVERY account at the provider gets
+                                               through the gate — without an approval per client (below)
+                                               the start therefore warns loudly (B3-9)
+    TINYSESAM_OIDC_NAME                        label of the sign-in button (default "SSO"), e.g. "PocketID"
+    TINYSESAM_BRAND_ICON                       favicon of all pages: path (/…) or data:image/… URI, never a foreign URL
+    TINYSESAM_BRAND_BACKGROUNDS                background images (space-separated), cross-fade; covered very dark
+    TINYSESAM_BRAND_BACKGROUNDS_EXTERN         1 = https addresses allowed (fetched from third parties; otherwise startup error)
+    TINYSESAM_BRAND_BACKGROUND_SECONDS         display time per image (default 12)
+    TINYSESAM_BRAND_BACKGROUND_CREDIT_TEXT/URL discreet note at the bottom right, e.g. "Photos: Unsplash"
+    TINYSESAM_GATE_BRAND                       brand in front of the applications: sign-in page "Sign in to <brand>"
+                                               with "App: <name>" below (empty = "Sign in to <name>")
+    TINYSESAM_OIDC_SCOPES                      default "openid profile email". With groups at
+                                               PocketID and others: "openid profile email groups" —
+                                               without the scope the claim is missing, and the gate rejects
+                                               everybody (the start warns)
+    TINYSESAM_TRUSTED_PROXIES                  comma list; default 127.0.0.1/32,::1/128
+    TINYSESAM_OIDC_CLIENTS                     JSON: several applications, each with its own
+                                               client at the same provider (T-14). Example:
                                                {"app.example.com": {"client_id": "...",
                                                 "client_secret": "..."}}
-                                               Alternativ je Host zwei Variablen, siehe unten.
-    TINYSESAM_OIDC_REVALIDATE_MINUTES          Frist, nach der die Freigabe beim Provider
-                                               nachgeprüft wird (Default 60, 0 = nie)
-    TINYSESAM_GATE                             1 = Gate-Token ausstellen (ADR-9): der Proxy prüft
-                                               danach selbst, Vorlage deploy/forward-auth/Caddyfile.gate
-                                               (braucht Caddy mit caddy-jwt). Default 0
-    TINYSESAM_GATE_LINK                        1 = zentrales Gateway mit Code-Austausch (T-26): Sitzung
-                                               bleibt auf TINYSESAM_BASE_URL, jeder App-Host bekommt nur
-                                               ein eigenes Verbindungs-Cookie. Verlangt TINYSESAM_GATE=1
-                                               und KEIN TINYSESAM_COOKIE_DOMAIN. Default 0
-    TINYSESAM_GATE_TTL_SEC                     Laufzeit des Gate-Tokens (Default 300, 30–3600) —
-                                               so lange wirkt ein Widerruf am Proxy nicht
-    TINYSESAM_FORWARD_LOGIN                    direct (Default: Seitenaufruf → Provider → zurück) oder
-                                               page (erst die Login-Seite mit dem Namen der Anwendung)
-    TINYSESAM_FORWARD_LOGOUT                   all (Default: Sitzung und Provider), app (nur diese
-                                               Anwendung) oder ask (fragen) — Weg /.tinysesam/logout
-    TINYSESAM_FORWARD_LOGGED_OUT_SEC           Modus direct: so lange steht die Seite „Abgemeldet“,
-                                               dann geht es von selbst zurück zur Anwendung und damit
-                                               zur neuen Anmeldung (Default 10, 0 = stehen lassen)
-    TINYSESAM_FORWARD_APPS                     JSON je Anwendung: {"wiki.example.com": {"name": "Wiki",
-                                               "login": "page", "logout": "ask"}} — name erscheint
-                                               auf Login- und Abmeldeseite
-    TINYSESAM_DB                               Default tinysesam-gateway.db
-    TINYSESAM_HTTPS_MODE                       off|warn|force (Default warn)
-    TINYSESAM_LANG                             Sprache der Seiten des Gateways: en (Default) oder de
-    TINYSESAM_SECURITY_LOG                     Datei für den fail2ban-Logger, z.B.
-                                               /var/log/tinysesam/security.log (leer = aus)
-    TINYSESAM_HOST / TINYSESAM_PORT            Default 0.0.0.0 / 8000
+                                               Alternatively two variables per host, see below.
+    TINYSESAM_OIDC_REVALIDATE_MINUTES          period after which the approval is re-checked
+                                               at the provider (default 60, 0 = never)
+    TINYSESAM_GATE                             1 = issue a gate token (ADR-9): the proxy then checks
+                                               by itself, template deploy/forward-auth/Caddyfile.gate
+                                               (needs Caddy with caddy-jwt). Default 0
+    TINYSESAM_GATE_LINK                        1 = central gateway with code exchange (T-26): the session
+                                               stays on TINYSESAM_BASE_URL, each app host gets only
+                                               a connection cookie of its own. Requires TINYSESAM_GATE=1
+                                               and NO TINYSESAM_COOKIE_DOMAIN. Default 0
+    TINYSESAM_GATE_TTL_SEC                     lifetime of the gate token (default 300, 30–3600) —
+                                               that long a revocation takes no effect at the proxy
+    TINYSESAM_FORWARD_LOGIN                    direct (default: page request → provider → back) or
+                                               page (first the login page with the name of the application)
+    TINYSESAM_FORWARD_LOGOUT                   all (default: session and provider), app (only this
+                                               application) or ask (prompt) — route /.tinysesam/logout
+    TINYSESAM_FORWARD_LOGGED_OUT_SEC           mode direct: the "Signed out" page stays this long,
+                                               then it returns by itself to the application and thereby
+                                               to a new sign-in (default 10, 0 = leave it standing)
+    TINYSESAM_FORWARD_APPS                     JSON per application: {"wiki.example.com": {"name": "Wiki",
+                                               "login": "page", "logout": "ask"}} — name appears
+                                               on the login and sign-out page
+    TINYSESAM_DB                               default tinysesam-gateway.db
+    TINYSESAM_HTTPS_MODE                       off|warn|force (default warn)
+    TINYSESAM_LANG                             language of the gateway's pages: en (default) or de
+    TINYSESAM_SECURITY_LOG                     file for the fail2ban logger, e.g.
+                                               /var/log/tinysesam/security.log (empty = off)
+    TINYSESAM_HOST / TINYSESAM_PORT            default 0.0.0.0 / 8000
 
-Der Reverse-Proxy ruft dann `GET /auth/forward` je Request (siehe deploy/forward-auth/).
-Braucht `pip install 'tinysesam[gateway]'` — das ist `[oidc]` **plus einen ASGI-Server**. Mit
-`[oidc]` allein endet der Startbefehl unten in `ModuleNotFoundError: uvicorn`; genau diese
-Zeile stand hier früher und schickte die Leserschaft in den Fehler.
+The reverse proxy then calls `GET /auth/forward` per request (see deploy/forward-auth/).
+Needs `pip install 'tinysesam[gateway]'` — that is `[oidc]` **plus an ASGI server**. With
+`[oidc]` alone the start command below ends in `ModuleNotFoundError: uvicorn`; exactly this
+line used to stand here and sent readers into the error.
 """
 from __future__ import annotations
 
@@ -76,24 +76,24 @@ from .config import TinySesamConfig
 from .manager import TinySesam
 
 
-from starlette.requests import Request as _Request  # Modulebene: FastAPI muss die Annotation auflösen
+from starlette.requests import Request as _Request  # module level: FastAPI must resolve the annotation
 
 def _split(name):
     return [x.strip() for x in os.environ.get(name, "").split(",") if x.strip()]
 
 
 def _host_aus_variable(rest: str, bekannte) -> str:
-    """Aus `APP_B_EXAMPLE_COM` den Hostnamen zurückgewinnen.
+    """Recover the host name from `APP_B_EXAMPLE_COM`.
 
-    Ein Variablenname trägt weder Punkt noch Bindestrich, beide werden zu `_` — die
-    Rückübersetzung kann also nicht raten, ob `APP_B_EXAMPLE_COM` für `app.b.example.com` oder
-    `app-b.example.com` steht. Deshalb wird nicht geraten, sondern **abgeglichen**: Jeder Host
-    aus `TINYSESAM_PROTECTED_HOSTS` wird genauso normalisiert; passt genau einer, ist er gemeint.
+    A variable name carries neither dot nor hyphen, both become `_` — the
+    reverse translation cannot guess whether `APP_B_EXAMPLE_COM` stands for `app.b.example.com` or
+    `app-b.example.com`. So it does not guess but **matches**: every host
+    from `TINYSESAM_PROTECTED_HOSTS` is normalized the same way; if exactly one fits, it is the one meant.
 
-    Ohne diesen Abgleich entstand stillschweigend ein Eintrag für einen Host, den es nicht gibt:
-    Die Anwendung lief weiter, nur ihre Zuordnung griff nie, und der Fehler zeigte sich erst als
-    „warum benutzt app-b den Vorgabe-Client". Passt nichts, bleibt der Punkt als Vermutung — dann
-    meldet `clients_from_env()` das laut.
+    Without this matching, an entry for a host that does not exist silently came into being:
+    the application kept running, only its mapping never took effect, and the error showed up only as
+    "why does app-b use the default client". If nothing fits, the dot stays as a guess — then
+    `clients_from_env()` reports it loudly.
     """
     for host in bekannte:
         if _als_variable(host) == rest.upper():
@@ -106,13 +106,13 @@ def _als_variable(host: str) -> str:
 
 
 def clients_from_env() -> dict:
-    """Die Zuordnung Host → Client aus der Umgebung lesen (T-14).
+    """Read the host → client mapping from the environment (T-14).
 
-    Zwei Schreibweisen, weil beide gebraucht werden: `TINYSESAM_OIDC_CLIENTS` als JSON ist die
-    knappe Form für eine compose-Datei mit vielen Anwendungen; die Einzelvariablen
-    `TINYSESAM_OIDC_CLIENT_<HOST>_ID` und `..._SECRET` sind die Form, in der ein Geheimnis aus
-    einer Datei oder einem Secret-Store kommt, ohne dass jemand JSON zusammensetzen muss.
-    Beides zusammen ist erlaubt; die Einzelvariablen gewinnen, weil sie spezifischer sind.
+    Two notations, because both are needed: `TINYSESAM_OIDC_CLIENTS` as JSON is the
+    compact form for a compose file with many applications; the individual variables
+    `TINYSESAM_OIDC_CLIENT_<HOST>_ID` and `..._SECRET` are the form in which a secret comes from
+    a file or a secret store, without anyone having to assemble JSON.
+    Both together are allowed; the individual variables win because they are more specific.
     """
     clients: dict = {}
     roh = os.environ.get("TINYSESAM_OIDC_CLIENTS", "").strip()
@@ -136,7 +136,7 @@ def clients_from_env() -> dict:
         if not name.startswith("TINYSESAM_OIDC_CLIENT_"):
             continue
         rest = name[len("TINYSESAM_OIDC_CLIENT_"):]
-        if rest in ("ID", "SECRET"):      # das ist der Einzel-Client, nicht eine Anwendung
+        if rest in ("ID", "SECRET"):      # that is the single client, not an application
             continue
         for endung, feld in (("_ID", "client_id"), ("_SECRET", "client_secret")):
             if rest.endswith(endung):
@@ -146,8 +146,8 @@ def clients_from_env() -> dict:
                     geraten.append((name, host))
                 clients.setdefault(host, {})[feld] = wert
     if geraten:
-        # Laut statt still: Ein Host, der in keiner Liste steht, bekommt nie eine Anfrage —
-        # die Zuordnung wäre da und wirkte trotzdem nie.
+        # Loud instead of silent: a host that is in no list never gets a request —
+        # the mapping would exist and still never take effect.
         security.seclog.warning(
             "Diese Client-Variablen nennen Hosts, die nicht in TINYSESAM_PROTECTED_HOSTS stehen: "
             "%s. Ein Unterstrich im Variablennamen kann ein Punkt ODER ein Bindestrich sein — "
@@ -197,8 +197,8 @@ def config_from_env() -> TinySesamConfig:
 
 
 def _json_objekt(name: str) -> dict:
-    """Ein JSON-Objekt aus der Umgebung, leer = {}. Kaputtes JSON beendet den Start — still
-    ignoriert gälte für jede Anwendung die Vorgabe, und niemand sähe, warum."""
+    """A JSON object from the environment, empty = {}. Broken JSON ends the start — silently
+    ignored, the default would apply to every application, and nobody would see why."""
     import json
     roh = os.environ.get(name, "").strip()
     if not roh:
@@ -213,9 +213,9 @@ def _json_objekt(name: str) -> dict:
 
 
 def _schalter(name: str) -> bool:
-    """Ein Ein/Aus aus der Umgebung. Ein Wert, der weder das eine noch das andere ist, beendet
-    den Start: `TINYSESAM_GATE=ja` still als „aus" zu lesen, hiesse ein Gate, das jede Anfrage
-    weiter prüft, und niemand wüsste, warum es nicht schneller wird."""
+    """An on/off from the environment. A value that is neither ends
+    the start: reading `TINYSESAM_GATE=ja` silently as "off" would mean a gate that keeps checking
+    every request, and nobody would know why it does not get faster."""
     wert = os.environ.get(name, "").strip().lower()
     if wert in ("", "0", "false", "no", "off"):
         return False
@@ -228,11 +228,11 @@ HEALTH_PATH = "/healthz"
 
 
 def _install_https_except_health(auth, app):
-    """Wie `auth.install_https`, aber `/healthz` bleibt über HTTP erreichbar.
+    """Like `auth.install_https`, but `/healthz` stays reachable over HTTP.
 
-    Bei `https_mode=force` würde die Redirect-Middleware auch den Health-Check umleiten —
-    und der spricht den Container von innen an, wo es kein TLS gibt. Ein Health-Check, der
-    einen Redirect zurückbekommt, prüft nichts.
+    With `https_mode=force` the redirect middleware would also redirect the health check —
+    and that one talks to the container from the inside, where there is no TLS. A health check that
+    gets a redirect back checks nothing.
     """
     if auth.cfg.https_mode != "force":
         return auth.install_https(app)
@@ -250,8 +250,8 @@ def _install_https_except_health(auth, app):
 
 
 def _favicon() -> str:
-    """TINYSESAM_BRAND_ICON: Favicon aller Seiten des Gateways. Nur vom eigenen Ursprung — ein Pfad (`/…`) oder eine
-    `data:image/…`-URI. Eine fremde URL hiesse, jeder Besucher meldet sich beim Laden der Anmeldeseite bei Dritten."""
+    """TINYSESAM_BRAND_ICON: favicon of all pages of the gateway. Only from the own origin — a path (`/…`) or a
+    `data:image/…` URI. A foreign URL would mean every visitor reports to third parties when loading the sign-in page."""
     wert = os.environ.get("TINYSESAM_BRAND_ICON", "").strip()
     if wert and not (wert.startswith("data:image/") or (wert.startswith("/") and not wert.startswith("//"))):
         raise SystemExit("TINYSESAM_BRAND_ICON: nur ein Pfad (/…) oder eine data:image/…-URI — keine fremde Adresse")
@@ -259,9 +259,9 @@ def _favicon() -> str:
 
 
 def _hintergruende() -> list:
-    """TINYSESAM_BRAND_BACKGROUNDS: Hintergrundbilder, durch Leerzeichen getrennt. Eine https-Adresse heisst: jeder
-    Besucher der Anmeldeseite laedt bei diesem Dritten. Das geht nur mit ausdruecklicher Freigabe
-    (TINYSESAM_BRAND_BACKGROUNDS_EXTERN=1) — sonst Startfehler, damit es nie aus Versehen passiert."""
+    """TINYSESAM_BRAND_BACKGROUNDS: background images, separated by spaces. An https address means: every
+    visitor of the sign-in page loads from that third party. That works only with explicit approval
+    (TINYSESAM_BRAND_BACKGROUNDS_EXTERN=1) — otherwise a startup error, so that it never happens by accident."""
     bilder = os.environ.get("TINYSESAM_BRAND_BACKGROUNDS", "").split()
     if any(b.startswith(("http://", "https://", "//")) for b in bilder) and not _schalter("TINYSESAM_BRAND_BACKGROUNDS_EXTERN"):
         raise SystemExit("TINYSESAM_BRAND_BACKGROUNDS: fremde Adressen nur mit TINYSESAM_BRAND_BACKGROUNDS_EXTERN=1 "
@@ -270,8 +270,8 @@ def _hintergruende() -> list:
 
 
 def _sprache() -> str:
-    """TINYSESAM_LANG: eine der Sprachen, die TinySesam mitbringt — sonst ein Startfehler statt
-    stiller englischer Seiten."""
+    """TINYSESAM_LANG: one of the languages TinySesam ships with — otherwise a startup error instead of
+    silent English pages."""
     from .messages import MESSAGES
     wert = os.environ.get("TINYSESAM_LANG", "").strip().lower() or "en"
     if wert not in MESSAGES:
@@ -280,20 +280,20 @@ def _sprache() -> str:
 
 
 def build_app(cfg: Optional[TinySesamConfig] = None):
-    """FastAPI-App für das Gateway bauen (cfg optional; sonst aus Env)."""
+    """Build the FastAPI app for the gateway (cfg optional; otherwise from env)."""
     from fastapi import FastAPI
     from fastapi.responses import RedirectResponse
     auth = TinySesam(cfg or config_from_env())
     app = FastAPI(title="TinySesam OIDC-Gateway")
     app.include_router(auth.router())
-    # Browser bekommen die Fehlerseite im Branding statt `{"detail": "Not Found"}`; API-Clients
-    # weiter JSON (Accept entscheidet, `install_error_pages`).
+    # Browsers get the error page in the branding instead of `{"detail": "Not Found"}`; API clients
+    # still get JSON (Accept decides, `install_error_pages`).
     auth.install_error_pages(app)
 
     @app.get("/", include_in_schema=False)
     def startseite(request: _Request):
-        """Wer die Adresse des Gateways aufruft, landet nicht im Leeren: angemeldet die Übersicht mit
-        Abmelden, sonst die Anmeldung."""
+        """Whoever opens the gateway's address does not land in the void: signed in, the overview with
+        sign-out, otherwise the sign-in."""
         u = auth.session_user(request)
         if not u:
             return RedirectResponse(auth.browser_path(request, auth.cfg.login_path), 303)
@@ -301,23 +301,23 @@ def build_app(cfg: Optional[TinySesamConfig] = None):
 
     @app.get(HEALTH_PATH, include_in_schema=False)
     def healthz():
-        """Ohne Anmeldung erreichbar — sonst könnte kein Orchestrator ihn benutzen.
+        """Reachable without sign-in — otherwise no orchestrator could use it.
 
-        Schreibt einmal in die Datenbank (`Store.schreibprobe()`). Ganz früher meldete er nur,
-        dass der Prozess lebt; danach fragte er mit `SELECT 1` — und das gelingt auch auf einer
-        nur lesbaren oder vollen Datenbank (B6-4). Nach einem Rollback, bei vollem Volume oder
-        falschen Dateirechten lieferte der Dienst allen Nutzern beim Anmelden 500, während
-        Docker den Container dauerhaft als `healthy` führte — kein Neustart, kein Alarm. Ein
-        Wächter, der den wahrscheinlichsten Ausfall nicht sehen kann, ist keiner.
+        Writes to the database once (`Store.schreibprobe()`). Very early on it only reported
+        that the process is alive; after that it asked with `SELECT 1` — and that also succeeds on a
+        read-only or full database (B6-4). After a rollback, on a full volume or
+        wrong file permissions the service returned 500 to all users on sign-in, while
+        Docker permanently kept the container as `healthy` — no restart, no alarm. A
+        guard that cannot see the most likely failure is none.
 
-        Ohne Anmeldung erreichbar heisst auch: flutbar. Deshalb schreibt die Probe höchstens alle
-        `Store.SCHREIBPROBE_SEK` wirklich, dazwischen prüft sie nur die Verbindung — sonst belegte
-        jeder Aufruf die Schreibsperre, auf die Anmeldungen warten. Sie wartet wie jede Anmeldung
-        bis zu `Store.BUSY_TIMEOUT_MS` hinter einem fremden Schreiber; der HEALTHCHECK im
-        Dockerfile gibt ihr dafür mehr Zeit.
+        Reachable without sign-in also means: floodable. That is why the probe really writes at most every
+        `Store.SCHREIBPROBE_SEK`, in between it only checks the connection — otherwise
+        every call would occupy the write lock that sign-ins wait for. Like any sign-in it waits
+        up to `Store.BUSY_TIMEOUT_MS` behind a foreign writer; the HEALTHCHECK in the
+        Dockerfile gives it more time for that.
 
-        Verraten wird trotzdem nichts: bei einem Defekt nur `status: "degraded"` und 503, nie
-        die Fehlermeldung (die stünde sonst unauthentifiziert im Netz).
+        Nothing is revealed all the same: on a defect only `status: "degraded"` and 503, never
+        the error message (which would otherwise stand unauthenticated on the network).
         """
         from fastapi.responses import JSONResponse
 
@@ -337,8 +337,8 @@ def build_app(cfg: Optional[TinySesamConfig] = None):
 
 
 def __getattr__(name):
-    # Lazy `app`, damit `uvicorn tinysesam.gateway:app` ohne Import-Zeit-Env funktioniert,
-    # ein reiner `import tinysesam.gateway` (z.B. in Tests) aber NICHT sofort Env verlangt.
+    # Lazy `app`, so that `uvicorn tinysesam.gateway:app` works without import-time env,
+    # but a plain `import tinysesam.gateway` (e.g. in tests) does NOT demand env right away.
     if name == "app":
         return build_app()
     raise AttributeError(name)
@@ -372,8 +372,8 @@ Beispielaufbau mit Caddy: deploy/forward-auth/
 
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
-    # `--help` VOR allem anderen: Vorher landete die Frage im uvicorn-Import und danach in
-    # einem Server auf 0.0.0.0:8000 — wer wissen wollte, wie das Ding heisst, hatte es laufen.
+    # `--help` BEFORE anything else: before, the question landed in the uvicorn import and then in
+    # a server on 0.0.0.0:8000 — whoever wanted to know what the thing is called had it running.
     if argv and argv[0] in ("--help", "-h", "help"):
         print(HILFE)
         return 0
@@ -384,9 +384,9 @@ def main(argv=None):
     try:
         import uvicorn
     except ModuleNotFoundError:
-        # Die README nannte `pip install 'tinysesam[oidc]'` und diesen Startbefehl in einem
-        # Atemzug — dabei bringt [oidc] keinen Server mit. Der nackte ModuleNotFoundError liess
-        # das wie einen Defekt aussehen statt wie eine fehlende Zeile im Install-Befehl.
+        # The README named `pip install 'tinysesam[oidc]'` and this start command in one
+        # breath — yet [oidc] brings no server. The bare ModuleNotFoundError made
+        # that look like a defect instead of a missing line in the install command.
         print("Zum Starten fehlt ein ASGI-Server.\n"
               "  pip install 'tinysesam[gateway]'\n"
               "Oder einen eigenen mitbringen:  uvicorn tinysesam.gateway:app --host 0.0.0.0 --port 8000",

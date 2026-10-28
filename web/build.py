@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
-"""Baut die Projekt-Website nach `_site/` — das, was GitHub Pages ausliefert.
+"""Builds the project website into `_site/` — what GitHub Pages serves.
 
-    python -m web.build [ziel]        # Standard: _site/
+    python -m web.build [target]        # default: _site/
 
-Erzeugt `index.html`, `demo.html`, `flows.html` und `legal.html` (jeweils zweisprachig) aus
-`web/site.py` und kopiert die statischen Beilagen (`docs/theme.css`, `docs/wizard.png`). Die
-GitHub-Action `.github/workflows/pages.yml` ruft das bei jedem Push auf `main` auf — die
-HTML-Dateien liegen deshalb **nicht** im Repo.
+Produces `index.html`, `demo.html`, `flows.html` and `legal.html` (each bilingual) from
+`web/site.py` and copies the static extras (`docs/theme.css`, `docs/wizard.png`). The
+GitHub Action `.github/workflows/pages.yml` calls this on every push to `main` — so the
+HTML files are **not** in the repo.
 
-Zur Demo-Seite gehören die drei Vorschau-Panels unter `demo/`. Sie werden aus der Bibliothek
-selbst gerendert (`web/demo.py`) und brauchen daher ein importierbares `tinysesam` samt
-FastAPI — die Website allein käme ohne aus. Fehlt es, bricht der Bau ab, statt eine Demo-Seite
-mit toten Rahmen auszuliefern.
+The demo page comes with the three preview panels under `demo/`. They are rendered from the
+library itself (`web/demo.py`) and therefore need an importable `tinysesam` plus
+FastAPI — the website alone could do without. If it is missing, the build aborts instead of
+shipping a demo page with dead frames.
 """
 import shutil
 import sys

@@ -1,5 +1,5 @@
-"""Härtung: echte Client-IP (Trusted-Proxy), Rate-Limiting, fail2ban-Logger.
-Die Brute-Force-Regulation selbst lebt im Manager (DB-basiert, Panel-konfigurierbar)."""
+"""Hardening: real client IP (trusted proxy), rate limiting, fail2ban logger.
+Brute-force regulation itself lives in the manager (DB-based, configurable in the panel)."""
 from __future__ import annotations
 import os
 import stat
@@ -11,48 +11,48 @@ import re
 from urllib.parse import urlsplit
 from collections import OrderedDict, deque
 
-# fail2ban parst diesen Logger. Failed-Login-Zeilen enthalten "ip=<IP>" → Filter matcht darauf.
+# fail2ban parses this logger. Failed-login lines contain "ip=<IP>" → the filter matches on it.
 seclog = logging.getLogger("tinysesam.security")
 
-#: Unicode-Formatzeichen, die die Leserichtung umdrehen (Bidi-Overrides/-Isolates). Sie brechen
-#: keine Zeile, lassen aber im Terminal eine andere stehen, als gespeichert ist (A-7).
-_BIDI = frozenset("\u061c\u200e\u200f\u202a\u202b\u202c\u202d\u202e"
-                  "\u2066\u2067\u2068\u2069")
+#: Unicode format characters that flip the reading direction (bidi overrides/isolates). They do not
+#: break a line, but make a terminal show something other than what is stored (A-7).
+_BIDI = frozenset("؜‎‏‪‫‬‭‮"
+                  "⁦⁧⁨⁩")
 
 
 def _zeilenbrecher(z: str) -> bool:
-    """Ein Zeichen, das in einer Logzeile nichts zu suchen hat.
+    """A character that has no business in a log line.
 
-    Nicht nur ASCII < 0x20 und DEL: Auch die C1-Steuerzeichen (U+0080–U+009F, darunter NEL als
-    Zeilenumbruch und CSI als Terminal-Befehl), der Zeilen- und Absatztrenner U+2028/U+2029 —
-    `str.splitlines()` und manche Anzeigen brechen daran — und die Bidi-Steuerzeichen.
+    Not only ASCII < 0x20 and DEL: also the C1 control characters (U+0080–U+009F, including NEL as
+    a line break and CSI as a terminal command), the line and paragraph separators U+2028/U+2029 —
+    `str.splitlines()` and some viewers break on them — and the bidi control characters.
     """
     o = ord(z)
     return o < 0x20 or 0x7f <= o <= 0x9f or o in (0x2028, 0x2029) or z in _BIDI
 
 
 def beleg_attribut(cfg, quelle: str) -> str:
-    """Das Beleg-Attribut einer Quelle (`ldap`/`saml`), getrimmt — `""` heisst: keins.
+    """The evidence attribute of a source (`ldap`/`saml`), trimmed — `""` means: none.
 
-    Die EINE Lesestelle für Laufzeit, Router und Konfigurationsprüfung: Liest die Prüfung
-    getrimmt und die Laufzeit roh, sagt `" "` dort „nie Erst-Admin" und hier „es gibt einen Beleg"
-    (Angriffsrunde Selbstbedienung, Fund 2)."""
+    The ONE read site for runtime, router and configuration check: if the check reads it trimmed
+    and the runtime raw, `" "` there means "never first admin" and here "there is evidence"
+    (self-service attack round, finding 2)."""
     return str(getattr(cfg, f"{quelle}_attr_email_verified", "") or "").strip()
 
 
 def fuer_log(wert) -> str:
-    """Einen fremden Wert so herrichten, dass er eine Logzeile nicht sprengen kann.
+    """Prepare a foreign value so that it cannot blow up a log line.
 
-    Der Benutzername kommt roh aus einem Formularfeld und landete ungefiltert in der Zeile, die
-    fail2ban liest. Ein `\n` darin erzeugt eine **zusätzliche Zeile** — und wer vorn und hinten
-    einen Umbruch setzt, schiebt die echte `ip=`-Angabe auf eine Folgezeile, die der Filter nicht
-    mehr matcht, und lässt dazwischen eine frei erfundene stehen. fail2ban zählt dann die
-    Fehlversuche einer **vom Angreifer gewählten** IP, während die echte null Treffer erzeugt.
-    Bei `maxretry = 6` genügen sechs Anfragen, um eine beliebige Adresse auszusperren — die des
-    Admins, eines Partners, einer Überwachungssonde.
+    The username comes raw from a form field and used to land unfiltered in the line that
+    fail2ban reads. A `\n` in it creates an **additional line** — and whoever puts a line break at
+    the start and the end pushes the real `ip=` entry onto a following line that the filter no
+    longer matches, and leaves a freely invented one in between. fail2ban then counts the failed
+    attempts of an IP **chosen by the attacker**, while the real one produces zero hits. With
+    `maxretry = 6`, six requests suffice to lock out any address — that of the admin, a partner,
+    a monitoring probe.
 
-    Steuerzeichen fliegen also raus, und die Länge wird gedeckelt (ein 4-kB-Benutzername ist
-    keine Anmeldung, sondern ein Versuch, das Log zu fluten).
+    So control characters are removed, and the length is capped (a 4 kB username is not a
+    login but an attempt to flood the log).
     """
     text = "".join(z for z in str(wert if wert is not None else "") if not _zeilenbrecher(z))
     # Wirkungslos — `_zeilenbrecher` hat jeden Umbruch schon entfernt —, aber die Form, die CodeQL
@@ -64,10 +64,10 @@ def fuer_log(wert) -> str:
 
 
 def zeilenfest(wert) -> str:
-    """Wie `fuer_log`, nur ohne Längendeckel — für Anzeigen, die den ganzen Wert brauchen.
+    """Like `fuer_log`, but without the length cap — for displays that need the whole value.
 
-    Ein Umbruch wird sichtbar (`\\n`) statt still entfernt: In der forensischen Ansicht soll
-    auffallen, DASS jemand einen Zeilenumbruch in einen Benutzernamen geschrieben hat (B5-06).
+    A line break becomes visible (`\\n`) instead of being silently removed: in the forensic view it
+    should be noticeable THAT someone wrote a line break into a username (B5-06).
     """
     text = str(wert if wert is not None else "")
     return "".join(z if not _zeilenbrecher(z) else
@@ -75,12 +75,12 @@ def zeilenfest(wert) -> str:
 
 
 def url_fuer_log(url) -> str:
-    """Eine URL ohne Query und Fragment, zeilenfest und gedeckelt — für das Audit-Log.
+    """A URL without query and fragment, line-safe and capped — for the audit log.
 
-    Hinter dem `?` stehen bei geschützten Anwendungen oft Geheimnisse: Freigabe-Links
-    (`?token=…`), OAuth-Codes, signierte Download-Parameter. Im Audit-Log blieben sie dauerhaft
-    lesbar, auch im Panel. Für die Frage „wohin wollte die Anfrage" genügen Host und Pfad; dass
-    eine Query dabei war, zeigt ein `?…`.
+    Behind the `?` there are often secrets in protected applications: approval links
+    (`?token=…`), OAuth codes, signed download parameters. In the audit log they would stay
+    readable permanently, also in the panel. For the question "where did the request want to go"
+    host and path suffice; a `?…` shows that there was a query.
     """
     text = str(url or "")
     teile = urlsplit(text) if "://" in text else None
@@ -95,12 +95,12 @@ def url_fuer_log(url) -> str:
 
 
 class _ZeilenSchutz(logging.Filter):
-    """Neutralisiert Steuerzeichen in den ARGUMENTEN jeder `seclog`-Zeile (B5-14).
+    """Neutralizes control characters in the ARGUMENTS of every `seclog` line (B5-14).
 
-    `fuer_log` an jeder Aufrufstelle ist eine Konvention — und zwei Stellen hatten sie nicht
-    (die `X-Forwarded-For`-Warnung und die OIDC-Adresse ohne Beleg). Die nächste neue Zeile
-    vergisst es wieder. Der Filter hängt am Logger selbst und greift deshalb für jede Zeile,
-    auch für künftige. Der Formatstring bleibt unberührt: Er ist Code, nicht Eingabe.
+    `fuer_log` at every call site is a convention — and two sites did not have it
+    (the `X-Forwarded-For` warning and the OIDC address without evidence). The next new line
+    forgets it again. The filter hangs on the logger itself and therefore applies to every line,
+    including future ones. The format string stays untouched: it is code, not input.
     """
 
     def filter(self, record: logging.LogRecord) -> bool:
@@ -114,7 +114,7 @@ class _ZeilenSchutz(logging.Filter):
     @staticmethod
     def _sauber(a):
         if isinstance(a, (int, float)) or a is None:
-            return a            # %d/%.1f brauchen die Zahl, und eine Zahl bricht keine Zeile
+            return a            # %d/%.1f need the number, and a number does not break a line
         return zeilenfest(a)
 
 
@@ -122,12 +122,12 @@ seclog.addFilter(_ZeilenSchutz())
 
 
 def ip_normiert(wert) -> str | None:
-    """Die kanonische Schreibweise einer IP-Adresse, oder None, wenn es keine ist (B5-15).
+    """The canonical notation of an IP address, or None if it is not one (B5-15).
 
-    Kanonisch heisst: `2001:DB8::1` und `2001:db8:0::1` sind dieselbe Adresse und landen als
-    eine im Protokoll, im Rate-Limit und in der Sperre — sonst zählte jede Schreibweise als
-    eigener Client. Eine Portangabe (`1.2.3.4:5678`, `[2001:db8::1]:443`), wie manche
-    Proxys sie in `X-Forwarded-For` schreiben, wird abgelöst.
+    Canonical means: `2001:DB8::1` and `2001:db8:0::1` are the same address and end up as
+    one in the log, in the rate limit and in the lockout — otherwise every notation would count
+    as its own client. A port specification (`1.2.3.4:5678`, `[2001:db8::1]:443`), as some
+    proxies write it into `X-Forwarded-For`, is stripped off.
     """
     roh = str(wert or "").strip()
     if not roh:
@@ -141,48 +141,48 @@ def ip_normiert(wert) -> str | None:
     except ValueError:
         return None
     if getattr(addr, "scope_id", None) is not None:
-        # Die Zonenangabe (`fe80::1%eth0`) fällt weg. `ipaddress` nimmt hinter dem `%` jeden
-        # Text an — auch einen Zeilenumbruch —, und jede Zone wäre ein eigener Schlüssel: Über
-        # einen Proxy, der den Client-Header durchreicht, dreht ein Angreifer sie je Anfrage
-        # weiter und entgeht so Rate-Limit, IP-Sperre und Log-Drossel. Die Zone benennt nur die
-        # Schnittstelle des Absenders, nicht den Client.
+        # The zone specification (`fe80::1%eth0`) is dropped. `ipaddress` accepts any text after
+        # the `%` — even a line break —, and every zone would be its own key: via a proxy that
+        # passes the client header through, an attacker rotates it per request and thereby
+        # evades rate limit, IP lockout and log throttle. The zone only names the sender's
+        # interface, not the client.
         addr = ipaddress.IPv6Address(addr.packed)
     return str(addr)
 
 
 def ip_pseudonym(ip: str) -> str:
-    """Eine IP auf ihr Netz kürzen: IPv4 auf /24, IPv6 auf /48 (`audit_ip_pseudonymize`).
+    """Shorten an IP to its network: IPv4 to /24, IPv6 to /48 (`audit_ip_pseudonymize`).
 
-    Das ist die Kürzung, die auch Webanalyse-Werkzeuge für „nicht mehr personenbeziehbar"
-    ansetzen. Für die Forensik bleibt das Netz — genug, um einen Provider oder eine Welle
-    zu erkennen, nicht genug, um einen Anschluss zu benennen. Keine IP → Wert unverändert.
+    This is the truncation that web analytics tools also apply for "no longer relatable to a
+    person". For forensics the network remains — enough to recognize a provider or a wave,
+    not enough to name a connection. No IP → value unchanged.
     """
     norm = ip_normiert(ip)
     if norm is None:
         return ip
     addr = ipaddress.ip_address(norm)
     if isinstance(addr, ipaddress.IPv6Address) and addr.ipv4_mapped:
-        addr = addr.ipv4_mapped             # ::ffff:1.2.3.4 ist eine IPv4-Adresse
+        addr = addr.ipv4_mapped             # ::ffff:1.2.3.4 is an IPv4 address
     netz = ipaddress.ip_network(f"{addr}/{24 if addr.version == 4 else 48}", strict=False)
     return str(netz)
 
 
-#: Rechte, mit denen die Security-Logdatei angelegt wird — bei der ersten Zeile und nach jeder
-#: Rotation. Vorher entstand sie mit der Prozess-umask, in der Praxis `-rw-rw-r--`: welt-lesbar.
-#: In den Zeilen stehen Benutzernamen und IP-Adressen; bis 0.18.x stand dort sogar das
-#: Erst-Admin-Einmal-Token (B5-03). fail2ban liest die Datei als root, ein Log-Versand über die
-#: Gruppe reicht — niemand sonst braucht sie. Gegenstück zu `Store.DATEIRECHTE` (0600).
+#: Permissions with which the security log file is created — on the first line and after every
+#: rotation. Before, it was created with the process umask, in practice `-rw-rw-r--`: world-readable.
+#: The lines contain usernames and IP addresses; up to 0.18.x even the first-admin one-time
+#: token was in there (B5-03). fail2ban reads the file as root, log shipping via the group
+#: suffices — nobody else needs it. Counterpart to `Store.DATEIRECHTE` (0600).
 LOG_DATEIRECHTE = 0o640
 
 
 class _SicherheitsLogHandler(logging.handlers.WatchedFileHandler):
-    """WatchedFileHandler, der die Datei mit `LOG_DATEIRECHTE` anlegt statt mit der umask.
+    """WatchedFileHandler that creates the file with `LOG_DATEIRECHTE` instead of the umask.
 
-    Das `mode`-Argument von `os.open` kann Rechte nur **wegnehmen** (die umask wird weiterhin
-    abgezogen), nie hinzufügen — enger als 0640 eingestellte Betriebe bleiben also eng.
-    Der Umweg über `opener` statt eines `chmod` danach vermeidet das Fenster, in dem die Datei
-    offen dasteht, und greift auch dann, wenn logrotate die Datei wegnimmt und der Handler sie
-    beim nächsten Satz **neu** anlegt — genau dort wäre ein einmaliges chmod beim Start wirkungslos.
+    The `mode` argument of `os.open` can only **remove** permissions (the umask is still
+    subtracted), never add any — setups configured narrower than 0640 therefore stay narrow.
+    The detour via `opener` instead of a `chmod` afterwards avoids the window in which the file
+    stands open, and also applies when logrotate removes the file and the handler creates it
+    **anew** on the next record — exactly there a one-off chmod at startup would be ineffective.
     """
 
     def _open(self):
@@ -193,17 +193,17 @@ class _SicherheitsLogHandler(logging.handlers.WatchedFileHandler):
 
 
 def attach_security_log(path: str) -> bool:
-    """Den Security-Logger zusätzlich in eine Datei schreiben lassen — das, was die fail2ban-Jail
-    liest (`deploy/fail2ban/`). Ohne diesen Handler zeigt die mitgelieferte Jail auf eine Datei,
-    die nie entsteht: sie wäre still wirkungslos.
+    """Also write the security logger to a file — what the fail2ban jail reads
+    (`deploy/fail2ban/`). Without this handler the shipped jail points to a file that never
+    comes into existence: it would be silently ineffective.
 
-    Idempotent (derselbe Pfad wird nicht zweimal angehängt — mehrere TinySesam-Instanzen im selben
-    Prozess sind erlaubt) und nicht start-verhindernd: ein nicht schreibbarer Pfad ist ein Grund
-    zu warnen, aber keiner, die Anmeldung stillzulegen. Das Format trägt den Zeitstempel vorn,
-    den fail2ban zum Datieren der Treffer braucht.
+    Idempotent (the same path is not attached twice — several TinySesam instances in the same
+    process are allowed) and not startup-preventing: an unwritable path is a reason to warn,
+    but none to shut down sign-in. The format carries the timestamp up front, which fail2ban
+    needs to date the hits.
 
-    Neu angelegt wird die Datei mit `LOG_DATEIRECHTE` (0640), nicht mehr mit der umask; eine
-    schon vorhandene, welt-lesbare Datei wird gemeldet, aber nicht umgeschrieben.
+    The file is newly created with `LOG_DATEIRECHTE` (0640), no longer with the umask; an
+    already existing, world-readable file is reported but not rewritten.
     """
     path = str(path)
     for h in seclog.handlers:
@@ -211,33 +211,33 @@ def attach_security_log(path: str) -> bool:
             return True
     schon_da = os.path.exists(path)
     try:
-        # WatchedFileHandler, nicht FileHandler: logrotate benennt die Datei um und legt eine
-        # neue an — ein FileHandler hält den alten Inode offen und schreibt ab da in die
-        # umbenannte Datei weiter. Die neue bliebe leer, und die fail2ban-Jail läse ab der
-        # ERSTEN Rotation nichts mehr: kein Fehler, keine Meldung, nur ein Wächter, der nicht
-        # mehr wacht. Der Watched-Handler prüft vor jeder Zeile Inode und Gerät und öffnet neu.
-        # (Unter Windows ohne Wirkung — dort lässt sich eine offene Datei ohnehin nicht
-        # umbenennen, und `copytruncate` ist der Weg.)
+        # WatchedFileHandler, not FileHandler: logrotate renames the file and creates a new one
+        # — a FileHandler keeps the old inode open and from then on keeps writing into the
+        # renamed file. The new one would stay empty, and the fail2ban jail would read nothing
+        # from the FIRST rotation on: no error, no message, just a guard that no longer
+        # guards. The watched handler checks inode and device before every line and reopens.
+        # (No effect on Windows — an open file cannot be renamed there anyway, and
+        # `copytruncate` is the way.)
         h = _SicherheitsLogHandler(path, encoding="utf-8")
     except OSError as e:
         seclog.warning("security_log %s nicht schreibbar (%s) — fail2ban bekommt nichts zu lesen.",
                        path, e)
         return False
     h.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
-    # Eigene Markierung am Handler, damit derselbe Pfad nicht zweimal angehängt wird. `setattr`
-    # statt direkter Zuweisung: Das Attribut ist unseres, nicht das der Klasse — ein Typprüfer
-    # meldete hier sonst zu Recht einen Fehler.
+    # Own marker on the handler, so that the same path is not attached twice. `setattr`
+    # instead of direct assignment: the attribute is ours, not the class's — a type checker
+    # would otherwise rightly report an error here.
     setattr(h, "_tinysesam_path", path)
     seclog.addHandler(h)
-    # Ohne eigenen Level erbt der Logger den der Wurzel; steht der auf ERROR, fehlen genau die
-    # WARNING-Zeilen mit den Fehlversuchen.
-    # INFO, nicht WARNING (0.24.9): `repeated login` und `login ok` sind INFO-Zeilen und gehören in dieselbe Datei.
+    # Without its own level the logger inherits the root's; if that is ERROR, exactly the
+    # WARNING lines with the failed attempts are missing.
+    # INFO, not WARNING (0.24.9): `repeated login` and `login ok` are INFO lines and belong in the same file.
     if seclog.level == logging.NOTSET or seclog.level > logging.INFO:
         seclog.setLevel(logging.INFO)
-    # Erst hier, nach dem Level: Eine Warnung, die der Logger verwirft, ist keine. Eine
-    # BESTEHENDE Datei wird nicht umgeschrieben — eine bewusste Freigabe an eine Gruppe
-    # (Log-Versand, `adm`) ist eine Entscheidung des Betreibers, keine Lücke. Still bleibt sie
-    # trotzdem nicht: In den Zeilen stehen Benutzernamen und IP-Adressen.
+    # Only here, after the level: a warning that the logger discards is none. An EXISTING file
+    # is not rewritten — a deliberate release to a group (log shipping, `adm`) is a decision of
+    # the operator, not a hole. It does not stay silent anyway: the lines contain usernames and
+    # IP addresses.
     if schon_da:
         try:
             modus = stat.S_IMODE(os.stat(path).st_mode)
@@ -250,46 +250,46 @@ def attach_security_log(path: str) -> bool:
     return True
 
 
-# Härtungs-Defaults — im Admin-Panel überschreibbar (store.setting). Nur diese Keys sind einstellbar.
+# Hardening defaults — overridable in the admin panel (store.setting). Only these keys are configurable.
 SECURITY_DEFAULTS = {
-    # Die Reihenfolge ist die des Panels: Was zusammen eingestellt wird, steht zusammen.
-    "max_login_attempts": 5,        # Fehlversuche je Konto UND IP (Paar) im Fenster → Lockout
-    "lockout_window_sec": 900,      # Beobachtungs-/Sperrfenster (15 min)
-    "ip_attempt_factor": 3,         # IP-Lockout-Schwelle = max_login_attempts * Faktor (mehrere User hinter NAT)
-    "account_attempt_factor": 3,    # Konto-Schwelle über alle IPs = max_login_attempts * Faktor (verteiltes Raten)
-    "account_max_consecutive_failures": 100,  # Fehlversuche IN FOLGE je Konto, ohne Fenster (B2-6, NIST)
-    "pin_max_attempts": 5,          # eigener, methoden-scoped Fehlversuch-Zähler für PIN (kurzer Keyspace)
-    "rate_limit_max": 30,           # max Requests pro IP …
-    "rate_limit_window_sec": 60,    # … je Fenster auf Auth-Endpoints
-    "password_min_length": 8,       # Mindestlänge, wenn das Passwort Teil einer Kette mit 2. Faktor ist
-    "password_min_length_single_factor": 15,  # … wenn es allein anmelden kann (B2-4, NIST 800-63B)
-    "password_change_max_attempts": 5,  # eigener Zähler für die Alt-Passwort-Abfrage auf der Kontoseite
-    "reauth_max_attempts": 5,       # eigener Zähler für die Step-up-Bestätigung (/auth/reauth)
-    "resource_max_attempts": 5,     # eigener Zähler für die Bereichs-PIN (/auth/resource/…, ohne Konto)
-    "mail_per_address_max": 3,      # Mails je Zieladresse im Fenster (Anmelde-Link, Reset, Hinweis) — R4-04
-    "mail_per_address_window_sec": 900,  # … Fenster dazu; die IP-Drossel allein schützt kein fremdes Postfach
-    "totp_setup_max_attempts": 5,   # eigener Zähler für die Bestätigung der TOTP-Einrichtung
-    # Dasselbe falsche Passwort, von derselben IP, an dasselbe Konto zählt nur EINMAL (0.24.9, PO: „gleiches Passwort
-    # 10 mal eintippen ist wohl weniger ein Hackversuch“): ein Handy mit altem Passwort soll weder das Konto noch die
-    # Heim-IP sperren. Gemerkt werden die letzten N Fingerabdrücke je (Konto, IP); 0 schaltet das aus.
+    # The order is that of the panel: what is configured together is listed together.
+    "max_login_attempts": 5,        # failed attempts per account AND IP (pair) in the window → lockout
+    "lockout_window_sec": 900,      # observation/lockout window (15 min)
+    "ip_attempt_factor": 3,         # IP lockout threshold = max_login_attempts * factor (several users behind NAT)
+    "account_attempt_factor": 3,    # account threshold across all IPs = max_login_attempts * factor (distributed guessing)
+    "account_max_consecutive_failures": 100,  # consecutive failed attempts per account, without window (B2-6, NIST)
+    "pin_max_attempts": 5,          # own, method-scoped failed-attempt counter for PIN (short keyspace)
+    "rate_limit_max": 30,           # max requests per IP …
+    "rate_limit_window_sec": 60,    # … per window on auth endpoints
+    "password_min_length": 8,       # minimum length when the password is part of a chain with a 2nd factor
+    "password_min_length_single_factor": 15,  # … when it can sign in on its own (B2-4, NIST 800-63B)
+    "password_change_max_attempts": 5,  # own counter for the old-password prompt on the account page
+    "reauth_max_attempts": 5,       # own counter for the step-up confirmation (/auth/reauth)
+    "resource_max_attempts": 5,     # own counter for the area PIN (/auth/resource/…, without account)
+    "mail_per_address_max": 3,      # mails per target address in the window (sign-in link, reset, notice) — R4-04
+    "mail_per_address_window_sec": 900,  # … window for it; the IP throttle alone does not protect a third party's mailbox
+    "totp_setup_max_attempts": 5,   # own counter for the confirmation of the TOTP setup
+    # The same wrong password, from the same IP, to the same account counts only ONCE (0.24.9, PO: "typing the same password
+    # 10 times is hardly a hacking attempt"): a phone with an old password should lock neither the account nor the
+    # home IP. The last N fingerprints per (account, IP) are remembered; 0 switches this off.
     "password_repeat_memory": 5,
-    "password_repeat_window_sec": 86400,  # … so lange zählt ein gemerkter Fingerabdruck als „schon probiert“
+    "password_repeat_window_sec": 86400,  # … how long a remembered fingerprint counts as "already tried"
 }
 
-#: Erlaubter Bereich je Härtungs-Schwelle, beide Grenzen eingeschlossen (R6-4, B2-9).
+#: Permitted range per hardening threshold, both bounds inclusive (R6-4, B2-9).
 #:
-#: Ohne Grenzen legte ein Tippfehler im Panel die Instanz still, und zwar dauerhaft: Mit
-#: `rate_limit_max=0` weist `_rate_ok` jede Anmeldung ab — auch die der Administratorin, die den
-#: Wert zurückdrehen müsste. Der Wert steht in der Datenbank und überlebt jeden Neustart. Ebenso
-#: `max_login_attempts=0` (jedes Konto gilt sofort als gesperrt) oder ein `lockout_window_sec`
-#: von Jahren. Die Untergrenzen halten den Betrieb am Leben, die Obergrenzen den Schutz:
-#: `password_min_length` unter 8 ist kein Tuning, sondern das Abschalten der Passwortregel.
+#: Without bounds a typo in the panel would shut the instance down silently and permanently: with
+#: `rate_limit_max=0`, `_rate_ok` rejects every sign-in — including that of the administrator
+#: who would have to turn the value back. The value is in the database and survives every
+#: restart. Likewise `max_login_attempts=0` (every account counts as locked at once) or a
+#: `lockout_window_sec` of years. The lower bounds keep operation alive, the upper bounds the
+#: protection: `password_min_length` below 8 is not tuning but switching off the password rule.
 #:
-#: Die Grenzen verbieten das Stilllegen, nicht das Verschärfen: Ein einziger Versuch
-#: (`count >= 1` sperrt nach dem ersten Fehler) oder eine Sperre von Wochen ist eine harte, aber
-#: legitime Wahl — erst `0` bzw. Jahre machen daraus einen Ausfall. `rate_limit_max` bleibt bei
-#: 3, weil eine Anmeldung mit zweitem Faktor mehrere Anfragen braucht; darunter kommt niemand
-#: mehr durch.
+#: The bounds forbid shutting down, not tightening: a single attempt
+#: (`count >= 1` locks after the first failure) or a lockout of weeks is a hard but
+#: legitimate choice — only `0` or years turn it into an outage. `rate_limit_max` stays at
+#: 3, because a sign-in with a second factor needs several requests; below that nobody
+#: gets through any more.
 SECURITY_GRENZEN = {
     "max_login_attempts": (1, 1000),
     "lockout_window_sec": (60, 30 * 86400),
@@ -298,8 +298,8 @@ SECURITY_GRENZEN = {
     "rate_limit_window_sec": (1, 86400),
     "password_min_length": (8, 128),
     "password_min_length_single_factor": (8, 128),
-    # Unten 10: Eine Serien-Sperre ist hart (sie läuft nicht ab), wenige Tippfehler dürfen sie
-    # nicht auslösen — dafür gibt es die Fenster-Schwellen. Oben 100000 heisst praktisch „aus".
+    # Lower bound 10: a series lockout is hard (it does not expire), a few typos must not
+    # trigger it — the window thresholds exist for that. Upper bound 100000 practically means "off".
     "account_max_consecutive_failures": (10, 100000),
     "pin_max_attempts": (1, 100),
     "password_change_max_attempts": (1, 100),
@@ -315,21 +315,21 @@ SECURITY_GRENZEN = {
 
 
 def pruefe_haertung(key: str, value) -> int:
-    """Einen Härtungs-Wert prüfen und als int zurückgeben — oder `ValueError` mit lesbarem Text.
+    """Check a hardening value and return it as int — or `ValueError` with readable text.
 
-    Eine Stelle für Panel, `set_security()` und das Lesen aus der Datenbank: Zwei Fassungen der
-    Grenzen liefen sonst auseinander, und die schwächere entschiede."""
+    One place for panel, `set_security()` and reading from the database: two versions of the
+    bounds would otherwise drift apart, and the weaker one would decide."""
     if key not in SECURITY_DEFAULTS:
         raise ValueError(f"{key!r} ist keine Härtungs-Schwelle. Bekannt sind: "
                          f"{', '.join(sorted(SECURITY_DEFAULTS))}")
-    # bool ist in Python ein int — `True` als „1 Versuch" wäre ein stiller Tippfehler.
+    # bool is an int in Python — `True` as "1 attempt" would be a silent typo.
     if isinstance(value, bool):
         raise ValueError(f"{key}: {value!r} ist keine Zahl")
     try:
         zahl = int(value)
     except (TypeError, ValueError, OverflowError):
-        # OverflowError: `int(float("inf"))` — Starlettes JSON nimmt das Literal `Infinity` an,
-        # und ohne diesen Fall wurde daraus ein 500 statt eines 400 (A4).
+        # OverflowError: `int(float("inf"))` — Starlette's JSON accepts the literal `Infinity`,
+        # and without this case it became a 500 instead of a 400 (A4).
         raise ValueError(f"{key}: {value!r} ist keine ganze Zahl") from None
     if isinstance(value, float) and value != zahl:
         raise ValueError(f"{key}: {value!r} ist keine ganze Zahl")
@@ -340,13 +340,13 @@ def pruefe_haertung(key: str, value) -> int:
 
 
 def klemme_haertung(key: str, value) -> int:
-    """Einen Altwert aus der Datenbank, den `pruefe_haertung` abweist, an die nächste Grenze ziehen.
+    """Pull a legacy value from the database that `pruefe_haertung` rejects to the nearest bound.
 
-    Nicht auf die Vorgabe zurücksetzen: Ein Bestandswert jenseits der Grenze liegt fast immer auf
-    der STRENGEN Seite (2 Versuche, eine Woche Sperre), und die Vorgabe wäre dann die schwächere
-    Einstellung — ein Upgrade darf die Härtung nicht still lockern (A1). Die Grenze ist der
-    strengste Wert, der den Betrieb nicht stilllegt, und das Panel nimmt sie an. Nur was gar
-    keine Zahl ist, fällt auf die Vorgabe."""
+    Not reset to the default: an existing value beyond the bound is almost always on the
+    STRICT side (2 attempts, one week lockout), and the default would then be the weaker
+    setting — an upgrade must not silently loosen the hardening (A1). The bound is the
+    strictest value that does not shut operation down, and the panel accepts it. Only what is
+    not a number at all falls back to the default."""
     try:
         zahl = int(str(value).strip())
     except (TypeError, ValueError, OverflowError):
@@ -356,18 +356,18 @@ def klemme_haertung(key: str, value) -> int:
 
 
 def haertung_lesen(store, key: str) -> int:
-    """Eine Härtungs-Schwelle aus der Datenbank lesen, wie sie gilt: der Wert aus dem Panel oder
-    die Vorgabe, immer innerhalb von `SECURITY_GRENZEN`.
+    """Read a hardening threshold from the database as it applies: the value from the panel or
+    the default, always within `SECURITY_GRENZEN`.
 
-    Der EINE Leseweg für `TinySesam._sec()` und das CLI (`tinysesam passwd`). Das CLI las
-    `password_min_length` bis T-13 roh: Ein Altwert aus einer Fassung ohne Grenzen (4, 0) galt im
-    Web als 8, offline weiter als 4 — und `passwd` setzte ein Passwort, das jede Web-Setzstelle
-    ablehnt. Zwei Lesewege laufen auseinander, und der schwächere entscheidet.
+    The ONE read path for `TinySesam._sec()` and the CLI (`tinysesam passwd`). The CLI read
+    `password_min_length` raw until T-13: a legacy value from a version without bounds (4, 0)
+    counted as 8 on the web, offline still as 4 — and `passwd` set a password that every web
+    setting site rejects. Two read paths drift apart, and the weaker one decides.
 
-    Ein Wert ausserhalb der Grenzen, der schon in der Datenbank steht (aus einer Fassung ohne
-    Grenzen, oder direkt geschrieben), wird an die nächste Grenze gezogen (`klemme_haertung`):
-    Ihn weiter anzuwenden hiesse, eine stillgelegte Instanz stillgelegt zu lassen (R6-4); ihn auf
-    die Vorgabe zu setzen, lockerte still jede strengere Bestandseinstellung (A1)."""
+    A value outside the bounds that is already in the database (from a version without
+    bounds, or written directly) is pulled to the nearest bound (`klemme_haertung`):
+    continuing to apply it would mean leaving a shut-down instance shut down (R6-4); setting it
+    to the default would silently loosen every stricter existing setting (A1)."""
     v = store.get_setting(key)
     if v is None:
         return SECURITY_DEFAULTS[key]
@@ -381,29 +381,29 @@ def haertung_lesen(store, key: str) -> int:
                 "sich im Admin-Panel bestätigen oder ändern.", e, wert)
         return wert
 
-# Methoden aus `login_attempt`, die KEIN Anmeldeversuch sind und deshalb nicht in den
-# Login-Lockout (`_is_locked`) zählen dürfen — und daneben der Riegel, der jede von ihnen
-# STATTDESSEN bremst.
+# Methods from `login_attempt` that are NOT a sign-in attempt and therefore must not count into
+# the login lockout (`_is_locked`) — and next to it the latch that throttles each of them
+# INSTEAD.
 #
-# Warum überhaupt: Die Alt-Passwort-Abfrage der Kontoseite, die Step-up-Bestätigung und die
-# Bereichs-PIN verbuchen ihre Fehlversuche in derselben Tabelle wie der Login (R4-10 — sonst
-# wären sie stille Orakel). `_is_locked` zählte aber methodenblind, und damit sperrten fünf
-# Tippfehler auf der EIGENEN Kontoseite die Anmeldung für 15 Minuten — abtragen konnte der
-# Nutzer sie durch nichts, denn ein Erfolg räumt nur die Fehlversuche derselben Methode weg.
-# Hinter NAT reichten drei Kollegen mit je fünf Tippfehlern, um einem völlig unbeteiligten
-# Vierten den Login zu verriegeln (`ip_attempt_factor`); bei der Bereichs-PIN genügten dafür
-# fremde Besucher, die gar kein Konto haben.
+# Why at all: the old-password prompt of the account page, the step-up confirmation and the
+# area PIN record their failed attempts in the same table as the login (R4-10 — otherwise they
+# would be silent oracles). But `_is_locked` counted method-blind, and so five typos on one's
+# OWN account page locked sign-in for 15 minutes — the user could not work them off by
+# anything, because a success only clears the failed attempts of the same method.
+# Behind NAT, three colleagues with five typos each sufficed to lock the login of a completely
+# uninvolved fourth (`ip_attempt_factor`); for the area PIN, foreign visitors who have no
+# account at all sufficed.
 #
-# Die Zuordnung ist Absicht und keine Bequemlichkeit: Wer eine Methode hier einträgt, nimmt
-# sie aus dem Login-Lockout — ohne eigenen Topf wäre sie damit unbegrenzt ratbar. Deshalb
-# steht der Ersatz daneben, `NICHT_LOGIN_METHODEN` wird daraus abgeleitet (eine Methode ohne
-# Riegel lässt sich gar nicht erst eintragen), und ein Test hält die Tabelle gegen die
-# Methoden, mit denen der Router `_record_login()` wirklich ruft.
+# The mapping is deliberate and not a convenience: whoever enters a method here takes it out of
+# the login lockout — without its own bucket it would thereby be guessable without limit. That
+# is why the replacement stands next to it, `NICHT_LOGIN_METHODEN` is derived from it (a method
+# without a latch cannot even be entered), and a test holds the table against the methods with
+# which the router really calls `_record_login()`.
 #
-# Bewusst eine **Ausnahmeliste**, keine Positivliste der Login-Methoden: Eine neue
-# Anmeldemethode zählt damit von sich aus mit. Eine vergessene Zeile kostet hier Bequemlichkeit
-# (eine Sperre zählt strenger als nötig), eine vergessene Zeile in einer Positivliste hätte ein
-# Loch im Lockout gekostet.
+# Deliberately an **exception list**, not a positive list of the login methods: a new
+# sign-in method thereby counts on its own. A forgotten line costs convenience here
+# (a lockout counts stricter than necessary), a forgotten line in a positive list would have
+# cost a hole in the lockout.
 EIGENE_SPERRE = {
     "password_change": "_is_password_change_locked",
     "reauth": "_is_reauth_locked",
@@ -413,43 +413,42 @@ EIGENE_SPERRE = {
 
 NICHT_LOGIN_METHODEN = tuple(EIGENE_SPERRE)
 
-#: Das Ereigniswort der Zeile im Sicherheits-Log. **Nur `failed login` trifft die
-#: mitgelieferte fail2ban-failregex** (`deploy/fail2ban/tinysesam-filter.conf`) — und das ist
-#: der Punkt: Ein Fehlgriff aus `NICHT_LOGIN_METHODEN` stammt von jemandem, der schon
-#: angemeldet ist (Kontoseite, Step-up) oder der gar kein Konto braucht (Bereichs-PIN). Mit
-#: demselben Wort bannte die ausgelieferte Jail (`maxretry = 6`) einen legitimen Nutzer nach
-#: ein paar Tippfehlern auf Firewall-Ebene aus — und zwar für die ganze Instanz, nicht für die
-#: Route. Verschärfend: Ab der App-Sperre erzeugt jeder weitere Klick eine weitere Zeile.
-#: Protokolliert wird deshalb unverändert, nur unter eigenem Namen; wer auch diese Zeilen
-#: bannen will, nimmt die zweite, mildere Jail aus `deploy/fail2ban/`.
+#: The event word of the line in the security log. **Only `failed login` hits the shipped
+#: fail2ban failregex** (`deploy/fail2ban/tinysesam-filter.conf`) — and that is the point: a
+#: miss from `NICHT_LOGIN_METHODEN` comes from someone who is already signed in (account page,
+#: step-up) or who needs no account at all (area PIN). With the same word, the shipped jail
+#: (`maxretry = 6`) banned a legitimate user at firewall level after a few typos — and for the
+#: whole instance, not for the route. Aggravating: from the app lockout on, every further click
+#: produces a further line. So it is logged unchanged, only under its own name; whoever also
+#: wants to ban these lines takes the second, milder jail from `deploy/fail2ban/`.
 LOG_ANMELDUNG = "failed login"
 LOG_PRUEFUNG = "failed verification"
-#: Ein falsches Passwort, das dieselbe IP an dasselbe Konto schon geschickt hat (`password_repeat_memory`). Bewusst ein
-#: eigenes Wort und INFO: Die mitgelieferte failregex verlangt `WARNING failed login`, diese Zeile zählt also nicht.
+#: A wrong password that the same IP has already sent to the same account (`password_repeat_memory`). Deliberately
+#: its own word and INFO: the shipped failregex requires `WARNING failed login`, so this line does not count.
 LOG_WIEDERHOLT = "repeated login"
-#: Eine VOLLSTÄNDIGE Anmeldung (alle Faktoren) — für Auswertung und Filter, die eine Sperrtreppe zurücksetzen wollen.
+#: A COMPLETE sign-in (all factors) — for evaluation and filters that want to reset a lockout ladder.
 LOG_ERFOLG = "login ok"
 
 
 def log_ereignis(method) -> str:
-    """Welches Ereigniswort gehört in die Sicherheits-Log-Zeile dieser Methode?
+    """Which event word belongs in the security log line of this method?
 
-    `failed login` nur für echte Anmeldeversuche — alles aus `NICHT_LOGIN_METHODEN` bekommt
-    `failed verification` und läuft damit an der mitgelieferten fail2ban-Jail vorbei."""
+    `failed login` only for real sign-in attempts — everything from `NICHT_LOGIN_METHODEN` gets
+    `failed verification` and thereby bypasses the shipped fail2ban jail."""
     return LOG_PRUEFUNG if method in NICHT_LOGIN_METHODEN else LOG_ANMELDUNG
 
 
 def safe_next(next_: str, default: str = "/", allowed_hosts=None) -> str:
-    """Open-Redirect-Schutz für ?next=-Ziele.
+    """Open-redirect protection for ?next= targets.
 
-    Erlaubt nur *relative* Pfade auf demselben Host (beginnen mit genau einem '/', kein
-    protokoll-relatives '//', kein Schema, kein Backslash). Absolute URLs sind nur erlaubt,
-    wenn ihr Host in allowed_hosts steht (für den Forward-Auth-/SSO-Fall). Alles andere → default.
+    Allows only *relative* paths on the same host (starting with exactly one '/', no
+    protocol-relative '//', no scheme, no backslash). Absolute URLs are only allowed
+    if their host is in allowed_hosts (for the forward-auth/SSO case). Everything else → default.
     """
     if not next_:
         return default
     n = next_.strip()
-    # relativer Pfad: genau ein führender Slash, kein Schema/Backslash/protokoll-relativ
+    # relative path: exactly one leading slash, no scheme/backslash/protocol-relative
     if n.startswith("/") and not n.startswith("//") and "\\" not in n and "://" not in n:
         return n
     if allowed_hosts:
@@ -464,20 +463,20 @@ def safe_next(next_: str, default: str = "/", allowed_hosts=None) -> str:
 
 
 def eigener_host(host: str, allowed_hosts=None) -> bool:
-    """Darf dieser Host in eine Adresse, die das Haus verlässt (Mail-Link, Redirect-URI)?
+    """May this host go into an address that leaves the house (mail link, redirect URI)?
 
-    Der Host aus `request.base_url` ist der rohe `Host`-Header, also eine **Eingabe des
-    Clients** — kein Proxy und kein ASGI-Server prüft ihn. Wer eine Reset-Mail für ein fremdes
-    Postfach anstößt und dabei `Host: angreifer.example` setzt, bekam bis 0.18.0 genau diesen
-    Host in den Link, den das Opfer per Mail erhält (R4-01/R8-4). Deshalb gilt ein abgeleiteter
-    Host nur, wenn er beweisbar der eigene ist:
+    The host from `request.base_url` is the raw `Host` header, i.e. an **input of the
+    client** — no proxy and no ASGI server checks it. Whoever triggers a reset mail for a foreign
+    mailbox and sets `Host: attacker.example` while doing so got exactly this host into the link
+    that the victim receives by mail until 0.18.0 (R4-01/R8-4). Therefore a derived host only
+    counts if it is provably our own:
 
-    * er steht in `trusted_redirect_hosts` — derselbe Kreis, dem schon `?next=` trauen darf, oder
-    * er ist eine Loopback-Adresse. Ein Link auf `localhost` nützt keinem Angreifer: er landet
-      beim Empfänger selbst. Damit bleibt der lokale Aufbau ohne `base_url` benutzbar.
+    * it is in `trusted_redirect_hosts` — the same circle that `?next=` may already trust, or
+    * it is a loopback address. A link to `localhost` is of no use to an attacker: it ends up
+      at the recipient itself. This keeps the local setup usable without `base_url`.
 
-    Alles andere ist ein Fremdname. Der Aufrufer bricht dann ab — eine Mail, die gar nicht
-    hinausgeht, ist besser als eine mit einem Link auf den Server des Angreifers.
+    Everything else is a foreign name. The caller then aborts — a mail that does not go out
+    at all is better than one with a link to the attacker's server.
     """
     h = (host or "").strip().strip("[]").lower()
     if not h:
@@ -492,32 +491,32 @@ def eigener_host(host: str, allowed_hosts=None) -> bool:
         return False
 
 
-#: Welcher Pfadanteil aus einer abgeleiteten Basis mit hinausgehen darf. Eng gefasst und
-#: fail-closed: Hier steht ein Mount-Präfix (`/sso`, `/auth/v2`), nichts anderes. Alles mit
-#: Doppel-Schrägstrich, Prozentzeichen oder Leerraum fällt durch, und `.`/`..` als Segment
-#: ebenso (`/../etc` wird nirgends normalisiert und stand sonst genau so in der Mail) — dann
-#: gibt es keine Basis, statt eine halb geratene.
+#: Which path part from a derived base may go out with it. Narrowly drawn and
+#: fail-closed: here stands a mount prefix (`/sso`, `/auth/v2`), nothing else. Anything with a
+#: double slash, percent sign or whitespace falls through, and `.`/`..` as a segment
+#: likewise (`/../etc` is normalized nowhere and otherwise stood exactly so in the mail) — then
+#: there is no base, instead of a half-guessed one.
 _PFAD_OK = re.compile(r"(?:/(?!\.{1,2}(?:/|$))[A-Za-z0-9._~-]+)+")
 
 
 def normalisiere_basis(kandidat: str) -> str:
-    """Eine Basis-URL auf ihre **Form** prüfen und kanonisch zusammensetzen — oder "" (fail closed).
+    """Check a base URL for its **form** and assemble it canonically — or "" (fail closed).
 
-    Beantwortet **nicht** die Frage, ob der Host der eigene ist; das macht `sichere_basis()`.
-    Getrennt seit 0.18.0, weil beide Zweige von `TinySesam.public_base()` dieselbe Form brauchen:
-    Bis dahin lief nur der **abgeleitete** Zweig hier durch, während ein konfiguriertes `base_url`
-    lediglich `strip().rstrip("/")` sah und die Konfigurationsprüfung es mit einem groben
-    Schema-und-Host-Muster abnahm. Damit kam durch, was hier scheitert: eine Benutzerangabe im Host
-    (`https://wer:was@auth.example` — sie stünde in jedem Reset-Link und in jeder Redirect-URI),
-    ein Fragment oder eine Abfrage, ein unzulässiger Port, ein Pfad mit `..` oder `//`. Eine Regel,
-    zwei Aufrufer — nicht zwei Regelwerke, von denen eines schwächer ist.
+    Does **not** answer the question whether the host is our own; `sichere_basis()` does that.
+    Separated since 0.18.0, because both branches of `TinySesam.public_base()` need the same form:
+    until then only the **derived** branch went through here, while a configured `base_url`
+    saw merely `strip().rstrip("/")` and the configuration check accepted it with a coarse
+    scheme-and-host pattern. That let through what fails here: a user part in the host
+    (`https://wer:was@auth.example` — it would stand in every reset link and every redirect URI),
+    a fragment or a query, an invalid port, a path with `..` or `//`. One rule,
+    two callers — not two rule sets, one of which is weaker.
 
-    Der **Pfadanteil kommt mit**: `request.base_url` trägt den `root_path` des ASGI-Servers
-    (uvicorn `--root-path`, ein `Mount`), und bis 0.18.x warf diese Funktion ihn weg. Wer die
-    App unter einem Unterpfad montiert hatte, bekam Mail-Links ohne das Präfix — also
-    404 statt Reset-Formular. Der `root_path` ist Serverkonfiguration, keine Client-Eingabe
-    (weder uvicorn noch Starlette leiten ihn aus einem Header ab), er wird aber trotzdem gegen
-    `_PFAD_OK` geprüft: eine Basis, die wir nicht sauber zusammensetzen können, gibt es nicht.
+    The **path part comes along**: `request.base_url` carries the `root_path` of the ASGI server
+    (uvicorn `--root-path`, a `Mount`), and until 0.18.x this function threw it away. Whoever had
+    mounted the app under a subpath got mail links without the prefix — thus
+    404 instead of the reset form. The `root_path` is server configuration, not client input
+    (neither uvicorn nor Starlette derives it from a header), but it is checked against
+    `_PFAD_OK` anyway: a base that we cannot assemble cleanly does not exist.
     """
     roh = str(kandidat or "").strip()
     if not roh:
@@ -528,17 +527,17 @@ def normalisiere_basis(kandidat: str) -> str:
         return ""
     if teile.scheme not in ("http", "https") or not teile.netloc:
         return ""
-    # Abfrage und Fragment gehören nicht in eine Basis: Was hinten angehängt wird (Token, Pfad),
-    # stünde sonst HINTER dem `#` und erreichte den Server nie — der Link sähe gültig aus und
-    # führte ins Leere.
+    # Query and fragment do not belong in a base: what is appended at the end (token, path)
+    # would otherwise stand BEHIND the `#` and never reach the server — the link would look valid
+    # and lead nowhere.
     if teile.query or teile.fragment:
         return ""
     host = teile.hostname or ""
     if not host:
         return ""
-    # Neu zusammengesetzt statt `netloc` übernommen: eine Benutzerangabe im Host
-    # (`https://vertraut.example@…`) wäre sonst Teil jedes ausgehenden Links. Geprüft wird
-    # ohnehin nur `hostname`, also darf auch nur der hinaus.
+    # Assembled anew instead of taking over `netloc`: a user part in the host
+    # (`https://trusted.example@…`) would otherwise be part of every outgoing link. Only
+    # `hostname` is checked anyway, so only that may go out.
     try:
         port = teile.port
     except ValueError:
@@ -552,11 +551,11 @@ def normalisiere_basis(kandidat: str) -> str:
 
 
 def sichere_basis(kandidat: str, allowed_hosts=None) -> str:
-    """Eine **abgeleitete** Basis-URL prüfen: Form (`normalisiere_basis`) **und** eigener Host.
+    """Check a **derived** base URL: form (`normalisiere_basis`) **and** own host.
 
-    Leer heißt: es gibt keine vertrauenswürdige öffentliche Adresse. Nicht raten — abbrechen.
-    Der Unterschied zu `normalisiere_basis()` ist die Herkunft: Was aus dem `Host`-Header kommt,
-    muss zusätzlich belegen, dass es ein eigener Name ist (R4-01/CWE-644).
+    Empty means: there is no trustworthy public address. Do not guess — abort.
+    The difference to `normalisiere_basis()` is the origin: what comes from the `Host` header
+    must additionally prove that it is a name of our own (R4-01/CWE-644).
     """
     roh = str(kandidat or "").strip()
     if not roh:
@@ -571,7 +570,7 @@ def sichere_basis(kandidat: str, allowed_hosts=None) -> str:
 
 
 def ungueltige_netze(trusted_nets) -> list:
-    """Die Einträge einer `trusted_proxies`-Liste, die kein IP-Netz sind (B3-3)."""
+    """The entries of a `trusted_proxies` list that are not an IP network (B3-3)."""
     schlecht = []
     for n in trusted_nets or []:
         try:
@@ -582,12 +581,12 @@ def ungueltige_netze(trusted_nets) -> list:
 
 
 def is_trusted(ip: str, trusted_nets) -> bool:
-    # Je Eintrag prüfen, nicht die ganze Liste in einem `try` (B3-3): Ein einziger ungültiger
-    # Eintrag (ein Hostname, ein Tippfehler) warf vorher mitten im `any()` und entwertete damit
-    # ALLE übrigen — der Proxy galt als fremd, jeder Nutzer erschien unter seiner IP. Die
-    # Warnung darauf riet dann, das Proxy-Netz einzutragen, das längst dastand.
-    # `konfigpruefung` weist so eine Liste beim Aufbau ab; hier ist der Boden für eine Liste,
-    # die danach geändert wurde.
+    # Check per entry, not the whole list in one `try` (B3-3): a single invalid
+    # entry (a hostname, a typo) used to raise in the middle of `any()` and thereby invalidate
+    # ALL the others — the proxy counted as foreign, every user appeared under its IP. The
+    # warning about it then advised entering the proxy network, which was there all along.
+    # `konfigpruefung` rejects such a list at setup; here is the floor for a list
+    # that was changed afterwards.
     try:
         addr = ipaddress.ip_address(ip)
     except ValueError:
@@ -601,48 +600,48 @@ def is_trusted(ip: str, trusted_nets) -> bool:
     return False
 
 
-# Peers, über die schon geklagt wurde — eine Fehlkonfiguration meldet sich einmal, nicht pro
-# Request. Ein Log-Sturm wird weggefiltert und hilft niemandem.
+# Peers that have already been complained about — a misconfiguration reports once, not per
+# request. A log storm is filtered away and helps nobody.
 _GEMELDETE_PEERS: set = set()
 
-#: Schlüssel, zu denen schon eine Hinweiszeile im Security-Log steht (`einmal_melden`).
-#: Gedeckelt: Der Schlüssel stammt aus der Anfrage, und wer den `Host`-Header durchprobiert,
-#: soll weder die Datei noch den Speicher füllen.
+#: Keys for which a notice line already stands in the security log (`einmal_melden`).
+#: Capped: the key comes from the request, and whoever probes the `Host` header
+#: should fill neither the file nor the memory.
 #:
-#: Der Deckel gilt **je Zeitfenster**, nicht für die Lebensdauer des Prozesses (C-4, 0.18.0):
-#: Vorher genügten 512 erfundene `Host`-Werte, um die Stelle bis zum Neustart stillzulegen —
-#: danach blieb auch der Hinweis auf den **echten** Betriebsfehler aus. Ein Angreifer konnte
-#: also nicht nur Lärm machen, sondern gezielt eine Warnung abschalten. Jetzt beginnt nach
-#: `_GEMELDET_FENSTER_SEK` ein neues Fenster, und das Erreichen des Deckels sagt einmal laut,
-#: dass ab hier geschwiegen wird — eine unsichtbare Unterdrückung wäre dasselbe Loch.
+#: The cap applies **per time window**, not for the lifetime of the process (C-4, 0.18.0):
+#: before, 512 invented `Host` values sufficed to disable the site until restart —
+#: afterwards the notice about the **real** operational error also stayed away. An attacker
+#: could thus not only make noise but deliberately switch off a warning. Now a new window
+#: begins after `_GEMELDET_FENSTER_SEK`, and reaching the cap says once, loudly,
+#: that silence starts from here — an invisible suppression would be the same hole.
 _GEMELDET_MAX = 512
 _GEMELDET_FENSTER_SEK = 3600
 _GEMELDET: set = set()
 
-#: Beginn des laufenden Fensters und ob der Deckel darin schon gemeldet wurde. Bewusst ein dict
-#: und keine zwei Modul-Variablen: Die müssten in jeder schreibenden Funktion `global` heissen,
-#: und eine per `global` gesetzte Variable liest CodeQL als ungenutzt (py/unused-global-variable)
-#: — ein Fehlalarm, den man sonst je Fassung neu abweisen müsste.
+#: Start of the current window and whether the cap has already been reported in it. Deliberately a dict
+#: and not two module variables: those would have to be declared `global` in every writing function,
+#: and a variable set via `global` is read by CodeQL as unused (py/unused-global-variable)
+#: — a false alarm that would otherwise have to be rejected anew in every version.
 _GEMELDET_FENSTER = {"beginn": 0.0, "ueberlauf": False}
 
 
 def einmal_melden(schluessel: str, jetzt: float | None = None) -> bool:
-    """True genau beim ersten Aufruf mit diesem Schlüssel, danach False — gegen Log-Stürme.
+    """True exactly on the first call with this key, False afterwards — against log storms.
 
-    Dieselbe Idee wie `_GEMELDETE_PEERS` in `client_ip()`, nur allgemein: Ein Hinweis auf eine
-    **Fehlkonfiguration** sagt beim ersten Mal alles; wiederholt er sich je Anfrage, füllt er
-    die Datei, auf die die fail2ban-Jail zeigt und die logrotate wochenlang aufhebt. Ein
-    Seitenaufruf mit zwanzig Unterressourcen schrieb so zwanzig gleiche Zeilen, ein Crawler
-    beliebig viele — die Meldung wird dadurch nicht richtiger, nur lauter.
+    The same idea as `_GEMELDETE_PEERS` in `client_ip()`, only general: a notice about a
+    **misconfiguration** says everything the first time; if it repeats per request, it fills
+    the file the fail2ban jail points to and that logrotate keeps for weeks. A
+    page view with twenty sub-resources thus wrote twenty identical lines, a crawler
+    arbitrarily many — the message does not become more correct by that, only louder.
 
-    Der Schlüssel gehört zur Ursache, nicht zur einzelnen Anfrage (also der Host, nicht die
-    vollständige URL) — sonst hebt jeder neue Pfad die Sperre wieder auf.
+    The key belongs to the cause, not to the single request (so the host, not the
+    full URL) — otherwise every new path lifts the lock again.
 
-    Der Zustand ist prozessweit: Ein Test, der die Zeile sehen will, leert `_GEMELDET` vorher
-    (Tests müssen wiederholbar bleiben) — dafür gibt es `einmal_melden_zuruecksetzen()`.
+    The state is process-wide: a test that wants to see the line empties `_GEMELDET` beforehand
+    (tests must stay repeatable) — `einmal_melden_zuruecksetzen()` exists for that.
 
-    `jetzt` ist nur für Tests da: So lässt sich der Fensterwechsel prüfen, ohne eine Stunde zu
-    warten (ein Test, der schläft, ist kein Test).
+    `jetzt` exists only for tests: this way the window change can be checked without waiting
+    an hour (a test that sleeps is not a test).
     """
     t = time.time() if jetzt is None else float(jetzt)
     if t - _GEMELDET_FENSTER["beginn"] >= _GEMELDET_FENSTER_SEK:
@@ -654,8 +653,8 @@ def einmal_melden(schluessel: str, jetzt: float | None = None) -> bool:
     if len(_GEMELDET) >= _GEMELDET_MAX:
         if not _GEMELDET_FENSTER["ueberlauf"]:
             _GEMELDET_FENSTER["ueberlauf"] = True
-            # Direkt und nicht über `einmal_melden()` — sonst geriete die Meldung über den
-            # Deckel in denselben Deckel. Genau eine Zeile je Fenster.
+            # Directly and not via `einmal_melden()` — otherwise the message about the
+            # cap would run into the same cap. Exactly one line per window.
             seclog.warning(
                 "Hinweis-Deckel erreicht: %d verschiedene Schlüssel in diesem Fenster (%d s). "
                 "Weitere Hinweise dieser Art bleiben bis zum Fensterwechsel aus. Wer den "
@@ -668,32 +667,32 @@ def einmal_melden(schluessel: str, jetzt: float | None = None) -> bool:
 
 
 def einmal_melden_zuruecksetzen() -> None:
-    """Den Hinweis-Speicher leeren (Tests, und ein Betrieb, der bewusst neu hören will)."""
+    """Empty the notice store (tests, and an operation that deliberately wants to listen anew)."""
     _GEMELDET.clear()
     _GEMELDET_FENSTER["beginn"] = 0.0
     _GEMELDET_FENSTER["ueberlauf"] = False
 
 
 def client_ip(request, trusted_nets) -> str:
-    """Echte Client-IP. Nur wenn der direkte Peer vertrauenswürdig ist, wird X-Forwarded-For ausgewertet
-    (rechteste NICHT-vertrauenswürdige Adresse) — sonst ist XFF fälschbar.
+    """Real client IP. X-Forwarded-For is only evaluated if the direct peer is trusted
+    (rightmost NON-trusted address) — otherwise XFF is forgeable.
 
-    **Der häufigste Fehlbetrieb ist still**: Im Container ist der Proxy ein anderer Container,
-    also nicht `127.0.0.1`. Die Vorgabe passt dann nicht, XFF wird verworfen, und JEDER Nutzer
-    erscheint unter der Proxy-IP — Rate-Limit und IP-Sperre gelten ab da kollektiv, und fail2ban
-    bannt im Ernstfall den Proxy, also alle. Nichts davon sieht nach einem Fehler aus. Deshalb
-    sagt diese Funktion einmal je Peer Bescheid.
+    **The most common misoperation is silent**: in a container the proxy is another container,
+    hence not `127.0.0.1`. The default then does not fit, XFF is discarded, and EVERY user
+    appears under the proxy IP — rate limit and IP lockout apply collectively from then on, and
+    fail2ban in the worst case bans the proxy, i.e. everyone. None of this looks like an error.
+    That is why this function speaks up once per peer.
     """
     peer = request.client.host if request.client else "?"
     xff = request.headers.get("x-forwarded-for")
     if xff and is_trusted(peer, trusted_nets):
         for ip in reversed([p.strip() for p in xff.split(",") if p.strip()]):
             if not is_trusted(ip, trusted_nets):
-                # Nur eine ECHTE Adresse wird Client-IP (B5-15). Vorher ging der erste nicht
-                # vertrauenswürdige Eintrag ungeprüft durch — auch `evil`, ein Zeilenumbruch
-                # oder 4 kB Text, und das als Schlüssel für Rate-Limit, Sperre und Audit-Log.
-                # Ein Proxy, der den Client-Header nur durchreicht statt anzuhängen, macht genau
-                # diesen Eintrag client-steuerbar. Dann lieber die Peer-IP (kollektiv, aber echt).
+                # Only a REAL address becomes the client IP (B5-15). Before, the first
+                # non-trusted entry went through unchecked — also `evil`, a line break
+                # or 4 kB of text, and that as a key for rate limit, lockout and audit log.
+                # A proxy that merely passes the client header through instead of appending makes
+                # exactly this entry client-controllable. Then rather the peer IP (collective, but real).
                 norm = ip_normiert(ip)
                 if norm is not None:
                     return norm
@@ -713,9 +712,9 @@ def client_ip(request, trusted_nets) -> str:
                 "Netz des Proxys eintragen, z.B. trusted_proxies=['172.28.0.0/16'].",
                 peer, list(trusted_nets or []))
         else:
-            # Peer vertraut, aber KEINE nicht-vertrauenswürdige Adresse im XFF gefunden — das
-            # ist der Fall `trusted_proxies=['0.0.0.0/0']`: Wenn jede Adresse als Proxy gilt,
-            # bleibt keine als Client übrig, und XFF ist wirkungslos statt großzügig.
+            # Peer trusted, but NO non-trusted address found in XFF — that
+            # is the case `trusted_proxies=['0.0.0.0/0']`: if every address counts as a proxy,
+            # none remains as client, and XFF is ineffective instead of generous.
             seclog.warning(
                 "X-Forwarded-For (%s) enthält keine Adresse ausserhalb von trusted_proxies (%s) "
                 "— es bleibt bei der Peer-IP %s. Ein Eintrag wie 0.0.0.0/0 entwertet XFF, statt "
@@ -725,16 +724,16 @@ def client_ip(request, trusted_nets) -> str:
 
 
 class RateLimiter:
-    """In-memory Token-Bucket pro Schlüssel (IP), pro Prozess. Für Single-Worker-Deployments;
-    bei mehreren Workern greift zusätzlich die DB-basierte Regulation (Lockout). Für ein
-    prozessübergreifendes Limit RedisRateLimiter nutzen (config.redis_url).
+    """In-memory token bucket per key (IP), per process. For single-worker deployments;
+    with several workers the DB-based regulation (lockout) applies in addition. For a
+    cross-process limit use RedisRateLimiter (config.redis_url).
 
-    **Gedeckelt** (R7-5): Bis T-13 wuchs das Wörterbuch mit jeder neuen Adresse und schrumpfte
-    nie — ein leerer Eimer blieb als Schlüssel stehen. Wer die Quelladresse wechselt (IPv6
-    liefert davon ein /64 pro Anschluss), füllte so den Speicher des Prozesses. Jetzt gilt
-    `max_keys`, und darüber geht der am längsten ruhende Schlüssel zuerst — jede Anfrage, auch
-    eine abgewiesene, rückt ihren Schlüssel nach vorn. Wer gerade gebremst wird, fragt also
-    ständig und bleibt; verdrängt wird, wessen letzter Versuch am weitesten zurückliegt.
+    **Capped** (R7-5): until T-13 the dictionary grew with every new address and never
+    shrank — an empty bucket stayed behind as a key. Whoever changes the source address (IPv6
+    supplies a /64 per connection) thereby filled the process's memory. Now
+    `max_keys` applies, and beyond it the longest-dormant key goes first — every request, even
+    a rejected one, moves its key to the front. Whoever is currently being throttled thus
+    keeps asking and stays; displaced is whoever's last attempt lies furthest back.
     """
     def __init__(self, max_keys: int = 100_000):
         self._hits: OrderedDict = OrderedDict()
@@ -760,27 +759,27 @@ class RateLimiter:
 
 
 class RedisRateLimiter:
-    """Prozessübergreifendes Rate-Limit über Redis (Fixed-Window-Counter) — für Multi-Worker/
-    Multi-Instanz. Gleiche allow()-Schnittstelle.
+    """Cross-process rate limit via Redis (fixed-window counter) — for multi-worker/
+    multi-instance. Same allow() interface.
 
-    **Bei einem Redis-Ausfall wird nicht aufgemacht, sondern je Prozess weitergezählt** (B6-1).
-    Bis T-13 hiess es hier „fail-open (erlauben)" mit der Begründung, die DB-Sperre greife ja
-    weiter. Die gibt es aber nur an den Anmelde-Routen; Magic-Link-Anforderung, Passwort
-    vergessen, Registrierung und der Start der Föderation hängen allein an diesem Limit — ohne
-    Redis waren sie offen, und die ersten beiden verschicken Mails an beliebige Adressen. Jetzt
-    übernimmt ein eingebauter `RateLimiter`: pro Prozess statt über alle, also bis zu N-mal so
-    grosszügig — aber eine Grenze. Ausgesperrt wird durch den Ausfall niemand.
+    **On a Redis outage it does not open up, but keeps counting per process** (B6-1).
+    Until T-13 it said "fail-open (allow)" here, with the reasoning that the DB lockout keeps
+    applying. But that exists only on the sign-in routes; magic-link request, forgotten
+    password, registration and the start of federation hang on this limit alone — without
+    Redis they were open, and the first two send mails to arbitrary addresses. Now
+    a built-in `RateLimiter` takes over: per process instead of across all, so up to N times as
+    generous — but a limit. Nobody is locked out by the outage.
 
-    **Und er wird bemerkt** (B6-2): Der Konstruktor fragt Redis einmal (`ping`), statt den
-    Ausfall erst beim ersten Besucher zu entdecken. Gemeldet wird der **Wechsel** — einmal beim
-    Ausfall, einmal bei der Rückkehr —, nicht jede Anfrage: vorher schrieb jede Anfrage eine
-    Warnzeile in genau die Datei, die fail2ban liest. Nach einem Fehler ruht Redis
-    `pause_sec` lang, danach wird es wieder versucht; so hängt nicht jede Anfrage im Timeout
-    eines toten Servers. Dazu kurze Socket-Timeouts: Ein Redis, das nicht antwortet (statt
-    abzulehnen), hielt sonst jede Anfrage unbegrenzt fest.
+    **And it is noticed** (B6-2): the constructor asks Redis once (`ping`) instead of discovering
+    the outage only at the first visitor. The **change** is reported — once on
+    the outage, once on the return —, not every request: before, every request wrote a
+    warning line into exactly the file that fail2ban reads. After an error Redis rests
+    `pause_sec`, after which it is tried again; this way not every request hangs in the timeout
+    of a dead server. Plus short socket timeouts: a Redis that does not answer (instead of
+    refusing) would otherwise hold every request indefinitely.
     """
     def __init__(self, url: str, prefix: str = "tsrl", pause_sec: float = 30.0, timeout_sec: float = 1.0):
-        import redis   # Extra [redis]
+        import redis   # extra [redis]
         self.client = redis.from_url(url, socket_connect_timeout=timeout_sec, socket_timeout=timeout_sec)
         self.prefix = prefix
         self._einrichten(pause_sec)
@@ -790,7 +789,7 @@ class RedisRateLimiter:
             self._ausgefallen(e)
 
     def _einrichten(self, pause_sec: float = 30.0) -> None:
-        """Rückfall-Zustand anlegen (auch für Tests, die `__init__` umgehen)."""
+        """Create the fallback state (also for tests that bypass `__init__`)."""
         self.ersatz = RateLimiter()
         self.pause_sec = pause_sec
         self._pause_bis = 0.0

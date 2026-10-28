@@ -1,11 +1,11 @@
-"""SAML 2.0 Service-Provider-Login (Extra `[saml]`, python3-saml/onelogin).
+"""SAML 2.0 service provider login (extra `[saml]`, python3-saml/onelogin).
 
-SP-initiierter Flow: /auth/saml/login → AuthnRequest (Redirect zum IdP) → IdP POSTet die signierte
-Assertion an /auth/saml/acs → hier Signatur/Conditions prüfen, Attribute lesen. Signatur ersetzt CSRF
-(die ACS-POST kommt vom IdP, ist also von CSRF ausgenommen). SP-Metadata unter /auth/saml/metadata.
+SP-initiated flow: /auth/saml/login → AuthnRequest (redirect to the IdP) → IdP POSTs the signed
+assertion to /auth/saml/acs → here check signature/conditions, read attributes. The signature replaces CSRF
+(the ACS POST comes from the IdP, so it is exempt from CSRF). SP metadata at /auth/saml/metadata.
 
-Minimal gehalten: HTTP-Redirect fürs SSO, HTTP-POST für die ACS; wantAssertionsSigned. Für Signieren
-eigener AuthnRequests / Verschlüsselung ließe sich ein SP-Cert/-Key ergänzen.
+Kept minimal: HTTP redirect for SSO, HTTP POST for the ACS; wantAssertionsSigned. For signing
+own AuthnRequests / encryption an SP cert/key could be added.
 """
 from __future__ import annotations
 
@@ -17,35 +17,35 @@ from . import errors
 
 
 def _fehlt_extra(e: ModuleNotFoundError) -> "errors.MissingExtra":
-    """Aus einem nackten Importfehler eine Meldung machen, die sagt, was zu tun ist.
+    """Turn a bare import error into a message that says what to do.
 
-    Die Extras werden hier bewusst LAZY importiert (erst beim Benutzen). Der Preis dafür war
-    bis 0.18.0 ein `ModuleNotFoundError: onelogin` mitten im Anmeldevorgang — für den Betreiber
-    ein Defekt, dabei fehlte nur eine Zeile im Install-Befehl."""
+    The extras are deliberately imported LAZILY here (only on use). The price for that was,
+    up to 0.18.0, a `ModuleNotFoundError: onelogin` in the middle of the sign-in — for the operator
+    a defect, when only one word was missing in the install command."""
     return errors.MissingExtra(
         "Das Extra [saml] ist nicht installiert (pip install 'tinysesam[saml]') — "
         f"es fehlt: {e.name or 'onelogin'}.", extra="saml")
 
 
 def request_kontext(basis: str, pfad: str, form=None, query=None) -> dict:
-    """Der `req`-Satz für python3-saml — **aus der geprüften Basis**, nicht aus Headern (F-16).
+    """The `req` dict for python3-saml — **from the verified base**, not from headers (F-16).
 
-    python3-saml baut aus `https`, `http_host` und `script_name` die Adresse, die es für die
-    eigene hält, und vergleicht damit die `Destination` der Assertion. Kamen Schema und Host
-    aus `X-Forwarded-Proto`/`Host`, bestimmte der Anfragende diesen Vergleich mit: Er konnte
-    eine Assertion vorlegen, deren `Destination` auf seinen Namen lautet, und den Header dazu
-    passend setzen — die Prüfung ging auf, obwohl die Assertion nie für uns gedacht war.
-    Zusammen mit der Bindung über den blossen Benutzernamen (F-11) ergab das eine
-    Kontoübernahme ohne Kenntnis des lokalen Passworts.
+    python3-saml builds from `https`, `http_host` and `script_name` the address it takes to be
+    its own, and compares the assertion's `Destination` against it. If scheme and host
+    came from `X-Forwarded-Proto`/`Host`, the requester co-determined this comparison: they could
+    present an assertion whose `Destination` names their own address, and set the header to
+    match — the check passed although the assertion was never meant for us.
+    Together with the binding via the bare username (F-11) that amounted to an
+    account takeover without knowing the local password.
 
-    Die Basis kommt jetzt aus `TinySesam.public_base()`, also aus `base_url` — derselben
-    Zusage, aus der auch Entity-ID und ACS-URL gebaut werden. Damit sagen alle drei Angaben
-    dasselbe, und keine davon hört auf den Anfragenden.
+    The base now comes from `TinySesam.public_base()`, i.e. from `base_url` — the same
+    commitment from which entity ID and ACS URL are built. So all three values say
+    the same thing, and none of them listens to the requester.
 
-    Der **Pfadanteil** der Basis gehört in `script_name`, sonst schlägt die Destination-
-    Prüfung bei einer unter einem Unterpfad montierten App fehl: Die ACS-URL in den Settings
-    trägt ihn (`base + /auth/saml/acs`), die berechnete Selbst-Adresse müsste ihn also auch
-    tragen. Ist er im Pfad schon enthalten (ASGI-Mount), wird er nicht doppelt angehängt.
+    The **path part** of the base belongs in `script_name`, otherwise the destination
+    check fails for an app mounted under a subpath: the ACS URL in the settings
+    carries it (`base + /auth/saml/acs`), so the computed own address would have to carry it too.
+    If it is already contained in the path (ASGI mount), it is not appended twice.
     """
     from urllib.parse import urlsplit
     teile = urlsplit(str(basis or ""))
@@ -86,12 +86,12 @@ class SAMLClient:
                 "wantAssertionsSigned": True,
                 "wantMessagesSigned": False,
                 "requestedAuthnContext": False,
-                # SHA-1 in Signatur- oder Digest-Verfahren wird abgewiesen (F-21). python3-saml
-                # nimmt `rsa-sha1`/`dsa-sha1`/`sha1` von sich aus an (Vorgabe False) — obwohl
-                # SHA-1-Kollisionen seit SHAttered (2017) praktisch sind und XML-DSig sie seit
-                # RFC 6931 als veraltet führt. Bewusst ohne Schalter, wie bei den ID-Token-
-                # Verfahren in oidc.py: Jeder verbreitete IdP (ADFS, Entra, Keycloak, Okta)
-                # signiert seit Jahren mit SHA-256; wer noch SHA-1 bekommt, stellt den IdP um.
+                # SHA-1 in signature or digest methods is rejected (F-21). python3-saml
+                # accepts `rsa-sha1`/`dsa-sha1`/`sha1` by itself (default False) — although
+                # SHA-1 collisions have been practical since SHAttered (2017) and XML-DSig has listed them as
+                # deprecated since RFC 6931. Deliberately without a switch, like the ID-token
+                # methods in oidc.py: every common IdP (ADFS, Entra, Keycloak, Okta)
+                # has signed with SHA-256 for years; whoever still receives SHA-1 reconfigures the IdP.
                 "rejectDeprecatedAlgorithm": True,
             },
         }
@@ -104,28 +104,28 @@ class SAMLClient:
         return OneLogin_Saml2_Auth(req, old_settings=self.settings(base_url))
 
     def login_url(self, req: dict, base_url: str, return_to: str = "/"):
-        """(URL zum IdP, ID des AuthnRequests).
+        """(URL to the IdP, ID of the AuthnRequest).
 
-        Die Request-ID ist der Anker gegen untergeschobene Antworten: Der Aufrufer legt sie in
-        ein kurzlebiges Cookie und reicht sie bei der ACS wieder an `process()`. Früher wurde
-        sie hier weggeworfen — damit nahm die ACS jede signierte Assertion an, auch eine, die
-        nie angefordert wurde (Login-CSRF: der Angreifer POSTet seine eigene gültige Assertion
-        in den Browser des Opfers und meldet es unter SEINEM Konto an).
+        The request ID is the anchor against planted responses: the caller puts it into
+        a short-lived cookie and hands it back to `process()` at the ACS. It used to be
+        thrown away here — so the ACS accepted every signed assertion, even one that was
+        never requested (login CSRF: the attacker POSTs their own valid assertion
+        into the victim's browser and signs the victim in under THEIR account).
         """
         auth = self._auth(req, base_url)
         url = auth.login(return_to=return_to)
         return url, auth.get_last_request_id()
 
     def process(self, req: dict, base_url: str, request_id: str = ""):
-        """ACS-Response prüfen. Gibt {nameid, attrs} oder None (ungültig/nicht authentifiziert).
+        """Check the ACS response. Returns {nameid, attrs} or None (invalid/not authenticated).
 
-        Der **Grund** einer Ablehnung geht an den Logger `tinysesam.security`, nicht an den
-        Browser: Wer die Antwort schickt, soll nicht erfahren, woran sie scheiterte (Audience?
-        Signatur? Uhrzeit?) — der Betreiber schon. Vorher verschwand er ersatzlos, und eine
-        fehlgeschlagene Anmeldung war von aussen wie von innen nicht unterscheidbar von
-        „irgendwas ist kaputt". Gefunden 2026-09 beim ersten Lauf gegen einen echten IdP:
-        Keycloaks Entity-ID ist `…/realms/<realm>`, nicht die SSO-URL — ohne
-        `saml_idp_entity_id` lehnt die Prüfung jede Assertion ab, schweigend.
+        The **reason** for a rejection goes to the logger `tinysesam.security`, not to the
+        browser: whoever sends the response should not learn why it failed (audience?
+        signature? time?) — the operator should. Before, it vanished without a trace, and a
+        failed sign-in was indistinguishable, from outside and inside, from
+        "something is broken". Found 2026-09 on the first run against a real IdP:
+        Keycloak's entity ID is `…/realms/<realm>`, not the SSO URL — without
+        `saml_idp_entity_id` the check rejects every assertion, silently.
         """
         import secrets as _secrets
 
@@ -137,11 +137,11 @@ class SAMLClient:
                                     auth.get_errors(), auth.get_last_error_reason(),
                                     auth.is_authenticated())
             return None
-        # Die Bibliothek prüft `InResponseTo` NUR, wenn es überhaupt dasteht (python3-saml
+        # The library checks `InResponseTo` ONLY if it is present at all (python3-saml
         # 1.16, response.py: `if in_response_to is not None and request_id is not None`).
-        # Eine Antwort ganz OHNE das Feld — die IdP-initiierte („unsolicited") Variante —
-        # geht also durch, und mit ihr jede Assertion, die nie angefordert wurde. Diese
-        # Fassung ist SP-initiiert (s. Modul-Docstring): keine Anforderung, kein Login.
+        # A response entirely WITHOUT the field — the IdP-initiated ("unsolicited") variant —
+        # therefore passes, and with it every assertion that was never requested. This
+        # version is SP-initiated (see module docstring): no request, no login.
         irt = auth.get_last_response_in_response_to()
         if not request_id or not irt or not _secrets.compare_digest(str(irt), str(request_id)):
             security.seclog.warning(

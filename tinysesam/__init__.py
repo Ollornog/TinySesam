@@ -1,11 +1,11 @@
-"""TinySesam — kleines, wiederverwendbares Multi-Methoden-Auth für FastAPI.
+"""TinySesam — small, reusable multi-method auth for FastAPI.
 
-Methoden (alle parallel aktivierbar): Passwort, Passkey/WebAuthn, OIDC; TOTP als 2FA on-top.
-Rollen sind optional — wer nur „eingeloggt oder nicht" braucht, nimmt `require_user`.
+Methods (all can be enabled in parallel): password, passkey/WebAuthn, OIDC; TOTP as 2FA on top.
+Roles are optional — whoever only needs "signed in or not" uses `require_user`.
 
-TinySesam aktualisiert sich **nicht selbst**. Die Version bestimmt, wer die Bibliothek
-installiert: über einen gepinnten Git-Tag bzw. das Wheel eines Releases. Siehe README,
-Abschnitt „Installation und Updates".
+TinySesam does **not update itself**. Whoever installs the library determines the version: via a
+pinned Git tag or a release's wheel. See README,
+section "Installation and updates".
 """
 __version__ = "0.24.13"
 
@@ -17,8 +17,8 @@ from .password_change_result import PasswordChangeResult
 
 
 def current_version() -> str:
-    """Installierte Version — bevorzugt die Distribution-Metadaten, die auch dann stimmen,
-    wenn TinySesam als Abhängigkeit in einer fremden App steckt."""
+    """Installed version — preferably the distribution metadata, which are also correct
+    when TinySesam is a dependency inside a foreign app."""
     try:
         from importlib.metadata import version
         return version("tinysesam")

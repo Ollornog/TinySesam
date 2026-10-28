@@ -1,14 +1,14 @@
-"""FastAPI-Router: /auth/* — Login (Passwort), TOTP-2FA + -Einrichtung, Logout, /me.
+"""FastAPI router: /auth/* — login (password), TOTP 2FA + setup, logout, /me.
 
-Der Router ist **durchgehend bedingt**: Fast jede Route hängt an einem Config-Schalter — PIN,
-Ressourcen-Sperren, Magic-Link, Registrierung und E-Mail-Bestätigung, Passwort-Reset,
-Forward-Auth, Konto-Seite, API-Keys, Admin-Panel und die Verfahren OIDC/Passkey/SAML. Was eine
-konkrete Konfiguration daraus macht, sagt `[r.path for r in app.routes]` verlässlicher als jede
-Aufzählung hier.
+The router is **conditional throughout**: almost every route hangs on a config switch — PIN,
+resource locks, magic link, registration and e-mail confirmation, password reset,
+forward auth, account page, API keys, admin panel and the OIDC/passkey/SAML methods. What a
+concrete configuration makes of it is told more reliably by `[r.path for r in app.routes]` than by any
+enumeration here.
 
-Die Verfahrens-Routen hängen dabei nicht am Schalter, sondern am fertig **aufgebauten** Verfahren
-(`auth.oidc`, `auth.webauthn`, `auth.saml`): Ein gesetzter Schalter, dessen Extra oder Pflichtfeld
-fehlt, lässt den Aufbau schon im Konstruktor scheitern — hier kommt er nie an."""
+The method routes depend not on the switch but on the finished, **built** method
+(`auth.oidc`, `auth.webauthn`, `auth.saml`): a switch that is set but whose extra or mandatory field
+is missing makes construction fail in the constructor already — it never gets here."""
 from __future__ import annotations
 import secrets
 from urllib.parse import urlsplit
@@ -26,10 +26,10 @@ from . import security
 
 
 async def _antwort_des_handlers(request: Request, exc: Exception):
-    """Die Antwort, die der Exception-Handler der App für `exc` bauen würde — oder None.
+    """The response the app's exception handler would build for `exc` — or None.
 
-    Dieselbe Suche wie Starlettes `ExceptionMiddleware` (entlang der MRO in der Tabelle, die sie
-    in den Scope legt), damit ein eigener Handler des Gastgebers gewinnt wie ohne TinySesam.
+    The same lookup as Starlette's `ExceptionMiddleware` (along the MRO in the table it
+    puts into the scope), so that a handler of the host's own wins as it would without TinySesam.
     """
     from starlette.concurrency import run_in_threadpool
     import inspect
@@ -45,12 +45,12 @@ async def _antwort_des_handlers(request: Request, exc: Exception):
 
 
 def gehaertete_route(auth) -> type[APIRoute]:
-    """Eine Routen-Klasse, die jede Antwort durch `auth._kopfzeilen` schickt.
+    """A route class that sends every response through `auth._kopfzeilen`.
 
-    Als Routen-Klasse und nicht als Middleware: TinySesam ist ein Router in einer fremden App.
-    Eine Middleware träfe jede Route des Gastgebers mit — dessen Cache-Regeln für statische
-    Dateien eingeschlossen. `include_router` übernimmt die Klasse je Route, deshalb gilt sie
-    auch für das Admin-Panel unter einem frei gewählten Präfix.
+    As a route class and not as middleware: TinySesam is a router inside a foreign app.
+    A middleware would hit every route of the host too — including its cache rules for static
+    files. `include_router` adopts the class per route, so it applies
+    to the admin panel under a freely chosen prefix as well.
     """
     class _GehaerteteRoute(APIRoute):
         def get_route_handler(self):
@@ -59,20 +59,20 @@ def gehaertete_route(auth) -> type[APIRoute]:
             async def handler(request: Request):
                 try:
                     antwort = await innen(request)
-                except _StarletteHTTPException as exc:   # FastAPIs HTTPException erbt davon
+                except _StarletteHTTPException as exc:   # FastAPI's HTTPException inherits from it
                     auth._kopfzeilen_fehler(exc)
                     raise
                 except RequestValidationError as exc:
-                    # Das 422 gibt die Eingabe zurück, trägt aber keine `headers`, in die man die
-                    # Kopfzeilen legen könnte (A2). Also die Antwort hier bauen — mit genau dem
-                    # Handler, den die App dafür registriert hat (der des Gastgebers oder FastAPIs
-                    # Vorgabe), damit sich an ihrem Inhalt nichts ändert.
+                    # The 422 returns the input but carries no `headers` into which the
+                    # header lines could be put (A2). So build the response here — with exactly the
+                    # handler the app registered for it (the host's or FastAPI's
+                    # default), so that nothing changes in its content.
                     antwort = await _antwort_des_handlers(request, exc)
                     if antwort is None:
                         raise
-                # Schreibt die Antwort die Sitzung (Anmelden auf jedem Weg, Abmelden, Step-up),
-                # gehen die Cookies unter den Namen von vor `__Host-` mit (H-1). Hier zentral,
-                # damit kein Anmeldeweg es vergessen kann.
+                # If the response writes the session (sign-in by any path, sign-out, step-up),
+                # the cookies go along under the names from before `__Host-` (H-1). Central here,
+                # so that no sign-in path can forget it.
                 auth._altnamen_loeschen(request, antwort)
                 return auth._kopfzeilen(antwort)
             return handler
@@ -83,31 +83,31 @@ def build_router(auth) -> APIRouter:
     cfg = auth.cfg
     r = APIRouter(tags=["auth"], route_class=gehaertete_route(auth))
 
-    # ---------- Login (Passwort) ----------
+    # ---------- Login (password) ----------
     @r.get("/auth/login", response_class=HTMLResponse)
     def login_page(request: Request, next: str = "", error: str = "", app: str = "", gate_host: str = "",
                    abgemeldet: str = ""):
         nxt = auth.safe_next(next, request)
-        # Code-Austausch (T-26): `next` ist dann ein Weg des Gateways; welche App gemeint ist, sagt
-        # `gate_host`. Einen Namen zeigt nur ein Host aus `forward_apps` — ein erfundener bleibt namenlos.
+        # Code exchange (T-26): `next` is then a path of the gateway; which app is meant is told by
+        # `gate_host`. A name is shown only for a host from `forward_apps` — an invented one stays nameless.
         gh = str(gate_host or "").strip().lower()
-        # `app` (T-14) nur, wenn es einen Client dieses Namens gibt — ein frei erfundener Wert
-        # gehört weder in den Knopf noch in eine Umleitung.
+        # `app` (T-14) only if a client of that name exists — a freely invented value
+        # belongs neither in the button nor in a redirect.
         registry = getattr(auth, "oidc_clients", None)
         app = app if (app and registry is not None and registry.mehrere and registry.bekannt(app)) else ""
         if auth.current_user(request):
             sitzung = request.cookies.get(auth.session_cookie_name) or ""
             ziel_host = (urlsplit(nxt).hostname or "").lower() if "://" in nxt else ""
-            # T-22: Nur von dieser Anwendung abgemeldet — die Seite zeigen, mit „Weiter als …",
-            # statt zurückzuschicken (das wäre eine Schleife mit der Forward-Auth).
+            # T-22: signed out of this application only — show the page, with "Continue as …",
+            # instead of sending back (that would be a loop with forward auth).
             if sitzung and ziel_host and auth.store.gate_ist_abgemeldet(auth.store.session_hash(sitzung), ziel_host):
                 u = auth.session_user(request)
                 return auth.render_page("login", request=request, next=nxt, error=error, app=app,
                                         app_name=auth._forward_app(nxt)["name"],
                                         resume_user=(u["display_name"] or u["username"]) if u else "")
-            # B-2: Angemeldet, aber ohne (gültige) Freigabe für DIESE Anwendung schickte die Seite
-            # zurück zu `next` — die Forward-Auth schickte wieder hierher, eine Schleife ohne Ende.
-            # Die Freigabe gibt nur der Provider, also dorthin.
+            # B-2: signed in, but without a (valid) approval for THIS application, the page sent
+            # back to `next` — forward auth sent here again, a loop without end.
+            # Only the provider grants the approval, so go there.
             sitzung = request.cookies.get(auth.session_cookie_name) or ""
             if app and sitzung and not auth._oidc_freigabe_gueltig(auth.store.session_hash(sitzung), app)[0]:
                 return RedirectResponse(f"{auth.browser_path(request, '/auth/oidc/start')}"
@@ -121,34 +121,34 @@ def build_router(auth) -> APIRouter:
     @r.post("/auth/login")
     def login_submit(request: Request, username: str = Form(""), password: str = Form(""),
                      next: str = Form(""), remember: str = Form(""), csrf_tok: str = Form("", alias="_csrf")):
-        # Eine Quelle (0.22.0): Der ganze Ablauf — CSRF, IP-Drossel, Vorbuchung, LDAP-Rückfall,
-        # Audit und Sicherheits-Log, Sitzung — steht in `login_password`, dem öffentlichen
-        # Baustein für eigene Login-Seiten. Hier wird nur das Ergebnis zur Seite. Diese Route ruft
-        # keinen inneren Prüfer selbst (Wächter in `tests/test_anmelden.py`).
+        # One source (0.22.0): the whole flow — CSRF, IP throttle, pre-booking, LDAP fallback,
+        # audit and security log, session — lives in `login_password`, the public
+        # building block for custom login pages. Here only the result becomes the page. This route calls
+        # no inner checker itself (guard in `tests/test_anmelden.py`).
         erg = auth.login_password(request, username, password, next=next,
                                   remember=_remember(cfg, remember), csrf=csrf_tok)
         if erg.reason == "method_disabled":
             raise HTTPException(404, erg.message)
         if not erg:
-            # Kein 422-JSON ins Gesicht: die Seite noch einmal, mit Hinweis.
+            # No 422 JSON in the face: the page once more, with a notice.
             return auth.render_page("login", request=request, status=erg.status, next=erg.next_url,
                                     error=erg.message)
-        return erg.redirect()   # Art des Cookies folgt der Sitzung (A-2)
+        return erg.redirect()   # kind of cookie follows the session (A-2)
 
-    # ---------- TOTP als Faktor (2. Schritt oder Ketten-/Route-Faktor) ----------
+    # ---------- TOTP as a factor (2nd step or chain/route factor) ----------
     @r.get("/auth/totp", response_class=HTMLResponse)
     def totp_page(request: Request, next: str = "", error: str = ""):
         nxt = auth.safe_next(next, request)
-        # Das Konto aus dem Cookie, wie beim Absenden (0.20.1, `session_user`): Ein API-Key hat
-        # hier keinen TOTP-Schritt.
+        # The account from the cookie, as on submit (0.20.1, `session_user`): an API key has
+        # no TOTP step here.
         voll = auth.session_user(request)
         user = auth.pending_user(request) or voll
         if not user:
             return RedirectResponse(auth.browser_path(request, cfg.login_path), 303)
         if not auth.store.has_confirmed_totp(user["id"]):
-            # Faktor totp verlangt, aber nicht eingerichtet → zur Einrichtung. Erlaubt ist das
-            # für voll Angemeldete und für den Ketten-Fall (siehe totp_enrollment_user) — sonst
-            # wäre login_chain=["password","totp"] für jedes Konto ohne TOTP eine Sackgasse.
+            # Factor totp required but not set up → to the setup. Allowed
+            # for fully signed-in users and for the chain case (see totp_enrollment_user) — otherwise
+            # login_chain=["password","totp"] would be a dead end for every account without TOTP.
             if voll or auth.totp_enrollment_user(request):
                 return RedirectResponse(f"{auth.browser_path(request, '/auth/totp/setup')}?next={_q(nxt)}", 303)
             return RedirectResponse(auth.browser_path(request, cfg.login_path), 303)
@@ -156,52 +156,52 @@ def build_router(auth) -> APIRouter:
 
     @r.post("/auth/totp")
     def totp_submit(request: Request, code: str = Form(""), next: str = Form(""), csrf_tok: str = Form("", alias="_csrf")):
-        # Eine Quelle (0.22.0): `login_totp` prüft (TOTP- oder Einmal-Code), drosselt, bucht und
-        # hängt den Faktor an; hier wird nur das Ergebnis zur Seite.
+        # One source (0.22.0): `login_totp` checks (TOTP or one-time code), throttles, books and
+        # attaches the factor; here only the result becomes the page.
         erg = auth.login_totp(request, code, next=next, csrf=csrf_tok)
         if erg.reason == "no_session":
-            return erg.redirect()                       # zur Login-Seite, ohne Cookie
+            return erg.redirect()                       # to the login page, without cookie
         if not erg:
             return auth.render_page("totp", request=request, status=erg.status, next=erg.next_url,
                                     error=erg.message)
         return erg.redirect()
 
-    # ---------- TOTP einrichten (eingeloggter User) ----------
+    # ---------- Set up TOTP (signed-in user) ----------
     @r.get("/auth/totp/setup", response_class=HTMLResponse)
     def totp_setup(request: Request, next: str = ""):
         u = auth.current_user(request) or auth.totp_enrollment_user(request)
         if not u:
             return RedirectResponse(auth.browser_path(request, cfg.login_path), 303)
-        # Faktor-ANLAGE ist Selbstverwaltung — eine Sitzung, kein API-Key. Der Abbau war seit
-        # R3-3 gesperrt, die Anlage nicht: Ein abgeflossener CI-Key richtete sich ein eigenes
-        # TOTP ein und kam über den vollwertigen Login damit zurück an die Abbau-Routen.
+        # Factor CREATION is self-service — a session, no API key. Removal had been blocked since
+        # R3-3, creation had not: a leaked CI key set up its own
+        # TOTP and came back through the full login to the removal routes.
         auth.require_session(request, u)
-        # Wer schon einen bestätigten zweiten Faktor hat, darf ihn hier nicht verlieren — ein
-        # Klick auf einen fremden Link reichte sonst, um TOTP auf „unbestätigt" zurückzusetzen
-        # (Fund B2-1). Der Weg zum Wechsel führt über das reguläre Abschalten
-        # (POST /auth/totp/disable, CSRF-geschützt). `totp_begin` verweigert das ebenfalls —
-        # der Wächter hier liefert nur die lesbare Antwort statt eines Serverfehlers.
+        # Whoever already has a confirmed second factor must not lose it here — one
+        # click on a foreign link was otherwise enough to reset TOTP to "unconfirmed"
+        # (finding B2-1). The way to switch leads through the regular disabling
+        # (POST /auth/totp/disable, CSRF-protected). `totp_begin` refuses that as well —
+        # the guard here only delivers the readable answer instead of a server error.
         if auth.store.has_confirmed_totp(u["id"]):
             raise HTTPException(409, auth.t("api.totp_active"))
-        # Dieser GET schreibt NICHTS mehr. Bis zur Nacharbeit rief er `totp_begin()` unbedingt:
-        # Für ein Konto ohne bestätigtes TOTP erzeugte damit jeder Aufruf ein neues Geheimnis
-        # und ersetzte einen laufenden Einrichtungsversuch — ein fremder Link entwertete das
-        # eben gescannte QR-Bild und stiess Audit-Zeilen von aussen an. Der Fundtext zu B2-1
-        # verlangte beides: bei bestätigtem TOTP verweigern UND nur auf ausdrückliche
-        # Anforderung (POST mit CSRF-Token) beginnen. Das Geheimnis entsteht deshalb erst in
-        # `POST /auth/totp/setup/start`; diese Seite zeigt bloss den Knopf dafür.
+        # This GET writes NOTHING any more. Until the follow-up it called `totp_begin()` unconditionally:
+        # for an account without confirmed TOTP every call thereby created a new secret
+        # and replaced an attempt in progress — a foreign link invalidated the
+        # QR image just scanned and triggered audit lines from outside. The finding text on B2-1
+        # demanded both: refuse with confirmed TOTP AND begin only on explicit
+        # request (POST with CSRF token). The secret therefore comes into being only in
+        # `POST /auth/totp/setup/start`; this page merely shows the button for it.
         return auth.render_page("totp_setup", request=request, data=None, next=auth.safe_next(next, request))
 
     @r.post("/auth/totp/setup/start", response_class=HTMLResponse)
     def totp_setup_start(request: Request, next: str = Form(""), csrf_tok: str = Form("", alias="_csrf")):
-        """Die Einrichtung ausdrücklich starten — hier (und nur hier) entsteht das Geheimnis."""
+        """Start the setup explicitly — here (and only here) the secret comes into being."""
         auth.require_csrf(request, csrf_tok)
         u = auth.current_user(request) or auth.totp_enrollment_user(request)
         if not u:
             return RedirectResponse(auth.browser_path(request, cfg.login_path), 303)
-        # Dasselbe Schloss wie am GET, und hier das wichtigere: Diese Antwort trägt das
-        # TOTP-Geheimnis im Klartext. Ein API-Key darf es nicht zu sehen bekommen — er käme
-        # sonst über den selbst registrierten Faktor an eine frische Sitzung.
+        # The same lock as on the GET, and here the more important one: this response carries the
+        # TOTP secret in plain text. An API key must not get to see it — via the
+        # self-registered factor it would otherwise obtain a fresh session.
         auth.require_session(request, u)
         if auth.store.has_confirmed_totp(u["id"]):
             raise HTTPException(409, auth.t("api.totp_active"))
@@ -211,27 +211,27 @@ def build_router(auth) -> APIRouter:
     @r.post("/auth/totp/setup")
     def totp_setup_confirm(request: Request, code: str = Form(...), next: str = Form("")):
         auth.require_csrf(request, request.headers.get("x-csrf-token"))
-        # Beide Konten aus dem Cookie (0.20.1, `session_user`): Der Einschreibungs-Zweig unten
-        # schliesst mit `complete_totp` die Sitzung ab.
+        # Both accounts from the cookie (0.20.1, `session_user`): the enrollment branch below
+        # completes the session with `complete_totp`.
         voll = auth.session_user(request)
-        # Vor der Bestätigung fragen — danach hat das Konto ein bestätigtes TOTP, und
-        # `totp_enrollment_user` sagt None.
+        # Ask before the confirmation — afterwards the account has a confirmed TOTP, and
+        # `totp_enrollment_user` says None.
         einschreibung = None if voll else auth.totp_enrollment_user(request)
-        # Ohne beides: ein API-Key bekommt die Absage mit Grund (403 `api.needs_session`, wie
-        # beim GET), wer gar nichts vorzeigt, die übliche Absage von `require_session` (401;
-        # nur ein Aufruf mit `Accept: text/html` wird zur Anmeldung geleitet — das Formular
-        # der Seite schickt per `fetch`, also ohne).
+        # Without both: an API key gets the refusal with reason (403 `api.needs_session`, as
+        # on the GET), whoever shows nothing at all gets the usual refusal of `require_session` (401;
+        # only a call with `Accept: text/html` is redirected to sign-in — the form
+        # of the page sends via `fetch`, so without).
         u = auth.require_session(request, voll or einschreibung)
-        # Wie GET und /start (A-4): Ein aktives TOTP wird hier nicht „noch einmal bestätigt".
-        # Sonst meldete die Stelle `totp_enabled` für nichts und prüfte nebenbei Codes des
-        # aktiven Faktors mit eigenem Versuchstopf.
+        # Like GET and /start (A-4): an active TOTP is not "confirmed once more" here.
+        # Otherwise this place would report `totp_enabled` for nothing and incidentally check codes of the
+        # active factor with its own attempt bucket.
         if auth.store.has_confirmed_totp(u["id"]):
             raise HTTPException(409, auth.t("api.totp_active"))
-        # Drossel, eigener Topf und Protokoll wie an jeder anderen OTP-Prüfstelle (B2-12/R3-6).
-        # Eigener Topf, weil Einrichten keine Anmeldung ist: Tippfehler hier dürfen den
-        # Login-Lockout nicht füllen. Prüfen und Verbuchen in EINEM Schritt wie überall sonst
-        # (R7-2): Mit `_is_totp_setup_locked()` vorab und `_record_login()` danach lag die
-        # Codeprüfung dazwischen, und eine parallele Salve kam an der Grenze vorbei.
+        # Throttle, own bucket and log as at every other OTP check (B2-12/R3-6).
+        # Own bucket, because setting up is not a sign-in: typos here must not fill the
+        # login lockout. Check and book in ONE step as everywhere else
+        # (R7-2): with `_is_totp_setup_locked()` beforehand and `_record_login()` afterwards the
+        # code check lay in between, and a parallel burst slipped past the limit.
         ip = auth.client_ip(request)
         versuch = (auth._versuch_beginnen(u["username"], ip, "totp_setup")
                    if auth._rate_ok(ip, login=False) else None)
@@ -240,82 +240,82 @@ def build_router(auth) -> APIRouter:
         ok = auth.totp_confirm(u["id"], code)
         auth._record_login(u["username"], ip, ok, "totp_setup", versuch=versuch)
         if not (ok and einschreibung):
-            # B1-7: Nach einem neuen Faktor das Beenden der übrigen Sitzungen anbieten — die Zahl
-            # sagt der Oberfläche, ob es etwas anzubieten gibt.
+            # B1-7: after a new factor offer to end the other sessions — the number
+            # tells the UI whether there is anything to offer.
             return JSONResponse({"ok": ok, "other_sessions": auth.count_other_sessions(request, u) if ok else 0})
-        # Pflicht-Einrichtung unter der Kette (A-1): Der Bestätigungscode IST der TOTP-Schritt.
-        # Er ist jetzt verbraucht; hätte der Nutzer ihn an /auth/totp noch einmal getippt, wäre
-        # das ein Fehlversuch gewesen — fünfmal, und der Login-Lockout samt fail2ban-Zeilen
-        # sperrte das Konto, das sich gerade korrekt eingerichtet hat.
+        # Mandatory setup under the chain (A-1): the confirmation code IS the TOTP step.
+        # It is now consumed; had the user typed it once more at /auth/totp, that would have
+        # been a failed attempt — five times, and the login lockout including fail2ban lines
+        # would lock the account that has just set itself up correctly.
         auth._record_login(u["username"], ip, True, "totp")
         sitzungs_token = request.cookies.get(auth.session_cookie_name)
         erneuert = auth.complete_totp(sitzungs_token)
         weiter = erneuert or sitzungs_token
-        # B1-7 auch hier: Gerade die Einschreibung ist der Fall mit alten Sitzungen (Gerät
-        # verloren, Betreiber-Fenster). Gezählt an der NEUEN Sitzung — die alte, halbe hat
-        # `complete_totp` eben gelöscht (sonst liefe die neue als „andere" mit).
-        # Nur wenn die Sitzung damit voll ist (`erneuert`): Folgt in der Kette noch ein Schritt
-        # (password → totp → pin), bleibt sie halb, und das Beenden der übrigen Sitzungen
-        # scheiterte mit 401 — die Seite hätte gefragt, der Nutzer zugestimmt, und das verlorene
-        # Gerät bliebe angemeldet. Dann lieber kein Angebot; die Kontoseite listet die Sitzungen.
+        # B1-7 here too: enrollment is precisely the case with old sessions (device
+        # lost, operator window). Counted at the NEW session — the old, half one was just
+        # deleted by `complete_totp` (otherwise the new one would count as "other").
+        # Only if the session is thereby full (`erneuert`): if the chain has another step
+        # (password → totp → pin), it stays half, and ending the other sessions
+        # would fail with 401 — the page would have asked, the user agreed, and the lost
+        # device would stay signed in. Better no offer then; the account page lists the sessions.
         antwort = JSONResponse({"ok": True, "next": auth._login_redirect_after(
             request, weiter, u["id"], auth.safe_next(next, request)),
             "other_sessions": auth.count_other_sessions(request, u, token=erneuert) if erneuert else 0,
-            # Grenze d: Bleibt die Sitzung halb, fragt die Seite trotzdem — eingelöst wird beim
-            # Abschluss der Kette (`/auth/sessions/revoke-after-login`).
+            # Boundary d: if the session stays half, the page asks anyway — redeemed at the
+            # end of the chain (`/auth/sessions/revoke-after-login`).
             "other_sessions_after": 0 if erneuert else auth.count_other_sessions(request, u)})
         if erneuert:
-            auth.set_cookie(antwort, erneuert)   # dreht beim Login auch das CSRF-Token
+            auth.set_cookie(antwort, erneuert)   # also rotates the CSRF token on login
         return antwort
 
     @r.post("/auth/totp/disable")
     def totp_off(request: Request):
-        # Ohne diese Zeile genügte ein <form method=POST> ohne Body von einer fremden Seite,
-        # um TOTP UND alle Recovery-Codes zu löschen — der zweite Faktor spurlos weg.
+        # Without this line a <form method=POST> without a body from a foreign page was enough
+        # to delete TOTP AND all recovery codes — the second factor gone without a trace.
         auth.require_csrf(request, request.headers.get("x-csrf-token"))
-        # **Faktor-Verwaltung verlangt Frische** (Befund R3-3). `current_user()` genügte hier
-        # bisher — mit zwei Folgen: (1) Eine Sitzung, deren Step-up längst abgelaufen war
-        # (jeder `require(mfa=True)`-Guard gab ihr 403), durfte den zweiten Faktor trotzdem
-        # abbauen. (2) `current_user()` akzeptiert auch einen **API-Key**: ein abgeflossenes
-        # Maschinen-Credential, das nie einen interaktiven Faktor erbracht hat, löschte TOTP und
-        # PIN seines Besitzers lautlos. `require_mfa()` schliesst beides — für einen API-Key ist
-        # Step-up-Frische konstruktiv unerreichbar (403, `api.stepup_session`).
+        # **Factor management requires freshness** (finding R3-3). `current_user()` was enough here
+        # so far — with two consequences: (1) a session whose step-up had long expired
+        # (every `require(mfa=True)` guard gave it 403) could still
+        # remove the second factor. (2) `current_user()` also accepts an **API key**: a leaked
+        # machine credential that never provided an interactive factor silently deleted the TOTP and
+        # PIN of its owner. `require_mfa()` closes both — for an API key
+        # step-up freshness is constructively unreachable (403, `api.stepup_session`).
         u = auth.require_mfa(request)
         auth.totp_disable(u["id"])
         return {"ok": True, "other_sessions": auth.count_other_sessions(request, u)}   # B1-7
 
     @r.post("/auth/totp/recovery")
     def totp_recovery(request: Request):
-        """Neue Einmal-Recovery-Codes erzeugen (nur mit eingerichtetem TOTP). Klartext NUR EINMAL."""
+        """Generate new one-time recovery codes (only with TOTP set up). Plain text ONLY ONCE."""
         auth.require_csrf(request, request.headers.get("x-csrf-token"))
-        u = auth.require_mfa(request)   # R3-3: frische Faktor-Bestätigung, kein API-Key
+        u = auth.require_mfa(request)   # R3-3: fresh factor confirmation, no API key
         if not auth.store.has_confirmed_totp(u["id"]):
             raise HTTPException(400, auth.t("api.totp_first"))
         return {"codes": auth.generate_recovery_codes(u["id"])}
 
-    # ---------- PIN-Login (persönliche PIN, nur wenn aktiviert) ----------
+    # ---------- PIN login (personal PIN, only if enabled) ----------
     if cfg.pin_enabled:
         @r.get("/auth/pin", response_class=HTMLResponse)
         def pin_page(request: Request, next: str = "", error: str = ""):
-            """PIN-Eingabe. Für Eingeloggte (PIN als Zusatzfaktor einer Route) und im Kettenschritt
-            nach dem ersten Faktor ohne Benutzerfeld; für Gäste als eigenständige Seite — die
-            Login-Seite bietet die PIN ohnehin an."""
+            """PIN entry. For signed-in users (PIN as additional factor of a route) and in the chain step
+            after the first factor without a user field; for guests as a standalone page — the
+            login page offers the PIN anyway."""
             nxt = auth.safe_next(next, request)
-            # Wie beim Absenden: ein API-Key ist ein Gast. Die halbe Sitzung (erster Faktor ja,
-            # Kette offen) zählt nur, wenn die PIN ihr Kettenschritt ist (G7-N1, p2 F1).
+            # As on submit: an API key is a guest. The half session (first factor yes,
+            # chain open) counts only if the PIN is its chain step (G7-N1, p2 F1).
             u = auth.session_user(request) or auth._pin_kettenschritt(request)
             if u:
                 return auth.render_page("pin", request=request, next=nxt, error=error, username=u["username"])
             if not cfg.pin_as_first_factor():
-                # PIN ist kein Erstfaktor → Gäste haben hier nichts verloren
+                # PIN is no first factor → guests have no business here
                 return RedirectResponse(f"{auth.browser_path(request, cfg.login_path)}?next={_q(nxt)}", 303)
             return auth.render_page("pin", request=request, next=nxt, error=error)
 
         @r.post("/auth/pin")
         def pin_submit(request: Request, pin: str = Form(""), username: str = Form(""),
                        next: str = Form(""), remember: str = Form(""), csrf_tok: str = Form("", alias="_csrf")):
-            # Eine Quelle (0.22.0): Welche Lage (volle Sitzung, Kettenschritt, Gästeweg), Drossel,
-            # Vorbuchung in Login- und PIN-Topf und Serie stehen in `login_pin`.
+            # One source (0.22.0): which situation (full session, chain step, guest path), throttle,
+            # pre-booking into login and PIN bucket, and series live in `login_pin`.
             erg = auth.login_pin(request, pin, username, next=next,
                                  remember=_remember(cfg, remember), csrf=csrf_tok)
             if erg.reason == "method_disabled":
@@ -324,8 +324,8 @@ def build_router(auth) -> APIRouter:
                 ctx = {"next": erg.next_url, "error": erg.message}
                 seite = "login"
                 if erg.next_factor == "pin":
-                    # Die PIN steht hinter einem erbrachten Faktor: dieselbe PIN-Seite, ohne
-                    # Namensfeld, mit dem Konto der Sitzung (volle oder halbe).
+                    # The PIN stands behind a provided factor: the same PIN page, without a
+                    # name field, with the session's account (full or half).
                     seite = "pin"
                     konto = auth.session_user(request) or auth.pending_user(request)
                     if konto:
@@ -335,30 +335,30 @@ def build_router(auth) -> APIRouter:
 
         @r.post("/auth/pin/set")
         async def pin_set(request: Request):
-            # R3-3: Eine PIN zu ERSETZEN heisst, einen Anmeldefaktor auszutauschen — das darf
-            # nur eine interaktive Sitzung mit frischer Bestätigung. Ein API-Key kommt hier in
-            # keinem Fall durch, auch nicht beim Anlegen (sonst setzt der Key-Inhaber den
-            # Faktor seines Besitzers): der Riegel steht deshalb VOR der Fallunterscheidung
-            # und liefert die klare Meldung statt der Frische-Ausrede.
+            # R3-3: REPLACING a PIN means exchanging a sign-in factor — only an
+            # interactive session with fresh confirmation may do that. An API key gets through here in
+            # no case, not even when creating (otherwise the key holder would set the
+            # factor of its owner): the bolt therefore stands BEFORE the case distinction
+            # and delivers the clear message instead of the freshness excuse.
             u = auth.require_session(request)
-            # Die Regel, genau: `require_mfa()` gilt für das Ersetzen UND für das Anlegen,
-            # sobald das Konto überhaupt etwas hat, womit es bestätigen kann — auch wenn das
-            # nur sein Passwort ist. Denn mit `pin_login` ist eine PIN ein vollwertiger
-            # Erstfaktor: Wer ein frisches Sitzungscookie stiehlt, richtete sich sonst einen
-            # eigenen Zugang ein, der den Diebstahl überdauert. Das Passwort noch einmal zu
-            # tippen ist die Hürde, die genau das verhindert; die Kontoseite führt über
-            # `X-TinySesam-Reauth` von selbst dorthin. Nur ein Konto, das gar nichts hat
-            # (rein föderiert), hängt am Alter der Anmeldung — sonst wäre die Einrichtung
-            # für es eine Sackgasse.
+            # The rule, exactly: `require_mfa()` applies to replacing AND to creating,
+            # as soon as the account has anything at all with which it can confirm — even if that
+            # is only its password. Because with `pin_login` a PIN is a full
+            # first factor: whoever steals a fresh session cookie would otherwise set up
+            # an access of their own that outlives the theft. Typing the password once more
+            # is the hurdle that prevents exactly that; the account page leads there by itself via
+            # `X-TinySesam-Reauth`. Only an account that has nothing at all
+            # (purely federated) depends on the age of the sign-in — otherwise setup
+            # would be a dead end for it.
             if auth.has_pin(u["id"]) or auth.stepup_options(u):
                 u = auth.require_mfa(request)
             elif not auth.login_fresh(request, u):
-                # Die ERSTE PIN eines Kontos, das nichts hat, womit es bestätigen könnte
-                # (kein Passwort, keine PIN, kein TOTP — rein föderiert): `require_mfa()`
-                # wäre hier eine Sackgasse, `stepup_options()` ist leer und die Reauth-Seite
-                # hätte kein Feld. Das Anlegen hängt darum am Alter der Anmeldung. Kein
-                # `X-TinySesam-Reauth`: Die Reauth-Seite kann diesem Konto nicht helfen, ein
-                # neuer Login schon.
+                # The FIRST PIN of an account that has nothing with which it could confirm
+                # (no password, no PIN, no TOTP — purely federated): `require_mfa()`
+                # would be a dead end here, `stepup_options()` is empty and the reauth page
+                # would have no field. Creating therefore depends on the age of the sign-in. No
+                # `X-TinySesam-Reauth`: the reauth page cannot help this account, a
+                # new login can.
                 raise HTTPException(403, auth.t("api.stepup_relogin"))
             b = await auth.json_body(request)
             try:
@@ -371,13 +371,13 @@ def build_router(auth) -> APIRouter:
         @r.post("/auth/pin/disable")
         def pin_off(request: Request):
             auth.require_csrf(request, request.headers.get("x-csrf-token"))
-            u = auth.require_mfa(request)   # R3-3: frische Faktor-Bestätigung, kein API-Key
-            # Die Zeile schreibt `disable_pin` selbst — mit Konto und IP (B5-02). Hier stand eine
-            # zweite, die denselben Vorgang doppelt ins Log schrieb.
+            u = auth.require_mfa(request)   # R3-3: fresh factor confirmation, no API key
+            # The line is written by `disable_pin` itself — with account and IP (B5-02). Here stood a
+            # second one that wrote the same operation twice into the log.
             auth.disable_pin(u["id"])
             return {"ok": True, "other_sessions": auth.count_other_sessions(request, u)}   # B1-7
 
-    # ---------- Geteiltes Ressourcen-Geheimnis (PIN/Passphrase ohne User-Konto) ----------
+    # ---------- Shared resource secret (PIN/passphrase without a user account) ----------
     if cfg.resource_locks_enabled:
         def _res_ctx(row, name, nxt, error=""):
             return dict(name=name, kind=row["kind"], label=row["label"] or name, next=nxt, error=error)
@@ -402,11 +402,11 @@ def build_router(auth) -> APIRouter:
             nxt = auth.safe_next(next, request)
             ip = auth.client_ip(request)
             pseudo = f"res:{name}"
-            # Eigener Topf (`_is_resource_locked`): Die Bereichs-PIN darf JEDER Besucher
-            # probieren, und über den Login-Zähler verriegelten diese Fehlgriffe via
-            # `ip_attempt_factor` die Anmeldung von Konten, die damit nichts zu tun hatten
-            # (drei Bereiche à fünf Fehlgriffe reichten). Gesperrt wird jetzt der Bereich —
-            # je Bereich und, weil hier Unangemeldete raten, weiterhin auch je Adresse.
+            # Own bucket (`_is_resource_locked`): EVERY visitor may try the area PIN,
+            # and through the login counter these wrong guesses locked, via
+            # `ip_attempt_factor`, the sign-in of accounts that had nothing to do with it
+            # (three areas of five wrong guesses were enough). Now the area is locked —
+            # per area and, because unauthenticated users guess here, still per address as well.
             versuch = auth._versuch_beginnen(pseudo, ip, "resource") if auth._rate_ok(ip, login=False) else None
             if versuch is None:
                 return auth.render_page("resource_unlock", request=request, status=429,
@@ -420,7 +420,7 @@ def build_router(auth) -> APIRouter:
             auth.audit("resource_unlock", ip=ip, detail=name)
             return resp
 
-    # ---------- Magic-Link (Einmal-Login per E-Mail) ----------
+    # ---------- Magic link (one-time login by e-mail) ----------
     if cfg.magiclink_enabled:
         @r.get("/auth/magic/request", response_class=HTMLResponse)
         def magic_request_page(request: Request, next: str = ""):
@@ -429,25 +429,25 @@ def build_router(auth) -> APIRouter:
         @r.post("/auth/magic/request", response_class=HTMLResponse)
         def magic_request(request: Request, email: str = Form(""), next: str = Form(""),
                           csrf_tok: str = Form("", alias="_csrf")):
-            # Ohne diese Prüfung konnte eine fremde Seite über den Browser des Opfers
-            # Anmeldelinks an beliebige Adressen verschicken lassen — die einzige
-            # zustandsändernde Route, die ohne Token durchkam.
+            # Without this check a foreign page could, via the victim's browser, have
+            # sign-in links sent to arbitrary addresses — the only
+            # state-changing route that got through without a token.
             auth.require_csrf(request, csrf_tok)
             nxt = auth.safe_next(next, request)
             ip = auth.client_ip(request)
             if not auth._rate_ok(ip):
                 return auth.render_page("magic_request", request=request, status=429, next=nxt, sent=False,
                                         error=auth.t("err.rate"))
-            # Ohne vertrauenswürdige öffentliche Adresse geht KEINE Mail hinaus: der Link
-            # käme aus dem Host-Header des Anfragenden, und den setzt bei einer Mail an ein
-            # fremdes Postfach der Angreifer (R4-01).
+            # Without a trustworthy public address NO mail goes out: the link
+            # would come from the requester's Host header, and for a mail to a
+            # foreign mailbox the attacker sets that (R4-01).
             #
-            # `require_public_base` und nicht `public_base`: Hier stand die Prüfung schon, aber
-            # der leere Fall schrieb nur eine Audit-Zeile und fiel unten in die Erfolgsseite —
-            # HTTP 200, „Mail ist unterwegs", keine Mail. Die generische Antwort ist gegen die
-            # Benutzer-Enumeration richtig und verdeckte hier einen Totalausfall. Ein fehlender
-            # `base_url` ist nicht adressbezogen: Der Abbruch verrät nichts über das Postfach,
-            # und `konfigpruefung` verhindert diesen Zustand ohnehin beim Aufbau.
+            # `require_public_base` and not `public_base`: the check stood here already, but
+            # the empty case only wrote an audit line and fell below into the success page —
+            # HTTP 200, "mail is on its way", no mail. The generic answer is right against
+            # user enumeration and here concealed a total failure. A missing
+            # `base_url` is not address-related: the abort reveals nothing about the mailbox,
+            # and `konfigpruefung` prevents this state at construction anyway.
             base = _mail_basis(auth, request)
             adresse = email.strip()
 
@@ -455,21 +455,21 @@ def build_router(auth) -> APIRouter:
                 try:
                     auth.send_login_link(adresse, base, nxt)
                 except Exception:
-                    auth.audit("magic_send_error", detail=adresse)   # Fehler nicht nach außen leaken
-            # immer dieselbe Antwort (keine User-Enumeration) — und zur selben Zeit: versandt
-            # wird erst nach der Antwort (R4-05), im eigenen Mail-Arbeiter (B6-6).
+                    auth.audit("magic_send_error", detail=adresse)   # do not leak errors to the outside
+            # always the same answer (no user enumeration) — and at the same time: sending
+            # happens only after the response (R4-05), in the own mail worker (B6-6).
             return auth.after_response(
                 auth.render_page("magic_request", request=request, next=nxt, sent=True, error=""), _versand)
 
-        # R4-02: Der Link aus der Mail führt auf eine Bestätigungsseite, erst deren POST löst ein.
-        # Mail-Scanner (Safe Links, Virenprüfer, Vorschau-Bots) rufen jeden Link per GET auf —
-        # bisher verbrauchte schon dieser Abruf den Token, und der Nutzer landete auf „Link
-        # ungültig". Ein GET, der anmeldet, meldet ausserdem jeden an, der den Link öffnet,
-        # auch den Scanner. Die Seite prüft nur (`peek_magic`), eingelöst wird mit CSRF-Token.
+        # R4-02: the link from the mail leads to a confirmation page, only its POST redeems.
+        # Mail scanners (safe links, virus checkers, preview bots) open every link via GET —
+        # so far this very fetch consumed the token, and the user landed on "link
+        # invalid". A GET that signs in also signs in everyone who opens the link,
+        # the scanner included. The page only checks (`peek_magic`), redeeming happens with a CSRF token.
         @r.get("/auth/magic/{token}", response_class=HTMLResponse)
         def magic_confirm(request: Request, token: str):
-            """Nur noch der Anmelde-Link. E-Mail-Bestätigung und Einladung haben seit 0.16 eigene
-            Endpunkte — sonst nahm das Abschalten des Magic-Links beides mit."""
+            """Only the sign-in link now. E-mail confirmation and invitation have had their own
+            endpoints since 0.16 — otherwise disabling the magic link took both along."""
             if not auth.peek_magic(token, purpose="login"):
                 auth._token_abgewiesen("login", request)
                 return auth.render_page("magic_invalid", request=request, status=400)
@@ -486,11 +486,11 @@ def build_router(auth) -> APIRouter:
             return _login_nach_token(auth, request, data["user_id"],
                                      auth.safe_next((data.get("payload") or {}).get("next") or "", request))
 
-    # ---------- E-Mail-Bestätigung (eigener Endpunkt, unabhängig vom Magic-Link) ----------
+    # ---------- E-mail confirmation (own endpoint, independent of the magic link) ----------
     if cfg.signup_verify_email:
         @r.get("/auth/verify/{token}", response_class=HTMLResponse)
         def verify_confirm(request: Request, token: str):
-            """Bestätigungsseite statt Einlösen per GET — Begründung bei `/auth/magic/{token}` (R4-02)."""
+            """Confirmation page instead of redeeming via GET — rationale at `/auth/magic/{token}` (R4-02)."""
             if not auth.peek_magic(token, purpose="verify_email"):
                 auth._token_abgewiesen("verify_email", request)
                 return auth.render_page("magic_invalid", request=request, status=400)
@@ -505,33 +505,33 @@ def build_router(auth) -> APIRouter:
                 auth._token_abgewiesen("verify_email", request)
                 return auth.render_page("magic_invalid", request=request, status=400)
             uid = data["user_id"]
-            # Nur die Sperre der AUSSTEHENDEN Bestätigung aufheben, nie die des Betreibers (H-18,
-            # zweite Angriffsrunde). Bis dahin setzte diese Route `disabled` bedingungslos auf 0:
-            # Entstand der Token erst nach einer Sperre im Panel — eine App schiebt
-            # `send_verify_email` in den Postausgang —, fand die Sperre nichts zu verwerfen, und
-            # der Link schaltete das Konto wieder frei und meldete an.
+            # Lift only the block of the PENDING confirmation, never the operator's (H-18,
+            # second attack round). Until then this route set `disabled` unconditionally to 0:
+            # if the token only came into being after a block in the panel — an app pushes
+            # `send_verify_email` into the outbox —, the block found nothing to discard, and
+            # the link unblocked the account again and signed in.
             if not auth.store.bestaetigung_freischalten(uid):
                 konto = auth._kontoname(uid)
-                if konto is None:                        # Konto inzwischen gelöscht
+                if konto is None:                        # account deleted in the meantime
                     auth._token_abgewiesen("verify_email", request)
                     return auth.render_page("magic_invalid", request=request, status=400)
                 auth.audit("verify_blocked", konto, auth.client_ip(request),
                            "Konto vom Betreiber gesperrt")
                 return auth.render_page("magic_invalid", request=request, status=403)
-            # Der eingelöste Link belegt die Adresse, an die er ging — solange sie noch die des
-            # Kontos ist (eine inzwischen geänderte Adresse hat er nicht belegt). Vor der Anmeldung
-            # unten: Dort entscheidet `_maybe_promote_admin` über den Vermerk am Konto.
+            # The redeemed link vouches for the address it went to — as long as it is still the account's
+            # (it has not vouched for an address changed in the meantime). Before the sign-in
+            # below: there `_maybe_promote_admin` decides about the note on the account.
             konto_zeile = auth.store.get_user(uid)
             if (konto_zeile is not None and konto_zeile["email"] and data.get("email")
                     and norm_email(data.get("email")) == konto_zeile["email"]):
                 auth.store.set_email_verified(uid, True)
-            # Konto und IP gehören in die Zeile (B5-02): Hier wird ein Konto freigeschaltet, und
-            # ohne Namen fand `tinysesam audit --user X` den Vorgang nicht.
+            # Account and IP belong in the line (B5-02): here an account is unblocked, and
+            # without a name `tinysesam audit --user X` did not find the operation.
             auth.audit("email_verified", auth._kontoname(uid), auth.client_ip(request),
                        data.get("email"))
             return _login_nach_token(auth, request, uid, auth.safe_next("", request))
 
-    # ---------- Einladung (eigener Endpunkt; verbraucht wird der Token erst bei der Registrierung) ----------
+    # ---------- Invitation (own endpoint; the token is consumed only at registration) ----------
     if cfg.allow_signup:
         @r.get("/auth/invite/{token}")
         def invite_redeem(request: Request, token: str):
@@ -540,18 +540,18 @@ def build_router(auth) -> APIRouter:
                 return auth.render_page("magic_invalid", request=request, status=400)
             return RedirectResponse(f"{auth.browser_path(request, '/auth/register')}?invite={_q(token)}", 303)
 
-    # ---------- Erst-Admin per Einmal-Token (nur solange es keinen Admin gibt) ----------
+    # ---------- First admin via one-time token (only as long as there is no admin) ----------
     @r.get("/auth/claim-admin", response_class=HTMLResponse)
     def claim_admin(request: Request, token: str = ""):
         u = auth.current_user(request)
         if not u:
             return RedirectResponse(f"{auth.browser_path(request, cfg.login_path)}?next={auth.browser_path(request, '/auth/claim-admin')}?token={_q(token)}", 303)
         if auth.admin_exists():
-            raise HTTPException(404)          # kein Hinweis darauf, dass es die Route mal gab
-        # Gedrosselt und protokolliert (B5-16): Bis T-13 durfte ein angemeldetes Konto hier
-        # beliebig oft raten, und kein Fehlgriff hinterliess eine Spur. Das Token hat 192 Bit,
-        # Raten ist also aussichtslos — aber wer es versucht, soll im Log stehen, und zwar
-        # als `failed verification` (kein Anmeldeversuch, siehe `security.LOG_PRUEFUNG`).
+            raise HTTPException(404)          # no hint that the route once existed
+        # Throttled and logged (B5-16): until T-13 a signed-in account could guess here
+        # as often as it liked, and no wrong guess left a trace. The token has 192 bits,
+        # so guessing is hopeless — but whoever tries should be in the log, namely
+        # as `failed verification` (no sign-in attempt, see `security.LOG_PRUEFUNG`).
         ip = auth.client_ip(request)
         if not auth._rate_ok(ip, login=False):
             raise HTTPException(429, auth.t("api.too_many"))
@@ -560,21 +560,21 @@ def build_router(auth) -> APIRouter:
             raise HTTPException(403, auth.t("err.claim"))
         return RedirectResponse(auth.browser_path(request, cfg.admin_path), 303)
 
-    # ---------- Step-up / Reauth (Sudo-Frische für mfa=True-Guards) ----------
+    # ---------- Step-up / reauth (sudo freshness for mfa=True guards) ----------
     def _nur_sitzung(request: Request):
-        """Das Konto, dessen Sitzung hier bestätigt wird — aus der Sitzung, nie aus einem API-Key (0.20.1).
+        """The account whose session is confirmed here — from the session, never from an API key (0.20.1).
 
-        Die Route prüfte den Faktor des Kontos aus `current_user()` und frischte danach die
-        Sitzung aus dem Cookie auf. Bei einer HALBEN Sitzung (erster Faktor ja, TOTP offen) fällt
-        `current_user()` auf den API-Key zurück — geprüft wurde dann das Konto des Keys, voll
-        gemacht die Sitzung aus dem Cookie: Die halbe Sitzung eines anderen wurde mit dem eigenen
-        Key und dem eigenen Passwort voll, und im eigenen Konto ersetzten Automaten-Key und Passwort
-        den zweiten Faktor (samt dem Admin-Flag, das der Key allein nicht trägt). Jetzt kommt das
-        Konto aus `session_user()` — der VOLLEN Sitzung eben dieses Cookies, derselben, die der
-        Step-up auffrischt. Frische kann ein Key ohnehin nie erreichen (`stepup_fresh`); zeigt die
-        Anfrage ohne Sitzung einen vor, sagt die Antwort das (403) statt auf die Login-Seite zu
-        leiten. Nur noch für die Seite (GET): Das Absenden läuft seit 0.22.0 über `confirm_*`,
-        und dort steht dieselbe Regel (`TinySesam._nur_mit_sitzung`).
+        The route checked the account's factor from `current_user()` and then refreshed the
+        session from the cookie. With a HALF session (first factor yes, TOTP open)
+        `current_user()` falls back to the API key — the key's account was then checked, and the session from the cookie
+        was made full: someone else's half session became full with one's own
+        key and one's own password, and in one's own account machine key and password replaced
+        the second factor (including the admin flag, which the key alone does not carry). Now the
+        account comes from `session_user()` — the FULL session of this very cookie, the same one the
+        step-up refreshes. A key can never reach freshness anyway (`stepup_fresh`); if the
+        request shows one without a session, the answer says so (403) instead of redirecting
+        to the login page. Only for the page (GET) now: submitting has gone through `confirm_*` since 0.22.0,
+        and the same rule stands there (`TinySesam._nur_mit_sitzung`).
         """
         u = auth.session_user(request)
         if u is None and cfg.apikey_enabled and auth._extract_api_key(request):
@@ -587,9 +587,9 @@ def build_router(auth) -> APIRouter:
         if not u:
             return RedirectResponse(f"{auth.browser_path(request, cfg.login_path)}?next={_q(auth.safe_next(next, request))}", 303)
         methods = auth.stepup_options(u)
-        # Leere Liste heisst `stepup_strict=True` und nichts Passendes eingerichtet. Ohne eigene
-        # Meldung stünde hier eine Seite ohne einziges Eingabefeld — der Nutzer sähe nicht, was
-        # von ihm erwartet wird.
+        # An empty list means `stepup_strict=True` and nothing suitable set up. Without a message of its own
+        # there would be a page without a single input field here — the user would not see what
+        # is expected of them.
         return auth.render_page("reauth", request=request, next=auth.safe_next(next, request),
                                 error=error or ("" if methods else auth.t("err.stepup_none")),
                                 username=u["username"], methods=methods)
@@ -597,12 +597,12 @@ def build_router(auth) -> APIRouter:
     @r.post("/auth/reauth")
     def reauth_submit(request: Request, code: str = Form(""), password: str = Form(""), pin: str = Form(""),
                       next: str = Form(""), csrf_tok: str = Form("", alias="_csrf")):
-        # Eine Quelle (0.22.0): CSRF, die Sitzung (nie ein API-Key), die angebotenen Verfahren,
-        # Drossel, Vorbuchung im eigenen Topf, Audit und Sicherheits-Log, Frische und neues Token
-        # stehen in `confirm_totp`/`confirm_pin`/`confirm_password`, den öffentlichen Bausteinen für
-        # eigene Step-up-Seiten. Hier wird nur gewählt, welches Feld ausgefüllt ist — in der
-        # Reihenfolge der Seite —, und das Ergebnis zur Seite. Diese Route ruft keinen inneren
-        # Prüfer selbst (Wächter in `tests/test_bestaetigen.py`).
+        # One source (0.22.0): CSRF, the session (never an API key), the offered methods,
+        # throttle, pre-booking in its own bucket, audit and security log, freshness and new token
+        # live in `confirm_totp`/`confirm_pin`/`confirm_password`, the public building blocks for
+        # custom step-up pages. Here only the choice is made which field is filled in — in the
+        # order of the page —, and the result becomes the page. This route calls no inner
+        # checker itself (guard in `tests/test_bestaetigen.py`).
         if code:
             erg = auth.confirm_totp(request, code, next=next, csrf=csrf_tok)
         elif pin:
@@ -610,18 +610,18 @@ def build_router(auth) -> APIRouter:
         else:
             erg = auth.confirm_password(request, password, next=next, csrf=csrf_tok)
         if erg.reason == "no_session":
-            if erg.status == 403:           # ein API-Key statt einer Sitzung (0.20.1)
+            if erg.status == 403:           # an API key instead of a session (0.20.1)
                 raise HTTPException(403, erg.message)
-            return erg.redirect()           # zur Login-Seite, ohne Cookie
+            return erg.redirect()           # to the login page, without cookie
         if not erg:
-            # Die Seite noch einmal, mit den Verfahren dieses Kontos (nur zum Anzeigen).
+            # The page once more, with the methods of this account (for display only).
             u = auth.session_user(request)
             return auth.render_page("reauth", request=request, status=erg.status, next=erg.next_url,
                                     username=u["username"] if u else "",
                                     methods=auth.stepup_options(u) if u else [], error=erg.message)
-        return erg.redirect()               # nach next, mit dem erneuerten Sitzungs-Cookie
+        return erg.redirect()               # to next, with the renewed session cookie
 
-    # ---------- Passwort vergessen / zurücksetzen (braucht einen Mailer, NICHT den Magic-Link) ----------
+    # ---------- Forgot / reset password (needs a mailer, NOT the magic link) ----------
     if cfg.password_reset_enabled:
         @r.get("/auth/forgot", response_class=HTMLResponse)
         def forgot_page(request: Request):
@@ -633,7 +633,7 @@ def build_router(auth) -> APIRouter:
             ip = auth.client_ip(request)
             if not auth._rate_ok(ip):
                 return auth.render_page("forgot", request=request, status=429, sent=False, error=auth.t("err.rate"))
-            base = _mail_basis(auth, request)   # fail closed, siehe /auth/magic/request
+            base = _mail_basis(auth, request)   # fail closed, see /auth/magic/request
             adresse = email.strip()
 
             def _versand():
@@ -641,15 +641,15 @@ def build_router(auth) -> APIRouter:
                     auth.send_password_reset(adresse, base)
                 except Exception:
                     auth.audit("reset_send_error", detail=adresse)
-            # generisch (keine Enumeration), Versand nach der Antwort (R4-05/B6-6)
+            # generic (no enumeration), sending after the response (R4-05/B6-6)
             return auth.after_response(auth.render_page("forgot", request=request, sent=True, error=""),
                                          _versand)
 
         @r.get("/auth/reset", response_class=HTMLResponse)
         def reset_page(request: Request, token: str = ""):
             if not auth.peek_magic(token, purpose="reset_password"):
-                # Ohne Token (Lesezeichen, Crawler) ist das kein vorgelegter Link — kein Eintrag,
-                # sonst meldete das Sicherheits-Log einen Fehlgriff, den es nie gab (A3).
+                # Without a token (bookmark, crawler) this is no presented link — no entry,
+                # otherwise the security log would report a wrong guess that never happened (A3).
                 if token:
                     auth._token_abgewiesen("reset_password", request)
                 return auth.render_page("magic_invalid", request=request, status=400)
@@ -659,18 +659,18 @@ def build_router(auth) -> APIRouter:
         def reset_submit(request: Request, token: str = Form(""), password: str = Form(""),
                          csrf_tok: str = Form("", alias="_csrf")):
             auth.require_csrf(request, csrf_tok)
-            # Die Regel braucht das Konto (Kontextwörter) — also erst nachsehen, OHNE den Token
-            # zu verbrauchen: Ein abgelehntes Passwort soll den Link nicht entwerten.
+            # The rule needs the account (context words) — so look it up first, WITHOUT consuming the token:
+            # a rejected password should not invalidate the link.
             vorab = auth.peek_magic(token, purpose="reset_password") or {}
             if not vorab.get("user_id"):
-                # Ein toter Link zuerst (A-8): Sonst hiess es bei abgelaufenem Link und schwachem
-                # Passwort „zu leicht", und erst der zweite Versuch verriet, dass der Link nicht
-                # mehr gilt. Verraten wird damit nichts Neues — der GET sagt dasselbe.
-                # Und dieselbe Spur wie der GET (B5-18, Integrationsfund 4): Hier kehrt JEDER tote
-                # Token zurück — geraten, abgelaufen, schon eingelöst. Der Aufruf hinter
-                # `redeem_magic` unten erreicht nur noch den Wettlauf zwischen peek und redeem;
-                # stand er allein, liessen sich Reset-Token per POST ohne Audit- und
-                # fail2ban-Zeile durchprobieren. Ohne Token kein vorgelegter Link (A3).
+                # A dead link first (A-8): otherwise with an expired link and weak
+                # password it said "too easy", and only the second attempt revealed that the link no
+                # longer applies. Nothing new is revealed by it — the GET says the same.
+                # And the same trace as the GET (B5-18, integration finding 4): here EVERY dead
+                # token returns — guessed, expired, already redeemed. The call behind
+                # `redeem_magic` below reaches only the race between peek and redeem;
+                # alone, it would have let reset tokens be probed by POST without an audit and
+                # fail2ban line. Without a token no presented link (A3).
                 if token:
                     auth._token_abgewiesen("reset_password", request)
                 return auth.render_page("magic_invalid", request=request, status=400)
@@ -679,28 +679,28 @@ def build_router(auth) -> APIRouter:
                                           email=konto["email"] if konto else None)
             if mangel:
                 return auth.render_page("reset", request=request, status=400, token=token, error=mangel)
-            data = auth.redeem_magic(token, purpose="reset_password")   # jetzt verbrauchen
+            data = auth.redeem_magic(token, purpose="reset_password")   # consume now
             if not data or not data.get("user_id"):
                 auth._token_abgewiesen("reset_password", request)
                 return auth.render_page("magic_invalid", request=request, status=400)
             uid = data["user_id"]
             auth.set_password(uid, password)
-            auth.store.delete_user_sessions(uid)   # alle alten Sitzungen beenden
-            # Der Reset hebt die Passwort-Sperre auf (R4-13). Vorher setzte er das Passwort
-            # und liess die Fehlversuche stehen: Wer sich ausgesperrt hatte und den
-            # vorgesehenen Weg ging, stand danach mit dem NEUEN Passwort vor derselben 429.
-            # Damit ist der Reset der Weg aus der Sperre, der nicht an ihr hängt (H-10).
+            auth.store.delete_user_sessions(uid)   # end all old sessions
+            # The reset lifts the password block (R4-13). Before, it set the password
+            # and left the failed attempts standing: whoever had locked themselves out and took the
+            # intended path stood afterwards with the NEW password before the same 429.
+            # Thus the reset is the way out of the block that does not depend on it (H-10).
             weg = auth.lift_lockout(uid, methods=("password",))
-            # Und die API-Keys (R4-14). Wer sein Passwort über „vergessen" zurücksetzt, hat sein
-            # Konto verloren oder fürchtet, dass es übernommen ist — derselbe Fall wie der
-            # Admin-Reset, der die Keys seit 0.18.0 widerruft. Ein Key ist eine zweite,
-            # gleichwertige Anmeldung; blieb er gültig, hätte der Reset nur die Haustür
-            # geschlossen. (Der Wechsel auf der Kontoseite lässt sie mit Absicht stehen — dort
-            # meldet sich der Inhaber mit dem alten Passwort an, das ist ein Routine-Wechsel.)
+            # And the API keys (R4-14). Whoever resets their password via "forgot" has lost their
+            # account or fears it is taken over — the same case as the
+            # admin reset, which has revoked the keys since 0.18.0. A key is a second,
+            # equivalent sign-in; had it stayed valid, the reset would only have closed
+            # the front door. (The change on the account page leaves them on purpose — there
+            # the holder signs in with the old password, that is a routine change.)
             keys = auth._keys_widerrufen(uid, "password_reset")
-            # Und alle offenen Links (Angriffsrunde Selbstbedienung, Fund 1): Ein Adresswechsel,
-            # den ein Eindringling aus seiner Sitzung beantragt hat, überlebte sonst den Reset —
-            # der Link liegt in SEINEM Postfach, ein Klick danach, und der nächste Reset ginge an ihn.
+            # And all open links (self-service attack round, finding 1): an address change
+            # that an intruder requested from their session otherwise survived the reset —
+            # the link lies in THEIR mailbox, one click later, and the next reset would go to them.
             links = auth.store.revoke_user_magic_tokens(uid)
             auth.audit("password_reset", auth._kontoname(uid), auth.client_ip(request),
                        f"uid={uid} fehlversuche_verworfen={weg}"
@@ -708,7 +708,7 @@ def build_router(auth) -> APIRouter:
                        + (f" links_revoked={links}" if links else ""))
             return RedirectResponse(f"{auth.browser_path(request, cfg.login_path)}?next={_q(auth.browser_path(request, '/'))}", 303)
 
-    # ---------- Registrierung (nur wenn allow_signup) ----------
+    # ---------- Registration (only if allow_signup) ----------
     if cfg.allow_signup:
         def _reg_ctx(nxt, invite="", email="", error="", **extra):
             return dict(next=nxt, invite=invite, email=email, error=error,
@@ -721,9 +721,9 @@ def build_router(auth) -> APIRouter:
                 return RedirectResponse(nxt, 303)
             inv = auth.peek_magic(invite, purpose="invite") if invite else None
             if invite and not inv:
-                # Dieselbe Spur wie /auth/invite/<t> und der POST (B5-18): Die Seite antwortet
-                # je nach Token anders (403 oder die vorausgefüllte Adresse) — ohne diese Zeile
-                # liessen sich Einladungs-Token hier still durchprobieren.
+                # The same trace as /auth/invite/<t> and the POST (B5-18): the page answers
+                # differently depending on the token (403 or the pre-filled address) — without this line
+                # invitation tokens could be probed silently here.
                 auth._token_abgewiesen("invite", request)
             if cfg.signup_invite_only and not inv:
                 return auth.render_page("register", request=request, status=403,
@@ -761,70 +761,70 @@ def build_router(auth) -> APIRouter:
                 roles = (inv.get("payload") or {}).get("roles") or []
                 is_admin = bool((inv.get("payload") or {}).get("is_admin"))
                 email_final = norm_email(inv.get("email")) or email_final
-            # E-Mail ist Login-Kennung → Pflicht, plausibel und eindeutig
+            # E-mail is the login identifier → mandatory, plausible and unique
             if (cfg.signup_require_email or cfg.login_identifier == "email") and not email_final:
                 return err(auth.t("err.email_required"))
             if email_final and not valid_email(email_final):
                 return err(auth.t("err.email_invalid"))
-            # Bestätigung verlangt, aber kein Mailer? Dann NICHT stillschweigend durchwinken.
-            # Steht vor der Vergeben-Prüfung: Sie hängt nicht an der Adresse und verrät nichts.
+            # Confirmation required but no mailer? Then do NOT silently wave it through.
+            # Stands before the taken check: it does not depend on the address and reveals nothing.
             verify = cfg.signup_verify_email and not inv
             if verify and not auth.mail_configured():
                 return err(auth.t("err.verify_no_mailer"), 500)
-            # Vor dem Anlegen prüfen, nicht danach: sonst entstünde ein deaktiviertes Konto,
-            # das mangels Bestätigungsmail nie freigeschaltet werden kann.
+            # Check before creating, not after: otherwise a deactivated account would arise
+            # that, for lack of a confirmation mail, can never be unblocked.
             verify_base = _mail_basis(auth, request) if verify else ""
-            # Im E-Mail-Modus gibt es kein Benutzernamen-Feld — die Adresse IST die Kennung.
+            # In e-mail mode there is no username field — the address IS the identifier.
             if cfg.login_identifier == "email":
                 username = email_final or ""
             if not username:
                 return err(auth.t("err.username_required"))
             if name_ungueltig(username):
                 return err(auth.t("err.username_invalid"))
-            # Benutzername = die eigene Adresse? Dann prüft die Adress-Prüfung unten beides.
+            # Username = one's own address? Then the address check below covers both.
             name_ist_adresse = bool(email_final) and norm_email(username) == email_final
-            # Mit Bestätigung darf ein Benutzername keine FREMDE Adresse sein (Angriff A1): Die
-            # Namensprüfung sucht kreuzweise auch in den Adressen und hätte mit 409 verraten,
-            # dass es die Adresse gibt — R4-03 wäre über das Namensfeld umgangen.
+            # With confirmation a username must not be a FOREIGN address (attack A1): the
+            # name check also searches the addresses crosswise and would have revealed with 409
+            # that the address exists — R4-03 would be bypassed via the name field.
             if verify and "@" in username and not name_ist_adresse:
                 return err(auth.t("err.username_is_address"))
-            # Kreuzweise prüfen: Benutzername und E-Mail sind EIN Kennungs-Raum (Fund R4-12).
-            # Eine Adresse, die schon als Benutzername eines anderen Kontos dient, ist vergeben —
-            # sonst besetzt die Registrierung dessen Login-Kennung und sperrt ihn aus.
-            # Der Name kommt VOR der Adresse (Angriff A1): Andersherum war ein bekannter,
-            # vergebener Name (`admin`) plus Zieladresse ein Orakel — vergebene Adresse 200,
-            # freie Adresse 409 username_taken. Ein vergebener Name ist ohnehin sichtbar (der
-            # Nutzer muss einen anderen wählen); jetzt hängt die Antwort darauf nicht mehr an der Adresse.
+            # Check crosswise: username and e-mail are ONE identifier space (finding R4-12).
+            # An address that already serves as another account's username is taken —
+            # otherwise the registration occupies that account's login identifier and locks them out.
+            # The name comes BEFORE the address (attack A1): the other way round a known,
+            # taken name (`admin`) plus target address was an oracle — taken address 200,
+            # free address 409 username_taken. A taken name is visible anyway (the
+            # user has to choose another); now the answer to it no longer depends on the address.
             if not name_ist_adresse and auth.identifier_taken(username):
                 return err(auth.t("err.username_taken"), 409)
             if email_final and auth.identifier_taken(email_final):
                 if verify:
-                    # R4-03: Mit Bestätigung antwortet eine vergebene Adresse wie eine freie —
-                    # 409 und „E-Mail vergeben" verrieten jedem, welche Adressen ein Konto
-                    # haben. Der Inhaber bekommt stattdessen einen Hinweis. Ohne Bestätigung
-                    # geht das nicht: Dort meldet der Erfolgsfall sofort an, die Antwort
-                    # unterscheidet sich also zwangsläufig.
+                    # R4-03: with confirmation a taken address answers like a free one —
+                    # 409 and "e-mail taken" revealed to anyone which addresses have an
+                    # account. The holder gets a notice instead. Without confirmation
+                    # that is not possible: there the success case signs in immediately, so the answer
+                    # necessarily differs.
                     #
-                    # Der Benutzername wird dabei genauso belegt wie beim echten Anlegen (A1,
-                    # zweite Variante): ein gesperrter Platzhalter ohne Adresse, mit einem nie
-                    # verschickten Bestätigungstoken. Sonst verriet die zweite Registrierung
-                    # desselben Namens per 409, ob die erste ein Konto angelegt hatte — also ob
-                    # die Adresse frei war. `gc()` entfernt den Platzhalter mit Ablauf des
-                    # Tokens, genau wie ein nie bestätigtes echtes Konto (R4-09). Das Anlegen
-                    # samt Passwort-Hash gleicht zugleich die Laufzeit an.
-                    # Ist der Name die Adresse (immer bei login_identifier='email'), ist der Name
-                    # selbst vergeben — der Platzhalter bekommt dann einen Zufallsnamen. Bis
-                    # 2026-09-24 schrieb dieser Zweig nur die Audit-Zeile, der freie dagegen Konto,
-                    # Sperre und Token: messbar an der Antwortzeit, ein Orakel „Adresse vergeben?"
-                    # (T-13, B1-12 / ASVS 6.3.8). Jetzt dieselbe Arbeit in beiden Zweigen; `gc()`
-                    # räumt den Platzhalter mit dem Ablauf seines Tokens (R4-09).
+                    # The username is claimed just as in real creation (A1,
+                    # second variant): a blocked placeholder without an address, with a never
+                    # sent confirmation token. Otherwise the second registration of the
+                    # same name revealed via 409 whether the first had created an account — that is, whether
+                    # the address was free. `gc()` removes the placeholder when the
+                    # token expires, just like a never-confirmed real account (R4-09). Creating
+                    # including the password hash also equalizes the running time.
+                    # If the name is the address (always with login_identifier='email'), the name
+                    # itself is taken — the placeholder then gets a random name. Until
+                    # 2026-09-24 this branch wrote only the audit line, the free one however account,
+                    # block and token: measurable in the response time, an oracle "address taken?"
+                    # (T-13, B1-12 / ASVS 6.3.8). Now the same work in both branches; `gc()`
+                    # clears the placeholder when its token expires (R4-09).
                     try:
                         platzhalter = auth.create_user(
                             f"reserviert-{secrets.token_hex(6)}" if name_ist_adresse else username,
                             password=password, roles=[], self_chosen_name=True)
                     except ConfigError:
-                        # Wettlauf: Der Name ist seit der Prüfung oben vergeben (G12c) — dieselbe
-                        # Antwort, die die Prüfung jetzt gäbe.
+                        # Race: the name has been taken since the check above (G12c) — the same
+                        # answer the check would now give.
                         return err(auth.t("err.username_taken"), 409)
                     auth.store.set_disabled(platzhalter, True)
                     auth.create_magic_token("verify_email", user_id=platzhalter)
@@ -840,28 +840,28 @@ def build_router(auth) -> APIRouter:
                         auth.render_page("register", request=request, **_reg_ctx(nxt, sent_verify=True)),
                         _hinweis)
                 return err(auth.t("err.email_taken"), 409)
-            # Belegt ist die Adresse hier nur, wenn sie aus der Einladung stammt — die hat der
-            # Admin an genau dieses Postfach geschickt. Eingetippt ist sie eine Behauptung: Mit
-            # Bestätigungspflicht setzt den Beleg erst der eingelöste Link (`/auth/verify`), ohne
-            # sie nie. Bis Schema 10 stand hier die Vorgabe „belegt", und die Löschung durch
-            # einen Admin nahm die fremd eingetippte Adresse deshalb auch aus Zeilen von vor der
-            # Anlage — die Einladung des Admins, die Fehlversuche der echten Inhaberin
-            # (`Store.konto_entfernen`). Rechte hängen daran nicht: Eine Allowlist-Adresse
-            # verlangt bei offener Registrierung ohnehin die Bestätigung (Konstruktor-Wächter).
+            # The address is vouched for here only if it comes from the invitation — the
+            # admin sent that to exactly this mailbox. Typed in, it is a claim: with a
+            # confirmation requirement the redeemed link provides the proof (`/auth/verify`), without
+            # one never. Until schema 10 the default "vouched" stood here, and the deletion by
+            # an admin therefore also removed the foreign-typed address from rows from before
+            # creation — the admin's invitation, the failed attempts of the real holder
+            # (`Store.konto_entfernen`). Rights do not depend on it: an allowlist address
+            # requires confirmation anyway with open registration (constructor guard).
             try:
-                # Den Namen hat die Person selbst eingetippt, auch mit Einladung: Er sagt nichts
-                # darüber, wer im Verzeichnis so heisst — LDAP/SAML binden dieses Konto nie über
-                # ihn (G2-N).
+                # The person typed the name themselves, even with an invitation: it says nothing
+                # about who is called that in the directory — LDAP/SAML never bind this account via
+                # it (G2-N).
                 uid = auth.create_user(username, password=password, is_admin=is_admin, roles=roles,
                                        email=email_final or None,
                                        email_verified=bool(inv and norm_email(inv.get("email"))),
                                        self_chosen_name=True)
             except ConfigError as e:
-                # Wettlauf (G12c): Zwischen den Prüfungen oben und dem Anlegen hat eine
-                # gleichzeitige Anfrage die Kennung belegt, und die Datenbank weist ab. Dieselben
-                # Antworten wie oben — bis dahin eine 500. Ein vergebener Name bleibt sichtbar; eine
-                # vergebene Adresse mit Bestätigungspflicht bekommt die neutrale Seite (R4-03), ohne
-                # sie 409.
+                # Race (G12c): between the checks above and creation a
+                # concurrent request has claimed the identifier, and the database rejects. The same
+                # answers as above — until then a 500. A taken name stays visible; a
+                # taken address with confirmation requirement gets the neutral page (R4-03), without
+                # it 409.
                 if getattr(e, "field", None) == "username" and not name_ist_adresse:
                     return err(auth.t("err.username_taken"), 409)
                 if verify:
@@ -869,33 +869,33 @@ def build_router(auth) -> APIRouter:
                     return auth.render_page("register", request=request, **_reg_ctx(nxt, sent_verify=True))
                 return err(auth.t("err.email_taken"), 409)
             if inv:
-                auth.redeem_magic(invite, purpose="invite")   # Einladung jetzt verbrauchen
+                auth.redeem_magic(invite, purpose="invite")   # consume the invitation now
             auth.audit("signup", username, ip)
-            # E-Mail-Bestätigung nötig? (nicht bei Einladung — die gilt als bestätigt)
+            # E-mail confirmation required? (not with invitation — it counts as confirmed)
             if verify and email_final:
                 auth.store.set_disabled(uid, True)
 
                 def _zuruecknehmen(grund):
-                    # B6-5: Ohne zugestellte Bestätigung ist das Konto eine Leiche — gesperrt,
-                    # nie freischaltbar, und es hält Namen und Adresse besetzt. Bis 0.19 kam
-                    # dazu eine HTTP-500. Es wird deshalb wieder entfernt; die Registrierung
-                    # lässt sich danach einfach wiederholen.
-                    # Über den einen Löschweg (H-13, Integrationsfunde 12/18): Sonst stünden
-                    # `signup` und diese Zeile samt IP weiter unter dem Namen, und wer ihn später
-                    # registriert, sähe sie auf seiner Kontoseite als eigene Ereignisse (H-7).
+                    # B6-5: without a delivered confirmation the account is a corpse — blocked,
+                    # never unblockable, and it keeps name and address occupied. Until 0.19 an HTTP 500
+                    # followed. It is therefore removed again; the registration
+                    # can simply be repeated afterwards.
+                    # Via the one deletion path (H-13, integration findings 12/18): otherwise
+                    # `signup` and this line including the IP would stay under the name, and whoever registers it later
+                    # would see them on their account page as their own events (H-7).
                     auth.store.konto_entfernen(uid)
                     auth.audit("verify_send_error", ersatzname(uid), ip,
                                detail=f"{grund}, Konto entfernt")
 
                 seite = auth.render_page("register", request=request, **_reg_ctx(nxt, sent_verify=True))
-                # Der Token entsteht HIER, in der Anfrage; nur der Versand wartet auf den
-                # Postausgang. Eine Sperre durch den Betreiber verwirft offene Token (H-18) —
-                # entstand er erst im Mail-Arbeiter, fand eine Sperre im Wartefenster nichts, und
-                # der verspätete Link hob sie danach auf. Zeitlich neutral nur gegenüber dem
-                # Platzhalter-Zweig einer vergebenen Adresse (R4-03, Name ≠ Adresse), der seinen
-                # Token ebenfalls in der Anfrage anlegt. Ist der Name die Adresse (immer bei
-                # login_identifier='email'), schreibt der Vergeben-Zweig nur die Audit-Zeile —
-                # dieses Zeitorakel bestand schon vorher und steht im Backlog (T-13).
+                # The token is created HERE, in the request; only the sending waits for the
+                # outbox. A block by the operator discards open tokens (H-18) —
+                # had it only come into being in the mail worker, a block in the waiting window found nothing, and
+                # the belated link lifted it afterwards. Timing-neutral only with respect to the
+                # placeholder branch of a taken address (R4-03, name ≠ address), which creates its
+                # token in the request as well. If the name is the address (always with
+                # login_identifier='email'), the taken branch writes only the audit line —
+                # this timing oracle existed before and is in the backlog (T-13).
                 try:
                     senden = auth._verify_mail(uid, email_final, verify_base)
                 except Exception:
@@ -918,19 +918,19 @@ def build_router(auth) -> APIRouter:
                 auth.set_cookie(resp, token)
             return resp
 
-    # ---------- Forward-Auth (Reverse-Proxy: Caddy forward_auth / nginx auth_request / Traefik) ----------
+    # ---------- Forward auth (reverse proxy: Caddy forward_auth / nginx auth_request / Traefik) ----------
     if cfg.forward_auth_enabled:
         from fastapi.responses import Response
 
         def _required_roles(request: Request) -> list:
-            """Rollen, die der **Proxy** für diese Route verlangt: `?roles=a,b` (mehrfach erlaubt)
-            oder Header `X-TinySesam-Roles`. Ohne Angabe bleibt /auth/forward binär wie bisher.
+            """Roles that the **proxy** demands for this route: `?roles=a,b` (several allowed)
+            or header `X-TinySesam-Roles`. Without it /auth/forward stays binary as before.
 
-            Gelesen wird die Angabe aus dem Sub-Request, den der Proxy stellt — sie steht in
-            dessen Konfiguration, nicht beim Client. Trotzdem ist die Auswertung absichtlich
-            **fail-closed**: mehrere Angaben werden UND-verknüpft, Kommas innerhalb einer Angabe
-            ODER. Hängt ein Client also selbst ein `roles=` oder den Header an (weil ein Setup den
-            Client-Query durchreicht), kann er die Prüfung nur verschärfen — nie aufweichen.
+            The value is read from the sub-request the proxy makes — it sits in
+            its configuration, not with the client. Still, the evaluation is deliberately
+            **fail-closed**: several values are AND-ed, commas within one value are
+            OR. So if a client itself appends a `roles=` or the header (because a setup passes the
+            client query through), it can only tighten the check — never loosen it.
             """
             groups = []
             for raw in list(request.query_params.getlist("roles")) + \
@@ -941,16 +941,16 @@ def build_router(auth) -> APIRouter:
             return groups
 
         def _forward_abweisung_protokollieren(request: Request, orig: str) -> None:
-            """Eine 401 der Forward-Auth ins Audit-Log — wenn ein Nachweis vorlag (B5-17).
+            """A 401 of forward auth into the audit log — if there was evidence (B5-17).
 
-            Bisher schrieb diese Antwort nichts. Protokolliert wird, wenn die Anfrage etwas
-            MITBRACHTE, das nicht (mehr) gilt: ein Sitzungscookie ohne gültige Sitzung, eine
-            Sitzung mitten im Faktor-Schritt, einen API-Key. Das ist der Anlass zum Nachsehen —
-            ein abgelaufener, gestohlener oder erratener Nachweis. Ein Aufruf ganz OHNE Nachweis
-            ist der gewöhnliche erste Besuch vor dem Login; ihn zu protokollieren begrübe das Log
-            unter Seitenaufrufen, und das Zugriffslog des Proxys hat ihn ohnehin. Gedrosselt je
-            IP und Grund, weil ein Browser mit abgelaufenem Cookie jede Teilanfrage einer Seite
-            (Bilder, Skripte) einzeln abweisen lässt.
+            So far this response wrote nothing. It is logged when the request
+            BROUGHT something along that is not (or no longer) valid: a session cookie without a valid session, a
+            session in the middle of the factor step, an API key. That is the reason to look —
+            an expired, stolen or guessed credential. A call entirely WITHOUT evidence
+            is the ordinary first visit before login; logging it would bury the log
+            under page views, and the proxy's access log has it anyway. Throttled per
+            IP and reason, because a browser with an expired cookie has every sub-request of a page
+            (images, scripts) rejected individually.
             """
             if request.cookies.get(auth.session_cookie_name):
                 grund = "mfa_offen" if auth.pending_user(request) else "sitzung_ungueltig"
@@ -964,8 +964,8 @@ def build_router(auth) -> APIRouter:
                            f"grund={grund} url={security.url_fuer_log(orig)}")
 
         def _link_modus(host: str) -> bool:
-            """Zentrales Gateway mit Code-Austausch (T-26): für einen geschützten App-Host, der nicht
-            der eigene ist. Dort gibt es keine Sitzung, nur die Verbindung des Hosts."""
+            """Central gateway with code exchange (T-26): for a protected app host that is not
+            the own one. There is no session there, only the host's connection."""
             from urllib.parse import urlsplit as _us
             return bool(cfg.gate_link_enabled and host and host in auth._gate_hosts()
                         and host != (_us(auth.gate_issuer()).hostname or "").lower())
@@ -977,25 +977,25 @@ def build_router(auth) -> APIRouter:
             return auth._forward_login_url(orig, request, direkt=direkt)
 
         def _forward(request: Request):
-            u = auth.current_user(request)   # Session ODER API-Key
+            u = auth.current_user(request)   # session OR API key
             orig = auth._forwarded_url(request)
             _host = (urlsplit(orig).hostname or "").lower()
-            # Die Sitzungszeile, an der Freigabe, Abmeldung „nur hier" und Gate-Token hängen: aus dem
-            # eigenen Cookie, sonst — zentrales Gateway, T-26 — aus der Verbindung dieses Hosts.
+            # The session row on which approval, "sign out here only" and gate token depend: from the
+            # own cookie, otherwise — central gateway, T-26 — from this host's connection.
             s = auth._session_from_request(request) if u else None
             if not u and _link_modus(_host):
                 s = auth._gate_link_sitzung(request, _host)
                 u = auth._konto_der_sitzung(s) if s else None
             handle = s["token_hash"] if s else ""
             if u:
-                # Schützt diese Installation mehrere Anwendungen, reicht „angemeldet" nicht:
-                # Wer in welche darf, hat der Provider je Client entschieden (T-14). Der Vermerk
-                # dazu hängt an der SITZUNG — ein API-Key hat keinen und ist hier auch nicht
-                # gemeint; für ihn bleibt es bei der bisherigen Antwort.
+                # If this installation protects several applications, "signed in" is not enough:
+                # who may enter which one was decided by the provider per client (T-14). The note
+                # for it hangs on the SESSION — an API key has none and is not meant
+                # here either; for it the previous answer stays.
                 anwendung = auth._oidc_anwendung(orig)
-                # Nur von dieser Anwendung abgemeldet (T-22): Die Sitzung gilt, nur hier nicht —
-                # bis der Mensch auf der Login-Seite „Weiter als …" wählt. Immer die Seite, nie der
-                # direkte Weg zum Provider: Der meldete lautlos wieder an.
+                # Signed out of this application only (T-22): the session is valid, just not here —
+                # until the human picks "Continue as …" on the login page. Always the page, never the
+                # direct path to the provider: that one silently signed in again.
                 if handle and _host and auth.store.gate_ist_abgemeldet(handle, _host):
                     return Response(status_code=401,
                                     headers={"X-TinySesam-Location": _anmelden_url(orig, request),
@@ -1004,45 +1004,45 @@ def build_router(auth) -> APIRouter:
                 if anwendung and handle:
                     ja, grund = auth._oidc_freigabe_gueltig(handle, anwendung)
                     if not ja:
-                        # Kein 403: Der Provider soll gefragt werden, nicht der Mensch abgewiesen.
-                        # Er hat dort meist noch eine Sitzung, der Sprung ist für ihn ein Flackern.
-                        # Erst wenn der Provider ablehnt, sieht der Mensch dessen eigene Absage —
-                        # und zwar die des Providers, denn dort wird die Freigabe gepflegt.
+                        # No 403: the provider should be asked, the human not turned away.
+                        # There they usually still have a session, the jump is a flicker for them.
+                        # Only if the provider declines does the human see its own refusal —
+                        # namely the provider's, because the approval is maintained there.
                         auth.audit("oidc_app_revalidate", u["username"], auth.client_ip(request),
                                    f"app={anwendung} grund={grund}")
-                        # Direkt zum Provider (B-2): Über die Login-Seite lief es im Kreis, die
-                        # Seite sah die Sitzung und schickte zurück.
+                        # Directly to the provider (B-2): via the login page it went in circles, the
+                        # page saw the session and sent back.
                         login = _anmelden_url(orig, request, direkt=True)
                         return Response(status_code=401,
                                         headers={"X-TinySesam-Location": login,
                                                  "X-TinySesam-Reason": "app-" + grund,
                                                  "WWW-Authenticate": 'FormBased realm="TinySesam"'})
-                # Rollenprüfung im Proxy-Modus. Fehlt die Rolle, ist das **403, nicht 401**:
-                # ein 401 schickte den bereits Angemeldeten zurück zum Login, der ihn sofort
-                # wieder hierher schickt — eine Schleife, an deren Ende dieselbe Rolle fehlt.
+                # Role check in proxy mode. If the role is missing, it is **403, not 401**:
+                # a 401 would send the already signed-in user back to login, which sends them
+                # straight back here — a loop at whose end the same role is still missing.
                 fehlend = [g for g in _required_roles(request)
                            if not any(auth.has_role(u, r) for r in g)]
                 if fehlend:
-                    # Eine 403 im Proxy-Log sagt nicht, wer woran gescheitert ist. Das Panel hat
-                    # das Audit-Log ohnehin — also dorthin, wo man später nachsieht.
+                    # A 403 in the proxy log does not say who failed at what. The panel has
+                    # the audit log anyway — so there, where one looks later.
                     auth.audit("forward_role_denied", u["username"], auth.client_ip(request),
                                f"url={security.url_fuer_log(orig)} fehlt={';'.join(','.join(g) for g in fehlend)}")
                     return Response(status_code=403, headers={"X-TinySesam-Reason": "role"})
-                # Welche Header das sind, steuert config.forward_headers (Vorgabe: Remote-*).
+                # Which headers these are is controlled by config.forward_headers (default: Remote-*).
                 kopf = auth._forward_response_headers(u)
-                # Gate-Token (ADR-9): Der Proxy legt es als Cookie auf den Host der Anwendung und
-                # prüft es danach selbst — bis es abläuft, kommt keine Anfrage mehr hier an.
+                # Gate token (ADR-9): the proxy sets it as a cookie on the application's host and
+                # then checks it itself — until it expires, no request gets here any more.
                 gate = auth._gate_cookie(request, u, orig, _required_roles(request), sitzung=s)
                 if gate:
                     kopf["X-TinySesam-Gate-Cookie"] = gate
                 return Response(status_code=200, headers=kopf)
-            # Login-Modus der Anwendung (T-21): "direct" führt einen Seitenaufruf gleich zum
-            # Provider; Hintergrund-Anfragen gehen immer zur Login-Seite.
+            # Login mode of the application (T-21): "direct" leads a page request straight to the
+            # provider; background requests always go to the login page.
             direkt = (auth._forward_app(orig)["login"] == "direct" and auth._ist_seitenaufruf(request)
                       and list(cfg.enabled_methods()) == ["oidc"])
             login = _anmelden_url(orig, request, direkt=direkt)
             _forward_abweisung_protokollieren(request, orig)
-            # Caddys forward_auth-Shortcut reicht nur die 401 durch → handle_response/redir nötig
+            # Caddy's forward_auth shortcut passes only the 401 through → handle_response/redir needed
             return Response(status_code=401, headers={"X-TinySesam-Location": login,
                                                       "WWW-Authenticate": 'FormBased realm="TinySesam"'})
 
@@ -1054,20 +1054,20 @@ def build_router(auth) -> APIRouter:
         def verify_auth(request: Request):
             return _forward(request)
 
-        # ---------- Abmelden an der Anwendung (T-22) ----------
-        # Diese Wege liegen auf dem HOST DER ANWENDUNG (der Proxy reicht /.tinysesam/* an TinySesam):
-        # Nur dort lässt sich das Gate-Cookie löschen, es gilt host-only.
+        # ---------- Signing out at the application (T-22) ----------
+        # These paths live on the APPLICATION'S HOST (the proxy passes /.tinysesam/* to TinySesam):
+        # only there can the gate cookie be deleted, it is host-only.
         GATE_SCOPES = ("app", "all")
 
         def _link_aufheben(request: Request, resp) -> None:
-            """Die Verbindung dieses Browsers zu diesem Host lösen (T-26): Zeile weg, Cookie weg."""
+            """Sever this browser's connection to this host (T-26): row gone, cookie gone."""
             roh = request.cookies.get(auth._GATE_LINK_COOKIE) or ""
             if roh:
                 auth.store.gate_link_entfernen(auth.store.session_hash(roh))
                 auth._gate_set_cookie(resp, auth._GATE_LINK_COOKIE, "", 0)
 
         def _gate_logout(request: Request, host: str, scope: str, nxt: str):
-            # Die Sitzung über das eigene Cookie ODER die Verbindung dieses Hosts (T-26).
+            # The session via the own cookie OR the connection of this host (T-26).
             s = auth._gate_sitzung(request, host)
             u = auth.session_user(request) or auth.pending_user(request) or (auth._konto_der_sitzung(s) if s else None)
             ip = auth.client_ip(request)
@@ -1080,16 +1080,16 @@ def build_router(auth) -> APIRouter:
                 auth._gate_cookie_loeschen(resp)
                 _link_aufheben(request, resp)
                 return resp
-            # "all" am App-Host OHNE Verbindung (etwa nach „nur hier abmelden“): Die Sitzung liegt beim
-            # Gateway, und nur dort ist ihr Cookie. Hin, dort endet sie — sonst bliebe sie still bestehen.
+            # "all" at the app host WITHOUT a connection (e.g. after "sign out here only"): the session lies with the
+            # gateway, and only there is its cookie. Go there, it ends there — otherwise it would silently persist.
             if not s and _link_modus(host):
                 resp = RedirectResponse(f"{auth.gate_issuer()}{auth.browser_path(request, '/auth/gate/logout')}"
                                         f"?host={_q(host)}", 303)
                 auth._gate_cookie_loeschen(resp)
                 _link_aufheben(request, resp)
                 return resp
-            # "all": diese Sitzung endet — sie trägt jede Anwendung hinter derselben Anmeldung —, mit
-            # oidc_rp_logout auch die beim Provider, mit dem ID-Token als Hinweis.
+            # "all": this session ends — it carries every application behind the same sign-in —, with
+            # oidc_rp_logout also the one at the provider, with the ID token as a hint.
             ziel = None
             if cfg.oidc_rp_logout and auth.oidc and s:
                 try:
@@ -1103,8 +1103,8 @@ def build_router(auth) -> APIRouter:
                 auth.audit("logout", u["username"], ip, f"host={host} scope=all")
             resp = RedirectResponse(ziel or "/.tinysesam/after-logout", 303)
             auth.logout(request, resp)
-            # Über die Verbindung angemeldet: Die Sitzung liegt auf dem Gateway, das eigene Cookie gibt
-            # es hier nicht — sie endet über ihr Handle, und mit ihr jede Verbindung (Fremdschlüssel).
+            # Signed in via the connection: the session lies on the gateway, there is no own cookie
+            # here — it ends via its handle, and with it every connection (foreign key).
             if s and not auth._session_from_request(request):
                 auth.store.delete_session_by_handle(s["token_hash"])
             auth._gate_cookie_loeschen(resp)
@@ -1112,9 +1112,9 @@ def build_router(auth) -> APIRouter:
             return resp
 
         def _weiter_sec(host: str) -> int:
-            """Wartezeit der Seite „Abgemeldet“, bevor sie zur Anwendung zurückführt (PO 2026-10-10) — nur im
-            Modus „direct“: Dort beginnt der Weg „/“ gleich beim Provider eine neue Anmeldung. Im Modus „page“
-            führt er zur eigenen Anmeldeseite, die zeigt die Abmeldung schon selbst."""
+            """Waiting time of the "Signed out" page before it leads back to the application (PO 2026-10-10) — only in
+            "direct" mode: there the path "/" starts a new sign-in right at the provider. In "page" mode
+            it leads to the own sign-in page, which already shows the sign-out itself."""
             if auth._forward_app(host)["login"] != "direct":
                 return 0
             return int(getattr(cfg, "forward_logged_out_sec", 0) or 0)
@@ -1133,7 +1133,7 @@ def build_router(auth) -> APIRouter:
             name = auth._forward_app(host)["name"]
             if modus not in GATE_SCOPES:          # "ask"
                 return auth.render_page("gate_logout", request=request, scope="", app_name=name, next=nxt)
-            # Logout-CSRF wie /auth/logout (F-07): von einer fremden Seite erst fragen.
+            # Logout CSRF like /auth/logout (F-07): from a foreign page ask first.
             if (request.headers.get("sec-fetch-site") or "").strip().lower() == "cross-site":
                 return auth.render_page("gate_logout", request=request, scope=modus, app_name=name, next=nxt)
             return _gate_logout(request, host, modus, nxt)
@@ -1149,18 +1149,18 @@ def build_router(auth) -> APIRouter:
 
         @r.get("/.tinysesam/after-logout", response_class=HTMLResponse)
         def gate_after_logout(request: Request):
-            """Rückweg vom Provider nach dem Abmelden — von TinySesam angestossen oder von der
-            Anwendung selbst (deren RP-Logout mit dieser Adresse als Logout Callback URL). Im
-            zweiten Fall besteht die Sitzung noch: Sie endet hier, von einer fremden Seite aus erst
-            nach Rückfrage (F-07)."""
+            """Return path from the provider after signing out — triggered by TinySesam or by the
+            application itself (its RP logout with this address as logout callback URL). In the
+            second case the session still exists: it ends here, from a foreign page only
+            after confirmation (F-07)."""
             host = _gate_host_oder_404(request)
             if auth._gate_sitzung(request, host):
                 if (request.headers.get("sec-fetch-site") or "").strip().lower() == "cross-site":
                     return auth.render_page("gate_logout", request=request, scope="all",
                                             app_name=auth._forward_app(host)["name"], next="/")
                 return _gate_logout(request, host, "all", "/")
-            # Code-Austausch im Modus „page“ (PO 2026-10-08): gleich die Anmeldeseite mit „Du wurdest abgemeldet“,
-            # statt einer Zwischenseite, deren einziger Knopf genau dorthin führt.
+            # Code exchange in "page" mode (PO 2026-10-08): straight to the sign-in page with "You have been signed out",
+            # instead of an intermediate page whose only button leads exactly there.
             if _link_modus(host) and auth._forward_app(host)["login"] == "page":
                 resp = RedirectResponse("/.tinysesam/start?rd=%2F&abgemeldet=1", 303)
             else:
@@ -1172,9 +1172,9 @@ def build_router(auth) -> APIRouter:
         @r.post("/auth/gate/resume")
         def gate_resume(request: Request, next: str = Form(""), gate_host: str = Form(""),
                         csrf_tok: str = Form("", alias="_csrf")):
-            """„Weiter als …" auf der Login-Seite nach einer Abmeldung nur von dieser Anwendung.
-            `gate_host` (T-26): Beim Code-Austausch steht die Seite auf dem Gateway, `next` zeigt auf
-            dessen eigenen Weg — der Host der Anwendung kommt dann ausdrücklich mit."""
+            """"Continue as …" on the login page after signing out of this application only.
+            `gate_host` (T-26): with the code exchange the page stands on the gateway, `next` points to
+            its own path — the application's host then comes along explicitly."""
             auth.require_csrf(request, csrf_tok or request.headers.get("x-csrf-token"))
             nxt = auth.safe_next(next, request)
             s = auth._session_from_request(request)
@@ -1188,7 +1188,7 @@ def build_router(auth) -> APIRouter:
                 auth.audit("gate_resume", u["username"], auth.client_ip(request), f"host={host}")
             return RedirectResponse(nxt, 303)
 
-        # ---------- Code-Austausch: zentrales Gateway, Sitzung bleibt auf seinem Host (T-26) ----------
+        # ---------- Code exchange: central gateway, session stays on its host (T-26) ----------
         if cfg.gate_link_enabled:
             import hashlib as _hashlib
 
@@ -1197,14 +1197,14 @@ def build_router(auth) -> APIRouter:
 
             @r.get("/.tinysesam/start")
             def gate_link_start(request: Request, rd: str = "/", abgemeldet: str = ""):
-                """Auf dem App-Host: den Austausch beginnen. Der Ablauf wird an DIESEN Browser gebunden
-                (Cookie nur für diesen Host), sonst könnte jemand einem Opfer einen fremden Rückweg
-                unterschieben und es so in sein Konto ziehen."""
+                """On the app host: begin the exchange. The flow is bound to THIS browser
+                (cookie for this host only), otherwise someone could slip a victim a foreign return path
+                and thereby pull them into their account."""
                 host = _gate_host_oder_404(request)
                 if not auth._rate_ok(auth.client_ip(request)):
                     raise HTTPException(429, auth.t("err.rate"))
                 ziel = str(rd or "/")
-                # Nur ein Pfad DIESES Hosts — nie eine fremde Adresse, nie `//` (Schema-relativ).
+                # Only a path of THIS host — never a foreign address, never `//` (scheme-relative).
                 if not ziel.startswith("/") or ziel.startswith("//") or "\\" in ziel:
                     ziel = "/"
                 proto = (request.headers.get("x-forwarded-proto") or request.url.scheme or "https").split(",")[0].strip()
@@ -1219,8 +1219,8 @@ def build_router(auth) -> APIRouter:
 
             @r.get("/auth/gate/authorize", response_class=HTMLResponse)
             def gate_link_authorize(request: Request, flow: str = ""):
-                """Auf dem Gateway: Sitzung prüfen (sonst anmelden), dann einen Einmal-Code für genau
-                diesen App-Host ausstellen und dorthin zurück."""
+                """On the gateway: check the session (otherwise sign in), then issue a one-time code for exactly
+                this app host and go back there."""
                 f = auth.store.pop_flow("gatelink:" + str(flow or ""))
                 if not f or f.get("host") not in auth._gate_hosts():
                     raise HTTPException(400, auth.t("api.invalid", grund="flow"))
@@ -1228,7 +1228,7 @@ def build_router(auth) -> APIRouter:
                 hier = f"{auth.browser_path(request, '/auth/gate/authorize')}?flow={_q(flow)}"
 
                 def _zurueck_in_den_ablauf():
-                    # Der Ablauf wartet auf die Anmeldung — dieselbe Kennung, neue Frist.
+                    # The flow waits for the sign-in — the same identifier, new deadline.
                     auth.store.put_flow("gatelink:" + str(flow), f, ttl=600)
 
                 s = auth._session_from_request(request)
@@ -1239,8 +1239,8 @@ def build_router(auth) -> APIRouter:
                     if auth._forward_app(host)["login"] == "direct" and list(cfg.enabled_methods()) == ["oidc"]:
                         ziel = f"{auth.browser_path(request, '/auth/oidc/start')}?next={_q(hier)}"
                     else:
-                        # gate_host: Die Anmeldeseite sieht nur `next` (den Weg des Gateways) — ohne den Host
-                        # stünde dort „TinySesam“ statt „Anmelden bei <App>“ (PO 2026-10-08).
+                        # gate_host: the sign-in page sees only `next` (the gateway's path) — without the host
+                        # it would say "TinySesam" instead of "Sign in to <app>" (PO 2026-10-08).
                         ziel = f"{auth.browser_path(request, cfg.login_path)}?next={_q(hier)}&gate_host={_q(host)}"
                         if f.get("abgemeldet"):
                             ziel += "&abgemeldet=1"
@@ -1263,9 +1263,9 @@ def build_router(auth) -> APIRouter:
 
             @r.get("/auth/gate/logout")
             def gate_link_logout(request: Request, host: str = ""):
-                """Auf dem Gateway: „überall abmelden“, angestossen von einem App-Host, der die Sitzung
-                nicht kennt. Von einer fremden Seite aus (Logout-CSRF, F-07) nicht hier, sondern
-                zurück zur Rückfrage auf dem App-Host — dessen Bestätigung kommt dann same-site."""
+                """On the gateway: "sign out everywhere", triggered by an app host that does not know
+                the session. From a foreign page (logout CSRF, F-07) not here, but
+                back to the confirmation on the app host — whose confirmation then comes same-site."""
                 h = str(host or "").strip().lower()
                 if h not in auth._gate_hosts():
                     raise HTTPException(400, auth.t("api.invalid", grund="host"))
@@ -1273,16 +1273,16 @@ def build_router(auth) -> APIRouter:
                     proto = (request.headers.get("x-forwarded-proto") or request.url.scheme or "https").split(",")[0].strip()
                     return RedirectResponse(f"{'http' if proto == 'http' else 'https'}://{h}/.tinysesam/logout", 303)
                 if not auth._session_from_request(request):
-                    # Auch hier keine Sitzung: nichts mehr zu beenden. Die Seite „Abgemeldet“ HIER zeigen —
-                    # nicht auf dem App-Host: Wer am Gate vorbeikommt (Mesh), erreicht dort keinen
-                    # TinySesam. Und NICHT in _gate_logout, das reichte ohne Sitzung wieder hierher (Schleife).
+                    # Here too no session: nothing left to end. Show the "Signed out" page HERE —
+                    # not on the app host: whoever bypasses the gate (mesh) reaches no
+                    # TinySesam there. And NOT in _gate_logout, which without a session led back here (loop).
                     return RedirectResponse(f"{auth.browser_path(request, '/auth/gate/logged-out')}?host={_q(h)}", 303)
                 return _gate_logout(request, h, "all", "/")
 
             @r.get("/auth/gate/logged-out", response_class=HTMLResponse)
             def gate_link_logged_out(request: Request, host: str = ""):
-                """Auf dem Gateway: „Abgemeldet“ für einen App-Host — mit „Wieder anmelden“ zu DIESER App.
-                Für Wege, auf denen der App-Host keinen TinySesam vor sich hat (Mesh am Gate vorbei)."""
+                """On the gateway: "Signed out" for an app host — with "Sign in again" to THIS app.
+                For paths on which the app host has no TinySesam in front of it (mesh bypassing the gate)."""
                 h = str(host or "").strip().lower()
                 if h not in auth._gate_hosts():
                     raise HTTPException(400, auth.t("api.invalid", grund="host"))
@@ -1295,8 +1295,8 @@ def build_router(auth) -> APIRouter:
 
             @r.get("/.tinysesam/callback")
             def gate_link_callback(request: Request, code: str = ""):
-                """Auf dem App-Host: Code einlösen (genau einmal, nur hier, nur in dem Browser, der den
-                Ablauf begann) und die Verbindung für diesen Host anlegen."""
+                """On the app host: redeem the code (exactly once, only here, only in the browser that
+                began the flow) and create the connection for this host."""
                 host = _gate_host_oder_404(request)
                 f = auth.store.pop_flow("gatecode:" + _h(code)) if code else None
                 bindung = request.cookies.get(auth._GATE_LINKFLOW_COOKIE) or ""
@@ -1319,18 +1319,18 @@ def build_router(auth) -> APIRouter:
                 auth._gate_set_cookie(resp, auth._GATE_LINKFLOW_COOKIE, "", 0)
                 return resp
 
-    # ---------- Eigenes Konto (Selbstverwaltung) ----------
+    # ---------- Own account (self-service) ----------
     @r.post("/auth/password")
     async def change_own_password(request: Request):
-        # Eine Quelle (0.22.0): Sitzung (nie ein API-Key), Drossel, Vorbuchung im eigenen Topf
-        # (R4-10), das alte Passwort gegen die ID der Sitzung (R4-12), die Passwortregel, das
-        # Beenden der anderen Sitzungen, das Verwerfen offener Adresswechsel-Links und das Audit
-        # stehen in `change_password`, dem öffentlichen Baustein für eigene Passwortwechsel-Seiten.
-        # Hier wird nur das JSON gelesen (samt CSRF-Prüfung, wie an jeder Schreib-Route) und das
-        # Ergebnis zur Antwort. Diese Route ruft keinen inneren Prüfer selbst (Wächter in
+        # One source (0.22.0): session (never an API key), throttle, pre-booking in its own bucket
+        # (R4-10), the old password against the session ID (R4-12), the password rule, ending the
+        # other sessions, discarding open address-change links and the audit
+        # live in `change_password`, the public building block for custom password-change pages.
+        # Here only the JSON is read (including the CSRF check, as at every write route) and the
+        # result becomes the response. This route calls no inner checker itself (guard in
         # `tests/test_bestaetigen.py`).
         b = await auth.json_body(request)
-        # Im Threadpool: Die Prüfung des alten Passworts (argon2) hielte sonst die Ereignisschleife an.
+        # In the thread pool: checking the old password (argon2) would otherwise halt the event loop.
         erg = await run_in_threadpool(auth.change_password, request, b.get("current") or "",
                                       b.get("new") or "",
                                       csrf=request.headers.get("x-csrf-token") or b.get("_csrf") or "")
@@ -1344,9 +1344,9 @@ def build_router(auth) -> APIRouter:
             u = auth.current_user(request)
             if not u:
                 return RedirectResponse(f"{auth.browser_path(request, cfg.login_path)}?next={_q(auth.browser_path(request, '/auth/account'))}", 303)
-            # Die Konto-Seite fragt, welche Faktoren ein Konto pflegt, nicht, womit die Login-Seite
-            # beginnt: Eine PIN, die eine strikte Kette nur als Folgefaktor zulässt (G7), braucht
-            # ihre Sektion trotzdem, ebenso eine, die die Kette verlangt (mit `pin_login=False`).
+            # The account page asks which factors an account maintains, not what the login page
+            # starts with: a PIN that a strict chain permits only as a follow-up factor (G7) needs
+            # its section anyway, as does one that the chain demands (with `pin_login=False`).
             methoden = cfg.enabled_methods()
             if cfg.pin_enabled and (cfg.pin_login or "pin" in (cfg.login_chain or [])) and "pin" not in methoden:
                 methoden.append("pin")
@@ -1362,12 +1362,12 @@ def build_router(auth) -> APIRouter:
                                                      and not cfg.ldap_enabled),
                                     email_change=(cfg.self_service_email_change and auth.mail_configured()))
 
-    # ---------- Selbstbedienung: Benutzername und Adresse (PO-Entscheid 2026-09-25) ----------
+    # ---------- Self-service: username and address (PO decision 2026-09-25) ----------
     def _frisch_fuer_kennung(request: Request) -> dict:
-        """Wer seine Kennung ändert, bestätigt vorher frisch — wie beim Einrichten eines Faktors:
-        Mit einem gestohlenen Sitzungscookie liesse sich sonst der Name oder die Adresse umbiegen,
-        und der Reset-Link ginge danach an den Dieb. Ein Konto ohne jeden Faktor (rein föderiert)
-        hängt am Alter der Anmeldung. Kein API-Key (`require_session`)."""
+        """Whoever changes their identifier confirms freshly beforehand — as when setting up a factor:
+        with a stolen session cookie the name or the address could otherwise be bent over,
+        and the reset link would then go to the thief. An account without any factor (purely federated)
+        depends on the age of the sign-in. No API key (`require_session`)."""
         u = auth.require_session(request)
         if auth.stepup_options(u):
             return auth.require_mfa(request)
@@ -1398,22 +1398,22 @@ def build_router(auth) -> APIRouter:
             try:
                 senden = auth.request_email_change(u["id"], b.get("email"), auth.public_base(request))
             except ConfigError:
-                # Zuerst: `ConfigError` IST ein `ValueError` (CodeQL py/unreachable-except). In
-                # umgekehrter Reihenfolge ging die Meldung zur Basis-Adresse als Antworttext hinaus.
+                # First: `ConfigError` IS a `ValueError` (CodeQL py/unreachable-except). In
+                # the reverse order the message about the base address went out as response text.
                 raise HTTPException(400, auth.t("api.no_mail"))
             except ValueError as e:
                 raise HTTPException(400, str(e))
-            # Dieselbe Antwort, ob ein Link hinausgeht oder nicht (vergebene Adresse, Drossel) —
-            # und der Versand erst nach der Antwort (R4-05): keine Laufzeit als Orakel.
-            # Ist die Warteschlange voll, verfällt der Token (`senden.verwerfen`): Ein nie
-            # zugestellter Link hielte sonst den Weg über LDAP/SAML bis zu seinem Ablauf auf.
+            # The same answer whether a link goes out or not (taken address, throttle) —
+            # and sending only after the response (R4-05): no running time as an oracle.
+            # If the queue is full, the token expires (`senden.verwerfen`): a link that was never
+            # delivered would otherwise block the path via LDAP/SAML until its expiry.
             antwort = JSONResponse({"ok": True, "sent": True})
             return auth.after_response(antwort, senden, on_overflow=senden.verwerfen) \
                 if senden else antwort
 
         @r.get("/auth/email/{token}", response_class=HTMLResponse)
         def email_confirm_page(request: Request, token: str):
-            """Bestätigungsseite statt Einlösen per GET — Link-Scanner lösen nichts ein (R4-02)."""
+            """Confirmation page instead of redeeming via GET — link scanners redeem nothing (R4-02)."""
             if not auth.peek_magic(token, purpose="email_change"):
                 auth._token_abgewiesen("email_change", request)
                 return auth.render_page("magic_invalid", request=request, status=400)
@@ -1432,15 +1432,15 @@ def build_router(auth) -> APIRouter:
             ziel = auth.browser_path(request, "/auth/account" if cfg.account_enabled else cfg.login_redirect)
             return RedirectResponse(ziel, 303)
 
-    # ---------- Eigene Sitzungen verwalten ----------
+    # ---------- Manage own sessions ----------
     @r.get("/auth/sessions")
     def own_sessions(request: Request):
         u = auth.current_user(request)
         if not u:
             raise HTTPException(401)
-        # Die Liste nennt IP und Browser jeder Sitzung — das ist die Sicht eines Menschen auf sein
-        # Konto, nicht die eines Automaten (F-09). Ansehen braucht keine frische Bestätigung
-        # (ASVS 5.0 7.5.2 verlangt sie nur fürs Beenden), wohl aber eine echte Sitzung.
+        # The list names IP and browser of every session — that is a human's view of their
+        # account, not a machine's (F-09). Viewing needs no fresh confirmation
+        # (ASVS 5.0 7.5.2 demands it only for ending), but a real session.
         auth.require_session(request, u)
         cur = auth._session_from_request(request)
         cur_tok = cur["token_hash"] if cur else None
@@ -1452,12 +1452,12 @@ def build_router(auth) -> APIRouter:
 
     @r.post("/auth/sessions/revoke-after-login")
     async def sessions_revoke_after_login(request: Request):
-        """Die übrigen Sitzungen beenden, SOBALD diese halbe Anmeldung vollständig ist (Grenze d).
+        """End the other sessions AS SOON AS this half sign-in is complete (boundary d).
 
-        Nur für eine halbe Sitzung: Eine volle nimmt `/auth/sessions/revoke`. Beendet wird hier
-        nichts — vermerkt wird die Zustimmung, eingelöst erst nach dem letzten Faktor. Wer nur den
-        ersten Faktor hat, kann damit also nichts beenden, was er nicht ohnehin voll könnte."""
-        await auth.json_body(request)                     # CSRF wie jede Schreib-Route
+        Only for a half session: a full one takes `/auth/sessions/revoke`. Nothing is ended
+        here — the consent is noted, redeemed only after the last factor. So whoever has only the
+        first factor cannot end anything with it that they could not fully do anyway."""
+        await auth.json_body(request)                     # CSRF like every write route
         s = auth._session_from_request(request)
         if not s or s["mfa_ok"]:
             raise HTTPException(400, auth.t("api.invalid", grund="keine halbe Anmeldung"))
@@ -1466,28 +1466,28 @@ def build_router(auth) -> APIRouter:
 
     @r.post("/auth/sessions/revoke")
     async def own_sessions_revoke(request: Request):
-        # Sitzungen beenden verlangt eine frische Bestätigung (F-09, ASVS 5.0 7.5.2: „having
-        # authenticated again with at least one factor"). Vorher genügte jede Sitzung und jeder
-        # API-Key: Ein gestohlenes Cookie warf den rechtmässigen Inhaber auf allen anderen
-        # Geräten hinaus, und „alle beenden" widerrief dabei auch noch seine API-Keys. Die
-        # Kontoseite folgt dem `X-TinySesam-Reauth`-Hinweis von selbst.
+        # Ending sessions requires a fresh confirmation (F-09, ASVS 5.0 7.5.2: "having
+        # authenticated again with at least one factor"). Before, any session and any
+        # API key sufficed: a stolen cookie threw the rightful holder off all other
+        # devices, and "end all" even revoked their API keys. The
+        # account page follows the `X-TinySesam-Reauth` hint by itself.
         if not auth.current_user(request):
             raise HTTPException(401)
         u = auth.require_mfa(request)
         scope = (await auth.json_body(request)).get("scope", "others")
-        # Ein API-Key ist eine zweite, gleichwertige Anmeldung — er hängt an keiner Sitzung.
-        # „alle beenden" ist die Panik-Taste (Konto vermutlich übernommen): da gehört er dazu.
-        # „andere beenden" ist Aufräumen: da bleibt er, und die Antwort sagt, wie viele weiter
-        # gelten. Stillschweigend weiterlaufen lassen ist das Einzige, was nicht geht.
+        # An API key is a second, equivalent sign-in — it hangs on no session.
+        # "end all" is the panic button (account probably taken over): the key belongs there.
+        # "end others" is tidying up: the key stays, and the answer says how many keep
+        # applying. Letting them run silently is the only thing that is not acceptable.
         keys_widerrufen = 0
         if scope == "all":
-            auth.store.delete_user_sessions(u["id"])          # inkl. aktueller → ausgeloggt
+            auth.store.delete_user_sessions(u["id"])          # incl. current → signed out
             keys_widerrufen = auth._keys_widerrufen(u["id"], "sessions_revoked")
-            auth.store.revoke_user_magic_tokens(u["id"])      # Panik-Taste: auch offene Links (Fund 1)
+            auth.store.revoke_user_magic_tokens(u["id"])      # panic button: open links too (finding 1)
         else:
             cur = auth._session_from_request(request)
             auth.store.delete_user_sessions_except(u["id"], cur["token_hash"] if cur else None)
-            # Ein offener Adresswechsel kann aus einer der beendeten Sitzungen stammen (Fund 1).
+            # An open address change may stem from one of the ended sessions (finding 1).
             auth.store.revoke_user_magic_tokens(u["id"], purposes=("email_change",))
         auth.audit("sessions_revoke", u["username"], auth.client_ip(request),
                    scope + (f" api_keys_revoked={keys_widerrufen}" if keys_widerrufen else ""))
@@ -1496,8 +1496,8 @@ def build_router(auth) -> APIRouter:
 
     # ---------- Logout / me ----------
     def _provider_logout_url(s, zurueck: str):
-        """Logout beim Provider, mit dem ID-Token der Anmeldung als Hinweis (T-22) — und mit DEM
-        Client, über den sie lief: PocketID nimmt den Hinweis nur zum passenden Client an."""
+        """Logout at the provider, with the sign-in's ID token as a hint (T-22) — and with THE
+        client through which it ran: PocketID accepts the hint only for the matching client."""
         gespeichert = auth.store.get_oidc_id_token(s["token_hash"]) if s else None
         client, hinweis = gespeichert if gespeichert else ("", None)
         registry = getattr(auth, "oidc_clients", None)
@@ -1505,10 +1505,10 @@ def build_router(auth) -> APIRouter:
         return oidc.end_session_url(zurueck, id_token_hint=hinweis)
 
     def _abmelden(request: Request):
-        # Protokolliert wird das Konto, dessen Sitzung hier endet — aus dem Cookie (0.20.1,
-        # `session_user`), nicht das eines mitgeschickten API-Keys.
+        # The account whose session ends here is logged — from the cookie (0.20.1,
+        # `session_user`), not that of an API key sent along.
         u = auth.session_user(request) or auth.pending_user(request)
-        # OIDC-Provider-Logout (optional): vor dem lokalen Logout prüfen, ob die Sitzung via OIDC lief
+        # OIDC provider logout (optional): before the local logout check whether the session ran via OIDC
         oidc_logout_url = None
         if cfg.oidc_rp_logout and auth.oidc:
             s = auth._session_from_request(request)
@@ -1518,9 +1518,9 @@ def build_router(auth) -> APIRouter:
             except Exception:
                 factors = []
             if s and (s["method"] == "oidc" or "oidc" in factors):
-                # Ohne vertrauenswürdige Basis KEIN post_logout_redirect_uri: sonst schickte
-                # der IdP das Opfer nach dem Logout auf den Host aus dem Host-Header. Der
-                # lokale Logout unten läuft trotzdem, nur eben ohne Provider-Umweg.
+                # Without a trustworthy base NO post_logout_redirect_uri: otherwise the
+                # IdP would send the victim after logout to the host from the Host header. The
+                # local logout below runs anyway, just without the provider detour.
                 base = auth.public_base(request)
                 if base:
                     oidc_logout_url = _provider_logout_url(s, base + cfg.logout_redirect)
@@ -1532,19 +1532,19 @@ def build_router(auth) -> APIRouter:
 
     @r.get("/auth/logout")
     def logout(request: Request):
-        # Logout-CSRF (F-07): Ein GET, der abmeldet, lässt sich von jeder fremden Seite mit einem
-        # <img src> auslösen. Der Browser sagt aber, woher die Navigation kommt. Von der eigenen
-        # Seite, einer Nachbar-Subdomain (die Abmelden-Schaltfläche einer geschützten App) oder
-        # aus der Adresszeile gilt der Link weiter; von einer FREMDEN Seite kommt statt des
-        # Abmeldens eine Rückfrage mit POST-Formular. Ohne den Header (alter Browser, Skript)
-        # bleibt es beim alten Verhalten — sonst bräche jeder bestehende Abmelde-Link.
+        # Logout CSRF (F-07): a GET that signs out can be triggered from any foreign page with an
+        # <img src>. But the browser says where the navigation comes from. From the own
+        # page, a neighbour subdomain (the sign-out button of a protected app) or
+        # the address bar the link keeps working; from a FOREIGN page, instead of
+        # signing out, a confirmation prompt with a POST form appears. Without the header (old browser, script)
+        # the old behaviour stays — otherwise every existing sign-out link would break.
         if (request.headers.get("sec-fetch-site") or "").strip().lower() == "cross-site":
             return auth.render_page("logout", request=request)
         return _abmelden(request)
 
     @r.post("/auth/logout")
     def logout_post(request: Request, csrf_tok: str = Form("", alias="_csrf")):
-        """Abmelden per Formular — mit CSRF-Prüfung, der Weg für eigene Oberflächen."""
+        """Sign out via form — with CSRF check, the way for custom UIs."""
         auth.require_csrf(request, csrf_tok or request.headers.get("x-csrf-token"))
         return _abmelden(request)
 
@@ -1557,31 +1557,31 @@ def build_router(auth) -> APIRouter:
                 "display_name": u["display_name"], "is_admin": bool(u["is_admin"]),
                 "roles": auth.user_roles(u)}
 
-    # ---------- OIDC (nur wenn aktiviert) ----------
+    # ---------- OIDC (only if enabled) ----------
     if auth.oidc:
         from .oidc import register_oidc_routes
         register_oidc_routes(r, auth)
 
-    # ---------- Passkey / WebAuthn (nur wenn aktiviert) ----------
+    # ---------- Passkey / WebAuthn (only if enabled) ----------
     if auth.webauthn:
         from .webauthn_ import register_passkey_routes
         try:
             register_passkey_routes(r, auth)
         except ModuleNotFoundError as e:
-            # Wer passkey_enabled bewusst einschaltet, soll lesen koennen, was fehlt — statt
-            # einen ModuleNotFoundError aus dem Innern der Bibliothek zu bekommen.
+            # Whoever deliberately enables passkey_enabled should be able to read what is missing — instead of
+            # getting a ModuleNotFoundError from inside the library.
             #
-            # `MissingExtra`, nicht `RuntimeError`: Die Doku zeigt `except MissingExtra as e:
-            # … e.extra` als Muster, und für den Passkey-Fall griff das ins Leere — als
-            # einziges Verfahren warf er einen anderen Typ. (`MissingExtra` erbt von
-            # `RuntimeError`, bestehender Code fängt also weiter.)
+            # `MissingExtra`, not `RuntimeError`: the docs show `except MissingExtra as e:
+            # … e.extra` as the pattern, and for the passkey case that missed — as the
+            # only method it raised a different type. (`MissingExtra` inherits from
+            # `RuntimeError`, so existing code keeps catching it.)
             from .errors import MissingExtra
             raise MissingExtra(
                 "passkey_enabled=True, aber das Extra [passkey] ist nicht installiert "
                 "(pip install 'tinysesam[passkey]'). Ohne es gibt es keine Passkey-Routen; "
                 "passkey_enabled=False schaltet sie ab.", extra="passkey") from e
 
-    # ---------- SAML 2.0 SP (nur wenn aktiviert) ----------
+    # ---------- SAML 2.0 SP (only if enabled) ----------
     if auth.saml:
         from fastapi.responses import Response as _Resp
 
@@ -1592,30 +1592,30 @@ def build_router(auth) -> APIRouter:
             return f"{proto}://{host}"
 
         def _saml_req(request: Request, form=None):
-            """Der `req`-Satz für python3-saml — gebaut aus der GEPRÜFTEN Basis (F-16).
+            """The `req` set for python3-saml — built from the CHECKED base (F-16).
 
-            Vorher standen hier Schema und Host aus `X-Forwarded-Proto`/`Host`. python3-saml
-            berechnet daraus die Adresse, die es für die eigene hält, und vergleicht sie mit der
-            `Destination` der Assertion — der Anfragende bestimmte diesen Vergleich also mit.
+            Before, scheme and host from `X-Forwarded-Proto`/`Host` stood here. python3-saml
+            computes from them the address it considers its own and compares it with the
+            `Destination` of the assertion — so the requester co-determined this comparison.
             """
             from .saml_ import request_kontext
             return request_kontext(_saml_basis(request), request.url.path,
                                    form=form, query=request.query_params)
 
-        # Anker gegen untergeschobene Assertions: Die ID des AuthnRequests liegt bis zur ACS in
-        # einem eigenen, kurzlebigen Cookie.
+        # Anchor against smuggled-in assertions: the ID of the AuthnRequest lies until the ACS in
+        # a cookie of its own, short-lived.
         #
-        # SameSite ist hier NICHT aus der Config: Die ACS ist ein Cross-Site-POST (der IdP lässt
-        # den Browser ein Formular abschicken), und dabei sendet der Browser ein Lax-Cookie
-        # nicht mit — der Vorgabewert `cookie_samesite="lax"` würde den Anker also bei jedem
-        # echten Login verlieren. Mitkommen kann nur `SameSite=None`, und das verlangt `Secure`.
-        # Ohne `cookie_secure` bleibt es deshalb beim Config-Wert: lokal/im TestClient ist der
-        # POST same-site und kommt durch, für einen echten IdP ist dieser Aufbau ohnehin keiner.
+        # SameSite is here NOT from the config: the ACS is a cross-site POST (the IdP has
+        # the browser submit a form), and the browser then does not send a Lax cookie
+        # along — the default `cookie_samesite="lax"` would therefore lose the anchor at every
+        # real login. Only `SameSite=None` can come along, and that requires `Secure`.
+        # Without `cookie_secure` it therefore stays with the config value: locally/in the TestClient the
+        # POST is same-site and gets through, for a real IdP this setup is none anyway.
         _SAMLFLOW = "tinysesam_saml_flow"
 
-        # SAML baut aus der Basis die eigene Entity-ID und die ACS-URL. Kommt sie aus dem
-        # Host-Header, wandert ein fremder Name in den AuthnRequest und in die Metadaten —
-        # deshalb hier kein Weiterarbeiten ohne geprüfte Basis (R4-01).
+        # SAML builds its own entity ID and the ACS URL from the base. If it comes from the
+        # Host header, a foreign name migrates into the AuthnRequest and the metadata —
+        # hence no carrying on here without a checked base (R4-01).
         def _saml_basis(request: Request) -> str:
             return auth.require_public_base(request, _saml_base(request))
 
@@ -1624,17 +1624,17 @@ def build_router(auth) -> APIRouter:
             base = _saml_basis(request)
             url, rid = auth.saml.login_url(_saml_req(request), base, return_to=auth.safe_next(next, request))
             resp = RedirectResponse(url, 303)
-            # `__Host-` davor, wo möglich (A-1) — sonst setzt eine Nachbar-Subdomain den Anker.
+            # `__Host-` in front where possible (A-1) — otherwise a neighbour subdomain sets the anchor.
             auth._flow_cookie_setzen(resp, _SAMLFLOW, rid or "", max_age=600,
                                     samesite="none" if cfg.cookie_secure else cfg.cookie_samesite)
             return resp
 
-        @r.post("/auth/saml/acs")            # POST vom IdP → von CSRF ausgenommen (Signatur schützt)
+        @r.post("/auth/saml/acs")            # POST from the IdP → exempt from CSRF (signature protects)
         async def saml_acs(request: Request):
-            # Ratenbegrenzt wie jeder andere Anmelde-Einstieg (F-22). Die ACS nimmt ohne CSRF und
-            # ohne Sitzung einen POST an und wirft ihn durch die XML-Signaturprüfung — die
-            # teuerste Arbeit, die ein Unangemeldeter hier auslösen kann, und bis 0.19.x die
-            # einzige Anmelderoute ohne Drossel.
+            # Rate-limited like every other sign-in entry (F-22). The ACS accepts a POST without CSRF and
+            # without a session and runs it through the XML signature check — the
+            # most expensive work an unauthenticated user can trigger here, and until 0.19.x the
+            # only sign-in route without a throttle.
             ip = auth.client_ip(request)
             if not auth._rate_ok(ip):
                 raise HTTPException(429, auth.t("err.rate"))
@@ -1643,23 +1643,23 @@ def build_router(auth) -> APIRouter:
             data = auth.saml.process(_saml_req(request, form), base,
                                      request_id=request.cookies.get(auth.flow_cookie_name(_SAMLFLOW)) or "")
             if not data:
-                # NICHT die Magic-Link-Seite („dieser Link ist ungültig, abgelaufen oder schon
-                # benutzt") — hier ging es um keinen Link, und die Meldung schickte beim ersten
-                # Lauf gegen einen echten IdP in die falsche Richtung. Der Grund steht im Log.
+                # NOT the magic-link page ("this link is invalid, expired or already
+                # used") — this was about no link, and the message sent the first
+                # run against a real IdP in the wrong direction. The reason is in the log.
                 auth.audit("saml_invalid", None, ip, "Assertion abgelehnt (Grund im Sicherheits-Log)")
                 raise HTTPException(400, auth.t("err.saml"))
             u = auth._check_saml(data.get("nameid"), data.get("attrs") or {}, ip=ip)
             if not u:
-                # Den Grund (Gruppe, kein Konto, gesperrt, Kennung vergeben) schreibt
-                # `_check_saml` selbst ins Audit-Log — hier nur die Antwort an den Browser.
+                # The reason (group, no account, blocked, identifier taken) is written by
+                # `_check_saml` itself into the audit log — here only the answer to the browser.
                 raise HTTPException(403, auth.t("api.saml_denied"))
             nxt = auth.safe_next(form.get("RelayState") or "", request)
-            # SAML kennt kein `email_verified`: Kein Standard-Attribut sagt, dass der IdP die
-            # Adresse geprüft hat. Ohne `saml_email_trusted` (Vorgabe) und ohne Beleg-Attribut
-            # (`saml_attr_email_verified`) reist hier deshalb „kein Beleg" mit — eine
-            # Allowlist-ADRESSE wird über SAML nie zum Erst-Admin (F-14). Mit einem von beiden
-            # zählt der Beleg am Konto, den `_check_saml` gesetzt hat. Der Faktor `saml`
-            # steht zusätzlich in `_FOEDERIERTE_FAKTOREN`, das Weglassen wäre also kein Loch.
+            # SAML has no `email_verified`: no standard attribute says that the IdP has
+            # checked the address. Without `saml_email_trusted` (default) and without a vouching attribute
+            # (`saml_attr_email_verified`) "no proof" therefore travels along here — an
+            # allowlist ADDRESS never becomes first admin via SAML (F-14). With one of the two
+            # the proof set on the account by `_check_saml` counts. The factor `saml`
+            # additionally stands in `_FOEDERIERTE_FAKTOREN`, so omitting it would be no hole.
             token, ok, is_new = auth.apply_factor(request, u["id"], "saml",
                                                   auth.client_ip(request),
                                                   request.headers.get("user-agent"),
@@ -1670,7 +1670,7 @@ def build_router(auth) -> APIRouter:
             resp = RedirectResponse(auth._login_redirect_after(request, token, u["id"], nxt), 303)
             if is_new:
                 auth.set_cookie(resp, token)
-            # einmal angefordert, einmal eingelöst
+            # requested once, redeemed once
             auth._flow_cookie_loeschen(resp, _SAMLFLOW,
                                       samesite="none" if cfg.cookie_secure else cfg.cookie_samesite)
             return resp
@@ -1680,7 +1680,7 @@ def build_router(auth) -> APIRouter:
             base = _saml_basis(request)
             return _Resp(content=auth.saml.metadata(base), media_type="application/xml")
 
-    # ---------- API-Keys: Self-Service für den eingeloggten User ----------
+    # ---------- API keys: self-service for the signed-in user ----------
     if cfg.apikey_enabled:
         @r.get("/auth/apikeys")
         def apikeys_list(request: Request):
@@ -1690,13 +1690,13 @@ def build_router(auth) -> APIRouter:
             return [key_view(k) for k in auth.list_api_keys(u["id"])]
 
         def _nur_mit_sitzung(request: Request):
-            """Verwaltung von Schlüsseln setzt eine interaktive Sitzung voraus.
+            """Managing keys presupposes an interactive session.
 
-            `create_api_key` schneidet den Scope gegen die **Konto**-Rollen — nicht gegen die
-            des Aufrufers. Ein auf `["lager"]` beschränkter Key konnte sich damit selbst einen
-            Key mit allen Rollen des Kontos ausstellen und so seine eigene Begrenzung aufheben.
-            Statt die Schnittmenge durch den ganzen Aufrufpfad zu fädeln, gilt die einfachere
-            Regel: Schlüssel gibt ein Mensch aus, kein Schlüssel.
+            `create_api_key` cuts the scope against the **account's** roles — not against those
+            of the caller. A key restricted to `["lager"]` could thereby issue itself a
+            key with all roles of the account and so lift its own restriction.
+            Instead of threading the intersection through the whole call path, the simpler
+            rule applies: keys are issued by a human, not by a key.
             """
             u = auth.current_user(request)
             if not u:
@@ -1709,12 +1709,12 @@ def build_router(auth) -> APIRouter:
         async def apikeys_create(request: Request):
             u = _nur_mit_sitzung(request)
             b = await auth.json_body(request)
-            # `kind` entscheidet, was der Key kann (R6-5): "automation" arbeitet allein, trägt
-            # aber nie das Admin-Flag; "human" gilt nur zusammen mit einer Sitzung desselben
-            # Kontos. Die Vorgabe ist die engere der beiden. Die Namen bis 0.21.x ("automat",
-            # "mensch") sind ein Eingabefehler, dessen Text den neuen nennt (ohne Alias).
-            # Ein unbrauchbarer Scope, „unbefristet" ohne Erlaubnis oder eine unbekannte Art
-            # sind Eingabefehler, kein Serverfehler — dieselbe Klasse wie R6-8 im Panel.
+            # `kind` decides what the key can do (R6-5): "automation" works alone, but
+            # never carries the admin flag; "human" is valid only together with a session of the same
+            # account. The default is the narrower of the two. The names up to 0.21.x ("automat",
+            # "mensch") are an input error, whose text names the new ones (no alias).
+            # An unusable scope, "unlimited" without permission or an unknown kind
+            # are input errors, not server errors — the same class as R6-8 in the panel.
             try:
                 return auth.create_api_key(u["id"], name=b.get("name"),
                                            expires_days=b.get("expires_days"), roles=b.get("roles"),
@@ -1726,10 +1726,10 @@ def build_router(auth) -> APIRouter:
         def apikeys_revoke(request: Request, key_id: int):
             auth.require_csrf(request, request.headers.get("x-csrf-token"))
             u = _nur_mit_sitzung(request)
-            auth.revoke_api_key(key_id, u["id"])   # sperren, nicht löschen
+            auth.revoke_api_key(key_id, u["id"])   # block, do not delete
             return {"ok": True}
 
-    # ---------- Admin-Panel — an config.admin_path; via auth.admin_router() auch woanders montierbar ----------
+    # ---------- Admin panel — at config.admin_path; mountable elsewhere via auth.admin_router() ----------
     if cfg.admin_enabled:
         r.include_router(auth.admin_router(), prefix=cfg.admin_path)
 
@@ -1737,15 +1737,15 @@ def build_router(auth) -> APIRouter:
 
 
 def _mail_basis(auth, request) -> str:
-    """Die Basis für einen verschickten Link — oder HTTP 503, nie ein 500 und nie ein stiller 200.
+    """The base for a sent link — or HTTP 503, never a 500 and never a silent 200.
 
-    `konfigpruefung` lässt eine Mail-Funktion ohne `base_url` gar nicht erst starten. Wird die
-    Config NACH dem Konstruktor geändert (`auth.cfg.base_url = ""`), wirft
-    `require_public_base()` zur Request-Zeit `ConfigError` — und den fing keine Route: Der
-    Nutzer bekam „internal server error", der Betreiber einen Stacktrace ohne Hinweis, dass es
-    an der Konfiguration liegt. 503 sagt, was es ist: Der Dienst ist so nicht einsatzbereit.
-    Der Grund steht einmal im Sicherheits-Log (nicht je Anfrage), die Antwort verrät nichts
-    über das Postfach und nichts über den Aufbau.
+    `konfigpruefung` does not let a mail feature without `base_url` start at all. If the
+    config is changed AFTER the constructor (`auth.cfg.base_url = ""`),
+    `require_public_base()` raises `ConfigError` at request time — and no route caught it: the
+    user got "internal server error", the operator a stack trace with no hint that it is
+    the configuration. 503 says what it is: the service is not operational this way.
+    The reason goes once into the security log (not per request), the answer reveals nothing
+    about the mailbox and nothing about the setup.
     """
     from . import security
     try:
@@ -1757,8 +1757,8 @@ def _mail_basis(auth, request) -> str:
 
 
 def _key_kind(k) -> str:
-    """Die Art eines Key-Datensatzes mit englischem Namen — verträglich mit Dateien vor Schema 7
-    und mit Werten bis 0.21.x (`store.key_kind_of`)."""
+    """The kind of a key record with an English name — compatible with files from before schema 7
+    and with values up to 0.21.x (`store.key_kind_of`)."""
     return key_kind_of(k)
 
 
@@ -1769,12 +1769,12 @@ def key_view(k) -> dict:
 
 
 def _login_nach_token(auth, request, uid, nxt):
-    """Nach einem eingelösten E-Mail-Token anmelden (Faktor `magic`) und weiterleiten.
+    """After a redeemed e-mail token, sign in (factor `magic`) and redirect.
 
-    Gemeinsam für Anmelde-Link und E-Mail-Bestätigung: Beide belegen dasselbe — der Empfänger
-    hat Zugriff auf das Postfach. Eine globale Faktor-Kette kann trotzdem einen weiteren Schritt
-    verlangen; darum geht der Weg über `apply_factor`/`_login_redirect_after` statt direkt in
-    eine Sitzung.
+    Common to sign-in link and e-mail confirmation: both prove the same — the recipient
+    has access to the mailbox. A global factor chain can still demand a further step;
+    that is why the path goes via `apply_factor`/`_login_redirect_after` instead of straight into
+    a session.
     """
     from fastapi.responses import RedirectResponse
     token, ok, is_new = auth.apply_factor(request, uid, "magic",
@@ -1786,7 +1786,7 @@ def _login_nach_token(auth, request, uid, nxt):
 
 
 def _remember(cfg, val) -> bool:
-    """Remember-me aus dem Formular auswerten. Ist die Checkbox global aus, gilt immer persistent."""
+    """Evaluate remember-me from the form. If the checkbox is globally off, always persistent."""
     if not cfg.remember_me_enabled:
         return True
     return str(val) in ("1", "true", "on", "yes")

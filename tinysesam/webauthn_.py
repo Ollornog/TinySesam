@@ -1,11 +1,11 @@
-"""Passkey / WebAuthn — Registrierung (eingeloggter User) + passwortloser Login (discoverable).
+"""Passkey / WebAuthn — registration (signed-in user) + passwordless login (discoverable).
 
-Nutzt py_webauthn (Extra `[passkey]`). Challenges liegen kurzlebig im Store (flow) und sind über
-ein httponly-Cookie an den Browser gebunden. Passkeys sind phishing-resistent → gelten als
-vollwertiger Login (kein zusätzliches TOTP nötig).
+Uses py_webauthn (extra `[passkey]`). Challenges live briefly in the store (flow) and are bound to
+the browser by an httponly cookie. Passkeys are phishing-resistant → count as a
+full login (no additional TOTP needed).
 
-Origin/RP müssen zur echten Domain passen (config.rp_id = Domain ohne Schema/Port, config.origin =
-exaktes Browser-Origin). Über http://localhost testbar, produktiv nur über HTTPS.
+Origin/RP must match the real domain (config.rp_id = domain without scheme/port, config.origin =
+exact browser origin). Testable via http://localhost, in production only over HTTPS.
 """
 from __future__ import annotations
 import json as _json
@@ -21,11 +21,11 @@ from . import errors, security
 
 
 def _fehlt_extra(e: ModuleNotFoundError) -> "errors.MissingExtra":
-    """Aus einem nackten Importfehler eine Meldung machen, die sagt, was zu tun ist.
+    """Turn a bare import error into a message that says what to do.
 
-    Die Extras werden hier bewusst LAZY importiert (erst beim Benutzen). Der Preis dafür war
-    bis 0.18.0 ein `ModuleNotFoundError: webauthn` mitten im Anmeldevorgang — für den Betreiber
-    ein Defekt, dabei fehlte nur eine Zeile im Install-Befehl."""
+    The extras are deliberately imported LAZILY here (only on use). The price for that was,
+    up to 0.18.0, a `ModuleNotFoundError: webauthn` in the middle of the sign-in — for the operator
+    a defect, when only one word was missing in the install command."""
     return errors.MissingExtra(
         "Das Extra [passkey] ist nicht installiert (pip install 'tinysesam[passkey]') — "
         f"es fehlt: {e.name or 'webauthn'}.", extra="passkey")
@@ -40,12 +40,12 @@ def register_passkey_routes(router, auth):
     from webauthn.helpers import base64url_to_bytes, bytes_to_base64url
 
     def _uv_anforderung(cfg):
-        """Die Nutzerprüfung als WebAuthn-Wert — `required` (Vorgabe) oder `preferred` (B2-10).
+        """The user verification as a WebAuthn value — `required` (default) or `preferred` (B2-10).
 
-        Ein Passkey meldet in TinySesam **allein** an. Ohne Nutzerprüfung belegt er nur den
-        Besitz des Schlüssels: der entsperrte Rechner, der eingesteckte Stick, das kurz aus der
-        Hand gelegte Telefon. Deshalb ist `required` die Vorgabe — und die Antwort wird beim
-        Login auch geprüft, nicht nur erbeten."""
+        A passkey signs in **alone** in TinySesam. Without user verification it proves only
+        possession of the key: the unlocked computer, the inserted stick, the phone briefly put
+        down. That is why `required` is the default — and the response is also checked at
+        login, not just requested."""
         art = str(getattr(cfg, "passkey_user_verification", "required") or "required")
         return (UserVerificationRequirement.REQUIRED if art == "required"
                 else UserVerificationRequirement.PREFERRED)
@@ -59,21 +59,21 @@ def register_passkey_routes(router, auth):
             cfg.passkey_user_verification)
 
     def _set_flow_cookie(resp, fk):
-        # `__Host-` davor, wo möglich (A-1): Ein von einer Nachbar-Subdomain untergeschobenes
-        # Flow-Cookie hängte das Opfer an die Challenge des Angreifers.
+        # `__Host-` in front, where possible (A-1): a flow cookie planted by a neighboring subdomain
+        # attached the victim to the attacker's challenge.
         auth._flow_cookie_setzen(resp, _WAFLOW, fk, max_age=300)
 
-    # ---------- Registrierung (eingeloggter User) ----------
+    # ---------- Registration (signed-in user) ----------
     @router.post("/auth/passkey/register/begin")
     def reg_begin(request: Request):
         auth.require_csrf(request, request.headers.get("x-csrf-token"))
-        # Einen Passkey ANZULEGEN verlangt eine interaktive Sitzung. `current_user()` genügte
-        # hier nicht: Es akzeptiert einen API-Key, und für einen echten Key entfällt die
-        # CSRF-Prüfung ohnehin (`_csrf_entbehrlich`). Ein abgeflossener CI-Key registrierte
-        # damit einen EIGENEN Passkey — und ein Passkey ist ein vollwertiger Login: Darüber
-        # bekam der Key eine frische interaktive Sitzung und stand plötzlich vor genau den
-        # `require_mfa()`-Routen, die ihn seit R3-3 aussperren sollten. Die Anlage war der
-        # Hebel, mit dem der Riegel gegen den lautlos abbauenden Key umgangen wurde.
+        # CREATING a passkey requires an interactive session. `current_user()` was not enough
+        # here: it accepts an API key, and for a real key the
+        # CSRF check does not apply anyway (`_csrf_entbehrlich`). A leaked CI key thereby registered
+        # a passkey OF ITS OWN — and a passkey is a full login: through it
+        # the key got a fresh interactive session and suddenly stood in front of exactly the
+        # `require_mfa()` routes that have locked it out since R3-3. The creation was the
+        # lever by which the bolt against the silently degrading key was bypassed.
         u = auth.require_session(request)
         existing = auth.store.list_webauthn(u["id"])
         opts = generate_registration_options(
@@ -95,14 +95,14 @@ def register_passkey_routes(router, auth):
     @router.post("/auth/passkey/register/finish")
     async def reg_finish(request: Request, name: str = ""):
         auth.require_csrf(request, request.headers.get("x-csrf-token"))
-        u = auth.require_session(request)   # derselbe Riegel wie beim begin
+        u = auth.require_session(request)   # same bolt as at begin
         fk = request.cookies.get(auth.flow_cookie_name(_WAFLOW))
         flow = auth.store.pop_flow("wareg:" + fk) if fk else None
         if not flow:
             raise HTTPException(400, auth.t("api.passkey_reg_expired"))
-        # Der neue Faktor gehört an das Konto, das hier angemeldet ist — nicht an das aus dem
-        # Flow-Cookie. Wer über eine Subdomain ein Cookie setzen kann, schiebt sonst einen
-        # fremden Flow unter und der Passkey landet an einem anderen Konto.
+        # The new factor belongs to the account that is signed in here — not to the one from the
+        # flow cookie. Whoever can set a cookie via a subdomain would otherwise slip in a
+        # foreign flow and the passkey would land on another account.
         if flow["user_id"] != u["id"]:
             raise HTTPException(400, auth.t("api.passkey_reg_expired"))
         body = await request.body()
@@ -116,24 +116,24 @@ def register_passkey_routes(router, auth):
         auth.store.add_webauthn(flow["user_id"], bytes_to_base64url(v.credential_id),
                                 bytes_to_base64url(v.credential_public_key), v.sign_count,
                                 transports, name or "Passkey")
-        # Ein neuer Passkey ist ein neuer vollwertiger Login-Weg an diesem Konto. Bis 0.18.x
-        # entstand er spurlos — wer ihn sich heimlich einrichtete, hinterliess nichts (B5-01).
+        # A new passkey is a new full login path on this account. Up to 0.18.x
+        # it came about without a trace — whoever set it up secretly left nothing behind (B5-01).
         auth.audit("passkey_create", u["username"], auth.client_ip(request),
                    f"name={name or 'Passkey'}")
         auth._sicherheitsereignis("passkey_added", u["id"], name=name or "Passkey")
         resp = JSONResponse({"ok": True, "other_sessions": auth.count_other_sessions(request, u)})  # B1-7
-        # Der Flow ist verbraucht (pop_flow) — das Cookie dazu bindet nichts mehr und ginge nur
-        # noch an jede App mit (B-20). OIDC und SAML löschen ihres am Rückweg ebenso.
+        # The flow is consumed (pop_flow) — the cookie for it binds nothing any more and would only
+        # keep going along to every app (B-20). OIDC and SAML delete theirs on the way back as well.
         auth._flow_cookie_loeschen(resp, _WAFLOW)
         return resp
 
-    # ---------- Passwortloser Login (discoverable credential) ----------
+    # ---------- Passwordless login (discoverable credential) ----------
     @router.post("/auth/passkey/login/begin")
     def login_begin(request: Request):
         auth.require_csrf(request, request.headers.get("x-csrf-token"))
-        # Drosselung wie an jedem anderen Login-Einstieg (B2-10). Ohne sie war dies die einzige
-        # Anmeldestrecke ohne Bremse: Jeder Aufruf legte zudem eine `flow`-Zeile an, die erst
-        # nach fünf Minuten verfällt — ein bequemer Weg, die Datenbank wachsen zu lassen.
+        # Throttling like at every other login entry point (B2-10). Without it this was the only
+        # sign-in path without a brake: every call also created a `flow` row that expires only
+        # after five minutes — a convenient way to make the database grow.
         if not auth._rate_ok(auth.client_ip(request)):
             raise HTTPException(429, auth.t("err.rate"))
         opts = generate_authentication_options(rp_id=cfg.rp_id,
@@ -158,10 +158,10 @@ def register_passkey_routes(router, auth):
         data = _json.loads(body)
         row = auth.store.get_webauthn_by_credid(data.get("id") or data.get("rawId"))
         if not row:
-            # Ein unbekannter Schlüssel ist ein Fehlversuch wie jeder andere — mit dem
-            # Ereigniswort, auf das die fail2ban-Jail matcht. Bis 0.18.x hinterliess der
-            # Passkey-Pfad überhaupt keine Spur: weder Anlage noch Löschung noch Fehlanmeldung
-            # (B2-10, B5-01). Wer hier durchprobierte, tat das unbeobachtet.
+            # An unknown key is a failed attempt like any other — with the
+            # event word the fail2ban jail matches on. Up to 0.18.x the
+            # passkey path left no trace at all: neither creation nor deletion nor failed sign-in
+            # (B2-10, B5-01). Whoever probed here did so unobserved.
             security.seclog.warning("%s user=%s ip=%s method=passkey grund=unbekannter_schluessel",
                                     security.log_ereignis("passkey"), "?",
                                     security.fuer_log(ip_roh))
@@ -173,14 +173,14 @@ def register_passkey_routes(router, auth):
                 expected_rp_id=cfg.rp_id, expected_origin=cfg.origin,
                 credential_public_key=base64url_to_bytes(row["public_key"]),
             credential_current_sign_count=row["sign_count"],
-            # Die Antwort des Authenticators wird jetzt auch GEPRÜFT. Vorher stand in der
-            # Anfrage „preferred" und hier `False`: Ein Authenticator konnte also nein sagen,
-            # und der Login galt trotzdem — die Bitte war unverbindlich in beide Richtungen.
+            # The authenticator's response is now also CHECKED. Before, the request said
+            # "preferred" and here `False`: an authenticator could thus say no,
+            # and the login counted anyway — the request was non-binding in both directions.
                 require_user_verification=(str(cfg.passkey_user_verification) == "required"))
         except Exception as e:
-            # Signatur falsch, Challenge alt, Nutzerprüfung verweigert — für den Angreifer alles
-            # dasselbe, für das Protokoll nicht. Der Typ der Ausnahme reicht: Ihr Text kann den
-            # Inhalt der Anfrage tragen und gehört damit nicht in eine Zeile, die fail2ban liest.
+            # Signature wrong, challenge old, user verification refused — all the same for the
+            # attacker, not for the log. The exception type suffices: its text can carry the
+            # content of the request and thus does not belong in a line that fail2ban reads.
             besitzer = auth.store.get_user(row["user_id"])
             security.seclog.warning("%s user=%s ip=%s method=passkey grund=%s",
                                     security.log_ereignis("passkey"),
@@ -190,19 +190,19 @@ def register_passkey_routes(router, auth):
                        f"grund={type(e).__name__}")
             raise HTTPException(400, auth.t("api.passkey_unknown"))
         auth.store.update_webauthn_signcount(row["id"], v.new_sign_count)
-        # client_ip, nicht request.client.host: Hinter einem Reverse-Proxy ist der Peer der
-        # Proxy. Die rohe Peer-IP landete sonst in der Sitzungsliste und im Protokoll — und
-        # die IP-Sperre haette alle Nutzer hinter demselben Proxy in einen Topf geworfen.
+        # client_ip, not request.client.host: behind a reverse proxy the peer is the
+        # proxy. The raw peer IP would otherwise end up in the session list and in the log — and
+        # the IP lockout would have lumped all users behind the same proxy together.
         ip, ua = auth.client_ip(request), request.headers.get("user-agent")
         token, ok, is_new = auth.apply_factor(request, row["user_id"], "passkey", ip, ua)
         target = auth._login_redirect_after(request, token, row["user_id"], auth.safe_next(next, request))
         resp = JSONResponse({"ok": True, "redirect": target})
         if is_new:
             auth.set_cookie(resp, token)
-        auth._flow_cookie_loeschen(resp, _WAFLOW)   # Flow verbraucht, s. reg_finish
+        auth._flow_cookie_loeschen(resp, _WAFLOW)   # flow consumed, see reg_finish
         return resp
 
-    # ---------- Verwaltung ----------
+    # ---------- Management ----------
     @router.get("/auth/passkey/list")
     def pk_list(request: Request):
         u = auth.current_user(request)
@@ -213,23 +213,23 @@ def register_passkey_routes(router, auth):
 
     @router.post("/auth/passkey/delete")
     async def pk_delete(request: Request):
-        # R3-3: Einen Passkey zu löschen nimmt dem Konto einen vollwertigen Faktor. Das verlangt
-        # eine interaktive Sitzung mit frischer Bestätigung — `current_user()` hätte auch eine
-        # veraltete Sitzung und jeden API-Key durchgelassen.
+        # R3-3: deleting a passkey takes a full factor away from the account. That requires
+        # an interactive session with fresh confirmation — `current_user()` would also have let through a
+        # stale session and any API key.
         u = auth.require_mfa(request)
         b = await auth.json_body(request)
-        # Eine ganze Zahl oder eine Ziffernfolge, sonst 400. `int()` allein nahm `true` als
-        # Passkey 1 und `1.9` als 1, und `1e400`/`Infinity` (json.loads: float('inf')) warfen
-        # OverflowError — HTTP 500 statt der zugesagten 400.
+        # An integer or a digit string, otherwise 400. `int()` alone took `true` as
+        # passkey 1 and `1.9` as 1, and `1e400`/`Infinity` (json.loads: float('inf')) raised
+        # OverflowError — HTTP 500 instead of the promised 400.
         roh = b.get("id")
         if isinstance(roh, str) and roh.isascii() and roh.isdigit():
             roh = int(roh)
         if isinstance(roh, bool) or not isinstance(roh, int):
             raise HTTPException(400, auth.t("api.invalid", grund="id"))
         passkey_id = roh
-        # Löschen, Audit-Zeile (B5-01) und `passkey_removed` in einem — derselbe Weg wie der
-        # Widerruf im Admin-Panel (Integrationsfund 3). Ein Passkey, den das Konto nicht hat,
-        # ist 404 und hinterlässt weder Zeile noch Ereignis.
+        # Deletion, audit line (B5-01) and `passkey_removed` in one — the same path as the
+        # revocation in the admin panel (integration finding 3). A passkey the account does not have
+        # is 404 and leaves neither line nor event.
         if not auth.remove_passkey(u["id"], passkey_id, auth.client_ip(request)):
             raise HTTPException(404, auth.t("api.not_found"))
         return {"ok": True, "other_sessions": auth.count_other_sessions(request, u)}   # B1-7

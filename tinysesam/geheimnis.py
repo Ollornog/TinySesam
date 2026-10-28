@@ -1,25 +1,24 @@
-"""Umkehrbare Geheimnisse ruhend verschlüsseln (H-14/H-15, PO-Entscheid 2026-09-24: Pflicht).
+"""Encrypt reversible secrets at rest (H-14/H-15, PO decision 2026-09-24: mandatory).
 
-Das einzige umkehrbare Geheimnis in der Datenbank ist das TOTP-Geheimnis — Passwörter, PINs,
-Recovery-Codes, API-Keys und Bereichsgeheimnisse liegen nur als Hash dort. Bis 0.20.x stand es im
-Klartext: Wer eine Kopie der Datei hatte (ein Backup, ein Abzug des Volumes), erzeugte für jedes
-Konto gültige Codes, der zweite Faktor war damit so stark wie die Aufbewahrung der Sicherungen.
+The only reversible secret in the database is the TOTP secret — passwords, PINs,
+recovery codes, API keys and scope secrets are stored there only as a hash. Up to 0.20.x it was stored in
+plain text: whoever had a copy of the file (a backup, a dump of the volume) could generate valid
+codes for every account, so the second factor was only as strong as the safekeeping of the backups.
 
-Jetzt: AES-256-GCM, der Schlüssel liegt NICHT in der Datenbank. Woher er kommt, in dieser Reihe:
+Now: AES-256-GCM, the key is NOT in the database. Where it comes from, in this order:
 
-1. Umgebungsvariable `TINYSESAM_SECRETS_KEY` (32 Byte, Base64) — der Weg für Container-Secrets.
-2. `secrets_key_file` in der Konfiguration (Datei mit demselben Inhalt).
-3. Sonst eine Schlüsseldatei neben der Datenbank (`<db>.key`, 0600), beim ersten Start erzeugt.
-   Laut: Sie schützt gegen eine Datenbankdatei, die ALLEIN abfliesst, nicht gegen eine Sicherung
-   des ganzen Verzeichnisses. Für echte Trennung den Schlüssel über 1. oder 2. an einen anderen
-   Ort legen.
+1. Environment variable `TINYSESAM_SECRETS_KEY` (32 bytes, Base64) — the way for container secrets.
+2. `secrets_key_file` in the configuration (file with the same content).
+3. Otherwise a key file next to the database (`<db>.key`, 0600), created on first start.
+   Loudly: it protects against a database file that leaks ALONE, not against a backup
+   of the whole directory. For real separation put the key elsewhere via 1. or 2.
 
-**Ohne Schlüssel sind die TOTP-Einrichtungen verloren** — er gehört in die Sicherung, getrennt
-von der Datenbank. Passt er nicht zu den gespeicherten Geheimnissen, startet TinySesam nicht
-(`ConfigError`), statt still jede TOTP-Anmeldung scheitern zu lassen.
+**Without the key the TOTP setups are lost** — it belongs in the backup, separate
+from the database. If it does not match the stored secrets, TinySesam does not start
+(`ConfigError`) instead of silently letting every TOTP sign-in fail.
 
-Format eines Werts: `v1:` + Base64url(Nonce 12 Byte ‖ Chiffrat ‖ Tag). Ein Wert ohne Präfix ist
-Klartext aus der Zeit davor und wird beim Start verschlüsselt (`Store.geheimnisse_heben`).
+Format of a value: `v1:` + Base64url(nonce 12 bytes ‖ ciphertext ‖ tag). A value without prefix is
+plain text from the time before and is encrypted at startup (`Store.geheimnisse_heben`).
 """
 from __future__ import annotations
 
@@ -39,7 +38,7 @@ log = logging.getLogger("tinysesam")
 def _aesgcm():
     try:
         from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-    except ImportError as e:   # pragma: no cover — cryptography ist Pflichtabhängigkeit
+    except ImportError as e:   # pragma: no cover — cryptography is a mandatory dependency
         raise ConfigError("Das Paket `cryptography` fehlt — es ist seit 0.21.0 Pflicht "
                           "(TOTP-Geheimnisse werden verschlüsselt).") from e
     return AESGCM
@@ -58,7 +57,7 @@ def _schluessel_lesen(text: str, herkunft: str) -> bytes:
 
 
 def schluessel_laden(db_path: str, schluessel_datei: str = "") -> tuple[bytes, str]:
-    """Den Schlüssel finden oder (neben der Datenbank) anlegen. Rückgabe `(schlüssel, herkunft)`."""
+    """Find the key or create it (next to the database). Returns `(key, origin)`."""
     wert = os.environ.get(UMGEBUNG, "")
     if wert.strip():
         return _schluessel_lesen(wert, UMGEBUNG), "umgebung"
@@ -69,19 +68,19 @@ def schluessel_laden(db_path: str, schluessel_datei: str = "") -> tuple[bytes, s
         except OSError as e:
             raise ConfigError(f"secrets_key_file {schluessel_datei!r} lässt sich nicht lesen: {e}") from e
     if not db_path or db_path == ":memory:":
-        # Eine Datenbank im Speicher lebt so lange wie der Prozess — ihr Schlüssel auch.
+        # An in-memory database lives as long as the process — so does its key.
         return secrets.token_bytes(32), "speicher"
     pfad = db_path + ".key"
     try:
         with open(pfad, encoding="ascii") as f:
             return _schluessel_lesen(f.read(), f"Schlüsseldatei {pfad!r}"), "neben_db"
     except FileNotFoundError:
-        pass              # erster Start: es gibt noch keine — sie wird gleich angelegt
-    # Atomar und exklusiv anlegen: erst eine vollständige Zwischendatei (0600, fsync), dann ein
-    # Hardlink auf den Zielnamen — der gelingt genau einem Prozess. Mehrere Worker, die gleichzeitig
-    # zum ersten Mal starten, lasen sonst eine halb geschriebene Datei oder scheiterten am
-    # O_EXCL (Angriff auf die zweite Runde, Fund 10: 85 von 240 Starts). Wer verliert, liest die
-    # Datei des Gewinners.
+        pass              # first start: there is none yet — it is created right away
+    # Create atomically and exclusively: first a complete temporary file (0600, fsync), then a
+    # hard link to the target name — that succeeds for exactly one process. Several workers starting
+    # for the first time at once would otherwise read a half-written file or fail on
+    # O_EXCL (attack on the second round, finding 10: 85 of 240 starts). The loser reads the
+    # winner's file.
     roh = secrets.token_bytes(32)
     zwischen = f"{pfad}.{os.getpid()}.{secrets.token_hex(4)}.tmp"
     fd = os.open(zwischen, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
@@ -96,12 +95,12 @@ def schluessel_laden(db_path: str, schluessel_datei: str = "") -> tuple[bytes, s
             with open(pfad, encoding="ascii") as f:
                 return _schluessel_lesen(f.read(), f"Schlüsseldatei {pfad!r}"), "neben_db"
     finally:
-        # Die Zwischendatei hat ihren Zweck erfüllt (gelinkt oder verloren) — weg damit; der Link
-        # lässt sie stehen, im Normalfall liegt sie also noch da.
+        # The temporary file has served its purpose (linked or lost) — get rid of it; the link
+        # leaves it standing, so in the normal case it is still there.
         try:
             os.unlink(zwischen)
         except FileNotFoundError:
-            pass          # ein fremder Aufräumer war schneller — Ziel war nur, dass sie nicht bleibt
+            pass          # a foreign cleaner was faster — the goal was only that it does not remain
     log.warning(
         "TinySesam: Schlüssel für die TOTP-Geheimnisse neu erzeugt: %s (0600). Er liegt neben der "
         "Datenbank — das schützt gegen eine Datenbankdatei, die allein abfliesst, nicht gegen eine "
@@ -112,7 +111,7 @@ def schluessel_laden(db_path: str, schluessel_datei: str = "") -> tuple[bytes, s
 
 
 class Tresor:
-    """Ver- und Entschlüsseln mit EINEM Schlüssel (AES-256-GCM)."""
+    """Encrypt and decrypt with ONE key (AES-256-GCM)."""
 
     def __init__(self, schluessel: bytes):
         self._aead = _aesgcm()(schluessel)
@@ -123,9 +122,9 @@ class Tresor:
         return PRAEFIX + base64.urlsafe_b64encode(nonce + chiffrat).decode("ascii")
 
     def entschluesseln(self, wert: Optional[str]) -> Optional[str]:
-        """`None` bleibt `None`; ein Wert ohne Präfix ist Klartext aus der Zeit vor der
-        Verschlüsselung und kommt unverändert zurück (bis `geheimnisse_heben` ihn verschlüsselt).
-        Ein falscher Schlüssel wirft `cryptography.exceptions.InvalidTag`."""
+        """`None` stays `None`; a value without prefix is plain text from the time before
+        encryption and comes back unchanged (until `geheimnisse_heben` encrypts it).
+        A wrong key raises `cryptography.exceptions.InvalidTag`."""
         if wert is None or not str(wert).startswith(PRAEFIX):
             return wert
         roh = base64.urlsafe_b64decode(str(wert)[len(PRAEFIX):].encode("ascii"))

@@ -1,32 +1,32 @@
-"""Veraltete Namen der Stufe C — bis 1.0 als warnender Alias (PO-Entscheid 2026-09-26).
+"""Deprecated tier-C names — kept as a warning alias until 1.0 (PO decision 2026-09-26).
 
-Stufe C heisst: intern, keine Zusage. Bis 0.21.x trugen diese Namen keinen Unterstrich und
-sahen damit aus wie jede andere Methode — `check_password` stand sogar als Baustein in der
-README, obwohl es nicht drosselt. Seit 0.22.0 heisst die Implementierung `_check_password`; der
-alte Name bleibt bis 1.0 als Klassenattribut stehen:
+Tier C means: internal, no promise. Up to 0.21.x these names carried no underscore and
+therefore looked like any other method — `check_password` was even listed as a building block in the
+README, although it does not throttle. Since 0.22.0 the implementation is called `_check_password`; the
+old name stays as a class attribute until 1.0:
 
     check_password = Veraltet("_check_password", "stattdessen `POST /auth/login` …")
 
-Methoden warnen beim **Aufruf**, nicht beim Nachschlagen: `hasattr`, `inspect.getmembers` oder
-eine Autovervollständigung sollen keine Warnung auslösen, die der Aufrufer gar nicht verursacht
-hat. Konstanten warnen beim **Lesen** — das Lesen ist dort der Gebrauch; auch ein Durchlauf über
-alle Attribute (`inspect.getmembers`) liest sie. Wer so durchläuft, ohne sie zu benutzen, liest
-statisch (`inspect.getattr_static`) oder unterdrückt die `DeprecationWarning` — so wie der Wächter
-und `scripts/_api_doku.py`.
+Methods warn on **call**, not on lookup: `hasattr`, `inspect.getmembers` or
+an autocompletion should not trigger a warning the caller did not cause at all.
+Constants warn on **read** — reading is the use there; even a walk over
+all attributes (`inspect.getmembers`) reads them. Whoever walks like that without using them reads
+statically (`inspect.getattr_static`) or suppresses the `DeprecationWarning` — as the guard
+and `scripts/_api_doku.py` do.
 
-Die Warnung zeigt auf den Aufrufer (nicht in diese Datei): Nur so lässt sie sich mit
-`-W error::DeprecationWarning` oder einem Filter auf das eigene Modul gezielt finden.
+The warning points at the caller (not into this file): only then can it be found specifically with
+`-W error::DeprecationWarning` or a filter on the own module.
 
-Eine Zuweisung am Objekt — typisch ein Test-Fake, `auth.check_password = fake` oder
-`mock.patch.object(auth, "rate_ok", …)` — **wirkt nicht mehr**: Bis 0.21.x ersetzte sie, was die
-eingebauten Routen riefen; seit 0.22.0 rufen sie `_check_password`, und der Fake liefe still ins
-Leere (gemessen: 0 Aufrufe, Login trotzdem 303). Deshalb ist der Alias ein **Daten**-Deskriptor:
-`__set__` legt den Wert wie bisher am Objekt ab — wer ihn über den alten Namen liest, bekommt
-ihn —, löst aber eine `RuntimeWarning` aus, die ohne Filter sichtbar ist und das Ziel nennt, auf
-das der Fake gehört. Dieselbe Begründung wie bei einer Unterklasse, die den alten Namen
-überschreibt (`TinySesam.__init_subclass__`). Eine Zuweisung an der KLASSE
-(`mock.patch.object(TinySesam, "rate_ok", …)`) ersetzt den Alias selbst und bleibt unbemerkt —
-dafür bräuchte es eine Metaklasse; auch sie wirkt nicht mehr.
+An assignment on the object — typically a test fake, `auth.check_password = fake` or
+`mock.patch.object(auth, "rate_ok", …)` — **no longer takes effect**: up to 0.21.x it replaced what the
+built-in routes called; since 0.22.0 they call `_check_password`, and the fake would silently run
+into the void (measured: 0 calls, login still 303). That is why the alias is a **data** descriptor:
+`__set__` stores the value on the object as before — whoever reads it via the old name gets
+it —, but triggers a `RuntimeWarning` that is visible without a filter and names the target the
+fake belongs on. Same reasoning as for a subclass that overrides the old name
+(`TinySesam.__init_subclass__`). An assignment on the CLASS
+(`mock.patch.object(TinySesam, "rate_ok", …)`) replaces the alias itself and goes unnoticed —
+that would need a metaclass; it no longer takes effect either.
 """
 from __future__ import annotations
 
@@ -34,17 +34,17 @@ import functools
 import types
 import warnings
 
-#: Mit welchem Release die Aliase fallen. Der Wächter (`tests/test_api_surface.py`) wird rot,
-#: sobald die Version diese Grenze erreicht und noch ein Alias in der Klasse steht.
+#: With which release the aliases fall. The guard (`tests/test_api_surface.py`) turns red
+#: as soon as the version reaches this limit and an alias still stands in the class.
 BIS = "1.0"
 
 
 class Veraltet:
-    """Ein alter Name der Stufe C: reicht an `ziel` weiter und warnt dabei genau einmal.
+    """An old tier-C name: forwards to `ziel` and warns exactly once while doing so.
 
-    `ziel` ist der Name der Implementierung in derselben Klasse (`_check_password`), `ersatz` der
-    Teil der Meldung nach dem Gedankenstrich — was der Aufrufer stattdessen nimmt. Er ist Pflicht:
-    Eine Warnung, die nur „veraltet" sagt, schickt jeden in den Quelltext.
+    `ziel` is the name of the implementation in the same class (`_check_password`), `ersatz` the
+    part of the message after the dash — what the caller should use instead. It is mandatory:
+    a warning that only says "deprecated" sends everyone into the source code.
     """
 
     __slots__ = ("ziel", "ersatz", "bis", "name", "klasse", "methode")
@@ -58,8 +58,8 @@ class Veraltet:
 
     def __set_name__(self, owner, name):
         self.name, self.klasse = name, owner.__name__
-        # Beim Bau der Klasse, nicht beim ersten Aufruf: Ein Alias auf ein Ziel, das es nicht
-        # gibt, soll den Import scheitern lassen — nicht erst den Aufrufer in einem Jahr.
+        # At class construction, not at the first call: an alias to a target that does not
+        # exist should make the import fail — not the caller only a year later.
         if self.ziel not in vars(owner):
             raise TypeError(f"{self.klasse}.{name}: Ziel {self.ziel!r} fehlt in der Klasse")
         self.methode = isinstance(vars(owner)[self.ziel],
@@ -71,12 +71,12 @@ class Veraltet:
                 f"{self.ersatz}.")
 
     def _warnen(self) -> None:
-        # Stapel: 1 = _warnen, 2 = der Alias bzw. __get__, 3 = der Aufrufer.
+        # Stack: 1 = _warnen, 2 = the alias or __get__, 3 = the caller.
         warnings.warn(self.meldung, DeprecationWarning, stacklevel=3)
 
     def __get__(self, obj, owner=None):
-        # Ein am Objekt gesetzter Wert (Test-Fake, s. `__set__`) geht vor — wie bei einer
-        # gewöhnlichen Methode, die eine Zuweisung am Objekt verdeckt.
+        # A value set on the object (test fake, see `__set__`) takes precedence — as with an
+        # ordinary method that an assignment on the object shadows.
         if obj is not None and self.name in getattr(obj, "__dict__", ()):
             return obj.__dict__[self.name]
         wert = getattr(obj if obj is not None else owner, self.ziel)
@@ -84,7 +84,7 @@ class Veraltet:
             self._warnen()
             return wert
 
-        @functools.wraps(wert)          # `__wrapped__` → inspect.signature zeigt die des Ziels
+        @functools.wraps(wert)          # `__wrapped__` → inspect.signature shows the target's
         def alias(*args, **kwargs):
             self._warnen()
             return wert(*args, **kwargs)
@@ -95,8 +95,8 @@ class Veraltet:
         return alias
 
     def __set__(self, obj, wert) -> None:
-        """Zuweisung am Objekt: ablegen wie bisher, aber laut — der Wert wirkt nicht mehr."""
-        # Stapel: 1 = __set__, 2 = die Zuweisung (bzw. `setattr` in `mock.patch`).
+        """Assignment on the object: store as before, but loudly — the value no longer takes effect."""
+        # Stack: 1 = __set__, 2 = the assignment (or `setattr` in `mock.patch`).
         warnings.warn(
             f"{type(obj).__name__}.{self.name} am Objekt gesetzt (Test-Fake?) — das wirkt seit "
             f"0.22.0 nicht mehr: TinySesam ruft intern `{self.ziel}`; den Fake auf `{self.ziel}` "
@@ -104,7 +104,7 @@ class Veraltet:
         obj.__dict__[self.name] = wert
 
     def __delete__(self, obj) -> None:
-        """`del auth.check_password` bzw. das Ende von `mock.patch.object`: der Alias gilt wieder."""
+        """`del auth.check_password` or the end of `mock.patch.object`: the alias applies again."""
         try:
             del obj.__dict__[self.name]
         except KeyError:

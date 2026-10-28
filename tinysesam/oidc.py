@@ -1,9 +1,9 @@
-"""OIDC (Authorization Code Flow) für einen generischen Provider (PocketID, Keycloak, …).
+"""OIDC (authorization code flow) for a generic provider (PocketID, Keycloak, …).
 
-httpx für Discovery/Token, authlib.jose für die ID-Token-Verifikation (Signatur gegen JWKS +
-iss/aud/exp). state, nonce und der PKCE-Verifier (S256) liegen kurzlebig im Store (flow), nicht
-im Client → CSRF-/Replay-fest, ein abgefangener Code ist ohne den Verifier nicht einlösbar.
-Beide Libs sind optional-Extra `[oidc]`.
+httpx for discovery/token, authlib.jose for ID-token verification (signature against JWKS +
+iss/aud/exp). state, nonce and the PKCE verifier (S256) are kept short-lived in the store (flow),
+not in the client → CSRF/replay-proof, an intercepted code cannot be redeemed without the verifier.
+Both libs are the optional extra `[oidc]`.
 """
 from __future__ import annotations
 
@@ -25,31 +25,31 @@ from .store import jetzt, name_ungueltig, norm_email, norm_kennung
 
 
 def _fehlt_extra(e: ModuleNotFoundError) -> "errors.MissingExtra":
-    """Aus einem nackten Importfehler eine Meldung machen, die sagt, was zu tun ist.
+    """Turn a bare import error into a message that says what to do.
 
-    Die Extras werden hier bewusst LAZY importiert (erst beim Benutzen). Der Preis dafür war
-    bis 0.18.0 ein `ModuleNotFoundError: authlib` mitten im Anmeldevorgang — für den Betreiber
-    ein Defekt, dabei fehlte nur eine Zeile im Install-Befehl."""
+    The extras are deliberately imported LAZILY here (only on use). The price for that was,
+    until 0.18.0, a `ModuleNotFoundError: authlib` in the middle of the sign-in process — for the
+    operator a defect, although only one line was missing in the install command."""
     return errors.MissingExtra(
         "Das Extra [oidc] ist nicht installiert (pip install 'tinysesam[oidc]') — "
         f"es fehlt: {e.name or 'authlib'}.", extra="oidc")
 
 
 def _hash(wert: str) -> str:
-    """Flow-Geheimnisse liegen nur als Hash im Speicher — wie Sitzungs-Token auch."""
+    """Flow secrets are kept in memory only as a hash — like session tokens."""
     import hashlib
     return hashlib.sha256((wert or "").encode()).hexdigest()
 
 
 def pkce_paar() -> tuple[str, str]:
-    """(code_verifier, code_challenge) nach RFC 7636 mit S256.
+    """(code_verifier, code_challenge) per RFC 7636 with S256.
 
-    PKCE bindet den Autorisierungs-Code an DEN Flow, der ihn angefordert hat (F-20/H-12): Wer
-    einen Code abfängt (Referer, Proxy-Log, Browser-Verlauf, ein Mitleser auf der Redirect-URI),
-    kann ihn ohne den Verifier nicht eintauschen — der liegt nur im Flow-Satz auf dem Server.
-    RFC 9700 (OAuth 2.0 Security BCP, 2.1.1) empfiehlt es ausdrücklich auch für vertrauliche
-    Clients mit Client-Secret, weil es zusätzlich die Code-Injektion in einen fremden Flow
-    abfängt. 48 Zufallsbytes ergeben 64 Zeichen, RFC 7636 verlangt 43 bis 128."""
+    PKCE binds the authorization code to THE flow that requested it (F-20/H-12): whoever
+    intercepts a code (referer, proxy log, browser history, an eavesdropper on the redirect URI)
+    cannot exchange it without the verifier — that one lives only in the flow record on the server.
+    RFC 9700 (OAuth 2.0 Security BCP, 2.1.1) expressly recommends it also for confidential
+    clients with a client secret, because it additionally catches code injection into a
+    foreign flow. 48 random bytes yield 64 characters, RFC 7636 requires 43 to 128."""
     import base64
     import hashlib
     verifier = secrets.token_urlsafe(48)
@@ -58,15 +58,15 @@ def pkce_paar() -> tuple[str, str]:
 
 
 def _flag_wahr(wert) -> bool:
-    """`email_verified` als Ja/Nein — für einen Wert, der **da ist**. Ob er fehlt, entscheidet
-    der Aufrufer (`_email_mit_beleg`): Ein fehlender Claim heisst etwas anderes als ein Claim,
-    der `false` sagt.
+    """`email_verified` as yes/no — for a value that **is there**. Whether it is missing is decided
+    by the caller (`_email_mit_beleg`): a missing claim means something different from a claim
+    that says `false`.
 
-    Gemessen an dem, was echte Provider senden: `True` (JSON-Boolean, der Standard),
-    `"true"`/`"True"` (als Zeichenkette — verbreitete Abweichung) und `1`/`"1"`. Alles andere
-    ist **Nein**, ausdrücklich auch `"false"` als Zeichenkette: Sie ist nicht leer und wäre für
-    jede Wahrheitsprüfung auf dem rohen Wert (`bool("false")`) ein Ja — genau die Verwechslung,
-    mit der eine unbestätigte Adresse wieder Erst-Admin-fähig würde."""
+    Measured against what real providers send: `True` (JSON boolean, the standard),
+    `"true"`/`"True"` (as a string — a common deviation) and `1`/`"1"`. Everything else
+    is **no**, explicitly also `"false"` as a string: it is not empty and would be a yes for
+    any truthiness check on the raw value (`bool("false")`) — exactly the mix-up
+    with which an unconfirmed address would become first-admin-capable again."""
     if isinstance(wert, bool):
         return wert
     if wert is None:
@@ -75,33 +75,33 @@ def _flag_wahr(wert) -> bool:
 
 
 def _email_mit_beleg(claims, nutzerinfo, vorgabe_wenn_claim_fehlt: bool = False) -> tuple:
-    """Adresse UND Beleg immer aus demselben Dokument. Gibt
-    `(adresse, bestaetigt, ausdruecklich)` — `ausdruecklich` sagt, ob der Provider sich zur
-    Adresse **geäussert** hat oder ob nur die Vorgabe des Betreibers gilt (Schweigen).
+    """Address AND evidence always from the same document. Returns
+    `(address, confirmed, explicit)` — `explicit` says whether the provider **spoke** about
+    the address or whether only the operator's default applies (silence).
 
-    OpenID Connect Core 5.1 kennt für die Adresse den Claim `email_verified` („True if the
-    End-User's e-mail address has been verified"). **Fehlt er, lautet die Antwort Nein** —
-    nicht „vielleicht": Ohne Beleg ist `email` ein Textfeld, das der Anmeldende beim IdP
-    selbst gefüllt hat (Selbstregistrierung, zweiter Mandant, öffentlicher Provider).
+    OpenID Connect Core 5.1 knows the claim `email_verified` for the address ("True if the
+    End-User's e-mail address has been verified"). **If it is missing, the answer is no** —
+    not "maybe": without evidence, `email` is a text field that the person signing in filled
+    at the IdP themselves (self-registration, second tenant, public provider).
 
-    Weil der Claim optional ist, darf der Betreiber dieses Nein für seinen IdP umdrehen
-    (`oidc_email_verified_default`, hier `vorgabe_wenn_claim_fehlt`) — er verantwortet die
-    Adressen dann selbst. Das gilt nur für den **fehlenden** Claim: Steht er da und sagt
-    `false`, bleibt die Antwort Nein, sonst wäre der Schalter eine Umgehung der Aussage des
-    Providers.
+    Because the claim is optional, the operator may flip this no for their IdP
+    (`oidc_email_verified_default`, here `vorgabe_wenn_claim_fehlt`) — they then answer for the
+    addresses themselves. This applies only to the **missing** claim: if it is there and says
+    `false`, the answer stays no, otherwise the switch would be a circumvention of the
+    provider's statement.
 
-    Entscheidend ist das Wort *derselben*: Der Callback legt userinfo-Dokument und ID-Token
-    zu einem Wörterbuch zusammen, und beim Mischen kann der Beleg des einen an die Adresse
-    des anderen geraten — liefert das ID-Token nur `email` und das userinfo-Dokument eine
-    ANDERE Adresse mit `email_verified=true`, trüge die ungeprüfte Adresse den fremden Beleg.
-    Darum wird das Paar hier an der Quelle gebildet, mit Vorrang für das signierte ID-Token
-    (das gewinnt auch beim Mischen).
+    The decisive word is *same*: the callback merges the userinfo document and the ID token
+    into one dictionary, and when mixing, the evidence of one can end up with the address
+    of the other — if the ID token supplies only `email` and the userinfo document a
+    DIFFERENT address with `email_verified=true`, the unchecked address would carry the foreign evidence.
+    That is why the pair is formed here at the source, with priority for the signed ID token
+    (which also wins when mixing).
     """
     for quelle in (claims, nutzerinfo):
         mail = (quelle or {}).get("email")
         if mail:
-            # `in` statt `.get()`: Der fehlende Claim ist ein eigener Fall (dann gilt die
-            # Vorgabe des Betreibers), ein vorhandener wird immer gemessen — auch `"false"`.
+            # `in` instead of `.get()`: the missing claim is a case of its own (then the
+            # operator's default applies), an existing one is always measured — also `"false"`.
             if "email_verified" in (quelle or {}):
                 return mail, _flag_wahr((quelle or {}).get("email_verified")), True
             return mail, bool(vorgabe_wenn_claim_fehlt), False
@@ -119,42 +119,42 @@ class OIDCClient:
         self._jwks = None
         self._jwks_zeit = 0.0
 
-    #: Höchstalter der gecachten Metadaten. Ein Provider verschiebt gelegentlich Endpunkte;
-    #: ein Tag ist lange genug, um nicht bei jedem Login zu fragen, und kurz genug, um eine
-    #: Änderung nicht bis zum nächsten Neustart auszusitzen.
+    #: Maximum age of the cached metadata. A provider occasionally moves endpoints;
+    #: a day is long enough not to ask on every login, and short enough not to sit out a
+    #: change until the next restart.
     META_TTL = 24 * 3600
-    #: Höchstalter des JWKS. Provider rotieren ihre Signaturschlüssel regelmässig (Keycloak,
-    #: Entra, Auth0); bis 0.18.0 wurde das Set EINMAL geholt und nie wieder — nach einer
-    #: Rotation scheiterte jeder Login an der Signatur, bis jemand den Prozess neu startete.
+    #: Maximum age of the JWKS. Providers rotate their signing keys regularly (Keycloak,
+    #: Entra, Auth0); until 0.18.0 the set was fetched ONCE and never again — after a
+    #: rotation every login failed on the signature until someone restarted the process.
     JWKS_TTL = 3600
-    #: Kürzester Abstand zwischen zwei ausserplanmässigen JWKS-Abrufen. Ohne diese Bremse löst
-    #: jedes kaputte id_token einen Abruf beim Provider aus — ein bequemer Weg, ihn von hier aus
-    #: zu belasten.
+    #: Shortest interval between two unscheduled JWKS fetches. Without this brake
+    #: every broken id_token triggers a fetch at the provider — a convenient way to put load
+    #: on it from here.
     JWKS_MIN_ABSTAND = 60
-    #: Signaturverfahren, die für ein ID-Token gelten — bewusst NUR asymmetrische.
-    #: Geprüft wird gegen das **öffentliche** JWKS des Providers; ein HMAC-Verfahren ergäbe hier
-    #: nie einen Sinn, denn das Geheimnis wäre ein öffentlicher Schlüssel. Genau darauf zielt die
-    #: Algorithmen-Konfusion: Der Angreifer setzt `alg: HS256`, signiert mit dem öffentlichen
-    #: Schlüssel aus dem JWKS als HMAC-Geheimnis und schreibt sich ins `sub`, das er will.
-    #: Wer die Liste erweitert, muss beim asymmetrischen Verfahren bleiben — `_dekoder()` weist
-    #: alles andere ab.
+    #: Signature algorithms valid for an ID token — deliberately ONLY asymmetric ones.
+    #: Verification is against the provider's **public** JWKS; an HMAC algorithm would never
+    #: make sense here, since the secret would be a public key. This is exactly what the
+    #: algorithm confusion aims at: the attacker sets `alg: HS256`, signs with the public
+    #: key from the JWKS as the HMAC secret and writes whatever `sub` they want.
+    #: Whoever extends the list must stay with asymmetric algorithms — `_dekoder()` rejects
+    #: everything else.
     ID_TOKEN_ALGS = ("RS256", "RS384", "RS512", "PS256", "PS384", "PS512",
                      "ES256", "ES384", "ES512", "EdDSA")
 
     def meta(self, erzwingen: bool = False):
-        # `self._meta_zeit and …`: Wer die Metadaten von aussen setzt (Tests ohne Netz, oder ein
-        # Aufbau, der sie aus einer Datei nimmt), hinterlässt keinen Zeitstempel. Ohne diese
-        # Bedingung wäre so ein Satz sofort „älter als die Lebensdauer" und würde beim ersten
-        # Zugriff überschrieben — inklusive des Netzzugriffs, den man gerade vermeiden wollte.
+        # `self._meta_zeit and …`: whoever sets the metadata from outside (tests without network, or a
+        # setup that takes it from a file) leaves no timestamp. Without this
+        # condition such a set would be "older than the lifetime" at once and would be overwritten on first
+        # access — including the network access that one wanted to avoid in the first place.
         veraltet = self._meta_zeit and (time.time() - self._meta_zeit) > self.META_TTL
         if self._meta is None or erzwingen or veraltet:
             try:
                 import httpx
             except ModuleNotFoundError as e:
                 raise _fehlt_extra(e) from e
-            # Kein Redirect: Ein 3xx auf dem Well-Known-Pfad würde das Dokument von woanders holen —
-            # und aus diesem Dokument kommen token_endpoint, jwks_uri und der Issuer, gegen den jedes
-            # ID-Token geprüft wird. Wer den Pfad umleiten kann, hätte damit den ganzen Login.
+            # No redirect: a 3xx on the well-known path would fetch the document from elsewhere —
+            # and this document supplies token_endpoint, jwks_uri and the issuer against which every
+            # ID token is checked. Whoever can redirect the path would thereby own the whole login.
             antwort = httpx.get(self.issuer + "/.well-known/openid-configuration",
                                 timeout=10, follow_redirects=False)
             if antwort.status_code != 200:
@@ -169,10 +169,10 @@ class OIDCClient:
         return self._meta
 
     def _pruefe_issuer(self, meta: dict) -> None:
-        """Das Discovery-Dokument muss den konfigurierten Issuer nennen (RFC 8414 §3.3, OIDC
-        Discovery §4.3). Alles Weitere — Token-Endpunkt, JWKS, der Schlüssel, unter dem Konten in
-        der Datenbank liegen — kommt aus diesem Dokument; stimmt der Issuer nicht, ist nichts davon
-        vertrauenswürdig. Bis 0.18.0 wurde das nie verglichen."""
+        """The discovery document must name the configured issuer (RFC 8414 §3.3, OIDC
+        Discovery §4.3). Everything else — token endpoint, JWKS, the key under which accounts are
+        stored in the database — comes from this document; if the issuer does not match, none of it
+        is trustworthy. Until 0.18.0 this was never compared."""
         gefunden = str(meta.get("issuer") or "").rstrip("/")
         if gefunden != self.issuer:
             raise errors.ConfigError(
@@ -189,10 +189,10 @@ class OIDCClient:
             except ModuleNotFoundError as e:
                 raise _fehlt_extra(e) from e
             antwort = httpx.get(self.meta()["jwks_uri"], timeout=10)
-            # Eine Fehlerantwort ist kein Schlüsselsatz. Ohne diese Prüfung landete ein
-            # `{"keys": []}` hinter einem 5xx (oder einem Wartungs-Proxy) für JWKS_TTL im Cache,
-            # und bis dahin scheiterte jeder Login an der Signatur (F-24, dieselbe Regel wie bei
-            # der Discovery oben: Nur eine 200 wird gemerkt).
+            # An error response is not a key set. Without this check a
+            # `{"keys": []}` behind a 5xx (or a maintenance proxy) landed in the cache for JWKS_TTL,
+            # and until then every login failed on the signature (F-24, the same rule as for
+            # the discovery above: only a 200 is remembered).
             status = getattr(antwort, "status_code", 200)
             if status != 200:
                 raise errors.ConfigError(
@@ -203,21 +203,21 @@ class OIDCClient:
         return self._jwks
 
     def _dekoder(self):
-        """Der JWT-Dekoder für das ID-Token — mit **fester** Algorithmenliste.
+        """The JWT decoder for the ID token — with a **fixed** algorithm list.
 
-        `authlib.jose.jwt` ist ein fertiger Dekoder mit Vorgabesatz, und dieser Satz enthält
-        HS256. Wird kein Verfahren genannt, sucht sich der **Header des Tokens** aus, wie geprüft
-        wird — die Entscheidung liegt damit beim Absender. Bis authlib 1.3.0 liess sich so mit dem
-        öffentlichen Schlüssel als HMAC-Geheimnis ein gültiges ID-Token fälschen
-        (GHSA-5357-c2jx-v7qh); die Gegenmassnahme dort deckt nur einige Schlüsselformate ab.
-        Die installierte Fassung darf nicht die Frage sein: Hier wird der Satz selbst gesetzt.
+        `authlib.jose.jwt` is a ready-made decoder with a default set, and this set contains
+        HS256. If no algorithm is named, the **token's header** picks how verification is done —
+        the decision thus lies with the sender. Up to authlib 1.3.0 a valid ID token could be
+        forged this way with the public key as HMAC secret
+        (GHSA-5357-c2jx-v7qh); the countermeasure there covers only some key formats.
+        The installed version must not be the question: here the set is set explicitly.
         """
         try:
             from authlib.jose import JsonWebToken
         except ModuleNotFoundError as e:
             raise _fehlt_extra(e) from e
-        # Fail-closed gegen eine spätere Erweiterung (auch aus einer Unterklasse heraus): Alles,
-        # was kein RSA-, PSS-, ECDSA- oder EdDSA-Verfahren ist, käme ohne privaten Schlüssel aus.
+        # Fail-closed against a later extension (also from a subclass): anything
+        # that is not an RSA, PSS, ECDSA or EdDSA algorithm would manage without a private key.
         fremd = [a for a in self.ID_TOKEN_ALGS if not str(a).startswith(("RS", "PS", "ES", "Ed"))]
         if fremd:
             raise errors.ConfigError(
@@ -227,20 +227,20 @@ class OIDCClient:
         return JsonWebToken(list(self.ID_TOKEN_ALGS))
 
     def _jwks_auffrischbar(self) -> bool:
-        """Darf jetzt ausserplanmässig neu geholt werden? (Drosselung gegen Fremdlast.)"""
+        """May an unscheduled re-fetch happen now? (Throttling against foreign load.)"""
         return (time.time() - self._jwks_zeit) > self.JWKS_MIN_ABSTAND
 
-    #: Wie viele Sekunden die Uhren von Provider und TinySesam auseinandergehen dürfen, wenn
-    #: `exp`, `iat` und `nbf` geprüft werden (F-26). Ohne Toleranz scheiterte JEDER Login, sobald
-    #: die Uhr des Providers ein paar Sekunden vorging: Das frische Token trug ein `iat` in der
-    #: Zukunft. 60 s ist der übliche Wert (Keycloak-Adapter, Spring Security, PyJWT-Beispiele) —
-    #: deutlich unter jeder sinnvollen Token-Lebensdauer.
+    #: How many seconds the clocks of provider and TinySesam may differ when
+    #: `exp`, `iat` and `nbf` are checked (F-26). Without tolerance, EVERY login failed as soon as
+    #: the provider's clock ran a few seconds ahead: the fresh token carried an `iat` in the
+    #: future. 60 s is the usual value (Keycloak adapter, Spring Security, PyJWT examples) —
+    #: well below any sensible token lifetime.
     UHR_TOLERANZ = 60
 
     def auth_url(self, redirect_uri, state, nonce, code_challenge: str = ""):
-        """Die Adresse der Autorisierungsanfrage. Mit `code_challenge` (aus `pkce_paar()`)
-        verlangt sie PKCE mit S256; der Aufrufer muss dann denselben Verifier an `exchange()`
-        geben."""
+        """The address of the authorization request. With `code_challenge` (from `pkce_paar()`)
+        it requires PKCE with S256; the caller must then pass the same verifier to
+        `exchange()`."""
         felder = {"response_type": "code", "client_id": self.client_id, "redirect_uri": redirect_uri,
                   "scope": self.scopes, "state": state, "nonce": nonce}
         if code_challenge:
@@ -248,14 +248,14 @@ class OIDCClient:
         return self.meta()["authorization_endpoint"] + "?" + urlencode(felder)
 
     def exchange(self, code, redirect_uri, nonce, t=None, code_verifier: str = ""):
-        """Code gegen Tokens tauschen und das ID-Token verifizieren.
+        """Exchange the code for tokens and verify the ID token.
 
-        `t` ist die Übersetzungsfunktion des Aufrufers (`auth.t`). Der Client selbst kennt keine
-        Sprache — er spricht das Protokoll, nicht mit dem Nutzer. Ohne `t` bleiben die beiden
-        Meldungen englisch, statt einem Aufrufer mit `lang="en"` Deutsch unterzuschieben.
+        `t` is the caller's translation function (`auth.t`). The client itself knows no
+        language — it speaks the protocol, not to the user. Without `t` the two
+        messages stay English, instead of foisting German on a caller with `lang="en"`.
 
-        `code_verifier` gehört zur `code_challenge` aus `auth_url()` (PKCE, F-20). Der eigene
-        Callback reicht ihn immer mit.
+        `code_verifier` belongs to the `code_challenge` from `auth_url()` (PKCE, F-20). The
+        own callback always passes it along.
         """
         t = t or (lambda schluessel, **fmt: translate("en", schluessel, None, **fmt))
         try:
@@ -270,39 +270,39 @@ class OIDCClient:
         tok = httpx.post(self.meta()["token_endpoint"], timeout=15, data=daten).json()
         if "id_token" not in tok:
             raise HTTPException(502, t("api.oidc_token", grund=tok.get("error", "?")))
-        # `exp` ist Pflicht (F-25). authlib prüft den Ablauf nur, wenn der Claim DA ist — ein
-        # ID-Token ohne `exp` galt damit für immer. OIDC Core 2 verlangt ihn („REQUIRED"), ein
-        # Provider, der ihn weglässt, ist defekt oder das Token nicht von ihm.
+        # `exp` is mandatory (F-25). authlib checks expiry only if the claim is THERE — an
+        # ID token without `exp` was thus valid forever. OIDC Core 2 requires it ("REQUIRED"), a
+        # provider that omits it is defective or the token is not from it.
         optionen = {"iss": {"essential": True, "value": self.meta()["issuer"]},
                     "aud": {"essential": True, "value": self.client_id},
                     "exp": {"essential": True}}
         try:
             claims = dekoder.decode(tok["id_token"], self._jwkset(), claims_options=optionen)
         except Exception:
-            # Scheitert die Signatur, ist der wahrscheinlichste Grund eine Schlüsselrotation
-            # beim Provider: Das Token nennt eine `kid`, die unser Set noch nicht kennt. Einmal
-            # neu holen und erneut versuchen — gedrosselt, damit ein Strom gefälschter Tokens
-            # den Provider nicht über uns belastet. Klappt es wieder nicht, gilt der Fehler.
+            # If the signature fails, the most likely reason is a key rotation
+            # at the provider: the token names a `kid` that our set does not know yet. Fetch
+            # anew once and try again — throttled, so that a stream of forged tokens
+            # does not load the provider via us. If it fails again, the error stands.
             if not self._jwks_auffrischbar():
                 raise
             security.seclog.warning(
                 "OIDC: ID-Token nicht verifizierbar — JWKS wird neu geholt (Schlüsselrotation?).")
             claims = dekoder.decode(tok["id_token"], self._jwkset(erzwingen=True),
                                     claims_options=optionen)
-        claims.validate(leeway=self.UHR_TOLERANZ)  # exp/iat/nbf, mit Uhrentoleranz (F-26)
+        claims.validate(leeway=self.UHR_TOLERANZ)  # exp/iat/nbf, with clock tolerance (F-26)
         self._pruefe_publikum(claims, t)
         if nonce and claims.get("nonce") != nonce:
             raise HTTPException(400, t("api.oidc_nonce"))
         return claims, tok
 
     def refresh(self, refresh_token: str, erwartetes_sub: str) -> tuple:
-        """Ein Refresh-Token beim Provider tauschen (4a, „Widerruf folgt dem IdP").
+        """Exchange a refresh token at the provider (4a, "revocation follows the IdP").
 
-        Rückgabe `(status, info, tok)`: `"ok"` mit den frischen Angaben (ID-Token-Claims, sonst
-        UserInfo) · `"abgelehnt"` — der Provider verweigert (RFC 6749 5.2: `invalid_grant` u. a.;
-        der Nutzer ist gesperrt, gelöscht, der Anwendung entzogen oder das Token widerrufen) ·
-        `"fehler"` — der Provider ist nicht erreichbar oder antwortet Unsinn. Nur `"abgelehnt"`
-        beendet die Sitzung; ein Ausfall des Providers soll niemanden abmelden."""
+        Returns `(status, info, tok)`: `"ok"` with the fresh data (ID-token claims, otherwise
+        UserInfo) · `"abgelehnt"` — the provider refuses (RFC 6749 5.2: `invalid_grant` etc.;
+        the user is blocked, deleted, withdrawn from the application or the token was revoked) ·
+        `"fehler"` — the provider is unreachable or answers nonsense. Only `"abgelehnt"`
+        ends the session; an outage of the provider must not sign anybody out."""
         try:
             import httpx
         except ModuleNotFoundError as e:
@@ -312,18 +312,18 @@ class OIDCClient:
         try:
             antwort = httpx.post(self.meta()["token_endpoint"], timeout=10, data=daten)
             tok = antwort.json()
-        except Exception as e:   # noqa: BLE001 — Netz, JSON: der Provider antwortet nicht brauchbar
+        except Exception as e:   # noqa: BLE001 — network, JSON: the provider does not answer usably
             return "fehler", {}, {"error": type(e).__name__}
         if not isinstance(tok, dict):
             return "fehler", {}, {"error": "antwort"}
-        # Ein Fehler des CLIENTS sagt nichts über die Person: `invalid_client` nach einer
-        # Secret-Rotation (RFC 6749 5.2: dafür steht auch die 401), `unauthorized_client`, ein
-        # abgeschalteter Grant. Er zählt wie ein nicht erreichbarer Provider — sonst beendete
-        # eine Fehlkonfiguration alle Sitzungen und legte seit Fund 8 die API-Keys aller
-        # Betroffenen still (Angriff auf die dritte Runde). Jede andere 4xx ist ein Nein: Die
-        # Anfrage ist wohlgeformt, also meint der Provider das Token — Dex meldet ein widerrufenes
-        # oder abgelaufenes als `400 invalid_request` (Gegenprüfung der Fixes), andere schicken
-        # gar keinen Code. Eine Liste der Nein-Codes liesse jeden solchen Provider durch.
+        # An error of the CLIENT says nothing about the person: `invalid_client` after a
+        # secret rotation (RFC 6749 5.2: the 401 stands for that, too), `unauthorized_client`, a
+        # disabled grant. It counts like an unreachable provider — otherwise
+        # a misconfiguration ended all sessions and, since finding 8, silenced the API keys of all
+        # those affected (attack on the third round). Every other 4xx is a no: the
+        # request is well-formed, so the provider means the token — Dex reports a revoked
+        # or expired one as `400 invalid_request` (counter-check of the fixes), others send
+        # no code at all. A list of the no-codes would let every such provider through.
         fehler_code = str(tok.get("error") or "")
         if antwort.status_code >= 500 or antwort.status_code == 401 or fehler_code in (
                 "invalid_client", "unauthorized_client", "unsupported_grant_type"):
@@ -341,37 +341,37 @@ class OIDCClient:
                 geprueft = self._dekoder().decode(tok["id_token"], self._jwkset(), claims_options=optionen)
                 geprueft.validate(leeway=self.UHR_TOLERANZ)
                 self._pruefe_publikum(geprueft, lambda schluessel, **fmt: schluessel)
-            except Exception:   # noqa: BLE001 — ein Token, das wir nicht prüfen können, gilt nicht
+            except Exception:   # noqa: BLE001 — a token we cannot verify does not count
                 return "fehler", {}, {"error": "id_token"}
             claims = dict(geprueft)
             if str(claims.get("sub") or "") != str(erwartetes_sub):
-                # Ein anderes Subjekt als bei der Anmeldung: nicht dieselbe Person.
+                # A different subject than at sign-in: not the same person.
                 return "abgelehnt", {}, {"error": "sub"}
         info: dict = {}
         if tok.get("access_token"):
             try:
                 info = self.userinfo(tok["access_token"], erwartetes_sub=erwartetes_sub) or {}
-            except Exception:   # noqa: BLE001 — ohne UserInfo zählt das ID-Token allein
+            except Exception:   # noqa: BLE001 — without UserInfo the ID token alone counts
                 info = {}
         return "ok", {**info, **claims}, tok
 
     def _pruefe_publikum(self, claims, t) -> None:
-        """`aud` und `azp` nach OIDC Core 3.1.3.7, Punkt 3 bis 5 (F-15).
+        """`aud` and `azp` per OIDC Core 3.1.3.7, points 3 to 5 (F-15).
 
-        Der Dekoder prüft nur, dass die eigene `client_id` in `aud` **vorkommt**. Ein Token darf
-        aber mehrere Empfänger nennen, und dann sagt erst `azp` (authorized party), für wen es
-        ausgestellt wurde. Ohne diese Prüfung nimmt TinySesam ein Token an, das für eine **andere**
-        Anwendung desselben Providers gemacht wurde und uns nur mitnennt — Token-Substitution.
-        Wer bei irgendeinem Client dieses Providers ein Token bekommt, käme damit auch hier herein.
+        The decoder only checks that the own `client_id` **occurs** in `aud`. A token may,
+        however, name several recipients, and then only `azp` (authorized party) says whom it was
+        issued for. Without this check TinySesam accepts a token made for a **different**
+        application of the same provider that merely names us as well — token substitution.
+        Whoever gets a token at any client of this provider would thereby get in here, too.
 
-        Genau drei Regeln, und alle drei fehlten:
-        * mehrere `aud` → `azp` ist Pflicht,
-        * `azp` vorhanden → es muss die eigene `client_id` sein,
-        * die eigene `client_id` muss in `aud` stehen (das deckt der Dekoder ab, hier noch einmal
-          als Boden — `claims_options` lässt sich von aussen setzen).
+        Exactly three rules, and all three were missing:
+        * several `aud` → `azp` is mandatory,
+        * `azp` present → it must be the own `client_id`,
+        * the own `client_id` must be in `aud` (the decoder covers that, here once more
+          as a floor — `claims_options` can be set from outside).
 
-        Seit T-14 wiegt das schwerer: Bei mehreren Clients **derselben** Installation wäre sonst
-        das Token von App A auch an App B gut, und die Freigabe je Client wäre umgangen.
+        Since T-14 this weighs heavier: with several clients of the **same** installation, the
+        token of app A would otherwise also be good for app B, and the approval per client would be bypassed.
         """
         aud = claims.get("aud")
         publikum = [str(a) for a in (aud if isinstance(aud, (list, tuple)) else [aud] if aud else [])]
@@ -393,11 +393,11 @@ class OIDCClient:
             raise HTTPException(400, t("api.oidc_audience"))
 
     def end_session_url(self, post_logout_redirect_uri=None, id_token_hint=None):
-        """RP-initiated-Logout-URL beim Provider (oder None, wenn nicht unterstützt).
+        """RP-initiated logout URL at the provider (or None if not supported).
 
-        `id_token_hint` (seit T-22 gespeichert, `Store.get_oidc_id_token`): PocketID beendet seine
-        Sitzung ohne ihn nicht, sondern zeigt eine Rückfrage und leitet danach nicht zurück.
-        Ein abgelaufenes ID-Token ist dafür gültig (OIDC RP-Initiated Logout 1.0, Abschnitt 2)."""
+        `id_token_hint` (stored since T-22, `Store.get_oidc_id_token`): PocketID does not end its
+        session without it, but shows a confirmation prompt and does not redirect back afterwards.
+        An expired ID token is valid for this (OIDC RP-Initiated Logout 1.0, section 2)."""
         try:
             ep = self.meta().get("end_session_endpoint")
         except Exception:
@@ -412,22 +412,22 @@ class OIDCClient:
         return ep + ("&" if "?" in ep else "?") + urlencode(params)
 
     def userinfo(self, access_token, erwartetes_sub: str = ""):
-        """Die UserInfo-Antwort des Providers — **nur**, wenn ihr `sub` zum ID-Token passt (F-18).
+        """The provider's UserInfo response — **only** if its `sub` matches the ID token (F-18).
 
-        OIDC Core 5.3.2 verlangt den Abgleich ausdrücklich: „The sub Claim in the UserInfo
+        OIDC Core 5.3.2 expressly requires the comparison: "The sub Claim in the UserInfo
         Response MUST be verified to exactly match the sub Claim in the ID Token; if they do not
         match, the UserInfo Response values MUST NOT be used."
 
-        Warum das zählt: Die Antwort wird im Callback **über** die Claims des ID-Tokens gelegt und
-        liefert Gruppen, E-Mail und damit mittelbar Rollen und das Admin-Flag. Das ID-Token ist
-        signiert, die UserInfo-Antwort ist es nicht — sie ist eine gewöhnliche HTTPS-Antwort auf
-        einen Bearer-Token. Wer einen Access-Token eines **anderen** Kontos vorlegt (oder der
-        Provider bei mehreren Mandanten verwechselt), schob so die Merkmale einer fremden Person
-        in die eigene Sitzung.
+        Why it matters: in the callback the response is laid **over** the claims of the ID token and
+        supplies groups, e-mail and thereby indirectly roles and the admin flag. The ID token is
+        signed, the UserInfo response is not — it is an ordinary HTTPS response to
+        a bearer token. Whoever presents an access token of a **different** account (or whoever the
+        provider confuses with several tenants) thus pushed the attributes of a foreign person
+        into their own session.
 
-        `erwartetes_sub` leer zu lassen ist der Bestandsaufruf und **verwirft dann jede Antwort**
-        mit `sub`, die nicht leer ist — der Aufrufer, der den Abgleich nicht machen kann, soll
-        die Daten nicht bekommen. Fail-closed statt „besser als nichts".
+        Leaving `erwartetes_sub` empty is the legacy call and **then discards every response**
+        with a non-empty `sub` — a caller that cannot do the comparison should not
+        get the data. Fail-closed instead of "better than nothing".
         """
         try:
             import httpx
@@ -442,9 +442,9 @@ class OIDCClient:
 
     @staticmethod
     def userinfo_pruefen(antwort, erwartetes_sub: str = "") -> dict:
-        """Der `sub`-Abgleich aus OIDC Core 5.3.2 — als eigene Funktion, damit ihn auch messen
-        kann, wer den HTTP-Teil durch eine Attrappe ersetzt. Eine Attrappe, die den Abgleich
-        nachbaut, prüft sonst nur den Nachbau."""
+        """The `sub` comparison from OIDC Core 5.3.2 — as a function of its own, so that whoever
+        replaces the HTTP part with a dummy can measure it too. A dummy that
+        rebuilds the comparison otherwise tests only the rebuild."""
         if not isinstance(antwort, dict):
             return {}
         gemeldet = str(antwort.get("sub") or "")
@@ -458,23 +458,23 @@ class OIDCClient:
         return antwort
 
 
-#: Schlüssel des Einzel-Clients in `oidc_grant` und im Flow. Ein Stern, weil er für **jeden**
-#: Host gilt, für den `oidc_clients` nichts Eigenes sagt — und weil kein Hostname so heissen kann.
+#: Key of the single client in `oidc_grant` and in the flow. A star, because it applies to **every**
+#: host for which `oidc_clients` says nothing of its own — and because no hostname can be called that.
 VORGABE_CLIENT = "*"
 
 
 class OIDCClients:
-    """Alle OIDC-Clients einer Installation: Host → Client beim selben Provider (T-14).
+    """All OIDC clients of an installation: host → client at the same provider (T-14).
 
-    Warum eine Registry und nicht einfach ein zweites Feld: Wer in welche Anwendung darf,
-    entscheidet der Provider je **Client** (bei PocketID über die Gruppenfreigabe). Mit einem
-    einzigen Client gibt es deshalb nur eine Antwort für alle Anwendungen. Die Registry hält
-    die Zuordnung an genau einer Stelle, damit Flow, Callback und Forward-Auth dieselbe Frage
-    gleich beantworten.
+    Why a registry and not simply a second field: who may enter which application is
+    decided by the provider per **client** (with PocketID via the group approval). With a
+    single client there is therefore only one answer for all applications. The registry holds
+    the mapping at exactly one place, so that flow, callback and forward-auth answer the same question
+    the same way.
 
-    **Ein Issuer für alle.** Discovery-Dokument und JWKS hängen am Provider, nicht am Client;
-    sie werden deshalb geteilt statt je Client neu geholt. Mehrere Provider in einer Instanz
-    sind nicht vorgesehen — `konfigpruefung` weist einen `issuer` im Client-Eintrag ab.
+    **One issuer for all.** Discovery document and JWKS hang on the provider, not on the client;
+    they are therefore shared instead of being fetched anew per client. Several providers in one instance
+    are not intended — `konfigpruefung` rejects an `issuer` in the client entry.
     """
 
     def __init__(self, cfg):
@@ -487,19 +487,19 @@ class OIDCClients:
             e = dict(eintrag or {})
             c = OIDCClient(cfg.oidc_issuer, e.get("client_id", ""), e.get("client_secret", ""),
                            e.get("scopes") or cfg.oidc_scopes)
-            # Metadaten und JWKS kommen vom selben Provider — einmal holen reicht. Ohne das
-            # fragte jeder Client einzeln nach demselben Dokument, bei drei Anwendungen also
-            # dreifach, und eine Schlüsselrotation wäre dreimal zu bemerken statt einmal.
+            # Metadata and JWKS come from the same provider — fetching once is enough. Without that
+            # every client asked separately for the same document, i.e. three times with three applications,
+            # and a key rotation would have to be noticed three times instead of once.
             c._meta, c._meta_zeit = vorgabe._meta, vorgabe._meta_zeit
             self._clients[str(host).strip().lower()] = c
         self._teile_meta()
 
     def _teile_meta(self):
-        """Den Metadaten-Cache des Vorgabe-Clients an alle anderen weiterreichen.
+        """Pass the metadata cache of the default client on to all the others.
 
-        Aufgerufen nach jedem Abruf: `meta()` setzt `_meta` auf dem Client, der gerade fragt.
-        Ohne dieses Nachziehen hätte jeder Client seinen eigenen Stand, und ein Test, der die
-        Metadaten von aussen setzt (die OIDC-Attrappe tut das), erreichte nur einen davon.
+        Called after every fetch: `meta()` sets `_meta` on the client that is currently asking.
+        Without this catching up, every client would have its own state, and a test that sets the
+        metadata from outside (the OIDC dummy does) would reach only one of them.
         """
         vorgabe = self._clients[VORGABE_CLIENT]
         for schluessel, c in self._clients.items():
@@ -513,15 +513,15 @@ class OIDCClients:
         return len(self._clients) > 1
 
     def schluessel_fuer_host(self, host: str) -> str:
-        """Welcher Client-Schlüssel gilt für diesen Host? Unbekannt → der Vorgabe-Client.
+        """Which client key applies to this host? Unknown → the default client.
 
-        Ein unbekannter Host bekommt bewusst den Vorgabe-Client und keine Absage: Genau so
-        verhält sich eine Installation ohne `oidc_clients`, und der Übergang soll keiner sein.
-        Welche Hosts überhaupt geschützt sind, entscheidet der Proxy — nicht diese Zuordnung.
+        An unknown host deliberately gets the default client and no rejection: that is exactly how
+        an installation without `oidc_clients` behaves, and the transition should not be one.
+        Which hosts are protected at all is decided by the proxy — not by this mapping.
         """
         h = str(host or "").strip().lower()
         if h and ":" in h and not h.startswith("["):
-            h = h.split(":", 1)[0]          # Port gehört nicht zum Namen der Anwendung
+            h = h.split(":", 1)[0]          # the port is not part of the application's name
         return h if h in self._clients else VORGABE_CLIENT
 
     def __getitem__(self, schluessel: str) -> OIDCClient:
@@ -531,15 +531,15 @@ class OIDCClients:
         return self[self.schluessel_fuer_host(host)]
 
     def bekannt(self, schluessel: str) -> bool:
-        """Ist dieser Client (noch) eingerichtet? `__getitem__` fällt sonst auf den Vorgabe-Client
-        zurück — für eine Zeile aus `oidc_sitzung` hiesse das, ein fremdes Refresh-Token mit
-        falschen Zugangsdaten zu tauschen."""
+        """Is this client (still) set up? `__getitem__` otherwise falls back to the default client
+        — for a row from `oidc_sitzung` that would mean exchanging a foreign refresh token with
+        the wrong credentials."""
         return schluessel in self._clients
 
     def eintrag(self, schluessel: str) -> dict:
-        """Die Zusatzangaben eines Clients (`allowed_groups`, `group_role_map`) — mit den
-        Werten des Einzel-Clients als Rückfall. So gilt eine global gesetzte Gruppenregel auch
-        für eine Anwendung, die selbst keine nennt."""
+        """The additional settings of a client (`allowed_groups`, `group_role_map`) — with the
+        values of the single client as fallback. This way a globally set group rule also applies
+        to an application that names none itself."""
         e = dict((self.cfg.oidc_clients or {}).get(schluessel) or {})
         return {
             "allowed_groups": list(e.get("allowed_groups") or self.cfg.oidc_allowed_groups or []),
@@ -555,30 +555,30 @@ def register_oidc_routes(router, auth):
     oidc: OIDCClient = auth.oidc
     clients: OIDCClients = auth.oidc_clients
     if cfg.base_url:
-        # Sichtbar machen, was der IdP als Redirect-URI kennen muss. Stimmt es nicht überein,
-        # meldet den Fehler sonst erst der Provider — nach dem Login, ohne Hinweis auf die Ursache.
+        # Make visible what the IdP must know as redirect URI. If it does not match,
+        # the provider reports the error only later — after the login, with no hint at the cause.
         security.seclog.info("OIDC-Redirect-URI: %s", cfg.base_url.rstrip("/") + cfg.oidc_callback_path)
 
     def _redirect_uri(request: Request):
-        # Die Redirect-URI entscheidet, wohin der IdP den Autorisierungs-Code schickt. Aus dem
-        # Host-Header abgeleitet wäre sie durch den Anfragenden bestimmbar; ein IdP mit locker
-        # gepflegten Redirect-URIs würde den Code dann an einen fremden Host ausliefern
-        # (R4-01). Ohne geprüfte Basis bricht der Flow ab, statt sie zu raten.
-        # `require_public_base`: Ein 500 mitten im Anmeldeversuch war der falsche Ort für
-        # eine Konfigurationslücke — `/auth/oidc/start` ist der Einstieg, auf den ein Gateway
-        # jeden Besucher schickt. Seit dieser Fassung verlangt `konfigpruefung` bei
-        # `oidc_enabled` ein `base_url` und der Aufbau scheitert vorher.
+        # The redirect URI decides where the IdP sends the authorization code. Derived from the
+        # host header, it would be determinable by the requester; an IdP with loosely
+        # maintained redirect URIs would then deliver the code to a foreign host
+        # (R4-01). Without a checked base the flow aborts instead of guessing.
+        # `require_public_base`: a 500 in the middle of a sign-in attempt was the wrong place for
+        # a configuration gap — `/auth/oidc/start` is the entry point to which a gateway sends
+        # every visitor. Since this version `konfigpruefung` requires a `base_url` when
+        # `oidc_enabled` is set, and setup fails beforehand.
         return auth.require_public_base(request) + cfg.oidc_callback_path
 
-    # Der Flow wird an den BROWSER gebunden, nicht nur an den `state`. Ohne das kann ein
-    # Angreifer den Flow bei sich starten, sich beim IdP als er selbst anmelden und das Opfer
-    # dann auf die Callback-URL locken — das Opfer landet still im Konto des Angreifers und
-    # arbeitet dort weiter. Ein gewöhnlicher Top-Level-GET genügt dafür; SameSite hilft nicht,
-    # weil gar kein Cookie gebraucht wird. Dasselbe Muster nutzt webauthn_.py schon
-    # (`_set_flow_cookie`) — hier fehlte es.
-    # Der tatsächliche Name trägt `__Host-`, wo möglich (A-1): Sonst setzt eine
-    # Nachbar-Subdomain per `Domain=.example.com` ihr eigenes Flow-Cookie, und die Bindung
-    # an den Browser hält nichts mehr.
+    # The flow is bound to the BROWSER, not only to the `state`. Without that an
+    # attacker can start the flow at their side, sign in at the IdP as themselves and then lure
+    # the victim onto the callback URL — the victim silently lands in the attacker's account and
+    # keeps working there. An ordinary top-level GET suffices for that; SameSite does not help,
+    # because no cookie is needed at all. webauthn_.py already uses the same pattern
+    # (`_set_flow_cookie`) — it was missing here.
+    # The actual name carries `__Host-` where possible (A-1): otherwise a
+    # neighboring subdomain sets its own flow cookie via `Domain=.example.com`, and the binding
+    # to the browser holds nothing any more.
     _OIDCFLOW = "tinysesam_oidc_flow"
 
     def _flow_cookie_setzen(resp, wert):
@@ -586,32 +586,32 @@ def register_oidc_routes(router, auth):
 
     @router.get("/auth/oidc/start")
     def oidc_start(request: Request, next: str = "", app: str = ""):
-        # Jeder Aufruf hinterlässt eine `flow`-Zeile (600 s), gelöscht wird sie nur beim
-        # erfolgreichen Rückweg oder von `gc`. Im Gateway-Betrieb ist das genau der Einstieg,
-        # auf den der Proxy jeden nicht angemeldeten Besucher schickt — jeder Abbruch, jeder
-        # Scanner, jeder Bot liess die Datenbank wachsen, und als einzige flow-erzeugende Route
-        # war sie nicht ratenbegrenzt.
+        # Every call leaves a `flow` row (600 s), which is deleted only on the
+        # successful return path or by `gc`. In gateway operation this is exactly the entry point
+        # to which the proxy sends every non-signed-in visitor — every abort, every
+        # scanner, every bot made the database grow, and as the only flow-creating route
+        # it was not rate-limited.
         if not auth._rate_ok(auth.client_ip(request)):
             raise HTTPException(429, auth.t("err.rate"))
         state, nonce = secrets.token_urlsafe(24), secrets.token_urlsafe(24)
-        # Welche Anwendung gemeint ist, entscheidet sich HIER und wandert in den Flow-Satz —
-        # nicht in die Redirect-URI (die ist für alle Clients dieselbe, damit beim Provider
-        # eine einzige Adresse eingetragen werden muss) und nicht in den `state` (den liest
-        # jeder aus der Adresszeile). `?app=` kommt vom Forward-Auth oder von der Anwendung
-        # selbst; ein unbekannter Name landet beim Vorgabe-Client, genau wie bisher (T-14).
-        # Ohne `app` entscheidet der Host von `next` (B-2): Ein Einstieg, der die Angabe verliert
-        # (ein Lesezeichen, eine eigene Login-Seite), begänne sonst mit dem Vorgabe-Client, und die
-        # Freigabe für die Anwendung, zu der es zurückgeht, entstünde nie.
+        # Which application is meant is decided HERE and travels into the flow record —
+        # not into the redirect URI (which is the same for all clients, so that a single
+        # address must be registered at the provider) and not into the `state` (which everyone
+        # reads from the address bar). `?app=` comes from forward-auth or from the application
+        # itself; an unknown name ends up at the default client, exactly as before (T-14).
+        # Without `app` the host of `next` decides (B-2): an entry that loses the information
+        # (a bookmark, a login page of its own) would otherwise begin with the default client, and the
+        # approval for the application it returns to would never come about.
         if not app and "://" in str(next or ""):
             from urllib.parse import urlsplit
             app = urlsplit(str(next)).hostname or ""
         ziel = clients.schluessel_fuer_host(app)
         client = clients[ziel]
-        # Das Geheimnis geht als httponly-Cookie an den Browser, nur sein Hash in den Flow-Satz.
-        # Wer den `state` aus der Redirect-URL abliest, hat damit noch nichts.
+        # The secret goes to the browser as an httponly cookie, only its hash into the flow record.
+        # Whoever reads the `state` from the redirect URL has gained nothing with that.
         flow_key = secrets.token_urlsafe(24)
-        # PKCE (F-20): Der Verifier bleibt im Flow-Satz auf dem Server, nur die Challenge geht
-        # in die Adresszeile. Ein abgefangener Code ist ohne ihn wertlos.
+        # PKCE (F-20): the verifier stays in the flow record on the server, only the challenge goes
+        # into the address bar. An intercepted code is worthless without it.
         verifier, challenge = pkce_paar()
         auth.store.put_flow("oidc:" + state,
                             {"nonce": nonce, "next": next, "fk": _hash(flow_key), "app": ziel,
@@ -629,37 +629,37 @@ def register_oidc_routes(router, auth):
         flow = auth.store.pop_flow("oidc:" + state)
         if not flow:
             raise HTTPException(400, auth.t("api.oidc_state"))
-        # Der Rückweg muss aus DEMSELBEN Browser kommen, der den Flow begonnen hat.
+        # The return path must come from THE SAME browser that began the flow.
         erwartet = flow.get("fk")
         mitgebracht = request.cookies.get(auth.flow_cookie_name(_OIDCFLOW)) or ""
         if not erwartet or not secrets.compare_digest(_hash(mitgebracht), erwartet):
             security.seclog.warning("OIDC-Callback ohne passendes Flow-Cookie — abgewiesen")
             raise HTTPException(400, auth.t("api.oidc_browser"))
-        # Getauscht wird mit dem Client, mit dem der Flow begonnen hat. Ein anderer Client hätte
-        # ein anderes Geheimnis — der Tausch scheitert dann beim Provider, und zwar zu Recht.
+        # The exchange is done with the client with which the flow began. A different client would have
+        # a different secret — the exchange then fails at the provider, rightly so.
         ziel = str(flow.get("app") or VORGABE_CLIENT)
         client = clients[ziel]
-        _gefragt = jetzt()          # Fund 8: ein Nein, das danach kommt, bleibt stehen
+        _gefragt = jetzt()          # finding 8: a no that comes afterwards stays
         claims, tok = client.exchange(code, _redirect_uri(request), flow["nonce"], t=auth.t,
                                       code_verifier=str(flow.get("pkce") or ""))
-        # Das `sub` aus dem **signierten** Token ist der Massstab für die UserInfo-Antwort, die
-        # selbst nicht signiert ist (F-18). Deshalb steht es vor dem Abruf, nicht danach.
+        # The `sub` from the **signed** token is the yardstick for the UserInfo response, which
+        # itself is not signed (F-18). That is why it stands before the fetch, not after.
         sub_im_token = str(claims.get("sub") or "")
         nutzerinfo = client.userinfo(tok.get("access_token"), erwartetes_sub=sub_im_token) or {}
         info = {**nutzerinfo, **dict(claims)}
 
-        # Gruppenregel je Anwendung: `oidc_clients[host]["allowed_groups"]`, sonst die globale.
-        # Die eigentliche Freigabe trifft ohnehin der Provider (er gibt einem nicht freigegebenen
-        # Benutzer gar keinen Code) — das hier ist die zweite Schranke für den Fall, dass beim
-        # Provider grosszügiger freigegeben ist als gewollt.
+        # Group rule per application: `oidc_clients[host]["allowed_groups"]`, otherwise the global one.
+        # The actual approval is made by the provider anyway (it gives a user who is not approved
+        # no code at all) — this is the second barrier for the case that the provider
+        # approves more generously than intended.
         eintrag = clients.eintrag(ziel)
         erlaubte = eintrag["allowed_groups"]
         if erlaubte:
             groups = info.get(cfg.oidc_group_claim) or []
             if not (set(erlaubte) & set(groups if isinstance(groups, list) else [groups])):
-                # Ins Protokoll, nicht nur an den Browser: „ich komme nicht rein" ist im
-                # Gateway-Betrieb der häufigste Supportfall, und ohne diese Zeile hinterliess
-                # er serverseitig gar nichts. Das Muster gibt es im Projekt schon
+                # Into the log, not only to the browser: "I cannot get in" is the most common
+                # support case in gateway operation, and without this line it left
+                # nothing at all on the server side. The pattern already exists in the project
                 # (`forward_role_denied` in router.py).
                 auth.audit("oidc_group_denied", str(info.get("email") or info.get("sub") or "?"),
                            auth.client_ip(request),
@@ -668,26 +668,26 @@ def register_oidc_routes(router, auth):
 
         issuer, sub = client.meta()["issuer"], claims["sub"]
 
-        # Die E-Mail aus dem ID-Token trägt in TinySesam Entscheidungen: `admin_identifiers`
-        # macht ihren Träger beim ersten Login zum Admin. Das setzt voraus, dass die Adresse dem
-        # Anmeldenden wirklich gehört — belegt ist das allein durch `email_verified`. Wer sich
-        # bei einem IdP mit Selbstregistrierung eine beliebige Adresse einträgt, wurde sonst mit
-        # ihr zum Erst-Admin. Adresse und Beleg werden deshalb als Paar geführt: die Adresse wie
-        # bisher ins Konto und in `Remote-Email`, der Beleg als Vermerk daneben.
+        # The e-mail from the ID token carries decisions in TinySesam: `admin_identifiers`
+        # makes its bearer admin on the first login. That presupposes that the address really belongs
+        # to the person signing in — which is proven solely by `email_verified`. Whoever enters an arbitrary address
+        # at an IdP with self-registration would otherwise become first admin with
+        # it. Address and evidence are therefore kept as a pair: the address as
+        # before into the account and into `Remote-Email`, the evidence as a note next to it.
         mail, mail_bestaetigt, beleg_ausdruecklich = _email_mit_beleg(
             claims, nutzerinfo, cfg.oidc_email_verified_default)
         if mail and not mail_bestaetigt:
-            # Eine Adresse OHNE Beleg wird nicht verwendet (H-3, PO-Entscheid 2026-09-24): kein
-            # Kontoname daraus, keine Adresse im neuen Konto, also auch kein `Remote-Email` an die
-            # geschützte App. Bis dahin wurde sie übernommen und nur als unbestätigt vermerkt —
-            # aber eine nachgelagerte App, die Nutzer über die Adresse zuordnet, sah den Vermerk
-            # nie: Wer sich beim Provider eine fremde Adresse eintrug, kam dort als deren Inhaber an.
+            # An address WITHOUT evidence is not used (H-3, PO decision 2026-09-24): no
+            # account name from it, no address in the new account, hence also no `Remote-Email` to the
+            # protected app. Until then it was adopted and merely noted as unconfirmed —
+            # but a downstream app that assigns users by address never saw the note:
+            # whoever entered a foreign address at the provider arrived there as its owner.
             #
-            # Der Preis: Ein Provider, der den optionalen Claim nie schickt (Entra ID), liefert
-            # dann keine Adressen mehr. Für ihn gibt es die ausdrückliche Aussage des Betreibers
-            # `oidc_email_verified_default=True` — „dieser Provider prüft jede Adresse" —, die
-            # `_email_mit_beleg` wie einen Beleg behandelt. Ein ausdrückliches `false` bleibt
-            # immer unbestätigt.
+            # The price: a provider that never sends the optional claim (Entra ID) then
+            # supplies no addresses any more. For it there is the operator's explicit statement
+            # `oidc_email_verified_default=True` — "this provider verifies every address" —, which
+            # `_email_mit_beleg` treats like evidence. An explicit `false` always stays
+            # unconfirmed.
             security.seclog.warning(
                 "OIDC: Der Provider meldet %s ohne Beleg (email_verified fehlt oder ist nicht "
                 "wahr) — die Adresse wird NICHT verwendet (kein Kontoname, kein Remote-Email). "
@@ -702,22 +702,22 @@ def register_oidc_routes(router, auth):
                 auth.audit("oidc_no_account", str(info.get("email") or sub or "?"),
                            auth.client_ip(request), "oidc_auto_create=False")
                 raise HTTPException(403, auth.t("api.oidc_nolink"))
-            # Ersatzname notfalls aus der Adresse — aber nur aus einer belegten (H-3). Bis
-            # 2026-09-24 auch aus einer unbestätigten („ein Name ist keine Berechtigung"); eine
-            # App hinter Forward-Auth, die über `Remote-User` zuordnet, sah darin aber genau die
-            # fremde Adresse, die hier nicht verwendet werden soll.
+            # Fallback name if need be from the address — but only from one with evidence (H-3). Until
+            # 2026-09-24 also from an unconfirmed one ("a name is not an authorization"); but an
+            # app behind forward-auth that assigns via `Remote-User` saw in it exactly the
+            # foreign address that is not to be used here.
             belegte_mail = mail if mail_bestaetigt else None
-            # Auch `preferred_username` kann eine Adresse sein (Keycloak „Email as username", Entra
-            # mit der UPN, Zitadel) — und ist dann dieselbe unbelegte Adresse unter anderem Namen.
-            # Durchgelassen, wurde sie Kontoname und `Remote-User`, und die Kennung war für die
-            # echte Inhaberin besetzt (Angriff auf H-3). Ein Name mit `@` gilt deshalb nur, wenn er
-            # die belegte Adresse ist; sonst der Ersatzname.
-            # Geprüft wird die GEFALTETE Kennung: `victim＠example.com` (Vollbreite, U+FF20) oder
-            # `﹫` (U+FE6B) werden in `norm_kennung` zu `@` — wörtlich geprüft rutschten sie durch
-            # und besetzten die Adresse doch (Angriff auf die Fixes, R2-1).
+            # `preferred_username` can also be an address (Keycloak "Email as username", Entra
+            # with the UPN, Zitadel) — and is then the same unverified address under another name.
+            # Let through, it became account name and `Remote-User`, and the identifier was taken
+            # for the real owner (attack on H-3). A name with `@` therefore counts only if it
+            # is the address with evidence; otherwise the fallback name.
+            # The FOLDED identifier is checked: `victim＠example.com` (full-width, U+FF20) or
+            # `﹫` (U+FE6B) become `@` in `norm_kennung` — checked literally they slipped through
+            # and occupied the address after all (attack on the fixes, R2-1).
             wunsch = str(info.get("preferred_username") or "").strip()
             if name_ungueltig(wunsch):
-                wunsch = ""          # Steuerzeichen: in `Remote-User` ein anderer Name
+                wunsch = ""          # control characters: a different name in `Remote-User`
             if "@" in norm_kennung(wunsch) and not (
                     belegte_mail and norm_email(wunsch) == norm_email(belegte_mail)):
                 wunsch = ""
@@ -725,44 +725,44 @@ def register_oidc_routes(router, auth):
             if name_ungueltig(username):
                 username = "oidc-" + hashlib.sha256(sub.encode()).hexdigest()[:8]
             base_un, i = username, 1
-            # Der Ausweichname muss in BEIDEN Namensräumen frei sein (Fund R4-12) — ein Name,
-            # der die E-Mail eines bestehenden Kontos ist, besetzt dessen Login-Kennung.
+            # The alternative name must be free in BOTH namespaces (finding R4-12) — a name
+            # that is the e-mail of an existing account occupies its login identifier.
             while auth.identifier_taken(username):
                 i += 1
                 username = f"{base_un}{i}"
             try:
-                # Adresse UND Beleg gehen zusammen ins Konto (F-14): Der Vermerk entscheidet
-                # später über Erst-Admin/Allowlist — unabhängig davon, über welchen Weg dieses
-                # Konto sich das nächste Mal anmeldet.
-                # Der Name kommt vom Provider (`name_quelle`): Eine Anmeldung über LDAP/SAML bindet
-                # dieses Konto nie über ihn (Angriffsrunde 2026-09-26, `_konto_anlegen`).
+                # Address AND evidence go into the account together (F-14): the note decides
+                # later about first admin/allowlist — regardless of by which route this
+                # account signs in the next time.
+                # The name comes from the provider (`name_quelle`): a sign-in via LDAP/SAML never binds
+                # this account via it (attack round 2026-09-26, `_konto_anlegen`).
                 uid = auth._konto_anlegen(username, display_name=info.get("name") or username,
                                           email=belegte_mail, email_verified=bool(belegte_mail),
                                           name_quelle="oidc")
             except errors.ConfigError:
-                # Die Kennung der Identität gehört lokal schon jemandem. Fail-closed: kein Konto,
-                # das eine fremde Kennung überschreibt — der Betreiber verknüpft von Hand.
+                # The identifier of the identity already belongs to someone locally. Fail-closed: no account
+                # that overwrites a foreign identifier — the operator links by hand.
                 auth.audit("oidc_ident_taken", str(mail or username or sub or "?"),
                            auth.client_ip(request))
                 raise HTTPException(409, auth.t("api.idp_ident_taken"))
             auth.store.link_oidc(issuer, sub, uid)
         elif mail and beleg_ausdruecklich:
-            # Bestandskonto: Was der Provider HEUTE über SEINE Adresse SAGT, ersetzt den Vermerk.
-            # Sonst bliebe ein „unbestätigt" von früher stehen, nachdem der IdP die Adresse
-            # geprüft hat — und umgekehrt bliebe ein alter Beleg gültig, obwohl der Provider ihn
-            # zurückgenommen hat.
+            # Existing account: what the provider SAYS TODAY about ITS address replaces the note.
+            # Otherwise an "unconfirmed" from earlier would remain after the IdP has
+            # verified the address — and conversely an old evidence would remain valid although the provider
+            # has withdrawn it.
             #
-            # Zwei Grenzen: nur bei DERSELBEN Adresse (über eine andere sagt der Claim nichts —
-            # dieselbe Regel wie in `_email_mit_beleg`), und nur bei einer ausdrücklichen
-            # Aussage. **Schweigen überschreibt nichts:** Ein Konto, dessen Adresse der Betreiber
-            # selbst gesetzt hat (Admin, CLI, Registrierung mit Bestätigungsmail), verlöre sonst
-            # seinen Beleg, nur weil ein IdP den optionalen Claim nicht mitschickt.
+            # Two limits: only for the SAME address (about a different one the claim says nothing —
+            # the same rule as in `_email_mit_beleg`), and only for an explicit
+            # statement. **Silence overwrites nothing:** an account whose address the operator
+            # set themselves (admin, CLI, registration with confirmation mail) would otherwise lose
+            # its evidence merely because an IdP does not send the optional claim.
             konto = auth.store.get_user(uid)
             if konto and not str(konto["email"] or "").strip() and mail_bestaetigt:
-                # Das Gegenstück zu H-3: Ein Konto, das ohne Adresse angelegt wurde, weil der
-                # Provider sie nicht belegte, bekommt sie, sobald er es tut — sofern sie frei ist.
-                # Gehört sie schon einem anderen Konto, bleibt es ohne (fail-closed, wie beim
-                # Anlegen); der Betreiber sieht die Zeile.
+                # The counterpart to H-3: an account created without an address because the
+                # provider did not verify it gets it as soon as it does — provided it is free.
+                # If it already belongs to another account, the account stays without (fail-closed, as with
+                # creation); the operator sees the line.
                 if auth.identifier_taken(mail, exclude_id=uid):
                     auth.audit("oidc_email_taken", str(konto["username"]), auth.client_ip(request),
                                "nachgetragen=0")
@@ -772,25 +772,25 @@ def register_oidc_routes(router, auth):
                         auth.audit("oidc_email_added", str(konto["username"]), auth.client_ip(request),
                                    "beleg=1")
                     except sqlite3.IntegrityError:
-                        # Wettlauf (G12c): zwischen Prüfung und Schreiben vergeben — die Datenbank
-                        # entscheidet, das Konto bleibt ohne Adresse wie oben.
+                        # Race (G12c): assigned between check and write — the database
+                        # decides, the account stays without an address as above.
                         auth.audit("oidc_email_taken", str(konto["username"]), auth.client_ip(request),
                                    "nachgetragen=0 wettlauf=1")
             elif konto and str(konto["email"] or "").lower() == str(mail).strip().lower() \
                     and bool(konto["email_verified"]) is not bool(mail_bestaetigt):
                 auth.store.set_email_verified(uid, mail_bestaetigt)
 
-        # Ein gesperrtes Konto bekommt hier gar nichts mehr (F-17). Bis 0.18.x lief der
-        # Callback für ein `disabled=1`-Konto vollständig durch: Gruppen wurden übernommen, das
-        # Admin-Flag konnte gesetzt werden, ein Login-Eintrag entstand — nur die Sitzung blieb am
-        # Ende aus. Das Sperren eines Kontos ist aber die Antwort auf „diese Person soll nichts
-        # mehr können"; dass ihre Rollen sich dabei noch ändern, ist das Gegenteil davon. Und im
-        # Protokoll sah es aus wie eine erfolgreiche Anmeldung.
+        # A blocked account gets nothing at all here any more (F-17). Until 0.18.x the
+        # callback ran through completely for a `disabled=1` account: groups were adopted, the
+        # admin flag could be set, a login entry was created — only the session stayed
+        # out at the end. But blocking an account is the answer to "this person should be able to do
+        # nothing any more"; that their roles still change in the process is the opposite. And in the
+        # log it looked like a successful sign-in.
         #
-        # Die Prüfung steht VOR `apply_idp_groups`, `apply_factor` und jedem Schreibzugriff —
-        # jede Zeile danach wäre eine Änderung an einem Konto, das nicht mehr anmelden darf.
-        # Lokaler Passwort-Login und Panel prüfen dasselbe seit jeher; die föderierte Seite war
-        # die Lücke.
+        # The check stands BEFORE `apply_idp_groups`, `apply_factor` and any write access —
+        # every line after it would be a change to an account that may no longer sign in.
+        # Local password login and panel have always checked the same; the federated side was
+        # the gap.
         _konto = auth.store.get_user(uid)
         if _konto and _konto["disabled"]:
             auth.audit("oidc_disabled", str(_konto["username"]), auth.client_ip(request),
@@ -800,40 +800,40 @@ def register_oidc_routes(router, auth):
                                     security.fuer_log(str(_konto["username"])),
                                     security.fuer_log(auth.client_ip(request)))
             raise HTTPException(403, auth.t("api.oidc_disabled"))
-        # Der Provider hat das Konto eben bestätigt — das weckt ruhende API-Keys (Fund 8). Erst
-        # hier, nach allen Abweisungen (Gruppen-Gate, Kennung vergeben, gesperrt): Ein Login, der
-        # scheitert, bestätigt nichts.
+        # The provider has just confirmed the account — that wakes dormant API keys (finding 8). Only
+        # here, after all rejections (group gate, identifier taken, blocked): a login that
+        # fails confirms nothing.
         auth.store.idp_bestaetigen(uid, _gefragt)
 
-        # OIDC-Gruppen → lokale Rollen (falls gemappt). Die Zuordnung darf je Anwendung eine
-        # andere sein: Dieselbe Verzeichnisgruppe kann in App A „Redakteur" heissen und in App B
-        # gar nichts. Ohne Eintrag gilt die globale Zuordnung, also das Verhalten von 0.18.0.
+        # OIDC groups → local roles (if mapped). The mapping may differ per application:
+        # the same directory group can be called "editor" in app A and
+        # nothing at all in app B. Without an entry the global mapping applies, i.e. the behavior of 0.18.0.
         _grp = info.get(cfg.oidc_group_claim) or []
         _gruppen = _grp if isinstance(_grp, list) else [_grp]
         auth.apply_idp_groups(uid, _gruppen, eintrag["group_role_map"])
 
-        # client_ip statt der rohen Peer-IP — hinter einem Proxy ist der Peer der Proxy.
+        # client_ip instead of the raw peer IP — behind a proxy the peer is the proxy.
         ip, ua = auth.client_ip(request), request.headers.get("user-agent")
         token, ok, is_new = auth.apply_factor(request, uid, "oidc", ip, ua,
                                               email_verified=mail_bestaetigt)
-        # 4a: Das Refresh-Token merken — mit ihm fragt TinySesam den Provider regelmässig, ob die
-        # Person noch darf (`oidc_session_refresh_minutes`). Ohne Refresh-Token geht das nicht.
+        # 4a: remember the refresh token — with it TinySesam regularly asks the provider whether the
+        # person is still allowed (`oidc_session_refresh_minutes`). Without a refresh token this does not work.
         if tok.get("refresh_token"):
             auth._oidc_sitzung_merken(token, ziel, str(sub), str(tok["refresh_token"]))
-        # Das ID-Token als Abmeldehinweis (T-22): PocketID beendet seine Sitzung nur mit
-        # `id_token_hint`; ohne bleibt der Mensch auf dessen Rückfrage stehen.
+        # The ID token as a sign-out hint (T-22): PocketID ends its session only with
+        # `id_token_hint`; without it the person is left standing at its confirmation prompt.
         if tok.get("id_token"):
             auth.store.set_oidc_id_token(auth.store.session_hash(token), ziel, str(tok["id_token"]))
-        # Der Provider hat für DIESE Anwendung zugestimmt — das wird an der Sitzung vermerkt.
-        # Für jede andere Anwendung sagt dieser Vermerk nichts; dort fragt `/auth/forward`
-        # erneut. Genau das ist der Unterschied zu „angemeldet ja/nein" (T-14).
+        # The provider has agreed for THIS application — this is noted on the session.
+        # For every other application this note says nothing; there `/auth/forward` asks
+        # again. Exactly that is the difference to "signed in yes/no" (T-14).
         auth._vermerke_oidc_freigabe(token, ziel, rollen=_gruppen)
         target = auth._login_redirect_after(request, token, uid,
                                             auth.safe_next(flow.get("next") or "", request))
         resp = RedirectResponse(target, 303)
         if is_new:
             auth.set_cookie(resp, token)
-        # Das Flow-Cookie hat seinen Zweck erfüllt — es liegen zu lassen wäre ein Rest,
-        # der nichts mehr schützt und nur noch verrät, dass hier ein Flow lief.
+        # The flow cookie has served its purpose — leaving it would be a remnant
+        # that protects nothing any more and only reveals that a flow ran here.
         auth._flow_cookie_loeschen(resp, _OIDCFLOW)
         return resp

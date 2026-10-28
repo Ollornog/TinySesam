@@ -1,7 +1,7 @@
-"""Übersetzungen der eingebauten Texte (UI + Fehlermeldungen). Default-Sprache = config.lang.
+"""Translations of the built-in texts (UI + error messages). Default language = config.lang.
 
-Erweitern/überschreiben: eine eigene Sprache via auth.add_messages(lang, {...}) ergänzen, oder das
-komplette Frontend per auth.set_template(...) ersetzen. Platzhalter im {name}-Stil (str.format).
+Extend/override: add your own language via auth.add_messages(lang, {...}), or replace the
+whole frontend via auth.set_template(...). Placeholders use the {name} style (str.format).
 """
 from __future__ import annotations
 
@@ -9,9 +9,9 @@ from typing import Optional
 
 MESSAGES = {
     "en": {
-        # --- Antworten an Maschinen (HTTPException-Detail). Getrennt von `err.*`,
-        # das die UI-Seiten tragen: Diese hier gehen in JSON-Antworten und an Proxys,
-        # und sie waren bis 0.18.0 durchweg deutsch — auch bei lang="en".
+        # --- Replies to machines (HTTPException detail). Kept separate from `err.*`,
+        # which the UI pages carry: these go into JSON replies and to proxies,
+        # and up to 0.18.0 they were German throughout — even with lang="en".
         "api.passkey_reg_expired": 'Registration expired',
         "api.passkey_login_expired": 'Sign-in expired',
         "api.passkey_unknown": 'Unknown passkey',
@@ -249,7 +249,7 @@ MESSAGES = {
         "acc.none": "none",
         "acc.this": "(this one)",
         # --- admin panel ---
-        # `admin.locale` steuert `toLocaleString()` im Panel — kein Text, ein BCP-47-Tag.
+        # `admin.locale` drives `toLocaleString()` in the panel — not text, a BCP-47 tag.
         "admin.locale": "en-GB",
         "admin.app": "App",
         "admin.tab.users": "Users",
@@ -328,9 +328,9 @@ MESSAGES = {
                              "tag up, reinstall, restart the service.",
     },
     "de": {
-        # --- Antworten an Maschinen (HTTPException-Detail). Getrennt von `err.*`,
-        # das die UI-Seiten tragen: Diese hier gehen in JSON-Antworten und an Proxys,
-        # und sie waren bis 0.18.0 durchweg deutsch — auch bei lang="en".
+        # --- Replies to machines (HTTPException detail). Kept separate from `err.*`,
+        # which the UI pages carry: these go into JSON replies and to proxies,
+        # and up to 0.18.0 they were German throughout — even with lang="en".
         "api.passkey_reg_expired": 'Registrierung abgelaufen',
         "api.passkey_login_expired": 'Login abgelaufen',
         "api.passkey_unknown": 'Unbekannter Passkey',
@@ -557,7 +557,7 @@ MESSAGES = {
         "acc.admin": "Admin-Panel",
         "acc.none": "keine",
         "acc.this": "(diese)",
-        # --- Admin-Panel ---
+        # --- Admin panel ---
         "admin.locale": "de-DE",
         "admin.app": "App",
         "admin.tab.users": "Benutzer",
@@ -639,7 +639,7 @@ MESSAGES = {
 
 
 def translate(lang: str, key: str, custom: Optional[dict] = None, **fmt) -> str:
-    """Text für key in lang; Fallback: custom → lang → en → key selbst. Platzhalter via str.format."""
+    """Text for key in lang; fallback: custom → lang → en → key itself. Placeholders via str.format."""
     for table in ((custom or {}).get(lang), MESSAGES.get(lang), MESSAGES.get("en")):
         if table and key in table:
             s = table[key]

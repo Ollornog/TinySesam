@@ -1,13 +1,13 @@
-"""Design-Tokens der eingebauten Seiten — die einzige Stelle mit Farbwerten.
+"""Design tokens of the built-in pages — the only place with color values.
 
-Alle eingebauten Seiten (Login, PIN, TOTP, Konto, Admin-Panel, Fehlerseiten) stylen sich
-ausschließlich über diese CSS-Variablen. Wer das Aussehen ändern will, überschreibt sie in
-`config.brand_css` — ein Satz Variablen re-skinnt damit *jede* Seite, ohne dass irgendwo ein
-Selektor nachgebaut werden muss:
+All built-in pages (login, PIN, TOTP, account, admin panel, error pages) style themselves
+exclusively through these CSS variables. Whoever wants to change the look overrides them in
+`config.brand_css` — one set of variables re-skins *every* page, without a
+selector having to be rebuilt anywhere:
 
     TinySesamConfig(brand_css=":root{--ts-bg:#f6f1ec;--ts-accent:#b0566f;…}")
 
-Die Defaults hier sind das dunkle Standard-Theme.
+The defaults here are the dark standard theme.
 """
 
 TOKENS = """
