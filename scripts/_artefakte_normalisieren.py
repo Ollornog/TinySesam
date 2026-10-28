@@ -1,21 +1,22 @@
 #!/usr/bin/env python3
-"""Wheel und sdist bit-reproduzierbar umschreiben — der Release-Workflow ruft das nach `python -m build`.
+"""Rewrite wheel and sdist bit-reproducibly — the release workflow calls this after `python -m build`.
 
     SOURCE_DATE_EPOCH=$(git log -1 --format=%ct) python3 scripts/_artefakte_normalisieren.py dist/*.whl dist/*.tar.gz
 
-sdist: setuptools übernimmt die Datei-Zeitstempel des Arbeitsbaums (bei einem frischen Checkout
-also die Uhrzeit des Klonens) und schreibt die aktuelle Zeit in den gzip-Kopf. Zwei Bauläufe
-desselben Commits ergaben damit zwei verschiedene Prüfsummen — und die veröffentlichte Prüfsumme
-liess sich von niemandem nachstellen. Hier wird das Archiv mit festen Werten neu geschrieben:
-sortierte Einträge, Zeitstempel = `SOURCE_DATE_EPOCH`, Eigentümer 0 ohne Namen, Rechte 0644/0755.
+sdist: setuptools takes over the file timestamps of the working tree (in a fresh checkout that
+is the time of cloning) and writes the current time into the gzip header. Two builds of the
+same commit thus produced two different checksums — and nobody could reproduce the published
+checksum. Here the archive is rewritten with fixed values: sorted entries, timestamp =
+`SOURCE_DATE_EPOCH`, owner 0 without a name, permissions 0644/0755.
 
-Wheel: Die Zeitstempel richtet `SOURCE_DATE_EPOCH` schon, die Dateirechte nicht — setuptools
-schreibt die Rechte des Checkouts in jeden Zip-Eintrag, und die hängen von der umask ab. Ein
-Nachbau auf Ubuntu/Mint (Benutzer-umask 0002, also 0664) ergab eine andere Prüfsumme als der
-Runner (0022, also 0644), bei identischem Inhalt (A-3 der Nachprüfung). Deshalb auch hier 0644/0755.
+Wheel: `SOURCE_DATE_EPOCH` already fixes the timestamps, but not the file permissions —
+setuptools writes the permissions of the checkout into every zip entry, and these depend on the
+umask. A rebuild on Ubuntu/Mint (user umask 0002, i.e. 0664) produced a different checksum than
+the runner (0022, i.e. 0644), with identical content (A-3 of the re-verification). Hence 0644/0755
+here as well.
 
-Der Inhalt jeder Datei bleibt Byte für Byte, wie setuptools ihn geschrieben hat — im Wheel stimmt
-`RECORD` damit weiter. stdlib-only, damit der Release-Job nichts dafür installieren muss.
+The content of every file stays byte for byte as setuptools wrote it — in the wheel `RECORD`
+therefore still matches. stdlib-only, so the release job does not have to install anything for it.
 """
 from __future__ import annotations
 
@@ -32,7 +33,7 @@ def _rechte(modus: int) -> int:
 
 
 def sdist_normalisieren(pfad: str, epoch: int) -> None:
-    """Schreibt das sdist unter `pfad` deterministisch neu (siehe Moduldoku)."""
+    """Rewrite the sdist at `pfad` deterministically (see module docstring)."""
     with tarfile.open(pfad, "r:gz") as alt:
         eintraege = []
         for m in alt.getmembers():
@@ -48,17 +49,17 @@ def sdist_normalisieren(pfad: str, epoch: int) -> None:
             m.pax_headers = {}
             m.mode = 0o755 if m.isdir() else _rechte(m.mode)
             neu.addfile(m, io.BytesIO(daten) if daten is not None else None)
-    # gzip schreibt sonst die aktuelle Zeit und den Dateinamen in den Kopf.
+    # Otherwise gzip writes the current time and the file name into the header.
     with open(pfad, "wb") as ziel:
         with gzip.GzipFile(filename="", mode="wb", fileobj=ziel, mtime=epoch, compresslevel=9) as gz:
             gz.write(puffer.getvalue())
 
 
 def wheel_normalisieren(pfad: str) -> None:
-    """Schreibt das Wheel unter `pfad` mit festen Dateirechten neu (siehe Moduldoku).
+    """Rewrite the wheel at `pfad` with fixed file permissions (see module docstring).
 
-    Reihenfolge und Zeitstempel der Einträge bleiben, wie setuptools sie gesetzt hat (RECORD
-    zuletzt, wie PEP 427 empfiehlt); die Zeitstempel sind mit `SOURCE_DATE_EPOCH` bereits fest.
+    Order and timestamps of the entries stay as setuptools set them (RECORD last, as PEP 427
+    recommends); the timestamps are already fixed by `SOURCE_DATE_EPOCH`.
     """
     with zipfile.ZipFile(pfad) as alt:
         eintraege = [(i, alt.read(i)) for i in alt.infolist()]
@@ -67,7 +68,7 @@ def wheel_normalisieren(pfad: str) -> None:
         for alt_info, daten in eintraege:
             info = zipfile.ZipInfo(alt_info.filename, date_time=alt_info.date_time)
             info.compress_type = alt_info.compress_type
-            info.create_system = 3                      # Unix — sonst gelten die Rechte nicht
+            info.create_system = 3                      # Unix — otherwise the permissions do not apply
             ist_dir = alt_info.filename.endswith("/")
             modus = 0o755 if ist_dir else _rechte(alt_info.external_attr >> 16)
             info.external_attr = ((0o040000 if ist_dir else 0o100000) | modus) << 16
@@ -79,7 +80,7 @@ def wheel_normalisieren(pfad: str) -> None:
 def main(argv: list[str]) -> int:
     epoch = os.environ.get("SOURCE_DATE_EPOCH")
     if not argv or not epoch:
-        # Ohne feste Zeit gibt es nichts, worauf sich zwei Bauläufe einigen könnten.
+        # Without a fixed time there is nothing two builds could agree on.
         print(__doc__, file=sys.stderr)
         return 2
     for pfad in argv:

@@ -1,8 +1,8 @@
-# Statische Analyse (SAST). Bis 0.18.0 lief gar keine — der OpenSSF-Scorecard-Check `SAST`
-# hätte 0 gegeben, und für ein Auth-Paket ist das die auffälligste Lücke in der Hygiene.
+# Static analysis (SAST). Up to 0.18.0 none ran at all — the OpenSSF Scorecard check `SAST`
+# would have given 0, and for an auth package that is the most conspicuous gap in hygiene.
 #
-# Öffentliches Repo → `ubuntu-latest`, keine self-hosted Runner: Bei einem Fork-PR liefe sonst
-# fremder Code auf eigener Hardware.
+# Public repo → `ubuntu-latest`, no self-hosted runners: with a fork PR, foreign
+# code would otherwise run on our own hardware.
 name: CodeQL
 
 on:
@@ -11,11 +11,11 @@ on:
   pull_request:
     branches: [main]
   schedule:
-    # Montags früh: CodeQL-Abfragen werden weiterentwickelt, ein Fund kann also auch ohne
-    # Codeänderung neu auftauchen.
+    # Early on Mondays: CodeQL queries keep evolving, so a finding can also appear anew without a
+    # code change.
     - cron: "17 5 * * 1"
-  # Der Nachlauf nach einem Dependabot-Auto-Merge (dependabot-auto-merge.yml): Ein Merge mit dem
-  # Workflow-Token startet keinen Push-Lauf, `workflow_dispatch` ist die Ausnahme.
+  # The follow-up run after a Dependabot auto-merge (dependabot-auto-merge.yml): a merge with the
+  # workflow token starts no push run, `workflow_dispatch` is the exception.
   workflow_dispatch:
 
 permissions:
@@ -28,7 +28,7 @@ jobs:
     timeout-minutes: 20
     permissions:
       contents: read
-      security-events: write      # nur dafür: die Funde in den Security-Reiter schreiben
+      security-events: write      # only for this: write the findings to the Security tab
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -38,8 +38,8 @@ jobs:
       - uses: github/codeql-action/init@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee  # v4.39.0
         with:
           languages: python
-          # `security-and-quality` statt der Vorgabe: Das Paket ist klein genug, dass die
-          # zusätzlichen Abfragen keine Flut erzeugen.
+          # `security-and-quality` instead of the default: the package is small enough that the
+          # additional queries do not produce a flood.
           queries: security-and-quality
 
       - uses: github/codeql-action/analyze@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee  # v4.39.0

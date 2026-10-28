@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-"""Offene Code-Scanning-Funde holen und als Backlog-Eintrag ablegen.
+"""Fetch open code-scanning findings and file them as a backlog entry.
 
-Warum: GitHub schickt CodeQL-Funde als **PR-Kommentar** an den Autor — also per Mail, mit dem
-Satz „found more than 20 potential problems" und ohne zu sagen, welche. Der Security-Tab hat die
-Details, aber niemand sieht ihn regelmässig an. Hier ist die Zwischenstufe: eine Datei im
-Backlog, die im Repo liegt, versioniert ist und beim nächsten Anfassen auffällt.
+Why: GitHub sends CodeQL findings as a **PR comment** to the author — i.e. by mail, with the
+sentence "found more than 20 potential problems" and without saying which. The security tab has
+the details, but nobody looks at it regularly. This is the intermediate stage: a file in the
+backlog that lives in the repo, is versioned, and gets noticed the next time it is touched.
 
-    python3 scripts/_codeql.py            # backlog/S-1-codeql.md schreiben
-    python3 scripts/_codeql.py --zeigen   # nur ausgeben, nichts schreiben
+    python3 scripts/_codeql.py            # write backlog/S-1-codeql.md
+    python3 scripts/_codeql.py --zeigen   # only print, write nothing
 
-Braucht `gh` mit Leserecht auf das Repo. Ohne Funde wird die Datei entfernt.
+Needs `gh` with read access to the repo. With no findings the file is removed.
 """
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ ROOT = Path(__file__).resolve().parent.parent
 ZIEL = ROOT / "backlog" / "S-1-codeql.md"
 REPO = "Ollornog/TinySesam"
 
-#: Was TinySesam bewusst anders bewertet als CodeQL — mit Grund, nicht als Stummschalten.
+#: What TinySesam deliberately rates differently from CodeQL — with a reason, not as muting.
 BEWERTET = {
     "py/url-redirection": (
         "geprüft, Fehlalarm: Das Ziel ist immer der relative `cfg.login_path`; der "

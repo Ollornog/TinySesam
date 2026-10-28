@@ -1,21 +1,21 @@
 #!/usr/bin/env python3
-"""Erzeugt API.md — die öffentliche Oberfläche von `TinySesam`, nach Stufe, mit Signatur und
-erstem Satz.
+"""Generates API.md — the public surface of `TinySesam`, by tier, with signature and
+first sentence.
 
-Warum: 68 der 105 eingefrorenen Methoden kamen in keiner Doku vor. Wer TinySesam einbettet,
-sah eine Zusage („diese Oberfläche bleibt stabil") ohne eine Stelle, an der steht, was sie
-enthält. Der Wächter `tests/test_api_surface.py` misst dieselbe Menge — hier ist sie lesbar.
+Why: 68 of the 105 frozen methods appeared in no documentation. Whoever embeds TinySesam
+saw a promise ("this surface stays stable") without a place that says what it
+contains. The guard `tests/test_api_surface.py` measures the same set — here it is readable.
 
-    python3 scripts/_api_doku.py              # schreiben
-    python3 scripts/_api_doku.py --dry-run    # nur prüfen (Exit 1 = veraltet)
+    python3 scripts/_api_doku.py              # write
+    python3 scripts/_api_doku.py --dry-run    # check only (exit 1 = outdated)
 
-Seit 0.22.0 ist die Oberfläche nicht mehr nur gemessen, sondern **eingestuft** (PO-Entscheid
-2026-09-26): Die Stufe jedes Namens steht in `tests/api_surface.json`, und diese Seite gliedert
-danach — A „öffentlich, stabil ab 1.0", B „für Fortgeschrittene", C „intern". C steht ohne
-Erklärung da (niemand soll dort einen Baustein finden), aber mit dem Ersatz: Seit 0.22.0 ist jeder
-C-Name ein Alias, der beim Aufruf warnt (`tinysesam/_veraltet.py`), und wer die Warnung sieht,
-sucht hier, was er stattdessen nimmt. Ein Name ohne Stufe landet sichtbar in einem eigenen
-Abschnitt; rot macht ihn der Wächter, nicht diese Seite.
+Since 0.22.0 the surface is no longer merely measured but **graded** (PO decision
+2026-09-26): The tier of every name lives in `tests/api_surface.json`, and this page is organised
+by it — A "public, stable from 1.0", B "for advanced users", C "internal". C stands without
+an explanation (nobody should find a building block there), but with the replacement: Since 0.22.0 every
+C name is an alias that warns on call (`tinysesam/_veraltet.py`), and whoever sees the warning
+looks here for what to use instead. A name without a tier shows up visibly in a section of its
+own; the guard turns it red, not this page.
 """
 from __future__ import annotations
 
@@ -36,65 +36,65 @@ ABLAGE = ROOT / "tests" / "api_surface.json"
 import tinysesam as paket  # noqa: E402
 from tinysesam._veraltet import BIS, Veraltet  # noqa: E402
 
-# Ein Import des Pakets, die Namen daraus per Zuweisung — nicht zusätzlich `from tinysesam import …`
+# One import of the package, the names from it by assignment — not additionally `from tinysesam import …`
 # (CodeQL py/import-and-import-from).
 LoginResult, PasswordChangeResult = paket.LoginResult, paket.PasswordChangeResult
 TinySesam, TinySesamConfig, fehler_modul = paket.TinySesam, paket.TinySesamConfig, paket.errors
 
-#: Überschrift und Zusage je Stufe — derselbe Wortlaut wie in den READMEs („Public API: three
-#: tiers" / „Öffentliche API: drei Stufen").
+#: Heading and promise per tier — the same wording as in the READMEs ("Public API: three
+#: tiers" / "Öffentliche API: drei Stufen").
 STUFEN = {
-    "A": ("öffentlich, stabil ab 1.0",
-          "dokumentiert und/oder von Einbettenden genutzt",
-          "Kein Bruch über zwei Minor-Versionen — die Bedingung für 1.0 "
-          "([M-1](backlog/M-1-api-stabil-1-0.md)). Der Zähler startet mit 0.22.0, dem Release, "
-          "das die Einstufung bringt."),
-    "B": ("für Fortgeschrittene",
-          "Bausteine für eigene Konto- und Admin-Seiten, eigene Mail- und Token-Abläufe, "
-          "Erweiterungspunkte",
-          "Bleibt. Entfernen oder umbauen erst, nachdem eine `DeprecationWarning` zwei "
-          "Minor-Versionen lang darauf hingewiesen hat. Schwächer als A: Ein Umbau mit Vorlauf "
-          "ist erlaubt."),
-    "C": ("intern",
-          "Verdrahtung der eingebauten Routen",
-          "Keine. Die Implementierung trägt seit 0.22.0 einen führenden Unterstrich; der alte "
-          "Name bleibt bis 1.0 als Alias, der beim Aufruf eine `DeprecationWarning` auslöst, und "
-          "fällt dann weg."),
+    "A": ("public, stable from 1.0",
+          "documented and/or used by embedders",
+          "No break across two minor versions — the condition for 1.0 "
+          "([M-1](backlog/M-1-api-stabil-1-0.md)). The counter starts with 0.22.0, the release "
+          "that introduces the grading."),
+    "B": ("for advanced users",
+          "Building blocks for your own account and admin pages, your own mail and token flows, "
+          "extension points",
+          "Stays. Removal or rework only after a `DeprecationWarning` has pointed to it for two "
+          "minor versions. Weaker than A: A rework with advance notice "
+          "is allowed."),
+    "C": ("internal",
+          "Wiring of the built-in routes",
+          "None. Since 0.22.0 the implementation carries a leading underscore; the old "
+          "name stays until 1.0 as an alias that triggers a `DeprecationWarning` on call, and "
+          "is then dropped."),
 }
 
-#: Die inneren Prüfer, vor denen der C-Abschnitt ausdrücklich warnt (PO-Befund 2026-09-26). Der
-#: Text nennt sie beim Namen — steht einer nicht mehr in C, stimmt der Text nicht mehr.
+#: The inner checkers the C section explicitly warns about (PO finding 2026-09-26). The
+#: text names them — if one is no longer in C, the text is no longer right.
 UNGEDROSSELT = ("check_password", "check_pin", "check_ldap", "check_saml")
 
-#: Der sichere Weg für eigene Login-Seiten (0.22.0), auf den der Warnsatz zu C zeigt. Stehen sie
-#: nicht in A, stimmt der Satz nicht mehr.
+#: The safe way for your own login pages (0.22.0), which the warning sentence on C points to. If they
+#: are not in A, the sentence is no longer right.
 BAUSTEINE = ("login_password", "login_pin", "login_totp")
-#: Dasselbe für die Bestätigung vor heiklen Aktionen und den eigenen Passwortwechsel (0.22.0).
+#: The same for the confirmation before delicate actions and for your own password change (0.22.0).
 WEITERE_BAUSTEINE = ("confirm_password", "confirm_pin", "confirm_totp", "change_password")
 
-#: Die Ergebnistypen der Bausteine für eigene Seiten (0.22.0, Stufe A), je mit eigenem Abschnitt:
-#: Name → (Typ, Überschrift). Wer sie liefert, sucht der Generator an `TinySesam` selbst
-#: (Rückgabetyp), damit ein neuer Baustein im Text nicht fehlt.
+#: The result types of the building blocks for your own pages (0.22.0, tier A), each with its own section:
+#: name → (type, heading). Which methods return them, the generator looks up on `TinySesam` itself
+#: (return type), so that a new building block does not go missing in the text.
 ERGEBNISTYPEN = {
-    "LoginResult": (LoginResult, "Ergebnis der Anmelde-Bausteine"),
-    "PasswordChangeResult": (PasswordChangeResult, "Ergebnis des Passwortwechsels"),
+    "LoginResult": (LoginResult, "Result of the sign-in building blocks"),
+    "PasswordChangeResult": (PasswordChangeResult, "Result of the password change"),
 }
 
-KOPF = """# API — die öffentliche Oberfläche von `TinySesam`
+KOPF = """# API — the public surface of `TinySesam`
 
-<!-- GENERIERT von scripts/_api_doku.py — nicht von Hand pflegen.
-     Neu bauen: `python3 scripts/_api_doku.py` -->
+<!-- GENERATED by scripts/_api_doku.py — do not maintain by hand.
+     Rebuild: `python3 scripts/_api_doku.py` -->
 
-Diese Namen hält `tests/api_surface.json` fest, jeden mit seiner **Stufe**: Was hier steht,
-ändert sich nicht ohne eine bewusste Entscheidung und einen Eintrag im CHANGELOG.
+These names are held fixed by `tests/api_surface.json`, each with its **tier**: What stands here
+does not change without a deliberate decision and an entry in the CHANGELOG.
 
-Die READMEs zeigen die **Wege** (welche Methode wofür, wie man sie kombiniert). Hier steht, was
-es überhaupt gibt — die Frage „gibt es dafür schon etwas?" beantwortet diese Seite, nicht der
-Quelltext.
+The READMEs show the **paths** (which method for what, how to combine them). Here stands what
+exists at all — the question "is there already something for this?" is answered by this page, not by the
+source code.
 
-## Drei Stufen — was zugesagt ist
+## Three tiers — what is promised
 
-| Stufe | Was | Zusage |
+| Tier | What | Promise |
 |---|---|---|
 """
 
@@ -112,9 +112,9 @@ def signatur(fn) -> str:
         s = inspect.signature(fn)
     except (TypeError, ValueError):
         return "(…)"
-    # Mit den Marken `*`/`/` wie im Wächter (`tests/test_api_surface.py`, `parameter_mit_marken`):
-    # Ohne sie stand `login_password(…, password, next=…)` hier, als ginge `next` auch
-    # positionell — bis 0.22.0 fehlten beide Marken in dieser Seite.
+    # With the markers `*`/`/` as in the guard (`tests/test_api_surface.py`, `parameter_mit_marken`):
+    # Without them `login_password(…, password, next=…)` stood here, as if `next` could also be
+    # passed positionally — until 0.22.0 both markers were missing on this page.
     parameter = [p for name, p in s.parameters.items() if name != "self"]
     teile, stern = [], any(p.kind is p.VAR_POSITIONAL for p in parameter)
     for i, p in enumerate(parameter):
@@ -131,7 +131,7 @@ def signatur(fn) -> str:
 
 
 def stufen() -> dict:
-    """{bereich: {name: stufe}} aus der Ablage des Wächters; fehlende Stufe = None."""
+    """{area: {name: tier}} from the guard's store; missing tier = None."""
     if not ABLAGE.exists():
         return {}
     datei = json.loads(ABLAGE.read_text(encoding="utf-8"))
@@ -141,11 +141,11 @@ def stufen() -> dict:
 
 
 def kommentare(klasse) -> dict:
-    """{NAME: Text} — die `#:`-Zeilen direkt über jeder Klassenzuweisung.
+    """{NAME: text} — the `#:` lines directly above each class assignment.
 
-    Konstanten haben keinen Docstring; ihre Erklärung steht als `#:`-Block darüber (dieselbe
-    Form, die Sphinx liest). Ein Zeilenende mit Bindestrich schliesst ohne Leerzeichen an; folgt
-    ein Kleinbuchstabe, war es eine Worttrennung, und der Strich fällt weg.
+    Constants have no docstring; their explanation stands as a `#:` block above (the same
+    form Sphinx reads). A line ending in a hyphen joins without a space; if a lowercase letter
+    follows, it was a word break, and the hyphen is dropped.
     """
     quelle = Path(inspect.getsourcefile(klasse)).read_text(encoding="utf-8")
     zeilen = quelle.splitlines()
@@ -163,9 +163,9 @@ def kommentare(klasse) -> dict:
         text = ""
         for teil in block:
             if text.endswith("-") and teil[:1].islower():
-                text = text[:-1] + teil               # „Anmelde-" + „faktor" → „Anmeldefaktor"
+                text = text[:-1] + teil               # "Anmelde-" + "faktor" → "Anmeldefaktor" (word break)
             elif text.endswith("-") or not text:
-                text += teil                          # „E-" + „Mail" → „E-Mail"
+                text += teil                          # "E-" + "Mail" → "E-Mail"
             else:
                 text += " " + teil
         for ziel in ziele:
@@ -175,7 +175,7 @@ def kommentare(klasse) -> dict:
 
 
 def satz(text: str) -> str:
-    """Der erste Satz — „z. B." beendet keinen (vor dem Punkt stehen mindestens zwei Zeichen)."""
+    """The first sentence — "z. B." ends none (at least two characters precede the full stop)."""
     if not text:
         return "—"
     m = re.match(r"(.+?[^\s.][^\s.]\.)\s+(?=[A-ZÄÖÜ`„])", text)
@@ -185,28 +185,28 @@ def satz(text: str) -> str:
 def wert(w) -> str:
     kurz = repr(w)
     if len(kurz) <= 200:
-        return f"Wert: `{kurz}`"
+        return f"Value: `{kurz}`"
     if isinstance(w, dict):
-        return "Schlüssel: " + ", ".join(f"`{k}`" for k in w)
+        return "Keys: " + ", ".join(f"`{k}`" for k in w)
     if isinstance(w, (tuple, list)):
-        return "Werte: " + ", ".join(f"`{x}`" for x in w)
-    return f"Wert: `{kurz[:197]}…`"
+        return "Values: " + ", ".join(f"`{x}`" for x in w)
+    return f"Value: `{kurz[:197]}…`"
 
 
 def liefern(typ) -> list:
-    """Die öffentlichen Methoden von `TinySesam`, die `typ` zurückgeben (am Rückgabetyp erkannt)."""
+    """The public methods of `TinySesam` that return `typ` (recognised by the return type)."""
     return sorted(n for n, f in vars(TinySesam).items()
                   if inspect.isfunction(f) and not n.startswith("_")
                   and inspect.signature(f).return_annotation in (typ, typ.__name__))
 
 
 def ergebnistyp_abschnitt(typ, titel, stufe_von) -> str:
-    """Ein Ergebnistyp der Bausteine für eigene Seiten: Felder als Tabelle (Erklärung aus dem
-    `#:`-Block), `REASONS` mit Wert, die Methoden mit Signatur. Nur die Namen der Stufe A — eine
-    andere Stufe gibt es hier nicht, der Wächter misst jeden Namen einzeln."""
+    """A result type of the building blocks for your own pages: fields as a table (explanation from the
+    `#:` block), `REASONS` with value, the methods with signature. Only the names of tier A — there is
+    no other tier here, the guard measures every name individually."""
     name = typ.__name__
     notiz = kommentare(typ)
-    # `dataclasses.fields`, nicht `__dataclass_fields__`: Dort stünde `REASONS` (ClassVar) mit.
+    # `dataclasses.fields`, not `__dataclass_fields__`: `REASONS` (ClassVar) would be in there.
     felder = [f for f in dataclasses.fields(typ) if stufe_von(f.name) == "A"]
     methoden = [(n, f) for n, f in inspect.getmembers(typ, inspect.isfunction)
                 if not n.startswith("_") and stufe_von(n) == "A"]
@@ -214,17 +214,17 @@ def ergebnistyp_abschnitt(typ, titel, stufe_von) -> str:
         assert notiz.get(f.name), f"{name}.{f.name} ohne `#:`-Erklärung — Zusage ins Blaue"
     von = liefern(typ)
     assert von, f"keine Methode von TinySesam liefert {name} — Abschnitt ohne Baustein"
-    token = (" Das Sitzungs-Token ist bewusst kein Feld — `set_cookie()` und `redirect()` setzen es."
+    token = (" The session token is deliberately not a field — `set_cookie()` and `redirect()` set it."
              if hasattr(typ, "set_cookie") else "")
     teile = [f"## A · {titel}: `tinysesam.{name}`\n\n{erster_satz(typ)} "
-             "Zurück von " + ", ".join(f"`{n}`" for n in von) + ". Eine eingefrorene "
-             f"Dataclass; `bool(result)` ist `result.ok`.{token}\n\n"
-             "| Feld | Typ | Bedeutung |\n|---|---|---|\n"]
+             "Returned by " + ", ".join(f"`{n}`" for n in von) + ". A frozen "
+             f"dataclass; `bool(result)` is `result.ok`.{token}\n\n"
+             "| Field | Type | Meaning |\n|---|---|---|\n"]
     for f in felder:
         teile.append(f"| `{f.name}` | `{f.type}` | {notiz[f.name].replace('|', chr(92) + '|')} |\n")
     teile.append("\n")
     if stufe_von("REASONS") == "A":
-        teile.append(f"### `{name}.REASONS` — Konstante\n\n{satz(notiz.get('REASONS', ''))}\n\n"
+        teile.append(f"### `{name}.REASONS` — Constant\n\n{satz(notiz.get('REASONS', ''))}\n\n"
                      f"{wert(typ.REASONS)}\n\n")
     for n, fn in methoden:
         teile.append(f"### `{name}.{n}{signatur(fn)}`\n\n{erster_satz(fn)}\n\n")
@@ -243,8 +243,8 @@ def bauen() -> str:
     def von(bereich, name):
         return st.get(bereich, {}).get(name)
 
-    # `getmembers` liest jedes Attribut — auch die Konstanten-Aliase der Stufe C, die beim Lesen
-    # warnen. Das Beschreiben ist kein Gebrauch.
+    # `getmembers` reads every attribute — including the constant aliases of tier C, which warn
+    # when read. Describing them is not using them.
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", DeprecationWarning)
         methoden = [(n, f) for n, f in inspect.getmembers(TinySesam, callable)
@@ -260,16 +260,16 @@ def bauen() -> str:
                if not n.startswith("_")]
     felder = list(TinySesamConfig.__dataclass_fields__)
     exporte = sorted(getattr(paket, "__all__", None) or [n for n in dir(paket) if not n.startswith("_")])
-    # Fehlertypen samt Hierarchie. Warum generiert und nicht bloss in den READMEs erzählt:
-    # `api_surface.json` friert Namen und SIGNATUREN ein — welchen Typ eine Methode WIRFT, sieht
-    # es nicht. Eine Änderung wie „totp_begin wirft jetzt StateError" blieb damit unsichtbar,
-    # obwohl sie jeden Aufrufer trifft, der den alten Typ fängt (Nacharbeit zu B2-1).
+    # Error types including their hierarchy. Why generated and not merely told in the READMEs:
+    # `api_surface.json` freezes names and SIGNATURES — which type a method RAISES, it does not
+    # see. A change like "totp_begin now raises StateError" thus stayed invisible,
+    # although it hits every caller that catches the old type (follow-up to B2-1).
     typen = [(n, k) for n, k in vars(fehler_modul).items()
              if isinstance(k, type) and issubclass(k, fehler_modul.TinySesamError)]
     typen.sort(key=lambda kv: (len(kv[1].__mro__), kv[0]))
     notiz = kommentare(TinySesam)
 
-    # Wer ohne Stufe ist, steht am Ende sichtbar da — statt still in A zu landen.
+    # Whatever has no tier stands visibly at the end — instead of silently landing in A.
     ergebnistyp = [(bereich, n) for bereich, (typ, _) in ERGEBNISTYPEN.items()
                    for n in ([f.name for f in dataclasses.fields(typ)] + ["REASONS"]
                              + [m for m, _ in inspect.getmembers(typ, inspect.isfunction)
@@ -294,68 +294,68 @@ def bauen() -> str:
         teile.append(f"| **{s} — {titel}** | {was} | {zusage} |\n")
     felder_a = sum(1 for f in felder if von("TinySesamConfig.felder", f) == "A")
     teile.append(
-        "\nDie Stufe steht je Name in `tests/api_surface.json`. Der Wächter "
-        "`tests/test_api_surface.py` verlangt für jeden öffentlichen Namen eine ausdrückliche: "
-        "Ein neuer Name kommt ohne Stufe herein und hält ihn rot, bis jemand entscheidet — "
-        "nichts wird aus Versehen zugesagt.\n\n"
-        f"Die Konfigurationsfelder stehen in [KONFIGURATION.md](KONFIGURATION.md): {felder_a} "
-        f"von {len(felder)} in Stufe A, die übrigen unten bei ihrer Stufe.\n\n"
-        "**Englisch, Namen wie Werte** (seit 0.22.0, ohne Alias): Die Namen der Stufen A und B, "
-        "ihre Parameter und die Schlüssel und Werte, die sie zurückgeben oder annehmen — "
-        "Ergebnis-Dicts, die `details` an `on_security_event`, der Kontext eigener Seiten "
-        "(`ctx[\"prefix\"]`, `ctx[\"purpose\"]`), die JSON-Antworten der Routen, die Arten der "
-        "API-Keys (`automation`, `human`). Audit- und Log-Zeilen bleiben, wie sie waren. Die Liste "
-        "alt → neu steht im CHANGELOG zu 0.22.0.\n\n"
-        "**`auth.store` ist Innenleben** (Stufe C): die Speicherschicht der eingebauten Routen, "
-        "ohne Stufe, ohne Zusage und ohne Übergangsfrist — ihre Methoden können sich mit jedem "
-        "Release ändern. Was eine App braucht, steht unten als Methode von `TinySesam` (etwa "
-        "`set_disabled` statt `auth.store.set_disabled`).\n\n"
-        f"**Stand:** {' · '.join(f'{s} {n}' for s, n in zahl.items())} Namen"
-        + (f", {len(ohne)} ohne Stufe" if ohne else "") + ".\n\n")
+        "\nThe tier is recorded per name in `tests/api_surface.json`. The guard "
+        "`tests/test_api_surface.py` demands an explicit one for every public name: "
+        "A new name comes in without a tier and keeps it red until someone decides — "
+        "nothing is promised by accident.\n\n"
+        f"The configuration fields are in [KONFIGURATION.md](KONFIGURATION.md): {felder_a} "
+        f"of {len(felder)} in tier A, the others below at their tier.\n\n"
+        "**English, names as well as values** (since 0.22.0, without alias): The names of tiers A and B, "
+        "their parameters and the keys and values they return or accept — "
+        "result dicts, the `details` passed to `on_security_event`, the context of your own pages "
+        "(`ctx[\"prefix\"]`, `ctx[\"purpose\"]`), the JSON responses of the routes, the kinds of "
+        "API keys (`automation`, `human`). Audit and log lines stay as they were. The list "
+        "old → new is in the CHANGELOG for 0.22.0.\n\n"
+        "**`auth.store` is internals** (tier C): the storage layer of the built-in routes, "
+        "without tier, without promise and without transition period — its methods can change with every "
+        "release. What an app needs is listed below as a method of `TinySesam` (e.g. "
+        "`set_disabled` instead of `auth.store.set_disabled`).\n\n"
+        f"**Status:** {' · '.join(f'{s} {n}' for s, n in zahl.items())} names"
+        + (f", {len(ohne)} without tier" if ohne else "") + ".\n\n")
 
     for s in ("A", "B"):
         titel = f"{s} · "
         teile.append(_abschnitt(
-            f"{titel}Methoden von `TinySesam`",
+            f"{titel}Methods of `TinySesam`",
             [f"### `{n}{signatur(f)}`\n\n{erster_satz(f)}\n\n"
              for n, f in methoden if von("TinySesam", n) == s]))
-        # Properties (seit 0.20.1 eingefroren wie die Methoden): Die Cookie-Namen sind die
-        # dokumentierte Ersatz-API für feste Namen — eine Seite, die sie verschweigt, schickt
-        # Integratoren zurück in den Quelltext.
+        # Properties (frozen since 0.20.1 like the methods): The cookie names are the
+        # documented replacement API for fixed names — a page that withholds them sends
+        # integrators back into the source code.
         teile.append(_abschnitt(
-            f"{titel}Eigenschaften von `TinySesam`",
+            f"{titel}Properties of `TinySesam`",
             [f"### `{n}` — Property `{signatur(p.fget)[2:].strip()}`\n\n{erster_satz(p)}\n\n"
              for n, p in eigenschaften if von("TinySesam.eigenschaften", n) == s],
-            "Ohne Klammern gelesen (`auth.csrf_cookie_name`). Zur Laufzeit berechnet: Sie folgen "
-            "der Konfiguration, auch wenn `cfg` nach dem Aufbau geändert wird.\n\n"))
+            "Read without parentheses (`auth.csrf_cookie_name`). Computed at runtime: They follow "
+            "the configuration, even if `cfg` is changed after setup.\n\n"))
         teile.append(_abschnitt(
-            f"{titel}Konstanten von `TinySesam`",
-            [f"### `{n}` — Konstante\n\n{satz(notiz.get(n, ''))}\n\n{wert(getattr(TinySesam, n))}\n\n"
+            f"{titel}Constants of `TinySesam`",
+            [f"### `{n}` — Constant\n\n{satz(notiz.get(n, ''))}\n\n{wert(getattr(TinySesam, n))}\n\n"
              for n in konstanten if von("TinySesam.konstanten", n) == s],
-            "Klassenattribute, gelesen als `TinySesam.NAME` oder `auth.NAME`. Der Wert gehört "
-            "zur Zusage — der Wächter hält ihn fest.\n\n"))
-        # Die Felder der Stufe A stehen vollständig in KONFIGURATION.md; hier nur die Ausnahmen.
+            "Class attributes, read as `TinySesam.NAME` or `auth.NAME`. The value is part "
+            "of the promise — the guard pins it down.\n\n"))
+        # The fields of tier A are listed in full in KONFIGURATION.md; here only the exceptions.
         eigene_felder = [f for f in felder if von("TinySesamConfig.felder", f) == s]
         teile.append(_abschnitt(
             f"{titel}`TinySesamConfig`",
-            ([f"Felder dieser Stufe (Bedeutung in [KONFIGURATION.md](KONFIGURATION.md)): "
+            ([f"Fields of this tier (meaning in [KONFIGURATION.md](KONFIGURATION.md)): "
               + ", ".join(f"`{f}`" for f in eigene_felder) + ".\n\n"]
              if eigene_felder and s != "A" else [])
             + [f"### `TinySesamConfig.{n}{signatur(f)}`\n\n{erster_satz(f)}\n\n"
                for n, f in presets if von("TinySesamConfig.methoden", n) == s],
-            "`TinySesamConfig` ist eine Dataclass und bleibt eine: `dataclasses.fields("
-            "TinySesamConfig)` zählt jedes Feld auf. Presets setzen Bündel dieser Felder, "
-            "einzelne lassen sich per `**overrides` überschreiben.\n\n" if s == "A" else ""))
+            "`TinySesamConfig` is a dataclass and stays one: `dataclasses.fields("
+            "TinySesamConfig)` lists every field. Presets set bundles of these fields, "
+            "individual ones can be overridden via `**overrides`.\n\n" if s == "A" else ""))
         eigene_typen = [(n, k) for n, k in typen if von("exporte", n) == s]
         teile.append(_abschnitt(
-            f"{titel}Fehlertypen",
-            [f"### `{n}` (erbt von {', '.join(f'`{b.__name__}`' for b in k.__bases__)})\n\n"
+            f"{titel}Error types",
+            [f"### `{n}` (inherits from {', '.join(f'`{b.__name__}`' for b in k.__bases__)})\n\n"
              f"{erster_satz(k)}\n\n" for n, k in eigene_typen],
-            "Exportiert aus `tinysesam`. Jeder erbt zusätzlich von dem eingebauten Typ, den "
-            "er ersetzt — bestehendes `except ValueError` / `except RuntimeError` fängt "
-            "weiter, es wird nur unterscheidbar. **Auf den Meldungstext prüft niemand:** er "
-            "ist übersetzt und darf sich ändern; die Typen hier und die Attribute an ihnen "
-            "sind die Zusage.\n\n"))
+            "Exported from `tinysesam`. Each additionally inherits from the built-in type it "
+            "replaces — existing `except ValueError` / `except RuntimeError` keeps "
+            "catching, it only becomes distinguishable. **Nobody checks the message text:** it "
+            "is translated and may change; the types here and the attributes on them "
+            "are the promise.\n\n"))
         for bereich, (typ, ueberschrift) in ERGEBNISTYPEN.items():
             if s == "A" and von("exporte", bereich) == "A":
                 teile.append(ergebnistyp_abschnitt(typ, ueberschrift,
@@ -364,7 +364,7 @@ def bauen() -> str:
                    and n not in ERGEBNISTYPEN]
         klassen = [n for n in uebrige if not inspect.isfunction(getattr(paket, n))]
         teile.append(_abschnitt(
-            f"{titel}weitere Exporte von `tinysesam`",
+            f"{titel}Further exports of `tinysesam`",
             (["".join(f"- `{n}`\n" for n in klassen) + "\n"] if klassen else [])
             + [f"### `tinysesam.{n}{signatur(getattr(paket, n))}`\n\n"
                f"{erster_satz(getattr(paket, n))}\n\n"
@@ -373,40 +373,40 @@ def bauen() -> str:
     intern = [(b, n) for b, n in alle if von(b, n) == "C"]
     if intern:
         teile.append(
-            f"## C · Veraltet — fällt mit {BIS} weg\n\n"
-            "Diese Namen gehören nicht zur Zusage. Seit 0.22.0 heisst die Implementierung "
-            f"`_name`; der alte Name bleibt bis {BIS} als Alias, der **beim Aufruf** (Konstanten: "
-            "beim Lesen) eine `DeprecationWarning` mit dem Ersatz auslöst, und fällt dann weg. "
-            "**Neu nicht verwenden** — für eigene Seiten stehen die Bausteine in A und B. Wer "
-            "prüfen will, ob seine App einen davon ruft, lässt ihre Tests einmal mit "
-            "`python -W error::DeprecationWarning` laufen.\n\n"
-            "**Vorsicht bei den inneren Prüfern** "
-            + ", ".join(f"`{n}`" for n in UNGEDROSSELT) + ": Sie drosseln nicht selbst — "
-            "Sperre, Fehlversuchszähler und Serie setzen nur die eingebauten Routen. Eine eigene "
-            "Login-Seite, die sie aufruft, ist gegen Passwort-Raten ungeschützt. Der sichere "
-            "Baustein ist " + ", ".join(f"`{n}`" for n in BAUSTEINE) + " (Stufe A): dieselben "
-            "Methoden, die die eingebauten Routen rufen. Für eine eigene Step-up-Seite gilt "
-            "dasselbe mit " + ", ".join(f"`{n}`" for n in WEITERE_BAUSTEINE[:3]) + ", für einen "
-            f"eigenen Passwortwechsel mit `{WEITERE_BAUSTEINE[3]}`.\n\n"
-            "| Alter Name | Art | Ersatz |\n|---|---|---|\n")
+            f"## C · Deprecated — removed with {BIS}\n\n"
+            "These names are not part of the promise. Since 0.22.0 the implementation is called "
+            f"`_name`; the old name stays until {BIS} as an alias that triggers a `DeprecationWarning` "
+            "with the replacement **on call** (constants: on read), and is then dropped. "
+            "**Do not use for new code** — for your own pages the building blocks are in A and B. Whoever wants to "
+            "check whether their app calls one of them runs its tests once with "
+            "`python -W error::DeprecationWarning`.\n\n"
+            "**Caution with the inner checkers** "
+            + ", ".join(f"`{n}`" for n in UNGEDROSSELT) + ": They do not throttle themselves — "
+            "lockout, failed-attempt counter and streak are set only by the built-in routes. A login "
+            "page of your own that calls them is unprotected against password guessing. The safe "
+            "building block is " + ", ".join(f"`{n}`" for n in BAUSTEINE) + " (tier A): the same "
+            "methods the built-in routes call. For a step-up page of your own the same "
+            "applies with " + ", ".join(f"`{n}`" for n in WEITERE_BAUSTEINE[:3]) + ", for a "
+            f"password change of your own with `{WEITERE_BAUSTEINE[3]}`.\n\n"
+            "| Old name | Kind | Replacement |\n|---|---|---|\n")
         for b, n in sorted(intern, key=lambda bn: bn[1].lower()):
             alias = aliase.get(n)
-            art = "Konstante" if b == "TinySesam.konstanten" else "Methode"
-            ersatz = alias.ersatz if alias else "— (kein Alias: Wächter rot)"
+            art = "Constant" if b == "TinySesam.konstanten" else "Method"
+            ersatz = alias.ersatz if alias else "— (no alias: guard red)"
             ersatz = ersatz.removeprefix("stattdessen ").replace("|", "\\|")
             teile.append(f"| `{n}` | {art} | {ersatz[:1].upper()}{ersatz[1:]} |\n")
         teile.append("\n")
 
     if ohne:
-        teile.append("## Ohne Stufe\n\nDer Wächter `tests/test_api_surface.py` ist rot, bis diese "
-                     "Namen eine Stufe tragen:\n\n"
+        teile.append("## No tier\n\nThe guard `tests/test_api_surface.py` is red until these "
+                     "names carry a tier:\n\n"
                      + "".join(f"- `{b}.{n}`\n" for b, n in ohne) + "\n")
 
-    teile.append(f"---\n\n{len(methoden)} Methoden, {len(eigenschaften)} Eigenschaften, "
-                 f"{len(konstanten)} Konstanten, {len(presets)} Methoden von `TinySesamConfig`, "
-                 f"{len(exporte)} Exporte, davon {len(typen)} Fehlertypen, {len(ergebnistyp)} Namen "
-                 "an den Ergebnistypen " + ", ".join(f"`{n}`" for n in ERGEBNISTYPEN)
-                 + " — erzeugt aus den Docstrings und `tests/api_surface.json`.\n")
+    teile.append(f"---\n\n{len(methoden)} methods, {len(eigenschaften)} properties, "
+                 f"{len(konstanten)} constants, {len(presets)} methods of `TinySesamConfig`, "
+                 f"{len(exporte)} exports, of which {len(typen)} error types, {len(ergebnistyp)} names "
+                 "on the result types " + ", ".join(f"`{n}`" for n in ERGEBNISTYPEN)
+                 + " — generated from the docstrings and `tests/api_surface.json`.\n")
     return "".join(teile)
 
 

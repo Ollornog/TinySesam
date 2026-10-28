@@ -1,14 +1,14 @@
-"""Gate-Token gemessen (T-24): dieselben Asset-Anfragen einmal über /auth/forward, einmal mit Gate-Token.
+"""Gate token measured (T-24): the same asset requests once via /auth/forward, once with a gate token.
 
-    TINYSESAM_GATE_CADDY=<caddy mit caddy-jwt> HEY=<hey> python scripts/gate_messung.py
+    TINYSESAM_GATE_CADDY=<caddy with caddy-jwt> HEY=<hey> python scripts/gate_messung.py
 
-Aufbau: TinySesam (uvicorn, ein Prozess — wie das Gateway-Abbild), Caddy mit der Vorlage
-deploy/forward-auth/Caddyfile.gate, und als Anwendung eine statische Antwort von Caddy selbst. Die
-Anwendung soll nichts kosten: Gemessen wird der Weg durch das Gate, nicht eine Attrappe.
+Setup: TinySesam (uvicorn, one process — like the gateway image), Caddy with the template
+deploy/forward-auth/Caddyfile.gate, and as the application a static response from Caddy itself. The
+application should cost nothing: what is measured is the path through the gate, not a dummy.
 
-Last mit `hey` (https://github.com/rakyll/hey, `go install github.com/rakyll/hey@v0.1.4`). Ein Client in
-Python taugt dafür nicht: Bei 20 gleichzeitigen Anfragen misst er seine eigene Thread-Verwaltung,
-und das Ergebnis kehrte sich um (erster Versuch, 2026-10-07).
+Load with `hey` (https://github.com/rakyll/hey, `go install github.com/rakyll/hey@v0.1.4`). A client
+in Python is not suitable: at 20 concurrent requests it measures its own thread management,
+and the result turned upside down (first attempt, 2026-10-07).
 """
 import os
 import pathlib

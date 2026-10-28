@@ -1,20 +1,20 @@
 name: release
 
-# Ein Git-Tag `vX.Y.Z` erzeugt dreierlei:
-#   1. ein GitHub-Release mit Wheel, sdist und Prüfsummen
-#   2. die Veröffentlichung desselben Wheels und sdists auf PyPI
-#   3. ein Container-Abbild `ghcr.io/ollornog/tinysesam:<version>` (für das Gateway)
+# A git tag `vX.Y.Z` produces three things:
+#   1. a GitHub release with wheel, sdist and checksums
+#   2. the publication of the same wheel and sdist on PyPI
+#   3. a container image `ghcr.io/ollornog/tinysesam:<version>` (for the gateway)
 #
-# Das sind die Verteilwege: TinySesam aktualisiert sich nicht selbst, es wird installiert —
-# per `pip install tinysesam==<version>`, per gepinntem Tag oder per Abbild-Tag.
+# These are the distribution channels: TinySesam does not update itself, it is installed —
+# via `pip install tinysesam==<version>`, via a pinned tag or via an image tag.
 #
-# Ausgelöst wird das NUR von einem Tag. Es rollt nichts automatisch aus; den Knopf drückt ein
-# Mensch, indem er taggt (Continuous Delivery, kein Continuous Deployment).
+# This is triggered ONLY by a tag. Nothing rolls out automatically; a human presses the
+# button by tagging (continuous delivery, not continuous deployment).
 #
-# ── Einmalige Einrichtung auf pypi.org (Trusted Publishing, kein Token) ───────────────────
-# Veröffentlicht wird ohne Geheimnis: PyPI vertraut diesem Workflow über dessen OIDC-Identität.
-# Damit gibt es kein Token im Repo, keines, das rotiert werden muss, und keines, das jemand
-# aus einem Fork-PR abgreifen kann. Einmal einzurichten, bevor der erste Tag fällt:
+# ── One-time setup on pypi.org (trusted publishing, no token) ─────────────────────────────
+# Publishing happens without a secret: PyPI trusts this workflow via its OIDC identity.
+# So there is no token in the repo, none that has to be rotated, and none that someone could
+# grab from a fork PR. To be set up once, before the first tag is cut:
 #
 #   PyPI → Your projects → Publishing → "Add a new pending publisher" (GitHub):
 #     PyPI Project Name : tinysesam
@@ -23,79 +23,79 @@ name: release
 #     Workflow name     : release.yml
 #     Environment name  : pypi
 #
-#   Danach im Repo unter Settings → Environments ein Environment `pypi` anlegen. Wer dort
-#   "Required reviewers" setzt, bekommt eine zweite Hand vor jeder Veröffentlichung — das
-#   GitHub-Release entsteht dann trotzdem, nur der PyPI-Upload wartet auf die Freigabe.
+#   Afterwards, create an environment `pypi` in the repo under Settings → Environments. Anyone who sets
+#   "Required reviewers" there gets a second pair of hands before every publication — the
+#   GitHub release is still created then, only the PyPI upload waits for the approval.
 #
-# "Pending publisher" heisst: das Projekt gibt es auf PyPI noch nicht. Mit dem ersten
-# erfolgreichen Lauf wird daraus ein normaler Publisher. Solange er fehlt, endet der
-# Upload-Schritt mit einem 403 — das Release und das Abbild sind davon unberührt.
+# "Pending publisher" means: the project does not exist on PyPI yet. With the first
+# successful run it turns into a normal publisher. As long as it is missing, the
+# upload step ends with a 403 — the release and the image are unaffected.
 #
-# Beides wird zusätzlich BEGLAUBIGT: Ein Digest belegt, dass sich ein Artefakt seit dem Bau nicht
-# verändert hat — nicht, WOHER es kommt. Wer Zugang zur Registry erbeutet, kann ein eigenes Abbild
-# unter denselben Tag schieben. Deshalb entsteht hier zu jedem Artefakt eine über Sigstore
-# signierte Herkunfts-Attestation (wer hat wann aus welchem Commit gebaut) und eine SBOM (was
-# steckt drin). Ohne eigene Schlüssel: signiert wird mit der OIDC-Identität dieses Workflows.
+# Both are additionally ATTESTED: a digest proves that an artifact has not changed since the
+# build — not WHERE it comes from. Anyone who gains access to the registry can push an image of their own
+# under the same tag. That is why every artifact gets a provenance attestation signed via
+# Sigstore (who built it when, from which commit) and an SBOM (what is
+# in it). Without keys of our own: signing uses the OIDC identity of this workflow.
 #
 #   gh attestation verify oci://ghcr.io/ollornog/tinysesam:vX.Y.Z --owner Ollornog
 #   gh attestation verify tinysesam-X.Y.Z-py3-none-any.whl        --owner Ollornog
 #
-# Vorher prüft der Job, dass der Tag zur Version im Paket passt. Ein Release mit
-# falscher Versionsnummer ist schlimmer als keins: es ist unauffällig falsch.
+# Beforehand the job checks that the tag matches the version in the package. A release with a
+# wrong version number is worse than none: it is inconspicuously wrong.
 #
-# ── Der Knopf (`workflow_dispatch`) ist ein TROCKENLAUF ─────────────────────────────────────
-# Von Hand ausgelöst (auf einem Zweig) prüft und baut der Workflow alles, veröffentlicht aber
-# nichts: kein Release, kein PyPI-Upload, kein Abbild in der Registry, keine Beglaubigung. Bis
-# 2026-09-24 hätte der Knopf nur eines von zwei Dingen getan — am Tag-Vergleich scheitern (bei
-# `workflow_dispatch` ist `GITHUB_REF_NAME` ein Zweigname) oder, wäre der Vergleich weg gewesen,
-# aus einem Zweig heraus veröffentlichen. Jetzt hängt JEDER veröffentlichende Schritt an
-# `github.ref_type == 'tag'`; ohne Tag prüft ein eigener Schritt, was prüfbar ist
-# (`scripts/_release.py --pruefen`: Paket, Modul, READMEs, Compose-Beispiel, CHANGELOG). So ist
-# der Trockenlauf eine Aussage und nicht „übersprungen" — und der Bau läuft genau so wie beim Tag
-# (der Teil, der beim ersten Tag nach zwei Monaten rot war).
+# ── The button (`workflow_dispatch`) is a DRY RUN ───────────────────────────────────────────
+# Triggered by hand (on a branch), the workflow checks and builds everything but publishes
+# nothing: no release, no PyPI upload, no image in the registry, no attestation. Until
+# 2026-09-24 the button would have done only one of two things — fail at the tag comparison (with
+# `workflow_dispatch`, `GITHUB_REF_NAME` is a branch name) or, had the comparison been missing,
+# publish from a branch. Now EVERY publishing step hangs on
+# `github.ref_type == 'tag'`; without a tag, a separate step checks what can be checked
+# (`scripts/_release.py --pruefen`: package, module, READMEs, compose example, CHANGELOG). So
+# the dry run is a statement and not "skipped" — and the build runs exactly as it does for the tag
+# (the part that was red at the first tag after two months).
 #
-# ── Derselbe Trockenlauf auf JEDEM Pull Request (seit 2026-09-28) ───────────────────────────
-# Updates, die ein Test abnimmt, mergen automatisch (PO-Entscheid 2026-09-28). Die gepinnten
-# Bauwerkzeuge (.github/bau), die Sperrliste des Abbilds (deploy/gateway), das Basis-Abbild im
-# Dockerfile und die Actions des Baus nahm bis dahin KEIN Pflicht-Check ab — ein Bump, der das
-# sdist oder das Abbild bricht, fiel erst beim nächsten Tag auf. Deshalb läuft der Trockenlauf
-# auch auf `pull_request`, und seine Jobs `pruefen`, `bauen`, `pruefsummen`, `abbild-probe` und
-# `image` sind Pflicht-Checks. Veröffentlicht wird dabei nichts: Bei einem PR ist `ref_type`
-# „branch“, jeder veröffentlichende Job hängt am Tag (`tests/test_repo.py` hält beides fest).
-# Bis 2026-10-11 nicht abgenommen: die Schritte, die nur beim Tag laufen — GHCR-Anmeldung,
-# Beglaubigungen, SBOM, PyPI-Upload. Deren Updates gingen von Hand.
+# ── The same dry run on EVERY pull request (since 2026-09-28) ───────────────────────────────
+# Updates that a test covers merge automatically (PO decision 2026-09-28). The pinned
+# build tools (.github/bau), the lock list of the image (deploy/gateway), the base image in the
+# Dockerfile and the actions of the build were covered by NO required check until then — a bump that breaks the
+# sdist or the image was only noticed at the next tag. That is why the dry run now also runs
+# on `pull_request`, and its jobs `pruefen`, `bauen`, `pruefsummen`, `abbild-probe` and
+# `image` are required checks. Nothing is published in the process: on a PR `ref_type` is
+# "branch", every publishing job hangs on the tag (`tests/test_repo.py` pins both down).
+# Not covered until 2026-10-11: the steps that only run for the tag — GHCR login,
+# attestations, SBOM, PyPI upload. Their updates were done by hand.
 #
-# ── GENERALPROBE (seit 2026-10-11, PO: „alles automatisieren ohne dass was bricht“) ─────────────
-# Die Jobs `generalprobe*` fahren GENAU diese Actions auf jedem PR — gegen Wegwerf-Ziele auf dem
-# Runner (.github/generalprobe): Anmeldung und Push an eine lokale Registry, SBOM aus dem dort
-# geschobenen Abbild, Upload von Wheel und sdist an einen lokalen Paket-Server, Beglaubigung einer
-# Probedatei. Veröffentlicht wird nichts: kein ghcr, kein PyPI, keine Beglaubigung eines Artefakts.
-# Die Probe-Beglaubigung hält `id-token`, aber kein Checkout, kein pip, und ihr Gegenstand ist nur
-# `generalprobe.txt` (`tests/test_repo.py` hält das fest). Wer eine Beglaubigung prüft, prüft den
-# Tag mit: `gh attestation verify … --owner Ollornog --source-ref refs/tags/vX.Y.Z`.
+# ── DRESS REHEARSAL (since 2026-10-11, PO: "automate everything without anything breaking") ───
+# The jobs `generalprobe*` run EXACTLY these actions on every PR — against throwaway targets on the
+# runner (.github/generalprobe): login and push to a local registry, SBOM from the image
+# pushed there, upload of wheel and sdist to a local package server, attestation of a
+# sample file. Nothing is published: no ghcr, no PyPI, no attestation of an artifact.
+# The sample attestation holds `id-token`, but no checkout, no pip, and its subject is only
+# `generalprobe.txt` (`tests/test_repo.py` pins that down). Anyone who verifies an attestation verifies the
+# tag too: `gh attestation verify … --owner Ollornog --source-ref refs/tags/vX.Y.Z`.
 
 on:
   push:
     tags: ["v*"]
-  pull_request:          # Trockenlauf als Pflicht-Check (siehe oben)
+  pull_request:          # dry run as a required check (see above)
   workflow_dispatch:
 
 permissions:
-  contents: read         # Grundrechte knapp halten; jeder Job holt sich, was er braucht
+  contents: read         # keep base permissions minimal; each job takes what it needs
 
 jobs:
-  # ── Aufteilung: Wer eine Identität hält, führt keinen fremden Code aus (B4-4 aus T-13) ──────
-  # Bis 0.19.0 lief alles in EINEM Job: `pip install -e ".[all]"`, die ganze Suite und
-  # `python -m build` — mit `id-token: write` und `contents: write` im selben Job. Jede der rund
-  # dreissig installierten Abhängigkeiten hätte damit ein Sigstore-Zertifikat auf die Identität
-  # DIESES Workflows ziehen (eine Attestation für ein beliebiges Artefakt fälschen) und Releases
-  # anlegen können. Jetzt:
-  #   pruefen  — Suite, fremder Code, nur Leserecht
-  #   bauen    — Wheel/sdist aus gehashten Bauwerkzeugen, nur Leserecht
-  #   release  — kein Checkout, kein pip: lädt das fertige Artefakt, beglaubigt, legt das Release an
-  #   pypi     — kein Checkout, kein pip: lädt hoch
-  # `tests/test_repo.py` hält das fest: Ein Job mit `id-token: write` oder `contents: write`
-  # darf weder das Repo auschecken noch pip, python oder ein Bauwerkzeug starten.
+  # ── Split: whoever holds an identity does not run foreign code (B4-4 from T-13) ─────────────
+  # Up to 0.19.0 everything ran in ONE job: `pip install -e ".[all]"`, the whole suite and
+  # `python -m build` — with `id-token: write` and `contents: write` in the same job. Each of the roughly
+  # thirty installed dependencies could thus have obtained a Sigstore certificate for the identity of
+  # THIS workflow (forge an attestation for an arbitrary artifact) and created releases.
+  # Now:
+  #   pruefen  — suite, foreign code, read permission only
+  #   bauen    — wheel/sdist from hashed build tools, read permission only
+  #   release  — no checkout, no pip: loads the finished artifact, attests, creates the release
+  #   pypi     — no checkout, no pip: uploads
+  # `tests/test_repo.py` pins that down: a job with `id-token: write` or `contents: write`
+  # must neither check out the repo nor start pip, python or a build tool.
   pruefen:
     timeout-minutes: 15
     runs-on: ubuntu-latest
@@ -123,17 +123,17 @@ jobs:
         if: github.ref_type != 'tag'
         run: python3 scripts/_release.py --pruefen
 
-      # Auf einem PR fährt ci.yml dieselbe Suite am selben Commit (Pflicht-Checks `full`,
-      # `minimal`, `browser`, `repeat`) — hier noch einmal kostete fünf Minuten Wartezeit.
+      # On a PR, ci.yml runs the same suite on the same commit (required checks `full`,
+      # `minimal`, `browser`, `repeat`) — doing it again here would cost five minutes of waiting.
       - name: Suite fahren, bevor irgendetwas veröffentlicht wird
         if: github.event_name != 'pull_request'
         run: |
           sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update && sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y libxmlsec1-dev pkg-config
-          # setuptools und wheel gehören dazu: tests/test_packaging.py BAUT das Paket (offline, ohne
-          # Isolierung) und überspringt sich ohne Bau-Backend nicht etwa, sondern wird ROT.
-          # Genau hier wäre das am teuersten — der Job soll ja prüfen, ob das Paket baut.
-          # Aufgefallen beim ersten Tag überhaupt (v0.19.0): 0.18.0 wurde nie getaggt, also lief
-          # dieser Job noch nie. Dieselbe Zeile steht seit jeher in scripts/check.sh.
+          # setuptools and wheel are part of it: tests/test_packaging.py BUILDS the package (offline, without
+          # isolation) and without a build backend it does not skip itself but turns RED.
+          # Right here that would be the most expensive — this job is supposed to check whether the package builds.
+          # Noticed at the very first tag (v0.19.0): 0.18.0 was never tagged, so
+          # this job had never run. The same line has always been in scripts/check.sh.
           pip install -e ".[all]" uvicorn httpx setuptools wheel
           python tests/run_all.py --no-browser
 
@@ -149,33 +149,33 @@ jobs:
         with:
           python-version: "3.13"
 
-      # Bit-reproduzierbar (B4-8): Wer denselben Commit mit denselben Bauwerkzeugen baut, bekommt
-      # dieselben Prüfsummen wie hier. Drei Zutaten:
-      #   - die Werkzeuge gepinnt samt Hashes (.github/bau/requirements.txt) und `--no-isolation`,
-      #     sonst holte sich `build` das gerade neueste setuptools;
-      #   - `SOURCE_DATE_EPOCH` = Zeitstempel des Commits (Zeitstempel im Wheel);
-      #   - beide Artefakte danach normalisiert: das sdist (Zeitstempel, Reihenfolge, Eigentümer,
-      #     Rechte, gzip-Kopf), das Wheel (Dateirechte — setuptools übernimmt die des Checkouts,
-      #     und die hängen von der umask ab: 0002 auf Ubuntu/Mint, 0022 auf dem Runner).
-      # Nachbauen: dieselben drei Schritte auf dem Tag, dann `sha256sum -c SHA256SUMS`.
-      # `tests/test_packaging.py` baut zweimal mit verschiedenen Datei-Zeitstempeln und -rechten
-      # und vergleicht.
+      # Bit-reproducible (B4-8): anyone who builds the same commit with the same build tools gets
+      # the same checksums as here. Three ingredients:
+      #   - the tools pinned with hashes (.github/bau/requirements.txt) and `--no-isolation`,
+      #     otherwise `build` would fetch whatever the newest setuptools is;
+      #   - `SOURCE_DATE_EPOCH` = timestamp of the commit (timestamps in the wheel);
+      #   - both artifacts normalised afterwards: the sdist (timestamps, order, owner,
+      #     permissions, gzip header), the wheel (file permissions — setuptools takes over those of the checkout,
+      #     and they depend on the umask: 0002 on Ubuntu/Mint, 0022 on the runner).
+      # To rebuild: the same three steps on the tag, then `sha256sum -c SHA256SUMS`.
+      # `tests/test_packaging.py` builds twice with different file timestamps and permissions
+      # and compares.
       - name: Pakete bauen
         run: |
           python -m venv "$RUNNER_TEMP/bau"
           "$RUNNER_TEMP/bau/bin/pip" install --require-hashes --no-deps -r .github/bau/requirements.txt
           SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"
           export SOURCE_DATE_EPOCH
-          "$RUNNER_TEMP/bau/bin/python" -m build --no-isolation   # dist/*.whl und dist/*.tar.gz
+          "$RUNNER_TEMP/bau/bin/python" -m build --no-isolation   # dist/*.whl and dist/*.tar.gz
           python scripts/_artefakte_normalisieren.py dist/*.whl dist/*.tar.gz
 
       - name: Prüfsummen
         run: cd dist && sha256sum ./* > SHA256SUMS && cat SHA256SUMS
 
-      # Nur Wheel und sdist wandern zu PyPI: Der Upload-Job lädt alles hoch, was er im
-      # Verzeichnis findet, und würde an `SHA256SUMS` scheitern (keine Distribution).
-      # Gebaut wird genau EINMAL — das PyPI-Artefakt ist dasselbe, das im Release hängt
-      # und dessen Herkunft beglaubigt wird.
+      # Only wheel and sdist go to PyPI: the upload job uploads everything it finds in the
+      # directory, and would fail on `SHA256SUMS` (not a distribution).
+      # The build happens exactly ONCE — the PyPI artifact is the same one attached to the release
+      # and whose provenance is attested.
       - name: Wheel und sdist weitergeben
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
@@ -191,9 +191,9 @@ jobs:
           path: dist/SHA256SUMS
           if-no-files-found: error
 
-  # Die Artefakte so, wie `release` und `pypi` sie bekommen: heruntergeladen und gegen die
-  # Prüfsummen gehalten. Das ist dieselbe Probe, die jeder Nutzer macht (`sha256sum -c`), und
-  # sie nimmt den Weitergabe-Weg ab — auch auf jedem PR, wo `release` übersprungen ist.
+  # The artifacts as `release` and `pypi` receive them: downloaded and held against the
+  # checksums. This is the same check every user does (`sha256sum -c`), and
+  # it covers the hand-over path — also on every PR, where `release` is skipped.
   pruefsummen:
     timeout-minutes: 10
     needs: bauen
@@ -216,12 +216,12 @@ jobs:
   release:
     timeout-minutes: 10
     needs: [bauen, pruefsummen]
-    if: github.ref_type == 'tag'   # veröffentlicht — nie aus einem Trockenlauf
+    if: github.ref_type == 'tag'   # publishes — never from a dry run
     runs-on: ubuntu-latest
     permissions:
-      contents: write      # Release anlegen und Dateien anhängen
-      id-token: write      # Sigstore-Identität für die Attestation
-      attestations: write  # die Attestation an GitHub übergeben
+      contents: write      # create the release and attach files
+      id-token: write      # Sigstore identity for the attestation
+      attestations: write  # hand the attestation to GitHub
     steps:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
         with:
@@ -232,57 +232,57 @@ jobs:
           name: pruefsummen
           path: dist
 
-      # Herkunft beglaubigen, BEVOR veröffentlicht wird — über genau die Bytes aus `bauen`.
+      # Attest the provenance BEFORE publishing — over exactly the bytes from `bauen`.
       - name: Herkunft von Wheel und sdist beglaubigen
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8  # v4.2.2
         with:
           subject-path: "dist/*.whl, dist/*.tar.gz"
 
-      # Bewusst `gh` statt einer Dritt-Action: die bräuchte `contents: write` auf dieses Repo,
-      # und ihr Tag liesse sich umhängen. `gh` ist auf den Runnern vorinstalliert. Ohne Checkout
-      # kennt `gh` das Repo nicht aus `.git` — deshalb `--repo`.
+      # Deliberately `gh` instead of a third-party action: that would need `contents: write` on this repo,
+      # and its tag could be moved. `gh` is preinstalled on the runners. Without a checkout
+      # `gh` does not know the repo from `.git` — hence `--repo`.
       - name: Release anlegen
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --generate-notes --verify-tag
 
-  # Der Upload nach PyPI. Bewusst ein EIGENER Job: Er tut nichts, als das fertige Artefakt
-  # herunterzuladen und hochzuladen — kein Code aus dem Repo läuft hier. Nur so ist das
-  # OIDC-Recht (`id-token: write`), mit dem sich der Workflow gegenüber PyPI ausweist, auf einen
-  # Job beschränkt, der nichts Fremdes ausführt. Und erst nach dem Release: Eine Version auf PyPI
-  # ist unwiderruflich; ein GitHub-Release liesse sich zurücknehmen.
+  # The upload to PyPI. Deliberately a SEPARATE job: it does nothing but download the finished
+  # artifact and upload it — no code from the repo runs here. Only this way is the
+  # OIDC permission (`id-token: write`) with which the workflow identifies itself to PyPI restricted to a
+  # job that runs nothing foreign. And only after the release: a version on PyPI
+  # is irrevocable; a GitHub release could be withdrawn.
   pypi:
     timeout-minutes: 10
     needs: release
-    if: github.ref_type == 'tag'   # ausdrücklich, nicht nur über das übersprungene `release`
+    if: github.ref_type == 'tag'   # explicit, not only via the skipped `release`
     runs-on: ubuntu-latest
     environment:
       name: pypi
       url: https://pypi.org/p/tinysesam
     permissions:
-      id-token: write    # die OIDC-Identität, der PyPI vertraut — sonst nichts
+      id-token: write    # the OIDC identity that PyPI trusts — nothing else
     steps:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
         with:
           name: pypi-dist
           path: dist
 
-      # Ohne `password` greift Trusted Publishing. Die Action legt dabei zusätzlich
-      # PEP-740-Attestationen an (Vorgabe `attestations: true`) — dieselbe Herkunftsaussage
-      # wie am GitHub-Release, nur direkt neben den Dateien im Index.
+      # Without `password`, trusted publishing applies. The action additionally creates
+      # PEP 740 attestations (default `attestations: true`) — the same provenance statement
+      # as on the GitHub release, only directly next to the files in the index.
       - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33  # v1.14.2
         with:
           print-hash: true
 
-  # Das Gateway-Abbild. Läuft erst, wenn das Release steht — ein Abbild ohne Release
-  # wäre ein Artefakt, zu dem die Notizen fehlen. Gebaut wird OHNE Identität: Der Bau führt
-  # pip im Abbild aus, die Beglaubigung macht der Job danach über den Digest.
-  # Im Trockenlauf wird das Abbild GEBAUT (beide Plattformen), aber nicht geschoben: `release`
-  # ist dann übersprungen, deshalb die ausdrückliche Bedingung statt der stillen Vorgabe.
-  # Das Abbild muss STARTEN, bevor es geschoben wird — und auf jedem PR, damit ein Bump der
-  # Sperrliste oder des Basis-Abbilds, der erst zur Laufzeit bricht, rot wird. Eigener Job ohne
-  # Schreibrecht: Hier läuft der Container, also fremder Code; `image` hält `packages: write`.
-  # Gebaut wird für amd64 aus demselben Commit und demselben Dockerfile.
+  # The gateway image. Runs only once the release exists — an image without a release
+  # would be an artifact without its notes. It is built WITHOUT an identity: the build runs
+  # pip inside the image, the job attests afterwards via the digest.
+  # In the dry run the image is BUILT (both platforms) but not pushed: `release`
+  # is skipped then, hence the explicit condition instead of the silent default.
+  # The image must START before it is pushed — and on every PR, so that a bump of the
+  # lock list or the base image that only breaks at runtime turns red. Separate job without
+  # write permission: the container runs here, i.e. foreign code; `image` holds `packages: write`.
+  # Built for amd64 from the same commit and the same Dockerfile.
   abbild-probe:
     timeout-minutes: 10
     runs-on: ubuntu-latest
@@ -301,8 +301,8 @@ jobs:
       (needs.release.result == 'success' || github.ref_type != 'tag')
     runs-on: ubuntu-latest
     permissions:
-      contents: read       # Checkout
-      packages: write      # Abbild nach GHCR schieben
+      contents: read       # checkout
+      packages: write      # push the image to GHCR
     outputs:
       digest: ${{ steps.push.outputs.digest }}
     steps:
@@ -310,16 +310,16 @@ jobs:
         with:
           persist-credentials: false
 
-      # arm64 wird emuliert. Das ist nur erträglich, weil das Abbild ausschließlich das
-      # `[gateway]`-Extra installiert (reine Python-Räder). Mit `[all]` müsste hier libxmlsec1
-      # kompiliert werden — Minuten statt Sekunden.
+      # arm64 is emulated. This is only bearable because the image installs nothing but the
+      # `[gateway]` extra (pure Python wheels). With `[all]`, libxmlsec1 would have to be
+      # compiled here — minutes instead of seconds.
       #
-      # Beide Actions laden zur Laufzeit ein Werkzeug nach, und ohne Angabe ein WANDERNDES
-      # (B4-6): qemu aus dem `latest`-Tag von tonistiigi/binfmt (läuft privilegiert auf dem Runner),
-      # BuildKit aus `moby/buildkit:buildx-stable-1`, buildx in der Fassung, die der Runner
-      # gerade mitbringt. Der SHA-Pin der Action hält davon nichts fest. Deshalb hier je Werkzeug
-      # Version und Digest; `tests/test_repo.py` verlangt sie. Dependabot sieht diese Angaben
-      # nicht — beim Heben der Action die Werkzeuge mit heben.
+      # Both actions fetch a tool at runtime, and without a specification a MOVING one
+      # (B4-6): qemu from the `latest` tag of tonistiigi/binfmt (runs privileged on the runner),
+      # BuildKit from `moby/buildkit:buildx-stable-1`, buildx in whatever version the runner
+      # happens to ship. The SHA pin of the action fixes none of that. That is why each tool gets
+      # version and digest here; `tests/test_repo.py` demands them. Dependabot does not see these
+      # entries — when bumping the action, bump the tools too.
       - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1  # v4.4.0
         with:
           image: tonistiigi/binfmt:qemu-v10.2.3@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0
@@ -327,19 +327,19 @@ jobs:
         with:
           version: v0.37.1
           driver-opts: image=moby/buildkit:v0.33.0@sha256:6c2fa84a6b61ccd72899dde4239f8d5717f05f9a8ca6f3cad185fb1a95a94de3
-          # Kein Binär-Cache: buildx käme sonst aus dem Actions-Cache, den auch PR-Läufe füllen —
-          # im Workflow, der veröffentlicht (zizmor `cache-poisoning`, M6/B1).
+          # No binary cache: otherwise buildx would come from the Actions cache, which PR runs also fill —
+          # in the workflow that publishes (zizmor `cache-poisoning`, M6/B1).
           cache-binary: false
 
-      # Container-Registries verlangen kleingeschriebene Repository-Namen; `repository_owner`
-      # liefert die Schreibweise des GitHub-Kontos. Groß geschrieben bricht `buildx` ab:
+      # Container registries require lowercase repository names; `repository_owner`
+      # returns the spelling of the GitHub account. With capitals `buildx` aborts:
       # `invalid tag …: repository name must be lowercase`.
       - name: Eigentümer kleinschreiben
         run: echo "OWNER_LC=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_ENV"
 
-      # Zeitstempel des Commits für den Abbild-Bau (B4-7): BuildKit reicht ihn als Build-Arg
-      # durch (Dockerfile: .pyc, /etc/shadow) und schreibt ihn mit `rewrite-timestamp` in jede
-      # Ebene. Die Abhängigkeiten legt deploy/gateway/requirements.txt samt Hashes fest.
+      # Timestamp of the commit for the image build (B4-7): BuildKit passes it on as a build arg
+      # (Dockerfile: .pyc, /etc/shadow) and writes it into every layer with `rewrite-timestamp`.
+      # The dependencies are fixed, with hashes, by deploy/gateway/requirements.txt.
       - name: Zeitstempel des Commits
         run: echo "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)" >> "$GITHUB_ENV"
 
@@ -357,19 +357,19 @@ jobs:
         with:
           context: .
           platforms: linux/amd64,linux/arm64
-          # Genau ein Tag, gleich dem Git-Tag. Bewusst KEIN `latest`: ein Tag, der wandert,
-          # macht jeden Neustart zum Glücksspiel — dasselbe Compose zöge irgendwann eine
-          # andere Version, ohne dass jemand etwas geändert hätte.
-          # Im Trockenlauf ein fester Name: Auf einem PR heisst der Ref `108/merge`, auf einem
-          # Zweig womöglich `feature/x` — als Abbild-Tag ungültig, der Bau brach daran ab
-          # (gefunden am ersten PR mit diesem Trockenlauf). Geschoben wird er ohnehin nie.
+          # Exactly one tag, equal to the git tag. Deliberately NO `latest`: a tag that moves
+          # makes every restart a gamble — the same compose would eventually pull a
+          # different version without anyone having changed anything.
+          # A fixed name in the dry run: on a PR the ref is called `108/merge`, on a
+          # branch possibly `feature/x` — invalid as an image tag, the build broke on it
+          # (found on the first PR with this dry run). It is never pushed anyway.
           tags: ghcr.io/${{ env.OWNER_LC }}/tinysesam:${{ github.ref_type == 'tag' && github.ref_name || 'trockenlauf' }}
           outputs: type=image,push=${{ github.ref_type == 'tag' }},rewrite-timestamp=true
           provenance: false
 
-  # ── Generalprobe (siehe Kopf) ──────────────────────────────────────────────────────────────────
-  # Die Abbilder der Wegwerf-Ziele kommen aus .github/generalprobe/docker-compose.yml (Dependabot
-  # hält sie aktuell) — ein `services:`-Abbild direkt im Workflow sähe Dependabot nicht.
+  # ── Dress rehearsal (see header) ───────────────────────────────────────────────────────────────
+  # The images of the throwaway targets come from .github/generalprobe/docker-compose.yml (Dependabot
+  # keeps them up to date) — a `services:` image directly in the workflow would be invisible to Dependabot.
   generalprobe-ziele:
     if: github.ref_type != 'tag'
     timeout-minutes: 5
@@ -391,9 +391,9 @@ jobs:
             echo "${dienst}=${abbild}" >> "$GITHUB_OUTPUT"
           done
 
-  # Ohne Schreibrecht: Hier läuft fremder Code (Bau, Paket-Server). Gebaut wird nur für amd64 und
-  # mit dem Docker-eigenen Builder — `image` baut beide Plattformen schon; hier geht es um Anmeldung,
-  # Push, SBOM und Upload.
+  # Without write permission: foreign code runs here (build, package server). It is built for amd64 only and
+  # with Docker's own builder — `image` already builds both platforms; here it is about login,
+  # push, SBOM and upload.
   generalprobe:
     needs: [bauen, generalprobe-ziele]
     if: github.ref_type != 'tag'
@@ -409,8 +409,8 @@ jobs:
         with:
           persist-credentials: false
 
-      # Der Paket-Server braucht Argumente (Upload ohne Anmeldung), die ein Dienst nicht kennt.
-      # Er hängt im Netz des Jobs, damit ihn die Upload-Action (ein Container) als `pypi` erreicht.
+      # The package server needs arguments (upload without login) that a service does not know.
+      # It sits in the network of the job so that the upload action (a container) reaches it as `pypi`.
       - name: "Generalprobe: Wegwerf-Paketserver starten"
         env:
           ABBILD: ${{ needs.generalprobe-ziele.outputs.pypi }}
@@ -419,7 +419,7 @@ jobs:
           netz="$(docker network ls -q --filter name=github_network_)"
           [ "$(wc -w <<<"$netz")" = "1" ] || { echo "Netz des Jobs nicht eindeutig: '$netz'"; exit 1; }
           befehl="$(yq -r '.services.pypi.command | join(" ")' .github/generalprobe/docker-compose.yml)"
-          # shellcheck disable=SC2086  # die Argumente aus der Compose-Datei, bewusst zerlegt
+          # shellcheck disable=SC2086  # the arguments from the compose file, deliberately split
           docker run -d --name pypi --network "$netz" --network-alias pypi -p 127.0.0.1:8080:8080 "$ABBILD" $befehl
           for _ in $(seq 1 30); do curl -fsS http://127.0.0.1:8080/simple/ >/dev/null && break; sleep 1; done
           curl -fsS http://127.0.0.1:8080/simple/ >/dev/null
@@ -464,7 +464,7 @@ jobs:
           attestations: false
           print-hash: true
 
-      # Angekommen ist erst, was der Paket-Server ausliefert, und eine SBOM, die das Paket kennt.
+      # Only what the package server serves counts as arrived, plus an SBOM that knows the package.
       - name: "Generalprobe: Upload und SBOM nachlesen"
         run: |
           set -euo pipefail
@@ -482,16 +482,16 @@ jobs:
           path: sbom.spdx.json
           if-no-files-found: error
 
-  # Die Beglaubigung, wie sie `release` und `image-beglaubigen` beim Tag fahren — nur über eine
-  # Probedatei. Kein Checkout, kein pip, kein fremder Code außer den beiden Actions selbst.
+  # The attestation as `release` and `image-beglaubigen` run it for the tag — only over a
+  # sample file. No checkout, no pip, no foreign code except the two actions themselves.
   generalprobe-beglaubigen:
     needs: generalprobe
     if: github.ref_type != 'tag'
     timeout-minutes: 10
     runs-on: ubuntu-latest
     permissions:
-      id-token: write      # Sigstore-Identität, wie beim Tag
-      attestations: write  # die Probe-Beglaubigung an GitHub übergeben
+      id-token: write      # Sigstore identity, as for the tag
+      attestations: write  # hand the sample attestation to GitHub
     steps:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
         with:
@@ -509,17 +509,17 @@ jobs:
           subject-path: generalprobe.txt
           sbom-path: sbom.spdx.json
 
-  # Beglaubigung des Abbilds — getrennt vom Bau, aus demselben Grund wie oben: Die Identität
-  # liegt nur in einem Job, der weder auscheckt noch baut. Er kennt nur den Digest.
+  # Attestation of the image — separate from the build, for the same reason as above: the identity
+  # lives only in a job that neither checks out nor builds. It knows only the digest.
   image-beglaubigen:
     timeout-minutes: 10
     needs: image
     if: github.ref_type == 'tag'
     runs-on: ubuntu-latest
     permissions:
-      packages: write      # Attestation und SBOM neben das Abbild in die Registry legen
-      id-token: write      # Sigstore-Identität für die Attestation
-      attestations: write  # Attestation an GitHub übergeben
+      packages: write      # put attestation and SBOM next to the image in the registry
+      id-token: write      # Sigstore identity for the attestation
+      attestations: write  # hand the attestation to GitHub
     steps:
       - name: Eigentümer kleinschreiben
         run: echo "OWNER_LC=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_ENV"
@@ -531,10 +531,10 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # BuildKits eigene Provenance bleibt aus (`provenance: false` oben): Sie ist UNSIGNIERT und
-      # belegt damit genau das nicht, worum es hier geht. Stattdessen eine über Sigstore signierte
-      # Attestation, die auch in der Registry neben dem Abbild landet — wer es zieht, kann die
-      # Herkunft prüfen, ohne dieses Repo zu kennen.
+      # BuildKit's own provenance stays off (`provenance: false` above): it is UNSIGNED and
+      # thus does not prove exactly what matters here. Instead an attestation signed via Sigstore,
+      # which also lands in the registry next to the image — whoever pulls it can verify the
+      # provenance without knowing this repo.
       - name: Herkunft des Abbilds beglaubigen
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8  # v4.2.2
         with:
@@ -542,11 +542,11 @@ jobs:
           subject-digest: ${{ needs.image.outputs.digest }}
           push-to-registry: true
 
-      # Die SBOM beantwortet die Frage, die nach jeder CVE-Meldung kommt: steckt das Paket drin?
-      # Erzeugt wird sie aus dem GESCHOBENEN Abbild (per Digest), nicht aus dem Bauverzeichnis —
-      # sonst beschriebe sie etwas anderes als das, was ausgeliefert wurde. Syft lädt die Action
-      # selbst nach; die Fassung steht als Konstante im gepinnten Commit der Action (bei diesem
-      # SHA v1.51.1) — mit dem SHA-Pin ist sie also festgelegt, anders als qemu/BuildKit oben.
+      # The SBOM answers the question that follows every CVE report: is the package in there?
+      # It is generated from the PUSHED image (by digest), not from the build directory —
+      # otherwise it would describe something other than what was shipped. The action fetches Syft
+      # itself; the version is a constant in the pinned commit of the action (at this
+      # SHA v1.51.1) — so the SHA pin fixes it, unlike qemu/BuildKit above.
       - name: SBOM aus dem geschobenen Abbild erzeugen
         uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c  # v0.24.3
         with:

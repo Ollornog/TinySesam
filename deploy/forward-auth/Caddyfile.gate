@@ -1,82 +1,82 @@
-# TinySesam als Gate vor einer fremden Anwendung — mit Gate-Token (ADR-9).
+# TinySesam as a gate in front of a third-party application — with gate token (ADR-9).
 #
-# Der Unterschied zu ./Caddyfile: Dort fragt Caddy für JEDE Anfrage /auth/forward, auch für jedes
-# Skript, Stylesheet und Icon. Hier prüft Caddy ein kurzlebiges, signiertes Cookie selbst und
-# fragt TinySesam erst, wenn es fehlt oder abgelaufen ist:
+# The difference to ./Caddyfile: there Caddy asks /auth/forward for EVERY request, even for every
+# script, stylesheet and icon. Here Caddy checks a short-lived, signed cookie itself and
+# asks TinySesam only when it is missing or expired:
 #
-#   Anfrage ──► jwtauth: Gate-Cookie gültig? ──ja──► Anwendung          (kein Aufruf bei TinySesam)
-#                         │ nein (401)
+#   request ──► jwtauth: gate cookie valid? ──yes──► application        (no call to TinySesam)
+#                         │ no (401)
 #                         ▼
-#               handle_errors 401: /auth/forward wie bisher
-#                         ├─ 200 → Anwendung, dazu Set-Cookie mit einem neuen Gate-Token
-#                         ├─ 401 → Login (X-TinySesam-Location)
-#                         └─ 403 → Rolle fehlt
+#               handle_errors 401: /auth/forward as before
+#                         ├─ 200 → application, plus Set-Cookie with a new gate token
+#                         ├─ 401 → login (X-TinySesam-Location)
+#                         └─ 403 → role missing
 #
-# Der Rückweg ist die bestehende Forward-Auth, Wort für Wort. Er reicht die Anfrage samt Methode
-# und Body an die Anwendung weiter — ein POST mit abgelaufenem Token geht also nicht verloren.
+# The fallback path is the existing forward-auth, word for word. It passes the request along with its method
+# and body to the application — so a POST with an expired token is not lost.
 #
-# Voraussetzungen:
-#   * Caddy MIT dem Plugin caddy-jwt (github.com/ggicci/caddy-jwt). Das offizielle Abbild hat es
-#     nicht — Bauanleitung: deploy/forward-auth/caddy-gate/Dockerfile.
+# Prerequisites:
+#   * Caddy WITH the plugin caddy-jwt (github.com/ggicci/caddy-jwt). The official image does not have
+#     it — build instructions: deploy/forward-auth/caddy-gate/Dockerfile.
 #   * TinySesamConfig: forward_auth_enabled=True, gate_token_enabled=True, base_url, cookie_domain
-#     und trusted_redirect_hosts wie in ./Caddyfile (zentrale Anmeldung auf auth.example.com).
-#     Im Gateway-Abbild: TINYSESAM_GATE=1.
-#   * TS_GATE_PUBKEY: der öffentliche Schlüssel, `tinysesam gate-key` gibt ihn aus. Er folgt dem
-#     Grundschlüssel der Installation (TINYSESAM_SECRETS_KEY) — wird der gewechselt, hier neu
-#     eintragen. Öffentlich, kein Geheimnis.
-#   * TS_GATE_ISSUER: base_url von TinySesam, ohne Schrägstrich am Ende.
+#     and trusted_redirect_hosts as in ./Caddyfile (central sign-in on auth.example.com).
+#     In the gateway image: TINYSESAM_GATE=1.
+#   * TS_GATE_PUBKEY: the public key, `tinysesam gate-key` prints it. It follows the
+#     installation's base key (TINYSESAM_SECRETS_KEY) — if that is changed, enter it
+#     here again. Public, not a secret.
+#   * TS_GATE_ISSUER: base_url of TinySesam, without a trailing slash.
 #
-# Was es kostet: Ein Widerruf (Abmelden, Sperren, entzogene Freigabe) greift hier erst, wenn das
-# Token abläuft — gate_token_ttl_sec, Vorgabe 300 Sekunden.
+# What it costs: a revocation (sign-out, lockout, withdrawn approval) takes effect here only when the
+# token expires — gate_token_ttl_sec, default 300 seconds.
 
-# Zentraler Auth-Dienst (TinySesam) — eigene Subdomain
+# Central auth service (TinySesam) — its own subdomain
 auth.example.com {
 	reverse_proxy {$TS_AUTH_UPSTREAM:127.0.0.1:8000}
 }
 
-# Geschützte Anwendung
+# Protected application
 app.example.com {
-	# Die Identität setzt NUR dieser Proxy. Ein vom Browser mitgeschickter Remote-User würde
-	# sonst auf jedem Weg durchgereicht, auf dem ihn niemand überschreibt.
+	# ONLY this proxy sets the identity. A Remote-User sent along by the browser would
+	# otherwise be passed through on every path where nobody overwrites it.
 	request_header -Remote-User
 	request_header -Remote-Name
 	request_header -Remote-Email
 	request_header -Remote-Groups
 	request_header -Remote-Id
 
-	# Abmelden an der Anwendung (T-22): /.tinysesam/logout und /.tinysesam/after-logout gehören
-	# TinySesam, nicht der Anwendung — und gehen am Gate vorbei: Abmelden muss auch mit
-	# abgelaufener Anmeldung gehen. Auf diesem Host, weil nur hier das Gate-Cookie gelöscht werden
-	# kann. Der Abmelde-Link der Anwendung zeigt auf https://app.example.com/.tinysesam/logout
-	# (?scope=app|all, sonst gilt forward_logout); beim Provider als Logout Callback URL
-	# https://app.example.com/.tinysesam/after-logout eintragen.
+	# Sign-out at the application (T-22): /.tinysesam/logout and /.tinysesam/after-logout belong to
+	# TinySesam, not to the application — and bypass the gate: signing out must also work with an
+	# expired sign-in. On this host, because only here can the gate cookie be deleted.
+	# The application's sign-out link points to https://app.example.com/.tinysesam/logout
+	# (?scope=app|all, otherwise forward_logout applies); register
+	# https://app.example.com/.tinysesam/after-logout with the provider as Logout Callback URL.
 	handle /.tinysesam/* {
 		reverse_proxy {$TS_AUTH_UPSTREAM:127.0.0.1:8000}
 	}
 
-	# Öffentliche Pfade der Anwendung (T-20), etwa Share-Links: ohne Anmeldung, ohne Identität.
-	# TS_SHARE_PRAEFIX ist ein regulärer Ausdruck über den Anfang des Pfads, z. B.
+	# Public paths of the application (T-20), such as share links: without sign-in, without identity.
+	# TS_SHARE_PRAEFIX is a regular expression over the beginning of the path, e.g.
 	#   TS_SHARE_PRAEFIX='^/(s|public/share)/'
-	# Ohne die Variable gilt `^$` — das trifft keinen Pfad, die Ausnahme ist aus.
+	# Without the variable `^$` applies — it matches no path, the exception is off.
 	#
-	# Geprüft wird der ROHE Pfad (`orig_uri.path`), nicht der von Caddy bereinigte: Caddy vergleicht
-	# sonst `/x/../s/a` als `/s/a`, reicht der Anwendung aber `/x/../s/a` weiter — und die löst
-	# ihn womöglich anders auf. Abgewiesen wird deshalb jeder Pfad mit `.`- oder `..`-Segment, `;`
-	# (Tomcat/Spring lesen `/s/..;/admin` als `/admin`), Backslash, NUL oder einer kodierten Form
-	# davon (%2e %2f %5c %00 %3b). Gross/klein zählt (`/S/` ist nicht `/s/`). Nachgemessen gegen
-	# Caddy 2.11.7 in tests/test_gate_caddy.py. Nie nach Dateiendung freigeben (`*.js`): Viele
-	# Anwendungen liefern unter `/admin/x.css` dynamischen Inhalt aus.
+	# The RAW path (`orig_uri.path`) is checked, not the one cleaned up by Caddy: otherwise Caddy
+	# compares `/x/../s/a` as `/s/a`, but passes `/x/../s/a` on to the application — which may
+	# resolve it differently. Therefore every path with a `.` or `..` segment, `;`
+	# (Tomcat/Spring read `/s/..;/admin` as `/admin`), backslash, NUL or an encoded form
+	# of these (%2e %2f %5c %00 %3b) is rejected. Case counts (`/S/` is not `/s/`). Measured against
+	# Caddy 2.11.7 in tests/test_gate_caddy.py. Never allow by file extension (`*.js`): many
+	# applications serve dynamic content under `/admin/x.css`.
 	#
-	# Eine Share-Seite lädt meist eigene Skripte und ruft eigene APIs auf — auch die gehören in
-	# den Ausdruck, je Anwendung nachgemessen. Was hier steht, ist öffentlich erreichbar: Eine Lücke
-	# der Anwendung in diesen Pfaden bleibt offen. So eng wie möglich.
+	# A share page usually loads its own scripts and calls its own APIs — these belong in
+	# the expression too, measured per application. Whatever is listed here is publicly reachable: a vulnerability
+	# of the application in these paths stays open. As narrow as possible.
 	@share {
 		vars_regexp share {http.request.orig_uri.path} {$TS_SHARE_PRAEFIX:^$}
 		not vars_regexp {http.request.orig_uri.path} (?i)(^|/)\.\.?(/|$)|[;\\\x00]|%(2e|2f|5c|00|3b)
 	}
 	handle @share {
 		reverse_proxy {$TS_APP_UPSTREAM:127.0.0.1:9000} {
-			# Keine Identität auf diesem Weg — auch keine, die der Browser selbst mitschickt.
+			# No identity on this path — not even one the browser sends along itself.
 			header_up -Remote-User
 			header_up -Remote-Name
 			header_up -Remote-Email
@@ -90,15 +90,15 @@ app.example.com {
 	route {
 		jwtauth {
 			sign_key {$TS_GATE_PUBKEY}
-			# Fest EdDSA: Mit sign_alg EdDSA ignoriert caddy-jwt das `alg` im Kopf des Tokens.
-			# Ein Token mit `alg: none` oder `HS256` wird damit nicht anders geprüft.
+			# Fixed to EdDSA: with sign_alg EdDSA caddy-jwt ignores the `alg` in the token's header.
+			# A token with `alg: none` or `HS256` is thus not checked any differently.
 			sign_alg EdDSA
 			from_cookies __Host-tinysesam_gate
 			issuer_whitelist {$TS_GATE_ISSUER:https://auth.example.com}
-			# Die Zielgruppe ist der Host. Verlangt der Rückweg Rollen (X-TinySesam-Roles unten),
-			# trägt das Token sie mit: `app.example.com|roles=admin,redaktion` — Rollen sortiert,
-			# mehrere Angaben mit `;` getrennt. Genau diese Zeichenkette gehört dann hierher, sonst
-			# fällt jede Anfrage auf den Rückweg zurück (sicher, nur langsam).
+			# The audience is the host. If the fallback path requires roles (X-TinySesam-Roles below),
+			# the token carries them: `app.example.com|roles=admin,redaktion` — roles sorted,
+			# several entries separated by `;`. Exactly this string then belongs here, otherwise
+			# every request falls back to the fallback path (safe, just slow).
 			audience_whitelist app.example.com
 			user_claims sub
 			meta_claims ts_user ts_name ts_email ts_groups ts_id
@@ -109,16 +109,16 @@ app.example.com {
 			header_up Remote-Email {http.auth.user.ts_email}
 			header_up Remote-Groups {http.auth.user.ts_groups}
 			header_up Remote-Id {http.auth.user.ts_id}
-			# Die Cookies von TinySesam erreichen die Anwendung nicht — das Gate-Cookie heisst
-			# ebenfalls tinysesam_* und fällt unter dieselbe Regel (B-20, siehe ./Caddyfile).
+			# TinySesam's cookies do not reach the application — the gate cookie is also named
+			# tinysesam_* and falls under the same rule (B-20, see ./Caddyfile).
 			header_up Cookie "(^|;)\s*(__Host-|__Secure-)?tinysesam_[^=;]*=[^;]*" ""
 			header_up Cookie "^[;\s]+" ""
 		}
 	}
 
-	# Kein oder kein gültiges Gate-Token: der Rückweg über /auth/forward.
-	# Eine 401 der Anwendung selbst landet NICHT hier — reverse_proxy reicht sie als Antwort
-	# durch, handle_errors sieht nur Fehler von Caddy (hier: die Absage von jwtauth).
+	# No gate token or no valid one: the fallback path via /auth/forward.
+	# A 401 from the application itself does NOT land here — reverse_proxy passes it through as a
+	# response, handle_errors sees only errors from Caddy (here: the rejection by jwtauth).
 	handle_errors 401 {
 		route {
 			reverse_proxy {$TS_AUTH_UPSTREAM:127.0.0.1:8000} {
@@ -126,7 +126,7 @@ app.example.com {
 				rewrite /auth/forward
 				header_up X-Forwarded-Method {method}
 				header_up X-Forwarded-Uri {uri}
-				# header_up X-TinySesam-Roles redaktion,admin   # dann audience_whitelist oben anpassen
+				# header_up X-TinySesam-Roles redaktion,admin   # then adjust audience_whitelist above
 				@ok status 200
 				handle_response @ok {
 					request_header Remote-User {rp.header.Remote-User}
@@ -134,8 +134,8 @@ app.example.com {
 					request_header Remote-Email {rp.header.Remote-Email}
 					request_header Remote-Groups {rp.header.Remote-Groups}
 					request_header Remote-Id {rp.header.Remote-Id}
-					# Das neue Gate-Token geht mit der Antwort der Anwendung an den Browser.
-					# Platzhalter in Go-kanonischer Form (H-16, siehe ./Caddyfile).
+					# The new gate token goes to the browser with the application's response.
+					# Placeholder in Go-canonical form (H-16, see ./Caddyfile).
 					header +Set-Cookie {rp.header.X-Tinysesam-Gate-Cookie}
 				}
 				@denied status 401

@@ -1,4 +1,4 @@
-# GENERIERT — nicht von Hand ändern (Dependabot hebt die Zeilen samt Hashes):
+# GENERATED — do not change by hand (Dependabot bumps the lines together with their hashes):
 #   uv pip compile .github/audit/werkzeuge.in --generate-hashes --universal \
 #       --python-version 3.12 --no-header -o .github/audit/requirements.txt
 boolean-py==5.0 \

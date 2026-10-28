@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
-# Baut das Gateway-Abbild für die eigene Plattform und prüft, dass es STARTET — nicht nur baut.
+# Builds the gateway image for the own platform and checks that it STARTS — not just builds.
 #
-#   scripts/_abbild_probe.sh            # baut `tinysesam-probe:lokal` aus dem Arbeitsbaum und prüft
+#   scripts/_abbild_probe.sh            # builds `tinysesam-probe:lokal` from the working tree and checks it
 #
-# Aufgerufen vom Job `abbild-probe` in .github/workflows/release.yml, auf jedem PR und vor jedem
-# Schieben eines Abbilds. Der Bau im Dockerfile prüft schon `pip check` und den Import; das
-# fängt keine Abhängigkeit, die sich importieren lässt und erst beim Start bricht (uvicorn,
-# Starlette-Middleware, der eigene HEALTHCHECK). Hier läuft der Container wirklich:
-#   1. ohne Netz (`--network none`) und mit Platzhalter-Werten statt eines OIDC-Anbieters —
-#      das Gateway lädt die Discovery erst bei der ersten Anmeldung;
-#   2. bis Dockers eigener HEALTHCHECK aus dem Dockerfile „healthy“ meldet (der, den auch jeder
-#      Betreiber sieht), höchstens WARTEN_S Sekunden;
-#   3. `/healthz` muss 200 liefern und die Version aus pyproject.toml nennen — sonst steckt im
-#      Abbild ein anderes Paket als in diesem Commit.
-# Ein Fehlschlag gibt die Container-Logs aus. Der Container wird in jedem Fall entfernt.
+# Called by the job `abbild-probe` in .github/workflows/release.yml, on every PR and before every
+# push of an image. The build in the Dockerfile already checks `pip check` and the import; that
+# does not catch a dependency that can be imported and only breaks at startup (uvicorn,
+# Starlette middleware, the own HEALTHCHECK). Here the container really runs:
+#   1. without network (`--network none`) and with placeholder values instead of an OIDC provider —
+#      the gateway loads the discovery only at the first sign-in;
+#   2. until Docker's own HEALTHCHECK from the Dockerfile reports "healthy" (the one every
+#      operator sees as well), at most WARTEN_S seconds;
+#   3. `/healthz` must return 200 and name the version from pyproject.toml — otherwise the
+#      image holds a different package than this commit.
+# A failure prints the container logs. The container is removed in any case.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -38,8 +38,8 @@ scheitern() {
     exit 1
 }
 
-# Platzhalter, keine Geheimnisse: Das Gateway verlangt die vier Werte beim Start, benutzt sie aber
-# erst bei einer Anmeldung.
+# Placeholders, not secrets: the gateway demands the four values at startup, but uses them only
+# at a sign-in.
 docker run --detach --name "$NAME" --network none \
     -e TINYSESAM_OIDC_ISSUER=https://issuer.example \
     -e TINYSESAM_OIDC_CLIENT_ID=probe \

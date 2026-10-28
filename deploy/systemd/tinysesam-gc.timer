@@ -2,7 +2,7 @@
 Description=TinySesam täglich aufräumen
 
 [Timer]
-# Nachts, mit Streuung — und `Persistent`, damit ein verpasster Lauf nachgeholt wird.
+# At night, with jitter — and `Persistent`, so a missed run is caught up.
 OnCalendar=*-*-* 03:30:00 Europe/Berlin
 RandomizedDelaySec=15m
 Persistent=true

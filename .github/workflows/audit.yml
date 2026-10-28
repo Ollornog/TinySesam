@@ -1,28 +1,28 @@
 name: audit
 
-# Das Schwachstellen-Tor (B4-2 aus T-13). Bis 0.19.0 prüfte kein Lauf, ob eine Abhängigkeit eine
-# bekannte Lücke hat: Dependabot meldet zwar repo-weit, aber eine Meldung ist kein Tor — ein PR
-# mit einer verwundbaren Auflösung wurde grün.
+# The vulnerability gate (B4-2 from T-13). Up to 0.19.0 no run checked whether a dependency has a
+# known vulnerability: Dependabot reports repo-wide, but a report is not a gate — a PR
+# with a vulnerable resolution went green.
 #
-# Geprüft werden vier Auflösungen, weil jede eine andere Zusage trägt:
-#   neu     — was `pip install tinysesam[all]` heute zieht
-#   boden   — die niedrigste erlaubte Fassung jeder direkten Abhängigkeit (`lowest-direct`). Das
-#             ist die Zusage der `>=`-Grenzen in pyproject.toml: Wer sie festhält, bekommt eine
-#             Installation ohne bekannte Lücke. Erscheint ein Advisory für einen Boden, wird
-#             dieser Lauf rot und der Boden wandert — Dependabot hebt einen offenen `>=`-Boden
-#             nie an, die Spanne erlaubt die neue Fassung ja schon (B4-3).
-#   gateway — die gehashte Sperrliste des Abbilds (deploy/gateway/requirements.txt)
-#   bau     — die Werkzeuge, die Wheel und sdist bauen (.github/bau/requirements.txt), und die
-#             dieses Tors selbst (.github/audit/requirements.txt)
+# Four resolutions are checked, because each carries a different promise:
+#   neu     — what `pip install tinysesam[all]` pulls today
+#   boden   — the lowest allowed version of every direct dependency (`lowest-direct`). This
+#             is the promise of the `>=` bounds in pyproject.toml: anyone who holds on to them gets an
+#             installation without known vulnerabilities. If an advisory appears for a floor, this
+#             run turns red and the floor moves — Dependabot never raises an open `>=` floor,
+#             since the range already allows the new version (B4-3).
+#   gateway — the hashed lock list of the image (deploy/gateway/requirements.txt)
+#   bau     — the tools that build wheel and sdist (.github/bau/requirements.txt), and those
+#             of this gate itself (.github/audit/requirements.txt)
 #
-# Nächtlich zusätzlich, weil Advisories ohne Codeänderung erscheinen. Öffentliches Repo →
-# `ubuntu-latest`, keine self-hosted Runner.
+# Additionally nightly, because advisories appear without a code change. Public repo →
+# `ubuntu-latest`, no self-hosted runners.
 on:
   push:
     branches: [main]
   pull_request:
   schedule:
-    # GitHub-cron kennt nur UTC: 02:45 UTC = 04:45 Europe/Berlin (MESZ) bzw. 03:45 (MEZ).
+    # GitHub cron only knows UTC: 02:45 UTC = 04:45 Europe/Berlin (CEST) or 03:45 (CET).
     - cron: "45 2 * * *"
   workflow_dispatch:
 
@@ -37,24 +37,24 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
-      # 3.14 für die Probe des Abbilds (dessen Python-Reihe), 3.13 (Untergrenze der Matrix) als Vorgabe — die zuletzt
-      # genannte Fassung ist die, die unter `python` läuft.
+      # 3.14 for the probe of the image (its Python series), 3.13 (lower bound of the matrix) as default — the version
+      # named last is the one that runs as `python`.
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
         with:
           python-version: |
             3.14
             3.13
 
-      # Eigene Umgebung, gepinnt samt Hashes: Das Prüfwerkzeug gehört nicht in die Umgebung, die
-      # es prüft, und kommt nicht in der gerade neuesten Fassung aus dem Index.
+      # Separate environment, pinned with hashes: the checking tool does not belong in the environment it
+      # checks, and does not come from the index in whatever the newest version is.
       - name: Werkzeuge
         run: |
           python -m venv "$RUNNER_TEMP/audit"
           "$RUNNER_TEMP/audit/bin/pip" install --require-hashes --no-deps -r .github/audit/requirements.txt
 
-      # Nur auflösen, nichts installieren: Aufgelöst wird gegen den Index, ohne Code der Pakete
-      # auszuführen (Metadaten aus den Rädern). `--python-version` = die Untergrenze aus
-      # requires-python, dort ist die Auflösung am ältesten.
+      # Only resolve, install nothing: resolution runs against the index, without executing any package
+      # code (metadata from the wheels). `--python-version` = the lower bound from
+      # requires-python, where the resolution is oldest.
       - name: Auflösen (neueste und niedrigste erlaubte Fassungen)
         run: |
           uv="$RUNNER_TEMP/audit/bin/uv"
@@ -62,13 +62,13 @@ jobs:
               -o "$RUNNER_TEMP/neu.txt"
           "$uv" pip compile pyproject.toml --all-extras --resolution lowest-direct \
               --python-version 3.13 --no-header -o "$RUNNER_TEMP/boden.txt"
-          # Null Pakete wären ein grüner Lauf ohne Befund: das ist kein Beleg, sondern ein Fehler.
+          # Zero packages would be a green run without findings: that is no evidence but an error.
           for f in neu boden; do
             [ "$(grep -cE '^[A-Za-z0-9_.-]+==' "$RUNNER_TEMP/$f.txt")" -gt 0 ] \
               || { echo "::error::$f: nichts aufgelöst — der Lauf prüfte nichts"; exit 1; }
           done
 
-      # `--strict`: Ein Paket, das pip-audit nicht nachschlagen kann, ist ein Fehler, kein Skip.
+      # `--strict`: a package that pip-audit cannot look up is an error, not a skip.
       - name: pip-audit
         run: |
           audit="$RUNNER_TEMP/audit/bin/pip-audit"
@@ -84,12 +84,12 @@ jobs:
             echo "::endgroup::"
           done
 
-      # Ist die Sperrliste des Abbilds vollständig? (A-1 aus der Nachprüfung von B4-7.) Das
-      # Dockerfile installiert sie mit `--no-deps` — eine fehlende transitive Abhängigkeit merkt pip
-      # dort nicht. Und Dependabot hebt in einer gehashten Liste nur einzelne Zeilen: Bringt ein
-      # Bump eine neue Abhängigkeit mit, fehlt sie. Ohne diesen Schritt würde so ein PR grün, und
-      # erst das veröffentlichte Abbild bräche beim Start ab. Dieselben Schritte wie im Dockerfile,
-      # dann `pip check` und der Import. Nur Leserecht; die Räder sind per Hash festgelegt.
+      # Is the lock list of the image complete? (A-1 from the re-check of B4-7.) The
+      # Dockerfile installs it with `--no-deps` — pip does not notice a missing transitive dependency
+      # there. And Dependabot bumps only single lines in a hashed list: if a
+      # bump brings a new dependency along, it is missing. Without this step such a PR would go green, and
+      # only the published image would abort at startup. The same steps as in the Dockerfile,
+      # then `pip check` and the import. Read permission only; the wheels are fixed by hash.
       - name: Sperrliste des Abbilds vollständig
         run: |
           python3.14 -m venv "$RUNNER_TEMP/gw"

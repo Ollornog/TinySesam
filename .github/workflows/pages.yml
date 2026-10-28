@@ -1,13 +1,13 @@
 name: pages
 
-# Baut die Projekt-Website aus web/site.py und veröffentlicht sie auf GitHub Pages.
-# Die HTML-Dateien liegen deshalb nicht im Repo — geändert wird nur die Quelle.
+# Builds the project website from web/site.py and publishes it on GitHub Pages.
+# The HTML files are therefore not in the repo — only the source is changed.
 #
-# Einmalig nötig: Settings → Pages → Source = "GitHub Actions", per API:
+# Needed once: Settings → Pages → Source = "GitHub Actions", via API:
 #   gh api -X PUT repos/<owner>/<repo>/pages -f build_type=workflow
-# Steht die Quelle auf "Deploy from a branch", liefert Pages den Ordner `docs/` aus — der hat
-# kein index.html, also 404; zusätzlich belegt der Automatik-Build das Deployment, woran dieser
-# Workflow mit "in progress deployment" scheitert. Prüfen:
+# If the source is set to "Deploy from a branch", Pages serves the folder `docs/` — it has
+# no index.html, hence 404; in addition the automatic build occupies the deployment, on which this
+# workflow fails with "in progress deployment". Check:
 #   gh api repos/<owner>/<repo>/pages --jq '{build_type,source}'
 
 on:
@@ -15,15 +15,15 @@ on:
     branches: [main]
     paths:
       - "web/**"
-      # Die Demo-Seite rendert Login-, Konto- und Admin-Panel aus der Bibliothek. Ändert die
-      # sich, ändert sich die Website — auch ohne Anfassen von `web/`.
+      # The demo page renders login, account and admin panels from the library. If that
+      # changes, the website changes — even without touching `web/`.
       - "tinysesam/**"
       - "docs/theme.css"
       - "docs/wizard.png"
       - ".github/workflows/pages.yml"
   workflow_dispatch:
 
-# Schreibrechte nur dort, wo sie gebraucht werden: im Deploy-Job. Der Build-Job liest nur.
+# Write permissions only where they are needed: in the deploy job. The build job only reads.
 permissions:
   contents: read
 
@@ -42,19 +42,19 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
         with:
           python-version: "3.13"
-      # Die Demo-Seite rendert ihre Panels aus der Bibliothek selbst — dafür muss sie
-      # importierbar sein. Ohne Extras: die Vorschauen brauchen weder OIDC noch SAML.
+      # The demo page renders its panels from the library itself — for that it must be
+      # importable. Without extras: the previews need neither OIDC nor SAML.
       - name: Bibliothek installieren
         run: pip install .
 
       - name: Website bauen
         run: python -m web.build _site
       - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d  # v6.0.0
-      # include-hidden-files: seit v4 werden Dotfiles standardmäßig WEGGELASSEN.
-      # web/build.py legt `.nojekyll` an — ohne den Schalter fiele die Datei still
-      # aus dem Artefakt: CI grün, Artefakt hochgeladen, Deploy erfolgreich, nur der
-      # Inhalt wäre ein anderer als bisher. Der Schalter hält das Artefakt exakt so,
-      # wie es vor dem Node-24-Sprung war — der Bump hebt die Laufzeit, nicht das Verhalten.
+      # include-hidden-files: since v4 dotfiles are OMITTED by default.
+      # web/build.py creates `.nojekyll` — without the switch the file would silently drop
+      # out of the artifact: CI green, artifact uploaded, deploy successful, only the
+      # content would differ from before. The switch keeps the artifact exactly as
+      # it was before the Node 24 jump — the bump raises the runtime, not the behaviour.
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9  # v5.0.0
         with:
           path: _site

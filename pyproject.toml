@@ -5,14 +5,14 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "tinysesam"
 version = "0.24.13"
-# Die Kurzbeschreibung steht im Paketindex neben dem Namen — englisch wie README und Website.
+# The short description appears in the package index next to the name — English like the README and website.
 description = "Small, reusable multi-method authentication for FastAPI: password, PIN, passkey, OIDC, SAML, LDAP, TOTP, magic link, forward-auth"
 readme = "README.md"
 requires-python = ">=3.13"
-# SPDX-Ausdruck nach PEP 639 (T-7): Die Tabellenform `{ text = "MIT" }` nimmt setuptools ab dem
-# 18.02.2027 nicht mehr an. Braucht setuptools >= 77 — das liegt seit 2026-09 in jeder Umgebung,
-# in der gebaut wird (CI-Abbild, GitHub-Jobs, isolierter Bau). Der Lizenz-Classifier entfällt:
-# PEP 639 verbietet ihn neben dem Ausdruck.
+# SPDX expression per PEP 639 (T-7): setuptools no longer accepts the table form `{ text = "MIT" }`
+# from 2027-02-18. Needs setuptools >= 77 — which has been in every build environment since 2026-09
+# (CI image, GitHub jobs, isolated build). The license classifier is dropped:
+# PEP 639 forbids it alongside the expression.
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [{ name = "ollornog" }]
@@ -25,8 +25,8 @@ classifiers = [
     "Intended Audience :: Developers",
     "Intended Audience :: System Administrators",
     "Operating System :: OS Independent",
-    # Jede hier genannte Fassung wird von der CI auch gefahren — `tests/test_packaging.py`
-    # hält beides zusammen. Ein Classifier ist ein Versprechen, keine Hoffnung.
+    # Every version named here is also run by the CI — `tests/test_packaging.py`
+    # keeps the two together. A classifier is a promise, not a hope.
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3 :: Only",
     "Programming Language :: Python :: 3.13",
@@ -38,43 +38,43 @@ classifiers = [
     "Topic :: System :: Systems Administration :: Authentication/Directory",
     "Typing :: Typed",
 ]
-# Die Untergrenzen sind KEIN „läuft vermutlich auch damit" — sie sind der gemessene Boden
-# ohne bekannte Lücke (OSV, Stand 2026-09-22). Ein `>=` ohne Deckel ist eine Zusage: Wer eine
-# alte Fassung festhält (Lockfile, Constraints, Distributionspaket), bekommt eine unterstützte
-# Installation. Lag der Boden unter einem Sicherheitsfix, war die Zusage falsch — so zog die
-# niedrigste erlaubte Auflösung bis 0.18.0 authlib 1.3.0, python-multipart 0.0.9 und (über
-# FastAPI) starlette 0.36.3, alle drei mit offenen Advisories. Gehoben wird der Boden,
-# **keine obere Schranke** ergänzt: Ein Deckel in einer Bibliothek blockiert genau die
-# Aktualisierung, die den nächsten Fix bringt. `tests/test_packaging.py` misst die Grenzen
-# gegen eine Tabelle mit, damit der Boden nicht wieder altert (B4-1 aus T-13).
+# The lower bounds are NOT "probably works with this too" — they are the measured floor
+# without a known vulnerability (OSV, as of 2026-09-22). A `>=` without a cap is a promise: anyone who
+# pins an old version (lockfile, constraints, distribution package) gets a supported
+# installation. If the floor was below a security fix, the promise was false — so the
+# lowest allowed resolution up to 0.18.0 pulled authlib 1.3.0, python-multipart 0.0.9 and (via
+# FastAPI) starlette 0.36.3, all three with open advisories. The floor is raised,
+# **no upper bound** is added: a cap in a library blocks exactly the
+# update that brings the next fix. `tests/test_packaging.py` also measures the bounds
+# against a table, so the floor does not age again (B4-1 from T-13).
 dependencies = [
-    # 0.133.0 ist die erste Fassung, die starlette >= 1.3.1 zulässt (Host-Header-Prüfung,
-    # UNC-Pfade in StaticFiles, Methoden-Dispatch, form()-Grenzen).
+    # 0.133.0 is the first version that allows starlette >= 1.3.1 (Host-header check,
+    # UNC paths in StaticFiles, method dispatch, form() limits).
     "fastapi>=0.133.0",
-    # Pflicht seit 0.21.0: TOTP-Geheimnisse liegen AES-256-GCM-verschlüsselt in der Datenbank
-    # (H-14/H-15). Die Standardbibliothek hat kein AES; eigene Krypto wäre die schlechtere Wahl.
+    # Required since 0.21.0: TOTP secrets are stored AES-256-GCM-encrypted in the database
+    # (H-14/H-15). The standard library has no AES; rolling our own crypto would be the worse choice.
     "cryptography>=50.0",
     "pyotp>=2.9",
     "python-multipart>=0.0.31",
 ]
 
 [project.optional-dependencies]
-argon2 = ["argon2-cffi>=23"]        # sonst stdlib-scrypt-Fallback
-qr = ["qrcode[pil]>=7"]             # TOTP-Enrollment-QR
+argon2 = ["argon2-cffi>=23"]        # otherwise stdlib scrypt fallback
+qr = ["qrcode[pil]>=7"]             # TOTP enrollment QR
 oidc = ["httpx>=0.27", "authlib>=1.9.1"]
 passkey = ["webauthn>=2.0"]
 ldap = ["ldap3>=2.9"]
 redis = ["redis>=5"]
-saml = ["python3-saml>=1.15"]       # braucht System-libxmlsec1
-# Das Forward-Auth-Gateway als fertiger Dienst: OIDC + ein ASGI-Server. `[oidc]` allein reicht
-# NICHT — `python -m tinysesam.gateway` endete damit in einem ModuleNotFoundError für uvicorn,
-# und genau das stand als Startbefehl in der README.
+saml = ["python3-saml>=1.15"]       # needs system libxmlsec1
+# The forward-auth gateway as a ready-made service: OIDC + an ASGI server. `[oidc]` alone is
+# NOT enough — `python -m tinysesam.gateway` ended with a ModuleNotFoundError for uvicorn,
+# and that was exactly the start command in the README.
 gateway = ["httpx>=0.27", "authlib>=1.9.1", "uvicorn>=0.30"]
 all = ["argon2-cffi>=23", "qrcode[pil]>=7", "httpx>=0.27", "authlib>=1.9.1", "webauthn>=2.0",
        "ldap3>=2.9", "redis>=5", "python3-saml>=1.15", "uvicorn>=0.30"]
 
-# Die Leiste neben der Projektseite im Index. Wer dort landet, sucht meist eines von
-# fünf Zielen — fehlt eines, sucht er es auf GitHub und findet vielleicht ein anderes Projekt.
+# The sidebar next to the project page in the index. Whoever lands there usually looks for one of
+# five targets — if one is missing, they search for it on GitHub and may find a different project.
 [project.urls]
 Homepage = "https://ollornog.github.io/TinySesam/"
 Documentation = "https://ollornog.github.io/TinySesam/"
@@ -88,8 +88,8 @@ tinysesam = "tinysesam.__main__:main"
 [tool.setuptools.packages.find]
 include = ["tinysesam*"]
 
-# Alles, was NICHT `.py` ist und trotzdem zur Laufzeit gebraucht wird, muss hier stehen —
-# sonst fehlt es im Wheel und fällt erst beim Nutzer auf. `tests/test_packaging.py` prüft
-# gegen die versionierten Dateien, damit die Liste nicht hinter dem Paket zurückbleibt.
+# Everything that is NOT `.py` and is still needed at runtime must be listed here —
+# otherwise it is missing from the wheel and only the user notices. `tests/test_packaging.py` checks
+# against the versioned files, so the list does not fall behind the package.
 [tool.setuptools.package-data]
 tinysesam = ["py.typed"]

@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
-"""Offene CodeQL-Alerts in den Backlog ziehen — statt in ein Postfach.
+"""Pull open CodeQL alerts into the backlog — instead of into a mailbox.
 
-    python3 scripts/_codeql_backlog.py            # Tabelle in backlog/T-12-codeql-bestand.md erneuern
-    python3 scripts/_codeql_backlog.py --zeige    # nur ausgeben, nichts schreiben
+    python3 scripts/_codeql_backlog.py            # refresh the table in backlog/T-12-codeql-bestand.md
+    python3 scripts/_codeql_backlog.py --zeige    # only print, write nothing
 
-CodeQL meldet jeden Fund als E-Mail und — bei einem Pull Request — als Review-Thread, der den
-Merge blockiert, solange er offen ist (auch bei Schwere „note"). Was auf `main` offen liegt,
-sieht dagegen niemand, bis ein PR zufällig dieselben Zeilen berührt. Dieses Skript holt die
-offene Liste über die GitHub-API und schreibt sie als Tabelle zwischen die Marker in der
-Backlog-Datei; alles ausserhalb der Marker bleibt, wie es ist. Braucht ein angemeldetes `gh`.
+CodeQL reports every finding as an e-mail and — on a pull request — as a review thread that
+blocks the merge as long as it is open (even at severity "note"). What is open on `main`, by
+contrast, nobody sees until a PR happens to touch the same lines. This script fetches the open
+list via the GitHub API and writes it as a table between the markers in the backlog file;
+everything outside the markers stays as it is. Needs a signed-in `gh`.
 
-Bewertete Alerts werden in GitHub mit Begründung abgewiesen (`gh api -X PATCH …/alerts/N`),
-nicht hier gestrichen — sonst kämen sie beim nächsten Lauf zurück.
+Assessed alerts are dismissed in GitHub with a reason (`gh api -X PATCH …/alerts/N`), not
+struck out here — otherwise they would come back on the next run.
 """
 from __future__ import annotations
 

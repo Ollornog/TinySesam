@@ -1,31 +1,31 @@
-# TinySesam als OIDC-Forward-Auth-Gateway (deploy-and-go), zusammen mit Caddy.
+# TinySesam as an OIDC forward-auth gateway (deploy-and-go), together with Caddy.
 #
 #   docker compose up -d
 #
-# Caddy ruft je Request GET /auth/forward beim Gateway (siehe ./Caddyfile). Der Gateway macht
-# ausschließlich OIDC-Login + Forward-Auth (keine Passwörter/PIN/Konten). Nötig ist das Extra
-# [gateway] — das ist [oidc] PLUS einen ASGI-Server. Wer nur [oidc] nimmt, bekommt die Bibliothek
-# ohne Server und der Start endet in `ModuleNotFoundError: uvicorn`. Im Abbild unten ist das
-# erledigt; die Zeile zählt für alle, die den Gateway ohne Container fahren.
+# Caddy calls GET /auth/forward on the gateway for each request (see ./Caddyfile). The gateway does
+# nothing but OIDC login + forward auth (no passwords/PIN/accounts). The extra [gateway] is
+# required — that is [oidc] PLUS an ASGI server. Anyone who takes only [oidc] gets the library
+# without a server and the start ends in `ModuleNotFoundError: uvicorn`. The image below takes
+# care of this; the line matters for everyone who runs the gateway without a container.
 #
-# Das Abbild ist GEPINNT. Vorher stand hier ein `pip install` ohne Ref: damit zog jeder
-# Neustart den aktuellen Hauptzweig — zwei Container derselben Datei konnten verschiedene
-# Versionen fahren, ohne Netz startete gar nichts, und ein Rollback gab es nicht.
+# The image is PINNED. This used to be a `pip install` without a ref: every restart
+# pulled the current main branch — two containers of the same file could run different
+# versions, nothing started at all without a network, and there was no rollback.
 #
-# Aktualisieren = Abbild-Tag hochziehen, `docker compose pull && docker compose up -d`.
-# Rollback = alten Tag zurückschreiben. Wer es ernst meint, pinnt den Digest
-# (`ghcr.io/ollornog/tinysesam@sha256:…`) — ein Tag lässt sich umhängen, ein Digest nicht.
-# Der Digest steht im Log des release-Workflows. Es gibt bewusst kein `latest`.
+# Update = bump the image tag, `docker compose pull && docker compose up -d`.
+# Rollback = write the old tag back. Anyone serious pins the digest
+# (`ghcr.io/ollornog/tinysesam@sha256:…`) — a tag can be moved, a digest cannot.
+# The digest is in the log of the release workflow. There is deliberately no `latest`.
 #
-# Caddy ist der Netzrand — der einzige Dienst, der aus dem Internet erreichbar ist. Bis 0.19.0
-# stand hier `caddy:2`: ein Tag, der mit jeder Caddy-Version wandert, sodass zwei `pull` desselben
-# Compose zwei verschiedene Proxys ergaben (B4-11 aus T-13). Jetzt Version UND Digest; Dependabot
-# hebt beides (Eintrag `docker-compose` in .github/dependabot.yml). Das eigene Abbild bleibt beim
-# Versions-Tag: Sein Digest entsteht erst im Release, also nach dem Commit, der ihn nennen müsste.
+# Caddy is the network edge — the only service reachable from the internet. Up to 0.19.0
+# this said `caddy:2`: a tag that moves with every Caddy version, so that two `pull`s of the same
+# compose yielded two different proxies (B4-11 from T-13). Now version AND digest; Dependabot
+# bumps both (entry `docker-compose` in .github/dependabot.yml). The own image stays on the
+# version tag: its digest only comes into existence in the release, i.e. after the commit that would have to name it.
 #
-# Beide Dienste laufen gehärtet (`x-haertung` unten): Dateisystem nur lesbar, alle Capabilities
-# weg, kein Rechtegewinn über setuid. Geschrieben wird nur in die Volumes und in ein tmpfs.
-# `tests/test_repo.py` verlangt das für jeden Dienst dieser Datei.
+# Both services run hardened (`x-haertung` below): filesystem read-only, all capabilities
+# dropped, no privilege gain via setuid. Writing happens only into the volumes and a tmpfs.
+# `tests/test_repo.py` demands this for every service in this file.
 
 x-haertung: &haertung
   read_only: true
@@ -37,8 +37,8 @@ services:
   tinysesam:
     <<: *haertung
     image: ghcr.io/ollornog/tinysesam:v0.24.13
-    # Kein `command:` nötig — der Entrypoint startet das Gateway. Es läuft als Nicht-root
-    # (uid 1000) und bringt einen HEALTHCHECK auf /healthz mit.
+    # No `command:` needed — the entrypoint starts the gateway. It runs as non-root
+    # (uid 1000) and ships a HEALTHCHECK on /healthz.
     environment:
       TINYSESAM_OIDC_ISSUER: "https://id.example.com"
       TINYSESAM_OIDC_CLIENT_ID: "gateway"
@@ -46,47 +46,47 @@ services:
       TINYSESAM_BASE_URL: "https://auth.example.com"
       TINYSESAM_COOKIE_DOMAIN: ".example.com"
       TINYSESAM_PROTECTED_HOSTS: "app.example.com,wiki.example.com"
-      # Wer durch das Tor darf, muss IRGENDWO begrenzt sein — sonst kommt jedes Konto beim
-      # Provider in jede Anwendung (deny-by-default, B3-9). Hier geschieht das über die
-      # Freigabe je Client beim Provider (TINYSESAM_OIDC_CLIENTS unten). Wer nur EINEN Client
-      # fährt, begrenzt mit Gruppen; ohne beides warnt TinySesam beim Start.
+      # Who may pass the gate must be restricted SOMEWHERE — otherwise every account at the
+      # provider gets into every application (deny-by-default, B3-9). Here this happens through the
+      # approval per client at the provider (TINYSESAM_OIDC_CLIENTS below). Anyone running only ONE
+      # client restricts by groups; with neither, TinySesam warns at startup.
       # TINYSESAM_ALLOWED_GROUPS: "mitarbeiter"
-      # Gruppen kommen bei PocketID (und anderen) nur mit dem Scope `groups` — ohne ihn weist
-      # das Tor jeden ab, der Start warnt dann:
+      # Groups arrive at PocketID (and others) only with the scope `groups` — without it the
+      # gate rejects everyone, and the startup warns then:
       # TINYSESAM_OIDC_SCOPES: "openid profile email groups"
       #
-      # Zwei Anwendungen, zwei Clients, EINE Installation (T-14). Wer in welche darf, steht
-      # beim Provider — dort hängt die Freigabe am Client. Ohne eigene Clients gäbe es nur eine
-      # Antwort für beide: Wer in app darf, käme auch ins wiki.
+      # Two applications, two clients, ONE installation (T-14). Who may enter which is defined
+      # at the provider — there the approval hangs on the client. Without separate clients there would be only one
+      # answer for both: anyone allowed into app would also get into the wiki.
       TINYSESAM_OIDC_CLIENTS: >-
         {"app.example.com":  {"client_id": "app",  "client_secret": "CHANGE_ME_APP"},
          "wiki.example.com": {"client_id": "wiki", "client_secret": "CHANGE_ME_WIKI"}}
-      # Dieselbe Angabe einzeln — praktisch, wenn die Geheimnisse aus einer Datei oder einem
-      # Secret-Store kommen. Der Hostname wird gegen PROTECTED_HOSTS abgeglichen, ein
-      # Unterstrich kann also auch für einen Bindestrich stehen:
+      # The same setting individually — handy when the secrets come from a file or a
+      # secret store. The hostname is matched against PROTECTED_HOSTS, so an
+      # underscore can also stand for a hyphen:
       #   TINYSESAM_OIDC_CLIENT_APP_EXAMPLE_COM_ID: "app"
       #   TINYSESAM_OIDC_CLIENT_APP_EXAMPLE_COM_SECRET: "CHANGE_ME_APP"
       #
-      # Nach dieser Frist fragt das Gateway beim Provider nach, ob die Freigabe noch gilt.
-      # 0 schaltet das ab — dann wirkt ein Gruppenentzug dort erst, wenn die Sitzung abläuft.
+      # After this period the gateway asks the provider whether the approval still holds.
+      # 0 switches that off — then removing a group takes effect there only when the session expires.
       TINYSESAM_OIDC_REVALIDATE_MINUTES: "60"
-      # Das Netz unten, NICHT 0.0.0.0/0: Gilt jede Adresse als Proxy, bleibt keine als Client
-      # übrig — X-Forwarded-For wird dann wirkungslos statt großzügig, und alle Nutzer erscheinen
-      # unter der Caddy-IP. Rate-Limit und IP-Sperre wirken ab da kollektiv, und fail2ban bannt
-      # im Ernstfall den Proxy, also alle. Deshalb hat dieses Compose ein festes Subnetz: eine
-      # vom Docker-Daemon vergebene Bridge-Adresse könnte man hier gar nicht eintragen.
+      # The network below, NOT 0.0.0.0/0: if every address counts as a proxy, none is left as a
+      # client — X-Forwarded-For then becomes ineffective instead of generous, and all users appear
+      # under the Caddy IP. Rate limit and IP block then act collectively, and fail2ban bans
+      # the proxy in an emergency, i.e. everyone. That is why this compose has a fixed subnet: a
+      # bridge address assigned by the Docker daemon could not be entered here at all.
       TINYSESAM_TRUSTED_PROXIES: "172.28.0.0/16"
-      TINYSESAM_HTTPS_MODE: "warn"                     # TLS terminiert Caddy davor
+      TINYSESAM_HTTPS_MODE: "warn"                     # TLS is terminated by Caddy in front
       TINYSESAM_DB: "/data/gateway.db"
-      # Das Lesefutter für fail2ban. Ohne diese Zeile UND den Mount unten zeigt die
-      # mitgelieferte Jail (deploy/fail2ban/) auf eine Datei, die es nie gibt — sie meldet sich
-      # nicht, sie läuft still leer. Zwei mitgelieferte Bausteine, die zusammen nichts tun.
+      # The feed for fail2ban. Without this line AND the mount below, the shipped
+      # jail (deploy/fail2ban/) points to a file that never exists — it does not complain,
+      # it just runs silently empty. Two shipped building blocks that together do nothing.
       TINYSESAM_SECURITY_LOG: "/var/log/tinysesam/security.log"
       TINYSESAM_PORT: "8000"
     volumes:
       - tinysesam-data:/data
-      # Auf den HOST, nicht in ein Volume: fail2ban läuft dort und muss die Datei lesen können.
-      # Das Verzeichnis vorher anlegen und dem Dienstbenutzer geben:
+      # To the HOST, not into a volume: fail2ban runs there and must be able to read the file.
+      # Create the directory beforehand and give it to the service user:
       #   sudo install -d -o 1000 -g 1000 /var/log/tinysesam
       - /var/log/tinysesam:/var/log/tinysesam
     networks: [intern]
@@ -95,15 +95,15 @@ services:
   caddy:
     <<: *haertung
     image: caddy:2.11.7@sha256:685ae3d7c34d9b5f8caeddc5d14051db7bbd88ff1f5a2fa0c16bd8ca328fb7af
-    # Die einzige Capability, die zurückkommt: Ports unter 1024 binden (80/443).
+    # The only capability that comes back: binding ports below 1024 (80/443).
     cap_add: [NET_BIND_SERVICE]
     ports:
       - "80:80"
       - "443:443"
     environment:
-      # Die Caddyfile zeigt ohne diese beiden auf 127.0.0.1 — im Caddy-CONTAINER wäre das der
-      # Container selbst, wo nichts lauscht. Hier gelten die Service-Namen des Compose-Netzes.
-      # (Die App unten ist ein Platzhalter: eigenen Service eintragen.)
+      # Without these two, the Caddyfile points to 127.0.0.1 — inside the Caddy CONTAINER that would be the
+      # container itself, where nothing listens. Here the service names of the compose network apply.
+      # (The app below is a placeholder: enter your own service.)
       TS_AUTH_UPSTREAM: "tinysesam:8000"
       TS_APP_UPSTREAM: "app:9000"
     volumes:
