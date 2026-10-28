@@ -121,8 +121,8 @@ _app_p = FastAPI()
 _app_p.include_router(_auth_p.router())
 _opt_p = _json_b210.loads(TestClient(_app_p).post("/auth/passkey/login/begin").text)
 assert _opt_p["userVerification"] == "preferred", _opt_p
-from tinysesam.konfigpruefung import pruefe as _pruefe                      # noqa: E402
-_f, _w = _pruefe(_auth_p.cfg)
+from tinysesam.config_check import check_config as _check_config                      # noqa: E402
+_f, _w = _check_config(_auth_p.cfg)
 assert any("passkey_user_verification" in x for x in _w), _w
 ok_("B2-10: 'preferred' ist möglich, meldet sich aber beim Aufbau und in der Konfigprüfung")
 

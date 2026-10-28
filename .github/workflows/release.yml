@@ -167,7 +167,7 @@ jobs:
           SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"
           export SOURCE_DATE_EPOCH
           "$RUNNER_TEMP/bau/bin/python" -m build --no-isolation   # dist/*.whl and dist/*.tar.gz
-          python scripts/_artefakte_normalisieren.py dist/*.whl dist/*.tar.gz
+          python scripts/_normalize_artifacts.py dist/*.whl dist/*.tar.gz
 
       - name: Prüfsummen
         run: cd dist && sha256sum ./* > SHA256SUMS && cat SHA256SUMS
@@ -291,7 +291,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Abbild bauen, starten, HEALTHCHECK und /healthz prüfen
-        run: scripts/_abbild_probe.sh
+        run: scripts/_image_probe.sh
 
   image:
     timeout-minutes: 30

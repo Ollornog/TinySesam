@@ -585,7 +585,7 @@ def is_trusted(ip: str, trusted_nets) -> bool:
     # entry (a hostname, a typo) used to raise in the middle of `any()` and thereby invalidate
     # ALL the others — the proxy counted as foreign, every user appeared under its IP. The
     # warning about it then advised entering the proxy network, which was there all along.
-    # `konfigpruefung` rejects such a list at setup; here is the floor for a list
+    # `config_check` rejects such a list at setup; here is the floor for a list
     # that was changed afterwards.
     try:
         addr = ipaddress.ip_address(ip)

@@ -337,7 +337,7 @@ auth_t.store.clear_fails(username="toni")
 
 # (1b) Counting and booking are ONE step, not merely close together: here the
 # counting itself is slowed. Whoever counts and books separately afterwards lets the volley through again.
-# (Mutation probe: `versuch_beginnen` counts via `count_fails` and then books with its own
+# (Mutation probe: `begin_attempt` counts via `count_fails` and then books with its own
 # INSERT → red.)
 del auth_t._check_password                         # the real check again
 _langsam(auth_t.store, "_fails_abfrage", 0.05)

@@ -13,13 +13,13 @@ WHAT NOT: The package gets NO switch for this. `tinysesam.passwords` reads neith
 environment variable nor a setting for its parameters — such a switch would be a way to run
 production with weakened hashes, and it would hang on every container that inherits the
 variable. The parameters are lowered HERE, in the test process, by monkeypatch; the guard
-`tests/test_testlauf.py` pins both. Whoever starts a suite directly (`python tests/test_x.py`)
+`tests/test_runner.py` pins both. Whoever starts a suite directly (`python tests/test_x.py`)
 computes with the production values, and so does every subprocess a suite starts.
 
 EXCEPTIONS (`PRODUKTIONSWERTE`): suites that check the parameters or the runtime of the hashing
 THEMSELVES run with the real values — with lowered ones their checks would be empty (a dummy
 verify that costs nothing is indistinguishable from "no dummy verify"). Which suite belongs
-here is decided by a guard in `tests/test_testlauf.py` from the source text of the suites, not
+here is decided by a guard in `tests/test_runner.py` from the source text of the suites, not
 by memory.
 
 The lowering happens only when the suite itself imports `tinysesam.passwords` (import hook). An
@@ -34,7 +34,7 @@ import sys
 
 #: Suite → reason. These suites compute with the production values.
 PRODUKTIONSWERTE = {
-    "test_bestandsdaten.py": "prüft die scrypt-Parameter selbst (Altformat 0.17.0, needs_rehash)",
+    "test_legacy_data.py": "prüft die scrypt-Parameter selbst (Altformat 0.17.0, needs_rehash)",
     "test_hardening2.py": "misst, dass der Dummy-Verify so lange rechnet wie ein echter Verify",
 }
 

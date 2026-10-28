@@ -111,7 +111,7 @@ ok("csp: typos without a known directive fail at build time, real policies do no
 # A3: an unknown directive NEXT TO known ones is skipped by the browser and the rest applied —
 #     a previously effective existing policy must not fail because of it, but should appear in the log.
 import logging  # noqa: E402
-from tinysesam import konfigpruefung  # noqa: E402
+from tinysesam import config_check  # noqa: E402
 
 
 class _Fang(logging.Handler):
@@ -129,11 +129,11 @@ for gemischt in ("default-src 'self'; require-sri-for script",
                  "default-src 'self'; disown-opener", "default-src 'self'; scirpt-src 'none'"):
     _fang.zeilen.clear()
     _gm = TinySesam(_cfg(csp=gemischt))
-    assert konfigpruefung.csp_fehler(gemischt) == "", gemischt
+    assert config_check.csp_fehler(gemischt) == "", gemischt
     assert any("nicht kennt" in z for z in _fang.zeilen), (gemischt, _fang.zeilen)
     assert any("nicht kennt" in b for b in _gm.cfg.validate()), _gm.cfg.validate()
 logging.getLogger("tinysesam.security").removeHandler(_fang)
-assert konfigpruefung.csp_warnung("default-src 'self'; script-src 'none'") == ""
+assert config_check.csp_warnung("default-src 'self'; script-src 'none'") == ""
 ok("csp: unknown directive next to known ones warns instead of preventing the start")
 # … and also after the build: `validate()` reports a typo set afterwards.
 _nach = TinySesam(_cfg())

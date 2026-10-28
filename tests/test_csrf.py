@@ -343,7 +343,7 @@ os.remove(_db)
 # Two consumers had to rebuild TinySesam when upgrading to 0.20.0: `issue_csrf()` rolls
 # new every time (every page invalidated the forms of the other tabs), `csrf_token()` sets no
 # cookie. Both combined `csrf_cookie_name` + `issue_csrf()` on a carrier response and
-# copied the Set-Cookie line across. Besides, `csrf_rotieren()` promised a fresh token
+# copied the Set-Cookie line across. Besides, `rotate_csrf()` promised a fresh token
 # „at login" — it was only called at the end of a TOTP step, and sign-out left the
 # CSRF cookie in place.
 import ast  # noqa: E402
@@ -601,7 +601,7 @@ ok("way 2 + sign-in/sign-out in one response: form carries the old token (403, d
 # Centrally at `set_cookie()`: every fully signed-in session is created in `_sitzung_anlegen()` and
 # is flagged there; setting its cookie rotates the CSRF token in the same response. A
 # step-up does not rotate it — that would only invalidate the forms of the other open tabs.
-# (Mutation probe: remove the call of `csrf_rotieren` in `set_cookie` → red;
+# (Mutation probe: remove the call of `rotate_csrf` in `set_cookie` → red;
 # remove the flagging in `_sitzung_anlegen` → red; call `store.create_session` directly again
 # in `complete_totp` → red; rotate every full session in `set_cookie` instead of only
 # the flagged ones → red at step-up.)

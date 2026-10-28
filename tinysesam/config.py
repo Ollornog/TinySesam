@@ -233,7 +233,7 @@ class TinySesamConfig:
     #: Key file for encrypting the TOTP secrets (H-14/H-15; 32 bytes, Base64).
     #: The environment variable TINYSESAM_SECRETS_KEY takes precedence; with neither, TinySesam creates
     #: `<db_path>.key` (0600). Without the key all TOTP setups are lost — back it up separately
-    #: from the database (docs/BETRIEB.md).
+    #: from the database (docs/OPERATIONS.md).
     secrets_key_file: str = ""
     # CAUTION: ineffective and therefore REJECTED since 0.18.0 — the switch was never
     # read. Making TOTP mandatory works through the factor chain:
@@ -741,8 +741,8 @@ class TinySesamConfig:
         """(errors, warnings) kept apart — `validate()` returns both in one list, and from
         that one could no longer read what would have made the setup fail. `TinySesam.router()`
         needs exactly this distinction (B3-14)."""
-        from .konfigpruefung import pruefe
-        fehler, warnungen = pruefe(self)
+        from .config_check import check_config
+        fehler, warnungen = check_config(self)
         if self.cookie_samesite not in ("lax", "strict", "none"):
             fehler.append(f"cookie_samesite={self.cookie_samesite!r} — erlaubt sind 'lax', "
                           "'strict', 'none' (klein geschrieben)")

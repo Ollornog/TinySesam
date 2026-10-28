@@ -16,7 +16,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from tinysesam import TinySesam, TinySesamConfig, ConfigError
-from tinysesam import gate, konfigpruefung
+from tinysesam import gate, config_check
 
 
 def ok(name):
@@ -63,7 +63,7 @@ PUB = base64.b64decode(auth.gate_public_key())
 assert len(PUB) == 32
 
 
-def pruefe(tok, aud="app.example.com", jetzt=None):
+def check_config(tok, aud="app.example.com", jetzt=None):
     return gate.pruefen(PUB, tok, aud=aud, iss=ISS, jetzt=int(time.time()) if jetzt is None else jetzt)
 
 
@@ -77,7 +77,7 @@ kopf = r.headers["X-TinySesam-Gate-Cookie"]
 for teil in ("Path=/", "Max-Age=300", "Secure", "HttpOnly", "SameSite=Lax"):
     assert teil in kopf, (teil, kopf)
 assert "domain" not in kopf.lower(), kopf
-inhalt = pruefe(tok)
+inhalt = check_config(tok)
 assert inhalt, "the fresh token does not pass the check"
 assert inhalt["sub"] == str(uid) and inhalt["ts_user"] == "anna" and inhalt["ts_id"] == str(uid)
 assert inhalt["ts_name"] == "Anna Berg" and inhalt["ts_email"] == "anna@example.com"
@@ -115,13 +115,13 @@ ok("role missing → 403, no gate token")
 # ---------- Audience with roles ----------
 r = c.get("/auth/forward?roles=redaktion,chef", headers=PROXY)
 _, tok_r = token_aus(r)
-assert pruefe(tok_r) is None, "a token from a check WITH roles applies on the path without roles"
-assert pruefe(tok_r, aud="app.example.com|roles=chef,redaktion")
+assert check_config(tok_r) is None, "a token from a check WITH roles applies on the path without roles"
+assert check_config(tok_r, aud="app.example.com|roles=chef,redaktion")
 ok("roles are in the audience (canonically sorted)")
 
 # Conversely the actual attack: a token without role information must not apply on a path with roles
 # — the proxy sees only the audience.
-assert pruefe(tok, aud="app.example.com|roles=redaktion") is None
+assert check_config(tok, aud="app.example.com|roles=redaktion") is None
 ok("token without role information does not apply on a path with roles")
 
 assert gate.zielgruppe("App.Example.com.", [["b", "a", "a"], ["c"], []]) == "app.example.com|roles=a,b;c"
@@ -161,8 +161,8 @@ faelle = {
     "Unsinn": "a.b.c",
 }
 for was, falsch in faelle.items():
-    assert pruefe(falsch) is None, was
-assert pruefe(neu_signiert(basis)), "the counter-check (re-signed unchanged) must pass"
+    assert check_config(falsch) is None, was
+assert check_config(neu_signiert(basis)), "the counter-check (re-signed unchanged) must pass"
 ok(f"check rejects {len(faelle)} forgeries, the unchanged counter-check passes")
 
 # Independent counter-check: a foreign JOSE implementation (authlib, extra [oidc]) reads the token
@@ -201,7 +201,7 @@ def gate_direkt():
              "client": ("127.0.0.1", 1), "server": ("testserver", 80), "scheme": "http"}
     kopf = auth._gate_cookie(Request(scope), auth._als_dict(auth.store.get_user(uid)),
                              "https://app.example.com/x", [])
-    return pruefe(kopf.split(";", 1)[0].split("=", 1)[1])
+    return check_config(kopf.split(";", 1)[0].split("=", 1)[1])
 
 
 for roh, soll in (("Anna Ärger", "Anna Ärger"), ("Иван", "Иван"),
@@ -265,7 +265,7 @@ ok("`gate-key` without base key: error, and it creates NO new one")
 def befunde(**extra):
     werte = dict(db_path=":memory:", forward_auth_enabled=True, gate_token_enabled=True)
     werte.update(extra)
-    return konfigpruefung.pruefe(TinySesamConfig(**werte))[0]
+    return config_check.check_config(TinySesamConfig(**werte))[0]
 
 
 assert not [b for b in befunde() if "gate" in b]

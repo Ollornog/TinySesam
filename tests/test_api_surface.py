@@ -1,7 +1,7 @@
 """Pin down the public API — so a break gets NOTICED instead of just happening.
 
 Milestone 1.0 demands that the public API does not break across two minor versions
-(`backlog/M-1-api-stabil-1-0.md`). Without measurement that is a claim: both most recent
+(`backlog/M-1-api-stable-1-0.md`). Without measurement that is a claim: both most recent
 releases broke it, and both times it was only noticed while writing the CHANGELOG.
 
 This test pins the surface in `tests/api_surface.json` and compares on every run.
@@ -26,9 +26,9 @@ one itself. A new name comes in without a tier and keeps the guard red until som
 — a silent "A" would have committed every helper method that happens to be created without an
 underscore, for good.
 
-**Tier C is only an alias since 0.22.0** (`tinysesam/_veraltet.py`): The implementation
+**Tier C is only an alias since 0.22.0** (`tinysesam/_deprecated.py`): The implementation
 is called `_name`, the old name keeps forwarding until 1.0 and warns. The guard additionally
-pins down (`c_befunde()`): every C entry is a `Veraltet` in the class and vice versa, it points to the
+pins down (`c_befunde()`): every C entry is a `Deprecated` in the class and vice versa, it points to the
 underscore implementation, calling it warns exactly once with the replacement and at the caller, no
 code in the package uses an old name, and from 1.0 none is left.
 
@@ -55,7 +55,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import importlib
 from tinysesam import ConfigError, LoginResult, PasswordChangeResult, TinySesam, TinySesamConfig
-from tinysesam._veraltet import BIS, Veraltet
+from tinysesam._deprecated import BIS, Deprecated
 
 _paket = importlib.import_module("tinysesam")
 WURZEL = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -170,7 +170,7 @@ def oberflaeche() -> dict:
     # without triggering it; a method alias is listed above with the methods.
     konstanten = {}
     for name, wert in vars(TinySesam).items():
-        if isinstance(wert, Veraltet):
+        if isinstance(wert, Deprecated):
             if wert.methode:
                 continue
             wert = vars(TinySesam)[wert.ziel]
@@ -437,11 +437,11 @@ def selbstpruefung_signatur(jetzt: dict) -> None:
     assert signatur(lambda *, x: x) == "(*, x)", signatur(lambda *, x: x)
     sig = jetzt["TinySesam"]["login_password"]
     assert ", *, next: " in sig, f"login_password measured without `*`: {sig}"
-    # `API.md` shows the same signature (own copy in scripts/_api_doku.py, where the
+    # `API.md` shows the same signature (own copy in scripts/_api_docs.py, where the
     # marks were missing just the same).
     import importlib.util
     spec = importlib.util.spec_from_file_location("_api_doku_probe",
-                                                  os.path.join(WURZEL, "scripts", "_api_doku.py"))
+                                                  os.path.join(WURZEL, "scripts", "_api_docs.py"))
     doku = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(doku)
     for fn in (probe, mit_args, TinySesam.login_password, TinySesamConfig.oidc_gateway):
@@ -555,7 +555,7 @@ def c_eintraege(datei: dict) -> dict:
             for name, e in eintraege.items() if isinstance(e, dict) and e.get("stufe") == "C"}
 
 
-def _warnt(klasse, name: str, alias: Veraltet) -> list:
+def _warnt(klasse, name: str, alias: Deprecated) -> list:
     """Does the alias warn exactly once, with replacement and at the caller — and does it forward?
 
     On an object without constructor whose target is a stub: This is how the guard measures the alias
@@ -594,7 +594,7 @@ def _warnt(klasse, name: str, alias: Veraltet) -> list:
     return [f"TinySesam{'' if alias.methode else '.konstanten'}.{name}: Alias {f}" for f in fehler]
 
 
-def _zuweisung(klasse, name: str, alias: Veraltet) -> list:
+def _zuweisung(klasse, name: str, alias: Deprecated) -> list:
     """An assignment to the old name on the object (test fake) no longer takes effect — does it warn?
 
     Exactly one `RuntimeWarning` (visible without a filter) that names the target and points to the assignment;
@@ -643,10 +643,10 @@ def alias_befunde(datei: dict, klasse=TinySesam) -> list:
                            "der Klasse — dort als Alias")
             continue
         alias = inspect.getattr_static(klasse, name, None)
-        if not isinstance(alias, Veraltet):
+        if not isinstance(alias, Deprecated):
             art = "fehlt in der Klasse" if alias is None else "hat eine eigene Implementierung"
             befunde.append(f"{bereich}.{name}: Stufe C, {art} — die Implementierung heisst "
-                           f"`_{name}`, der alte Name wird `Veraltet(\"_{name}\", \"<Ersatz>\")`")
+                           f"`_{name}`, der alte Name wird `Deprecated(\"_{name}\", \"<Ersatz>\")`")
             continue
         if alias.methode != C_BEREICHE[bereich]:
             befunde.append(f"{bereich}.{name}: der Alias zeigt auf "
@@ -655,7 +655,7 @@ def alias_befunde(datei: dict, klasse=TinySesam) -> list:
             befunde.append(f"{bereich}.{name}: die Ablage nennt `ziel` {e.get('ziel')!r}, der "
                            f"Alias zeigt auf {alias.ziel!r}")
         ziel = inspect.getattr_static(klasse, alias.ziel, None)
-        if ziel is None or isinstance(ziel, Veraltet):
+        if ziel is None or isinstance(ziel, Deprecated):
             befunde.append(f"{bereich}.{name}: das Ziel {alias.ziel!r} ist keine Implementierung")
         elif alias.ziel != f"_{name}" and stufe.get((bereich, alias.ziel)) != "A":
             befunde.append(f"{bereich}.{name}: zeigt auf {alias.ziel!r} — erlaubt ist `_{name}` "
@@ -665,10 +665,10 @@ def alias_befunde(datei: dict, klasse=TinySesam) -> list:
                            f"(Ablage {e.get('seit')!r}/{e.get('bis')!r}, Alias bis {alias.bis})")
         befunde += _warnt(klasse, name, alias) + _zuweisung(klasse, name, alias)
     for name, alias in sorted(vars(klasse).items()):
-        if isinstance(alias, Veraltet):
+        if isinstance(alias, Deprecated):
             bereich = "TinySesam" if alias.methode else "TinySesam.konstanten"
             if (bereich, name) not in c:
-                befunde.append(f"{bereich}.{name}: ist in der Klasse ein Alias (Veraltet), in der "
+                befunde.append(f"{bereich}.{name}: ist in der Klasse ein Alias (Deprecated), in der "
                                "Ablage aber nicht Stufe C")
     return befunde
 
@@ -691,7 +691,7 @@ def interne_aufrufe(ziele: dict, wurzel: str = WURZEL) -> tuple:
     """(findings, checked files) — does code in the repo that is not a test use an old name?
 
     Strings only count in the package itself (`security.EIGENE_SPERRE` names methods by
-    name); `scripts/_api_doku.py` may name the old names — it describes them."""
+    name); `scripts/_api_docs.py` may name the old names — it describes them."""
     befunde, zahl = [], 0
     for ordner in EIGENER_CODE:
         for pfad_, unter, dateien in os.walk(os.path.join(wurzel, ordner)):
@@ -796,7 +796,7 @@ def seit_befunde(datei: dict, changelog: str) -> list:
 def c_befunde(datei: dict, klasse=TinySesam, version: str = _paket.__version__,
               wurzel: str = WURZEL, changelog: "str | None" = None) -> tuple:
     """(findings, checked files) — the whole tier-C check of the normal run."""
-    ziele = {name: alias.ziel for name, alias in vars(klasse).items() if isinstance(alias, Veraltet)}
+    ziele = {name: alias.ziel for name, alias in vars(klasse).items() if isinstance(alias, Deprecated)}
     ziele.update({name: e.get("ziel") or f"_{name}" for (_, name), e in c_eintraege(datei).items()
                   if name not in ziele})
     innen, zahl = interne_aufrufe(ziele, wurzel)
@@ -890,7 +890,7 @@ def selbstpruefung_c() -> None:
     hopefully happen to be right, and a rule that was never red proves nothing."""
     import tempfile
 
-    def klasse(alias_typ=Veraltet, echt_f=False):
+    def klasse(alias_typ=Deprecated, echt_f=False):
         ns = {"_f": lambda self, *a, **k: ("f", a, k), "_K": (1, 2),
               "g": lambda self: None, "K": alias_typ("_K", "ohne Ersatz, intern")}
         ns["f"] = (lambda self: None) if echt_f else alias_typ("_f", "stattdessen `g`")
@@ -917,39 +917,39 @@ def selbstpruefung_c() -> None:
     sauber = alias_befunde(ablage(), klasse())
     assert sauber == [], sauber
 
-    class Stumm(Veraltet):
+    class Stumm(Deprecated):
         __slots__ = ()
 
         def _warnen(self):
             pass
 
-    class Tief(Veraltet):
+    class Tief(Deprecated):
         __slots__ = ()
 
         def _warnen(self):
             warnings.warn(self.meldung, DeprecationWarning, stacklevel=2)
 
-    class Verschluckt(Veraltet):
+    class Verschluckt(Deprecated):
         __slots__ = ()
 
         def __get__(self, obj, owner=None):
             fn = super().__get__(obj, owner)
             return (lambda *a, **k: fn(*a)) if self.methode else fn
 
-    class StilleZuweisung(Veraltet):
+    class StilleZuweisung(Deprecated):
         __slots__ = ()
 
         def __set__(self, obj, wert):
             obj.__dict__[self.name] = wert
 
-    class Falsch(Veraltet):
+    class Falsch(Deprecated):
         __slots__ = ()
 
         def __set__(self, obj, wert):
             warnings.warn("veraltet", RuntimeWarning, stacklevel=2)
             obj.__dict__[self.name] = wert
 
-    class Anderswo(Veraltet):
+    class Anderswo(Deprecated):
         __slots__ = ()
 
         def __set__(self, obj, wert):
@@ -970,8 +970,8 @@ def selbstpruefung_c() -> None:
     rot(alias_befunde(ablage(x__Neu__stufe="C"), klasse()), "exporte.Neu: Stufe C gibt es nur")
     rot(alias_befunde(ablage(m__h__ziel="_h"), klasse()), "TinySesam.h: Stufe C, fehlt")
     umgelenkt = type("TinySesam", (), {"_f": lambda self: None, "g": lambda self: None,
-                                        "_K": 1, "K": Veraltet("_K", "x"),
-                                        "f": Veraltet("g", "stattdessen `g`")})
+                                        "_K": 1, "K": Deprecated("_K", "x"),
+                                        "f": Deprecated("g", "stattdessen `g`")})
     assert alias_befunde(ablage(m__f__ziel="g"), umgelenkt) == [], "target of tier A is allowed"
     rot(alias_befunde(ablage(m__f__ziel="g", m__g__stufe="B"), umgelenkt), "erlaubt ist `_f`")
     # Internal calls: AST over a probe repo — attribute everywhere, string only in the package.
@@ -1031,7 +1031,7 @@ def selbstpruefung_c() -> None:
 # old names that keep forwarding as aliases until 1.0. The keys and values this surface
 # returns or accepts are measured, since the second PO decision of the same day, by `pruefe_werte()`
 # further below; audit and log lines (`login_fail … grund=`, fail2ban) stay as they are.
-# Section (k) in `tests/test_anmelden.py` additionally measures the surface of the login building block together with
+# Section (k) in `tests/test_sign_in.py` additionally measures the surface of the login building block together with
 # the values of `LoginResult.REASONS` — with the same word list (`deutsch_in`).
 # (Mutation probes: `by_operator` in `change_username` back to `durch_betreiber` → red;
 # `ConfigError.owner_id` back to `besitzer_id` → red; a configuration field `sperre_minuten`
@@ -1255,12 +1255,12 @@ def selbstpruefung_namen() -> None:
 # of custom pages (`set_template`: `ctx["prefix"]`, `ctx["purpose"]`), the JSON responses of the routes,
 # the values of `kind` and what of it is in the database. No alias; stored values are carried over
 # by the migration to schema 12 (`Store._werte_englisch`), an old value is still read
-# (tests/test_bestandsdaten.py). Audit and log lines stay as they are (fail2ban, operators'
+# (tests/test_legacy_data.py). Audit and log lines stay as they are (fail2ban, operators'
 # filters) — this check does not measure them.
 #
 # Measured twice: on the live object (a probe instance runs through the paths, a hook
 # collects the events, custom templates record their context) and in the source (every
-# call of `_sicherheitsereignis`, `render_page`, every key a built-in page reads from
+# call of `_security_event`, `render_page`, every key a built-in page reads from
 # `ctx`, every returned JSON response of the routes). The probe sees what really
 # goes out; the source what the probe does not reach (such as `passkey_added` without the extra).
 # (Mutation probes: `failure_series` in `gc()` back to `fehlserien` → red; `reason=` in
@@ -1474,7 +1474,7 @@ ROUTEN_MODULE = ("router.py", "admin.py", "webauthn_.py", "oidc.py", "saml_.py",
 
 def werte_im_code(quellen: dict) -> list:
     """[(where, name)] from the source (`{filename: text}`): keyword arguments of every call of
-    `_sicherheitsereignis` (the payload of `on_security_event`) and `render_page` (the context
+    `_security_event` (the payload of `on_security_event`) and `render_page` (the context
     of custom pages), every key a built-in renderer reads from `ctx` or
     `render_page` puts into it, the keys of the `…_ctx` helpers, and every key of a
     returned JSON response in a routes module."""
@@ -1499,7 +1499,7 @@ def werte_im_code(quellen: dict) -> list:
         for k in ast.walk(baum):
             if isinstance(k, ast.Call):
                 name = k.func.attr if isinstance(k.func, ast.Attribute) else getattr(k.func, "id", "")
-                if name == "_sicherheitsereignis":
+                if name == "_security_event":
                     paare += [(f"{datei}: on_security_event-Nutzlast", w.arg) for w in k.keywords if w.arg]
                 elif name == "render_page":
                     paare += [(f"{datei}: render_page-Kontext", w.arg) for w in k.keywords
@@ -1581,7 +1581,7 @@ def selbstpruefung_werte() -> None:
     probe = [w for wo, w in werte_der_probe(Rueckfall) if wo == "gc()"]
     assert "fehlserien" in probe and wert_befunde([("gc()", "fehlserien")]), probe
     quelle = {"router.py": 'def f(auth, request):\n'
-                           '    auth._sicherheitsereignis("x", 1, anzahl=2)\n'
+                           '    auth._security_event("x", 1, anzahl=2)\n'
                            '    return auth.render_page("p", request=request, zweck="login")\n'
                            'def g():\n    return {"ok": True, "gebunden": []}\n'
                            'def _reg_ctx(nxt):\n    return dict(next=nxt, kennung="")\n',
@@ -1664,7 +1664,7 @@ def main(argv):
         for zeile in c_fehler:
             print(f"    TIER C       {zeile}")
         print("\n  Tier C means: The implementation carries an underscore, the old name is "
-              "`Veraltet(\"_name\", \"<Ersatz>\")`\n  (tinysesam/_veraltet.py), and nothing in the "
+              "`Deprecated(\"_name\", \"<Ersatz>\")`\n  (tinysesam/_deprecated.py), and nothing in the "
               "package calls it. The entry in tests/api_surface.json\n  carries `ziel`, `seit` and "
               "`bis`.\n")
     else:

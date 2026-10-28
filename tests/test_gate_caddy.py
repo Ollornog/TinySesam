@@ -339,10 +339,10 @@ try:
         assert st == 302 and FORWARD["n"] == vorher + 1, (pfad, st)
     ok(f"{len(zu)} path tricks and neighbouring paths → through the gate (..;, %2e, %5c, NUL, /x/../s/, /S/, //s/ …)")
 
-    # ---------- Abnahmemuster (T-24): deploy/forward-auth/abnahme.sh gegen diesen Aufbau ----------
+    # ---------- Abnahmemuster (T-24): deploy/forward-auth/acceptance.sh gegen diesen Aufbau ----------
     import shutil  # noqa: E402
-    assert shutil.which("bash") and shutil.which("curl"), "abnahme.sh needs bash and curl"
-    skript = ROOT / "deploy/forward-auth/abnahme.sh"
+    assert shutil.which("bash") and shutil.which("curl"), "acceptance.sh needs bash and curl"
+    skript = ROOT / "deploy/forward-auth/acceptance.sh"
     umg_a = {**os.environ, "APP": f"http://app.example.com:{PORT}", "SHARE": "/s/abc123",
              "SESSION": "; ".join(f"{k}={v}" for k, v in sitzung.items()),
              "CURL_EXTRA": f"--resolve app.example.com:{PORT}:127.0.0.1"}
@@ -350,14 +350,14 @@ try:
     assert a.returncode == 0 and "bestanden" in a.stdout and "ROT" not in a.stdout, a.stdout + a.stderr
     zeilen = [z for z in a.stdout.splitlines() if z.startswith("  ok")]
     assert len(zeilen) >= 15, a.stdout
-    ok(f"abnahme.sh gegen diesen Aufbau: {len(zeilen)} checks passed")
+    ok(f"acceptance.sh gegen diesen Aufbau: {len(zeilen)} checks passed")
     # Counter-check: the script must turn red when an expectation is wrong — here a path that is
     # closed but is given as a share. Otherwise “passed” would also be the answer of a script that
     # checks nothing.
     a = subprocess.run(["bash", str(skript)], env={**umg_a, "SHARE": "/admin/x.js"},
                        capture_output=True, text=True, timeout=120)
     assert a.returncode == 1 and "ROT  Share-Pfad /admin/x.js ist offen" in a.stdout, a.stdout
-    ok("counter-check: a path that is closed, given as share → abnahme.sh red (exit 1)")
+    ok("counter-check: a path that is closed, given as share → acceptance.sh red (exit 1)")
     tc.post("/auth/gate/resume", data={"next": f"http://app.example.com:{PORT}/"}, follow_redirects=False)
 
     # ---------- the price: revocation only takes effect on expiry ----------

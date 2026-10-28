@@ -272,7 +272,7 @@ is the same code path the routes use, minus the HTTP surface.
 
 `TinySesamConfig` is a dataclass, and that is part of the promise: `dataclasses.fields(TinySesamConfig)`
 lists every field — handy for passing on only the keys it knows from your own settings. Every
-field with its meaning: [`KONFIGURATION.md`](https://github.com/Ollornog/TinySesam/blob/main/KONFIGURATION.md) (German).
+field with its meaning: [`CONFIGURATION.md`](https://github.com/Ollornog/TinySesam/blob/main/CONFIGURATION.md) (German).
 
 ## Language (i18n)
 
@@ -760,7 +760,7 @@ Modeled on Authelia/Fail2Ban — the thresholds are changeable **in the admin pa
   path); sessions without "stay signed in" end after 8 h of inactivity (`session_idle_minutes`); TOTP
   secrets are stored AES-256-GCM-encrypted — **back up the key** (`TINYSESAM_SECRETS_KEY`,
   `secrets_key_file` or `<db>.key`) separately; an OIDC session re-checks its refresh token every
-  `oidc_session_refresh_minutes` and ends when the provider says no. Details: `docs/BETRIEB.md`.
+  `oidc_session_refresh_minutes` and ends when the provider says no. Details: `docs/OPERATIONS.md`.
 - **Lockout notice** (ASVS 6.3.5): with a mailer configured, the verified address of a locked-out
   account gets one notice per lockout window (opt-out `notify_login_failures=False`).
 - **Consecutive failures, no window** (`account_max_consecutive_failures`, default 100): every
@@ -965,7 +965,7 @@ For **machine access** (scripts, other services, system daemons) — alongside t
   and an admin's key was a complete write API: create users, set `is_admin`, reset passwords — no
   second factor, no CSRF layer. A leaked CI key was the instance. (Up to 0.21.x the kinds were
   called `automat` and `mensch`; since 0.22.0 those names are an input error that names the new
-  one, and the migration rewrites stored keys — rolling back: `docs/BETRIEB.md`.)
+  one, and the migration rewrites stored keys — rolling back: `docs/OPERATIONS.md`.)
 - **Keys expire by themselves.** Without `expires_days` a key used to live forever, and that was
   the common case. `apikey_default_days` (90) now applies; `expires_days=0` still means
   "unlimited" but needs `apikey_allow_unlimited=True` and lands in the audit entry.
@@ -985,7 +985,7 @@ Built-in panel at **`/auth/admin`** (`is_admin` only), embeddable with no extra 
 - **Sessions:** view active ones + end them.
 - **Hardening:** tune the thresholds (attempts/lockout time/rate limit) live.
 - **Version:** the running version plus a note on how updates work — there is **no “update
-  now” button**, and deliberately so ([ADR-2](https://github.com/Ollornog/TinySesam/blob/main/backlog/ADR-2-kein-selbst-update.md)):
+  now” button**, and deliberately so ([ADR-2](https://github.com/Ollornog/TinySesam/blob/main/backlog/ADR-2-no-self-update.md)):
   an auth module that loads code at runtime is a back door with a manual. You update where you
   installed it. (This line used to promise a button, a manual/auto mode and a version pin —
   none of which has existed since 0.12.0.)
@@ -1064,7 +1064,7 @@ All optional (on/off by config), usable individually and combined, front end rep
 - **Account page:** built in at `/auth/account` (`account_enabled`) — password/PIN/2FA/passkeys/keys.
 - **Forward-auth:** `forward_auth_enabled` → `GET /auth/forward` (200 + `Remote-User/Groups/Email` or
   401 + `X-TinySesam-Location`). Examples: [`deploy/forward-auth/`](https://github.com/Ollornog/TinySesam/tree/main/deploy/forward-auth/) (Caddy/nginx/Traefik;
-  `nginx-pfad.conf` covers the other common shape — one host, individual paths protected, static files + PHP behind it).
+  `nginx-path.conf` covers the other common shape — one host, individual paths protected, static files + PHP behind it).
   **Roles at the proxy:** have the proxy ask for them — `GET /auth/forward?roles=editor,admin` or the header
   `X-TinySesam-Roles`. One of the listed roles is enough; signed in but missing the role answers **403**
   (not 401 — that would bounce the user to the login and straight back). Without the parameter the endpoint
@@ -1177,7 +1177,7 @@ Routes: `/auth/saml/login` (→ IdP), `/auth/saml/acs` (assertion, signature-che
 > POST — fine for local runs and the test client, broken against a real IdP. The reason is in the
 > `tinysesam.security` log.
 
-> **Every field, in one place:** [`KONFIGURATION.md`](https://github.com/Ollornog/TinySesam/blob/main/KONFIGURATION.md)
+> **Every field, in one place:** [`CONFIGURATION.md`](https://github.com/Ollornog/TinySesam/blob/main/CONFIGURATION.md)
 > lists all 120 config fields with type, default and meaning — generated from `config.py`, so it
 > cannot drift. This README explains the *ways*; that page answers *“there's a field — what does
 > it do?”*
@@ -1270,7 +1270,7 @@ gateway and with it every connection — also after the app was signed out “he
 With `TS_SHARE_PRAEFIX='^/(s|public/share)/'` both Caddy templates let paths through without sign-in
 and without an identity. The raw path is checked; the rule rejects `..`, `;`, backslash, NUL and
 their encoded forms (Tomcat and Spring read `/s/..;/admin` as `/admin`). Off by default. How to
-measure an app's paths: `docs/BETRIEB.md`.
+measure an app's paths: `docs/OPERATIONS.md`.
 
 ### Signing out at the app: here only or everywhere (T-22)
 
@@ -1309,7 +1309,7 @@ Not everything without a leading underscore is a promise. Since 0.22.0 every pub
 
 A new public name has no tier until someone decides; the guard `tests/test_api_surface.py` stays
 red until then, so nothing becomes a promise by accident. The config fields are tier A (except
-one tombstone, marked in `KONFIGURATION.md`), and so are the error types (`TinySesamError`,
+one tombstone, marked in `CONFIGURATION.md`), and so are the error types (`TinySesamError`,
 `ConfigError`, `StateError`, `MissingExtra`, `MailNotConfigured`).
 
 **Tiers A and B are in English.** Up to 0.21.x some of these names were German
@@ -1325,7 +1325,7 @@ accept (the report of `federation_bind_existing`, `gc()`, `create_api_key`, the 
 `ctx["purpose"]`), the JSON of the account and admin routes, and the API key kinds `automation`/
 `human`. The two values that live in the database (the key kind, the `old` address in a pending
 address-change link) are migrated on start (schema 12) and still read correctly in their old form;
-rolling back to 0.21.x takes one SQL block from `docs/BETRIEB.md`. The same guard measures them on a
+rolling back to 0.21.x takes one SQL block from `docs/OPERATIONS.md`. The same guard measures them on a
 probe instance and in the source. **Audit and log lines stay as they are** — fail2ban filters and
 your own filters depend on them (`apikey_create … art=automat` keeps its wording).
 

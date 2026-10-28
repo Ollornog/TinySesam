@@ -14,7 +14,7 @@ The building blocks, deliberately small and without a dependency of their own (`
   account. `caddy-jwt` enforces the algorithm when `sign_alg EdDSA` is set — a
   token with `alg: none` or `HS256` in its header is therefore not checked any differently.
 * **The key is derived**, not managed separately: HKDF-SHA256 from the key that
-  already protects the TOTP secrets (`geheimnis.schluessel_laden`). So there is no second
+  already protects the TOTP secrets (`vault.load_key`). So there is no second
   secret that can be backed up, distributed and forgotten, and all workers of the same
   installation sign with the same key. Whoever changes the base key changes
   this one too — the proxy then needs the new public key (`tinysesam gate-key`).

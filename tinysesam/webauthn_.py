@@ -120,7 +120,7 @@ def register_passkey_routes(router, auth):
         # it came about without a trace — whoever set it up secretly left nothing behind (B5-01).
         auth.audit("passkey_create", u["username"], auth.client_ip(request),
                    f"name={name or 'Passkey'}")
-        auth._sicherheitsereignis("passkey_added", u["id"], name=name or "Passkey")
+        auth._security_event("passkey_added", u["id"], name=name or "Passkey")
         resp = JSONResponse({"ok": True, "other_sessions": auth.count_other_sessions(request, u)})  # B1-7
         # The flow is consumed (pop_flow) — the cookie for it binds nothing any more and would only
         # keep going along to every app (B-20). OIDC and SAML delete theirs on the way back as well.

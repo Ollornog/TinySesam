@@ -228,7 +228,7 @@ assert "app=app-a.example.com" in r.headers.get("X-TinySesam-Location", ""), r.h
 ok("T-14: signed in, but without approval for this application → 401 with app= in the login URL")
 
 # The provider has agreed for A.
-auth4._vermerke_oidc_freigabe(_sitzung, "app-a.example.com", rollen=["a-team"])
+auth4._record_oidc_approval(_sitzung, "app-a.example.com", rollen=["a-team"])
 r = c14.get("/auth/forward", headers=PROXY_A)
 assert r.status_code == 200, (r.status_code, r.headers.get("X-TinySesam-Reason"))
 
@@ -246,12 +246,12 @@ assert r.status_code == 401 and r.headers.get("X-TinySesam-Reason") == "app-vera
 assert c14.get("/auth/forward", headers=PROXY_A).status_code == 401
 # The session itself is untouched — that is the difference from signing out.
 assert auth4.store.get_session(_sitzung) is not None, "the session must survive the expired approval"
-auth4._vermerke_oidc_freigabe(_sitzung, "app-a.example.com")
+auth4._record_oidc_approval(_sitzung, "app-a.example.com")
 assert c14.get("/auth/forward", headers=PROXY_A).status_code == 200
 ok("T-14: after oidc_revalidate_minutes the approval lapses (session stays), confirmation opens it again")
 
 # Revocation by hand: one application closed, the other open.
-auth4._vermerke_oidc_freigabe(_sitzung, "app-b.example.com")
+auth4._record_oidc_approval(_sitzung, "app-b.example.com")
 assert c14.get("/auth/forward", headers=PROXY_B).status_code == 200
 _weg = auth4.store.drop_oidc_grant(_h, "app-b.example.com")
 assert _weg == 1
@@ -303,9 +303,9 @@ c15.post("/auth/login", data={"username": "admin", "password": "geheim123", "nex
          follow_redirects=False)
 r = c15.get("/auth/forward", headers=PROXY)
 assert r.status_code == 200, (r.status_code, r.headers.get("X-TinySesam-Reason"))
-assert auth5._oidc_anwendung("https://app.example.com/x") == ""
+assert auth5._oidc_application("https://app.example.com/x") == ""
 assert "app=" not in auth5._forward_login_url("https://app.example.com/x")
-assert auth5._oidc_freigabe_gueltig("egal", "egal") == (True, "")
+assert auth5._oidc_approval_valid("egal", "egal") == (True, "")
 ok("T-14: an installation with one client behaves unchanged (no app=, no approval needed)")
 
 # The gateway preset's default is here so that a change to it gets noticed: it is the

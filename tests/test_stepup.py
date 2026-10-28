@@ -192,8 +192,8 @@ os.remove(db_t)
 
 # On step-up via /auth/totp TinySesam rotates the session token but not the CSRF token —
 # like `/auth/reauth`: a new one would only invalidate the forms in the other open tabs.
-# At login (half → full), by contrast, a fresh one (csrf_rotieren, cookie injection).
-# (Mutation probe: remove the `if not s["mfa_ok"]` before csrf_rotieren in router.totp_submit → red.)
+# At login (half → full), by contrast, a fresh one (rotate_csrf, cookie injection).
+# (Mutation probe: remove the `if not s["mfa_ok"]` before rotate_csrf in router.totp_submit → red.)
 db_x = os.path.join(tempfile.mkdtemp(), "t.db")
 auth_x = TinySesam(TinySesamConfig(lang="de", db_path=db_x, passkey_enabled=False, oidc_enabled=False,
                                    cookie_secure=False, stepup_max_age_sec=900,

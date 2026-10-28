@@ -8,7 +8,7 @@ The version appears in six places (package, module, two READMEs several times, c
 in the CHANGELOG. By hand this has worked so far because a test enforces it — but "works because
 a test complains" is not a procedure, it is a loop of error and correction. Milestone 1.0
 explicitly requires that a release runs through without manual steps
-(`backlog/M-1-api-stabil-1-0.md`).
+(`backlog/M-1-api-stable-1-0.md`).
 
 What this script deliberately does NOT do: tag and push. A human presses the button — the same
 separation as for rollout (delivery, not deployment). It prepares and says what follows.

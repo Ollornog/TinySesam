@@ -31,7 +31,7 @@ class FakeSAML:
 
     def process(self, req, base, request_id=""):
         # The stand-in represents the real client AFTER a successful check — the comparison of
-        # InResponseTo is covered by tests/test_sicherheit_befunde.py. The `req` set is
+        # InResponseTo is covered by tests/test_security_findings.py. The `req` set is
         # recorded: python3-saml computes its own address from it and compares it
         # with the `Destination` of the assertion (F-16).
         self.kontexte.append(req)
@@ -221,22 +221,22 @@ os.remove(db)
 
 # ---------- B-umgehung-10: the two SAML locks measured INDIVIDUALLY ----------
 # Two bolts secure the same path: (1) the ACS route explicitly passes on "no proof",
-# (2) `saml` is in `FOEDERIERTE_FAKTOREN` and requires an explicit `True` there.
+# (2) `saml` is in `FEDERATED_FACTORS` and requires an explicit `True` there.
 # As long as both exist, removing a single one goes unnoticed anywhere — whoever later
 # rebuilds one loses it unnoticed. Each probe therefore detaches the other one.
 
-# Lock 1 alone: `FOEDERIERTE_FAKTOREN` empty, account with REAL proof (created by the
+# Lock 1 alone: `FEDERATED_FACTORS` empty, account with REAL proof (created by the
 # operator). Now only the route's pass-through holds.
 db, auth, app = build(admin_identifiers=["boss@example.com"])
 uid = auth.create_user("angreifer", email="boss@example.com")
 assert auth.store.get_user(uid)["email_verified"] == 1, "precondition: the account is proven"
-auth._FOEDERIERTE_FAKTOREN = ()                 # lock 2 detached
+auth._FEDERATED_FACTORS = ()                 # lock 2 detached
 auth.saml = FakeSAML(nameid="angreifer", attrs={"email": ["boss@example.com"]})
 assert TestClient(app).post("/auth/saml/acs", data={"SAMLResponse": "x"},
                             follow_redirects=False).status_code == 303
 assert not auth.get_user(uid)["is_admin"], \
     "the ACS route no longer passes on \"no proof\" — SAML promotes again"
-ok("B-umgehung-10: lock 1 alone — the ACS route passes on \"no proof\" (without FOEDERIERTE_FAKTOREN)")
+ok("B-umgehung-10: lock 1 alone — the ACS route passes on \"no proof\" (without FEDERATED_FACTORS)")
 # Control: without the pass-through the same note promotes immediately — this measures that above
 # the route REALLY decided.
 assert auth._maybe_promote_admin(auth.get_user(uid), faktor="saml") is True, \

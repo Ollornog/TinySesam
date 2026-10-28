@@ -474,7 +474,7 @@ class OIDCClients:
 
     **One issuer for all.** Discovery document and JWKS hang on the provider, not on the client;
     they are therefore shared instead of being fetched anew per client. Several providers in one instance
-    are not intended — `konfigpruefung` rejects an `issuer` in the client entry.
+    are not intended — `config_check` rejects an `issuer` in the client entry.
     """
 
     def __init__(self, cfg):
@@ -566,7 +566,7 @@ def register_oidc_routes(router, auth):
         # (R4-01). Without a checked base the flow aborts instead of guessing.
         # `require_public_base`: a 500 in the middle of a sign-in attempt was the wrong place for
         # a configuration gap — `/auth/oidc/start` is the entry point to which a gateway sends
-        # every visitor. Since this version `konfigpruefung` requires a `base_url` when
+        # every visitor. Since this version `config_check` requires a `base_url` when
         # `oidc_enabled` is set, and setup fails beforehand.
         return auth.require_public_base(request) + cfg.oidc_callback_path
 
@@ -827,7 +827,7 @@ def register_oidc_routes(router, auth):
         # The provider has agreed for THIS application — this is noted on the session.
         # For every other application this note says nothing; there `/auth/forward` asks
         # again. Exactly that is the difference to "signed in yes/no" (T-14).
-        auth._vermerke_oidc_freigabe(token, ziel, rollen=_gruppen)
+        auth._record_oidc_approval(token, ziel, rollen=_gruppen)
         target = auth._login_redirect_after(request, token, uid,
                                             auth.safe_next(flow.get("next") or "", request))
         resp = RedirectResponse(target, 303)

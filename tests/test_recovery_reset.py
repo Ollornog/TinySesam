@@ -245,10 +245,10 @@ for _tok in ("quatsch", tok_r):
 ok("A-8: invalid or consumed link → “Link invalid” before the password rule")
 
 # Integration finding 4 (A-8 × B5-18): the A-8 pre-check returned early WITHOUT
-# `token_abgewiesen` — the call from B5-18 was only behind `redeem_magic` and was unreachable for a
+# `token_rejected` — the call from B5-18 was only behind `redeem_magic` and was unreachable for a
 # dead token. Whoever probed reset tokens via POST or replayed a used link
 # appeared neither in the audit log nor in the fail2ban verify jail; the GET did.
-# (Mutation probe: remove the `token_abgewiesen` call in the A-8 branch of `reset_submit` → red.)
+# (Mutation probe: remove the `token_rejected` call in the A-8 branch of `reset_submit` → red.)
 import io as _io  # noqa: E402
 import logging as _logging  # noqa: E402
 from tinysesam import security as _security  # noqa: E402

@@ -4,7 +4,7 @@ Deliberately stdlib `sqlite3` (no ORM): lightweight, no extra dependency.
 Thread-safe via a lock + `check_same_thread=False` (FastAPI workers share the instance).
 
 What happens with a read-only, full or locked database and with a jump of the system clock
-is described for operators in `docs/BETRIEB.md` (failure behaviour).
+is described for operators in `docs/OPERATIONS.md` (failure behaviour).
 """
 from __future__ import annotations
 import contextlib, sqlite3, threading, time, secrets, json, logging, hashlib, os, re, stat, unicodedata
@@ -215,7 +215,7 @@ CREATE TABLE IF NOT EXISTS oidc_sitzung (    -- Refresh-Token einer OIDC-Sitzung
     token_hash  TEXT NOT NULL REFERENCES session(token_hash) ON DELETE CASCADE,
     client      TEXT NOT NULL,                -- Schlüssel aus cfg.oidc_clients, "*" = Einzel-Client
     sub         TEXT NOT NULL,                -- Subjekt beim Provider; ein anderes beendet die Sitzung
-    refresh     TEXT NOT NULL,                -- verschlüsselt (geheimnis.Tresor), nie im Klartext
+    refresh     TEXT NOT NULL,                -- verschlüsselt (vault.Vault), nie im Klartext
     geprueft_at INTEGER NOT NULL,             -- letzter Tausch (oder: beansprucht, s. Store)
     client_id   TEXT,                         -- an welche client_id das Token ging (NULL: vor dieser Spalte)
     erfolg_at   INTEGER,                      -- letzte ERFOLGREICHE Nachprüfung (Obergrenze ohne Nachprüfung); NULL: vor dieser Spalte
@@ -230,7 +230,7 @@ CREATE TABLE IF NOT EXISTS gate_abgemeldet (
     at         INTEGER NOT NULL,
     PRIMARY KEY (token_hash, host)
 );
--- Das ID-Token der Anmeldung, verschlüsselt (geheimnis.Tresor) — nur als `id_token_hint` für den
+-- Das ID-Token der Anmeldung, verschlüsselt (vault.Vault) — nur als `id_token_hint` für den
 -- Logout beim Provider (T-22). PocketID beendet seine Sitzung ohne den Hinweis nicht, sondern
 -- zeigt eine Rückfrage und leitet danach nicht zurück.
 -- Die Verbindung eines App-Hosts zur zentralen Sitzung (Code-Austausch, T-26): Die Sitzung bleibt
@@ -785,7 +785,7 @@ class Store:
     #:      column changes. The stamp rises because an older version reads the new values DIFFERENTLY:
     #:      0.21.x takes a `human` key for an automation key (valid without a session). It
     #:      still opens the file, but reports the newer schema version at start — way back
-    #:      with SQL in docs/BETRIEB.md.
+    #:      with SQL in docs/OPERATIONS.md.
     #: 13 — `gate_abgemeldet` (signed out of one application only, T-22) and `oidc_id_token` (the
     #:      ID token as a sign-out hint for the provider, encrypted). Additive; an older version
     #:      leaves both tables in place, but does not rotate them along when rotating a session — the
@@ -931,7 +931,7 @@ class Store:
             # 0.17.0 carries 0 there, and `0 < 0` is false. The plaintext entries would therefore have
             # remained; they would never have matched again (the hash is searched since then)
             # and unnoticed would have occupied space until their expiry. The test for this is in
-            # tests/test_bestandsdaten.py.
+            # tests/test_legacy_data.py.
             # Two conditions, both necessary: the stamp says "this file has not been through yet"
             # (and keeps the scan out of every further start), the VALUE says which row
             # really is plaintext. The stamp alone was not enough — see above.
@@ -1135,7 +1135,7 @@ class Store:
 
         The lookup runs over `ix_users_topf_name`/`ix_users_topf_mail`/`ix_fed_name_topf`, no
         scan: the work does not depend on the number of accounts (step counting in
-        tests/test_kennungsraum.py and tests/test_audit_runde2.py)."""
+        tests/test_identifier_space.py and tests/test_audit_round2.py)."""
         def neu(spalte, alt, id_aus):
             andere = "id IS NOT NEW.id AND " if id_aus else ""
             fremd = "user_id IS NOT NEW.id AND " if id_aus else ""
@@ -1228,7 +1228,7 @@ class Store:
           `old` (`payload_lesen`) — visible via `peek_magic`/`redeem_magic`. Only with
           `links=True` (on the jump to 12): the search goes through all one-time tokens, and they grow
           until the next `gc` — on every start that would cost a run through the table
-          (measured in `tests/test_bestandsdaten.py`, "Aufwand"). A link that an older version
+          (measured in `tests/test_legacy_data.py`, "Aufwand"). A link that an older version
           issues afterwards is mapped by `payload_lesen` on reading; it expires soon anyway.
 
         Idempotent; it writes only where there is something to rewrite — a read-only file
@@ -1940,7 +1940,7 @@ class Store:
         taken address: from a few thousand accounts on, the response time of a single request revealed
         whether an address has an account (R4-03), and `gc()` grew with open × all accounts.
         The work here now depends neither on the number of accounts nor on whether and where the
-        identifier is found (tests/test_audit_runde2.py counts the SQLite steps).
+        identifier is found (tests/test_audit_round2.py counts the SQLite steps).
         `ausser` leaves out one account (the ID currently at issue)."""
         topf = norm_kennung(kennung)
         if not topf:
@@ -2272,7 +2272,7 @@ class Store:
         return self.get_pin_hash(user_id) is not None
 
     # ---------- TOTP ----------
-    #: Encryption/decryption of the TOTP secrets (H-14/H-15, `geheimnis.Tresor`). Set by the manager;
+    #: Encryption/decryption of the TOTP secrets (H-14/H-15, `vault.Vault`). Set by the manager;
     #: a store without a vault (CLI tools) does not touch the secrets.
     tresor: Any = None
 
@@ -2282,11 +2282,11 @@ class Store:
         # if both fall into the same 30-second window.
         if self.tresor is None:
             raise RuntimeError("TOTP-Geheimnisse werden nur verschlüsselt abgelegt — der Store hat "
-                               "keinen Schlüssel (geheimnis.Tresor).")
+                               "keinen Schlüssel (vault.Vault).")
         self._exec("INSERT INTO totp_cred(user_id, secret, confirmed, created_at) VALUES (?,?,?,?) "
                    "ON CONFLICT(user_id) DO UPDATE SET secret=excluded.secret, "
                    "confirmed=excluded.confirmed, last_step=NULL",
-                   (user_id, self.tresor.verschluesseln(secret), 1 if confirmed else 0, _now()))
+                   (user_id, self.tresor.encrypt(secret), 1 if confirmed else 0, _now()))
 
     def confirm_totp(self, user_id):
         self._exec("UPDATE totp_cred SET confirmed=1 WHERE user_id=?", (user_id,))
@@ -2298,7 +2298,7 @@ class Store:
             return None
         d = dict(zeile)
         if self.tresor is not None:
-            d["secret"] = self.tresor.entschluesseln(d["secret"])
+            d["secret"] = self.tresor.decrypt(d["secret"])
         return d
 
     def geheimnisse_heben(self) -> int:
@@ -2315,7 +2315,7 @@ class Store:
                           "UNION ALL SELECT refresh FROM oidc_sitzung WHERE refresh LIKE 'v1:%' LIMIT 1")
         if probe is not None:
             try:
-                self.tresor.entschluesseln(probe["wert"])
+                self.tresor.decrypt(probe["wert"])
             except Exception:
                 raise ConfigError(
                     "Der Schlüssel passt nicht zu den gespeicherten Geheimnissen (TOTP/OIDC; falsche "
@@ -2325,7 +2325,7 @@ class Store:
         klar = self._all("SELECT user_id, secret FROM totp_cred WHERE secret NOT LIKE 'v1:%'")
         for z in klar:
             self._exec("UPDATE totp_cred SET secret=? WHERE user_id=? AND secret=?",
-                       (self.tresor.verschluesseln(z["secret"]), z["user_id"], z["secret"]))
+                       (self.tresor.encrypt(z["secret"]), z["user_id"], z["secret"]))
         if klar:
             logging.getLogger("tinysesam").info(
                 "%d TOTP-Geheimnis(se) verschlüsselt (bisher Klartext in der Datenbank).", len(klar))
@@ -2546,12 +2546,12 @@ class Store:
         client must not overwrite the re-check of the first — otherwise the user would choose
         which provider entry is still re-checked (attack on the second round, finding 7)."""
         if self.tresor is None:
-            raise RuntimeError("Refresh-Tokens werden nur verschlüsselt abgelegt (geheimnis.Tresor).")
+            raise RuntimeError("Refresh-Tokens werden nur verschlüsselt abgelegt (vault.Vault).")
         self._exec("INSERT INTO oidc_sitzung(token_hash, client, sub, refresh, geprueft_at, client_id, erfolg_at) "
                    "VALUES (?,?,?,?,?,?,?) ON CONFLICT(token_hash, client) DO UPDATE SET sub=excluded.sub, "
                    "refresh=excluded.refresh, geprueft_at=excluded.geprueft_at, client_id=excluded.client_id, "
                    "erfolg_at=excluded.erfolg_at",
-                   (self._handle(handle), client, sub, self.tresor.verschluesseln(refresh), _now(), client_id,
+                   (self._handle(handle), client, sub, self.tresor.encrypt(refresh), _now(), client_id,
                     _now()))
 
     def get_oidc_sitzungen(self, handle) -> list:
@@ -2567,7 +2567,7 @@ class Store:
             return None
         d = dict(z)
         if self.tresor is not None:
-            d["refresh"] = self.tresor.entschluesseln(d["refresh"])
+            d["refresh"] = self.tresor.decrypt(d["refresh"])
         return d
 
     def oidc_sitzung_beanspruchen(self, handle, client, alt: int, jetzt: int) -> bool:
@@ -2596,7 +2596,7 @@ class Store:
         erfolg_wert = (int(zeit),) if erfolg else ()
         if neuer_refresh and self.tresor is not None:
             return self._exec(f"UPDATE oidc_sitzung SET geprueft_at=?, refresh=?{extra} WHERE {wo} AND client=?",
-                              (int(zeit), self.tresor.verschluesseln(neuer_refresh), *erfolg_wert, wert,
+                              (int(zeit), self.tresor.encrypt(neuer_refresh), *erfolg_wert, wert,
                                client)).rowcount > 0
         return self._exec(f"UPDATE oidc_sitzung SET geprueft_at=?{extra} WHERE {wo} AND client=?",
                           (int(zeit), *erfolg_wert, wert, client)).rowcount > 0
@@ -2636,16 +2636,16 @@ class Store:
     # ---------- ID token as a sign-out hint (T-22) ----------
     def set_oidc_id_token(self, handle, client: str, id_token: str) -> None:
         if self.tresor is None:
-            raise RuntimeError("ID-Tokens werden nur verschlüsselt abgelegt (geheimnis.Tresor).")
+            raise RuntimeError("ID-Tokens werden nur verschlüsselt abgelegt (vault.Vault).")
         self._exec("INSERT OR REPLACE INTO oidc_id_token(token_hash, client, id_token) VALUES (?,?,?)",
-                   (self._handle(handle), client, self.tresor.verschluesseln(id_token)))
+                   (self._handle(handle), client, self.tresor.encrypt(id_token)))
 
     def get_oidc_id_token(self, handle) -> Optional[tuple]:
         """(client, id_token) of this session's sign-in, decrypted — or None."""
         r = self._one("SELECT client, id_token FROM oidc_id_token WHERE token_hash=?", (self._handle(handle),))
         if not r or self.tresor is None:
             return None
-        return r["client"], self.tresor.entschluesseln(r["id_token"])
+        return r["client"], self.tresor.decrypt(r["id_token"])
 
     def put_oidc_grant(self, token_hash: str, client: str, jetzt: int, roles=None) -> None:
         """Enter or confirm an approval. `granted_at` stays on a confirmation —
@@ -3114,7 +3114,7 @@ class Store:
         only once the outage is reported, with a directory that drops packets, hence after
         the timeout). If a rule or the series applies **only** because of such rows, the
         answer is `(None, "schwebend")`: not decided yet, no lockout. The caller asks
-        again after a short pause (`_versuch_beginnen`). Previously every rejection in this
+        again after a short pause (`_begin_attempt`). Previously every rejection in this
         window was a lockout with `failed login` for fail2ban and a lockout notice to the holder — even
         if not a single failed attempt remained afterwards. The burst (R7-2) stays slowed down: it
         waits until the pre-bookings are decided and then gets the real lockout. If
@@ -3167,7 +3167,7 @@ class Store:
         `count_fails(nur_bestaetigt=True)` — until then completing a failed attempt was a
         no-op. `serie=(topf, art)` withdraws the pre-booking in the series on a success in the SAME
         transaction: separately it would stand in between neither as open nor as withdrawn,
-        and whoever is waiting right now (`_versuch_beginnen`) would read the series one too high — at the
+        and whoever is waiting right now (`_begin_attempt`) would read the series one too high — at the
         limit a lockout with a lockout notice for nothing.
 
         With `serie` it returns `(before, after)`: the settled state of the series
@@ -3672,7 +3672,7 @@ class Store:
                 bis = min(unten + self._ANONYM_BLOCK, schluss)
                 # The block via the primary key (`id > ? AND id <= ?`, so it stands in the plan) —
                 # never via `idx_audit_ts`: otherwise each block would read all rows from `seit`, and the
-                # search would become quadratic (tests/test_audit_runde2.py checks the plan).
+                # search would become quadratic (tests/test_audit_round2.py checks the plan).
                 kandidaten = {z["id"]: z for z in self._all(
                     "SELECT id, event, username, detail FROM audit WHERE id > ? AND id <= ? "
                     f"AND (instr(lower(detail), lower(?)) > 0 {auch_name}) AND {grenze}",

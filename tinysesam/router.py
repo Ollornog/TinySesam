@@ -109,7 +109,7 @@ def build_router(auth) -> APIRouter:
             # back to `next` — forward auth sent here again, a loop without end.
             # Only the provider grants the approval, so go there.
             sitzung = request.cookies.get(auth.session_cookie_name) or ""
-            if app and sitzung and not auth._oidc_freigabe_gueltig(auth.store.session_hash(sitzung), app)[0]:
+            if app and sitzung and not auth._oidc_approval_valid(auth.store.session_hash(sitzung), app)[0]:
                 return RedirectResponse(f"{auth.browser_path(request, '/auth/oidc/start')}"
                                         f"?next={_q(nxt)}&app={_q(app)}", 303)
             return RedirectResponse(nxt, 303)
@@ -124,7 +124,7 @@ def build_router(auth) -> APIRouter:
         # One source (0.22.0): the whole flow — CSRF, IP throttle, pre-booking, LDAP fallback,
         # audit and security log, session — lives in `login_password`, the public
         # building block for custom login pages. Here only the result becomes the page. This route calls
-        # no inner checker itself (guard in `tests/test_anmelden.py`).
+        # no inner checker itself (guard in `tests/test_sign_in.py`).
         erg = auth.login_password(request, username, password, next=next,
                                   remember=_remember(cfg, remember), csrf=csrf_tok)
         if erg.reason == "method_disabled":
@@ -233,7 +233,7 @@ def build_router(auth) -> APIRouter:
         # (R7-2): with `_is_totp_setup_locked()` beforehand and `_record_login()` afterwards the
         # code check lay in between, and a parallel burst slipped past the limit.
         ip = auth.client_ip(request)
-        versuch = (auth._versuch_beginnen(u["username"], ip, "totp_setup")
+        versuch = (auth._begin_attempt(u["username"], ip, "totp_setup")
                    if auth._rate_ok(ip, login=False) else None)
         if versuch is None:
             raise HTTPException(429, auth.t("api.too_many"))
@@ -407,7 +407,7 @@ def build_router(auth) -> APIRouter:
             # `ip_attempt_factor`, the sign-in of accounts that had nothing to do with it
             # (three areas of five wrong guesses were enough). Now the area is locked —
             # per area and, because unauthenticated users guess here, still per address as well.
-            versuch = auth._versuch_beginnen(pseudo, ip, "resource") if auth._rate_ok(ip, login=False) else None
+            versuch = auth._begin_attempt(pseudo, ip, "resource") if auth._rate_ok(ip, login=False) else None
             if versuch is None:
                 return auth.render_page("resource_unlock", request=request, status=429,
                                         **_res_ctx(row, name, nxt, "Zu viele Versuche — bitte warten."))
@@ -447,7 +447,7 @@ def build_router(auth) -> APIRouter:
             # HTTP 200, "mail is on its way", no mail. The generic answer is right against
             # user enumeration and here concealed a total failure. A missing
             # `base_url` is not address-related: the abort reveals nothing about the mailbox,
-            # and `konfigpruefung` prevents this state at construction anyway.
+            # and `config_check` prevents this state at construction anyway.
             base = _mail_basis(auth, request)
             adresse = email.strip()
 
@@ -471,7 +471,7 @@ def build_router(auth) -> APIRouter:
             """Only the sign-in link now. E-mail confirmation and invitation have had their own
             endpoints since 0.16 — otherwise disabling the magic link took both along."""
             if not auth.peek_magic(token, purpose="login"):
-                auth._token_abgewiesen("login", request)
+                auth._token_rejected("login", request)
                 return auth.render_page("magic_invalid", request=request, status=400)
             return auth.render_page("magic_confirm", request=request, purpose="login",
                                     action=auth.browser_path(request, f"/auth/magic/{_q(token)}"))
@@ -481,7 +481,7 @@ def build_router(auth) -> APIRouter:
             auth.require_csrf(request, csrf_tok)
             data = auth.redeem_magic(token, purpose="login")
             if not data or not data.get("user_id"):
-                auth._token_abgewiesen("login", request)
+                auth._token_rejected("login", request)
                 return auth.render_page("magic_invalid", request=request, status=400)
             return _login_nach_token(auth, request, data["user_id"],
                                      auth.safe_next((data.get("payload") or {}).get("next") or "", request))
@@ -492,7 +492,7 @@ def build_router(auth) -> APIRouter:
         def verify_confirm(request: Request, token: str):
             """Confirmation page instead of redeeming via GET — rationale at `/auth/magic/{token}` (R4-02)."""
             if not auth.peek_magic(token, purpose="verify_email"):
-                auth._token_abgewiesen("verify_email", request)
+                auth._token_rejected("verify_email", request)
                 return auth.render_page("magic_invalid", request=request, status=400)
             return auth.render_page("magic_confirm", request=request, purpose="verify_email",
                                     action=auth.browser_path(request, f"/auth/verify/{_q(token)}"))
@@ -502,7 +502,7 @@ def build_router(auth) -> APIRouter:
             auth.require_csrf(request, csrf_tok)
             data = auth.redeem_magic(token, purpose="verify_email")
             if not data or not data.get("user_id"):
-                auth._token_abgewiesen("verify_email", request)
+                auth._token_rejected("verify_email", request)
                 return auth.render_page("magic_invalid", request=request, status=400)
             uid = data["user_id"]
             # Lift only the block of the PENDING confirmation, never the operator's (H-18,
@@ -513,7 +513,7 @@ def build_router(auth) -> APIRouter:
             if not auth.store.bestaetigung_freischalten(uid):
                 konto = auth._kontoname(uid)
                 if konto is None:                        # account deleted in the meantime
-                    auth._token_abgewiesen("verify_email", request)
+                    auth._token_rejected("verify_email", request)
                     return auth.render_page("magic_invalid", request=request, status=400)
                 auth.audit("verify_blocked", konto, auth.client_ip(request),
                            "Konto vom Betreiber gesperrt")
@@ -536,7 +536,7 @@ def build_router(auth) -> APIRouter:
         @r.get("/auth/invite/{token}")
         def invite_redeem(request: Request, token: str):
             if not auth.peek_magic(token, purpose="invite"):
-                auth._token_abgewiesen("invite", request)
+                auth._token_rejected("invite", request)
                 return auth.render_page("magic_invalid", request=request, status=400)
             return RedirectResponse(f"{auth.browser_path(request, '/auth/register')}?invite={_q(token)}", 303)
 
@@ -556,7 +556,7 @@ def build_router(auth) -> APIRouter:
         if not auth._rate_ok(ip, login=False):
             raise HTTPException(429, auth.t("api.too_many"))
         if not auth._consume_admin_claim(token, u):
-            auth._admin_claim_fehlgriff(u["username"], ip)
+            auth._admin_claim_failure(u["username"], ip)
             raise HTTPException(403, auth.t("err.claim"))
         return RedirectResponse(auth.browser_path(request, cfg.admin_path), 303)
 
@@ -602,7 +602,7 @@ def build_router(auth) -> APIRouter:
         # live in `confirm_totp`/`confirm_pin`/`confirm_password`, the public building blocks for
         # custom step-up pages. Here only the choice is made which field is filled in — in the
         # order of the page —, and the result becomes the page. This route calls no inner
-        # checker itself (guard in `tests/test_bestaetigen.py`).
+        # checker itself (guard in `tests/test_confirm.py`).
         if code:
             erg = auth.confirm_totp(request, code, next=next, csrf=csrf_tok)
         elif pin:
@@ -651,7 +651,7 @@ def build_router(auth) -> APIRouter:
                 # Without a token (bookmark, crawler) this is no presented link — no entry,
                 # otherwise the security log would report a wrong guess that never happened (A3).
                 if token:
-                    auth._token_abgewiesen("reset_password", request)
+                    auth._token_rejected("reset_password", request)
                 return auth.render_page("magic_invalid", request=request, status=400)
             return auth.render_page("reset", request=request, token=token, error="")
 
@@ -672,7 +672,7 @@ def build_router(auth) -> APIRouter:
                 # alone, it would have let reset tokens be probed by POST without an audit and
                 # fail2ban line. Without a token no presented link (A3).
                 if token:
-                    auth._token_abgewiesen("reset_password", request)
+                    auth._token_rejected("reset_password", request)
                 return auth.render_page("magic_invalid", request=request, status=400)
             konto = auth.store.get_user(vorab["user_id"])
             mangel = auth.password_policy_error(password, username=konto["username"] if konto else None,
@@ -681,7 +681,7 @@ def build_router(auth) -> APIRouter:
                 return auth.render_page("reset", request=request, status=400, token=token, error=mangel)
             data = auth.redeem_magic(token, purpose="reset_password")   # consume now
             if not data or not data.get("user_id"):
-                auth._token_abgewiesen("reset_password", request)
+                auth._token_rejected("reset_password", request)
                 return auth.render_page("magic_invalid", request=request, status=400)
             uid = data["user_id"]
             auth.set_password(uid, password)
@@ -724,7 +724,7 @@ def build_router(auth) -> APIRouter:
                 # The same trace as /auth/invite/<t> and the POST (B5-18): the page answers
                 # differently depending on the token (403 or the pre-filled address) — without this line
                 # invitation tokens could be probed silently here.
-                auth._token_abgewiesen("invite", request)
+                auth._token_rejected("invite", request)
             if cfg.signup_invite_only and not inv:
                 return auth.render_page("register", request=request, status=403,
                                         **_reg_ctx(nxt, error=auth.t("err.invite_required")))
@@ -742,7 +742,7 @@ def build_router(auth) -> APIRouter:
                                         error=auth.t("err.rate")))
             inv = auth.peek_magic(invite, purpose="invite") if invite else None
             if invite and not inv:
-                auth._token_abgewiesen("invite", request)
+                auth._token_rejected("invite", request)
             if cfg.signup_invite_only and not inv:
                 return auth.render_page("register", request=request, status=403,
                                         **_reg_ctx(nxt, error=auth.t("err.invite_required")))
@@ -992,7 +992,7 @@ def build_router(auth) -> APIRouter:
                 # who may enter which one was decided by the provider per client (T-14). The note
                 # for it hangs on the SESSION — an API key has none and is not meant
                 # here either; for it the previous answer stays.
-                anwendung = auth._oidc_anwendung(orig)
+                anwendung = auth._oidc_application(orig)
                 # Signed out of this application only (T-22): the session is valid, just not here —
                 # until the human picks "Continue as …" on the login page. Always the page, never the
                 # direct path to the provider: that one silently signed in again.
@@ -1002,7 +1002,7 @@ def build_router(auth) -> APIRouter:
                                              "X-TinySesam-Reason": "app-abgemeldet",
                                              "WWW-Authenticate": 'FormBased realm="TinySesam"'})
                 if anwendung and handle:
-                    ja, grund = auth._oidc_freigabe_gueltig(handle, anwendung)
+                    ja, grund = auth._oidc_approval_valid(handle, anwendung)
                     if not ja:
                         # No 403: the provider should be asked, the human not turned away.
                         # There they usually still have a session, the jump is a flicker for them.
@@ -1233,7 +1233,7 @@ def build_router(auth) -> APIRouter:
 
                 s = auth._session_from_request(request)
                 u = auth._konto_der_sitzung(s) if s else None
-                anwendung = auth._oidc_anwendung(host)
+                anwendung = auth._oidc_application(host)
                 if not u:
                     _zurueck_in_den_ablauf()
                     if auth._forward_app(host)["login"] == "direct" and list(cfg.enabled_methods()) == ["oidc"]:
@@ -1252,7 +1252,7 @@ def build_router(auth) -> APIRouter:
                     return auth.render_page("login", request=request, next=hier, app=anwendung,
                                             app_name=auth._forward_app(host)["name"], gate_host=host,
                                             resume_user=u["display_name"] or u["username"])
-                if anwendung and not auth._oidc_freigabe_gueltig(s["token_hash"], anwendung)[0]:
+                if anwendung and not auth._oidc_approval_valid(s["token_hash"], anwendung)[0]:
                     _zurueck_in_den_ablauf()
                     return RedirectResponse(f"{auth.browser_path(request, '/auth/oidc/start')}?next={_q(hier)}"
                                             f"&app={_q(anwendung)}", 303)
@@ -1328,7 +1328,7 @@ def build_router(auth) -> APIRouter:
         # live in `change_password`, the public building block for custom password-change pages.
         # Here only the JSON is read (including the CSRF check, as at every write route) and the
         # result becomes the response. This route calls no inner checker itself (guard in
-        # `tests/test_bestaetigen.py`).
+        # `tests/test_confirm.py`).
         b = await auth.json_body(request)
         # In the thread pool: checking the old password (argon2) would otherwise halt the event loop.
         erg = await run_in_threadpool(auth.change_password, request, b.get("current") or "",
@@ -1353,7 +1353,7 @@ def build_router(auth) -> APIRouter:
             return auth.render_page("account", request=request, user=u, methods=methoden,
                                     has_totp=auth.store.has_confirmed_totp(u["id"]),
                                     recovery_left=auth.recovery_codes_remaining(u["id"]),
-                                    recovery_warn=auth._RECOVERY_WARNSCHWELLE,
+                                    recovery_warn=auth._RECOVERY_WARN_THRESHOLD,
                                     has_pin=(cfg.pin_enabled and auth.has_pin(u["id"])),
                                     is_admin=bool(u["is_admin"]), admin_path=cfg.admin_path,
                                     events=auth.own_events(u["id"]),
@@ -1415,7 +1415,7 @@ def build_router(auth) -> APIRouter:
         def email_confirm_page(request: Request, token: str):
             """Confirmation page instead of redeeming via GET — link scanners redeem nothing (R4-02)."""
             if not auth.peek_magic(token, purpose="email_change"):
-                auth._token_abgewiesen("email_change", request)
+                auth._token_rejected("email_change", request)
                 return auth.render_page("magic_invalid", request=request, status=400)
             return auth.render_page("magic_confirm", request=request, purpose="email_change",
                                     action=auth.browser_path(request, f"/auth/email/{_q(token)}"))
@@ -1425,7 +1425,7 @@ def build_router(auth) -> APIRouter:
             auth.require_csrf(request, csrf_tok)
             ergebnis = auth.confirm_email_change(token, auth.client_ip(request))
             if ergebnis is None:
-                auth._token_abgewiesen("email_change", request)
+                auth._token_rejected("email_change", request)
                 return auth.render_page("magic_invalid", request=request, status=400)
             if ergebnis == "taken":
                 return auth.render_page("magic_invalid", request=request, status=409)
@@ -1659,7 +1659,7 @@ def build_router(auth) -> APIRouter:
             # (`saml_attr_email_verified`) "no proof" therefore travels along here — an
             # allowlist ADDRESS never becomes first admin via SAML (F-14). With one of the two
             # the proof set on the account by `_check_saml` counts. The factor `saml`
-            # additionally stands in `_FOEDERIERTE_FAKTOREN`, so omitting it would be no hole.
+            # additionally stands in `_FEDERATED_FACTORS`, so omitting it would be no hole.
             token, ok, is_new = auth.apply_factor(request, u["id"], "saml",
                                                   auth.client_ip(request),
                                                   request.headers.get("user-agent"),
@@ -1739,7 +1739,7 @@ def build_router(auth) -> APIRouter:
 def _mail_basis(auth, request) -> str:
     """The base for a sent link — or HTTP 503, never a 500 and never a silent 200.
 
-    `konfigpruefung` does not let a mail feature without `base_url` start at all. If the
+    `config_check` does not let a mail feature without `base_url` start at all. If the
     config is changed AFTER the constructor (`auth.cfg.base_url = ""`),
     `require_public_base()` raises `ConfigError` at request time — and no route caught it: the
     user got "internal server error", the operator a stack trace with no hint that it is

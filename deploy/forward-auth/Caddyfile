@@ -96,7 +96,7 @@ app.example.com {
 			# Header form in `{rp.header.…}` (H-16): Caddy looks for the name character by character
 			# in the form Go's textproto makes of it — each word capitalised, the rest lowercase
 			# (`Remote-User`, `X-Tinysesam-Location`). Any other spelling yields an
-			# EMPTY value, without error and without a log line. tests/test_bestandsdaten.py checks every
+			# EMPTY value, without error and without a log line. tests/test_legacy_data.py checks every
 			# placeholder in this file against exactly this form.
 			@ok status 200
 			handle_response @ok {

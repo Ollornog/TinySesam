@@ -30,7 +30,7 @@ import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from _kit import backlog, hygiene  # noqa: E402
+from _kit import backlog, hygiene, manifest  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 POLICY = hygiene.lade_policy()
@@ -69,30 +69,30 @@ assert not fehlend, f"Required files missing: {fehlend}"
 print("  License, SECURITY, CHANGELOG, both READMEs, py.typed, all workflows present")
 
 # ---------- docs/ now contains only attachments; the pages are built by the action ----------
-# Exception: BETRIEB.md, the operator docs (failure behaviour, sessions, sign-in paths). It is
+# Exception: OPERATIONS.md, the operator docs (failure behaviour, sessions, sign-in paths). It is
 # source text like API.md, not a built page — the Pages action does not publish docs/.
 docs = [f for f in FILES if f.startswith("docs/")]
-assert sorted(docs) == ["docs/.nojekyll", "docs/BETRIEB.md", "docs/theme.css", "docs/wizard.png"], docs
+assert sorted(docs) == ["docs/.nojekyll", "docs/OPERATIONS.md", "docs/theme.css", "docs/wizard.png"], docs
 assert not any(f.endswith(".html") for f in FILES), "generated HTML does not belong in the repo"
 assert "_site/" in read(".gitignore")
-print("  docs/: only BETRIEB.md, theme.css, wizard.png, .nojekyll — no generated HTML in the repo")
+print("  docs/: only OPERATIONS.md, theme.css, wizard.png, .nojekyll — no generated HTML in the repo")
 
-# ---------- docs/BETRIEB.md says what the code does ----------
+# ---------- docs/OPERATIONS.md says what the code does ----------
 # Operator docs whose numbers drift away from the code are worse than none: People plan
 # by them. What is checked is what can be read off mechanically — the wait time on a locked
 # database, the healthcheck path and that every identifying factor is in the table of the
 # sign-in paths (a new path without a row there would be exactly the gap from B1-11).
-betrieb = read("docs", "BETRIEB.md")
+betrieb = read("docs", "OPERATIONS.md")
 _store_src = read("tinysesam", "store.py")
 _busy = int(re.search(r"^    BUSY_TIMEOUT_MS = ([\d_]+)", _store_src, re.M).group(1).replace("_", ""))
-assert f"**{_busy // 1000} s**" in betrieb, f"BETRIEB.md does not name the real wait time ({_busy} ms)"
+assert f"**{_busy // 1000} s**" in betrieb, f"OPERATIONS.md does not name the real wait time ({_busy} ms)"
 assert re.search(r'^HEALTH_PATH = "/healthz"', read("tinysesam", "gateway.py"), re.M) and "/healthz" in betrieb
 _ident = re.search(r"^    _IDENTIFYING = \(([^)]*)\)", read("tinysesam", "manager.py"), re.M).group(1)
 _faktoren = re.findall(r'"(\w+)"', _ident)
 assert len(_faktoren) >= 6, f"_IDENTIFYING not read: {_faktoren}"
 _fehlend = [f for f in _faktoren if f"(`{f}`" not in betrieb]
-assert not _fehlend, f"BETRIEB.md: sign-in path without a row in the strength table: {_fehlend}"
-print(f"  docs/BETRIEB.md: wait time {_busy // 1000} s, /healthz and all {len(_faktoren)} "
+assert not _fehlend, f"OPERATIONS.md: sign-in path without a row in the strength table: {_fehlend}"
+print(f"  docs/OPERATIONS.md: wait time {_busy // 1000} s, /healthz and all {len(_faktoren)} "
       "identifying factors match the code")
 
 # The image's HEALTHCHECK must wait longer than the database: `/healthz` writes and, like every sign-in,
@@ -432,7 +432,7 @@ assert not schluessel, "policy keys without a reader:\n  " + "\n  ".join(schlues
 fremd = hygiene.pruefe_keine_fremdressourcen(ROOT, FILES, POLICY)
 assert not fremd, "third-party resources in the markup:\n  " + "\n  ".join(fremd)
 # Kit 0.28 (PO 2026-10-08): every complete page carries a favicon. The built-in pages are built by the code; they
-# are checked by tests/test_gate_marke.py (brand_icon) — here the files in the repo (website, demos).
+# are checked by tests/test_gate_brand.py (brand_icon) — here the files in the repo (website, demos).
 favicon = hygiene.pruefe_favicon(ROOT, FILES, POLICY)
 assert not favicon, "pages without favicon:\n  " + "\n  ".join(favicon)
 
@@ -468,6 +468,13 @@ assert not _tx, "texts: dead links/anchors or broken frontmatter:\n  " + "\n  ".
 _nt = hygiene.pruefe_nur_text(ROOT)
 assert not _nt, "text fast path not wired up or list extended:\n  " + "\n  ".join(_nt)
 print("  Kit 0.35.0: texts clean (links, anchors, frontmatter), text fast path wired up")
+
+# The vendored test kit is unchanged against its manifest. Until the config check was renamed,
+# the kit's "is every check called?" guard counted `config_check.check_config(...)` calls (then
+# `pruefe(...)`) as calls of `manifest.pruefe` — a name-only match — so this check never ran here.
+_mf = manifest.pruefe(ROOT)
+assert not _mf, "test kit differs from its manifest:\n  " + "\n  ".join(_mf)
+print("  Test kit: files match MANIFEST.sha256")
 
 ungerufen = hygiene.pruefe_kit_prueffunktionen_gerufen(ROOT, ausgenommen={})
 assert not ungerufen, "kit check lies idle:\n  " + "\n  ".join(ungerufen)
@@ -890,8 +897,8 @@ for _j in ("pruefsummen", "abbild-probe"):
         f"release.yml: `{_j}` hangs on a condition — it must run on every PR and every tag"
 assert any("sha256sum -c SHA256SUMS" in k for k in _kommandos(_rel_jobs.get("pruefsummen", []))), \
     "release.yml: `pruefsummen` does not check the checksums"
-assert any(k.startswith("scripts/_abbild_probe.sh") for k in _kommandos(_rel_jobs.get("abbild-probe", []))), \
-    "release.yml: `abbild-probe` does not start the image (scripts/_abbild_probe.sh)"
+assert any(k.startswith("scripts/_image_probe.sh") for k in _kommandos(_rel_jobs.get("abbild-probe", []))), \
+    "release.yml: `abbild-probe` does not start the image (scripts/_image_probe.sh)"
 # The suite in `pruefen` may be skipped ONLY on a PR (there ci.yml runs it) — on the tag it runs.
 _suite = re.search(r"- name: Suite fahren[^\n]*\n((?:\s{8}.*\n)+)", "\n".join(_rel_jobs.get("pruefen", [])) + "\n")
 assert _suite, "release.yml: the suite step in `pruefen` is missing"
@@ -1281,11 +1288,11 @@ print(f"  README.md without relative references (PyPI-ready)")
 # Of 119 fields 39 appeared in no README. Maintaining a reference by hand means
 # that it is incomplete again at the next new field — hence generated, from the
 # comments in config.py. Two promises: the file is current, and no field is silent.
-_gen = subprocess.run([sys.executable, "scripts/_config_doku.py", "--dry-run"],
+_gen = subprocess.run([sys.executable, "scripts/_config_docs.py", "--dry-run"],
                       cwd=ROOT, capture_output=True, text=True)
-assert _gen.returncode == 0, ("KONFIGURATION.md is stale — "
-                              "run `python3 scripts/_config_doku.py`")
-_konf = _lies("KONFIGURATION.md")
+assert _gen.returncode == 0, ("CONFIGURATION.md is stale — "
+                              "run `python3 scripts/_config_docs.py`")
+_konf = _lies("CONFIGURATION.md")
 # B3-15: Descriptions slipped. The indented continuation of a trailing comment ended up
 # at the NEXT field — `login_identifier` began with the text of `https_mode`, `admin_identifiers`
 # broke off mid-sentence. Measured on three fields that have exactly this form, and on the
@@ -1309,7 +1316,7 @@ from dataclasses import fields as _dc_fields  # noqa: E402
 import sys as _sys2  # noqa: E402
 _sys2.path.insert(0, ROOT)
 from tinysesam import TinySesamConfig as _TSC  # noqa: E402
-assert _zahl == len(_dc_fields(_TSC)), (f"KONFIGURATION.md lists {_zahl} fields, "
+assert _zahl == len(_dc_fields(_TSC)), (f"CONFIGURATION.md lists {_zahl} fields, "
                                         f"TinySesamConfig has {len(_dc_fields(_TSC))}")
 # The tier (0.22.0): Almost every field is A; whoever deviates enters it in their line — otherwise
 # someone would read the tombstone `totp_required` as a commitment until 1.0.
@@ -1326,10 +1333,10 @@ print(f"  Configuration reference: {_zahl} fields, each explained, dump current,
 # ---------- API reference: every frozen method explained, dump current ----------
 # 68 of the 105 frozen methods appeared in no docs. Whoever embeds TinySesam saw a
 # commitment ("this surface stays stable") without a place that says what it contains.
-_api = subprocess.run([sys.executable, "scripts/_api_doku.py", "--dry-run"],
+_api = subprocess.run([sys.executable, "scripts/_api_docs.py", "--dry-run"],
                       cwd=ROOT, capture_output=True, text=True)
 assert _api.returncode == 0, ("API.md is stale or the generator rejects something — "
-                              "run `python3 scripts/_api_doku.py`\n" + _api.stderr[-400:])
+                              "run `python3 scripts/_api_docs.py`\n" + _api.stderr[-400:])
 _apidoc = _lies("API.md")
 # Methods `### \`name(…)\``, properties `### \`name\` — Property …` (frozen since 0.20.1),
 # since 0.22.0 also the constants (`— Constant`, explanation from the `#:` block above), the
@@ -1354,9 +1361,9 @@ _c_zeilen = _re.findall(r"^\| `(\w+)` \| (?:Method|Constant) \| (.+) \|$", _apid
 _c_namen = sorted(n for _b, _ee in _json_k.loads(_lies("tests/api_surface.json")).items()
                   for n, _e in _ee.items() if isinstance(_e, dict) and _e.get("stufe") == "C")
 assert sorted(n for n, _ in _c_zeilen) == _c_namen, (
-    "API.md: the table „Veraltet“ does not match the C names of the baseline")
+    "API.md: the table „Deprecated“ does not match the C names of the baseline")
 assert all(_e.strip() and not _e.startswith("—") for _, _e in _c_zeilen), (
-    "API.md: a C name without replacement in the table „Veraltet“")
+    "API.md: a C name without replacement in the table „Deprecated“")
 assert "## No tier" not in _apidoc, ("API.md lists names without a tier — "
                                         "`python tests/test_api_surface.py` says which")
 print(f"  API reference: {_apidoc.count(chr(10) + '### ')} entries, each explained, dump current")
@@ -1396,7 +1403,7 @@ print(f"  READMEs: Python range correct ({_spanne})")
 # A B building block that no README names is a commitment nobody knows about — exactly the
 # state the tiering was meant to end (68 of 105 methods stood nowhere). The list
 # comes from the guard's baseline, not from this test: A new B name turns it red until
-# it is in both READMEs. The fields are listed completely in KONFIGURATION.md.
+# it is in both READMEs. The fields are listed completely in CONFIGURATION.md.
 import json as _json  # noqa: E402
 _ablage = _json.loads(_lies("tests/api_surface.json"))
 _stufe_b = sorted({n for _bereich, _eintraege in _ablage.items() if _bereich != "TinySesamConfig.felder"

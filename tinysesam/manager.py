@@ -29,7 +29,7 @@ from fastapi import Request, HTTPException
 from fastapi.responses import HTMLResponse
 from starlette.responses import Response
 
-from . import konfigpruefung
+from . import config_check
 from .errors import ConfigError, StateError
 from .config import TinySesamConfig
 from .store import (Store, key_kind_of, name_ungueltig, norm_email, norm_kennung, jetzt as _jetzt,
@@ -41,7 +41,7 @@ from .templates import PRAEFIX_PLATZHALTER as _PRAEFIX_PLATZHALTER, Templates, i
 from . import totp as _totp
 from . import security
 from .ldap_ import VERBINDUNGS_TIMEOUT as _LDAP_TIMEOUT
-from ._veraltet import Veraltet
+from ._deprecated import Deprecated
 from .login_result import LoginResult
 from .password_change_result import PasswordChangeResult
 
@@ -283,10 +283,10 @@ class TinySesam:
                                    max(0, int(config.session_idle_minutes_remember or 0)) * 60)
         # TOTP secrets only encrypted (H-14/H-15, mandatory). Key from the environment, the
         # configuration or next to the database; a wrong one aborts startup.
-        from . import geheimnis as _geheimnis
-        _schluessel, self._schluessel_herkunft = _geheimnis.schluessel_laden(
+        from . import vault as _vault
+        _schluessel, self._schluessel_herkunft = _vault.load_key(
             config.db_path, config.secrets_key_file)
-        self.store.tresor = _geheimnis.Tresor(_schluessel)
+        self.store.tresor = _vault.Vault(_schluessel)
         # Gate token (ADR-9, T-19): the signing key is derived from the same base key
         # — no second secret to back up and distribute. Always derived, even
         # when the gate is off: `tinysesam gate-key` should be able to prepare the proxy before
@@ -335,14 +335,14 @@ class TinySesam:
         self.on_security_event: Optional[Callable[[str, dict, dict], Any]] = None
         self._blockliste = self._blockliste_laden(config.password_blocklist_file)
         # Attempt ID → (identifier, method, series state after booking) for the series
-        # pre-booked in `_versuch_beginnen` (B2-6). In memory is enough: if the process dies
+        # pre-booked in `_begin_attempt` (B2-6). In memory is enough: if the process dies
         # in between, the pre-booking remains as a failed attempt — stricter in doubt.
         self._serie_vorbuchungen: dict = {}
         # Fingerprints of wrong passwords per (account, IP) — memory only, never on disk (`_passwort_wiederholt`).
         self._pw_wiederholung: "OrderedDict[tuple, list]" = OrderedDict()
         self._pw_wiederholung_sperre = threading.Lock()
         # Waiting slots for sign-ins that would not get further only because of pending
-        # pre-bookings (G9, `_versuch_beginnen`) — capped, so waiters do not occupy all worker threads.
+        # pre-bookings (G9, `_begin_attempt`) — capped, so waiters do not occupy all worker threads.
         self._schwebe_plaetze = threading.BoundedSemaphore(self._SCHWEBE_WARTEPLAETZE)
         self.oidc = None
         self.webauthn = None
@@ -370,7 +370,7 @@ class TinySesam:
         # COMPLETELY configured": whoever sets `oidc_enabled=True` but no
         # `issuer` obviously wants to bring the client themselves (`auth.oidc = …`) — four
         # own suites work that way. A guard that triggers on the switch already forbids
-        # that route. That a half-configured method gets noticed is done by konfigpruefung.
+        # that route. That a half-configured method gets noticed is done by config_check.
         # `find_spec` instead of an import attempt: the extras are imported LAZILY everywhere
         # (only on connect, on token exchange, when checking an assertion). A missing
         # package therefore did not show at setup but at the first sign-in attempt — as a
@@ -915,7 +915,7 @@ class TinySesam:
             # Into the audit entry, not just discarded: whoever tries this should be visible.
             detail += f" verworfene_rollen={','.join(abgeschnitten)}"
         self.audit("apikey_create", self._kontoname(user_id), detail=detail)
-        self._sicherheitsereignis("api_key_created", user_id, key_id=kid, name=name or "")
+        self._security_event("api_key_created", user_id, key_id=kid, name=name or "")
         return {"id": kid, "key": raw, "prefix": prefix, "expires_at": expires_at,
                 "roles": roles, "dropped_roles": abgeschnitten, "kind": kind}
 
@@ -1024,7 +1024,7 @@ class TinySesam:
     #: A key exists for automations that present it every second; one line per request
     #: would bury the rest of the log. One per hour and address answers the questions one asks after
     #: a leak: since when, from where, and did a NEW address join.
-    _APIKEY_AUDIT_FENSTER = 3600
+    _APIKEY_AUDIT_WINDOW = 3600
     _DROSSEL_MAX = 10000
 
     def _einmal_je(self, schluessel, fenster_sek: float) -> bool:
@@ -1052,7 +1052,7 @@ class TinySesam:
         a = _ANFRAGE.get() or {}
         ip = a.get("ip")
         kid = row["id"] if row is not None else None
-        if not self._einmal_je(("apikey", kid, ip, grund), self._APIKEY_AUDIT_FENSTER):
+        if not self._einmal_je(("apikey", kid, ip, grund), self._APIKEY_AUDIT_WINDOW):
             return
         besitzer = self._kontoname(row["user_id"]) if row is not None else None
         art = self._key_art_audit(self._key_kind(row)) if row is not None else "?"
@@ -1094,7 +1094,7 @@ class TinySesam:
         self.store.revoke_api_key(key_id, user_id)
         self.audit("apikey_revoke", self._kontoname(besitzer), detail=f"key={key_id}")
         if besitzer is not None and self.store.count_active_api_keys(besitzer) < vorher:
-            self._sicherheitsereignis("api_key_revoked", besitzer, key_id=key_id)
+            self._security_event("api_key_revoked", besitzer, key_id=key_id)
 
     #: Why all keys of an account were revoked — `reason` in the event `api_keys_revoked`
     #: (`on_security_event`). Up to 0.21.x German (`sperre`, `admin_passwort`, `passwort_reset`,
@@ -1112,7 +1112,7 @@ class TinySesam:
             raise ValueError(f"unbekannter Grund {grund!r} — erlaubt: {self._KEYS_WIDERRUFEN_GRUENDE}")
         n = self.store.revoke_user_api_keys(user_id)
         if n:
-            self._sicherheitsereignis("api_keys_revoked", user_id, count=n, reason=grund)
+            self._security_event("api_keys_revoked", user_id, count=n, reason=grund)
         return n
 
     def set_password(self, user_id, password):
@@ -1123,7 +1123,7 @@ class TinySesam:
         readable answer. Whoever calls this method from their own code first asks `password_policy_error()`.
         Notification always happens (`password_changed`), whichever way it is reached."""
         self.store.set_password_hash(user_id, hash_password(password))
-        self._sicherheitsereignis("password_changed", user_id)
+        self._security_event("password_changed", user_id)
 
     @staticmethod
     def _blockliste_laden(pfad) -> frozenset:
@@ -1220,7 +1220,7 @@ class TinySesam:
         "email_changed", "username_changed",
     )
 
-    def _sicherheitsereignis(self, ereignis: str, user_id, **details) -> None:
+    def _security_event(self, ereignis: str, user_id, **details) -> None:
         """Call `on_security_event` for an event from `SECURITY_EVENTS`, if set.
 
         An error in the hook does **not** abort the operation — the change has by then
@@ -1419,7 +1419,7 @@ class TinySesam:
     #: `ldap` is deliberately not here: LDAP writes the factor `password` (see `_check_ldap`),
     #: so it cannot be recognised by the factor name — its caller passes the evidence, which does not exist there
     #: at all, explicitly as `False`.
-    _FOEDERIERTE_FAKTOREN = ("oidc", "saml")
+    _FEDERATED_FACTORS = ("oidc", "saml")
 
     def _maybe_promote_admin(self, user, email_bestaetigt: Optional[bool] = None,
                              faktor: Optional[str] = None) -> bool:
@@ -1449,7 +1449,7 @@ class TinySesam:
            `email_verified`, OIDC Core 5.1). **SAML and LDAP have none** — no
            standard attribute says that a directory verified the address, and in many directories the user maintains a
            `mail` attribute themselves. So that this does not depend on the
-           caller's memory: `faktor` from `_FOEDERIERTE_FAKTOREN` demands
+           caller's memory: `faktor` from `_FEDERATED_FACTORS` demands
            `email_bestaetigt is True`, a forgotten argument refuses. LDAP writes the
            factor `password` and cannot be recognised by it — there the caller passes
            `email_bestaetigt=False`.
@@ -1497,7 +1497,7 @@ class TinySesam:
             # on the account decides.
             if email_bestaetigt is not None:
                 belegt, grund = email_bestaetigt is True, "email_unbestaetigt"
-            elif (faktor or "") in self._FOEDERIERTE_FAKTOREN:
+            elif (faktor or "") in self._FEDERATED_FACTORS:
                 belegt, grund = False, f"ohne_beleg:{faktor or '?'}"
             else:
                 belegt, grund = _beleg_am_konto(user), "email_unbestaetigt"
@@ -1647,7 +1647,7 @@ class TinySesam:
                                 security.fuer_log(user["username"]))
         return True
 
-    def _admin_claim_fehlgriff(self, username, ip) -> None:
+    def _admin_claim_failure(self, username, ip) -> None:
         """Record a failed first-admin claim — audit log and security log (B5-16)."""
         self.audit("admin_claim_fail", username, ip)
         security.seclog.warning("%s user=%s ip=%s method=claim_admin", security.LOG_PRUEFUNG,
@@ -2326,7 +2326,7 @@ class TinySesam:
           on the account does not claim what nobody has verified.
         * Whoever integrates this path themselves passes `email_verified=False` on to `apply_factor`
           (the bundled login route does so). The path cannot be recognised by the factor name —
-          `password` is not in `_FOEDERIERTE_FAKTOREN`, because a local
+          `password` is not in `_FEDERATED_FACTORS`, because a local
           password arrives there too.
 
         The second alone protected only THIS login: the attacker set up a PIN or a passkey in the
@@ -2470,7 +2470,7 @@ class TinySesam:
         Since the PO decision 2026-09-24 the operator says whether they trust it
         (`saml_email_trusted`, default no). Without trust it is not used, an
         account name with `@` yields to a substitute name, and via such a name no
-        existing account is ever mapped. The factor `saml` is in `_FOEDERIERTE_FAKTOREN`: an allowlist ADDRESS never becomes first admin via this path,
+        existing account is ever mapped. The factor `saml` is in `_FEDERATED_FACTORS`: an allowlist ADDRESS never becomes first admin via this path,
         even if a caller does not state the evidence — and not via a second,
         self-set-up factor at the next login either (B-umgehung-1 from T-13).
 
@@ -2670,7 +2670,7 @@ class TinySesam:
         self.store.delete_webauthn(int(passkey_id), user_id)
         # Losing a factor is exactly what one wants to look up later (B5-01).
         self.audit("passkey_delete", self._kontoname(user_id), ip, f"id={int(passkey_id)}")
-        self._sicherheitsereignis("passkey_removed", user_id, passkey_id=int(passkey_id))
+        self._security_event("passkey_removed", user_id, passkey_id=int(passkey_id))
         return True
 
     # ---------- PIN login (personal PIN per user) ----------
@@ -2680,7 +2680,7 @@ class TinySesam:
         if len(pin) < self.cfg.pin_min_length:
             raise ConfigError(f"PIN zu kurz (min. {self.cfg.pin_min_length})")
         self.store.set_pin_hash(user_id, hash_password(pin))
-        self._sicherheitsereignis("pin_set", user_id)
+        self._security_event("pin_set", user_id)
 
     def has_pin(self, user_id) -> bool:
         """Has this account set up a PIN?"""
@@ -2690,7 +2690,7 @@ class TinySesam:
         """Remove an account's PIN (is logged — a second factor does not vanish unnoticed)."""
         self.store.delete_pin(user_id)
         self.audit("pin_disable", self._kontoname(user_id), detail=f"user={user_id}")
-        self._sicherheitsereignis("pin_disabled", user_id)
+        self._security_event("pin_disabled", user_id)
 
     def _check_pin(self, username, pin) -> Optional[dict]:
         """Like `_check_password`, only with the personal PIN."""
@@ -2838,7 +2838,7 @@ class TinySesam:
         Like `reauth`, **per account only** (`totp_setup_max_attempts`) and separate from the
         login lockout: five typos during setup should not lock the sign-in.
 
-        Read-only: the route calls `_versuch_beginnen(…, "totp_setup")`, which checks and books in
+        Read-only: the route calls `_begin_attempt(…, "totp_setup")`, which checks and books in
         one step — with this method beforehand and `_record_login()` afterwards a parallel
         burst got past the limit.
         """
@@ -2874,7 +2874,7 @@ class TinySesam:
     def _regeln(self, username, ip, method) -> list:
         """Which counters apply to an attempt of this method? List of `(reason, limit, filter)`.
 
-        `is_*_locked()` checks them, `_versuch_beginnen()` checks them AND books atomically — both read
+        `is_*_locked()` checks them, `_begin_attempt()` checks them AND books atomically — both read
         the same list so that the two paths are never of different strictness.
 
         **Sign-in** (everything except `security.NICHT_LOGIN_METHODEN`, R7-6/H-8): the first
@@ -2933,7 +2933,7 @@ class TinySesam:
         """Does a self-service reset lift the streak lock under this identifier?
 
         It clears only the shares of the first factors (`_SERIE_RESET_ARTEN`), not TOTP and not
-        the PIN in the chain step (`_SERIE_PIN_FOLGE`, G7). If those alone are at the limit, the lockout
+        the PIN in the chain step (`_PIN_CHAIN_SERIES`, G7). If those alone are at the limit, the lockout
         notice and security log still named the reset as a way out until 2026-09-27 — the owner
         reset their password and stayed locked. Only for texts to the owner and operator: the
         sign-in page shows everyone the same text (`err.locked_serie`), otherwise it would reveal that
@@ -2972,8 +2972,8 @@ class TinySesam:
             self._aufgeschoben(username, ip, login=login)
         return schwebend
 
-    def _versuch_beginnen(self, username, ip, method, auch_pin: bool = False,
-                          serie_art: Optional[str] = None, schweben: bool = False) -> Optional[int]:
+    def _begin_attempt(self, username, ip, method, include_pin: bool = False,
+                          series_kind: Optional[str] = None, schweben: bool = False) -> Optional[int]:
         """Admit a check attempt **atomically** and pre-book it as a failed attempt.
 
         Return: an attempt ID that goes back to `_record_login(..., versuch=id)`, or
@@ -2981,11 +2981,11 @@ class TinySesam:
         `_record_login()`, which let a parallel burst past the lock (R3-2, R3-7,
         R7-2; rationale at `Store.reserve_attempt`).
 
-        `auch_pin=True` also attaches the PIN bucket — for the step-up page, on which a PIN
+        `include_pin=True` also attaches the PIN bucket — for the step-up page, on which a PIN
         confirms but whose attempts land in the `reauth` bucket.
 
-        `serie_art` books the attempt in the streak (B2-6) under a different kind than the
-        method — `_SERIE_PIN_FOLGE` for a PIN that comes AFTER an already provided factor
+        `series_kind` books the attempt in the streak (B2-6) under a different kind than the
+        method — `_PIN_CHAIN_SERIES` for a PIN that comes AFTER an already provided factor
         (chain step, route chain; G7). Window and buckets keep counting under `method`.
 
         `schweben=True` books the attempt with an open outcome (G9, `Store.reserve_attempt`): for
@@ -2997,14 +2997,14 @@ class TinySesam:
         `failed login` in the security log (fail2ban does not ban) and without a lockout notice.
         """
         regeln = self._regeln(username, ip, method)
-        if auch_pin:
+        if include_pin:
             regeln = regeln + self._regeln_pin(username, ip)
         # The streak (B2-6) belongs in the SAME transaction as the attempt: checked and pre-booked
         # in `reserve_attempt`. Before, it was read ahead of it and counted only after the check — a
         # parallel burst at the limit could then guess for one attempt per request.
         serie = None
         if method not in security.NICHT_LOGIN_METHODEN:
-            serie = (norm_kennung(username), serie_art or method, self._sec("account_max_consecutive_failures"))
+            serie = (norm_kennung(username), series_kind or method, self._sec("account_max_consecutive_failures"))
 
         def buchen():
             return self.store.reserve_attempt(self._topf(username, method), ip, method,
@@ -3033,7 +3033,7 @@ class TinySesam:
 
     _SERIE_VORBUCHUNGEN_MAX = 10000
 
-    #: Pending pre-bookings (G9, `_versuch_beginnen`): how many sign-ins per process may
+    #: Pending pre-bookings (G9, `_begin_attempt`): how many sign-ins per process may
     #: wait at the same time, for how long at most (one directory question up to its timeout
     #: and some headroom) and at what interval they ask again. Every re-ask takes the write lock
     #: (`BEGIN IMMEDIATE`) — at full occupancy at most about 40 short transactions per second.
@@ -3246,7 +3246,7 @@ class TinySesam:
         # until now the only factor change without a line (B5-07). It is precisely this that an
         # attacker with a taken-over session does in order to come back.
         self.audit("totp_enable", self._kontoname(user_id), detail=f"user={user_id}")
-        self._sicherheitsereignis("totp_enabled", user_id)
+        self._security_event("totp_enabled", user_id)
         return True
 
     def totp_disable(self, user_id):
@@ -3260,7 +3260,7 @@ class TinySesam:
         # it left no trace, although TOTP AND all recovery codes fall in the process.
         self.audit("totp_disable", self._kontoname(user_id), detail=f"user={user_id} recovery_codes_geloescht={offen}")
         if hatte:
-            self._sicherheitsereignis("totp_disabled", user_id, recovery_codes_deleted=offen)
+            self._security_event("totp_disabled", user_id, recovery_codes_deleted=offen)
 
     # ---------- Recovery codes (2FA substitute for a lost authenticator) ----------
     #: Random bytes per half of a recovery code. Two halves of 7 bytes = **112 bits**.
@@ -3275,7 +3275,7 @@ class TinySesam:
     _RECOVERY_BYTES = 7
     #: At this few remaining codes the account page shows a warning and the
     #: security log a line — whoever uses them up should generate new ones in time.
-    _RECOVERY_WARNSCHWELLE = 3
+    _RECOVERY_WARN_THRESHOLD = 3
 
     def generate_recovery_codes(self, user_id, n=None) -> list:
         """Generate new one-time codes (replaces existing ones). Plaintext return ONLY ONCE."""
@@ -3284,7 +3284,7 @@ class TinySesam:
         self.store.delete_recovery_codes(user_id)
         self.store.add_recovery_codes(user_id, [self._rc_hash(c) for c in codes])
         self.audit("recovery_generate", self._kontoname(user_id), detail=f"user={user_id} n={n}")
-        self._sicherheitsereignis("recovery_codes_generated", user_id, count=n)
+        self._security_event("recovery_codes_generated", user_id, count=n)
         return codes
 
     @staticmethod
@@ -3305,7 +3305,7 @@ class TinySesam:
         rest = self.store.count_recovery_codes(user_id)
         self.audit("recovery_used", self._kontoname(user_id), detail=f"user={user_id} verbleibend={rest}")
         security.seclog.warning("recovery code used user_id=%s verbleibend=%s", user_id, rest)
-        self._sicherheitsereignis("recovery_code_used", user_id, remaining=rest)
+        self._security_event("recovery_code_used", user_id, remaining=rest)
         return True
 
     def recovery_codes_remaining(self, user_id) -> int:
@@ -3464,7 +3464,7 @@ class TinySesam:
         page with a form, `ensure_csrf()` is the way — this one invalidates the forms in
         all other open tabs.
 
-        Intended for deliberate renewal (`_csrf_rotieren()`). Replaces a CSRF line that the
+        Intended for deliberate renewal (`_rotate_csrf()`). Replaces a CSRF line that the
         response already carries instead of appending a second one. If CSRF is switched off, nothing
         happens and the return value is empty."""
         if not self.cfg.csrf_enabled:
@@ -3781,7 +3781,7 @@ class TinySesam:
     _TOKEN_AUDIT_MAX = 20
     _TOKEN_AUDIT_FENSTER_SEC = 60
 
-    def _token_abgewiesen(self, zweck, request: Optional[Request] = None, grund="ungueltig"):
+    def _token_rejected(self, zweck, request: Optional[Request] = None, grund="ungueltig"):
         """An invalid/expired/consumed one-time token was presented (B5-18).
 
         Until now that left no trace: whoever tried out reset or sign-in tokens was seen by the
@@ -3988,7 +3988,7 @@ class TinySesam:
             raise ValueError(self.t("api.user_exists")) from None
         self.audit("username_changed", name, ip,
                    f"alt={alt} durch=betreiber" if by_operator else f"alt={alt}")
-        self._sicherheitsereignis("username_changed", user_id, old=alt, new=name)
+        self._security_event("username_changed", user_id, old=alt, new=name)
         return name
 
     def request_email_change(self, user_id, new_email, base_url):
@@ -4107,7 +4107,7 @@ class TinySesam:
         """Even the REQUEST for an address change goes to the previous, taken address
         (attack round, finding 1): if it comes from a taken-over session, the owner learns of it
         before the link is redeemed — and a password change or "end sessions"
-        discards it. **Without a link** (nothing whose base would have to be checked; test_selbstbedienung)."""
+        discards it. **Without a link** (nothing whose base would have to be checked; test_self_service)."""
         if self._mail_ziel_ok(alt, "email_change_notice", topf="hinweis"):
             self.send_mail(alt, "Änderung deiner E-Mail-Adresse beantragt",
                            f"Für dein Konto „{name}“ wurde beantragt, die E-Mail-Adresse auf {neu} "
@@ -4162,7 +4162,7 @@ class TinySesam:
         self.store.revoke_user_magic_tokens(uid)
         name = self._kontoname(uid)
         self.audit("email_changed", name, ip, f"alt={alt} neu={mail}")
-        self._sicherheitsereignis("email_changed", uid, old=alt, new=mail)
+        self._security_event("email_changed", uid, old=alt, new=mail)
         if alt and self.mail_configured():
             def hinweis():
                 self.send_mail(alt, "Deine E-Mail-Adresse wurde geändert",
@@ -4466,7 +4466,7 @@ class TinySesam:
     # of an own login page. The inner checkers do not throttle — lock, counter, streak and
     # the fail2ban lines existed only in the routes. These three methods ARE now the routes:
     # `POST /auth/login`, `/auth/pin` and `/auth/totp` call them and only render the
-    # result. One source, no drift — `tests/test_anmelden.py` ensures via AST that none
+    # result. One source, no drift — `tests/test_sign_in.py` ensures via AST that none
     # of the three routes calls an inner checker itself, and checks own pages against the
     # built-in ones (the same audit and log lines).
 
@@ -4542,7 +4542,7 @@ class TinySesam:
         # failed attempt in the table; `_record_login(..., versuch=…)` turns it into a success.
         # With LDAP it stays pending until the directory has answered (G9): on an outage it is
         # taken back (F-23), and until then it must lock nobody, only make them wait.
-        versuch = self._versuch_beginnen(username, ip, "password", schweben=cfg.ldap_enabled)
+        versuch = self._begin_attempt(username, ip, "password", schweben=cfg.ldap_enabled)
         if versuch is None:
             return self._anmeldung_gesperrt(username, nxt)
         # The unexpected (programming error in the client, database gone, an HTTPException from the
@@ -4573,7 +4573,7 @@ class TinySesam:
                     # IPs, only the IP rate limit would still apply. The response stays 503. A local account
                     # WITH a password can thus be recognised during an outage by the later 429 —
                     # the same lock that also hits it in normal operation; that is the smaller price.
-                    # The attempt has stood in the table since `_versuch_beginnen` (R7-2), as a
+                    # The attempt has stood in the table since `_begin_attempt` (R7-2), as a
                     # pending pre-booking (G9) — without a local password it is therefore
                     # taken back, not merely not booked additionally. Until then it lets
                     # sign-ins that would fail because of it wait instead of locking them; so that
@@ -4688,8 +4688,8 @@ class TinySesam:
         # is the most grateful target of a parallel burst. Behind a provided factor
         # the streak books under its own kind: these wrong guesses arise only for whoever has the first
         # factor, and a self-service reset does not clear them (like TOTP, G7).
-        versuch = self._versuch_beginnen(ident, ip, "pin",
-                                         serie_art=self._SERIE_PIN_FOLGE if folge else None)
+        versuch = self._begin_attempt(ident, ip, "pin",
+                                         series_kind=self._PIN_CHAIN_SERIES if folge else None)
         if versuch is None:
             return self._anmeldung_gesperrt(ident, nxt, offen)
         try:
@@ -4737,7 +4737,7 @@ class TinySesam:
         ip = self.client_ip(request)
         # Atomic as at login (R3-2): otherwise the check lies between lock and counting.
         drossel_ok = self._rate_ok(ip)
-        versuch = self._versuch_beginnen(pu["username"], ip, "totp") if drossel_ok else None
+        versuch = self._begin_attempt(pu["username"], ip, "totp") if drossel_ok else None
         if versuch is None:
             return self._anmeldung_gesperrt(pu["username"], nxt, offen, text="err.retry",
                                             grund="locked" if drossel_ok else "ratelimit")
@@ -4765,7 +4765,7 @@ class TinySesam:
     # actions (until then only the built-in page `/auth/reauth`) and for the own
     # password change (until then only `POST /auth/password`). The inner checkers
     # (`_verify_user_password`, `_verify_user_pin`, `_verify_totp`) do not throttle; these methods
-    # do what the routes do — because the routes call them. `tests/test_bestaetigen.py` ensures via AST
+    # do what the routes do — because the routes call them. `tests/test_confirm.py` ensures via AST
     # that neither of the two routes calls an inner checker itself, and measures own pages
     # against the built-in ones (the same status, audit, log and counter lines).
 
@@ -4826,7 +4826,7 @@ class TinySesam:
         # its bucket applies too (C-3): a PIN locked at login cannot be guessed
         # on here.
         drossel_ok = self._rate_ok(ip, login=False)
-        versuch = (self._versuch_beginnen(u["username"], ip, "reauth", auch_pin="pin" in methods)
+        versuch = (self._begin_attempt(u["username"], ip, "reauth", include_pin="pin" in methods)
                    if drossel_ok else None)
         if versuch is None:
             return self._anmeldung_nein("locked" if drossel_ok else "ratelimit", 429, "err.retry", nxt)
@@ -4936,7 +4936,7 @@ class TinySesam:
         # `ip_attempt_factor`. It remains throttled (`_rate_ok`),
         # and logged too.
         drossel_ok = self._rate_ok(ip, login=False)
-        versuch = self._versuch_beginnen(u["username"], ip, "password_change") if drossel_ok else None
+        versuch = self._begin_attempt(u["username"], ip, "password_change") if drossel_ok else None
         if versuch is None:
             return nein("locked" if drossel_ok else "ratelimit", 429, "api.too_many")
         # Checked against the **ID** of the own session, not against the login identifier:
@@ -5069,7 +5069,7 @@ class TinySesam:
                                     security.fuer_log(client), security.fuer_log(name))
             return
         try:
-            refresh = self.store.tresor.entschluesseln(z["refresh"])
+            refresh = self.store.tresor.decrypt(z["refresh"])
         except Exception:   # noqa: BLE001 — wrong key: the start checks that; do not burn anything here
             self.store.oidc_sitzung_geprueft(handle, client, _jetzt() - frist + 60,
                                              alt_verschluesselt=z["refresh"])
@@ -5352,7 +5352,7 @@ class TinySesam:
         u = self.store.get_user(user_id)
         self.audit("mfa_enrollment_revoked", str(u["username"]) if u else None)
 
-    def _csrf_rotieren(self, response) -> str:
+    def _rotate_csrf(self, response) -> str:
         """Set a fresh CSRF token — at login.
 
         The naive double-submit is considered vulnerable to *cookie injection*: whoever can set a cookie via a
@@ -5478,7 +5478,7 @@ class TinySesam:
         # not per route: every sign-in sets this cookie, and every full session is noted
         # at its creation (`_sitzung_anlegen`). A step-up does not rotate.
         if self._anmeldung_einloesen(token):
-            self._csrf_rotieren(response)
+            self._rotate_csrf(response)
 
     def rotate_session(self, request, response) -> Optional[str]:
         """Give the running session a new token and set the cookie (F-06).
@@ -5738,7 +5738,7 @@ class TinySesam:
         a sign-in at all would lock the sign-in too. The counter of these methods is not lost,
         it just has its own bucket (e.g. `_is_password_change_locked`).
 
-        Read-only: the routes take `_versuch_beginnen()`, which checks and books in one step.
+        Read-only: the routes take `_begin_attempt()`, which checks and books in one step.
         """
         return self._sperre_pruefen(self._regeln(username, ip, "password"), username, ip, login=True)
 
@@ -5746,7 +5746,7 @@ class TinySesam:
                       quelle: str = "", konto: Optional[int] = None):
         """Book a sign-in attempt. A success clears only the failed attempts of the SAME method.
 
-        `versuch` is the ID from `_versuch_beginnen()`: then the attempt already stands as a
+        `versuch` is the ID from `_begin_attempt()`: then the attempt already stands as a
         failed attempt in the table and is only closed here instead of being counted a second time.
 
         `quelle` tells the audit log WHO checked the secret where the method does not
@@ -5812,7 +5812,7 @@ class TinySesam:
                                     security.fuer_log(username), security.fuer_log(ip), method)
             if method not in security.NICHT_LOGIN_METHODEN:
                 # The streak counts per folded identifier, like the account bucket (`_topf`). Pre-booked
-                # by `_versuch_beginnen`; only a route without pre-booking counts here. Exactly at the
+                # by `_begin_attempt`; only a route without pre-booking counts here. Exactly at the
                 # crossing of the limit one line: from there the sign-in is permanently closed, and
                 # the operator must know why someone can no longer sign in.
                 #
@@ -5868,13 +5868,13 @@ class TinySesam:
     #: advises would no longer help (attack on the fixes, R2-2). TOTP wrong guesses, by contrast,
     #: arise only for whoever already has the password; only a complete sign-in or the
     #: operator clears those (R4-13). Likewise a PIN AFTER an already provided factor (chain step of the
-    #: half session, route chain of the full one): it books under `_SERIE_PIN_FOLGE` and stays
+    #: half session, route chain of the full one): it books under `_PIN_CHAIN_SERIES` and stays
     #: like TOTP (G7). Until 2026-09-26 the kind did not know the position — in a chain
     #: `password → pin` the reset cleared the second factor's wrong guesses too.
     _SERIE_RESET_ARTEN = ("password", "pin")
     #: The kind of the streak for a PIN behind an already provided factor (G7). `login_attempt`
     #: and the PIN bucket keep counting it as `pin`; only the self-service reset distinguishes.
-    _SERIE_PIN_FOLGE = "pin_folge"
+    _PIN_CHAIN_SERIES = "pin_folge"
 
     def lift_lockout(self, user_id, methods=None) -> int:
         """Clear the sign-in failed attempts of an account; returns how many there were.
@@ -6213,11 +6213,11 @@ class TinySesam:
             return f"{proto}://{host}{uri}"
         return h.get("referer") or "/"
 
-    def _forward_app(self, url_oder_host: str) -> dict:
+    def _forward_app(self, url_or_host: str) -> dict:
         """The gate's settings for an application (T-21): `name` and `login`, from
         `forward_apps[host]` with `forward_login` as fallback. The host without port, lowercase."""
         from urllib.parse import urlsplit
-        roh = str(url_oder_host or "")
+        roh = str(url_or_host or "")
         host = ((urlsplit(roh).hostname if "://" in roh else roh.split(":", 1)[0]) or "").lower().rstrip(".")
         e = {}
         for h, werte in (self.cfg.forward_apps or {}).items():
@@ -6279,7 +6279,7 @@ class TinySesam:
         derived host counts only from `trusted_redirect_hosts` or loopback, otherwise "" remains.
         **The one exception is the paragraph above** and it is deliberate: without `cookie_domain`
         the requested — co-trusted — host may claim the login page, otherwise the sign-in
-        goes round in circles. `konfigpruefung` announces this case at startup.
+        goes round in circles. `config_check` announces this case at startup.
         """
         from urllib.parse import quote, urlsplit
         kandidat = ""
@@ -6322,7 +6322,7 @@ class TinySesam:
         # only then does `/auth/oidc/start` know for which client it has to begin the round (T-14).
         # Without that every sign-in would run via the default client, and the approval that the
         # provider grants per client would be ineffective.
-        anwendung = self._oidc_anwendung(orig_url)
+        anwendung = self._oidc_application(orig_url)
         if anwendung:
             ziel += f"&app={quote(anwendung, safe='')}"
         return ziel
@@ -6348,7 +6348,7 @@ class TinySesam:
         return schema
 
     # ---------- Approvals per application (T-14) ----------
-    def _oidc_anwendung(self, url_oder_host: str) -> str:
+    def _oidc_application(self, url_or_host: str) -> str:
         """The client key for this address — "" if this installation protects only one
         application. The empty return value is intentional: it keeps every call site
         word-for-word at the behaviour of 0.18.0 as long as `oidc_clients` is empty."""
@@ -6356,16 +6356,16 @@ class TinySesam:
         registry = getattr(self, "oidc_clients", None)
         if not registry or not registry.mehrere:
             return ""
-        roh = str(url_oder_host or "")
+        roh = str(url_or_host or "")
         host = urlsplit(roh).hostname if "://" in roh else roh
         return registry.schluessel_fuer_host(host or "")
 
-    def _vermerke_oidc_freigabe(self, token: str, client: str, rollen=None) -> None:
+    def _record_oidc_approval(self, token: str, client: str, rollen=None) -> None:
         """The provider has approved for this application — note it on the session."""
         self.store.put_oidc_grant(self.store.session_hash(token), client or "*",
                                   _jetzt(), rollen)
 
-    def _oidc_freigabe_gueltig(self, token_hash: str, client: str) -> tuple:
+    def _oidc_approval_valid(self, token_hash: str, client: str) -> tuple:
         """May this session enter this application? Return `(yes, reason)`.
 
         `reason` is "" for yes, otherwise "fehlt" (the provider has never approved
@@ -6654,7 +6654,7 @@ class TinySesam:
             # The CONFIGURED base also goes through the same form check as the derived one
             # (C-7). Before, it saw only `strip().rstrip("/")`: `https://who:what@auth.example`
             # thus stood in every reset link and every redirect URI, a fragment cut off
-            # the appended token. `konfigpruefung` already rejects both at construction —
+            # the appended token. `config_check` already rejects both at construction —
             # this line is the floor beneath it, because a config can still be changed after the
             # constructor.
             basis = security.normalisiere_basis(str(self.cfg.base_url))
@@ -6696,7 +6696,7 @@ class TinySesam:
         in the result, but a server error in the middle of the sign-in attempt, although it was already clear at construction
         that it could not work.
 
-        Both are gone. `konfigpruefung` makes `base_url` mandatory as soon as one of these routes
+        Both are gone. `config_check` makes `base_url` mandatory as soon as one of these routes
         is on — so construction fails before a user clicks "forgot password".
         This method is the second lock for the rest: a config that was changed
         after the constructor (it is read at request time). Then the process aborts with a
@@ -6865,10 +6865,10 @@ class TinySesam:
         """All checks that make construction fail — in the constructor and once more before
         `router()`/`admin_router()` (A2).
 
-        Until then they stood only in the constructor; `_nachpruefen` knew only `konfigpruefung` and
+        Until then they stood only in the constructor; `_nachpruefen` knew only `config_check` and
         the cookie fields. Whoever set `auth.cfg.allow_signup = True` afterwards built, alongside
         `admin_identifiers=["boss"]`, a router in which the first visitor registered as "boss"
-        and became first admin. `beim_aufbau=False` leaves out only `konfigpruefung` —
+        and became first admin. `beim_aufbau=False` leaves out only `config_check` —
         `_nachpruefen` has already run it via `TinySesamConfig._befunde()`, warnings included."""
         if config.login_identifier not in ("username", "email", "both"):
             raise ConfigError("login_identifier muss 'username', 'email' oder 'both' sein")
@@ -6877,10 +6877,10 @@ class TinySesam:
                              "sonst entstehen Konten, die sich nicht anmelden können")
         # All remaining contradictions at once — at construction, not at the first login. The
         # checks above raise individually because each tells its own story;
-        # what comes after is collected by konfigpruefung.py and reported together. Whoever has three things
+        # what comes after is collected by config_check.py and reported together. Whoever has three things
         # wrong should read them once and not start three times.
         if beim_aufbau:
-            befunde, hinweise = konfigpruefung.pruefe(config)
+            befunde, hinweise = config_check.check_config(config)
             for hinweis in hinweise:
                 security.seclog.warning("Konfiguration: %s", hinweis)
             if befunde:
@@ -7015,7 +7015,7 @@ class TinySesam:
         used to bypass every guard — `TinySesamConfig.validate()` existed for that, nobody
         called it. Here is the last point at which an error is still noticed at startup instead of at the
         first click. The constructor has already issued warnings; here only what would have made
-        construction fail counts — and ALL of it: `konfigpruefung` including the cookie fields and
+        construction fail counts — and ALL of it: `config_check` including the cookie fields and
         the constructor's bolts (`_riegel`, A2)."""
         fehler, _ = self.cfg._befunde()
         if not fehler:
@@ -7407,134 +7407,105 @@ class TinySesam:
         super().__init_subclass__(**kwargs)
         for name, wert in vars(cls).items():
             alias = next((vars(b)[name] for b in cls.__mro__[1:] if name in vars(b)), None)
-            if isinstance(alias, Veraltet) and not isinstance(wert, Veraltet):
+            if isinstance(alias, Deprecated) and not isinstance(wert, Deprecated):
                 warnings.warn(
                     f"{cls.__name__}.{name} überschreibt einen veralteten Namen und wirkt seit "
                     f"0.22.0 nicht mehr: TinySesam ruft intern `{alias.ziel}`. {alias.meldung}",
                     RuntimeWarning, stacklevel=2)
 
-    admin_claim_fehlgriff = Veraltet(
-        "_admin_claim_fehlgriff", "ohne Ersatz; die Route `/auth/claim-admin` protokolliert selbst")
-    check_ldap = Veraltet(
+    check_ldap = Deprecated(
         "_check_ldap", "stattdessen `login_password` (fragt das Verzeichnis als Rückfall, "
         "drosselt und sperrt wie `POST /auth/login`)")
-    check_password = Veraltet(
+    check_password = Deprecated(
         "_check_password", "stattdessen `login_password` (drosselt, zählt und sperrt wie "
         "`POST /auth/login`), für ein eigenes Aussehen allein `set_template(\"login\", …)`; "
         "`check_password` selbst drosselt nicht")
-    check_pin = Veraltet(
+    check_pin = Deprecated(
         "_check_pin", "stattdessen `login_pin` (drosselt, zählt und sperrt wie `POST /auth/pin`), "
         "für ein eigenes Aussehen allein `set_template(\"pin\", …)`; `check_pin` selbst drosselt "
         "nicht")
-    check_resource = Veraltet(
+    check_resource = Deprecated(
         "_check_resource", "stattdessen `POST /auth/resource/{name}` (drosselt und sperrt) bzw. "
         "`require_resource`")
-    check_saml = Veraltet(
+    check_saml = Deprecated(
         "_check_saml", "stattdessen `POST /auth/saml/acs`, das die Signatur der Assertion prüft; "
         "`check_saml` vertraut seinen Argumenten")
-    complete_mfa = Veraltet("complete_totp", "stattdessen `complete_totp` (gleiches Verhalten)")
-    consume_admin_claim = Veraltet(
+    complete_mfa = Deprecated("complete_totp", "stattdessen `complete_totp` (gleiches Verhalten)")
+    consume_admin_claim = Deprecated(
         "_consume_admin_claim", "stattdessen die Route `/auth/claim-admin`, `ensure_admin` oder "
         "`admin_identifiers`")
-    csrf_rotieren = Veraltet(
-        "_csrf_rotieren", "stattdessen `set_cookie` (dreht das CSRF-Token bei der Anmeldung mit) "
-        "bzw. `issue_csrf`")
-    factor_entry = Veraltet(
+    factor_entry = Deprecated(
         "_factor_entry", "ohne Ersatz; `require_user`/`require` leiten selbst zum offenen Faktor")
-    forward_login_url = Veraltet(
+    forward_login_url = Deprecated(
         "_forward_login_url", "ohne Ersatz; die Route `/auth/forward` baut die Login-Adresse selbst")
-    forward_response_headers = Veraltet(
+    forward_response_headers = Deprecated(
         "_forward_response_headers", "ohne Ersatz; welche Header `/auth/forward` setzt, steuert "
         "`forward_headers`")
-    forwarded_url = Veraltet(
+    forwarded_url = Deprecated(
         "_forwarded_url", "ohne Ersatz; die Route `/auth/forward` liest die Proxy-Header selbst")
-    is_locked = Veraltet(
+    is_locked = Deprecated(
         "_is_locked", "stattdessen `login_password`, `login_pin` bzw. `login_totp`, die "
         "atomar prüfen und buchen; `is_locked` liest nur und lässt parallele Salven durch")
-    is_password_change_locked = Veraltet(
+    is_password_change_locked = Deprecated(
         "_is_password_change_locked", "stattdessen `change_password` (prüft und bucht atomar wie "
         "`POST /auth/password`)")
-    is_pin_locked = Veraltet(
+    is_pin_locked = Deprecated(
         "_is_pin_locked", "stattdessen `login_pin` (prüft und bucht atomar wie `POST /auth/pin`)")
-    is_reauth_locked = Veraltet(
+    is_reauth_locked = Deprecated(
         "_is_reauth_locked", "stattdessen `confirm_password`, `confirm_pin` bzw. `confirm_totp` "
         "(prüfen und buchen atomar wie `/auth/reauth`, wohin `require(mfa=True)` leitet)")
-    is_resource_locked = Veraltet(
+    is_resource_locked = Deprecated(
         "_is_resource_locked", "stattdessen `POST /auth/resource/{name}` (prüft und bucht atomar)")
-    is_secure = Veraltet(
+    is_secure = Deprecated(
         "_is_secure", "ohne Ersatz; die Warnung ohne HTTPS steuert `https_mode`")
-    is_totp_setup_locked = Veraltet(
+    is_totp_setup_locked = Deprecated(
         "_is_totp_setup_locked", "stattdessen `POST /auth/totp/setup` (prüft und bucht atomar)")
-    login_redirect_after = Veraltet(
+    login_redirect_after = Deprecated(
         "_login_redirect_after", "stattdessen `next_url` bzw. `redirect()` am Ergebnis von "
         "`login_password`, `login_pin` oder `login_totp` (nächster Faktor oder `next`)")
-    maybe_promote_admin = Veraltet(
+    maybe_promote_admin = Deprecated(
         "_maybe_promote_admin", "stattdessen `admin_identifiers` oder `ensure_admin`; direkt "
         "gerufen umgeht es den Adressbeleg")
-    mfa_pending = Veraltet(
+    mfa_pending = Deprecated(
         "_mfa_pending", "ohne Ersatz (der Name meint „hat ein bestätigtes TOTP“); dasselbe "
         "liefert `auth.store.has_confirmed_totp(user_id)` — Innenleben, ohne Zusage")
-    next_login_step = Veraltet(
+    next_login_step = Deprecated(
         "_next_login_step", "ohne Ersatz; `require_user`/`require` leiten selbst zum offenen "
         "Faktor")
-    oidc_anwendung = Veraltet(
-        "_oidc_anwendung", "ohne Ersatz; die Zuordnung steht in `oidc_clients`")
-    oidc_freigabe_gueltig = Veraltet(
-        "_oidc_freigabe_gueltig", "ohne Ersatz; die Zuordnung steht in `oidc_clients`")
-    purge_demo = Veraltet(
+    purge_demo = Deprecated(
         "_purge_demo", "stattdessen `demo_mode=False` (räumt die Demo-Konten beim Start)")
-    rate_ok = Veraltet(
+    rate_ok = Deprecated(
         "_rate_ok", "stattdessen `login_password`, `login_pin` bzw. `login_totp` (drosseln "
         "je IP), ein eigener Limiter per `set_rate_limiter`")
-    record_login = Veraltet(
+    record_login = Deprecated(
         "_record_login", "stattdessen `login_password`, `login_pin` bzw. `login_totp`, die "
         "jeden Versuch verbuchen; falsch gerufen räumt es fremde Fehlversuchszähler")
-    sec = Veraltet("_sec", "stattdessen `all_security()`")
-    seed_demo = Veraltet(
+    sec = Deprecated("_sec", "stattdessen `all_security()`")
+    seed_demo = Deprecated(
         "_seed_demo", "stattdessen `demo_mode=True` (legt die Demo-Konten beim Start an)")
-    send_signup_notice = Veraltet(
+    send_signup_notice = Deprecated(
         "_send_signup_notice", "ohne Ersatz; `POST /auth/register` verschickt den Hinweis selbst")
-    session_from_request = Veraltet(
+    session_from_request = Deprecated(
         "_session_from_request", "stattdessen `current_user` bzw. `session_user`")
-    sicherheitsereignis = Veraltet(
-        "_sicherheitsereignis", "ohne Ersatz; TinySesam ruft den Hook `on_security_event` selbst")
-    token_abgewiesen = Veraltet(
-        "_token_abgewiesen", "ohne Ersatz; die eingebauten Token-Routen protokollieren selbst")
-    unlock_resource = Veraltet(
+    unlock_resource = Deprecated(
         "_unlock_resource", "stattdessen `POST /auth/resource/{name}` (prüft das Geheimnis vorher)")
-    verify_csrf = Veraltet("_verify_csrf", "stattdessen `require_csrf`")
-    verify_recovery_code = Veraltet(
+    verify_csrf = Deprecated("_verify_csrf", "stattdessen `require_csrf`")
+    verify_recovery_code = Deprecated(
         "_verify_recovery_code", "stattdessen `login_totp` (nimmt auch Einmal-Codes, drosselt "
         "und sperrt wie `POST /auth/totp`); `verify_recovery_code` selbst drosselt nicht")
-    verify_totp = Veraltet(
+    verify_totp = Deprecated(
         "_verify_totp", "stattdessen `login_totp` (drosselt und sperrt wie `POST /auth/totp`), "
         "für den Step-up `confirm_totp`; `verify_totp` selbst drosselt nicht")
-    verify_user_password = Veraltet(
+    verify_user_password = Deprecated(
         "_verify_user_password", "stattdessen `confirm_password` (Step-up, drosselt und sperrt wie "
         "`/auth/reauth`) bzw. `change_password` (wie `POST /auth/password`); "
         "`verify_user_password` selbst drosselt nicht")
-    verify_user_pin = Veraltet(
+    verify_user_pin = Deprecated(
         "_verify_user_pin", "stattdessen `confirm_pin` (Step-up, drosselt und sperrt wie "
         "`/auth/reauth`); `verify_user_pin` selbst drosselt nicht")
-    vermerke_oidc_freigabe = Veraltet(
-        "_vermerke_oidc_freigabe", "ohne Ersatz; die Zuordnung steht in `oidc_clients`")
-    versuch_beginnen = Veraltet(
-        "_versuch_beginnen", "stattdessen `login_password`, `login_pin` bzw. `login_totp`, "
-        "die jeden Versuch atomar vorbuchen")
 
-    APIKEY_AUDIT_FENSTER = Veraltet("_APIKEY_AUDIT_FENSTER", "ohne Ersatz, ein interner Wert")
-    DEMO_USERS = Veraltet(
+    DEMO_USERS = Deprecated(
         "_DEMO_USERS", "ohne Ersatz; die Demo-Konten heissen `demo` und `demoadmin` (README)")
-    FOEDERIERTE_FAKTOREN = Veraltet(
-        "_FOEDERIERTE_FAKTOREN", "ohne Ersatz, eine innere Entscheidungsliste für den Erst-Admin")
-    IDENTIFYING = Veraltet(
-        "_IDENTIFYING", "ohne Ersatz; welche Faktoren identifizieren, steht in docs/BETRIEB.md")
-    RECOVERY_BYTES = Veraltet("_RECOVERY_BYTES", "ohne Ersatz, ein interner Wert")
-    RECOVERY_WARNSCHWELLE = Veraltet(
-        "_RECOVERY_WARNSCHWELLE", "stattdessen `recovery_codes_remaining` und eine eigene Schwelle")
-    # Came with 0.21.0 (G7) and stood there in the CHANGELOG as the route for own PIN pages
-    # (`versuch_beginnen(…, serie_art=auth.SERIE_PIN_FOLGE)`) — published, so an alias
-    # like any other C name, not merely renamed.
-    SERIE_PIN_FOLGE = Veraltet(
-        "_SERIE_PIN_FOLGE", "stattdessen `login_pin` (bucht eine PIN hinter einem erbrachten "
-        "Faktor selbst unter dieser Serien-Art)")
+    IDENTIFYING = Deprecated(
+        "_IDENTIFYING", "ohne Ersatz; welche Faktoren identifizieren, steht in docs/OPERATIONS.md")
+    RECOVERY_BYTES = Deprecated("_RECOVERY_BYTES", "ohne Ersatz, ein interner Wert")

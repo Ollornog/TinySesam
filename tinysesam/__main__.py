@@ -243,7 +243,7 @@ def _gc(argv) -> int:
     a = ap.parse_args(argv)
     # The same bound as `audit_retention_days` — checked before anything is deleted.
     # 10**20 otherwise aborted with OverflowError when sessions and tokens were already gone.
-    from .konfigpruefung import ZAHLENGRENZEN
+    from .config_check import ZAHLENGRENZEN
     unten, oben = ZAHLENGRENZEN["audit_retention_days"]
     if not unten <= a.audit_days <= oben:
         ap.error(f"--audit-days muss zwischen {unten} und {oben} liegen (Tage, nicht Sekunden)")
@@ -382,7 +382,7 @@ def _owner(argv) -> int:
 
 
 #: Maximum length of a username — the same as `TinySesam.NAME_MAX` (the CLI does not import the
-#: manager, it pulls in FastAPI; tests/test_admin_konto.py keeps both equal).
+#: manager, it pulls in FastAPI; tests/test_admin_account.py keeps both equal).
 _NAME_MAX = 150
 
 
@@ -465,18 +465,18 @@ def _gate_key(argv) -> int:
     ap.add_argument("--secrets-key-file", default="", help="wie config.secrets_key_file")
     a = ap.parse_args(argv)
     import os
-    from . import gate, geheimnis
-    # The key is derived from the base key. If that does not exist yet, `schluessel_laden`
+    from . import gate, vault
+    # The key is derived from the base key. If that does not exist yet, `load_key`
     # creates it — a read command must not do that: the proxy would get a key
     # that the service (with its environment) does not use at all.
-    if not (os.environ.get(geheimnis.UMGEBUNG, "").strip() or a.secrets_key_file
+    if not (os.environ.get(vault.ENV_VAR, "").strip() or a.secrets_key_file
             or os.path.exists(a.db + ".key")):
-        print(f"Kein Grundschlüssel: weder {geheimnis.UMGEBUNG} noch --secrets-key-file noch "
+        print(f"Kein Grundschlüssel: weder {vault.ENV_VAR} noch --secrets-key-file noch "
               f"{a.db}.key. Mit derselben Umgebung aufrufen wie den Dienst.", file=sys.stderr)
         return 1
     try:
-        schluessel, _herkunft = geheimnis.schluessel_laden(a.db, a.secrets_key_file)
-    except geheimnis.ConfigError as e:
+        schluessel, _herkunft = vault.load_key(a.db, a.secrets_key_file)
+    except vault.ConfigError as e:
         print(str(e), file=sys.stderr)
         return 1
     print(gate.oeffentlich_b64(gate.schluessel_ableiten(schluessel)))

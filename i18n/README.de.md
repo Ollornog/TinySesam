@@ -268,7 +268,7 @@ CLI-Kommando: im eigenen Dienst über die Python-API tun (`auth.set_pin(uid, …
 
 `TinySesamConfig` ist eine Dataclass, und das gehört zur Zusage: `dataclasses.fields(TinySesamConfig)`
 zählt jedes Feld auf — praktisch, um aus eigenen Einstellungen nur die bekannten Schlüssel
-weiterzureichen. Jedes Feld mit Bedeutung: [`KONFIGURATION.md`](../KONFIGURATION.md).
+weiterzureichen. Jedes Feld mit Bedeutung: [`CONFIGURATION.md`](../CONFIGURATION.md).
 
 ## Sprache (i18n)
 
@@ -766,7 +766,7 @@ Nach dem Vorbild von Authelia/Fail2Ban — die Schwellen sind **im Admin-Panel /
   (`session_idle_minutes`); TOTP-Geheimnisse liegen AES-256-GCM-verschlüsselt — **den Schlüssel
   getrennt sichern** (`TINYSESAM_SECRETS_KEY`, `secrets_key_file` oder `<db>.key`); eine
   OIDC-Sitzung prüft ihr Refresh-Token alle `oidc_session_refresh_minutes` nach und endet, wenn der
-  Provider Nein sagt. Einzelheiten: `docs/BETRIEB.md`.
+  Provider Nein sagt. Einzelheiten: `docs/OPERATIONS.md`.
 - **Sperr-Hinweis** (ASVS 6.3.5): Mit konfiguriertem Versand bekommt die belegte Adresse eines
   gesperrten Kontos einen Hinweis je Sperrfenster (Opt-out `notify_login_failures=False`).
 - **Fehlversuche in Folge, ohne Fenster** (`account_max_consecutive_failures`, Vorgabe 100): Jeder
@@ -979,7 +979,7 @@ Für **maschinellen Zugang** (Skripte, andere Dienste, System-Daemons) — paral
   `is_admin` setzen, Passwörter zurücksetzen — ohne zweiten Faktor, ohne CSRF-Schicht. Ein
   abgeflossener CI-Key war die Instanz. (Bis 0.21.x hiessen die Arten `automat` und `mensch`; seit
   0.22.0 sind diese Namen ein Eingabefehler, der den neuen nennt, und die Migration schreibt
-  gespeicherte Keys um — Rückschritt: `docs/BETRIEB.md`.)
+  gespeicherte Keys um — Rückschritt: `docs/OPERATIONS.md`.)
 - **Ein Key läuft von selbst ab.** Ohne `expires_days` galt er bisher unbefristet, und das war
   der häufigste Fall. Jetzt greift `apikey_default_days` (90); `expires_days=0` heisst weiter
   „unbefristet", braucht aber `apikey_allow_unlimited=True` und steht dann im Audit-Eintrag.
@@ -999,7 +999,7 @@ Eingebautes Panel unter **`/auth/admin`** (nur `is_admin`), einbindbar ohne Extr
 - **Sitzungen:** aktive einsehen + beenden.
 - **Härtung:** Schwellen (Versuche/Sperrzeit/Rate-Limit) live einstellen.
 - **Version:** die laufende Version plus ein Hinweis, wie Updates laufen — es gibt **keinen
-  „jetzt aktualisieren"-Knopf**, und zwar mit Absicht ([ADR-2](../backlog/ADR-2-kein-selbst-update.md)):
+  „jetzt aktualisieren"-Knopf**, und zwar mit Absicht ([ADR-2](../backlog/ADR-2-no-self-update.md)):
   Ein Auth-Modul, das zur Laufzeit Code nachlädt, ist eine Hintertür mit Bedienungsanleitung.
   Aktualisiert wird dort, wo installiert wurde. (Hier stand bis 0.18.0 ein Knopf, ein
   manual/auto-Modus und ein Version-Pin — nichts davon gibt es seit 0.12.0.)
@@ -1082,7 +1082,7 @@ Alles optional (per Config an/aus), einzeln und kombiniert nutzbar, Frontend üb
 - **Konto-Seite:** eingebaut unter `/auth/account` (`account_enabled`) — Passwort/PIN/2FA/Passkeys/Keys.
 - **Forward-Auth:** `forward_auth_enabled` → `GET /auth/forward` (200 + `Remote-User/Groups/Email` bzw.
   401 + `X-TinySesam-Location`). Beispiele: [`deploy/forward-auth/`](../deploy/forward-auth/) (Caddy/nginx/Traefik;
-  `nginx-pfad.conf` deckt den anderen häufigen Zuschnitt ab — ein Host, nur einzelne Pfade geschützt,
+  `nginx-path.conf` deckt den anderen häufigen Zuschnitt ab — ein Host, nur einzelne Pfade geschützt,
   dahinter statische Dateien und PHP).
   **Rollen am Proxy:** der Proxy sagt, was er verlangt — `GET /auth/forward?roles=redaktion,admin` oder
   Header `X-TinySesam-Roles`. Eine der genannten Rollen genügt; angemeldet, aber Rolle fehlt → **403**
@@ -1200,7 +1200,7 @@ Routen: `/auth/saml/login` (→ IdP), `/auth/saml/acs` (Assertion, signaturgepr�
 > TestClient in Ordnung, gegen einen echten IdP nicht. Der Grund steht im Log
 > `tinysesam.security`.
 
-> **Alle Felder auf einen Blick:** [`KONFIGURATION.md`](../KONFIGURATION.md) führt alle 120
+> **Alle Felder auf einen Blick:** [`CONFIGURATION.md`](../CONFIGURATION.md) führt alle 120
 > Config-Felder mit Typ, Vorgabe und Bedeutung — erzeugt aus `config.py`, kann also nicht
 > auseinanderlaufen. Diese README erklärt die *Wege*; jene Seite beantwortet *„es gibt da ein
 > Feld — was tut es?"*
@@ -1293,7 +1293,7 @@ Gateway-Seiten wählt `TINYSESAM_LANG` (`en`, `de`).
 Beide Caddy-Vorlagen lassen mit `TS_SHARE_PRAEFIX='^/(s|public/share)/'` Pfade ohne Anmeldung
 durch, ohne Identität. Geprüft wird der rohe Pfad; `..`, `;`, Backslash, NUL und ihre kodierten Formen
 weist die Regel ab (`/s/..;/admin` lesen Tomcat und Spring als `/admin`). Von sich aus aus. Wie man die
-Pfade einer Anwendung nachmisst: `docs/BETRIEB.md`.
+Pfade einer Anwendung nachmisst: `docs/OPERATIONS.md`.
 
 ### Abmelden an der Anwendung: nur hier oder überall (T-22)
 
@@ -1334,7 +1334,7 @@ aufgeführt in [`API.md`](../API.md):
 
 Ein neuer öffentlicher Name hat keine Stufe, bis jemand entscheidet; so lange ist der Wächter
 `tests/test_api_surface.py` rot — nichts wird aus Versehen zur Zusage. Die Konfigurationsfelder
-sind Stufe A (bis auf einen Grabstein, markiert in `KONFIGURATION.md`), ebenso die Fehlertypen
+sind Stufe A (bis auf einen Grabstein, markiert in `CONFIGURATION.md`), ebenso die Fehlertypen
 (`TinySesamError`, `ConfigError`, `StateError`, `MissingExtra`, `MailNotConfigured`).
 
 **Stufen A und B heissen englisch.** Bis 0.21.x waren einige dieser Namen deutsch
@@ -1351,7 +1351,7 @@ Grund-Kürzel), die `details` an `on_security_event`, der Kontext eigener Seiten
 `human`. Die zwei Werte, die in der Datenbank stehen (die Art eines Keys, die bisherige Adresse
 `old` in einem offenen Adresswechsel-Link), schreibt der Start um (Schema 12), gelesen werden sie
 auch in alter Form richtig; der Rückschritt auf 0.21.x braucht einen SQL-Block aus
-`docs/BETRIEB.md`. Derselbe Wächter misst sie an einer Probeinstanz und im Quelltext. **Audit- und
+`docs/OPERATIONS.md`. Derselbe Wächter misst sie an einer Probeinstanz und im Quelltext. **Audit- und
 Log-Zeilen bleiben, wie sie sind** — fail2ban und eigene Filter hängen an ihnen
 (`apikey_create … art=automat` behält seinen Wortlaut).
 

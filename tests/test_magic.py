@@ -280,9 +280,9 @@ finally:
 ok("B3-1: STARTTLS and SMTPS with certificate and hostname check; smtp_ca_file takes effect")
 
 # ---------- Attack A4: the consequences of B3-1 show up at build time or with a hint ----------
-from tinysesam.konfigpruefung import pruefe as _pruefe
+from tinysesam.config_check import check_config as _check_config
 def _smtp_befunde(**kw):
-    f, w = _pruefe(TinySesamConfig(db_path=os.path.join(tempfile.mkdtemp(), "t.db"),
+    f, w = _check_config(TinySesamConfig(db_path=os.path.join(tempfile.mkdtemp(), "t.db"),
                                    passkey_enabled=False, **kw))
     return ([x for x in f if "smtp" in x.lower()], [x for x in w if "smtp_host=" in x])
 assert len(_smtp_befunde(smtp_host="mail.example.com", smtp_ca_file="/gibt/es/nicht.pem")[0]) == 1

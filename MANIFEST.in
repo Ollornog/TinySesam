@@ -32,7 +32,7 @@ recursive-exclude deploy __pycache__
 # What a human looks for in the source package: the license (setuptools includes it itself), the
 # version history, the reporting path for vulnerabilities and the German version of the README.
 include CHANGELOG.md
-include KONFIGURATION.md
+include CONFIGURATION.md
 include API.md
 include SECURITY.md
 include i18n/README.de.md

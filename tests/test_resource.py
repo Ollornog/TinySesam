@@ -117,7 +117,7 @@ ok("area slips lock no sign-in (own bucket)")
 # Here a stranger guesses, the victim is no particular user, and without it he could keep guessing endlessly via
 # new area names. A FOURTH, never touched area is therefore closed from
 # the same address.
-auth2.set_resource_secret("tresor", "9876", kind="pin", label="Tresor")
+auth2.set_resource_secret("tresor", "9876", kind="pin", label="Vault")
 assert auth2.store.count_fails(0, username="res:tresor", method="resource") == 0, \
     "precondition: this area itself has seen no slip"
 r = c3.post("/auth/resource/tresor", data={"secret": "9876", "next": "/"})

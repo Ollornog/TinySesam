@@ -125,7 +125,7 @@ ok(f"failed writes roll back ({len(schreiber)} paths), sign-in stays intact")
 # rollback), `reserve_attempt` clears it instead of letting every sign-in fail.
 auth_s.store.db.execute("INSERT INTO setting(key, value) VALUES ('probe_liegengeblieben', '1')")
 assert auth_s.store.db.in_transaction, "precondition: an open transaction is lying around"
-versuch_s = auth_s._versuch_beginnen("sven", "198.51.100.9", "password")
+versuch_s = auth_s._begin_attempt("sven", "198.51.100.9", "password")
 assert versuch_s is not None, "the sign-in attempt was rejected"
 assert not auth_s.store.db.in_transaction
 assert auth_s.store.get_setting("probe_liegengeblieben") is None, \

@@ -104,7 +104,7 @@ try:
 
     class _Konsole(io.StringIO):
         # stderr on a terminal: only then does the token go to stderr. Without a console (container,
-        # journal) TinySesam has written `<db_path>.claim` since 0.22.0 — tests/test_betriebsfunde.py (b).
+        # journal) TinySesam has written `<db_path>.claim` since 0.22.0 — tests/test_operations_findings.py (b).
         def isatty(self):
             return True
 
@@ -249,17 +249,17 @@ ok("the token file is truncated — no remainder of a longer predecessor")
 
 # (3) Token file set, token route off: the file is never created. Without a warning the
 #     operator waits for a token that never comes.
-from tinysesam.konfigpruefung import pruefe                                    # noqa: E402
+from tinysesam.config_check import check_config                                    # noqa: E402
 
 _gemeinsam7 = dict(db_path=os.path.join(tempfile.mkdtemp(), "t.db"),
                    admin_claim_token_file=os.path.join(tmp6, "claim.token"))
 for _lage, _cfg in (("admin_claim_ttl_min=0", TinySesamConfig(admin_claim_ttl_min=0, **_gemeinsam7)),
                     ("admin_enabled=False", TinySesamConfig(admin_enabled=False, **_gemeinsam7))):
-    _f7, _w7 = pruefe(_cfg)
+    _f7, _w7 = check_config(_cfg)
     assert any("admin_claim_token_file ist gesetzt" in w and "nie geschrieben" in w for w in _w7), \
         f"{_lage}: no warning — {_w7!r}"
     assert not _f7, _f7
-_f7, _w7 = pruefe(TinySesamConfig(**_gemeinsam7))          # route on → silent
+_f7, _w7 = check_config(TinySesamConfig(**_gemeinsam7))          # route on → silent
 assert not any("admin_claim_token_file ist gesetzt" in w for w in _w7), _w7
 ok("admin_claim_token_file without a token route is reported at setup (with a route: silent)")
 
@@ -268,7 +268,7 @@ ok("admin_claim_token_file without a token route is reported at setup (with a ro
 #      the CHANGELOG explicitly retracted elsewhere („Das CLI stand hier
 #      zunächst mit in der Liste — es kann gar keine Konten anlegen"), this time in a text that
 #      the operator gets to read. Whoever followed it searched for a command that does not exist.
-_f8, _w8 = pruefe(TinySesamConfig(admin_claim_ttl_min=0, **_gemeinsam7))
+_f8, _w8 = check_config(TinySesamConfig(admin_claim_ttl_min=0, **_gemeinsam7))
 _zeile8 = next(w for w in _w8 if "admin_claim_token_file ist gesetzt" in w)
 assert "ensure_admin" in _zeile8 and hasattr(TinySesam, "ensure_admin"), \
     f"the warning names no route that exists: {_zeile8!r}"
@@ -283,7 +283,7 @@ _kommandos = set(re.findall(r'cmd == "([a-z]+)"', _inspect.getsource(_cli_main))
 # `owner` (2026-09-24) creates no account and changes no identifier — it sets the owner role of an
 # existing account (emergency route when no owner can get in anymore). `rename` (G13, 2026-09-26) likewise
 # creates no account but does change an identifier — which is why the startup messages on
-# identifier collisions and control characters now name it (tests/test_sicherheit_befunde.py checks that
+# identifier collisions and control characters now name it (tests/test_security_findings.py checks that
 # the named route exists); the first-admin warning here stays as it is.
 assert _kommandos == {"version", "passwd", "backup", "restore", "gc", "audit", "unlock", "owner",
                       "rename"}, \
@@ -589,7 +589,7 @@ os.remove(dbp)
 
 # (6) B5-16: Missteps at /auth/claim-admin — throttled and logged. Until T-13 a
 # signed-in account could guess here as often as it liked, without a trace. (Mutation probe:
-# remove `admin_claim_fehlgriff` from the router → no line, no audit.)
+# remove `admin_claim_failure` from the router → no line, no audit.)
 dbc = os.path.join(tempfile.mkdtemp(), "t.db")
 authc = TinySesam(TinySesamConfig(db_path=dbc, cookie_secure=False, passkey_enabled=False,
                                   csrf_enabled=False, lang="de"))

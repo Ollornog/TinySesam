@@ -16,15 +16,51 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
   the form CodeQL recognises as a filter against log injection (#266, `deferred login`). New test: a line break in
   name or address does not produce a second line in the deferral line.
 
-### Changed — repository language is English (T-29)
+### Changed — repository language is English (T-29); one-time breaking renames
 
-- Documentation (`API.md`, `KONFIGURATION.md`, `docs/BETRIEB.md`, `TODO.md`), this CHANGELOG (now with the English Keep a
-  Changelog categories), the backlog, and the comments and docstrings of the library, the tests, the scripts and the
-  deployment files are written in English. The German user interface stays available (`lang="de"`), the German
-  READMEs and policy files stay under `i18n/`. Default language of the interface was already English.
-- Not yet translated (runtime texts, tests depend on their wording): log lines, `ConfigError`/`StateError` messages,
-  CLI output, the hints of `konfigpruefung.py`, the replacement texts of the deprecated aliases, SQL schema comments,
-  and the German website texts.
+The repository is now English throughout: documentation, CHANGELOG (with the English Keep a Changelog categories), backlog,
+comments and docstrings, and the names of modules, scripts, test files and backlog files. The German user interface stays
+available (`lang="de"`), the German READMEs and policy files stay under `i18n/`. The default language of the interface was
+already English. The names below changed **once, without compatibility aliases** (maintainer decision); the library is
+still below 1.0.
+
+**Removed — deprecated tier-C names that still had a German spelling** (they were announced for removal with 1.0 anyway;
+calling them now raises `AttributeError` instead of a `DeprecationWarning`):
+
+| Old name | Use instead |
+|---|---|
+| `TinySesam.admin_claim_fehlgriff` | none; `/auth/claim-admin` logs by itself |
+| `TinySesam.csrf_rotieren` | `set_cookie` / `issue_csrf` |
+| `TinySesam.oidc_anwendung` | none; the mapping is in `oidc_clients` |
+| `TinySesam.oidc_freigabe_gueltig` | none; the mapping is in `oidc_clients` |
+| `TinySesam.sicherheitsereignis` | none; TinySesam calls the `on_security_event` hook itself |
+| `TinySesam.token_abgewiesen` | none; the built-in token routes log by themselves |
+| `TinySesam.vermerke_oidc_freigabe` | none; the mapping is in `oidc_clients` |
+| `TinySesam.versuch_beginnen` | `login_password`, `login_pin` or `login_totp` |
+| `TinySesam.APIKEY_AUDIT_FENSTER` | none, an internal value |
+| `TinySesam.FOEDERIERTE_FAKTOREN` | none, an internal decision list |
+| `TinySesam.RECOVERY_WARNSCHWELLE` | `recovery_codes_remaining` and your own threshold |
+| `TinySesam.SERIE_PIN_FOLGE` | `login_pin` |
+
+**Renamed — modules and files** (imports and links follow; nothing of this is public API except where noted):
+
+| Old | New |
+|---|---|
+| `tinysesam/konfigpruefung.py` (`konfigpruefung.pruefe`) | `tinysesam/config_check.py` (`config_check.check_config`) |
+| `tinysesam/geheimnis.py` (`Tresor`, `schluessel_laden`, `UMGEBUNG`, `PRAEFIX`) | `tinysesam/vault.py` (`Vault`, `load_key`, `ENV_VAR`, `PREFIX`) |
+| `tinysesam/_veraltet.py` (`Veraltet`) | `tinysesam/_deprecated.py` (`Deprecated`) |
+| `KONFIGURATION.md` | `CONFIGURATION.md` |
+| `docs/BETRIEB.md` | `docs/OPERATIONS.md` |
+| `scripts/_api_doku.py`, `_config_doku.py` | `scripts/_api_docs.py`, `_config_docs.py` |
+| `scripts/_abbild_probe.sh`, `_artefakte_normalisieren.py`, `gate_messung.py` | `scripts/_image_probe.sh`, `_normalize_artifacts.py`, `gate_measurement.py` |
+| `deploy/forward-auth/abnahme.sh`, `nginx-pfad.conf` | `deploy/forward-auth/acceptance.sh`, `nginx-path.conf` |
+| `tests/test_anmelden.py`, `test_bestaetigen.py`, `test_login_modi.py`, `test_logout_modi.py`, `test_meldungen.py`, `test_selbstbedienung.py`, `test_unterpfad.py`, `test_typen.py` and 20 more | the English equivalents (`test_sign_in.py`, `test_confirm.py`, `test_login_modes.py`, …); `run_all.py` collects them by pattern |
+| `backlog/<id>-<german-slug>.md` (39 files) | `backlog/<id>-<english-slug>.md` (ids unchanged) |
+
+Left as they are because the shared test kit (`repokit sync`) depends on the names: `tests/voraussetzung.py`, the
+`werkzeuge.in` lists, and the kit-managed files themselves.
+
+- Not yet translated (runtime texts; tests depend on their wording): see the next entry once it lands.
 
 ### Changed — Python 3.13–3.15 (test kit 0.37.0)
 
@@ -108,7 +144,7 @@ without `cookie_prefix` everything stays as it was.
   `cookie_prefix="myapp_"` its cookies get through. Explicitly set names and the gateway's cookies
   (`__Host-tinysesam_gate|link|linkflow`) stay. The config check rejects a broken prefix and a gateway
   (`forward_auth_enabled`) with a foreign prefix — the templates would otherwise no longer strip its session.
-  Test `tests/test_cookie_praefix.py` plays through start → proxy rule from `Caddyfile.gate` → return.
+  Test `tests/test_cookie_prefix.py` plays through start → proxy rule from `Caddyfile.gate` → return.
 
 ### Changed
 - **Lock list of the gateway image: Dependabot regenerates it completely (uv instead of pip).** New input
@@ -135,7 +171,7 @@ Whoever wants to leave it standing sets `forward_logged_out_sec` to 0.
   - A `meta refresh` in the head, no script. The bar is pure CSS and is dropped under `prefers-reduced-motion`.
   - Applies on the app host (`/.tinysesam/after-logout`) and on the gateway (`/auth/gate/logged-out`), only in
     `direct` mode. In `page` mode the login page itself shows the sign-out.
-  - Tests in `tests/test_gate_link.py` and `tests/test_logout_modi.py`. The mutations "never continue" and
+  - Tests in `tests/test_gate_link.py` and `tests/test_logout_modes.py`. The mutations "never continue" and
     "continue in `page` mode too" are red.
 
 ## [0.24.10] — 2026-10-09
@@ -148,7 +184,7 @@ Whoever wants to leave it standing sets `forward_logged_out_sec` to 0.
   - `ja` appears only if there is no failed attempt against a **different** account from this IP within the lockout window. Own
     typos beforehand do not interfere.
   - This way an attacker with an own account cannot lift their ban by signing in between two volleys.
-  - Test in `tests/test_passwort_wiederholung.py`. The mutation "always ja" is red.
+  - Test in `tests/test_password_repetition.py`. The mutation "always ja" is red.
 
 ## [0.24.9] — 2026-10-09
 
@@ -166,7 +202,7 @@ old behavior sets `password_repeat_memory` to 0.
     in the security log.
   - Only 8 bytes of PBKDF2 (20,000 rounds, salt from a derived subkey) are remembered, in memory only.
   - Every other wrong password counts in full.
-  - `tests/test_passwort_wiederholung.py`. The mutation without fingerprint is red (429 from the sixth attempt).
+  - `tests/test_password_repetition.py`. The mutation without fingerprint is red (429 from the sixth attempt).
 - **`INFO login ok user=… ip=… method=…`** in the security log for every complete sign-in.
 
 ### Changed
@@ -193,7 +229,7 @@ sets `brand_icon="none"`.
   - The configuration check (already in the constructor) rejects addresses with quotation marks, parentheses, backslash or
     spaces (CSS breakout), as well as `javascript:` and `//`.
   - In the gateway, foreign addresses are allowed only with `TINYSESAM_BRAND_BACKGROUNDS_EXTERN=1`, otherwise startup aborts.
-  - `tests/test_hintergrund.py`. Two mutations are red: without character check and without CSP extension.
+  - `tests/test_background.py`. Two mutations are red: without character check and without CSP extension.
 - **Built-in favicon:** a plain key as a `data:` URI that switches between light and dark. Without a
   favicon the browser requests `/favicon.ico`, which in front of a gate is a protected path.
 
@@ -206,7 +242,7 @@ the new setting nobody sees anything new.
 
 - **Brand in front of the applications** (`gate_brand`, in the gateway `TINYSESAM_GATE_BRAND`): If set, the
   login page is titled "Sign in to <brand>" and names the application below it ("App: <name>", from `forward_apps`). Without a brand
-  it stays at "Sign in to <application>". `tests/test_gate_marke.py` covers both cases, the application without a name and
+  it stays at "Sign in to <application>". `tests/test_gate_brand.py` covers both cases, the application without a name and
   the escaping (mutation: brand ignored → red).
   With a brand the page title is "<brand> Login".
 - **Favicon in the gateway** (`TINYSESAM_BRAND_ICON` → `brand_icon`, so it applies to all built-in pages). Only
@@ -346,7 +382,7 @@ session ever reaching an app.
 ## [0.23.0] — 2026-10-07
 
 **No break** of the public API — extensions only (`tests/api_surface.json`). New is the gate in front of
-third-party applications ([M-3](backlog/M-3-gate-vor-fremden-apps.md)): gate token, login and logout modes,
+third-party applications ([M-3](backlog/M-3-gate-in-front-of-third-party-apps.md)): gate token, login and logout modes,
 share exceptions, measurement and acceptance.
 
 **What stands out on update:**
@@ -358,7 +394,7 @@ share exceptions, measurement and acceptance.
   behavior: `TINYSESAM_FORWARD_LOGIN=page`.
 - **Gateway:** `oidc_rp_logout` is now on — signing out also ends the session at the provider, with
   `id_token_hint`. For the return at the provider, enter `https://<app>/.tinysesam/after-logout` as the Logout
-  Callback URL (`docs/BETRIEB.md`, checklist).
+  Callback URL (`docs/OPERATIONS.md`, checklist).
 - **Several OIDC clients:** A session without approval for an application now goes to the provider instead of
   into a loop (B-2) — whoever worked around this so far can remove the detour.
 - The Caddy templates pass `/.tinysesam/*` to TinySesam and have a (switched-off)
@@ -367,10 +403,10 @@ share exceptions, measurement and acceptance.
 
 ### Added — Measurement and acceptance of the gate (T-24)
 
-- `scripts/gate_messung.py` (with `hey`): With 20 simultaneous requests, the path via
+- `scripts/gate_measurement.py` (with `hey`): With 20 simultaneous requests, the path via
   `/auth/forward` manages about 3,200 requests per second at 6 ms median, the gate token about 40,000 at 0.4 ms.
-  Result and setup in `docs/BETRIEB.md`.
-- `deploy/forward-auth/abnahme.sh`: acceptance of a real deployment from the outside (sign-in,
+  Result and setup in `docs/OPERATIONS.md`.
+- `deploy/forward-auth/acceptance.sh`: acceptance of a real deployment from the outside (sign-in,
   remote user, `/.tinysesam/*`, share path and path tricks, gate token, sign-out). The Caddy test runs
   it against the test setup.
 
@@ -434,7 +470,7 @@ host (no token would be issued); `forward_apps` without forward auth; `forward_l
   approval to the provider instead of back, the button carries `app=`, and `/auth/oidc/start` without `app` takes the
   client for the host of `next`.
 
-### Added — Gate token: the proxy checks by itself ([ADR-9](backlog/ADR-9-gate-token-am-proxy.md), T-19)
+### Added — Gate token: the proxy checks by itself ([ADR-9](backlog/ADR-9-gate-token-at-the-proxy.md), T-19)
 
 - **`gate_token_enabled`** (default off; gateway: `TINYSESAM_GATE=1`): A successful check on
   `/auth/forward` additionally returns the header `X-TinySesam-Gate-Cookie` with a short-lived token
@@ -463,7 +499,7 @@ host (no token would be issued); `forward_apps` without forward auth; `forward_l
 - E2E stage: OIDC green again (T-25). The test account now belongs at the provider to a group that is approved only for
   the stage's client. On a freshly built stage all three paths run green; without the
   approval OIDC goes red.
-- `tests/test_vorbuchung_schwebe.py` no longer waits a fixed time until the parallel sign-ins
+- `tests/test_prebooking_pending.py` no longer waits a fixed time until the parallel sign-ins
   have arrived in the pending directory, but for the state itself (T-18). The suite was once
   red under load, the cause presumably exactly these wait points.
 - **The number of parallel test jobs comes from the runner, not from detection.** `tests/run_all.py`
@@ -472,7 +508,7 @@ host (no token would be issued); `forward_apps` without forward auth; `forward_l
   jobs. Now `CI_TEST_JOBS` (by hand) applies, otherwise `CI_KERNE` (set by the CI runner), otherwise 2. An
   invalid value in either of the two variables aborts. For this, `tests/test_repo.py` calls the
   kit check `pruefe_parallel_worker` (kit 0.27.1).
-- `tests/test_testlauf.py` now checks that every suite has its own throwaway directory
+- `tests/test_runner.py` now checks that every suite has its own throwaway directory
   (TMPDIR, HOME, XDG_*) and that it is deleted afterwards. Until now nothing guarded that: a
   shared, never-deleted directory for all suites stayed green.
 - **After a Dependabot auto-merge, CI runs on main.** With `gh pr merge --auto`, GitHub merged
@@ -513,7 +549,7 @@ host (no token would be issued); `forward_apps` without forward auth; `forward_l
   image was noticed only at the next tag. Now every PR builds wheel, sdist and the image
   for both platforms, but publishes nothing. The PR skips the suite in `pruefen`
   because `ci.yml` runs it on the same commit.
-- **New `abbild-probe`:** The image must start before it is pushed. `scripts/_abbild_probe.sh`
+- **New `abbild-probe`:** The image must start before it is pushed. `scripts/_image_probe.sh`
   builds it, starts it without network and with placeholder values, waits for the HEALTHCHECK from the
   `Dockerfile` and requires `/healthz` 200 with the version from `pyproject.toml`. The job has no
   write permission; `image` depends on it.
@@ -540,7 +576,7 @@ host (no token would be issued); `forward_apps` without forward auth; `forward_l
 - **Cheap password hashes only in the test run.** The collective run starts every suite via
   `tests/_starter.py`, which lowers scrypt and argon2 **in the test process**. In the slim run,
   about two thirds of the suite time previously went into scrypt. The package has **no** switch for this —
-  no environment variable, no setting; `tests/test_testlauf.py` pins that down. Suites that check
+  no environment variable, no setting; `tests/test_runner.py` pins that down. Suites that check
   hash parameters or runtimes themselves keep computing with the real values, as does every
   directly started suite.
 - **No suite writes into the tree or shares anything with another one anymore:** mypy puts
@@ -548,7 +584,7 @@ host (no token would be issued); `forward_apps` without forward auth; `forward_l
   the website into a throwaway directory (before: `_site/`, which was deleted afterwards — including an
   own one), `tests/test_ratelimit.py` no longer talks to a real Redis on `localhost:6379`, and
   `tests/test_ldap.py` keeps its "dead" port occupied until the probe is finished.
-- **A check that went red under load:** `tests/test_werte_englisch.py` compared the order
+- **A check that went red under load:** `tests/test_values_english.py` compared the order
   of `list_api_keys` (sorted by seconds) — if the keys were created in two different seconds,
   it was red although every kind was right. Now per key via its name.
 
@@ -557,7 +593,7 @@ host (no token would be issued); `forward_apps` without forward auth; `forward_l
 > **Breaks the interface — read before updating.** German names, parameters, keys and values
 > of tiers A and B are now English, **without alias**; internal names (tier C) warn; `POST
 > /auth/password` no longer accepts an API key. Schema 12 (stored key kinds in English) — **back up the database
-> before updating**; going back to 0.21.x needs the SQL from `docs/BETRIEB.md`.
+> before updating**; going back to 0.21.x needs the SQL from `docs/OPERATIONS.md`.
 > Whoever uses TinySesam only via the documented tier A paths (router, guards, `create_user`,
 > configuration) will not notice any of this — cross-checked with three consumers.
 
@@ -667,7 +703,7 @@ reported.** What stands out on update:
   **Going back to 0.21.x** (measured with 0.21.0): It opens the file and warns at startup
   ("Die Datenbank trägt Schema-Version 12, diese TinySesam-Fassung kennt nur 11 …"), but treats a
   `human` key as an automation key — **there it works without a session**, with the rights of the
-  account without admin flag. Before starting a 0.21.x version, therefore run the SQL from `docs/BETRIEB.md`
+  account without admin flag. Before starting a 0.21.x version, therefore run the SQL from `docs/OPERATIONS.md`
   ("Rückschritt auf 0.21.x"): `UPDATE api_key SET kind='mensch' WHERE kind='human'` etc.,
   then set the stamp back to 11.
 
@@ -691,7 +727,7 @@ reported.** What stands out on update:
 - **An operator locks an account in code with `auth.set_disabled(user_id, True)`** (new, tier A,
   PO decision 2026-09-27) — same effect as "Lock" in the panel, which calls the method:
   operator note, end sessions, revoke API keys, discard open one-time tokens, audit.
-  Up to 0.21.x `docs/BETRIEB.md` showed `auth.store.set_disabled(uid, True,
+  Up to 0.21.x `docs/OPERATIONS.md` showed `auth.store.set_disabled(uid, True,
   durch_betreiber=True)` for this — **that set only the note**; sessions, keys and links stayed valid.
   Whoever adopted that switches over. **`auth.store` is internals** (tier C): no tier,
   no promise, no transition period. Where the docs still name a call (the write probe for a
@@ -779,16 +815,16 @@ reported.** What stands out on update:
   payload of every event on a hook; the context of custom pages via recording templates;
   the JSON of `/auth/me`, `/auth/apikeys` and `<admin_path>/api/users` including `disabled_by`; the
   stored values in the file), on the constants and configuration defaults and in the source code
-  (every call of `_sicherheitsereignis` and `render_page`, every key a renderer reads from
+  (every call of `_security_event` and `render_page`, every key a renderer reads from
   `ctx`, every JSON response of the route modules) — currently 790 entries. Red on a German word (the same
   list, extended by the words and stems of the values) and on every name up to 0.21.x (`ALTE_WERTE`,
   also `alt`, which as an English word is not in the list); plus a minimum set per path,
   self-tests (an old key in `gc()` of a subclass, in an event, in the context,
   in a JSON response) and the wiring.
-- **Tests:** `tests/test_werte_englisch.py` — a file from 0.21.x (old values, stamp 11)
+- **Tests:** `tests/test_values_english.py` — a file from 0.21.x (old values, stamp 11)
   migrates at startup, the keys work as before (human key only with a session), a second
   start changes nothing; mixed values after a rollback (stamp 12, `mensch`/`automat` and
-  a link with `alt`) work correctly, even without a restart; the SQL from `docs/BETRIEB.md` restores
+  a link with `alt`) work correctly, even without a restart; the SQL from `docs/OPERATIONS.md` restores
   the state of 0.21.x and a later start migrates again; a file with
   old values (stamp 12) starts read-only, an upgrade without write permission aborts; the old kinds are an
   input error with a hint; `set_disabled` with every effect, owner protection, unknown ID,
@@ -796,15 +832,15 @@ reported.** What stands out on update:
   calls the method.
 
 - **Warning for a group rule without scope `groups`** (T-16, finding from operation 2026-09-27):
-  `konfigpruefung` checks per client — the single client with `oidc_scopes`, each application from
+  `config_check` checks per client — the single client with `oidc_scopes`, each application from
   `oidc_clients` with its `scopes` and its group rule (otherwise the global one) — whether a
   group rule runs via the claim `groups` without the scope `groups` being requested. A
   warning, not an error, no requesting on its behalf. For Entra ID (`login.microsoftonline.com`) it stays silent:
   There `groups` is not a scope (AADSTS650053), groups come as an "optional claim". SAML and LDAP
   have no counterpart in the configuration (no scopes; the IdP or the directory releases the attribute
-  or not) — `docs/BETRIEB.md` names the symptom. Gateway: new variable
+  or not) — `docs/OPERATIONS.md` names the symptom. Gateway: new variable
   `TINYSESAM_OIDC_SCOPES` (default `openid profile email`), before, the scope could not
-  be set there at all. Test: `tests/test_betriebsfunde.py` (a).
+  be set there at all. Test: `tests/test_operations_findings.py` (a).
 - **Secure login building block for custom pages: `login_password`, `login_pin`,
   `login_totp`** (tier A, PO finding 2026-09-26). Each method does what the built-in route
   does — and the built-in route calls it (one source, no drift): check CSRF (`csrf=`, otherwise
@@ -860,7 +896,7 @@ reported.** What stands out on update:
   and rotates no token: `next_url`, `next_factor`, `done`, `redirect()` would have no
   meaning, `api_keys_active` only it has. The guard measures it like `LoginResult` (own
   area in `tests/api_surface.json`), `API.md` describes it in a section of its own.
-- **Tests:** `tests/test_bestaetigen.py` — a custom step-up page via `confirm_*` locks after N
+- **Tests:** `tests/test_confirm.py` — a custom step-up page via `confirm_*` locks after N
   failed attempts in the `reauth` bucket (even the correct password then makes nothing fresh, the
   sign-in stays open), throttles per IP and on success makes fresh, with a new token and
   grace period of the old one; without a session, with a half session and with an API key (also next to a half
@@ -874,7 +910,7 @@ reported.** What stands out on update:
   lock; the names are English and tier A. The guard in `tests/test_stepup.py` now
   also sees a sink that is merely passed along (`run_in_threadpool(auth.change_password, …)`), helpers
   that are called as a method (`self._nur_mit_sitzung`), and checks the body of a sink itself.
-- **Tests:** `tests/test_anmelden.py` — a custom login page via the building block locks after N
+- **Tests:** `tests/test_sign_in.py` — a custom login page via the building block locks after N
   failed attempts (429 `locked`), throttles per IP (`ratelimit`) and locks the series
   (`locked_series`); LDAP fallback, outage with and without a local password, "one identifier, one
   account"; PIN in the guest path and in the chain step, TOTP with one-time code and without a session; CSRF,
@@ -896,7 +932,7 @@ reported.** What stands out on update:
   after splitting) and umlauts. Plus a minimum set (one mandatory entry per kind, number of parameters and
   fields) against a measurement that silently sees less, and self-tests on a sample class: every
   old name stands out, English lookalikes (`series`, `start`, `binding`, `base`) do not, tier C
-  stays outside. Section (k) in `tests/test_anmelden.py` uses the same list.
+  stays outside. Section (k) in `tests/test_sign_in.py` uses the same list.
 
 - **Tier per public name, and the guard requires it** (PO decision 2026-09-26).
   `tests/api_surface.json` keeps every entry as an object: the measured value (`sig`, for
@@ -909,8 +945,8 @@ reported.** What stands out on update:
   forever. A reported break carries the name's tier (`[A] …`). Currently: A 252 (including
   `login_*`, `confirm_*`, `change_password`, `set_disabled`, the 11 names on the result type
   `LoginResult` and the 6 on `PasswordChangeResult`), B 64, C 50 of 366 names.
-- **Tier C as a warning alias** (`tinysesam/_veraltet.py`). Every C name is a
-  `Veraltet("_name", "<replacement>")`: a descriptor that passes through unchanged to the implementation
+- **Tier C as a warning alias** (`tinysesam/_deprecated.py`). Every C name is a
+  `Deprecated("_name", "<replacement>")`: a descriptor that passes through unchanged to the implementation
   and triggers exactly one `DeprecationWarning` in the process — on call, not already on
   lookup (`hasattr`, `getmembers`), for constants on read; the warning points to the
   caller and names the replacement. Signature and docstring come from the target. An assignment on the object
@@ -955,7 +991,7 @@ reported.** What stands out on update:
   its content is invalid. Without a database file (`:memory:`) or if the file is not created, only
   stderr remains — and the log line then says that the value is in the service's log, instead of claiming
   the opposite. Also applies to the output at the moment of an IdP withdrawal (G6). Test:
-  `tests/test_betriebsfunde.py` (b).
+  `tests/test_operations_findings.py` (b).
 - **The pattern "Your own login page" of the README was unprotected against password guessing**
   (PO finding 2026-09-26). It showed `check_password` + `start_session` as building blocks; but the inner
   checkers `check_password`, `check_pin`, `check_ldap` and `check_saml` do not throttle by themselves —
@@ -988,7 +1024,7 @@ reported.** What stands out on update:
   there without a session); the stamp is exactly the place where an older version warns about it.
   `api_key.kind` is rewritten on every start, the payload of an address-change link only by the jump to
   12 — on every start the search through all one-time tokens would run (measured in
-  `tests/test_bestandsdaten.py`, "Aufwand": 540 SQLite steps more with 20,000 tokens); old values
+  `tests/test_legacy_data.py`, "Aufwand": 540 SQLite steps more with 20,000 tokens); old values
   are read correctly in both places. A file with old values at stamp 12 starts read-only
   and keeps going (warning in the log). The reason for the collective key revocation comes from a fixed
   list (`_KEYS_WIDERRUFEN_GRUENDE`); any other value is a programming error (`ValueError`),
@@ -1001,7 +1037,7 @@ reported.** What stands out on update:
   2026-09-27): 11 methods, 5 constants, 2 methods of `TinySesamConfig`, 18 parameters in 14
   methods, the attributes `ConfigError.field`/`.owner_id` and the first parameter of
   `MissingExtra` — the table is above under "What stands out on update". Package, routes,
-  examples, tests and docs now call only the new names; `API.md` and `KONFIGURATION.md` are regenerated.
+  examples, tests and docs now call only the new names; `API.md` and `CONFIGURATION.md` are regenerated.
 - **`POST /auth/login`, `/auth/pin` and `/auth/totp` are thin wrappers around `login_*`.** The
   whole flow moved from `router.py` into the building blocks; the routes now only render the result.
   Responses, texts, audit and log lines stay the same (measured against a custom route over
@@ -1011,7 +1047,7 @@ reported.** What stands out on update:
   if `pin_enabled` was switched off at runtime (the route had existed since startup, but on
   a full session it kept confirming PINs). And the replacement texts of the C aliases (`check_password`,
   `check_pin`, `check_ldap`, `verify_totp`, `verify_recovery_code`, `is_locked`, `is_pin_locked`,
-  `rate_ok`, `record_login`, `versuch_beginnen`, `login_redirect_after`) now name the
+  `rate_ok`, `record_login`, `begin_attempt`, `login_redirect_after`) now name the
   building block instead of the route.
 - **`/auth/reauth` (submit) and `POST /auth/password` are thin wrappers around `confirm_*` and
   `change_password`.** The flow moved from `router.py` into the building blocks; the routes now only choose
@@ -1027,7 +1063,7 @@ reported.** What stands out on update:
   explains up front what each tier promises. New
   in it: the constants of tiers A and B (explanation from the `#:` comment, plus the value) and
   `tinysesam.current_version()`; the hygiene check requires an explanation for them too.
-  `KONFIGURATION.md` names the tier of the fields — all A except the tombstone `totp_required` (B).
+  `CONFIGURATION.md` names the tier of the fields — all A except the tombstone `totp_required` (B).
   Until now it said "measured, not selected": what was frozen was whatever carried no underscore.
 
 ### Deprecated
@@ -1035,7 +1071,7 @@ reported.** What stands out on update:
 - **50 internal names (tier C) — dropped with 1.0.** Since this release the
   implementation is called `_name`; the old name passes through unchanged until 1.0 and triggers a
   `DeprecationWarning` on call (constants: on read) that names the replacement. The replacement per name
-  is listed in `API.md` ("C · Veraltet — fällt mit 1.0 weg"). **With 1.0 all old names are dropped.**
+  is listed in `API.md` ("C · Deprecated — fällt mit 1.0 weg"). **With 1.0 all old names are dropped.**
   - **Sign-in checkers without their own throttle — replacement: `login_password`, `login_pin`,
     `login_totp`, for step-up `confirm_password`, `confirm_pin`, `confirm_totp`, for the
     password change `change_password` or the built-in routes (`/auth/resource/{name}`,
@@ -1049,29 +1085,29 @@ reported.** What stands out on update:
     `is_password_change_locked` → `_is_password_change_locked`, `is_reauth_locked` →
     `_is_reauth_locked`, `is_resource_locked` → `_is_resource_locked`, `is_totp_setup_locked` →
     `_is_totp_setup_locked`, `rate_ok` → `_rate_ok`, `record_login` → `_record_login`,
-    `versuch_beginnen` → `_versuch_beginnen`.
+    `begin_attempt` → `_begin_attempt`.
   - **Session, sign-in chain, CSRF:** `session_from_request` → `_session_from_request` (replacement
     `current_user`/`session_user`), `next_login_step` → `_next_login_step`, `factor_entry` →
     `_factor_entry`, `login_redirect_after` → `_login_redirect_after` (replacement `next_url` on the result
-    of `login_*`), `csrf_rotieren` → `_csrf_rotieren` (replacement `set_cookie`/`issue_csrf`),
+    of `login_*`), `rotate_csrf` → `_rotate_csrf` (replacement `set_cookie`/`issue_csrf`),
     `verify_csrf` → `_verify_csrf` (replacement `require_csrf`), `unlock_resource` → `_unlock_resource`,
     `mfa_pending` → `_mfa_pending`.
   - **First admin, demo, log:** `maybe_promote_admin` → `_maybe_promote_admin` (replacement
     `admin_identifiers`/`ensure_admin`), `consume_admin_claim` → `_consume_admin_claim`,
-    `admin_claim_fehlgriff` → `_admin_claim_fehlgriff`, `seed_demo` → `_seed_demo` (replacement
+    `admin_claim_failure` → `_admin_claim_failure`, `seed_demo` → `_seed_demo` (replacement
     `demo_mode=True`), `purge_demo` → `_purge_demo` (replacement `demo_mode=False`), `send_signup_notice`
-    → `_send_signup_notice`, `sicherheitsereignis` → `_sicherheitsereignis`, `token_abgewiesen` →
-    `_token_abgewiesen`.
+    → `_send_signup_notice`, `security_event` → `_security_event`, `token_rejected` →
+    `_token_rejected`.
   - **Forward auth and several OIDC applications:** `forwarded_url` → `_forwarded_url`,
     `forward_login_url` → `_forward_login_url`, `forward_response_headers` →
-    `_forward_response_headers`, `oidc_anwendung` → `_oidc_anwendung`, `oidc_freigabe_gueltig` →
-    `_oidc_freigabe_gueltig`, `vermerke_oidc_freigabe` → `_vermerke_oidc_freigabe`, `is_secure` →
+    `_forward_response_headers`, `oidc_application` → `_oidc_application`, `oidc_approval_valid` →
+    `_oidc_approval_valid`, `record_oidc_approval` → `_record_oidc_approval`, `is_secure` →
     `_is_secure`.
   - **Hardening values:** `sec` → `_sec` (replacement `all_security()`).
-  - **Constants (warn on read):** `APIKEY_AUDIT_FENSTER` → `_APIKEY_AUDIT_FENSTER`,
-    `DEMO_USERS` → `_DEMO_USERS`, `FOEDERIERTE_FAKTOREN` → `_FOEDERIERTE_FAKTOREN`, `IDENTIFYING` →
-    `_IDENTIFYING`, `RECOVERY_BYTES` → `_RECOVERY_BYTES`, `RECOVERY_WARNSCHWELLE` →
-    `_RECOVERY_WARNSCHWELLE`, `SERIE_PIN_FOLGE` → `_SERIE_PIN_FOLGE` (replacement `login_pin`; came with
+  - **Constants (warn on read):** `APIKEY_AUDIT_WINDOW` → `_APIKEY_AUDIT_WINDOW`,
+    `DEMO_USERS` → `_DEMO_USERS`, `FEDERATED_FACTORS` → `_FEDERATED_FACTORS`, `IDENTIFYING` →
+    `_IDENTIFYING`, `RECOVERY_BYTES` → `_RECOVERY_BYTES`, `RECOVERY_WARN_THRESHOLD` →
+    `_RECOVERY_WARN_THRESHOLD`, `PIN_CHAIN_SERIES` → `_PIN_CHAIN_SERIES` (replacement `login_pin`; came with
     0.21.0, whose CHANGELOG named it for custom PIN pages — hence an alias and not merely
     renamed).
   - **`complete_mfa` → `complete_totp`** (same behavior; not an underscore name, the alias points
@@ -1091,7 +1127,7 @@ reported.** What stands out on update:
   appended at the end remains an extension. A store from before 0.22.0
   (`git show v0.21.0:tests/api_surface.json`) can still be compared: Its signatures
   are read in as "measured without markers" and compared without markers. The same bug was
-  in `scripts/_api_doku.py` — `API.md` showed e.g. `login_password(…, password, next=…)`, as if
+  in `scripts/_api_docs.py` — `API.md` showed e.g. `login_password(…, password, next=…)`, as if
   `next` could be passed positionally too; the guard keeps both versions equal.
 
 ## [0.21.0] — 2026-09-27
@@ -1367,12 +1403,12 @@ What else you will notice:
   the list. Now the revocation of the last admin sets the marker `allowlist_nach_idp_entzug`
   (setting, no schema), after which the allowlist refuses (`admin_bootstrap_denied nach_idp_entzug`).
   The one-time token for `/auth/claim-admin` goes to the operator immediately (until then only at startup),
-  `tinysesam owner` remains. Test: `tests/test_t13_entscheide.py`.
+  `tinysesam owner` remains. Test: `tests/test_t13_decisions.py`.
 - **Route chains require the second factor after the sign-in link (G10).** `_link_braucht` ran
   only for the global policy; `require(factors=["magic"])` let an account with TOTP or passkey through with
   the mailbox alone (measured: global route 401, this one 200). Now the same rule in both
   places; a chain that itself contains `totp`/`passkey` gets no double step. Test:
-  `tests/test_t13_entscheide.py` (3c).
+  `tests/test_t13_decisions.py` (3c).
 - **Binding via the name with a deadline (G1).** An account without an identifier from LDAP/SAML (existing data from before
   F-11, advance creation) bound the next sign-in under its name — without a limit on time or
   origin, also replacing an origin placeholder, and `federation_require_stable_id`
@@ -1384,7 +1420,7 @@ What else you will notice:
   The same applies without a stable identifier to the first assignment of an existing account.
   `loese_fremde_bindung` opens the binding for one account (table `namensbindung`), the new
   `foederation_nachbinden` binds the existing data explicitly — with the same decision as
-  the sign-in (`_nachbindung_grund`). Test: `tests/test_foederation_bestand.py`.
+  the sign-in (`_nachbindung_grund`). Test: `tests/test_federation_legacy.py`.
 - **A self-chosen name does not bind via LDAP/SAML (G2-N).** A local account `eve` renamed
   itself to `chefin` on the account page, a name that existed only in the directory; the
   sign-in of the real chefin bound her identifier to eve's account, the role from
@@ -1409,7 +1445,7 @@ What else you will notice:
   identifier would have been rejected. Renaming resets the origin. Existing data gets it on the
   first start, once, where it is documented: OIDC (the callback creates every linked account itself)
   and an LDAP/SAML binding from the second of creation; accounts from before the identifiers (up to 0.19)
-  stay without and are subject to the deadline. Test: `tests/test_foederation_bestand.py`.
+  stay without and are subject to the deadline. Test: `tests/test_federation_legacy.py`.
 - **`objectGUID` from the raw bytes** (side finding to G1): Without a schema, ldap3 decodes a value
   that happens to be valid UTF-8 to text — a GUID made of bytes below 0x80 arrived as text with
   control characters, the format check rejected it as tampered, and the person never got
@@ -1437,7 +1473,7 @@ What else you will notice:
   `sqlite3.IntegrityError` ("tinysesam: kennung vergeben") instead of creating a collision.
   **Way back:** The triggers stay in the file and keep working under 0.20.x; remove them with
   `DROP TRIGGER trg_users_kennung_insert; DROP TRIGGER trg_users_kennung_update;`
-  (docs/BETRIEB.md, "Kennungsraum"). Test: `tests/test_kennungsraum.py`.
+  (docs/OPERATIONS.md, "Kennungsraum"). Test: `tests/test_identifier_space.py`.
 - **No oracle for taken addresses on address change (G12b).** The response was identical,
   but three channels revealed whether an address is already the identifier of another account (measured): The
   notice to the own, confirmed address came only for a free one; the request for a taken one
@@ -1454,7 +1490,7 @@ What else you will notice:
   **Remaining:** no index hit against a non-hit (microseconds), and the throttle per
   target (`wechsel:<address>`) still reveals whether an address received three
   change requests in the last 15 minutes — regardless of whether it is taken. Test:
-  `tests/test_selbstbedienung.py` (G12b), `tests/test_quellenadresse.py` (account page LDAP).
+  `tests/test_self_service.py` (G12b), `tests/test_source_address.py` (account page LDAP).
 - **Confirmation links from LDAP/SAML: count sends, dampen attempts (G12a).** The daily quota
   (`quellmail:<id>`, in memory per process) was consumed before the attempt: A throttled
   target address or a failed send cost the link for a whole day, and two workers
@@ -1470,7 +1506,7 @@ What else you will notice:
   transient in the window of the mail throttle. `_token_mail` reports whether the mail went out.
   **Remaining:** If the send to a free address fails, the next sign-in may try again after the
   window — a taken one has no send that could fail. Test:
-  `tests/test_quellenadresse.py` (G12a, a1-02).
+  `tests/test_source_address.py` (G12a, a1-02).
 - **Open one-time links fall with every defense** (self-service attack round, finding 1): The
   password reset (also by the admin) and "end all sessions" discard all open links of the
   account, the password change on the account page and "end other sessions" open
@@ -1516,7 +1552,7 @@ What else you will notice:
   raises it (recalculation trigger, the stricter direction). Existing data: NULL, then as before the creation.
   The series (B2-6) still ends only with the first full sign-in — it has no IP and protects
   only the one to whom the identifier now belongs. Schema stays 11 (additive). Test:
-  `tests/test_kennung_beitritt.py`.
+  `tests/test_identifier_join.py`.
 - **LDAP: the series under the name in the directory (G5).** After a rename in the directory
   (locally `alice`, bound via the stable identifier, there `alice.neu`) the series (B2-6) counts under
   `alice.neu`, but clearing happened only under `alice` and the address: Own typos added up
@@ -1547,11 +1583,11 @@ What else you will notice:
   If the form in the chain step names a different account, it remains an identity switch via the
   guest path (404 if closed). The account page still shows its PIN section where the login page
   no longer offers the PIN, and also with `pin_login=False` if the chain requires a PIN. New
-  for own PIN pages: `versuch_beginnen(…, serie_art=auth.SERIE_PIN_FOLGE)`. The lockout notice by
+  for own PIN pages: `begin_attempt(…, series_kind=auth.PIN_CHAIN_SERIES)`. The lockout notice by
   mail also names the operator as a way out for the series (since the review round 2026-09-27 the reset
   only if it clears the series, below). **Way back:** An older version counts
   `pin_folge` too and clears it only with a full sign-in or by the operator — stricter.
-  Test: `tests/test_pin_folge.py`.
+  Test: `tests/test_pin_sequence.py`.
 - **LDAP: a directory sign-in no longer clears foreign counters (G5-N1).** A filter on
   `mail` also resolves the address of a local account to a third party whose `mail` attribute is that value.
   Every sign-in of the third party reset the account window of the holder — distributed guessing
@@ -1570,7 +1606,7 @@ What else you will notice:
   (account, binding, roles, address); the route books a failed attempt. And the name on the
   binding of another account (`federated_identity.name_topf`) is taken: `kennung_vergeben`,
   the identifier triggers of the database (index `ix_fed_name_topf`) and `tinysesam rename`. Test:
-  `tests/test_t13_entscheide.py`.
+  `tests/test_t13_decisions.py`.
 - **After renaming an LDAP account, its old name remains the name in the directory (p1-b).**
   If the account had the same name locally as in the directory, nothing was recorded on the binding; after renaming,
   panel reset and full sign-in no longer cleared the series under the directory name (429 until
@@ -1585,12 +1621,12 @@ What else you will notice:
 - **A writer that carries the counting bucket along raises the watermark (p1-c).** `store.set_email` from
   0.20.1 (after a downgrade) sets address and bucket in one statement — the recalculation trigger
   did not fire, and the first full sign-in cleared the stranger's failed attempts under the new
-  address. New triggers `trg_users_wechsel_name`/`_mail`. Test: `tests/test_kennung_beitritt.py`.
+  address. New triggers `trg_users_wechsel_name`/`_mail`. Test: `tests/test_identifier_join.py`.
 - **Route chains no longer fall below the global rule (PO decision 2026-09-27, "align").**
   `require(factors=["password"])` let an account with TOTP onto the route with the password alone,
   `["pin", "password"]` likewise, and under `login_chain=["password", "totp"]` the password sufficed.
   Now the session must first be full for the global rule (`mfa_ok`); a half one goes to its
-  missing step (`next_login_step`). No new parameter. Test: `tests/test_t13_entscheide.py`.
+  missing step (`next_login_step`). No new parameter. Test: `tests/test_t13_decisions.py`.
 - **The deletion promise (H-13) covers spellings, earlier identifiers and the own values (p2 F4,
   already on main).** After deletion, these remained: `login_fail` lines with the RAW input
   (`Émile `, ` emile@…`, full-width), the sign-in under the earlier name including IP, `alt=` in
@@ -1598,7 +1634,7 @@ What else you will notice:
   LDAP/SAML. Now the block scan compares the column `username` in the counting bucket (not if a
   remaining account shares the bucket), earlier names and addresses come from the own
   change lines and apply in their span, and in the own lines `alt=`, `neu=` and
-  `an=` are replaced. Test: `tests/test_audit_runde2.py`.
+  `an=` are replaced. Test: `tests/test_audit_round2.py`.
 - **The half session checks the PIN only as its chain step (review round 2026-09-27, p2 F1).** Since
   G7-N1, `/auth/pin` accepted any half session. In classic mode with `pin_login=False` and an
   account with TOTP and PIN, whoever had only the password got 401 for a wrong PIN and 303 for the
@@ -1606,7 +1642,7 @@ What else you will notice:
   PIN was in the session before the TOTP; its order could never be satisfied afterwards, and every further
   sign-in in the same browser got stuck on it until sign-out. Now the half session (GET
   and POST) counts only if the global `login_chain` requires the PIN, it is still missing and — strictly —
-  it is the next step; otherwise guest path or 404. Test: `tests/test_pin_folge.py` (j);
+  it is the next step; otherwise guest path or 404. Test: `tests/test_pin_sequence.py` (j);
   `tests/test_stepup.py` had pinned the 401 for the classic case and expects 404 again.
 - **No oracle via the in-flight window of the outbox (p2 F2).** The line
   `federation_email_confirm` is created only after the send, a rejection immediately, and
@@ -1614,7 +1650,7 @@ What else you will notice:
   outbox (slow relay), a second worker after a change of the own
   `mail` attribute sent one to `probe@` — if it arrived, `target@` was free; plus two links on one day.
   Now every open address-change link of the account holds it back (`store.offener_token(…, email=None)`).
-  Test: `tests/test_quellenadresse.py`.
+  Test: `tests/test_source_address.py`.
 - **`lockout_serie` exactly at the transition (p2 F3, already on main).** What was logged was the
   series state at booking, including pending pre-bookings: If the holder (right
   password) and an attacker were pending at limit−2 simultaneously and her full sign-in ended the series,
@@ -1623,7 +1659,7 @@ What else you will notice:
   immediately settled booking exceeds the limit there — reported if the series is
   still standing at completion), `store.finish_attempt(…, serie=)` returns it before and after
   completion, both in one transaction (`BEGIN IMMEDIATE`; a pending one exceeds the limit only there). Test:
-  `tests/test_vorbuchung_schwebe.py` (real burst with and without pending: exactly one line).
+  `tests/test_prebooking_pending.py` (real burst with and without pending: exactly one line).
 - **LDAP: total deadline so that a running sign-in never counts as a confirmed failed attempt (p2 V1).**
   An open pre-booking counts after `Store.VORBUCHUNG_SCHWEBE_SEK` (30 s) as the failed attempt of a
   dead process. ldap3 knows only a deadline per response (10 s), and a search-then-bind with
@@ -1638,13 +1674,13 @@ What else you will notice:
   Now they name it only if it lifts the lockout (`store.fehlserie_ohne`), otherwise the operator.
   The login page shows everyone the same text, which names the operator first — a text per kind
   would reveal that someone is guessing at the second factor and the account therefore exists. Test:
-  `tests/test_pin_folge.py`.
+  `tests/test_pin_sequence.py`.
 - **A full queue discards the confirmation link.** If the notice outbox returned the send
   (queue full), the token of the never-delivered link stayed open and held back, via
   `offener_token`, every new one until its expiry. Now it expires immediately; the same applies to
   the address change in self-service (`request_email_change` passes along `senden.verwerfen`, the route
-  passes it through as `bei_ueberlauf`). Test: `tests/test_quellenadresse.py`,
-  `tests/test_selbstbedienung.py`.
+  passes it through as `bei_ueberlauf`). Test: `tests/test_source_address.py`,
+  `tests/test_self_service.py`.
 - **LDAP: the first window of an outage no longer locks anyone (G9).** The login route books every
   attempt in advance as a failed attempt (R7-2) and takes it back on a directory outage (F-23) —
   only once the outage is reported, for a directory that drops packets, that is after the
@@ -1667,12 +1703,12 @@ What else you will notice:
   died) counts as a failed attempt; an unexpected exception in the check turns the attempt immediately
   into one. Also: completion or withdrawal of an attempt and its pre-booking in the series now run
   in one transaction — separately, a waiter read the series in between one too high. New:
-  `versuch_beginnen(…, schweben=)`, `store.count_fails(…, nur_bestaetigt=)`,
+  `begin_attempt(…, schweben=)`, `store.count_fails(…, nur_bestaetigt=)`,
   `store.reserve_attempt(…, schweben=)` (response `(None, "schwebend")`), `store.finish_attempt(…,
   serie=)`, `store.cancel_attempt(…, serie=)`, `store.fehlserie_bestaetigt()` — all appended, with
   default. `is_locked()` reports a deferral as `True` (with `deferred login`, without mail). Without LDAP
   nothing is pending, behavior is unchanged. **Way back:** An older version does not know the column
-  and counts open rows as failed attempts as before. Test: `tests/test_vorbuchung_schwebe.py`.
+  and counts open rows as failed attempts as before. Test: `tests/test_prebooking_pending.py`.
 
 - **Sign-in locked after 100 failed attempts in a row (B2-6).** The previous thresholds count only
   within the window (`lockout_window_sec`) — anyone who guesses more slowly than the threshold could guess indefinitely. Now
@@ -1747,7 +1783,7 @@ What else you will notice:
 
 - **PIN as first factor remains allowed — recorded as a decision (B2-8, ADR-8).** Nothing
   changes in behavior; the PIN attempts (`pin_max_attempts`) now sit in the panel right next to the
-  login lockout, PIN failures count in the series (B2-6). README and `docs/BETRIEB.md` show the
+  login lockout, PIN failures count in the series (B2-6). README and `docs/OPERATIONS.md` show the
   pattern "general page with PIN, detail page with `require(factors=["pin", "password"])`".
 - Order of the hardening values in the panel: what is set together is placed together.
 - **The panel names the reason for a lockout** (limit b): "locked (confirmation / app)" (lifted by the
@@ -1755,12 +1791,12 @@ What else you will notice:
   panel (the list of panel texts did not know it, the badge stayed empty), nor did the texts of the
   owner buttons — and "Make owner / Give up owner" was never wired, the click did nothing
   (G3). A test now checks every text the panel script reads and every action a button
-  names (`tests/test_admin_konto.py`); the browser test clicks the owner button and "Rename".
+  names (`tests/test_admin_account.py`); the browser test clicks the owner button and "Rename".
 - **Indexes on the audit log** (limit c) for search by name and time. The search in the detail text
   on deleting an account is narrowed by no index (substring) — it remains a scan, but ran in
   ONE write transaction: With a large log, every sign-in and every other worker waited out the
   whole search. Since G4 it reads in blocks by `id` (5000 rows) without a write lock and writes
-  only the hits in short transactions, the row read fresh there (`tests/test_audit_runde2.py`,
+  only the hits in short transactions, the row read fresh there (`tests/test_audit_round2.py`,
   120,000 rows).
 - **Chain with mandatory setup (password → totp → pin): the offer to end the other sessions
   returns** (limit d, ASVS 7.4.3). The page asks after the setup; the consent is
@@ -1856,13 +1892,13 @@ schema change, no new configuration.
   of the double submit (`verify_csrf`) is unchanged.
 - **The admin panel sets its CSRF cookie via `ensure_csrf()`** and thus with the same
   attributes as every other setter.
-- **`issue_csrf()` and `csrf_rotieren()` replace a CSRF line** that the response already carries,
+- **`issue_csrf()` and `rotate_csrf()` replace a CSRF line** that the response already carries,
   instead of appending a second one.
 
 ### Security
 
 - **Every sign-in rotates the CSRF token, sign-out deletes it** — as the docstring of
-  `csrf_rotieren()` promises ("on login"; OWASP CSRF Prevention Cheat Sheet: "changes with each
+  `rotate_csrf()` promises ("on login"; OWASP CSRF Prevention Cheat Sheet: "changes with each
   login"). It was called only at the end of a TOTP step. Password, PIN, sign-in link,
   registration, OIDC, SAML and passkey left the token standing, and `auth.logout()` did not delete the
   cookie: The token survived sign-out and re-sign-in until the browser was closed.
@@ -1928,7 +1964,7 @@ schema change, no new configuration.
   `auth.csrf_cookie_name`" (0.20.0) was shortened: JavaScript cannot read a Python property. The
   page passes the name on via a template variable or `<meta>`, or the script takes the
   token from the form field of `ensure_csrf()`. Clarified in the 0.20.0 section, in both
-  READMEs and in `KONFIGURATION.md` (`cookie_host_prefix`).
+  READMEs and in `CONFIGURATION.md` (`cookie_host_prefix`).
 - **Docs: 0.19.0 promised too much for factor setup.** Behavior change no. 3 said that the setup
   too (`totp/setup`, `passkey/register/*`) requires a freshly confirmed session. The code
   requires an interactive session there (`require_session()`, no API key), not a fresh
@@ -2160,7 +2196,7 @@ Ten areas, **161 items fixed**, 2 were already done, 6 stay open with justificat
 
 #### Lockouts and throttling
 
-- **Atomic lockouts (R7-2, R3-2, R3-7):** Login, TOTP, PIN, area PIN, step-up and password change now check and book an attempt in one step (`versuch_beginnen()`, `Store.reserve_attempt` with `BEGIN IMMEDIATE`). A parallel burst no longer gets over the lockout limit.
+- **Atomic lockouts (R7-2, R3-2, R3-7):** Login, TOTP, PIN, area PIN, step-up and password change now check and book an attempt in one step (`begin_attempt()`, `Store.reserve_attempt` with `BEGIN IMMEDIATE`). A parallel burst no longer gets over the lockout limit.
 - **No more foreign lockouts (R7-6/H-8):** The first threshold of the login lockout applies per pair of account and IP (`max_login_attempts`). Per account, a higher threshold applies across all IPs (new: `account_attempt_factor`, default 3). A single stranger no longer locks the holder out, distributed guessing remains limited. **Behavior change.**
 - **Account threshold counts under the folded identifier (R7-6/H-8, re-check):** Counting happened under the raw typed identifier. Variants like `' opfer'` or `'OPFER\t'` hit the same account but each filled a counter of its own, so the account threshold bound nothing. Now all paths count, clear and unlock (`tinysesam unlock`) under the same identifier, trimmed and lowercased (`norm_kennung`).
 - **Area PIN (R7-3):** per IP `resource_max_attempts`, per area `account_attempt_factor` times that. A stranger no longer locks an area for everyone. **Behavior change.**
@@ -2217,7 +2253,7 @@ Ten areas, **161 items fixed**, 2 were already done, 6 stay open with justificat
 - **An unusable scope or expiry when creating a key yields 400 with a reason instead of HTTP 500** (R6-8), in the panel as under `/auth/apikeys`.
 - **Login URL at forward-auth** (R5-1): With `cookie_secure=True`, `X-Forwarded-Proto: http` no longer downgrades the scheme (except loopback). A user part from `X-Original-URL` (`https://fremd.example@app.example.com`) no longer lands in front of the host.
 - **`trusted_proxies`: One invalid entry no longer invalidates the whole list** (B3-3). Each entry is checked individually, and the configuration check rejects hostnames and typos.
-- **Later config changes are checked before the routes are built** (B3-14, A2). `router()` and `admin_router()` re-check everything that would have made the constructor fail: `konfigpruefung`, cookie fields and the bolts of the constructor (`admin_identifiers` next to open registration/auto-create, `login_identifier`, `forward_headers`, `totp_required`). Before, for example, `auth.cfg.allow_signup = True` after the constructor next to `admin_identifiers=["chef"]` built a router in which the first visitor registered as first admin. `pruefen()` still returns a list.
+- **Later config changes are checked before the routes are built** (B3-14, A2). `router()` and `admin_router()` re-check everything that would have made the constructor fail: `config_check`, cookie fields and the bolts of the constructor (`admin_identifiers` next to open registration/auto-create, `login_identifier`, `forward_headers`, `totp_required`). Before, for example, `auth.cfg.allow_signup = True` after the constructor next to `admin_identifiers=["chef"]` built a router in which the first visitor registered as first admin. `pruefen()` still returns a list.
 
 **Changed**
 
@@ -2225,7 +2261,7 @@ Ten areas, **161 items fixed**, 2 were already done, 6 stay open with justificat
   - `stepup_methods` with an unknown method (`"topt"`) or a disabled one (`"pin"` without `pin_enabled`) (B3-6). Before, the confirmation silently fell back to the password.
   - `trusted_proxies` with an entry that is not an IP network (B3-3).
   - `passkey_enabled`: `origin` is not an origin (path, trailing slash) or `rp_id` does not fit it (B3-10). If `origin` differs from `base_url` or the developer values are still there, there is a warning. `origin` may, as with py_webauthn, be a **list**, each entry is checked.
-  - Number fields outside their limits (B3-12, `konfigpruefung.ZAHLENGRENZEN`), for example `session_ttl_hours=0`, `magiclink_ttl_min=0`, `recovery_code_count=0` or a negative `stepup_max_age_sec`. `True` instead of a number is also an error, and **text instead of a number as well**: `smtp_port="587"`, say straight from an environment variable, now aborts setup with "is not an integer". In 0.19.0, text in these fields still built, so these newly break: `pin_min_length`, `apikey_default_days`, `resource_unlock_ttl_hours`, `magiclink_ttl_min`, `smtp_port`, `smtp_timeout`, `recovery_code_count`, `mfa_enrollment_grace_days`, `stepup_max_age_sec`, `session_ttl_hours`, `session_ttl_transient_hours` and `oidc_revalidate_minutes`, i.e. every field in `ZAHLENGRENZEN` but two. `admin_claim_ttl_min` already failed in 0.19.0 with a `TypeError` instead of a message (except with `admin_enabled=False`), and `audit_retention_days` is new. → **To do:** convert beforehand yourself, `smtp_port=int(os.environ["SMTP_PORT"])`. The bundled gateway already converts its environment variables.
+  - Number fields outside their limits (B3-12, `config_check.ZAHLENGRENZEN`), for example `session_ttl_hours=0`, `magiclink_ttl_min=0`, `recovery_code_count=0` or a negative `stepup_max_age_sec`. `True` instead of a number is also an error, and **text instead of a number as well**: `smtp_port="587"`, say straight from an environment variable, now aborts setup with "is not an integer". In 0.19.0, text in these fields still built, so these newly break: `pin_min_length`, `apikey_default_days`, `resource_unlock_ttl_hours`, `magiclink_ttl_min`, `smtp_port`, `smtp_timeout`, `recovery_code_count`, `mfa_enrollment_grace_days`, `stepup_max_age_sec`, `session_ttl_hours`, `session_ttl_transient_hours` and `oidc_revalidate_minutes`, i.e. every field in `ZAHLENGRENZEN` but two. `admin_claim_ttl_min` already failed in 0.19.0 with a `TypeError` instead of a message (except with `admin_enabled=False`), and `audit_retention_days` is new. → **To do:** convert beforehand yourself, `smtp_port=int(os.environ["SMTP_PORT"])`. The bundled gateway already converts its environment variables.
   - `signup_verify_email=True` without `signup_require_email=True` (B3-16). Anyone who gave no address was active immediately without confirmation. Also errors: `cookie_domain` that does not cover the host of `base_url`, and `admin_path`/`login_path`/`oidc_callback_path` without a leading `/`. Warnings exist for swapped session durations and for `signup_invite_only` without `allow_signup`.
   - `demo_mode=True` next to OIDC/SAML/LDAP/forward-auth and on a database with existing accounts that never was a demo (B3-8). A real demo still starts, even with registered visitors.
 - **Warning on an open forward-auth gate** (H-11, B3-9): auto-create without `*_allowed_groups` or without `oidc_clients`, or open self-registration in front of forward-auth. The bundled compose and the gateway docs say where the circle is limited.
@@ -2233,7 +2269,7 @@ Ten areas, **161 items fixed**, 2 were already done, 6 stay open with justificat
 
 **Docs**
 
-- **KONFIGURATION.md: descriptions no longer slip** (B3-15). The generator attaches indented continuation lines to the right field and removes the `#:` colon. The file is regenerated, as is API.md.
+- **CONFIGURATION.md: descriptions no longer slip** (B3-15). The generator attaches indented continuation lines to the right field and removes the `#:` colon. The file is regenerated, as is API.md.
 
 #### Operations and runtime
 
@@ -2250,7 +2286,7 @@ Ten areas, **161 items fixed**, 2 were already done, 6 stay open with justificat
 - `pop_flow()` hands out WebAuthn challenge and OIDC `state` exactly once, even with two simultaneous callbacks and across process boundaries (R3-8).
 
 **Docs**
-- New: `docs/BETRIEB.md` with failure behavior (B6-13), session and federation management (F-10), sign-in paths and their strength (B1-11) and the open ASVS L3 items (B1-12). `test_repo` checks the page's numbers against the code, including the ratio of HEALTHCHECK to `busy_timeout`.
+- New: `docs/OPERATIONS.md` with failure behavior (B6-13), session and federation management (F-10), sign-in paths and their strength (B1-11) and the open ASVS L3 items (B1-12). `test_repo` checks the page's numbers against the code, including the ratio of HEALTHCHECK to `busy_timeout`.
 
 #### Supply chain and publishing
 
@@ -2267,7 +2303,7 @@ Ten areas, **161 items fixed**, 2 were already done, 6 stay open with justificat
 **Changed**
 
 - **Behavior change: The reference stack is hardened** (B4-11). `deploy/forward-auth/docker-compose.yml` pins Caddy to a version and digest instead of `caddy:2`. Both services run `read_only`, with `cap_drop: [ALL]` and `no-new-privileges`. Caddy gets back only `NET_BIND_SERVICE`. → **To do**, if you adopted the compose: Everything a service writes at runtime needs a volume or a `tmpfs`. Own additions that need further capabilities must explicitly bring them back.
-- **Wheel and sdist are bit-reproducible** (B4-8). Both artifacts are built with `SOURCE_DATE_EPOCH` = timestamp of the commit and then normalized with `scripts/_artefakte_normalisieren.py`. The sdist gets fixed timestamps, order, owner, permissions and a fixed gzip header. In the wheel the file permissions are fixed, because setuptools otherwise adopts the umask of the checkout (0002 on Ubuntu/Mint, 0022 on the runner). Rebuilding works like this: run the same steps on the tag, then `sha256sum -c SHA256SUMS`.
+- **Wheel and sdist are bit-reproducible** (B4-8). Both artifacts are built with `SOURCE_DATE_EPOCH` = timestamp of the commit and then normalized with `scripts/_normalize_artifacts.py`. The sdist gets fixed timestamps, order, owner, permissions and a fixed gzip header. In the wheel the file permissions are fixed, because setuptools otherwise adopts the umask of the checkout (0002 on Ubuntu/Mint, 0022 on the runner). Rebuilding works like this: run the same steps on the tag, then `sha256sum -c SHA256SUMS`.
 - **Dependabot raises what is pinned** (B4-3, B4-12). The pip entry for `/` was ineffective because Dependabot never raises open `>=` floors. It is replaced by entries for the hashed lock lists and for the compose stack. The floors are now checked by the audit gate.
 - **The sdist contains nothing gitignored any more** (B4-13). `MANIFEST.in` mirrors `.gitignore`. Before, `python -m build` from a used working tree put, for example, an `examples/app.db` or a `.env` into the package.
 - **`SECURITY.md` names reachable reporting paths and deadlines** (B4-10). There are two paths: the private advisory and an email for everyone without a GitHub account. The deadlines are 7, 14 and 90 days, the same in both languages.
@@ -2310,7 +2346,7 @@ of it matters for the update:
   `tinysesam passwd` reads the minimum length by the same route as the web
   (`security.haertung_lesen`). The confirmation token is created in the request, only the send
   waits.
-- **Known limits** (SECURITY.md, BETRIEB.md, backlog T-13): With `cookie_domain`,
+- **Known limits** (SECURITY.md, OPERATIONS.md, backlog T-13): With `cookie_domain`,
   `cookie_host_prefix=False`, a different `cookie_path` or over HTTP, any host under the
   domain can plant a session cookie. In a chain `password → totp → pin` the
   offer to end the other sessions is dropped. In the first window of an LDAP outage, attempts
@@ -2564,7 +2600,7 @@ It would have hit exactly the installations the fallback was built for.
   `python-multipart>=0.0.31`, `authlib>=1.6.12`. **No** upper bounds — a cap in a library
   blocks exactly the update that brings the next fix.
   `tests/test_packaging.py` also measures the bounds against a frozen table, so that the floor
-  does not age again. Found in the third audit (B4-1 from [T-13](backlog/T-13-audit-2026-09-22-runde-3.md)).
+  does not age again. Found in the third audit (B4-1 from [T-13](backlog/T-13-audit-2026-09-22-round-3.md)).
 - **An unconfirmed IdP address could determine the first admin.** `admin_identifiers` is the
   documented bootstrap path. For open registration, TinySesam requires a confirmed
   address for it — the OIDC path, however, read `email` unconditionally and overlooked the standard claim
@@ -2602,7 +2638,7 @@ It would have hit exactly the installations the fallback was built for.
   `mail` attribute continued to determine the first admin. Now both
   paths explicitly pass "no proof", and the rule itself is **fail-closed**:
   `maybe_promote_admin` receives the **factor**, and for a federated factor (new:
-  `TinySesam.FOEDERIERTE_FAKTOREN`) an address only counts with an explicit `True` —
+  `TinySesam.FEDERATED_FACTORS`) an address only counts with an explicit `True` —
   a future federated path that forgets to pass the proof thereby refuses instead of
   promoting. LDAP needs the explicit pass-through in addition, because it deliberately writes the factor
   `password` and cannot be recognized by the factor name. The configuration check names
@@ -2622,9 +2658,9 @@ It would have hit exactly the installations the fallback was built for.
   The rule is thus the same across all sign-in paths — an address supports a
   permissions decision only if *this* login proves it (OIDC claim) or a dedicated
   confirmation path has proven it. The two bolts for SAML (pass-through of the ACS route,
-  `FOEDERIERTE_FAKTOREN`) and the one for LDAP are now measured **individually**: before, each
+  `FEDERATED_FACTORS`) and the one for LDAP are now measured **individually**: before, each
   covered the other, a refactoring could have lost the remaining one unnoticed.
-  Evidence in `tests/test_saml.py`, `tests/test_ldap.py` and `tests/test_audit_runde2.py`.
+  Evidence in `tests/test_saml.py`, `tests/test_ldap.py` and `tests/test_audit_round2.py`.
   Found in the third audit (F-14 from T-13; the two follow-up findings B-umgehung-1 and
   B-umgehung-10 of the second attack round).
 - **⚠️ `store.set_email()` now carries the confirmation flag along — behavior change for
@@ -2637,8 +2673,8 @@ It would have hit exactly the installations the fallback was built for.
   into the database in ONE statement, by default as **unconfirmed**; anyone who has proof
   for the new address says so (`set_email(uid, mail, verified=True)`). Within the package itself
   the method has no caller — the trap was set for embedders. Evidence in
-  `tests/test_audit_runde2.py`. Found in the third audit (B-umgehung-8 from
-  [T-13](backlog/T-13-audit-2026-09-22-runde-3.md)).
+  `tests/test_audit_round2.py`. Found in the third audit (B-umgehung-8 from
+  [T-13](backlog/T-13-audit-2026-09-22-round-3.md)).
 - **LDAP no longer follows a referral — it cost the service account's password.** ldap3
   follows a `SearchResultDone resultCode=10` on its own and builds a new connection
   to the host that the **response** names — with the same credentials. TinySesam set the
@@ -2657,7 +2693,7 @@ It would have hit exactly the installations the fallback was built for.
   as the username, so a line break from a foreign response does not create a second,
   made-up log line. The Global Catalog hint (port 3268/3269) is now in the
   LDAP section of **both READMEs** instead of only in the source. Finding **F-28** from
-  [T-13](backlog/T-13-audit-2026-09-22-runde-3.md). Side finding at the same spot: ldap3 rejects `ldap_bind_dn`
+  [T-13](backlog/T-13-audit-2026-09-22-round-3.md). Side finding at the same spot: ldap3 rejects `ldap_bind_dn`
   without `ldap_bind_password`, the error was swallowed in the login and looked like a wrong password
   for every user — the configuration check now reports the combination at construction.
 - **The `Host` header poisoned the reset, sign-in and confirmation link.** In ten places
@@ -2671,7 +2707,7 @@ It would have hit exactly the installations the fallback was built for.
   `TinySesam.public_base()` decides everywhere: `base_url` wins, otherwise a derived host only counts
   if it is in `trusted_redirect_hosts` or is loopback. The same check covers
   OIDC redirect URI and post-logout, SAML entity ID/ACS and the forward-auth redirect; each
-  of these places is measured individually (`tests/test_sicherheit_befunde.py`), after in a
+  of these places is measured individually (`tests/test_security_findings.py`), after in a
   mutation trial all four could be reverted to the old form without a single check turning red.
 
   **The documented methods now follow the same rule too** — `magic_url()`, where all four
@@ -2700,13 +2736,13 @@ It would have hit exactly the installations the fallback was built for.
   `base_url` lost password reset and magic link for **all** users, visible only
   in one log line. The other paths (OIDC start, registration with confirmation, admin invitation,
   SAML) answered with **500** in the middle of the sign-in attempt, although it was already clear at construction that
-  it cannot work. And `konfigpruefung` called it only a **warning**: if `base_url` stayed empty
+  it cannot work. And `config_check` called it only a **warning**: if `base_url` stayed empty
   and — the normal case with forward-auth/SSO — several names were in
   `trusted_redirect_hosts`, the runtime check was satisfied by any of them; the attacker triggered the
   reset for a foreign mailbox, set `Host:` to a **different** co-trusted host and
   the token went out there.
 
-  Both are closed: `konfigpruefung` reports an empty `base_url` as an **error** as soon as a
+  Both are closed: `config_check` reports an empty `base_url` as an **error** as soon as a
   mail path (`magiclink_enabled`, `password_reset_enabled`, `signup_verify_email`),
   `oidc_enabled` or `saml_enabled` is on — construction then fails with `ConfigError`, instead of
   permitting an operation that silently does the wrong thing. Thus `base_url` wins everywhere an absolute
@@ -2714,7 +2750,7 @@ It would have hit exactly the installations the fallback was built for.
   and the `Host` header has no say there anymore. **One exception, and it is named:** without
   `cookie_domain`, `forward_login_url()` builds the login page on the requested host if that is in
   `trusted_redirect_hosts`. The session cookie is then host-only; if the login URL
-  pointed elsewhere, the sign-in silently went in circles. `konfigpruefung` announces this case at
+  pointed elsewhere, the sign-in silently went in circles. `config_check` announces this case at
   startup, and it reaches no further than `trusted_redirect_hosts`.
 
   At runtime there is no silent success: the new method
@@ -2726,8 +2762,8 @@ It would have hit exactly the installations the fallback was built for.
   **The 500 remains.** This used to say "where before a success page or a 500
   stood"; that promised more than is measured. No route catches the `ConfigError`, an
   ASGI server turns it into a server error — for the regular setup that is meaningless,
-  because `konfigpruefung` no longer lets it arise at all, it only affects a config that was changed AFTER the
-  constructor. Both are measured (`tests/test_sicherheit_befunde.py`): no 200,
+  because `config_check` no longer lets it arise at all, it only affects a config that was changed AFTER the
+  constructor. Both are measured (`tests/test_security_findings.py`): no 200,
   no mail sent, and the 500 as what comes out today. The hint about the missing base
   appears **once per process and host** in the security log, not per request: forward-auth asks
   on every anonymous request, one page load is twenty subresources — exactly the file
@@ -2740,8 +2776,8 @@ It would have hit exactly the installations the fallback was built for.
   Their form targets and links are root-absolute (`/auth/register`, `/auth/forgot`,
   …), and `login_path`/`login_redirect`/`logout_redirect` go out unchanged. Anyone mounting under
   `--root-path /sso` behind a proxy that strips `/sso` gets working
-  mails and a sign-in into a 404. The limit is measured (`tests/test_sicherheit_befunde.py`
-  on a real mount) and tracked as a task: [`backlog/T-15`](backlog/T-15-unterpfad-montage.md).
+  mails and a sign-in into a 404. The limit is measured (`tests/test_security_findings.py`
+  on a real mount) and tracked as a task: [`backlog/T-15`](backlog/T-15-subpath-mounting.md).
 
   **For operators — what to enter:** Anyone who previously ran without `base_url` and uses a mail path,
   OIDC or SAML must set `base_url` to the public address of this app, otherwise the instance
@@ -2755,7 +2791,7 @@ It would have hit exactly the installations the fallback was built for.
   value — that also lifts an `http://` from a TLS-terminating proxy to the configured
   address, instead of letting it silently wander into the mail link; once per host a line
   about it appears in the security log. Without `base_url`, a foreign host gets `ConfigError` instead of a link.
-  Found in the third audit (R4-01 = R8-4 from [T-13](https://github.com/Ollornog/TinySesam/blob/main/backlog/T-13-audit-2026-09-22-runde-3.md)),
+  Found in the third audit (R4-01 = R8-4 from [T-13](https://github.com/Ollornog/TinySesam/blob/main/backlog/T-13-audit-2026-09-22-round-3.md)),
   sharpened further in the follow-up rounds N1 and N6.
 - **A foreign registration could occupy the login identifier of an existing account.** The two
   namespaces were only checked separately — the address against `users.email`, the username
@@ -2820,7 +2856,7 @@ It would have hit exactly the installations the fallback was built for.
   sign-in anymore, and each bucket hits exactly the one who guessed.
   New: `auth.is_password_change_locked(username, ip)` and
   `store.count_fails(..., exclude_methods=…)`. Evidence in `tests/test_hardening.py`.
-  Found in the third audit (R4-10 from [T-13](https://github.com/Ollornog/TinySesam/blob/main/backlog/T-13-audit-2026-09-22-runde-3.md)).
+  Found in the third audit (R4-10 from [T-13](https://github.com/Ollornog/TinySesam/blob/main/backlog/T-13-audit-2026-09-22-round-3.md)).
   **Reworked (second attack round) — the fix fell short in three places:**
   1. **The exception list named only `password_change`.** `record_login()` is called in the router with
      five methods; `reauth` (step-up confirmation) and `resource` (area PIN without
@@ -2875,7 +2911,7 @@ It would have hit exactly the installations the fallback was built for.
   documented type otherwise gets a 500 in their own route. Because `api_surface.json` freezes signatures
   and does not see raised types at all, [API.md](API.md) from now on lists the
   error types together with the hierarchy (generated from the docstrings).
-  Finding **B2-1** from [T-13](https://github.com/Ollornog/TinySesam/blob/main/backlog/T-13-audit-2026-09-22-runde-3.md).
+  Finding **B2-1** from [T-13](https://github.com/Ollornog/TinySesam/blob/main/backlog/T-13-audit-2026-09-22-round-3.md).
 - **The first-admin one-time token was in plaintext in `security.log`.** As long as there is no admin,
   TinySesam writes a hint to `/auth/claim-admin?token=…` at startup — up to 0.18.x
   including the value, via `security.seclog`. With `security_log` set, that is exactly the
@@ -2894,7 +2930,7 @@ It would have hit exactly the installations the fallback was built for.
   at the update, but only at the next rotation, when the handler recreates the file. Anyone who
   needs it grants access via the group: logrotate line `create 0640 tinysesam adm`. That
   used to be only in the fail2ban template and is now also in the `security_log` section of
-  KONFIGURATION.md and both READMEs. What the fix does **not** solve and which is therefore listed as a known limit
+  CONFIGURATION.md and both READMEs. What the fix does **not** solve and which is therefore listed as a known limit
   in SECURITY.md and both READMEs: the token is redeemed via a **URL**
   (`GET /auth/claim-admin?token=…`, and for a non-signed-in call additionally in the `Location` of the
   login redirect) and thus passes through proxy access logs, `Referer` and browser history; by
@@ -2902,7 +2938,7 @@ It would have hit exactly the installations the fallback was built for.
   collect. Neither yields a permanent secret (redeemable exactly once, expiry via
   `admin_claim_ttl_min`, route 404 as soon as an admin exists) — set a short expiry, where stderr
   is collected use `admin_claim_token_file`, redeem immediately.
-  Found in the third audit (B5-03 from [T-13](https://github.com/Ollornog/TinySesam/blob/main/backlog/T-13-audit-2026-09-22-runde-3.md)).
+  Found in the third audit (B5-03 from [T-13](https://github.com/Ollornog/TinySesam/blob/main/backlog/T-13-audit-2026-09-22-round-3.md)).
 - **The OIDC discovery document is now checked against the configured issuer.** Until now
   TinySesam took `issuer`, `token_endpoint` and `jwks_uri` from the document unchecked and on retrieval also
   followed redirects — a 3xx on the well-known path would have sufficed to replace all three, and the
@@ -2912,7 +2948,7 @@ It would have hit exactly the installations the fallback was built for.
   the issuer from the document; through the comparison it is now the same as in the configuration.
   Found in the third audit (PocketID symbiosis, RB-03).
 - **CodeQL backlog cleaned up.** 61 open alerts lay on `main`, unassessed. They do nothing — until a pull request touches one
-  of their lines and the merge hangs on a `note` thread. Reviewed ([T-12](https://github.com/Ollornog/TinySesam/blob/main/backlog/T-12-codeql-bestand.md)):
+  of their lines and the merge hangs on a `note` thread. Reviewed ([T-12](https://github.com/Ollornog/TinySesam/blob/main/backlog/T-12-codeql-backlog.md)):
   **one real finding** — `examples/showcase.py` put the username unescaped into the demo pages
   `/app` and `/sensibel` (fixed with `html.escape`); **nine false alarms** rejected with reasons
   (fixed redirect paths, logged IPs instead of secrets, sha256 for random API keys, a
@@ -2949,7 +2985,7 @@ It would have hit exactly the installations the fallback was built for.
   "turn off 2FA", landing on `/auth/reauth`, the factor is still there afterwards). In the process it turned out that
   the two delete buttons of the account page reported success **unconditionally** ("✓ entfernt") and reloaded
   — even on 403 or 500. They now check the response. Finding **R3-3** from
-  [T-13](backlog/T-13-audit-2026-09-22-runde-3.md).
+  [T-13](backlog/T-13-audit-2026-09-22-round-3.md).
 - **The bolt against the dismantling API key could be bypassed via factor SETUP.** `require_mfa()`
   only covered the dismantling; `GET/POST /auth/totp/setup` and `POST /auth/passkey/register/{begin,finish}`
   still hung on `current_user()` alone — and that accepts an API key, for which the
@@ -3044,7 +3080,7 @@ It would have hit exactly the installations the fallback was built for.
   the Python range are measured against reality, and as long as the version is below 1.0,
   no README may show a PyPI installation. Exactly these three numbers were wrong — numbers
   that nobody re-measures go stale with the next commit.
-- **`tests/test_bestandsdaten.py`** — 28 checks on what an upgrade must survive.
+- **`tests/test_legacy_data.py`** — 28 checks on what an upgrade must survive.
 - **Promises of this cycle that nobody had measured now have a test** — each
   proven by a mutation trial (revert → red, otherwise green), after all of them could be reverted with the full suite 46/46:
   `ConfigError.feld`/`.besitzer_id` **and** the unchanged message text
@@ -3053,7 +3089,7 @@ It would have hit exactly the installations the fallback was built for.
   which never gets to see the PIN section (`tests/test_account.py`); the binding of
   `passkey/register/finish` to the signed-in account, against a foreign flow planted
   (`tests/test_methods.py`); and that the two operator messages only name paths that exist
-  (`tests/test_security_log.py`, `tests/test_sicherheit_befunde.py`).
+  (`tests/test_security_log.py`, `tests/test_security_findings.py`).
 
 ### Changed — Python 3.12 is the new lower bound (matrix 3.12 / 3.13 / 3.14)
 
@@ -3078,7 +3114,7 @@ The matrix is now maintained in **one** place instead of three.
 - **The installation instructions lead with the git tag.** Both READMEs began with
   `pip install tinysesam` — the name is not registered on PyPI, the command ends with
   `No matching distribution found`. The first line anyone tries was the first one to
-  fail. Publication happens with 1.0 ([ADR-6](backlog/ADR-6-pypi-veroeffentlichen.md)).
+  fail. Publication happens with 1.0 ([ADR-6](backlog/ADR-6-publish-to-pypi.md)).
 - **The status section of both READMEs** described the state of 0.5/0.6 ("17 and 22 test files respectively")
   for a package with two security audits, SAML, gateway and command line behind it.
 - **`web/flows.py` names `ldap_enabled`** in the section "External IdProvider". The page
@@ -3135,7 +3171,7 @@ it exists.
 Four independent angles, this time aimed at the fresh code itself. **43 findings, 5
 blockers** — and three of them were holes that appeared while closing the first six.
 That is the real yield of this round: whoever closes a hole does not check their own
-closure. Evidence in `tests/test_audit_runde2.py` ([T-9](backlog/T-9-audit-2026-09-21-runde-2.md)).
+closure. Evidence in `tests/test_audit_round2.py` ([T-9](backlog/T-9-audit-2026-09-21-round-2.md)).
 
 **The first admin could still be hijacked — via the username.** The new guard
 requires an *email* in `admin_identifiers` when signup is open, on the grounds that "whoever has the
@@ -3172,7 +3208,7 @@ looks for rows that do not look like a hash: this **heals** an already damaged f
 Solved along the way: with several workers, one died at startup with `no such column: "token"`.
 
 **The first-admin guard, `POST /auth/magic/request`** (the only state-changing route without
-CSRF) and **[B-1](backlog/B-1-admin-panel-rotiert-csrf.md)** (the panel rolled a new CSRF token on every
+CSRF) and **[B-1](backlog/B-1-admin-panel-rotates-csrf.md)** (the panel rolled a new CSRF token on every
 call) are also closed — B-1 was filed as "after 1.0" and, through the new
 CSRF checks, now affected more paths.
 
@@ -3249,8 +3285,8 @@ Every promise was cross-checked by mutation; seven did not hold:
   alias resolution.
 - **`test_api_surface`** did not freeze class attributes (`FORWARD_HEADERS_DEFAULT` is a
   promise in the docs and could have been changed silently).
-- **`test_kern_install`** measured text occurrences instead of behavior in two places.
-- **`test_typen`** ran mypy without `--check-untyped-defs`: 120 of 410 functions unchecked,
+- **`test_core_install`** measured text occurrences instead of behavior in two places.
+- **`test_types`** ran mypy without `--check-untyped-defs`: 120 of 410 functions unchecked,
   including all four presets. With the depth, six real errors turned up immediately.
 
 Two suites had also **cemented the TOTP replay** (the same code twice). A
@@ -3348,7 +3384,7 @@ replace — `except ValueError` and `except RuntimeError` still catch.
 
 Found in the maturity review before the planned 1.0. Each of the six was reproduced
 individually before it was repaired, and each now has a check in
-`tests/test_sicherheit_befunde.py` — named after the **attack**, not the function: anyone
+`tests/test_security_findings.py` — named after the **attack**, not the function: anyone
 who sees one of them red knows immediately what has become possible again. Every fix was additionally cross-checked by
 switching it off (mutation): without it the check goes red, with it green.
 
@@ -3391,9 +3427,9 @@ one-time token under `/auth/claim-admin`).
 
 ### Added — two reference works, both generated
 
-**[`KONFIGURATION.md`](KONFIGURATION.md)** lists all **119** config fields with type, default and
+**[`CONFIGURATION.md`](CONFIGURATION.md)** lists all **119** config fields with type, default and
 meaning. 39 of them appeared in no documentation before. Generated from the comments in `config.py`
-(`scripts/_config_doku.py`) so that it cannot drift apart again — and 32 fields that had no
+(`scripts/_config_docs.py`) so that it cannot drift apart again — and 32 fields that had no
 comment at all now have one. A check demands both: dump up to date, no
 field without an explanation.
 
@@ -3401,18 +3437,18 @@ field without an explanation.
 methods** of `TinySesam` plus the 6 presets of `TinySesamConfig`, 112 entries in total.
 68 of them appeared in no documentation before: anyone embedding TinySesam saw the promise "this surface
 stays stable" without a place stating what it contains. All now have a docstring.
-(Generated like `KONFIGURATION.md` — the number in this paragraph is the state of this release, the
+(Generated like `CONFIGURATION.md` — the number in this paragraph is the state of this release, the
 current one is in the file itself.)
 
 **Open and deliberately not decided in passing:** *which* of these methods should be public
 in the long run. The surface was measured (everything without a leading underscore), not selected —
-that is a product decision and is tracked in [M-1](backlog/M-1-api-stabil-1-0.md).
+that is a product decision and is tracked in [M-1](backlog/M-1-api-stable-1-0.md).
 
 ### Fixed — contradictions in the configuration were noticed only at login
 
 An app **without a single active sign-in method** started without complaint. A `login_chain` that
 names a disabled method is unfulfillable and sends the user in circles. OIDC without
-`issuer` failed only at the click on "Sign in". `tinysesam/konfigpruefung.py` now checks this
+`issuer` failed only at the click on "Sign in". `tinysesam/config_check.py` now checks this
 at construction and reports **all** findings together — anyone with three things wrong should read them once
 and not start three times.
 
@@ -3523,7 +3559,7 @@ German version under `i18n/` is read only on GitHub and may stay relative.
 
 In the same go: both READMEs advertised an **update button** in the admin panel ("mode manual/auto,
 version pin, update now"). It has deliberately not existed since 0.12.0
-([ADR-2](backlog/ADR-2-kein-selbst-update.md)) — the panel shows the version and a notice.
+([ADR-2](backlog/ADR-2-no-self-update.md)) — the panel shows the version and a notice.
 
 ### Fixed — `Typing :: Typed` was a promise nobody had measured
 
@@ -3546,7 +3582,7 @@ a wrong value with an `assert` — so only at the first cookie, and under `pytho
 the typo would then end up in the `Set-Cookie` header. The constructor now checks it, including
 the combination `samesite='none'` without `cookie_secure` (which a browser discards).
 
-So that the promise stays **measured**: `tests/test_typen.py` runs mypy over the library and
+So that the promise stays **measured**: `tests/test_types.py` runs mypy over the library and
 additionally checks against the actual return value what the signatures promise. mypy runs in CI and
 is included in the `ci-python-web` image — without that, the suite skipped itself, and the
 run still looked green.
@@ -3605,7 +3641,7 @@ The classifiers promised 3.10 to 3.14, the CI matrix ran **3.10, 3.12 and 3.14**
 classifiers against the matrix: whoever promises a version in future must also run it (or remove the
 classifier).
 
-The trigger was a failure of our own: `tests/test_kern_install.py` imported `tomllib`, which exists
+The trigger was a failure of our own: `tests/test_core_install.py` imported `tomllib`, which exists
 only from 3.11 — on 3.10 the test died. Because `ci-local` runs only **one** Python version, this
 was noticed only in the GitHub matrix; the gate did what it is there for. The test now reads the
 core dependencies from the **package metadata** (`importlib.metadata.requires`) instead of from
@@ -3613,7 +3649,7 @@ core dependencies from the **package metadata** (`importlib.metadata.requires`) 
 really there after `pip install tinysesam`. A second hygiene check catches standard-library
 names that are younger than the oldest promised version.
 
-### Fixed — operations: backup, cleanup, log ([T-8](backlog/T-8-reifepruefung-restbefunde.md))
+### Fixed — operations: backup, cleanup, log ([T-8](backlog/T-8-maturity-review-remaining-findings.md))
 
 **A file copy of the database was worthless.** It runs in WAL mode; anyone who backs up only the `.db`
 gets a torso — measured, the copy of an instance with five accounts did not even contain the
@@ -3641,7 +3677,7 @@ even in installations that never touched their filter file. The reason is attach
 was locked, not by whom — with several admins exactly the question asked afterwards.
 All eight panel actions now run through a common path that records both.
 
-### Security — four findings from the second round ([T-8](backlog/T-8-reifepruefung-restbefunde.md))
+### Security — four findings from the second round ([T-8](backlog/T-8-maturity-review-remaining-findings.md))
 
 The maturity review reported 35 further findings that nobody had reproduced individually. They are
 examined in turn — confirmed, refuted or filed as a matter of taste. These four were
@@ -3690,23 +3726,23 @@ The packaging test paid off immediately: the sdist contained **half a test suite
 own OIDC identity (Trusted Publishing) — no token in the repo, none to rotate, none that
 could be extracted from a run. Each file additionally carries a PEP 740 attestation:
 verifiable which commit it was built from. It is triggered solely by a tag that a
-human sets. Rationale and the one-time setup: [ADR-6](backlog/ADR-6-pypi-veroeffentlichen.md),
+human sets. Rationale and the one-time setup: [ADR-6](backlog/ADR-6-publish-to-pypi.md),
 fields in the head of `.github/workflows/release.yml`.
 
-[ADR-1](backlog/ADR-1-pypi-vertagt.md) ("deferred until 1.0") is thereby set to `verworfen` — with
+[ADR-1](backlog/ADR-1-pypi-deferred.md) ("deferred until 1.0") is thereby set to `verworfen` — with
 a pointer to its successor and unchanged text. The decision was not wrong, it has been fulfilled.
 
 **On the API surface.** Measured for the window `v0.16.0` → `v0.17.0`: **zero breaks, zero
 extensions** — there the surface is the same character for character. That was the third
 condition for 1.0 and is proven for this period. **For 0.18.0 this no longer holds**: this
-release brings new methods (`complete_totp`, `csrf_rotieren`), new exports (`TinySesamError`,
+release brings new methods (`complete_totp`, `rotate_csrf`), new exports (`TinySesamError`,
 `ConfigError`, `MissingExtra`, `MailNotConfigured`) and the changed default of
 `passkey_enabled` — the clock for "two minor versions without a break" thereby restarts.
 
 It does not carry 1.0 anyway: the promise never had to hold under changes, because 0.17.0 did not touch
 the library at all. And the security fixes of this version change **behavior**
 that users could (wrongly) assume until now — a measured surface says nothing about that.
-[M-1](backlog/M-1-api-stabil-1-0.md) remains open.
+[M-1](backlog/M-1-api-stable-1-0.md) remains open.
 
 ### Added — `tests/test_packaging.py`: the package as it arrives
 
@@ -3800,7 +3836,7 @@ a loop of error and correction, not a procedure. `python3 scripts/_release.py 0.
 everything and closes the CHANGELOG section; `--pruefen` only checks.
 
 Deliberately **not** included: tagging and pushing. A human presses the button — the same separation as
-with rollout. Both feed into [M-1](backlog/M-1-api-stabil-1-0.md).
+with rollout. Both feed into [M-1](backlog/M-1-api-stable-1-0.md).
 
 ## [0.16.0] — 2026-09-19
 
@@ -3827,7 +3863,7 @@ identity provider next to it. Until now that existed only because someone had se
 was running was known only to whoever was there. Now a run builds it from a fresh throwaway container,
 and the second run changes nothing. The playbook lives in the deploy repo: addresses and
 credentials do not belong in a public repo; only the call leads from here. Closes
-[T-6](backlog/T-6-stage-per-playbook.md).
+[T-6](backlog/T-6-stage-via-playbook.md).
 
 ### Added — provenance and contents of the artifacts are now attested
 
@@ -3846,7 +3882,7 @@ gh attestation verify oci://ghcr.io/ollornog/tinysesam:vX.Y.Z --owner Ollornog
 
 The SBOM is generated from the **pushed** image, not from the build directory — otherwise it would describe
 something other than what was delivered. Closes
-[T-5](backlog/T-5-abbild-signatur-pruefen.md).
+[T-5](backlog/T-5-verify-image-signature.md).
 
 ### Fixed — a rejected SAML assertion could not be diagnosed
 
@@ -3886,7 +3922,7 @@ clock (fixed wait times made it moody), and it **cleans up after itself** — ot
 account accumulates another passkey on every pass. It reports a rate limit or lockout as
 such, instead of saying "sign-in failed" and sending the search in the wrong direction. All three paths run through against real counterparties, and the run turns red when
 it is broken (wrong password at the IdP, unknown credential: exit 1). Closes
-[T-1](backlog/T-1-e2e-gegen-echten-idp.md).
+[T-1](backlog/T-1-e2e-against-real-idp.md).
 
 ### Changed — shared test base on repokit 0.9.0
 
@@ -3920,7 +3956,7 @@ now accepts only `login` tokens and rejects others **without consuming them**.
 
 Anyone who builds the links themselves: `auth.magic_url(raw, base_url, purpose)` picks the path per purpose
 (`TinySesam.TOKEN_PATHS`). Closes
-[T-4](backlog/T-4-verifikation-ohne-magic-endpoint.md).
+[T-4](backlog/T-4-verification-without-magic-endpoint.md).
 
 ### Fixed — browser test: the test server port was a race
 
@@ -3930,7 +3966,7 @@ on a runner with parallel jobs not a thought experiment, and the test then turns
 inexplicably. The socket now stays bound and is passed to `uvicorn.Server.run(sockets=[...])`;
 the window no longer exists. Chrome had already solved the same problem on its side for a while
 (`--remote-debugging-port=0` + `DevToolsActivePort`). Closes
-[T-2](backlog/T-2-freien-port-nicht-selbst-suchen.md).
+[T-2](backlog/T-2-do-not-search-free-port-yourself.md).
 
 ### Added — `forward_headers`: which headers the forward-auth response sets
 
@@ -3946,7 +3982,7 @@ not to hand it out. Empty = unchanged, the previous set.
 
 It is validated at startup: a typo in the field name would otherwise silently drop the header, and a
 header name with a line break would be header injection. Closes
-[T-3](backlog/T-3-forward-auth-header-feinsteuerung.md).
+[T-3](backlog/T-3-forward-auth-header-fine-tuning.md).
 
 ## [0.15.0] — 2026-09-19
 
@@ -3983,7 +4019,7 @@ Follow-up to the role check in forward auth: there, since the previous entry, yo
 `?roles=redaktion,lektorat`, but not in the app — `require_role()` took exactly one role,
 for an OR you had to write your own dependency. The same question ("who gets through?")
 thus meant something different depending on the operating mode, at the expense of the basic model
-([ADR-3](backlog/ADR-3-in-app-statt-proxy.md)).
+([ADR-3](backlog/ADR-3-in-app-instead-of-proxy.md)).
 
 Now: `require_role("redaktion", "lektorat")` or `require_role(list_from_the_config)`, likewise
 `require(role=[...])`. Anyone who requires **all** roles stacks two guards — `Depends` dependencies
@@ -4006,7 +4042,7 @@ there back with the same missing role. The rejection appears as `forward_role_de
 audit log; a 403 in the proxy log does not say who failed at what. Without the specification everything stays
 as before. Multiple specifications are ANDed, so that a parameter appended by someone
 can only tighten the check. Rationale and the rejected alternative (rule table in the Authelia style):
-[ADR-5](backlog/ADR-5-rollen-im-forward-auth.md).
+[ADR-5](backlog/ADR-5-roles-in-forward-auth.md).
 
 ### Added — `security_log`: the fail2ban jail works without manual effort
 
@@ -4024,9 +4060,9 @@ first-admin paths only apply as long as no admin exists. Anyone who lost their a
 no documented way back. New: `python -m tinysesam passwd --db auth.db admin` — offline on
 the database file, ends the account's open sessions and writes an audit entry.
 This does not contradict "no self-update"; the line there is *loading code*, not *maintaining
-offline* ([ADR-2](backlog/ADR-2-kein-selbst-update.md)).
+offline* ([ADR-2](backlog/ADR-2-no-self-update.md)).
 
-### Added — `deploy/forward-auth/nginx-pfad.conf`
+### Added — `deploy/forward-auth/nginx-path.conf`
 
 A second nginx example for the other common layout: one host, only individual paths
 protected, static files and PHP behind it. It exposes three traps, all of which were

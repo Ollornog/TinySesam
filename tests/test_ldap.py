@@ -576,16 +576,16 @@ ok("discarded referral: one log line with host and Global Catalog hint (line bre
 # Side finding on F-28: ldap3 rejects a service account DN without password; the error is swallowed in
 # the login and looks like a wrong password to every user. Hence the
 # combination is now caught already when the configuration is built, not only in operation.
-from tinysesam.konfigpruefung import pruefe
+from tinysesam.config_check import check_config
 
 _gemeinsam = dict(db_path=":memory:", ldap_enabled=True, ldap_url="ldap://dummy", ldap_allow_plaintext=True,
                   ldap_user_base="ou=people,dc=example,dc=com")
-_fehler, _warn = pruefe(TinySesamConfig(ldap_bind_dn=SVC_DN, **_gemeinsam))
+_fehler, _warn = check_config(TinySesamConfig(ldap_bind_dn=SVC_DN, **_gemeinsam))
 assert any("ldap_bind_password" in w for w in _warn), _warn
 assert not _fehler, _fehler
-_, _warn_ok = pruefe(TinySesamConfig(ldap_bind_dn=SVC_DN, ldap_bind_password=SVC_PW, **_gemeinsam))
+_, _warn_ok = check_config(TinySesamConfig(ldap_bind_dn=SVC_DN, ldap_bind_password=SVC_PW, **_gemeinsam))
 assert not any("ldap_bind_password" in w for w in _warn_ok), _warn_ok
-_, _warn_anon = pruefe(TinySesamConfig(**_gemeinsam))          # anonymous search stays silent
+_, _warn_anon = check_config(TinySesamConfig(**_gemeinsam))          # anonymous search stays silent
 assert not any("ldap_bind_password" in w for w in _warn_anon), _warn_anon
 ok("ldap_bind_dn without ldap_bind_password is reported at setup, not only at login")
 
@@ -659,7 +659,7 @@ finally:
 
 # And the configuration check catches plaintext operation when it is built.
 def _ldap_befunde(**kw):
-    f, w = pruefe(TinySesamConfig(db_path=os.path.join(tempfile.mkdtemp(), "t.db"),
+    f, w = check_config(TinySesamConfig(db_path=os.path.join(tempfile.mkdtemp(), "t.db"),
                                   passkey_enabled=False, ldap_enabled=True,
                                   ldap_user_dn_template="uid={username},dc=x", **kw))
     return ([x for x in f if "ldap" in x.lower()], [x for x in w if "ldap" in x.lower()])
@@ -937,7 +937,7 @@ os.remove(db23a)
 # without asking the directory again. (Mutation probe: remove the call in `check_ldap`
 # `self._ldap_ausfall.zugang()` → the burst hangs, the directory is asked on every attempt
 # again → red. Until G9 the admin also got 429 here; since then he waits until the
-# pending pre-bookings are decided — tests/test_vorbuchung_schwebe.py measures that.)
+# pending pre-bookings are decided — tests/test_prebooking_pending.py measures that.)
 from concurrent.futures import ThreadPoolExecutor as _Pool24  # noqa: E402
 
 HAENGT24 = 2.0
@@ -1505,8 +1505,8 @@ ok("F-29: without ldap_enabled no additional line")
 os.remove(db29b)
 
 # ---------- F-30: the configuration check names no remedy that it rejects itself ----------
-from tinysesam import konfigpruefung as _kp  # noqa: E402
-_f30, _w30 = _kp.pruefe(TinySesamConfig(db_path=":memory:", password_enabled=False,
+from tinysesam import config_check as _kp  # noqa: E402
+_f30, _w30 = _kp.check_config(TinySesamConfig(db_path=":memory:", password_enabled=False,
                                         passkey_enabled=False, ldap_enabled=True,
                                         ldap_url="ldaps://ldap.example.com"))
 _meldung30 = next(f for f in _f30 if "Keine einzige Anmelde-Methode" in f)
@@ -1514,7 +1514,7 @@ assert "ldap_enabled=True," not in _meldung30.split("LDAP allein")[0], _meldung3
 assert "password_enabled=True" in _meldung30.split("LDAP allein")[1], _meldung30
 assert any("ldap_enabled=True, aber password_enabled=False" in w for w in _w30), _w30
 # Counter-check: the named remedy is actually accepted.
-_f30b, _w30b = _kp.pruefe(TinySesamConfig(db_path=":memory:", password_enabled=True,
+_f30b, _w30b = _kp.check_config(TinySesamConfig(db_path=":memory:", password_enabled=True,
                                           passkey_enabled=False, ldap_enabled=True,
                                           ldap_url="ldaps://ldap.example.com"))
 assert not any("Keine einzige" in f for f in _f30b) and not any("password_enabled=False" in w for w in _w30b)

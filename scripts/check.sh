@@ -30,7 +30,7 @@ if [[ -z "$PY" ]]; then
     # setuptools/wheel: tests/test_packaging.py BUILDS the package (offline, without isolation).
     # A uv venv brings neither, and without a build backend the suite would check nothing.
     # mypy belongs here too: `Typing :: Typed` is a promise to every user, and without the checker
-    # tests/test_typen.py skips itself — then nobody measures it (see "a skip is not a green").
+    # tests/test_types.py skips itself — then nobody measures it (see "a skip is not a green").
     VIRTUAL_ENV=".venv" uv pip install -q -e ".[all]" uvicorn websockets httpx setuptools wheel mypy \
         || fail "uv pip install"
     PY=".venv/bin/python"

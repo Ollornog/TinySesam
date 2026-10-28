@@ -76,13 +76,6 @@
       "sig": "(lang, mapping: 'dict')",
       "stufe": "A"
     },
-    "admin_claim_fehlgriff": {
-      "bis": "1.0",
-      "seit": "0.22.0",
-      "sig": "(username, ip) -> 'None'",
-      "stufe": "C",
-      "ziel": "_admin_claim_fehlgriff"
-    },
     "admin_claim_token": {
       "sig": "() -> 'Optional[str]'",
       "stufe": "B"
@@ -227,13 +220,6 @@
     "create_user": {
       "sig": "(username, password=None, is_admin=False, roles=None, display_name=None, email=None, is_service=False, email_verified: 'bool' = True, *, self_chosen_name: 'bool' = False) -> 'int'",
       "stufe": "A"
-    },
-    "csrf_rotieren": {
-      "bis": "1.0",
-      "seit": "0.22.0",
-      "sig": "(response) -> 'str'",
-      "stufe": "C",
-      "ziel": "_csrf_rotieren"
     },
     "csrf_token": {
       "sig": "(request: 'Optional[Request]' = None) -> 'str'",
@@ -484,20 +470,6 @@
       "stufe": "C",
       "ziel": "_next_login_step"
     },
-    "oidc_anwendung": {
-      "bis": "1.0",
-      "seit": "0.22.0",
-      "sig": "(url_oder_host: 'str') -> 'str'",
-      "stufe": "C",
-      "ziel": "_oidc_anwendung"
-    },
-    "oidc_freigabe_gueltig": {
-      "bis": "1.0",
-      "seit": "0.22.0",
-      "sig": "(token_hash: 'str', client: 'str') -> 'tuple'",
-      "stufe": "C",
-      "ziel": "_oidc_freigabe_gueltig"
-    },
     "own_events": {
       "sig": "(user_id: 'int', limit: 'int' = 20) -> 'list'",
       "stufe": "B"
@@ -715,13 +687,6 @@
       "sig": "(name, fn)",
       "stufe": "A"
     },
-    "sicherheitsereignis": {
-      "bis": "1.0",
-      "seit": "0.22.0",
-      "sig": "(ereignis: 'str', user_id, **details) -> 'None'",
-      "stufe": "C",
-      "ziel": "_sicherheitsereignis"
-    },
     "start_session": {
       "sig": "(user_id, method, ip=None, ua=None, remember: 'bool' = True) -> 'tuple[str, bool]'",
       "stufe": "A"
@@ -737,13 +702,6 @@
     "t": {
       "sig": "(key, **fmt) -> 'str'",
       "stufe": "B"
-    },
-    "token_abgewiesen": {
-      "bis": "1.0",
-      "seit": "0.22.0",
-      "sig": "(zweck, request: 'Optional[Request]' = None, grund='ungueltig')",
-      "stufe": "C",
-      "ziel": "_token_abgewiesen"
     },
     "totp_begin": {
       "sig": "(user_id)",
@@ -811,23 +769,9 @@
       "stufe": "C",
       "ziel": "_verify_user_pin"
     },
-    "vermerke_oidc_freigabe": {
-      "bis": "1.0",
-      "seit": "0.22.0",
-      "sig": "(token: 'str', client: 'str', rollen=None) -> 'None'",
-      "stufe": "C",
-      "ziel": "_vermerke_oidc_freigabe"
-    },
     "version": {
       "sig": "() -> 'str'",
       "stufe": "B"
-    },
-    "versuch_beginnen": {
-      "bis": "1.0",
-      "seit": "0.22.0",
-      "sig": "(username, ip, method, auch_pin: 'bool' = False, serie_art: 'Optional[str]' = None, schweben: 'bool' = False) -> 'Optional[int]'",
-      "stufe": "C",
-      "ziel": "_versuch_beginnen"
     }
   },
   "TinySesam.eigenschaften": {
@@ -845,13 +789,6 @@
     }
   },
   "TinySesam.konstanten": {
-    "APIKEY_AUDIT_FENSTER": {
-      "bis": "1.0",
-      "seit": "0.22.0",
-      "stufe": "C",
-      "wert": "3600",
-      "ziel": "_APIKEY_AUDIT_FENSTER"
-    },
     "DEMO_USERS": {
       "bis": "1.0",
       "seit": "0.22.0",
@@ -862,13 +799,6 @@
     "FEDERATED_SOURCES": {
       "stufe": "B",
       "wert": "('ldap', 'saml')"
-    },
-    "FOEDERIERTE_FAKTOREN": {
-      "bis": "1.0",
-      "seit": "0.22.0",
-      "stufe": "C",
-      "wert": "('oidc', 'saml')",
-      "ziel": "_FOEDERIERTE_FAKTOREN"
     },
     "FORWARD_HEADERS_DEFAULT": {
       "stufe": "A",
@@ -904,23 +834,9 @@
       "wert": "7",
       "ziel": "_RECOVERY_BYTES"
     },
-    "RECOVERY_WARNSCHWELLE": {
-      "bis": "1.0",
-      "seit": "0.22.0",
-      "stufe": "C",
-      "wert": "3",
-      "ziel": "_RECOVERY_WARNSCHWELLE"
-    },
     "SECURITY_EVENTS": {
       "stufe": "A",
       "wert": "('password_changed', 'pin_set', 'pin_disabled', 'totp_enabled', 'totp_disabled', 'recovery_codes_generated', 'recovery_code_used', 'passkey_added', 'passkey_removed', 'api_key_created', 'api_key_revoked', 'api_keys_revoked', 'email_changed', 'username_changed')"
-    },
-    "SERIE_PIN_FOLGE": {
-      "bis": "1.0",
-      "seit": "0.22.0",
-      "stufe": "C",
-      "wert": "'pin_folge'",
-      "ziel": "_SERIE_PIN_FOLGE"
     },
     "TOKEN_PATHS": {
       "stufe": "B",

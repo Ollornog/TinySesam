@@ -161,7 +161,7 @@ class AusfallMerker:
     """Remembers a directory outage so that not every sign-in hangs until the timeout.
 
     Modelled on the Redis pause (`security.RedisRateLimiter`). Here it is more than convenience: the
-    login route books every attempt IN ADVANCE as a failed attempt (`_versuch_beginnen`, R7-2) and takes it
+    login route books every attempt IN ADVANCE as a failed attempt (`_begin_attempt`, R7-2) and takes it
     back on an outage only when `VerzeichnisNichtErreichbar` arrives (F-23). With a
     directory that drops packets, that is after `VERBINDUNGS_TIMEOUT`. Until then every
     hanging sign-in counted for account, pair and address — and during the WHOLE outage,
@@ -189,7 +189,7 @@ class AusfallMerker:
     hang until the timeout — once per outage and per process (the marker lives in the
     process, so with `--workers N` N times, simultaneously). Their pre-bookings no longer block anybody,
     though: the login route books them as pending (`Store.reserve_attempt(schweben=True)`), and
-    anyone who would fail only because of them waits until they are decided (`_versuch_beginnen`) —
+    anyone who would fail only because of them waits until they are decided (`_begin_attempt`) —
     at most `VERBINDUNGS_TIMEOUT + 2` seconds, without `failed login` and without a lockout notice. Until
     2026-09-26 this window remained a known gap: 429 for bystanders, including the
     emergency admin, plus a ban by fail2ban.

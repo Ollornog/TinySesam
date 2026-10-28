@@ -12,7 +12,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from tinysesam import TinySesam, TinySesamConfig, ConfigError
-from tinysesam import konfigpruefung
+from tinysesam import config_check
 
 
 def ok(name):
@@ -239,7 +239,7 @@ p6 = b6["gw"].get("/auth/gate/logged-out?host=app.example.com", follow_redirects
 assert p6.status_code == 303, "page redirects on to the sign-in page, without an intermediate page"
 assert "http-equiv=refresh" not in TestClient(fa, base_url=APP).get("/.tinysesam/after-logout").text
 ok("direct: “Abgemeldet” with meta refresh after 10 s to the app (app host and gateway), 0 = leave standing; page without")
-assert any("forward_logged_out_sec" in f for f in konfigpruefung.pruefe(TinySesamConfig(
+assert any("forward_logged_out_sec" in f for f in config_check.check_config(TinySesamConfig(
     db_path=":memory:", forward_logged_out_sec=301))[0])
 ok("forward_logged_out_sec above 300 is a configuration error")
 
@@ -251,7 +251,7 @@ except ConfigError as e:
     assert "cookie_domain" in str(e)
 else:
     raise AssertionError("Link-Modus mit cookie_domain startet")
-assert any("gate_token_enabled" in f for f in konfigpruefung.pruefe(TinySesamConfig(
+assert any("gate_token_enabled" in f for f in config_check.check_config(TinySesamConfig(
     db_path=":memory:", forward_auth_enabled=True, gate_link_enabled=True, base_url=GW))[0])
 ok("configuration check: link mode not with cookie_domain, not without gate token")
 

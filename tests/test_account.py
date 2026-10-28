@@ -15,7 +15,7 @@ db = os.path.join(tempfile.mkdtemp(), "t.db")
 auth = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db, rp_name="Test", passkey_enabled=False, oidc_enabled=False,
                                  cookie_secure=False, pin_enabled=True))
 # This suite checks the blocklist, context words and maximum length — not the single-factor length (B2-4,
-# that is checked by test_t13_entscheide.py). With a minimum length of 15 characters every short weak
+# that is checked by test_t13_decisions.py). With a minimum length of 15 characters every short weak
 # example would already fail on length, and the rule behind it would stay unchecked.
 auth.set_security("password_min_length_single_factor", 8)
 auth.ensure_admin("admin", "geheim123")
@@ -136,7 +136,7 @@ ok("A-6: repeated blocks, keyboard and counting sequences count as trivial")
 
 # ---------- on_security_event (B2-2/H-6) ----------
 # Every change to a sign-in factor reaches the hook — the owner should learn about it.
-# (Mutation probe: delete `self.sicherheitsereignis("password_changed", …)` from `set_password`
+# (Mutation probe: delete `self.security_event("password_changed", …)` from `set_password`
 # → red; likewise for each event.)
 _ereignisse = []
 auth.on_security_event = lambda e, konto, d: _ereignisse.append((e, konto["username"], d))
@@ -159,7 +159,7 @@ _gerufen = set()
 for _datei in (_pl.Path(__file__).resolve().parent.parent / "tinysesam").glob("*.py"):
     for _k in _ast.walk(_ast.parse(_datei.read_text(encoding="utf-8"))):
         if (isinstance(_k, _ast.Call) and isinstance(_k.func, _ast.Attribute)
-                and _k.func.attr == "_sicherheitsereignis" and _k.args
+                and _k.func.attr == "_security_event" and _k.args
                 and isinstance(_k.args[0], _ast.Constant)):
             _gerufen.add(_k.args[0].value)
 assert _gerufen == set(auth.SECURITY_EVENTS), (sorted(_gerufen), auth.SECURITY_EVENTS)

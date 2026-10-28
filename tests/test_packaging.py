@@ -1,6 +1,6 @@
 """The package as it reaches the user — not the intent in `pyproject.toml`.
 
-Since 0.19.0 PyPI is the installation route ([ADR-6](../backlog/ADR-6-pypi-veroeffentlichen.md)).
+Since 0.19.0 PyPI is the installation route ([ADR-6](../backlog/ADR-6-publish-to-pypi.md)).
 So what counts is no longer what lies in the repo but what ends up in the wheel and the sdist — and the
 two are built from different rules. A wheel missing a file installs
 cleanly and only crashes at the user; a version that is on PyPI cannot be
@@ -41,7 +41,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _kit import hygiene  # noqa: E402
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts"))
-import _artefakte_normalisieren  # noqa: E402
+import _normalize_artifacts  # noqa: E402
 
 # Without setuptools nothing can be built — and without a build this test checks nothing. A
 # silent "skipped" would be the worst answer here: it would look green and be empty.
@@ -128,8 +128,8 @@ def baue(verschiebung: float = 0.0, attrappen: tuple[str, ...] = (),
             os.environ["SOURCE_DATE_EPOCH"] = sde
     # The same step as in the release workflow — without it the sdist would depend on timestamps and
     # permissions of the checkout, the wheel on its permissions (umask).
-    _artefakte_normalisieren.sdist_normalisieren(os.path.join(ziel, sdist), BAUZEIT)
-    _artefakte_normalisieren.wheel_normalisieren(os.path.join(ziel, whl))
+    _normalize_artifacts.sdist_normalisieren(os.path.join(ziel, sdist), BAUZEIT)
+    _normalize_artifacts.wheel_normalisieren(os.path.join(ziel, whl))
     return arbeit, os.path.join(ziel, whl), os.path.join(ziel, sdist)
 
 
@@ -353,7 +353,7 @@ try:
     assert _sha(WHEEL) == _sha(WHEEL2), ("wheel not reproducible (SOURCE_DATE_EPOCH or "
                                          "the permission normalization has no effect)")
     assert _sha(SDIST) == _sha(SDIST2), ("sdist not reproducible — "
-                                         "scripts/_artefakte_normalisieren.py has no effect")
+                                         "scripts/_normalize_artifacts.py has no effect")
     # The release workflow does the same, in this order and in the same step: export time,
     # build without isolation, normalize both artifacts. A mere "appears somewhere"
     # (until the re-check, A-6) pinned down neither the order nor `--no-isolation`.
@@ -369,7 +369,7 @@ try:
     assert "export SOURCE_DATE_EPOCH" in davor, "release.yml: SOURCE_DATE_EPOCH not exported before the build"
     assert any(re.match(r"^SOURCE_DATE_EPOCH=\"\$\(git log -1 --format=%ct\)\"$", z) for z in davor), \
         "release.yml: SOURCE_DATE_EPOCH not from the commit timestamp"
-    assert any("scripts/_artefakte_normalisieren.py" in z and "dist/*.whl" in z and "dist/*.tar.gz" in z
+    assert any("scripts/_normalize_artifacts.py" in z and "dist/*.whl" in z and "dist/*.tar.gz" in z
                for z in danach), "release.yml: wheel and sdist are not normalized after the build"
     ok(f"Wheel and sdist bit-reproducible (sha256 {_sha(SDIST)[:12]}…), release builds the same way")
 

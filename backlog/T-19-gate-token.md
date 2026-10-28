@@ -10,7 +10,7 @@ created: 2026-10-03
 
 # T-19 — Gate token
 
-Core of [ADR-9](ADR-9-gate-token-am-proxy.md).
+Core of [ADR-9](ADR-9-gate-token-at-the-proxy.md).
 
 **To do:**
 - Key pair of the gateway (rotation with overlap), output as JWKS.
@@ -31,12 +31,12 @@ TinySesam session; mutation per check.
 ## Done 2026-10-07
 
 The code exchange via `/.sesam/*` has been dropped: the token is created on the way back in
-`/auth/forward` (reasoning in [ADR-9](ADR-9-gate-token-am-proxy.md)). JWKS likewise — `caddy-jwt`
+`/auth/forward` (reasoning in [ADR-9](ADR-9-gate-token-at-the-proxy.md)). JWKS likewise — `caddy-jwt`
 takes the key directly with EdDSA, so there is no rotation with overlap.
 
 - `tinysesam/gate.py`: derivation (HKDF), issuing, verifying as at the proxy, `zielgruppe()`.
   `_gate_cookie()` in `/auth/forward`; fields `gate_token_enabled`, `gate_token_ttl_sec`,
-  `gate_cookie_name`, check in `konfigpruefung._gate`; `tinysesam gate-key`; gateway
+  `gate_cookie_name`, check in `config_check._gate`; `tinysesam gate-key`; gateway
   `TINYSESAM_GATE`, `TINYSESAM_GATE_TTL_SEC`.
 - `deploy/forward-auth/Caddyfile.gate`, `deploy/forward-auth/caddy-gate/Dockerfile`.
 - Tests: `tests/test_gate.py` (issuing, audience, claims, 12 tamperings, foreign

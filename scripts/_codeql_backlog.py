@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Pull open CodeQL alerts into the backlog — instead of into a mailbox.
 
-    python3 scripts/_codeql_backlog.py            # refresh the table in backlog/T-12-codeql-bestand.md
+    python3 scripts/_codeql_backlog.py            # refresh the table in backlog/T-12-codeql-backlog.md
     python3 scripts/_codeql_backlog.py --zeige    # only print, write nothing
 
 CodeQL reports every finding as an e-mail and — on a pull request — as a review thread that
@@ -21,7 +21,7 @@ import subprocess
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-ZIEL = os.path.join(ROOT, "backlog", "T-12-codeql-bestand.md")
+ZIEL = os.path.join(ROOT, "backlog", "T-12-codeql-backlog.md")
 START, ENDE = "<!-- CODEQL:START -->", "<!-- CODEQL:END -->"
 RANG = {"error": 0, "warning": 1, "note": 2}
 JQ = (".[] | {n:.number, rule:.rule.id, sev:.rule.severity, path:.most_recent_instance.location.path,"

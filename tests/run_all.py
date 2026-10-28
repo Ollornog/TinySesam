@@ -67,13 +67,13 @@ JOBS_VORGABE = 2
 #: These suites start FIRST in a parallel run — the slowest, measured 2026-09-27 (0.22.0).
 #: The list only determines WHEN a suite starts; result and order of the output stay
 #: the same. Without it `test_browser.py` (~80 s, almost only waiting for Chrome) and
-#: `test_vorbuchung_schwebe.py` (10 s, deliberate wait) started last and fixed the end of the
+#: `test_prebooking_pending.py` (10 s, deliberate wait) started last and fixed the end of the
 #: whole run. With one job it does not apply — that is the serial run of old. A
 #: stale entry costs time, never a result; that every entry is still a suite is checked by
-#: `tests/test_testlauf.py`.
-LANGE_ZUERST = ("test_browser.py", "test_ldap.py", "test_vorbuchung_schwebe.py",
-                "test_audit_runde2.py", "test_t13_entscheide.py", "test_repo.py",
-                "test_admin_konto.py", "test_sicherheit_befunde.py", "test_hardening2.py")
+#: `tests/test_runner.py`.
+LANGE_ZUERST = ("test_browser.py", "test_ldap.py", "test_prebooking_pending.py",
+                "test_audit_round2.py", "test_t13_decisions.py", "test_repo.py",
+                "test_admin_account.py", "test_security_findings.py", "test_hardening2.py")
 
 
 
@@ -87,7 +87,7 @@ def _fail_ausgabe(aus: str) -> str:
 
     Until 2026-09-28 only the end (2000 characters) was shown here. A suite prints its checks in the
     order in which they run — if an early one failed, its `FEHL` line was before the excerpt
-    and missing from the log. Seen in the CI job `repeat`: `FAIL test_vorbuchung_schwebe.py`, below it
+    and missing from the log. Seen in the CI job `repeat`: `FAIL test_prebooking_pending.py`, below it
     "ufschub" and 42 ok lines, but not WHAT was red. A flaky test that cannot be reproduced
     locally cannot be explained without this line.
     """
@@ -110,7 +110,7 @@ def warnfilter() -> str:
     `getattr(auth, name)` — this filter finds both as soon as a suite goes through the path.
 
     A `-W` filter compares the module LITERALLY (no prefix), hence one line per module; the
-    message begins with `TinySesam.` (see `tinysesam/_veraltet.py`). Foreign warnings, including
+    message begins with `TinySesam.` (see `tinysesam/_deprecated.py`). Foreign warnings, including
     foreign `DeprecationWarning`s from tinysesam code, are left untouched.
     """
     module = set()

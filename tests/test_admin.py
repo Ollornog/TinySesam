@@ -9,7 +9,7 @@ from tinysesam import TinySesam, TinySesamConfig
 db = os.path.join(tempfile.mkdtemp(), "t.db")
 auth = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db, passkey_enabled=False, oidc_enabled=False, cookie_secure=False))
 # This suite checks the blocklist, context words and maximum length — not the single-factor length (B2-4,
-# which test_t13_entscheide.py checks). With a minimum length of 15 characters every short weak
+# which test_t13_decisions.py checks). With a minimum length of 15 characters every short weak
 # example would already fail on length, and the rule behind it would stay untested.
 auth.set_security("password_min_length_single_factor", 8)
 auth.ensure_admin("admin", "pw12345")

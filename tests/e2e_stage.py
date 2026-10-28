@@ -2,7 +2,7 @@
 
 Not a CI test and deliberately **not** `test_*.py`: `run_all.py` collects by glob and would
 otherwise pick it up. CI has no domain, no certificate and no identity provider — a test that
-rebuilds them checks the dummy, not the ceremony (see `backlog/T-1-e2e-gegen-echten-idp.md`).
+rebuilds them checks the dummy, not the ceremony (see `backlog/T-1-e2e-against-real-idp.md`).
 Meant as a **smoke test after the deploy** against a rolled-out stage.
 
 Everything environment-specific comes from the ENVIRONMENT — addresses and credentials do not belong
