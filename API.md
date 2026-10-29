@@ -733,7 +733,7 @@ What a proxy (Caddy `forward_auth`, nginx `auth_request`, Traefik) and the appli
 | GET | `/.tinysesam/callback` | `query:code` |
 | GET | `/.tinysesam/logout` | `query:next`, `query:scope` |
 | POST | `/.tinysesam/logout` | `form:_csrf`, `form:next`, `form:scope` |
-| GET | `/.tinysesam/start` | `query:abgemeldet`, `query:rd` |
+| GET | `/.tinysesam/start` | `query:rd`, `query:signed_out` |
 | GET | `/auth/forward` | — |
 | GET | `/auth/gate/authorize` | `query:flow` |
 | GET | `/auth/gate/logged-out` | `query:host` |
@@ -796,7 +796,7 @@ The HTML pages (sign-in, registration, account, admin panel, the pages behind e-
 | GET | `/auth/forgot` | — |
 | POST | `/auth/forgot` | `form:_csrf`, `form:email` |
 | GET | `/auth/invite/{token}` | — |
-| GET | `/auth/login` | `query:abgemeldet`, `query:app`, `query:error`, `query:gate_host`, `query:next` |
+| GET | `/auth/login` | `query:app`, `query:error`, `query:gate_host`, `query:next`, `query:signed_out` |
 | POST | `/auth/login` | `form:_csrf`, `form:next`, `form:password`, `form:remember`, `form:username` |
 | GET | `/auth/logout` | — |
 | POST | `/auth/logout` | `form:_csrf` |

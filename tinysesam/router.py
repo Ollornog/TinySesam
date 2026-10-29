@@ -86,7 +86,7 @@ def build_router(auth) -> APIRouter:
     # ---------- Login (password) ----------
     @r.get("/auth/login", response_class=HTMLResponse)
     def login_page(request: Request, next: str = "", error: str = "", app: str = "", gate_host: str = "",
-                   abgemeldet: str = ""):
+                   signed_out: str = ""):
         nxt = auth.safe_next(next, request)
         # Code exchange (T-26): `next` is then a path of the gateway; which app is meant is told by
         # `gate_host`. A name is shown only for a host from `forward_apps` — an invented one stays nameless.
@@ -116,7 +116,7 @@ def build_router(auth) -> APIRouter:
         return auth.render_page("login", request=request, next=nxt, error=error, app=app,
                                 app_name=auth._forward_app(nxt)["name"] if "://" in nxt
                                 else (auth._forward_app(gh)["name"] if gh else ""),
-                                info=auth.t("login.logged_out") if abgemeldet == "1" else "")
+                                info=auth.t("login.logged_out") if signed_out == "1" else "")
 
     @r.post("/auth/login")
     def login_submit(request: Request, username: str = Form(""), password: str = Form(""),
@@ -1162,7 +1162,7 @@ def build_router(auth) -> APIRouter:
             # Code exchange in "page" mode (PO 2026-10-08): straight to the sign-in page with "You have been signed out",
             # instead of an intermediate page whose only button leads exactly there.
             if _link_modus(host) and auth._forward_app(host)["login"] == "page":
-                resp = RedirectResponse("/.tinysesam/start?rd=%2F&abgemeldet=1", 303)
+                resp = RedirectResponse("/.tinysesam/start?rd=%2F&signed_out=1", 303)
             else:
                 resp = auth.render_page("gate_logged_out", request=request, app_name=auth._forward_app(host)["name"],
                                         redirect_sec=_weiter_sec(host))
@@ -1196,7 +1196,7 @@ def build_router(auth) -> APIRouter:
                 return _hashlib.sha256(str(wert or "").encode()).hexdigest()
 
             @r.get("/.tinysesam/start")
-            def gate_link_start(request: Request, rd: str = "/", abgemeldet: str = ""):
+            def gate_link_start(request: Request, rd: str = "/", signed_out: str = ""):
                 """On the app host: begin the exchange. The flow is bound to THIS browser
                 (cookie for this host only), otherwise someone could slip a victim a foreign return path
                 and thereby pull them into their account."""
@@ -1209,9 +1209,9 @@ def build_router(auth) -> APIRouter:
                     ziel = "/"
                 proto = (request.headers.get("x-forwarded-proto") or request.url.scheme or "https").split(",")[0].strip()
                 ablauf, bindung = secrets.token_urlsafe(24), secrets.token_urlsafe(24)
-                auth.store.put_flow("gatelink:" + ablauf, {"host": host, "rd": ziel, "bindung": _h(bindung),
+                auth.store.put_flow("gatelink:" + ablauf, {"host": host, "rd": ziel, "binding": _h(bindung),
                                                            "proto": "http" if proto == "http" else "https",
-                                                           "abgemeldet": abgemeldet == "1"}, ttl=600)
+                                                           "signed_out": signed_out == "1"}, ttl=600)
                 basis = auth.gate_issuer()
                 resp = RedirectResponse(f"{basis}{auth.browser_path(request, '/auth/gate/authorize')}?flow={_q(ablauf)}", 303)
                 auth._gate_set_cookie(resp, auth._GATE_LINKFLOW_COOKIE, bindung, 600)
@@ -1242,8 +1242,8 @@ def build_router(auth) -> APIRouter:
                         # gate_host: the sign-in page sees only `next` (the gateway's path) — without the host
                         # it would say "TinySesam" instead of "Sign in to <app>" (PO 2026-10-08).
                         ziel = f"{auth.browser_path(request, cfg.login_path)}?next={_q(hier)}&gate_host={_q(host)}"
-                        if f.get("abgemeldet"):
-                            ziel += "&abgemeldet=1"
+                        if f.get("signed_out"):
+                            ziel += "&signed_out=1"
                     if anwendung:
                         ziel += f"&app={_q(anwendung)}"
                     return RedirectResponse(ziel, 303)
@@ -1258,7 +1258,7 @@ def build_router(auth) -> APIRouter:
                                             f"&app={_q(anwendung)}", 303)
                 code = secrets.token_urlsafe(32)
                 auth.store.put_flow("gatecode:" + _h(code), {"handle": s["token_hash"], "host": host,
-                                                              "rd": f["rd"], "bindung": f["bindung"]}, ttl=120)
+                                                              "rd": f["rd"], "binding": f.get("binding") or ""}, ttl=120)
                 return RedirectResponse(f"{f['proto']}://{host}/.tinysesam/callback?code={_q(code)}", 303)
 
             @r.get("/auth/gate/logout")
@@ -1289,7 +1289,7 @@ def build_router(auth) -> APIRouter:
                 proto = (request.headers.get("x-forwarded-proto") or request.url.scheme or "https").split(",")[0].strip()
                 basis = f"{'http' if proto == 'http' else 'https'}://{h}"
                 if auth._forward_app(h)["login"] == "page":
-                    return RedirectResponse(f"{basis}/.tinysesam/start?rd=%2F&abgemeldet=1", 303)
+                    return RedirectResponse(f"{basis}/.tinysesam/start?rd=%2F&signed_out=1", 303)
                 return auth.render_page("gate_logged_out", request=request, app_name=auth._forward_app(h)["name"],
                                         again_url=f"{basis}/", redirect_sec=_weiter_sec(h))
 
@@ -1301,7 +1301,7 @@ def build_router(auth) -> APIRouter:
                 f = auth.store.pop_flow("gatecode:" + _h(code)) if code else None
                 bindung = request.cookies.get(auth._GATE_LINKFLOW_COOKIE) or ""
                 if (not f or f.get("host") != host or not bindung
-                        or not secrets.compare_digest(_h(bindung), str(f.get("bindung") or ""))):
+                        or not secrets.compare_digest(_h(bindung), str(f.get("binding") or ""))):
                     security.seclog.warning("gate-link: return path without a matching code or without a binding — rejected (host=%s)",
                                             security.fuer_log(host))
                     raise HTTPException(400, auth.t("api.invalid", reason="code"))

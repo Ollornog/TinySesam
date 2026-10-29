@@ -1763,15 +1763,15 @@ def selbstpruefung_vertrag(jetzt: dict) -> None:
            "POST /.tinysesam/logout", "GET /.tinysesam/logout2")
     # a dropped parameter is a break (list value), a gained one an extension
     vorher = routen(quellen)["GET /.tinysesam/start"]
-    kopie = verbogen("router.py", "def gate_link_start(request: Request, rd: str = \"/\", abgemeldet: str = \"\"):",
+    kopie = verbogen("router.py", "def gate_link_start(request: Request, rd: str = \"/\", signed_out: str = \"\"):",
                      "def gate_link_start(request: Request, rd: str = \"/\"):")
     b, e = beurteile({"http.routes": {"GET /.tinysesam/start": vorher}},
                      {"http.routes": {"GET /.tinysesam/start": routen(kopie)["GET /.tinysesam/start"]}},
                      {"http.routes": {"GET /.tinysesam/start": "A"}})
-    assert b and b[0].startswith("[A]") and "query:abgemeldet" in b[0] and not e, (b, e)
+    assert b and b[0].startswith("[A]") and "query:signed_out" in b[0] and not e, (b, e)
     b, e = beurteile({"http.routes": {"GET /.tinysesam/start": routen(kopie)["GET /.tinysesam/start"]}},
                      {"http.routes": {"GET /.tinysesam/start": vorher}})
-    assert not b and e and "query:abgemeldet" in e[0], (b, e)
+    assert not b and e and "query:signed_out" in e[0], (b, e)
     # a route the scan cannot see is refused, not ignored
     for fremd in ("app.add_api_route('/x', f)", "app.mount('/x', sub)"):
         try:
@@ -1866,7 +1866,7 @@ def selbstpruefung_vertrag(jetzt: dict) -> None:
     live = {"GET /auth/forward": [], "GET /invented": []}
     assert any("live route 'GET /invented'" in z for z in CT.routes_differences(jetzt["http.routes"], live))
     live = {"GET /.tinysesam/start": ["query:rd"]}
-    assert any("query:abgemeldet" in z for z in CT.routes_differences(jetzt["http.routes"], live))
+    assert any("query:signed_out" in z for z in CT.routes_differences(jetzt["http.routes"], live))
     gerufen = {k.func.id for k in ast.walk(ast.parse(inspect.getsource(main)))
                if isinstance(k, ast.Call) and isinstance(k.func, ast.Name)}
     assert "vertrag_befunde" in gerufen, "main() does not call vertrag_befunde"

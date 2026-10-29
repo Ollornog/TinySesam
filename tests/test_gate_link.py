@@ -211,7 +211,7 @@ assert r.status_code == 303 and b5["gw"].get("/auth/me").status_code == 401, (r.
 r = b5["gw"].get("/auth/gate/logout?host=app.example.com", follow_redirects=False)
 assert r.status_code == 303 and r.headers["location"] == "/auth/gate/logged-out?host=app.example.com", r.headers.get("location")
 r = b5["gw"].get("/auth/gate/logged-out?host=app.example.com", follow_redirects=False)
-assert r.status_code == 303 and r.headers["location"] == APP + "/.tinysesam/start?rd=%2F&abgemeldet=1", r.headers.get("location")
+assert r.status_code == 303 and r.headers["location"] == APP + "/.tinysesam/start?rd=%2F&signed_out=1", r.headers.get("location")
 _wiki_direct()
 r = b5["gw"].get("/auth/gate/logged-out?host=wiki.example.com")
 auth._forward_app = _fa_orig
@@ -223,16 +223,16 @@ ok("sign out everywhere without link → to the gateway, where the session ends 
 # ---------- after signing out: sign-in page with a hint instead of an intermediate page (mode page, PO 2026-10-08) ----------
 b6 = browser()
 r = b6["app"].get("/.tinysesam/after-logout", follow_redirects=False)
-assert r.status_code == 303 and r.headers["location"] == "/.tinysesam/start?rd=%2F&abgemeldet=1", (r.status_code, r.headers.get("location"))
-s = b6["app"].get("/.tinysesam/start?rd=%2F&abgemeldet=1", follow_redirects=False)
+assert r.status_code == 303 and r.headers["location"] == "/.tinysesam/start?rd=%2F&signed_out=1", (r.status_code, r.headers.get("location"))
+s = b6["app"].get("/.tinysesam/start?rd=%2F&signed_out=1", follow_redirects=False)
 a = b6["gw"].get(urlsplit(ort(s)).path + "?" + urlsplit(ort(s)).query, follow_redirects=False)
-assert a.status_code == 303 and "abgemeldet=1" in ort(a), ort(a)
+assert a.status_code == 303 and "signed_out=1" in ort(a), ort(a)
 seite = b6["gw"].get(urlsplit(ort(a)).path + "?" + urlsplit(ort(a)).query)
 assert "Du wurdest abgemeldet." in seite.text and "Anmelden bei App" in seite.text, seite.text[:400]
 s = b6["app"].get("/.tinysesam/start?rd=%2F", follow_redirects=False)
 a = b6["gw"].get(urlsplit(ort(s)).path + "?" + urlsplit(ort(s)).query, follow_redirects=False)
-assert "abgemeldet" not in ort(a) and "abgemeldet" not in b6["gw"].get(urlsplit(ort(a)).path + "?" + urlsplit(ort(a)).query).text.lower()
-assert "abgemeldet" not in b6["gw"].get("/auth/login?next=/&abgemeldet=0").text.lower()
+assert "signed_out" not in ort(a) and "abgemeldet" not in b6["gw"].get(urlsplit(ort(a)).path + "?" + urlsplit(ort(a)).query).text.lower()
+assert "abgemeldet" not in b6["gw"].get("/auth/login?next=/&signed_out=0").text.lower()
 _wiki_direct()
 w = TestClient(fa, base_url=WIKI).get("/.tinysesam/after-logout")
 auth._forward_app = _fa_orig

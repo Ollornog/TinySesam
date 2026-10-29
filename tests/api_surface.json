@@ -1887,8 +1887,8 @@
     },
     "GET /.tinysesam/start": {
       "keys": [
-        "query:abgemeldet",
-        "query:rd"
+        "query:rd",
+        "query:signed_out"
       ],
       "stufe": "A"
     },
@@ -1942,11 +1942,11 @@
     },
     "GET /auth/login": {
       "keys": [
-        "query:abgemeldet",
         "query:app",
         "query:error",
         "query:gate_host",
-        "query:next"
+        "query:next",
+        "query:signed_out"
       ],
       "stufe": "B"
     },
