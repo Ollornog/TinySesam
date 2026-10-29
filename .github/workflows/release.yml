@@ -270,7 +270,7 @@ jobs:
       # Without `password`, trusted publishing applies. The action additionally creates
       # PEP 740 attestations (default `attestations: true`) — the same provenance statement
       # as on the GitHub release, only directly next to the files in the index.
-      - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33  # v1.14.2
+      - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086  # v1.14.3
         with:
           print-hash: true
 
@@ -456,7 +456,7 @@ jobs:
           path: dist
 
       - name: "Dress rehearsal: wheel and sdist to the throwaway package server"
-        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33  # v1.14.2
+        uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086  # v1.14.3
         with:
           repository-url: http://pypi:8080/
           user: rehearsal
