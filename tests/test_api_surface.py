@@ -1747,9 +1747,6 @@ def selbstpruefung_vertrag(jetzt: dict) -> None:
         kopie[datei] = quellen[datei].replace(alt, neu, anzahl)
         return kopie
 
-    stufen = {"http.routes": {"GET /auth/forward": "A"}, "http.contract": {}, "log.loggers": {},
-              "log.lines": {}, "TinySesam.event_payload": {}}
-
     def pruefe(bereich, messen, kopie, weg, hinzu=None):
         vorher, nachher = messen(quellen), messen(kopie)
         assert weg in vorher and weg not in nachher, (bereich, weg, "is still there after the mutation")

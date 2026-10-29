@@ -285,7 +285,6 @@ def vertrag_abschnitte(datei: dict) -> str:
     """The sections for the contract beyond the Python names (PO decision 2026-10-29), from the baseline."""
     if not all(b in datei for b in VERTRAG_BEREICHE):
         return ""
-    a_routen, b_routen = _ab(datei, "http.routes", "A"), _ab(datei, "http.routes", "B")
     t = []
     # --- attributes and the hook ---
     t.append("## A · Attributes of `TinySesam`\n\nInstance attributes — measured on a probe instance, "

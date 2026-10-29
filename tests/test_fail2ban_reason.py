@@ -127,8 +127,7 @@ ok(f"filter keywords read from deploy/fail2ban: {sorted(STICHWORTE)}")
 import sys  # noqa: E402
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from _seclog_ast import (EREIGNIS, KONST, LEVEL, formatvarianten as _formatvarianten,  # noqa: E402,F401
-                         seclog_aufrufe as _seclog_aufrufe)
+from _seclog_ast import EREIGNIS, formatvarianten as _formatvarianten, seclog_aufrufe as _seclog_aufrufe  # noqa: E402
 
 assert EREIGNIS == {"failed login", "failed verification"}, EREIGNIS
 
