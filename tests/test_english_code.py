@@ -65,6 +65,7 @@ Works without extras; reads only files.
 from __future__ import annotations
 
 import ast
+import functools
 import io
 import os
 import re
@@ -325,21 +326,17 @@ PROTOCOL_CONSTANTS = frozenset({"tinysesam/passwort-wiederholung/v1"})
 ENGLISH_STRING_TOKENS = frozenset({"typ"})
 
 
-KIT_TOKEN_CACHE: list = []
-
-
+@functools.lru_cache(maxsize=None)
 def kit_string_tokens() -> frozenset:
     """The identifier-like strings WITH an underscore that the shared kit defines or reads (policy keys such as
     `private_namen_sha256_16`, the cookie key `_wert`, `pruefe_cookie_flags` ...): a test string that names one of them
     cannot name it differently."""
-    if not KIT_TOKEN_CACHE:
-        found = set()
-        for path in [*KIT_FILES, *(str(p.relative_to(ROOT)) for p in (ROOT / "tests" / "_kit").glob("*.py"))]:
-            if path.endswith(".py"):
-                found |= {text_of(n) for n in _string_nodes(ast.parse((ROOT / path).read_text(encoding="utf-8")))
-                          if "_" in text_of(n) and re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]{2,}", text_of(n))}
-        KIT_TOKEN_CACHE.append(frozenset(found))
-    return KIT_TOKEN_CACHE[0]
+    found = set()
+    for path in [*KIT_FILES, *(str(p.relative_to(ROOT)) for p in (ROOT / "tests" / "_kit").glob("*.py"))]:
+        if path.endswith(".py"):
+            found |= {text_of(n) for n in _string_nodes(ast.parse((ROOT / path).read_text(encoding="utf-8")))
+                      if "_" in text_of(n) and re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]{2,}", text_of(n))}
+    return frozenset(found)
 
 
 def without_kit_tokens(value: str) -> str:
@@ -412,14 +409,10 @@ def german_ui_corpus() -> list:
     return out
 
 
-GERMAN_DOCS_CACHE: list = []
-
-
+@functools.lru_cache(maxsize=None)
 def german_docs_text() -> str:
     """The text of the German translations (`i18n/*.de.md`): German on purpose, and read by tests that run their examples."""
-    if not GERMAN_DOCS_CACHE:
-        GERMAN_DOCS_CACHE.append("\n".join(p.read_text(encoding="utf-8") for p in sorted((ROOT / "i18n").glob("*.de.md"))))
-    return GERMAN_DOCS_CACHE[0]
+    return "\n".join(p.read_text(encoding="utf-8") for p in sorted((ROOT / "i18n").glob("*.de.md")))
 
 
 def old_value_tokens() -> frozenset:
