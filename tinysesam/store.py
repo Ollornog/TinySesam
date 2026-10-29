@@ -1929,16 +1929,15 @@ class Store:
             return "last_admin"
         return None
 
-    def konto_bestand(self, user_id) -> dict:
-        """What hangs on an account, as counts only (for the confirmation of `tinysesam delete`)."""
+    def konto_bestand(self, user_id) -> tuple[int, int, int]:
+        """What hangs on an account, as counts only (for `tinysesam delete`):
+        `(sessions, identity links, API keys)`."""
         def n(sql):
             return int(self._one(sql, (user_id,))["n"])
-        return {
-            "sessions": n("SELECT COUNT(*) AS n FROM session WHERE user_id=?"),
-            "identities": (n("SELECT COUNT(*) AS n FROM oidc_identity WHERE user_id=?")
-                           + n("SELECT COUNT(*) AS n FROM federated_identity WHERE user_id=?")),
-            "api_keys": n("SELECT COUNT(*) AS n FROM api_key WHERE user_id=?"),
-        }
+        return (n("SELECT COUNT(*) AS n FROM session WHERE user_id=?"),
+                n("SELECT COUNT(*) AS n FROM oidc_identity WHERE user_id=?")
+                + n("SELECT COUNT(*) AS n FROM federated_identity WHERE user_id=?"),
+                n("SELECT COUNT(*) AS n FROM api_key WHERE user_id=?"))
 
     def konto_entfernen(self, user_id, adresse_unbefristet: bool = False) -> Optional[tuple[str, int]]:
         """Delete an account — the ONE deletion path that every caller goes through (H-13).

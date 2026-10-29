@@ -479,6 +479,7 @@ def _delete(argv) -> int:
     if store is None:
         return 1
     from .security import zeilenfest as _z
+    from .store import ersatzname
 
     def finde():
         k = store.get_user_by_name(a.username)
@@ -502,16 +503,17 @@ def _delete(argv) -> int:
         return 1
     if sperre_melden(konto):
         return 1
-    bestand = store.konto_bestand(konto["id"])
+    uid = int(konto["id"])
+    n_sitzungen, n_identitaeten, n_schluessel = store.konto_bestand(uid)
     name = _z(konto["username"])
-    umfang = (f"{bestand['sessions']} session(s), {bestand['identities']} identity link(s), "
-              f"{bestand['api_keys']} API key(s)")
+    umfang = (f"{n_sitzungen} session(s), {n_identitaeten} identity link(s), "
+              f"{n_schluessel} API key(s)")
     if not a.ja:
         # Without a person to answer there is no confirmation: a script has to say --ja.
         if not sys.stdin.isatty():
             print("Not a terminal and no --ja — nothing deleted.", file=sys.stderr)
             return 1
-        print(f"This deletes the account '{name}' (id {konto['id']}) with {umfang}. "
+        print(f"This deletes the account '{name}' (id {uid}) with {umfang}. "
               "The service may keep running.")
         try:
             antwort = input("Delete? [y/N] ")
@@ -530,14 +532,13 @@ def _delete(argv) -> int:
     # The ONE deletion path (`Store.konto_entfernen`), as in `TinySesam.delete_user`: only here, in
     # the deliberate deletion, does a verified address count as the account's own from before creation.
     # NOT `Store.delete_user`: that leaves the name in every audit row.
-    entfernt = store.konto_entfernen(konto["id"], adresse_unbefristet=True)
+    entfernt = store.konto_entfernen(uid, adresse_unbefristet=True)
     if entfernt is None:
         print(f"The account '{name}' is gone in the meantime — nothing to do.", file=sys.stderr)
         return 1
     ersatz, n = entfernt
-    store.audit_log("user_delete", ersatz, None,
-                    f"uid={konto['id']} audit_anonymized={n} source=cli")
-    print(f"Deleted '{name}' (id {konto['id']}): {umfang}; {n} audit row(s) anonymised as {ersatz}.")
+    store.audit_log("user_delete", ersatz, None, f"uid={uid} audit_anonymized={n} source=cli")
+    print(f"Deleted '{name}' (id {uid}): {umfang}; {int(n)} audit row(s) anonymised as {ersatzname(uid)}.")
     return 0
 
 
