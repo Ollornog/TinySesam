@@ -774,6 +774,16 @@
       "stufe": "B"
     }
   },
+  "TinySesam.attributes": {
+    "cfg": {
+      "stufe": "A",
+      "wert": "TinySesamConfig; the instance passed to the constructor: True; frozen: False"
+    },
+    "on_security_event": {
+      "stufe": "A",
+      "wert": "Optional[Callable[[str, dict, dict], Any]] = None; hook(str, dict, dict); account keys: display_name, email, id, username; called synchronously (1 call per change); after the change is written; a failing hook does not abort the operation (change written)"
+    }
+  },
   "TinySesam.eigenschaften": {
     "csrf_cookie_name": {
       "sig": "() -> 'str'",
@@ -785,6 +795,88 @@
     },
     "session_cookie_name": {
       "sig": "() -> 'str'",
+      "stufe": "A"
+    }
+  },
+  "TinySesam.event_payload": {
+    "api_key_created": {
+      "keys": [
+        "key_id",
+        "name"
+      ],
+      "stufe": "A"
+    },
+    "api_key_revoked": {
+      "keys": [
+        "key_id"
+      ],
+      "stufe": "A"
+    },
+    "api_keys_revoked": {
+      "keys": [
+        "count",
+        "reason"
+      ],
+      "stufe": "A"
+    },
+    "email_changed": {
+      "keys": [
+        "new",
+        "old"
+      ],
+      "stufe": "A"
+    },
+    "passkey_added": {
+      "keys": [
+        "name"
+      ],
+      "stufe": "A"
+    },
+    "passkey_removed": {
+      "keys": [
+        "passkey_id"
+      ],
+      "stufe": "A"
+    },
+    "password_changed": {
+      "keys": [],
+      "stufe": "A"
+    },
+    "pin_disabled": {
+      "keys": [],
+      "stufe": "A"
+    },
+    "pin_set": {
+      "keys": [],
+      "stufe": "A"
+    },
+    "recovery_code_used": {
+      "keys": [
+        "remaining"
+      ],
+      "stufe": "A"
+    },
+    "recovery_codes_generated": {
+      "keys": [
+        "count"
+      ],
+      "stufe": "A"
+    },
+    "totp_disabled": {
+      "keys": [
+        "recovery_codes_deleted"
+      ],
+      "stufe": "A"
+    },
+    "totp_enabled": {
+      "keys": [],
+      "stufe": "A"
+    },
+    "username_changed": {
+      "keys": [
+        "new",
+        "old"
+      ],
       "stufe": "A"
     }
   },
@@ -1597,6 +1689,780 @@
     },
     "current_version": {
       "stufe": "B"
+    }
+  },
+  "http.contract": {
+    "cookie:__Host-tinysesam_link": {
+      "stufe": "A"
+    },
+    "cookie:__Host-tinysesam_linkflow": {
+      "stufe": "A"
+    },
+    "header:X-TinySesam-Factor": {
+      "stufe": "B"
+    },
+    "header:X-TinySesam-Gate-Cookie": {
+      "stufe": "A"
+    },
+    "header:X-TinySesam-Location": {
+      "stufe": "A"
+    },
+    "header:X-TinySesam-Reason": {
+      "stufe": "A"
+    },
+    "header:X-TinySesam-Reauth": {
+      "stufe": "B"
+    },
+    "header:X-TinySesam-Roles": {
+      "stufe": "A"
+    },
+    "reason:app-missing": {
+      "stufe": "A"
+    },
+    "reason:app-signed-out": {
+      "stufe": "A"
+    },
+    "reason:app-stale": {
+      "stufe": "A"
+    },
+    "reason:role": {
+      "stufe": "A"
+    },
+    "request-header:Accept": {
+      "stufe": "A"
+    },
+    "request-header:Authorization": {
+      "stufe": "A"
+    },
+    "request-header:Host": {
+      "stufe": "A"
+    },
+    "request-header:Referer": {
+      "stufe": "A"
+    },
+    "request-header:Sec-Fetch-Mode": {
+      "stufe": "A"
+    },
+    "request-header:Sec-Fetch-Site": {
+      "stufe": "A"
+    },
+    "request-header:X-Api-Key": {
+      "stufe": "A"
+    },
+    "request-header:X-Csrf-Token": {
+      "stufe": "A"
+    },
+    "request-header:X-Forwarded-For": {
+      "stufe": "A"
+    },
+    "request-header:X-Forwarded-Host": {
+      "stufe": "A"
+    },
+    "request-header:X-Forwarded-Proto": {
+      "stufe": "A"
+    },
+    "request-header:X-Forwarded-Uri": {
+      "stufe": "A"
+    },
+    "request-header:X-Original-Uri": {
+      "stufe": "A"
+    },
+    "request-header:X-Original-Url": {
+      "stufe": "A"
+    },
+    "request-header:X-TinySesam-Roles": {
+      "stufe": "A"
+    },
+    "request-param:roles": {
+      "stufe": "A"
+    }
+  },
+  "http.forward": {
+    "forward: API key": {
+      "response": "200 | headers: Remote-Email, Remote-Groups, Remote-Id, Remote-Name, Remote-User",
+      "stufe": "A"
+    },
+    "forward: not signed in": {
+      "response": "401 | WWW-Authenticate: FormBased realm=\"TinySesam\" | X-TinySesam-Location -> /auth/login",
+      "stufe": "A"
+    },
+    "forward: role missing (?roles=)": {
+      "response": "403 | X-TinySesam-Reason: role",
+      "stufe": "A"
+    },
+    "forward: role missing (X-TinySesam-Roles)": {
+      "response": "403 | X-TinySesam-Reason: role",
+      "stufe": "A"
+    },
+    "forward: role present (?roles=)": {
+      "response": "200 | headers: Remote-Email, Remote-Groups, Remote-Id, Remote-Name, Remote-User, X-TinySesam-Gate-Cookie",
+      "stufe": "A"
+    },
+    "forward: signed in": {
+      "response": "200 | headers: Remote-Email, Remote-Groups, Remote-Id, Remote-Name, Remote-User, X-TinySesam-Gate-Cookie",
+      "stufe": "A"
+    },
+    "forward: signed out of this application": {
+      "response": "401 | WWW-Authenticate: FormBased realm=\"TinySesam\" | X-TinySesam-Location -> /auth/login | X-TinySesam-Reason: app-signed-out",
+      "stufe": "A"
+    },
+    "gate logout: host not protected": {
+      "response": "404",
+      "stufe": "A"
+    },
+    "gate logout: sign out everywhere": {
+      "response": "303 | Location -> /.tinysesam/after-logout | cookies: __Host-tinysesam_gate (cleared), tinysesam_session (cleared)",
+      "stufe": "A"
+    },
+    "gate logout: sign out of this application only": {
+      "response": "303 | Location -> / | cookies: __Host-tinysesam_gate (cleared)",
+      "stufe": "A"
+    },
+    "gateway authorize: signed in": {
+      "response": "303 | Location -> /.tinysesam/callback",
+      "stufe": "A"
+    },
+    "gateway authorize: unknown flow": {
+      "response": "400",
+      "stufe": "A"
+    },
+    "gateway callback: unknown code": {
+      "response": "400",
+      "stufe": "A"
+    },
+    "gateway callback: valid code": {
+      "response": "303 | Location -> /seite | cookies: __Host-tinysesam_link, __Host-tinysesam_linkflow (cleared)",
+      "stufe": "A"
+    },
+    "gateway forward: not signed in": {
+      "response": "401 | WWW-Authenticate: FormBased realm=\"TinySesam\" | X-TinySesam-Location -> /.tinysesam/start",
+      "stufe": "A"
+    },
+    "gateway forward: signed in via the connection": {
+      "response": "200 | headers: Remote-Email, Remote-Groups, Remote-Id, Remote-Name, Remote-User, X-TinySesam-Gate-Cookie",
+      "stufe": "A"
+    },
+    "gateway logged-out page: host not protected": {
+      "response": "400",
+      "stufe": "A"
+    },
+    "gateway logout: host not protected": {
+      "response": "400",
+      "stufe": "A"
+    },
+    "gateway start": {
+      "response": "303 | Location -> /auth/gate/authorize | cookies: __Host-tinysesam_linkflow",
+      "stufe": "A"
+    },
+    "gateway start: host not protected": {
+      "response": "404",
+      "stufe": "A"
+    },
+    "verify alias: signed in": {
+      "response": "200 | headers: Remote-Email, Remote-Groups, Remote-Id, Remote-Name, Remote-User, X-TinySesam-Gate-Cookie",
+      "stufe": "A"
+    }
+  },
+  "http.routes": {
+    "GET /": {
+      "keys": [],
+      "stufe": "B"
+    },
+    "GET /.tinysesam/after-logout": {
+      "keys": [],
+      "stufe": "A"
+    },
+    "GET /.tinysesam/callback": {
+      "keys": [
+        "query:code"
+      ],
+      "stufe": "A"
+    },
+    "GET /.tinysesam/logout": {
+      "keys": [
+        "query:next",
+        "query:scope"
+      ],
+      "stufe": "A"
+    },
+    "GET /.tinysesam/start": {
+      "keys": [
+        "query:abgemeldet",
+        "query:rd"
+      ],
+      "stufe": "A"
+    },
+    "GET /auth/account": {
+      "keys": [],
+      "stufe": "B"
+    },
+    "GET /auth/apikeys": {
+      "keys": [],
+      "stufe": "B"
+    },
+    "GET /auth/claim-admin": {
+      "keys": [
+        "query:token"
+      ],
+      "stufe": "B"
+    },
+    "GET /auth/email/{token}": {
+      "keys": [],
+      "stufe": "B"
+    },
+    "GET /auth/forgot": {
+      "keys": [],
+      "stufe": "B"
+    },
+    "GET /auth/forward": {
+      "keys": [],
+      "stufe": "A"
+    },
+    "GET /auth/gate/authorize": {
+      "keys": [
+        "query:flow"
+      ],
+      "stufe": "A"
+    },
+    "GET /auth/gate/logged-out": {
+      "keys": [
+        "query:host"
+      ],
+      "stufe": "A"
+    },
+    "GET /auth/gate/logout": {
+      "keys": [
+        "query:host"
+      ],
+      "stufe": "A"
+    },
+    "GET /auth/invite/{token}": {
+      "keys": [],
+      "stufe": "B"
+    },
+    "GET /auth/login": {
+      "keys": [
+        "query:abgemeldet",
+        "query:app",
+        "query:error",
+        "query:gate_host",
+        "query:next"
+      ],
+      "stufe": "B"
+    },
+    "GET /auth/logout": {
+      "keys": [],
+      "stufe": "B"
+    },
+    "GET /auth/magic/request": {
+      "keys": [
+        "query:next"
+      ],
+      "stufe": "B"
+    },
+    "GET /auth/magic/{token}": {
+      "keys": [],
+      "stufe": "B"
+    },
+    "GET /auth/me": {
+      "keys": [],
+      "stufe": "B"
+    },
+    "GET /auth/oidc/start": {
+      "keys": [
+        "query:app",
+        "query:next"
+      ],
+      "stufe": "B"
+    },
+    "GET /auth/passkey/list": {
+      "keys": [],
+      "stufe": "B"
+    },
+    "GET /auth/pin": {
+      "keys": [
+        "query:error",
+        "query:next"
+      ],
+      "stufe": "B"
+    },
+    "GET /auth/reauth": {
+      "keys": [
+        "query:error",
+        "query:next"
+      ],
+      "stufe": "B"
+    },
+    "GET /auth/register": {
+      "keys": [
+        "query:invite",
+        "query:next"
+      ],
+      "stufe": "B"
+    },
+    "GET /auth/reset": {
+      "keys": [
+        "query:token"
+      ],
+      "stufe": "B"
+    },
+    "GET /auth/resource/{name}": {
+      "keys": [
+        "query:error",
+        "query:next"
+      ],
+      "stufe": "B"
+    },
+    "GET /auth/saml/login": {
+      "keys": [
+        "query:next"
+      ],
+      "stufe": "B"
+    },
+    "GET /auth/saml/metadata": {
+      "keys": [],
+      "stufe": "B"
+    },
+    "GET /auth/sessions": {
+      "keys": [],
+      "stufe": "B"
+    },
+    "GET /auth/totp": {
+      "keys": [
+        "query:error",
+        "query:next"
+      ],
+      "stufe": "B"
+    },
+    "GET /auth/totp/setup": {
+      "keys": [
+        "query:next"
+      ],
+      "stufe": "B"
+    },
+    "GET /auth/verify": {
+      "keys": [],
+      "stufe": "A"
+    },
+    "GET /auth/verify/{token}": {
+      "keys": [],
+      "stufe": "B"
+    },
+    "GET /healthz": {
+      "keys": [],
+      "stufe": "B"
+    },
+    "GET <admin>": {
+      "keys": [],
+      "stufe": "B"
+    },
+    "GET <admin>/api/audit": {
+      "keys": [
+        "query:limit"
+      ],
+      "stufe": "B"
+    },
+    "GET <admin>/api/resources": {
+      "keys": [],
+      "stufe": "B"
+    },
+    "GET <admin>/api/security": {
+      "keys": [],
+      "stufe": "B"
+    },
+    "GET <admin>/api/sessions": {
+      "keys": [],
+      "stufe": "B"
+    },
+    "GET <admin>/api/users": {
+      "keys": [],
+      "stufe": "B"
+    },
+    "GET <admin>/api/users/{uid}/keys": {
+      "keys": [],
+      "stufe": "B"
+    },
+    "GET <admin>/api/users/{uid}/passkeys": {
+      "keys": [],
+      "stufe": "B"
+    },
+    "GET <admin>/api/version": {
+      "keys": [],
+      "stufe": "B"
+    },
+    "GET <oidc_callback_path>": {
+      "keys": [
+        "query:code",
+        "query:error",
+        "query:state"
+      ],
+      "stufe": "B"
+    },
+    "POST /.tinysesam/logout": {
+      "keys": [
+        "form:_csrf",
+        "form:next",
+        "form:scope"
+      ],
+      "stufe": "A"
+    },
+    "POST /auth/account/email": {
+      "keys": [],
+      "stufe": "B"
+    },
+    "POST /auth/account/username": {
+      "keys": [],
+      "stufe": "B"
+    },
+    "POST /auth/apikeys": {
+      "keys": [],
+      "stufe": "B"
+    },
+    "POST /auth/apikeys/{key_id}/revoke": {
+      "keys": [],
+      "stufe": "B"
+    },
+    "POST /auth/email/{token}": {
+      "keys": [
+        "form:_csrf"
+      ],
+      "stufe": "B"
+    },
+    "POST /auth/forgot": {
+      "keys": [
+        "form:_csrf",
+        "form:email"
+      ],
+      "stufe": "B"
+    },
+    "POST /auth/gate/resume": {
+      "keys": [
+        "form:_csrf",
+        "form:gate_host",
+        "form:next"
+      ],
+      "stufe": "A"
+    },
+    "POST /auth/login": {
+      "keys": [
+        "form:_csrf",
+        "form:next",
+        "form:password",
+        "form:remember",
+        "form:username"
+      ],
+      "stufe": "B"
+    },
+    "POST /auth/logout": {
+      "keys": [
+        "form:_csrf"
+      ],
+      "stufe": "B"
+    },
+    "POST /auth/magic/request": {
+      "keys": [
+        "form:_csrf",
+        "form:email",
+        "form:next"
+      ],
+      "stufe": "B"
+    },
+    "POST /auth/magic/{token}": {
+      "keys": [
+        "form:_csrf"
+      ],
+      "stufe": "B"
+    },
+    "POST /auth/passkey/delete": {
+      "keys": [],
+      "stufe": "B"
+    },
+    "POST /auth/passkey/login/begin": {
+      "keys": [],
+      "stufe": "B"
+    },
+    "POST /auth/passkey/login/finish": {
+      "keys": [
+        "query:next"
+      ],
+      "stufe": "B"
+    },
+    "POST /auth/passkey/register/begin": {
+      "keys": [],
+      "stufe": "B"
+    },
+    "POST /auth/passkey/register/finish": {
+      "keys": [
+        "query:name"
+      ],
+      "stufe": "B"
+    },
+    "POST /auth/password": {
+      "keys": [],
+      "stufe": "B"
+    },
+    "POST /auth/pin": {
+      "keys": [
+        "form:_csrf",
+        "form:next",
+        "form:pin",
+        "form:remember",
+        "form:username"
+      ],
+      "stufe": "B"
+    },
+    "POST /auth/pin/disable": {
+      "keys": [],
+      "stufe": "B"
+    },
+    "POST /auth/pin/set": {
+      "keys": [],
+      "stufe": "B"
+    },
+    "POST /auth/reauth": {
+      "keys": [
+        "form:_csrf",
+        "form:code",
+        "form:next",
+        "form:password",
+        "form:pin"
+      ],
+      "stufe": "B"
+    },
+    "POST /auth/register": {
+      "keys": [
+        "form:_csrf",
+        "form:email",
+        "form:invite",
+        "form:next",
+        "form:password",
+        "form:username"
+      ],
+      "stufe": "B"
+    },
+    "POST /auth/reset": {
+      "keys": [
+        "form:_csrf",
+        "form:password",
+        "form:token"
+      ],
+      "stufe": "B"
+    },
+    "POST /auth/resource/{name}": {
+      "keys": [
+        "form:_csrf",
+        "form:next",
+        "form:secret"
+      ],
+      "stufe": "B"
+    },
+    "POST /auth/saml/acs": {
+      "keys": [],
+      "stufe": "B"
+    },
+    "POST /auth/sessions/revoke": {
+      "keys": [],
+      "stufe": "B"
+    },
+    "POST /auth/sessions/revoke-after-login": {
+      "keys": [],
+      "stufe": "B"
+    },
+    "POST /auth/totp": {
+      "keys": [
+        "form:_csrf",
+        "form:code",
+        "form:next"
+      ],
+      "stufe": "B"
+    },
+    "POST /auth/totp/disable": {
+      "keys": [],
+      "stufe": "B"
+    },
+    "POST /auth/totp/recovery": {
+      "keys": [],
+      "stufe": "B"
+    },
+    "POST /auth/totp/setup": {
+      "keys": [
+        "form:code",
+        "form:next"
+      ],
+      "stufe": "B"
+    },
+    "POST /auth/totp/setup/start": {
+      "keys": [
+        "form:_csrf",
+        "form:next"
+      ],
+      "stufe": "B"
+    },
+    "POST /auth/verify/{token}": {
+      "keys": [
+        "form:_csrf"
+      ],
+      "stufe": "B"
+    },
+    "POST <admin>/api/invite": {
+      "keys": [],
+      "stufe": "B"
+    },
+    "POST <admin>/api/keys/{kid}/revoke": {
+      "keys": [],
+      "stufe": "B"
+    },
+    "POST <admin>/api/resources": {
+      "keys": [],
+      "stufe": "B"
+    },
+    "POST <admin>/api/resources/{name}/delete": {
+      "keys": [],
+      "stufe": "B"
+    },
+    "POST <admin>/api/security": {
+      "keys": [],
+      "stufe": "B"
+    },
+    "POST <admin>/api/sessions/revoke": {
+      "keys": [],
+      "stufe": "B"
+    },
+    "POST <admin>/api/users": {
+      "keys": [],
+      "stufe": "B"
+    },
+    "POST <admin>/api/users/{uid}/delete": {
+      "keys": [],
+      "stufe": "B"
+    },
+    "POST <admin>/api/users/{uid}/disable": {
+      "keys": [],
+      "stufe": "B"
+    },
+    "POST <admin>/api/users/{uid}/keys": {
+      "keys": [],
+      "stufe": "B"
+    },
+    "POST <admin>/api/users/{uid}/owner": {
+      "keys": [],
+      "stufe": "B"
+    },
+    "POST <admin>/api/users/{uid}/passkeys/{cid}/delete": {
+      "keys": [],
+      "stufe": "B"
+    },
+    "POST <admin>/api/users/{uid}/password": {
+      "keys": [],
+      "stufe": "B"
+    },
+    "POST <admin>/api/users/{uid}/roles": {
+      "keys": [],
+      "stufe": "B"
+    },
+    "POST <admin>/api/users/{uid}/username": {
+      "keys": [],
+      "stufe": "B"
+    }
+  },
+  "log.lines": {
+    "event:deferred login": {
+      "stufe": "A"
+    },
+    "event:deferred verification": {
+      "stufe": "A"
+    },
+    "event:failed login": {
+      "stufe": "A"
+    },
+    "event:failed verification": {
+      "stufe": "A"
+    },
+    "event:login ok": {
+      "stufe": "A"
+    },
+    "event:repeated login": {
+      "stufe": "A"
+    },
+    "format:%(asctime)s %(levelname)s %(message)s": {
+      "stufe": "A"
+    },
+    "line:INFO login ok | user ip method unban": {
+      "stufe": "A"
+    },
+    "line:INFO repeated login | user ip method": {
+      "stufe": "A"
+    },
+    "line:WARNING deferred login | user ip reason": {
+      "stufe": "A"
+    },
+    "line:WARNING deferred verification | user ip reason": {
+      "stufe": "A"
+    },
+    "line:WARNING failed login | user ip method": {
+      "stufe": "A"
+    },
+    "line:WARNING failed login | user ip method reason": {
+      "stufe": "A"
+    },
+    "line:WARNING failed verification | user ip method": {
+      "stufe": "A"
+    },
+    "line:WARNING failed verification | user ip method reason": {
+      "stufe": "A"
+    },
+    "value:method=blocked": {
+      "stufe": "A"
+    },
+    "value:method=claim_admin": {
+      "stufe": "A"
+    },
+    "value:method=oidc": {
+      "stufe": "A"
+    },
+    "value:method=passkey": {
+      "stufe": "A"
+    },
+    "value:method=password": {
+      "stufe": "A"
+    },
+    "value:method=password_change": {
+      "stufe": "A"
+    },
+    "value:method=reauth": {
+      "stufe": "A"
+    },
+    "value:method=resource": {
+      "stufe": "A"
+    },
+    "value:method=totp_setup": {
+      "stufe": "A"
+    },
+    "value:reason=account_locked": {
+      "stufe": "A"
+    },
+    "value:reason=pending": {
+      "stufe": "A"
+    },
+    "value:reason=unknown_key": {
+      "stufe": "A"
+    },
+    "value:unban=no": {
+      "stufe": "A"
+    },
+    "value:unban=yes": {
+      "stufe": "A"
+    }
+  },
+  "log.loggers": {
+    "tinysesam": {
+      "stufe": "A"
+    },
+    "tinysesam.mail": {
+      "stufe": "A"
+    },
+    "tinysesam.security": {
+      "stufe": "A"
     }
   }
 }
