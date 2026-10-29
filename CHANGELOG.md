@@ -14,6 +14,14 @@ variable `TS_SHARE_PREFIX`, the Traefik middleware `tinysesam-strip-cookies`, th
 on the login page (B-4), adds `tinysesam delete`, and is the base of the API freeze: the two-minor-version clock for
 the new tier-A entries (hook, HTTP contract, security log) starts with this release.
 
+### Fixed — CI: the release PR could not turn green (M-1)
+
+The acceptance of the reference stack (`gate-caddy`, since 2026-10-11) pulls every image of
+`deploy/forward-auth/docker-compose.yml` — including `ghcr.io/ollornog/tinysesam:v<version>`, which only the tag
+builds. The release PR sets that version first, so the check was red on every release PR. The own image at the
+package version is now skipped as long as its tag does not exist (`image-probe` builds and starts that image on every
+PR); once the tag exists it is pulled like every other image.
+
 ### Added — the stability promise covers the hook, the HTTP contract and the security log (M-1, no break)
 
 PO decision 2026-10-29: besides the Python names the promise now covers the following. **Nothing changes in the
