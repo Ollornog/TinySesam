@@ -2,7 +2,17 @@
 
 All notable changes. Format loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [0.25.0] — 2026-10-29
+
+**Breaking — take a backup first (`tinysesam backup`, not `cp`).** The database migrates to schema 16 on the first
+start, **forward only**: 0.24.x crashes on a migrated file, the only way back is `restore` of that backup (see
+`docs/OPERATIONS.md`). Everything the stability promise names is English now, renamed once **without alias** — read
+the rename tables below before updating: Python names and parameters, query parameter `signed_out=1`, CLI `--yes`,
+stored and logged values (`reason=` instead of `grund=`, take the fail2ban filters from this release), the template
+variable `TS_SHARE_PREFIX`, the Traefik middleware `tinysesam-strip-cookies`, the compose anchor `x-hardening`.
+**Who needs it:** everyone — it fixes downloads with `;` in the file name behind a share exception (B-3) and `next`
+on the login page (B-4), adds `tinysesam delete`, and is the base of the API freeze: the two-minor-version clock for
+the new tier-A entries (hook, HTTP contract, security log) starts with this release.
 
 ### Added — the stability promise covers the hook, the HTTP contract and the security log (M-1, no break)
 
