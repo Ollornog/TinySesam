@@ -21,7 +21,7 @@ list (also with `..`, `%2e`, double slash) must return 401 or 307.
 
 ## Done 2026-10-07
 
-- `@share` in both Caddy templates, off until `TS_SHARE_PRAEFIX` is set.
+- `@share` in both Caddy templates, off until `TS_SHARE_PREFIX` is set.
 - **Measurement before the rule** (Caddy 2.11.7): The `path` matcher compares the cleaned path and
   does not distinguish upper/lower case, but passes the raw one on to the application.
   `/s/..;/admin`, `/s/..%5cadmin` and `/s/abc%00` got through, `/x/../s/abc` and `/S/abc` likewise.

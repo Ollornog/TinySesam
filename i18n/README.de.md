@@ -741,7 +741,7 @@ Konten suchen. Im Protokoll liest nur der Betreiber mit.
 ### Ein Konto entfernen
 
 ```bash
-python -m tinysesam delete --db auth.db alice           # fragt vorher nach; --ja für Skripte
+python -m tinysesam delete --db auth.db alice           # fragt vorher nach; --yes für Skripte
 ```
 
 Für Instanzen ohne Admin-Panel — etwa nur OIDC, wo ein Abnahmetest mit einem Testkonto ein lokales
@@ -749,7 +749,7 @@ Konto hinterlässt. Es nimmt denselben Weg und dieselben Schutzregeln wie „Lö
 Zugangsdaten, Sitzungen und Identitätsverknüpfungen verschwinden, die Anmeldeversuche unter Name und
 Adresse ebenfalls, und der Name im Audit-Log wird zu `deleted#<id>` (die Zeilen selbst bleiben). Ein
 Owner und der letzte Admin werden nicht gelöscht. Das Kommando nennt, was es entfernt hat (Name, Zahl
-der Sitzungen und Identitätsverknüpfungen), nie ein Geheimnis. Ohne `--ja` fragt es nach, ohne
+der Sitzungen und Identitätsverknüpfungen), nie ein Geheimnis. Ohne `--yes` fragt es nach, ohne
 Terminal verweigert es; ein unbekanntes Konto endet mit Exit 1. `#<id>` statt des Namens geht wie bei
 `rename`. Ein rohes `DELETE` in der Datenbank ist der falsche Weg — es lässt den Namen in jeder
 Audit-Zeile stehen.
@@ -1308,7 +1308,7 @@ Gateway-Seiten wählt `TINYSESAM_LANG` (`en`, `de`).
 
 ### Öffentliche Pfade: Share-Links (T-20)
 
-Beide Caddy-Vorlagen lassen mit `TS_SHARE_PRAEFIX='^/(s|public/share)/'` Pfade ohne Anmeldung
+Beide Caddy-Vorlagen lassen mit `TS_SHARE_PREFIX='^/(s|public/share)/'` Pfade ohne Anmeldung
 durch, ohne Identität. Geprüft wird der rohe Pfad; `.`/`..`-Segmente (auch mit Pfadparameter: `..;`), Backslash, NUL
 und ihre kodierten Formen weist die Regel ab (`/s/..;/admin` lesen Tomcat und Spring als `/admin`); ein `;` oder `%3B`
 anderswo, etwa in einem Dateinamen, lässt sie durch. Von sich aus aus. Wie man die

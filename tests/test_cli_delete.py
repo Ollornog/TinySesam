@@ -8,7 +8,7 @@ What is pinned here:
   * the command goes through the ONE deletion path (`Store.konto_entfernen`) — the result is the same as
     deleting through `TinySesam.delete_user` (the panel): rows gone, audit anonymised as `deleted#<id>`;
   * the protection rules are the panel's (owner, last admin), taken from the same function;
-  * confirmation: asks on a terminal, `--ja` for scripts, no terminal and no `--ja` -> nothing happens;
+  * confirmation: asks on a terminal, `--yes` for scripts, no terminal and no `--yes` -> nothing happens;
   * the output names counts and the name, never a secret.
 
 (Mutation probes, run by hand and listed in the CHANGELOG: `Store.konto_entfernen` replaced by
@@ -103,10 +103,10 @@ assert zaehle(uid) == {"oidc_identity": 1, "session": 2, "users": 1}
 vorher = len(audit_zeilen("tester"))
 assert vorher >= 2
 
-code, aus = cli("delete", "--db", db, "--ja", "tester")
+code, aus = cli("delete", "--db", db, "--yes", "tester")
 assert code == 0, (code, aus)
 assert zaehle(uid) == {"oidc_identity": 0, "session": 0, "users": 0}, zaehle(uid)
-ok("delete --ja removes users, oidc_identity and session rows")
+ok("delete --yes removes users, oidc_identity and session rows")
 
 ersatz = f"deleted#{uid}"
 assert "tester" in aus and "2 session(s)" in aus and "1 identity link(s)" in aus, aus
@@ -132,16 +132,16 @@ assert re.fullmatch(r"uid=\d+ audit_anonymized=\d+", panel_zeile[0]["detail"]), 
 assert re.fullmatch(r"uid=\d+ audit_anonymized=\d+ source=cli", zeile[0]["detail"]), zeile
 ok("the user_delete row has the panel's shape (uid=… audit_anonymized=…) plus the source")
 
-code, aus = cli("delete", "--db", db, "--ja", "tester")
+code, aus = cli("delete", "--db", db, "--yes", "tester")
 assert code == 1 and "No account 'tester'" in aus, (code, aus)
 ok("second call -> exit 1, clear message")
 
-code, aus = cli("delete", "--db", db + ".fehlt", "--ja", "tester")
+code, aus = cli("delete", "--db", db + ".fehlt", "--yes", "tester")
 assert code == 1 and "No database at" in aus and not os.path.exists(db + ".fehlt")
 ok("wrong DB path -> clear message, no empty database created")
 
 # ---------- protection rules (the panel's) ----------
-code, aus = cli("delete", "--db", db, "--ja", "boss")
+code, aus = cli("delete", "--db", db, "--yes", "boss")
 assert code == 1 and "owner" in aus and st.get_user(boss) is not None, (code, aus)
 ok("an owner is not deleted")
 
@@ -149,7 +149,7 @@ ok("an owner is not deleted")
 # identity provider demoted): set it up by hand. (With no owner at all the store promotes the oldest
 # admin itself at opening, so that state cannot be tested through the command.)
 st._exec("UPDATE users SET is_admin=0 WHERE id=?", (boss,))
-code, aus = cli("delete", "--db", db, "--ja", "zweit")
+code, aus = cli("delete", "--db", db, "--yes", "zweit")
 assert code == 1 and "last admin" in aus and st.get_user(zweiter) is not None, (code, aus)
 try:
     auth.delete_user(zweiter)
@@ -167,14 +167,14 @@ for uid_k, name_k in ((boss, "boss"),):
         panel_sperrt = False
     except Exception:   # noqa: BLE001 — StateError is the expected refusal
         panel_sperrt = True
-    assert panel_sperrt and cli("delete", "--db", db, "--ja", name_k)[0] == 1
+    assert panel_sperrt and cli("delete", "--db", db, "--yes", name_k)[0] == 1
 ok("panel route and CLI refuse the same account")
 
 # ---------- confirmation ----------
 u2 = oidc_konto("frage", "sub-frage", "frage@example.com")
 code, aus = cli("delete", "--db", db, "frage")
 assert code == 1 and "Not a terminal" in aus and st.get_user(u2) is not None, (code, aus)
-ok("no --ja and no terminal -> nothing deleted, exit 1")
+ok("no --yes and no terminal -> nothing deleted, exit 1")
 
 code, aus = cli("delete", "--db", db, "frage", stdin="n\n", tty=True)
 assert code == 1 and "Aborted" in aus and st.get_user(u2) is not None, (code, aus)
@@ -191,7 +191,7 @@ ok("\"y\" on a terminal deletes")
 
 # ---------- by ID, for a name that cannot be typed in ----------
 u3 = oidc_konto("per-id", "sub-id", "id@example.com")
-code, aus = cli("delete", "--db", db, "--ja", f"#{u3}")
+code, aus = cli("delete", "--db", db, "--yes", f"#{u3}")
 assert code == 0 and st.get_user(u3) is None, (code, aus)
 ok("#<id> works like in rename")
 
@@ -199,7 +199,7 @@ ok("#<id> works like in rename")
 code, aus = cli("--help")
 assert code == 0 and "delete" in aus
 code, aus = cli("delete", "--help")
-assert code == 0 and "--ja" in aus and "deleted#<id>" in aus
+assert code == 0 and "--yes" in aus and "deleted#<id>" in aus
 ok("help names the command")
 
 print("\nCLI delete OK ✅")

@@ -736,7 +736,7 @@ accounts. The log is only read by the operator.
 ### Removing an account
 
 ```bash
-python -m tinysesam delete --db auth.db alice           # asks first; --ja for scripts
+python -m tinysesam delete --db auth.db alice           # asks first; --yes for scripts
 ```
 
 For instances without an admin panel — for instance OIDC only, where an acceptance test with a
@@ -744,7 +744,7 @@ test account leaves a local account behind. It takes the same route and the same
 the panel's "Delete": credentials, sessions and identity links go, the sign-in attempts under name and
 address go, and the name in the audit log becomes `deleted#<id>` (the rows themselves stay). An owner
 and the last admin are not deleted. The command names what it removed (name, number of sessions and
-identity links), never a secret. Without `--ja` it asks, and without a terminal it refuses; an
+identity links), never a secret. Without `--yes` it asks, and without a terminal it refuses; an
 unknown account ends with exit 1. `#<id>` instead of the name works as in `rename`. A raw `DELETE`
 in the database is the wrong way — it leaves the name in every audit row.
 
@@ -1283,7 +1283,7 @@ gateway and with it every connection — also after the app was signed out “he
 
 ### Public paths: share links (T-20)
 
-With `TS_SHARE_PRAEFIX='^/(s|public/share)/'` both Caddy templates let paths through without sign-in
+With `TS_SHARE_PREFIX='^/(s|public/share)/'` both Caddy templates let paths through without sign-in
 and without an identity. The raw path is checked; the rule rejects `.`/`..` segments (also with a path
 parameter: `..;`), backslash, NUL and their encoded forms (Tomcat and Spring read `/s/..;/admin` as `/admin`); a `;` or `%3B`
 elsewhere, such as in a file name, passes. Off by default. How to

@@ -29,7 +29,7 @@ their cases.
   has no further caller).
 - The same protection rules as when deleting via the panel (check how it treats the owner, and do not
   make it looser here); unknown user → exit ≠ 0 with a clear message.
-- Confirmation: ask interactively, `--ja` for scripts. The output names what was removed (name, number
+- Confirmation: ask interactively, `--yes` for scripts. The output names what was removed (name, number
   of sessions/identities), never secrets.
 - Update help text, README section "Maintenance" and CHANGELOG.
 
@@ -43,9 +43,9 @@ their cases.
 
 - `delete --db <file> <user>` (also `#<id>`) in `tinysesam/__main__.py`; goes through `Store.konto_entfernen` like the
   panel. The protection rule (owner, last admin) was moved into `Store.loeschsperre` and is used by
-  `TinySesam.delete_user` and the command — one rule, not a copy. Asks on a terminal, `--ja` for scripts, no terminal
-  and no `--ja` refuses.
+  `TinySesam.delete_user` and the command — one rule, not a copy. Asks on a terminal, `--yes` for scripts, no terminal
+  and no `--yes` refuses.
 - Test `tests/test_cli_delete.py` (OIDC account with sessions: rows gone, audit anonymised like the panel's, second
   call exit 1, owner / last admin, confirmation paths). Mutations red: command bent to `Store.delete_user`, protection
-  rule removed, `--ja` / terminal check removed.
+  rule removed, `--yes` / terminal check removed.
 - Docs: README (en/de) "Removing an account", `docs/OPERATIONS.md`, CHANGELOG. API.md does not list CLI commands.

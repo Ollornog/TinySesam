@@ -268,7 +268,7 @@ an admin would set the owner's password and be one themselves.
 | Grant / give up owner | panel "Make owner" / "Give up owner" or `POST <admin_path>/api/users/{id}/owner` `{"owner": true|false}` — only as owner; giving up only if another remains |
 | Code | `auth.set_owner(uid, True|False)` (`StateError` for the last owner, `ConfigError` for a service / disabled account) |
 | Hardening values (lockout thresholds, rate limits, password lengths, PIN attempts) | only an owner saves them (`POST <admin_path>/api/security`, otherwise 403); any admin may read. With no owner in the data as before any admin |
-| Delete an account, as operator | panel "Delete", or without a panel / a running service `tinysesam delete --db <file> <user>` (`#<id>` instead of the name) — the same route (`Store.konto_entfernen`, audit anonymised as `deleted#<id>`) and the same protection (an owner and the last admin are not deleted; the rule is `Store.loeschsperre`, shared by both). Asks on a terminal, `--ja` for scripts, no terminal and no `--ja` refuses. Audit `user_delete … source=cli` |
+| Delete an account, as operator | panel "Delete", or without a panel / a running service `tinysesam delete --db <file> <user>` (`#<id>` instead of the name) — the same route (`Store.konto_entfernen`, audit anonymised as `deleted#<id>`) and the same protection (an owner and the last admin are not deleted; the rule is `Store.loeschsperre`, shared by both). Asks on a terminal, `--yes` for scripts, no terminal and no `--yes` refuses. Audit `user_delete … source=cli` |
 | Emergency route (no owner can reach it any more) | `tinysesam owner --db <file> <user>` — whoever has the database operates the instance anyway |
 | First owner | the first admin (`/auth/claim-admin`, `admin_identifiers`, `ensure_admin`); in existing data the oldest **active**, manually set admin — no service account, not disabled (`owner_grant` in the audit log). If there is none (only admins from the identity provider or disabled ones), the instance stays without owner and the log names the emergency route |
 
@@ -621,10 +621,10 @@ the gateway itself under its `base_url`.
 
 Both Caddy templates have a block `@share` that lets paths through without sign-in — without
 identity and without the TinySesam cookies. By default it is off (`^$`); it is switched on
-with `TS_SHARE_PRAEFIX`, a regular expression over the beginning of the path:
+with `TS_SHARE_PREFIX`, a regular expression over the beginning of the path:
 
 ```
-TS_SHARE_PRAEFIX='^/(s|index\.php/s|apps/files_sharing/publicpreview)/'
+TS_SHARE_PREFIX='^/(s|index\.php/s|apps/files_sharing/publicpreview)/'
 ```
 
 - **Measure instead of guess.** A share page loads its own scripts and calls its own APIs. Open the

@@ -711,7 +711,7 @@ r.check("a plain `cp` of the backup does NOT work (the WAL overwrites it)",
         f"{naiv} — then the test does not measure the difference that `restore` makes")
 
 lauf2 = subprocess.run([sys.executable, "-m", "tinysesam", "restore", "--db", str(ziel),
-                        str(ordner2 / "sicherung.db"), "--ja"],
+                        str(ordner2 / "sicherung.db"), "--yes"],
                        cwd=ROOT, capture_output=True, text=True)
 r.check("`tinysesam restore` runs through", lauf2.returncode == 0, lauf2.stderr[:140])
 namen = [z[0] for z in sqlite3.connect(str(ziel)).execute("SELECT username FROM users")]

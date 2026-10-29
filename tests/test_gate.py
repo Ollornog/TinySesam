@@ -312,7 +312,7 @@ for _datei in ("deploy/forward-auth/Caddyfile", "deploy/forward-auth/Caddyfile.g
                       for z in _t.splitlines())
     _block = re.search(r"handle @share \{(.*?)\n\t\}", _code, re.S)
     assert _block, f"{_datei}: no handle @share"
-    assert "{$TS_SHARE_PRAEFIX:^$}" in _code, f"{_datei}: the share exception is not off by itself"
+    assert "{$TS_SHARE_PREFIX:^$}" in _code, f"{_datei}: the share exception is not off by itself"
     assert "vars_regexp share {http.request.orig_uri.path}" in _code, f"{_datei}: share does not check the raw path"
     _sperre = re.search(r"not vars_regexp \{http\.request\.orig_uri\.path\} (\S+)", _code)
     assert _sperre, f"{_datei}: without a block for path tricks"

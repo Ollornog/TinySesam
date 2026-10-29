@@ -48,13 +48,13 @@ code or in any existing tier** — this is new promise, measured by `tests/test_
   row is written. Not `Store.delete_user`, which leaves the name in every audit row.
 - Same protection as the panel: an owner and the last admin are not deleted. The rule moved into
   `Store.loeschsperre` and is used by `TinySesam.delete_user` and the command alike, so the two cannot drift apart.
-- Asks on a terminal; `--ja` skips the question for scripts; no terminal and no `--ja` refuses (exit 1). An unknown
+- Asks on a terminal; `--yes` skips the question for scripts; no terminal and no `--yes` refuses (exit 1). An unknown
   account or database ends with exit 1 and a clear message. The output names the account, the number of sessions,
   identity links and API keys and the replacement name — no address, no secret.
 - Occasion: an acceptance test with a test account on an OIDC-only instance left a local account behind, and the CLI
   had no way to remove it. Test: `tests/test_cli_delete.py`.
 - Mutations (real runs): the command bent to `Store.delete_user` -> the audit checks turn red; protection rule
-  removed -> the owner check turns red; `--ja`/terminal check removed -> the "no terminal" check turns red.
+  removed -> the owner check turns red; `--yes`/terminal check removed -> the "no terminal" check turns red.
 
 ### Fixed — `next` on the login page travels as one query value (B-4)
 
@@ -76,7 +76,7 @@ code or in any existing tier** — this is new promise, measured by `tests/test_
   encoded `..%253b` stay closed; backslash, NUL, `%2e %2f %5c %00` and the case rule are unchanged. Tests:
   `tests/test_gate_caddy.py` (real Caddy, both templates), `tests/test_gate.py` (both templates carry the same filter).
 - **Migration:** whoever copied the template into their own Caddyfile must take over the changed `not vars_regexp`
-  line in the `@share` block. Without `TS_SHARE_PRAEFIX` (exception off) nothing changes.
+  line in the `@share` block. Without `TS_SHARE_PREFIX` (exception off) nothing changes.
 
 ### Security — authlib floor 1.9.1, setuptools 84.2.1, log filter for CodeQL
 

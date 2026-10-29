@@ -10,7 +10,7 @@
     unlock --db auth.db <user>       lift a brute-force lockout
     owner --db auth.db <user>        make an account an owner (emergency route)
     rename --db auth.db <old> <new>  rename an account (resolve an identifier collision)
-    delete --db auth.db <user>       delete an account (asks; --ja for scripts; not an owner)
+    delete --db auth.db <user>       delete an account (asks; --yes for scripts; not an owner)
     gate-key --db auth.db            public key of the gate tokens (for the proxy, ADR-9)
 
 Deliberately lean. TinySesam does not install itself — an auth module that reloads
@@ -179,7 +179,7 @@ def _restore(argv) -> int:
                "This command removes both files before it replaces.")
     ap.add_argument("quelle", help="the backup file")
     ap.add_argument("--db", required=True, help="target: the service's database")
-    ap.add_argument("--ja", action="store_true", help="do not ask for confirmation (for scripts)")
+    ap.add_argument("--yes", action="store_true", help="do not ask for confirmation (for scripts)")
     a = ap.parse_args(argv)
     import os
     import shutil
@@ -210,7 +210,7 @@ def _restore(argv) -> int:
         return 1
 
     print(f"Backup: {a.quelle} — {konten} accounts, schema {stand}, integrity_check ok")
-    if os.path.exists(a.db) and not a.ja:
+    if os.path.exists(a.db) and not a.yes:
         print(f"This overwrites {a.db}. The service must be STOPPED.")
         if input("Continue? [y/N] ").strip().lower() not in ("j", "ja", "y", "yes"):
             print("Aborted.")
@@ -467,13 +467,13 @@ def _delete(argv) -> int:
         epilog="The same route and the same protection rules as the panel's \"Delete\" (H-13): "
                "credentials, sessions and identities go, the sign-in attempts under name and address "
                "go, and the name in the audit log becomes deleted#<id> — the rows themselves stay. "
-               "An owner and the last admin are not deleted. Without --ja the command asks, and "
+               "An owner and the last admin are not deleted. Without --yes the command asks, and "
                "without a terminal it refuses. A raw DELETE in the database is the wrong way: it "
                "leaves the name in every audit row.")
     ap.add_argument("username", help="username of the account, or #<id> (the user_id from the "
                                      "startup message — for a name that cannot be typed in)")
     ap.add_argument("--db", required=True, help="path to the TinySesam database")
-    ap.add_argument("--ja", action="store_true", help="do not ask for confirmation (for scripts)")
+    ap.add_argument("--yes", action="store_true", help="do not ask for confirmation (for scripts)")
     a = ap.parse_args(argv)
     store = _oeffne(a.db)
     if store is None:
@@ -508,10 +508,10 @@ def _delete(argv) -> int:
     name = _z(konto["username"])
     umfang = (f"{n_sitzungen} session(s), {n_identitaeten} identity link(s), "
               f"{n_schluessel} API key(s)")
-    if not a.ja:
-        # Without a person to answer there is no confirmation: a script has to say --ja.
+    if not a.yes:
+        # Without a person to answer there is no confirmation: a script has to say --yes.
         if not sys.stdin.isatty():
-            print("Not a terminal and no --ja — nothing deleted.", file=sys.stderr)
+            print("Not a terminal and no --yes — nothing deleted.", file=sys.stderr)
             return 1
         print(f"This deletes the account '{name}' (id {uid}) with {umfang}. "
               "The service may keep running.")
@@ -607,7 +607,7 @@ def main(argv=None):
               "       python -m tinysesam unlock --db <file> <user>\n"
               "       python -m tinysesam owner  --db <file> <user>\n"
               "       python -m tinysesam rename --db <file> <user> <new-name>\n"
-              "       python -m tinysesam delete --db <file> <user> [--ja]\n"
+              "       python -m tinysesam delete --db <file> <user> [--yes]\n"
               "       python -m tinysesam gate-key --db <file>",
               file=sys.stdout if hilfe else sys.stderr)
         sys.exit(0 if hilfe else 2)
