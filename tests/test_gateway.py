@@ -190,5 +190,60 @@ hstore.db = old_db
 ok(f"/healthz: 200 probes → {_writes} commit(s); a dead connection is still noticed immediately")
 os.remove(hdb)
 
+# ---------- B-5: a forward-auth check with `Upgrade: websocket` is a plain HTTP request ----------
+# Through a REAL uvicorn with the gateway's own configuration: where `websockets` is installed, uvicorn's default
+# (`ws="auto"`) took the check for a handshake and answered 403. uvicorn is the extra `gateway`: without it
+# (job `minimal`) this part has nothing to start.
+import base64
+import http.client as _http
+import threading as _threading
+import time as _time
+
+
+def _b5_real_uvicorn(uvicorn):
+    caught = []
+    h = _logging.Handler(); h.emit = lambda rec: caught.append(rec.getMessage())
+    uv_log = _logging.getLogger("uvicorn.error")
+    server = uvicorn.Server(gateway._server_config(gateway.build_app(cfg), "127.0.0.1", 0))
+    uv_log.addHandler(h)
+    thread = _threading.Thread(target=server.run, daemon=True)
+    thread.start()
+    try:
+        deadline = _time.monotonic() + 20
+        while not server.started:
+            assert _time.monotonic() < deadline and thread.is_alive(), "uvicorn did not start"
+            _time.sleep(0.05)
+        port = server.servers[0].sockets[0].getsockname()[1]
+
+        def status(path, headers):
+            conn = _http.HTTPConnection("127.0.0.1", port, timeout=10)
+            conn.request("GET", path, headers=headers)
+            resp = conn.getresponse(); resp.read(); conn.close()
+            return resp.status
+
+        fwd = {"X-Forwarded-Proto": "https", "X-Forwarded-Host": "app.example.com", "X-Forwarded-Uri": "/chat"}
+        ws = {"Connection": "Upgrade", "Upgrade": "websocket", "Sec-WebSocket-Version": "13",
+              "Sec-WebSocket-Key": base64.b64encode(os.urandom(16)).decode()}   # a nonce, like a browser sends
+        plain = status("/auth/forward", fwd)
+        assert plain == 401, plain
+        assert status("/auth/forward", {**fwd, **ws}) == plain, "forward auth with Upgrade header differs"
+        assert status("/healthz", ws) == 200
+        uv_log.warning("another uvicorn warning")          # the filter drops only the upgrade pair
+        assert not any(m.startswith(gateway._UPGRADE_WARNINGS) for m in caught), caught
+        assert "another uvicorn warning" in caught, caught
+    finally:
+        server.should_exit = True
+        thread.join(10)
+        uv_log.removeHandler(h)
+
+
+try:
+    import uvicorn as _uvicorn
+except ImportError:
+    print("  - B-5 skipped: uvicorn (extra `gateway`) not installed")
+else:
+    _b5_real_uvicorn(_uvicorn)
+    ok("B-5: forward auth with Upgrade: websocket answers like without (401, no 403), upgrade warnings dropped")
+
 os.remove(db)
 print("\nOIDC-GATEWAY OK ✅")

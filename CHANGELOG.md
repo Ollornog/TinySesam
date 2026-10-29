@@ -4,6 +4,17 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+### Fixed — gateway: forward auth of WebSocket apps with a WebSocket library installed (B-5)
+
+A forward-auth check of a WebSocket app arrives with the client's `Upgrade: websocket` (Caddy copies the headers).
+With `websockets` or `wsproto` installed (e.g. `uvicorn[standard]`), uvicorn took it for a handshake and answered
+**403** — the app was locked out. The gateway image had no such library, so it answered correctly, but logged
+"Unsupported upgrade request" and "No supported WebSocket library detected" for every WebSocket connection.
+`python -m tinysesam.gateway` now starts uvicorn with `ws="none"` and drops exactly these two warnings; your own
+invocation needs `uvicorn tinysesam.gateway:app --ws none` (README, `--help`). Test `tests/test_gateway.py` through
+a real uvicorn: the check with and without `Upgrade` header answers 401, the warnings are gone, other warnings stay.
+Mutations: `ws="auto"` → 403, red; filter not installed → red.
+
 ### Changed — English string literals (T-29 follow-up)
 
 PO decision 2026-10-29: English also in the string literals — log, error and output texts, test data, embedded code.

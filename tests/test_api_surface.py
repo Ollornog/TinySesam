@@ -1818,6 +1818,15 @@ def self_check_contract(now: dict) -> None:
     check("log.loggers", CT.loggers_static,
            bent("security.py", 'getLogger("tinysesam.security")', 'getLogger("tinysesam.sec")'),
            "tinysesam.security", "tinysesam.sec")
+    # uvicorn's logger (B-5) is foreign, not a promised name; any other foreign name is refused, not ignored.
+    assert "uvicorn.error" not in CT.loggers_static(sources), "a foreign logger counted as a promised name"
+    for name in ("tinysesm.security", "uvicorn.access"):
+        try:
+            CT.loggers_static(bent("gateway.py", 'getLogger("uvicorn.error")', f'getLogger("{name}")'))
+        except CT.MeasurementError:
+            pass
+        else:
+            raise AssertionError(f"{name}: the logger scan let a name outside tinysesam* through")
     log = lambda q: CT.log_atoms(q, security.NOT_LOGIN_METHODS)           # noqa: E731
     # A shape produced by ONE call site: bending that site makes it disappear. (A shape several sites produce,
     # such as `failed login | user ip method reason`, survives bending one of them on purpose: merging or
