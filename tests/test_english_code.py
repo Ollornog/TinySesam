@@ -40,7 +40,7 @@ After the identifiers and the database names were renamed, this guard keeps it t
      `Store.RENAMED_*`, `Store.KEY_KINDS_OLD`, `Store._english_names` (`oidc_widerruf`, `kein_konto`), a single old
      key before `=` (`akteur=`), and the code that defines or reads them (`old_value_nodes`); the three tests whose
      INPUT is the old data (`OLD_DATA_TESTS`);
-   * names that the kit dictates (`_KIT_NAMES`, its identifier-like strings with an underscore), the HMAC domain
+   * names that the kit dictates (`KIT_NAMES`, its identifier-like strings with an underscore), the HMAC domain
      label `PROTOCOL_CONSTANTS`, and the guards' own probes and word lists (`GUARD_FILES`: German on purpose).
 
 Explicit and small exceptions (everything else is a finding):
@@ -310,7 +310,7 @@ GUARD_FILES = ("tests/test_english_code.py", "tests/_german_words.py", "tests/te
 #: convention (`status: offen`), and the German OUTPUT of the kit's report
 #: (`FEHL <check>`, `<n> ok, <n> Fehler, <n> übersprungen` from `tests/_kit/report.py`, `uebersprungen: <reason>` from
 #: `tests/voraussetzung.py`), which `tests/run_all.py` reads and `tests/test_runner.py` imitates.
-_KIT_NAMES = re.compile(r"CI_KERNE|PFLICHT_WORKFLOWS|[\w./-]*(?:_nur_text|_residue_check|nur-text-verengung)[\w./-]*"
+KIT_NAMES = re.compile(r"CI_KERNE|PFLICHT_WORKFLOWS|[\w./-]*(?:_nur_text|_residue_check|nur-text-verengung)[\w./-]*"
                         r"|--seit\b|\bstatus: offen\b|\bFEHL\b|\b\d+ ok, \d+ Fehler\b|, \d+ übersprungen\b|\buebersprungen:")
 #: Tests whose INPUT is the old German data (audit lines, key kinds, table and column names of the old schema, free text of
 #: the old messages): whole files, because the fixtures are the subject — they are the tests that prove the migrations.
@@ -325,27 +325,27 @@ PROTOCOL_CONSTANTS = frozenset({"tinysesam/passwort-wiederholung/v1"})
 ENGLISH_STRING_TOKENS = frozenset({"typ"})
 
 
-_KIT_TOKEN_CACHE: list = []
+KIT_TOKEN_CACHE: list = []
 
 
 def kit_string_tokens() -> frozenset:
     """The identifier-like strings WITH an underscore that the shared kit defines or reads (policy keys such as
     `private_namen_sha256_16`, the cookie key `_wert`, `pruefe_cookie_flags` ...): a test string that names one of them
     cannot name it differently."""
-    if not _KIT_TOKEN_CACHE:
+    if not KIT_TOKEN_CACHE:
         found = set()
         for path in [*KIT_FILES, *(str(p.relative_to(ROOT)) for p in (ROOT / "tests" / "_kit").glob("*.py"))]:
             if path.endswith(".py"):
                 found |= {text_of(n) for n in _string_nodes(ast.parse((ROOT / path).read_text(encoding="utf-8")))
                           if "_" in text_of(n) and re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]{2,}", text_of(n))}
-        _KIT_TOKEN_CACHE.append(frozenset(found))
-    return _KIT_TOKEN_CACHE[0]
+        KIT_TOKEN_CACHE.append(frozenset(found))
+    return KIT_TOKEN_CACHE[0]
 
 
 def without_kit_tokens(value: str) -> str:
-    """`value` without the names of the kit (`_KIT_NAMES` and the identifier-like strings of the kit files)."""
+    """`value` without the names of the kit (`KIT_NAMES` and the identifier-like strings of the kit files)."""
     kit = kit_string_tokens()
-    value = _KIT_NAMES.sub(" ", value)
+    value = KIT_NAMES.sub(" ", value)
     return re.sub(r"[A-Za-z_][A-Za-z_0-9]*", lambda m: " " if m.group(0) in kit else m.group(0), value)
 
 
@@ -412,14 +412,14 @@ def german_ui_corpus() -> list:
     return out
 
 
-_GERMAN_DOCS_CACHE: list = []
+GERMAN_DOCS_CACHE: list = []
 
 
 def german_docs_text() -> str:
     """The text of the German translations (`i18n/*.de.md`): German on purpose, and read by tests that run their examples."""
-    if not _GERMAN_DOCS_CACHE:
-        _GERMAN_DOCS_CACHE.append("\n".join(p.read_text(encoding="utf-8") for p in sorted((ROOT / "i18n").glob("*.de.md"))))
-    return _GERMAN_DOCS_CACHE[0]
+    if not GERMAN_DOCS_CACHE:
+        GERMAN_DOCS_CACHE.append("\n".join(p.read_text(encoding="utf-8") for p in sorted((ROOT / "i18n").glob("*.de.md"))))
+    return GERMAN_DOCS_CACHE[0]
 
 
 def old_value_tokens() -> frozenset:
@@ -443,7 +443,7 @@ def old_value_tokens() -> frozenset:
                         try:
                             tables[t.id] = ast.literal_eval(n.value)
                         except ValueError:
-                            pass
+                            pass        # not a literal table (a regex, a computed value): only its strings count
             elif isinstance(n, ast.FunctionDef) and (path, n.name) in OLD_NAMES_ALLOWED:
                 roots.append(n)
         for root in roots:
@@ -470,8 +470,8 @@ def without_old_tokens(value: str, old_tokens) -> str:
     return re.sub(r"[\w#]+", lambda m: " " if is_old_name(value, m, old_tokens) else m.group(0), value)
 
 
-_PLACEHOLDER = re.compile(r"\{[^{}]*\}|%\([A-Za-z_]+\)[sdr]|%[sdr]|<[^<>]*>|__[A-Z_]+__")
-_CURLY_QUOTED = re.compile(r"“[^”]*”|„[^“”\"]*[“”\"]")
+PLACEHOLDER_RE = re.compile(r"\{[^{}]*\}|%\([A-Za-z_]+\)[sdr]|%[sdr]|<[^<>]*>|__[A-Z_]+__")
+CURLY_QUOTED = re.compile(r"“[^”]*”|„[^“”\"]*[“”\"]")
 
 
 def ui_words(ui_corpus) -> frozenset:
@@ -488,7 +488,7 @@ def ui_caps(ui_corpus) -> frozenset:
 def ui_fragments(ui_corpus) -> list:
     """The literal pieces of the German interface texts (a phrase of at least 6 characters, or a word of at least 16), longest first: a test string that
     contains one of them quotes the interface (`Anmelden bei {app}` is asserted as `Anmelden bei Wiki`)."""
-    pieces = {p.strip() for entry in ui_corpus for p in _PLACEHOLDER.split(entry)
+    pieces = {p.strip() for entry in ui_corpus for p in PLACEHOLDER_RE.split(entry)
               if (len(p.strip()) >= 6 and " " in p.strip()) or len(p.strip()) >= 16}
     return sorted(pieces, key=len, reverse=True)
 
@@ -513,7 +513,7 @@ def string_hits(path: str, text: str, ui_corpus=(), old_tokens=frozenset(), frag
             continue
         if text_of(n) in GERMAN_DOC_PATTERNS or text_of(n) in PROTOCOL_CONSTANTS:
             continue
-        value = _CURLY_QUOTED.sub(" ", text_of(n))
+        value = CURLY_QUOTED.sub(" ", text_of(n))
         if path.startswith("tinysesam/") and SQL_KEYWORDS.search(value) and len(value) > 12:
             value = re.sub(r"'[^']*'|--[^\n]*", " ", value)          # SQL: values and comments (as in `sql_findings`)
         if path.startswith("tests/") and "i18n/" in text and len(value.strip()) >= 8 \
@@ -787,12 +787,12 @@ for what, path, old, new in (
 _UI = german_ui_corpus()
 _OLD = old_value_tokens()
 _FR = ui_fragments(_UI)
-_PROBE_UI = ["Anmelden bei {app}", "Konto", "Passwort", "Zu viele Fehlversuche — vorübergehend gesperrt.",
+PROBE_UI = ["Anmelden bei {app}", "Konto", "Passwort", "Zu viele Fehlversuche — vorübergehend gesperrt.",
              "Achtung: NIE freigeben"]
 
 
 def probe_strings(path: str, text: str, ui=None) -> list:
-    return string_findings(path, text, _PROBE_UI if ui is None else ui, _OLD, ui_fragments(_PROBE_UI if ui is None else ui))
+    return string_findings(path, text, PROBE_UI if ui is None else ui, _OLD, ui_fragments(PROBE_UI if ui is None else ui))
 
 
 STR_BAD = {
