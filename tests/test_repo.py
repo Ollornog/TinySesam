@@ -1433,7 +1433,7 @@ print(f"  READMEs: all {len(_stufe_b)} B building blocks in the section for adva
 # The measurement is tests/test_api_surface.py; here the documentation is held against it: API.md has the
 # generated sections, both READMEs the paragraph, and docs/OPERATIONS.md names every event word and every literal
 # value of the security log and every logger — a promise the operator cannot read is no promise to them.
-for _kopf in ("## A · Attributes of `TinySesam`", "## HTTP contract", "### A · Forward and gate — for reverse proxies",
+for _kopf in ("## A · Attributes of `TinySesam`", "## HTTP contract", "### A · Forward, gate and provider paths — for reverse proxies, identity providers and the health check",
               "### B · Pages and API routes", "## A · Security log — for fail2ban and log shipping"):
     assert _kopf in _apidoc, f"API.md without section {_kopf!r} — `python3 scripts/_api_docs.py`"
 for _datei, _kopf in (("README.md", "**Beyond the Python names**"), ("i18n/README.de.md", "**Über die Python-Namen hinaus**")):

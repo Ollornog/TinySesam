@@ -28,7 +28,7 @@ The configuration fields are in [CONFIGURATION.md](CONFIGURATION.md): 172 of 173
 
 **`auth.store` is internals** (tier C): the storage layer of the built-in routes, without tier, without promise and without transition period — its methods can change with every release. What an app needs is listed below as a method of `TinySesam` (e.g. `set_disabled` instead of `auth.store.set_disabled`).
 
-**Status:** A 372 · B 151 · C 38 names.
+**Status:** A 371 · B 152 · C 38 names.
 
 ## A · Methods of `TinySesam`
 
@@ -721,9 +721,9 @@ The keys of the `details` dict per event, read from the call sites. A key that g
 
 The routes of the built-in router and the admin panel, read from the source (every route a feature flag can switch on, whether or not the extra is installed) and compared with what FastAPI reports for a probe instance. A route exists when its feature is on; the flag is the one named in [README.md](README.md). **Path and method are the promise.** Query and form parameter names are listed and guarded; the JSON bodies some routes read are not measured. `<admin>` is where the admin router is mounted (`admin_path`, default `/auth/admin`), `<oidc_callback_path>` is the field of that name.
 
-### A · Forward and gate — for reverse proxies
+### A · Forward, gate and provider paths — for reverse proxies, identity providers and the health check
 
-What a proxy (Caddy `forward_auth`, nginx `auth_request`, Traefik) and the application host's `/.tinysesam/*` paths depend on. A break here resets the 1.0 clock, like any tier-A name. The pages behind these routes (the sign-out page, the "Signed out" page) are HTML: their path, method, status and redirect target are promised, their appearance is not.
+What a proxy (Caddy `forward_auth`, nginx `auth_request`, Traefik) and the application host's `/.tinysesam/*` paths depend on, plus the paths other systems have registered by hand or poll: the OIDC callback (`<oidc_callback_path>`), the SAML ACS and metadata paths and `/healthz` (the image's health check). A break here resets the 1.0 clock, like any tier-A name. The pages behind these routes (the sign-out page, the "Signed out" page) are HTML: their path, method, status and redirect target are promised, their appearance is not.
 
 #### Routes
 
@@ -739,7 +739,11 @@ What a proxy (Caddy `forward_auth`, nginx `auth_request`, Traefik) and the appli
 | GET | `/auth/gate/logged-out` | `query:host` |
 | GET | `/auth/gate/logout` | `query:host` |
 | POST | `/auth/gate/resume` | `form:_csrf`, `form:gate_host`, `form:next` |
+| POST | `/auth/saml/acs` | — |
+| GET | `/auth/saml/metadata` | — |
 | GET | `/auth/verify` | — |
+| GET | `/healthz` | — |
+| GET | `<oidc_callback_path>` | `query:code`, `query:error`, `query:state` |
 
 #### Responses
 
@@ -773,13 +777,13 @@ Observed on probe instances; values are recorded where they are the contract (`X
 
 - **`X-TinySesam-*` headers** (request or response, see the table above): `X-TinySesam-Gate-Cookie`, `X-TinySesam-Location`, `X-TinySesam-Reason`, `X-TinySesam-Roles`.
 - **Values of `X-TinySesam-Reason`:** `app-missing`, `app-signed-out`, `app-stale`, `role` (`app-…` only with several OIDC clients).
-- **Request headers the forward and gate paths read:** `Accept`, `Authorization`, `Host`, `Referer`, `Sec-Fetch-Mode`, `Sec-Fetch-Site`, `X-Api-Key`, `X-Csrf-Token`, `X-Forwarded-For`, `X-Forwarded-Host`, `X-Forwarded-Proto`, `X-Forwarded-Uri`, `X-Original-Uri`, `X-Original-Url`, `X-TinySesam-Roles`.
+- **Request headers the forward and gate paths read** — what a proxy sets or passes on: `Authorization`, `Host`, `X-Api-Key`, `X-Forwarded-For`, `X-Forwarded-Host`, `X-Forwarded-Proto`, `X-Forwarded-Uri`, `X-Original-Uri`, `X-Original-Url`, `X-TinySesam-Roles`. The `Cookie` header is passed on as the browser sent it. Headers a browser sends on its own (`Accept`, `Referer`, `Sec-Fetch-Mode`, `Sec-Fetch-Site`, `X-Csrf-Token`) are read as well but are tier B: no proxy has to set them.
 - **Request parameters:** `roles`.
 - **Cookies the gate sets itself** (host-only, fixed names): `__Host-tinysesam_link`, `__Host-tinysesam_linkflow`. The gate token cookie is named by the configuration field `gate_cookie_name`.
 
 ### B · Pages and API routes
 
-The HTML pages (sign-in, registration, account, admin panel, the pages behind e-mailed links), the JSON routes of the account and admin APIs, the passkey, OIDC and SAML routes and the gateway's own `/` and `/healthz`. Path and method are promised with the weaker B promise: removed or renamed only after the CHANGELOG has announced it under “Deprecated” for two minor versions (a route cannot raise a Python warning). The HTML of a page is **not** promised, nor its look.
+The HTML pages (sign-in, registration, account, admin panel, the pages behind e-mailed links), the JSON routes of the account and admin APIs, the passkey, OIDC and SAML routes (except the provider paths above) and the gateway's own `/`. Path and method are promised with the weaker B promise: removed or renamed only after the CHANGELOG has announced it under “Deprecated” for two minor versions (a route cannot raise a Python warning). The HTML of a page is **not** promised, nor its look.
 
 | Method | Path | Query / form parameters |
 |---|---|---|
@@ -825,9 +829,7 @@ The HTML pages (sign-in, registration, account, admin panel, the pages behind e-
 | POST | `/auth/reset` | `form:_csrf`, `form:password`, `form:token` |
 | GET | `/auth/resource/{name}` | `query:error`, `query:next` |
 | POST | `/auth/resource/{name}` | `form:_csrf`, `form:next`, `form:secret` |
-| POST | `/auth/saml/acs` | — |
 | GET | `/auth/saml/login` | `query:next` |
-| GET | `/auth/saml/metadata` | — |
 | GET | `/auth/sessions` | — |
 | POST | `/auth/sessions/revoke` | — |
 | POST | `/auth/sessions/revoke-after-login` | — |
@@ -840,7 +842,6 @@ The HTML pages (sign-in, registration, account, admin panel, the pages behind e-
 | POST | `/auth/totp/setup/start` | `form:_csrf`, `form:next` |
 | GET | `/auth/verify/{token}` | — |
 | POST | `/auth/verify/{token}` | `form:_csrf` |
-| GET | `/healthz` | — |
 | GET | `<admin>` | — |
 | GET | `<admin>/api/audit` | `query:limit` |
 | POST | `<admin>/api/invite` | — |
@@ -865,7 +866,6 @@ The HTML pages (sign-in, registration, account, admin panel, the pages behind e-
 | POST | `<admin>/api/users/{uid}/roles` | — |
 | POST | `<admin>/api/users/{uid}/username` | — |
 | GET | `<admin>/api/version` | — |
-| GET | `<oidc_callback_path>` | `query:code`, `query:error`, `query:state` |
 
 Hints to the account page's script, tier B: `X-TinySesam-Factor`, `X-TinySesam-Reauth`.
 

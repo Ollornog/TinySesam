@@ -1655,9 +1655,19 @@ VERTRAG_BEREICHE = ("TinySesam.attributes", "TinySesam.event_payload", "http.rou
 VERTRAG_BEREICHE_A = ("TinySesam.attributes", "TinySesam.event_payload", "http.forward", "log.loggers", "log.lines")
 #: In `http.contract` everything is tier A except these — hints to the account page's script, not to proxies.
 VERTRAG_CONTRACT_NICHT_A = ("header:X-TinySesam-Factor", "header:X-TinySesam-Reauth")
+#: Request headers a BROWSER sends (PO decision 2026-10-29, "last breaking pass"): not an operator contract, because
+#: no proxy has to set or pass them on specially. They sit in tier B, and the guard refuses A for them. Tier A in
+#: `request-header:*` is what a proxy sets or passes on: `Host`, `Authorization`, `X-Api-Key`, `X-Forwarded-*`,
+#: `X-Original-Uri|Url`, `X-TinySesam-Roles` (the `Cookie` header and its names are described in OPERATIONS.md).
+VERTRAG_BROWSER_HEADER = ("request-header:Accept", "request-header:Referer", "request-header:Sec-Fetch-Mode",
+                          "request-header:Sec-Fetch-Site", "request-header:X-Csrf-Token")
 #: The paths of the forward/gate contract, tier A at least; every other route may be B (path and method).
 GATE_PFADE = ("/auth/forward", "/auth/verify")
 GATE_PRAEFIXE = ("/.tinysesam/", "/auth/gate/")
+#: Paths that other systems have registered by hand or poll — the identity provider (OIDC callback, SAML ACS and
+#: metadata) and the container health check: tier A at least (PO decision 2026-10-29). Moving one costs an operator a
+#: reconfiguration at the provider. `<oidc_callback_path>` is the configured path (`TinySesamConfig.oidc_callback_path`).
+IDP_PFADE = ("<oidc_callback_path>", "/auth/saml/acs", "/auth/saml/metadata", "/healthz")
 
 #: What the contract measurement must see at minimum — otherwise it silently measures less than it promises.
 VERTRAG_PFLICHT = (
@@ -1686,10 +1696,10 @@ def vertrag_untergrenze(bereich: str, name: str) -> "str | None":
     if bereich in VERTRAG_BEREICHE_A:
         return "A"
     if bereich == "http.contract":
-        return None if name in VERTRAG_CONTRACT_NICHT_A else "A"
+        return None if name in VERTRAG_CONTRACT_NICHT_A or name in VERTRAG_BROWSER_HEADER else "A"
     if bereich == "http.routes":
         pfad = name.split(" ", 1)[1]
-        return "A" if pfad in GATE_PFADE or pfad.startswith(GATE_PRAEFIXE) else None
+        return "A" if pfad in GATE_PFADE + IDP_PFADE or pfad.startswith(GATE_PRAEFIXE) else None
     return None
 
 
@@ -1703,6 +1713,11 @@ def vertrag_befunde(datei: dict, jetzt: dict, live_routen: "dict | None" = None,
             stufe = e.get("stufe") if isinstance(e, dict) else None
             if soll == "A" and stufe is not None and stufe != "A":
                 befunde.append(f"{bereich}.{name}: tier {stufe}, but the decision of 2026-10-29 puts it in A")
+    for name in VERTRAG_BROWSER_HEADER:
+        e = (datei.get("http.contract") or {}).get(name)
+        if isinstance(e, dict) and e.get("stufe") == "A":
+            befunde.append(f"http.contract.{name}: tier A, but a header the browser sends is no operator contract "
+                           "(decision of 2026-10-29, last breaking pass): tier B")
     for bereich, name in pflicht:
         gemessen = jetzt.get(bereich, {})
         if name not in gemessen:
@@ -1850,6 +1865,20 @@ def selbstpruefung_vertrag(jetzt: dict) -> None:
         gesenkt = json.loads(json.dumps(datei))
         gesenkt[bereich][name]["stufe"] = "B"
         assert any(f"{bereich}.{name}: tier B" in z for z in vertrag_befunde(gesenkt, jetzt)), (bereich, name)
+    # the paths the identity provider and the health check use (decision of 2026-10-29): not below A
+    for name in ("GET <oidc_callback_path>", "POST /auth/saml/acs", "GET /auth/saml/metadata", "GET /healthz"):
+        gesenkt = json.loads(json.dumps(datei))
+        gesenkt["http.routes"][name]["stufe"] = "B"
+        assert any(f"http.routes.{name}: tier B" in z for z in vertrag_befunde(gesenkt, jetzt)), name
+    # the headers a browser sends: not A (the narrowing of the same decision is held, too)
+    for name in VERTRAG_BROWSER_HEADER:
+        gehoben = json.loads(json.dumps(datei))
+        assert gehoben["http.contract"][name]["stufe"] == "B", name
+        gehoben["http.contract"][name]["stufe"] = "A"
+        assert any(f"http.contract.{name}: tier A" in z for z in vertrag_befunde(gehoben, jetzt)), name
+    assert all(datei["http.contract"][n]["stufe"] == "A" for n in jetzt["http.contract"]
+               if n.startswith("request-header:") and n not in VERTRAG_BROWSER_HEADER), \
+        "a header a proxy sets or passes on must be tier A"
     frei = json.loads(json.dumps(datei))
     frei["http.routes"]["GET /auth/login"]["stufe"] = "B"             # an HTML page: B is the decision
     frei["http.contract"]["header:X-TinySesam-Reauth"]["stufe"] = "B"
@@ -1904,10 +1933,9 @@ def deutsch_im_text(text: str) -> set:
     return funde
 
 
-#: Entries of `DEUTSCH` that are also ordinary English words in running text (`art` is "art", `weg`,
-#: `wert` are not — but the list is checked against the real log texts, a hit there is a finding).
-ENGLISCH_IM_TEXT = frozenset({"art", "basis", "seit", "feld", "zeit", "seite", "pfad", "ziel", "liste",
-                              "frist", "tage", "grund", "jetzt", "bis", "leer", "mensch", "konto", "name"})
+#: Entries of `DEUTSCH` that are also ordinary English words in running text (`art`, `basis`); every other word
+#: of `DEUTSCH` counts as German in a log text, and a false hit there is a finding about the list.
+ENGLISCH_IM_TEXT = frozenset({"art", "basis"})
 
 
 def log_texte(quellen: dict) -> list:

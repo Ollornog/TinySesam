@@ -308,9 +308,12 @@ def vertrag_abschnitte(datei: dict) -> str:
         "listed and guarded; the JSON bodies some routes read are not measured. `<admin>` is where the admin "
         "router is mounted (`admin_path`, default `/auth/admin`), `<oidc_callback_path>` is the field of that "
         "name.\n\n")
-    t.append("### A · Forward and gate — for reverse proxies\n\n"
+    t.append("### A · Forward, gate and provider paths — for reverse proxies, identity providers and the "
+             "health check\n\n"
              "What a proxy (Caddy `forward_auth`, nginx `auth_request`, Traefik) and the application host's "
-             "`/.tinysesam/*` paths depend on. A break here resets the 1.0 clock, like any tier-A name. The "
+             "`/.tinysesam/*` paths depend on, plus the paths other systems have registered by hand or poll: the "
+             "OIDC callback (`<oidc_callback_path>`), the SAML ACS and metadata paths and `/healthz` (the image's "
+             "health check). A break here resets the 1.0 clock, like any tier-A name. The "
              "pages behind these routes (the sign-out page, the \"Signed out\" page) are HTML: their path, "
              "method, status and redirect target are promised, their appearance is not.\n\n"
              "#### Routes\n\n" + _route_tabelle(datei, "A"))
@@ -325,15 +328,18 @@ def vertrag_abschnitte(datei: dict) -> str:
              + ", ".join(f"`{h}`" for h in kopf_a) + ".\n")
     t.append("- **Values of `X-TinySesam-Reason`:** " + ", ".join(f"`{r}`" for r in _atome(datei, "reason", "A"))
              + " (`app-…` only with several OIDC clients).\n")
-    t.append("- **Request headers the forward and gate paths read:** "
-             + ", ".join(f"`{h}`" for h in _atome(datei, "request-header", "A")) + ".\n")
+    t.append("- **Request headers the forward and gate paths read** — what a proxy sets or passes on: "
+             + ", ".join(f"`{h}`" for h in _atome(datei, "request-header", "A"))
+             + ". The `Cookie` header is passed on as the browser sent it. Headers a browser sends on its own "
+             "(" + ", ".join(f"`{h}`" for h in _atome(datei, "request-header", "B"))
+             + ") are read as well but are tier B: no proxy has to set them.\n")
     t.append("- **Request parameters:** " + ", ".join(f"`{p}`" for p in _atome(datei, "request-param", "A")) + ".\n")
     t.append("- **Cookies the gate sets itself** (host-only, fixed names): "
              + ", ".join(f"`{c}`" for c in _atome(datei, "cookie", "A"))
              + ". The gate token cookie is named by the configuration field `gate_cookie_name`.\n\n")
     t.append(f"### B · Pages and API routes\n\nThe HTML pages (sign-in, registration, account, admin panel, the "
              f"pages behind e-mailed links), the JSON routes of the account and admin APIs, the passkey, OIDC "
-             f"and SAML routes and the gateway's own `/` and `/healthz`. Path and method are promised with the "
+             f"and SAML routes (except the provider paths above) and the gateway's own `/`. Path and method are promised with the "
              f"weaker B promise: removed or renamed only after the CHANGELOG has announced it under “Deprecated” "
              f"for two minor versions (a route cannot raise a Python warning). The HTML of a page is **not** "
              f"promised, nor its look.\n\n"
