@@ -238,7 +238,7 @@ def trigger_problems(path: str) -> list:
             con.execute("INSERT INTO users(username, created_at, folded_name) VALUES ('x', 1, 'alice')")
             problem.append("identifier trigger: a colliding bucket was accepted")
         except sqlite3.IntegrityError:
-            pass
+            pass        # expected: the identifier trigger rejects the collision
         con.execute("UPDATE users SET username = 'bobby' WHERE id = 2")
         row = con.execute("SELECT folded_name, name_attempt_from FROM users WHERE id = 2").fetchone()
         if row[0] is not None or row[1] is None:
@@ -320,7 +320,7 @@ try:
         result_d = "started"
     except sqlite3.OperationalError as error:
         result_d = "OperationalError"
-        error_d = str(error)
+        assert str(error)
 finally:
     sqlite3.connect = connection
 r.check("(D) a read-only file with old names: the start fails with an OperationalError (the new code needs the new "

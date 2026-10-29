@@ -377,7 +377,7 @@ if _extra_da("webauthn"):
 
     with _Recording() as m:
         _passkey_finish("gibtsnicht")
-    to = _expect([z for z in m.lines() if "method=passkey" in z], JAIL, IP4, reason="unknown_key",
+    _expect([z for z in m.lines() if "method=passkey" in z], JAIL, IP4, reason="unknown_key",
                   was="passkey unknown key")
     ok("(2) passkey, unknown key: `failed login ... method=passkey reason=unknown_key` hits the login jail")
     with _Recording() as m:
@@ -423,7 +423,7 @@ if _extra_da("authlib"):
     with _Recording() as m:
         response = _sso_login()
     assert response.status_code == 403, response.status_code
-    zo = _expect([z for z in m.lines() if "method=oidc" in z], JAIL, IP5, reason="account_locked",
+    _expect([z for z in m.lines() if "method=oidc" in z], JAIL, IP5, reason="account_locked",
                   was="SSO locked account")
     ok("(2) SSO, locked account: `failed login ... method=oidc reason=account_locked` hits the login jail")
 else:
