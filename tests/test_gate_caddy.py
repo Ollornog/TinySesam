@@ -1,14 +1,14 @@
-"""Gate-Token durch einen ECHTEN Caddy mit caddy-jwt — die Vorlage deploy/forward-auth/Caddyfile.gate.
+"""Gate token through a REAL Caddy with caddy-jwt — the template deploy/forward-auth/Caddyfile.gate.
 
-Die Behauptung von ADR-9 ist eine über den Proxy: Mit gültigem Gate-Cookie erreicht eine Anfrage
-die Anwendung, ohne dass TinySesam gefragt wird. Das lässt sich nur mit dem Proxy selbst belegen.
-Gestartet werden TinySesam (uvicorn), eine Attrappe der Anwendung, die zurückmeldet, was bei ihr
-ankommt, und Caddy mit der Vorlage aus dem Repo — Wort für Wort, nur die Site-Adressen zeigen auf
-einen freien Port und `auto_https` ist aus.
+The claim of ADR-9 is one about the proxy: with a valid gate cookie a request reaches
+the application without TinySesam being asked. That can only be proven with the proxy itself.
+Started are TinySesam (uvicorn), a dummy of the application that reports back what arrives
+at it, and Caddy with the template from the repo — word for word, only the site addresses point to
+a free port and `auto_https` is off.
 
-Caddy mit dem Plugin kommt aus TINYSESAM_GATE_CADDY (Pfad zur Binärdatei). Der CI-Job `gate-caddy`
-baut sie aus deploy/forward-auth/caddy-gate/Dockerfile und setzt die Variable — ist sie gesetzt,
-ist die Binärdatei Pflicht. Ohne Variable meldet die Suite „übersprungen" mit Grund.
+Caddy with the plugin comes from TINYSESAM_GATE_CADDY (path to the binary). The CI job `gate-caddy`
+builds it from deploy/forward-auth/caddy-gate/Dockerfile and sets the variable — if it is set,
+the binary is required. Without the variable the suite reports “skipped” with a reason.
 """
 import base64
 import http.server
@@ -28,13 +28,13 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from voraussetzung import braucht, braucht_modul  # noqa: E402
 
 CADDY = os.environ.get("TINYSESAM_GATE_CADDY", "")
-braucht(CADDY, "TINYSESAM_GATE_CADDY nicht gesetzt — Caddy mit caddy-jwt fehlt "
-               "(bauen: deploy/forward-auth/caddy-gate/Dockerfile)")
+braucht(CADDY, "TINYSESAM_GATE_CADDY not set — Caddy with caddy-jwt missing "
+               "(build: deploy/forward-auth/caddy-gate/Dockerfile)")
 braucht_modul("uvicorn")
-# Gesetzt heisst Pflicht: Ein falscher Pfad oder ein Caddy ohne Plugin ist ein Fehler, kein Skip.
-assert os.access(CADDY, os.X_OK), f"TINYSESAM_GATE_CADDY={CADDY!r} ist keine ausführbare Datei"
+# Set means required: a wrong path or a Caddy without the plugin is an error, not a skip.
+assert os.access(CADDY, os.X_OK), f"TINYSESAM_GATE_CADDY={CADDY!r} is not an executable file"
 _module = subprocess.run([CADDY, "list-modules"], capture_output=True, text=True, timeout=30).stdout
-assert "http.authentication.providers.jwt" in _module.split(), "dieser Caddy hat caddy-jwt nicht"
+assert "http.authentication.providers.jwt" in _module.split(), "this Caddy does not have caddy-jwt"
 
 import uvicorn  # noqa: E402
 from fastapi import FastAPI, Request  # noqa: E402
@@ -85,7 +85,7 @@ _ts_server = uvicorn.Server(uvicorn.Config(ts_app, log_level="critical"))
 threading.Thread(target=lambda: _ts_server.run(sockets=[_ts_sock]), daemon=True).start()
 
 
-# ---------- Attrappe der Anwendung: meldet zurück, was bei ihr ankommt ----------
+# ---------- Dummy of the application: reports back what arrives at it ----------
 class Anwendung(http.server.BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
@@ -117,19 +117,19 @@ for _ in range(100):
     except Exception:
         time.sleep(0.1)
 else:
-    raise RuntimeError("TinySesam startet nicht")
+    raise RuntimeError("TinySesam does not start")
 FORWARD["n"] = 0
 
 
-# ---------- Caddy mit der Vorlage aus dem Repo ----------
-#: Öffentliche Pfade für diesen Lauf (T-20) — wie ein Betreiber sie setzen würde.
+# ---------- Caddy with the template from the repo ----------
+#: Public paths for this run (T-20) — the way an operator would set them.
 SHARE = "^/(s|public/share)/"
 
 
 def caddy_starten():
-    """Caddy braucht einen Port, den es selbst bindet — ein gebundener Socket lässt sich nicht
-    übergeben. Also einen freien suchen, freigeben und Caddy binden lassen; scheitert das (ein
-    anderer Prozess war schneller), mit dem nächsten noch einmal."""
+    """Caddy needs a port that it binds itself — a bound socket cannot be
+    passed on. So find a free one, release it and let Caddy bind; if that fails (another
+    process was faster), try again with the next one."""
     vorlage = (ROOT / "deploy/forward-auth/Caddyfile.gate").read_text(encoding="utf-8")
     for _ in range(5):
         s = socket.socket()
@@ -139,7 +139,7 @@ def caddy_starten():
         text = "{\n\tauto_https off\n\tadmin off\n}\n" + vorlage
         text = text.replace("\nauth.example.com {", f"\nhttp://auth.example.com:{port} {{", 1)
         text = text.replace("\napp.example.com {", f"\nhttp://app.example.com:{port} {{", 1)
-        assert text.count(f":{port} {{") == 2, "die Site-Adressen der Vorlage haben sich verschoben"
+        assert text.count(f":{port} {{") == 2, "the site addresses of the template have shifted"
         datei = os.path.join(_tmp, "Caddyfile")
         with open(datei, "w", encoding="utf-8") as f:
             f.write(text)
@@ -147,8 +147,8 @@ def caddy_starten():
                "TS_SHARE_PRAEFIX": SHARE,
                "TS_AUTH_UPSTREAM": TS, "TS_APP_UPSTREAM": APP, "XDG_DATA_HOME": _tmp,
                "XDG_CONFIG_HOME": _tmp}
-        # Popen gibt dem Kind eine eigene Kopie des Datei-Deskriptors — die des Elternprozesses
-        # darf gleich wieder zu.
+        # Popen gives the child its own copy of the file descriptor — the parent process's one
+        # may be closed right away.
         with open(os.path.join(_tmp, "caddy.log"), "w") as log:
             p = subprocess.Popen([CADDY, "run", "--config", datei, "--adapter", "caddyfile"],
                                  stdout=log, stderr=subprocess.STDOUT, env=umg)
@@ -162,7 +162,7 @@ def caddy_starten():
                 time.sleep(0.1)
         p.kill()
     with open(os.path.join(_tmp, "caddy.log"), encoding="utf-8", errors="replace") as log:
-        raise RuntimeError("Caddy startet nicht: " + log.read()[-2000:])
+        raise RuntimeError("Caddy does not start: " + log.read()[-2000:])
 
 
 _caddy, PORT = caddy_starten()
@@ -177,7 +177,7 @@ _oeffner = urllib.request.build_opener(_OhneUmleitung)
 
 
 def anfrage(pfad, cookies=None, kopf=None, methode="GET", body=None):
-    """Eine Anfrage an Caddy, Host app.example.com. Rückgabe (Status, Header, JSON der Attrappe)."""
+    """A request to Caddy, host app.example.com. Returns (status, headers, JSON of the dummy)."""
     h = {"Host": f"app.example.com:{PORT}", **(kopf or {})}
     if cookies:
         h["Cookie"] = "; ".join(f"{k}={v}" for k, v in cookies.items())
@@ -202,18 +202,18 @@ def gate_cookie(header):
 
 
 def utf8(wert):
-    """Header kommen bei http.client als Latin-1 an; TinySesam schickt UTF-8 über die Leitung."""
+    """Headers arrive as Latin-1 with http.client; TinySesam sends UTF-8 over the wire."""
     return wert.encode("latin-1").decode("utf-8") if wert is not None else None
 
 
 try:
-    # ---------- ohne Anmeldung ----------
+    # ---------- without sign-in ----------
     st, h, _ = anfrage("/start")
     assert st == 302 and "/auth/login?next=" in h["Location"], (st, dict(h))
     assert FORWARD["n"] == 1
-    ok("ohne Anmeldung → 302 zum Login (Rückweg über /auth/forward)")
+    ok("without sign-in → 302 to the login (way back via /auth/forward)")
 
-    # ---------- Sitzung, noch kein Gate-Cookie: Rückweg, neues Token ----------
+    # ---------- session, no gate cookie yet: way back, new token ----------
     from fastapi.testclient import TestClient  # noqa: E402
     tc = TestClient(ts_app)
     tc.post("/auth/login", data={"username": "anna", "password": "geheim123", "next": "/"},
@@ -225,35 +225,35 @@ try:
     assert st == 200, st
     assert FORWARD["n"] == vorher + 1
     tok = gate_cookie(h)
-    assert tok, f"kein Gate-Cookie in der Antwort: {h.get_all('Set-Cookie')}"
-    assert "app_eigen=1; Path=/" in (h.get_all("Set-Cookie") or []), "das Cookie der Anwendung fehlt"
+    assert tok, f"no gate cookie in the response: {h.get_all('Set-Cookie')}"
+    assert "app_eigen=1; Path=/" in (h.get_all("Set-Cookie") or []), "the application's cookie is missing"
     assert a["methode"] == "POST" and a["body"] == "feld=wert", a
     assert a["header"].get("Remote-User") == "anna", a["header"]
     assert "tinysesam" not in (a["header"].get("Cookie") or ""), a["header"].get("Cookie")
-    ok("Sitzung ohne Gate-Cookie → Rückweg: 200, POST samt Body, neues Gate-Cookie, "
-       "Remote-User vom Browser überschrieben, TinySesam-Cookies entfernt")
+    ok("session without gate cookie → way back: 200, POST including body, new gate cookie, "
+       "Remote-User from the browser overwritten, TinySesam cookies removed")
 
-    # ---------- mit Gate-Cookie: TinySesam wird nicht gefragt ----------
+    # ---------- with gate cookie: TinySesam is not asked ----------
     mit_gate = {**sitzung, "__Host-tinysesam_gate": tok, "andere": "1"}
     vorher = FORWARD["n"]
     for i in range(10):
         st, h, a = anfrage(f"/asset-{i}.js", mit_gate, {"Remote-User": "admin", "Remote-Groups": "admin",
                                                          "Remote-Email": "chef@example.com"})
         assert st == 200 and a["pfad"] == f"/asset-{i}.js", (st, a)
-    assert FORWARD["n"] == vorher, f"{FORWARD['n'] - vorher} Aufrufe bei TinySesam trotz gültigem Gate-Cookie"
+    assert FORWARD["n"] == vorher, f"{FORWARD['n'] - vorher} calls to TinySesam despite a valid gate cookie"
     hd = a["header"]
     assert hd.get("Remote-User") == "anna" and hd.get("Remote-Groups") == "redaktion", hd
     assert utf8(hd.get("Remote-Name")) == "Anna Ärger", hd.get("Remote-Name")
     assert hd.get("Remote-Id") == str(uid), hd
-    # Anna hat keine Adresse — der Claim ist leer. Die Adresse aus dem Browser darf trotzdem nicht
-    # durchkommen: Dafür entfernt die Vorlage jeden Remote-* der Anfrage, bevor sie ihn setzt.
+    # Anna has no address — the claim is empty. The address from the browser must still not
+    # get through: for that the template removes every Remote-* of the request before it sets it.
     assert hd.get("Remote-Email", "") == "", hd.get("Remote-Email")
     assert hd.get("Cookie") == "andere=1", hd.get("Cookie")
-    assert gate_cookie(h) is None, "auf dem schnellen Weg wird kein neues Token ausgestellt"
-    ok("gültiges Gate-Cookie → 10 Anfragen bei der Anwendung, 0 bei TinySesam; Identität aus dem "
-       "Token (UTF-8 wie bei /auth/forward), Remote-* vom Browser überschrieben, Gate-Cookie entfernt")
+    assert gate_cookie(h) is None, "no new token is issued on the fast path"
+    ok("valid gate cookie → 10 requests at the application, 0 at TinySesam; identity from the "
+       "token (UTF-8 as with /auth/forward), Remote-* from the browser overwritten, gate cookie removed")
 
-    # ---------- jede Verfälschung fällt auf den Rückweg ----------
+    # ---------- every forgery falls back to the way back ----------
     jetzt = int(time.time())
     basis = gate.pruefen(base64.b64decode(auth.gate_public_key()), tok, aud="app.example.com",
                          iss=ISS, jetzt=jetzt)
@@ -267,45 +267,45 @@ try:
     assert anfrage("/x", {"__Host-tinysesam_gate": signiert()})[0] == 200, "Gegenprobe: frisch signiert"
     k, i, s = tok.split(".")
     faelle = {
-        # Ein BYTE der Signatur kippen, nicht die letzten Zeichen ersetzen: Die letzten Base64-Zeichen
-        # tragen Füllbits, und `…AA` statt `…AB` ist mitunter dieselbe Signatur (1 in 256 Läufen).
-        "Signatur verändert": f"{k}.{i}." + gate._b64u(bytes([gate._b64u_lesen(s)[0] ^ 1]) + gate._b64u_lesen(s)[1:]),
+        # Flip a BYTE of the signature, do not replace the last characters: the last base64 characters
+        # carry padding bits, and `…AA` instead of `…AB` is sometimes the same signature (1 in 256 runs).
+        "signature altered": f"{k}.{i}." + gate._b64u(bytes([gate._b64u_lesen(s)[0] ^ 1]) + gate._b64u_lesen(s)[1:]),
         "alg none": base64.urlsafe_b64encode(b'{"alg":"none"}').rstrip(b"=").decode() + f".{i}.",
-        "fremder Schlüssel": signiert(schluessel=gate.schluessel_ableiten(b"\x00" * 32)),
-        "abgelaufen": signiert(jetzt_=jetzt - 400),
-        "anderer Aussteller": signiert(iss="https://evil.example"),
-        "andere Zielgruppe": signiert(aud="wiki.example.com"),
-        "Zielgruppe mit Rollen an einem Pfad ohne": signiert(aud="app.example.com|roles=admin"),
+        "foreign key": signiert(schluessel=gate.schluessel_ableiten(b"\x00" * 32)),
+        "expired": signiert(jetzt_=jetzt - 400),
+        "other issuer": signiert(iss="https://evil.example"),
+        "other audience": signiert(aud="wiki.example.com"),
+        "audience with roles on a path without": signiert(aud="app.example.com|roles=admin"),
     }
     for was, falsch in faelle.items():
         vorher = FORWARD["n"]
         st, h, _ = anfrage("/x", {"__Host-tinysesam_gate": falsch}, {"Remote-User": "admin"})
         assert st == 302 and FORWARD["n"] == vorher + 1, (was, st)
-    ok(f"{len(faelle)} verfälschte Gate-Cookies → Rückweg, ohne Sitzung 302 (die Gegenprobe kommt durch)")
+    ok(f"{len(faelle)} forged gate cookies → way back, without session 302 (the counter-check gets through)")
 
-    # Mit Sitzung ersetzt der Rückweg ein abgelaufenes Token durch ein neues.
-    st, h, _ = anfrage("/x", {**sitzung, "__Host-tinysesam_gate": faelle["abgelaufen"]})
-    assert st == 200 and gate_cookie(h) and gate_cookie(h) != faelle["abgelaufen"]
-    ok("abgelaufenes Token + Sitzung → 200 und ein neues Gate-Cookie")
+    # With a session the way back replaces an expired token with a new one.
+    st, h, _ = anfrage("/x", {**sitzung, "__Host-tinysesam_gate": faelle["expired"]})
+    assert st == 200 and gate_cookie(h) and gate_cookie(h) != faelle["expired"]
+    ok("expired token + session → 200 and a new gate cookie")
 
-    # ---------- Abmelden an der Anwendung (T-22): /.tinysesam/* geht am Gate vorbei ----------
+    # ---------- Signing out at the application (T-22): /.tinysesam/* bypasses the gate ----------
     vorher = FORWARD["n"]
     st, h, _ = anfrage("/.tinysesam/logout?scope=app", sitzung)
     assert st == 303 and h["Location"] == "/", (st, dict(h))
     assert any(v.startswith("__Host-tinysesam_gate=;") and "Max-Age=0" in v for v in h.get_all("Set-Cookie") or []), \
         h.get_all("Set-Cookie")
-    assert FORWARD["n"] == vorher, "der Abmelde-Weg darf nicht durch das Gate (es gibt keine Anmeldung zu prüfen)"
+    assert FORWARD["n"] == vorher, "the sign-out path must not go through the gate (there is no sign-in to check)"
     st, h, _ = anfrage("/seite", sitzung)
     assert st == 302 and "/auth/login?next=" in h["Location"], (st, dict(h))
-    ok("/.tinysesam/logout?scope=app durch Caddy: am Gate vorbei, Gate-Cookie gelöscht, danach 302 zur Login-Seite")
+    ok("/.tinysesam/logout?scope=app through Caddy: past the gate, gate cookie deleted, then 302 to the login page")
     tc.post("/auth/gate/resume", data={"next": f"http://app.example.com:{PORT}/seite"}, follow_redirects=False)
     assert anfrage("/seite", sitzung)[0] == 200
-    ok("„Weiter als …“ → die Anwendung lässt wieder durch")
+    ok("“Continue as …” → the application lets through again")
 
-    # ---------- Share-Ausnahme (T-20): öffentlich nur der Präfix, ohne Pfad-Tricks ----------
+    # ---------- Share exception (T-20): public only the prefix, without path tricks ----------
     def roh(pfad, kopf=None):
-        """Wie `anfrage`, aber der Pfad geht UNVERÄNDERT auf die Leitung (http.client normalisiert
-        nichts) — sonst prüfte der Test die Pfad-Tricks gar nicht."""
+        """Like `anfrage`, but the path goes onto the wire UNCHANGED (http.client normalises
+        nothing) — otherwise the test would not check the path tricks at all."""
         import http.client
         v = http.client.HTTPConnection("127.0.0.1", PORT, timeout=10)
         v.putrequest("GET", pfad, skip_host=True)
@@ -327,8 +327,8 @@ try:
         st, a = roh(pfad, {"Remote-User": "admin", "Cookie": "tinysesam_session=GEHEIM; a=1"})
         assert st == 200 and a and a["header"].get("Remote-User") is None, (pfad, st, a and a["header"])
         assert a["header"].get("Cookie") == "a=1", (pfad, a["header"].get("Cookie"))
-    assert FORWARD["n"] == vorher, "ein Share-Pfad darf TinySesam nicht fragen"
-    ok(f"{len(offen)} Share-Pfade offen, ohne TinySesam, ohne Identität (auch keine vom Browser), ohne TinySesam-Cookies")
+    assert FORWARD["n"] == vorher, "a share path must not ask TinySesam"
+    ok(f"{len(offen)} share paths open, without TinySesam, without identity (none from the browser either), without TinySesam cookies")
 
     zu = ["/s/..;/admin", "/s/%2e%2e;/admin", "/s/abc;jsessionid=1", "/s/..%5cadmin", "/s/..\\admin",
           "/s%2f..%2fadmin", "/s/abc%00", "/x/../s/abc", "/s/../admin", "/s/./abc", "/S/abc", "//s/abc",
@@ -337,36 +337,36 @@ try:
         vorher = FORWARD["n"]
         st, _ = roh(pfad)
         assert st == 302 and FORWARD["n"] == vorher + 1, (pfad, st)
-    ok(f"{len(zu)} Pfad-Tricks und Nachbarpfade → durch das Gate (..;, %2e, %5c, NUL, /x/../s/, /S/, //s/ …)")
+    ok(f"{len(zu)} path tricks and neighbouring paths → through the gate (..;, %2e, %5c, NUL, /x/../s/, /S/, //s/ …)")
 
-    # ---------- Abnahmemuster (T-24): deploy/forward-auth/abnahme.sh gegen diesen Aufbau ----------
+    # ---------- Abnahmemuster (T-24): deploy/forward-auth/acceptance.sh gegen diesen Aufbau ----------
     import shutil  # noqa: E402
-    assert shutil.which("bash") and shutil.which("curl"), "abnahme.sh braucht bash und curl"
-    skript = ROOT / "deploy/forward-auth/abnahme.sh"
+    assert shutil.which("bash") and shutil.which("curl"), "acceptance.sh needs bash and curl"
+    skript = ROOT / "deploy/forward-auth/acceptance.sh"
     umg_a = {**os.environ, "APP": f"http://app.example.com:{PORT}", "SHARE": "/s/abc123",
              "SESSION": "; ".join(f"{k}={v}" for k, v in sitzung.items()),
              "CURL_EXTRA": f"--resolve app.example.com:{PORT}:127.0.0.1"}
     a = subprocess.run(["bash", str(skript)], env=umg_a, capture_output=True, text=True, timeout=120)
-    assert a.returncode == 0 and "bestanden" in a.stdout and "ROT" not in a.stdout, a.stdout + a.stderr
+    assert a.returncode == 0 and "passed" in a.stdout and "FAIL" not in a.stdout, a.stdout + a.stderr
     zeilen = [z for z in a.stdout.splitlines() if z.startswith("  ok")]
     assert len(zeilen) >= 15, a.stdout
-    ok(f"abnahme.sh gegen diesen Aufbau: {len(zeilen)} Prüfungen bestanden")
-    # Gegenprobe: Das Skript muss rot werden, wenn eine Erwartung nicht stimmt — hier ein Pfad, der zu
-    # ist, aber als Share angegeben wird. Sonst wäre „bestanden" auch die Antwort eines Skripts, das
-    # nichts prüft.
+    ok(f"acceptance.sh against this setup: {len(zeilen)} checks passed")
+    # Counter-check: the script must turn red when an expectation is wrong — here a path that is
+    # closed but is given as a share. Otherwise “passed” would also be the answer of a script that
+    # checks nothing.
     a = subprocess.run(["bash", str(skript)], env={**umg_a, "SHARE": "/admin/x.js"},
                        capture_output=True, text=True, timeout=120)
-    assert a.returncode == 1 and "ROT  Share-Pfad /admin/x.js ist offen" in a.stdout, a.stdout
-    ok("Gegenprobe: ein Pfad, der zu ist, als Share angegeben → abnahme.sh rot (Exit 1)")
+    assert a.returncode == 1 and "FAIL Share path /admin/x.js is open" in a.stdout, a.stdout
+    ok("counter-check: a path that is closed, given as share → acceptance.sh red (exit 1)")
     tc.post("/auth/gate/resume", data={"next": f"http://app.example.com:{PORT}/"}, follow_redirects=False)
 
-    # ---------- der Preis: Widerruf greift erst mit Ablauf ----------
+    # ---------- the price: revocation only takes effect on expiry ----------
     auth.store.delete_user_sessions(uid)
     assert anfrage("/x", sitzung)[0] == 302
     assert anfrage("/x", {"__Host-tinysesam_gate": tok})[0] == 200
-    ok("nach dem Abmelden: Sitzung allein → 302, das Gate-Token gilt bis zu seinem Ablauf (ADR-9)")
+    ok("after signing out: session alone → 302, the gate token applies until its expiry (ADR-9)")
 
-    # ---------- Gegenprobe: ohne Gate fragt der Proxy wieder jedes Mal ----------
+    # ---------- Counter-check: without gate the proxy asks every time again ----------
     tc.post("/auth/login", data={"username": "anna", "password": "geheim123", "next": "/"},
             follow_redirects=False)
     sitzung = {auth.session_cookie_name: tc.cookies.get(auth.session_cookie_name)}
@@ -377,7 +377,7 @@ try:
         assert st == 200 and gate_cookie(h) is None
     assert FORWARD["n"] == vorher + 3
     auth.cfg.gate_token_enabled = True
-    ok("gate_token_enabled=False → jede Anfrage geht über /auth/forward (wie ohne Gate)")
+    ok("gate_token_enabled=False → every request goes via /auth/forward (as without gate)")
 finally:
     _caddy.terminate()
     try:
@@ -387,4 +387,4 @@ finally:
     _app_srv.shutdown()
     _ts_server.should_exit = True
 
-print("Gate-Token durch Caddy OK")
+print("Gate token through Caddy OK")

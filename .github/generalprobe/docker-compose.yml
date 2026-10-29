@@ -1,12 +1,12 @@
-# Generalprobe (PO 2026-10-11): die Wegwerf-Ziele, gegen die release.yml auf JEDEM Pull Request
-# veröffentlicht — eine Registry und ein Paket-Server auf dem Runner. So laufen Anmeldung,
-# schiebender Bau, SBOM, PyPI-Upload und Beglaubigung mit genau den Actions des Tags, ohne dass
-# etwas nach draußen geht; ihre Updates nimmt damit ein Pflicht-Check ab, und sie mergen selbst.
+# Dress rehearsal (PO 2026-10-11): the throwaway targets that release.yml publishes against on EVERY
+# pull request — a registry and a package server on the runner. This way sign-in, pushing
+# build, SBOM, PyPI upload and attestation run with exactly the actions of the tag, without
+# anything going outside; a required check thus covers their updates, and they merge themselves.
 #
-# Diese Datei ist die Quelle der Abbilder, nicht der Startweg: Der Job `generalprobe-ziele` liest
-# sie, `generalprobe` startet die Registry als Dienst und den Paket-Server per `docker run` (er
-# braucht Argumente, die ein Dienst nicht kennt). Dependabot (docker-compose) hält sie aktuell, und
-# die Generalprobe nimmt das Update gleich mit ab.
+# This file is the source of the images, not the way they are started: the job `generalprobe-ziele`
+# reads it, `generalprobe` starts the registry as a service and the package server via `docker run`
+# (it needs arguments that a service does not know). Dependabot (docker-compose) keeps them up to
+# date, and the dress rehearsal checks the update right away.
 services:
   registry:
     image: registry:3.1.2@sha256:ddf754342cfc8acc51a56d5d0ab6af06826461864460636d8bd5c546dab2a7b8

@@ -1,17 +1,17 @@
-"""Die Projekt-Website — eine Quelle, zwei Sprachen, zwei Seiten.
+"""The project website — one source, two languages, two pages.
 
-    index.html   → Überblick
-    flows.html   → alle Login-Wege als Diagramm (Inhalt: web/flows.py)
+    index.html   → overview
+    flows.html   → all login paths as a diagram (content: web/flows.py)
 
-**Ein** Sprachsystem: `?lang=de` bzw. `?lang=en` schaltet, das Cookie `ts_lang` merkt — genauso wie in
-der App. Weil GitHub Pages keinen Server hat, trägt jede Datei **beide** Sprachen und blendet eine aus.
-Keine Sprach-Dateinamen.
+**One** language system: `?lang=de` or `?lang=en` switches, the cookie `ts_lang` remembers it — exactly as in
+the app. Because GitHub Pages has no server, every file carries **both** languages and hides one.
+No language file names.
 
-`web/build.py` schreibt die vier Dateien für GitHub Pages (die Action baut sie bei jedem Push).
-Die Demo rendert dieselben Funktionen zur Laufzeit — sie braucht keine gebauten Dateien.
+`web/build.py` writes the four files for GitHub Pages (the Action builds them on every push).
+The demo renders the same functions at runtime — it needs no built files.
 
-Hier stehen nur **Texte und Seiteninhalt**. Kopf, Navigation und Fußzeile kommen aus `web/ui.py`,
-damit Website, Demo und die eingebauten TinySesam-Seiten denselben Rumpf tragen.
+Only **texts and page content** live here. Header, navigation and footer come from `web/ui.py`,
+so that website, demo and the built-in TinySesam pages carry the same shell.
 """
 from .demo import DEMO_CSS, demo_body, static_src
 from .flows import CSS as FLOW_CSS, render as render_flow_list
@@ -23,8 +23,8 @@ REPO = "https://github.com/Ollornog/TinySesam"
 
 INDEX, FLOWS, LEGAL, DEMO = "index.html", "flows.html", "legal.html", "demo.html"
 
-# Anbieterkennzeichnung der Projektseite. § 5 DDG (seit 14.05.2025, löste § 5 TMG ab) verlangt
-# Name, ladungsfähige Anschrift und einen schnellen elektronischen Kontakt.
+# Provider identification of the project page. § 5 DDG (since 14.05.2025, replaced § 5 TMG) requires
+# a name, a postal address for service of process and a fast electronic contact.
 OWNER = {
     "name": "Daniel Brunthaler",
     "street": "Hebbelstraße 22",
@@ -33,11 +33,11 @@ OWNER = {
     "email": "tinysesam-github@ollornog.de",
 }
 
-# Für welche Adresse gilt dieses Impressum? Nur für die offizielle Projektseite. Wer den Code
-# selbst hostet, ist selbst Anbieter — TinySesam ist eine Vorlage, kein Angebot des Autors.
+# Which address does this legal notice apply to? Only the official project page. Whoever hosts the code
+# themselves is the provider themselves — TinySesam is a template, not an offer by the author.
 SITE_URL = "ollornog.github.io/TinySesam"
 # ────────────────────────────────────────────────────────────────────────────────
-LANG_HREFS = {c: f"?lang={c}" for c in LANGS}   # eine URL je Seite, die Sprache ist ein Parameter
+LANG_HREFS = {c: f"?lang={c}" for c in LANGS}   # one URL per page, the language is a parameter
 
 
 T = {
@@ -153,11 +153,11 @@ T = {
                        "operators; at the time of linking nothing unlawful was apparent.",
         "credits": '<a href="https://www.flaticon.com/free-icons/wizard" title="wizard icons">'
                    'Wizard icons created by max.icons — Flaticon</a>',
-        # Demo-Seite
+        # demo page
         "demo_title": "TinySesam — demo",
         "demo_desc": "The login page, the account page and the admin panel of TinySesam, "
                      "rendered from the library itself.",
-        # Flow-Seite
+        # flow page
         "flows_title": "TinySesam — sign-in flows",
         "flows_desc": "Every TinySesam sign-in flow as a diagram: password, PIN, TOTP, step-up, "
                       "factor chains, shared secrets, magic links, OIDC/SAML and forward-auth.",
@@ -361,10 +361,10 @@ INDEX_CSS = """
   .solves .yes{color:var(--accent);font-weight:700;font-family:var(--ts-serif)}
   .solves b{font-weight:600}
   .solves span{color:var(--muted)}
-  /* Grid auf der Liste, `li{display:contents}` — sonst ist jedes li sein eigenes Raster
-     und die Beschreibungen fluchten nicht. */
-  /* Eine Schriftgröße für den ganzen Block: `code` schrumpft global auf .86em, die Beschreibung
-     nicht — nebeneinander sähen sie ungleich aus. Beide auf die kleinere Größe (wie `.note`). */
+  /* Grid on the list, `li{display:contents}` — otherwise each li is its own grid
+     and the descriptions do not line up. */
+  /* One font size for the whole block: `code` shrinks globally to .86em, the description
+     does not — side by side they would look uneven. Both on the smaller size (like `.note`). */
   .extras{list-style:none;padding:0;margin:12px 0;display:grid;
           grid-template-columns:auto 1fr;gap:8px 14px;align-items:baseline;font-size:13.5px}
   .extras li{display:contents}
@@ -401,7 +401,7 @@ def hero(lang: str) -> str:
 
 
 def index_body(lang: str, nav: Nav) -> str:
-    """Der Inhalt der Startseite (ohne Rumpf)."""
+    """The content of the home page (without shell)."""
     t = T[lang]
     solves = "".join(f'<li><span class="yes">✓</span><span><b>{q}</b><br />— {a}</span></li>'
                      for q, a in t["solves"])
@@ -410,9 +410,9 @@ def index_body(lang: str, nav: Nav) -> str:
     extras = "".join(f'<li><code>[{name}]</code><span>{desc}</span></li>' for name, desc in t["extras"])
     code = lambda inner: codeblock(inner, copy=t["copy"], copied=t["copied"])  # noqa: E731
 
-    # MIT Pin: ohne `@v…` zöge das den beweglichen Hauptzweig statt einer freigegebenen Fassung —
-    # zwei Installationen am selben Tag könnten verschiedene Stände sein. Die Version kommt aus
-    # dem Paket, damit die Seite nicht beim nächsten Release veraltet.
+    # WITH pin: without `@v…` this would pull the moving main branch instead of a released version —
+    # two installations on the same day could be different states. The version comes from
+    # the package, so that the page does not go stale on the next release.
     install = code(f'pip install <span class="s">"tinysesam[all] @ git+{REPO}.git@v{VERSION}"</span>')
     use = code(
         f'<span class="k">auth</span> = TinySesam(TinySesamConfig(db_path=<span class="s">"app.db"</span>))\n'
@@ -461,7 +461,7 @@ LEGAL_CSS = """
 
 
 def legal_body(lang: str) -> str:
-    """Impressum + Datenschutz. Die Angaben stehen in `OWNER` — Platzhalter fallen sofort auf."""
+    """Legal notice + privacy policy. The details are in `OWNER` — placeholders stand out immediately."""
     t = T[lang]
     def field(key):
         v = OWNER[key]
@@ -493,7 +493,7 @@ def flows_body(lang: str) -> str:
             f'<p class="lead">{t["flows_outro"]}</p>')
 
 
-# Die App rendert dieselben Seiten serverseitig — sie kennt die Sprache schon.
+# The app renders the same pages server-side — it already knows the language.
 def render_index(lang: str, ctx: Ctx, nav: Nav) -> str:
     ctx.hero = hero(lang)
     return shell(ctx, nav, index_body(lang, nav))
@@ -508,12 +508,12 @@ def render_legal(lang: str, ctx: Ctx, nav: Nav) -> str:
 
 
 def demo_page_body(lang: str) -> str:
-    """Die Demo-Seite, statisch: die Frames zeigen auf die zur Bauzeit gerenderten Panels."""
+    """The demo page, static: the frames point at the panels rendered at build time."""
     return demo_body(lang, src=static_src(lang))
 
 
 def build_pages() -> dict:
-    """Vier Dateien, alle zweisprachig. Die Sprache wählt `?lang=`/Cookie — nicht der Dateiname."""
+    """Four files, all bilingual. The language is chosen by `?lang=`/cookie — not the file name."""
     nav = site_nav(LANGS[0])
     out = {}
     for name, page, css, body_of, title_key, desc_key in (

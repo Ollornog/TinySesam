@@ -27,11 +27,11 @@ cfg = TinySesamConfig.entra_id(tenant_id="abc-123", client_id="cid", client_secr
 assert cfg.oidc_enabled and cfg.oidc_client_id == "cid"
 assert cfg.oidc_issuer == "https://login.microsoftonline.com/abc-123/v2.0"
 assert "oidc" in cfg.enabled_methods()
-ok("entra_id: OIDC-Issuer aus tenant_id, oidc aktiv")
+ok("entra_id: OIDC issuer from tenant_id, oidc active")
 
 # ---------- overrides greifen ----------
 cfg = TinySesamConfig.entra_id(tenant_id="t", client_id="c", client_secret="s", db_path="app.db", lang="de")
 assert cfg.db_path == "app.db" and cfg.lang == "de"
-ok("Presets: **overrides (db_path/lang …) werden übernommen")
+ok("presets: **overrides (db_path/lang …) are taken over")
 
 print("\nPRESETS OK ✅")

@@ -1,68 +1,68 @@
-# TinySesam Forward-Auth mit Caddy.
+# TinySesam forward-auth with Caddy.
 #
-# WICHTIG (Gotcha): Caddys `forward_auth`-Shortcut reicht eine 401 nur durch und leitet NICHT
-# automatisch zum Login um. Für den Redirect braucht es die expandierte reverse_proxy-Form mit
-# handle_response, die den vom Auth-Dienst gesetzten Header X-TinySesam-Location auswertet.
+# IMPORTANT (gotcha): Caddy's `forward_auth` shortcut only passes a 401 through and does NOT
+# redirect to the login automatically. The redirect needs the expanded reverse_proxy form with
+# handle_response, which evaluates the header X-TinySesam-Location set by the auth service.
 #
-# Upstreams kommen aus der Umgebung, damit dieselbe Datei auf dem Blech und im Compose stimmt:
-# ohne gesetzte Variablen gilt 127.0.0.1 (Dienste auf demselben Host), `docker-compose.yml`
-# setzt die Service-Namen. Im Caddy-CONTAINER ist 127.0.0.1 der Container selbst — dort lauscht
-# nichts auf 8000, und ein `docker compose up -d` ergäbe einen Stack, der nicht funktioniert.
+# Upstreams come from the environment, so the same file is right on bare metal and in compose:
+# without the variables set, 127.0.0.1 applies (services on the same host), `docker-compose.yml`
+# sets the service names. In the Caddy CONTAINER 127.0.0.1 is the container itself — nothing
+# listens on 8000 there, and a `docker compose up -d` would yield a stack that does not work.
 #
-# Voraussetzung in TinySesamConfig:
+# Prerequisite in TinySesamConfig:
 #   forward_auth_enabled=True
-#   base_url="https://auth.example.com"          # zentrale Login-Domain
-#   cookie_domain=".example.com"                 # Cookie gilt für alle Subdomains (SSO)
-#   trusted_redirect_hosts=["app.example.com"]   # erlaubt next= zurück auf die App
-#   trusted_proxies=["<Caddy-IP>/32"]            # echte Client-IP hinter dem Proxy
+#   base_url="https://auth.example.com"          # central login domain
+#   cookie_domain=".example.com"                 # cookie applies to all subdomains (SSO)
+#   trusted_redirect_hosts=["app.example.com"]   # allows next= back to the app
+#   trusted_proxies=["<Caddy-IP>/32"]            # real client IP behind the proxy
 
-# Zentraler Auth-Dienst (TinySesam) — eigene Subdomain
+# Central auth service (TinySesam) — its own subdomain
 auth.example.com {
 	reverse_proxy {$TS_AUTH_UPSTREAM:127.0.0.1:8000}
 }
 
-# Rollen verlangen (optional): dem Sub-Request `header_up X-TinySesam-Roles redaktion,admin`
-# mitgeben — eine der genannten Rollen genügt. TinySesam antwortet dann 403 statt 200, wenn
-# jemand angemeldet ist, aber die Rolle fehlt; ohne die Angabe bleibt /auth/forward binär.
-# Der Header gehört in DIESE Datei: `header_up` überschreibt einen gleichnamigen Header des
-# Clients. (Selbst wenn nicht, käme ein Client damit nicht weiter — mehrere Angaben werden
-# UND-verknüpft, er könnte die Prüfung also nur verschärfen.)
+# Require roles (optional): add `header_up X-TinySesam-Roles redaktion,admin` to the
+# sub-request — one of the named roles suffices. TinySesam then answers 403 instead of 200 when
+# someone is signed in but lacks the role; without it /auth/forward stays binary.
+# The header belongs in THIS file: `header_up` overwrites a same-named header of the
+# client. (Even if it did not, a client would get nowhere with it — several values are
+# AND-combined, so it could only tighten the check.)
 
-# Geschützte App (kann eine beliebige Fremd-App / statische Site sein)
+# Protected app (can be any third-party app / static site)
 app.example.com {
-	# Abmelden an der Anwendung (T-22): /.tinysesam/logout und /.tinysesam/after-logout gehören
-	# TinySesam, nicht der Anwendung — und gehen am Gate vorbei: Abmelden muss auch mit
-	# abgelaufener Anmeldung gehen. Auf diesem Host, weil nur hier das Gate-Cookie gelöscht werden
-	# kann. Der Abmelde-Link der Anwendung zeigt auf https://app.example.com/.tinysesam/logout
-	# (?scope=app|all, sonst gilt forward_logout); beim Provider als Logout Callback URL
-	# https://app.example.com/.tinysesam/after-logout eintragen.
+	# Sign-out at the application (T-22): /.tinysesam/logout and /.tinysesam/after-logout belong to
+	# TinySesam, not to the application — and bypass the gate: signing out must also work with an
+	# expired sign-in. On this host, because only here can the gate cookie be deleted.
+	# The application's sign-out link points to https://app.example.com/.tinysesam/logout
+	# (?scope=app|all, otherwise forward_logout applies); register
+	# https://app.example.com/.tinysesam/after-logout with the provider as Logout Callback URL.
 	handle /.tinysesam/* {
 		reverse_proxy {$TS_AUTH_UPSTREAM:127.0.0.1:8000}
 	}
 
-	# Öffentliche Pfade der Anwendung (T-20), etwa Share-Links: ohne Anmeldung, ohne Identität.
-	# TS_SHARE_PRAEFIX ist ein regulärer Ausdruck über den Anfang des Pfads, z. B.
+	# Public paths of the application (T-20), such as share links: without sign-in, without identity.
+	# TS_SHARE_PRAEFIX is a regular expression over the beginning of the path, e.g.
 	#   TS_SHARE_PRAEFIX='^/(s|public/share)/'
-	# Ohne die Variable gilt `^$` — das trifft keinen Pfad, die Ausnahme ist aus.
+	# Without the variable `^$` applies — it matches no path, the exception is off.
 	#
-	# Geprüft wird der ROHE Pfad (`orig_uri.path`), nicht der von Caddy bereinigte: Caddy vergleicht
-	# sonst `/x/../s/a` als `/s/a`, reicht der Anwendung aber `/x/../s/a` weiter — und die löst
-	# ihn womöglich anders auf. Abgewiesen wird deshalb jeder Pfad mit `.`- oder `..`-Segment, `;`
-	# (Tomcat/Spring lesen `/s/..;/admin` als `/admin`), Backslash, NUL oder einer kodierten Form
-	# davon (%2e %2f %5c %00 %3b). Gross/klein zählt (`/S/` ist nicht `/s/`). Nachgemessen gegen
-	# Caddy 2.11.7 in tests/test_gate_caddy.py. Nie nach Dateiendung freigeben (`*.js`): Viele
-	# Anwendungen liefern unter `/admin/x.css` dynamischen Inhalt aus.
+	# The RAW path (`orig_uri.path`) is checked, not the one cleaned up by Caddy: otherwise Caddy
+	# compares `/x/../s/a` as `/s/a`, but passes `/x/../s/a` on to the application — which may
+	# resolve it differently. Therefore every path with a `.` or `..` segment, `;`
+	# (Tomcat/Spring read `/s/..;/admin` as `/admin`), backslash, NUL or an encoded form
+	# of these (%2e %2f %5c %00 %3b) is rejected. Case counts (`/S/` is not `/s/`). Measured against
+	# Caddy 2.11.7 in tests/test_gate_caddy.py. Never allow by file extension (`*.js`): many
+	# applications serve dynamic content under `/admin/x.css`.
 	#
-	# Eine Share-Seite lädt meist eigene Skripte und ruft eigene APIs auf — auch die gehören in
-	# den Ausdruck, je Anwendung nachgemessen. Was hier steht, ist öffentlich erreichbar: Eine Lücke
-	# der Anwendung in diesen Pfaden bleibt offen. So eng wie möglich.
+	# A share page usually loads its own scripts and calls its own APIs — these belong in
+	# the expression too, measured per application. Whatever is listed here is publicly reachable: a vulnerability
+	# of the application in these paths stays open. As narrow as possible.
 	@share {
 		vars_regexp share {http.request.orig_uri.path} {$TS_SHARE_PRAEFIX:^$}
 		not vars_regexp {http.request.orig_uri.path} (?i)(^|/)\.\.?(/|$)|[;\\\x00]|%(2e|2f|5c|00|3b)
 	}
 	handle @share {
 		reverse_proxy {$TS_APP_UPSTREAM:127.0.0.1:9000} {
-			# Keine Identität auf diesem Weg — auch keine, die der Browser selbst mitschickt.
+			# No identity on this path — not even one the browser sends along itself.
 			header_up -Remote-User
 			header_up -Remote-Name
 			header_up -Remote-Email
@@ -76,28 +76,28 @@ app.example.com {
 	route {
 		reverse_proxy {$TS_AUTH_UPSTREAM:127.0.0.1:8000} {
 			method GET
-			# Der Sub-Request geht an /auth/forward — als `rewrite` IM Block, nicht als Pfad vor
-			# dem Upstream. Dort stand bis 2026-09-21 `reverse_proxy /auth/forward <upstream>`:
-			# Ein führender Pfad ist in Caddy ein MATCHER, kein Rewrite. Die Prüfung lief damit
-			# nur für Anfragen, deren eigener Pfad /auth/forward lautet — jeder andere Pfad fiel
-			# direkt auf die App durch. Die Vorlage schützte nichts und sah dabei aus wie SSO.
-			# (Form wie in Caddys eigener Expansion von `forward_auth`.)
+			# The sub-request goes to /auth/forward — as a `rewrite` INSIDE the block, not as a path before
+			# the upstream. Until 2026-09-21 this had `reverse_proxy /auth/forward <upstream>`:
+			# a leading path in Caddy is a MATCHER, not a rewrite. The check thus ran
+			# only for requests whose own path is /auth/forward — every other path fell
+			# straight through to the app. The template protected nothing and looked like SSO.
+			# (Form as in Caddy's own expansion of `forward_auth`.)
 			rewrite /auth/forward
-			# Methode und Pfad der ECHTEN Anfrage — der rewrite oben hat beide überschrieben.
-			# X-Forwarded-Host/-Proto stehen hier bewusst nicht: die setzt Caddy von sich aus,
-			# und `caddy validate` weist die Doppelung als unnötig aus.
+			# Method and path of the REAL request — the rewrite above overwrote both.
+			# X-Forwarded-Host/-Proto are deliberately not here: Caddy sets them on its own,
+			# and `caddy validate` flags the duplication as unnecessary.
 			header_up X-Forwarded-Method {method}
 			header_up X-Forwarded-Uri {uri}
-			# header_up X-TinySesam-Roles redaktion,admin   # nur mit einer dieser Rollen durch
-			# nur die Auth-Antwort-Header übernehmen
-			# Andere Namen (z.B. X-WEBAUTH-USER für Grafana): TinySesamConfig(forward_headers={...})
-			# setzen und sie hier mitziehen — übernommen wird nur, was hier steht.
+			# header_up X-TinySesam-Roles redaktion,admin   # only passes with one of these roles
+			# take over only the auth response headers
+			# Other names (e.g. X-WEBAUTH-USER for Grafana): set TinySesamConfig(forward_headers={...})
+			# and carry them along here — only what is listed here is taken over.
 			#
-			# Header-Form in `{rp.header.…}` (H-16): Caddy sucht den Namen Zeichen für Zeichen
-			# in der Form, die Gos textproto daraus macht — jedes Wort gross, der Rest klein
-			# (`Remote-User`, `X-Tinysesam-Location`). Eine andere Schreibweise ergibt einen
-			# LEEREN Wert, ohne Fehler und ohne Logzeile. tests/test_bestandsdaten.py prüft jeden
-			# Platzhalter dieser Datei gegen genau diese Form.
+			# Header form in `{rp.header.…}` (H-16): Caddy looks for the name character by character
+			# in the form Go's textproto makes of it — each word capitalised, the rest lowercase
+			# (`Remote-User`, `X-Tinysesam-Location`). Any other spelling yields an
+			# EMPTY value, without error and without a log line. tests/test_legacy_data.py checks every
+			# placeholder in this file against exactly this form.
 			@ok status 200
 			handle_response @ok {
 				request_header Remote-User {rp.header.Remote-User}
@@ -106,38 +106,38 @@ app.example.com {
 				request_header Remote-Name {rp.header.Remote-Name}
 				request_header Remote-Id {rp.header.Remote-Id}
 			}
-			# nicht eingeloggt → Redirect zur Login-URL aus dem Header
+			# not signed in → redirect to the login URL from the header
 			#
-			# `X-Tinysesam-Location` mit kleinem s: Caddy legt die Antwort-Header unter dem
-			# Namen ab, den Gos HTTP-Client daraus macht (textproto-Kanonisierung — jedes Wort
-			# gross, der Rest klein), und der Platzhalter wird Zeichen für Zeichen gesucht. Mit
-			# der Repo-Schreibweise X-TinySesam-Location traf er nichts: eine 302 mit LEEREM
-			# Location-Header, der Browser blieb stehen statt zum Login zu gehen. Auf der
-			# Leitung ist der Name weiterhin case-insensitiv — nur dieser Platzhalter ist es
-			# nicht. nginx (lowercase) und Traefik sind davon nicht betroffen.
+			# `X-Tinysesam-Location` with a lowercase s: Caddy stores the response headers under the
+			# name Go's HTTP client makes of them (textproto canonicalisation — each word
+			# capitalised, the rest lowercase), and the placeholder is looked up character by character. With
+			# the repo spelling X-TinySesam-Location it matched nothing: a 302 with an EMPTY
+			# Location header, the browser stood still instead of going to the login. On the
+			# wire the name is still case-insensitive — only this placeholder is
+			# not. nginx (lowercase) and Traefik are not affected.
 			@denied status 401
 			handle_response @denied {
 				redir {rp.header.X-Tinysesam-Location} 302
 			}
-			# angemeldet, aber Rolle fehlt → 403 stehen lassen. NICHT zum Login schicken:
-			# der schickt denselben Benutzer sofort zurück, dem dieselbe Rolle fehlt.
+			# signed in, but role missing → leave the 403 standing. Do NOT send to the login:
+			# it sends the same user straight back, who still lacks the same role.
 			@norole status 403
 			handle_response @norole {
 				respond "Kein Zugriff: fehlende Rolle." 403
 			}
 		}
-		# Die eigentliche Upstream-App — OHNE die Cookies von TinySesam (B-20).
-		# Der Browser schickt es an jeden Host unter cookie_domain mit, und ungefiltert las es
-		# jede geschützte App mit: Eine kompromittierte oder schlicht geschwätzige App (Debug-
-		# Seite, Fehlerbericht, Log mit Anfrage-Headern) gab damit eine Sitzung heraus, die für
-		# ALLE anderen Apps und für das Konto bei TinySesam gilt. Die App braucht das Cookie
-		# nicht — wer angemeldet ist, sagen ihr die Remote-*-Header.
-		# Dasselbe gilt für das Freigabe-Cookie `tinysesam_runlock` (entsperrte Ressourcen), und
-		# das CSRF-Cookie ist der App ebenso wenig bestimmt — also alle `tinysesam_*`.
-		# Die erste Zeile entfernt jedes Vorkommen (auch mit __Host-/__Secure-Präfix), die
-		# zweite ein dabei übrig gebliebenes führendes `; `. Andere Cookies bleiben unberührt.
-		# Umbenannte Cookies (TinySesamConfig(session_cookie=…, resource_cookie=…,
-		# csrf_cookie=…)) hier ins Muster mitziehen.
+		# The actual upstream app — WITHOUT TinySesam's cookies (B-20).
+		# The browser sends it to every host under cookie_domain, and unfiltered it was read by
+		# every protected app: a compromised or simply chatty app (debug
+		# page, error report, log with request headers) would thereby leak a session valid for
+		# ALL other apps and for the account at TinySesam. The app does not need the cookie
+		# — who is signed in is told to it by the Remote-* headers.
+		# The same goes for the approval cookie `tinysesam_runlock` (unlocked resources), and
+		# the CSRF cookie is just as little meant for the app — so all `tinysesam_*`.
+		# The first line removes every occurrence (also with the __Host-/__Secure- prefix), the
+		# second a leading `; ` left over from that. Other cookies stay untouched.
+		# Renamed cookies (TinySesamConfig(session_cookie=…, resource_cookie=…,
+		# csrf_cookie=…)) must be carried along into the pattern here.
 		reverse_proxy {$TS_APP_UPSTREAM:127.0.0.1:9000} {
 			header_up Cookie "(^|;)\s*(__Host-|__Secure-)?tinysesam_[^=;]*=[^;]*" ""
 			header_up Cookie "^[;\s]+" ""

@@ -1,20 +1,20 @@
-"""Der Rumpf jeder Seite — Kopf, zwei Navigationsreihen, Fußzeile. Eine Quelle für alles.
+"""The shell of every page — header, two navigation rows, footer. One source for everything.
 
-Benutzt von:
-  * `web/site.py`      — die statische Projekt-Website (GitHub Pages)
-  * `examples/showcase.py` — das Demo-Frontend
-  * und über `brand_header`/`brand_footer` auch von den **eingebauten** TinySesam-Seiten
-    (Login, PIN, Konto, Admin-Panel, Fehlerseiten). Dieselbe Nav, dieselbe Fußzeile, überall.
+Used by:
+  * `web/site.py`      — the static project website (GitHub Pages)
+  * `examples/showcase.py` — the demo frontend
+  * and, via `brand_header`/`brand_footer`, also by the **built-in** TinySesam pages
+    (login, PIN, account, admin panel, error pages). The same nav, the same footer, everywhere.
 
-Aufbau des Kopfes (ein Container, drei Zeilen):
+Structure of the header (one container, three rows):
 
     <header class=shell>
-      Titelzeile   — Marke; auf der Startseite ersetzt der große Titelbereich sie
-      Navreihe 1   — links die Seiten (+ Aufklapper), rechts Konto bzw. An-/Abmelden
-      Navreihe 2   — links Verweise als Icon, rechts Sprache und Hell/Dunkel
+      Title row    — brand; on the home page the large hero replaces it
+      Nav row 1    — pages on the left (+ dropdown), account or sign-in/sign-out on the right
+      Nav row 2    — links as icons on the left, language and light/dark on the right
     </header>
 
-Kein FastAPI-Import: der Website-Generator kommt ohne laufende App aus.
+No FastAPI import: the website generator works without a running app.
 """
 from __future__ import annotations
 
@@ -32,7 +32,7 @@ _PATHS = {
     "sun": 'M8 11a3 3 0 1 1 0-6 3 3 0 0 1 0 6Zm0-9.5a.75.75 0 0 1 .75.75v1a.75.75 0 0 1-1.5 0v-1A.75.75 0 0 1 8 1.5Zm0 11a.75.75 0 0 1 .75.75v1a.75.75 0 0 1-1.5 0v-1A.75.75 0 0 1 8 12.5ZM14.5 8a.75.75 0 0 1-.75.75h-1a.75.75 0 0 1 0-1.5h1A.75.75 0 0 1 14.5 8Zm-11 0a.75.75 0 0 1-.75.75h-1a.75.75 0 0 1 0-1.5h1A.75.75 0 0 1 3.5 8Zm9.1-4.6a.75.75 0 0 1 0 1.06l-.7.71a.75.75 0 1 1-1.07-1.06l.71-.71a.75.75 0 0 1 1.06 0ZM4.87 11.13a.75.75 0 0 1 0 1.06l-.71.71A.75.75 0 0 1 3.1 11.84l.71-.71a.75.75 0 0 1 1.06 0Zm7.73.71a.75.75 0 1 1-1.06 1.06l-.71-.71a.75.75 0 0 1 1.06-1.06ZM4.87 4.87A.75.75 0 0 1 3.81 4.16l-.71-.7A.75.75 0 0 1 4.16 2.39l.71.71a.75.75 0 0 1 0 1.06Z',
     "moon": 'M9.6 1.2a6.8 6.8 0 1 0 5.2 8.1A5.5 5.5 0 0 1 9.6 1.2Z',
     "person": 'M8 8a3 3 0 1 0 0-6 3 3 0 0 0 0 6Zm0 1.5c-2.6 0-4.8 1.5-5.5 3.6-.2.6.3 1.2.9 1.2h9.2c.6 0 1.1-.6.9-1.2C12.8 11 10.6 9.5 8 9.5Z',
-    # Zwei Konturen in einem `d` — `icon()` malt genau einen Pfad.
+    # Two outlines in one `d` — `icon()` paints exactly one path.
     "copy": 'M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 0 1 0 1.5h-1.5a.25.25 0 0 0-.25.25v7.5c0 '
             '.138.112.25.25.25h7.5a.25.25 0 0 0 .25-.25v-1.5a.75.75 0 0 1 1.5 0v1.5A1.75 1.75 0 0 1 '
             '9.25 16h-7.5A1.75 1.75 0 0 1 0 14.25ZM5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 '
@@ -47,16 +47,16 @@ def icon(name: str) -> str:
     return f'<svg viewBox="0 0 16 16" aria-hidden="true"><path d="{_PATHS[name]}"/></svg>'
 
 
-# ---------------------------------------------------------------------- Bausteine
+# ---------------------------------------------------------------------- Building blocks
 def link(href: str, label: str, active: bool = False) -> str:
     return f"<a class='{'on' if active else ''}' href='{href}'>{label}</a>"
 
 
 def codeblock(code: str, *, copy: str, copied: str) -> str:
-    """Ein Codeblock mit Kopierknopf. `code` ist fertig ausgezeichnetes HTML (Spans .k/.s/.c).
+    """A code block with a copy button. `code` is ready-made highlighted HTML (spans .k/.s/.c).
 
-    Kopiert wird der reine Text (`innerText`), nicht die Auszeichnung — sonst landet die
-    Syntaxfarbe in der Zwischenablage.
+    What gets copied is the plain text (`innerText`), not the markup — otherwise the
+    syntax colour ends up on the clipboard.
     """
     return (f'<div class="cw">'
             f'<button type="button" class="copy" title="{escape(copy)}" aria-label="{escape(copy)}"'
@@ -71,14 +71,14 @@ def icon_link(href: str, name: str, title: str) -> str:
 
 
 def dropdown(summary: str, items_html: str, right: bool = False, active: bool = False) -> str:
-    """Aufklapper. `active` markiert nur den Auslöser — von selbst aufspringen soll er nicht."""
+    """Dropdown. `active` only marks the trigger — it is not meant to pop open by itself."""
     cls = "dd r" if right else "dd"
     return (f"<details class='{cls}'><summary class='{'on' if active else ''}'>{summary}</summary>"
             f"<div class=ddmenu>{items_html}</div></details>")
 
 
 def menu(summary: str, entries) -> str:
-    """Aufklapper mit einfachen Links: `entries` = (href, label)."""
+    """Dropdown with plain links: `entries` = (href, label)."""
     return dropdown(summary, "".join(f"<a href='{h}'>{l}</a>" for h, l in entries), right=True)
 
 
@@ -90,22 +90,22 @@ def _seg(label: str, *, href: str = None, on: bool = False, data: str = "") -> s
 
 
 def lang_pill(hrefs: dict, lang: str) -> str:
-    """Sprache als Zweisegment-Pille. `hrefs` bildet Sprachcode → Ziel-URL ab."""
+    """Language as a two-segment pill. `hrefs` maps language code → target URL."""
     segs = "".join(_seg(c.upper(), href=hrefs[c], on=c == lang) for c in LANGS)
     return f"<span class=pill2>{segs}</span>"
 
 
 def theme_pill(light: str = "Hell", dark: str = "Dunkel") -> str:
-    """Hell/Dunkel. Das aktive Segment markiert `UI_JS` beim Laden (kennt die Systemeinstellung)."""
+    """Light/dark. `UI_JS` marks the active segment on load (it knows the system setting)."""
     segs = (_seg(icon("sun"), data=f'data-theme=light title="{light}"')
             + _seg(icon("moon"), data=f'data-theme=dark title="{dark}"'))
     return f"<span class=pill2 id=ts-theme>{segs}</span>"
 
 
-# ---------------------------------------------------------------------- Rumpf
+# ---------------------------------------------------------------------- Shell
 @dataclass(frozen=True)
 class Labels:
-    """Alles, was der Rumpf an Text braucht — einmal je Sprache."""
+    """Everything the shell needs in text — once per language."""
     account: str
     admin: str
     logout: str
@@ -123,30 +123,30 @@ class Labels:
 
 @dataclass(frozen=True)
 class Nav:
-    """Wie der Rumpf einer App aussieht — einmal deklarieren, überall benutzen."""
+    """What an app's shell looks like — declare once, use everywhere."""
     brand_href: str
     icon_url: str
     repo: str
-    css_href: str = "theme.css"   # Farbpalette; die Demo liefert sie unter einem absoluten Pfad
-    flows_href: str = "flows.html"   # Ziel des „alle Login-Wege"-Verweises
-    legal_href: str = "legal.html"   # Impressum + Datenschutz
-    pages: tuple = ()          # ((href, label), …) — links in der ersten Navreihe
-    examples: tuple = ()       # ((href, label, beschreibung), …) — als Aufklapper daneben
+    css_href: str = "theme.css"   # colour palette; the demo serves it under an absolute path
+    flows_href: str = "flows.html"   # target of the "all login paths" link
+    legal_href: str = "legal.html"   # legal notice + privacy policy
+    pages: tuple = ()          # ((href, label), …) — on the left in the first nav row
+    examples: tuple = ()       # ((href, label, description), …) — as a dropdown next to it
     examples_label: str = ""
-    auth: bool = False         # rechts Konto/Abmelden bzw. An-/Registrieren anbieten
+    auth: bool = False         # offer account/sign-out or sign-in/register on the right
 
 
 @dataclass
 class Ctx:
-    """Der Zustand dieses einen Requests."""
+    """The state of this one request."""
     lang: str
     labels: Labels
-    lang_hrefs: dict          # Sprachcode → URL derselben Seite
+    lang_hrefs: dict          # language code → URL of the same page
     path: str = "/"
     user: dict | None = None
     is_admin: bool = False
-    brand: bool = True        # False = der große Titelbereich ersetzt die Marke
-    hero: str = ""            # Titelbereich (nur Startseite)
+    brand: bool = True        # False = the large hero replaces the brand
+    hero: str = ""            # hero (home page only)
     extra_head: str = field(default="")
 
 
@@ -163,7 +163,7 @@ def _row_auth(ctx: Ctx) -> str:
 
 
 def header(ctx: Ctx, nav: Nav) -> str:
-    """Titelzeile + zwei Navreihen in einem Container. Auf jeder Seite identisch."""
+    """Title row + two nav rows in one container. Identical on every page."""
     lb = ctx.labels
     if ctx.hero:
         title = ctx.hero
@@ -190,7 +190,7 @@ def header(ctx: Ctx, nav: Nav) -> str:
 
 
 def footer(ctx: Ctx, nav: Nav) -> str:
-    """Fußzeile — auf jeder Seite dieselbe."""
+    """Footer — the same on every page."""
     lb = ctx.labels
     security_doc = "i18n/SECURITY.de.md" if ctx.lang == "de" else "SECURITY.md"
     return (f'<footer><div class=inner><a href="{nav.repo}">GitHub</a>·'
@@ -202,7 +202,7 @@ def footer(ctx: Ctx, nav: Nav) -> str:
 
 
 def shell(ctx: Ctx, nav: Nav, body: str) -> str:
-    """Kopf + Inhalt + Fußzeile — der Teil, den jede Seite gemeinsam hat."""
+    """Header + content + footer — the part every page shares."""
     return f"{header(ctx, nav)}\n<main>{body}</main>\n{footer(ctx, nav)}"
 
 
@@ -217,19 +217,19 @@ def _head(nav: Nav, lang: str, title: str, desc: str, css: str, extra: str = "")
 
 
 def document(ctx: Ctx, nav: Nav, *, title: str, desc: str = "", css: str = "", body: str = "") -> str:
-    """Serverseitig gerenderte Seite — die App kennt die Sprache schon."""
+    """Server-rendered page — the app already knows the language."""
     return (_head(nav, ctx.lang, title, desc, css, ctx.extra_head)
             + f"<body>\n{shell(ctx, nav, body)}\n</body>\n</html>\n")
 
 
 def static_document(nav: Nav, css: str, variants: dict) -> str:
-    """Eine Datei, beide Sprachen — für GitHub Pages, das kein `?lang=` auswerten kann.
+    """One file, both languages — for GitHub Pages, which cannot evaluate `?lang=`.
 
     `variants` = {lang: (title, desc, shell_html)} — `shell_html` kommt aus `shell(ctx, nav, body)`.
-    `LANG_JS` wählt beim Laden: `?lang=` schlägt Cookie schlägt `LANGS[0]` (Englisch). Die
-    **Browsersprache zählt bewusst nicht** — die Projektsprache ist Englisch, sonst bekäme ein
-    deutscher Browser eine deutsche Seite, ohne dass jemand darum gebeten hat. **Derselbe
-    Parameter, dasselbe Cookie wie in der App** — ein Sprachsystem, keine Sprach-Dateinamen.
+    `LANG_JS` picks on load: `?lang=` beats cookie beats `LANGS[0]` (English). The
+    **browser language deliberately does not count** — the project language is English, otherwise a
+    German browser would get a German page without anyone having asked for it. **The same
+    parameter, the same cookie as in the app** — one language system, no language file names.
     """
     first = LANGS[0]
     title, desc, _ = variants[first]
@@ -242,7 +242,7 @@ def static_document(nav: Nav, css: str, variants: dict) -> str:
 
 LANG_COOKIE = "ts_lang"
 
-# Nur für die statischen Seiten: sie tragen beide Sprachen und blenden eine aus.
+# Only for the static pages: they carry both languages and hide one.
 LANG_CSS = "".join(f'html[data-lang="{l}"] .l-{o}{{display:none}}'
                    for l in LANGS for o in LANGS if l != o)
 
@@ -261,9 +261,9 @@ LANG_JS = """<script>
 </script>""" % (json.dumps(list(LANGS)), LANG_COOKIE, LANG_COOKIE)
 
 
-# ---------------------------------------------------------------------- Aussehen
-# `--nav-w` setzt jede Seite auf ihre Inhaltsbreite; `--nav-fs` ist die EINE Schriftgröße
-# der Leisten — Abstufung wäre dort nur Unruhe.
+# ---------------------------------------------------------------------- Appearance
+# `--nav-w` is set by each page to its content width; `--nav-fs` is the ONE font size
+# of the bars — graduation there would only be noise.
 UI_CSS = """
 :root{--nav-w:900px;--nav-fs:14px}
 *{box-sizing:border-box}
@@ -277,7 +277,7 @@ code{font-family:var(--ts-mono);font-size:.86em;background:var(--chip);border:1p
   border-radius:5px;padding:1px 5px;color:var(--ink)}
 main{max-width:var(--nav-w);margin:0 auto;padding:56px 22px 72px}
 
-/* ---- Kopf: Titelzeile + zwei Navreihen ---- */
+/* ---- Header: title row + two nav rows ---- */
 header.shell>*{max-width:var(--nav-w);margin:0 auto;font-size:var(--nav-fs)}
 header.shell .brand{display:flex;align-items:center;gap:10px;padding:14px 22px;
   text-decoration:none;color:var(--ink);width:fit-content}
@@ -287,11 +287,11 @@ header.shell .brand b{color:var(--accent)}
 header.shell .brand:hover{text-decoration:none}
 nav.row{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
 nav.row .l,nav.row .r{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
-/* eigener Stapelkontext: sonst malen animierte Abschnitte über ein offenes Dropdown */
+/* own stacking context: otherwise animated sections paint over an open dropdown */
 nav.pages{position:relative;z-index:30;background:var(--paper);padding:11px 22px;
   border-bottom:1px solid var(--line)}
 nav.tools{position:relative;z-index:29;padding:8px 22px}
-/* :not(.ilink) — sonst schlaegt diese Regel (0,1,2) das .ilink-Padding (0,1,0) und quetscht das Icon */
+/* :not(.ilink) — otherwise this rule (0,1,2) beats the .ilink padding (0,1,0) and squeezes the icon */
 nav.row a:not(.ilink){padding:6px 11px}
 nav.row a{display:inline-flex;align-items:center;gap:6px;border-radius:8px;
   color:var(--muted);white-space:nowrap;text-decoration:none;font-size:var(--nav-fs)}
@@ -306,13 +306,13 @@ nav.row code{font-size:1em;background:none;border:0;padding:0;color:inherit}
 .btn.ghost{border:1px solid var(--line);color:var(--ink)}
 .btn.ghost:hover{text-decoration:none;border-color:var(--accent)}
 nav .btn{padding:6px 13px;font-size:var(--nav-fs);border-radius:9px}
-/* genauso hoch wie die Wechsel-Pillen (18px Segment + 2px Polsterung + 2px Rand = 22px) */
+/* exactly as tall as the switch pills (18px segment + 2px padding + 2px border = 22px) */
 .ilink{display:inline-flex;align-items:center;justify-content:center;width:26px;height:22px;
   padding:0;border-radius:7px;color:var(--muted)}
 .ilink:hover{background:var(--chip);color:var(--ink);text-decoration:none}
 .ilink svg{width:20px;height:20px;flex:0 0 auto;fill:currentColor}
 
-/* ---- Zweisegment-Pille (Sprache, Hell/Dunkel) ---- */
+/* ---- Two-segment pill (language, light/dark) ---- */
 .pill2{display:inline-flex;align-items:center;gap:1px;padding:1px;border-radius:999px;
   background:var(--chip);border:1px solid var(--line)}
 .pill2 .seg{display:inline-flex;align-items:center;justify-content:center;min-width:24px;height:18px;
@@ -322,7 +322,7 @@ nav .btn{padding:6px 13px;font-size:var(--nav-fs);border-radius:9px}
 .pill2 .seg.on{background:var(--card);color:var(--ink);box-shadow:0 1px 3px rgba(90,60,70,.12)}
 .pill2 .seg svg{width:14px;height:14px;fill:currentColor}
 
-/* ---- Aufklapper ---- */
+/* ---- Dropdown ---- */
 .dd{position:relative}
 .dd summary{list-style:none;cursor:pointer;padding:6px 11px;border-radius:8px;color:var(--muted);
   display:inline-flex;align-items:center;gap:7px;white-space:nowrap;font-size:var(--nav-fs)}
@@ -335,29 +335,29 @@ nav .btn{padding:6px 13px;font-size:var(--nav-fs);border-radius:9px}
   box-shadow:0 14px 40px rgba(90,60,70,.14)}
 .dd.r .ddmenu{right:0}
 .dd:not(.r) .ddmenu{left:0}
-/* muss `nav.row a` schlagen (gleiche Spezifität) — sonst stehen die Einträge nebeneinander */
+/* must beat `nav.row a` (same specificity) — otherwise the entries sit side by side */
 .ddmenu a,nav.row .ddmenu a{display:block;padding:8px 10px;border-radius:8px;color:var(--ink);
   white-space:normal;font-size:var(--nav-fs)}
 .ddmenu a:hover,nav.row .ddmenu a:hover{background:var(--chip);text-decoration:none}
 .ddmenu b{display:block;font-weight:600}
 .ddmenu span{display:block;color:var(--muted);font-size:12.5px}
 
-/* ---- Fußzeile ---- */
+/* ---- Footer ---- */
 footer{margin-top:72px;color:var(--muted);font-size:14px}
 footer .inner{max-width:var(--nav-w);margin:0 auto;padding:26px 22px 60px;text-align:center;
   border-top:1px solid var(--line)}
 footer a{margin:0 9px}
 footer .credits{margin-top:14px;font-size:12.5px}
 
-/* ---- Codeblock mit Kopierknopf ---- */
-/* Farben aus theme.css: hell im hellen Thema, dunkel im dunklen. Kasten und Rahmen sitzen auf
-   `.cw`, nicht auf `.code` — so steht der Knopf in einer eigenen Zeile INNERHALB des Blocks,
-   oben rechts, und verdeckt trotzdem keine Codezeile. `overflow-x` bleibt beim Code, damit
-   langes Kopieren den Knopf nicht mit wegscrollt. */
+/* ---- Code block with copy button ---- */
+/* Colors from theme.css: light in the light theme, dark in the dark one. Box and border sit on
+   `.cw`, not on `.code` — so the button stands in a row of its own INSIDE the block,
+   top right, and still covers no code line. `overflow-x` stays on the code, so that
+   long copying does not scroll the button away. */
 .cw{display:flex;flex-direction:column;gap:6px;background:var(--code-bg);color:var(--code-fg);
   border:1px solid var(--code-line);border-radius:12px;padding:10px 12px 16px}
-/* `white-space:pre` ist Pflicht: sonst kollabieren die Zeilenumbrüche im Quelltext zu Leerzeichen
-   — und `innerText` gäbe dem Kopierknopf eine einzige endlose Zeile. */
+/* `white-space:pre` is mandatory: otherwise the line breaks in the source collapse into spaces
+   — and `innerText` would give the copy button one single endless line. */
 .cw .code{padding:0 6px;overflow-x:auto;white-space:pre;
   font-family:var(--ts-mono);font-size:13.5px;line-height:1.7}
 .cw .code .c{color:var(--code-com)}
@@ -383,7 +383,7 @@ footer .credits{margin-top:14px;font-size:12.5px}
 """
 
 UI_JS = """<script>
-// Hell/Dunkel früh anwenden, damit beim Laden nichts umspringt. theme.css kennt [data-theme].
+// Apply light/dark early so nothing jumps on load. theme.css knows [data-theme].
 (function(){var t=localStorage.getItem('ts-theme'); if(t) document.documentElement.dataset.theme=t;})();
 document.addEventListener('DOMContentLoaded',function(){
   var root=document.documentElement;
@@ -397,7 +397,7 @@ document.addEventListener('DOMContentLoaded',function(){
   });
   paint();
 });
-// <details> schliesst von sich aus nicht bei Klick daneben.
+// <details> does not close on its own when clicking elsewhere.
 document.addEventListener('click',function(e){
   document.querySelectorAll('details.dd[open]').forEach(function(d){
     if(!d.contains(e.target)) d.open=false;});
@@ -405,8 +405,8 @@ document.addEventListener('click',function(e){
 document.addEventListener('keydown',function(e){
   if(e.key==='Escape') document.querySelectorAll('details.dd[open]').forEach(function(d){d.open=false;});
 });
-// Kopierknopf. `navigator.clipboard` gibt es nur im sicheren Kontext — das Showcase laeuft aber
-// oft ueber http:// im LAN. Deshalb der execCommand-Notweg; er ist veraltet, aber dort das Einzige.
+// Copy button. `navigator.clipboard` exists only in a secure context — but the showcase often runs
+// over http:// on the LAN. Hence the execCommand fallback; it is deprecated, but the only option there.
 function tsCopy(text){
   if(navigator.clipboard && window.isSecureContext) return navigator.clipboard.writeText(text);
   return new Promise(function(res,rej){

@@ -1,20 +1,20 @@
-"""Showcase — Referenz-Frontend für TinySesam, im Design der Projekt-Website.
+"""Showcase — reference frontend for TinySesam, in the design of the project website.
 
     pip install -e '.[all]'
     uvicorn examples.showcase:app --reload
     # → http://127.0.0.1:8000
 
-Alles hängt an je einer Quelle:
-  * **Farben** — `docs/theme.css`. Die Website lädt sie per `<link>`, die App reicht sie als
-    `brand_css` in die eingebauten Seiten weiter.
-  * **Navigation** — `web/site.py` (`nav_top`/`nav_sub`). Website und Demo bauen damit dieselben
-    zwei Leisten, nur mit eigenem Inhalt.
-  * **Texte** — `TEXTS` unten, zweisprachig. Die Sprache kommt aus `?lang=` bzw. dem Cookie und
-    gilt für die Demo-Seiten UND die eingebauten TinySesam-Seiten (`cfg.lang`).
-  * **Panels** — die Vorschauen rendern die echten Bausteine (`auth.render_page`, `render_panel`).
+Everything hangs on one source each:
+  * **Colours** — `docs/theme.css`. The website loads it via `<link>`, the app passes it on as
+    `brand_css` into the built-in pages.
+  * **Navigation** — `web/site.py` (`nav_top`/`nav_sub`). Website and demo use it to build the same
+    two bars, just with their own content.
+  * **Texts** — `TEXTS` below, bilingual. The language comes from `?lang=` or the cookie and
+    applies to the demo pages AND the built-in TinySesam pages (`cfg.lang`).
+  * **Panels** — the previews render the real building blocks (`auth.render_page`, `render_panel`).
 
-Der **Demo-Modus** (`demo_mode=True`) legt die Konten `demo` und `demoadmin` an und zeigt die
-Zugangsdaten auf der Login-Seite — samt Warnung, dass er produktiv aus gehört.
+The **demo mode** (`demo_mode=True`) creates the accounts `demo` and `demoadmin` and shows the
+credentials on the login page — along with a warning that it does not belong in production.
 """
 import html
 import os
@@ -22,7 +22,7 @@ import sys
 from contextvars import ContextVar
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))   # damit `web` gefunden wird
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))   # so that `web` is found
 
 from fastapi import FastAPI, Depends, Request, HTTPException            # noqa: E402
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse  # noqa: E402
@@ -46,18 +46,18 @@ THEME = (DOCS / "theme.css").read_text(encoding="utf-8")
 
 BRAND = brand_css(THEME)
 
-# Dieselbe Config, die `web.demo.build()` für die statische Fassung benutzt — sonst zeigt die
-# Website andere Anmeldemethoden als die laufende Demo. Nur was die Live-App zusätzlich braucht,
-# steht hier: eine echte Datei-DB und der Demo-Modus mit seinen Beispielkonten.
+# The same config that `web.demo.build()` uses for the static version — otherwise the
+# website would show different sign-in methods than the running demo. Only what the live app additionally needs
+# goes here: a real file DB and the demo mode with its example accounts.
 auth = TinySesam(demo_config(
     db_path=os.environ.get("TINYSESAM_SHOWCASE_DB", "/tmp/tinysesam-showcase.db"),
     brand=BRAND,
     icon=ICON_URL,
     lang="en",
-    demo_mode=True,                  # legt `demo` + `demoadmin` an und zeigt die Zugangsdaten
+    demo_mode=True,                  # creates `demo` + `demoadmin` and shows the credentials
     demo_pin="1234",
 ))
-auth.set_resource_secret("gaeste", "2468", kind="pin", label="Gäste-Bereich")
+auth.set_resource_secret("gaeste", "2468", kind="pin", label="Guest area")
 
 
 app = FastAPI()
@@ -65,21 +65,21 @@ app.include_router(auth.router())
 auth.install_error_pages(app)
 
 
-# ---------------------------------------------------------------- Sprache
+# ---------------------------------------------------------------- Language
 def lang_of(request: Request) -> str:
-    # Dieselbe Reihenfolge wie auf der Website: `?lang=` vor Cookie vor Projektsprache (Englisch).
-    # Die Browsersprache zählt bewusst nicht.
+    # Same order as on the website: `?lang=` before cookie before project language (English).
+    # The browser language deliberately does not count.
     lang = request.query_params.get("lang") or request.cookies.get(LANG_COOKIE) or UI_LANGS[0]
     return lang if lang in UI_LANGS else UI_LANGS[0]
 
 
-# Der Rumpf der eingebauten Seiten hängt vom Request ab (Sprache, Login-Status, Pfad).
-# ContextVar statt globaler Variable: bei nebenläufigen Requests bleibt jeder bei seinem Wert.
+# The shell of the built-in pages depends on the request (language, login state, path).
+# ContextVar instead of a global variable: with concurrent requests each one keeps its own value.
 _ctx: ContextVar[Ctx] = ContextVar("ctx")
 
 
 def nav_of(lang: str) -> Nav:
-    """Der Rumpf dieser App — einmal deklariert, überall benutzt."""
+    """The shell of this app — declared once, used everywhere."""
     t = TEXTS[lang]
     return Nav(brand_href="/", icon_url=ICON_URL, repo=REPO, css_href="/theme.css",
                flows_href="/demo/flows", legal_href="/legal",
@@ -96,7 +96,7 @@ def ctx_of(request: Request, lang: str) -> Ctx:
 
 
 def _bare(ctx: Ctx) -> bool:
-    # Die read-only Vorschauen zeigen nur die Seite selbst — ohne den Rumpf drumherum.
+    # The read-only previews show only the page itself — without the shell around it.
     return ctx.path.startswith("/demo/preview/")
 
 
@@ -110,18 +110,18 @@ def shell_footer(_auth) -> str:
     return "" if _bare(c) else footer(c, nav_of(c.lang))
 
 
-# Die eingebauten Seiten (Login, Konto, Admin, Fehlerseiten) bekommen denselben Rumpf wie der Rest.
-# Steht bewusst NACH den beiden Funktionen: Vorher hielt ein Lambda den Namen nur bis zum Aufruf offen.
+# The built-in pages (login, account, admin, error pages) get the same shell as the rest.
+# Deliberately placed AFTER the two functions: before, a lambda kept the name open only until the call.
 auth.cfg.brand_header = shell_header
 auth.cfg.brand_footer = shell_footer
-auth.cfg.brand_head = UI_JS       # Theme-Pille + „Aufklapper schließen" auch dort
+auth.cfg.brand_head = UI_JS       # theme pill + "close dropdown" there as well
 
 
 class ShellMiddleware:
-    """Sprache und Seiten-Kontext für diesen Request bereitstellen.
+    """Provide language and page context for this request.
 
-    Bewusst **reines ASGI** statt `@app.middleware("http")`: Starlettes `BaseHTTPMiddleware` führt die
-    App in einem eigenen Task aus — eine dort gesetzte `ContextVar` ist im Endpoint nicht mehr sichtbar.
+    Deliberately **plain ASGI** instead of `@app.middleware("http")`: Starlette's `BaseHTTPMiddleware` runs the
+    app in a task of its own — a `ContextVar` set there is no longer visible in the endpoint.
     """
 
     def __init__(self, app):
@@ -131,8 +131,8 @@ class ShellMiddleware:
         if scope["type"] != "http":
             return await self.app(scope, receive, send)
         request = Request(scope, receive)
-        lang = lang_of(request)          # ?lang= schlägt Cookie — überall gleich
-        auth.cfg.lang = lang                       # damit auch die eingebauten Seiten folgen
+        lang = lang_of(request)          # ?lang= beats cookie — the same everywhere
+        auth.cfg.lang = lang                       # so the built-in pages follow too
         _ctx.set(ctx_of(request, lang))
 
         if request.cookies.get(LANG_COOKIE) == lang:
@@ -159,8 +159,8 @@ TEXTS = {
                      ("/gaeste", "<code>/gaeste</code>", "geteilte PIN, ganz ohne Konto"),
                      ("/gibtsnicht", "404", "gebrandete Fehlerseite"),
                      ("/boom", "500", "gebrandete Fehlerseite")],
-        # Panel-Überschriften, „read-only"-Marken und der Demo-Vorspann stehen in `web/demo.py`
-        # (PANEL_T) — die gebaute Seite benutzt dieselben Sätze.
+        # Panel headings, "read-only" badges and the demo intro live in `web/demo.py`
+        # (PANEL_T) — the built page uses the same sentences.
         "flows_h1": "Login-Flows",
         "flows_lead": 'Jeder Weg ist ein eigener Schalter. Diese Demo läuft mit '
                       '<code>login_identifier="{ident}"</code> und <code>pin_login={pin}</code> — '
@@ -187,7 +187,7 @@ TEXTS = {
                      ("/gaeste", "<code>/gaeste</code>", "shared PIN, no account at all"),
                      ("/gibtsnicht", "404", "branded error page"),
                      ("/boom", "500", "branded error page")],
-        # s.o.: die Panel-Texte kommen aus `web/demo.py`.
+        # see above: the panel texts come from `web/demo.py`.
         "flows_h1": "Sign-in flows",
         "flows_lead": 'Every way in is its own switch. This demo runs with '
                       '<code>login_identifier="{ident}"</code> and <code>pin_login={pin}</code> — '
@@ -209,9 +209,9 @@ TEXTS = {
 }
 
 
-# ---------------------------------------------------------------- Seitengerüst der Demo
-# `DEMO_CSS` (Rahmen, Glasscheibe, Marke) kommt aus `web/demo.py` — dieselbe Quelle wie für die
-# gebaute Seite. Hier steht nur, was allein die laufende App braucht.
+# ---------------------------------------------------------------- Page scaffold of the demo
+# `DEMO_CSS` (frame, glass pane, brand) comes from `web/demo.py` — the same source as for the
+# built page. Only what the running app alone needs is here.
 _DEMO_CSS = FLOW_CSS + """
 h1{font-family:var(--ts-serif);font-size:48px;letter-spacing:-.01em;margin:.2em 0 .2em;text-wrap:balance}
 h2{font-size:18px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);
@@ -225,13 +225,13 @@ h2{font-size:18px;text-transform:uppercase;letter-spacing:.08em;color:var(--mute
 
 
 def page(title: str, body: str, request: Request) -> HTMLResponse:
-    """Eine Demo-Seite — Rumpf und Fußzeile kommen aus `web/ui.py`, wie überall sonst."""
+    """A demo page — shell and footer come from `web/ui.py`, as everywhere else."""
     c = _ctx.get()
     return HTMLResponse(document(c, nav_of(c.lang), title=f"{title} · TinySesam",
                                  css=_DEMO_CSS, body=body))
 
 
-# ---------------------------------------------------------------- Website-Seiten (aus web/site.py)
+# ---------------------------------------------------------------- Website pages (from web/site.py)
 @app.get(ICON_URL, include_in_schema=False)
 def wizard():
     return FileResponse(DOCS / "wizard.png", media_type="image/png")
@@ -244,7 +244,7 @@ def theme():
 
 @app.get("/legal", response_class=HTMLResponse)
 def legal(request: Request):
-    """Impressum + Datenschutz — dieselbe Quelle wie auf GitHub Pages."""
+    """Legal notice + privacy policy — the same source as on GitHub Pages."""
     c = _ctx.get()
     return HTMLResponse(document(c, nav_of(c.lang), title=SITE_T[c.lang]["legal_title"],
                                  desc=SITE_T[c.lang]["legal_desc"], css=LEGAL_CSS,
@@ -253,7 +253,7 @@ def legal(request: Request):
 
 @app.get("/", response_class=HTMLResponse)
 def landing(request: Request):
-    """Dieselbe Startseite wie auf GitHub Pages — hier serverseitig in der gewählten Sprache."""
+    """The same home page as on GitHub Pages — here rendered server-side in the chosen language."""
     c = _ctx.get()
     nav = nav_of(c.lang)
     c.hero = hero(c.lang)
@@ -262,8 +262,8 @@ def landing(request: Request):
 
 
 # ---------------------------------------------------------------- Demo
-#: Die laufende App liefert ihre Vorschauen aus eigenen Routen; die gebaute Seite zeigt Dateien.
-#: `demo_body` kennt beides — nur die Quellen unterscheiden sich.
+#: The running app serves its previews from routes of its own; the built page shows files.
+#: `demo_body` knows both — only the sources differ.
 _LIVE_SRC = {k: f"/demo/preview/{k}" for k in ("login", "account", "admin")}
 _LIVE_OPEN = {"login": "/auth/login", "account": "/auth/account", "admin": "/auth/admin"}
 
@@ -272,9 +272,9 @@ _LIVE_OPEN = {"login": "/auth/login", "account": "/auth/account", "admin": "/aut
 def demo(request: Request):
     lang, user = lang_of(request), auth.current_user(request)
     t = PANEL_T[lang]
-    # Escapen wie auf /app und /sensibel (R8-2): Der Fix aus T-12 traf zwei der drei Stellen,
-    # an denen der Benutzername in eine Demo-Seite geht. Wer sich als `<img src=x onerror=…>`
-    # registrierte, lief hier auf jedem Besuch von /demo mit.
+    # Escape as on /app and /sensibel (R8-2): the fix from T-12 hit two of the three places
+    # where the username goes into a demo page. Whoever registered as `<img src=x onerror=…>`
+    # was running along here on every visit to /demo.
     lead = t["demo_hello"].format(u=html.escape(user["username"])) if user else t["demo_lead"]
     body = demo_body(lang, src=_LIVE_SRC, open_urls=_LIVE_OPEN, lead=lead)
     return page(t["demo_h1"], body, request)
@@ -293,12 +293,12 @@ def flows(request: Request):
     return page(t["flows_h1"], body, request)
 
 
-# ---------------------------------------------------------------- Read-only Vorschauen
-# Gerendert wird in `web/demo.py` — dieselben drei Panels, die auch die gebaute Seite zeigt.
-# Hier hängen sie nur an Routen statt an Dateien.
+# ---------------------------------------------------------------- Read-only previews
+# Rendering happens in `web/demo.py` — the same three panels the built page shows.
+# Here they are merely attached to routes instead of files.
 #
-# Bewusst **pro Request**, nicht einmal beim Import: `auth.cfg.lang` setzt die Middleware je
-# Anfrage. Ein zwischengespeichertes Panel bliebe für immer in der Sprache des ersten Aufrufs.
+# Deliberately **per request**, not once at import: the middleware sets `auth.cfg.lang` per
+# request. A cached panel would stay in the language of the first call forever.
 @app.get("/demo/preview/{name}", include_in_schema=False)
 def prev_panel(name: str):
     previews = render_previews(auth, "/demo/preview/adminapi")
@@ -307,7 +307,7 @@ def prev_panel(name: str):
     return HTMLResponse(previews[name])
 
 
-#: Die Beispieldaten des Admin-Panels — dieselben, die der Bauschritt als Dateien ablegt.
+#: The example data of the admin panel — the same that the build step writes out as files.
 _FAKE = mock_api(__version__)
 
 
@@ -321,7 +321,7 @@ def prev_api_ro(path: str):
     return JSONResponse({"detail": "Vorschau — schreibende Aktionen sind abgeschaltet."}, status_code=403)
 
 
-# ---------------------------------------------------------------- Geschützte Beispiel-Seiten
+# ---------------------------------------------------------------- Protected example pages
 @app.get("/app", response_class=HTMLResponse)
 def protected(request: Request, user=Depends(auth.require_user)):
     lang = lang_of(request)
@@ -354,4 +354,4 @@ def guests(request: Request, _=Depends(auth.require_resource("gaeste"))):
 
 @app.get("/boom", response_class=HTMLResponse)
 def boom():
-    raise RuntimeError("absichtlicher Fehler für die Demo")   # → themed 500-Seite
+    raise RuntimeError("intentional error for the demo")   # → themed 500 page

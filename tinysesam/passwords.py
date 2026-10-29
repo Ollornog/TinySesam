@@ -1,12 +1,12 @@
-"""Passwort-Hashing. Bevorzugt argon2 (argon2-cffi); Fallback auf stdlib-scrypt,
-damit TinySesam auch ohne argon2-cffi läuft. Beide sind speicher-hart und sicher.
+"""Password hashing. Prefers argon2 (argon2-cffi); falls back to stdlib scrypt,
+so TinySesam also runs without argon2-cffi. Both are memory-hard and secure.
 
-Die Richtung zählt: scrypt-Hashes prüft jede Installation, argon2-Hashes nur eine mit dem Extra
-`[argon2]`. Fehlt es zur Laufzeit — neues Abbild ohne das Extra, `pip install tinysesam` statt
-`tinysesam[argon2]`, ein venv neu aufgesetzt —, passt kein einziges Bestandspasswort mehr (B6-8).
-Das bleibt so (ein argon2-Hash lässt sich ohne argon2 nicht prüfen), aber es geschieht nicht mehr
-still: `TinySesam()` zählt die betroffenen Hashes beim Start, und der erste Fehlschlag dieser Art
-im Betrieb schreibt eine Zeile mit der Abhilfe.
+The direction matters: every installation can verify scrypt hashes, argon2 hashes only one with the extra
+`[argon2]`. If it is missing at runtime — new image without the extra, `pip install tinysesam` instead of
+`tinysesam[argon2]`, a venv set up anew —, not a single existing password matches any more (B6-8).
+That stays so (an argon2 hash cannot be verified without argon2), but it no longer happens
+silently: `TinySesam()` counts the affected hashes at startup, and the first failure of this kind
+in operation writes a line with the remedy.
 """
 from __future__ import annotations
 import hashlib, os, base64, hmac, logging
@@ -20,30 +20,30 @@ try:
 except Exception:
     _ARGON = False
 
-_MAXMEM = 132 * 1024 * 1024  # scrypt n=2^15,r=8 braucht ~32 MiB → OpenSSL-Default-Limit anheben
-#: scrypt-Parameter für den Fallback ohne `[argon2]`. `p=3` statt `p=1`: Das OWASP Password
-#: Storage Cheat Sheet listet `N=2^15` nur zusammen mit `p=3` als gleichwertige Konfiguration
-#: (die übrigen sind `N=2^17/p=1`, `N=2^16/p=2`, `N=2^14/p=5`, `N=2^13/p=10`). `N=2^15, p=1` war
-#: keine davon und lag messbar darunter — 52 ms gegen 122 ms auf demselben Rechner.
+_MAXMEM = 132 * 1024 * 1024  # scrypt n=2^15,r=8 needs ~32 MiB → raise the OpenSSL default limit
+#: scrypt parameters for the fallback without `[argon2]`. `p=3` instead of `p=1`: the OWASP Password
+#: Storage Cheat Sheet lists `N=2^15` only together with `p=3` as an equivalent configuration
+#: (the others are `N=2^17/p=1`, `N=2^16/p=2`, `N=2^14/p=5`, `N=2^13/p=10`). `N=2^15, p=1` was
+#: none of them and measurably lower — 52 ms against 122 ms on the same machine.
 _SCRYPT = dict(n=2 ** 15, r=8, p=3, dklen=32, maxmem=_MAXMEM)
 
-#: Die Parameter, mit denen bis einschliesslich 0.17.0 gehasht wurde. Das damalige Format
-#: `scrypt$salt$dk` trug sie nicht mit — wer einen solchen Hash mit dem heutigen `p=3` nachrechnet,
-#: bekommt ein anderes Ergebnis und damit ein falsches "Passwort stimmt nicht". Ohne diese Zeile
-#: hätte die Parameter-Anhebung in 0.18.0 jedes Konto ausgesperrt, das ohne `[argon2]` läuft.
+#: The parameters used for hashing up to and including 0.17.0. The format of that time,
+#: `scrypt$salt$dk`, did not carry them — recomputing such a hash with today's `p=3`
+#: gives a different result and thus a false "password does not match". Without this line
+#: the parameter increase in 0.18.0 would have locked out every account that runs without `[argon2]`.
 _SCRYPT_ALT = dict(n=2 ** 15, r=8, p=1)
 
 
 def _scrypt_teile(stored: str) -> tuple[int, int, int, str, str]:
-    """`scrypt$…` zerlegen → (n, r, p, salt_b64, dk_b64).
+    """Split `scrypt$…` → (n, r, p, salt_b64, dk_b64).
 
-    Zwei Formate: das heutige `scrypt$n$r$p$salt$dk` trägt seine Parameter selbst, das alte
-    `scrypt$salt$dk` nicht — dort gelten die von damals (`_SCRYPT_ALT`).
+    Two formats: today's `scrypt$n$r$p$salt$dk` carries its parameters itself, the old
+    `scrypt$salt$dk` does not — there those of that time apply (`_SCRYPT_ALT`).
 
-    Die Parameter kommen damit aus der Datenbank. Ein absurd grosses `n` rechnet trotzdem niemand:
-    `verify_password` gibt `_MAXMEM` mit, `hashlib.scrypt` weist alles darüber ab, und der Aufrufer
-    wertet das als „Passwort stimmt nicht". (Wer in die Tabelle schreiben kann, braucht diesen Weg
-    ohnehin nicht — er setzt einfach einen eigenen Hash.)
+    The parameters thus come from the database. An absurdly large `n` is still not computed by anyone:
+    `verify_password` passes `_MAXMEM`, `hashlib.scrypt` rejects everything above it, and the caller
+    treats that as "password does not match". (Whoever can write to the table does not need this path
+    anyway — they simply set a hash of their own.)
     """
     teile = stored.split("$")
     if len(teile) == 6:
@@ -55,7 +55,7 @@ def _scrypt_teile(stored: str) -> tuple[int, int, int, str, str]:
 
 def hash_password(pw: str) -> str:
     if not pw:
-        raise ValueError("leeres Passwort")
+        raise ValueError("empty password")
     if _ARGON:
         return _PH.hash(pw)
     salt = os.urandom(16)
@@ -90,15 +90,15 @@ def verify_password(pw: str, stored: str) -> bool:
     return False
 
 
-#: Hinweis, wenn ein argon2-Hash ohne das Extra auftaucht — eine Zeile, mit der Abhilfe.
-ARGON2_FEHLT = ("Das Extra [argon2] fehlt, die Datenbank enthält aber argon2-Hashes: Diese "
-                "Passwörter/PINs lassen sich nicht prüfen, jede Anmeldung damit scheitert. "
-                "Abhilfe: pip install 'tinysesam[argon2]' und neu starten.")
+#: Notice when an argon2 hash shows up without the extra — one line, with the remedy.
+ARGON2_FEHLT = ("The extra [argon2] is missing, but the database contains argon2 hashes: these "
+                "passwords/PINs cannot be verified, every sign-in with them fails. "
+                "Remedy: pip install 'tinysesam[argon2]' and restart.")
 _ARGON2_GEMELDET = {"ja": False}
 
 
 def argon2_verfuegbar() -> bool:
-    """Ist das Extra `[argon2]` in diesem Prozess nutzbar?"""
+    """Is the `[argon2]` extra usable in this process?"""
     return _ARGON
 
 
@@ -107,42 +107,42 @@ def ist_argon2(stored) -> bool:
 
 
 def _argon2_fehlt_melden() -> None:
-    """Einmal je Prozess: im Betrieb wäre es sonst eine Zeile je Anmeldeversuch."""
+    """Once per process: in operation it would otherwise be one line per sign-in attempt."""
     if _ARGON2_GEMELDET["ja"]:
         return
     _ARGON2_GEMELDET["ja"] = True
     logging.getLogger("tinysesam").error(ARGON2_FEHLT)
 
 
-# Dummy-Hash (mit dem AKTIVEN Verfahren, einmalig erzeugt) für Timing-Ausgleich: bei unbekanntem
-# User/fehlendem Hash trotzdem gleich viel Verify-Arbeit leisten → keine User-Enumeration per Zeit.
+# Dummy hash (with the ACTIVE method, created once) for timing equalization: for an unknown
+# user/missing hash still do the same amount of verify work → no user enumeration via timing.
 _DUMMY = hash_password("tinysesam-timing-dummy")
 
 
 def dummy_verify(pw: str) -> bool:
-    """Verify-Arbeit gegen den Dummy-Hash leisten (Rückgabe immer False)."""
+    """Do verify work against the dummy hash (always returns False)."""
     try:
         verify_password(pw or "", _DUMMY)
     except Exception:
-        pass  # nur die Rechenzeit zählt; das Ergebnis ist immer False
+        pass  # only the compute time counts; the result is always False
     return False
 
 
 def needs_rehash(stored: str) -> bool:
-    """Sollte dieser Hash beim nächsten erfolgreichen Login neu gerechnet werden?
+    """Should this hash be recomputed at the next successful login?
 
-    Ein **scrypt**-Hash sagt hier `True`, sobald argon2 verfügbar ist: Wer das Extra `[argon2]`
-    nachinstalliert, soll seine Bestandskonten auch wirklich auf das stärkere Verfahren heben.
-    Vorher gab diese Funktion für jeden `scrypt$`-Hash `False` zurück — die Login-Pfade riefen
-    sie zwar korrekt auf, bekamen aber nie ein `True`, und die Konten blieben für immer auf dem
-    Fallback. Zusammen mit den zu schwachen scrypt-Parametern war das doppelt ärgerlich.
+    A **scrypt** hash says `True` here as soon as argon2 is available: whoever installs the
+    `[argon2]` extra later should really have their existing accounts lifted to the stronger method.
+    Before, this function returned `False` for every `scrypt$` hash — the login paths
+    called it correctly but never got a `True`, and the accounts stayed on the
+    fallback forever. Together with the too-weak scrypt parameters that was doubly annoying.
     """
     if not stored:
         return False
     if stored.startswith("scrypt$"):
         if _ARGON:
-            return True        # argon2 da → beim nächsten Login aufsteigen
-        try:                   # sonst: schwächere scrypt-Parameter als heute → neu rechnen
+            return True        # argon2 present → upgrade at the next login
+        try:                   # otherwise: weaker scrypt parameters than today → recompute
             n, r, pp, _, _ = _scrypt_teile(stored)
         except Exception:
             return False
@@ -155,19 +155,19 @@ def needs_rehash(stored: str) -> bool:
     return False
 
 
-# ---------- Passwortregel beim Setzen (Länge, Blockliste, Kontextwörter) ----------
-#: Obergrenze für ein neues Passwort. NIST SP 800-63B verlangt, mindestens 64 Zeichen
-#: zuzulassen — 256 lässt Passphrasen und Passwortmanagern reichlich Platz. Ohne Grenze
-#: (R4-07) nahmen alle drei Setzstellen beliebig lange Eingaben an, und jede davon ging
-#: vollständig in den Hash; eine Obergrenze ist die übliche, prüfbare Zusage.
+# ---------- Password policy when setting (length, blocklist, context words) ----------
+#: Upper limit for a new password. NIST SP 800-63B requires allowing at least 64 characters
+#: — 256 leaves plenty of room for passphrases and password managers. Without a limit
+#: (R4-07) all three setting points accepted input of any length, and each of them went
+#: completely into the hash; an upper limit is the usual, verifiable commitment.
 PASSWORT_MAX_LAENGE = 256
 
-#: Eingebaute Blockliste — die Passwörter, die in jeder veröffentlichten Leak-Auswertung ganz
-#: oben stehen, plus die deutschsprachigen Klassiker. Bewusst **offline**: Eine Anfrage an
-#: einen fremden Dienst (etwa die k-Anonymity-API von HIBP) würde bei jeder Registrierung
-#: nach aussen telefonieren; das entscheidet der Betreiber, nicht die Bibliothek (Fund B2-5,
-#: Empfehlung H-17). Die Liste ist klein, weil sie mit der Mindestlänge zusammenspielt —
-#: länger wird sie über `password_blocklist_file`. Verglichen wird kleingeschrieben.
+#: Built-in blocklist — the passwords that top every published leak analysis,
+#: plus the German-language classics. Deliberately **offline**: a request to
+#: a foreign service (such as HIBP's k-anonymity API) would phone outward on every registration;
+#: that is for the operator to decide, not the library (finding B2-5,
+#: recommendation H-17). The list is small because it interplays with the minimum length —
+#: it grows via `password_blocklist_file`. Comparison is lowercase.
 BLOCKLISTE = frozenset("""
 password password1 password12 password123 password1234 passw0rd p@ssw0rd p@ssword
 passwort passwort1 passwort12 passwort123 passwort1234 kennwort kennwort1 kennwort123
@@ -187,39 +187,39 @@ winter2024 winter2025 winter2026 frühling2026 herbst2026 dezember januar
 """.split())
 
 def mit_kernen(eintraege) -> frozenset:
-    """Eine Blockliste samt der Wortkerne ihrer Einträge (ab vier Buchstaben).
+    """A blocklist together with the word cores of its entries (from four letters).
 
-    Steht `Firmenname2026` auf der Liste, soll `Firmenname!!` nicht durchgehen — verglichen wird
-    deshalb auch Kern gegen Kern. Kürzere Kerne (`abc` aus `abc123`) blieben draussen: Sie
-    stecken in zu vielen brauchbaren Passwörtern."""
+    If `Firmenname2026` is on the list, `Firmenname!!` should not get through — so core is
+    compared against core as well. Shorter cores (`abc` from `abc123`) stay out: they
+    occur in too many usable passwords."""
     klein = {str(e).strip().lower() for e in eintraege if str(e).strip()}
     return frozenset(klein | {k for k in map(_kern, klein) if len(k) >= 4})
 
 
-#: Wörter, die für einen Dienst dieser Art ohnehin jeder zuerst probiert.
+#: Words that everyone tries first anyway for a service of this kind.
 KONTEXT_GRUNDWORTE = ("tinysesam", "password", "passwort", "login", "admin")
 
 
 def _kern(pw: str) -> str:
-    """Der Wortkern eines Passworts: kleingeschrieben, ohne Ziffern und Sonderzeichen.
+    """The word core of a password: lowercase, without digits and special characters.
 
-    Daran scheitern die üblichen Aufhübschungen (`Passwort2026!`, `Anna1990`, `admin#1`) —
-    sie hängen nur Ziffern und Zeichen an ein Wort, das auf der Liste steht."""
+    The usual embellishments fail on it (`Passwort2026!`, `Anna1990`, `admin#1`) —
+    they only append digits and characters to a word that is on the list."""
     return "".join(z for z in pw.lower() if z.isalpha())
 
 
-#: Zeichenreihen, deren Abschnitte als „Folge" gelten — vorwärts wie rückwärts. Tastaturzeilen
-#: (deutsches und englisches Layout), Alphabet, Ziffernzeile.
+#: Character rows whose segments count as a "sequence" — forwards as well as backwards. Keyboard rows
+#: (German and English layout), alphabet, digit row.
 _VORWAERTS = ("1234567890", "qwertyuiop", "qwertzuiop", "asdfghjkl", "yxcvbnm", "zxcvbnm",
               "abcdefghijklmnopqrstuvwxyz")
 _REIHEN: tuple = _VORWAERTS + tuple(r[::-1] for r in _VORWAERTS)
 
 
 def _aus_reihen(s: str) -> bool:
-    """Lässt sich `s` lückenlos aus Reihen-Abschnitten von je mindestens drei Zeichen legen?
+    """Can `s` be composed without gaps from row segments of at least three characters each?
 
-    Fängt `qwerasdf`, `0987654321`, `7890123`, `Asdf1234` — Tastaturwege und Zählreihen, die
-    in jeder Leak-Liste weit oben stehen, aber keinen konstanten Zeichenabstand haben."""
+    Catches `qwerasdf`, `0987654321`, `7890123`, `Asdf1234` — keyboard paths and counting rows that
+    rank high in every leak list but have no constant character distance."""
     n = len(s)
     geht = [True] + [False] * n
     for i in range(n):
@@ -232,24 +232,24 @@ def _aus_reihen(s: str) -> bool:
 
 
 def _trivial(pw: str) -> bool:
-    """Triviale Muster: ein Zeichen wiederholt (`aaaaaaaa`), eine lückenlose Folge (`45678901`),
-    ein wiederholter Block (`12341234`, `asdfasdf`), Doppelungen einer Folge (`11112222`,
-    `aabbccdd`) und Tastatur- oder Zählreihen (`qwerasdf`, `0987654321`).
+    """Trivial patterns: a repeated character (`aaaaaaaa`), a gapless sequence (`45678901`),
+    a repeated block (`12341234`, `asdfasdf`), doubled sequences (`11112222`,
+    `aabbccdd`) and keyboard or counting rows (`qwerasdf`, `0987654321`).
 
-    Bis zur Nacharbeit (A-6) kannte die Prüfung nur den konstanten Abstand ±1 — alles andere
-    aus diesem Katalog steht ebenso weit oben in den Leak-Listen und ging durch."""
+    Until the rework (A-6) the check knew only the constant distance ±1 — everything else
+    in this catalog ranks just as high in the leak lists and got through."""
     s = pw.lower()
     if len(set(s)) <= 1:
         return True
     schritte = {ord(b) - ord(a) for a, b in zip(s, s[1:])}
     if schritte in ({1}, {-1}) or (s.isdigit() and (schritte <= {1, -9} or schritte <= {-1, 9})):
         return True
-    # Ein Block, mehrfach hintereinander: `s` steckt in sich selbst um weniger als seine
-    # Länge verschoben genau dann, wenn es periodisch ist.
+    # One block, several times in a row: `s` is contained in itself shifted by less than its
+    # length exactly when it is periodic.
     if (s + s).find(s, 1) < len(s):
         return True
-    # Läufe gleicher Zeichen zusammenfalten: Was danach höchstens halb so lang und selbst
-    # trivial ist, war nur eine aufgeblähte Folge.
+    # Fold runs of identical characters: whatever is at most half as long afterwards and itself
+    # trivial was only an inflated sequence.
     gefaltet = "".join(z for i, z in enumerate(s) if i == 0 or s[i - 1] != z)
     if len(gefaltet) * 2 <= len(s) and (len(set(gefaltet)) <= 2 or _trivial(gefaltet)):
         return True
@@ -257,11 +257,11 @@ def _trivial(pw: str) -> bool:
 
 
 def _kontextteile(wort: str) -> set:
-    """Ein Kontextwort als Ganzes UND in seinen Teilen (Trenner, Ziffern, Binnenmajuskel).
+    """A context word as a whole AND in its parts (separators, digits, inner capitals).
 
-    `max.mustermann`, `anna_schmidt`, `k.mueller`, `MaxMustermann` — der Nachname allein ist
-    das naheliegendste Passwort-Wort dieser Konten, und der Vergleich des ganzen Namens liess
-    ihn durch (A-5)."""
+    `max.mustermann`, `anna_schmidt`, `k.mueller`, `MaxMustermann` — the surname alone is
+    the most obvious password word of these accounts, and comparing the whole name let
+    it through (A-5)."""
     roh = str(wort or "")
     getrennt = "".join(" " + z if z.isupper() and i and roh[i - 1].islower() else z
                        for i, z in enumerate(roh))
@@ -270,12 +270,12 @@ def _kontextteile(wort: str) -> set:
 
 
 def blockliste_lesen(pfad) -> frozenset:
-    """Eine Blockliste aus einer Datei: ein Passwort je Zeile, `#` am Zeilenanfang = Kommentar.
+    """A blocklist from a file: one password per line, `#` at the line start = comment.
 
-    Zeilen werden als UTF-8 gelesen; eine Zeile, die kein gültiges UTF-8 ist, als Latin-1.
-    Gängige Leak-Listen (etwa `rockyou.txt`) mischen beides — mit einem strikten UTF-8-Lesen
-    brach der Start an genau den Listen ab, für die das Feld gedacht ist (A-3). Ein
-    `OSError` (Datei fehlt, Verzeichnis, keine Rechte) geht an den Aufrufer."""
+    Lines are read as UTF-8; a line that is not valid UTF-8, as Latin-1.
+    Common leak lists (such as `rockyou.txt`) mix both — with strict UTF-8 reading
+    the startup aborted on exactly the lists the field is meant for (A-3). An
+    `OSError` (file missing, directory, no permissions) goes to the caller."""
     zeilen = []
     with open(pfad, "rb") as f:
         for roh in f:
@@ -289,17 +289,17 @@ def blockliste_lesen(pfad) -> frozenset:
 
 
 def passwort_mangel(pw: str, min_laenge: int, *, kontext=(), blockliste=()) -> "Optional[tuple]":
-    """Was stimmt mit diesem neuen Passwort nicht? `None` = in Ordnung.
+    """What is wrong with this new password? `None` = fine.
 
-    Rückgabe `(grund, parameter)` mit `grund` in `"short"`, `"long"`, `"weak"` — die Texte
-    macht der Aufrufer, damit dieselbe Regel für Seite, JSON-Antwort und CLI gilt. Geprüft
-    wird, was NIST SP 800-63B für ein gewähltes Passwort verlangt: Länge, Abgleich gegen eine
-    Liste bekannter Passwörter und gegen **kontextbezogene Wörter** (Dienstname, Benutzername,
-    E-Mail-Adresse). Keine Zusammensetzungsregeln (Grossbuchstabe, Sonderzeichen) — die
-    verbietet dieselbe Norm, weil sie nur vorhersehbare Muster erzeugen.
+    Returns `(reason, parameter)` with `reason` in `"short"`, `"long"`, `"weak"` — the texts
+    are made by the caller, so the same rule applies to page, JSON response and CLI. What is
+    checked is what NIST SP 800-63B requires for a chosen password: length, comparison against a
+    list of known passwords and against **context-related words** (service name, username,
+    email address). No composition rules (uppercase letter, special character) — the
+    same standard forbids them because they only produce predictable patterns.
 
-    `kontext`: Wörter, die für DIESES Konto naheliegen. `blockliste`: zusätzliche Einträge
-    des Betreibers (aufbereitet mit `mit_kernen`).
+    `kontext`: words that are obvious for THIS account. `blockliste`: additional entries
+    of the operator (prepared with `mit_kernen`).
     """
     pw = pw or ""
     if len(pw) < int(min_laenge):
@@ -314,8 +314,8 @@ def passwort_mangel(pw: str, min_laenge: int, *, kontext=(), blockliste=()) -> "
         return "weak", {}
     for wort in tuple(KONTEXT_GRUNDWORTE) + tuple(kontext or ()):
         for w in _kontextteile(wort):
-            # Unter vier Buchstaben trägt ein Kontextwort nichts — `al` stünde in jedem zweiten
-            # Wort. Auch verdoppelt (`admin-admin`) ist es nur das eine Wort.
+            # Under four letters a context word contributes nothing — `al` would be in every second
+            # word. Even doubled (`admin-admin`) it is just the one word.
             if kern and len(w) >= 4 and len(kern) % len(w) == 0 and kern == w * (len(kern) // len(w)):
                 return "weak", {}
     return None

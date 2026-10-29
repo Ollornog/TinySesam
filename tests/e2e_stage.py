@@ -1,24 +1,24 @@
-"""End-to-End gegen eine ECHTE Instanz: OIDC, SAML und Passkey im echten Browser.
+"""End-to-end against a REAL instance: OIDC, SAML and passkey in a real browser.
 
-Kein CI-Test und bewusst **nicht** `test_*.py`: `run_all.py` sammelt per Glob und würde ihn sonst
-einsammeln. Die CI hat keine Domain, kein Zertifikat und keinen Identity Provider — ein Test, der
-das nachbaut, prüft die Attrappe, nicht die Ceremony (siehe `backlog/T-1-e2e-gegen-echten-idp.md`).
-Gedacht als **Smoke-Test nach dem Deploy** gegen eine ausgerollte Stage.
+Not a CI test and deliberately **not** `test_*.py`: `run_all.py` collects by glob and would
+otherwise pick it up. CI has no domain, no certificate and no identity provider — a test that
+rebuilds them checks the dummy, not the ceremony (see `backlog/T-1-e2e-against-real-idp.md`).
+Meant as a **smoke test after the deploy** against a rolled-out stage.
 
-Alles Umgebungsspezifische kommt aus der UMGEBUNG — Adressen und Zugangsdaten gehören nicht in ein
-öffentliches Repo:
+Everything environment-specific comes from the ENVIRONMENT — addresses and credentials do not belong
+in a public repo:
 
-    STAGE_BASE_URL          https://<stage>            (Pflicht)
-    STAGE_ADMIN_USER/_PW    lokales Konto für den Passkey-Teil
-    STAGE_SAML_USER/_PW     Konto im SAML-IdP
-    STAGE_OIDC_CRED         Datei mit einem exportierten WebAuthn-Credential des IdP-Kontos
-                            (JSON aus WebAuthn.getCredentials) — der IdP meldet passwortlos an
+    STAGE_BASE_URL          https://<stage>            (required)
+    STAGE_ADMIN_USER/_PW    local account for the passkey part
+    STAGE_SAML_USER/_PW     account in the SAML IdP
+    STAGE_OIDC_CRED         file with an exported WebAuthn credential of the IdP account
+                            (JSON from WebAuthn.getCredentials) — the IdP signs in passwordless
 
-    python tests/e2e_stage.py            # alles, was konfiguriert ist
-    python tests/e2e_stage.py saml       # nur einen Teil
+    python tests/e2e_stage.py            # everything that is configured
+    python tests/e2e_stage.py saml       # only one part
 
-Jeder Teil, dessen Variablen fehlen, wird **übersprungen** und als solcher gemeldet — nie still
-als bestanden. Exit 0 = alles Geprüfte grün, 1 = ein Teil rot.
+Every part whose variables are missing is **skipped** and reported as such — never silently
+as passed. Exit 0 = everything checked green, 1 = a part red.
 """
 from __future__ import annotations
 
@@ -42,10 +42,10 @@ def ok(name):
 
 
 class Browser:
-    """Headless Chrome über das DevTools-Protokoll — dieselbe Mechanik wie test_browser.py.
+    """Headless Chrome over the DevTools protocol — the same mechanism as test_browser.py.
 
-    Chrome wählt seinen Debug-Port selbst (`--remote-debugging-port=0`) und schreibt ihn ins
-    Profil: Ein vorab reservierter Port ist ein Wettlauf.
+    Chrome picks its debug port itself (`--remote-debugging-port=0`) and writes it into the
+    profile: a port reserved in advance is a race.
     """
 
     def __init__(self):
@@ -63,14 +63,14 @@ class Browser:
         ende = time.time() + 30
         while time.time() < ende:
             if self.proc.poll() is not None:
-                raise RuntimeError("Chrome ist beim Start gestorben")
+                raise RuntimeError("Chrome died at startup")
             try:
                 with open(datei, encoding="utf-8") as fh:
                     erste = fh.readline().strip()
                 if erste.isdigit():
                     return int(erste)
             except OSError:
-                pass  # Datei fehlt noch oder ist halb geschrieben — nächste Runde
+                pass  # file is still missing or half written — next round
             time.sleep(0.1)
         raise RuntimeError("Chrome meldet keinen Debug-Port")
 
@@ -89,14 +89,14 @@ class Browser:
         shutil.rmtree(self.profil, ignore_errors=True)
 
     async def cmd(self, method, params=None, frist=60):
-        """Einen DevTools-Befehl senden und auf SEINE Antwort warten — mit Frist.
+        """Send a DevTools command and wait for ITS response — with a deadline.
 
-        Zwei Dinge, die einen Lauf sonst endlos hängen liessen (gefunden beim Bühnentest für
-        0.20.0, 15 Minuten ohne Ausgabe): Öffnet die Seite einen `confirm()`-Dialog — die
-        Kontoseite fragt seit B1-7 nach einer Faktor-Änderung, ob die übrigen Sitzungen enden
-        sollen —, beantwortet Chrome bis zum Schließen kein `Runtime.evaluate` mehr. Der Dialog
-        wird deshalb hier sofort abgelehnt (das Angebot ist nicht Gegenstand dieses Tests) und
-        gemeldet. Und jede Antwort hat eine Frist; ohne sie wartet ein Fehler still statt laut.
+        Two things that would otherwise let a run hang forever (found in the stage test for
+        0.20.0, 15 minutes without output): if the page opens a `confirm()` dialog — since B1-7 the
+        account page asks after a factor change whether the other sessions should end —,
+        Chrome answers no `Runtime.evaluate` until it is closed. The dialog
+        is therefore rejected immediately here (the offer is not the subject of this test) and
+        reported. And every response has a deadline; without it an error waits silently instead of loudly.
         """
         self._n += 1
         mein = self._n
@@ -128,11 +128,11 @@ class Browser:
         await asyncio.sleep(warte)
 
     async def warte_bis(self, ausdruck, sekunden=20, was="Zustand"):
-        """Auf einen Zustand warten, nicht auf die Uhr.
+        """Wait for a state, not for the clock.
 
-        Feste Wartezeiten machen einen E2E-Test launisch: Der Rechner ist mal schneller, der
-        Provider mal langsamer, und rot wird der Test dann aus einem Grund, der nichts mit dem
-        Code zu tun hat. Der Ausdruck wird im Browser ausgewertet, bis er wahr ist.
+        Fixed waits make an E2E test moody: the machine is sometimes faster, the
+        provider sometimes slower, and the test then goes red for a reason that has nothing to do with
+        the code. The expression is evaluated in the browser until it is true.
         """
         ende = time.time() + sekunden
         while time.time() < ende:
@@ -140,16 +140,16 @@ class Browser:
                 if await self.js(ausdruck):
                     return True
             except RuntimeError:
-                pass          # während einer Navigation ist der Kontext kurz weg
+                pass          # during a navigation the context is briefly gone
             await asyncio.sleep(0.4)
         return False
 
     async def csrf(self):
-        """Das CSRF-Token aus dem Cookie — unabhängig davon, auf welcher Seite wir gerade sind.
+        """The CSRF token from the cookie — regardless of which page we are currently on.
 
-        Die eingebaute Hilfe `tsCsrf()` gibt es nur auf TinySesams eigenen Seiten; auf einer Seite
-        der Anwendung fehlt sie. Das Double-Submit-Cookie ist bewusst nicht HttpOnly, genau damit
-        eigene Skripte es lesen können. Über HTTPS heisst es seit H-1 `__Host-tinysesam_csrf`.
+        The built-in helper `tsCsrf()` exists only on TinySesam's own pages; on a page
+        of the application it is missing. The double-submit cookie is deliberately not HttpOnly, precisely so
+        that own scripts can read it. Over HTTPS it has been called `__Host-tinysesam_csrf` since H-1.
         """
         return await self.js(
             "(document.cookie.split('; ').find(c => c.startsWith('__Host-tinysesam_csrf=')"
@@ -157,7 +157,7 @@ class Browser:
             ".split('=')[1] || ''")
 
     async def angemeldet_als(self, warte=0):
-        """Username laut /auth/me, oder None. `warte` Sekunden lang geduldig, wenn gewünscht."""
+        """Username according to /auth/me, or None. Patient for `warte` seconds, if desired."""
         ende = time.time() + warte
         while True:
             roh = await self.js("fetch('/auth/me').then(r => r.json()).then(j => JSON.stringify(j))")
@@ -169,16 +169,16 @@ class Browser:
             await asyncio.sleep(0.5)
 
     async def fuelle(self, felder: dict, absenden: str = None):
-        """Formular ausfüllen und abschicken — wartend, nicht ratend.
+        """Fill in and submit a form — waiting, not guessing.
 
-        Erst warten, bis alle Felder da sind (eine Seite, die noch baut, nimmt keine Werte an),
-        dann `requestSubmit()`: Das ist der standardkonforme Weg, der Validierung und
-        `submit`-Handler auslöst — ein Klick auf den Knopf tat das hier mal, mal nicht, je nachdem
-        wie weit die Seite war. Danach warten, bis die Seite tatsächlich gewechselt hat.
+        First wait until all fields are there (a page that is still building accepts no values),
+        then `requestSubmit()`: that is the standards-compliant way, which triggers validation and
+        `submit` handlers — a click on the button did that here sometimes, sometimes not, depending on
+        how far along the page was. Afterwards wait until the page has actually changed.
         """
         for sel in felder:
             if not await self.warte_bis(f"!!document.querySelector({sel!r})", 15):
-                raise RuntimeError(f"Feld {sel} erscheint nicht — falsche Seite?")
+                raise RuntimeError(f"Field {sel} does not appear — wrong page?")
         setzen = "".join(
             f"document.querySelector({s!r}).value = {w!r};" for s, w in felder.items())
         wo = next(iter(felder))
@@ -189,34 +189,34 @@ class Browser:
         await self.pruefe_regulierung()
 
     async def pruefe_regulierung(self):
-        """Rate-Limit und Lockout als solche melden, nicht als „Anmeldung fehlgeschlagen".
+        """Report rate limit and lockout as such, not as "sign-in failed".
 
-        Wer diesen Test mehrmals hintereinander fährt, läuft in die eigene Brute-Force-Bremse —
-        und eine Fehlermeldung, die dann nach falschem Passwort klingt, schickt den Suchenden in
-        die völlig falsche Richtung. (Dieselbe Lehre wie beim SAML-Fund: erst die Diagnose, dann
-        die Fehlersuche.)
+        Whoever runs this test several times in a row runs into their own brute-force brake —
+        and an error message that then sounds like a wrong password sends the searcher in
+        completely the wrong direction. (The same lesson as with the SAML finding: first the diagnosis, then
+        the troubleshooting.)
         """
         text = (await self.js("document.body.innerText")) or ""
-        for muster, was in (("too many", "Rate-Limit"), ("zu viele", "Rate-Limit"),
-                            ("locked", "Konto-Lockout"), ("gesperrt", "Konto-Lockout")):
+        for muster, was in (("too many", "rate limit"), ("zu viele", "rate limit"),
+                            ("locked", "account lockout"), ("gesperrt", "account lockout")):
             if muster in text.lower():
                 raise RuntimeError(
-                    f"{was} der Instanz hat zugeschlagen — nicht die Anmeldung ist kaputt, "
-                    f"sondern es kamen zu viele Versuche. Kurz warten und erneut fahren. "
-                    f"Seite sagt: {text[:80].strip()!r}")
+                    f"The instance's {was} kicked in — sign-in is not broken, "
+                    f"there were just too many attempts. Wait briefly and run again. "
+                    f"Page says: {text[:80].strip()!r}")
 
 
 async def teil_passkey():
-    """Passkey: registrieren und danach passwortlos anmelden — gegen die ECHTE rp_id.
+    """Passkey: register and then sign in passwordless — against the REAL rp_id.
 
-    Der virtuelle Authenticator ersetzt die Hardware, nicht die Ceremony: Origin, `rp_id` und
-    Zertifikat sind die der laufenden Instanz. Bedient wird die eingebaute Oberfläche, nicht
-    selbst nachgebautes JS — sonst prüfte der Test seinen eigenen Code.
+    The virtual authenticator replaces the hardware, not the ceremony: origin, `rp_id` and
+    certificate are those of the running instance. The built-in UI is operated, not
+    self-built JS — otherwise the test would check its own code.
     """
     user = os.environ.get("STAGE_ADMIN_USER", "admin")
     pw = os.environ.get("STAGE_ADMIN_PW")
     if not pw:
-        return "übersprungen (STAGE_ADMIN_PW fehlt)"
+        return "skipped (STAGE_ADMIN_PW missing)"
     async with Browser() as b:
         await b.cmd("WebAuthn.enable")
         auth_id = (await b.cmd("WebAuthn.addVirtualAuthenticator", {"options": {
@@ -226,30 +226,30 @@ async def teil_passkey():
 
         await b.geh("/auth/login", 2)
         await b.fuelle({"[name=username]": user, "[name=password]": pw})
-        assert await b.angemeldet_als(10) == user, "Passwort-Login fehlgeschlagen"
+        assert await b.angemeldet_als(10) == user, "password login failed"
 
         await b.geh("/auth/account", 2)
         await b.js("document.querySelector('[data-act=addpk]').click(); true")
         await asyncio.sleep(4)
         await b.warte_bis("fetch('/auth/passkey/list').then(r => r.json()).then(j => j.length > 0)", 20)
         liste = await b.js("fetch('/auth/passkey/list').then(r => r.json()).then(j => j.length)")
-        assert liste, "kein Passkey gespeichert"
+        assert liste, "no passkey stored"
         assert (await b.cmd("WebAuthn.getCredentials", {"authenticatorId": auth_id}))["credentials"]
-        ok(f"Passkey registriert ({liste} am Konto, 1 im Authenticator)")
+        ok(f"Passkey registered ({liste} on the account, 1 in the authenticator)")
 
-        # Abmelden wie die eingebaute Oberfläche: POST mit CSRF (seit F-07; ein GET fragt je nach
-        # Herkunft nur nach).
+        # Sign out like the built-in UI: POST with CSRF (since F-07; a GET only asks back
+        # depending on origin).
         tok = await b.csrf()
         await b.js(f"fetch('/auth/logout', {{method: 'POST', headers: {{'X-CSRF-Token': {tok!r}}}}})"
                    ".then(r => r.status)")
-        assert await b.angemeldet_als() is None, "Abmelden per POST hat nicht gegriffen"
+        assert await b.angemeldet_als() is None, "sign-out via POST did not take effect"
         await b.geh("/auth/login", 2)
         await b.js("document.querySelector('#pkbtn').click(); true")
-        assert await b.angemeldet_als(20) == user, "Passkey-Login fehlgeschlagen"
-        ok("passwortlos angemeldet (WebAuthn gegen echte rp_id)")
+        assert await b.angemeldet_als(20) == user, "passkey login failed"
+        ok("signed in passwordless (WebAuthn against the real rp_id)")
 
-        # Den angelegten Passkey wieder entfernen: Ein Lauf darf den nächsten nicht beeinflussen,
-        # sonst sammelt das Konto bei jedem Durchgang einen weiteren Schlüssel an.
+        # Remove the created passkey again: one run must not influence the next,
+        # otherwise the account accumulates another key on every pass.
         tok = await b.csrf()
         await b.js(f"""(async () => {{
             const ps = await (await fetch('/auth/passkey/list')).json();
@@ -260,39 +260,39 @@ async def teil_passkey():
             }}
             return true; }})()""")
         rest = await b.js("fetch('/auth/passkey/list').then(r => r.json()).then(j => j.length)")
-        assert rest == 0, f"Aufräumen unvollständig ({rest} Passkeys bleiben)"
-        ok("aufgeräumt: Konto ohne Passkey, der nächste Lauf startet gleich")
-    return "grün"
+        assert rest == 0, f"cleanup incomplete ({rest} passkeys remain)"
+        ok("cleaned up: account without passkey, the next run starts the same")
+    return "green"
 
 
 async def teil_saml():
-    """SAML: AuthnRequest → IdP-Login → signierte Assertion am ACS → Sitzung."""
+    """SAML: AuthnRequest → IdP login → signed assertion at the ACS → session."""
     user, pw = os.environ.get("STAGE_SAML_USER"), os.environ.get("STAGE_SAML_PW")
     if not (user and pw):
-        return "übersprungen (STAGE_SAML_USER/_PW fehlen)"
+        return "skipped (STAGE_SAML_USER/_PW missing)"
     async with Browser() as b:
         await b.geh("/auth/saml/login", 4)
         wohin = await b.js("location.href")
-        assert BASE not in wohin or "/idp" in wohin, f"kein Redirect zum IdP: {wohin}"
-        ok("AuthnRequest: zum IdP weitergeleitet")
+        assert BASE not in wohin or "/idp" in wohin, f"no redirect to the IdP: {wohin}"
+        ok("AuthnRequest: redirected to the IdP")
 
         await b.fuelle({"#username": user, "#password": pw})
         wer = await b.angemeldet_als(20)
-        assert wer, "Assertion wurde nicht angenommen (Grund steht im Log der Instanz)"
-        ok(f"Assertion angenommen, angemeldet als {wer}")
-    return "grün"
+        assert wer, "assertion was not accepted (the reason is in the instance log)"
+        ok(f"Assertion accepted, signed in as {wer}")
+    return "green"
 
 
 async def teil_oidc():
-    """OIDC: Authorization-Code-Flow gegen den echten Provider.
+    """OIDC: authorization code flow against the real provider.
 
-    Der Provider meldet passwortlos an (Passkey), deshalb bekommt der virtuelle Authenticator ein
-    zuvor exportiertes Credential eingespielt (`STAGE_OIDC_CRED`). Einmal von Hand registrieren,
-    danach beliebig oft automatisch — ohne dass ein Geheimnis im Repo landet.
+    The provider signs in passwordless (passkey), so the virtual authenticator gets a
+    previously exported credential injected (`STAGE_OIDC_CRED`). Register once by hand,
+    then automatically as often as you like — without a secret ending up in the repo.
     """
     cred_datei = os.environ.get("STAGE_OIDC_CRED")
     if not cred_datei or not os.path.exists(cred_datei):
-        return "übersprungen (STAGE_OIDC_CRED fehlt)"
+        return "skipped (STAGE_OIDC_CRED missing)"
     with open(cred_datei, encoding="utf-8") as fh:
         cred = json.load(fh)
     async with Browser() as b:
@@ -305,13 +305,13 @@ async def teil_oidc():
 
         await b.geh("/auth/oidc/start", 4)
         wohin = await b.js("location.origin")
-        assert BASE not in wohin, f"kein Redirect zum Provider: {wohin}"
-        ok("Authorization-Request: zum Provider weitergeleitet")
+        assert BASE not in wohin, f"no redirect to the provider: {wohin}"
+        ok("Authorization request: redirected to the provider")
 
-        # Der Provider führt durch mehrere Schritte: erst anmelden (der Passkey kommt aus dem
-        # eingespielten Credential), dann der Freigabe zustimmen. Wie viele Seiten das sind, hängt
-        # am Provider und daran, ob er die Zustimmung schon kennt — deshalb klicken wir weiter,
-        # solange wir noch bei ihm sind, statt eine feste Zahl Schritte anzunehmen.
+        # The provider leads through several steps: first sign in (the passkey comes from the
+        # injected credential), then agree to the approval. How many pages that is depends
+        # on the provider and on whether it already knows the consent — so we keep clicking
+        # as long as we are still at it, instead of assuming a fixed number of steps.
         for _ in range(4):
             if BASE.startswith(await b.js("location.origin") or "x"):
                 break
@@ -322,13 +322,13 @@ async def teil_oidc():
                 if (!b) return null; b.click(); return b.innerText.trim(); })()""")
             if not geklickt:
                 break
-            ok(f"beim Provider bestätigt: {geklickt!r}")
+            ok(f"confirmed at the provider: {geklickt!r}")
             await asyncio.sleep(4)
         wer = await b.angemeldet_als(25)
-        assert wer, ("kein Zugangstoken eingelöst — letzte Seite: "
+        assert wer, ("no access token redeemed — last page: "
                      + ((await b.js("document.body.innerText")) or "")[:120].replace(chr(10), " | "))
-        ok(f"Code eingelöst, angemeldet als {wer}")
-    return "grün"
+        ok(f"Code redeemed, signed in as {wer}")
+    return "green"
 
 
 TEILE = {"passkey": teil_passkey, "saml": teil_saml, "oidc": teil_oidc}
@@ -336,7 +336,7 @@ TEILE = {"passkey": teil_passkey, "saml": teil_saml, "oidc": teil_oidc}
 
 async def main(namen):
     if not BASE:
-        sys.exit("STAGE_BASE_URL fehlt — dieser Test läuft gegen eine ausgerollte Instanz.")
+        sys.exit("STAGE_BASE_URL missing — this test runs against a deployed instance.")
     if not CHROME:
         sys.exit("kein Chrome gefunden")
     print(f"E2E gegen {BASE}")
@@ -348,7 +348,7 @@ async def main(namen):
         except Exception as e:
             ergebnis[name] = f"ROT: {e}"
             rot = True
-        if ergebnis[name].startswith("über"):
+        if ergebnis[name].startswith("skipped"):
             print(f"  – {ergebnis[name]}")
         elif ergebnis[name].startswith("ROT"):
             print(f"  ✗ {ergebnis[name]}")

@@ -1,4 +1,4 @@
-"""Phase 4: Geteiltes Ressourcen-Geheimnis (PIN ODER Passphrase) — ohne Benutzerkonto."""
+"""Phase 4: shared resource secret (PIN OR passphrase) — without a user account."""
 import os
 import tempfile, os
 from fastapi import FastAPI, Depends
@@ -13,7 +13,7 @@ def ok(name):
 db = os.path.join(tempfile.mkdtemp(), "t.db")
 auth = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db, rp_name="Test", passkey_enabled=False, oidc_enabled=False,
                                  cookie_secure=False, resource_locks_enabled=True))
-# zwei Bereiche: einer PIN, einer Passphrase
+# two areas: one PIN, one passphrase
 auth.set_resource_secret("fotos", "2468", kind="pin", label="Familienfotos")
 auth.set_resource_secret("wiki", "geheime passphrase", kind="password", label="Team-Wiki")
 
@@ -34,37 +34,37 @@ def wiki(_=Depends(auth.require_resource("wiki"))):
 c = TestClient(app)
 JSON = {"Accept": "application/json"}
 
-# gesperrt ohne Unlock → 401 (JSON) bzw. 307 zur Unlock-Seite (Browser)
+# locked without unlock → 401 (JSON) or 307 to the unlock page (browser)
 assert c.get("/fotos", headers=JSON).status_code == 401
 r = c.get("/fotos", headers={"Accept": "text/html"}, follow_redirects=False)
 assert r.status_code == 307 and r.headers["location"] == "/auth/resource/fotos?next=/fotos"
-ok("gesperrter Bereich: JSON→401, Browser→307 zur Unlock-Seite")
+ok("locked area: JSON→401, browser→307 to the unlock page")
 
-# Unlock-Seite zeigt PIN- bzw. Passwort-Feld je nach kind
+# unlock page shows PIN or password field depending on kind
 assert "Familienfotos" in c.get("/auth/resource/fotos").text
 assert "Zugangswort" in c.get("/auth/resource/wiki").text
-ok("Unlock-Seite: PIN-Feld bzw. Passphrase-Feld je nach kind")
+ok("unlock page: PIN field or passphrase field depending on kind")
 
 # falsches Geheimnis → 401
 assert c.post("/auth/resource/fotos", data={"secret": "0000", "next": "/fotos"}).status_code == 401
 ok("falsches Geheimnis → 401")
 
-# richtige PIN schaltet frei → Zugriff, ohne jeden User-Login
+# correct PIN unlocks → access, without any user login
 r = c.post("/auth/resource/fotos", data={"secret": "2468", "next": "/fotos"}, follow_redirects=False)
 assert r.status_code == 303 and r.headers["location"] == "/fotos"
 assert c.get("/fotos", headers=JSON).json() == {"area": "fotos"}
-ok("PIN korrekt → Bereich frei (kein Benutzerkonto nötig)")
+ok("PIN correct → area open (no user account needed)")
 
-# Freischaltung ist pro Bereich: wiki noch gesperrt
+# unlocking is per area: wiki still locked
 assert c.get("/wiki", headers=JSON).status_code == 401
 r = c.post("/auth/resource/wiki", data={"secret": "geheime passphrase", "next": "/wiki"}, follow_redirects=False)
 assert r.status_code == 303
 assert c.get("/wiki", headers=JSON).json() == {"area": "wiki"}
-# fotos bleibt parallel offen
+# fotos stays open in parallel
 assert c.get("/fotos", headers=JSON).status_code == 200
 ok("Freischaltung pro Bereich getrennt (Passphrase-Bereich separat)")
 
-# Lockout nach zu vielen Fehlversuchen (pseudo-User res:name)
+# lockout after too many failed attempts (pseudo user res:name)
 c2 = TestClient(app)
 GRENZE = auth._sec("resource_max_attempts")
 codes = [c2.post("/auth/resource/fotos", data={"secret": "0000", "next": "/"}).status_code
@@ -73,14 +73,14 @@ assert codes == [401] * GRENZE, codes
 assert c2.post("/auth/resource/fotos", data={"secret": "2468", "next": "/"}).status_code == 429
 ok("Ressourcen-Lockout greift")
 
-# ---------- Runde 2: Bereichs-Fehlgriffe sperren keine ANMELDUNG ----------
-# Die Bereichs-PIN darf JEDER Besucher probieren — ein Konto braucht es dafür nicht. Ihre
-# Fehlgriffe liefen trotzdem in den Login-Topf (`record_login(pseudo, …, "resource")` +
-# `is_locked`), und weil dort die IP-Schwelle `max_login_attempts * ip_attempt_factor` gilt,
-# genügten drei Bereiche à fünf Fehlgriffe von derselben Adresse, um die Anmeldung von Konten
-# zu verriegeln, die damit nichts zu tun hatten. Jetzt sperrt der eigene Topf das, was er
-# schützt: Bereiche. (Mutationsprobe: in `resource_submit` wieder `is_locked` prüfen und
-# "resource" aus `security.EIGENE_SPERRE` nehmen → (a) wird rot.)
+# ---------- Round 2: area slips do not lock any SIGN-IN ----------
+# EVERY visitor may try the area PIN — an account is not needed for it. Their
+# slips nevertheless ran into the login bucket (`record_login(pseudo, …, "resource")` +
+# `is_locked`), and because the IP threshold `max_login_attempts * ip_attempt_factor` applies there,
+# three areas with five slips each from the same address were enough to lock the sign-in of accounts
+# that had nothing to do with it. Now the own bucket locks what it
+# protects: areas. (Mutation probe: check `is_locked` again in `resource_submit` and
+# remove "resource" from `security.EIGENE_SPERRE` → (a) turns red.)
 db2 = os.path.join(tempfile.mkdtemp(), "t.db")
 auth2 = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db2, rp_name="Test",
                                   passkey_enabled=False, oidc_enabled=False, cookie_secure=False,
@@ -92,10 +92,10 @@ c3 = TestClient(app2)
 bereiche = ["lager", "archiv", "keller"]
 for n in bereiche:
     auth2.set_resource_secret(n, "1234", kind="pin", label=n)
-# Seit R7-3 sperrt die ADRESSE schon bei `resource_max_attempts` — die Angriffslage (die Adresse
-# erreicht die Login-IP-Schwelle) lässt sich mit der Vorgabe also gar nicht mehr herstellen.
-# Für diese Probe wird die Bereichs-Schwelle deshalb auf die Login-IP-Schwelle gehoben.
-JE_BEREICH = auth2._sec("resource_max_attempts")     # wie bisher: fünf je Bereich, 15 zusammen
+# Since R7-3 the ADDRESS locks already at `resource_max_attempts` — the attack situation (the address
+# reaches the login IP threshold) can therefore no longer be produced with the default.
+# For this probe the area threshold is therefore raised to the login IP threshold.
+JE_BEREICH = auth2._sec("resource_max_attempts")     # as before: five per area, 15 together
 auth2.set_security("resource_max_attempts",
                    auth2._sec("max_login_attempts") * auth2._sec("ip_attempt_factor"))
 for n in bereiche:
@@ -103,38 +103,38 @@ for n in bereiche:
         c3.post(f"/auth/resource/{n}", data={"secret": "0000", "next": "/"})
 IP_GRENZE = auth2._sec("max_login_attempts") * auth2._sec("ip_attempt_factor")
 assert auth2.store.count_fails(0, ip="testclient", method="resource") >= IP_GRENZE, \
-    "Angriffslage nicht hergestellt: die Test-IP hat die Login-IP-Schwelle nicht erreicht"
+    "attack situation not produced: the test IP has not reached the login IP threshold"
 
-# (a) Der Angriff: Die Anmeldung eines Unbeteiligten von derselben Adresse bleibt offen.
+# (a) The attack: the sign-in of an uninvolved person from the same address stays open.
 assert not auth2._is_locked("unbeteiligt", "testclient"), \
-    "Fehlgriffe an der Bereichs-PIN sperren die Anmeldung Unbeteiligter"
+    "slips on the area PIN lock the sign-in of uninvolved persons"
 r = c3.post("/auth/login", data={"username": "unbeteiligt", "password": "Unbeteiligt-Passwort-1"},
             follow_redirects=False)
 assert r.status_code == 303, f"Login des Unbeteiligten gesperrt: {r.status_code}"
-ok("Bereichs-Fehlgriffe sperren keine Anmeldung (eigener Topf)")
+ok("area slips lock no sign-in (own bucket)")
 
-# (b) Die IP-Dimension bleibt hier trotzdem erhalten — anders als bei den angemeldeten Wegen:
-# Hier rät ein Fremder, das Opfer ist kein bestimmter Nutzer, und ohne sie könnte er über immer
-# neue Bereichsnamen endlos weiterraten. Ein VIERTER, nie berührter Bereich ist deshalb von
-# derselben Adresse aus zu.
-auth2.set_resource_secret("tresor", "9876", kind="pin", label="Tresor")
+# (b) The IP dimension is nevertheless retained here — unlike with the signed-in paths:
+# Here a stranger guesses, the victim is no particular user, and without it he could keep guessing endlessly via
+# new area names. A FOURTH, never touched area is therefore closed from
+# the same address.
+auth2.set_resource_secret("tresor", "9876", kind="pin", label="Vault")
 assert auth2.store.count_fails(0, username="res:tresor", method="resource") == 0, \
-    "Vorbedingung: dieser Bereich hat selbst keinen Fehlgriff gesehen"
+    "precondition: this area itself has seen no slip"
 r = c3.post("/auth/resource/tresor", data={"secret": "9876", "next": "/"})
-assert r.status_code == 429, f"die IP-Schwelle des Bereichs-Topfes greift nicht: {r.status_code}"
-# …und ein anderer Anschluss ist davon unberührt (die Sperre klebt an der Adresse, nicht am Bereich).
+assert r.status_code == 429, f"the IP threshold of the area bucket does not apply: {r.status_code}"
+# …and another connection is unaffected (the lockout sticks to the address, not to the area).
 c4 = TestClient(app2, client=("203.0.113.30", 50000))
 r = c4.post("/auth/resource/tresor", data={"secret": "9876", "next": "/"}, follow_redirects=False)
 assert r.status_code == 303, f"fremder Anschluss mitgesperrt: {r.status_code}"
-ok("…die IP-Schwelle des Bereichs-Topfes bleibt (sperrt Bereiche, keine Anmeldungen)")
+ok("…the IP threshold of the area bucket remains (locks areas, no sign-ins)")
 os.remove(db2)
 
-# ---------- R7-3: Ein einzelner Fremder sperrt den Bereich nicht für alle ----------
-# Bis T-13 griff die Bereichsschwelle (`res:<name>`) schon bei `resource_max_attempts` — egal,
-# von wem die Fehlgriffe kamen. Fünf Anfragen eines Fremden verriegelten den Bereich für jeden,
-# auch für die, die das Geheimnis kennen. Jetzt stoppt die Adresse den Fremden zuerst; der
-# Bereich selbst geht erst beim `account_attempt_factor`-fachen zu, also nur, wenn mehrere
-# Anschlüsse raten. (Mutationsprobe: in `_regeln` die beiden Resource-Grenzen tauschen → rot.)
+# ---------- R7-3: a single stranger does not lock the area for everyone ----------
+# Until T-13 the area threshold (`res:<name>`) applied already at `resource_max_attempts` — no matter
+# who the slips came from. Five requests from a stranger locked the area for everyone,
+# even for those who know the secret. Now the address stops the stranger first; the
+# area itself only closes at `account_attempt_factor` times that, i.e. only if several
+# connections guess. (Mutation probe: swap the two resource limits in `_regeln` → red.)
 db5 = os.path.join(tempfile.mkdtemp(), "t.db")
 auth5 = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db5, rp_name="Test",
                                   passkey_enabled=False, oidc_enabled=False, cookie_secure=False,
@@ -149,11 +149,11 @@ codes = [fremd.post("/auth/resource/garten", data={"secret": "0000", "next": "/"
 assert codes[:G5] == [401] * G5 and codes[G5:] == [429, 429], codes
 kenner = TestClient(app5, client=("203.0.113.77", 40000))
 r = kenner.post("/auth/resource/garten", data={"secret": "4711", "next": "/"}, follow_redirects=False)
-assert r.status_code == 303, f"ein einzelner Fremder sperrt den Bereich für alle: {r.status_code}"
-ok("R7-3: ein Fremder sperrt nur seine Adresse, nicht den Bereich")
+assert r.status_code == 303, f"a single stranger locks the area for everyone: {r.status_code}"
+ok("R7-3: a stranger locks only his address, not the area")
 
-# …aber verteiltes Raten bleibt begrenzt: Ab `account_attempt_factor` Anschlüssen geht der
-# Bereich zu, auch für einen weiteren, unbeteiligten.
+# …but distributed guessing stays limited: from `account_attempt_factor` connections the
+# area closes, also for a further, uninvolved one.
 kenner.cookies.clear()
 auth5.store.clear_fails(username="res:garten")
 for i in range(auth5._sec("account_attempt_factor")):
@@ -162,31 +162,31 @@ for i in range(auth5._sec("account_attempt_factor")):
         ci.post("/auth/resource/garten", data={"secret": "0000", "next": "/"})
 spaet = TestClient(app5, client=("203.0.113.78", 40000))
 r = spaet.post("/auth/resource/garten", data={"secret": "4711", "next": "/"}, follow_redirects=False)
-assert r.status_code == 429, f"verteiltes Raten ist unbegrenzt: {r.status_code}"
-ok("…verteiltes Raten über viele Adressen sperrt den Bereich weiterhin")
+assert r.status_code == 429, f"distributed guessing is unlimited: {r.status_code}"
+ok("…distributed guessing over many addresses still locks the area")
 os.remove(db5)
 
 # Admin-API verwaltet Geheimnisse
 admin = auth.store.get_user_by_name("admin")
-# (kein Admin angelegt in diesem Test → über Manager prüfen)
+# (no admin created in this test → check via manager)
 auth.set_resource_secret("neu", "1234", kind="pin", label="Neu")
 names = {r["name"] for r in auth.list_resource_secrets()}
 assert {"fotos", "wiki", "neu"} <= names
 auth.remove_resource_secret("neu")
 assert "neu" not in {r["name"] for r in auth.list_resource_secrets()}
-ok("Manager/Admin: Geheimnisse anlegen + löschen")
+ok("manager/admin: create + delete secrets")
 
-# F-01: Session-Fixation der Freigabe. Der Angreifer schiebt dem Opfer ein Token unter, das er
-# kennt (Nachbar-Subdomain, Klartext-HTTP); das Opfer gibt den Bereich frei. Vorher hing die
-# Freigabe danach an GENAU diesem Token — der Angreifer war mit drin.
-for _b in ("fotos", "wiki"):     # die Sperr-Prüfungen oben haben die Bereiche verriegelt
+# F-01: session fixation of the unlock. The attacker plants a token on the victim that he
+# knows (neighbour subdomain, plain-text HTTP); the victim unlocks the area. Before, the
+# unlock afterwards hung on EXACTLY this token — the attacker was in too.
+for _b in ("fotos", "wiki"):     # the lockout checks above locked the areas
     auth.store.clear_fails(username=f"res:{_b}", method="resource")
 RC = auth.resource_cookie_name
-cf = TestClient(app, client=("198.51.100.41", 50000))   # eigene Adresse: die Sperren oben kleben an "testclient"
+cf = TestClient(app, client=("198.51.100.41", 50000))   # own address: the lockouts above stick to "testclient"
 
 
 def mit(tok):
-    """Cookie ausdrücklich im Header — der Jar des Clients bliebe sonst beim alten Wert."""
+    """Cookie explicitly in the header — the client's jar would otherwise stay at the old value."""
     cf.cookies.clear()
     return {**JSON, "Cookie": f"{RC}={tok}"} if tok else dict(JSON)
 
@@ -202,30 +202,30 @@ r = cf.post("/auth/resource/fotos", data={"secret": "2468", "next": "/fotos"},
             headers=mit(untergeschoben), follow_redirects=False)
 assert r.status_code == 303, (r.status_code, r.text[:200])
 neu_tok = gesetzt(r)
-assert neu_tok and neu_tok != untergeschoben, "die Freigabe muss ein NEUES Token bekommen"
-assert cf.get("/fotos", headers=mit(neu_tok)).status_code == 200, "das Opfer selbst ist drin"
+assert neu_tok and neu_tok != untergeschoben, "the unlock must get a NEW token"
+assert cf.get("/fotos", headers=mit(neu_tok)).status_code == 200, "the victim itself is in"
 assert cf.get("/fotos", headers=mit(untergeschoben)).status_code == 401, \
-    "das untergeschobene Token ist wertlos"
-ok("F-01: Freigabe vergibt ein neues Token — ein untergeschobenes wird nicht freigeschaltet")
+    "the planted token is worthless"
+ok("F-01: unlock issues a new token — a planted one is not unlocked")
 
-# Was derselbe Browser schon offen hatte, zieht mit um — und bleibt am alten Token nicht hängen.
+# What the same browser already had open moves along — and does not stay on the old token.
 r = cf.post("/auth/resource/wiki", data={"secret": "geheime passphrase", "next": "/wiki"},
             headers=mit(neu_tok), follow_redirects=False)
 drittes = gesetzt(r)
 assert drittes and drittes != neu_tok
 assert cf.get("/fotos", headers=mit(drittes)).status_code == 200
 assert cf.get("/wiki", headers=mit(drittes)).status_code == 200
-assert cf.get("/fotos", headers=mit(neu_tok)).status_code == 401, "das vorige Token muss leer sein"
-ok("…bereits offene Bereiche ziehen auf das neue Token um, das alte hält nichts mehr")
+assert cf.get("/fotos", headers=mit(neu_tok)).status_code == 401, "the previous token must be empty"
+ok("…already open areas move to the new token, the old one holds nothing any more")
 
-# F-08: Logout beendet auch die Freigaben dieses Browsers — ein Abmelden am geteilten Rechner
-# liess den gesperrten Bereich bisher bis zu resource_unlock_ttl_hours offen.
+# F-08: logout also ends the unlocks of this browser — signing out on a shared machine
+# so far left the locked area open for up to resource_unlock_ttl_hours.
 r = cf.get("/auth/logout", headers=mit(drittes), follow_redirects=False)
 assert r.status_code == 303
-assert gesetzt(r) in ("", '""'), f"Freigabe-Cookie muss geleert werden: {gesetzt(r)!r}"
-assert cf.get("/fotos", headers=mit(drittes)).status_code == 401, "Freigabe überlebt den Logout"
+assert gesetzt(r) in ("", '""'), f"unlock cookie must be cleared: {gesetzt(r)!r}"
+assert cf.get("/fotos", headers=mit(drittes)).status_code == 401, "unlock survives the logout"
 assert cf.get("/wiki", headers=mit(drittes)).status_code == 401
-ok("F-08: Logout löscht die Freigaben serverseitig und das Freigabe-Cookie im Browser")
+ok("F-08: logout deletes the unlocks server-side and the unlock cookie in the browser")
 
 os.remove(db)
 print("\nRESOURCE-LOCK OK ✅")

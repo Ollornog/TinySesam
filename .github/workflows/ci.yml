@@ -1,36 +1,36 @@
 name: tests
 
-# Feature-Branches laufen bewusst OHNE CI — dort prüft `ci-local` (Docker, offline).
-# Volle CI erst beim Pull Request und auf main. Gemergt wird nach grünem lokalem Lauf.
-# Notausgang für WIP auf main: [skip ci] in der Commit-Message.
+# Feature branches deliberately run WITHOUT CI — `ci-local` (Docker, offline) checks them there.
+# Full CI only on the pull request and on main. Merging happens after a green local run.
+# Escape hatch for WIP on main: [skip ci] in the commit message.
 on:
   push:
     branches: [main]
   pull_request:
   workflow_dispatch:
 
-# Least Privilege. Es gibt keinen sicheren Default — die Ausgangsberechtigung des
-# GITHUB_TOKEN kommt aus der Repo-Einstellung. Sobald EINE Berechtigung explizit
-# gesetzt ist, fallen alle übrigen auf `none`.
+# Least privilege. There is no safe default — the initial permission of the
+# GITHUB_TOKEN comes from the repo setting. As soon as ONE permission is explicitly
+# set, all others fall back to `none`.
 permissions:
   contents: read
 
-# `setuptools`/`wheel` stehen bei jedem Install dabei: `tests/test_packaging.py` baut Wheel und
-# sdist und sieht hinein. Seit Python 3.12 bringt eine frische Umgebung setuptools nicht mehr mit,
-# und `pip install -e .` legt es nur in seine eigene Bau-Isolierung, nicht in die Umgebung.
+# `setuptools`/`wheel` are part of every install: `tests/test_packaging.py` builds wheel and
+# sdist and looks inside. Since Python 3.12 a fresh environment no longer ships setuptools,
+# and `pip install -e .` puts it only into its own build isolation, not into the environment.
 jobs:
-  # Voller Lauf mit allen Extras über die gefuehrte Matrix — die letzten DREI stable
-  # Minors (PO 2026-09-22). Die Versionen stehen NICHT hier zu Hause: gefuehrt werden
-  # sie in repokit (tests/_kit/python_matrix.json), und dasselbe Trio traegt das
-  # Abbild ci-python-web in /opt/ci-matrix.
-  #   3.12 = Untergrenze aus requires-python, zugleich Prod / System-Python im Abbild
-  #   3.13 = Mitte
-  #   3.14 = Obergrenze, aktuelle stable (seit 10/2025)
-  # 3.10 und 3.11 fielen am 2026-09-22 raus: 3.10 geht am 31.10.2026 EOL, und die
-  # Untergrenze wandert mit der Regel statt mit einer einmal gesetzten Zahl.
-  # Prerelease (3.15) läuft separat nightly mit continue-on-error, damit ein RC-Bug
-  # keinen Push blockiert — und NUR dort: ein Gate-Bein gehoert nicht in einen Job,
-  # der nicht rot werden kann.
+  # Full run with all extras over the managed matrix — the last THREE stable
+  # minors (PO 2026-09-22). The versions do NOT live here: they are managed
+  # in repokit (tests/_kit/python_matrix.json), and the same trio is carried by the
+  # image ci-python-web in /opt/ci-matrix.
+  #   3.12 = lower bound from requires-python, also prod / system Python in the image
+  #   3.13 = middle
+  #   3.14 = upper bound, current stable (since 10/2025)
+  # 3.10 and 3.11 were dropped on 2026-09-22: 3.10 goes EOL on 2026-10-31, and the
+  # lower bound moves with the rule instead of with a number set once.
+  # The prerelease (3.15) runs separately nightly with continue-on-error, so that an RC bug
+  # does not block a push — and ONLY there: a gate leg does not belong in a job
+  # that cannot turn red.
   full:
     timeout-minutes: 15
     runs-on: ubuntu-latest
@@ -45,14 +45,14 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
         with:
           python-version: ${{ matrix.python-version }}
-      - name: Systempaket für SAML (xmlsec)
+      - name: System package for SAML (xmlsec)
         run: sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update && sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y libxmlsec1-dev pkg-config
-      - name: Install (alle Extras)
+      - name: Install (all extras)
         run: pip install -e '.[all]' setuptools wheel mypy
-      # xmlsec hat nicht für jede Python-Reihe ein Wheel (3.15: keins). Dann baut es gegen das libxml2 des Systems,
-      # das lxml-Wheel bringt aber sein eigenes mit — `import xmlsec` scheitert mit „lxml & xmlsec libxml2 library
-      # version mismatch“. In dem Fall lxml aus dem Quelltext gegen dasselbe libxml2 (wie im Abbild ci-python-web).
-      - name: lxml passend zu xmlsec
+      # xmlsec has no wheel for every Python series (3.15: none). Then it builds against the system's libxml2,
+      # but the lxml wheel ships its own — `import xmlsec` fails with "lxml & xmlsec libxml2 library
+      # version mismatch". In that case lxml from source against the same libxml2 (as in the image ci-python-web).
+      - name: lxml matching xmlsec
         run: |
           python -c "import xmlsec" 2>/dev/null && exit 0
           sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y libxml2-dev libxslt1-dev
@@ -61,8 +61,8 @@ jobs:
       - name: Tests
         run: python tests/run_all.py
 
-  # Minimal-Install ohne Extras: sichert den stdlib-scrypt-Fallback + Kernpfad ab
-  # (Suiten, die zwingend Extras brauchen, werden vom Runner als skip gewertet).
+  # Minimal install without extras: covers the stdlib scrypt fallback + core path
+  # (suites that strictly need extras are counted as skip by the runner).
   minimal:
     timeout-minutes: 10
     runs-on: ubuntu-latest
@@ -73,13 +73,13 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
         with:
           python-version: "3.13"
-      - name: Install (nur Kern + httpx fürs TestClient-Werkzeug)
+      - name: Install (core only + httpx for the TestClient tool)
         run: pip install -e . httpx setuptools wheel
-      - name: Tests (Kern / scrypt-Fallback; Passkey/OIDC-Suiten werden übersprungen)
+      - name: Tests (core / scrypt fallback; passkey/OIDC suites are skipped)
         run: python tests/run_all.py
 
-  # Die Seiten im echten Browser: Konsolenfehler, Breiten, Sprachwechsel, Dark-Mode, Login.
-  # Ohne diesen Job faellt eine Design-Regression erst dem Nutzer auf.
+  # The pages in a real browser: console errors, widths, language switch, dark mode, login.
+  # Without this job a design regression is only noticed by the user.
   browser:
     timeout-minutes: 15
     runs-on: ubuntu-latest
@@ -90,27 +90,27 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
         with:
           python-version: "3.13"
-      - name: Chrome installieren
+      - name: Install Chrome
         uses: browser-actions/setup-chrome@48ad923757ca74d66703209fe939badbdf80f2f4  # v2.2.0
         with:
           install-dependencies: true
-      - name: Chrome vorhanden?
+      - name: Chrome present?
         run: which chrome || which google-chrome; chrome --version || google-chrome --version
-      - name: Abhängigkeiten
+      - name: Dependencies
         run: pip install -e . uvicorn websockets httpx setuptools wheel
-      - name: Website bauen (muss durchlaufen)
+      - name: Build the website (must succeed)
         run: python -m web.build _site
-      - name: Browser-Test
+      - name: Browser test
         run: python tests/test_browser.py
-      - name: Repo-Hygiene
+      - name: Repo hygiene
         run: python tests/test_repo.py
-      - name: Website-Test
+      - name: Website test
         run: python tests/test_site.py
 
-  # Gate-Token durch einen ECHTEN Caddy mit caddy-jwt (ADR-9). Gebaut wird genau das Abbild aus
-  # deploy/forward-auth/caddy-gate/Dockerfile — dieselben Pins, die ein Betreiber baut. Mit
-  # gesetzter TINYSESAM_GATE_CADDY ist der Test Pflicht: ein fehlender oder falscher Caddy ist
-  # rot, kein Skip. In den übrigen Jobs fehlt die Variable, dort meldet die Suite „übersprungen".
+  # Gate token through a REAL Caddy with caddy-jwt (ADR-9). Exactly the image from
+  # deploy/forward-auth/caddy-gate/Dockerfile is built — the same pins an operator builds. With
+  # TINYSESAM_GATE_CADDY set the test is mandatory: a missing or wrong Caddy is
+  # red, not a skip. In the other jobs the variable is absent, there the suite reports "übersprungen" (skipped).
   gate-caddy:
     timeout-minutes: 20
     runs-on: ubuntu-latest
@@ -121,39 +121,39 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
         with:
           python-version: "3.13"
-      - name: Abhängigkeiten
+      - name: Dependencies
         run: pip install -e . uvicorn httpx setuptools wheel
-      - name: Caddy mit caddy-jwt bauen (deploy/forward-auth/caddy-gate)
+      - name: Build Caddy with caddy-jwt (deploy/forward-auth/caddy-gate)
         run: |
           docker build -t caddy-gate deploy/forward-auth/caddy-gate
           id="$(docker create caddy-gate)"
           docker cp "$id:/usr/bin/caddy" "$RUNNER_TEMP/caddy-gate"
           docker rm "$id"
           "$RUNNER_TEMP/caddy-gate" version
-      - name: Gate-Token durch Caddy
+      - name: Gate token through Caddy
         run: TINYSESAM_GATE_CADDY="$RUNNER_TEMP/caddy-gate" python tests/test_gate_caddy.py
-      # Abnahme des Referenz-Stacks deploy/forward-auth/docker-compose.yml (seit 2026-10-11): Damit nimmt ein
-      # Pflicht-Check auch die Dependabot-PRs des docker-compose-Eintrags ab, und sie mergen selbst. Die Datei muss
-      # sich auflösen lassen, jedes Abbild darin muss sich unter Tag und Digest ziehen lassen, und das Caddy AUS DER
-      # COMPOSE-DATEI muss die mitgelieferte Caddyfile annehmen.
-      - name: Referenz-Stack (docker-compose) abnehmen
+      # Acceptance of the reference stack deploy/forward-auth/docker-compose.yml (since 2026-10-11): This way a
+      # required check also covers the Dependabot PRs of the docker-compose entry, and they merge themselves. The file must
+      # resolve, every image in it must be pullable by tag and digest, and the Caddy FROM THE
+      # COMPOSE FILE must accept the shipped Caddyfile.
+      - name: Accept the reference stack (docker-compose)
         run: |
           set -euo pipefail
           f=deploy/forward-auth/docker-compose.yml
           docker compose -f "$f" config --quiet
           bilder="$(docker compose -f "$f" config --images)"
-          [ -n "$bilder" ] || { echo "keine Abbilder in $f"; exit 1; }
+          [ -n "$bilder" ] || { echo "no images in $f"; exit 1; }
           while IFS= read -r b; do docker pull -q "$b"; done <<<"$bilder"
-          caddy="$(grep -m1 '^caddy:' <<<"$bilder")" || { echo "kein caddy-Abbild in $f"; exit 1; }
+          caddy="$(grep -m1 '^caddy:' <<<"$bilder")" || { echo "no caddy image in $f"; exit 1; }
           docker run --rm -e TS_AUTH_UPSTREAM=tinysesam:8000 -e TS_APP_UPSTREAM=app:9000 \
             -v "$PWD/deploy/forward-auth/Caddyfile:/etc/caddy/Caddyfile:ro" \
             "$caddy" caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
 
-  # Wiederholbarkeit: dieselbe Suite ZWEIMAL im selben Arbeitsverzeichnis.
-  # Ein Test, der beim zweiten Lauf rot wird, ist kaputt — nicht der Code.
-  # Danach muss der Baum unverändert sein: eine Suite, die schreibt, ist beim
-  # nächsten Lauf nicht mehr wiederholbar. Lokales Äquivalent: `ci-local --full`.
-  # Bewusst NICHT im pre-push-Hook — das verdoppelte die Wartezeit bei jedem Push.
+  # Repeatability: the same suite TWICE in the same working directory.
+  # A test that turns red on the second run is broken — not the code.
+  # Afterwards the tree must be unchanged: a suite that writes is no longer
+  # repeatable on the next run. Local equivalent: `ci-local --full`.
+  # Deliberately NOT in the pre-push hook — that doubled the wait on every push.
   repeat:
     timeout-minutes: 30
     runs-on: ubuntu-latest
@@ -164,25 +164,25 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
         with:
           python-version: "3.13"
-      - name: Chrome installieren
+      - name: Install Chrome
         uses: browser-actions/setup-chrome@48ad923757ca74d66703209fe939badbdf80f2f4  # v2.2.0
         with:
           install-dependencies: true
-      - name: Systempaket für SAML (xmlsec)
+      - name: System package for SAML (xmlsec)
         run: sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update && sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y libxmlsec1-dev pkg-config
-      - name: Install (alle Extras)
+      - name: Install (all extras)
         run: pip install -e '.[all]' uvicorn websockets setuptools wheel mypy
-      # Vorher-Stand festhalten: Seit Kit 0.20.1 meldet der Check ohne ihn einen veränderten
-      # Baum nur noch als „nicht entscheidbar" (Exit 2) — der Job würde zwar rot, sagte aber
-      # nicht, dass es die Suite war. Mit dem Stand ist ein Rückstand belegt (Exit 1).
-      - name: Vorher-Stand des Baums
+      # Record the before state: since kit 0.20.1 the check, without it, reports a changed
+      # tree only as "nicht entscheidbar" (undecidable) (exit 2) — the job would turn red, but would not say
+      # that the suite was responsible. With the state, a residue is proven (exit 1).
+      - name: State of the tree before
         run: scripts/_residue_check.sh snapshot > "$RUNNER_TEMP/baum-vorher.txt"
-      - name: Erster Lauf
+      - name: First run
         run: scripts/check.sh
-      - name: Zweiter Lauf (muss ebenfalls grün sein)
+      - name: Second run (must also be green)
         run: scripts/check.sh
-      # Dieselbe Prüfung, die der pre-push-Hook fährt. Vorher stand hier ein roher
-      # `git status --porcelain`, der `.ci-allow-dirty` nicht kannte — das verbindliche
-      # Gate widersprach damit dem lokalen Netz.
-      - name: Baum muss unverändert sein
+      # The same check that the pre-push hook runs. This used to be a raw
+      # `git status --porcelain`, which did not know `.ci-allow-dirty` — the binding
+      # gate thus contradicted the local safety net.
+      - name: Tree must be unchanged
         run: scripts/_residue_check.sh check --seit "$RUNNER_TEMP/baum-vorher.txt"

@@ -1,45 +1,45 @@
-"""Die öffentliche API festhalten — damit ein Bruch AUFFÄLLT, statt zu passieren.
+"""Pin down the public API — so a break gets NOTICED instead of just happening.
 
-Der Meilenstein 1.0 verlangt, dass die öffentliche API sich über zwei Minor-Versionen nicht mehr
-bricht (`backlog/M-1-api-stabil-1-0.md`). Ohne Messung ist das eine Behauptung: Beide letzten
-Releases haben gebrochen, und beide Male fiel es erst beim Schreiben des CHANGELOG auf.
+Milestone 1.0 demands that the public API does not break across two minor versions
+(`backlog/M-1-api-stable-1-0.md`). Without measurement that is a claim: both most recent
+releases broke it, and both times it was only noticed while writing the CHANGELOG.
 
-Dieser Test schreibt die Oberfläche in `tests/api_surface.json` fest und vergleicht bei jedem Lauf.
-Erfasst werden Methoden, Klassenkonstanten, seit 0.20.1 auch die Properties (die Cookie-Namen),
-die Konfigurationsfelder mit Vorgabe, die Presets und die Exporte, seit 0.22.0 dazu die
-Ergebnistypen der Bausteine für eigene Seiten (`LoginResult`, `PasswordChangeResult`: Felder,
-Methoden, Gründe).
-Er verbietet nichts — er erzwingt eine **bewusste Entscheidung**:
+This test pins the surface in `tests/api_surface.json` and compares on every run.
+It records methods, class constants, since 0.20.1 also the properties (the cookie names),
+the configuration fields with defaults, the presets and the exports, and since 0.22.0 also the
+result types of the building blocks for custom pages (`LoginResult`, `PasswordChangeResult`:
+fields, methods, reasons).
+It forbids nothing — it forces a **deliberate decision**:
 
-    python tests/test_api_surface.py --update      # Änderung übernehmen, danach committen
+    python tests/test_api_surface.py --update      # accept the change, then commit
 
-Was als Bruch gilt, steht unten in `beurteile()`: Entfernt oder umbenannt ist ein Bruch,
-eine geänderte Signatur meistens auch, etwas Neues ist eine Erweiterung. Die Unterscheidung
-steht im Bericht, damit man nicht jede Zeile selbst nachschlagen muss.
+What counts as a break is defined below in `beurteile()`: removed or renamed is a break,
+a changed signature usually is too, something new is an extension. The distinction
+appears in the report, so nobody has to look up every line themselves.
 
-**Seit 0.22.0 trägt jeder Name eine Stufe** (PO-Entscheid 2026-09-26, `STUFEN` unten): A ist
-dauerhaft öffentlich und die einzige Stufe mit der 1.0-Zusage, B ist für Fortgeschrittene mit
-schwächerer Zusage, C ist intern. Bis dahin war die Oberfläche *gemessen, nicht ausgewählt* —
-eingefroren war, was keinen Unterstrich trug. Die Stufe ist eine Entscheidung, keine Messung:
-Sie steht je Eintrag in `api_surface.json`, `--update` übernimmt sie, vergibt aber NIE selbst
-eine. Ein neuer Name kommt ohne Stufe herein und hält den Wächter rot, bis jemand sie einträgt
-— ein stilles „A" hätte jede Hilfsmethode, die zufällig ohne Unterstrich entsteht, für immer
-zugesagt.
+**Since 0.22.0 every name carries a tier** (PO decision 2026-09-26, `STUFEN` below): A is
+permanently public and the only tier with the 1.0 commitment, B is for advanced users with a
+weaker commitment, C is internal. Until then the surface was *measured, not chosen* —
+what had no underscore was frozen. The tier is a decision, not a measurement:
+it is stored per entry in `api_surface.json`, `--update` carries it over, but NEVER assigns
+one itself. A new name comes in without a tier and keeps the guard red until someone enters one
+— a silent "A" would have committed every helper method that happens to be created without an
+underscore, for good.
 
-**Stufe C ist seit 0.22.0 nur noch ein Alias** (`tinysesam/_veraltet.py`): Die Implementierung
-heisst `_name`, der alte Name reicht bis 1.0 weiter und warnt. Der Wächter hält dazu fest
-(`c_befunde()`): Jeder C-Eintrag ist in der Klasse ein `Veraltet` und umgekehrt, er zeigt auf die
-Unterstrich-Implementierung, sein Aufruf warnt genau einmal mit Ersatz und auf den Aufrufer, kein
-Code im Paket benutzt einen alten Namen, und ab 1.0 steht keiner mehr da.
+**Tier C is only an alias since 0.22.0** (`tinysesam/_deprecated.py`): The implementation
+is called `_name`, the old name keeps forwarding until 1.0 and warns. The guard additionally
+pins down (`c_befunde()`): every C entry is a `Deprecated` in the class and vice versa, it points to the
+underscore implementation, calling it warns exactly once with the replacement and at the caller, no
+code in the package uses an old name, and from 1.0 none is left.
 
-**Die Stufen A und B heissen englisch** (PO-Entscheid 2026-09-27, `pruefe_namen()`): Kein Name,
-Parameter, Konfigurationsfeld oder Attribut eines Fehlertyps der Stufen A/B trägt ein deutsches
-Wort — gemessen am lebenden Objekt, mit Mindestmenge und Selbstproben. **Ebenso ihre Schlüssel
-und Werte** (zweiter PO-Entscheid desselben Tags, `pruefe_werte()`): was die Oberfläche zurückgibt
-oder annimmt, die Nutzlast von `on_security_event`, der Kontext eigener Seiten, das JSON der Routen
-und die gespeicherten Werte — an einer Probeinstanz, an den Konstanten und im Quelltext, gegen die
-Wortliste und gegen jeden Namen bis 0.21.x (`ALTE_WERTE`). Audit- und Log-Zeilen misst sie nicht:
-Die bleiben, wie sie sind.
+**Tiers A and B are named in English** (PO decision 2026-09-27, `pruefe_namen()`): No name,
+parameter, configuration field or attribute of an error type in tiers A/B carries a German
+word — measured on the live object, with a minimum count and self-checks. **So do their keys
+and values** (second PO decision of the same day, `pruefe_werte()`): what the surface returns
+or accepts, the payload of `on_security_event`, the context of custom pages, the JSON of the routes
+and the stored values — on a probe instance, on the constants and in the source, against the
+word list and against every name up to 0.21.x (`ALTE_WERTE`). It does not measure audit and log lines:
+they stay as they are.
 """
 import ast
 import dataclasses
@@ -55,36 +55,36 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import importlib
 from tinysesam import ConfigError, LoginResult, PasswordChangeResult, TinySesam, TinySesamConfig
-from tinysesam._veraltet import BIS, Veraltet
+from tinysesam._deprecated import BIS, Deprecated
 
 _paket = importlib.import_module("tinysesam")
 WURZEL = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 ABLAGE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "api_surface.json")
 
-#: Die Stufen der öffentlichen Oberfläche (PO-Entscheid 2026-09-26). Nur für A gilt die Zusage
-#: aus M-1 („zwei Minor-Versionen ohne Bruch“); der Zähler startet mit 0.22.0.
+#: The tiers of the public surface (PO decision 2026-09-26). Only A carries the commitment
+#: from M-1 ("two minor versions without a break"); the counter starts at 0.22.0.
 STUFEN = {
-    "A": "öffentlich, stabil ab 1.0 — ein Bruch setzt die 1.0-Uhr zurück (M-1)",
-    "B": "für Fortgeschrittene — entfernen oder umbauen erst nach einer DeprecationWarning "
-         "über zwei Minor-Versionen",
-    "C": "intern — die Implementierung trägt einen führenden Unterstrich, der alte Name bleibt "
-         "bis 1.0 als Alias mit DeprecationWarning (Eintrag mit `ziel`, `seit`, `bis`)",
+    "A": "public, stable from 1.0 — a break resets the 1.0 clock (M-1)",
+    "B": "for advanced users — remove or rebuild only after a DeprecationWarning "
+         "over two minor versions",
+    "C": "internal — the implementation carries a leading underscore, the old name stays "
+         "until 1.0 as an alias with DeprecationWarning (entry with `ziel`, `seit`, `bis`)",
 }
 
-#: Seit wann die C-Aliase warnen (Zusatzfeld `seit` an jedem C-Eintrag).
+#: Since when the C aliases warn (extra field `seit` on every C entry).
 C_SEIT = "0.22.0"
 
-#: Unter welchem Schlüssel ein Eintrag in `api_surface.json` seinen GEMESSENEN Wert trägt.
-#: Alles andere am Eintrag (`stufe`, später Alias-Angaben) ist Entscheidung und wird von
-#: `--update` übernommen, nicht neu gemessen. Die Exporte haben keinen Messwert — nur den Namen.
+#: Under which key an entry in `api_surface.json` carries its MEASURED value.
+#: Everything else on the entry (`stufe`, later alias details) is a decision and is carried over by
+#: `--update`, not re-measured. The exports have no measured value — only the name.
 MESSWERT = {"TinySesam": "sig", "TinySesam.eigenschaften": "sig",
             "TinySesamConfig.methoden": "sig", "TinySesam.konstanten": "wert",
             "TinySesamConfig.felder": "feld", "exporte": None, "LoginResult": "sig",
             "PasswordChangeResult": "sig"}
 
-#: Die Ergebnistypen der Bausteine für eigene Seiten (0.22.0, Stufe A), je mit eigenem Bereich in
-#: der Ablage: `LoginResult` (`login_*`, `confirm_*`), `PasswordChangeResult` (`change_password`).
+#: The result types of the building blocks for custom pages (0.22.0, tier A), each with its own area in
+#: the baseline: `LoginResult` (`login_*`, `confirm_*`), `PasswordChangeResult` (`change_password`).
 ERGEBNISTYPEN = {"LoginResult": LoginResult, "PasswordChangeResult": PasswordChangeResult}
 
 
@@ -93,13 +93,13 @@ def ok(name):
 
 
 def parameter_mit_marken(parameter) -> list:
-    """`str(p)` je Parameter, dazu die Marken `*` (davor nur Schlüsselwort) und `/` (davor nur
-    Position) an der Stelle, an der Python sie in der Signatur verlangt.
+    """`str(p)` per parameter, plus the marks `*` (keyword-only before it) and `/` (positional-only
+    before it) at the place where Python requires them in the signature.
 
-    Bis 0.22.0 setzte `signatur()` die Parameter einzeln zusammen und verlor dabei beide Marken:
-    `(request, username, password, *, next='')` stand als `(…, password, next='')` in der Ablage.
-    Ein nachträglich eingefügtes `*` — jeder Aufruf `login_password(r, u, p, "/start")` bricht
-    — sah damit aus wie keine Änderung (Befund aus Schritt 3 der Einstufung, M-1).
+    Until 0.22.0 `signatur()` assembled the parameters individually and lost both marks:
+    `(request, username, password, *, next='')` was stored as `(…, password, next='')` in the baseline.
+    A `*` inserted later — every call `login_password(r, u, p, "/start")` breaks
+    — thus looked like no change (finding from step 3 of the tiering, M-1).
     """
     teile, stern = [], any(p.kind is p.VAR_POSITIONAL for p in parameter)
     for i, p in enumerate(parameter):
@@ -114,37 +114,37 @@ def parameter_mit_marken(parameter) -> list:
 
 
 def signatur(fn) -> str:
-    """Die Signatur ohne `self` — Parameternamen und Reihenfolge sind Teil des Versprechens.
+    """The signature without `self` — parameter names and order are part of the promise.
 
-    Erfasst wird auch, ob ein Parameter keyword-only ist: Genau daran hing der Bruch in 0.15
-    (`require_role("editor", True)` meinte einmal `mfa=True` und wäre danach eine zweite Rolle).
-    Seit 0.22.0 wirklich: mit den Marken `*` und `/` (`parameter_mit_marken`).
+    Whether a parameter is keyword-only is captured too: That is exactly what the break in 0.15 hinged on
+    (`require_role("editor", True)` once meant `mfa=True` and would afterwards have been a second role).
+    Really so since 0.22.0: with the marks `*` and `/` (`parameter_mit_marken`).
     """
     try:
         s = inspect.signature(fn)
     except (TypeError, ValueError):
         return "?"
     teile = parameter_mit_marken([p for name, p in s.parameters.items() if name != "self"])
-    # Der Rückgabetyp gehört dazu. Ohne ihn liesse sich `-> dict` still zu `-> str` ändern:
-    # Jeder Aufruf bricht, und der Wächter schwiege — er erfasste nur die Eingänge.
+    # The return type belongs to it. Without it `-> dict` could silently change to `-> str`:
+    # every call breaks, and the guard would stay silent — it only covered the inputs.
     zurueck = "" if s.return_annotation is inspect.Signature.empty else \
         f" -> {inspect.formatannotation(s.return_annotation)}"
     return "(" + ", ".join(teile) + ")" + zurueck
 
 
 def oberflaeche() -> dict:
-    """Was ein Einbindender benutzt: die Klasse, die Konfiguration, die Exporte."""
-    # Das Messen ist kein Gebrauch: `getmembers` liest jedes Attribut, auch die Konstanten-Aliase
-    # der Stufe C, und die warnen beim Lesen. Methoden-Aliase liefern hier ihre Hülle — deren
-    # Signatur ist über `__wrapped__` die des Ziels, und genau die ist zugesagt.
+    """What an embedder uses: the class, the configuration, the exports."""
+    # Measuring is not using: `getmembers` reads every attribute, including the constant aliases
+    # of tier C, and those warn when read. Method aliases deliver their wrapper here — its
+    # signature is that of the target via `__wrapped__`, and that is exactly what is promised.
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", DeprecationWarning)
         manager = {name: signatur(fn)
                    for name, fn in inspect.getmembers(TinySesam, callable)
                    if not name.startswith("_")}
-    # Mit VORGABEWERT. Ohne ihn liesse sich `session_ttl_hours` still von 168 auf 1 ändern —
-    # ein Verhaltensbruch für jeden, der das Feld nie angefasst hat, und genau die Sorte, die
-    # niemand im CHANGELOG sucht. Der Wächter deckte bis 0.18.0 nur Name und Typ ab.
+    # With DEFAULT VALUE. Without it `session_ttl_hours` could silently change from 168 to 1 —
+    # a behaviour break for everyone who never touched the field, and exactly the kind that
+    # nobody looks for in the CHANGELOG. Until 0.18.0 the guard only covered name and type.
     felder = {}
     for f in TinySesamConfig.__dataclass_fields__.values():
         if f.default is not dataclasses.MISSING:
@@ -162,15 +162,15 @@ def oberflaeche() -> dict:
                if not name.startswith("_")}
     exporte = sorted(getattr(_paket, "__all__", None)
                      or [n for n in dir(_paket) if not n.startswith("_")])
-    # Öffentliche Klassenattribute gehören dazu. `inspect.getmembers(…, callable)` erfasst nur
-    # Aufrufbares — `FORWARD_HEADERS_DEFAULT` liess sich damit still ändern, obwohl die Doku es
-    # als Zusage führt („der Authelia-übliche Satz Remote-User/-Name/-Email/-Groups"). Eine
-    # Änderung bricht jede Caddy-/Traefik-Installation, ohne dass eine Zeile Code anders aussieht.
-    # Ein Konstanten-Alias (Stufe C) wird mit dem Wert seines Ziels gemessen — statisch gelesen,
-    # ohne ihn auszulösen; ein Methoden-Alias steht oben bei den Methoden.
+    # Public class attributes belong to it. `inspect.getmembers(…, callable)` only captures
+    # callables — `FORWARD_HEADERS_DEFAULT` could silently change that way, although the docs
+    # list it as a commitment ("the Authelia-style set Remote-User/-Name/-Email/-Groups"). A
+    # change breaks every Caddy/Traefik installation without a single line of code looking different.
+    # A constant alias (tier C) is measured with the value of its target — read statically,
+    # without triggering it; a method alias is listed above with the methods.
     konstanten = {}
     for name, wert in vars(TinySesam).items():
-        if isinstance(wert, Veraltet):
+        if isinstance(wert, Deprecated):
             if wert.methode:
                 continue
             wert = vars(TinySesam)[wert.ziel]
@@ -178,10 +178,10 @@ def oberflaeche() -> dict:
             continue
         if not name.startswith("_"):
             konstanten[name] = repr(wert)
-    # Properties gehören ebenso dazu (0.20.1): `session_cookie_name`, `csrf_cookie_name`,
-    # `resource_cookie_name` sind die dokumentierte Ersatz-API für feste Cookie-Namen. Erfasst
-    # wird der Rückgabetyp des Getters; ein Setter hängt „(schreibbar)" an. Statisch gelesen:
-    # Ein Property ist auch dann das Property-Objekt, und kein Konstanten-Alias warnt dabei.
+    # Properties belong to it as well (0.20.1): `session_cookie_name`, `csrf_cookie_name`,
+    # `resource_cookie_name` are the documented replacement API for fixed cookie names. What is
+    # captured is the return type of the getter; a setter appends "(writable)". Read statically:
+    # a property is the property object even then, and no constant alias warns in the process.
     eigenschaften = {name: signatur(wert.fget) + (" (schreibbar)" if wert.fset else "")
                      for name, wert in inspect.getmembers_static(
                          TinySesam, lambda w: isinstance(w, property))
@@ -194,13 +194,13 @@ def oberflaeche() -> dict:
 
 
 def ergebnistyp_oberflaeche(typ=LoginResult) -> dict:
-    """Ein Ergebnistyp der Bausteine für eigene Seiten (0.22.0, Stufe A): Felder, Methoden, Gründe.
+    """A result type of the building blocks for custom pages (0.22.0, tier A): fields, methods, reasons.
 
-    Die Exporte erfasst der Wächter nur beim Namen. Für `LoginResult` genügt das nicht: Wer
-    `result.next_factor` liest oder auf `result.reason == "locked"` prüft, bricht an einem
-    umbenannten Feld oder einem gestrichenen Grund genauso wie an einer umbenannten Methode.
-    Felder mit Typ und Vorgabe (wie die Konfiguration), Methoden mit Signatur, `REASONS` mit dem
-    Wert. Dasselbe gilt für `PasswordChangeResult` (`result.api_keys_active`).
+    The guard captures the exports by name only. For `LoginResult` that is not enough: Whoever reads
+    `result.next_factor` or checks `result.reason == "locked"` breaks on a
+    renamed field or a dropped reason just as on a renamed method.
+    Fields with type and default (like the configuration), methods with signature, `REASONS` with the
+    value. The same holds for `PasswordChangeResult` (`result.api_keys_active`).
     """
     ergebnis = {}
     for f in dataclasses.fields(typ):
@@ -213,29 +213,29 @@ def ergebnistyp_oberflaeche(typ=LoginResult) -> dict:
 
 
 class OhneMarken(str):
-    """Eine Signatur aus einer Ablage von vor 0.22.0: gemessen OHNE die Marken `*` und `/`.
+    """A signature from a baseline from before 0.22.0: measured WITHOUT the marks `*` and `/`.
 
-    Wo die Marken standen, weiss so ein Eintrag nicht mehr. `beurteile()` vergleicht ihn deshalb
-    mit der heutigen Messung ohne Marken (`ohne_marken`) — sonst meldete ein Vergleich mit einem
-    älteren Release jede Methode mit Nur-Schlüsselwort-Parametern als Bruch, und ein echter
-    ginge darin unter. Ein Unterschied in Namen, Reihenfolge, Vorgaben oder Rückgabe bleibt einer.
+    Where the marks were, such an entry no longer knows. `beurteile()` therefore compares it
+    with today's measurement without marks (`ohne_marken`) — otherwise a comparison with an
+    older release would report every method with keyword-only parameters as a break, and a real
+    one would be lost in it. A difference in names, order, defaults or return stays one.
     """
 
 
 def ohne_marken(sig: str) -> str:
-    """`(a, *, b=1) -> 'x'` → `(a, b=1) -> 'x'` — die Form, in der vor 0.22.0 gemessen wurde."""
+    """`(a, *, b=1) -> 'x'` → `(a, b=1) -> 'x'` — the form in which measurements were taken before 0.22.0."""
     rest = _klammer_und_rest(sig)[1]
     return ("(" + ", ".join(t for t in teile(sig) if t not in ("*", "/")) + ")"
             + (" " + rest if rest else ""))
 
 
 def messung(datei: dict) -> dict:
-    """Die Ablage auf die reine Messung zurückführen — die Form, die `oberflaeche()` liefert.
+    """Reduce the baseline to the pure measurement — the form `oberflaeche()` delivers.
 
-    Verträgt auch die Ablage von vor 0.22.0 (Wert als Zeichenkette, Exporte als Liste): Ein
-    Vergleich mit einem älteren Release (`git show v0.21.0:tests/api_surface.json`) soll nicht an
-    der Form scheitern. Deren Signaturen kamen ohne die Marken `*`/`/` — sie werden als
-    `OhneMarken` eingelesen und ohne Marken verglichen.
+    Also tolerates the baseline from before 0.22.0 (value as string, exports as list): A
+    comparison with an older release (`git show v0.21.0:tests/api_surface.json`) should not fail on
+    the form. Its signatures came without the marks `*`/`/` — they are read in as
+    `OhneMarken` and compared without marks.
     """
     ergebnis = {}
     for bereich, eintraege in datei.items():
@@ -253,16 +253,16 @@ def messung(datei: dict) -> dict:
 
 
 def mit_stufen(jetzt: dict, frueher: dict) -> dict:
-    """Die neue Ablage: gemessene Werte von `jetzt`, jede Entscheidung aus `frueher`.
+    """The new baseline: measured values from `jetzt`, every decision from `frueher`.
 
-    Übernommen wird alles am alten Eintrag ausser dem Messwert — die `stufe`, später auch
-    Alias-Angaben —, und zwar nur für denselben Namen im selben Bereich. Ein neuer Name bekommt
-    KEINE Stufe: Der Wächter meldet ihn dann, statt ihn still zuzusagen.
+    Everything on the old entry except the measured value is carried over — the `stufe`, later also
+    alias details —, and only for the same name in the same area. A new name gets
+    NO tier: The guard then reports it instead of silently committing to it.
     """
     ablage = {}
     for bereich, gemessen in jetzt.items():
         alt = frueher.get(bereich, {})
-        if isinstance(alt, list):                     # Form vor 0.22.0: keine Entscheidungen
+        if isinstance(alt, list):                     # form before 0.22.0: no decisions
             alt = {}
         schluessel = MESSWERT[bereich]
         neu = {}
@@ -278,35 +278,35 @@ def mit_stufen(jetzt: dict, frueher: dict) -> dict:
 
 
 def stufen_aus(datei: dict) -> dict:
-    """{bereich: {name: stufe}} — nur Einträge, die eine tragen."""
+    """{area: {name: tier}} — only entries that carry one."""
     return {bereich: {name: e["stufe"] for name, e in eintraege.items()
                       if isinstance(e, dict) and "stufe" in e}
             for bereich, eintraege in datei.items() if isinstance(eintraege, dict)}
 
 
 def ohne_stufe(datei: dict) -> list:
-    """Jeder Eintrag ohne gültige Stufe, als lesbare Zeile. Leer = alles eingestuft."""
+    """Every entry without a valid tier, as a readable line. Empty = everything tiered."""
     fehlt = []
     for bereich in sorted(datei):
         eintraege = datei[bereich]
         if not isinstance(eintraege, dict):
-            fehlt.append(f"{bereich}: ganze Liste ohne Stufen (Form vor 0.22.0)")
+            fehlt.append(f"{bereich}: whole list without tiers (form before 0.22.0)")
             continue
         for name in sorted(eintraege):
             e = eintraege[name]
             stufe = e.get("stufe") if isinstance(e, dict) else None
             if stufe is None:
-                fehlt.append(f"{bereich}.{name}: keine Stufe")
+                fehlt.append(f"{bereich}.{name}: no tier")
             elif stufe not in STUFEN:
-                fehlt.append(f"{bereich}.{name}: unbekannte Stufe {stufe!r} "
-                             f"(erlaubt: {', '.join(STUFEN)})")
+                fehlt.append(f"{bereich}.{name}: unknown tier {stufe!r} "
+                             f"(allowed: {', '.join(STUFEN)})")
     return fehlt
 
 
 def _klammer_und_rest(sig: str) -> tuple:
-    """`(a, b) -> 'bool'` → (`a, b`, ` -> 'bool'`). Bis T-13 schnitt `teile()` einfach das
-    erste und letzte Zeichen ab — bei einer Signatur MIT Rückgabetyp landete der dann im
-    letzten Parameter, und ein harmlos angehängter Parameter galt als BRUCH."""
+    """`(a, b) -> 'bool'` → (`a, b`, ` -> 'bool'`). Until T-13 `teile()` simply cut off the
+    first and last character — for a signature WITH a return type that ended up in the
+    last parameter, and a harmlessly appended parameter counted as a BREAK."""
     s, tiefe = sig.strip(), 0
     for i, c in enumerate(s):
         if c in "([{":
@@ -319,7 +319,7 @@ def _klammer_und_rest(sig: str) -> tuple:
 
 
 def teile(sig: str) -> list:
-    """Signatur-String in Parameter zerlegen — nur auf Kommas ausserhalb von Klammern."""
+    """Split a signature string into parameters — only at commas outside brackets."""
     inhalt = _klammer_und_rest(sig)[0]
     teile, tiefe, akt = [], 0, ""
     for c in inhalt:
@@ -338,25 +338,25 @@ def teile(sig: str) -> list:
 
 
 def nur_erweitert(alt: str, neu: str) -> bool:
-    """Ist die neue Signatur mit der alten aufrufbar?
+    """Is the new signature callable like the old one?
 
-    Ein Parameter, der MIT Vorgabewert hinten angehängt wird, bricht nichts — jeder bestehende
-    Aufruf funktioniert weiter. Das als Bruch zu melden wäre nicht nur falsch, es wäre schädlich:
-    Ein Wächter, der bei Harmlosem schreit, wird weggeklickt, und dann übersieht man den echten.
+    A parameter appended at the end WITH a default breaks nothing — every existing
+    call keeps working. Reporting that as a break would not only be wrong, it would be harmful:
+    A guard that cries wolf at harmless things gets clicked away, and then the real one is overlooked.
     """
     a, n = teile(alt), teile(neu)
     if _klammer_und_rest(alt)[1] != _klammer_und_rest(neu)[1]:
-        return False                                  # anderer Rückgabetyp
+        return False                                  # different return type
     if len(n) < len(a) or n[:len(a)] != a:
         return False
     return all("=" in p or p.startswith("*") for p in n[len(a):])
 
 
 def beurteile(alt: dict, neu: dict, stufen: "dict | None" = None):
-    """(brueche, erweiterungen) — beides mit lesbarer Beschreibung.
+    """(breaks, extensions) — both with a readable description.
 
-    Mit `stufen` (aus `stufen_aus()` der alten Ablage) beginnt jeder Bruch mit der Stufe des
-    Namens, `[A] …`: Ob die 1.0-Uhr zurückspringt, hängt allein daran.
+    With `stufen` (from `stufen_aus()` of the old baseline) every break starts with the tier of the
+    name, `[A] …`: Whether the 1.0 clock jumps back depends on that alone.
     """
     brueche, erweiterungen = [], []
 
@@ -370,61 +370,61 @@ def beurteile(alt: dict, neu: dict, stufen: "dict | None" = None):
         if isinstance(a, list) or isinstance(n, list):
             fort = sorted(set(a) - set(n))
             dazu = sorted(set(n) - set(a))
-            brueche += [f"{marke(bereich, x)}{bereich}: '{x}' ist fort" for x in fort]
-            erweiterungen += [f"{bereich}: '{x}' ist neu" for x in dazu]
+            brueche += [f"{marke(bereich, x)}{bereich}: '{x}' is gone" for x in fort]
+            erweiterungen += [f"{bereich}: '{x}' is new" for x in dazu]
             continue
         for name in sorted(set(a) - set(n)):
-            brueche.append(f"{marke(bereich, name)}{bereich}.{name} ist fort "
-                           "(entfernt oder umbenannt)")
+            brueche.append(f"{marke(bereich, name)}{bereich}.{name} is gone "
+                           "(removed or renamed)")
         for name in sorted(set(n) - set(a)):
-            erweiterungen.append(f"{bereich}.{name} ist neu")
+            erweiterungen.append(f"{bereich}.{name} is new")
         for name in sorted(set(a) & set(n)):
             jetzt = n[name]
             if isinstance(a[name], OhneMarken) and isinstance(jetzt, str):
-                jetzt = ohne_marken(jetzt)        # alte Ablage: ohne `*`/`/` gemessen
+                jetzt = ohne_marken(jetzt)        # old baseline: measured without `*`/`/`
             if a[name] == jetzt:
                 continue
-            zeile = (f"{bereich}.{name}:\n        vorher {a[name]}\n        jetzt  {n[name]}")
+            zeile = (f"{bereich}.{name}:\n        before {a[name]}\n        now    {n[name]}")
             if isinstance(a[name], str) and a[name].startswith("(") and nur_erweitert(a[name], jetzt):
-                erweiterungen.append(zeile + "\n        (nur angehängt, mit Vorgabewert — "
-                                            "bestehende Aufrufe laufen weiter)")
+                erweiterungen.append(zeile + "\n        (only appended, with default value — "
+                                            "existing calls keep working)")
             else:
                 brueche.append(marke(bereich, name) + zeile)
     return brueche, erweiterungen
 
 
-#: Diese Properties MÜSSEN in der Oberfläche stehen — der CHANGELOG von 0.20.0 schickt jede
-#: einbettende App zu ihnen („den CSRF-Cookie-Namen aus `auth.csrf_cookie_name` lesen").
+#: These properties MUST be in the surface — the CHANGELOG of 0.20.0 sends every
+#: embedding app to them ("read the CSRF cookie name from `auth.csrf_cookie_name`").
 PFLICHT_EIGENSCHAFTEN = ("session_cookie_name", "csrf_cookie_name", "resource_cookie_name")
 
 
 def selbstpruefung(jetzt: dict) -> None:
-    """Misst der Wächter die Properties überhaupt? (0.20.1)
+    """Does the guard measure the properties at all? (0.20.1)
 
-    Bis 0.20.0 schloss `oberflaeche()` sie ausdrücklich aus (`isinstance(wert, property)`), und
-    `getmembers(…, callable)` sieht sie ohnehin nicht. Ein Umbenennen von `csrf_cookie_name` —
-    genau des Namens, den eigenes JS und eigene Routen brauchen — fiel damit keinem Wächter auf.
-    Läuft auch vor `--update`: Sonst liesse sich der Ausschluss samt neuem Abzug einchecken.
-    (Mutationsprobe: in `oberflaeche()` den Bereich `TinySesam.eigenschaften` streichen → rot.)
+    Until 0.20.0 `oberflaeche()` explicitly excluded them (`isinstance(wert, property)`), and
+    `getmembers(…, callable)` does not see them anyway. Renaming `csrf_cookie_name` —
+    exactly the name that custom JS and custom routes need — thus went unnoticed by every guard.
+    Also runs before `--update`: Otherwise the exclusion could be checked in together with the new dump.
+    (Mutation probe: delete the area `TinySesam.eigenschaften` in `oberflaeche()` → red.)
     """
     eig = jetzt.get("TinySesam.eigenschaften", {})
     fehlt = [n for n in PFLICHT_EIGENSCHAFTEN if n not in eig]
-    assert not fehlt, f"Properties fehlen in der eingefrorenen Oberfläche: {fehlt}"
-    # Gegenprobe am Vergleich selbst: Ein umbenanntes Property ist ein BRUCH, keine Erweiterung.
+    assert not fehlt, f"Properties missing from the frozen surface: {fehlt}"
+    # Counter-check on the comparison itself: A renamed property is a BREAK, not an extension.
     umbenannt = json.loads(json.dumps(jetzt))
     umbenannt["TinySesam.eigenschaften"]["csrf_cookie"] = \
         umbenannt["TinySesam.eigenschaften"].pop("csrf_cookie_name")
     brueche, _ = beurteile(jetzt, umbenannt)
-    assert any("csrf_cookie_name ist fort" in b for b in brueche), brueche
-    ok(f"Properties eingefroren ({len(eig)}), ein Umbenennen gälte als Bruch")
+    assert any("csrf_cookie_name is gone" in b for b in brueche), brueche
+    ok(f"Properties frozen ({len(eig)}), renaming one would count as a break")
 
 
 def selbstpruefung_signatur(jetzt: dict) -> None:
-    """Misst `signatur()` die Marken `*` und `/`, und meldet ein eingefügtes `*` als Bruch? (0.22.0)
+    """Does `signatur()` measure the marks `*` and `/`, and report an inserted `*` as a break? (0.22.0)
 
-    Dazu: Eine Ablage von vor 0.22.0 (ohne Marken gemessen) lässt sich weiter vergleichen — ohne
-    dass jede Methode mit Nur-Schlüsselwort-Parametern als Bruch erscheint, und ohne dass ein
-    echter Unterschied darin verschwindet. Läuft auch vor `--update`.
+    In addition: A baseline from before 0.22.0 (measured without marks) can still be compared — without
+    every method with keyword-only parameters appearing as a break, and without a
+    real difference disappearing in it. Also runs before `--update`.
     """
     def probe(self, a, /, b, *, c=1, d: "int" = 2) -> bool:   # noqa: ARG001
         return True
@@ -436,24 +436,24 @@ def selbstpruefung_signatur(jetzt: dict) -> None:
     assert signatur(mit_args) == "(a, *rest, c=1, **kw)", signatur(mit_args)
     assert signatur(lambda *, x: x) == "(*, x)", signatur(lambda *, x: x)
     sig = jetzt["TinySesam"]["login_password"]
-    assert ", *, next: " in sig, f"login_password ohne `*` gemessen: {sig}"
-    # `API.md` zeigt dieselbe Signatur (eigene Kopie in scripts/_api_doku.py, dort fehlten die
-    # Marken genauso).
+    assert ", *, next: " in sig, f"login_password measured without `*`: {sig}"
+    # `API.md` shows the same signature (own copy in scripts/_api_docs.py, where the
+    # marks were missing just the same).
     import importlib.util
     spec = importlib.util.spec_from_file_location("_api_doku_probe",
-                                                  os.path.join(WURZEL, "scripts", "_api_doku.py"))
+                                                  os.path.join(WURZEL, "scripts", "_api_docs.py"))
     doku = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(doku)
     for fn in (probe, mit_args, TinySesam.login_password, TinySesamConfig.oidc_gateway):
         assert doku.signatur(fn) == signatur(fn), (fn, doku.signatur(fn), signatur(fn))
-    # Ein nachträglich eingefügtes `*` (oder `/`) bricht jeden positionellen Aufruf.
+    # A `*` (or `/`) inserted later breaks every positional call.
     vorher = {"TinySesam": {"m": "(request, username, next='')"}}
     for nachher in ("(request, username, *, next='')", "(request, /, username, next='')"):
         brueche, _ = beurteile(vorher, {"TinySesam": {"m": nachher}})
         assert brueche and "TinySesam.m:" in brueche[0], (nachher, brueche)
-    assert nur_erweitert("(a, b=1)", "(a, b=1, *, c=2)"), "kw-only mit Vorgabe hinten ist harmlos"
-    assert not nur_erweitert("(a, *, b=1)", "(a, *, b=1, c)"), "kw-only OHNE Vorgabe bricht"
-    # Alte Ablage (Form vor 0.22.0): ohne Marken eingelesen und ohne Marken verglichen.
+    assert nur_erweitert("(a, b=1)", "(a, b=1, *, c=2)"), "kw-only with a default at the end is harmless"
+    assert not nur_erweitert("(a, *, b=1)", "(a, *, b=1, c)"), "kw-only WITHOUT a default breaks"
+    # Old baseline (form before 0.22.0): read in without marks and compared without marks.
     alt = messung({"TinySesam": {"m": "(request, username, next='') -> 'x'",
                                  "n": "(request, next='')"}, "exporte": ["TinySesam"]})
     assert isinstance(alt["TinySesam"]["m"], OhneMarken)
@@ -461,24 +461,24 @@ def selbstpruefung_signatur(jetzt: dict) -> None:
                          "n": "(request, *, weiter='')"}, "exporte": ["TinySesam"]}
     brueche, erw = beurteile(alt, neu)
     assert len(brueche) == 1 and brueche[0].startswith("TinySesam.n:") and not erw, (brueche, erw)
-    ok("Signaturen mit `*` und `/`: ein eingefügtes `*` ist ein Bruch, eine Ablage von vor 0.22.0 "
-       "vergleicht ohne Marken")
+    ok("Signatures with `*` and `/`: an inserted `*` is a break, a baseline from before 0.22.0 "
+       "compares without marks")
 
 
 def selbstpruefung_stufen(jetzt: dict) -> None:
-    """Schlägt die Stufen-Pflicht an, und vergibt `--update` wirklich keine Stufe? (0.22.0)
+    """Does the tier requirement trigger, and does `--update` really assign no tier? (0.22.0)
 
-    An synthetischen Ablagen aus der echten Messung, damit die Prüfung nicht an der
-    eingecheckten Datei hängt, die gerade vollständig sein mag. Läuft auch vor `--update`.
+    On synthetic baselines made from the real measurement, so that the check does not depend on the
+    checked-in file, which may happen to be complete. Also runs before `--update`.
     """
     assert set(MESSWERT) == set(jetzt), (
-        f"Bereiche ohne Messwert-Schlüssel: {sorted(set(jetzt) - set(MESSWERT))} — "
-        "MESSWERT ergänzen, sonst weiss die Ablage nicht, was gemessen und was entschieden ist")
+        f"Areas without a measured-value key: {sorted(set(jetzt) - set(MESSWERT))} — "
+        "add to MESSWERT, otherwise the baseline does not know what was measured and what was decided")
     gesamt = sum(len(v) for v in jetzt.values())
-    # 1. Frisch gemessen trägt KEIN Eintrag eine Stufe — jeder einzelne wird gemeldet.
+    # 1. Freshly measured, NO entry carries a tier — every single one is reported.
     roh = mit_stufen(jetzt, {})
     assert len(ohne_stufe(roh)) == gesamt, (len(ohne_stufe(roh)), gesamt)
-    # 2. Alles eingestuft → nichts gemeldet; eine unbekannte Stufe (auch kleingeschrieben) → gemeldet.
+    # 2. Everything tiered → nothing reported; an unknown tier (also lowercase) → reported.
     voll = json.loads(json.dumps(roh))
     for eintraege in voll.values():
         for e in eintraege.values():
@@ -488,78 +488,78 @@ def selbstpruefung_stufen(jetzt: dict) -> None:
         kaputt = json.loads(json.dumps(voll))
         name = sorted(kaputt[bereich])[0]
         kaputt[bereich][name]["stufe"] = falsch
-        assert any(f"{bereich}.{name}: unbekannte Stufe" in z for z in ohne_stufe(kaputt)), falsch
+        assert any(f"{bereich}.{name}: unknown tier" in z for z in ohne_stufe(kaputt)), falsch
         del kaputt[bereich][name]["stufe"]
-        assert f"{bereich}.{name}: keine Stufe" in ohne_stufe(kaputt), bereich
-    # 3. `--update` übernimmt Entscheidungen, misst neu, und ein neuer Name bleibt ohne Stufe.
+        assert f"{bereich}.{name}: no tier" in ohne_stufe(kaputt), bereich
+    # 3. `--update` carries decisions over, re-measures, and a new name stays without a tier.
     frueher = json.loads(json.dumps(voll))
     methode = sorted(frueher["TinySesam"])[0]
     frueher["TinySesam"][methode].update(stufe="B", sig="(veraltet)", ersatz="neu_name")
-    del frueher["TinySesam"][sorted(frueher["TinySesam"])[1]]      # „neu" seit der alten Ablage
+    del frueher["TinySesam"][sorted(frueher["TinySesam"])[1]]      # "new" since the old baseline
     del frueher["exporte"][sorted(frueher["exporte"])[0]]
     frueher["TinySesam"]["fort_seit_langem"] = {"sig": "()", "stufe": "A"}
     neu = mit_stufen(jetzt, frueher)
     assert neu["TinySesam"][methode] == {"sig": jetzt["TinySesam"][methode], "stufe": "B",
                                          "ersatz": "neu_name"}, neu["TinySesam"][methode]
     assert "fort_seit_langem" not in neu["TinySesam"]
-    assert ohne_stufe(neu) == [f"TinySesam.{sorted(jetzt['TinySesam'])[1]}: keine Stufe",
-                               f"exporte.{sorted(jetzt['exporte'])[0]}: keine Stufe"], ohne_stufe(neu)
-    # 4. Die Ablage führt verlustfrei auf die Messung zurück — sonst vergliche `beurteile` Äpfel.
+    assert ohne_stufe(neu) == [f"TinySesam.{sorted(jetzt['TinySesam'])[1]}: no tier",
+                               f"exporte.{sorted(jetzt['exporte'])[0]}: no tier"], ohne_stufe(neu)
+    # 4. The baseline leads back to the measurement losslessly — otherwise `beurteile` would compare apples.
     assert messung(neu) == jetzt
-    # 5. Ein Bruch nennt die Stufe des Namens.
+    # 5. A break names the tier of the name.
     weg = json.loads(json.dumps(jetzt))
     del weg["TinySesam"][methode]
     brueche, _ = beurteile(jetzt, weg, stufen_aus(neu))
-    assert brueche and brueche[0].startswith(f"[B] TinySesam.{methode} ist fort"), brueche
-    # 6. Der normale Lauf — dieselbe Funktion, die `main()` ausführt — ist rot, sobald EIN Name
-    #    ohne Stufe ist, auch wenn sich an der Messung nichts geändert hat.
+    assert brueche and brueche[0].startswith(f"[B] TinySesam.{methode} is gone"), brueche
+    # 6. The normal run — the same function `main()` executes — is red as soon as ONE name
+    #    has no tier, even if nothing about the measurement changed.
     rot, fehlt, b, e = vergleiche(voll, jetzt)
     assert (rot, fehlt, b, e) == (False, [], [], []), (rot, fehlt, b, e)
     luecke = json.loads(json.dumps(voll))
     del luecke["TinySesam.eigenschaften"]["csrf_cookie_name"]["stufe"]
     rot, fehlt, b, e = vergleiche(luecke, jetzt)
-    assert rot and fehlt == ["TinySesam.eigenschaften.csrf_cookie_name: keine Stufe"] \
+    assert rot and fehlt == ["TinySesam.eigenschaften.csrf_cookie_name: no tier"] \
         and not b and not e, (rot, fehlt, b, e)
-    ok(f"Stufen-Pflicht greift ({gesamt} Namen): fehlende und unbekannte Stufe gemeldet, "
-       "`--update` vergibt keine")
+    ok(f"Tier requirement works ({gesamt} names): missing and unknown tier reported, "
+       "`--update` assigns none")
 
 
 def vergleiche(frueher_datei: dict, jetzt: dict) -> tuple:
-    """(rot, ohne_stufe, brueche, erweiterungen) — die ganze Entscheidung des normalen Laufs.
+    """(red, without_tier, breaks, extensions) — the whole decision of the normal run.
 
-    Eine eigene Funktion, damit die Selbstprüfung genau das prüft, was `main()` ausführt: Eine
-    Stufen-Prüfung, die nur in der Selbstprüfung stünde, liefe im echten Lauf ins Leere.
+    A function of its own, so that the self-check checks exactly what `main()` executes: A
+    tier check that existed only in the self-check would run into the void in the real run.
     """
     fehlt = ohne_stufe(frueher_datei)
     brueche, erweiterungen = beurteile(messung(frueher_datei), jetzt, stufen_aus(frueher_datei))
     return bool(fehlt or brueche or erweiterungen), fehlt, brueche, erweiterungen
 
 
-# ---------- Stufe C: die Aliase (0.22.0) ----------
-# PO-Entscheid 2026-09-26: Ein Name der Stufe C bekommt einen führenden Unterstrich; der alte Name
-# bleibt bis 1.0 als Alias, der beim Aufruf eine DeprecationWarning auslöst. Das ist nur dann
-# wahr, wenn es gemessen wird — ein Alias, der still weiterreicht, oder eine Route, die noch den
-# alten Namen ruft (und damit bei jeder Anmeldung warnt), sähe sonst genauso grün aus.
+# ---------- Tier C: the aliases (0.22.0) ----------
+# PO decision 2026-09-26: A tier-C name gets a leading underscore; the old name
+# stays as an alias until 1.0 that triggers a DeprecationWarning when called. That is only
+# true if it is measured — an alias that silently forwards, or a route that still calls the
+# old name (and thus warns on every login), would look just as green.
 
-#: Wo Code liegt, der zum Paket gehört oder es benutzt, ohne Test zu sein: Dort steht kein alter
-#: Name. Die Tests rufen die Unterstrich-Namen; die alten ruft nur dieser Wächter.
+#: Where code lives that belongs to the package or uses it without being a test: No old
+#: name appears there. The tests call the underscore names; only this guard calls the old ones.
 EIGENER_CODE = ("tinysesam", "examples", "scripts", "web")
-#: Unter diesen Bereichen darf ein Name Stufe C tragen — nur dort gibt es einen Alias.
-C_BEREICHE = {"TinySesam": True, "TinySesam.konstanten": False}   # Bereich → Methode?
+#: Under these areas a name may carry tier C — only there is there an alias.
+C_BEREICHE = {"TinySesam": True, "TinySesam.konstanten": False}   # area → method?
 
 
 def c_eintraege(datei: dict) -> dict:
-    """{(bereich, name): eintrag} — jeder Eintrag der Stufe C, in welchem Bereich auch immer."""
+    """{(area, name): entry} — every tier-C entry, in whichever area."""
     return {(bereich, name): e for bereich, eintraege in datei.items()
             if isinstance(eintraege, dict)
             for name, e in eintraege.items() if isinstance(e, dict) and e.get("stufe") == "C"}
 
 
-def _warnt(klasse, name: str, alias: Veraltet) -> list:
-    """Warnt der Alias genau einmal, mit Ersatz und auf den Aufrufer — und reicht er weiter?
+def _warnt(klasse, name: str, alias: Deprecated) -> list:
+    """Does the alias warn exactly once, with replacement and at the caller — and does it forward?
 
-    An einem Objekt ohne Konstruktor, dessen Ziel ein Stub ist: So misst der Wächter den Alias
-    selbst, nicht das, was die echte Methode mit Testdaten täte."""
+    On an object without constructor whose target is a stub: This is how the guard measures the alias
+    itself, not what the real method would do with test data."""
     fehler = []
     probe = klasse.__new__(klasse)
     zeichen, erhalten = object(), []
@@ -569,38 +569,38 @@ def _warnt(klasse, name: str, alias: Veraltet) -> list:
             probe.__dict__[alias.ziel] = lambda *a, **k: (erhalten.append((a, k)), zeichen)[1]
             fn = getattr(probe, name)
             if gewarnt:
-                fehler.append("warnt schon beim Nachschlagen (hasattr, getmembers) statt beim Aufruf")
+                fehler.append("warns already on lookup (hasattr, getmembers) instead of on call")
                 del gewarnt[:]
             ergebnis = fn(1, zwei=2)
             if ergebnis is not zeichen or erhalten != [((1,), {"zwei": 2})]:
-                fehler.append(f"reicht nicht unverändert an {alias.ziel} weiter "
-                              f"(erhalten {erhalten!r})")
+                fehler.append(f"does not pass through unchanged to {alias.ziel} "
+                              f"(received {erhalten!r})")
         else:
             ergebnis = getattr(klasse, name)
             if ergebnis is not vars(klasse)[alias.ziel]:
-                fehler.append(f"liefert nicht den Wert von {alias.ziel}")
+                fehler.append(f"does not return the value of {alias.ziel}")
     if len(gewarnt) != 1:
-        fehler.append(f"löst {len(gewarnt)} Warnungen aus statt genau einer")
+        fehler.append(f"raises {len(gewarnt)} warnings instead of exactly one")
     for w in gewarnt[:1]:
         text = str(w.message)
         if w.category is not DeprecationWarning:
-            fehler.append(f"warnt als {w.category.__name__}, nicht als DeprecationWarning")
+            fehler.append(f"warns as {w.category.__name__}, not as DeprecationWarning")
         if os.path.abspath(w.filename) != os.path.abspath(__file__):
-            fehler.append(f"die Warnung zeigt auf {os.path.basename(w.filename)} statt auf den "
-                          "Aufrufer (stacklevel)")
-        for teil in (f"{klasse.__name__}.{name} ", f"fällt mit {BIS} weg", alias.ersatz):
+            fehler.append(f"the warning points to {os.path.basename(w.filename)} instead of to the "
+                          "caller (stacklevel)")
+        for teil in (f"{klasse.__name__}.{name} ", f"goes away with {BIS}", alias.ersatz):
             if teil not in text:
-                fehler.append(f"die Meldung nennt {teil!r} nicht: {text!r}")
+                fehler.append(f"the message does not name {teil!r}: {text!r}")
     return [f"TinySesam{'' if alias.methode else '.konstanten'}.{name}: Alias {f}" for f in fehler]
 
 
-def _zuweisung(klasse, name: str, alias: Veraltet) -> list:
-    """Eine Zuweisung auf den alten Namen am Objekt (Test-Fake) wirkt nicht mehr — warnt sie?
+def _zuweisung(klasse, name: str, alias: Deprecated) -> list:
+    """An assignment to the old name on the object (test fake) no longer takes effect — does it warn?
 
-    Genau eine `RuntimeWarning` (sichtbar ohne Filter), die das Ziel nennt und auf die Zuweisung
-    zeigt; danach liest der alte Name den gesetzten Wert, und `del` stellt den Alias wieder her
-    (so räumt `mock.patch.object` auf). Befund der Gegenprüfung 2026-09-27: Ein Fake auf
-    `check_password` wurde 0-mal gerufen, der Login ergab 303, und niemand warnte."""
+    Exactly one `RuntimeWarning` (visible without a filter) that names the target and points to the assignment;
+    afterwards the old name reads the assigned value, and `del` restores the alias
+    (this is how `mock.patch.object` cleans up). Finding of the counter-check 2026-09-27: A fake on
+    `check_password` was called 0 times, the login gave 303, and nobody warned."""
     fehler = []
     probe = klasse.__new__(klasse)
     fake = object()
@@ -610,88 +610,88 @@ def _zuweisung(klasse, name: str, alias: Veraltet) -> list:
             setattr(probe, name, fake)
             gelesen = probe.__dict__.get(name, None) is fake and getattr(probe, name) is fake
             delattr(probe, name)
-        except Exception as e:                     # noqa: BLE001 — jede Ausnahme ist ein Befund
-            return [f"TinySesam.{name}: Alias: Zuweisung am Objekt wirft {type(e).__name__}: {e}"]
+        except Exception as e:                     # noqa: BLE001 — every exception is a finding
+            return [f"TinySesam.{name}: Alias: assignment on the object raises {type(e).__name__}: {e}"]
     if [w.category for w in gewarnt] != [RuntimeWarning]:
-        fehler.append(f"Zuweisung am Objekt löst {[w.category.__name__ for w in gewarnt]} aus "
-                      "statt genau einer RuntimeWarning")
+        fehler.append(f"assignment on the object raises {[w.category.__name__ for w in gewarnt]} "
+                      "instead of exactly one RuntimeWarning")
     else:
         text = str(gewarnt[0].message)
         if f"`{alias.ziel}`" not in text:
-            fehler.append(f"die Warnung bei einer Zuweisung nennt das Ziel `{alias.ziel}` nicht: "
+            fehler.append(f"the warning on an assignment does not name the target `{alias.ziel}`: "
                           f"{text!r}")
         if os.path.abspath(gewarnt[0].filename) != os.path.abspath(__file__):
-            fehler.append(f"die Warnung bei einer Zuweisung zeigt auf "
-                          f"{os.path.basename(gewarnt[0].filename)} statt auf die Zuweisung")
+            fehler.append(f"the warning on an assignment points to "
+                          f"{os.path.basename(gewarnt[0].filename)} instead of to the assignment")
     if not gelesen:
-        fehler.append("liefert nach einer Zuweisung am Objekt nicht den gesetzten Wert")
+        fehler.append("does not return the assigned value after an assignment on the object")
     if name in probe.__dict__:
-        fehler.append("`del` lässt den am Objekt gesetzten Wert stehen")
+        fehler.append("`del` leaves the value set on the object in place")
     art = "" if alias.methode else ".konstanten"
     return [f"TinySesam{art}.{name}: Alias {f}" for f in fehler]
 
 
 def alias_befunde(datei: dict, klasse=TinySesam) -> list:
-    """Stimmen Ablage und Klasse bei Stufe C überein, und tut jeder Alias, was er soll?"""
+    """Do baseline and class agree for tier C, and does every alias do what it should?"""
     befunde = []
     stufe = {(b, n): e.get("stufe") for b, ee in datei.items() if isinstance(ee, dict)
              for n, e in ee.items() if isinstance(e, dict)}
     c = c_eintraege(datei)
     for (bereich, name), e in sorted(c.items()):
         if bereich not in C_BEREICHE:
-            befunde.append(f"{bereich}.{name}: Stufe C gibt es nur für Methoden und Konstanten "
-                           "der Klasse — dort als Alias")
+            befunde.append(f"{bereich}.{name}: tier C exists only for methods and constants "
+                           "of the class — there as an alias")
             continue
         alias = inspect.getattr_static(klasse, name, None)
-        if not isinstance(alias, Veraltet):
-            art = "fehlt in der Klasse" if alias is None else "hat eine eigene Implementierung"
-            befunde.append(f"{bereich}.{name}: Stufe C, {art} — die Implementierung heisst "
-                           f"`_{name}`, der alte Name wird `Veraltet(\"_{name}\", \"<Ersatz>\")`")
+        if not isinstance(alias, Deprecated):
+            art = "is missing in the class" if alias is None else "has its own implementation"
+            befunde.append(f"{bereich}.{name}: tier C, {art} — the implementation is called "
+                           f"`_{name}`, the old name becomes `Deprecated(\"_{name}\", \"<Ersatz>\")`")
             continue
         if alias.methode != C_BEREICHE[bereich]:
-            befunde.append(f"{bereich}.{name}: der Alias zeigt auf "
-                           f"{'eine Methode' if alias.methode else 'eine Konstante'}")
+            befunde.append(f"{bereich}.{name}: the alias points to "
+                           f"{'a method' if alias.methode else 'a constant'}")
         if e.get("ziel") != alias.ziel:
-            befunde.append(f"{bereich}.{name}: die Ablage nennt `ziel` {e.get('ziel')!r}, der "
-                           f"Alias zeigt auf {alias.ziel!r}")
+            befunde.append(f"{bereich}.{name}: the baseline names `ziel` {e.get('ziel')!r}, the "
+                           f"alias points to {alias.ziel!r}")
         ziel = inspect.getattr_static(klasse, alias.ziel, None)
-        if ziel is None or isinstance(ziel, Veraltet):
-            befunde.append(f"{bereich}.{name}: das Ziel {alias.ziel!r} ist keine Implementierung")
+        if ziel is None or isinstance(ziel, Deprecated):
+            befunde.append(f"{bereich}.{name}: the target {alias.ziel!r} is not an implementation")
         elif alias.ziel != f"_{name}" and stufe.get((bereich, alias.ziel)) != "A":
-            befunde.append(f"{bereich}.{name}: zeigt auf {alias.ziel!r} — erlaubt ist `_{name}` "
-                           "oder ein Name der Stufe A (so `complete_mfa` → `complete_totp`)")
+            befunde.append(f"{bereich}.{name}: points to {alias.ziel!r} — allowed is `_{name}` "
+                           "or a name of tier A (e.g. `complete_mfa` → `complete_totp`)")
         if not e.get("seit") or e.get("bis") != alias.bis:
-            befunde.append(f"{bereich}.{name}: `seit`/`bis` fehlen oder passen nicht zum Alias "
-                           f"(Ablage {e.get('seit')!r}/{e.get('bis')!r}, Alias bis {alias.bis})")
+            befunde.append(f"{bereich}.{name}: `seit`/`bis` are missing or do not match the alias "
+                           f"(baseline {e.get('seit')!r}/{e.get('bis')!r}, alias until {alias.bis})")
         befunde += _warnt(klasse, name, alias) + _zuweisung(klasse, name, alias)
     for name, alias in sorted(vars(klasse).items()):
-        if isinstance(alias, Veraltet):
+        if isinstance(alias, Deprecated):
             bereich = "TinySesam" if alias.methode else "TinySesam.konstanten"
             if (bereich, name) not in c:
-                befunde.append(f"{bereich}.{name}: ist in der Klasse ein Alias (Veraltet), in der "
-                               "Ablage aber nicht Stufe C")
+                befunde.append(f"{bereich}.{name}: is an alias (Deprecated) in the class, but in the "
+                               "baseline not tier C")
     return befunde
 
 
 def alte_namen_im_text(text: str, ziele: dict, zeichenketten: bool) -> list:
-    """[(zeile, befund)] — Zugriffe auf einen alten Namen in einem Quelltext (AST, nicht grep:
-    ein Kommentar oder Docstring, der den Namen erwähnt, ist kein Aufruf)."""
+    """[(line, finding)] — accesses to an old name in a source text (AST, not grep:
+    a comment or docstring that mentions the name is not a call)."""
     treffer = []
     for k in ast.walk(ast.parse(text)):
         if isinstance(k, ast.Attribute) and k.attr in ziele:
-            treffer.append((k.lineno, f"`.{k.attr}` ist der alte Name — `.{ziele[k.attr]}` nehmen"))
+            treffer.append((k.lineno, f"`.{k.attr}` is the old name — use `.{ziele[k.attr]}`"))
         elif (zeichenketten and isinstance(k, ast.Constant) and isinstance(k.value, str)
               and k.value in ziele):
-            treffer.append((k.lineno, f"Zeichenkette {k.value!r} — getattr/setattr auf den alten "
-                                      f"Namen? `{ziele[k.value]}` nehmen"))
+            treffer.append((k.lineno, f"string {k.value!r} — getattr/setattr on the old "
+                                      f"name? use `{ziele[k.value]}`"))
     return sorted(treffer)
 
 
 def interne_aufrufe(ziele: dict, wurzel: str = WURZEL) -> tuple:
-    """(befunde, geprüfte Dateien) — benutzt Code im Repo, der kein Test ist, einen alten Namen?
+    """(findings, checked files) — does code in the repo that is not a test use an old name?
 
-    Zeichenketten zählen nur im Paket selbst (`security.EIGENE_SPERRE` nennt Methoden beim
-    Namen); `scripts/_api_doku.py` darf die alten Namen nennen — es beschreibt sie."""
+    Strings only count in the package itself (`security.EIGENE_SPERRE` names methods by
+    name); `scripts/_api_docs.py` may name the old names — it describes them."""
     befunde, zahl = [], 0
     for ordner in EIGENER_CODE:
         for pfad_, unter, dateien in os.walk(os.path.join(wurzel, ordner)):
@@ -722,20 +722,20 @@ def _version(text: str) -> tuple:
 
 
 def frist_befunde(datei: dict, version: str) -> list:
-    """Mit 1.0 fallen die Aliase — steht dann noch einer da, ist das rot, nicht vergessen."""
-    return [f"{bereich}.{name}: der Alias hätte mit {e.get('bis', BIS)} fallen müssen "
-            f"(Version {version}) — Alias und Eintrag entfernen, CHANGELOG „Entfernt“"
+    """With 1.0 the aliases fall — if one is still there, that is red, not forgotten."""
+    return [f"{bereich}.{name}: the alias should have fallen with {e.get('bis', BIS)} "
+            f"(version {version}) — remove alias and entry, CHANGELOG Removed"
             for (bereich, name), e in sorted(c_eintraege(datei).items())
             if _version(version) >= _version(e.get("bis", BIS))]
 
 
-#: Der Name des noch offenen Abschnitts im CHANGELOG — was dort steht, ist in keinem Release.
-OFFEN = "Unveröffentlicht"
+#: The name of the still-open section in the CHANGELOG — what is in it is in no release.
+OFFEN = "Unreleased"
 
 
 def changelog_veraltet(text: str) -> list:
-    """[(abschnitt, {namen})] in der Reihenfolge des CHANGELOG (neueste zuerst): je Abschnitt
-    `## [X.Y.Z]` bzw. `## [Unveröffentlicht]` die Namen in Backticks unter `### Veraltet`."""
+    """[(section, {names})] in CHANGELOG order (newest first): per section
+    `## [X.Y.Z]` or `## [Unreleased]` the names in backticks under `### Deprecated`."""
     abschnitte, akt, in_veraltet = [], None, False
     for zeile in text.split("\n"):
         if zeile.startswith("## ["):
@@ -744,7 +744,7 @@ def changelog_veraltet(text: str) -> list:
             abschnitte.append(akt)
             in_veraltet = False
         elif zeile.startswith("### "):
-            in_veraltet = akt is not None and zeile[4:].strip().startswith("Veraltet")
+            in_veraltet = akt is not None and zeile[4:].strip().startswith("Deprecated")
         elif in_veraltet:
             teile = zeile.split("`")
             akt[1].update(t for t in teile[1::2] if t.isidentifier())
@@ -752,51 +752,51 @@ def changelog_veraltet(text: str) -> list:
 
 
 def seit_befunde(datei: dict, changelog: str) -> list:
-    """Stimmt `seit` jedes Alias mit dem Release überein, das ihn einführt? (0.22.0)
+    """Does the `seit` of every alias match the release that introduces it? (0.22.0)
 
-    Anlass: Die Einstufung war mit `seit: 0.21.0` gebaut, dann ging 0.21.0 ohne sie hinaus. Ein
-    `seit`, das ein schon veröffentlichtes Release nennt, in dem es den Alias gar nicht gab,
-    schickt jeden, der die Warnung liest, in die falsche Version — und nichts fiel auf, weil
-    nur geprüft wurde, OB das Feld da ist. Die Regel, am CHANGELOG gemessen:
+    Reason: The tiering was built with `seit: 0.21.0`, then 0.21.0 went out without it. A
+    `seit` that names an already published release in which the alias did not exist
+    sends everyone who reads the warning to the wrong version — and nothing was noticed, because
+    only whether the field is there was checked. The rule, measured against the CHANGELOG:
 
-    * Der Alias steht unter `### Veraltet` in genau dem Abschnitt, der ihn einführt — dem
-      ältesten, der ihn dort nennt. Fehlt er überall, ist das rot.
-    * Führt ihn `[Unveröffentlicht]` ein, muss `seit` **grösser** sein als das jüngste Release
-      im CHANGELOG: Das nächste Release bringt ihn, keines der schon draussen ist.
-    * Führt ihn ein Release `[X.Y.Z]` ein, muss `seit` genau `X.Y.Z` sein. Beim Umbenennen von
-      `[Unveröffentlicht]` in das neue Release greift damit dieselbe Regel weiter.
+    * The alias is under `### Deprecated` in exactly the section that introduces it — the
+      oldest that names it there. If it is missing everywhere, that is red.
+    * If `[Unreleased]` introduces it, `seit` must be **greater** than the latest release
+      in the CHANGELOG: The next release brings it, none of those already out.
+    * If a release `[X.Y.Z]` introduces it, `seit` must be exactly `X.Y.Z`. When renaming
+      `[Unreleased]` to the new release the same rule keeps applying.
     """
     abschnitte = changelog_veraltet(changelog)
     releases = [kopf for kopf, _ in abschnitte if kopf != OFFEN and kopf[:1].isdigit()]
     if not releases:
-        return ["CHANGELOG.md: kein Release-Abschnitt `## [X.Y.Z]` gefunden — `seit` der Aliase "
-                "lässt sich nicht prüfen"]
+        return ["CHANGELOG.md: no release section `## [X.Y.Z]` found — the `seit` of the aliases "
+                "cannot be checked"]
     juengstes = max(releases, key=_version)
     befunde = []
     for (bereich, name), e in sorted(c_eintraege(datei).items()):
         seit = str(e.get("seit") or "")
         wo = [kopf for kopf, namen in abschnitte if name in namen]
         if not wo:
-            befunde.append(f"{bereich}.{name}: CHANGELOG nennt den Alias in keinem Abschnitt unter "
-                           f"„Veraltet“ — dort gehört er hin, mit Ersatz (`seit` {seit!r})")
+            befunde.append(f"{bereich}.{name}: CHANGELOG lists the alias in no section under "
+                           f"Deprecated — it belongs there, with replacement (`seit` {seit!r})")
             continue
-        einfuehrung = wo[-1]                   # der älteste Abschnitt, der ihn nennt
+        einfuehrung = wo[-1]                   # the oldest section that names it
         if einfuehrung == OFFEN:
             if _version(seit) <= _version(juengstes):
                 befunde.append(
-                    f"{bereich}.{name}: `seit` {seit!r}, aber der Alias steht erst unter "
-                    f"[{OFFEN}] — {juengstes} ist schon veröffentlicht und kannte ihn nicht; "
-                    f"`seit` auf das nächste Release setzen (grösser als {juengstes})")
+                    f"{bereich}.{name}: `seit` {seit!r}, but the alias is only under "
+                    f"[{OFFEN}] — {juengstes} is already published and did not know it; "
+                    f"set `seit` to the next release (greater than {juengstes})")
         elif _version(seit) != _version(einfuehrung):
-            befunde.append(f"{bereich}.{name}: `seit` {seit!r}, eingeführt hat den Alias aber "
-                           f"[{einfuehrung}] (CHANGELOG, „Veraltet“)")
+            befunde.append(f"{bereich}.{name}: `seit` {seit!r}, but the alias was introduced by "
+                           f"[{einfuehrung}] (CHANGELOG, Deprecated)")
     return befunde
 
 
 def c_befunde(datei: dict, klasse=TinySesam, version: str = _paket.__version__,
               wurzel: str = WURZEL, changelog: "str | None" = None) -> tuple:
-    """(befunde, geprüfte Dateien) — die ganze Stufe-C-Prüfung des normalen Laufs."""
-    ziele = {name: alias.ziel for name, alias in vars(klasse).items() if isinstance(alias, Veraltet)}
+    """(findings, checked files) — the whole tier-C check of the normal run."""
+    ziele = {name: alias.ziel for name, alias in vars(klasse).items() if isinstance(alias, Deprecated)}
     ziele.update({name: e.get("ziel") or f"_{name}" for (_, name), e in c_eintraege(datei).items()
                   if name not in ziele})
     innen, zahl = interne_aufrufe(ziele, wurzel)
@@ -808,8 +808,8 @@ def c_befunde(datei: dict, klasse=TinySesam, version: str = _paket.__version__,
 
 
 def pruefe_unterklasse() -> None:
-    """Eine Unterklasse, die einen alten Namen überschreibt, muss es erfahren (RuntimeWarning):
-    Seit 0.22.0 rufen die Routen `_name`, die Überschreibung liefe still ins Leere."""
+    """A subclass that overrides an old name must find out (RuntimeWarning):
+    Since 0.22.0 the routes call `_name`, the override would silently run into the void."""
     with warnings.catch_warnings(record=True) as gewarnt:
         warnings.simplefilter("always")
 
@@ -830,23 +830,23 @@ def pruefe_unterklasse() -> None:
             def eigene_methode(self):
                 return None
     assert not gewarnt, (_Harmlos.__name__, [str(w.message) for w in gewarnt])
-    ok("eine Unterklasse, die einen alten Namen überschreibt, bekommt eine RuntimeWarning")
+    ok("a subclass that overrides an old name gets a RuntimeWarning")
 
 
 def pruefe_warnfilter() -> None:
-    """Macht `tests/run_all.py` einen alten Namen, gerufen AUS dem Paket, wirklich zum Fehler?
+    """Does `tests/run_all.py` really turn an old name, called FROM the package, into an error?
 
-    Ein falsch geschriebener `-W`-Filter wird von Python nur mit „Invalid -W option ignored"
-    quittiert — der Lauf bliebe grün, ohne etwas zu prüfen. Deshalb die Wirkung messen: In einem
-    frischen Prozess mit genau der Umgebung einer Suite ruft Code, der sich als Modul des Pakets
-    ausgibt, einen Alias (Methode und Konstante) — das muss werfen; derselbe Aufruf aus
-    `__main__` (ein Nutzer, ein Test) nur warnen."""
+    A misspelled `-W` filter is only acknowledged by Python with "Invalid -W option ignored"
+    — the run would stay green without checking anything. Hence measure the effect: In a
+    fresh process with exactly the environment of a suite, code that poses as a module of the package
+    calls an alias (method and constant) — that must raise; the same call from
+    `__main__` (a user, a test) only warn."""
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     import run_all
     import tempfile
     sandbox = tempfile.mkdtemp(prefix="tinysesam-warnfilter-")
-    # Nur der Filter von run_all.py zählt — ein von aussen gesetztes PYTHONWARNINGS (etwa ein
-    # strenger Lauf mit `error::DeprecationWarning`) würde die Gegenprobe aus `__main__` verfälschen.
+    # Only the filter of run_all.py counts — an externally set PYTHONWARNINGS (such as a
+    # strict run with `error::DeprecationWarning`) would falsify the counter-check from `__main__`.
     von_aussen = os.environ.pop("PYTHONWARNINGS", None)
     try:
         umgebung = run_all.umgebung(sandbox)
@@ -861,7 +861,7 @@ def pruefe_warnfilter() -> None:
         module |= {".".join(teile if d == "__init__.py" else teile + [d[:-3]])
                    for d in dateien if d.endswith(".py")}
     fehlt = sorted(m for m in module if f"error:TinySesam.:DeprecationWarning:{m}" not in eintraege)
-    assert not fehlt, f"run_all.py filtert diese Module nicht: {fehlt}"
+    assert not fehlt, f"run_all.py does not filter these modules: {fehlt}"
     probe = (
         "import warnings\n"
         "from tinysesam import TinySesam\n"
@@ -881,19 +881,19 @@ def pruefe_warnfilter() -> None:
     assert r.returncode == 0, r.stderr[-800:]
     assert "Invalid -W option" not in r.stderr, r.stderr[-800:]
     assert r.stdout.split("\n")[:4] == ["tinysesam.router wirft", "__main__ warnt"] * 2, r.stdout
-    ok(f"run_all.py: ein alter Name aus dem Paket wirft ({len(module)} Module gefiltert), "
-       "aus eigenem Code warnt er nur")
+    ok(f"run_all.py: an old name from the package raises ({len(module)} modules filtered), "
+       "from own code it only warns")
 
 
 def selbstpruefung_c() -> None:
-    """Schlägt jede Stufe-C-Regel an? An einer Probeklasse, nicht an TinySesam — deren Aliase
-    stimmen hoffentlich gerade, und eine Regel, die nie rot war, beweist nichts."""
+    """Does every tier-C rule trigger? On a probe class, not on TinySesam — its aliases
+    hopefully happen to be right, and a rule that was never red proves nothing."""
     import tempfile
 
-    def klasse(alias_typ=Veraltet, echt_f=False):
+    def klasse(alias_typ=Deprecated, echt_f=False):
         ns = {"_f": lambda self, *a, **k: ("f", a, k), "_K": (1, 2),
-              "g": lambda self: None, "K": alias_typ("_K", "ohne Ersatz, intern")}
-        ns["f"] = (lambda self: None) if echt_f else alias_typ("_f", "stattdessen `g`")
+              "g": lambda self: None, "K": alias_typ("_K", "no replacement; internal")}
+        ns["f"] = (lambda self: None) if echt_f else alias_typ("_f", "use `g` instead")
         return type("TinySesam", (), ns)
 
     def ablage(**zusatz):
@@ -917,39 +917,39 @@ def selbstpruefung_c() -> None:
     sauber = alias_befunde(ablage(), klasse())
     assert sauber == [], sauber
 
-    class Stumm(Veraltet):
+    class Stumm(Deprecated):
         __slots__ = ()
 
         def _warnen(self):
             pass
 
-    class Tief(Veraltet):
+    class Tief(Deprecated):
         __slots__ = ()
 
         def _warnen(self):
             warnings.warn(self.meldung, DeprecationWarning, stacklevel=2)
 
-    class Verschluckt(Veraltet):
+    class Verschluckt(Deprecated):
         __slots__ = ()
 
         def __get__(self, obj, owner=None):
             fn = super().__get__(obj, owner)
             return (lambda *a, **k: fn(*a)) if self.methode else fn
 
-    class StilleZuweisung(Veraltet):
+    class StilleZuweisung(Deprecated):
         __slots__ = ()
 
         def __set__(self, obj, wert):
             obj.__dict__[self.name] = wert
 
-    class Falsch(Veraltet):
+    class Falsch(Deprecated):
         __slots__ = ()
 
         def __set__(self, obj, wert):
             warnings.warn("veraltet", RuntimeWarning, stacklevel=2)
             obj.__dict__[self.name] = wert
 
-    class Anderswo(Veraltet):
+    class Anderswo(Deprecated):
         __slots__ = ()
 
         def __set__(self, obj, wert):
@@ -957,24 +957,24 @@ def selbstpruefung_c() -> None:
             obj.__dict__[self.name] = wert
 
     rot(alias_befunde(ablage(), klasse(StilleZuweisung)),
-        "TinySesam.f: Alias Zuweisung am Objekt löst [] aus")
-    rot(alias_befunde(ablage(), klasse(Falsch)), "nennt das Ziel `_f` nicht")
-    rot(alias_befunde(ablage(), klasse(Anderswo)), "zeigt auf anderswo.py statt auf die Zuweisung")
-    rot(alias_befunde(ablage(), klasse(Stumm)), "löst 0 Warnungen aus")
-    rot(alias_befunde(ablage(), klasse(Tief)), "statt auf den Aufrufer")
-    rot(alias_befunde(ablage(), klasse(Verschluckt)), "reicht nicht unverändert")
-    rot(alias_befunde(ablage(), klasse(echt_f=True)), "TinySesam.f: Stufe C, hat eine eigene")
-    rot(alias_befunde(ablage(m__f__stufe="A"), klasse()), "in der Ablage aber nicht Stufe C")
-    rot(alias_befunde(ablage(m__f__ziel="_g"), klasse()), "die Ablage nennt `ziel` '_g'")
-    rot(alias_befunde(ablage(m__f__bis=None), klasse()), "`seit`/`bis` fehlen")
-    rot(alias_befunde(ablage(x__Neu__stufe="C"), klasse()), "exporte.Neu: Stufe C gibt es nur")
-    rot(alias_befunde(ablage(m__h__ziel="_h"), klasse()), "TinySesam.h: Stufe C, fehlt")
+        "TinySesam.f: Alias assignment on the object raises []")
+    rot(alias_befunde(ablage(), klasse(Falsch)), "does not name the target `_f`")
+    rot(alias_befunde(ablage(), klasse(Anderswo)), "points to anderswo.py instead of to the assignment")
+    rot(alias_befunde(ablage(), klasse(Stumm)), "raises 0 warnings")
+    rot(alias_befunde(ablage(), klasse(Tief)), "instead of to the caller")
+    rot(alias_befunde(ablage(), klasse(Verschluckt)), "does not pass through unchanged")
+    rot(alias_befunde(ablage(), klasse(echt_f=True)), "TinySesam.f: tier C, has its own")
+    rot(alias_befunde(ablage(m__f__stufe="A"), klasse()), "in the baseline not tier C")
+    rot(alias_befunde(ablage(m__f__ziel="_g"), klasse()), "the baseline names `ziel` '_g'")
+    rot(alias_befunde(ablage(m__f__bis=None), klasse()), "`seit`/`bis` are missing")
+    rot(alias_befunde(ablage(x__Neu__stufe="C"), klasse()), "exporte.Neu: tier C exists only")
+    rot(alias_befunde(ablage(m__h__ziel="_h"), klasse()), "TinySesam.h: tier C, is missing")
     umgelenkt = type("TinySesam", (), {"_f": lambda self: None, "g": lambda self: None,
-                                        "_K": 1, "K": Veraltet("_K", "x"),
-                                        "f": Veraltet("g", "stattdessen `g`")})
-    assert alias_befunde(ablage(m__f__ziel="g"), umgelenkt) == [], "Ziel der Stufe A ist erlaubt"
-    rot(alias_befunde(ablage(m__f__ziel="g", m__g__stufe="B"), umgelenkt), "erlaubt ist `_f`")
-    # Interne Aufrufe: AST über ein Probe-Repo — Attribut überall, Zeichenkette nur im Paket.
+                                        "_K": 1, "K": Deprecated("_K", "x"),
+                                        "f": Deprecated("g", "use `g` instead")})
+    assert alias_befunde(ablage(m__f__ziel="g"), umgelenkt) == [], "target of tier A is allowed"
+    rot(alias_befunde(ablage(m__f__ziel="g", m__g__stufe="B"), umgelenkt), "allowed is `_f`")
+    # Internal calls: AST over a probe repo — attribute everywhere, string only in the package.
     probe = tempfile.mkdtemp(prefix="tinysesam-c-")
     for rel, text in (("tinysesam/m.py", "auth.f(1)\nauth._f(2)\ngetattr(auth, 'f')\n# auth.f\n"),
                       ("examples/e.py", "x = 'f'\nauth.K\n"), ("tests/t.py", "auth.f()\n")):
@@ -984,62 +984,62 @@ def selbstpruefung_c() -> None:
     innen, zahl = interne_aufrufe({"f": "_f", "K": "_K"}, probe)
     assert zahl == 2 and sorted(b.split(": ")[0] for b in innen) == [
         "examples/e.py:2", "tinysesam/m.py:1", "tinysesam/m.py:3"], (zahl, innen)
-    # Frist: ab 1.0 ist jeder verbliebene Alias rot, davor keiner.
+    # Deadline: from 1.0 every remaining alias is red, before that none.
     assert frist_befunde(ablage(), "0.22.0") == [] and frist_befunde(ablage(), "0.99.3") == []
     assert len(frist_befunde(ablage(), "1.0.0")) == 2 and frist_befunde(ablage(), "1.2")
 
-    # `seit` gegen das CHANGELOG (0.22.0): Der Alias steht unter „Veraltet“ im Abschnitt, der ihn
-    # einführt; im offenen Abschnitt ist `seit` grösser als das jüngste Release, sonst genau dieses.
+    # `seit` against the CHANGELOG (0.22.0): The alias is under "Deprecated" in the section that
+    # introduces it; in the open section `seit` is greater than the latest release, otherwise exactly that one.
     def changelog(offen="", release=""):
-        return ("# Changelog\n\n## [Unveröffentlicht]\n\n### Veraltet\n\n" + offen + "\n\n"
-                "## [0.21.0] — 2026-09-27\n\n### Geändert\n\n- `f` und `K` zählen hier nicht\n\n"
-                "### Veraltet\n\n" + release + "\n\n## [0.20.1] — 2026-09-24\n")
+        return ("# Changelog\n\n## [Unreleased]\n\n### Deprecated\n\n" + offen + "\n\n"
+                "## [0.21.0] — 2026-09-27\n\n### Changed\n\n- `f` and `K` do not count here\n\n"
+                "### Deprecated\n\n" + release + "\n\n## [0.20.1] — 2026-09-24\n")
     beide = "- `f` → `_f`, `K` → `_K`"
     neu = ablage(m__f__seit="0.22.0", k__K__seit="0.21.1")
     assert seit_befunde(neu, changelog(offen=beide)) == [], seit_befunde(neu, changelog(offen=beide))
     rot(seit_befunde(ablage(m__f__seit="0.21.0"), changelog(offen=beide)),
-        "TinySesam.f: `seit` '0.21.0', aber der Alias steht erst unter [Unveröffentlicht]")
+        "TinySesam.f: `seit` '0.21.0', but the alias is only under [Unreleased]")
     rot(seit_befunde(ablage(k__K__seit="0.19.0"), changelog(offen=beide)),
-        "TinySesam.konstanten.K: `seit` '0.19.0', aber")
+        "TinySesam.konstanten.K: `seit` '0.19.0', but")
     alt = ablage(m__f__seit="0.21.0", k__K__seit="0.21.0")
     assert seit_befunde(alt, changelog(release=beide)) == []
-    assert seit_befunde(alt, changelog(offen=beide, release=beide)) == [], "der älteste zählt"
+    assert seit_befunde(alt, changelog(offen=beide, release=beide)) == [], "the oldest counts"
     rot(seit_befunde(ablage(m__f__seit="0.22.0"), changelog(release=beide)),
-        "TinySesam.f: `seit` '0.22.0', eingeführt hat den Alias aber [0.21.0]")
-    rot(seit_befunde(ablage(), changelog(offen="- `K` → `_K`")), "TinySesam.f: CHANGELOG nennt")
-    rot(seit_befunde(ablage(), "# Changelog\n\n## [Unveröffentlicht]\n"), "kein Release-Abschnitt")
-    # Der normale Lauf geht durch dieselbe Funktion und sieht alle vier Arten.
+        "TinySesam.f: `seit` '0.22.0', but the alias was introduced by [0.21.0]")
+    rot(seit_befunde(ablage(), changelog(offen="- `K` → `_K`")), "TinySesam.f: CHANGELOG lists")
+    rot(seit_befunde(ablage(), "# Changelog\n\n## [Unreleased]\n"), "no release section")
+    # The normal run goes through the same function and sees all four kinds.
     befunde, _ = c_befunde(ablage(m__f__seit="0.21.0", k__K__seit="0.22.0"), klasse(Stumm),
                            "1.0.0", probe, changelog(offen=beide))
     import shutil
     shutil.rmtree(probe, ignore_errors=True)
-    for art in ("löst 0 Warnungen", "tinysesam/m.py:1", "fallen müssen", "kannte ihn nicht"):
+    for art in ("raises 0 warnings", "tinysesam/m.py:1", "should have fallen", "did not know it"):
         rot(befunde, art)
-    ok("Stufe-C-Regeln schlagen an: Alias stumm, falscher stacklevel, verschluckte Argumente, "
-       "stille Zuweisung am Objekt, eigene Implementierung, Ablage ≠ Klasse, falsches Ziel, "
-       "interner Aufruf, Frist 1.0, `seit` gegen das CHANGELOG")
+    ok("Tier-C rules trigger: silent alias, wrong stacklevel, swallowed arguments, "
+       "silent assignment on the object, own implementation, baseline ≠ class, wrong target, "
+       "internal call, deadline 1.0, `seit` against the CHANGELOG")
 
 
-# ---------- Die Namen der Stufen A und B: englisch (0.22.0) ----------
-# PO-Entscheid 2026-09-27: Die öffentliche Oberfläche heisst englisch — vor 0.22.0 umbenannt,
-# **ohne Alias**, weil die Zusagen der Stufen erst mit diesem Release beginnen und kein Abnehmer
-# einen der deutschen Namen benutzte (CHANGELOG, „Was beim Update auffällt“). Damit kein deutsches
-# Wort zurückkommt, misst der Wächter die GANZE Oberfläche der Stufen A und B: jeden Namen der
-# Ablage, die Parameter jeder Methode und Funktion (am lebenden Objekt), die Konfigurationsfelder
-# und die öffentlichen Attribute und Konstruktor-Parameter der exportierten Fehlertypen
-# (`ConfigError.field`, `MissingExtra(message, extra)`). Stufe C bleibt aussen vor: Das sind die
-# alten Namen, die bis 1.0 als Alias weiterreichen. Die Schlüssel und Werte, die diese Oberfläche
-# zurückgibt oder annimmt, misst seit dem zweiten PO-Entscheid desselben Tags `pruefe_werte()`
-# weiter unten; Audit- und Log-Zeilen (`login_fail … grund=`, fail2ban) bleiben, wie sie sind.
-# Der Abschnitt (k) in `tests/test_anmelden.py` misst dazu die Oberfläche des Login-Bausteins samt
-# der Werte von `LoginResult.REASONS` — mit derselben Wortliste (`deutsch_in`).
-# (Mutationsproben: `by_operator` in `change_username` zurück auf `durch_betreiber` → rot;
-# `ConfigError.owner_id` zurück auf `besitzer_id` → rot; ein Konfigurationsfeld `sperre_minuten`
-# mit Stufe → rot; `STAMM` leeren → Selbstprobe rot; die Parameter nicht mehr messen → rot.)
+# ---------- The names of tiers A and B: English (0.22.0) ----------
+# PO decision 2026-09-27: The public surface is named in English — renamed before 0.22.0,
+# **without an alias**, because the commitments of the tiers only begin with this release and no consumer
+# used any of the German names (CHANGELOG, "Was beim Update auffällt"). So that no German
+# word comes back, the guard measures the WHOLE surface of tiers A and B: every name of the
+# baseline, the parameters of every method and function (on the live object), the configuration fields
+# and the public attributes and constructor parameters of the exported error types
+# (`ConfigError.field`, `MissingExtra(message, extra)`). Tier C stays out: Those are the
+# old names that keep forwarding as aliases until 1.0. The keys and values this surface
+# returns or accepts are measured, since the second PO decision of the same day, by `pruefe_werte()`
+# further below; audit and log lines (`login_fail … grund=`, fail2ban) stay as they are.
+# Section (k) in `tests/test_sign_in.py` additionally measures the surface of the login building block together with
+# the values of `LoginResult.REASONS` — with the same word list (`deutsch_in`).
+# (Mutation probes: `by_operator` in `change_username` back to `durch_betreiber` → red;
+# `ConfigError.owner_id` back to `besitzer_id` → red; a configuration field `sperre_minuten`
+# with a tier → red; emptying `STAMM` → self-check red; no longer measuring the parameters → red.)
 
-#: Deutsche Wörter, als GANZES Wort eines Namens (zerlegt an `_`, `.` und CamelCase). Mit Vorsicht
-#: gewählt: keines ist zugleich ein englisches Wort, das in einer API vorkommt — `die`, `alt`,
-#: `hat`, `was`, `man`, `also` fehlen darum, `serie` zählt nur ganz (sonst fiele `series` auf).
+#: German words, as a WHOLE word of a name (split at `_`, `.` and CamelCase). Chosen with
+#: care: none of them is also an English word that occurs in an API — `die`, `alt`,
+#: `hat`, `was`, `man`, `also` are therefore missing, `serie` only counts whole (otherwise `series` would be flagged).
 DEUTSCH = frozenset("""
     abgeschaltet abmelden alle als andere anderen anmelden anmeldung antwort anwendung anzahl art arten
     aufheben auftrag ausfuehren basis bei benutzer besitzer bestaetigt betreiber bindung bis darf der
@@ -1055,9 +1055,9 @@ DEUTSCH = frozenset("""
     abgewiesen anders ausgefuehrt automat dienstkonto gebunden konflikt lokal mehrdeutig mensch
     schon treffer verbleibend
 """.split())
-#: Deutsche Wortstämme, die auch INNERHALB eines Worts auffallen: Eine Konstante wie
-#: `SICHERHEITSEREIGNISSE` ist nach dem Zerlegen EIN Wort. Nur Stämme ab fünf Buchstaben, die in
-#: keinem englischen Wort stecken (`bindung` ≠ `binding`, `sitzung`, `kennung` …).
+#: German word stems that are also conspicuous INSIDE a word: A constant like
+#: `SICHERHEITSEREIGNISSE` is ONE word after splitting. Only stems of five or more letters that are in
+#: no English word (`bindung` ≠ `binding`, `sitzung`, `kennung` …).
 STAMM = ("anmeld", "aufheb", "ausfuehr", "benutzer", "besitzer", "bestaetig", "betreiber",
          "bindung", "einricht", "ereignis", "ergebnis", "erstfaktor", "fehlgriff", "fehlserie",
          "foederi", "gesperrt", "gewaehlt", "gueltig", "kennung", "loesch", "nachricht", "passwort",
@@ -1072,8 +1072,8 @@ def woerter(name: str) -> set:
 
 
 def deutsch_in(name: str) -> set:
-    """Was an `name` deutsch ist: ganze Wörter aus `DEUTSCH`, Stämme aus `STAMM` (auch mitten im
-    Wort) und Umlaute/ß — leer, wenn nichts. Eine Menge, damit der Befund sagt, WAS auffiel."""
+    """What is German in `name`: whole words from `DEUTSCH`, stems from `STAMM` (also in the middle of a
+    word) and umlauts/ß — empty if nothing. A set, so that the finding says WHAT stood out."""
     ww = woerter(name)
     funde = ww & DEUTSCH
     funde |= {s for s in STAMM for w in ww if s in w}
@@ -1082,8 +1082,8 @@ def deutsch_in(name: str) -> set:
 
 
 def _parameter(fn) -> list:
-    """Die Parameternamen einer Methode oder Funktion, ohne `self`/`cls` — `[]`, wenn keine
-    Signatur zu haben ist (dann meldet `pruefe_namen` das über die Mindestmenge)."""
+    """The parameter names of a method or function, without `self`/`cls` — `[]` if no
+    signature is available (then `pruefe_namen` reports that via the minimum count)."""
     try:
         return [p for p in inspect.signature(fn).parameters if p not in ("self", "cls")]
     except (TypeError, ValueError):
@@ -1092,14 +1092,14 @@ def _parameter(fn) -> list:
 
 def oberflaeche_namen(datei: dict, klasse=TinySesam, config=TinySesamConfig,
                       paket=_paket) -> list:
-    """[(wo, name)] — jeder Name der Stufen A und B, dazu Parameter, Felder, Attribute.
+    """[(where, name)] — every name of tiers A and B, plus parameters, fields, attributes.
 
-    Die Namen kommen aus der Ablage (der normale Lauf hält sie gleich mit der Messung), die
-    Parameter und Attribute vom lebenden Objekt — ein neuer Parameter braucht keinen neuen
-    Eintrag, um gesehen zu werden."""
+    The names come from the baseline (the normal run keeps it equal to the measurement), the
+    parameters and attributes from the live object — a new parameter needs no new
+    entry to be seen."""
     namen = []
     objekte = {"TinySesam": klasse, "TinySesamConfig.methoden": config, **ERGEBNISTYPEN}
-    eigen = {klasse.__name__, config.__name__, *ERGEBNISTYPEN}   # haben eigene Bereiche
+    eigen = {klasse.__name__, config.__name__, *ERGEBNISTYPEN}   # have their own areas
     for bereich in sorted(datei):
         eintraege = datei[bereich]
         if not isinstance(eintraege, dict):
@@ -1129,13 +1129,13 @@ def oberflaeche_namen(datei: dict, klasse=TinySesam, config=TinySesamConfig,
 
 
 def namens_befunde(namen: list) -> list:
-    """Jeder Name mit einem deutschen Wort, als lesbare Zeile. Leer = alles englisch."""
+    """Every name with a German word, as a readable line. Empty = everything English."""
     return [f"{wo}: {name!r} ({', '.join(sorted(deutsch_in(name)))})"
             for wo, name in namen if deutsch_in(name)]
 
 
-#: Was die Messung mindestens sehen muss — sonst misst sie still weniger, als sie verspricht
-#: (eine leere Schnittmenge sieht aus wie eine saubere Oberfläche).
+#: What the measurement must see at minimum — otherwise it silently measures less than it promises
+#: (an empty intersection looks like a clean surface).
 NAMEN_PFLICHT = (("TinySesam", "change_username"), ("TinySesam.change_username()", "by_operator"),
                  ("TinySesam.konstanten", "SECURITY_EVENTS"),
                  ("TinySesamConfig.felder", "federation_name_binding_days"),
@@ -1147,24 +1147,24 @@ NAMEN_PFLICHT = (("TinySesam", "change_username"), ("TinySesam.change_username()
 
 def pruefe_namen(datei: dict, klasse=TinySesam, paket=_paket, pflicht=NAMEN_PFLICHT,
                  mindestens=(500, 200, 150)) -> tuple:
-    """(befunde, zahl) — die ganze Namensprüfung des normalen Laufs, mit Mindestmenge. Dieselbe
-    Funktion prüft die Selbstprobe; eine Prüfung, die nur dort stünde, liefe im Lauf ins Leere."""
+    """(findings, count) — the whole name check of the normal run, with minimum count. The same
+    function checks the self-probe; a check that existed only there would run into the void in the run."""
     namen = oberflaeche_namen(datei, klasse=klasse, paket=paket)
-    fehlt = [f"{wo}: {name!r} wird nicht gemessen — Messung kaputt?"
+    fehlt = [f"{wo}: {name!r} is not measured — measurement broken?"
              for wo, name in pflicht if (wo, name) not in namen]
     parameter = sum(1 for wo, _ in namen if wo.endswith("()"))
     felder = sum(1 for wo, _ in namen if wo == "TinySesamConfig.felder")
-    # Stand 0.22.0: 596 Einträge, davon 278 Parameter und 159 Felder — mit Luft nach unten.
+    # As of 0.22.0: 596 entries, of which 278 parameters and 159 fields — with headroom downwards.
     if len(namen) < mindestens[0] or parameter < mindestens[1] or felder < mindestens[2]:
-        fehlt.append(f"zu wenig gemessen: {len(namen)} Namen, {parameter} Parameter, {felder} "
-                     f"Felder (erwartet mindestens {'/'.join(map(str, mindestens))})")
+        fehlt.append(f"too little measured: {len(namen)} names, {parameter} parameters, {felder} "
+                     f"fields (expected at least {'/'.join(map(str, mindestens))})")
     return fehlt + namens_befunde(namen), len(namen)
 
 
 def selbstpruefung_namen() -> None:
-    """Findet die Namensprüfung, was sie finden soll — und nur das? An einer Probe, nicht an der
-    echten Oberfläche: Die ist hoffentlich gerade sauber, und eine Liste, die nie etwas fand,
-    beweist nichts."""
+    """Does the name check find what it should find — and only that? On a probe, not on the
+    real surface: That one is hopefully clean right now, and a list that never found anything
+    proves nothing."""
     for deutsch in ("foederation_nachbinden", "loese_fremde_bindung", "SICHERHEITSEREIGNISSE",
                     "andere_sitzungen", "api_key_art", "kennung_vergeben", "nach_der_antwort",
                     "nur_foederiert", "passwort_mangel", "pin_als_erstfaktor", "pruefen",
@@ -1173,7 +1173,7 @@ def selbstpruefung_namen() -> None:
                     "quelle", "neu", "kandidat", "email_bestaetigt", "jetzt", "basis", "auftrag",
                     "bei_ueberlauf", "methoden", "name_selbst_gewaehlt", "feld", "besitzer_id",
                     "nachricht", "pfad", "darf_mfa_einrichten", "SperreMinuten", "größe",
-                    # Schlüssel und Werte bis 0.21.x (`pruefe_werte`, PO-Entscheid 2026-09-27):
+                    # keys and values up to 0.21.x (`pruefe_werte`, PO decision 2026-09-27):
                     "ausgefuehrt", "gebunden", "konflikt", "mehrdeutig", "nicht_im_verzeichnis",
                     "ohne_kennung", "abgewiesen", "lokal", "verzeichnis", "gebunden_an", "treffer",
                     "grund", "kein_konto", "dienstkonto", "gesperrt", "schon_gebunden",
@@ -1181,16 +1181,16 @@ def selbstpruefung_namen() -> None:
                     "frist", "fehlserien", "verworfene_rollen", "verbleibend", "anzahl",
                     "recovery_codes_geloescht", "automat", "mensch", "praefix", "zweck", "vergeben",
                     "sperre", "admin_passwort", "passwort_reset", "sitzungen_beendet", "_key_art",
-                    # nur über einen Stamm zu finden — zusammengesetzt, kein Wort der Liste:
+                    # only findable via a stem — composed, not a word of the list:
                     "KENNUNGSRAUM", "passwortregel", "sitzungsdauer", "Verzeichnisname"):
-        assert deutsch_in(deutsch), f"{deutsch!r} fällt der Namensprüfung nicht auf"
+        assert deutsch_in(deutsch), f"{deutsch!r} is not noticed by the name check"
     for englisch in ("federation_bind_existing", "federation_unbind", "SECURITY_EVENTS",
                      "count_other_sessions", "locked_series", "series", "start", "partial",
                      "binding", "TinySesam", "base", "base_url", "new_username", "mapping", "apply",
                      "source", "now", "methods", "message", "owner_id", "field", "path",
                      "browser_path", "after_response", "on_overflow", "artifact", "nachos",
                      "prefix", "background", "validate", "PAGES",
-                     # die Schlüssel und Werte seit 0.22.0 — und englische Wörter nahe an der Liste:
+                     # the keys and values since 0.22.0 — and English words close to the list:
                      "applied", "bound", "conflict", "ambiguous", "not_in_directory",
                      "no_identifier", "refused", "local_password", "local", "directory",
                      "bound_to", "matches", "reason", "no_account", "service_account", "disabled",
@@ -1200,7 +1200,7 @@ def selbstpruefung_namen() -> None:
                      "recovery_codes_deleted", "automation", "automatic", "human", "purpose",
                      "taken", "account_disabled", "admin_password_reset", "password_reset",
                      "sessions_revoked", "_key_kind", "old", "new", "alternative", "schema"):
-        assert not deutsch_in(englisch), f"{englisch!r}: Fehlalarm ({deutsch_in(englisch)})"
+        assert not deutsch_in(englisch), f"{englisch!r}: false alarm ({deutsch_in(englisch)})"
 
     class Probe:
         GUT = 1
@@ -1227,50 +1227,50 @@ def selbstpruefung_namen() -> None:
               "exporte": {"ProbeError": {"stufe": "A"}}}
     namen = oberflaeche_namen(ablage, klasse=Probe, paket=probe_paket)
     assert ("TinySesam.gut()", "by_operator") in namen and ("ProbeError", "field") in namen, namen
-    # Stufe C zählt nicht: Dort stehen die alten Namen als Alias bis 1.0.
+    # Tier C does not count: The old names are there as aliases until 1.0.
     assert not any(n in ("SICHERHEITSEREIGNISSE", "ok_feld") for _, n in namen), namen
-    # Durch dieselbe Funktion wie der normale Lauf: die vier deutschen Namen, sonst nichts.
+    # Through the same function as the normal run: the four German names, nothing else.
     befunde, zahl = pruefe_namen(ablage, klasse=Probe, paket=probe_paket, pflicht=(),
                                  mindestens=(len(namen), 0, 0))
     assert [b.split(": ")[1].split(" ")[0] for b in befunde] == [
         "'durch_betreiber'", "'sperre_minuten'", "'besitzer_id'", "'nachricht'"], befunde
-    # … und die Mindestmenge schlägt an, wenn eine Art fehlt oder zu wenig gemessen wird.
+    # … and the minimum count triggers when a kind is missing or too little is measured.
     befunde, _ = pruefe_namen(ablage, klasse=Probe, paket=probe_paket,
                               pflicht=(("ProbeError()", "message"),), mindestens=(zahl + 1, 0, 0))
-    assert len(befunde) == 6 and "'message' wird nicht gemessen" in befunde[0] \
-        and "zu wenig gemessen" in befunde[1], befunde
-    # Verdrahtet: Der normale Lauf ruft genau diese Funktion — eine Prüfung, die nur hier
-    # stünde, bliebe im Lauf stumm.
+    assert len(befunde) == 6 and "'message' is not measured" in befunde[0] \
+        and "too little measured" in befunde[1], befunde
+    # Wired up: The normal run calls exactly this function — a check that would only
+    # exist here would stay silent in the run.
     gerufen = {k.func.id for k in ast.walk(ast.parse(inspect.getsource(main)))
                if isinstance(k, ast.Call) and isinstance(k.func, ast.Name)}
-    assert "pruefe_namen" in gerufen, "main() ruft pruefe_namen nicht"
-    ok("Namensprüfung schlägt an: deutsche Namen, Parameter, Felder, Attribute, Konstruktor, "
-       f"Umlaut — {len(STAMM)} Stämme, {len(DEUTSCH)} Wörter, ohne Fehlalarm bei englischen")
+    assert "pruefe_namen" in gerufen, "main() does not call pruefe_namen"
+    ok("Name check triggers: German names, parameters, fields, attributes, constructor, "
+       f"umlaut — {len(STAMM)} stems, {len(DEUTSCH)} words, no false alarm on English ones")
 
 
-# ---------- Schlüssel und Werte der Stufen A und B: englisch (0.22.0) ----------
-# PO-Entscheid 2026-09-27 („Alles übersetzen, auch DB-Werte“): Nach den Namen auch, was die
-# Oberfläche zurückgibt oder annimmt — die Ergebnis-Dicts der Methoden (`gc()`, der Bericht von
-# `federation_bind_existing`, `create_api_key` …), die Nutzlast von `on_security_event`, der Kontext
-# eigener Seiten (`set_template`: `ctx["prefix"]`, `ctx["purpose"]`), die JSON-Antworten der Routen,
-# die Werte von `kind` und was davon in der Datenbank steht. Ohne Alias; gespeicherte Werte zieht
-# die Migration auf Schema 12 nach (`Store._werte_englisch`), gelesen wird ein alter Wert trotzdem
-# (tests/test_bestandsdaten.py). Audit- und Log-Zeilen bleiben, wie sie sind (fail2ban, Filter der
-# Betreiber) — sie misst diese Prüfung nicht.
+# ---------- Keys and values of tiers A and B: English (0.22.0) ----------
+# PO decision 2026-09-27 ("Translate everything, DB values too"): After the names also what the
+# surface returns or accepts — the result dicts of the methods (`gc()`, the report of
+# `federation_bind_existing`, `create_api_key` …), the payload of `on_security_event`, the context
+# of custom pages (`set_template`: `ctx["prefix"]`, `ctx["purpose"]`), the JSON responses of the routes,
+# the values of `kind` and what of it is in the database. No alias; stored values are carried over
+# by the migration to schema 12 (`Store._werte_englisch`), an old value is still read
+# (tests/test_legacy_data.py). Audit and log lines stay as they are (fail2ban, operators'
+# filters) — this check does not measure them.
 #
-# Gemessen wird zweifach: am lebenden Objekt (eine Probeinstanz durchläuft die Wege, ein Hook
-# sammelt die Ereignisse, eigene Vorlagen zeichnen ihren Kontext auf) und im Quelltext (jeder
-# Aufruf von `_sicherheitsereignis`, `render_page`, jeder Schlüssel, den eine eingebaute Seite aus
-# `ctx` liest, jede zurückgegebene JSON-Antwort der Routen). Die Probe sieht, was wirklich
-# hinausgeht; der Quelltext, was die Probe nicht erreicht (etwa `passkey_added` ohne das Extra).
-# (Mutationsproben: `failure_series` in `gc()` zurück auf `fehlserien` → rot; `reason=` in
-# `_keys_widerrufen` zurück auf `grund=` → rot; `ctx.setdefault("prefix", …)` zurück auf
-# `"praefix"` → rot; `create_api_key` schreibt wieder `automat` → rot; die Probe nicht mehr rufen
-# → Verdrahtung rot.)
+# Measured twice: on the live object (a probe instance runs through the paths, a hook
+# collects the events, custom templates record their context) and in the source (every
+# call of `_security_event`, `render_page`, every key a built-in page reads from
+# `ctx`, every returned JSON response of the routes). The probe sees what really
+# goes out; the source what the probe does not reach (such as `passkey_added` without the extra).
+# (Mutation probes: `failure_series` in `gc()` back to `fehlserien` → red; `reason=` in
+# `_keys_widerrufen` back to `grund=` → red; `ctx.setdefault("prefix", …)` back to
+# `"praefix"` → red; `create_api_key` writes `automat` again → red; no longer calling the probe
+# → wiring red.)
 
-#: Die Schlüssel und Werte bis 0.21.x — auch die, die als Wort englisch durchgingen (`alt` ist ein
-#: englisches Wort und steht deshalb nicht in `DEUTSCH`). Taucht einer wieder auf, ist das ein
-#: Rückfall, kein neuer Name.
+#: The keys and values up to 0.21.x — also those that passed as English as a word (`alt` is an
+#: English word and is therefore not in `DEUTSCH`). If one reappears, it is a
+#: regression, not a new name.
 ALTE_WERTE = frozenset("""
     quelle ausgefuehrt gebunden konflikt mehrdeutig nicht_im_verzeichnis ohne_kennung abgewiesen
     lokal verzeichnis kennung grund gebunden_an treffer kein_konto dienstkonto gesperrt
@@ -1282,13 +1282,13 @@ ALTE_WERTE = frozenset("""
 
 
 def wert_befunde(paare: list) -> list:
-    """Jeder Schlüssel oder Wert mit deutschem Wort oder aus `ALTE_WERTE`, als lesbare Zeile."""
+    """Every key or value with a German word or from `ALTE_WERTE`, as a readable line."""
     return [f"{wo}: {wert!r} ({', '.join(sorted(deutsch_in(wert)) or ['Name bis 0.21.x'])})"
             for wo, wert in paare if deutsch_in(wert) or wert in ALTE_WERTE]
 
 
 def _schluessel(wo: str, obj) -> list:
-    """[(wo, schluessel)] eines Dicts, rekursiv für Listen und Unter-Dicts."""
+    """[(where, key)] of a dict, recursive for lists and sub-dicts."""
     paare = []
     if isinstance(obj, dict):
         for k, v in obj.items():
@@ -1301,8 +1301,8 @@ def _schluessel(wo: str, obj) -> list:
 
 
 def werte_der_probe(klasse=TinySesam) -> list:
-    """[(wo, schluessel_oder_wert)] — was eine Probeinstanz hinausgibt, auf allen Wegen, die ohne
-    Extra gehen. `klasse` für die Selbstprobe (eine Unterklasse, die einen alten Schlüssel liefert)."""
+    """[(where, key_or_value)] — what a probe instance emits, on all paths that work without
+    extra. `klasse` for the self-probe (a subclass that delivers an old key)."""
     import re as _re
     import tempfile
     import pyotp
@@ -1368,7 +1368,7 @@ def werte_der_probe(klasse=TinySesam) -> list:
         paare += _schluessel("own_events()", a.own_events(uid))
         paare += _schluessel("all_security()", a.all_security())
 
-        # Eigene Seiten: Welche Schlüssel bekommt eine eigene Vorlage wirklich?
+        # Custom pages: Which keys does a custom template really get?
         kontexte: dict = {}
 
         def aufzeichnen(name):
@@ -1386,7 +1386,7 @@ def werte_der_probe(klasse=TinySesam) -> list:
         for seite, schluessel in kontexte.items():
             paare += [(f"set_template({seite!r}) ctx", s) for s in schluessel]
 
-        # JSON der Routen, am lebenden Objekt: Konto-Seite und Admin-API.
+        # JSON of the routes, on the live object: account page and admin API.
         app.include_router(a.admin_router(), prefix="/probe-admin")
         a.create_user("chef", password="Chef-Pw-12345", is_admin=True)
         for name, pw in (("probe2", "Neu-Pw-5678xyz"), ("chef", "Chef-Pw-12345")):
@@ -1411,9 +1411,9 @@ def werte_der_probe(klasse=TinySesam) -> list:
         except ConfigError as e:
             paare.append(("ConfigError.field", e.field))
 
-        # Ereignisse: der Grund des gesammelten Widerrufs ist ein Wert.
+        # Events: the reason of the collective revocation is a value.
         a.set_disabled(uid, True)
-        a.store.set_disabled(a.find_user("dritte")["id"], True)     # Sperre einer offenen Bestätigung
+        a.store.set_disabled(a.find_user("dritte")["id"], True)     # lock of an open confirmation
         chef_c = TestClient(app)
         chef_c.post("/auth/login", data={"username": "chef", "password": "Chef-Pw-12345"},
                     follow_redirects=False)
@@ -1426,7 +1426,7 @@ def werte_der_probe(klasse=TinySesam) -> list:
                 paare.append((f"on_security_event({e!r}).reason", details["reason"]))
         paare += [("TinySesam._KEYS_WIDERRUFEN_GRUENDE", g) for g in a._KEYS_WIDERRUFEN_GRUENDE]
 
-        # Bestandsbindung: alle Teile des Berichts, Einträge und Gründe.
+        # Existing-binding: all parts of the report, entries and reasons.
         class Verzeichnis:
             def eintrag_suchen(self, name):
                 return {"anna": [{"id": "u-anna", "name": "Anna", "email": "anna@example.com"}],
@@ -1450,8 +1450,8 @@ def werte_der_probe(klasse=TinySesam) -> list:
 
 
 def werte_der_konstanten(datei: dict) -> list:
-    """[(wo, wert)] — die Werte der Konstanten der Stufen A/B (Elemente, Schlüssel; Fliesstext mit
-    Leerzeichen nicht) und die Vorgaben der Konfigurationsfelder, die wie ein Kürzel aussehen."""
+    """[(where, value)] — the values of the constants of tiers A/B (elements, keys; running text with
+    spaces not) and the defaults of the configuration fields that look like an abbreviation."""
     paare = []
     for name, e in (datei.get("TinySesam.konstanten") or {}).items():
         if not isinstance(e, dict) or e.get("stufe") not in ("A", "B"):
@@ -1468,16 +1468,16 @@ def werte_der_konstanten(datei: dict) -> list:
     return paare
 
 
-#: Module mit Routen: Was dort zurückgegeben wird, ist eine JSON-Antwort.
+#: Modules with routes: What is returned there is a JSON response.
 ROUTEN_MODULE = ("router.py", "admin.py", "webauthn_.py", "oidc.py", "saml_.py", "gateway.py")
 
 
 def werte_im_code(quellen: dict) -> list:
-    """[(wo, name)] aus dem Quelltext (`{dateiname: text}`): Schlüsselwörter jedes Aufrufs von
-    `_sicherheitsereignis` (die Nutzlast von `on_security_event`) und `render_page` (der Kontext
-    eigener Seiten), jeder Schlüssel, den ein eingebauter Renderer aus `ctx` liest oder
-    `render_page` hineinlegt, die Schlüssel der `…_ctx`-Helfer, und jeder Schlüssel einer
-    zurückgegebenen JSON-Antwort in einem Routen-Modul."""
+    """[(where, name)] from the source (`{filename: text}`): keyword arguments of every call of
+    `_security_event` (the payload of `on_security_event`) and `render_page` (the context
+    of custom pages), every key a built-in renderer reads from `ctx` or
+    `render_page` puts into it, the keys of the `…_ctx` helpers, and every key of a
+    returned JSON response in a routes module."""
     paare = []
 
     def konst(k):
@@ -1499,7 +1499,7 @@ def werte_im_code(quellen: dict) -> list:
         for k in ast.walk(baum):
             if isinstance(k, ast.Call):
                 name = k.func.attr if isinstance(k.func, ast.Attribute) else getattr(k.func, "id", "")
-                if name == "_sicherheitsereignis":
+                if name == "_security_event":
                     paare += [(f"{datei}: on_security_event-Nutzlast", w.arg) for w in k.keywords if w.arg]
                 elif name == "render_page":
                     paare += [(f"{datei}: render_page-Kontext", w.arg) for w in k.keywords
@@ -1530,7 +1530,7 @@ def _quellen(wurzel: str = WURZEL) -> dict:
     return quellen
 
 
-#: Was die Wertprüfung mindestens sehen muss — je Weg ein Eintrag, der nur dort vorkommt.
+#: What the value check must see at minimum — one entry per path that occurs only there.
 WERTE_PFLICHT = (("gc()", "failure_series"), ("create_api_key()", "dropped_roles"),
                  ("create_api_key(kind=).kind", "human"), ("list_api_keys()[].kind", "automation"),
                  ("api_key.kind (Datenbank)", "human"), ("magic_token.payload (Datenbank)", "old"),
@@ -1553,26 +1553,26 @@ WERTE_PFLICHT = (("gc()", "failure_series"), ("create_api_key()", "dropped_roles
 
 def pruefe_werte(datei: dict, klasse=TinySesam, quellen: "dict | None" = None,
                  pflicht=WERTE_PFLICHT, mindestens: int = 600) -> tuple:
-    """(befunde, zahl) — die ganze Wertprüfung des normalen Laufs, mit Mindestmenge (Stand 0.22.0:
-    790 Einträge, mit Luft nach unten). Dieselbe Funktion prüft die Selbstprobe."""
+    """(findings, count) — the whole value check of the normal run, with minimum count (as of 0.22.0:
+    790 entries, with headroom downwards). The same function checks the self-probe."""
     paare = (werte_der_probe(klasse) + werte_der_konstanten(datei)
              + werte_im_code(_quellen() if quellen is None else quellen))
     gesehen = set(paare)
-    fehlt = [f"{wo}: {wert!r} wird nicht gemessen — Probe oder Messung kaputt?"
+    fehlt = [f"{wo}: {wert!r} is not measured — probe or measurement broken?"
              for wo, wert in pflicht if (wo, wert) not in gesehen]
     if len(paare) < mindestens:
-        fehlt.append(f"zu wenig gemessen: {len(paare)} Schlüssel und Werte (erwartet mindestens "
+        fehlt.append(f"too little measured: {len(paare)} keys and values (expected at least "
                      f"{mindestens})")
     return fehlt + wert_befunde(sorted(gesehen)), len(paare)
 
 
 def selbstpruefung_werte() -> None:
-    """Findet die Wertprüfung einen alten Schlüssel — in der Probe und im Quelltext?"""
-    assert all(wert_befunde([("x", w)]) for w in ALTE_WERTE), "ALTE_WERTE misst nichts"
+    """Does the value check find an old key — in the probe and in the source?"""
+    assert all(wert_befunde([("x", w)]) for w in ALTE_WERTE), "ALTE_WERTE measures nothing"
     assert not wert_befunde([("x", w)
                              for w in ("old", "new", "count", "reason", "human", "automation",
                                        "prefix", "purpose", "taken", "failure_series")]), \
-        "Fehlalarm bei den englischen Werten"
+        "False alarm on the English values"
 
     class Rueckfall(TinySesam):
         def gc(self, attempts_older_than_sec: int = 86400) -> dict:
@@ -1581,22 +1581,22 @@ def selbstpruefung_werte() -> None:
     probe = [w for wo, w in werte_der_probe(Rueckfall) if wo == "gc()"]
     assert "fehlserien" in probe and wert_befunde([("gc()", "fehlserien")]), probe
     quelle = {"router.py": 'def f(auth, request):\n'
-                           '    auth._sicherheitsereignis("x", 1, anzahl=2)\n'
+                           '    auth._security_event("x", 1, anzahl=2)\n'
                            '    return auth.render_page("p", request=request, zweck="login")\n'
                            'def g():\n    return {"ok": True, "gebunden": []}\n'
                            'def _reg_ctx(nxt):\n    return dict(next=nxt, kennung="")\n',
               "templates.py": 'def _p(auth, ctx):\n    return ctx.get("praefix") + ctx["alt"]\n'}
     funde = sorted({w for _, w in werte_im_code(quelle) if wert_befunde([("", w)])})
     assert funde == ["alt", "anzahl", "gebunden", "kennung", "praefix", "zweck"], funde
-    befunde, _ = pruefe_werte({}, quellen={}, pflicht=(("gc()", "gibt-es-nicht"),),
+    befunde, _ = pruefe_werte({}, quellen={}, pflicht=(("gc()", "does-not-exist"),),
                               mindestens=10 ** 6)
-    assert "'gibt-es-nicht' wird nicht gemessen" in befunde[0] and "zu wenig gemessen" in befunde[1], \
+    assert "'does-not-exist' is not measured" in befunde[0] and "too little measured" in befunde[1], \
         befunde[:2]
     gerufen = {k.func.id for k in ast.walk(ast.parse(inspect.getsource(main)))
                if isinstance(k, ast.Call) and isinstance(k.func, ast.Name)}
-    assert "pruefe_werte" in gerufen, "main() ruft pruefe_werte nicht"
-    ok("Wertprüfung schlägt an: ein alter Schlüssel in der Probe (gc), in einem Ereignis, im Kontext "
-       "einer Seite, in einer JSON-Antwort, in einem ctx-Helfer; Mindestmenge und Verdrahtung")
+    assert "pruefe_werte" in gerufen, "main() does not call pruefe_werte"
+    ok("Value check triggers: an old key in the probe (gc), in an event, in the context "
+       "of a page, in a JSON response, in a ctx helper; minimum count and wiring")
 
 
 def _zaehle_stufen(datei: dict) -> str:
@@ -1608,15 +1608,15 @@ def _zaehle_stufen(datei: dict) -> str:
 
 
 def _melde_ohne_stufe(fehlt: list) -> None:
-    print(f"\n  {len(fehlt)} öffentliche Namen ohne gültige Stufe:\n")
+    print(f"\n  {len(fehlt)} public names without a valid tier:\n")
     for zeile in fehlt:
-        print(f"    OHNE STUFE   {zeile}")
-    print("\n  Jeder öffentliche Name braucht eine ausdrückliche Stufe — in tests/api_surface.json")
-    print('  am Eintrag `"stufe": "A"|"B"|"C"` setzen (Bedeutung: API.md, „Drei Stufen“):')
+        print(f"    NO TIER     {zeile}")
+    print("\n  Every public name needs an explicit tier — in tests/api_surface.json")
+    print('  set `"stufe": "A"|"B"|"C"` on the entry (meaning: API.md, „Drei Stufen“):')
     for stufe, text in STUFEN.items():
         print(f"    {stufe}  {text}")
-    print("  Nichts Öffentliches soll aus Versehen entstehen: Ist der Name intern, bekommt er einen")
-    print("  führenden Unterstrich und verschwindet aus der Ablage.\n")
+    print("  Nothing public should arise by accident: If the name is internal, it gets a")
+    print("  leading underscore and disappears from the baseline.\n")
 
 
 def main(argv):
@@ -1638,7 +1638,7 @@ def main(argv):
         with open(ABLAGE, "w", encoding="utf-8") as fh:
             json.dump(ablage, fh, indent=2, ensure_ascii=False, sort_keys=True)
             fh.write("\n")
-        print(f"  Oberfläche festgeschrieben: {ABLAGE}")
+        print(f"  Surface pinned: {ABLAGE}")
         fehlt = ohne_stufe(ablage)
         if fehlt:
             _melde_ohne_stufe(fehlt)
@@ -1646,83 +1646,83 @@ def main(argv):
         return 0
 
     if not frueher_datei:
-        print(f"  {ABLAGE} fehlt — einmalig anlegen mit: python tests/test_api_surface.py --update")
+        print(f"  {ABLAGE} is missing — create it once with: python tests/test_api_surface.py --update")
         return 1
 
     rot, fehlt, brueche, erweiterungen = vergleiche(frueher_datei, jetzt)
     if fehlt:
         _melde_ohne_stufe(fehlt)
     else:
-        ok(f"jeder öffentliche Name hat eine Stufe ({_zaehle_stufen(frueher_datei)})")
+        ok(f"every public name has a tier ({_zaehle_stufen(frueher_datei)})")
 
-    # Stufe C (0.22.0): Aliase, keine Aufrufe alter Namen im eigenen Code, Frist 1.0.
+    # Tier C (0.22.0): aliases, no calls of old names in own code, deadline 1.0.
     c_fehler, c_dateien = c_befunde(frueher_datei)
-    assert c_dateien >= 20, f"nur {c_dateien} Dateien nach alten Namen durchsucht — Pfad kaputt?"
+    assert c_dateien >= 20, f"only {c_dateien} files searched for old names — path broken?"
     if c_fehler:
         rot = True
-        print(f"\n  {len(c_fehler)} Befunde zu Stufe C (Alias bis 1.0):\n")
+        print(f"\n  {len(c_fehler)} findings on tier C (alias until 1.0):\n")
         for zeile in c_fehler:
-            print(f"    STUFE C      {zeile}")
-        print("\n  Stufe C heisst: Die Implementierung trägt einen Unterstrich, der alte Name ist "
-              "`Veraltet(\"_name\", \"<Ersatz>\")`\n  (tinysesam/_veraltet.py), und nichts im "
-              "Paket ruft ihn. Der Eintrag in tests/api_surface.json\n  trägt `ziel`, `seit` und "
+            print(f"    TIER C       {zeile}")
+        print("\n  Tier C means: The implementation carries an underscore, the old name is "
+              "`Deprecated(\"_name\", \"<Ersatz>\")`\n  (tinysesam/_deprecated.py), and nothing in the "
+              "package calls it. The entry in tests/api_surface.json\n  carries `ziel`, `seit` and "
               "`bis`.\n")
     else:
-        ok(f"Stufe C: {len(c_eintraege(frueher_datei))} Aliase warnen genau einmal und zeigen auf "
-           f"ihre Implementierung, eine Zuweisung am Objekt (Test-Fake) warnt; {c_dateien} "
-           "Dateien ohne alten Namen")
+        ok(f"Tier C: {len(c_eintraege(frueher_datei))} aliases warn exactly once and point to "
+           f"their implementation, an assignment on the object (test fake) warns; {c_dateien} "
+           "files without an old name")
     pruefe_unterklasse()
     pruefe_warnfilter()
 
-    # Die Namen der Stufen A und B sind englisch (PO-Entscheid 2026-09-27).
+    # The names of tiers A and B are English (PO decision 2026-09-27).
     n_fehler, n_zahl = pruefe_namen(frueher_datei)
     if n_fehler:
         rot = True
-        print(f"\n  {len(n_fehler)} Namen der Stufen A/B mit deutschem Wort (oder Messung zu klein):\n")
+        print(f"\n  {len(n_fehler)} names of tiers A/B with a German word (or measurement too small):\n")
         for zeile in n_fehler:
-            print(f"    DEUTSCH      {zeile}")
-        print("\n  Die öffentliche Oberfläche heisst englisch — Namen, Parameter, Konfigurationsfelder,")
-        print("  Attribute der Fehlertypen. Ist ein Treffer ein englisches Wort, gehört es aus")
-        print("  `DEUTSCH`/`STAMM` heraus (mit Gegenprobe in `selbstpruefung_namen`).\n")
+            print(f"    GERMAN       {zeile}")
+        print("\n  The public surface is named in English — names, parameters, configuration fields,")
+        print("  attributes of the error types. If a hit is an English word, it belongs out of")
+        print("  `DEUTSCH`/`STAMM` (with a counter-check in `selbstpruefung_namen`).\n")
     else:
-        ok(f"Stufen A und B englisch: {n_zahl} Namen, Parameter, Felder und Attribute, kein "
-           "deutsches Wort")
+        ok(f"Tiers A and B English: {n_zahl} names, parameters, fields and attributes, no "
+           "German word")
 
-    # Die Schlüssel und Werte der Stufen A und B sind englisch (PO-Entscheid 2026-09-27).
+    # The keys and values of tiers A and B are English (PO decision 2026-09-27).
     w_fehler, w_zahl = pruefe_werte(frueher_datei)
     if w_fehler:
         rot = True
-        print(f"\n  {len(w_fehler)} Schlüssel/Werte der Stufen A/B deutsch oder von 0.21.x "
-              "(oder Messung zu klein):\n")
+        print(f"\n  {len(w_fehler)} keys/values of tiers A/B German or from 0.21.x "
+              "(or measurement too small):\n")
         for zeile in w_fehler:
-            print(f"    WERT         {zeile}")
-        print("\n  Was die öffentliche Oberfläche zurückgibt oder annimmt, ist englisch — Ergebnis-Dicts,")
-        print("  Ereignis-Nutzlast, Kontext eigener Seiten, JSON-Antworten, gespeicherte Werte. Audit-")
-        print("  und Log-Zeilen sind nicht gemeint (die misst diese Prüfung nicht).\n")
+            print(f"    VALUE        {zeile}")
+        print("\n  What the public surface returns or accepts is English — result dicts,")
+        print("  event payload, context of custom pages, JSON responses, stored values. Audit")
+        print("  and log lines are not meant (this check does not measure them).\n")
     else:
-        ok(f"Schlüssel und Werte der Stufen A und B englisch: {w_zahl} gemessen (Probeinstanz, "
-           "Konstanten, Quelltext), kein deutsches Wort, keiner von 0.21.x")
+        ok(f"Keys and values of tiers A and B English: {w_zahl} measured (probe instance, "
+           "constants, source), no German word, none from 0.21.x")
 
     if not brueche and not erweiterungen:
         n = sum(len(v) for v in jetzt.values())
-        ok(f"öffentliche API unverändert ({n} Namen)")
+        ok(f"public API unchanged ({n} names)")
         return 1 if rot else 0
 
-    print("\n  Die öffentliche API hat sich geändert.\n")
+    print("\n  The public API has changed.\n")
     for b in brueche:
-        print(f"    BRUCH        {b}")
+        print(f"    BREAK        {b}")
     for e in erweiterungen:
-        print(f"    Erweiterung  {e}")
-    print("\n  Ein Bruch kostet die Nutzer Arbeit. Was er kostet, sagt die Stufe davor:")
+        print(f"    Extension    {e}")
+    print("\n  A break costs users work. What it costs is told by the tier before it:")
     for stufe, text in STUFEN.items():
         print(f"    [{stufe}] {text}")
-    print("  War die Änderung gewollt: `python tests/test_api_surface.py --update`, dann committen")
-    print("  — und im CHANGELOG darauf hinweisen, wenn ein BRUCH dabei ist. Ein neuer Name")
-    print("  braucht danach noch seine Stufe.\n")
+    print("  If the change was intended: `python tests/test_api_surface.py --update`, then commit")
+    print("  — and point it out in the CHANGELOG if a BREAK is involved. A new name")
+    print("  needs its tier afterwards.\n")
     return 1
 
 
 if __name__ == "__main__":
     code = main(sys.argv[1:])
-    print("\nAPI-OBERFLÄCHE " + ("OK ✅" if code == 0 else "GEÄNDERT ODER OHNE STUFE ❌"))
+    print("\nAPI SURFACE " + ("OK ✅" if code == 0 else "CHANGED OR WITHOUT TIER ❌"))
     sys.exit(code)

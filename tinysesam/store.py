@@ -1,14 +1,16 @@
-"""SQLite-Store für TinySesam: Nutzer, Credentials (Passwort/TOTP/WebAuthn/OIDC) und Sessions.
+"""SQLite store for TinySesam: users, credentials (password/TOTP/WebAuthn/OIDC) and sessions.
 
-Bewusst stdlib-`sqlite3` (kein ORM): leichtgewichtig, keine zusätzliche Abhängigkeit.
-Thread-safe über ein Lock + `check_same_thread=False` (FastAPI-Worker teilen sich die Instanz).
+Deliberately stdlib `sqlite3` (no ORM): lightweight, no extra dependency.
+Thread-safe via a lock + `check_same_thread=False` (FastAPI workers share the instance).
 
-Was bei einer nur lesbaren, vollen oder gesperrten Datenbank und bei einem Sprung der Systemuhr
-geschieht, steht für Betreiber in `docs/BETRIEB.md` (Ausfallverhalten).
+What happens with a read-only, full or locked database and with a jump of the system clock
+is described for operators in `docs/OPERATIONS.md` (failure behaviour).
 """
 from __future__ import annotations
 import contextlib, sqlite3, threading, time, secrets, json, logging, hashlib, os, re, stat, unicodedata
 from typing import Any, Optional
+
+from . import _vokabular
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
@@ -16,93 +18,93 @@ CREATE TABLE IF NOT EXISTS users (
     username      TEXT UNIQUE NOT NULL,
     display_name  TEXT,
     email         TEXT,
-    -- Trägt die Adresse einen Beleg? 1 = ja (lokale Registrierung, sobald der Bestätigungslink
-    -- eingelöst ist, oder über eine Einladung an genau diese Adresse; vom Admin/CLI gesetzt; ein
-    -- IdP mit dem Claim), 0 = nein. Nein heisst NICHT „ungültig": Die
-    -- Adresse wird ganz normal geführt und weitergereicht (`Remote-Email`), sie trägt nur keine
-    -- Rechte — Erst-Admin/Allowlist verlangen den Beleg (`maybe_promote_admin`). Ein IdP, der
-    -- `email_verified` nicht schickt (OIDC Core 5.1: optional; Entra ID), landet damit auf 0,
-    -- statt die Adresse zu verlieren. Vorgabe 1: ein Bestand aus der Zeit vor dieser Spalte
-    -- behält sein Verhalten (das ALTER TABLE füllt jede vorhandene Zeile damit).
+    -- Does the address carry proof? 1 = yes (local registration once the confirmation link
+    -- has been redeemed, or via an invitation to exactly this address; set by admin/CLI; an
+    -- IdP with the claim), 0 = no. No does NOT mean "invalid": the
+    -- address is kept and passed on as usual (`Remote-Email`), it just carries no
+    -- rights — first admin/allowlist require the proof (`maybe_promote_admin`). An IdP that does not
+    -- send `email_verified` (OIDC Core 5.1: optional; Entra ID) thereby ends up at 0,
+    -- instead of losing the address. Default 1: existing data from before this column
+    -- keeps its behaviour (the ALTER TABLE fills every existing row with it).
     email_verified INTEGER NOT NULL DEFAULT 1,
     is_admin      INTEGER NOT NULL DEFAULT 0,
-    -- Owner (Entscheid 2026-09-24): immer Admin (von Hand, 1), nicht löschbar, nicht sperrbar, nicht
-    -- entmachtbar; die Rolle lässt sich weitergeben, es gibt mindestens einen. Nur Owner vergeben sie.
+    -- Owner (decision 2026-09-24): always admin (set by hand, 1), cannot be deleted, cannot be locked, cannot be
+    -- demoted; the role can be passed on, there is always at least one. Only owners grant it.
     is_owner      INTEGER NOT NULL DEFAULT 0,
-    roles         TEXT NOT NULL DEFAULT '[]',   -- JSON-Liste feingranularer Rollen (optional)
-    is_service    INTEGER NOT NULL DEFAULT 0,   -- Service-/Daemon-Account: kein interaktiver Login, nur API-Key
-    -- 0 = aktiv. 1 = gesperrt, weil die Bestätigung der Adresse aussteht (Registrierung, oder
-    -- `set_disabled(uid, True)` einer einbettenden App) — die hebt der Bestätigungslink auf.
-    -- 2 = gesperrt durch den Betreiber (Admin-Panel) — die hebt KEIN Link auf, nur der Betreiber.
+    roles         TEXT NOT NULL DEFAULT '[]',   -- JSON list of fine-grained roles (optional)
+    is_service    INTEGER NOT NULL DEFAULT 0,   -- service/daemon account: no interactive login, API key only
+    -- 0 = active. 1 = locked because confirmation of the address is pending (registration, or
+    -- `set_disabled(uid, True)` of an embedding app) — the confirmation link lifts that.
+    -- 2 = locked by the operator (admin panel) — NO link lifts that, only the operator.
     disabled      INTEGER NOT NULL DEFAULT 0,
-    -- Wann war dieses Konto zum ERSTEN Mal vollständig angemeldet? NULL = noch nie (R3-1).
-    -- Daran hängt das Selbst-Enrollment: Verlangt die Kette einen zweiten Faktor, darf ein
-    -- Konto ihn selbst einrichten, solange es noch nie benutzt wurde — danach nicht mehr.
-    -- Sonst genügt das Passwort eines BESTEHENDEN Kontos, um sich den zweiten Faktor selbst
-    -- zu geben, und die Kette schützt genau die nicht, für die sie gedacht war.
+    -- When was this account fully signed in for the FIRST time? NULL = never (R3-1).
+    -- Self-enrollment hangs on it: if the chain requires a second factor, an
+    -- account may set it up itself as long as it has never been used — not afterwards.
+    -- Otherwise the password of an EXISTING account would suffice to give oneself the second factor,
+    -- and the chain would protect exactly those it was not meant for.
     first_login_at INTEGER,
-    -- Ein vom Betreiber geöffnetes Zeitfenster für die Einrichtung (Admin-Panel, Einladung).
-    -- NULL/abgelaufen = zu. Der Weg für jedes Konto, dem die Betriebsart es sonst verwehrt.
+    -- A time window for enrollment opened by the operator (admin panel, invitation).
+    -- NULL/expired = closed. The way for any account the operating mode would otherwise deny it.
     mfa_enroll_until INTEGER,
     created_at    INTEGER NOT NULL,
-    -- Der Zähl-Topf des Sperrzählers (`norm_kennung`) von Name und Adresse, als Spalten mit Index
-    -- (Schema 10). `konto_mit_topf` faltete vorher bei JEDEM Aufruf alle Konten in Python: Die
-    -- Registrierung mit einer freien Adresse lief dadurch messbar länger als mit einer vergebenen
-    -- (R4-03), und `gc()` wuchs mit offenen Konten × allen Konten. Gesetzt von `create_user` und
-    -- `set_email`. NULL heisst „noch nicht gerechnet" — eine Zeile eines anderen Schreibers
-    -- (ältere Fassung nach einem Rückschritt, rohes SQL, eine Umbenennung von Hand, s. die
-    -- Trigger in `_migrate`) — und wird nachgetragen (`_toepfe_nachtragen`). '' = keine Adresse.
-    -- Über die Töpfe erzwingt die Datenbank auch den gemeinsamen Kennungsraum (`_trigger_sql`).
+    -- The counting bucket of the lockout counter (`norm_kennung`) of name and address, as columns with an index
+    -- (schema 10). `konto_mit_topf` used to fold all accounts in Python on EVERY call: registration
+    -- with a free address thereby took measurably longer than with a taken one
+    -- (R4-03), and `gc()` grew with open accounts × all accounts. Set by `create_user` and
+    -- `set_email`. NULL means "not computed yet" — a row from another writer
+    -- (older version after a downgrade, raw SQL, a rename by hand, see the
+    -- triggers in `_migrate`) — and is filled in later (`_toepfe_nachtragen`). '' = no address.
+    -- Through the buckets the database also enforces the shared identifier space (`_trigger_sql`).
     topf_name     TEXT,
     topf_mail     TEXT,
-    idp_bestaetigt_at INTEGER, -- letzte Bestätigung durch den OIDC-Provider; 0 = Nein, NULL = nie (Fund 8)
-    -- Ab wann gehört die Kennung diesem Konto? (Grenze a, G2) Die höchste `login_attempt.id`
-    -- bzw. `audit.id` in dem Moment, in dem Name oder Adresse in ihren Zähl-Topf kamen — bei der
-    -- Anlage, beim Umbenennen, beim Adresswechsel und beim Nachtrag einer Adresse. Was darunter
-    -- liegt, galt niemandem oder jemand anderem. Eine Id statt einer Zeit: exakt auch innerhalb
-    -- einer Sekunde, und unabhängig von der Uhr. NULL = Bestand von vor dieser Spalte, dann gilt
-    -- die Anlage als Grenze (`created_at`, `anlage_grenze`). Gesetzt von `create_user` und
-    -- `_kennung_setzen`, bei einem fremden Schreiber vom Nachrechnen-Trigger (`_trigger_sql`).
+    idp_bestaetigt_at INTEGER, -- last confirmation by the OIDC provider; 0 = no, NULL = never (finding 8)
+    -- From when does the identifier belong to this account? (limit a, G2) The highest `login_attempt.id`
+    -- or `audit.id` at the moment name or address entered their counting bucket — at
+    -- creation, on rename, on address change and when an address is added later. What lies below
+    -- belonged to nobody or to someone else. An id instead of a time: exact even within
+    -- one second, and independent of the clock. NULL = data from before this column, then
+    -- creation counts as the limit (`created_at`, `anlage_grenze`). Set by `create_user` and
+    -- `_kennung_setzen`, with a foreign writer by the recompute trigger (`_trigger_sql`).
     name_versuch_ab INTEGER,
     mail_versuch_ab INTEGER,
     name_audit_ab   INTEGER,
     mail_audit_ab   INTEGER,
-    -- Aus welcher föderierten Quelle stammt der Name ('oidc', 'saml', 'ldap')? Gesetzt, wenn die
-    -- Quelle das Konto anlegt; NULL = vom Betreiber vergeben, selbst gewählt oder Bestand von vor
-    -- dieser Spalte. Ein Name aus einer Quelle sagt nichts darüber, wer in einer ANDEREN so heisst:
-    -- `preferred_username` oder `uid` wählt man bei einem IdP mit Selbstregistrierung selbst. Eine
-    -- Anmeldung über eine andere Quelle bindet dieses Konto deshalb nie über den Namen
-    -- (`_nachbindung_grund`, Angriffsrunde 2026-09-26); dieselbe Quelle darf ihren Platzhalter
-    -- weiter durch die echte Kennung ersetzen. Ein Umbenennen setzt sie zurück.
+    -- From which federated source does the name originate ('oidc', 'saml', 'ldap')? Set when the
+    -- source creates the account; NULL = assigned by the operator, chosen by the person or data from before
+    -- this column. A name from one source says nothing about who is called that in ANOTHER:
+    -- `preferred_username` or `uid` is chosen by oneself with an IdP that has self-registration. A
+    -- sign-in via another source therefore never binds this account via the name
+    -- (`_nachbindung_grund`, attack round 2026-09-26); the same source may keep replacing its placeholder
+    -- with the real identifier. A rename resets it.
     name_quelle     TEXT,
-    -- Hat die Person den Namen selbst gewählt (Registrierung, Umbenennen in der Selbstbedienung)?
-    -- 1 = ja: Dann sagt er nichts darüber, wer im Verzeichnis so heisst, und eine Anmeldung über
-    -- LDAP/SAML bindet dieses Konto nie über den Namen (G2-N, `_nachbindung_grund`). 0 = vom
-    -- Betreiber vergeben (Panel, API, Umbenennen mit `by_operator=True`) oder aus einer Quelle
-    -- (dann sagt `name_quelle`, aus welcher).
+    -- Did the person choose the name themselves (registration, renaming in self-service)?
+    -- 1 = yes: then it says nothing about who is called that in the directory, and a sign-in via
+    -- LDAP/SAML never binds this account via the name (G2-N, `_nachbindung_grund`). 0 = assigned by the
+    -- operator (panel, API, rename with `by_operator=True`) or from a source
+    -- (then `name_quelle` says which).
     name_selbst_gewaehlt INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS api_key (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     name       TEXT,
-    prefix     TEXT NOT NULL,                   -- Anzeige (tsk_xxxx…), NICHT der Key
-    key_hash   TEXT UNIQUE NOT NULL,            -- sha256(vollständiger Key)
-    roles      TEXT NOT NULL DEFAULT '[]',      -- Key-Scope; leer = erbt User-Rollen
-    -- Welche Art Key ist das? (R6-5)
-    --   'automation' (Vorgabe): arbeitet allein, trägt NIE das Admin-Flag seines Besitzers und
-    --                           erfüllt keine Route, die Admin verlangt. Für Dienste und Skripte.
-    --   'human'               : gilt nur ZUSAMMEN mit einer gültigen Sitzung desselben Kontos.
-    --                           Dafür trägt er die vollen Rechte — der Weg für ein Werkzeug, das
-    --                           ein Mensch selbst bedient (CLI am eigenen Rechner).
-    -- Bis 0.21.x hiessen die Werte 'automat' und 'mensch' (Schema 12, `_werte_englisch`); gelesen
-    -- werden sie weiter (`KEY_ARTEN_ALT`). Bis 0.18.x gab es die Unterscheidung nicht: Jeder Key
-    -- eines Admins war eine vollständige Admin-Schreib-API, ohne zweiten Faktor und ohne
-    -- CSRF-Schicht — ein abgeflossener CI-Key war die Instanz.
+    prefix     TEXT NOT NULL,                   -- display (tsk_xxxx…), NOT the key
+    key_hash   TEXT UNIQUE NOT NULL,            -- sha256(full key)
+    roles      TEXT NOT NULL DEFAULT '[]',      -- key scope; empty = inherits user roles
+    -- What kind of key is this? (R6-5)
+    --   'automation' (default): works on its own, NEVER carries its owner's admin flag and
+    --                           satisfies no route that requires admin. For services and scripts.
+    --   'human'               : only valid TOGETHER with a valid session of the same account.
+    --                           In return it carries the full rights — the way for a tool that
+    --                           a person operates themselves (CLI on their own machine).
+    -- Up to 0.21.x the values were called 'automat' and 'mensch' (schema 12, `_werte_englisch`); they are
+    -- still read (`KEY_ARTEN_ALT`). Up to 0.18.x there was no such distinction: every key
+    -- of an admin was a complete admin write API, without a second factor and without a
+    -- CSRF layer — a leaked CI key was the instance.
     kind       TEXT NOT NULL DEFAULT 'automation',
     created_at INTEGER NOT NULL,
     last_used  INTEGER,
-    expires_at INTEGER,                          -- NULL = unbefristet
+    expires_at INTEGER,                          -- NULL = no expiry
     revoked    INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS password_cred (
@@ -112,7 +114,7 @@ CREATE TABLE IF NOT EXISTS password_cred (
 );
 CREATE TABLE IF NOT EXISTS pin_cred (
     user_id  INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
-    hash     TEXT NOT NULL,               -- wie Passwort gehasht (argon2/scrypt)
+    hash     TEXT NOT NULL,               -- hashed like a password (argon2/scrypt)
     updated_at INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS totp_cred (
@@ -120,14 +122,14 @@ CREATE TABLE IF NOT EXISTS totp_cred (
     secret    TEXT NOT NULL,
     confirmed INTEGER NOT NULL DEFAULT 0,
     created_at INTEGER NOT NULL,
-    last_step INTEGER                          -- zuletzt verbrauchter Zeitschritt; ein Code gilt
-                                               -- genau einmal (NIST SP 800-63B: „SHALL accept a
+    last_step INTEGER                          -- last consumed time step; a code is valid
+                                               -- exactly once (NIST SP 800-63B: "SHALL accept a
                                                -- given OTP only once while it is valid")
 );
-CREATE TABLE IF NOT EXISTS recovery_code (   -- Einmal-Codes als 2FA-Ersatz (verlorener Authenticator)
+CREATE TABLE IF NOT EXISTS recovery_code (   -- one-time codes as 2FA substitute (lost authenticator)
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    code_hash  TEXT NOT NULL,                 -- sha256(normalisierter Code)
+    code_hash  TEXT NOT NULL,                 -- sha256(normalized code)
     created_at INTEGER NOT NULL,
     used_at    INTEGER
 );
@@ -137,7 +139,7 @@ CREATE TABLE IF NOT EXISTS webauthn_cred (
     credential_id TEXT UNIQUE NOT NULL,   -- base64url
     public_key    TEXT NOT NULL,          -- base64url (COSE)
     sign_count    INTEGER NOT NULL DEFAULT 0,
-    transports    TEXT,                   -- JSON-Liste
+    transports    TEXT,                   -- JSON list
     name          TEXT,
     created_at    INTEGER NOT NULL,
     last_used     INTEGER
@@ -148,31 +150,31 @@ CREATE TABLE IF NOT EXISTS oidc_identity (
     user_id  INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     PRIMARY KEY (issuer, subject)
 );
--- Fremde Identität → lokales Konto, über eine STABILE Kennung des Verzeichnisses (F-11).
--- OIDC hat dafür `oidc_identity` (issuer+sub); LDAP und SAML banden bis 0.19.0 allein über den
--- Benutzernamen. Ein Name ist aber nicht fälschungssicher: Wer im Verzeichnis umbenennt oder ein
--- gelöschtes Konto unter demselben Namen neu anlegt, bekommt dasselbe lokale Konto mitsamt
--- seinen Rollen. Die Kennung hier ist objectGUID/entryUUID (LDAP) bzw. die NameID (SAML) — sie
--- überlebt eine Umbenennung und wird nicht wiederverwendet.
+-- Foreign identity → local account, via a STABLE identifier of the directory (F-11).
+-- OIDC has `oidc_identity` for that (issuer+sub); LDAP and SAML bound solely via the
+-- username up to 0.19.0. A name is not forgery-proof, though: whoever renames in the directory or
+-- recreates a deleted account under the same name gets the same local account including
+-- its roles. The identifier here is objectGUID/entryUUID (LDAP) or the NameID (SAML) — it
+-- survives a rename and is not reused.
 CREATE TABLE IF NOT EXISTS federated_identity (
     quelle      TEXT NOT NULL,              -- 'ldap' | 'saml'
-    kennung     TEXT NOT NULL,              -- die stabile Kennung aus dem Verzeichnis
+    kennung     TEXT NOT NULL,              -- the stable identifier from the directory
     user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    gebunden_at INTEGER NOT NULL,           -- wann die Bindung entstand (auch: nachgebunden)
-    -- Der Name, unter dem sich das Konto zuletzt über diese Quelle angemeldet hat, im Zähl-Topf
-    -- (`norm_kennung`) — nur wenn er weder Name noch Adresse des Kontos ist (G5). Nach einer
-    -- Umbenennung im Verzeichnis tippt die Person den NEUEN Namen, und unter ihm zählt die Serie
-    -- (B2-6); ohne diese Spalte räumte kein Rückweg sie. NULL = keiner (oder noch nie gesehen).
-    -- Der Name gehört dem Konto, das sich zuletzt so angemeldet hat (`bindung_name_setzen` löscht
-    -- ihn an fremden Bindungen), und kein anderes Konto kann ihn als Name oder Adresse annehmen
-    -- (Kennungs-Trigger, `TinySesam.identifier_taken`; Prüfrunde Sperren/Zähler 2026-09-27).
+    gebunden_at INTEGER NOT NULL,           -- when the binding came about (also: bound later)
+    -- The name under which the account last signed in via this source, in the counting bucket
+    -- (`norm_kennung`) — only if it is neither name nor address of the account (G5). After a
+    -- rename in the directory the person types the NEW name, and the series is counted under it
+    -- (B2-6); without this column no way back would clear it. NULL = none (or never seen).
+    -- The name belongs to the account that last signed in like this (`bindung_name_setzen` deletes
+    -- it from foreign bindings), and no other account can take it as name or address
+    -- (identifier trigger, `TinySesam.identifier_taken`; review round lockouts/counters 2026-09-27).
     name_topf   TEXT,
     PRIMARY KEY (quelle, kennung)
 );
--- Vom Betreiber geöffnete Bindung über den Namen (G1): Bis `bis` bindet die nächste Anmeldung über
--- LDAP/SAML dieses Konto über seinen Namen, auch nach der Frist (`federation_name_binding_days`)
--- und auch mit selbst gewähltem Namen. Geschrieben von `federation_unbind`, gelöscht, sobald
--- die Bindung steht. Ohne Zeile entscheidet die Frist.
+-- Binding via the name opened by the operator (G1): until `bis` the next sign-in via
+-- LDAP/SAML binds this account via its name, even after the deadline (`federation_name_binding_days`)
+-- and even with a self-chosen name. Written by `federation_unbind`, deleted as soon as
+-- the binding stands. Without a row the deadline decides.
 CREATE TABLE IF NOT EXISTS namensbindung (
     quelle  TEXT NOT NULL,
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -180,62 +182,62 @@ CREATE TABLE IF NOT EXISTS namensbindung (
     PRIMARY KEY (quelle, user_id)
 );
 CREATE TABLE IF NOT EXISTS session (
-    token_hash TEXT PRIMARY KEY,               -- sha256(Klartext-Token); der Klartext steht NUR im
-                                               -- Cookie des Browsers. Wer die Datei liest, bekommt
-                                               -- damit keine übernehmbare Sitzung (s. magic_token,
-                                               -- das es von Anfang an so hält).
+    token_hash TEXT PRIMARY KEY,               -- sha256(plaintext token); the plaintext is ONLY in the
+                                               -- browser's cookie. Whoever reads the file does not get
+                                               -- a hijackable session that way (see magic_token,
+                                               -- which has done it like this from the start).
     user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     created_at INTEGER NOT NULL,
     expires_at INTEGER NOT NULL,
-    mfa_ok     INTEGER NOT NULL DEFAULT 0,   -- erfüllt die aktive Login-Policy (Kette/2FA) vollständig
-    mfa_at     INTEGER,                       -- Zeitpunkt der letzten Faktor-Bestätigung (Step-up-Frische)
-    method     TEXT,                          -- erster/primärer Faktor: password|pin|passkey|oidc|magic
-    factors_done TEXT NOT NULL DEFAULT '[]',  -- JSON-Liste erfüllter Faktoren (Ketten-Engine)
-    remember   INTEGER NOT NULL DEFAULT 1,   -- „Angemeldet bleiben" (persistentes Cookie)
+    mfa_ok     INTEGER NOT NULL DEFAULT 0,   -- fully satisfies the active login policy (chain/2FA)
+    mfa_at     INTEGER,                       -- time of the last factor confirmation (step-up freshness)
+    method     TEXT,                          -- first/primary factor: password|pin|passkey|oidc|magic
+    factors_done TEXT NOT NULL DEFAULT '[]',  -- JSON list of satisfied factors (chain engine)
+    remember   INTEGER NOT NULL DEFAULT 1,   -- "stay signed in" (persistent cookie)
     ip         TEXT,
     user_agent TEXT,
-    zuletzt    INTEGER,                       -- letzte Anfrage mit dieser Sitzung (Inaktivitäts-Timeout, F-05)
-    andere_beenden INTEGER NOT NULL DEFAULT 0, -- halbe Sitzung: bei Abschluss der Kette die übrigen beenden (Grenze d)
-    bleiben_gewaehlt INTEGER NOT NULL DEFAULT 0, -- „Angemeldet bleiben" AUSDRÜCKLICH gewählt (F-05: dann gilt die zweite Leerlauf-Grenze)
-    nachfolger TEXT                           -- abgelöst durch diese Sitzung (Gnadenfrist nach dem Drehen, A-6); NULL = aktuell
+    zuletzt    INTEGER,                       -- last request with this session (inactivity timeout, F-05)
+    andere_beenden INTEGER NOT NULL DEFAULT 0, -- half session: end the others when the chain completes (limit d)
+    bleiben_gewaehlt INTEGER NOT NULL DEFAULT 0, -- "stay signed in" EXPLICITLY chosen (F-05: then the second idle limit applies)
+    nachfolger TEXT                           -- superseded by this session (grace period after rotation, A-6); NULL = current
 );
--- Welche Anwendung hat der Provider dieser Sitzung freigegeben? (T-14)
--- Eine Zeile je Sitzung UND Anwendung: Wer sich für app-a anmeldet, bekommt damit keinen
--- Zugang zu app-b — dort entscheidet der Provider erneut. Ohne diese Tabelle gäbe es nur die
--- Frage „angemeldet ja/nein", und die kann die Freigabe je Client nicht abbilden.
+-- Which application has the provider approved for this session? (T-14)
+-- One row per session AND application: whoever signs in for app-a does not thereby get
+-- access to app-b — the provider decides again there. Without this table there would only be the
+-- question "signed in yes/no", and that cannot represent the approval per client.
 CREATE TABLE IF NOT EXISTS oidc_grant (
     token_hash TEXT NOT NULL REFERENCES session(token_hash) ON DELETE CASCADE,
-    client     TEXT NOT NULL,                 -- Schlüssel aus cfg.oidc_clients, "*" = Einzel-Client
-    granted_at INTEGER NOT NULL,              -- erste Freigabe (bleibt stehen, auch über Nachprüfungen)
-    checked_at INTEGER NOT NULL,              -- letzte Bestätigung durch den Provider
-    roles      TEXT NOT NULL DEFAULT '[]',    -- Rollen, die der Provider FÜR DIESE Anwendung ergab
+    client     TEXT NOT NULL,                 -- key from cfg.oidc_clients, "*" = single client
+    granted_at INTEGER NOT NULL,              -- first approval (stays, even across re-checks)
+    checked_at INTEGER NOT NULL,              -- last confirmation by the provider
+    roles      TEXT NOT NULL DEFAULT '[]',    -- roles the provider yielded FOR THIS application
     PRIMARY KEY (token_hash, client)
 );
-CREATE TABLE IF NOT EXISTS oidc_sitzung (    -- Refresh-Token einer OIDC-Sitzung je Client (4a, Widerruf folgt dem IdP)
+CREATE TABLE IF NOT EXISTS oidc_sitzung (    -- refresh token of an OIDC session per client (4a, revocation follows the IdP)
     token_hash  TEXT NOT NULL REFERENCES session(token_hash) ON DELETE CASCADE,
-    client      TEXT NOT NULL,                -- Schlüssel aus cfg.oidc_clients, "*" = Einzel-Client
-    sub         TEXT NOT NULL,                -- Subjekt beim Provider; ein anderes beendet die Sitzung
-    refresh     TEXT NOT NULL,                -- verschlüsselt (geheimnis.Tresor), nie im Klartext
-    geprueft_at INTEGER NOT NULL,             -- letzter Tausch (oder: beansprucht, s. Store)
-    client_id   TEXT,                         -- an welche client_id das Token ging (NULL: vor dieser Spalte)
-    erfolg_at   INTEGER,                      -- letzte ERFOLGREICHE Nachprüfung (Obergrenze ohne Nachprüfung); NULL: vor dieser Spalte
+    client      TEXT NOT NULL,                -- key from cfg.oidc_clients, "*" = single client
+    sub         TEXT NOT NULL,                -- subject at the provider; a different one ends the session
+    refresh     TEXT NOT NULL,                -- encrypted (vault.Vault), never in plaintext
+    geprueft_at INTEGER NOT NULL,             -- last exchange (or: claimed, see Store)
+    client_id   TEXT,                         -- to which client_id the token went (NULL: before this column)
+    erfolg_at   INTEGER,                      -- last SUCCESSFUL re-check (upper bound without re-check); NULL: before this column
     PRIMARY KEY (token_hash, client)
 );
--- Nur von DIESER Anwendung abgemeldet (T-22, `forward_logout="app"`): Die Sitzung bleibt, die
--- Forward-Auth lässt sie für diesen Host aber nicht mehr durch, bis der Mensch auf der Login-Seite
--- ausdrücklich „weiter“ wählt. Ohne die Zeile wäre „nur hier abmelden“ ein Neuladen der Seite.
+-- Signed out of ONLY THIS application (T-22, `forward_logout="app"`): the session stays, but the
+-- forward auth no longer lets it through for this host until the person explicitly
+-- chooses "continue" on the login page. Without the row "sign out only here" would be a page reload.
 CREATE TABLE IF NOT EXISTS gate_abgemeldet (
     token_hash TEXT NOT NULL REFERENCES session(token_hash) ON DELETE CASCADE,
     host       TEXT NOT NULL,
     at         INTEGER NOT NULL,
     PRIMARY KEY (token_hash, host)
 );
--- Das ID-Token der Anmeldung, verschlüsselt (geheimnis.Tresor) — nur als `id_token_hint` für den
--- Logout beim Provider (T-22). PocketID beendet seine Sitzung ohne den Hinweis nicht, sondern
--- zeigt eine Rückfrage und leitet danach nicht zurück.
--- Die Verbindung eines App-Hosts zur zentralen Sitzung (Code-Austausch, T-26): Die Sitzung bleibt
--- auf dem Host des Gateways; der App-Host bekommt nur ein eigenes Cookie, dessen Hash hier steht.
--- Es gilt NUR für seinen Host und endet mit der Sitzung (ON DELETE CASCADE).
+-- The ID token of the sign-in, encrypted (vault.Vault) — only as `id_token_hint` for the
+-- logout at the provider (T-22). PocketID does not end its session without the hint, but
+-- shows a confirmation prompt and does not redirect back afterwards.
+-- The link of an app host to the central session (code exchange, T-26): the session stays
+-- on the gateway's host; the app host only gets a cookie of its own, whose hash is stored here.
+-- It is valid ONLY for its host and ends with the session (ON DELETE CASCADE).
 CREATE TABLE IF NOT EXISTS gate_link (
     link_hash  TEXT PRIMARY KEY,
     token_hash TEXT NOT NULL REFERENCES session(token_hash) ON DELETE CASCADE,
@@ -247,56 +249,56 @@ CREATE TABLE IF NOT EXISTS oidc_id_token (
     client     TEXT NOT NULL,
     id_token   TEXT NOT NULL
 );
-CREATE TABLE IF NOT EXISTS flow (            -- kurzlebiger State (OIDC state/nonce, WebAuthn-Challenge)
+CREATE TABLE IF NOT EXISTS flow (            -- short-lived state (OIDC state/nonce, WebAuthn challenge)
     key        TEXT PRIMARY KEY,
     data       TEXT NOT NULL,               -- JSON
     expires_at INTEGER NOT NULL
 );
-CREATE TABLE IF NOT EXISTS setting (         -- Runtime-Settings (Härtungs-Schwellen, Panel-editierbar)
+CREATE TABLE IF NOT EXISTS setting (         -- runtime settings (hardening thresholds, editable in the panel)
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
-CREATE TABLE IF NOT EXISTS magic_token (      -- Einmal-Token (Magic-Link / Invite / E-Mail-Verify)
-    token_hash TEXT PRIMARY KEY,               -- sha256(Klartext-Token)
+CREATE TABLE IF NOT EXISTS magic_token (      -- one-time token (magic link / invite / e-mail verify)
+    token_hash TEXT PRIMARY KEY,               -- sha256(plaintext token)
     purpose    TEXT NOT NULL,                  -- login | invite | verify_email | …
-    user_id    INTEGER,                        -- optional: an bestehenden User gebunden
+    user_id    INTEGER,                        -- optional: bound to an existing user
     email      TEXT,
-    payload    TEXT,                            -- JSON (z.B. Rollen, Ressource)
+    payload    TEXT,                            -- JSON (e.g. roles, resource)
     created_at INTEGER NOT NULL,
     expires_at INTEGER NOT NULL,
-    used_at    INTEGER                          -- gesetzt bei Einlösung → one-shot
+    used_at    INTEGER                          -- set on redemption → one-shot
 );
-CREATE TABLE IF NOT EXISTS resource_secret (  -- geteiltes Ressourcen-Geheimnis (ohne User-Konto)
+CREATE TABLE IF NOT EXISTS resource_secret (  -- shared resource secret (without a user account)
     name       TEXT PRIMARY KEY,
-    hash       TEXT NOT NULL,                 -- wie Passwort gehasht
-    kind       TEXT NOT NULL DEFAULT 'pin',   -- 'pin' (numerisch) | 'password' (Passphrase)
+    hash       TEXT NOT NULL,                 -- hashed like a password
+    kind       TEXT NOT NULL DEFAULT 'pin',   -- 'pin' (numeric) | 'password' (passphrase)
     label      TEXT,
     created_at INTEGER NOT NULL
 );
-CREATE TABLE IF NOT EXISTS resource_unlock (  -- freigeschaltete Ressourcen je Unlock-Token (Cookie)
+CREATE TABLE IF NOT EXISTS resource_unlock (  -- unlocked resources per unlock token (cookie)
     token      TEXT NOT NULL,
     resource   TEXT NOT NULL,
     expires_at INTEGER NOT NULL,
     PRIMARY KEY (token, resource)
 );
-CREATE TABLE IF NOT EXISTS login_attempt (   -- Brute-Force-Regulation
+CREATE TABLE IF NOT EXISTS login_attempt (   -- brute-force regulation
     id       INTEGER PRIMARY KEY AUTOINCREMENT,
     ts       INTEGER NOT NULL,
     username TEXT,
     ip       TEXT,
     success  INTEGER NOT NULL,
     method   TEXT,
-    offen    INTEGER NOT NULL DEFAULT 0      -- 1: vorgebucht, Ausgang noch offen (G9, `reserve_attempt`)
+    offen    INTEGER NOT NULL DEFAULT 0      -- 1: pre-booked, outcome still open (G9, `reserve_attempt`)
 );
-CREATE TABLE IF NOT EXISTS fehlserie (       -- Fehlversuche IN FOLGE je Kennung, ohne Zeitfenster (B2-6)
-    topf    TEXT NOT NULL,                   -- gefaltete Kennung, derselbe Schlüssel wie login_attempt.username
-    art     TEXT NOT NULL,                   -- Methode (password, pin, totp …): ein Reset räumt nur seine
+CREATE TABLE IF NOT EXISTS fehlserie (       -- failed attempts IN A ROW per identifier, without a time window (B2-6)
+    topf    TEXT NOT NULL,                   -- folded identifier, the same key as login_attempt.username
+    art     TEXT NOT NULL,                   -- method (password, pin, totp …): a reset only clears its own
     anzahl  INTEGER NOT NULL,
-    seit    INTEGER NOT NULL,                -- erster Fehlversuch der laufenden Serie
+    seit    INTEGER NOT NULL,                -- first failed attempt of the current series
     zuletzt INTEGER NOT NULL,
     PRIMARY KEY (topf, art)
 );
-CREATE TABLE IF NOT EXISTS audit (           -- Audit-Log (Login/Logout/Admin-Aktionen)
+CREATE TABLE IF NOT EXISTS audit (           -- audit log (login/logout/admin actions)
     id       INTEGER PRIMARY KEY AUTOINCREMENT,
     ts       INTEGER NOT NULL,
     event    TEXT NOT NULL,
@@ -306,33 +308,33 @@ CREATE TABLE IF NOT EXISTS audit (           -- Audit-Log (Login/Logout/Admin-Ak
 );
 CREATE INDEX IF NOT EXISTS idx_session_user ON session(user_id);
 CREATE INDEX IF NOT EXISTS idx_webauthn_user ON webauthn_cred(user_id);
--- Grenze c (Integrationsangriff): `anlage_grenze` und `audit_anonymisieren` suchen nach Name und
--- Zeit. Ohne Index lief das über das ganze Audit-Log — seine Grösse wächst mit der Aufbewahrung.
--- Nur Name und Zeit: Die Suche im DETAILTEXT (`audit_anonymisieren`) ist eine Teilstring-Suche,
--- die kein Index eingrenzt — sie bleibt ein Scan, läuft seit G4 aber blockweise ohne Schreibsperre.
+-- Limit c (integration attack): `anlage_grenze` and `audit_anonymisieren` search by name and
+-- time. Without an index that ran over the whole audit log — its size grows with the retention.
+-- Only name and time: the search in the DETAIL text (`audit_anonymisieren`) is a substring search
+-- that no index narrows down — it remains a scan, but since G4 runs in blocks without a write lock.
 CREATE INDEX IF NOT EXISTS idx_audit_name_ts ON audit(lower(username), ts);
 CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit(ts);
 CREATE INDEX IF NOT EXISTS idx_attempt_user ON login_attempt(username, ts);
 CREATE INDEX IF NOT EXISTS idx_attempt_ip ON login_attempt(ip, ts);
 CREATE INDEX IF NOT EXISTS idx_apikey_user ON api_key(user_id);
--- G1: „Welche Konten tragen für diese Quelle noch keine Kennung?" (Startmeldung, Bestandsbindung)
--- fragt je Konto nach seiner Zeile; ohne Index läse das je Konto alle Bindungen der Quelle.
+-- G1: "Which accounts still carry no identifier for this source?" (startup message, binding of existing accounts)
+-- asks for its row per account; without an index that would read all bindings of the source per account.
 CREATE INDEX IF NOT EXISTS idx_fed_quelle_user ON federated_identity(quelle, user_id);
 """
 
 
-#: Zeichen, in denen sich IDNA 2003 (stdlib-Codec) und IDNA 2008 unterscheiden: Der stdlib-Codec
-#: macht aus `straße.example` ein `strasse.example` — eine ANDERE Domain. Enthält eine Domain eines davon,
-#: bleibt sie in Unicode-Form statt falsch umgeschrieben zu werden.
+#: Characters where IDNA 2003 (stdlib codec) and IDNA 2008 differ: the stdlib codec
+#: turns `straße.example` into `strasse.example` — a DIFFERENT domain. A domain containing one of them
+#: stays in Unicode form instead of being rewritten incorrectly.
 _IDNA_ABWEICHLER = frozenset("ßς\u200c\u200d")
 
 
 def _domain_kanonisch(domain: str) -> str:
-    """Eine Domain in die A-Label-Form (`xn--…`) bringen, wenn das eindeutig geht (R4-06).
+    """Bring a domain into A-label form (`xn--…`) when that is unambiguous (R4-06).
 
-    Sonst stehen `bücher.example` und `xn--bcher-kva.example` als zwei verschiedene Adressen in der
-    Datenbank, obwohl beide dasselbe Postfach meinen — zwei Konten, zwei „vergeben"-Prüfungen,
-    die einander nicht sehen. Was sich nicht sicher umschreiben lässt, bleibt unverändert."""
+    Otherwise `bücher.example` and `xn--bcher-kva.example` are stored as two different addresses
+    in the database although both mean the same mailbox — two accounts, two "taken" checks
+    that cannot see each other. What cannot be rewritten safely stays unchanged."""
     if domain.isascii() or any(z in _IDNA_ABWEICHLER for z in domain):
         return domain
     try:
@@ -342,10 +344,10 @@ def _domain_kanonisch(domain: str) -> str:
 
 
 def _email_unicode(email: str) -> str:
-    """Die Adresse mit der Domain in Unicode-Form (`xn--bcher-kva.example` → `bücher.example`).
+    """The address with its domain in Unicode form (`xn--bcher-kva.example` → `bücher.example`).
 
-    Nur für die Suche nach Bestandsadressen von vor R4-06, die noch so gespeichert sind — nie zum
-    Speichern. Was sich nicht dekodieren lässt, kommt unverändert zurück."""
+    Only for looking up existing addresses from before R4-06 that are still stored that way — never
+    for storing. What cannot be decoded is returned unchanged."""
     lokal, at, domain = email.rpartition("@")
     if not at or "xn--" not in domain:
         return email
@@ -356,13 +358,13 @@ def _email_unicode(email: str) -> str:
 
 
 def key_kind_of(row) -> str:
-    """Die Art einer Key-Zeile mit englischem Namen (Schema 12): `automation` oder `human`.
+    """The kind of a key row with the English name (schema 12): `automation` or `human`.
 
-    Ein Wert bis 0.21.x (`automat`, `mensch`) wird abgebildet (`Store.KEY_ARTEN_ALT`) — eine ältere
-    Fassung, die nach einem Rückschritt auf der Datei lief, schreibt ihn wieder. Leer oder ohne
-    Spalte (Datei vor Schema 7) heisst `automation`. Alles andere bleibt, wie es ist, und gilt, weil
-    es nicht `human` ist, als Automaten-Key (fail-closed, R6-6). Hier und nicht am Manager, damit
-    Router und Admin-Panel es ohne Import des Managers lesen (kein Import-Zyklus)."""
+    A value up to 0.21.x (`automat`, `mensch`) is mapped (`Store.KEY_ARTEN_ALT`) — an older
+    version that ran on the file after a rollback writes it again. Empty or without the
+    column (file before schema 7) means `automation`. Anything else stays as it is and, because
+    it is not `human`, counts as an automation key (fail-closed, R6-6). Here and not on the manager, so that
+    router and admin panel can read it without importing the manager (no import cycle)."""
     try:
         wert = str(row["kind"] or "automation")
     except (IndexError, KeyError, TypeError):
@@ -370,11 +372,11 @@ def key_kind_of(row) -> str:
     return Store.KEY_ARTEN_ALT.get(wert, wert)
 
 def norm_email(email) -> Optional[str]:
-    """E-Mail kanonisch speichern: NFKC, getrimmt, klein, Domain als A-Label. `None` bleibt `None`.
+    """Store an email canonically: NFKC, trimmed, lowercase, domain as A-label. `None` stays `None`.
 
-    NFKC faltet Kompatibilitätszeichen (R4-06): `ａｄｍｉｎ@example.com` in Vollbreite ist danach
-    dasselbe wie `admin@example.com` — vorher waren es zwei Kennungen, die im Panel gleich
-    aussahen."""
+    NFKC folds compatibility characters (R4-06): a full-width `ａｄｍｉｎ@example.com` is afterwards
+    the same as `admin@example.com` — before, they were two identifiers that looked the same
+    in the panel."""
     e = unicodedata.normalize("NFKC", str(email or "")).strip().lower()
     if not e:
         return None
@@ -385,16 +387,16 @@ def norm_email(email) -> Optional[str]:
 
 
 def _schriften(text: str) -> set:
-    """Die Schriftsysteme der Buchstaben in `text` (erstes Wort des Unicode-Namens: LATIN,
-    CYRILLIC, GREEK …). Ziffern und Satzzeichen zählen nicht."""
+    """The scripts of the letters in `text` (first word of the Unicode name: LATIN,
+    CYRILLIC, GREEK …). Digits and punctuation do not count."""
     return {unicodedata.name(z, "?").split(" ", 1)[0] for z in text if z.isalpha()}
 
 
-#: Schriften, die in EINER Sprache zusammengehören und deshalb mischen dürfen (Angriff A6,
-#: Vorbild UTS #39 „Highly Restrictive"): Japanisch schreibt Kanji mit Hiragana und Katakana
-#: (`山田たろう`, `例え`), Koreanisch Hanja mit Hangul, Chinesisch Han mit Bopomofo. Ohne diese
-#: Ausnahme wies die Schriftprüfung gewöhnliche japanische Adressen und IDN-Domains ab. Latein
-#: gehört bewusst in keine Gruppe — `аdmin` (kyrillisch/lateinisch) bleibt abgewiesen.
+#: Scripts that belong together in ONE language and may therefore be mixed (attack A6,
+#: modelled on UTS #39 "Highly Restrictive"): Japanese writes kanji with hiragana and katakana
+#: (`山田たろう`, `例え`), Korean hanja with hangul, Chinese han with bopomofo. Without this
+#: exception the script check rejected ordinary Japanese addresses and IDN domains. Latin
+#: deliberately belongs to no group — `аdmin` (Cyrillic/Latin) stays rejected.
 _SCHRIFT_GRUPPEN = (
     frozenset({"CJK", "IDEOGRAPHIC", "HIRAGANA", "KATAKANA", "KATAKANA-HIRAGANA"}),
     frozenset({"CJK", "IDEOGRAPHIC", "HANGUL"}),
@@ -403,44 +405,44 @@ _SCHRIFT_GRUPPEN = (
 
 
 def _eine_schrift(teil: str) -> bool:
-    """Stammen die Buchstaben aus einer Schrift — oder aus einer Gruppe, die zusammengehört?"""
+    """Do the letters come from one script — or from a group that belongs together?"""
     s = _schriften(teil)
     return len(s) <= 1 or any(s <= gruppe for gruppe in _SCHRIFT_GRUPPEN)
 
 
 def name_ungueltig(name) -> bool:
-    """Enthält ein Benutzername Steuer-, Format- oder Trennzeichen (Cc/Cf/Zl/Zp)?
+    """Does a username contain control, format or separator characters (Cc/Cf/Zl/Zp)?
 
-    Solche Zeichen trennen zwei Kennungen, die für einen Menschen und für einen HTTP-Header gleich
-    aussehen: `chefin\\x01` ist für `identifier_taken` ein anderer Name als `chefin`, aber die
-    Header-Säuberung der Forward-Auth nimmt das Steuerzeichen heraus — die geschützte App bekam
-    `Remote-User: chefin` von einem fremden Konto (Angriff auf die dritte Runde). Dieselbe Regel
-    wie für Adressen (`valid_email`)."""
+    Such characters separate two identifiers that look the same to a human and to an HTTP header:
+    `chefin\\x01` is a different name from `chefin` for `identifier_taken`, but the forward-auth
+    header sanitising strips the control character — the protected app received
+    `Remote-User: chefin` from a foreign account (attack in the third round). The same rule
+    as for addresses (`valid_email`)."""
     return any(unicodedata.category(z) in ("Cc", "Cf", "Zl", "Zp") for z in str(name or ""))
 
 
 def norm_kennung(kennung) -> str:
-    """Die Login-Kennung so, wie der Sperrzähler sie führt: NFKC, getrimmt, klein — und eine
-    Adresse so kanonisch wie `norm_email` sie speichert.
+    """The login identifier as the lockout counter keeps it: NFKC, trimmed, lowercase — and an
+    address as canonical as `norm_email` stores it.
 
-    Muss mindestens so grob falten wie `TinySesam.find_user` (strip, `norm_email`, NOCASE):
-    Jede Schreibweise, die dasselbe Konto trifft, gehört in denselben Zähl-Topf. Sonst stellt
-    sich ein verteilter Angreifer mit `' opfer'`, `'opfer '`, `'\topfer'` … beliebig viele
-    frische Töpfe auf, und die Konto-Schwelle über alle Adressen bindet nichts. `lower()`
-    faltet gröber als NOCASE (auch ausserhalb von ASCII) — zwei Namen, die nur darin
-    abweichen, teilen sich dann einen Topf. Das ist strenger, nie lockerer.
+    Must fold at least as coarsely as `TinySesam.find_user` (strip, `norm_email`, NOCASE):
+    every spelling that hits the same account belongs in the same counting bucket. Otherwise a
+    distributed attacker with `' victim'`, `'victim '`, `'\tvictim'` … sets up any number of
+    fresh buckets, and the account threshold across all addresses binds nothing. `lower()`
+    folds more coarsely than NOCASE (also outside ASCII) — two names that differ only in that
+    then share a bucket. That is stricter, never looser.
 
-    Bis zur Integration von T-13 hiess das nur strip + lower. `norm_email` faltet seit R4-06
-    aber auch NFKC und IDNA, und `find_user` fand damit `ｖｉｃｔｉｍ@example.com`,
-    `victim＠example.com` (Vollbreiten-@) und jede Mischform — je mit eigenem Topf, allein für
-    diese Adresse 2^16. Deshalb erst NFKC, DANN nach dem `@` sehen: Das Vollbreiten-@ U+FF20
-    wird erst durch die Faltung zu einem. Gezählt wird bewusst unter der gefalteten EINGABE,
-    nicht unter dem Konto, das sie trifft: So verhält sich die Sperre für vorhandene und
-    erfundene Kennungen gleich und verrät nicht, welche Adresse zu welchem Benutzernamen
-    gehört (Benutzername und Adresse eines Kontos sind deshalb zwei Töpfe; `lift_lockout`
-    räumt beide). Namensvetter aus einem Bestand (`Émile`/`émile`) teilen einen Topf; neu
-    anlegen lässt sich keiner mehr (`TinySesam.identifier_taken` fragt
-    `Store.konto_mit_topf`), und `delete_attempts_for` lässt einen geteilten Topf stehen."""
+    Until the integration of T-13 this was only strip + lower. Since R4-06, however, `norm_email` also folds
+    NFKC and IDNA, and `find_user` thereby found `ｖｉｃｔｉｍ@example.com`,
+    `victim＠example.com` (full-width @) and every mixed form — each with its own bucket, 2^16 for
+    this one address alone. Hence NFKC first, THEN look for the `@`: the full-width @ U+FF20
+    only becomes one through folding. Counting deliberately happens under the folded INPUT,
+    not under the account it hits: this way the lockout behaves the same for existing and
+    invented identifiers and does not reveal which address belongs to which username
+    (username and address of an account are therefore two buckets; `lift_lockout`
+    clears both). Namesakes from existing data (`Émile`/`émile`) share a bucket; none can be
+    created anew (`TinySesam.identifier_taken` asks
+    `Store.konto_mit_topf`), and `delete_attempts_for` leaves a shared bucket in place."""
     k = unicodedata.normalize("NFKC", str(kennung or "")).strip().lower()
     if "@" in k:
         return norm_email(k) or ""
@@ -448,8 +450,8 @@ def norm_kennung(kennung) -> str:
 
 
 def _kennung_sql(wert) -> Optional[str]:
-    """`norm_kennung` für SQLite (`tinysesam_kennung`): NULL bleibt NULL, und ein Fehler wird NULL
-    statt einer Ausnahme mitten in der Abfrage."""
+    """`norm_kennung` for SQLite (`tinysesam_kennung`): NULL stays NULL, and an error becomes NULL
+    instead of an exception in the middle of the query."""
     if wert is None:
         return None
     try:
@@ -459,14 +461,14 @@ def _kennung_sql(wert) -> Optional[str]:
 
 
 def valid_email(email) -> bool:
-    """Bewusst nachsichtig: genau ein @, links und rechts was dran, rechts ein Punkt, keine Leerzeichen.
-    Ob die Adresse existiert, beantwortet nur der Bestätigungslink (`signup_verify_email`).
+    """Deliberately lenient: exactly one @, something on the left and right, a dot on the right, no spaces.
+    Whether the address exists is answered only by the confirmation link (`signup_verify_email`).
 
-    Abgewiesen wird ausserdem, was zum Verwechseln gebaut ist (R4-06): unsichtbare Zeichen
-    (Steuer- und Formatzeichen wie Zero-Width-Joiner) und ein Teil, der Schriften mischt —
-    `аdmin@example.com` mit kyrillischem `а` sieht im Panel aus wie das Admin-Postfach. Eine
-    Adresse ganz in einer Schrift (`müller@…`, `иван@…`) bleibt erlaubt, ebenso die Mischungen einer
-    Sprache aus `_SCHRIFT_GRUPPEN` (`山田たろう@…`)."""
+    Also rejected is anything built to be confusable (R4-06): invisible characters
+    (control and format characters such as zero-width joiner) and a part that mixes scripts —
+    `аdmin@example.com` with a Cyrillic `а` looks like the admin mailbox in the panel. An
+    address entirely in one script (`müller@…`, `иван@…`) stays allowed, as do the mixtures of one
+    language from `_SCHRIFT_GRUPPEN` (`山田たろう@…`)."""
     e = (email or "").strip()
     if not e or " " in e or e.count("@") != 1:
         return False
@@ -479,64 +481,64 @@ def valid_email(email) -> bool:
 
 
 class _Uhr:
-    """Die Zeitquelle für alles, was in der Datenbank mit einer Frist steht.
+    """The time source for everything in the database that carries a deadline.
 
-    Sitzungen, Einmal-Token, Step-up-Frische, Sperrfenster und Flow-State vergleichen einen
-    gespeicherten Zeitstempel mit „jetzt". Mit der nackten Wanduhr (`time.time()`) belebte ein
-    Rückwärtssprung all das wieder: NTP-Korrektur, ein Raspberry Pi, der ohne Pufferbatterie
-    mit einem alten Datum bootet, ein VM-Snapshot — eine abgelaufene Sitzung galt erneut, ein
-    verfallener Magic-Link liess sich einlösen, ein alter Step-up war wieder „frisch" (B6-9).
+    Sessions, one-time tokens, step-up freshness, lockout windows and flow state compare a
+    stored timestamp with "now". With the bare wall clock (`time.time()`), a backwards jump
+    revived all of it: an NTP correction, a Raspberry Pi that boots with an old date
+    without a backup battery, a VM snapshot — an expired session was valid again, an
+    expired magic link could be redeemed, an old step-up was "fresh" again (B6-9).
 
-    Deshalb läuft diese Uhr nie rückwärts: Sie folgt der Wanduhr nach vorn, rückwärts aber nur
-    mit der vergangenen **monotonen** Zeit (`time.monotonic()` kennt keine Sprünge). Nach einem
-    Sprung um eine Stunde zurück zählt sie also normal weiter, statt eine Stunde stehenzubleiben
-    — Fristen laufen weiter ab. Über einen Neustart trägt die Datenbank selbst den Stand:
-    `Store()` hebt die Uhr auf den jüngsten Zeitstempel, den sie findet (`mindestens()`) —
-    darunter den Stand, den `Store` höchstens jede Minute mitschreibt (`uhr_stand`, bei jedem
-    Schreibzugriff und bei jeder Schreibprobe des Healthchecks). Was in der letzten Minute vor
-    einem Neustart ablief oder in einer Zeit, in der gar nichts geschrieben wurde, kann danach
-    also bis zu diesem Abstand länger gelten — nicht aber seine volle Restfrist.
+    That is why this clock never runs backwards: it follows the wall clock forwards, but backwards only
+    with the elapsed **monotonic** time (`time.monotonic()` knows no jumps). After a
+    jump back by an hour it therefore keeps counting normally instead of standing still for an hour
+    — deadlines keep expiring. Across a restart the database itself carries the state:
+    `Store()` raises the clock to the most recent timestamp it finds (`mindestens()`) —
+    including the state that `Store` writes at most once a minute (`uhr_stand`, on every
+    write access and on every write probe of the health check). What expired in the last minute before
+    a restart, or during a time in which nothing was written at all, can therefore
+    remain valid for up to that interval longer — but not for its full remaining lifetime.
 
-    Der Preis: Sprang die Wanduhr einmal falsch nach VORN, bleibt die Uhr dort, bis die Wanduhr
-    aufholt — Fristen sind dann intern stimmig, nur eben in der Zukunft datiert. Das ist die
-    sichere Richtung, und es steht als Warnung im Log.
+    The price: if the wall clock once jumped wrongly FORWARDS, the clock stays there until the wall clock
+    catches up — deadlines are then internally consistent, just dated in the future. That is the
+    safe direction, and it is logged as a warning.
 
-    `wand`/`mono` sind austauschbar, damit ein Test einen Sprung stellen kann, ohne die Uhr des
-    ganzen Prozesses zu verbiegen. Ohne Angabe werden `time.time`/`time.monotonic` bei JEDEM
-    Aufruf nachgeschlagen, nicht beim Import gebunden: Eine einbettende App, die in ihren Tests
-    `time.time` patcht (`mock.patch`, `monkeypatch`, freezegun), stellt damit auch diese Uhr
-    vor. Zurückdrehen lässt sie sich so nicht — das ist genau der Schutz oben.
+    `wand`/`mono` are interchangeable so that a test can set up a jump without bending the clock of
+    the whole process. Without them, `time.time`/`time.monotonic` are looked up on EVERY
+    call rather than bound at import: an embedding app that patches `time.time` in its tests
+    (`mock.patch`, `monkeypatch`, freezegun) thereby sets this clock too.
+    It cannot be turned back this way — that is exactly the protection above.
 
-    freezegun ersetzt zusätzlich `time.monotonic`, und zwar durch die eingefrorene Zeit auf der
-    Epoch-Skala statt durch die Betriebszeit. Fortgeschrieben wäre das ein Sprung um Jahrzehnte
-    (und beim Verlassen von `freeze_time` einer zurück). Ein Monotonie-Schritt, der rückwärts
-    geht oder größer ist als `MONO_SCHRITT_MAX_SEK`, zählt deshalb nicht als vergangene Zeit:
-    Unter freezegun folgt die Uhr der eingefrorenen Wanduhr nach vorn (`tick()`/`move_to()`
-    eingeschlossen); nach dem Verlassen läuft sie vom vorgestellten Stand aus mit der echten
-    monotonen Zeit weiter — wie nach `mock.patch`. Der Vorsprung bleibt also: für die Lebensdauer
-    des Prozesses (die echte Zeit holt ihn nicht ein, beide laufen gleich schnell) und über
-    `uhr_stand` in dieser Datenbank für jede spätere Öffnung, solange die Pause dazwischen kürzer
-    ist als der Vorsprung. Das ist die sichere Richtung; ein Test, der die Uhr weit vorstellt,
-    nimmt deshalb eine eigene Wegwerf-Datenbank. Den Preis der Plausibilitätsgrenze zahlt nur
-    ein Rückwärtssprung der Wanduhr, der in eine Pause von mehr als einem Jahr ohne jeden Aufruf
-    fällt: Dann gilt die zurückgesprungene Wanduhr, aber nie weniger als der zuletzt ausgegebene
-    Stand. Dieselbe Regel gilt für die monotonen Stempel des `Store` (`_frisch`): Ein negativer
-    Abstand ist abgelaufen, nicht frisch.
+    freezegun additionally replaces `time.monotonic`, namely with the frozen time on the
+    epoch scale instead of the uptime. Carried forward, that would be a jump of decades
+    (and one back when leaving `freeze_time`). A monotonic step that goes backwards
+    or is larger than `MONO_SCHRITT_MAX_SEK` therefore does not count as elapsed time:
+    under freezegun the clock follows the frozen wall clock forwards (including `tick()`/`move_to()`);
+    after leaving, it continues from the advanced state with the real
+    monotonic time — as after `mock.patch`. The lead therefore remains: for the lifetime
+    of the process (real time does not catch up, both run at the same speed) and via
+    `uhr_stand` in this database for every later opening, as long as the pause in between is shorter
+    than the lead. That is the safe direction; a test that sets the clock far ahead
+    therefore uses its own throwaway database. The price of the plausibility limit is paid only by
+    a backwards jump of the wall clock that falls into a pause of more than a year without any call:
+    then the wall clock that jumped back applies, but never less than the most recently issued
+    state. The same rule applies to the monotonic stamps of the `Store` (`_frisch`): a negative
+    distance is expired, not fresh.
     """
 
-    #: Ab welchem Rückstand der Wanduhr eine Warnung geschrieben wird (Sekunden). Darunter ist
-    #: es normales NTP-Zittern.
+    #: Lag of the wall clock from which a warning is written (seconds). Below that
+    #: it is normal NTP jitter.
     WARN_AB_SEK = 5
 
-    #: Größter Schritt der monotonen Zeit zwischen zwei Aufrufen, der noch als vergangene Zeit
-    #: gilt (Sekunden). Ein echter Schritt ist die Pause zwischen zwei Anfragen; freezegun liefert
-    #: dagegen die eingefrorene Zeit auf der Epoch-Skala (≈1,8e9 s) — ein Sprung um Jahrzehnte.
-    #: Ein Jahr trennt beides sicher, ohne den Schutz nach einer langen Pause aufzugeben.
+    #: Largest step of monotonic time between two calls that still counts as elapsed time
+    #: (seconds). A real step is the pause between two requests; freezegun instead delivers
+    #: the frozen time on the epoch scale (≈1.8e9 s) — a jump of decades.
+    #: One year separates the two safely without giving up the protection after a long pause.
     MONO_SCHRITT_MAX_SEK = 365 * 86400
 
     def __init__(self, wand=None, mono=None):
-        # Bei JEDEM Aufruf nachschlagen, nicht beim Bau binden: Wer `time.time` patcht
-        # (`mock.patch`, `monkeypatch`, freezegun), stellt damit auch diese Uhr (siehe Docstring).
+        # Look up on EVERY call, do not bind at construction: whoever patches `time.time`
+        # (`mock.patch`, `monkeypatch`, freezegun) sets this clock too (see docstring).
         def _wand():
             return time.time()
 
@@ -545,27 +547,27 @@ class _Uhr:
         self.wand = wand or _wand
         self.mono = mono or _mono
         self._lock = threading.Lock()
-        self._stand = 0.0          # zuletzt ausgegebene Zeit (Wanduhr-Skala)
-        self._mono = None          # monotone Zeit bei dieser Ausgabe
-        self._gemeldet = False     # Rückstand schon gemeldet? (eine Zeile je Sprung, nicht je Anfrage)
+        self._stand = 0.0          # last issued time (wall-clock scale)
+        self._mono = None          # monotonic time at that issue
+        self._gemeldet = False     # lag already reported? (one line per jump, not per request)
 
     def jetzt(self) -> int:
         with self._lock:
             wand, mono = float(self.wand()), float(self.mono())
             schritt = mono - self._mono if self._mono is not None else 0.0
             if not 0.0 <= schritt <= self.MONO_SCHRITT_MAX_SEK:
-                # Keine echte monotone Uhr (rückwärts oder ein Sprung um Jahrzehnte: freezegun
-                # ersetzt `time.monotonic` durch die Epoch-Zeit). Nicht fortschreiben — sonst
-                # sprang die Uhr um ≈57 Jahre vor und `uhr_stand` hielt jede spätere Öffnung der
-                # Datenbank dort fest. Die Wanduhr nach vorn gilt weiter, rückwärts steht die Uhr —
-                # auch wenn die monotone Quelle selbst zurückspringt (Verlassen von freeze_time).
+                # No real monotonic clock (backwards, or a jump of decades: freezegun
+                # replaces `time.monotonic` with the epoch time). Do not advance — otherwise
+                # the clock jumped ahead by ≈57 years and `uhr_stand` pinned every later opening of the
+                # database there. The wall clock forwards still applies, backwards the clock stands —
+                # even if the monotonic source itself jumps back (leaving freeze_time).
                 schritt = 0.0
             self._stand, self._mono = max(wand, self._stand + schritt), mono
             self._rueckstand_pruefen(wand)
             return int(self._stand)
 
     def mindestens(self, ts) -> None:
-        """Die Uhr auf mindestens `ts` heben (jüngster Zeitstempel der Datenbank beim Öffnen)."""
+        """Raise the clock to at least `ts` (most recent timestamp of the database when opening)."""
         if not ts:
             return
         with self._lock:
@@ -578,48 +580,48 @@ class _Uhr:
         if rueckstand > self.WARN_AB_SEK and not self._gemeldet:
             self._gemeldet = True
             logging.getLogger("tinysesam").warning(
-                "Die Systemuhr steht %d s hinter der zuletzt benutzten Zeit (Rückwärtssprung "
-                "oder falsches Datum nach dem Start). TinySesam zählt monoton weiter, damit "
-                "abgelaufene Sitzungen und Einmal-Token nicht wieder gelten (nach einem "
-                "Neustart ab dem zuletzt gesicherten Stand, höchstens eine Minute alt) — "
-                "Uhrzeit (NTP) prüfen.", int(rueckstand))
+                "The system clock is %d s behind the last time used (backward jump "
+                "or wrong date after startup). TinySesam keeps counting monotonically so that "
+                "expired sessions and one-time tokens do not become valid again (after a "
+                "restart from the last saved state, at most one minute old) — "
+                "check the time (NTP).", int(rueckstand))
         elif rueckstand <= self.WARN_AB_SEK:
             self._gemeldet = False
 
 
-#: Prozessweit eine Uhr: Mehrere `Store`-Instanzen im selben Prozess dürfen einander nicht
-#: widersprechen, und ein Rückwärtssprung trifft den ganzen Prozess, nicht eine Datenbank.
+#: One clock per process: several `Store` instances in the same process must not
+#: contradict each other, and a backwards jump hits the whole process, not one database.
 _UHR = _Uhr()
 
 
 def jetzt() -> int:
-    """Aktuelle Zeit (Unix-Sekunden), die nie rückwärts läuft — s. `_Uhr`."""
+    """Current time (Unix seconds) that never runs backwards — see `_Uhr`."""
     return _UHR.jetzt()
 
 
-#: Längste Frist, nach der `gc` alte Login-Versuche löscht (Sekunden): zehn Jahre wie
-#: `audit_retention_days`. Die Grenze ist kein Vorschlag für die Aufbewahrung — die Sperre sieht
-#: ohnehin nur ihr Fenster —, sondern hält die Zahl im Bereich, den SQLite rechnen kann.
+#: Longest age after which `gc` deletes old login attempts (seconds): ten years like
+#: `audit_retention_days`. The limit is not a recommendation for retention — the lockout sees
+#: only its window anyway —, but keeps the number within the range SQLite can compute.
 VERSUCHSFRIST_MAX_SEK = 3660 * 86400
 
 
 def versuchsfrist(sekunden) -> int:
-    """`attempts_older_than_sec` von `gc` prüfen — BEVOR irgendetwas gelöscht wird.
+    """Check `attempts_older_than_sec` of `gc` — BEFORE anything is deleted.
 
-    Ohne Grenze brach ±10**20 mit `OverflowError` ab, als Sitzungen, Flows, Tokens und Unlocks
-    schon weg waren; ein negativer Wert löschte jeden Fehlversuch, auch die im laufenden
-    Sperrfenster, und hob damit jede Kontosperre auf. 0 bleibt erlaubt: der dokumentierte Weg,
-    alle Fehlversuche zu räumen. `True` ist keine Frist (hiesse eine Sekunde). `ValueError`, wenn
-    der Wert nicht passt."""
+    Without a limit, ±10**20 aborted with `OverflowError` after sessions, flows, tokens and unlocks
+    were already gone; a negative value deleted every failed attempt, including those in the running
+    lockout window, and thereby lifted every account lockout. 0 stays allowed: the documented way
+    to clear all failed attempts. `True` is not an age (it would mean one second). `ValueError` if
+    the value does not fit."""
     try:
         if isinstance(sekunden, bool):
             raise ValueError
         zahl = int(sekunden)
     except (TypeError, ValueError, OverflowError):
-        raise ValueError(f"attempts_older_than_sec={sekunden!r} ist keine ganze Zahl von Sekunden.") from None
+        raise ValueError(f"attempts_older_than_sec={sekunden!r} is not a whole number of seconds.") from None
     if not 0 <= zahl <= VERSUCHSFRIST_MAX_SEK:
-        raise ValueError(f"attempts_older_than_sec={zahl} liegt ausserhalb von 0…{VERSUCHSFRIST_MAX_SEK} "
-                         "(Sekunden). 0 räumt alle Fehlversuche.")
+        raise ValueError(f"attempts_older_than_sec={zahl} is outside 0…{VERSUCHSFRIST_MAX_SEK} "
+                         "(seconds). 0 clears all failed attempts.")
     return zahl
 
 
@@ -628,24 +630,24 @@ def _now() -> int:
 
 
 def ersatzname(user_id) -> str:
-    """Wer ein gelöschtes Konto im Audit-Log vertritt (H-13): `gelöscht#<id>`.
+    """Who represents a deleted account in the audit log (H-13): `deleted#<id>` (up to 0.24.x `gelöscht#<id>`).
 
-    Eine Stelle für das Format — jeder Löschweg schreibt seine Schlusszeile darunter, auch
-    einer, der das Konto schon nicht mehr vorfindet (sonst stünde dort wieder der Klarname)."""
-    return f"gelöscht#{int(user_id)}"
+    One place for the format — every deletion path writes its closing line under it, even
+    one that no longer finds the account (otherwise the clear name would appear there again)."""
+    return f"{_vokabular.ERSATZ_PRAEFIX}{int(user_id)}"
 
 
-#: Schlüssel im Payload eines Adresswechsel-Links bis 0.21.x und ihr englischer Ersatz (Schema 12).
+#: Keys in the payload of an address-change link up to 0.21.x and their English replacement (schema 12).
 _PAYLOAD_SCHLUESSEL_ALT = {"email_change": {"alt": "old"}}
 
 
 def payload_lesen(purpose, text) -> Optional[dict]:
-    """Der Payload eines Einmal-Tokens als Dict — mit englischen Schlüsseln (Schema 12).
+    """The payload of a one-time token as a dict — with English keys (schema 12).
 
-    Ein Adresswechsel-Link trug bis 0.21.x `{"alt": <bisherige Adresse>}`, seit 0.22.0
-    `{"old": …}`. Ein alter Schlüssel wird abgebildet, auch wenn die Migration ihn nicht mehr
-    erreicht hat — eine ältere Fassung, die nach einem Rückschritt einen Link ausstellte, schreibt
-    ihn wieder so. Ein Schlüssel, der schon englisch dasteht, gewinnt. `None` ohne Payload."""
+    An address-change link carried `{"alt": <previous address>}` up to 0.21.x, and
+    `{"old": …}` since 0.22.0. An old key is mapped, even if the migration has not
+    reached it — an older version that issued a link after a rollback writes
+    it that way again. A key that is already English wins. `None` without a payload."""
     if not text:
         return None
     daten = json.loads(text)
@@ -657,43 +659,43 @@ def payload_lesen(purpose, text) -> Optional[dict]:
 
 
 class Store:
-    #: Rechte für eine NEU angelegte Datenbank. Hier stehen Passwort-Hashes, TOTP-Geheimnisse
-    #: und E-Mail-Adressen; auf einem geteilten Host konnte sie bis 0.18.0 jeder lesen (0644,
-    #: je nach umask). Bei einer bestehenden Datei wird nichts umgestellt — wer bewusst eine
-    #: Gruppe freigegeben hat, soll das behalten —, aber es gibt eine Warnung.
+    #: Permissions for a NEWLY created database. It holds password hashes, TOTP secrets
+    #: and email addresses; on a shared host anyone could read it up to 0.18.0 (0644,
+    #: depending on umask). Nothing is changed on an existing file — whoever deliberately
+    #: released a group should keep that —, but there is a warning.
     DATEIRECHTE = 0o600
 
     def __init__(self, db_path: str):
         neu = db_path not in (":memory:", "") and not os.path.exists(db_path)
         if neu:
-            # Die Datei entsteht direkt mit engen Rechten. Ein chmod NACH dem Verbinden hätte
-            # ein Zeitfenster, in dem sie offen dasteht — und genau in dem Moment schreibt
-            # SQLite das Schema hinein.
+            # The file is created directly with narrow permissions. A chmod AFTER connecting would have
+            # a window in which it stands open — and that is exactly when
+            # SQLite writes the schema into it.
             try:
                 os.close(os.open(db_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, self.DATEIRECHTE))
             except OSError:
-                neu = False                      # Verzeichnis fehlt o.ä. — sqlite3 meldet es gleich
+                neu = False                      # directory missing or similar — sqlite3 reports it right away
         self.db = sqlite3.connect(db_path, check_same_thread=False,
                                   timeout=self.BUSY_TIMEOUT_MS / 1000)
         self.db.row_factory = sqlite3.Row
-        # Ausdrücklich, nicht als stille Vorgabe von Pythons `sqlite3` (5 s): Der Wert entscheidet,
-        # ob ein zweiter Schreiber — ein weiterer Worker, `tinysesam` auf der Kommandozeile, ein
-        # WAL-Checkpoint, eine laufende Sicherung — wartet oder mit „database is locked" eine
-        # Anmeldung als 500 abbricht (B6-11). Das PRAGMA wiederholt den Wert, damit er an der
-        # Verbindung selbst ablesbar ist, egal wie sie geöffnet wurde.
+        # Explicitly, not as the silent default of Python's `sqlite3` (5 s): the value decides
+        # whether a second writer — another worker, `tinysesam` on the command line, a
+        # WAL checkpoint, a running backup — waits or aborts a login with "database is locked"
+        # as a 500 (B6-11). The PRAGMA repeats the value so that it can be read off
+        # the connection itself, no matter how it was opened.
         self.db.execute(f"PRAGMA busy_timeout={int(self.BUSY_TIMEOUT_MS)}")
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.execute("PRAGMA foreign_keys=ON")
-        # Gelöschtes wird überschrieben, nicht nur freigegeben: Ein ersetztes Klartext-Geheimnis
-        # (vor der Verschlüsselung, H-14/H-15) oder ein gelöschtes Konto bliebe sonst in freien
-        # Seiten der Datei — und damit in jeder Sicherung — lesbar, je nach SQLite-Bau.
+        # Deleted data is overwritten, not just freed: a replaced plaintext secret
+        # (before encryption, H-14/H-15) or a deleted account would otherwise remain readable in free
+        # pages of the file — and thereby in every backup — depending on the SQLite build.
         self.db.execute("PRAGMA secure_delete=ON")
-        # Der Zähl-Topf als SQL-Funktion — NUR für Abfragen dieser Verbindung (`audit_anonymisieren`),
-        # nie in Schema, Trigger oder Index: Dort bräche sie jeden Schreiber ohne sie (`_trigger_sql`).
+        # The counting bucket as an SQL function — ONLY for queries of this connection (`audit_anonymisieren`),
+        # never in schema, trigger or index: there it would break every writer without it (`_trigger_sql`).
         self.db.create_function("tinysesam_kennung", 1, _kennung_sql, deterministic=True)
         self._lock = threading.Lock()
-        self._uhr_gesichert: Optional[float] = None   # monotone Zeit des letzten gesicherten Uhrstands
-        self._geschrieben: Optional[float] = None     # monotone Zeit des letzten erfolgreichen Commits
+        self._uhr_gesichert: Optional[float] = None   # monotonic time of the last saved clock state
+        self._geschrieben: Optional[float] = None     # monotonic time of the last successful commit
         with self._lock:
             self.db.executescript(SCHEMA)
             self.db.commit()
@@ -701,17 +703,17 @@ class Store:
         self._dateirechte_pruefen(db_path, neu)
         _UHR.mindestens(self._juengster_zeitstempel())
 
-    #: Wie lange eine Anfrage auf eine gesperrte Datenbank wartet, bevor sie aufgibt (ms).
-    #: Doppelt so lang wie Pythons Vorgabe: Ein Checkpoint oder eine Sicherung auf langsamem
-    #: Speicher (SD-Karte, Netzlaufwerk) dauert länger als 5 s, und ein abgebrochener Login
-    #: ist teurer als ein langsamer. Länger nicht — der Worker-Thread hängt so lange fest.
+    #: How long a request waits for a locked database before giving up (ms).
+    #: Twice Python's default: a checkpoint or a backup on slow
+    #: storage (SD card, network drive) takes longer than 5 s, and an aborted login
+    #: is more expensive than a slow one. No longer — the worker thread is stuck for that long.
     BUSY_TIMEOUT_MS = 10_000
 
     def _juengster_zeitstempel(self) -> int:
-        """Der jüngste Ereignis-Zeitstempel der Datenbank — der Stand der Uhr über einen Neustart.
+        """The most recent event timestamp of the database — the clock state across a restart.
 
-        Nur Zeitpunkte, zu denen etwas GESCHAH (angelegt, protokolliert), keine Fristen: ein
-        `expires_at` liegt planmässig in der Zukunft und würde die Uhr vorstellen."""
+        Only points in time at which something HAPPENED (created, logged), no deadlines: an
+        `expires_at` is in the future by design and would set the clock ahead."""
         abfragen = ("SELECT MAX(created_at) AS t FROM session",
                     "SELECT MAX(created_at) AS t FROM magic_token",
                     "SELECT ts AS t FROM audit ORDER BY id DESC LIMIT 1",
@@ -728,11 +730,11 @@ class Store:
         return max(werte, default=0)
 
     def _dateirechte_pruefen(self, db_path: str, neu: bool):
-        """WAL und SHM tragen dieselben Daten wie die Datenbank — sie bekommen dieselben Rechte.
+        """WAL and SHM carry the same data as the database — they get the same permissions.
 
-        Die Hauptdatei selbst wird nur bei einer bestehenden Installation beurteilt, nicht
-        umgeschrieben: eine bewusste Gruppenfreigabe ist eine Entscheidung des Betreibers, keine
-        Lücke. Still bleibt sie trotzdem nicht."""
+        The main file itself is only assessed on an existing installation, not
+        rewritten: a deliberate group release is a decision of the operator, not a
+        gap. It still does not stay silent."""
         if db_path in (":memory:", ""):
             return
         try:
@@ -745,136 +747,148 @@ class Store:
                 if os.path.exists(pfad) and stat.S_IMODE(os.stat(pfad).st_mode) != modus:
                     os.chmod(pfad, modus)
             except OSError:
-                pass                              # Dateisystem ohne Rechte (Windows, manche Mounts)
+                pass                              # file system without permissions (Windows, some mounts)
         if not neu and modus & 0o077:
             logging.getLogger("tinysesam").warning(
-                "Die Datenbank %s ist für andere Konten lesbar (%o). Darin stehen Passwort-Hashes "
-                "und TOTP-Geheimnisse. Enger stellen: chmod 600 %s", db_path, modus, db_path)
+                "The database %s is readable by other accounts (%o). It contains password hashes "
+                "and TOTP secrets. Tighten it: chmod 600 %s", db_path, modus, db_path)
 
-    #: Stand des Schemas. Wird bei jeder Änderung an SCHEMA/_migrate() um eins erhöht.
+    #: State of the schema. Raised by one with every change to SCHEMA/_migrate().
     #:
-    #: 1 — bis 0.17.x (kein Stempel; wird beim ersten Öffnen nachgetragen)
-    #: 2 — 0.18.0: `session.token` → `session.token_hash` (sha256 statt Klartext)
-    #: 3 — 0.18.0: `totp_cred.last_step` (ein TOTP-Code gilt genau einmal)
-    #: 4 — 0.18.0: `resource_unlock.token` trägt den sha256 statt des Klartexts
-    #: 5 — `users.email_verified`: der Beleg für die Adresse, getrennt von der Adresse selbst
-    #: 6 — `oidc_grant`: Freigabe je Anwendung (T-14)
-    #: 7 — `api_key.kind`: Automaten- und Menschen-Keys (R6-5)
-    #: 8 — `users.first_login_at`, `users.mfa_enroll_until` (R3-1) — Stand von 0.19.0
-    #: 9 — `federated_identity`: stabile Verzeichnis-Kennungen für LDAP/SAML (F-11)
-    #: 10 — `users.topf_name`/`topf_mail` mit Index und Triggern, Indizes für die Suche nach Name
-    #:      und Adresse (NOCASE); Bestand: Sperren aus dem Panel auf den Betreiber-Vermerk
-    #:      (`disabled=2`), Adressen offener Registrierungen ohne Beleg (`_migrate`)
-    #: 11 — `fehlserie`: Fehlversuche in Folge je Kennung (B2-6); `users.is_admin=2` heisst
-    #:      „vom Identity Provider vergeben" (H-5) — die Spalte selbst bleibt, wie sie ist;
-    #:      `users.is_owner` (Owner); `session.zuletzt` (Inaktivitäts-Timeout, F-05);
-    #:      `session.andere_beenden` (Grenze d); `oidc_sitzung` (Refresh-Token, 4a);
-    #:      `users.idp_bestaetigt_at` (API-Keys folgen dem IdP, Fund 8); Trigger
-    #:      `trg_users_kennung_insert`/`_update`: Name und Adresse sind EIN Kennungsraum, von der
-    #:      Datenbank erzwungen (G12c; angelegt bei jedem Start, nicht am Stempel);
-    #:      `users.name_versuch_ab`/`mail_versuch_ab`/`name_audit_ab`/`mail_audit_ab`: ab wann eine
-    #:      Kennung dem Konto gehört (G2, NULL im Bestand), dazu die Nachrechnen-Trigger, die sie bei
-    #:      einem fremden Schreiber heben; `federated_identity.name_topf`: der Name im Verzeichnis
-    #:      (G5); `login_attempt.offen`: eine Vorbuchung, deren Ausgang noch offen ist (G9). Alles
-    #:      davon additiv und bei jedem Start idempotent — Stand von 0.21.0.
-    #: 12 — 0.22.0: gespeicherte Werte der öffentlichen Oberfläche englisch (PO-Entscheid
-    #:      2026-09-27): `api_key.kind` `automat`/`mensch` → `automation`/`human` (bei JEDEM Start —
-    #:      für Keys, die eine ältere Fassung nach einem Rückschritt ausgestellt hat), im Payload
-    #:      offener Adresswechsel-Links `alt` → `old` (beim Sprung auf 12; `_werte_englisch`).
-    #:      Gelesen wird ein alter Wert trotzdem richtig (`KEY_ARTEN_ALT`, `payload_lesen`). Keine
-    #:      Spalte ändert sich. Der Stempel steigt, weil eine ältere Fassung die neuen Werte ANDERS
-    #:      liest: 0.21.x hält einen `human`-Key für einen Automaten-Key (gilt ohne Sitzung). Sie
-    #:      öffnet die Datei trotzdem, meldet aber beim Start die neuere Schema-Version — Rückweg
-    #:      mit SQL in docs/BETRIEB.md.
-    #: 13 — `gate_abgemeldet` (nur von einer Anwendung abgemeldet, T-22) und `oidc_id_token` (das
-    #:      ID-Token als Abmeldehinweis für den Provider, verschlüsselt). Additiv; eine ältere Fassung
-    #:      lässt beide Tabellen liegen, dreht sie beim Rotieren einer Sitzung aber nicht mit — die
-    #:      Zeilen fallen dann mit der alten Sitzung weg (Abmeldung „nur hier“ vergessen, Provider-
-    #:      Logout ohne Hinweis), mehr nicht.
-    #: 14 — `gate_link`: Verbindung eines App-Hosts zur zentralen Sitzung (Code-Austausch, T-26).
-    #:      Additiv; eine ältere Fassung lässt die Tabelle liegen und dreht sie beim Rotieren nicht mit —
-    #:      der App-Host verliert dann seine Verbindung und holt sich über den Code-Austausch eine neue.
-    SCHEMA_VERSION = 14
+    #: 1 — up to 0.17.x (no stamp; added on first opening)
+    #: 2 — 0.18.0: `session.token` → `session.token_hash` (sha256 instead of plaintext)
+    #: 3 — 0.18.0: `totp_cred.last_step` (a TOTP code is valid exactly once)
+    #: 4 — 0.18.0: `resource_unlock.token` carries the sha256 instead of the plaintext
+    #: 5 — `users.email_verified`: the proof for the address, separate from the address itself
+    #: 6 — `oidc_grant`: approval per application (T-14)
+    #: 7 — `api_key.kind`: automation and human keys (R6-5)
+    #: 8 — `users.first_login_at`, `users.mfa_enroll_until` (R3-1) — state of 0.19.0
+    #: 9 — `federated_identity`: stable directory identifiers for LDAP/SAML (F-11)
+    #: 10 — `users.topf_name`/`topf_mail` with index and triggers, indexes for the search by name
+    #:      and address (NOCASE); existing data: lockouts from the panel to the operator mark
+    #:      (`disabled=2`), addresses of open sign-ups without proof (`_migrate`)
+    #: 11 — `fehlserie`: consecutive failed attempts per identifier (B2-6); `users.is_admin=2` means
+    #:      "granted by the identity provider" (H-5) — the column itself stays as it is;
+    #:      `users.is_owner` (owner); `session.zuletzt` (inactivity timeout, F-05);
+    #:      `session.andere_beenden` (limit d); `oidc_sitzung` (refresh token, 4a);
+    #:      `users.idp_bestaetigt_at` (API keys follow the IdP, finding 8); triggers
+    #:      `trg_users_kennung_insert`/`_update`: name and address are ONE identifier space, enforced
+    #:      by the database (G12c; created on every start, not at the stamp);
+    #:      `users.name_versuch_ab`/`mail_versuch_ab`/`name_audit_ab`/`mail_audit_ab`: from when an
+    #:      identifier belongs to the account (G2, NULL in existing data), plus the recompute triggers that raise them on
+    #:      a foreign writer; `federated_identity.name_topf`: the name in the directory
+    #:      (G5); `login_attempt.offen`: a pre-booking whose outcome is still open (G9). All
+    #:      of it additive and idempotent on every start — state of 0.21.0.
+    #: 12 — 0.22.0: stored values of the public interface in English (PO decision
+    #:      2026-09-27): `api_key.kind` `automat`/`mensch` → `automation`/`human` (on EVERY start —
+    #:      for keys that an older version issued after a rollback), in the payload of
+    #:      open address-change links `alt` → `old` (on the jump to 12; `_werte_englisch`).
+    #:      An old value is still read correctly (`KEY_ARTEN_ALT`, `payload_lesen`). No
+    #:      column changes. The stamp rises because an older version reads the new values DIFFERENTLY:
+    #:      0.21.x takes a `human` key for an automation key (valid without a session). It
+    #:      still opens the file, but reports the newer schema version at start — way back
+    #:      with SQL in docs/OPERATIONS.md.
+    #: 13 — `gate_abgemeldet` (signed out of one application only, T-22) and `oidc_id_token` (the
+    #:      ID token as a sign-out hint for the provider, encrypted). Additive; an older version
+    #:      leaves both tables in place, but does not rotate them along when rotating a session — the
+    #:      rows then drop away with the old session (sign-out "here only" forgotten, provider
+    #:      logout without hint), nothing more.
+    #: 14 — `gate_link`: connection of an app host to the central session (code exchange, T-26).
+    #:      Additive; an older version leaves the table in place and does not rotate it along —
+    #:      the app host then loses its connection and fetches a new one via the code exchange.
+    #: 15 — the stored and logged key vocabulary in English (PO decision 2026-10-29,
+    #:      `Store._vokabular_englisch`, `tinysesam/_vokabular.py`): `audit.event` (`oidc_widerruf` →
+    #:      `oidc_revoked`, `ldap_kennung_gebunden` → `ldap_identifier_bound` …), the keys and tokens in
+    #:      `audit.detail` (`grund=kein_konto` → `reason=no_account` …), the replacement name in
+    #:      `audit.username` (`gelöscht#<id>` → `deleted#<id>`), `fehlserie.art`/`login_attempt.method`
+    #:      (`pin_folge` → `pin_chain`), and the message of the identifier triggers (`tinysesam: kennung
+    #:      vergeben` → `tinysesam: identifier taken`; replaced by `_trigger_setzen` on every start). No
+    #:      column changes. The stamp rises because an older version does not know the new values: it
+    #:      still opens the file and reports the newer schema version at start, shows the new event names
+    #:      as unknown (display only) — and does not recognise an address-change conflict
+    #:      (`on_confirmation=1`, `own_events`) or the counted lockout notice (`lockout_notice`) in a new row.
+    #:      Way back with SQL in docs/OPERATIONS.md. Read paths take the old and the new spelling.
+    SCHEMA_VERSION = 15
 
-    #: Die gespeicherten Werte bis 0.21.x und ihr englischer Ersatz (Schema 12). Die Migration
-    #: schreibt um, und wer liest, bildet einen alten Wert trotzdem ab: Eine ältere Fassung, die
-    #: nach einem Rückschritt auf derselben Datei lief, hat wieder alte Werte hinterlassen.
+    #: The stored values up to 0.21.x and their English replacement (schema 12). The migration
+    #: rewrites them, and whoever reads still maps an old value: an older version that ran
+    #: on the same file after a rollback has left old values behind again.
     KEY_ARTEN_ALT = {"automat": "automation", "mensch": "human"}
 
-    #: Ab diesem Schema-Stand sind `topf_name`/`topf_mail` mit der heutigen `norm_kennung`
-    #: gerechnet. Wer die Faltung in `norm_kennung` ändert, hebt `SCHEMA_VERSION` und setzt diesen
-    #: Wert gleich — sonst stünden die Töpfe des Bestands in der alten Faltung im Index, und
-    #: `konto_mit_topf` fände Namensvetter nicht mehr.
+    #: From this schema state on, `topf_name`/`topf_mail` are computed with today's `norm_kennung`.
+    #: Whoever changes the folding in `norm_kennung` raises `SCHEMA_VERSION` and sets this
+    #: value to match — otherwise the buckets of the existing data would stand in the old folding in the index, and
+    #: `konto_mit_topf` would no longer find namesakes.
     TOPF_SCHEMA = 10
 
     def _migrate(self):
-        """Additive Migrationen für bestehende DBs: fehlende Spalten nachrüsten (idempotent).
+        """Additive migrations for existing DBs: add missing columns (idempotent).
 
-        Am Ende steht `PRAGMA user_version` auf `SCHEMA_VERSION`. Bis 0.18.0 gab es diesen
-        Stempel nicht: Welchen Stand eine Datei hat, war nur an ihren Spaltennamen zu erraten —
-        und eine Datei aus einer NEUEREN Fassung öffnete eine ältere TinySesam-Version
-        stillschweigend, mit Tabellen, die sie nicht kennt. Der Stempel macht daraus eine
-        Ansage statt eines rätselhaften Verhaltens."""
+        At the end `PRAGMA user_version` is set to `SCHEMA_VERSION`. Up to 0.18.0 this stamp did
+        not exist: which state a file had could only be guessed from its column names —
+        and a file from a NEWER version was opened silently by an older TinySesam version,
+        with tables it does not know. The stamp turns that into an
+        announcement instead of puzzling behaviour."""
         adds = {
             "session": [("mfa_at", "INTEGER"), ("remember", "INTEGER NOT NULL DEFAULT 1"),
                         ("factors_done", "TEXT NOT NULL DEFAULT '[]'"),
-                        # NULL für Bestandssitzungen: gilt als `created_at` (F-05).
+                        # NULL for existing sessions: counts as `created_at` (F-05).
                         ("zuletzt", "INTEGER"),
                         ("andere_beenden", "INTEGER NOT NULL DEFAULT 0"),
                         ("bleiben_gewaehlt", "INTEGER NOT NULL DEFAULT 0"),
-                        # NULL = die aktuelle Sitzung; gesetzt nur für ein abgelöstes Token in der
-                        # Gnadenfrist nach dem Drehen (A-6).
+                        # NULL = the current session; set only for a superseded token in the
+                        # grace period after rotation (A-6).
                         ("nachfolger", "TEXT")],
             "totp_cred": [("last_step", "INTEGER")],
-            # Die client_id, an die ein Refresh-Token ging: Legt der Betreiber den Client beim
-            # Provider neu an, lehnt der jedes alte Token ab — das ist kein Nein zum Konto.
+            # The client_id to which a refresh token went: if the operator recreates the client at the
+            # provider, it rejects every old token — that is no "no" to the account.
             "oidc_sitzung": [("client_id", "TEXT"), ("erfolg_at", "INTEGER")],
-            # Bestandskeys gelten als Automaten-Keys: die engere Auslegung. Ein Key,
-            # der bisher Admin-Routen bedienen konnte, verliert das — genau das ist
-            # der Sinn von R6-5, und ein abgewiesener Aufruf hinterlässt eine Zeile.
+            # Existing keys count as automation keys: the narrower interpretation. A key
+            # that could previously serve admin routes loses that — exactly that is
+            # the point of R6-5, and a rejected call leaves a row.
             "api_key": [("kind", "TEXT NOT NULL DEFAULT 'automation'")],
-            # `DEFAULT 1` füllt jede Bestandszeile: Adressen, die vor dieser Spalte entstanden
-            # sind, behalten genau ihre bisherige Wirkung. Auf 0 kommt eine Adresse nur, wenn
-            # ein Aufrufer sie ausdrücklich ohne Beleg einträgt (OIDC ohne `email_verified`).
+            # `DEFAULT 1` fills every existing row: addresses that were created before this column
+            # keep exactly their previous effect. An address only gets 0 if
+            # a caller explicitly enters it without proof (OIDC without `email_verified`).
             "users": [("email_verified", "INTEGER NOT NULL DEFAULT 1"),
-                      # Beide NULL für Bestandskonten: Wer noch kein TOTP hat, soll es beim
-                      # nächsten Login einrichten können — der Riegel greift ab da (R3-1).
+                      # Both NULL for existing accounts: whoever has no TOTP yet should be able to set it up at
+                      # the next login — the latch applies from then on (R3-1).
                       ("first_login_at", "INTEGER"), ("mfa_enroll_until", "INTEGER"),
-                      # NULL = noch nicht gerechnet; weiter unten für den Bestand nachgetragen.
-                      # Ohne NOT NULL: Eine ältere Fassung (Rückschritt) legt Konten weiter an.
+                      # NULL = not yet computed; backfilled further below for existing data.
+                      # Without NOT NULL: an older version (rollback) keeps creating accounts.
                       ("topf_name", "TEXT"), ("topf_mail", "TEXT"),
-                      # 0 für den Bestand; wer Owner wird, entscheidet `Store._owner_nachziehen`.
+                      # 0 for existing data; who becomes owner is decided by `Store._owner_nachziehen`.
                       ("is_owner", "INTEGER NOT NULL DEFAULT 0"),
-                      # Bestand: unten für OIDC-Konten auf „jetzt" gesetzt (Fund 8).
+                      # Existing data: set to "now" below for OIDC accounts (finding 8).
                       ("idp_bestaetigt_at", "INTEGER"),
-                      # NULL für den Bestand: Grenze ist dann die Anlage, wie bis 2026-09-26 (G2).
-                      # Nicht „jetzt" nachtragen — die Kontoseite zeigte sonst nichts mehr von vor
-                      # dem Update, und eigene Fehlversuche blieben bis zum Fensterende stehen.
+                      # NULL for existing data: the limit is then the creation, as until 2026-09-26 (G2).
+                      # Do not backfill "now" — the account page would otherwise show nothing from before
+                      # the update, and own failed attempts would remain until the end of the window.
                       ("name_versuch_ab", "INTEGER"), ("mail_versuch_ab", "INTEGER"),
                       ("name_audit_ab", "INTEGER"), ("mail_audit_ab", "INTEGER"),
-                      # 0 für den Bestand; wer sich registriert oder selbst umbenannt hat, trägt
-                      # es unten einmal nach (`NAME_SELBST_NACHGETRAGEN`, G2-N).
+                      # 0 for existing data; whoever registered or renamed themselves backfills
+                      # it once below (`NAME_SELBST_NACHGETRAGEN`, G2-N).
                       ("name_selbst_gewaehlt", "INTEGER NOT NULL DEFAULT 0"),
-                      # NULL für den Bestand; wo die Herkunft belegt ist, unten einmal nachgetragen
-                      # (`NAME_QUELLE_NACHGETRAGEN`, Angriffsrunde 2026-09-26).
+                      # NULL for existing data; where the origin is proven, backfilled once below
+                      # (`NAME_QUELLE_NACHGETRAGEN`, attack round 2026-09-26).
                       ("name_quelle", "TEXT")],
-            # NULL: noch nie unter einem anderen Namen angemeldet (G5); entsteht beim nächsten Login.
+            # NULL: never logged in under a different name yet (G5); arises at the next login.
             "federated_identity": [("name_topf", "TEXT")],
-            # 0 für den Bestand: Jede vorhandene Zeile ist ein abgeschlossener Versuch (G9).
+            # 0 for existing data: every present row is a completed attempt (G9).
             "login_attempt": [("offen", "INTEGER NOT NULL DEFAULT 0")],
         }
-        # `_schreibend`, nicht nur `_lock`: Der Schluss-Commit unten nimmt DELETE und Stempel mit.
-        # Scheitert davor etwas, bliebe ohne Zurückrollen eine Transaktion auf der Verbindung
-        # offen (der AST-Wächter in tests/test_hardening2.py verlangt das für jeden Commit).
+        # `_schreibend`, not only `_lock`: the final commit below takes DELETE and stamp with it.
+        # If something fails before that, without a rollback a transaction would stay open on the
+        # connection (the AST guard in tests/test_hardening2.py demands this for every commit).
         with self._schreibend():
-            # `fehlserie` kam mit Schema 11 zunächst ohne Spalte `art` (nie veröffentlichter
-            # Zwischenstand). Eine solche Tabelle wird neu angelegt — sonst liefe jede Anmeldung auf
-            # einen 500. Die Serien darin gehen verloren; das ist der kleinere Schaden.
+            # `fehlserie` initially came with schema 11 without a column `art` (a never published
+            # intermediate state). Such a table is recreated — otherwise every login would end in
+            # a 500. The series in it are lost; that is the lesser harm.
             _fs = {r["name"] for r in self.db.execute("PRAGMA table_info(fehlserie)")}
             if _fs and "art" not in _fs:
                 ddl = re.search(r"CREATE TABLE IF NOT EXISTS fehlserie \(.*?\n\);", SCHEMA, re.S)
-                if ddl is None:     # steht in SCHEMA; fehlt sie dort, ist das ein Fehler hier
-                    raise RuntimeError("SCHEMA enthält keine Tabelle fehlserie")
+                if ddl is None:     # it is in SCHEMA; if it is missing there, that is an error here
+                    raise RuntimeError("SCHEMA contains no table fehlserie")
                 self.db.execute("DROP TABLE fehlserie")
                 self.db.execute(ddl.group(0))
             for table, cols in adds.items():
@@ -883,22 +897,22 @@ class Store:
                     if name not in have:
                         self.db.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
 
-            # Sitzungs-Tokens lagen bis 0.18.0 im Klartext in der Datei. Der Hash lässt sich aus
-            # dem Klartext ausrechnen — bestehende Anmeldungen überleben die Umstellung also, die
-            # Cookies bleiben gültig.
+            # Session tokens were stored in plaintext in the file up to 0.18.0. The hash can be computed from
+            # the plaintext — existing logins thus survive the switch, the
+            # cookies stay valid.
             #
-            # **In EINER Transaktion, mit BEGIN IMMEDIATE.** Die erste Fassung fuhr das
-            # `ALTER TABLE` allein: Pythons sqlite3 öffnet vor DDL keine Transaktion, der
-            # Umbenennung folgte also sofort ein Commit, und das Nachhashen lief getrennt. Ein
-            # Abbruch dazwischen (SIGKILL, OOM, Container-Neustart mitten im Upgrade) hinterliess
-            # eine Spalte `token_hash` **mit Klartext darin** — dauerhaft, denn die Bedingung
-            # unten wird nie wieder wahr, und der Stempel sagt danach „migriert". Genau das, was
-            # die Umstellung beseitigen soll, wäre für immer geblieben.
+            # **In ONE transaction, with BEGIN IMMEDIATE.** The first version ran the
+            # `ALTER TABLE` alone: Python's sqlite3 opens no transaction before DDL, so the
+            # rename was followed by an immediate commit, and the rehashing ran separately. An
+            # abort in between (SIGKILL, OOM, container restart in the middle of the upgrade) left
+            # a column `token_hash` **with plaintext in it** — permanently, because the condition
+            # below never becomes true again, and the stamp then says "migrated". Exactly what
+            # the switch is meant to remove would have remained forever.
             #
-            # `BEGIN IMMEDIATE` nimmt die Schreibsperre sofort. Das löst zugleich den zweiten
-            # Fall: Bei mehreren Prozessen (`uvicorn --workers N`) las Worker A die Spaltenliste,
-            # B migrierte fertig, A fuhr sein ALTER — und starb mit `no such column: "token"`.
-            # Jetzt wartet A auf die Sperre und sieht danach den fertigen Zustand.
+            # `BEGIN IMMEDIATE` takes the write lock immediately. That also solves the second
+            # case: with several processes (`uvicorn --workers N`), worker A read the column list,
+            # B finished migrating, A ran its ALTER — and died with `no such column: "token"`.
+            # Now A waits for the lock and afterwards sees the finished state.
             self.db.execute("BEGIN IMMEDIATE")
             try:
                 spalten = {r["name"] for r in self.db.execute("PRAGMA table_info(session)")}
@@ -917,24 +931,24 @@ class Store:
                 raise
             if zeilen:
                 logging.getLogger("tinysesam").info(
-                    "Sitzungstabelle migriert: %d Token gehasht, Anmeldungen bleiben gültig.",
+                    "Session table migrated: %d tokens hashed, sign-ins stay valid.",
                     len(zeilen))
 
-            # Freischaltungen aus der Zeit vor der Umstellung lassen sich nicht umrechnen: Aus
-            # dem Klartext wird der Hash, aus dem Hash nichts. Sie werden verworfen — betroffen
-            # sind nur offene Ressourcen-Freigaben, und die holt man sich mit dem Geheimnis in
-            # Sekunden zurück. Eine halb gehashte Tabelle wäre schlimmer.
+            # Unlocks from the time before the switch cannot be converted: the hash
+            # is made from the plaintext, nothing from the hash. They are discarded — only open
+            # resource approvals are affected, and those are fetched back with the secret in
+            # seconds. A half-hashed table would be worse.
             #
-            # Erkannt wird das am WERT, nicht am Schema-Stempel. Die erste Fassung fragte
-            # `0 < user_version < 4` — und traf damit genau den Fall nicht, für den sie
-            # geschrieben war: `user_version` kam selbst erst mit 0.18.0, eine Bestandsdatei aus
-            # 0.17.0 trägt dort die 0, und `0 < 0` ist falsch. Die Klartext-Einträge wären also
-            # liegengeblieben; sie hätten nie wieder gematcht (gesucht wird seitdem der Hash)
-            # und unbemerkt bis zu ihrem Ablauf Platz belegt. Der Test dazu steht in
-            # tests/test_bestandsdaten.py.
-            # Zwei Bedingungen, beide nötig: der Stempel sagt „diese Datei ist noch nicht durch"
-            # (und hält den Scan aus jedem weiteren Start heraus), der WERT sagt, welche Zeile
-            # wirklich Klartext ist. Der Stempel allein reichte nicht — siehe oben.
+            # This is detected by the VALUE, not by the schema stamp. The first version asked
+            # `0 < user_version < 4` — and thereby missed exactly the case it was
+            # written for: `user_version` itself only arrived with 0.18.0, an existing file from
+            # 0.17.0 carries 0 there, and `0 < 0` is false. The plaintext entries would therefore have
+            # remained; they would never have matched again (the hash is searched since then)
+            # and unnoticed would have occupied space until their expiry. The test for this is in
+            # tests/test_legacy_data.py.
+            # Two conditions, both necessary: the stamp says "this file has not been through yet"
+            # (and keeps the scan out of every further start), the VALUE says which row
+            # really is plaintext. The stamp alone was not enough — see above.
             vorhanden_vorab = int(self.db.execute("PRAGMA user_version").fetchone()[0] or 0)
             if vorhanden_vorab < self.SCHEMA_VERSION:
                 weg = self.db.execute(
@@ -942,28 +956,28 @@ class Store:
                     " OR token GLOB '*[^0-9a-f]*'").rowcount
                 if weg:
                     logging.getLogger("tinysesam").info(
-                        "%d Ressourcen-Freigaben verworfen (Token werden jetzt gehasht abgelegt).", weg)
+                        "%d resource approvals discarded (tokens are now stored hashed).", weg)
 
-            # Schema 10. Die Schritte laufen in derselben Transaktion wie der Stempel unten: Bricht
-            # der Start dazwischen ab, fehlt auch der Stempel, und der nächste Start fährt sie erneut
-            # (jeder Schritt ist wiederholbar). Die Bestandsschritte laufen bei JEDEM Start, nicht nur
-            # beim Sprung über den Stempel — für das, was ein älterer Schreiber seitdem hinterlassen
-            # haben kann (`_bestand_nachziehen`).
+            # Schema 10. The steps run in the same transaction as the stamp below: if
+            # the start aborts in between, the stamp is missing too, and the next start runs them again
+            # (every step is repeatable). The existing-data steps run on EVERY start, not only
+            # on the jump over the stamp — for what an older writer may have left behind
+            # since then (`_bestand_nachziehen`).
             ohne_topf = self.db.execute(
                 "SELECT * FROM users" + ("" if vorhanden_vorab < self.TOPF_SCHEMA else
                                          " WHERE topf_name IS NULL OR topf_mail IS NULL")).fetchall()
             if self.db.execute("SELECT 1 FROM setting WHERE key='idp_bestand_gesetzt'").fetchone() is None:
-                # Die Frist für die API-Keys eines OIDC-Kontos (Fund 8) beginnt für den Bestand
-                # mit dem Update — sonst ruhten nach dem Update sofort alle Keys, bis jeder sich
-                # einmal über den Provider angemeldet hat. Genau einmal: Liefe es bei jedem Start,
-                # schenkte jeder Neustart einem Konto ohne Bestätigung eine neue Frist.
+                # The deadline for the API keys of an OIDC account (finding 8) starts for existing data
+                # with the update — otherwise all keys would be dormant right after the update until everyone has
+                # signed in once via the provider. Exactly once: if it ran on every start,
+                # every restart would give an unconfirmed account a new deadline.
                 #
-                # Am Merker, nicht an „Spalte in diesem Lauf angelegt": Das ALTER ist sofort
-                # dauerhaft, dieses UPDATE erst mit dem Schluss-Commit. Ein Abbruch dazwischen
-                # (OOM, Neustart mitten im Update) hinterliess die Spalte ohne Stand, und kein
-                # Start holte ihn nach (Angriff auf die dritte Runde). Merker und Stand gehen im
-                # selben Commit. Hier und nicht direkt nach dem ALTER: Ein UPDATE öffnet in
-                # Pythons sqlite3 eine Transaktion, und das `BEGIN IMMEDIATE` oben schlüge fehl.
+                # Tied to the marker, not to "column created in this run": the ALTER is immediately
+                # permanent, this UPDATE only with the final commit. An abort in between
+                # (OOM, restart in the middle of the update) left the column without a value, and no
+                # start backfilled it (attack on the third round). Marker and value go in the
+                # same commit. Here and not directly after the ALTER: an UPDATE opens a
+                # transaction in Python's sqlite3, and the `BEGIN IMMEDIATE` above would fail.
                 self.db.execute("UPDATE users SET idp_bestaetigt_at=? WHERE idp_bestaetigt_at IS NULL "
                                 "AND id IN (SELECT user_id FROM oidc_identity)", (_now(),))
                 self.db.execute("INSERT OR REPLACE INTO setting(key, value) VALUES ('idp_bestand_gesetzt', ?)",
@@ -975,10 +989,10 @@ class Store:
                                (self.NAME_QUELLE_NACHGETRAGEN,)).fetchone() is None:
                 self._name_quelle_nachtragen()
             self._owner_nachziehen()
-            # Schema 12: die gespeicherten Werte englisch (s. `_werte_englisch`). Nur lesbar und
-            # Werte einer älteren Fassung darin: Das darf einen Start nicht verhindern, der bisher
-            # ging — gelesen werden die alten Werte ohnehin richtig. Ein Upgrade dagegen schreibt,
-            # wie jede Migration.
+            # Schema 12: the stored values in English (see `_werte_englisch`). Read-only and
+            # values of an older version in it: that must not prevent a start that worked
+            # before — the old values are read correctly anyway. An upgrade, on the other hand, writes,
+            # like every migration.
             try:
                 umgeschrieben = self._werte_englisch(links=vorhanden_vorab < 12)
             except sqlite3.OperationalError as e:
@@ -986,156 +1000,169 @@ class Store:
                     raise
                 umgeschrieben = 0
                 logging.getLogger("tinysesam").warning(
-                    "Werte einer älteren Fassung nicht auf die englischen Namen umgeschrieben (%s): "
-                    "Die Datenbank ist nicht schreibbar. Gelesen werden sie trotzdem richtig.", e)
+                    "Values of an older version not rewritten to the English names (%s): "
+                    "the database is not writable. They are still read correctly.", e)
             if umgeschrieben:
                 logging.getLogger("tinysesam").info(
-                    "%d gespeicherte Werte auf die englischen Namen umgeschrieben (Schema 12: "
-                    "API-Key-Arten, Adresswechsel-Links).", umgeschrieben)
+                    "%d stored values rewritten to the English names (schema 12: "
+                    "API key kinds, address-change links).", umgeschrieben)
+            # Schema 15: the audit log and the series kinds in English (see `_vokabular_englisch`). Only on
+            # the jump over the stamp: the audit log can be large, and a row that an older version writes
+            # afterwards is mapped by the read paths (`_vokabular`). An upgrade writes, like every
+            # migration — a read-only file with an old stamp already failed at the steps above.
+            if vorhanden_vorab < 15:
+                umgeschrieben = self._vokabular_englisch()
+                if umgeschrieben:
+                    logging.getLogger("tinysesam").info(
+                        "%d stored values rewritten to the English vocabulary (schema 15: audit events, "
+                        "keys and tokens in the audit details, replacement names, series kinds).",
+                        umgeschrieben)
             if vorhanden_vorab < 10:
                 self._bestand_nachziehen(True, ohne_topf)
             else:
                 try:
                     self._bestand_nachziehen(False, ohne_topf)
                 except sqlite3.OperationalError as e:
-                    # Wie beim Topf unten: Das darf einen Start nicht verhindern, der bisher ging.
-                    # In der Transaktion liegt bei diesem Stempel nur dieser Schritt.
+                    # As with the bucket below: this must not prevent a start that worked before.
+                    # With this stamp the transaction contains only this step.
                     self.db.rollback()
                     logging.getLogger("tinysesam").warning(
-                        "Bestandsschritte nicht nachgezogen (%s): Sperren aus dem Panel einer älteren "
-                        "Fassung tragen den Betreiber-Vermerk erst nach einem Start mit "
-                        "Schreibzugriff.", e)
+                        "Existing-data steps not applied (%s): lockouts from the panel of an older "
+                        "version only carry the operator marker after a start with "
+                        "write access.", e)
             try:
                 self._toepfe_schreiben(ohne_topf)
             except sqlite3.OperationalError:
-                # Nur lesbar (Volume schreibgeschützt eingehängt) und Zeilen eines fremden
-                # Schreibers ohne Topf: Das darf den Start nicht verhindern, der bisher auch ging —
-                # `konto_mit_topf` prüft solche Zeilen dann selbst (`_toepfe_nachtragen`). Ein
-                # Upgrade dagegen braucht die Töpfe, wie jede andere Migration ihre Spalten.
+                # Read-only (volume mounted read-only) and rows of a foreign
+                # writer without a bucket: this must not prevent the start, which worked before —
+                # `konto_mit_topf` then checks such rows itself (`_toepfe_nachtragen`). An
+                # upgrade, on the other hand, needs the buckets, like every other migration its columns.
                 if vorhanden_vorab < self.TOPF_SCHEMA:
                     raise
                 logging.getLogger("tinysesam").warning(
-                    "Zähl-Töpfe von %d Konto(en) nicht nachgetragen: Die Datenbank ist nicht "
-                    "schreibbar. Die Topf-Prüfung sieht sie trotzdem, nur langsamer.", len(ohne_topf))
+                    "Counting buckets of %d account(s) not filled in: the database is not "
+                    "writable. The bucket check still sees them, only more slowly.", len(ohne_topf))
 
-            # Eine Datei aus der Zukunft: Diese Fassung kennt ihre Tabellen nicht vollständig
-            # und würde beim Schreiben Lücken hinterlassen. Das ist kein Grund abzustürzen —
-            # aber ein sehr guter, es laut zu sagen.
+            # A file from the future: this version does not fully know its tables
+            # and would leave gaps when writing. That is no reason to crash —
+            # but a very good one to say so loudly.
             vorhanden = int(self.db.execute("PRAGMA user_version").fetchone()[0] or 0)
             if vorhanden > self.SCHEMA_VERSION:
                 logging.getLogger("tinysesam").warning(
-                    "Die Datenbank trägt Schema-Version %d, diese TinySesam-Fassung kennt nur %d. "
-                    "Sie stammt aus einer neueren Version — mit dieser hier zu schreiben kann "
-                    "Daten unvollständig lassen. Passende Version installieren oder die Datei "
-                    "aus einer Sicherung zurückspielen.", vorhanden, self.SCHEMA_VERSION)
+                    "The database carries schema version %d, this TinySesam version only knows %d. "
+                    "It comes from a newer version — writing with this one can leave "
+                    "data incomplete. Install the matching version or restore the file "
+                    "from a backup.", vorhanden, self.SCHEMA_VERSION)
             elif vorhanden != self.SCHEMA_VERSION:
                 self.db.execute(f"PRAGMA user_version = {self.SCHEMA_VERSION}")
-            # E-Mail eindeutig (Login-Kennung) — partiell, damit Konten ohne E-Mail erlaubt bleiben.
-            # Bestandsdaten mit Dubletten: Index kann nicht angelegt werden → laut sagen, nicht crashen.
+            # Email unique (login identifier) — partial, so that accounts without an email stay allowed.
+            # Existing data with duplicates: the index cannot be created → say so loudly, do not crash.
             try:
                 self.db.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_users_email "
                                 "ON users(lower(email)) WHERE email IS NOT NULL AND email <> ''")
             except sqlite3.IntegrityError:
                 logging.getLogger("tinysesam").warning(
-                    "users.email enthält Dubletten — Eindeutigkeits-Index nicht angelegt. "
-                    "Doppelte Adressen bereinigen, sonst ist Login per E-Mail mehrdeutig.")
-            # Schema 10: Jede Suche nach einer Kennung läuft über einen Index, keine durch die ganze
-            # Tabelle. Mit einem Scan hing die Laufzeit einer Registrierung davon ab, ob (und wie
-            # früh) die Adresse gefunden wird — bei vielen Konten ein Orakel für vergebene Adressen
-            # (R4-03). `get_user_by_name`/`get_user_by_email` vergleichen mit NOCASE; der
-            # UNIQUE-Index auf `username` (BINARY) und `ux_users_email` (`lower(email)`) passen
-            # dazu nicht, SQLite las deshalb jede Zeile.
-            # Der Name im Verzeichnis (G5) zählt im Kennungsraum mit (Prüfrunde 2026-09-27) — die
-            # Kennungs-Trigger fragen bei jeder Anlage und jedem Umbenennen nach ihm.
+                    "users.email contains duplicates — uniqueness index not created. "
+                    "Clean up duplicate addresses, otherwise login by e-mail is ambiguous.")
+            # Schema 10: every lookup of an identifier goes through an index, none through the whole
+            # table. With a scan, the runtime of a registration depended on whether (and how
+            # early) the address is found — with many accounts an oracle for taken addresses
+            # (R4-03). `get_user_by_name`/`get_user_by_email` compare with NOCASE; the
+            # UNIQUE index on `username` (BINARY) and `ux_users_email` (`lower(email)`) do not fit
+            # that, so SQLite read every row.
+            # The name in the directory (G5) counts in the identifier space (audit round 2026-09-27) — the
+            # identifier triggers ask for it on every creation and every rename.
             for sql in ("CREATE INDEX IF NOT EXISTS ix_users_topf_name ON users(topf_name)",
                         "CREATE INDEX IF NOT EXISTS ix_users_topf_mail ON users(topf_mail)",
                         "CREATE INDEX IF NOT EXISTS ix_fed_name_topf ON federated_identity(name_topf)",
                         "CREATE INDEX IF NOT EXISTS ix_users_name_nocase ON users(username COLLATE NOCASE)",
                         "CREATE INDEX IF NOT EXISTS ix_users_email_nocase ON users(email COLLATE NOCASE)"):
                 self.db.execute(sql)
-            # Die Trigger über die Töpfe (Nachrechnen und Kennungsraum, s. `_trigger_sql`). Eine
-            # Datei, auf der sie sich nicht anlegen lassen (nur lesbar), darf den Start nicht
-            # verhindern: Dort entsteht ohnehin kein neues Konto, und die Vorprüfung
-            # (`identifier_taken`) bleibt. Gesagt wird es trotzdem.
+            # The triggers over the buckets (recompute and identifier space, see `_trigger_sql`). A
+            # file on which they cannot be created (read-only) must not prevent the start:
+            # no new account is created there anyway, and the pre-check
+            # (`identifier_taken`) remains. It is still reported.
             try:
                 self._trigger_setzen()
             except sqlite3.OperationalError as e:
                 logging.getLogger("tinysesam").warning(
-                    "Trigger über Benutzername und Adresse nicht angelegt (%s): Die Datenbank "
-                    "erzwingt den gemeinsamen Kennungsraum erst nach einem Start mit "
-                    "Schreibzugriff.", e)
+                    "Triggers over username and address not created (%s): the database "
+                    "only enforces the shared identifier space after a start with "
+                    "write access.", e)
             self.db.commit()
 
-    #: Meldung der Kennungs-Trigger (`sqlite3.IntegrityError`): Name oder Adresse fällt in den
-    #: Zähl-Topf eines ANDEREN Kontos. Aufrufer erkennen den Fall an `IntegrityError`, nicht am Text.
-    KENNUNG_VERGEBEN = "tinysesam: kennung vergeben"
+    #: Message of the identifier triggers (`sqlite3.IntegrityError`): name or address falls into the
+    #: counting bucket of ANOTHER account. Callers recognise the case by `IntegrityError`, not by the text.
+    #: Up to 0.24.x the text was `tinysesam: kennung vergeben`; `_trigger_setzen` replaces the trigger
+    #: because its definition differs (schema 15).
+    KENNUNG_VERGEBEN = "tinysesam: identifier taken"
 
-    #: Die Wasserlinien einer Kennung (G2) als SQL-Ausdruck: die höchste Id, die es JETZT gibt.
-    #: Alles, was danach entsteht, hat eine grössere (`AUTOINCREMENT` vergibt keine Id zweimal).
-    #: Nur eingebaute Funktionen — derselbe Grund wie bei den Triggern.
+    #: The watermarks of an identifier (G2) as an SQL expression: the highest id that exists NOW.
+    #: Everything created afterwards has a larger one (`AUTOINCREMENT` never issues an id twice).
+    #: Only built-in functions — same reason as for the triggers.
     WL_VERSUCH = "(SELECT COALESCE(MAX(id), 0) FROM login_attempt)"
     WL_AUDIT = "(SELECT COALESCE(MAX(id), 0) FROM audit)"
 
     @classmethod
     def _trigger_sql(cls) -> list:
-        """Die Trigger auf `users` als `(name, CREATE-Anweisung)`. Nur eingebaute SQL-Funktionen:
-        Auch das sqlite3-Werkzeug und ältere Fassungen müssen weiter schreiben können (eine
-        Python-Funktion im Trigger oder im Index-Ausdruck bräche jeden Schreiber ohne sie mit
-        „no such function").
+        """The triggers on `users` as `(name, CREATE statement)`. Only built-in SQL functions:
+        the sqlite3 tool and older versions must still be able to write (a
+        Python function in the trigger or in the index expression would break every writer without it with
+        "no such function").
 
-        **Nachrechnen** (`trg_users_topf_name`/`_mail`, Schema 10): Ein anderer Schreiber ändert
-        Name oder Adresse, ohne den Topf mitzuführen (eine ältere Fassung nach einem Rückschritt,
-        die Umbenennung von Hand, zu der der Kollisions-Wächter beim Start rät): Dann ist der Topf
-        veraltet — und NULL heisst „nachrechnen". Nur wenn sich der Wert WIRKLICH ändert: Wer
-        dieselbe Adresse erneut setzt, behält seinen Topf (bis 2026-09-26 stand er danach bis zum
-        nächsten Nachtrag auf NULL, und die Kennungs-Trigger sahen das Konto so lange nicht).
-        Derselbe Trigger hebt die Wasserlinien der Kennung (`name_versuch_ab` … , G2) auf den
-        aktuellen Stand: Ein fremder Schreiber hat eine neue Kennung vergeben, und was vorher unter
-        ihr stand, gehörte nicht diesem Konto. Das ist die strengere Richtung — auch bei einer
-        Umbenennung, die nur die Schreibweise ändert. Die eigenen Schreiber lösen ihn nie aus
-        (`_kennung_setzen`); sonst verschöbe schon `B1` → `b1` die Grenze.
+        **Recompute** (`trg_users_topf_name`/`_mail`, schema 10): another writer changes
+        name or address without carrying the bucket along (an older version after a rollback,
+        the manual rename that the collision guard recommends at start): then the bucket is
+        stale — and NULL means "recompute". Only if the value REALLY changes: whoever sets
+        the same address again keeps their bucket (until 2026-09-26 it stood at NULL afterwards until the
+        next backfill, and the identifier triggers did not see the account for that long).
+        The same trigger raises the watermarks of the identifier (`name_versuch_ab` … , G2) to the
+        current state: a foreign writer has assigned a new identifier, and what stood before under
+        it did not belong to this account. That is the stricter direction — also for a
+        rename that only changes the spelling. The own writers never fire it
+        (`_kennung_setzen`); otherwise even `B1` → `b1` would shift the limit.
 
-        **Wechsel mit Topf** (`trg_users_wechsel_name`/`_mail`, Prüfrunde 2026-09-27): Ein fremder
-        Schreiber, der den Topf SELBST mitführt (`store.set_email` aus 0.20.1 setzt Adresse und
-        `topf_mail` in einer Anweisung), löst den Nachrechnen-Trigger nicht aus — der Topf ändert
-        sich ja. Bis dahin blieb die Wasserlinie dann auf dem Stand der ALTEN Kennung, und die erste
-        volle Anmeldung räumte die Fehlversuche, die ein Fremder vor dem Wechsel unter der neuen
-        gemacht hatte, auch aus der Drosselung seiner IP. Dieser Trigger hebt sie, wenn in derselben
-        Anweisung der Wert UND der Topf wechseln (auf einen Topf, nicht auf NULL). Der Nachtrag
-        (`_toepfe_schreiben`: nur der Topf) feuert ihn nicht, `B1` → `b1` in `_kennung_setzen` auch
-        nicht (dort steht der Topf zwischendurch auf NULL); bei einem echten Wechsel in
-        `_kennung_setzen` setzt er denselben Stand, den die Anweisung schon geschrieben hat.
+        **Change with bucket** (`trg_users_wechsel_name`/`_mail`, audit round 2026-09-27): a foreign
+        writer that carries the bucket ITSELF (`store.set_email` from 0.20.1 sets address and
+        `topf_mail` in one statement) does not fire the recompute trigger — the bucket does
+        change. Until then the watermark stayed at the state of the OLD identifier, and the first
+        full sign-in cleared the failed attempts that a stranger had made under the new one before the change,
+        also from the throttling of his IP. This trigger raises them when, in the same
+        statement, the value AND the bucket change (to a bucket, not to NULL). The backfill
+        (`_toepfe_schreiben`: only the bucket) does not fire it, nor does `B1` → `b1` in `_kennung_setzen`
+        (there the bucket is at NULL in between); on a real change in
+        `_kennung_setzen` it sets the same state that the statement has already written.
 
-        **Kennungsraum** (`trg_users_kennung_insert`/`_update`, G12c): Benutzername und Adresse
-        sind EIN Raum (`find_user` sucht in beiden), und der Zähl-Topf faltet gröber als NOCASE
-        (`Alice`/`alice`, `Émile`/`émile`, Vollbreite, Unicode- und A-Label-Domain). Die Datenbank
-        kannte bis dahin nur `UNIQUE(username)` (BINARY) und `ux_users_email` — Prüfung
-        (`identifier_taken`) und Schreiben waren getrennt, und zwei gleichzeitige Registrierungen
-        derselben Kennung (eine als Name, eine als Adresse) kamen beide durch. Jetzt weist die
-        Datenbank einen NEU vergebenen Topf ab, der schon Name oder Adresse eines anderen Kontos
-        ist — in derselben Anweisung wie das Schreiben, unter dem einen Schreiber von SQLite.
-        Warum jedes Teil:
+        **Identifier space** (`trg_users_kennung_insert`/`_update`, G12c): username and address
+        are ONE space (`find_user` searches both), and the counting bucket folds more coarsely than NOCASE
+        (`Alice`/`alice`, `Émile`/`émile`, full-width, Unicode and A-label domain). Until then the database
+        knew only `UNIQUE(username)` (BINARY) and `ux_users_email` — check
+        (`identifier_taken`) and write were separate, and two simultaneous registrations
+        of the same identifier (one as name, one as address) both got through. Now the
+        database rejects a NEWLY assigned bucket that is already the name or address of another account
+        — in the same statement as the write, under SQLite's single writer.
+        Why each part:
 
-        * `UPDATE OF username, email`, nicht `OF topf_*`: Der Nachtrag (`_toepfe_schreiben`)
-          setzt nur Töpfe und prüft deshalb nicht. Ein Bestand mit Kollision bricht den Start nicht.
-        * `NEW IS NOT OLD`: Geprüft wird nur ein neu vergebener Topf. Das erneute Setzen der
-          eigenen Adresse und ein rohes UPDATE (Topf bleibt stehen, der Trigger oben setzt ihn
-          danach auf NULL) gehen durch — eine Kollision im Bestand wird gemeldet, nicht verhindert.
-        * `id IS NOT NEW.id` (nur beim UPDATE): Dieselbe Zeile darf Name = Adresse tragen
-          (E-Mail-Modus). Beim INSERT steht die Zeile noch nicht in der Tabelle.
-        * Zeilen ohne Topf (NULL: ein fremder Schreiber, noch nicht nachgetragen) zählen erst ab
-          dem Nachtrag — den `identifier_taken` vor jeder Anlage anstösst.
-        * **Der Name im Verzeichnis eines ANDEREN Kontos** (`federated_identity.name_topf`, G5)
-          zählt mit (Prüfrunde 2026-09-27). Unter einer Kennung prüft die Login-Route zwei
-          Geheimnisse — das lokale Passwort des Kontos und das LDAP-Passwort des Eintrags. Nahm
-          ein lokales Konto den Verzeichnisnamen einer anderen Person an (Selbstbedienung,
-          Registrierung), räumte jede seiner Anmeldungen die Zähler, unter denen gegen deren
-          LDAP-Passwort geraten wurde. Beim UPDATE nur fremde Bindungen (`user_id IS NOT NEW.id`):
-          Wer zu seinem eigenen Verzeichnisnamen zurückkehrt, darf das.
+        * `UPDATE OF username, email`, not `OF topf_*`: the backfill (`_toepfe_schreiben`)
+          sets only buckets and therefore does not check. Existing data with a collision does not break the start.
+        * `NEW IS NOT OLD`: only a newly assigned bucket is checked. Setting one's own
+          address again and a raw UPDATE (bucket stays, the trigger above then sets it
+          to NULL) go through — a collision in existing data is reported, not prevented.
+        * `id IS NOT NEW.id` (UPDATE only): the same row may carry name = address
+          (email mode). On INSERT the row is not yet in the table.
+        * Rows without a bucket (NULL: a foreign writer, not yet backfilled) count only from
+          the backfill — which `identifier_taken` triggers before every creation.
+        * **The name in the directory of ANOTHER account** (`federated_identity.name_topf`, G5)
+          counts (audit round 2026-09-27). Under one identifier the login route checks two
+          secrets — the local password of the account and the LDAP password of the entry. If
+          a local account took on the directory name of another person (self-service,
+          registration), each of its sign-ins cleared the counters under which the other's
+          LDAP password was being guessed. On UPDATE only foreign bindings (`user_id IS NOT NEW.id`):
+          whoever returns to their own directory name may do so.
 
-        Die Suche läuft über `ix_users_topf_name`/`ix_users_topf_mail`/`ix_fed_name_topf`, kein
-        Scan: Die Arbeit hängt nicht von der Zahl der Konten ab (Schrittzählung in
-        tests/test_kennungsraum.py und tests/test_audit_runde2.py)."""
+        The lookup runs over `ix_users_topf_name`/`ix_users_topf_mail`/`ix_fed_name_topf`, no
+        scan: the work does not depend on the number of accounts (step counting in
+        tests/test_identifier_space.py and tests/test_audit_round2.py)."""
         def neu(spalte, alt, id_aus):
             andere = "id IS NOT NEW.id AND " if id_aus else ""
             fremd = "user_id IS NOT NEW.id AND " if id_aus else ""
@@ -1168,13 +1195,13 @@ class Store:
         return sql
 
     def _trigger_setzen(self) -> None:
-        """Die Trigger aus `_trigger_sql` anlegen — oder ersetzen, wenn eine ältere Fassung sie
-        anders angelegt hat (ohne Commit, unter `_lock`, Teil von `_migrate`).
+        """Create the triggers from `_trigger_sql` — or replace them if an older version created them
+        differently (without commit, under `_lock`, part of `_migrate`).
 
-        `CREATE TRIGGER IF NOT EXISTS` allein liesse einen Trigger aus Schema 10 für immer so
-        stehen, wie er damals war. Verglichen wird mit dem Text in `sqlite_master` (SQLite legt ihn
-        ohne `IF NOT EXISTS` ab; Leerraum zählt nicht). Stimmt er, wird nichts geschrieben — auch
-        nicht auf einer nur lesbaren Datei."""
+        `CREATE TRIGGER IF NOT EXISTS` alone would leave a trigger from schema 10 forever
+        as it was back then. The comparison is made with the text in `sqlite_master` (SQLite stores it
+        without `IF NOT EXISTS`; whitespace does not count). If it matches, nothing is written — not even
+        on a read-only file."""
         for name, sql in self._trigger_sql():
             soll = " ".join(sql.replace(" IF NOT EXISTS", "", 1).split())
             steht = self.db.execute("SELECT sql FROM sqlite_master WHERE type='trigger' AND name=?",
@@ -1185,29 +1212,29 @@ class Store:
                 self.db.execute(f"DROP TRIGGER IF EXISTS {name}")
             self.db.execute(sql)
 
-    #: Setting-Schlüssel: Ist `users.name_selbst_gewaehlt` für den Bestand nachgetragen (G2-N)?
+    #: Setting key: has `users.name_selbst_gewaehlt` been backfilled for existing data (G2-N)?
     NAME_SELBST_NACHGETRAGEN = "name_selbst_nachgetragen"
 
     def _name_selbst_nachtragen(self) -> None:
-        """`users.name_selbst_gewaehlt` für den Bestand einmal aus dem Audit-Log nachtragen (G2-N;
-        ohne Commit, unter `_lock`, Teil von `_migrate`).
+        """Backfill `users.name_selbst_gewaehlt` once for existing data from the audit log (G2-N;
+        without commit, under `_lock`, part of `_migrate`).
 
-        Die Spalte kam nach 0.20.1; bis dahin hielt nichts fest, woher ein Name stammt. Das
-        Audit-Log weiss es für die beiden Wege, die zählen: `signup` (Registrierung, auch mit
-        Einladung) und `username_changed` (Umbenennen) stehen unter dem Namen, den das Konto danach
-        trug. Gezählt wird nur eine Zeile unter dem HEUTIGEN Namen und ab der Anlage des Kontos —
-        eine ältere gehörte einem anderen Konto mit diesem Namen. Die Suche läuft über
-        `idx_audit_name_ts` (Name, Zeit), nicht durch das ganze Log.
+        The column came after 0.20.1; until then nothing recorded where a name came from. The
+        audit log knows it for the two paths that count: `signup` (registration, also with
+        invitation) and `username_changed` (rename) stand under the name the account
+        carried afterwards. Only a row under TODAY's name and from the creation of the account on is counted —
+        an older one belonged to another account with this name. The lookup runs over
+        `idx_audit_name_ts` (name, time), not through the whole log.
 
-        Grenzen, bewusst in die sichere Richtung: Ein vom Betreiber umbenanntes Konto trug bis
-        dahin dieselbe Zeile (`username_changed`) und bekommt den Merker auch — das Konto bindet
-        dann nicht mehr über den Namen, der Betreiber öffnet es mit `federation_unbind`. Was die
-        Aufbewahrung (`audit_retention_days`) schon gelöscht hat, wird nicht erkannt; 0.20.1 kannte
-        das Umbenennen nicht, dort bleibt nur die Registrierung.
+        Limits, deliberately in the safe direction: an account renamed by the operator carried
+        the same row until then (`username_changed`) and gets the marker too — the account
+        then no longer binds via the name, and the operator opens it with `federation_unbind`. What
+        the retention (`audit_retention_days`) has already deleted is not detected; 0.20.1 did not know
+        renaming, there only the registration remains.
 
-        Genau einmal, am Merker `NAME_SELBST_NACHGETRAGEN` im selben Commit: Liefe es bei jedem
-        Start, machte die Zeile eines späteren Umbenennens durch den Betreiber das Konto wieder zu
-        einem selbst benannten."""
+        Exactly once, via the marker `NAME_SELBST_NACHGETRAGEN` in the same commit: if it ran on every
+        start, the row of a later rename by the operator would make the account a
+        self-named one again."""
         self.db.execute(
             "UPDATE users SET name_selbst_gewaehlt = 1 WHERE name_selbst_gewaehlt = 0 AND is_service = 0 "
             "AND EXISTS (SELECT 1 FROM audit a WHERE lower(a.username) = lower(users.username) "
@@ -1216,26 +1243,26 @@ class Store:
                         (self.NAME_SELBST_NACHGETRAGEN, str(_now())))
 
     def _werte_englisch(self, links: bool = True) -> int:
-        """Gespeicherte Werte der öffentlichen Oberfläche auf ihre englischen Namen bringen (Schema
-        12, PO-Entscheid 2026-09-27) — ohne Commit, unter `_lock`, Teil von `_migrate`.
+        """Bring stored values of the public interface to their English names (schema
+        12, PO decision 2026-09-27) — without commit, under `_lock`, part of `_migrate`.
 
-        * `api_key.kind`: `automat` → `automation`, `mensch` → `human` (`KEY_ARTEN_ALT`) — die Art
-          sieht jeder, der Keys auflistet (`list_api_keys`, `api_key_kind`, `GET /auth/apikeys`,
-          das Panel). Bei JEDEM Start, nicht nur beim Sprung über den Stempel: Eine ältere Fassung,
-          die nach einem Rückschritt auf der Datei lief, hat wieder alte Werte geschrieben, und sie
-          senkt den Stempel nicht. Die Tabelle ist klein.
-        * Payload offener Adresswechsel-Links (`magic_token`, `purpose='email_change'`): `alt` →
-          `old` (`payload_lesen`) — sichtbar über `peek_magic`/`redeem_magic`. Nur mit
-          `links=True` (beim Sprung auf 12): Die Suche geht durch alle Einmal-Token, und die wachsen
-          bis zum nächsten `gc` — bei jedem Start kostete das einen Lauf durch die Tabelle
-          (gemessen in `tests/test_bestandsdaten.py`, „Aufwand"). Ein Link, den eine ältere Fassung
-          danach ausstellt, bildet `payload_lesen` beim Lesen ab; er verfällt ohnehin bald.
+        * `api_key.kind`: `automat` → `automation`, `mensch` → `human` (`KEY_ARTEN_ALT`) — the kind
+          is seen by everyone who lists keys (`list_api_keys`, `api_key_kind`, `GET /auth/apikeys`,
+          the panel). On EVERY start, not only on the jump over the stamp: an older version
+          that ran on the file after a rollback has written old values again, and it
+          does not lower the stamp. The table is small.
+        * Payload of open address-change links (`magic_token`, `purpose='email_change'`): `alt` →
+          `old` (`payload_lesen`) — visible via `peek_magic`/`redeem_magic`. Only with
+          `links=True` (on the jump to 12): the search goes through all one-time tokens, and they grow
+          until the next `gc` — on every start that would cost a run through the table
+          (measured in `tests/test_legacy_data.py`, "Aufwand"). A link that an older version
+          issues afterwards is mapped by `payload_lesen` on reading; it expires soon anyway.
 
-        Idempotent; geschrieben wird nur, wo es etwas umzuschreiben gibt — eine nur lesbare Datei
-        ohne alte Werte startet wie bisher. Rückgabe: die Zahl der geänderten Zeilen.
+        Idempotent; it writes only where there is something to rewrite — a read-only file
+        without old values starts as before. Returns: the number of changed rows.
 
-        Nicht übersetzt wird, was nur innen gelesen wird (die Art einer Serie `fehlserie.art`, die
-        Spaltennamen) und was im Audit-Log steht — dessen Zeilen bleiben, wie sie sind."""
+        Not translated here: the audit log and the kinds of the series (`fehlserie.art`) — those are
+        rewritten on the jump to schema 15 (`_vokabular_englisch`) — and the column names (they stay)."""
         n = 0
         for alt, neu in self.KEY_ARTEN_ALT.items():
             if self.db.execute("SELECT 1 FROM api_key WHERE kind=? LIMIT 1", (alt,)).fetchone():
@@ -1248,40 +1275,125 @@ class Store:
                     try:
                         neu_text = json.dumps(payload_lesen(purpose, z["payload"]))
                     except ValueError:
-                        continue          # kein JSON: nicht von uns, nicht anfassen
+                        continue          # not JSON: not ours, do not touch
                     if neu_text != z["payload"]:
                         self.db.execute("UPDATE magic_token SET payload=? WHERE token_hash=?",
                                         (neu_text, z["token_hash"]))
                         n += 1
         return n
 
-    #: Setting-Schlüssel: Ist `users.name_quelle` für den Bestand nachgetragen (Angriffsrunde 2026-09-26)?
+    #: Rows per block when `_vokabular_englisch` walks through `audit.detail`.
+    _VOKABULAR_BLOCK = 5000
+
+    def _vokabular_englisch(self) -> int:
+        """Bring the stored and logged key vocabulary to its English names (schema 15, PO decision
+        2026-10-29) — without commit, under `_lock`, part of `_migrate`, on the jump over the stamp.
+
+        What is rewritten, and only that (the mapping itself is in `tinysesam/_vokabular.py`, pure
+        functions that the tests use as well):
+
+        * `audit.event`: the exact names (`oidc_widerruf` → `oidc_revoked`, …) and the families
+          `<oidc|saml|ldap>_kennung_gebunden` → `<…>_identifier_bound` etc. (`audit_ereignis_neu`) —
+          in ONE statement, one pass over the table.
+        * `audit.detail`: the keys of the `key=value` pairs and the tokens behind `reason=`/`source=`/…
+          (`audit_detail_neu`): keys only where one stands as a key (start or after a space, directly
+          before `=`), values only behind their key, never free text that happens to contain the word.
+          Rows of free-text events (`ldap_unavailable`, `resource_unlock`, `user_create`) keep their keys.
+          Block by block over `id`, each changed row written once.
+        * `audit.username`: `gelöscht#<id>` → `deleted#<id>` (digits only; a name that merely begins with
+          it stays), likewise inside the details (`actor=`, the head of `user_create`).
+        * `fehlserie.art` and `login_attempt.method`: `pin_folge` → `pin_chain`. If both kinds exist for
+          an identifier (the old one written by an older version after a rollback), the counts are
+          ADDED up (stricter, never looser than dropping one) and the old row goes.
+
+        The trigger message (`tinysesam: kennung vergeben` → `identifier taken`) is not touched here:
+        `_trigger_setzen` replaces a trigger whose definition differs, on every start.
+
+        Idempotent (a second run changes 0 rows) and it writes only where there is something to
+        rewrite — a read-only file without old values starts as before. Returns the number of changed
+        rows (event names count per row, details per row, series per row)."""
+        V = _vokabular
+        n = 0
+        # (1) event names: one statement for all of them.
+        paare = dict(V.AUDIT_EREIGNISSE_ALT)
+        for quelle in V.AUDIT_QUELLEN:
+            for alt, neu in V.AUDIT_FAMILIEN_ALT.items():
+                paare[quelle + alt] = quelle + neu
+        platz = ",".join("?" * len(paare))
+        if self.db.execute(f"SELECT 1 FROM audit WHERE event IN ({platz}) LIMIT 1", tuple(paare)).fetchone():
+            fall = " ".join("WHEN ? THEN ?" for _ in paare)
+            args = [x for alt, neu in paare.items() for x in (alt, neu)]
+            n += self.db.execute(
+                f"UPDATE audit SET event = CASE event {fall} ELSE event END WHERE event IN ({platz})",
+                (*args, *paare)).rowcount
+        # (2) the replacement name of deleted accounts (digits only after the prefix).
+        alt_praefix, neu_praefix = V.ERSATZ_PRAEFIX_ALT, V.ERSATZ_PRAEFIX
+        laenge = len(alt_praefix)
+        where_ersatz = ("substr(username, 1, ?) = ? AND length(username) > ? "
+                        "AND substr(username, ?) NOT GLOB '*[^0-9]*'")
+        werte_ersatz = (laenge, alt_praefix, laenge, laenge + 1)
+        if self.db.execute(f"SELECT 1 FROM audit WHERE {where_ersatz} LIMIT 1", werte_ersatz).fetchone():
+            n += self.db.execute(
+                f"UPDATE audit SET username = ? || substr(username, ?) WHERE {where_ersatz}",
+                (neu_praefix, laenge + 1, *werte_ersatz)).rowcount
+        # (3) the detail text, block by block over the primary key. The event is read AFTER step 1, so
+        # it is already the new name — `audit_detail_neu` takes either.
+        letzte = 0
+        while True:
+            zeilen = self.db.execute(
+                "SELECT id, event, detail FROM audit WHERE id > ? AND detail IS NOT NULL AND detail <> '' "
+                "ORDER BY id LIMIT ?", (letzte, self._VOKABULAR_BLOCK)).fetchall()
+            if not zeilen:
+                break
+            for z in zeilen:
+                neu_detail = V.audit_detail_neu(z["detail"], z["event"])
+                if neu_detail != z["detail"]:
+                    self.db.execute("UPDATE audit SET detail=? WHERE id=?", (neu_detail, z["id"]))
+                    n += 1
+            letzte = zeilen[-1]["id"]
+        # (4) the kinds of the streak and the methods.
+        for alt, neu in V.KINDS_ALT.items():
+            for z in self.db.execute("SELECT topf, anzahl, seit, zuletzt FROM fehlserie WHERE art=?",
+                                     (alt,)).fetchall():
+                if self.db.execute("SELECT 1 FROM fehlserie WHERE topf=? AND art=?", (z["topf"], neu)).fetchone():
+                    self.db.execute(
+                        "UPDATE fehlserie SET anzahl = anzahl + ?, seit = MIN(seit, ?), zuletzt = MAX(zuletzt, ?) "
+                        "WHERE topf=? AND art=?", (z["anzahl"], z["seit"], z["zuletzt"], z["topf"], neu))
+                    self.db.execute("DELETE FROM fehlserie WHERE topf=? AND art=?", (z["topf"], alt))
+                else:
+                    self.db.execute("UPDATE fehlserie SET art=? WHERE topf=? AND art=?", (neu, z["topf"], alt))
+                n += 1
+            if self.db.execute("SELECT 1 FROM login_attempt WHERE method=? LIMIT 1", (alt,)).fetchone():
+                n += self.db.execute("UPDATE login_attempt SET method=? WHERE method=?", (neu, alt)).rowcount
+        return n
+
+    #: Setting key: has `users.name_quelle` been backfilled for existing data (attack round 2026-09-26)?
     NAME_QUELLE_NACHGETRAGEN = "name_quelle_nachgetragen"
 
-    #: Wie weit Anlage und Bindung einer Quelle auseinanderliegen dürfen, damit die Bindung als „die
-    #: Quelle hat das Konto angelegt" gilt (`_name_quelle_nachtragen`). Beim Anlegen stehen beide in
-    #: derselben Anmeldung, ohne Verzeichnisaufruf dazwischen — Sekundenbruchteile.
+    #: How far apart creation and binding of a source may be for the binding to count as "the
+    #: source created the account" (`_name_quelle_nachtragen`). On creation both happen in
+    #: the same sign-in, without a directory call in between — fractions of a second.
     ANLAGE_TOLERANZ_SEC = 2
 
     def _name_quelle_nachtragen(self) -> None:
-        """`users.name_quelle` für den Bestand einmal nachtragen, wo die Herkunft belegt ist (ohne
-        Commit, unter `_lock`, Teil von `_migrate`).
+        """Backfill `users.name_quelle` once for existing data where the origin is proven (without
+        commit, under `_lock`, part of `_migrate`).
 
-        * **OIDC:** Jede Zeile in `oidc_identity` hat seit v0.1 der Callback beim ANLEGEN des Kontos
-          geschrieben — er verknüpft nie ein vorhandenes. Das Konto trägt also den Namen des Providers.
-        * **LDAP/SAML:** Eine Bindung (auch der Platzhalter), die mit der Anlage des Kontos entstand
-          (`gebunden_at` höchstens `ANLAGE_TOLERANZ_SEC` vor oder nach `created_at`). Eine spätere
-          Nachbindung zählt nicht — dann gab es das Konto schon, und sein Name kam von woanders.
+        * **OIDC:** every row in `oidc_identity` has been written by the callback since v0.1 on CREATING
+          the account — it never links an existing one. The account therefore carries the provider's name.
+        * **LDAP/SAML:** a binding (also the placeholder) that arose with the creation of the account
+          (`gebunden_at` at most `ANLAGE_TOLERANZ_SEC` before or after `created_at`). A later
+          re-binding does not count — the account already existed then, and its name came from elsewhere.
 
-        Ausgenommen: Service-Konten und selbst gewählte Namen (der Merker oben trägt sie schon).
-        Konten von vor den Kennungen (F-11, bis 0.19) haben keine Bindung aus der Anlage und bleiben
-        NULL — für sie bleibt die Frist (`federation_name_binding_days`). Grenze in die sichere
-        Richtung: Legt der Betreiber ein Konto an und bindet es binnen zwei Sekunden, gilt es als von
-        der Quelle angelegt; eine andere Quelle bindet es dann nur, wenn er sie öffnet
+        Excluded: service accounts and self-chosen names (the marker above already carries them).
+        Accounts from before the identifiers (F-11, up to 0.19) have no binding from creation and stay
+        NULL — the deadline applies to them (`federation_name_binding_days`). Limit in the safe
+        direction: if the operator creates an account and binds it within two seconds, it counts as created by
+        the source; another source binds it then only if the operator opens it
         (`federation_unbind`).
 
-        Genau einmal, am Merker `NAME_QUELLE_NACHGETRAGEN` im selben Commit: Liefe es bei jedem Start,
-        bekäme ein vom Betreiber umbenanntes Konto seine Quelle zurück."""
+        Exactly once, via the marker `NAME_QUELLE_NACHGETRAGEN` in the same commit: if it ran on every start,
+        an account renamed by the operator would get its source back."""
         self.db.execute(
             "UPDATE users SET name_quelle = 'oidc' WHERE name_quelle IS NULL AND is_service = 0 "
             "AND name_selbst_gewaehlt = 0 AND id IN (SELECT user_id FROM oidc_identity)")
@@ -1296,21 +1408,21 @@ class Store:
         self.db.execute("INSERT OR REPLACE INTO setting(key, value) VALUES (?, ?)",
                         (self.NAME_QUELLE_NACHGETRAGEN, str(_now())))
 
-    #: Setting-Schlüssel: bis zu welcher `audit.id` die Panel-Sperren älterer Schreiber schon
-    #: nachgezogen sind (`_bestand_nachziehen`). Fehlt er, liest der nächste Start das Audit-Log
-    #: einmal ganz — das ist nur langsamer, nicht falsch (jeder Schritt ist wiederholbar).
+    #: Setting key: up to which `audit.id` the panel lockouts of older writers have already been
+    #: caught up (`_bestand_nachziehen`). If it is missing, the next start reads the audit log
+    #: in full once — that is only slower, not wrong (every step is repeatable).
     PANEL_WASSERLINIE = "panel_sperren_bis"
 
-    #: Wie viele Kennungen höchstens in einem `IN (…)` stehen (SQLite bis 3.32: 999 Parameter).
+    #: How many identifiers at most in one `IN (…)` (SQLite up to 3.32: 999 parameters).
     IN_STUECK = 500
 
     @staticmethod
     def _uid_aus_detail(detail) -> Optional[int]:
-        """Die Konto-ID aus dem Detail einer Panel-Zeile: `uid=<id>` oder `uid=<id> …`.
+        """The account id from the detail of a panel row: `uid=<id>` or `uid=<id> …`.
 
-        Dieselbe Form, die die SQL-Fassung verglich (`detail = 'uid=' || id` oder
-        `LIKE 'uid=' || id || ' %'`): nur ASCII-Ziffern ohne führende Null, danach Ende oder ein
-        Leerzeichen. Das Panel schreibt diese Form seit 0.3.0 unverändert."""
+        The same form that the SQL version compared (`detail = 'uid=' || id` or
+        `LIKE 'uid=' || id || ' %'`): only ASCII digits without a leading zero, then end or a
+        space. The panel has written this form unchanged since 0.3.0."""
         kopf = str(detail or "").split(" ", 1)[0]
         if not kopf.startswith("uid="):
             return None
@@ -1320,79 +1432,79 @@ class Store:
         return int(zahl)
 
     def _owner_nachziehen(self) -> None:
-        """Gibt es Admins, aber keinen Owner (Bestand vor dem Owner-Modell), wird der älteste Admin
-        Owner — bevorzugt einer, den jemand von Hand gesetzt hat (`is_admin=1`), aktiv und kein
-        Service-Konto. Einmal, mit Zeile im Audit-Log. Läuft in der Migration (unter der
-        Schreibsperre, direkt auf der Verbindung) — VOR der Wasserlinie der Bestandsschritte, damit
-        ihre eigene Zeile nicht als „neu seit dem letzten Start" gilt. Ohne Admin bleibt es beim
-        Erst-Admin-Weg, der den ersten Owner mit vergibt."""
+        """If there are admins but no owner (existing data from before the owner model), the oldest admin
+        becomes owner — preferably one that someone set by hand (`is_admin=1`), active and not a
+        service account. Once, with a row in the audit log. Runs in the migration (under the
+        write lock, directly on the connection) — BEFORE the watermark of the existing-data steps, so that
+        its own row does not count as "new since the last start". Without an admin it stays with the
+        first-admin path, which also assigns the first owner."""
         spalten = {r["name"] for r in self.db.execute("PRAGMA table_info(users)")}
         if "is_owner" not in spalten:
             return
         if self.db.execute("SELECT 1 FROM users WHERE is_owner=1 LIMIT 1").fetchone():
             return
-        # NUR ein aktiver, von Hand gesetzter Admin (`is_admin=1`). Ein vom Identity Provider
-        # vergebenes Flag (2) machte ihn sonst beim nächsten Start dauerhaft zum Owner — und damit
-        # zu einem Admin, den kein Provider mehr entzieht (Angriff auf die zweite Runde, Fund 1).
-        # Ein gesperrter Admin wäre ein Owner, der sich nicht anmelden kann (Fund 2).
+        # ONLY an active, manually set admin (`is_admin=1`). A flag granted by the identity provider
+        # (2) would otherwise make him a permanent owner at the next start — and thereby
+        # an admin that no provider revokes anymore (attack on the second round, finding 1).
+        # A locked admin would be an owner who cannot sign in (finding 2).
         u = self.db.execute(
             "SELECT id, username FROM users WHERE is_admin = 1 AND is_service = 0 AND disabled = 0 "
             "ORDER BY id LIMIT 1").fetchone()
         if u is None:
             if self.db.execute("SELECT 1 FROM users WHERE is_admin <> 0 LIMIT 1").fetchone():
                 logging.getLogger("tinysesam").warning(
-                    "Kein Owner: Es gibt Admins, aber keinen aktiven, von Hand gesetzten (nur vom "
-                    "Identity Provider vergebene oder gesperrte). Einen Owner bestimmen: "
-                    "`tinysesam owner --db <datei> <benutzer>`.")
+                    "No owner: there are admins, but none active and set by hand (only ones "
+                    "granted by the identity provider, or locked). Designate an owner: "
+                    "`tinysesam owner --db <file> <user>`.")
             return
         self.db.execute("UPDATE users SET is_owner=1, is_admin=1 WHERE id=?", (u["id"],))
         self.db.execute("INSERT INTO audit(ts, event, username, ip, detail) VALUES (?,?,?,?,?)",
-                        (_now(), "owner_grant", u["username"], None, "quelle=bestand aeltester_admin"))
+                        (_now(), "owner_grant", u["username"], None, "source=existing oldest_admin"))
         logging.getLogger("tinysesam").warning(
-            "Owner-Modell: %s ist jetzt Owner (ältester Admin). Weitere Owner vergibt ein Owner im "
-            "Admin-Panel.", u["username"])
+            "Owner model: %s is now owner (oldest admin). Further owners are granted by an owner in the "
+            "admin panel.", u["username"])
 
     def _bestand_nachziehen(self, ab_anfang: bool, ohne_topf) -> None:
-        """Bestandsdaten auf Schema 10 heben (ohne Commit, unter `_lock` — Teil von `_migrate`).
+        """Bring existing data to schema 10 (without commit, under `_lock` — part of `_migrate`).
 
-        Beim Upgrade (`ab_anfang`) für den ganzen Bestand, danach bei **jedem** Start für das, was
-        ein älterer Schreiber seitdem hinterlassen haben kann. Eine ältere Fassung öffnet eine
-        Schema-10-Datei, warnt und schreibt weiter; den Stempel lässt sie auf 10 (Rückschritt ohne
-        Sicherung). Sperrt sie in diesem Fenster im Panel, steht wieder `disabled=1` mit offenem
-        Bestätigungslink da, und hinge der Schritt am Stempel, liefe er nie wieder: Der alte Link
-        höbe die Sperre auf und meldete an (H-18, gemessen mit 0.19.0). Die Spur des älteren
-        Schreibers ist je Schritt eine andere — Audit-Zeilen seit der Wasserlinie für die Sperren,
-        Zeilen ohne Topf (`topf_name`) für die Registrierungen.
+        On upgrade (`ab_anfang`) for all existing data, afterwards on **every** start for what
+        an older writer may have left behind since then. An older version opens a
+        schema-10 file, warns and keeps writing; it leaves the stamp at 10 (rollback without
+        backup). If it locks in the panel during this window, `disabled=1` stands again with an open
+        confirmation link, and if the step hung on the stamp, it would never run again: the old link
+        would lift the lock and sign in (H-18, measured with 0.19.0). The trace of the older
+        writer is different per step — audit rows since the watermark for the locks,
+        rows without a bucket (`topf_name`) for the registrations.
 
-        1. **Sperren aus dem Panel bekommen den Betreiber-Vermerk** (`disabled=2`). Bis zu dieser
-           Fassung schrieb die Sperre im Panel `disabled=1` — denselben Wert wie eine ausstehende
-           Bestätigung, und die hebt der Bestätigungslink auf. Bis 0.19.x verwarf die Sperre
-           dabei nicht einmal die offenen Token. Erkannt wird die Panel-Sperre am Audit-Log: Der
-           jüngste Eintrag `user_disable`/`user_enable` mit `uid=<id>` ist `user_disable`, und das
-           Konto steht auf 1 (die heutige Sperre schreibt 2, eine 1 dahinter stammt also von einem
-           älteren Schreiber). Solchen Konten werden zugleich die offenen Einmal-Token verworfen —
-           wie bei einer Sperre von heute. Gelesen wird **einmal der Reihe nach**, nur die Zeilen
-           nach der Wasserlinie (`PANEL_WASSERLINIE`, beim Upgrade ab 0): Die erste Fassung suchte
-           je gesperrtem Konto im ganzen Audit-Log (gemessen 60 s bei 1 000 000 Zeilen × 1 000
-           Konten, unter der Schreibsperre — ein zweiter Worker scheiterte am `busy_timeout`).
-           Grenzen: Eine Sperre, deren Zeile `audit_retention_days` schon gelöscht hat, bleibt
-           unerkannt; dafür sperrt `POST <admin_path>/api/users/{id}/disable` mit
-           `{"disabled": true}` erneut, ohne zu entsperren. Und in die sichere Richtung: Hebt eine
-           App eine Sperre von heute ohne Audit-Zeile auf und sperrt dann selbst (1), bevor der
-           Dienst neu startet, gilt das beim nächsten Start als Sperre des Betreibers.
-        2. **Adressen offener Registrierungen tragen keinen Beleg** (`email_verified=0`). Die
-           Registrierung legte sie mit dem Vermerk 1 an, obwohl der Link noch ausstand; seit
-           dieser Fassung setzt ihn erst der eingelöste Link. Offen heisst: gesperrt, nie
-           angemeldet, ein unbenutzter `verify_email`-Token und kein eingelöster. Sonst nähme
-           die Löschung durch einen Admin die fremd eingetippte Adresse auch aus älteren Zeilen
-           (`konto_entfernen`) — auch dann noch, wenn eine Sperre im Panel die Token verworfen
-           hat, an denen das Konto sonst als offen zu erkennen ist. Nach dem Upgrade nur für
-           Zeilen ohne Topf (die legt nur ein fremder Schreiber an) und für die Konten aus
-           Schritt 1. Schritt 2 läuft vor Schritt 1, der genau diese Token verwirft."""
+        1. **Locks from the panel get the operator mark** (`disabled=2`). Up to this
+           version the panel lock wrote `disabled=1` — the same value as a pending
+           confirmation, and the confirmation link lifts that. Up to 0.19.x the lock
+           did not even discard the open tokens. The panel lock is recognised from the audit log: the
+           most recent entry `user_disable`/`user_enable` with `uid=<id>` is `user_disable`, and the
+           account is at 1 (today's lock writes 2, a 1 behind it therefore comes from an
+           older writer). For such accounts the open one-time tokens are discarded at the same time —
+           as with a lock of today. It is read **once in sequence**, only the rows
+           after the watermark (`PANEL_WASSERLINIE`, on upgrade from 0): the first version searched
+           the whole audit log for each locked account (measured 60 s with 1,000,000 rows × 1,000
+           accounts, under the write lock — a second worker failed at `busy_timeout`).
+           Limits: a lock whose row `audit_retention_days` has already deleted stays
+           undetected; for that, `POST <admin_path>/api/users/{id}/disable` with
+           `{"disabled": true}` locks again without unlocking. And in the safe direction: if an
+           app lifts a lock of today without an audit row and then locks itself (1) before the
+           service restarts, it counts as an operator lock at the next start.
+        2. **Addresses of open registrations carry no proof** (`email_verified=0`). The
+           registration created them with the marker 1 although the link was still outstanding; since
+           this version only the redeemed link sets it. Open means: locked, never
+           signed in, an unused `verify_email` token and no redeemed one. Otherwise
+           the deletion by an admin would also take the address typed in by a stranger from older rows
+           (`konto_entfernen`) — even when a lock in the panel has discarded the tokens
+           by which the account is otherwise recognisable as open. After the upgrade only for
+           rows without a bucket (only a foreign writer creates them) and for the accounts from
+           step 1. Step 2 runs before step 1, which discards exactly these tokens."""
         log = logging.getLogger("tinysesam")
-        # Lesen und Schreiben unter EINER Schreibsperre: Ein zweiter Worker, der gerade einen
-        # Bestätigungslink einlöst, sieht die Sperre davor oder danach, nicht dazwischen. Beim
-        # Upgrade hält `_migrate` die Transaktion schon (DELETE oben).
+        # Reading and writing under ONE write lock: a second worker that is just redeeming a
+        # confirmation link sees the lock before or after, not in between. On
+        # upgrade `_migrate` already holds the transaction (DELETE above).
         if not self.db.in_transaction:
             self.db.execute("BEGIN IMMEDIATE")
         zeile = self.db.execute("SELECT seq FROM sqlite_sequence WHERE name='audit'").fetchone()
@@ -1404,7 +1516,7 @@ class Store:
         if not ab_anfang and gespeichert is not None and str(gespeichert).isdigit():
             ab = int(gespeichert)
         if ab > bis:
-            ab = 0          # Zähler kleiner als die Wasserlinie (Tabelle neu angelegt): alles lesen
+            ab = 0          # counter smaller than the watermark (table recreated): read everything
         juengstes = {}
         for ereignis, detail in self.db.execute(
                 "SELECT event, detail FROM audit WHERE id > ? AND id <= ? "
@@ -1447,33 +1559,33 @@ class Store:
             self.db.execute("INSERT OR REPLACE INTO setting(key, value) VALUES (?, ?)",
                             (self.PANEL_WASSERLINIE, str(bis)))
         if ab_anfang and (adressen or panel):
-            log.info("Schema 10: %d Sperre(n) aus dem Panel tragen jetzt den Betreiber-Vermerk (offene "
-                     "Einmal-Token verworfen), %d Adresse(n) offener Registrierungen gelten bis zur "
-                     "Bestätigung als unbelegt.", len(panel), adressen)
+            log.info("Schema 10: %d lockout(s) from the panel now carry the operator marker (open "
+                     "one-time tokens discarded), %d address(es) of open registrations count as "
+                     "unproven until confirmed.", len(panel), adressen)
         elif adressen or panel:
-            log.warning("Eine ältere TinySesam-Fassung hat in diese Datenbank geschrieben (Rückschritt "
-                        "ohne Sicherung?): %d Sperre(n) aus ihrem Panel tragen jetzt den "
-                        "Betreiber-Vermerk (offene Einmal-Token verworfen), %d Adresse(n) ihrer "
-                        "offenen Registrierungen gelten bis zur Bestätigung als unbelegt.",
+            log.warning("An older TinySesam version has written to this database (downgrade "
+                        "without a backup?): %d lockout(s) from its panel now carry the "
+                        "operator marker (open one-time tokens discarded), %d address(es) of its "
+                        "open registrations count as unproven until confirmed.",
                         len(panel), adressen)
 
     def _toepfe_schreiben(self, zeilen) -> None:
-        """`topf_name`/`topf_mail` für diese Kontozeilen rechnen (ohne Commit, unter `_lock`).
+        """Compute `topf_name`/`topf_mail` for these account rows (without commit, under `_lock`).
 
-        Geschrieben wird nur, wenn Name und Adresse noch die gelesenen sind: Ändert ein anderer
-        Schreiber sie dazwischen, setzt sein Trigger den Topf auf NULL, und der nächste Aufruf
-        rechnet neu — statt dass hier der Topf des alten Namens stehen bliebe."""
+        Written only if name and address are still the ones read: if another
+        writer changes them in between, its trigger sets the bucket to NULL, and the next call
+        recomputes — instead of the bucket of the old name remaining here."""
         self.db.executemany(
             "UPDATE users SET topf_name=?, topf_mail=? WHERE id=? AND username IS ? AND email IS ?",
             [(norm_kennung(z["username"]), norm_kennung(z["email"]), z["id"], z["username"], z["email"])
              for z in zeilen])
 
     def _toepfe_nachtragen(self) -> list:
-        """Fehlende Zähl-Töpfe nachtragen — die Zeilen eines anderen Schreibers (s. `topf_name`).
+        """Backfill missing counting buckets — the rows of another writer (see `topf_name`).
 
-        Gibt die Zeilen zurück, die sich NICHT schreiben liessen (Datenbank nur lesbar, gesperrt);
-        die prüft der Aufrufer selbst. Im Normalfall ist das nichts, und es kostet eine Abfrage
-        über den Index — unabhängig davon, welche Kennung gerade gesucht wird."""
+        Returns the rows that could NOT be written (database read-only, locked);
+        the caller checks those itself. Normally that is none, and it costs one query
+        over the index — independent of which identifier is being looked up."""
         offen = self._all("SELECT * FROM users WHERE topf_name IS NULL OR topf_mail IS NULL")
         if not offen:
             return []
@@ -1495,48 +1607,48 @@ class Store:
             return self.db.execute(sql, args).fetchall()
 
     def _verwerfen(self) -> None:
-        """Eine offene Transaktion zurückrollen (unter `_lock`) — nach einem gescheiterten Schreiben."""
+        """Roll back an open transaction (under `_lock`) — after a failed write."""
         try:
             self.db.rollback()
         except sqlite3.Error:
-            pass     # Verbindung geschlossen o. ä. — dann liegt auch nichts mehr offen
+            pass     # connection closed or similar — then nothing is left open either
 
     def _begin_immediate(self) -> None:
-        """`BEGIN IMMEDIATE` für eine selbst geführte Transaktion (unter `_lock`) — Zählen und
-        Buchen in einem Schritt, auch über mehrere Prozesse (`reserve_attempt`, `finish_attempt`)."""
+        """`BEGIN IMMEDIATE` for a self-managed transaction (under `_lock`) — counting and
+        booking in one step, also across several processes (`reserve_attempt`, `finish_attempt`)."""
         if self.db.in_transaction:
-            # Das zweite Schloss hinter `_schreibend`: Liegt doch eine Transaktion herum (ein
-            # Schreiber, der beim Fehlschlag nicht zurückrollt), scheiterte das BEGIN unten an ihr —
-            # und mit ihm jede Anmeldung, bis jemand anderes committete. Ihr Inhalt ist der Rest
-            # eines GESCHEITERTEN Schreibzugriffs; er wird verworfen, nicht mitgebucht. Laut, weil
-            # es ein Fehler an anderer Stelle ist.
+            # The second lock behind `_schreibend`: if a transaction is lying around anyway (a
+            # writer that did not roll back on failure), the BEGIN below would fail on it —
+            # and with it every sign-in until someone else committed. Its content is the remainder
+            # of a FAILED write; it is discarded, not booked along. Loud, because
+            # it is an error elsewhere.
             logging.getLogger("tinysesam").warning(
-                "Offene Transaktion auf der Datenbankverbindung vorgefunden (Rest eines "
-                "gescheiterten Schreibzugriffs) — verworfen, bevor der Anmeldeversuch zählt.")
+                "Open transaction found on the database connection (remnant of a "
+                "failed write) — discarded before the sign-in attempt counts.")
             self._verwerfen()
         self.db.execute("BEGIN IMMEDIATE")
 
     @contextlib.contextmanager
     def _schreibend(self):
-        """`_lock` halten, schreiben — und bei einem Fehlschlag die Transaktion VERWERFEN.
+        """Hold `_lock`, write — and on failure DISCARD the transaction.
 
-        Pythons `sqlite3` öffnet vor jedem INSERT/UPDATE/DELETE still ein `BEGIN`. Scheiterte
-        der Schreibzugriff (ein fremder Schreiber hielt die Sperre länger als `busy_timeout`,
-        Volume voll, Datei nur lesbar), blieb diese Transaktion auf der GETEILTEN Verbindung
-        offen. Gemessen: `reserve_attempt` beginnt mit einem ausdrücklichen `BEGIN IMMEDIATE`
-        und scheiterte an „cannot start a transaction within a transaction" — jede Anmeldung
-        endete mit 500, bis irgendein anderer Schreibzugriff zufällig committete. Ausgelöst hat
-        es schon die Schreibprobe von `/healthz`, die ohne Anmeldung erreichbar ist. Dazu kommt:
-        Dieser fremde Commit nähme mit, was ein mehrteiliger Schreiber (`delete_user`) vor dem
-        Fehlschlag schon geschrieben hatte.
+        Python's `sqlite3` silently opens a `BEGIN` before every INSERT/UPDATE/DELETE. If
+        the write failed (a foreign writer held the lock longer than `busy_timeout`,
+        volume full, file read-only), this transaction stayed open on the SHARED connection.
+        Measured: `reserve_attempt` begins with an explicit `BEGIN IMMEDIATE`
+        and failed with "cannot start a transaction within a transaction" — every sign-in
+        ended with a 500 until some other write happened to commit. It was triggered
+        by the write probe of `/healthz` alone, which is reachable without sign-in. In addition:
+        that foreign commit would take along what a multi-part writer (`delete_user`) had already
+        written before the failure.
 
-        Jeder Schreibweg läuft deshalb hierüber (oder über `_exec`, das es auch tut); wer die
-        Transaktion selbst führt (`reserve_attempt`, `rotate_session`, `_uhr_mitschreiben`, der
-        innere Block von `_migrate`), setzt jeden Commit in ein `try`, dessen breites `except`
-        (ohne Typ, `Exception` oder `BaseException` — `sqlite3.Error` fängt einen Bindefehler wie
-        OverflowError nicht) oder `finally` zurückrollt. tests/test_hardening2.py prüft das per
-        Syntaxbaum für jeden Commit in dieser Klasse — nicht bloss, ob irgendwo in der Funktion
-        `rollback()` steht."""
+        Every write path therefore runs through here (or through `_exec`, which does so too); whoever manages the
+        transaction themselves (`reserve_attempt`, `rotate_session`, `_uhr_mitschreiben`, the
+        inner block of `_migrate`) puts each commit in a `try` whose broad `except`
+        (without type, `Exception` or `BaseException` — `sqlite3.Error` does not catch a binding error such as
+        OverflowError) or `finally` rolls back. tests/test_hardening2.py checks this via the
+        syntax tree for every commit in this class — not merely whether `rollback()`
+        appears somewhere in the function."""
         with self._lock:
             try:
                 yield
@@ -1552,17 +1664,17 @@ class Store:
             self._uhr_mitschreiben()
             return cur
 
-    #: Setting-Schlüssel des gesicherten Uhrstands (s. `_Uhr`) und wie oft er höchstens
-    #: geschrieben wird (Sekunden).
+    #: Setting key of the saved clock state (see `_Uhr`) and how often it is written at most
+    #: (seconds).
     UHR_STAND = "uhr_stand"
     UHR_SICHERN_SEK = 60
 
     def _uhr_stand_schreiben(self) -> None:
-        """`uhr_stand` auf `jetzt()` heben — nur nach OBEN (ohne Commit, unter `_lock`).
+        """Raise `uhr_stand` to `jetzt()` — only UPWARDS (without commit, under `_lock`).
 
-        Schon `_migrate()` schreibt, bevor `Store()` die Uhr aus der Datenbank gehoben hat;
-        dort ist `jetzt()` noch die falsche Wanduhr eines Boots mit altem Datum. Ein blindes
-        Überschreiben löschte damit genau den Stand, der die Uhr gleich heben soll."""
+        `_migrate()` already writes before `Store()` has raised the clock from the database;
+        there `jetzt()` is still the wrong wall clock of a boot with an old date. A blind
+        overwrite would delete exactly the state that is about to raise the clock."""
         jetzt_s = _now()
         self.db.execute("INSERT OR IGNORE INTO setting(key, value) VALUES (?, ?)",
                         (self.UHR_STAND, str(jetzt_s)))
@@ -1571,23 +1683,23 @@ class Store:
 
     @staticmethod
     def _frisch(seit, m, frist) -> bool:
-        """Liegt der monotone Stempel `seit` weniger als `frist` Sekunden vor `m`?
+        """Is the monotonic stamp `seit` less than `frist` seconds before `m`?
 
-        Ein NEGATIVER Abstand zählt als abgelaufen, nicht als frisch: freezegun liefert
-        `time.monotonic` auf der Epoch-Skala (≈1,8e9). Ein Schreibzugriff unter `freeze_time`
-        hinterliess die Stempel dort, und danach war jeder Abstand negativ, also immer „kürzer als
-        die Frist“ — `uhr_stand` wurde im ganzen Prozess nicht mehr gesichert, die Schreibprobe
-        prüfte nur noch die Verbindung (zweite Angriffsrunde, dieselbe Klasse wie in `_Uhr.jetzt`).
-        Ein Abstand über jeder Frist ist ohnehin abgelaufen."""
+        A NEGATIVE distance counts as expired, not as fresh: freezegun delivers
+        `time.monotonic` on the epoch scale (≈1.8e9). A write under `freeze_time`
+        left the stamps there, and afterwards every distance was negative, hence always "shorter than
+        the deadline" — `uhr_stand` was no longer saved in the whole process, the write probe
+        checked only the connection (second attack round, same class as in `_Uhr.jetzt`).
+        A distance above any deadline is expired anyway."""
         return seit is not None and 0 <= m - seit < frist
 
     def _uhr_mitschreiben(self) -> None:
-        """Den Stand der Uhr sichern — höchstens einmal je `UHR_SICHERN_SEK` (unter `_lock`).
+        """Save the clock state — at most once per `UHR_SICHERN_SEK` (under `_lock`).
 
-        Ohne ihn kannte ein Neustart nur das letzte Ereignis in der Datenbank: Was danach ablief,
-        galt nach einem Boot mit altem Datum wieder für seine volle Restfrist (B6-9). Eigener
-        Commit NACH dem eigentlichen Schreiben: Scheitert er (Volume voll), darf das den schon
-        bestätigten Schreibzugriff nicht mitreissen — der Stand ist Beiwerk."""
+        Without it a restart knew only the last event in the database: what expired afterwards
+        applied again for its full remaining lifetime after a boot with an old date (B6-9). Own
+        commit AFTER the actual write: if it fails (volume full), it must not drag down the
+        already confirmed write — the state is a bonus."""
         m = time.monotonic()
         if self._frisch(self._uhr_gesichert, m, self.UHR_SICHERN_SEK):
             return
@@ -1596,10 +1708,10 @@ class Store:
             self.db.commit()
             self._uhr_gesichert = m
         except Exception as fehler:
-            # Zurückgerollt wird bei JEDEM Fehlschlag, geschluckt nur der Datenbankfehler (der
-            # Uhrstand ist Vorsorge). Bis zur Schlussrunde fing hier `except sqlite3.Error:` —
-            # ein Bindefehler wie OverflowError ist keiner und liess die Transaktion offen;
-            # gerettet hat es nur das äussere `_schreibend` von `_exec`.
+            # Rolled back on EVERY failure, only the database error is swallowed (the
+            # clock state is a precaution). Until the final round, `except sqlite3.Error:` caught here —
+            # a binding error such as OverflowError is not one and left the transaction open;
+            # only the outer `_schreibend` of `_exec` saved it.
             self._verwerfen()
             if not isinstance(fehler, sqlite3.Error):
                 raise
@@ -1608,17 +1720,17 @@ class Store:
     def create_user(self, username, display_name=None, email=None, is_admin=False, roles=None,
                     is_service=False, email_verified=True, name_selbst_gewaehlt=False,
                     name_quelle=None) -> int:
-        """Ein Konto anlegen (Rohbaustein; die Prüfungen macht `TinySesam.create_user`).
+        """Create an account (raw building block; the checks are done by `TinySesam.create_user`).
 
-        Wirft `sqlite3.IntegrityError`, wenn Name oder Adresse schon Kennung eines anderen Kontos
-        ist — auch als Namensvetter im Zähl-Topf (`Alice`/`alice`, s. `_trigger_sql`). Bis
-        2026-09-26 ging das hier durch, sofern nicht genau derselbe Name oder dieselbe Adresse
-        schon stand.
+        Raises `sqlite3.IntegrityError` if the name or address is already the identifier of another account
+        — also as a namesake in the counting bucket (`Alice`/`alice`, see `_trigger_sql`). Until
+        2026-09-26 this went through here, unless exactly the same name or the same address
+        already existed.
 
-        Name und Adresse gehören dem Konto ab dieser Anweisung: Die Wasserlinien (G2) entstehen im
-        selben INSERT, als höchste Id, die es in `login_attempt` und `audit` gerade gibt. Ebenso der
-        Merker `name_selbst_gewaehlt` (G2-N) und die Herkunft des Namens (`name_quelle`) — zwischen
-        Anlage und Merker liegt keine Anmeldung, die das Konto über den Namen binden könnte."""
+        Name and address belong to the account from this statement on: the watermarks (G2) arise in
+        the same INSERT, as the highest id currently in `login_attempt` and `audit`. Likewise the
+        marker `name_selbst_gewaehlt` (G2-N) and the origin of the name (`name_quelle`) — between
+        creation and marker there is no sign-in that could bind the account via the name."""
         mail = norm_email(email)
         cur = self._exec(
             "INSERT INTO users(username, display_name, email, email_verified, is_admin, roles, "
@@ -1633,28 +1745,28 @@ class Store:
         return cur.lastrowid
 
     def _kennung_setzen(self, user_id, spalte: str, wert, topf: str, beleg=None) -> list:
-        """Die Anweisungen, die Name (`spalte="username"`) oder Adresse (`"email"`, mit `beleg`)
-        samt Zähl-Topf ersetzen — für `_umschreiben`.
+        """The statements that replace name (`spalte="username"`) or address (`"email"`, with `beleg`)
+        together with the counting bucket — for `_umschreiben`.
 
-        Kommt die Kennung damit in einen ANDEREN Topf, gehört sie dem Konto erst ab jetzt: Die
-        Wasserlinien (`name_versuch_ab`/`name_audit_ab` bzw. `mail_…`, G2) gehen in derselben
-        Anweisung auf den aktuellen Stand. Bleibt der Topf (`B1` → `b1`, `u@bücher.example` →
-        `u@xn--bcher-kva.example`), bleiben sie stehen — es ist dieselbe Kennung. SQLite rechnet
-        jeden Ausdruck in SET mit der ALTEN Zeile; der Vergleich sieht also den bisherigen Topf.
+        If the identifier thereby moves to a DIFFERENT bucket, it belongs to the account only from now on: the
+        watermarks (`name_versuch_ab`/`name_audit_ab` or `mail_…`, G2) go to the current state in the same
+        statement. If the bucket stays (`B1` → `b1`, `u@bücher.example` →
+        `u@xn--bcher-kva.example`), they stay — it is the same identifier. SQLite evaluates
+        every expression in SET with the OLD row; the comparison therefore sees the previous bucket.
 
-        Zwei Anweisungen, weil der Nachrechnen-Trigger (`_trigger_sql`) einen eigenen Schreiber
-        nicht von einem fremden unterscheiden kann: Er feuert, wenn sich der Wert ändert, der Topf
-        aber nicht — und hebt dann die Wasserlinien. Deshalb setzt die erste Anweisung einen
-        gleichbleibenden Topf selbst auf NULL (der Trigger sieht einen geänderten Topf und bleibt
-        still; die Kennungs-Trigger prüfen nichts — es kommt ja keine Kennung hinzu), und die
-        zweite setzt ihn in derselben Transaktion zurück. Sie ändert nur den Topf und löst keinen
-        Trigger aus. Bis 2026-09-26 setzte der Trigger den Topf auf NULL und die zweite Anweisung
-        ihn zurück; mit den Wasserlinien hätte das schon `B1` → `b1` die Grenze verschoben.
+        Two statements, because the recompute trigger (`_trigger_sql`) cannot tell its own writer
+        from a foreign one: it fires when the value changes but the bucket
+        does not — and then raises the watermarks. Therefore the first statement sets an
+        unchanged bucket to NULL itself (the trigger sees a changed bucket and stays
+        silent; the identifier triggers check nothing — no identifier is added), and the
+        second sets it back in the same transaction. It changes only the bucket and fires no
+        trigger. Until 2026-09-26 the trigger set the bucket to NULL and the second statement
+        set it back; with the watermarks that would already have shifted the limit for `B1` → `b1`.
 
-        Beim Namen kommt vorne eine dritte dazu (`_verzeichnisname_merken`, Prüfrunde 2026-09-27):
-        Ein Konto mit LDAP-Bindung, dessen Name der Name im Verzeichnis war, behält den alten als
-        Verzeichnisnamen — sonst fiele er beim Umbenennen aus `zaehl_kennungen` und aus dem
-        Kennungsraum, bis zur nächsten erfolgreichen LDAP-Anmeldung."""
+        For the name a third is added at the front (`_verzeichnisname_merken`, audit round 2026-09-27):
+        an account with an LDAP binding whose name was the name in the directory keeps the old one as
+        directory name — otherwise it would drop out of `zaehl_kennungen` and out of the
+        identifier space on renaming, until the next successful LDAP sign-in."""
         topf_spalte, art = ("topf_name", "name") if spalte == "username" else ("topf_mail", "mail")
         gleich = f"CASE WHEN {topf_spalte} IS ? THEN"
         setzen = (f"{topf_spalte} = {gleich} NULL ELSE ? END, "
@@ -1671,23 +1783,23 @@ class Store:
         return vorab + [erste, (f"UPDATE users SET {topf_spalte}=? WHERE id=?", (topf, user_id))]
 
     def _verzeichnisname_merken(self, user_id, neuer_topf) -> tuple:
-        """Die Anweisung, die vor einem Umbenennen den bisherigen Namen als Namen im Verzeichnis
-        an der LDAP-Bindung vermerkt (`federated_identity.name_topf`, G5) — für `_kennung_setzen`.
+        """The statement that, before a rename, records the previous name as the name in the directory
+        on the LDAP binding (`federated_identity.name_topf`, G5) — for `_kennung_setzen`.
 
-        Anlass (Prüfrunde 2026-09-27): Heisst ein Konto lokal wie im Verzeichnis, steht dort NULL
-        (`bindung_name_setzen` vermerkt nur einen abweichenden Namen). Benannte der Betreiber
-        (G13, Panel, `tinysesam rename`) oder die Person selbst das Konto um, fiel der
-        Verzeichnisname aus `zaehl_kennungen`: Füllte ein Fremder vorher die Serie darunter, blieb
-        die LDAP-Anmeldung gesperrt — Panel-Reset und volle Anmeldung auf anderem Weg räumten sie
-        nicht, nur `tinysesam unlock <verzeichnisname>`. Und der Name war lokal frei: ein anderes
-        Konto konnte ihn annehmen und mit jeder Anmeldung die Zähler gegen das LDAP-Passwort
-        räumen.
+        Occasion (audit round 2026-09-27): if an account is named the same locally and in the directory, NULL stands there
+        (`bindung_name_setzen` records only a differing name). If the operator
+        (G13, panel, `tinysesam rename`) or the person themselves renamed the account, the
+        directory name dropped out of `zaehl_kennungen`: if a stranger had filled the series beneath it before, the
+        LDAP sign-in stayed locked — panel reset and full sign-in by another route did not
+        clear it, only `tinysesam unlock <directory name>`. And the name was free locally: another
+        account could take it and, with every sign-in, clear the counters against the LDAP
+        password.
 
-        Nur eine echte Kennung (nicht der Herkunfts-Platzhalter `OHNE_KENNUNG`): Ohne stabile
-        Kennung ordnet LDAP über den Namen zu — nach dem Umbenennen gehört der alte Name nicht
-        mehr zu diesem Konto. Nur wenn NULL steht (ein abweichender Name ist schon vermerkt und
-        der jüngere) und nur, wenn der Topf wirklich wechselt. Gelesen wird der alte Topf in
-        derselben Transaktion, vor dem Schreiben des neuen Namens."""
+        Only a real identifier (not the origin placeholder `OHNE_KENNUNG`): without a stable
+        identifier LDAP matches via the name — after renaming, the old name no longer
+        belongs to this account. Only if NULL stands (a differing name is already recorded and
+        the younger one) and only if the bucket really changes. The old bucket is read in
+        the same transaction, before the new name is written."""
         alt = "(SELECT topf_name FROM users WHERE id = ?)"
         return (f"UPDATE federated_identity SET name_topf = {alt} WHERE quelle = 'ldap' AND user_id = ? "
                 "AND name_topf IS NULL AND substr(kennung, 1, length(?)) <> ? "
@@ -1696,9 +1808,9 @@ class Store:
                  neuer_topf))
 
     def _umschreiben(self, schritte) -> None:
-        """Mehrere Anweisungen in EINER Transaktion, ein Commit (wie `_exec`, nur für eine Liste).
-        Scheitert eine — auch an einem Kennungs-Trigger (`IntegrityError`) —, rollt `_schreibend`
-        alle zurück."""
+        """Several statements in ONE transaction, one commit (like `_exec`, only for a list).
+        If one fails — also on an identifier trigger (`IntegrityError`) — `_schreibend` rolls
+        all of them back."""
         with self._schreibend():
             for sql, args in schritte:
                 self.db.execute(sql, args)
@@ -1707,15 +1819,15 @@ class Store:
             self._uhr_mitschreiben()
 
     def set_username(self, user_id, username, selbst_gewaehlt: Optional[bool] = None) -> None:
-        """Den Benutzernamen ersetzen — samt Zähl-Topf (`topf_name`) in derselben Transaktion.
-        Geprüft wird vorher (`TinySesam.change_username`); hier nur geschrieben. Ist der Name
-        schon Kennung eines anderen Kontos (Name, Adresse oder Namensvetter im Topf), weist die
-        Datenbank ihn ab: `sqlite3.IntegrityError`, nichts geändert.
+        """Replace the username — together with the counting bucket (`topf_name`) in the same transaction.
+        The check happens beforehand (`TinySesam.change_username`); this only writes. If the name is
+        already the identifier of another account (name, address or namesake in the bucket), the
+        database rejects it: `sqlite3.IntegrityError`, nothing changed.
 
-        `selbst_gewaehlt` setzt den Merker `users.name_selbst_gewaehlt` (G2-N) in derselben
-        Transaktion und löscht die Herkunft `users.name_quelle`: Der neue Name stammt von der Person
-        oder vom Betreiber, nicht mehr aus der Quelle, die das Konto angelegt hat. `None` lässt
-        beide, wie sie sind."""
+        `selbst_gewaehlt` sets the marker `users.name_selbst_gewaehlt` (G2-N) in the same
+        transaction and deletes the origin `users.name_quelle`: the new name comes from the person
+        or the operator, no longer from the source that created the account. `None` leaves
+        both as they are."""
         name = str(username or "").strip()
         schritte = self._kennung_setzen(user_id, "username", name, norm_kennung(name))
         if selbst_gewaehlt is not None:
@@ -1724,37 +1836,37 @@ class Store:
         self._umschreiben(schritte)
 
     def set_email(self, user_id, email, verified: bool = False):
-        """Die Adresse ersetzen — **mitsamt ihrem Beleg**, vorgabegemäss „unbestätigt".
+        """Replace the address — **together with its proof**, by default "unconfirmed".
 
-        Der Beleg gehört zur Adresse, nicht zum Konto: Seit `users.email_verified` über
-        Rechte entscheidet (`_maybe_promote_admin`, Stufe 2), wäre ein stehengelassener Vermerk
-        der Beleg der **alten** Adresse auf der **neuen** — gemessen wurde genau das
-        (B-umgehung-8 aus T-13): `eve@example.com` (belegt) → `set_email(uid, "boss@example.com")` →
-        Erst-Admin über die Allowlist, ohne dass jemand etwas bestätigt hat.
+        The proof belongs to the address, not to the account: since `users.email_verified` decides
+        on rights (`_maybe_promote_admin`, stage 2), a marker left standing would be
+        the proof of the **old** address on the **new** one — exactly that was measured
+        (B-umgehung-8 from T-13): `eve@example.com` (proven) → `set_email(uid, "boss@example.com")` →
+        first admin via the allowlist, without anyone having confirmed anything.
 
-        Bis dahin stand hier, der Vermerk bleibe „fail-closed" liegen. Das galt nur für die
-        eine Richtung (unbestätigt bleibt unbestätigt); die andere war fail-**open**. Die
-        Vorgabe ist deshalb `verified=False`: Wer einen Beleg für die NEUE Adresse hat — eine
-        eingelöste Bestätigungsmail, ein IdP-Claim aus demselben Login —, sagt das
-        ausdrücklich (`set_email(uid, mail, verified=True)`) oder setzt ihn danach mit
-        `set_email_verified`. Adresse und Beleg gehen in EINER Anweisung in die Datenbank,
-        damit zwischen beiden kein Zustand liegt, in dem die neue Adresse den alten Beleg
-        trägt. Der Zähl-Topf der Adresse (`topf_mail`) geht in derselben Transaktion mit.
+        Until then it said here that the marker stays "fail-closed". That held only for the
+        one direction (unconfirmed stays unconfirmed); the other was fail-**open**. The
+        default is therefore `verified=False`: whoever has a proof for the NEW address — a
+        redeemed confirmation mail, an IdP claim from the same login — says so
+        explicitly (`set_email(uid, mail, verified=True)`) or sets it afterwards with
+        `set_email_verified`. Address and proof go into the database in ONE statement,
+        so that there is no state in between in which the new address carries the old proof.
+        The counting bucket of the address (`topf_mail`) goes along in the same transaction.
 
-        Ist die Adresse schon Kennung eines anderen Kontos (Adresse, Name oder Namensvetter im
-        Topf), weist die Datenbank sie ab: `sqlite3.IntegrityError`, nichts geändert. Bis
-        2026-09-26 prüfte hier nichts ausser `ux_users_email` (Adresse gegen Adresse)."""
+        If the address is already the identifier of another account (address, name or namesake in the
+        bucket), the database rejects it: `sqlite3.IntegrityError`, nothing changed. Until
+        2026-09-26 nothing checked here except `ux_users_email` (address against address)."""
         mail = norm_email(email)
         self._umschreiben(self._kennung_setzen(user_id, "email", mail, norm_kennung(mail), bool(verified)))
 
     def adresse_wechseln(self, user_id, email, name_folgt: bool = False) -> None:
-        """Die bestätigte neue Adresse eintragen (mit Beleg) und, wenn `name_folgt`, den Namen
-        auf dieselbe Adresse setzen (E-Mail-Modus) — in EINER Transaktion.
+        """Enter the confirmed new address (with proof) and, if `name_folgt`, set the name
+        to the same address (email mode) — in ONE transaction.
 
-        Getrennt geschrieben (`set_email`, dann `set_username`) konnte das zweite scheitern,
-        nachdem das erste schon stand: Adresse neu, Name noch die alte Adresse — und die alte
-        Adresse blieb als Name des Kontos besetzt. Scheitert hier eine Anweisung (die neue
-        Kennung ist inzwischen vergeben: `sqlite3.IntegrityError`), bleibt beides beim Alten."""
+        Written separately (`set_email`, then `set_username`), the second could fail
+        after the first was already in place: new address, name still the old address — and the old
+        address stayed occupied as the account's name. If one statement fails here (the new
+        identifier has meanwhile been taken: `sqlite3.IntegrityError`), both stay as they were."""
         mail = norm_email(email)
         topf = norm_kennung(mail)
         schritte = self._kennung_setzen(user_id, "email", mail, topf, True)
@@ -1763,12 +1875,12 @@ class Store:
         self._umschreiben(schritte)
 
     def set_email_verified(self, user_id, verified: bool):
-        """Den Beleg für die Adresse vermerken (`users.email_verified`).
+        """Record the proof for the address (`users.email_verified`).
 
-        Getrennt von der Adresse, weil beides getrennt bekannt ist: Ein IdP schickt `email` in
-        jedem Login, den Claim `email_verified` aber nur manchmal. Und der Vermerk muss liegen
-        bleiben, denn über ihn entscheidet auch ein Login, der selbst keinen Beleg mitbringt
-        (lokales Passwort, Magic-Link) — sonst hinge der Schutz am Anmeldeweg."""
+        Separate from the address because the two are known separately: an IdP sends `email` in
+        every login, but the claim `email_verified` only sometimes. And the marker must stay
+        in place, because a login that brings no proof itself (local password, magic link)
+        is also decided by it — otherwise the protection would depend on the sign-in route."""
         self._exec("UPDATE users SET email_verified=? WHERE id=?",
                    (1 if verified else 0, user_id))
 
@@ -1792,71 +1904,71 @@ class Store:
         kanonisch = norm_email(email)
         if not kanonisch:
             return None
-        # Auch die Form von vor R4-06 (nur getrimmt und klein) suchen: Eine gespeicherte Adresse
-        # mit Umlaut-Domain steht im Bestand noch in Unicode-Form und würde sonst nicht gefunden.
-        # Und zwar in BEIDE Richtungen (Angriff A5): Die Unicode-Form wird auch aus der A-Label-
-        # Eingabe zurückgewonnen — sonst fand `user@xn--bcher-kva.example` den Bestand
-        # `user@bücher.example` nicht, und die Registrierung legte ein zweites Konto für dasselbe
-        # Postfach an.
+        # Also look for the form from before R4-06 (only trimmed and lowercase): a stored address
+        # with an umlaut domain is still in Unicode form in existing data and would otherwise not be found.
+        # And in BOTH directions (attack A5): the Unicode form is also recovered from the A-label
+        # input — otherwise `user@xn--bcher-kva.example` did not find the existing entry
+        # `user@bücher.example`, and the registration created a second account for the same
+        # mailbox.
         alt = str(email or "").strip().lower()
         unicode_form = _email_unicode(kanonisch)
         return self._one("SELECT * FROM users WHERE email COLLATE NOCASE IN (?, ?, ?) ORDER BY id LIMIT 1",
                          (kanonisch, alt, unicode_form))
 
     def konto_entfernen(self, user_id, adresse_unbefristet: bool = False) -> Optional[tuple[str, int]]:
-        """Ein Konto löschen — der EINE Löschweg, über den jeder Aufrufer geht (H-13).
+        """Delete an account — the ONE deletion path that every caller goes through (H-13).
 
-        Konto samt Zugangsdaten und Sitzungen, die Anmeldeversuche unter Name und Adresse, und
-        im Audit-Log wird aus dem Namen `gelöscht#<id>` (`audit_anonymisieren`). Ein gelöschtes
-        Konto, dessen Name weiter in jeder Zeile steht, ist nicht gelöscht.
+        Account together with credentials and sessions, the sign-in attempts under name and address, and
+        in the audit log the name becomes `deleted#<id>` (`audit_anonymisieren`). A deleted
+        account whose name still stands in every row is not deleted.
 
-        Warum hier und nicht im Manager: Bis zur T-13-Integration gab es vier Löschwege mit zwei
-        verschiedenen Zusagen. `TinySesam.delete_user` anonymisierte, `gc()`, `tinysesam gc` (das
-        direkt auf dem Store arbeitet) und die Rücknahme bei gescheitertem Bestätigungsversand
-        riefen `delete_user` und liessen Name, fremde IP und die Adresse des Opfers stehen — ein
-        späterer Namensvetter sah die Registrierung des Fremden als eigenes Ereignis
-        (Integrationsfunde 12/18). Der Store ist die tiefste Stelle, die alle Wege teilen.
+        Why here and not in the manager: until the T-13 integration there were four deletion paths with two
+        different promises. `TinySesam.delete_user` anonymised, `gc()`, `tinysesam gc` (which
+        works directly on the store) and the rollback after a failed confirmation send
+        called `delete_user` and left name, foreign IP and the victim's address standing — a
+        later namesake saw the stranger's registration as their own event
+        (integration findings 12/18). The store is the deepest place that all paths share.
 
-        **Nur was ab der Anlage des Kontos entstand** (`anlage_grenze` — dieselbe Grenze wie
-        `TinySesam.own_events`). Seit `gc()` und die B6-5-Rücknahme hier durchgehen, löst diesen
-        Weg auch ein Fremder ohne Konto aus: registrieren, nie bestätigen. Ohne Grenze schrieb
-        er dabei Zeilen um, die VOR seinem Konto entstanden und anderen gehören — die Einladung
-        des Admins mit der Adresse im Detail, den Fehlversuch eines Sprayers unter dem damals
-        freien Namen, den der echten Adressinhaberin —, und deren Versuchszeilen verschwanden
-        aus der Drosselung je IP. Ein Name oder eine eingetippte Adresse gehörte vor der Anlage
-        niemandem oder jemand anderem. Anmeldeversuche aus der Sekunde der Anlage bleiben
-        stehen: Ob sie davor oder danach kamen, lässt sich nicht entscheiden, und Stehenlassen
-        ist hier die sichere Richtung (sie verfallen mit dem Sperrfenster).
+        **Only what arose from the creation of the account** (`anlage_grenze` — the same limit as
+        `TinySesam.own_events`). Since `gc()` and the B6-5 rollback go through here, a stranger without
+        an account triggers this path too: register, never confirm. Without a limit it
+        rewrote rows that arose BEFORE his account and belong to others — the admin's invitation
+        with the address in the detail, the failed attempt of a sprayer under the then
+        free name, the one of the real address holder —, and their attempt rows disappeared
+        from the per-IP throttling. A name or a typed-in address belonged before creation
+        to nobody or to someone else. Sign-in attempts from the second of creation stay
+        in place: whether they came before or after cannot be decided, and leaving them
+        is the safe direction here (they expire with the lockout window).
 
-        Seit 2026-09-26 genauer (G2): nicht ab der Anlage, sondern ab dem **Beitritt jeder
-        Kennung** (`kennung_grenzen`) — ein Konto bekommt Namen und Adresse auch später
-        (Umbenennen, Adresswechsel). Auf die Zeile genau, auch in der Sekunde des Beitritts. Die
-        Anlage bleibt der Rückfall für den Bestand ohne Wasserlinie.
+        More precise since 2026-09-26 (G2): not from creation, but from **each identifier's
+        joining** (`kennung_grenzen`) — an account gets name and address later too
+        (rename, address change). To the exact row, also in the second of joining. The
+        creation remains the fallback for existing data without a watermark.
 
-        `adresse_unbefristet=True` nimmt eine **belegte** Adresse davon aus (`adresse_belegt`):
-        Sie gehört nachweislich dem Konto und wird auch in älteren Zeilen ersetzt (die
-        Einladung, die zu dem Konto führte). Das ist die bewusste Löschung durch einen Admin
-        (`TinySesam.delete_user`, H-13) — kein Weg, den ein Anonymer auslöst. `gc()`, die
-        Rücknahme und `_purge_demo` räumen Konten ab, die nie jemandem gehörten; dort gilt die
-        Grenze auch für die Adresse. Und auch bei der Löschung durch einen Admin nur für eine
-        BELEGTE Adresse: Die eines offenen Kontos (Registrierung, Link nie eingelöst) oder
-        einer Registrierung ohne Bestätigungspflicht hat ein Fremder eingetippt — ohne diese
-        Unterscheidung schrieb das Aufräumen solcher Konten im Panel die Einladung des Admins
-        und die Fehlversuche der echten Inhaberin von VOR der Anlage auf `gelöscht#<id>` um.
+        `adresse_unbefristet=True` exempts a **proven** address (`adresse_belegt`):
+        it demonstrably belongs to the account and is also replaced in older rows (the
+        invitation that led to the account). That is the deliberate deletion by an admin
+        (`TinySesam.delete_user`, H-13) — not a path that an anonymous party triggers. `gc()`, the
+        rollback and `_purge_demo` clear accounts that never belonged to anyone; there the
+        limit applies to the address too. And even for deletion by an admin only for a
+        PROVEN address: that of an open account (registration, link never redeemed) or
+        of a registration without confirmation requirement was typed in by a stranger — without this
+        distinction, clearing such accounts in the panel would rewrite the admin's invitation
+        and the failed attempts of the real holder from BEFORE creation to `deleted#<id>`.
 
-        Die Anmeldeversuche eines Zähl-Topfs (`norm_kennung`), den ein VERBLEIBENDES Konto
-        teilt, bleiben stehen (s. `delete_attempts_for`).
+        The sign-in attempts of a counting bucket (`norm_kennung`) that a REMAINING account
+        shares stay in place (see `delete_attempts_for`).
 
-        Gibt `(ersatzname, anonymisierte Zeilen)` zurück — unter dem Ersatznamen schreibt der
-        Aufrufer seine eigene Zeile (`user_delete`, `signup_expired`, `verify_send_error`) —,
-        None, wenn es das Konto nicht gibt."""
+        Returns `(replacement name, anonymised rows)` — under the replacement name the
+        caller writes its own row (`user_delete`, `signup_expired`, `verify_send_error`) —,
+        None if the account does not exist."""
         u = self.get_user(user_id)
         if u is None:
             return None
         name, mail = str(u["username"]), (u["email"] or "")
         seit, seit_id = self.anlage_grenze(u)
-        # Genauer als die Anlage: ab wann jede Kennung dem Konto gehörte (G2). Vor dem Löschen
-        # gelesen — danach gibt es die Zeile nicht mehr.
+        # More precise than creation: from when each identifier belonged to the account (G2). Read before
+        # deleting — afterwards the row no longer exists.
         grenzen = self.kennung_grenzen(u)
         unbefristet = (mail,) if (adresse_unbefristet and self.adresse_belegt(u)) else ()
         self.delete_user(user_id)
@@ -1868,15 +1980,15 @@ class Store:
                                                 ab_ids={t: g[1] for t, g in grenzen.items()})
 
     def adresse_belegt(self, user) -> bool:
-        """Gehört die Adresse dieses Kontos nachweislich ihm? (`konto_entfernen`, H-13)
+        """Does the address of this account demonstrably belong to it? (`konto_entfernen`, H-13)
 
-        Der Vermerk `email_verified` UND keine ausstehende Bestätigung: Ein offenes Konto —
-        gesperrt, ein unbenutzter `verify_email`-Token und kein eingelöster — trägt eine Adresse,
-        die jemand eingetippt und nie bestätigt hat. Die Registrierung legt sie seit Schema 10
-        ohne Vermerk an (den setzt erst der eingelöste Link), und `_migrate` holt das für
-        offene Registrierungen aus dem Bestand nach. Die Token-Prüfung hier fängt zusätzlich
-        eine App, die `create_user` mit der Vorgabe `email_verified=True` ruft und danach selbst
-        einen Bestätigungslink verschickt."""
+        The marker `email_verified` AND no pending confirmation: an open account —
+        locked, an unused `verify_email` token and no redeemed one — carries an address
+        that someone typed in and never confirmed. Since schema 10 the registration creates it
+        without the marker (which only the redeemed link sets), and `_migrate` backfills this for
+        open registrations from existing data. The token check here additionally catches
+        an app that calls `create_user` with the default `email_verified=True` and then itself
+        sends a confirmation link."""
         if not (user["email"] and user["email_verified"]):
             return False
         if not user["disabled"]:
@@ -1889,33 +2001,33 @@ class Store:
         return offen is None
 
     def anlage_grenze(self, user) -> tuple[int, int]:
-        """Ab wo gehört eine Audit-Zeile zu diesem Konto? `(seit, seit_id)` — der Rückfall.
+        """From where does an audit row belong to this account? `(seit, seit_id)` — the fallback.
 
-        Seit 2026-09-26 gilt zuerst die Wasserlinie der Kennung (`kennung_grenzen`, G2): Ein
-        Konto, das einen freigewordenen Namen übernimmt, sah hier sonst die Anmeldungen des
-        Vorbesitzers samt dessen IP. Diese Grenze trägt nur noch den Bestand, dessen Konten die
-        Wasserlinie nicht haben.
+        Since 2026-09-26 the watermark of the identifier applies first (`kennung_grenzen`, G2): an
+        account that takes over a name that became free otherwise saw here the sign-ins of the
+        previous owner including their IP. This limit now carries only the existing data whose accounts do not have the
+        watermark.
 
-        `seit` ist `created_at` (Unix-Sekunden). Aus der Sekunde der Anlage selbst zählen nur
-        Zeilen ab `seit_id`: der Registrierungszeile des Kontos (`signup`, beim Platzhalter
-        `signup_taken`), die direkt nach dem Anlegen geschrieben wird. Ohne sie wäre die Grenze
-        nur sekundengenau — und ein Fremder, der sich in derselben Sekunde registriert, in der
-        der Admin die Adresse einlädt oder ein Sprayer den freien Namen probiert, bekäme deren
-        Zeilen zugeschrieben. Genau diese Wege (Registrierung, `gc()`, B6-5) haben die Zeile
-        immer; ein Konto ohne sie (Admin-API, SSO, Demo) fällt auf `seit_id = 0` zurück — dann
-        zählt die ganze Sekunde.
+        `seit` is `created_at` (Unix seconds). From the second of creation itself only rows
+        from `seit_id` count: the registration row of the account (`signup`, for the placeholder
+        `signup_taken`), which is written right after creation. Without it the limit would be
+        accurate to the second only — and a stranger who registers in the same second in which
+        the admin invites the address or a sprayer tries the free name would have their
+        rows attributed. Exactly these paths (registration, `gc()`, B6-5) always have the row;
+        an account without it (admin API, SSO, demo) falls back to `seit_id = 0` — then
+        the whole second counts.
 
-        Gesucht wird die Zeile nur in der Sekunde der Anlage und der nächsten (das Passwort wird
-        NACH dem Anlegen gehasht, die Zeile kann eine Sekunde später stehen). Eine
-        `signup_taken`-Zeile zählt nur, wenn sie die Anlage eines **Platzhalters** war: Der
-        Platzhalter trägt keine Adresse, und seine Zeile nennt im Detail die Adresse, die nicht
-        sein Name ist. Die andere `signup_taken`-Zeile — jemand registriert sich mit einer
-        Adresse, die schon einem Konto als Benutzername gehört (Name = Adresse), und dabei
-        entsteht kein Konto — steht unter genau diesem Namen, auch in derselben oder der
-        nächsten Sekunde. Sie ist nicht die Anlage und verschiebt nichts; als Anker genommen,
-        fiele die `user_create`-Zeile des Admins aus der Anonymisierung.
+        The row is searched only in the second of creation and the next (the password is hashed
+        AFTER creation, the row may be one second later). A
+        `signup_taken` row counts only if it was the creation of a **placeholder**: the
+        placeholder carries no address, and its row names in the detail the address that is not
+        its name. The other `signup_taken` row — someone registers with an
+        address that already belongs to an account as a username (name = address), and no
+        account is created — stands under exactly this name, also in the same or the
+        next second. It is not the creation and shifts nothing; taken as an anchor,
+        the admin's `user_create` row would drop out of the anonymisation.
 
-        Filter für SQL: `ts > seit OR (ts = seit AND id >= seit_id)`."""
+        Filter for SQL: `ts > seit OR (ts = seit AND id >= seit_id)`."""
         seit = int(user["created_at"] or 0)
         platzhalter = not user["email"]
         for z in self._all(
@@ -1928,25 +2040,25 @@ class Store:
         return seit, 0
 
     def konto_mit_topf(self, kennung, ausser=None) -> Optional[sqlite3.Row]:
-        """Das erste Konto, dessen Name oder Adresse in denselben Zähl-Topf fällt wie `kennung`.
+        """The first account whose name or address falls into the same counting bucket as `kennung`.
 
-        Der Topf ist `norm_kennung` (Python-`lower()`), die Namensprüfung der Datenbank dagegen
-        `COLLATE NOCASE` — und das faltet nur ASCII. `Émile` und `émile` sind für SQLite zwei
-        Namen, für den Sperrzähler einer. Deshalb führt jedes Konto seinen Topf als Spalte
-        (`topf_name`/`topf_mail`, gerechnet in Python), und gesucht wird über deren Index.
+        The bucket is `norm_kennung` (Python `lower()`), whereas the database's name check is
+        `COLLATE NOCASE` — and that folds only ASCII. `Émile` and `émile` are two
+        names for SQLite, one for the lockout counter. That is why each account carries its bucket as a column
+        (`topf_name`/`topf_mail`, computed in Python), and the lookup goes through its index.
 
-        Bis Schema 10 lief die Suche als Schleife über ALLE Konten in Python — bei jeder
-        Registrierung, und bei der mit einer freien Adresse zweimal öfter als bei der mit einer
-        vergebenen: Ab einigen tausend Konten verriet die Antwortzeit einer einzigen Anfrage,
-        ob eine Adresse ein Konto hat (R4-03), und `gc()` wuchs mit offenen × allen Konten.
-        Die Arbeit hier hängt jetzt weder von der Zahl der Konten ab noch davon, ob und wo die
-        Kennung gefunden wird (tests/test_audit_runde2.py zählt die SQLite-Schritte).
-        `ausser` lässt ein Konto aus (die ID, um die es gerade geht)."""
+        Up to schema 10 the lookup ran as a loop over ALL accounts in Python — on every
+        registration, and for one with a free address twice as often as for one with a
+        taken address: from a few thousand accounts on, the response time of a single request revealed
+        whether an address has an account (R4-03), and `gc()` grew with open × all accounts.
+        The work here now depends neither on the number of accounts nor on whether and where the
+        identifier is found (tests/test_audit_round2.py counts the SQLite steps).
+        `ausser` leaves out one account (the ID currently at issue)."""
         topf = norm_kennung(kennung)
         if not topf:
             return None
-        # Zeilen, deren Topf sich nicht nachtragen liess (Datenbank nur lesbar), prüft Python —
-        # im Normalfall keine.
+        # Rows whose bucket could not be backfilled (database read-only) are checked by Python —
+        # normally none.
         treffer = [z for z in self._toepfe_nachtragen()
                    if z["id"] != ausser and topf in (norm_kennung(z["username"]), norm_kennung(z["email"]))]
         z = self._one("SELECT * FROM users WHERE (topf_name = ? OR topf_mail = ?) AND id IS NOT ? "
@@ -1956,42 +2068,42 @@ class Store:
         return min(treffer, key=lambda t: t["id"]) if treffer else None
 
     def topf_eines_anderen(self, kennung, user_id) -> bool:
-        """Ist diese Kennung (im Zähl-Topf) Name oder Adresse eines ANDEREN Kontos als `user_id`?
+        """Is this identifier (in the counting bucket) the name or address of an account OTHER than `user_id`?
 
-        Der Wächter vor jedem Räumen unter einer Kennung, die das Konto nicht selbst als Name oder
-        Adresse führt (G5, G5-N1): unter dem Namen aus dem Verzeichnis (`zaehl_kennungen`) und
-        unter der eingetippten Kennung einer Verzeichnis-Anmeldung (`TinySesam._record_login`). Ein
-        Verzeichnisfilter über `mail` löst `chefin@example.com` zu einem Dritten auf, dessen
-        `mail`-Attribut so lautet; ohne diesen Wächter räumte jede Anmeldung des Dritten die
-        Zähler der lokalen Inhaberin dieser Adresse — unbegrenztes Raten gegen ihr Konto.
-        Geprüft wird beim Räumen, nicht beim Schreiben: Eine Kennung kann den Besitzer wechseln."""
+        The guard before every clearing under an identifier that the account does not itself carry as name or
+        address (G5, G5-N1): under the name from the directory (`zaehl_kennungen`) and
+        under the typed identifier of a directory sign-in (`TinySesam._record_login`). A
+        directory filter on `mail` resolves `chefin@example.com` to a third party whose
+        `mail` attribute reads that way; without this guard every sign-in of the third party cleared the
+        counters of the local holder of this address — unlimited guessing against her account.
+        It is checked when clearing, not when writing: an identifier can change owner."""
         return self.konto_mit_topf(kennung, ausser=user_id) is not None
 
     @staticmethod
     def _feld(zeile, name):
-        """Eine Spalte der Kontozeile — None, wenn es sie (noch) nicht gibt (Attrappe, altes Dict)."""
+        """A column of the account row — None if it does not (yet) exist (dummy, old dict)."""
         try:
             return zeile[name]
         except (IndexError, KeyError):
             return None
 
     def kennung_grenzen(self, user) -> dict:
-        """Ab wo gehört eine Zeile unter Name oder Adresse diesem Konto? (Grenze a, G2)
+        """From where does a row under name or address belong to this account? (limit a, G2)
 
-        `{topf: (versuch_ab, audit_ab)}` für Name und Adresse im Zähl-Topf: Zeilen in
-        `login_attempt` bzw. `audit` mit einer GRÖSSEREN Id gehören dem Konto, die übrigen galten
-        niemandem oder jemand anderem. `None` heisst Bestand (die Spalten kamen erst mit diesem
-        Stand) — dann gilt wie bis 2026-09-26 die Anlage (`created_at`, `anlage_grenze`).
+        `{bucket: (versuch_ab, audit_ab)}` for name and address in the counting bucket: rows in
+        `login_attempt` or `audit` with a LARGER id belong to the account, the others belonged
+        to nobody or to someone else. `None` means existing data (the columns only arrived with this
+        state) — then, as until 2026-09-26, the creation applies (`created_at`, `anlage_grenze`).
 
-        Bis dahin war die Anlage die Grenze für JEDE Kennung. Ein Konto bekommt eine Kennung aber
-        auch später: beim Umbenennen, beim Adresswechsel, beim Nachtrag einer Adresse aus OIDC.
-        Die Fehlversuche, die ein Fremder vorher unter dem damals freien Namen gemacht hatte,
-        räumte dann die erste volle Anmeldung weg — auch aus der Drosselung seiner IP —, und die
-        Kontoseite zeigte die Anmeldung des Vorbesitzers samt dessen IP.
+        Until then the creation was the limit for EVERY identifier. But an account gets an identifier
+        later too: on renaming, on address change, on backfilling an address from OIDC.
+        The failed attempts that a stranger had made earlier under the then free name
+        were cleared by the first full sign-in — also from the throttling of his IP —, and the
+        account page showed the previous owner's sign-in including their IP.
 
-        Name und Adresse im selben Topf (E-Mail-Modus): die frühere der beiden Wasserlinien —
-        die Kennung gehört dem Konto, seit sie über einen der beiden Wege hinzukam. Ist eine
-        davon NULL, gilt der Rückfall."""
+        Name and address in the same bucket (email mode): the earlier of the two watermarks —
+        the identifier belongs to the account since it was added by one of the two paths. If one
+        of them is NULL, the fallback applies."""
         aus: dict = {}
         for spalte, art in (("username", "name"), ("email", "mail")):
             topf = norm_kennung(self._feld(user, spalte))
@@ -2005,10 +2117,10 @@ class Store:
         return aus
 
     def konto_mit_verzeichnisname(self, kennung, ausser=None) -> Optional[sqlite3.Row]:
-        """Das Konto (nicht `ausser`), an dessen Bindung diese Kennung als Name im Verzeichnis steht
-        (`federated_identity.name_topf`, G5) — oder None. Für `TinySesam.identifier_taken` und
-        `tinysesam rename`; die Datenbank prüft dasselbe in den Kennungs-Triggern (`_trigger_sql`).
-        Über `ix_fed_name_topf`, kein Scan."""
+        """The account (not `ausser`) on whose binding this identifier stands as the name in the directory
+        (`federated_identity.name_topf`, G5) — or None. For `TinySesam.identifier_taken` and
+        `tinysesam rename`; the database checks the same in the identifier triggers (`_trigger_sql`).
+        Via `ix_fed_name_topf`, no scan."""
         topf = norm_kennung(kennung)
         if not topf:
             return None
@@ -2017,22 +2129,22 @@ class Store:
         return self.get_user(z["user_id"]) if z else None
 
     def zaehl_kennungen(self, user_id) -> set:
-        """Alle Kennungen (im Zähl-Topf), unter denen die Serie (B2-6) dieses Kontos stehen kann.
+        """All identifiers (in the counting bucket) under which the series (B2-6) of this account can stand.
 
-        Name und Adresse — und der Name, unter dem sich das Konto über eine Verzeichnisquelle
-        anmeldet (`federated_identity.name_topf`, G5), sofern er nicht Name oder Adresse eines
-        ANDEREN Kontos ist (`topf_eines_anderen`) und nicht auch an der Bindung eines anderen
-        steht (Prüfrunde 2026-09-27, p1-a: nach Umbenennen und Wiedervergabe im Verzeichnis trugen
-        zwei Konten denselben Namen, und jede volle Anmeldung des Vorbesitzers beendete die Serie,
-        unter der gegen den neuen Inhaber geraten wurde). Seitdem löscht `bindung_name_setzen` den
-        Namen an fremden Bindungen; stehen zwei im Bestand, zählt er für keins — bis zur nächsten
-        LDAP-Anmeldung unter ihm. Die Serie zählt unter der EINGETIPPTEN Kennung;
-        nach einer Umbenennung im Verzeichnis (lokal `alice`, dort `alice.neu`) räumte bis
-        2026-09-26 kein Rückweg die Serie unter `alice.neu` — eigene Tippfehler summierten sich
-        über die Jahre, und ein Fremder sperrte die Person mit genug Fehlversuchen dauerhaft aus.
+        Name and address — and the name under which the account signs in via a directory source
+        (`federated_identity.name_topf`, G5), provided it is not the name or address of an
+        OTHER account (`topf_eines_anderen`) and does not also stand on another account's binding
+        (audit round 2026-09-27, p1-a: after renaming and reassignment in the directory,
+        two accounts carried the same name, and every full sign-in of the previous owner ended the series
+        under which the new holder was being guessed against). Since then `bindung_name_setzen` deletes the
+        name on foreign bindings; if two exist in existing data, it counts for neither — until the next
+        LDAP sign-in under it. The series counts under the TYPED identifier;
+        after a rename in the directory (locally `alice`, there `alice.neu`), until
+        2026-09-26 no way back cleared the series under `alice.neu` — one's own typos added up
+        over the years, and a stranger permanently locked the person out with enough failed attempts.
 
-        Der eine Leser für jeden Rückweg: `lift_lockout`, `_serie_beenden` (Panel-Reset),
-        `tinysesam passwd` und `tinysesam unlock`."""
+        The one reader for every way back: `lift_lockout`, `_serie_beenden` (panel reset),
+        `tinysesam passwd` and `tinysesam unlock`."""
         u = self.get_user(user_id)
         if u is None:
             return set()
@@ -2046,22 +2158,22 @@ class Store:
         return kennungen
 
     def bindung_name_setzen(self, quelle: str, user_id, name) -> bool:
-        """Den Namen, unter dem sich das Konto gerade über `quelle` angemeldet hat, an seiner
-        Bindung vermerken (`federated_identity.name_topf`, G5). Gibt zurück, ob geschrieben wurde.
+        """Record the name under which the account has just signed in via `quelle` on its
+        binding (`federated_identity.name_topf`, G5). Returns whether anything was written.
 
-        Gefaltet (`norm_kennung`) und nur, wenn er weder Name noch Adresse des Kontos ist — die
-        kennen die Rückwege ohnehin; dann steht NULL. Nur der jüngste Name: Nach zwei
-        Umbenennungen im Verzeichnis zählt unter dem ältesten niemand mehr, der sich so anmeldet.
-        Geschrieben wird nur bei einer Änderung, also höchstens ein UPDATE je Anmeldung und im
-        Normalfall keins. Ob der Name Name oder Adresse eines ANDEREN Kontos ist, prüft jeder Leser
-        (`zaehl_kennungen`), nicht dieser Schreiber.
+        Folded (`norm_kennung`) and only if it is neither name nor address of the account — the
+        ways back know those anyway; then NULL stands. Only the most recent name: after two
+        renames in the directory nobody signing in that way counts under the oldest any more.
+        It writes only on a change, so at most one UPDATE per sign-in and normally
+        none. Whether the name is the name or address of an OTHER account is checked by every reader
+        (`zaehl_kennungen`), not by this writer.
 
-        **Die jüngste Anmeldung unter dem Namen belegt, wem er gehört** (Prüfrunde 2026-09-27,
-        p1-a): Steht derselbe Name an der Bindung eines ANDEREN Kontos, ist er dort veraltet — im
-        Verzeichnis umbenannt und neu vergeben. Er wird dort gelöscht, auch wenn er hier als eigener
-        Name oder eigene Adresse NULL bleibt. Bis dahin trugen beide ihn, jede volle Anmeldung des
-        Vorbesitzers beendete die Serie des neuen Inhabers, und `tinysesam unlock` nannte das Konto
-        mit der jüngeren Bindung statt dem, das sich zuletzt so angemeldet hatte."""
+        **The most recent sign-in under the name proves who it belongs to** (audit round 2026-09-27,
+        p1-a): if the same name stands on the binding of an OTHER account, it is stale there — renamed
+        in the directory and reassigned. It is deleted there, even if it stays NULL here as own
+        name or own address. Until then both carried it, every full sign-in of the
+        previous owner ended the new holder's series, and `tinysesam unlock` named the account
+        with the younger binding instead of the one that had last signed in that way."""
         u = self.get_user(user_id)
         if u is None:
             return False
@@ -2078,23 +2190,23 @@ class Store:
         return True
 
     def verzeichnisname_freigeben(self, name) -> int:
-        """Den Namen im Verzeichnis an ALLEN Bindungen löschen — vor der Anlage eines Kontos, das
-        ihn als Namen bekommt (`TinySesam._check_ldap`, Prüfrunde 2026-09-27). Das Verzeichnis hat
-        eben einen anderen Eintrag unter diesem Namen angemeldet; wo er noch steht, ist er veraltet
-        (s. `bindung_name_setzen`) — und ohne das wiese die Datenbank die Anlage ab (Kennungs-
-        Trigger). Gibt die Zahl der gelöschten Vermerke zurück."""
+        """Delete the name in the directory on ALL bindings — before creating an account that
+        gets it as its name (`TinySesam._check_ldap`, audit round 2026-09-27). The directory has
+        just signed in a different entry under this name; where it still stands, it is stale
+        (see `bindung_name_setzen`) — and without this the database would reject the creation (identifier
+        trigger). Returns the number of deleted marks."""
         topf = norm_kennung(name)
         if not topf or self.konto_mit_verzeichnisname(topf) is None:
             return 0
         return self._exec("UPDATE federated_identity SET name_topf=NULL WHERE name_topf=?", (topf,)).rowcount
 
     def konto_mit_bindungsname(self, kennung) -> Optional[sqlite3.Row]:
-        """Das Konto, das sich zuletzt unter dieser Kennung über eine Verzeichnisquelle angemeldet
-        hat (`federated_identity.name_topf`, G5) — für `tinysesam unlock <Name wie eingetippt>`.
-        None, wenn keins oder wenn die Kennung Name oder Adresse eines Kontos ist (dann ist DAS
-        Konto gemeint, `konto_mit_topf`). Mehrere Treffer (Bestand, s. `bindung_name_setzen`):
-        None — welches sich zuletzt so angemeldet hat, steht nirgends. Bis 2026-09-27 war es das
-        zuletzt GEBUNDENE, und `unlock` räumte dessen eigene Serie mit (Prüfrunde, p1-a)."""
+        """The account that last signed in under this identifier via a directory source
+        (`federated_identity.name_topf`, G5) — for `tinysesam unlock <name as typed>`.
+        None if none or if the identifier is the name or address of an account (then THAT
+        account is meant, `konto_mit_topf`). Several hits (existing data, see `bindung_name_setzen`):
+        None — which one signed in last that way is recorded nowhere. Until 2026-09-27 it was the
+        most recently BOUND one, and `unlock` cleared its own series too (audit round, p1-a)."""
         topf = norm_kennung(kennung)
         if not topf or self.konto_mit_topf(topf) is not None:
             return None
@@ -2102,11 +2214,11 @@ class Store:
         return self.get_user(z[0]["user_id"]) if len(z) == 1 else None
 
     def delete_user(self, user_id):
-        """Die Zeilen eines Kontos entfernen — Rohbaustein, nur für `konto_entfernen`.
+        """Remove the rows of an account — raw building block, only for `konto_entfernen`.
 
-        Wer ein Konto löscht, ruft `konto_entfernen` (oder `TinySesam.delete_user`): Hier bleibt
-        der Name im Audit-Log stehen, und die Anmeldeversuche bleiben liegen. Ein Test hält fest,
-        dass es keinen weiteren Aufrufer gibt."""
+        Whoever deletes an account calls `konto_entfernen` (or `TinySesam.delete_user`): here
+        the name stays in the audit log, and the sign-in attempts stay in place. A test ensures
+        that there is no other caller."""
         with self._schreibend():
             for table in ("api_key", "password_cred", "pin_cred", "totp_cred", "recovery_code",
                           "webauthn_cred", "oidc_identity", "federated_identity", "namensbindung",
@@ -2120,22 +2232,22 @@ class Store:
         return bool(u and u["id"] != exclude_id)
 
     def kennungs_kollisionen(self, limit: int = 50) -> list:
-        """Konten, deren **Benutzername** die **E-Mail** eines ANDEREN Kontos ist (Fund R4-12).
+        """Accounts whose **username** is the **email** of an OTHER account (finding R4-12).
 
-        Nur die Kreuz-Richtung; alle Kollisionen im Kennungsraum (auch Name gegen Name, Adresse
-        gegen Adresse) nennt `topf_kollisionen`. Neue verhindert seit 2026-09-26 die Datenbank
-        (`_trigger_sql`); was hier steht, stammt aus dem Bestand (eine ältere Fassung, ein rohes
-        UPDATE, eine Zeile eines fremden Schreibers nach dem Nachtrag ihres Topfs).
+        Only the cross direction; all collisions in the identifier space (also name against name, address
+        against address) are reported by `topf_kollisionen`. New ones have been prevented by the database since 2026-09-26
+        (`_trigger_sql`); what stands here comes from existing data (an older version, a raw
+        UPDATE, a row of a foreign writer after the backfill of its bucket).
 
-        Verglichen wird über den Zähl-Topf (`norm_kennung`). Der faltet gröber als NOCASE, mit dem
-        `get_user_by_name`/`get_user_by_email` suchen — jede Kollision, die die Anmeldung findet,
-        fällt also auch hier auf. Bis 2026-09-26 stand hier NOCASE; `Ärmel`/`ärmel` oder eine
-        Unicode- gegen die A-Label-Domain derselben Adresse fehlten. Eine Zeile ohne Topf (Datei
-        nur lesbar, Nachtrag nicht möglich) zählt nicht mit.
-        Zeilen: `(name_id, kennung, mail_id, adresse)`. Ein Konto, das dieselbe Zeichenfolge in
-        BEIDEN eigenen Spalten trägt, ist keine Kollision (E-Mail-Modus, vorgesehener Weg).
+        The comparison runs over the counting bucket (`norm_kennung`). It folds more coarsely than NOCASE, with which
+        `get_user_by_name`/`get_user_by_email` search — every collision that the sign-in finds
+        is therefore also noticed here. Until 2026-09-26 NOCASE stood here; `Ärmel`/`ärmel` or a
+        Unicode against the A-label domain of the same address were missing. A row without a bucket (file
+        read-only, backfill not possible) does not count.
+        Rows: `(name_id, kennung, mail_id, adresse)`. An account that carries the same string in
+        BOTH its own columns is no collision (email mode, intended path).
         """
-        self._toepfe_nachtragen()     # Zeilen eines fremden Schreibers zählen mit
+        self._toepfe_nachtragen()     # rows of a foreign writer count too
         return self._all(
             "SELECT n.id AS name_id, n.username AS kennung, e.id AS mail_id, e.email AS adresse "
             "FROM users n JOIN users e ON e.id <> n.id "
@@ -2143,17 +2255,17 @@ class Store:
             "ORDER BY n.id LIMIT ?", (int(limit),))
 
     def topf_kollisionen(self, limit: int = 50) -> list:
-        """Alle Kennungen, die mehr als einem Konto gehören — als `[{"kennung", "ids"}, …]`.
+        """All identifiers that belong to more than one account — as `[{"kennung", "ids"}, …]`.
 
-        Gezählt wird im Zähl-Topf (`norm_kennung`) über Namen UND Adressen: `Alice`/`alice`,
-        Name = fremde Adresse, zwei Schreibweisen derselben Adresse (`u@bücher.example` und
-        `u@xn--bcher-kva.example`). Ein Konto, dessen Name seine eigene Adresse ist, zählt einmal
-        (das `UNION` fasst die Zeile zusammen). Neue Kollisionen verhindert die Datenbank
-        (`_trigger_sql`); diese Abfrage nennt die aus dem Bestand — für die Startmeldung, die
-        vorher nur die Kreuz-Richtung sah (`kennungs_kollisionen`). `ids` aufsteigend, die
-        Kennungen nach dem ältesten beteiligten Konto. Zeilen eines fremden Schreibers bekommen
-        vorher ihren Topf (`_toepfe_nachtragen`); lässt der sich nicht schreiben (Datei nur
-        lesbar), zählen sie nicht mit."""
+        Counted in the counting bucket (`norm_kennung`) over names AND addresses: `Alice`/`alice`,
+        name = foreign address, two spellings of the same address (`u@bücher.example` and
+        `u@xn--bcher-kva.example`). An account whose name is its own address counts once
+        (the `UNION` merges the row). New collisions are prevented by the database
+        (`_trigger_sql`); this query reports those from existing data — for the start message, which
+        previously saw only the cross direction (`kennungs_kollisionen`). `ids` ascending, the
+        identifiers by the oldest account involved. Rows of a foreign writer first get
+        their bucket (`_toepfe_nachtragen`); if that cannot be written (file read-only),
+        they do not count."""
         self._toepfe_nachtragen()
         zeilen = self._all(
             "SELECT topf, group_concat(id) AS ids FROM ("
@@ -2166,38 +2278,38 @@ class Store:
     def list_users(self):
         return self._all("SELECT * FROM users ORDER BY username")
 
-    #: Werte von `users.disabled` neben 0 (aktiv): die Sperre einer ausstehenden Bestätigung und
-    #: die Sperre durch den Betreiber. Getrennt, weil `/auth/verify/…` die eine aufhebt und die
-    #: andere nie (H-18, zweite Angriffsrunde): Entstand der Bestätigungstoken erst NACH einer
-    #: Sperre durch den Betreiber — etwa im Postausgang einer einbettenden App, die
-    #: `send_verify_email` dorthin schiebt —, fand die Sperre nichts zu verwerfen, und der Link
-    #: setzte `disabled` danach bedingungslos auf 0.
+    #: Values of `users.disabled` besides 0 (active): the lock of a pending confirmation and
+    #: the lock by the operator. Separate because `/auth/verify/…` lifts the one and never the
+    #: other (H-18, second attack round): if the confirmation token arose only AFTER a
+    #: lock by the operator — for instance in the outbox of an embedding app to which
+    #: `send_verify_email` pushes it —, the lock found nothing to discard, and the link
+    #: afterwards set `disabled` unconditionally to 0.
     GESPERRT_BESTAETIGUNG = 1
     GESPERRT_BETREIBER = 2
 
     def set_disabled(self, user_id, disabled: bool, durch_betreiber: bool = False):
-        """Konto sperren oder entsperren.
+        """Lock or unlock an account.
 
-        `durch_betreiber=True` ist die Sperre des Betreibers (Admin-Panel): Kein Bestätigungslink
-        hebt sie auf, nur ein ausdrückliches `set_disabled(uid, False)`. Ohne den Vermerk ist es
-        die Sperre einer ausstehenden Bestätigung, die `bestaetigung_freischalten` aufhebt — und
-        die stuft eine schon bestehende Sperre des Betreibers nicht herab.
+        `durch_betreiber=True` is the operator's lock (admin panel): no confirmation link
+        lifts it, only an explicit `set_disabled(uid, False)`. Without the marker it is
+        the lock of a pending confirmation, which `bestaetigung_freischalten` lifts — and
+        which does not downgrade an already existing operator lock.
 
-        Sperren aus Fassungen vor dieser Unterscheidung tragen 1 — und bis 0.19.x verwarf die
-        Sperre im Panel die offenen Einmal-Token nicht, ein ausstehender Bestätigungslink hätte
-        sie nach dem Upgrade also aufgehoben. Die Migration auf Schema 10 (`_bestand_nachziehen`)
-        hebt deshalb jede Sperre, die das Audit-Log als Panel-Sperre kennt, auf 2 und verwirft
-        dabei die offenen Token. Eine Sperre, deren Zeile schon gelöscht ist
-        (`audit_retention_days`), bleibt 1; `POST <admin_path>/api/users/{id}/disable` mit
-        `{"disabled": true}` setzt den Vermerk, ohne dazwischen zu entsperren."""
+        Locks from versions before this distinction carry 1 — and up to 0.19.x the lock
+        in the panel did not discard the open one-time tokens, so a pending confirmation link would
+        have lifted it after the upgrade. The migration to schema 10 (`_bestand_nachziehen`)
+        therefore raises every lock that the audit log knows as a panel lock to 2 and discards
+        the open tokens in doing so. A lock whose row has already been deleted
+        (`audit_retention_days`) stays 1; `POST <admin_path>/api/users/{id}/disable` with
+        `{"disabled": true}` sets the marker without unlocking in between."""
         if disabled:
-            # Ein Owner lässt sich nicht sperren — auch nicht über den Code-Weg (Owner-Modell). Sonst
-            # zählte `owner_count` einen Owner, der sich nicht anmelden kann.
+            # An owner cannot be locked — not even via the code path (owner model). Otherwise
+            # `owner_count` would count an owner who cannot sign in.
             zeile = self._one("SELECT is_owner FROM users WHERE id=?", (user_id,))
             if zeile is not None and zeile["is_owner"]:
                 from .errors import StateError
-                raise StateError(f"Konto {user_id} ist Owner und lässt sich nicht sperren — erst die "
-                                 "Owner-Rolle abgeben.")
+                raise StateError(f"Account {user_id} is an owner and cannot be locked — hand over the "
+                                 "owner role first.")
         if not disabled:
             self._exec("UPDATE users SET disabled=0 WHERE id=?", (user_id,))
         elif durch_betreiber:
@@ -2207,10 +2319,10 @@ class Store:
                        (self.GESPERRT_BESTAETIGUNG, user_id))
 
     def bestaetigung_freischalten(self, user_id) -> bool:
-        """Die Sperre einer ausstehenden Bestätigung aufheben — nie die des Betreibers.
+        """Lift the lock of a pending confirmation — never the operator's.
 
-        True, wenn das Konto danach aktiv ist (auch: es war gar nicht gesperrt). False, wenn
-        eine Sperre bleibt; dann hat der Betreiber gesperrt, und nur er hebt es wieder auf."""
+        True if the account is active afterwards (also: it was not locked at all). False if
+        a lock remains; then the operator locked it, and only the operator lifts it again."""
         self._exec("UPDATE users SET disabled=0 WHERE id=? AND disabled=?",
                    (user_id, self.GESPERRT_BESTAETIGUNG))
         zeile = self._one("SELECT disabled FROM users WHERE id=?", (user_id,))
@@ -2220,32 +2332,32 @@ class Store:
         self._exec("UPDATE users SET is_admin=? WHERE id=?", (1 if is_admin else 0, user_id))
 
     def set_owner(self, user_id, owner: bool):
-        """Owner-Kennzeichen setzen. Ein Owner ist immer Admin — und zwar von Hand (1): Kein Identity
-        Provider nimmt einem Owner das Admin-Recht (H-5 entzieht nur die 2). Die Regeln (mindestens
-        einer, nur Owner vergeben) prüft der Manager."""
+        """Set the owner flag. An owner is always an admin — and by hand (1): no identity
+        provider takes the admin right from an owner (H-5 removes only the 2). The rules (at least
+        one, only owners assign) are checked by the manager."""
         if owner:
             self._exec("UPDATE users SET is_owner=1, is_admin=1 WHERE id=?", (user_id,))
         else:
             self._exec("UPDATE users SET is_owner=0 WHERE id=?", (user_id,))
 
     def owner_count(self, ohne=None) -> int:
-        """Wie viele Owner gibt es (ohne das Konto `ohne`)?"""
+        """How many owners are there (excluding the account `ohne`)?"""
         zeile = self._one("SELECT COUNT(*) AS n FROM users WHERE is_owner=1 AND id <> ?",
                           (int(ohne) if ohne is not None else -1,))
         return int(zeile["n"])
 
     def set_admin_vom_idp(self, user_id):
-        """Admin-Flag mit dem Vermerk „vom Identity Provider vergeben" (`is_admin=2`, H-5).
+        """Admin flag with the mark "granted by the identity provider" (`is_admin=2`, H-5).
 
-        Nur dieser Wert darf beim nächsten Login wieder entzogen werden, wenn der Provider die
-        Gruppe nicht mehr liefert. Eine 1 (Panel, CLI, `admin_identifiers`, `/auth/claim-admin`)
-        rührt kein Provider an. Überall sonst gilt das Flag als Wahrheitswert — 2 ist Admin wie 1."""
+        Only this value may be withdrawn again at the next login if the provider no longer
+        delivers the group. A 1 (panel, CLI, `admin_identifiers`, `/auth/claim-admin`)
+        is never touched by a provider. Everywhere else the flag counts as a truth value — 2 is admin like 1."""
         self._exec("UPDATE users SET is_admin=2 WHERE id=? AND is_admin=0", (user_id,))
 
     def user_count(self) -> int:
         return self._one("SELECT COUNT(*) c FROM users")["c"]
 
-    # ---------- Passwort ----------
+    # ---------- Password ----------
     def set_password_hash(self, user_id, hash_):
         self._exec("INSERT INTO password_cred(user_id, hash, updated_at) VALUES (?,?,?) "
                    "ON CONFLICT(user_id) DO UPDATE SET hash=excluded.hash, updated_at=excluded.updated_at",
@@ -2272,63 +2384,63 @@ class Store:
         return self.get_pin_hash(user_id) is not None
 
     # ---------- TOTP ----------
-    #: Ver-/Entschlüsselung der TOTP-Geheimnisse (H-14/H-15, `geheimnis.Tresor`). Setzt der Manager;
-    #: ein Store ohne Tresor (CLI-Werkzeuge) fasst die Geheimnisse nicht an.
+    #: Encryption/decryption of the TOTP secrets (H-14/H-15, `vault.Vault`). Set by the manager;
+    #: a store without a vault (CLI tools) does not touch the secrets.
     tresor: Any = None
 
     def set_totp(self, user_id, secret, confirmed=False):
-        # `last_step` gehört zum Geheimnis: Ein neues beginnt ohne verbrauchten Schritt. Sonst
-        # sperrte der Bestätigungscode eines verworfenen Versuchs den ersten Code des neuen,
-        # wenn beide in dasselbe 30-Sekunden-Fenster fallen.
+        # `last_step` belongs to the secret: a new one starts without a consumed step. Otherwise
+        # the confirmation code of a discarded attempt would lock the first code of the new one
+        # if both fall into the same 30-second window.
         if self.tresor is None:
-            raise RuntimeError("TOTP-Geheimnisse werden nur verschlüsselt abgelegt — der Store hat "
-                               "keinen Schlüssel (geheimnis.Tresor).")
+            raise RuntimeError("TOTP secrets are only stored encrypted — the store has "
+                               "no key (vault.Vault).")
         self._exec("INSERT INTO totp_cred(user_id, secret, confirmed, created_at) VALUES (?,?,?,?) "
                    "ON CONFLICT(user_id) DO UPDATE SET secret=excluded.secret, "
                    "confirmed=excluded.confirmed, last_step=NULL",
-                   (user_id, self.tresor.verschluesseln(secret), 1 if confirmed else 0, _now()))
+                   (user_id, self.tresor.encrypt(secret), 1 if confirmed else 0, _now()))
 
     def confirm_totp(self, user_id):
         self._exec("UPDATE totp_cred SET confirmed=1 WHERE user_id=?", (user_id,))
 
     def get_totp(self, user_id) -> Optional[dict]:
-        """Die TOTP-Zeile eines Kontos, das Geheimnis entschlüsselt (`secret`)."""
+        """The TOTP row of an account, with the secret decrypted (`secret`)."""
         zeile = self._one("SELECT * FROM totp_cred WHERE user_id=?", (user_id,))
         if zeile is None:
             return None
         d = dict(zeile)
         if self.tresor is not None:
-            d["secret"] = self.tresor.entschluesseln(d["secret"])
+            d["secret"] = self.tresor.decrypt(d["secret"])
         return d
 
     def geheimnisse_heben(self) -> int:
-        """Klartext-Geheimnisse aus der Zeit vor der Verschlüsselung verschlüsseln (stilles Heben)
-        — und vorher prüfen, dass der Schlüssel zu den schon verschlüsselten passt. Passt er nicht,
-        `ConfigError`: Ein Start mit falschem Schlüssel liesse sonst jede TOTP-Anmeldung still
-        scheitern. Gibt zurück, wie viele gehoben wurden."""
+        """Encrypt plaintext secrets from the time before encryption (silent upgrade)
+        — and first check that the key matches the already encrypted ones. If it does not,
+        `ConfigError`: a start with the wrong key would otherwise let every TOTP sign-in fail
+        silently. Returns how many were upgraded."""
         from .errors import ConfigError
         if self.tresor is None:
             return 0
-        # Beide Tabellen mit Verschlüsseltem: Gibt es nur Refresh-Tokens (OIDC-Instanz ohne TOTP),
-        # startete ein falscher Schlüssel sonst — und jede Anfrage mit altem Cookie lief auf 500.
+        # Both tables with encrypted data: if there are only refresh tokens (OIDC instance without TOTP),
+        # a wrong key would otherwise start — and every request with an old cookie ended in a 500.
         probe = self._one("SELECT secret AS wert FROM totp_cred WHERE secret LIKE 'v1:%' "
                           "UNION ALL SELECT refresh FROM oidc_sitzung WHERE refresh LIKE 'v1:%' LIMIT 1")
         if probe is not None:
             try:
-                self.tresor.entschluesseln(probe["wert"])
+                self.tresor.decrypt(probe["wert"])
             except Exception:
                 raise ConfigError(
-                    "Der Schlüssel passt nicht zu den gespeicherten Geheimnissen (TOTP/OIDC; falsche "
-                    "TINYSESAM_SECRETS_KEY/secrets_key_file, oder die Schlüsseldatei neben der "
-                    "Datenbank fehlt bzw. ist eine andere). Den richtigen Schlüssel einsetzen — ohne ihn "
-                    "müssen alle Konten TOTP neu einrichten.") from None
+                    "The key does not match the stored secrets (TOTP/OIDC; wrong "
+                    "TINYSESAM_SECRETS_KEY/secrets_key_file, or the key file next to the "
+                    "database is missing or a different one). Use the right key — without it "
+                    "all accounts have to set up TOTP again.") from None
         klar = self._all("SELECT user_id, secret FROM totp_cred WHERE secret NOT LIKE 'v1:%'")
         for z in klar:
             self._exec("UPDATE totp_cred SET secret=? WHERE user_id=? AND secret=?",
-                       (self.tresor.verschluesseln(z["secret"]), z["user_id"], z["secret"]))
+                       (self.tresor.encrypt(z["secret"]), z["user_id"], z["secret"]))
         if klar:
             logging.getLogger("tinysesam").info(
-                "%d TOTP-Geheimnis(se) verschlüsselt (bisher Klartext in der Datenbank).", len(klar))
+                "%d TOTP secret(s) encrypted (previously plaintext in the database).", len(klar))
         return len(klar)
 
     def delete_totp(self, user_id):
@@ -2338,7 +2450,7 @@ class Store:
         r = self.get_totp(user_id)
         return bool(r and r["confirmed"])
 
-    # ---------- Recovery-Codes ----------
+    # ---------- Recovery codes ----------
     def delete_recovery_codes(self, user_id):
         self._exec("DELETE FROM recovery_code WHERE user_id=?", (user_id,))
 
@@ -2350,7 +2462,7 @@ class Store:
             self.db.commit()
 
     def consume_recovery_code(self, user_id, code_hash) -> bool:
-        """Einen ungenutzten Code atomar entwerten. True nur beim ersten gültigen Einlösen."""
+        """Invalidate an unused code atomically. True only on the first valid redemption."""
         with self._schreibend():
             cur = self.db.execute(
                 "UPDATE recovery_code SET used_at=? WHERE id=(SELECT id FROM recovery_code "
@@ -2381,37 +2493,37 @@ class Store:
     def delete_webauthn(self, cred_row_id, user_id):
         self._exec("DELETE FROM webauthn_cred WHERE id=? AND user_id=?", (cred_row_id, user_id))
 
-    # ---------- OIDC-Link ----------
+    # ---------- OIDC link ----------
     def link_oidc(self, issuer, subject, user_id):
         self._exec("INSERT OR REPLACE INTO oidc_identity(issuer, subject, user_id) VALUES (?,?,?)",
                    (issuer, subject, user_id))
 
-    # ---------- Erst-Login und Enrollment-Fenster (R3-1) ----------
+    # ---------- First login and enrollment window (R3-1) ----------
     def mark_first_login(self, user_id: int, jetzt: int) -> bool:
-        """Den ersten vollständigen Login festhalten — nur beim ersten Mal (idempotent).
+        """Record the first complete login — only the first time (idempotent).
 
-        Rückgabe: True, wenn dieser Aufruf ihn gesetzt hat. Die Bedingung steht im SQL, nicht
-        davor: Zwei gleichzeitige Anmeldungen desselben Kontos (zwei Geräte, zwei Worker)
-        würden sonst beide lesen, beide schreiben, und der Zeitpunkt wäre der spätere."""
+        Return value: True if this call set it. The condition is in the SQL, not
+        before it: two simultaneous sign-ins of the same account (two devices, two workers)
+        would otherwise both read, both write, and the time would be the later one."""
         return self._exec("UPDATE users SET first_login_at=? WHERE id=? AND first_login_at IS NULL",
                           (jetzt, user_id)).rowcount > 0
 
     def set_mfa_enroll_until(self, user_id: int, bis: Optional[int]) -> None:
-        """Das Einrichtungsfenster öffnen (Zeitstempel) oder schliessen (None)."""
+        """Open the enrollment window (timestamp) or close it (None)."""
         self._exec("UPDATE users SET mfa_enroll_until=? WHERE id=?", (bis, user_id))
 
     def ist_oidc_konto(self, user_id) -> bool:
-        """Ist dieses Konto an eine OIDC-Identität gebunden (Fund 8)?"""
+        """Is this account bound to an OIDC identity (finding 8)?"""
         return bool(self._one("SELECT 1 FROM oidc_identity WHERE user_id=? LIMIT 1", (user_id,)))
 
     def idp_bestaetigen(self, user_id, gefragt_at: Optional[int] = None) -> bool:
-        """Der Provider hat das Konto bestätigt (Login über ihn, Refresh-Tausch mit Ja).
+        """The provider has confirmed the account (login via it, refresh exchange with yes).
 
-        `gefragt_at` ist der Zeitpunkt, zu dem die Frage an den Provider ABGING. Ein Nein, das
-        danach eingetragen wurde, bleibt stehen: Zwei Tausche laufen parallel (zwei Sitzungen,
-        zwei Clients), und ein Ja, das vor der Sperre beantwortet, aber nach dem Nein angewandt
-        wird, weckte sonst die Keys eines gesperrten Kontos (Angriff auf die dritte Runde).
-        Rückgabe: ob geschrieben wurde."""
+        `gefragt_at` is the time at which the question to the provider WENT OUT. A no that was
+        recorded after that stays: two exchanges run in parallel (two sessions,
+        two clients), and a yes that was answered before the lock but applied after the no
+        would otherwise wake the keys of a locked account (attack on the third round).
+        Return value: whether anything was written."""
         jetzt = _now()
         gefragt = int(gefragt_at if gefragt_at is not None else jetzt)
         return self._exec(
@@ -2419,29 +2531,29 @@ class Store:
             "OR idp_bestaetigt_at > 0 OR -idp_bestaetigt_at < ?)", (jetzt, user_id, gefragt)).rowcount > 0
 
     def idp_verweigert(self, user_id) -> None:
-        """Der Provider hat Nein gesagt: Die API-Keys des Kontos ruhen bis zur nächsten
-        Bestätigung (Fund 8). Gespeichert als NEGATIVER Zeitpunkt des Neins — NULL heisst „nie
-        bestätigt", ≤ 0 „verweigert", und der Zeitpunkt entscheidet, ob ein später angewandtes Ja
-        jünger ist (`idp_bestaetigen`)."""
+        """The provider said no: the API keys of the account are dormant until the next
+        confirmation (finding 8). Stored as a NEGATIVE time of the no — NULL means "never
+        confirmed", ≤ 0 "refused", and the time decides whether a later-applied yes
+        is younger (`idp_bestaetigen`)."""
         self._exec("UPDATE users SET idp_bestaetigt_at=? WHERE id=?", (-max(_now(), 1), user_id))
 
     def oidc_sitzung_handle(self, client, alt_verschluesselt) -> Optional[str]:
-        """Das HEUTIGE Handle der Sitzung, deren Zeile dieses (verschlüsselte) Token trägt."""
+        """TODAY's handle of the session whose row carries this (encrypted) token."""
         r = self._one("SELECT token_hash FROM oidc_sitzung WHERE client=? AND refresh=?",
                       (client, alt_verschluesselt))
         return r["token_hash"] if r else None
 
     def oidc_sitzung_verwerfen(self, handle, client) -> None:
-        """Eine OIDC-Zeile ohne eingerichteten Client verwerfen — die Sitzung selbst bleibt."""
+        """Discard an OIDC row without a configured client — the session itself stays."""
         self._exec("DELETE FROM oidc_sitzung WHERE token_hash=? AND client=?", (self._handle(handle), client))
 
     def get_oidc_user(self, issuer, subject) -> Optional[int]:
         r = self._one("SELECT user_id FROM oidc_identity WHERE issuer=? AND subject=?", (issuer, subject))
         return r["user_id"] if r else None
 
-    # ---------- Föderierte Identitäten über eine stabile Kennung (F-11) ----------
+    # ---------- Federated identities via a stable identifier (F-11) ----------
     def link_federated(self, quelle: str, kennung: str, user_id: int, jetzt: int) -> None:
-        """Eine fremde Identität an ein lokales Konto binden (oder die Bindung erneuern)."""
+        """Bind a foreign identity to a local account (or renew the binding)."""
         self._exec("INSERT OR REPLACE INTO federated_identity(quelle, kennung, user_id, gebunden_at)"
                    " VALUES (?,?,?,?)", (quelle, kennung, user_id, jetzt))
 
@@ -2451,39 +2563,39 @@ class Store:
         return r["user_id"] if r else None
 
     def get_federated_kennung(self, quelle: str, user_id: int) -> Optional[str]:
-        """Die Kennung, mit der dieses Konto für diese Quelle gebunden ist — None, wenn keine.
+        """The identifier with which this account is bound for this source — None if none.
 
-        Der Rückweg ist der eigentliche Riegel: Trägt ein Konto schon eine Kennung, darf es
-        **nicht** an eine zweite gebunden werden. Genau das wäre der Fall, wenn im Verzeichnis
-        ein gelöschtes Konto unter demselben Namen neu entsteht."""
+        The way back is the actual bolt: if an account already carries an identifier, it must
+        **not** be bound to a second one. That is exactly what would happen if a deleted account
+        were recreated under the same name in the directory."""
         r = self._one("SELECT kennung FROM federated_identity WHERE quelle=? AND user_id=?",
                       (quelle, user_id))
         return r["kennung"] if r else None
 
     def has_foreign_identity(self, user_id: int) -> bool:
-        """Ist dieses Konto an irgendeine fremde Identität gebunden (OIDC, LDAP, SAML)?"""
+        """Is this account bound to any foreign identity (OIDC, LDAP, SAML)?"""
         return bool(self._one("SELECT 1 FROM oidc_identity WHERE user_id=? "
                               "UNION ALL SELECT 1 FROM federated_identity WHERE user_id=? LIMIT 1",
                               (user_id, user_id)))
 
     def unlink_federated(self, quelle: str, user_id: int) -> int:
-        """Die Bindung eines Kontos für eine Quelle lösen (Betreiber-Weg nach einem Umzug)."""
+        """Release the binding of an account for a source (operator path after a move)."""
         return self._exec("DELETE FROM federated_identity WHERE quelle=? AND user_id=?",
                           (quelle, user_id)).rowcount
 
-    #: Präfix der Herkunfts-Platzhalter in `federated_identity.kennung` (s. `TinySesam._OHNE_KENNUNG`).
+    #: Prefix of the origin placeholders in `federated_identity.kennung` (see `TinySesam._OHNE_KENNUNG`).
     OHNE_KENNUNG = "~ohne-kennung:"
 
     def nachbinden(self, quelle: str, kennung: str, user_id: int, jetzt: int) -> bool:
-        """Ein Konto an eine Kennung binden, die noch niemandem gehört — oder nichts tun (G1).
+        """Bind an account to an identifier that belongs to nobody yet — or do nothing (G1).
 
-        Für die Bestandsbindung (`TinySesam.federation_bind_existing`), die zwischen Prüfung und
-        Schreiben durch ein ganzes Verzeichnis läuft. `link_federated` ersetzt eine Zeile mit
-        derselben Kennung (`INSERT OR REPLACE`) — hier nähme das einem Konto, das sich inzwischen
-        angemeldet hat, seine Bindung weg. Deshalb in EINER Transaktion: Gehört die Kennung schon
-        einem Konto oder trägt dieses Konto schon eine echte Kennung, bleibt alles, wie es ist
-        (`False`). Sonst weicht ein Herkunfts-Platzhalter, die Bindung entsteht, und eine offene
-        Namensbindung (`namensbindung`) ist erledigt."""
+        For the binding of existing accounts (`TinySesam.federation_bind_existing`), which runs through a whole
+        directory between check and write. `link_federated` replaces a row with
+        the same identifier (`INSERT OR REPLACE`) — here that would take its binding away from an account that has
+        meanwhile signed in. Hence in ONE transaction: if the identifier already belongs
+        to an account or this account already carries a real identifier, everything stays as it is
+        (`False`). Otherwise an origin placeholder yields, the binding is created, and an open
+        name binding (`namensbindung`) is done."""
         with self._schreibend():
             besetzt = self.db.execute(
                 "SELECT 1 FROM federated_identity WHERE quelle=? AND (kennung=? OR "
@@ -2501,8 +2613,8 @@ class Store:
         return True
 
     def ohne_bindung(self, quelle: str) -> list:
-        """Die Konten ohne echte Kennung für diese Quelle — keine Zeile oder nur der
-        Herkunfts-Platzhalter —, ohne Service-Konten (G1). Mit `hat_passwort` (lokales Passwort)."""
+        """The accounts without a real identifier for this source — no row or only the
+        origin placeholder —, excluding service accounts (G1). With `hat_passwort` (local password)."""
         return self._all(
             "SELECT u.*, EXISTS (SELECT 1 FROM password_cred p WHERE p.user_id = u.id) AS hat_passwort "
             "FROM users u WHERE u.is_service = 0 AND NOT EXISTS (SELECT 1 FROM federated_identity f "
@@ -2510,25 +2622,25 @@ class Store:
             (quelle, len(self.OHNE_KENNUNG), self.OHNE_KENNUNG))
 
     def namensbindung_oeffnen(self, quelle: str, user_id: int, bis: int) -> None:
-        """Die Bindung über den Namen für dieses Konto bis `bis` öffnen (G1, `federation_unbind`)."""
+        """Open the binding via the name for this account until `bis` (G1, `federation_unbind`)."""
         self._exec("INSERT OR REPLACE INTO namensbindung(quelle, user_id, bis) VALUES (?,?,?)",
                    (quelle, user_id, int(bis)))
 
     def namensbindung_offen(self, quelle: str, user_id: int, jetzt: int) -> bool:
-        """Hat der Betreiber die Bindung über den Namen für dieses Konto geöffnet (und läuft sie noch)?"""
+        """Has the operator opened the binding via the name for this account (and is it still running)?"""
         return self._one("SELECT 1 AS x FROM namensbindung WHERE quelle=? AND user_id=? AND bis > ?",
                          (quelle, user_id, int(jetzt))) is not None
 
     def namensbindung_schliessen(self, quelle: str, user_id: int) -> None:
-        """Die geöffnete Bindung über den Namen ist erledigt (die Bindung steht)."""
+        """The opened binding via the name is done (the binding stands)."""
         self._exec("DELETE FROM namensbindung WHERE quelle=? AND user_id=?", (quelle, user_id))
 
     def foederation_seit(self, quelle: str, jetzt: int) -> int:
-        """Der Merker einer föderierten Quelle (`foederation_seit:<quelle>`): ab wann die Frist für
-        die Bindung über den Namen läuft (G1). Beim ersten Aufruf auf `jetzt` gesetzt, danach nie
-        wieder — ein Merker, der bei jedem Start neu gesetzt würde, schenkte jedem Neustart eine
-        neue Frist. `INSERT OR IGNORE`: Starten mehrere Worker gleichzeitig, gewinnt der erste, und
-        alle lesen danach denselben Wert."""
+        """The marker of a federated source (`foederation_seit:<quelle>`): from when the deadline for
+        the binding via the name runs (G1). Set to `jetzt` on the first call, never
+        again afterwards — a marker that were set anew on every start would give every restart a
+        new deadline. `INSERT OR IGNORE`: if several workers start at the same time, the first wins, and
+        all afterwards read the same value."""
         schluessel = f"foederation_seit:{quelle}"
         z = self._one("SELECT value FROM setting WHERE key=?", (schluessel,))
         if z is None:
@@ -2536,78 +2648,78 @@ class Store:
             z = self._one("SELECT value FROM setting WHERE key=?", (schluessel,))
         return int(z["value"])
 
-    # ---------- Freigaben je Anwendung (T-14) ----------
-    # Der Schlüssel ist der **Hash** der Sitzung, nicht der Klartext — dieselbe Regel wie in
-    # `session`: Wer die Datei liest, bekommt damit keine übernehmbare Sitzung.
+    # ---------- Approvals per application (T-14) ----------
+    # The key is the **hash** of the session, not the plaintext — the same rule as in
+    # `session`: whoever reads the file thereby gets no session that can be taken over.
     def set_oidc_sitzung(self, handle, client, sub, refresh, client_id: Optional[str] = None) -> None:
-        """Das Refresh-Token einer OIDC-Sitzung für DIESEN Client ablegen — verschlüsselt (4a).
+        """Store the refresh token of an OIDC session for THIS client — encrypted (4a).
 
-        Je Client eine Zeile: Mit mehreren Anwendungen darf ein späterer Login über einen anderen
-        Client die Nachprüfung des ersten nicht überschreiben — sonst suchte der Nutzer selbst aus,
-        welcher Provider-Eintrag noch nachgeprüft wird (Angriff auf die zweite Runde, Fund 7)."""
+        One row per client: with several applications, a later login via another
+        client must not overwrite the re-check of the first — otherwise the user would choose
+        which provider entry is still re-checked (attack on the second round, finding 7)."""
         if self.tresor is None:
-            raise RuntimeError("Refresh-Tokens werden nur verschlüsselt abgelegt (geheimnis.Tresor).")
+            raise RuntimeError("Refresh tokens are only stored encrypted (vault.Vault).")
         self._exec("INSERT INTO oidc_sitzung(token_hash, client, sub, refresh, geprueft_at, client_id, erfolg_at) "
                    "VALUES (?,?,?,?,?,?,?) ON CONFLICT(token_hash, client) DO UPDATE SET sub=excluded.sub, "
                    "refresh=excluded.refresh, geprueft_at=excluded.geprueft_at, client_id=excluded.client_id, "
                    "erfolg_at=excluded.erfolg_at",
-                   (self._handle(handle), client, sub, self.tresor.verschluesseln(refresh), _now(), client_id,
+                   (self._handle(handle), client, sub, self.tresor.encrypt(refresh), _now(), client_id,
                     _now()))
 
     def get_oidc_sitzungen(self, handle) -> list:
-        """Die OIDC-Zeilen einer Sitzung — das Refresh-Token VERSCHLÜSSELT (entschlüsselt wird
-        erst, wenn getauscht wird; eine Anfrage vor Ablauf der Frist fasst den Schlüssel nicht an)."""
+        """The OIDC rows of a session — the refresh token ENCRYPTED (it is decrypted
+        only when exchanging; a request before the deadline expires does not touch the key)."""
         return [dict(z) for z in self._all("SELECT * FROM oidc_sitzung WHERE token_hash=?",
                                           (self._handle(handle),))]
 
     def get_oidc_sitzung(self, handle, client="*") -> Optional[dict]:
-        """Eine OIDC-Zeile, das Refresh-Token entschlüsselt, oder None (für Werkzeuge und Tests)."""
+        """One OIDC row, with the refresh token decrypted, or None (for tools and tests)."""
         z = self._one("SELECT * FROM oidc_sitzung WHERE token_hash=? AND client=?", (self._handle(handle), client))
         if z is None:
             return None
         d = dict(z)
         if self.tresor is not None:
-            d["refresh"] = self.tresor.entschluesseln(d["refresh"])
+            d["refresh"] = self.tresor.decrypt(d["refresh"])
         return d
 
     def oidc_sitzung_beanspruchen(self, handle, client, alt: int, jetzt: int) -> bool:
-        """Den fälligen Tausch für GENAU eine Anfrage beanspruchen: `geprueft_at` von `alt` auf
-        `jetzt`, nur wenn es noch `alt` ist. Mehrere gleichzeitige Anfragen (auch über Worker) —
-        nur eine tauscht. Sonst tauschten alle dasselbe Refresh-Token, und ein Provider mit
-        Token-Rotation lehnte den zweiten Tausch ab: Die Sitzung endete ohne Grund (Fund 5)."""
+        """Claim the due exchange for EXACTLY one request: `geprueft_at` from `alt` to
+        `jetzt`, only if it is still `alt`. Several simultaneous requests (also across workers) —
+        only one exchanges. Otherwise all would exchange the same refresh token, and a provider with
+        token rotation rejected the second exchange: the session ended for no reason (finding 5)."""
         return self._exec("UPDATE oidc_sitzung SET geprueft_at=? WHERE token_hash=? AND client=? "
                           "AND geprueft_at=?", (int(jetzt), self._handle(handle), client, int(alt))).rowcount == 1
 
     def oidc_sitzung_geprueft(self, handle, client, zeit: int, neuer_refresh=None,
                               alt_verschluesselt: Optional[str] = None, erfolg: bool = False) -> bool:
-        """Den Tausch vermerken; ein neu ausgegebenes Refresh-Token ersetzt das alte (Rotation).
-        Rückgabe: ob die Zeile noch da war (die Sitzung kann inzwischen beendet sein).
+        """Record the exchange; a newly issued refresh token replaces the old one (rotation).
+        Return value: whether the row was still there (the session may have ended meanwhile).
 
-        Mit `alt_verschluesselt` (dem gespeicherten, verschlüsselten Token, mit dem getauscht
-        wurde) wird die Zeile darüber gefunden statt über das Handle: Bekommt die Sitzung während
-        des Tauschs ein neues Token (Step-up, Abschluss eines Faktors), hängt die Zeile am neuen
-        Handle — das alte träfe nichts, und das vom Provider rotierte Refresh-Token ginge
-        verloren; der nächste Tausch mit dem alten wäre bei PocketID ein Nein. Der Chiffretext ist
-        durch seine Nonce eindeutig."""
+        With `alt_verschluesselt` (the stored, encrypted token with which the exchange was
+        made) the row is found through it instead of through the handle: if the session gets a new token
+        during the exchange (step-up, completion of a factor), the row hangs on the new
+        handle — the old one would hit nothing, and the refresh token rotated by the provider would be
+        lost; the next exchange with the old one would be a no at PocketID. The ciphertext is
+        unique through its nonce."""
         wo, wert = ("refresh=?", alt_verschluesselt) if alt_verschluesselt else ("token_hash=?", self._handle(handle))
-        # `erfolg`: der Provider hat eben Ja gesagt — Stand für die Obergrenze ohne Nachprüfung.
-        # `geprueft_at` allein taugt dafür nicht: Nach einem „fehler" steht es auf „in einer Minute".
+        # `erfolg`: the provider has just said yes — state for the upper limit without a re-check.
+        # `geprueft_at` alone is not suitable for that: after an "fehler" it stands at "in a minute".
         extra = ", erfolg_at=?" if erfolg else ""
         erfolg_wert = (int(zeit),) if erfolg else ()
         if neuer_refresh and self.tresor is not None:
             return self._exec(f"UPDATE oidc_sitzung SET geprueft_at=?, refresh=?{extra} WHERE {wo} AND client=?",
-                              (int(zeit), self.tresor.verschluesseln(neuer_refresh), *erfolg_wert, wert,
+                              (int(zeit), self.tresor.encrypt(neuer_refresh), *erfolg_wert, wert,
                                client)).rowcount > 0
         return self._exec(f"UPDATE oidc_sitzung SET geprueft_at=?{extra} WHERE {wo} AND client=?",
                           (int(zeit), *erfolg_wert, wert, client)).rowcount > 0
 
     def oidc_sitzung_umhaengen(self, alt, neu) -> None:
-        """Die OIDC-Zeilen an eine neue Sitzung hängen (neues Token beim Abschluss der Kette) —
-        VOR dem Löschen der alten, sonst nähme der Fremdschlüssel sie mit."""
+        """Attach the OIDC rows to a new session (new token at the completion of the chain) —
+        BEFORE deleting the old ones, otherwise the foreign key would take them along."""
         self._exec("UPDATE oidc_sitzung SET token_hash=? WHERE token_hash=?",
                    (self._handle(neu), self._handle(alt)))
 
-    # ---------- Gate: nur von einer Anwendung abgemeldet (T-22) ----------
+    # ---------- Gate: signed out of one application only (T-22) ----------
     def gate_abmelden(self, handle, host: str) -> None:
         self._exec("INSERT OR REPLACE INTO gate_abgemeldet(token_hash, host, at) VALUES (?,?,?)",
                    (self._handle(handle), str(host).lower(), _now()))
@@ -2620,36 +2732,36 @@ class Store:
         return self._exec("DELETE FROM gate_abgemeldet WHERE token_hash=? AND host=?",
                           (self._handle(handle), str(host).lower())).rowcount
 
-    # ---------- Verbindung eines App-Hosts zur zentralen Sitzung (T-26) ----------
+    # ---------- Connection of an app host to the central session (T-26) ----------
     def gate_link_anlegen(self, link_hash: str, handle, host: str) -> None:
         self._exec("INSERT INTO gate_link(link_hash, token_hash, host, created_at) VALUES (?,?,?,?)",
                    (link_hash, self._handle(handle), str(host).lower(), _now()))
 
     def gate_link_handle(self, link_hash: str, host: str) -> Optional[str]:
-        """Das Sitzungs-Handle hinter dieser Verbindung — nur für IHREN Host, sonst None."""
+        """The session handle behind this connection — only for ITS host, otherwise None."""
         r = self._one("SELECT token_hash FROM gate_link WHERE link_hash=? AND host=?", (link_hash, str(host).lower()))
         return r["token_hash"] if r else None
 
     def gate_link_entfernen(self, link_hash: str) -> int:
         return self._exec("DELETE FROM gate_link WHERE link_hash=?", (link_hash,)).rowcount
 
-    # ---------- ID-Token als Abmeldehinweis (T-22) ----------
+    # ---------- ID token as a sign-out hint (T-22) ----------
     def set_oidc_id_token(self, handle, client: str, id_token: str) -> None:
         if self.tresor is None:
-            raise RuntimeError("ID-Tokens werden nur verschlüsselt abgelegt (geheimnis.Tresor).")
+            raise RuntimeError("ID tokens are only stored encrypted (vault.Vault).")
         self._exec("INSERT OR REPLACE INTO oidc_id_token(token_hash, client, id_token) VALUES (?,?,?)",
-                   (self._handle(handle), client, self.tresor.verschluesseln(id_token)))
+                   (self._handle(handle), client, self.tresor.encrypt(id_token)))
 
     def get_oidc_id_token(self, handle) -> Optional[tuple]:
-        """(client, id_token) der Anmeldung dieser Sitzung, entschlüsselt — oder None."""
+        """(client, id_token) of this session's sign-in, decrypted — or None."""
         r = self._one("SELECT client, id_token FROM oidc_id_token WHERE token_hash=?", (self._handle(handle),))
         if not r or self.tresor is None:
             return None
-        return r["client"], self.tresor.entschluesseln(r["id_token"])
+        return r["client"], self.tresor.decrypt(r["id_token"])
 
     def put_oidc_grant(self, token_hash: str, client: str, jetzt: int, roles=None) -> None:
-        """Freigabe eintragen oder bestätigen. `granted_at` bleibt bei einer Bestätigung stehen —
-        die Frage „seit wann darf diese Sitzung in diese Anwendung" beantwortet sonst niemand mehr."""
+        """Enter or confirm an approval. `granted_at` stays on a confirmation —
+        otherwise nobody could answer the question "since when may this session enter this application"."""
         self._exec(
             "INSERT INTO oidc_grant(token_hash, client, granted_at, checked_at, roles) VALUES (?,?,?,?,?)"
             " ON CONFLICT(token_hash, client) DO UPDATE SET checked_at=excluded.checked_at,"
@@ -2673,15 +2785,15 @@ class Store:
             " ORDER BY granted_at", (token_hash,))]
 
     def drop_oidc_grant(self, token_hash: str, client: str) -> int:
-        """Eine Freigabe entziehen. Genau eine — die Sitzung und die übrigen Anwendungen bleiben;
-        das ist der Unterschied zwischen „der Provider sagt Nein zu dieser App" und „abmelden"."""
+        """Withdraw an approval. Exactly one — the session and the other applications stay;
+        that is the difference between "the provider says no to this app" and "sign out"."""
         return self._exec("DELETE FROM oidc_grant WHERE token_hash=? AND client=?",
                           (token_hash, client)).rowcount
 
     def drop_oidc_grants_for_user(self, user_id: int, client: Optional[str] = None) -> int:
-        """Alle Freigaben eines Kontos entziehen (optional nur für eine Anwendung). Der Weg für
-        den Betreiber, wenn der Provider jemanden ausgeschlossen hat und es sofort wirken soll,
-        ohne die Sitzung selbst zu beenden."""
+        """Withdraw all approvals of an account (optionally only for one application). The way for
+        the operator when the provider has excluded someone and it should take effect immediately,
+        without ending the session itself."""
         if client is None:
             return self._exec(
                 "DELETE FROM oidc_grant WHERE token_hash IN (SELECT token_hash FROM session WHERE user_id=?)",
@@ -2691,9 +2803,9 @@ class Store:
             " (SELECT token_hash FROM session WHERE user_id=?)", (client, user_id)).rowcount
 
     # ---------- Sessions ----------
-    # Gespeichert wird der sha256 des Tokens, nie das Token selbst. Alles, was aus einer
-    # Sitzungs-Zeile kommt (`row["token_hash"]`), ist deshalb ein Handle: Es benennt eine Sitzung
-    # und taugt nicht zum Anmelden. Der Klartext lebt zwischen `create_session()` und dem Cookie.
+    # What is stored is the sha256 of the token, never the token itself. Everything that comes from a
+    # session row (`row["token_hash"]`) is therefore a handle: it names a session
+    # and is no good for signing in. The plaintext lives between `create_session()` and the cookie.
     @staticmethod
     def session_hash(token: str) -> str:
         return hashlib.sha256((token or "").encode()).hexdigest()
@@ -2709,23 +2821,23 @@ class Store:
                     1 if remember else 0, ip, ua, now))
         return token
 
-    #: Inaktivitäts-Grenzen in Sekunden (ohne / mit „Angemeldet bleiben"), 0 = aus. Setzt der
-    #: Manager aus der Konfiguration (F-05); der Store allein kennt keine.
+    #: Inactivity limits in seconds (without / with "stay signed in"), 0 = off. Set by the
+    #: manager from the configuration (F-05); the store alone knows none.
     leerlauf_sek = (0, 0)
-    #: Wie oft `zuletzt` höchstens geschrieben wird: Jede Anfrage schreiben hiesse, dass jeder
-    #: Forward-Auth-Abruf die Datei sperrt. Eine Minute Unschärfe ist für Stunden-Grenzen nichts.
+    #: How often `zuletzt` is written at most: writing on every request would mean that every
+    #: forward-auth call locks the file. A minute of fuzziness is nothing for limits of hours.
     LEERLAUF_SCHRITT_SEK = 60
 
     @staticmethod
     def _handle(wert) -> str:
-        """Ein Handle ist ein sha256-Hexdigest. Wer hier versehentlich ein Klartext-Token
-        hereinreicht, bekommt einen Fehler — sonst liefe das UPDATE ins Leere und die Sitzung
-        behielte still ihren alten Stand (ein zweiter Faktor, der nicht ankommt, fällt niemandem
-        auf, bis er fehlt)."""
+        """A handle is a sha256 hex digest. Whoever passes in a plaintext token by mistake
+        gets an error — otherwise the UPDATE would hit nothing and the session
+        would silently keep its old state (a second factor that does not arrive is noticed by nobody
+        until it is missing)."""
         h = str(wert or "")
         if len(h) != 64 or any(c not in "0123456789abcdef" for c in h):
-            raise ValueError("Sitzungs-Handle erwartet (token_hash aus der Sitzungs-Zeile), "
-                             f"kein Klartext-Token: {h[:12]!r}…")
+            raise ValueError("Session handle expected (token_hash from the session row), "
+                             f"not a plaintext token: {h[:12]!r}…")
         return h
 
     def set_session_factors(self, handle, factors, mfa_ok=None):
@@ -2743,9 +2855,9 @@ class Store:
         return self.get_session_by_handle(self.session_hash(token))
 
     def get_session_by_handle(self, handle) -> Optional[sqlite3.Row]:
-        """Wie `get_session`, aber über das Handle (`token_hash`) — für Wege, die die Sitzung nicht
-        aus dem eigenen Cookie kennen (die Verbindung eines App-Hosts, T-26). Dieselben Prüfungen:
-        Ablauf, Inaktivität, `zuletzt` nachziehen."""
+        """Like `get_session`, but via the handle (`token_hash`) — for paths that do not know the session
+        from their own cookie (the connection of an app host, T-26). The same checks:
+        expiry, inactivity, updating `zuletzt`."""
         h = str(handle or "")
         if len(h) != 64:
             return None
@@ -2756,12 +2868,12 @@ class Store:
         if r["expires_at"] < jetzt:
             self.delete_session_by_handle(h)
             return None
-        # Inaktivität (F-05): zusätzlich zur absoluten Laufzeit. Eine abgelaufene Sitzung wird
-        # gelöscht, nicht nur abgewiesen — sonst lebte sie mit dem nächsten Zugriff wieder auf.
-        # Die lange Grenze nur, wenn jemand „Angemeldet bleiben" AUSDRÜCKLICH gewählt hat. Eine
-        # Sitzung, die nur deshalb dauerhaft ist, weil der Weg keine Wahl kennt (OIDC, Passkey,
-        # Anmelde-Link) oder die Checkbox abgeschaltet ist, bekäme sonst nie ein Leerlauf-Ende
-        # (Angriff auf die zweite Runde, Fund 9).
+        # Inactivity (F-05): in addition to the absolute lifetime. An expired session is
+        # deleted, not only rejected — otherwise it would come back to life with the next access.
+        # The long limit only if someone EXPLICITLY chose "stay signed in". A
+        # session that is permanent only because the path knows no choice (OIDC, passkey,
+        # sign-in link) or the checkbox is switched off would otherwise never get an idle end
+        # (attack on the second round, finding 9).
         grenze = self.leerlauf_sek[1 if (r["remember"] and r["bleiben_gewaehlt"]) else 0]
         zuletzt = r["zuletzt"] if r["zuletzt"] is not None else r["created_at"]
         if grenze and jetzt - int(zuletzt) > grenze:
@@ -2772,11 +2884,11 @@ class Store:
         return r
 
     def set_session_bleiben(self, handle):
-        """Vermerken: „Angemeldet bleiben" wurde ausdrücklich gewählt (F-05)."""
+        """Record: "stay signed in" was explicitly chosen (F-05)."""
         self._exec("UPDATE session SET bleiben_gewaehlt=1 WHERE token_hash=?", (self._handle(handle),))
 
     def set_session_andere_beenden(self, handle):
-        """Vermerken: Wird diese (halbe) Sitzung voll, enden die übrigen des Kontos (Grenze d)."""
+        """Record: if this (half) session becomes full, the account's other ones end (limit d)."""
         self._exec("UPDATE session SET andere_beenden=1 WHERE token_hash=?", (self._handle(handle),))
 
     def set_session_mfa(self, handle, ok=True):
@@ -2784,30 +2896,30 @@ class Store:
                    (1 if ok else 0, (_now() if ok else None), self._handle(handle)))
 
     def delete_session(self, token):
-        """Klartext-Token (aus dem Cookie) — für Logout."""
+        """Plaintext token (from the cookie) — for logout."""
         self._exec("DELETE FROM session WHERE token_hash=?", (self.session_hash(token),))
 
     def delete_session_by_handle(self, handle):
-        """Handle aus einer Sitzungs-Zeile — für Admin-Panel und „andere Sitzungen beenden"."""
+        """Handle from a session row — for the admin panel and "end other sessions"."""
         h = self._handle(handle)
-        # Ein abgelöstes Token in der Gnadenfrist (A-6) gehört zu dieser Sitzung und geht mit.
+        # A superseded token in the grace period (A-6) belongs to this session and goes with it.
         self._exec("DELETE FROM session WHERE token_hash=? OR nachfolger=?", (h, h))
 
     def rotate_session(self, handle, gnade_sek: int = 0) -> Optional[str]:
-        """Der Sitzung ein neues Token geben, ohne sonst etwas an ihr zu ändern (F-06).
+        """Give the session a new token without otherwise changing it (F-06).
 
-        Laufzeit, Faktoren und `created_at` bleiben — ein Step-up soll das Token erneuern, nicht
-        die absolute Lebensdauer verlängern. Die OIDC-Freigaben hängen per Fremdschlüssel am
-        Handle und ziehen mit um; darum neue Zeile, Freigaben umhängen, alte Zeile löschen, alles
-        in einer Transaktion. Gibt das neue Klartext-Token zurück, oder None, wenn es die
-        Sitzung nicht (mehr) gibt.
+        Lifetime, factors and `created_at` stay — a step-up is meant to renew the token, not
+        extend the absolute lifetime. The OIDC approvals hang on the handle by foreign key
+        and move along; hence a new row, re-attach the approvals, delete the old row, all
+        in one transaction. Returns the new plaintext token, or None if the
+        session does not (any longer) exist.
 
-        `gnade_sek` (A-6, PO-Entscheid 2026-09-25): Das alte Token gilt danach noch so viele
-        Sekunden — eine Anfrage, die im Moment des Step-ups schon unterwegs war (zweiter Tab,
-        Hintergrund-Laden), scheitert sonst einmal. Es gilt dann OHNE Step-up-Frische (`mfa_at`
-        leer): Wer das alte Token mitgelesen hat, bekommt keine frisch bestätigten Rechte, nur
-        die Frist. Es verweist auf seinen Nachfolger und endet mit ihm (`delete_session_by_handle`).
-        Ein schon abgelöstes Token wird nicht noch einmal gedreht."""
+        `gnade_sek` (A-6, PO decision 2026-09-25): the old token then remains valid for that many
+        seconds — a request that was already under way at the moment of the step-up (second tab,
+        background loading) would otherwise fail once. It then applies WITHOUT step-up freshness (`mfa_at`
+        empty): whoever read along the old token gets no freshly confirmed rights, only
+        the deadline. It points to its successor and ends with it (`delete_session_by_handle`).
+        An already superseded token is not rotated again."""
         alt = self._handle(handle)
         token = secrets.token_urlsafe(32)
         neu = self.session_hash(token)
@@ -2829,8 +2941,8 @@ class Store:
                 if gnade_sek > 0:
                     self.db.execute("UPDATE session SET expires_at=MIN(expires_at, ?), mfa_at=NULL, "
                                     "nachfolger=? WHERE token_hash=?", (_now() + int(gnade_sek), neu, alt))
-                    # Ein früherer Vorgänger, der auf das alte Token zeigt, zeigt jetzt auf das neue —
-                    # sonst überlebte er ein Abmelden der neuen Sitzung.
+                    # An earlier predecessor that points to the old token now points to the new one —
+                    # otherwise it would survive a sign-out of the new session.
                     self.db.execute("UPDATE session SET nachfolger=? WHERE nachfolger=?", (neu, alt))
                 else:
                     self.db.execute("DELETE FROM session WHERE token_hash=?", (alt,))
@@ -2844,17 +2956,17 @@ class Store:
         self._exec("DELETE FROM session WHERE user_id=?", (user_id,))
 
     def delete_user_sessions_except(self, user_id, keep_handle):
-        """Alle Sitzungen eines Users beenden AUSSER einer (z.B. die aktuelle bei Selbst-PW-Änderung).
+        """End all sessions of a user EXCEPT one (e.g. the current one on a self password change).
 
-        `keep_handle` ist das `token_hash` aus der Sitzungs-Zeile, nicht das Cookie."""
+        `keep_handle` is the `token_hash` from the session row, not the cookie."""
         self._exec("DELETE FROM session WHERE user_id=? AND token_hash!=?", (user_id, keep_handle or ""))
 
     def totp_step_verbrauchen(self, user_id, step: int) -> bool:
-        """Einen TOTP-Zeitschritt als verbraucht buchen. True, wenn er noch frei war.
+        """Book a TOTP time step as consumed. True if it was still free.
 
-        Der Vergleich und das Schreiben stecken in EINEM `UPDATE … WHERE`: Zwei gleichzeitige
-        Anfragen mit demselben Code können so nicht beide gewinnen — SQLite serialisiert die
-        Schreiber, und der zweite trifft keine Zeile mehr.
+        The comparison and the write sit in ONE `UPDATE … WHERE`: two simultaneous
+        requests with the same code cannot both win this way — SQLite serialises the
+        writers, and the second hits no row any more.
         """
         cur = self._exec(
             "UPDATE totp_cred SET last_step=? WHERE user_id=? AND (last_step IS NULL OR last_step < ?)",
@@ -2866,19 +2978,19 @@ class Store:
 
     @classmethod
     def sichere_datei(cls, quelle: str, ziel: str) -> str:
-        """Eine Datenbankdatei sichern, OHNE sie anzufassen — der Weg für `tinysesam backup`.
+        """Back up a database file WITHOUT touching it — the path for `tinysesam backup`.
 
-        Warum nicht einfach `Store(quelle).backup(ziel)`: Der Konstruktor setzt
-        `PRAGMA journal_mode=WAL`, legt fehlende Tabellen an und fährt `_migrate()`. Er
-        **schreibt** also, und zwar bevor irgendetwas kopiert ist. Wer vor einem Update das
-        einzig Richtige tut und sichert, hätte damit die laufende Installation auf das neue
-        Schema gehoben, während noch der alte Code läuft — der Rückweg wäre zu, und eine Datei
-        im alten Schema gäbe es danach nirgends mehr. Das Sicherheitsnetz hätte zerstört, was es
-        sichern soll.
+        Why not simply `Store(quelle).backup(ziel)`: the constructor sets
+        `PRAGMA journal_mode=WAL`, creates missing tables and runs `_migrate()`. It
+        **writes**, and does so before anything has been copied. Whoever does the
+        only right thing before an update and makes a backup would thereby have lifted the running installation to the new
+        schema while the old code is still running — the way back would be closed, and a file
+        in the old schema would then exist nowhere. The safety net would have destroyed what it is meant to
+        protect.
 
-        Deshalb hier eine eigene Verbindung im Modus `ro`: Sie migriert nicht, legt nichts an
-        und braucht kein schreibbares Verzeichnis. Die Online-Backup-API liest darüber trotzdem
-        einen konsistenten Stand samt WAL.
+        That is why there is a separate connection in `ro` mode here: it does not migrate, creates nothing
+        and needs no writable directory. The online backup API still reads
+        a consistent state including WAL through it.
         """
         if not os.path.exists(quelle):
             raise FileNotFoundError(quelle)
@@ -2886,7 +2998,7 @@ class Store:
             try:
                 os.close(os.open(ziel, os.O_CREAT | os.O_EXCL | os.O_WRONLY, cls.DATEIRECHTE))
             except OSError:
-                pass  # inzwischen angelegt oder nicht anlegbar — die Rechte setzt der chmod unten
+                pass  # created meanwhile or cannot be created — chmod below sets the permissions
         quell_db = sqlite3.connect(f"file:{quelle}?mode=ro", uri=True)
         ziel_db = sqlite3.connect(ziel)
         try:
@@ -2899,27 +3011,27 @@ class Store:
                 if os.path.exists(ziel + anhang):
                     os.chmod(ziel + anhang, cls.DATEIRECHTE)
             except OSError:
-                pass  # Rechte nicht setzbar (fremdes Dateisystem) — die Kopie selbst ist vollständig
+                pass  # permissions cannot be set (foreign file system) — the copy itself is complete
         return ziel
 
     def backup(self, ziel: str) -> str:
-        """Eine konsistente Kopie der Datenbank schreiben, im laufenden Betrieb.
+        """Write a consistent copy of the database, during operation.
 
-        **Eine Datei-Kopie taugt nicht.** Die Datenbank läuft im WAL-Modus: Alles seit dem
-        letzten Checkpoint steht in `…-wal`, nicht in der `.db`. Wer nur die `.db` kopiert (cp,
-        rsync, ein Backup-Agent, der Muster kennt), bekommt einen Torso — gemessen: eine frische
-        Instanz mit fünf Konten ergab eine Kopie ohne auch nur die Tabelle `users`. Der Fehler
-        fällt erst beim Zurückspielen auf.
+        **A file copy is no good.** The database runs in WAL mode: everything since the
+        last checkpoint is in `…-wal`, not in the `.db`. Whoever copies only the `.db` (cp,
+        rsync, a backup agent that knows patterns) gets a torso — measured: a fresh
+        instance with five accounts yielded a copy without even the table `users`. The error
+        is noticed only on restoring.
 
-        Hier läuft SQLites Online-Backup: Es nimmt die Sperren, die es braucht, zieht WAL mit und
-        liefert eine Datei, die für sich allein stimmt. Die Kopie bekommt dieselben engen Rechte
-        wie das Original — ein Backup mit Passwort-Hashes ist so schützenswert wie die Quelle.
+        Here SQLite's online backup runs: it takes the locks it needs, pulls in the WAL and
+        delivers a file that is correct on its own. The copy gets the same narrow permissions
+        as the original — a backup with password hashes deserves as much protection as the source.
         """
         if not os.path.exists(ziel):
             try:
                 os.close(os.open(ziel, os.O_CREAT | os.O_EXCL | os.O_WRONLY, self.DATEIRECHTE))
             except OSError:
-                pass  # inzwischen angelegt oder nicht anlegbar — die Rechte setzt der chmod unten
+                pass  # created meanwhile or cannot be created — chmod below sets the permissions
         ziel_db = sqlite3.connect(ziel)
         try:
             with self._lock:
@@ -2931,33 +3043,33 @@ class Store:
                 if os.path.exists(ziel + anhang):
                     os.chmod(ziel + anhang, self.DATEIRECHTE)
             except OSError:
-                pass  # Rechte nicht setzbar (fremdes Dateisystem) — die Kopie selbst ist vollständig
+                pass  # permissions cannot be set (foreign file system) — the copy itself is complete
         return ziel
 
     def gc_flow(self) -> int:
         return self._exec("DELETE FROM flow WHERE expires_at < ?", (_now(),)).rowcount
 
     def list_sessions(self, user_id=None):
-        # Abgelöste Tokens in der Gnadenfrist (A-6) sind keine eigene Sitzung.
+        # Superseded tokens in the grace period (A-6) are not a session of their own.
         if user_id is not None:
             return self._all("SELECT * FROM session WHERE user_id=? AND nachfolger IS NULL "
                              "ORDER BY created_at DESC", (user_id,))
         return self._all("SELECT * FROM session WHERE nachfolger IS NULL ORDER BY created_at DESC")
 
-    # ---------- Flow-State (OIDC / WebAuthn, kurzlebig, one-shot) ----------
+    # ---------- Flow state (OIDC / WebAuthn, short-lived, one-shot) ----------
     def put_flow(self, key, data: dict, ttl=600):
         self._exec("INSERT OR REPLACE INTO flow(key, data, expires_at) VALUES (?,?,?)",
                    (key, json.dumps(data), _now() + ttl))
 
     def pop_flow(self, key) -> Optional[dict]:
-        """Flow-State genau EINMAL herausgeben (WebAuthn-Challenge, OIDC-`state`/`nonce`).
+        """Hand out flow state exactly ONCE (WebAuthn challenge, OIDC `state`/`nonce`).
 
-        Lesen und Löschen waren zwei getrennte Schritte, jeder mit eigenem Lock (R3-8): Zwei
-        gleichzeitige Callbacks mit demselben `state` — zwei Threads, oder zwei Worker auf
-        derselben Datei — lasen beide die Zeile, bevor einer sie löschte, und beide bekamen die
-        Challenge. Jetzt entscheidet das `DELETE`: Nur wer die Zeile tatsächlich entfernt hat
-        (`rowcount == 1`), bekommt den Inhalt. SQLite serialisiert die Schreiber, auch über
-        Prozessgrenzen — `RETURNING` wäre eleganter, verlangt aber SQLite ≥ 3.35."""
+        Reading and deleting were two separate steps, each with its own lock (R3-8): two
+        simultaneous callbacks with the same `state` — two threads, or two workers on
+        the same file — both read the row before one deleted it, and both got the
+        challenge. Now the `DELETE` decides: only whoever actually removed the row
+        (`rowcount == 1`) gets the content. SQLite serialises the writers, also across
+        process boundaries — `RETURNING` would be more elegant but requires SQLite ≥ 3.35."""
         with self._schreibend():
             r = self.db.execute("SELECT data, expires_at FROM flow WHERE key=?", (key,)).fetchone()
             if not r:
@@ -2965,7 +3077,7 @@ class Store:
             weg = self.db.execute("DELETE FROM flow WHERE key=?", (key,)).rowcount
             self.db.commit()
         if weg != 1:
-            return None                 # ein anderer Aufrufer hat ihn zuerst verbraucht
+            return None                 # another caller consumed it first
         if r["expires_at"] < _now():
             return None
         try:
@@ -2974,35 +3086,35 @@ class Store:
             return None
 
     def zaehle_argon2_hashes(self) -> int:
-        """Wie viele gespeicherte Passwort-/PIN-/Bereichs-Hashes sind argon2? (B6-8)"""
+        """How many stored password/PIN/scope hashes are argon2? (B6-8)"""
         n = 0
         for tabelle in ("password_cred", "pin_cred", "resource_secret"):
             r = self._one(f"SELECT COUNT(*) AS n FROM {tabelle} WHERE hash LIKE '$argon2%'")
             n += int(r["n"] or 0) if r else 0
         return n
 
-    #: So lange gilt ein erfolgreicher Commit als Beleg, dass die Datenbank beschreibbar ist
-    #: (Sekunden). Innerhalb dieser Frist prüft `schreibprobe()` nur noch die Verbindung.
+    #: How long a successful commit counts as proof that the database is writable
+    #: (seconds). Within this period `schreibprobe()` only checks the connection.
     SCHREIBPROBE_SEK = 5
 
     def schreibprobe(self) -> None:
-        """Eine echte Schreibtransaktion — der Kern des Healthchecks (B6-4).
+        """A real write transaction — the core of the health check (B6-4).
 
-        Ein `SELECT 1` gelingt auch auf einer Datenbank, die nur noch lesbar ist (Read-only-
-        Mount, falsche Rechte nach einem Rückspielen, `SQLITE_READONLY`) oder deren Volume voll
-        ist (`SQLITE_FULL`) — genau dort, wo jede Anmeldung an ihrem ersten `INSERT INTO
-        session` scheitert. Gemeldet wird deshalb erst gesund, wenn ein Commit durchgeht.
-        Wirft die sqlite3-Ausnahme unverändert; was davon nach aussen dringt, entscheidet der
-        Aufrufer.
+        A `SELECT 1` also succeeds on a database that has become read-only (read-only
+        mount, wrong permissions after a restore, `SQLITE_READONLY`) or whose volume is full
+        (`SQLITE_FULL`) — exactly where every sign-in fails at its first `INSERT INTO
+        session`. Healthy is therefore only reported once a commit goes through.
+        Raises the sqlite3 exception unchanged; what of it reaches the outside is decided by the
+        caller.
 
-        Geschrieben wird der Stand der Uhr (`uhr_stand`) — so sichert der Healthcheck ihn
-        nebenbei auch in Zeiten, in denen sonst nichts geschrieben wird. Aber höchstens alle
-        `SCHREIBPROBE_SEK`: `/healthz` ist ohne Anmeldung erreichbar, und je Aufruf ein Commit
-        mit fsync unter `_lock` hiesse, wer ihn flutet, belegt die Schreibsperre, auf die
-        Anmeldungen warten, und nutzt SD-Karten ab. Liegt der letzte erfolgreiche Commit (auch
-        ein fremder über `_exec`) kürzer zurück, genügt ein Lesezugriff — eine geschlossene oder
-        verschwundene Verbindung fällt dabei weiterhin sofort auf, ein Wechsel auf „nur lesbar"
-        spätestens nach `SCHREIBPROBE_SEK`."""
+        What is written is the clock state (`uhr_stand`) — so the health check also saves it
+        on the side, in times when nothing else is written. But at most every
+        `SCHREIBPROBE_SEK`: `/healthz` is reachable without sign-in, and one commit
+        with fsync under `_lock` per call would mean that whoever floods it occupies the write lock that
+        sign-ins wait for, and wears out SD cards. If the last successful commit (also
+        a foreign one via `_exec`) is more recent than that, a read access suffices — a closed or
+        vanished connection is still noticed immediately, a change to "read-only" at the latest
+        after `SCHREIBPROBE_SEK`."""
         with self._schreibend():
             m = time.monotonic()
             if self._frisch(self._geschrieben, m, self.SCHREIBPROBE_SEK):
@@ -3012,7 +3124,7 @@ class Store:
             self.db.commit()
             self._geschrieben = self._uhr_gesichert = m
 
-    # ---------- Runtime-Settings (Panel-editierbar) ----------
+    # ---------- Runtime settings (editable in the panel) ----------
     def get_setting(self, key) -> Optional[str]:
         r = self._one("SELECT value FROM setting WHERE key=?", (key,))
         return r["value"] if r else None
@@ -3023,23 +3135,23 @@ class Store:
     def all_settings(self) -> dict:
         return {r["key"]: r["value"] for r in self._all("SELECT key, value FROM setting")}
 
-    # ---------- Brute-Force-Regulation ----------
+    # ---------- Brute-force regulation ----------
     def record_attempt(self, username, ip, success, method):
         self._exec("INSERT INTO login_attempt(ts, username, ip, success, method) VALUES (?,?,?,?,?)",
                    (_now(), username, ip, 1 if success else 0, method))
 
-    #: So lange gilt eine Vorbuchung mit offenem Ausgang (`reserve_attempt(schweben=True)`) als
-    #: schwebend, nicht als Fehlversuch (Sekunden, G9). Länger als jede Verzeichnis-Frage bis zu
-    #: ihrem Timeout (`ldap_.VERBINDUNGS_TIMEOUT`, Verbindungsaufbau und Bind je einmal) samt
-    #: Rechenzeit. Eine ältere offene Zeile hat niemand abgeschlossen — der Prozess ist gestorben
-    #: oder hängt; sie zählt dann als Fehlversuch, im Zweifel strenger.
+    #: How long a pre-booking with an open outcome (`reserve_attempt(schweben=True)`) counts as
+    #: pending, not as a failed attempt (seconds, G9). Longer than any directory query up to
+    #: its timeout (`ldap_.VERBINDUNGS_TIMEOUT`, connection setup and bind once each) including
+    #: compute time. An older open row has been completed by nobody — the process has died
+    #: or is hanging; it then counts as a failed attempt, when in doubt the stricter reading.
     VORBUCHUNG_SCHWEBE_SEK = 30
 
     def _fails_abfrage(self, since, username=None, ip=None, method=None, exclude_methods=None,
                        ab_id=None, nur_bestaetigt=False, ausser_username=None):
-        """Die Zählabfrage für `count_fails` und `reserve_attempt` — eine Regel, zwei Aufrufer.
-        `ab_id`: nur Zeilen mit einer grösseren Id (Wasserlinie einer Kennung, G2).
-        `nur_bestaetigt`: ohne die schwebenden Vorbuchungen (G9, `VORBUCHUNG_SCHWEBE_SEK`)."""
+        """The counting query for `count_fails` and `reserve_attempt` — one rule, two callers.
+        `ab_id`: only rows with a larger id (watermark of an identifier, G2).
+        `nur_bestaetigt`: without the pending pre-bookings (G9, `VORBUCHUNG_SCHWEBE_SEK`)."""
         q = "SELECT COUNT(*) c FROM login_attempt WHERE success=0 AND ts>=?"
         args = [since]
         if nur_bestaetigt:
@@ -3068,15 +3180,15 @@ class Store:
 
     def count_fails(self, since, username=None, ip=None, method=None, exclude_methods=None,
                     ab_id=None, nur_bestaetigt=False, ausser_username=None) -> int:
-        """Fehlversuche im Fenster zählen — optional nur EINE Methode, oder alle AUSSER einigen.
+        """Count failed attempts in the window — optionally only ONE method, or all EXCEPT some.
 
-        `exclude_methods` ist das Gegenstück zu `method`: Der Login-Lockout will alles zählen,
-        was ein Anmeldeversuch war — aber nicht die Alt-Passwort-Abfrage der Kontoseite, die in
-        derselben Tabelle liegt (siehe `security.NICHT_LOGIN_METHODEN`). Eine Zeile ohne Methode
-        (`NULL`, denkbar aus einem Altbestand) zählt weiter mit: Im Zweifel strenger sperren.
+        `exclude_methods` is the counterpart of `method`: the login lockout wants to count everything
+        that was a sign-in attempt — but not the old-password query of the account page, which lies in
+        the same table (see `security.NICHT_LOGIN_METHODEN`). A row without a method
+        (`NULL`, conceivable from old data) still counts: when in doubt, lock more strictly.
 
-        Vorgabe: Eine schwebende Vorbuchung (`reserve_attempt(schweben=True)`) zählt mit — sie
-        KANN ein Fehlversuch werden. `nur_bestaetigt=True` lässt sie weg (G9).
+        Default: a pending pre-booking (`reserve_attempt(schweben=True)`) counts — it
+        CAN become a failed attempt. `nur_bestaetigt=True` leaves it out (G9).
         """
         if not username and not ip:
             return 0
@@ -3085,41 +3197,41 @@ class Store:
         return self._one(q, args)["c"]
 
     def reserve_attempt(self, username, ip, method, regeln, serie=None, schweben=False) -> tuple:
-        """Sperren prüfen und den Versuch **in derselben Transaktion** vorab als Fehlversuch buchen.
+        """Check lockouts and pre-book the attempt **in the same transaction** as a failed attempt.
 
-        `regeln` ist eine Liste `(grund, grenze, filter)`; `filter` sind die Schlüsselwörter von
-        `count_fails`. Rückgabe `(id, None)` — der Versuch darf laufen und steht schon als
-        Fehlversuch in der Tabelle — oder `(None, grund)`, wenn eine Regel greift.
+        `regeln` is a list `(grund, grenze, filter)`; `filter` are the keywords of
+        `count_fails`. Returns `(id, None)` — the attempt may proceed and already stands as a
+        failed attempt in the table — or `(None, grund)` if a rule applies.
 
-        Warum vorab und warum in einer Transaktion (R3-2, R3-7, R7-2): Vorher stand zwischen
-        `_is_locked()` und `record_attempt()` die ganze Passwortprüfung (argon2, zig
-        Millisekunden). Eine parallele Salve von N Anfragen las N-mal denselben Zählerstand
-        „noch nicht gesperrt" und durfte N-mal raten — die Grenze galt nur für Angreifer, die
-        brav nacheinander fragen. Jetzt reserviert jeder Versuch seinen Platz, bevor er prüft,
-        und `BEGIN IMMEDIATE` macht Zählen und Buchen zu einem Schritt, auch über mehrere
-        Prozesse (`uvicorn --workers N`) hinweg: Die Schreibsperre der Datei ordnet sie.
-        Gelingt der Versuch, macht `finish_attempt` aus der Zeile einen Erfolg; ein Prozess,
-        der dazwischen stirbt, hinterlässt einen Fehlversuch — im Zweifel strenger.
+        Why in advance and why in one transaction (R3-2, R3-7, R7-2): previously the entire password
+        check (argon2, dozens of milliseconds) lay between `_is_locked()` and `record_attempt()`.
+        A parallel burst of N requests read the same counter state N times,
+        "not locked yet", and could guess N times — the limit applied only to attackers who
+        politely ask one after another. Now every attempt reserves its place before it checks,
+        and `BEGIN IMMEDIATE` turns counting and booking into one step, also across several
+        processes (`uvicorn --workers N`): the file's write lock orders them.
+        If the attempt succeeds, `finish_attempt` turns the row into a success; a process
+        that dies in between leaves a failed attempt — when in doubt, stricter.
 
-        `serie=(topf, art, grenze)` bucht dazu die Serie der Fehlversuche in Folge (B2-6) vor —
-        in DERSELBEN Transaktion. Die erste Fassung las die Serie davor und zählte sie erst nach
-        der Prüfung: Eine parallele Salve an der Grenze las N-mal „noch nicht voll" und durfte
-        N-mal raten (gemessen: 15 statt 1). Rückgabe dann `(id, serienstand)` nach der Buchung —
-        der FESTSTEHENDE Stand (`_serie_bestaetigt`, ohne schwebende Vorbuchungen). Erreicht er
-        die Grenze, hat genau diese Buchung die Sperre ausgelöst; eine schwebende erreicht sie hier
-        nie, sie erst bei ihrem Abschluss (`finish_attempt`, Prüfrunde 2026-09-27, p2 F3).
+        `serie=(topf, art, grenze)` also pre-books the series of consecutive failed attempts (B2-6) —
+        in the SAME transaction. The first version read the series beforehand and counted it only after
+        the check: a parallel burst at the limit read "not full yet" N times and could guess
+        N times (measured: 15 instead of 1). Returns then `(id, series state)` after the booking —
+        the SETTLED state (`_serie_bestaetigt`, without pending pre-bookings). If it reaches
+        the limit, exactly this booking triggered the lockout; a pending one never reaches it here,
+        only at its completion (`finish_attempt`, audit round 2026-09-27, p2 F3).
 
-        **Schwebend (G9).** `schweben=True` bucht den Versuch mit offenem Ausgang (`offen=1`): Er
-        kann ein Fehlversuch werden oder gar keiner (Verzeichnis-Ausfall, F-23 — zurückgenommen
-        erst, wenn der Ausfall gemeldet ist, bei einem Verzeichnis, das Pakete verwirft, also nach
-        dem Timeout). Greift eine Regel oder die Serie **nur** wegen solcher Zeilen, ist die
-        Antwort `(None, "schwebend")`: noch nicht entschieden, keine Sperre. Der Aufrufer fragt
-        nach einer kurzen Pause erneut (`_versuch_beginnen`). Vorher war jede Abweisung in diesem
-        Fenster eine Sperre mit `failed login` für fail2ban und Sperrhinweis an den Inhaber — auch
-        wenn danach kein einziger Fehlversuch übrig blieb. Die Salve (R7-2) bleibt gebremst: Sie
-        wartet, bis die Vorbuchungen entschieden sind, und bekommt dann die echte Sperre. Greift
-        eine Regel auch mit den bestätigten Zeilen allein, gilt ihr Grund wie bisher; eine offene
-        Zeile, die älter ist als `VORBUCHUNG_SCHWEBE_SEK`, gilt als Fehlversuch.
+        **Pending (G9).** `schweben=True` books the attempt with an open outcome (`offen=1`): it
+        can become a failed attempt or none at all (directory outage, F-23 — withdrawn
+        only once the outage is reported, with a directory that drops packets, hence after
+        the timeout). If a rule or the series applies **only** because of such rows, the
+        answer is `(None, "schwebend")`: not decided yet, no lockout. The caller asks
+        again after a short pause (`_begin_attempt`). Previously every rejection in this
+        window was a lockout with `failed login` for fail2ban and a lockout notice to the holder — even
+        if not a single failed attempt remained afterwards. The burst (R7-2) stays slowed down: it
+        waits until the pre-bookings are decided and then gets the real lockout. If
+        a rule applies with the confirmed rows alone, its reason applies as before; an open
+        row older than `VORBUCHUNG_SCHWEBE_SEK` counts as a failed attempt.
         """
         with self._lock:
             self._begin_immediate()
@@ -3130,7 +3242,7 @@ class Store:
                 if topf_s and self._serie_summe(topf_s) >= grenze_s:
                     if self._serie_bestaetigt(topf_s) >= grenze_s:
                         self.db.execute("ROLLBACK")
-                        return None, "lockout_serie"
+                        return None, "lockout_series"
                     schwebend = True
                 for grund, grenze, filt in regeln:
                     if not filt.get("username") and not filt.get("ip"):
@@ -3138,8 +3250,8 @@ class Store:
                     q, args = self._fails_abfrage(**filt)
                     if self.db.execute(q, args).fetchone()["c"] < grenze:
                         continue
-                    # Die Regel greift — auch ohne die schwebenden Vorbuchungen? Dann ist es eine
-                    # Sperre. Sonst weiter: Eine spätere Regel kann bestätigt greifen und geht vor.
+                    # Does the rule apply — even without the pending pre-bookings? Then it is a
+                    # lockout. Otherwise continue: a later rule may apply confirmed and takes precedence.
                     q, args = self._fails_abfrage(**filt, nur_bestaetigt=True)
                     if self.db.execute(q, args).fetchone()["c"] >= grenze:
                         self.db.execute("ROLLBACK")
@@ -3161,21 +3273,21 @@ class Store:
                 raise
 
     def finish_attempt(self, attempt_id, success: bool, serie=None) -> Optional[tuple]:
-        """Einen mit `reserve_attempt` vorgebuchten Versuch abschliessen: Erfolg oder Fehlversuch.
+        """Complete an attempt pre-booked with `reserve_attempt`: success or failed attempt.
 
-        Beides beendet den Schwebezustand (`offen=0`, G9): Ein Fehlversuch zählt ab hier auch für
-        `count_fails(nur_bestaetigt=True)` — bis dahin war der Abschluss eines Fehlversuchs ein
-        No-op. `serie=(topf, art)` nimmt bei einem Erfolg die Vorbuchung in der Serie in DERSELBEN
-        Transaktion zurück: Getrennt stünde sie dazwischen weder als offen noch als zurückgenommen
-        da, und wer gerade wartet (`_versuch_beginnen`), läse die Serie um eins zu hoch — an der
-        Grenze eine Sperre mit Sperrhinweis für nichts.
+        Both end the pending state (`offen=0`, G9): a failed attempt counts from here also for
+        `count_fails(nur_bestaetigt=True)` — until then completing a failed attempt was a
+        no-op. `serie=(topf, art)` withdraws the pre-booking in the series on a success in the SAME
+        transaction: separately it would stand in between neither as open nor as withdrawn,
+        and whoever is waiting right now (`_begin_attempt`) would read the series one too high — at the
+        limit a lockout with a lockout notice for nothing.
 
-        Mit `serie` gibt es `(vorher, nachher)` zurück: den feststehenden Stand der Serie
-        (`_serie_bestaetigt`) vor und nach dem Abschluss, beide in einer Transaktion
-        (`BEGIN IMMEDIATE`, auch über mehrere Prozesse). Daran sieht `_record_login`, ob GENAU
-        dieser Abschluss die Grenze überschritten hat (p2 F3). Bis 2026-09-27 zählte der Stand bei
-        der Buchung: Hatte in der Zwischenzeit eine volle Anmeldung die Serie beendet, stand
-        `lockout_serie` im Protokoll, obwohl nichts gesperrt war. Ohne `serie` None."""
+        With `serie` it returns `(before, after)`: the settled state of the series
+        (`_serie_bestaetigt`) before and after the completion, both in one transaction
+        (`BEGIN IMMEDIATE`, also across several processes). From that `_record_login` sees whether EXACTLY
+        this completion crossed the limit (p2 F3). Until 2026-09-27 the state counted at
+        booking: if in the meantime a full sign-in had ended the series, `lockout_series`
+        stood in the log although nothing was locked. Without `serie` None."""
         with self._schreibend():
             vorher = None
             if serie:
@@ -3192,10 +3304,10 @@ class Store:
         return stand
 
     def cancel_attempt(self, attempt_id, serie=None):
-        """Einen vorgebuchten Versuch zurücknehmen — er war keiner (etwa: Verzeichnis-Ausfall, F-23).
+        """Withdraw a pre-booked attempt — it was none (e.g. directory outage, F-23).
 
-        `serie=(topf, art)` nimmt seine Vorbuchung in der Serie in derselben Transaktion zurück —
-        aus demselben Grund wie bei `finish_attempt` (G9)."""
+        `serie=(topf, art)` withdraws its pre-booking in the series in the same transaction —
+        for the same reason as in `finish_attempt` (G9)."""
         with self._schreibend():
             self.db.execute("DELETE FROM login_attempt WHERE id=? AND success=0", (attempt_id,))
             if serie:
@@ -3206,20 +3318,20 @@ class Store:
 
     def clear_fails(self, username=None, ip=None, method=None, exclude_methods=None, seit=None,
                     ab_id=None):
-        """Fehlversuche loeschen — optional nur die EINER Methode, oder alle AUSSER einigen.
+        """Delete failed attempts — optionally only those of ONE method, or all EXCEPT some.
 
-        `method` ist keine Feinheit, sondern der Kern: Ohne sie raeumte ein erfolgreicher
-        Passwort-Login auch die TOTP- und PIN-Fehlversuche weg. Wer das Passwort kannte (Leak,
-        Wiederverwendung, Phishing), meldete sich vor jedem Rateversuch einmal korrekt an und
-        setzte damit die Sperre fuer den ZWEITEN Faktor zurueck — beliebig oft. Die Regulierung,
-        die das Panel als Haertung ausweist, griff fuer den zweiten Faktor nie.
+        `method` is not a nicety but the core: without it a successful
+        password login also cleared the TOTP and PIN failed attempts. Whoever knew the password (leak,
+        reuse, phishing) signed in correctly once before every guess and
+        thereby reset the lockout for the SECOND factor — as often as they liked. The regulation
+        that the panel advertises as hardening never applied to the second factor.
 
-        `exclude_methods` räumt alles ausser den genannten — der Weg nach einer VOLLSTÄNDIGEN
-        Anmeldung, die die eigenen Töpfe (Kontoseite, Step-up, Bereich) nicht betrifft.
+        `exclude_methods` clears everything except those named — the path after a COMPLETE
+        sign-in, which does not concern the own buckets (account page, step-up, scope).
 
-        `ab_id` räumt nur Zeilen ab der Wasserlinie der Kennung (`kennung_grenzen`, G2): was
-        erst entstand, als die Kennung dem Konto schon gehörte. `seit` ist der Rückfall für den
-        Bestand ohne Wasserlinie (Unix-Sekunden, die Anlage des Kontos, einschliesslich).
+        `ab_id` clears only rows from the watermark of the identifier (`kennung_grenzen`, G2): what
+        arose only when the identifier already belonged to the account. `seit` is the fallback for
+        existing data without a watermark (Unix seconds, the creation of the account, inclusive).
         """
         wo: str = ""
         args_m: tuple = ()
@@ -3229,13 +3341,13 @@ class Store:
             platz = ",".join("?" for _ in exclude_methods)
             wo, args_m = f" AND (method IS NULL OR method NOT IN ({platz}))", tuple(exclude_methods)
         if seit is not None:
-            # Nur ab einem Zeitpunkt (Grenze a): Eine vollständige Anmeldung räumt, was DIESEM
-            # Konto galt — nicht die Fehlversuche unter seinem Namen oder seiner Adresse von vor
-            # seiner Anlage (die galten niemandem oder jemand anderem).
+            # Only from a point in time (limit a): a complete sign-in clears what applied to THIS
+            # account — not the failed attempts under its name or address from before
+            # its creation (those applied to nobody or to someone else).
             wo, args_m = wo + " AND ts >= ?", args_m + (int(seit),)
         if ab_id is not None:
-            # Genauer als `seit` (G2): ab dem Beitritt der Kennung, nicht ab der Anlage — und auf
-            # die Zeile genau, auch in der Sekunde des Beitritts.
+            # More precise than `seit` (G2): from the joining of the identifier, not from creation — and to
+            # the exact row, also in the second of joining.
             wo, args_m = wo + " AND id > ?", args_m + (int(ab_id),)
         if username:
             self._exec("DELETE FROM login_attempt WHERE username=? COLLATE NOCASE" + wo,
@@ -3246,25 +3358,25 @@ class Store:
     def gc_attempts(self, older_than) -> int:
         return self._exec("DELETE FROM login_attempt WHERE ts < ?", (older_than,)).rowcount
 
-    # ---------- Fehlversuche in Folge (B2-6) ----------
-    # Die Tabelle `login_attempt` kennt nur Fenster: `gc()` räumt sie nach einem Tag, und jede
-    # Schwelle dort zählt ab `lockout_window_sec`. Wer langsam rät — vier Versuche je Fenster,
-    # rund um die Uhr —, blieb unter jeder Schwelle, beliebig lange. NIST SP 800-63B verlangt
-    # deshalb eine Grenze für Fehlversuche IN FOLGE, die mit der Zeit nicht verfällt. Sie steht
-    # hier, eigens und ohne Zeitfenster, je Kennung UND Methode: Gesperrt wird auf der Summe,
-    # geräumt wird, was der Rückweg belegt (ein Selbstbedienungs-Reset nur den Passwort-Anteil,
-    # R4-13). Das Buchen liegt in `reserve_attempt`, atomar mit dem Versuch selbst.
+    # ---------- Consecutive failed attempts (B2-6) ----------
+    # The table `login_attempt` knows only windows: `gc()` clears it after a day, and every
+    # threshold there counts from `lockout_window_sec`. Whoever guesses slowly — four attempts per window,
+    # around the clock —, stayed below every threshold, for as long as they liked. NIST SP 800-63B
+    # therefore demands a limit for CONSECUTIVE failed attempts that does not expire with time. It stands
+    # here, separate and without a time window, per identifier AND method: locking happens on the sum,
+    # what gets cleared is what the way back proves (a self-service reset only the password part,
+    # R4-13). The booking lies in `reserve_attempt`, atomic with the attempt itself.
     def _serie_summe(self, topf) -> int:
         zeile = self.db.execute("SELECT COALESCE(SUM(anzahl), 0) AS n FROM fehlserie WHERE topf=?",
                                 (topf,)).fetchone()
         return int(zeile["n"])
 
     def _serie_bestaetigt(self, topf) -> int:
-        """Die Serie ohne die schwebenden Vorbuchungen (G9) — unter `_lock`, ohne Commit.
+        """The series without the pending pre-bookings (G9) — under `_lock`, without commit.
 
-        Jede offene Zeile in `login_attempt` hat genau eine Buchung in der Serie unter demselben
-        Topf (`reserve_attempt(schweben=True)` bucht beide in einer Transaktion); eine Zeile, die
-        älter ist als `VORBUCHUNG_SCHWEBE_SEK`, gilt als Fehlversuch und wird nicht abgezogen."""
+        Every open row in `login_attempt` has exactly one booking in the series under the same
+        bucket (`reserve_attempt(schweben=True)` books both in one transaction); a row that is
+        older than `VORBUCHUNG_SCHWEBE_SEK` counts as a failed attempt and is not subtracted."""
         offen = self.db.execute(
             "SELECT COUNT(*) AS n FROM login_attempt WHERE username=? COLLATE NOCASE AND offen=1 "
             "AND ts>=?", (topf, _now() - self.VORBUCHUNG_SCHWEBE_SEK)).fetchone()
@@ -3281,23 +3393,23 @@ class Store:
                         "zuletzt = excluded.zuletzt", (topf, art or "", jetzt, jetzt))
 
     def fehlserie(self, topf) -> int:
-        """Wie viele Fehlversuche in Folge stehen für diese (gefaltete) Kennung, über alle Methoden?"""
+        """How many consecutive failed attempts stand for this (folded) identifier, across all methods?"""
         if not topf:
             return 0
         with self._lock:
             return self._serie_summe(topf)
 
     def fehlserie_bestaetigt(self, topf) -> int:
-        """Wie `fehlserie`, ohne die schwebenden Vorbuchungen (G9): die Fehlversuche in Folge, die
-        feststehen. An ihr hängt die Serien-Sperre; die Summe allein kann noch sinken."""
+        """Like `fehlserie`, without the pending pre-bookings (G9): the consecutive failed attempts that
+        are settled. The series lockout hangs on it; the sum alone can still fall."""
         if not topf:
             return 0
         with self._lock:
             return self._serie_bestaetigt(topf)
 
     def fehlserie_ohne(self, topf, arten) -> int:
-        """Die Serie dieser Kennung OHNE die genannten Arten — was ein Räumen nur dieser Arten
-        stehen liesse (etwa der Selbstbedienungs-Reset, der TOTP und `pin_folge` nicht räumt)."""
+        """The series of this identifier WITHOUT the named kinds — what clearing only these kinds
+        would leave standing (e.g. the self-service reset, which does not clear TOTP and `pin_chain`)."""
         if not topf:
             return 0
         arten = [str(a) for a in arten]
@@ -3308,7 +3420,7 @@ class Store:
         return int(zeile["n"])
 
     def fehlserie_erhoehen(self, topf, art="password") -> int:
-        """Einen Fehlversuch an die Serie hängen (Wege ohne Vorbuchung); gibt die neue Summe zurück."""
+        """Attach a failed attempt to the series (paths without pre-booking); returns the new sum."""
         if not topf:
             return 0
         jetzt = _now()
@@ -3318,17 +3430,17 @@ class Store:
         return self.fehlserie(topf)
 
     def fehlserie_senken(self, topf, art) -> None:
-        """Eine Vorbuchung zurücknehmen: Der Versuch war richtig (oder gar keiner — Verzeichnis-Ausfall).
+        """Withdraw a pre-booking: the attempt was correct (or none at all — directory outage).
 
-        Nicht löschen: Ein richtiges Passwort bei offenem zweiten Faktor ist keine vollständige
-        Anmeldung. Die Serie davor bleibt, nur dieser Versuch zählt nicht."""
+        Do not delete: a correct password with an open second factor is not a complete
+        sign-in. The series before it stays, only this attempt does not count."""
         if not topf:
             return
         self._exec("UPDATE fehlserie SET anzahl = anzahl - 1 WHERE topf=? AND art=? AND anzahl > 0",
                    (topf, art or ""))
 
     def fehlserie_loeschen(self, topf, arten=None) -> int:
-        """Die Serie beenden (`arten=None`: ganz, sonst nur diese Methoden); gibt zurück, wie viele es waren."""
+        """End the series (`arten=None`: entirely, otherwise only these methods); returns how many there were."""
         if not topf:
             return 0
         if arten is None:
@@ -3343,17 +3455,17 @@ class Store:
         return int(zeile["n"])
 
     def gc_fehlserien(self, older_than, grenze) -> int:
-        """Alte, NICHT ausgelöste Serien räumen (`zuletzt` vor `older_than`, Summe unter `grenze`).
+        """Clear old, NOT triggered series (`zuletzt` before `older_than`, sum below `grenze`).
 
-        Eine ausgelöste Serie bleibt: Sie ist eine Sperre, und die hebt nur eine Anmeldung, ein
-        Reset oder der Betreiber auf — nicht das Warten. Ohne Grenze liefe die Tabelle mit
-        erfundenen Namen voll; mit ihr kostet jede bleibende Zeile einen Angreifer `grenze`
-        Fehlversuche, jeder durch die Fenster-Schwellen gebremst."""
+        A triggered series stays: it is a lockout, and only a sign-in, a reset
+        or the operator lifts it — not waiting. Without a limit the table would fill up with
+        invented names; with it each remaining row costs an attacker `grenze`
+        failed attempts, each slowed down by the window thresholds."""
         return self._exec(
             "DELETE FROM fehlserie WHERE topf IN (SELECT topf FROM fehlserie GROUP BY topf "
             "HAVING MAX(zuletzt) < ? AND SUM(anzahl) < ?)", (int(older_than), int(grenze))).rowcount
 
-    # ---------- Magic-/Einmal-Token ----------
+    # ---------- Magic / one-time tokens ----------
     def add_magic_token(self, token_hash, purpose, expires_at, user_id=None, email=None, payload=None):
         self._exec("INSERT INTO magic_token(token_hash, purpose, user_id, email, payload, created_at, expires_at) "
                    "VALUES (?,?,?,?,?,?,?)",
@@ -3364,7 +3476,7 @@ class Store:
         return self._one("SELECT * FROM magic_token WHERE token_hash=?", (token_hash,))
 
     def use_magic_token(self, token_hash) -> bool:
-        """Atomar als benutzt markieren. True nur beim ERSTEN gültigen Einlösen (one-shot)."""
+        """Mark as used atomically. True only on the FIRST valid redemption (one-shot)."""
         with self._schreibend():
             cur = self.db.execute(
                 "UPDATE magic_token SET used_at=? WHERE token_hash=? AND used_at IS NULL AND expires_at>=?",
@@ -3373,23 +3485,23 @@ class Store:
             return cur.rowcount == 1
 
     def expire_magic_token(self, token_hash) -> bool:
-        """Einen noch unbenutzten Token sofort ablaufen lassen (Versand gescheitert, B6-12).
+        """Let a still unused token expire immediately (sending failed, B6-12).
 
-        Bewusst „abgelaufen" und nicht „benutzt": `used_at` heisst „eingelöst" — bei einem
-        Bestätigungstoken also „Adresse belegt". Ein nie zugestellter Link hat nichts belegt,
-        und die Bereinigung unbestätigter Konten (`unbestaetigte_konten`) muss ihn als
-        abgelaufen sehen.
+        Deliberately "expired" and not "used": `used_at` means "redeemed" — for a
+        confirmation token that is "address proven". A never delivered link proved nothing,
+        and the cleanup of unconfirmed accounts (`unbestaetigte_konten`) must see it as
+        expired.
         """
         return self._exec("UPDATE magic_token SET expires_at=? WHERE token_hash=? AND used_at IS NULL",
                           (_now() - 1, token_hash)).rowcount == 1
 
     def unbestaetigte_konten(self) -> list:
-        """Konten aus einer Registrierung, deren Bestätigungslink abgelaufen ist, ohne dass sie je
-        bestätigt wurden (R4-09). Nur diese Kombination zählt — gesperrt, noch nie angemeldet,
-        ein unbenutzter und abgelaufener `verify_email`-Token, und KEIN gültiger oder schon
-        eingelöster daneben. Ein vom Admin gesperrtes Bestandskonto trägt keinen solchen Token
-        und bleibt deshalb unberührt — und eines mit dem Betreiber-Vermerk (`disabled=2`) auch
-        dann, wenn ihm eine App danach noch einen Bestätigungslink geschickt hat."""
+        """Accounts from a registration whose confirmation link has expired without them ever
+        having been confirmed (R4-09). Only this combination counts — locked, never signed in,
+        an unused and expired `verify_email` token, and NO valid or already
+        redeemed one beside it. An existing account locked by the admin carries no such token
+        and therefore stays untouched — and one with the operator mark (`disabled=2`) also
+        when an app has sent it a confirmation link afterwards."""
         now = _now()
         return [r["id"] for r in self._all(
             "SELECT DISTINCT u.id FROM users u JOIN magic_token m ON m.user_id = u.id "
@@ -3401,18 +3513,18 @@ class Store:
             (now, now))]
 
     def gc_unbestaetigte_konten(self) -> int:
-        """Nie bestätigte Konten entfernen (R4-09) — VOR `gc_magic_tokens` rufen.
+        """Remove never-confirmed accounts (R4-09) — call BEFORE `gc_magic_tokens`.
 
-        Das Merkmal „nie bestätigt" ist der abgelaufene Bestätigungstoken; räumt
-        `gc_magic_tokens` ihn zuerst weg, ist das Konto nicht mehr zu erkennen. Ohne diesen
-        Schritt blieb eine Adresse, die jemand Fremdes registriert und nie bestätigt hatte, für
-        immer belegt: Der echte Inhaber bekam „E-Mail vergeben". Hier und nicht im Manager,
-        damit `tinysesam gc` (arbeitet direkt auf dem Store) dieselbe Reihenfolge fährt."""
+        The mark "never confirmed" is the expired confirmation token; if
+        `gc_magic_tokens` clears it first, the account can no longer be recognised. Without this
+        step an address that a stranger had registered and never confirmed stayed taken
+        forever: the real owner got "email taken". Here and not in the manager,
+        so that `tinysesam gc` (works directly on the store) runs the same order."""
         ids = self.unbestaetigte_konten()
         for uid in ids:
-            # Über den einen Löschweg (H-13, Integrationsfunde 12/18): Die Registrierung des
-            # Fremden samt IP und die Fehlversuche des echten Adressinhabers stünden sonst
-            # weiter unter Name und Adresse — und die Schlusszeile trüge den Klarnamen.
+            # Via the one deletion path (H-13, integration findings 12/18): the registration of the
+            # stranger including IP and the failed attempts of the real address holder would otherwise
+            # keep standing under name and address — and the closing line would carry the clear name.
             self.konto_entfernen(uid)
             self.audit_log("signup_expired", ersatzname(uid), None, f"uid={uid}")
         return len(ids)
@@ -3420,7 +3532,7 @@ class Store:
     def gc_magic_tokens(self) -> int:
         return self._exec("DELETE FROM magic_token WHERE expires_at < ? OR used_at IS NOT NULL", (_now(),)).rowcount
 
-    # ---------- Geteilte Ressourcen-Geheimnisse ----------
+    # ---------- Shared resource secrets ----------
     def set_resource_secret(self, name, hash_, kind="pin", label=None):
         self._exec("INSERT INTO resource_secret(name, hash, kind, label, created_at) VALUES (?,?,?,?,?) "
                    "ON CONFLICT(name) DO UPDATE SET hash=excluded.hash, kind=excluded.kind, label=excluded.label",
@@ -3436,20 +3548,20 @@ class Store:
         self._exec("DELETE FROM resource_secret WHERE name=?", (name,))
         self._exec("DELETE FROM resource_unlock WHERE resource=?", (name,))
 
-    # Auch hier nur der Hash. Der Token stand im Klartext in der Datei und war identisch mit dem
-    # Cookie: Wer die Datei las, hängte sich den Wert in den Browser und war zwölf Stunden in
-    # jedem freigeschalteten Bereich — dasselbe Bedrohungsmodell, das die Sitzungs-Umstellung
-    # begründet, nur eine Tabelle weiter. Der Token hat 256 Bit, sha256 genügt also.
+    # Only the hash here too. The token stood in plaintext in the file and was identical to the
+    # cookie: whoever read the file put the value into the browser and was in every unlocked
+    # scope for twelve hours — the same threat model that justifies the session switch,
+    # only one table further. The token has 256 bits, so sha256 suffices.
     def add_resource_unlock(self, token, resource, expires_at):
         self._exec("INSERT OR REPLACE INTO resource_unlock(token, resource, expires_at) VALUES (?,?,?)",
                    (self.session_hash(token), resource, expires_at))
 
     def move_resource_unlocks(self, old_token, new_token) -> int:
-        """Die Freigaben eines Browsers auf ein neues Token umhängen (F-01).
+        """Re-attach the approvals of a browser to a new token (F-01).
 
-        Umhängen statt kopieren: Danach hält das alte Token nichts mehr. War es von aussen
-        untergeschoben, geht der Unterschieber leer aus; war es das eigene, bleiben die
-        Bereiche offen, die dieser Browser schon hatte."""
+        Re-attach instead of copy: afterwards the old token holds nothing. If it was
+        planted from outside, the planter comes away empty-handed; if it was the browser's own, the
+        scopes this browser already had stay open."""
         if not old_token:
             return 0
         with self._schreibend():
@@ -3459,7 +3571,7 @@ class Store:
             return cur.rowcount
 
     def delete_resource_unlocks(self, token) -> int:
-        """Alle Freigaben dieses Browsers beenden — beim Logout (F-08)."""
+        """End all approvals of this browser — on logout (F-08)."""
         if not token:
             return 0
         return self._exec("DELETE FROM resource_unlock WHERE token=?",
@@ -3480,16 +3592,16 @@ class Store:
     def gc_resource_unlocks(self) -> int:
         return self._exec("DELETE FROM resource_unlock WHERE expires_at < ?", (_now(),)).rowcount
 
-    # ---------- Audit-Log ----------
-    #: IPs im Audit-Log auf ihr Netz kürzen (`TinySesamConfig.audit_ip_pseudonymize`, B5-11).
-    #: Steht hier und nicht im Manager, weil auch der Login-Pfad direkt `audit_log` schreibt —
-    #: eine Kürzung, die nur ein Teil der Zeilen erfährt, schützt niemanden.
+    # ---------- Audit log ----------
+    #: Truncate IPs in the audit log to their network (`TinySesamConfig.audit_ip_pseudonymize`, B5-11).
+    #: Stands here and not in the manager because the login path also writes `audit_log` directly —
+    #: a truncation that only some of the rows undergo protects nobody.
     audit_ip_pseudonym = False
 
     def audit_log(self, event, username=None, ip=None, detail=None):
-        # Die Spalte heisst `ip` — also steht darin eine (B5-15). Eine echte Adresse in ihrer
-        # kanonischen Form; alles andere (ein Test-Peer, ein Unix-Socket) nur steuerzeichenfrei
-        # und gedeckelt, damit weder das Panel noch `tinysesam audit` eine erfundene Zeile zeigt.
+        # The column is called `ip` — so an IP stands in it (B5-15). A real address in its
+        # canonical form; everything else (a test peer, a Unix socket) only free of control characters
+        # and capped, so that neither the panel nor `tinysesam audit` shows an invented row.
         if ip is not None:
             from . import security as _sec
             norm = _sec.ip_normiert(ip)
@@ -3501,31 +3613,31 @@ class Store:
                    (_now(), event, username, ip, detail))
 
     def delete_attempts_for(self, username, weitere=(), nach=None, unbefristet=(), ab_ids=None) -> int:
-        """Die Anmeldeversuche eines Kontos löschen (beim Löschen des Kontos, H-13).
+        """Delete the sign-in attempts of an account (when deleting the account, H-13).
 
-        `weitere` sind zusätzliche Kennungen, unter denen es angemeldet werden konnte (die
-        E-Mail-Adresse — `find_user` nimmt sie an, und der Versuch steht dann unter ihr).
+        `weitere` are additional identifiers under which it could sign in (the
+        email address — `find_user` accepts it, and the attempt then stands under it).
 
-        Gezählt wird unter dem Topf `norm_kennung` (NFKC, Python-`lower()`, IDNA für Adressen),
-        gelöscht wird deshalb auch dort — `lower()` in SQLite faltet nur ASCII und traf den Topf
-        `ärmel` des Kontos `Ärmel` nie, ein Name mit Kompatibilitätszeichen (`ｂｅｒｔａ`) und eine
-        Bestandsadresse in Unicode-Form (`u@bücher.example`) ebenso wenig. Zeilen aus der Zeit vor
-        `_topf` stehen unter der rohen Eingabe und werden weiter über SQLite-`lower()` gefunden.
+        Counting happens under the bucket `norm_kennung` (NFKC, Python `lower()`, IDNA for addresses),
+        so deleting happens there too — `lower()` in SQLite folds only ASCII and never hit the bucket
+        `ärmel` of the account `Ärmel`, nor a name with compatibility characters (`ｂｅｒｔａ`) or an
+        existing address in Unicode form (`u@bücher.example`). Rows from the time before
+        `_topf` stand under the raw input and are still found via SQLite `lower()`.
 
-        Zwei Grenzen (Nachbesserung zu den Integrationsfunden 12/18):
-        - `nach` (Unix-Sekunden): nur Versuche NACH dieser Sekunde (der Anlage des Kontos) —
-          davor galten sie nicht ihm, und sie zählen in der Drosselung je IP dessen, der sie
-          machte. Die Sekunde selbst bleibt: Ob ein Versuch darin vor oder nach der Anlage kam,
-          ist nicht zu entscheiden, und ein stehengebliebener Versuch verfällt mit dem
-          Sperrfenster. Kennungen in `unbefristet` gelten ohne diese Grenze.
-          Genauer ist `ab_ids` (`{topf: versuch_ab}` aus `kennung_grenzen`, G2): nur Versuche mit
-          einer grösseren Id als die Wasserlinie der Kennung — ab ihrem BEITRITT (Umbenennen,
-          Adresswechsel), nicht ab der Anlage, und auf die Zeile genau. Wo eine Kennung keine hat
-          (Bestand), gilt `nach`.
-        - Führt ein VERBLEIBENDES Konto denselben Topf (ein Namensvetter wie `ｃｌａｒａ`/`clara`
-          oder `Émile`/`émile` aus einem Bestand, `konto_mit_topf`), bleibt der Topf unberührt.
-          Sonst leerte das Entfernen eines Kontos, das ein Anonymer anlegen und per `gc()`
-          abräumen lassen kann, die Konto-Schwelle eines fremden (R7-6/H-8)."""
+        Two limits (follow-up to integration findings 12/18):
+        - `nach` (Unix seconds): only attempts AFTER this second (the creation of the account) —
+          before that they did not apply to it, and they count in the per-IP throttling of whoever
+          made them. The second itself stays: whether an attempt in it came before or after creation
+          cannot be decided, and a left-over attempt expires with the
+          lockout window. Identifiers in `unbefristet` apply without this limit.
+          More precise is `ab_ids` (`{bucket: versuch_ab}` from `kennung_grenzen`, G2): only attempts with
+          a larger id than the watermark of the identifier — from its JOINING (rename,
+          address change), not from creation, and to the exact row. Where an identifier has none
+          (existing data), `nach` applies.
+        - If a REMAINING account carries the same bucket (a namesake such as `ｃｌａｒａ`/`clara`
+          or `Émile`/`émile` from existing data, `konto_mit_topf`), the bucket stays untouched.
+          Otherwise removing an account, which an anonymous party can create and have cleared via `gc()`,
+          would empty the account threshold of a stranger (R7-6/H-8)."""
         n = 0
         for wert in (username, *[w for w in weitere if w]):
             topf = norm_kennung(wert)
@@ -3546,61 +3658,61 @@ class Store:
         return n
 
     def gc_audit(self, older_than_ts: int) -> int:
-        """Audit-Zeilen vor einem Zeitpunkt löschen (`audit_retention_days`, B5-11)."""
+        """Delete audit rows before a point in time (`audit_retention_days`, B5-11)."""
         return self._exec("DELETE FROM audit WHERE ts < ?", (int(older_than_ts),)).rowcount
 
     def audit_anonymisieren(self, username, ersatz, weitere=(), seit=None, seit_id=0,
                             unbefristet=(), ab_ids=None) -> int:
-        """Ein Konto aus dem Audit-Log herausnehmen, ohne die Zeilen zu löschen (H-13).
+        """Take an account out of the audit log without deleting the rows (H-13).
 
-        Die Zeile „am 3. um 14:02 wurde ein Passwort zurückgesetzt, von dieser IP" bleibt für
-        die Forensik stehen; WER es war, steht danach nur noch als `ersatz` da. `weitere` sind
-        zusätzliche Kennungen (die E-Mail-Adresse): Unter ihr stehen Anmeldeversuche in der
-        Spalte `username` (`find_user` nimmt die Adresse an), und im Detailtext kommt sie vor.
+        The row "on the 3rd at 14:02 a password was reset, from this IP" stays for
+        forensics; WHO it was then stands only as `ersatz`. `weitere` are
+        additional identifiers (the email address): under it, sign-in attempts stand in the
+        column `username` (`find_user` accepts the address), and it occurs in the detail text.
 
-        Im Detailtext wird der BENUTZERNAME nur dort ersetzt, wo einer steht — `akteur=<name>`
-        und der Kopf von `user_create`. Ein freies Ersetzen jedes gleichlautenden Wortes traf
-        fremde Zeilen: Mit dem Konto `admin` wurde aus `admin=0->1` in der Rollenänderung eines
-        ANDEREN Kontos `gelöscht#2=0->1`, mit `password` die Methode jedes Fehlversuchs. Eine
-        Kennung mit `@` ist dagegen unverwechselbar und wird überall ersetzt.
+        In the detail text the USERNAME is replaced only where one stands — `actor=<name>` (up to 0.24.x
+        `akteur=<name>`, both are found) and the head of `user_create`. Freely replacing every identical word hit
+        foreign rows: with the account `admin`, `admin=0->1` in the role change of an
+        OTHER account became `deleted#2=0->1`, with `password` the method of every failed attempt. An
+        identifier with `@`, on the other hand, is unmistakable and is replaced everywhere.
 
-        `seit`/`seit_id` beschränken das auf Zeilen ab der Anlage des Kontos (`anlage_grenze`,
-        `konto_entfernen`): Was davor unter dem Namen oder mit der Adresse geschrieben wurde,
-        gehörte nicht diesem Konto. Kennungen in `unbefristet` gelten ohne die Grenze. Ohne
-        `seit` gilt jede Zeile. Genauer ist `ab_ids` (`{topf: audit_ab}` aus `kennung_grenzen`,
-        G2): ab dem Beitritt der Kennung statt ab der Anlage — sonst wurde beim Löschen eines
-        Kontos, das einen freigewordenen Namen übernommen hatte, auch die Zeile des Vorbesitzers
-        umgeschrieben. Wo eine Kennung keine hat (Bestand), gilt `seit`.
+        `seit`/`seit_id` restrict this to rows from the creation of the account (`anlage_grenze`,
+        `konto_entfernen`): what was written before under the name or with the address
+        did not belong to this account. Identifiers in `unbefristet` apply without the limit. Without
+        `seit` every row applies. More precise is `ab_ids` (`{bucket: audit_ab}` from `kennung_grenzen`,
+        G2): from the joining of the identifier instead of from creation — otherwise, when deleting an
+        account that had taken over a freed name, the previous owner's row was
+        rewritten too. Where an identifier has none (existing data), `seit` applies.
 
-        **Die Suche im Detailtext ist ein Scan** — eine Teilstring-Suche (`instr`), die kein
-        B-Tree-Index eingrenzt; `idx_audit_name_ts`/`idx_audit_ts` helfen nur der Spalte
-        `username` und dem Zeitraum ab `seit`. Bei einer unbefristeten Adresse (Löschen durch
-        einen Admin, `adresse_unbefristet`) liest sie das ganze Audit-Log, und das wächst ohne
-        `audit_retention_days` unbegrenzt. Bis 2026-09-26 lief dieser Scan in EINER
-        Schreibtransaktion, unter der Schreibsperre (`_lock`) und mit offener SQLite-Transaktion:
-        Jede Anmeldung, jeder Audit-Eintrag, jeder andere Worker wartete die ganze Suche ab (G4).
-        Jetzt liest sie blockweise nach `id` (`_ANONYM_BLOCK` Zeilen) OHNE Schreibtransaktion und
-        schreibt nur die Treffer, je Block in einer kurzen Transaktion — die Zeile dort frisch
-        gelesen und neu geprüft, damit nichts überschrieben wird, was sich seit dem Lesen geändert
-        hat. Durchsucht wird bis zur jüngsten Zeile beim Beginn der Suche; was danach kommt, schrieb
-        jemand nach dem Löschen.
+        **The search in the detail text is a scan** — a substring search (`instr`) that no
+        B-tree index narrows down; `idx_audit_name_ts`/`idx_audit_ts` help only the column
+        `username` and the period from `seit`. For an unrestricted address (deletion by
+        an admin, `adresse_unbefristet`) it reads the whole audit log, and that grows without
+        `audit_retention_days` without limit. Until 2026-09-26 this scan ran in ONE
+        write transaction, under the write lock (`_lock`) and with an open SQLite transaction:
+        every sign-in, every audit entry, every other worker waited out the whole search (G4).
+        Now it reads in blocks by `id` (`_ANONYM_BLOCK` rows) WITHOUT a write transaction and
+        writes only the hits, per block in a short transaction — the row read there fresh
+        and re-checked, so that nothing is overwritten that has changed since reading.
+        The search runs up to the most recent row at its start; what comes afterwards was written
+        by someone after the deletion.
 
-        **Was die Löschzusage bis 2026-09-27 ausliess** (Prüfrunde Sperren/Zähler, F4 — schon auf
-        main so):
+        **What the deletion promise left out until 2026-09-27** (lockouts/counters audit round, F4 — already
+        so on main):
 
-        * **Jede Schreibweise der eingetippten Kennung** (4a): `login_fail` schreibt die ROHE
-          Eingabe (`Émile `, ` emile@example.com`, `ＥＭＩＬＥ@example.com`), gezählt wird sie im
-          Topf (`norm_kennung`). `lower(username)` traf davon nur ASCII-Varianten. Der Blockscan
-          vergleicht deshalb auch die Spalte `username` im Topf (SQL-Funktion `tinysesam_kennung`,
-          nur für Abfragen dieser Verbindung), mit denselben Grenzen je Kennung. Teilt ein
-          VERBLEIBENDES Konto den Topf (Namensvetter aus dem Bestand, wie bei
-          `delete_attempts_for`), bleibt es bei `lower()` — sonst träfe es dessen Zeilen.
-        * **Frühere Namen und Adressen** (4b): aus den eigenen Zeilen `username_changed alt=…` und
-          `email_changed alt=…` (`_fruehere_kennungen`), je in der Spanne, in der das Konto sie
-          trug — die Anmeldung unter dem alten Namen stand sonst mit IP weiter da.
-        * **Werte in den eigenen Zeilen** (4c): In jeder Zeile, deren `username` danach der
-          Ersatzname ist, die Werte von `alt=`, `neu=` und `an=` — der nie eingelöste Adresswechsel,
-          die Adresse aus LDAP/SAML, der alte Name.
+        * **Every spelling of the typed identifier** (4a): `login_fail` writes the RAW
+          input (`Émile `, ` emile@example.com`, `ＥＭＩＬＥ@example.com`), counted in the
+          bucket (`norm_kennung`). `lower(username)` hit only ASCII variants of these. The block scan
+          therefore also compares the column `username` in the bucket (SQL function `tinysesam_kennung`,
+          only for queries of this connection), with the same limits per identifier. If a
+          REMAINING account shares the bucket (namesake from existing data, as with
+          `delete_attempts_for`), it stays with `lower()` — otherwise it would hit its rows.
+        * **Earlier names and addresses** (4b): from the own rows `username_changed old=…` and
+          `email_changed old=…` (up to 0.24.x `alt=…`, `_fruehere_kennungen`), each in the span in which the account
+          carried them — the sign-in under the old name would otherwise keep standing with its IP.
+        * **Values in the own rows** (4c): in every row whose `username` is afterwards
+          the replacement name, the values of `old=`, `new=` and `to=` (up to 0.24.x `alt=`, `neu=`, `an=`) — the never redeemed address change,
+          the address from LDAP/SAML, the old name.
         """
         if not username:
             return 0
@@ -3619,14 +3731,14 @@ class Store:
             return (int(seit), int(seit), int(seit_id or 0), -1, offen)
         grenze = "((ts > ? OR (ts = ? AND id >= ?)) AND id > ? AND id <= ?)"
         anlage = (-1, -1, 0, -1) if seit is None else (int(seit), int(seit), int(seit_id or 0), -1)
-        # Jede Kennung mit ihrer Spanne: die heutigen, dann die früheren (4b) — gelesen, BEVOR
-        # etwas umgeschrieben ist; danach stehen die Zeilen, aus denen sie stammen, unter `ersatz`.
+        # Every identifier with its span: today's, then the earlier ones (4b) — read BEFORE
+        # anything is rewritten; afterwards the rows they come from stand under `ersatz`.
         kennungen = [(str(w), ab(str(w))) for w in (username, *weitere) if w]
         kennungen += self._fruehere_kennungen(kennungen, anlage, grenze)
-        # Gefaltet verglichen (4a) nur, wo kein verbleibendes Konto den Topf teilt.
+        # Compared folded (4a) only where no remaining account shares the bucket.
         falten = {t for t in {norm_kennung(w) for w, _ in kennungen} - {""}
                   if self.konto_mit_topf(t) is None}
-        # Die Spalte `username`: über `idx_audit_name_ts`, kurz — eine Transaktion.
+        # The column `username`: via `idx_audit_name_ts`, short — one transaction.
         with self._schreibend():
             n = 0
             for wert, grenzwerte in kennungen:
@@ -3641,38 +3753,38 @@ class Store:
             if "@" in wert:
                 muster = _re.compile(r"(?<![\w@.-])" + w + ende, _re.IGNORECASE)
             else:
-                muster = _re.compile(r"(?<![\w@.-])akteur=" + w + ende, _re.IGNORECASE)
+                muster = _re.compile(r"(?<![\w@.-])(akteur|actor)=" + w + ende, _re.IGNORECASE)
             topf = norm_kennung(wert)
             gefaltet = topf in falten
 
             def umschreiben(event, alt, wert=wert, w=w, muster=muster) -> str:
                 if "@" in wert:
                     return muster.sub(ersatz, alt)
-                neu = muster.sub("akteur=" + ersatz, alt)
-                if event == "user_create":   # Detail: „<name> service=…"
+                neu = muster.sub(lambda m: m.group(1) + "=" + ersatz, alt)
+                if event == "user_create":   # detail: "<name> service=…"
                     neu = _re.sub(r"^" + w + r"(?=\s|$)", ersatz, neu, count=1, flags=_re.IGNORECASE)
                 return neu
 
             def name_trifft(name, topf=topf, gefaltet=gefaltet) -> bool:
                 return gefaltet and name is not None and name != ersatz and norm_kennung(name) == topf
-            # Wo die Suche beginnt: hinter der Wasserlinie, bzw. bei der ersten Zeile ab `seit`
-            # — davor erfüllt keine Zeile die Grenze. `id + 0`, damit SQLite das Minimum über
-            # `idx_audit_ts` sucht (nur die Zeilen ab `seit`) und nicht die Tabelle ab der ersten
-            # `id` entlangläuft, bis `ts` passt — das wäre für ein junges Konto das ganze Log.
+            # Where the search begins: behind the watermark, or at the first row from `seit`
+            # — before that no row satisfies the limit. `id + 0`, so that SQLite finds the minimum via
+            # `idx_audit_ts` (only the rows from `seit`) and does not walk the table from the first
+            # `id` until `ts` fits — for a young account that would be the whole log.
             unten = max(grenzwerte[3], 0)
             if grenzwerte[0] >= 0:
                 erste = self._one("SELECT min(id + 0) AS m FROM audit WHERE ts >= ?",
                                   (grenzwerte[0],))["m"]
                 unten = max(unten, int(erste) - 1 if erste is not None else oben)
             schluss = min(oben, grenzwerte[4])
-            # Die Spalte `username` im Topf (4a) nur, wo gefaltet wird: Die Funktion kostet einen
-            # Python-Aufruf je Zeile.
+            # The column `username` in the bucket (4a) only where folding is done: the function costs a
+            # Python call per row.
             auch_name = "OR tinysesam_kennung(username) = ?" if gefaltet else ""
             while unten < schluss:
                 bis = min(unten + self._ANONYM_BLOCK, schluss)
-                # Der Block über den Primärschlüssel (`id > ? AND id <= ?`, so steht es im Plan) —
-                # nie über `idx_audit_ts`: Sonst läse jeder Block alle Zeilen ab `seit`, und die
-                # Suche würde quadratisch (tests/test_audit_runde2.py prüft den Plan).
+                # The block via the primary key (`id > ? AND id <= ?`, so it stands in the plan) —
+                # never via `idx_audit_ts`: otherwise each block would read all rows from `seit`, and the
+                # search would become quadratic (tests/test_audit_round2.py checks the plan).
                 kandidaten = {z["id"]: z for z in self._all(
                     "SELECT id, event, username, detail FROM audit WHERE id > ? AND id <= ? "
                     f"AND (instr(lower(detail), lower(?)) > 0 {auch_name}) AND {grenze}",
@@ -3685,7 +3797,7 @@ class Store:
                             z = self.db.execute("SELECT event, username, detail FROM audit WHERE id=?",
                                                 (zid,)).fetchone()
                             if z is None:
-                                continue          # inzwischen weggeräumt (`gc_audit`)
+                                continue          # cleared away meanwhile (`gc_audit`)
                             alt = z["detail"] or ""
                             neu = umschreiben(z["event"], alt)
                             name = ersatz if name_trifft(z["username"]) else z["username"]
@@ -3698,35 +3810,36 @@ class Store:
         self._eigene_werte_ersetzen(ersatz, oben)
         return n
 
-    #: Wie viele Audit-Zeilen `audit_anonymisieren` je Block im Detailtext durchsucht, bevor es die
-    #: Schreibsperre für andere freigibt (G4).
+    #: How many audit rows `audit_anonymisieren` searches in the detail text per block before it
+    #: releases the write lock for others (G4).
     _ANONYM_BLOCK = 5000
-    #: Obergrenze der Spanne einer HEUTIGEN Kennung (`audit_anonymisieren`): keine.
+    #: Upper bound of the span of a TODAY identifier (`audit_anonymisieren`): none.
     _OHNE_OBERGRENZE = 2 ** 62
-    #: Wie viele frühere Namen bzw. Adressen `_fruehere_kennungen` höchstens zurückverfolgt.
+    #: How many earlier names or addresses `_fruehere_kennungen` traces back at most.
     _FRUEHERE_MAX = 100
-    #: Der alte Name in `username_changed` (`alt=<name>[ durch=betreiber][ quelle=cli][ akteur=…]`)
-    #: und die alte Adresse in `email_changed` (`alt=<adresse> neu=<adresse>`). Ein Name kann
-    #: Leerzeichen tragen, eine Adresse nicht (`valid_email`).
-    _ALT_NAME = re.compile(r"^alt=(.*?)(?= durch=| quelle=| akteur=|$)")
-    _ALT_MAIL = re.compile(r"^alt=(\S*)")
-    #: Die Werte in den eigenen Zeilen, die eine Kennung tragen (4c): bis zum nächsten ` schlüssel=`.
-    _EIGENE_WERTE = re.compile(r"(?<![\w@.-])(alt|neu|an)=(\S.*?)(?=\s[\w-]+=|$)")
+    #: The old name in `username_changed` (`old=<name>[ by=operator][ source=cli][ actor=…]`)
+    #: and the old address in `email_changed` (`old=<address> new=<address>`). A name may
+    #: carry spaces, an address may not (`valid_email`). Up to 0.24.x the keys were `alt=`, `durch=`,
+    #: `quelle=`, `akteur=`, `neu=`: both spellings are read (a row of an older version after a rollback).
+    _ALT_NAME = re.compile(r"^(?:alt|old)=(.*?)(?= (?:durch|by)=| (?:quelle|source)=| (?:akteur|actor)=|$)")
+    _ALT_MAIL = re.compile(r"^(?:alt|old)=(\S*)")
+    #: The values in the own rows that carry an identifier (4c): up to the next ` key=`.
+    _EIGENE_WERTE = re.compile(r"(?<![\w@.-])(alt|old|neu|new|an|to)=(\S.*?)(?=\s[\w-]+=|$)")
 
     def _fruehere_kennungen(self, heutige, anlage, grenze) -> list:
-        """Frühere Namen und Adressen eines Kontos, je mit der Spanne, in der es sie trug —
-        `[(kennung, grenzwerte)]` für `audit_anonymisieren` (H-13, Prüfrunde 2026-09-27, 4b).
-        `heutige`: `[(Name, Grenzwerte), (Adresse, Grenzwerte)]`, `anlage`: die Grenze der Anlage
-        ohne Obergrenze.
+        """Earlier names and addresses of an account, each with the span in which it carried them —
+        `[(kennung, limits)]` for `audit_anonymisieren` (H-13, audit round 2026-09-27, 4b).
+        `heutige`: `[(name, limits), (address, limits)]`, `anlage`: the limit of the creation
+        without an upper bound.
 
-        Gelesen aus den eigenen Zeilen: `username_changed` steht unter dem NEUEN Namen und nennt den
-        alten (`alt=`), `email_changed` unter dem Namen zur Zeit des Wechsels und nennt die alte
-        Adresse. Rückwärts vom heutigen Namen: Die jüngste Umbenennung in seiner Spanne nennt den
-        Vorgänger. Der gehörte dem Konto bis zu dieser Zeile, ab der Zeile, die IHN einführte — die
-        jüngste Umbenennung unter ihm davor, nicht vor der Anlage —, sonst ab der Anlage. Ebenso die
-        Adressen, aus den Wechselzeilen unter allen Namen. Nicht erfasst: eine Adresse, die ohne
-        `email_changed` kam und ging (Nachtrag aus OIDC/LDAP) — für sie steht keine Zeile. Über
-        `idx_audit_name_ts`, kein Scan."""
+        Read from the own rows: `username_changed` stands under the NEW name and names the
+        old one (`old=`, up to 0.24.x `alt=`), `email_changed` under the name at the time of the change and
+        names the old address. Backwards from today's name: the most recent rename in its span names the
+        predecessor. It belonged to the account until that row, from the row that introduced IT — the
+        most recent rename under it before that, not before creation —, otherwise from creation. Likewise the
+        addresses, from the change rows under all names. Not covered: an address that came and went
+        without `email_changed` (backfill from OIDC/LDAP) — there is no row for it. Via
+        `idx_audit_name_ts`, no scan."""
         if not heutige:
             return []
         suche = ("SELECT id, detail FROM audit WHERE lower(username) = lower(?) AND event = ? "
@@ -3759,12 +3872,12 @@ class Store:
         return namen + adressen
 
     def _eigene_werte_ersetzen(self, ersatz, oben) -> None:
-        """In den Zeilen des gelöschten Kontos (`username` = Ersatzname, bis `oben`) die Werte von
-        `alt=`, `neu=` und `an=` ersetzen (H-13, Prüfrunde 2026-09-27, 4c): den beantragten, nie
-        eingelösten Adresswechsel (`email_change_requested neu=…`), die Adresse aus LDAP/SAML
-        (`federation_email_confirm an=…`), den alten Namen (`username_changed alt=…`). Leere Werte
-        bleiben leer. Über `idx_audit_name_ts`; geschrieben je `_ANONYM_BLOCK` Zeilen, die Zeile
-        frisch gelesen."""
+        """In the rows of the deleted account (`username` = replacement name, up to `oben`) replace the values of
+        `old=`, `new=` and `to=` (up to 0.24.x `alt=`, `neu=`, `an=`; H-13, audit round 2026-09-27, 4c): the
+        requested, never redeemed address change (`email_change_requested new=…`), the address from LDAP/SAML
+        (`federation_email_confirm to=…`), the old name (`username_changed old=…`). Empty values
+        stay empty. Via `idx_audit_name_ts`; written per `_ANONYM_BLOCK` rows, the row
+        read fresh."""
         def ersetzen(detail) -> str:
             return self._EIGENE_WERTE.sub(lambda m: f"{m.group(1)}={ersatz}", detail)
         treffer = [int(z["id"]) for z in self._all(
@@ -3781,26 +3894,30 @@ class Store:
 
     def recent_audit(self, limit=100, username: str | None = None, seit: int | None = None,
                      seit_id: int = 0, ab_id: int | None = None, ohne_events=()):
-        """Die jüngsten Audit-Einträge, neueste zuerst.
+        """The most recent audit entries, newest first.
 
-        `username` filtert in SQL, nicht im Aufrufer. Das ist der Unterschied zwischen „die
-        letzten N Einträge dieses Kontos" und „die Einträge dieses Kontos unter den letzten N" —
-        und genau der zählt im Anlassfall: Eine Brute-Force-Welle schiebt in Minuten Tausende
-        Zeilen nach, das gesuchte Konto liegt dann weit hinter jedem Fenster. Aus demselben Grund
-        filtert `seit` (Unix-Sekunden, einschliesslich) ebenfalls in SQL; aus der Sekunde `seit`
-        selbst nur Zeilen ab `seit_id` (s. `anlage_grenze`). `ab_id`: nur Zeilen mit einer
-        grösseren Id — die Wasserlinie einer Kennung (`kennung_grenzen`, G2). `ohne_events`
-        lässt diese Ereignisse aus, ebenfalls in SQL: Eine Anzeige, die Zeilen erst danach
-        verwirft, zeigte weniger als `limit` — und die Lücke verriete, dass dort eine lag (G12b).
+        `username` filters in SQL, not in the caller. That is the difference between "the
+        last N entries of this account" and "the entries of this account among the last N" —
+        and exactly that counts in the motivating case: a brute-force wave pushes thousands of
+        rows in within minutes, and the account being sought then lies far behind any window. For the same reason
+        `seit` (Unix seconds, inclusive) also filters in SQL; from the second `seit`
+        itself only rows from `seit_id` (see `anlage_grenze`). `ab_id`: only rows with a
+        larger id — the watermark of an identifier (`kennung_grenzen`, G2). `ohne_events`
+        leaves out these events (in the new and the old spelling, `_vokabular.ereignis_formen`), likewise in SQL: a display that discards rows only afterwards
+        would show fewer than `limit` — and the gap would reveal that there had been one (G12b).
         """
         bedingungen: list[str] = []
         werte: list[object] = []
         if ohne_events:
-            bedingungen.append(f"event NOT IN ({','.join('?' * len(ohne_events))})")
-            werte.extend(ohne_events)
+            # Both spellings: a row that an older version wrote after a rollback carries the old name.
+            formen = _vokabular.ereignis_formen(*ohne_events)
+            bedingungen.append(f"event NOT IN ({','.join('?' * len(formen))})")
+            werte.extend(formen)
         if username:
-            bedingungen.append("lower(username)=lower(?)")
-            werte.append(username)
+            # A replacement name in both spellings (`deleted#4`, up to 0.24.x `gelöscht#4`).
+            namen = _vokabular.ersatz_formen(username)
+            bedingungen.append("lower(username) IN (" + ",".join("lower(?)" for _ in namen) + ")")
+            werte.extend(namen)
         if seit:
             bedingungen.append("(ts > ? OR (ts = ? AND id >= ?))")
             werte.extend((int(seit), int(seit), int(seit_id or 0)))
@@ -3810,7 +3927,7 @@ class Store:
         wo = (" WHERE " + " AND ".join(bedingungen)) if bedingungen else ""
         return self._all(f"SELECT * FROM audit{wo} ORDER BY id DESC LIMIT ?", (*werte, limit))
 
-    # ---------- API-Keys ----------
+    # ---------- API keys ----------
     def add_api_key(self, user_id, name, prefix, key_hash, roles=None, expires_at=None,
                     kind: str = "automation") -> int:
         cur = self._exec(
@@ -3828,30 +3945,32 @@ class Store:
     def touch_api_key(self, key_id):
         self._exec("UPDATE api_key SET last_used=? WHERE id=?", (_now(), key_id))
 
-    #: Was einen Bestätigungsantrag aus LDAP/SAML für den Tag erledigt (`quellmail_seit`): der
-    #: zugestellte Link und die Abweisung einer vergebenen oder reservierten Adresse.
+    #: What settles a confirmation request from LDAP/SAML for the day (`quellmail_seit`): the
+    #: delivered link and the rejection of a taken or reserved address.
     QUELLMAIL_ERLEDIGT = ("federation_email_confirm", "email_change_taken", "email_change_reserved")
 
     def quellmail_seit(self, user_id, seit) -> bool:
-        """Ist seit `seit` (Unix-Sekunden) ein Bestätigungsantrag für eine Adresse aus LDAP/SAML an
-        diesem Konto erledigt? Zugestellt (G12a: die Zeile `federation_email_confirm`, die erst NACH
-        dem erfolgreichen Versand entsteht) oder abgewiesen, weil die Adresse vergeben oder
-        reserviert ist (`email_change_taken`/`_reserved` aus diesem Weg, Angriffsrunde 2026-09-26 —
-        sonst schrieb jeder Worker seine eigene Zeile, und die Kontoseite zählte mit). Erkannt am
-        Detail, das mit `konto=<id> ` beginnt; die Selbstbedienung schreibt es nicht. Über
-        `idx_audit_ts`, in der Datenbank und damit über alle Worker und jeden Neustart hinweg.
-        Die Id statt des Namens: Ein Umbenennen setzt das Tageskontingent nicht zurück."""
+        """Has a confirmation request for an address from LDAP/SAML on this account been settled
+        since `seit` (Unix seconds)? Delivered (G12a: the row `federation_email_confirm`, which arises only AFTER
+        the successful send) or rejected because the address is taken or
+        reserved (`email_change_taken`/`_reserved` from this path, attack round 2026-09-26 —
+        otherwise every worker wrote its own row, and the account page counted along). Recognised by the
+        detail that begins with `account=<id> ` (up to 0.24.x `konto=<id> `, both are taken); self-service
+        does not write it. Via
+        `idx_audit_ts`, in the database and thus across all workers and every restart.
+        The id instead of the name: a rename does not reset the daily quota."""
         return bool(self._one(
-            "SELECT 1 FROM audit WHERE ts >= ? AND event IN (?, ?, ?) AND detail LIKE ? LIMIT 1",
-            (int(seit), *self.QUELLMAIL_ERLEDIGT, f"konto={int(user_id)} %")))
+            "SELECT 1 FROM audit WHERE ts >= ? AND event IN (?, ?, ?) AND (detail LIKE ? OR detail LIKE ?) "
+            "LIMIT 1",
+            (int(seit), *self.QUELLMAIL_ERLEDIGT, f"account={int(user_id)} %", f"konto={int(user_id)} %")))
 
     def offener_token(self, user_id, purpose, email=None) -> bool:
-        """Liegt für dieses Konto schon ein offener (unbenutzter, gültiger) Link dieses Zwecks —
-        an diese Adresse, oder ohne `email` an irgendeine? Damit nicht jede Anmeldung einen neuen
-        Bestätigungslink verschickt. Der Weg über LDAP/SAML fragt ohne Adresse (p2 F2): Mit dem
-        Filter auf die Adresse schickte ein zweiter Worker einen Link an eine andere, solange der
-        erste noch im Postausgang lag — und daran, ob er kam, las ein Nutzer, der sein `mail`
-        selbst pflegt, ob die erste Adresse vergeben ist."""
+        """Is there already an open (unused, valid) link of this purpose for this account —
+        to this address, or without `email` to any? So that not every sign-in sends a new
+        confirmation link. The LDAP/SAML path asks without an address (p2 F2): with the
+        filter on the address a second worker sent a link to a different one as long as the
+        first was still in the outbox — and from whether it arrived, a user who maintains their own `mail`
+        could read whether the first address is taken."""
         if email is None:
             return bool(self._one("SELECT 1 FROM magic_token WHERE user_id=? AND purpose=? "
                                   "AND used_at IS NULL AND expires_at >= ? LIMIT 1",
@@ -3861,13 +3980,13 @@ class Store:
                               (user_id, purpose, email, _now())))
 
     def revoke_user_magic_tokens(self, user_id, purposes=None) -> int:
-        """Noch offene Einmal-Token eines Kontos verwerfen — alle, oder nur die genannten Zwecke.
+        """Discard still open one-time tokens of an account — all, or only the named purposes.
 
-        Sperre durch den Betreiber: Ein vor der Sperre verschickter Bestätigungslink schaltete
-        das Konto sonst wieder frei (`/auth/verify/…` hebt `disabled` auf — für die Registrierung
-        ist das richtig, für eine Sperre durch den Betreiber nicht), ein Anmelde-Link hätte eine
-        Sitzung angelegt. Reset, Passwortwechsel, „Sitzungen beenden": Ein offener Adresswechsel
-        aus einer übernommenen Sitzung überlebte sonst die Abwehr (Angriffsrunde, Fund 1)."""
+        Lock by the operator: a confirmation link sent before the lock would otherwise unlock
+        the account again (`/auth/verify/…` lifts `disabled` — for the registration
+        that is right, for a lock by the operator it is not), a sign-in link would have created a
+        session. Reset, password change, "end sessions": an open address change
+        from a taken-over session would otherwise survive the defence (attack round, finding 1)."""
         if purposes:
             ph = ",".join("?" * len(purposes))
             return self._exec(f"DELETE FROM magic_token WHERE user_id=? AND used_at IS NULL "
@@ -3876,9 +3995,9 @@ class Store:
                           (user_id,)).rowcount
 
     def revoke_user_api_keys(self, user_id) -> int:
-        """Alle noch gültigen Keys eines Kontos entwerten. Gibt zurück, wie viele es waren —
-        die Zahl gehört ins Protokoll und in die Antwort, sonst merkt niemand, was still
-        weggefallen ist (oder eben weiterläuft)."""
+        """Invalidate all still valid keys of an account. Returns how many there were —
+        the number belongs in the log and in the response, otherwise nobody notices what silently
+        dropped out (or keeps running)."""
         return self._exec("UPDATE api_key SET revoked=1 WHERE user_id=? AND revoked=0",
                           (user_id,)).rowcount
 
@@ -3887,7 +4006,7 @@ class Store:
         return r["n"] if r else 0
 
     def api_key_owner(self, key_id) -> Optional[int]:
-        """Die Konto-ID zu einem Key — für die Audit-Zeile beim Widerruf (B5-04)."""
+        """The account ID for a key — for the audit row on revocation (B5-04)."""
         r = self._one("SELECT user_id FROM api_key WHERE id=?", (key_id,))
         return r["user_id"] if r else None
 

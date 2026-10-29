@@ -1,13 +1,13 @@
-/* TinySesam — ein Satz Farben für die Projekt-Website UND für die App/Showcase.
-   Die Website lädt die Datei per <link>, das Showcase reicht sie als `brand_css` in die
-   eingebauten Seiten (Login/Konto/Admin/Fehler). Farbe ändern = nur hier ändern. */
+/* TinySesam — one set of colours for the project website AND for the app/showcase.
+   The website loads the file via <link>, the showcase passes it as `brand_css` into the
+   built-in pages (login/account/admin/error). Change a colour = change it only here. */
 
 :root{
   --paper:#f6f1ec; --card:#fbf8f4; --chip:#efe7de;
   --ink:#2b2a3a; --muted:#6f6a7d; --line:#e6ddd4;
   --accent:#b0566f; --accent-2:#d98c93;
-  /* Codeblock folgt dem Thema: helles Blatt auf beigem Papier. Eigene Syntaxtöne, weil
-     die Textfarben des Fließtexts auf diesem Grund zu blass bzw. zu grell wären. */
+  /* Code block follows the theme: a light sheet on beige paper. Own syntax tones, because
+     the body-text colours would be too pale or too glaring on this background. */
   --code-bg:#fbf8f4; --code-fg:#2b2a3a; --code-line:#e6ddd4;
   --code-com:#79738a; --code-key:#a5375a; --code-str:#7a5326;
   --glow:rgba(176,86,111,.20);
@@ -59,8 +59,8 @@
   --info-bg:#12283a; --info-ink:#60a5fa;
 }
 
-/* Die Tokens der eingebauten TinySesam-Seiten — abgeleitet, nichts doppelt gepflegt.
-   Damit sehen Login-, Konto-, Admin- und Fehlerseite exakt aus wie die Website. */
+/* The tokens of the built-in TinySesam pages — derived, nothing maintained twice.
+   This way the login, account, admin and error pages look exactly like the website. */
 :root{
   --ts-bg:var(--paper);          --ts-surface:var(--card);      --ts-surface-2:var(--chip);
   --ts-ink:var(--ink);           --ts-muted:var(--muted);

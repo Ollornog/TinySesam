@@ -1,5 +1,5 @@
-# Nur, was das Gateway braucht. Ein kleiner Build-Kontext ist auch ein sicherer:
-# was nicht mitkommt, kann nicht versehentlich ins Abbild geraten (Datenbanken, .env, .git).
+# Only what the gateway needs. A small build context is also a safe one:
+# what does not come along cannot end up in the image by accident (databases, .env, .git).
 *
 !pyproject.toml
 !README.md

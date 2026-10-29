@@ -1,4 +1,4 @@
-"""Die Projekt-Website: eine Quelle, zwei Sprachen — und der Rumpf aus web/ui.py."""
+"""The project website: one source, two languages — and the body from web/ui.py."""
 import json
 import os
 import subprocess
@@ -16,14 +16,14 @@ sys.path.insert(0, ROOT)
 
 from tinysesam import __version__ as TS_VERSION  # noqa: E402
 
-# Vor dem ersten web-Import: Der Website-Generator liegt nur im Repo, nicht im sdist.
-# Eine Voraussetzung, die NACH dem Import steht, kommt zu spät — dann ist der
-# ModuleNotFoundError schon geflogen.
+# Before the first web import: the website generator exists only in the repo, not in the sdist.
+# A precondition that comes AFTER the import is too late — the
+# ModuleNotFoundError has already been thrown.
 import pathlib  # noqa: E402
 from voraussetzung import braucht  # noqa: E402
 
 braucht((pathlib.Path(__file__).resolve().parent.parent / "web").is_dir(),
-        "kein `web/` — der Website-Generator liegt nur im Repo, nicht im sdist")
+        "no `web/` — the website generator lives only in the repo, not in the sdist")
 
 from web.flows import FLOWS, render                       # noqa: E402
 from web.site import DEMO, FLOWS as FLOWS_FILE, INDEX, LEGAL, OWNER, LABELS, build_pages  # noqa: E402
@@ -38,22 +38,22 @@ for f in FLOWS:
         assert loc["title"] and loc["why"] and loc["steps"], (f["key"], lang)
         for kind, _text in loc["steps"]:
             assert kind in ("do", "srv", "end"), (f["key"], lang, kind)
-print(f"  {len(FLOWS)} Flows, beide Sprachen, Kästchen-Typen ok")
+print(f"  {len(FLOWS)} flows, both languages, box types ok")
 
-# ---------- render(): statisch = Config-Schalter, mit cfg = aktiv/aus ----------
+# ---------- render(): static = config switch, with cfg = active/off ----------
 static = render("en", cfg=None)
 assert "pill cfg" in static and "pill on" not in static and "pill off" not in static
 assert static.count("<section class=flow>") == len(FLOWS)
 
 
 class _Cfg:
-    """Eine Config-Attrappe: gesetzt ist, was diese Prüfung braucht — alles andere kommt aus den
-    Vorgaben von `TinySesamConfig`.
+    """A config dummy: what this check needs is set — everything else comes from the
+    defaults of `TinySesamConfig`.
 
-    Der Rückfall über `__getattr__` ist der eigentliche Punkt. Vorher zählte die Attrappe ihre
-    Felder einzeln auf und brach, sobald ein Flow ein weiteres Feld las (zuletzt `ldap_enabled`).
-    Das machte eine Erweiterung der Seite zu einem Fehlschlag in einer ganz anderen Datei — und
-    verführt dazu, das Feld dort nachzutragen, statt es in `flows.py` zu benutzen.
+    The fallback via `__getattr__` is the actual point. Before, the dummy listed its
+    fields one by one and broke as soon as a flow read another field (most recently `ldap_enabled`).
+    That turned an extension of the page into a failure in a completely different file — and
+    tempts one to add the field there instead of using it in `flows.py`.
     """
 
     login_identifier = "username"
@@ -74,20 +74,20 @@ class _Cfg:
         from tinysesam import TinySesamConfig
         vorgabe = TinySesamConfig(db_path=":memory:")
         if not hasattr(vorgabe, name):
-            raise AttributeError(f"weder in der Attrappe noch in TinySesamConfig: {name}")
+            raise AttributeError(f"neither in the stub nor in TinySesamConfig: {name}")
         return getattr(vorgabe, name)
 
 
 live = render("de", cfg=_Cfg())
 assert "pill cfg" not in live
 assert live.count("pill on") == 5 and live.count("pill off") == 4
-assert "Benutzername</b>" in live, "note(cfg) wird ausgewertet"
-print("  render(): statisch = Config-Schalter, mit cfg = aktiv/aus")
+assert "Benutzername</b>" in live, "note(cfg) is evaluated"
+print("  render(): static = config switch, with cfg = active/off")
 
-# ---------- Vier Dateien, jede zweisprachig — EIN Sprachsystem ----------
+# ---------- Four files, each bilingual — ONE language system ----------
 pages = build_pages()
 assert set(pages) == {INDEX, DEMO, FLOWS_FILE, LEGAL}, sorted(pages)
-assert not any(".de.html" in k for k in pages), "keine Sprach-Dateinamen"
+assert not any(".de.html" in k for k in pages), "no language file names"
 
 for name, marks in ((INDEX, ("Use only what you need", "Nutze nur, was du brauchst")),
                     (DEMO, ("Live demo", "Live-Demo")),
@@ -96,27 +96,27 @@ for name, marks in ((INDEX, ("Use only what you need", "Nutze nur, was du brauch
     html = pages[name]
     for m in marks:
         assert m in html, (name, m)
-    # beide Sprachfassungen liegen in der Datei, eine wird ausgeblendet
+    # both language versions are in the file, one is hidden
     assert '<div class="l-en">' in html and '<div class="l-de">' in html
     assert 'html[data-lang="en"] .l-de{display:none}' in html
-    # der Wechsler benutzt überall denselben Parameter
+    # the switcher uses the same parameter everywhere
     for code in LANGS:
         assert f"href='?lang={code}'" in html, (name, code)
-    # Keine Sprach-Dateinamen für SEITEN. Die Panel-Vorschauen der Demo sind keine Seiten,
-    # sondern iframe-Inhalte — sie heißen `demo/login.de.html`, und das ist Absicht.
+    # No language file names for PAGES. The panel previews of the demo are not pages
+    # but iframe contents — they are called `demo/login.de.html`, and that is intentional.
     for page_name in ("index", "flows", "legal"):
         assert f"{page_name}.de" not in html, (name, page_name)
-    # und dasselbe Cookie wie die App
+    # and the same cookie as the app
     assert LANG_COOKIE in html
-    # Standard ist Englisch: `?lang=` > Cookie > LANGS[0]. Die Browsersprache zählt NICHT —
-    # sonst sähe ein deutscher Browser ungefragt die deutsche Fassung.
-    assert "navigator.language" not in html, "Browsersprache darf den Standard nicht überschreiben"
+    # The default is English: `?lang=` > cookie > LANGS[0]. The browser language does NOT count —
+    # otherwise a German browser would see the German version unasked.
+    assert "navigator.language" not in html, "browser language must not override the default"
     assert "cookie('ts_lang') || LANGS[0]" in html
     assert 'href="theme.css"' in html and 'href="wizard.png"' in html
     assert "flaticon.com/free-icons/wizard" in html, "Icon-Attribution"
-print("  2 Dateien, beide Sprachen, ein `?lang=`-Parameter + ein Cookie")
+print("  2 files, both languages, one `?lang=` parameter + one cookie")
 
-# ---------- Der Rumpf: ein Kopf-Container, zwei Navreihen, gleiche Fußzeile ----------
+# ---------- The body: one header container, two nav rows, same footer ----------
 def _cut(h, a, b):
     i = h.index(a)
     return h[i:h.index(b, i) + len(b)]
@@ -124,7 +124,7 @@ def _cut(h, a, b):
 
 for name in (INDEX, FLOWS_FILE, LEGAL):
     h = pages[name]
-    assert h.count("<header class=shell>") == 2, "je Sprachfassung ein Kopf"
+    assert h.count("<header class=shell>") == 2, "one header per language version"
     assert h.count("<nav class='row pages'>") == 2 and h.count("<nav class='row tools'>") == 2
     assert h.count("<footer") == 2
     assert "id=ts-theme" in h and "data-theme=light" in h and "data-theme=dark" in h
@@ -135,23 +135,23 @@ legal = pages[LEGAL]
 for probe in ("§ 5 DDG", "Art. 6 Abs. 1 lit. f DSGVO", "GitHub, Inc.", "EU-US Data Privacy Framework",
               "ts_lang", "ts-theme", "Art. 15", "Cookie-Banner"):
     assert probe in legal, probe
-# Platzhalter fallen rot auf — sind jetzt aber ausgefüllt
+# Placeholders stand out in red — but are now filled in
 for key in ("name", "street", "city", "email"):
-    assert OWNER[key] and not OWNER[key].startswith("«"), f"OWNER[{key}] fehlt"
+    assert OWNER[key] and not OWNER[key].startswith("«"), f"OWNER[{key}] missing"
     assert OWNER[key] in legal, key
-assert "class=todo" not in legal, "keine unausgefüllten Angaben mehr"
-# Der Geltungsbereich muss klarstellen: nur diese eine Adresse, nicht selbstgehostete Kopien
+assert "class=todo" not in legal, "no unfilled details any more"
+# The scope must make clear: only this one address, not self-hosted copies
 assert "ollornog.github.io/TinySesam" in legal
 for probe in ("eigenen Server installiert", "on their own server"):
     assert probe in legal, probe
-assert all(f'href="{LEGAL}"' in pages[p] for p in (INDEX, FLOWS_FILE, LEGAL)), "Fußzeile verlinkt"
+assert all(f'href="{LEGAL}"' in pages[p] for p in (INDEX, FLOWS_FILE, LEGAL)), "footer linked"
 print("  legal.html: Impressum (§5 DDG), Hosting, Browser-Speicher, Betroffenenrechte")
 
 idx, fl = pages[INDEX], pages[FLOWS_FILE]
 assert "class=hero" in _cut(idx, "<header class=shell>", "</header>")
 assert "class=brand" not in _cut(idx, "<header class=shell>", "</header>")
 assert "class=brand" in _cut(fl, "<header class=shell>", "</header>")
-print("  Kopf: ein Container + zwei Navreihen; Startseite mit Titelbereich statt Marke")
+print("  header: one container + two nav rows; start page with title area instead of brand")
 
 # ---------- ui-Bausteine ----------
 _nav = Nav(brand_href="/", icon_url="w.png", repo="https://example.invalid",
@@ -165,35 +165,35 @@ _ctx.is_admin = True
 h = header(_ctx, _nav)
 assert "max" in h and "Admin-Panel" in h and "Abmelden" in h and "Anmelden" not in h
 assert footer(_ctx, _nav).count("<footer") == 1
-print("  ui.header/ui.footer: Seiten markiert, Profil-Menü nur mit Benutzer")
+print("  ui.header/ui.footer: pages marked, profile menu only with user")
 
-# ---------- Icon-Links dürfen nicht vom Seitenlink-Polster gequetscht werden ----------
+# ---------- Icon links must not be squeezed by the page-link padding ----------
 from web.ui import UI_CSS  # noqa: E402
 
 assert "nav.row a:not(.ilink){padding:6px 11px}" in UI_CSS, (
-    "sonst schlägt `nav.row a` (0,1,2) das `.ilink`-Padding (0,1,0) und das Icon wird 4px breit")
-assert ".ilink svg{width:20px;height:20px;flex:0 0 auto" in UI_CSS, "Icon darf nicht schrumpfen"
-assert "height:22px" in UI_CSS.split(".ilink{")[1].split("}")[0], "Icon-Rahmen = Pillenhöhe"
-print("  .ilink: eigenes Polster, Icon 20px, kein Flex-Schrumpfen")
+    "otherwise `nav.row a` (0,1,2) beats the `.ilink` padding (0,1,0) and the icon becomes 4px wide")
+assert ".ilink svg{width:20px;height:20px;flex:0 0 auto" in UI_CSS, "icon must not shrink"
+assert "height:22px" in UI_CSS.split(".ilink{")[1].split("}")[0], "icon frame = pill height"
+print("  .ilink: own padding, icon 20px, no flex shrinking")
 
-# ---------- Ein Sprachsystem: nirgends ein Dateiname, überall `?lang=` ----------
+# ---------- One language system: nowhere a file name, everywhere `?lang=` ----------
 for name in (INDEX, FLOWS_FILE, LEGAL):
     html = pages[name]
     i = html.index("<span class=pill2>")
     pill = html[i:html.index("</span>", i)]
     for code in LANGS:
         assert f"href='?lang={code}'" in pill, (name, code)
-print("  Sprachwechsler: überall `?lang=`, keine Sprach-Dateinamen")
+print("  language switcher: `?lang=` everywhere, no language file names")
 
-# ---------- Der Generator, den die GitHub-Action ruft ----------
+# ---------- The generator that the GitHub action calls ----------
 with tempfile.TemporaryDirectory() as tmp:
     subprocess.run([sys.executable, "-m", "web.build", tmp], cwd=ROOT, check=True, capture_output=True)
     have = sorted(os.listdir(tmp))
     assert have == sorted([".nojekyll", "demo", "demo.html", "flows.html", "index.html",
                            "legal.html", "theme.css", "wizard.png"]), have
 
-    # Die Vorschauen der Demo-Seite: jedes Panel je Sprache — alle drei sprechen `cfg.lang`.
-    # Dazu die Attrappen-API als Dateien.
+    # The previews of the demo page: each panel per language — all three speak `cfg.lang`.
+    # Plus the dummy API as files.
     demo = sorted(os.listdir(os.path.join(tmp, "demo")))
     assert demo == sorted(["adminapi",
                            "login.en.html", "login.de.html",
@@ -203,22 +203,22 @@ with tempfile.TemporaryDirectory() as tmp:
     api = os.path.join(tmp, "demo", "adminapi", "api")
     assert sorted(os.listdir(api)) == sorted(["users", "sessions", "security", "audit",
                                               "resources", "version"])
-    # Ohne Endung, aber JSON: `fetch(...).json()` prüft keinen Content-Type, und Pages
-    # liefert die Datei unverändert aus.
+    # Without extension, but JSON: `fetch(...).json()` checks no Content-Type, and Pages
+    # serves the file unchanged.
     users = json.loads(_lies(api, "users"))
     assert [u["username"] for u in users] == ["demoadmin", "demo", "martin", "backup-daemon"]
     version = json.loads(_lies(api, "version"))
-    assert version["version"] == TS_VERSION, "das Panel zeigt die gebaute Version"
+    assert version["version"] == TS_VERSION, "the panel shows the built version"
 
-    # Die Panels sind echte Seiten, aber gesperrt — und die Demo-Seite bindet genau sie ein.
+    # The panels are real pages, but locked — and the demo page embeds exactly them.
     def panel(name):
         return _lies(tmp, "demo", name)
 
     for name in ("admin.en.html", "admin.de.html", "login.en.html", "account.de.html"):
-        assert "pointer-events:none" in panel(name), f"{name} muss read-only sein"
+        assert "pointer-events:none" in panel(name), f"{name} must be read-only"
     assert "<form" in panel("login.en.html")
 
-    # Jedes Panel spricht die Sprache seiner Datei — auch das Admin-Panel.
+    # Every panel speaks the language of its file — the admin panel too.
     for name, lang, want, nope in (("admin.en.html", "en", "Hardening", "Härtung"),
                                    ("admin.de.html", "de", "Härtung", "Hardening"),
                                    ("login.en.html", "en", "Sign in", "Anmelden"),
@@ -231,13 +231,13 @@ with tempfile.TemporaryDirectory() as tmp:
     for src in ("demo/login.en.html", "demo/account.de.html", "demo/admin.en.html",
                 "demo/admin.de.html"):
         assert f"src='{src}'" in page, src
-    # Auf Pages läuft nichts — ein „Öffnen"-Knopf hätte kein Ziel.
-    assert "/auth/login" not in page, "die gebaute Seite verlinkt keine laufende App"
+    # Nothing runs on Pages — an “Open” button would have no target.
+    assert "/auth/login" not in page, "the built page links no running app"
 print("  web.build schreibt Seiten, Demo-Panels, Attrappen-API + .nojekyll")
 
-# ---------- Showcase: der Benutzername ist Text (R8-2) ----------
-# T-12 escapte ihn auf /app und /sensibel; /demo („Angemeldet als …") blieb roh. Ein Konto namens
-# <img src=x onerror=…> lief damit bei jedem eigenen Besuch der Demo-Seite als Code.
+# ---------- Showcase: the username is text (R8-2) ----------
+# T-12 escaped it on /app and /sensibel; /demo (“Signed in as …”) stayed raw. An account named
+# <img src=x onerror=…> thereby ran as code on every own visit to the demo page.
 os.environ["TINYSESAM_SHOWCASE_DB"] = os.path.join(tempfile.mkdtemp(), "showcase.db")
 from fastapi.testclient import TestClient  # noqa: E402
 import examples.showcase as showcase  # noqa: E402
@@ -253,6 +253,6 @@ assert _r.status_code == 303, _r.status_code
 for _weg in ("/demo", "/app"):
     _t = _c.get(_weg).text
     assert "<img src=x" not in _t and "&lt;img src=x onerror=alert(1)&gt;" in _t, _weg
-print("  Showcase: ein präparierter Benutzername bleibt auf /demo und /app Text")
+print("  showcase: a crafted username stays text on /demo and /app")
 
 print("OK test_site")

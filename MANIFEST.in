@@ -1,56 +1,57 @@
-# Was ins sdist gehört — und was bewusst NICHT.
+# What belongs in the sdist — and what deliberately does NOT.
 #
-# Das Wheel entsteht aus `[tool.setuptools.packages.find]` und braucht diese Datei nicht.
-# Das sdist dagegen nimmt per Vorgabe mehr mit, als jemand vermutet, und weniger, als er
-# braucht: setuptools zieht nach einer alten Heuristik `tests/test_*.py` hinein, aber weder
-# `tests/run_all.py` noch `tests/_kit/` noch `tests/api_surface.json`. Ausgeliefert wurde damit
-# eine Suite, die sich nicht starten lässt — schlimmer als keine, weil sie eine Zusage vortäuscht.
+# The wheel is built from `[tool.setuptools.packages.find]` and does not need this file.
+# The sdist, by contrast, takes along by default more than anyone suspects, and less than it
+# needs: by an old heuristic setuptools pulls in `tests/test_*.py`, but neither
+# `tests/run_all.py` nor `tests/_kit/` nor `tests/api_surface.json`. That shipped
+# a suite that cannot be started — worse than none, because it feigns a promise.
 #
-# Bis 0.18.0 stand hier deshalb `prune tests`, mit der Begründung: zwei Suiten brauchen ohnehin,
-# was ein sdist nie enthält (`git ls-files` für die Hygiene, `web/` für die Website). Diese
-# Begründung trägt nicht mehr. Seit 0.18.0 sagt eine Suite selbst ab, wenn ihr eine Voraussetzung
-# fehlt (`tests/voraussetzung.py`, Exit 77) — die repo-gebundenen überspringen sich im sdist also
-# sauber und nennen den Grund, statt rot zu werden. Wer TinySesam neu paketiert (Distributionen,
-# conda, ein internes Rad), kann den Bau damit prüfen, und das ist der Sinn eines Quellpakets.
+# Up to 0.18.0 this therefore had `prune tests`, with the reasoning: two suites need anyway
+# what an sdist never contains (`git ls-files` for hygiene, `web/` for the website). That
+# reasoning no longer holds. Since 0.18.0 a suite opts out itself when a prerequisite is
+# missing (`tests/voraussetzung.py`, exit 77) — the repo-bound ones skip themselves cleanly
+# in the sdist and name the reason instead of going red. Anyone who repackages TinySesam
+# (distributions, conda, an internal wheel) can verify the build with it, and that is the
+# point of a source package.
 #
-# Also VOLLSTÄNDIG statt halb: `run_all.py`, `_kit/`, `voraussetzung.py`, `api_surface.json`
-# gehören dazu, sonst startet nichts. `tests/test_packaging.py` misst genau das.
+# So COMPLETE rather than half: `run_all.py`, `_kit/`, `voraussetzung.py`, `api_surface.json`
+# belong in, otherwise nothing starts. `tests/test_packaging.py` measures exactly that.
 graft tests
 recursive-exclude tests __pycache__
 recursive-exclude tests *.py[cod]
 
-# Was die README dem Leser zeigt, soll auch im Quellpaket liegen: `examples/showcase.py` und die
-# fertigen Aufbauten unter `deploy/` sind dort verlinkt, und ein Verweis ins Leere ist in einem
-# Tarball ärgerlicher als im Web — dort gibt es kein GitHub daneben. `web/` bleibt draussen: Das
-# ist der Generator der Projektseite, Repo-Sache, nicht Quelle der Bibliothek.
+# What the README shows the reader should also be in the source package: `examples/showcase.py` and the
+# ready-made setups under `deploy/` are linked there, and a dangling reference is more annoying in a
+# tarball than on the web — there is no GitHub next to it. `web/` stays out: it is the
+# generator of the project site, a repo matter, not part of the library's source.
 graft examples
 graft deploy
 recursive-exclude examples __pycache__
 recursive-exclude deploy __pycache__
 
-# Was ein Mensch im Quellpaket sucht: die Lizenz (nimmt setuptools selbst mit), die
-# Versionsgeschichte, den Meldeweg für Lücken und die deutsche Fassung der README.
+# What a human looks for in the source package: the license (setuptools includes it itself), the
+# version history, the reporting path for vulnerabilities and the German version of the README.
 include CHANGELOG.md
-include KONFIGURATION.md
+include CONFIGURATION.md
 include API.md
 include SECURITY.md
 include i18n/README.de.md
 include i18n/SECURITY.de.md
 
-# Bauartefakte eines fremden Arbeitsbaums haben in einem Quellpaket nichts verloren.
+# Build artifacts of a foreign working tree have no business in a source package.
 recursive-exclude * __pycache__
 recursive-exclude * *.py[cod]
 global-exclude .DS_Store
 
-# Was .gitignore ausschliesst, gehört auch nicht ins sdist. Die `graft`-Zeilen oben nehmen ALLES
-# unter tests/, examples/ und deploy/ mit, was auf der Platte liegt — nicht, was versioniert ist.
-# Ein `python -m build` aus einem benutzten Arbeitsbaum packte so eine `examples/app.db` samt
-# Konten und Sitzungen oder eine `deploy/forward-auth/.env` mit Geheimnissen ins Quellpaket
-# (B4-13 aus T-13). Der Release baut aus einem frischen Checkout und war nicht betroffen — wer
-# selbst paketiert, schon. `tests/test_packaging.py` legt für jedes Muster aus .gitignore eine
-# Attrappe in die gegrafteten Bäume und prüft, dass keine im sdist landet; ein neues Muster dort
-# ohne Zeile hier wird rot. `*.egg-info/` nur unter den gegrafteten Bäumen: setuptools legt sein
-# eigenes egg-info ins sdist, ein `global-exclude` schlösse es mit aus.
+# What .gitignore excludes does not belong in the sdist either. The `graft` lines above take ALL
+# of tests/, examples/ and deploy/ that is on disk — not what is versioned.
+# A `python -m build` from a used working tree thus packed an `examples/app.db` with its
+# accounts and sessions, or a `deploy/forward-auth/.env` with secrets, into the source package
+# (B4-13 from T-13). The release builds from a fresh checkout and was not affected — anyone who
+# packages themselves was. `tests/test_packaging.py` places a dummy for every pattern from .gitignore
+# in the grafted trees and checks that none ends up in the sdist; a new pattern there
+# without a line here turns red. `*.egg-info/` only under the grafted trees: setuptools puts its
+# own egg-info into the sdist, a `global-exclude` would exclude it as well.
 global-exclude .venv/** venv/** __pycache__/** build/** dist/** _site/** .befunde-*/**
 global-exclude *.db *.db-wal *.db-shm .env
 recursive-exclude tests *.egg-info/**

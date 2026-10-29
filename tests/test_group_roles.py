@@ -10,23 +10,23 @@ def ok(name):
     print(f"  ✓ {name}")
 
 
-# ---------- apply_idp_groups: sync gemappter Rollen, manuelle bleiben, __admin__ folgt dem IdP (H-5) ----------
+# ---------- apply_idp_groups: sync of mapped roles, manual ones stay, __admin__ follows the IdP (H-5) ----------
 db = os.path.join(tempfile.mkdtemp(), "t.db")
 auth = TinySesam(TinySesamConfig(db_path=db, csrf_enabled=False, cookie_secure=False))
 uid = auth.create_user("bob", roles=["manual"])   # manuell vergebene Rolle
 mapping = {"editors": "editor", "admins": "__admin__", "viewers": "viewer"}
 
-# hat editors + admins → editor-Rolle + Admin-Flag; manuelle Rolle bleibt
-# (verglichen wird EXAKT — Default seit group_match="exact")
+# has editors + admins → editor role + admin flag; manual role stays
+# (compared EXACTLY — default since group_match="exact")
 auth.apply_idp_groups(uid, ["editors", "admins"], mapping)
 u = auth.store.get_user(uid)
-# is_admin=2: „vom Identity Provider vergeben" — nur so ein Flag darf er später wieder nehmen.
+# is_admin=2: “granted by the identity provider” — only such a flag may he take away later.
 assert set(auth.user_roles(u)) == {"manual", "editor"} and u["is_admin"] == 2
-ok("Gruppen→Rollen: editor gesetzt, manuelle Rolle bleibt, __admin__ → Admin-Flag (Vermerk: vom IdP)")
+ok("groups→roles: editor set, manual role stays, __admin__ → admin flag (mark: from the IdP)")
 
-# nächster Login ohne editors- und admins-Gruppe → editor entfällt, manual bleibt, und das
-# Admin-Flag, das der IdP vergeben hat, geht mit (H-5, PO-Entscheid 2026-09-24). Bis dahin
-# stand hier „Admin bleibt (kein Auto-Entzug)" — genau das war der Befund.
+# next login without editors and admins group → editor lapses, manual stays, and the
+# admin flag that the IdP granted goes with it (H-5, PO decision 2026-09-24). Until then
+# this said “admin stays (no auto-revocation)” — exactly that was the finding.
 auth.apply_idp_groups(uid, ["viewers"], mapping)
 u = auth.store.get_user(uid)
 assert set(auth.user_roles(u)) == {"manual", "viewer"} and not u["is_admin"]
@@ -36,14 +36,14 @@ ok("erneuter Login: gemappte Rollen synchronisiert (editor weg, viewer da); vom 
 before = auth.user_roles(auth.store.get_user(uid))
 auth.apply_idp_groups(uid, ["editors"], {})
 assert auth.user_roles(auth.store.get_user(uid)) == before
-ok("leeres Mapping → keine Änderung")
+ok("empty mapping → no change")
 
-# exakter Vergleich: 'editors' darf NICHT auf 'nicht-editors' passen
+# exact comparison: 'editors' must NOT match 'nicht-editors'
 auth.apply_idp_groups(uid, ["nicht-editors"], {"editors": "editor"})
 assert "editor" not in auth.user_roles(auth.store.get_user(uid))
-ok("Default exakt: Teiltreffer verleiht keine Rolle")
+ok("default exact: partial match grants no role")
 
-# Teilstring bleibt für DNs möglich — explizit
+# substring remains possible for DNs — explicit
 auth.apply_idp_groups(uid, ["cn=admins,ou=g,dc=x"], {"cn=admins,ou=g": "__admin__"}, substring=True)
 assert auth.store.get_user(uid)["is_admin"] == 2
 ok("substring=True: DN-Teiltreffer greift (so nutzt LDAP es)")
@@ -64,7 +64,7 @@ assert u and auth.has_role(u, "editor")
 ok("LDAP-Login: memberOf 'staff' → Rolle 'editor' (Teilstring-Match)")
 os.remove(db)
 
-# ---------- Admin-Panel: available_roles landen als ROLES im Panel-HTML ----------
+# ---------- Admin panel: available_roles end up as ROLES in the panel HTML ----------
 db = os.path.join(tempfile.mkdtemp(), "t.db")
 auth = TinySesam(TinySesamConfig(db_path=db, csrf_enabled=False, cookie_secure=False,
                                  available_roles=["editor", "viewer"]))
@@ -74,7 +74,7 @@ c = TestClient(app)
 c.post("/auth/login", data={"username": "admin", "password": "geheim123"}, follow_redirects=False)
 html = c.get("/auth/admin", headers={"Accept": "text/html"}).text
 assert 'const ROLES=["editor", "viewer"]' in html or 'const ROLES=["editor","viewer"]' in html
-ok("Admin-Panel: available_roles als ROLES injiziert (Checkbox-Editor)")
+ok("admin panel: available_roles injected as ROLES (checkbox editor)")
 os.remove(db)
 
 print("\nGROUP→ROLE OK ✅")

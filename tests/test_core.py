@@ -1,4 +1,4 @@
-"""End-to-End-Test des Passwort- + TOTP-Kerns via FastAPI-TestClient (ohne Browser)."""
+"""End-to-end test of the password + TOTP core via FastAPI TestClient (without browser)."""
 import os
 import tempfile, os
 from fastapi import FastAPI, Depends
@@ -10,7 +10,7 @@ from tinysesam import TinySesam, TinySesamConfig
 db = os.path.join(tempfile.mkdtemp(), "t.db")
 auth = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db, rp_name="Test", passkey_enabled=False,
                                  oidc_enabled=False, cookie_secure=False))
-assert auth.ensure_admin("admin", "geheim123"), "admin sollte angelegt werden"
+assert auth.ensure_admin("admin", "geheim123"), "admin should be created"
 assert not auth.ensure_admin("x", "y"), "zweiter ensure_admin darf nichts tun"
 
 app = FastAPI()
@@ -29,28 +29,28 @@ def ok(name):
     print(f"  ✓ {name}")
 
 
-# 1) ohne Login → 401 (JSON-Client)
+# 1) without login → 401 (JSON client)
 assert c.get("/geheim").status_code == 401
-ok("geschützt ohne Login → 401")
+ok("protected without login → 401")
 
-# 2) Login-Seite rendert
+# 2) login page renders
 r = c.get("/auth/login")
 assert r.status_code == 200 and "Passwort" in r.text
-ok("Login-Seite")
+ok("login page")
 
 # 3) falsches Passwort
 assert c.post("/auth/login", data={"username": "admin", "password": "falsch", "next": "/geheim"}).status_code == 401
 ok("falsches Passwort → 401")
 
-# 4) richtiges Passwort (noch kein TOTP) → 303 + Cookie, kein MFA
+# 4) correct password (no TOTP yet) → 303 + cookie, no MFA
 r = c.post("/auth/login", data={"username": "admin", "password": "geheim123", "next": "/geheim"}, follow_redirects=False)
 assert r.status_code == 303 and "set-cookie" in {k.lower() for k in r.headers}
-ok("Login ohne 2FA → eingeloggt")
+ok("login without 2FA → logged in")
 
-# 5) geschützt jetzt erreichbar
+# 5) protected now reachable
 r = c.get("/geheim")
 assert r.status_code == 200 and r.json()["user"] == "admin"
-ok("geschützt mit Session erreichbar")
+ok("protected reachable with session")
 assert c.get("/auth/me").json()["authenticated"] is True
 ok("/auth/me authenticated")
 
@@ -60,12 +60,12 @@ secret = auth.totp_begin(uid)["secret"]
 assert auth.totp_confirm(uid, pyotp.TOTP(secret).at(time.time() - 30)) and auth.store.has_confirmed_totp(uid)
 ok("TOTP eingerichtet")
 
-# 7) Logout → Login jetzt MFA-pflichtig
+# 7) logout → login is now MFA-required
 c.get("/auth/logout")
 r = c.post("/auth/login", data={"username": "admin", "password": "geheim123", "next": "/geheim"}, follow_redirects=False)
 assert r.status_code == 303 and "/auth/totp" in r.headers["location"]
-assert c.get("/geheim").status_code == 401, "mit 2FA-pending noch nicht voll eingeloggt"
-ok("Login mit TOTP → 2FA-Schritt verlangt")
+assert c.get("/geheim").status_code == 401, "with 2FA pending not yet fully logged in"
+ok("login with TOTP → 2FA step required")
 
 # 8) falscher + richtiger TOTP-Code
 assert c.post("/auth/totp", data={"code": "000000", "next": "/geheim"}).status_code == 401
@@ -77,14 +77,14 @@ ok("TOTP korrekt → voll eingeloggt")
 # 9) Rollen (optional)
 auth.set_roles(uid, ["editor"])
 u = auth.store.get_user(uid)
-assert auth.has_role(u, "editor") and auth.has_role(u, "irgendwas")  # admin ⇒ alle Rollen
+assert auth.has_role(u, "editor") and auth.has_role(u, "irgendwas")  # admin ⇒ all roles
 auth.store.set_disabled(uid, False)
 ok("Rollen + Admin-Override")
 
-# ---------- B2-3: der Einrichtungscode ist verbraucht ----------
-# Bis T-13 buchte `totp_confirm` den Zeitschritt nicht: derselbe Code, eben zur Einrichtung
-# eingetippt, meldete danach noch bis zu 90 Sekunden an. (Mutationsprobe: in `totp_confirm`
-# `_totp.verify(...)` statt `passender_schritt` + `totp_step_verbrauchen` → rot.)
+# ---------- B2-3: the setup code is consumed ----------
+# Until T-13 `totp_confirm` did not book the time step: the same code, just typed
+# in for the setup, still signed in for up to 90 seconds afterwards. (Mutation probe: in `totp_confirm`
+# `_totp.verify(...)` instead of `passender_schritt` + `totp_step_verbrauchen` → red.)
 db_b = os.path.join(tempfile.mkdtemp(), "b.db")
 auth_b = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db_b, passkey_enabled=False,
                                    oidc_enabled=False, cookie_secure=False))
@@ -94,14 +94,14 @@ auth_b.on_security_event = lambda e, k, d: _ereig.append(e)
 geheim_b = auth_b.totp_begin(uid_b)["secret"]
 code_b = pyotp.TOTP(geheim_b).now()
 assert auth_b.totp_confirm(uid_b, code_b)
-assert not auth_b._verify_totp(uid_b, code_b), "der Einrichtungscode meldet danach noch an"
-assert not auth_b.totp_confirm(uid_b, code_b), "…und bestätigt ein zweites Mal"
+assert not auth_b._verify_totp(uid_b, code_b), "the setup code still signs in afterwards"
+assert not auth_b.totp_confirm(uid_b, code_b), "…and confirms a second time"
 assert _ereig == ["totp_enabled"], _ereig
 assert any(z["event"] == "totp_enable" for z in auth_b.store.recent_audit(20))
-ok("B2-3: der Einrichtungscode gilt genau einmal (danach auch an /auth/totp nicht mehr)")
+ok("B2-3: the setup code applies exactly once (afterwards not at /auth/totp either)")
 
-# ---------- B2-12 / R3-6: Drossel, eigener Topf und Protokoll an der Einrichtungsbestätigung ----------
-# (Mutationsprobe: die `is_totp_setup_locked`-Abfrage in router.totp_setup_confirm streichen → rot.)
+# ---------- B2-12 / R3-6: throttle, own bucket and log at the setup confirmation ----------
+# (Mutation probe: remove the `is_totp_setup_locked` query in router.totp_setup_confirm → red.)
 auth_b.totp_disable(uid_b)
 app_b = FastAPI()
 app_b.include_router(auth_b.router())
@@ -113,16 +113,16 @@ grenze = auth_b._sec("totp_setup_max_attempts")
 antworten = [cb.post("/auth/totp/setup", data={"code": "000000"}).json().get("ok") for _ in range(grenze)]
 assert antworten == [False] * grenze, antworten
 r = cb.post("/auth/totp/setup", data={"code": pyotp.TOTP(geheim_b).now()})
-assert r.status_code == 429, f"nach {grenze} Fehlgriffen muss die Bestätigung sperren, war {r.status_code}"
+assert r.status_code == 429, f"after {grenze} failed attempts the confirmation must lock, was {r.status_code}"
 assert not auth_b.store.has_confirmed_totp(uid_b)
 fehl = [z for z in auth_b.store.recent_audit(50) if z["event"] == "login_fail" and "totp_setup" in (z["detail"] or "")]
-assert len(fehl) >= grenze, "jeder Fehlgriff steht im Audit-Log"
-# Eigener Topf: Die Anmeldung desselben Kontos bleibt offen.
+assert len(fehl) >= grenze, "every failed attempt is in the audit log"
+# Own bucket: the sign-in of the same account stays open.
 assert not auth_b._is_locked("berta", "testclient")
 assert TestClient(app_b).post("/auth/login", data={"username": "berta", "password": "berta-geheim-1"},
                               follow_redirects=False).status_code == 303
-ok("B2-12/R3-6: Einrichtungsbestätigung gedrosselt, gesperrt, protokolliert — Login bleibt offen")
+ok("B2-12/R3-6: setup confirmation throttled, locked, logged — login stays open")
 os.remove(db_b)
 
 os.remove(db)
-print("\nALLE TESTS OK ✅")
+print("\nALL TESTS OK ✅")

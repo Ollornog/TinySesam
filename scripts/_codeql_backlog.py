@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
-"""Offene CodeQL-Alerts in den Backlog ziehen — statt in ein Postfach.
+"""Pull open CodeQL alerts into the backlog — instead of into a mailbox.
 
-    python3 scripts/_codeql_backlog.py            # Tabelle in backlog/T-12-codeql-bestand.md erneuern
-    python3 scripts/_codeql_backlog.py --zeige    # nur ausgeben, nichts schreiben
+    python3 scripts/_codeql_backlog.py            # refresh the table in backlog/T-12-codeql-backlog.md
+    python3 scripts/_codeql_backlog.py --zeige    # only print, write nothing
 
-CodeQL meldet jeden Fund als E-Mail und — bei einem Pull Request — als Review-Thread, der den
-Merge blockiert, solange er offen ist (auch bei Schwere „note"). Was auf `main` offen liegt,
-sieht dagegen niemand, bis ein PR zufällig dieselben Zeilen berührt. Dieses Skript holt die
-offene Liste über die GitHub-API und schreibt sie als Tabelle zwischen die Marker in der
-Backlog-Datei; alles ausserhalb der Marker bleibt, wie es ist. Braucht ein angemeldetes `gh`.
+CodeQL reports every finding as an e-mail and — on a pull request — as a review thread that
+blocks the merge as long as it is open (even at severity "note"). What is open on `main`, by
+contrast, nobody sees until a PR happens to touch the same lines. This script fetches the open
+list via the GitHub API and writes it as a table between the markers in the backlog file;
+everything outside the markers stays as it is. Needs a signed-in `gh`.
 
-Bewertete Alerts werden in GitHub mit Begründung abgewiesen (`gh api -X PATCH …/alerts/N`),
-nicht hier gestrichen — sonst kämen sie beim nächsten Lauf zurück.
+Assessed alerts are dismissed in GitHub with a reason (`gh api -X PATCH …/alerts/N`), not
+struck out here — otherwise they would come back on the next run.
 """
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ import subprocess
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-ZIEL = os.path.join(ROOT, "backlog", "T-12-codeql-bestand.md")
+ZIEL = os.path.join(ROOT, "backlog", "T-12-codeql-backlog.md")
 START, ENDE = "<!-- CODEQL:START -->", "<!-- CODEQL:END -->"
 RANG = {"error": 0, "warning": 1, "note": 2}
 JQ = (".[] | {n:.number, rule:.rule.id, sev:.rule.severity, path:.most_recent_instance.location.path,"
@@ -41,15 +41,15 @@ def hole_alerts() -> list[dict]:
 
 def tabelle(alerts: list[dict]) -> str:
     if not alerts:
-        return "_Keine offenen Alerts._"
-    zeilen = ["| # | Schwere | Regel | Stelle |", "|---|---|---|---|"]
+        return "_No open alerts._"
+    zeilen = ["| # | Severity | Rule | Location |", "|---|---|---|---|"]
     for a in alerts:
         zeilen.append(f"| [{a['n']}]({a['url']}) | {a['sev']} | `{a['rule']}` | `{a['path']}:{a['line']}` |")
     je = {}
     for a in alerts:
         je[a["sev"]] = je.get(a["sev"], 0) + 1
     summe = ", ".join(f"{n} {s}" for s, n in sorted(je.items(), key=lambda x: RANG.get(x[0], 9)))
-    return f"**{len(alerts)} offen** ({summe}).\n\n" + "\n".join(zeilen)
+    return f"**{len(alerts)} open** ({summe}).\n\n" + "\n".join(zeilen)
 
 
 def main(argv: list[str]) -> int:
@@ -61,7 +61,7 @@ def main(argv: list[str]) -> int:
     with open(ZIEL, encoding="utf-8") as fh:
         alt = fh.read()
     if START not in alt or ENDE not in alt:
-        print(f"Marker {START} / {ENDE} fehlen in {ZIEL}", file=sys.stderr)
+        print(f"Markers {START} / {ENDE} missing in {ZIEL}", file=sys.stderr)
         return 1
     kopf, rest = alt.split(START, 1)
     _, fuss = rest.split(ENDE, 1)
@@ -69,7 +69,7 @@ def main(argv: list[str]) -> int:
     if neu != alt:
         with open(ZIEL, "w", encoding="utf-8") as fh:
             fh.write(neu)
-    print(f"{len(alerts)} offene Alerts → {os.path.relpath(ZIEL, ROOT)}")
+    print(f"{len(alerts)} open alerts → {os.path.relpath(ZIEL, ROOT)}")
     return 0
 
 

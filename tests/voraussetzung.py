@@ -1,21 +1,21 @@
-"""Eine Suite sagt selbst, wenn ihr eine Voraussetzung fehlt.
+"""A suite says itself when a prerequisite is missing.
 
-Liegt bewusst NEBEN `_kit/` und nicht darin: `_kit/` ist die geteilte Testbasis aus repokit und
-wird von `repokit sync` überschrieben — eine eigene Datei dort wäre beim nächsten Sync weg.
+Deliberately lives NEXT TO `_kit/` and not inside it: `_kit/` is the shared test base from repokit
+and is overwritten by `repokit sync` — a file of our own there would be gone at the next sync.
 
-Warum das nicht der Runner entscheidet: Er sähe nur einen ImportError im stderr und könnte zwei
-völlig verschiedene Fälle nicht trennen — „diesem TEST fehlt ein Extra" (überspringen ist richtig)
-und „die BIBLIOTHEK stürzt ohne ein Extra ab" (das ist ein Fehler). Genau daran blieb monatelang
-unsichtbar, dass `pip install tinysesam` mit Vorgabe-Konfiguration gar nicht startet.
+Why the runner does not decide this: it would only see an ImportError on stderr and could not tell
+two completely different cases apart — "this TEST lacks an extra" (skipping is right) and "the
+LIBRARY crashes without an extra" (that is a bug). This is exactly why it stayed invisible for
+months that `pip install tinysesam` with the default configuration does not start at all.
 
-Benutzung, ganz oben in der Suite:
+Usage, at the very top of the suite:
 
     from voraussetzung import braucht_modul, braucht
     braucht_modul("onelogin", extra="saml")
     braucht(shutil.which("chrome"), "kein Chrome gefunden")
 
-Beides beendet den Prozess mit Exit 77; `run_all.py` wertet das als „übersprungen" und nennt den
-Grund. Ist die Voraussetzung da, passiert nichts.
+Both end the process with exit 77; `run_all.py` counts that as "skipped" and names the reason.
+If the prerequisite is there, nothing happens.
 """
 import importlib.util
 import os
@@ -26,18 +26,18 @@ SKIP_EXIT = 77
 
 
 def braucht(bedingung, grund):
-    """Abwinken, wenn `bedingung` falsch ist — mit einem Grund, den der Runner anzeigt."""
+    """Bail out if `bedingung` is false — with a reason the runner displays."""
     if not bedingung:
         print(f"uebersprungen: {grund}")
         sys.exit(SKIP_EXIT)
 
 
 def braucht_modul(name, extra=None):
-    """Abwinken, wenn ein Modul nicht installiert ist.
+    """Bail out if a module is not installed.
 
-    Prüft über `find_spec` statt über einen echten Import: Ein Import könnte selbst scheitern
-    (fehlende Systembibliothek, kaputte Installation), und DAS wäre ein Fehler, kein Grund zum
-    Überspringen. Hier geht es nur um „ist es da".
+    Checks via `find_spec` instead of a real import: an import could fail itself (missing system
+    library, broken installation), and THAT would be a bug, not a reason to skip. All that
+    matters here is "is it there".
     """
     try:
         da = importlib.util.find_spec(name) is not None
@@ -50,24 +50,24 @@ def braucht_modul(name, extra=None):
 
 
 def pflicht_werkzeug(name, zweck):
-    """Den Pfad eines Werkzeugs, ohne das ein TEIL einer Suite nicht prüft — oder rot.
+    """The path of a tool without which PART of a suite checks nothing — or goes red.
 
-    Anders als `braucht()`: Die Suite läuft weiter, nur dieser Teil hängt am Werkzeug. Bis
-    2026-09-24 stand an solchen Stellen `if shutil.which("node"):` — fehlte node, fiel die Probe
-    stumm weg, und die Suite meldete grün. Genau so prüfte `ci-local` (Abbild ohne node) weniger
-    als das Gate auf GitHub (`ubuntu-latest` bringt node mit), und niemand sah es: Eine Mutation
-    im Panel-JS blieb lokal grün. Fehlt das Werkzeug, ist das jetzt ein Fehler.
+    Unlike `braucht()`: the suite keeps running, only this part depends on the tool. Until
+    2026-09-24 such places had `if shutil.which("node"):` — if node was missing, the probe was
+    silently dropped and the suite reported green. That is exactly how `ci-local` (image without
+    node) checked less than the gate on GitHub (`ubuntu-latest` ships node), and nobody noticed: a
+    mutation in the panel JS stayed green locally. If the tool is missing, that is now an error.
 
-    Wer bewusst ohne arbeitet, setzt `TINYSESAM_OHNE_<NAME>=1` (z. B. `TINYSESAM_OHNE_NODE=1`):
-    Dann läuft die Suite weiter, und die Zeile sagt ausdrücklich, dass dieser Teil NICHT geprüft
-    hat. Die CI setzt das nie.
+    Whoever deliberately works without it sets `TINYSESAM_OHNE_<NAME>=1` (e.g.
+    `TINYSESAM_OHNE_NODE=1`): then the suite keeps running, and the line states explicitly that
+    this part did NOT check. CI never sets it.
     """
     pfad = shutil.which(name)
     if pfad:
         return pfad
     schalter = f"TINYSESAM_OHNE_{name.upper()}"
     if os.environ.get(schalter) == "1":
-        print(f"  ⚠ {zweck}: `{name}` fehlt, per {schalter}=1 erlaubt — dieser Teil hat NICHT geprüft")
+        print(f"  ⚠ {zweck}: `{name}` is missing, allowed via {schalter}=1 — this part did NOT check")
         return None
     raise AssertionError(f"`{name}` fehlt — ohne es prüft „{zweck}“ nichts und wäre stumm grün. "
                          f"Installieren, oder bewusst {schalter}=1 setzen (dann steht es als ungeprüft da).")

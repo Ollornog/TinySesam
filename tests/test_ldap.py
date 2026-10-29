@@ -1,5 +1,5 @@
-"""Batch B: LDAP/lldap-Backend — Login gegen Verzeichnis, Auto-Create, Gruppen-Gate.
-Nutzt einen gefälschten LDAP-Client (kein Server/ldap3 nötig) und testet die Integration."""
+"""Batch B: LDAP/lldap backend — login against a directory, auto-create, group gate.
+Uses a fake LDAP client (no server/ldap3 needed) and tests the integration."""
 import os
 import tempfile, os
 from fastapi import FastAPI, Depends
@@ -21,18 +21,18 @@ class FakeLDAP:
             return None
         return {"username": username, "email": u.get("email"),
                 "name": u.get("name", username), "groups": u.get("groups", []),
-                "id": u.get("id")}   # stabile Kennung des Verzeichnisses (F-11)
+                "id": u.get("id")}   # stable identifier of the directory (F-11)
 
 
 def build(**cfgkw):
     db = os.path.join(tempfile.mkdtemp(), "t.db")
-    # `ldap_allow_plaintext=True`: Diese Suite spricht mit einer Attrappe, es gibt weder Server
-    # noch Netz. Seit F-12 wäre `ldap://` ohne TLS sonst ein Aufbaufehler — zu Recht, aber hier
-    # ginge es an der Sache vorbei. Der Riegel selbst wird unten eigens gemessen.
+    # `ldap_allow_plaintext=True`: This suite talks to a stub, there is neither a server
+    # nor a network. Since F-12, `ldap://` without TLS would otherwise be a setup error — rightly so, but here
+    # that would miss the point. The guard itself is measured separately below.
     cfgkw.setdefault("ldap_allow_plaintext", True)
     auth = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db, rp_name="Test", passkey_enabled=False, oidc_enabled=False,
                                      cookie_secure=False, ldap_enabled=True, ldap_url="ldap://dummy", **cfgkw))
-    auth.ensure_admin("admin", "lokalpw")   # lokaler User mit lokalem Passwort
+    auth.ensure_admin("admin", "lokalpw")   # local user with a local password
     app = FastAPI()
     app.include_router(auth.router())
 
@@ -45,7 +45,7 @@ def build(**cfgkw):
 
 JSON = {"Accept": "application/json"}
 
-# ---------- LDAP-User ohne lokales Passwort → Login + Auto-Create ----------
+# ---------- LDAP user without a local password → login + auto-create ----------
 db, auth, c = build()
 auth.ldap = FakeLDAP({"alice": {"password": "ldappw", "email": "alice@corp", "name": "Alice",
                                 "groups": ["cn=staff,ou=groups,dc=corp"]}})
@@ -54,56 +54,56 @@ r = c.post("/auth/login", data={"username": "alice", "password": "ldappw", "next
 assert r.status_code == 303, r.status_code
 assert c.get("/geheim", headers=JSON).json() == {"u": "alice"}
 u = auth.store.get_user_by_name("alice")
-# Seit dem PO-Entscheid 2026-09-25 ist LDAP per Vorgabe NICHT vertraut: Die Adresse kommt erst
-# nach einer Bestätigung ins Konto (federation_email_confirm, hier ohne Mailer/base_url gar nicht).
+# Since the PO decision of 2026-09-25, LDAP is NOT trusted by default: The address only enters the account
+# after a confirmation (federation_email_confirm, not at all here without mailer/base_url).
 assert u and not u["email"] and u["display_name"] == "Alice", dict(u)
-ok("LDAP-Login legt lokalen User automatisch an (Name übernommen, unbestätigte Adresse nicht)")
+ok("LDAP login creates a local user automatically (name taken over, unconfirmed address not)")
 
-# falsches LDAP-Passwort → 401
+# wrong LDAP password → 401
 c.get("/auth/logout")
 assert c.post("/auth/login", data={"username": "alice", "password": "falsch"}).status_code == 401
-ok("falsches LDAP-Passwort → 401")
+ok("wrong LDAP password → 401")
 os.remove(db)
 
-# ---------- lokales Passwort funktioniert weiter neben LDAP ----------
+# ---------- local password keeps working alongside LDAP ----------
 db, auth, c = build()
 auth.ldap = FakeLDAP({})
 r = c.post("/auth/login", data={"username": "admin", "password": "lokalpw", "next": "/"}, follow_redirects=False)
 assert r.status_code == 303
-ok("lokaler Passwort-Login funktioniert weiterhin (LDAP nur Fallback)")
+ok("local password login still works (LDAP only a fallback)")
 os.remove(db)
 
-# ---------- Gruppen-Gate ----------
+# ---------- Group gate ----------
 db, auth, c = build(ldap_allowed_groups=["staff"])
 auth.ldap = FakeLDAP({
-    "bob": {"password": "x", "groups": ["cn=staff,ou=groups,dc=corp"]},      # erlaubt
-    "eve": {"password": "x", "groups": ["cn=extern,ou=groups,dc=corp"]},     # nicht erlaubt
+    "bob": {"password": "x", "groups": ["cn=staff,ou=groups,dc=corp"]},      # allowed
+    "eve": {"password": "x", "groups": ["cn=extern,ou=groups,dc=corp"]},     # not allowed
 })
 assert c.post("/auth/login", data={"username": "eve", "password": "x"}).status_code == 401
-ok("Gruppen-Gate: User ohne erlaubte Gruppe → 401")
+ok("Group gate: user without an allowed group → 401")
 c.get("/auth/logout")
 r = c.post("/auth/login", data={"username": "bob", "password": "x", "next": "/geheim"}, follow_redirects=False)
 assert r.status_code == 303 and c.get("/geheim", headers=JSON).json() == {"u": "bob"}
-ok("Gruppen-Gate: User mit erlaubter Gruppe → Login")
+ok("Group gate: user with an allowed group → login")
 os.remove(db)
 
-# ---------- auto_create=False → kein lokaler User, kein Login ----------
+# ---------- auto_create=False → no local user, no login ----------
 db, auth, c = build(ldap_auto_create=False)
 auth.ldap = FakeLDAP({"carol": {"password": "x"}})
 assert c.post("/auth/login", data={"username": "carol", "password": "x"}).status_code == 401
-ok("ldap_auto_create=False: unbekannter LDAP-User wird nicht angelegt")
+ok("ldap_auto_create=False: unknown LDAP user is not created")
 os.remove(db)
 
-# ---------- F-14: eine Allowlist-ADRESSE wird über LDAP nicht Erst-Admin ----------
-# Das `mail`-Attribut pflegt in vielen Verzeichnissen der Nutzer selbst, und einen Beleg wie
-# OIDCs Claim `email_verified` kennt LDAP nicht. Wer sich dort die Admin-Adresse eintrug, war
-# beim ersten Login Erst-Admin der Instanz: Der Riegel aus F-14 hing allein am OIDC-Callback,
-# die Login-Route rief `apply_factor` ohne Beleg, und „kein Beleg" (None) hiess dort
-# „kein IdP im Spiel". Jetzt reicht die Route ausdrücklich „kein Beleg" durch (fail-closed).
+# ---------- F-14: an allowlist ADDRESS does not become first admin via LDAP ----------
+# In many directories users maintain the `mail` attribute themselves, and LDAP has no proof like
+# OIDC's `email_verified` claim. Whoever entered the admin address there was
+# first admin of the instance at the first login: The guard from F-14 hung solely on the OIDC callback,
+# the login route called `apply_factor` without proof, and "no proof" (None) meant
+# "no IdP involved" there. Now the route explicitly passes "no proof" through (fail-closed).
 def baue_ohne_admin(**cfgkw):
-    """Wie `build`, aber OHNE `ensure_admin` — die Bootstrap-Wege greifen nur, solange es
-    keinen Admin gibt. Mit dem lokalen Admin aus `build` würde jede Prüfung hier grün sein,
-    ohne etwas zu messen."""
+    """Like `build`, but WITHOUT `ensure_admin` — the bootstrap paths only apply while there is
+    no admin. With the local admin from `build`, every check here would be green
+    without measuring anything."""
     db = os.path.join(tempfile.mkdtemp(), "t.db")
     auth = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db, rp_name="Test",
                                      passkey_enabled=False, oidc_enabled=False,
@@ -114,142 +114,142 @@ def baue_ohne_admin(**cfgkw):
     return db, auth, TestClient(app)
 
 
-# Seit dem PO-Entscheid 2026-09-24 hängt der Riegel an `ldap_email_trusted=False` — der Betreiber
-# sagt damit, dass Nutzer ihr `mail`-Attribut selbst pflegen. Die Vorgabe (vertraut) steht unten.
+# Since the PO decision of 2026-09-24, the guard hangs on `ldap_email_trusted=False` — the operator
+# thereby says that users maintain their `mail` attribute themselves. The default (trusted) is below.
 db, auth, c = baue_ohne_admin(admin_identifiers=["boss@example.com"], ldap_email_trusted=False)
 auth.ldap = FakeLDAP({"angreifer": {"password": "x", "email": "boss@example.com", "groups": []}})
 r = c.post("/auth/login", data={"username": "angreifer", "password": "x"}, follow_redirects=False)
-assert r.status_code == 303, r.status_code          # die Anmeldung selbst bleibt erlaubt
+assert r.status_code == 303, r.status_code          # the sign-in itself remains allowed
 u = auth.store.get_user_by_name("angreifer")
 assert u is not None and not u["is_admin"], dict(u) if u else None
-assert not auth.admin_exists(), "die Instanz hat jetzt einen Admin — über ein mail-Attribut"
-ok("F-14: eine Allowlist-ADRESSE aus einem nicht vertrauten Verzeichnis befördert nicht")
+assert not auth.admin_exists(), "the instance now has an admin — via a mail attribute"
+ok("F-14: an allowlist ADDRESS from an untrusted directory does not promote")
 os.remove(db)
 
-# Die Vorgabe `ldap_email_trusted=True` (PO-Entscheid B): Das Verzeichnis gilt als gepflegt, seine
-# Adresse als belegt — und trägt damit Rechte, bis zum Erst-Admin. Seit 2026-09-25 ist das NICHT
-# mehr die Vorgabe (F-14 gilt wieder); der Betreiber sagt es ausdrücklich für ein gepflegtes Verzeichnis.
+# The default `ldap_email_trusted=True` (PO decision B): The directory counts as maintained, its
+# address as proven — and thereby carries rights, up to first admin. Since 2026-09-25 this is NOT
+# the default any more (F-14 applies again); the operator states it explicitly for a maintained directory.
 db, auth, c = baue_ohne_admin(admin_identifiers=["boss@example.com"], ldap_email_trusted=True)
 auth.ldap = FakeLDAP({"boss": {"password": "x", "email": "boss@example.com", "groups": []}})
 assert c.post("/auth/login", data={"username": "boss", "password": "x"},
               follow_redirects=False).status_code == 303
 u = auth.store.get_user_by_name("boss")
 assert u["email"] == "boss@example.com" and u["email_verified"] and u["is_admin"], dict(u)
-ok("ldap_email_trusted=True: die Verzeichnis-Adresse gilt als belegt und trägt Rechte")
+ok("ldap_email_trusted=True: the directory address counts as proven and carries rights")
 os.remove(db)
 
-# Gegenprobe, sonst wäre die Prüfung oben auch grün, wenn der Bootstrap komplett kaputt wäre:
-# Ein Allowlist-NAME zählt weiterhin. Erlaubt ist er nur ohne Auto-Anlegen (sonst verbietet ihn
-# der Konstruktor-Wächter) — das Konto hat der Betreiber dann selbst angelegt.
+# Counter-check, otherwise the check above would also be green if the bootstrap were completely broken:
+# An allowlist NAME still counts. It is only allowed without auto-create (otherwise the constructor
+# guard forbids it) — the operator then created the account themselves.
 db, auth, c = baue_ohne_admin(admin_identifiers=["chefin"], ldap_auto_create=False)
 uid = auth.create_user("chefin", email="chefin@example.com")
 auth.ldap = FakeLDAP({"chefin": {"password": "x", "email": "chefin@example.com", "groups": []}})
 r = c.post("/auth/login", data={"username": "chefin", "password": "x"}, follow_redirects=False)
 assert r.status_code == 303, r.status_code
-assert auth.get_user(uid)["is_admin"], "der dokumentierte Bootstrap-Weg über den Namen ist zu"
-ok("... der Allowlist-NAME eines vorher angelegten Kontos befördert weiterhin")
+assert auth.get_user(uid)["is_admin"], "the documented bootstrap path via the name is closed"
+ok("... the allowlist NAME of a previously created account still promotes")
 os.remove(db)
 
-# ---------- B-umgehung-1: der Riegel hält auch den ZWEITEN Login ----------
-# Das Verweigern oben schliesst nur DIESEN Anmeldeweg. Legte LDAP das Konto mit der Vorgabe
-# `email_verified=1` an, stand am Konto „belegt", obwohl nichts belegt wurde — und der nächste
-# Faktor, den sich der Angreifer in seiner frisch angemeldeten Sitzung selbst einrichtet (PIN,
-# Passkey: Selbstbedienung), reist ohne Beleg an, liest den Vermerk und befördert doch. Der
-# Bootstrap-Angriff war damit unverändert möglich, nur mit einem Klick mehr.
+# ---------- B-umgehung-1: the guard also holds the SECOND login ----------
+# The refusal above closes only THIS sign-in path. If LDAP created the account with the default
+# `email_verified=1`, the account said "proven" although nothing was proven — and the next
+# factor the attacker sets up himself in his freshly signed-in session (PIN,
+# passkey: self-service) arrives without proof, reads the note and promotes after all. The
+# bootstrap attack was thus still possible unchanged, just with one more click.
 db, auth, c = baue_ohne_admin(admin_identifiers=["boss@example.com"], ldap_email_trusted=False,
                               pin_enabled=True, pin_login=True)
 auth.ldap = FakeLDAP({"mallory": {"password": "x", "email": "boss@example.com", "groups": []}})
 assert c.post("/auth/login", data={"username": "mallory", "password": "x"},
               follow_redirects=False).status_code == 303
 mallory = auth.store.get_user_by_name("mallory")
-assert not mallory["email_verified"], "LDAP legt mit einem Beleg an, den niemand erbracht hat"
-assert c.post("/auth/pin/set", json={"pin": "246813"}).status_code == 200   # eigene Sitzung
+assert not mallory["email_verified"], "LDAP creates with a proof that nobody provided"
+assert c.post("/auth/pin/set", json={"pin": "246813"}).status_code == 200   # own session
 c.get("/auth/logout")
 c.cookies.clear()
 r = c.post("/auth/pin", data={"username": "mallory", "pin": "246813"}, follow_redirects=False)
-assert r.status_code == 303, r.status_code                   # der PIN-Login selbst geht
-assert not auth.get_user(mallory["id"])["is_admin"], "Erst-Admin über den zweiten Sprung"
+assert r.status_code == 303, r.status_code                   # the PIN login itself works
+assert not auth.get_user(mallory["id"])["is_admin"], "first admin via the second jump"
 assert not auth.admin_exists()
-ok("B-umgehung-1: ... auch ein selbst eingerichteter zweiter Faktor befördert die Adresse nicht")
+ok("B-umgehung-1: ... a self-configured second factor does not promote the address either")
 os.remove(db)
 
-# Gegenprobe: Derselbe zweite Sprung mit einem Konto, dessen Adresse jemand verbürgt hat (hier
-# der Betreiber beim Anlegen), befördert weiterhin — sonst wäre oben auch eine komplett kaputte
-# PIN-Beförderung grün.
+# Counter-check: The same second jump with an account whose address someone vouched for (here
+# the operator at creation) still promotes — otherwise a completely broken
+# PIN promotion would be green above too.
 db, auth, c = baue_ohne_admin(admin_identifiers=["boss@example.com"], ldap_auto_create=False,
                               pin_enabled=True, pin_login=True)
 uid = auth.create_user("chefin", password="lokal12345", email="boss@example.com")
 assert c.post("/auth/login", data={"username": "chefin", "password": "lokal12345"},
               follow_redirects=False).status_code == 303
-assert auth.get_user(uid)["is_admin"], "der belegte Weg ist zu"
-ok("... die belegte Adresse eines lokal angelegten Kontos befördert weiterhin")
+assert auth.get_user(uid)["is_admin"], "the proven path is closed"
+ok("... the proven address of a locally created account still promotes")
 os.remove(db)
 
-# ---------- B-umgehung-10: das Schloss der LOGIN-ROUTE einzeln gemessen ----------
-# Zwei Schlösser sichern denselben Weg: (1) die Route reicht ausdrücklich „kein Beleg" durch,
-# (2) ein aus dem Verzeichnis angelegtes Konto trägt gar keinen Beleg. Solange beide stehen,
-# fällt das Entfernen von (1) nirgends auf — wer den Durchreicher später umbaut, verliert ihn
-# unbemerkt. Deshalb hier ein Konto, das einen ECHTEN Beleg trägt (der Betreiber hat es
-# angelegt) und dessen Namen das Verzeichnis kennt: Jetzt hängt alles an (1).
+# ---------- B-umgehung-10: the lock of the LOGIN ROUTE measured individually ----------
+# Two locks secure the same path: (1) the route explicitly passes "no proof" through,
+# (2) an account created from the directory carries no proof at all. As long as both stand,
+# removing (1) goes unnoticed anywhere — whoever rebuilds the pass-through later loses it
+# unnoticed. Hence here an account that carries a REAL proof (the operator created
+# it) and whose name the directory knows: Now everything hangs on (1).
 db, auth, c = baue_ohne_admin(admin_identifiers=["boss@example.com"], ldap_auto_create=False,
                               ldap_email_trusted=False)
-uid = auth.create_user("chefin", email="boss@example.com")       # Beleg am Konto: ja
-assert auth.store.get_user(uid)["email_verified"] == 1, "Vorbedingung: das Konto ist belegt"
+uid = auth.create_user("chefin", email="boss@example.com")       # proof on the account: yes
+assert auth.store.get_user(uid)["email_verified"] == 1, "precondition: the account is proven"
 auth.ldap = FakeLDAP({"chefin": {"password": "x", "email": "boss@example.com", "groups": []}})
 assert c.post("/auth/login", data={"username": "chefin", "password": "x"},
-              follow_redirects=False).status_code == 303        # Login über das Verzeichnis
+              follow_redirects=False).status_code == 303        # login via the directory
 assert not auth.get_user(uid)["is_admin"], \
-    "die Login-Route reicht „kein Beleg\" nicht mehr durch — LDAP befördert wieder"
-ok("B-umgehung-10: Schloss 1 einzeln — die Login-Route reicht „kein Beleg\" durch, auch bei belegtem Konto")
-# Gegenprobe: Ohne diesen Durchreicher (`email_bestaetigt=None`) befördert derselbe Vermerk
-# sofort — das misst, dass oben WIRKLICH die Route entschieden hat und nicht etwas anderes.
+    "the login route no longer passes \"no proof\" through — LDAP promotes again"
+ok("B-umgehung-10: lock 1 on its own — the login route passes \"no proof\" through, even for a proven account")
+# Counter-check: Without this pass-through (`email_bestaetigt=None`) the same note promotes
+# immediately — this measures that the route REALLY decided above and nothing else.
 assert auth._maybe_promote_admin(auth.get_user(uid), faktor="password") is True, \
-    "auch ohne den Durchreicher befördert nichts — dann misst die Prüfung darüber nichts"
-ok("... Gegenprobe: ohne den Durchreicher befördert der Vermerk am Konto sofort")
+    "nothing promotes even without the pass-through — then the check above measures nothing"
+ok("... counter-check: without the pass-through the note on the account promotes immediately")
 os.remove(db)
 
-# ---------- R4-12: eine Verzeichnis-Kennung besetzt keine lokale ----------
-# Benutzername und E-Mail sind EIN Kennungs-Raum (`find_user` sucht in beiden Spalten). Die
-# Kreuzprüfung sitzt in `create_user` und trifft damit auch das Auto-Anlegen aus LDAP — und
-# sie muss hier als saubere Abweisung ankommen, nicht als 500 mitten im Anmeldevorgang.
-# Der zweite Fall endet seit der Prüfrunde 2026-09-27 (p1-d) schon VOR der Anlage: Die Kennung
-# `chef@example.com` gehört lokal einem Konto, der Eintrag im Verzeichnis führte zu einem anderen —
-# `ldap_kennung_abgewiesen grund=kennung_zweier_konten` statt `ldap_ident_taken`. Das Ergebnis bleibt.
+# ---------- R4-12: a directory identifier does not occupy a local one ----------
+# Username and e-mail are ONE identifier space (`find_user` searches both columns). The
+# cross-check sits in `create_user` and thus also hits auto-create from LDAP — and
+# it must arrive here as a clean rejection, not as a 500 in the middle of the sign-in.
+# The second case has ended BEFORE creation since the review round of 2026-09-27 (p1-d): The identifier
+# `chef@example.com` belongs to one account locally, the directory entry led to another —
+# `ldap_identifier_rejected reason=identifier_of_two_accounts` instead of `ldap_ident_taken`. The result stays.
 for was, verzeichnis, kennung, ereignis in (
         ("deren Adresse lokal schon Kennung ist", {"password": "x", "email": "chef@example.com"}, "eve",
          "ldap_ident_taken"),
         ("deren Name lokal schon Adresse ist", {"password": "x", "email": "eve@example.com"}, "chef@example.com",
-         "ldap_kennung_abgewiesen")):
-    # Mit vertrauter Quelle: Nur dann kommt die Adresse überhaupt ins Konto (Vorgabe seit 2026-09-25:
-    # nicht vertraut — dann besetzt sie ohnehin nichts).
+         "ldap_identifier_rejected")):
+    # With a trusted source: Only then does the address enter the account at all (default since 2026-09-25:
+    # not trusted — then it occupies nothing anyway).
     db, auth, c = baue_ohne_admin(ldap_email_trusted=True)
     lokal = auth.create_user("chef", password="lokal12345", email="chef@example.com")
     auth.ldap = FakeLDAP({kennung: dict(verzeichnis, groups=[])})
     r = c.post("/auth/login", data={"username": kennung, "password": "x"}, follow_redirects=False)
-    assert r.status_code == 401, f"HTTP {r.status_code} — 303 wäre eine besetzte Kennung, 500 ein Defekt"
-    assert auth.store.get_user_by_name(kennung) is None, "das Konto entstand trotz Abweisung"
-    assert (auth.find_user("chef@example.com") or {})["id"] == lokal, "die Kennung wurde übernommen"
+    assert r.status_code == 401, f"HTTP {r.status_code} — 303 would be an occupied identifier, 500 a defect"
+    assert auth.store.get_user_by_name(kennung) is None, "the account was created despite the rejection"
+    assert (auth.find_user("chef@example.com") or {})["id"] == lokal, "the identifier was taken over"
     assert any(z["event"] == ereignis for z in auth.store.recent_audit(20)), \
-        "kein Audit-Eintrag — die Abweisung ist unsichtbar"
-    ok(f"R4-12: eine Verzeichnis-Identität, {was}, legt kein Konto an (401, kein 500)")
+        "no audit entry — the rejection is invisible"
+    ok(f"R4-12: a directory identity, {was}, creates no account (401, no 500)")
     os.remove(db)
 
-# Gegenprobe: freie Kennungen legen weiterhin an.
+# Counter-check: free identifiers still create the account.
 db, auth, c = baue_ohne_admin()
 auth.create_user("chef", password="lokal12345", email="chef@example.com")
 auth.ldap = FakeLDAP({"neu": {"password": "x", "email": "neu@example.com", "groups": []}})
 r = c.post("/auth/login", data={"username": "neu", "password": "x"}, follow_redirects=False)
 assert r.status_code == 303 and auth.store.get_user_by_name("neu") is not None, r.status_code
-ok("... mit freien Kennungen legt LDAP weiterhin an")
+ok("... with free identifiers LDAP still creates the account")
 os.remove(db)
 
-# ---------- F-28: Verweisen (Referrals) wird nie gefolgt ----------
-# ldap3 folgt einem `SearchResultDone resultCode=10 (referral)` von sich aus und bindet auf dem
-# Host, den die ANTWORT nennt, erneut mit denselben Zugangsdaten. Ein übernommenes Verzeichnis
-# — oder auf einer Klartext-Verbindung jeder Zwischenhörer — bekam damit DN und Passwort des
-# Dienstkontos bzw. das Passwort des Anmeldenden frei Haus geliefert. Nachgestellt wird das mit
-# zwei echten LDAP-Servern auf Loopback: A ist das konfigurierte Verzeichnis und antwortet mit
-# einem Verweis auf B, B schreibt mit, was bei ihm ankommt.
+# ---------- F-28: referrals are never followed ----------
+# ldap3 follows a `SearchResultDone resultCode=10 (referral)` on its own and binds again
+# on the host named in the RESPONSE with the same credentials. A taken-over directory
+# — or, on a plaintext connection, any eavesdropper — thereby got the DN and password of the
+# service account or the password of the person signing in handed over for free. This is reproduced with
+# two real LDAP servers on loopback: A is the configured directory and answers with
+# a referral to B, B records what arrives at it.
 import importlib.util, socket, sys, threading, time, types
 from tinysesam.ldap_ import LDAPClient
 
@@ -267,13 +267,13 @@ def tlv(tag, inhalt):
 
 
 def zerlegen(daten):
-    """(messageID, protocolOp-Tag) aus einer LDAPMessage lesen."""
+    """Read (messageID, protocolOp tag) from an LDAPMessage."""
     i = 1
     if daten[i] & 0x80:
         i += 1 + (daten[i] & 0x7F)
     else:
         i += 1
-    assert daten[i] == 0x02, "kein INTEGER an der erwarteten Stelle"
+    assert daten[i] == 0x02, "no INTEGER at the expected position"
     n = daten[i + 1]
     mid = int.from_bytes(daten[i + 2:i + 2 + n], "big")
     return mid, daten[i + 2 + n]
@@ -288,7 +288,7 @@ def bind_ok(mid):
 
 
 def suche_fertig(mid, uri=None):
-    """SearchResultDone — mit Verweis (resultCode 10) oder schlicht erfolgreich (0)."""
+    """SearchResultDone — with a referral (resultCode 10) or simply successful (0)."""
     kopf = tlv(0x0A, b"\x0a" if uri else b"\x00") + tlv(0x04, b"") + tlv(0x04, b"")
     return antwort(mid, 0x65, kopf + (tlv(0xA3, tlv(0x04, uri)) if uri else b""))
 
@@ -303,7 +303,7 @@ def lauscher():
 
 
 def verzeichnis(sock, verweis_uri, gesehen):
-    """Server A: Bind annehmen, Suche mit/ohne Verweis beantworten."""
+    """Server A: accept bind, answer search with/without referral."""
     try:
         conn, _ = sock.accept()
         conn.settimeout(8)
@@ -317,7 +317,7 @@ def verzeichnis(sock, verweis_uri, gesehen):
                 conn.sendall(bind_ok(mid))
             elif op == 0x63:
                 conn.sendall(suche_fertig(mid, verweis_uri))
-            else:                                  # Unbind o.a. → Schluss
+            else:                                  # unbind etc. → end
                 break
         conn.close()
     except Exception as e:
@@ -325,7 +325,7 @@ def verzeichnis(sock, verweis_uri, gesehen):
 
 
 def fremder_host(sock, eimer):
-    """Server B: nur mitschreiben, was hereinkommt."""
+    """Server B: only record what comes in."""
     try:
         conn, _ = sock.accept()
         conn.settimeout(8)
@@ -336,7 +336,7 @@ def fremder_host(sock, eimer):
 
 
 def aufbau(verweis=True):
-    """Beide Server starten; gibt (port_a, gesehen_a, eimer_b, sockets) zurück."""
+    """Start both servers; returns (port_a, gesehen_a, eimer_b, sockets)."""
     sa, pa = lauscher()
     sb, pb = lauscher()
     gesehen, eimer = [], []
@@ -351,15 +351,15 @@ def aufbau(verweis=True):
 HAT_LDAP3 = importlib.util.find_spec("ldap3") is not None
 
 if HAT_LDAP3:
-    # (a) Such-Bind des Dienstkontos: A verweist auf B → bei B darf NICHTS ankommen.
+    # (a) Search bind of the service account: A refers to B → NOTHING may arrive at B.
     pa, gesehen, eimer, socks = aufbau()
     cfg_svc = TinySesamConfig(
         db_path=":memory:", password_enabled=True, ldap_enabled=True,
         ldap_url=f"ldap://127.0.0.1:{pa}", ldap_bind_dn=SVC_DN, ldap_bind_password=SVC_PW,
         ldap_user_base="ou=people,dc=example,dc=com", ldap_user_filter="(uid={username})")
-    # Dabei gleich mitmessen, dass der verworfene Verweis eine Logzeile schreibt — hier gegen
-    # ein ECHTES ldap3, nicht gegen den Stub weiter unten (nur so ist belegt, dass der Verweis
-    # wirklich in `Connection.result` steht und nicht bloss in unserer Annahme davon).
+    # While at it, also measure that the discarded referral writes a log line — here against
+    # a REAL ldap3, not against the stub further below (only that proves the referral
+    # really appears in `Connection.result` and not merely in our assumption of it).
     import io as _io2, logging as _logging2
     from tinysesam.security import seclog as _seclog2
     _puffer = _io2.StringIO()
@@ -369,19 +369,19 @@ if HAT_LDAP3:
         assert LDAPClient(cfg_svc).authenticate("alice", "egal") is None
     finally:
         _seclog2.removeHandler(_haken)
-    assert "VERWEIS" in _puffer.getvalue() and "Global Catalog" in _puffer.getvalue(), \
-        f"echtes ldap3: der verworfene Verweis blieb stumm: {_puffer.getvalue()[:200]!r}"
+    assert "REFERRAL" in _puffer.getvalue() and "Global Catalog" in _puffer.getvalue(), \
+        f"real ldap3: the discarded referral stayed silent: {_puffer.getvalue()[:200]!r}"
     time.sleep(0.5)
     beute = eimer[0] if eimer else b""
-    assert SVC_DN.encode() not in beute, f"Bind-DN des Dienstkontos ging an den Verweis-Host: {beute[:120]!r}"
-    assert SVC_PW.encode() not in beute, f"Passwort des Dienstkontos ging an den Verweis-Host: {beute[:120]!r}"
-    assert beute == b"", f"der Verweis-Host wurde überhaupt kontaktiert: {beute[:120]!r}"
+    assert SVC_DN.encode() not in beute, f"bind DN of the service account went to the referral host: {beute[:120]!r}"
+    assert SVC_PW.encode() not in beute, f"password of the service account went to the referral host: {beute[:120]!r}"
+    assert beute == b"", f"the referral host was contacted at all: {beute[:120]!r}"
     for s in socks:
         s.close()
-    ok("Verweis beim Such-Bind: Dienstkonto-Zugangsdaten erreichen den fremden Host nicht")
+    ok("Referral on the search bind: service account credentials do not reach the foreign host")
 
-    # (b) Benutzer-Bind (Direkt-DN): der Verweis kommt auf die Attribut-Suche, die auf der
-    #     Verbindung mit dem PASSWORT DES ANMELDENDEN läuft.
+    # (b) User bind (direct DN): the referral arrives on the attribute search that runs on the
+    #     connection with the PASSWORD OF THE PERSON SIGNING IN.
     pa, gesehen, eimer, socks = aufbau()
     cfg_usr = TinySesamConfig(
         db_path=":memory:", password_enabled=True, ldap_enabled=True,
@@ -394,20 +394,20 @@ if HAT_LDAP3:
         info = LDAPClient(cfg_usr).authenticate("alice", "NUTZER-GEHEIM-456")
     finally:
         _seclog2.removeHandler(_haken_b)
-    # Auch auf diesem Weg darf der Verweis nicht stumm bleiben: Ohne die Attribute fehlen
-    # E-Mail, Name und Gruppen — mit `ldap_allowed_groups` ist das eine Abweisung ohne Grund.
-    assert "Attribut-Suche" in _puffer_b.getvalue(), \
-        f"der Verweis auf der Attribut-Suche blieb stumm: {_puffer_b.getvalue()[:200]!r}"
+    # On this path too the referral must not stay silent: Without the attributes
+    # e-mail, name and groups are missing — with `ldap_allowed_groups` that is a rejection without reason.
+    assert "attribute search" in _puffer_b.getvalue(), \
+        f"the referral on the attribute search stayed silent: {_puffer_b.getvalue()[:200]!r}"
     time.sleep(0.5)
     beute = eimer[0] if eimer else b""
-    assert b"NUTZER-GEHEIM-456" not in beute, f"Nutzerpasswort ging an den Verweis-Host: {beute[:120]!r}"
-    assert beute == b"", f"der Verweis-Host wurde überhaupt kontaktiert: {beute[:120]!r}"
-    assert info and info["username"] == "alice"   # der Bind hat das Passwort bestätigt
+    assert b"NUTZER-GEHEIM-456" not in beute, f"user password went to the referral host: {beute[:120]!r}"
+    assert beute == b"", f"the referral host was contacted at all: {beute[:120]!r}"
+    assert info and info["username"] == "alice"   # the bind confirmed the password
     for s in socks:
         s.close()
-    ok("Verweis bei der Attribut-Suche: das Passwort des Anmeldenden bleibt beim Verzeichnis")
+    ok("Referral on the attribute search: the password of the person signing in stays with the directory")
 
-    # (c) Gegenprobe ohne Verweis: der normale Weg funktioniert unverändert.
+    # (c) Counter-check without referral: the normal path works unchanged.
     pa, gesehen, eimer, socks = aufbau(verweis=False)
     cfg_ok = TinySesamConfig(
         db_path=":memory:", password_enabled=True, ldap_enabled=True,
@@ -415,25 +415,25 @@ if HAT_LDAP3:
         ldap_user_dn_template="uid={username},ou=people,dc=example,dc=com")
     info = LDAPClient(cfg_ok).authenticate("alice", "richtig")
     assert info and info["username"] == "alice" and info["name"] == "alice", info
-    assert "0x60" in gesehen and "0x63" in gesehen, gesehen   # Bind UND Suche liefen wirklich
+    assert "0x60" in gesehen and "0x63" in gesehen, gesehen   # bind AND search really ran
     for s in socks:
         s.close()
-    ok("ohne Verweis: Bind + Attribut-Suche gegen einen echten Server laufen weiter durch")
+    ok("without referral: bind + attribute search against a real server still go through")
 else:                                              # pragma: no cover
-    print("  – Verweis-Test gegen echte Server übersprungen (ldap3 fehlt)")
+    print("  – referral test against real servers skipped (ldap3 missing)")
 
-# Die Zusage selbst — unabhängig davon, ob das Extra installiert ist: JEDE Verbindung, die
-# dieses Modul aufmacht, schaltet die Verweis-Verfolgung ab, und der Server erlaubt keinen
-# Verweis-Host. Gemessen mit einem untergeschobenen ldap3: Fällt einer der beiden Parameter
-# weg, ist diese Prüfung rot, auch wenn kein Verzeichnis in der Nähe ist.
+# The guarantee itself — independent of whether the extra is installed: EVERY connection this
+# module opens switches referral chasing off, and the server allows no
+# referral host. Measured with a substituted ldap3: If one of the two parameters
+# is dropped, this check is red, even when no directory is anywhere near.
 def stub_ldap3(mitschrift, leer=False, result=None):
-    """Untergeschobenes ldap3. `leer=True` + `result=…` stellt die Antwort eines Verzeichnisses
-    nach, das die Suche mit einem VERWEIS statt mit Einträgen beantwortet."""
+    """Substituted ldap3. `leer=True` + `result=…` simulates the response of a directory
+    that answers the search with a REFERRAL instead of entries."""
     mod = types.ModuleType("ldap3")
     mod.NONE, mod.BASE = "NONE", "BASE"
-    # Die Attrappe bildet nach, was der Code von ldap3 benutzt — seit F-12 auch `Tls` und die
-    # AUTO_BIND-Konstanten. Fehlten sie, prüfte die Suite eine Fassung des Moduls, die es nicht
-    # gibt, und der Härtungsschritt liefe hier ins Leere.
+    # The stub reproduces what the code uses from ldap3 — since F-12 also `Tls` and the
+    # AUTO_BIND constants. If they were missing, the suite would test a version of the module that does not
+    # exist, and the hardening step would run into nothing here.
     mod.AUTO_BIND_NO_TLS = "NO_TLS"
     mod.AUTO_BIND_TLS_BEFORE_BIND = "TLS_BEFORE_BIND"
 
@@ -462,7 +462,7 @@ def stub_ldap3(mitschrift, leer=False, result=None):
                 self.result = result
 
         def open(self):
-            pass     # `authenticate` öffnet die Benutzer-Verbindung ausdrücklich vor dem Bind
+            pass     # `authenticate` explicitly opens the user connection before the bind
 
         def start_tls(self):
             pass
@@ -507,22 +507,22 @@ finally:
 
 verbindungen = [kw for art, kw in mitschrift if art == "Connection"]
 server = [kw for art, kw in mitschrift if art == "Server"]
-assert len(verbindungen) == 3, f"erwartet: Such-Bind + zwei Benutzer-Binds, war {len(verbindungen)}"
+assert len(verbindungen) == 3, f"expected: search bind + two user binds, was {len(verbindungen)}"
 assert all(kw.get("auto_referrals") is False for kw in verbindungen), verbindungen
 assert server and all(kw.get("allowed_referral_hosts") == [] for kw in server), server
-ok("jede Verbindung setzt auto_referrals=False, jeder Server allowed_referral_hosts=[]")
+ok("every connection sets auto_referrals=False, every server allowed_referral_hosts=[]")
 
-# ---------- A-regression-9: der verworfene Verweis darf nicht STUMM sein ----------
-# Der F-28-Fix hat einen Preis: Mit `auto_referrals=False` endet eine Suche, die das Verzeichnis
-# per Verweis beantwortet, ergebnislos — `authenticate()` gibt None zurück, und die App zeigt
-# „Passwort falsch". Wer über mehrere AD-Domänen sucht, sah das nach dem Update für JEDEN Nutzer
-# und hatte nichts, was auf die Ursache zeigt: Der Global-Catalog-Hinweis stand nur im Quelltext
-# und im CHANGELOG. Jetzt schreibt der Fall eine Zeile ins Sicherheits-Log.
+# ---------- A-regression-9: the discarded referral must not be SILENT ----------
+# The F-28 fix has a price: With `auto_referrals=False`, a search that the directory
+# answers by referral ends without result — `authenticate()` returns None, and the app shows
+# "wrong password". Whoever searches across several AD domains saw this for EVERY user after the update
+# and had nothing pointing to the cause: The Global Catalog hint was only in the source code
+# and in the CHANGELOG. Now the case writes a line to the security log.
 import io as _io, logging as _logging          # noqa: E402
 from tinysesam.security import seclog as _seclog  # noqa: E402
 
-# Die Verweis-Adresse kommt aus FREMDER Hand: ein Umbruch darin wäre eine zusätzliche,
-# frei erfundene Zeile in genau dem Log, das fail2ban liest (Log-Injection).
+# The referral address comes from a THIRD PARTY: a line break in it would be an additional,
+# freely invented line in exactly the log that fail2ban reads (log injection).
 _VERWEIS = ("ldap://fremd.example.com/dc=example,dc=com\n"
             "2026-09-22 00:00:00 WARNING failed login user=opfer ip=203.0.113.9 method=password")
 
@@ -548,8 +548,8 @@ try:
     sys.modules.update(stub_ldap3([], leer=True,
                                   result={"result": 10, "referrals": [_VERWEIS]}))
     _text = _mit_seclog(lambda: LDAPClient(_cfg_verweis).authenticate("alice", "egal"))
-    # Gegenprobe: dieselbe leere Suche OHNE Verweis ist ein gewöhnliches „Konto gibt es nicht"
-    # und darf das Log nicht fluten.
+    # Counter-check: the same empty search WITHOUT referral is an ordinary "account does not exist"
+    # and must not flood the log.
     sys.modules.update(stub_ldap3([], leer=True, result={"result": 0, "referrals": []}))
     _still = _mit_seclog(lambda: LDAPClient(_cfg_verweis).authenticate("alice", "egal"))
 finally:
@@ -559,76 +559,76 @@ finally:
         else:
             sys.modules[name] = mod
 
-assert "VERWEIS" in _text and "referral" in _text, f"kein Hinweis auf den Verweis: {_text[:200]!r}"
-# Auf den Host wird mit Wortgrenzen geprüft, nicht per Teilzeichenkette: `x-fremd.example.com.evil`
-# enthielte den Namen ebenfalls, wäre aber ein anderer Host (CodeQL py/incomplete-url-substring-
-# sanitization — hier eine Testzusage, aber dieselbe Falle).
+assert "REFERRAL" in _text and "Global Catalog" in _text, f"no hint of the referral: {_text[:200]!r}"
+# The host is checked with word boundaries, not by substring: `x-fremd.example.com.evil`
+# would contain the name too, but would be a different host (CodeQL py/incomplete-url-substring-
+# sanitization — a test guarantee here, but the same trap).
 import re as _re_verweis  # noqa: E402
 assert _re_verweis.search(r"(?<![\w.-])fremd\.example\.com(?![\w.-])", _text), \
-    f"der verwiesene Host fehlt: {_text[:200]!r}"
-assert "Global Catalog" in _text and "3268" in _text, f"kein Betriebs-Hinweis: {_text[:200]!r}"
+    f"the referred host is missing: {_text[:200]!r}"
+assert "Global Catalog" in _text and "3268" in _text, f"no operations hint: {_text[:200]!r}"
 assert "user=alice" in _text, _text[:200]
-assert len(_text.strip().splitlines()) == 1, f"der Verweis hat eine Zeile eingeschoben: {_text!r}"
-assert "ip=203.0.113.9" not in _text, f"Log-Injection über die Verweis-Adresse: {_text!r}"
-assert _still.strip() == "", f"eine gewöhnliche leere Suche meldet sich: {_still[:120]!r}"
-ok("verworfener Verweis: eine Logzeile mit Host und Global-Catalog-Hinweis (Umbruch entschärft)")
+assert len(_text.strip().splitlines()) == 1, f"the referral inserted a line: {_text!r}"
+assert "ip=203.0.113.9" not in _text, f"log injection via the referral address: {_text!r}"
+assert _still.strip() == "", f"an ordinary empty search reports itself: {_still[:120]!r}"
+ok("discarded referral: one log line with host and Global Catalog hint (line break defused)")
 
-# Nebenbefund zu F-28: Ein Dienstkonto-DN ohne Passwort lehnt ldap3 ab; der Fehler wird im
-# Login verschluckt und sieht für jeden Nutzer wie ein falsches Passwort aus. Deshalb fällt die
-# Kombination jetzt schon beim Aufbau der Konfiguration auf, nicht erst im Betrieb.
-from tinysesam.konfigpruefung import pruefe
+# Side finding on F-28: ldap3 rejects a service account DN without password; the error is swallowed in
+# the login and looks like a wrong password to every user. Hence the
+# combination is now caught already when the configuration is built, not only in operation.
+from tinysesam.config_check import check_config
 
 _gemeinsam = dict(db_path=":memory:", ldap_enabled=True, ldap_url="ldap://dummy", ldap_allow_plaintext=True,
                   ldap_user_base="ou=people,dc=example,dc=com")
-_fehler, _warn = pruefe(TinySesamConfig(ldap_bind_dn=SVC_DN, **_gemeinsam))
+_fehler, _warn = check_config(TinySesamConfig(ldap_bind_dn=SVC_DN, **_gemeinsam))
 assert any("ldap_bind_password" in w for w in _warn), _warn
 assert not _fehler, _fehler
-_, _warn_ok = pruefe(TinySesamConfig(ldap_bind_dn=SVC_DN, ldap_bind_password=SVC_PW, **_gemeinsam))
+_, _warn_ok = check_config(TinySesamConfig(ldap_bind_dn=SVC_DN, ldap_bind_password=SVC_PW, **_gemeinsam))
 assert not any("ldap_bind_password" in w for w in _warn_ok), _warn_ok
-_, _warn_anon = pruefe(TinySesamConfig(**_gemeinsam))          # anonyme Suche bleibt still
+_, _warn_anon = check_config(TinySesamConfig(**_gemeinsam))          # anonymous search stays silent
 assert not any("ldap_bind_password" in w for w in _warn_anon), _warn_anon
-ok("ldap_bind_dn ohne ldap_bind_password wird beim Aufbau gemeldet, nicht erst beim Login")
+ok("ldap_bind_dn without ldap_bind_password is reported at setup, not only at login")
 
-# ---------- F-12: der Transport ----------
-# Drei Mängel auf einmal: Vorgabe war Klartext, das Zertifikat wurde nie geprüft, und das
-# Dienstkonto band sich AN, bevor StartTLS die Leitung verschlüsselte — sein Passwort war also
-# schon über das Netz. Ein Mitleser brauchte keinen Angriff, nur Geduld.
+# ---------- F-12: the transport ----------
+# Three defects at once: The default was plaintext, the certificate was never verified, and the
+# service account bound BEFORE StartTLS encrypted the line — its password was thus
+# already on the network. An eavesdropper needed no attack, only patience.
 _mit12 = []
 _vorher12 = {n: sys.modules.get(n) for n in ("ldap3", "ldap3.utils", "ldap3.utils.conv", "ldap3.utils.dn")}
 sys.modules.update(stub_ldap3(_mit12))
 try:
-    # (a) TLS-Objekt mit Zertifikatsprüfung geht an den Server — vorher gab es gar keines.
+    # (a) TLS object with certificate verification goes to the server — before, there was none at all.
     LDAPClient(TinySesamConfig(db_path=os.path.join(tempfile.mkdtemp(), "t.db"),
                                passkey_enabled=False, ldap_enabled=True,
                                ldap_url="ldaps://dir.example.com",
                                ldap_user_dn_template="uid={username},dc=x")).authenticate("alice", "pw")
     _tls_kw = [kw for art, kw in _mit12 if art == "Tls"]
-    assert _tls_kw, f"kein Tls-Objekt gebaut: {_mit12[:3]}"
+    assert _tls_kw, f"no Tls object built: {_mit12[:3]}"
     import ssl as _ssl
     assert _tls_kw[0]["validate"] == _ssl.CERT_REQUIRED, _tls_kw[0]
     _srv_kw = [kw for art, kw in _mit12 if art == "Server"]
     assert _srv_kw and _srv_kw[0].get("tls") is not None, _srv_kw
-    ok("F-12: der Server bekommt ein TLS-Objekt mit Zertifikatsprüfung")
+    ok("F-12: the server gets a TLS object with certificate verification")
 
-    # (b) Eigene CA-Datei wandert durch.
+    # (b) A custom CA file is passed through.
     _mit12.clear()
     LDAPClient(TinySesamConfig(db_path=os.path.join(tempfile.mkdtemp(), "t.db"),
                                passkey_enabled=False, ldap_enabled=True,
                                ldap_url="ldaps://dir.example.com", ldap_tls_ca_file="/etc/ssl/eigene.pem",
                                ldap_user_dn_template="uid={username},dc=x")).authenticate("alice", "pw")
     assert [kw for art, kw in _mit12 if art == "Tls"][0]["ca_certs_file"] == "/etc/ssl/eigene.pem"
-    ok("F-12: eine eigene CA-Datei wird durchgereicht")
+    ok("F-12: a custom CA file is passed through")
 
-    # (c) Abschaltbar — aber dann ausdrücklich ohne Prüfung, nicht heimlich.
+    # (c) Can be switched off — but then explicitly without verification, not secretly.
     _mit12.clear()
     LDAPClient(TinySesamConfig(db_path=os.path.join(tempfile.mkdtemp(), "t.db"),
                                passkey_enabled=False, ldap_enabled=True,
                                ldap_url="ldaps://dir.example.com", ldap_tls_verify=False,
                                ldap_user_dn_template="uid={username},dc=x")).authenticate("alice", "pw")
     assert [kw for art, kw in _mit12 if art == "Tls"][0]["validate"] == _ssl.CERT_NONE
-    ok("F-12: ldap_tls_verify=False schaltet die Prüfung ab (und wird beim Aufbau gemeldet)")
+    ok("F-12: ldap_tls_verify=False switches the check off (and is reported at setup)")
 
-    # (d) Der Kern: Das Dienstkonto bindet erst NACH dem TLS-Upgrade.
+    # (d) The core: The service account binds only AFTER the TLS upgrade.
     _mit12.clear()
     LDAPClient(TinySesamConfig(db_path=os.path.join(tempfile.mkdtemp(), "t.db"),
                                passkey_enabled=False, ldap_enabled=True,
@@ -638,10 +638,10 @@ try:
     _conns = [kw for art, kw in _mit12 if art == "Connection"]
     assert _conns, _mit12
     assert _conns[0].get("auto_bind") == "TLS_BEFORE_BIND", \
-        f"das Dienstkonto bindet vor dem TLS-Upgrade: auto_bind={_conns[0].get('auto_bind')!r}"
-    ok("F-12: das Dienstkonto bindet erst nach dem TLS-Upgrade, nicht davor")
+        f"the service account binds before the TLS upgrade: auto_bind={_conns[0].get('auto_bind')!r}"
+    ok("F-12: the service account binds only after the TLS upgrade, not before")
 
-    # Gegenprobe: ohne StartTLS gibt es nichts hochzuschalten — dann kein TLS_BEFORE_BIND.
+    # Counter-check: without StartTLS there is nothing to upgrade — then no TLS_BEFORE_BIND.
     _mit12.clear()
     LDAPClient(TinySesamConfig(db_path=os.path.join(tempfile.mkdtemp(), "t.db"),
                                passkey_enabled=False, ldap_enabled=True,
@@ -649,7 +649,7 @@ try:
                                ldap_bind_dn="cn=svc,dc=x", ldap_bind_password="geheim",
                                ldap_user_base="dc=x")).authenticate("alice", "pw")
     assert [kw for art, kw in _mit12 if art == "Connection"][0].get("auto_bind") == "NO_TLS"
-    ok("F-12: bei ldaps:// ist die Leitung schon verschlüsselt — kein zusätzliches Upgrade")
+    ok("F-12: with ldaps:// the line is already encrypted — no additional upgrade")
 finally:
     for n, m in _vorher12.items():
         if m is None:
@@ -657,9 +657,9 @@ finally:
         else:
             sys.modules[n] = m
 
-# Und die Konfigurationsprüfung fängt den Klartext-Betrieb beim Aufbau ab.
+# And the configuration check catches plaintext operation when it is built.
 def _ldap_befunde(**kw):
-    f, w = pruefe(TinySesamConfig(db_path=os.path.join(tempfile.mkdtemp(), "t.db"),
+    f, w = check_config(TinySesamConfig(db_path=os.path.join(tempfile.mkdtemp(), "t.db"),
                                   passkey_enabled=False, ldap_enabled=True,
                                   ldap_user_dn_template="uid={username},dc=x", **kw))
     return ([x for x in f if "ldap" in x.lower()], [x for x in w if "ldap" in x.lower()])
@@ -671,58 +671,58 @@ assert _ldap_befunde(ldap_url="ldap://dir.example.com", ldap_allow_plaintext=Tru
 assert _ldap_befunde(ldap_url="ldaps://dir.example.com") == ([], [])
 assert len(_ldap_befunde(ldap_url="ldaps://dir.example.com", ldap_tls_verify=False)[1]) == 1
 assert len(_ldap_befunde(ldap_url="ldaps://dir.example.com", ldap_tls_ca_file="/gibt/es/nicht.pem")[0]) == 1
-ok("F-12: Klartext ohne ausdrückliche Erlaubnis ist ein Aufbaufehler, kein Betriebsproblem")
+ok("F-12: plaintext without explicit permission is a setup error, not an operational problem")
 
-# ---------- F-11: die Zuordnung hängt an einer stabilen Kennung, nicht am Namen ----------
-# Ein Benutzername ist nicht fälschungssicher. Wer im Verzeichnis umbenennt oder ein gelöschtes
-# Konto unter demselben Namen neu anlegt, bekam bis 0.19.0 dasselbe lokale Konto mitsamt seinen
-# Rollen — ohne das lokale Passwort zu kennen.
+# ---------- F-11: the mapping hangs on a stable identifier, not on the name ----------
+# A username is not forgery-proof. Whoever renames in the directory or re-creates a deleted
+# account under the same name got, up to 0.19.0, the same local account including its
+# roles — without knowing the local password.
 db11, auth11, c11 = build(ldap_auto_create=True)
 
-# (1) Neues Konto: wird angelegt UND gebunden.
+# (1) New account: is created AND bound.
 auth11.ldap = FakeLDAP({"alice": {"password": "pw", "id": "uuid-alice", "email": "a@corp"}})
 assert auth11._check_ldap("alice", "pw") is not None
 _uid_a = auth11.store.get_user_by_name("alice")["id"]
 assert auth11.store.get_federated_kennung("ldap", _uid_a) == "uuid-alice"
-ok("F-11: ein neu angelegtes Konto wird an die Kennung des Verzeichnisses gebunden")
+ok("F-11: a newly created account is bound to the directory's identifier")
 
-# (2) Umbenennung im Verzeichnis: dieselbe Kennung, neuer Name → dasselbe Konto.
+# (2) Rename in the directory: same identifier, new name → same account.
 auth11.ldap = FakeLDAP({"alice.neu": {"password": "pw", "id": "uuid-alice"}})
 _u = auth11._check_ldap("alice.neu", "pw")
-assert _u is not None and _u["id"] == _uid_a, f"Umbenennung ergab ein anderes Konto: {_u}"
-assert auth11.store.get_user_by_name("alice.neu") is None, "es wurde ein zweites Konto angelegt"
-ok("F-11: eine Umbenennung im Verzeichnis ist kein Kontowechsel")
+assert _u is not None and _u["id"] == _uid_a, f"renaming resulted in a different account: {_u}"
+assert auth11.store.get_user_by_name("alice.neu") is None, "a second account was created"
+ok("F-11: a rename in the directory is not an account switch")
 
-# (3) DER ANGRIFF: neue Kennung unter dem alten Namen → abgewiesen.
+# (3) THE ATTACK: new identifier under the old name → rejected.
 auth11.ldap = FakeLDAP({"alice": {"password": "pw", "id": "uuid-FREMD"}})
 assert auth11._check_ldap("alice", "pw") is None, \
-    "ein neues Verzeichniskonto unter demselben Namen hat das lokale Konto übernommen"
-assert any(e["event"] == "ldap_kennung_wechsel" for e in auth11.store.recent_audit(limit=10))
-ok("F-11: ein neues Verzeichniskonto unter altem Namen erbt das lokale Konto NICHT")
+    "a new directory account under the same name took over the local account"
+assert any(e["event"] == "ldap_identifier_change" for e in auth11.store.recent_audit(limit=10))
+ok("F-11: a new directory account under the old name does NOT inherit the local account")
 
-# (4) Bestandsfall: ein Konto ohne Bindung wird beim nächsten Login nachgebunden (PO-Entscheid).
+# (4) Existing case: an account without a binding is re-bound at the next login (PO decision).
 _uid_b = auth11.create_user("bestand")
 assert auth11.store.get_federated_kennung("ldap", _uid_b) is None
 auth11.ldap = FakeLDAP({"bestand": {"password": "pw", "id": "uuid-bestand"}})
 assert auth11._check_ldap("bestand", "pw") is not None
 assert auth11.store.get_federated_kennung("ldap", _uid_b) == "uuid-bestand"
-assert any(e["event"] == "ldap_kennung_gebunden" for e in auth11.store.recent_audit(limit=10))
-ok("F-11: ein Bestandskonto wird beim nächsten Login nachgebunden — einmal, mit Audit-Zeile")
+assert any(e["event"] == "ldap_identifier_bound" for e in auth11.store.recent_audit(limit=10))
+ok("F-11: an existing account is re-bound at the next login — once, with an audit line")
 
-# …und danach greift der Riegel aus (3) auch für dieses Konto.
+# …and afterwards the guard from (3) also applies to this account.
 auth11.ldap = FakeLDAP({"bestand": {"password": "pw", "id": "uuid-anders"}})
 assert auth11._check_ldap("bestand", "pw") is None
-ok("F-11: …danach ist auch dieses Konto gegen den Namenswechsel geschützt")
+ok("F-11: …afterwards this account is protected against the name change too")
 
-# Der Betreiber kann die Bindung lösen, wenn im Verzeichnis wirklich umgezogen wurde.
+# The operator can release the binding if the directory was really migrated.
 assert auth11.federation_unbind("ldap", _uid_b) == 1
 assert auth11._check_ldap("bestand", "pw") is not None
 assert auth11.store.get_federated_kennung("ldap", _uid_b) == "uuid-anders"
-ok("F-11: der Betreiber löst die Bindung — ein bewusster Schritt, kein Nebeneffekt")
+ok("F-11: the operator releases the binding — a deliberate step, not a side effect")
 
-# Ohne Kennung bleibt es beim Namen (Bestandsverzeichnisse), aber es wird gesagt.
+# Without an identifier it stays with the name (legacy directories), but this is logged.
 db11b, auth11b, c11b = build(ldap_auto_create=True)
-auth11b.ldap = FakeLDAP({"ohne": {"password": "pw"}})     # kein "id"
+auth11b.ldap = FakeLDAP({"ohne": {"password": "pw"}})     # no "id"
 import io as _io11, logging as _log11                                      # noqa: E402
 from tinysesam import security as _sec11                                   # noqa: E402
 _sec11.einmal_melden_zuruecksetzen()
@@ -733,53 +733,53 @@ try:
     assert auth11b._check_ldap("ohne", "pw") is not None
 finally:
     _sec11.seclog.removeHandler(_haken11)
-assert "keine stabile Kennung" in _puffer11.getvalue(), _puffer11.getvalue()[:200]
-ok("F-11: ein Verzeichnis ohne stabile Kennung meldet sich, sperrt aber niemanden aus")
+assert "no stable identifier" in _puffer11.getvalue(), _puffer11.getvalue()[:200]
+ok("F-11: a directory without a stable identifier reports itself but locks nobody out")
 
-# …es sei denn, der Betreiber verlangt sie.
+# …unless the operator demands one.
 db11c, auth11c, c11c = build(ldap_auto_create=True, federation_require_stable_id=True)
 auth11c.ldap = FakeLDAP({"ohne": {"password": "pw"}})
 assert auth11c._check_ldap("ohne", "pw") is None
-ok("F-11: federation_require_stable_id=True weist eine Anmeldung ohne Kennung ab")
+ok("F-11: federation_require_stable_id=True rejects a sign-in without identifier")
 
-# A-4 (Angriff auf H-4): Ohne stabile Kennung wurde nie gebunden — das LDAP-Konto galt als lokal
-# und bekam einen Reset-Link. Das neue lokale Passwort stach danach das Verzeichnis, auch wenn das
-# Konto dort gesperrt war. Hier über den ECHTEN Login-Weg, nicht über eine Bindung von Hand.
+# A-4 (attack on H-4): Without a stable identifier nothing was ever bound — the LDAP account counted as local
+# and got a reset link. The new local password then overrode the directory, even if the
+# account was locked there. Here via the REAL login path, not via a binding made by hand.
 db11d, auth11d, c11d = build(ldap_auto_create=True, password_reset_enabled=True,
                              base_url="https://auth.example.com")
 _post11d = []
 auth11d.set_mailer(lambda to, s, t, html=None: _post11d.append(to))
-auth11d.ldap = FakeLDAP({"bob": {"password": "ldappw", "email": "bob@example.com"}})   # kein "id"
+auth11d.ldap = FakeLDAP({"bob": {"password": "ldappw", "email": "bob@example.com"}})   # no "id"
 assert c11d.post("/auth/login", data={"username": "bob", "password": "ldappw"},
                  follow_redirects=False).status_code == 303
 _uid_bob = auth11d.store.get_user_by_name("bob")["id"]
-assert auth11d.federated_only(_uid_bob), "LDAP-Konto ohne Kennung gilt als lokal"
+assert auth11d.federated_only(_uid_bob), "LDAP account without identifier counts as local"
 c11d.get("/auth/logout")
-# Die Anmeldung schickt (Adresse nicht vertraut) einen Bestätigungslink — gemessen wird hier nur der Reset.
+# The sign-in sends (address not trusted) a confirmation link — only the reset is measured here.
 auth11d._hinweis_ausgang.abwarten()
 _post11d.clear()
 assert c11d.post("/auth/forgot", data={"email": "bob@example.com"}).status_code == 200
-assert _post11d == [], f"LDAP-Konto ohne Kennung bekam einen Reset-Link: {_post11d}"
-ok("A-4: ein LDAP-Konto ohne stabile Kennung bekommt über den echten Login-Weg keinen Reset-Link")
-# Kommt später eine echte Kennung, ersetzt sie den Platzhalter (Nachbindung, kein Kennungswechsel).
+assert _post11d == [], f"LDAP account without identifier got a reset link: {_post11d}"
+ok("A-4: an LDAP account without a stable identifier gets no reset link via the real login path")
+# If a real identifier arrives later, it replaces the placeholder (re-binding, not an identifier change).
 auth11d.ldap = FakeLDAP({"bob": {"password": "ldappw", "id": "uuid-bob"}})
-assert auth11d._check_ldap("bob", "ldappw") is not None, "der Platzhalter blockiert die echte Kennung"
+assert auth11d._check_ldap("bob", "ldappw") is not None, "the placeholder blocks the real identifier"
 assert auth11d.store.get_federated_kennung("ldap", _uid_bob) == "uuid-bob"
-# Eine Kennung in Platzhalter-Form aus dem Verzeichnis wird abgewiesen — sie träfe sonst das
-# Konto, dessen ID sie nennt.
+# An identifier in placeholder form from the directory is rejected — it would otherwise hit the
+# account whose ID it names.
 _adm11d = auth11d.store.get_user_by_name("admin")["id"]
 auth11d.store.link_federated("ldap", f"{auth11d._OHNE_KENNUNG}{_adm11d}", _adm11d, 0)
 auth11d.ldap = FakeLDAP({"mallory": {"password": "m", "id": f"{auth11d._OHNE_KENNUNG}{_adm11d}"}})
-assert auth11d._check_ldap("mallory", "m") is None, "Platzhalter-Kennung übernahm ein fremdes Konto"
-ok("A-4: echte Kennung ersetzt den Platzhalter; Platzhalter-Form aus dem Verzeichnis abgewiesen")
+assert auth11d._check_ldap("mallory", "m") is None, "placeholder identifier took over a foreign account"
+ok("A-4: real identifier replaces the placeholder; placeholder form from the directory rejected")
 
 for _d in (db11, db11b, db11c, db11d):
     os.remove(_d)
 
-# ---------- F-19: Gruppen aus dem Verzeichnis werden nicht mehr als Teilstring verglichen ----------
-# Bis 0.20.0 verglich LDAP IMMER per Teilstring, `group_match` war wirkungslos: `admin` passte auf
-# `cn=nicht-admin,…`, `staff` auf `cn=staffextern,…`. Wer im Verzeichnis eine Gruppe benennen
-# darf (in vielen AD-Umgebungen jeder Abteilungsleiter), bekam damit Rolle und Admin-Flag.
+# ---------- F-19: groups from the directory are no longer compared as a substring ----------
+# Up to 0.20.0, LDAP ALWAYS compared by substring, `group_match` had no effect: `admin` matched
+# `cn=nicht-admin,…`, `staff` matched `cn=staffextern,…`. Whoever may name a group in the directory
+# (in many AD environments every department head) thereby got role and admin flag.
 db19, auth19, c19 = build(ldap_allowed_groups=["staff"],
                           ldap_group_role_map={"admin": "__admin__", "cn=redaktion": "redaktion"})
 auth19.ldap = FakeLDAP({
@@ -792,42 +792,42 @@ auth19.ldap = FakeLDAP({
             "groups": ["cn=staff,ou=groups,dc=corp", "cn=nicht-admin,ou=groups,dc=corp",
                        "cn=redaktion-alt,ou=groups,dc=corp"]},
 })
-assert auth19._check_ldap("eve", "x") is None, "staff passt nicht auf cn=staffextern"
+assert auth19._check_ldap("eve", "x") is None, "staff does not match cn=staffextern"
 assert any(z["event"] == "ldap_group_denied" and z["username"] == "eve"
-           for z in auth19.store.recent_audit(20)), "die Abweisung am Gruppen-Gate ist stumm"
-ok("F-19: ldap_allowed_groups=['staff'] lässt cn=staffextern nicht durch (und sagt es im Audit-Log)")
+           for z in auth19.store.recent_audit(20)), "the rejection at the group gate is silent"
+ok("F-19: ldap_allowed_groups=['staff'] does not let cn=staffextern through (and says so in the audit log)")
 _mia = auth19._check_ldap("mia", "x")
-assert _mia is not None and not _mia["is_admin"], "admin passt auf cn=nicht-admin"
+assert _mia is not None and not _mia["is_admin"], "admin matches cn=nicht-admin"
 assert auth19.store.get_roles(_mia["id"]) == [], auth19.store.get_roles(_mia["id"])
-ok("F-19: 'admin' und 'cn=redaktion' treffen weder cn=nicht-admin noch cn=redaktion-alt")
+ok("F-19: 'admin' and 'cn=redaktion' match neither cn=nicht-admin nor cn=redaktion-alt")
 _bob = auth19._check_ldap("bob", "x")
-assert _bob is not None and _bob["is_admin"], "der exakte CN-Treffer muss weiter greifen"
+assert _bob is not None and _bob["is_admin"], "the exact CN match must still apply"
 assert auth19.store.get_roles(_bob["id"]) == ["redaktion"], auth19.store.get_roles(_bob["id"])
-ok("F-19: der gewohnte Schlüssel ('staff', 'cn=redaktion') greift weiter — Gross/klein egal")
+ok("F-19: the usual key ('staff', 'cn=redaktion') still applies — case does not matter")
 os.remove(db19)
 
-# Die ausdrückliche Rückkehr zum alten Vergleich bleibt möglich — jetzt wirkt der Schalter.
+# The explicit return to the old comparison remains possible — now the switch takes effect.
 db19b, auth19b, _ = build(ldap_allowed_groups=["staff"], group_match="substring")
 auth19b.ldap = FakeLDAP({"eve": {"password": "x", "id": "e1",
                                  "groups": ["cn=staffextern,ou=groups,dc=corp"]}})
 assert auth19b._check_ldap("eve", "x") is not None
-ok("F-19: group_match='substring' holt den Teilstring-Vergleich ausdrücklich zurück")
+ok("F-19: group_match='substring' explicitly brings back the substring comparison")
 os.remove(db19b)
 
 from tinysesam.manager import gruppe_passt  # noqa: E402
-assert gruppe_passt("cn=a\\,b", "cn=a\\,b,ou=g,dc=x", dn=True), "maskiertes Komma zerlegt den DN nicht"
+assert gruppe_passt("cn=a\\,b", "cn=a\\,b,ou=g,dc=x", dn=True), "escaped comma does not split the DN"
 assert not gruppe_passt("a", "cn=a\\,b,ou=g,dc=x", dn=True)
 assert gruppe_passt("cn=staff,ou=groups,dc=corp", "CN=Staff, OU=Groups, DC=corp", dn=True)
-assert not gruppe_passt("staff", "cn=staff,ou=g", dn=False), "ohne dn=True bleibt es beim exakten Text"
+assert not gruppe_passt("staff", "cn=staff,ou=g", dn=False), "without dn=True it stays with the exact text"
 assert not gruppe_passt("", "cn=x", dn=True)
-ok("F-19: gruppe_passt zerlegt DNs an unmaskierten Kommas, vergleicht ganzen DN/ersten RDN/Wert")
+ok("F-19: gruppe_passt splits DNs at unescaped commas, compares whole DN/first RDN/value")
 
-# A-3 (Angriff auf F-19): Das README-Beispiel `{"cn=admins,ou=g": "__admin__"}` ist ein Teil-DN.
-# Nach dem ersten Fix traf es `cn=admins,ou=g,dc=example,dc=com` nicht mehr — Admin-Mapping still
-# weg, als ldap_allowed_groups jeder Nutzer abgewiesen.
+# A-3 (attack on F-19): The README example `{"cn=admins,ou=g": "__admin__"}` is a partial DN.
+# After the first fix it no longer matched `cn=admins,ou=g,dc=example,dc=com` — admin mapping silently
+# gone, with ldap_allowed_groups every user rejected.
 assert gruppe_passt("cn=admins,ou=g", "cn=admins,ou=g,dc=example,dc=com", dn=True)
 assert gruppe_passt("CN=Admins, OU=G", "cn=admins,ou=g,dc=example,dc=com", dn=True)
-assert not gruppe_passt("ou=g", "cn=admins,ou=g,dc=example,dc=com", dn=True), "nur von vorn"
+assert not gruppe_passt("ou=g", "cn=admins,ou=g,dc=example,dc=com", dn=True), "only from the front"
 assert not gruppe_passt("cn=admin,ou=g", "cn=admins,ou=g,dc=example,dc=com", dn=True)
 assert not gruppe_passt("cn=admins,ou=g,dc=example,dc=com,dc=x", "cn=admins,ou=g,dc=example,dc=com", dn=True)
 db19c, auth19c, _ = build(ldap_allowed_groups=["cn=admins,ou=g"],
@@ -843,32 +843,32 @@ try:
     _ada = auth19c._check_ldap("ada", "x")
 finally:
     _sec19.seclog.removeHandler(_haken19)
-assert _ada is not None, "README-Schlüssel als ldap_allowed_groups weist jeden ab"
-assert _ada["is_admin"], "README-Schlüssel als Admin-Mapping greift nicht"
-assert auth19c.store.get_roles(_ada["id"]) == [], "Teilstring 'ou=g' darf nicht treffen"
-# Der Schlüssel, der nur noch als Teilstring träfe, fällt nicht still weg: eine Zeile im Log.
-assert "'ou=g'" in _puffer19.getvalue() and "Teilstring" in _puffer19.getvalue(), _puffer19.getvalue()[:300]
-assert "cn=admins,ou=g'" not in _puffer19.getvalue(), "ein greifender Schlüssel darf nicht warnen"
-ok("A-3: Teil-DN von vorn (README-Beispiel) greift wieder; ein reiner Teilstring-Schlüssel meldet sich")
+assert _ada is not None, "README key as ldap_allowed_groups rejects everyone"
+assert _ada["is_admin"], "README key as admin mapping does not apply"
+assert auth19c.store.get_roles(_ada["id"]) == [], "substring 'ou=g' must not match"
+# The key that would only match as a substring does not silently drop out: one line in the log.
+assert "'ou=g'" in _puffer19.getvalue() and "only matches as a substring" in _puffer19.getvalue(), _puffer19.getvalue()[:300]
+assert "cn=admins,ou=g'" not in _puffer19.getvalue(), "a key that applies must not warn"
+ok("A-3: partial DN from the front (README example) applies again; a pure substring key reports itself")
 os.remove(db19c)
 
-# ---------- F-23: ein Ausfall des Verzeichnisses ist kein Fehlversuch ----------
-# Bis 0.20.0 endete jeder Fehler in `authenticate()` als None, also als „Passwort falsch": ein
-# Fehlversuch gegen Konto und IP, `failed login` für fail2ban. Nach ein paar Minuten Ausfall
-# waren genau die Nutzer gesperrt, die nichts falsch gemacht hatten.
+# ---------- F-23: a directory outage is not a failed attempt ----------
+# Up to 0.20.0, every error in `authenticate()` ended as None, i.e. as "wrong password": a
+# failed attempt against account and IP, `failed login` for fail2ban. After a few minutes of outage
+# exactly the users who had done nothing wrong were locked out.
 from tinysesam.ldap_ import AUSFALL_PAUSE_SEK, AusfallMerker, VerzeichnisNichtErreichbar  # noqa: E402
 from tinysesam import ldap_ as _ldap_mod                    # noqa: E402
 
 
 class AusfallLDAP:
     def authenticate(self, username, password):
-        raise VerzeichnisNichtErreichbar("LDAP-Verzeichnis ldap://dummy nicht benutzbar: Test")
+        raise VerzeichnisNichtErreichbar("LDAP directory ldap://dummy unusable: Test")
 
 
 db23, auth23, c23 = build()
 auth23.ldap = AusfallLDAP()
-# Nach einem Ausfall fragt der Login das Verzeichnis eine Pause lang nicht (AusfallMerker, siehe
-# unten); die Uhr des Merkers ist hier gestellt, damit die Gegenprobe die Pause ablaufen lassen kann.
+# After an outage, the login does not ask the directory for one pause (outage flag, see
+# below); the flag's clock is set here so that the counter-check can let the pause expire.
 _uhr23 = [1000.0]
 auth23._ldap_ausfall = AusfallMerker(uhr=lambda: _uhr23[0])
 import io as _io23, logging as _log23                     # noqa: E402
@@ -883,25 +883,25 @@ finally:
     _seclog23.removeHandler(_haken23)
 assert all(a.status_code == 503 for a in antworten23), [a.status_code for a in antworten23]
 assert "nicht erreichbar" in antworten23[0].text, antworten23[0].text[:300]
-assert auth23.store.count_fails(0, username="alice") == 0, "der Ausfall wurde als Fehlversuch verbucht"
-assert not auth23._is_locked("alice", "testclient"), "ein Ausfall sperrt das Konto"
-assert "failed login" not in _puffer23.getvalue(), "fail2ban bekäme einen Ausfall als Angriff"
-assert "LDAP nicht erreichbar" in _puffer23.getvalue(), _puffer23.getvalue()[:300]
+assert auth23.store.count_fails(0, username="alice") == 0, "the outage was booked as a failed attempt"
+assert not auth23._is_locked("alice", "testclient"), "an outage locks the account"
+assert "failed login" not in _puffer23.getvalue(), "fail2ban would take an outage for an attack"
+assert "LDAP directory unreachable (" in _puffer23.getvalue(), _puffer23.getvalue()[:300]
 assert any(z["event"] == "ldap_unavailable" for z in auth23.store.recent_audit(20))
-ok("F-23: Verzeichnis-Ausfall → 503, kein Fehlversuch, keine Sperre, kein 'failed login', eigene Audit-Zeile")
-# Gegenprobe: dieselbe Route mit einem erreichbaren Verzeichnis und falschem Passwort zählt —
-# sobald die Pause nach dem Ausfall abgelaufen ist und der Login wieder nachfragt.
+ok("F-23: directory outage → 503, no failed attempt, no lockout, no 'failed login', own audit line")
+# Counter-check: the same route with a reachable directory and a wrong password counts —
+# as soon as the pause after the outage has expired and the login asks again.
 auth23.ldap = FakeLDAP({"alice": {"password": "richtig"}})
 _uhr23[0] += AUSFALL_PAUSE_SEK + 1
 assert c23.post("/auth/login", data={"username": "alice", "password": "falsch"}).status_code == 401
 assert auth23.store.count_fails(0, username="alice") == 1
-ok("F-23: …ein echtes falsches Passwort bleibt ein Fehlversuch")
+ok("F-23: …a real wrong password remains a failed attempt")
 os.remove(db23)
 
-# A-1 (Angriff auf F-23): Während des Ausfalls blieb auch das falsche LOKALE Passwort
-# unverbucht — gegen den lokalen Admin, das Notfallkonto, war beliebig oft zu raten (verteilt
-# über IPs griff nur das IP-Ratelimit), und das richtige Passwort kam danach trotz
-# max_login_attempts durch.
+# A-1 (attack on F-23): During the outage, the wrong LOCAL password was also
+# not booked — against the local admin, the emergency account, guessing was possible without limit (distributed
+# across IPs only the IP rate limit applied), and the correct password afterwards got through despite
+# max_login_attempts.
 db23a, auth23a, c23a = build()
 auth23a.ldap = AusfallLDAP()
 _max23a = auth23a._sec("max_login_attempts")
@@ -915,36 +915,36 @@ finally:
     _seclog23.removeHandler(_haken23a)
 assert all(s == 503 for s in _antw23a), _antw23a
 assert auth23a.store.count_fails(0, username="admin") == _max23a, \
-    "falsches lokales Passwort während des Ausfalls wurde nicht verbucht"
-assert auth23a._is_locked("admin", "testclient"), "lokaler Admin während des Ausfalls unbegrenzt ratbar"
-assert "failed login" in _puffer23a.getvalue(), "fail2ban sieht das Raten am lokalen Konto nicht"
+    "wrong local password during the outage was not booked"
+assert auth23a._is_locked("admin", "testclient"), "local admin can be guessed without limit during the outage"
+assert "failed login" in _puffer23a.getvalue(), "fail2ban does not see the guessing at the local account"
 _r23a = c23a.post("/auth/login", data={"username": "admin", "password": "lokalpw"}, follow_redirects=False)
-assert _r23a.status_code == 429, f"richtiges Passwort kam nach {_max23a} Fehlversuchen durch: {_r23a.status_code}"
-# Der Verzeichnis-Anteil bleibt entschuldigt: das LDAP-Konto ohne lokales Passwort zählt nicht.
+assert _r23a.status_code == 429, f"correct password got through after {_max23a} failed attempts: {_r23a.status_code}"
+# The directory share stays excused: the LDAP account without a local password does not count.
 c23a.post("/auth/login", data={"username": "alice", "password": "x"})
 assert auth23a.store.count_fails(0, username="alice") == 0
-ok("A-1: Ausfall entschuldigt nur das Verzeichnis — ein falsches LOKALES Passwort zählt und sperrt")
+ok("A-1: outage excuses only the directory — a wrong LOCAL password counts and locks")
 os.remove(db23a)
 
-# ---------- T-13-Integration: vorgebuchte Versuche schweben nicht bis zum Timeout ----------
-# Der Login bucht jeden Versuch VORAB als Fehlversuch (R7-2) und nimmt ihn bei einem Ausfall
-# zurück (F-23) — aber erst, wenn `VerzeichnisNichtErreichbar` kommt. Ein Verzeichnis, das Pakete
-# verwirft, antwortet erst nach dem Timeout (10 s). Bis dahin zählte jede hängende Anmeldung für
-# Konto, Paar und Adresse: 15 Kollegen hinter einer NAT-Adresse, und der lokale Notfall-Admin
-# bekam mit RICHTIGEM Passwort 429; jede weitere Abweisung schrieb `failed login … reason=
-# lockout_ip`, und fail2ban bannte die Adresse. Und das nicht einmal, sondern bei jedem Anlauf
-# während des ganzen Ausfalls. Jetzt merkt sich der Login den Ausfall: Danach kommt sofort 503,
-# ohne das Verzeichnis erneut zu fragen. (Mutationsprobe: in `check_ldap` den Aufruf
-# `self._ldap_ausfall.zugang()` streichen → die Salve hängt, das Verzeichnis wird bei jedem Anlauf
-# erneut gefragt → rot. Bis G9 bekam dabei auch der Admin 429; seitdem wartet er, bis die
-# schwebenden Vorbuchungen entschieden sind — das misst tests/test_vorbuchung_schwebe.py.)
+# ---------- T-13 integration: pre-booked attempts do not hang until the timeout ----------
+# The login books every attempt IN ADVANCE as a failed attempt (R7-2) and takes it back on an outage
+# (F-23) — but only when `VerzeichnisNichtErreichbar` arrives. A directory that
+# drops packets answers only after the timeout (10 s). Until then every hanging sign-in counted for
+# account, pair and address: 15 colleagues behind one NAT address, and the local emergency admin
+# got 429 with the CORRECT password; every further rejection wrote `failed login … reason=
+# lockout_ip`, and fail2ban banned the address. And not just once, but on every attempt
+# during the whole outage. Now the login remembers the outage: Afterwards 503 comes immediately,
+# without asking the directory again. (Mutation probe: remove the call in `check_ldap`
+# `self._ldap_ausfall.zugang()` → the burst hangs, the directory is asked on every attempt
+# again → red. Until G9 the admin also got 429 here; since then he waits until the
+# pending pre-bookings are decided — tests/test_prebooking_pending.py measures that.)
 from concurrent.futures import ThreadPoolExecutor as _Pool24  # noqa: E402
 
 HAENGT24 = 2.0
 
 
 class HaengendesLDAP:
-    """Ein Verzeichnis, das Pakete verwirft: jede Frage hängt bis zum Timeout, dann Ausfall."""
+    """A directory that drops packets: every query hangs until the timeout, then outage."""
 
     def __init__(self):
         self.fragen = 0
@@ -954,11 +954,11 @@ class HaengendesLDAP:
         with self._zaehler:
             self.fragen += 1
         time.sleep(HAENGT24)
-        raise VerzeichnisNichtErreichbar("LDAP-Verzeichnis ldap://dummy nicht benutzbar: timed out")
+        raise VerzeichnisNichtErreichbar("LDAP directory ldap://dummy unusable: timed out")
 
 
 db24, auth24, c24 = build()
-auth24.set_security("rate_limit_max", 1000)          # eine 429 muss aus der Sperre kommen
+auth24.set_security("rate_limit_max", 1000)          # a 429 must come from the lockout
 haengt24 = HaengendesLDAP()
 auth24.ldap = haengt24
 NAT24 = ("198.51.100.7", 40000)
@@ -974,18 +974,18 @@ _puffer24 = _io23.StringIO()
 _haken24 = _log23.StreamHandler(_puffer24)
 _seclog23.addHandler(_haken24)
 try:
-    # (1) Der erste Anlauf entdeckt den Ausfall. Er hängt bis zum Timeout — dieses eine Fenster
-    # bleibt, denn vorher weiss niemand, dass das Verzeichnis weg ist.
+    # (1) The first attempt discovers the outage. It hangs until the timeout — this one window
+    # remains, because before that nobody knows that the directory is gone.
     _t0 = time.monotonic()
     assert _anmelden24("kollege0") == 503
-    assert time.monotonic() - _t0 >= HAENGT24 * 0.9, "Vorbedingung: die erste Frage hing nicht"
-    # (2) Während des Ausfalls: das ganze Büro hinter der NAT-Adresse — so viele wie die
-    # IP-Schwelle, alle innerhalb von drei Fünfteln des Timeouts —, danach der lokale Notfall-Admin
-    # mit richtigem Passwort. Ohne Merker schwebten zu dem Zeitpunkt alle Anläufe noch und füllten
-    # die IP-Schwelle. Gestaffelt, nicht auf einen Schlag: Eine Vorbuchung lebt jetzt so lange wie
-    # die lokale Prüfung und ein paar Schreibzugriffe (unter Last einige hundert Millisekunden).
-    # Kommen mehr Anmeldungen als die IP-Schwelle GLEICHZEITIG, weist die Sperre einige ab — das
-    # ist R7-2 im Normalbetrieb genauso und hat mit dem Ausfall nichts zu tun.
+    assert time.monotonic() - _t0 >= HAENGT24 * 0.9, "precondition: the first query did not hang"
+    # (2) During the outage: the whole office behind the NAT address — as many as the
+    # IP threshold, all within three fifths of the timeout —, then the local emergency admin
+    # with the correct password. Without the flag, all attempts would still be pending at that time and fill
+    # the IP threshold. Staggered, not all at once: A pre-booking now lives as long as
+    # the local check and a few write accesses (some hundred milliseconds under load).
+    # If more sign-ins than the IP threshold arrive AT THE SAME TIME, the lockout rejects some — that
+    # is exactly R7-2 in normal operation and has nothing to do with the outage.
     _anzahl24 = SCHWELLE24
     _abstand24 = HAENGT24 * 0.6 / _anzahl24
     with _Pool24(max_workers=_anzahl24) as _pool24:
@@ -996,29 +996,29 @@ try:
         _schwebend24 = auth24.store.count_fails(0, ip=NAT24[0])
         _admin24 = _anmelden24("admin", "lokalpw")
         _kollegen24 = [f.result(timeout=30) for f in _laufend24]
-    # (3) Der ungeduldige Nutzer, der auf der hängenden Seite siebenmal abschickt.
+    # (3) The impatient user who submits seven times on the hanging page.
     _klicks24 = [_anmelden24("alice") for _ in range(7)]
 finally:
     _seclog23.removeHandler(_haken24)
-assert _admin24 == 303, (f"der Notfall-Admin kommt während des Ausfalls nicht hinein: {_admin24} "
-                         f"({_schwebend24} vorgebuchte Versuche der Adresse schwebten)")
-assert _kollegen24 == [503] * len(_kollegen24), f"Kollegen während des Ausfalls: {sorted(set(_kollegen24))}"
-assert _klicks24 == [503] * 7, f"ungeduldige Klicks: {_klicks24}"
-assert haengt24.fragen == 1, f"während der Pause wurde das Verzeichnis {haengt24.fragen - 1}-mal erneut gefragt"
+assert _admin24 == 303, (f"the emergency admin cannot get in during the outage: {_admin24} "
+                         f"({_schwebend24} pre-booked attempts of the address were pending)")
+assert _kollegen24 == [503] * len(_kollegen24), f"colleagues during the outage: {sorted(set(_kollegen24))}"
+assert _klicks24 == [503] * 7, f"impatient clicks: {_klicks24}"
+assert haengt24.fragen == 1, f"during the pause the directory was asked again {haengt24.fragen - 1} times"
 assert "failed login" not in _puffer24.getvalue(), \
-    "fail2ban bekäme den Ausfall als Angriff: " + next(
+    "fail2ban would take the outage for an attack: " + next(
         z for z in _puffer24.getvalue().splitlines() if "failed login" in z)
-assert auth24.store.count_fails(0, ip=NAT24[0]) == 0, "vom Ausfall blieben Fehlversuche stehen"
-ok(f"F-23 × R7-2: nach dem ersten Timeout sofort 503 — {len(_kollegen24)} Kollegen, 7 Klicks, "
-   "der lokale Admin kommt hinein, kein 'failed login'")
+assert auth24.store.count_fails(0, ip=NAT24[0]) == 0, "failed attempts remained from the outage"
+ok(f"F-23 × R7-2: 503 immediately after the first timeout — {len(_kollegen24)} colleagues, 7 clicks, "
+   "the local admin gets in, no 'failed login'")
 
-# Nach der Pause fragt GENAU EINE Anmeldung nach (Probe); alle übrigen bekommen weiter sofort 503,
-# bis sie zurück ist — sonst schwebten nach jeder Pause wieder alle, die gerade anklopfen. Antwortet
-# das Verzeichnis wieder (auch mit „Passwort falsch"), ist es frei. Gemeldet wird der Wechsel, je
-# einmal, nicht jede Anfrage. (Mutationsprobe: in `AusfallMerker.zugang` die laufende Probe nicht
-# beachten (`if rest > 0:` statt `if rest > 0 or self._probe:`) → während der Probe fragen alle
-# das Verzeichnis → rot; in `check_ldap` `merker.erreicht()` streichen → das zurückgekehrte
-# Verzeichnis bleibt gesperrt → rot.)
+# After the pause EXACTLY ONE sign-in asks again (probe); all others keep getting 503 immediately
+# until it is back — otherwise after every pause all those just knocking would hang again. If
+# the directory answers again (even with "wrong password"), it is free. The change is reported, once
+# each, not on every request. (Mutation probe: in `AusfallMerker.zugang` ignore the running probe
+# (`if rest > 0:` instead of `if rest > 0 or self._probe:`) → during the probe everybody asks
+# the directory → red; remove `merker.erreicht()` in `check_ldap` → the returned
+# directory stays locked → red.)
 _uhr24 = [5000.0]
 auth24._ldap_ausfall = AusfallMerker(uhr=lambda: _uhr24[0])
 haengt24.fragen = 0
@@ -1026,69 +1026,69 @@ _puffer24b = _io23.StringIO()
 _haken24b = _log23.StreamHandler(_puffer24b)
 _seclog23.addHandler(_haken24b)
 try:
-    assert _anmelden24("kollege0") == 503 and haengt24.fragen == 1      # Ausfall entdeckt
-    assert _anmelden24("kollege1") == 503 and haengt24.fragen == 1      # Pause: nicht gefragt
-    _uhr24[0] += AUSFALL_PAUSE_SEK + 1                                  # Pause vorbei
+    assert _anmelden24("kollege0") == 503 and haengt24.fragen == 1      # outage discovered
+    assert _anmelden24("kollege1") == 503 and haengt24.fragen == 1      # pause: not asked
+    _uhr24[0] += AUSFALL_PAUSE_SEK + 1                                  # pause over
     with _Pool24(max_workers=2) as _pool24b:
-        _probe24 = _pool24b.submit(_anmelden24, "kollege2")             # die Probe hängt
+        _probe24 = _pool24b.submit(_anmelden24, "kollege2")             # the probe hangs
         time.sleep(HAENGT24 / 4)
         _andere24 = [_anmelden24(f"kollege{i}") for i in range(3, 13)]
         _admin24b = _anmelden24("admin", "lokalpw")
         _probe_status24 = _probe24.result(timeout=30)
     assert haengt24.fragen == 2, \
-        f"während der Probe fragten {haengt24.fragen - 2} weitere Anmeldungen das Verzeichnis"
+        f"during the probe {haengt24.fragen - 2} further sign-ins asked the directory"
     assert _andere24 == [503] * 10 and _probe_status24 == 503, (_andere24, _probe_status24)
-    assert _admin24b == 303, f"der lokale Admin während der Probe: {_admin24b}"
-    # Das Verzeichnis ist zurück: Nach der nächsten Pause antwortet die Probe, danach läuft alles normal.
+    assert _admin24b == 303, f"the local admin during the probe: {_admin24b}"
+    # The directory is back: After the next pause the probe answers, afterwards everything runs normally.
     auth24.ldap = FakeLDAP({"alice": {"password": "richtig"}})
     _uhr24[0] += AUSFALL_PAUSE_SEK + 1
-    assert _anmelden24("alice", "falsch") == 401, "die Probe mit falschem Passwort ist ein Fehlversuch"
-    assert _anmelden24("alice", "richtig") == 303, "nach der Rückkehr des Verzeichnisses bleibt es gesperrt"
+    assert _anmelden24("alice", "falsch") == 401, "the probe with a wrong password is a failed attempt"
+    assert _anmelden24("alice", "richtig") == 303, "after the directory's return it stays locked"
 finally:
     _seclog23.removeHandler(_haken24b)
 _text24 = _puffer24b.getvalue()
-assert _text24.count("LDAP-Verzeichnis nicht erreichbar (") == 1, _text24
-assert _text24.count("LDAP-Verzeichnis wieder erreichbar") == 1, _text24
+assert _text24.count("LDAP directory unreachable (") == 1, _text24
+assert _text24.count("LDAP directory reachable again") == 1, _text24
 assert "failed login user=kollege" not in _text24, _text24
-assert auth24.store.count_fails(0, username="alice") == 0, "der volle Login räumt den Fehlversuch"
-ok("…nach der Pause fragt genau eine Anmeldung nach; Ausfall und Rückkehr stehen je einmal im Log")
+assert auth24.store.count_fails(0, username="alice") == 0, "the full login clears the failed attempt"
+ok("…after the pause exactly one sign-in asks again; outage and return appear once each in the log")
 os.remove(db24)
 
-# Den Platz der Probe gibt nur die Probe selbst frei (`ausgefallen(war_probe=True)`). Ein
-# Nachzügler aus dem ersten Fenster, der erst während der Probe in sein Timeout läuft, meldet
-# `war_probe=False` — gäbe er den Platz frei, fragte gleich die nächste Anmeldung parallel zur
-# laufenden Probe nach, und nach jeder Pause schwebten wieder mehrere Versuche. (Mutationsprobe:
-# in `AusfallMerker.ausgefallen` den Platz immer freigeben (`self._probe = False` ohne
-# `if war_probe`) → rot.)
+# Only the probe itself releases the probe's slot (`ausgefallen(war_probe=True)`). A
+# straggler from the first window that only runs into its timeout during the probe reports
+# `war_probe=False` — if it released the slot, the next sign-in would immediately ask in parallel to the
+# running probe, and after every pause several attempts would hang again. (Mutation probe:
+# in `AusfallMerker.ausgefallen` always release the slot (`self._probe = False` without
+# `if war_probe`) → red.)
 _uhr_n = [100.0]
 _m_n = AusfallMerker(uhr=lambda: _uhr_n[0])
 _m_n.ausgefallen(VerzeichnisNichtErreichbar("Test: timed out"))
 _uhr_n[0] += AUSFALL_PAUSE_SEK + 1
-assert _m_n.zugang() is True, "Vorbedingung: nach der Pause ist die nächste Anmeldung die Probe"
-_m_n.ausgefallen(VerzeichnisNichtErreichbar("Test: Nachzügler"), war_probe=False)   # Nachzügler
+assert _m_n.zugang() is True, "precondition: after the pause the next sign-in is the probe"
+_m_n.ausgefallen(VerzeichnisNichtErreichbar("Test: straggler"), war_probe=False)   # straggler
 _uhr_n[0] += AUSFALL_PAUSE_SEK + 1
 try:
     _m_n.zugang()
     _zweite_probe = True
 except VerzeichnisNichtErreichbar as _e_n:
     _zweite_probe = False
-    assert "fragt gerade nach" in str(_e_n), str(_e_n)
-assert not _zweite_probe, "ein Nachzügler hat den Platz der laufenden Probe freigegeben — zwei Proben zugleich"
+    assert "is asking right now" in str(_e_n), str(_e_n)
+assert not _zweite_probe, "a straggler released the slot of the running probe — two probes at once"
 _m_n.ausgefallen(VerzeichnisNichtErreichbar("Test: Probe gescheitert"), war_probe=True)
 _uhr_n[0] += AUSFALL_PAUSE_SEK + 1
-assert _m_n.zugang() is True, "nach dem Ende der Probe fragt die nächste nach"
-ok("Ausfall-Merker: ein Nachzügler gibt den Platz der laufenden Probe nicht frei")
+assert _m_n.zugang() is True, "after the end of the probe the next one asks again"
+ok("Outage flag: a straggler does not release the slot of the running probe")
 
-# Endet die Probe mit einer ANDEREN Ausnahme (Programmfehler im eigenen Client, fehlendes Extra),
-# muss `check_ldap` ihren Platz freigeben — sonst fragt niemand mehr nach, und die LDAP-Anmeldung
-# liefert bis zum Neustart 503, auch bei gesundem Verzeichnis. (Mutationsprobe: in `check_ldap`
-# den Zweig `except BaseException: if probe: merker.freigeben()` streichen → rot.)
+# If the probe ends with a DIFFERENT exception (programming error in our own client, missing extra),
+# `check_ldap` must release its slot — otherwise nobody asks any more, and the LDAP sign-in
+# returns 503 until restart, even with a healthy directory. (Mutation probe: in `check_ldap`
+# remove the branch `except BaseException: if probe: merker.freigeben()` → red.)
 class _LaunischesLDAP:
     modus = "weg"
 
     def authenticate(self, username, password):
         if self.modus == "weg":
-            raise VerzeichnisNichtErreichbar("LDAP-Verzeichnis ldap://dummy nicht benutzbar: timed out")
+            raise VerzeichnisNichtErreichbar("LDAP directory ldap://dummy unusable: timed out")
         if self.modus == "kaputt":
             raise RuntimeError("unerwarteter Fehler im Client")
         if self.modus == "abgebrochen":
@@ -1104,54 +1104,54 @@ _auth_p.ldap = _launisch = _LaunischesLDAP()
 try:
     _auth_p._check_ldap("alice", "pw")
 except VerzeichnisNichtErreichbar:
-    pass   # der Merker ist danach scharf — nur das zählt hier
+    pass   # the flag is armed afterwards — only that counts here
 _uhr_p[0] += AUSFALL_PAUSE_SEK + 1
 _launisch.modus = "kaputt"
 try:
     _auth_p._check_ldap("alice", "pw")
-    raise AssertionError("Vorbedingung: die Probe hätte mit RuntimeError enden müssen")
+    raise AssertionError("precondition: the probe should have ended with RuntimeError")
 except RuntimeError:
     pass
 _launisch.modus = "gesund"
 try:
     _info_p = _auth_p._check_ldap("alice", "pw")
 except VerzeichnisNichtErreichbar as _e_p:
-    raise AssertionError(f"nach einer Probe mit fremder Ausnahme fragt niemand mehr nach: {_e_p}")
+    raise AssertionError(f"after a probe with a foreign exception nobody asks any more: {_e_p}")
 assert _info_p, _info_p
-# Dasselbe, wenn die Probe nur ihre eigene Anfrage verliert (`AnfrageAbgebrochen`, s. unten): kein
-# Beleg für einen Ausfall, aber auch keiner für die Rückkehr — die nächste Anmeldung fragt nach.
-# (Mutationsprobe: im Zweig `except AnfrageAbgebrochen` von `check_ldap` das `merker.freigeben()`
-# streichen → rot.)
+# The same if the probe only loses its own request (`AnfrageAbgebrochen`, see below): no
+# proof of an outage, but none of the return either — the next sign-in asks again.
+# (Mutation probe: in the branch `except AnfrageAbgebrochen` of `check_ldap` remove
+# `merker.freigeben()` → red.)
 _launisch.modus = "weg"
 try:
     _auth_p._check_ldap("alice", "pw")
 except VerzeichnisNichtErreichbar:
-    pass   # der Merker ist danach scharf — nur das zählt hier
+    pass   # the flag is armed afterwards — only that counts here
 _uhr_p[0] += AUSFALL_PAUSE_SEK + 1
 _launisch.modus = "abgebrochen"
 try:
     _auth_p._check_ldap("alice", "pw")
-    raise AssertionError("Vorbedingung: die Probe hätte abgebrochen werden müssen")
+    raise AssertionError("precondition: the probe should have been aborted")
 except _ldap_mod.AnfrageAbgebrochen:
     pass
 _launisch.modus = "gesund"
 try:
     _info_p = _auth_p._check_ldap("alice", "pw")
 except VerzeichnisNichtErreichbar as _e_p:
-    raise AssertionError(f"nach einer abgebrochenen Probe fragt niemand mehr nach: {_e_p}")
+    raise AssertionError(f"after an aborted probe nobody asks any more: {_e_p}")
 assert _info_p, _info_p
-ok("Ausfall-Merker: endet die Probe mit einer fremden Ausnahme oder einem Abbruch, fragt die nächste nach")
+ok("Outage flag: if the probe ends with a foreign exception or an abort, the next one asks again")
 
-# ---------- Nachbesserung T-13: eine übergrosse Anmeldung legt LDAP nicht still ----------
-# Der Merker schaltete bei JEDEM `VerzeichnisNichtErreichbar` scharf — auch wenn nur diese eine
-# Anfrage gescheitert war. OpenLDAP beendet mit seiner Vorgabe `sockbuf_max_incoming=262143` die
-# Verbindung, sobald eine Bind-PDU auf der (noch anonymen) Sitzung grösser ist; ldap3 meldet das
-# als Kommunikationsfehler. Ein Passwort mit 270 000 Zeichen, ohne Anmeldung abgeschickt, gab so
-# jeder LDAP-Nutzerin 30 s lang 503 — alle 2,5 s wiederholt dauerhaft, und den Angreifer kostete
-# es nichts (zurückgenommene Vorbuchung, kein `failed login`). Erstes Schloss: Was länger ist als
-# jede echte Anmeldung, geht gar nicht erst ans Verzeichnis und ist ein falsches Passwort.
-# (Mutationsprobe: in `check_ldap` die Prüfung `ldap_.eingabe_zu_lang` streichen → der Client
-# wird gefragt → rot.)
+# ---------- Follow-up T-13: an oversized sign-in does not take LDAP down silently ----------
+# The flag armed on EVERY `VerzeichnisNichtErreichbar` — even when only this one
+# request had failed. With its default `sockbuf_max_incoming=262143`, OpenLDAP ends the
+# connection as soon as a bind PDU on the (still anonymous) session is larger; ldap3 reports this
+# as a communication error. A password of 270 000 characters, submitted without signing in, thus gave
+# every LDAP user 503 for 30 s — repeated every 2.5 s permanently, and it cost the attacker
+# nothing (pre-booking taken back, no `failed login`). First lock: Whatever is longer than
+# any real sign-in never reaches the directory at all and is a wrong password.
+# (Mutation probe: in `check_ldap` remove the check `ldap_.eingabe_zu_lang` → the client
+# is asked → red.)
 class _MitschreibendesLDAP(FakeLDAP):
     def __init__(self, users):
         super().__init__(users)
@@ -1175,24 +1175,24 @@ try:
                       {"username": "n" * 270_000, "password": "x"})]
 finally:
     _seclog23.removeHandler(_haken_g)
-assert _mitschrift_g.gefragt == [], f"übergrosse Eingaben gingen ans Verzeichnis: {_mitschrift_g.gefragt}"
-assert _gross == [401, 401], f"übergrosse Eingaben: {_gross} (erwartet: wie ein falsches Passwort)"
-assert auth_g.store.count_fails(0, ip="203.0.113.66") == 2, "die übergrossen Versuche zählen nicht"
-assert _puffer_g.getvalue().count("failed login") == 2, "fail2ban sieht die übergrossen Versuche nicht"
+assert _mitschrift_g.gefragt == [], f"oversized inputs went to the directory: {_mitschrift_g.gefragt}"
+assert _gross == [401, 401], f"oversized inputs: {_gross} (expected: like a wrong password)"
+assert auth_g.store.count_fails(0, ip="203.0.113.66") == 2, "the oversized attempts do not count"
+assert _puffer_g.getvalue().count("failed login") == 2, "fail2ban does not see the oversized attempts"
 _r_g = TestClient(c_g.app, client=("192.0.2.10", 40000)).post(
     "/auth/login", data={"username": "alice", "password": "richtig"}, follow_redirects=False)
-assert _r_g.status_code == 303, f"die richtige Anmeldung danach: {_r_g.status_code}"
+assert _r_g.status_code == 303, f"the correct sign-in afterwards: {_r_g.status_code}"
 os.remove(db_g)
-ok("übergrosse Eingaben gehen nicht ans Verzeichnis: 401, Fehlversuch, 'failed login' — LDAP bleibt offen")
+ok("oversized inputs do not go to the directory: 401, failed attempt, 'failed login' — LDAP stays open")
 
 if HAT_LDAP3:
-    # Gegen das ECHTE ldap3: ein Port, auf dem niemand lauscht. Die Ausnahme muss aus der
-    # Bibliothek kommen, nicht aus unserer Attrappe — sonst wäre die Zuordnung der Fehlerarten
-    # (`_ausfall_arten`) ungemessen.
-    # Der Port bleibt GEBUNDEN, nur ohne `listen()`: Verbindungen werden abgewiesen wie bei einem
-    # toten Port, aber kein anderer Prozess bekommt ihn in der Zwischenzeit. Vorher wurde er gleich
-    # wieder freigegeben — lief daneben eine andere Suite (der Sammellauf fährt sie parallel) und
-    # bekam dieselbe Nummer für ihren Attrappen-Server, sprach ldap3 mit DEM statt mit niemandem.
+    # Against the REAL ldap3: a port on which nobody listens. The exception must come from the
+    # library, not from our stub — otherwise the mapping of the error kinds
+    # (`_ausfall_arten`) would be unmeasured.
+    # The port stays BOUND, just without `listen()`: Connections are refused as with a
+    # dead port, but no other process gets it in the meantime. Before, it was released right
+    # away — if another suite was running alongside (the collective run starts them in parallel) and
+    # got the same number for its stub server, ldap3 talked to THAT instead of to nobody.
     _s = socket.socket()
     _s.bind(("127.0.0.1", 0))
     _toter_port = _s.getsockname()[1]
@@ -1208,11 +1208,11 @@ if HAT_LDAP3:
             _geworfen = False
         except VerzeichnisNichtErreichbar as _e_tot:
             _geworfen = True
-            # Ein toter Port betrifft das ganze Verzeichnis: Der Merker muss scharf schalten.
-            # (Mutationsprobe: in `authenticate` jeden Fehler als `AnfrageAbgebrochen` melden → rot.)
+            # A dead port affects the whole directory: The flag must arm.
+            # (Mutation probe: in `authenticate` report every error as `AnfrageAbgebrochen` → red.)
             assert not isinstance(_e_tot, getattr(_ldap_mod, "AnfrageAbgebrochen", ())), \
-                f"ein toter Port gilt als Fehler nur dieser Anfrage: {_e_tot!r}"
-        assert _geworfen, "ein toter Port endet wieder als 'Passwort falsch'"
+                f"a dead port counts as an error of this request only: {_e_tot!r}"
+        assert _geworfen, "a dead port ends as 'wrong password' again"
     _zweiter = socket.socket()
     _zweiter.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     try:
@@ -1223,9 +1223,9 @@ if HAT_LDAP3:
     finally:
         _zweiter.close()
     _s.close()
-    assert _belegt, "der tote Port war während der Probe frei — eine parallele Suite hätte ihn nehmen können"
-    ok("F-23: echtes ldap3 gegen einen toten Port → VerzeichnisNichtErreichbar (Direkt- und Such-Bind)")
-    # Und ein abgewiesenes Passwort gegen einen ECHTEN Server bleibt None, nicht Ausfall.
+    assert _belegt, "the dead port was free during the probe — a parallel suite could have taken it"
+    ok("F-23: real ldap3 against a dead port → VerzeichnisNichtErreichbar (direct and search bind)")
+    # And a rejected password against a REAL server stays None, not outage.
     _sa, _pa = lauscher()
 
     def _lehnt_ab(sock):
@@ -1239,7 +1239,7 @@ if HAT_LDAP3:
             conn.recv(8192)
             conn.close()
         except Exception:
-            pass   # der Client hat aufgelegt — für diesen Attrappen-Server kein Fehler
+            pass   # the client hung up — no error for this stub server
 
     threading.Thread(target=_lehnt_ab, args=(_sa,), daemon=True).start()
     assert LDAPClient(TinySesamConfig(
@@ -1248,17 +1248,17 @@ if HAT_LDAP3:
         ldap_user_dn_template="uid={username},ou=people,dc=example,dc=com")).authenticate(
         "alice", "falsch") is None
     _sa.close()
-    ok("F-23: invalidCredentials vom echten Server bleibt None (Fehlversuch), kein Ausfall")
+    ok("F-23: invalidCredentials from the real server stays None (failed attempt), no outage")
 
-    # Zweites Schloss, gegen ECHTES ldap3 und ein Verzeichnis auf Loopback, das sich wie slapd
-    # verhält: Eine PDU über seiner Grenze beendet die Verbindung ohne Antwort. Die Grenze ist hier
-    # klein gestellt, damit eine Eingabe UNTER der Eingabegrenze sie reisst — so wie jeder
-    # künftige Weg, eine einzelne Anfrage abbrechen zu lassen. Bricht das Verzeichnis nur diese
-    # eine Anfrage ab (schnell, nachdem Eingaben des Anmeldenden gesendet waren), ist das kein
-    # Ausfall des Verzeichnisses: 503 für diese Anfrage, der Merker bleibt aus, die nächste
-    # Anmeldung fragt normal. (Mutationsprobe: in `check_ldap` `AnfrageAbgebrochen` wie jeden
-    # Ausfall behandeln (`merker.ausgefallen`) → alice bekommt 503 → rot; in `authenticate` die
-    # Unterscheidung streichen (immer `VerzeichnisNichtErreichbar`) → rot.)
+    # Second lock, against REAL ldap3 and a directory on loopback that behaves like slapd:
+    # A PDU over its limit ends the connection without a response. The limit is set small here
+    # so that an input BELOW the input limit breaks it — like any
+    # future way of making a single request abort. If the directory aborts only this
+    # one request (quickly, after the sign-in person's inputs had been sent), that is not an
+    # outage of the directory: 503 for this request, the flag stays off, the next
+    # sign-in asks normally. (Mutation probe: in `check_ldap` treat `AnfrageAbgebrochen` like any
+    # outage (`merker.ausgefallen`) → alice gets 503 → red; in `authenticate` remove the
+    # distinction (always `VerzeichnisNichtErreichbar`) → red.)
     def _tlv_lesen(d, i):
         tag = d[i]
         i += 1
@@ -1272,9 +1272,9 @@ if HAT_LDAP3:
         return tag, d[i:i + n], i + n
 
     class _MiniVerzeichnis:
-        """LDAP-Verzeichnis auf Loopback mit echten PDUs. `grenze` wie slapds
-        `sockbuf_max_incoming` (eine grössere PDU beendet die Verbindung ohne Antwort);
-        `haengt=True`: nimmt Verbindungen an, liest mit, antwortet nie."""
+        """LDAP directory on loopback with real PDUs. `grenze` like slapd's
+        `sockbuf_max_incoming` (a larger PDU ends the connection without a response);
+        `haengt=True`: accepts connections, reads along, never answers."""
         NUTZER = {b"uid=alice,ou=people,dc=example,dc=com": b"richtig"}
 
         def __init__(self, grenze=262143, haengt=False):
@@ -1315,7 +1315,7 @@ if HAT_LDAP3:
                         n, kopf = puffer[1], 2
                     if kopf + n > self.grenze:
                         self.log.append(f"zu gross {kopf + n}")
-                        return                      # Verbindung zu, keine Antwort — wie slapd
+                        return                      # connection closed, no response — like slapd
                     while len(puffer) < kopf + n:
                         puffer = self._mehr(conn, puffer)
                     pdu, puffer = puffer[:kopf + n], puffer[kopf + n:]
@@ -1339,7 +1339,7 @@ if HAT_LDAP3:
                     else:
                         return
             except (OSError, EOFError):
-                pass   # Attrappen-Server: der Client hat aufgelegt
+                pass   # stub server: the client hung up
             finally:
                 conn.close()
 
@@ -1365,10 +1365,10 @@ if HAT_LDAP3:
     _v = _MiniVerzeichnis(grenze=900)
     _auth_v, _app_v, _db_v = _echt_bauen(_v.port)
     try:
-        assert _echt_anmelden(_app_v, "alice", "richtig", "192.0.2.10") == 303, "Vorbedingung: alice kommt hinein"
+        assert _echt_anmelden(_app_v, "alice", "richtig", "192.0.2.10") == 303, "precondition: alice gets in"
         _grenze_v = __import__("tinysesam.ldap_", fromlist=["x"])
-        _lang_v = "x" * 1000                  # unter der Eingabegrenze, über der PDU-Grenze des Verzeichnisses
-        assert len(_lang_v) <= getattr(_grenze_v, "LDAP_PASSWORT_MAX", 10 ** 9), "Vorbedingung: Eingabe unter der Grenze"
+        _lang_v = "x" * 1000                  # below the input limit, above the directory's PDU limit
+        assert len(_lang_v) <= getattr(_grenze_v, "LDAP_PASSWORT_MAX", 10 ** 9), "precondition: input below the limit"
         _t_v = time.monotonic()
         _puffer_v = _io23.StringIO()
         _haken_v = _log23.StreamHandler(_puffer_v)
@@ -1377,56 +1377,56 @@ if HAT_LDAP3:
             _abbruch_v = _echt_anmelden(_app_v, "bob", _lang_v, "203.0.113.66")
         finally:
             _seclog23.removeHandler(_haken_v)
-        # Im Sicherheits-Log unterscheidbar — auch nach dem Kürzen des Grundes auf 64 Zeichen.
-        assert "grund=LDAP: nur diese Anfrage abgebrochen" in _puffer_v.getvalue(), _puffer_v.getvalue()
-        assert "LDAP-Verzeichnis nicht erreichbar (" not in _puffer_v.getvalue(), "der Merker hat gemeldet"
-        assert any(z.startswith("zu gross") for z in _v.log), f"Vorbedingung: kein Abbruch im Verzeichnis: {_v.log}"
-        assert _abbruch_v == 503, f"die abgebrochene Anfrage selbst: {_abbruch_v}"
+        # Distinguishable in the security log — even after the reason is truncated to 64 characters.
+        assert "reason=LDAP: only this request aborted" in _puffer_v.getvalue(), _puffer_v.getvalue()
+        assert "LDAP directory unreachable (" not in _puffer_v.getvalue(), "the flag reported"
+        assert any(z.startswith("zu gross") for z in _v.log), f"precondition: no abort in the directory: {_v.log}"
+        assert _abbruch_v == 503, f"the aborted request itself: {_abbruch_v}"
         _vorher_v = len(_v.log)
         _danach_v = [_echt_anmelden(_app_v, "alice", "richtig", f"192.0.2.{20 + i}") for i in range(3)]
         assert _danach_v == [303] * 3, \
-            f"EINE abgebrochene Anfrage legt die LDAP-Anmeldung aller still: {_danach_v} ({_v.log[_vorher_v:]})"
+            f"ONE aborted request takes down the LDAP sign-in of everyone: {_danach_v} ({_v.log[_vorher_v:]})"
         assert _v.log[_vorher_v:].count("bind uid=alice,ou=people,dc=example,dc=com ok") == 3, _v.log[_vorher_v:]
-        assert time.monotonic() - _t_v < 5, "der Abbruch hat gehangen"
+        assert time.monotonic() - _t_v < 5, "the abort hung"
     finally:
         _v.schliessen()
         os.remove(_db_v)
-    ok("eine einzelne Anfrage, die das Verzeichnis abbricht, schaltet den Merker nicht scharf")
+    ok("a single request that the directory aborts does not arm the flag")
 
-    # Die Eingabegrenze gilt auch, wenn jemand `LDAPClient` direkt benutzt: Das Verzeichnis sieht
-    # die übergrosse Eingabe gar nicht. (Mutationsprobe: in `LDAPClient.authenticate` die Prüfung
-    # `eingabe_zu_lang` streichen → das Verzeichnis wird gefragt → rot.)
+    # The input limit also applies if someone uses `LDAPClient` directly: The directory does not see
+    # the oversized input at all. (Mutation probe: in `LDAPClient.authenticate` remove the check
+    # `eingabe_zu_lang` → the directory is asked → red.)
     _v2 = _MiniVerzeichnis()
     try:
         _cfg_v2 = TinySesamConfig(db_path=":memory:", password_enabled=True, ldap_enabled=True,
                                   ldap_url=f"ldap://127.0.0.1:{_v2.port}", ldap_allow_plaintext=True,
                                   ldap_user_dn_template="uid={username},ou=people,dc=example,dc=com")
-        assert LDAPClient(_cfg_v2).authenticate("alice", "richtig"), "Vorbedingung: der Server antwortet"
+        assert LDAPClient(_cfg_v2).authenticate("alice", "richtig"), "precondition: the server answers"
         _vorher_v2 = _v2.verbindungen
         assert LDAPClient(_cfg_v2).authenticate("alice", "x" * 270_000) is None
         assert LDAPClient(_cfg_v2).authenticate("n" * 270_000, "richtig") is None
         time.sleep(0.2)
-        assert _v2.verbindungen == _vorher_v2, f"übergrosse Eingaben erreichten das Verzeichnis: {_v2.log}"
+        assert _v2.verbindungen == _vorher_v2, f"oversized inputs reached the directory: {_v2.log}"
     finally:
         _v2.schliessen()
-    ok("LDAPClient: übergrosse Eingaben erreichen das Verzeichnis nicht (None)")
+    ok("LDAPClient: oversized inputs do not reach the directory (None)")
 
-    # Die Unterscheidung hängt am SCHRITT, nicht bloss an der Fehlerart: Beendet das Verzeichnis
-    # die Verbindung schon bei StartTLS, meldet ldap3 dieselbe `LDAPSessionTerminatedByServerError`
-    # wie beim abgebrochenen Bind — nur ist bis dahin nichts vom Anmeldenden gesendet. Das ist
-    # ein Ausfall des Verzeichnisses (etwa ein TLS-Vorbau ohne Backend), kein Abbruch dieser
-    # Anfrage. (Mutationsprobe: in `authenticate` Verbindung und StartTLS schon als
-    # Eingabe-Schritt führen (`eingabe, seit = True, …` vor `conn.open()`) → rot.)
+    # The distinction hangs on the STEP, not merely on the error kind: If the directory ends
+    # the connection already at StartTLS, ldap3 reports the same `LDAPSessionTerminatedByServerError`
+    # as for the aborted bind — only that nothing from the person signing in has been sent by then. That is
+    # an outage of the directory (e.g. a TLS front end without backend), not an abort of this
+    # request. (Mutation probe: in `authenticate` treat connection and StartTLS already as
+    # input step (`eingabe, seit = True, …` before `conn.open()`) → red.)
     _st, _pst = lauscher()
 
     def _schliesst_bei_starttls(sock):
         try:
             conn, _ = sock.accept()
             conn.settimeout(5)
-            conn.recv(8192)                        # ExtendedRequest StartTLS — und zu
+            conn.recv(8192)                        # ExtendedRequest StartTLS — and close
             conn.close()
         except OSError:
-            pass   # Attrappen-Server: der Client hat aufgelegt
+            pass   # stub server: the client hung up
 
     threading.Thread(target=_schliesst_bei_starttls, args=(_st,), daemon=True).start()
     try:
@@ -1439,17 +1439,17 @@ if HAT_LDAP3:
         _e_st = _e
     finally:
         _st.close()
-    assert _e_st is not None, "Vorbedingung: der Abbruch bei StartTLS wurde nicht gemeldet"
+    assert _e_st is not None, "precondition: the abort at StartTLS was not reported"
     assert not isinstance(_e_st, _ldap_mod.AnfrageAbgebrochen), \
-        f"ein Abbruch bei StartTLS (vor jeder Eingabe) gilt als Fehler nur dieser Anfrage: {_e_st!r}"
-    ok("Abbruch schon bei StartTLS: Ausfall des Verzeichnisses, nicht bloss dieser Anfrage")
+        f"an abort at StartTLS (before any input) counts as an error of this request only: {_e_st!r}"
+    ok("Abort already at StartTLS: outage of the directory, not merely of this request")
 
-    # Gegenprobe: Ein Verzeichnis, das annimmt und nie antwortet (Prozess hängt, Backend
-    # blockiert), bleibt ein Ausfall des GANZEN Verzeichnisses — auch wenn es erst nach dem
-    # Senden des Benutzer-Binds hängt. Sonst hinge jeder Anlauf wieder bis zum Timeout (F-23 ×
-    # R7-2). Die Uhren sind klein gestellt, damit der Test nicht zehn Sekunden wartet.
-    # (Mutationsprobe: in `authenticate` die Dauer nicht beachten — jeden Fehler nach gesendeter
-    # Eingabe als `AnfrageAbgebrochen` melden → die zweite Anmeldung fragt wieder → rot.)
+    # Counter-check: A directory that accepts and never answers (process hangs, backend
+    # blocked) remains an outage of the WHOLE directory — even if it only hangs after
+    # the user bind was sent. Otherwise every attempt would again hang until the timeout (F-23 ×
+    # R7-2). The clocks are set small so that the test does not wait ten seconds.
+    # (Mutation probe: in `authenticate` ignore the duration — report every error after the input was sent
+    # as `AnfrageAbgebrochen` → the second sign-in asks again → red.)
     _ldap_mod_h = __import__("tinysesam.ldap_", fromlist=["x"])
     _alt_h = {n: getattr(_ldap_mod_h, n) for n in ("VERBINDUNGS_TIMEOUT", "HAENGER_SEK") if hasattr(_ldap_mod_h, n)}
     _ldap_mod_h.VERBINDUNGS_TIMEOUT, _ldap_mod_h.HAENGER_SEK = 1, 0.3
@@ -1458,13 +1458,13 @@ if HAT_LDAP3:
     try:
         _t_h = time.monotonic()
         assert _echt_anmelden(_app_h, "alice", "richtig", "192.0.2.10") == 503
-        assert time.monotonic() - _t_h >= 0.9, "Vorbedingung: die erste Frage hing nicht bis zum Timeout"
-        assert any(z.startswith("haengt 0x60") for z in _h.log), f"Vorbedingung: der Bind kam an: {_h.log}"
+        assert time.monotonic() - _t_h >= 0.9, "precondition: the first query did not hang until the timeout"
+        assert any(z.startswith("haengt 0x60") for z in _h.log), f"precondition: the bind arrived: {_h.log}"
         _n_h = _h.verbindungen
         _t_h = time.monotonic()
         assert _echt_anmelden(_app_h, "alice", "richtig", "192.0.2.11") == 503
-        assert _h.verbindungen == _n_h, "nach einem Hänger beim Benutzer-Bind wurde das Verzeichnis gleich wieder gefragt"
-        assert time.monotonic() - _t_h < 0.9, "die zweite Anmeldung hing wieder"
+        assert _h.verbindungen == _n_h, "after a hang at the user bind the directory was asked again right away"
+        assert time.monotonic() - _t_h < 0.9, "the second sign-in hung again"
     finally:
         for _n, _w in _alt_h.items():
             setattr(_ldap_mod_h, _n, _w)
@@ -1472,9 +1472,9 @@ if HAT_LDAP3:
             delattr(_ldap_mod_h, "HAENGER_SEK")
         _h.schliessen()
         os.remove(_db_h)
-    ok("ein Verzeichnis, das beim Benutzer-Bind hängt, schaltet den Merker weiter scharf")
+    ok("a directory that hangs at the user bind still arms the flag")
 
-# ---------- F-29: LDAP- und lokale Anmeldung sind im Audit-Log unterscheidbar ----------
+# ---------- F-29: LDAP and local sign-in are distinguishable in the audit log ----------
 db29, auth29, c29 = build()
 auth29.ldap = FakeLDAP({"ldapnutzer": {"password": "lp", "id": "l1"}})
 c29.post("/auth/login", data={"username": "ldapnutzer", "password": "lp"}, follow_redirects=False)
@@ -1485,13 +1485,13 @@ c29.post("/auth/login", data={"username": "niemand", "password": "x"})
 _zeilen29 = auth29.store.recent_audit(50)
 _ereignisse = {(z["event"], z["username"]) for z in _zeilen29}
 assert ("login_ldap", "ldapnutzer") in _ereignisse, _ereignisse
-assert ("login_lokal", "admin") in _ereignisse, _ereignisse
-assert ("login_ldap", "admin") not in _ereignisse and ("login_lokal", "ldapnutzer") not in _ereignisse
+assert ("login_local", "admin") in _ereignisse, _ereignisse
+assert ("login_ldap", "admin") not in _ereignisse and ("login_local", "ldapnutzer") not in _ereignisse
 _fail29 = [z for z in _zeilen29 if z["event"] == "login_fail" and z["username"] == "niemand"]
-assert _fail29 and "quelle=lokal+ldap" in (_fail29[0]["detail"] or ""), _fail29
-ok("F-29: login_ldap / login_lokal getrennt, ein Fehlversuch nennt quelle=lokal+ldap")
+assert _fail29 and "source=local+ldap" in (_fail29[0]["detail"] or ""), _fail29
+ok("F-29: login_ldap / login_local separate, a failed attempt names source=local+ldap")
 os.remove(db29)
-# Ohne LDAP bleibt das Audit-Log wie bisher — keine neue Zeile für jeden lokalen Login.
+# Without LDAP the audit log stays as before — no new line for every local login.
 db29b = os.path.join(tempfile.mkdtemp(), "t.db")
 auth29b = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db29b, rp_name="Test",
                                     passkey_enabled=False, cookie_secure=False))
@@ -1501,23 +1501,23 @@ _app29b.include_router(auth29b.router())
 TestClient(_app29b).post("/auth/login", data={"username": "admin", "password": "lokalpw"},
                          follow_redirects=False)
 assert not any(z["event"].startswith("login_l") for z in auth29b.store.recent_audit(20))
-ok("F-29: ohne ldap_enabled keine Zusatzzeile")
+ok("F-29: without ldap_enabled no additional line")
 os.remove(db29b)
 
-# ---------- F-30: die Konfigurationsprüfung nennt keine Abhilfe, die sie selbst ablehnt ----------
-from tinysesam import konfigpruefung as _kp  # noqa: E402
-_f30, _w30 = _kp.pruefe(TinySesamConfig(db_path=":memory:", password_enabled=False,
+# ---------- F-30: the configuration check names no remedy that it rejects itself ----------
+from tinysesam import config_check as _kp  # noqa: E402
+_f30, _w30 = _kp.check_config(TinySesamConfig(db_path=":memory:", password_enabled=False,
                                         passkey_enabled=False, ldap_enabled=True,
                                         ldap_url="ldaps://ldap.example.com"))
-_meldung30 = next(f for f in _f30 if "Keine einzige Anmelde-Methode" in f)
-assert "ldap_enabled=True," not in _meldung30.split("LDAP allein")[0], _meldung30
-assert "password_enabled=True" in _meldung30.split("LDAP allein")[1], _meldung30
-assert any("ldap_enabled=True, aber password_enabled=False" in w for w in _w30), _w30
-# Gegenprobe: die genannte Abhilfe wird tatsächlich angenommen.
-_f30b, _w30b = _kp.pruefe(TinySesamConfig(db_path=":memory:", password_enabled=True,
+_meldung30 = next(f for f in _f30 if "Not a single login method" in f)
+assert "ldap_enabled=True," not in _meldung30.split("LDAP alone")[0], _meldung30
+assert "password_enabled=True" in _meldung30.split("LDAP alone")[1], _meldung30
+assert any("ldap_enabled=True, but password_enabled=False" in w for w in _w30), _w30
+# Counter-check: the named remedy is actually accepted.
+_f30b, _w30b = _kp.check_config(TinySesamConfig(db_path=":memory:", password_enabled=True,
                                           passkey_enabled=False, ldap_enabled=True,
                                           ldap_url="ldaps://ldap.example.com"))
 assert not any("Keine einzige" in f for f in _f30b) and not any("password_enabled=False" in w for w in _w30b)
-ok("F-30: 'keine Methode' nennt ldap_enabled nicht mehr als Abhilfe; LDAP ohne Passwortfeld warnt")
+ok("F-30: 'no method' no longer names ldap_enabled as a remedy; LDAP without password field warns")
 
 print("\nLDAP-BACKEND OK ✅")

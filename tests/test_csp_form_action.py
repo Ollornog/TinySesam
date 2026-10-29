@@ -1,15 +1,15 @@
-"""CSP `form-action` im ECHTEN Browser (0.24.13, DAST 2026-10-11, ZAP 10055-13).
+"""CSP `form-action` in a REAL browser (0.24.13, DAST 2026-10-11, ZAP 10055-13).
 
-`form-action` fällt nicht auf `default-src` zurück. Fehlt die Direktive, darf ein eingeschleustes Formular überallhin
-senden. Chrome prüft sie auch an der Weiterleitung NACH dem Absenden — eine Liste nur mit `'self'` hätte deshalb jede
-Anmeldung mit `next` auf einen geschützten Host, das Abmelden beim Provider und „Weiter als …“ gebrochen.
+`form-action` does not fall back to `default-src`. If the directive is missing, an injected form may submit
+anywhere. Chrome also checks it on the redirect AFTER submitting — a list with only `'self'` would therefore have broken every
+sign-in with `next` to a protected host, signing out at the provider and “Weiter als …”.
 
-  (a) Kopf: `form-action 'self'` plus base_url, Issuer und `trusted_redirect_hosts` als `name:*`
-  (b) Chrome: Anmeldung mit `next` auf einen erlaubten zweiten Host → die Weiterleitung kommt dort an
-  (c) Chrome: ein Formular an einen fremden Ursprung wird blockiert — der fremde Server sieht keine Anfrage
+  (a) header: `form-action 'self'` plus base_url, issuer and `trusted_redirect_hosts` as `name:*`
+  (b) Chrome: sign-in with `next` to an allowed second host → the redirect arrives there
+  (c) Chrome: a form to a foreign origin is blocked — the foreign server sees no request
 
-Mutationen 2026-10-11: Hosts aus `trusted_redirect_hosts` nicht in form-action → (b) rot; `form-action` ganz weg → (c)
-rot.
+Mutations 2026-10-11: hosts from `trusted_redirect_hosts` not in form-action → (b) red; `form-action` removed entirely → (c)
+red.
 """
 import asyncio
 import http.server
@@ -38,7 +38,7 @@ from fastapi import FastAPI  # noqa: E402
 from tinysesam import TinySesam, TinySesamConfig  # noqa: E402
 
 CHROME = next((b for b in ("google-chrome", "chrome", "chromium", "chromium-browser") if shutil.which(b)), None)
-braucht(CHROME, "kein Chrome gefunden")
+braucht(CHROME, "no Chrome found")
 
 
 def ok(text):
@@ -53,7 +53,7 @@ def _sock():
     return s
 
 
-# Ziel-Server auf einem zweiten Port: als `localhost` erlaubt, als `127.0.0.1` fremd (anderer Ursprung als die App).
+# Target server on a second port: allowed as `localhost`, foreign as `127.0.0.1` (different origin than the app).
 ZIEL_AUFRUFE = []
 
 
@@ -98,7 +98,7 @@ for _ in range(100):
     except Exception:
         time.sleep(0.1)
 else:
-    raise RuntimeError("App startet nicht")
+    raise RuntimeError("App does not start")
 
 print("CSP form-action")
 
@@ -128,7 +128,7 @@ def _ws_url():
             return [t for t in tabs if t["type"] == "page"][0]["webSocketDebuggerUrl"]
         except Exception:
             time.sleep(0.1)
-    raise RuntimeError("Chrome antwortet nicht")
+    raise RuntimeError("Chrome does not respond")
 
 
 async def _lauf():
@@ -155,7 +155,7 @@ async def _lauf():
             return False
 
         await cmd("Page.enable")
-        # (b) Anmeldung mit next auf den erlaubten zweiten Host
+        # (b) Sign-in with next to the allowed second host
         ziel = f"http://localhost:{ZIEL}/ziel"
         await cmd("Page.navigate", url=f"{BASE}/auth/login?next={ziel}")
         await warte_auf(lambda: js("!!document.querySelector('input[name=password]')"))
@@ -164,10 +164,10 @@ async def _lauf():
                  "document.querySelector('input[name=password]').form.submit()")
         angekommen = await warte_auf(lambda: js(f"location.href === {json.dumps(ziel)}"))
         assert angekommen, (await js("location.href"), ZIEL_AUFRUFE)
-        ok("Anmeldung mit next auf einen erlaubten Host: Chrome folgt der Weiterleitung")
+        ok("sign-in with next to an allowed host: Chrome follows the redirect")
 
-        # (c) eingeschleustes Formular an einen fremden Ursprung
-        # Abgemeldet, sonst leitet /auth/login weiter — auf eine Seite der Test-App ohne CSP, und die Probe misst nichts.
+        # (c) injected form to a foreign origin
+        # Signed out, otherwise /auth/login redirects — to a page of the test app without CSP, and the probe measures nothing.
         await cmd("Network.enable")
         await cmd("Network.clearBrowserCookies")
         await cmd("Page.navigate", url=f"{BASE}/auth/login")
@@ -179,7 +179,7 @@ async def _lauf():
         await asyncio.sleep(2)
         assert not any(p == "/fremd" for _, p in ZIEL_AUFRUFE[vorher:]), ZIEL_AUFRUFE
         assert (await js("location.href")).startswith(BASE), await js("location.href")
-        ok("Formular an einen fremden Ursprung: blockiert, der fremde Server sieht nichts")
+        ok("form to a foreign origin: blocked, the foreign server sees nothing")
 
 
 try:

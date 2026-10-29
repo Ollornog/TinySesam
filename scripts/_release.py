@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
-"""release — die Handgriffe vor einem Release erledigen und prüfen. stdlib-only.
+"""release — do the manual steps before a release and check them. stdlib-only.
 
-    python3 scripts/_release.py 0.17.0          Version setzen, CHANGELOG schliessen
-    python3 scripts/_release.py --pruefen       nur prüfen, nichts ändern
+    python3 scripts/_release.py 0.17.0          set the version, close the CHANGELOG
+    python3 scripts/_release.py --pruefen       check only, change nothing
 
-Die Version steht an sechs Stellen (Paket, Modul, zwei READMEs mehrfach, Compose-Beispiel) und
-im CHANGELOG. Von Hand hat das bisher funktioniert, weil ein Test es erzwingt — aber „funktioniert,
-weil ein Test schimpft" ist kein Verfahren, sondern eine Schleife aus Fehler und Korrektur. Der
-Meilenstein 1.0 verlangt ausdrücklich, dass ein Release ohne Handgriffe durchläuft
-(`backlog/M-1-api-stabil-1-0.md`).
+The version appears in six places (package, module, two READMEs several times, compose example) and
+in the CHANGELOG. By hand this has worked so far because a test enforces it — but "works because
+a test complains" is not a procedure, it is a loop of error and correction. Milestone 1.0
+explicitly requires that a release runs through without manual steps
+(`backlog/M-1-api-stable-1-0.md`).
 
-Was dieses Skript BEWUSST NICHT tut: taggen und pushen. Den Knopf drückt ein Mensch — dieselbe
-Trennung wie beim Ausrollen (Delivery, nicht Deployment). Es bereitet vor und sagt, was folgt.
+What this script deliberately does NOT do: tag and push. A human presses the button — the same
+separation as for rollout (delivery, not deployment). It prepares and says what follows.
 """
 from __future__ import annotations
 
@@ -21,8 +21,8 @@ import re
 import sys
 
 WURZEL = pathlib.Path(__file__).resolve().parent.parent
-# Wo überall eine Version steht. Die READMEs nennen sie mehrfach (Git-Ref, Wheel-URL, Abbild-Tag,
-# Verifikations-Befehle) — deshalb wird ersetzt, nicht an einer Zeilennummer geschraubt.
+# Everywhere a version appears. The READMEs name it several times (git ref, wheel URL, image tag,
+# verification commands) — so we replace, rather than patch a fixed line number.
 DATEIEN = ["pyproject.toml", "tinysesam/__init__.py", "README.md", "i18n/README.de.md",
            "deploy/forward-auth/docker-compose.yml"]
 CHANGELOG = WURZEL / "CHANGELOG.md"
@@ -35,41 +35,41 @@ def aktuelle_version() -> str:
 
 
 def pruefen() -> int:
-    """Stimmt alles überein? Gibt die Zahl der Beanstandungen zurück."""
+    """Does everything match? Returns the number of complaints."""
     version = aktuelle_version()
     fehler = []
 
     modul = (WURZEL / "tinysesam/__init__.py").read_text(encoding="utf-8")
     if f'__version__ = "{version}"' not in modul:
-        fehler.append(f"tinysesam/__init__.py nennt nicht {version}")
+        fehler.append(f"tinysesam/__init__.py does not name {version}")
 
     for name in DATEIEN[2:]:
         text = (WURZEL / name).read_text(encoding="utf-8")
-        # Eine ältere Version in einem Beispiel ist kein Schönheitsfehler: Sie schickt Nutzer auf
-        # einen Stand, den dieses Release gerade ersetzt.
+        # An older version in an example is not a cosmetic flaw: it sends users to a state
+        # that this release is just replacing.
         alt = {v for v in re.findall(r"tinysesam[:@/-]v?(\d+\.\d+\.\d+)", text)} - {version}
         if alt:
-            fehler.append(f"{name} verweist noch auf {', '.join(sorted(alt))}")
+            fehler.append(f"{name} still refers to {', '.join(sorted(alt))}")
 
     text = CHANGELOG.read_text(encoding="utf-8")
     if not re.search(rf"^## \[{re.escape(version)}\] — \d{{4}}-\d{{2}}-\d{{2}}", text, re.M):
-        fehler.append(f"CHANGELOG hat keinen abgeschlossenen Abschnitt [{version}] — <Datum>")
+        fehler.append(f"CHANGELOG has no closed section [{version}] — <date>")
 
     for f in fehler:
         print(f"  ✗ {f}")
     if not fehler:
-        print(f"  ✓ alles auf {version}: Paket, Modul, beide READMEs, Compose-Beispiel, CHANGELOG")
+        print(f"  ✓ everything on {version}: package, module, both READMEs, compose example, CHANGELOG")
     return len(fehler)
 
 
 def ersetze_pins(text: str, alt: str, neu: str) -> tuple[str, int]:
-    """Die Version nur dort ersetzen, wo sie ein **Pin** ist — nicht in erzählendem Text.
+    """Replace the version only where it is a **pin** — not in narrative text.
 
-    Bis 0.20.0 ersetzte das Skript jede Zeichenkette `alt` in den READMEs. Damit wurde aus
-    „0.19.0 hob die Datenbank auf Schema 8“ ein falsches „0.20.0 hob …“ und aus „bis 0.19.0
-    landete man im selben Konto“ eine Aussage über die neue Fassung. Ein Pin erkennt man an dem,
-    was davor steht: `@v`, `:v`, `/v` (Git-Ref, Abbild-Tag, Release-Pfad), `tinysesam-` (Wheel),
-    `==` (PyPI), und in `pyproject.toml`/`__init__.py` an der Zuweisung."""
+    Up to 0.20.0 the script replaced every occurrence of the string `alt` in the READMEs. That
+    turned "0.19.0 upgraded the database to schema 8" into a false "0.20.0 upgraded …" and
+    "up to 0.19.0 you ended up in the same account" into a statement about the new version. A pin
+    is recognised by what precedes it: `@v`, `:v`, `/v` (git ref, image tag, release path),
+    `tinysesam-` (wheel), `==` (PyPI), and in `pyproject.toml`/`__init__.py` by the assignment."""
     muster = re.compile(r'(?:(?<=@v)|(?<=:v)|(?<=/v)|(?<=tinysesam-)|(?<===)|(?<=version = ")'
                         r'|(?<=__version__ = "))' + re.escape(alt) + r"(?![\d.])")
     return muster.subn(neu, text)
@@ -78,7 +78,7 @@ def ersetze_pins(text: str, alt: str, neu: str) -> tuple[str, int]:
 def setzen(neu: str) -> int:
     alt = aktuelle_version()
     if alt == neu:
-        print(f"  Version ist bereits {neu} — nichts zu tun.")
+        print(f"  Version is already {neu} — nothing to do.")
         return 0
     print(f"  {alt} → {neu}")
 
@@ -91,23 +91,23 @@ def setzen(neu: str) -> int:
 
     text = CHANGELOG.read_text(encoding="utf-8")
     heute = dt.date.today().isoformat()
-    # Der CHANGELOG ist deutsch und nennt den Abschnitt „[Unveröffentlicht]“; bis 0.20.0 suchte
-    # das Skript nur die englische Form und bat bei jedem Release um Handarbeit.
-    for offen in ("## [Unveröffentlicht]", "## [Unreleased]"):
+    # The CHANGELOG is English (since T-29; before, German with "[Unveröffentlicht]") and names the open section
+    # "[Unreleased]".
+    for offen in ("## [Unreleased]",):
         if offen in text:
             CHANGELOG.write_text(text.replace(offen, f"## [{neu}] — {heute}", 1), encoding="utf-8")
             print(f"    CHANGELOG: {offen[3:]} → [{neu}] — {heute}")
             break
     else:
-        print("    CHANGELOG: kein [Unveröffentlicht]-Abschnitt gefunden — bitte von Hand nachsehen")
+        print("    CHANGELOG: no [Unreleased] section found — please check by hand")
 
-    print("\n  Was noch fehlt (und ein Mensch entscheiden soll):")
-    print("    1. Im CHANGELOG-Abschnitt oben zusammenfassen, WER dieses Release braucht.")
-    print("       Bei einem Bruch gehört die Warnung in die erste Zeile.")
-    print("    2. Suite fahren, Release-PR nach main, mergen.")
-    print(f"    3. Tag setzen: git tag -a v{neu} -m \"…\" && git push origin v{neu}")
-    print("    4. Danach die Artefakte selbst prüfen — nicht die Ampel:")
-    print("       gh release view · Manifest (beide Architekturen, kein latest) ·")
+    print("\n  What is still missing (and a human should decide):")
+    print("    1. Summarise at the top of the CHANGELOG section WHO needs this release.")
+    print("       For a breaking change, the warning belongs in the first line.")
+    print("    2. Run the suite, open the release PR against main, merge it.")
+    print(f"    3. Set the tag: git tag -a v{neu} -m \"…\" && git push origin v{neu}")
+    print("    4. Then check the artifacts yourself — not the traffic light:")
+    print("       gh release view · manifest (both architectures, no latest) ·")
     print("       gh attestation verify")
     return 0
 
@@ -119,7 +119,7 @@ def main(argv) -> int:
     if argv[0] == "--pruefen":
         return 1 if pruefen() else 0
     if not SEMVER.match(argv[0]):
-        print(f"  '{argv[0]}' ist keine Version der Form X.Y.Z")
+        print(f"  '{argv[0]}' is not a version of the form X.Y.Z")
         return 2
     return setzen(argv[0])
 

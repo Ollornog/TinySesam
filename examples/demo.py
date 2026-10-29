@@ -1,8 +1,8 @@
-"""Minimal-Beispiel: TinySesam vor eine FastAPI-App hängen.
+"""Minimal example: put TinySesam in front of a FastAPI app.
 
-    pip install -e '.[all]'          # oder ohne extras: nur Passwort+TOTP
+    pip install -e '.[all]'          # or without extras: password + TOTP only
     uvicorn examples.demo:app --reload
-    # → http://127.0.0.1:8000  (leitet zum Login; admin / geheim123)
+    # → http://127.0.0.1:8000  (redirects to the login; admin / geheim123)
 """
 from html import escape
 
@@ -15,11 +15,11 @@ auth = TinySesam(TinySesamConfig(
     db_path="/tmp/tinysesam-demo.db",
     rp_name="Demo",
     password_enabled=True,
-    passkey_enabled=False,     # für lokalen HTTP-Test aus; über HTTPS/echte Domain einschalten
+    passkey_enabled=False,     # off for a local HTTP test; enable over HTTPS / a real domain
     oidc_enabled=False,
-    cookie_secure=False,       # lokal ohne HTTPS
+    cookie_secure=False,       # local, without HTTPS
 ))
-auth.ensure_admin("admin", "geheim123")   # nur beim ersten Start
+auth.ensure_admin("admin", "geheim123")   # only on first start
 
 app = FastAPI()
 app.include_router(auth.router())
@@ -27,8 +27,8 @@ app.include_router(auth.router())
 
 @app.get("/", response_class=HTMLResponse)
 def home(user=Depends(auth.require_user)):
-    # `escape()`: Ein Benutzername ist ein freies Textfeld — TinySesam filtert ihn bewusst
-    # nicht, sondern erwartet, dass die App bei der AUSGABE escaped. Ohne das ist ein Konto
-    # namens `<script>…</script>` gespeichertes XSS, und dieses Beispiel wird kopiert.
-    return (f"<h1>Hallo {escape(user['username'])}</h1>"
-            f"<p><a href='/auth/totp/setup'>2FA einrichten</a> · <a href='/auth/logout'>Logout</a></p>")
+    # `escape()`: a username is a free text field — TinySesam deliberately does not filter it,
+    # but expects the app to escape on OUTPUT. Without that, an account named
+    # `<script>…</script>` is stored XSS, and this example gets copied.
+    return (f"<h1>Hello {escape(user['username'])}</h1>"
+            f"<p><a href='/auth/totp/setup'>Set up 2FA</a> · <a href='/auth/logout'>Logout</a></p>")

@@ -1,8 +1,8 @@
-"""CLI: `version` und das Wartungskommando `passwd` (Passwort offline neu setzen).
+"""CLI: `version` and the maintenance command `passwd` (reset a password offline).
 
-Hintergrund: Mit einem Preset ohne Mailer (local_accounts) sind „Passwort vergessen" und
-Magic-Link aus, und die Erst-Admin-Wege greifen nur, solange kein Admin existiert. Wer sein
-Admin-Passwort verliert, hatte damit keinen dokumentierten Weg zurück.
+Background: with a preset without a mailer (local_accounts) "forgot password" and the
+magic link are off, and the first-admin paths only work while no admin exists. Anyone who
+lost their admin password therefore had no documented way back.
 """
 import io
 import os
@@ -19,7 +19,7 @@ def ok(name):
 
 
 def cli(*argv, stdin=None):
-    """main() aufrufen, Ausgabe und Exit-Code einsammeln."""
+    """Call main(), collect output and exit code."""
     alt = sys.stdin
     if stdin is not None:
         sys.stdin = io.StringIO(stdin)
@@ -41,139 +41,139 @@ uid = auth.store.get_user_by_name("admin")["id"]
 
 code, aus = cli("version")
 assert code == 0 and aus.strip()
-ok("version gibt die installierte Version aus")
+ok("version prints the installed version")
 
 code, aus = cli("passwd", "--db", db, "--stdin", "admin", stdin="neues-geheim-lang-genug\n")
 assert code == 0, aus
 assert auth._check_password("admin", "neues-geheim-lang-genug")
 assert not auth._check_password("admin", "altes-geheim")
-ok("passwd setzt das Passwort (der Weg zurück ohne Mailer und ohne zweiten Admin)")
+ok("passwd sets the password (the way back without a mailer and without a second admin)")
 
-# offene Sitzungen gelten nach einem Credential-Wechsel nicht weiter
+# open sessions no longer apply after a credential change
 tok = auth.store.create_session(uid, 3600, True, "password")
 cli("passwd", "--db", db, "--stdin", "admin", stdin="noch-eins-geheim\n")
 assert auth.store.get_session(tok) is None
-ok("offene Sitzungen werden beendet (--keep-sessions lässt sie stehen)")
+ok("open sessions are ended (--keep-sessions leaves them alone)")
 
 tok = auth.store.create_session(uid, 3600, True, "password")
 cli("passwd", "--db", db, "--stdin", "--keep-sessions", "admin", stdin="und-noch-eins-lang\n")
 assert auth.store.get_session(tok) is not None
-ok("--keep-sessions behält sie")
+ok("--keep-sessions keeps them")
 
 assert any(a["event"] == "password_reset_cli" for a in auth.store.recent_audit(50))
-ok("der Eingriff steht im Audit-Log")
+ok("the intervention is in the audit log")
 
 code, aus = cli("passwd", "--db", db, "--stdin", "gibtsnicht", stdin="egal-egal-egal\n")
 assert code == 1 and "gibtsnicht" in aus
-ok("unbekanntes Konto → Fehlermeldung, Exit 1")
+ok("unknown account -> error message, exit 1")
 
 code, aus = cli("passwd", "--db", db + ".fehlt", "--stdin", "admin", stdin="egal-egal-egal\n")
-assert code == 1 and "Keine Datenbank" in aus
-assert not os.path.exists(db + ".fehlt")     # sqlite legt sonst still eine leere Datei an
-ok("falscher DB-Pfad → klare Meldung, keine leere Datenbank als Nebenwirkung")
+assert code == 1 and "No database at" in aus
+assert not os.path.exists(db + ".fehlt")     # otherwise sqlite silently creates an empty file
+ok("wrong DB path -> clear message, no empty database as a side effect")
 
 code, aus = cli("passwd", "--db", db, "--stdin", "admin", stdin="kurz\n")
-assert code == 1 and "zu kurz" in aus
+assert code == 1 and "too short" in aus
 assert auth._check_password("admin", "und-noch-eins-lang")
-ok("password_min_length gilt auch hier")
+ok("password_min_length applies here too")
 
-# Ohne Konfiguration weiss das CLI nicht, ob eine Kette einen zweiten Faktor erzwingt — es nimmt
-# die strengere Länge (B2-4): 15 Zeichen, solange niemand sie im Panel herunterstellt.
-code, aus = cli("passwd", "--db", db, "--stdin", "admin", stdin="Vierzehn-Zeich\n")   # 14 Zeichen
-assert code == 1 and "zu kurz (min. 15)" in aus, aus
-ok("passwd nimmt die Einfaktor-Länge (15), weil es die Kette nicht kennt")
-# (Mutationsprobe: in `_passwd` nur `password_min_length` lesen → rot.)
+# Without configuration the CLI does not know whether a chain enforces a second factor — it takes
+# the stricter length (B2-4): 15 characters, as long as nobody lowers it in the panel.
+code, aus = cli("passwd", "--db", db, "--stdin", "admin", stdin="Vierzehn-Zeich\n")   # 14 characters
+assert code == 1 and "too short (min. 15)" in aus, aus
+ok("passwd takes the single-factor length (15) because it does not know the chain")
+# (Mutation probe: read only `password_min_length` in `_passwd` -> red.)
 
-# Ab hier geht es um die Regel hinter der Länge (Blockliste, Kontext, Altwerte) — die kurzen
-# Beispiele dürfen nicht schon an der Einfaktor-Länge scheitern.
+# From here on it is about the rule behind the length (blocklist, context, legacy values) — the short
+# examples must not already fail on the single-factor length.
 auth.store.set_setting("password_min_length_single_factor", "8")
 
-# Dieselbe Regel wie im Web (B2-5/B2-13): Blockliste, Benutzername, Höchstlänge.
-for _schwach, _text in (("Passwort2026!", "leicht zu erraten"), ("admin-admin", "leicht zu erraten"),
-                        ("y" * 257, "zu lang")):
+# Same rule as on the web (B2-5/B2-13): blocklist, username, maximum length.
+for _schwach, _text in (("Passwort2026!", "too easy to guess"), ("admin-admin", "too easy to guess"),
+                        ("y" * 257, "too long")):
     code, aus = cli("passwd", "--db", db, "--stdin", "admin", stdin=_schwach + "\n")
     assert code == 1 and _text in aus, (_schwach[:20], aus)
 assert auth._check_password("admin", "und-noch-eins-lang")
-ok("passwd: Blockliste, Kontowort und Höchstlänge gelten auch offline")
+ok("passwd: blocklist, account word and maximum length apply offline too")
 
-# A-7: Die Betreiber-Blockliste und der Dienstname galten offline nicht — ein Passwort von der
-# eigenen Liste liess sich per CLI setzen. Jetzt über dieselben Werte wie in der Config.
+# A-7: The operator blocklist and the service name did not apply offline — a password from the
+# own list could be set via the CLI. Now via the same values as in the config.
 _liste = os.path.join(tempfile.mkdtemp(), "block.txt")
 with open(_liste, "wb") as _f:
-    _f.write(b"# Kommentar\nfirmengeheimnis\nsch\xf6nwetter99\n")   # zweite Zeile ist Latin-1
+    _f.write(b"# Kommentar\nfirmengeheimnis\nsch\xf6nwetter99\n")   # second line is Latin-1
 for _args, _pw in ((("--blocklist-file", _liste), "Firmengeheimnis2026!"),
                    (("--blocklist-file", _liste), "Schönwetter99"),
                    (("--rp-name", "Beispielportal"), "Beispielportal1!")):
     code, aus = cli("passwd", "--db", db, "--stdin", *_args, "admin", stdin=_pw + "\n")
-    assert code == 1 and "leicht zu erraten" in aus, (_args, _pw, aus)
+    assert code == 1 and "too easy to guess" in aus, (_args, _pw, aus)
 _von_der_liste = "Firmengeheimnis2026!"
 code, aus = cli("passwd", "--db", db, "--stdin", "admin", stdin=_von_der_liste + "\n")
-assert code == 0, aus    # Gegenprobe: ohne Schalter kennt das CLI die Liste nicht
+assert code == 0, aus    # control: without the switch the CLI does not know the list
 code, aus = cli("passwd", "--db", db, "--stdin", "--blocklist-file", _liste + ".fehlt", "admin",
                 stdin="noch-ein-anderes\n")
-assert code == 1 and "lässt sich nicht lesen" in aus, aus
+assert code == 1 and "cannot be read" in aus, aus
 assert auth._check_password("admin", _von_der_liste)
-ok("passwd liest --blocklist-file (auch Latin-1-Zeilen) und --rp-name wie die Config")
+ok("passwd reads --blocklist-file (also Latin-1 lines) and --rp-name like the config")
 
-# Die Mindestlänge liest das CLI wie das Web (T-13-Angriff, faktoren × konfiguration): Ein
-# Altwert aus einer Fassung ohne Grenzen (`password_min_length` = 4 oder 0) gilt im Web als 8
-# (`sec()` zieht ihn an die Grenze), das CLI las ihn roh und setzte Passwörter, die jede
-# Web-Setzstelle ablehnt.
+# The CLI reads the minimum length like the web (T-13 attack, factors x configuration): a
+# legacy value from a version without limits (`password_min_length` = 4 or 0) counts as 8 on
+# the web (`sec()` pulls it to the limit), the CLI read it raw and set passwords that every
+# web setter rejects.
 from tinysesam import security as _security
 
 for _altwert in ("4", "0"):
     auth.store.set_setting("password_min_length", _altwert)
-    code, aus = cli("passwd", "--db", db, "--stdin", "admin", stdin="k9T#q7\n")   # 6 Zeichen
-    assert code == 1 and "zu kurz (min. 8)" in aus, (_altwert, code, aus)
+    code, aus = cli("passwd", "--db", db, "--stdin", "admin", stdin="k9T#q7\n")   # 6 characters
+    assert code == 1 and "too short (min. 8)" in aus, (_altwert, code, aus)
     assert auth._sec("password_min_length") == 8 == _security.haertung_lesen(auth.store, "password_min_length")
     assert auth._check_password("admin", _von_der_liste)
-auth.store.set_setting("password_min_length", "12")                 # gültiger Wert: gilt wie im Web
-code, aus = cli("passwd", "--db", db, "--stdin", "admin", stdin="Elf-Zeichen\n")   # 11 Zeichen
-assert code == 1 and "zu kurz (min. 12)" in aus, (code, aus)
-auth.store._exec("DELETE FROM setting WHERE key='password_min_length'")   # zurück zur Vorgabe
+auth.store.set_setting("password_min_length", "12")                 # valid value: applies as on the web
+code, aus = cli("passwd", "--db", db, "--stdin", "admin", stdin="Elf-Zeichen\n")   # 11 characters
+assert code == 1 and "too short (min. 12)" in aus, (code, aus)
+auth.store._exec("DELETE FROM setting WHERE key='password_min_length'")   # back to the default
 auth.store._exec("DELETE FROM setting WHERE key='password_min_length_single_factor'")
-ok("passwd liest die Mindestlänge wie das Web (Altwert jenseits der Grenze gilt als Grenze)")
-# (Mutationsprobe: in `_passwd` wieder `int(store.get_setting("password_min_length") or …)` statt
-# `haertung_lesen` → rot.)
+ok("passwd reads the minimum length like the web (legacy value beyond the limit counts as the limit)")
+# (Mutation probe: in `_passwd` put back `int(store.get_setting("password_min_length") or …)` instead of
+# `haertung_lesen` -> red.)
 
-# Die Klasse dahinter: Jede Härtungs-Schwelle wird über `security.haertung_lesen` gelesen — ein
-# zweiter, roher Leseweg entschiede sonst mit dem schwächeren Wert. Geprüft wird jeder Lesezugriff
-# auf die Settings-Tabelle im Paket, nicht nur die Schreibweise, die der erste Fund benutzte
-# (zweite Angriffsrunde, konfig: `get_setting(key="…")`, ein Schlüssel über eine Variable und
-# `all_settings()[…]` kamen durch, und ein falscher Pfad hätte null Dateien geprüft — grün).
+# The class behind it: every hardening threshold is read via `security.haertung_lesen` — a
+# second, raw read path would otherwise decide with the weaker value. Every read access to the
+# settings table in the package is checked, not only the spelling the first finding used
+# (second attack round, konfig: `get_setting(key="…")`, a key via a variable and
+# `all_settings()[…]` got through, and a wrong path would have checked zero files — green).
 import ast as _ast
 import pathlib as _pl
 import re as _re
 
-#: Wo ein NICHT-literaler Schlüssel erlaubt ist (Datei, Funktion) — der gemeinsame Leseweg selbst.
+#: Where a NON-literal key is allowed (file, function) — the shared read path itself.
 _SETTING_FREIER_SCHLUESSEL = {("security.py", "haertung_lesen")}
-#: Wo `all_settings()` gerufen werden darf. Heute nirgends; wer es braucht, trägt die Stelle
-#: hier ein und begründet, warum dort keine Härtungs-Schwelle roh gelesen wird.
+#: Where `all_settings()` may be called. Nowhere today; whoever needs it enters the place
+#: here and justifies why no hardening threshold is read raw there.
 _SETTING_ALLE = set()
 _SETTING_METHODEN = ("get_setting", "all_settings")
-# Die Klassen statt der Schreibweisen (Schlussfund konfig-2: der Wächter suchte case-sensitiv nach
-# `FROM setting` und sah `get_setting` nur als Attribut-Aufruf — kleingeschriebenes SQL, `main.`,
-# Anführungszeichen, ein f-String mit dem Tabellennamen, `getattr(store, "get_setting")` und ein
-# Alias `lesen = store.get_setting` blieben grün):
-# 1. Rohes SQL auf die Tabelle `setting` ausserhalb von store.py: ein String, in dem `setting` als
-#    Tabelle hinter FROM/JOIN/UPDATE/INTO steht — gleich in welcher Schreibung (SQLite unterscheidet
-#    dort nicht), mit Schema-Präfix (`main.`), in Quotes oder Klammern, mit Kommentar statt
-#    Leerzeichen. Auch ein Schreibzugriff fällt darunter: Er ginge ebenso am Store vorbei.
-# 2. SQL, dessen Tabellenname erst zur Laufzeit dazukommt (f-String, `+`, `%`, `.format`): Der Text
-#    beginnt mit einem SQL-Verb, und hinter FROM/JOIN/UPDATE/INTO steht eine Lücke. Welche Tabelle
-#    es wird, sieht kein Syntaxbaum.
-#    Geprüft wird je Ausdruck der ganze Text: f-Strings und `+`-Ketten werden zusammengesetzt
-#    (eine Lücke steht als `{}`), `"… FROM sett" + "ing"` fällt also unter 1. Docstrings zählen
-#    nicht — sie laufen nie gegen die Datenbank.
-# 3. Jede Erwähnung von `get_setting`/`all_settings`, die kein direkter Aufruf ist (Alias,
-#    `functools.partial`, Übergabe als Argument) und jeder String, der genau so heisst (`getattr`,
-#    `operator.methodcaller`). Ein Aufruf über einen Namen (`get_setting(...)` als Parameter)
-#    wird geprüft wie ein Methodenaufruf.
-# Grenze: Ein Name, der erst zur Laufzeit ENTSTEHT (`getattr(store, name)`), SQL, das über mehrere
-# Anweisungen wächst (`sql += …`), SQL aus einer Datei und eine eigene sqlite3-Verbindung mit so
-# gebautem SQL sieht dieser Wächter nicht; vollständig erkennen liesse sich das nur zur Laufzeit.
-# Umgekehrt meldete er englischen Fliesstext der Form „… from setting …“ (heute keiner im Paket):
-# Dann nennt er Datei und Zeile, und die Formulierung wird geändert.
+# The classes instead of the spellings (final finding konfig-2: the guard searched case-sensitively for
+# `FROM setting` and saw `get_setting` only as an attribute call — lowercase SQL, `main.`,
+# quotation marks, an f-string with the table name, `getattr(store, "get_setting")` and an
+# alias `lesen = store.get_setting` stayed green):
+# 1. Raw SQL on the `setting` table outside store.py: a string in which `setting` stands as a
+#    table after FROM/JOIN/UPDATE/INTO — whatever the spelling (SQLite does not distinguish
+#    there), with schema prefix (`main.`), in quotes or brackets, with a comment instead of a
+#    space. A write access falls under this too: it would bypass the store just the same.
+# 2. SQL whose table name is only added at runtime (f-string, `+`, `%`, `.format`): the text
+#    starts with an SQL verb, and after FROM/JOIN/UPDATE/INTO there is a gap. Which table
+#    it becomes, no syntax tree sees.
+#    Per expression the whole text is checked: f-strings and `+` chains are assembled
+#    (a gap stands as `{}`), so `"… FROM sett" + "ing"` falls under 1. Docstrings do not
+#    count — they never run against the database.
+# 3. Every mention of `get_setting`/`all_settings` that is not a direct call (alias,
+#    `functools.partial`, passed as an argument) and every string that is called exactly that (`getattr`,
+#    `operator.methodcaller`). A call via a name (`get_setting(...)` as a parameter)
+#    is checked like a method call.
+# Limit: a name that only ARISES at runtime (`getattr(store, name)`), SQL that grows over several
+# statements (`sql += …`), SQL from a file and an own sqlite3 connection with SQL built
+# that way are not seen by this guard; they could be recognised completely only at runtime.
+# Conversely it would flag English prose of the form "… from setting …" (none in the package today):
+# then it names file and line, and the wording is changed.
 _SQL_SETTING = _re.compile(
     r"(?i)(?<![\w$])(?:from|join|update|into)(?:\s|/\*(?:[^*]|\*(?!/))*\*/)*"
     r"(?:(?:\"[^\"]*\"|`[^`]*`|\[[^\]]*\]|\w+)\s*\.\s*)?[\"'`\[]?setting(?![\w$])", _re.S)
@@ -182,7 +182,7 @@ _SQL_TABELLE_OFFEN = _re.compile(r"(?i)(?<![\w$])(?:from|join|update|into)(?:\s|
 
 
 def _sql_text(k):
-    """Der Text eines String-Ausdrucks: Konstante, f-String oder `+`-Kette (Lücken als `{}`)."""
+    """The text of a string expression: constant, f-string or `+` chain (gaps as `{}`)."""
     if isinstance(k, _ast.Constant) and isinstance(k.value, str):
         return k.value
     if isinstance(k, _ast.JoinedStr):
@@ -198,7 +198,7 @@ def _sql_text(k):
 
 
 def _setting_lesewege(quellen):
-    """(Verstöße, gesehene erlaubte Stellen) für [(Dateiname, Quelltext), …]."""
+    """(violations, allowed places seen) for [(filename, source), …]."""
     verstoesse, gesehen = [], set()
     for name, text in quellen:
         baum = _ast.parse(text)
@@ -221,11 +221,11 @@ def _setting_lesewege(quellen):
                             and isinstance(p, _ast.BinOp))
                 if name != "store.py" and ganz and not isinstance(p, _ast.Expr):
                     if _SQL_SETTING.search(text):
-                        verstoesse.append(f"{name}:{k.lineno} rohes SQL auf die Settings-Tabelle")
+                        verstoesse.append(f"{name}:{k.lineno} raw SQL on the settings table")
                     elif _SQL_ANFANG.search(text) and _SQL_TABELLE_OFFEN.search(text):
-                        verstoesse.append(f"{name}:{k.lineno} SQL mit Tabellennamen zur Laufzeit")
+                        verstoesse.append(f"{name}:{k.lineno} SQL with table name at runtime")
                 if isinstance(k, _ast.Constant) and k.value in _SETTING_METHODEN:
-                    verstoesse.append(f"{name}:{k.lineno} {k.value!r} als Text (getattr o. ä.)")
+                    verstoesse.append(f"{name}:{k.lineno} {k.value!r} as text (getattr or similar)")
                 continue
             if isinstance(k, _ast.Attribute):
                 methode = k.attr
@@ -250,28 +250,28 @@ def _setting_lesewege(quellen):
                 (w.value for w in aufruf.keywords if w.arg == "key"), None)
             if isinstance(schluessel, _ast.Constant) and isinstance(schluessel.value, str):
                 if schluessel.value in _security.SECURITY_DEFAULTS:
-                    verstoesse.append(f"{name}:{k.lineno} Härtungs-Schwelle {schluessel.value!r} roh gelesen")
+                    verstoesse.append(f"{name}:{k.lineno} hardening threshold {schluessel.value!r} read raw")
             elif stelle in _SETTING_FREIER_SCHLUESSEL:
                 gesehen.add(stelle)
             else:
-                verstoesse.append(f"{name}:{k.lineno} get_setting ohne literalen Schlüssel in {stelle[1]}")
+                verstoesse.append(f"{name}:{k.lineno} get_setting without a literal key in {stelle[1]}")
     return verstoesse, gesehen
 
 
-# Selbsttest des Wächters: jede Schreibweise eines rohen Lesewegs fällt auf.
+# Self-test of the guard: every spelling of a raw read path gets noticed.
 for _schreibweise in ('n = int(store.get_setting("password_min_length") or 8)',
                       'n = int(store.get_setting(key="password_min_length") or 8)',
                       'k = "max_login_attempts"\nn = int(store.get_setting(k) or 5)',
                       'n = int(store.all_settings().get("max_login_attempts", 5))',
                       'n = db.execute("SELECT value FROM setting WHERE key=?", (k,))',
-                      # Schlussfund konfig-2: kamen durch, solange der Wächter eine Schreibweise sah.
+                      # Final finding konfig-2: got through as long as the guard saw one spelling.
                       'n = db.execute("select value from setting where key=?", (k,))',
                       'n = db.execute("SELECT value FROM main.setting WHERE key=?", (k,))',
                       'n = db.execute(\'SELECT value FROM "setting" WHERE key=?\', (k,))',
                       't = "setting"\nn = db.execute(f"SELECT value FROM {t} WHERE key=?", (k,))',
                       'n = getattr(store, "get_setting")("password_min_length")',
                       'lesen = store.get_setting\nn = lesen("password_min_length")',
-                      # Dieselben Klassen in weiteren Schreibweisen:
+                      # The same classes in further spellings:
                       'n = db.execute("SELECT value FROM [setting] WHERE key=?", (k,))',
                       'n = db.execute("SELECT value FROM/**/Setting WHERE key=?", (k,))',
                       'n = db.execute("SELECT value FROM %s WHERE key=?" % t, (k,))',
@@ -286,64 +286,64 @@ for _schreibweise in ('n = int(store.get_setting("password_min_length") or 8)',
                       'n = db.execute("SELECT value " + "FROM " + t + " WHERE key=?", (k,))',
                       'n = db.execute(\'SELECT value FROM "main"."setting"\')',
                       'n = db.execute("UPDATE setting SET value=value WHERE key=? RETURNING value", (k,))'):
-    assert _setting_lesewege([("fremd.py", _schreibweise)])[0], f"Wächter übersieht: {_schreibweise}"
-# Gegenprobe: Ein literaler Schlüssel ohne Härtungs-Schwelle, der Mail-Kopf `From`, Fliesstext über
-# „settings“/„setting“ und ein Docstring bleiben ohne Befund — sonst prüfte der Selbsttest nur, dass
-# alles anschlägt.
+    assert _setting_lesewege([("fremd.py", _schreibweise)])[0], f"guard overlooks: {_schreibweise}"
+# Control: a literal key without hardening threshold, the mail header `From`, prose about
+# "settings"/"setting" and a docstring stay without a finding — otherwise the self-test would only check that
+# everything trips.
 for _harmlos in ('x = store.get_setting("demo_users")', 'msg["From"] = absender',
                  'hinweis = "Die settings from the panel gelten sofort."',
                  'hinweis = "Select whether this setting applies."',
                  'hinweis = f"Login from {ip}"',
                  'def f():\n    """Liest nie SELECT value FROM setting — nur ein Docstring."""'):
-    assert not _setting_lesewege([("fremd.py", _harmlos)])[0], f"Fehlalarm: {_harmlos}"
+    assert not _setting_lesewege([("fremd.py", _harmlos)])[0], f"false alarm: {_harmlos}"
 
 _paket = sorted((_pl.Path(__file__).resolve().parent.parent / "tinysesam").rglob("*.py"))
 assert len(_paket) >= 10 and any(d.name == "security.py" for d in _paket), \
-    f"Wächter findet das Paket nicht: {len(_paket)} Datei(en)"
+    f"guard does not find the package: {len(_paket)} file(s)"
 _verstoesse, _gesehen = _setting_lesewege([(d.name, d.read_text(encoding="utf-8")) for d in _paket])
-assert not _verstoesse, f"Settings am gemeinsamen Leseweg vorbei gelesen: {_verstoesse}"
+assert not _verstoesse, f"settings read past the shared read path: {_verstoesse}"
 assert _gesehen == _SETTING_FREIER_SCHLUESSEL | _SETTING_ALLE, \
-    f"Ausnahmeliste veraltet oder Wächter blind: gesehen {_gesehen}"
-ok("jeder Lesezugriff auf die Settings läuft über literale Schlüssel oder security.haertung_lesen")
-# (Mutationsproben: im Wächter nur `aufruf.args[0]` lesen, Schlüsselwörter übergehen → der
-# Selbsttest wird rot; den Zweig für nicht-literale Schlüssel streichen → rot; in `_passwd` wieder
-# `int(store.get_setting("password_min_length") or …)` → der Wächter nennt `__main__.py:<Zeile>`,
-# einzeln nachgeprüft, weil in der Suite das assert weiter oben zuerst anschlägt. Schlussrunde,
-# je einzeln → rot: `(?i)` streichen; den Schema-Präfix nicht zulassen; die Prüfung auf den
-# Tabellennamen zur Laufzeit streichen; das Zusammensetzen von `+`-Ketten abschalten; die Meldung
-# „als Wert weitergereicht“ streichen; den Methodennamen als Text übergehen; Aufrufe über einen
-# Namen übergehen → der Selbsttest wird rot. Das SQL-Verb am Anfang nicht verlangen → die
-# Gegenprobe `f"Login from {ip}"` wird rot; Docstrings mitprüfen → die Docstring-Gegenprobe wird
-# rot. Am Paket: die Fund-Mutation (kleines SQL und Alias) in security.py → rot mit
-# `security.py:<Zeile>`; `getattr(self.store, "get_setting")` in manager.py → rot mit
-# `manager.py:<Zeile>`; ein f-String `select value from {_T}` in admin.py → rot mit `admin.py:<Zeile>`.)
+    f"exception list outdated or guard blind: seen {_gesehen}"
+ok("every read access to the settings goes through literal keys or security.haertung_lesen")
+# (Mutation probes: in the guard read only `aufruf.args[0]`, skip keywords -> the
+# self-test turns red; remove the branch for non-literal keys -> red; in `_passwd` again
+# `int(store.get_setting("password_min_length") or …)` -> the guard names `__main__.py:<line>`,
+# checked individually because in the suite the assert further up trips first. Final round,
+# each individually -> red: remove `(?i)`; do not allow the schema prefix; remove the check for the
+# table name at runtime; switch off the assembling of `+` chains; remove the message
+# "passed on as a value"; skip the method name as text; skip calls via a
+# name -> the self-test turns red. Not requiring the SQL verb at the start -> the
+# control `f"Login from {ip}"` turns red; also checking docstrings -> the docstring control turns
+# red. On the package: the finding mutation (lowercase SQL and alias) in security.py -> red with
+# `security.py:<line>`; `getattr(self.store, "get_setting")` in manager.py -> red with
+# `manager.py:<line>`; an f-string `select value from {_T}` in admin.py -> red with `admin.py:<line>`.)
 
 code, aus = cli("quatsch")
 assert code == 2 and "usage" in aus
-ok("unbekanntes Kommando → usage, Exit 2")
+ok("unknown command -> usage, exit 2")
 
-# `--help` ist eine Frage, kein Fehler: Exit 0, damit ein Skript den Unterschied zum Tippfehler
-# sieht. (Der Prüfbericht hatte das für das Gateway gemeldet — hier ist die Gegenprobe.)
+# `--help` is a question, not an error: exit 0, so a script sees the difference from a typo.
+# (The audit report had flagged this for the gateway — here is the control.)
 code, aus = cli("--help")
 assert code == 0 and "usage" in aus, (code, aus)
-ok("--help → usage, Exit 0 (nicht 2 wie ein Tippfehler)")
+ok("--help -> usage, exit 0 (not 2 like a typo)")
 
-# ---------- backup: eine Datei-Kopie taugt im WAL-Modus nicht ----------
+# ---------- backup: a file copy is no good in WAL mode ----------
 import sqlite3
 
 nackt = os.path.join(tempfile.mkdtemp(), "t.db")
 code, aus = cli("backup", "--db", db, nackt)
-assert code == 0 and "Sicherung geschrieben" in aus, (code, aus)
+assert code == 0 and "Backup written" in aus, (code, aus)
 namen = {z[0] for z in sqlite3.connect(nackt).execute("SELECT username FROM users")}
-assert namen, "Sicherung ohne Konten"
-ok(f"backup zieht eine Kopie, die für sich allein stimmt ({len(namen)} Konten)")
+assert namen, "backup without accounts"
+ok(f"backup takes a copy that is consistent on its own ({len(namen)} accounts)")
 
 import stat as _stat
 
 assert _stat.S_IMODE(os.stat(nackt).st_mode) == 0o600, oct(_stat.S_IMODE(os.stat(nackt).st_mode))
-ok("die Sicherung trägt dieselben engen Rechte wie die Quelle")
+ok("the backup carries the same tight permissions as the source")
 
-# Das naive Backup zur Gegenprobe — es ist genau der Fehler, den das Kommando abnimmt.
+# The naive backup as a control — it is exactly the error the command takes off your hands.
 import shutil
 
 roh = os.path.join(tempfile.mkdtemp(), "t.db")
@@ -353,50 +353,50 @@ try:
     naiv_ok = True
 except sqlite3.DatabaseError:
     naiv_ok = False
-assert not naiv_ok, "die blosse Datei-Kopie war brauchbar — dann misst der Test nichts"
-ok("eine blosse Datei-Kopie ist unbrauchbar (WAL) — deshalb gibt es das Kommando")
+assert not naiv_ok, "the plain file copy was usable — then the test measures nothing"
+ok("a plain file copy is unusable (WAL) — that is why the command exists")
 
 code, aus = cli("backup", "--db", db, nackt)
-assert code == 1 and "gibt es schon" in aus, (code, aus)
-ok("backup überschreibt keine bestehende Datei")
+assert code == 1 and "already exists" in aus, (code, aus)
+ok("backup does not overwrite an existing file")
 
 code, aus = cli("backup", "--db", os.path.join(tempfile.mkdtemp(), "t.db"), os.path.join(tempfile.mkdtemp(), "datei"))
-assert code == 1 and "Keine Datenbank" in aus, (code, aus)
-ok("backup auf eine fehlende Datenbank → Exit 1, keine leere Datei angelegt")
+assert code == 1 and "No database at" in aus, (code, aus)
+ok("backup of a missing database -> exit 1, no empty file created")
 
-# ---------- gc: das Aufräumen braucht einen Weg von aussen ----------
-# R4-09: ein nie bestätigtes Konto (gesperrt, abgelaufener unbenutzter Bestätigungstoken) räumt
-# auch der CLI-Weg weg — und zwar VOR den Tokens, sonst verschwände das Merkmal zuerst.
+# ---------- gc: cleaning up needs a way from outside ----------
+# R4-09: an account that was never confirmed (locked, expired unused confirmation token) is also
+# removed by the CLI path — and BEFORE the tokens, otherwise the marker would vanish first.
 _sq = auth.create_user("squatter", password="geheim12345", email="opfer@example.com")
 auth.store.set_disabled(_sq, True)
 auth.store.add_magic_token("abgelaufen-verify", "verify_email", 1, user_id=_sq, email="opfer@example.com")
 code, aus = cli("gc", "--db", db)
 assert code == 0 and "sessions=" in aus and "login_attempts=" in aus, (code, aus)
 assert "unverified_accounts=1" in aus and auth.store.get_user(_sq) is None, aus
-ok("gc räumt auf und nennt je Bereich die Zahl (für Cron/Timer), nie bestätigte Konten zuerst")
+ok("gc cleans up and names the count per area (for cron/timer), never-confirmed accounts first")
 
-# `--audit-days` ist das Gegenstück zu `audit_retention_days` und hält dieselbe Grenze
-# (T-13-Angriff, audit × konfiguration): 10**20 brach mit OverflowError ab, NACHDEM Sitzungen und
-# Tokens schon gelöscht waren; Sekunden statt Tagen (2592000) liessen die Frist still ins Leere laufen.
+# `--audit-days` is the counterpart of `audit_retention_days` and holds the same limit
+# (T-13 attack, audit x configuration): 10**20 aborted with OverflowError AFTER sessions and
+# tokens were already deleted; seconds instead of days (2592000) let the period silently run into the void.
 auth.store.audit_log("bleibt", "x", None)
 for _tage in (str(10 ** 20), "2592000", "-1"):
     try:
         code, aus = cli("gc", "--db", db, "--audit-days", _tage)
-    except Exception as e:   # noqa: BLE001 — ein Traceback ist hier der Befund
+    except Exception as e:   # noqa: BLE001 — a traceback is the finding here
         code, aus = f"{type(e).__name__}", str(e)
     assert code == 2 and "--audit-days" in aus, (_tage, code, aus[-200:])
 assert any(z["event"] == "bleibt" for z in auth.store.recent_audit(20))
-ok("gc --audit-days hält dieselbe Grenze wie audit_retention_days (kein Absturz, nichts gelöscht)")
-# (Mutationsprobe: die Bereichsprüfung in `_gc` auf `a.audit_days < 0` zurückstellen → rot.)
+ok("gc --audit-days holds the same limit as audit_retention_days (no crash, nothing deleted)")
+# (Mutation probe: revert the range check in `_gc` to `a.audit_days < 0` -> red.)
 
-# Dieselbe Klasse am Nachbarparameter (zweite Angriffsrunde, konfig): `--attempts-older-than` und
-# `TinySesam.gc(attempts_older_than_sec=)` hatten keine Grenze. ±10**20 brach mit OverflowError ab,
-# NACHDEM Sitzungen, Flows, Tokens und Unlocks schon gelöscht waren; ein negativer Wert räumte
-# jeden Fehlversuch weg — auch die im laufenden Sperrfenster — und hob damit jede Kontosperre auf.
-# 0 bleibt erlaubt: der dokumentierte Weg, alle Fehlversuche zu räumen (s. `unlock`).
+# The same class at the neighbouring parameter (second attack round, konfig): `--attempts-older-than` and
+# `TinySesam.gc(attempts_older_than_sec=)` had no limit. ±10**20 aborted with OverflowError
+# AFTER sessions, flows, tokens and unlocks were already deleted; a negative value cleared
+# every failed attempt — including those in the running lockout window — and thereby lifted every account lock.
+# 0 stays allowed: the documented way to clear all failed attempts (see `unlock`).
 _gc_uid = auth.create_user("gc-probe", password="Gc-Probe#lang-12345")
 auth.store.create_session(_gc_uid, 3600, True, "password")
-auth.store._exec("UPDATE session SET expires_at=1 WHERE user_id=?", (_gc_uid,))   # abgelaufen
+auth.store._exec("UPDATE session SET expires_at=1 WHERE user_id=?", (_gc_uid,))   # expired
 
 
 def _abgelaufene_sitzungen():
@@ -409,27 +409,27 @@ assert auth._is_locked("gc-probe", "198.51.100.7")
 for _sek in (str(10 ** 20), str(-10 ** 20), "-1"):
     try:
         code, aus = cli("gc", "--db", db, "--attempts-older-than", _sek)
-    except Exception as e:   # noqa: BLE001 — ein Traceback ist hier der Befund
+    except Exception as e:   # noqa: BLE001 — a traceback is the finding here
         code, aus = f"{type(e).__name__}", str(e)
     assert code == 2 and "--attempts-older-than" in aus, (_sek, code, aus[-200:])
-assert _abgelaufene_sitzungen() == 1, "gc hat gelöscht, obwohl das Argument abgewiesen wurde"
-assert auth._is_locked("gc-probe", "198.51.100.7"), "ein abgewiesener gc-Lauf hat die Sperre aufgehoben"
+assert _abgelaufene_sitzungen() == 1, "gc deleted although the argument was rejected"
+assert auth._is_locked("gc-probe", "198.51.100.7"), "a rejected gc run lifted the lock"
 for _sek in (10 ** 20, -10 ** 20, -1, True, float("inf"), "viel"):
     try:
         auth.gc(attempts_older_than_sec=_sek)
         _gc_fund = "angenommen"
     except ValueError:
         _gc_fund = None
-    except Exception as e:   # noqa: BLE001 — ein anderer Absturz ist hier der Befund
+    except Exception as e:   # noqa: BLE001 — any other crash is the finding here
         _gc_fund = f"{type(e).__name__}: {e}"
     assert _gc_fund is None, (_sek, _gc_fund)
 assert _abgelaufene_sitzungen() == 1 and auth._is_locked("gc-probe", "198.51.100.7")
 assert auth.gc(attempts_older_than_sec=86400)["sessions"] >= 1 and _abgelaufene_sitzungen() == 0
 code, aus = cli("gc", "--db", db, "--attempts-older-than", "0")
 assert code == 0 and "login_attempts=" in aus, (code, aus)
-ok("gc --attempts-older-than und auth.gc() prüfen die Frist, bevor irgendetwas gelöscht wird")
-# (Mutationsprobe: `store.versuchsfrist(...)` in `_gc` durch den rohen Wert ersetzen → rot
-# (OverflowError bzw. Exit 0); dasselbe in `TinySesam.gc` → rot.)
+ok("gc --attempts-older-than and auth.gc() check the period before anything is deleted")
+# (Mutation probe: replace `store.versuchsfrist(...)` in `_gc` by the raw value -> red
+# (OverflowError or exit 0); the same in `TinySesam.gc` -> red.)
 
 os.remove(nackt)
 os.remove(roh)

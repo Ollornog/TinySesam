@@ -1,14 +1,14 @@
-"""E-Mail-Versand für TinySesam. Standard: stdlib-smtplib (STARTTLS/SSL). Komplett ersetzbar
-über auth.set_mailer(fn): fn(to, subject, text, html=None) -> None.
+"""Email sending for TinySesam. Default: stdlib smtplib (STARTTLS/SSL). Fully replaceable
+via auth.set_mailer(fn): fn(to, subject, text, html=None) -> None.
 
-Ohne konfigurierten smtp_host UND ohne gesetzten Mailer ist der Versand deaktiviert: Der Mailer
-wird AUFGERUFEN wie eine Funktion (`mailer(to, subject, text, html)`) und wirft dann
-MailNotConfigured — die Aufrufer behandeln das als „E-Mail-Feature nicht verfügbar". Eine Methode
-`send()` gibt es nicht; wer einen eigenen Mailer baut, schreibt ein `__call__` oder übergibt
-gleich eine Funktion.
+Without a configured smtp_host AND without a set mailer, sending is disabled: the mailer
+is CALLED like a function (`mailer(to, subject, text, html)`) and then raises
+MailNotConfigured — the callers treat that as "email feature not available". There is no
+`send()` method; whoever builds their own mailer writes a `__call__` or passes
+a function directly.
 
-Die eingebauten Routen verschicken nicht selbst, sondern über den `Postausgang` (unten): Die
-Antwort geht hinaus, bevor die Mail den Server verlässt.
+The built-in routes do not send themselves but via the `Postausgang` (below): the
+response goes out before the mail leaves the server.
 """
 from __future__ import annotations
 import asyncio
@@ -21,33 +21,33 @@ from email.message import EmailMessage
 from typing import Optional
 
 
-# Der Typ lebt jetzt in errors.py, damit ihn eine App importieren kann; hier bleibt der Name
-# stehen, damit `from .mailer import MailNotConfigured` weiter geht.
+# The type now lives in errors.py so an app can import it; the name stays here
+# so `from .mailer import MailNotConfigured` keeps working.
 from .errors import MailNotConfigured  # noqa: F401
 
 log = logging.getLogger("tinysesam.mail")
 
 
 def tls_kontext(cfg) -> ssl.SSLContext:
-    """Der TLS-Kontext für die SMTP-Verbindung: Zertifikat UND Hostname werden geprüft (B3-1).
+    """The TLS context for the SMTP connection: certificate AND hostname are verified (B3-1).
 
-    `smtplib.SMTP_SSL()` und `starttls()` ohne `context=` nehmen den stdlib-Kontext, der
-    **nichts** prüft — jeder auf dem Weg konnte sich als Mailserver ausgeben und bekam das
-    SMTP-Passwort samt jedem Anmelde- und Reset-Link mitgelesen. Ein Relay mit eigener CA gibt
-    sie über `smtp_ca_file` an; abschalten lässt sich die Prüfung bewusst nicht.
+    `smtplib.SMTP_SSL()` and `starttls()` without `context=` take the stdlib context, which
+    verifies **nothing** — anyone on the path could pose as the mail server and got the
+    SMTP password along with every sign-in and reset link to read. A relay with its own CA gives
+    it via `smtp_ca_file`; the verification deliberately cannot be switched off.
     """
     return ssl.create_default_context(cafile=(getattr(cfg, "smtp_ca_file", "") or None))
 
 
 class SMTPMailer:
-    """Voreingestellter SMTP-Sender (stdlib). Für den Hetzner-587-Submission-Relay & Co."""
+    """Default SMTP sender (stdlib). For the Hetzner 587 submission relay & co."""
     def __init__(self, cfg):
         self.cfg = cfg
 
     def __call__(self, to, subject, text, html=None):
         cfg = self.cfg
         if not cfg.smtp_host:
-            raise MailNotConfigured("kein smtp_host konfiguriert")
+            raise MailNotConfigured("no smtp_host configured")
         msg = EmailMessage()
         msg["From"] = cfg.smtp_from or cfg.smtp_user
         msg["To"] = to
@@ -58,11 +58,11 @@ class SMTPMailer:
         try:
             self._senden(cfg, msg)
         except ssl.SSLCertVerificationError as e:
-            # Seit B3-1 wird das Zertifikat geprüft. Wer vorher mit selbstsigniertem Zertifikat
-            # oder per IP-Adresse versandt hat, sieht sonst nur `*_send_error` im Audit-Log —
-            # hier steht, was zu tun ist (Angriff A4).
-            log.error("SMTP: Zertifikat von %s nicht vertrauenswürdig (%s). Eigene CA in "
-                      "smtp_ca_file eintragen bzw. smtp_host auf den Namen im Zertifikat setzen.",
+            # Since B3-1 the certificate is verified. Whoever sent before with a self-signed certificate
+            # or via IP address would otherwise see only `*_send_error` in the audit log —
+            # here it says what to do (attack A4).
+            log.error("SMTP: certificate of %s not trusted (%s). Enter your own CA in "
+                      "smtp_ca_file or set smtp_host to the name in the certificate.",
                       cfg.smtp_host, getattr(e, "verify_message", None) or e)
             raise
 
@@ -84,22 +84,22 @@ class SMTPMailer:
 
 
 class Postausgang:
-    """Versand ausserhalb der Anfrage: eigene, kleine Arbeiterschaft mit gedeckelter Warteschlange.
+    """Sending outside the request: a small worker pool of its own with a capped queue.
 
-    Zwei Befunde, eine Ursache — die Route wartete auf den Mailserver:
+    Two findings, one cause — the route waited for the mail server:
 
-    * **R4-05 (Timing):** „Passwort vergessen" und der Anmelde-Link antworteten für eine
-      existierende Adresse um die Dauer einer SMTP-Sitzung später als für eine unbekannte. Die
-      Antwort war wortgleich, die Stoppuhr nicht.
-    * **B6-6 (Threadpool):** Jeder Versand hielt einen Platz im Threadpool von FastAPI für bis zu
-      `smtp_timeout` Sekunden. Vierzig Anfragen gegen einen hängenden Mailserver belegten alle —
-      im Gateway-Betrieb stand damit auch `/auth/forward` und jede dahinter geschützte App.
+    * **R4-05 (timing):** "Forgot password" and the sign-in link answered for an
+      existing address later than for an unknown one by the duration of an SMTP session. The
+      response was word for word identical, the stopwatch was not.
+    * **B6-6 (thread pool):** Every send held a slot in FastAPI's thread pool for up to
+      `smtp_timeout` seconds. Forty requests against a hanging mail server occupied all of them —
+      in gateway operation that stalled `/auth/forward` and every app protected behind it.
 
-    `nachher()` liefert deshalb eine **async** Hintergrundaufgabe: Starlette schickt erst die
-    Antwort, dann läuft sie; sie wartet auf den eigenen Arbeiter, ohne einen Platz im Threadpool
-    zu halten. Die Warteschlange ist gedeckelt — ist sie voll, wird die Mail verworfen und das
-    gemeldet, statt den Speicher mit einer Flut von Aufträgen zu füllen. `TestClient` wartet auf
-    Hintergrundaufgaben, Tests sehen die Mail also wie bisher direkt nach der Anfrage.
+    `nachher()` therefore returns an **async** background task: Starlette sends the
+    response first, then it runs; it waits for its own worker without holding a slot in the thread pool.
+    The queue is capped — when it is full, the mail is dropped and this is
+    reported, instead of filling memory with a flood of jobs. `TestClient` waits for
+    background tasks, so tests see the mail right after the request as before.
     """
 
     def __init__(self, arbeiter: int = 2, max_offen: int = 100):
@@ -128,9 +128,9 @@ class Postausgang:
             self._offen -= 1
 
     def einreihen(self, auftrag) -> bool:
-        """`auftrag()` im eigenen Arbeiter starten, ohne auf ihn zu warten — für Stellen ohne
-        Antwort-Objekt (die Sperre im Login, ASVS 6.3.5). False, wenn die Warteschlange voll ist;
-        der Auftrag entfällt dann."""
+        """Start `auftrag()` in the own worker without waiting for it — for places without a
+        response object (the lockout in login, ASVS 6.3.5). False if the queue is full;
+        the job is dropped then."""
         if not self._reservieren():
             log.warning("Hinweis-Warteschlange voll (%d) — Versand verworfen", self.max_offen)
             return False
@@ -148,18 +148,18 @@ class Postausgang:
         return True
 
     def abwarten(self, timeout: float = 10.0) -> None:
-        """Warten, bis alles Eingereihte gelaufen ist (für Tests und ein geordnetes Ende)."""
+        """Wait until everything queued has run (for tests and an orderly shutdown)."""
         with self._lock:
             laufend = list(getattr(self, "_laufend", []))
         for z in laufend:
             z.result(timeout=timeout)
 
     def nachher(self, auftrag, bei_ueberlauf=None):
-        """Eine async Hintergrundaufgabe, die `auftrag()` im eigenen Arbeiter ausführt.
+        """An async background task that runs `auftrag()` in the own worker.
 
-        `auftrag` fängt seine Fehler selbst (er weiss, was aufzuräumen ist); was trotzdem
-        durchschlägt, wird hier geloggt statt still verschluckt. `bei_ueberlauf()` läuft, wenn
-        die Warteschlange voll ist — der Auftrag entfällt dann.
+        `auftrag` catches its own errors (it knows what to clean up); whatever still
+        gets through is logged here instead of silently swallowed. `bei_ueberlauf()` runs when
+        the queue is full — the job is dropped then.
         """
         async def _lauf():
             if not self._reservieren():
@@ -167,8 +167,8 @@ class Postausgang:
                 if bei_ueberlauf:
                     try:
                         bei_ueberlauf()
-                    except Exception:   # noqa: BLE001 — Aufräumen darf den Server nicht reissen
-                        log.exception("Aufräumen nach verworfenem Versand gescheitert")
+                    except Exception:   # noqa: BLE001 — cleanup must not bring the server down
+                        log.exception("Cleanup after a discarded send failed")
                 return
             try:
                 await asyncio.wrap_future(self._executor().submit(auftrag))

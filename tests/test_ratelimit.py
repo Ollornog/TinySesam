@@ -9,7 +9,7 @@ def ok(name):
     print(f"  ✓ {name}")
 
 
-# ---------- RedisRateLimiter mit gefälschtem Client (kein Server/redis nötig) ----------
+# ---------- RedisRateLimiter with a faked client (no server/redis needed) ----------
 class FakePipe:
     def __init__(self, store):
         self.store = store
@@ -39,19 +39,19 @@ class FakeRedis:
 
 
 import importlib.util                                                            # noqa: E402
-rl = object.__new__(security.RedisRateLimiter)   # __init__ umgehen (kein echtes redis)
+rl = object.__new__(security.RedisRateLimiter)   # bypass __init__ (no real redis)
 rl.client = FakeRedis()
 rl.prefix = "tsrl"
 results = [rl.allow("1.2.3.4", 3, 60) for _ in range(4)]
 assert results == [True, True, True, False], results
-assert rl.allow("5.6.7.8", 3, 60) is True   # anderer Key eigener Zähler
-ok("RedisRateLimiter: Fixed-Window zählt korrekt (3 erlaubt, 4. blockiert)")
+assert rl.allow("5.6.7.8", 3, 60) is True   # another key has its own counter
+ok("RedisRateLimiter: fixed window counts correctly (3 allowed, 4th blocked)")
 
-# ---------- B6-1 / B6-2: Redis fällt aus → je Prozess weiterzählen, und zwar hörbar ----------
-# Bis T-13 hiess ein Redis-Fehler „erlauben" — Magic-Link, Passwort vergessen, Registrierung und
-# der Föderationsstart hängen aber allein an diesem Limit, sie waren dann offen. Und jede
-# Anfrage schrieb eine Warnzeile, ohne dass beim Start je jemand gefragt hätte, ob Redis da ist.
-# (Mutationsprobe: im `except` von `allow` wieder `return True` → die zweite Zusage fällt.)
+# ---------- B6-1 / B6-2: Redis fails → keep counting per process, and audibly ----------
+# Until T-13 a Redis error meant “allow” — magic link, forgot password, registration and
+# the federation start depend solely on this limit, so they were then open. And every
+# request wrote a warning line, without anyone having asked at startup whether Redis is there.
+# (Mutation probe: `return True` again in the `except` of `allow` → the second promise falls.)
 import logging                                                                  # noqa: E402
 
 
@@ -70,69 +70,69 @@ try:
     rl.client = FakeRedis(broken=True)
     antworten = [rl.allow("x", 3, 60) for _ in range(5)]
     assert antworten == [True, True, True, False, False], \
-        f"B6-1: ohne Redis bleibt die Drossel offen: {antworten}"
-    ok("B6-1: Redis-Ausfall → In-Memory-Rückfall zählt weiter (3 erlaubt, dann 429), niemand ausgesperrt")
-    # Ohne Pause fragt jede Anfrage Redis erneut und scheitert erneut — gemeldet wird trotzdem
-    # nur der Wechsel. (Die Pause allein würde die Zeilen sonst bloss verdecken.)
+        f"B6-1: without Redis the throttle stays open: {antworten}"
+    ok("B6-1: Redis outage → in-memory fallback keeps counting (3 allowed, then 429), nobody locked out")
+    # Without a pause every request asks Redis again and fails again — still only the
+    # change is reported. (The pause alone would otherwise merely hide the lines.)
     rl.pause_sec = 0.0
     rl._pause_bis = 0.0
     for _ in range(50):
         rl.allow("y", 1000, 60)
-    ausfall = [z for z in mit.zeilen if "nicht erreichbar" in z]
-    assert len(ausfall) == 1, f"B6-2: {len(ausfall)} Warnzeilen für 55 Anfragen im Ausfall"
-    # Redis ist zurück: nach der Pause wird wieder gefragt, und der Wechsel wird einmal gemeldet.
+    ausfall = [z for z in mit.zeilen if "unreachable" in z]
+    assert len(ausfall) == 1, f"B6-2: {len(ausfall)} warning lines for 55 requests during the outage"
+    # Redis is back: after the pause it is asked again, and the change is reported once.
     rl.client = FakeRedis()
     rl._pause_bis = 0.0
     assert rl.allow("z", 3, 60) is True
     assert rl.allow("z", 3, 60) is True
-    zurueck = [z for z in mit.zeilen if "wieder erreichbar" in z]
-    assert len(zurueck) == 1, f"B6-2: die Rückkehr wird {len(zurueck)}-mal gemeldet"
-    assert rl.client.store, "nach der Rückkehr zählt wieder Redis"
-    ok("B6-2: Ausfall und Rückkehr je EINE Zeile, nicht eine je Anfrage")
+    zurueck = [z for z in mit.zeilen if "reachable again" in z]
+    assert len(zurueck) == 1, f"B6-2: the return is reported {len(zurueck)} times"
+    assert rl.client.store, "after the return Redis counts again"
+    ok("B6-2: outage and return ONE line each, not one per request")
 
-    # Der Konstruktor fragt Redis beim Start (ping), statt es den ersten Besucher merken zu lassen.
+    # The constructor asks Redis at startup (ping), instead of letting the first visitor notice.
     if importlib.util.find_spec("redis"):
         mit.zeilen.clear()
         tot = security.RedisRateLimiter("redis://127.0.0.1:1/0")   # Port 1: dort lauscht nichts
-        assert any("nicht erreichbar" in z for z in mit.zeilen), \
-            "B6-2: ein unerreichbares Redis fällt beim Start nicht auf"
+        assert any("unreachable" in z for z in mit.zeilen), \
+            "B6-2: an unreachable Redis is not noticed at startup"
         assert tot.allow("a", 1, 60) is True and tot.allow("a", 1, 60) is False, \
-            "B6-1: der beim Start erkannte Ausfall drosselt nicht"
-        ok("B6-2: unerreichbares Redis wird schon beim Aufbau gemeldet und gedrosselt")
+            "B6-1: the outage detected at startup does not throttle"
+        ok("B6-2: unreachable Redis is already reported and throttled at build time")
 finally:
     security.seclog.removeHandler(mit)
 
-# ---------- R7-5: Der In-Memory-Limiter wächst nicht unbegrenzt ----------
-# Jede neue Adresse legte einen Schlüssel an, und keiner verschwand je. Wer die Quelladresse
-# wechselt (ein IPv6-/64 hat davon genug), füllte den Speicher. Jetzt gilt ein Deckel, und
-# verdrängt wird der am längsten ruhende Schlüssel — nie der, der gerade gebremst wird.
-# (Mutationsprobe: die `popitem`-Schleife in `RateLimiter.allow` streichen → rot.)
+# ---------- R7-5: the in-memory limiter does not grow without bound ----------
+# Every new address created a key, and none ever disappeared. Whoever changes the source address
+# (an IPv6 /64 has enough of them) filled the memory. Now a cap applies, and
+# the key dormant longest is evicted — never the one currently being throttled.
+# (Mutation probe: remove the `popitem` loop in `RateLimiter.allow` → red.)
 klein = security.RateLimiter(max_keys=100)
 assert klein.allow("laut", 2, 60) and klein.allow("laut", 2, 60) and not klein.allow("laut", 2, 60)
 for i in range(1000):
     klein.allow(f"2001:db8::{i:x}", 5, 60)
-    klein.allow("laut", 2, 60)                    # der Gebremste fragt weiter
-assert len(klein) <= 100, f"R7-5: {len(klein)} Schlüssel trotz Deckel 100"
-assert klein.allow("laut", 2, 60) is False, "der gerade Gebremste wurde verdrängt und ist wieder frei"
+    klein.allow("laut", 2, 60)                    # the throttled one keeps asking
+assert len(klein) <= 100, f"R7-5: {len(klein)} keys despite cap 100"
+assert klein.allow("laut", 2, 60) is False, "the one just throttled was evicted and is free again"
 assert security.RateLimiter().max_keys > 0
-ok("R7-5: Schlüsselzahl gedeckelt; der Gebremste bleibt gebremst")
+ok("R7-5: number of keys capped; the throttled one stays throttled")
 
-# ---------- redis_url gesetzt: mit redis-Paket → RedisRateLimiter, ohne → In-Memory-Fallback ----------
-# (kein Crash in beiden Fällen; ohne laufenden Redis → In-Memory-Rückfall, der erste Aufruf geht durch)
-# Port 1 statt 6379, wie oben: Auf einem Rechner mit einem echten Redis traf die Probe sonst DIESEN —
-# sie schrieb Zähler in eine fremde Datenbank, teilte sie mit jedem gleichzeitigen Lauf und prüfte
-# den Rückfall gar nicht, den sie ankündigt.
+# ---------- redis_url set: with redis package → RedisRateLimiter, without → in-memory fallback ----------
+# (no crash in either case; without a running Redis → in-memory fallback, the first call goes through)
+# Port 1 instead of 6379, as above: on a machine with a real Redis the probe otherwise hit THAT one —
+# it wrote counters into a foreign database, shared them with every simultaneous run and did not check
+# the fallback at all that it announces.
 import importlib.util
 db = os.path.join(tempfile.mkdtemp(), "t.db")
 auth = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db, redis_url="redis://127.0.0.1:1/0", cookie_secure=False))
 if importlib.util.find_spec("redis"):
     assert isinstance(auth.rl, security.RedisRateLimiter)
-    assert auth.rl._gestoert, "kein Rückfall — die Probe hat ein echtes Redis erreicht"
-    assert auth._rate_ok("ip") is True   # Redis down → Rückfall, der erste Aufruf geht durch
-    ok("redis_url + redis-Paket → RedisRateLimiter (Redis down → In-Memory-Rückfall)")
+    assert auth.rl._gestoert, "no fallback — the probe reached a real Redis"
+    assert auth._rate_ok("ip") is True   # Redis down → fallback, the first call goes through
+    ok("redis_url + redis package → RedisRateLimiter (Redis down → in-memory fallback)")
 else:
     assert isinstance(auth.rl, security.RateLimiter)
-    ok("redis_url ohne redis-Paket → In-Memory-Fallback (kein Crash)")
+    ok("redis_url without redis package → in-memory fallback (no crash)")
 
 # ---------- eigenes Backend injizieren ----------
 class CountingLimiter:
@@ -141,7 +141,7 @@ class CountingLimiter:
 
 auth.set_rate_limiter(CountingLimiter())
 assert auth._rate_ok("ip") and auth._rate_ok("ip") and not auth._rate_ok("ip")
-ok("set_rate_limiter: eigenes Backend wird genutzt")
+ok("set_rate_limiter: own backend is used")
 os.remove(db)
 
 print("\nRATE-LIMIT OK ✅")

@@ -1,8 +1,8 @@
-"""F1: SAML 2.0 SP — Login-Redirect, ACS→User/Session, Gruppen-Gate, Metadata.
-ACS-Flow mit gefälschtem Client (keine echte signierte Assertion nötig); Metadata mit echtem onelogin."""
+"""F1: SAML 2.0 SP — login redirect, ACS→user/session, group gate, metadata.
+ACS flow with a forged client (no real signed assertion needed); metadata with a real onelogin."""
 
-# Diese Suite prueft den SAML-Weg — ohne python3-saml gibt es nichts zu pruefen. Die Zusage
-# steht hier und nicht im Runner: nur die Suite selbst weiss, was sie braucht.
+# This suite tests the SAML path — without python3-saml there is nothing to test. The promise
+# lives here and not in the runner: only the suite itself knows what it needs.
 from voraussetzung import braucht_modul  # noqa: E402
 braucht_modul("onelogin", extra="saml")
 import os
@@ -16,7 +16,7 @@ def ok(name):
     print(f"  ✓ {name}")
 
 
-DUMMY_CERT = "MIID...dummy...cert"   # nur nicht-leer; echte Signaturprüfung testet der Fake nicht
+DUMMY_CERT = "MIID...dummy...cert"   # merely non-empty; the fake does not test real signature verification
 
 
 class FakeSAML:
@@ -30,10 +30,10 @@ class FakeSAML:
                 "_authnreq-id-4711")
 
     def process(self, req, base, request_id=""):
-        # Die Attrappe steht für den echten Client NACH bestandener Prüfung — den Abgleich von
-        # InResponseTo stellt tests/test_sicherheit_befunde.py nach. Der `req`-Satz wird
-        # mitgeschrieben: Aus ihm berechnet python3-saml die eigene Adresse und vergleicht sie
-        # mit der `Destination` der Assertion (F-16).
+        # The stand-in represents the real client AFTER a successful check — the comparison of
+        # InResponseTo is covered by tests/test_security_findings.py. The `req` set is
+        # recorded: python3-saml computes its own address from it and compares it
+        # with the `Destination` of the assertion (F-16).
         self.kontexte.append(req)
         self.gesehene_request_id = request_id
         return {"nameid": self.nameid, "attrs": self.attrs} if self.valid else None
@@ -74,24 +74,24 @@ assert r.status_code == 303 and r.headers["location"].startswith("https://idp.ex
 assert "RelayState=/geheim" in r.headers["location"]
 ok("Login-Seite zeigt SAML-Button; /auth/saml/login → Redirect zum IdP (RelayState=next)")
 
-# ---------- ACS: geprüfte Assertion → User anlegen + eingeloggt ----------
+# ---------- ACS: verified assertion → create user + logged in ----------
 auth.saml = FakeSAML(nameid="alice", attrs={"email": ["alice@corp"], "displayName": ["Alice"],
                                             "groups": ["staff"]})
 r = c.post("/auth/saml/acs", data={"SAMLResponse": "x", "RelayState": "/geheim"}, follow_redirects=False)
 assert r.status_code == 303 and r.headers["location"] == "/geheim", r.headers.get("location")
 assert c.get("/geheim", headers=JSON).json() == {"u": "alice"}
 u = auth.store.get_user_by_name("alice")
-# `saml_email_trusted` ist per Vorgabe aus (PO-Entscheid 2026-09-24): Die Adresse aus der
-# Assertion wird nicht verwendet, wie H-3 bei OIDC. Der Anzeigename kommt weiter.
+# `saml_email_trusted` is off by default (PO decision 2026-09-24): the address from the
+# assertion is not used, like H-3 for OIDC. The display name still comes through.
 assert not u["email"] and u["display_name"] == "Alice", dict(u)
-ok("ACS: gültige Assertion → lokaler User (Auto-Create, Anzeigename, KEINE unbelegte Adresse) + eingeloggt")
+ok("ACS: valid assertion → local user (auto-create, display name, NO unproven address) + logged in")
 
-# ---------- ACS: ungültige Assertion → 400 ----------
+# ---------- ACS: invalid assertion → 400 ----------
 c2 = TestClient(app)
 auth.saml = FakeSAML(valid=False)
 r = c2.post("/auth/saml/acs", data={"SAMLResponse": "x"})
 assert r.status_code == 400
-ok("ACS: ungültige/ungeprüfte Assertion → 400")
+ok("ACS: invalid/unverified assertion → 400")
 os.remove(db)
 
 # ---------- Gruppen-Gate ----------
@@ -108,14 +108,14 @@ db, auth, app = build()
 from tinysesam.saml_ import SAMLClient
 md = SAMLClient(auth.cfg).metadata("https://app.example.com")
 assert "EntityDescriptor" in md and "app.example.com/auth/saml/acs" in md
-# über die Route
+# via the route
 assert TestClient(app).get("/auth/saml/metadata").status_code == 200
-ok("SP-Metadata (onelogin) enthält ACS-URL + ist über /auth/saml/metadata abrufbar")
+ok("SP metadata (onelogin) contains ACS URL + is retrievable via /auth/saml/metadata")
 os.remove(db)
 
-# ---------- Abgelehnte Assertion: diagnostizierbar und nicht als „Link ungültig" ----------
-# Beim ersten Lauf gegen einen echten IdP (Keycloak) endete eine abgelehnte Assertion in der
-# Magic-Link-Fehlerseite, und der Grund stand nirgends. Beides ist jetzt Teil des Vertrags.
+# ---------- Rejected assertion: diagnosable and not shown as "invalid link" ----------
+# On the first run against a real IdP (Keycloak) a rejected assertion ended up on the
+# magic-link error page, and the reason was nowhere to be found. Both are now part of the contract.
 import io
 import logging
 
@@ -133,11 +133,11 @@ finally:
     seclog.removeHandler(h)
 
 assert r.status_code == 400, r.status_code
-assert "link" not in r.text.lower(), "SAML-Fehler darf nicht als Link-Problem erscheinen"
-ok("abgelehnte Assertion → 400 ohne irreführende Magic-Link-Seite")
+assert "link" not in r.text.lower(), "SAML error must not appear as a link problem"
+ok("rejected assertion → 400 without a misleading magic-link page")
 
-# Der echte Client (nicht die Attrappe) schreibt den Grund ins Sicherheits-Log — ohne ihn ist eine
-# fehlgeschlagene Anmeldung von aussen wie von innen nicht erklärbar.
+# The real client (not the stand-in) writes the reason to the security log — without it a
+# failed sign-in cannot be explained from outside or from inside.
 from tinysesam.saml_ import SAMLClient
 
 
@@ -166,101 +166,101 @@ finally:
     seclog.removeHandler(h)
 zeile = puffer.getvalue()
 assert "invalid_response" in zeile and "Invalid issuer" in zeile, zeile
-ok("Grund der Ablehnung steht im Logger tinysesam.security (errors + reason)")
+ok("Reason for the rejection is in the tinysesam.security logger (errors + reason)")
 os.remove(db)
 
-# ---------- F-14: eine Allowlist-ADRESSE wird über SAML nicht Erst-Admin ----------
-# SAML kennt kein `email_verified`: Kein Standardattribut sagt, dass der IdP die Adresse
-# geprüft hat. Ein IdP mit Selbstregistrierung (oder ein zweiter Mandant) setzte deshalb
-# `email=boss@example.com` in die Assertion und war beim ersten Login Erst-Admin der Instanz —
-# der Riegel aus F-14 hing allein am OIDC-Callback. Jetzt reicht die ACS ausdrücklich
-# „kein Beleg" durch, und `saml` gilt als föderierter Faktor (fail-closed).
+# ---------- F-14: an allowlist ADDRESS does not become first admin via SAML ----------
+# SAML has no `email_verified`: no standard attribute says that the IdP verified the
+# address. An IdP with self-registration (or a second tenant) therefore put
+# `email=boss@example.com` into the assertion and was first admin of the instance on the first login —
+# the bolt from F-14 hung on the OIDC callback alone. Now the ACS explicitly passes on
+# "no proof", and `saml` counts as a federated factor (fail-closed).
 db, auth, app = build(admin_identifiers=["boss@example.com"])
 auth.saml = FakeSAML(nameid="angreifer", attrs={"email": ["boss@example.com"]})
 c = TestClient(app)
 r = c.post("/auth/saml/acs", data={"SAMLResponse": "x", "RelayState": "/"}, follow_redirects=False)
-assert r.status_code == 303, r.status_code          # die Anmeldung selbst bleibt erlaubt
+assert r.status_code == 303, r.status_code          # the sign-in itself remains allowed
 u = auth.store.get_user_by_name("angreifer")
 assert u is not None and not u["is_admin"], dict(u) if u else None
-assert not auth.admin_exists(), "die Instanz hat jetzt einen Admin — über ein Assertion-Attribut"
-ok("F-14: eine Allowlist-ADRESSE aus der Assertion befördert nicht (SAML kennt keinen Beleg)")
+assert not auth.admin_exists(), "the instance now has an admin — via an assertion attribute"
+ok("F-14: an allowlist ADDRESS from the assertion does not promote (SAML has no proof)")
 os.remove(db)
 
-# Gegenprobe: Der Allowlist-NAME zählt weiterhin. Erlaubt ist er nur ohne Auto-Anlegen (sonst
-# verbietet ihn der Konstruktor-Wächter) — das Konto hat der Betreiber dann selbst angelegt.
+# Control: the allowlist NAME still counts. It is allowed only without auto-create (otherwise
+# the constructor guard forbids it) — the operator then created the account themselves.
 db, auth, app = build(admin_identifiers=["chefin"], saml_auto_create=False)
 uid = auth.create_user("chefin", email="chefin@example.com")
 auth.saml = FakeSAML(nameid="chefin", attrs={"email": ["chefin@example.com"]})
 r = TestClient(app).post("/auth/saml/acs", data={"SAMLResponse": "x", "RelayState": "/"},
                          follow_redirects=False)
 assert r.status_code == 303, r.status_code
-assert auth.get_user(uid)["is_admin"], "der dokumentierte Bootstrap-Weg über den Namen ist zu"
-ok("... der Allowlist-NAME eines vorher angelegten Kontos befördert weiterhin")
+assert auth.get_user(uid)["is_admin"], "the documented bootstrap path via the name is closed"
+ok("... the allowlist NAME of a previously created account still promotes")
 os.remove(db)
 
-# ---------- B-umgehung-1: der Riegel hält auch den ZWEITEN Login ----------
-# Das Verweigern oben schliesst nur DIESEN Anmeldeweg. Legte die ACS das Konto mit der Vorgabe
-# `email_verified=1` an, stand am Konto „belegt", obwohl die Assertion nichts belegt — und ein
-# Faktor, den sich der Angreifer in seiner frisch angemeldeten Sitzung selbst einrichtet (PIN,
-# Passkey), reist ohne Beleg an, liest den Vermerk und befördert doch.
+# ---------- B-umgehung-1: the bolt also holds the SECOND login ----------
+# The refusal above closes only THIS sign-in path. If the ACS created the account with the default
+# `email_verified=1`, the account would show "proven" although the assertion proves nothing — and a
+# factor the attacker sets up themselves in their freshly signed-in session (PIN,
+# passkey) arrives without proof, reads the note and promotes after all.
 db, auth, app = build(admin_identifiers=["boss@example.com"], pin_enabled=True, pin_login=True)
 auth.saml = FakeSAML(nameid="mallory", attrs={"email": ["boss@example.com"]})
 c = TestClient(app)
 assert c.post("/auth/saml/acs", data={"SAMLResponse": "x"}, follow_redirects=False).status_code == 303
 mallory = auth.store.get_user_by_name("mallory")
-assert not mallory["email_verified"], "SAML legt mit einem Beleg an, den die Assertion nie trägt"
+assert not mallory["email_verified"], "SAML creates with a proof the assertion never carries"
 assert c.post("/auth/pin/set", json={"pin": "246813"}).status_code == 200   # eigene Sitzung
 c.get("/auth/logout")
 c.cookies.clear()
 r = c.post("/auth/pin", data={"username": "mallory", "pin": "246813"}, follow_redirects=False)
-assert r.status_code == 303, r.status_code                   # der PIN-Login selbst geht
-assert not auth.get_user(mallory["id"])["is_admin"], "Erst-Admin über den zweiten Sprung"
+assert r.status_code == 303, r.status_code                   # the PIN login itself works
+assert not auth.get_user(mallory["id"])["is_admin"], "first admin via the second hop"
 assert not auth.admin_exists()
-ok("B-umgehung-1: ... auch ein selbst eingerichteter zweiter Faktor befördert die Adresse nicht")
+ok("B-umgehung-1: ... a second factor set up by oneself does not promote the address either")
 os.remove(db)
 
-# ---------- B-umgehung-10: die beiden SAML-Schlösser EINZELN gemessen ----------
-# Denselben Weg sichern zwei Riegel: (1) die ACS-Route reicht ausdrücklich „kein Beleg" durch,
-# (2) `saml` steht in `FOEDERIERTE_FAKTOREN` und verlangt dort ein ausdrückliches `True`.
-# Solange beide stehen, fällt das Entfernen eines einzelnen nirgends auf — wer später einen
-# umbaut, verliert ihn unbemerkt. Jede Probe hängt deshalb den jeweils anderen aus.
+# ---------- B-umgehung-10: the two SAML locks measured INDIVIDUALLY ----------
+# Two bolts secure the same path: (1) the ACS route explicitly passes on "no proof",
+# (2) `saml` is in `FEDERATED_FACTORS` and requires an explicit `True` there.
+# As long as both exist, removing a single one goes unnoticed anywhere — whoever later
+# rebuilds one loses it unnoticed. Each probe therefore detaches the other one.
 
-# Schloss 1 allein: `FOEDERIERTE_FAKTOREN` leer, Konto mit ECHTEM Beleg (vom Betreiber
-# angelegt). Jetzt hält nur noch der Durchreicher der Route.
+# Lock 1 alone: `FEDERATED_FACTORS` empty, account with REAL proof (created by the
+# operator). Now only the route's pass-through holds.
 db, auth, app = build(admin_identifiers=["boss@example.com"])
 uid = auth.create_user("angreifer", email="boss@example.com")
-assert auth.store.get_user(uid)["email_verified"] == 1, "Vorbedingung: das Konto ist belegt"
-auth._FOEDERIERTE_FAKTOREN = ()                 # Schloss 2 ausgehängt
+assert auth.store.get_user(uid)["email_verified"] == 1, "precondition: the account is proven"
+auth._FEDERATED_FACTORS = ()                 # lock 2 detached
 auth.saml = FakeSAML(nameid="angreifer", attrs={"email": ["boss@example.com"]})
 assert TestClient(app).post("/auth/saml/acs", data={"SAMLResponse": "x"},
                             follow_redirects=False).status_code == 303
 assert not auth.get_user(uid)["is_admin"], \
-    "die ACS-Route reicht „kein Beleg\" nicht mehr durch — SAML befördert wieder"
-ok("B-umgehung-10: Schloss 1 einzeln — die ACS-Route reicht „kein Beleg\" durch (ohne FOEDERIERTE_FAKTOREN)")
-# Gegenprobe: Ohne den Durchreicher befördert derselbe Vermerk sofort — das misst, dass oben
-# WIRKLICH die Route entschieden hat.
+    "the ACS route no longer passes on \"no proof\" — SAML promotes again"
+ok("B-umgehung-10: lock 1 alone — the ACS route passes on \"no proof\" (without FEDERATED_FACTORS)")
+# Control: without the pass-through the same note promotes immediately — this measures that above
+# the route REALLY decided.
 assert auth._maybe_promote_admin(auth.get_user(uid), faktor="saml") is True, \
-    "auch ohne beide Schlösser befördert nichts — dann misst die Prüfung darüber nichts"
-ok("... Gegenprobe: ohne beide Schlösser befördert der Vermerk am Konto sofort")
+    "even without both locks nothing promotes — then the check above measures nothing"
+ok("... control: without both locks the note on the account promotes immediately")
 os.remove(db)
 
-# Schloss 2 allein: ohne die Route, direkt an der Quelle. Ein Aufrufer, der den Beleg schlicht
-# vergisst (`email_bestaetigt=None`), darf über einen föderierten Faktor nicht befördern.
+# Lock 2 alone: without the route, directly at the source. A caller that simply forgets the proof
+# (`email_bestaetigt=None`) must not promote via a federated factor.
 db, auth, app = build(admin_identifiers=["boss@example.com"])
 uid = auth.create_user("angreifer", email="boss@example.com")     # Beleg am Konto: ja
 assert auth._maybe_promote_admin(auth.get_user(uid), faktor="saml") is False, \
-    "der Faktor 'saml' verlangt keinen ausdrücklichen Beleg mehr"
-ok("B-umgehung-10: Schloss 2 einzeln — der Faktor 'saml' befördert ohne ausdrücklichen Beleg nicht")
+    "the 'saml' factor no longer requires an explicit proof"
+ok("B-umgehung-10: lock 2 alone — the 'saml' factor does not promote without an explicit proof")
 assert auth._maybe_promote_admin(auth.get_user(uid), email_bestaetigt=True, faktor="saml") is True, \
-    "auch mit Beleg befördert der Faktor nicht — dann misst die Prüfung darüber nichts"
-ok("... Gegenprobe: mit ausdrücklichem Beleg befördert derselbe Aufruf")
+    "even with proof the factor does not promote — then the check above measures nothing"
+ok("... control: with an explicit proof the same call promotes")
 os.remove(db)
 
-# ---------- R4-12: eine SAML-Identität besetzt keine lokale Kennung ----------
-# Benutzername und E-Mail sind EIN Kennungs-Raum. Die Kreuzprüfung in `create_user` trifft
-# auch das Auto-Anlegen aus SAML — und muss als saubere 403 ankommen, nicht als 500. Gemessen mit
-# `saml_email_trusted=True`: Nur dann kommen Adresse und Adress-Name überhaupt ins Konto (die
-# Vorgabe verwendet sie nicht, s. unten).
+# ---------- R4-12: a SAML identity does not occupy a local identifier ----------
+# Username and email are ONE identifier space. The cross-check in `create_user` also
+# hits the auto-create from SAML — and must arrive as a clean 403, not a 500. Measured with
+# `saml_email_trusted=True`: only then do address and address-name get into the account at all (the
+# default does not use them, see below).
 for was, nameid, attrs in (
         ("deren Adresse lokal schon Kennung ist", "eve", {"email": ["chef@example.com"]}),
         ("deren Name lokal schon Adresse ist", "chef@example.com", {"email": ["eve@example.com"]})):
@@ -268,12 +268,12 @@ for was, nameid, attrs in (
     lokal = auth.create_user("chef", password="lokal12345", email="chef@example.com")
     auth.saml = FakeSAML(nameid=nameid, attrs=attrs)
     r = TestClient(app).post("/auth/saml/acs", data={"SAMLResponse": "x"}, follow_redirects=False)
-    assert r.status_code == 403, f"HTTP {r.status_code} — 303 wäre eine besetzte Kennung, 500 ein Defekt"
-    assert auth.store.get_user_by_name(nameid) is None, "das Konto entstand trotz Abweisung"
-    assert (auth.find_user("chef@example.com") or {})["id"] == lokal, "die Kennung wurde übernommen"
+    assert r.status_code == 403, f"HTTP {r.status_code} — 303 would be an occupied identifier, 500 a defect"
+    assert auth.store.get_user_by_name(nameid) is None, "the account was created despite the rejection"
+    assert (auth.find_user("chef@example.com") or {})["id"] == lokal, "the identifier was taken over"
     assert any(z["event"] == "saml_ident_taken" for z in auth.store.recent_audit(20)), \
-        "kein Audit-Eintrag — die Abweisung ist unsichtbar"
-    ok(f"R4-12: eine SAML-Identität, {was}, legt kein Konto an (403, kein 500)")
+        "no audit entry — the rejection is invisible"
+    ok(f"R4-12: a SAML identity, {was}, creates no account (403, no 500)")
     os.remove(db)
 
 # Gegenprobe: freie Kennungen legen weiterhin an.
@@ -282,13 +282,13 @@ auth.create_user("chef", password="lokal12345", email="chef@example.com")
 auth.saml = FakeSAML(nameid="neu", attrs={"email": ["neu@example.com"]})
 r = TestClient(app).post("/auth/saml/acs", data={"SAMLResponse": "x"}, follow_redirects=False)
 assert r.status_code == 303 and auth.store.get_user_by_name("neu") is not None, r.status_code
-ok("... mit freien Kennungen legt SAML weiterhin an")
+ok("... with free identifiers SAML still creates")
 os.remove(db)
 
-# ---------- saml_email_trusted=False (Vorgabe, PO-Entscheid 2026-09-24): wie H-3 bei OIDC ----------
-# Die unbelegte Adresse einer Assertion wird nicht verwendet: kein Konto-Attribut, und ein
-# Kontoname mit `@` (NameID emailAddress) weicht einem Ersatznamen — sonst besetzte er als
-# `Remote-User` die Kennung der echten Inhaberin.
+# ---------- saml_email_trusted=False (default, PO decision 2026-09-24): like H-3 for OIDC ----------
+# The unproven address of an assertion is not used: no account attribute, and an
+# account name with `@` (NameID emailAddress) yields to a substitute name — otherwise it would occupy as
+# `Remote-User` the identifier of the real owner.
 db, auth, app = build(admin_identifiers=["chef@example.com"])
 lokal = auth.create_user("chef", password="lokal12345", email="chef@example.com")
 auth.saml = FakeSAML(nameid="chef＠example.com", attrs={"email": ["chef@example.com"]})   # Vollbreite
@@ -297,7 +297,7 @@ neu = [u for u in auth.store.list_users() if u["id"] != lokal]
 assert r.status_code == 303 and len(neu) == 1, (r.status_code, [dict(u) for u in neu])
 assert neu[0]["username"].startswith("saml-") and not neu[0]["email"], dict(neu[0])
 assert (auth.find_user("chef@example.com") or {})["id"] == lokal and not neu[0]["is_admin"]
-ok("saml_email_trusted=False: Adresse nicht verwendet, `@`-Name (auch `＠`) → Ersatzname, kein Erst-Admin")
+ok("saml_email_trusted=False: address not used, `@` name (also `＠`) → substitute name, no first admin")
 os.remove(db)
 db, auth, app = build(saml_email_trusted=True)
 auth.saml = FakeSAML(nameid="bea@corp.example", attrs={"email": ["bea@corp.example"]})
@@ -305,15 +305,15 @@ assert TestClient(app).post("/auth/saml/acs", data={"SAMLResponse": "x"},
                             follow_redirects=False).status_code == 303
 bea = auth.store.get_user_by_name("bea@corp.example")
 assert bea is not None and bea["email"] == "bea@corp.example" and bea["email_verified"], bea
-ok("saml_email_trusted=True: Name und Adresse aus der Assertion, die Adresse gilt als belegt")
+ok("saml_email_trusted=True: name and address from the assertion, the address counts as proven")
 os.remove(db)
 
-# ---------- F-16: die SP-Identität kommt aus base_url, nicht aus dem Host-Header ----------
-# python3-saml baut aus `https`, `http_host` und `script_name` die Adresse, die es für die eigene
-# hält, und vergleicht damit die `Destination` der Assertion. Kamen Schema und Host aus
-# X-Forwarded-Proto/Host, bestimmte der Anfragende diesen Vergleich mit: Er legte eine Assertion
-# vor, deren Destination auf SEINEN Namen lautet, und setzte den Header passend dazu. Zusammen
-# mit der Bindung über den blossen Benutzernamen (F-11) war das eine Kontoübernahme.
+# ---------- F-16: the SP identity comes from base_url, not from the Host header ----------
+# python3-saml builds from `https`, `http_host` and `script_name` the address it considers
+# its own, and compares the `Destination` of the assertion against it. If scheme and host came from
+# X-Forwarded-Proto/Host, the requester co-determined this comparison: they presented an assertion
+# whose Destination names THEIR host, and set the header to match. Together
+# with the binding via the bare username (F-11) this was an account takeover.
 db16, auth16, app16 = build()
 auth16.saml = FakeSAML()
 c16 = TestClient(app16)
@@ -323,25 +323,25 @@ FREMD = {"X-Forwarded-Proto": "http", "X-Forwarded-Host": "angreifer.example",
 auth16.saml.kontexte.clear()
 c16.get("/auth/saml/login", headers=FREMD, follow_redirects=False)
 _k = auth16.saml.kontexte[-1]
-assert _k["http_host"] == "app.example.com", f"fremder Host im SAML-Kontext: {_k}"
+assert _k["http_host"] == "app.example.com", f"foreign host in the SAML context: {_k}"
 assert _k["https"] == "on", _k
-ok("F-16: der AuthnRequest nennt den Host aus base_url, nicht den aus dem Header")
+ok("F-16: the AuthnRequest names the host from base_url, not the one from the header")
 
 auth16.saml.kontexte.clear()
 c16.post("/auth/saml/acs", data={"SAMLResponse": "x", "RelayState": "/"}, headers=FREMD,
          follow_redirects=False)
 _k = auth16.saml.kontexte[-1]
-assert _k["http_host"] == "app.example.com", f"fremder Host an der ACS: {_k}"
-ok("F-16: …und die ACS rechnet ihre eigene Adresse genauso aus")
+assert _k["http_host"] == "app.example.com", f"foreign host at the ACS: {_k}"
+ok("F-16: …and the ACS computes its own address the same way")
 
-# Die Metadaten bauen Entity-ID und ACS-URL — sie kommen aus derselben geprüften Basis, sonst
-# läge im Dokument, das der IdP einliest, der Name des Anfragenden.
+# The metadata builds entity ID and ACS URL — they come from the same verified base, otherwise
+# the document the IdP reads would contain the requester's name.
 c16.get("/auth/saml/metadata", headers=FREMD)
 assert auth16.saml.metadaten_basis == "https://app.example.com", auth16.saml.metadaten_basis
-ok("F-16: …auch die Metadaten, die der IdP einliest")
+ok("F-16: …also the metadata the IdP reads")
 
-# Der Pfadanteil einer unter einem Unterpfad montierten App gehört mit in die Selbst-Adresse,
-# sonst weicht sie von der ACS-URL in den Settings ab und die Destination-Prüfung scheitert.
+# The path part of an app mounted under a subpath belongs in the self address,
+# otherwise it deviates from the ACS URL in the settings and the Destination check fails.
 db16b, auth16b, app16b = build(base_url="https://app.example.com/sso")
 auth16b.saml = FakeSAML()
 c16b = TestClient(app16b)
@@ -349,21 +349,21 @@ auth16b.saml.kontexte.clear()
 c16b.get("/auth/saml/login", follow_redirects=False)
 _kb = auth16b.saml.kontexte[-1]
 assert _kb["script_name"] == "/sso/auth/saml/login", _kb
-ok("F-16: der Unterpfad aus base_url steht in der berechneten Selbst-Adresse")
+ok("F-16: the subpath from base_url is in the computed self address")
 
-# Und er wird nicht doppelt angehängt, wenn er im Pfad schon steckt (ASGI-Mount).
+# And it is not appended twice if it is already in the path (ASGI mount).
 from tinysesam.saml_ import request_kontext                                # noqa: E402
 _direkt = request_kontext("https://app.example.com/sso", "/sso/auth/saml/acs")
 assert _direkt["script_name"] == "/sso/auth/saml/acs", _direkt
-ok("F-16: …und nicht doppelt, wenn er schon im Pfad steht")
+ok("F-16: …and not twice if it is already in the path")
 
 for _d in (db16, db16b):
     os.remove(_d)
 
-# ---------- F-11: die NameID bindet, nicht der Name ----------
-# Bei SAML ist die stabile Kennung die NameID (oder ein Attribut, wenn der IdP transiente
-# NameIDs schickt). Ohne sie hing die Zuordnung am Benutzernamen aus einem Attribut — und wer
-# den im Verzeichnis ändert, bekam ein fremdes lokales Konto.
+# ---------- F-11: the NameID binds, not the name ----------
+# With SAML the stable identifier is the NameID (or an attribute if the IdP sends transient
+# NameIDs). Without it the mapping hung on the username from an attribute — and whoever
+# changes that in the directory got a foreign local account.
 db11, auth11, app11 = build(saml_attr_username="uid")
 c11 = TestClient(app11)
 
@@ -374,43 +374,43 @@ def _saml_anmelden(auth, app, nameid, attrs):
                                 follow_redirects=False)
 
 
-# (1) Neues Konto wird an die NameID gebunden.
+# (1) A new account is bound to the NameID.
 assert _saml_anmelden(auth11, app11, "nid-alice", {"uid": ["alice"]}).status_code == 303
 _uid_a = auth11.store.get_user_by_name("alice")["id"]
 assert auth11.store.get_federated_kennung("saml", _uid_a) == "nid-alice"
-ok("F-11: ein über SAML angelegtes Konto wird an die NameID gebunden")
+ok("F-11: an account created via SAML is bound to the NameID")
 
 # (2) Der IdP nennt denselben Menschen anders — dieselbe NameID, dasselbe Konto.
 assert _saml_anmelden(auth11, app11, "nid-alice", {"uid": ["alice.neu"]}).status_code == 303
-assert auth11.store.get_user_by_name("alice.neu") is None, "es entstand ein zweites Konto"
-ok("F-11: ein neuer Name bei gleicher NameID führt in dasselbe Konto")
+assert auth11.store.get_user_by_name("alice.neu") is None, "a second account was created"
+ok("F-11: a new name with the same NameID leads to the same account")
 
-# (3) Der Angriff: fremde NameID unter dem alten Namen.
+# (3) The attack: foreign NameID under the old name.
 _r = _saml_anmelden(auth11, app11, "nid-FREMD", {"uid": ["alice"]})
-assert _r.status_code == 403, f"HTTP {_r.status_code} — das fremde Konto kam durch"
-assert any(e["event"] == "saml_kennung_wechsel" for e in auth11.store.recent_audit(limit=10))
-ok("F-11: eine fremde NameID unter altem Namen wird abgewiesen")
+assert _r.status_code == 403, f"HTTP {_r.status_code} — the foreign account got through"
+assert any(e["event"] == "saml_identifier_change" for e in auth11.store.recent_audit(limit=10))
+ok("F-11: a foreign NameID under an old name is rejected")
 
-# (4) `saml_attr_id`: Wenn der IdP transiente NameIDs schickt, bindet ein Attribut.
+# (4) `saml_attr_id`: if the IdP sends transient NameIDs, an attribute binds.
 db11b, auth11b, app11b = build(saml_attr_username="uid", saml_attr_id="employeeNumber")
 assert _saml_anmelden(auth11b, app11b, "transient-4711",
                       {"uid": ["bob"], "employeeNumber": ["p-0815"]}).status_code == 303
 _uid_b = auth11b.store.get_user_by_name("bob")["id"]
 assert auth11b.store.get_federated_kennung("saml", _uid_b) == "p-0815", \
-    "die transiente NameID wurde gebunden statt des Attributs"
-# Beim nächsten Login ist die NameID eine andere — das Attribut bleibt.
+    "the transient NameID was bound instead of the attribute"
+# On the next login the NameID is a different one — the attribute stays.
 assert _saml_anmelden(auth11b, app11b, "transient-9999",
                       {"uid": ["bob"], "employeeNumber": ["p-0815"]}).status_code == 303
 assert auth11b.store.get_user_by_name("bob")["id"] == _uid_b
-ok("F-11: saml_attr_id bindet das Attribut — eine transiente NameID wechselt bei jedem Login")
+ok("F-11: saml_attr_id binds the attribute — a transient NameID changes on every login")
 
 for _d in (db11, db11b):
     os.remove(_d)
 
-# ---------- F-22: die ACS ist ratenbegrenzt, und jede Abweisung steht im Audit-Log ----------
-# Bis 0.20.0 war die ACS die einzige Anmelderoute ohne Drossel — und die teuerste: Jeder POST geht
-# durch die XML-Signaturprüfung. Fachliche Abweisungen (Gruppe, kein Konto, gesperrt) endeten
-# stumm in einer 403; „ich komme nicht rein" war serverseitig nicht zu beantworten.
+# ---------- F-22: the ACS is rate-limited, and every rejection is in the audit log ----------
+# Until 0.20.0 the ACS was the only sign-in route without throttling — and the most expensive: every POST goes
+# through the XML signature check. Business rejections (group, no account, locked) ended
+# silently in a 403; "I can't get in" could not be answered server-side.
 db22, auth22, app22 = build(saml_allowed_groups=["staff"])
 auth22.set_security("rate_limit_max", 3)
 c22 = TestClient(app22)
@@ -418,18 +418,18 @@ auth22.saml = FakeSAML(nameid="eve", attrs={"groups": ["extern"]})
 _antw22 = [c22.post("/auth/saml/acs", data={"SAMLResponse": "x"}, follow_redirects=False).status_code
            for _ in range(5)]
 assert _antw22[:3] == [403, 403, 403] and _antw22[3:] == [429, 429], _antw22
-ok("F-22: die ACS ist ratenbegrenzt (nach rate_limit_max → 429, vor der Signaturprüfung)")
+ok("F-22: the ACS is rate-limited (after rate_limit_max → 429, before the signature check)")
 _z22 = auth22.store.recent_audit(50)
-assert any(z["event"] == "saml_denied" and z["username"] == "eve" and "grund=gruppe" in (z["detail"] or "")
+assert any(z["event"] == "saml_denied" and z["username"] == "eve" and "reason=group" in (z["detail"] or "")
            and z["ip"] for z in _z22), [dict(z) for z in _z22][:5]
-ok("F-22: Gruppen-Abweisung → Audit-Zeile saml_denied mit Grund und IP")
+ok("F-22: group rejection → audit line saml_denied with reason and IP")
 os.remove(db22)
 
 db22b, auth22b, app22b = build(saml_auto_create=False)
 auth22b.saml = FakeSAML(nameid="unbekannt", attrs={})
 assert TestClient(app22b).post("/auth/saml/acs", data={"SAMLResponse": "x"},
                                follow_redirects=False).status_code == 403
-assert any(z["event"] == "saml_denied" and "grund=kein_konto" in (z["detail"] or "")
+assert any(z["event"] == "saml_denied" and "reason=no_account" in (z["detail"] or "")
            for z in auth22b.store.recent_audit(20))
 _uid22 = auth22b.create_user("gesperrt")
 auth22b.store._exec("UPDATE users SET disabled=1 WHERE id=?", (_uid22,))
@@ -437,16 +437,16 @@ auth22b.saml = FakeSAML(nameid="gesperrt", attrs={})
 assert TestClient(app22b).post("/auth/saml/acs", data={"SAMLResponse": "x"},
                                follow_redirects=False).status_code == 403
 assert any(z["event"] == "saml_denied" and z["username"] == "gesperrt"
-           and "grund=konto_gesperrt" in (z["detail"] or "") for z in auth22b.store.recent_audit(20))
+           and "reason=account_locked" in (z["detail"] or "") for z in auth22b.store.recent_audit(20))
 auth22b.saml = FakeSAML(valid=False)
 assert TestClient(app22b).post("/auth/saml/acs", data={"SAMLResponse": "x"}).status_code == 400
 assert any(z["event"] == "saml_invalid" for z in auth22b.store.recent_audit(20))
-ok("F-22: kein Konto, gesperrtes Konto und abgelehnte Assertion hinterlassen je eine Audit-Zeile")
+ok("F-22: no account, locked account and rejected assertion each leave an audit line")
 os.remove(db22b)
 
-# ---------- F-21: SHA-1 in Signatur oder Digest wird abgewiesen ----------
-# Gemessen gegen ECHTES python3-saml mit einer echt signierten Assertion: Nur so ist belegt, dass
-# der Schalter in den Settings auch dort ankommt, wo die Signatur geprüft wird.
+# ---------- F-21: SHA-1 in signature or digest is rejected ----------
+# Measured against REAL python3-saml with a really signed assertion: only this proves that
+# the switch in the settings also arrives where the signature is checked.
 from onelogin.saml2.settings import OneLogin_Saml2_Settings  # noqa: E402
 from tinysesam.saml_ import SAMLClient, request_kontext       # noqa: E402
 
@@ -456,7 +456,7 @@ _cfg21 = TinySesamConfig(db_path=":memory:", saml_enabled=True, passkey_enabled=
 _st21 = OneLogin_Saml2_Settings(SAMLClient(_cfg21).settings("https://app.example.com"),
                                 sp_validation_only=True)
 assert _st21.get_security_data().get("rejectDeprecatedAlgorithm") is True, _st21.get_security_data()
-ok("F-21: rejectDeprecatedAlgorithm ist in den wirksamen python3-saml-Settings gesetzt")
+ok("F-21: rejectDeprecatedAlgorithm is set in the effective python3-saml settings")
 
 import importlib.util as _ilu21  # noqa: E402
 if _ilu21.find_spec("cryptography") and _ilu21.find_spec("lxml"):
@@ -520,19 +520,19 @@ if _ilu21.find_spec("cryptography") and _ilu21.find_spec("lxml"):
 
     _gut21 = _pruefe21(_K.RSA_SHA256, _K.SHA256)
     assert _gut21 and _gut21["nameid"] == "alice", \
-        f"Vorbedingung: eine SHA-256-signierte Assertion muss durchgehen, sonst misst der Rest nichts: {_gut21}"
-    assert _pruefe21(_K.RSA_SHA1, _K.SHA1) is None, "rsa-sha1 + sha1 wurde angenommen"
-    assert _pruefe21(_K.RSA_SHA1, _K.SHA256) is None, "rsa-sha1 als Signaturverfahren wurde angenommen"
-    assert _pruefe21(_K.RSA_SHA256, _K.SHA1) is None, "sha1 als Digest wurde angenommen"
-    ok("F-21: echt signierte Assertion — SHA-256 geht durch, SHA-1 in Signatur ODER Digest nicht")
+        f"precondition: a SHA-256-signed assertion must pass, otherwise the rest measures nothing: {_gut21}"
+    assert _pruefe21(_K.RSA_SHA1, _K.SHA1) is None, "rsa-sha1 + sha1 was accepted"
+    assert _pruefe21(_K.RSA_SHA1, _K.SHA256) is None, "rsa-sha1 as signature method was accepted"
+    assert _pruefe21(_K.RSA_SHA256, _K.SHA1) is None, "sha1 as digest was accepted"
+    ok("F-21: really signed assertion — SHA-256 passes, SHA-1 in signature OR digest does not")
 else:                                                    # pragma: no cover
-    print("  – F-21 gegen eine echt signierte Assertion nicht gefahren (cryptography/lxml fehlen); "
-          "gemessen ist oben nur der Settings-Schalter")
+    print("  – F-21 not run against a really signed assertion (cryptography/lxml missing); "
+          "only the settings switch is measured above")
 
-# ---------- Beleg-Attribut (PO-Entscheid 2026-09-25): wirkt wie der Schalter, auch für den Erst-Admin ----------
-# Bis hierher reiste über die ACS nur mit `saml_email_trusted` ein Beleg mit. Mit dem Attribut
-# stand der Beleg dann zwar am Konto, die Anmeldung selbst beförderte aber nicht — erst die
-# nächste über einen lokalen Faktor. Konfig-Prüfung und Laufzeit sagten Verschiedenes.
+# ---------- Proof attribute (PO decision 2026-09-25): acts like the switch, also for the first admin ----------
+# Until here a proof travelled in via the ACS only with `saml_email_trusted`. With the attribute
+# the proof was on the account, but the sign-in itself did not promote — only the
+# next one via a local factor. Config check and runtime said different things.
 for wert, soll in (("true", True), ("false", False)):
     db, auth, app = build(admin_identifiers=["boss@example.com"], saml_attr_email_verified="email_verified")
     auth.saml = FakeSAML(nameid="bossin", attrs={"email": ["boss@example.com"], "email_verified": [wert]})
@@ -541,6 +541,6 @@ for wert, soll in (("true", True), ("false", False)):
     u = auth.store.get_user_by_name("bossin")
     assert r.status_code == 303 and bool(u["is_admin"]) is soll, (wert, r.status_code, dict(u))
     os.remove(db)
-ok("Beleg-Attribut „true“ befördert die Allowlist-Adresse wie der Schalter, „false“ nicht")
+ok("Proof attribute \"true\" promotes the allowlist address like the switch, \"false\" does not")
 
 print("\nSAML OK ✅")

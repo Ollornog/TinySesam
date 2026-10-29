@@ -1,37 +1,37 @@
-"""Das Ergebnis eines Anmeldeschritts: `login_password`, `login_pin`, `login_totp` — und einer Step-up-Bestätigung: `confirm_password`, `confirm_pin`, `confirm_totp` (0.22.0).
+"""The result of a sign-in step: `login_password`, `login_pin`, `login_totp` — and of a step-up confirmation: `confirm_password`, `confirm_pin`, `confirm_totp` (0.22.0).
 
-PO-Befund 2026-09-26: Die README zeigte als Weg zu einer eigenen Login-Seite `check_password` +
-`start_session`. Die inneren Prüfer drosseln aber nicht — Sperre, Fehlversuchszähler, Serie,
-IP-Drossel und die Zeilen für fail2ban standen nur in den eingebauten Routen. Wer dem Muster
-folgte, liess Passwörter (oder eine vierstellige PIN) so schnell raten, wie der Server antwortet.
+PO finding 2026-09-26: the README showed `check_password` + `start_session` as the way to a
+custom login page. The inner checkers do not throttle, though — lockout, failed-attempt counter,
+series, IP throttle and the lines for fail2ban existed only in the built-in routes. Anyone
+following the pattern let passwords (or a four-digit PIN) be guessed as fast as the server answers.
 
-Der öffentliche Weg sind seither die drei `login_*`-Methoden. Sie tun genau, was die
-eingebauten Routen tun, weil diese sie aufrufen (eine Quelle, kein Drift). Zurück kommt ein
-`LoginResult`: Erfolg oder der Grund dagegen, mit dem HTTP-Status und dem Text, den die eingebaute
-Seite zeigt.
+The public way since then is the three `login_*` methods. They do exactly what the built-in
+routes do, because those call them (one source, no drift). What comes back is a
+`LoginResult`: success or the reason against it, with the HTTP status and the text the built-in
+page shows.
 
-Seit dem PO-Entscheid vom 2026-09-27 liefern auch die Step-up-Bausteine `confirm_*` (die
-Bestätigung vor heiklen Aktionen, `POST /auth/reauth` ruft sie) ein `LoginResult`: Eine
-Bestätigung ist eine erneute Anmeldung an der laufenden Sitzung, und die Felder passen ohne Rest —
-bei Erfolg `done=True` und kein offener Faktor, `redirect()`/`set_cookie()` setzen das erneuerte
-Token (F-06). Ein eigener Typ hätte jedes Feld und beide Methoden wiederholt, und eine eigene
-Seite lernte zwei Formen für dasselbe Muster.
+Since the PO decision of 2026-09-27 the step-up building blocks `confirm_*` (the confirmation
+before sensitive actions, called by `POST /auth/reauth`) also return a `LoginResult`: a
+confirmation is a renewed sign-in on the running session, and the fields fit without remainder —
+on success `done=True` and no open factor, `redirect()`/`set_cookie()` set the renewed
+token (F-06). A separate type would have repeated every field and both methods, and a custom
+page would have had to learn two shapes for the same pattern.
 
-Die Namen sind englisch (PO-Entscheid 2026-09-27), wie der Rest der Stufe-A-Oberfläche. Die Werte
-von `reason` sind kurze englische Kürzel für Programme; die Audit- und Log-Zeilen (fail2ban!)
-behalten ihre eigenen Wörter — ein `reason` ist keine Log-Zeile.
+The names are English (PO decision 2026-09-27), like the rest of the tier-A surface. The values
+of `reason` are short English codes for programs; the audit and log lines (fail2ban!)
+keep their own words — a `reason` is not a log line.
 
-Erwartbare Ausgänge — falsches Passwort, Sperre, Drossel, Verzeichnis weg — sind **Ergebnisse,
-keine Ausnahmen**: Die eingebaute Route muss sie als Seite mit Status rendern, eine eigene als
-Formular oder JSON. Fail-closed durch Bauweise: Bei jedem Misserfolg gibt es keine Sitzung und
-kein Cookie. Wer das Ergebnis ignoriert, landet ohne Sitzung auf der Zielseite und wird von dort
-zur Anmeldung zurückgeschickt.
+Expected outcomes — wrong password, lockout, throttle, directory gone — are **results,
+not exceptions**: the built-in route has to render them as a page with a status, a custom one as
+a form or JSON. Fail-closed by construction: on every failure there is no session and
+no cookie. Whoever ignores the result lands on the target page without a session and is sent
+from there back to the sign-in.
 
-Das Sitzungs-Token ist bewusst **kein Feld**: Der Fehler, den die alte README vormachte (das
-Tupel aus `start_session` im Cookie), kam genau vom Hantieren mit dem Token. `set_cookie()`
-und `redirect()` setzen es richtig — samt neuem CSRF-Token bei einer frischen Anmeldung.
-Es hängt am Objekt, aber ausserhalb der Dataclass-Felder: `repr()`, `==` und
-`dataclasses.asdict()` sehen es nicht.
+The session token is deliberately **not a field**: the mistake the old README modelled (the
+tuple from `start_session` in the cookie) came precisely from handling the token. `set_cookie()`
+and `redirect()` set it correctly — including a new CSRF token on a fresh sign-in.
+It hangs on the object, but outside the dataclass fields: `repr()`, `==` and
+`dataclasses.asdict()` do not see it.
 """
 from __future__ import annotations
 
@@ -41,58 +41,58 @@ from typing import Any, ClassVar, Optional
 
 @dataclass(frozen=True)
 class LoginResult:
-    """Was ein Anmeldeschritt oder eine Step-up-Bestätigung ergeben hat: Erfolg oder der Grund dagegen, mit HTTP-Status und Text.
+    """What a sign-in step or step-up confirmation resulted in: success or the reason against it, with HTTP status and text.
 
-    `if not result:` fragt nach dem Erfolg (`ok`). Bei Erfolg setzt `result.redirect()` das
-    Sitzungs-Cookie und leitet zum nächsten Faktor oder zum Ziel; bei einem Misserfolg gibt es
-    keine Sitzung, und `status`/`message` sind das, was die eingebaute Seite zeigen würde.
+    `if not result:` asks for success (`ok`). On success `result.redirect()` sets the
+    session cookie and leads to the next factor or to the target; on failure there is
+    no session, and `status`/`message` are what the built-in page would show.
     """
 
-    #: Hat der Schritt angemeldet (bzw. frisch bestätigt)? Genau dann, wenn `reason == "ok"`;
-    #: `bool(result)` ist derselbe Wert.
+    #: Did the step sign in (or freshly confirm)? Exactly when `reason == "ok"`;
+    #: `bool(result)` is the same value.
     ok: bool
-    #: Warum (nicht): einer der Werte aus `REASONS`. Für Programme — der Text steht in `message`.
+    #: Why (not): one of the values in `REASONS`. For programs — the text is in `message`.
     reason: str
-    #: Der HTTP-Status der eingebauten Seite: 303 bei Erfolg, sonst 400, 401, 403, 404, 429 oder 503.
+    #: The HTTP status of the built-in page: 303 on success, otherwise 400, 401, 403, 404, 429 or 503.
     status: int
-    #: Der übersetzte Text für den Nutzer (Sprache aus `config.lang`); leer bei Erfolg.
+    #: The translated text for the user (language from `config.lang`); empty on success.
     message: str = ""
-    #: Das geprüfte Ziel (`safe_next`, mit Montage-Präfix): bei Erfolg der nächste Faktor-Schritt
-    #: oder `next`, sonst `next` fürs Formular — bei `no_session` die Login-Seite.
+    #: The checked target (`safe_next`, with mount prefix): on success the next factor step
+    #: or `next`, otherwise `next` for the form — for `no_session` the login page.
     next_url: str = ""
-    #: Der offene Faktor nach diesem Schritt (etwa `"totp"`), für eine eigene Seite des nächsten
-    #: Schritts. Bei einem Fehlschlag im Folgeschritt derselbe Faktor noch einmal, sonst None.
+    #: The open factor after this step (e.g. `"totp"`), for a custom page of the next
+    #: step. On a failure in the follow-up step the same factor once more, otherwise None.
     next_factor: Optional[str] = None
-    #: Ist die Sitzung vollständig angemeldet? Nur bei Erfolg und ohne offenen Faktor True.
+    #: Is the session fully signed in? True only on success and with no open factor.
     done: bool = False
-    #: Das angemeldete Konto (wie `get_user`) — nur bei Erfolg, sonst None.
+    #: The signed-in account (like `get_user`) — only on success, otherwise None.
     user: Optional[dict] = None
 
-    #: Jeder Wert, den `reason` annehmen kann: `ok`; `missing` (Pflichtfeld leer, 400); `invalid`
-    #: (Passwort, PIN oder Code falsch, 401); `locked` (Sperre nach Fehlversuchen, 429);
-    #: `locked_series` (zu viele Fehlversuche in Folge, läuft nicht ab, 429); `ratelimit` (Drossel
-    #: je IP, 429); `directory_down` (LDAP-Verzeichnis nicht erreichbar, 503); `method_disabled`
-    #: (Verfahren abgeschaltet oder hier kein Erstfaktor, 404; bei `confirm_*` 403: dieses Konto
-    #: kann hier nicht mit diesem Verfahren bestätigen, `stepup_options`); `no_session` (ohne
-    #: Sitzung, 401 — bei `login_totp` und `confirm_*`; bei `confirm_*` 403, wenn die Anfrage
-    #: statt einer Sitzung einen API-Key zeigt). `locked` umfasst auch den Aufschub hinter einer
-    #: schwebenden Verzeichnis-Anmeldung (G9) — sonst verriete der Grund, dass gerade jemand
-    #: anderes unter der Kennung anmeldet.
+    #: Every value `reason` can take: `ok`; `missing` (required field empty, 400); `invalid`
+    #: (password, PIN or code wrong, 401); `locked` (lockout after failed attempts, 429);
+    #: `locked_series` (too many failed attempts in a row, does not expire, 429); `ratelimit` (throttle
+    #: per IP, 429); `directory_down` (LDAP directory unreachable, 503); `method_disabled`
+    #: (method disabled or no first factor here, 404; for `confirm_*` 403: this account
+    #: cannot confirm here with this method, `stepup_options`); `no_session` (without a
+    #: session, 401 — for `login_totp` and `confirm_*`; for `confirm_*` 403 if the request
+    #: shows an API key instead of a session). `locked` also covers the deferral behind a
+    #: pending directory sign-in (G9) — otherwise the reason would reveal that someone
+    #: else is currently signing in under the identifier.
     REASONS: ClassVar[tuple] = ("ok", "missing", "invalid", "locked", "locked_series", "ratelimit",
                                 "directory_down", "method_disabled", "no_session")
 
     def __post_init__(self) -> None:
         if self.reason not in self.REASONS:
-            raise ValueError(f"unbekannter Grund {self.reason!r} (erlaubt: {', '.join(self.REASONS)})")
+            raise ValueError(f"unknown reason {self.reason!r} (allowed: {', '.join(self.REASONS)})")
         if bool(self.ok) != (self.reason == "ok"):
-            raise ValueError("ok und reason widersprechen sich")
-        # Ohne Sitzung: Nur `_with_session` hängt Token und TinySesam an — ausserhalb der Felder.
+            raise ValueError("ok and reason contradict each other")
+        # Without a session: only `_with_session` attaches token and TinySesam — outside the fields.
         object.__setattr__(self, "_token", None)
         object.__setattr__(self, "_auth", None)
 
     @classmethod
     def _with_session(cls, auth: Any, token: Optional[str], **felder) -> "LoginResult":
-        """Ein Erfolg, dessen Sitzungs-Token noch ins Cookie muss (None: das Cookie gilt schon)."""
+        """A success whose session token still has to go into the cookie (None: the cookie is already valid)."""
         result = cls(**felder)
         object.__setattr__(result, "_auth", auth)
         object.__setattr__(result, "_token", token)
@@ -102,21 +102,21 @@ class LoginResult:
         return bool(self.ok)
 
     def set_cookie(self, response) -> None:
-        """Das Sitzungs-Cookie in `response` setzen, falls der Schritt ein neues Token ergeben hat.
+        """Set the session cookie in `response` if the step produced a new token.
 
-        Über `TinySesam.set_cookie`: Die Art des Cookies folgt der Sitzung („Angemeldet bleiben“),
-        und eine eben entstandene Anmeldung bekommt dabei ein neues CSRF-Token. Ohne neues Token
-        (ein Kettenschritt an einer laufenden Sitzung, jeder Misserfolg) tut es nichts. Für eine
-        eigene Antwort — JSON statt Umleitung —, sonst `redirect()`."""
+        Via `TinySesam.set_cookie`: the kind of cookie follows the session ("Stay signed in"),
+        and a sign-in that has just come about gets a new CSRF token in the process. Without a new token
+        (a chain step on a running session, every failure) it does nothing. For a
+        custom response — JSON instead of a redirect —, otherwise `redirect()`."""
         if self._token and self._auth is not None:     # type: ignore[attr-defined]
             self._auth.set_cookie(response, self._token)   # type: ignore[attr-defined]
 
     def redirect(self):
-        """Eine Umleitung (303) nach `next_url`, mit gesetztem Sitzungs-Cookie, falls es eines gibt.
+        """A redirect (303) to `next_url`, with the session cookie set if there is one.
 
-        Bei Erfolg der übliche Abschluss einer eigenen Route: zum offenen Faktor oder zum Ziel.
-        Bei `no_session` führt sie zur Login-Seite; bei jedem anderen Misserfolg auf `next`,
-        ohne Sitzung — von dort schickt der Guard zurück zur Anmeldung."""
+        On success the usual ending of a custom route: to the open factor or to the target.
+        For `no_session` it leads to the login page; on any other failure to `next`,
+        without a session — from there the guard sends back to the sign-in."""
         from fastapi.responses import RedirectResponse
         antwort = RedirectResponse(self.next_url, 303)
         self.set_cookie(antwort)

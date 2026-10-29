@@ -1,4 +1,4 @@
-"""TOTP (Zeit-2FA) — pyotp; optional qrcode für den Enrollment-QR."""
+"""TOTP (time-based 2FA) — pyotp; optional qrcode for the enrollment QR."""
 from __future__ import annotations
 import io, base64
 
@@ -29,12 +29,12 @@ def verify(secret: str, code: str) -> bool:
 
 
 def passender_schritt(secret: str, code: str, fenster: int = 1):
-    """Welcher Zeitschritt passt zu diesem Code — oder None.
+    """Which time step matches this code — or None.
 
-    `verify()` sagt nur ja/nein. Für die Einmal-Verwendung muss der Aufrufer wissen, WELCHER
-    Schritt getroffen wurde: `valid_window=1` erlaubt den vorherigen, den aktuellen und den
-    nächsten, ein Code war damit 90 Sekunden lang beliebig oft gültig (NIST SP 800-63B verlangt
-    genau einmal). Ohne diese Auskunft lässt sich der Verbrauch nicht buchen.
+    `verify()` only says yes/no. For single use the caller has to know WHICH
+    step was hit: `valid_window=1` allows the previous, the current and the
+    next one, so a code was valid any number of times for 90 seconds (NIST SP 800-63B requires
+    exactly once). Without this information the consumption cannot be booked.
     """
     try:
         import time as _t
@@ -53,7 +53,7 @@ def passender_schritt(secret: str, code: str, fenster: int = 1):
 
 
 def qr_data_uri(uri: str):
-    """PNG-QR als data:-URI (oder None, wenn qrcode nicht installiert → UI zeigt dann das Secret)."""
+    """PNG QR as data: URI (or None if qrcode is not installed → the UI then shows the secret)."""
     if not _QR:
         return None
     img = qrcode.make(uri)

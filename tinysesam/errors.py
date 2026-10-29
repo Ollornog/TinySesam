@@ -1,22 +1,22 @@
-"""Fehlertypen, auf die eine einbettende App reagieren kann.
+"""Error types an embedding app can react to.
 
-Bis 0.18.0 warf TinySesam nur eingebaute Typen: `ValueError` aus den Konstruktor-Wächtern,
-`RuntimeError` aus einem fehlenden Extra, `MailNotConfigured` (nicht exportiert). Wer beim
-Starten unterscheiden wollte, ob die **Konfiguration** falsch ist oder ob ein **Paket** fehlt,
-musste den Meldungstext lesen — die brüchigste Art, ein Programm zu steuern, und beim nächsten
-Übersetzungswechsel kaputt.
+Up to 0.18.0 TinySesam raised only built-in types: `ValueError` from the constructor guards,
+`RuntimeError` from a missing extra, `MailNotConfigured` (not exported). Anyone who wanted to
+tell at startup whether the **configuration** is wrong or a **package** is missing had to read
+the message text — the most brittle way to control a program, and broken at the next
+change of translation.
 
-Jeder Typ hier erbt zusätzlich von dem eingebauten, den er ersetzt. Bestehender Code, der
-`except ValueError` schreibt, fängt weiter — nichts bricht, es wird nur unterscheidbar:
+Each type here additionally inherits from the built-in one it replaces. Existing code that
+writes `except ValueError` keeps catching — nothing breaks, it just becomes distinguishable:
 
     from tinysesam import ConfigError, MissingExtra, TinySesamError
 
     try:
         auth = TinySesam(config)
     except MissingExtra as e:
-        print("Bitte nachinstallieren:", e)      # pip install 'tinysesam[passkey]'
+        print("Please install:", e)             # pip install 'tinysesam[passkey]'
     except ConfigError as e:
-        print("Konfiguration prüfen:", e)        # widersprüchliche Schalter
+        print("Check configuration:", e)        # contradictory switches
 """
 from __future__ import annotations
 
@@ -24,30 +24,30 @@ from typing import Optional
 
 
 class TinySesamError(Exception):
-    """Basis aller eigenen Fehler — `except TinySesamError` fängt alles von hier."""
+    """Base of all own errors — `except TinySesamError` catches everything from here."""
 
 
 class ConfigError(TinySesamError, ValueError):
-    """Die Konfiguration widerspricht sich oder verspricht etwas, das so nicht wirkt.
+    """The configuration contradicts itself or promises something that does not take effect.
 
-    Erbt von `ValueError`, weil die Wächter das bisher warfen.
+    Inherits from `ValueError` because the guards raised that so far.
 
-    Zwei Felder sind gesetzt, wo eine **Kennung** im Spiel ist (`create_user`): `field` ist
-    `"username"` oder `"email"`, `owner_id` die ID des Kontos, dem die Kennung gehört.
-    Damit muss niemand den Meldungstext lesen, um die beiden Fälle zu trennen — der Text ist
-    übersetzt und gehört dem Menschen, die Attribute dem Programm. Sonst leer bzw. `None`."""
+    Two fields are set where an **identifier** is involved (`create_user`): `field` is
+    `"username"` or `"email"`, `owner_id` the ID of the account that owns the identifier.
+    This way nobody has to read the message text to tell the two cases apart — the text is
+    translated and belongs to the human, the attributes to the program. Otherwise empty or `None`."""
 
-    #: "username" | "email" | "" — betroffenes Feld, wo es eines gibt.
+    #: "username" | "email" | "" — the affected field, where there is one.
     field: str = ""
-    #: ID des Kontos, dem die Kennung schon gehört (sonst None).
+    #: ID of the account that already owns the identifier (otherwise None).
     owner_id: "Optional[int]" = None
 
 
 class MissingExtra(TinySesamError, RuntimeError):
-    """Ein aktivierter Schalter braucht ein Extra, das nicht installiert ist.
+    """An enabled switch needs an extra that is not installed.
 
-    Trägt den Namen des Extras, damit eine App die Installationszeile bauen kann, statt sie
-    aus dem Meldungstext zu fischen."""
+    Carries the name of the extra so an app can build the install line instead of fishing it
+    out of the message text."""
 
     def __init__(self, message: str, extra: str = ""):
         super().__init__(message)
@@ -55,13 +55,13 @@ class MissingExtra(TinySesamError, RuntimeError):
 
 
 class MailNotConfigured(TinySesamError, RuntimeError):
-    """Es sollte eine Mail raus, aber kein Mailer ist eingerichtet."""
+    """A mail was supposed to go out, but no mailer is set up."""
 
 
 class StateError(TinySesamError, RuntimeError):
-    """Der Vorgang passt nicht zum Zustand des Kontos — und wird deshalb verweigert.
+    """The operation does not fit the state of the account — and is therefore refused.
 
-    Kein Konfigurations- und kein Installationsfehler: Die Anfrage ist für sich in Ordnung,
-    nur würde sie etwas überschreiben, das schon gilt. Erster Fall: eine TOTP-Einrichtung
-    starten, obwohl bereits ein bestätigter zweiter Faktor existiert (Fund B2-1) — dort war
-    der stille Erfolg das Problem, nicht der Abbruch."""
+    Neither a configuration nor an installation error: the request is fine in itself, but it
+    would overwrite something that already applies. First case: starting a TOTP setup although
+    a confirmed second factor already exists (finding B2-1) — there the silent success was
+    the problem, not the abort."""

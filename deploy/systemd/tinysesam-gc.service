@@ -1,16 +1,16 @@
 [Unit]
-Description=TinySesam aufräumen (abgelaufene Sitzungen, Flows, Einmal-Token)
-# Ohne Umlaut: systemd verwirft eine Documentation=-Zeile mit Nicht-ASCII still, `systemctl show`
-# zeigt dann gar keine. Der Anker ist der der englischen README — die liefert github.com aus.
+Description=TinySesam cleanup (expired sessions, flows, one-time tokens)
+# Without an umlaut: systemd silently discards a Documentation= line with non-ASCII, `systemctl show`
+# then shows none at all. The anchor is that of the English README — which github.com serves.
 Documentation=https://github.com/Ollornog/TinySesam#backups-and-cleanup
 
 [Service]
 Type=oneshot
-# Anpassen: Benutzer des Dienstes und Pfad der Datenbank.
+# Adjust: the service's user and the database path.
 User=tinysesam
 ExecStart=/opt/tinysesam/venv/bin/python -m tinysesam gc --db /var/lib/tinysesam/auth.db
 
-# Das Aufräumen braucht nichts ausser seiner Datenbank.
+# The cleanup needs nothing except its database.
 NoNewPrivileges=yes
 PrivateTmp=yes
 ProtectSystem=strict
