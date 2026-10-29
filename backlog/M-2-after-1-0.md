@@ -3,7 +3,7 @@ id: M-2
 type: Milestone
 title: After 1.0 — keeping the published package maintained
 status: offen
-tags: [release, wartung]
+tags: [release, maintenance]
 created: 2026-09-21
 ---
 

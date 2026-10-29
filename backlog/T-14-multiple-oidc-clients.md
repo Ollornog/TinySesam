@@ -4,7 +4,7 @@ type: Task
 title: Multiple OIDC clients in one instance — per-app approval lives at the identity provider
 status: erledigt
 milestone: M-1
-tags: [oidc, forward-auth, gateway, autorisierung, pocketid]
+tags: [oidc, forward-auth, gateway, authorization, pocketid]
 created: 2026-09-21
 ---
 

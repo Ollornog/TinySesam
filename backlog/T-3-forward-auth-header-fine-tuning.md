@@ -4,7 +4,7 @@ type: Task
 title: Forward auth — make the remote headers that are set configurable
 status: erledigt
 milestone: M-1
-tags: [forward-auth, konfiguration]
+tags: [forward-auth, configuration]
 created: 2026-07-10
 ---
 

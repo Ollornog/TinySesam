@@ -1,5 +1,5 @@
 # GENERATED — do not change by hand (Dependabot bumps the lines together with their hashes):
-#   uv pip compile .github/audit/werkzeuge.in --generate-hashes --universal \
+#   uv pip compile .github/audit/tools.in --generate-hashes --universal \
 #       --python-version 3.12 --no-header -o .github/audit/requirements.txt
 boolean-py==5.0 \
     --hash=sha256:60cbc4bad079753721d32649545505362c754e121570ada4658b852a3a318d95 \
@@ -329,7 +329,7 @@ pip-api==0.0.35 \
 pip-audit==2.10.1 \
     --hash=sha256:1eb4565d19ebe5d48996f4b770b4d2b32887e12cb12cfa637f1a064011b55ffc \
     --hash=sha256:99ef3f600a317c1945f1e89e227ef26e1c2d618429b8bd3fa6f4f7c440c4611a
-    # via -r .github/audit/werkzeuge.in
+    # via -r .github/audit/tools.in
 pip-requirements-parser==32.0.1 \
     --hash=sha256:4659bc2a667783e7a15d190f6fccf8b2486685b6dba4c19c3876314769c57526 \
     --hash=sha256:b4fa3a7a0be38243123cf9d1f3518da10c51bdb165a2b2985566247f9155a7d3
@@ -463,4 +463,4 @@ uv==0.13.4 \
     --hash=sha256:deffa5a4afdb48f3e44fb26e80377d256b330ddcad0373daff4b54f6162b43a4 \
     --hash=sha256:e90ab42825587821096cb0d071e387468da38cfa22818c91f9c0b3c0453048e8 \
     --hash=sha256:fb0e2028d9a8929884344afb7d91d0f65d9783f640d28aede89fca3602bedde9
-    # via -r .github/audit/werkzeuge.in
+    # via -r .github/audit/tools.in

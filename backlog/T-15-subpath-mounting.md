@@ -4,7 +4,7 @@ type: Task
 title: Make built-in pages mountable under a subpath
 status: erledigt
 milestone: M-2
-tags: [routen, templates, deployment]
+tags: [routes, templates, deployment]
 created: 2026-09-22
 ---
 
@@ -39,7 +39,7 @@ One source: `TinySesam._prefix(request)` takes the path of `base_url`, and witho
 `/part/part` of A–Z a–z 0–9 . _ ~ -, otherwise empty and a warning — the value ends up unmasked
 in attributes and scripts). The built-in pages write `__TS_P__` in front of every path of the app
 (forms, links, fetch calls), `render_page` inserts the prefix; a custom template without
-the placeholder stays untouched. Redirects to paths of the app go through `auth.pfad(request, p)`;
+the placeholder stays untouched. Redirects to paths of the app go through `auth.browser_path(request, p)`;
 a `next` target is already a path of the browser and gets no second prefix. `safe_next(next,
 request)` gives the fallback `login_redirect` the prefix; the routes have `next=""` instead of `"/"`
 as default, so that a missing `next` really leads to `login_redirect` (that is how it already stood in

@@ -10,6 +10,6 @@ dist/
 *.db-shm
 .env
 
-# Generierte Website (web/build.py + GitHub-Action "pages")
+# Generated website (web/build.py + GitHub Action "pages")
 _site/
-.befunde-*/
+.findings-*/

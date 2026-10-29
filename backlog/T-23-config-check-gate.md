@@ -4,7 +4,7 @@ type: Task
 title: Configuration check for gate operation
 status: erledigt
 milestone: M-3
-tags: [gateway, konfiguration]
+tags: [gateway, configuration]
 created: 2026-10-03
 ---
 

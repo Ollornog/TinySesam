@@ -1,4 +1,4 @@
-"""The database names in English (schema 16): migration of a real schema-15 file, idempotence, rollback SQL, mutations.
+"""The database names in English (schema 16): migration of a real schema-15 file, idempotence, merge, mutations.
 
 PO decision 2026-10-29: tables, columns, indexes, triggers and setting keys carried German names up to schema 15
 (`namensbindung`, `fehlserie.topf`, `users.name_quelle`, `foederation_seit:ldap`, ...). Schema 16 renames them once
@@ -12,8 +12,9 @@ This suite measures that against a REAL schema-15 file, not against the mapping 
   (`EXPECTED_*`), NOT derived from `Store.RENAMED_*`; otherwise the test would prove the table with itself.
 * (A) the start migrates exactly that: stamp, names, every row, indexes, triggers (and they still work), integrity;
   (B) a second start changes nothing, also on a read-only file; (C) a file made by the current code has no old name;
-  (D) a file with old names that cannot be written does not start and is left alone; (E) the rollback SQL of
-  docs/OPERATIONS.md gives the schema-15 names back, and the newer version migrates the result again; (F) a file into
+  (D) a file with old names that cannot be written does not start and is left alone; (E) was the hand-written
+  rollback SQL — dropped: schema 16 is a migration forward only, the way back is `restore` of the backup taken before the
+  update; (F) a file into
   which a version without the new names has written (old tables next to new ones) is merged; (G) mutations: every
   guard turns the suite red when it is broken (done by a deliberately broken copy of a table or function, never in the
   source).
@@ -26,7 +27,6 @@ import contextlib
 import io
 import logging
 import os
-import re
 import sqlite3
 import sys
 import tempfile
@@ -39,10 +39,9 @@ sys.path.insert(0, str(ROOT / "tests"))
 from tinysesam.store import Store                              # noqa: E402
 from _kit.report import Report                                 # noqa: E402
 
-r = Report("Database names in English (schema 16): migration, idempotence, rollback SQL")
+r = Report("Database names in English (schema 16): migration, idempotence, merge")
 
 FIXTURE = ROOT / "tests" / "fixtures" / "schema15_names.sql"
-OPERATIONS = ROOT / "docs" / "OPERATIONS.md"
 T = 1793237238          # the clock of the fixture rows
 
 # ── what must come out, by hand ─────────────────────────────────────────────────────────────────────
@@ -273,7 +272,8 @@ def idempotence_problems(path: str) -> list:
         problem.append("a second start changed the file")
     if "renamed to English" in log:
         problem.append(f"a second start renames again: {log[-200:]!r}")
-    # read-only: SQLite's own mode (what the kernel does for a read-only mount)
+    # read-only: SQLite's own mode in a writable folder — it stands for a read-only FILE. A read-only MOUNTED folder is
+    # something else: SQLite cannot open a WAL database there at all ("unable to open database file"), old and new version alike.
     connection = sqlite3.connect
 
     def only_read(target, *a, **k):
@@ -326,67 +326,9 @@ finally:
 r.check("(D) a read-only file with old names: the start fails with an OperationalError (the new code needs the new "
         "names) and the file is untouched", result_d == "OperationalError" and _dump(path_d) == before_d, result_d)
 
-# ═══ (E) The rollback SQL of docs/OPERATIONS.md ═══════════════════════════════════════════════════════
-def rollback_sql() -> str:
-    text = OPERATIONS.read_text(encoding="utf-8")
-    section = text.split("## Rollback of the English database names (schema 16)", 1)[1].split("\n## ", 1)[0]
-    return re.search(r"```sql\n(.*?)```", section, re.S).group(1)
-
-
-def rollback_problems(sql: str) -> list:
-    """Migrate the fixture, run the SQL: names, columns, rows, settings and the stamp are those of the fixture again."""
-    problem = []
-    path = fresh()
-    original = fresh()
-    _start(path)
-    con = sqlite3.connect(path)
-    try:
-        con.executescript(sql)
-    except sqlite3.Error as error:
-        con.close()
-        return [f"the SQL fails: {error}"]
-    con.commit()
-    con.close()
-    if _stamp(path) != 15:
-        problem.append(f"stamp {_stamp(path)}")
-    if _names(path, "table") != _names(original, "table"):
-        problem.append(f"tables {sorted(_names(path, 'table') ^ _names(original, 'table'))}")
-    else:
-        for table in sorted(_names(original, "table")):
-            if _columns(path, table) != _columns(original, table):
-                problem.append(f"{table}: columns {sorted(_columns(path, table) ^ _columns(original, table))}")
-            elif table != "sqlite_sequence":
-                a = sorted(_read(path, f"SELECT * FROM {table}"), key=repr)
-                b = sorted(_read(original, f"SELECT * FROM {table}"), key=repr)
-                # `setting` and `users` get no change from the start except the clock key; compare the old keys
-                if a != b and table not in ("setting",):
-                    problem.append(f"{table}: rows differ")
-    got = dict(_read(path, "SELECT key, value FROM setting"))
-    want = dict(_read(original, "SELECT key, value FROM setting"))
-    moved = {"uhr_stand", "panel_sperren_bis"}          # the store moves these forward itself: only their presence counts
-    if not {k: v for k, v in want.items() if k not in moved}.items() <= got.items() or not moved <= set(got):
-        problem.append(f"settings: missing {sorted(set(want) - set(got))}")
-    if _read(path, "PRAGMA integrity_check") != [("ok",)]:
-        problem.append("integrity")
-    # and the newer version migrates the result again, to the same state as the first time
-    again = _new_path("again.db")
-    con = sqlite3.connect(again)
-    con.executescript(FIXTURE.read_text(encoding="utf-8"))
-    con.close()
-    os.chmod(path, 0o600)
-    log = _start(path)
-    if "Database names renamed to English (schema 16)" not in log or _stamp(path) != 16:
-        problem.append("the migration after the rollback did not run")
-    return problem
-
-
-rollback_a = rollback_problems(rollback_sql())
-r.check("(E) the rollback SQL of docs/OPERATIONS.md gives the schema-15 names, rows and stamp back, and the newer "
-        "version migrates the result again", not rollback_a, "; ".join(rollback_a))
-
 # ═══ (F) A file a version without the new names wrote into is merged ═══════════════════════════════════
 def merge_problems() -> list:
-    """Old tables and a doubled column next to the migrated ones (a rollback without the SQL)."""
+    """Old tables and a doubled column next to the migrated ones (an older version that ran on a migrated file)."""
     problem = []
     path = fresh()
     _start(path)
@@ -518,15 +460,5 @@ def idempotence_after_migration() -> list:
 
 r.check("mutation baseline: the unbroken second start reports no problem", idempotence_after_migration() == [])
 mutated("the step writes on every start (a read-only file would fail)", writes_every_time, idempotence_after_migration)
-
-# the rollback SQL: one statement less, and the check must see it
-good_sql = rollback_sql()
-for what, broken_sql in (
-        ("a column rename missing", good_sql.replace("ALTER TABLE users RENAME COLUMN folded_name TO topf_name;\n", "")),
-        ("a table rename missing", good_sql.replace("ALTER TABLE failure_series RENAME TO fehlserie;\n", "")),
-        ("a setting rename missing", good_sql.replace("UPDATE setting SET key = 'uhr_stand' WHERE key = 'clock_state';\n", "")),
-        ("the stamp missing", good_sql.replace("PRAGMA user_version = 15;\n", ""))):
-    r.check(f"mutation: rollback SQL with {what} — the check turns red",
-            bool(rollback_problems(broken_sql)) and broken_sql != good_sql, "the break was not noticed")
 
 raise SystemExit(r.done())

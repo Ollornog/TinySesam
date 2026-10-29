@@ -325,8 +325,8 @@ names is English and correctly tiered *now*; everything earlier counts as broken
 translated texts and the promised names; this pass renames the rest **before** the freeze, once, without alias:
 
 * **Database names** (tables, columns, indexes, triggers, six setting keys, the placeholder prefix of
-  `federated_identity.identifier`) — schema **16**, migration `Store._english_names`, rollback SQL in
-  `docs/OPERATIONS.md`, tested against a real schema-15 file (`tests/test_db_names_migration.py`). The file format is
+  `federated_identity.identifier`) — schema **16**, migration `Store._english_names`, forward only (the way back is `restore` of the backup, see
+  `docs/OPERATIONS.md`), tested against a real schema-15 file (`tests/test_db_names_migration.py`). The file format is
   not part of the promise, but operators read it and restore backups from it; hence backup advice and the table in the
   CHANGELOG.
 * **Identifiers** (about 3,100 names in `tinysesam/`, `web/`, `examples/`, `scripts/`, `tests/`), comments, docstrings and

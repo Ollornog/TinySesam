@@ -95,6 +95,88 @@ assert not _absent, f"OPERATIONS.md: sign-in path without a row in the strength 
 print(f"  docs/OPERATIONS.md: wait time {_busy // 1000} s, /healthz and all {len(_factors)} "
       "identifying factors match the code")
 
+# ---------- The Python names the docs mention exist in the code ----------
+# `docs/OPERATIONS.md` sent embedders to `auth.store.schreibprobe()` and `Store.loeschsperre` for weeks after both had
+# been renamed — nothing compared the docs with the code in this direction (the READMEs' tier lists check code → docs).
+# Every dotted name in the live docs (`auth.…`, `tinysesam.…`, `TinySesam.…`, `Store.…`, `TinySesamConfig.…`; in
+# backticks, or anywhere inside a code block) must consist of words that the package defines somewhere: a function,
+# class, attribute, parameter, module or imported name. A set of words and not a resolved path on purpose — it needs no
+# import and no extras, and it still finds a name that was renamed (the old word is gone from the whole package).
+# OLD names stay where the docs talk about the past — `_german_words.history_lines` defines where (old → new pairs,
+# version numbers, "German", the rollback sections), the same exemption the German-words guard uses. Not read:
+# CHANGELOG and backlog (history by nature). `NAME` is a placeholder, `.git` ends the repo URL, `auth.example.…` is a host name.
+import ast as _ast  # noqa: E402
+sys.path.insert(0, os.path.join(ROOT, "tests"))
+from _german_words import history_lines  # noqa: E402
+
+_DOC_ROOTS = r"(?:auth|tinysesam|TinySesam|Store|TinySesamConfig)"
+_DOTTED = re.compile(r"(?<![\w.])" + _DOC_ROOTS + r"((?:\.[A-Za-z_]\w*)+)")
+_NOT_NAMES = frozenset({"NAME", "git"})
+
+
+def package_words(sources) -> set:
+    """Every name that the given Python sources define, assign, take as a parameter, import or call with a keyword."""
+    words = set()
+    for rel, source in sources:
+        words.add(os.path.splitext(os.path.basename(rel))[0])
+        for n in _ast.walk(_ast.parse(source)):
+            if isinstance(n, (_ast.FunctionDef, _ast.AsyncFunctionDef, _ast.ClassDef)):
+                words.add(n.name)
+            elif isinstance(n, _ast.Name) and isinstance(n.ctx, _ast.Store):
+                words.add(n.id)
+            elif isinstance(n, _ast.Attribute) and isinstance(n.ctx, _ast.Store):
+                words.add(n.attr)
+            elif isinstance(n, _ast.arg):
+                words.add(n.arg)
+            elif isinstance(n, _ast.alias):
+                words.add((n.asname or n.name).split(".")[-1])
+            elif isinstance(n, _ast.keyword) and n.arg:
+                words.add(n.arg)
+    return words
+
+
+def stale_doc_names(text: str, words: set) -> list:
+    """[(line, name, [unknown words])] — dotted names in the text with a word the package does not define."""
+    out, exempt, fence = [], history_lines(text), False
+    for n, line in enumerate(text.split("\n"), 1):
+        if line.startswith("```"):
+            fence = not fence
+            continue
+        if n in exempt:
+            continue
+        for span in ([line] if fence else re.findall(r"`([^`\n]+)`", line)):
+            for m in _DOTTED.finditer(span):
+                parts = m.group(1).split(".")[1:]
+                unknown = [w for w in parts if w not in words and w not in _NOT_NAMES]
+                if unknown and parts[0] != "example":     # `auth.example.com` is a host name, not a Python name
+                    out.append((n, m.group(0), unknown))
+    return out
+
+
+_package_words = package_words((f, read(f)) for f in LIB)
+_live_docs = ["README.md", "API.md", "SECURITY.md", "CONFIGURATION.md", "CONTRIBUTING.md", "TODO.md", "docs/OPERATIONS.md",
+              "deploy/systemd/README.md"] + sorted(f for f in FILES if f.startswith("i18n/") and f.endswith(".md"))
+_stale = [f"{d}:{n}: {name} → {unknown}" for d in _live_docs for n, name, unknown in stale_doc_names(read(d), _package_words)]
+assert not _stale, "the docs name Python names that no longer exist:\n  " + "\n  ".join(_stale[:8])
+# Self-test and mutations: a renamed name is found; the same name inside history is not; a real doc with a stale name is red.
+_probe_words = {"auth", "store", "write_probe", "Store", "deletion_guard", "set_disabled"}
+assert stale_doc_names("Use `auth.store.schreibprobe()` here.\n", _probe_words) == [(1, "auth.store.schreibprobe", ["schreibprobe"])]
+assert stale_doc_names("| Row | `Store.loeschsperre` |\n", _probe_words)
+assert stale_doc_names("```python\nauth.store.write_probe()\nauth.store.schreibprobe()\n```\n", _probe_words)
+assert not stale_doc_names("Use `auth.store.write_probe()` and `Store.deletion_guard`, see `auth.example.com`.\n", _probe_words)
+assert not stale_doc_names("Up to 0.24.x `auth.store.schreibprobe()`, now `auth.store.write_probe()`.\n", _probe_words)
+assert not stale_doc_names("Renamed: `auth.store.schreibprobe()` → `auth.store.write_probe()`.\n", _probe_words)
+assert not stale_doc_names("## Rollback to 0.24.x\n\nSee `Store.loeschsperre`.\n\n## Next\n", _probe_words)
+assert stale_doc_names("## Rollback to 0.24.x\n\n## Next\n\nSee `Store.loeschsperre`.\n", _probe_words), \
+    "the exemption of a rollback section must end with the section"
+for _old_text, _new_text in (("`auth.store.write_probe()`", "`auth.store.schreibprobe()`"),
+                             ("`Store.deletion_guard`", "`Store.loeschsperre`")):
+    assert _old_text in operation, f"mutation anchor {_old_text} not in OPERATIONS.md"
+    assert stale_doc_names(operation.replace(_old_text, _new_text, 1), _package_words), \
+        f"a stale name in OPERATIONS.md ({_new_text}) goes unnoticed"
+assert len(_package_words) > 1500, f"package words not read: {len(_package_words)}"
+print(f"  docs: every dotted Python name in {len(_live_docs)} docs exists in the package ({len(_package_words)} words)")
+
 # The image's HEALTHCHECK must wait longer than the database: `/healthz` writes and, like every sign-in,
 # waits up to BUSY_TIMEOUT_MS behind a foreign writer. With 4 s the
 # check aborted on a 6-s lock, although the service returned 200 afterwards (A-B6-4-healthz-lock).
@@ -814,25 +896,25 @@ for wf in (".github/workflows/release.yml", ".github/workflows/audit.yml"):
             if re.search(r"-m\s+build\b", z):
                 assert re.search(r"\s(--no-isolation|-n)\b", z), \
                     f"{wf} job `{job}`: `-m build` with build isolation (pulls setuptools freely): {z}"
-_build_job = _jobs(read(".github/workflows/release.yml")).get("bauen", [])
+_build_job = _jobs(read(".github/workflows/release.yml")).get("build", [])
 assert any(re.search(r"-m\s+build\b", k) for k in _command_list(_build_job)), \
-    "release.yml: job `bauen` no longer builds with `-m build` — adjust guard"
+    "release.yml: job `build` no longer builds with `-m build` — adjust guard"
 print("  Build and check tools in release/audit only from hashed lists, build without isolation")
 
 # The button (`workflow_dispatch`) is a dry run: Every job that publishes or holds an
 # identity hangs on the tag; the image is built without a tag, but neither logged in nor
 # pushed. Until 2026-09-24 the button could have failed at the tag comparison or — without it — published from a
-# branch. (Mutation probe: for `release`, `pypi` or `image-beglaubigen`
+# branch. (Mutation probe: for `release`, `pypi` or `image-attest`
 # delete the `if:` line, or turn `push=${{ github.ref_type == 'tag' }}` into `push=true` → red.)
 _rel_jobs = _jobs(rel)
 _AM_TAG = "if: github.ref_type == 'tag'"
-for _j in ("release", "pypi", "image-beglaubigen"):
+for _j in ("release", "pypi", "image-attest"):
     _lines = [z.strip() for z in _rel_jobs.get(_j, [])]
     assert _AM_TAG in _lines, f"release.yml: job `{_j}` also publishes without a tag (button = dry run)"
-# Exception dress rehearsal (PO 2026-10-11): `generalprobe-beglaubigen` holds `id-token` WITHOUT a tag, so that
+# Exception dress rehearsal (PO 2026-10-11): `rehearsal-attest` holds `id-token` WITHOUT a tag, so that
 # the attestation actions run on every PR. Allowed only this narrowly: never on the tag, no checkout, no
 # environment, and only the probe file is attested — never an artifact, never an image.
-# (Mutation probes: `subject-path: generalprobe.txt` → `dist/*.whl`; a checkout in the job; turn the
+# (Mutation probes: `subject-path: rehearsal.txt` → `dist/*.whl`; a checkout in the job; turn the
 # `if:` to `== 'tag'` → each red.)
 _PROBE = "if: github.ref_type != 'tag'"
 _probe_certified = 0
@@ -841,26 +923,26 @@ for _j, _lines in _rel_jobs.items():
     _st = [z.strip() for z in _lines]
     if re.search(r"\b(id-token|contents|attestations): write\b", _permissions) or \
             any(z.strip().startswith("environment:") for z in _lines):
-        if _j == "generalprobe-beglaubigen":
+        if _j == "rehearsal-attest":
             assert _PROBE in _st and _AM_TAG not in _st, f"release.yml: `{_j}` does not run exactly without a tag"
             assert not any("actions/checkout" in z for z in _st), f"release.yml: `{_j}` checks out"
             assert not any(z.startswith(("environment:", "subject-name:", "push-to-registry:")) for z in _st), \
                 f"release.yml: `{_j}` names an environment, an image or a registry"
             _object = [z for z in _st if z.startswith("subject-path:")]
-            assert _object and all(z == "subject-path: generalprobe.txt" for z in _object), \
+            assert _object and all(z == "subject-path: rehearsal.txt" for z in _object), \
                 f"release.yml: `{_j}` attests more than the probe file: {_object}"
             assert not re.search(r"\bcontents: write\b", _permissions), f"release.yml: `{_j}` holds contents: write"
             _probe_certified += 1
             continue
         assert _AM_TAG in [z.strip() for z in _lines], \
             f"release.yml: job `{_j}` holds an identity or write permission, but is not tied to the tag"
-assert _probe_certified == 1, "release.yml: the job `generalprobe-beglaubigen` is missing"
+assert _probe_certified == 1, "release.yml: the job `rehearsal-attest` is missing"
 # Every action that runs only on the tag also runs the dress rehearsal — with the same version. Otherwise
 # its update would be unchecked (the auto-merge would then leave it lying, but this says so earlier).
 _tag_actions, _probe_actions = set(), set()
 for _j, _lines in _rel_jobs.items():
     for _m in re.finditer(r"uses:\s*(\S+@\S+)", "\n".join(_lines)):
-        (_probe_actions if _j.startswith("generalprobe") else _tag_actions).add(_m.group(1))
+        (_probe_actions if _j.startswith("rehearsal") else _tag_actions).add(_m.group(1))
 for _a in ("docker/login-action", "docker/build-push-action", "anchore/sbom-action",
            "pypa/gh-action-pypi-publish", "actions/attest-build-provenance", "actions/attest-sbom"):
     _t = {x for x in _tag_actions if x.startswith(_a + "@")}
@@ -871,7 +953,7 @@ assert "push=${{ github.ref_type == 'tag' }}" in _image and "push=true" not in _
     "release.yml: the image is also pushed without a tag"
 _login = re.search(r"- name: Log in to GHCR\n\s+" + re.escape(_AM_TAG), _image)
 assert _login, "release.yml: the GHCR login in job `image` is not tied to the tag"
-_check = "\n".join(_rel_jobs.get("pruefen", []))
+_check = "\n".join(_rel_jobs.get("verify", []))
 assert "_release.py --check" in _check and "if: github.ref_type != 'tag'" in _check, \
     "release.yml: the dry run checks nothing (scripts/_release.py --check missing)"
 print("  release.yml: dry run without a tag — check and build yes, publish never")
@@ -880,31 +962,31 @@ print("  release.yml: dry run without a tag — check and build yes, publish nev
 # every PR, checks the downloaded artifacts and starts the image BEFORE anything is published or
 # pushed. Without a PR trigger no mandatory check would vet the build tools, the lock list and the
 # base image, and Dependabot would merge them unchecked. (Mutation probes: delete `pull_request:`;
-# take `abbild-probe` out of `needs:` of `image`; `pruefsummen` out of `needs:` of `release`; give the
+# take `image-probe` out of `needs:` of `image`; `checksums` out of `needs:` of `release`; give the
 # suite step in `check` an `if: github.ref_type != 'tag'` → each red.)
 _rel_on = rel.split("\njobs:", 1)[0]
 assert re.search(r"^  pull_request:", _rel_on, re.M), \
     "release.yml: no `pull_request` trigger — the dry run is no longer a mandatory check"
 _needs = {j: re.search(r"^    needs:\s*(.+)$", "\n".join(z), re.M) for j, z in _rel_jobs.items()}
 _needs = {j: set(re.findall(r"[A-Za-z0-9_-]+", m.group(1))) if m else set() for j, m in _needs.items()}
-assert "pruefsummen" in _needs.get("release", set()), \
-    "release.yml: `release` publishes without `pruefsummen` having checked the artifacts"
-assert "abbild-probe" in _needs.get("image", set()) and \
-    "needs.abbild-probe.result == 'success'" in " ".join(_rel_jobs.get("image", [])), \
-    "release.yml: `image` pushes without `abbild-probe` having started the image"
-for _j in ("pruefsummen", "abbild-probe"):
+assert "checksums" in _needs.get("release", set()), \
+    "release.yml: `release` publishes without `checksums` having checked the artifacts"
+assert "image-probe" in _needs.get("image", set()) and \
+    "needs.image-probe.result == 'success'" in " ".join(_rel_jobs.get("image", [])), \
+    "release.yml: `image` pushes without `image-probe` having started the image"
+for _j in ("checksums", "image-probe"):
     assert not any(z.strip().startswith("if:") for z in _rel_jobs.get(_j, []) if z.startswith("    if")), \
         f"release.yml: `{_j}` hangs on a condition — it must run on every PR and every tag"
-assert any("sha256sum -c SHA256SUMS" in k for k in _command_list(_rel_jobs.get("pruefsummen", []))), \
-    "release.yml: `pruefsummen` does not check the checksums"
-assert any(k.startswith("scripts/_image_probe.sh") for k in _command_list(_rel_jobs.get("abbild-probe", []))), \
-    "release.yml: `abbild-probe` does not start the image (scripts/_image_probe.sh)"
+assert any("sha256sum -c SHA256SUMS" in k for k in _command_list(_rel_jobs.get("checksums", []))), \
+    "release.yml: `checksums` does not check the checksums"
+assert any(k.startswith("scripts/_image_probe.sh") for k in _command_list(_rel_jobs.get("image-probe", []))), \
+    "release.yml: `image-probe` does not start the image (scripts/_image_probe.sh)"
 # The suite in `check` may be skipped ONLY on a PR (there ci.yml runs it) — on the tag it runs.
-_suite = re.search(r"- name: Run the suite[^\n]*\n((?:\s{8}.*\n)+)", "\n".join(_rel_jobs.get("pruefen", [])) + "\n")
-assert _suite, "release.yml: the suite step in `pruefen` is missing"
+_suite = re.search(r"- name: Run the suite[^\n]*\n((?:\s{8}.*\n)+)", "\n".join(_rel_jobs.get("verify", [])) + "\n")
+assert _suite, "release.yml: the suite step in `verify` is missing"
 _suite_if = [z.strip() for z in _suite.group(1).splitlines() if z.strip().startswith("if:")]
 assert _suite_if in ([], ["if: github.event_name != 'pull_request'"]), \
-    f"release.yml: the suite in `pruefen` is not skipped only on PRs: {_suite_if}"
+    f"release.yml: the suite in `verify` is not skipped only on PRs: {_suite_if}"
 # The image tag is the git tag only on the tag. On a PR `github.ref_name` is `108/merge` —
 # invalid as an image tag, `image` broke on the first PR with this dry run because of it.
 # (Mutation probe: `tags:` back to `…:${{ github.ref_name }}` → red.)
@@ -1106,16 +1188,16 @@ assert len(_images) >= 2, _images
 for image in _images:
     assert image == f"ghcr.io/ollornog/tinysesam:v{pv}" or re.search(r":[\w.-]+@sha256:[0-9a-f]{64}$", image), \
         f"compose: {image} is neither the own version image nor pinned by version+digest"
-_anchor = re.search(r"^x-haertung: &haertung\n((?:  .*\n)+)", "\n".join(_cz) + "\n", re.M)
-assert _anchor, "compose: the hardening anchor x-haertung is missing"
+_anchor = re.search(r"^x-hardening: &hardening\n((?:  .*\n)+)", "\n".join(_cz) + "\n", re.M)
+assert _anchor, "compose: the hardening anchor x-hardening is missing"
 for necessary in ("read_only: true", "cap_drop: [ALL]", 'security_opt: ["no-new-privileges:true"]'):
-    assert necessary in _anchor.group(1), f"compose: x-haertung without `{necessary}`"
+    assert necessary in _anchor.group(1), f"compose: x-hardening without `{necessary}`"
 _services = re.search(r"^services:\n(.*?)^\S", "\n".join(_cz) + "\nENDE", re.M | re.S).group(1)
 _names = re.findall(r"^  ([a-z0-9_-]+):\s*$", _services, re.M)
 _blocks = re.split(r"^  [a-z0-9_-]+:\s*$", _services, flags=re.M)[1:]
 assert len(_names) == len(_blocks) >= 2, _names
 for name, block in zip(_names, _blocks):
-    assert "<<: *haertung" in block, f"compose: service `{name}` without hardening (<<: *haertung)"
+    assert "<<: *hardening" in block, f"compose: service `{name}` without hardening (<<: *hardening)"
     assert "cap_add" not in block or re.search(r"cap_add: \[NET_BIND_SERVICE\]", block), \
         f"compose: service `{name}` takes back more than NET_BIND_SERVICE"
 print(f"  Reference stack: {len(_images)} images pinned, {len(_names)} services hardened")

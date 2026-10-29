@@ -3,7 +3,7 @@ id: ADR-4
 type: Decision
 title: CI stays on hosted runners — self-hosted ruled out
 status: erledigt
-tags: [ci, sicherheit]
+tags: [ci, security]
 created: 2026-07-10
 ---
 

@@ -3,7 +3,7 @@ id: ADR-3
 type: Decision
 title: Protection in the app per route, not at proxy level
 status: erledigt
-tags: [architektur, auth, forward-auth]
+tags: [architecture, auth, forward-auth]
 created: 2026-07-06
 ---
 

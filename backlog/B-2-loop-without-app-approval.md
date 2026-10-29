@@ -4,7 +4,7 @@ type: Bug
 title: Endless loop between application and login page when the approval for the application is missing
 status: erledigt
 milestone: M-3
-tags: [forward-auth, oidc, mehrere-clients]
+tags: [forward-auth, oidc, multiple-clients]
 created: 2026-10-07
 ---
 

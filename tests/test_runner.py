@@ -401,7 +401,7 @@ exec "{sys.executable}" "$@"
                          capture_output=True, text=True)
     afterwards_h = sorted(str(x.relative_to(copy)) for x in copy.rglob("*") if "__pycache__" not in x.parts)
     r.check("H: check.sh builds the website (exit 0, all required files in the build)",
-            gate.returncode == 0 and "alles grün" in gate.stdout,
+            gate.returncode == 0 and "all green" in gate.stdout,
             f"Exit {gate.returncode}\n{gate.stdout[-400:]}{gate.stderr[-400:]}")
     r.check("H: … an existing _site/ stays untouched, and nothing new arises in the tree",
             (copy / "_site" / "eigen.txt").exists() and afterwards_h == before_h,

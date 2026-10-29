@@ -3,7 +3,7 @@ id: ADR-7
 type: Decision
 title: TOTP secrets and PINs never come from the identity provider
 status: erledigt
-tags: [architektur, oidc, mfa, pocketid]
+tags: [architecture, oidc, mfa, pocketid]
 created: 2026-09-22
 ---
 

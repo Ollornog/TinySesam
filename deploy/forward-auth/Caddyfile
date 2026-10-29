@@ -21,7 +21,7 @@ auth.example.com {
 	reverse_proxy {$TS_AUTH_UPSTREAM:127.0.0.1:8000}
 }
 
-# Require roles (optional): add `header_up X-TinySesam-Roles redaktion,admin` to the
+# Require roles (optional): add `header_up X-TinySesam-Roles editors,admin` to the
 # sub-request — one of the named roles suffices. TinySesam then answers 403 instead of 200 when
 # someone is signed in but lacks the role; without it /auth/forward stays binary.
 # The header belongs in THIS file: `header_up` overwrites a same-named header of the
@@ -91,7 +91,7 @@ app.example.com {
 			# and `caddy validate` flags the duplication as unnecessary.
 			header_up X-Forwarded-Method {method}
 			header_up X-Forwarded-Uri {uri}
-			# header_up X-TinySesam-Roles redaktion,admin   # only passes with one of these roles
+			# header_up X-TinySesam-Roles editors,admin   # only passes with one of these roles
 			# take over only the auth response headers
 			# Other names (e.g. X-WEBAUTH-USER for Grafana): set TinySesamConfig(forward_headers={...})
 			# and carry them along here — only what is listed here is taken over.
@@ -126,7 +126,7 @@ app.example.com {
 			# it sends the same user straight back, who still lacks the same role.
 			@norole status 403
 			handle_response @norole {
-				respond "Kein Zugriff: fehlende Rolle." 403
+				respond "Access denied: missing role." 403
 			}
 		}
 		# The actual upstream app — WITHOUT TinySesam's cookies (B-20).

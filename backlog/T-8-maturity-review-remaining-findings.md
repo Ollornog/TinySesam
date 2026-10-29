@@ -4,7 +4,7 @@ type: Task
 title: Work through the 35 maturity-review findings that were not reproduced individually
 status: erledigt
 milestone: M-1
-tags: [sicherheit, betrieb, paket, api, doku]
+tags: [security, operations, package, api, docs]
 created: 2026-09-21
 ---
 
@@ -107,7 +107,7 @@ The CSRF rotation of the admin panel is already recorded as [B-1](B-1-admin-pane
 - [x] The API guard freezes less than "231 names" suggests — fixed: defaults
       of the config fields and return types are now captured too
 - [x] `set_template` names two page names in its docstring that do not exist — fixed:
-      `TinySesam.SEITEN`, an unknown name raises, check against `render_page`
+      `TinySesam.PAGES`, an unknown name raises, check against `render_page`
 
 ## Docs, website, language
 
@@ -124,6 +124,6 @@ The CSRF rotation of the admin panel is already recorded as [B-1](B-1-admin-pane
 
 ## Provenance
 
-The evidence for the reproduced findings is in `.befunde-2026-09-21/` (not checked in).
+The evidence for the reproduced findings is in `.findings-2026-09-21/` (not checked in).
 The titles here are the short version from the review report; the long versions went away with
 the review agents. Where a title is terse, the code decides anyway.

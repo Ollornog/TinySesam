@@ -3,7 +3,7 @@ id: ADR-5
 type: Decision
 title: Roles in forward auth come from the proxy, not from a rules table
 status: erledigt
-tags: [architektur, forward-auth, rollen]
+tags: [architecture, forward-auth, roles]
 created: 2026-09-19
 ---
 

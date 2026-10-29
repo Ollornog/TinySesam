@@ -4,7 +4,7 @@ type: Task
 title: zizmor excessive-permissions — already fixed when filed, entry stays as a lesson
 status: erledigt
 milestone: M-1
-tags: [ci, sicherheit, workflows]
+tags: [ci, security, workflows]
 created: 2026-09-22
 ---
 

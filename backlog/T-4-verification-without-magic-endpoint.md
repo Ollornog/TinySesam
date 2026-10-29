@@ -4,7 +4,7 @@ type: Task
 title: Email verification and invitation without the magic-link endpoint
 status: erledigt
 milestone: M-1
-tags: [mail, registrierung]
+tags: [mail, registration]
 created: 2026-07-10
 ---
 

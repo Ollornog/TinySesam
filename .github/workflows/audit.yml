@@ -5,14 +5,14 @@ name: audit
 # with a vulnerable resolution went green.
 #
 # Four resolutions are checked, because each carries a different promise:
-#   neu     — what `pip install tinysesam[all]` pulls today
-#   boden   — the lowest allowed version of every direct dependency (`lowest-direct`). This
+#   newest  — what `pip install tinysesam[all]` pulls today
+#   floor   — the lowest allowed version of every direct dependency (`lowest-direct`). This
 #             is the promise of the `>=` bounds in pyproject.toml: anyone who holds on to them gets an
 #             installation without known vulnerabilities. If an advisory appears for a floor, this
 #             run turns red and the floor moves — Dependabot never raises an open `>=` floor,
 #             since the range already allows the new version (B4-3).
 #   gateway — the hashed lock list of the image (deploy/gateway/requirements.txt)
-#   bau     — the tools that build wheel and sdist (.github/bau/requirements.txt), and those
+#   build   — the tools that build wheel and sdist (.github/packaging/requirements.txt), and those
 #             of this gate itself (.github/audit/requirements.txt)
 #
 # Additionally nightly, because advisories appear without a code change. Public repo →
@@ -59,11 +59,11 @@ jobs:
         run: |
           uv="$RUNNER_TEMP/audit/bin/uv"
           "$uv" pip compile pyproject.toml --all-extras --python-version 3.13 --no-header \
-              -o "$RUNNER_TEMP/neu.txt"
+              -o "$RUNNER_TEMP/newest.txt"
           "$uv" pip compile pyproject.toml --all-extras --resolution lowest-direct \
-              --python-version 3.13 --no-header -o "$RUNNER_TEMP/boden.txt"
+              --python-version 3.13 --no-header -o "$RUNNER_TEMP/floor.txt"
           # Zero packages would be a green run without findings: that is no evidence but an error.
-          for f in neu boden; do
+          for f in newest floor; do
             [ "$(grep -cE '^[A-Za-z0-9_.-]+==' "$RUNNER_TEMP/$f.txt")" -gt 0 ] \
               || { echo "::error::$f: nothing resolved — the run checked nothing"; exit 1; }
           done
@@ -72,12 +72,12 @@ jobs:
       - name: pip-audit
         run: |
           audit="$RUNNER_TEMP/audit/bin/pip-audit"
-          for f in neu boden; do
+          for f in newest floor; do
             echo "::group::$f"
             "$audit" --strict --progress-spinner off --no-deps --disable-pip -r "$RUNNER_TEMP/$f.txt"
             echo "::endgroup::"
           done
-          for f in deploy/gateway/requirements.txt .github/bau/requirements.txt \
+          for f in deploy/gateway/requirements.txt .github/packaging/requirements.txt \
                    .github/audit/requirements.txt; do
             echo "::group::$f"
             "$audit" --strict --progress-spinner off --require-hashes --disable-pip -r "$f"

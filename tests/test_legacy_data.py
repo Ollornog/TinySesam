@@ -729,7 +729,7 @@ for file in ("deploy/forward-auth/nginx.conf", "deploy/forward-auth/nginx-path.c
     # instances. The chain must cover the transition situation completely, and anything beyond that
     # must never slip through to the app — better no cookie at all then (fail closed). Reproduced against real
     # nginx 1.31: 12 pieces → only the own ones, 13 → empty.
-    # (Mutation probe: make the latch `$ts_ck_zu` ineffective → red from 13 cookies.)
+    # (Mutation probe: make the latch `$ts_ck_latch` ineffective → red from 13 cookies.)
     _tiers = len(re.findall(r'^map \$\w+ \$ts_ck\d+ ', (ROOT / file).read_text(encoding="utf-8"), re.M))
     r.check(f"{file}: the chain covers the transition situation (six names, old and __Host-)",
             _tiers >= 12, f"nur {_tiers} Stufen")

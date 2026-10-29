@@ -1,92 +1,92 @@
-# SHA-gepinnte Actions veralten still — ein Commit-SHA sagt nicht, dass eine neuere
-# Version existiert. Dependabot liest den Versions-Kommentar hinter dem Pin und öffnet
-# einen PR mit dem SHA der neuen Version. Ohne diese Datei wäre das SHA-Pinning ein
-# Sicherheitsgewinn, den man mit Wartungsblindheit bezahlt.
+# SHA-pinned actions go stale silently — a commit SHA does not say that a newer
+# version exists. Dependabot reads the version comment behind the pin and opens
+# a PR with the SHA of the new version. Without this file the SHA pinning would be a
+# security gain paid for with maintenance blindness.
 #
-# Sicherheits-Updates für Abhängigkeiten laufen getrennt davon über den Repo-Schalter
-# (Dependabot security updates) und brauchen keine Konfiguration.
+# Security updates for dependencies run separately through the repo switch
+# (Dependabot security updates) and need no configuration.
 version: 2
 updates:
   - package-ecosystem: github-actions
     directory: /
-    # Wartezeit vor Versions-Updates (PO 2026-09-28), gilt nicht für Sicherheits-Updates.
+    # Waiting period before version updates (PO 2026-09-28), does not apply to security updates.
     cooldown:
       default-days: 3
     schedule:
       interval: monthly
     groups:
-      # Mehrere Teile EINER Action (`github/codeql-action/init` und `/analyze`) müssen dieselbe
-      # Fassung haben: Einzeln gehoben stand `init` auf 4.38.2 und `analyze` auf 4.38.1, und
-      # CodeQL brach ab („Loaded a configuration file for version '4.38.2', but running version
-      # '4.38.1'“, #110/#111). Deshalb heben sie gemeinsam. `tests/test_repo.py` verlangt eine
-      # solche Gruppe für jede Action, die mit mehreren Unterpfaden benutzt wird.
+      # Several parts of ONE action (`github/codeql-action/init` and `/analyze`) must have the same
+      # version: bumped singly, `init` stood at 4.38.2 and `analyze` at 4.38.1, and
+      # CodeQL aborted ("Loaded a configuration file for version '4.38.2', but running version
+      # '4.38.1'", #110/#111). That is why they are bumped together. `tests/test_repo.py` demands one
+      # such group for every action that is used with several subpaths.
       codeql:
         patterns: ["github/codeql-action*"]
 
-  # Gepinnte Python-Abhängigkeiten — dort, wo es Pins GIBT. Bis 0.19.0 stand hier ein Eintrag für
-  # `directory: /`, also für die `>=`-Grenzen in pyproject.toml. Der konnte nie etwas tun: Eine
-  # offene Untergrenze erlaubt jede neue Fassung schon, Dependabot sieht nichts zu heben (B4-3
-  # aus T-13). Die Frage, ob ein BODEN noch lückenfrei ist, beantwortet jetzt das Tor in
-  # .github/workflows/audit.yml (Auflösung `lowest-direct` gegen pip-audit) — rot statt PR.
+  # Pinned Python dependencies — where there ARE pins. Up to 0.19.0 there was an entry here for
+  # `directory: /`, i.e. for the `>=` bounds in pyproject.toml. It could never do anything: an
+  # open lower bound already allows every new version, Dependabot sees nothing to raise (B4-3
+  # from T-13). The question whether a FLOOR is still free of known vulnerabilities is answered by the gate in
+  # .github/workflows/audit.yml (resolution `lowest-direct` against pip-audit) — red instead of a PR.
   #
-  # Was ausgeliefert oder zum Bauen benutzt wird, steht dagegen gepinnt samt Hashes, und dort
-  # hebt Dependabot die Zeilen: die Sperrliste des Gateway-Abbilds, die Bauwerkzeuge von Wheel
-  # und sdist, die Werkzeuge des Schwachstellen-Tors.
+  # What is shipped or used for building, on the other hand, stands pinned with hashes, and there
+  # Dependabot bumps the lines: the lock list of the gateway image, the build tools of wheel
+  # and sdist, the tools of the vulnerability gate.
   #
-  # Die Sperrliste des Gateway-Abbilds pflegt seit 2026-10-10 der uv-Eintrag darunter: Dieser pip-Eintrag hob sie
-  # zeilenweise und trug neue transitive Abhängigkeiten nicht nach (fastapi 0.142 → opentelemetry-api, #126 rot).
-  # Die zwei Werkzeuglisten bleiben hier — sie heissen `werkzeuge.in`, und ob das uv-Ökosystem dazu die Ausgabedatei
-  # findet, ist im Quelltext nicht eindeutig (es sucht `<name>.txt` oder die .in am Zeilenende des Kopfes).
+  # The lock list of the gateway image has been maintained by the uv entry below since 2026-10-10: this pip entry bumped it
+  # line by line and did not add new transitive dependencies (fastapi 0.142 → opentelemetry-api, #126 red).
+  # The two tool lists stay here — they are called `tools.in`, and whether the uv ecosystem finds the output file for
+  # them is not clear from the source (it looks for `<name>.txt` or the .in at the end of the header line).
     ignore:
-      # Den Pin besitzt die repokit-Vorlage (tests/_kit/vorlage_actions.yml), er kommt mit `repokit sync`.
-      # Ein Bump hier wiche von der Vorlage ab, und der PR würde nie grün (Kit 0.36.0).
+      # The pin belongs to the repokit template (`tests/_kit/vorlage_actions.yml`), it arrives with `repokit sync`.
+      # A bump here would deviate from the template, and the PR would never turn green (kit 0.36.0).
       - dependency-name: "actions/create-github-app-token"
   - package-ecosystem: pip
-    directories: ["/.github/bau", "/.github/audit"]
-    # Wartezeit vor Versions-Updates (PO 2026-09-28), gilt nicht für Sicherheits-Updates.
+    directories: ["/.github/packaging", "/.github/audit"]
+    # Waiting period before version updates (PO 2026-09-28), does not apply to security updates.
     cooldown:
       default-days: 3
     schedule:
       interval: monthly
     groups:
-      # Ein PR je Monat statt einem je Paket — sonst ertrinkt ein Solo-Projekt in Rauschen.
+      # One PR per month instead of one per package — otherwise a solo project drowns in noise.
       #
-      # **Nur patch und minor.** Majors kommen einzeln: Bricht einer, ist der rote PR genau diesem
-      # Paket zuzuordnen, statt einen Sammel-PR mit drei harmlosen Patches aufzuhalten. Seit
-      # 2026-10-11 mergen auch Majors selbst, wenn die Pflicht-Checks grün sind (PO, siehe
+      # **Only patch and minor.** Majors come singly: if one breaks, the red PR is attributable to exactly this
+      # package, instead of holding up a collective PR with three harmless patches. Since
+      # 2026-10-11 majors also merge themselves when the required checks are green (PO, see
       # dependabot-auto-merge.yml).
-      alle:
+      all:
         patterns: ["*"]
         update-types: ["patch", "minor"]
 
-  # Die Sperrliste des Gateway-Abbilds: deploy/gateway/requirements.txt, per `uv pip compile` aus requirements.in
-  # daneben. Das uv-Ökosystem erkennt die Datei am Kopf (`--output-file`, `--universal`, `--python-version`, Hashes),
-  # hebt mit `-P <paket>==<fassung>` und erzeugt die GANZE Datei neu — neue transitive Abhängigkeiten eingeschlossen
-  # (dependabot-core: uv/lib/dependabot/uv/file_updater/compile_file_updater.rb). Muster: DashMyBoard /app.
+  # The lock list of the gateway image: deploy/gateway/requirements.txt, via `uv pip compile` from the requirements.in
+  # next to it. The uv ecosystem recognizes the file by its header (`--output-file`, `--universal`, `--python-version`, hashes),
+  # bumps with `-P <package>==<version>` and regenerates the WHOLE file — new transitive dependencies included
+  # (dependabot-core: uv/lib/dependabot/uv/file_updater/compile_file_updater.rb). Pattern: DashMyBoard /app.
   - package-ecosystem: uv
     directory: /deploy/gateway
-    # Wartezeit vor Versions-Updates (PO 2026-09-28), gilt nicht für Sicherheits-Updates.
+    # Waiting period before version updates (PO 2026-09-28), does not apply to security updates.
     cooldown:
       default-days: 3
     schedule:
       interval: monthly
     groups:
-      # Wie oben: patch und minor gebündelt, Majors einzeln.
-      alle:
+      # As above: patch and minor bundled, majors singly.
+      all:
         patterns: ["*"]
         update-types: ["patch", "minor"]
-    # pydantic legt pydantic-core EXAKT fest (`pydantic-core==…`), und pydantic-core erscheint oft vor dem pydantic,
-    # das es verlangt. Zeilenweise gehoben (bis 2026-10-10, pip) wurde `pip check` rot (#81, #112). Neu kompiliert
-    # wäre ein pydantic-core-PR allein nicht auflösbar — es wandert deshalb weiter nur mit pydantic mit.
+    # pydantic pins pydantic-core EXACTLY (`pydantic-core==…`), and pydantic-core often appears before the pydantic
+    # that requires it. Bumped line by line (until 2026-10-10, pip), `pip check` turned red (#81, #112). Freshly compiled,
+    # a pydantic-core PR alone would not be resolvable — it therefore keeps moving only together with pydantic.
     ignore:
       - dependency-name: "pydantic-core"
 
-  # Der mitgelieferte Referenz-Stack (B4-12): Caddy ist der Netzrand, und sein Pin in
-  # deploy/forward-auth/docker-compose.yml alterte bis hierhin, ohne dass jemand es sah — der
-  # `docker`-Eintrag unten liest nur Dockerfiles, keine Compose-Dateien.
+  # The bundled reference stack (B4-12): Caddy is the network edge, and its pin in
+  # deploy/forward-auth/docker-compose.yml aged until here without anyone seeing it — the
+  # `docker` entry below reads only Dockerfiles, no compose files.
   - package-ecosystem: docker-compose
     directory: /deploy/forward-auth
-    # Wartezeit vor Versions-Updates (PO 2026-09-28), gilt nicht für Sicherheits-Updates.
+    # Waiting period before version updates (PO 2026-09-28), does not apply to security updates.
     cooldown:
       default-days: 3
     schedule:
@@ -94,10 +94,10 @@ updates:
     commit-message:
       prefix: "deploy"
 
-  # Die Wegwerf-Ziele der Generalprobe (release.yml auf jedem PR). Ihr Update nimmt die
-  # Generalprobe selbst ab: Startet Registry oder Paket-Server nicht, ist `generalprobe` rot.
+  # The throwaway targets of the dress rehearsal (release.yml on every PR). The rehearsal itself accepts their update:
+  # if the registry or the package server does not start, `rehearsal` is red.
   - package-ecosystem: docker-compose
-    directory: /.github/generalprobe
+    directory: /.github/rehearsal
     cooldown:
       default-days: 3
     schedule:
@@ -105,12 +105,12 @@ updates:
     commit-message:
       prefix: "ci"
 
-  # Das Basis-Abbild ist per Digest gepinnt; ohne Dependabot bliebe es für immer stehen.
-  # Dazu das Caddy mit caddy-jwt für die Gate-Vorlage (ADR-9). Dessen Plugin-Version (ein Go-Modul,
-  # ARG CADDY_JWT) sieht Dependabot nicht — die hebt man von Hand, der CI-Job gate-caddy prüft sie.
+  # The base image is pinned by digest; without Dependabot it would stand still forever.
+  # Plus the Caddy with caddy-jwt for the gate template (ADR-9). Its plugin version (a Go module,
+  # ARG CADDY_JWT) is not seen by Dependabot — it is bumped by hand, the CI job gate-caddy checks it.
   - package-ecosystem: docker
     directories: ["/", "/deploy/forward-auth/caddy-gate"]
-    # Wartezeit vor Versions-Updates (PO 2026-09-28), gilt nicht für Sicherheits-Updates.
+    # Waiting period before version updates (PO 2026-09-28), does not apply to security updates.
     cooldown:
       default-days: 3
     schedule:

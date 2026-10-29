@@ -4,7 +4,7 @@ type: Task
 title: Warn when a group rule runs through the groups claim and the groups scope is missing
 status: erledigt
 milestone: M-2
-tags: [oidc, gruppen, konfiguration, pocketid, betrieb]
+tags: [oidc, groups, configuration, pocketid, operations]
 created: 2026-09-27
 ---
 

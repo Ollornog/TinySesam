@@ -781,7 +781,8 @@ r.check("(D) a trigger that still carries the OLD message (`kennung vergeben`) a
 
 # ═══ (E) A file that cannot be written starts anyway ════════════════════════════════════════════════
 # Stamp 15 with old rows, as after a rollback, on a volume that was mounted read-only. The connection is opened with
-# `mode=ro` (SQLite's own read-only mode, what the kernel does for a read-only mount): a file permission would not hold
+# `mode=ro` (SQLite's own read-only mode in a writable folder; it stands for a read-only FILE, not for a read-only MOUNT: there
+# SQLite cannot open a WAL database at all, "unable to open database file"): a file permission would not hold
 # for a test that runs as root, and `PRAGMA query_only` also refuses the `BEGIN IMMEDIATE` of the start, which a real
 # read-only file does not.
 path_e = _new_path("e.db")

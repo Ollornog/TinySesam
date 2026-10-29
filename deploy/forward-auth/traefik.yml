@@ -18,7 +18,7 @@
 # ALL apps. Caddy and nginx (templates next to this one) strip the TinySesam cookies
 # selectively; Traefik cannot do that with built-in means — the headers middleware only sets or
 # deletes the WHOLE Cookie header. Therefore:
-#   * If the app needs no cookies of its own: put the middleware `tinysesam-cookies-weg` (below)
+#   * If the app needs no cookies of its own: put the middleware `tinysesam-strip-cookies` (below)
 #     into the chain AFTER `tinysesam-auth`. The order matters — before it, the check would not see a cookie either.
 #   * If it needs its own cookies: a plugin that removes individual cookies, or Caddy/nginx
 #     in front of the app. Without one of the two, the gap remains.
@@ -40,9 +40,9 @@ http:
     # parameter (one of the listed roles is enough). TinySesam answers 403 instead of 200 if
     # someone is signed in but lacks the role — deliberately not a 401, which would send them to
     # the login and from there back here with the same missing role.
-    tinysesam-auth-redaktion:
+    tinysesam-auth-editors:
       forwardAuth:
-        address: "http://tinysesam:8000/auth/forward?roles=redaktion,admin"
+        address: "http://tinysesam:8000/auth/forward?roles=editors,admin"
         trustForwardHeader: true
         authResponseHeaders:
           - "Remote-User"
@@ -53,7 +53,7 @@ http:
 
     # Deletes the whole Cookie header on the way to the app (empty value = remove). Only for apps
     # without cookies of their own — see B-20 above.
-    tinysesam-cookies-weg:
+    tinysesam-strip-cookies:
       headers:
         customRequestHeaders:
           Cookie: ""
@@ -63,7 +63,7 @@ http:
       rule: "Host(`app.example.com`)"
       middlewares:
         - tinysesam-auth
-        # - tinysesam-cookies-weg   # only for apps without cookies of their own (B-20), always AFTER the check
+        # - tinysesam-strip-cookies   # only for apps without cookies of their own (B-20), always AFTER the check
       service: app-svc
 
     auth:

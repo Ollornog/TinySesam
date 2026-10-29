@@ -4,7 +4,7 @@ type: Task
 title: Acceptance — before/after measurement and acceptance test per app
 status: erledigt
 milestone: M-3
-tags: [gateway, messung, test]
+tags: [gateway, measurement, test]
 created: 2026-10-03
 ---
 

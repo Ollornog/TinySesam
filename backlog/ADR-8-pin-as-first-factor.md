@@ -3,7 +3,7 @@ id: ADR-8
 type: Decision
 title: A PIN may be the first factor — deliberate, configurable, with its own limit
 status: erledigt
-tags: [pin, faktoren, härtung]
+tags: [pin, factors, hardening]
 created: 2026-09-24
 ---
 

@@ -40,7 +40,7 @@ above all, are coded in English):
 
 - **Identifiers** (about 3,100 names), **comments, docstrings, test descriptions** and internal string values are English;
   module `_vokabular.py` → `_vocabulary.py`.
-- **Database names** are English — schema **16**, migration `Store._english_names`, rollback SQL in `docs/OPERATIONS.md`,
+- **Database names** are English — schema **16**, migration `Store._english_names`, forward only (the way back is `restore` of the backup, `docs/OPERATIONS.md`),
   test `tests/test_db_names_migration.py` against a real schema-15 file (details and the old → new table in the CHANGELOG).
 - **Guard** `tests/test_english_code.py` (identifiers, file names, SQL, comments, docstrings); `CONTRIBUTING.md` states the rule.
 - **Still German on purpose:** the interface texts (`lang="de"`, `i18n/`) and the files that the shared test kit manages

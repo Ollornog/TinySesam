@@ -1831,7 +1831,7 @@
       "tier": "A"
     },
     "gateway callback: valid code": {
-      "response": "303 | Location -> /seite | cookies: __Host-tinysesam_link, __Host-tinysesam_linkflow (cleared)",
+      "response": "303 | Location -> /page | cookies: __Host-tinysesam_link, __Host-tinysesam_linkflow (cleared)",
       "tier": "A"
     },
     "gateway forward: not signed in": {
