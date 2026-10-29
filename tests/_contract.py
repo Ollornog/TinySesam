@@ -151,6 +151,18 @@ def routes_static(quellen: dict) -> dict:
     return {k: sorted(v) for k, v in sorted(routen.items())}
 
 
+def _schema_properties(schema: dict, komponenten: dict, tiefe: int = 0) -> set:
+    """The property names of an OpenAPI schema — inline, behind a `$ref`, or in an `allOf` (FastAPI versions differ)."""
+    if tiefe > 5:
+        return set()
+    namen = set(schema.get("properties", {}))
+    if "$ref" in schema:
+        namen |= _schema_properties(komponenten.get(schema["$ref"].rsplit("/", 1)[-1], {}), komponenten, tiefe + 1)
+    for teil in schema.get("allOf", []):
+        namen |= _schema_properties(teil, komponenten, tiefe + 1)
+    return namen
+
+
 def routes_live(cfg_vorgaben: "dict | None" = None) -> dict:
     """{"METHOD /path": parameter list} as FastAPI itself reads the routers of a probe instance (the OpenAPI
     schema) — with as many features on as the base install allows. Extras that are not installed (OIDC,
@@ -182,9 +194,7 @@ def routes_live(cfg_vorgaben: "dict | None" = None) -> dict:
             params = {f"query:{p['name']}" for p in op.get("parameters", []) if p.get("in") == "query"}
             inhalt = (op.get("requestBody") or {}).get("content", {})
             formular = inhalt.get("application/x-www-form-urlencoded") or inhalt.get("multipart/form-data") or {}
-            ref = (formular.get("schema") or {}).get("$ref", "")
-            eigenschaften = komponenten.get(ref.rsplit("/", 1)[-1], {}).get("properties", {}) if ref else {}
-            params |= {f"form:{n}" for n in eigenschaften}
+            params |= {f"form:{n}" for n in _schema_properties(formular.get("schema") or {}, komponenten)}
             gefunden[f"{methode.upper()} {pfad}"] = sorted(params)
     return gefunden
 
