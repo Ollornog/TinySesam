@@ -143,7 +143,16 @@ jobs:
           docker compose -f "$f" config --quiet
           images="$(docker compose -f "$f" config --images)"
           [ -n "$images" ] || { echo "no images in $f"; exit 1; }
-          while IFS= read -r b; do docker pull -q "$b"; done <<<"$images"
+          # The own image at the package version does not exist before its tag: the release PR sets the version,
+          # the tag builds the image. `image-probe` builds and starts exactly that image on every PR.
+          version="$(python3 -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
+          own="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/tinysesam:v$version"
+          while IFS= read -r b; do
+            if [ "$b" = "$own" ] && ! git ls-remote --exit-code --tags origin "refs/tags/v$version" >/dev/null; then
+              echo "skipped (built by the tag v$version, not yet set): $b"; continue
+            fi
+            docker pull -q "$b"
+          done <<<"$images"
           caddy="$(grep -m1 '^caddy:' <<<"$images")" || { echo "no caddy image in $f"; exit 1; }
           docker run --rm -e TS_AUTH_UPSTREAM=tinysesam:8000 -e TS_APP_UPSTREAM=app:9000 \
             -v "$PWD/deploy/forward-auth/Caddyfile:/etc/caddy/Caddyfile:ro" \
