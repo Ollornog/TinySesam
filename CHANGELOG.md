@@ -4,6 +4,18 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+### Fixed — `next` on the login page travels as one query value (B-3)
+
+- The links of the login page (`/auth/register`, `/auth/magic/request`, the OIDC and SAML buttons) and the passkey
+  script carried the return target with HTML escaping only. `&` cut the target off (`/a?x=1&y=2` lost `&y=2`), `+`
+  came back as a space, `%3B` as `;`, and `&amp;` in a file name was escaped twice — the person landed on another
+  file than the one requested. The target is now percent-encoded (`templates._next_q`); the server still decodes once
+  and runs `safe_next`, so nothing about the open-redirect rules changes. Test: `tests/test_next_in_links.py`.
+- B-3 (paths with `;` or `%3B` redirected to the login with a valid session) could **not** be reproduced in TinySesam or
+  in `deploy/forward-auth/Caddyfile.gate` (real Caddy 2.11.7 + caddy-jwt, whole code-exchange round trip). Both are now
+  pinned by tests (`;`, `%3B`, `&amp;`, query with `;`): `tests/test_gate_link.py`, `tests/test_gate_caddy.py`. The
+  suspicion moves to the proxy chain in front of the gateway — see `backlog/B-3-gate-semicolon-redirect.md`.
+
 ### Security — authlib floor 1.9.1, setuptools 84.2.1, log filter for CodeQL
 
 - Lower bound `authlib>=1.9.1` (extras `oidc`, `gateway`, `all`; previously 1.6.12): The lowest permitted resolution

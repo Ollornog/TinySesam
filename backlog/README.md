@@ -8,7 +8,7 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 ## Meilensteine
 
 * ☐ **[M-1](M-1-api-stable-1-0.md)** 1.0 — API stable enough for PyPI — 14/14 erledigt
-* ☐ **[M-2](M-2-after-1-0.md)** After 1.0 — keeping the published package maintained — 7/11 erledigt
+* ☐ **[M-2](M-2-after-1-0.md)** After 1.0 — keeping the published package maintained — 8/11 erledigt
 * ☑ **[M-3](M-3-gate-in-front-of-third-party-apps.md)** Gate in front of third-party apps — fast, sign in once, sign out cleanly — 8/8 erledigt
 
 ## Aufgaben
@@ -48,7 +48,7 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 
 * ☑ **[B-1](B-1-admin-panel-rotates-csrf.md)** The admin panel rolls a new CSRF token on every request · M-1
 * ☑ **[B-2](B-2-loop-without-app-approval.md)** Endless loop between application and login page when the approval for the application is missing · M-3
-* ☐ **[B-3](B-3-gate-semicolon-redirect.md)** Gate: paths containing ; or %3B are redirected to /.tinysesam/start · M-2
+* ☑ **[B-3](B-3-gate-semicolon-redirect.md)** Gate: paths containing ; or %3B are redirected to /.tinysesam/start · M-2
 
 ## Entscheidungen (ADR)
 

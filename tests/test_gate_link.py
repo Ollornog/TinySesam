@@ -6,7 +6,7 @@ TestClients on two hosts — like two origins in the browser: a cookie of one do
 """
 import os
 import tempfile
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, quote, urlsplit
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -101,6 +101,22 @@ ok("with link → 200, Remote-User, gate token")
 
 assert auth.session_cookie_name not in b["app"].cookies and auth.session_cookie_name in b["gw"].cookies
 ok("the session exists only at the gateway — the app host never saw it")
+
+# B-3: `;`, `%3B` and `&amp;` in the path. A semicolon is a path-parameter separator in RFC 3986 and Tomcat/Spring
+# cut at it — TinySesam must not: the path is opaque. Signed out → the exchange carries the path home unchanged,
+# signed in (with the link) → 200 for exactly the same address.
+SEMI = ["/a;b.pdf", "/a%3Bb.pdf", "/Tom&amp;Jerry.pdf", "/d/x;y/z;", "/a;b.pdf?k=1;2&m=%3B"]
+for pfad in SEMI:
+    r = forward(browser()["app"], uri=pfad)
+    assert r.status_code == 401, (pfad, r.status_code)
+    rd = parse_qs(urlsplit(ort(r)).query)["rd"][0]
+    assert rd == pfad, (pfad, rd, ort(r))
+    c_ = browser()
+    cb_, _ = koppeln(c_, rd=quote(rd, safe=""))
+    assert ort(cb_) == pfad, (pfad, ort(cb_))
+    r = forward(c_["app"], uri=pfad)
+    assert r.status_code == 200 and r.headers["Remote-User"] == "anna", (pfad, r.status_code, ort(r))
+ok(f"B-3: {len(SEMI)} paths with ; / %3B / &amp; — signed out: rd carries the path unchanged; signed in: 200")
 
 # ---------- Angriffe ----------
 roh = b["app"].cookies.get("__Host-tinysesam_link")
