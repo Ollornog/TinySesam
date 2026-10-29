@@ -23,6 +23,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from urllib.parse import parse_qs, urlsplit
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from voraussetzung import braucht, braucht_modul  # noqa: E402
@@ -252,6 +253,37 @@ try:
     assert gate_cookie(h) is None, "no new token is issued on the fast path"
     ok("valid gate cookie → 10 requests at the application, 0 at TinySesam; identity from the "
        "token (UTF-8 as with /auth/forward), Remote-* from the browser overwritten, gate cookie removed")
+
+    # ---------- B-3: `;` and `%3B` in the path ----------
+    def roh_a(pfad, cookies=None):
+        """Raw path on the wire, headers of the dummy back (http.client normalises nothing)."""
+        import http.client
+        v = http.client.HTTPConnection("127.0.0.1", PORT, timeout=10)
+        v.putrequest("GET", pfad, skip_host=True)
+        v.putheader("Host", f"app.example.com:{PORT}")
+        if cookies:
+            v.putheader("Cookie", "; ".join(f"{k}={w}" for k, w in cookies.items()))
+        v.endheaders()
+        a = v.getresponse()
+        text = a.read()
+        v.close()
+        try:
+            return a.status, a.getheader("Location"), json.loads(text)
+        except ValueError:
+            return a.status, a.getheader("Location"), None
+
+    semi = ["/a;b.pdf", "/a%3Bb.pdf", "/a%3bb.pdf", "/Tom&amp;Jerry.pdf", "/a;b.pdf?x=1&y=;z", "/d/x;y/z"]
+    for cookies, was in ((mit_gate, "gate cookie"), (sitzung, "session only")):
+        for pfad in semi:
+            st, loc, a = roh_a(pfad, cookies)
+            assert st == 200 and a and a["pfad"] == pfad, (was, pfad, st, loc, a)
+    ok(f"B-3: {len(semi)} paths with ; / %3B / &amp; reach the application unchanged — with gate cookie and with session alone")
+    for pfad in semi:
+        st, loc, a = roh_a(pfad)
+        assert st == 302 and a is None, (pfad, st, loc)
+        nxt = parse_qs(urlsplit(loc).query)["next"][0]
+        assert nxt == f"http://app.example.com:{PORT}{pfad}", (pfad, nxt)
+    ok("B-3: signed out → login, and `next` carries the path unchanged (; survives, & stays encoded)")
 
     # ---------- every forgery falls back to the way back ----------
     jetzt = int(time.time())
