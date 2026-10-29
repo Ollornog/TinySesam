@@ -1867,11 +1867,13 @@ def selbstpruefung_vertrag(jetzt: dict) -> None:
         assert any(f"{bereich}.{name}: tier B" in z for z in vertrag_befunde(gesenkt, jetzt)), (bereich, name)
     # the paths the identity provider and the health check use (decision of 2026-10-29): not below A
     for name in ("GET <oidc_callback_path>", "POST /auth/saml/acs", "GET /auth/saml/metadata", "GET /healthz"):
+        assert name in datei["http.routes"], f"{name}: the provider path is no longer measured (renamed or removed?)"
         gesenkt = json.loads(json.dumps(datei))
         gesenkt["http.routes"][name]["stufe"] = "B"
         assert any(f"http.routes.{name}: tier B" in z for z in vertrag_befunde(gesenkt, jetzt)), name
     # the headers a browser sends: not A (the narrowing of the same decision is held, too)
     for name in VERTRAG_BROWSER_HEADER:
+        assert name in datei["http.contract"], f"{name}: the browser header is no longer measured"
         gehoben = json.loads(json.dumps(datei))
         assert gehoben["http.contract"][name]["stufe"] == "B", name
         gehoben["http.contract"][name]["stufe"] = "A"
