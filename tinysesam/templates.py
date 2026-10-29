@@ -39,7 +39,7 @@ class Templates:
     def has(self, name: str) -> bool:
         return name in self._overrides or name in DEFAULTS
 
-    def ueberschrieben(self, name: str) -> bool:
+    def overridden(self, name: str) -> bool:
         """Has the app replaced this page with its own template?"""
         return name in self._overrides
 
@@ -53,7 +53,7 @@ class Templates:
 #: Placeholder before every path of the app in the built-in pages (forms, links, fetch calls).
 #: `TinySesam.render_page` inserts the mount prefix (`root_path`) for it (T-15); a custom
 #: template that does not name it stays untouched.
-PRAEFIX_PLATZHALTER = "__TS_P__"
+PREFIX_PLACEHOLDER = "__TS_P__"
 
 _CSS = TOKENS + """
 /* IMPORTANT: everything below is scoped to .tsmain. Otherwise the card CSS bleeds onto the host
@@ -97,14 +97,14 @@ body{font-family:var(--ts-font);margin:0;min-height:100vh;display:flex;flex-dire
      border-radius:8px;font-size:12px;margin-bottom:10px}
 /* Messages (PO 2026-10-08): a box of their own BELOW the card, one icon per message. Notice, warning and
    error are built alike and differ only in colour and icon. */
-.tsmain .meldungen{width:340px;max-width:92vw;display:flex;flex-direction:column;gap:8px}
-.tsmain .meldung{display:flex;align-items:flex-start;gap:10px;padding:11px 14px;font-size:13px;line-height:1.4;
+.tsmain .notices{width:340px;max-width:92vw;display:flex;flex-direction:column;gap:8px}
+.tsmain .notice{display:flex;align-items:flex-start;gap:10px;padding:11px 14px;font-size:13px;line-height:1.4;
      border-radius:calc(var(--ts-radius) + 2px);border:1px solid var(--ts-line)}
-.tsmain .meldung svg{flex:0 0 18px;width:18px;height:18px;margin-top:1px}
-.tsmain .meldung.info{background:var(--ts-info-bg);color:var(--ts-info-ink)}
-.tsmain .meldung.warn{background:var(--ts-warn-bg);color:var(--ts-warn-ink)}
-.tsmain .meldung.fehler{background:var(--ts-err-bg);color:var(--ts-err-ink)}
-.tsmain .meldung.ok{background:var(--ts-ok-bg);color:var(--ts-ok-ink)}
+.tsmain .notice svg{flex:0 0 18px;width:18px;height:18px;margin-top:1px}
+.tsmain .notice.info{background:var(--ts-info-bg);color:var(--ts-info-ink)}
+.tsmain .notice.warn{background:var(--ts-warn-bg);color:var(--ts-warn-ink)}
+.tsmain .notice.error{background:var(--ts-err-bg);color:var(--ts-err-ink)}
+.tsmain .notice.ok{background:var(--ts-ok-bg);color:var(--ts-ok-ink)}
 /* sits NEXT TO the card, not in it — a demo notice is not part of the form */
 .tsmain .demobar{width:340px;max-width:92vw;background:var(--ts-info-bg);color:var(--ts-info-ink);
      padding:11px 14px;border-radius:calc(var(--ts-radius) + 2px);border:1px solid var(--ts-line);
@@ -140,15 +140,15 @@ def favicon_link(icon: str) -> str:
     return f"<link rel=icon href='{html.escape(icon or STANDARD_FAVICON)}'>"
 
 
-def hintergrund(cfg) -> tuple[str, str]:
+def background(cfg) -> tuple[str, str]:
     """(CSS, HTML) of the rotating background images from `brand_backgrounds` — empty if none are set. The image
     sits in the (nonce-protected) page `<style>`, not in style=: the strict CSP forbids inline attributes."""
-    bilder = [b for b in (getattr(cfg, "brand_backgrounds", None) or []) if b]
-    if not bilder:
+    images = [b for b in (getattr(cfg, "brand_backgrounds", None) or []) if b]
+    if not images:
         return "", ""
     # f = cross-fade time between two images. All delays are pulled forward by (f − 0.5 s): the first image appears after
     # half a second, instead of emerging from black only after f seconds (PO 2026-10-09).
-    n, d, f = len(bilder), int(getattr(cfg, "brand_background_seconds", 12) or 12), 3
+    n, d, f = len(images), int(getattr(cfg, "brand_background_seconds", 12) or 12), 3
     t = n * d
     css = [".tsbg{position:fixed;inset:0;z-index:-1;background:var(--ts-image-base);overflow:hidden}",
            (".tsbg i{position:absolute;inset:-2%;background:center/cover no-repeat;opacity:0;"
@@ -156,8 +156,8 @@ def hintergrund(cfg) -> tuple[str, str]:
            (".tsbg::after{content:'';position:absolute;inset:0;background:radial-gradient(ellipse at center,"
             "var(--ts-image-overlay),var(--ts-image-overlay-edge))}"),
            "body{background:transparent}",
-           (".tsbg-quelle{position:fixed;right:12px;bottom:8px;font-size:11px;color:var(--ts-muted);opacity:.55;"
-            "text-decoration:none}.tsbg-quelle:hover{opacity:.9;text-decoration:underline}")]
+           (".tsbg-source{position:fixed;right:12px;bottom:8px;font-size:11px;color:var(--ts-muted);opacity:.55;"
+            "text-decoration:none}.tsbg-source:hover{opacity:.9;text-decoration:underline}")]
     if n == 1:
         css.append(".tsbg i{opacity:var(--ts-image-strength)}")
     else:
@@ -167,15 +167,15 @@ def hintergrund(cfg) -> tuple[str, str]:
                    f"{c:.3f}%{{opacity:0}}100%{{opacity:0}}}}")
         css.append(f".tsbg i{{animation:tsbg {t}s linear infinite}}")
         css.append("@media(prefers-reduced-motion:reduce){.tsbg i{animation:none}.tsbg i:first-child{opacity:var(--ts-image-strength)}}")
-    for k, b in enumerate(bilder, 1):
+    for k, b in enumerate(images, 1):
         css.append(f".tsbg i:nth-child({k}){{background-image:url('{b}')"
                    + (f";animation-delay:{(k - 1) * d - (f - 0.5):g}s" if n > 1 else "") + "}")
-    quelle = ""
-    text, ziel = getattr(cfg, "brand_background_credit_text", ""), getattr(cfg, "brand_background_credit_url", "")
+    source = ""
+    text, destination = getattr(cfg, "brand_background_credit_text", ""), getattr(cfg, "brand_background_credit_url", "")
     if text:
-        quelle = (f"<a class=tsbg-quelle href='{html.escape(ziel)}' target=_blank rel='noopener noreferrer'>"
-                  f"{html.escape(text)}</a>" if ziel else f"<span class=tsbg-quelle>{html.escape(text)}</span>")
-    return "".join(css), "<div class=tsbg aria-hidden=true>" + "<i></i>" * n + "</div>" + quelle
+        source = (f"<a class=tsbg-source href='{html.escape(destination)}' target=_blank rel='noopener noreferrer'>"
+                  f"{html.escape(text)}</a>" if destination else f"<span class=tsbg-source>{html.escape(text)}</span>")
+    return "".join(css), "<div class=tsbg aria-hidden=true>" + "<i></i>" * n + "</div>" + source
 
 
 def brand(value, auth):
@@ -190,14 +190,14 @@ def brand(value, auth):
 
 
 def _doc(title, body, lang="en", brand_css="", brand_head="", card=True, brand_icon="", top="",
-         header="", footer="", unten="", hg=("", ""), kopf=""):
-    """`top` sits outside the card (e.g. the demo notice) — directly above it, same width; `unten` directly
+         header="", footer="", below="", hg=("", ""), head=""):
+    """`top` sits outside the card (e.g. the demo notice) — directly above it, same width; `below` directly
     below it (the messages). `header`/`footer` enclose the page so the host app can put its navigation
-    around it. `kopf` lands in `<head>` before the branding (e.g. a meta refresh)."""
-    inner = (f"<div class=card>{body}</div>" if card else body) + (unten or "")
+    around it. `head` lands in `<head>` before the branding (e.g. a meta refresh)."""
+    inner = (f"<div class=card>{body}</div>" if card else body) + (below or "")
     return (f"<!doctype html><html lang={html.escape(lang)}><head><meta charset=utf-8>"
             f"<meta name=viewport content='width=device-width,initial-scale=1'>"
-            f"{favicon_link(brand_icon)}{kopf}"
+            f"{favicon_link(brand_icon)}{head}"
             f"<title>{html.escape(title)}</title><style>{_CSS}{hg[0]}{brand_css or ''}</style>{brand_head or ''}</head>"
             f"<body>{hg[1]}{header}<div class=tsmain>{top}{inner}</div>{footer}</body></html>")
 
@@ -206,38 +206,38 @@ def _shell(title, body, lang="en"):
     return _doc(title, body)
 
 
-def _page(auth, title, body, card=True, top="", unten="", kopf=""):
+def _page(auth, title, body, card=True, top="", below="", head=""):
     """Like _shell, but with branding from the config (brand_css/brand_head/brand_icon/brand_header/
-    brand_footer) — re-skins and frames all pages centrally. `top` lands above the card, `unten` below it."""
+    brand_footer) — re-skins and frames all pages centrally. `top` lands above the card, `below` below it."""
     cfg = auth.cfg
     return _doc(title, body, cfg.lang, getattr(cfg, "brand_css", ""), getattr(cfg, "brand_head", ""),
                 card, getattr(cfg, "brand_icon", ""), top,
-                brand(getattr(cfg, "brand_header", ""), auth), brand(getattr(cfg, "brand_footer", ""), auth), unten,
-                hintergrund(cfg), kopf)
+                brand(getattr(cfg, "brand_header", ""), auth), brand(getattr(cfg, "brand_footer", ""), auth), below,
+                background(cfg), head)
 
 
 #: Message icons — inline SVG in currentColor (nothing is fetched), 24 grid, strokes only.
 _SYMBOL = {
     "info": "<circle cx='12' cy='12' r='9'/><path d='M12 11v5'/><path d='M12 7.5v.5'/>",
     "warn": "<path d='M12 3.5 21 19.5H3z'/><path d='M12 10v4'/><path d='M12 16.5v.5'/>",
-    "fehler": "<circle cx='12' cy='12' r='9'/><path d='M8.5 8.5l7 7'/><path d='M15.5 8.5l-7 7'/>",
+    "error": "<circle cx='12' cy='12' r='9'/><path d='M8.5 8.5l7 7'/><path d='M15.5 8.5l-7 7'/>",
     "ok": "<circle cx='12' cy='12' r='9'/><path d='M8 12.5l2.8 2.8L16 10'/>",
 }
 
 
-def _meldungen(liste) -> str:
-    """Messages as a separate box below the card: `[(art, text), …]`, art ∈ info | ok | warn | fehler.
+def _messages(items) -> str:
+    """Messages as a separate box below the card: `[(kind, text), …]`, kind ∈ info | ok | warn | error.
     Empty texts are dropped; without a message there is no box."""
-    teile = []
-    for art, text in liste:
+    parts = []
+    for kind, text in items:
         if not text:
             continue
-        art = art if art in _SYMBOL else "info"
-        rolle = "alert" if art == "fehler" else "status"
-        teile.append(f"<div class='meldung {art}' role={rolle}>"
+        kind = kind if kind in _SYMBOL else "info"
+        role = "alert" if kind == "error" else "status"
+        parts.append(f"<div class='notice {kind}' role={role}>"
                      f"<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' "
-                     f"stroke-linejoin='round' aria-hidden='true'>{_SYMBOL[art]}</svg><span>{_e(text)}</span></div>")
-    return f"<div class=meldungen>{''.join(teile)}</div>" if teile else ""
+                     f"stroke-linejoin='round' aria-hidden='true'>{_SYMBOL[kind]}</svg><span>{_e(text)}</span></div>")
+    return f"<div class=notices>{''.join(parts)}</div>" if parts else ""
 
 
 def _e(s) -> str:
@@ -344,7 +344,7 @@ def _login(auth, ctx) -> str:
     methods = cfg.enabled_methods()
     # Messages (PO 2026-10-08): notice ("You have been signed out"), warning and error of a sign-in attempt stand
     # together in a separate box below the card, each with an icon — no longer scattered in the card.
-    meldungen = _meldungen([("info", ctx.get("info")), ("warn", ctx.get("warn")), ("fehler", error)])
+    messages = _messages([("info", ctx.get("info")), ("warn", ctx.get("warn")), ("error", error)])
     _or = f"<div class=or>{_e(t('or'))}</div>"
     remember = ""
     if cfg.remember_me_enabled:
@@ -391,30 +391,30 @@ def _login(auth, ctx) -> str:
     js = (_csrf_js(auth) + _PASSKEY_LOGIN_JS.replace("__NEXT__", _next_q(next_))) if "passkey" in methods else ""
     # In front of an application (forward_apps[host].name, T-21) the page says what you sign in for. With a brand
     # (gate_brand) the brand stands on top and the application as its own line below.
-    marke = getattr(cfg, "gate_brand", "") or ""
-    if marke:
-        titel = t("login.for_app", name=marke)
+    brand = getattr(cfg, "gate_brand", "") or ""
+    if brand:
+        title = t("login.for_app", name=brand)
     else:
-        titel = t("login.for_app", name=ctx["app_name"]) if ctx.get("app_name") else cfg.rp_name
-    app_zeile = (f"<p class=app>{_e(t('login.app_line', name=ctx['app_name']))}</p>"
-                 if marke and ctx.get("app_name") else "")
+        title = t("login.for_app", name=ctx["app_name"]) if ctx.get("app_name") else cfg.rp_name
+    app_line = (f"<p class=app>{_e(t('login.app_line', name=ctx['app_name']))}</p>"
+                 if brand and ctx.get("app_name") else "")
     # Signed out of this application only (T-22): back in with one click, without a new sign-in.
-    weiter = ""
+    further = ""
     if ctx.get("resume_user"):
         gh = f"<input type=hidden name=gate_host value='{_e(ctx['gate_host'])}'>" if ctx.get("gate_host") else ""
-        weiter = (f"<form method=post action='__TS_P__/auth/gate/resume'>"
+        further = (f"<form method=post action='__TS_P__/auth/gate/resume'>"
                   f"<input type=hidden name=next value='{_e(next_)}'>{gh}{_cf(ctx)}"
                   f"<button type=submit>{_e(t('gate.resume', name=ctx['resume_user']))}</button></form>"
                   + (_or if (pw or pin or others) else ""))
-    body = f"<h1>{_e(titel)}</h1>{app_zeile}{weiter}{pw}{pin}{sep}{others}{signup}{js}"
-    seitentitel = t("login.brand_title", name=marke) if marke else t("login.submit")
-    return _page(auth, seitentitel, body, top=_demobar(auth, ctx=ctx), unten=meldungen)
+    body = f"<h1>{_e(title)}</h1>{app_line}{further}{pw}{pin}{sep}{others}{signup}{js}"
+    page_title = t("login.brand_title", name=brand) if brand else t("login.submit")
+    return _page(auth, page_title, body, top=_demobar(auth, ctx=ctx), below=messages)
 
 
 def _totp(auth, ctx) -> str:
     """ctx: next, error."""
     t = auth.t
-    meldungen = _meldungen([("fehler", ctx.get("error"))])
+    messages = _messages([("error", ctx.get("error"))])
     body = (f"<h1>{_e(t('totp.title'))}</h1>"
             f"<form method=post action='__TS_P__/auth/totp'>"
             f"<input type=hidden name=next value='{_e(ctx.get('next', '/'))}'>{_cf(ctx)}"
@@ -422,7 +422,7 @@ def _totp(auth, ctx) -> str:
             f"<input name=code class=code inputmode=numeric autocomplete=one-time-code autofocus maxlength=6>"
             f"<button type=submit>{_e(t('totp.submit'))}</button></form>"
             f"<div class=hint><a href='__TS_P__/auth/logout'>{_e(t('cancel'))}</a></div>")
-    return _page(auth, t("totp.title"), body, unten=meldungen)
+    return _page(auth, t("totp.title"), body, below=messages)
 
 
 def _account(auth, ctx) -> str:
@@ -442,10 +442,10 @@ def _account(auth, ctx) -> str:
             f"<input id=un_new autocomplete=username value='{_e(u['username'])}'>"
             f"<button data-act=setname>{_e(t('acc.username_change'))}</button><span id=un_msg class=msg></span></div>")
     if ctx.get("email_change"):
-        aktuell = u.get("email") or ""
+        current = u.get("email") or ""
         sections.append(
             f"<div class=sec><h2>{_e(t('acc.email'))}</h2>"
-            + (f"<div class=msg>{_e(aktuell)}</div>" if aktuell else "")
+            + (f"<div class=msg>{_e(current)}</div>" if current else "")
             + f"<input id=mail_new type=email autocomplete=email placeholder='{_e(t('acc.email_new'))}'>"
             f"<button data-act=setmail>{_e(t('acc.email_change'))}</button><span id=mail_msg class=msg></span></div>")
 
@@ -473,14 +473,14 @@ def _account(auth, ctx) -> str:
             # used code was not tracked anywhere until T-13, and whoever used up the last one
             # only learned of it when they needed it.
             rest = ctx.get("recovery_left")
-            hinweis = ""
+            notice = ""
             if rest is not None:
-                knapp = rest <= ctx.get("recovery_warn", 3)
-                hinweis = (f" <small class={'err' if knapp else 'ok'} id=rc_left>"
-                           f"{_e(t('acc.recovery_low' if knapp else 'acc.recovery_left', n=rest))}</small>")
+                tight = rest <= ctx.get("recovery_warn", 3)
+                notice = (f" <small class={'err' if tight else 'ok'} id=rc_left>"
+                           f"{_e(t('acc.recovery_low' if tight else 'acc.recovery_left', n=rest))}</small>")
             totp = (f"<span class=ok>{_e(t('acc.totp_active'))}</span> "
                     f"<button class=warn data-act=deltotp>{_e(t('acc.totp_off'))}</button> "
-                    f"<button data-act=recovery>{_e(t('acc.recovery'))}</button>{hinweis}")
+                    f"<button data-act=recovery>{_e(t('acc.recovery'))}</button>{notice}")
         else:
             totp = f"<a class=btnlink href='__TS_P__/auth/totp/setup'>{_e(t('acc.totp_setup'))}</a>"
         sections.append(f"<div class=sec><h2>{_e(t('acc.totp'))}</h2>{totp}<span id=totp_msg class=msg></span>"
@@ -514,7 +514,7 @@ def _account(auth, ctx) -> str:
     events = ctx.get("events")
     if events is not None:
         import datetime as _dt
-        zeilen = "".join(
+        lines = "".join(
             f"<li><code>{_e(_dt.datetime.fromtimestamp(int(ev['ts']), _dt.timezone.utc).strftime('%Y-%m-%d %H:%M'))}"
             f" UTC</code> {_e(ev['event'])} <small>"
             f"{_e(t('acc.events_by_admin') if ev.get('by_admin') else (ev.get('ip') or ''))}</small></li>"
@@ -522,7 +522,7 @@ def _account(auth, ctx) -> str:
         sections.append(
             f"<div class=sec><h2>{_e(t('acc.events'))}</h2>"
             f"<p class='msg evhint'>{_e(t('acc.events_hint'))}</p>"
-            f"<ul id=eventlist>{zeilen}</ul></div>")
+            f"<ul id=eventlist>{lines}</ul></div>")
 
     admin_link = (f"<a href='{_e('__TS_P__' + ctx.get('admin_path', '/auth/admin'))}'>{_e(t('acc.admin'))}</a>"
                   if ctx.get("is_admin") else "")
@@ -557,7 +557,7 @@ def _account(auth, ctx) -> str:
             f"<div>{admin_link} <a href='__TS_P__/auth/logout'>{_e(t('logout'))}</a></div></header>"
             + "".join(sections)
             + ("" if static else _ACCOUNT_JS.replace("__CSRFCK__", _e(auth.csrf_cookie_name)).replace("__TXT__", _account_texts(auth))
-               + _revoke_js(auth, "location.pathname+'?revoke_others=1'") + _ACCOUNT_RUECKKEHR_JS
+               + _revoke_js(auth, "location.pathname+'?revoke_others=1'") + _ACCOUNT_RETURN_JS
                .replace("__CONFIRM__", json.dumps(t("acc.sessions_confirm"))))
             + pkjs)
     # Account uses full width (no card) + account CSS + branding
@@ -683,9 +683,9 @@ def _register(auth, ctx) -> str:
         body = (f"<h1>{_e(t('reg.verify_title'))}</h1>"
                 f"<div class=hint>{_e(t('reg.verify_hint'))}</div>"
                 f"<a class=btn2 href='__TS_P__/auth/login'>{_e(t('magic.to_login'))}</a>")
-        return _page(auth, t("reg.verify_title"), body, unten=_meldungen([("ok", t("reg.verify"))]))
+        return _page(auth, t("reg.verify_title"), body, below=_messages([("ok", t("reg.verify"))]))
     cfg = auth.cfg
-    meldungen = _meldungen([("fehler", ctx.get("error"))])
+    messages = _messages([("error", ctx.get("error"))])
     emailro = " readonly" if ctx.get("invite") and ctx.get("email") else ""
     # The fields follow the config: in e-mail mode the address is the identifier; an optional
     # e-mail field appears only if the app does anything with it at all (login link,
@@ -707,7 +707,7 @@ def _register(auth, ctx) -> str:
             f"<label>{_e(t('reg.password'))}</label><input name=password required type=password autocomplete=new-password>"
             f"<button type=submit>{_e(t('reg.submit'))}</button></form>"
             f"<div class=hint><a href='__TS_P__/auth/login'>{_e(t('reg.have'))}</a></div>")
-    return _page(auth, t("reg.title"), body, unten=meldungen)
+    return _page(auth, t("reg.title"), body, below=messages)
 
 
 def _magic_request(auth, ctx) -> str:
@@ -717,8 +717,8 @@ def _magic_request(auth, ctx) -> str:
         body = (f"<h1>{_e(t('magic.sent_title'))}</h1>"
                 f"<div class=hint>{_e(t('magic.sent_hint'))}</div>"
                 f"<a class=btn2 href='__TS_P__/auth/login'>{_e(t('magic.back_login'))}</a>")
-        return _page(auth, t("magic.sent_title"), body, unten=_meldungen([("ok", t("magic.sent"))]))
-    meldungen = _meldungen([("fehler", ctx.get("error"))])
+        return _page(auth, t("magic.sent_title"), body, below=_messages([("ok", t("magic.sent"))]))
+    messages = _messages([("error", ctx.get("error"))])
     body = (f"<h1>{_e(t('magic.title'))}</h1>"
             f"<div class=hint>{_e(t('magic.hint'))}</div>"
             f"<form method=post action='__TS_P__/auth/magic/request'>"
@@ -727,7 +727,7 @@ def _magic_request(auth, ctx) -> str:
             f"<input name=email type=email autocomplete=email autofocus>"
             f"<button type=submit>{_e(t('magic.send'))}</button></form>"
             f"<div class=hint><a href='__TS_P__/auth/login'>{_e(t('back'))}</a></div>")
-    return _page(auth, t("magic.title"), body, unten=meldungen)
+    return _page(auth, t("magic.title"), body, below=messages)
 
 
 def _forgot(auth, ctx) -> str:
@@ -737,28 +737,28 @@ def _forgot(auth, ctx) -> str:
         return _page(auth, t("magic.sent_title"),
                       f"<h1>{_e(t('magic.sent_title'))}</h1>"
                       f"<a class=btn2 href='__TS_P__/auth/login'>{_e(t('magic.to_login'))}</a>",
-                      unten=_meldungen([("ok", t("magic.sent"))]))
-    meldungen = _meldungen([("fehler", ctx.get("error"))])
+                      below=_messages([("ok", t("magic.sent"))]))
+    messages = _messages([("error", ctx.get("error"))])
     body = (f"<h1>{_e(t('forgot.title'))}</h1>"
             f"<div class=hint>{_e(t('forgot.hint'))}</div>"
             f"<form method=post action='__TS_P__/auth/forgot'>{_cf(ctx)}"
             f"<label>{_e(t('magic.email'))}</label><input name=email type=email autocomplete=email autofocus>"
             f"<button type=submit>{_e(t('forgot.send'))}</button></form>"
             f"<div class=hint><a href='__TS_P__/auth/login'>{_e(t('back'))}</a></div>")
-    return _page(auth, t("forgot.title"), body, unten=meldungen)
+    return _page(auth, t("forgot.title"), body, below=messages)
 
 
 def _reset(auth, ctx) -> str:
     """ctx: token, error. Set a new password."""
     t = auth.t
-    meldungen = _meldungen([("fehler", ctx.get("error"))])
+    messages = _messages([("error", ctx.get("error"))])
     body = (f"<h1>{_e(t('reset.title'))}</h1>"
             f"<form method=post action='__TS_P__/auth/reset'>"
             f"<input type=hidden name=token value='{_e(ctx.get('token', ''))}'>{_cf(ctx)}"
             f"<label>{_e(t('reset.new'))}</label>"
             f"<input name=password type=password autocomplete=new-password autofocus>"
             f"<button type=submit>{_e(t('reset.submit'))}</button></form>")
-    return _page(auth, t("reset.title"), body, unten=meldungen)
+    return _page(auth, t("reset.title"), body, below=messages)
 
 
 def _error(auth, ctx) -> str:
@@ -779,35 +779,35 @@ def _magic_confirm(auth, ctx) -> str:
     The link from the mail no longer redeems on GET — mail scanners open every link and
     would otherwise have consumed it. Only this POST (with CSRF token) does it."""
     t = auth.t
-    knopf = {"verify_email": t("magic.confirm_verify"),
+    button = {"verify_email": t("magic.confirm_verify"),
              "email_change": t("magic.confirm_email_change")}.get(ctx.get("purpose"), t("magic.confirm_login"))
     body = (f"<h1>{_e(t('magic.confirm_title'))}</h1>"
             f"<div class=hint>{_e(t('magic.confirm_hint'))}</div>"
             f"<form method=post action='{_e(ctx.get('action', ''))}'>{_cf(ctx)}"
-            f"<button type=submit autofocus>{_e(knopf)}</button></form>")
+            f"<button type=submit autofocus>{_e(button)}</button></form>")
     return _page(auth, t("magic.confirm_title"), body)
 
 
-def _revoke_js(auth, zurueck: str) -> str:
+def _revoke_js(auth, back: str) -> str:
     """JS for the offer after a factor change (B1-7, ASVS 7.4.3): `offer(r)` reads
     `other_sessions` from the response and asks, `tsRevokeOthers()` ends the remaining
     sessions. Needs `tsCsrf()` on the page.
 
     Ending requires a fresh confirmation (F-09), creating a factor does not always
     (passkey, TOTP need only a session). If the freshness has expired, the path leads through
-    the reauth page — and `zurueck` (a JS expression, or empty) says where to go afterwards,
+    the reauth page — and `back` (a JS expression, or empty) says where to go afterwards,
     so that the consent already given is not silently lost (A-5). During
     this redirect `tsRevokeOthers` never returns: a caller that reloads afterwards
     would otherwise abort the navigation."""
     t = auth.t
-    ziel = (f"location.href=re+'?next='+encodeURIComponent({zurueck});return new Promise(()=>{{}})"
-            if zurueck else f"alert({json.dumps(t('api.stepup'))});return false")
+    destination = (f"location.href=re+'?next='+encodeURIComponent({back});return new Promise(()=>{{}})"
+            if back else f"alert({json.dumps(t('api.stepup'))});return false")
     return ("<script>"
             "async function tsRevokeOthers(){const r=await fetch('__TS_P__/auth/sessions/revoke',{method:'POST',"
             "headers:{'Content-Type':'application/json','X-CSRF-Token':tsCsrf()},"
             "body:JSON.stringify({scope:'others'})});"
             "const re=r.headers.get('X-TinySesam-Reauth');"
-            f"if(r.status===403&&re){{{ziel}}}return r.ok}}"
+            f"if(r.status===403&&re){{{destination}}}return r.ok}}"
             "async function offer(r){let j={};try{j=await r.clone().json()}catch(e){}"
             f"if(r.ok&&j.other_sessions>0&&confirm({json.dumps(t('acc.sessions_offer'))}))"
             "await tsRevokeOthers();"
@@ -819,7 +819,7 @@ def _revoke_js(auth, zurueck: str) -> str:
 
 # Back from reauth with `?revoke_others=1`: ask once more, then end. Not silently
 # executed — otherwise every foreign link to this address would end the other sessions.
-_ACCOUNT_RUECKKEHR_JS = """<script>
+_ACCOUNT_RETURN_JS = """<script>
 if(new URLSearchParams(location.search).get('revoke_others')==='1'){
   history.replaceState(null,'',location.pathname);
   if(confirm(__CONFIRM__))tsRevokeOthers().then(ok=>{if(ok)say('sess_msg','\u2713 beendet',true);loadsess()})}
@@ -844,19 +844,19 @@ def _gate_logout(auth, ctx) -> str:
     t = auth.t
     name = ctx.get("app_name") or t("gate.this_app")
 
-    def knopf(scope, text):
+    def button(scope, text):
         return (f"<form method=post action='logout'>{_cf(ctx)}"
                 f"<input type=hidden name=scope value='{_e(scope)}'>"
                 f"<input type=hidden name=next value='{_e(ctx.get('next', '/'))}'>"
                 f"<button type=submit>{_e(text)}</button></form>")
 
     if ctx.get("scope") in ("app", "all"):
-        frage = t("gate.confirm_app", name=name) if ctx["scope"] == "app" else t("gate.confirm_all")
-        knoepfe = knopf(ctx["scope"], t("logout"))
+        question = t("gate.confirm_app", name=name) if ctx["scope"] == "app" else t("gate.confirm_all")
+        buttons = button(ctx["scope"], t("logout"))
     else:
-        frage = t("gate.ask", name=name)
-        knoepfe = knopf("app", t("gate.only_app", name=name)) + knopf("all", t("gate.everywhere"))
-    body = (f"<h1>{_e(t('logout'))}</h1><div class=hint>{_e(frage)}</div>{knoepfe}"
+        question = t("gate.ask", name=name)
+        buttons = button("app", t("gate.only_app", name=name)) + button("all", t("gate.everywhere"))
+    body = (f"<h1>{_e(t('logout'))}</h1><div class=hint>{_e(question)}</div>{buttons}"
             f"<div class=hint><a href='/'>{_e(t('cancel'))}</a></div>")
     return _page(auth, t("logout"), body)
 
@@ -866,21 +866,21 @@ def _gate_logged_out(auth, ctx) -> str:
     a way back that starts a NEW sign-in. With `redirect_sec` > 0 ("direct" mode, PO 2026-10-10) it goes
     there by itself after that many seconds: a meta refresh, no script; the bar runs down in CSS only."""
     t = auth.t
-    ziel = ctx.get("again_url") or "/"
+    destination = ctx.get("again_url") or "/"
     try:
-        sek = max(0, min(300, int(ctx.get("redirect_sec") or 0)))
+        sec = max(0, min(300, int(ctx.get("redirect_sec") or 0)))
     except (TypeError, ValueError):
-        sek = 0
-    kopf, weiter = "", ""
-    if sek:
-        kopf = (f"<meta http-equiv=refresh content='{sek};url={_e(ziel)}'>"
+        sec = 0
+    head, further = "", ""
+    if sec:
+        head = (f"<meta http-equiv=refresh content='{sec};url={_e(destination)}'>"
                 f"<style>@keyframes tsweiter{{from{{transform:scaleX(1)}}to{{transform:scaleX(0)}}}}"
-                f".tsweiter i{{animation:tsweiter {sek}s linear forwards}}</style>")
-        weiter = (f"<div class=hint role=status>{_e(t('gate.login_soon', n=sek))}</div>"
+                f".tsweiter i{{animation:tsweiter {sec}s linear forwards}}</style>")
+        further = (f"<div class=hint role=status>{_e(t('gate.login_soon', n=sec))}</div>"
                   f"<div class=tsweiter aria-hidden=true><i></i></div>")
-    body = (f"<h1>{_e(t('gate.logged_out_title'))}</h1><div class=hint>{_e(t('gate.logged_out'))}</div>{weiter}"
-            f"<a class=btn2 href='{_e(ziel)}'>{_e(t('gate.login_now') if sek else t('gate.login_again'))}</a>")
-    return _page(auth, t("gate.logged_out_title"), body, kopf=kopf)
+    body = (f"<h1>{_e(t('gate.logged_out_title'))}</h1><div class=hint>{_e(t('gate.logged_out'))}</div>{further}"
+            f"<a class=btn2 href='{_e(destination)}'>{_e(t('gate.login_now') if sec else t('gate.login_again'))}</a>")
+    return _page(auth, t("gate.logged_out_title"), body, head=head)
 
 
 def _gateway_home(auth, ctx) -> str:
@@ -899,13 +899,13 @@ def _magic_invalid(auth, ctx) -> str:
     t = auth.t
     body = (f"<h1>{_e(t('magic.invalid_title'))}</h1>"
             f"<a class=btn2 href='__TS_P__/auth/login'>{_e(t('magic.to_login'))}</a>")
-    return _page(auth, t("magic.invalid_title"), body, unten=_meldungen([("fehler", t("magic.invalid"))]))
+    return _page(auth, t("magic.invalid_title"), body, below=_messages([("error", t("magic.invalid"))]))
 
 
 def _resource_unlock(auth, ctx) -> str:
     """ctx: name, kind ('pin'|'password'), label, next, error. Shared resource secret."""
     t = auth.t
-    meldungen = _meldungen([("fehler", ctx.get("error"))])
+    messages = _messages([("error", ctx.get("error"))])
     if ctx.get("kind") == "pin":
         field = "<input name=secret type=password inputmode=numeric autocomplete=off class=code autofocus>"
         lbl = t("res.pin")
@@ -918,7 +918,7 @@ def _resource_unlock(auth, ctx) -> str:
             f"<input type=hidden name=next value='{_e(ctx.get('next', '/'))}'>{_cf(ctx)}"
             f"<label>{_e(lbl)}</label>{field}"
             f"<button type=submit>{_e(t('res.submit'))}</button></form>")
-    return _page(auth, str(ctx.get("label") or lbl), body, unten=meldungen)
+    return _page(auth, str(ctx.get("label") or lbl), body, below=messages)
 
 
 def _stepup_field(auth, method, first) -> str:
@@ -948,28 +948,28 @@ def _reauth(auth, ctx) -> str:
     the password field stays.
     """
     t = auth.t
-    meldungen = _meldungen([("fehler", ctx.get("error"))])
+    messages = _messages([("error", ctx.get("error"))])
     methods = ctx.get("methods")
     methods = ["password"] if methods is None else list(methods)
-    kopf = (f"<h1>{_e(t('reauth.title'))}</h1>"
+    head = (f"<h1>{_e(t('reauth.title'))}</h1>"
             f"<div class=hint>{_e(t('reauth.hint', user=ctx.get('username')))}</div>")
     fuss = f"<div class=hint><a href='__TS_P__/auth/logout'>{_e(t('logout'))}</a></div>"
     if not methods:
-        return _page(auth, t("reauth.title"), kopf + fuss, unten=meldungen)
+        return _page(auth, t("reauth.title"), head + fuss, below=messages)
     fields = f"<div class=or>{_e(t('or'))}</div>".join(
         _stepup_field(auth, m, i == 0) for i, m in enumerate(methods))
-    body = (kopf
+    body = (head
             + f"<form method=post action='__TS_P__/auth/reauth'>"
             f"<input type=hidden name=next value='{_e(ctx.get('next', '/'))}'>{_cf(ctx)}"
             f"{fields}<button type=submit>{_e(t('reauth.submit'))}</button></form>"
             + fuss)
-    return _page(auth, t("reauth.title"), body, unten=meldungen)
+    return _page(auth, t("reauth.title"), body, below=messages)
 
 
 def _pin(auth, ctx) -> str:
     """ctx: next, error, username (optional). PIN entry — without a user field if already signed in."""
     t = auth.t
-    meldungen = _meldungen([("fehler", ctx.get("error"))])
+    messages = _messages([("error", ctx.get("error"))])
     known = bool(ctx.get("username"))
     id_label, id_ac = _ident(auth)
     user_field = ("" if known else
@@ -984,7 +984,7 @@ def _pin(auth, ctx) -> str:
             f"{' autofocus' if known else ''}>"
             f"<button type=submit>{_e(t('login.pin_submit'))}</button></form>"
             f"<div class=hint><a href='__TS_P__{_e(auth.cfg.login_path)}'>{_e(t('back'))}</a></div>")
-    return _page(auth, t("pin.title"), body, top=_demobar(auth, pin=True, ctx=ctx), unten=meldungen)
+    return _page(auth, t("pin.title"), body, top=_demobar(auth, pin=True, ctx=ctx), below=messages)
 
 
 def _totp_setup(auth, ctx) -> str:

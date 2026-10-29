@@ -41,8 +41,12 @@ git config core.hooksPath .githooks    # einmal pro Klon; fährt die Suite vor j
 ## Stil
 
 Schreib wie der Code drumherum: gleiche Benennung, gleiche Kommentardichte. Ein Kommentar nennt eine
-Bedingung, die der Code nicht zeigen kann — nicht, was die nächste Zeile tut. Doku und Kommentare auf
-Deutsch; Bezeichner bleiben englisch.
+Bedingung, die der Code nicht zeigen kann — nicht, was die nächste Zeile tut. Projektsprache ist
+Englisch: Bezeichner (Funktionen, Klassen, Parameter, Variablen, Konstanten, Dateinamen), Namen von
+Datenbanktabellen und -spalten, Kommentare, Docstrings, Dokumentation, Commit-Nachrichten und Pull
+Requests sind englisch. Deutsch gibt es nur als Übersetzung der Oberfläche (`lang="de"`, `i18n/`).
+`tests/test_english_code.py` erzwingt das: ein deutsches Wort in einem Bezeichner, Dateinamen, SQL oder
+Kommentar macht die Suite rot.
 
 ## Eine Schwachstelle melden
 

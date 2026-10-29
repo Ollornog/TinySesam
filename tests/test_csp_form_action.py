@@ -54,12 +54,12 @@ def _sock():
 
 
 # Target server on a second port: allowed as `localhost`, foreign as `127.0.0.1` (different origin than the app).
-ZIEL_AUFRUFE = []
+DESTINATION_CALLS = []
 
 
-class _Ziel(http.server.BaseHTTPRequestHandler):
-    def _antwort(self):
-        ZIEL_AUFRUFE.append((self.command, self.path))
+class _Destination(http.server.BaseHTTPRequestHandler):
+    def _response(self):
+        DESTINATION_CALLS.append((self.command, self.path))
         body = b"<!doctype html><title>ziel</title>angekommen"
         self.send_response(200)
         self.send_header("Content-Type", "text/html")
@@ -67,16 +67,16 @@ class _Ziel(http.server.BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    do_GET = do_POST = _antwort
+    do_GET = do_POST = _response
 
     def log_message(self, *a):
         pass
 
 
-_ziel_sock = _sock()
-ZIEL = _ziel_sock.getsockname()[1]
-_zs = http.server.HTTPServer(("127.0.0.1", ZIEL), _Ziel, bind_and_activate=False)
-_zs.socket = _ziel_sock
+_destination_sock = _sock()
+DESTINATION = _destination_sock.getsockname()[1]
+_zs = http.server.HTTPServer(("127.0.0.1", DESTINATION), _Destination, bind_and_activate=False)
+_zs.socket = _destination_sock
 threading.Thread(target=_zs.serve_forever, daemon=True).start()
 
 _app_sock = _sock()
@@ -103,26 +103,26 @@ else:
 print("CSP form-action")
 
 # (a)
-kopf = urllib.request.urlopen(f"{BASE}/auth/login").headers["Content-Security-Policy"]
-fa = [d.strip() for d in kopf.split(";") if d.strip().startswith("form-action")]
-assert fa and fa[0].split()[1] == "'self'" and "localhost:*" in fa[0].split() and f"127.0.0.1:{APP}" in fa[0], kopf
-ok(f"Kopf: {fa[0]}")
+head = urllib.request.urlopen(f"{BASE}/auth/login").headers["Content-Security-Policy"]
+fa = [d.strip() for d in head.split(";") if d.strip().startswith("form-action")]
+assert fa and fa[0].split()[1] == "'self'" and "localhost:*" in fa[0].split() and f"127.0.0.1:{APP}" in fa[0], head
+ok(f"Header: {fa[0]}")
 
-_profil = tempfile.mkdtemp()
+_profile = tempfile.mkdtemp()
 _log = tempfile.NamedTemporaryFile(prefix="chrome-", suffix=".log", delete=False)
 _chrome = subprocess.Popen([CHROME, "--headless=new", "--disable-gpu", "--no-sandbox", "--disable-dev-shm-usage",
-                            f"--user-data-dir={_profil}", "--remote-debugging-port=0", "about:blank"],
+                            f"--user-data-dir={_profile}", "--remote-debugging-port=0", "about:blank"],
                            stdout=_log, stderr=subprocess.STDOUT)
 
 
 def _ws_url():
-    datei = os.path.join(_profil, "DevToolsActivePort")
-    ende = time.time() + float(os.environ.get("CHROME_START_TIMEOUT", "30"))
-    while time.time() < ende:
+    file = os.path.join(_profile, "DevToolsActivePort")
+    end = time.time() + float(os.environ.get("CHROME_START_TIMEOUT", "30"))
+    while time.time() < end:
         if _chrome.poll() is not None:
-            raise RuntimeError(f"Chrome gestorben (Exit {_chrome.returncode})")
+            raise RuntimeError(f"Chrome died (exit {_chrome.returncode})")
         try:
-            with open(datei, encoding="utf-8") as fh:
+            with open(file, encoding="utf-8") as fh:
                 port = int(fh.readline().strip())
             tabs = json.load(urllib.request.urlopen(f"http://127.0.0.1:{port}/json"))
             return [t for t in tabs if t["type"] == "page"][0]["webSocketDebuggerUrl"]
@@ -131,7 +131,7 @@ def _ws_url():
     raise RuntimeError("Chrome does not respond")
 
 
-async def _lauf():
+async def _execution():
     async with websockets.connect(_ws_url(), max_size=None) as ws:
         n = [0]
 
@@ -147,23 +147,23 @@ async def _lauf():
             r = await cmd("Runtime.evaluate", expression=expr, returnByValue=True)
             return r.get("result", {}).get("value")
 
-        async def warte_auf(pruef, sek=10):
-            for _ in range(int(sek / 0.2)):
-                if await pruef():
+        async def wait_on(check, sec=10):
+            for _ in range(int(sec / 0.2)):
+                if await check():
                     return True
                 await asyncio.sleep(0.2)
             return False
 
         await cmd("Page.enable")
         # (b) Sign-in with next to the allowed second host
-        ziel = f"http://localhost:{ZIEL}/ziel"
-        await cmd("Page.navigate", url=f"{BASE}/auth/login?next={ziel}")
-        await warte_auf(lambda: js("!!document.querySelector('input[name=password]')"))
+        destination = f"http://localhost:{DESTINATION}/ziel"
+        await cmd("Page.navigate", url=f"{BASE}/auth/login?next={destination}")
+        await wait_on(lambda: js("!!document.querySelector('input[name=password]')"))
         await js("document.querySelector('input[name=username]').value='anna';"
                  "document.querySelector('input[name=password]').value='Richtiges-Pw-2026';"
                  "document.querySelector('input[name=password]').form.submit()")
-        angekommen = await warte_auf(lambda: js(f"location.href === {json.dumps(ziel)}"))
-        assert angekommen, (await js("location.href"), ZIEL_AUFRUFE)
+        arrived = await wait_on(lambda: js(f"location.href === {json.dumps(destination)}"))
+        assert arrived, (await js("location.href"), DESTINATION_CALLS)
         ok("sign-in with next to an allowed host: Chrome follows the redirect")
 
         # (c) injected form to a foreign origin
@@ -171,19 +171,19 @@ async def _lauf():
         await cmd("Network.enable")
         await cmd("Network.clearBrowserCookies")
         await cmd("Page.navigate", url=f"{BASE}/auth/login")
-        assert await warte_auf(lambda: js("!!document.querySelector('input[name=password]')")), await js("location.href")
-        vorher = len(ZIEL_AUFRUFE)
-        fremd = f"http://127.0.0.1:{ZIEL}/fremd"
-        await js(f"const f=document.createElement('form');f.method='post';f.action={json.dumps(fremd)};"
+        assert await wait_on(lambda: js("!!document.querySelector('input[name=password]')")), await js("location.href")
+        before = len(DESTINATION_CALLS)
+        foreign = f"http://127.0.0.1:{DESTINATION}/fremd"
+        await js(f"const f=document.createElement('form');f.method='post';f.action={json.dumps(foreign)};"
                  "document.body.appendChild(f);f.submit()")
         await asyncio.sleep(2)
-        assert not any(p == "/fremd" for _, p in ZIEL_AUFRUFE[vorher:]), ZIEL_AUFRUFE
+        assert not any(p == "/fremd" for _, p in DESTINATION_CALLS[before:]), DESTINATION_CALLS
         assert (await js("location.href")).startswith(BASE), await js("location.href")
         ok("form to a foreign origin: blocked, the foreign server sees nothing")
 
 
 try:
-    asyncio.run(_lauf())
+    asyncio.run(_execution())
 finally:
     _chrome.terminate()
 print("CSP form-action OK")

@@ -7,7 +7,7 @@ the details, but nobody looks at it regularly. This is the intermediate stage: a
 backlog that lives in the repo, is versioned, and gets noticed the next time it is touched.
 
     python3 scripts/_codeql.py            # write backlog/S-1-codeql.md
-    python3 scripts/_codeql.py --zeigen   # only print, write nothing
+    python3 scripts/_codeql.py --show   # only print, write nothing
 
 Needs `gh` with read access to the repo. With no findings the file is removed.
 """
@@ -20,11 +20,11 @@ from collections import defaultdict
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-ZIEL = ROOT / "backlog" / "S-1-codeql.md"
+DESTINATION = ROOT / "backlog" / "S-1-codeql.md"
 REPO = "Ollornog/TinySesam"
 
 #: What TinySesam deliberately rates differently from CodeQL — with a reason, not as muting.
-BEWERTET = {
+RATED = {
     "py/url-redirection": (
         "checked, false alarm: the target is always the relative `cfg.login_path`; the "
         "user-supplied part only ends up in the `next` parameter, and `safe_next()` throws external "
@@ -34,24 +34,24 @@ BEWERTET = {
 
 
 def alerts() -> list[dict]:
-    roh = subprocess.run(
+    raw = subprocess.run(
         ["gh", "api", f"repos/{REPO}/code-scanning/alerts?state=open&per_page=100"],
         capture_output=True, text=True)
-    if roh.returncode != 0:
-        print(f"gh api failed: {roh.stderr.strip()[:200]}", file=sys.stderr)
+    if raw.returncode != 0:
+        print(f"gh api failed: {raw.stderr.strip()[:200]}", file=sys.stderr)
         raise SystemExit(1)
-    return json.loads(roh.stdout)
+    return json.loads(raw.stdout)
 
 
-def bauen(daten: list[dict]) -> str:
-    nach_regel: dict = defaultdict(list)
-    for a in daten:
-        ort = a["most_recent_instance"]["location"]
-        nach_regel[(a["rule"]["id"], a["rule"].get("security_severity_level")
+def build(data: list[dict]) -> str:
+    after_rule: dict = defaultdict(list)
+    for a in data:
+        place = a["most_recent_instance"]["location"]
+        after_rule[(a["rule"]["id"], a["rule"].get("security_severity_level")
                     or a["rule"].get("severity"))].append(
-            f'{ort["path"]}:{ort["start_line"]}')
+            f'{place["path"]}:{place["start_line"]}')
 
-    zeilen = [
+    lines = [
         "---", "id: S-1", "type: Task",
         "title: Review open CodeQL findings", "status: offen", "milestone: M-2",
         "tags: [sicherheit, codeql, generiert]", "created: 2026-09-21", "---", "",
@@ -60,43 +60,43 @@ def bauen(daten: list[dict]) -> str:
         "GitHub reports code-scanning findings by mail to the PR author — with the count, without the",
         "list — and puts the details in the Security tab. This page is the extract of that:",
         "in the repo, versioned, and visible the next time someone touches it.", "",
-        f"**{len(daten)} open findings.** A finding is a claim: measure first, then",
+        f"**{len(data)} open findings.** A finding is a claim: measure first, then",
         "fix it or dismiss it with a reason.", "",
     ]
-    for (regel, schwere), orte in sorted(nach_regel.items(), key=lambda kv: -len(kv[1])):
-        bib = [o for o in orte if o.startswith("tinysesam/")]
-        zeilen.append(f"## `{regel}` — {len(orte)}× ({schwere or 'note'})")
-        zeilen.append("")
-        if regel in BEWERTET:
-            zeilen.append(f"> **Assessed:** {BEWERTET[regel]}")
-            zeilen.append("")
+    for (rule, severity), places in sorted(after_rule.items(), key=lambda kv: -len(kv[1])):
+        bib = [o for o in places if o.startswith("tinysesam/")]
+        lines.append(f"## `{rule}` — {len(places)}× ({severity or 'note'})")
+        lines.append("")
+        if rule in RATED:
+            lines.append(f"> **Assessed:** {RATED[rule]}")
+            lines.append("")
         if bib:
-            zeilen.append(f"**In the library:** {', '.join(f'`{o}`' for o in bib)}")
-            zeilen.append("")
-        andere = [o for o in orte if not o.startswith("tinysesam/")]
-        if andere:
-            gezeigt = ", ".join(f"`{o}`" for o in andere[:6])
-            rest = f" … and {len(andere) - 6} more" if len(andere) > 6 else ""
-            zeilen.append(f"Outside the library: {gezeigt}{rest}")
-            zeilen.append("")
-    return "\n".join(zeilen) + "\n"
+            lines.append(f"**In the library:** {', '.join(f'`{o}`' for o in bib)}")
+            lines.append("")
+        other = [o for o in places if not o.startswith("tinysesam/")]
+        if other:
+            shown = ", ".join(f"`{o}`" for o in other[:6])
+            rest = f" … and {len(other) - 6} more" if len(other) > 6 else ""
+            lines.append(f"Outside the library: {shown}{rest}")
+            lines.append("")
+    return "\n".join(lines) + "\n"
 
 
 def main() -> int:
-    daten = alerts()
-    if not daten:
-        if ZIEL.exists():
-            ZIEL.unlink()
-            print(f"No open findings — {ZIEL.name} removed.")
+    data = alerts()
+    if not data:
+        if DESTINATION.exists():
+            DESTINATION.unlink()
+            print(f"No open findings — {DESTINATION.name} removed.")
         else:
             print("No open findings.")
         return 0
-    text = bauen(daten)
-    if "--zeigen" in sys.argv:
+    text = build(data)
+    if "--show" in sys.argv:
         print(text)
         return 0
-    ZIEL.write_text(text, encoding="utf-8")
-    print(f"written: {ZIEL.relative_to(ROOT)} ({len(daten)} findings)")
+    DESTINATION.write_text(text, encoding="utf-8")
+    print(f"written: {DESTINATION.relative_to(ROOT)} ({len(data)} findings)")
     return 0
 
 

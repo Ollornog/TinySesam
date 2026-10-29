@@ -26,7 +26,7 @@ import re
 from . import security
 
 #: Method → which config field switches it on. The same list serves the chain check.
-VERFAHREN = {
+PROCEDURE = {
     "password": "password_enabled",
     "pin": "pin_enabled",
     "passkey": "passkey_enabled",
@@ -38,23 +38,23 @@ VERFAHREN = {
 }
 
 #: What may appear in a `login_chain`: the factors a session can really get
-#: (`TinySesam._IDENTIFYING`) plus `totp`. Deliberately NOT `VERFAHREN` — that also holds
+#: (`TinySesam._IDENTIFYING`) plus `totp`. Deliberately NOT `PROCEDURE` — that also holds
 #: `ldap` (writes the factor `password`) and `apikey` (never becomes a factor).
-KETTENSCHRITTE = frozenset({"password", "pin", "oidc", "passkey", "magic", "saml", "totp"})
+CHAIN_STEPS = frozenset({"password", "pin", "oidc", "passkey", "magic", "saml", "totp"})
 
 #: Methods with which a human can SIGN IN. `apikey` does not count: a key is issued
 #: by an account, which has to exist first.
-ANMELDEND = ("password", "pin", "passkey", "oidc", "saml", "ldap", "magic")
+SIGNING_IN = ("password", "pin", "passkey", "oidc", "saml", "ldap", "magic")
 
 #: Method → fields without which it cannot work.
-PFLICHTFELDER = {
+REQUIRED_FIELDS = {
     "oidc": ("oidc_issuer", "oidc_client_id"),
     "saml": ("saml_idp_sso_url", "saml_idp_x509cert"),
     "ldap": ("ldap_url",),
 }
 
 #: What needs a mailer. Not an error — `set_mailer` often comes later.
-BRAUCHT_MAILER = {
+REQUIRES_MAILER = {
     "magiclink_enabled": "Magic-link sign-in",
     "password_reset_enabled": "\"Forgot password\"",
     "signup_verify_email": "Email confirmation at registration",
@@ -64,7 +64,7 @@ BRAUCHT_MAILER = {
 #: the redirect URI at the IdP, the entity ID in SAML metadata. Without `base_url` only
 #: the `Host` header would remain for it, and the requester sets that (R4-01). These switches make `base_url`
 #: **mandatory**: without it construction fails, not only the first sign-in attempt.
-BRAUCHT_BASE_URL = {
+REQUIRES_BASE_URL = {
     "magiclink_enabled": "Magic link and invitation (link in the email)",
     "password_reset_enabled": "\"Forgot password\" (reset link in the email)",
     "signup_verify_email": "Email confirmation (confirmation link in the email)",
@@ -77,21 +77,21 @@ BRAUCHT_BASE_URL = {
 #: and the browser resolves it against the requested host — that works as long as app and
 #: TinySesam live under one name. A foreign name does not get into the redirect this way, nothing
 #: goes out to third parties, and therefore this is no reason to refuse to start.
-BASE_URL_EMPFOHLEN = {
+BASE_URL_RECOMMENDED = {
     "forward_auth_enabled": "Forward auth (redirect of the proxy to the login page)",
 }
 
 
-def _ist_ip(wert: str) -> bool:
+def _is_ip(value: str) -> bool:
     import ipaddress
     try:
-        ipaddress.ip_address(wert)
+        ipaddress.ip_address(value)
         return True
     except ValueError:
         return False
 
 
-def _t(config, template: str, **werte) -> str:
+def _t(config, template: str, **values) -> str:
     """Finding text in the language of `config.lang`: English (default) or German.
 
     `template` is the English text with named placeholders (`str.format`); for `lang == "de"` the
@@ -99,31 +99,31 @@ def _t(config, template: str, **werte) -> str:
     Literal braces in a template are written doubled (`{{` / `}}`)."""
     if getattr(config, "lang", "en") == "de":
         template = _DE.get(template, template)
-    return template.format(**werte)
+    return template.format(**values)
 
 
-def _an(config, feld: str) -> bool:
-    return bool(getattr(config, feld, False))
+def _an(config, slot: str) -> bool:
+    return bool(getattr(config, slot, False))
 
 
-def _ganzzahl(config, feld: str, fehlt: int | None = 0):
+def _integer(config, slot: str, missing: int | None = 0):
     """Read a number field for a combination check — or None if it is not an integer.
 
-    Type and range are reported by `_zahlengrenzen` (including `True`, text, `inf`, `nan`); the combination
+    Type and range are reported by `_number_limits` (including `True`, text, `inf`, `nan`); the combination
     is then not evaluated. An `int()` on the raw value crashed the whole check
     before the type message came, and `TinySesam(cfg)` raised ValueError/OverflowError instead of a
     collected ConfigError (second attack round, config)."""
-    wert = getattr(config, feld, fehlt)
-    if wert is None:
-        return fehlt
-    if isinstance(wert, bool) or not isinstance(wert, int):
+    value = getattr(config, slot, missing)
+    if value is None:
+        return missing
+    if isinstance(value, bool) or not isinstance(value, int):
         return None
-    return wert
+    return value
 
 
 #: The directives a Content-Security-Policy knows (CSP Level 3 plus the common
 #: legacy ones). A custom policy needs at least one of them; every other one gives a warning.
-CSP_DIREKTIVEN = frozenset({
+CSP_DIRECTIVES = frozenset({
     "default-src", "script-src", "script-src-elem", "script-src-attr", "style-src",
     "style-src-elem", "style-src-attr", "img-src", "font-src", "connect-src", "media-src",
     "object-src", "frame-src", "child-src", "worker-src", "manifest-src", "prefetch-src",
@@ -133,17 +133,17 @@ CSP_DIREKTIVEN = frozenset({
 })
 
 
-def _csp_namen(wert) -> list[str] | None:
+def _csp_names(value) -> list[str] | None:
     """The directive names of a custom policy, lower-cased — None for 'strict'/'off'/empty."""
-    if not isinstance(wert, str):
+    if not isinstance(value, str):
         return None
-    roh = wert.strip()
-    if roh in ("", "strict", "off"):
+    raw = value.strip()
+    if raw in ("", "strict", "off"):
         return None
-    return [teil.split()[0].lower() for teil in roh.split(";") if teil.strip()]
+    return [part.split()[0].lower() for part in raw.split(";") if part.strip()]
 
 
-def csp_fehler(wert, config=None) -> str:
+def csp_error(value, config=None) -> str:
     """The finding for `csp`, empty if fine (B3-2).
 
     Everything except 'strict' and 'off' went unchecked 1:1 into the header up to 0.19.0. A typo
@@ -151,91 +151,91 @@ def csp_fehler(wert, config=None) -> str:
     browser discards such a header, and the pages ran **without any CSP**, without anyone
     noticing. An error is therefore only the policy without a **single** known
     directive. If an unknown one stands next to known ones, the browser skips only it and applies
-    the rest — that is `csp_warnung` (A3: `require-sri-for`, `disown-opener` otherwise kept a
+    the rest — that is `csp_warning` (A3: `require-sri-for`, `disown-opener` otherwise kept a
     previously working policy from starting).
     """
-    namen = _csp_namen(wert)
-    if namen is None:
+    names = _csp_names(value)
+    if names is None:
         return ""                  # the constructor reports a non-string separately
-    roh = wert.strip()
-    if roh.lower() in ("strict", "off"):
+    raw = value.strip()
+    if raw.lower() in ("strict", "off"):
         return _t(
             config,
             "csp={value!r} — probably {intended!r} (lower case) is meant. As written it would be a "
             "custom policy without a directive, and the browser would run without any CSP.",
-            value=wert, intended=roh.lower())
-    if not any(n in CSP_DIREKTIVEN for n in namen):
+            value=value, intended=raw.lower())
+    if not any(n in CSP_DIRECTIVES for n in names):
         return _t(
             config,
             "csp={value!r} is neither 'strict' nor 'off' nor a policy with a known directive. The "
             "browser discards such a header, and the pages would run without any CSP.",
-            value=wert)
+            value=value)
     return ""
 
 
-def csp_warnung(wert, config=None) -> str:
+def csp_warning(value, config=None) -> str:
     """Unknown directives next to known ones: not an error, but probably a typo.
 
     The browser applies the policy without them. With 'scirpt-src', `default-src` then applies instead of
     the intended rule — that should be in the log. A real directive that is merely not listed here
     passes just the same.
     """
-    namen = _csp_namen(wert)
-    if not namen or csp_fehler(wert, config):
+    names = _csp_names(value)
+    if not names or csp_error(value, config):
         return ""
-    unbekannt = [n for n in namen if n not in CSP_DIREKTIVEN]
-    if not unbekannt:
+    unknown = [n for n in names if n not in CSP_DIRECTIVES]
+    if not unknown:
         return ""
     return _t(
         config,
         "csp={value!r} contains directives that TinySesam does not know: {unknown}. The browser "
         "skips what it does not know and applies the rest — with a typo, the intended rule "
         "therefore does not apply.",
-        value=wert, unknown=", ".join(unbekannt))
+        value=value, unknown=", ".join(unknown))
 
 
 def check_config(config) -> tuple[list[str], list[str]]:
     """(errors, warnings) — both complete, not aborted at the first finding."""
-    fehler: list[str] = []
-    warnungen: list[str] = []
+    error: list[str] = []
+    warnings: list[str] = []
 
     # Background images (0.24.8): an address lands in a CSS url() — a quote or a parenthesis would be
     # a breakout from the stylesheet. Here and not only at the router, so render_page() is protected without a router too.
     for b in getattr(config, "brand_backgrounds", None) or []:
         if not isinstance(b, str) or not b or any(z in b for z in "'\"()\\<> \t\n"):
-            fehler.append(_t(
+            error.append(_t(
                 config,
                 "brand_backgrounds: {b!r} — an address without quotation marks, parentheses, "
                 "backslash and spaces (it ends up in a CSS url())",
                 b=b))
         elif not (b.startswith("/") and not b.startswith("//")) and not b.startswith(("https://", "data:image/")):
-            fehler.append(_t(
+            error.append(_t(
                 config,
                 "brand_backgrounds: {b!r} — allowed are /path, data:image/… and https://…",
                 b=b))
-    _ziel = getattr(config, "brand_background_credit_url", "")
-    if _ziel and not str(_ziel).startswith(("https://", "http://")):
-        fehler.append(_t(
+    _destination = getattr(config, "brand_background_credit_url", "")
+    if _destination and not str(_destination).startswith(("https://", "http://")):
+        error.append(_t(
             config,
             "brand_background_credit_url: only http(s) addresses"))
 
     # Cookie prefix (0.24.12): the start of a cookie name, no `__` (`__Host-`/`__Secure-` reserve that), and a gateway
     # stays at `tinysesam_` — the proxy templates strip its session in front of the app only under that name.
-    _praefix = getattr(config, "cookie_prefix", "tinysesam_")
-    if not isinstance(_praefix, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,31}", _praefix):
-        fehler.append(_t(
+    _prefix = getattr(config, "cookie_prefix", "tinysesam_")
+    if not isinstance(_prefix, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,31}", _prefix):
+        error.append(_t(
             config,
             "cookie_prefix={p!r}: 1–32 characters of letters, digits, _ and -, starting with a "
             "letter or a digit (e.g. \"myapp_\")",
-            p=_praefix))
-    elif _an(config, "forward_auth_enabled") and not _praefix.startswith("tinysesam_"):
-        fehler.append(_t(
+            p=_prefix))
+    elif _an(config, "forward_auth_enabled") and not _prefix.startswith("tinysesam_"):
+        error.append(_t(
             config,
             "cookie_prefix={p!r} with forward_auth_enabled=True: the proxy templates strip "
             "only tinysesam_* cookies in front of the app — the session of this gateway would "
             "then reach every protected app. A gateway stays at cookie_prefix=\"tinysesam_\"; "
             "the prefix is for the app behind it.",
-            p=_praefix))
+            p=_prefix))
 
 
     # `enabled_methods()` is asked — the same list from which the login page
@@ -243,24 +243,24 @@ def check_config(config) -> tuple[list[str], list[str]]:
     # `pin_enabled=True` and overlooked `pin_login=False`, and thereby let an empty login page
     # through (PIN only as step-up is the documented way, not an exotic value).
     try:
-        aktive = list(config.enabled_methods())
+        active = list(config.enabled_methods())
     except Exception:
-        aktive = [name for name in ANMELDEND if _an(config, VERFAHREN[name])]
-    if not aktive:
+        active = [name for name in SIGNING_IN if _an(config, PROCEDURE[name])]
+    if not active:
         # `ldap_enabled=True` is NOT in the remedy (F-30): LDAP is not a field of its own on
         # the login page, but checks the password form against the directory. The message
         # named it anyway — and whoever followed it got the same message again.
-        fehler.append(_t(
+        error.append(_t(
             config,
             "Not a single login method is enabled — the login page would have no field at all, "
             "nobody can sign in. At least one of: {fields} (for PIN also pin_login=True, "
             "otherwise it is only step-up). LDAP alone is not enough: ldap_enabled=True checks "
             "the password form against the directory and therefore needs password_enabled=True.",
-            fields=", ".join(f"{VERFAHREN[n]}=True" for n in ANMELDEND if n != "ldap")))
+            fields=", ".join(f"{PROCEDURE[n]}=True" for n in SIGNING_IN if n != "ldap")))
     if _an(config, "ldap_enabled") and not _an(config, "password_enabled"):
         # Warning, not error: with a second method (OIDC, passkey) construction starts
         # sensibly — only the LDAP path is dead then, and the operator should know.
-        warnungen.append(_t(
+        warnings.append(_t(
             config,
             "ldap_enabled=True, but password_enabled=False. LDAP has no form of its own, it "
             "checks the password field of the login page against the directory — without "
@@ -275,31 +275,31 @@ def check_config(config) -> tuple[list[str], list[str]]:
     # EVERY configuration of the method and at the same time never checks what was meant. Exactly
     # that happened (`ldap_server` instead of `ldap_url`, and the field appeared in the whole repo only in
     # this line). Hence an assertion here instead of trust.
-    unbekannt = sorted({f for felder in PFLICHTFELDER.values() for f in felder
+    unknown = sorted({f for fields in REQUIRED_FIELDS.values() for f in fields
                         if not hasattr(config, f)}
-                       | {v for v in VERFAHREN.values() if not hasattr(config, v)}
-                       | {f for f in BRAUCHT_MAILER if not hasattr(config, f)}
-                       | {f for f in BRAUCHT_BASE_URL if not hasattr(config, f)}
-                       | {f for f in BASE_URL_EMPFOHLEN if not hasattr(config, f)}
+                       | {v for v in PROCEDURE.values() if not hasattr(config, v)}
+                       | {f for f in REQUIRES_MAILER if not hasattr(config, f)}
+                       | {f for f in REQUIRES_BASE_URL if not hasattr(config, f)}
+                       | {f for f in BASE_URL_RECOMMENDED if not hasattr(config, f)}
                        | {f for f in ("base_url", "trusted_redirect_hosts")
                           if not hasattr(config, f)})
-    if unbekannt:
-        fehler.append(_t(
+    if unknown:
+        error.append(_t(
             config,
             "The configuration check names fields that do not exist in TinySesamConfig: "
             "{fields}. This is a bug in TinySesam itself — please report it.",
-            fields=unbekannt))
+            fields=unknown))
 
-    for name, felder in PFLICHTFELDER.items():
-        if not _an(config, VERFAHREN[name]):
+    for name, fields in REQUIRED_FIELDS.items():
+        if not _an(config, PROCEDURE[name]):
             continue
-        leer = [f for f in felder if not str(getattr(config, f, "") or "").strip()]
-        if leer:
-            warnungen.append(_t(
+        empty = [f for f in fields if not str(getattr(config, f, "") or "").strip()]
+        if empty:
+            warnings.append(_t(
                 config,
                 "{method}=True, but {empty} is empty. The method cannot work that way and "
                 "fails at the first sign-in attempt — unless the client is replaced at runtime.",
-                method=VERFAHREN[name], empty=', '.join(leer)))
+                method=PROCEDURE[name], empty=', '.join(empty)))
 
     # Side finding from the same audit (F-28): a service-account DN without password is not an
     # anonymous search, but a combination that ldap3 rejects on its own
@@ -308,7 +308,7 @@ def check_config(config) -> tuple[list[str], list[str]]:
     # wrong end. Warning instead of error, because the client is replaceable at runtime.
     if _an(config, "ldap_enabled") and str(getattr(config, "ldap_bind_dn", "") or "").strip() \
             and not str(getattr(config, "ldap_bind_password", "") or "").strip():
-        warnungen.append(_t(
+        warnings.append(_t(
             config,
             "ldap_bind_dn is set, ldap_bind_password is empty. This is not an anonymous "
             "search: ldap3 rejects a DN without a password, the error only occurs at login and "
@@ -319,26 +319,26 @@ def check_config(config) -> tuple[list[str], list[str]]:
     # none (it writes the factor `password`), neither is `apikey` — both were in the
     # whitelist anyway, and `login_chain=["ldap","totp"]` is the most obvious spelling for an
     # LDAP operator. It led into exactly the loop this module warns about.
-    kette = list(getattr(config, "login_chain", None) or [])
-    unbekannt = [s for s in kette if s not in KETTENSCHRITTE]
-    if unbekannt:
-        hinweis = ""
-        if "ldap" in unbekannt:
-            hinweis = _t(config, " — LDAP satisfies the step 'password', not 'ldap'")
-        fehler.append(_t(
+    chain = list(getattr(config, "login_chain", None) or [])
+    unknown = [s for s in chain if s not in CHAIN_STEPS]
+    if unknown:
+        notice = ""
+        if "ldap" in unknown:
+            notice = _t(config, " — LDAP satisfies the step 'password', not 'ldap'")
+        error.append(_t(
             config,
             "login_chain names steps that are not a factor: {steps}{hint}. Allowed are "
             "{allowed}.",
-            steps=unbekannt, hint=hinweis, allowed=sorted(KETTENSCHRITTE)))
-    aus = [s for s in kette if s in VERFAHREN and not _an(config, VERFAHREN[s])]
-    if aus:
-        fehler.append(_t(
+            steps=unknown, hint=notice, allowed=sorted(CHAIN_STEPS)))
+    from_ = [s for s in chain if s in PROCEDURE and not _an(config, PROCEDURE[s])]
+    if from_:
+        error.append(_t(
             config,
             "login_chain requires {steps}, but {switches} — the chain is unsatisfiable, nobody "
             "gets past this step.",
-            steps=aus, switches=", ".join(f"{VERFAHREN[s]}=False" for s in aus)))
-    if "totp" in kette and not _an(config, "totp_enabled"):
-        fehler.append(_t(
+            steps=from_, switches=", ".join(f"{PROCEDURE[s]}=False" for s in from_)))
+    if "totp" in chain and not _an(config, "totp_enabled"):
+        error.append(_t(
             config,
             "login_chain requires 'totp', but totp_enabled=False — unsatisfiable."))
     # A PIN behind another factor is, in a NON-strict chain with `pin_login`,
@@ -346,9 +346,9 @@ def check_config(config) -> tuple[list[str], list[str]]:
     # with the password. Then anyone guesses the PIN without the password, and a self-service reset
     # clears these wrong guesses from the series (R2-2) — the configuration says "follow-up factor", the
     # behaviour "first factor" (G7). In a strict chain TinySesam closes the guest path itself.
-    if ("pin" in kette and kette[0] != "pin" and _an(config, "pin_enabled")
+    if ("pin" in chain and chain[0] != "pin" and _an(config, "pin_enabled")
             and _an(config, "pin_login") and not getattr(config, "login_chain_strict", True)):
-        warnungen.append(_t(
+        warnings.append(_t(
             config,
             "login_chain={chain} with login_chain_strict=False names 'pin' behind another "
             "factor, and pin_login=True offers the PIN as a first factor at the same time: "
@@ -356,7 +356,7 @@ def check_config(config) -> tuple[list[str], list[str]]:
             "clears these failed attempts from the series (account_max_consecutive_failures). "
             "If the PIN is meant to be only a follow-up factor: pin_login=False — the PIN step "
             "after the first factor stays reachable.",
-            chain=kette))
+            chain=chain))
 
     # Here once stood "resource_locks_enabled needs pin_enabled". That was wrong and
     # a suite of its own refuted it immediately: a locked resource is released with its OWN
@@ -365,13 +365,13 @@ def check_config(config) -> tuple[list[str], list[str]]:
     # here instead of the check.
 
     if _an(config, "password_reset_enabled") and not _an(config, "magiclink_enabled"):
-        warnungen.append(_t(
+        warnings.append(_t(
             config,
             "password_reset_enabled=True, but magiclink_enabled=False. The routes are mounted, "
             "but the link \"Forgot password?\" does not appear on the login page — the feature "
             "is on and reachable for nobody."))
     if _an(config, "allow_signup") and not _an(config, "password_enabled"):
-        fehler.append(_t(
+        error.append(_t(
             config,
             "allow_signup=True with password_enabled=False creates accounts that can never "
             "sign in — registration assigns a password, and password login is off."))
@@ -382,7 +382,7 @@ def check_config(config) -> tuple[list[str], list[str]]:
     # out. TinySesam does not know these names before the directory names them — so
     # the combination does not exist. There the operator creates accounts (panel, `create_user`).
     if _an(config, "allow_signup") and _an(config, "ldap_enabled"):
-        fehler.append(_t(
+        error.append(_t(
             config,
             "allow_signup=True next to ldap_enabled=True: whoever registers with the name or "
             "the address of a person from the directory before that person has signed in locks "
@@ -415,24 +415,24 @@ def check_config(config) -> tuple[list[str], list[str]]:
     # no way to supply it later, because without a base the first click on "forgot password"
     # ends in nothing.
     # The check uses the **same** function that `public_base()` applies later
-    # (`security.normalisiere_basis`), not a weaker pattern of its own: a coarse
+    # (`security.normalize_base`), not a weaker pattern of its own: a coarse
     # scheme-and-host pattern accepted `https://wer:was@auth.example` and `https://auth.example/x#y`
     # — both would then stand in every reset link, and the part behind `#` does not even
     # reach the server. Two rule sets for the same question are one too many (C-7).
-    _basis = str(getattr(config, "base_url", "") or "").strip()
-    _kanonisch = security.normalisiere_basis(_basis)
-    if _basis and _kanonisch and _kanonisch != _basis.rstrip("/"):
+    _base = str(getattr(config, "base_url", "") or "").strip()
+    _canonical = security.normalize_base(_base)
+    if _base and _canonical and _canonical != _base.rstrip("/"):
         # The address is usable, but it is altered on the way — we say so here
         # instead of doing it silently. Most common case: user info in the host
         # (`https://wer:was@auth.example`), which is removed from every outgoing link.
-        fehler.append(_t(
+        error.append(_t(
             config,
             "base_url={base!r} is used as {canon!r} — the address is not in the form in which "
             "it appears in links. Please enter exactly the second value, so that configuration "
             "and reality say the same.",
-            base=_basis, canon=_kanonisch))
-    if _basis and not _kanonisch:
-        fehler.append(_t(
+            base=_base, canon=_canonical))
+    if _base and not _canonical:
+        error.append(_t(
             config,
             "base_url={base!r} is not a usable base address (expected e.g. "
             "\"https://auth.example.com\", with a subpath \"https://example.com/sso\"). "
@@ -440,11 +440,11 @@ def check_config(config) -> tuple[list[str], list[str]]:
             "a query (?) or fragment (#), an invalid port and a path with \"..\" or \"//\". "
             "Every link built from it would be broken — without an error, without a log line, "
             "only at the recipient.",
-            base=_basis))
-    if not _basis:
-        betroffen = [_t(config, wofuer) for feld, wofuer in BRAUCHT_BASE_URL.items() if _an(config, feld)]
-        if betroffen:
-            fehler.append(_t(
+            base=_base))
+    if not _base:
+        affected = [_t(config, for_what) for slot, for_what in REQUIRES_BASE_URL.items() if _an(config, slot)]
+        if affected:
+            error.append(_t(
                 config,
                 "base_url is empty, but these functions hand an absolute address to third "
                 "parties: {functions}. The only source left would be the Host header of the "
@@ -455,32 +455,32 @@ def check_config(config) -> tuple[list[str], list[str]]:
                 "belongs in it (\"https://example.com/sso\"). trusted_redirect_hosts is NOT a "
                 "substitute for this: if more than one host is listed there, the requester "
                 "decides via the Host header which of them ends up in the link.",
-                functions="; ".join(betroffen)))
-        weich = [_t(config, wofuer) for feld, wofuer in BASE_URL_EMPFOHLEN.items() if _an(config, feld)]
-        if weich and not betroffen:
-            warnungen.append(_t(
+                functions="; ".join(affected)))
+        soft = [_t(config, for_what) for slot, for_what in BASE_URL_RECOMMENDED.items() if _an(config, slot)]
+        if soft and not affected:
+            warnings.append(_t(
                 config,
                 "base_url is empty, but this function builds absolute addresses: {functions}. "
                 "Without a checked base the redirect stays relative — that holds as long as "
                 "app and login page live under the same host. For SSO across several hosts set "
                 "base_url (and cookie_domain).",
-                functions="; ".join(weich)))
+                functions="; ".join(soft)))
     # First-admin token: the value must not land where strangers can read it. That was exactly
     # B5-03 — it stood in the file that the fail2ban jail reads and logrotate archives.
-    token_datei = str(getattr(config, "admin_claim_token_file", "") or "").strip()
-    seclog_datei = str(getattr(config, "security_log", "") or "").strip()
-    if token_datei and seclog_datei and os.path.abspath(token_datei) == os.path.abspath(seclog_datei):
-        fehler.append(_t(
+    token_file = str(getattr(config, "admin_claim_token_file", "") or "").strip()
+    seclog_file = str(getattr(config, "security_log", "") or "").strip()
+    if token_file and seclog_file and os.path.abspath(token_file) == os.path.abspath(seclog_file):
+        error.append(_t(
             config,
             "admin_claim_token_file and security_log point to the same file. The first-admin "
             "one-time token would then end up again in the log that fail2ban reads, logrotate "
             "archives and a log shipper takes along — whoever reads it becomes admin. Use a "
             "file of its own for the token (e.g. /run/<service>/admin-claim.token) or leave "
             "the field empty, then the value goes to stderr."))
-    _claim_ttl = _ganzzahl(config, "admin_claim_ttl_min")
-    if token_datei and ((_claim_ttl is not None and _claim_ttl <= 0)
+    _claim_ttl = _integer(config, "admin_claim_ttl_min")
+    if token_file and ((_claim_ttl is not None and _claim_ttl <= 0)
                         or not _an(config, "admin_enabled")):
-        warnungen.append(_t(
+        warnings.append(_t(
             config,
             "admin_claim_token_file is set, but the token path is off (admin_claim_ttl_min=0 "
             "or admin_enabled=False) — the file is never written. The first admin then only "
@@ -496,18 +496,18 @@ def check_config(config) -> tuple[list[str], list[str]]:
     # and the confirmation link goes to no allowlist address. Trusted or provable
     # by attribute: the address promotes — correct only if nobody can enter it or the attribute
     # themselves.
-    allowlist_adressen = sorted({str(i).strip() for i in
+    allowlist_addresses = sorted({str(i).strip() for i in
                                  (getattr(config, "admin_identifiers", None) or [])
                                  if "@" in str(i)})
-    quellen = [(name, _an(config, vertrauen) or bool(security.beleg_attribut(config, quelle)))
-               for an, anlegen, vertrauen, quelle, name in (
+    sources = [(name, _an(config, trust) or bool(security.proof_attribute(config, source)))
+               for an, create, trust, source, name in (
         ("saml_enabled", "saml_auto_create", "saml_email_trusted", "saml", "SAML"),
         ("ldap_enabled", "ldap_auto_create", "ldap_email_trusted", "ldap", "LDAP"))
-        if _an(config, an) and _an(config, anlegen)]
-    ohne_beleg = [name for name, vertraut in quellen if not vertraut]
-    mit_beleg = [name for name, vertraut in quellen if vertraut]
-    if allowlist_adressen and ohne_beleg:
-        warnungen.append(_t(
+        if _an(config, an) and _an(config, create)]
+    without_proof = [name for name, trusted in sources if not trusted]
+    with_proof = [name for name, trusted in sources if trusted]
+    if allowlist_addresses and without_proof:
+        warnings.append(_t(
             config,
             "admin_identifiers names the address(es) {addrs}, and accounts are created at the "
             "first login by {sources} itself, without the operator trusting the addresses of "
@@ -516,9 +516,9 @@ def check_config(config) -> tuple[list[str], list[str]]:
             "at all. The proven way is the one-time token: sign in, then /auth/claim-admin "
             "(see admin_claim_ttl_min); after that the first admin assigns the rights "
             "themselves.",
-            addrs=allowlist_adressen, sources=_t(config, " and ").join(ohne_beleg)))
-    if allowlist_adressen and mit_beleg:
-        warnungen.append(_t(
+            addrs=allowlist_addresses, sources=_t(config, " and ").join(without_proof)))
+    if allowlist_addresses and with_proof:
+        warnings.append(_t(
             config,
             "admin_identifiers names the address(es) {addrs}, and {sources} counts as a "
             "trusted source (*_email_trusted=True or a proof attribute *_attr_email_verified): "
@@ -526,7 +526,7 @@ def check_config(config) -> tuple[list[str], list[str]]:
             "first login. That is only right if nobody can change their address (or the proof "
             "attribute) in this source themselves (no self-service for the mail attribute, no "
             "IdP with self-registration) — otherwise turn both off and use /auth/claim-admin.",
-            addrs=allowlist_adressen, sources=_t(config, " and ").join(mit_beleg)))
+            addrs=allowlist_addresses, sources=_t(config, " and ").join(with_proof)))
     # LDAP not trusted, but the search filter finds accounts via the address: then the
     # input at login is an address that nobody vouches for. TinySesam does not take it as an
     # account name (substitute name `ldap-…`), but needs a stable identifier for that.
@@ -534,7 +534,7 @@ def check_config(config) -> tuple[list[str], list[str]]:
     _mail_attr = str(getattr(config, "ldap_attr_email", "") or "mail")
     if _an(config, "ldap_enabled") and not _an(config, "ldap_email_trusted") \
             and f"({_mail_attr.lower()}=" in _filter.lower():
-        warnungen.append(_t(
+        warnings.append(_t(
             config,
             "ldap_user_filter searches via {attr}, but ldap_email_trusted=False: whoever signs "
             "in with their {attr} value gets a substitute name (ldap-…) instead of this value "
@@ -543,11 +543,11 @@ def check_config(config) -> tuple[list[str], list[str]]:
             attr=_mail_attr))
     # G1: binding indefinitely via the name is the state up to 0.20.x — and exactly the gap that the
     # deadline closes. Allowed (way back), but not silently.
-    _foederiert = [name for an, name in (("ldap_enabled", "LDAP"), ("saml_enabled", "SAML"))
+    _federated = [name for an, name in (("ldap_enabled", "LDAP"), ("saml_enabled", "SAML"))
                    if _an(config, an)]
-    _tage = _ganzzahl(config, "federation_name_binding_days", 30)
-    if _foederiert and _tage is not None and _tage < 0:
-        warnungen.append(_t(
+    _days = _integer(config, "federation_name_binding_days", 30)
+    if _federated and _days is not None and _days < 0:
+        warnings.append(_t(
             config,
             "federation_name_binding_days={days}: for {sources}, an unbound account is bound "
             "indefinitely via its name. A dormant account (someone has left) then falls to the "
@@ -555,114 +555,114 @@ def check_config(config) -> tuple[list[str], list[str]]:
             "admin right. Better: bind the existing accounts once "
             "(auth.federation_bind_existing(source), first as a dry run) and keep the default "
             "(30).",
-            days=_tage, sources=_t(config, " and ").join(_foederiert)))
+            days=_days, sources=_t(config, " and ").join(_federated)))
 
     # Paths of the app have carried no mount prefix since T-15 — TinySesam puts it in front from the path
     # of the base_url. Whoever entered it by hand for the old version (`/sso/auth/login`)
     # would now get `/sso/sso/auth/login` (404). A warning, not an error: a path of the app can
     # by pure chance be named like the prefix.
     from urllib.parse import urlsplit as _urlsplit
-    _praefix = _urlsplit(str(getattr(config, "base_url", "") or "")).path.rstrip("/")
-    if _praefix:
-        _pfade = {"login_path": str(getattr(config, "login_path", "") or ""),
+    _prefix = _urlsplit(str(getattr(config, "base_url", "") or "")).path.rstrip("/")
+    if _prefix:
+        _paths = {"login_path": str(getattr(config, "login_path", "") or ""),
                   "login_redirect": str(getattr(config, "login_redirect", "") or ""),
                   "logout_redirect": str(getattr(config, "logout_redirect", "") or ""),
                   "admin_path": str(getattr(config, "admin_path", "") or "")}
-        doppelt = [f"{feld}={wert!r}" for feld, wert in _pfade.items() if wert.startswith(_praefix + "/")]
-        if doppelt:
-            warnungen.append(_t(
+        double = [f"{slot}={value!r}" for slot, value in _paths.items() if value.startswith(_prefix + "/")]
+        if double:
+            warnings.append(_t(
                 config,
                 "{fields} begins with the prefix of base_url ({prefix}). These fields are app "
                 "paths without the prefix — TinySesam puts it in front itself since 0.21, "
                 "otherwise {prefix}{prefix}/… results. Remove the prefix from the value.",
-                fields=', '.join(doppelt), prefix=_praefix))
+                fields=', '.join(double), prefix=_prefix))
 
     # --- Several applications behind one installation (T-14) ---
     _clients = getattr(config, "oidc_clients", None) or {}
-    # Type and range are checked by ZAHLENGRENZEN (below, including negative values); here only the
+    # Type and range are checked by NUMBER_LIMITS (below, including negative values); here only the
     # combination. An `int()` on a text crashed the whole check.
-    _revalidate = _ganzzahl(config, "oidc_revalidate_minutes") or 0
+    _revalidate = _integer(config, "oidc_revalidate_minutes") or 0
     if _clients and not _an(config, "oidc_enabled"):
-        fehler.append(_t(
+        error.append(_t(
             config,
             "oidc_clients names {hosts}, but oidc_enabled is False. The host→client mapping "
             "would have no effect: there would be no OIDC path through which an approval could "
             "arise.",
             hosts=", ".join(sorted(str(h) for h in _clients))))
     if _revalidate > 0 and not _clients:
-        warnungen.append(_t(
+        warnings.append(_t(
             config,
             "oidc_revalidate_minutes={n}, but oidc_clients is empty. The re-check concerns the "
             "approval per application — without several clients there is none, and the value "
             "stays without effect. Probably session_ttl_hours (lifetime of the session) or "
             "stepup_max_age_sec (freshness for sensitive routes) was meant.",
             n=_revalidate))
-    # The upper bound in ZAHLENGRENZEN (30 days) catches a period in seconds only from one day
+    # The upper bound in NUMBER_LIMITS (30 days) catches a period in seconds only from one day
     # (86400). The preset's default, one hour, written in seconds (3600) passed
     # silently — re-check every 60 hours, a revocation at the provider arrived 60 times later. A
     # period above one day is unusual enough to ask about the unit; 300 or 900
     # (five or 15 minutes in seconds) are caught by no bound.
     if _revalidate > 24 * 60:
-        warnungen.append(_t(
+        warnings.append(_t(
             config,
             "oidc_revalidate_minutes={n} means: re-check at the provider every {hours} hours. "
             "The field counts minutes — was the period meant in seconds (one hour = 60, not "
             "3600)? If the long period is intended, it stays at this warning.",
             n=_revalidate, hours=format(_revalidate / 60, "g")))
-    _vertraute = [str(h).strip().lower() for h in (getattr(config, "trusted_redirect_hosts", None) or [])]
-    for host, eintrag in _clients.items():
+    _trusted = [str(h).strip().lower() for h in (getattr(config, "trusted_redirect_hosts", None) or [])]
+    for host, entry in _clients.items():
         h = str(host).strip().lower()
-        e = dict(eintrag or {})
-        wo = f"oidc_clients[{host!r}]"
+        e = dict(entry or {})
+        where = f"oidc_clients[{host!r}]"
         if not str(e.get("client_id") or "").strip():
-            fehler.append(_t(
+            error.append(_t(
                 config,
-                "{wo} has no client_id. Without it there is no client at the provider for this "
+                "{where} has no client_id. Without it there is no client at the provider for this "
                 "application — and thus no approval of its own.",
-                wo=wo))
+                where=where))
         if not str(e.get("client_secret") or "").strip():
-            fehler.append(_t(
+            error.append(_t(
                 config,
-                "{wo} has no client_secret. The exchange of the authorization code then fails "
+                "{where} has no client_secret. The exchange of the authorization code then fails "
                 "at the provider, and only after the sign-in — that is, at the point where "
                 "nobody suspects a configuration gap any more.",
-                wo=wo))
+                where=where))
         if e.get("issuer"):
-            fehler.append(_t(
+            error.append(_t(
                 config,
-                "{wo} names an issuer of its own. Several providers in one installation are "
+                "{where} names an issuer of its own. Several providers in one installation are "
                 "not intended: discovery document, JWKS and the mapping issuer+sub→account "
                 "hang on the one oidc_issuer. A second provider needs a second instance.",
-                wo=wo))
-        if _vertraute and h not in _vertraute:
-            warnungen.append(_t(
+                where=where))
+        if _trusted and h not in _trusted:
+            warnings.append(_t(
                 config,
-                "{wo} is not in trusted_redirect_hosts. The login URL for this application is "
+                "{where} is not in trusted_redirect_hosts. The login URL for this application is "
                 "then built on base_url instead of on the requested host — without "
                 "cookie_domain the session cookie is host-only, and the sign-in goes round in "
                 "circles.",
-                wo=wo))
+                where=where))
     if _clients and not _an(config, "forward_auth_enabled"):
-        warnungen.append(_t(
+        warnings.append(_t(
             config,
             "oidc_clients is set, but forward_auth_enabled is False. The approval per "
             "application is checked in /auth/forward — without forward auth it arises at "
             "login, but is afterwards queried by nothing."))
 
     # --- Self-enrollment of the second factor (R3-1) ---
-    _arten = ("first_login", "grace", "strict")
-    _art = str(getattr(config, "mfa_enrollment", "") or "first_login")
-    if _art not in _arten:
-        fehler.append(_t(
+    _kinds = ("first_login", "grace", "strict")
+    _kind = str(getattr(config, "mfa_enrollment", "") or "first_login")
+    if _kind not in _kinds:
+        error.append(_t(
             config,
-            "mfa_enrollment={art!r} does not exist. Allowed are {allowed}: 'first_login' "
+            "mfa_enrollment={kind!r} does not exist. Allowed are {allowed}: 'first_login' "
             "(default, allowed until the first complete login), 'grace' (allowed "
             "mfa_enrollment_grace_days after account creation), 'strict' (never — the setup "
             "then comes from the operator).",
-            art=_art, allowed=list(_arten)))
-    _gnade = _ganzzahl(config, "mfa_enrollment_grace_days")
-    if _art == "grace" and _gnade is not None and _gnade <= 0:
-        fehler.append(_t(
+            kind=_kind, allowed=list(_kinds)))
+    _mercy = _integer(config, "mfa_enrollment_grace_days")
+    if _kind == "grace" and _mercy is not None and _mercy <= 0:
+        error.append(_t(
             config,
             "mfa_enrollment='grace', but mfa_enrollment_grace_days is 0 or less. 'grace' then "
             "behaves like 'strict', only less conspicuously — either set a period or write "
@@ -675,7 +675,7 @@ def check_config(config) -> tuple[list[str], list[str]]:
     # foreign form, and nobody checks a token. That is not a compromise, that is a hole.
     if (not _an(config, "csrf_enabled")
             and str(getattr(config, "cookie_samesite", "lax") or "").lower() == "none"):
-        fehler.append(_t(
+        error.append(_t(
             config,
             "csrf_enabled=False together with cookie_samesite='none': the browser then sends "
             "the session cookie along with every form of a foreign site, and no token holds "
@@ -686,7 +686,7 @@ def check_config(config) -> tuple[list[str], list[str]]:
     # --- User verification for passkeys (B2-10) ---
     _uv = str(getattr(config, "passkey_user_verification", "required") or "required")
     if _uv not in ("required", "preferred"):
-        fehler.append(_t(
+        error.append(_t(
             config,
             "passkey_user_verification={uv!r} does not exist. Allowed are 'required' (default: "
             "the authenticator must verify the person) and 'preferred' (it is asked to). A "
@@ -694,7 +694,7 @@ def check_config(config) -> tuple[list[str], list[str]]:
             "the key.",
             uv=_uv))
     elif _uv == "preferred" and _an(config, "passkey_enabled"):
-        warnungen.append(_t(
+        warnings.append(_t(
             config,
             "passkey_user_verification='preferred': a passkey without user verification signs "
             "in on its own and then proves only possession of the key — an unlocked computer "
@@ -706,7 +706,7 @@ def check_config(config) -> tuple[list[str], list[str]]:
         _url = str(getattr(config, "ldap_url", "") or "").strip().lower()
         _tls_an = _url.startswith("ldaps://") or _an(config, "ldap_start_tls")
         if _url and not _tls_an and not _an(config, "ldap_allow_plaintext"):
-            fehler.append(_t(
+            error.append(_t(
                 config,
                 "ldap_url={url!r} speaks plain text and ldap_start_tls is False. Then the "
                 "password of the service account AND every user password travel unencrypted "
@@ -715,13 +715,13 @@ def check_config(config) -> tuple[list[str], list[str]]:
                 "the traffic never leaves it, ldap_allow_plaintext=True says so explicitly.",
                 url=_url))
         if _an(config, "ldap_allow_plaintext") and not _tls_an:
-            warnungen.append(_t(
+            warnings.append(_t(
                 config,
                 "ldap_allow_plaintext=True: the LDAP traffic is unencrypted. The password of "
                 "the service account and every user password can thus be read by anyone "
                 "sitting on the path. Only justifiable if this path does not leave the machine."))
         if _tls_an and not _an(config, "ldap_tls_verify"):
-            warnungen.append(_t(
+            warnings.append(_t(
                 config,
                 "ldap_tls_verify=False: the certificate of the directory is not checked. "
                 "Encrypted then only means: not readable by someone who does not sit in "
@@ -730,63 +730,63 @@ def check_config(config) -> tuple[list[str], list[str]]:
                 "ldap_tls_ca_file."))
         _ca = str(getattr(config, "ldap_tls_ca_file", "") or "").strip()
         if _ca and not os.path.exists(_ca):
-            fehler.append(_t(
+            error.append(_t(
                 config,
                 "ldap_tls_ca_file={ca!r} does not exist. The connection to the directory then "
                 "fails at every sign-in — and only in operation.",
                 ca=_ca))
 
-    _csp_fund = csp_fehler(getattr(config, "csp", "strict"), config)
-    if _csp_fund:
-        fehler.append(_csp_fund)
-    _csp_hinweis = csp_warnung(getattr(config, "csp", "strict"), config)
-    if _csp_hinweis:
-        warnungen.append(_csp_hinweis)
-    _zahlengrenzen(config, fehler)
-    _proxies_und_passkey(config, fehler, warnungen)
-    _stepup(config, fehler, warnungen)
-    _offene_tore(config, warnungen)
-    _gruppen_scope(config, warnungen)
-    _kombinationen(config, fehler, warnungen)
-    _gate(config, fehler, warnungen)
-    _forward_apps(config, fehler, warnungen)
+    _csp_hit = csp_error(getattr(config, "csp", "strict"), config)
+    if _csp_hit:
+        error.append(_csp_hit)
+    _csp_notice = csp_warning(getattr(config, "csp", "strict"), config)
+    if _csp_notice:
+        warnings.append(_csp_notice)
+    _number_limits(config, error)
+    _proxies_and_passkey(config, error, warnings)
+    _stepup(config, error, warnings)
+    _open_gates(config, warnings)
+    _groups_scope(config, warnings)
+    _combinations(config, error, warnings)
+    _gate(config, error, warnings)
+    _forward_apps(config, error, warnings)
 
-    hat_mailer = bool(str(getattr(config, "smtp_host", "") or "").strip())
+    has_mailer = bool(str(getattr(config, "smtp_host", "") or "").strip())
     # --- SMTP TLS (B3-1, attack A4): since the certificate is checked, a wrong
     # CA path or a relay by IP address fails on EVERY mail — and silently, only as
     # *_send_error in the audit log. Both can be detected at construction.
     _smtp_ca = str(getattr(config, "smtp_ca_file", "") or "").strip()
     if _smtp_ca and not os.path.isfile(_smtp_ca):
-        fehler.append(_t(
+        error.append(_t(
             config,
             "smtp_ca_file={ca!r} does not exist. The TLS check of the mail server then fails "
             "on every mail — sign-in links, resets and confirmations would never go out, and "
             "only in operation.",
             ca=_smtp_ca))
     _smtp_host = str(getattr(config, "smtp_host", "") or "").strip().strip("[]")
-    if hat_mailer and _ist_ip(_smtp_host):
-        warnungen.append(_t(
+    if has_mailer and _is_ip(_smtp_host):
+        warnings.append(_t(
             config,
             "smtp_host={host!r} is an IP address. The certificate of the mail server is "
             "checked against the hostname; if it does not carry the IP as a Subject "
             "Alternative Name, every send fails. Remedy: enter the name the certificate is "
             "issued for (with a CA of your own additionally smtp_ca_file).",
             host=_smtp_host))
-    for feld, wofuer in BRAUCHT_MAILER.items():
-        if _an(config, feld) and not hat_mailer:
-            warnungen.append(_t(
+    for slot, for_what in REQUIRES_MAILER.items():
+        if _an(config, slot) and not has_mailer:
+            warnings.append(_t(
                 config,
                 "{field}=True ({what}), but smtp_host is empty. Without a mailer no mail goes "
                 "out and the method ends silently. Either set smtp_host or call "
                 "auth.set_mailer(...) at runtime — then this message is moot.",
-                field=feld, what=_t(config, wofuer)))
+                field=slot, what=_t(config, for_what)))
 
-    # `audit_retention_days` is checked by ZAHLENGRENZEN (below): a negative period would be in `gc()` a
+    # `audit_retention_days` is checked by NUMBER_LIMITS (below): a negative period would be in `gc()` a
     # point in time in the future — the whole audit log would vanish on the next run. The own
     # check that stood here knew only `< 0` and let `True`, seconds instead of days and
     # huge values (OverflowError in gc()) through.
 
-    return fehler, warnungen
+    return error, warnings
 
 
 #: Number fields of the config → allowed range, both bounds inclusive (B3-12).
@@ -797,7 +797,7 @@ def check_config(config) -> tuple[list[str], list[str]]:
 #: issues no codes and still reports success, a negative `stepup_max_age_sec` makes
 #: every step-up confirmation instantly old. The upper bounds catch the unit error (minutes instead of
 #: hours, seconds instead of minutes), which silently multiplies a period by sixty.
-ZAHLENGRENZEN = {
+NUMBER_LIMITS = {
     "brand_background_seconds": (4, 600),   # dwell time per background image (0.24.8)
     "pin_min_length": (4, 64),
     "apikey_default_days": (0, 3650),
@@ -842,45 +842,45 @@ ZAHLENGRENZEN = {
 }
 
 
-def _zahlengrenzen(config, fehler: list) -> None:
-    for feld, (unten, oben) in ZAHLENGRENZEN.items():
-        if not hasattr(config, feld):
-            fehler.append(_t(
+def _number_limits(config, error: list) -> None:
+    for slot, (below, above) in NUMBER_LIMITS.items():
+        if not hasattr(config, slot):
+            error.append(_t(
                 config,
                 "The configuration check names the field {field!r}, which does not exist in "
                 "TinySesamConfig — a bug in TinySesam itself.",
-                field=feld))
+                field=slot))
             continue
-        wert = getattr(config, feld)
+        value = getattr(config, slot)
         # bool is an int: `session_ttl_hours=True` would mean one hour, which was never intended.
-        if isinstance(wert, bool) or not isinstance(wert, int):
-            fehler.append(_t(
+        if isinstance(value, bool) or not isinstance(value, int):
+            error.append(_t(
                 config,
                 "{field}={value!r} is not an integer.",
-                field=feld, value=wert))
+                field=slot, value=value))
             continue
-        if not unten <= wert <= oben:
-            fehler.append(_t(
+        if not below <= value <= above:
+            error.append(_t(
                 config,
                 "{field}={value} is outside {lo}…{hi}. The most common reason is a mixed-up "
                 "unit (the field name states it).",
-                field=feld, value=wert, lo=unten, hi=oben))
+                field=slot, value=value, lo=below, hi=above))
 
 
-def _proxies_und_passkey(config, fehler: list, warnungen: list) -> None:
+def _proxies_and_passkey(config, error: list, warnings: list) -> None:
     # --- trusted_proxies (B3-3) ---
     # An invalid entry raised at runtime in the middle of the check and invalidated the WHOLE
     # list; the warning afterwards advised entering the proxy network that was long there. A
     # hostname is the most common case — proxies are given here as a network, not as a name.
-    schlecht = security.ungueltige_netze(getattr(config, "trusted_proxies", None) or [])
-    if schlecht:
-        fehler.append(_t(
+    bad = security.invalid_networks(getattr(config, "trusted_proxies", None) or [])
+    if bad:
+        error.append(_t(
             config,
             "trusted_proxies contains entries that are not an IP network: {bad}. Expected are "
             "addresses or networks like '203.0.113.5' or '198.51.100.0/24' — no hostnames. An "
             "invalid entry must not be read along: it would otherwise decide whether the proxy "
             "counts as trustworthy.",
-            bad=schlecht))
+            bad=bad))
 
     # --- WebAuthn: rp_id and origin (B3-10) ---
     # Both fields carry developer values as default (`localhost`, `http://localhost:8000`).
@@ -891,25 +891,25 @@ def _proxies_und_passkey(config, fehler: list, warnungen: list) -> None:
         return
     from urllib.parse import urlsplit
     rp_id = str(getattr(config, "rp_id", "") or "").strip().lower()
-    roh = getattr(config, "origin", "")
-    roh = "" if roh is None else roh
+    raw = getattr(config, "origin", "")
+    raw = "" if raw is None else raw
     # py_webauthn also accepts a list as `expected_origin` (A5): whoever serves the sign-in page under
     # several names enters them all. Each entry is then checked individually —
     # `str(list)` is never an origin, and so a working config became an error.
-    origins = [str(o).strip() for o in roh] if isinstance(roh, (list, tuple)) else [str(roh).strip()]
+    origins = [str(o).strip() for o in raw] if isinstance(raw, (list, tuple)) else [str(raw).strip()]
     if not origins:
-        fehler.append(_t(
+        error.append(_t(
             config,
             "origin is an empty list — at least one origin like \"https://auth.example.com\" "
             "must be there, otherwise every passkey fails."))
         return
     hosts = []
     for origin in origins:
-        teile = urlsplit(origin)
-        host = (teile.hostname or "").lower()
-        if teile.scheme not in ("http", "https") or not host or teile.path not in ("", "/") \
-                or teile.query or teile.fragment or origin.endswith("/"):
-            fehler.append(_t(
+        parts = urlsplit(origin)
+        host = (parts.hostname or "").lower()
+        if parts.scheme not in ("http", "https") or not host or parts.path not in ("", "/") \
+                or parts.query or parts.fragment or origin.endswith("/"):
+            error.append(_t(
                 config,
                 "origin={origin!r} is not an origin. Required is exactly scheme, host and "
                 "optionally port (\"https://auth.example.com\"), without a path and without a "
@@ -918,7 +918,7 @@ def _proxies_und_passkey(config, fehler: list, warnungen: list) -> None:
             return
         hosts.append(host)
     if not rp_id or "://" in rp_id or ":" in rp_id or "/" in rp_id:
-        fehler.append(_t(
+        error.append(_t(
             config,
             "rp_id={rp!r} must be a hostname without scheme and port, e.g. "
             "\"auth.example.com\" or the domain above it (\"example.com\").",
@@ -926,69 +926,69 @@ def _proxies_und_passkey(config, fehler: list, warnungen: list) -> None:
     else:
         for origin, host in zip(origins, hosts):
             if not (host == rp_id or host.endswith("." + rp_id)):
-                fehler.append(_t(
+                error.append(_t(
                     config,
                     "rp_id={rp!r} does not match origin={origin!r}: the rp_id must be the host "
                     "of the origin or a domain above it. Every browser rejects the passkey "
                     "ceremony that way.",
                     rp=rp_id, origin=origin))
-    basis = security.normalisiere_basis(str(getattr(config, "base_url", "") or "").strip())
-    if basis:
-        b = urlsplit(basis)
-        soll = f"{b.scheme}://{b.netloc}"
-        if soll.lower() not in [o.lower() for o in origins]:
+    base = security.normalize_base(str(getattr(config, "base_url", "") or "").strip())
+    if base:
+        b = urlsplit(base)
+        should = f"{b.scheme}://{b.netloc}"
+        if should.lower() not in [o.lower() for o in origins]:
             # Warning, not error: whoever serves the sign-in page under a second name of their own
             # (base_url only for the mail links) may want it that way.
-            anzeige = origins[0] if len(origins) == 1 else origins
-            warnungen.append(_t(
+            display = origins[0] if len(origins) == 1 else origins
+            warnings.append(_t(
                 config,
                 "origin={shown!r} differs from base_url ({base}). The login page runs under "
                 "base_url, and the browser reports exactly this origin — with the value here "
                 "every passkey fails. Usually the development default is still in place here.",
-                shown=anzeige, base=soll))
+                shown=display, base=should))
     elif all(h in ("localhost", "127.0.0.1", "::1") for h in hosts) and rp_id == "localhost":
-        warnungen.append(_t(
+        warnings.append(_t(
             config,
             "passkey_enabled=True with the developer values rp_id={rp!r}, origin={origin!r}. "
             "Outside your own machine every passkey fails with them — in production set both "
             "to the public address (and base_url as well).",
-            rp=rp_id, origin=roh))
+            rp=rp_id, origin=raw))
 
 
 #: What may appear in `stepup_methods`, and which switch turns the method on.
-STEPUP_VERFAHREN = {"totp": "totp_enabled", "pin": "pin_enabled", "password": "password_enabled"}
+STEPUP_PROCEDURE = {"totp": "totp_enabled", "pin": "pin_enabled", "password": "password_enabled"}
 
 
-def _stepup(config, fehler: list, warnungen: list) -> None:
+def _stepup(config, error: list, warnings: list) -> None:
     # B3-6: `stepup_methods` is a wish, and a wish that does not exist is silently
     # passed over — `["topt"]` fell back to "everything the user has", that is, to the password
     # with which they had just signed in. The second factor before the sensitive area was gone,
     # and nothing said so. With `stepup_strict=True` it was the other way round: nobody ever got in.
-    gewuenscht = [str(m) for m in (getattr(config, "stepup_methods", None) or [])]
-    unbekannt = [m for m in gewuenscht if m not in STEPUP_VERFAHREN]
-    if unbekannt:
-        fehler.append(_t(
+    wished = [str(m) for m in (getattr(config, "stepup_methods", None) or [])]
+    unknown = [m for m in wished if m not in STEPUP_PROCEDURE]
+    if unknown:
+        error.append(_t(
             config,
             "stepup_methods names {names} — those are not step-up methods. Allowed are "
             "{allowed}. An unknown name is not skipped but rejected: skipped, the confirmation "
             "would fall back to the password.",
-            names=unbekannt, allowed=sorted(STEPUP_VERFAHREN)))
-    aus = [m for m in gewuenscht if m in STEPUP_VERFAHREN and not _an(config, STEPUP_VERFAHREN[m])]
-    if aus:
-        fehler.append(_t(
+            names=unknown, allowed=sorted(STEPUP_PROCEDURE)))
+    from_ = [m for m in wished if m in STEPUP_PROCEDURE and not _an(config, STEPUP_PROCEDURE[m])]
+    if from_:
+        error.append(_t(
             config,
             "stepup_methods requires {names}, but {switches}. This wish can never be fulfilled "
             "— without stepup_strict the confirmation silently falls back to another method, "
             "with stepup_strict the area stays closed.",
-            names=aus, switches=", ".join(f"{STEPUP_VERFAHREN[m]}=False" for m in aus)))
-    if _an(config, "stepup_strict") and not gewuenscht:
-        warnungen.append(_t(
+            names=from_, switches=", ".join(f"{STEPUP_PROCEDURE[m]}=False" for m in from_)))
+    if _an(config, "stepup_strict") and not wished:
+        warnings.append(_t(
             config,
             "stepup_strict=True without stepup_methods has no effect: the barrier applies only "
             "to named methods. Probably e.g. stepup_methods=['totp'] was meant."))
 
 
-def _offene_tore(config, warnungen: list) -> None:
+def _open_gates(config, warnings: list) -> None:
     """Deny-by-default for the gate in front of foreign applications (H-11, B3-9).
 
     Forward auth answers "through" for every signed-in session — without `?roles=` at the proxy
@@ -1003,29 +1003,29 @@ def _offene_tore(config, warnungen: list) -> None:
     """
     if not _an(config, "forward_auth_enabled"):
         return
-    offen = []
-    for an, anlegen, gruppen, name in (("oidc_enabled", "oidc_auto_create", "oidc_allowed_groups", "OIDC"),
+    unclosed = []
+    for an, create, groups, name in (("oidc_enabled", "oidc_auto_create", "oidc_allowed_groups", "OIDC"),
                                        ("saml_enabled", "saml_auto_create", "saml_allowed_groups", "SAML"),
                                        ("ldap_enabled", "ldap_auto_create", "ldap_allowed_groups", "LDAP")):
-        if not (_an(config, an) and _an(config, anlegen)) or getattr(config, gruppen, None):
+        if not (_an(config, an) and _an(config, create)) or getattr(config, groups, None):
             continue
         if name == "OIDC" and getattr(config, "oidc_clients", None):
             # One client of its own per application (T-14): the approval lies with the provider, and
             # `/auth/forward` checks it per host. That is a closed gate — just one
             # whose key the provider manages.
             continue
-        offen.append(f"{name} ({anlegen}=True, {gruppen} leer)")
-    if offen:
-        warnungen.append(_t(
+        unclosed.append(f"{name} ({create}=True, {groups} leer)")
+    if unclosed:
+        warnings.append(_t(
             config,
             "Forward auth with an open gate: {items}. Every account at the provider is created "
             "at the first login and then gets through EVERY protected application that does "
             "not require ?roles= at the proxy. Limit the circle: set *_allowed_groups (for the "
             "gateway TINYSESAM_ALLOWED_GROUPS), require ?roles= at the proxy, or regulate the "
             "approval per application at the provider (oidc_clients).",
-            items="; ".join(offen)))
+            items="; ".join(unclosed)))
     if _an(config, "allow_signup") and not _an(config, "signup_invite_only"):
-        warnungen.append(_t(
+        warnings.append(_t(
             config,
             "Forward auth with open self-registration: every visitor creates an account and "
             "thereby gets through every protected application that does not require ?roles= at "
@@ -1038,10 +1038,10 @@ def _offene_tore(config, warnungen: list) -> None:
 #: (AADSTS650053 "scope 'groups' that doesn't exist"; the groups come there via "optional
 #: claims" of the app registration). The advice "add `groups` to
 #: oidc_scopes" would be wrong there, the warning a permanent false alarm for the `entra_id` preset.
-_GRUPPEN_OHNE_SCOPE = ("login.microsoftonline.com",)
+_GROUPS_WITHOUT_SCOPE = ("login.microsoftonline.com",)
 
 
-def _gruppen_scope(config, warnungen: list) -> None:
+def _groups_scope(config, warnings: list) -> None:
     """Group rule via the claim `groups`, but the scope `groups` is not requested.
 
     Finding from operation (2026-09-27): PocketID — and other providers that tie claims to
@@ -1067,26 +1067,26 @@ def _gruppen_scope(config, warnungen: list) -> None:
         idp = (urlsplit(str(getattr(config, "oidc_issuer", "") or "").strip()).hostname or "").lower()
     except ValueError:
         idp = ""
-    if idp in _GRUPPEN_OHNE_SCOPE:
+    if idp in _GROUPS_WITHOUT_SCOPE:
         return
-    global_gruppen = list(getattr(config, "oidc_allowed_groups", None) or [])
+    global_groups = list(getattr(config, "oidc_allowed_groups", None) or [])
     global_map = dict(getattr(config, "oidc_group_role_map", None) or {})
     global_scopes = str(getattr(config, "oidc_scopes", "") or "")
 
-    def ohne_scope(scopes) -> bool:
+    def without_scope(scopes) -> bool:
         return "groups" not in str(scopes or "").split()
 
-    betroffen = []
-    if (global_gruppen or global_map) and ohne_scope(global_scopes):
-        betroffen.append(f"oidc_scopes={global_scopes!r}")
-    for host, eintrag in (getattr(config, "oidc_clients", None) or {}).items():
-        e = dict(eintrag or {})
-        regel = e.get("allowed_groups") or global_gruppen or e.get("group_role_map") or global_map
+    affected = []
+    if (global_groups or global_map) and without_scope(global_scopes):
+        affected.append(f"oidc_scopes={global_scopes!r}")
+    for host, entry in (getattr(config, "oidc_clients", None) or {}).items():
+        e = dict(entry or {})
+        rule = e.get("allowed_groups") or global_groups or e.get("group_role_map") or global_map
         scopes = e.get("scopes") or global_scopes
-        if regel and ohne_scope(scopes):
-            betroffen.append(f"oidc_clients[{host!r}] (scopes={str(scopes)!r})")
-    if betroffen:
-        warnungen.append(_t(
+        if rule and without_scope(scopes):
+            affected.append(f"oidc_clients[{host!r}] (scopes={str(scopes)!r})")
+    if affected:
+        warnings.append(_t(
             config,
             "Group rule via the claim 'groups' (oidc_allowed_groups or oidc_group_role_map), "
             "but the scope 'groups' is not requested: {affected}. PocketID and other providers "
@@ -1095,127 +1095,127 @@ def _gruppen_scope(config, warnungen: list) -> None:
             "TINYSESAM_OIDC_SCOPES; per application `scopes` in the oidc_clients entry). If "
             "the provider delivers the claim without a scope of its own (mapper, e.g. with "
             "Keycloak), this warning is moot.",
-            affected="; ".join(betroffen)))
+            affected="; ".join(affected)))
 
 
-FORWARD_APP_SCHLUESSEL = ("name", "login", "logout")
+FORWARD_APP_KEY_NAME = ("name", "login", "logout")
 FORWARD_LOGIN = ("page", "direct")
 FORWARD_LOGOUT = ("all", "app", "ask")
 
 
-def _forward_apps(config, fehler: list, warnungen: list) -> None:
+def _forward_apps(config, error: list, warnings: list) -> None:
     """Login mode and settings per application in front of the gate (T-21)."""
-    modus = getattr(config, "forward_login", "page")
-    if modus not in FORWARD_LOGIN:
-        fehler.append(_t(
+    mode = getattr(config, "forward_login", "page")
+    if mode not in FORWARD_LOGIN:
+        error.append(_t(
             config,
             "forward_login={mode!r}: allowed are {allowed}.",
-            mode=modus, allowed=', '.join(FORWARD_LOGIN)))
-    abmelden = getattr(config, "forward_logout", "all")
-    if abmelden not in FORWARD_LOGOUT:
-        fehler.append(_t(
+            mode=mode, allowed=', '.join(FORWARD_LOGIN)))
+    sign_out = getattr(config, "forward_logout", "all")
+    if sign_out not in FORWARD_LOGOUT:
+        error.append(_t(
             config,
             "forward_logout={mode!r}: allowed are {allowed}.",
-            mode=abmelden, allowed=', '.join(FORWARD_LOGOUT)))
+            mode=sign_out, allowed=', '.join(FORWARD_LOGOUT)))
     apps = getattr(config, "forward_apps", None) or {}
     if not isinstance(apps, dict):
-        fehler.append(_t(
+        error.append(_t(
             config,
             "forward_apps must be a dict: {{\"app.example.com\": {{\"name\": …, \"login\": "
             "…}}}}."))
         return
-    direkt = [("forward_login", modus)] if modus == "direct" else []
-    vertraut = {str(h).strip().lower() for h in (getattr(config, "trusted_redirect_hosts", None) or [])}
+    direct = [("forward_login", mode)] if mode == "direct" else []
+    trusted = {str(h).strip().lower() for h in (getattr(config, "trusted_redirect_hosts", None) or [])}
     for host, e in apps.items():
-        wo = f"forward_apps[{host!r}]"
+        where = f"forward_apps[{host!r}]"
         if not isinstance(e, dict):
-            fehler.append(_t(
+            error.append(_t(
                 config,
-                "{wo} must be a dict.",
-                wo=wo))
+                "{where} must be a dict.",
+                where=where))
             continue
-        fremd = sorted(set(e) - set(FORWARD_APP_SCHLUESSEL))
-        if fremd:
+        foreign = sorted(set(e) - set(FORWARD_APP_KEY_NAME))
+        if foreign:
             # A mistyped key (`logn`) would otherwise silently not apply — the application would get
             # the global mode, and nobody would know why.
-            fehler.append(_t(
+            error.append(_t(
                 config,
-                "{wo} does not know {keys} (allowed: {allowed}).",
-                wo=wo, keys=', '.join(fremd), allowed=', '.join(FORWARD_APP_SCHLUESSEL)))
+                "{where} does not know {keys} (allowed: {allowed}).",
+                where=where, keys=', '.join(foreign), allowed=', '.join(FORWARD_APP_KEY_NAME)))
         if "login" in e and e["login"] not in FORWARD_LOGIN:
-            fehler.append(_t(
+            error.append(_t(
                 config,
-                "{wo}['login']={value!r}: allowed are {allowed}.",
-                wo=wo, value=e['login'], allowed=', '.join(FORWARD_LOGIN)))
+                "{where}['login']={value!r}: allowed are {allowed}.",
+                where=where, value=e['login'], allowed=', '.join(FORWARD_LOGIN)))
         if "logout" in e and e["logout"] not in FORWARD_LOGOUT:
-            fehler.append(_t(
+            error.append(_t(
                 config,
-                "{wo}['logout']={value!r}: allowed are {allowed}.",
-                wo=wo, value=e['logout'], allowed=', '.join(FORWARD_LOGOUT)))
+                "{where}['logout']={value!r}: allowed are {allowed}.",
+                where=where, value=e['logout'], allowed=', '.join(FORWARD_LOGOUT)))
         if e.get("login") == "direct":
-            direkt.append((wo, "direct"))
-        if vertraut and str(host).strip().lower() not in vertraut:
-            warnungen.append(_t(
+            direct.append((where, "direct"))
+        if trusted and str(host).strip().lower() not in trusted:
+            warnings.append(_t(
                 config,
-                "{wo} is not in trusted_redirect_hosts — there is no redirect back for this "
+                "{where} is not in trusted_redirect_hosts — there is no redirect back for this "
                 "host, the setting never takes effect.",
-                wo=wo))
+                where=where))
     if apps and not _an(config, "forward_auth_enabled"):
-        warnungen.append(_t(
+        warnings.append(_t(
             config,
             "forward_apps is set, but forward_auth_enabled is False — only forward auth reads "
             "the per-application settings."))
     # "Sign out everywhere" without the provider, in front of a gate that sends directly to the provider: the
     # next page request silently signs in again — signing out looks like a reload.
-    abmeldungen = [abmelden] + [str(e.get("logout")) for e in apps.values() if isinstance(e, dict) and e.get("logout")]
-    if (direkt and _an(config, "oidc_enabled") and not _an(config, "oidc_rp_logout")
-            and any(a in ("all", "ask") for a in abmeldungen)):
-        warnungen.append(_t(
+    sign_outs = [sign_out] + [str(e.get("logout")) for e in apps.values() if isinstance(e, dict) and e.get("logout")]
+    if (direct and _an(config, "oidc_enabled") and not _an(config, "oidc_rp_logout")
+            and any(a in ("all", "ask") for a in sign_outs)):
+        warnings.append(_t(
             config,
             "forward_login='direct' and sign-out (\"all\"/\"ask\"), but oidc_rp_logout=False: "
             "the session at the provider remains, and the next page request signs in again "
             "without any action. Set oidc_rp_logout=True (oidc_gateway() does that)."))
-    if direkt and _an(config, "forward_auth_enabled"):
+    if direct and _an(config, "forward_auth_enabled"):
         try:
-            methoden = list(config.enabled_methods())
+            methods = list(config.enabled_methods())
         except Exception:
-            methoden = []
-        if methoden != ["oidc"]:
-            fehler.append(_t(
+            methods = []
+        if methods != ["oidc"]:
+            error.append(_t(
                 config,
                 "{where}='direct' leads straight to the identity provider — that only works if "
                 "OIDC is the only login method (enabled: {enabled}). Otherwise the other "
                 "methods would have no way onto the login page.",
-                where=direkt[0][0], enabled=', '.join(methoden) or _t(config, "none")))
+                where=direct[0][0], enabled=', '.join(methods) or _t(config, "none")))
 
 
-def _gate(config, fehler: list, warnungen: list) -> None:
+def _gate(config, error: list, warnings: list) -> None:
     """Gate token (ADR-9, T-19): only as part of forward auth, only with a cookie that the
     browser returns exclusively to the application's host."""
     if _an(config, "gate_link_enabled"):
         # Code exchange (T-26): it replaces the session cookie on the parent domain. Both at once
         # would mean sending the session to every app after all — and the exchange would be only a detour.
         if not _an(config, "gate_token_enabled"):
-            fehler.append(_t(
+            error.append(_t(
                 config,
                 "gate_link_enabled=True without gate_token_enabled=True: the code exchange "
                 "gives the app host a connection with which it gets gate tokens — without a "
                 "gate token it has no purpose."))
         if str(getattr(config, "cookie_domain", "") or "").strip():
-            fehler.append(_t(
+            error.append(_t(
                 config,
                 "gate_link_enabled=True together with cookie_domain: the code exchange is "
                 "meant to NOT have the session cookie on the parent domain — otherwise it "
                 "reaches every app below it. Leave cookie_domain empty."))
         if not str(getattr(config, "base_url", "") or "").strip():
-            fehler.append(_t(
+            error.append(_t(
                 config,
                 "gate_link_enabled=True without base_url: the app hosts send to the address of "
                 "the gateway for the sign-in — that is in base_url."))
     if not _an(config, "gate_token_enabled"):
         return
     if not _an(config, "forward_auth_enabled"):
-        fehler.append(_t(
+        error.append(_t(
             config,
             "gate_token_enabled=True without forward_auth_enabled=True: the gate token arises "
             "in the response of /auth/forward — without the route there is none, and the proxy "
@@ -1227,16 +1227,16 @@ def _gate(config, fehler: list, warnungen: list) -> None:
     # `tinysesam_` after it: the templates strip every `tinysesam_*` cookie before the request
     # reaches the application (B-20). A differently named gate cookie would be read along by the application.
     if not re.fullmatch(r"__Host-tinysesam_[A-Za-z0-9_]+", name):
-        fehler.append(_t(
+        error.append(_t(
             config,
             "gate_cookie_name={name!r} must have the form __Host-tinysesam_<name>: __Host- "
             "binds the cookie to the host of the application (the browser accepts it only "
             "without a Domain attribute), and tinysesam_ makes sure the proxy templates remove "
             "it in front of the application.",
             name=name))
-    ttl = _ganzzahl(config, "gate_token_ttl_sec", None)
+    ttl = _integer(config, "gate_token_ttl_sec", None)
     if ttl is not None and 900 < ttl <= 3600:
-        warnungen.append(_t(
+        warnings.append(_t(
             config,
             "gate_token_ttl_sec={ttl}: for this long, neither a sign-out in another "
             "application nor a block nor an approval withdrawn at the provider takes effect at "
@@ -1247,21 +1247,21 @@ def _gate(config, fehler: list, warnungen: list) -> None:
     hosts = [h for h in (getattr(config, "trusted_redirect_hosts", None) or []) if h] + \
             [h for h in (getattr(config, "oidc_clients", None) or {}) if h]
     if not hosts and not str(getattr(config, "base_url", "") or "").strip():
-        warnungen.append(_t(
+        warnings.append(_t(
             config,
             "gate_token_enabled=True, but no protected host: neither trusted_redirect_hosts "
             "nor oidc_clients nor base_url. A gate token arises only for these hosts — so for "
             "none, and the proxy keeps asking on every request."))
 
 
-def _kombinationen(config, fehler: list, warnungen: list) -> None:
+def _combinations(config, error: list, warnings: list) -> None:
     """Combinations that are allowed individually and together do not do what they say (B3-16)."""
     # E-mail confirmation without a mandatory address: whoever leaves the field empty gets an IMMEDIATELY
     # active account — the confirmation applies only to those who give an address. The barrier
     # thus has a door next to it.
     if _an(config, "allow_signup") and _an(config, "signup_verify_email") \
             and not _an(config, "signup_require_email"):
-        fehler.append(_t(
+        error.append(_t(
             config,
             "signup_verify_email=True, but signup_require_email=False: whoever gives no "
             "address at registration is active immediately without any confirmation. Either "
@@ -1273,43 +1273,43 @@ def _kombinationen(config, fehler: list, warnungen: list) -> None:
     if _an(config, "allow_signup") and not _an(config, "signup_invite_only") \
             and not _an(config, "signup_verify_email") \
             and (_an(config, "signup_require_email") or getattr(config, "login_identifier", "") == "email"):
-        warnungen.append(_t(
+        warnings.append(_t(
             config,
             "Open registration without signup_verify_email: a taken address answers with 409, "
             "a free one signs in immediately — every visitor thus learns which addresses have "
             "an account here (ASVS 6.3.8). With signup_verify_email=True both answer the same."))
     if _an(config, "signup_invite_only") and not _an(config, "allow_signup"):
-        warnungen.append(_t(
+        warnings.append(_t(
             config,
             "signup_invite_only=True without allow_signup=True has no effect — registration is "
             "off anyway."))
-    # Via `_ganzzahl` like every combination (tests/test_security_findings.py checks that): text,
-    # inf, nan and True are reported by `_zahlengrenzen`; here the combination then stays unevaluated.
-    lang = _ganzzahl(config, "session_ttl_hours", None)
-    kurz = _ganzzahl(config, "session_ttl_transient_hours", None)
-    if lang is not None and kurz is not None and kurz > lang:
-        warnungen.append(_t(
+    # Via `_integer` like every combination (tests/test_security_findings.py checks that): text,
+    # inf, nan and True are reported by `_number_limits`; here the combination then stays unevaluated.
+    lang = _integer(config, "session_ttl_hours", None)
+    short = _integer(config, "session_ttl_transient_hours", None)
+    if lang is not None and short is not None and short > lang:
+        warnings.append(_t(
             config,
             "session_ttl_transient_hours={short} is longer than session_ttl_hours={long}: "
             "without \"Stay signed in\" one would stay signed in longer than with it.",
-            short=kurz, long=lang))
-    for feld in ("admin_path", "login_path", "oidc_callback_path"):
-        wert = str(getattr(config, feld, "") or "")
-        if wert and not wert.startswith("/"):
-            fehler.append(_t(
+            short=short, long=lang))
+    for slot in ("admin_path", "login_path", "oidc_callback_path"):
+        value = str(getattr(config, slot, "") or "")
+        if value and not value.startswith("/"):
+            error.append(_t(
                 config,
                 "{field}={value!r} must begin with '/' — otherwise it is no path, and routes "
                 "as well as links point nowhere.",
-                field=feld, value=wert))
+                field=slot, value=value))
     # cookie_domain that does not cover the own host: the browser discards the cookie, every
     # sign-in "works" and the next click is the login page again.
     dom = str(getattr(config, "cookie_domain", "") or "").strip().lower().lstrip(".")
-    basis = security.normalisiere_basis(str(getattr(config, "base_url", "") or "").strip())
-    if dom and basis:
+    base = security.normalize_base(str(getattr(config, "base_url", "") or "").strip())
+    if dom and base:
         from urllib.parse import urlsplit
-        host = (urlsplit(basis).hostname or "").lower()
+        host = (urlsplit(base).hostname or "").lower()
         if host and not (host == dom or host.endswith("." + dom)):
-            fehler.append(_t(
+            error.append(_t(
                 config,
                 "cookie_domain={domain!r} does not cover the host of base_url ({host}). The "
                 "browser discards a cookie for a foreign domain — nobody would stay signed in.",
@@ -1318,15 +1318,15 @@ def _kombinationen(config, fehler: list, warnungen: list) -> None:
     # password, one is admin. Next to OIDC/SAML/LDAP that is no demo any more, but a
     # production instance with a back door.
     if _an(config, "demo_mode"):
-        echt = [feld for feld in ("oidc_enabled", "saml_enabled", "ldap_enabled", "forward_auth_enabled")
-                if _an(config, feld)]
-        if echt:
-            fehler.append(_t(
+        real = [slot for slot in ("oidc_enabled", "saml_enabled", "ldap_enabled", "forward_auth_enabled")
+                if _an(config, slot)]
+        if real:
+            error.append(_t(
                 config,
                 "demo_mode=True together with {real}: the demo creates an admin account with a "
                 "known password. Next to a real login path or in front of foreign applications "
                 "that is a back door, not a demonstration.",
-                real=', '.join(echt)))
+                real=', '.join(real)))
 
 
 # --- German version of the findings (selected with `config.lang == "de"`) ---------------
@@ -1334,7 +1334,7 @@ def _kombinationen(config, fehler: list, warnungen: list) -> None:
 # Key = the English template exactly as it stands in the `_t(config, …)` call, value = the German
 # template with the same named placeholders. A key that is missing here falls back to English.
 # `tests/` can check completeness: every first argument of a `_t(` call (AST) and every value of
-# BRAUCHT_MAILER / BRAUCHT_BASE_URL / BASE_URL_EMPFOHLEN must be a key of `_DE`, and every
+# REQUIRES_MAILER / REQUIRES_BASE_URL / BASE_URL_RECOMMENDED must be a key of `_DE`, and every
 # key must be used (`config_check._DE`).
 _DE: dict[str, str] = {
     ("demo_mode=True together with {real}: the demo creates an admin account with a known "
@@ -1431,18 +1431,18 @@ _DE: dict[str, str] = {
      "per-application settings."):
         ("forward_apps ist gesetzt, forward_auth_enabled aber False — die Einstellungen je "
          "Anwendung liest nur die Forward-Auth."),
-    ("{wo} is not in trusted_redirect_hosts — there is no redirect back for this host, the "
+    ("{where} is not in trusted_redirect_hosts — there is no redirect back for this host, the "
      "setting never takes effect."):
-        ("{wo} steht nicht in trusted_redirect_hosts — für diesen Host gibt es keine "
+        ("{where} steht nicht in trusted_redirect_hosts — für diesen Host gibt es keine "
          "Rückleitung, die Einstellung greift nie."),
-    "{wo}['logout']={value!r}: allowed are {allowed}.":
-        "{wo}['logout']={value!r}: erlaubt sind {allowed}.",
-    "{wo}['login']={value!r}: allowed are {allowed}.":
-        "{wo}['login']={value!r}: erlaubt sind {allowed}.",
-    "{wo} does not know {keys} (allowed: {allowed}).":
-        "{wo} kennt {keys} nicht (erlaubt: {allowed}).",
-    "{wo} must be a dict.":
-        "{wo} muss ein Dict sein.",
+    "{where}['logout']={value!r}: allowed are {allowed}.":
+        "{where}['logout']={value!r}: erlaubt sind {allowed}.",
+    "{where}['login']={value!r}: allowed are {allowed}.":
+        "{where}['login']={value!r}: erlaubt sind {allowed}.",
+    "{where} does not know {keys} (allowed: {allowed}).":
+        "{where} kennt {keys} nicht (erlaubt: {allowed}).",
+    "{where} must be a dict.":
+        "{where} muss ein Dict sein.",
     "forward_apps must be a dict: {{\"app.example.com\": {{\"name\": …, \"login\": …}}}}.":
         ("forward_apps muss ein Dict sein: {{\"app.example.com\": {{\"name\": …, \"login\": "
          "…}}}}."),
@@ -1621,10 +1621,10 @@ _DE: dict[str, str] = {
         ("mfa_enrollment='grace', aber mfa_enrollment_grace_days ist 0 oder kleiner. Damit "
          "verhält sich 'grace' wie 'strict', nur unauffälliger — entweder eine Frist setzen "
          "oder gleich mfa_enrollment='strict' schreiben."),
-    ("mfa_enrollment={art!r} does not exist. Allowed are {allowed}: 'first_login' (default, "
+    ("mfa_enrollment={kind!r} does not exist. Allowed are {allowed}: 'first_login' (default, "
      "allowed until the first complete login), 'grace' (allowed mfa_enrollment_grace_days "
      "after account creation), 'strict' (never — the setup then comes from the operator)."):
-        ("mfa_enrollment={art!r} gibt es nicht. Erlaubt sind {allowed}: 'first_login' (Vorgabe, "
+        ("mfa_enrollment={kind!r} gibt es nicht. Erlaubt sind {allowed}: 'first_login' (Vorgabe, "
          "erlaubt bis zum ersten vollständigen Login), 'grace' (erlaubt "
          "mfa_enrollment_grace_days ab Kontoanlage), 'strict' (nie — die Einrichtung kommt dann "
          "vom Betreiber)."),
@@ -1634,27 +1634,27 @@ _DE: dict[str, str] = {
         ("oidc_clients ist gesetzt, forward_auth_enabled aber False. Die Freigabe je Anwendung "
          "wird in /auth/forward geprüft — ohne Forward-Auth entsteht sie beim Login, wird "
          "danach aber von nichts abgefragt."),
-    ("{wo} is not in trusted_redirect_hosts. The login URL for this application is then "
+    ("{where} is not in trusted_redirect_hosts. The login URL for this application is then "
      "built on base_url instead of on the requested host — without cookie_domain the "
      "session cookie is host-only, and the sign-in goes round in circles."):
-        ("{wo} ist nicht in trusted_redirect_hosts. Die Login-URL für diese Anwendung wird dann "
+        ("{where} ist nicht in trusted_redirect_hosts. Die Login-URL für diese Anwendung wird dann "
          "auf base_url gebaut statt auf den angefragten Host — ohne cookie_domain gilt das "
          "Sitzungs-Cookie host-only, und die Anmeldung dreht sich im Kreis."),
-    ("{wo} names an issuer of its own. Several providers in one installation are not "
+    ("{where} names an issuer of its own. Several providers in one installation are not "
      "intended: discovery document, JWKS and the mapping issuer+sub→account hang on the one "
      "oidc_issuer. A second provider needs a second instance."):
-        ("{wo} nennt einen eigenen issuer. Mehrere Provider in einer Installation sind nicht "
+        ("{where} nennt einen eigenen issuer. Mehrere Provider in einer Installation sind nicht "
          "vorgesehen: Discovery-Dokument, JWKS und die Zuordnung issuer+sub→Konto hängen am "
          "einen oidc_issuer. Für einen zweiten Provider braucht es eine zweite Instanz."),
-    ("{wo} has no client_secret. The exchange of the authorization code then fails at the "
+    ("{where} has no client_secret. The exchange of the authorization code then fails at the "
      "provider, and only after the sign-in — that is, at the point where nobody suspects a "
      "configuration gap any more."):
-        ("{wo} hat kein client_secret. Der Tausch des Autorisierungs-Codes scheitert dann beim "
+        ("{where} hat kein client_secret. Der Tausch des Autorisierungs-Codes scheitert dann beim "
          "Provider, und zwar erst nach der Anmeldung — also an der Stelle, an der niemand mehr "
          "eine Konfigurationslücke vermutet."),
-    ("{wo} has no client_id. Without it there is no client at the provider for this "
+    ("{where} has no client_id. Without it there is no client at the provider for this "
      "application — and thus no approval of its own."):
-        ("{wo} hat keine client_id. Ohne sie gibt es für diese Anwendung keinen Client beim "
+        ("{where} hat keine client_id. Ohne sie gibt es für diese Anwendung keinen Client beim "
          "Provider — und damit auch keine eigene Freigabe."),
     ("oidc_revalidate_minutes={n} means: re-check at the provider every {hours} hours. The "
      "field counts minutes — was the period meant in seconds (one hour = 60, not 3600)? If "

@@ -20,7 +20,7 @@ Which check failed was not in the log. `tests/run_all.py` showed only the last
 as deferral", and from there on everything was green. So the failed check is **before** that, in
 sections (a) first window, R7-2 burst, orphaned pre-bookings, (d) parallel login at
 the limit or (d3) deferral at the series limit. Three of them wait with a fixed
-`time.sleep(HAENGT * 0.4)` for the parallel sign-ins to have arrived in the hanging directory.
+`time.sleep(HANGS * 0.4)` for the parallel sign-ins to have arrived in the hanging directory.
 Under load that can be too short.
 
 **Cannot be reproduced.** Locally 20× without load and 30× under full load (12 busy loops on 12
@@ -38,8 +38,8 @@ threads) green, and in two further CI runs of the same PR `repeat` was green as 
 Not seen red again since PR #108 (the `FEHL` line would have been in the log since then). The
 second point is implemented, without waiting for the next red run:
 
-- All six fixed wait points (`time.sleep(HAENGT * 0.4)`, `* 0.3`, `0.15`) now wait with
-  `warte_bis()` for the state that the check reads afterwards: the number of attempts that have
+- All six fixed wait points (`time.sleep(HANGS * 0.4)`, `* 0.3`, `0.15`) now wait with
+  `wait_until()` for the state that the check reads afterwards: the number of attempts that have
   arrived in the directory (`Verzeichnis.fragen`), with a deadline and a named error.
 - **Not** implemented: letting the directory "hang until the test releases". In (d), (d3) and (h)
   the parallel sign-ins themselves go into the directory. A release only after their result would have

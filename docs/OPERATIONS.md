@@ -21,10 +21,10 @@ exceptions are listed explicitly below (Redis, security log): there a *throttle*
 | **Redis** (`redis_url`) unreachable | nothing: sign-ins continue | **throttled per process** — a built-in in-memory limiter takes over (with `--workers N` up to N times as generous, but still a limit; B6-1). The switch is reported, not every request: once `Redis-Rate-Limit nicht erreichbar …`, once on return (B6-2); the start already asks Redis with `ping`. After an error Redis rests for 30 s, then the next attempt follows. The account lockout (in the database) applies unchanged. |
 | **SMTP / mailer** | Magic link and "forgot password": the same success page as always (no account enumeration), but no mail. Registration with confirmation mail: likewise the usual page ("Mail on its way"); the account just created is removed again and the registration can be repeated (B6-5). If no mailer is set up at all (no `smtp_host`, no `set_mailer`), registration with confirmation is rejected immediately with 500. | Audit: `magic_send_error`, `reset_send_error` or `verify_send_error` (with "account removed"). The token of the undelivered mail has expired immediately (B6-12) — a relay that delivers the mail after all carries a dead link. |
 | **OIDC provider** | New sign-ins via OIDC fail (error page). Existing sessions keep running until `session_ttl_hours`. | With several applications and `oidc_revalidate_minutes`: after the period expires, forward-auth sends the user to the provider — if that is gone, access to **this** application ends (fail-closed). |
-| **LDAP server** | 503 "directory not reachable" — the same answer for every account. Local accounts with their own password (the emergency admin) keep signing in. | An outage is not a failed attempt: no lockout, no `failed login` (F-23); a wrong **local** password still counts (A-1). Audit `ldap_unavailable`, in the security log `LDAP unreachable user=… ip=… reason=…`. After the first failure that affects the directory as a whole (connection setup, TLS, service account, or a question that hung until the timeout), TinySesam **does not ask the directory at all for 30 s** (`ldap_.AUSFALL_PAUSE_SEK`), after that a single sign-in probes again. If the directory aborts only **one** request quickly after its inputs were sent (e.g. slapd on a PDU above `sockbuf_max_incoming`), only that one gets 503 (`reason=LDAP: only this request aborted …` in the security log) — otherwise a crafted sign-in would switch LDAP off for everyone. User names above 256 and passwords above 1024 characters (`ldap_.LDAP_NAME_MAX`, `LDAP_PASSWORT_MAX`) never reach the directory and count like a wrong password (401, `failed login`); outage and return are logged once each (`LDAP-Verzeichnis nicht erreichbar (…)`, `… wieder erreichbar`). Without this pause, with a directory that drops packets, every attempt hung until the timeout (10 s, `ldap_.VERBINDUNGS_TIMEOUT`). **The first window** (until the first timeout, per outage and process) still hangs, but no longer locks anyone out (G9): the pre-booking of an LDAP sign-in stays pending (`login_attempt.offen`) until the directory has answered. Anyone who would fail only because of pending pre-bookings — the colleagues behind the same NAT address, the emergency admin — waits until they are decided: at most 12 s, at most 8 waiters per process. After that 503 or the sign-in; anyone who gets no waiting slot or exceeds the deadline gets 429 with `deferred login user=… ip=… reason=pending` in the security log — **no** lockout, no `failed login` (fail2ban does not ban), no lockout notice. A salvo of wrong passwords waits along and then gets the real lockout (R7-2). An open pre-booking that nobody has completed after 30 s (`Store.VORBUCHUNG_SCHWEBE_SEK`, process died) counts as a failed attempt. So that a sign-in that is still running never counts that way, every question to the directory has **at most 25 s in total** (`ldap_.GESAMT_FRIST_SEK`, since 2026-09-27): each answer gets its share — the service account at most half of the remainder, the user connection the rest, at most 10 s per answer. With search-then-bind and StartTLS that is 2 s per service-account answer (ldaps 3 s, without TLS 4 s), then up to 5 s for the user connection (ldaps 6 s, without TLS 8 s). A directory that answers more slowly counts as unreachable (503, no failed attempt). A directory on the same network needs milliseconds. |
+| **LDAP server** | 503 "directory not reachable" — the same answer for every account. Local accounts with their own password (the emergency admin) keep signing in. | An outage is not a failed attempt: no lockout, no `failed login` (F-23); a wrong **local** password still counts (A-1). Audit `ldap_unavailable`, in the security log `LDAP unreachable user=… ip=… reason=…`. After the first failure that affects the directory as a whole (connection setup, TLS, service account, or a question that hung until the timeout), TinySesam **does not ask the directory at all for 30 s** (`ldap_.FAILURE_PAUSE_SEC`), after that a single sign-in probes again. If the directory aborts only **one** request quickly after its inputs were sent (e.g. slapd on a PDU above `sockbuf_max_incoming`), only that one gets 503 (`reason=LDAP: only this request aborted …` in the security log) — otherwise a crafted sign-in would switch LDAP off for everyone. User names above 256 and passwords above 1024 characters (`ldap_.LDAP_NAME_MAX`, `LDAP_PASSWORD_MAX`) never reach the directory and count like a wrong password (401, `failed login`); outage and return are logged once each (`LDAP-Verzeichnis nicht erreichbar (…)`, `… wieder erreichbar`). Without this pause, with a directory that drops packets, every attempt hung until the timeout (10 s, `ldap_.CONNECTION_TIMEOUT`). **The first window** (until the first timeout, per outage and process) still hangs, but no longer locks anyone out (G9): the pre-booking of an LDAP sign-in stays pending (`login_attempt.offen`) until the directory has answered. Anyone who would fail only because of pending pre-bookings — the colleagues behind the same NAT address, the emergency admin — waits until they are decided: at most 12 s, at most 8 waiters per process. After that 503 or the sign-in; anyone who gets no waiting slot or exceeds the deadline gets 429 with `deferred login user=… ip=… reason=pending` in the security log — **no** lockout, no `failed login` (fail2ban does not ban), no lockout notice. A salvo of wrong passwords waits along and then gets the real lockout (R7-2). An open pre-booking that nobody has completed after 30 s (`Store.PREBOOKING_PENDING_SEC`, process died) counts as a failed attempt. So that a sign-in that is still running never counts that way, every question to the directory has **at most 25 s in total** (`ldap_.TOTAL_DEADLINE_SEC`, since 2026-09-27): each answer gets its share — the service account at most half of the remainder, the user connection the rest, at most 10 s per answer. With search-then-bind and StartTLS that is 2 s per service-account answer (ldaps 3 s, without TLS 4 s), then up to 5 s for the user connection (ldaps 6 s, without TLS 8 s). A directory that answers more slowly counts as unreachable (503, no failed attempt). A directory on the same network needs milliseconds. |
 | **Extra missing at runtime** (`[oidc]`, `[saml]`, `[ldap]`, `[passkey]`) | Sign-in via this method fails with a readable message | At start a warning line with `pip install 'tinysesam[…]'` (the start itself remains possible — a custom client can be set); on the first attempt `MissingExtra` with the package name instead of a 500 from deep inside. |
 | **Extra `[argon2]` missing** (new image, venv rebuilt) | Every account with an argon2 hash: "wrong password". | At start a line with the number of affected hashes and `pip install 'tinysesam[argon2]'`; during operation the same remedy once per process (B6-8). Every installation verifies scrypt hashes. |
-| **System clock jumps back** (NTP, Pi without backup battery, VM snapshot) | nothing — deadlines keep running normally | Warning line `Die Systemuhr steht … hinter der zuletzt benutzten Zeit`. TinySesam keeps counting monotonically; expired sessions, one-time tokens and step-ups do not come back to life (B6-9). Across a **restart** the database carries the state: it saves it at most once a minute (`uhr_stand`, on every write and on the write probe of `/healthz`). What expired in the time after that — the last minute, or the whole idle period of an instance without healthcheck and without sign-ins — is valid again after a boot with an old date, until the clock has caught up that gap. If the clock once jumped wrongly **forward**, timestamps stay there until the wall clock catches up. |
+| **System clock jumps back** (NTP, Pi without backup battery, VM snapshot) | nothing — deadlines keep running normally | Warning line `The system clock is … s behind the last time used`. TinySesam keeps counting monotonically; expired sessions, one-time tokens and step-ups do not come back to life (B6-9). Across a **restart** the database carries the state: it saves it at most once a minute (`uhr_stand`, on every write and on the write probe of `/healthz`). What expired in the time after that — the last minute, or the whole idle period of an instance without healthcheck and without sign-ins — is valid again after a boot with an old date, until the clock has caught up that gap. If the clock once jumped wrongly **forward**, timestamps stay there until the wall clock catches up. |
 | **Security log** (`security_log`) not writable | nothing | At start: `security_log … not writable — fail2ban gets nothing to read`. Sign-in continues anyway — a missing log is no reason to shut the service down. |
 
 **Healthcheck.** The gateway (`python -m tinysesam.gateway`) ships `/healthz`: reachable without
@@ -33,7 +33,7 @@ sign-in, also over HTTP with `https_mode="force"`, answer 200 `{"status": "ok"}`
 TinySesam as a library, build the same check with `auth.store.schreibprobe()` (internals, tier C —
 without commitment, like everything under `auth.store`): it raises the sqlite3 exception if no commit
 goes through. A `SELECT 1` is not enough — it also succeeds on a read-only file.
-It writes at most every 5 s (`Store.SCHREIBPROBE_SEK`, a commit of a sign-in counts too), in between
+It writes at most every 5 s (`Store.WRITE_PROBE_SEC`, a commit of a sign-in counts too), in between
 the probe only checks the connection: `/healthz` is reachable without sign-in, and one commit per call
 would let anyone who floods it occupy the write lock. A database that has just become read-only is
 therefore reported by the check after 5 s at the latest.
@@ -130,7 +130,7 @@ A session is a row in `session`; the cookie holds the token, the database only i
 | Admin | see all sessions | panel or `GET <admin_path>/api/sessions` (`full` is the handle) |
 | Admin | end one / all of an account | `POST <admin_path>/api/sessions/revoke` with `{"token": <handle>}` or `{"user_id": …}` |
 | Admin | disable account | `POST <admin_path>/api/users/{id}/disable` — ends all sessions, revokes API keys and discards open one-time tokens (sign-in, confirmation, reset link). The block carries the operator flag: even a confirmation link that only comes into existence afterwards does not lift it — only "Unlock" in the panel does (H-18). Blocks from versions up to 0.19.x are raised to the flag by the migration to schema 10, which discards their open tokens, provided the audit log still knows the block — also one that an older version set after a rollback to a schema-10 file: every start re-reads the audit rows since the last start (setting `panel_sperren_bis`) and warns in the log when it finds something; an older one (row already removed, `audit_retention_days`) is blocked again by the same call with `{"disabled": true}`, without unlocking — for a disabled account the panel offers only "Unlock". |
-| Code | disable account | `auth.set_disabled(user_id, True)` (tier A, since 0.22.0) — exactly the effect of the panel, which calls this method: operator flag, end sessions, revoke API keys, discard open one-time tokens, audit `user_disable`. `auth.set_disabled(user_id, False)` unlocks. An owner cannot be disabled (`StateError`), an unknown ID returns `False`. Up to 0.21.x this read `auth.store.set_disabled(user_id, True, durch_betreiber=True)` — that only set the flag; sessions, keys and links stayed valid. |
+| Code | disable account | `auth.set_disabled(user_id, True)` (tier A, since 0.22.0) — exactly the effect of the panel, which calls this method: operator flag, end sessions, revoke API keys, discard open one-time tokens, audit `user_disable`. `auth.set_disabled(user_id, False)` unlocks. An owner cannot be disabled (`StateError`), an unknown ID returns `False`. Up to 0.21.x this read `auth.store.set_disabled(user_id, True, through_operator=True)` — that only set the flag; sessions, keys and links stayed valid. |
 | Code | sessions without HTTP | only via the internals (`auth.store`, tier C — no commitment, may change with every release): `auth.store.list_sessions(user_id)`, `delete_session_by_handle(handle)`, `delete_user_sessions(user_id)`, `delete_user_sessions_except(user_id, handle)` |
 
 What ends a session **by itself**: inactivity (`session_idle_minutes`, default 8 h — for every
@@ -221,8 +221,8 @@ coarsely than the database (NFKC, lowercase, IDNA: `Alice`/`alice`, `Émile`/`é
 `u@bücher.example`/`u@xn--bcher-kva.example`). Both columns are therefore **one** space: no
 identifier belongs to two accounts.
 
-- **Since 2026-09-26 the database enforces this** (triggers `trg_users_kennung_insert` and
-  `trg_users_kennung_update` over the counting buckets `topf_name`/`topf_mail`). Before, only
+- **Since 2026-09-26 the database enforces this** (triggers `trg_users_identifier_insert` and
+  `trg_users_identifier_update` over the counting buckets `folded_name`/`folded_mail`). Before, only
   TinySesam checked before writing; two simultaneous requests for the same identifier (two workers, one as
   name, one as address) both got through or ended with a 500. Now the loser gets
   the same answer as for a taken identifier — 409, with registration with confirmation the
@@ -242,14 +242,14 @@ identifier belongs to two accounts.
 - **Limits:** A row from a foreign writer (older version after a rollback,
   sqlite3 tool) carries no bucket and counts for the triggers only once TinySesam has
   filled it in — at start and before every creation. If a foreign writer changes name or
-  address, the identifier counts as having only just joined (triggers `trg_users_topf_name`/`_mail`):
+  address, the identifier counts as having only just joined (triggers `trg_users_folded_name`/`_mail`):
   stricter, never looser. A raw UPDATE that renames into a collision
   is not prevented, only reported at the next start. If the triggers cannot
   be created (file read-only), TinySesam starts anyway and says so in the log.
 - **Rollback to 0.20.x:** The triggers stay in the file and keep acting there (0.20.x writes
   the buckets along; only built-in SQL functions, so no "no such function"). In a race 0.20.x
   then answers with 500 instead of a collision. Remove with the instance stopped:
-  `DROP TRIGGER trg_users_kennung_insert; DROP TRIGGER trg_users_kennung_update;` — a newer
+  `DROP TRIGGER trg_users_identifier_insert; DROP TRIGGER trg_users_identifier_update;` — a newer
   version recreates them at the next start.
 
 ## First-admin one-time token
@@ -287,7 +287,7 @@ an admin would set the owner's password and be one themselves.
 | Grant / give up owner | panel "Make owner" / "Give up owner" or `POST <admin_path>/api/users/{id}/owner` `{"owner": true|false}` — only as owner; giving up only if another remains |
 | Code | `auth.set_owner(uid, True|False)` (`StateError` for the last owner, `ConfigError` for a service / disabled account) |
 | Hardening values (lockout thresholds, rate limits, password lengths, PIN attempts) | only an owner saves them (`POST <admin_path>/api/security`, otherwise 403); any admin may read. With no owner in the data as before any admin |
-| Delete an account, as operator | panel "Delete", or without a panel / a running service `tinysesam delete --db <file> <user>` (`#<id>` instead of the name) — the same route (`Store.konto_entfernen`, audit anonymised as `deleted#<id>`) and the same protection (an owner and the last admin are not deleted; the rule is `Store.loeschsperre`, shared by both). Asks on a terminal, `--yes` for scripts, no terminal and no `--yes` refuses. Audit `user_delete … source=cli` |
+| Delete an account, as operator | panel "Delete", or without a panel / a running service `tinysesam delete --db <file> <user>` (`#<id>` instead of the name) — the same route (`Store.remove_account`, audit anonymised as `deleted#<id>`) and the same protection (an owner and the last admin are not deleted; the rule is `Store.loeschsperre`, shared by both). Asks on a terminal, `--yes` for scripts, no terminal and no `--yes` refuses. Audit `user_delete … source=cli` |
 | Emergency route (no owner can reach it any more) | `tinysesam owner --db <file> <user>` — whoever has the database operates the instance anyway |
 | First owner | the first admin (`/auth/claim-admin`, `admin_identifiers`, `ensure_admin`); in existing data the oldest **active**, manually set admin — no service account, not disabled (`owner_grant` in the audit log). If there is none (only admins from the identity provider or disabled ones), the instance stays without owner and the log names the emergency route |
 
@@ -354,7 +354,7 @@ side and does not change:
 | Source | Bound via | Table |
 |---|---|---|
 | OIDC | `iss` + `sub` | `oidc_identity` |
-| LDAP | `objectGUID` / `entryUUID` (`_stabile_kennung`) | `federated_identity` (`quelle="ldap"`) |
+| LDAP | `objectGUID` / `entryUUID` (`_stable_identifier`) | `federated_identity` (`source="ldap"`) |
 | SAML | `NameID` | `federated_identity` (`quelle="saml"`) |
 
 - **First sign-in**: If there is no binding yet, the account is looked up by name or created with
@@ -364,14 +364,14 @@ side and does not change:
   for existing data therefore from the update — or from the creation of the account, whichever is later (a
   pre-creation in the panel has its own deadline). After that it is rejected: a dormant account
   (someone has left) would otherwise fall, with roles and admin right, to the next person who gets the same
-  name in the directory. The rejection writes `<quelle>_namensbindung_zu` to the audit log
+  name in the directory. The rejection writes `<source>_name_binding_closed` to the audit log
   and a line to the security log with identifier and remedy. `0` = only explicitly,
   `-1` = unlimited as up to 0.20.x (the configuration check warns). The same applies to the replacement
   of an origin placeholder and — for a source without a stable identifier — to the first
   assignment of an existing account.
 - **A self-chosen name never binds via the name** (G2-N): accounts from registration
   (also with an invitation) and accounts that were renamed on the account page
-  (`users.name_selbst_gewaehlt`) are bound by no sign-in via LDAP/SAML — otherwise a
+  (`users.name_self_chosen`) are bound by no sign-in via LDAP/SAML — otherwise a
   local account names itself after someone from the directory and, at that person's sign-in, inherits identifier and
   groups. An account created by the operator does not carry the flag; panel and `tinysesam rename`
   rename as operator (the flag is dropped), whoever renames from the embedding service passes
@@ -382,7 +382,7 @@ side and does not change:
 - **A name from another source likewise never binds** (attack round 2026-09-26): An account
   that OIDC, SAML or LDAP created carries the name the person has there — with an IdP
   with self-registration a self-chosen one (`preferred_username`, NameID, `uid`). The creation
-  remembers the source (`users.name_quelle`), and another source never binds the account via the
+  remembers the source (`users.name_source`), and another source never binds the account via the
   name (`name_from_other_source`, in the audit `reason=name_from_other_source`); otherwise someone picks
   `chefin` at the IdP and, at the
   LDAP sign-in of the real chefin, gets her identifier and groups. The same source keeps replacing its
@@ -487,7 +487,7 @@ side and does not change:
 - **Series lockout (B2-6) and LDAP renaming:** Counting happens under the typed name.
   If an account is meanwhile named differently in the directory than locally (bound via the stable identifier),
   every successful sign-in records the directory name on the binding
-  (`federated_identity.name_topf`, only the most recent), and all fallback paths clear it too: the full
+  (`federated_identity.directory_name_folded`, only the most recent), and all fallback paths clear it too: the full
   sign-in, the password reset in the panel, `tinysesam passwd` and `tinysesam unlock` (G5, since
   2026-09-26; until then they cleared only the local name and the address, and
   `unlock <directory name>` aborted with "no account"). `tinysesam unlock` takes the identifier as
@@ -736,7 +736,7 @@ says so in the log (`… stored values rewritten to the English vocabulary (sche
 
 | Where | Up to 0.24.x | Since schema 15 |
 |---|---|---|
-| `audit.event` | `oidc_widerruf`, `oidc_unbestaetigt`, `api_keys_ruhen`, `lockout_serie`, `sperrhinweis`, `recovery_verwaist_geloescht`, `login_lokal`, `<oidc\|saml\|ldap>_kennung_abgewiesen`/`_gebunden`/`_geloest`/`_ungueltig`/`_wechsel`, `_namensbindung_zu`, `_ohne_kennung` | `oidc_revoked`, `oidc_unconfirmed`, `api_keys_dormant`, `lockout_series`, `lockout_notice`, `recovery_orphan_deleted`, `login_local`, `<…>_identifier_rejected`/`_bound`/`_unbound`/`_invalid`/`_change`, `_name_binding_closed`, `_without_identifier` |
+| `audit.event` | `oidc_widerruf`, `oidc_unbestaetigt`, `api_keys_ruhen`, `lockout_serie`, `sperrhinweis`, `recovery_verwaist_geloescht`, `login_lokal`, `<oidc\|saml\|ldap>_kennung_abgewiesen`/`_bound`/`_geloest`/`_ungueltig`/`_change`, `_namensbindung_zu`, `_ohne_kennung` | `oidc_revoked`, `oidc_unconfirmed`, `api_keys_dormant`, `lockout_series`, `lockout_notice`, `recovery_orphan_deleted`, `login_local`, `<…>_identifier_rejected`/`_bound`/`_unbound`/`_invalid`/`_change`, `_name_binding_closed`, `_without_identifier` |
 | `audit.detail` (keys) | `grund=`, `konto=`, `quelle=`, `durch=`, `akteur=`, `alt=`, `neu=`, `an=`, `anzahl=`, `beleg=`, `verlangt=`, `verwendet=`, `nachgetragen=`, `fehlversuche=`, `in_folge=`, `kennung=`, `lokal=`, `verzeichnis=`, `zweck=`, `fehlt=`, `art=`, `rollen=`, `beim_bestaetigen=`, `nach_einschreibung=`, … | `reason=`, `account=`, `source=`, `by=`, `actor=`, `old=`, `new=`, `to=`, `count=`, `proof=`, `required=`, `used=`, `backfilled=`, `failed_attempts=`, `in_a_row=`, `identifier=`, `local=`, `directory=`, `purpose=`, `missing=`, `kind=`, `roles=`, `on_confirmation=`, `after_enrollment=`, … |
 | `audit.detail` (tokens behind `reason=`, `source=`, `by=`, `kind=`) | `kein_konto`, `konto_gesperrt`, `falsches_geheimnis`, `falsches_bereichsgeheimnis`, `kein_passwort_gesetzt`, `wiederholt`, `gruppe`, `idp_nein`, `idp_unbestaetigt`, `betreiber`, `lokal`, `erst_admin`, `automat`/`mensch`, … | `no_account`, `account_locked`, `wrong_secret`, `wrong_area_secret`, `no_password_set`, `repeated`, `group`, `idp_no`, `idp_unconfirmed`, `operator`, `local`, `first_admin`, `automation`/`human`, … |
 | `audit.username` | `gelöscht#<id>` | `deleted#<id>` (also inside the details) |
@@ -770,6 +770,106 @@ version: it renames a query parameter (`abgemeldet` → `signed_out`), a message
 `err.locked_series`), the `--ja` option (→ `--yes`), the Caddy template variable (`TS_SHARE_PRAEFIX` →
 `TS_SHARE_PREFIX`) and a few log texts. Rolling back to the version before it needs no SQL; only your own
 configuration (the variable, the option, a custom message id) has to go back to the old name.
+
+## Rollback of the English database names (schema 16)
+
+**Take a backup before the update** (`tinysesam backup`, not `cp`: WAL). The first start of the version with schema
+**16** renames the German names inside the database file to English — tables, columns, the indexes and triggers built
+on them, six keys in `setting` and the placeholder prefix of `federated_identity.identifier` — in **one transaction**
+(an abort leaves the old names, the next start repeats it), and says so in the log (`Database names renamed to English
+(schema 16) …`). No data changes beyond the names. Whoever reads the database file with their own SQL (reports,
+dashboards, backups restored into other tools) has to use the new names:
+
+| Table / column up to schema 15 | Since schema 16 |
+|---|---|
+| table `namensbindung` (`quelle`, `bis`) | `name_binding` (`source`, `until`) |
+| table `oidc_sitzung` (`geprueft_at`, `erfolg_at`) | `oidc_session` (`checked_at`, `success_at`) |
+| table `gate_abgemeldet` | `gate_signed_out` |
+| table `fehlserie` (`topf`, `art`, `anzahl`, `seit`, `zuletzt`) | `failure_series` (`folded`, `kind`, `count`, `since`, `last_seen`) |
+| `users.topf_name`, `topf_mail` | `folded_name`, `folded_mail` |
+| `users.idp_bestaetigt_at` | `idp_confirmed_at` |
+| `users.name_versuch_ab`, `mail_versuch_ab`, `name_audit_ab`, `mail_audit_ab` | `name_attempt_from`, `mail_attempt_from`, `name_audit_from`, `mail_audit_from` |
+| `users.name_quelle`, `name_selbst_gewaehlt` | `name_source`, `name_self_chosen` |
+| `federated_identity.quelle`, `kennung`, `gebunden_at`, `name_topf` | `source`, `identifier`, `bound_at`, `directory_name_folded` |
+| `session.zuletzt`, `andere_beenden`, `bleiben_gewaehlt`, `nachfolger` | `last_seen`, `end_others`, `stay_chosen`, `successor` |
+| `login_attempt.offen` | `pending` |
+| indexes `idx_fed_quelle_user`, `ix_fed_name_topf`, `ix_users_topf_name`/`_mail` | `idx_fed_source_user`, `ix_fed_directory_name_folded`, `ix_users_folded_name`/`_mail` |
+| triggers `trg_users_topf_name`/`_mail`, `trg_users_wechsel_name`/`_mail`, `trg_users_kennung_insert`/`_update` | `trg_users_folded_name`/`_mail`, `trg_users_change_name`/`_mail`, `trg_users_identifier_insert`/`_update` |
+| `setting` keys `allowlist_nach_idp_entzug`, `idp_bestand_gesetzt`, `name_quelle_nachgetragen`, `name_selbst_nachgetragen`, `uhr_stand`, `panel_sperren_bis`, `foederation_seit:<source>` | `allowlist_after_idp_revocation`, `idp_inventory_set`, `name_source_backfilled`, `name_self_backfilled`, `clock_state`, `panel_lock_until`, `federation_since:<source>` |
+| `federated_identity.identifier` placeholder `~ohne-kennung:<…>` | `~without-identifier:<…>` |
+
+The step looks at `sqlite_master`, the column lists and the keys of `setting` on every start and writes nothing if no old
+name is left (also on a read-only file). A file with old names that cannot be written does **not** start (the new code
+needs the new names): mount it writable once.
+
+**What an older version does with a migrated file** (0.24.x and the unreleased builds with schema 15): it starts and warns once
+(`The database carries schema version 16, this TinySesam version only knows 15 …`), then does not find its tables and
+columns and fails on the first request. **Therefore before the first start of the older version** — service stopped,
+backup taken — rename everything back (the older version creates the old indexes and triggers itself at its start):
+
+```sql
+BEGIN;
+DROP TRIGGER IF EXISTS trg_users_folded_name;
+DROP TRIGGER IF EXISTS trg_users_folded_mail;
+DROP TRIGGER IF EXISTS trg_users_change_name;
+DROP TRIGGER IF EXISTS trg_users_change_mail;
+DROP TRIGGER IF EXISTS trg_users_identifier_insert;
+DROP TRIGGER IF EXISTS trg_users_identifier_update;
+DROP INDEX IF EXISTS idx_fed_source_user;
+DROP INDEX IF EXISTS ix_fed_directory_name_folded;
+DROP INDEX IF EXISTS ix_users_folded_name;
+DROP INDEX IF EXISTS ix_users_folded_mail;
+ALTER TABLE users RENAME COLUMN folded_name TO topf_name;
+ALTER TABLE users RENAME COLUMN folded_mail TO topf_mail;
+ALTER TABLE users RENAME COLUMN idp_confirmed_at TO idp_bestaetigt_at;
+ALTER TABLE users RENAME COLUMN name_attempt_from TO name_versuch_ab;
+ALTER TABLE users RENAME COLUMN mail_attempt_from TO mail_versuch_ab;
+ALTER TABLE users RENAME COLUMN name_audit_from TO name_audit_ab;
+ALTER TABLE users RENAME COLUMN mail_audit_from TO mail_audit_ab;
+ALTER TABLE users RENAME COLUMN name_source TO name_quelle;
+ALTER TABLE users RENAME COLUMN name_self_chosen TO name_selbst_gewaehlt;
+ALTER TABLE federated_identity RENAME COLUMN source TO quelle;
+ALTER TABLE federated_identity RENAME COLUMN identifier TO kennung;
+ALTER TABLE federated_identity RENAME COLUMN bound_at TO gebunden_at;
+ALTER TABLE federated_identity RENAME COLUMN directory_name_folded TO name_topf;
+ALTER TABLE name_binding RENAME COLUMN source TO quelle;
+ALTER TABLE name_binding RENAME COLUMN until TO bis;
+ALTER TABLE session RENAME COLUMN last_seen TO zuletzt;
+ALTER TABLE session RENAME COLUMN end_others TO andere_beenden;
+ALTER TABLE session RENAME COLUMN stay_chosen TO bleiben_gewaehlt;
+ALTER TABLE session RENAME COLUMN successor TO nachfolger;
+ALTER TABLE oidc_session RENAME COLUMN checked_at TO geprueft_at;
+ALTER TABLE oidc_session RENAME COLUMN success_at TO erfolg_at;
+ALTER TABLE login_attempt RENAME COLUMN pending TO offen;
+ALTER TABLE failure_series RENAME COLUMN folded TO topf;
+ALTER TABLE failure_series RENAME COLUMN kind TO art;
+ALTER TABLE failure_series RENAME COLUMN count TO anzahl;
+ALTER TABLE failure_series RENAME COLUMN since TO seit;
+ALTER TABLE failure_series RENAME COLUMN last_seen TO zuletzt;
+ALTER TABLE name_binding RENAME TO namensbindung;
+ALTER TABLE oidc_session RENAME TO oidc_sitzung;
+ALTER TABLE gate_signed_out RENAME TO gate_abgemeldet;
+ALTER TABLE failure_series RENAME TO fehlserie;
+UPDATE setting SET key = 'allowlist_nach_idp_entzug' WHERE key = 'allowlist_after_idp_revocation';
+UPDATE setting SET key = 'idp_bestand_gesetzt' WHERE key = 'idp_inventory_set';
+UPDATE setting SET key = 'name_quelle_nachgetragen' WHERE key = 'name_source_backfilled';
+UPDATE setting SET key = 'name_selbst_nachgetragen' WHERE key = 'name_self_backfilled';
+UPDATE setting SET key = 'uhr_stand' WHERE key = 'clock_state';
+UPDATE setting SET key = 'panel_sperren_bis' WHERE key = 'panel_lock_until';
+UPDATE setting SET key = 'foederation_seit:' || substr(key, 18) WHERE key LIKE 'federation_since:%';
+UPDATE federated_identity SET kennung = '~ohne-kennung:' || substr(kennung, 21)
+ WHERE kennung LIKE '~without-identifier:%';
+PRAGMA user_version = 15;
+COMMIT;
+```
+
+For example `sqlite3 auth.db < rollback.sql`, or from Python `sqlite3.connect("auth.db").executescript(open("rollback.sql").read())`
+(SQLite 3.25 or newer for `RENAME COLUMN`). `tests/test_db_names_migration.py` runs exactly this block against a migrated
+copy of a real schema-15 file and compares the result with that file; a later start of the newer version migrates again
+(idempotent). If a version without the new names has already run on a migrated file **without** this SQL, it has created
+empty tables and columns under the old names next to the migrated ones: the next start of the newer version merges the
+tables (rows of the old table are added, then the old table is dropped) and leaves a doubled column alone with a warning
+in the log.
 
 ## Sign-in methods and their strength
 

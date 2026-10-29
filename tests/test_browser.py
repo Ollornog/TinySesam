@@ -53,7 +53,7 @@ def _server_socket():
     rarely and inexplicably. uvicorn accepts ready-made sockets (`run(sockets=…)`),
     so we never give this one up again — that way the window does not exist.
 
-    Chrome solves the same problem its own way: `--remote-debugging-port=0` and the actual
+    Chrome solves the same problem its own way: `--remote-debugging-pplace=0` and the actual
     number from `DevToolsActivePort` (see `_cdp_port`).
     """
     s = socket.socket()
@@ -129,9 +129,9 @@ def _cdp_port():
                 f"--- Chrome output ---\n{_chrome_output()}")
         try:
             with open(port_file, encoding="utf-8", errors="replace") as fh:
-                erste = fh.readline().strip()
-            if erste.isdigit():
-                return int(erste)
+                first = fh.readline().strip()
+            if first.isdigit():
+                return int(first)
         except OSError:
             pass  # Port file not there yet — Chrome is still starting
         time.sleep(0.1)
@@ -311,12 +311,12 @@ async def run():
         # transparent — only that way can the copy button sit on its own line in the block.
         lum = """(function(s){const m=getComputedStyle(document.querySelector(s)).backgroundColor
             .match(/\\d+/g).map(Number); return (m[0]*.299+m[1]*.587+m[2]*.114)/255;})('.cw')"""
-        for theme, hell in (("light", True), ("dark", False)):
+        for theme, light in (("light", True), ("dark", False)):
             await p.js(f"localStorage.setItem('ts-theme','{theme}')")
             await p.go("/", wait=1.6)
             assert await p.js("document.querySelectorAll('.cw .copy').length") == 2, theme
             l = await p.js(lum)
-            assert (l > 0.85 if hell else l < 0.2), f"code block in the {theme} theme: brightness {l:.2f}"
+            assert (l > 0.85 if light else l < 0.2), f"code block in the {theme} theme: brightness {l:.2f}"
             # The button sits on its own line above the code — it does not overlap it.
             over = await p.js("""(function(){
                 const b=document.querySelector('.cw .copy').getBoundingClientRect(),
@@ -359,9 +359,9 @@ async def run():
         await asyncio.sleep(1.5)
         assert not await p.js("!!document.querySelector('pre')"), "422 JSON instead of a page"
         # Since 0.24.6 errors appear as a message BELOW the card (own box with an icon), no longer inside it.
-        err = (await p.js("(document.querySelector('.meldungen .meldung.fehler')||{textContent:''}).textContent")).strip()
+        err = (await p.js("(document.querySelector('.notices .notice.error')||{textContent:''}).textContent")).strip()
         assert err, "no error message"
-        assert await p.js("!document.querySelector('.card .meldung') && !!document.querySelector('.meldung.fehler svg')"), \
+        assert await p.js("!document.querySelector('.card .notice') && !!document.querySelector('.notice.error svg')"), \
             "message inside the card or without an icon"
         print(f"  empty form: {err!r} instead of JSON")
 
@@ -405,20 +405,20 @@ async def run():
         # Only an owner can grant the owner role — the demo account is not one, so for this probe
         # it is made one and afterwards reset to its previous state.
         _demoadmin = _st.get_user_by_name("demoadmin")["id"]
-        _war_owner = bool(_st.get_user(_demoadmin)["is_owner"])
+        _was_owner = bool(_st.get_user(_demoadmin)["is_owner"])
         _st.set_owner(_demoadmin, True)
         try:
             await p.go("/auth/admin", wait=1.5)
             await p.js("window.confirm=()=>true;window.alert=m=>{window.__alert=m};true")
-            _knopf = await p.js(f"document.querySelector('[data-on=own][data-a^=\"[{_demo},\"]').textContent.trim()")
-            assert _knopf, "owner button without label"
+            _button = await p.js(f"document.querySelector('[data-on=own][data-a^=\"[{_demo},\"]').textContent.trim()")
+            assert _button, "owner button without label"
             await p.click(f'[data-on=own][data-a^="[{_demo},"]')
             assert _st.get_user(_demo)["is_owner"], \
                 f"„Make owner“ without effect: {await p.js('window.__alert')!r}"
             await p.click(f'[data-on=own][data-a^="[{_demo},"]')
             assert not _st.get_user(_demo)["is_owner"], "„Give up owner“ without effect"
         finally:
-            _st.set_owner(_demoadmin, _war_owner)
+            _st.set_owner(_demoadmin, _was_owner)
         print("  admin panel: rename and owner button work (G13, G3)")
         await p.click(".tab[data-on=go]:nth-child(2)")
         await asyncio.sleep(0.6)
@@ -434,7 +434,7 @@ async def run():
         # has expired — and the button on the account page failed **silently**: the page simply
         # reloaded, the factor was still there. The switch in the account JS is the only
         # UI change of this round; only in the browser is it measurable at all.
-        vorher_frische = showcase.auth.cfg.stepup_max_age_sec
+        before_fresh = showcase.auth.cfg.stepup_max_age_sec
         demoadmin_id = showcase.auth.store.get_user_by_name("demoadmin")["id"]
         # Set up a second factor so that the account page shows the „disable 2FA" button at all
         # — it is the path that R3-3 put behind the freshness check.
@@ -448,46 +448,46 @@ async def run():
             await p.js("window.confirm=()=>true")           # confirm the button's prompt
             await asyncio.sleep(1.5)                        # … now the confirmation is too old
             await p.click("[data-act=deltotp]")
-            ziel = await p.js("location.pathname + location.search")
-            assert ziel.startswith("/auth/reauth"), \
-                f"stayed on {ziel!r} — the 403 fails silently, the page merely reloads"
-            assert "auth%2Faccount" in ziel or "/auth/account" in ziel, ziel
+            destination = await p.js("location.pathname + location.search")
+            assert destination.startswith("/auth/reauth"), \
+                f"stayed on {destination!r} — the 403 fails silently, the page merely reloads"
+            assert "auth%2Faccount" in destination or "/auth/account" in destination, destination
             assert await p.js("!!document.querySelector('form')"), "reauth page without a form"
             assert showcase.auth.store.has_confirmed_totp(demoadmin_id), \
                 "the second factor was removed without fresh confirmation"
         finally:
-            showcase.auth.cfg.stepup_max_age_sec = vorher_frische
+            showcase.auth.cfg.stepup_max_age_sec = before_fresh
         print("  account page: expired freshness → reauth page instead of a silent 403")
 
         # ---------- 10) Offer after a factor change: actually execute `offer()` (B1-7, A-5) ----------
         # Previously only a string test checked that `offer(` is in the HTML. Here we measure what
         # the user experiences: consent ends the other session — and with expired
         # freshness it is not lost but comes back as a prompt after the reauth.
-        antwort = "new Response(JSON.stringify({ok:true,other_sessions:1}),{status:200})"
-        andere, _ = showcase.auth.start_session(demoadmin_id, "password")
+        response = "new Response(JSON.stringify({ok:true,other_sessions:1}),{status:200})"
+        other, _ = showcase.auth.start_session(demoadmin_id, "password")
         await p.go("/auth/account", wait=1.6)
         await p.js("window.confirm=()=>true")
-        await p.js(f"offer({antwort}).then(()=>{{window.__offer_fertig=true}});1")
+        await p.js(f"offer({response}).then(()=>{{window.__offer_fertig=true}});1")
         await asyncio.sleep(1.2)
         assert await p.js("window.__offer_fertig===true"), "offer() did not return"
-        assert showcase.auth.store.get_session(andere) is None, \
+        assert showcase.auth.store.get_session(other) is None, \
             "offer confirmed, yet the other session keeps running"
         # Freshness expired: detour via reauth, the consent travels along as ?revoke_others=1.
-        andere, _ = showcase.auth.start_session(demoadmin_id, "password")
+        other, _ = showcase.auth.start_session(demoadmin_id, "password")
         try:
             showcase.auth.cfg.stepup_max_age_sec = 1
             await asyncio.sleep(1.5)
-            await p.js(f"offer({antwort});1")
+            await p.js(f"offer({response});1")
             await asyncio.sleep(1.4)
-            ziel = await p.js("location.pathname + decodeURIComponent(location.search)")
-            assert ziel.startswith("/auth/reauth") and "/auth/account?revoke_others=1" in ziel, \
-                f"stayed on {ziel!r} — the consent would be lost"
-            assert showcase.auth.store.get_session(andere) is not None, "ended without freshness"
+            destination = await p.js("location.pathname + decodeURIComponent(location.search)")
+            assert destination.startswith("/auth/reauth") and "/auth/account?revoke_others=1" in destination, \
+                f"stayed on {destination!r} — the consent would be lost"
+            assert showcase.auth.store.get_session(other) is not None, "ended without freshness"
         finally:
-            showcase.auth.cfg.stepup_max_age_sec = vorher_frische   # ≙ reauth passed
+            showcase.auth.cfg.stepup_max_age_sec = before_fresh   # ≙ reauth passed
         await p.cmd("Page.addScriptToEvaluateOnNewDocument", source="window.confirm=()=>true")
         await p.go("/auth/account?revoke_others=1", wait=1.8)
-        assert showcase.auth.store.get_session(andere) is None, \
+        assert showcase.auth.store.get_session(other) is None, \
             "not asked/ended after the reauth — the consent is lost"
         assert await p.js("location.search") == "", "?revoke_others stays in the address"
         print("  account page: offer ends the other sessions, also via the reauth detour")

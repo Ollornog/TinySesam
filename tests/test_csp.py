@@ -30,7 +30,7 @@ def _pages(auth):
         # WITH `events`: the route always passes them, and exactly the section “Latest events”
         # carried a `style=` attribute that the strict CSP blocks. Without `events` it was missing here,
         # and the check below stayed green (integration finding 9).
-        # (Mutationsprobe: in templates.py wieder `<p class=msg style='margin:0 0 8px'>` → rot.)
+        # (Mutation probe: in templates.py put back `<p class=msg style='margin:0 0 8px'>` → rot.)
         "account": auth.render_page("account", request=None,
                                     user={"username": "u", "display_name": "U", "id": 1},
                                     methods=["password", "pin", "passkey"],
@@ -59,8 +59,8 @@ for name, resp in _pages(auth).items():
     tags = len(_TAG.findall(body))
     nonced = len(re.findall(rf'<(?:script|style) nonce="{re.escape(n)}"', body))
     assert tags and tags == nonced, f"{name}: {nonced}/{tags} script/style genonced"
-    assert not re.search(r'\son(click|submit)=', body), f"{name}: Inline-Handler geblieben"
-    assert not re.search(r'\sstyle=', body), f"{name}: style=-Attribut geblieben"
+    assert not re.search(r'\son(click|submit)=', body), f"{name}: inline handler remained"
+    assert not re.search(r'\sstyle=', body), f"{name}: style= attribute remained"
     # Precondition: the section is really there — otherwise the line above checked nothing.
     assert name != "account" or "id=eventlist" in body, "account: „Letzte Ereignisse“ missing"
 ok("strict: header + nonce on every <script>/<style>, no inline handlers/style=")
@@ -68,7 +68,7 @@ ok("strict: header + nonce on every <script>/<style>, no inline handlers/style="
 # 2) A fresh nonce per response
 n1, n2 = _nonce(auth.render_page("login", request=None)), _nonce(auth.render_page("login", request=None))
 assert n1 and n2 and n1 != n2, "nonce not fresh per response"
-ok("Nonce pro Antwort frisch")
+ok("Nonce fresh per response")
 
 # 3) csp='off' → no header (e.g. when a proxy sets the CSP centrally)
 assert not TinySesam(_cfg(csp="off")).render_page("login", request=None) \
@@ -79,12 +79,12 @@ ok("csp='off' → no header")
 cust = TinySesam(_cfg(csp="default-src 'self'; script-src 'nonce-{nonce}' https://cdn.example"))
 csp = cust.render_page("login", request=None).headers["content-security-policy"]
 assert "{nonce}" not in csp and csp.split().count("https://cdn.example") == 1 and "nonce-" in csp, csp
-ok("eigene Policy: {nonce} ersetzt, Rest 1:1")
+ok("custom policy: {nonce} replaced, rest 1:1")
 
 # 5) Invalid csp (not a string) → clear rejection at build time
 try:
     TinySesam(_cfg(csp=123))
-    assert False, "csp=123 haette scheitern muessen"
+    assert False, "csp=123 should have failed"
 except ValueError:
     ok("csp must be a string (build rejects)")
 
@@ -98,15 +98,15 @@ ok("HTTP GET /auth/login carries the CSP header")
 # 7) B3-2: a typo in `csp` was an “own policy” without a directive — the browser discarded
 #    the header, the pages ran without CSP, nobody noticed. Now the build fails.
 from tinysesam.errors import ConfigError  # noqa: E402
-for falsch in ("Strict", "stirct", "OFF", "scirpt-src 'none'", ";"):
+for wrong in ("Strict", "stirct", "OFF", "scirpt-src 'none'", ";"):
     try:
-        TinySesam(_cfg(csp=falsch))
-        assert False, f"csp={falsch!r} haette scheitern muessen"
+        TinySesam(_cfg(csp=wrong))
+        assert False, f"csp={wrong!r} should have failed"
     except ConfigError as e:
         assert "csp=" in str(e), str(e)
-for gut in ("strict", "off", "", "default-src 'self'; script-src 'nonce-{nonce}'",
+for good in ("strict", "off", "", "default-src 'self'; script-src 'nonce-{nonce}'",
             "Default-Src 'self'; upgrade-insecure-requests"):
-    TinySesam(_cfg(csp=gut))
+    TinySesam(_cfg(csp=good))
 ok("csp: typos without a known directive fail at build time, real policies do not")
 # A3: an unknown directive NEXT TO known ones is skipped by the browser and the rest applied —
 #     a previously effective existing policy must not fail because of it, but should appear in the log.
@@ -114,31 +114,31 @@ import logging  # noqa: E402
 from tinysesam import config_check  # noqa: E402
 
 
-class _Fang(logging.Handler):
+class _Trap(logging.Handler):
     def __init__(self):
         super().__init__()
-        self.zeilen = []
+        self.lines = []
 
     def emit(self, record):
-        self.zeilen.append(record.getMessage())
+        self.lines.append(record.getMessage())
 
 
-_fang = _Fang()
-logging.getLogger("tinysesam.security").addHandler(_fang)
-for gemischt in ("default-src 'self'; require-sri-for script",
+_trap = _Trap()
+logging.getLogger("tinysesam.security").addHandler(_trap)
+for mixed in ("default-src 'self'; require-sri-for script",
                  "default-src 'self'; disown-opener", "default-src 'self'; scirpt-src 'none'"):
-    _fang.zeilen.clear()
-    _gm = TinySesam(_cfg(csp=gemischt))
-    assert config_check.csp_fehler(gemischt) == "", gemischt
-    assert any("does not know" in z for z in _fang.zeilen), (gemischt, _fang.zeilen)
+    _trap.lines.clear()
+    _gm = TinySesam(_cfg(csp=mixed))
+    assert config_check.csp_error(mixed) == "", mixed
+    assert any("does not know" in z for z in _trap.lines), (mixed, _trap.lines)
     assert any("does not know" in b for b in _gm.cfg.validate()), _gm.cfg.validate()
-logging.getLogger("tinysesam.security").removeHandler(_fang)
-assert config_check.csp_warnung("default-src 'self'; script-src 'none'") == ""
+logging.getLogger("tinysesam.security").removeHandler(_trap)
+assert config_check.csp_warning("default-src 'self'; script-src 'none'") == ""
 ok("csp: unknown directive next to known ones warns instead of preventing the start")
 # … and also after the build: `validate()` reports a typo set afterwards.
-_nach = TinySesam(_cfg())
-_nach.cfg.csp = "stict"
-assert any("csp=" in b for b in _nach.cfg.validate()), _nach.cfg.validate()
+_after = TinySesam(_cfg())
+_after.cfg.csp = "stict"
+assert any("csp=" in b for b in _after.cfg.validate()), _after.cfg.validate()
 ok("csp: validate() reports the typo set afterwards")
 
 
@@ -147,7 +147,7 @@ ok("csp: validate() reports the typo set afterwards")
 from fastapi.responses import PlainTextResponse  # noqa: E402
 
 
-def _haerte_app(**kw):
+def _hardness_app(**kw):
     a = TinySesam(_cfg(admin_enabled=True, password_reset_enabled=True, smtp_host="smtp.example",
                        base_url="https://auth.example", **kw))
     ap = FastAPI()
@@ -155,28 +155,28 @@ def _haerte_app(**kw):
     a.install_error_pages(ap)
 
     @ap.get("/gast")
-    def gast():
+    def guest():
         return PlainTextResponse("x", headers={"Vary": "Accept-Encoding"})
     return a, ap
 
 
-_a8, _app8 = _haerte_app()
+_a8, _app8 = _hardness_app()
 _c8 = TestClient(_app8)
-_KOPF = {"x-content-type-options": "nosniff", "referrer-policy": "same-origin",
+_HEAD = {"x-content-type-options": "nosniff", "referrer-policy": "same-origin",
          "cache-control": "no-store"}
 # `/auth/admin` without a session: the guard RAISES — the response is built by the exception handler,
 # bypassing the route class. With and without install_error_pages.
 _app8b = FastAPI()
 _app8b.include_router(_a8.router())
-for cl, weg, erwartet in ((_c8, "/auth/login", 200), (_c8, "/auth/me", 401),
+for cl, away, expected in ((_c8, "/auth/login", 200), (_c8, "/auth/me", 401),
                           (_c8, "/auth/reset?token=geheim", 400), (_c8, "/auth/admin", 401),
                           (_c8, "/auth/admin/api/users", 401),
                           (TestClient(_app8b), "/auth/admin/api/users", 401)):
-    rr = cl.get(weg, follow_redirects=False)
-    assert rr.status_code == erwartet, (weg, rr.status_code)
-    for k, v in _KOPF.items():
-        assert rr.headers.get(k) == v, (weg, k, rr.headers.get(k))
-    assert "Cookie" in rr.headers.get("vary", ""), (weg, rr.headers.get("vary"))
+    rr = cl.get(away, follow_redirects=False)
+    assert rr.status_code == expected, (away, rr.status_code)
+    for k, v in _HEAD.items():
+        assert rr.headers.get(k) == v, (away, k, rr.headers.get(k))
+    assert "Cookie" in rr.headers.get("vary", ""), (away, rr.headers.get("vary"))
 ok("nosniff, Referrer-Policy, no-store, Vary: Cookie on page, JSON, token page, raised 401")
 _g = _c8.get("/gast")
 assert "x-content-type-options" not in _g.headers and "cache-control" not in _g.headers, _g.headers
@@ -187,14 +187,14 @@ _f = _c8.get("/gibtsnicht", headers={"accept": "text/html"})
 assert _f.status_code == 404 and _f.headers.get("x-content-type-options") == "nosniff", _f.headers
 ok("the error page from install_error_pages also carries the headers")
 # An existing Vary is extended, not replaced.
-_v = _a8._kopfzeilen(PlainTextResponse("x", headers={"Vary": "Accept-Encoding"}))
+_v = _a8._header_lines(PlainTextResponse("x", headers={"Vary": "Accept-Encoding"}))
 assert _v.headers["vary"] == "Accept-Encoding, Cookie", _v.headers["vary"]
-_v2 = _a8._kopfzeilen(PlainTextResponse("x", headers={"Vary": "cookie"}))
+_v2 = _a8._header_lines(PlainTextResponse("x", headers={"Vary": "cookie"}))
 assert _v2.headers["vary"] == "cookie", _v2.headers["vary"]
 ok("Vary: existing values stay, Cookie is added exactly once")
 # X-Frame-Options only with 'strict' — an own policy or 'off' decides itself.
 assert _c8.get("/auth/login").headers.get("x-frame-options") == "SAMEORIGIN"
-_, _app_off = _haerte_app(csp="off")
+_, _app_off = _hardness_app(csp="off")
 _ro = TestClient(_app_off).get("/auth/login")
 assert "x-frame-options" not in _ro.headers and _ro.headers.get("x-content-type-options") == "nosniff"
 ok("X-Frame-Options only with csp='strict'; the other headers also apply with 'off'")
@@ -247,7 +247,7 @@ _app10.include_router(_a8.router())
 
 
 @_app10.exception_handler(_SHE)
-async def _gast_handler(request, exc):
+async def _guest_handler(request, exc):
     if exc.headers and "Location" in exc.headers:
         return _RR(exc.headers["Location"], status_code=303)
     return _JR({"detail": exc.detail, "keys": sorted((exc.headers or {}).keys())},
@@ -258,7 +258,7 @@ _r10 = TestClient(_app10).get("/auth/admin", headers={"accept": "text/html"}, fo
 assert _r10.status_code == 303 and _r10.headers.get("location", "").startswith("/auth/login"), \
     (_r10.status_code, _r10.headers)
 _e = _HE(403, "x", headers={"X-TinySesam-Reauth": "/auth/reauth", "Vary": "Accept"})
-_a8._kopfzeilen_fehler(_e)
+_a8._header_lines_error(_e)
 assert _e.headers["X-TinySesam-Reauth"] == "/auth/reauth" and _e.headers["Vary"] == "Accept, Cookie", _e.headers
 assert _e.headers["X-Content-Type-Options"] == "nosniff" and "vary" not in _e.headers, _e.headers
 ok("raised HTTPException: keys in exc.headers keep their spelling")
@@ -269,21 +269,21 @@ ok("raised HTTPException: keys in exc.headers keep their spelling")
 from fastapi.exceptions import RequestValidationError as _RVE  # noqa: E402
 
 
-def _pruefe_kopf(rr, was):
-    for k, v in _KOPF.items():
+def _check_head(rr, was):
+    for k, v in _HEAD.items():
         assert rr.headers.get(k) == v, (was, k, rr.headers.get(k))
     assert "Cookie" in rr.headers.get("vary", ""), (was, rr.headers.get("vary"))
 
 
 _r422 = _c8.post("/auth/apikeys/abc/revoke")
 assert _r422.status_code == 422 and _r422.json()["detail"][0]["loc"][-1] == "key_id", _r422.text
-_pruefe_kopf(_r422, "422")
+_check_head(_r422, "422")
 _app11 = FastAPI()
 _app11.include_router(_a8.router())
 
 
 @_app11.exception_handler(_RVE)
-async def _eigenes_422(request, exc):
+async def _own_422(request, exc):
     return _JR({"eigen": True}, status_code=400)
 
 
@@ -291,23 +291,23 @@ _c11 = TestClient(_app11)
 _c11.cookies.update(_c8.cookies)
 _r11 = _c11.post("/auth/apikeys/abc/revoke")
 assert _r11.status_code == 400 and _r11.json() == {"eigen": True}, _r11.text
-_pruefe_kopf(_r11, "eigener 422-Handler")
+_check_head(_r11, "eigener 422-Handler")
 ok("422: headers included, the app's handler still builds the response")
 _orig_audit = _a8.store.recent_audit
 
 
-def _kaputt(*a, **k):
-    raise RuntimeError("kaputt")
+def _broken(*a, **k):
+    raise RuntimeError("broken")
 
 
-_a8.store.recent_audit = _kaputt
+_a8.store.recent_audit = _broken
 try:
     _r500 = TestClient(_app8, raise_server_exceptions=False).get(
         "/auth/admin/api/audit", cookies=dict(_c8.cookies))
 finally:
     _a8.store.recent_audit = _orig_audit
 assert _r500.status_code == 500 and _r500.json() == {"detail": "internal server error"}, _r500.text
-_pruefe_kopf(_r500, "500 JSON")
+_check_head(_r500, "500 JSON")
 ok("JSON 500 from install_error_pages carries the headers")
 
 print("\ntest_csp: all checks green")

@@ -113,7 +113,7 @@ c.post(f"/auth/admin/api/users/{bid}/disable", json={"disabled": False})
 assert c.post(f"/auth/admin/api/users/{bid}/roles", json={"roles": [], "is_admin": False}).status_code == 200
 assert by_name("bob")["is_admin"] is False and by_name("admin")["is_admin"] is True
 print("  ✓ R6-1: last active admin cannot be demoted (blocked ones do not count), otherwise it can")
-# (Mutation probe: `and not andere_aktive_admins(uid)` → `and False` in admin.user_roles → red.)
+# (Mutation probe: `and not other_active_admins(uid)` → `and False` in admin.user_roles → red.)
 
 # ---------- R6-2: no admin service account ----------
 r = c.post("/auth/admin/api/users", json={"username": "svc2", "is_service": True, "is_admin": True})
@@ -125,18 +125,18 @@ print("  ✓ R6-2: a service account becomes admin neither on creation nor via t
 
 # ---------- R6-4 / B2-9: hardening thresholds with limits ----------
 from tinysesam import ConfigError, security  # noqa: E402
-vorher = auth._sec("max_login_attempts")
-for boese in ({"rate_limit_max": 0}, {"max_login_attempts": 0}, {"lockout_window_sec": 10**9},
+before = auth._sec("max_login_attempts")
+for evil in ({"rate_limit_max": 0}, {"max_login_attempts": 0}, {"lockout_window_sec": 10**9},
               {"password_min_length": 1}, {"rate_limit_max": "viele"}, {"gibtsnicht": 5},
               {"max_login_attempts": True}):
-    assert c.post("/auth/admin/api/security", json=boese).status_code == 400, boese
+    assert c.post("/auth/admin/api/security", json=evil).status_code == 400, evil
 # All-or-nothing: a valid value next to an invalid one is NOT written.
 assert c.post("/auth/admin/api/security",
-              json={"max_login_attempts": vorher + 2, "rate_limit_max": 0}).status_code == 400
-assert auth._sec("max_login_attempts") == vorher and auth._sec("rate_limit_max") == 30
+              json={"max_login_attempts": before + 2, "rate_limit_max": 0}).status_code == 400
+assert auth._sec("max_login_attempts") == before and auth._sec("rate_limit_max") == 30
 try:
     auth.set_security("rate_limit_max", 0)
-    raise AssertionError("set_security nahm 0 an")
+    raise AssertionError("set_security accepted 0")
 except ConfigError:
     pass
 # A value already in the database (version without limits): it is pulled to the nearest
@@ -147,14 +147,14 @@ auth.store.set_setting("rate_limit_max", "keine Zahl")          # only the unrea
 assert auth._sec("rate_limit_max") == 30, auth._sec("rate_limit_max")
 auth.store.set_setting("rate_limit_max", "30")
 print("  ✓ R6-4/B2-9: limits in the panel and in set_security, all-or-nothing, legacy value pulled to the limit")
-# (Mutation probe: comment out the range check in security.pruefe_haertung → red.)
+# (Mutation probe: comment out the range check in security.check_hardening → red.)
 
 # ---------- A1: an upgrade does not loosen a stricter existing setting ----------
 # Up to 0.19.x set_security wrote every value. Anyone who had set it STRICTER than the limits of
 # the first version allowed silently got the weaker default after the upgrade.
-streng = {"max_login_attempts": 2, "pin_max_attempts": 2, "lockout_window_sec": 7 * 86400,
+strict = {"max_login_attempts": 2, "pin_max_attempts": 2, "lockout_window_sec": 7 * 86400,
           "rate_limit_window_sec": 7200}
-for k, v in streng.items():
+for k, v in strict.items():
     auth.store.set_setting(k, str(v))
     assert auth._sec(k) == v, (k, auth._sec(k))
 # Beyond the limit: to the limit, not to the default — the direction of tightening is kept.
@@ -163,8 +163,8 @@ assert auth._sec("password_min_length") == 128, auth._sec("password_min_length")
 auth.store.set_setting("lockout_window_sec", str(10**9))
 assert auth._sec("lockout_window_sec") == 30 * 86400, auth._sec("lockout_window_sec")
 # What sec() then returns, the panel accepts too — the log line recommends nothing impossible.
-assert c.post("/auth/admin/api/security", json={**streng, "password_min_length": 128}).status_code == 200
-for k, v in streng.items():
+assert c.post("/auth/admin/api/security", json={**strict, "password_min_length": 128}).status_code == 200
+for k, v in strict.items():
     assert auth._sec(k) == v, (k, auth._sec(k))
 auth.set_security("max_login_attempts", 1)                     # one attempt: harsh, but permitted
 for k, v in security.SECURITY_DEFAULTS.items():
@@ -172,12 +172,12 @@ for k, v in security.SECURITY_DEFAULTS.items():
 auth.set_security("password_min_length_single_factor", 8)      # as above: this is about the rule
 print("  ✓ A1: stricter legacy values stay, values beyond the limit end up at the limit")
 # (Mutation probe: in manager.sec() `return security.SECURITY_DEFAULTS[key]` again instead of
-#  klemme_haertung → red; SECURITY_GRENZEN max_login_attempts (3, …) again → red.)
-# Every hardening threshold has limits. Without an entry `pruefe_haertung` raised a KeyError, i.e.
+#  clamp_hardening → red; SECURITY_LIMITS max_login_attempts (3, …) again → red.)
+# Every hardening threshold has limits. Without an entry `check_hardening` raised a KeyError, i.e.
 # a 500 in the panel — which happened when three branches each brought a new threshold and none
 # updated the limits. The loop above only catches that for the defaults; here it stands as a rule.
-assert set(security.SECURITY_GRENZEN) == set(security.SECURITY_DEFAULTS), \
-    set(security.SECURITY_GRENZEN) ^ set(security.SECURITY_DEFAULTS)
+assert set(security.SECURITY_LIMITS) == set(security.SECURITY_DEFAULTS), \
+    set(security.SECURITY_LIMITS) ^ set(security.SECURITY_DEFAULTS)
 
 # ---------- A4: Infinity is a 400, not a 500 ----------
 r = c.post("/auth/admin/api/security", content=b'{"max_login_attempts": Infinity}',
@@ -185,18 +185,18 @@ r = c.post("/auth/admin/api/security", content=b'{"max_login_attempts": Infinity
 assert r.status_code == 400, r.status_code
 try:
     auth.set_security("max_login_attempts", float("inf"))
-    raise AssertionError("set_security nahm inf an")
+    raise AssertionError("set_security accepted inf")
 except ConfigError:
     pass
 assert auth._sec("max_login_attempts") == security.SECURITY_DEFAULTS["max_login_attempts"]
 print("  ✓ A4: Infinity in the panel → 400, in set_security → ConfigError")
-# (Mutation probe: remove OverflowError from the except in pruefe_haertung → red.)
+# (Mutation probe: remove OverflowError from the except in check_hardening → red.)
 
 # ---------- R6-8: key route answers 400 instead of 500 ----------
-for boese in ({"name": "x", "roles": ["gibtsnicht"]}, {"name": "x", "expires_days": 0},
+for evil in ({"name": "x", "roles": ["gibtsnicht"]}, {"name": "x", "expires_days": 0},
               {"name": "x", "expires_days": "morgen"}):
-    r = c.post(f"/auth/admin/api/users/{sid}/keys", json=boese)
-    assert r.status_code == 400, (boese, r.status_code)
+    r = c.post(f"/auth/admin/api/users/{sid}/keys", json=evil)
+    assert r.status_code == 400, (evil, r.status_code)
 # Self-service: the same class.
 assert c.post("/auth/apikeys", json={"name": "x", "roles": ["gibtsnicht"]}).status_code == 400
 print("  ✓ R6-8: unusable scope/expiry → 400 with reason (panel and /auth/apikeys)")
@@ -204,21 +204,21 @@ print("  ✓ R6-8: unusable scope/expiry → 400 with reason (panel and /auth/ap
 # ---------- R6-6: a key does not mint a key ----------
 # (a) fail-closed for a key kind that does not exist: the admin flag is dropped, not only for
 #     "automation". Before, `kind="Automat"` (typo in the column) kept the admin rights —
-#     a value that the value mapping up to 0.21.x (`automat`/`mensch`) does not know either.
+#     a value that the value mapping up to 0.21.x (`automaton`/`human`) does not know either.
 k = auth.create_api_key(mid, name="ci")
 auth.store._exec("UPDATE api_key SET kind='Automat' WHERE id=?", (k["id"],))
-ohne = TestClient(app)
-assert ohne.get("/auth/admin/api/users", headers={"x-api-key": k["key"]}).status_code == 403
+without = TestClient(app)
+assert without.get("/auth/admin/api/users", headers={"x-api-key": k["key"]}).status_code == 403
 # (b) The panel route itself requires a session — independent of whether R6-5 already removes the
 #     admin flag. What is simulated is an admin signed in via key (the case R6-5 prevents today);
 #     the route must still not issue a key.
-echt = auth.current_user
+real = auth.current_user
 auth.current_user = lambda req: {**dict(auth.store.get_user(mid)), "_via": "apikey"}
 try:
-    r = ohne.post(f"/auth/admin/api/users/{sid}/keys", json={"name": "gemintet"})
+    r = without.post(f"/auth/admin/api/users/{sid}/keys", json={"name": "gemintet"})
     assert r.status_code == 403, r.status_code
 finally:
-    auth.current_user = echt
+    auth.current_user = real
 assert not any(x["name"] == "gemintet" for x in auth.list_api_keys(sid))
 print("  ✓ R6-6: unknown key kind carries no admin flag; panel key only from a session")
 # (Mutation probes: `art != "human"` → `art == "automation"` in current_user → (a) red;
@@ -253,24 +253,24 @@ print("  ✓ B2-13: creating and resetting in the panel check length, blocklist 
 # With `roles=[1]` that raised: HTTP 500, the admin flag was already in the database, and the
 # audit line was missing — an account became admin without it appearing in the log. And as long
 # as the roles stayed broken, every further change to the account went through just as unlogged.
-# (Mutation probes: delete the `rollen_aus` call in `user_roles` → red (200, `[1]` stored);
+# (Mutation probes: delete the `roles_from` call in `user_roles` → red (200, `[1]` stored);
 #  build the detail line with `sorted(...)` without `str` again → red for the legacy data below.)
 import json as _json  # noqa: E402
 
 
-def _zeilen(ereignis):
-    return len([z for z in auth.store.recent_audit(500) if z["event"] == ereignis])
+def _lines(event):
+    return len([z for z in auth.store.recent_audit(500) if z["event"] == event])
 
 
 _carl = auth.create_user("carl", password="carl-geheim-1")
-_vorher8 = _zeilen("user_roles")
-for _koerper in ({"roles": [1], "is_admin": True}, {"roles": [None], "is_admin": True},
+_before8 = _lines("user_roles")
+for _body in ({"roles": [1], "is_admin": True}, {"roles": [None], "is_admin": True},
                  {"roles": "admin", "is_admin": True}, {"roles": {"a": 1}}, {"roles": ["ok", 2]}):
-    r = c.post(f"/auth/admin/api/users/{_carl}/roles", json=_koerper)
-    assert r.status_code == 400 and "roles" in r.json()["detail"], (_koerper, r.status_code, r.text)
+    r = c.post(f"/auth/admin/api/users/{_carl}/roles", json=_body)
+    assert r.status_code == 400 and "roles" in r.json()["detail"], (_body, r.status_code, r.text)
     _z = auth.store.get_user(_carl)
-    assert _json.loads(_z["roles"]) == [] and not _z["is_admin"], (_koerper, dict(_z))
-assert _zeilen("user_roles") == _vorher8, "rejected means: nothing written, nothing to log"
+    assert _json.loads(_z["roles"]) == [] and not _z["is_admin"], (_body, dict(_z))
+assert _lines("user_roles") == _before8, "rejected means: nothing written, nothing to log"
 # Creating and inviting use the same check — otherwise the broken role would sit in the
 # database and hit the next role change.
 r = c.post("/auth/admin/api/users", json={"username": "dora", "roles": [1]})
@@ -282,7 +282,7 @@ auth.store._exec("UPDATE users SET roles=? WHERE id=?", ("[1, null]", _carl))
 r = c.post(f"/auth/admin/api/users/{_carl}/roles", json={"roles": ["x"], "is_admin": False})
 assert r.status_code == 200, (r.status_code, r.text)
 _z8 = [z["detail"] for z in auth.store.recent_audit(20) if z["event"] == "user_roles"]
-assert _zeilen("user_roles") == _vorher8 + 1 and "roles=1,None->x" in _z8[0] and "rollen=" not in _z8[0], _z8
+assert _lines("user_roles") == _before8 + 1 and "roles=1,None->x" in _z8[0] and "rollen=" not in _z8[0], _z8
 print("  ✓ Finding 8: roles without text → 400 before any write; legacy data is logged instead of 500")
 
 # ---------- Integration finding 10: the panel shows what the server rejects ----------
@@ -298,23 +298,23 @@ import re as _re  # noqa: E402
 import subprocess as _sp  # noqa: E402
 
 _panel = c.get("/auth/admin").text
-_skripte = [s for s in _re.findall(r"<script\b[^>]*>(.*?)</script\s*>", _panel, _re.S | _re.I)
+_scripts = [s for s in _re.findall(r"<script\b[^>]*>(.*?)</script\s*>", _panel, _re.S | _re.I)
             if "const ACT={" in s]
-assert len(_skripte) == 1, "panel script not found"
-_js = _skripte[0]
-# Without runtime: every action that calls `p()` routes the result through `abgewiesen` — the next
+assert len(_scripts) == 1, "panel script not found"
+_js = _scripts[0]
+# Without runtime: every action that calls `p()` routes the result through `rejected` — the next
 # new action would otherwise fall into the same hole again.
 # What is counted are the actions from ACT (only those are called by a button), without comment lines.
 _act = set(_re.search(r"const ACT=\{([^}]*)\}", _js).group(1).split(","))
-_stuecke = {m.group(1): "\n".join(z for z in m.group(0).splitlines() if not z.lstrip().startswith("//"))
+_pieces = {m.group(1): "\n".join(z for z in m.group(0).splitlines() if not z.lstrip().startswith("//"))
             for m in _re.finditer(r"(?:async )?function (\w+)\(.*?(?=\n(?:async )?function \w+\(|\nconst ACT=)",
                                   _js, _re.S)}
-_schreibend = [n for n in sorted(_act) if _re.search(r"(?<![\w.])p\(", _stuecke.get(n, ""))]
-_ohne = [n for n in _schreibend if "abgewiesen(" not in _stuecke[n]]
-assert not _ohne, f"Actions without display of the rejection: {_ohne}"
-assert len(_schreibend) >= 10 and _act <= set(_stuecke), (_schreibend, _act - set(_stuecke))
+_writing = [n for n in sorted(_act) if _re.search(r"(?<![\w.])p\(", _pieces.get(n, ""))]
+_without = [n for n in _writing if "abgewiesen(" not in _pieces[n]]
+assert not _without, f"Actions without display of the rejection: {_without}"
+assert len(_writing) >= 10 and _act <= set(_pieces), (_writing, _act - set(_pieces))
 # And `p()` itself: without the look at `r.ok` it returns the body on 400/500, and
-# `abgewiesen()` sees nothing on a 500 without a JSON body. The runtime probe below needs
+# `rejected()` sees nothing on a 500 without a JSON body. The runtime probe below needs
 # node; this check always runs.
 #
 # Until the final round it only demanded `if(r.ok)return`, `return {detail:` and the text
@@ -335,7 +335,7 @@ _JS_TOKEN = _re.compile(r"""\s*(?:(?P<str>"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')|(
                         r"""|(?P<name>[A-Za-z_$][\w$]*)|(?P<num>\d+(?:\.\d+)?))""")
 
 
-def _js_ausdruck(text):
+def _js_expression(text):
     """Read a JS expression from the small part above — as nested tuples."""
     toks, i = [], 0
     while i < len(text):
@@ -344,62 +344,62 @@ def _js_ausdruck(text):
         m = _JS_TOKEN.match(text, i)
         if not m or m.end() == i:
             raise ValueError(f"cannot be evaluated from {text[i:i + 20]!r}")
-        art = m.lastgroup
-        toks.append((art, m.group(art)))
+        kind = m.lastgroup
+        toks.append((kind, m.group(kind)))
         i = m.end()
     pos = [0]
 
-    def nimm(wert=None):
-        if pos[0] < len(toks) and (wert is None or toks[pos[0]][1] == wert):
+    def take(value=None):
+        if pos[0] < len(toks) and (value is None or toks[pos[0]][1] == value):
             pos[0] += 1
             return toks[pos[0] - 1]
         return None
 
-    def muss(wert):
-        if not nimm(wert):
-            raise ValueError(f"expected {wert!r} at token {pos[0]}")
+    def must(value):
+        if not take(value):
+            raise ValueError(f"expected {value!r} at token {pos[0]}")
 
-    def bedingt():
-        a = oder()
-        if nimm("?"):
-            x = bedingt()
-            muss(":")
-            return ("cond", a, x, bedingt())
+    def conditional():
+        a = or_()
+        if take("?"):
+            x = conditional()
+            must(":")
+            return ("cond", a, x, conditional())
         return a
 
-    def kette(art, op, weiter):
-        teile = [weiter()]
-        while nimm(op):
-            teile.append(weiter())
-        return teile[0] if len(teile) == 1 else (art, teile)
+    def chain(kind, op, further):
+        parts = [further()]
+        while take(op):
+            parts.append(further())
+        return parts[0] if len(parts) == 1 else (kind, parts)
 
-    def oder():
-        return kette("or", "||", und)
+    def or_():
+        return chain("or", "||", and_)
 
-    def und():
-        return kette("and", "&&", gleich)
+    def and_():
+        return chain("and", "&&", same)
 
-    def gleich():
-        a = einstellig()
+    def same():
+        a = single_digit()
         while pos[0] < len(toks) and toks[pos[0]][1] in ("===", "!==", "==", "!="):
-            op = nimm()[1]
-            a = ("eq", op, a, einstellig())
+            op = take()[1]
+            a = ("eq", op, a, single_digit())
         return a
 
-    def einstellig():
-        if nimm("!"):
-            return ("not", einstellig())
-        if nimm("typeof"):
-            return ("typeof", einstellig())
-        return glied()
+    def single_digit():
+        if take("!"):
+            return ("not", single_digit())
+        if take("typeof"):
+            return ("typeof", single_digit())
+        return member()
 
-    def glied():
-        t = nimm()
+    def member():
+        t = take()
         if t is None:
             raise ValueError("expression ends too early")
         if t[1] == "(":
-            a = bedingt()
-            muss(")")
+            a = conditional()
+            must(")")
         elif t[0] in ("name", "num"):
             a = (t[0], t[1])
         elif t[0] == "str":
@@ -407,162 +407,162 @@ def _js_ausdruck(text):
         else:
             raise ValueError(f"unexpected {t[1]!r}")
         while True:
-            if nimm(".") or nimm("?."):
+            if take(".") or take("?."):
                 optional = toks[pos[0] - 1][1] == "?."
-                n = nimm()
+                n = take()
                 if not n or n[0] != "name":
                     raise ValueError("a name is missing after .")
                 a = ("mem", a, n[1], optional)
-            elif nimm("["):
-                k = bedingt()
-                muss("]")
+            elif take("["):
+                k = conditional()
+                must("]")
                 if k[0] != "str":
                     raise ValueError("index is not a fixed text")
                 a = ("mem", a, k[1], False)
             else:
                 return a
 
-    baum = bedingt()
+    tree = conditional()
     if pos[0] != len(toks):
-        raise ValueError(f"Rest nach dem Ausdruck: {toks[pos[0]:][:3]}")
-    return baum
+        raise ValueError(f"Remainder after the expression:{toks[pos[0]:][:3]}")
+    return tree
 
 
-def _js_ergebnisse(a, bedingungen=()):
+def _js_results(a, conditions=()):
     """Every value the expression can yield as a result (except the short-circuited
     falsy ones), with the conditions that were true then, in this order."""
     if a[0] == "or":
-        return [e for t in a[1] for e in _js_ergebnisse(t, bedingungen)]
+        return [e for t in a[1] for e in _js_results(t, conditions)]
     if a[0] == "and":
-        return _js_ergebnisse(a[1][-1], bedingungen + tuple(a[1][:-1]))
+        return _js_results(a[1][-1], conditions + tuple(a[1][:-1]))
     if a[0] == "cond":
-        wahr = tuple(a[1][1]) if a[1][0] == "and" else (a[1],)   # `x&&y?…` means: x, then y
-        return _js_ergebnisse(a[2], bedingungen + wahr) + _js_ergebnisse(a[3], bedingungen)
-    return [(a, bedingungen)]
+        true = tuple(a[1][1]) if a[1][0] == "and" else (a[1],)   # `x&&y?…` means: x, then y
+        return _js_results(a[2], conditions + true) + _js_results(a[3], conditions)
+    return [(a, conditions)]
 
 
-def _p_detail_stelle(code):
+def _p_detail_place(code):
     """(Start, end) of the expression behind `return {detail:` — or None."""
     m = _re.search(r"return\s*\{\s*detail\s*:", code)
     if not m:
         return None
-    tiefe, i, zeichen = 0, m.end(), None
+    depth, i, char = 0, m.end(), None
     while i < len(code):
         c = code[i]
-        if zeichen:
+        if char:
             if c == "\\":
                 i += 1
-            elif c == zeichen:
-                zeichen = None
+            elif c == char:
+                char = None
         elif c in "\"'`":
-            zeichen = c
+            char = c
         elif c in "([{":
-            tiefe += 1
+            depth += 1
         elif c in ")]}":
-            if tiefe == 0:
+            if depth == 0:
                 return m.end(), i
-            tiefe -= 1
-        elif c == "," and tiefe == 0:
+            depth -= 1
+        elif c == "," and depth == 0:
             return m.end(), i
         i += 1
     return None
 
 
-def _p_pruefen(code):
+def _check_p(code):
     """What p() lacks to pass on a rejection together with its reason — empty if nothing."""
-    probleme = []
+    problems = []
     rm = _re.search(r"\.then\(\s*(?:async\s*)?\(?\s*(\w+)\s*\)?\s*=>", code)
     r_ = rm.group(1) if rm else "r"
     if not _re.search(rf"if\s*\(\s*{r_}\.ok\s*\)\s*\{{?\s*return", code):
-        probleme.append("p() does not read r.ok")
+        problems.append("p() does not read r.ok")
     jm = _re.search(rf"(\w+)\s*=\s*await\s+{r_}\.json\(\)", code)
     if not jm:
-        probleme.append("p() does not read the response body")
-    stelle = _p_detail_stelle(code)
-    if stelle is None:
-        return probleme + ["p() does not return a rejection as {detail: …}"]
+        problems.append("p() does not read the response body")
+    place = _p_detail_place(code)
+    if place is None:
+        return problems + ["p() does not return a rejection as {detail: …}"]
     try:
-        ergebnisse = _js_ergebnisse(_js_ausdruck(code[stelle[0]:stelle[1]]))
+        results = _js_results(_js_expression(code[place[0]:place[1]]))
     except ValueError as e:
-        return probleme + [f"detail expression cannot be evaluated ({e}): {code[stelle[0]:stelle[1]]}"]
+        return problems + [f"detail expression cannot be evaluated ({e}): {code[place[0]:place[1]]}"]
     j = jm.group(1) if jm else "j"
 
-    def ist_grund(a):
+    def is_reason(a):
         return a[0] == "mem" and a[1] == ("name", j) and a[2] == "detail"
 
-    def ist_textpruefung(b):
+    def is_text_check(b):
         if b[0] != "eq" or b[1] not in ("===", "=="):
             return None
         for x, y in ((b[2], b[3]), (b[3], b[2])):
-            if x[0] == "typeof" and ist_grund(x[1]) and y == ("str", "string"):
+            if x[0] == "typeof" and is_reason(x[1]) and y == ("str", "string"):
                 return x[1]
         return None
 
-    def ist_nicht_null(b):
+    def is_not_null(b):
         return b == ("name", j) or (b[0] == "eq" and b[1] in ("!==", "!=") and ("name", j) in (b[2], b[3])
                                     and ({("name", "null"), ("name", "undefined")} & {b[2], b[3]}))
 
-    def geschuetzt(bedingungen):
-        for n, b in enumerate(bedingungen):
-            gelesen = ist_textpruefung(b)
-            if gelesen and (gelesen[3] or any(ist_nicht_null(v) for v in bedingungen[:n])):
+    def protected(conditions):
+        for n, b in enumerate(conditions):
+            read = is_text_check(b)
+            if read and (read[3] or any(is_not_null(v) for v in conditions[:n])):
                 return True
         return False
 
-    if not any(ist_grund(w) and geschuetzt(bed) for w, bed in ergebnisse):
-        probleme.append(f"p() does not pass on the server's reason ({j}.detail, only as text, null-safe) through")
-    if not any(w == ("mem", ("name", "L"), "err.generic", False) for w, _ in ergebnisse):
-        probleme.append('p() has no fallback text L["err.generic"]')
-    return probleme
+    if not any(is_reason(w) and protected(bed) for w, bed in results):
+        problems.append(f"p() does not pass on the server's reason ({j}.detail, only as text, null-safe) through")
+    if not any(w == ("mem", ("name", "L"), "err.generic", False) for w, _ in results):
+        problems.append('p() has no fallback text L["err.generic"]')
+    return problems
 
 
 _p_def = _re.search(r"^const p=\(u,b\)=>(.*?)^(?:const|function|async function) ", _js, _re.S | _re.M)
 assert _p_def, "p() not found"
 _p_code = "\n".join(z for z in _p_def.group(1).splitlines() if not z.lstrip().startswith("//"))
-assert not _p_pruefen(_p_code), f"{_p_pruefen(_p_code)}: {_p_code}"
+assert not _check_p(_p_code), f"{_check_p(_p_code)}: {_p_code}"
 # Self-test: every broken version of p() is noticed, every equivalent spelling is not.
 # The versions only swap the expression behind `detail:` (the check finds it itself) or
 # replace p() entirely — no text anchor in admin.py.
-_p_stelle = _p_detail_stelle(_p_code)
-assert _p_stelle, _p_code
+_p_place = _p_detail_place(_p_code)
+assert _p_place, _p_code
 
 
-def _p_mit(detail):
-    return _p_code[:_p_stelle[0]] + detail + _p_code[_p_stelle[1]:]
+def _p_with(detail):
+    return _p_code[:_p_place[0]] + detail + _p_code[_p_place[1]:]
 
 
-_p_kaputt = {
-    "final finding audit-3": _p_mit('L["err.generic"]'),
-    "fixed text instead of reason": _p_mit('(j&&typeof j.detail==="string"&&"Fehler")||L["err.generic"]'),
-    "reason without text and null check": _p_mit('j.detail||L["err.generic"]'),
-    "reason without text check": _p_mit('(j&&j.detail)||L["err.generic"]'),
-    "typeof before the null check": _p_mit('(typeof j.detail==="string"&&j&&j.detail)||L["err.generic"]'),
-    "text check negated": _p_mit('(j&&typeof j.detail!=="string"&&j.detail)||L["err.generic"]'),
-    "text check on another field": _p_mit('(j&&typeof j.fehler==="string"&&j.detail)||L["err.generic"]'),
-    "null check negated": _p_mit('(!j&&typeof j.detail==="string"&&j.detail)||L["err.generic"]'),
-    "reason from another variable": _p_mit('(j&&typeof j.detail==="string"&&k.detail)||L["err.generic"]'),
-    "branches swapped": _p_mit('j&&typeof j.detail==="string"?L["err.generic"]:j.detail'),
-    "without fallback text": _p_mit('(j&&typeof j.detail==="string"&&j.detail)'),
-    "function call (outside the part)": _p_mit('grund(j)||L["err.generic"]'),
+_p_broken = {
+    "final finding audit-3": _p_with('L["err.generic"]'),
+    "fixed text instead of reason": _p_with('(j&&typeof j.detail==="string"&&"Fehler")||L["err.generic"]'),
+    "reason without text and null check": _p_with('j.detail||L["err.generic"]'),
+    "reason without text check": _p_with('(j&&j.detail)||L["err.generic"]'),
+    "typeof before the null check": _p_with('(typeof j.detail==="string"&&j&&j.detail)||L["err.generic"]'),
+    "text check negated": _p_with('(j&&typeof j.detail!=="string"&&j.detail)||L["err.generic"]'),
+    "text check on another field": _p_with('(j&&typeof j.fehler==="string"&&j.detail)||L["err.generic"]'),
+    "null check negated": _p_with('(!j&&typeof j.detail==="string"&&j.detail)||L["err.generic"]'),
+    "reason from another variable": _p_with('(j&&typeof j.detail==="string"&&k.detail)||L["err.generic"]'),
+    "branches swapped": _p_with('j&&typeof j.detail==="string"?L["err.generic"]:j.detail'),
+    "without fallback text": _p_with('(j&&typeof j.detail==="string"&&j.detail)'),
+    "function call (outside the part)": _p_with('grund(j)||L["err.generic"]'),
     "without looking at r.ok": _re.sub(r"if\s*\(\s*r\.ok\s*\)\s*return[^;]*;", "", _p_code),
     "finding 4": '.then(r=>r.json());\n',
     "finding 7 (body always)": '.then(async r=>{let j=null;try{j=await r.json()}catch(e){} return j});\n',
 }
-_p_durch = [n for n, c in _p_kaputt.items() if not _p_pruefen(c)]
-assert not _p_durch and _p_kaputt["without looking at r.ok"] != _p_code, f"structure check misses: {_p_durch}"
-_p_gleichwertig = [
+_p_through = [n for n, c in _p_broken.items() if not _check_p(c)]
+assert not _p_through and _p_broken["without looking at r.ok"] != _p_code, f"structure check misses: {_p_through}"
+_p_equivalent = [
     'j&&typeof j.detail==="string"?j.detail:L["err.generic"]',
     '(typeof j?.detail==="string"&&j.detail)||L["err.generic"]',
     '(j!==null&&"string"===typeof j["detail"]&&j["detail"])||L[\'err.generic\']',
 ]
-_p_fehlalarm = [d for d in _p_gleichwertig if _p_pruefen(_p_mit(d))]
-assert not _p_fehlalarm, f"structure check rejects equivalents: {_p_fehlalarm}"
+_p_false_alarm = [d for d in _p_equivalent if _check_p(_p_with(d))]
+assert not _p_false_alarm, f"structure check rejects equivalents: {_p_false_alarm}"
 
 from voraussetzung import pflicht_werkzeug  # noqa: E402
 
 # If node is missing, that is red — everywhere, not only on GitHub (see `pflicht_werkzeug`). Since the
 # ci-local image ships node, level 1 checks exactly as much here as the gate.
-# (Mutation probe: with PATH without node → red; with TINYSESAM_OHNE_NODE=1 → ⚠ line.)
+# (Mutation probe: with PATH without node → red; with `TINYSESAM_OHNE_NODE`=1 → ⚠ line.)
 _node = pflicht_werkzeug("node", "finding 10: runtime probe of the panel actions")
 if _node:
     _probe = ("const A=[];let ANTWORT=null;const E={};\n"
@@ -583,9 +583,9 @@ if _node:
               "    ANTWORT=antw;A.length=0;await (globalThis[name]||eval(name))(...args);"
               "E2[name+' '+k]=[...A]}}\n"
               "  process.stdout.write(JSON.stringify(E2))})();\n")
-    _aus = _sp.run([_node, "-e", _probe], capture_output=True, text=True, timeout=30)
-    assert _aus.returncode == 0, _aus.stderr[-600:]
-    _erg = _json.loads(_aus.stdout)
+    _out = _sp.run([_node, "-e", _probe], capture_output=True, text=True, timeout=30)
+    assert _out.returncode == 0, _out.stderr[-600:]
+    _erg = _json.loads(_out.stdout)
     _Lp = _json.loads(_re.search(r"const L=(\{.*?\});", _js).group(1))   # the texts of the panel
     for _name in ("savesec", "saveroles", "pw", "dis", "delpk", "revk", "mkkey", "deluser"):
         assert _erg[f"{_name} 400"] == ["Grund vom Server"], (_name, _erg[f"{_name} 400"])

@@ -3,10 +3,10 @@
 PO decision 2026-09-27, “translate everything, DB values too”: since 0.22.0 the values of the
 public interface are also English, without alias. Two of them are in the database:
 
-- `api_key.kind` — `automat`/`mensch` → `automation`/`human`;
-- the payload of open address-change links (`magic_token`, `purpose='email_change'`) — `alt` → `old`.
+- `api_key.kind` — `automaton`/`human` → `automation`/`human`;
+- the payload of open address-change links (`magic_token`, `purpose='email_change'`) — `old` → `old`.
 
-The migration rewrites them at start (`Store._werte_englisch`, stamp 12), the code still reads an
+The migration rewrites them at start (`Store._values_english`, stamp 12), the code still reads an
 old value correctly — an older version that ran on the same file after a rollback
 has left old ones behind again — and writes only new ones. The way back to 0.21.x is stated as SQL in
 `docs/OPERATIONS.md`; this suite runs exactly this block so that docs and effect do not
@@ -14,7 +14,7 @@ drift apart. What 0.21.0 itself does with a file at stamp 12 was measured once w
 code from the tag (CHANGELOG 0.22.0) — not here, because the CI checkout has no tags.
 
 In addition `auth.set_disabled(user_id, disabled)` (stage A): the same effect as the lockout in the panel,
-which calls the method — up to 0.21.x the docs showed `auth.store.set_disabled(…, durch_betreiber=True)`,
+which calls the method — up to 0.21.x the docs showed `auth.store.set_disabled(…, through_operator=True)`,
 which only set the mark.
 
 All checks work without extras.
@@ -49,15 +49,15 @@ from _kit.report import Report                                 # noqa: E402
 r = Report("Values in English (schema 12) and auth.set_disabled")
 
 PW = "Probe-Pw-12345"
-BASIS = "https://app.example.com"
+BASE = "https://app.example.com"
 
 
-def _aufbau(pfad: str, post: list | None = None) -> TinySesam:
-    a = TinySesam(TinySesamConfig(db_path=pfad, cookie_secure=False, csrf_enabled=False,
+def _setup(path: str, post: list | None = None) -> TinySesam:
+    a = TinySesam(TinySesamConfig(db_path=path, cookie_secure=False, csrf_enabled=False,
                                   passkey_enabled=False, magiclink_enabled=True,
-                                  signup_verify_email=True, base_url=BASIS))
+                                  signup_verify_email=True, base_url=BASE))
     if post is not None:
-        a.set_mailer(lambda to, betreff, text, html=None: post.append(text))
+        a.set_mailer(lambda to, subject, text, html=None: post.append(text))
     return a
 
 
@@ -66,25 +66,25 @@ def _app(a: TinySesam) -> FastAPI:
     app.include_router(a.router())
 
     @app.get("/wer")
-    def wer(u=Depends(a.require_user)):
+    def person(u=Depends(a.require_user)):
         return {"user": u["username"], "via": u.get("_via"), "kind": u.get("_key_kind")}
     return app
 
 
-def _mitschreiben(fn):
+def _record(fn):
     """(result, text) — what the logger `tinysesam` says meanwhile, from INFO."""
-    puffer = io.StringIO()
-    haken = logging.StreamHandler(puffer)
+    buffer = io.StringIO()
+    check = logging.StreamHandler(buffer)
     log = logging.getLogger("tinysesam")
-    stufe = log.level
-    log.addHandler(haken)
+    tier = log.level
+    log.addHandler(check)
     log.setLevel(logging.INFO)
     try:
-        ergebnis = fn()
+        result = fn()
     finally:
-        log.removeHandler(haken)
-        log.setLevel(stufe)
-    return ergebnis, puffer.getvalue()
+        log.removeHandler(check)
+        log.setLevel(tier)
+    return result, buffer.getvalue()
 
 
 def _link(post: list) -> str:
@@ -92,9 +92,9 @@ def _link(post: list) -> str:
                 for m in [re.search(r"/auth/email/([A-Za-z0-9_\-]+)", t)] if m)
 
 
-def _roh(pfad: str, *sql) -> None:
+def _raw(path: str, *sql) -> None:
     """Write directly into the file like an older version (or the operator with `sqlite3`)."""
-    con = sqlite3.connect(pfad)
+    con = sqlite3.connect(path)
     try:
         for s in sql:
             con.execute(*s) if isinstance(s, tuple) else con.executescript(s)
@@ -103,9 +103,9 @@ def _roh(pfad: str, *sql) -> None:
         con.close()
 
 
-def _stand(pfad: str) -> tuple:
+def _state(path: str) -> tuple:
     """(stamp, key kinds, payloads of the address-change links) — raw from the file."""
-    con = sqlite3.connect(pfad)
+    con = sqlite3.connect(path)
     try:
         return (con.execute("PRAGMA user_version").fetchone()[0],
                 [z[0] for z in con.execute("SELECT kind FROM api_key ORDER BY id")],
@@ -115,103 +115,103 @@ def _stand(pfad: str) -> tuple:
         con.close()
 
 
-def _key_einfuegen(pfad: str, uid: int, kind: str) -> str:
+def _insert_key(path: str, uid: int, kind: str) -> str:
     """Create a key the way 0.21.x issues it (`kind` as there) — returns the plaintext."""
-    roh = "tsk_" + secrets.token_urlsafe(32)
-    _roh(pfad, ("INSERT INTO api_key(user_id, name, prefix, key_hash, roles, kind, created_at, "
+    raw = "tsk_" + secrets.token_urlsafe(32)
+    _raw(path, ("INSERT INTO api_key(user_id, name, prefix, key_hash, roles, kind, created_at, "
                 "expires_at) VALUES (?,?,?,?,?,?,strftime('%s','now'),strftime('%s','now')+86400)",
-                (uid, f"alt-{kind}", roh[:12] + "…", hashlib.sha256(roh.encode()).hexdigest(), "[]", kind)))
-    return roh
+                (uid, f"alt-{kind}", raw[:12] + "…", hashlib.sha256(raw.encode()).hexdigest(), "[]", kind)))
+    return raw
 
 
-def _link_einfuegen(pfad: str, uid: int, alt: str, neu: str) -> str:
+def _insert_link(path: str, uid: int, old: str, new: str) -> str:
     """Create an address-change link the way 0.21.x issues it (payload `{"alt": …}`)."""
-    roh = secrets.token_urlsafe(32)
-    _roh(pfad, ("INSERT INTO magic_token(token_hash, purpose, user_id, email, payload, created_at, "
+    raw = secrets.token_urlsafe(32)
+    _raw(path, ("INSERT INTO magic_token(token_hash, purpose, user_id, email, payload, created_at, "
                 "expires_at) VALUES (?,?,?,?,?,strftime('%s','now'),strftime('%s','now')+3600)",
-                (hashlib.sha256(roh.encode()).hexdigest(), "email_change", uid, neu,
-                 json.dumps({"alt": alt}))))
-    return roh
+                (hashlib.sha256(raw.encode()).hexdigest(), "email_change", uid, new,
+                 json.dumps({"alt": old}))))
+    return raw
 
 
-def _wirkung(a: TinySesam, mensch: str, automat: str) -> dict:
+def _effect(a: TinySesam, human: str, automaton: str) -> dict:
     """What the two keys do on a route: the human key alone and with a session, the
     automation key alone."""
     app = _app(a)
-    ohne = TestClient(app)
-    mit = TestClient(app)
-    mit.post("/auth/login", data={"username": "anna", "password": PW}, follow_redirects=False)
-    a_allein = ohne.get("/wer", headers={"X-API-Key": automat})
-    return {"mensch_allein": ohne.get("/wer", headers={"X-API-Key": mensch}).status_code,
-            "mensch_mit_sitzung": mit.get("/wer", headers={"X-API-Key": mensch}).status_code,
-            "automat_allein": a_allein.status_code,
-            "automat_kind": a_allein.json().get("kind") if a_allein.status_code == 200 else None}
+    without = TestClient(app)
+    with_ = TestClient(app)
+    with_.post("/auth/login", data={"username": "anna", "password": PW}, follow_redirects=False)
+    a_alone = without.get("/wer", headers={"X-API-Key": automaton})
+    return {"mensch_allein": without.get("/wer", headers={"X-API-Key": human}).status_code,
+            "mensch_mit_sitzung": with_.get("/wer", headers={"X-API-Key": human}).status_code,
+            "automat_allein": a_alone.status_code,
+            "automat_kind": a_alone.json().get("kind") if a_alone.status_code == 200 else None}
 
 
 # ── (a) A file from 0.21.x: the start migrates, the keys work as before ──────────────────────────
-# (Mutation probes: remove the call of `_werte_englisch` in `_migrate` → (a) red, the kinds
-# stay old; empty `KEY_ARTEN_ALT` → (a)/(b) red, `mensch` counts as an automation key and the key
+# (Mutation probes: remove the call of `_values_english` in `_migrate` → (a) red, the kinds
+# stay old; empty `KEY_KINDS_OLD` → (a)/(b) red, `human` counts as an automation key and the key
 # works without a session — exactly what 0.21.x does with a `human` key.)
-pfad_a = os.path.join(tempfile.mkdtemp(), "a.db")
+path_a = os.path.join(tempfile.mkdtemp(), "a.db")
 post_a: list = []
-a = _aufbau(pfad_a, post_a)
+a = _setup(path_a, post_a)
 anna = a.create_user("anna", password=PW, email="anna@example.com")
-mensch_a = a.create_api_key(anna, name="cli", kind="human")["key"]
-automat_a = a.create_api_key(anna, name="ci")["key"]
-a.request_email_change(anna, "anna.neu@example.com", BASIS)()
+human_a = a.create_api_key(anna, name="cli", kind="human")["key"]
+automaton_a = a.create_api_key(anna, name="ci")["key"]
+a.request_email_change(anna, "anna.neu@example.com", BASE)()
 link_a = _link(post_a)
 a.store.db.close()
 # This is how the file lay under 0.21.x: old values, stamp 11.
-_roh(pfad_a, "UPDATE api_key SET kind='mensch' WHERE kind='human';"
+_raw(path_a, "UPDATE api_key SET kind='mensch' WHERE kind='human';"
              "UPDATE api_key SET kind='automat' WHERE kind='automation';"
              "UPDATE magic_token SET payload=json_object('alt', json_extract(payload, '$.old')) "
              "WHERE purpose='email_change';"
              "PRAGMA user_version = 11;")
-vorher_a = _stand(pfad_a)
-a, log_a = _mitschreiben(lambda: _aufbau(pfad_a, post_a))
-nachher_a = _stand(pfad_a)
+before_a = _state(path_a)
+a, log_a = _record(lambda: _setup(path_a, post_a))
+afterwards_a = _state(path_a)
 r.check("precondition: the file carries the values of 0.21.x and the stamp 11",
-        vorher_a == (11, ["mensch", "automat"], [{"alt": "anna@example.com"}]), str(vorher_a))
+        before_a == (11, ["mensch", "automat"], [{"alt": "anna@example.com"}]), str(before_a))
 r.check("(a) the start migrates: current stamp (from 12), `automation`/`human`, payload `old` — and says so in the log",
-        nachher_a == (Store.SCHEMA_VERSION, ["human", "automation"], [{"old": "anna@example.com"}])
+        afterwards_a == (Store.SCHEMA_VERSION, ["human", "automation"], [{"old": "anna@example.com"}])
         and "3 stored values rewritten to the English names" in log_a,
-        f"{nachher_a} {log_a[-300:]!r}")
-w_a = _wirkung(a, mensch_a, automat_a)
+        f"{afterwards_a} {log_a[-300:]!r}")
+w_a = _effect(a, human_a, automaton_a)
 r.check("(a) … the keys work as before: the human key only with a session, the automation key alone",
         w_a == {"mensch_allein": 401, "mensch_mit_sitzung": 200, "automat_allein": 200,
                 "automat_kind": "automation"}, str(w_a))
 r.check("(a) … `api_key_kind`, `list_api_keys` and the open link name the English values",
-        a.api_key_kind(mensch_a) == "human" and a.api_key_kind(automat_a) == "automation"
+        a.api_key_kind(human_a) == "human" and a.api_key_kind(automaton_a) == "automation"
         and sorted(k["kind"] for k in a.list_api_keys(anna)) == ["automation", "human"]
         and a.peek_magic(link_a, purpose="email_change")["payload"] == {"old": "anna@example.com"})
 a.store.db.close()
-a, log_a2 = _mitschreiben(lambda: _aufbau(pfad_a, post_a))
+a, log_a2 = _record(lambda: _setup(path_a, post_a))
 r.check("(a) second start: nothing left to rewrite (idempotent), same file",
-        _stand(pfad_a) == nachher_a and "rewritten to the English names" not in log_a2, log_a2[-300:])
+        _state(path_a) == afterwards_a and "rewritten to the English names" not in log_a2, log_a2[-300:])
 r.check("(a) … and the link from 0.21.x redeems like any other",
         a.confirm_email_change(link_a) == "ok" and a.get_user(anna)["email"] == "anna.neu@example.com")
 a.store.db.close()
 
 # ── (a') Audit and log lines stay as they were ────────────────────────────────────────────────
 # Operators' filters hang on them (PO decision 2026-09-27): the kind of a key still appears there
-# as `kind=automation`/`kind=human` since schema 15 (up to then `art=automat|mensch`), the security log line
+# as `kind=automation`/`kind=human` since schema 15 (up to then `art=automaton|human`), the security log line
 # (English text) names `'human'`.
 # (Mutation probe: `_key_art_audit` returns the English name → (a') red.)
-pfad_g = os.path.join(tempfile.mkdtemp(), "g.db")
-g = _aufbau(pfad_g)
+path_g = os.path.join(tempfile.mkdtemp(), "g.db")
+g = _setup(path_g)
 anna_g = g.create_user("anna", password=PW)
-mensch_g = g.create_api_key(anna_g, name="cli", kind="human")
-automat_g = g.create_api_key(anna_g, name="ci")
+human_g = g.create_api_key(anna_g, name="cli", kind="human")
+automaton_g = g.create_api_key(anna_g, name="ci")
 _sec = io.StringIO()
-_sec_haken = logging.StreamHandler(_sec)
+_sec_check = logging.StreamHandler(_sec)
 from tinysesam.security import seclog  # noqa: E402
-seclog.addHandler(_sec_haken)
+seclog.addHandler(_sec_check)
 try:
     _cg = TestClient(_app(g))
-    _cg.get("/wer", headers={"X-API-Key": automat_g["key"]})
-    _cg.get("/wer", headers={"X-API-Key": mensch_g["key"]})
+    _cg.get("/wer", headers={"X-API-Key": automaton_g["key"]})
+    _cg.get("/wer", headers={"X-API-Key": human_g["key"]})
 finally:
-    seclog.removeHandler(_sec_haken)
+    seclog.removeHandler(_sec_check)
 _details = {f"{z['event']}:{m.group(1)}"
             for z in g.store._all("SELECT event, detail FROM audit WHERE event IN ('apikey_create', 'apikey_use')")
             for m in [re.search(r"(?:^| )kind=(\S+)", z["detail"] or "")] if m}
@@ -228,18 +228,18 @@ g.store.db.close()
 # without a restart (a second process still running 0.21.x); the next start rewrites the keys.
 # The payload of a link only on the jump to 12 (the search would otherwise go through all
 # one-time tokens at every start, tests/test_legacy_data.py “Aufwand”) — `peek_magic` maps it when reading.
-# (Mutation probe: leave out the mapping in `TinySesam._key_kind` → (b) red: the `mensch` key
+# (Mutation probe: leave out the mapping in `TinySesam._key_kind` → (b) red: the `human` key
 # works without a session.)
-pfad_b = os.path.join(tempfile.mkdtemp(), "b.db")
-b = _aufbau(pfad_b)
+path_b = os.path.join(tempfile.mkdtemp(), "b.db")
+b = _setup(path_b)
 anna_b = b.create_user("anna", password=PW, email="anna@example.com")
-neu_b = b.create_api_key(anna_b, name="neu", kind="human")["key"]
-mensch_b = _key_einfuegen(pfad_b, anna_b, "mensch")
-automat_b = _key_einfuegen(pfad_b, anna_b, "automat")
-link_b = _link_einfuegen(pfad_b, anna_b, "anna@example.com", "anna.b@example.com")
+new_b = b.create_api_key(anna_b, name="neu", kind="human")["key"]
+human_b = _insert_key(path_b, anna_b, "mensch")
+automaton_b = _insert_key(path_b, anna_b, "automat")
+link_b = _insert_link(path_b, anna_b, "anna@example.com", "anna.b@example.com")
 r.check("precondition: mixed values at the current stamp (from 12)",
-        _stand(pfad_b)[:2] == (Store.SCHEMA_VERSION, ["human", "mensch", "automat"]), str(_stand(pfad_b)))
-w_b = _wirkung(b, mensch_b, automat_b)
+        _state(path_b)[:2] == (Store.SCHEMA_VERSION, ["human", "mensch", "automat"]), str(_state(path_b)))
+w_b = _effect(b, human_b, automaton_b)
 # `list_api_keys` sorts by `created_at` (seconds) descending. The key from the library and
 # the two inserted raw do not arise in the same second when the machine is busy
 # (parallel suites) — then the newest came first, and the order check turned red
@@ -248,56 +248,56 @@ r.check("(b) mixed, without restart: `mensch` counts as `human` (only with a ses
         "`automation`",
         w_b == {"mensch_allein": 401, "mensch_mit_sitzung": 200, "automat_allein": 200,
                 "automat_kind": "automation"}
-        and [b.api_key_kind(k) for k in (neu_b, mensch_b, automat_b)] == ["human", "human", "automation"]
+        and [b.api_key_kind(k) for k in (new_b, human_b, automaton_b)] == ["human", "human", "automation"]
         and {k["name"]: k["kind"] for k in b.list_api_keys(anna_b)}
         == {"neu": "human", "alt-mensch": "human", "alt-automat": "automation"},
         f"{w_b} {[(k['name'], k['kind']) for k in b.list_api_keys(anna_b)]}")
 r.check("(b) … the link from 0.21.x shows `old`, not `alt`",
         b.peek_magic(link_b, purpose="email_change")["payload"] == {"old": "anna@example.com"})
 b.store.db.close()
-b, log_b = _mitschreiben(lambda: _aufbau(pfad_b))
+b, log_b = _record(lambda: _setup(path_b))
 r.check("(b) the next start rewrites the keys (at every start), the link not (stamp already 12)",
-        _stand(pfad_b) == (Store.SCHEMA_VERSION, ["human", "human", "automation"], [{"alt": "anna@example.com"}])
-        and "2 stored values rewritten to the English names" in log_b, f"{_stand(pfad_b)} {log_b[-200:]!r}")
+        _state(path_b) == (Store.SCHEMA_VERSION, ["human", "human", "automation"], [{"alt": "anna@example.com"}])
+        and "2 stored values rewritten to the English names" in log_b, f"{_state(path_b)} {log_b[-200:]!r}")
 r.check("(b) … and it remains valid, redeemed with `old` in the result",
         b.redeem_magic(link_b, purpose="email_change")["payload"] == {"old": "anna@example.com"})
 b.store.db.close()
 
 # ── (c) The way back from docs/OPERATIONS.md: exactly the block that is stated there ──────────────
-# (Mutation probe: remove the line for `mensch` in the SQL block of the docs → (c) red.)
-_doku = (ROOT / "docs" / "OPERATIONS.md").read_text(encoding="utf-8")
-_abschnitt = (_doku.split("## Rollback to 0.21.x", 1)[-1].split("\n## ", 1)[0]
-              if "## Rollback to 0.21.x" in _doku else "")
-_sql = re.search(r"```sql\n(.*?)```", _abschnitt, re.S)
+# (Mutation probe: remove the line for `human` in the SQL block of the docs → (c) red.)
+_docs = (ROOT / "docs" / "OPERATIONS.md").read_text(encoding="utf-8")
+_section = (_docs.split("## Rollback to 0.21.x", 1)[-1].split("\n## ", 1)[0]
+              if "## Rollback to 0.21.x" in _docs else "")
+_sql = re.search(r"```sql\n(.*?)```", _section, re.S)
 r.check("docs/OPERATIONS.md has the section “Rollback to 0.21.x” with an SQL block",
         bool(_sql), "section or ```sql block missing")
 # Section “Rollback to 0.24.x (schema 15)”: it must name every renamed audit event, old and new, as in
-# `_vokabular` (a table row that drifts from the code is red).
-from tinysesam import _vokabular as _voc  # noqa: E402
-_a24 = (_doku.split("## Rollback to 0.24.x (schema 15)", 1)[-1].split("\n## ", 1)[0]
-        if "## Rollback to 0.24.x (schema 15)" in _doku else "")
-_fehlt24 = [n for alt, neu in _voc.AUDIT_EREIGNISSE_ALT.items() for n in (alt, neu)
+# `_vocabulary` (a table row that drifts from the code is red).
+from tinysesam import _vocabulary as _voc  # noqa: E402
+_a24 = (_docs.split("## Rollback to 0.24.x (schema 15)", 1)[-1].split("\n## ", 1)[0]
+        if "## Rollback to 0.24.x (schema 15)" in _docs else "")
+_missing24 = [n for old, new in _voc.AUDIT_EVENTS_OLD.items() for n in (old, new)
             if n not in _a24 and n not in ("login_local", "login_lokal", "source_email_taken", "quelle_email_taken")]
-_fehlt24 += [s for s in ("_kennung_abgewiesen", "_identifier_rejected", "_namensbindung_zu", "_name_binding_closed",
+_missing24 += [s for s in ("_kennung_abgewiesen", "_identifier_rejected", "_namensbindung_zu", "_name_binding_closed",
                          "_ohne_kennung", "_without_identifier", "gelöscht#", "deleted#", "pin_folge", "pin_chain",
                          "kennung vergeben", "identifier taken") if s not in _a24]
 r.check("docs/OPERATIONS.md has the section “Rollback to 0.24.x (schema 15)” naming the old and new events",
-        bool(_a24) and not _fehlt24, str(_fehlt24))
+        bool(_a24) and not _missing24, str(_missing24))
 if _sql:
-    pfad_c = os.path.join(tempfile.mkdtemp(), "c.db")
+    path_c = os.path.join(tempfile.mkdtemp(), "c.db")
     post_c: list = []
-    c = _aufbau(pfad_c, post_c)
+    c = _setup(path_c, post_c)
     anna_c = c.create_user("anna", password=PW, email="anna@example.com")
     c.create_api_key(anna_c, name="cli", kind="human")
     c.create_api_key(anna_c, name="ci")
-    c.request_email_change(anna_c, "anna.c@example.com", BASIS)()
+    c.request_email_change(anna_c, "anna.c@example.com", BASE)()
     c.store.db.close()
-    _roh(pfad_c, _sql.group(1))
+    _raw(path_c, _sql.group(1))
     r.check("(c) the SQL from the docs restores the values of 0.21.x and lowers the stamp to 11",
-            _stand(pfad_c) == (11, ["mensch", "automat"], [{"alt": "anna@example.com"}]), str(_stand(pfad_c)))
-    c = _aufbau(pfad_c, post_c)
+            _state(path_c) == (11, ["mensch", "automat"], [{"alt": "anna@example.com"}]), str(_state(path_c)))
+    c = _setup(path_c, post_c)
     r.check("(c) … and a start of 0.22.0 afterwards migrates again (there and back without loss)",
-            _stand(pfad_c) == (Store.SCHEMA_VERSION, ["human", "automation"], [{"old": "anna@example.com"}]), str(_stand(pfad_c)))
+            _state(path_c) == (Store.SCHEMA_VERSION, ["human", "automation"], [{"old": "anna@example.com"}]), str(_state(path_c)))
     c.store.db.close()
 
 # ── (d) Read-only ─────────────────────────────────────────────────────────────────────────────
@@ -305,11 +305,11 @@ if _sql:
 # fail, which worked before — reading is correct anyway. An upgrade (stamp 11), on the other hand, needs
 # write permission like any migration. The test makes it read-only itself, really via
 # `PRAGMA query_only` (the other steps of the start write nothing that counts here).
-# (Mutation probe: remove the `try` around `_werte_englisch` → (d) red, the start fails.)
-_original = Store._werte_englisch
+# (Mutation probe: remove the `try` around `_values_english` → (d) red, the start fails.)
+_original = Store._values_english
 
 
-def _nur_lesbar(self, links=True):
+def _only_readable(self, links=True):
     self.db.execute("PRAGMA query_only = ON")
     try:
         return _original(self, links)
@@ -317,69 +317,69 @@ def _nur_lesbar(self, links=True):
         self.db.execute("PRAGMA query_only = OFF")
 
 
-pfad_d = os.path.join(tempfile.mkdtemp(), "d.db")
-d = _aufbau(pfad_d)
+path_d = os.path.join(tempfile.mkdtemp(), "d.db")
+d = _setup(path_d)
 anna_d = d.create_user("anna", password=PW)
 d.store.db.close()
-mensch_d = _key_einfuegen(pfad_d, anna_d, "mensch")
-Store._werte_englisch = _nur_lesbar
+human_d = _insert_key(path_d, anna_d, "mensch")
+Store._values_english = _only_readable
 try:
     try:
-        d, log_d = _mitschreiben(lambda: _aufbau(pfad_d))
+        d, log_d = _record(lambda: _setup(path_d))
         start_d = "ok"
-    except Exception as fehler:          # the start itself fails
-        log_d, start_d = "", f"{type(fehler).__name__}: {fehler}"
+    except Exception as error:          # the start itself fails
+        log_d, start_d = "", f"{type(error).__name__}: {error}"
     r.check("(d) read-only, stamp 12, old values: the start succeeds, says so, reads `mensch` as `human`",
             start_d == "ok" and "not rewritten to the English names" in log_d
-            and d.api_key_kind(mensch_d) == "human" and _stand(pfad_d)[1] == ["mensch"],
+            and d.api_key_kind(human_d) == "human" and _state(path_d)[1] == ["mensch"],
             f"{start_d} {log_d[-200:]!r}")
     if start_d == "ok":
         d.store.db.close()
-    _roh(pfad_d, "PRAGMA user_version = 11;")
+    _raw(path_d, "PRAGMA user_version = 11;")
     try:
-        _aufbau(pfad_d).store.db.close()
+        _setup(path_d).store.db.close()
         upgrade_d = "ok"
-    except sqlite3.OperationalError as fehler:
-        upgrade_d = f"OperationalError: {fehler}"
+    except sqlite3.OperationalError as error:
+        upgrade_d = f"OperationalError: {error}"
     r.check("(d) … an upgrade (stamp 11) without write permission aborts, like any migration",
             upgrade_d.startswith("OperationalError"), upgrade_d)
 finally:
-    Store._werte_englisch = _original
+    Store._values_english = _original
 
 # ── (e) The old names are input errors whose text names the new ones — no alias ────────────────
-pfad_e = os.path.join(tempfile.mkdtemp(), "e.db")
-e = _aufbau(pfad_e)
+path_e = os.path.join(tempfile.mkdtemp(), "e.db")
+e = _setup(path_e)
 bert = e.create_user("bert", password=PW)
-_texte = {}
-for alt_name, neu_name in (("automat", "automation"), ("mensch", "human")):
+_texts = {}
+for old_name, new_name in (("automat", "automation"), ("mensch", "human")):
     try:
-        e.create_api_key(bert, name="x", kind=alt_name)
-        _texte[alt_name] = "angenommen"
-    except ConfigError as fehler:
-        _texte[alt_name] = str(fehler)
+        e.create_api_key(bert, name="x", kind=old_name)
+        _texts[old_name] = "angenommen"
+    except ConfigError as error:
+        _texts[old_name] = str(error)
 r.check("(e) `create_api_key(kind='automat'|'mensch')` → ConfigError that names the new name",
-        all(f"has been called {neu!r} since 0.22.0" in _texte[alt] for alt, neu in
-            (("automat", "automation"), ("mensch", "human"))), str(_texte))
+        all(f"has been called {new!r} since 0.22.0" in _texts[old] for old, new in
+            (("automat", "automation"), ("mensch", "human"))), str(_texts))
 _ce = TestClient(_app(e))
 _ce.post("/auth/login", data={"username": "bert", "password": PW}, follow_redirects=False)
-_antwort = _ce.post("/auth/apikeys", json={"name": "x", "kind": "mensch"})
+_response = _ce.post("/auth/apikeys", json={"name": "x", "kind": "mensch"})
 _standard = _ce.post("/auth/apikeys", json={"name": "y"})
 r.check("(e) … via `POST /auth/apikeys` 400 with the same hint; without `kind` an `automation` key",
-        _antwort.status_code == 400 and "'human'" in _antwort.json()["detail"]
+        _response.status_code == 400 and "'human'" in _response.json()["detail"]
         and _standard.status_code == 200 and _standard.json()["kind"] == "automation"
-        and "dropped_roles" in _standard.json(), f"{_antwort.text[:200]} {_standard.text[:200]}")
+        and "dropped_roles" in _standard.json(), f"{_response.text[:200]} {_standard.text[:200]}")
 e.store.db.close()
 
 # ── (f) auth.set_disabled: the operator's lockout with its full effect ─────────────────────────
 # (Mutation probes, each individually: remove the ending of sessions in `set_disabled` → red; the
-# revocation of the keys → red; `revoke_user_magic_tokens` → red; omit `durch_betreiber=True` → red
+# revocation of the keys → red; `revoke_user_magic_tokens` → red; omit `through_operator=True` → red
 # (the confirmation link lifts the lockout); the audit line → red.)
-pfad_f = os.path.join(tempfile.mkdtemp(), "f.db")
-f = _aufbau(pfad_f)
-ereignisse_f: list = []
-f.on_security_event = lambda ereignis, konto, details: ereignisse_f.append((ereignis, details))
+path_f = os.path.join(tempfile.mkdtemp(), "f.db")
+f = _setup(path_f)
+events_f: list = []
+f.on_security_event = lambda event, account, details: events_f.append((event, details))
 f.ensure_admin("chefin", PW)
-chefin = f.find_user("chefin")["id"]
+manager = f.find_user("chefin")["id"]
 bert_f = f.create_user("bert", password=PW, email="bert@example.com")
 app_f = _app(f)
 cb = TestClient(app_f)
@@ -389,23 +389,23 @@ link_f = f.create_magic_token("login", user_id=bert_f, email="bert@example.com")
 r.check("precondition: bert is signed in, his key works, his sign-in link is open",
         cb.get("/wer").status_code == 200 and f.verify_api_key(key_f)[0] is not None
         and f.peek_magic(link_f) is not None)
-_vor = f.store._one("SELECT MAX(id) AS m FROM audit")["m"]
+_prior = f.store._one("SELECT MAX(id) AS m FROM audit")["m"]
 r.check("(f) `set_disabled(uid, True)` without a request → True", f.set_disabled(bert_f, True) is True)
-_zeile = f.store._one("SELECT event, username, ip, detail FROM audit WHERE id > ? AND event='user_disable'",
-                      (_vor,))
+_line = f.store._one("SELECT event, username, ip, detail FROM audit WHERE id > ? AND event='user_disable'",
+                      (_prior,))
 r.check("(f) … with operator mark, session ended, key revoked, link discarded",
-        f.get_user(bert_f)["disabled"] == Store.GESPERRT_BETREIBER and cb.get("/wer").status_code == 401
+        f.get_user(bert_f)["disabled"] == Store.LOCKED_OPERATOR and cb.get("/wer").status_code == 401
         and f.verify_api_key(key_f) == (None, None) and f.peek_magic(link_f) is None
         and [k["revoked"] for k in f.list_api_keys(bert_f)] == [1])
 r.check("(f) … audit `user_disable` under the affected account, event `api_keys_revoked` with `reason`",
-        _zeile is not None and dict(_zeile) == {"event": "user_disable", "username": "bert", "ip": None,
+        _line is not None and dict(_line) == {"event": "user_disable", "username": "bert", "ip": None,
                                                 "detail": f"uid={bert_f} api_keys_revoked=1"}
-        and ("api_keys_revoked", {"count": 1, "reason": "account_disabled"}) in ereignisse_f,
-        f"{_zeile and dict(_zeile)} {ereignisse_f}")
+        and ("api_keys_revoked", {"count": 1, "reason": "account_disabled"}) in events_f,
+        f"{_line and dict(_line)} {events_f}")
 _verify = f.create_magic_token("verify_email", user_id=bert_f, email="bert@example.com")
 _v = TestClient(app_f).post(f"/auth/verify/{_verify}", follow_redirects=False)
 r.check("(f) … a confirmation link that only arises afterwards does not lift the lockout (H-18)",
-        _v.status_code == 403 and f.get_user(bert_f)["disabled"] == Store.GESPERRT_BETREIBER, str(_v.status_code))
+        _v.status_code == 403 and f.get_user(bert_f)["disabled"] == Store.LOCKED_OPERATOR, str(_v.status_code))
 r.check("(f) `set_disabled(uid, False)` unlocks; the revoked key stays revoked, the ended "
         "session stays ended (otherwise it would revive with the unlock)",
         f.set_disabled(bert_f, False) is True and f.get_user(bert_f)["disabled"] == 0
@@ -413,34 +413,34 @@ r.check("(f) `set_disabled(uid, False)` unlocks; the revoked key stays revoked, 
         and f.store.list_sessions(bert_f) == []
         and f.store._one("SELECT 1 FROM audit WHERE event='user_enable' AND username='bert' "
                          "AND detail=?", (f"uid={bert_f}",)) is not None)
-_vor = f.store._one("SELECT MAX(id) AS m FROM audit")["m"]
+_prior = f.store._one("SELECT MAX(id) AS m FROM audit")["m"]
 try:
-    f.set_disabled(chefin, True)
+    f.set_disabled(manager, True)
     _owner = "gesperrt"
 except StateError:
     _owner = "StateError"
 r.check("(f) an owner cannot be locked: StateError, and nothing happened",
-        _owner == "StateError" and f.get_user(chefin)["disabled"] == 0
-        and f.store._one("SELECT 1 FROM audit WHERE id > ?", (_vor,)) is None, _owner)
+        _owner == "StateError" and f.get_user(manager)["disabled"] == 0
+        and f.store._one("SELECT 1 FROM audit WHERE id > ?", (_prior,)) is None, _owner)
 r.check("(f) an unknown account: False, no audit row",
         f.set_disabled(9999, True) is False
-        and f.store._one("SELECT 1 FROM audit WHERE id > ?", (_vor,)) is None)
+        and f.store._one("SELECT 1 FROM audit WHERE id > ?", (_prior,)) is None)
 
 # The panel calls exactly this method — and writes the same line as up to 0.21.x: the admin as
-# Konto, seine IP, `uid=… api_keys_revoked=…`.
+# account, its IP, `uid=… api_keys_revoked=…`.
 ca = TestClient(app_f)
 ca.post("/auth/login", data={"username": "chefin", "password": PW}, follow_redirects=False)
 f.create_api_key(bert_f, name="zwei")
-_vor = f.store._one("SELECT MAX(id) AS m FROM audit")["m"]
+_prior = f.store._one("SELECT MAX(id) AS m FROM audit")["m"]
 _p = ca.post(f"/auth/admin/api/users/{bert_f}/disable", json={"disabled": True})
-_zeile = f.store._one("SELECT event, username, ip, detail FROM audit WHERE id > ? AND event='user_disable'",
-                      (_vor,))
+_line = f.store._one("SELECT event, username, ip, detail FROM audit WHERE id > ? AND event='user_disable'",
+                      (_prior,))
 r.check("(f) panel: 200, same effect, audit under the admin with his IP (as up to 0.21.x)",
-        _p.status_code == 200 and f.get_user(bert_f)["disabled"] == Store.GESPERRT_BETREIBER
-        and _zeile is not None and dict(_zeile) == {"event": "user_disable", "username": "chefin",
+        _p.status_code == 200 and f.get_user(bert_f)["disabled"] == Store.LOCKED_OPERATOR
+        and _line is not None and dict(_line) == {"event": "user_disable", "username": "chefin",
                                                     "ip": "testclient",
                                                     "detail": f"uid={bert_f} api_keys_revoked=1"},
-        f"{_p.status_code} {_zeile and dict(_zeile)}")
+        f"{_p.status_code} {_line and dict(_line)}")
 r.check("(f) panel: an unknown account → 404 instead of 200 (up to 0.21.x “ok” and an audit row)",
         ca.post("/auth/admin/api/users/9999/disable", json={"disabled": True}).status_code == 404)
 f.store.db.close()
@@ -448,13 +448,13 @@ f.store.db.close()
 # One source: the panel route calls `auth.set_disabled` and none of the steps itself.
 _admin = ast.parse((ROOT / "tinysesam" / "admin.py").read_text(encoding="utf-8"))
 _route = next(k for k in ast.walk(_admin) if isinstance(k, ast.AsyncFunctionDef) and k.name == "user_disable")
-_rufe = {ast.unparse(k.func) for k in ast.walk(_route) if isinstance(k, ast.Call)}
-_ueberall = {ast.unparse(k.func) for k in ast.walk(_admin) if isinstance(k, ast.Call)}
+_call = {ast.unparse(k.func) for k in ast.walk(_route) if isinstance(k, ast.Call)}
+_everywhere = {ast.unparse(k.func) for k in ast.walk(_admin) if isinstance(k, ast.Call)}
 r.check("(f) one source: `user_disable` calls `auth.set_disabled`, no step itself; admin.py calls "
         "`store.set_disabled` nowhere",
-        "auth.set_disabled" in _rufe
-        and not _rufe & {"auth.store.set_disabled", "auth.store.delete_user_sessions", "auth._keys_widerrufen",
+        "auth.set_disabled" in _call
+        and not _call & {"auth.store.set_disabled", "auth.store.delete_user_sessions", "auth._keys_widerrufen",
                          "auth.store.revoke_user_magic_tokens", "protokoll"}
-        and "auth.store.set_disabled" not in _ueberall, str(sorted(_rufe)))
+        and "auth.store.set_disabled" not in _everywhere, str(sorted(_call)))
 
 raise SystemExit(r.done())

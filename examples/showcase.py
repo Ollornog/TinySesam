@@ -155,7 +155,7 @@ TEXTS = {
         "nav_site": "Projektseite", "nav_demo": "Demo", "nav_flows": "Login-Flows",
         "nav_account": "Konto", "nav_admin": "Admin-Panel", "nav_examples": "Beispielseiten",
         "examples": [("/app", "<code>/app</code>", "geschützt mit <code>require_user</code>"),
-                     ("/sensibel", "<code>/sensibel</code>", "Step-up: fragt nach der PIN"),
+                     ("/sensitive", "<code>/sensitive</code>", "Step-up: fragt nach der PIN"),
                      ("/gaeste", "<code>/gaeste</code>", "geteilte PIN, ganz ohne Konto"),
                      ("/gibtsnicht", "404", "gebrandete Fehlerseite"),
                      ("/boom", "500", "gebrandete Fehlerseite")],
@@ -183,7 +183,7 @@ TEXTS = {
         "nav_site": "Project page", "nav_demo": "Demo", "nav_flows": "Sign-in flows",
         "nav_account": "Account", "nav_admin": "Admin panel", "nav_examples": "Example pages",
         "examples": [("/app", "<code>/app</code>", "guarded by <code>require_user</code>"),
-                     ("/sensibel", "<code>/sensibel</code>", "step-up: asks for the PIN"),
+                     ("/sensitive", "<code>/sensitive</code>", "step-up: asks for the PIN"),
                      ("/gaeste", "<code>/gaeste</code>", "shared PIN, no account at all"),
                      ("/gibtsnicht", "404", "branded error page"),
                      ("/boom", "500", "branded error page")],
@@ -272,7 +272,7 @@ _LIVE_OPEN = {"login": "/auth/login", "account": "/auth/account", "admin": "/aut
 def demo(request: Request):
     lang, user = lang_of(request), auth.current_user(request)
     t = PANEL_T[lang]
-    # Escape as on /app and /sensibel (R8-2): the fix from T-12 hit two of the three places
+    # Escape as on /app and /sensitive (R8-2): the fix from T-12 hit two of the three places
     # where the username goes into a demo page. Whoever registered as `<img src=x onerror=…>`
     # was running along here on every visit to /demo.
     lead = t["demo_hello"].format(u=html.escape(user["username"])) if user else t["demo_lead"]
@@ -288,7 +288,7 @@ def flows(request: Request):
             f"<p class=lead>{t['flows_lead'].format(ident=c.login_identifier, pin=c.pin_login)}</p>"
             + flow_html(lang, c) +
             f"<hr class=rule><div class=bar><a class='btn primary' href='/demo'>{t['back_demo']}</a>"
-            f"<a class='btn ghost' href='/sensibel'>{t['try_stepup']}</a>"
+            f"<a class='btn ghost' href='/sensitive'>{t['try_stepup']}</a>"
             f"<a class='btn ghost' href='/gaeste'>{t['try_pin']}</a></div>")
     return page(t["flows_h1"], body, request)
 
@@ -329,15 +329,15 @@ def protected(request: Request, user=Depends(auth.require_user)):
     return page("/app", f"<h1>{t['app_h1'].format(u=html.escape(user['username']))}</h1>"
                         f"<p class=lead>{t['app_lead']}</p>"
                         f"<div class=bar><a class='btn primary' href='/demo'>{t['back_demo']}</a>"
-                        f"<a class='btn ghost' href='/sensibel'>{t['try_stepup']}</a></div>", request)
+                        f"<a class='btn ghost' href='/sensitive'>{t['try_stepup']}</a></div>", request)
 
 
-@app.get("/sensibel", response_class=HTMLResponse)
+@app.get("/sensitive", response_class=HTMLResponse)
 def sensitive(request: Request, user=Depends(auth.require(mfa=True))):
     lang = lang_of(request)
     t = TEXTS[lang]
     method = html.escape(", ".join(auth.stepup_options(user))) or "—"
-    return page("/sensibel", f"<h1>{t['sens_h1']}</h1>"
+    return page("/sensitive", f"<h1>{t['sens_h1']}</h1>"
                              f"<p class=lead>{t['sens_lead'].format(u=html.escape(user['username']))}</p>"
                              f"<p class=muted style='max-width:60ch'>{t['sens_hint'].format(m=method)}</p>"
                              f"<div class=bar><a class='btn primary' href='/demo'>{t['back_demo']}</a>"

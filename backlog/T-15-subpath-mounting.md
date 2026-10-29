@@ -33,7 +33,7 @@ qualification.
 
 ## Done 2026-09-25
 
-One source: `TinySesam._praefix(request)` takes the path of `base_url`, and without it `scope["root_path"]`
+One source: `TinySesam._prefix(request)` takes the path of `base_url`, and without it `scope["root_path"]`
 (counter-check: only this way do the guards of a host app outside the mount and a proxy that strips without
 `--root-path` come out right). Form checked: only
 `/part/part` of A–Z a–z 0–9 . _ ~ -, otherwise empty and a warning — the value ends up unmasked

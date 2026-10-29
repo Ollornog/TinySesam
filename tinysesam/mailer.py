@@ -7,7 +7,7 @@ MailNotConfigured — the callers treat that as "email feature not available". T
 `send()` method; whoever builds their own mailer writes a `__call__` or passes
 a function directly.
 
-The built-in routes do not send themselves but via the `Postausgang` (below): the
+The built-in routes do not send themselves but via the `Outbox` (below): the
 response goes out before the mail leaves the server.
 """
 from __future__ import annotations
@@ -28,7 +28,7 @@ from .errors import MailNotConfigured  # noqa: F401
 log = logging.getLogger("tinysesam.mail")
 
 
-def tls_kontext(cfg) -> ssl.SSLContext:
+def tls_context(cfg) -> ssl.SSLContext:
     """The TLS context for the SMTP connection: certificate AND hostname are verified (B3-1).
 
     `smtplib.SMTP_SSL()` and `starttls()` without `context=` take the stdlib context, which
@@ -56,7 +56,7 @@ class SMTPMailer:
         if html:
             msg.add_alternative(html, subtype="html")
         try:
-            self._senden(cfg, msg)
+            self._send(cfg, msg)
         except ssl.SSLCertVerificationError as e:
             # Since B3-1 the certificate is verified. Whoever sent before with a self-signed certificate
             # or via IP address would otherwise see only `*_send_error` in the audit log —
@@ -67,23 +67,23 @@ class SMTPMailer:
             raise
 
     @staticmethod
-    def _senden(cfg, msg):
+    def _send(cfg, msg):
         if cfg.smtp_ssl:
             with smtplib.SMTP_SSL(cfg.smtp_host, cfg.smtp_port, timeout=cfg.smtp_timeout,
-                                  context=tls_kontext(cfg)) as s:
+                                  context=tls_context(cfg)) as s:
                 if cfg.smtp_user:
                     s.login(cfg.smtp_user, cfg.smtp_password)
                 s.send_message(msg)
         else:
             with smtplib.SMTP(cfg.smtp_host, cfg.smtp_port, timeout=cfg.smtp_timeout) as s:
                 if cfg.smtp_starttls:
-                    s.starttls(context=tls_kontext(cfg))
+                    s.starttls(context=tls_context(cfg))
                 if cfg.smtp_user:
                     s.login(cfg.smtp_user, cfg.smtp_password)
                 s.send_message(msg)
 
 
-class Postausgang:
+class Outbox:
     """Sending outside the request: a small worker pool of its own with a capped queue.
 
     Two findings, one cause — the route waited for the mail server:
@@ -95,85 +95,85 @@ class Postausgang:
       `smtp_timeout` seconds. Forty requests against a hanging mail server occupied all of them —
       in gateway operation that stalled `/auth/forward` and every app protected behind it.
 
-    `nachher()` therefore returns an **async** background task: Starlette sends the
+    `afterwards()` therefore returns an **async** background task: Starlette sends the
     response first, then it runs; it waits for its own worker without holding a slot in the thread pool.
     The queue is capped — when it is full, the mail is dropped and this is
     reported, instead of filling memory with a flood of jobs. `TestClient` waits for
     background tasks, so tests see the mail right after the request as before.
     """
 
-    def __init__(self, arbeiter: int = 2, max_offen: int = 100):
-        self.arbeiter = arbeiter
-        self.max_offen = max_offen
+    def __init__(self, worker: int = 2, max_unclosed: int = 100):
+        self.worker = worker
+        self.max_unclosed = max_unclosed
         self._pool: Optional[ThreadPoolExecutor] = None
-        self._offen = 0
+        self._unclosed = 0
         self._lock = threading.Lock()
 
     def _executor(self) -> ThreadPoolExecutor:
         with self._lock:
             if self._pool is None:
-                self._pool = ThreadPoolExecutor(max_workers=self.arbeiter,
+                self._pool = ThreadPoolExecutor(max_workers=self.worker,
                                                 thread_name_prefix="tinysesam-mail")
             return self._pool
 
-    def _reservieren(self) -> bool:
+    def _reserve(self) -> bool:
         with self._lock:
-            if self._offen >= self.max_offen:
+            if self._unclosed >= self.max_unclosed:
                 return False
-            self._offen += 1
+            self._unclosed += 1
             return True
 
-    def _freigeben(self):
+    def _release(self):
         with self._lock:
-            self._offen -= 1
+            self._unclosed -= 1
 
-    def einreihen(self, auftrag) -> bool:
-        """Start `auftrag()` in the own worker without waiting for it — for places without a
+    def enqueue(self, job) -> bool:
+        """Start `job()` in the own worker without waiting for it — for places without a
         response object (the lockout in login, ASVS 6.3.5). False if the queue is full;
         the job is dropped then."""
-        if not self._reservieren():
-            log.warning("Notice queue full (%d) — send dropped", self.max_offen)
+        if not self._reserve():
+            log.warning("Notice queue full (%d) — send dropped", self.max_unclosed)
             return False
 
-        def _lauf():
+        def _execution():
             try:
-                auftrag()
+                job()
             except Exception:   # noqa: BLE001
                 log.exception("Notice job failed")
             finally:
-                self._freigeben()
-        zukunft = self._executor().submit(_lauf)
+                self._release()
+        future = self._executor().submit(_execution)
         with self._lock:
-            self._laufend = [z for z in getattr(self, "_laufend", []) if not z.done()] + [zukunft]
+            self._running = [z for z in getattr(self, "_running", []) if not z.done()] + [future]
         return True
 
-    def abwarten(self, timeout: float = 10.0) -> None:
+    def wait(self, timeout: float = 10.0) -> None:
         """Wait until everything queued has run (for tests and an orderly shutdown)."""
         with self._lock:
-            laufend = list(getattr(self, "_laufend", []))
-        for z in laufend:
+            running = list(getattr(self, "_running", []))
+        for z in running:
             z.result(timeout=timeout)
 
-    def nachher(self, auftrag, bei_ueberlauf=None):
-        """An async background task that runs `auftrag()` in the own worker.
+    def afterwards(self, job, at_overflow=None):
+        """An async background task that runs `job()` in the own worker.
 
-        `auftrag` catches its own errors (it knows what to clean up); whatever still
-        gets through is logged here instead of silently swallowed. `bei_ueberlauf()` runs when
+        `job` catches its own errors (it knows what to clean up); whatever still
+        gets through is logged here instead of silently swallowed. `at_overflow()` runs when
         the queue is full — the job is dropped then.
         """
-        async def _lauf():
-            if not self._reservieren():
-                log.warning("Mail queue full (%d) — send dropped", self.max_offen)
-                if bei_ueberlauf:
+        async def _execution():
+            if not self._reserve():
+                log.warning("Mail queue full (%d) — send dropped", self.max_unclosed)
+                if at_overflow:
                     try:
-                        bei_ueberlauf()
+                        at_overflow()
                     except Exception:   # noqa: BLE001 — cleanup must not bring the server down
                         log.exception("Cleanup after a discarded send failed")
                 return
             try:
-                await asyncio.wrap_future(self._executor().submit(auftrag))
+                await asyncio.wrap_future(self._executor().submit(job))
             except Exception:   # noqa: BLE001
                 log.exception("Mail job failed")
             finally:
-                self._freigeben()
-        return _lauf
+                self._release()
+        return _execution

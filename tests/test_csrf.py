@@ -20,7 +20,7 @@ app.include_router(auth.router())
 
 
 @app.get("/geheim")
-def geheim(u=Depends(auth.require_user)):
+def secret_text(u=Depends(auth.require_user)):
     return {"u": u["username"]}
 
 
@@ -61,9 +61,9 @@ _m_app = FastAPI(); _m_app.include_router(_m.router())
 _mc = TestClient(_m_app)
 _m_tok = _m.create_magic_token("login", user_id=_m_uid, email="mia@example.com", payload={"next": "/"})
 assert _mc.post(f"/auth/magic/{_m_tok}", follow_redirects=False).status_code == 403, "without token"
-_seite = _mc.get(f"/auth/magic/{_m_tok}").text
-_feld = re.search(r"name=_csrf value='([^']+)'", _seite).group(1)
-assert _mc.post(f"/auth/magic/{_m_tok}", data={"_csrf": _feld}, follow_redirects=False).status_code == 303
+_page_html = _mc.get(f"/auth/magic/{_m_tok}").text
+_slot = re.search(r"name=_csrf value='([^']+)'", _page_html).group(1)
+assert _mc.post(f"/auth/magic/{_m_tok}", data={"_csrf": _slot}, follow_redirects=False).status_code == 303
 os.remove(_m_db)
 ok("R4-02: confirmation page carries the CSRF field; POST without token 403, with token redeemed")
 
@@ -135,7 +135,7 @@ import logging  # noqa: E402
 _db = os.path.join(tempfile.mkdtemp(), "t.db")
 
 
-def _instanz(**kw):
+def _instance(**kw):
     a = TinySesam(TinySesamConfig(db_path=_db, lang="de", passkey_enabled=False, cookie_secure=False,
                                   apikey_enabled=True, **kw))
     a.ensure_admin("admin", "geheim123-lang-genug")
@@ -144,32 +144,32 @@ def _instanz(**kw):
     return a, ap
 
 
-_a, _app = _instanz(trusted_redirect_hosts=["portal.example.com"])
+_a, _app = _instance(trusted_redirect_hosts=["portal.example.com"])
 
 
-def _login(kopf, app=None):
+def _login(head, app=None):
     cl = TestClient(app or _app)
-    feld = re.search(r"name=_csrf value='([^']+)'", cl.get("/auth/login").text).group(1)
+    slot = re.search(r"name=_csrf value='([^']+)'", cl.get("/auth/login").text).group(1)
     return cl.post("/auth/login", data={"username": "admin", "password": "geheim123-lang-genug", "next": "/",
-                                        "_csrf": feld}, headers=kopf, follow_redirects=False).status_code
+                                        "_csrf": slot}, headers=head, follow_redirects=False).status_code
 
 
-class _Fang(logging.Handler):
-    zeilen: list = []
+class _Trap(logging.Handler):
+    lines: list = []
 
     def emit(self, record):
-        _Fang.zeilen.append(record.getMessage())
+        _Trap.lines.append(record.getMessage())
 
 
 _log = logging.getLogger("tinysesam.security")
-_fang = _Fang()
-_log.addHandler(_fang)
+_trap = _Trap()
+_log.addHandler(_trap)
 try:
     assert _login({"Origin": "https://angreifer.example"}) == 403, "foreign origin with a valid pair"
     assert _login({"Origin": "https://nachbar.example.com", "Sec-Fetch-Site": "same-site"}) == 403, \
         "neighbouring subdomain (cookie tossing) must fail"
     assert _login({"Sec-Fetch-Site": "cross-site"}) == 403, "cross-site without origin"
-    assert any("csrf origin rejected" in z for z in _Fang.zeilen), "rejection must appear in the log"
+    assert any("csrf origin rejected" in z for z in _Trap.lines), "rejection must appear in the log"
     ok("H-2: foreign origin, neighbouring subdomain and cross-site → 403, although the token pair matches")
 
     assert _login({"Origin": "http://testserver", "Sec-Fetch-Site": "same-origin"}) == 303
@@ -181,7 +181,7 @@ try:
     # protected apps. They are not an own origin: a compromised app on one of
     # these hosts would otherwise send forms with a valid origin to TinySesam (login CSRF,
     # ending the victim's sessions). Until the follow-up they counted as own here.
-    # (Mutation probe: put `trusted_redirect_hosts` back into `_eigene_hosts` → red.)
+    # (Mutation probe: put `trusted_redirect_hosts` back into `_own_hosts` → red.)
     assert _login({"Origin": "https://portal.example.com"}) == 403, \
         "a host from trusted_redirect_hosts counts as own origin"
     assert _login({"Origin": "https://portal.example.com", "Sec-Fetch-Site": "same-site"}) == 403
@@ -191,7 +191,7 @@ try:
     # form POST carries `Origin: null`, and `Sec-Fetch-Site` still says `same-site`. Until the
     # follow-up only `cross-site` without origin weighed heavily — `null` with `same-site` got through,
     # and where the CSRF cookie cannot carry `__Host-`, the token alone decided again.
-    # (Mutation probe: in `_herkunft_ok` reset the rejection for `same-site` without own origin to
+    # (Mutation probe: in `_origin_ok` reset the rejection for `same-site` without own origin to
     # `cross-site` only → red.)
     assert _login({"Origin": "null", "Sec-Fetch-Site": "same-site"}) == 403, \
         "Origin null from a neighbouring subdomain (no-referrer) passes the origin check"
@@ -200,7 +200,7 @@ try:
     ok("H-2: same-site or cross-site without a usable origin (null, missing) → 403")
 
     # Proxy rewrites the host (upstream name), without X-Forwarded-Host — base_url saves it.
-    _a2, _app2 = _instanz(base_url="https://auth.example.com")
+    _a2, _app2 = _instance(base_url="https://auth.example.com")
     assert _login({"Origin": "https://auth.example.com", "Host": "127.0.0.1:8000"}, _app2) == 303
     assert _login({"Origin": "https://auth.example.com", "Host": "127.0.0.1:8000",
                    "X-Forwarded-Host": "auth.example.com"}, _app) == 303, "X-Forwarded-Host counts"
@@ -219,10 +219,10 @@ try:
 
     # The JSON route (json_body) checks the same way.
     cl = TestClient(_app)
-    feld = re.search(r"name=_csrf value='([^']+)'", cl.get("/auth/login").text).group(1)
-    cl.post("/auth/login", data={"username": "admin", "password": "geheim123-lang-genug", "_csrf": feld})
+    slot = re.search(r"name=_csrf value='([^']+)'", cl.get("/auth/login").text).group(1)
+    cl.post("/auth/login", data={"username": "admin", "password": "geheim123-lang-genug", "_csrf": slot})
     r = cl.post("/auth/password", json={"current": "geheim123-lang-genug", "new": "anderespasswort1"},
-                headers={"X-CSRF-Token": feld, "Origin": "https://angreifer.example"})
+                headers={"X-CSRF-Token": slot, "Origin": "https://angreifer.example"})
     assert r.status_code == 403, r.status_code
     ok("H-2: the JSON route (X-CSRF-Token) also rejects a foreign origin")
 
@@ -233,11 +233,11 @@ try:
     assert r.status_code == 200
     ok("H-2: API key requests stay exempt from the CSRF layer")
 
-    _a3, _app3 = _instanz(csrf_origin_check=False)
+    _a3, _app3 = _instance(csrf_origin_check=False)
     assert _login({"Origin": "https://angreifer.example"}, _app3) == 303
     ok("csrf_origin_check=False switches off only the pre-check (escape hatch for crooked proxies)")
 finally:
-    _log.removeHandler(_fang)
+    _log.removeHandler(_trap)
 
 # ---------- H-1 in the forward-auth setup: the CSRF cookie carries `__Host-` even with cookie_domain ----------
 # With `cookie_domain` (SSO across subdomains) the SESSION cookie cannot carry `__Host-`. TinySesam
@@ -257,35 +257,35 @@ _fa_app.include_router(_fa.router())
 assert _fa.session_cookie_name == "tinysesam_session", "session with cookie_domain: without prefix"
 assert _fa.csrf_cookie_name == "__Host-tinysesam_csrf", _fa.csrf_cookie_name
 _fa_c = TestClient(_fa_app, base_url="https://auth.example.com")
-_seite = _fa_c.get("/auth/login")
-_zeile = [z for z in _seite.headers.get_list("set-cookie") if z.startswith("__Host-tinysesam_csrf=")]
-assert len(_zeile) == 1 and "domain" not in _zeile[0].lower() and "secure" in _zeile[0].lower() \
-    and "path=/" in _zeile[0].lower(), _seite.headers.get_list("set-cookie")
-_feld = re.search(r"name=_csrf value='([^']+)'", _seite.text).group(1)
+_page_html = _fa_c.get("/auth/login")
+_line = [z for z in _page_html.headers.get_list("set-cookie") if z.startswith("__Host-tinysesam_csrf=")]
+assert len(_line) == 1 and "domain" not in _line[0].lower() and "secure" in _line[0].lower() \
+    and "path=/" in _line[0].lower(), _page_html.headers.get_list("set-cookie")
+_slot = re.search(r"name=_csrf value='([^']+)'", _page_html.text).group(1)
 assert _fa_c.post("/auth/login", data={"username": "admin", "password": "geheim123-lang-genug", "next": "/",
-                                       "_csrf": _feld}, follow_redirects=False).status_code == 303
+                                       "_csrf": _slot}, follow_redirects=False).status_code == 303
 ok("H-1: with cookie_domain the CSRF cookie is named __Host-…, without Domain; login works")
 
 
-def _geworfen(kopf):
+def _thrown(head):
     """Login CSRF with a planted domain cookie `tinysesam_csrf=BEKANNT`."""
     cl = TestClient(_fa_app, base_url="https://auth.example.com")
     cl.cookies.set("tinysesam_csrf", "BEKANNT", domain=".example.com", path="/")
     return cl.post("/auth/login", data={"username": "mallory", "password": "angreifer-pw-15",
                                         "next": "/", "_csrf": "BEKANNT"},
-                   headers=kopf, follow_redirects=False).status_code
+                   headers=head, follow_redirects=False).status_code
 
 
-assert _geworfen({}) == 403, "a planted tinysesam_csrf passes double-submit"
-assert _geworfen({"Origin": "https://app.example.com", "Sec-Fetch-Site": "same-site"}) == 403, \
+assert _thrown({}) == 403, "a planted tinysesam_csrf passes double-submit"
+assert _thrown({"Origin": "https://app.example.com", "Sec-Fetch-Site": "same-site"}) == 403, \
     "login CSRF from the protected app"
 # And with the victim's session: the protected app does not end its other sessions.
-_opfer = TestClient(_fa_app, base_url="https://auth.example.com")
-_f = re.search(r"name=_csrf value='([^']+)'", _opfer.get("/auth/login").text).group(1)
-_opfer.post("/auth/login", data={"username": "admin", "password": "geheim123-lang-genug", "next": "/",
+_victim = TestClient(_fa_app, base_url="https://auth.example.com")
+_f = re.search(r"name=_csrf value='([^']+)'", _victim.get("/auth/login").text).group(1)
+_victim.post("/auth/login", data={"username": "admin", "password": "geheim123-lang-genug", "next": "/",
                                  "_csrf": _f}, follow_redirects=False)
-_opfer.cookies.set("tinysesam_csrf", "BEKANNT", domain=".example.com", path="/")
-_r = _opfer.post("/auth/sessions/revoke", content='{"scope":"others","_csrf":"BEKANNT"}',
+_victim.cookies.set("tinysesam_csrf", "BEKANNT", domain=".example.com", path="/")
+_r = _victim.post("/auth/sessions/revoke", content='{"scope":"others","_csrf":"BEKANNT"}',
                  headers={"Content-Type": "text/plain", "Origin": "https://app.example.com",
                           "Sec-Fetch-Site": "same-site"})
 assert _r.status_code == 403, (_r.status_code, _r.text[:120])
@@ -309,19 +309,19 @@ _np_app.include_router(_np.router())
 assert _np.csrf_cookie_name == "tinysesam_csrf"
 
 
-def _ohne_praefix(kopf):
+def _without_prefix(head):
     cl = TestClient(_np_app, base_url="https://auth.example.com")
     cl.cookies.set("tinysesam_csrf", "BEKANNT", domain=".example.com", path="/")
     r = cl.post("/auth/login", data={"username": "mallory", "password": "angreifer-pw-15",
                                      "next": "/", "_csrf": "BEKANNT"},
-                headers=kopf, follow_redirects=False)
+                headers=head, follow_redirects=False)
     return r.status_code, [z.split("=", 1)[0] for z in r.headers.get_list("set-cookie")]
 
 
-assert _ohne_praefix({"Origin": "null", "Sec-Fetch-Site": "same-site"}) == (403, []), \
+assert _without_prefix({"Origin": "null", "Sec-Fetch-Site": "same-site"}) == (403, []), \
     "login CSRF via Origin null + same-site without __Host- CSRF cookie"
-assert _ohne_praefix({"Origin": "https://app.example.com", "Sec-Fetch-Site": "same-site"})[0] == 403
-assert _ohne_praefix({"Origin": "https://auth.example.com", "Sec-Fetch-Site": "same-origin"})[0] == 303, \
+assert _without_prefix({"Origin": "https://app.example.com", "Sec-Fetch-Site": "same-site"})[0] == 403
+assert _without_prefix({"Origin": "https://auth.example.com", "Sec-Fetch-Site": "same-origin"})[0] == 303, \
     "the own login must keep working without prefix"
 ok("H-2: without the __Host- prefix the origin check alone stops Origin null + same-site")
 os.remove(_np_db)
@@ -359,42 +359,42 @@ from fastapi import Form, Request, Response  # noqa: E402
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse  # noqa: E402
 
 CK = "__Host-tinysesam_csrf"
-BASIS = "https://testserver"
+BASE = "https://testserver"
 _FORM = re.compile(r"[A-Za-z0-9_-]{32,128}")
 
 
-def _set_cookies(antwort) -> list:
-    h = antwort.headers
+def _set_cookies(response) -> list:
+    h = response.headers
     return list(h.get_list("set-cookie") if hasattr(h, "get_list") else h.getlist("set-cookie"))
 
 
-def _zeilen(antwort, name=CK) -> list:
+def _lines(response, name=CK) -> list:
     """The raw Set-Cookie lines of this response for exactly this name."""
-    return [z for z in _set_cookies(antwort) if z.startswith(name + "=")]
+    return [z for z in _set_cookies(response) if z.startswith(name + "=")]
 
 
-def _wert(zeile: str) -> str:
-    return zeile.split(";", 1)[0].split("=", 1)[1].strip()
+def _value(line: str) -> str:
+    return line.split(";", 1)[0].split("=", 1)[1].strip()
 
 
-def _attribute(zeile: str) -> set:
+def _attribute(line: str) -> set:
     """All attributes except value, expiry and Max-Age — lowercase, as a set."""
-    teile = [t.strip().lower() for t in zeile.split(";")[1:]]
-    return {t for t in teile if t and not t.startswith(("expires=", "max-age="))}
+    parts = [t.strip().lower() for t in line.split(";")[1:]]
+    return {t for t in parts if t and not t.startswith(("expires=", "max-age="))}
 
 
-def _geloescht(zeile: str) -> bool:
-    return _wert(zeile) in ("", '""') and "max-age=0" in zeile.lower()
+def _deleted(line: str) -> bool:
+    return _value(line) in ("", '""') and "max-age=0" in line.lower()
 
 
-def _feld(html: str) -> str:
+def _slot(html: str) -> str:
     return re.search(r"name=_csrf value='([^']+)'", html).group(1)
 
 
-def _instanz(**kw):
+def _instance(**kw):
     """Instance with `__Host-` cookies (Secure, host-only) and the routes of an embedding app."""
     cfg = dict(db_path=os.path.join(tempfile.mkdtemp(), "t.db"), lang="de", passkey_enabled=False,
-               oidc_enabled=False, base_url=BASIS)
+               oidc_enabled=False, base_url=BASE)
     cfg.update(kw)
     a = TinySesam(TinySesamConfig(**cfg))
     ap = FastAPI()
@@ -402,7 +402,7 @@ def _instanz(**kw):
 
     # Way 1 of the docs: FastAPI response parameters, the page as return value.
     @ap.get("/app/formular", response_class=HTMLResponse)
-    def formular(request: Request, response: Response):
+    def form(request: Request, response: Response):
         csrf = a.ensure_csrf(request, response)
         return (f"<meta name=tinysesam-csrf-cookie content='{a.csrf_cookie_name}'>"
                 f"<form method=post action=/app/speichern><input name=_csrf value='{csrf}'></form>")
@@ -410,138 +410,138 @@ def _instanz(**kw):
     # Way 2 of the docs: a finished response (Jinja `TemplateResponse` & co.) — first the token,
     # then the page, then the cookie onto the finished response.
     @ap.get("/app/fertig")
-    def fertig(request: Request):
+    def done(request: Request):
         csrf = a.csrf_token(request)
-        antwort = HTMLResponse(f"<input name=_csrf value='{csrf}'>")
-        antwort.headers["x-ensure"] = a.ensure_csrf(request, antwort)
-        return antwort
+        response = HTMLResponse(f"<input name=_csrf value='{csrf}'>")
+        response.headers["x-ensure"] = a.ensure_csrf(request, response)
+        return response
 
     @ap.post("/app/speichern")
-    def speichern(request: Request, csrf_tok: str = Form("", alias="_csrf")):
+    def store(request: Request, csrf_tok: str = Form("", alias="_csrf")):
         a.require_csrf(request, csrf_tok)
         return {"ok": True}
 
     # An app's own sign-in route: `start_session` + `set_cookie`, then the form of the
     # same response.
     @ap.post("/app/anmelden")
-    def anmelden(request: Request):
+    def sign_in(request: Request):
         token, _ok = a.start_session(a.store.get_user_by_name("erika")["id"], "password")
-        antwort = JSONResponse({})
-        a.set_cookie(antwort, token)
-        antwort.headers["x-csrf"] = a.ensure_csrf(request, antwort)
-        return antwort
+        response = JSONResponse({})
+        a.set_cookie(response, token)
+        response.headers["x-csrf"] = a.ensure_csrf(request, response)
+        return response
 
     @ap.post("/app/abmelden")
-    def abmelden(request: Request):
-        antwort = JSONResponse({})
-        a.logout(request, antwort)
-        antwort.headers["x-csrf"] = a.ensure_csrf(request, antwort)
-        return antwort
+    def sign_out(request: Request):
+        response = JSONResponse({})
+        a.logout(request, response)
+        response.headers["x-csrf"] = a.ensure_csrf(request, response)
+        return response
 
     @ap.post("/app/nur-abmelden")
-    def nur_abmelden(request: Request):
-        antwort = JSONResponse({})
-        a.logout(request, antwort)
-        return antwort
+    def only_sign_out(request: Request):
+        response = JSONResponse({})
+        a.logout(request, response)
+        return response
 
     # Way 2 and sign-in/sign-out in the SAME response — the limit the docs name since the
     # follow-up: the finished page is rendered before `set_cookie`/`logout` turns.
     @ap.post("/app/anmelden-fertig")
-    def anmelden_fertig(request: Request):
+    def sign_in_done(request: Request):
         token, _ok = a.start_session(a.store.get_user_by_name("erika")["id"], "password")
         csrf = a.csrf_token(request)
-        antwort = HTMLResponse(f"<input name=_csrf value='{csrf}'>")
-        a.set_cookie(antwort, token)
-        antwort.headers["x-ensure"] = a.ensure_csrf(request, antwort)
-        return antwort
+        response = HTMLResponse(f"<input name=_csrf value='{csrf}'>")
+        a.set_cookie(response, token)
+        response.headers["x-ensure"] = a.ensure_csrf(request, response)
+        return response
 
     @ap.post("/app/abmelden-fertig")
-    def abmelden_fertig(request: Request):
+    def sign_out_done(request: Request):
         csrf = a.csrf_token(request)
-        antwort = HTMLResponse(f"<input name=_csrf value='{csrf}'>")
-        a.logout(request, antwort)
-        antwort.headers["x-ensure"] = a.ensure_csrf(request, antwort)
-        return antwort
+        response = HTMLResponse(f"<input name=_csrf value='{csrf}'>")
+        a.logout(request, response)
+        response.headers["x-ensure"] = a.ensure_csrf(request, response)
+        return response
 
     # The way the docs name for this: sign in/out, redirect, the follow-up request renders.
     @ap.post("/app/anmelden-umleiten")
-    def anmelden_umleiten(request: Request):
+    def redirect_sign_in(request: Request):
         token, _ok = a.start_session(a.store.get_user_by_name("erika")["id"], "password")
-        antwort = RedirectResponse("/app/fertig", 303)
-        a.set_cookie(antwort, token)
-        return antwort
+        response = RedirectResponse("/app/fertig", 303)
+        a.set_cookie(response, token)
+        return response
 
     @ap.post("/app/abmelden-umleiten")
-    def abmelden_umleiten(request: Request):
-        antwort = RedirectResponse("/app/fertig", 303)
-        a.logout(request, antwort)
-        return antwort
+    def redirect_sign_out(request: Request):
+        response = RedirectResponse("/app/fertig", 303)
+        a.logout(request, response)
+        return response
 
     a.create_user("erika", password="geheim12345-lang-genug", email="erika@example.com")
     return a, ap
 
 
 def _client(ap):
-    return TestClient(ap, base_url=BASIS)
+    return TestClient(ap, base_url=BASE)
 
 
 # The attributes `issue_csrf()` sets — the yardstick for every other setter.
-_a0, _ = _instanz()
+_a0, _ = _instance()
 _r0 = Response()
 _a0.issue_csrf(_r0)
-_ATTR = _attribute(_zeilen(_r0)[0])
+_ATTR = _attribute(_lines(_r0)[0])
 assert _ATTR == {"path=/", "samesite=lax", "secure"}, _ATTR
 
 # ---------- E1. ensure_csrf(): keep an existing token, otherwise set one ----------
 # (Mutation probe: in `ensure_csrf` always roll anew like `issue_csrf` → red.)
-_a, _ap = _instanz()
+_a, _ap = _instance()
 _c = _client(_ap)
 _r = _c.get("/app/formular")
-assert _r.status_code == 200 and len(_zeilen(_r)) == 1, _set_cookies(_r)
-_t1 = _wert(_zeilen(_r)[0])
-assert _feld(_r.text) == _t1 and _FORM.fullmatch(_t1), (_feld(_r.text), _t1)
-assert _attribute(_zeilen(_r)[0]) == _ATTR, "ensure_csrf sets different attributes than issue_csrf"
+assert _r.status_code == 200 and len(_lines(_r)) == 1, _set_cookies(_r)
+_t1 = _value(_lines(_r)[0])
+assert _slot(_r.text) == _t1 and _FORM.fullmatch(_t1), (_slot(_r.text), _t1)
+assert _attribute(_lines(_r)[0]) == _ATTR, "ensure_csrf sets different attributes than issue_csrf"
 assert f"content='{_a.csrf_cookie_name}'" in _r.text
 ok("ensure_csrf: first visit sets the cookie (attributes like issue_csrf), return value = form value")
 
 _r = _c.get("/app/formular")
-assert not _zeilen(_r) and _feld(_r.text) == _t1, (_set_cookies(_r), _feld(_r.text))
+assert not _lines(_r) and _slot(_r.text) == _t1, (_set_cookies(_r), _slot(_r.text))
 _r = _c.get("/app/fertig")
-assert not _zeilen(_r) and _feld(_r.text) == _t1 == _r.headers["x-ensure"]
+assert not _lines(_r) and _slot(_r.text) == _t1 == _r.headers["x-ensure"]
 _r = _c.get("/auth/login")
-assert not _zeilen(_r) and _feld(_r.text) == _t1, "render_page and ensure_csrf share the token"
+assert not _lines(_r) and _slot(_r.text) == _t1, "render_page and ensure_csrf share the token"
 assert _c.post("/app/speichern", data={"_csrf": _t1}).status_code == 200
 assert _c.post("/app/speichern", data={"_csrf": "falsch"}).status_code == 403
 ok("ensure_csrf: existing token stays (no Set-Cookie) — the forms of other tabs stay valid")
 
 # Way 2: `csrf_token()` before rendering, `ensure_csrf()` on the finished response — the same token.
-# (Mutation probe: in `_csrf_der_anfrage` do not remember the new token per request → red.)
+# (Mutation probe: in `_csrf_of_request` do not remember the new token per request → red.)
 _c2 = _client(_ap)
 _r = _c2.get("/app/fertig")
-assert len(_zeilen(_r)) == 1 and _wert(_zeilen(_r)[0]) == _feld(_r.text) == _r.headers["x-ensure"], \
-    (_set_cookies(_r), _feld(_r.text), _r.headers.get("x-ensure"))
+assert len(_lines(_r)) == 1 and _value(_lines(_r)[0]) == _slot(_r.text) == _r.headers["x-ensure"], \
+    (_set_cookies(_r), _slot(_r.text), _r.headers.get("x-ensure"))
 ok("csrf_token() + ensure_csrf(finished response): the same token in form and cookie")
 
 # Accept nothing arbitrary: a cookie that does not look like a token is replaced —
 # by ensure_csrf, csrf_token and render_page alike.
-# (Mutation probe: remove the format check in `_csrf_der_anfrage` → red.)
-for _schlecht in ("kurz", "A" * 31, "A" * 129, "A" * 30 + "<>", "A" * 30 + "'x"):
-    for _pfad in ("/app/formular", "/app/fertig", "/auth/login"):
+# (Mutation probe: remove the format check in `_csrf_of_request` → red.)
+for _bad in ("kurz", "A" * 31, "A" * 129, "A" * 30 + "<>", "A" * 30 + "'x"):
+    for _path in ("/app/formular", "/app/fertig", "/auth/login"):
         _cs = _client(_ap)
-        _cs.cookies.set(CK, _schlecht)
-        _r = _cs.get(_pfad)
-        assert len(_zeilen(_r)) == 1, (_schlecht, _pfad, _set_cookies(_r))
-        _neu = _wert(_zeilen(_r)[0])
-        assert _neu != _schlecht and _FORM.fullmatch(_neu) and _feld(_r.text) == _neu, \
-            (_schlecht, _pfad, _neu, _feld(_r.text))
-_gut = "B" * 43                          # e.g. secrets.token_urlsafe(32) — valid, stays
+        _cs.cookies.set(CK, _bad)
+        _r = _cs.get(_path)
+        assert len(_lines(_r)) == 1, (_bad, _path, _set_cookies(_r))
+        _new = _value(_lines(_r)[0])
+        assert _new != _bad and _FORM.fullmatch(_new) and _slot(_r.text) == _new, \
+            (_bad, _path, _new, _slot(_r.text))
+_good = "B" * 43                          # e.g. secrets.token_urlsafe(32) — valid, stays
 _cs = _client(_ap)
-_cs.cookies.set(CK, _gut)
+_cs.cookies.set(CK, _good)
 _r = _cs.get("/app/formular")
-assert not _zeilen(_r) and _feld(_r.text) == _gut
+assert not _lines(_r) and _slot(_r.text) == _good
 ok("ensure_csrf/csrf_token/render_page: invalid cookie (short, too long, foreign characters) is replaced")
 
-_ax, _apx = _instanz(csrf_enabled=False)
+_ax, _apx = _instance(csrf_enabled=False)
 _r = _client(_apx).get("/app/formular")
 assert not _set_cookies(_r) and "value=''" in _r.text
 ok("csrf_enabled=False: ensure_csrf sets nothing and returns ''")
@@ -549,20 +549,20 @@ ok("csrf_enabled=False: ensure_csrf sets nothing and returns ''")
 # Signing in in the SAME response: ensure_csrf afterwards returns the rotated token, not the old one.
 # (Mutation probe: in `ensure_csrf` do not consult the response → red.)
 _c3 = _client(_ap)
-_alt = _feld(_c3.get("/app/formular").text)
+_old = _slot(_c3.get("/app/formular").text)
 _r = _c3.post("/app/anmelden")
-assert len(_zeilen(_r)) == 1, _set_cookies(_r)
-_neu = _wert(_zeilen(_r)[0])
-assert _neu != _alt and _r.headers["x-csrf"] == _neu, (_alt, _neu, _r.headers.get("x-csrf"))
+assert len(_lines(_r)) == 1, _set_cookies(_r)
+_new = _value(_lines(_r)[0])
+assert _new != _old and _r.headers["x-csrf"] == _new, (_old, _new, _r.headers.get("x-csrf"))
 _r = _c3.get("/app/formular")
-assert not _zeilen(_r) and _feld(_r.text) == _neu
+assert not _lines(_r) and _slot(_r.text) == _new
 ok("own sign-in route (start_session + set_cookie): token rotated, ensure_csrf afterwards returns the new one")
 
 # Signing out in the same response: ensure_csrf afterwards sets a NEW one (replacing the delete line).
-# (Mutation probe: in `_csrf_cookie_setzen` do not remove the existing line → red.)
+# (Mutation probe: in `_set_csrf_cookie` do not remove the existing line → red.)
 _r = _c3.post("/app/abmelden")
-assert len(_zeilen(_r)) == 1 and not _geloescht(_zeilen(_r)[0]), _set_cookies(_r)
-assert _wert(_zeilen(_r)[0]) == _r.headers["x-csrf"] not in (_neu, _alt)
+assert len(_lines(_r)) == 1 and not _deleted(_lines(_r)[0]), _set_cookies(_r)
+assert _value(_lines(_r)[0]) == _r.headers["x-csrf"] not in (_new, _old)
 ok("logout() + ensure_csrf() in one response: exactly one line, a new token instead of the deletion")
 
 # Way 2 (finished response) and sign-in/sign-out in the SAME response does not work — the limit the
@@ -573,145 +573,145 @@ ok("logout() + ensure_csrf() in one response: exactly one line, a new token inst
 # security promise, it must not depend on whether a token was issued beforehand. No
 # code fix, hence no mutation probe — the block records what the docs say. If it turns red because
 # the form suddenly is valid, either the rotation is gone or the docs are outdated.
-for _weg in ("anmelden", "abmelden"):
+for _away in ("anmelden", "abmelden"):
     _cw = _client(_ap)
-    if _weg == "abmelden":
+    if _away == "abmelden":
         assert _cw.post("/app/anmelden").status_code == 200
-    _vorher = _feld(_cw.get("/app/formular").text)
-    _r = _cw.post(f"/app/{_weg}-fertig")
-    _nachher = _cw.cookies.get(CK)
-    assert _feld(_r.text) == _vorher != _nachher == _r.headers["x-ensure"], \
-        (_weg, _vorher, _feld(_r.text), _nachher, _r.headers.get("x-ensure"))
-    assert _cw.post("/app/speichern", data={"_csrf": _feld(_r.text)}).status_code == 403, _weg
+    _before = _slot(_cw.get("/app/formular").text)
+    _r = _cw.post(f"/app/{_away}-fertig")
+    _afterwards = _cw.cookies.get(CK)
+    assert _slot(_r.text) == _before != _afterwards == _r.headers["x-ensure"], \
+        (_away, _before, _slot(_r.text), _afterwards, _r.headers.get("x-ensure"))
+    assert _cw.post("/app/speichern", data={"_csrf": _slot(_r.text)}).status_code == 403, _away
     # The documented way: redirect; the follow-up request renders with the new cookie.
     _cw = _client(_ap)
-    if _weg == "abmelden":
+    if _away == "abmelden":
         assert _cw.post("/app/anmelden").status_code == 200
-    _vorher = _feld(_cw.get("/app/formular").text)
-    _r = _cw.post(f"/app/{_weg}-umleiten", follow_redirects=False)
-    assert _r.status_code == 303, (_weg, _r.status_code)
+    _before = _slot(_cw.get("/app/formular").text)
+    _r = _cw.post(f"/app/{_away}-umleiten", follow_redirects=False)
+    assert _r.status_code == 303, (_away, _r.status_code)
     _r = _cw.get("/app/fertig")
-    assert _feld(_r.text) == _cw.cookies.get(CK) != _vorher, (_weg, _feld(_r.text), _vorher)
-    assert _cw.post("/app/speichern", data={"_csrf": _feld(_r.text)}).status_code == 200, _weg
+    assert _slot(_r.text) == _cw.cookies.get(CK) != _before, (_away, _slot(_r.text), _before)
+    assert _cw.post("/app/speichern", data={"_csrf": _slot(_r.text)}).status_code == 200, _away
 ok("way 2 + sign-in/sign-out in one response: form carries the old token (403, documented); "
    "redirecting works")
 
 
 # ---------- E2. Every sign-in route rotates the CSRF token (OWASP: "changes with each login") ----------
-# Centrally at `set_cookie()`: every fully signed-in session is created in `_sitzung_anlegen()` and
+# Centrally at `set_cookie()`: every fully signed-in session is created in `_create_session()` and
 # is flagged there; setting its cookie rotates the CSRF token in the same response. A
 # step-up does not rotate it — that would only invalidate the forms of the other open tabs.
 # (Mutation probe: remove the call of `rotate_csrf` in `set_cookie` → red;
-# remove the flagging in `_sitzung_anlegen` → red; call `store.create_session` directly again
+# remove the flagging in `_create_session` → red; call `store.create_session` directly again
 # in `complete_totp` → red; rotate every full session in `set_cookie` instead of only
 # the flagged ones → red at step-up.)
-def _dreht(name, cl, schritt, ap_=None):
-    """`schritt(cl)` signs in. Checks: exactly one new CSRF line, the old token is dead, the
+def _turns(name, cl, step, ap_=None):
+    """`step(cl)` signs in. Checks: exactly one new CSRF line, the old token is dead, the
     new one is valid, and the next page — built-in as well as own — renders with the new one."""
-    alt = cl.cookies.get(CK)
-    assert alt, f"{name}: precondition — a CSRF cookie exists before sign-in"
-    r = schritt(cl)
+    old = cl.cookies.get(CK)
+    assert old, f"{name}: precondition — a CSRF cookie exists before sign-in"
+    r = step(cl)
     assert r.status_code in (200, 303), (name, r.status_code, r.text[:200])
-    zeilen = _zeilen(r)
-    assert len(zeilen) == 1, f"{name}: the CSRF token was not rotated: {_set_cookies(r)}"
-    neu = _wert(zeilen[0])
-    assert neu != alt and _FORM.fullmatch(neu), (name, alt, neu)
-    assert _attribute(zeilen[0]) == _ATTR, (name, zeilen[0])
-    assert cl.cookies.get(CK) == neu
-    assert cl.post("/app/speichern", data={"_csrf": alt}).status_code == 403, f"{name}: old token is valid"
-    assert cl.post("/app/speichern", data={"_csrf": neu}).status_code == 200, f"{name}: new one is not valid"
-    seite = cl.get("/app/formular")
-    assert not _zeilen(seite) and _feld(seite.text) == neu, (name, _feld(seite.text))
+    lines = _lines(r)
+    assert len(lines) == 1, f"{name}: the CSRF token was not rotated: {_set_cookies(r)}"
+    new = _value(lines[0])
+    assert new != old and _FORM.fullmatch(new), (name, old, new)
+    assert _attribute(lines[0]) == _ATTR, (name, lines[0])
+    assert cl.cookies.get(CK) == new
+    assert cl.post("/app/speichern", data={"_csrf": old}).status_code == 403, f"{name}: old token is valid"
+    assert cl.post("/app/speichern", data={"_csrf": new}).status_code == 200, f"{name}: new one is not valid"
+    page_html = cl.get("/app/formular")
+    assert not _lines(page_html) and _slot(page_html.text) == new, (name, _slot(page_html.text))
     # A built-in page after sign-in (the sign-out prompt) carries the new token.
-    seite = cl.get("/auth/logout", headers={"Sec-Fetch-Site": "cross-site"})
-    assert seite.status_code == 200 and _feld(seite.text) == neu, (name, seite.status_code)
+    page_html = cl.get("/auth/logout", headers={"Sec-Fetch-Site": "cross-site"})
+    assert page_html.status_code == 200 and _slot(page_html.text) == new, (name, page_html.status_code)
     ok(f"sign-in route {name}: CSRF token rotated, follow-up pages render with the new one")
-    return neu
+    return new
 
 
-def _bleibt(name, cl, schritt, warum="a step-up does not invalidate other tabs"):
-    alt = cl.cookies.get(CK)
-    r = schritt(cl)
+def _stays(name, cl, step, why="a step-up does not invalidate other tabs"):
+    old = cl.cookies.get(CK)
+    r = step(cl)
     assert r.status_code in (200, 303), (name, r.status_code, r.text[:200])
-    assert not _zeilen(r) and cl.cookies.get(CK) == alt, f"{name}: rotates the CSRF token: {_set_cookies(r)}"
-    ok(f"{name}: CSRF token stays ({warum})")
+    assert not _lines(r) and cl.cookies.get(CK) == old, f"{name}: rotates the CSRF token: {_set_cookies(r)}"
+    ok(f"{name}: CSRF token stays ({why})")
 
 
-def _passwort(cl, user="erika", pw="geheim12345-lang-genug"):
-    seite = cl.get("/auth/login", follow_redirects=False)     # signed in: 303 instead of form
-    f = _feld(seite.text) if seite.status_code == 200 else cl.cookies.get(CK)
+def _password(cl, user="erika", pw="geheim12345-lang-genug"):
+    page_html = cl.get("/auth/login", follow_redirects=False)     # signed in: 303 instead of form
+    f = _slot(page_html.text) if page_html.status_code == 200 else cl.cookies.get(CK)
     return cl.post("/auth/login", data={"username": user, "password": pw, "next": "/", "_csrf": f},
                    follow_redirects=False)
 
 
 # Password
-_a, _ap = _instanz()
+_a, _ap = _instance()
 _c = _client(_ap)
 _c.get("/auth/login")
-_dreht("Passwort", _c, _passwort)
+_turns("Passwort", _c, _password)
 # Step-up by password (reauth) on the full session does not rotate.
-_bleibt("Step-up /auth/reauth", _c, lambda cl: cl.post(
+_stays("Step-up /auth/reauth", _c, lambda cl: cl.post(
     "/auth/reauth", data={"password": "geheim12345-lang-genug", "next": "/", "_csrf": cl.cookies.get(CK)},
     follow_redirects=False))
 # Signing in again as the same person with a full session is a step-up, as another person a login.
 _a.create_user("otto", password="geheim67890-lang-genug")
-_dreht("identity change (another person logs in)", _c,
-       lambda cl: _passwort(cl, "otto", "geheim67890-lang-genug"))
+_turns("identity change (another person logs in)", _c,
+       lambda cl: _password(cl, "otto", "geheim67890-lang-genug"))
 
 # Registration with immediate sign-in
-_a, _ap = _instanz(allow_signup=True, signup_require_email=False, login_identifier="username")
+_a, _ap = _instance(allow_signup=True, signup_require_email=False, login_identifier="username")
 _c = _client(_ap)
 _c.get("/auth/register")
-_dreht("Registrierung", _c, lambda cl: cl.post(
+_turns("Registrierung", _c, lambda cl: cl.post(
     "/auth/register", data={"username": "neu1", "password": "langes-passwort-1", "next": "/",
-                            "_csrf": _feld(cl.get("/auth/register").text)}, follow_redirects=False))
+                            "_csrf": _slot(cl.get("/auth/register").text)}, follow_redirects=False))
 
 # PIN as first factor
-_a, _ap = _instanz(pin_enabled=True, pin_login=True)
+_a, _ap = _instance(pin_enabled=True, pin_login=True)
 _a.set_pin(_a.store.get_user_by_name("erika")["id"], "480915")
 _c = _client(_ap)
 _c.get("/auth/login")
-_dreht("PIN", _c, lambda cl: cl.post(
+_turns("PIN", _c, lambda cl: cl.post(
     "/auth/pin", data={"username": "erika", "pin": "480915", "next": "/",
-                       "_csrf": _feld(cl.get("/auth/pin").text)}, follow_redirects=False))
+                       "_csrf": _slot(cl.get("/auth/pin").text)}, follow_redirects=False))
 
 # Sign-in link
-_a, _ap = _instanz(magiclink_enabled=True)
+_a, _ap = _instance(magiclink_enabled=True)
 _tok = _a.create_magic_token("login", user_id=_a.store.get_user_by_name("erika")["id"],
                              email="erika@example.com", payload={"next": "/"})
 _c = _client(_ap)
 _c.get("/auth/login")
-_dreht("Anmelde-Link", _c, lambda cl: cl.post(
-    f"/auth/magic/{_tok}", data={"_csrf": _feld(cl.get(f"/auth/magic/{_tok}").text)},
+_turns("Anmelde-Link", _c, lambda cl: cl.post(
+    f"/auth/magic/{_tok}", data={"_csrf": _slot(cl.get(f"/auth/magic/{_tok}").text)},
     follow_redirects=False))
 
 # Chain password → TOTP: rotation happens where the session becomes full — not yet at the first
 # factor (the half session is no sign-in).
-_a, _ap = _instanz(login_chain=["password", "totp"])
+_a, _ap = _instance(login_chain=["password", "totp"])
 _uid = _a.store.get_user_by_name("erika")["id"]
-_geheim = _a.totp_begin(_uid)["secret"]
-assert _a.totp_confirm(_uid, pyotp.TOTP(_geheim).at(int(_time.time()) - 30))
+_secret_text = _a.totp_begin(_uid)["secret"]
+assert _a.totp_confirm(_uid, pyotp.TOTP(_secret_text).at(int(_time.time()) - 30))
 _c = _client(_ap)
 _c.get("/auth/login")
-_bleibt("chain: first factor", _c, _passwort, "the half session is not yet a login")
-_dreht("chain password → TOTP", _c, lambda cl: cl.post(
-    "/auth/totp", data={"code": pyotp.TOTP(_geheim).now(), "next": "/",
-                        "_csrf": _feld(cl.get("/auth/totp").text)}, follow_redirects=False))
-_bleibt("Step-up per TOTP", _c, lambda cl: cl.post(
-    "/auth/totp", data={"code": pyotp.TOTP(_geheim).at(int(_time.time()) + 30), "next": "/",
+_stays("chain: first factor", _c, _password, "the half session is not yet a login")
+_turns("chain password → TOTP", _c, lambda cl: cl.post(
+    "/auth/totp", data={"code": pyotp.TOTP(_secret_text).now(), "next": "/",
+                        "_csrf": _slot(cl.get("/auth/totp").text)}, follow_redirects=False))
+_stays("Step-up per TOTP", _c, lambda cl: cl.post(
+    "/auth/totp", data={"code": pyotp.TOTP(_secret_text).at(int(_time.time()) + 30), "next": "/",
                         "_csrf": cl.cookies.get(CK)}, follow_redirects=False))
 
 # Chain with mandatory setup: the confirmation code completes the sign-in (JSON response).
-_a, _ap = _instanz(login_chain=["password", "totp"])
+_a, _ap = _instance(login_chain=["password", "totp"])
 _uid = _a.store.get_user_by_name("erika")["id"]
 _c = _client(_ap)
 _c.get("/auth/login")
-assert _passwort(_c).status_code == 303
+assert _password(_c).status_code == 303
 _start = _c.post("/auth/totp/setup/start", data={"next": "/", "_csrf": _c.cookies.get(CK)})
 assert _start.status_code == 200, _start.status_code
-_geheim = _a.store.get_totp(_uid)["secret"]
-_dreht("chain with TOTP setup", _c, lambda cl: cl.post(
-    "/auth/totp/setup", data={"code": pyotp.TOTP(_geheim).now(), "next": "/"},
+_secret_text = _a.store.get_totp(_uid)["secret"]
+_turns("chain with TOTP setup", _c, lambda cl: cl.post(
+    "/auth/totp/setup", data={"code": pyotp.TOTP(_secret_text).now(), "next": "/"},
     headers={"X-CSRF-Token": cl.cookies.get(CK)}))
 
 # OIDC return path (no network: discovery prefilled, token exchange as a dummy)
@@ -723,7 +723,7 @@ else:
             pass
 
     _idp = "https://idp.example.com"
-    _a, _ap = _instanz(oidc_enabled=True, oidc_issuer=_idp, oidc_client_id="probe",
+    _a, _ap = _instance(oidc_enabled=True, oidc_issuer=_idp, oidc_client_id="probe",
                        oidc_client_secret="geheim")
     _a.oidc._meta = {"issuer": _idp, "authorization_endpoint": _idp + "/authorize",
                      "token_endpoint": _idp + "/token", "userinfo_endpoint": _idp + "/userinfo",
@@ -732,7 +732,7 @@ else:
         _Claims({"sub": "oidc-1", "preferred_username": "olga", "name": "Olga",
                  "email": "olga@example.com", "email_verified": True, "nonce": nonce}),
         {"access_token": "at"})
-    _a.oidc.userinfo = lambda at, erwartetes_sub="": {}
+    _a.oidc.userinfo = lambda at, expected_sub="": {}
     _c = _client(_ap)
     _c.get("/auth/login")
 
@@ -740,7 +740,7 @@ else:
         start = cl.get("/auth/oidc/start", follow_redirects=False)
         state = _parse_qs(_urlparse(start.headers["location"]).query)["state"][0]
         return cl.get(f"/auth/oidc/callback?code=x&state={state}", follow_redirects=False)
-    _dreht("OIDC", _c, _oidc)
+    _turns("OIDC", _c, _oidc)
 
 # SAML ACS (assertion as a dummy — the signature check is tested by test_saml.py)
 if importlib.util.find_spec("onelogin") is None:
@@ -758,7 +758,7 @@ else:
 
     _db_s = os.path.join(tempfile.mkdtemp(), "t.db")
     _a = TinySesam(TinySesamConfig(db_path=_db_s, lang="de", passkey_enabled=False, oidc_enabled=False,
-                                   base_url=BASIS, saml_enabled=True,
+                                   base_url=BASE, saml_enabled=True,
                                    saml_idp_sso_url="https://idp.example.com/sso",
                                    saml_idp_x509cert="MIID...dummy", saml_attr_email="email"))
     _a.saml = _FakeSAML()
@@ -766,17 +766,17 @@ else:
     _ap.include_router(_a.router())
 
     @_ap.post("/app/speichern")
-    def _s_speichern(request: Request, csrf_tok: str = Form("", alias="_csrf")):
+    def _store_s(request: Request, csrf_tok: str = Form("", alias="_csrf")):
         _a.require_csrf(request, csrf_tok)
         return {"ok": True}
 
     @_ap.get("/app/formular", response_class=HTMLResponse)
-    def _s_formular(request: Request, response: Response):
+    def _s_form(request: Request, response: Response):
         return f"<input name=_csrf value='{_a.ensure_csrf(request, response)}'>"
 
     _c = _client(_ap)
     _c.get("/auth/login")
-    _dreht("SAML", _c, lambda cl: cl.post("/auth/saml/acs", data={"SAMLResponse": "x", "RelayState": "/"},
+    _turns("SAML", _c, lambda cl: cl.post("/auth/saml/acs", data={"SAMLResponse": "x", "RelayState": "/"},
                                           follow_redirects=False))
 
 # Passkey (signature check replaced — what is tested is the wiring, not WebAuthn)
@@ -784,96 +784,96 @@ if importlib.util.find_spec("webauthn") is None:
     print("  - Passkey skipped: extra [passkey] missing — guard E3 covers the route structurally")
 else:
     import webauthn as _webauthn
-    _echt = _webauthn.verify_authentication_response
+    _real = _webauthn.verify_authentication_response
     _webauthn.verify_authentication_response = lambda **kw: _types.SimpleNamespace(new_sign_count=1)
     try:
-        _a, _ap = _instanz(passkey_enabled=True, rp_id="testserver", origin=BASIS)
+        _a, _ap = _instance(passkey_enabled=True, rp_id="testserver", origin=BASE)
     finally:
-        _webauthn.verify_authentication_response = _echt
+        _webauthn.verify_authentication_response = _real
     _a.store.add_webauthn(_a.store.get_user_by_name("erika")["id"], "Y3JlZC10ZXN0", "pk", 0,
                           ["internal"], "Test")
     _c = _client(_ap)
     _c.get("/auth/login")
 
     def _passkey(cl):
-        kopf = {"X-CSRF-Token": cl.cookies.get(CK), "Content-Type": "application/json"}
-        assert cl.post("/auth/passkey/login/begin", headers=kopf).status_code == 200
+        head = {"X-CSRF-Token": cl.cookies.get(CK), "Content-Type": "application/json"}
+        assert cl.post("/auth/passkey/login/begin", headers=head).status_code == 200
         return cl.post("/auth/passkey/login/finish", content=_json.dumps({"id": "Y3JlZC10ZXN0"}),
-                       headers=kopf)
-    _dreht("Passkey", _c, _passkey)
+                       headers=head)
+    _turns("Passkey", _c, _passkey)
 
 # Own sign-in route of the app (start_session + set_cookie, without a built-in route)
-_a, _ap = _instanz()
+_a, _ap = _instance()
 _c = _client(_ap)
 _c.get("/app/formular")
-_dreht("eigene Route (start_session + set_cookie)", _c, lambda cl: cl.post("/app/anmelden"))
+_turns("eigene Route (start_session + set_cookie)", _c, lambda cl: cl.post("/app/anmelden"))
 
 
 # ---------- E2b. Signing out deletes the CSRF cookie ----------
 # (Mutation probe: remove the deletion of the CSRF cookie in `logout()` → red; omit the
-# `secure=` in `_csrf_cookie_loeschen` → red.)
-def _abmelden_loescht(name, schritt):
-    a, ap = _instanz()
+# `secure=` in `_delete_csrf_cookie` → red.)
+def _sign_out_deletes(name, step):
+    a, ap = _instance()
     cl = _client(ap)
-    assert _passwort(cl).status_code == 303
-    alt = cl.cookies.get(CK)
-    r = schritt(cl)
-    zeilen = _zeilen(r)
-    assert len(zeilen) == 1 and _geloescht(zeilen[0]), f"{name}: {_set_cookies(r)}"
-    assert _attribute(zeilen[0]) == _ATTR, (name, zeilen[0])     # Secure + Path=/: otherwise the browser
+    assert _password(cl).status_code == 303
+    old = cl.cookies.get(CK)
+    r = step(cl)
+    lines = _lines(r)
+    assert len(lines) == 1 and _deleted(lines[0]), f"{name}: {_set_cookies(r)}"
+    assert _attribute(lines[0]) == _ATTR, (name, lines[0])     # Secure + Path=/: otherwise the browser
     assert cl.cookies.get(CK) is None                            # discards the __Host- deletion
-    neu = _feld(cl.get("/auth/login").text)
-    assert neu != alt and cl.cookies.get(CK) == neu, (name, alt, neu)
+    new = _slot(cl.get("/auth/login").text)
+    assert new != old and cl.cookies.get(CK) == new, (name, old, new)
     ok(f"{name}: CSRF cookie deleted, the page afterwards gets a new token")
 
 
-_abmelden_loescht("POST /auth/logout", lambda cl: cl.post(
+_sign_out_deletes("POST /auth/logout", lambda cl: cl.post(
     "/auth/logout", data={"_csrf": cl.cookies.get(CK)}, follow_redirects=False))
-_abmelden_loescht("GET /auth/logout (own page)",
+_sign_out_deletes("GET /auth/logout (own page)",
                   lambda cl: cl.get("/auth/logout", follow_redirects=False))
-_abmelden_loescht("auth.logout() in a custom route", lambda cl: cl.post("/app/nur-abmelden"))
+_sign_out_deletes("auth.logout() in a custom route", lambda cl: cl.post("/app/nur-abmelden"))
 
 
 # ---------- E3. Guard: no sign-in route can bypass the rotation ----------
-# The rotation hangs on two chokepoints: every session row is created in `_sitzung_anlegen()`
+# The rotation hangs on two chokepoints: every session row is created in `_create_session()`
 # (the full one is flagged there), and every session cookie is set by `set_cookie()` (rotation
 # happens there). A new sign-in route that bypasses one of them is caught here — even one for which
 # E2 has no run.
 # (Mutation probe: in `apply_factor` call `self.store.create_session(…)` directly again → red.)
-class _Aufrufe(ast.NodeVisitor):
+class _Calls(ast.NodeVisitor):
     def __init__(self):
-        self.stapel, self.funde = [], []
+        self.stack, self.hits = [], []
 
     def visit_FunctionDef(self, node):
-        self.stapel.append(node.name)
+        self.stack.append(node.name)
         self.generic_visit(node)
-        self.stapel.pop()
+        self.stack.pop()
 
     visit_AsyncFunctionDef = visit_FunctionDef
 
     def visit_Call(self, node):
         f = node.func
         if isinstance(f, ast.Attribute):
-            erstes = node.args[0] if node.args else None
+            first = node.args[0] if node.args else None
             if f.attr == "create_session" and isinstance(f.value, ast.Attribute) and f.value.attr == "store":
-                self.funde.append(("create_session", tuple(self.stapel), node.lineno))
-            if (f.attr == "set_cookie" and isinstance(erstes, ast.Attribute)
-                    and erstes.attr == "session_cookie_name"):
-                self.funde.append(("sitzungs_cookie", tuple(self.stapel), node.lineno))
+                self.hits.append(("create_session", tuple(self.stack), node.lineno))
+            if (f.attr == "set_cookie" and isinstance(first, ast.Attribute)
+                    and first.attr == "session_cookie_name"):
+                self.hits.append(("sitzungs_cookie", tuple(self.stack), node.lineno))
         self.generic_visit(node)
 
 
-_paket = pathlib.Path(__file__).resolve().parent.parent / "tinysesam"
-_funde = []
-for _datei in sorted(_paket.glob("*.py")):
-    _v = _Aufrufe()
-    _v.visit(ast.parse(_datei.read_text(encoding="utf-8")))
-    _funde += [(_datei.name,) + f for f in _v.funde]
-_anlage = [f for f in _funde if f[1] == "create_session"]
-_cookie = [f for f in _funde if f[1] == "sitzungs_cookie"]
-assert _anlage and all(f[0] == "manager.py" and f[2][-1:] == ("_sitzung_anlegen",) for f in _anlage), \
-    f"a session is created bypassing `_sitzung_anlegen` (not flagged): {_anlage}"
+_package = pathlib.Path(__file__).resolve().parent.parent / "tinysesam"
+_hits = []
+for _file in sorted(_package.glob("*.py")):
+    _v = _Calls()
+    _v.visit(ast.parse(_file.read_text(encoding="utf-8")))
+    _hits += [(_file.name,) + f for f in _v.hits]
+_setup = [f for f in _hits if f[1] == "create_session"]
+_cookie = [f for f in _hits if f[1] == "sitzungs_cookie"]
+assert _setup and all(f[0] == "manager.py" and f[2][-1:] == ("_create_session",) for f in _setup), \
+    f"a session is created bypassing `_sitzung_anlegen` (not flagged): {_setup}"
 assert _cookie and all(f[0] == "manager.py" and f[2][-1:] == ("set_cookie",) for f in _cookie), \
     f"a session cookie is set bypassing `set_cookie` (rotates no CSRF token): {_cookie}"
-ok(f"guard: {len(_anlage)} session creation(s) only in _sitzung_anlegen, session cookie only in set_cookie")
+ok(f"guard: {len(_setup)} session creation(s) only in _sitzung_anlegen, session cookie only in set_cookie")
 print("\nCSRF 0.20.1 (ensure_csrf, rotation, sign-out) OK ✅")

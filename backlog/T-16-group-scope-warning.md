@@ -25,7 +25,7 @@ mutation.
 
 ## Done 2026-09-27
 
-- `config_check._gruppen_scope()`: one warning that names the affected clients and the way
+- `config_check._groups_scope()`: one warning that names the affected clients and the way
   (`oidc_scopes`, gateway `TINYSESAM_OIDC_SCOPES`, `scopes` on the entry). Silent for Entra ID
   (`login.microsoftonline.com`): there `groups` is not a scope, the advice would break the sign-in
   (AADSTS650053); groups arrive as an "optional claim".

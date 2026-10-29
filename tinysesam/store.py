@@ -10,7 +10,7 @@ from __future__ import annotations
 import contextlib, sqlite3, threading, time, secrets, json, logging, hashlib, os, re, stat, unicodedata
 from typing import Any, Optional
 
-from . import _vokabular
+from . import _vocabulary
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
@@ -47,42 +47,42 @@ CREATE TABLE IF NOT EXISTS users (
     -- NULL/expired = closed. The way for any account the operating mode would otherwise deny it.
     mfa_enroll_until INTEGER,
     created_at    INTEGER NOT NULL,
-    -- The counting bucket of the lockout counter (`norm_kennung`) of name and address, as columns with an index
-    -- (schema 10). `konto_mit_topf` used to fold all accounts in Python on EVERY call: registration
+    -- The counting bucket of the lockout counter (`norm_identifier`) of name and address, as columns with an index
+    -- (schema 10). `account_by_bucket` used to fold all accounts in Python on EVERY call: registration
     -- with a free address thereby took measurably longer than with a taken one
     -- (R4-03), and `gc()` grew with open accounts × all accounts. Set by `create_user` and
     -- `set_email`. NULL means "not computed yet" — a row from another writer
     -- (older version after a downgrade, raw SQL, a rename by hand, see the
-    -- triggers in `_migrate`) — and is filled in later (`_toepfe_nachtragen`). '' = no address.
+    -- triggers in `_migrate`) — and is filled in later (`_backfill_pots`). '' = no address.
     -- Through the buckets the database also enforces the shared identifier space (`_trigger_sql`).
-    topf_name     TEXT,
-    topf_mail     TEXT,
-    idp_bestaetigt_at INTEGER, -- last confirmation by the OIDC provider; 0 = no, NULL = never (finding 8)
+    folded_name     TEXT,
+    folded_mail     TEXT,
+    idp_confirmed_at INTEGER, -- last confirmation by the OIDC provider; 0 = no, NULL = never (finding 8)
     -- From when does the identifier belong to this account? (limit a, G2) The highest `login_attempt.id`
     -- or `audit.id` at the moment name or address entered their counting bucket — at
     -- creation, on rename, on address change and when an address is added later. What lies below
     -- belonged to nobody or to someone else. An id instead of a time: exact even within
     -- one second, and independent of the clock. NULL = data from before this column, then
-    -- creation counts as the limit (`created_at`, `anlage_grenze`). Set by `create_user` and
-    -- `_kennung_setzen`, with a foreign writer by the recompute trigger (`_trigger_sql`).
-    name_versuch_ab INTEGER,
-    mail_versuch_ab INTEGER,
-    name_audit_ab   INTEGER,
-    mail_audit_ab   INTEGER,
+    -- creation counts as the limit (`created_at`, `setup_limit`). Set by `create_user` and
+    -- `_set_identifier`, with a foreign writer by the recompute trigger (`_trigger_sql`).
+    name_attempt_from INTEGER,
+    mail_attempt_from INTEGER,
+    name_audit_from   INTEGER,
+    mail_audit_from   INTEGER,
     -- From which federated source does the name originate ('oidc', 'saml', 'ldap')? Set when the
     -- source creates the account; NULL = assigned by the operator, chosen by the person or data from before
     -- this column. A name from one source says nothing about who is called that in ANOTHER:
     -- `preferred_username` or `uid` is chosen by oneself with an IdP that has self-registration. A
     -- sign-in via another source therefore never binds this account via the name
-    -- (`_nachbindung_grund`, attack round 2026-09-26); the same source may keep replacing its placeholder
+    -- (`_rebinding_reason`, attack round 2026-09-26); the same source may keep replacing its placeholder
     -- with the real identifier. A rename resets it.
-    name_quelle     TEXT,
+    name_source     TEXT,
     -- Did the person choose the name themselves (registration, renaming in self-service)?
     -- 1 = yes: then it says nothing about who is called that in the directory, and a sign-in via
-    -- LDAP/SAML never binds this account via the name (G2-N, `_nachbindung_grund`). 0 = assigned by the
+    -- LDAP/SAML never binds this account via the name (G2-N, `_rebinding_reason`). 0 = assigned by the
     -- operator (panel, API, rename with `by_operator=True`) or from a source
-    -- (then `name_quelle` says which).
-    name_selbst_gewaehlt INTEGER NOT NULL DEFAULT 0
+    -- (then `name_source` says which).
+    name_self_chosen INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS api_key (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -97,8 +97,8 @@ CREATE TABLE IF NOT EXISTS api_key (
     --   'human'               : only valid TOGETHER with a valid session of the same account.
     --                           In return it carries the full rights — the way for a tool that
     --                           a person operates themselves (CLI on their own machine).
-    -- Up to 0.21.x the values were called 'automat' and 'mensch' (schema 12, `_werte_englisch`); they are
-    -- still read (`KEY_ARTEN_ALT`). Up to 0.18.x there was no such distinction: every key
+    -- Up to 0.21.x the values were called 'automat' and 'mensch' (schema 12, `_values_english`); they are
+    -- still read (`KEY_KINDS_OLD`). Up to 0.18.x there was no such distinction: every key
     -- of an admin was a complete admin write API, without a second factor and without a
     -- CSRF layer — a leaked CI key was the instance.
     kind       TEXT NOT NULL DEFAULT 'automation',
@@ -157,29 +157,29 @@ CREATE TABLE IF NOT EXISTS oidc_identity (
 -- its roles. The identifier here is objectGUID/entryUUID (LDAP) or the NameID (SAML) — it
 -- survives a rename and is not reused.
 CREATE TABLE IF NOT EXISTS federated_identity (
-    quelle      TEXT NOT NULL,              -- 'ldap' | 'saml'
-    kennung     TEXT NOT NULL,              -- the stable identifier from the directory
+    source      TEXT NOT NULL,              -- 'ldap' | 'saml'
+    identifier     TEXT NOT NULL,              -- the stable identifier from the directory
     user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    gebunden_at INTEGER NOT NULL,           -- when the binding came about (also: bound later)
+    bound_at INTEGER NOT NULL,           -- when the binding came about (also: bound later)
     -- The name under which the account last signed in via this source, in the counting bucket
-    -- (`norm_kennung`) — only if it is neither name nor address of the account (G5). After a
+    -- (`norm_identifier`) — only if it is neither name nor address of the account (G5). After a
     -- rename in the directory the person types the NEW name, and the series is counted under it
     -- (B2-6); without this column no way back would clear it. NULL = none (or never seen).
-    -- The name belongs to the account that last signed in like this (`bindung_name_setzen` deletes
+    -- The name belongs to the account that last signed in like this (`set_binding_name` deletes
     -- it from foreign bindings), and no other account can take it as name or address
     -- (identifier trigger, `TinySesam.identifier_taken`; review round lockouts/counters 2026-09-27).
-    name_topf   TEXT,
-    PRIMARY KEY (quelle, kennung)
+    directory_name_folded   TEXT,
+    PRIMARY KEY (source, identifier)
 );
--- Binding via the name opened by the operator (G1): until `bis` the next sign-in via
+-- Binding via the name opened by the operator (G1): until `until` the next sign-in via
 -- LDAP/SAML binds this account via its name, even after the deadline (`federation_name_binding_days`)
 -- and even with a self-chosen name. Written by `federation_unbind`, deleted as soon as
 -- the binding stands. Without a row the deadline decides.
-CREATE TABLE IF NOT EXISTS namensbindung (
-    quelle  TEXT NOT NULL,
+CREATE TABLE IF NOT EXISTS name_binding (
+    source  TEXT NOT NULL,
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    bis     INTEGER NOT NULL,
-    PRIMARY KEY (quelle, user_id)
+    until     INTEGER NOT NULL,
+    PRIMARY KEY (source, user_id)
 );
 CREATE TABLE IF NOT EXISTS session (
     token_hash TEXT PRIMARY KEY,               -- sha256(plaintext token); the plaintext is ONLY in the
@@ -196,10 +196,10 @@ CREATE TABLE IF NOT EXISTS session (
     remember   INTEGER NOT NULL DEFAULT 1,   -- "stay signed in" (persistent cookie)
     ip         TEXT,
     user_agent TEXT,
-    zuletzt    INTEGER,                       -- last request with this session (inactivity timeout, F-05)
-    andere_beenden INTEGER NOT NULL DEFAULT 0, -- half session: end the others when the chain completes (limit d)
-    bleiben_gewaehlt INTEGER NOT NULL DEFAULT 0, -- "stay signed in" EXPLICITLY chosen (F-05: then the second idle limit applies)
-    nachfolger TEXT                           -- superseded by this session (grace period after rotation, A-6); NULL = current
+    last_seen    INTEGER,                       -- last request with this session (inactivity timeout, F-05)
+    end_others INTEGER NOT NULL DEFAULT 0, -- half session: end the others when the chain completes (limit d)
+    stay_chosen INTEGER NOT NULL DEFAULT 0, -- "stay signed in" EXPLICITLY chosen (F-05: then the second idle limit applies)
+    successor TEXT                           -- superseded by this session (grace period after rotation, A-6); NULL = current
 );
 -- Which application has the provider approved for this session? (T-14)
 -- One row per session AND application: whoever signs in for app-a does not thereby get
@@ -213,20 +213,20 @@ CREATE TABLE IF NOT EXISTS oidc_grant (
     roles      TEXT NOT NULL DEFAULT '[]',    -- roles the provider yielded FOR THIS application
     PRIMARY KEY (token_hash, client)
 );
-CREATE TABLE IF NOT EXISTS oidc_sitzung (    -- refresh token of an OIDC session per client (4a, revocation follows the IdP)
+CREATE TABLE IF NOT EXISTS oidc_session (    -- refresh token of an OIDC session per client (4a, revocation follows the IdP)
     token_hash  TEXT NOT NULL REFERENCES session(token_hash) ON DELETE CASCADE,
     client      TEXT NOT NULL,                -- key from cfg.oidc_clients, "*" = single client
     sub         TEXT NOT NULL,                -- subject at the provider; a different one ends the session
     refresh     TEXT NOT NULL,                -- encrypted (vault.Vault), never in plaintext
-    geprueft_at INTEGER NOT NULL,             -- last exchange (or: claimed, see Store)
+    checked_at INTEGER NOT NULL,             -- last exchange (or: claimed, see Store)
     client_id   TEXT,                         -- to which client_id the token went (NULL: before this column)
-    erfolg_at   INTEGER,                      -- last SUCCESSFUL re-check (upper bound without re-check); NULL: before this column
+    success_at   INTEGER,                      -- last SUCCESSFUL re-check (upper bound without re-check); NULL: before this column
     PRIMARY KEY (token_hash, client)
 );
 -- Signed out of ONLY THIS application (T-22, `forward_logout="app"`): the session stays, but the
 -- forward auth no longer lets it through for this host until the person explicitly
 -- chooses "continue" on the login page. Without the row "sign out only here" would be a page reload.
-CREATE TABLE IF NOT EXISTS gate_abgemeldet (
+CREATE TABLE IF NOT EXISTS gate_signed_out (
     token_hash TEXT NOT NULL REFERENCES session(token_hash) ON DELETE CASCADE,
     host       TEXT NOT NULL,
     at         INTEGER NOT NULL,
@@ -288,15 +288,15 @@ CREATE TABLE IF NOT EXISTS login_attempt (   -- brute-force regulation
     ip       TEXT,
     success  INTEGER NOT NULL,
     method   TEXT,
-    offen    INTEGER NOT NULL DEFAULT 0      -- 1: pre-booked, outcome still open (G9, `reserve_attempt`)
+    pending    INTEGER NOT NULL DEFAULT 0      -- 1: pre-booked, outcome still open (G9, `reserve_attempt`)
 );
-CREATE TABLE IF NOT EXISTS fehlserie (       -- failed attempts IN A ROW per identifier, without a time window (B2-6)
-    topf    TEXT NOT NULL,                   -- folded identifier, the same key as login_attempt.username
-    art     TEXT NOT NULL,                   -- method (password, pin, totp …): a reset only clears its own
-    anzahl  INTEGER NOT NULL,
-    seit    INTEGER NOT NULL,                -- first failed attempt of the current series
-    zuletzt INTEGER NOT NULL,
-    PRIMARY KEY (topf, art)
+CREATE TABLE IF NOT EXISTS failure_series (       -- failed attempts IN A ROW per identifier, without a time window (B2-6)
+    folded    TEXT NOT NULL,                   -- folded identifier, the same key as login_attempt.username
+    kind     TEXT NOT NULL,                   -- method (password, pin, totp …): a reset only clears its own
+    count  INTEGER NOT NULL,
+    since    INTEGER NOT NULL,                -- first failed attempt of the current series
+    last_seen INTEGER NOT NULL,
+    PRIMARY KEY (folded, kind)
 );
 CREATE TABLE IF NOT EXISTS audit (           -- audit log (login/logout/admin actions)
     id       INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -308,9 +308,9 @@ CREATE TABLE IF NOT EXISTS audit (           -- audit log (login/logout/admin ac
 );
 CREATE INDEX IF NOT EXISTS idx_session_user ON session(user_id);
 CREATE INDEX IF NOT EXISTS idx_webauthn_user ON webauthn_cred(user_id);
--- Limit c (integration attack): `anlage_grenze` and `audit_anonymisieren` search by name and
+-- Limit c (integration attack): `setup_limit` and `anonymize_audit` search by name and
 -- time. Without an index that ran over the whole audit log — its size grows with the retention.
--- Only name and time: the search in the DETAIL text (`audit_anonymisieren`) is a substring search
+-- Only name and time: the search in the DETAIL text (`anonymize_audit`) is a substring search
 -- that no index narrows down — it remains a scan, but since G4 runs in blocks without a write lock.
 CREATE INDEX IF NOT EXISTS idx_audit_name_ts ON audit(lower(username), ts);
 CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit(ts);
@@ -319,23 +319,23 @@ CREATE INDEX IF NOT EXISTS idx_attempt_ip ON login_attempt(ip, ts);
 CREATE INDEX IF NOT EXISTS idx_apikey_user ON api_key(user_id);
 -- G1: "Which accounts still carry no identifier for this source?" (startup message, binding of existing accounts)
 -- asks for its row per account; without an index that would read all bindings of the source per account.
-CREATE INDEX IF NOT EXISTS idx_fed_quelle_user ON federated_identity(quelle, user_id);
+CREATE INDEX IF NOT EXISTS idx_fed_source_user ON federated_identity(source, user_id);
 """
 
 
 #: Characters where IDNA 2003 (stdlib codec) and IDNA 2008 differ: the stdlib codec
 #: turns `straße.example` into `strasse.example` — a DIFFERENT domain. A domain containing one of them
 #: stays in Unicode form instead of being rewritten incorrectly.
-_IDNA_ABWEICHLER = frozenset("ßς\u200c\u200d")
+_IDNA_DEVIANTS = frozenset("ßς\u200c\u200d")
 
 
-def _domain_kanonisch(domain: str) -> str:
+def _domain_canonical(domain: str) -> str:
     """Bring a domain into A-label form (`xn--…`) when that is unambiguous (R4-06).
 
     Otherwise `bücher.example` and `xn--bcher-kva.example` are stored as two different addresses
     in the database although both mean the same mailbox — two accounts, two "taken" checks
     that cannot see each other. What cannot be rewritten safely stays unchanged."""
-    if domain.isascii() or any(z in _IDNA_ABWEICHLER for z in domain):
+    if domain.isascii() or any(z in _IDNA_DEVIANTS for z in domain):
         return domain
     try:
         return domain.encode("idna").decode("ascii").lower()
@@ -348,11 +348,11 @@ def _email_unicode(email: str) -> str:
 
     Only for looking up existing addresses from before R4-06 that are still stored that way — never
     for storing. What cannot be decoded is returned unchanged."""
-    lokal, at, domain = email.rpartition("@")
+    local, at, domain = email.rpartition("@")
     if not at or "xn--" not in domain:
         return email
     try:
-        return f"{lokal}@{domain.encode('ascii').decode('idna').lower()}"
+        return f"{local}@{domain.encode('ascii').decode('idna').lower()}"
     except UnicodeError:
         return email
 
@@ -360,16 +360,16 @@ def _email_unicode(email: str) -> str:
 def key_kind_of(row) -> str:
     """The kind of a key row with the English name (schema 12): `automation` or `human`.
 
-    A value up to 0.21.x (`automat`, `mensch`) is mapped (`Store.KEY_ARTEN_ALT`) — an older
+    A value up to 0.21.x (`automaton`, `human`) is mapped (`Store.KEY_KINDS_OLD`) — an older
     version that ran on the file after a rollback writes it again. Empty or without the
     column (file before schema 7) means `automation`. Anything else stays as it is and, because
     it is not `human`, counts as an automation key (fail-closed, R6-6). Here and not on the manager, so that
     router and admin panel can read it without importing the manager (no import cycle)."""
     try:
-        wert = str(row["kind"] or "automation")
+        value = str(row["kind"] or "automation")
     except (IndexError, KeyError, TypeError):
         return "automation"
-    return Store.KEY_ARTEN_ALT.get(wert, wert)
+    return Store.KEY_KINDS_OLD.get(value, value)
 
 def norm_email(email) -> Optional[str]:
     """Store an email canonically: NFKC, trimmed, lowercase, domain as A-label. `None` stays `None`.
@@ -380,13 +380,13 @@ def norm_email(email) -> Optional[str]:
     e = unicodedata.normalize("NFKC", str(email or "")).strip().lower()
     if not e:
         return None
-    lokal, at, domain = e.rpartition("@")
+    local, at, domain = e.rpartition("@")
     if at and domain:
-        e = f"{lokal}@{_domain_kanonisch(domain)}"
+        e = f"{local}@{_domain_canonical(domain)}"
     return e
 
 
-def _schriften(text: str) -> set:
+def _fonts(text: str) -> set:
     """The scripts of the letters in `text` (first word of the Unicode name: LATIN,
     CYRILLIC, GREEK …). Digits and punctuation do not count."""
     return {unicodedata.name(z, "?").split(" ", 1)[0] for z in text if z.isalpha()}
@@ -397,31 +397,31 @@ def _schriften(text: str) -> set:
 #: (`山田たろう`, `例え`), Korean hanja with hangul, Chinese han with bopomofo. Without this
 #: exception the script check rejected ordinary Japanese addresses and IDN domains. Latin
 #: deliberately belongs to no group — `аdmin` (Cyrillic/Latin) stays rejected.
-_SCHRIFT_GRUPPEN = (
+_FONT_GROUPS = (
     frozenset({"CJK", "IDEOGRAPHIC", "HIRAGANA", "KATAKANA", "KATAKANA-HIRAGANA"}),
     frozenset({"CJK", "IDEOGRAPHIC", "HANGUL"}),
     frozenset({"CJK", "IDEOGRAPHIC", "BOPOMOFO"}),
 )
 
 
-def _eine_schrift(teil: str) -> bool:
+def _a_font(part: str) -> bool:
     """Do the letters come from one script — or from a group that belongs together?"""
-    s = _schriften(teil)
-    return len(s) <= 1 or any(s <= gruppe for gruppe in _SCHRIFT_GRUPPEN)
+    s = _fonts(part)
+    return len(s) <= 1 or any(s <= group for group in _FONT_GROUPS)
 
 
-def name_ungueltig(name) -> bool:
+def name_invalid(name) -> bool:
     """Does a username contain control, format or separator characters (Cc/Cf/Zl/Zp)?
 
     Such characters separate two identifiers that look the same to a human and to an HTTP header:
-    `chefin\\x01` is a different name from `chefin` for `identifier_taken`, but the forward-auth
+    `manager\\x01` is a different name from `manager` for `identifier_taken`, but the forward-auth
     header sanitising strips the control character — the protected app received
-    `Remote-User: chefin` from a foreign account (attack in the third round). The same rule
+    `Remote-User: manager` from a foreign account (attack in the third round). The same rule
     as for addresses (`valid_email`)."""
     return any(unicodedata.category(z) in ("Cc", "Cf", "Zl", "Zp") for z in str(name or ""))
 
 
-def norm_kennung(kennung) -> str:
+def norm_identifier(identifier) -> str:
     """The login identifier as the lockout counter keeps it: NFKC, trimmed, lowercase — and an
     address as canonical as `norm_email` stores it.
 
@@ -442,20 +442,20 @@ def norm_kennung(kennung) -> str:
     (username and address of an account are therefore two buckets; `lift_lockout`
     clears both). Namesakes from existing data (`Émile`/`émile`) share a bucket; none can be
     created anew (`TinySesam.identifier_taken` asks
-    `Store.konto_mit_topf`), and `delete_attempts_for` leaves a shared bucket in place."""
-    k = unicodedata.normalize("NFKC", str(kennung or "")).strip().lower()
+    `Store.account_by_bucket`), and `delete_attempts_for` leaves a shared bucket in place."""
+    k = unicodedata.normalize("NFKC", str(identifier or "")).strip().lower()
     if "@" in k:
         return norm_email(k) or ""
     return k
 
 
-def _kennung_sql(wert) -> Optional[str]:
-    """`norm_kennung` for SQLite (`tinysesam_kennung`): NULL stays NULL, and an error becomes NULL
+def _identifier_sql(value) -> Optional[str]:
+    """`norm_identifier` for SQLite (`tinysesam_identifier`): NULL stays NULL, and an error becomes NULL
     instead of an exception in the middle of the query."""
-    if wert is None:
+    if value is None:
         return None
     try:
-        return norm_kennung(wert)
+        return norm_identifier(value)
     except Exception:
         return None
 
@@ -468,7 +468,7 @@ def valid_email(email) -> bool:
     (control and format characters such as zero-width joiner) and a part that mixes scripts —
     `аdmin@example.com` with a Cyrillic `а` looks like the admin mailbox in the panel. An
     address entirely in one script (`müller@…`, `иван@…`) stays allowed, as do the mixtures of one
-    language from `_SCHRIFT_GRUPPEN` (`山田たろう@…`)."""
+    language from `_FONT_GROUPS` (`山田たろう@…`)."""
     e = (email or "").strip()
     if not e or " " in e or e.count("@") != 1:
         return False
@@ -477,10 +477,10 @@ def valid_email(email) -> bool:
     local, _, domain = e.partition("@")
     if not (bool(local) and "." in domain and not domain.startswith(".") and not domain.endswith(".")):
         return False
-    return all(_eine_schrift(teil) for teil in [local, *domain.split(".")])
+    return all(_a_font(part) for part in [local, *domain.split(".")])
 
 
-class _Uhr:
+class _Clock:
     """The time source for everything in the database that carries a deadline.
 
     Sessions, one-time tokens, step-up freshness, lockout windows and flow state compare a
@@ -493,8 +493,8 @@ class _Uhr:
     with the elapsed **monotonic** time (`time.monotonic()` knows no jumps). After a
     jump back by an hour it therefore keeps counting normally instead of standing still for an hour
     — deadlines keep expiring. Across a restart the database itself carries the state:
-    `Store()` raises the clock to the most recent timestamp it finds (`mindestens()`) —
-    including the state that `Store` writes at most once a minute (`uhr_stand`, on every
+    `Store()` raises the clock to the most recent timestamp it finds (`at_least()`) —
+    including the state that `Store` writes at most once a minute (`clock_state`, on every
     write access and on every write probe of the health check). What expired in the last minute before
     a restart, or during a time in which nothing was written at all, can therefore
     remain valid for up to that interval longer — but not for its full remaining lifetime.
@@ -503,7 +503,7 @@ class _Uhr:
     catches up — deadlines are then internally consistent, just dated in the future. That is the
     safe direction, and it is logged as a warning.
 
-    `wand`/`mono` are interchangeable so that a test can set up a jump without bending the clock of
+    `wall`/`mono` are interchangeable so that a test can set up a jump without bending the clock of
     the whole process. Without them, `time.time`/`time.monotonic` are looked up on EVERY
     call rather than bound at import: an embedding app that patches `time.time` in its tests
     (`mock.patch`, `monkeypatch`, freezegun) thereby sets this clock too.
@@ -512,100 +512,100 @@ class _Uhr:
     freezegun additionally replaces `time.monotonic`, namely with the frozen time on the
     epoch scale instead of the uptime. Carried forward, that would be a jump of decades
     (and one back when leaving `freeze_time`). A monotonic step that goes backwards
-    or is larger than `MONO_SCHRITT_MAX_SEK` therefore does not count as elapsed time:
+    or is larger than `MONO_STEP_MAX_SEC` therefore does not count as elapsed time:
     under freezegun the clock follows the frozen wall clock forwards (including `tick()`/`move_to()`);
     after leaving, it continues from the advanced state with the real
     monotonic time — as after `mock.patch`. The lead therefore remains: for the lifetime
     of the process (real time does not catch up, both run at the same speed) and via
-    `uhr_stand` in this database for every later opening, as long as the pause in between is shorter
+    `clock_state` in this database for every later opening, as long as the pause in between is shorter
     than the lead. That is the safe direction; a test that sets the clock far ahead
     therefore uses its own throwaway database. The price of the plausibility limit is paid only by
     a backwards jump of the wall clock that falls into a pause of more than a year without any call:
     then the wall clock that jumped back applies, but never less than the most recently issued
-    state. The same rule applies to the monotonic stamps of the `Store` (`_frisch`): a negative
+    state. The same rule applies to the monotonic stamps of the `Store` (`_fresh`): a negative
     distance is expired, not fresh.
     """
 
     #: Lag of the wall clock from which a warning is written (seconds). Below that
     #: it is normal NTP jitter.
-    WARN_AB_SEK = 5
+    WARN_FROM_SEC = 5
 
     #: Largest step of monotonic time between two calls that still counts as elapsed time
     #: (seconds). A real step is the pause between two requests; freezegun instead delivers
     #: the frozen time on the epoch scale (≈1.8e9 s) — a jump of decades.
     #: One year separates the two safely without giving up the protection after a long pause.
-    MONO_SCHRITT_MAX_SEK = 365 * 86400
+    MONO_STEP_MAX_SEC = 365 * 86400
 
-    def __init__(self, wand=None, mono=None):
+    def __init__(self, wall=None, mono=None):
         # Look up on EVERY call, do not bind at construction: whoever patches `time.time`
         # (`mock.patch`, `monkeypatch`, freezegun) sets this clock too (see docstring).
-        def _wand():
+        def _wall():
             return time.time()
 
         def _mono():
             return time.monotonic()
-        self.wand = wand or _wand
+        self.wall = wall or _wall
         self.mono = mono or _mono
         self._lock = threading.Lock()
-        self._stand = 0.0          # last issued time (wall-clock scale)
+        self._state = 0.0          # last issued time (wall-clock scale)
         self._mono = None          # monotonic time at that issue
-        self._gemeldet = False     # lag already reported? (one line per jump, not per request)
+        self._reported = False     # lag already reported? (one line per jump, not per request)
 
-    def jetzt(self) -> int:
+    def now(self) -> int:
         with self._lock:
-            wand, mono = float(self.wand()), float(self.mono())
-            schritt = mono - self._mono if self._mono is not None else 0.0
-            if not 0.0 <= schritt <= self.MONO_SCHRITT_MAX_SEK:
+            wall, mono = float(self.wall()), float(self.mono())
+            step = mono - self._mono if self._mono is not None else 0.0
+            if not 0.0 <= step <= self.MONO_STEP_MAX_SEC:
                 # No real monotonic clock (backwards, or a jump of decades: freezegun
                 # replaces `time.monotonic` with the epoch time). Do not advance — otherwise
-                # the clock jumped ahead by ≈57 years and `uhr_stand` pinned every later opening of the
+                # the clock jumped ahead by ≈57 years and `clock_state` pinned every later opening of the
                 # database there. The wall clock forwards still applies, backwards the clock stands —
                 # even if the monotonic source itself jumps back (leaving freeze_time).
-                schritt = 0.0
-            self._stand, self._mono = max(wand, self._stand + schritt), mono
-            self._rueckstand_pruefen(wand)
-            return int(self._stand)
+                step = 0.0
+            self._state, self._mono = max(wall, self._state + step), mono
+            self._check_backlog(wall)
+            return int(self._state)
 
-    def mindestens(self, ts) -> None:
+    def at_least(self, ts) -> None:
         """Raise the clock to at least `ts` (most recent timestamp of the database when opening)."""
         if not ts:
             return
         with self._lock:
-            if float(ts) > self._stand:
-                self._stand, self._mono = float(ts), float(self.mono())
-            self._rueckstand_pruefen(float(self.wand()))
+            if float(ts) > self._state:
+                self._state, self._mono = float(ts), float(self.mono())
+            self._check_backlog(float(self.wall()))
 
-    def _rueckstand_pruefen(self, wand: float) -> None:
-        rueckstand = self._stand - wand
-        if rueckstand > self.WARN_AB_SEK and not self._gemeldet:
-            self._gemeldet = True
+    def _check_backlog(self, wall: float) -> None:
+        backlog = self._state - wall
+        if backlog > self.WARN_FROM_SEC and not self._reported:
+            self._reported = True
             logging.getLogger("tinysesam").warning(
                 "The system clock is %d s behind the last time used (backward jump "
                 "or wrong date after startup). TinySesam keeps counting monotonically so that "
                 "expired sessions and one-time tokens do not become valid again (after a "
                 "restart from the last saved state, at most one minute old) — "
-                "check the time (NTP).", int(rueckstand))
-        elif rueckstand <= self.WARN_AB_SEK:
-            self._gemeldet = False
+                "check the time (NTP).", int(backlog))
+        elif backlog <= self.WARN_FROM_SEC:
+            self._reported = False
 
 
 #: One clock per process: several `Store` instances in the same process must not
 #: contradict each other, and a backwards jump hits the whole process, not one database.
-_UHR = _Uhr()
+_CLOCK = _Clock()
 
 
-def jetzt() -> int:
-    """Current time (Unix seconds) that never runs backwards — see `_Uhr`."""
-    return _UHR.jetzt()
+def now() -> int:
+    """Current time (Unix seconds) that never runs backwards — see `_Clock`."""
+    return _CLOCK.now()
 
 
 #: Longest age after which `gc` deletes old login attempts (seconds): ten years like
 #: `audit_retention_days`. The limit is not a recommendation for retention — the lockout sees
 #: only its window anyway —, but keeps the number within the range SQLite can compute.
-VERSUCHSFRIST_MAX_SEK = 3660 * 86400
+ATTEMPT_DEADLINE_MAX_SEC = 3660 * 86400
 
 
-def versuchsfrist(sekunden) -> int:
+def attempt_deadline(seconds) -> int:
     """Check `attempts_older_than_sec` of `gc` — BEFORE anything is deleted.
 
     Without a limit, ±10**20 aborted with `OverflowError` after sessions, flows, tokens and unlocks
@@ -614,34 +614,34 @@ def versuchsfrist(sekunden) -> int:
     to clear all failed attempts. `True` is not an age (it would mean one second). `ValueError` if
     the value does not fit."""
     try:
-        if isinstance(sekunden, bool):
+        if isinstance(seconds, bool):
             raise ValueError
-        zahl = int(sekunden)
+        number = int(seconds)
     except (TypeError, ValueError, OverflowError):
-        raise ValueError(f"attempts_older_than_sec={sekunden!r} is not a whole number of seconds.") from None
-    if not 0 <= zahl <= VERSUCHSFRIST_MAX_SEK:
-        raise ValueError(f"attempts_older_than_sec={zahl} is outside 0…{VERSUCHSFRIST_MAX_SEK} "
+        raise ValueError(f"attempts_older_than_sec={seconds!r} is not a whole number of seconds.") from None
+    if not 0 <= number <= ATTEMPT_DEADLINE_MAX_SEC:
+        raise ValueError(f"attempts_older_than_sec={number} is outside 0…{ATTEMPT_DEADLINE_MAX_SEC} "
                          "(seconds). 0 clears all failed attempts.")
-    return zahl
+    return number
 
 
 def _now() -> int:
-    return _UHR.jetzt()
+    return _CLOCK.now()
 
 
-def ersatzname(user_id) -> str:
+def replacement_name(user_id) -> str:
     """Who represents a deleted account in the audit log (H-13): `deleted#<id>` (up to 0.24.x `gelöscht#<id>`).
 
     One place for the format — every deletion path writes its closing line under it, even
     one that no longer finds the account (otherwise the clear name would appear there again)."""
-    return f"{_vokabular.ERSATZ_PRAEFIX}{int(user_id)}"
+    return f"{_vocabulary.REPLACEMENT_PREFIX}{int(user_id)}"
 
 
 #: Keys in the payload of an address-change link up to 0.21.x and their English replacement (schema 12).
-_PAYLOAD_SCHLUESSEL_ALT = {"email_change": {"alt": "old"}}
+_PAYLOAD_KEY_NAME_OLD = {"email_change": {"alt": "old"}}
 
 
-def payload_lesen(purpose, text) -> Optional[dict]:
+def read_payload(purpose, text) -> Optional[dict]:
     """The payload of a one-time token as a dict — with English keys (schema 12).
 
     An address-change link carried `{"alt": <previous address>}` up to 0.21.x, and
@@ -650,12 +650,12 @@ def payload_lesen(purpose, text) -> Optional[dict]:
     it that way again. A key that is already English wins. `None` without a payload."""
     if not text:
         return None
-    daten = json.loads(text)
-    for alt, neu in _PAYLOAD_SCHLUESSEL_ALT.get(purpose, {}).items():
-        if isinstance(daten, dict) and alt in daten:
-            wert = daten.pop(alt)
-            daten.setdefault(neu, wert)
-    return daten
+    data = json.loads(text)
+    for old, new in _PAYLOAD_KEY_NAME_OLD.get(purpose, {}).items():
+        if isinstance(data, dict) and old in data:
+            value = data.pop(old)
+            data.setdefault(new, value)
+    return data
 
 
 class Store:
@@ -663,18 +663,18 @@ class Store:
     #: and email addresses; on a shared host anyone could read it up to 0.18.0 (0644,
     #: depending on umask). Nothing is changed on an existing file — whoever deliberately
     #: released a group should keep that —, but there is a warning.
-    DATEIRECHTE = 0o600
+    FILE_PERMISSIONS = 0o600
 
     def __init__(self, db_path: str):
-        neu = db_path not in (":memory:", "") and not os.path.exists(db_path)
-        if neu:
+        new = db_path not in (":memory:", "") and not os.path.exists(db_path)
+        if new:
             # The file is created directly with narrow permissions. A chmod AFTER connecting would have
             # a window in which it stands open — and that is exactly when
             # SQLite writes the schema into it.
             try:
-                os.close(os.open(db_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, self.DATEIRECHTE))
+                os.close(os.open(db_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, self.FILE_PERMISSIONS))
             except OSError:
-                neu = False                      # directory missing or similar — sqlite3 reports it right away
+                new = False                      # directory missing or similar — sqlite3 reports it right away
         self.db = sqlite3.connect(db_path, check_same_thread=False,
                                   timeout=self.BUSY_TIMEOUT_MS / 1000)
         self.db.row_factory = sqlite3.Row
@@ -690,18 +690,19 @@ class Store:
         # (before encryption, H-14/H-15) or a deleted account would otherwise remain readable in free
         # pages of the file — and thereby in every backup — depending on the SQLite build.
         self.db.execute("PRAGMA secure_delete=ON")
-        # The counting bucket as an SQL function — ONLY for queries of this connection (`audit_anonymisieren`),
+        # The counting bucket as an SQL function — ONLY for queries of this connection (`anonymize_audit`),
         # never in schema, trigger or index: there it would break every writer without it (`_trigger_sql`).
-        self.db.create_function("tinysesam_kennung", 1, _kennung_sql, deterministic=True)
+        self.db.create_function("tinysesam_identifier", 1, _identifier_sql, deterministic=True)
         self._lock = threading.Lock()
-        self._uhr_gesichert: Optional[float] = None   # monotonic time of the last saved clock state
-        self._geschrieben: Optional[float] = None     # monotonic time of the last successful commit
+        self._clock_secured: Optional[float] = None   # monotonic time of the last saved clock state
+        self._written: Optional[float] = None     # monotonic time of the last successful commit
         with self._lock:
+            self._english_names()
             self.db.executescript(SCHEMA)
             self.db.commit()
         self._migrate()
-        self._dateirechte_pruefen(db_path, neu)
-        _UHR.mindestens(self._juengster_zeitstempel())
+        self._check_file_permissions(db_path, new)
+        _CLOCK.at_least(self._youngest_timestamp())
 
     #: How long a request waits for a locked database before giving up (ms).
     #: Twice Python's default: a checkpoint or a backup on slow
@@ -709,27 +710,27 @@ class Store:
     #: is more expensive than a slow one. No longer — the worker thread is stuck for that long.
     BUSY_TIMEOUT_MS = 10_000
 
-    def _juengster_zeitstempel(self) -> int:
+    def _youngest_timestamp(self) -> int:
         """The most recent event timestamp of the database — the clock state across a restart.
 
         Only points in time at which something HAPPENED (created, logged), no deadlines: an
         `expires_at` is in the future by design and would set the clock ahead."""
-        abfragen = ("SELECT MAX(created_at) AS t FROM session",
+        queries = ("SELECT MAX(created_at) AS t FROM session",
                     "SELECT MAX(created_at) AS t FROM magic_token",
                     "SELECT ts AS t FROM audit ORDER BY id DESC LIMIT 1",
                     "SELECT ts AS t FROM login_attempt ORDER BY id DESC LIMIT 1",
-                    f"SELECT CAST(value AS INTEGER) AS t FROM setting WHERE key='{self.UHR_STAND}'")
-        werte = []
-        for sql in abfragen:
+                    f"SELECT CAST(value AS INTEGER) AS t FROM setting WHERE key='{self.CLOCK_STATE}'")
+        values = []
+        for sql in queries:
             try:
                 r = self._one(sql)
             except sqlite3.Error:
                 continue
             if r and r["t"]:
-                werte.append(int(r["t"]))
-        return max(werte, default=0)
+                values.append(int(r["t"]))
+        return max(values, default=0)
 
-    def _dateirechte_pruefen(self, db_path: str, neu: bool):
+    def _check_file_permissions(self, db_path: str, new: bool):
         """WAL and SHM carry the same data as the database — they get the same permissions.
 
         The main file itself is only assessed on an existing installation, not
@@ -738,20 +739,20 @@ class Store:
         if db_path in (":memory:", ""):
             return
         try:
-            modus = stat.S_IMODE(os.stat(db_path).st_mode)
+            mode = stat.S_IMODE(os.stat(db_path).st_mode)
         except OSError:
             return
-        for anhang in ("-wal", "-shm"):
-            pfad = db_path + anhang
+        for attachment in ("-wal", "-shm"):
+            path = db_path + attachment
             try:
-                if os.path.exists(pfad) and stat.S_IMODE(os.stat(pfad).st_mode) != modus:
-                    os.chmod(pfad, modus)
+                if os.path.exists(path) and stat.S_IMODE(os.stat(path).st_mode) != mode:
+                    os.chmod(path, mode)
             except OSError:
                 pass                              # file system without permissions (Windows, some mounts)
-        if not neu and modus & 0o077:
+        if not new and mode & 0o077:
             logging.getLogger("tinysesam").warning(
                 "The database %s is readable by other accounts (%o). It contains password hashes "
-                "and TOTP secrets. Tighten it: chmod 600 %s", db_path, modus, db_path)
+                "and TOTP secrets. Tighten it: chmod 600 %s", db_path, mode, db_path)
 
     #: State of the schema. Raised by one with every change to SCHEMA/_migrate().
     #:
@@ -764,31 +765,31 @@ class Store:
     #: 7 — `api_key.kind`: automation and human keys (R6-5)
     #: 8 — `users.first_login_at`, `users.mfa_enroll_until` (R3-1) — state of 0.19.0
     #: 9 — `federated_identity`: stable directory identifiers for LDAP/SAML (F-11)
-    #: 10 — `users.topf_name`/`topf_mail` with index and triggers, indexes for the search by name
+    #: 10 — `users.folded_name`/`folded_mail` with index and triggers, indexes for the search by name
     #:      and address (NOCASE); existing data: lockouts from the panel to the operator mark
     #:      (`disabled=2`), addresses of open sign-ups without proof (`_migrate`)
-    #: 11 — `fehlserie`: consecutive failed attempts per identifier (B2-6); `users.is_admin=2` means
+    #: 11 — `failure_series`: consecutive failed attempts per identifier (B2-6); `users.is_admin=2` means
     #:      "granted by the identity provider" (H-5) — the column itself stays as it is;
-    #:      `users.is_owner` (owner); `session.zuletzt` (inactivity timeout, F-05);
-    #:      `session.andere_beenden` (limit d); `oidc_sitzung` (refresh token, 4a);
-    #:      `users.idp_bestaetigt_at` (API keys follow the IdP, finding 8); triggers
-    #:      `trg_users_kennung_insert`/`_update`: name and address are ONE identifier space, enforced
+    #:      `users.is_owner` (owner); `session.last_seen` (inactivity timeout, F-05);
+    #:      `session.end_others` (limit d); `oidc_session` (refresh token, 4a);
+    #:      `users.idp_confirmed_at` (API keys follow the IdP, finding 8); triggers
+    #:      `trg_users_identifier_insert`/`_update`: name and address are ONE identifier space, enforced
     #:      by the database (G12c; created on every start, not at the stamp);
-    #:      `users.name_versuch_ab`/`mail_versuch_ab`/`name_audit_ab`/`mail_audit_ab`: from when an
+    #:      `users.name_attempt_from`/`mail_attempt_from`/`name_audit_from`/`mail_audit_from`: from when an
     #:      identifier belongs to the account (G2, NULL in existing data), plus the recompute triggers that raise them on
-    #:      a foreign writer; `federated_identity.name_topf`: the name in the directory
-    #:      (G5); `login_attempt.offen`: a pre-booking whose outcome is still open (G9). All
+    #:      a foreign writer; `federated_identity.directory_name_folded`: the name in the directory
+    #:      (G5); `login_attempt.pending`: a pre-booking whose outcome is still open (G9). All
     #:      of it additive and idempotent on every start — state of 0.21.0.
     #: 12 — 0.22.0: stored values of the public interface in English (PO decision
-    #:      2026-09-27): `api_key.kind` `automat`/`mensch` → `automation`/`human` (on EVERY start —
+    #:      2026-09-27): `api_key.kind` `automaton`/`human` → `automation`/`human` (on EVERY start —
     #:      for keys that an older version issued after a rollback), in the payload of
-    #:      open address-change links `alt` → `old` (on the jump to 12; `_werte_englisch`).
-    #:      An old value is still read correctly (`KEY_ARTEN_ALT`, `payload_lesen`). No
+    #:      open address-change links `old` → `old` (on the jump to 12; `_values_english`).
+    #:      An old value is still read correctly (`KEY_KINDS_OLD`, `read_payload`). No
     #:      column changes. The stamp rises because an older version reads the new values DIFFERENTLY:
     #:      0.21.x takes a `human` key for an automation key (valid without a session). It
     #:      still opens the file, but reports the newer schema version at start — way back
     #:      with SQL in docs/OPERATIONS.md.
-    #: 13 — `gate_abgemeldet` (signed out of one application only, T-22) and `oidc_id_token` (the
+    #: 13 — `gate_signed_out` (signed out of one application only, T-22) and `oidc_id_token` (the
     #:      ID token as a sign-out hint for the provider, encrypted). Additive; an older version
     #:      leaves both tables in place, but does not rotate them along when rotating a session — the
     #:      rows then drop away with the old session (sign-out "here only" forgotten, provider
@@ -797,29 +798,170 @@ class Store:
     #:      Additive; an older version leaves the table in place and does not rotate it along —
     #:      the app host then loses its connection and fetches a new one via the code exchange.
     #: 15 — the stored and logged key vocabulary in English (PO decision 2026-10-29,
-    #:      `Store._vokabular_englisch`, `tinysesam/_vokabular.py`): `audit.event` (`oidc_widerruf` →
+    #:      `Store._vocabulary_english`, `tinysesam/_vocabulary.py`): `audit.event` (`oidc_widerruf` →
     #:      `oidc_revoked`, `ldap_kennung_gebunden` → `ldap_identifier_bound` …), the keys and tokens in
     #:      `audit.detail` (`grund=kein_konto` → `reason=no_account` …), the replacement name in
-    #:      `audit.username` (`gelöscht#<id>` → `deleted#<id>`), `fehlserie.art`/`login_attempt.method`
-    #:      (`pin_folge` → `pin_chain`), and the message of the identifier triggers (`tinysesam: kennung
-    #:      vergeben` → `tinysesam: identifier taken`; replaced by `_trigger_setzen` on every start). No
+    #:      `audit.username` (`gelöscht#<id>` → `deleted#<id>`), `failure_series.kind`/`login_attempt.method`
+    #:      (`pin_folge` → `pin_chain`), and the message of the identifier triggers
+    #:      (`tinysesam: kennung vergeben` → `tinysesam: identifier taken`; replaced by `_set_trigger` on every start). No
     #:      column changes. The stamp rises because an older version does not know the new values: it
     #:      still opens the file and reports the newer schema version at start, shows the new event names
     #:      as unknown (display only) — and does not recognise an address-change conflict
     #:      (`on_confirmation=1`, `own_events`) or the counted lockout notice (`lockout_notice`) in a new row.
     #:      Way back with SQL in docs/OPERATIONS.md. Read paths take the old and the new spelling.
-    SCHEMA_VERSION = 15
+    #: 16 — the database names in English (PO decision 2026-10-29, T-29 follow-up; `Store._english_names`):
+    #:      tables `namensbindung` → `name_binding`, `oidc_sitzung` → `oidc_session`, `gate_abgemeldet` →
+    #:      `gate_signed_out`, `fehlserie` → `failure_series`; the columns of `users`, `federated_identity`,
+    #:      `name_binding`, `session`, `oidc_session`, `login_attempt` and `failure_series` (see `RENAMED_COLUMNS`),
+    #:      the indexes and triggers built on them, six keys in `setting` and the placeholder prefix
+    #:      `~ohne-kennung:` of `federated_identity.identifier`. No data changes beyond that. Runs
+    #:      BEFORE the schema script (the new names must not appear as empty tables next to the old ones) and
+    #:      only if an old name is present; on every other start it reads `sqlite_master` and is done. An older
+    #:      version opens the file with the "newer schema version" warning and then does not find its tables —
+    #:      way back with SQL in docs/OPERATIONS.md.
+    SCHEMA_VERSION = 16
+
+    #: Old table name → new table name (schema 16).
+    RENAMED_TABLES = {"namensbindung": "name_binding", "oidc_sitzung": "oidc_session",
+                      "gate_abgemeldet": "gate_signed_out", "fehlserie": "failure_series"}
+
+    #: Table (by its NEW name) → {old column: new column} (schema 16).
+    RENAMED_COLUMNS = {
+        "users": {"topf_name": "folded_name", "topf_mail": "folded_mail", "idp_bestaetigt_at": "idp_confirmed_at",
+                  "name_versuch_ab": "name_attempt_from", "mail_versuch_ab": "mail_attempt_from",
+                  "name_audit_ab": "name_audit_from", "mail_audit_ab": "mail_audit_from",
+                  "name_quelle": "name_source", "name_selbst_gewaehlt": "name_self_chosen"},
+        "federated_identity": {"quelle": "source", "kennung": "identifier", "gebunden_at": "bound_at",
+                               "name_topf": "directory_name_folded"},
+        "name_binding": {"quelle": "source", "bis": "until"},
+        "session": {"zuletzt": "last_seen", "andere_beenden": "end_others", "bleiben_gewaehlt": "stay_chosen",
+                    "nachfolger": "successor"},
+        "oidc_session": {"geprueft_at": "checked_at", "erfolg_at": "success_at"},
+        "login_attempt": {"offen": "pending"},
+        "failure_series": {"topf": "folded", "art": "kind", "anzahl": "count", "seit": "since",
+                           "zuletzt": "last_seen"},
+    }
+
+    #: Indexes and triggers of the old names (dropped; the new names are created by the schema script, `_migrate`
+    #: and `_set_trigger`).
+    RENAMED_OBJECTS = {
+        "index": ("idx_fed_quelle_user", "ix_fed_name_topf", "ix_users_topf_name", "ix_users_topf_mail"),
+        "trigger": ("trg_users_topf_name", "trg_users_topf_mail", "trg_users_wechsel_name", "trg_users_wechsel_mail",
+                    "trg_users_kennung_insert", "trg_users_kennung_update"),
+    }
+
+    #: Keys in `setting` (schema 16), and the prefix of `foederation_seit:<source>`.
+    RENAMED_SETTINGS = {"allowlist_nach_idp_entzug": "allowlist_after_idp_revocation",
+                        "idp_bestand_gesetzt": "idp_inventory_set",
+                        "name_quelle_nachgetragen": "name_source_backfilled",
+                        "name_selbst_nachgetragen": "name_self_backfilled",
+                        "uhr_stand": "clock_state", "panel_sperren_bis": "panel_lock_until"}
+    RENAMED_SETTING_PREFIXES = {"foederation_seit:": "federation_since:"}
 
     #: The stored values up to 0.21.x and their English replacement (schema 12). The migration
     #: rewrites them, and whoever reads still maps an old value: an older version that ran
     #: on the same file after a rollback has left old values behind again.
-    KEY_ARTEN_ALT = {"automat": "automation", "mensch": "human"}
+    KEY_KINDS_OLD = {"automat": "automation", "mensch": "human"}
 
-    #: From this schema state on, `topf_name`/`topf_mail` are computed with today's `norm_kennung`.
-    #: Whoever changes the folding in `norm_kennung` raises `SCHEMA_VERSION` and sets this
+    #: From this schema state on, `folded_name`/`folded_mail` are computed with today's `norm_identifier`.
+    #: Whoever changes the folding in `norm_identifier` raises `SCHEMA_VERSION` and sets this
     #: value to match — otherwise the buckets of the existing data would stand in the old folding in the index, and
-    #: `konto_mit_topf` would no longer find namesakes.
-    TOPF_SCHEMA = 10
+    #: `account_by_bucket` would no longer find namesakes.
+    BUCKET_SCHEMA = 10
+
+    def _english_names(self) -> int:
+        """Schema 16: bring the old German table, column, index, trigger and setting names of a file to
+        the English ones (before the schema script; see `SCHEMA_VERSION`). Returns the number of renamed things.
+
+        Idempotent and cheap on every start: if no old name is present, only `sqlite_master`, the column lists
+        of the seven tables and the keys of `setting` are read and nothing is written (also on a read-only file).
+        Everything happens in ONE transaction (`BEGIN IMMEDIATE`, as with the session tokens in `_migrate`): an
+        abort leaves the old names, and the next start runs it again.
+
+        * Old triggers and indexes are dropped first (SQLite would otherwise carry them along with the column
+          rename; the new ones come from the schema script and `_set_trigger`).
+        * A table that exists under the old AND the new name (a version without these names wrote into a file of
+          this one, after a rollback without the SQL) is merged: the rows of the old one are added to the new one
+          (`INSERT OR IGNORE`, the columns both have), then the old one goes.
+        * A column that exists under the old AND the new name (same cause) is left alone, with a warning.
+        * `setting` keys and the placeholder prefix of `federated_identity.identifier` are renamed row by row;
+          if the new key already exists, it wins and the old row goes.
+        """
+        log = logging.getLogger("tinysesam")
+        names = {r[0] for r in self.db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+
+        def sources(table):
+            """The names under which `table` may exist right now: the new one and the old one."""
+            return [t for t in (table, *[o for o, n in self.RENAMED_TABLES.items() if n == table]) if t in names]
+
+        todo = [old for old in self.RENAMED_TABLES if old in names]
+        for table, columns in self.RENAMED_COLUMNS.items():
+            for source in sources(table):
+                have = {r["name"] for r in self.db.execute(f"PRAGMA table_info({source})")}
+                todo += [f"{source}.{old}" for old in columns if old in have]
+        if "setting" in names:
+            keys = {r[0] for r in self.db.execute("SELECT key FROM setting")}
+            todo += [old for old in self.RENAMED_SETTINGS if old in keys]
+            todo += [k for k in keys if any(k.startswith(p) for p in self.RENAMED_SETTING_PREFIXES)]
+        old_objects = [(kind, name) for kind, items in self.RENAMED_OBJECTS.items() for name in items
+                       if self.db.execute("SELECT 1 FROM sqlite_master WHERE type=? AND name=?",
+                                          (kind, name)).fetchone()]
+        placeholder = False
+        if "federated_identity" in names:
+            have = {r["name"] for r in self.db.execute("PRAGMA table_info(federated_identity)")}
+            column = "kennung" if "kennung" in have else ("identifier" if "identifier" in have else None)
+            placeholder = column is not None and self.db.execute(
+                f"SELECT 1 FROM federated_identity WHERE {column} LIKE '~ohne-kennung:%' LIMIT 1").fetchone() is not None
+        if not (todo or old_objects or placeholder):
+            return 0
+        done = 0
+        self.db.execute("BEGIN IMMEDIATE")
+        try:
+            for kind, name in old_objects:
+                self.db.execute(f"DROP {kind.upper()} IF EXISTS {name}")
+            # columns first, on whichever name the table has now: then a merge sees the same column names
+            for table, columns in self.RENAMED_COLUMNS.items():
+                for source in sources(table):
+                    have = {r["name"] for r in self.db.execute(f"PRAGMA table_info({source})")}
+                    for old, new in columns.items():
+                        if old not in have:
+                            continue
+                        if new in have:
+                            log.warning("Table %s has the old column %s and the new column %s — left as it is "
+                                        "(a version without the new names wrote into this file).", source, old, new)
+                            continue
+                        self.db.execute(f"ALTER TABLE {source} RENAME COLUMN {old} TO {new}")
+                        done += 1
+            for old, new in self.RENAMED_TABLES.items():
+                if old not in names:
+                    continue
+                if new in names:
+                    new_cols = {c["name"] for c in self.db.execute(f"PRAGMA table_info({new})")}
+                    common = [r["name"] for r in self.db.execute(f"PRAGMA table_info({old})") if r["name"] in new_cols]
+                    cols = ", ".join(common)
+                    self.db.execute(f"INSERT OR IGNORE INTO {new}({cols}) SELECT {cols} FROM {old}")
+                    self.db.execute(f"DROP TABLE {old}")
+                else:
+                    self.db.execute(f"ALTER TABLE {old} RENAME TO {new}")
+                done += 1
+            if "setting" in names:
+                for old, new in self.RENAMED_SETTINGS.items():
+                    self.db.execute("UPDATE OR IGNORE setting SET key=? WHERE key=?", (new, old))
+                    done += self.db.execute("DELETE FROM setting WHERE key=?", (old,)).rowcount
+                for old, new in self.RENAMED_SETTING_PREFIXES.items():
+                    self.db.execute("UPDATE OR IGNORE setting SET key = ? || substr(key, ?) WHERE key LIKE ?",
+                                    (new, len(old) + 1, old + "%"))
+                    done += self.db.execute("DELETE FROM setting WHERE key LIKE ?", (old + "%",)).rowcount
+            if placeholder:
+                self.db.execute("UPDATE federated_identity SET identifier = '~without-identifier:' || "
+                                "substr(identifier, 15) WHERE identifier LIKE '~ohne-kennung:%'")
+            self.db.execute("COMMIT")
+        except Exception:
+            self.db.execute("ROLLBACK")
+            raise
+        log.info("Database names renamed to English (schema 16): %d tables, columns and settings. "
+                 "Take a backup before updating (`tinysesam backup`); the way back is in docs/OPERATIONS.md.", done)
+        return done
 
     def _migrate(self):
         """Additive migrations for existing DBs: add missing columns (idempotent).
@@ -833,16 +975,16 @@ class Store:
             "session": [("mfa_at", "INTEGER"), ("remember", "INTEGER NOT NULL DEFAULT 1"),
                         ("factors_done", "TEXT NOT NULL DEFAULT '[]'"),
                         # NULL for existing sessions: counts as `created_at` (F-05).
-                        ("zuletzt", "INTEGER"),
-                        ("andere_beenden", "INTEGER NOT NULL DEFAULT 0"),
-                        ("bleiben_gewaehlt", "INTEGER NOT NULL DEFAULT 0"),
+                        ("last_seen", "INTEGER"),
+                        ("end_others", "INTEGER NOT NULL DEFAULT 0"),
+                        ("stay_chosen", "INTEGER NOT NULL DEFAULT 0"),
                         # NULL = the current session; set only for a superseded token in the
                         # grace period after rotation (A-6).
-                        ("nachfolger", "TEXT")],
+                        ("successor", "TEXT")],
             "totp_cred": [("last_step", "INTEGER")],
             # The client_id to which a refresh token went: if the operator recreates the client at the
             # provider, it rejects every old token — that is no "no" to the account.
-            "oidc_sitzung": [("client_id", "TEXT"), ("erfolg_at", "INTEGER")],
+            "oidc_session": [("client_id", "TEXT"), ("success_at", "INTEGER")],
             # Existing keys count as automation keys: the narrower interpretation. A key
             # that could previously serve admin routes loses that — exactly that is
             # the point of R6-5, and a rejected call leaves a row.
@@ -856,40 +998,40 @@ class Store:
                       ("first_login_at", "INTEGER"), ("mfa_enroll_until", "INTEGER"),
                       # NULL = not yet computed; backfilled further below for existing data.
                       # Without NOT NULL: an older version (rollback) keeps creating accounts.
-                      ("topf_name", "TEXT"), ("topf_mail", "TEXT"),
-                      # 0 for existing data; who becomes owner is decided by `Store._owner_nachziehen`.
+                      ("folded_name", "TEXT"), ("folded_mail", "TEXT"),
+                      # 0 for existing data; who becomes owner is decided by `Store._catch_up_owner`.
                       ("is_owner", "INTEGER NOT NULL DEFAULT 0"),
                       # Existing data: set to "now" below for OIDC accounts (finding 8).
-                      ("idp_bestaetigt_at", "INTEGER"),
+                      ("idp_confirmed_at", "INTEGER"),
                       # NULL for existing data: the limit is then the creation, as until 2026-09-26 (G2).
                       # Do not backfill "now" — the account page would otherwise show nothing from before
                       # the update, and own failed attempts would remain until the end of the window.
-                      ("name_versuch_ab", "INTEGER"), ("mail_versuch_ab", "INTEGER"),
-                      ("name_audit_ab", "INTEGER"), ("mail_audit_ab", "INTEGER"),
+                      ("name_attempt_from", "INTEGER"), ("mail_attempt_from", "INTEGER"),
+                      ("name_audit_from", "INTEGER"), ("mail_audit_from", "INTEGER"),
                       # 0 for existing data; whoever registered or renamed themselves backfills
-                      # it once below (`NAME_SELBST_NACHGETRAGEN`, G2-N).
-                      ("name_selbst_gewaehlt", "INTEGER NOT NULL DEFAULT 0"),
+                      # it once below (`NAME_ITSELF_BACKFILLED`, G2-N).
+                      ("name_self_chosen", "INTEGER NOT NULL DEFAULT 0"),
                       # NULL for existing data; where the origin is proven, backfilled once below
-                      # (`NAME_QUELLE_NACHGETRAGEN`, attack round 2026-09-26).
-                      ("name_quelle", "TEXT")],
+                      # (`NAME_SOURCE_BACKFILLED`, attack round 2026-09-26).
+                      ("name_source", "TEXT")],
             # NULL: never logged in under a different name yet (G5); arises at the next login.
-            "federated_identity": [("name_topf", "TEXT")],
+            "federated_identity": [("directory_name_folded", "TEXT")],
             # 0 for existing data: every present row is a completed attempt (G9).
-            "login_attempt": [("offen", "INTEGER NOT NULL DEFAULT 0")],
+            "login_attempt": [("pending", "INTEGER NOT NULL DEFAULT 0")],
         }
-        # `_schreibend`, not only `_lock`: the final commit below takes DELETE and stamp with it.
+        # `_writing`, not only `_lock`: the final commit below takes DELETE and stamp with it.
         # If something fails before that, without a rollback a transaction would stay open on the
         # connection (the AST guard in tests/test_hardening2.py demands this for every commit).
-        with self._schreibend():
-            # `fehlserie` initially came with schema 11 without a column `art` (a never published
+        with self._writing():
+            # `failure_series` initially came with schema 11 without a column `art` (a never published
             # intermediate state). Such a table is recreated — otherwise every login would end in
             # a 500. The series in it are lost; that is the lesser harm.
-            _fs = {r["name"] for r in self.db.execute("PRAGMA table_info(fehlserie)")}
-            if _fs and "art" not in _fs:
-                ddl = re.search(r"CREATE TABLE IF NOT EXISTS fehlserie \(.*?\n\);", SCHEMA, re.S)
+            _fs = {r["name"] for r in self.db.execute("PRAGMA table_info(failure_series)")}
+            if _fs and "kind" not in _fs:
+                ddl = re.search(r"CREATE TABLE IF NOT EXISTS failure_series \(.*?\n\);", SCHEMA, re.S)
                 if ddl is None:     # it is in SCHEMA; if it is missing there, that is an error here
-                    raise RuntimeError("SCHEMA contains no table fehlserie")
-                self.db.execute("DROP TABLE fehlserie")
+                    raise RuntimeError("SCHEMA contains no table failure_series")
+                self.db.execute("DROP TABLE failure_series")
                 self.db.execute(ddl.group(0))
             for table, cols in adds.items():
                 have = {r["name"] for r in self.db.execute(f"PRAGMA table_info({table})")}
@@ -915,24 +1057,24 @@ class Store:
             # Now A waits for the lock and afterwards sees the finished state.
             self.db.execute("BEGIN IMMEDIATE")
             try:
-                spalten = {r["name"] for r in self.db.execute("PRAGMA table_info(session)")}
-                if "token" in spalten and "token_hash" not in spalten:
+                columns = {r["name"] for r in self.db.execute("PRAGMA table_info(session)")}
+                if "token" in columns and "token_hash" not in columns:
                     self.db.execute("ALTER TABLE session RENAME COLUMN token TO token_hash")
-                zeilen = self.db.execute(
+                lines = self.db.execute(
                     "SELECT token_hash FROM session WHERE length(token_hash) <> 64"
                     " OR token_hash GLOB '*[^0-9a-f]*'").fetchall()
                 self.db.executemany(
                     "UPDATE session SET token_hash=? WHERE token_hash=?",
                     [(hashlib.sha256(z["token_hash"].encode()).hexdigest(), z["token_hash"])
-                     for z in zeilen if z["token_hash"]])
+                     for z in lines if z["token_hash"]])
                 self.db.execute("COMMIT")
             except Exception:
                 self.db.execute("ROLLBACK")
                 raise
-            if zeilen:
+            if lines:
                 logging.getLogger("tinysesam").info(
                     "Session table migrated: %d tokens hashed, sign-ins stay valid.",
-                    len(zeilen))
+                    len(lines))
 
             # Unlocks from the time before the switch cannot be converted: the hash
             # is made from the plaintext, nothing from the hash. They are discarded — only open
@@ -949,24 +1091,24 @@ class Store:
             # Two conditions, both necessary: the stamp says "this file has not been through yet"
             # (and keeps the scan out of every further start), the VALUE says which row
             # really is plaintext. The stamp alone was not enough — see above.
-            vorhanden_vorab = int(self.db.execute("PRAGMA user_version").fetchone()[0] or 0)
-            if vorhanden_vorab < self.SCHEMA_VERSION:
-                weg = self.db.execute(
+            present_beforehand = int(self.db.execute("PRAGMA user_version").fetchone()[0] or 0)
+            if present_beforehand < self.SCHEMA_VERSION:
+                away = self.db.execute(
                     "DELETE FROM resource_unlock WHERE length(token) <> 64"
                     " OR token GLOB '*[^0-9a-f]*'").rowcount
-                if weg:
+                if away:
                     logging.getLogger("tinysesam").info(
-                        "%d resource approvals discarded (tokens are now stored hashed).", weg)
+                        "%d resource approvals discarded (tokens are now stored hashed).", away)
 
             # Schema 10. The steps run in the same transaction as the stamp below: if
             # the start aborts in between, the stamp is missing too, and the next start runs them again
             # (every step is repeatable). The existing-data steps run on EVERY start, not only
             # on the jump over the stamp — for what an older writer may have left behind
-            # since then (`_bestand_nachziehen`).
-            ohne_topf = self.db.execute(
-                "SELECT * FROM users" + ("" if vorhanden_vorab < self.TOPF_SCHEMA else
-                                         " WHERE topf_name IS NULL OR topf_mail IS NULL")).fetchall()
-            if self.db.execute("SELECT 1 FROM setting WHERE key='idp_bestand_gesetzt'").fetchone() is None:
+            # since then (`_catch_up_inventory`).
+            without_bucket = self.db.execute(
+                "SELECT * FROM users" + ("" if present_beforehand < self.BUCKET_SCHEMA else
+                                         " WHERE folded_name IS NULL OR folded_mail IS NULL")).fetchall()
+            if self.db.execute("SELECT 1 FROM setting WHERE key='idp_inventory_set'").fetchone() is None:
                 # The deadline for the API keys of an OIDC account (finding 8) starts for existing data
                 # with the update — otherwise all keys would be dormant right after the update until everyone has
                 # signed in once via the provider. Exactly once: if it ran on every start,
@@ -978,50 +1120,50 @@ class Store:
                 # start backfilled it (attack on the third round). Marker and value go in the
                 # same commit. Here and not directly after the ALTER: an UPDATE opens a
                 # transaction in Python's sqlite3, and the `BEGIN IMMEDIATE` above would fail.
-                self.db.execute("UPDATE users SET idp_bestaetigt_at=? WHERE idp_bestaetigt_at IS NULL "
+                self.db.execute("UPDATE users SET idp_confirmed_at=? WHERE idp_confirmed_at IS NULL "
                                 "AND id IN (SELECT user_id FROM oidc_identity)", (_now(),))
-                self.db.execute("INSERT OR REPLACE INTO setting(key, value) VALUES ('idp_bestand_gesetzt', ?)",
+                self.db.execute("INSERT OR REPLACE INTO setting(key, value) VALUES ('idp_inventory_set', ?)",
                                 (str(_now()),))
             if self.db.execute("SELECT 1 FROM setting WHERE key=?",
-                               (self.NAME_SELBST_NACHGETRAGEN,)).fetchone() is None:
-                self._name_selbst_nachtragen()
+                               (self.NAME_ITSELF_BACKFILLED,)).fetchone() is None:
+                self._backfill_name_itself()
             if self.db.execute("SELECT 1 FROM setting WHERE key=?",
-                               (self.NAME_QUELLE_NACHGETRAGEN,)).fetchone() is None:
-                self._name_quelle_nachtragen()
-            self._owner_nachziehen()
-            # Schema 12: the stored values in English (see `_werte_englisch`). Read-only and
+                               (self.NAME_SOURCE_BACKFILLED,)).fetchone() is None:
+                self._backfill_name_source()
+            self._catch_up_owner()
+            # Schema 12: the stored values in English (see `_values_english`). Read-only and
             # values of an older version in it: that must not prevent a start that worked
             # before — the old values are read correctly anyway. An upgrade, on the other hand, writes,
             # like every migration.
             try:
-                umgeschrieben = self._werte_englisch(links=vorhanden_vorab < 12)
+                rewritten = self._values_english(links=present_beforehand < 12)
             except sqlite3.OperationalError as e:
-                if vorhanden_vorab < self.SCHEMA_VERSION:
+                if present_beforehand < self.SCHEMA_VERSION:
                     raise
-                umgeschrieben = 0
+                rewritten = 0
                 logging.getLogger("tinysesam").warning(
                     "Values of an older version not rewritten to the English names (%s): "
                     "the database is not writable. They are still read correctly.", e)
-            if umgeschrieben:
+            if rewritten:
                 logging.getLogger("tinysesam").info(
                     "%d stored values rewritten to the English names (schema 12: "
-                    "API key kinds, address-change links).", umgeschrieben)
-            # Schema 15: the audit log and the series kinds in English (see `_vokabular_englisch`). Only on
+                    "API key kinds, address-change links).", rewritten)
+            # Schema 15: the audit log and the series kinds in English (see `_vocabulary_english`). Only on
             # the jump over the stamp: the audit log can be large, and a row that an older version writes
-            # afterwards is mapped by the read paths (`_vokabular`). An upgrade writes, like every
+            # afterwards is mapped by the read paths (`_vocabulary`). An upgrade writes, like every
             # migration — a read-only file with an old stamp already failed at the steps above.
-            if vorhanden_vorab < 15:
-                umgeschrieben = self._vokabular_englisch()
-                if umgeschrieben:
+            if present_beforehand < 15:
+                rewritten = self._vocabulary_english()
+                if rewritten:
                     logging.getLogger("tinysesam").info(
                         "%d stored values rewritten to the English vocabulary (schema 15: audit events, "
                         "keys and tokens in the audit details, replacement names, series kinds).",
-                        umgeschrieben)
-            if vorhanden_vorab < 10:
-                self._bestand_nachziehen(True, ohne_topf)
+                        rewritten)
+            if present_beforehand < 10:
+                self._catch_up_inventory(True, without_bucket)
             else:
                 try:
-                    self._bestand_nachziehen(False, ohne_topf)
+                    self._catch_up_inventory(False, without_bucket)
                 except sqlite3.OperationalError as e:
                     # As with the bucket below: this must not prevent a start that worked before.
                     # With this stamp the transaction contains only this step.
@@ -1031,29 +1173,29 @@ class Store:
                         "version only carry the operator marker after a start with "
                         "write access.", e)
             try:
-                self._toepfe_schreiben(ohne_topf)
+                self._write_pots(without_bucket)
             except sqlite3.OperationalError:
                 # Read-only (volume mounted read-only) and rows of a foreign
                 # writer without a bucket: this must not prevent the start, which worked before —
-                # `konto_mit_topf` then checks such rows itself (`_toepfe_nachtragen`). An
+                # `account_by_bucket` then checks such rows itself (`_backfill_pots`). An
                 # upgrade, on the other hand, needs the buckets, like every other migration its columns.
-                if vorhanden_vorab < self.TOPF_SCHEMA:
+                if present_beforehand < self.BUCKET_SCHEMA:
                     raise
                 logging.getLogger("tinysesam").warning(
                     "Counting buckets of %d account(s) not filled in: the database is not "
-                    "writable. The bucket check still sees them, only more slowly.", len(ohne_topf))
+                    "writable. The bucket check still sees them, only more slowly.", len(without_bucket))
 
             # A file from the future: this version does not fully know its tables
             # and would leave gaps when writing. That is no reason to crash —
             # but a very good one to say so loudly.
-            vorhanden = int(self.db.execute("PRAGMA user_version").fetchone()[0] or 0)
-            if vorhanden > self.SCHEMA_VERSION:
+            present = int(self.db.execute("PRAGMA user_version").fetchone()[0] or 0)
+            if present > self.SCHEMA_VERSION:
                 logging.getLogger("tinysesam").warning(
                     "The database carries schema version %d, this TinySesam version only knows %d. "
                     "It comes from a newer version — writing with this one can leave "
                     "data incomplete. Install the matching version or restore the file "
-                    "from a backup.", vorhanden, self.SCHEMA_VERSION)
-            elif vorhanden != self.SCHEMA_VERSION:
+                    "from a backup.", present, self.SCHEMA_VERSION)
+            elif present != self.SCHEMA_VERSION:
                 self.db.execute(f"PRAGMA user_version = {self.SCHEMA_VERSION}")
             # Email unique (login identifier) — partial, so that accounts without an email stay allowed.
             # Existing data with duplicates: the index cannot be created → say so loudly, do not crash.
@@ -1072,9 +1214,9 @@ class Store:
             # that, so SQLite read every row.
             # The name in the directory (G5) counts in the identifier space (audit round 2026-09-27) — the
             # identifier triggers ask for it on every creation and every rename.
-            for sql in ("CREATE INDEX IF NOT EXISTS ix_users_topf_name ON users(topf_name)",
-                        "CREATE INDEX IF NOT EXISTS ix_users_topf_mail ON users(topf_mail)",
-                        "CREATE INDEX IF NOT EXISTS ix_fed_name_topf ON federated_identity(name_topf)",
+            for sql in ("CREATE INDEX IF NOT EXISTS ix_users_folded_name ON users(folded_name)",
+                        "CREATE INDEX IF NOT EXISTS ix_users_folded_mail ON users(folded_mail)",
+                        "CREATE INDEX IF NOT EXISTS ix_fed_directory_name_folded ON federated_identity(directory_name_folded)",
                         "CREATE INDEX IF NOT EXISTS ix_users_name_nocase ON users(username COLLATE NOCASE)",
                         "CREATE INDEX IF NOT EXISTS ix_users_email_nocase ON users(email COLLATE NOCASE)"):
                 self.db.execute(sql)
@@ -1083,7 +1225,7 @@ class Store:
             # no new account is created there anyway, and the pre-check
             # (`identifier_taken`) remains. It is still reported.
             try:
-                self._trigger_setzen()
+                self._set_trigger()
             except sqlite3.OperationalError as e:
                 logging.getLogger("tinysesam").warning(
                     "Triggers over username and address not created (%s): the database "
@@ -1093,14 +1235,14 @@ class Store:
 
     #: Message of the identifier triggers (`sqlite3.IntegrityError`): name or address falls into the
     #: counting bucket of ANOTHER account. Callers recognise the case by `IntegrityError`, not by the text.
-    #: Up to 0.24.x the text was `tinysesam: kennung vergeben`; `_trigger_setzen` replaces the trigger
+    #: Up to 0.24.x the text was `tinysesam: kennung grant`; `_set_trigger` replaces the trigger
     #: because its definition differs (schema 15).
-    KENNUNG_VERGEBEN = "tinysesam: identifier taken"
+    IDENTIFIER_GRANT = "tinysesam: identifier taken"
 
     #: The watermarks of an identifier (G2) as an SQL expression: the highest id that exists NOW.
     #: Everything created afterwards has a larger one (`AUTOINCREMENT` never issues an id twice).
     #: Only built-in functions — same reason as for the triggers.
-    WL_VERSUCH = "(SELECT COALESCE(MAX(id), 0) FROM login_attempt)"
+    WL_ATTEMPT = "(SELECT COALESCE(MAX(id), 0) FROM login_attempt)"
     WL_AUDIT = "(SELECT COALESCE(MAX(id), 0) FROM audit)"
 
     @classmethod
@@ -1110,30 +1252,30 @@ class Store:
         Python function in the trigger or in the index expression would break every writer without it with
         "no such function").
 
-        **Recompute** (`trg_users_topf_name`/`_mail`, schema 10): another writer changes
+        **Recompute** (`trg_users_folded_name`/`_mail`, schema 10): another writer changes
         name or address without carrying the bucket along (an older version after a rollback,
         the manual rename that the collision guard recommends at start): then the bucket is
         stale — and NULL means "recompute". Only if the value REALLY changes: whoever sets
         the same address again keeps their bucket (until 2026-09-26 it stood at NULL afterwards until the
         next backfill, and the identifier triggers did not see the account for that long).
-        The same trigger raises the watermarks of the identifier (`name_versuch_ab` … , G2) to the
+        The same trigger raises the watermarks of the identifier (`name_attempt_from` … , G2) to the
         current state: a foreign writer has assigned a new identifier, and what stood before under
         it did not belong to this account. That is the stricter direction — also for a
         rename that only changes the spelling. The own writers never fire it
-        (`_kennung_setzen`); otherwise even `B1` → `b1` would shift the limit.
+        (`_set_identifier`); otherwise even `B1` → `b1` would shift the limit.
 
-        **Change with bucket** (`trg_users_wechsel_name`/`_mail`, audit round 2026-09-27): a foreign
+        **Change with bucket** (`trg_users_change_name`/`_mail`, audit round 2026-09-27): a foreign
         writer that carries the bucket ITSELF (`store.set_email` from 0.20.1 sets address and
-        `topf_mail` in one statement) does not fire the recompute trigger — the bucket does
+        `folded_mail` in one statement) does not fire the recompute trigger — the bucket does
         change. Until then the watermark stayed at the state of the OLD identifier, and the first
         full sign-in cleared the failed attempts that a stranger had made under the new one before the change,
         also from the throttling of his IP. This trigger raises them when, in the same
         statement, the value AND the bucket change (to a bucket, not to NULL). The backfill
-        (`_toepfe_schreiben`: only the bucket) does not fire it, nor does `B1` → `b1` in `_kennung_setzen`
+        (`_write_pots`: only the bucket) does not fire it, nor does `B1` → `b1` in `_set_identifier`
         (there the bucket is at NULL in between); on a real change in
-        `_kennung_setzen` it sets the same state that the statement has already written.
+        `_set_identifier` it sets the same state that the statement has already written.
 
-        **Identifier space** (`trg_users_kennung_insert`/`_update`, G12c): username and address
+        **Identifier space** (`trg_users_identifier_insert`/`_update`, G12c): username and address
         are ONE space (`find_user` searches both), and the counting bucket folds more coarsely than NOCASE
         (`Alice`/`alice`, `Émile`/`émile`, full-width, Unicode and A-label domain). Until then the database
         knew only `UNIQUE(username)` (BINARY) and `ux_users_email` — check
@@ -1143,7 +1285,7 @@ class Store:
         — in the same statement as the write, under SQLite's single writer.
         Why each part:
 
-        * `UPDATE OF username, email`, not `OF topf_*`: the backfill (`_toepfe_schreiben`)
+        * `UPDATE OF username, email`, not `OF topf_*`: the backfill (`_write_pots`)
           sets only buckets and therefore does not check. Existing data with a collision does not break the start.
         * `NEW IS NOT OLD`: only a newly assigned bucket is checked. Setting one's own
           address again and a raw UPDATE (bucket stays, the trigger above then sets it
@@ -1152,7 +1294,7 @@ class Store:
           (email mode). On INSERT the row is not yet in the table.
         * Rows without a bucket (NULL: a foreign writer, not yet backfilled) count only from
           the backfill — which `identifier_taken` triggers before every creation.
-        * **The name in the directory of ANOTHER account** (`federated_identity.name_topf`, G5)
+        * **The name in the directory of ANOTHER account** (`federated_identity.directory_name_folded`, G5)
           counts (audit round 2026-09-27). Under one identifier the login route checks two
           secrets — the local password of the account and the LDAP password of the entry. If
           a local account took on the directory name of another person (self-service,
@@ -1160,41 +1302,41 @@ class Store:
           LDAP password was being guessed. On UPDATE only foreign bindings (`user_id IS NOT NEW.id`):
           whoever returns to their own directory name may do so.
 
-        The lookup runs over `ix_users_topf_name`/`ix_users_topf_mail`/`ix_fed_name_topf`, no
+        The lookup runs over `ix_users_folded_name`/`ix_users_folded_mail`/`ix_fed_directory_name_folded`, no
         scan: the work does not depend on the number of accounts (step counting in
         tests/test_identifier_space.py and tests/test_audit_round2.py)."""
-        def neu(spalte, alt, id_aus):
-            andere = "id IS NOT NEW.id AND " if id_aus else ""
-            fremd = "user_id IS NOT NEW.id AND " if id_aus else ""
-            return (f"(NEW.{spalte} IS NOT {alt} AND NEW.{spalte} <> '' AND (EXISTS (SELECT 1 FROM users "
-                    f"WHERE {andere}(topf_name = NEW.{spalte} OR topf_mail = NEW.{spalte})) "
-                    f"OR EXISTS (SELECT 1 FROM federated_identity WHERE {fremd}name_topf = NEW.{spalte})))")
-        abweisen = f"BEGIN SELECT RAISE(ABORT, '{cls.KENNUNG_VERGEBEN}'); END"
-        arten = (("username", "topf_name", "name"), ("email", "topf_mail", "mail"))
-        sql = [(f"trg_users_{topf}",
-                f"CREATE TRIGGER IF NOT EXISTS trg_users_{topf} AFTER UPDATE OF {spalte} ON users "
-                f"WHEN NEW.{topf} IS OLD.{topf} AND NEW.{spalte} IS NOT OLD.{spalte} "
-                f"BEGIN UPDATE users SET {topf} = NULL, {art}_versuch_ab = {cls.WL_VERSUCH}, "
-                f"{art}_audit_ab = {cls.WL_AUDIT} WHERE id = NEW.id; END")
-               for spalte, topf, art in arten]
-        sql += [(f"trg_users_wechsel_{art}",
-                 f"CREATE TRIGGER IF NOT EXISTS trg_users_wechsel_{art} AFTER UPDATE OF {topf} ON users "
-                 f"WHEN NEW.{topf} IS NOT NULL AND NEW.{topf} IS NOT OLD.{topf} "
-                 f"AND NEW.{spalte} IS NOT OLD.{spalte} "
-                 f"BEGIN UPDATE users SET {art}_versuch_ab = {cls.WL_VERSUCH}, "
-                 f"{art}_audit_ab = {cls.WL_AUDIT} WHERE id = NEW.id; END")
-                for spalte, topf, art in arten]
-        sql.append(("trg_users_kennung_insert",
-                    "CREATE TRIGGER IF NOT EXISTS trg_users_kennung_insert BEFORE INSERT ON users "
-                    f"WHEN {neu('topf_name', 'NULL', False)} OR {neu('topf_mail', 'NULL', False)} "
-                    + abweisen))
-        sql.append(("trg_users_kennung_update",
-                    "CREATE TRIGGER IF NOT EXISTS trg_users_kennung_update BEFORE UPDATE OF username, email "
-                    f"ON users WHEN {neu('topf_name', 'OLD.topf_name', True)} "
-                    f"OR {neu('topf_mail', 'OLD.topf_mail', True)} " + abweisen))
+        def new(column, old, id_from):
+            other = "id IS NOT NEW.id AND " if id_from else ""
+            foreign = "user_id IS NOT NEW.id AND " if id_from else ""
+            return (f"(NEW.{column} IS NOT {old} AND NEW.{column} <> '' AND (EXISTS (SELECT 1 FROM users "
+                    f"WHERE {other}(folded_name = NEW.{column} OR folded_mail = NEW.{column})) "
+                    f"OR EXISTS (SELECT 1 FROM federated_identity WHERE {foreign}directory_name_folded = NEW.{column})))")
+        reject = f"BEGIN SELECT RAISE(ABORT, '{cls.IDENTIFIER_GRANT}'); END"
+        kinds = (("username", "folded_name", "name"), ("email", "folded_mail", "mail"))
+        sql = [(f"trg_users_{bucket}",
+                f"CREATE TRIGGER IF NOT EXISTS trg_users_{bucket} AFTER UPDATE OF {column} ON users "
+                f"WHEN NEW.{bucket} IS OLD.{bucket} AND NEW.{column} IS NOT OLD.{column} "
+                f"BEGIN UPDATE users SET {bucket} = NULL, {kind}_attempt_from = {cls.WL_ATTEMPT}, "
+                f"{kind}_audit_from = {cls.WL_AUDIT} WHERE id = NEW.id; END")
+               for column, bucket, kind in kinds]
+        sql += [(f"trg_users_change_{kind}",
+                 f"CREATE TRIGGER IF NOT EXISTS trg_users_change_{kind} AFTER UPDATE OF {bucket} ON users "
+                 f"WHEN NEW.{bucket} IS NOT NULL AND NEW.{bucket} IS NOT OLD.{bucket} "
+                 f"AND NEW.{column} IS NOT OLD.{column} "
+                 f"BEGIN UPDATE users SET {kind}_attempt_from = {cls.WL_ATTEMPT}, "
+                 f"{kind}_audit_from = {cls.WL_AUDIT} WHERE id = NEW.id; END")
+                for column, bucket, kind in kinds]
+        sql.append(("trg_users_identifier_insert",
+                    "CREATE TRIGGER IF NOT EXISTS trg_users_identifier_insert BEFORE INSERT ON users "
+                    f"WHEN {new('folded_name', 'NULL', False)} OR {new('folded_mail', 'NULL', False)} "
+                    + reject))
+        sql.append(("trg_users_identifier_update",
+                    "CREATE TRIGGER IF NOT EXISTS trg_users_identifier_update BEFORE UPDATE OF username, email "
+                    f"ON users WHEN {new('folded_name', 'OLD.folded_name', True)} "
+                    f"OR {new('folded_mail', 'OLD.folded_mail', True)} " + reject))
         return sql
 
-    def _trigger_setzen(self) -> None:
+    def _set_trigger(self) -> None:
         """Create the triggers from `_trigger_sql` — or replace them if an older version created them
         differently (without commit, under `_lock`, part of `_migrate`).
 
@@ -1203,20 +1345,20 @@ class Store:
         without `IF NOT EXISTS`; whitespace does not count). If it matches, nothing is written — not even
         on a read-only file."""
         for name, sql in self._trigger_sql():
-            soll = " ".join(sql.replace(" IF NOT EXISTS", "", 1).split())
-            steht = self.db.execute("SELECT sql FROM sqlite_master WHERE type='trigger' AND name=?",
+            should = " ".join(sql.replace(" IF NOT EXISTS", "", 1).split())
+            stands = self.db.execute("SELECT sql FROM sqlite_master WHERE type='trigger' AND name=?",
                                     (name,)).fetchone()
-            if steht is not None and " ".join(str(steht[0] or "").split()) == soll:
+            if stands is not None and " ".join(str(stands[0] or "").split()) == should:
                 continue
-            if steht is not None:
+            if stands is not None:
                 self.db.execute(f"DROP TRIGGER IF EXISTS {name}")
             self.db.execute(sql)
 
-    #: Setting key: has `users.name_selbst_gewaehlt` been backfilled for existing data (G2-N)?
-    NAME_SELBST_NACHGETRAGEN = "name_selbst_nachgetragen"
+    #: Setting key: has `users.name_self_chosen` been backfilled for existing data (G2-N)?
+    NAME_ITSELF_BACKFILLED = "name_self_backfilled"
 
-    def _name_selbst_nachtragen(self) -> None:
-        """Backfill `users.name_selbst_gewaehlt` once for existing data from the audit log (G2-N;
+    def _backfill_name_itself(self) -> None:
+        """Backfill `users.name_self_chosen` once for existing data from the audit log (G2-N;
         without commit, under `_lock`, part of `_migrate`).
 
         The column came after 0.20.1; until then nothing recorded where a name came from. The
@@ -1232,157 +1374,157 @@ class Store:
         the retention (`audit_retention_days`) has already deleted is not detected; 0.20.1 did not know
         renaming, there only the registration remains.
 
-        Exactly once, via the marker `NAME_SELBST_NACHGETRAGEN` in the same commit: if it ran on every
+        Exactly once, via the marker `NAME_ITSELF_BACKFILLED` in the same commit: if it ran on every
         start, the row of a later rename by the operator would make the account a
         self-named one again."""
         self.db.execute(
-            "UPDATE users SET name_selbst_gewaehlt = 1 WHERE name_selbst_gewaehlt = 0 AND is_service = 0 "
+            "UPDATE users SET name_self_chosen = 1 WHERE name_self_chosen = 0 AND is_service = 0 "
             "AND EXISTS (SELECT 1 FROM audit a WHERE lower(a.username) = lower(users.username) "
             "AND a.ts >= users.created_at AND a.event IN ('signup', 'username_changed'))")
         self.db.execute("INSERT OR REPLACE INTO setting(key, value) VALUES (?, ?)",
-                        (self.NAME_SELBST_NACHGETRAGEN, str(_now())))
+                        (self.NAME_ITSELF_BACKFILLED, str(_now())))
 
-    def _werte_englisch(self, links: bool = True) -> int:
+    def _values_english(self, links: bool = True) -> int:
         """Bring stored values of the public interface to their English names (schema
         12, PO decision 2026-09-27) — without commit, under `_lock`, part of `_migrate`.
 
-        * `api_key.kind`: `automat` → `automation`, `mensch` → `human` (`KEY_ARTEN_ALT`) — the kind
+        * `api_key.kind`: `automaton` → `automation`, `human` → `human` (`KEY_KINDS_OLD`) — the kind
           is seen by everyone who lists keys (`list_api_keys`, `api_key_kind`, `GET /auth/apikeys`,
           the panel). On EVERY start, not only on the jump over the stamp: an older version
           that ran on the file after a rollback has written old values again, and it
           does not lower the stamp. The table is small.
-        * Payload of open address-change links (`magic_token`, `purpose='email_change'`): `alt` →
-          `old` (`payload_lesen`) — visible via `peek_magic`/`redeem_magic`. Only with
+        * Payload of open address-change links (`magic_token`, `purpose='email_change'`): `old` →
+          `old` (`read_payload`) — visible via `peek_magic`/`redeem_magic`. Only with
           `links=True` (on the jump to 12): the search goes through all one-time tokens, and they grow
           until the next `gc` — on every start that would cost a run through the table
           (measured in `tests/test_legacy_data.py`, "Aufwand"). A link that an older version
-          issues afterwards is mapped by `payload_lesen` on reading; it expires soon anyway.
+          issues afterwards is mapped by `read_payload` on reading; it expires soon anyway.
 
         Idempotent; it writes only where there is something to rewrite — a read-only file
         without old values starts as before. Returns: the number of changed rows.
 
-        Not translated here: the audit log and the kinds of the series (`fehlserie.art`) — those are
-        rewritten on the jump to schema 15 (`_vokabular_englisch`) — and the column names (they stay)."""
+        Not translated here: the audit log and the kinds of the series (`failure_series.kind`) — those are
+        rewritten on the jump to schema 15 (`_vocabulary_english`) — and the column names (they stay)."""
         n = 0
-        for alt, neu in self.KEY_ARTEN_ALT.items():
-            if self.db.execute("SELECT 1 FROM api_key WHERE kind=? LIMIT 1", (alt,)).fetchone():
-                n += self.db.execute("UPDATE api_key SET kind=? WHERE kind=?", (neu, alt)).rowcount
-        for purpose, schluessel in (_PAYLOAD_SCHLUESSEL_ALT.items() if links else ()):
-            for alt in schluessel:
+        for old, new in self.KEY_KINDS_OLD.items():
+            if self.db.execute("SELECT 1 FROM api_key WHERE kind=? LIMIT 1", (old,)).fetchone():
+                n += self.db.execute("UPDATE api_key SET kind=? WHERE kind=?", (new, old)).rowcount
+        for purpose, key_name in (_PAYLOAD_KEY_NAME_OLD.items() if links else ()):
+            for old in key_name:
                 for z in self.db.execute(
                         "SELECT token_hash, payload FROM magic_token WHERE purpose=? AND payload LIKE ?",
-                        (purpose, f'%"{alt}"%')).fetchall():
+                        (purpose, f'%"{old}"%')).fetchall():
                     try:
-                        neu_text = json.dumps(payload_lesen(purpose, z["payload"]))
+                        new_text = json.dumps(read_payload(purpose, z["payload"]))
                     except ValueError:
                         continue          # not JSON: not ours, do not touch
-                    if neu_text != z["payload"]:
+                    if new_text != z["payload"]:
                         self.db.execute("UPDATE magic_token SET payload=? WHERE token_hash=?",
-                                        (neu_text, z["token_hash"]))
+                                        (new_text, z["token_hash"]))
                         n += 1
         return n
 
-    #: Rows per block when `_vokabular_englisch` walks through `audit.detail`.
-    _VOKABULAR_BLOCK = 5000
+    #: Rows per block when `_vocabulary_english` walks through `audit.detail`.
+    _VOCABULARY_BLOCK = 5000
 
-    def _vokabular_englisch(self) -> int:
+    def _vocabulary_english(self) -> int:
         """Bring the stored and logged key vocabulary to its English names (schema 15, PO decision
         2026-10-29) — without commit, under `_lock`, part of `_migrate`, on the jump over the stamp.
 
-        What is rewritten, and only that (the mapping itself is in `tinysesam/_vokabular.py`, pure
+        What is rewritten, and only that (the mapping itself is in `tinysesam/_vocabulary.py`, pure
         functions that the tests use as well):
 
         * `audit.event`: the exact names (`oidc_widerruf` → `oidc_revoked`, …) and the families
-          `<oidc|saml|ldap>_kennung_gebunden` → `<…>_identifier_bound` etc. (`audit_ereignis_neu`) —
+          `<oidc|saml|ldap>_kennung_gebunden` → `<…>_identifier_bound` etc. (`audit_event_new`) —
           in ONE statement, one pass over the table.
         * `audit.detail`: the keys of the `key=value` pairs and the tokens behind `reason=`/`source=`/…
-          (`audit_detail_neu`): keys only where one stands as a key (start or after a space, directly
+          (`audit_detail_new`): keys only where one stands as a key (start or after a space, directly
           before `=`), values only behind their key, never free text that happens to contain the word.
           Rows of free-text events (`ldap_unavailable`, `resource_unlock`, `user_create`) keep their keys.
           Block by block over `id`, each changed row written once.
         * `audit.username`: `gelöscht#<id>` → `deleted#<id>` (digits only; a name that merely begins with
           it stays), likewise inside the details (`actor=`, the head of `user_create`).
-        * `fehlserie.art` and `login_attempt.method`: `pin_folge` → `pin_chain`. If both kinds exist for
+        * `failure_series.kind` and `login_attempt.method`: `pin_folge` → `pin_chain`. If both kinds exist for
           an identifier (the old one written by an older version after a rollback), the counts are
           ADDED up (stricter, never looser than dropping one) and the old row goes.
 
-        The trigger message (`tinysesam: kennung vergeben` → `identifier taken`) is not touched here:
-        `_trigger_setzen` replaces a trigger whose definition differs, on every start.
+        The trigger message (`tinysesam: kennung grant` → `identifier taken`) is not touched here:
+        `_set_trigger` replaces a trigger whose definition differs, on every start.
 
         Idempotent (a second run changes 0 rows) and it writes only where there is something to
         rewrite — a read-only file without old values starts as before. Returns the number of changed
         rows (event names count per row, details per row, series per row)."""
-        V = _vokabular
+        V = _vocabulary
         n = 0
         # (1) event names: one statement for all of them.
-        paare = dict(V.AUDIT_EREIGNISSE_ALT)
-        for quelle in V.AUDIT_QUELLEN:
-            for alt, neu in V.AUDIT_FAMILIEN_ALT.items():
-                paare[quelle + alt] = quelle + neu
-        platz = ",".join("?" * len(paare))
-        if self.db.execute(f"SELECT 1 FROM audit WHERE event IN ({platz}) LIMIT 1", tuple(paare)).fetchone():
-            fall = " ".join("WHEN ? THEN ?" for _ in paare)
-            args = [x for alt, neu in paare.items() for x in (alt, neu)]
+        pairs = dict(V.AUDIT_EVENTS_OLD)
+        for source in V.AUDIT_SOURCES:
+            for old, new in V.AUDIT_FAMILIES_OLD.items():
+                pairs[source + old] = source + new
+        place = ",".join("?" * len(pairs))
+        if self.db.execute(f"SELECT 1 FROM audit WHERE event IN ({place}) LIMIT 1", tuple(pairs)).fetchone():
+            case = " ".join("WHEN ? THEN ?" for _ in pairs)
+            args = [x for old, new in pairs.items() for x in (old, new)]
             n += self.db.execute(
-                f"UPDATE audit SET event = CASE event {fall} ELSE event END WHERE event IN ({platz})",
-                (*args, *paare)).rowcount
+                f"UPDATE audit SET event = CASE event {case} ELSE event END WHERE event IN ({place})",
+                (*args, *pairs)).rowcount
         # (2) the replacement name of deleted accounts (digits only after the prefix).
-        alt_praefix, neu_praefix = V.ERSATZ_PRAEFIX_ALT, V.ERSATZ_PRAEFIX
-        laenge = len(alt_praefix)
-        where_ersatz = ("substr(username, 1, ?) = ? AND length(username) > ? "
+        old_prefix, new_prefix = V.REPLACEMENT_PREFIX_OLD, V.REPLACEMENT_PREFIX
+        length = len(old_prefix)
+        where_replacement = ("substr(username, 1, ?) = ? AND length(username) > ? "
                         "AND substr(username, ?) NOT GLOB '*[^0-9]*'")
-        werte_ersatz = (laenge, alt_praefix, laenge, laenge + 1)
-        if self.db.execute(f"SELECT 1 FROM audit WHERE {where_ersatz} LIMIT 1", werte_ersatz).fetchone():
+        values_replacement = (length, old_prefix, length, length + 1)
+        if self.db.execute(f"SELECT 1 FROM audit WHERE {where_replacement} LIMIT 1", values_replacement).fetchone():
             n += self.db.execute(
-                f"UPDATE audit SET username = ? || substr(username, ?) WHERE {where_ersatz}",
-                (neu_praefix, laenge + 1, *werte_ersatz)).rowcount
+                f"UPDATE audit SET username = ? || substr(username, ?) WHERE {where_replacement}",
+                (new_prefix, length + 1, *values_replacement)).rowcount
         # (3) the detail text, block by block over the primary key. The event is read AFTER step 1, so
-        # it is already the new name — `audit_detail_neu` takes either.
-        letzte = 0
+        # it is already the new name — `audit_detail_new` takes either.
+        last = 0
         while True:
-            zeilen = self.db.execute(
+            lines = self.db.execute(
                 "SELECT id, event, detail FROM audit WHERE id > ? AND detail IS NOT NULL AND detail <> '' "
-                "ORDER BY id LIMIT ?", (letzte, self._VOKABULAR_BLOCK)).fetchall()
-            if not zeilen:
+                "ORDER BY id LIMIT ?", (last, self._VOCABULARY_BLOCK)).fetchall()
+            if not lines:
                 break
-            for z in zeilen:
-                neu_detail = V.audit_detail_neu(z["detail"], z["event"])
-                if neu_detail != z["detail"]:
-                    self.db.execute("UPDATE audit SET detail=? WHERE id=?", (neu_detail, z["id"]))
+            for z in lines:
+                new_detail = V.audit_detail_new(z["detail"], z["event"])
+                if new_detail != z["detail"]:
+                    self.db.execute("UPDATE audit SET detail=? WHERE id=?", (new_detail, z["id"]))
                     n += 1
-            letzte = zeilen[-1]["id"]
+            last = lines[-1]["id"]
         # (4) the kinds of the streak and the methods.
-        for alt, neu in V.KINDS_ALT.items():
-            for z in self.db.execute("SELECT topf, anzahl, seit, zuletzt FROM fehlserie WHERE art=?",
-                                     (alt,)).fetchall():
-                if self.db.execute("SELECT 1 FROM fehlserie WHERE topf=? AND art=?", (z["topf"], neu)).fetchone():
+        for old, new in V.KINDS_OLD.items():
+            for z in self.db.execute("SELECT folded, count, since, last_seen FROM failure_series WHERE kind=?",
+                                     (old,)).fetchall():
+                if self.db.execute("SELECT 1 FROM failure_series WHERE folded=? AND kind=?", (z["folded"], new)).fetchone():
                     self.db.execute(
-                        "UPDATE fehlserie SET anzahl = anzahl + ?, seit = MIN(seit, ?), zuletzt = MAX(zuletzt, ?) "
-                        "WHERE topf=? AND art=?", (z["anzahl"], z["seit"], z["zuletzt"], z["topf"], neu))
-                    self.db.execute("DELETE FROM fehlserie WHERE topf=? AND art=?", (z["topf"], alt))
+                        "UPDATE failure_series SET count = count + ?, since = MIN(since, ?), last_seen = MAX(last_seen, ?) "
+                        "WHERE folded=? AND kind=?", (z["count"], z["since"], z["last_seen"], z["folded"], new))
+                    self.db.execute("DELETE FROM failure_series WHERE folded=? AND kind=?", (z["folded"], old))
                 else:
-                    self.db.execute("UPDATE fehlserie SET art=? WHERE topf=? AND art=?", (neu, z["topf"], alt))
+                    self.db.execute("UPDATE failure_series SET kind=? WHERE folded=? AND kind=?", (new, z["folded"], old))
                 n += 1
-            if self.db.execute("SELECT 1 FROM login_attempt WHERE method=? LIMIT 1", (alt,)).fetchone():
-                n += self.db.execute("UPDATE login_attempt SET method=? WHERE method=?", (neu, alt)).rowcount
+            if self.db.execute("SELECT 1 FROM login_attempt WHERE method=? LIMIT 1", (old,)).fetchone():
+                n += self.db.execute("UPDATE login_attempt SET method=? WHERE method=?", (new, old)).rowcount
         return n
 
-    #: Setting key: has `users.name_quelle` been backfilled for existing data (attack round 2026-09-26)?
-    NAME_QUELLE_NACHGETRAGEN = "name_quelle_nachgetragen"
+    #: Setting key: has `users.name_source` been backfilled for existing data (attack round 2026-09-26)?
+    NAME_SOURCE_BACKFILLED = "name_source_backfilled"
 
     #: How far apart creation and binding of a source may be for the binding to count as "the
-    #: source created the account" (`_name_quelle_nachtragen`). On creation both happen in
+    #: source created the account" (`_backfill_name_source`). On creation both happen in
     #: the same sign-in, without a directory call in between — fractions of a second.
-    ANLAGE_TOLERANZ_SEC = 2
+    SETUP_TOLERANCE_SEC = 2
 
-    def _name_quelle_nachtragen(self) -> None:
-        """Backfill `users.name_quelle` once for existing data where the origin is proven (without
+    def _backfill_name_source(self) -> None:
+        """Backfill `users.name_source` once for existing data where the origin is proven (without
         commit, under `_lock`, part of `_migrate`).
 
         * **OIDC:** every row in `oidc_identity` has been written by the callback since v0.1 on CREATING
           the account — it never links an existing one. The account therefore carries the provider's name.
         * **LDAP/SAML:** a binding (also the placeholder) that arose with the creation of the account
-          (`gebunden_at` at most `ANLAGE_TOLERANZ_SEC` before or after `created_at`). A later
+          (`bound_at` at most `SETUP_TOLERANCE_SEC` before or after `created_at`). A later
           re-binding does not count — the account already existed then, and its name came from elsewhere.
 
         Excluded: service accounts and self-chosen names (the marker above already carries them).
@@ -1392,54 +1534,54 @@ class Store:
         the source; another source binds it then only if the operator opens it
         (`federation_unbind`).
 
-        Exactly once, via the marker `NAME_QUELLE_NACHGETRAGEN` in the same commit: if it ran on every start,
+        Exactly once, via the marker `NAME_SOURCE_BACKFILLED` in the same commit: if it ran on every start,
         an account renamed by the operator would get its source back."""
         self.db.execute(
-            "UPDATE users SET name_quelle = 'oidc' WHERE name_quelle IS NULL AND is_service = 0 "
-            "AND name_selbst_gewaehlt = 0 AND id IN (SELECT user_id FROM oidc_identity)")
-        aus_anlage = ("FROM federated_identity f WHERE f.user_id = users.id "
-                      "AND abs(f.gebunden_at - users.created_at) <= ?")
+            "UPDATE users SET name_source = 'oidc' WHERE name_source IS NULL AND is_service = 0 "
+            "AND name_self_chosen = 0 AND id IN (SELECT user_id FROM oidc_identity)")
+        from_setup = ("FROM federated_identity f WHERE f.user_id = users.id "
+                      "AND abs(f.bound_at - users.created_at) <= ?")
         self.db.execute(
-            f"UPDATE users SET name_quelle = (SELECT f.quelle {aus_anlage} "
-            "ORDER BY f.gebunden_at, f.quelle LIMIT 1) "
-            "WHERE name_quelle IS NULL AND is_service = 0 AND name_selbst_gewaehlt = 0 "
-            f"AND EXISTS (SELECT 1 {aus_anlage})",
-            (self.ANLAGE_TOLERANZ_SEC, self.ANLAGE_TOLERANZ_SEC))
+            f"UPDATE users SET name_source = (SELECT f.source {from_setup} "
+            "ORDER BY f.bound_at, f.source LIMIT 1) "
+            "WHERE name_source IS NULL AND is_service = 0 AND name_self_chosen = 0 "
+            f"AND EXISTS (SELECT 1 {from_setup})",
+            (self.SETUP_TOLERANCE_SEC, self.SETUP_TOLERANCE_SEC))
         self.db.execute("INSERT OR REPLACE INTO setting(key, value) VALUES (?, ?)",
-                        (self.NAME_QUELLE_NACHGETRAGEN, str(_now())))
+                        (self.NAME_SOURCE_BACKFILLED, str(_now())))
 
     #: Setting key: up to which `audit.id` the panel lockouts of older writers have already been
-    #: caught up (`_bestand_nachziehen`). If it is missing, the next start reads the audit log
+    #: caught up (`_catch_up_inventory`). If it is missing, the next start reads the audit log
     #: in full once — that is only slower, not wrong (every step is repeatable).
-    PANEL_WASSERLINIE = "panel_sperren_bis"
+    PANEL_WATERLINE = "panel_lock_until"
 
     #: How many identifiers at most in one `IN (…)` (SQLite up to 3.32: 999 parameters).
-    IN_STUECK = 500
+    IN_PIECE = 500
 
     @staticmethod
-    def _uid_aus_detail(detail) -> Optional[int]:
+    def _uid_from_detail(detail) -> Optional[int]:
         """The account id from the detail of a panel row: `uid=<id>` or `uid=<id> …`.
 
         The same form that the SQL version compared (`detail = 'uid=' || id` or
         `LIKE 'uid=' || id || ' %'`): only ASCII digits without a leading zero, then end or a
         space. The panel has written this form unchanged since 0.3.0."""
-        kopf = str(detail or "").split(" ", 1)[0]
-        if not kopf.startswith("uid="):
+        head = str(detail or "").split(" ", 1)[0]
+        if not head.startswith("uid="):
             return None
-        zahl = kopf[4:]
-        if not (zahl.isascii() and zahl.isdigit()) or zahl != str(int(zahl)):
+        number = head[4:]
+        if not (number.isascii() and number.isdigit()) or number != str(int(number)):
             return None
-        return int(zahl)
+        return int(number)
 
-    def _owner_nachziehen(self) -> None:
+    def _catch_up_owner(self) -> None:
         """If there are admins but no owner (existing data from before the owner model), the oldest admin
         becomes owner — preferably one that someone set by hand (`is_admin=1`), active and not a
         service account. Once, with a row in the audit log. Runs in the migration (under the
         write lock, directly on the connection) — BEFORE the watermark of the existing-data steps, so that
         its own row does not count as "new since the last start". Without an admin it stays with the
         first-admin path, which also assigns the first owner."""
-        spalten = {r["name"] for r in self.db.execute("PRAGMA table_info(users)")}
-        if "is_owner" not in spalten:
+        columns = {r["name"] for r in self.db.execute("PRAGMA table_info(users)")}
+        if "is_owner" not in columns:
             return
         if self.db.execute("SELECT 1 FROM users WHERE is_owner=1 LIMIT 1").fetchone():
             return
@@ -1464,17 +1606,17 @@ class Store:
             "Owner model: %s is now owner (oldest admin). Further owners are granted by an owner in the "
             "admin panel.", u["username"])
 
-    def _bestand_nachziehen(self, ab_anfang: bool, ohne_topf) -> None:
+    def _catch_up_inventory(self, from_start: bool, without_bucket) -> None:
         """Bring existing data to schema 10 (without commit, under `_lock` — part of `_migrate`).
 
-        On upgrade (`ab_anfang`) for all existing data, afterwards on **every** start for what
+        On upgrade (`from_start`) for all existing data, afterwards on **every** start for what
         an older writer may have left behind since then. An older version opens a
         schema-10 file, warns and keeps writing; it leaves the stamp at 10 (rollback without
         backup). If it locks in the panel during this window, `disabled=1` stands again with an open
         confirmation link, and if the step hung on the stamp, it would never run again: the old link
         would lift the lock and sign in (H-18, measured with 0.19.0). The trace of the older
         writer is different per step — audit rows since the watermark for the locks,
-        rows without a bucket (`topf_name`) for the registrations.
+        rows without a bucket (`folded_name`) for the registrations.
 
         1. **Locks from the panel get the operator mark** (`disabled=2`). Up to this
            version the panel lock wrote `disabled=1` — the same value as a pending
@@ -1484,7 +1626,7 @@ class Store:
            account is at 1 (today's lock writes 2, a 1 behind it therefore comes from an
            older writer). For such accounts the open one-time tokens are discarded at the same time —
            as with a lock of today. It is read **once in sequence**, only the rows
-           after the watermark (`PANEL_WASSERLINIE`, on upgrade from 0): the first version searched
+           after the watermark (`PANEL_WATERLINE`, on upgrade from 0): the first version searched
            the whole audit log for each locked account (measured 60 s with 1,000,000 rows × 1,000
            accounts, under the write lock — a second worker failed at `busy_timeout`).
            Limits: a lock whose row `audit_retention_days` has already deleted stays
@@ -1497,7 +1639,7 @@ class Store:
            this version only the redeemed link sets it. Open means: locked, never
            signed in, an unused `verify_email` token and no redeemed one. Otherwise
            the deletion by an admin would also take the address typed in by a stranger from older rows
-           (`konto_entfernen`) — even when a lock in the panel has discarded the tokens
+           (`remove_account`) — even when a lock in the panel has discarded the tokens
            by which the account is otherwise recognisable as open. After the upgrade only for
            rows without a bucket (only a foreign writer creates them) and for the accounts from
            step 1. Step 2 runs before step 1, which discards exactly these tokens."""
@@ -1507,94 +1649,94 @@ class Store:
         # upgrade `_migrate` already holds the transaction (DELETE above).
         if not self.db.in_transaction:
             self.db.execute("BEGIN IMMEDIATE")
-        zeile = self.db.execute("SELECT seq FROM sqlite_sequence WHERE name='audit'").fetchone()
-        bis = int(zeile[0]) if zeile and zeile[0] else 0
-        gespeichert = self.db.execute("SELECT value FROM setting WHERE key=?",
-                                      (self.PANEL_WASSERLINIE,)).fetchone()
-        gespeichert = gespeichert[0] if gespeichert else None
-        ab = 0
-        if not ab_anfang and gespeichert is not None and str(gespeichert).isdigit():
-            ab = int(gespeichert)
-        if ab > bis:
-            ab = 0          # counter smaller than the watermark (table recreated): read everything
-        juengstes = {}
-        for ereignis, detail in self.db.execute(
+        line = self.db.execute("SELECT seq FROM sqlite_sequence WHERE name='audit'").fetchone()
+        until = int(line[0]) if line and line[0] else 0
+        stored = self.db.execute("SELECT value FROM setting WHERE key=?",
+                                      (self.PANEL_WATERLINE,)).fetchone()
+        stored = stored[0] if stored else None
+        start_from = 0
+        if not from_start and stored is not None and str(stored).isdigit():
+            start_from = int(stored)
+        if start_from > until:
+            start_from = 0          # counter smaller than the watermark (table recreated): read everything
+        youngest = {}
+        for event, detail in self.db.execute(
                 "SELECT event, detail FROM audit WHERE id > ? AND id <= ? "
-                "AND event IN ('user_disable', 'user_enable') ORDER BY id", (ab, bis)):
-            uid = self._uid_aus_detail(detail)
+                "AND event IN ('user_disable', 'user_enable') ORDER BY id", (start_from, until)):
+            uid = self._uid_from_detail(detail)
             if uid is not None:
-                juengstes[uid] = ereignis
-        kandidaten = sorted(uid for uid, ereignis in juengstes.items() if ereignis == "user_disable")
+                youngest[uid] = event
+        candidates = sorted(uid for uid, event in youngest.items() if event == "user_disable")
 
-        def stuecke(ids):
+        def pieces(ids):
             ids = list(ids)
-            for i in range(0, len(ids), self.IN_STUECK):
-                teil = ids[i:i + self.IN_STUECK]
-                yield teil, ",".join("?" * len(teil))
+            for i in range(0, len(ids), self.IN_PIECE):
+                part = ids[i:i + self.IN_PIECE]
+                yield part, ",".join("?" * len(part))
 
-        adressen = 0
-        ziel = None if ab_anfang else {z["id"] for z in ohne_topf} | set(kandidaten)
-        if ziel is None or ziel:
-            offen = sorted(z[0] for z in self.db.execute(
+        addresses = 0
+        destination = None if from_start else {z["id"] for z in without_bucket} | set(candidates)
+        if destination is None or destination:
+            unclosed = sorted(z[0] for z in self.db.execute(
                 "SELECT user_id FROM magic_token WHERE purpose = 'verify_email' AND user_id IS NOT NULL "
                 "GROUP BY user_id HAVING SUM(used_at IS NULL) > 0 AND SUM(used_at IS NOT NULL) = 0")
-                if ziel is None or z[0] in ziel)
-            for teil, ph in stuecke(offen):
-                adressen += self.db.execute(
+                if destination is None or z[0] in destination)
+            for part, ph in pieces(unclosed):
+                addresses += self.db.execute(
                     f"UPDATE users SET email_verified=0 WHERE id IN ({ph}) AND email_verified <> 0 "
-                    "AND disabled <> 0 AND first_login_at IS NULL", teil).rowcount
+                    "AND disabled <> 0 AND first_login_at IS NULL", part).rowcount
         panel = []
-        for teil, ph in stuecke(kandidaten):
+        for part, ph in pieces(candidates):
             ids = [z[0] for z in self.db.execute(
                 f"SELECT id FROM users WHERE id IN ({ph}) AND disabled = ?",
-                (*teil, self.GESPERRT_BESTAETIGUNG))]
+                (*part, self.LOCKED_CONFIRMATION))]
             if not ids:
                 continue
             ph = ",".join("?" * len(ids))
             self.db.execute(f"UPDATE users SET disabled=? WHERE id IN ({ph}) AND disabled = ?",
-                            (self.GESPERRT_BETREIBER, *ids, self.GESPERRT_BESTAETIGUNG))
+                            (self.LOCKED_OPERATOR, *ids, self.LOCKED_CONFIRMATION))
             self.db.execute(f"DELETE FROM magic_token WHERE user_id IN ({ph}) AND used_at IS NULL", ids)
             panel += ids
-        if gespeichert is None or str(gespeichert) != str(bis):
+        if stored is None or str(stored) != str(until):
             self.db.execute("INSERT OR REPLACE INTO setting(key, value) VALUES (?, ?)",
-                            (self.PANEL_WASSERLINIE, str(bis)))
-        if ab_anfang and (adressen or panel):
+                            (self.PANEL_WATERLINE, str(until)))
+        if from_start and (addresses or panel):
             log.info("Schema 10: %d lockout(s) from the panel now carry the operator marker (open "
                      "one-time tokens discarded), %d address(es) of open registrations count as "
-                     "unproven until confirmed.", len(panel), adressen)
-        elif adressen or panel:
+                     "unproven until confirmed.", len(panel), addresses)
+        elif addresses or panel:
             log.warning("An older TinySesam version has written to this database (downgrade "
                         "without a backup?): %d lockout(s) from its panel now carry the "
                         "operator marker (open one-time tokens discarded), %d address(es) of its "
                         "open registrations count as unproven until confirmed.",
-                        len(panel), adressen)
+                        len(panel), addresses)
 
-    def _toepfe_schreiben(self, zeilen) -> None:
-        """Compute `topf_name`/`topf_mail` for these account rows (without commit, under `_lock`).
+    def _write_pots(self, lines) -> None:
+        """Compute `folded_name`/`folded_mail` for these account rows (without commit, under `_lock`).
 
         Written only if name and address are still the ones read: if another
         writer changes them in between, its trigger sets the bucket to NULL, and the next call
         recomputes — instead of the bucket of the old name remaining here."""
         self.db.executemany(
-            "UPDATE users SET topf_name=?, topf_mail=? WHERE id=? AND username IS ? AND email IS ?",
-            [(norm_kennung(z["username"]), norm_kennung(z["email"]), z["id"], z["username"], z["email"])
-             for z in zeilen])
+            "UPDATE users SET folded_name=?, folded_mail=? WHERE id=? AND username IS ? AND email IS ?",
+            [(norm_identifier(z["username"]), norm_identifier(z["email"]), z["id"], z["username"], z["email"])
+             for z in lines])
 
-    def _toepfe_nachtragen(self) -> list:
-        """Backfill missing counting buckets — the rows of another writer (see `topf_name`).
+    def _backfill_pots(self) -> list:
+        """Backfill missing counting buckets — the rows of another writer (see `folded_name`).
 
         Returns the rows that could NOT be written (database read-only, locked);
         the caller checks those itself. Normally that is none, and it costs one query
         over the index — independent of which identifier is being looked up."""
-        offen = self._all("SELECT * FROM users WHERE topf_name IS NULL OR topf_mail IS NULL")
-        if not offen:
+        unclosed = self._all("SELECT * FROM users WHERE folded_name IS NULL OR folded_mail IS NULL")
+        if not unclosed:
             return []
         try:
-            with self._schreibend():
-                self._toepfe_schreiben(offen)
+            with self._writing():
+                self._write_pots(unclosed)
                 self.db.commit()
         except sqlite3.Error:
-            return offen
+            return unclosed
         return []
 
     def _one(self, sql, args=()):
@@ -1606,7 +1748,7 @@ class Store:
         with self._lock:
             return self.db.execute(sql, args).fetchall()
 
-    def _verwerfen(self) -> None:
+    def _discard(self) -> None:
         """Roll back an open transaction (under `_lock`) — after a failed write."""
         try:
             self.db.rollback()
@@ -1617,7 +1759,7 @@ class Store:
         """`BEGIN IMMEDIATE` for a self-managed transaction (under `_lock`) — counting and
         booking in one step, also across several processes (`reserve_attempt`, `finish_attempt`)."""
         if self.db.in_transaction:
-            # The second lock behind `_schreibend`: if a transaction is lying around anyway (a
+            # The second lock behind `_writing`: if a transaction is lying around anyway (a
             # writer that did not roll back on failure), the BEGIN below would fail on it —
             # and with it every sign-in until someone else committed. Its content is the remainder
             # of a FAILED write; it is discarded, not booked along. Loud, because
@@ -1625,11 +1767,11 @@ class Store:
             logging.getLogger("tinysesam").warning(
                 "Open transaction found on the database connection (remnant of a "
                 "failed write) — discarded before the sign-in attempt counts.")
-            self._verwerfen()
+            self._discard()
         self.db.execute("BEGIN IMMEDIATE")
 
     @contextlib.contextmanager
-    def _schreibend(self):
+    def _writing(self):
         """Hold `_lock`, write — and on failure DISCARD the transaction.
 
         Python's `sqlite3` silently opens a `BEGIN` before every INSERT/UPDATE/DELETE. If
@@ -1643,7 +1785,7 @@ class Store:
         written before the failure.
 
         Every write path therefore runs through here (or through `_exec`, which does so too); whoever manages the
-        transaction themselves (`reserve_attempt`, `rotate_session`, `_uhr_mitschreiben`, the
+        transaction themselves (`reserve_attempt`, `rotate_session`, `_clock_record`, the
         inner block of `_migrate`) puts each commit in a `try` whose broad `except`
         (without type, `Exception` or `BaseException` — `sqlite3.Error` does not catch a binding error such as
         OverflowError) or `finally` rolls back. tests/test_hardening2.py checks this via the
@@ -1653,73 +1795,73 @@ class Store:
             try:
                 yield
             except BaseException:
-                self._verwerfen()
+                self._discard()
                 raise
 
     def _exec(self, sql, args=()):
-        with self._schreibend():
+        with self._writing():
             cur = self.db.execute(sql, args)
             self.db.commit()
-            self._geschrieben = time.monotonic()
-            self._uhr_mitschreiben()
+            self._written = time.monotonic()
+            self._clock_record()
             return cur
 
-    #: Setting key of the saved clock state (see `_Uhr`) and how often it is written at most
+    #: Setting key of the saved clock state (see `_Clock`) and how often it is written at most
     #: (seconds).
-    UHR_STAND = "uhr_stand"
-    UHR_SICHERN_SEK = 60
+    CLOCK_STATE = "clock_state"
+    CLOCK_SECURE_SEC = 60
 
-    def _uhr_stand_schreiben(self) -> None:
-        """Raise `uhr_stand` to `jetzt()` — only UPWARDS (without commit, under `_lock`).
+    def _write_clock_state(self) -> None:
+        """Raise `clock_state` to `now()` — only UPWARDS (without commit, under `_lock`).
 
         `_migrate()` already writes before `Store()` has raised the clock from the database;
-        there `jetzt()` is still the wrong wall clock of a boot with an old date. A blind
+        there `now()` is still the wrong wall clock of a boot with an old date. A blind
         overwrite would delete exactly the state that is about to raise the clock."""
-        jetzt_s = _now()
+        now_s = _now()
         self.db.execute("INSERT OR IGNORE INTO setting(key, value) VALUES (?, ?)",
-                        (self.UHR_STAND, str(jetzt_s)))
+                        (self.CLOCK_STATE, str(now_s)))
         self.db.execute("UPDATE setting SET value=? WHERE key=? AND CAST(value AS INTEGER) < ?",
-                        (str(jetzt_s), self.UHR_STAND, jetzt_s))
+                        (str(now_s), self.CLOCK_STATE, now_s))
 
     @staticmethod
-    def _frisch(seit, m, frist) -> bool:
-        """Is the monotonic stamp `seit` less than `frist` seconds before `m`?
+    def _fresh(since, m, deadline) -> bool:
+        """Is the monotonic stamp `seit` less than `deadline` seconds before `m`?
 
         A NEGATIVE distance counts as expired, not as fresh: freezegun delivers
         `time.monotonic` on the epoch scale (≈1.8e9). A write under `freeze_time`
         left the stamps there, and afterwards every distance was negative, hence always "shorter than
-        the deadline" — `uhr_stand` was no longer saved in the whole process, the write probe
-        checked only the connection (second attack round, same class as in `_Uhr.jetzt`).
+        the deadline" — `clock_state` was no longer saved in the whole process, the write probe
+        checked only the connection (second attack round, same class as in `_Clock.now`).
         A distance above any deadline is expired anyway."""
-        return seit is not None and 0 <= m - seit < frist
+        return since is not None and 0 <= m - since < deadline
 
-    def _uhr_mitschreiben(self) -> None:
-        """Save the clock state — at most once per `UHR_SICHERN_SEK` (under `_lock`).
+    def _clock_record(self) -> None:
+        """Save the clock state — at most once per `CLOCK_SECURE_SEC` (under `_lock`).
 
         Without it a restart knew only the last event in the database: what expired afterwards
         applied again for its full remaining lifetime after a boot with an old date (B6-9). Own
         commit AFTER the actual write: if it fails (volume full), it must not drag down the
         already confirmed write — the state is a bonus."""
         m = time.monotonic()
-        if self._frisch(self._uhr_gesichert, m, self.UHR_SICHERN_SEK):
+        if self._fresh(self._clock_secured, m, self.CLOCK_SECURE_SEC):
             return
         try:
-            self._uhr_stand_schreiben()
+            self._write_clock_state()
             self.db.commit()
-            self._uhr_gesichert = m
-        except Exception as fehler:
+            self._clock_secured = m
+        except Exception as error:
             # Rolled back on EVERY failure, only the database error is swallowed (the
             # clock state is a precaution). Until the final round, `except sqlite3.Error:` caught here —
             # a binding error such as OverflowError is not one and left the transaction open;
-            # only the outer `_schreibend` of `_exec` saved it.
-            self._verwerfen()
-            if not isinstance(fehler, sqlite3.Error):
+            # only the outer `_writing` of `_exec` saved it.
+            self._discard()
+            if not isinstance(error, sqlite3.Error):
                 raise
 
     # ---------- Users ----------
     def create_user(self, username, display_name=None, email=None, is_admin=False, roles=None,
-                    is_service=False, email_verified=True, name_selbst_gewaehlt=False,
-                    name_quelle=None) -> int:
+                    is_service=False, email_verified=True, name_itself_chosen=False,
+                    name_source=None) -> int:
         """Create an account (raw building block; the checks are done by `TinySesam.create_user`).
 
         Raises `sqlite3.IntegrityError` if the name or address is already the identifier of another account
@@ -1729,27 +1871,27 @@ class Store:
 
         Name and address belong to the account from this statement on: the watermarks (G2) arise in
         the same INSERT, as the highest id currently in `login_attempt` and `audit`. Likewise the
-        marker `name_selbst_gewaehlt` (G2-N) and the origin of the name (`name_quelle`) — between
+        marker `name_self_chosen` (G2-N) and the origin of the name (`name_source`) — between
         creation and marker there is no sign-in that could bind the account via the name."""
         mail = norm_email(email)
         cur = self._exec(
             "INSERT INTO users(username, display_name, email, email_verified, is_admin, roles, "
-            "is_service, created_at, topf_name, topf_mail, name_versuch_ab, mail_versuch_ab, "
-            "name_audit_ab, mail_audit_ab, name_selbst_gewaehlt, name_quelle) VALUES (?,?,?,?,?,?,?,?,?,?,"
-            f"{self.WL_VERSUCH},{self.WL_VERSUCH},{self.WL_AUDIT},{self.WL_AUDIT},?,?)",
+            "is_service, created_at, folded_name, folded_mail, name_attempt_from, mail_attempt_from, "
+            "name_audit_from, mail_audit_from, name_self_chosen, name_source) VALUES (?,?,?,?,?,?,?,?,?,?,"
+            f"{self.WL_ATTEMPT},{self.WL_ATTEMPT},{self.WL_AUDIT},{self.WL_AUDIT},?,?)",
             (username, display_name or username, mail, 1 if email_verified else 0,
              1 if is_admin else 0,
              json.dumps(list(roles or [])), 1 if is_service else 0, _now(),
-             norm_kennung(username), norm_kennung(mail), 1 if name_selbst_gewaehlt else 0,
-             name_quelle or None))
+             norm_identifier(username), norm_identifier(mail), 1 if name_itself_chosen else 0,
+             name_source or None))
         return cur.lastrowid
 
-    def _kennung_setzen(self, user_id, spalte: str, wert, topf: str, beleg=None) -> list:
-        """The statements that replace name (`spalte="username"`) or address (`"email"`, with `beleg`)
-        together with the counting bucket — for `_umschreiben`.
+    def _set_identifier(self, user_id, column: str, value, bucket: str, proof=None) -> list:
+        """The statements that replace name (`column="username"`) or address (`"email"`, with `proof`)
+        together with the counting bucket — for `_rewrite`.
 
         If the identifier thereby moves to a DIFFERENT bucket, it belongs to the account only from now on: the
-        watermarks (`name_versuch_ab`/`name_audit_ab` or `mail_…`, G2) go to the current state in the same
+        watermarks (`name_attempt_from`/`name_audit_from` or `mail_…`, G2) go to the current state in the same
         statement. If the bucket stays (`B1` → `b1`, `u@bücher.example` →
         `u@xn--bcher-kva.example`), they stay — it is the same identifier. SQLite evaluates
         every expression in SET with the OLD row; the comparison therefore sees the previous bucket.
@@ -1763,77 +1905,77 @@ class Store:
         trigger. Until 2026-09-26 the trigger set the bucket to NULL and the second statement
         set it back; with the watermarks that would already have shifted the limit for `B1` → `b1`.
 
-        For the name a third is added at the front (`_verzeichnisname_merken`, audit round 2026-09-27):
+        For the name a third is added at the front (`_remember_directory_name`, audit round 2026-09-27):
         an account with an LDAP binding whose name was the name in the directory keeps the old one as
-        directory name — otherwise it would drop out of `zaehl_kennungen` and out of the
+        directory name — otherwise it would drop out of `count_identifiers` and out of the
         identifier space on renaming, until the next successful LDAP sign-in."""
-        topf_spalte, art = ("topf_name", "name") if spalte == "username" else ("topf_mail", "mail")
-        gleich = f"CASE WHEN {topf_spalte} IS ? THEN"
-        setzen = (f"{topf_spalte} = {gleich} NULL ELSE ? END, "
-                  f"{art}_versuch_ab = {gleich} {art}_versuch_ab ELSE {self.WL_VERSUCH} END, "
-                  f"{art}_audit_ab = {gleich} {art}_audit_ab ELSE {self.WL_AUDIT} END")
-        erste: tuple
-        if beleg is None:
-            erste = (f"UPDATE users SET {spalte}=?, {setzen} WHERE id=?",
-                     (wert, topf, topf, topf, topf, user_id))
+        bucket_column, kind = ("folded_name", "name") if column == "username" else ("folded_mail", "mail")
+        same = f"CASE WHEN {bucket_column} IS ? THEN"
+        set_value = (f"{bucket_column} = {same} NULL ELSE ? END, "
+                  f"{kind}_attempt_from = {same} {kind}_attempt_from ELSE {self.WL_ATTEMPT} END, "
+                  f"{kind}_audit_from = {same} {kind}_audit_from ELSE {self.WL_AUDIT} END")
+        first: tuple
+        if proof is None:
+            first = (f"UPDATE users SET {column}=?, {set_value} WHERE id=?",
+                     (value, bucket, bucket, bucket, bucket, user_id))
         else:
-            erste = (f"UPDATE users SET {spalte}=?, email_verified=?, {setzen} WHERE id=?",
-                     (wert, 1 if beleg else 0, topf, topf, topf, topf, user_id))
-        vorab = [self._verzeichnisname_merken(user_id, topf)] if spalte == "username" else []
-        return vorab + [erste, (f"UPDATE users SET {topf_spalte}=? WHERE id=?", (topf, user_id))]
+            first = (f"UPDATE users SET {column}=?, email_verified=?, {set_value} WHERE id=?",
+                     (value, 1 if proof else 0, bucket, bucket, bucket, bucket, user_id))
+        beforehand = [self._remember_directory_name(user_id, bucket)] if column == "username" else []
+        return beforehand + [first, (f"UPDATE users SET {bucket_column}=? WHERE id=?", (bucket, user_id))]
 
-    def _verzeichnisname_merken(self, user_id, neuer_topf) -> tuple:
+    def _remember_directory_name(self, user_id, new_bucket) -> tuple:
         """The statement that, before a rename, records the previous name as the name in the directory
-        on the LDAP binding (`federated_identity.name_topf`, G5) — for `_kennung_setzen`.
+        on the LDAP binding (`federated_identity.directory_name_folded`, G5) — for `_set_identifier`.
 
         Occasion (audit round 2026-09-27): if an account is named the same locally and in the directory, NULL stands there
-        (`bindung_name_setzen` records only a differing name). If the operator
+        (`set_binding_name` records only a differing name). If the operator
         (G13, panel, `tinysesam rename`) or the person themselves renamed the account, the
-        directory name dropped out of `zaehl_kennungen`: if a stranger had filled the series beneath it before, the
+        directory name dropped out of `count_identifiers`: if a stranger had filled the series beneath it before, the
         LDAP sign-in stayed locked — panel reset and full sign-in by another route did not
         clear it, only `tinysesam unlock <directory name>`. And the name was free locally: another
         account could take it and, with every sign-in, clear the counters against the LDAP
         password.
 
-        Only a real identifier (not the origin placeholder `OHNE_KENNUNG`): without a stable
+        Only a real identifier (not the origin placeholder `WITHOUT_IDENTIFIER`): without a stable
         identifier LDAP matches via the name — after renaming, the old name no longer
         belongs to this account. Only if NULL stands (a differing name is already recorded and
         the younger one) and only if the bucket really changes. The old bucket is read in
         the same transaction, before the new name is written."""
-        alt = "(SELECT topf_name FROM users WHERE id = ?)"
-        return (f"UPDATE federated_identity SET name_topf = {alt} WHERE quelle = 'ldap' AND user_id = ? "
-                "AND name_topf IS NULL AND substr(kennung, 1, length(?)) <> ? "
-                f"AND {alt} IS NOT NULL AND {alt} <> '' AND {alt} IS NOT ?",
-                (user_id, user_id, self.OHNE_KENNUNG, self.OHNE_KENNUNG, user_id, user_id, user_id,
-                 neuer_topf))
+        old = "(SELECT folded_name FROM users WHERE id = ?)"
+        return (f"UPDATE federated_identity SET directory_name_folded = {old} WHERE source = 'ldap' AND user_id = ? "
+                "AND directory_name_folded IS NULL AND substr(identifier, 1, length(?)) <> ? "
+                f"AND {old} IS NOT NULL AND {old} <> '' AND {old} IS NOT ?",
+                (user_id, user_id, self.WITHOUT_IDENTIFIER, self.WITHOUT_IDENTIFIER, user_id, user_id, user_id,
+                 new_bucket))
 
-    def _umschreiben(self, schritte) -> None:
+    def _rewrite(self, steps) -> None:
         """Several statements in ONE transaction, one commit (like `_exec`, only for a list).
-        If one fails — also on an identifier trigger (`IntegrityError`) — `_schreibend` rolls
+        If one fails — also on an identifier trigger (`IntegrityError`) — `_writing` rolls
         all of them back."""
-        with self._schreibend():
-            for sql, args in schritte:
+        with self._writing():
+            for sql, args in steps:
                 self.db.execute(sql, args)
             self.db.commit()
-            self._geschrieben = time.monotonic()
-            self._uhr_mitschreiben()
+            self._written = time.monotonic()
+            self._clock_record()
 
-    def set_username(self, user_id, username, selbst_gewaehlt: Optional[bool] = None) -> None:
-        """Replace the username — together with the counting bucket (`topf_name`) in the same transaction.
+    def set_username(self, user_id, username, itself_chosen: Optional[bool] = None) -> None:
+        """Replace the username — together with the counting bucket (`folded_name`) in the same transaction.
         The check happens beforehand (`TinySesam.change_username`); this only writes. If the name is
         already the identifier of another account (name, address or namesake in the bucket), the
         database rejects it: `sqlite3.IntegrityError`, nothing changed.
 
-        `selbst_gewaehlt` sets the marker `users.name_selbst_gewaehlt` (G2-N) in the same
-        transaction and deletes the origin `users.name_quelle`: the new name comes from the person
+        `itself_chosen` sets the marker `users.name_self_chosen` (G2-N) in the same
+        transaction and deletes the origin `users.name_source`: the new name comes from the person
         or the operator, no longer from the source that created the account. `None` leaves
         both as they are."""
         name = str(username or "").strip()
-        schritte = self._kennung_setzen(user_id, "username", name, norm_kennung(name))
-        if selbst_gewaehlt is not None:
-            schritte.append(("UPDATE users SET name_selbst_gewaehlt=?, name_quelle=NULL WHERE id=?",
-                             (1 if selbst_gewaehlt else 0, user_id)))
-        self._umschreiben(schritte)
+        steps = self._set_identifier(user_id, "username", name, norm_identifier(name))
+        if itself_chosen is not None:
+            steps.append(("UPDATE users SET name_self_chosen=?, name_source=NULL WHERE id=?",
+                             (1 if itself_chosen else 0, user_id)))
+        self._rewrite(steps)
 
     def set_email(self, user_id, email, verified: bool = False):
         """Replace the address — **together with its proof**, by default "unconfirmed".
@@ -1841,7 +1983,7 @@ class Store:
         The proof belongs to the address, not to the account: since `users.email_verified` decides
         on rights (`_maybe_promote_admin`, stage 2), a marker left standing would be
         the proof of the **old** address on the **new** one — exactly that was measured
-        (B-umgehung-8 from T-13): `eve@example.com` (proven) → `set_email(uid, "boss@example.com")` →
+        (B-bypass-8 from T-13): `eve@example.com` (proven) → `set_email(uid, "boss@example.com")` →
         first admin via the allowlist, without anyone having confirmed anything.
 
         Until then it said here that the marker stays "fail-closed". That held only for the
@@ -1851,16 +1993,16 @@ class Store:
         explicitly (`set_email(uid, mail, verified=True)`) or sets it afterwards with
         `set_email_verified`. Address and proof go into the database in ONE statement,
         so that there is no state in between in which the new address carries the old proof.
-        The counting bucket of the address (`topf_mail`) goes along in the same transaction.
+        The counting bucket of the address (`folded_mail`) goes along in the same transaction.
 
         If the address is already the identifier of another account (address, name or namesake in the
         bucket), the database rejects it: `sqlite3.IntegrityError`, nothing changed. Until
         2026-09-26 nothing checked here except `ux_users_email` (address against address)."""
         mail = norm_email(email)
-        self._umschreiben(self._kennung_setzen(user_id, "email", mail, norm_kennung(mail), bool(verified)))
+        self._rewrite(self._set_identifier(user_id, "email", mail, norm_identifier(mail), bool(verified)))
 
-    def adresse_wechseln(self, user_id, email, name_folgt: bool = False) -> None:
-        """Enter the confirmed new address (with proof) and, if `name_folgt`, set the name
+    def address_switch(self, user_id, email, name_follows: bool = False) -> None:
+        """Enter the confirmed new address (with proof) and, if `name_follows`, set the name
         to the same address (email mode) — in ONE transaction.
 
         Written separately (`set_email`, then `set_username`), the second could fail
@@ -1868,11 +2010,11 @@ class Store:
         address stayed occupied as the account's name. If one statement fails here (the new
         identifier has meanwhile been taken: `sqlite3.IntegrityError`), both stay as they were."""
         mail = norm_email(email)
-        topf = norm_kennung(mail)
-        schritte = self._kennung_setzen(user_id, "email", mail, topf, True)
-        if name_folgt:
-            schritte += self._kennung_setzen(user_id, "username", mail, topf)
-        self._umschreiben(schritte)
+        bucket = norm_identifier(mail)
+        steps = self._set_identifier(user_id, "email", mail, bucket, True)
+        if name_follows:
+            steps += self._set_identifier(user_id, "username", mail, bucket)
+        self._rewrite(steps)
 
     def set_email_verified(self, user_id, verified: bool):
         """Record the proof for the address (`users.email_verified`).
@@ -1901,8 +2043,8 @@ class Store:
         return self._one("SELECT * FROM users WHERE username=? COLLATE NOCASE", (username,))
 
     def get_user_by_email(self, email) -> Optional[sqlite3.Row]:
-        kanonisch = norm_email(email)
-        if not kanonisch:
+        canonical = norm_email(email)
+        if not canonical:
             return None
         # Also look for the form from before R4-06 (only trimmed and lowercase): a stored address
         # with an umlaut domain is still in Unicode form in existing data and would otherwise not be found.
@@ -1910,12 +2052,12 @@ class Store:
         # input — otherwise `user@xn--bcher-kva.example` did not find the existing entry
         # `user@bücher.example`, and the registration created a second account for the same
         # mailbox.
-        alt = str(email or "").strip().lower()
-        unicode_form = _email_unicode(kanonisch)
+        old = str(email or "").strip().lower()
+        unicode_form = _email_unicode(canonical)
         return self._one("SELECT * FROM users WHERE email COLLATE NOCASE IN (?, ?, ?) ORDER BY id LIMIT 1",
-                         (kanonisch, alt, unicode_form))
+                         (canonical, old, unicode_form))
 
-    def loeschsperre(self, user) -> Optional[str]:
+    def deletion_guard(self, user) -> Optional[str]:
         """Why can this account NOT be deleted on purpose? `"owner"`, `"last_admin"` or None.
 
         The one protection rule of the deliberate deletion — shared by `TinySesam.delete_user`
@@ -1929,7 +2071,7 @@ class Store:
             return "last_admin"
         return None
 
-    def konto_bestand(self, user_id) -> tuple[int, int, int]:
+    def account_footprint(self, user_id) -> tuple[int, int, int]:
         """What hangs on an account, as counts only (for `tinysesam delete`):
         `(sessions, identity links, API keys)`."""
         def n(sql):
@@ -1939,11 +2081,11 @@ class Store:
                 + n("SELECT COUNT(*) AS n FROM federated_identity WHERE user_id=?"),
                 n("SELECT COUNT(*) AS n FROM api_key WHERE user_id=?"))
 
-    def konto_entfernen(self, user_id, adresse_unbefristet: bool = False) -> Optional[tuple[str, int]]:
+    def remove_account(self, user_id, address_unlimited: bool = False) -> Optional[tuple[str, int]]:
         """Delete an account — the ONE deletion path that every caller goes through (H-13).
 
         Account together with credentials and sessions, the sign-in attempts under name and address, and
-        in the audit log the name becomes `deleted#<id>` (`audit_anonymisieren`). A deleted
+        in the audit log the name becomes `deleted#<id>` (`anonymize_audit`). A deleted
         account whose name still stands in every row is not deleted.
 
         Why here and not in the manager: until the T-13 integration there were four deletion paths with two
@@ -1953,7 +2095,7 @@ class Store:
         later namesake saw the stranger's registration as their own event
         (integration findings 12/18). The store is the deepest place that all paths share.
 
-        **Only what arose from the creation of the account** (`anlage_grenze` — the same limit as
+        **Only what arose from the creation of the account** (`setup_limit` — the same limit as
         `TinySesam.own_events`). Since `gc()` and the B6-5 rollback go through here, a stranger without
         an account triggers this path too: register, never confirm. Without a limit it
         rewrote rows that arose BEFORE his account and belong to others — the admin's invitation
@@ -1965,11 +2107,11 @@ class Store:
         is the safe direction here (they expire with the lockout window).
 
         More precise since 2026-09-26 (G2): not from creation, but from **each identifier's
-        joining** (`kennung_grenzen`) — an account gets name and address later too
+        joining** (`identifier_limits`) — an account gets name and address later too
         (rename, address change). To the exact row, also in the second of joining. The
         creation remains the fallback for existing data without a watermark.
 
-        `adresse_unbefristet=True` exempts a **proven** address (`adresse_belegt`):
+        `address_unlimited=True` exempts a **proven** address (`address_proven`):
         it demonstrably belongs to the account and is also replaced in older rows (the
         invitation that led to the account). That is the deliberate deletion by an admin
         (`TinySesam.delete_user`, H-13) — not a path that an anonymous party triggers. `gc()`, the
@@ -1980,7 +2122,7 @@ class Store:
         distinction, clearing such accounts in the panel would rewrite the admin's invitation
         and the failed attempts of the real holder from BEFORE creation to `deleted#<id>`.
 
-        The sign-in attempts of a counting bucket (`norm_kennung`) that a REMAINING account
+        The sign-in attempts of a counting bucket (`norm_identifier`) that a REMAINING account
         shares stay in place (see `delete_attempts_for`).
 
         Returns `(replacement name, anonymised rows)` — under the replacement name the
@@ -1990,21 +2132,21 @@ class Store:
         if u is None:
             return None
         name, mail = str(u["username"]), (u["email"] or "")
-        seit, seit_id = self.anlage_grenze(u)
+        since, since_id = self.setup_limit(u)
         # More precise than creation: from when each identifier belonged to the account (G2). Read before
         # deleting — afterwards the row no longer exists.
-        grenzen = self.kennung_grenzen(u)
-        unbefristet = (mail,) if (adresse_unbefristet and self.adresse_belegt(u)) else ()
+        limits = self.identifier_limits(u)
+        unlimited = (mail,) if (address_unlimited and self.address_proven(u)) else ()
         self.delete_user(user_id)
-        self.delete_attempts_for(name, (mail,), nach=seit, unbefristet=unbefristet,
-                                 ab_ids={t: g[0] for t, g in grenzen.items()})
-        ersatz = ersatzname(user_id)
-        return ersatz, self.audit_anonymisieren(name, ersatz, (mail,), seit=seit, seit_id=seit_id,
-                                                unbefristet=unbefristet,
-                                                ab_ids={t: g[1] for t, g in grenzen.items()})
+        self.delete_attempts_for(name, (mail,), after=since, unlimited=unlimited,
+                                 from_ids={t: g[0] for t, g in limits.items()})
+        replacement = replacement_name(user_id)
+        return replacement, self.anonymize_audit(name, replacement, (mail,), since=since, since_id=since_id,
+                                                unlimited=unlimited,
+                                                from_ids={t: g[1] for t, g in limits.items()})
 
-    def adresse_belegt(self, user) -> bool:
-        """Does the address of this account demonstrably belong to it? (`konto_entfernen`, H-13)
+    def address_proven(self, user) -> bool:
+        """Does the address of this account demonstrably belong to it? (`remove_account`, H-13)
 
         The marker `email_verified` AND no pending confirmation: an open account —
         locked, an unused `verify_email` token and no redeemed one — carries an address
@@ -2017,28 +2159,28 @@ class Store:
             return False
         if not user["disabled"]:
             return True
-        offen = self._one(
+        unclosed = self._one(
             "SELECT 1 AS x FROM magic_token WHERE user_id=? AND purpose='verify_email' "
             "  AND used_at IS NULL "
             "  AND NOT EXISTS (SELECT 1 FROM magic_token WHERE user_id=? AND purpose='verify_email' "
             "      AND used_at IS NOT NULL) LIMIT 1", (user["id"], user["id"]))
-        return offen is None
+        return unclosed is None
 
-    def anlage_grenze(self, user) -> tuple[int, int]:
-        """From where does an audit row belong to this account? `(seit, seit_id)` — the fallback.
+    def setup_limit(self, user) -> tuple[int, int]:
+        """From where does an audit row belong to this account? `(seit, since_id)` — the fallback.
 
-        Since 2026-09-26 the watermark of the identifier applies first (`kennung_grenzen`, G2): an
+        Since 2026-09-26 the watermark of the identifier applies first (`identifier_limits`, G2): an
         account that takes over a name that became free otherwise saw here the sign-ins of the
         previous owner including their IP. This limit now carries only the existing data whose accounts do not have the
         watermark.
 
         `seit` is `created_at` (Unix seconds). From the second of creation itself only rows
-        from `seit_id` count: the registration row of the account (`signup`, for the placeholder
+        from `since_id` count: the registration row of the account (`signup`, for the placeholder
         `signup_taken`), which is written right after creation. Without it the limit would be
         accurate to the second only — and a stranger who registers in the same second in which
         the admin invites the address or a sprayer tries the free name would have their
         rows attributed. Exactly these paths (registration, `gc()`, B6-5) always have the row;
-        an account without it (admin API, SSO, demo) falls back to `seit_id = 0` — then
+        an account without it (admin API, SSO, demo) falls back to `since_id = 0` — then
         the whole second counts.
 
         The row is searched only in the second of creation and the next (the password is hashed
@@ -2051,25 +2193,25 @@ class Store:
         next second. It is not the creation and shifts nothing; taken as an anchor,
         the admin's `user_create` row would drop out of the anonymisation.
 
-        Filter for SQL: `ts > seit OR (ts = seit AND id >= seit_id)`."""
-        seit = int(user["created_at"] or 0)
-        platzhalter = not user["email"]
+        Filter for SQL: `ts > seit OR (ts = seit AND id >= since_id)`."""
+        since = int(user["created_at"] or 0)
+        placeholder = not user["email"]
         for z in self._all(
                 "SELECT id, event, username, detail FROM audit WHERE event IN ('signup', 'signup_taken') "
                 "AND lower(username) = lower(?) AND ts BETWEEN ? AND ? ORDER BY id",
-                (str(user["username"]), seit, seit + 1)):
+                (str(user["username"]), since, since + 1)):
             if z["event"] == "signup" or (
-                    platzhalter and norm_email(z["username"]) != norm_email(z["detail"])):
-                return seit, int(z["id"])
-        return seit, 0
+                    placeholder and norm_email(z["username"]) != norm_email(z["detail"])):
+                return since, int(z["id"])
+        return since, 0
 
-    def konto_mit_topf(self, kennung, ausser=None) -> Optional[sqlite3.Row]:
+    def account_by_bucket(self, identifier, other_than=None) -> Optional[sqlite3.Row]:
         """The first account whose name or address falls into the same counting bucket as `kennung`.
 
-        The bucket is `norm_kennung` (Python `lower()`), whereas the database's name check is
+        The bucket is `norm_identifier` (Python `lower()`), whereas the database's name check is
         `COLLATE NOCASE` — and that folds only ASCII. `Émile` and `émile` are two
         names for SQLite, one for the lockout counter. That is why each account carries its bucket as a column
-        (`topf_name`/`topf_mail`, computed in Python), and the lookup goes through its index.
+        (`folded_name`/`folded_mail`, computed in Python), and the lookup goes through its index.
 
         Up to schema 10 the lookup ran as a loop over ALL accounts in Python — on every
         registration, and for one with a free address twice as often as for one with a
@@ -2077,47 +2219,47 @@ class Store:
         whether an address has an account (R4-03), and `gc()` grew with open × all accounts.
         The work here now depends neither on the number of accounts nor on whether and where the
         identifier is found (tests/test_audit_round2.py counts the SQLite steps).
-        `ausser` leaves out one account (the ID currently at issue)."""
-        topf = norm_kennung(kennung)
-        if not topf:
+        `other_than` leaves out one account (the ID currently at issue)."""
+        bucket = norm_identifier(identifier)
+        if not bucket:
             return None
         # Rows whose bucket could not be backfilled (database read-only) are checked by Python —
         # normally none.
-        treffer = [z for z in self._toepfe_nachtragen()
-                   if z["id"] != ausser and topf in (norm_kennung(z["username"]), norm_kennung(z["email"]))]
-        z = self._one("SELECT * FROM users WHERE (topf_name = ? OR topf_mail = ?) AND id IS NOT ? "
-                      "ORDER BY id LIMIT 1", (topf, topf, ausser))
+        hit = [z for z in self._backfill_pots()
+                   if z["id"] != other_than and bucket in (norm_identifier(z["username"]), norm_identifier(z["email"]))]
+        z = self._one("SELECT * FROM users WHERE (folded_name = ? OR folded_mail = ?) AND id IS NOT ? "
+                      "ORDER BY id LIMIT 1", (bucket, bucket, other_than))
         if z is not None:
-            treffer.append(z)
-        return min(treffer, key=lambda t: t["id"]) if treffer else None
+            hit.append(z)
+        return min(hit, key=lambda t: t["id"]) if hit else None
 
-    def topf_eines_anderen(self, kennung, user_id) -> bool:
+    def bucket_of_another(self, identifier, user_id) -> bool:
         """Is this identifier (in the counting bucket) the name or address of an account OTHER than `user_id`?
 
         The guard before every clearing under an identifier that the account does not itself carry as name or
-        address (G5, G5-N1): under the name from the directory (`zaehl_kennungen`) and
+        address (G5, G5-N1): under the name from the directory (`count_identifiers`) and
         under the typed identifier of a directory sign-in (`TinySesam._record_login`). A
         directory filter on `mail` resolves `chefin@example.com` to a third party whose
         `mail` attribute reads that way; without this guard every sign-in of the third party cleared the
         counters of the local holder of this address — unlimited guessing against her account.
         It is checked when clearing, not when writing: an identifier can change owner."""
-        return self.konto_mit_topf(kennung, ausser=user_id) is not None
+        return self.account_by_bucket(identifier, other_than=user_id) is not None
 
     @staticmethod
-    def _feld(zeile, name):
+    def _slot(line, name):
         """A column of the account row — None if it does not (yet) exist (dummy, old dict)."""
         try:
-            return zeile[name]
+            return line[name]
         except (IndexError, KeyError):
             return None
 
-    def kennung_grenzen(self, user) -> dict:
+    def identifier_limits(self, user) -> dict:
         """From where does a row under name or address belong to this account? (limit a, G2)
 
-        `{bucket: (versuch_ab, audit_ab)}` for name and address in the counting bucket: rows in
+        `{bucket: (versuch_ab, audit_from)}` for name and address in the counting bucket: rows in
         `login_attempt` or `audit` with a LARGER id belong to the account, the others belonged
         to nobody or to someone else. `None` means existing data (the columns only arrived with this
-        state) — then, as until 2026-09-26, the creation applies (`created_at`, `anlage_grenze`).
+        state) — then, as until 2026-09-26, the creation applies (`created_at`, `setup_limit`).
 
         Until then the creation was the limit for EVERY identifier. But an account gets an identifier
         later too: on renaming, on address change, on backfilling an address from OIDC.
@@ -2128,69 +2270,69 @@ class Store:
         Name and address in the same bucket (email mode): the earlier of the two watermarks —
         the identifier belongs to the account since it was added by one of the two paths. If one
         of them is NULL, the fallback applies."""
-        aus: dict = {}
-        for spalte, art in (("username", "name"), ("email", "mail")):
-            topf = norm_kennung(self._feld(user, spalte))
-            if not topf:
+        from_: dict = {}
+        for column, kind in (("username", "name"), ("email", "mail")):
+            bucket = norm_identifier(self._slot(user, column))
+            if not bucket:
                 continue
-            werte = tuple(None if w is None else int(w)
-                          for w in (self._feld(user, f"{art}_versuch_ab"), self._feld(user, f"{art}_audit_ab")))
-            if topf in aus:
-                werte = tuple(None if a is None or b is None else min(a, b) for a, b in zip(aus[topf], werte))
-            aus[topf] = werte
-        return aus
+            values = tuple(None if w is None else int(w)
+                          for w in (self._slot(user, f"{kind}_attempt_from"), self._slot(user, f"{kind}_audit_from")))
+            if bucket in from_:
+                values = tuple(None if a is None or b is None else min(a, b) for a, b in zip(from_[bucket], values))
+            from_[bucket] = values
+        return from_
 
-    def konto_mit_verzeichnisname(self, kennung, ausser=None) -> Optional[sqlite3.Row]:
-        """The account (not `ausser`) on whose binding this identifier stands as the name in the directory
-        (`federated_identity.name_topf`, G5) — or None. For `TinySesam.identifier_taken` and
+    def account_with_directory_name(self, identifier, other_than=None) -> Optional[sqlite3.Row]:
+        """The account (not `other_than`) on whose binding this identifier stands as the name in the directory
+        (`federated_identity.directory_name_folded`, G5) — or None. For `TinySesam.identifier_taken` and
         `tinysesam rename`; the database checks the same in the identifier triggers (`_trigger_sql`).
-        Via `ix_fed_name_topf`, no scan."""
-        topf = norm_kennung(kennung)
-        if not topf:
+        Via `ix_fed_directory_name_folded`, no scan."""
+        bucket = norm_identifier(identifier)
+        if not bucket:
             return None
-        z = self._one("SELECT user_id FROM federated_identity WHERE name_topf = ? AND user_id IS NOT ? "
-                      "ORDER BY user_id LIMIT 1", (topf, ausser))
+        z = self._one("SELECT user_id FROM federated_identity WHERE directory_name_folded = ? AND user_id IS NOT ? "
+                      "ORDER BY user_id LIMIT 1", (bucket, other_than))
         return self.get_user(z["user_id"]) if z else None
 
-    def zaehl_kennungen(self, user_id) -> set:
+    def count_identifiers(self, user_id) -> set:
         """All identifiers (in the counting bucket) under which the series (B2-6) of this account can stand.
 
         Name and address — and the name under which the account signs in via a directory source
-        (`federated_identity.name_topf`, G5), provided it is not the name or address of an
-        OTHER account (`topf_eines_anderen`) and does not also stand on another account's binding
+        (`federated_identity.directory_name_folded`, G5), provided it is not the name or address of an
+        OTHER account (`bucket_of_another`) and does not also stand on another account's binding
         (audit round 2026-09-27, p1-a: after renaming and reassignment in the directory,
         two accounts carried the same name, and every full sign-in of the previous owner ended the series
-        under which the new holder was being guessed against). Since then `bindung_name_setzen` deletes the
+        under which the new holder was being guessed against). Since then `set_binding_name` deletes the
         name on foreign bindings; if two exist in existing data, it counts for neither — until the next
         LDAP sign-in under it. The series counts under the TYPED identifier;
         after a rename in the directory (locally `alice`, there `alice.neu`), until
         2026-09-26 no way back cleared the series under `alice.neu` — one's own typos added up
         over the years, and a stranger permanently locked the person out with enough failed attempts.
 
-        The one reader for every way back: `lift_lockout`, `_serie_beenden` (panel reset),
+        The one reader for every way back: `lift_lockout`, `_end_series` (panel reset),
         `tinysesam passwd` and `tinysesam unlock`."""
         u = self.get_user(user_id)
         if u is None:
             return set()
-        kennungen = {norm_kennung(u["username"]), norm_kennung(u["email"])} - {""}
-        for z in self._all("SELECT DISTINCT name_topf FROM federated_identity WHERE user_id=? "
-                           "AND name_topf IS NOT NULL AND name_topf <> ''", (user_id,)):
-            topf = norm_kennung(z["name_topf"])
-            if (topf and topf not in kennungen and not self.topf_eines_anderen(topf, user_id)
-                    and self.konto_mit_verzeichnisname(topf, ausser=user_id) is None):
-                kennungen.add(topf)
-        return kennungen
+        identifiers = {norm_identifier(u["username"]), norm_identifier(u["email"])} - {""}
+        for z in self._all("SELECT DISTINCT directory_name_folded FROM federated_identity WHERE user_id=? "
+                           "AND directory_name_folded IS NOT NULL AND directory_name_folded <> ''", (user_id,)):
+            bucket = norm_identifier(z["directory_name_folded"])
+            if (bucket and bucket not in identifiers and not self.bucket_of_another(bucket, user_id)
+                    and self.account_with_directory_name(bucket, other_than=user_id) is None):
+                identifiers.add(bucket)
+        return identifiers
 
-    def bindung_name_setzen(self, quelle: str, user_id, name) -> bool:
+    def set_binding_name(self, source: str, user_id, name) -> bool:
         """Record the name under which the account has just signed in via `quelle` on its
-        binding (`federated_identity.name_topf`, G5). Returns whether anything was written.
+        binding (`federated_identity.directory_name_folded`, G5). Returns whether anything was written.
 
-        Folded (`norm_kennung`) and only if it is neither name nor address of the account — the
+        Folded (`norm_identifier`) and only if it is neither name nor address of the account — the
         ways back know those anyway; then NULL stands. Only the most recent name: after two
         renames in the directory nobody signing in that way counts under the oldest any more.
         It writes only on a change, so at most one UPDATE per sign-in and normally
         none. Whether the name is the name or address of an OTHER account is checked by every reader
-        (`zaehl_kennungen`), not by this writer.
+        (`count_identifiers`), not by this writer.
 
         **The most recent sign-in under the name proves who it belongs to** (audit round 2026-09-27,
         p1-a): if the same name stands on the binding of an OTHER account, it is stale there — renamed
@@ -2201,51 +2343,51 @@ class Store:
         u = self.get_user(user_id)
         if u is None:
             return False
-        topf = norm_kennung(name)
-        if topf and self.konto_mit_verzeichnisname(topf, ausser=user_id) is not None:
-            self._exec("UPDATE federated_identity SET name_topf=NULL WHERE name_topf=? AND user_id IS NOT ?",
-                       (topf, user_id))
-        wert = None if not topf or topf in {norm_kennung(u["username"]), norm_kennung(u["email"])} else topf
-        if self._one("SELECT 1 AS x FROM federated_identity WHERE quelle=? AND user_id=? AND name_topf IS NOT ?",
-                     (quelle, user_id, wert)) is None:
+        bucket = norm_identifier(name)
+        if bucket and self.account_with_directory_name(bucket, other_than=user_id) is not None:
+            self._exec("UPDATE federated_identity SET directory_name_folded=NULL WHERE directory_name_folded=? AND user_id IS NOT ?",
+                       (bucket, user_id))
+        value = None if not bucket or bucket in {norm_identifier(u["username"]), norm_identifier(u["email"])} else bucket
+        if self._one("SELECT 1 AS x FROM federated_identity WHERE source=? AND user_id=? AND directory_name_folded IS NOT ?",
+                     (source, user_id, value)) is None:
             return False
-        self._exec("UPDATE federated_identity SET name_topf=? WHERE quelle=? AND user_id=?",
-                   (wert, quelle, user_id))
+        self._exec("UPDATE federated_identity SET directory_name_folded=? WHERE source=? AND user_id=?",
+                   (value, source, user_id))
         return True
 
-    def verzeichnisname_freigeben(self, name) -> int:
+    def release_directory_name(self, name) -> int:
         """Delete the name in the directory on ALL bindings — before creating an account that
         gets it as its name (`TinySesam._check_ldap`, audit round 2026-09-27). The directory has
         just signed in a different entry under this name; where it still stands, it is stale
-        (see `bindung_name_setzen`) — and without this the database would reject the creation (identifier
+        (see `set_binding_name`) — and without this the database would reject the creation (identifier
         trigger). Returns the number of deleted marks."""
-        topf = norm_kennung(name)
-        if not topf or self.konto_mit_verzeichnisname(topf) is None:
+        bucket = norm_identifier(name)
+        if not bucket or self.account_with_directory_name(bucket) is None:
             return 0
-        return self._exec("UPDATE federated_identity SET name_topf=NULL WHERE name_topf=?", (topf,)).rowcount
+        return self._exec("UPDATE federated_identity SET directory_name_folded=NULL WHERE directory_name_folded=?", (bucket,)).rowcount
 
-    def konto_mit_bindungsname(self, kennung) -> Optional[sqlite3.Row]:
+    def account_with_binding_name(self, identifier) -> Optional[sqlite3.Row]:
         """The account that last signed in under this identifier via a directory source
-        (`federated_identity.name_topf`, G5) — for `tinysesam unlock <name as typed>`.
+        (`federated_identity.directory_name_folded`, G5) — for `tinysesam unlock <name as typed>`.
         None if none or if the identifier is the name or address of an account (then THAT
-        account is meant, `konto_mit_topf`). Several hits (existing data, see `bindung_name_setzen`):
+        account is meant, `account_by_bucket`). Several hits (existing data, see `set_binding_name`):
         None — which one signed in last that way is recorded nowhere. Until 2026-09-27 it was the
         most recently BOUND one, and `unlock` cleared its own series too (audit round, p1-a)."""
-        topf = norm_kennung(kennung)
-        if not topf or self.konto_mit_topf(topf) is not None:
+        bucket = norm_identifier(identifier)
+        if not bucket or self.account_by_bucket(bucket) is not None:
             return None
-        z = self._all("SELECT DISTINCT user_id FROM federated_identity WHERE name_topf=? LIMIT 2", (topf,))
+        z = self._all("SELECT DISTINCT user_id FROM federated_identity WHERE directory_name_folded=? LIMIT 2", (bucket,))
         return self.get_user(z[0]["user_id"]) if len(z) == 1 else None
 
     def delete_user(self, user_id):
-        """Remove the rows of an account — raw building block, only for `konto_entfernen`.
+        """Remove the rows of an account — raw building block, only for `remove_account`.
 
-        Whoever deletes an account calls `konto_entfernen` (or `TinySesam.delete_user`): here
+        Whoever deletes an account calls `remove_account` (or `TinySesam.delete_user`): here
         the name stays in the audit log, and the sign-in attempts stay in place. A test ensures
         that there is no other caller."""
-        with self._schreibend():
+        with self._writing():
             for table in ("api_key", "password_cred", "pin_cred", "totp_cred", "recovery_code",
-                          "webauthn_cred", "oidc_identity", "federated_identity", "namensbindung",
+                          "webauthn_cred", "oidc_identity", "federated_identity", "name_binding",
                           "session", "magic_token"):
                 self.db.execute(f"DELETE FROM {table} WHERE user_id=?", (user_id,))
             self.db.execute("DELETE FROM users WHERE id=?", (user_id,))
@@ -2255,49 +2397,49 @@ class Store:
         u = self.get_user_by_email(email)
         return bool(u and u["id"] != exclude_id)
 
-    def kennungs_kollisionen(self, limit: int = 50) -> list:
+    def identifier_collisions(self, limit: int = 50) -> list:
         """Accounts whose **username** is the **email** of an OTHER account (finding R4-12).
 
         Only the cross direction; all collisions in the identifier space (also name against name, address
-        against address) are reported by `topf_kollisionen`. New ones have been prevented by the database since 2026-09-26
+        against address) are reported by `bucket_collisions`. New ones have been prevented by the database since 2026-09-26
         (`_trigger_sql`); what stands here comes from existing data (an older version, a raw
         UPDATE, a row of a foreign writer after the backfill of its bucket).
 
-        The comparison runs over the counting bucket (`norm_kennung`). It folds more coarsely than NOCASE, with which
+        The comparison runs over the counting bucket (`norm_identifier`). It folds more coarsely than NOCASE, with which
         `get_user_by_name`/`get_user_by_email` search — every collision that the sign-in finds
         is therefore also noticed here. Until 2026-09-26 NOCASE stood here; `Ärmel`/`ärmel` or a
         Unicode against the A-label domain of the same address were missing. A row without a bucket (file
         read-only, backfill not possible) does not count.
-        Rows: `(name_id, kennung, mail_id, adresse)`. An account that carries the same string in
+        Rows: `(name_id, kennung, mail_id, address)`. An account that carries the same string in
         BOTH its own columns is no collision (email mode, intended path).
         """
-        self._toepfe_nachtragen()     # rows of a foreign writer count too
+        self._backfill_pots()     # rows of a foreign writer count too
         return self._all(
-            "SELECT n.id AS name_id, n.username AS kennung, e.id AS mail_id, e.email AS adresse "
+            "SELECT n.id AS name_id, n.username AS identifier, e.id AS mail_id, e.email AS address "
             "FROM users n JOIN users e ON e.id <> n.id "
-            "  AND e.topf_mail <> '' AND e.topf_mail = n.topf_name "
+            "  AND e.folded_mail <> '' AND e.folded_mail = n.folded_name "
             "ORDER BY n.id LIMIT ?", (int(limit),))
 
-    def topf_kollisionen(self, limit: int = 50) -> list:
+    def bucket_collisions(self, limit: int = 50) -> list:
         """All identifiers that belong to more than one account — as `[{"kennung", "ids"}, …]`.
 
-        Counted in the counting bucket (`norm_kennung`) over names AND addresses: `Alice`/`alice`,
+        Counted in the counting bucket (`norm_identifier`) over names AND addresses: `Alice`/`alice`,
         name = foreign address, two spellings of the same address (`u@bücher.example` and
         `u@xn--bcher-kva.example`). An account whose name is its own address counts once
         (the `UNION` merges the row). New collisions are prevented by the database
         (`_trigger_sql`); this query reports those from existing data — for the start message, which
-        previously saw only the cross direction (`kennungs_kollisionen`). `ids` ascending, the
+        previously saw only the cross direction (`identifier_collisions`). `ids` ascending, the
         identifiers by the oldest account involved. Rows of a foreign writer first get
-        their bucket (`_toepfe_nachtragen`); if that cannot be written (file read-only),
+        their bucket (`_backfill_pots`); if that cannot be written (file read-only),
         they do not count."""
-        self._toepfe_nachtragen()
-        zeilen = self._all(
-            "SELECT topf, group_concat(id) AS ids FROM ("
-            "  SELECT id, topf_name AS topf FROM users WHERE topf_name <> ''"
-            "  UNION SELECT id, topf_mail FROM users WHERE topf_mail <> '') "
-            "GROUP BY topf HAVING COUNT(*) > 1 ORDER BY MIN(id) LIMIT ?", (int(limit),))
-        return [{"kennung": z["topf"], "ids": sorted(int(i) for i in str(z["ids"]).split(","))}
-                for z in zeilen]
+        self._backfill_pots()
+        lines = self._all(
+            "SELECT folded, group_concat(id) AS ids FROM ("
+            "  SELECT id, folded_name AS folded FROM users WHERE folded_name <> ''"
+            "  UNION SELECT id, folded_mail FROM users WHERE folded_mail <> '') "
+            "GROUP BY folded HAVING COUNT(*) > 1 ORDER BY MIN(id) LIMIT ?", (int(limit),))
+        return [{"identifier": z["folded"], "ids": sorted(int(i) for i in str(z["ids"]).split(","))}
+                for z in lines]
 
     def list_users(self):
         return self._all("SELECT * FROM users ORDER BY username")
@@ -2308,20 +2450,20 @@ class Store:
     #: lock by the operator — for instance in the outbox of an embedding app to which
     #: `send_verify_email` pushes it —, the lock found nothing to discard, and the link
     #: afterwards set `disabled` unconditionally to 0.
-    GESPERRT_BESTAETIGUNG = 1
-    GESPERRT_BETREIBER = 2
+    LOCKED_CONFIRMATION = 1
+    LOCKED_OPERATOR = 2
 
-    def set_disabled(self, user_id, disabled: bool, durch_betreiber: bool = False):
+    def set_disabled(self, user_id, disabled: bool, through_operator: bool = False):
         """Lock or unlock an account.
 
-        `durch_betreiber=True` is the operator's lock (admin panel): no confirmation link
+        `through_operator=True` is the operator's lock (admin panel): no confirmation link
         lifts it, only an explicit `set_disabled(uid, False)`. Without the marker it is
-        the lock of a pending confirmation, which `bestaetigung_freischalten` lifts — and
+        the lock of a pending confirmation, which `confirmation_enable` lifts — and
         which does not downgrade an already existing operator lock.
 
         Locks from versions before this distinction carry 1 — and up to 0.19.x the lock
         in the panel did not discard the open one-time tokens, so a pending confirmation link would
-        have lifted it after the upgrade. The migration to schema 10 (`_bestand_nachziehen`)
+        have lifted it after the upgrade. The migration to schema 10 (`_catch_up_inventory`)
         therefore raises every lock that the audit log knows as a panel lock to 2 and discards
         the open tokens in doing so. A lock whose row has already been deleted
         (`audit_retention_days`) stays 1; `POST <admin_path>/api/users/{id}/disable` with
@@ -2329,28 +2471,28 @@ class Store:
         if disabled:
             # An owner cannot be locked — not even via the code path (owner model). Otherwise
             # `owner_count` would count an owner who cannot sign in.
-            zeile = self._one("SELECT is_owner FROM users WHERE id=?", (user_id,))
-            if zeile is not None and zeile["is_owner"]:
+            line = self._one("SELECT is_owner FROM users WHERE id=?", (user_id,))
+            if line is not None and line["is_owner"]:
                 from .errors import StateError
                 raise StateError(f"Account {user_id} is an owner and cannot be locked — hand over the "
                                  "owner role first.")
         if not disabled:
             self._exec("UPDATE users SET disabled=0 WHERE id=?", (user_id,))
-        elif durch_betreiber:
-            self._exec("UPDATE users SET disabled=? WHERE id=?", (self.GESPERRT_BETREIBER, user_id))
+        elif through_operator:
+            self._exec("UPDATE users SET disabled=? WHERE id=?", (self.LOCKED_OPERATOR, user_id))
         else:
             self._exec("UPDATE users SET disabled=max(disabled, ?) WHERE id=?",
-                       (self.GESPERRT_BESTAETIGUNG, user_id))
+                       (self.LOCKED_CONFIRMATION, user_id))
 
-    def bestaetigung_freischalten(self, user_id) -> bool:
+    def confirmation_enable(self, user_id) -> bool:
         """Lift the lock of a pending confirmation — never the operator's.
 
         True if the account is active afterwards (also: it was not locked at all). False if
         a lock remains; then the operator locked it, and only the operator lifts it again."""
         self._exec("UPDATE users SET disabled=0 WHERE id=? AND disabled=?",
-                   (user_id, self.GESPERRT_BESTAETIGUNG))
-        zeile = self._one("SELECT disabled FROM users WHERE id=?", (user_id,))
-        return bool(zeile) and not zeile["disabled"]
+                   (user_id, self.LOCKED_CONFIRMATION))
+        line = self._one("SELECT disabled FROM users WHERE id=?", (user_id,))
+        return bool(line) and not line["disabled"]
 
     def set_admin(self, user_id, is_admin: bool):
         self._exec("UPDATE users SET is_admin=? WHERE id=?", (1 if is_admin else 0, user_id))
@@ -2364,13 +2506,13 @@ class Store:
         else:
             self._exec("UPDATE users SET is_owner=0 WHERE id=?", (user_id,))
 
-    def owner_count(self, ohne=None) -> int:
-        """How many owners are there (excluding the account `ohne`)?"""
-        zeile = self._one("SELECT COUNT(*) AS n FROM users WHERE is_owner=1 AND id <> ?",
-                          (int(ohne) if ohne is not None else -1,))
-        return int(zeile["n"])
+    def owner_count(self, without=None) -> int:
+        """How many owners are there (excluding the account `without`)?"""
+        line = self._one("SELECT COUNT(*) AS n FROM users WHERE is_owner=1 AND id <> ?",
+                          (int(without) if without is not None else -1,))
+        return int(line["n"])
 
-    def set_admin_vom_idp(self, user_id):
+    def set_admin_from_idp(self, user_id):
         """Admin flag with the mark "granted by the identity provider" (`is_admin=2`, H-5).
 
         Only this value may be withdrawn again at the next login if the provider no longer
@@ -2410,62 +2552,62 @@ class Store:
     # ---------- TOTP ----------
     #: Encryption/decryption of the TOTP secrets (H-14/H-15, `vault.Vault`). Set by the manager;
     #: a store without a vault (CLI tools) does not touch the secrets.
-    tresor: Any = None
+    vault: Any = None
 
     def set_totp(self, user_id, secret, confirmed=False):
         # `last_step` belongs to the secret: a new one starts without a consumed step. Otherwise
         # the confirmation code of a discarded attempt would lock the first code of the new one
         # if both fall into the same 30-second window.
-        if self.tresor is None:
+        if self.vault is None:
             raise RuntimeError("TOTP secrets are only stored encrypted — the store has "
                                "no key (vault.Vault).")
         self._exec("INSERT INTO totp_cred(user_id, secret, confirmed, created_at) VALUES (?,?,?,?) "
                    "ON CONFLICT(user_id) DO UPDATE SET secret=excluded.secret, "
                    "confirmed=excluded.confirmed, last_step=NULL",
-                   (user_id, self.tresor.encrypt(secret), 1 if confirmed else 0, _now()))
+                   (user_id, self.vault.encrypt(secret), 1 if confirmed else 0, _now()))
 
     def confirm_totp(self, user_id):
         self._exec("UPDATE totp_cred SET confirmed=1 WHERE user_id=?", (user_id,))
 
     def get_totp(self, user_id) -> Optional[dict]:
         """The TOTP row of an account, with the secret decrypted (`secret`)."""
-        zeile = self._one("SELECT * FROM totp_cred WHERE user_id=?", (user_id,))
-        if zeile is None:
+        line = self._one("SELECT * FROM totp_cred WHERE user_id=?", (user_id,))
+        if line is None:
             return None
-        d = dict(zeile)
-        if self.tresor is not None:
-            d["secret"] = self.tresor.decrypt(d["secret"])
+        d = dict(line)
+        if self.vault is not None:
+            d["secret"] = self.vault.decrypt(d["secret"])
         return d
 
-    def geheimnisse_heben(self) -> int:
+    def extract_secrets(self) -> int:
         """Encrypt plaintext secrets from the time before encryption (silent upgrade)
         — and first check that the key matches the already encrypted ones. If it does not,
         `ConfigError`: a start with the wrong key would otherwise let every TOTP sign-in fail
         silently. Returns how many were upgraded."""
         from .errors import ConfigError
-        if self.tresor is None:
+        if self.vault is None:
             return 0
         # Both tables with encrypted data: if there are only refresh tokens (OIDC instance without TOTP),
         # a wrong key would otherwise start — and every request with an old cookie ended in a 500.
-        probe = self._one("SELECT secret AS wert FROM totp_cred WHERE secret LIKE 'v1:%' "
-                          "UNION ALL SELECT refresh FROM oidc_sitzung WHERE refresh LIKE 'v1:%' LIMIT 1")
+        probe = self._one("SELECT secret AS value FROM totp_cred WHERE secret LIKE 'v1:%' "
+                          "UNION ALL SELECT refresh FROM oidc_session WHERE refresh LIKE 'v1:%' LIMIT 1")
         if probe is not None:
             try:
-                self.tresor.decrypt(probe["wert"])
+                self.vault.decrypt(probe["value"])
             except Exception:
                 raise ConfigError(
                     "The key does not match the stored secrets (TOTP/OIDC; wrong "
                     "TINYSESAM_SECRETS_KEY/secrets_key_file, or the key file next to the "
                     "database is missing or a different one). Use the right key — without it "
                     "all accounts have to set up TOTP again.") from None
-        klar = self._all("SELECT user_id, secret FROM totp_cred WHERE secret NOT LIKE 'v1:%'")
-        for z in klar:
+        clear = self._all("SELECT user_id, secret FROM totp_cred WHERE secret NOT LIKE 'v1:%'")
+        for z in clear:
             self._exec("UPDATE totp_cred SET secret=? WHERE user_id=? AND secret=?",
-                       (self.tresor.encrypt(z["secret"]), z["user_id"], z["secret"]))
-        if klar:
+                       (self.vault.encrypt(z["secret"]), z["user_id"], z["secret"]))
+        if clear:
             logging.getLogger("tinysesam").info(
-                "%d TOTP secret(s) encrypted (previously plaintext in the database).", len(klar))
-        return len(klar)
+                "%d TOTP secret(s) encrypted (previously plaintext in the database).", len(clear))
+        return len(clear)
 
     def delete_totp(self, user_id):
         self._exec("DELETE FROM totp_cred WHERE user_id=?", (user_id,))
@@ -2480,14 +2622,14 @@ class Store:
 
     def add_recovery_codes(self, user_id, hashes):
         now = _now()
-        with self._schreibend():
+        with self._writing():
             self.db.executemany("INSERT INTO recovery_code(user_id, code_hash, created_at) VALUES (?,?,?)",
                                 [(user_id, h, now) for h in hashes])
             self.db.commit()
 
     def consume_recovery_code(self, user_id, code_hash) -> bool:
         """Invalidate an unused code atomically. True only on the first valid redemption."""
-        with self._schreibend():
+        with self._writing():
             cur = self.db.execute(
                 "UPDATE recovery_code SET used_at=? WHERE id=(SELECT id FROM recovery_code "
                 "WHERE user_id=? AND code_hash=? AND used_at IS NULL LIMIT 1)",
@@ -2523,78 +2665,78 @@ class Store:
                    (issuer, subject, user_id))
 
     # ---------- First login and enrollment window (R3-1) ----------
-    def mark_first_login(self, user_id: int, jetzt: int) -> bool:
+    def mark_first_login(self, user_id: int, now: int) -> bool:
         """Record the first complete login — only the first time (idempotent).
 
         Return value: True if this call set it. The condition is in the SQL, not
         before it: two simultaneous sign-ins of the same account (two devices, two workers)
         would otherwise both read, both write, and the time would be the later one."""
         return self._exec("UPDATE users SET first_login_at=? WHERE id=? AND first_login_at IS NULL",
-                          (jetzt, user_id)).rowcount > 0
+                          (now, user_id)).rowcount > 0
 
-    def set_mfa_enroll_until(self, user_id: int, bis: Optional[int]) -> None:
+    def set_mfa_enroll_until(self, user_id: int, until: Optional[int]) -> None:
         """Open the enrollment window (timestamp) or close it (None)."""
-        self._exec("UPDATE users SET mfa_enroll_until=? WHERE id=?", (bis, user_id))
+        self._exec("UPDATE users SET mfa_enroll_until=? WHERE id=?", (until, user_id))
 
-    def ist_oidc_konto(self, user_id) -> bool:
+    def is_oidc_account(self, user_id) -> bool:
         """Is this account bound to an OIDC identity (finding 8)?"""
         return bool(self._one("SELECT 1 FROM oidc_identity WHERE user_id=? LIMIT 1", (user_id,)))
 
-    def idp_bestaetigen(self, user_id, gefragt_at: Optional[int] = None) -> bool:
+    def confirm_idp(self, user_id, asked_at: Optional[int] = None) -> bool:
         """The provider has confirmed the account (login via it, refresh exchange with yes).
 
-        `gefragt_at` is the time at which the question to the provider WENT OUT. A no that was
+        `asked_at` is the time at which the question to the provider WENT OUT. A no that was
         recorded after that stays: two exchanges run in parallel (two sessions,
         two clients), and a yes that was answered before the lock but applied after the no
         would otherwise wake the keys of a locked account (attack on the third round).
         Return value: whether anything was written."""
-        jetzt = _now()
-        gefragt = int(gefragt_at if gefragt_at is not None else jetzt)
+        now = _now()
+        asked = int(asked_at if asked_at is not None else now)
         return self._exec(
-            "UPDATE users SET idp_bestaetigt_at=? WHERE id=? AND (idp_bestaetigt_at IS NULL "
-            "OR idp_bestaetigt_at > 0 OR -idp_bestaetigt_at < ?)", (jetzt, user_id, gefragt)).rowcount > 0
+            "UPDATE users SET idp_confirmed_at=? WHERE id=? AND (idp_confirmed_at IS NULL "
+            "OR idp_confirmed_at > 0 OR -idp_confirmed_at < ?)", (now, user_id, asked)).rowcount > 0
 
-    def idp_verweigert(self, user_id) -> None:
+    def idp_refused(self, user_id) -> None:
         """The provider said no: the API keys of the account are dormant until the next
         confirmation (finding 8). Stored as a NEGATIVE time of the no — NULL means "never
         confirmed", ≤ 0 "refused", and the time decides whether a later-applied yes
-        is younger (`idp_bestaetigen`)."""
-        self._exec("UPDATE users SET idp_bestaetigt_at=? WHERE id=?", (-max(_now(), 1), user_id))
+        is younger (`confirm_idp`)."""
+        self._exec("UPDATE users SET idp_confirmed_at=? WHERE id=?", (-max(_now(), 1), user_id))
 
-    def oidc_sitzung_handle(self, client, alt_verschluesselt) -> Optional[str]:
+    def oidc_session_handle(self, client, old_encrypted) -> Optional[str]:
         """TODAY's handle of the session whose row carries this (encrypted) token."""
-        r = self._one("SELECT token_hash FROM oidc_sitzung WHERE client=? AND refresh=?",
-                      (client, alt_verschluesselt))
+        r = self._one("SELECT token_hash FROM oidc_session WHERE client=? AND refresh=?",
+                      (client, old_encrypted))
         return r["token_hash"] if r else None
 
-    def oidc_sitzung_verwerfen(self, handle, client) -> None:
+    def discard_oidc_session(self, handle, client) -> None:
         """Discard an OIDC row without a configured client — the session itself stays."""
-        self._exec("DELETE FROM oidc_sitzung WHERE token_hash=? AND client=?", (self._handle(handle), client))
+        self._exec("DELETE FROM oidc_session WHERE token_hash=? AND client=?", (self._handle(handle), client))
 
     def get_oidc_user(self, issuer, subject) -> Optional[int]:
         r = self._one("SELECT user_id FROM oidc_identity WHERE issuer=? AND subject=?", (issuer, subject))
         return r["user_id"] if r else None
 
     # ---------- Federated identities via a stable identifier (F-11) ----------
-    def link_federated(self, quelle: str, kennung: str, user_id: int, jetzt: int) -> None:
+    def link_federated(self, source: str, identifier: str, user_id: int, now: int) -> None:
         """Bind a foreign identity to a local account (or renew the binding)."""
-        self._exec("INSERT OR REPLACE INTO federated_identity(quelle, kennung, user_id, gebunden_at)"
-                   " VALUES (?,?,?,?)", (quelle, kennung, user_id, jetzt))
+        self._exec("INSERT OR REPLACE INTO federated_identity(source, identifier, user_id, bound_at)"
+                   " VALUES (?,?,?,?)", (source, identifier, user_id, now))
 
-    def get_federated_user(self, quelle: str, kennung: str) -> Optional[int]:
-        r = self._one("SELECT user_id FROM federated_identity WHERE quelle=? AND kennung=?",
-                      (quelle, kennung))
+    def get_federated_user(self, source: str, identifier: str) -> Optional[int]:
+        r = self._one("SELECT user_id FROM federated_identity WHERE source=? AND identifier=?",
+                      (source, identifier))
         return r["user_id"] if r else None
 
-    def get_federated_kennung(self, quelle: str, user_id: int) -> Optional[str]:
+    def get_federated_identifier(self, source: str, user_id: int) -> Optional[str]:
         """The identifier with which this account is bound for this source — None if none.
 
         The way back is the actual bolt: if an account already carries an identifier, it must
         **not** be bound to a second one. That is exactly what would happen if a deleted account
         were recreated under the same name in the directory."""
-        r = self._one("SELECT kennung FROM federated_identity WHERE quelle=? AND user_id=?",
-                      (quelle, user_id))
-        return r["kennung"] if r else None
+        r = self._one("SELECT identifier FROM federated_identity WHERE source=? AND user_id=?",
+                      (source, user_id))
+        return r["identifier"] if r else None
 
     def has_foreign_identity(self, user_id: int) -> bool:
         """Is this account bound to any foreign identity (OIDC, LDAP, SAML)?"""
@@ -2602,15 +2744,15 @@ class Store:
                               "UNION ALL SELECT 1 FROM federated_identity WHERE user_id=? LIMIT 1",
                               (user_id, user_id)))
 
-    def unlink_federated(self, quelle: str, user_id: int) -> int:
+    def unlink_federated(self, source: str, user_id: int) -> int:
         """Release the binding of an account for a source (operator path after a move)."""
-        return self._exec("DELETE FROM federated_identity WHERE quelle=? AND user_id=?",
-                          (quelle, user_id)).rowcount
+        return self._exec("DELETE FROM federated_identity WHERE source=? AND user_id=?",
+                          (source, user_id)).rowcount
 
-    #: Prefix of the origin placeholders in `federated_identity.kennung` (see `TinySesam._OHNE_KENNUNG`).
-    OHNE_KENNUNG = "~ohne-kennung:"
+    #: Prefix of the origin placeholders in `federated_identity.identifier` (see `TinySesam._WITHOUT_IDENTIFIER`).
+    WITHOUT_IDENTIFIER = "~without-identifier:"
 
-    def nachbinden(self, quelle: str, kennung: str, user_id: int, jetzt: int) -> bool:
+    def rebind(self, source: str, identifier: str, user_id: int, now: int) -> bool:
         """Bind an account to an identifier that belongs to nobody yet — or do nothing (G1).
 
         For the binding of existing accounts (`TinySesam.federation_bind_existing`), which runs through a whole
@@ -2619,145 +2761,145 @@ class Store:
         meanwhile signed in. Hence in ONE transaction: if the identifier already belongs
         to an account or this account already carries a real identifier, everything stays as it is
         (`False`). Otherwise an origin placeholder yields, the binding is created, and an open
-        name binding (`namensbindung`) is done."""
-        with self._schreibend():
-            besetzt = self.db.execute(
-                "SELECT 1 FROM federated_identity WHERE quelle=? AND (kennung=? OR "
-                "(user_id=? AND substr(kennung, 1, ?) <> ?)) LIMIT 1",
-                (quelle, kennung, user_id, len(self.OHNE_KENNUNG), self.OHNE_KENNUNG)).fetchone()
-            if besetzt is not None:
+        name binding (`name_binding`) is done."""
+        with self._writing():
+            occupied = self.db.execute(
+                "SELECT 1 FROM federated_identity WHERE source=? AND (identifier=? OR "
+                "(user_id=? AND substr(identifier, 1, ?) <> ?)) LIMIT 1",
+                (source, identifier, user_id, len(self.WITHOUT_IDENTIFIER), self.WITHOUT_IDENTIFIER)).fetchone()
+            if occupied is not None:
                 return False
-            self.db.execute("DELETE FROM federated_identity WHERE quelle=? AND user_id=?", (quelle, user_id))
-            self.db.execute("INSERT INTO federated_identity(quelle, kennung, user_id, gebunden_at) "
-                            "VALUES (?,?,?,?)", (quelle, kennung, user_id, jetzt))
-            self.db.execute("DELETE FROM namensbindung WHERE quelle=? AND user_id=?", (quelle, user_id))
+            self.db.execute("DELETE FROM federated_identity WHERE source=? AND user_id=?", (source, user_id))
+            self.db.execute("INSERT INTO federated_identity(source, identifier, user_id, bound_at) "
+                            "VALUES (?,?,?,?)", (source, identifier, user_id, now))
+            self.db.execute("DELETE FROM name_binding WHERE source=? AND user_id=?", (source, user_id))
             self.db.commit()
-            self._geschrieben = time.monotonic()
-            self._uhr_mitschreiben()
+            self._written = time.monotonic()
+            self._clock_record()
         return True
 
-    def ohne_bindung(self, quelle: str) -> list:
+    def without_binding(self, source: str) -> list:
         """The accounts without a real identifier for this source — no row or only the
-        origin placeholder —, excluding service accounts (G1). With `hat_passwort` (local password)."""
+        origin placeholder —, excluding service accounts (G1). With `has_password` (local password)."""
         return self._all(
-            "SELECT u.*, EXISTS (SELECT 1 FROM password_cred p WHERE p.user_id = u.id) AS hat_passwort "
+            "SELECT u.*, EXISTS (SELECT 1 FROM password_cred p WHERE p.user_id = u.id) AS has_password "
             "FROM users u WHERE u.is_service = 0 AND NOT EXISTS (SELECT 1 FROM federated_identity f "
-            "WHERE f.quelle = ? AND f.user_id = u.id AND substr(f.kennung, 1, ?) <> ?) ORDER BY u.id",
-            (quelle, len(self.OHNE_KENNUNG), self.OHNE_KENNUNG))
+            "WHERE f.source = ? AND f.user_id = u.id AND substr(f.identifier, 1, ?) <> ?) ORDER BY u.id",
+            (source, len(self.WITHOUT_IDENTIFIER), self.WITHOUT_IDENTIFIER))
 
-    def namensbindung_oeffnen(self, quelle: str, user_id: int, bis: int) -> None:
+    def open_name_binding(self, source: str, user_id: int, until: int) -> None:
         """Open the binding via the name for this account until `bis` (G1, `federation_unbind`)."""
-        self._exec("INSERT OR REPLACE INTO namensbindung(quelle, user_id, bis) VALUES (?,?,?)",
-                   (quelle, user_id, int(bis)))
+        self._exec("INSERT OR REPLACE INTO name_binding(source, user_id, until) VALUES (?,?,?)",
+                   (source, user_id, int(until)))
 
-    def namensbindung_offen(self, quelle: str, user_id: int, jetzt: int) -> bool:
+    def name_binding_unclosed(self, source: str, user_id: int, now: int) -> bool:
         """Has the operator opened the binding via the name for this account (and is it still running)?"""
-        return self._one("SELECT 1 AS x FROM namensbindung WHERE quelle=? AND user_id=? AND bis > ?",
-                         (quelle, user_id, int(jetzt))) is not None
+        return self._one("SELECT 1 AS x FROM name_binding WHERE source=? AND user_id=? AND until > ?",
+                         (source, user_id, int(now))) is not None
 
-    def namensbindung_schliessen(self, quelle: str, user_id: int) -> None:
+    def name_binding_close(self, source: str, user_id: int) -> None:
         """The opened binding via the name is done (the binding stands)."""
-        self._exec("DELETE FROM namensbindung WHERE quelle=? AND user_id=?", (quelle, user_id))
+        self._exec("DELETE FROM name_binding WHERE source=? AND user_id=?", (source, user_id))
 
-    def foederation_seit(self, quelle: str, jetzt: int) -> int:
-        """The marker of a federated source (`foederation_seit:<quelle>`): from when the deadline for
-        the binding via the name runs (G1). Set to `jetzt` on the first call, never
+    def federation_since(self, source: str, now: int) -> int:
+        """The marker of a federated source (`federation_since:<quelle>`): from when the deadline for
+        the binding via the name runs (G1). Set to `now` on the first call, never
         again afterwards — a marker that were set anew on every start would give every restart a
         new deadline. `INSERT OR IGNORE`: if several workers start at the same time, the first wins, and
         all afterwards read the same value."""
-        schluessel = f"foederation_seit:{quelle}"
-        z = self._one("SELECT value FROM setting WHERE key=?", (schluessel,))
+        key_name = f"federation_since:{source}"
+        z = self._one("SELECT value FROM setting WHERE key=?", (key_name,))
         if z is None:
-            self._exec("INSERT OR IGNORE INTO setting(key, value) VALUES (?,?)", (schluessel, str(int(jetzt))))
-            z = self._one("SELECT value FROM setting WHERE key=?", (schluessel,))
+            self._exec("INSERT OR IGNORE INTO setting(key, value) VALUES (?,?)", (key_name, str(int(now))))
+            z = self._one("SELECT value FROM setting WHERE key=?", (key_name,))
         return int(z["value"])
 
     # ---------- Approvals per application (T-14) ----------
     # The key is the **hash** of the session, not the plaintext — the same rule as in
     # `session`: whoever reads the file thereby gets no session that can be taken over.
-    def set_oidc_sitzung(self, handle, client, sub, refresh, client_id: Optional[str] = None) -> None:
+    def set_oidc_session(self, handle, client, sub, refresh, client_id: Optional[str] = None) -> None:
         """Store the refresh token of an OIDC session for THIS client — encrypted (4a).
 
         One row per client: with several applications, a later login via another
         client must not overwrite the re-check of the first — otherwise the user would choose
         which provider entry is still re-checked (attack on the second round, finding 7)."""
-        if self.tresor is None:
+        if self.vault is None:
             raise RuntimeError("Refresh tokens are only stored encrypted (vault.Vault).")
-        self._exec("INSERT INTO oidc_sitzung(token_hash, client, sub, refresh, geprueft_at, client_id, erfolg_at) "
+        self._exec("INSERT INTO oidc_session(token_hash, client, sub, refresh, checked_at, client_id, success_at) "
                    "VALUES (?,?,?,?,?,?,?) ON CONFLICT(token_hash, client) DO UPDATE SET sub=excluded.sub, "
-                   "refresh=excluded.refresh, geprueft_at=excluded.geprueft_at, client_id=excluded.client_id, "
-                   "erfolg_at=excluded.erfolg_at",
-                   (self._handle(handle), client, sub, self.tresor.encrypt(refresh), _now(), client_id,
+                   "refresh=excluded.refresh, checked_at=excluded.checked_at, client_id=excluded.client_id, "
+                   "success_at=excluded.success_at",
+                   (self._handle(handle), client, sub, self.vault.encrypt(refresh), _now(), client_id,
                     _now()))
 
-    def get_oidc_sitzungen(self, handle) -> list:
+    def get_oidc_sessions(self, handle) -> list:
         """The OIDC rows of a session — the refresh token ENCRYPTED (it is decrypted
         only when exchanging; a request before the deadline expires does not touch the key)."""
-        return [dict(z) for z in self._all("SELECT * FROM oidc_sitzung WHERE token_hash=?",
+        return [dict(z) for z in self._all("SELECT * FROM oidc_session WHERE token_hash=?",
                                           (self._handle(handle),))]
 
-    def get_oidc_sitzung(self, handle, client="*") -> Optional[dict]:
+    def get_oidc_session(self, handle, client="*") -> Optional[dict]:
         """One OIDC row, with the refresh token decrypted, or None (for tools and tests)."""
-        z = self._one("SELECT * FROM oidc_sitzung WHERE token_hash=? AND client=?", (self._handle(handle), client))
+        z = self._one("SELECT * FROM oidc_session WHERE token_hash=? AND client=?", (self._handle(handle), client))
         if z is None:
             return None
         d = dict(z)
-        if self.tresor is not None:
-            d["refresh"] = self.tresor.decrypt(d["refresh"])
+        if self.vault is not None:
+            d["refresh"] = self.vault.decrypt(d["refresh"])
         return d
 
-    def oidc_sitzung_beanspruchen(self, handle, client, alt: int, jetzt: int) -> bool:
-        """Claim the due exchange for EXACTLY one request: `geprueft_at` from `alt` to
-        `jetzt`, only if it is still `alt`. Several simultaneous requests (also across workers) —
+    def claim_oidc_session(self, handle, client, old: int, now: int) -> bool:
+        """Claim the due exchange for EXACTLY one request: `checked_at` from `old` to
+        `now`, only if it is still `old`. Several simultaneous requests (also across workers) —
         only one exchanges. Otherwise all would exchange the same refresh token, and a provider with
         token rotation rejected the second exchange: the session ended for no reason (finding 5)."""
-        return self._exec("UPDATE oidc_sitzung SET geprueft_at=? WHERE token_hash=? AND client=? "
-                          "AND geprueft_at=?", (int(jetzt), self._handle(handle), client, int(alt))).rowcount == 1
+        return self._exec("UPDATE oidc_session SET checked_at=? WHERE token_hash=? AND client=? "
+                          "AND checked_at=?", (int(now), self._handle(handle), client, int(old))).rowcount == 1
 
-    def oidc_sitzung_geprueft(self, handle, client, zeit: int, neuer_refresh=None,
-                              alt_verschluesselt: Optional[str] = None, erfolg: bool = False) -> bool:
+    def oidc_session_checked(self, handle, client, when: int, new_refresh=None,
+                              old_encrypted: Optional[str] = None, success: bool = False) -> bool:
         """Record the exchange; a newly issued refresh token replaces the old one (rotation).
         Return value: whether the row was still there (the session may have ended meanwhile).
 
-        With `alt_verschluesselt` (the stored, encrypted token with which the exchange was
+        With `old_encrypted` (the stored, encrypted token with which the exchange was
         made) the row is found through it instead of through the handle: if the session gets a new token
         during the exchange (step-up, completion of a factor), the row hangs on the new
         handle — the old one would hit nothing, and the refresh token rotated by the provider would be
         lost; the next exchange with the old one would be a no at PocketID. The ciphertext is
         unique through its nonce."""
-        wo, wert = ("refresh=?", alt_verschluesselt) if alt_verschluesselt else ("token_hash=?", self._handle(handle))
-        # `erfolg`: the provider has just said yes — state for the upper limit without a re-check.
-        # `geprueft_at` alone is not suitable for that: after an "fehler" it stands at "in a minute".
-        extra = ", erfolg_at=?" if erfolg else ""
-        erfolg_wert = (int(zeit),) if erfolg else ()
-        if neuer_refresh and self.tresor is not None:
-            return self._exec(f"UPDATE oidc_sitzung SET geprueft_at=?, refresh=?{extra} WHERE {wo} AND client=?",
-                              (int(zeit), self.tresor.encrypt(neuer_refresh), *erfolg_wert, wert,
+        where, value = ("refresh=?", old_encrypted) if old_encrypted else ("token_hash=?", self._handle(handle))
+        # `success`: the provider has just said yes — state for the upper limit without a re-check.
+        # `checked_at` alone is not suitable for that: after an "error" it stands at "in a minute".
+        extra = ", success_at=?" if success else ""
+        success_value = (int(when),) if success else ()
+        if new_refresh and self.vault is not None:
+            return self._exec(f"UPDATE oidc_session SET checked_at=?, refresh=?{extra} WHERE {where} AND client=?",
+                              (int(when), self.vault.encrypt(new_refresh), *success_value, value,
                                client)).rowcount > 0
-        return self._exec(f"UPDATE oidc_sitzung SET geprueft_at=?{extra} WHERE {wo} AND client=?",
-                          (int(zeit), *erfolg_wert, wert, client)).rowcount > 0
+        return self._exec(f"UPDATE oidc_session SET checked_at=?{extra} WHERE {where} AND client=?",
+                          (int(when), *success_value, value, client)).rowcount > 0
 
-    def oidc_sitzung_umhaengen(self, alt, neu) -> None:
+    def move_oidc_session(self, old, new) -> None:
         """Attach the OIDC rows to a new session (new token at the completion of the chain) —
         BEFORE deleting the old ones, otherwise the foreign key would take them along."""
-        self._exec("UPDATE oidc_sitzung SET token_hash=? WHERE token_hash=?",
-                   (self._handle(neu), self._handle(alt)))
+        self._exec("UPDATE oidc_session SET token_hash=? WHERE token_hash=?",
+                   (self._handle(new), self._handle(old)))
 
     # ---------- Gate: signed out of one application only (T-22) ----------
-    def gate_abmelden(self, handle, host: str) -> None:
-        self._exec("INSERT OR REPLACE INTO gate_abgemeldet(token_hash, host, at) VALUES (?,?,?)",
+    def gate_sign_out(self, handle, host: str) -> None:
+        self._exec("INSERT OR REPLACE INTO gate_signed_out(token_hash, host, at) VALUES (?,?,?)",
                    (self._handle(handle), str(host).lower(), _now()))
 
-    def gate_ist_abgemeldet(self, handle, host: str) -> bool:
-        return bool(self._one("SELECT 1 FROM gate_abgemeldet WHERE token_hash=? AND host=?",
+    def gate_is_signed_out(self, handle, host: str) -> bool:
+        return bool(self._one("SELECT 1 FROM gate_signed_out WHERE token_hash=? AND host=?",
                               (self._handle(handle), str(host).lower())))
 
-    def gate_fortsetzen(self, handle, host: str) -> int:
-        return self._exec("DELETE FROM gate_abgemeldet WHERE token_hash=? AND host=?",
+    def gate_resume(self, handle, host: str) -> int:
+        return self._exec("DELETE FROM gate_signed_out WHERE token_hash=? AND host=?",
                           (self._handle(handle), str(host).lower())).rowcount
 
     # ---------- Connection of an app host to the central session (T-26) ----------
-    def gate_link_anlegen(self, link_hash: str, handle, host: str) -> None:
+    def create_gate_link(self, link_hash: str, handle, host: str) -> None:
         self._exec("INSERT INTO gate_link(link_hash, token_hash, host, created_at) VALUES (?,?,?,?)",
                    (link_hash, self._handle(handle), str(host).lower(), _now()))
 
@@ -2766,31 +2908,31 @@ class Store:
         r = self._one("SELECT token_hash FROM gate_link WHERE link_hash=? AND host=?", (link_hash, str(host).lower()))
         return r["token_hash"] if r else None
 
-    def gate_link_entfernen(self, link_hash: str) -> int:
+    def remove_gate_link(self, link_hash: str) -> int:
         return self._exec("DELETE FROM gate_link WHERE link_hash=?", (link_hash,)).rowcount
 
     # ---------- ID token as a sign-out hint (T-22) ----------
     def set_oidc_id_token(self, handle, client: str, id_token: str) -> None:
-        if self.tresor is None:
+        if self.vault is None:
             raise RuntimeError("ID tokens are only stored encrypted (vault.Vault).")
         self._exec("INSERT OR REPLACE INTO oidc_id_token(token_hash, client, id_token) VALUES (?,?,?)",
-                   (self._handle(handle), client, self.tresor.encrypt(id_token)))
+                   (self._handle(handle), client, self.vault.encrypt(id_token)))
 
     def get_oidc_id_token(self, handle) -> Optional[tuple]:
         """(client, id_token) of this session's sign-in, decrypted — or None."""
         r = self._one("SELECT client, id_token FROM oidc_id_token WHERE token_hash=?", (self._handle(handle),))
-        if not r or self.tresor is None:
+        if not r or self.vault is None:
             return None
-        return r["client"], self.tresor.decrypt(r["id_token"])
+        return r["client"], self.vault.decrypt(r["id_token"])
 
-    def put_oidc_grant(self, token_hash: str, client: str, jetzt: int, roles=None) -> None:
+    def put_oidc_grant(self, token_hash: str, client: str, now: int, roles=None) -> None:
         """Enter or confirm an approval. `granted_at` stays on a confirmation —
         otherwise nobody could answer the question "since when may this session enter this application"."""
         self._exec(
             "INSERT INTO oidc_grant(token_hash, client, granted_at, checked_at, roles) VALUES (?,?,?,?,?)"
             " ON CONFLICT(token_hash, client) DO UPDATE SET checked_at=excluded.checked_at,"
             " roles=excluded.roles",
-            (token_hash, client, jetzt, jetzt, json.dumps(list(roles or []))))
+            (token_hash, client, now, now, json.dumps(list(roles or []))))
 
     def get_oidc_grant(self, token_hash: str, client: str) -> Optional[dict]:
         r = self._one("SELECT * FROM oidc_grant WHERE token_hash=? AND client=?", (token_hash, client))
@@ -2839,7 +2981,7 @@ class Store:
         token = secrets.token_urlsafe(32)
         now = _now()
         self._exec("INSERT INTO session(token_hash, user_id, created_at, expires_at, mfa_ok, mfa_at, "
-                   "method, factors_done, remember, ip, user_agent, zuletzt) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                   "method, factors_done, remember, ip, user_agent, last_seen) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
                    (self.session_hash(token), user_id, now, now + ttl_seconds, 1 if mfa_ok else 0,
                     (now if mfa_ok else None), method, json.dumps(list(factors or [])),
                     1 if remember else 0, ip, ua, now))
@@ -2847,18 +2989,18 @@ class Store:
 
     #: Inactivity limits in seconds (without / with "stay signed in"), 0 = off. Set by the
     #: manager from the configuration (F-05); the store alone knows none.
-    leerlauf_sek = (0, 0)
+    idle_sec = (0, 0)
     #: How often `zuletzt` is written at most: writing on every request would mean that every
     #: forward-auth call locks the file. A minute of fuzziness is nothing for limits of hours.
-    LEERLAUF_SCHRITT_SEK = 60
+    IDLE_STEP_SEC = 60
 
     @staticmethod
-    def _handle(wert) -> str:
+    def _handle(value) -> str:
         """A handle is a sha256 hex digest. Whoever passes in a plaintext token by mistake
         gets an error — otherwise the UPDATE would hit nothing and the session
         would silently keep its old state (a second factor that does not arrive is noticed by nobody
         until it is missing)."""
-        h = str(wert or "")
+        h = str(value or "")
         if len(h) != 64 or any(c not in "0123456789abcdef" for c in h):
             raise ValueError("Session handle expected (token_hash from the session row), "
                              f"not a plaintext token: {h[:12]!r}…")
@@ -2888,8 +3030,8 @@ class Store:
         r = self._one("SELECT * FROM session WHERE token_hash=?", (h,))
         if not r:
             return None
-        jetzt = _now()
-        if r["expires_at"] < jetzt:
+        now = _now()
+        if r["expires_at"] < now:
             self.delete_session_by_handle(h)
             return None
         # Inactivity (F-05): in addition to the absolute lifetime. An expired session is
@@ -2898,22 +3040,22 @@ class Store:
         # session that is permanent only because the path knows no choice (OIDC, passkey,
         # sign-in link) or the checkbox is switched off would otherwise never get an idle end
         # (attack on the second round, finding 9).
-        grenze = self.leerlauf_sek[1 if (r["remember"] and r["bleiben_gewaehlt"]) else 0]
-        zuletzt = r["zuletzt"] if r["zuletzt"] is not None else r["created_at"]
-        if grenze and jetzt - int(zuletzt) > grenze:
+        limit = self.idle_sec[1 if (r["remember"] and r["stay_chosen"]) else 0]
+        last = r["last_seen"] if r["last_seen"] is not None else r["created_at"]
+        if limit and now - int(last) > limit:
             self.delete_session_by_handle(h)
             return None
-        if jetzt - int(zuletzt) >= self.LEERLAUF_SCHRITT_SEK:
-            self._exec("UPDATE session SET zuletzt=? WHERE token_hash=?", (jetzt, r["token_hash"]))
+        if now - int(last) >= self.IDLE_STEP_SEC:
+            self._exec("UPDATE session SET last_seen=? WHERE token_hash=?", (now, r["token_hash"]))
         return r
 
-    def set_session_bleiben(self, handle):
+    def set_session_stay(self, handle):
         """Record: "stay signed in" was explicitly chosen (F-05)."""
-        self._exec("UPDATE session SET bleiben_gewaehlt=1 WHERE token_hash=?", (self._handle(handle),))
+        self._exec("UPDATE session SET stay_chosen=1 WHERE token_hash=?", (self._handle(handle),))
 
-    def set_session_andere_beenden(self, handle):
+    def set_session_end_others(self, handle):
         """Record: if this (half) session becomes full, the account's other ones end (limit d)."""
-        self._exec("UPDATE session SET andere_beenden=1 WHERE token_hash=?", (self._handle(handle),))
+        self._exec("UPDATE session SET end_others=1 WHERE token_hash=?", (self._handle(handle),))
 
     def set_session_mfa(self, handle, ok=True):
         self._exec("UPDATE session SET mfa_ok=?, mfa_at=? WHERE token_hash=?",
@@ -2927,9 +3069,9 @@ class Store:
         """Handle from a session row — for the admin panel and "end other sessions"."""
         h = self._handle(handle)
         # A superseded token in the grace period (A-6) belongs to this session and goes with it.
-        self._exec("DELETE FROM session WHERE token_hash=? OR nachfolger=?", (h, h))
+        self._exec("DELETE FROM session WHERE token_hash=? OR successor=?", (h, h))
 
-    def rotate_session(self, handle, gnade_sek: int = 0) -> Optional[str]:
+    def rotate_session(self, handle, mercy_sec: int = 0) -> Optional[str]:
         """Give the session a new token without otherwise changing it (F-06).
 
         Lifetime, factors and `created_at` stay — a step-up is meant to renew the token, not
@@ -2938,38 +3080,38 @@ class Store:
         in one transaction. Returns the new plaintext token, or None if the
         session does not (any longer) exist.
 
-        `gnade_sek` (A-6, PO decision 2026-09-25): the old token then remains valid for that many
+        `mercy_sec` (A-6, PO decision 2026-09-25): the old token then remains valid for that many
         seconds — a request that was already under way at the moment of the step-up (second tab,
         background loading) would otherwise fail once. It then applies WITHOUT step-up freshness (`mfa_at`
         empty): whoever read along the old token gets no freshly confirmed rights, only
         the deadline. It points to its successor and ends with it (`delete_session_by_handle`).
         An already superseded token is not rotated again."""
-        alt = self._handle(handle)
+        old = self._handle(handle)
         token = secrets.token_urlsafe(32)
-        neu = self.session_hash(token)
-        spalten = ("user_id, created_at, expires_at, mfa_ok, mfa_at, method, factors_done, "
-                   "remember, ip, user_agent, zuletzt, bleiben_gewaehlt")
+        new = self.session_hash(token)
+        columns = ("user_id, created_at, expires_at, mfa_ok, mfa_at, method, factors_done, "
+                   "remember, ip, user_agent, last_seen, stay_chosen")
         with self._lock:
             try:
                 cur = self.db.execute(
-                    f"INSERT INTO session(token_hash, {spalten}) SELECT ?, {spalten} FROM session "
-                    "WHERE token_hash=? AND nachfolger IS NULL", (neu, alt))
+                    f"INSERT INTO session(token_hash, {columns}) SELECT ?, {columns} FROM session "
+                    "WHERE token_hash=? AND successor IS NULL", (new, old))
                 if cur.rowcount != 1:
                     self.db.rollback()
                     return None
-                self.db.execute("UPDATE oidc_grant SET token_hash=? WHERE token_hash=?", (neu, alt))
-                self.db.execute("UPDATE oidc_sitzung SET token_hash=? WHERE token_hash=?", (neu, alt))
-                self.db.execute("UPDATE gate_abgemeldet SET token_hash=? WHERE token_hash=?", (neu, alt))
-                self.db.execute("UPDATE oidc_id_token SET token_hash=? WHERE token_hash=?", (neu, alt))
-                self.db.execute("UPDATE gate_link SET token_hash=? WHERE token_hash=?", (neu, alt))
-                if gnade_sek > 0:
+                self.db.execute("UPDATE oidc_grant SET token_hash=? WHERE token_hash=?", (new, old))
+                self.db.execute("UPDATE oidc_session SET token_hash=? WHERE token_hash=?", (new, old))
+                self.db.execute("UPDATE gate_signed_out SET token_hash=? WHERE token_hash=?", (new, old))
+                self.db.execute("UPDATE oidc_id_token SET token_hash=? WHERE token_hash=?", (new, old))
+                self.db.execute("UPDATE gate_link SET token_hash=? WHERE token_hash=?", (new, old))
+                if mercy_sec > 0:
                     self.db.execute("UPDATE session SET expires_at=MIN(expires_at, ?), mfa_at=NULL, "
-                                    "nachfolger=? WHERE token_hash=?", (_now() + int(gnade_sek), neu, alt))
+                                    "successor=? WHERE token_hash=?", (_now() + int(mercy_sec), new, old))
                     # An earlier predecessor that points to the old token now points to the new one —
                     # otherwise it would survive a sign-out of the new session.
-                    self.db.execute("UPDATE session SET nachfolger=? WHERE nachfolger=?", (neu, alt))
+                    self.db.execute("UPDATE session SET successor=? WHERE successor=?", (new, old))
                 else:
-                    self.db.execute("DELETE FROM session WHERE token_hash=?", (alt,))
+                    self.db.execute("DELETE FROM session WHERE token_hash=?", (old,))
                 self.db.commit()
             except Exception:
                 self.db.rollback()
@@ -2985,7 +3127,7 @@ class Store:
         `keep_handle` is the `token_hash` from the session row, not the cookie."""
         self._exec("DELETE FROM session WHERE user_id=? AND token_hash!=?", (user_id, keep_handle or ""))
 
-    def totp_step_verbrauchen(self, user_id, step: int) -> bool:
+    def consume_totp_step(self, user_id, step: int) -> bool:
         """Book a TOTP time step as consumed. True if it was still free.
 
         The comparison and the write sit in ONE `UPDATE … WHERE`: two simultaneous
@@ -3001,10 +3143,10 @@ class Store:
         return self._exec("DELETE FROM session WHERE expires_at < ?", (_now(),)).rowcount
 
     @classmethod
-    def sichere_datei(cls, quelle: str, ziel: str) -> str:
+    def secure_file(cls, source: str, destination: str) -> str:
         """Back up a database file WITHOUT touching it — the path for `tinysesam backup`.
 
-        Why not simply `Store(quelle).backup(ziel)`: the constructor sets
+        Why not simply `Store(quelle).backup(destination)`: the constructor sets
         `PRAGMA journal_mode=WAL`, creates missing tables and runs `_migrate()`. It
         **writes**, and does so before anything has been copied. Whoever does the
         only right thing before an update and makes a backup would thereby have lifted the running installation to the new
@@ -3016,29 +3158,29 @@ class Store:
         and needs no writable directory. The online backup API still reads
         a consistent state including WAL through it.
         """
-        if not os.path.exists(quelle):
-            raise FileNotFoundError(quelle)
-        if not os.path.exists(ziel):
+        if not os.path.exists(source):
+            raise FileNotFoundError(source)
+        if not os.path.exists(destination):
             try:
-                os.close(os.open(ziel, os.O_CREAT | os.O_EXCL | os.O_WRONLY, cls.DATEIRECHTE))
+                os.close(os.open(destination, os.O_CREAT | os.O_EXCL | os.O_WRONLY, cls.FILE_PERMISSIONS))
             except OSError:
                 pass  # created meanwhile or cannot be created — chmod below sets the permissions
-        quell_db = sqlite3.connect(f"file:{quelle}?mode=ro", uri=True)
-        ziel_db = sqlite3.connect(ziel)
+        source_db = sqlite3.connect(f"file:{source}?mode=ro", uri=True)
+        destination_db = sqlite3.connect(destination)
         try:
-            quell_db.backup(ziel_db)
+            source_db.backup(destination_db)
         finally:
-            ziel_db.close()
-            quell_db.close()
-        for anhang in ("", "-wal", "-shm"):
+            destination_db.close()
+            source_db.close()
+        for attachment in ("", "-wal", "-shm"):
             try:
-                if os.path.exists(ziel + anhang):
-                    os.chmod(ziel + anhang, cls.DATEIRECHTE)
+                if os.path.exists(destination + attachment):
+                    os.chmod(destination + attachment, cls.FILE_PERMISSIONS)
             except OSError:
                 pass  # permissions cannot be set (foreign file system) — the copy itself is complete
-        return ziel
+        return destination
 
-    def backup(self, ziel: str) -> str:
+    def backup(self, destination: str) -> str:
         """Write a consistent copy of the database, during operation.
 
         **A file copy is no good.** The database runs in WAL mode: everything since the
@@ -3051,24 +3193,24 @@ class Store:
         delivers a file that is correct on its own. The copy gets the same narrow permissions
         as the original — a backup with password hashes deserves as much protection as the source.
         """
-        if not os.path.exists(ziel):
+        if not os.path.exists(destination):
             try:
-                os.close(os.open(ziel, os.O_CREAT | os.O_EXCL | os.O_WRONLY, self.DATEIRECHTE))
+                os.close(os.open(destination, os.O_CREAT | os.O_EXCL | os.O_WRONLY, self.FILE_PERMISSIONS))
             except OSError:
                 pass  # created meanwhile or cannot be created — chmod below sets the permissions
-        ziel_db = sqlite3.connect(ziel)
+        destination_db = sqlite3.connect(destination)
         try:
             with self._lock:
-                self.db.backup(ziel_db)
+                self.db.backup(destination_db)
         finally:
-            ziel_db.close()
-        for anhang in ("", "-wal", "-shm"):
+            destination_db.close()
+        for attachment in ("", "-wal", "-shm"):
             try:
-                if os.path.exists(ziel + anhang):
-                    os.chmod(ziel + anhang, self.DATEIRECHTE)
+                if os.path.exists(destination + attachment):
+                    os.chmod(destination + attachment, self.FILE_PERMISSIONS)
             except OSError:
                 pass  # permissions cannot be set (foreign file system) — the copy itself is complete
-        return ziel
+        return destination
 
     def gc_flow(self) -> int:
         return self._exec("DELETE FROM flow WHERE expires_at < ?", (_now(),)).rowcount
@@ -3076,9 +3218,9 @@ class Store:
     def list_sessions(self, user_id=None):
         # Superseded tokens in the grace period (A-6) are not a session of their own.
         if user_id is not None:
-            return self._all("SELECT * FROM session WHERE user_id=? AND nachfolger IS NULL "
+            return self._all("SELECT * FROM session WHERE user_id=? AND successor IS NULL "
                              "ORDER BY created_at DESC", (user_id,))
-        return self._all("SELECT * FROM session WHERE nachfolger IS NULL ORDER BY created_at DESC")
+        return self._all("SELECT * FROM session WHERE successor IS NULL ORDER BY created_at DESC")
 
     # ---------- Flow state (OIDC / WebAuthn, short-lived, one-shot) ----------
     def put_flow(self, key, data: dict, ttl=600):
@@ -3094,13 +3236,13 @@ class Store:
         challenge. Now the `DELETE` decides: only whoever actually removed the row
         (`rowcount == 1`) gets the content. SQLite serialises the writers, also across
         process boundaries — `RETURNING` would be more elegant but requires SQLite ≥ 3.35."""
-        with self._schreibend():
+        with self._writing():
             r = self.db.execute("SELECT data, expires_at FROM flow WHERE key=?", (key,)).fetchone()
             if not r:
                 return None
-            weg = self.db.execute("DELETE FROM flow WHERE key=?", (key,)).rowcount
+            away = self.db.execute("DELETE FROM flow WHERE key=?", (key,)).rowcount
             self.db.commit()
-        if weg != 1:
+        if away != 1:
             return None                 # another caller consumed it first
         if r["expires_at"] < _now():
             return None
@@ -3109,19 +3251,19 @@ class Store:
         except Exception:
             return None
 
-    def zaehle_argon2_hashes(self) -> int:
+    def count_argon2_hashes(self) -> int:
         """How many stored password/PIN/scope hashes are argon2? (B6-8)"""
         n = 0
-        for tabelle in ("password_cred", "pin_cred", "resource_secret"):
-            r = self._one(f"SELECT COUNT(*) AS n FROM {tabelle} WHERE hash LIKE '$argon2%'")
+        for table in ("password_cred", "pin_cred", "resource_secret"):
+            r = self._one(f"SELECT COUNT(*) AS n FROM {table} WHERE hash LIKE '$argon2%'")
             n += int(r["n"] or 0) if r else 0
         return n
 
     #: How long a successful commit counts as proof that the database is writable
-    #: (seconds). Within this period `schreibprobe()` only checks the connection.
-    SCHREIBPROBE_SEK = 5
+    #: (seconds). Within this period `write_probe()` only checks the connection.
+    WRITE_PROBE_SEC = 5
 
-    def schreibprobe(self) -> None:
+    def write_probe(self) -> None:
         """A real write transaction — the core of the health check (B6-4).
 
         A `SELECT 1` also succeeds on a database that has become read-only (read-only
@@ -3131,22 +3273,22 @@ class Store:
         Raises the sqlite3 exception unchanged; what of it reaches the outside is decided by the
         caller.
 
-        What is written is the clock state (`uhr_stand`) — so the health check also saves it
+        What is written is the clock state (`clock_state`) — so the health check also saves it
         on the side, in times when nothing else is written. But at most every
-        `SCHREIBPROBE_SEK`: `/healthz` is reachable without sign-in, and one commit
+        `WRITE_PROBE_SEC`: `/healthz` is reachable without sign-in, and one commit
         with fsync under `_lock` per call would mean that whoever floods it occupies the write lock that
         sign-ins wait for, and wears out SD cards. If the last successful commit (also
         a foreign one via `_exec`) is more recent than that, a read access suffices — a closed or
         vanished connection is still noticed immediately, a change to "read-only" at the latest
-        after `SCHREIBPROBE_SEK`."""
-        with self._schreibend():
+        after `WRITE_PROBE_SEC`."""
+        with self._writing():
             m = time.monotonic()
-            if self._frisch(self._geschrieben, m, self.SCHREIBPROBE_SEK):
+            if self._fresh(self._written, m, self.WRITE_PROBE_SEC):
                 self.db.execute("SELECT 1").fetchone()
                 return
-            self._uhr_stand_schreiben()
+            self._write_clock_state()
             self.db.commit()
-            self._geschrieben = self._uhr_gesichert = m
+            self._written = self._clock_secured = m
 
     # ---------- Runtime settings (editable in the panel) ----------
     def get_setting(self, key) -> Optional[str]:
@@ -3164,66 +3306,66 @@ class Store:
         self._exec("INSERT INTO login_attempt(ts, username, ip, success, method) VALUES (?,?,?,?,?)",
                    (_now(), username, ip, 1 if success else 0, method))
 
-    #: How long a pre-booking with an open outcome (`reserve_attempt(schweben=True)`) counts as
+    #: How long a pre-booking with an open outcome (`reserve_attempt(as_pending=True)`) counts as
     #: pending, not as a failed attempt (seconds, G9). Longer than any directory query up to
-    #: its timeout (`ldap_.VERBINDUNGS_TIMEOUT`, connection setup and bind once each) including
+    #: its timeout (`ldap_.CONNECTION_TIMEOUT`, connection setup and bind once each) including
     #: compute time. An older open row has been completed by nobody — the process has died
     #: or is hanging; it then counts as a failed attempt, when in doubt the stricter reading.
-    VORBUCHUNG_SCHWEBE_SEK = 30
+    PREBOOKING_PENDING_SEC = 30
 
-    def _fails_abfrage(self, since, username=None, ip=None, method=None, exclude_methods=None,
-                       ab_id=None, nur_bestaetigt=False, ausser_username=None):
+    def _fails_query(self, since, username=None, ip=None, method=None, exclude_methods=None,
+                       from_id=None, only_confirmed=False, except_username=None):
         """The counting query for `count_fails` and `reserve_attempt` — one rule, two callers.
-        `ab_id`: only rows with a larger id (watermark of an identifier, G2).
-        `nur_bestaetigt`: without the pending pre-bookings (G9, `VORBUCHUNG_SCHWEBE_SEK`)."""
+        `from_id`: only rows with a larger id (watermark of an identifier, G2).
+        `only_confirmed`: without the pending pre-bookings (G9, `PREBOOKING_PENDING_SEC`)."""
         q = "SELECT COUNT(*) c FROM login_attempt WHERE success=0 AND ts>=?"
         args = [since]
-        if nur_bestaetigt:
-            q += " AND (offen=0 OR ts<?)"
-            args.append(_now() - self.VORBUCHUNG_SCHWEBE_SEK)
-        if ab_id is not None:
+        if only_confirmed:
+            q += " AND (pending=0 OR ts<?)"
+            args.append(_now() - self.PREBOOKING_PENDING_SEC)
+        if from_id is not None:
             q += " AND id>?"
-            args.append(int(ab_id))
+            args.append(int(from_id))
         if username:
             q += " AND username=? COLLATE NOCASE"
             args.append(username)
         if ip:
             q += " AND ip=?"
             args.append(ip)
-        if ausser_username:
+        if except_username:
             q += " AND username<>? COLLATE NOCASE"
-            args.append(ausser_username)
+            args.append(except_username)
         if method:
             q += " AND method=?"
             args.append(method)
         if exclude_methods:
-            platz = ",".join("?" for _ in exclude_methods)
-            q += f" AND (method IS NULL OR method NOT IN ({platz}))"
+            place = ",".join("?" for _ in exclude_methods)
+            q += f" AND (method IS NULL OR method NOT IN ({place}))"
             args.extend(exclude_methods)
         return q, args
 
     def count_fails(self, since, username=None, ip=None, method=None, exclude_methods=None,
-                    ab_id=None, nur_bestaetigt=False, ausser_username=None) -> int:
+                    from_id=None, only_confirmed=False, except_username=None) -> int:
         """Count failed attempts in the window — optionally only ONE method, or all EXCEPT some.
 
         `exclude_methods` is the counterpart of `method`: the login lockout wants to count everything
         that was a sign-in attempt — but not the old-password query of the account page, which lies in
-        the same table (see `security.NICHT_LOGIN_METHODEN`). A row without a method
+        the same table (see `security.NOT_LOGIN_METHODS`). A row without a method
         (`NULL`, conceivable from old data) still counts: when in doubt, lock more strictly.
 
-        Default: a pending pre-booking (`reserve_attempt(schweben=True)`) counts — it
-        CAN become a failed attempt. `nur_bestaetigt=True` leaves it out (G9).
+        Default: a pending pre-booking (`reserve_attempt(as_pending=True)`) counts — it
+        CAN become a failed attempt. `only_confirmed=True` leaves it out (G9).
         """
         if not username and not ip:
             return 0
-        q, args = self._fails_abfrage(since, username, ip, method, exclude_methods, ab_id,
-                                      nur_bestaetigt, ausser_username)
+        q, args = self._fails_query(since, username, ip, method, exclude_methods, from_id,
+                                      only_confirmed, except_username)
         return self._one(q, args)["c"]
 
-    def reserve_attempt(self, username, ip, method, regeln, serie=None, schweben=False) -> tuple:
+    def reserve_attempt(self, username, ip, method, rules, series=None, as_pending=False) -> tuple:
         """Check lockouts and pre-book the attempt **in the same transaction** as a failed attempt.
 
-        `regeln` is a list `(grund, grenze, filter)`; `filter` are the keywords of
+        `rules` is a list `(grund, limit, filter)`; `filter` are the keywords of
         `count_fails`. Returns `(id, None)` — the attempt may proceed and already stands as a
         failed attempt in the table — or `(None, grund)` if a rule applies.
 
@@ -3237,111 +3379,111 @@ class Store:
         If the attempt succeeds, `finish_attempt` turns the row into a success; a process
         that dies in between leaves a failed attempt — when in doubt, stricter.
 
-        `serie=(topf, art, grenze)` also pre-books the series of consecutive failed attempts (B2-6) —
+        `series=(topf, art, limit)` also pre-books the series of consecutive failed attempts (B2-6) —
         in the SAME transaction. The first version read the series beforehand and counted it only after
         the check: a parallel burst at the limit read "not full yet" N times and could guess
         N times (measured: 15 instead of 1). Returns then `(id, series state)` after the booking —
-        the SETTLED state (`_serie_bestaetigt`, without pending pre-bookings). If it reaches
+        the SETTLED state (`_series_confirmed`, without pending pre-bookings). If it reaches
         the limit, exactly this booking triggered the lockout; a pending one never reaches it here,
         only at its completion (`finish_attempt`, audit round 2026-09-27, p2 F3).
 
-        **Pending (G9).** `schweben=True` books the attempt with an open outcome (`offen=1`): it
+        **Pending (G9).** `as_pending=True` books the attempt with an open outcome (`offen=1`): it
         can become a failed attempt or none at all (directory outage, F-23 — withdrawn
         only once the outage is reported, with a directory that drops packets, hence after
         the timeout). If a rule or the series applies **only** because of such rows, the
-        answer is `(None, "schwebend")`: not decided yet, no lockout. The caller asks
+        answer is `(None, "pending")`: not decided yet, no lockout. The caller asks
         again after a short pause (`_begin_attempt`). Previously every rejection in this
         window was a lockout with `failed login` for fail2ban and a lockout notice to the holder — even
         if not a single failed attempt remained afterwards. The burst (R7-2) stays slowed down: it
         waits until the pre-bookings are decided and then gets the real lockout. If
         a rule applies with the confirmed rows alone, its reason applies as before; an open
-        row older than `VORBUCHUNG_SCHWEBE_SEK` counts as a failed attempt.
+        row older than `PREBOOKING_PENDING_SEC` counts as a failed attempt.
         """
         with self._lock:
             self._begin_immediate()
             try:
-                stand = None
-                schwebend = False
-                topf_s, art_s, grenze_s = serie if serie is not None else (None, None, 0)
-                if topf_s and self._serie_summe(topf_s) >= grenze_s:
-                    if self._serie_bestaetigt(topf_s) >= grenze_s:
+                state = None
+                pending = False
+                bucket_s, kind_s, limit_s = series if series is not None else (None, None, 0)
+                if bucket_s and self._series_sum(bucket_s) >= limit_s:
+                    if self._series_confirmed(bucket_s) >= limit_s:
                         self.db.execute("ROLLBACK")
                         return None, "lockout_series"
-                    schwebend = True
-                for grund, grenze, filt in regeln:
+                    pending = True
+                for reason, limit, filt in rules:
                     if not filt.get("username") and not filt.get("ip"):
                         continue
-                    q, args = self._fails_abfrage(**filt)
-                    if self.db.execute(q, args).fetchone()["c"] < grenze:
+                    q, args = self._fails_query(**filt)
+                    if self.db.execute(q, args).fetchone()["c"] < limit:
                         continue
                     # Does the rule apply — even without the pending pre-bookings? Then it is a
                     # lockout. Otherwise continue: a later rule may apply confirmed and takes precedence.
-                    q, args = self._fails_abfrage(**filt, nur_bestaetigt=True)
-                    if self.db.execute(q, args).fetchone()["c"] >= grenze:
+                    q, args = self._fails_query(**filt, only_confirmed=True)
+                    if self.db.execute(q, args).fetchone()["c"] >= limit:
                         self.db.execute("ROLLBACK")
-                        return None, grund
-                    schwebend = True
-                if schwebend:
+                        return None, reason
+                    pending = True
+                if pending:
                     self.db.execute("ROLLBACK")
-                    return None, "schwebend"
+                    return None, "pending"
                 cur = self.db.execute(
-                    "INSERT INTO login_attempt(ts, username, ip, success, method, offen) VALUES (?,?,?,0,?,?)",
-                    (_now(), username, ip, method, 1 if schweben else 0))
-                if topf_s:
-                    self._serie_plus(topf_s, art_s)
-                    stand = self._serie_bestaetigt(topf_s)
+                    "INSERT INTO login_attempt(ts, username, ip, success, method, pending) VALUES (?,?,?,0,?,?)",
+                    (_now(), username, ip, method, 1 if as_pending else 0))
+                if bucket_s:
+                    self._series_plus(bucket_s, kind_s)
+                    state = self._series_confirmed(bucket_s)
                 self.db.execute("COMMIT")
-                return cur.lastrowid, stand
+                return cur.lastrowid, state
             except Exception:
                 self.db.execute("ROLLBACK")
                 raise
 
-    def finish_attempt(self, attempt_id, success: bool, serie=None) -> Optional[tuple]:
+    def finish_attempt(self, attempt_id, success: bool, series=None) -> Optional[tuple]:
         """Complete an attempt pre-booked with `reserve_attempt`: success or failed attempt.
 
         Both end the pending state (`offen=0`, G9): a failed attempt counts from here also for
-        `count_fails(nur_bestaetigt=True)` — until then completing a failed attempt was a
-        no-op. `serie=(topf, art)` withdraws the pre-booking in the series on a success in the SAME
+        `count_fails(only_confirmed=True)` — until then completing a failed attempt was a
+        no-op. `series=(topf, art)` withdraws the pre-booking in the series on a success in the SAME
         transaction: separately it would stand in between neither as open nor as withdrawn,
         and whoever is waiting right now (`_begin_attempt`) would read the series one too high — at the
         limit a lockout with a lockout notice for nothing.
 
-        With `serie` it returns `(before, after)`: the settled state of the series
-        (`_serie_bestaetigt`) before and after the completion, both in one transaction
+        With `series` it returns `(before, after)`: the settled state of the series
+        (`_series_confirmed`) before and after the completion, both in one transaction
         (`BEGIN IMMEDIATE`, also across several processes). From that `_record_login` sees whether EXACTLY
         this completion crossed the limit (p2 F3). Until 2026-09-27 the state counted at
         booking: if in the meantime a full sign-in had ended the series, `lockout_series`
-        stood in the log although nothing was locked. Without `serie` None."""
-        with self._schreibend():
-            vorher = None
-            if serie:
+        stood in the log although nothing was locked. Without `series` None."""
+        with self._writing():
+            before = None
+            if series:
                 self._begin_immediate()
-                vorher = self._serie_bestaetigt(serie[0])
-            self.db.execute("UPDATE login_attempt SET success=?, offen=0 WHERE id=?",
+                before = self._series_confirmed(series[0])
+            self.db.execute("UPDATE login_attempt SET success=?, pending=0 WHERE id=?",
                             (1 if success else 0, attempt_id))
-            if success and serie:
-                self._serie_minus(*serie)
-            stand = (vorher, self._serie_bestaetigt(serie[0])) if serie else None
+            if success and series:
+                self._series_minus(*series)
+            state = (before, self._series_confirmed(series[0])) if series else None
             self.db.commit()
-            self._geschrieben = time.monotonic()
-            self._uhr_mitschreiben()
-        return stand
+            self._written = time.monotonic()
+            self._clock_record()
+        return state
 
-    def cancel_attempt(self, attempt_id, serie=None):
+    def cancel_attempt(self, attempt_id, series=None):
         """Withdraw a pre-booked attempt — it was none (e.g. directory outage, F-23).
 
-        `serie=(topf, art)` withdraws its pre-booking in the series in the same transaction —
+        `series=(topf, art)` withdraws its pre-booking in the series in the same transaction —
         for the same reason as in `finish_attempt` (G9)."""
-        with self._schreibend():
+        with self._writing():
             self.db.execute("DELETE FROM login_attempt WHERE id=? AND success=0", (attempt_id,))
-            if serie:
-                self._serie_minus(*serie)
+            if series:
+                self._series_minus(*series)
             self.db.commit()
-            self._geschrieben = time.monotonic()
-            self._uhr_mitschreiben()
+            self._written = time.monotonic()
+            self._clock_record()
 
-    def clear_fails(self, username=None, ip=None, method=None, exclude_methods=None, seit=None,
-                    ab_id=None):
+    def clear_fails(self, username=None, ip=None, method=None, exclude_methods=None, since=None,
+                    from_id=None):
         """Delete failed attempts — optionally only those of ONE method, or all EXCEPT some.
 
         `method` is not a nicety but the core: without it a successful
@@ -3353,31 +3495,31 @@ class Store:
         `exclude_methods` clears everything except those named — the path after a COMPLETE
         sign-in, which does not concern the own buckets (account page, step-up, scope).
 
-        `ab_id` clears only rows from the watermark of the identifier (`kennung_grenzen`, G2): what
+        `from_id` clears only rows from the watermark of the identifier (`identifier_limits`, G2): what
         arose only when the identifier already belonged to the account. `seit` is the fallback for
         existing data without a watermark (Unix seconds, the creation of the account, inclusive).
         """
-        wo: str = ""
+        where: str = ""
         args_m: tuple = ()
         if method is not None:
-            wo, args_m = " AND method=?", (method,)
+            where, args_m = " AND method=?", (method,)
         elif exclude_methods:
-            platz = ",".join("?" for _ in exclude_methods)
-            wo, args_m = f" AND (method IS NULL OR method NOT IN ({platz}))", tuple(exclude_methods)
-        if seit is not None:
+            place = ",".join("?" for _ in exclude_methods)
+            where, args_m = f" AND (method IS NULL OR method NOT IN ({place}))", tuple(exclude_methods)
+        if since is not None:
             # Only from a point in time (limit a): a complete sign-in clears what applied to THIS
             # account — not the failed attempts under its name or address from before
             # its creation (those applied to nobody or to someone else).
-            wo, args_m = wo + " AND ts >= ?", args_m + (int(seit),)
-        if ab_id is not None:
+            where, args_m = where + " AND ts >= ?", args_m + (int(since),)
+        if from_id is not None:
             # More precise than `seit` (G2): from the joining of the identifier, not from creation — and to
             # the exact row, also in the second of joining.
-            wo, args_m = wo + " AND id > ?", args_m + (int(ab_id),)
+            where, args_m = where + " AND id > ?", args_m + (int(from_id),)
         if username:
-            self._exec("DELETE FROM login_attempt WHERE username=? COLLATE NOCASE" + wo,
+            self._exec("DELETE FROM login_attempt WHERE username=? COLLATE NOCASE" + where,
                        (username,) + args_m)
         if ip:
-            self._exec("DELETE FROM login_attempt WHERE ip=?" + wo, (ip,) + args_m)
+            self._exec("DELETE FROM login_attempt WHERE ip=?" + where, (ip,) + args_m)
 
     def gc_attempts(self, older_than) -> int:
         return self._exec("DELETE FROM login_attempt WHERE ts < ?", (older_than,)).rowcount
@@ -3390,104 +3532,104 @@ class Store:
     # here, separate and without a time window, per identifier AND method: locking happens on the sum,
     # what gets cleared is what the way back proves (a self-service reset only the password part,
     # R4-13). The booking lies in `reserve_attempt`, atomic with the attempt itself.
-    def _serie_summe(self, topf) -> int:
-        zeile = self.db.execute("SELECT COALESCE(SUM(anzahl), 0) AS n FROM fehlserie WHERE topf=?",
-                                (topf,)).fetchone()
-        return int(zeile["n"])
+    def _series_sum(self, bucket) -> int:
+        line = self.db.execute("SELECT COALESCE(SUM(count), 0) AS n FROM failure_series WHERE folded=?",
+                                (bucket,)).fetchone()
+        return int(line["n"])
 
-    def _serie_bestaetigt(self, topf) -> int:
+    def _series_confirmed(self, bucket) -> int:
         """The series without the pending pre-bookings (G9) — under `_lock`, without commit.
 
         Every open row in `login_attempt` has exactly one booking in the series under the same
-        bucket (`reserve_attempt(schweben=True)` books both in one transaction); a row that is
-        older than `VORBUCHUNG_SCHWEBE_SEK` counts as a failed attempt and is not subtracted."""
-        offen = self.db.execute(
-            "SELECT COUNT(*) AS n FROM login_attempt WHERE username=? COLLATE NOCASE AND offen=1 "
-            "AND ts>=?", (topf, _now() - self.VORBUCHUNG_SCHWEBE_SEK)).fetchone()
-        return max(0, self._serie_summe(topf) - int(offen["n"]))
+        bucket (`reserve_attempt(as_pending=True)` books both in one transaction); a row that is
+        older than `PREBOOKING_PENDING_SEC` counts as a failed attempt and is not subtracted."""
+        unclosed = self.db.execute(
+            "SELECT COUNT(*) AS n FROM login_attempt WHERE username=? COLLATE NOCASE AND pending=1 "
+            "AND ts>=?", (bucket, _now() - self.PREBOOKING_PENDING_SEC)).fetchone()
+        return max(0, self._series_sum(bucket) - int(unclosed["n"]))
 
-    def _serie_minus(self, topf, art):
-        self.db.execute("UPDATE fehlserie SET anzahl = anzahl - 1 WHERE topf=? AND art=? AND anzahl > 0",
-                        (topf, art or ""))
+    def _series_minus(self, bucket, kind):
+        self.db.execute("UPDATE failure_series SET count = count - 1 WHERE folded=? AND kind=? AND count > 0",
+                        (bucket, kind or ""))
 
-    def _serie_plus(self, topf, art):
-        jetzt = _now()
-        self.db.execute("INSERT INTO fehlserie(topf, art, anzahl, seit, zuletzt) VALUES (?, ?, 1, ?, ?) "
-                        "ON CONFLICT(topf, art) DO UPDATE SET anzahl = anzahl + 1, "
-                        "zuletzt = excluded.zuletzt", (topf, art or "", jetzt, jetzt))
+    def _series_plus(self, bucket, kind):
+        now = _now()
+        self.db.execute("INSERT INTO failure_series(folded, kind, count, since, last_seen) VALUES (?, ?, 1, ?, ?) "
+                        "ON CONFLICT(folded, kind) DO UPDATE SET count = count + 1, "
+                        "last_seen = excluded.last_seen", (bucket, kind or "", now, now))
 
-    def fehlserie(self, topf) -> int:
+    def failure_series(self, bucket) -> int:
         """How many consecutive failed attempts stand for this (folded) identifier, across all methods?"""
-        if not topf:
+        if not bucket:
             return 0
         with self._lock:
-            return self._serie_summe(topf)
+            return self._series_sum(bucket)
 
-    def fehlserie_bestaetigt(self, topf) -> int:
-        """Like `fehlserie`, without the pending pre-bookings (G9): the consecutive failed attempts that
+    def failure_series_confirmed(self, bucket) -> int:
+        """Like `failure_series`, without the pending pre-bookings (G9): the consecutive failed attempts that
         are settled. The series lockout hangs on it; the sum alone can still fall."""
-        if not topf:
+        if not bucket:
             return 0
         with self._lock:
-            return self._serie_bestaetigt(topf)
+            return self._series_confirmed(bucket)
 
-    def fehlserie_ohne(self, topf, arten) -> int:
+    def failure_series_without(self, bucket, kinds) -> int:
         """The series of this identifier WITHOUT the named kinds — what clearing only these kinds
         would leave standing (e.g. the self-service reset, which does not clear TOTP and `pin_chain`)."""
-        if not topf:
+        if not bucket:
             return 0
-        arten = [str(a) for a in arten]
-        platz = ",".join("?" for _ in arten)
+        kinds = [str(a) for a in kinds]
+        place = ",".join("?" for _ in kinds)
         with self._lock:
-            zeile = self.db.execute(f"SELECT COALESCE(SUM(anzahl), 0) AS n FROM fehlserie "
-                                    f"WHERE topf=? AND art NOT IN ({platz})", [topf, *arten]).fetchone()
-        return int(zeile["n"])
+            line = self.db.execute(f"SELECT COALESCE(SUM(count), 0) AS n FROM failure_series "
+                                    f"WHERE folded=? AND kind NOT IN ({place})", [bucket, *kinds]).fetchone()
+        return int(line["n"])
 
-    def fehlserie_erhoehen(self, topf, art="password") -> int:
+    def increase_failure_series(self, bucket, kind="password") -> int:
         """Attach a failed attempt to the series (paths without pre-booking); returns the new sum."""
-        if not topf:
+        if not bucket:
             return 0
-        jetzt = _now()
-        self._exec("INSERT INTO fehlserie(topf, art, anzahl, seit, zuletzt) VALUES (?, ?, 1, ?, ?) "
-                   "ON CONFLICT(topf, art) DO UPDATE SET anzahl = anzahl + 1, zuletzt = excluded.zuletzt",
-                   (topf, art or "", jetzt, jetzt))
-        return self.fehlserie(topf)
+        now = _now()
+        self._exec("INSERT INTO failure_series(folded, kind, count, since, last_seen) VALUES (?, ?, 1, ?, ?) "
+                   "ON CONFLICT(folded, kind) DO UPDATE SET count = count + 1, last_seen = excluded.last_seen",
+                   (bucket, kind or "", now, now))
+        return self.failure_series(bucket)
 
-    def fehlserie_senken(self, topf, art) -> None:
+    def lower_failure_series(self, bucket, kind) -> None:
         """Withdraw a pre-booking: the attempt was correct (or none at all — directory outage).
 
         Do not delete: a correct password with an open second factor is not a complete
         sign-in. The series before it stays, only this attempt does not count."""
-        if not topf:
+        if not bucket:
             return
-        self._exec("UPDATE fehlserie SET anzahl = anzahl - 1 WHERE topf=? AND art=? AND anzahl > 0",
-                   (topf, art or ""))
+        self._exec("UPDATE failure_series SET count = count - 1 WHERE folded=? AND kind=? AND count > 0",
+                   (bucket, kind or ""))
 
-    def fehlserie_loeschen(self, topf, arten=None) -> int:
-        """End the series (`arten=None`: entirely, otherwise only these methods); returns how many there were."""
-        if not topf:
+    def delete_failure_series(self, bucket, kinds=None) -> int:
+        """End the series (`kinds=None`: entirely, otherwise only these methods); returns how many there were."""
+        if not bucket:
             return 0
-        if arten is None:
-            weg = self.fehlserie(topf)
-            self._exec("DELETE FROM fehlserie WHERE topf=?", (topf,))
-            return weg
-        arten = [str(a) for a in arten]
-        platz = ",".join("?" for _ in arten)
-        zeile = self._one(f"SELECT COALESCE(SUM(anzahl), 0) AS n FROM fehlserie WHERE topf=? AND art IN ({platz})",
-                          [topf, *arten])
-        self._exec(f"DELETE FROM fehlserie WHERE topf=? AND art IN ({platz})", [topf, *arten])
-        return int(zeile["n"])
+        if kinds is None:
+            away = self.failure_series(bucket)
+            self._exec("DELETE FROM failure_series WHERE folded=?", (bucket,))
+            return away
+        kinds = [str(a) for a in kinds]
+        place = ",".join("?" for _ in kinds)
+        line = self._one(f"SELECT COALESCE(SUM(count), 0) AS n FROM failure_series WHERE folded=? AND kind IN ({place})",
+                          [bucket, *kinds])
+        self._exec(f"DELETE FROM failure_series WHERE folded=? AND kind IN ({place})", [bucket, *kinds])
+        return int(line["n"])
 
-    def gc_fehlserien(self, older_than, grenze) -> int:
-        """Clear old, NOT triggered series (`zuletzt` before `older_than`, sum below `grenze`).
+    def gc_failure_series(self, older_than, limit) -> int:
+        """Clear old, NOT triggered series (`zuletzt` before `older_than`, sum below `limit`).
 
         A triggered series stays: it is a lockout, and only a sign-in, a reset
         or the operator lifts it — not waiting. Without a limit the table would fill up with
-        invented names; with it each remaining row costs an attacker `grenze`
+        invented names; with it each remaining row costs an attacker `limit`
         failed attempts, each slowed down by the window thresholds."""
         return self._exec(
-            "DELETE FROM fehlserie WHERE topf IN (SELECT topf FROM fehlserie GROUP BY topf "
-            "HAVING MAX(zuletzt) < ? AND SUM(anzahl) < ?)", (int(older_than), int(grenze))).rowcount
+            "DELETE FROM failure_series WHERE folded IN (SELECT folded FROM failure_series GROUP BY folded "
+            "HAVING MAX(last_seen) < ? AND SUM(count) < ?)", (int(older_than), int(limit))).rowcount
 
     # ---------- Magic / one-time tokens ----------
     def add_magic_token(self, token_hash, purpose, expires_at, user_id=None, email=None, payload=None):
@@ -3501,7 +3643,7 @@ class Store:
 
     def use_magic_token(self, token_hash) -> bool:
         """Mark as used atomically. True only on the FIRST valid redemption (one-shot)."""
-        with self._schreibend():
+        with self._writing():
             cur = self.db.execute(
                 "UPDATE magic_token SET used_at=? WHERE token_hash=? AND used_at IS NULL AND expires_at>=?",
                 (_now(), token_hash, _now()))
@@ -3513,13 +3655,13 @@ class Store:
 
         Deliberately "expired" and not "used": `used_at` means "redeemed" — for a
         confirmation token that is "address proven". A never delivered link proved nothing,
-        and the cleanup of unconfirmed accounts (`unbestaetigte_konten`) must see it as
+        and the cleanup of unconfirmed accounts (`unconfirmed_accounts`) must see it as
         expired.
         """
         return self._exec("UPDATE magic_token SET expires_at=? WHERE token_hash=? AND used_at IS NULL",
                           (_now() - 1, token_hash)).rowcount == 1
 
-    def unbestaetigte_konten(self) -> list:
+    def unconfirmed_accounts(self) -> list:
         """Accounts from a registration whose confirmation link has expired without them ever
         having been confirmed (R4-09). Only this combination counts — locked, never signed in,
         an unused and expired `verify_email` token, and NO valid or already
@@ -3536,7 +3678,7 @@ class Store:
             "      AND m2.purpose = 'verify_email' AND (m2.used_at IS NOT NULL OR m2.expires_at >= ?))",
             (now, now))]
 
-    def gc_unbestaetigte_konten(self) -> int:
+    def gc_unconfirmed_accounts(self) -> int:
         """Remove never-confirmed accounts (R4-09) — call BEFORE `gc_magic_tokens`.
 
         The mark "never confirmed" is the expired confirmation token; if
@@ -3544,13 +3686,13 @@ class Store:
         step an address that a stranger had registered and never confirmed stayed taken
         forever: the real owner got "email taken". Here and not in the manager,
         so that `tinysesam gc` (works directly on the store) runs the same order."""
-        ids = self.unbestaetigte_konten()
+        ids = self.unconfirmed_accounts()
         for uid in ids:
             # Via the one deletion path (H-13, integration findings 12/18): the registration of the
             # stranger including IP and the failed attempts of the real address holder would otherwise
             # keep standing under name and address — and the closing line would carry the clear name.
-            self.konto_entfernen(uid)
-            self.audit_log("signup_expired", ersatzname(uid), None, f"uid={uid}")
+            self.remove_account(uid)
+            self.audit_log("signup_expired", replacement_name(uid), None, f"uid={uid}")
         return len(ids)
 
     def gc_magic_tokens(self) -> int:
@@ -3588,7 +3730,7 @@ class Store:
         scopes this browser already had stay open."""
         if not old_token:
             return 0
-        with self._schreibend():
+        with self._writing():
             cur = self.db.execute("UPDATE OR REPLACE resource_unlock SET token=? WHERE token=?",
                                   (self.session_hash(new_token), self.session_hash(old_token)))
             self.db.commit()
@@ -3628,69 +3770,69 @@ class Store:
         # and capped, so that neither the panel nor `tinysesam audit` shows an invented row.
         if ip is not None:
             from . import security as _sec
-            norm = _sec.ip_normiert(ip)
+            norm = _sec.ip_normalized(ip)
             if norm is None:
-                ip = _sec.fuer_log(ip) or None
+                ip = _sec.for_log(ip) or None
             else:
                 ip = _sec.ip_pseudonym(norm) if self.audit_ip_pseudonym else norm
         self._exec("INSERT INTO audit(ts, event, username, ip, detail) VALUES (?,?,?,?,?)",
                    (_now(), event, username, ip, detail))
 
-    def delete_attempts_for(self, username, weitere=(), nach=None, unbefristet=(), ab_ids=None) -> int:
+    def delete_attempts_for(self, username, additional=(), after=None, unlimited=(), from_ids=None) -> int:
         """Delete the sign-in attempts of an account (when deleting the account, H-13).
 
-        `weitere` are additional identifiers under which it could sign in (the
+        `additional` are additional identifiers under which it could sign in (the
         email address — `find_user` accepts it, and the attempt then stands under it).
 
-        Counting happens under the bucket `norm_kennung` (NFKC, Python `lower()`, IDNA for addresses),
+        Counting happens under the bucket `norm_identifier` (NFKC, Python `lower()`, IDNA for addresses),
         so deleting happens there too — `lower()` in SQLite folds only ASCII and never hit the bucket
         `ärmel` of the account `Ärmel`, nor a name with compatibility characters (`ｂｅｒｔａ`) or an
         existing address in Unicode form (`u@bücher.example`). Rows from the time before
-        `_topf` stand under the raw input and are still found via SQLite `lower()`.
+        `_bucket` stand under the raw input and are still found via SQLite `lower()`.
 
         Two limits (follow-up to integration findings 12/18):
-        - `nach` (Unix seconds): only attempts AFTER this second (the creation of the account) —
+        - `after` (Unix seconds): only attempts AFTER this second (the creation of the account) —
           before that they did not apply to it, and they count in the per-IP throttling of whoever
           made them. The second itself stays: whether an attempt in it came before or after creation
           cannot be decided, and a left-over attempt expires with the
-          lockout window. Identifiers in `unbefristet` apply without this limit.
-          More precise is `ab_ids` (`{bucket: versuch_ab}` from `kennung_grenzen`, G2): only attempts with
+          lockout window. Identifiers in `unlimited` apply without this limit.
+          More precise is `from_ids` (`{bucket: versuch_ab}` from `identifier_limits`, G2): only attempts with
           a larger id than the watermark of the identifier — from its JOINING (rename,
           address change), not from creation, and to the exact row. Where an identifier has none
-          (existing data), `nach` applies.
+          (existing data), `after` applies.
         - If a REMAINING account carries the same bucket (a namesake such as `ｃｌａｒａ`/`clara`
-          or `Émile`/`émile` from existing data, `konto_mit_topf`), the bucket stays untouched.
+          or `Émile`/`émile` from existing data, `account_by_bucket`), the bucket stays untouched.
           Otherwise removing an account, which an anonymous party can create and have cleared via `gc()`,
           would empty the account threshold of a stranger (R7-6/H-8)."""
         n = 0
-        for wert in (username, *[w for w in weitere if w]):
-            topf = norm_kennung(wert)
-            if not topf or self.konto_mit_topf(topf) is not None:
+        for value in (username, *[w for w in additional if w]):
+            bucket = norm_identifier(value)
+            if not bucket or self.account_by_bucket(bucket) is not None:
                 continue
-            wasserlinie = (ab_ids or {}).get(topf)
-            if wert in unbefristet:
-                grenze, ab = "ts > ?", -1
-            elif wasserlinie is not None:
-                grenze, ab = "id > ?", int(wasserlinie)
+            waterline = (from_ids or {}).get(bucket)
+            if value in unlimited:
+                limit, start_from = "ts > ?", -1
+            elif waterline is not None:
+                limit, start_from = "id > ?", int(waterline)
             else:
-                grenze, ab = "ts > ?", (-1 if nach is None else int(nach))
-            roh = str(wert)
-            n += self._exec(f"DELETE FROM login_attempt WHERE {grenze} "
+                limit, start_from = "ts > ?", (-1 if after is None else int(after))
+            raw = str(value)
+            n += self._exec(f"DELETE FROM login_attempt WHERE {limit} "
                             "AND (username = ? OR lower(username) = lower(?) "
                             "OR lower(username) = lower(?))",
-                            (ab, topf, roh, roh.strip())).rowcount
+                            (start_from, bucket, raw, raw.strip())).rowcount
         return n
 
     def gc_audit(self, older_than_ts: int) -> int:
         """Delete audit rows before a point in time (`audit_retention_days`, B5-11)."""
         return self._exec("DELETE FROM audit WHERE ts < ?", (int(older_than_ts),)).rowcount
 
-    def audit_anonymisieren(self, username, ersatz, weitere=(), seit=None, seit_id=0,
-                            unbefristet=(), ab_ids=None) -> int:
+    def anonymize_audit(self, username, replacement, additional=(), since=None, since_id=0,
+                            unlimited=(), from_ids=None) -> int:
         """Take an account out of the audit log without deleting the rows (H-13).
 
         The row "on the 3rd at 14:02 a password was reset, from this IP" stays for
-        forensics; WHO it was then stands only as `ersatz`. `weitere` are
+        forensics; WHO it was then stands only as `replacement`. `additional` are
         additional identifiers (the email address): under it, sign-in attempts stand in the
         column `username` (`find_user` accepts the address), and it occurs in the detail text.
 
@@ -3700,10 +3842,10 @@ class Store:
         OTHER account became `deleted#2=0->1`, with `password` the method of every failed attempt. An
         identifier with `@`, on the other hand, is unmistakable and is replaced everywhere.
 
-        `seit`/`seit_id` restrict this to rows from the creation of the account (`anlage_grenze`,
-        `konto_entfernen`): what was written before under the name or with the address
-        did not belong to this account. Identifiers in `unbefristet` apply without the limit. Without
-        `seit` every row applies. More precise is `ab_ids` (`{bucket: audit_ab}` from `kennung_grenzen`,
+        `seit`/`since_id` restrict this to rows from the creation of the account (`setup_limit`,
+        `remove_account`): what was written before under the name or with the address
+        did not belong to this account. Identifiers in `unlimited` apply without the limit. Without
+        `seit` every row applies. More precise is `from_ids` (`{bucket: audit_from}` from `identifier_limits`,
         G2): from the joining of the identifier instead of from creation — otherwise, when deleting an
         account that had taken over a freed name, the previous owner's row was
         rewritten too. Where an identifier has none (existing data), `seit` applies.
@@ -3711,11 +3853,11 @@ class Store:
         **The search in the detail text is a scan** — a substring search (`instr`) that no
         B-tree index narrows down; `idx_audit_name_ts`/`idx_audit_ts` help only the column
         `username` and the period from `seit`. For an unrestricted address (deletion by
-        an admin, `adresse_unbefristet`) it reads the whole audit log, and that grows without
+        an admin, `address_unlimited`) it reads the whole audit log, and that grows without
         `audit_retention_days` without limit. Until 2026-09-26 this scan ran in ONE
         write transaction, under the write lock (`_lock`) and with an open SQLite transaction:
         every sign-in, every audit entry, every other worker waited out the whole search (G4).
-        Now it reads in blocks by `id` (`_ANONYM_BLOCK` rows) WITHOUT a write transaction and
+        Now it reads in blocks by `id` (`_ANONYMOUS_BLOCK` rows) WITHOUT a write transaction and
         writes only the hits, per block in a short transaction — the row read there fresh
         and re-checked, so that nothing is overwritten that has changed since reading.
         The search runs up to the most recent row at its start; what comes afterwards was written
@@ -3726,13 +3868,13 @@ class Store:
 
         * **Every spelling of the typed identifier** (4a): `login_fail` writes the RAW
           input (`Émile `, ` emile@example.com`, `ＥＭＩＬＥ@example.com`), counted in the
-          bucket (`norm_kennung`). `lower(username)` hit only ASCII variants of these. The block scan
-          therefore also compares the column `username` in the bucket (SQL function `tinysesam_kennung`,
+          bucket (`norm_identifier`). `lower(username)` hit only ASCII variants of these. The block scan
+          therefore also compares the column `username` in the bucket (SQL function `tinysesam_identifier`,
           only for queries of this connection), with the same limits per identifier. If a
           REMAINING account shares the bucket (namesake from existing data, as with
           `delete_attempts_for`), it stays with `lower()` — otherwise it would hit its rows.
         * **Earlier names and addresses** (4b): from the own rows `username_changed old=…` and
-          `email_changed old=…` (up to 0.24.x `alt=…`, `_fruehere_kennungen`), each in the span in which the account
+          `email_changed old=…` (up to 0.24.x `alt=…`, `_earlier_identifiers`), each in the span in which the account
           carried them — the sign-in under the old name would otherwise keep standing with its IP.
         * **Values in the own rows** (4c): in every row whose `username` is afterwards
           the replacement name, the values of `old=`, `new=` and `to=` (up to 0.24.x `alt=`, `neu=`, `an=`) — the never redeemed address change,
@@ -3741,119 +3883,119 @@ class Store:
         if not username:
             return 0
         import re as _re
-        ohne_frist = {str(w) for w in unbefristet if w}
-        offen = self._OHNE_OBERGRENZE
+        without_deadline = {str(w) for w in unlimited if w}
+        unclosed = self._WITHOUT_UPPER_LIMIT
 
-        def ab(wert) -> tuple:
-            if wert in ohne_frist:
-                return (-1, -1, 0, -1, offen)
-            wasserlinie = (ab_ids or {}).get(norm_kennung(wert))
-            if wasserlinie is not None:
-                return (-1, -1, 0, int(wasserlinie), offen)
-            if seit is None:
-                return (-1, -1, 0, -1, offen)
-            return (int(seit), int(seit), int(seit_id or 0), -1, offen)
-        grenze = "((ts > ? OR (ts = ? AND id >= ?)) AND id > ? AND id <= ?)"
-        anlage = (-1, -1, 0, -1) if seit is None else (int(seit), int(seit), int(seit_id or 0), -1)
+        def start_from(value) -> tuple:
+            if value in without_deadline:
+                return (-1, -1, 0, -1, unclosed)
+            waterline = (from_ids or {}).get(norm_identifier(value))
+            if waterline is not None:
+                return (-1, -1, 0, int(waterline), unclosed)
+            if since is None:
+                return (-1, -1, 0, -1, unclosed)
+            return (int(since), int(since), int(since_id or 0), -1, unclosed)
+        limit = "((ts > ? OR (ts = ? AND id >= ?)) AND id > ? AND id <= ?)"
+        setup = (-1, -1, 0, -1) if since is None else (int(since), int(since), int(since_id or 0), -1)
         # Every identifier with its span: today's, then the earlier ones (4b) — read BEFORE
-        # anything is rewritten; afterwards the rows they come from stand under `ersatz`.
-        kennungen = [(str(w), ab(str(w))) for w in (username, *weitere) if w]
-        kennungen += self._fruehere_kennungen(kennungen, anlage, grenze)
+        # anything is rewritten; afterwards the rows they come from stand under `replacement`.
+        identifiers = [(str(w), start_from(str(w))) for w in (username, *additional) if w]
+        identifiers += self._earlier_identifiers(identifiers, setup, limit)
         # Compared folded (4a) only where no remaining account shares the bucket.
-        falten = {t for t in {norm_kennung(w) for w, _ in kennungen} - {""}
-                  if self.konto_mit_topf(t) is None}
+        fold = {t for t in {norm_identifier(w) for w, _ in identifiers} - {""}
+                  if self.account_by_bucket(t) is None}
         # The column `username`: via `idx_audit_name_ts`, short — one transaction.
-        with self._schreibend():
+        with self._writing():
             n = 0
-            for wert, grenzwerte in kennungen:
+            for value, limits in identifiers:
                 n += self.db.execute(
-                    f"UPDATE audit SET username=? WHERE lower(username)=lower(?) AND {grenze}",
-                    (ersatz, wert, *grenzwerte)).rowcount
+                    f"UPDATE audit SET username=? WHERE lower(username)=lower(?) AND {limit}",
+                    (replacement, value, *limits)).rowcount
             self.db.commit()
-        oben = int(self._one("SELECT max(id) AS m FROM audit")["m"] or 0)
-        for wert, grenzwerte in kennungen:
-            w = _re.escape(wert)
-            ende = r"(?![\w@.=-])"
-            if "@" in wert:
-                muster = _re.compile(r"(?<![\w@.-])" + w + ende, _re.IGNORECASE)
+        above = int(self._one("SELECT max(id) AS m FROM audit")["m"] or 0)
+        for value, limits in identifiers:
+            w = _re.escape(value)
+            end = r"(?![\w@.=-])"
+            if "@" in value:
+                pattern = _re.compile(r"(?<![\w@.-])" + w + end, _re.IGNORECASE)
             else:
-                muster = _re.compile(r"(?<![\w@.-])(akteur|actor)=" + w + ende, _re.IGNORECASE)
-            topf = norm_kennung(wert)
-            gefaltet = topf in falten
+                pattern = _re.compile(r"(?<![\w@.-])(akteur|actor)=" + w + end, _re.IGNORECASE)
+            bucket = norm_identifier(value)
+            folded = bucket in fold
 
-            def umschreiben(event, alt, wert=wert, w=w, muster=muster) -> str:
-                if "@" in wert:
-                    return muster.sub(ersatz, alt)
-                neu = muster.sub(lambda m: m.group(1) + "=" + ersatz, alt)
+            def rewrite(event, old, value=value, w=w, pattern=pattern) -> str:
+                if "@" in value:
+                    return pattern.sub(replacement, old)
+                new = pattern.sub(lambda m: m.group(1) + "=" + replacement, old)
                 if event == "user_create":   # detail: "<name> service=…"
-                    neu = _re.sub(r"^" + w + r"(?=\s|$)", ersatz, neu, count=1, flags=_re.IGNORECASE)
-                return neu
+                    new = _re.sub(r"^" + w + r"(?=\s|$)", replacement, new, count=1, flags=_re.IGNORECASE)
+                return new
 
-            def name_trifft(name, topf=topf, gefaltet=gefaltet) -> bool:
-                return gefaltet and name is not None and name != ersatz and norm_kennung(name) == topf
+            def name_hits(name, bucket=bucket, folded=folded) -> bool:
+                return folded and name is not None and name != replacement and norm_identifier(name) == bucket
             # Where the search begins: behind the watermark, or at the first row from `seit`
             # — before that no row satisfies the limit. `id + 0`, so that SQLite finds the minimum via
             # `idx_audit_ts` (only the rows from `seit`) and does not walk the table from the first
             # `id` until `ts` fits — for a young account that would be the whole log.
-            unten = max(grenzwerte[3], 0)
-            if grenzwerte[0] >= 0:
-                erste = self._one("SELECT min(id + 0) AS m FROM audit WHERE ts >= ?",
-                                  (grenzwerte[0],))["m"]
-                unten = max(unten, int(erste) - 1 if erste is not None else oben)
-            schluss = min(oben, grenzwerte[4])
+            below = max(limits[3], 0)
+            if limits[0] >= 0:
+                first = self._one("SELECT min(id + 0) AS m FROM audit WHERE ts >= ?",
+                                  (limits[0],))["m"]
+                below = max(below, int(first) - 1 if first is not None else above)
+            finish = min(above, limits[4])
             # The column `username` in the bucket (4a) only where folding is done: the function costs a
             # Python call per row.
-            auch_name = "OR tinysesam_kennung(username) = ?" if gefaltet else ""
-            while unten < schluss:
-                bis = min(unten + self._ANONYM_BLOCK, schluss)
+            also_name = "OR tinysesam_identifier(username) = ?" if folded else ""
+            while below < finish:
+                until = min(below + self._ANONYMOUS_BLOCK, finish)
                 # The block via the primary key (`id > ? AND id <= ?`, so it stands in the plan) —
                 # never via `idx_audit_ts`: otherwise each block would read all rows from `seit`, and the
                 # search would become quadratic (tests/test_audit_round2.py checks the plan).
-                kandidaten = {z["id"]: z for z in self._all(
+                candidates = {z["id"]: z for z in self._all(
                     "SELECT id, event, username, detail FROM audit WHERE id > ? AND id <= ? "
-                    f"AND (instr(lower(detail), lower(?)) > 0 {auch_name}) AND {grenze}",
-                    (unten, bis, wert, *((topf,) if gefaltet else ()), *grenzwerte))
-                    if umschreiben(z["event"], z["detail"] or "") != (z["detail"] or "")
-                    or name_trifft(z["username"])}
-                if kandidaten:
-                    with self._schreibend():
-                        for zid in kandidaten:
+                    f"AND (instr(lower(detail), lower(?)) > 0 {also_name}) AND {limit}",
+                    (below, until, value, *((bucket,) if folded else ()), *limits))
+                    if rewrite(z["event"], z["detail"] or "") != (z["detail"] or "")
+                    or name_hits(z["username"])}
+                if candidates:
+                    with self._writing():
+                        for zid in candidates:
                             z = self.db.execute("SELECT event, username, detail FROM audit WHERE id=?",
                                                 (zid,)).fetchone()
                             if z is None:
                                 continue          # cleared away meanwhile (`gc_audit`)
-                            alt = z["detail"] or ""
-                            neu = umschreiben(z["event"], alt)
-                            name = ersatz if name_trifft(z["username"]) else z["username"]
-                            if neu != alt or name != z["username"]:
+                            old = z["detail"] or ""
+                            new = rewrite(z["event"], old)
+                            name = replacement if name_hits(z["username"]) else z["username"]
+                            if new != old or name != z["username"]:
                                 self.db.execute("UPDATE audit SET username=?, detail=? WHERE id=?",
-                                                (name, neu if neu != alt else z["detail"], zid))
+                                                (name, new if new != old else z["detail"], zid))
                                 n += name != z["username"]
                         self.db.commit()
-                unten = bis
-        self._eigene_werte_ersetzen(ersatz, oben)
+                below = until
+        self._replace_own_values(replacement, above)
         return n
 
-    #: How many audit rows `audit_anonymisieren` searches in the detail text per block before it
+    #: How many audit rows `anonymize_audit` searches in the detail text per block before it
     #: releases the write lock for others (G4).
-    _ANONYM_BLOCK = 5000
-    #: Upper bound of the span of a TODAY identifier (`audit_anonymisieren`): none.
-    _OHNE_OBERGRENZE = 2 ** 62
-    #: How many earlier names or addresses `_fruehere_kennungen` traces back at most.
-    _FRUEHERE_MAX = 100
+    _ANONYMOUS_BLOCK = 5000
+    #: Upper bound of the span of a TODAY identifier (`anonymize_audit`): none.
+    _WITHOUT_UPPER_LIMIT = 2 ** 62
+    #: How many earlier names or addresses `_earlier_identifiers` traces back at most.
+    _EARLIER_MAX = 100
     #: The old name in `username_changed` (`old=<name>[ by=operator][ source=cli][ actor=…]`)
     #: and the old address in `email_changed` (`old=<address> new=<address>`). A name may
     #: carry spaces, an address may not (`valid_email`). Up to 0.24.x the keys were `alt=`, `durch=`,
     #: `quelle=`, `akteur=`, `neu=`: both spellings are read (a row of an older version after a rollback).
-    _ALT_NAME = re.compile(r"^(?:alt|old)=(.*?)(?= (?:durch|by)=| (?:quelle|source)=| (?:akteur|actor)=|$)")
-    _ALT_MAIL = re.compile(r"^(?:alt|old)=(\S*)")
+    _OLD_NAME = re.compile(r"^(?:alt|old)=(.*?)(?= (?:durch|by)=| (?:quelle|source)=| (?:akteur|actor)=|$)")
+    _OLD_MAIL = re.compile(r"^(?:alt|old)=(\S*)")
     #: The values in the own rows that carry an identifier (4c): up to the next ` key=`.
-    _EIGENE_WERTE = re.compile(r"(?<![\w@.-])(alt|old|neu|new|an|to)=(\S.*?)(?=\s[\w-]+=|$)")
+    _OWN_VALUES = re.compile(r"(?<![\w@.-])(alt|old|neu|new|an|to)=(\S.*?)(?=\s[\w-]+=|$)")
 
-    def _fruehere_kennungen(self, heutige, anlage, grenze) -> list:
+    def _earlier_identifiers(self, current, setup, limit) -> list:
         """Earlier names and addresses of an account, each with the span in which it carried them —
-        `[(kennung, limits)]` for `audit_anonymisieren` (H-13, audit round 2026-09-27, 4b).
-        `heutige`: `[(name, limits), (address, limits)]`, `anlage`: the limit of the creation
+        `[(kennung, limits)]` for `anonymize_audit` (H-13, audit round 2026-09-27, 4b).
+        `current`: `[(name, limits), (address, limits)]`, `setup`: the limit of the creation
         without an upper bound.
 
         Read from the own rows: `username_changed` stands under the NEW name and names the
@@ -3864,60 +4006,60 @@ class Store:
         addresses, from the change rows under all names. Not covered: an address that came and went
         without `email_changed` (backfill from OIDC/LDAP) — there is no row for it. Via
         `idx_audit_name_ts`, no scan."""
-        if not heutige:
+        if not current:
             return []
-        suche = ("SELECT id, detail FROM audit WHERE lower(username) = lower(?) AND event = ? "
-                 f"AND {grenze} ORDER BY id DESC")
-        namen: list = []
-        name, grenzwerte = heutige[0]
-        z = self._one(suche + " LIMIT 1", (name, "username_changed", *grenzwerte))
-        for _ in range(self._FRUEHERE_MAX):
-            m = self._ALT_NAME.match(str(z["detail"] or "")) if z is not None else None
-            alt = m.group(1).strip() if m else ""
-            if z is None or not alt:
+        search = ("SELECT id, detail FROM audit WHERE lower(username) = lower(?) AND event = ? "
+                 f"AND {limit} ORDER BY id DESC")
+        names: list = []
+        name, limits = current[0]
+        z = self._one(search + " LIMIT 1", (name, "username_changed", *limits))
+        for _ in range(self._EARLIER_MAX):
+            m = self._OLD_NAME.match(str(z["detail"] or "")) if z is not None else None
+            old = m.group(1).strip() if m else ""
+            if z is None or not old:
                 break
-            bis = int(z["id"])
-            z = self._one(suche + " LIMIT 1", (alt, "username_changed", *anlage, bis - 1))
-            namen.append((alt, (-1, -1, 0, int(z["id"]) - 1, bis) if z is not None else (*anlage, bis)))
-        wechsel: dict = {}
-        for name, grenzwerte in [heutige[0], *namen]:
-            for zeile in self._all(suche + f" LIMIT {self._FRUEHERE_MAX}", (name, "email_changed", *grenzwerte)):
-                wechsel[int(zeile["id"])] = zeile
-        reihe = [wechsel[i] for i in sorted(wechsel, reverse=True)][:self._FRUEHERE_MAX]
-        adressen: list = []
-        for i, zeile in enumerate(reihe):
-            m = self._ALT_MAIL.match(str(zeile["detail"] or ""))
-            alt = m.group(1) if m else ""
-            if not alt:
+            until = int(z["id"])
+            z = self._one(search + " LIMIT 1", (old, "username_changed", *setup, until - 1))
+            names.append((old, (-1, -1, 0, int(z["id"]) - 1, until) if z is not None else (*setup, until)))
+        change: dict = {}
+        for name, limits in [current[0], *names]:
+            for line in self._all(search + f" LIMIT {self._EARLIER_MAX}", (name, "email_changed", *limits)):
+                change[int(line["id"])] = line
+        row = [change[i] for i in sorted(change, reverse=True)][:self._EARLIER_MAX]
+        addresses: list = []
+        for i, line in enumerate(row):
+            m = self._OLD_MAIL.match(str(line["detail"] or ""))
+            old = m.group(1) if m else ""
+            if not old:
                 continue
-            bis = int(zeile["id"])
-            vor = reihe[i + 1] if i + 1 < len(reihe) else None
-            adressen.append((alt, (-1, -1, 0, int(vor["id"]) - 1, bis) if vor is not None else (*anlage, bis)))
-        return namen + adressen
+            until = int(line["id"])
+            prior = row[i + 1] if i + 1 < len(row) else None
+            addresses.append((old, (-1, -1, 0, int(prior["id"]) - 1, until) if prior is not None else (*setup, until)))
+        return names + addresses
 
-    def _eigene_werte_ersetzen(self, ersatz, oben) -> None:
-        """In the rows of the deleted account (`username` = replacement name, up to `oben`) replace the values of
+    def _replace_own_values(self, replacement, above) -> None:
+        """In the rows of the deleted account (`username` = replacement name, up to `above`) replace the values of
         `old=`, `new=` and `to=` (up to 0.24.x `alt=`, `neu=`, `an=`; H-13, audit round 2026-09-27, 4c): the
         requested, never redeemed address change (`email_change_requested new=…`), the address from LDAP/SAML
         (`federation_email_confirm to=…`), the old name (`username_changed old=…`). Empty values
-        stay empty. Via `idx_audit_name_ts`; written per `_ANONYM_BLOCK` rows, the row
+        stay empty. Via `idx_audit_name_ts`; written per `_ANONYMOUS_BLOCK` rows, the row
         read fresh."""
-        def ersetzen(detail) -> str:
-            return self._EIGENE_WERTE.sub(lambda m: f"{m.group(1)}={ersatz}", detail)
-        treffer = [int(z["id"]) for z in self._all(
-            "SELECT id, detail FROM audit WHERE lower(username) = lower(?) AND id <= ?", (ersatz, oben))
-            if z["detail"] and ersetzen(z["detail"]) != z["detail"]]
-        for i in range(0, len(treffer), self._ANONYM_BLOCK):
-            with self._schreibend():
-                for zid in treffer[i:i + self._ANONYM_BLOCK]:
+        def replace(detail) -> str:
+            return self._OWN_VALUES.sub(lambda m: f"{m.group(1)}={replacement}", detail)
+        hit = [int(z["id"]) for z in self._all(
+            "SELECT id, detail FROM audit WHERE lower(username) = lower(?) AND id <= ?", (replacement, above))
+            if z["detail"] and replace(z["detail"]) != z["detail"]]
+        for i in range(0, len(hit), self._ANONYMOUS_BLOCK):
+            with self._writing():
+                for zid in hit[i:i + self._ANONYMOUS_BLOCK]:
                     z = self.db.execute("SELECT username, detail FROM audit WHERE id=?", (zid,)).fetchone()
-                    if z is None or z["username"] != ersatz or not z["detail"]:
+                    if z is None or z["username"] != replacement or not z["detail"]:
                         continue
-                    self.db.execute("UPDATE audit SET detail=? WHERE id=?", (ersetzen(z["detail"]), zid))
+                    self.db.execute("UPDATE audit SET detail=? WHERE id=?", (replace(z["detail"]), zid))
                 self.db.commit()
 
-    def recent_audit(self, limit=100, username: str | None = None, seit: int | None = None,
-                     seit_id: int = 0, ab_id: int | None = None, ohne_events=()):
+    def recent_audit(self, limit=100, username: str | None = None, since: int | None = None,
+                     since_id: int = 0, from_id: int | None = None, without_events=()):
         """The most recent audit entries, newest first.
 
         `username` filters in SQL, not in the caller. That is the difference between "the
@@ -3925,31 +4067,31 @@ class Store:
         and exactly that counts in the motivating case: a brute-force wave pushes thousands of
         rows in within minutes, and the account being sought then lies far behind any window. For the same reason
         `seit` (Unix seconds, inclusive) also filters in SQL; from the second `seit`
-        itself only rows from `seit_id` (see `anlage_grenze`). `ab_id`: only rows with a
-        larger id — the watermark of an identifier (`kennung_grenzen`, G2). `ohne_events`
-        leaves out these events (in the new and the old spelling, `_vokabular.ereignis_formen`), likewise in SQL: a display that discards rows only afterwards
+        itself only rows from `since_id` (see `setup_limit`). `from_id`: only rows with a
+        larger id — the watermark of an identifier (`identifier_limits`, G2). `without_events`
+        leaves out these events (in the new and the old spelling, `_vocabulary.event_forms`), likewise in SQL: a display that discards rows only afterwards
         would show fewer than `limit` — and the gap would reveal that there had been one (G12b).
         """
-        bedingungen: list[str] = []
-        werte: list[object] = []
-        if ohne_events:
+        conditions: list[str] = []
+        values: list[object] = []
+        if without_events:
             # Both spellings: a row that an older version wrote after a rollback carries the old name.
-            formen = _vokabular.ereignis_formen(*ohne_events)
-            bedingungen.append(f"event NOT IN ({','.join('?' * len(formen))})")
-            werte.extend(formen)
+            forms = _vocabulary.event_forms(*without_events)
+            conditions.append(f"event NOT IN ({','.join('?' * len(forms))})")
+            values.extend(forms)
         if username:
             # A replacement name in both spellings (`deleted#4`, up to 0.24.x `gelöscht#4`).
-            namen = _vokabular.ersatz_formen(username)
-            bedingungen.append("lower(username) IN (" + ",".join("lower(?)" for _ in namen) + ")")
-            werte.extend(namen)
-        if seit:
-            bedingungen.append("(ts > ? OR (ts = ? AND id >= ?))")
-            werte.extend((int(seit), int(seit), int(seit_id or 0)))
-        if ab_id is not None:
-            bedingungen.append("id > ?")
-            werte.append(int(ab_id))
-        wo = (" WHERE " + " AND ".join(bedingungen)) if bedingungen else ""
-        return self._all(f"SELECT * FROM audit{wo} ORDER BY id DESC LIMIT ?", (*werte, limit))
+            names = _vocabulary.replacement_forms(username)
+            conditions.append("lower(username) IN (" + ",".join("lower(?)" for _ in names) + ")")
+            values.extend(names)
+        if since:
+            conditions.append("(ts > ? OR (ts = ? AND id >= ?))")
+            values.extend((int(since), int(since), int(since_id or 0)))
+        if from_id is not None:
+            conditions.append("id > ?")
+            values.append(int(from_id))
+        where = (" WHERE " + " AND ".join(conditions)) if conditions else ""
+        return self._all(f"SELECT * FROM audit{where} ORDER BY id DESC LIMIT ?", (*values, limit))
 
     # ---------- API keys ----------
     def add_api_key(self, user_id, name, prefix, key_hash, roles=None, expires_at=None,
@@ -3969,11 +4111,11 @@ class Store:
     def touch_api_key(self, key_id):
         self._exec("UPDATE api_key SET last_used=? WHERE id=?", (_now(), key_id))
 
-    #: What settles a confirmation request from LDAP/SAML for the day (`quellmail_seit`): the
+    #: What settles a confirmation request from LDAP/SAML for the day (`source_mail_since`): the
     #: delivered link and the rejection of a taken or reserved address.
-    QUELLMAIL_ERLEDIGT = ("federation_email_confirm", "email_change_taken", "email_change_reserved")
+    SOURCE_MAIL_DONE = ("federation_email_confirm", "email_change_taken", "email_change_reserved")
 
-    def quellmail_seit(self, user_id, seit) -> bool:
+    def source_mail_since(self, user_id, since) -> bool:
         """Has a confirmation request for an address from LDAP/SAML on this account been settled
         since `seit` (Unix seconds)? Delivered (G12a: the row `federation_email_confirm`, which arises only AFTER
         the successful send) or rejected because the address is taken or
@@ -3986,9 +4128,9 @@ class Store:
         return bool(self._one(
             "SELECT 1 FROM audit WHERE ts >= ? AND event IN (?, ?, ?) AND (detail LIKE ? OR detail LIKE ?) "
             "LIMIT 1",
-            (int(seit), *self.QUELLMAIL_ERLEDIGT, f"account={int(user_id)} %", f"konto={int(user_id)} %")))
+            (int(since), *self.SOURCE_MAIL_DONE, f"account={int(user_id)} %", f"konto={int(user_id)} %")))
 
-    def offener_token(self, user_id, purpose, email=None) -> bool:
+    def open_token(self, user_id, purpose, email=None) -> bool:
         """Is there already an open (unused, valid) link of this purpose for this account —
         to this address, or without `email` to any? So that not every sign-in sends a new
         confirmation link. The LDAP/SAML path asks without an address (p2 F2): with the

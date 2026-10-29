@@ -54,42 +54,42 @@ def forward(c, host="app.example.com", uri="/seite"):
                                            "X-Forwarded-Uri": uri, "Sec-Fetch-Mode": "navigate"})
 
 
-def ort(r):
+def place(r):
     return r.headers.get("location") or r.headers.get("X-TinySesam-Location") or ""
 
 
-def koppeln(b, rd="/seite", anmelden=True, gast="app"):
+def couple(b, rd="/seite", sign_in=True, guest="app"):
     """The whole exchange for one browser. Returns: (callback response, code)."""
-    s = b[gast].get(f"/.tinysesam/start?rd={rd}", follow_redirects=False)
-    assert s.status_code == 303 and ort(s).startswith(GW + "/auth/gate/authorize?flow="), ort(s)
-    a = b["gw"].get(urlsplit(ort(s)).path + "?" + urlsplit(ort(s)).query, follow_redirects=False)
-    if a.status_code == 303 and urlsplit(ort(a)).path == "/auth/login" and anmelden:
-        nxt = parse_qs(urlsplit(ort(a)).query)["next"][0]
+    s = b[guest].get(f"/.tinysesam/start?rd={rd}", follow_redirects=False)
+    assert s.status_code == 303 and place(s).startswith(GW + "/auth/gate/authorize?flow="), place(s)
+    a = b["gw"].get(urlsplit(place(s)).path + "?" + urlsplit(place(s)).query, follow_redirects=False)
+    if a.status_code == 303 and urlsplit(place(a)).path == "/auth/login" and sign_in:
+        nxt = parse_qs(urlsplit(place(a)).query)["next"][0]
         b["gw"].post("/auth/login", data={"username": "anna", "password": PW, "next": nxt}, follow_redirects=False)
         a = b["gw"].get(nxt, follow_redirects=False)
-    assert a.status_code == 303 and "/.tinysesam/callback?code=" in ort(a), (a.status_code, ort(a))
-    code = parse_qs(urlsplit(ort(a)).query)["code"][0]
-    koppeln.bindung = b[gast].cookies.get("__Host-tinysesam_linkflow")
-    return b[gast].get(f"/.tinysesam/callback?code={code}", follow_redirects=False), code
+    assert a.status_code == 303 and "/.tinysesam/callback?code=" in place(a), (a.status_code, place(a))
+    code = parse_qs(urlsplit(place(a)).query)["code"][0]
+    couple.binding = b[guest].cookies.get("__Host-tinysesam_linkflow")
+    return b[guest].get(f"/.tinysesam/callback?code={code}", follow_redirects=False), code
 
 
 # ---------- the path ----------
 b = browser()
 r = forward(b["app"])
-assert r.status_code == 401 and ort(r) == APP + "/.tinysesam/start?rd=%2Fseite", ort(r)
+assert r.status_code == 401 and place(r) == APP + "/.tinysesam/start?rd=%2Fseite", place(r)
 ok("app host without link → 401 on ITS /.tinysesam/start (not on the login page)")
 
 s = b["app"].get("/.tinysesam/start?rd=/seite", follow_redirects=False)
 assert any(v.startswith("__Host-tinysesam_linkflow=") for v in s.headers.get_list("set-cookie"))
-a = b["gw"].get(urlsplit(ort(s)).path + "?" + urlsplit(ort(s)).query, follow_redirects=False)
-assert a.status_code == 303 and urlsplit(ort(a)).path == "/auth/login", ort(a)
-seite = b["gw"].get(urlsplit(ort(a)).path + "?" + urlsplit(ort(a)).query)
-assert "Anmelden bei App" in seite.text, seite.text[:300]
+a = b["gw"].get(urlsplit(place(s)).path + "?" + urlsplit(place(s)).query, follow_redirects=False)
+assert a.status_code == 303 and urlsplit(place(a)).path == "/auth/login", place(a)
+page_html = b["gw"].get(urlsplit(place(a)).path + "?" + urlsplit(place(a)).query)
+assert "Anmelden bei App" in page_html.text, page_html.text[:300]
 assert "Anmelden bei" not in b["gw"].get("/auth/login?next=/&gate_host=evil.example.net").text
 ok("gateway without session → login “Anmelden bei App”, the flow waits (foreign gate_host → no name)")
 
-cb, code = koppeln(b)
-assert cb.status_code == 303 and ort(cb) == "/seite", (cb.status_code, ort(cb))
+cb, code = couple(b)
+assert cb.status_code == 303 and place(cb) == "/seite", (cb.status_code, place(cb))
 link = [v for v in cb.headers.get_list("set-cookie") if v.startswith("__Host-tinysesam_link=")]
 assert link and "Secure" in link[0] and "HttpOnly" in link[0] and "Domain" not in link[0], link
 ok("callback → back to rd, link cookie __Host- (Secure, HttpOnly, without Domain)")
@@ -106,54 +106,54 @@ ok("the session exists only at the gateway — the app host never saw it")
 # cut at it — TinySesam must not: the path is opaque. Signed out → the exchange carries the path home unchanged,
 # signed in (with the link) → 200 for exactly the same address.
 SEMI = ["/a;b.pdf", "/a%3Bb.pdf", "/Tom&amp;Jerry.pdf", "/d/x;y/z;", "/a;b.pdf?k=1;2&m=%3B"]
-for pfad in SEMI:
-    r = forward(browser()["app"], uri=pfad)
-    assert r.status_code == 401, (pfad, r.status_code)
-    rd = parse_qs(urlsplit(ort(r)).query)["rd"][0]
-    assert rd == pfad, (pfad, rd, ort(r))
+for path in SEMI:
+    r = forward(browser()["app"], uri=path)
+    assert r.status_code == 401, (path, r.status_code)
+    rd = parse_qs(urlsplit(place(r)).query)["rd"][0]
+    assert rd == path, (path, rd, place(r))
     c_ = browser()
-    cb_, _ = koppeln(c_, rd=quote(rd, safe=""))
-    assert ort(cb_) == pfad, (pfad, ort(cb_))
-    r = forward(c_["app"], uri=pfad)
-    assert r.status_code == 200 and r.headers["Remote-User"] == "anna", (pfad, r.status_code, ort(r))
+    cb_, _ = couple(c_, rd=quote(rd, safe=""))
+    assert place(cb_) == path, (path, place(cb_))
+    r = forward(c_["app"], uri=path)
+    assert r.status_code == 200 and r.headers["Remote-User"] == "anna", (path, r.status_code, place(r))
 ok(f"B-3: {len(SEMI)} paths with ; / %3B / &amp; — signed out: rd carries the path unchanged; signed in: 200")
 
-# ---------- Angriffe ----------
-roh = b["app"].cookies.get("__Host-tinysesam_link")
-fremd = TestClient(fa, base_url=WIKI)
-fremd.cookies.set("__Host-tinysesam_link", roh)
-assert forward(fremd, host="wiki.example.com").status_code == 401
+# ---------- Attacks ----------
+raw = b["app"].cookies.get("__Host-tinysesam_link")
+foreign = TestClient(fa, base_url=WIKI)
+foreign.cookies.set("__Host-tinysesam_link", raw)
+assert forward(foreign, host="wiki.example.com").status_code == 401
 ok("the link of app does not apply to wiki (bound to the host)")
 
 # With the same binding as the first time — otherwise the second attempt would fail on the missing
 # binding and not on the consumed code (mutation probe: put the code back after redeeming → red).
-nochmal = TestClient(fa, base_url=APP)
-nochmal.cookies.set("__Host-tinysesam_linkflow", koppeln.bindung)
-assert nochmal.get(f"/.tinysesam/callback?code={code}", follow_redirects=False).status_code == 400
+again = TestClient(fa, base_url=APP)
+again.cookies.set("__Host-tinysesam_linkflow", couple.binding)
+assert again.get(f"/.tinysesam/callback?code={code}", follow_redirects=False).status_code == 400
 ok("a code applies exactly once (even with the matching binding)")
 
 b2 = browser()
 b2["gw"].post("/auth/login", data={"username": "anna", "password": PW, "next": "/"}, follow_redirects=False)
 s = b2["app"].get("/.tinysesam/start?rd=/x", follow_redirects=False)
-a = b2["gw"].get(urlsplit(ort(s)).path + "?" + urlsplit(ort(s)).query, follow_redirects=False)
-code2 = parse_qs(urlsplit(ort(a)).query)["code"][0]
-opfer = TestClient(fa, base_url=APP)       # another browser, without binding cookie
-assert opfer.get(f"/.tinysesam/callback?code={code2}", follow_redirects=False).status_code == 400
+a = b2["gw"].get(urlsplit(place(s)).path + "?" + urlsplit(place(s)).query, follow_redirects=False)
+code2 = parse_qs(urlsplit(place(a)).query)["code"][0]
+victim = TestClient(fa, base_url=APP)       # another browser, without binding cookie
+assert victim.get(f"/.tinysesam/callback?code={code2}", follow_redirects=False).status_code == 400
 ok("a foreign code in another person's browser (without binding) → 400, no link")
 
 b3 = browser()
 b3["gw"].post("/auth/login", data={"username": "anna", "password": PW, "next": "/"}, follow_redirects=False)
 s = b3["app"].get("/.tinysesam/start?rd=/x", follow_redirects=False)
-a = b3["gw"].get(urlsplit(ort(s)).path + "?" + urlsplit(ort(s)).query, follow_redirects=False)
-code3 = parse_qs(urlsplit(ort(a)).query)["code"][0]
+a = b3["gw"].get(urlsplit(place(s)).path + "?" + urlsplit(place(s)).query, follow_redirects=False)
+code3 = parse_qs(urlsplit(place(a)).query)["code"][0]
 b3["wiki"].cookies.set("__Host-tinysesam_linkflow", b3["app"].cookies.get("__Host-tinysesam_linkflow"))
 assert b3["wiki"].get(f"/.tinysesam/callback?code={code3}", follow_redirects=False).status_code == 400
 ok("a code for app, redeemed at wiki → 400")
 
-for boese in ("//evil.example/x", "https://evil.example/", "\\\\evil", "evil"):
-    s = browser()["app"].get("/.tinysesam/start", params={"rd": boese}, follow_redirects=False)
-    flow = parse_qs(urlsplit(ort(s)).query)["flow"][0]
-    assert auth.store.pop_flow("gatelink:" + flow)["rd"] == "/", boese
+for evil in ("//evil.example/x", "https://evil.example/", "\\\\evil", "evil"):
+    s = browser()["app"].get("/.tinysesam/start", params={"rd": evil}, follow_redirects=False)
+    flow = parse_qs(urlsplit(place(s)).query)["flow"][0]
+    assert auth.store.pop_flow("gatelink:" + flow)["rd"] == "/", evil
 ok("rd takes only paths of this host (//, foreign address, backslash → /)")
 
 assert TestClient(fa, base_url=GW).get("/auth/gate/authorize?flow=erfunden").status_code == 400
@@ -162,8 +162,8 @@ ok("unknown flow → 400, unprotected host → 404")
 
 # ---------- the session is rotated, the link moves along ----------
 h = auth.store.session_hash(b["gw"].cookies.get(auth.session_cookie_name))
-neu = auth.store.rotate_session(h)
-b["gw"].cookies.set(auth.session_cookie_name, neu)
+new = auth.store.rotate_session(h)
+b["gw"].cookies.set(auth.session_cookie_name, new)
 assert forward(b["app"]).status_code == 200
 ok("session rotated (step-up) — the link of the app host remains valid")
 
@@ -175,20 +175,20 @@ assert any(v.startswith("__Host-tinysesam_link=;") or v.startswith("__Host-tinys
 b["app"].cookies.delete("__Host-tinysesam_link")
 assert forward(b["app"]).status_code == 401
 s = b["app"].get("/.tinysesam/start?rd=/seite", follow_redirects=False)
-a = b["gw"].get(urlsplit(ort(s)).path + "?" + urlsplit(ort(s)).query, follow_redirects=False)
+a = b["gw"].get(urlsplit(place(s)).path + "?" + urlsplit(place(s)).query, follow_redirects=False)
 assert a.status_code == 200 and "Weiter als anna" in a.text and "name=gate_host value='app.example.com'" in a.text, a.status_code
 ok("signed out here only: link gone; the new exchange shows “Weiter als anna” instead of silently linking")
 
-nxt = "/auth/gate/authorize?flow=" + parse_qs(urlsplit(ort(s)).query)["flow"][0]
+nxt = "/auth/gate/authorize?flow=" + parse_qs(urlsplit(place(s)).query)["flow"][0]
 r = b["gw"].post("/auth/gate/resume", data={"next": nxt, "gate_host": "app.example.com"}, follow_redirects=False)
 assert r.status_code == 303 and r.headers["location"] == nxt
 a = b["gw"].get(nxt, follow_redirects=False)
-assert "/.tinysesam/callback?code=" in ort(a)
+assert "/.tinysesam/callback?code=" in place(a)
 ok("“Weiter als …” lifts the sign-out for app, the exchange continues")
 
 # ---------- sign out everywhere from the app host ----------
 b4 = browser()
-koppeln(b4)
+couple(b4)
 assert forward(b4["app"]).status_code == 200
 r = b4["app"].get("/.tinysesam/logout?scope=all", follow_redirects=False)
 assert r.status_code == 303
@@ -198,7 +198,7 @@ ok("signing out everywhere at the app host ends the session at the gateway — a
 
 # ---------- first only here, then everywhere: the session at the gateway must not be left over ----------
 b5 = browser()
-koppeln(b5)
+couple(b5)
 b5["app"].get("/.tinysesam/logout?scope=app", follow_redirects=False)
 b5["app"].cookies.delete("__Host-tinysesam_link")
 r = b5["app"].get("/.tinysesam/logout?scope=all", follow_redirects=False)
@@ -225,13 +225,13 @@ b6 = browser()
 r = b6["app"].get("/.tinysesam/after-logout", follow_redirects=False)
 assert r.status_code == 303 and r.headers["location"] == "/.tinysesam/start?rd=%2F&signed_out=1", (r.status_code, r.headers.get("location"))
 s = b6["app"].get("/.tinysesam/start?rd=%2F&signed_out=1", follow_redirects=False)
-a = b6["gw"].get(urlsplit(ort(s)).path + "?" + urlsplit(ort(s)).query, follow_redirects=False)
-assert a.status_code == 303 and "signed_out=1" in ort(a), ort(a)
-seite = b6["gw"].get(urlsplit(ort(a)).path + "?" + urlsplit(ort(a)).query)
-assert "Du wurdest abgemeldet." in seite.text and "Anmelden bei App" in seite.text, seite.text[:400]
+a = b6["gw"].get(urlsplit(place(s)).path + "?" + urlsplit(place(s)).query, follow_redirects=False)
+assert a.status_code == 303 and "signed_out=1" in place(a), place(a)
+page_html = b6["gw"].get(urlsplit(place(a)).path + "?" + urlsplit(place(a)).query)
+assert "Du wurdest abgemeldet." in page_html.text and "Anmelden bei App" in page_html.text, page_html.text[:400]
 s = b6["app"].get("/.tinysesam/start?rd=%2F", follow_redirects=False)
-a = b6["gw"].get(urlsplit(ort(s)).path + "?" + urlsplit(ort(s)).query, follow_redirects=False)
-assert "signed_out" not in ort(a) and "abgemeldet" not in b6["gw"].get(urlsplit(ort(a)).path + "?" + urlsplit(ort(a)).query).text.lower()
+a = b6["gw"].get(urlsplit(place(s)).path + "?" + urlsplit(place(s)).query, follow_redirects=False)
+assert "signed_out" not in place(a) and "abgemeldet" not in b6["gw"].get(urlsplit(place(a)).path + "?" + urlsplit(place(a)).query).text.lower()
 assert "abgemeldet" not in b6["gw"].get("/auth/login?next=/&signed_out=0").text.lower()
 _wiki_direct()
 w = TestClient(fa, base_url=WIKI).get("/.tinysesam/after-logout")

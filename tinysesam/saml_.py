@@ -16,7 +16,7 @@ _REDIRECT = "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect"
 from . import errors
 
 
-def _fehlt_extra(e: ModuleNotFoundError) -> "errors.MissingExtra":
+def _missing_extra(e: ModuleNotFoundError) -> "errors.MissingExtra":
     """Turn a bare import error into a message that says what to do.
 
     The extras are deliberately imported LAZILY here (only on use). The price for that was,
@@ -27,7 +27,7 @@ def _fehlt_extra(e: ModuleNotFoundError) -> "errors.MissingExtra":
         f"missing: {e.name or 'onelogin'}.", extra="saml")
 
 
-def request_kontext(basis: str, pfad: str, form=None, query=None) -> dict:
+def request_context(base: str, path: str, form=None, query=None) -> dict:
     """The `req` dict for python3-saml — **from the verified base**, not from headers (F-16).
 
     python3-saml builds from `https`, `http_host` and `script_name` the address it takes to be
@@ -48,14 +48,14 @@ def request_kontext(basis: str, pfad: str, form=None, query=None) -> dict:
     If it is already contained in the path (ASGI mount), it is not appended twice.
     """
     from urllib.parse import urlsplit
-    teile = urlsplit(str(basis or ""))
-    praefix = (teile.path or "").rstrip("/")
-    weg = str(pfad or "/")
-    if praefix and not weg.startswith(praefix + "/") and weg != praefix:
-        weg = praefix + weg
-    host = teile.netloc or ""
-    return {"https": "on" if teile.scheme == "https" else "off",
-            "http_host": host, "script_name": weg,
+    parts = urlsplit(str(base or ""))
+    prefix = (parts.path or "").rstrip("/")
+    away = str(path or "/")
+    if prefix and not away.startswith(prefix + "/") and away != prefix:
+        away = prefix + away
+    host = parts.netloc or ""
+    return {"https": "on" if parts.scheme == "https" else "off",
+            "http_host": host, "script_name": away,
             "get_data": dict(query or {}),
             "post_data": {k: v for k, v in (form or {}).items()}}
 
@@ -100,7 +100,7 @@ class SAMLClient:
         try:
             from onelogin.saml2.auth import OneLogin_Saml2_Auth
         except ModuleNotFoundError as e:
-            raise _fehlt_extra(e) from e
+            raise _missing_extra(e) from e
         return OneLogin_Saml2_Auth(req, old_settings=self.settings(base_url))
 
     def login_url(self, req: dict, base_url: str, return_to: str = "/"):
@@ -157,7 +157,7 @@ class SAMLClient:
         try:
             from onelogin.saml2.settings import OneLogin_Saml2_Settings
         except ModuleNotFoundError as e:
-            raise _fehlt_extra(e) from e
+            raise _missing_extra(e) from e
         st = OneLogin_Saml2_Settings(self.settings(base_url), sp_validation_only=True)
         return st.get_sp_metadata()
 

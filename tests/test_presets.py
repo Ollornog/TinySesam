@@ -6,14 +6,14 @@ def ok(name):
     print(f"  ✓ {name}")
 
 
-# ---------- active_directory: Direkt-Bind per UPN ----------
+# ---------- active_directory: direct bind via UPN ----------
 cfg = TinySesamConfig.active_directory(ldap_url="ldaps://dc.corp:636", upn_suffix="corp.example.com",
                                        allowed_groups=["Domain Users"], db_path="x.db")
 assert cfg.ldap_enabled and cfg.ldap_url == "ldaps://dc.corp:636"
 assert cfg.ldap_user_dn_template == "{username}@corp.example.com"
 assert cfg.ldap_group_attr == "memberOf" and cfg.ldap_allowed_groups == ["Domain Users"]
 assert cfg.ldap_attr_name == "displayName" and cfg.db_path == "x.db"
-ok("active_directory (UPN): ldap_user_dn_template gesetzt, memberOf-Gate, Attribute")
+ok("active_directory (UPN): ldap_user_dn_template set, memberOf gate, attributes")
 
 # ---------- active_directory: Search-then-Bind (sAMAccountName) ----------
 cfg = TinySesamConfig.active_directory(ldap_url="ldap://dc.corp:389", ldap_allow_plaintext=True, bind_dn="CN=svc,DC=corp",
@@ -22,14 +22,14 @@ assert cfg.ldap_bind_dn == "CN=svc,DC=corp" and cfg.ldap_user_filter == "(sAMAcc
 assert cfg.ldap_user_base == "DC=corp,DC=example,DC=com" and not cfg.ldap_user_dn_template
 ok("active_directory (Search-then-Bind): sAMAccountName-Filter + Service-Account")
 
-# ---------- entra_id: OIDC gegen Azure AD ----------
+# ---------- entra_id: OIDC against Azure AD ----------
 cfg = TinySesamConfig.entra_id(tenant_id="abc-123", client_id="cid", client_secret="sec")
 assert cfg.oidc_enabled and cfg.oidc_client_id == "cid"
 assert cfg.oidc_issuer == "https://login.microsoftonline.com/abc-123/v2.0"
 assert "oidc" in cfg.enabled_methods()
 ok("entra_id: OIDC issuer from tenant_id, oidc active")
 
-# ---------- overrides greifen ----------
+# ---------- overrides take effect ----------
 cfg = TinySesamConfig.entra_id(tenant_id="t", client_id="c", client_secret="s", db_path="app.db", lang="de")
 assert cfg.db_path == "app.db" and cfg.lang == "de"
 ok("presets: **overrides (db_path/lang …) are taken over")

@@ -693,7 +693,7 @@ MESSAGES = {
         "admin.update_note": "TinySesam aktualisiert sich nicht selbst. Neue Version: gepinnten Tag "
                              "hochziehen, neu installieren, Dienst neu starten.",
 
-        # --- Mails (von der Bibliothek verschickt; Sprache = config.lang), Aufbau wie im Block "en".
+        # --- Mails (sent by the library; language = config.lang), same layout as in the block "en".
         "mail.reset.subject": "Passwort zurücksetzen",
         "mail.reset.text": "Zum Zurücksetzen deines Passworts diesen Link öffnen (gültig {mins} Minuten):\n\n{url}\n\n"
                            "Wenn du das nicht angefordert hast, ignoriere diese E-Mail.",

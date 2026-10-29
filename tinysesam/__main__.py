@@ -50,8 +50,8 @@ def _passwd(argv) -> int:
     # (demo seeding, first-admin token) — neither has any business in a maintenance command.
     import os
     from .store import Store
-    from .passwords import hash_password, passwort_mangel, blockliste_lesen
-    from .security import haertung_lesen
+    from .passwords import hash_password, password_defect, read_blocklist
+    from .security import read_hardening
 
     # Without this check sqlite3 silently creates the file and the typo in the path
     # would come back as "No account 'admin'" — the most baffling of all error messages.
@@ -78,33 +78,33 @@ def _passwd(argv) -> int:
     # does not know whether a chain enforces a second factor. When in doubt the rule for
     # a password that can sign in on its own applies; whoever does not want that lowers
     # `password_min_length_single_factor` in the panel.
-    minlen = max(haertung_lesen(store, "password_min_length"),
-                 haertung_lesen(store, "password_min_length_single_factor"))
+    minlen = max(read_hardening(store, "password_min_length"),
+                 read_hardening(store, "password_min_length_single_factor"))
     # The same rule as on the web (length, maximum length, built-in blocklist, username,
     # e-mail name) — the CLI is a way of setting like the others. The operator's blocklist and service
     # name come via `--blocklist-file` and `--rp-name`, because the CLI reads no config.
-    blockliste: frozenset = frozenset()
+    blocklist: frozenset = frozenset()
     if a.blocklist_file:
         try:
-            blockliste = blockliste_lesen(a.blocklist_file)
+            blocklist = read_blocklist(a.blocklist_file)
         except OSError as e:
             print(f"Blocklist {a.blocklist_file!r} cannot be read: {e}", file=sys.stderr)
             return 1
-    mangel = passwort_mangel(pw, minlen, blockliste=blockliste,
-                             kontext=(a.username, (user["email"] or "").split("@", 1)[0], a.rp_name))
-    if mangel:
-        grund, werte = mangel
-        print({"short": f"Password too short (min. {werte.get('n')}).",
-               "long": f"Password too long (max. {werte.get('n')}).",
-               "weak": "Password too easy to guess (known, trivial or derived from the account name)."}[grund],
+    defect = password_defect(pw, minlen, blocklist=blocklist,
+                             context=(a.username, (user["email"] or "").split("@", 1)[0], a.rp_name))
+    if defect:
+        reason, values = defect
+        print({"short": f"Password too short (min. {values.get('n')}).",
+               "long": f"Password too long (max. {values.get('n')}).",
+               "weak": "Password too easy to guess (known, trivial or derived from the account name)."}[reason],
               file=sys.stderr)
         return 1
 
     store.set_password_hash(user["id"], hash_password(pw))
     # Bound anew: a series lockout (B2-6) ends here like with any other reset — under
-    # name, address and the name in the directory (G5, `Store.zaehl_kennungen`).
-    for kennung in store.zaehl_kennungen(user["id"]):
-        store.fehlserie_loeschen(kennung)
+    # name, address and the name in the directory (G5, `Store.count_identifiers`).
+    for identifier in store.count_identifiers(user["id"]):
+        store.delete_failure_series(identifier)
     note = ""
     if not a.keep_sessions:
         # Standard after every credential change: open sessions no longer count.
@@ -115,15 +115,15 @@ def _passwd(argv) -> int:
     return 0
 
 
-def _oeffne(pfad: str):
+def _open(path: str):
     """Store on an EXISTING file. As with `passwd`: no TinySesam, so that a
     maintenance command triggers no demo seeding and no first-admin token."""
     import os
     from .store import Store
-    if not os.path.exists(pfad):
-        print(f"No database at {pfad}.", file=sys.stderr)
+    if not os.path.exists(path):
+        print(f"No database at {path}.", file=sys.stderr)
         return None
-    return Store(pfad)
+    return Store(path)
 
 
 def _backup(argv) -> int:
@@ -133,7 +133,7 @@ def _backup(argv) -> int:
         epilog="A file copy (cp/rsync) is NOT enough: the database runs in WAL mode, everything "
                "since the last checkpoint is in the -wal file. Backing up only the .db "
                "gives you a stump — and you only notice when restoring.")
-    ap.add_argument("ziel", help="path of the backup file (will be created)")
+    ap.add_argument("destination", help="path of the backup file (will be created)")
     ap.add_argument("--db", required=True, help="path to the TinySesam database (config.db_path)")
     a = ap.parse_args(argv)
     import os
@@ -142,21 +142,21 @@ def _backup(argv) -> int:
     if not os.path.exists(a.db):
         print(f"No database at {a.db}.", file=sys.stderr)
         return 1
-    if os.path.exists(a.ziel):
-        print(f"{a.ziel} already exists — nothing overwritten.", file=sys.stderr)
+    if os.path.exists(a.destination):
+        print(f"{a.destination} already exists — nothing overwritten.", file=sys.stderr)
         return 1
-    # NOT via `_oeffne()`: the Store constructor migrates the file before a copy
-    # exists — a backup that changes its source is none. `sichere_datei` opens
+    # NOT via `_open()`: the Store constructor migrates the file before a copy
+    # exists — a backup that changes its source is none. `secure_file` opens
     # read-only.
     try:
-        Store.sichere_datei(a.db, a.ziel)
+        Store.secure_file(a.db, a.destination)
     except Exception as e:
         print(f"Backup failed: {type(e).__name__}: {e}", file=sys.stderr)
         for rest in ("", "-wal", "-shm"):
-            if os.path.exists(a.ziel + rest):
-                os.remove(a.ziel + rest)      # leave no half file behind
+            if os.path.exists(a.destination + rest):
+                os.remove(a.destination + rest)      # leave no half file behind
         return 1
-    print(f"Backup written: {a.ziel} ({os.path.getsize(a.ziel)} bytes, mode 0600).")
+    print(f"Backup written: {a.destination} ({os.path.getsize(a.destination)} bytes, mode 0600).")
     # The backup contains the TOTP secrets only encrypted (H-14/H-15). Without the key
     # it is worthless for TOTP — it belongs backed up separately, not in the same storage.
     if os.path.exists(a.db + ".key"):
@@ -177,7 +177,7 @@ def _restore(argv) -> int:
                "replays them onto the freshly restored file at the next start — the old "
                "state is back, without an error message, and `PRAGMA integrity_check` says `ok`. "
                "This command removes both files before it replaces.")
-    ap.add_argument("quelle", help="the backup file")
+    ap.add_argument("source", help="the backup file")
     ap.add_argument("--db", required=True, help="target: the service's database")
     ap.add_argument("--yes", action="store_true", help="do not ask for confirmation (for scripts)")
     a = ap.parse_args(argv)
@@ -185,31 +185,31 @@ def _restore(argv) -> int:
     import shutil
     import sqlite3
 
-    if not os.path.exists(a.quelle):
-        print(f"No backup at {a.quelle}.", file=sys.stderr)
+    if not os.path.exists(a.source):
+        print(f"No backup at {a.source}.", file=sys.stderr)
         return 1
     # First check whether the backup is any good at all — not only after overwriting.
     try:
-        pruef = sqlite3.connect(f"file:{a.quelle}?mode=ro", uri=True)
-        heil = pruef.execute("PRAGMA integrity_check").fetchone()[0]
-        konten = pruef.execute("SELECT COUNT(*) FROM users").fetchone()[0]
-        stand = pruef.execute("PRAGMA user_version").fetchone()[0]
-        pruef.close()
+        check = sqlite3.connect(f"file:{a.source}?mode=ro", uri=True)
+        whole = check.execute("PRAGMA integrity_check").fetchone()[0]
+        accounts = check.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+        state = check.execute("PRAGMA user_version").fetchone()[0]
+        check.close()
     except Exception as e:
-        print(f"{a.quelle} is not a readable TinySesam database: {e}", file=sys.stderr)
+        print(f"{a.source} is not a readable TinySesam database: {e}", file=sys.stderr)
         return 1
-    if heil != "ok":
-        print(f"The backup is damaged (integrity_check: {heil}).", file=sys.stderr)
+    if whole != "ok":
+        print(f"The backup is damaged (integrity_check: {whole}).", file=sys.stderr)
         return 1
 
     from .store import Store
-    if stand > Store.SCHEMA_VERSION:
-        print(f"The backup carries schema version {stand}, this version knows {Store.SCHEMA_VERSION}. "
+    if state > Store.SCHEMA_VERSION:
+        print(f"The backup carries schema version {state}, this version knows {Store.SCHEMA_VERSION}. "
               "It comes from a newer TinySesam version — install the matching version.",
               file=sys.stderr)
         return 1
 
-    print(f"Backup: {a.quelle} — {konten} accounts, schema {stand}, integrity_check ok")
+    print(f"Backup: {a.source} — {accounts} accounts, schema {state}, integrity_check ok")
     if os.path.exists(a.db) and not a.yes:
         print(f"This overwrites {a.db}. The service must be STOPPED.")
         if input("Continue? [y/N] ").strip().lower() not in ("j", "ja", "y", "yes"):
@@ -220,9 +220,9 @@ def _restore(argv) -> int:
     for rest in ("-wal", "-shm"):
         if os.path.exists(a.db + rest):
             os.remove(a.db + rest)
-    shutil.copyfile(a.quelle, a.db)
+    shutil.copyfile(a.source, a.db)
     try:
-        os.chmod(a.db, Store.DATEIRECHTE)
+        os.chmod(a.db, Store.FILE_PERMISSIONS)
     except OSError:
         pass  # file system without Unix permissions — the copy itself is complete
     print(f"Restored: {a.db} (mode 0600). Start the service again.")
@@ -244,24 +244,24 @@ def _gc(argv) -> int:
     a = ap.parse_args(argv)
     # The same bound as `audit_retention_days` — checked before anything is deleted.
     # 10**20 otherwise aborted with OverflowError when sessions and tokens were already gone.
-    from .config_check import ZAHLENGRENZEN
-    unten, oben = ZAHLENGRENZEN["audit_retention_days"]
-    if not unten <= a.audit_days <= oben:
-        ap.error(f"--audit-days must be between {unten} and {oben} (days, not seconds)")
+    from .config_check import NUMBER_LIMITS
+    below, above = NUMBER_LIMITS["audit_retention_days"]
+    if not below <= a.audit_days <= above:
+        ap.error(f"--audit-days must be between {below} and {above} (days, not seconds)")
     # The same for the login attempts (second attack round): ±10**20 aborted after the first
     # deletion steps, a negative value also cleared the running lockout window.
-    from .store import versuchsfrist, VERSUCHSFRIST_MAX_SEK
+    from .store import attempt_deadline, ATTEMPT_DEADLINE_MAX_SEC
     try:
-        versuchsfrist(a.attempts_older_than)
+        attempt_deadline(a.attempts_older_than)
     except ValueError:
-        ap.error(f"--attempts-older-than must be between 0 and {VERSUCHSFRIST_MAX_SEK} "
+        ap.error(f"--attempts-older-than must be between 0 and {ATTEMPT_DEADLINE_MAX_SEC} "
                  "(seconds; 0 clears all failed attempts)")
-    store = _oeffne(a.db)
+    store = _open(a.db)
     if store is None:
         return 1
     import time as _t
-    zahlen = {
-        "unverified_accounts": store.gc_unbestaetigte_konten(),   # vor den Tokens (R4-09)
+    numbers = {
+        "unverified_accounts": store.gc_unconfirmed_accounts(),   # before the tokens (R4-09)
         "sessions": store.gc_sessions(),
         "flow": store.gc_flow(),
         "magic_tokens": store.gc_magic_tokens(),
@@ -269,8 +269,8 @@ def _gc(argv) -> int:
         "login_attempts": store.gc_attempts(int(_t.time()) - a.attempts_older_than),
     }
     if a.audit_days > 0:
-        zahlen["audit"] = store.gc_audit(int(_t.time()) - a.audit_days * 86400)
-    print(" ".join(f"{k}={v}" for k, v in zahlen.items()))
+        numbers["audit"] = store.gc_audit(int(_t.time()) - a.audit_days * 86400)
+    print(" ".join(f"{k}={v}" for k, v in numbers.items()))
     return 0
 
 
@@ -284,27 +284,27 @@ def _audit(argv) -> int:
     ap.add_argument("--user", default="", help="only entries for this account")
     ap.add_argument("-n", type=int, default=30, help="how many lines (default: 30)")
     a = ap.parse_args(argv)
-    store = _oeffne(a.db)
+    store = _open(a.db)
     if store is None:
         return 1
     import datetime as _dt
     # Filter in SQL, not here: post-filtering the most recent rows found an account's entries
     # only if they happened to fall into the window — so precisely not during a brute-force wave.
     # The command then reported "No entries for 'X'." and exit 0, although they were there.
-    zeilen = store.recent_audit(a.n, username=a.user or None)
-    if not zeilen:
+    lines = store.recent_audit(a.n, username=a.user or None)
+    if not lines:
         print("No entries." if not a.user else f"No entries for '{a.user}'.")
         return 0
-    # Every field through `zeilenfest` (B5-06): username and detail come from forms and
+    # Every field through `line_fixed` (B5-06): username and detail come from forms and
     # foreign responses. A `\n` in them printed a second, freely invented line here — with
     # timestamp, event and IP of choice — exactly in the view one relies on in
     # the case at hand. A control character (ESC) could moreover reconfigure the terminal itself.
-    from .security import zeilenfest as _z
-    from ._vokabular import audit_zeile_neu
-    for z in reversed(zeilen):
-        z = audit_zeile_neu(z)       # always the English spelling (rows written by an older version too)
-        zeit = _dt.datetime.fromtimestamp(z["ts"]).strftime("%Y-%m-%d %H:%M:%S")
-        print(f"{zeit}  {_z(z['event']):22} {_z(z['username'] or '-'):16} "
+    from .security import line_fixed as _z
+    from ._vocabulary import audit_line_new
+    for z in reversed(lines):
+        z = audit_line_new(z)       # always the English spelling (rows written by an older version too)
+        when = _dt.datetime.fromtimestamp(z["ts"]).strftime("%Y-%m-%d %H:%M:%S")
+        print(f"{when}  {_z(z['event']):22} {_z(z['username'] or '-'):16} "
               f"{_z(z['ip'] or '-'):18} {_z(z['detail'] or '')}")
     return 0
 
@@ -320,41 +320,41 @@ def _unlock(argv) -> int:
                                      "or the name in the directory (LDAP)")
     ap.add_argument("--db", required=True, help="path to the TinySesam database")
     a = ap.parse_args(argv)
-    store = _oeffne(a.db)
+    store = _open(a.db)
     if store is None:
         return 1
-    # Counting is done under the folded identifier (`norm_kennung`), so clear it that way, too.
-    from .store import norm_kennung
-    topf = norm_kennung(a.username)
+    # Counting is done under the folded identifier (`norm_identifier`), so clear it that way, too.
+    from .store import norm_identifier
+    bucket = norm_identifier(a.username)
     # The account for the identifier: via the name, via name or address in the counting bucket, or via the
     # name under which it last signed in in the directory (G5). Until 2026-09-26 only
     # via the name — after a rename in the directory (locally `alice`, there `alice.neu`)
     # `unlock alice.neu` aborted with "Kein Konto", although counting was done under exactly that name.
-    konto = (store.get_user_by_name(a.username) or store.konto_mit_topf(topf)
-             or store.konto_mit_bindungsname(topf))
-    offen = store.count_fails(0, username=topf)
-    store.clear_fails(username=topf)
+    account = (store.get_user_by_name(a.username) or store.account_by_bucket(bucket)
+             or store.account_with_binding_name(bucket))
+    unclosed = store.count_fails(0, username=bucket)
+    store.clear_fails(username=bucket)
     # The series lockout (B2-6) as well, under all identifiers of the account — counting is done under what
     # someone typed — and always under the typed one itself.
-    serie = sum(store.fehlserie_loeschen(k) for k in
-                ({topf} | (store.zaehl_kennungen(konto["id"]) if konto else set())) - {""})
-    if konto is None:
+    series = sum(store.delete_failure_series(k) for k in
+                ({bucket} | (store.count_identifiers(account["id"]) if account else set())) - {""})
+    if account is None:
         # No account — but counting is also done for identifiers without an account (B2-6 does not reveal whether there
         # is one), and an existing database does not know the name in the directory yet (it only comes into being
         # with the next successful sign-in). What stood under the identifier is cleared.
-        if not (offen or serie):
+        if not (unclosed or series):
             print(f"No account '{a.username}' in {a.db}, and there is no lockout under this identifier.",
                   file=sys.stderr)
             return 1
         store.audit_log("unlock_cli", a.username, None,
-                        f"failed_attempts={offen} in_a_row={serie} without_account=1")
+                        f"failed_attempts={unclosed} in_a_row={series} without_account=1")
         print(f"No account '{a.username}' — the lockout under this identifier is lifted anyway "
-              f"({offen} failed attempts, {serie} in a row discarded).")
+              f"({unclosed} failed attempts, {series} in a row discarded).")
         return 0
-    store.audit_log("unlock_cli", str(konto["username"]), None,
-                    f"failed_attempts={offen} in_a_row={serie}"
-                    + (f" identifier={a.username}" if norm_kennung(konto["username"]) != topf else ""))
-    print(f"Lockout for '{a.username}' lifted ({offen} failed attempts discarded).")
+    store.audit_log("unlock_cli", str(account["username"]), None,
+                    f"failed_attempts={unclosed} in_a_row={series}"
+                    + (f" identifier={a.username}" if norm_identifier(account["username"]) != bucket else ""))
+    print(f"Lockout for '{a.username}' lifted ({unclosed} failed attempts discarded).")
     return 0
 
 
@@ -368,18 +368,18 @@ def _owner(argv) -> int:
     ap.add_argument("username", help="username of the account")
     ap.add_argument("--db", required=True, help="path to the TinySesam database")
     a = ap.parse_args(argv)
-    store = _oeffne(a.db)
+    store = _open(a.db)
     if store is None:
         return 1
-    konto = store.get_user_by_name(a.username)
-    if not konto:
+    account = store.get_user_by_name(a.username)
+    if not account:
         print(f"No account '{a.username}' in {a.db}.", file=sys.stderr)
         return 1
-    if konto["is_service"] or konto["disabled"]:
+    if account["is_service"] or account["disabled"]:
         print(f"'{a.username}' is locked or a service account — an owner must be able to sign in.",
               file=sys.stderr)
         return 1
-    store.set_owner(konto["id"], True)
+    store.set_owner(account["id"], True)
     store.audit_log("owner_grant", a.username, None, "source=cli")
     print(f"'{a.username}' is an owner (and admin).")
     return 0
@@ -404,58 +404,58 @@ def _rename(argv) -> int:
     ap.add_argument("username", help="current username of the account, or #<id> (the user_id "
                                      "from the startup message — for a name that cannot "
                                      "be typed in)")
-    ap.add_argument("neuer_name", help="the new username")
+    ap.add_argument("new_name", help="the new username")
     ap.add_argument("--db", required=True, help="path to the TinySesam database")
     a = ap.parse_args(argv)
-    store = _oeffne(a.db)
+    store = _open(a.db)
     if store is None:
         return 1
     import sqlite3
-    from .store import name_ungueltig, norm_email, norm_kennung
-    konto = store.get_user_by_name(a.username)
-    if konto is None and a.username[:1] == "#" and a.username[1:].isascii() and a.username[1:].isdigit():
+    from .store import name_invalid, norm_email, norm_identifier
+    account = store.get_user_by_name(a.username)
+    if account is None and a.username[:1] == "#" and a.username[1:].isascii() and a.username[1:].isdigit():
         # Via the ID: a name with control characters (existing data) cannot be typed in, and on
         # a collision the startup message names the accounts via their user_id anyway.
-        konto = store.get_user(int(a.username[1:]))
-    if not konto:
+        account = store.get_user(int(a.username[1:]))
+    if not account:
         print(f"No account '{a.username}' in {a.db}.", file=sys.stderr)
         return 1
-    neu = a.neuer_name.strip()
-    if not neu or len(neu) > _NAME_MAX or name_ungueltig(neu):
+    new = a.new_name.strip()
+    if not new or len(new) > _NAME_MAX or name_invalid(new):
         print("Invalid username (empty, longer than 150 characters or containing control characters).",
               file=sys.stderr)
         return 1
-    eigene = norm_email(konto["email"]) if konto["email"] and konto["email_verified"] else None
-    if "@" in norm_kennung(neu) and norm_email(neu) != eigene:
+    own = norm_email(account["email"]) if account["email"] and account["email_verified"] else None
+    if "@" in norm_identifier(new) and norm_email(new) != own:
         # As with `change_username`: a name that is a foreign address would occupy the mailbox
         # of a person who does not exist here yet.
-        print(f"'{neu}' is an address — as a name only the account's own confirmed address is allowed.",
+        print(f"'{new}' is an address — as a name only the account's own confirmed address is allowed.",
               file=sys.stderr)
         return 1
-    alt = str(konto["username"])
-    if neu == alt:
-        print(f"'{alt}' is already called that — nothing changed.")
+    old = str(account["username"])
+    if new == old:
+        print(f"'{old}' is already called that — nothing changed.")
         return 0
     # Cross-wise, like `TinySesam.identifier_taken`: name, address, counting bucket and the name in the
     # directory of another account (review round 2026-09-27).
-    for treffer in (store.get_user_by_name(neu), store.get_user_by_email(neu),
-                    store.konto_mit_topf(neu, ausser=konto["id"]),
-                    store.konto_mit_verzeichnisname(neu, ausser=konto["id"])):
-        if treffer is not None and treffer["id"] != konto["id"]:
-            print(f"'{neu}' is already taken (account {treffer['id']}, as name, address or name "
+    for hit in (store.get_user_by_name(new), store.get_user_by_email(new),
+                    store.account_by_bucket(new, other_than=account["id"]),
+                    store.account_with_directory_name(new, other_than=account["id"])):
+        if hit is not None and hit["id"] != account["id"]:
+            print(f"'{new}' is already taken (account {hit['id']}, as name, address or name "
                   "in the directory).", file=sys.stderr)
             return 1
     try:
         # As operator: the marker "chosen by themselves" (G2-N) is dropped — the name stands for the
         # operator, and the sign-in via LDAP/SAML may bind the account via it again.
-        store.set_username(konto["id"], neu, selbst_gewaehlt=False)
+        store.set_username(account["id"], new, itself_chosen=False)
     except sqlite3.IntegrityError:
         # Race with the running service: assigned in between — the database decides (G12c).
-        print(f"'{neu}' is already taken — the database rejected the rename, nothing "
+        print(f"'{new}' is already taken — the database rejected the rename, nothing "
               "changed.", file=sys.stderr)
         return 1
-    store.audit_log("username_changed", neu, None, f"old={alt} by=operator source=cli")
-    print(f"'{alt}' is now called '{neu}'. Apps see the new name as Remote-User; the account ID "
+    store.audit_log("username_changed", new, None, f"old={old} by=operator source=cli")
+    print(f"'{old}' is now called '{new}'. Apps see the new name as Remote-User; the account ID "
           "(Remote-Id) stays.")
     return 0
 
@@ -475,70 +475,70 @@ def _delete(argv) -> int:
     ap.add_argument("--db", required=True, help="path to the TinySesam database")
     ap.add_argument("--yes", action="store_true", help="do not ask for confirmation (for scripts)")
     a = ap.parse_args(argv)
-    store = _oeffne(a.db)
+    store = _open(a.db)
     if store is None:
         return 1
-    from .security import zeilenfest as _z
-    from .store import ersatzname
+    from .security import line_fixed as _z
+    from .store import replacement_name
 
-    def finde():
+    def find():
         k = store.get_user_by_name(a.username)
         if k is None and a.username[:1] == "#" and a.username[1:].isascii() and a.username[1:].isdigit():
             k = store.get_user(int(a.username[1:]))
         return k
 
-    def sperre_melden(k) -> bool:
+    def report_lock(k) -> bool:
         # THE rule of the panel (`TinySesam.delete_user`), not a copy of it.
-        grund = store.loeschsperre(k)
-        if grund == "owner":
+        reason = store.deletion_guard(k)
+        if reason == "owner":
             print(f"'{_z(k['username'])}' is an owner and cannot be deleted — hand over the owner "
                   "role first (this requires another owner to exist).", file=sys.stderr)
-        elif grund == "last_admin":
+        elif reason == "last_admin":
             print(f"'{_z(k['username'])}' is the last admin and cannot be deleted.", file=sys.stderr)
-        return grund is not None
+        return reason is not None
 
-    konto = finde()
-    if not konto:
+    account = find()
+    if not account:
         print(f"No account '{_z(a.username)}' in {a.db}.", file=sys.stderr)
         return 1
-    if sperre_melden(konto):
+    if report_lock(account):
         return 1
-    uid = int(konto["id"])
-    n_sitzungen, n_identitaeten, n_schluessel = store.konto_bestand(uid)
-    name = _z(konto["username"])
-    umfang = (f"{n_sitzungen} session(s), {n_identitaeten} identity link(s), "
-              f"{n_schluessel} API key(s)")
+    uid = int(account["id"])
+    n_sessions, n_identities, n_key_name = store.account_footprint(uid)
+    name = _z(account["username"])
+    scope = (f"{n_sessions} session(s), {n_identities} identity link(s), "
+              f"{n_key_name} API key(s)")
     if not a.yes:
         # Without a person to answer there is no confirmation: a script has to say --yes.
         if not sys.stdin.isatty():
             print("Not a terminal and no --yes — nothing deleted.", file=sys.stderr)
             return 1
-        print(f"This deletes the account '{name}' (id {uid}) with {umfang}. "
+        print(f"This deletes the account '{name}' (id {uid}) with {scope}. "
               "The service may keep running.")
         try:
-            antwort = input("Delete? [y/N] ")
+            response = input("Delete? [y/N] ")
         except EOFError:
-            antwort = ""
-        if antwort.strip().lower() not in ("j", "ja", "y", "yes"):
+            response = ""
+        if response.strip().lower() not in ("j", "ja", "y", "yes"):
             print("Aborted.")
             return 1
         # The service may have changed the account while the question stood.
-        konto = finde()
-        if not konto:
+        account = find()
+        if not account:
             print(f"The account '{name}' is gone in the meantime — nothing to do.", file=sys.stderr)
             return 1
-        if sperre_melden(konto):
+        if report_lock(account):
             return 1
-    # The ONE deletion path (`Store.konto_entfernen`), as in `TinySesam.delete_user`: only here, in
+    # The ONE deletion path (`Store.remove_account`), as in `TinySesam.delete_user`: only here, in
     # the deliberate deletion, does a verified address count as the account's own from before creation.
     # NOT `Store.delete_user`: that leaves the name in every audit row.
-    entfernt = store.konto_entfernen(uid, adresse_unbefristet=True)
-    if entfernt is None:
+    removed = store.remove_account(uid, address_unlimited=True)
+    if removed is None:
         print(f"The account '{name}' is gone in the meantime — nothing to do.", file=sys.stderr)
         return 1
-    ersatz, n = entfernt
-    store.audit_log("user_delete", ersatz, None, f"uid={uid} audit_anonymized={n} source=cli")
-    print(f"Deleted '{name}' (id {uid}): {umfang}; {int(n)} audit row(s) anonymised as {ersatzname(uid)}.")
+    replacement, n = removed
+    store.audit_log("user_delete", replacement, None, f"uid={uid} audit_anonymized={n} source=cli")
+    print(f"Deleted '{name}' (id {uid}): {scope}; {int(n)} audit row(s) anonymised as {replacement_name(uid)}.")
     return 0
 
 
@@ -561,11 +561,11 @@ def _gate_key(argv) -> int:
               f"{a.db}.key. Call it with the same environment as the service.", file=sys.stderr)
         return 1
     try:
-        schluessel, _herkunft = vault.load_key(a.db, a.secrets_key_file)
+        key_name, _origin = vault.load_key(a.db, a.secrets_key_file)
     except vault.ConfigError as e:
         print(str(e), file=sys.stderr)
         return 1
-    print(gate.oeffentlich_b64(gate.schluessel_ableiten(schluessel)))
+    print(gate.public_b64(gate.derive_key_name(key_name)))
     return 0
 
 
@@ -597,7 +597,7 @@ def main(argv=None):
     else:
         # `--help` is a question, not an error: it belongs on stdout and ends with 0. A
         # typo, on the other hand, goes to stderr and ends with 2, otherwise no script notices the difference.
-        hilfe = cmd in ("--help", "-h", "help")
+        help_text = cmd in ("--help", "-h", "help")
         print("usage: python -m tinysesam version\n"
               "       python -m tinysesam passwd --db <file> <user>\n"
               "       python -m tinysesam backup --db <file> <target>\n"
@@ -609,8 +609,8 @@ def main(argv=None):
               "       python -m tinysesam rename --db <file> <user> <new-name>\n"
               "       python -m tinysesam delete --db <file> <user> [--yes]\n"
               "       python -m tinysesam gate-key --db <file>",
-              file=sys.stdout if hilfe else sys.stderr)
-        sys.exit(0 if hilfe else 2)
+              file=sys.stdout if help_text else sys.stderr)
+        sys.exit(0 if help_text else 2)
 
 
 if __name__ == "__main__":

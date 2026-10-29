@@ -36,72 +36,72 @@ import warnings
 
 #: With which release the aliases fall. The guard (`tests/test_api_surface.py`) turns red
 #: as soon as the version reaches this limit and an alias still stands in the class.
-BIS = "1.0"
+UNTIL = "1.0"
 
 
 class Deprecated:
-    """An old tier-C name: forwards to `ziel` and warns exactly once while doing so.
+    """An old tier-C name: forwards to `destination` and warns exactly once while doing so.
 
-    `ziel` is the name of the implementation in the same class (`_check_password`), `ersatz` the
+    `destination` is the name of the implementation in the same class (`_check_password`), `replacement` the
     part of the message after the dash — what the caller should use instead. It is mandatory:
     a warning that only says "deprecated" sends everyone into the source code.
     """
 
-    __slots__ = ("ziel", "ersatz", "bis", "name", "klasse", "methode")
+    __slots__ = ("destination", "replacement", "until", "name", "klass", "method")
 
-    def __init__(self, ziel: str, ersatz: str, bis: str = BIS):
-        if not ziel or not ersatz or not ersatz.strip():
+    def __init__(self, destination: str, replacement: str, until: str = UNTIL):
+        if not destination or not replacement or not replacement.strip():
             raise ValueError("Deprecated needs a target and a replacement")
-        self.ziel, self.ersatz, self.bis = ziel, ersatz.strip().rstrip("."), bis
-        self.name = self.klasse = ""
-        self.methode = False
+        self.destination, self.replacement, self.until = destination, replacement.strip().rstrip("."), until
+        self.name = self.klass = ""
+        self.method = False
 
     def __set_name__(self, owner, name):
-        self.name, self.klasse = name, owner.__name__
+        self.name, self.klass = name, owner.__name__
         # At class construction, not at the first call: an alias to a target that does not
         # exist should make the import fail — not the caller only a year later.
-        if self.ziel not in vars(owner):
-            raise TypeError(f"{self.klasse}.{name}: target {self.ziel!r} is missing in the class")
-        self.methode = isinstance(vars(owner)[self.ziel],
+        if self.destination not in vars(owner):
+            raise TypeError(f"{self.klass}.{name}: target {self.destination!r} is missing in the class")
+        self.method = isinstance(vars(owner)[self.destination],
                                   (types.FunctionType, staticmethod, classmethod))
 
     @property
-    def meldung(self) -> str:
-        return (f"{self.klasse}.{self.name} is internal (tier C) and goes away with {self.bis} — "
-                f"{self.ersatz}.")
+    def message(self) -> str:
+        return (f"{self.klass}.{self.name} is internal (tier C) and goes away with {self.until} — "
+                f"{self.replacement}.")
 
-    def _warnen(self) -> None:
-        # Stack: 1 = _warnen, 2 = the alias or __get__, 3 = the caller.
-        warnings.warn(self.meldung, DeprecationWarning, stacklevel=3)
+    def _warn(self) -> None:
+        # Stack: 1 = _warn, 2 = the alias or __get__, 3 = the caller.
+        warnings.warn(self.message, DeprecationWarning, stacklevel=3)
 
     def __get__(self, obj, owner=None):
         # A value set on the object (test fake, see `__set__`) takes precedence — as with an
         # ordinary method that an assignment on the object shadows.
         if obj is not None and self.name in getattr(obj, "__dict__", ()):
             return obj.__dict__[self.name]
-        wert = getattr(obj if obj is not None else owner, self.ziel)
-        if not self.methode:
-            self._warnen()
-            return wert
+        value = getattr(obj if obj is not None else owner, self.destination)
+        if not self.method:
+            self._warn()
+            return value
 
-        @functools.wraps(wert)          # `__wrapped__` → inspect.signature shows the target's
+        @functools.wraps(value)          # `__wrapped__` → inspect.signature shows the target's
         def alias(*args, **kwargs):
-            self._warnen()
-            return wert(*args, **kwargs)
+            self._warn()
+            return value(*args, **kwargs)
 
         alias.__name__ = self.name
-        alias.__qualname__ = f"{self.klasse}.{self.name}"
-        alias.__doc__ = self.meldung + ("\n\n" + wert.__doc__ if wert.__doc__ else "")
+        alias.__qualname__ = f"{self.klass}.{self.name}"
+        alias.__doc__ = self.message + ("\n\n" + value.__doc__ if value.__doc__ else "")
         return alias
 
-    def __set__(self, obj, wert) -> None:
+    def __set__(self, obj, value) -> None:
         """Assignment on the object: store as before, but loudly — the value no longer takes effect."""
         # Stack: 1 = __set__, 2 = the assignment (or `setattr` in `mock.patch`).
         warnings.warn(
             f"{type(obj).__name__}.{self.name} set on the object (test fake?) — this has had no effect since "
-            f"0.22.0: TinySesam calls `{self.ziel}` internally; set the fake on `{self.ziel}` "
-            f"instead. {self.meldung}", RuntimeWarning, stacklevel=2)
-        obj.__dict__[self.name] = wert
+            f"0.22.0: TinySesam calls `{self.destination}` internally; set the fake on `{self.destination}` "
+            f"instead. {self.message}", RuntimeWarning, stacklevel=2)
+        obj.__dict__[self.name] = value
 
     def __delete__(self, obj) -> None:
         """`del auth.check_password` or the end of `mock.patch.object`: the alias applies again."""
@@ -111,4 +111,4 @@ class Deprecated:
             raise AttributeError(self.name) from None
 
     def __repr__(self) -> str:
-        return f"Deprecated({self.ziel!r}, bis {self.bis})"
+        return f"Deprecated({self.destination!r}, bis {self.until})"

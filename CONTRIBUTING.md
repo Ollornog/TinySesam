@@ -39,8 +39,11 @@ git config core.hooksPath .githooks    # once per clone; runs the suite before e
 ## Style
 
 Match the surrounding code: same naming, same comment density. A comment states a constraint the
-code cannot show — not what the next line does. German is the project language for docs and
-comments; identifiers stay in English.
+code cannot show — not what the next line does. The project language is English: identifiers
+(functions, classes, parameters, variables, constants, file names), database table and column
+names, comments, docstrings, documentation, commit messages and pull requests are written in English.
+German exists only as a translation of the interface (`lang="de"`, `i18n/`). `tests/test_english_code.py`
+enforces this: a German word in an identifier, a file name, SQL or a comment makes the suite red.
 
 ## Reporting a vulnerability
 

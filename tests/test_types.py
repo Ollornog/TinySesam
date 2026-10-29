@@ -40,29 +40,29 @@ r = Report("Types — the promise `Typing :: Typed`")
 # in the same tree shared it, and a cache from an earlier run could have
 # influenced the next. Now a fresh folder of its own per run (TMPDIR is the throwaway sandbox).
 cache = tempfile.mkdtemp(prefix="mypy-")
-im_baum = ROOT / ".mypy_cache"
-schon_da = im_baum.exists()
-lauf = subprocess.run([sys.executable, "-m", "mypy", "tinysesam/", "--ignore-missing-imports",
+in_tree = ROOT / ".mypy_cache"
+already_da = in_tree.exists()
+execution = subprocess.run([sys.executable, "-m", "mypy", "tinysesam/", "--ignore-missing-imports",
                        "--check-untyped-defs", "--cache-dir", cache],
                       cwd=ROOT, capture_output=True, text=True)
 r.check("mypy writes its cache into the sandbox, not into the tree",
-        any(Path(cache).iterdir()) and (schon_da or not im_baum.exists()),
-        f"Cache leer: {not any(Path(cache).iterdir())}, .mypy_cache im Baum angelegt: "
-        f"{not schon_da and im_baum.exists()}")
-fehler = [z for z in lauf.stdout.splitlines() if ": error:" in z]
-r.check("mypy findet keinen Fehler in tinysesam/", not fehler,
-        "\n        " + "\n        ".join(fehler[:6]) +
-        (f"\n        … and {len(fehler) - 6} more" if len(fehler) > 6 else ""))
+        any(Path(cache).iterdir()) and (already_da or not in_tree.exists()),
+        f"cache empty: {not any(Path(cache).iterdir())}, .mypy_cache created in the tree: "
+        f"{not already_da and in_tree.exists()}")
+error = [z for z in execution.stdout.splitlines() if ": error:" in z]
+r.check("mypy finds no error in tinysesam/", not error,
+        "\n        " + "\n        ".join(error[:6]) +
+        (f"\n        … and {len(error) - 6} more" if len(error) > 6 else ""))
 
 # And the check must have seen anything at all — a run over zero files would be
 # always green and would say nothing.
 r.check("and in doing so has seen the whole library",
-        "source file" in lauf.stdout and " 0 source files" not in lauf.stdout,
-        f"Ausgabe: {lauf.stdout.strip()[:120]!r}")
+        "source file" in execution.stdout and " 0 source files" not in execution.stdout,
+        f"output: {execution.stdout.strip()[:120]!r}")
 
 # ---------- 2) The promise where it arrives ----------
 # `py.typed` must be shipped, otherwise every type checker ignores the annotations.
-r.check("py.typed liegt im Paket", (ROOT / "tinysesam" / "py.typed").exists(),
+r.check("py.typed is in the package", (ROOT / "tinysesam" / "py.typed").exists(),
         "without this file no type checker evaluates the annotations (PEP 561)")
 
 auth = TinySesam(TinySesamConfig(db_path=str(Path(tempfile.mkdtemp()) / "t.db"),
@@ -70,7 +70,7 @@ auth = TinySesam(TinySesamConfig(db_path=str(Path(tempfile.mkdtemp()) / "t.db"),
 uid = auth.create_user("wer", password="geheim12345", email="wer@example.com")
 
 # The six methods that promise `Optional[dict]` — measured on the real return value.
-for name, wert in (("get_user", auth.get_user(uid)),
+for name, value in (("get_user", auth.get_user(uid)),
                    ("find_user", auth.find_user("wer")),
                    ("_check_password", auth._check_password("wer", "geheim12345")),
                    ("current_user", None),
@@ -78,12 +78,12 @@ for name, wert in (("get_user", auth.get_user(uid)),
                    ("find_user (leer)", auth.find_user("niemand"))):
     if name == "current_user":
         continue
-    erwartet_leer = "leer" in name
-    if erwartet_leer:
-        r.check(f"{name} returns None, not something wrong", wert is None, f"{type(wert).__name__}")
+    expected_empty = "leer" in name
+    if expected_empty:
+        r.check(f"{name} returns None, not something wrong", value is None, f"{type(value).__name__}")
     else:
         r.check(f"{name} really returns a dict, not a sqlite3.Row",
-                isinstance(wert, dict), f"returns {type(wert).__name__}")
+                isinstance(value, dict), f"returns {type(value).__name__}")
 
 # The test on which a user failed: there is no `.get()` on a Row.
 u = auth._check_password("wer", "geheim12345")

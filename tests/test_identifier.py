@@ -39,7 +39,7 @@ print("  norm_email/valid_email ok")
 # ---------- R4-06: compatibility characters, IDNA, look-alikes ----------
 assert norm_email("ａｄｍｉｎ@ｅｘａｍｐｌｅ.com") == "admin@example.com", "NFKC folds full-width"
 assert norm_email("u@Bücher.example") == norm_email("u@xn--bcher-kva.example") == "u@xn--bcher-kva.example"
-# IDNA 2003 (stdlib) turned straße.example into strasse.example — a different domain. Stays unchanged.
+# IDNA 2003 (stdlib) turned `straße.example` into `strasse.example` — a different domain. Stays unchanged.
 assert norm_email("u@straße.example") == "u@straße.example"
 assert not valid_email("аdmin@example.com"), "Cyrillic а between Latin letters"
 assert not valid_email("admin@exаmple.com"), "look-alike in the domain"
@@ -206,7 +206,7 @@ print("  verify without mailer: 500, no account ok")
 for bad in ("mail", "", "Username"):
     try:
         TinySesam(TinySesamConfig(db_path=os.path.join(tempfile.mkdtemp(), "datei"), login_identifier=bad))
-        raise AssertionError(f"login_identifier={bad!r} akzeptiert")
+        raise AssertionError(f"login_identifier={bad!r} accepted")
     except ValueError:
         pass
 try:
@@ -221,95 +221,95 @@ print("  config sanity ok")
 # Promised in the CHANGELOG under "For embedding apps": the message text stays the one from 0.18.x
 # ("… ist bereits vergeben"), so that a caller who checks the text does not break on this fix
 # — and the case can now be told apart WITHOUT text comparison by `e.field` and
-# `e.owner_id` (until 0.21.x `e.feld`/`e.besitzer_id`). Both halves of the promise were covered by not a
+# `e.owner_id` (until 0.21.x `e.slot`/`e.owner_id`). Both halves of the promise were covered by not a
 # single line: mutation M25 (no longer setting the attributes) and M34 (wording back
 # to "… ist bereits als Login-Kennung vergeben") each ran through green with 46/46.
-# `grep -rn "besitzer_id" tests/` found nothing. Exactly the promise that was to replace the text comparison, and exactly the text comparison
+# `grep -rn "owner_id" tests/` found nothing. Exactly the promise that was to replace the text comparison, and exactly the text comparison
 # that it was to save.
 from tinysesam import ConfigError  # noqa: E402
 
 auth, c, db = build(login_identifier="both")
-opfer_id = auth.create_user("opfer", password="geheim12345-lang-genug", email="chef@example.com")
-for kennung, mail, feld in (("chef@example.com", None, "username"),   # name == foreign email
+victim_id = auth.create_user("opfer", password="geheim12345-lang-genug", email="chef@example.com")
+for identifier, mail, slot in (("chef@example.com", None, "username"),   # name == foreign email
                             ("neu", "chef@example.com", "email")):    # email == foreign email
     try:
-        auth.create_user(kennung, email=mail)
-        raise AssertionError(f"{feld}: the cross check does not take effect, the account was created")
+        auth.create_user(identifier, email=mail)
+        raise AssertionError(f"{slot}: the cross check does not take effect, the account was created")
     except ConfigError as e:
         assert "is already taken" in str(e), (
-            f"{feld}: wording changed ({str(e)!r}) — callers from 0.18.x check exactly this "
+            f"{slot}: wording changed ({str(e)!r}) — callers from 0.18.x check exactly this "
             "text, and the CHANGELOG promises them that it stays")
-        assert getattr(e, "field", None) == feld, (
-            f"e.field is {getattr(e, 'field', '<missing>')!r}, expected {feld!r} — without the attribute "
+        assert getattr(e, "field", None) == slot, (
+            f"e.field is {getattr(e, 'field', '<missing>')!r}, expected {slot!r} — without the attribute "
             "the text comparison remains the only way to tell the two cases apart")
-        assert getattr(e, "owner_id", None) == opfer_id, (
-            f"e.owner_id is {getattr(e, 'owner_id', '<missing>')!r}, expected {opfer_id}")
+        assert getattr(e, "owner_id", None) == victim_id, (
+            f"e.owner_id is {getattr(e, 'owner_id', '<missing>')!r}, expected {victim_id}")
 # Control: a free identifier does not raise — otherwise "always raises" would be green too.
-frei_id = auth.create_user("frei", email="frei@example.com")
-assert frei_id and auth.store.get_user(frei_id)["username"] == "frei"
+free_id = auth.create_user("frei", email="frei@example.com")
+assert free_id and auth.store.get_user(free_id)["username"] == "frei"
 os.unlink(db)
 print("  cross collision: wording stays, e.field/e.owner_id name the case ok")
 
 # ---------- The lockout bucket folds like find_user — also NFKC and IDNA ----------
-# The account threshold against distributed guessing counts under `norm_kennung()`. That used to be strip + lower;
+# The account threshold against distributed guessing counts under `norm_identifier()`. That used to be strip + lower;
 # but `find_user` looks an address up via `norm_email()`, and since R4-06 that also folds NFKC
 # and IDNA. `ｖｉｃｔｉｍ@example.com`, `victim＠example.com` (full-width @) and every mixed form
 # hit the same account, but each filled a bucket of its own — for this one address alone
 # 2^16 spellings. Measured: 40 failed attempts from 40 addresses, none locked, the owner
-# afterwards in with 303. (Mutation probe: `norm_kennung` back to `strip().lower()` → the
+# afterwards in with 303. (Mutation probe: `norm_identifier` back to `strip().lower()` → the
 # bucket check and the volley turn red; only NFKC without `norm_email` → the IDNA line turns red.)
-from tinysesam.store import norm_kennung  # noqa: E402
+from tinysesam.store import norm_identifier  # noqa: E402
 
-VOLL = {ch: chr(ord(ch) + 0xFEE0) for ch in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ@."}
+FULL = {ch: chr(ord(ch) + 0xFEE0) for ch in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ@."}
 
 
-def _voll(text, maske):
-    """The characters at the positions whose bit is set in `maske`, in full width."""
-    return "".join(VOLL.get(z, z) if (maske >> i) & 1 else z for i, z in enumerate(text))
+def _full(text, mask):
+    """The characters at the positions whose bit is set in `mask`, in full width."""
+    return "".join(FULL.get(z, z) if (mask >> i) & 1 else z for i, z in enumerate(text))
 
 
 auth, c, db = build(login_identifier="both")
-opfer_id = auth.create_user("opfer", "Richtiges-Passwort-42x", email="victim@example.com")
+victim_id = auth.create_user("opfer", "Richtiges-Passwort-42x", email="victim@example.com")
 idn_id = auth.create_user("idn", "Idn-Passwort-2026x", email="u@bücher.example")
-basis = "victim@example.com"
-varianten = [_voll(basis, m) for m in (0b1, 0b111111, 0b1000000, 0b111111111111111111, 0b10101010101,
+base = "victim@example.com"
+variants = [_full(base, m) for m in (0b1, 0b111111, 0b1000000, 0b111111111111111111, 0b10101010101,
                                        (1 << 18) - 1 - 0b1000000)]
-varianten += ["VICTIM＠EXAMPLE.COM", " ｖｉｃｔｉｍ@example.com\t", "\xa0victim@ｅｘａｍｐｌｅ.ｃｏｍ"]
-for v in varianten:
-    gefunden = auth.find_user(v)
-    assert gefunden and gefunden["id"] == opfer_id, f"precondition: {v!r} does not hit the account"
-    assert norm_kennung(v) == norm_kennung(basis), \
-        f"{v!r} hits the account, but counts in bucket {norm_kennung(v)!r} instead of {norm_kennung(basis)!r}"
+variants += ["VICTIM＠EXAMPLE.COM", " ｖｉｃｔｉｍ@example.com\t", "\xa0victim@ｅｘａｍｐｌｅ.ｃｏｍ"]
+for v in variants:
+    found = auth.find_user(v)
+    assert found and found["id"] == victim_id, f"precondition: {v!r} does not hit the account"
+    assert norm_identifier(v) == norm_identifier(base), \
+        f"{v!r} hits the account, but counts in bucket {norm_identifier(v)!r} instead of {norm_identifier(base)!r}"
 # IDNA: A-label and Unicode form of the same domain are the same mailbox, hence one bucket.
 for v in ("u@bücher.example", "u@xn--bcher-kva.example", "U@BÜCHER.EXAMPLE", "u@ｂüｃｈｅｒ.example"):
     assert auth.find_user(v)["id"] == idn_id, f"precondition: {v!r} does not hit the IDN account"
-    assert norm_kennung(v) == norm_kennung("u@bücher.example"), f"IDNA spelling {v!r} has its own bucket"
-print(f"  lockout bucket: {len(varianten) + 4} spellings that find_user assigns to the same account count together ok")
+    assert norm_identifier(v) == norm_identifier("u@bücher.example"), f"IDNA spelling {v!r} has its own bucket"
+print(f"  lockout bucket: {len(variants) + 4} spellings that find_user assigns to the same account count together ok")
 
 # And via the route: distributed guessing with full-width spellings, every request from a
 # different address. The check must not get past the account threshold.
 auth.set_security("rate_limit_max", 1000)
 app_k = FastAPI()
 app_k.include_router(auth.router())
-DECKEL = auth._sec("max_login_attempts") * auth._sec("account_attempt_factor")
-geprueft = 0
-for i in range(DECKEL + 25):
+LID = auth._sec("max_login_attempts") * auth._sec("account_attempt_factor")
+checked = 0
+for i in range(LID + 25):
     ci = TestClient(app_k, client=(f"198.51.100.{i + 1}", 40000))
-    r = ci.post("/auth/login", data={"username": _voll(basis, i + 1), "password": f"falsch-{i}"},
+    r = ci.post("/auth/login", data={"username": _full(base, i + 1), "password": f"falsch-{i}"},
                 follow_redirects=False)
-    geprueft += r.status_code == 401
-assert geprueft <= DECKEL, f"{geprueft} guesses via full-width spellings, promised are at most {DECKEL}"
+    checked += r.status_code == 401
+assert checked <= LID, f"{checked} guesses via full-width spellings, promised are at most {LID}"
 r = TestClient(app_k, client=("192.0.2.200", 40000)).post(
-    "/auth/login", data={"username": basis, "password": "Richtiges-Passwort-42x"}, follow_redirects=False)
-assert r.status_code == 429, f"the account threshold did not take effect after {geprueft} attempts: {r.status_code}"
+    "/auth/login", data={"username": base, "password": "Richtiges-Passwort-42x"}, follow_redirects=False)
+assert r.status_code == 429, f"the account threshold did not take effect after {checked} attempts: {r.status_code}"
 # Lifting hits the same bucket: counting was done under the folded address.
-assert auth.lift_lockout(opfer_id) == geprueft
+assert auth.lift_lockout(victim_id) == checked
 os.unlink(db)
-print(f"  lockout bucket via the route: {geprueft} checked, then closed (account threshold {DECKEL}) ok")
+print(f"  lockout bucket via the route: {checked} checked, then closed (account threshold {LID}) ok")
 
 # ---------- H-13 × lockout bucket: deleting clears the attempts under the folded identifier ----------
 # Since the lockout bucket folds NFKC and IDNA (above), the attempts of an account are under
-# `norm_kennung(...)`. But `delete_user` searched for them via SQLite `lower()` under the STORED
+# `norm_identifier(...)`. But `delete_user` searched for them via SQLite `lower()` under the STORED
 # name or the stored address. A name with compatibility characters (`ｂｅｒｔａ`, `ﬁnn` —
 # `create_user` does not fold names, they come e.g. from LDAP or OIDC) and an existing address
 # from before R4-06 in Unicode form (`u2@bücher.example`) left identifier and IP standing after deletion
@@ -318,30 +318,30 @@ print(f"  lockout bucket via the route: {geprueft} checked, then closed (account
 auth, c, db = build(login_identifier="both")
 berta_id = auth.create_user("ｂｅｒｔａ", "Berta-Passwort-2026x")
 finn_id = auth.create_user("ﬁnn", "Finn-Passwort-2026x")
-bestand_id = auth.create_user("bestand", "Bestand-Passwort-2026x", email="u2@example.org")
-auth.store.db.execute("UPDATE users SET email='u2@bücher.example' WHERE id=?", (bestand_id,))
+inventory_id = auth.create_user("bestand", "Bestand-Passwort-2026x", email="u2@example.org")
+auth.store.db.execute("UPDATE users SET email='u2@bücher.example' WHERE id=?", (inventory_id,))
 auth.store.db.commit()
-assert auth.find_user("u2@bücher.example")["id"] == bestand_id, "precondition: existing address is found"
-# Make the accounts a minute older: the deletion path (`Store.konto_entfernen`) clears only attempts
+assert auth.find_user("u2@bücher.example")["id"] == inventory_id, "precondition: existing address is found"
+# Make the accounts a minute older: the deletion path (`Store.remove_account`) clears only attempts
 # AFTER the second of creation — what happened within it cannot be attributed and stays.
 # Here it is about the folding, not about this boundary.
 auth.store.db.execute("UPDATE users SET created_at = created_at - 60 WHERE id IN (?, ?, ?)",
-                      (berta_id, finn_id, bestand_id))
+                      (berta_id, finn_id, inventory_id))
 auth.store.db.commit()
-for i, kennung in enumerate(("ｂｅｒｔａ", "ﬁnn", "u2@bücher.example", "BESTAND")):
+for i, identifier in enumerate(("ｂｅｒｔａ", "ﬁnn", "u2@bücher.example", "BESTAND")):
     for ip in ("198.51.100.1", "198.51.100.2"):
-        r = login(TestClient(c.app, client=(ip, 40000 + i)), kennung, "falsch-geraten-1")
-        assert r.status_code == 401, (kennung, r.status_code)
+        r = login(TestClient(c.app, client=(ip, 40000 + i)), identifier, "falsch-geraten-1")
+        assert r.status_code == 401, (identifier, r.status_code)
 
 
-def _versuche(a):
+def _attempts(a):
     return [(z["username"], z["ip"]) for z in a.store._all("SELECT username, ip FROM login_attempt")]
 
 
-assert len(_versuche(auth)) == 8, f"precondition: eight failed attempts stand: {_versuche(auth)}"
-for uid in (berta_id, finn_id, bestand_id):
+assert len(_attempts(auth)) == 8, f"precondition: eight failed attempts stand: {_attempts(auth)}"
+for uid in (berta_id, finn_id, inventory_id):
     assert auth.delete_user(uid)
-assert _versuche(auth) == [], f"after delete_user attempts of deleted accounts still stand: {_versuche(auth)}"
+assert _attempts(auth) == [], f"after delete_user attempts of deleted accounts still stand: {_attempts(auth)}"
 os.unlink(db)
 print("  H-13: delete_user clears the attempts also under an NFKC-/IDNA-folded identifier ok")
 
@@ -350,26 +350,26 @@ print("  H-13: delete_user clears the attempts also under an NFKC-/IDNA-folded i
 # the same thing that protects `clara`. Deleting one must not reset the lockout of the other —
 # otherwise "create account, guess, have the account deleted" would be a way past the
 # account threshold. (Mutation probe: in `delete_attempts_for` remove the exception for a bucket that
-# `konto_mit_topf` assigns to a remaining account → red.)
+# `account_by_bucket` assigns to a remaining account → red.)
 auth, c, db = build()
 auth.set_security("rate_limit_max", 1000)
-voll_id = auth.create_user("ｃｌａｒａ", "Clara-Voll-2026x")
+full_id = auth.create_user("ｃｌａｒａ", "Clara-Voll-2026x")
 # The namesake can no longer be created anew (`identifier_taken` asks the bucket, since
 # G12c the store rejects it too) — it comes from an existing state from before, hence as a raw
 # INSERT without bucket, as from a foreign writer.
-from tinysesam.store import jetzt as _jetzt  # noqa: E402
+from tinysesam.store import now as _now  # noqa: E402
 clara_id = auth.store._exec("INSERT INTO users(username, display_name, created_at) VALUES (?,?,?)",
-                            ("clara", "clara", _jetzt())).lastrowid
+                            ("clara", "clara", _now())).lastrowid
 auth.set_password(clara_id, "Clara-Ascii-2026x")
-fehl = auth._sec("max_login_attempts") * auth._sec("account_attempt_factor")   # account threshold across all addresses
-for i in range(fehl):
+fail = auth._sec("max_login_attempts") * auth._sec("account_attempt_factor")   # account threshold across all addresses
+for i in range(fail):
     login(TestClient(c.app, client=(f"198.51.100.{i + 1}", 40000)), "clara", f"falsch-{i}")
 r = login(TestClient(c.app, client=("192.0.2.50", 40000)), "clara", "Clara-Ascii-2026x")
-assert r.status_code == 429, f"precondition: clara is locked after {fehl} failed attempts ({r.status_code})"
-assert auth.delete_user(voll_id)
+assert r.status_code == 429, f"precondition: clara is locked after {fail} failed attempts ({r.status_code})"
+assert auth.delete_user(full_id)
 r = login(TestClient(c.app, client=("192.0.2.51", 40000)), "clara", "Clara-Ascii-2026x")
 assert r.status_code == 429, f"deleting ｃｌａｒａ lifted the lockout of clara ({r.status_code})"
-assert len(_versuche(auth)) >= fehl, _versuche(auth)
+assert len(_attempts(auth)) >= fail, _attempts(auth)
 os.unlink(db)
 print("  H-13: a bucket shared by a remaining account stays standing ok")
 

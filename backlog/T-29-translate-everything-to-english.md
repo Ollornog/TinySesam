@@ -32,10 +32,17 @@ expectations).
 - **Hygiene:** a check for private home-directory paths in `tests/test_repo.py`; fail2ban filters and log lines agree on
   `reason=`, checked by a test.
 
-## Not done (kept deliberately)
+## Follow-up (2026-10-29): the rest, before the API freeze
 
-- German names of **database tables, columns and setting keys** (`namensbindung`, `fehlserie`, `topf_name`,
-  `name_quelle`, `idp_bestaetigt_at`, …) and of private identifiers inside the library: renaming them is a schema change
-  of its own with no benefit for users.
-- Files managed by the shared test kit (`tests/_kit/**`, `.githooks/pre-push`, `scripts/_backlog.py`, …) and the names the
-  kit depends on (`tests/voraussetzung.py`, the `werkzeuge.in` lists): they change with `repokit sync`, not here.
+The "not done" items of the first pass (German names of database tables, columns and setting keys, private identifiers
+inside the library) were done once the repository was to be launched in English (PO decision 2026-10-29; apps, public ones
+above all, are coded in English):
+
+- **Identifiers** (about 3,100 names), **comments, docstrings, test descriptions** and internal string values are English;
+  module `_vokabular.py` → `_vocabulary.py`.
+- **Database names** are English — schema **16**, migration `Store._english_names`, rollback SQL in `docs/OPERATIONS.md`,
+  test `tests/test_db_names_migration.py` against a real schema-15 file (details and the old → new table in the CHANGELOG).
+- **Guard** `tests/test_english_code.py` (identifiers, file names, SQL, comments, docstrings); `CONTRIBUTING.md` states the rule.
+- **Still German on purpose:** the interface texts (`lang="de"`, `i18n/`) and the files that the shared test kit manages
+  (`tests/_kit/**`, `tests/voraussetzung.py`, `scripts/_backlog.py`, `.githooks/pre-push`, the `werkzeuge.in` lists, the job id
+  `pruefen` of `release.yml`): they change with `repokit sync`, not here.

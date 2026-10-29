@@ -70,32 +70,32 @@ app2.include_router(auth.router())
 
 
 @app2.get("/nur-admin")
-def nur_admin(u=Depends(auth.require_admin)):
+def only_admin(u=Depends(auth.require_admin)):
     return {"ok": True, "via": u.get("_via")}
 
 
 @app2.get("/wer")
-def wer(u=Depends(auth.require_user)):
+def person(u=Depends(auth.require_user)):
     return {"user": u["username"], "via": u.get("_via"), "admin": bool(u["is_admin"])}
 
 
 c2 = TestClient(app2)
 _admin_id = auth.store.get_user_by_name("admin")["id"]
-_automat = auth.create_api_key(_admin_id, name="ci", kind="automation")
-_mensch = auth.create_api_key(_admin_id, name="cli", kind="human")
+_automaton = auth.create_api_key(_admin_id, name="ci", kind="automation")
+_human = auth.create_api_key(_admin_id, name="cli", kind="human")
 
 # The automation key gets in, but without the admin flag of its owner.
-_a = c2.get("/wer", headers={"X-API-Key": _automat["key"]})
+_a = c2.get("/wer", headers={"X-API-Key": _automaton["key"]})
 assert _a.status_code == 200 and _a.json()["user"] == "admin", _a.text[:120]
 assert _a.json()["admin"] is False, "the automation key carries the admin flag along"
-assert c2.get("/nur-admin", headers={"X-API-Key": _automat["key"]}).status_code == 403
+assert c2.get("/nur-admin", headers={"X-API-Key": _automaton["key"]}).status_code == 403
 print("  ✓ Automation key: signed in yes, admin no (R6-5)")
 
 # The human key alone is worthless — it only counts together with a session of the same account.
-assert c2.get("/wer", headers={"X-API-Key": _mensch["key"]}).status_code == 401
+assert c2.get("/wer", headers={"X-API-Key": _human["key"]}).status_code == 401
 c3 = TestClient(app2)
 c3.post("/auth/login", data={"username": "admin", "password": "pw", "next": "/"}, follow_redirects=False)
-_m = c3.get("/wer", headers={"X-API-Key": _mensch["key"]})
+_m = c3.get("/wer", headers={"X-API-Key": _human["key"]})
 assert _m.status_code == 200 and _m.json()["admin"] is True, _m.text[:120]
 print("  ✓ Human key: worthless alone, fully effective with a session")
 
@@ -104,30 +104,30 @@ auth.create_user("zweitkonto", password="pw2")
 c4 = TestClient(app2)
 c4.post("/auth/login", data={"username": "zweitkonto", "password": "pw2", "next": "/"},
         follow_redirects=False)
-assert c4.get("/wer", headers={"X-API-Key": _mensch["key"]}).json()["user"] == "zweitkonto", \
+assert c4.get("/wer", headers={"X-API-Key": _human["key"]}).json()["user"] == "zweitkonto", \
     "a foreign session must not activate the key — otherwise ANY sign-in would suffice"
 print("  ✓ …and only together with the session of ITS account")
 
 # Expiry: the default applies, unlimited needs explicit permission.
-_mit_vorgabe = auth.create_api_key(svc, name="mit-vorgabe")
-assert _mit_vorgabe["expires_at"] is not None
-assert abs((_mit_vorgabe["expires_at"] - int(__import__("time").time())) / 86400 - 90) < 1
+_with_default = auth.create_api_key(svc, name="mit-vorgabe")
+assert _with_default["expires_at"] is not None
+assert abs((_with_default["expires_at"] - int(__import__("time").time())) / 86400 - 90) < 1
 try:
     auth.create_api_key(svc, name="ewig", expires_days=0)
     raise AssertionError("an unlimited key got through without permission")
 except ConfigError:
     pass
-_frei = TinySesam(TinySesamConfig(db_path=os.path.join(tempfile.mkdtemp(), "t.db"),
+_free = TinySesam(TinySesamConfig(db_path=os.path.join(tempfile.mkdtemp(), "t.db"),
                                   passkey_enabled=False, cookie_secure=False,
                                   apikey_allow_unlimited=True))
-_uid_frei = _frei.create_service("geraet")
-assert _frei.create_api_key(_uid_frei, name="dauer", expires_days=0)["expires_at"] is None
+_uid_free = _free.create_service("geraet")
+assert _free.create_api_key(_uid_free, name="dauer", expires_days=0)["expires_at"] is None
 print("  ✓ Expiry: 90 days as default, unlimited only with apikey_allow_unlimited")
 
 # An unknown kind is an error, not a silent assumption.
 try:
     auth.create_api_key(svc, name="quatsch", kind="halbstark")
-    raise AssertionError("unbekannte Art kam durch")
+    raise AssertionError("unknown kind got through")
 except ConfigError:
     pass
 print("  ✓ an unknown key kind aborts instead of passing as automation")

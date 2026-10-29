@@ -62,7 +62,7 @@ app.include_router(auth.router())
 
 
 @app.get("/tresor")
-def tresor(user=Depends(auth.require(factors=["password", "pin"]))):
+def vault(user=Depends(auth.require(factors=["password", "pin"]))):
     return {"ok": user["username"]}
 
 
@@ -94,8 +94,8 @@ app = FastAPI()
 app.include_router(auth.router())
 
 
-@app.get("/sensibel")
-def sensibel(user=Depends(auth.require(mfa=True))):
+@app.get("/sensitive")
+def sensitive(user=Depends(auth.require(mfa=True))):
     return {"ok": user["username"]}
 
 
@@ -110,24 +110,24 @@ auth.store.set_session_mfa(s["token_hash"], True)
 auth.store.db.execute("UPDATE session SET mfa_at=0 WHERE token_hash=?", (s["token_hash"],))
 auth.store.db.commit()
 
-r = c.get("/sensibel", follow_redirects=False)
+r = c.get("/sensitive", follow_redirects=False)
 assert r.status_code == 307 and r.headers["location"].startswith("/auth/reauth"), r.headers
-page = c.get("/auth/reauth?next=/sensibel").text
+page = c.get("/auth/reauth?next=/sensitive").text
 assert "name=pin" in page and "PIN zur Bestätigung" in page
 assert "name=password" not in page, "stepup_methods=['pin'] → no password field"
-r = c.post("/auth/reauth", data={"pin": "9999", "next": "/sensibel"})
+r = c.post("/auth/reauth", data={"pin": "9999", "next": "/sensitive"})
 assert r.status_code == 401
 # Password is NOT accepted if only PIN is allowed. Since 0.22.0 (`confirm_password`)
 # that is 403 `method_disabled` and not a failed attempt: a method that is not offered is
 # not checked at all — until then 401, and the request counted in the bucket `reauth`.
-_vorher = auth.store.count_fails(0, username="max", method="reauth")
-r = c.post("/auth/reauth", data={"password": "geheim12345-lang-genug", "next": "/sensibel"})
+_before = auth.store.count_fails(0, username="max", method="reauth")
+r = c.post("/auth/reauth", data={"password": "geheim12345-lang-genug", "next": "/sensitive"})
 assert r.status_code == 403, "password must not pass here"
-assert auth.store.count_fails(0, username="max", method="reauth") == _vorher, "no failed attempt"
-assert c.get("/sensibel", follow_redirects=False).status_code == 307, "the session is not fresh"
-r = c.post("/auth/reauth", data={"pin": "2468", "next": "/sensibel"}, follow_redirects=False)
-assert r.status_code == 303 and r.headers["location"] == "/sensibel"
-assert c.get("/sensibel", headers={"accept": "application/json"}).json() == {"ok": "max"}
+assert auth.store.count_fails(0, username="max", method="reauth") == _before, "no failed attempt"
+assert c.get("/sensitive", follow_redirects=False).status_code == 307, "the session is not fresh"
+r = c.post("/auth/reauth", data={"pin": "2468", "next": "/sensitive"}, follow_redirects=False)
+assert r.status_code == 303 and r.headers["location"] == "/sensitive"
+assert c.get("/sensitive", headers={"accept": "application/json"}).json() == {"ok": "max"}
 os.unlink(db)
 print("  stepup_methods=['pin']: sensitive area requires PIN despite login ok")
 
@@ -264,8 +264,8 @@ r = c.post("/auth/pin/set", json={"pin": "1357"}, headers=J)
 assert r.status_code == 403, (r.status_code, r.text[:120])
 assert r.headers.get("X-TinySesam-Reauth") == "/auth/reauth", dict(r.headers)
 assert auth._verify_user_pin(uid, "2468"), "the old PIN may stay"
-seite = c.get("/auth/reauth").text
-assert "name=pin" in seite, "the reauth page must now have a PIN field"
+page_html = c.get("/auth/reauth").text
+assert "name=pin" in page_html, "the reauth page must now have a PIN field"
 r = c.post("/auth/reauth", data={"pin": "2468", "next": "/"}, follow_redirects=False)
 assert r.status_code == 303, r.status_code
 assert c.post("/auth/pin/set", json={"pin": "1357"}, headers=J).status_code == 200
@@ -295,12 +295,12 @@ assert "X-TinySesam-Reauth" not in r.headers, dict(r.headers)
 assert not auth.has_pin(uid), "without a fresh sign-in no PIN may be set"
 # The reauth page tells the account the truth, instead of offering a password field that it does
 # not have (every attempt would be hopeless — and would count in the same lockout bucket).
-seite = c.get("/auth/reauth")
-felder = re.findall(r"<input[^>]*name=[\"\']?(\w+)", seite.text)
-assert felder == [], felder
-assert auth.t("err.stepup_none") in seite.text, seite.text[:300]
-antwort = c.post("/auth/reauth", data={"password": "geraten", "next": "/"})
-assert antwort.status_code == 403, antwort.status_code
+page_html = c.get("/auth/reauth")
+fields = re.findall(r"<input[^>]*name=[\"\']?(\w+)", page_html.text)
+assert fields == [], fields
+assert auth.t("err.stepup_none") in page_html.text, page_html.text[:300]
+response = c.post("/auth/reauth", data={"password": "geraten", "next": "/"})
+assert response.status_code == 403, response.status_code
 assert auth.store.count_fails(0, username="sso-nutzer") == 0, "no failed attempt in the lockout bucket"
 os.unlink(db)
 print("  (b) sign-in too old: 403 'sign in again', reauth page without field ok")
@@ -339,11 +339,11 @@ print("  (a) password account, freshly signed in: first PIN goes through ok")
 auth.disable_pin(uid)
 _hash = auth.store.session_hash(c.cookies.get(auth.cfg.session_cookie))
 auth.store._exec("UPDATE session SET mfa_at=? WHERE token_hash=?", (int(time.time()) - 100000, _hash))
-_sitzung = auth.store._one("SELECT created_at, mfa_at FROM session WHERE token_hash=?", (_hash,))
+_session = auth.store._one("SELECT created_at, mfa_at FROM session WHERE token_hash=?", (_hash,))
 # Precondition, otherwise (b) measures the wrong bolt: the SIGN-IN is still young, only the
 # confirmation has expired. Exactly this situation separates `login_fresh()` from `stepup_fresh()`.
-assert int(time.time()) - _sitzung["created_at"] < auth.cfg.stepup_max_age_sec, dict(_sitzung)
-assert int(time.time()) - _sitzung["mfa_at"] > auth.cfg.stepup_max_age_sec, dict(_sitzung)
+assert int(time.time()) - _session["created_at"] < auth.cfg.stepup_max_age_sec, dict(_session)
+assert int(time.time()) - _session["mfa_at"] > auth.cfg.stepup_max_age_sec, dict(_session)
 r = c.post("/auth/pin/set", json={"pin": "1357"}, headers=J)
 assert r.status_code == 403, (r.status_code, r.text[:120])
 assert r.headers.get("X-TinySesam-Reauth") == "/auth/reauth", dict(r.headers)

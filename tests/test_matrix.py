@@ -30,7 +30,7 @@ app = FastAPI(); app.include_router(a.router())
 c = TestClient(app, raise_server_exceptions=False)
 for path in ("/auth/pin", "/auth/magic/request", "/auth/register", "/auth/resource/x",
              "/auth/forward", "/auth/account"):
-    assert absent(c, path), f"{path} sollte fehlen (404)"
+    assert absent(c, path), f"{path} should be absent (404)"
 assert c.get("/auth/login").status_code == 200
 assert c.get("/auth/logout", follow_redirects=False).status_code in (303, 307)
 os.remove(db)
@@ -53,7 +53,7 @@ c = TestClient(app, raise_server_exceptions=False)
 JSON = {"Accept": "application/json"}
 for path in ("/auth/pin", "/auth/magic/request", "/auth/register", "/auth/resource/z",
              "/auth/forward", "/auth/account", "/auth/reauth"):
-    assert not absent(c, path), f"{path} sollte vorhanden sein"
+    assert not absent(c, path), f"{path} should be present"
 assert c.get("/auth/login").status_code == 200
 ok("all features on → all routes reachable, no collision")
 secret = a.totp_begin(uid)["secret"]
@@ -64,7 +64,7 @@ r = c.post("/auth/pin", data={"username": "admin", "pin": "2468", "next": "/"}, 
 assert r.status_code == 303 and "/auth/totp" in r.headers["location"]
 r = c.post("/auth/totp", data={"code": pyotp.TOTP(secret).now(), "next": "/"}, follow_redirects=False)
 assert r.status_code == 303
-# eingeloggt: Konto-Seite + Forward-Auth ok
+# signed in: account page + forward-auth ok
 assert "Konto · admin" in c.get("/auth/account").text
 assert c.get("/auth/forward", headers={"X-Forwarded-Host": "app", "X-Forwarded-Uri": "/x"}).status_code == 200
 # resource PIN independent of the login
@@ -78,14 +78,14 @@ db = os.path.join(tempfile.mkdtemp(), "t.db")
 sent = []
 a = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db, password_enabled=False, passkey_enabled=False,
                               oidc_enabled=False, magiclink_enabled=True, cookie_secure=False,
-                              base_url="https://auth.example.com"))   # Mail-Link, siehe R4-01
+                              base_url="https://auth.example.com"))   # mail link, see R4-01
 a.set_mailer(lambda to, s, t, html=None: sent.append(t))
 a.create_user("nurmail", email="m@example.com")
 app = FastAPI(); app.include_router(a.router())
 c = TestClient(app)
 # no password login
 assert c.post("/auth/login", data={"username": "nurmail", "password": "x"}).status_code == 404
-# Magic-Link funktioniert allein
+# Magic link works on its own
 c.post("/auth/magic/request", data={"email": "m@example.com", "next": "/"})
 import re
 tok = re.search(r"/auth/magic/([\w\-]+)", sent[0]).group(1)

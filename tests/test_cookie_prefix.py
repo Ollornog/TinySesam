@@ -36,10 +36,10 @@ def ok(text):
 
 
 def _cfg(**k):
-    grund = dict(db_path=str(Path(tempfile.mkdtemp()) / "t.db"), cookie_secure=False, base_url="http://testserver",
+    reason = dict(db_path=str(Path(tempfile.mkdtemp()) / "t.db"), cookie_secure=False, base_url="http://testserver",
                  csrf_enabled=False, passkey_enabled=False)
-    grund.update(k)
-    return TinySesamConfig(**grund)
+    reason.update(k)
+    return TinySesamConfig(**reason)
 
 
 class _Claims(dict):
@@ -54,21 +54,21 @@ def _oidc_app(**k):
     auth.oidc.exchange = lambda code, redirect_uri, nonce, t=None, **_: (
         _Claims({"sub": "anna-1", "preferred_username": "anna", "email": "anna@example.com", "email_verified": True,
                  "iss": IDP, "nonce": nonce}), {"access_token": "at"})
-    auth.oidc.userinfo = lambda at, erwartetes_sub="": {}
+    auth.oidc.userinfo = lambda at, expected_sub="": {}
     app = FastAPI()
     app.include_router(auth.router())
     return auth, app
 
 
 # The template's rule, taken verbatim from the file — if the template changes, this test checks the new one.
-_vorlage = (ROOT / "deploy" / "forward-auth" / "Caddyfile.gate").read_text(encoding="utf-8")
-_m = re.search(r'header_up Cookie "([^"]*tinysesam_[^"]*)" ""', _vorlage)
+_template = (ROOT / "deploy" / "forward-auth" / "Caddyfile.gate").read_text(encoding="utf-8")
+_m = re.search(r'header_up Cookie "([^"]*tinysesam_[^"]*)" ""', _template)
 assert _m, "Cookie rule not found in Caddyfile.gate"
-REGEL = re.compile(_m.group(1).replace("\\\\", "\\"))
+RULE = re.compile(_m.group(1).replace("\\\\", "\\"))
 
 
-def _durch_proxy(kopf: str) -> str:
-    return re.sub(r"^[;\s]+", "", REGEL.sub("", kopf))
+def _through_proxy(head: str) -> str:
+    return re.sub(r"^[;\s]+", "", RULE.sub("", head))
 
 
 print("cookie_prefix")
@@ -84,9 +84,9 @@ ok("default: names unchanged")
 b = TinySesam(_cfg(cookie_prefix="meineapp_"))
 assert (b.session_cookie_name, b.csrf_cookie_name, b.resource_cookie_name) == (
     "meineapp_session", "meineapp_csrf", "meineapp_runlock"), (b.session_cookie_name, b.csrf_cookie_name)
-for basis, neu in (("tinysesam_oidc_flow", "meineapp_oidc_flow"), ("tinysesam_saml_flow", "meineapp_saml_flow"),
+for base, new in (("tinysesam_oidc_flow", "meineapp_oidc_flow"), ("tinysesam_saml_flow", "meineapp_saml_flow"),
                    ("tinysesam_waflow", "meineapp_waflow")):
-    assert b.flow_cookie_name(basis) == neu, b.flow_cookie_name(basis)
+    assert b.flow_cookie_name(base) == new, b.flow_cookie_name(base)
 hb = TinySesam(_cfg(cookie_prefix="meineapp_", cookie_secure=True))
 assert hb.session_cookie_name == "__Host-meineapp_session", hb.session_cookie_name
 ok("prefix: session, CSRF, unlock, flow (OIDC/SAML/passkey); __Host- still comes first")
@@ -98,31 +98,31 @@ ok("explicitly set name and __ names (gateway cookies) stay unchanged")
 
 
 # (d)
-def _ablauf(praefix):
-    auth, app = _oidc_app(**({"cookie_prefix": praefix} if praefix else {}))
+def _expiry(prefix):
+    auth, app = _oidc_app(**({"cookie_prefix": prefix} if prefix else {}))
     start = TestClient(app).get("/auth/oidc/start", follow_redirects=False)
     assert start.status_code in (302, 303), start.status_code
     state = parse_qs(urlparse(start.headers["location"]).query)["state"][0]
-    kopf = "; ".join(f"{n}={v}" for n, v in start.cookies.items())
-    rueck = TestClient(app).get(f"/auth/oidc/callback?code=x&state={state}", follow_redirects=False,
-                                headers={"Cookie": _durch_proxy(kopf)})
-    return kopf, rueck, auth
+    head = "; ".join(f"{n}={v}" for n, v in start.cookies.items())
+    back = TestClient(app).get(f"/auth/oidc/callback?code=x&state={state}", follow_redirects=False,
+                                headers={"Cookie": _through_proxy(head)})
+    return head, back, auth
 
 
-kopf, rueck, auth = _ablauf("meineapp_")
-assert "meineapp_oidc_flow=" in kopf, kopf
-assert rueck.status_code in (302, 303) and auth.session_cookie_name in rueck.headers.get("set-cookie", ""), (
-    rueck.status_code, rueck.text[:200])
+head, back, auth = _expiry("meineapp_")
+assert "meineapp_oidc_flow=" in head, head
+assert back.status_code in (302, 303) and auth.session_cookie_name in back.headers.get("set-cookie", ""), (
+    back.status_code, back.text[:200])
 ok("with prefix: flow cookie survives the proxy, return trip signs in (session cookie meineapp_session)")
-kopf, rueck, _ = _ablauf(None)
-assert "tinysesam_oidc_flow=" in kopf and _durch_proxy(kopf) == ""
-assert rueck.status_code == 400 and "set-cookie" not in {k.lower() for k in rueck.headers if "session" in rueck.headers[k]}, rueck.status_code
+head, back, _ = _expiry(None)
+assert "tinysesam_oidc_flow=" in head and _through_proxy(head) == ""
+assert back.status_code == 400 and "set-cookie" not in {k.lower() for k in back.headers if "session" in back.headers[k]}, back.status_code
 ok("control without prefix: the proxy strips the flow cookie, return trip 400 (the error seen in operation)")
 
 # (e)
-for boese in ("", "__Host-x_", "a b", "x" * 40, "-x"):
-    f, _ = check_config(_cfg(cookie_prefix=boese))
-    assert any("cookie_prefix" in z for z in f), (boese, f)
+for evil in ("", "__Host-x_", "a b", "x" * 40, "-x"):
+    f, _ = check_config(_cfg(cookie_prefix=evil))
+    assert any("cookie_prefix" in z for z in f), (evil, f)
 f, _ = check_config(_cfg(cookie_prefix="meineapp_"))
 assert not any("cookie_prefix" in z for z in f), f
 f, _ = check_config(_cfg(cookie_prefix="meineapp_", forward_auth_enabled=True, trusted_redirect_hosts=["app.example.com"]))

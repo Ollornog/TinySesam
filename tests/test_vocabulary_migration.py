@@ -1,9 +1,9 @@
 """The key vocabulary in English (schema 15): migration of a real old database, idempotence, free text, read paths.
 
 PO decision 2026-10-29: the audit log (`audit.event`, `audit.detail`, `audit.username`) and the kinds of the
-failed-attempt streak (`fehlserie.art`, `login_attempt.method`) carried German event names, `key=value` keys and
+failed-attempt streak (`failure_series.kind`, `login_attempt.method`) carried German event names, `key=value` keys and
 tokens up to 0.24.x (`grund=kein_konto`, `oidc_widerruf`, `gelöscht#<id>`). Schema 15 rewrites an existing file once
-(`Store._vokabular_englisch`), and every read path still understands an old row (`tinysesam/_vokabular.py`) — an older
+(`Store._vocabulary_english`), and every read path still understands an old row (`tinysesam/_vocabulary.py`) — an older
 version that ran on the file after a rollback, or a writer outside the process, leaves old rows behind again.
 
 This suite measures that against a REAL schema-14 file, not against the mapping tables:
@@ -11,7 +11,7 @@ This suite measures that against a REAL schema-14 file, not against the mapping 
 * `tests/fixtures/schema14_audit.sql` is plain SQL, produced by the code of 0.24.x (114 audit rows, two streak rows
   with a collision, one method row, the old trigger message). `PAIRS` below spells out, row by row, what the
   file holds and what must come out — written out by hand from the code that wrote the old rows and from
-  the code that writes the new ones. The expectations are NOT derived from `_vokabular.py`; otherwise the test would
+  the code that writes the new ones. The expectations are NOT derived from `_vocabulary.py`; otherwise the test would
   prove the table with itself.
 * (A) the migration rewrites exactly that and nothing else, (B) a second run changes nothing, (C) free text that only
   happens to contain a similar word stays as it is, (D) the read paths take both spellings after a rollback,
@@ -42,7 +42,7 @@ from fastapi import FastAPI                                    # noqa: E402
 from fastapi.testclient import TestClient                      # noqa: E402
 
 from tinysesam import TinySesam, TinySesamConfig               # noqa: E402
-from tinysesam import _vokabular as V                           # noqa: E402
+from tinysesam import _vocabulary as V                           # noqa: E402
 from tinysesam.__main__ import main as cli_main                # noqa: E402
 from tinysesam.errors import ConfigError                       # noqa: E402
 from tinysesam.store import Store                              # noqa: E402
@@ -52,8 +52,8 @@ r = Report("Key vocabulary in English (schema 15): migration, idempotence, free 
 
 FIXTURE = ROOT / "tests" / "fixtures" / "schema14_audit.sql"
 PW = "Probe-Pw-12345-xyz"
-BASIS = "https://app.example.com"
-MELDUNG = "rewritten to the English vocabulary"      # the log line of a migration that changed something
+BASE = "https://app.example.com"
+MESSAGE = "rewritten to the English vocabulary"      # the log line of a migration that changed something
 
 # (old event, old username, old detail) -> (new event, new username, new detail) for the 114 audit rows of the fixture,
 # in the order of their ids. Taken from what 0.24.x wrote and what the current code writes. The last block must
@@ -199,76 +199,76 @@ PAIRS = [
 ]
 
 # Rows where a look-alike of the old vocabulary is correct (free text, look-alikes kept on purpose).
-AUSNAHMEN = {p[3:] for p in PAIRS[-13:]} | {("username_changed", "bobby", "old=Max konto=1 Muster")}
+EXCEPTIONS = {p[3:] for p in PAIRS[-13:]} | {("username_changed", "bobby", "old=Max konto=1 Muster")}
 
-# The old audit events (exact names) and the families — spelled out here, independent of `_vokabular.py`.
-ALTE_EREIGNISSE = ("api_keys_ruhen", "lockout_serie", "login_lokal", "oidc_unbestaetigt", "oidc_widerruf",
+# The old audit events (exact names) and the families — spelled out here, independent of `_vocabulary.py`.
+OLD_EVENTS = ("api_keys_ruhen", "lockout_serie", "login_lokal", "oidc_unbestaetigt", "oidc_widerruf",
                    "quelle_email_taken", "recovery_verwaist_geloescht", "sperrhinweis")
-ALTE_FAMILIEN = ("_kennung_abgewiesen", "_kennung_gebunden", "_kennung_geloest", "_kennung_ungueltig",
+OLD_FAMILIES = ("_kennung_abgewiesen", "_kennung_gebunden", "_kennung_geloest", "_kennung_ungueltig",
                  "_kennung_wechsel", "_namensbindung_zu", "_ohne_kennung")
 # The old keys of `key=value` pairs, spelled out. Used to find a leftover of the old vocabulary in new rows.
-ALTE_SCHLUESSEL = ("grund", "konto", "quelle", "durch", "akteur", "alt", "neu", "an", "anzahl", "beleg", "verlangt",
+OLD_KEY_NAME = ("grund", "konto", "quelle", "durch", "akteur", "alt", "neu", "an", "anzahl", "beleg", "verlangt",
                    "verwendet", "nachgetragen", "fehlversuche", "in_folge", "fehlversuche_in_folge",
                    "fehlversuche_verworfen", "kennung", "lokal", "verzeichnis", "zweck", "fehlt", "ohne_konto",
                    "gruppe_entfallen", "beim_bestaetigen", "nach_einschreibung", "namensbindung_offen_bis",
                    "recovery_codes_geloescht", "audit_anonymisiert", "verbleibend", "art", "ablauf",
                    "verworfene_rollen", "stunden", "minuten", "wettlauf", "rollen")
-ALT_SCHLUESSEL_RE = re.compile(r"(?<!\S)(?:" + "|".join(ALTE_SCHLUESSEL) + r")=")
+OLD_KEY_NAME_RE = re.compile(r"(?<!\S)(?:" + "|".join(OLD_KEY_NAME) + r")=")
 # Events whose detail is free text; their keys are not touched.
-FREITEXT = ("ldap_unavailable", "resource_unlock", "user_create")
+FREE_TEXT = ("ldap_unavailable", "resource_unlock", "user_create")
 
 
-def alt_vokabular(event, username, detail) -> list:
+def old_vocabulary(event, username, detail) -> list:
     """What of the old vocabulary is still in this audit row (a list of reasons, empty = clean)?"""
-    funde = []
+    hits = []
     ev = str(event or "")
-    if ev in ALTE_EREIGNISSE or any(ev.startswith(q) and ev[len(q):] in ALTE_FAMILIEN
+    if ev in OLD_EVENTS or any(ev.startswith(q) and ev[len(q):] in OLD_FAMILIES
                                     for q in ("oidc", "saml", "ldap")):
-        funde.append(f"event {ev}")
+        hits.append(f"event {ev}")
     if re.fullmatch(r"gelöscht#\d+", str(username or "")):
-        funde.append(f"username {username}")
-    if ev not in FREITEXT and ALT_SCHLUESSEL_RE.search(str(detail or "")):
-        funde.append(f"detail key in {detail!r}")
-    if re.search(r"(?<![\w@.-])gelöscht#\d", str(detail or "")) and ev not in FREITEXT[:2]:
-        funde.append(f"detail name in {detail!r}")
-    return funde
+        hits.append(f"username {username}")
+    if ev not in FREE_TEXT and OLD_KEY_NAME_RE.search(str(detail or "")):
+        hits.append(f"detail key in {detail!r}")
+    if re.search(r"(?<![\w@.-])gelöscht#\d", str(detail or "")) and ev not in FREE_TEXT[:2]:
+        hits.append(f"detail name in {detail!r}")
+    return hits
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────────────────────────
-def _mitschreiben(fn):
+def _record(fn):
     """(result, text) — what the logger `tinysesam` says meanwhile, from INFO."""
-    puffer = io.StringIO()
-    haken = logging.StreamHandler(puffer)
+    buffer = io.StringIO()
+    check = logging.StreamHandler(buffer)
     log = logging.getLogger("tinysesam")
-    stufe = log.level
-    log.addHandler(haken)
+    tier = log.level
+    log.addHandler(check)
     log.setLevel(logging.INFO)
     try:
-        ergebnis = fn()
+        result = fn()
     finally:
-        log.removeHandler(haken)
-        log.setLevel(stufe)
-    return ergebnis, puffer.getvalue()
+        log.removeHandler(check)
+        log.setLevel(tier)
+    return result, buffer.getvalue()
 
 
 @contextlib.contextmanager
-def patch(obj, name, wert):
+def patch(obj, name, value):
     """Replace `obj.name` for the duration of the block — the mutation tests use this, never the source."""
     original = getattr(obj, name)
-    setattr(obj, name, wert)
+    setattr(obj, name, value)
     try:
         yield
     finally:
         setattr(obj, name, original)
 
 
-def _neuer_pfad(name="t.db") -> str:
+def _new_path(name="t.db") -> str:
     return os.path.join(tempfile.mkdtemp(), name)
 
 
-def _roh(pfad: str, *sql) -> None:
+def _raw(path: str, *sql) -> None:
     """Write directly into the file like an older version (or the operator with `sqlite3`)."""
-    con = sqlite3.connect(pfad)
+    con = sqlite3.connect(path)
     try:
         for s in sql:
             con.execute(*s) if isinstance(s, tuple) else con.executescript(s)
@@ -277,12 +277,12 @@ def _roh(pfad: str, *sql) -> None:
         con.close()
 
 
-def _fixture_laden(pfad: str, extra=()) -> None:
+def _load_fixture(path: str, extra=()) -> None:
     """A fresh file from the schema-14 fixture (plain SQL); `extra`: audit rows (event, username, detail) appended."""
-    con = sqlite3.connect(pfad)
+    con = sqlite3.connect(path)
     try:
         con.executescript(FIXTURE.read_text(encoding="utf-8"))
-        os.chmod(pfad, 0o600)       # as the store creates its own files (otherwise it warns about the mode)
+        os.chmod(path, 0o600)       # as the store creates its own files (otherwise it warns about the mode)
         for ev, user, det in extra:
             con.execute("INSERT INTO audit(ts, event, username, ip, detail) VALUES (1793237238, ?, ?, NULL, ?)",
                         (ev, user, det))
@@ -291,32 +291,32 @@ def _fixture_laden(pfad: str, extra=()) -> None:
         con.close()
 
 
-def _lesen(pfad: str, sql: str, *args) -> list:
-    con = sqlite3.connect(pfad)
+def _read(path: str, sql: str, *args) -> list:
+    con = sqlite3.connect(path)
     try:
         return con.execute(sql, args).fetchall()
     finally:
         con.close()
 
 
-def _stempel(pfad: str) -> int:
-    return _lesen(pfad, "PRAGMA user_version")[0][0]
+def _stamp(path: str) -> int:
+    return _read(path, "PRAGMA user_version")[0][0]
 
 
-def _audit(pfad: str) -> list:
-    return _lesen(pfad, "SELECT id, ts, event, username, ip, detail FROM audit ORDER BY id")
+def _audit(path: str) -> list:
+    return _read(path, "SELECT id, ts, event, username, ip, detail FROM audit ORDER BY id")
 
 
-def _tabellen(pfad: str) -> tuple:
+def _tables(path: str) -> tuple:
     """The three tables the migration touches, complete and ordered — for before/after comparisons."""
-    return (_audit(pfad),
-            _lesen(pfad, "SELECT topf, art, anzahl, seit, zuletzt FROM fehlserie ORDER BY topf, art"),
-            _lesen(pfad, "SELECT id, ts, username, ip, method, offen FROM login_attempt ORDER BY id"))
+    return (_audit(path),
+            _read(path, "SELECT folded, kind, count, since, last_seen FROM failure_series ORDER BY folded, kind"),
+            _read(path, "SELECT id, ts, username, ip, method, pending FROM login_attempt ORDER BY id"))
 
 
-def _start(pfad: str):
+def _start(path: str):
     """Open the file with `Store` (that runs the migration) — (store, log text)."""
-    return _mitschreiben(lambda: Store(pfad))
+    return _record(lambda: Store(path))
 
 
 def _app(a: TinySesam) -> FastAPI:
@@ -325,83 +325,83 @@ def _app(a: TinySesam) -> FastAPI:
     return app
 
 
-def _aufbau(pfad: str, post: list | None = None, **cfg) -> TinySesam:
-    kw = dict(db_path=pfad, cookie_secure=False, csrf_enabled=False, passkey_enabled=False,
-              base_url=BASIS, notify_login_failures=True)
+def _setup(path: str, post: list | None = None, **cfg) -> TinySesam:
+    kw = dict(db_path=path, cookie_secure=False, csrf_enabled=False, passkey_enabled=False,
+              base_url=BASE, notify_login_failures=True)
     kw.update(cfg)
     a = TinySesam(TinySesamConfig(**kw))
-    a.set_mailer(lambda to, betreff, text, html=None: post.append((to, betreff)) if post is not None else None)
+    a.set_mailer(lambda to, subject, text, html=None: post.append((to, subject)) if post is not None else None)
     return a
 
 
-def neu_von(zeilen: list, ev: str, user, det) -> tuple:
+def new_from(lines: list, ev: str, user, det) -> tuple:
     """The migrated row (event, username, detail) that belongs to the OLD row (ev, user, det) of `PAIRS`."""
     i = [p[:3] for p in PAIRS].index((ev, user, det))
-    return zeilen[i][2], zeilen[i][3], zeilen[i][5]
+    return lines[i][2], lines[i][3], lines[i][5]
 
 
 # ── the checks of the fixture migration, as a function: the same ones run again under a mutation ──────
-def fixture_probleme(pfad: str) -> list:
-    """Migrate the fixture at `pfad` (a fresh schema-14 file) and list what is wrong afterwards (empty = right)."""
-    vorher = _audit(pfad)
-    store, log = _start(pfad)
+def fixture_problems(path: str) -> list:
+    """Migrate the fixture at `path` (a fresh schema-14 file) and list what is wrong afterwards (empty = right)."""
+    before = _audit(path)
+    store, log = _start(path)
     store.db.close()
     problem = []
-    nachher = _audit(pfad)
-    if _stempel(pfad) != 15:
-        problem.append(f"stamp {_stempel(pfad)}")
-    if MELDUNG not in log:
+    afterwards = _audit(path)
+    if _stamp(path) != Store.SCHEMA_VERSION:
+        problem.append(f"stamp {_stamp(path)}")
+    if MESSAGE not in log:
         problem.append("the migration does not say that it rewrote something")
-    if len(nachher) != len(PAIRS):
-        problem.append(f"row count {len(nachher)}")
-    for p, z in zip(PAIRS, nachher):
+    if len(afterwards) != len(PAIRS):
+        problem.append(f"row count {len(afterwards)}")
+    for p, z in zip(PAIRS, afterwards):
         if (z[2], z[3], z[5]) != p[3:]:
             problem.append(f"row {z[0]}: {(z[2], z[3], z[5])} instead of {p[3:]}")
-    if [(z[0], z[1], z[4]) for z in vorher] != [(z[0], z[1], z[4]) for z in nachher]:
+    if [(z[0], z[1], z[4]) for z in before] != [(z[0], z[1], z[4]) for z in afterwards]:
         problem.append("id, ts or ip of a row changed")
-    if _lesen(pfad, "SELECT topf, art, anzahl, seit, zuletzt FROM fehlserie ORDER BY topf, art") != [
+    if _read(path, "SELECT folded, kind, count, since, last_seen FROM failure_series ORDER BY folded, kind") != [
             ("alice", "pin_chain", 5, 1793237188, 1793237233),
             ("bob", "pin_chain", 4, 1793237188, 1793237233),
             ("bob", "totp", 1, 1793237188, 1793237233)]:
-        problem.append("fehlserie")
-    if _lesen(pfad, "SELECT id, method FROM login_attempt ORDER BY id") != [(1, "pin_chain"), (2, "pin")]:
+        problem.append("failure_series")
+    if _read(path, "SELECT id, method FROM login_attempt ORDER BY id") != [(1, "pin_chain"), (2, "pin")]:
         problem.append("login_attempt.method")
     return problem
 
 
 # ═══ (A) The real schema-14 file is rewritten correctly ═════════════════════════════════════════════
-pfad_a = _neuer_pfad("a.db")
-_fixture_laden(pfad_a)
-vorher_a = _audit(pfad_a)
+path_a = _new_path("a.db")
+_load_fixture(path_a)
+before_a = _audit(path_a)
 r.check("precondition: the fixture is a schema-14 file with the 114 rows of PAIRS in their old spelling",
-        _stempel(pfad_a) == 14 and len(vorher_a) == len(PAIRS) == 114
-        and [(z[2], z[3], z[5]) for z in vorher_a] == [p[:3] for p in PAIRS],
-        f"{_stempel(pfad_a)} {len(vorher_a)}")
+        _stamp(path_a) == 14 and len(before_a) == len(PAIRS) == 114
+        and [(z[2], z[3], z[5]) for z in before_a] == [p[:3] for p in PAIRS],
+        f"{_stamp(path_a)} {len(before_a)}")
 r.check("precondition: the old trigger message and the colliding streak rows are in the fixture",
-        any("kennung vergeben" in str(z[0]) for z in _lesen(
-            pfad_a, "SELECT sql FROM sqlite_master WHERE type='trigger' AND name LIKE 'trg_users_kennung_%'"))
-        and _lesen(pfad_a, "SELECT art FROM fehlserie WHERE topf='alice' ORDER BY art") == [("pin_chain",), ("pin_folge",)])
-alt_pruefung = [alt_vokabular(z[2], z[3], z[5]) for z in vorher_a]
-r.check("precondition: the old-vocabulary detector (independent of `_vokabular.py`) finds the old rows in the fixture",
-        sum(1 for f in alt_pruefung if f) >= 80, str(sum(1 for f in alt_pruefung if f)))
+        any("kennung vergeben" in str(z[0]) for z in _read(
+            path_a, "SELECT sql FROM sqlite_master WHERE type='trigger' AND name LIKE 'trg_users_kennung_%'"))
+        and _read(path_a, "SELECT art FROM fehlserie WHERE topf='alice' ORDER BY art") == [("pin_chain",), ("pin_folge",)])
+old_check = [old_vocabulary(z[2], z[3], z[5]) for z in before_a]
+r.check("precondition: the old-vocabulary detector (independent of `_vocabulary.py`) finds the old rows in the fixture",
+        sum(1 for f in old_check if f) >= 80, str(sum(1 for f in old_check if f)))
 
-store_a, log_a = _start(pfad_a)
+store_a, log_a = _start(path_a)
 store_a.db.close()
-nachher_a = _audit(pfad_a)
-r.check("(A) the start migrates: stamp 15 and a log line that says something was rewritten",
-        _stempel(pfad_a) == 15 == Store.SCHEMA_VERSION and MELDUNG in log_a, f"{_stempel(pfad_a)} {log_a[-300:]!r}")
-falsch = [(z[0], (z[2], z[3], z[5]), p[3:]) for p, z in zip(PAIRS, nachher_a) if (z[2], z[3], z[5]) != p[3:]]
+afterwards_a = _audit(path_a)
+r.check("(A) the start migrates: the current stamp and a log line that says something was rewritten",
+        _stamp(path_a) == Store.SCHEMA_VERSION and MESSAGE in log_a, f"{_stamp(path_a)} {log_a[-300:]!r}")
+wrong = [(z[0], (z[2], z[3], z[5]), p[3:]) for p, z in zip(PAIRS, afterwards_a) if (z[2], z[3], z[5]) != p[3:]]
 r.check("(A) all 114 audit rows come out exactly as spelled out in PAIRS (event, username, detail)",
-        not falsch and len(nachher_a) == 114, str(falsch[:3]))
+        not wrong and len(afterwards_a) == 114, str(wrong[:3]))
 r.check("(A) id, ts and ip of every row are untouched, no row was added or dropped",
-        [(z[0], z[1], z[4]) for z in vorher_a] == [(z[0], z[1], z[4]) for z in nachher_a])
+        [(z[0], z[1], z[4]) for z in before_a] == [(z[0], z[1], z[4]) for z in afterwards_a])
 r.check("(A) nothing of the old vocabulary is left in the rows that are not free text",
-        not [(z[0], f) for z in nachher_a for f in [alt_vokabular(z[2], z[3], z[5])]
-             if f and (z[2], z[3], z[5]) not in AUSNAHMEN],
-        str([(z[0], alt_vokabular(z[2], z[3], z[5])) for z in nachher_a if alt_vokabular(z[2], z[3], z[5])][:3]))
+        not [(z[0], f) for z in afterwards_a for f in [old_vocabulary(z[2], z[3], z[5])]
+             if f and (z[2], z[3], z[5]) not in EXCEPTIONS],
+        str([(z[0], old_vocabulary(z[2], z[3], z[5])) for z in afterwards_a if old_vocabulary(z[2], z[3], z[5])][:3]))
 
 # Event families and the exact names, one row each (the fixture carries them).
-EREIGNIS_ERWARTUNG = {"api_keys_ruhen": "api_keys_dormant", "lockout_serie": "lockout_series",
+EVENT_EXPECTATION = {"api_keys_ruhen": "api_keys_dormant", "lockout_serie": "lockout_series",
                       "login_lokal": "login_local", "oidc_unbestaetigt": "oidc_unconfirmed",
                       "oidc_widerruf": "oidc_revoked", "quelle_email_taken": "source_email_taken",
                       "recovery_verwaist_geloescht": "recovery_orphan_deleted", "sperrhinweis": "lockout_notice",
@@ -416,21 +416,21 @@ EREIGNIS_ERWARTUNG = {"api_keys_ruhen": "api_keys_dormant", "lockout_serie": "lo
                       "ldap_namensbindung_zu": "ldap_name_binding_closed",
                       "saml_namensbindung_zu": "saml_name_binding_closed",
                       "ldap_ohne_kennung": "ldap_without_identifier", "saml_ohne_kennung": "saml_without_identifier"}
-gesehen = {alt: sorted({n[2] for v, n in zip(vorher_a, nachher_a) if v[2] == alt}) for alt in EREIGNIS_ERWARTUNG}
+seen = {old: sorted({n[2] for v, n in zip(before_a, afterwards_a) if v[2] == old}) for old in EVENT_EXPECTATION}
 r.check("(A) every event family (`<q>_kennung_*`, `<q>_namensbindung_zu`, `<q>_ohne_kennung`) and every exact name "
         "(`oidc_widerruf`, `lockout_serie`, `sperrhinweis`, …) has its row, rewritten",
-        all(gesehen[alt] == [neu] for alt, neu in EREIGNIS_ERWARTUNG.items()), str(gesehen))
-neue_ereignisse = {z[2] for z in nachher_a}
+        all(seen[old] == [new] for old, new in EVENT_EXPECTATION.items()), str(seen))
+new_events = {z[2] for z in afterwards_a}
 r.check("(A) the families are rewritten for `oidc_`, `saml_` and `ldap_` alike: no old family name is left, the new names "
         "of all three sources are there",
-        not [z for z in nachher_a if any(z[2] == q + alt for q in ("oidc", "saml", "ldap") for alt in ALTE_FAMILIEN)]
+        not [z for z in afterwards_a if any(z[2] == q + old for q in ("oidc", "saml", "ldap") for old in OLD_FAMILIES)]
         and {"oidc_identifier_bound", "ldap_identifier_bound", "saml_identifier_rejected", "ldap_identifier_rejected",
              "saml_name_binding_closed", "ldap_name_binding_closed", "saml_identifier_invalid",
              "ldap_identifier_invalid", "saml_without_identifier", "ldap_without_identifier",
-             "ldap_identifier_change", "ldap_identifier_unbound"} <= neue_ereignisse)
+             "ldap_identifier_change", "ldap_identifier_unbound"} <= new_events)
 
 # Detail keys, tokens and flags: one explicit row per kind of rewrite.
-n = lambda ev, u, d: neu_von(nachher_a, ev, u, d)       # noqa: E731
+n = lambda ev, u, d: new_from(afterwards_a, ev, u, d)       # noqa: E731
 r.check("(A) key `grund=` -> `reason=` with its token (`kein_konto` -> `no_account`, `konto_gesperrt` -> "
         "`account_locked`, `falsches_bereichsgeheimnis` -> `wrong_area_secret`, `wiederholt` -> `repeated`)",
         n("login_fail", "x", "password grund=kein_konto")[2] == "password reason=no_account"
@@ -504,7 +504,7 @@ r.check("(A) `audit.username` `gelöscht#<id>` -> `deleted#<id>` (digits only): 
         and n("user_create", "gelöscht#99", "gelöscht#99 service=False")[1:] == ("deleted#99", "deleted#99 service=False")
         and n("login_fail", "gelöscht#5abc", "password grund=kein_konto")[1] == "gelöscht#5abc"
         and n("login_fail", "gelöscht#", "password")[1] == "gelöscht#"
-        and sorted(u for (u,) in _lesen(pfad_a, "SELECT DISTINCT username FROM audit WHERE username LIKE 'gelöscht#%'"))
+        and sorted(u for (u,) in _read(path_a, "SELECT DISTINCT username FROM audit WHERE username LIKE 'gelöscht#%'"))
         == ["gelöscht#", "gelöscht#5abc"])
 r.check("(A) the replacement name inside a detail: `alt=gelöscht#4` -> `old=deleted#4`, `akteur=gelöscht#5` -> "
         "`actor=deleted#5`",
@@ -520,27 +520,27 @@ r.check("(A) a detail that is already in the new form stays (`reason=no_account`
         n("login_fail", "x", "password reason=no_account")[2] == "password reason=no_account"
         and n("login_fail", "x", "password altgrund=kein_konto")[2] == "password altgrund=kein_konto"
         and n("login_fail", "x", "password mygrund=kein_konto")[2] == "password mygrund=kein_konto")
-fehl = _lesen(pfad_a, "SELECT topf, art, anzahl, seit, zuletzt FROM fehlserie ORDER BY topf, art")
-r.check("(A) `fehlserie.art` `pin_folge` -> `pin_chain`; where both exist (the collision) the counts are ADDED up "
+fail = _read(path_a, "SELECT folded, kind, count, since, last_seen FROM failure_series ORDER BY folded, kind")
+r.check("(A) `failure_series.kind` `pin_folge` -> `pin_chain`; where both exist (the collision) the counts are ADDED up "
         "(3+2), the window widens (earliest start, latest end), exactly one row is left",
-        fehl == [("alice", "pin_chain", 5, 1793237188, 1793237233), ("bob", "pin_chain", 4, 1793237188, 1793237233),
-                 ("bob", "totp", 1, 1793237188, 1793237233)], str(fehl))
+        fail == [("alice", "pin_chain", 5, 1793237188, 1793237233), ("bob", "pin_chain", 4, 1793237188, 1793237233),
+                 ("bob", "totp", 1, 1793237188, 1793237233)], str(fail))
 r.check("(A) `login_attempt.method` `pin_folge` -> `pin_chain`, other methods stay",
-        _lesen(pfad_a, "SELECT id, method FROM login_attempt ORDER BY id") == [(1, "pin_chain"), (2, "pin")])
-def trigger_texte(pfad: str) -> list:
-    return [z[0] for z in _lesen(pfad, "SELECT sql FROM sqlite_master WHERE type='trigger' "
-                                       "AND name LIKE 'trg_users_kennung_%'")]
+        _read(path_a, "SELECT id, method FROM login_attempt ORDER BY id") == [(1, "pin_chain"), (2, "pin")])
+def trigger_texts(path: str) -> list:
+    return [z[0] for z in _read(path, "SELECT sql FROM sqlite_master WHERE type='trigger' "
+                                       "AND name LIKE 'trg_users_identifier_%'")]
 
 
-trigger_a = trigger_texte(pfad_a)
+trigger_a = trigger_texts(path_a)
 r.check("(A) the identifier triggers carry the new message and none the old one",
         len(trigger_a) == 2 and all("tinysesam: identifier taken" in t and "kennung vergeben" not in t
                                     for t in trigger_a), str(trigger_a)[:200])
 
 # The new message is what a collision raises; the callers recognise the case by IntegrityError, not by the text.
-def kollision(pfad: str):
+def collision(path: str):
     """Two identifiers in one counting bucket, the pre-check suppressed (a race): (type of the error, message of the cause)."""
-    app = _aufbau(pfad)
+    app = _setup(path)
     app.create_user("Anna", password=PW)
     app.identifier_taken = lambda *a, **k: None
     try:
@@ -552,63 +552,63 @@ def kollision(pfad: str):
     return res
 
 
-kollision_a = kollision(pfad_a)
+collision_a = collision(path_a)
 r.check("(A) a collision on the migrated file: the trigger aborts with `tinysesam: identifier taken`, the caller turns "
         "it into a `ConfigError`",
-        kollision_a == ("ConfigError", "tinysesam: identifier taken"), str(kollision_a))
+        collision_a == ("ConfigError", "tinysesam: identifier taken"), str(collision_a))
 
 # ═══ (B) Idempotence ═════════════════════════════════════════════════════════════════════════════════
-def idempotenz_probleme(pfad: str) -> list:
+def idempotence_problems(path: str) -> list:
     """Migrate a fresh fixture, then run it again in three ways; list what the second run changed (empty = idempotent)."""
     problem = []
-    st, _ = _start(pfad)
+    st, _ = _start(path)
     st.db.close()
-    s1 = _tabellen(pfad)
-    st, log2 = _start(pfad)                                  # (1) an ordinary second start (stamp 15)
+    s1 = _tables(path)
+    st, log2 = _start(path)                                  # (1) an ordinary second start (current stamp)
     st.db.close()
-    if _tabellen(pfad) != s1 or MELDUNG in log2:
+    if _tables(path) != s1 or MESSAGE in log2:
         problem.append("second start changed something")
-    _roh(pfad, "PRAGMA user_version = 14;")                 # (2) the step runs again over migrated data
-    st, log3 = _start(pfad)
+    _raw(path, "PRAGMA user_version = 14;")                 # (2) the step runs again over migrated data
+    st, log3 = _start(path)
     st.db.close()
-    if _tabellen(pfad) != s1 or MELDUNG in log3 or _stempel(pfad) != 15:
+    if _tables(path) != s1 or MESSAGE in log3 or _stamp(path) != Store.SCHEMA_VERSION:
         problem.append(f"forced second run changed something ({log3[-120:]!r})")
-    st = Store(pfad)                                         # (3) the step itself: 0 rows, 0 changes on the connection
-    vor = st.db.total_changes
-    with st._schreibend():
-        zeilen = st._vokabular_englisch()
+    st = Store(path)                                         # (3) the step itself: 0 rows, 0 changes on the connection
+    prior = st.db.total_changes
+    with st._writing():
+        lines = st._vocabulary_english()
     st.db.rollback()
-    delta = st.db.total_changes - vor
+    delta = st.db.total_changes - prior
     st.db.close()
-    if zeilen != 0 or delta != 0 or _tabellen(pfad) != s1:
-        problem.append(f"direct second call: {zeilen} rows, {delta} changes")
+    if lines != 0 or delta != 0 or _tables(path) != s1:
+        problem.append(f"direct second call: {lines} rows, {delta} changes")
     return problem
 
 
-pfad_b = _neuer_pfad("b.db")
-_fixture_laden(pfad_b)
+path_b = _new_path("b.db")
+_load_fixture(path_b)
 r.check("(B) a second start, a forced second run (stamp back to 14) and a direct second call change 0 rows: the tables "
         "stay identical, no log line, 0 changes on the connection",
-        idempotenz_probleme(pfad_b) == [], str(idempotenz_probleme(_neuer_pfad())))
+        idempotence_problems(path_b) == [], str(idempotence_problems(_new_path())))
 # A file made by the current code (new spellings from the start): the step finds nothing, even when it runs again.
-pfad_b2 = _neuer_pfad("b2.db")
-st_b2, log_b2 = _start(pfad_b2)
+path_b2 = _new_path("b2.db")
+st_b2, log_b2 = _start(path_b2)
 st_b2.audit_log("oidc_revoked", "x", None, "client=wiki reason=group actor=deleted#7")
 st_b2.audit_log("login_fail", "deleted#3", None, "password reason=no_account")
 st_b2.db.close()
-neu_b2 = _tabellen(pfad_b2)
-_roh(pfad_b2, "PRAGMA user_version = 14;")
-st_b2, log_b2 = _start(pfad_b2)
+new_b2 = _tables(path_b2)
+_raw(path_b2, "PRAGMA user_version = 14;")
+st_b2, log_b2 = _start(path_b2)
 st_b2.db.close()
 r.check("(B) a file that never held old values: the step run over it (stamp forced back to 14) rewrites nothing",
-        _tabellen(pfad_b2) == neu_b2 and MELDUNG not in log_b2 and len(neu_b2[0]) == 2, log_b2[-200:])
+        _tables(path_b2) == new_b2 and MESSAGE not in log_b2 and len(new_b2[0]) == 2, log_b2[-200:])
 
 # ═══ (C) Free text stays untouched ═════════════════════════════════════════════════════════════════════
 # Rows whose text only happens to contain a word of the vocabulary. They sit at the end of an otherwise old file, next
 # to one row that MUST be rewritten (the companion — a migration that did nothing would otherwise pass).
-FREI = [
+FREE = [
     ("login_fail", "x", "password das konto wurde gesperrt, grund unklar"),          # words, no `=`
-    ("login_fail", "kontoinhaber", "password reason=no_account"),                      # a name that contains `konto`
+    ("login_fail", "kontoinhaber", "password reason=no_account"),                      # a name that contains `account`
     ("login_fail", "konto", "konto"),                                                  # name and detail are the word
     ("note", "x", "password kein_konto"),                                              # a token without its key
     ("login_fail", "x", "password mykonto=1 xgrund=2 unter_quelle=3"),                 # key as the end of a longer word
@@ -624,61 +624,61 @@ FREI = [
 COMPANION = ("login_fail", "x", "password grund=kein_konto")
 
 
-def freitext_probleme(pfad: str) -> list:
+def free_text_problems(path: str) -> list:
     """Migrate a fresh fixture with the free-text rows appended; list the rows that were wrongly changed (empty = right)."""
-    _fixture_laden(pfad, FREI + [COMPANION])
-    st, _ = _start(pfad)
+    _load_fixture(path, FREE + [COMPANION])
+    st, _ = _start(path)
     st.db.close()
-    zeilen = _audit(pfad)
-    neu = [(z[2], z[3], z[5]) for z in zeilen[len(PAIRS):]]
-    problem = [f"changed: {alt} -> {nach}" for alt, nach in zip(FREI, neu[:-1]) if alt != nach]
-    if neu[-1] != ("login_fail", "x", "password reason=no_account"):
-        problem.append(f"companion not migrated: {neu[-1]}")
+    lines = _audit(path)
+    new = [(z[2], z[3], z[5]) for z in lines[len(PAIRS):]]
+    problem = [f"changed: {old} -> {after}" for old, after in zip(FREE, new[:-1]) if old != after]
+    if new[-1] != ("login_fail", "x", "password reason=no_account"):
+        problem.append(f"companion not migrated: {new[-1]}")
     return problem
 
 
 r.check("(C) free text that merely contains a word of the vocabulary (`konto` without `=`, in a name, as the end of a "
         "word, behind `?`, `kein_konto` without its key, a name with `gelöscht#` inside) is not changed — and the "
         "companion row next to them is",
-        freitext_probleme(_neuer_pfad("c.db")) == [], str(freitext_probleme(_neuer_pfad("c2.db"))[:3]))
+        free_text_problems(_new_path("c.db")) == [], str(free_text_problems(_new_path("c2.db"))[:3]))
 
 # ═══ (D) The read paths take both spellings (a rollback leaves old rows behind) ═══════════════════════════
-pfad_d = _neuer_pfad("d.db")
+path_d = _new_path("d.db")
 post_d: list = []
-d = _aufbau(pfad_d, post_d)
+d = _setup(path_d, post_d)
 st_d = d.store
-JETZT = int(time.time())
+NOW = int(time.time())
 
 
-def alt_zeile(ev, user, det, ip=None):
+def old_line(ev, user, det, ip=None):
     """Write a row like another writer outside of this process (an older version, or the operator)."""
-    _roh(pfad_d, ("INSERT INTO audit(ts, event, username, ip, detail) VALUES (?,?,?,?,?)", (JETZT, ev, user, ip, det)))
+    _raw(path_d, ("INSERT INTO audit(ts, event, username, ip, detail) VALUES (?,?,?,?,?)", (NOW, ev, user, ip, det)))
 
 
 # recent_audit: hiding an event takes both spellings, in both directions
-alt_zeile("sperrhinweis", "bob", "grund=lockout_serie")
-alt_zeile("lockout_notice", "bob", "reason=lockout_series")
-alt_zeile("login", "bob", "password")
-ev_neu = [z["event"] for z in st_d.recent_audit(50, ohne_events=("lockout_notice",))]
-ev_alt = [z["event"] for z in st_d.recent_audit(50, ohne_events=("sperrhinweis",))]
-r.check("(D) `recent_audit(ohne_events=…)` hides the event in both spellings, whichever one is asked for",
-        "sperrhinweis" not in ev_neu and "lockout_notice" not in ev_neu and "login" in ev_neu
-        and "sperrhinweis" not in ev_alt and "lockout_notice" not in ev_alt and "login" in ev_alt, f"{ev_neu} {ev_alt}")
+old_line("sperrhinweis", "bob", "grund=lockout_serie")
+old_line("lockout_notice", "bob", "reason=lockout_series")
+old_line("login", "bob", "password")
+ev_new = [z["event"] for z in st_d.recent_audit(50, without_events=("lockout_notice",))]
+ev_old = [z["event"] for z in st_d.recent_audit(50, without_events=("sperrhinweis",))]
+r.check("(D) `recent_audit(without_events=…)` hides the event in both spellings, whichever one is asked for",
+        "sperrhinweis" not in ev_new and "lockout_notice" not in ev_new and "login" in ev_new
+        and "sperrhinweis" not in ev_old and "lockout_notice" not in ev_old and "login" in ev_old, f"{ev_new} {ev_old}")
 # recent_audit(username=<replacement name>)
-alt_zeile("login", "gelöscht#42", "password")
-alt_zeile("login", "deleted#42", "password")
-alt_zeile("login", "deleted#4", "password")
+old_line("login", "gelöscht#42", "password")
+old_line("login", "deleted#42", "password")
+old_line("login", "deleted#4", "password")
 r.check("(D) `recent_audit(username=…)` finds a replacement name in both spellings, and not another id",
         len(st_d.recent_audit(50, username="deleted#42")) == 2 and len(st_d.recent_audit(50, username="gelöscht#42")) == 2
         and len(st_d.recent_audit(50, username="deleted#4")) == 1)
-# quellmail_seit: `konto=` and `account=`
+# source_mail_since: `konto=` and `account=`
 bob = d.create_user("bob", password=PW, email="bob@example.com")
 carol = d.create_user("carol", password=PW, email="carol@example.com")
-alt_zeile("federation_email_confirm", "bob", f"konto={bob} quelle=ldap an=x@y.z")
-r.check("(D) `quellmail_seit` recognises the old row (`konto=<id> `), not for another account",
-        st_d.quellmail_seit(bob, 0) and not st_d.quellmail_seit(carol, 0))
-alt_zeile("federation_email_confirm", "carol", f"account={carol} source=ldap to=x@y.z")
-r.check("(D) … and the new row (`account=<id> `)", st_d.quellmail_seit(carol, 0))
+old_line("federation_email_confirm", "bob", f"konto={bob} quelle=ldap an=x@y.z")
+r.check("(D) `source_mail_since` recognises the old row (`konto=<id> `), not for another account",
+        st_d.source_mail_since(bob, 0) and not st_d.source_mail_since(carol, 0))
+old_line("federation_email_confirm", "carol", f"account={carol} source=ldap to=x@y.z")
+r.check("(D) … and the new row (`account=<id> `)", st_d.source_mail_since(carol, 0))
 # own_events: old and new rows of the same account
 dora = d.create_user("dora", password=PW, email="dora@example.com")
 for ev_, det, ip_ in (("email_change_taken", "neu=x@y.z beim_bestaetigen=1", "203.0.113.9"),
@@ -691,17 +691,17 @@ for ev_, det, ip_ in (("email_change_taken", "neu=x@y.z beim_bestaetigen=1", "20
                       ("oidc_widerruf", "client=wiki grund=gruppe", "203.0.113.9"),
                       ("password_reset", "uid=1 akteur=admin", "203.0.113.9"),
                       ("password_reset", "uid=1 actor=admin", "203.0.113.9")):
-    alt_zeile(ev_, "dora", det, ip_)
+    old_line(ev_, "dora", det, ip_)
 own = d.own_events(dora, 50)
-namen = [e["event"] for e in own]
+names = [e["event"] for e in own]
 r.check("(D) `own_events` hides the directory rejection and the confirmation mail row in both spellings",
-        "ldap_kennung_abgewiesen" not in namen and "ldap_identifier_rejected" not in namen
-        and "federation_email_confirm" not in namen, str(namen))
+        "ldap_kennung_abgewiesen" not in names and "ldap_identifier_rejected" not in names
+        and "federation_email_confirm" not in names, str(names))
 r.check("(D) … a conflict at confirmation (`beim_bestaetigen=1` and `on_confirmation=1`) keeps its event name, the "
         "same event at the request (`neu=`/`new=` only) shows as `email_change_requested`",
-        namen.count("email_change_taken") == 2 and namen.count("email_change_requested") == 2, str(namen))
+        names.count("email_change_taken") == 2 and names.count("email_change_requested") == 2, str(names))
 r.check("(D) … an old event name is shown in the English spelling",
-        "oidc_revoked" in namen and "oidc_widerruf" not in namen, str(namen))
+        "oidc_revoked" in names and "oidc_widerruf" not in names, str(names))
 adm = [e for e in own if e["event"] == "password_reset"]
 r.check("(D) … `akteur=` and `actor=` both mark the line as done by an admin (`by_admin`, no IP); the others keep their IP",
         [e["by_admin"] for e in adm] == [True, True] and all(e["ip"] is None for e in adm)
@@ -709,24 +709,24 @@ r.check("(D) … `akteur=` and `actor=` both mark the line as done by an admin (
 # the lockout notice: a row of an older version still throttles the next one
 eva = d.create_user("eva", password=PW, email="eva@example.com")
 post_d.clear()
-alt_zeile("sperrhinweis", "eva", "grund=lockout_serie")
-d._sperrhinweis("eva", "203.0.113.1", "lockout_series")
-d._hinweis_ausgang.abwarten()
-r.check("(D) `_sperrhinweis`: a notice row in the OLD spelling inside the window throttles the next notice (no mail)",
+old_line("sperrhinweis", "eva", "grund=lockout_serie")
+d._lockout_notice("eva", "203.0.113.1", "lockout_series")
+d._notice_outcome.wait()
+r.check("(D) `_lockout_notice`: a notice row in the OLD spelling inside the window throttles the next notice (no mail)",
         post_d == [], str(post_d))
 fred = d.create_user("fred", password=PW, email="fred@example.com")
-d._sperrhinweis("fred", "203.0.113.1", "lockout_series")
-d._hinweis_ausgang.abwarten()
+d._lockout_notice("fred", "203.0.113.1", "lockout_series")
+d._notice_outcome.wait()
 r.check("(D) … without one the notice goes out and is written in the new spelling",
         len(post_d) == 1 and st_d._one("SELECT detail FROM audit WHERE event='lockout_notice' AND username='fred'")["detail"]
         == "reason=lockout_series", str(post_d))
 # deleting an account: old rows of the same account are anonymised as well
 gus = d.create_user("gus", password=PW, email="gus@example.com")
 hal = d.create_user("hal", password=PW, email="hal@example.com")
-alt_zeile("password_reset", "hal", "uid=9 akteur=gus")
-alt_zeile("password_reset", "hal", "uid=9 actor=gus")
-alt_zeile("username_changed", "gus", "alt=gus0 durch=betreiber akteur=hal")
-alt_zeile("email_change_requested", "gus", "neu=future@example.com")
+old_line("password_reset", "hal", "uid=9 akteur=gus")
+old_line("password_reset", "hal", "uid=9 actor=gus")
+old_line("username_changed", "gus", "alt=gus0 durch=betreiber akteur=hal")
+old_line("email_change_requested", "gus", "neu=future@example.com")
 d.delete_user(gus)
 rest = " ".join(f"{z['event']} {z['username']} {z['detail']}" for z in st_d._all("SELECT * FROM audit"))
 r.check("(D) `delete_user` finds the account in old rows too: `akteur=gus` and `actor=gus` both become `deleted#<id>`; "
@@ -735,94 +735,94 @@ r.check("(D) `delete_user` finds the account in old rows too: `akteur=gus` and `
         and "gus0" not in rest and "future@" not in rest, rest[-300:])
 
 # Display paths: the CLI and the panel show the new spelling for every row, old or new.
-BLEIBT_ALT = re.compile(r"(?<!\S)(?:grund|konto|quelle|durch|akteur|alt|neu|an|verlangt|nachgetragen|wettlauf)=|gelöscht#|"
+STAYS_OLD = re.compile(r"(?<!\S)(?:grund|konto|quelle|durch|akteur|alt|neu|an|verlangt|nachgetragen|wettlauf)=|gelöscht#|"
                         r"\boidc_widerruf\b|\bsperrhinweis\b|\bldap_kennung_|\blockout_serie\b")
-alt_zeile("oidc_widerruf", "bob", "client=wiki grund=gruppe akteur=gelöscht#7")
-alt_zeile("ldap_kennung_gebunden", "bob", "nachgebunden beim Login")
-alt_zeile("oidc_widerruf", "gelöscht#7", "client=wiki grund=invalid_grant")
-puffer_cli = io.StringIO()
-with contextlib.redirect_stdout(puffer_cli):
+old_line("oidc_widerruf", "bob", "client=wiki grund=gruppe akteur=gelöscht#7")
+old_line("ldap_kennung_gebunden", "bob", "nachgebunden beim Login")
+old_line("oidc_widerruf", "gelöscht#7", "client=wiki grund=invalid_grant")
+buffer_cli = io.StringIO()
+with contextlib.redirect_stdout(buffer_cli):
     try:
-        cli_main(["audit", "--db", pfad_d, "-n", "500"])
+        cli_main(["audit", "--db", path_d, "-n", "500"])
     except SystemExit:
         pass
-cli = puffer_cli.getvalue()
+cli = buffer_cli.getvalue()
 r.check("(D) `tinysesam audit` shows the new spelling for old rows (event, `reason=`, `actor=deleted#7`, username) and "
         "leaves the new rows as they are",
         "oidc_revoked" in cli and "reason=group actor=deleted#7" in cli and "reason=invalid_grant" in cli
         and "deleted#7" in cli and "ldap_identifier_bound" in cli and "bound later at sign-in" in cli
-        and "lockout_notice" in cli and "reason=lockout_series" in cli and not BLEIBT_ALT.search(cli),
-        f"{BLEIBT_ALT.search(cli)} {cli[-600:]}")
+        and "lockout_notice" in cli and "reason=lockout_series" in cli and not STAYS_OLD.search(cli),
+        f"{STAYS_OLD.search(cli)} {cli[-600:]}")
 d.create_user("chefin", password=PW, is_admin=True)
 tc = TestClient(_app(d))
 tc.post("/auth/login", data={"username": "chefin", "password": PW}, follow_redirects=False)
-antwort = tc.get("/auth/admin/api/audit?limit=500")
-zeilen_api = antwort.json() if antwort.status_code == 200 else []
-text_api = " ".join(f"{z['event']} {z['username']} {z['detail']}" for z in zeilen_api)
+response = tc.get("/auth/admin/api/audit?limit=500")
+lines_api = response.json() if response.status_code == 200 else []
+text_api = " ".join(f"{z['event']} {z['username']} {z['detail']}" for z in lines_api)
 r.check("(D) the panel API (`/api/audit`) shows the new spelling for old rows and does not mix: no old event, key or name",
-        antwort.status_code == 200 and len(zeilen_api) > 20 and not BLEIBT_ALT.search(text_api)
-        and "oidc_revoked" in text_api and "reason=group actor=deleted#7" in text_api, f"{antwort.status_code} {text_api[-300:]}")
+        response.status_code == 200 and len(lines_api) > 20 and not STAYS_OLD.search(text_api)
+        and "oidc_revoked" in text_api and "reason=group actor=deleted#7" in text_api, f"{response.status_code} {text_api[-300:]}")
 st_d.db.close()
 
 # The address-change conflict on confirmation is the `own_events` check above (`on_confirmation=1` / `beim_bestaetigen=1`).
 # The trigger of a file that was rolled back keeps the OLD message; the caller must not depend on the text.
-pfad_t = _neuer_pfad("t.db")
-t0 = _aufbau(pfad_t)
+path_t = _new_path("t.db")
+t0 = _setup(path_t)
 t0.store.db.close()
-for name_, sql_ in _lesen(pfad_t, "SELECT name, sql FROM sqlite_master WHERE type='trigger' AND name LIKE 'trg_users_kennung_%'"):
-    _roh(pfad_t, f"DROP TRIGGER {name_};", sql_.replace("tinysesam: identifier taken", "tinysesam: kennung vergeben"))
-def nicht_ersetzen(self):                                                   # a start that cannot rewrite the trigger
+for name_, sql_ in _read(path_t, "SELECT name, sql FROM sqlite_master WHERE type='trigger' AND name LIKE 'trg_users_identifier_%'"):
+    _raw(path_t, f"DROP TRIGGER {name_};", sql_.replace("tinysesam: identifier taken", "tinysesam: kennung vergeben"))
+def replace_not(self):                                                   # a start that cannot rewrite the trigger
     raise sqlite3.OperationalError("attempt to write a readonly database")
-with patch(Store, "_trigger_setzen", nicht_ersetzen):
-    alt_trigger = kollision(pfad_t)
+with patch(Store, "_set_trigger", replace_not):
+    old_trigger = collision(path_t)
 r.check("(D) a trigger that still carries the OLD message (`kennung vergeben`) aborts as well, and the caller reports "
         "the same `ConfigError` — it recognises the case by `IntegrityError`, not by the text",
-        alt_trigger == ("ConfigError", "tinysesam: kennung vergeben"), str(alt_trigger))
+        old_trigger == ("ConfigError", "tinysesam: kennung vergeben"), str(old_trigger))
 
 # ═══ (E) A file that cannot be written starts anyway ════════════════════════════════════════════════
 # Stamp 15 with old rows, as after a rollback, on a volume that was mounted read-only. The connection is opened with
 # `mode=ro` (SQLite's own read-only mode, what the kernel does for a read-only mount): a file permission would not hold
 # for a test that runs as root, and `PRAGMA query_only` also refuses the `BEGIN IMMEDIATE` of the start, which a real
 # read-only file does not.
-pfad_e = _neuer_pfad("e.db")
-e0 = _aufbau(pfad_e)
+path_e = _new_path("e.db")
+e0 = _setup(path_e)
 e0.create_user("anna", password=PW)
 e0.store.db.close()
-_roh(pfad_e, ("INSERT INTO audit(ts, event, username, ip, detail) VALUES (?,?,?,?,?)",
+_raw(path_e, ("INSERT INTO audit(ts, event, username, ip, detail) VALUES (?,?,?,?,?)",
               (int(time.time()), "oidc_widerruf", "anna", None, "client=wiki grund=gruppe akteur=gelöscht#7")))
-_roh(pfad_e, ("INSERT INTO fehlserie(topf, art, anzahl, seit, zuletzt) VALUES ('anna', 'pin_folge', 2, 1, 2)"))
-vor_e = _tabellen(pfad_e)
-verbindung = sqlite3.connect
+_raw(path_e, ("INSERT INTO failure_series(folded, kind, count, since, last_seen) VALUES ('anna', 'pin_folge', 2, 1, 2)"))
+prior_e = _tables(path_e)
+connection = sqlite3.connect
 
 
-def nur_lesen(pfad, *a, **k):
-    return verbindung(f"file:{pfad}?mode=ro", *a, uri=True, **k)
+def only_read(path, *a, **k):
+    return connection(f"file:{path}?mode=ro", *a, uri=True, **k)
 
 
-sqlite3.connect = nur_lesen
+sqlite3.connect = only_read
 try:
     try:
-        e1, log_e = _mitschreiben(lambda: _aufbau(pfad_e))
+        e1, log_e = _record(lambda: _setup(path_e))
         start_e = "ok"
-    except Exception as fehler:        # noqa: BLE001 — the start itself fails
-        e1, log_e, start_e = None, "", f"{type(fehler).__name__}: {fehler}"
+    except Exception as error:        # noqa: BLE001 — the start itself fails
+        e1, log_e, start_e = None, "", f"{type(error).__name__}: {error}"
 finally:
-    sqlite3.connect = verbindung
-r.check("(E) a read-only file at stamp 15 with old rows (event, detail, name, streak kind): the start succeeds",
-        start_e == "ok" and _stempel(pfad_e) == 15, start_e)
+    sqlite3.connect = connection
+r.check("(E) a read-only file at the current stamp with old rows (event, detail, name, streak kind): the start succeeds",
+        start_e == "ok" and _stamp(path_e) == Store.SCHEMA_VERSION, start_e)
 if start_e == "ok":
-    zeilen_e = e1.store.recent_audit(10)
+    lines_e = e1.store.recent_audit(10)
     r.check("(E) … nothing is rewritten (the old rows are still there, byte for byte) and no log line claims it",
-            _tabellen(pfad_e) == vor_e and MELDUNG not in log_e, log_e[-200:])
+            _tables(path_e) == prior_e and MESSAGE not in log_e, log_e[-200:])
     r.check("(E) … and the old rows are read in the new spelling: `own_events`, the display mapping",
             [x["event"] for x in e1.own_events(1, 10)] == ["oidc_revoked"]
-            and V.audit_zeile_neu(zeilen_e[0])["detail"] == "client=wiki reason=group actor=deleted#7")
+            and V.audit_line_new(lines_e[0])["detail"] == "client=wiki reason=group actor=deleted#7")
     e1.store.db.close()
 
 # ═══ (F) New code writes only the new spelling ═════════════════════════════════════════════════════════
-pfad_f = _neuer_pfad("f.db")
+path_f = _new_path("f.db")
 post_f: list = []
-f = _aufbau(pfad_f, post_f, apikey_allow_unlimited=True)
+f = _setup(path_f, post_f, apikey_allow_unlimited=True)
 anna = f.create_user("anna", password=PW, email="anna@example.com")
 bert = f.create_user("bert", password=PW, email="bert@example.com")
 f.ensure_admin("chefin", PW)
@@ -834,236 +834,236 @@ f.create_api_key(anna, name="cli", kind="human")
 f.verify_api_key("tsk_" + "x" * 40)
 f.change_username(anna, "anna2", "203.0.113.5")
 f.change_username(bert, "bert2", "203.0.113.5", by_operator=True)
-f.request_email_change(anna, "anna.neu@example.com", BASIS)()
-f._sperrhinweis("anna2", "203.0.113.5", "lockout_series")
-f._hinweis_ausgang.abwarten()
+f.request_email_change(anna, "anna.neu@example.com", BASE)()
+f._lockout_notice("anna2", "203.0.113.5", "lockout_series")
+f._notice_outcome.wait()
 f.set_disabled(bert, True)
 f.delete_user(bert)
-zeilen_f = f.store._all("SELECT event, username, detail FROM audit ORDER BY id")
-events_f = {z["event"] for z in zeilen_f}
-text_f = " | ".join(f"{z['event']}:{z['username']}:{z['detail']}" for z in zeilen_f)
+lines_f = f.store._all("SELECT event, username, detail FROM audit ORDER BY id")
+events_f = {z["event"] for z in lines_f}
+text_f = " | ".join(f"{z['event']}:{z['username']}:{z['detail']}" for z in lines_f)
 r.check("(F) real operations (wrong password, unknown name, API keys, rename by the user and by the operator, address "
         "change, lockout notice, lock, delete) leave rows — and none of them in the old spelling",
         {"login_fail", "apikey_create", "apikey_denied", "username_changed", "email_change_requested",
          "lockout_notice", "user_disable", "user_delete"} <= events_f
-        and not [alt_vokabular(z["event"], z["username"], z["detail"]) for z in zeilen_f
-                 if alt_vokabular(z["event"], z["username"], z["detail"])], text_f[-400:])
-erwartet_f = ("reason=wrong_secret", "reason=no_account", "kind=human", "kind=automation", "expiry=unlimited",
+        and not [old_vocabulary(z["event"], z["username"], z["detail"]) for z in lines_f
+                 if old_vocabulary(z["event"], z["username"], z["detail"])], text_f[-400:])
+expected_f = ("reason=wrong_secret", "reason=no_account", "kind=human", "kind=automation", "expiry=unlimited",
               "old=anna", "by=operator", "reason=lockout_series", f"user_delete:deleted#{bert}:uid={bert} audit_anonymized=")
-fehlt_f = [x for x in erwartet_f if x not in text_f]
+missing_f = [x for x in expected_f if x not in text_f]
 r.check("(F) … in the expected new form: `reason=wrong_secret`/`reason=no_account`, `kind=human`/`kind=automation` "
         "with `expiry=unlimited`, `old=anna`, `by=operator`, `reason=lockout_series`, `deleted#<id>` with `audit_anonymized=`",
-        not fehlt_f, f"missing {fehlt_f} in {text_f[-500:]}")
+        not missing_f, f"missing {missing_f} in {text_f[-500:]}")
 r.check("(F) the series kind and the method of a failed PIN step are written as `pin_chain` (no `pin_folge` anywhere "
         "in the tables)",
-        not _lesen(pfad_f, "SELECT 1 FROM fehlserie WHERE art='pin_folge' UNION ALL "
+        not _read(path_f, "SELECT 1 FROM failure_series WHERE kind='pin_folge' UNION ALL "
                            "SELECT 1 FROM login_attempt WHERE method='pin_folge'"))
 f.store.db.close()
 
 # ═══ (G) Mutations: every guard turns the suite red when it is broken ═══════════════════════════════
 # Each one breaks a COPY of a table or one function for the length of the block (never the source) and runs the same
 # check function as the real run above; the suite is red exactly when that function reports a problem.
-def mutiert(name: str, bruch, pruefung) -> None:
-    """`pruefung` ran green above. Under the break `bruch()` (a context manager) it must find a problem."""
-    with bruch():
-        probleme = pruefung()
-    r.check(f"mutation: {name} — the check turns red", bool(probleme), "the break was not noticed")
+def mutated(name: str, breakage, check) -> None:
+    """`check` ran green above. Under the break `bruch()` (a context manager) it must find a problem."""
+    with breakage():
+        problems = check()
+    r.check(f"mutation: {name} — the check turns red", bool(problems), "the break was not noticed")
 
 
-def ohne_eintrag(tabelle_name: str, schluessel: str):
+def without_entry(table_name: str, key_name: str):
     @contextlib.contextmanager
     def _b():
-        kaputt = {k: v for k, v in getattr(V, tabelle_name).items() if k != schluessel}
-        with patch(V, tabelle_name, kaputt):
+        broken = {k: v for k, v in getattr(V, table_name).items() if k != key_name}
+        with patch(V, table_name, broken):
             yield
     return _b
 
 
-def frisch_fixture() -> str:
-    p = _neuer_pfad("m.db")
-    _fixture_laden(p)
+def fresh_fixture() -> str:
+    p = _new_path("m.db")
+    _load_fixture(p)
     return p
 
 
 r.check("mutation baseline: the unbroken fixture migration reports no problem",
-        fixture_probleme(frisch_fixture()) == [])
-mutiert("`oidc_widerruf` removed from AUDIT_EREIGNISSE_ALT", ohne_eintrag("AUDIT_EREIGNISSE_ALT", "oidc_widerruf"),
-        lambda: fixture_probleme(frisch_fixture()))
-mutiert("`sperrhinweis` removed from AUDIT_EREIGNISSE_ALT", ohne_eintrag("AUDIT_EREIGNISSE_ALT", "sperrhinweis"),
-        lambda: fixture_probleme(frisch_fixture()))
-mutiert("`_kennung_gebunden` removed from AUDIT_FAMILIEN_ALT", ohne_eintrag("AUDIT_FAMILIEN_ALT", "_kennung_gebunden"),
-        lambda: fixture_probleme(frisch_fixture()))
-mutiert("`_namensbindung_zu` removed from AUDIT_FAMILIEN_ALT", ohne_eintrag("AUDIT_FAMILIEN_ALT", "_namensbindung_zu"),
-        lambda: fixture_probleme(frisch_fixture()))
-mutiert("`pin_folge` removed from KINDS_ALT (the series kinds stay old)", ohne_eintrag("KINDS_ALT", "pin_folge"),
-        lambda: fixture_probleme(frisch_fixture()))
+        fixture_problems(fresh_fixture()) == [])
+mutated("`oidc_widerruf` removed from AUDIT_EVENTS_OLD", without_entry("AUDIT_EVENTS_OLD", "oidc_widerruf"),
+        lambda: fixture_problems(fresh_fixture()))
+mutated("`sperrhinweis` removed from AUDIT_EVENTS_OLD", without_entry("AUDIT_EVENTS_OLD", "sperrhinweis"),
+        lambda: fixture_problems(fresh_fixture()))
+mutated("`_kennung_gebunden` removed from AUDIT_FAMILIES_OLD", without_entry("AUDIT_FAMILIES_OLD", "_kennung_gebunden"),
+        lambda: fixture_problems(fresh_fixture()))
+mutated("`_namensbindung_zu` removed from AUDIT_FAMILIES_OLD", without_entry("AUDIT_FAMILIES_OLD", "_namensbindung_zu"),
+        lambda: fixture_problems(fresh_fixture()))
+mutated("`pin_folge` removed from KINDS_OLD (the series kinds stay old)", without_entry("KINDS_OLD", "pin_folge"),
+        lambda: fixture_problems(fresh_fixture()))
 
 
-def trigger_probleme() -> list:
-    p = frisch_fixture()
+def trigger_problems() -> list:
+    p = fresh_fixture()
     st, _ = _start(p)
     st.db.close()
     problem = []
-    texte = trigger_texte(p)
-    if len(texte) != 2 or not all("tinysesam: identifier taken" in t and "kennung vergeben" not in t for t in texte):
+    texts = trigger_texts(p)
+    if len(texts) != 2 or not all("tinysesam: identifier taken" in t and "kennung vergeben" not in t for t in texts):
         problem.append("trigger text")
-    if kollision(p) != ("ConfigError", "tinysesam: identifier taken"):
+    if collision(p) != ("ConfigError", "tinysesam: identifier taken"):
         problem.append("collision message")
     return problem
 
 
 @contextlib.contextmanager
-def ohne_token():
+def without_token():
     """`kein_konto` missing in the value table of `reason=`: the key is renamed, its value stays German."""
-    kaputt = {**V.AUDIT_WERTE_ALT, "reason": {k: v for k, v in V.AUDIT_WERTE_ALT["reason"].items() if k != "kein_konto"}}
-    with patch(V, "AUDIT_WERTE_ALT", kaputt):
+    broken = {**V.AUDIT_VALUES_OLD, "reason": {k: v for k, v in V.AUDIT_VALUES_OLD["reason"].items() if k != "kein_konto"}}
+    with patch(V, "AUDIT_VALUES_OLD", broken):
         yield
 
 
-r.check("mutation baseline: the unbroken trigger replacement reports no problem", trigger_probleme() == [])
-mutiert("the trigger message is still the old one", lambda: patch(Store, "KENNUNG_VERGEBEN", "tinysesam: kennung vergeben"),
-        trigger_probleme)
-mutiert("the replacement prefix is not translated (`deleted#` -> `deleted_`)", lambda: patch(V, "ERSATZ_PRAEFIX", "deleted_"),
-        lambda: fixture_probleme(frisch_fixture()))
-mutiert("`kein_konto` removed from the token table of `reason=`", ohne_token, lambda: fixture_probleme(frisch_fixture()))
+r.check("mutation baseline: the unbroken trigger replacement reports no problem", trigger_problems() == [])
+mutated("the trigger message is still the old one", lambda: patch(Store, "IDENTIFIER_GRANT", "tinysesam: kennung vergeben"),
+        trigger_problems)
+mutated("the replacement prefix is not translated (`deleted#` -> `deleted_`)", lambda: patch(V, "REPLACEMENT_PREFIX", "deleted_"),
+        lambda: fixture_problems(fresh_fixture()))
+mutated("`kein_konto` removed from the token table of `reason=`", without_token, lambda: fixture_problems(fresh_fixture()))
 
 
 @contextlib.contextmanager
-def ohne_wortgrenze():
+def without_word_boundary():
     """The key pattern without the word boundary in front: `mykonto=1` and `?konto=1` would be rewritten."""
-    muster = re.compile(r"(" + "|".join(sorted(map(re.escape, V.AUDIT_SCHLUESSEL_ALT), key=len, reverse=True)) + r")=(\S*)")
-    with patch(V, "_SCHLUESSEL_RE", muster):
+    pattern = re.compile(r"(" + "|".join(sorted(map(re.escape, V.AUDIT_KEY_NAME_OLD), key=len, reverse=True)) + r")=(\S*)")
+    with patch(V, "_KEY_NAME_RE", pattern):
         yield
 
 
-mutiert("`audit_detail_neu` without the word boundary in front of the key", ohne_wortgrenze,
-        lambda: freitext_probleme(_neuer_pfad("mf.db")))
-mutiert("`audit_detail_neu` without the word boundary — the fixture rows themselves go wrong too", ohne_wortgrenze,
-        lambda: fixture_probleme(frisch_fixture()))
+mutated("`audit_detail_new` without the word boundary in front of the key", without_word_boundary,
+        lambda: free_text_problems(_new_path("mf.db")))
+mutated("`audit_detail_new` without the word boundary — the fixture rows themselves go wrong too", without_word_boundary,
+        lambda: fixture_problems(fresh_fixture()))
 
 
 @contextlib.contextmanager
-def alles_ersetzen():
+def replace_everything():
     """A value replaced anywhere in the text, not only behind its key (a token as a free word)."""
-    echt = V.audit_detail_neu
+    real = V.audit_detail_new
 
-    def kaputt(detail, event=None):
-        detail = echt(detail, event)
-        if isinstance(detail, str) and event not in V.FREITEXT_EREIGNISSE:
-            for alt, neu in V.TOKENS_ALT.items():
-                detail = re.sub(rf"(?<![\w=]){re.escape(alt)}(?!\w)", neu, detail)
+    def broken(detail, event=None):
+        detail = real(detail, event)
+        if isinstance(detail, str) and event not in V.FREE_TEXT_EVENTS:
+            for old, new in V.TOKENS_OLD.items():
+                detail = re.sub(rf"(?<![\w=]){re.escape(old)}(?!\w)", new, detail)
         return detail
-    with patch(V, "audit_detail_neu", kaputt):
+    with patch(V, "audit_detail_new", broken):
         yield
 
 
-mutiert("`audit_detail_neu` replaces a token as a free word (`kein_konto` without its key)", alles_ersetzen,
-        lambda: freitext_probleme(_neuer_pfad("mt.db")))
+mutated("`audit_detail_new` replaces a token as a free word (`kein_konto` without its key)", replace_everything,
+        lambda: free_text_problems(_new_path("mt.db")))
 
 
 @contextlib.contextmanager
-def aufwand_ungeschuetzt():
+def effort_unprotected():
     """The step writes every row again on every run, "just to be safe" (an unguarded UPDATE: it also fails on a read-only file)."""
-    echt = Store._vokabular_englisch
+    real = Store._vocabulary_english
 
-    def kaputt(self):
-        return echt(self) + self.db.execute("UPDATE audit SET detail = detail").rowcount
-    with patch(Store, "_vokabular_englisch", kaputt):
+    def broken(self):
+        return real(self) + self.db.execute("UPDATE audit SET detail = detail").rowcount
+    with patch(Store, "_vocabulary_english", broken):
         yield
 
 
 @contextlib.contextmanager
-def nicht_idempotent():
+def not_idempotent():
     """A mapping that is not idempotent: it adds a blank behind `reason=` on every pass."""
-    echt = V.audit_detail_neu
+    real = V.audit_detail_new
 
-    def kaputt(detail, event=None):
-        detail = echt(detail, event)
+    def broken(detail, event=None):
+        detail = real(detail, event)
         return detail.replace("reason=", "reason= ") if isinstance(detail, str) else detail
-    with patch(V, "audit_detail_neu", kaputt):
+    with patch(V, "audit_detail_new", broken):
         yield
 
 
-def idempotenz_frisch() -> list:
-    p = _neuer_pfad("mi.db")
-    _fixture_laden(p)
-    return idempotenz_probleme(p)
+def idempotence_fresh() -> list:
+    p = _new_path("mi.db")
+    _load_fixture(p)
+    return idempotence_problems(p)
 
 
-r.check("mutation baseline: the unbroken step is idempotent", idempotenz_frisch() == [])
-mutiert("the step runs twice with effort (an unguarded UPDATE on every run)", aufwand_ungeschuetzt, idempotenz_frisch)
-mutiert("the mapping is not idempotent (a second pass changes the text again)", nicht_idempotent, idempotenz_frisch)
+r.check("mutation baseline: the unbroken step is idempotent", idempotence_fresh() == [])
+mutated("the step runs twice with effort (an unguarded UPDATE on every run)", effort_unprotected, idempotence_fresh)
+mutated("the mapping is not idempotent (a second pass changes the text again)", not_idempotent, idempotence_fresh)
 
 
 # The read paths: break one spelling and the (D) checks must see it. The checks are re-run as functions.
-def lesepfad_probleme() -> list:
-    p = _neuer_pfad("ml.db")
-    x = _aufbau(p)
+def read_path_problems() -> list:
+    p = _new_path("ml.db")
+    x = _setup(p)
     stx = x.store
-    zeit = int(time.time()) + 60
-    probleme = []
+    when = int(time.time()) + 60
+    problems = []
     u = x.create_user("dora", password=PW, email="dora@example.com")
     for ev_, det in (("sperrhinweis", "grund=lockout_serie"), ("lockout_notice", "reason=lockout_series"),
                      ("email_change_taken", "neu=x@y.z beim_bestaetigen=1"), ("email_change_taken", "new=x@y.z on_confirmation=1"),
                      ("password_reset", "uid=1 akteur=admin"), ("password_reset", "uid=1 actor=admin"),
                      ("ldap_kennung_abgewiesen", "grund=kennung_zweier_konten lokal=3 verzeichnis=1"),
                      ("federation_email_confirm", f"konto={u} quelle=ldap an=x@y.z")):
-        _roh(p, ("INSERT INTO audit(ts, event, username, ip, detail) VALUES (?,?,?,?,?)", (zeit, ev_, "dora", "203.0.113.9", det)))
-    ev = [z["event"] for z in stx.recent_audit(50, ohne_events=("lockout_notice",))]
+        _raw(p, ("INSERT INTO audit(ts, event, username, ip, detail) VALUES (?,?,?,?,?)", (when, ev_, "dora", "203.0.113.9", det)))
+    ev = [z["event"] for z in stx.recent_audit(50, without_events=("lockout_notice",))]
     if "sperrhinweis" in ev or "lockout_notice" in ev:
-        probleme.append("recent_audit shows a hidden event")
-    eigen = x.own_events(u, 50)
-    if [e["by_admin"] for e in eigen if e["event"] == "password_reset"] != [True, True]:
-        probleme.append("own_events misses an actor")
-    if [e["event"] for e in eigen].count("email_change_taken") != 2:
-        probleme.append("own_events misses the conflict on confirmation")
-    if "ldap_kennung_abgewiesen" in [e["event"] for e in eigen]:
-        probleme.append("own_events shows the rejection")
-    if not stx.quellmail_seit(u, 0):
-        probleme.append("quellmail_seit misses the old row")
+        problems.append("recent_audit shows a hidden event")
+    own = x.own_events(u, 50)
+    if [e["by_admin"] for e in own if e["event"] == "password_reset"] != [True, True]:
+        problems.append("own_events misses an actor")
+    if [e["event"] for e in own].count("email_change_taken") != 2:
+        problems.append("own_events misses the conflict on confirmation")
+    if "ldap_kennung_abgewiesen" in [e["event"] for e in own]:
+        problems.append("own_events shows the rejection")
+    if not stx.source_mail_since(u, 0):
+        problems.append("source_mail_since misses the old row")
     stx.db.close()
-    return probleme
+    return problems
 
 
-r.check("mutation baseline: the unbroken read paths report no problem", lesepfad_probleme() == [])
+r.check("mutation baseline: the unbroken read paths report no problem", read_path_problems() == [])
 
 
 @contextlib.contextmanager
-def nur_neue_ereignisse():
-    with patch(V, "ereignis_formen", lambda *ev: tuple(V.audit_ereignis_neu(e) for e in ev)):
+def only_new_events():
+    with patch(V, "event_forms", lambda *ev: tuple(V.audit_event_new(e) for e in ev)):
         yield
 
 
 @contextlib.contextmanager
-def nur_neuer_schluessel():
-    with patch(V, "detail_hat_schluessel", lambda detail, s: bool(detail) and (s + "=") in str(detail).split(" ")[0:99]
+def only_new_key_name():
+    with patch(V, "detail_has_key", lambda detail, s: bool(detail) and (s + "=") in str(detail).split(" ")[0:99]
                or bool(detail) and any(t.startswith(s + "=") for t in str(detail).split(" "))):
         yield
 
 
 @contextlib.contextmanager
-def nur_neues_flag():
-    with patch(V, "detail_hat_wert", lambda detail, s, w: bool(detail) and f"{s}={w}" in str(detail).split(" ")):
+def only_new_flag():
+    with patch(V, "detail_has_value", lambda detail, s, w: bool(detail) and f"{s}={w}" in str(detail).split(" ")):
         yield
 
 
 @contextlib.contextmanager
-def quellmail_nur_neu():
-    echt = Store.quellmail_seit
+def source_mail_only_new():
+    real = Store.source_mail_since
 
-    def kaputt(self, user_id, seit):
+    def broken(self, user_id, since):
         return bool(self._one("SELECT 1 FROM audit WHERE ts >= ? AND event IN (?, ?, ?) AND detail LIKE ? LIMIT 1",
-                              (int(seit), *self.QUELLMAIL_ERLEDIGT, f"account={int(user_id)} %")))
-    with patch(Store, "quellmail_seit", kaputt):
+                              (int(since), *self.SOURCE_MAIL_DONE, f"account={int(user_id)} %")))
+    with patch(Store, "source_mail_since", broken):
         yield
 
 
-mutiert("`ereignis_formen` knows only the new spelling (an old event is no longer hidden)", nur_neue_ereignisse,
-        lesepfad_probleme)
-mutiert("`detail_hat_schluessel` knows only `actor=` (an old `akteur=` line shows the admin's IP)", nur_neuer_schluessel,
-        lesepfad_probleme)
-mutiert("`detail_hat_wert` knows only `on_confirmation=1` (the old conflict shows as a request)", nur_neues_flag,
-        lesepfad_probleme)
-mutiert("`quellmail_seit` looks only for `account=<id>`", quellmail_nur_neu, lesepfad_probleme)
+mutated("`event_forms` knows only the new spelling (an old event is no longer hidden)", only_new_events,
+        read_path_problems)
+mutated("`detail_has_key` knows only `actor=` (an old `akteur=` line shows the admin's IP)", only_new_key_name,
+        read_path_problems)
+mutated("`detail_has_value` knows only `on_confirmation=1` (the old conflict shows as a request)", only_new_flag,
+        read_path_problems)
+mutated("`source_mail_since` looks only for `account=<id>`", source_mail_only_new, read_path_problems)
 
 raise SystemExit(r.done())

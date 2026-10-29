@@ -30,19 +30,19 @@ PW = "Selbst-Test-Pw15"
 HTML = {"accept": "text/html"}
 
 
-def _aufbau(**cfg):
+def _setup(**cfg):
     mails: list = []
-    grund = dict(db_path=str(Path(tempfile.mkdtemp()) / "t.db"), cookie_secure=False, csrf_enabled=False,
+    reason = dict(db_path=str(Path(tempfile.mkdtemp()) / "t.db"), cookie_secure=False, csrf_enabled=False,
                  passkey_enabled=False, base_url="http://testserver", lang="de",
                  admin_identifiers=["chef-reserviert", "Boss@Example.com"], password_reset_enabled=True)
-    grund.update(cfg)
-    auth = TinySesam(TinySesamConfig(**grund))
-    auth.set_mailer(lambda to, betreff, text, html=None: mails.append((to, betreff, text)))
+    reason.update(cfg)
+    auth = TinySesam(TinySesamConfig(**reason))
+    auth.set_mailer(lambda to, subject, text, html=None: mails.append((to, subject, text)))
     app = FastAPI()
     app.include_router(auth.router())
-    ereignisse: list = []
-    auth.on_security_event = lambda e, konto, d: ereignisse.append((e, d))
-    return auth, app, mails, ereignisse
+    events: list = []
+    auth.on_security_event = lambda e, account, d: events.append((e, d))
+    return auth, app, mails, events
 
 
 def _login(app, name):
@@ -51,24 +51,24 @@ def _login(app, name):
     return c
 
 
-def _altern(auth):
+def _alternate(auth):
     auth.store._exec("UPDATE session SET mfa_at=?", (int(time.time()) - 100000,))
 
 
 # ── Benutzername ─────────────────────────────────────────────────────────────────────────
-auth, app, mails, ev = _aufbau()
+auth, app, mails, ev = _setup()
 uid = auth.create_user("anna", password=PW, email="anna@example.com")
 auth.create_user("bert", password=PW, email="bert@example.com")
 c = _login(app, "anna")
-seite = c.get("/auth/account", headers=HTML).text
-r.check("account page offers username and address", "data-act=setname" in seite and "data-act=setmail" in seite)
-id_vorher = auth._forward_response_headers(auth.get_user(uid))["Remote-Id"]
+page_html = c.get("/auth/account", headers=HTML).text
+r.check("account page offers username and address", "data-act=setname" in page_html and "data-act=setmail" in page_html)
+id_before = auth._forward_response_headers(auth.get_user(uid))["Remote-Id"]
 a = c.post("/auth/account/username", json={"username": "anna.neu"})
 r.check("username changed (freshly signed in)", a.status_code == 200 and auth.get_user(uid)["username"] == "anna.neu",
         f"{a.status_code} {a.text[:120]}")
-kopf = auth._forward_response_headers(auth.get_user(uid))
+head = auth._forward_response_headers(auth.get_user(uid))
 r.check("… Remote-Id stays the account ID, Remote-User follows the new name",
-        kopf["Remote-Id"] == id_vorher == str(uid) and kopf["Remote-User"] == "anna.neu")
+        head["Remote-Id"] == id_before == str(uid) and head["Remote-User"] == "anna.neu")
 r.check("… the session stays (it hangs on the ID)", c.get("/auth/me").status_code == 200)
 r.check("… security event and audit row",
         ("username_changed", {"old": "anna", "new": "anna.neu"}) in ev
@@ -76,86 +76,86 @@ r.check("… security event and audit row",
 r.check("… signing in with the new name works, with the old one not",
         _login(app, "anna.neu").get("/auth/me").status_code == 200
         and _login(app, "anna").get("/auth/me").status_code == 401)
-fehl = {n: c.post("/auth/account/username", json={"username": n}).status_code
+fail = {n: c.post("/auth/account/username", json={"username": n}).status_code
         for n in ("bert", "bert@example.com", "fremd@example.com", "chef-reserviert", "CHEF-reserviert",
                   "zwei\x01", "", "x" * 151)}
-r.check("vergeben, fremde Adresse, Allowlist-Name, Steuerzeichen, leer, zu lang → 400",
-        set(fehl.values()) == {400} and auth.get_user(uid)["username"] == "anna.neu", str(fehl))
+r.check("taken, foreign address, allowlist name, control characters, empty, too long → 400",
+        set(fail.values()) == {400} and auth.get_user(uid)["username"] == "anna.neu", str(fail))
 r.check("… the own CONFIRMED address works as a name",
         c.post("/auth/account/username", json={"username": "anna@example.com"}).status_code == 200)
-_altern(auth)
-alt_ = c.post("/auth/account/username", json={"username": "anna3"})
-r.check("without fresh step-up → 403 with reauth hint", alt_.status_code == 403
-        and alt_.headers.get("x-tinysesam-reauth"), f"{alt_.status_code} {dict(alt_.headers)}")
+_alternate(auth)
+old_ = c.post("/auth/account/username", json={"username": "anna3"})
+r.check("without fresh step-up → 403 with reauth hint", old_.status_code == 403
+        and old_.headers.get("x-tinysesam-reauth"), f"{old_.status_code} {dict(old_.headers)}")
 key = auth.create_api_key(uid, name="skript", kind="human")["key"]
-mit_key = TestClient(app).post("/auth/account/username", json={"username": "per-key"},
+with_key = TestClient(app).post("/auth/account/username", json={"username": "per-key"},
                                headers={"Authorization": f"Bearer {key}"})
-r.check("an API key changes no name", mit_key.status_code in (401, 403), str(mit_key.status_code))
+r.check("an API key changes no name", with_key.status_code in (401, 403), str(with_key.status_code))
 
-auth_e, app_e, _, _ = _aufbau(login_identifier="email", signup_require_email=True)
+auth_e, app_e, _, _ = _setup(login_identifier="email", signup_require_email=True)
 auth_e.create_user("emil@example.com", password=PW, email="emil@example.com")
 ce = _login(app_e, "emil@example.com")
 r.check("mail mode: no separate name change (the name follows the address), page does not offer it",
         ce.post("/auth/account/username", json={"username": "emil"}).status_code == 400
         and "data-act=setname" not in ce.get("/auth/account", headers=HTML).text)
 
-# ── Adresse ──────────────────────────────────────────────────────────────────────────────
-auth, app, mails, ev = _aufbau()
+# ── Address ──────────────────────────────────────────────────────────────────────────────
+auth, app, mails, ev = _setup()
 uid = auth.create_user("carla", password=PW, email="carla@example.com")
 auth.create_user("dora", password=PW, email="dora@example.com")
 c = _login(app, "carla")
-reset_alt = auth.create_magic_token("reset_password", user_id=uid, email="carla@example.com")
+reset_old = auth.create_magic_token("reset_password", user_id=uid, email="carla@example.com")
 mails.clear()
 a = c.post("/auth/account/email", json={"email": "Carla.Neu@Example.com"})
-auth._hinweis_ausgang.abwarten()
+auth._notice_outcome.wait()
 r.check("address change requested → link to the NEW address, the account does not change yet",
         a.status_code == 200 and a.json() == {"ok": True, "sent": True}
         and [m[0] for m in mails if "/auth/email/" in m[2]] == ["carla.neu@example.com"]
         and auth.get_user(uid)["email"] == "carla@example.com", f"{a.text} {mails}")
 r.check("… the mail names the account being confirmed",
         any(m[0] == "carla.neu@example.com" and "„carla“" in m[2] for m in mails), str(mails))
-_antrag = [m for m in mails if m[0] == "carla@example.com"]
+_request = [m for m in mails if m[0] == "carla@example.com"]
 r.check("… the request itself goes as a notice to the previous occupied address — without link",
-        len(_antrag) == 1 and "carla.neu@example.com" in _antrag[0][2] and "://" not in _antrag[0][2],
+        len(_request) == 1 and "carla.neu@example.com" in _request[0][2] and "://" not in _request[0][2],
         str(mails))
 link = re.search(r"http://testserver(/auth/email/[^\s]+)", mails[0][2]).group(1) if mails else ""
-seite = c.get(link, headers=HTML)
+page_html = c.get(link, headers=HTML)
 r.check("… the link shows a confirmation page (GET redeems nothing)",
-        seite.status_code == 200 and "<form" in seite.text and auth.get_user(uid)["email"] == "carla@example.com")
+        page_html.status_code == 200 and "<form" in page_html.text and auth.get_user(uid)["email"] == "carla@example.com")
 mails.clear()
-fertig = TestClient(app).post(link, follow_redirects=False)       # also from another browser
-auth._hinweis_ausgang.abwarten()
-konto = auth.get_user(uid)
+done = TestClient(app).post(link, follow_redirects=False)       # also from another browser
+auth._notice_outcome.wait()
+account = auth.get_user(uid)
 r.check("… redeemed: new address WITH proof, back to the account page",
-        fertig.status_code == 303 and fertig.headers["location"] == "/auth/account"
-        and konto["email"] == "carla.neu@example.com" and konto["email_verified"], f"{fertig.status_code} {dict(konto)}")
+        done.status_code == 303 and done.headers["location"] == "/auth/account"
+        and account["email"] == "carla.neu@example.com" and account["email_verified"], f"{done.status_code} {dict(account)}")
 r.check("… the old address gets a notice — without link (nothing whose base would need checking)",
         [m[0] for m in mails] == ["carla@example.com"] and "://" not in mails[0][2], str(mails))
 r.check("… open links to the old address no longer apply",
-        auth.peek_magic(reset_alt, purpose="reset_password") is None)
+        auth.peek_magic(reset_old, purpose="reset_password") is None)
 r.check("… security event with old/new",
         ("email_changed", {"old": "carla@example.com", "new": "carla.neu@example.com"}) in ev, str(ev))
 r.check("… the same link a second time: invalid", TestClient(app).post(link).status_code == 400)
 
 # Taken/reserved: no link — but the notice to the own address as with every request
 # (G12b; until 2026-09-26 it was left out, and exactly that revealed "taken").
-_HINWEIS = ("carla.neu@example.com", "Änderung deiner E-Mail-Adresse beantragt")
+_NOTICE = ("carla.neu@example.com", "Änderung deiner E-Mail-Adresse beantragt")
 mails.clear()
-vergeben = c.post("/auth/account/email", json={"email": "dora@example.com"})
-auth._hinweis_ausgang.abwarten()
+grant = c.post("/auth/account/email", json={"email": "dora@example.com"})
+auth._notice_outcome.wait()
 r.check("a taken address: same response, no link, only the notice to the own one, row in the audit log",
-        vergeben.status_code == 200 and vergeben.json() == {"ok": True, "sent": True}
-        and [m[:2] for m in mails] == [_HINWEIS]
+        grant.status_code == 200 and grant.json() == {"ok": True, "sent": True}
+        and [m[:2] for m in mails] == [_NOTICE]
         and auth.store._one("SELECT 1 FROM audit WHERE event='email_change_taken'") is not None, str(mails))
 r.check("invalid address → 400", c.post("/auth/account/email", json={"email": "kaputt"}).status_code == 400)
 # Allowlist address: if its owner clicked the link (on an instance without admin), the foreign
 # account would carry the occupied address and be first admin at the next login.
 mails.clear()
-reserviert = c.post("/auth/account/email", json={"email": "boss@EXAMPLE.com"})
-auth._hinweis_ausgang.abwarten()
+reserved = c.post("/auth/account/email", json={"email": "boss@EXAMPLE.com"})
+auth._notice_outcome.wait()
 r.check("an address from admin_identifiers: same response, no link, only the notice, row in the audit log",
-        reserviert.status_code == 200 and reserviert.json() == {"ok": True, "sent": True}
-        and [m[:2] for m in mails] == [_HINWEIS]
+        reserved.status_code == 200 and reserved.json() == {"ok": True, "sent": True}
+        and [m[:2] for m in mails] == [_NOTICE]
         and auth.store._one("SELECT 1 FROM audit WHERE event='email_change_reserved'") is not None, str(mails))
 # Both requests used up the account's quota like a free one (G12b) — a fresh window
 # for the following cases.
@@ -178,43 +178,43 @@ r.check("account page: every request is called email_change_requested (5), only 
         "keeps its name (the 409 said it anyway)",
         _carla.count("email_change_requested") == 5 and _carla.count("email_change_taken") == 1
         and _carla.count("email_change_reserved") == 1, str(_carla))
-_altern(auth)
+_alternate(auth)
 r.check("without fresh step-up → 403", c.post("/auth/account/email", json={"email": "x@example.com"}).status_code == 403)
 
 # ── An open change does not survive a defence (attack round, finding 1) ───────────────────
 # An intruder with a fresh session requests the change to HIS address; the link is in
 # his mailbox. The owner resets the password, changes it or ends sessions — the
 # link must lapse with that, otherwise the intruder clicks afterwards, and the next reset goes to him.
-def _abwehr_aufbau():
-    a, ap, post, _ = _aufbau()
+def _defense_setup():
+    a, ap, post, _ = _setup()
     a.create_user("chefin", password=PW, email="chefin@example.com")
     a.store.set_admin(a.store.get_user_by_name("chefin")["id"], True)
     u = a.create_user("opfer", password=PW, email="opfer@example.com")
     return a, ap, post, u
 
 
-def _eindringling_beantragt(a, ap, post):
+def _intruder_requested(a, ap, post):
     post.clear()
     _login(ap, "opfer").post("/auth/account/email", json={"email": "dieb@example.org"})
-    a._hinweis_ausgang.abwarten()
+    a._notice_outcome.wait()
     return re.search(r"http://testserver(/auth/email/[^\s]+)",
                      next(m[2] for m in post if m[0] == "dieb@example.org")).group(1)
 
 
 def _reset(a, ap, u):
-    roh = a.create_magic_token("reset_password", user_id=u, email="opfer@example.com")
-    TestClient(ap).post("/auth/reset", data={"token": roh, "password": "Ganz-Neues-Pw15"})
+    raw = a.create_magic_token("reset_password", user_id=u, email="opfer@example.com")
+    TestClient(ap).post("/auth/reset", data={"token": raw, "password": "Ganz-Neues-Pw15"})
 
 
-def _pw_wechsel(a, ap, u):
+def _pw_change(a, ap, u):
     _login(ap, "opfer").post("/auth/password", json={"current": PW, "new": "Ganz-Neues-Pw15"})
 
 
-def _alle_beenden(a, ap, u):
+def _end_all(a, ap, u):
     _login(ap, "opfer").post("/auth/sessions/revoke", json={"scope": "all"})
 
 
-def _andere_beenden(a, ap, u):
+def _end_other(a, ap, u):
     _login(ap, "opfer").post("/auth/sessions/revoke", json={"scope": "others"})
 
 
@@ -222,29 +222,29 @@ def _admin_reset(a, ap, u):
     _login(ap, "chefin").post(f"/auth/admin/api/users/{u}/password", json={"password": "Admin-Setzt-Pw15"})
 
 
-for titel, abwehr in (("Passwort-Reset", _reset), ("Passwortwechsel auf der Konto-Seite", _pw_wechsel),
-                      ("alle Sitzungen beenden", _alle_beenden), ("andere Sitzungen beenden", _andere_beenden),
+for title, defense in (("Passwort-Reset", _reset), ("Passwortwechsel auf der Konto-Seite", _pw_change),
+                      ("alle Sitzungen beenden", _end_all), ("andere Sitzungen beenden", _end_other),
                       ("Passwort-Reset durch den Admin", _admin_reset)):
-    a_, ap_, post_, u_ = _abwehr_aufbau()
-    link_ = _eindringling_beantragt(a_, ap_, post_)
-    abwehr(a_, ap_, u_)
-    spaeter = TestClient(ap_).post(link_, follow_redirects=False)
-    r.check(f"{titel}: the intruder's open change link no longer applies afterwards",
-            spaeter.status_code == 400 and a_.get_user(u_)["email"] == "opfer@example.com",
-            f"{spaeter.status_code} {a_.get_user(u_)['email']}")
+    a_, ap_, post_, u_ = _defense_setup()
+    link_ = _intruder_requested(a_, ap_, post_)
+    defense(a_, ap_, u_)
+    later = TestClient(ap_).post(link_, follow_redirects=False)
+    r.check(f"{title}: the intruder's open change link no longer applies afterwards",
+            later.status_code == 400 and a_.get_user(u_)["email"] == "opfer@example.com",
+            f"{later.status_code} {a_.get_user(u_)['email']}")
 
 # Scattering: an account does not send change mails to arbitrarily many foreign addresses (finding 3).
-a_s, ap_s, post_s, _ = _aufbau()
+a_s, ap_s, post_s, _ = _setup()
 a_s.create_user("streuer", password=PW, email="streuer@example.com")
 c_s = _login(ap_s, "streuer")
 for i in range(12):
     c_s.post("/auth/account/email", json={"email": f"ziel{i}@example.org"})
-a_s._hinweis_ausgang.abwarten()
-_ziele = {m[0] for m in post_s if "/auth/email/" in m[2]}
+a_s._notice_outcome.wait()
+_destinations = {m[0] for m in post_s if "/auth/email/" in m[2]}
 r.check("an account reaches with change links at most as many addresses as the quota allows",
-        0 < len(_ziele) <= int(a_s._sec("mail_per_address_max"))
+        0 < len(_destinations) <= int(a_s._sec("mail_per_address_max"))
         and a_s.store._one("SELECT 1 FROM audit WHERE event='mail_ratelimit' AND detail LIKE 'email_change account=%'")
-        is not None, f"{len(_ziele)} Adressen")
+        is not None, f"{len(_destinations)} addresses")
 
 # Checked folded (finding 3 LDAP/SAML round): `＠` (U+FF20) would fold to two `@`.
 r.check("an address that is only invalid when folded → 400",
@@ -256,14 +256,14 @@ r.check("an address that is only invalid when folded → 400",
 # a free one, the account's quota used up only by free ones, the account page named
 # `email_change_taken`, and the database wrote one row less for a taken one. One
 # fresh setup per target — same starting point, only the target differs.
-ZIELE = (("vergeben", "bert@example.com"), ("reserviert", "boss@example.com"), ("frei", "neu@example.com"))
+DESTINATIONS = (("vergeben", "bert@example.com"), ("reserviert", "boss@example.com"), ("frei", "neu@example.com"))
 
 
-def _g12b_aufbau():
-    a, ap, post, _ = _aufbau()
-    konto = a.create_user("anna", password=PW, email="anna@example.com")
+def _g12b_setup():
+    a, ap, post, _ = _setup()
+    account = a.create_user("anna", password=PW, email="anna@example.com")
     a.create_user("bert", password=PW, email="bert@example.com")
-    return a, ap, post, konto
+    return a, ap, post, account
 
 
 def _form(sql):
@@ -272,16 +272,16 @@ def _form(sql):
 
 
 _g = {}
-for art, ziel in ZIELE:
-    a, ap, post, konto = _g12b_aufbau()
+for kind, destination in DESTINATIONS:
+    a, ap, post, account = _g12b_setup()
     c_g = _login(ap, "anna")
     post.clear()
-    antw = c_g.post("/auth/account/email", json={"email": ziel})
-    a._hinweis_ausgang.abwarten()
-    _g[art] = {"auth": a, "antwort": (antw.status_code, antw.text),
+    reply = c_g.post("/auth/account/email", json={"email": destination})
+    a._notice_outcome.wait()
+    _g[kind] = {"auth": a, "antwort": (reply.status_code, reply.text),
                "eigene": [m[1] for m in post if m[0] == "anna@example.com"],
-               "ziel": [m[1] for m in post if m[0] == ziel],
-               "ereignisse": [e["event"] for e in a.own_events(konto, limit=50)],
+               "ziel": [m[1] for m in post if m[0] == destination],
+               "ereignisse": [e["event"] for e in a.own_events(account, limit=50)],
                "seite": re.findall(r"email_change_\w+|federation_email_confirm",
                                    c_g.get("/auth/account", headers=HTML).text)}
 r.check("G12b: same response for taken, reserved and free",
@@ -303,109 +303,109 @@ r.check("… the operator's audit log keeps the real names",
 
 # Quota: three requests for a taken address use it up like three for free ones — afterwards
 # no link goes even to an own control address any more. Before, exactly that revealed "taken".
-_kontrolle = {}
-for art, ziele in (("vergeben", ["bert@example.com"] * 3),
+_control = {}
+for kind, destinations in (("vergeben", ["bert@example.com"] * 3),
                    ("frei", ["x1@example.com", "x2@example.com", "x3@example.com"])):
-    a, ap, post, _k = _g12b_aufbau()
+    a, ap, post, _k = _g12b_setup()
     c_k = _login(ap, "anna")
-    for z in ziele:
+    for z in destinations:
         c_k.post("/auth/account/email", json={"email": z})
-    a._hinweis_ausgang.abwarten()
+    a._notice_outcome.wait()
     post.clear()
     c_k.post("/auth/account/email", json={"email": "kontrolle@example.com"})
-    a._hinweis_ausgang.abwarten()
-    _kontrolle[art] = [m[0] for m in post if m[0] == "kontrolle@example.com"]
+    a._notice_outcome.wait()
+    _control[kind] = [m[0] for m in post if m[0] == "kontrolle@example.com"]
 r.check("G12b: after 3× taken as after 3× free no link to the control address",
-        _kontrolle == {"vergeben": [], "frei": []}, str(_kontrolle))
+        _control == {"vergeben": [], "frei": []}, str(_control))
 
 # Work of the database, without a stopwatch: the same sequence of statements (without their values), the same
 # number of rows written — token and audit row in every case.
-_spur = {}
-for art, ziel in ZIELE:
-    a, _ap, post, konto = _g12b_aufbau()
-    befehle: list = []
-    a.store._uhr_gesichert = time.monotonic()      # do not save the clock state in the middle of it
-    vorher = a.store.db.total_changes
-    a.store.db.set_trace_callback(befehle.append)
+_trace = {}
+for kind, destination in DESTINATIONS:
+    a, _ap, post, account = _g12b_setup()
+    commands: list = []
+    a.store._clock_secured = time.monotonic()      # do not save the clock state in the middle of it
+    before = a.store.db.total_changes
+    a.store.db.set_trace_callback(commands.append)
     try:
-        senden = a.request_email_change(konto, ziel, "http://testserver")
+        send = a.request_email_change(account, destination, "http://testserver")
     finally:
         a.store.db.set_trace_callback(None)
-    geschrieben = a.store.db.total_changes - vorher
-    _spur[art] = {"folge": [_form(b) for b in befehle], "zeilen": geschrieben,
-                  "gesendet": senden() if senden else None, "auth": a, "konto": konto}
+    written = a.store.db.total_changes - before
+    _trace[kind] = {"folge": [_form(b) for b in commands], "zeilen": written,
+                  "gesendet": send() if send else None, "auth": a, "konto": account}
 r.check("G12b: the same sequence of statements for taken, reserved and free",
-        _spur["vergeben"]["folge"] == _spur["reserviert"]["folge"] == _spur["frei"]["folge"]
-        and any(f.startswith("INSERT INTO magic_token") for f in _spur["frei"]["folge"]),
-        "\n".join(f"{k}: {v['folge']}" for k, v in _spur.items()))
+        _trace["vergeben"]["folge"] == _trace["reserviert"]["folge"] == _trace["frei"]["folge"]
+        and any(f.startswith("INSERT INTO magic_token") for f in _trace["frei"]["folge"]),
+        "\n".join(f"{k}: {v['folge']}" for k, v in _trace.items()))
 r.check("… the same number of rows written (token + audit = 2)",
-        [v["zeilen"] for v in _spur.values()] == [2, 2, 2], str([v["zeilen"] for v in _spur.values()]))
+        [v["zeilen"] for v in _trace.values()] == [2, 2, 2], str([v["zeilen"] for v in _trace.values()]))
 r.check("… always one sender; it says whether a link went out (False, False, True)",
-        [v["gesendet"] for v in _spur.values()] == [False, False, True],
-        str([v["gesendet"] for v in _spur.values()]))
+        [v["gesendet"] for v in _trace.values()] == [False, False, True],
+        str([v["gesendet"] for v in _trace.values()]))
 
 # If sending the link fails, the notice to the own address still goes out — otherwise a mail server
 # rejecting the free address would again reveal the difference. The error stays visible.
-a_f, _ap_f, post_f, konto_f = _g12b_aufbau()
+a_f, _ap_f, post_f, account_f = _g12b_setup()
 
 
-def _link_kaputt(to, betreff, text, html=None):
+def _link_broken(to, subject, text, html=None):
     if to == "neu@example.com":
         raise OSError("Mailserver weist ab")
-    post_f.append((to, betreff))
+    post_f.append((to, subject))
 
 
-a_f.set_mailer(_link_kaputt)
-senden_f = a_f.request_email_change(konto_f, "neu@example.com", "http://testserver")
+a_f.set_mailer(_link_broken)
+send_f = a_f.request_email_change(account_f, "neu@example.com", "http://testserver")
 try:
-    senden_f()
-    _geworfen = False
+    send_f()
+    _thrown = False
 except OSError:
-    _geworfen = True
+    _thrown = True
 r.check("G12b: if the link fails, the notice to the own address still goes out (the error stays)",
-        _geworfen and post_f == [("anna@example.com", "Änderung deiner E-Mail-Adresse beantragt")],
-        f"{_geworfen} {post_f}")
+        _thrown and post_f == [("anna@example.com", "Änderung deiner E-Mail-Adresse beantragt")],
+        f"{_thrown} {post_f}")
 
 # The throwaway token is harmless: expired from the start, no open link, `gc()` clears it.
-_st = _spur["vergeben"]["auth"].store
-_jetzt_s = int(time.time())
+_st = _trace["vergeben"]["auth"].store
+_now_s = int(time.time())
 r.check("G12b: the token for “taken” is already expired at creation, no open link",
         _st._one("SELECT COUNT(*) AS n FROM magic_token WHERE email='bert@example.com'")["n"] == 1
         and _st._one("SELECT COUNT(*) AS n FROM magic_token WHERE email='bert@example.com' AND expires_at >= ?",
-                     (_jetzt_s,))["n"] == 0
-        and not _st.offener_token(_spur["vergeben"]["konto"], "email_change", "bert@example.com"))
-_spur["vergeben"]["auth"].gc()
+                     (_now_s,))["n"] == 0
+        and not _st.open_token(_trace["vergeben"]["konto"], "email_change", "bert@example.com"))
+_trace["vergeben"]["auth"].gc()
 r.check("… and gc() clears it away",
         _st._one("SELECT COUNT(*) AS n FROM magic_token WHERE email='bert@example.com'")["n"] == 0)
-_sf = _spur["frei"]["auth"].store
+_sf = _trace["frei"]["auth"].store
 r.check("… while the link to the free address applies",
-        _sf.offener_token(_spur["frei"]["konto"], "email_change", "neu@example.com"))
+        _sf.open_token(_trace["frei"]["konto"], "email_change", "neu@example.com"))
 
 # Review round 2026-09-27: if the outbox is full, the link never goes out — its token expires
 # immediately. Since p2 F2 every open link of the account blocks the way via LDAP/SAML; one never
 # delivered would do so until its expiry.
-a_v, ap_v, post_v, _ = _aufbau()
+a_v, ap_v, post_v, _ = _setup()
 uid_v = a_v.create_user("voll", password=PW, email="voll@example.com")
-a_v._postausgang.max_offen = 0
-_antw_v = _login(ap_v, "voll").post("/auth/account/email", json={"email": "voll.neu@example.com"})
-# (Mutation probe: leave out `on_overflow=senden.verwerfen` in the route → open token → red.)
+a_v._outbox.max_unclosed = 0
+_reply_v = _login(ap_v, "voll").post("/auth/account/email", json={"email": "voll.neu@example.com"})
+# (Mutation probe: leave out `on_overflow=send.discard` in the route → open token → red.)
 r.check("outbox full: same response, no link, and no open token remains",
-        _antw_v.status_code == 200 and not [m for m in post_v if "/auth/email/" in m[2]]
+        _reply_v.status_code == 200 and not [m for m in post_v if "/auth/email/" in m[2]]
         and a_v.store._one("SELECT COUNT(*) AS n FROM magic_token WHERE purpose='email_change'")["n"] == 1
-        and not a_v.store.offener_token(uid_v, "email_change"), f"{_antw_v.status_code} {post_v}")
+        and not a_v.store.open_token(uid_v, "email_change"), f"{_reply_v.status_code} {post_v}")
 
 # Without base_url and with a foreign host: the response says "no mail sending", not the internals of the
 # base check (CodeQL py/unreachable-except: `ConfigError` is a `ValueError`).
-a_b, ap_b, post_b, _ = _aufbau(base_url="", password_reset_enabled=False)
+a_b, ap_b, post_b, _ = _setup(base_url="", password_reset_enabled=False)
 a_b.create_user("ohnebasis", password=PW, email="ohnebasis@example.com")
-_ohne = _login(ap_b, "ohnebasis").post("/auth/account/email", json={"email": "neu@example.com"},
+_without = _login(ap_b, "ohnebasis").post("/auth/account/email", json={"email": "neu@example.com"},
                                        headers={"host": "evil.example"})
 r.check("without base_url, foreign host: 400 with the message “no mail sending”, no link",
-        _ohne.status_code == 400 and _ohne.json().get("detail") == a_b.t("api.no_mail") and not post_b,
-        f"{_ohne.status_code} {_ohne.text[:160]}")
+        _without.status_code == 400 and _without.json().get("detail") == a_b.t("api.no_mail") and not post_b,
+        f"{_without.status_code} {_without.text[:160]}")
 
 # Mail mode: the username moves along.
-auth_e, app_e, mails_e, _ = _aufbau(login_identifier="email", signup_require_email=True)
+auth_e, app_e, mails_e, _ = _setup(login_identifier="email", signup_require_email=True)
 uid_e = auth_e.create_user("emil@example.com", password=PW, email="emil@example.com")
 ce = _login(app_e, "emil@example.com")
 ce.post("/auth/account/email", json={"email": "emil.neu@example.com"})
@@ -415,19 +415,19 @@ r.check("mail mode: after confirmation the username is the new address",
         auth_e.get_user(uid_e)["username"] == "emil.neu@example.com")
 
 # Without mail sending the path does not exist (the page does not offer it, the route says 400).
-auth_o, app_o, _, _ = _aufbau()
+auth_o, app_o, _, _ = _setup()
 auth_o.set_mailer(None)
 auth_o.create_user("otto", password=PW, email="otto@example.com")
 co = _login(app_o, "otto")
 r.check("without mailer: no address change",
         "data-act=setmail" not in co.get("/auth/account", headers=HTML).text
         and co.post("/auth/account/email", json={"email": "o2@example.com"}).status_code == 400)
-# (Mutation probes: the step-up in `_frisch_fuer_kennung` removed → “without fresh step-up” red; the
+# (Mutation probes: the step-up in `_fresh_for_identifier` removed → “without fresh step-up” red; the
 #  allowlist check removed → allowlist name red; the @ rule removed → “foreign address” red; the
 #  identifier comparison on confirm removed → 409 red; `revoke_user_magic_tokens` removed → “open links”
 #  red; `verified=True` removed → “WITH proof” red; `Remote-Id` removed → Remote-Id red.
 #  G12b: notice only without “no” → notice red; throttle of the account only for free ones →
-#  Kontingent rot; Abbildung in `own_events` weg → Kontoseite rot; Wegwerf-Token weg → Folge rot;
+#  quota red; mapping in `own_events` removed → account page red; throwaway token removed → sequence red;
 #  token with a real deadline → “already expired” red.)
 
 sys.exit(r.done())

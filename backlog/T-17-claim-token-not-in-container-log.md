@@ -25,7 +25,7 @@ no console, permissions, no token in the log text; mutation.
 
 ## Done 2026-09-27
 
-- `TinySesam._admin_claim_bekanntgeben`: console → stderr as before; no console →
+- `TinySesam._admin_claim_announce`: console → stderr as before; no console →
   `<db_path>.claim` (0600, opened without `O_TRUNC`, permissions set on the descriptor, then
   truncated — the same route as for `admin_claim_token_file`), only the path in the log. Fallback
   to stderr without a database file or if the file is not created, then with the sentence that the

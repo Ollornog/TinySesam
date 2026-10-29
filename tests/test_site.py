@@ -7,8 +7,8 @@ import tempfile
 from pathlib import Path
 
 
-def _lies(*teile: str) -> str:
-    return Path(*teile).read_text(encoding="utf-8")
+def _read(*parts: str) -> str:
+    return Path(*parts).read_text(encoding="utf-8")
 
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -30,7 +30,7 @@ from web.site import DEMO, FLOWS as FLOWS_FILE, INDEX, LEGAL, OWNER, LABELS, bui
 from web.ui import LANG_COOKIE, LANGS, Ctx, Nav, footer, header  # noqa: E402
 
 
-# ---------- Flow-Daten ----------
+# ---------- Flow data ----------
 for f in FLOWS:
     assert f["key"] and f["config"] and callable(f["active"]), f
     for lang in LANGS:
@@ -72,10 +72,10 @@ class _Cfg:
 
     def __getattr__(self, name):
         from tinysesam import TinySesamConfig
-        vorgabe = TinySesamConfig(db_path=":memory:")
-        if not hasattr(vorgabe, name):
+        default = TinySesamConfig(db_path=":memory:")
+        if not hasattr(default, name):
             raise AttributeError(f"neither in the stub nor in TinySesamConfig: {name}")
-        return getattr(vorgabe, name)
+        return getattr(default, name)
 
 
 live = render("de", cfg=_Cfg())
@@ -130,7 +130,7 @@ for name in (INDEX, FLOWS_FILE, LEGAL):
     assert "id=ts-theme" in h and "data-theme=light" in h and "data-theme=dark" in h
     assert "details.dd[open]" in h and "e.key==='Escape'" in h
 
-# ---------- Impressum + Datenschutz ----------
+# ---------- Legal notice + privacy ----------
 legal = pages[LEGAL]
 for probe in ("§ 5 DDG", "Art. 6 Abs. 1 lit. f DSGVO", "GitHub, Inc.", "EU-US Data Privacy Framework",
               "ts_lang", "ts-theme", "Art. 15", "Cookie-Banner"):
@@ -153,13 +153,13 @@ assert "class=brand" not in _cut(idx, "<header class=shell>", "</header>")
 assert "class=brand" in _cut(fl, "<header class=shell>", "</header>")
 print("  header: one container + two nav rows; start page with title area instead of brand")
 
-# ---------- ui-Bausteine ----------
+# ---------- ui building blocks ----------
 _nav = Nav(brand_href="/", icon_url="w.png", repo="https://example.invalid",
            pages=(("/a", "A"), ("/b", "B")), auth=True)
 _ctx = Ctx(lang="de", labels=LABELS["de"], lang_hrefs={"en": "?l=en", "de": "?l=de"}, path="/a")
 h = header(_ctx, _nav)
 assert "class='on' href='/a'" in h and "class='' href='/b'" in h
-assert "Anmelden" in h and "Registrieren" in h, "ausgeloggt: An-/Registrieren"
+assert "Anmelden" in h and "Registrieren" in h, "signed out: sign-in/register"
 _ctx.user = {"username": "max"}
 _ctx.is_admin = True
 h = header(_ctx, _nav)
@@ -205,14 +205,14 @@ with tempfile.TemporaryDirectory() as tmp:
                                               "resources", "version"])
     # Without extension, but JSON: `fetch(...).json()` checks no Content-Type, and Pages
     # serves the file unchanged.
-    users = json.loads(_lies(api, "users"))
+    users = json.loads(_read(api, "users"))
     assert [u["username"] for u in users] == ["demoadmin", "demo", "martin", "backup-daemon"]
-    version = json.loads(_lies(api, "version"))
+    version = json.loads(_read(api, "version"))
     assert version["version"] == TS_VERSION, "the panel shows the built version"
 
     # The panels are real pages, but locked — and the demo page embeds exactly them.
     def panel(name):
-        return _lies(tmp, "demo", name)
+        return _read(tmp, "demo", name)
 
     for name in ("admin.en.html", "admin.de.html", "login.en.html", "account.de.html"):
         assert "pointer-events:none" in panel(name), f"{name} must be read-only"
@@ -227,7 +227,7 @@ with tempfile.TemporaryDirectory() as tmp:
         assert f"lang={lang}" in html or f'lang="{lang}"' in html, name
         assert want in html and nope not in html, (name, want, nope)
 
-    page = _lies(tmp, "demo.html")
+    page = _read(tmp, "demo.html")
     for src in ("demo/login.en.html", "demo/account.de.html", "demo/admin.en.html",
                 "demo/admin.de.html"):
         assert f"src='{src}'" in page, src
@@ -236,23 +236,23 @@ with tempfile.TemporaryDirectory() as tmp:
 print("  web.build schreibt Seiten, Demo-Panels, Attrappen-API + .nojekyll")
 
 # ---------- Showcase: the username is text (R8-2) ----------
-# T-12 escaped it on /app and /sensibel; /demo (“Signed in as …”) stayed raw. An account named
+# T-12 escaped it on /app and /sensitive; /demo (“Signed in as …”) stayed raw. An account named
 # <img src=x onerror=…> thereby ran as code on every own visit to the demo page.
 os.environ["TINYSESAM_SHOWCASE_DB"] = os.path.join(tempfile.mkdtemp(), "showcase.db")
 from fastapi.testclient import TestClient  # noqa: E402
 import examples.showcase as showcase  # noqa: E402
 
-_boese = "<img src=x onerror=alert(1)>"
-showcase.auth.create_user(_boese, password="geheim-passwort-1")
+_evil = "<img src=x onerror=alert(1)>"
+showcase.auth.create_user(_evil, password="geheim-passwort-1")
 _c = TestClient(showcase.app)
 _c.get("/auth/login")
-_r = _c.post("/auth/login", data={"username": _boese, "password": "geheim-passwort-1", "next": "/",
+_r = _c.post("/auth/login", data={"username": _evil, "password": "geheim-passwort-1", "next": "/",
                                   "_csrf": _c.cookies.get(showcase.auth.cfg.csrf_cookie)},
              follow_redirects=False)
 assert _r.status_code == 303, _r.status_code
-for _weg in ("/demo", "/app"):
-    _t = _c.get(_weg).text
-    assert "<img src=x" not in _t and "&lt;img src=x onerror=alert(1)&gt;" in _t, _weg
+for _away in ("/demo", "/app"):
+    _t = _c.get(_away).text
+    assert "<img src=x" not in _t and "&lt;img src=x onerror=alert(1)&gt;" in _t, _away
 print("  showcase: a crafted username stays text on /demo and /app")
 
 print("OK test_site")

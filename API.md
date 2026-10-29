@@ -106,7 +106,7 @@ Release an account's binding to a foreign identity (operator path) — and open 
 
 ### `gc(attempts_older_than_sec: 'int' = 86400) -> 'dict'`
 
-Clean up: expired sessions/flows/magic tokens/realm unlocks + old login attempts. Call regularly (cron/startup/scheduler) — otherwise the tables grow. The audit log only if `audit_retention_days` sets a deadline (B5-11) — then the number appears under `audit`. Returns the number of deleted rows per area: `unverified_accounts`, `sessions`, `flow`, `magic_tokens`, `resource_unlocks`, `login_attempts`, `failure_series` (until 0.21.x `fehlserien`), possibly `audit`. `attempts_older_than_sec` lies between 0 (all failed attempts) and ten years in seconds, otherwise `ValueError`, before anything is deleted.
+Clean up: expired sessions/flows/magic tokens/realm unlocks + old login attempts. Call regularly (cron/startup/scheduler) — otherwise the tables grow. The audit log only if `audit_retention_days` sets a deadline (B5-11) — then the number appears under `audit`. Returns the number of deleted rows per area: `unverified_accounts`, `sessions`, `flow`, `magic_tokens`, `resource_unlocks`, `login_attempts`, `failure_series` (until 0.21.x `failure_seriesn`), possibly `audit`. `attempts_older_than_sec` lies between 0 (all failed attempts) and ten years in seconds, otherwise `ValueError`, before anything is deleted.
 
 ### `grant_mfa_enrollment(user_id: 'int', minutes: 'int' = 60) -> 'int'`
 
@@ -166,7 +166,7 @@ General guard factory for arbitrary combinations — the "flag on the guard" rou
 
 ### `require_admin(request: 'Request') -> 'dict'`
 
-FastAPI-Dependency (direkt): eingeloggt + Admin (+ Step-up, wenn admin_require_mfa).
+FastAPI dependency (direct): signed in + admin (+ step-up, when admin_require_mfa).
 
 ### `require_csrf(request: 'Request', submitted)`
 
@@ -408,7 +408,7 @@ Is there at least one admin? The two bootstrap paths apply only while there is n
 
 ### `after_response(resp, task, on_overflow=None)`
 
-Run `task()` only AFTER the response has been sent, in the own mail worker (`mailer.Postausgang`, R4-05/B6-6). Returns `resp`.
+Run `task()` only AFTER the response has been sent, in the own mail worker (`mailer.Outbox`, R4-05/B6-6). Returns `resp`.
 
 ### `all_security() -> 'dict'`
 
@@ -416,7 +416,7 @@ All hardening thresholds as a dict (defaults, overridden by what is set in the p
 
 ### `api_key_kind(key) -> 'str'`
 
-The kind of a key (`"automation"`/`"human"`, up to 0.21.x `"automat"`/`"mensch"`) — without using it. `""` for an unknown key.
+The kind of a key (`"automation"`/`"human"`, up to 0.21.x `"automaton"`/`"human"`) — without using it. `""` for an unknown key.
 
 ### `apply_factor(request, user_id, factor, ip=None, ua=None, remember=True, email_verified: 'Optional[bool]' = None) -> 'tuple[str, bool, bool]'`
 
@@ -556,7 +556,7 @@ Release a locked resource again (remove the lock, not unlock it).
 
 ### `request_email_change(user_id, new_email, base_url)`
 
-Request the change to a new address: confirmation link to the NEW one. Returns the sending function (for `after_response`) — even when the address is taken or reserved and no link goes out; `senden()` says so with True/False. None only for a throttle and for the own, already taken address. `ValueError` for an invalid address or without a mailer. If sending fails before it begins (full queue), `senden.verwerfen()` lets the token expire — as `on_overflow` for `after_response` (since 2026-09-27).
+Request the change to a new address: confirmation link to the NEW one. Returns the sending function (for `after_response`) — even when the address is taken or reserved and no link goes out; `send()` says so with True/False. None only for a throttle and for the own, already taken address. `ValueError` for an invalid address or without a mailer. If sending fails before it begins (full queue), `send.discard()` lets the token expire — as `on_overflow` for `after_response` (since 2026-09-27).
 
 ### `require_public_base(request: 'Optional[Request]' = None, candidate: 'str' = '') -> 'str'`
 
@@ -568,7 +568,7 @@ Is this resource currently unlocked for this browser?
 
 ### `revoke_mfa_enrollment(user_id: 'int') -> 'None'`
 
-Ein offenes Einrichtungsfenster sofort schliessen.
+Close an open enrollment window immediately.
 
 ### `send_mail(to, subject, text, html=None)`
 
@@ -636,7 +636,7 @@ Value: `('first_login', 'grace', 'strict')`
 
 ### `NAME_BINDING_REFUSALS` — Constant
 
-Why an account is not bound via the name (`_nachbindung_grund`) — short code and explanation, for the report of `federation_bind_existing` (`reason`).
+Why an account is not bound via the name (`_rebinding_reason`) — short code and explanation, for the report of `federation_bind_existing` (`reason`).
 
 Keys: `address_as_name`, `invalid_identifier`, `conflict`, `bound_elsewhere`, `self_chosen_name`, `name_from_other_source`, `binding_window_expired`
 
