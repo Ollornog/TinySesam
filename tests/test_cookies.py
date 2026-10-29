@@ -74,11 +74,11 @@ def make(**cfg_kw):
               passkey_enabled=False, oidc_enabled=False)
     kw.update(cfg_kw)
     auth = TinySesam(TinySesamConfig(**kw))
-    auth.ensure_admin("admin", "geheim123")
+    auth.ensure_admin("admin", "dummy123")
     app = FastAPI()
     app.include_router(auth.router())
 
-    @app.get("/geheim")
+    @app.get("/secret")
     def secret_text(u=Depends(auth.require_user)):
         return {"u": u["username"]}
 
@@ -91,7 +91,7 @@ def login(client, remember="on"):
     html = client.get("/auth/login").text
     field = re.search(r"name=_csrf value='([^']+)'", html).group(1)
     return client.post("/auth/login",
-                       data={"username": "admin", "password": "geheim123", "next": "/",
+                       data={"username": "admin", "password": "dummy123", "next": "/",
                              "remember": remember, "_csrf": field},
                        follow_redirects=False)
 
@@ -120,8 +120,8 @@ assert not violations, violations
 assert "max-age" in assigned["__Host-tinysesam_session"], "remember=on must be persistent"
 ok("Session cookie in the real login: HttpOnly + Secure + SameSite=lax + Path + Max-Age")
 
-assert c.get("/geheim").json() == {"u": "admin"}
-ok("Session holds: /geheim reachable (the cookie is real, not just a header)")
+assert c.get("/secret").json() == {"u": "admin"}
+ok("Session holds: /secret reachable (the cookie is real, not just a header)")
 
 
 # ---------- B. Flag matrix directly on set_cookie() ----------
@@ -190,7 +190,7 @@ ok("csrf_enabled=False → issue_csrf() sets no cookie at all")
 # ---------- C. Resource cookie ----------
 auth, _ = make()
 resp = Response()
-auth._unlock_resource(_FakeReq(), resp, "fotos")
+auth._unlock_resource(_FakeReq(), resp, "photos")
 assigned = set_cookies(resp)
 assert "__Host-tinysesam_runlock" in assigned
 violations = headers.pruefe_cookie_flags(assigned, EXPECTATION)
@@ -234,7 +234,7 @@ for kw, expected in (({}, True), ({"cookie_samesite": "strict"}, True),
     resp = Response()
     a.set_cookie(resp, "tok123")
     a.issue_csrf(resp)
-    a._unlock_resource(_FakeReq(), resp, "fotos")
+    a._unlock_resource(_FakeReq(), resp, "photos")
     assigned = set_cookies(resp)
     assert set(assigned) == set(names), (kw, assigned.keys())
     # Every `__Host-` cookie as the browser accepts it — also the CSRF cookie next to a
@@ -259,10 +259,10 @@ ok("A-1/A-7: flow cookies with __Host- also with cookie_domain; cookie_path='' g
 auth, c = make()
 login(c)
 real = c.cookies.get("__Host-tinysesam_session")
-assert real and c.get("/geheim").status_code == 200
+assert real and c.get("/secret").status_code == 200
 c.cookies.clear()
 c.cookies.set("tinysesam_session", real)
-assert c.get("/geheim").status_code in (401, 307), "unprefixed cookie must not count"
+assert c.get("/secret").status_code in (401, 307), "unprefixed cookie must not count"
 ok("an unprefixed session cookie (subdomain throw) is not read")
 
 # ---------- D2b. TinySesam clears the legacy names from before the prefix (H-1, B-20) ----------
@@ -286,13 +286,13 @@ def deleted(response) -> set:
 auth, c = make()
 _uid = auth.store.get_user_by_name("admin")["id"]
 _old_session = auth.store.create_session(_uid, 3600, True, "password")   # from the time before the update
-_old_release = "alte-freigabe-vor-dem-update"
-auth.store.add_resource_unlock(_old_release, "fotos", int(time.time()) + 3600)
+_old_release = "old-release-before-dem-update"
+auth.store.add_resource_unlock(_old_release, "photos", int(time.time()) + 3600)
 for n in OLD:
     c.cookies.set(n, "ALT")
 c.cookies.set("tinysesam_session", _old_session)
 c.cookies.set("tinysesam_runlock", _old_release)
-assert auth.store.get_session(_old_session) and auth.store.is_resource_unlocked(_old_release, "fotos")
+assert auth.store.get_session(_old_session) and auth.store.is_resource_unlocked(_old_release, "photos")
 r = login(c)
 assert r.status_code == 303 and "__Host-tinysesam_session" in set_cookies(r)
 assert deleted(r) >= set(OLD), f"login does not delete the legacy names: {deleted(r)}"
@@ -303,7 +303,7 @@ ok("H-1: the login deletes the cookies sent along under the legacy names (host-o
 # And the session behind it: the old token would still have signed in for seven days under the new name.
 # (Mutation probe: remove delete_session/delete_resource_unlocks in `_delete_old_names` → red.)
 assert auth.store.get_session(_old_session) is None, "the session behind the legacy name lives on"
-assert not auth.store.is_resource_unlocked(_old_release, "fotos"), "the old unlock lives on"
+assert not auth.store.is_resource_unlocked(_old_release, "photos"), "the old unlock lives on"
 ok("H-1: …and ends the session and the unlocks behind it")
 
 auth, c = make()
@@ -320,7 +320,7 @@ auth, c = make()
 _app_own = c.app
 
 
-@_app_own.post("/eigen/abmelden")
+@_app_own.post("/own/signout")
 def _own_sign_out(request: Request):
     response = Response()
     auth.logout(request, response)
@@ -329,7 +329,7 @@ def _own_sign_out(request: Request):
 
 login(c)
 c.cookies.set("tinysesam_session", "ALT")
-assert "tinysesam_session" in deleted(c.post("/eigen/abmelden")), \
+assert "tinysesam_session" in deleted(c.post("/own/signout")), \
     "auth.logout() in an own route leaves the legacy names standing"
 ok("H-1: auth.logout() in an own route clears the legacy names too")
 
@@ -338,7 +338,7 @@ ok("H-1: auth.logout() in an own route clears the legacy names too")
 # (Mutation probe: remove the call of `_delete_old_names` in `rotate_session` → red.)
 
 
-@_app_own.post("/eigen/stepup")
+@_app_own.post("/own/stepup")
 def _own_stepup(request: Request):
     response = Response()
     auth.rotate_session(request, response)
@@ -348,7 +348,7 @@ def _own_stepup(request: Request):
 login(c)
 _old_su = auth.store.create_session(auth.store.get_user_by_name("admin")["id"], 3600, True, "password")
 c.cookies.set("tinysesam_session", _old_su)
-r = c.post("/eigen/stepup")
+r = c.post("/own/stepup")
 assert "__Host-tinysesam_session" in set_cookies(r), "rotate_session sets no cookie"
 assert "tinysesam_session" in deleted(r), "auth.rotate_session() leaves the legacy names standing"
 assert auth.store.get_session(_old_su) is None, "the session behind the legacy name lives on"
@@ -388,7 +388,7 @@ ok("H-1: with cookie_domain the legacy name tinysesam_csrf is deleted host-only,
 
 # Where the prefix does not apply, the legacy names ARE the current names — they must not fall.
 auth, c = make(cookie_secure=False)
-c.cookies.set("tinysesam_runlock", "AKTUELL")
+c.cookies.set("tinysesam_runlock", "CURRENT")
 r = login(c)
 assert r.status_code == 303 and not deleted(r), deleted(r)
 assert set_cookies(r)["tinysesam_session"]["_wert"] not in ("", '""')
@@ -409,7 +409,7 @@ else:
     _real = (webauthn.verify_authentication_response, webauthn.verify_registration_response)
     webauthn.verify_authentication_response = lambda **kw: types.SimpleNamespace(new_sign_count=1)
     webauthn.verify_registration_response = lambda **kw: types.SimpleNamespace(
-        credential_id=b"neu", credential_public_key=b"pk", sign_count=0)
+        credential_id=b"new", credential_public_key=b"pk", sign_count=0)
     try:
         auth, c = make(passkey_enabled=True, rp_id="testserver", origin="https://testserver")
     finally:
@@ -434,7 +434,7 @@ else:
     head["X-CSRF-Token"] = c.cookies.get("__Host-tinysesam_csrf")
     r = c.post("/auth/passkey/register/begin", headers=head)
     assert r.status_code == 200 and "__Host-tinysesam_waflow" in set_cookies(r), r.text[:120]
-    r = c.post("/auth/passkey/register/finish", content=json.dumps({"id": "neu", "response": {}}),
+    r = c.post("/auth/passkey/register/finish", content=json.dumps({"id": "new", "response": {}}),
                headers=head)
     assert r.status_code == 200 and r.json()["ok"], r.text[:200]
     assert "__Host-tinysesam_waflow" in deleted(r), f"flow cookie remains after registration: {set_cookies(r)}"

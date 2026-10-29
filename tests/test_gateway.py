@@ -39,7 +39,7 @@ ok("password/PIN/register/account/magic are off (404)")
 
 # ---------- Forward auth: not logged in → 401 + login URL back to the app ----------
 r = c.get("/auth/forward", headers={"X-Forwarded-Proto": "https", "X-Forwarded-Host": "app.example.com",
-                                    "X-Forwarded-Uri": "/geheim"})
+                                    "X-Forwarded-Uri": "/secret"})
 assert r.status_code == 401
 loc = r.headers.get("X-TinySesam-Location")
 assert loc and loc.startswith("https://auth.example.com/auth/login?next=") and urlparse(parse_qs(urlparse(loc).query)["next"][0]).netloc == "app.example.com"
@@ -70,8 +70,8 @@ del os.environ["TINYSESAM_OIDC_NAME"]
 assert gateway.config_from_env().oidc_name == "SSO"
 ok("TINYSESAM_LANG: default en, de selectable, unknown → start error; TINYSESAM_OIDC_NAME names the button")
 assert gateway.config_from_env().gate_brand == ""
-os.environ["TINYSESAM_GATE_BRAND"] = "  Firma A  "
-assert gateway.config_from_env().gate_brand == "Firma A"
+os.environ["TINYSESAM_GATE_BRAND"] = "  Company A  "
+assert gateway.config_from_env().gate_brand == "Company A"
 del os.environ["TINYSESAM_GATE_BRAND"]
 ok("TINYSESAM_GATE_BRAND: empty by default, set without margin")
 assert gateway.config_from_env().brand_icon == ""
@@ -159,7 +159,7 @@ hc = TestClient(happ, base_url="http://auth.example.com")
 r = hc.get("/healthz")
 assert r.status_code == 503 and r.json()["status"] == "degraded", (r.status_code, r.text)
 assert "readonly" not in r.text and "database" not in r.text, "error text does not belong on the network"
-assert hstore._one("SELECT 1 AS eins")["eins"] == 1, "counter-check: reading must still work here"
+assert hstore._one("SELECT 1 AS one")["one"] == 1, "counter-check: reading must still work here"
 # The same via the switch that SQLite itself has for it.
 hstore.db = old_db
 hstore.db.execute("PRAGMA query_only=ON")

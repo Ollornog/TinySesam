@@ -34,8 +34,8 @@ import sys
 
 #: Suite → reason. These suites compute with the production values.
 PRODUCTION_VALUES = {
-    "test_legacy_data.py": "prüft die scrypt-Parameter selbst (Altformat 0.17.0, needs_rehash)",
-    "test_hardening2.py": "misst, dass der Dummy-Verify so lange rechnet wie ein echter Verify",
+    "test_legacy_data.py": "checks the scrypt parameters itself (old format 0.17.0, needs_rehash)",
+    "test_hardening2.py": "measures that the dummy verify takes as long as a real verify",
 }
 
 #: scrypt in the test run: N=2^4 instead of 2^15, p=1 instead of 3 (r stays). Formats and paths stay
@@ -79,7 +79,7 @@ class _AfterTheLoad:
 
 def main(argv: list[str]) -> None:
     if not argv:
-        sys.exit("Aufruf: python tests/_starter.py <suite.py> [argumente …]")
+        sys.exit("Call: python tests/_starter.py <suite.py> [arguments …]")
     suite = os.path.abspath(argv[0])
     # Like a direct start: sys.argv[0] is the suite, its directory is first on the path.
     sys.argv = [suite, *argv[1:]]

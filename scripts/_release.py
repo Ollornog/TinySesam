@@ -87,7 +87,7 @@ def set_value(new: str) -> int:
         text, count = replace_pins(p.read_text(encoding="utf-8"), old, new)
         if count:
             p.write_text(text, encoding="utf-8")
-            print(f"    {name}: {count} Stelle(n)")
+            print(f"    {name}: {count} occurrence(s)")
 
     text = CHANGELOG.read_text(encoding="utf-8")
     today = dt.date.today().isoformat()

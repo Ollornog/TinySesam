@@ -44,7 +44,7 @@ class Directory:
         if not e or e["pw"] != password:
             return None
         return {"username": username, "email": e.get("email"), "name": username, "groups": [],
-                "id": e.get("id"), "email_verified": e.get("beleg")}
+                "id": e.get("id"), "email_verified": e.get("proof")}
 
 
 def _setup(**cfg):
@@ -133,13 +133,13 @@ r.check("… the next day one again", [m[0] for m in post2] == ["cleo@example.co
 # An account with a proven address keeps it — even one other than that of the source.
 auth3, _, post3 = _setup()
 u3 = _sign_in(auth3, "dana", {"email": "dana@example.com", "id": "uuid-dana"})
-auth3.store.set_email(u3["id"], "dana.privat@example.com", verified=True)
+auth3.store.set_email(u3["id"], "dana.private@example.com", verified=True)
 _elapse(auth3, 86401)                     # daily quota free: only the proof bolts
 auth3.store._exec("DELETE FROM magic_token")
 post3.clear()
 _sign_in(auth3, "dana", {"email": "dana@example.com", "id": "uuid-dana"})
 r.check("Account with proven own address: no link, the address stays",
-        post3 == [] and auth3.get_user(u3["id"])["email"] == "dana.privat@example.com", str(post3))
+        post3 == [] and auth3.get_user(u3["id"])["email"] == "dana.private@example.com", str(post3))
 
 # The address already belongs to another account: no link, audit only.
 auth4, _, post4 = _setup()
@@ -151,7 +151,7 @@ r.check("Address of another account: no link, the account stays without address,
 
 # Switched off or without preconditions: nothing at all.
 for title, cfg in (("federation_email_confirm=False", {"federation_email_confirm": False}),
-                   ("ohne base_url", {"base_url": ""})):
+                   ("without base_url", {"base_url": ""})):
     a_, _, p_ = _setup(**cfg)
     u_ = _sign_in(a_, "fritz", {"email": "fritz@example.com", "id": "uuid-fritz"})
     r.check(f"{title}: no link, no address", p_ == [] and not a_.get_user(u_["id"])["email"], str(p_))
@@ -173,11 +173,11 @@ r.check("ldap_email_trusted=True: address directly WITH proof, no link",
 a6, _, p6 = _setup(ldap_attr_email_verified="emailVerified")
 r.check("The proof attribute is also requested from the directory",
         "emailVerified" in _attribute_list(a6.cfg), str(_attribute_list(a6.cfg)))
-u6 = _sign_in(a6, "hans", {"email": "hans@example.com", "id": "uuid-hans", "beleg": "TRUE"})
+u6 = _sign_in(a6, "hans", {"email": "hans@example.com", "id": "uuid-hans", "proof": "TRUE"})
 k6 = a6.get_user(u6["id"])
 r.check("Proof attribute \"TRUE\": address directly WITH proof, no link",
         k6["email"] == "hans@example.com" and k6["email_verified"] and p6 == [], f"{dict(k6)} {p6}")
-u6b = _sign_in(a6, "ida", {"email": "ida@example.com", "id": "uuid-ida", "beleg": "FALSE"})
+u6b = _sign_in(a6, "ida", {"email": "ida@example.com", "id": "uuid-ida", "proof": "FALSE"})
 r.check("Proof attribute \"FALSE\": not trusted — link instead of address",
         not a6.get_user(u6b["id"])["email"] and [m[0] for m in p6] == ["ida@example.com"], str(p6))
 p6.clear()
@@ -185,7 +185,7 @@ u6c = _sign_in(a6, "jan", {"email": "jan@example.com", "id": "uuid-jan"})
 r.check("Proof attribute missing in the entry: not trusted",
         not a6.get_user(u6c["id"])["email"] and [m[0] for m in p6] == ["jan@example.com"], str(p6))
 a6b, _, p6b = _setup()
-u6d = _sign_in(a6b, "kai", {"email": "kai@example.com", "id": "uuid-kai", "beleg": "TRUE"})
+u6d = _sign_in(a6b, "ken", {"email": "ken@example.com", "id": "uuid-ken", "proof": "TRUE"})
 r.check("Without a configured proof attribute a supplied one does not count",
         not a6b.get_user(u6d["id"])["email"], str(dict(a6b.get_user(u6d["id"]))))
 
@@ -193,7 +193,7 @@ r.check("Without a configured proof attribute a supplied one does not count",
 # at THIS sign-in, not only at the next one via a local factor.
 for value, should in (("TRUE", True), ("FALSE", False)):
     a_b, app_b, _ = _setup(admin_identifiers=["boss@example.com"], ldap_attr_email_verified="emailVerified")
-    a_b.ldap = Directory({"bossin": {"pw": "pw", "email": "boss@example.com", "id": "uuid-bossin", "beleg": value}})
+    a_b.ldap = Directory({"bossin": {"pw": "pw", "email": "boss@example.com", "id": "uuid-bossin", "proof": value}})
     response = TestClient(app_b).post("/auth/login", data={"username": "bossin", "password": "pw"},
                                      follow_redirects=False)
     account_b = a_b.store.get_user_by_name("bossin")
@@ -228,9 +228,9 @@ r.check("SAML, proof attribute \"false\": link instead of address",
 # as name, their own address confirmed. Without this rule situation 4 bound the local account
 # `bob@example.com` via the name: takeover, also of an admin.
 a10, _, _ = _setup(saml_attr_email_verified="email_verified")
-victim10 = a10.create_user("bob@example.com", password="Opfer-Passwort1", email="bob@example.com")
+victim10 = a10.create_user("bob@example.com", password="Victim-Secret-1", email="bob@example.com")
 a10.store.set_admin(victim10, True)
-u10 = a10._check_saml("bob@example.com", {"email": ["angreifer@evil.example"], "email_verified": ["true"]})
+u10 = a10._check_saml("bob@example.com", {"email": ["attacker@evil.example"], "email_verified": ["true"]})
 r.check("SAML, proof attribute: an @ name that is NOT the proven address hits no local account",
         u10 is None or (u10["id"] != victim10 and u10["username"].startswith("saml-") and not u10["is_admin"]),
         str(u10))
@@ -238,10 +238,10 @@ u10b = a10._check_saml("mia@example.com", {"email": ["mia@example.com"], "email_
 r.check("… if it is exactly the proven address, it remains the account name (like OIDC with email_verified)",
         u10b is not None and u10b["username"] == "mia@example.com", str(u10b))
 a10c, _, _ = _setup(saml_attr_email_verified="email_verified", saml_attr_username="email")
-a10c.create_user("chefin", password="Opfer-Passwort1")
-u10c = a10c._check_saml("id-1", {"email": ["chefin"], "email_verified": ["true"]})
+a10c.create_user("boss", password="Victim-Secret-1")
+u10c = a10c._check_saml("id-1", {"email": ["boss"], "email_verified": ["true"]})
 r.check("… and a name from the address attribute that is not an address stays unproven",
-        u10c is None or u10c["username"] != "chefin", str(u10c))
+        u10c is None or u10c["username"] != "boss", str(u10c))
 
 # Proof attribute made of whitespace (finding 2): check and runtime read the same, trimmed value.
 a11, app11, _ = _setup(admin_identifiers=["boss@example.com"], ldap_attr_email_verified=" ")
@@ -338,7 +338,7 @@ r.check("G12a: taken address, three sign-ins 15 min apart → exactly one audit 
 
 # The row is created in the outbox, but carries IP and actor of the request as before.
 g_e, _, _ = _setup()
-_brand = _REQUEST.set({"ip": "203.0.113.7", "akteur": None})
+_brand = _REQUEST.set({"ip": "203.0.113.7", "actor": None})
 try:
     _sign_in(g_e, "lars", {"email": "lars@example.com", "id": "uuid-lars"})
 finally:
@@ -350,14 +350,14 @@ r.check("… the federation_email_confirm row carries the IP of the request",
 # Account page of an LDAP account (G12b): the same events, whether the address from the directory is free
 # or taken — `federation_email_confirm` arises only for a free one and stays absent there.
 _view = {}
-for kind, address in (("frei", "mona@example.com"), ("vergeben", "nora@example.com")):
+for kind, address in (("free", "mona@example.com"), ("taken", "nora@example.com")):
     a_k, _, _ = _setup()
     a_k.create_user("nora", email="nora@example.com")
     u_k = _sign_in(a_k, "mona", {"email": address, "id": "uuid-mona"})
     _view[kind] = [e["event"] for e in a_k.own_events(u_k["id"], limit=50)]
 r.check("G12b: account page of an LDAP account the same for free and taken address, without federation_email_confirm",
-        _view["frei"] == _view["vergeben"] and "email_change_requested" in _view["frei"]
-        and not {None, "federation_email_confirm", "email_change_taken"} & set(_view["frei"] + _view["vergeben"]),
+        _view["free"] == _view["taken"] and "email_change_requested" in _view["free"]
+        and not {None, "federation_email_confirm", "email_change_taken"} & set(_view["free"] + _view["taken"]),
         str(_view))
 
 # ── Attack round 2026-09-26 (a1-02): no oracle across several workers ─────────────────────────
@@ -377,11 +377,11 @@ def _worker_execution(grant, **cfg):
     w1, _, p1 = _setup(db_path=db, **cfg)
     w2, _, p2 = _setup(db_path=db, **cfg)
     if grant:
-        w1.create_user("opfer", email="ziel@example.com")
+        w1.create_user("victim", email="target@example.com")
     number = []
 
     def _view(w):
-        u = _sign_in(w, "mallory", {"email": "ziel@example.com", "id": "uuid-mallory"})
+        u = _sign_in(w, "mallory", {"email": "target@example.com", "id": "uuid-mallory"})
         number.append([e["event"] for e in w.own_events(u["id"], limit=50)].count("email_change_requested"))
     for w in (w1, w2, w1, w2):
         _view(w)
@@ -389,29 +389,29 @@ def _worker_execution(grant, **cfg):
     _view(w3)
     lines = w3.store._one("SELECT COUNT(*) AS n FROM audit WHERE event IN "
                            "('email_change_requested', 'email_change_taken')")["n"]
-    return {"sicht": number, "zeilen": lines, "post": [m[0] for m in p1 + p2 + p3], "w": w3, "sichtbar": _view}
+    return {"seen": number, "lines": lines, "post": [m[0] for m in p1 + p2 + p3], "w": w3, "sichtbar": _view}
 
 
 _free, _cmp = _worker_execution(False), _worker_execution(True)
-_res = _worker_execution(False, admin_identifiers=["ziel@example.com"])     # reserved (allowlist)
+_res = _worker_execution(False, admin_identifiers=["target@example.com"])     # reserved (allowlist)
 r.check("a1-02: account page after four sign-ins across two workers and a restart the same "
         "whether the address is free, taken or reserved (exactly one request each)",
-        _free["sicht"] == _cmp["sicht"] == _res["sicht"] == [1, 1, 1, 1, 1],
-        f"frei {_free['sicht']} vergeben {_cmp['sicht']} reserviert {_res['sicht']}")
+        _free["seen"] == _cmp["seen"] == _res["seen"] == [1, 1, 1, 1, 1],
+        f"free {_free['seen']} taken {_cmp['seen']} reserved {_res['seen']}")
 r.check("… in the operator's audit log one row each, the link only to the free address",
-        _free["zeilen"] == _cmp["zeilen"] == 1 and _free["post"] == ["ziel@example.com"]
+        _free["lines"] == _cmp["lines"] == 1 and _free["post"] == ["target@example.com"]
         and _cmp["post"] == _res["post"] == []
         and _res["w"].store._one("SELECT COUNT(*) AS n FROM audit WHERE event='email_change_reserved'")["n"] == 1,
-        f"{_free['zeilen']}/{_cmp['zeilen']} {_free['post']} {_cmp['post']} {_res['post']}")
+        f"{_free['lines']}/{_cmp['lines']} {_free['post']} {_cmp['post']} {_res['post']}")
 r.check("… the row carries `account=<id> source=ldap` first, built the same for every outcome",
-        all(re.fullmatch(r"account=\d+ source=ldap new=ziel@example\.com", z["detail"] or "")
+        all(re.fullmatch(r"account=\d+ source=ldap new=target@example\.com", z["detail"] or "")
             for execution in (_free, _cmp, _res) for z in execution["w"].store._all(
                 "SELECT detail FROM audit WHERE event LIKE 'email_change_%'")))
 for execution in (_free, _cmp):
     _alternate_everything(execution["w"], 86401)
     execution["sichtbar"](execution["w"])
 r.check("… the next day exactly one further request for both",
-        _free["sicht"][-1] == _cmp["sicht"][-1] == 2, f"{_free['sicht']} {_cmp['sicht']}")
+        _free["seen"][-1] == _cmp["seen"][-1] == 2, f"{_free['seen']} {_cmp['seen']}")
 
 # If the link lives longer than a day, the rejection holds off exactly as long as an open link.
 _free7, _cmp7 = _worker_execution(False, email_change_ttl_min=3 * 24 * 60), _worker_execution(True, email_change_ttl_min=3 * 24 * 60)
@@ -419,12 +419,12 @@ for execution in (_free7, _cmp7):
     _alternate_everything(execution["w"], 86401)
     execution["sichtbar"](execution["w"])
 r.check("… with email_change_ttl_min = 3 days: also the next day no further request for either",
-        _free7["sicht"] == _cmp7["sicht"] == [1, 1, 1, 1, 1, 1], f"{_free7['sicht']} {_cmp7['sicht']}")
+        _free7["seen"] == _cmp7["seen"] == [1, 1, 1, 1, 1, 1], f"{_free7['seen']} {_cmp7['seen']}")
 for execution in (_free7, _cmp7):
     _alternate_everything(execution["w"], 2 * 86400)
     execution["sichtbar"](execution["w"])
 r.check("… after the link expires exactly one further for both",
-        _free7["sicht"][-1] == _cmp7["sicht"][-1] == 2, f"{_free7['sicht']} {_cmp7['sicht']}")
+        _free7["seen"][-1] == _cmp7["seen"][-1] == 2, f"{_free7['seen']} {_cmp7['seen']}")
 
 # ── Review round 2026-09-27 (p2 F2): the in-flight window of the outbox ─────────────────────────────
 # The row `federation_email_confirm` arises only after delivery, the rejection of a taken
@@ -446,8 +446,8 @@ def _flight_window(grant):
         post1.append((to, subject, text))
     w1.set_mailer(_slow)
     if grant:
-        w1.create_user("opfer", email="ziel@example.com")
-    dirname = Directory({"mallory": {"pw": "pw", "email": "ziel@example.com", "id": "uuid-mallory"}})
+        w1.create_user("victim", email="target@example.com")
+    dirname = Directory({"mallory": {"pw": "pw", "email": "target@example.com", "id": "uuid-mallory"}})
     w1.ldap = w2.ldap = dirname
     try:
         u = w1._check_ldap("mallory", "pw")
@@ -458,21 +458,21 @@ def _flight_window(grant):
         brake.set()
     w1._notice_outcome.wait()
     return {"post1": [m[0] for m in post1], "post2": [m[0] for m in post2],
-            "sicht": sorted(e["event"] for e in w2.own_events(u["id"], limit=50)
+            "seen": sorted(e["event"] for e in w2.own_events(u["id"], limit=50)
                             if e["event"] and e["event"].startswith("email_change"))}
 
 
 _ff_free, _ff_cmp = _flight_window(False), _flight_window(True)
 # (Mutation probe: in `_address_proven_by_source` again `open_token(…, address)` → free: post
 #  to probe@ at worker 2, two requests → red.)
-r.check("p2 F2: link to ziel@ hangs in worker 1's outbox, `mail` changed, worker 2 sends "
-        "none to probe@ — whether ziel@ is free or taken",
+r.check("p2 F2: link to target@ hangs in worker 1's outbox, `mail` changed, worker 2 sends "
+        "none to probe@ — whether target@ is free or taken",
         _ff_free["post2"] == [] and _ff_cmp["post2"] == []
-        and _ff_free["post1"] == ["ziel@example.com"] and _ff_cmp["post1"] == [],
-        f"frei {_ff_free} vergeben {_ff_cmp}")
+        and _ff_free["post1"] == ["target@example.com"] and _ff_cmp["post1"] == [],
+        f"free {_ff_free} taken {_ff_cmp}")
 r.check("… and the account page shows the same one request in both cases",
-        _ff_free["sicht"] == _ff_cmp["sicht"] == ["email_change_requested"],
-        f"frei {_ff_free['sicht']} vergeben {_ff_cmp['sicht']}")
+        _ff_free["seen"] == _ff_cmp["seen"] == ["email_change_requested"],
+        f"free {_ff_free['seen']} taken {_ff_cmp['seen']}")
 
 # ── Review round 2026-09-27: a full queue discards the token ─────────────────────────────────
 # If the notice outbox returns the job (queue full), the link never goes out.
@@ -488,21 +488,21 @@ _sign_in(g_q, "quentin", {"email": "quentin@example.com", "id": "uuid-quentin"})
 #  link → red.)
 r.check("Queue full: no link, no open token — after the throttle window the link comes",
         not _unclosed_q and [m[0] for m in p_q] == ["quentin@example.com"] and _link(p_q),
-        f"offen {_unclosed_q}, {p_q}")
+        f"open {_unclosed_q}, {p_q}")
 
 # ── Quota: change requests to an address do not lock out its later owner ─────
 # Every request reaches the throttle, also the one to a taken address (G12b). Delicate is the
 # still FREE one: a stranger requests the change to it until its quota is used up;
 # if the owner registers right afterwards, their sign-in link would no longer arrive in the same bucket.
 a9, _, p9 = _setup()
-perpetrator = a9.create_user("taeter", email="taeter@example.com")
+perpetrator = a9.create_user("culprit", email="culprit@example.com")
 for _ in range(int(a9._sec("mail_per_address_max")) + 2):
-    a9.request_email_change(perpetrator, "spaeter@example.com", BASE)
-a9.create_user("spaet", email="spaeter@example.com")
+    a9.request_email_change(perpetrator, "later@example.com", BASE)
+a9.create_user("late", email="later@example.com")
 p9.clear()
-a9.send_login_link("spaeter@example.com", BASE)
+a9.send_login_link("later@example.com", BASE)
 r.check("Change requests by others to the address do not consume the quota of the sign-in link",
-        [m[0] for m in p9] == ["spaeter@example.com"]
+        [m[0] for m in p9] == ["later@example.com"]
         and a9.store._one("SELECT 1 FROM audit WHERE event='mail_ratelimit' AND detail LIKE 'login%'") is None,
         str(p9))
 # (Mutation probes: `_proof_true` always true → "FALSE" red; `open_token` removed → "as long as the

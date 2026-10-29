@@ -44,14 +44,14 @@ from _kit.report import Report  # noqa: E402
 r = Report("Pending pre-bookings — the first window of an LDAP outage (G9)")
 HANGS = 1.5
 DEADLINE = 4.0
-PW = "Notfall-Pw-15!"
+PW = "Emergency-Pw-15!"
 NAT = ("198.51.100.7", 40000)
 
 
 class Directory:
     """A moody directory: hangs until the "timeout", rejects quickly, or raises."""
 
-    def __init__(self, mode="haengt", duration=HANGS):
+    def __init__(self, mode="hangs", duration=HANGS):
         self.mode = mode
         self.duration = duration
         self.questions = 0
@@ -60,15 +60,15 @@ class Directory:
     def authenticate(self, username, password):
         with self._counter:
             self.questions += 1
-        if self.mode == "haengt":
+        if self.mode == "hangs":
             time.sleep(self.duration)
-            raise DirectoryNotReachable("LDAP-Verzeichnis ldap://dummy nicht benutzbar: timed out")
-        if self.mode == "weg":
-            raise DirectoryNotReachable("LDAP-Verzeichnis ldap://dummy nicht benutzbar: Test")
-        if self.mode == "kaputt":
+            raise DirectoryNotReachable("LDAP directory ldap://dummy unusable: timed out")
+        if self.mode == "path":
+            raise DirectoryNotReachable("LDAP directory ldap://dummy unusable: test")
+        if self.mode == "broken":
             raise RuntimeError("unexpected error in the client")
         time.sleep(self.duration)
-        if self.mode == "richtig":
+        if self.mode == "right":
             return {"username": username, "email": None, "name": username, "groups": [], "id": f"l-{username}"}
         return None                                    # „falsch“: password rejected
 
@@ -148,14 +148,14 @@ def _old_unclosed(auth, name, ip, count):
 
 
 # ── (a) The first window: nobody gets locked out, the emergency admin gets in ─────────────────
-dir_a = Directory("haengt")
+dir_a = Directory("hangs")
 auth, app, post, db = _setup(dir_a)
 pair = auth._sec("max_login_attempts")
 threshold_ip = pair * auth._sec("ip_attempt_factor")
 with Recording() as log_a, ThreadPoolExecutor(max_workers=threshold_ip + 4) as pool:
     # Impatient Alice clicks five times, the office behind the same NAT address signs in.
     running = [pool.submit(_sign_in, app, "alice") for _ in range(pair)]
-    running += [pool.submit(_sign_in, app, f"kollege{i}") for i in range(threshold_ip - pair)]
+    running += [pool.submit(_sign_in, app, f"colleague{i}") for i in range(threshold_ip - pair)]
     wait_until(lambda: dir_a.questions >= threshold_ip, f"{threshold_ip} attempts in the hanging directory")
     pending = auth.store.count_fails(0, ip=NAT[0])
     confirmed = auth.store.count_fails(0, ip=NAT[0], only_confirmed=True)
@@ -182,11 +182,11 @@ os.remove(db)
 # ── (b) R7-2 stays: a burst waits along and then gets the real lockout ─────────────────────────
 # The directory rejects quickly. Exactly `max_login_attempts` attempts reach it; the rest waits
 # for their outcome (or, with no waiting slot, immediately gets the deferral) and then runs into the lockout.
-dir_b = Directory("falsch", duration=0.3)
+dir_b = Directory("wrong", duration=0.3)
 auth, app, post, db = _setup(dir_b)
 pair = auth._sec("max_login_attempts")
 with Recording() as log_b, ThreadPoolExecutor(max_workers=3 * pair) as pool:
-    volley = list(pool.map(lambda i: _sign_in(app, "alice", f"falsch{i}"), range(3 * pair)))
+    volley = list(pool.map(lambda i: _sign_in(app, "alice", f"wrong{i}"), range(3 * pair)))
 auth._notice_outcome.wait()
 r.check("R7-2: exactly max_login_attempts attempts reach the directory",
         dir_b.questions == pair, f"{dir_b.questions} of {3 * pair}")
@@ -201,7 +201,7 @@ r.check("R7-2: after the burst nothing is open any more",
 os.remove(db)
 
 # ── (c) An open pre-booking that nobody completes becomes a failed attempt after the deadline ──
-auth, app, post, db = _setup(Directory("falsch", duration=0))
+auth, app, post, db = _setup(Directory("wrong", duration=0))
 _old_unclosed(auth, "alice", NAT[0], auth._sec("max_login_attempts"))
 when_c: list = []
 with Recording() as log_c:
@@ -214,7 +214,7 @@ r.check("orphaned pre-bookings: `reason=lockout_user` in the log, no deferral",
 os.remove(db)
 
 # The same for the series (B2-6): an old open pre-booking counts there too.
-auth, app, post, db = _setup(Directory("falsch", duration=0), max_login_attempts=100)
+auth, app, post, db = _setup(Directory("wrong", duration=0), max_login_attempts=100)
 limit_s = auth._sec("account_max_consecutive_failures")
 _old_unclosed(auth, "alice", "192.0.2.50", limit_s)
 for _ in range(limit_s):
@@ -231,12 +231,12 @@ os.remove(db)
 # If a rule already applies with the confirmed rows, it takes precedence — no waiting for another one
 # that only applies while pending. Here five pre-bookings of Alice are pending (another process is checking
 # them right now), and the address has already reached its threshold with confirmed failed attempts.
-auth, app, post, db = _setup(Directory("falsch", duration=0))
+auth, app, post, db = _setup(Directory("wrong", duration=0))
 for _ in range(auth._sec("max_login_attempts")):
     auth.store._exec("INSERT INTO login_attempt(ts, username, ip, success, method, pending) "
                      "VALUES (?,'alice',?,0,'password',1)", (now(), NAT[0]))
 for i in range(auth._sec("max_login_attempts") * auth._sec("ip_attempt_factor")):
-    auth.store.record_attempt(f"kollege{i}", NAT[0], False, "password")
+    auth.store.record_attempt(f"colleague{i}", NAT[0], False, "password")
 when_c3: list = []
 with Recording() as log_c3:
     status_c3 = _sign_in(app, "alice", when=when_c3)
@@ -247,7 +247,7 @@ r.check("a rule that applies with confirmed rows takes precedence over the pendi
 os.remove(db)
 
 # ── (d) The series: a hanging pre-booking at the limit does not trigger a series lockout ──────
-dir_d = Directory("haengt")
+dir_d = Directory("hangs")
 auth, app, post, db = _setup(dir_d, max_login_attempts=100)
 limit_s = auth._sec("account_max_consecutive_failures")
 for _ in range(limit_s - 1):
@@ -271,7 +271,7 @@ os.remove(db)
 
 # Without a waiting slot at the same spot: the deferral does not show the text of the series lockout ("until you
 # reset your password"), and `is_locked` reports it as a deferral — without `lockout_series`, without mail.
-dir_d3 = Directory("haengt")
+dir_d3 = Directory("hangs")
 auth, app, post, db = _setup(dir_d3, max_login_attempts=100)
 auth._pending_places = threading.BoundedSemaphore(1)
 auth._pending_places.acquire()                          # all waiting slots taken
@@ -298,7 +298,7 @@ os.remove(db)
 # Withdrawal and completion lower the series in the SAME transaction as the row. Separately, the
 # pre-booking stood in between as neither open nor withdrawn, and whoever was waiting read
 # the series one too high — at the limit a lockout including a lockout mail for nothing.
-dir_t = Directory("weg")
+dir_t = Directory("path")
 auth, app, post, db = _setup(dir_t)
 calls: list = []
 _real = auth.store._series_minus
@@ -311,7 +311,7 @@ def _spy(bucket, kind):
 
 auth.store._series_minus = _spy
 _sign_in(app, "alice")                                  # failure → withdrawal
-dir_t.mode, dir_t.duration = "richtig", 0
+dir_t.mode, dir_t.duration = "right", 0
 auth._ldap_failure = type(auth._ldap_failure)()          # the marker is armed after the failure
 status_t = _sign_in(app, "alice")                       # success → completion
 r.check("withdrawal and success lower the series in the row's transaction",
@@ -321,7 +321,7 @@ r.check("…and the series is afterwards at 0", auth.store.failure_series("alice
 os.remove(db)
 
 # ── (e) Waiting slots: whoever gets none immediately gets the deferral — without a lockout ────
-dir_e = Directory("haengt")
+dir_e = Directory("hangs")
 auth, app, post, db = _setup(dir_e, max_login_attempts=1)
 auth._pending_places = threading.BoundedSemaphore(1)
 times_e: list = []
@@ -335,7 +335,7 @@ auth._notice_outcome.wait()
 times_e.sort()
 r.check("without waiting slot: immediately 429, the other waits and gets the outage (503)",
         status_e == [429, 503] and times_e[0] < HANGS * 0.4 <= times_e[1],
-        f"{status_e}, Zeiten {[round(z, 2) for z in times_e]}")
+        f"{status_e}, times {[round(z, 2) for z in times_e]}")
 deferred = log_e.lines("deferred login")
 r.check("without waiting slot: `deferred login … reason=pending` in the log, no `failed login`, no mail",
         len(deferred) == 1 and "user=alice" in deferred[0] and "reason=pending" in deferred[0]
@@ -358,7 +358,7 @@ r.check("counter-check: the same line as `failed login` would hit the jail",
 os.remove(db)
 
 # ── (h) is_locked: a deferral is True, but without a lockout mail and without `failed login` ──
-dir_h = Directory("haengt")
+dir_h = Directory("hangs")
 auth, app, post, db = _setup(dir_h)
 with Recording() as log_h, ThreadPoolExecutor(max_workers=auth._sec("max_login_attempts")) as pool:
     running = [pool.submit(_sign_in, app, "alice") for _ in range(auth._sec("max_login_attempts"))]
@@ -375,7 +375,7 @@ r.check("is_locked on deferral: `deferred login`, no `failed login`, no mail",
 os.remove(db)
 
 # ── (f) An unexpected exception leaves no pending row behind ───────────────────────────────────
-auth, app, post, db = _setup(Directory("kaputt"))
+auth, app, post, db = _setup(Directory("broken"))
 status_f = _sign_in(app, "alice")
 lines_f = [(z["pending"], z["success"]) for z in auth.store._all("SELECT pending, success FROM login_attempt")]
 r.check("exception in the directory client: 500, the attempt is a confirmed failed attempt",
@@ -388,7 +388,7 @@ os.remove(db)
 # the series is at limit−2: the owner is fully signed in and ends the series, the
 # attacker fails with the booked state = limit — `lockout_series` in the audit log and "locked"
 # in the security log, although nothing was locked.
-CORRECT_I = "richtig-im-verz"
+CORRECT_I = "right-in-dir"
 
 
 class Checking(Directory):
@@ -415,7 +415,7 @@ for _ in range(limit_i - 2):
 with Recording() as log_i, ThreadPoolExecutor(max_workers=2) as pool:
     holder = pool.submit(_sign_in, app, "alice", CORRECT_I, ("198.51.100.1", 40000))
     wait_until(lambda: dir_i.questions >= 1, "the owner in the directory")
-    attacker = pool.submit(_sign_in, app, "alice", "falsch", ("203.0.113.66", 40000))
+    attacker = pool.submit(_sign_in, app, "alice", "wrong", ("203.0.113.66", 40000))
     holder, attacker = holder.result(timeout=30), attacker.result(timeout=30)
 auth._notice_outcome.wait()
 # (Mutation probe: in `record_login` restore `state = prebooked[2]` and `state == limit`, plus in
@@ -424,17 +424,17 @@ r.check("p2 F3: owner and attacker are pending at limit−2, the owner ends the 
         "no `lockout_series` in the audit log, no “locked” in the security log",
         holder == 303 and attacker == 401 and auth.store.failure_series("alice") == 0
         and _series_lines(auth) == 0 and not log_i.lines("locked") and post == [],
-        f"{holder}/{attacker}, Serie {auth.store.failure_series('alice')}, Zeilen {_series_lines(auth)}, "
+        f"{holder}/{attacker}, series {auth.store.failure_series('alice')}, lines {_series_lines(auth)}, "
         f"{log_i.lines('locked')} {post}"[:400])
 os.remove(db)
 
 # Counter-check: the real lockout by burst — exactly one row, with pending (LDAP) and without.
-dir_i2 = Directory("falsch", duration=0.3)
+dir_i2 = Directory("wrong", duration=0.3)
 auth, app, post, db = _setup(dir_i2, max_login_attempts=1000, account_max_consecutive_failures=10)
 for _ in range(limit_i - 1):
     auth.store.increase_failure_series("alice")
 with Recording() as log_i2, ThreadPoolExecutor(max_workers=6) as pool:
-    volley_i2 = sorted(pool.map(lambda i: _sign_in(app, "alice", f"falsch{i}", (f"192.0.2.{20 + i}", 40000)),
+    volley_i2 = sorted(pool.map(lambda i: _sign_in(app, "alice", f"wrong{i}", (f"192.0.2.{20 + i}", 40000)),
                                range(6)))
 auth._notice_outcome.wait()
 r.check("p2 F3 counter-check with LDAP (pending): burst at limit−1 → one question to the directory, series "
@@ -456,7 +456,7 @@ app_i3.include_router(auth_i3.router())
 for _ in range(limit_i - 1):
     auth_i3.store.increase_failure_series("bert")
 with ThreadPoolExecutor(max_workers=6) as pool:
-    volley_i3 = sorted(pool.map(lambda i: _sign_in(app_i3, "bert", f"falsch{i}", (f"192.0.2.{40 + i}", 40000)),
+    volley_i3 = sorted(pool.map(lambda i: _sign_in(app_i3, "bert", f"wrong{i}", (f"192.0.2.{40 + i}", 40000)),
                                range(6)))
 r.check("p2 F3 counter-check without LDAP (settled immediately): burst at limit−1 → exactly one `lockout_series` row",
         volley_i3 == [401] + [429] * 5 and _series_lines(auth_i3) == 1, f"{volley_i3} {_series_lines(auth_i3)}")
@@ -474,14 +474,14 @@ auth_i3._record_login("bert", "192.0.2.60", False, "pin", attempt=_v)
 r.check("p2 F3: booking over the limit, series ended before completion → no row",
         _v is not None and _series_lines(auth_i3) == _prior_i3, f"{_v} {_series_lines(auth_i3) - _prior_i3}")
 _mixed = []
-for order in ("schwebend zuerst", "feststehend zuerst"):
+for order in ("floating first", "fixed first"):
     auth_i3.store.delete_failure_series("bert")
     for _ in range(limit_i - 2):
         auth_i3.store.increase_failure_series("bert")
     _prior = _series_lines(auth_i3)
     _s = auth_i3._begin_attempt("bert", "192.0.2.61", "password", as_pending=True)
     _f = auth_i3._begin_attempt("bert", "192.0.2.62", "pin")
-    for v, m in ((_s, "password"), (_f, "pin"))[::1 if order == "schwebend zuerst" else -1]:
+    for v, m in ((_s, "password"), (_f, "pin"))[::1 if order == "floating first" else -1]:
         auth_i3._record_login("bert", "192.0.2.61", False, m, attempt=v)
     _mixed.append((order, _s is not None and _f is not None, _series_lines(auth_i3) - _prior))
 # (Mutation probe: delete `before < max_series <= afterwards` → "pending first" 0 rows → red.)
@@ -592,7 +592,7 @@ def _slow_questions(response_sec, **cfg):
     clock, transcript = _Clock(), []
     before = {n: sys.modules.get(n) for n in _LDAP3_NAMES}
     when_before = _ldap_mod.time
-    reason = dict(db_path=":memory:", ldap_enabled=True, ldap_url="ldap://verzeichnis.example.com",
+    reason = dict(db_path=":memory:", ldap_enabled=True, ldap_url="ldap://directory.example.com",
                  ldap_allow_plaintext=True, ldap_bind_dn="cn=svc,dc=example,dc=com", ldap_bind_password="svc",
                  ldap_user_base="ou=people,dc=example,dc=com")
     reason.update(cfg)
@@ -601,10 +601,10 @@ def _slow_questions(response_sec, **cfg):
         _ldap_mod.time = clock
         start = clock.t
         try:
-            outcome = "angemeldet" if _ldap_mod.LDAPClient(TinySesamConfig(**reason)).authenticate("alice", "pw") \
-                else "abgewiesen"
+            outcome = "signed_in" if _ldap_mod.LDAPClient(TinySesamConfig(**reason)).authenticate("alice", "pw") \
+                else "rejected"
         except _ldap_mod.DirectoryNotReachable:
-            outcome = "nicht erreichbar"
+            outcome = "unreachable"
         return outcome, clock.t - start, transcript
     finally:
         _ldap_mod.time = when_before
@@ -616,9 +616,9 @@ def _slow_questions(response_sec, **cfg):
 
 
 _cases_j = {"Search-then-Bind + StartTLS": dict(ldap_start_tls=True),
-             "Search-then-Bind, ldaps://": dict(ldap_url="ldaps://verzeichnis.example.com"),
-             "Search-then-Bind, ohne TLS": dict(),
-             "Direkt-Bind + StartTLS": dict(ldap_start_tls=True, ldap_bind_dn="", ldap_bind_password="",
+             "Search-then-Bind, ldaps://": dict(ldap_url="ldaps://directory.example.com"),
+             "search-then-bind, without TLS": dict(),
+             "direct bind + StartTLS": dict(ldap_start_tls=True, ldap_bind_dn="", ldap_bind_password="",
                                             ldap_user_dn_template="uid={username},ou=people,dc=example,dc=com")}
 _measurement_j = {(name, sec): _slow_questions(sec, **cfg)[:2]
               for name, cfg in _cases_j.items() for sec in (0.01, 1.2, 1.9, 2.9, 4.5, 9.5)}
@@ -626,11 +626,11 @@ _to_lang_j = {k: v for k, v in _measurement_j.items() if v[1] > _ldap_mod.TOTAL_
 # (Mutation probe: in `_Deadline.per_wait_point` always `CONNECTION_TIMEOUT` again → up to 95 s → red.)
 r.check("p2 V1: every sign-in against a slow but responding directory ends within the "
         f"overall deadline ({_ldap_mod.TOTAL_DEADLINE_SEC} s) — signed in or “nicht erreichbar”, never “abgewiesen”",
-        not _to_lang_j and all(a in ("angemeldet", "nicht erreichbar") for a, _ in _measurement_j.values()),
-        f"too long: {_to_lang_j}; {[(k, v) for k, v in _measurement_j.items() if v[0] == 'abgewiesen']}")
+        not _to_lang_j and all(a in ("signed_in", "unreachable") for a, _ in _measurement_j.values()),
+        f"too long: {_to_lang_j}; {[(k, v) for k, v in _measurement_j.items() if v[0] == 'rejected']}")
 r.check("… a fast directory notices nothing: signed in, the service account with the half, the "
         "user connection with the whole remaining deadline per response (at most 10 s)",
-        all(_measurement_j[(n, 0.01)][0] == "angemeldet" for n in _cases_j)
+        all(_measurement_j[(n, 0.01)][0] == "signed_in" for n in _cases_j)
         and _slow_questions(0.01)[2] == [(4, 4), (8, 8)], str(_slow_questions(0.01)[2]))
 r.check("… and the overall deadline lies with room below the pending time of the pre-booking",
         _ldap_mod.TOTAL_DEADLINE_SEC + 5 <= Store.PREBOOKING_PENDING_SEC,
@@ -644,7 +644,7 @@ finally:
 # (Mutationsprobe: `except DirectoryNotReachable: raise` in `authenticate` delete → „abgewiesen“,
 #  a failed attempt for the slowness of the directory → red.)
 r.check("p2 V1: if the deadline is not enough, the directory counts as unreachable before it is asked "
-        "(no failed attempt)", _tight_j[0] == "nicht erreichbar" and _tight_j[2] == [], str(_tight_j))
+        "(no failed attempt)", _tight_j[0] == "unreachable" and _tight_j[2] == [], str(_tight_j))
 
 # ── Without LDAP nothing is pending, and the column also lands in a file that already carries schema 11 ─
 db_o = str(Path(tempfile.mkdtemp()) / "t.db")
@@ -653,8 +653,8 @@ auth_o = TinySesam(TinySesamConfig(db_path=db_o, cookie_secure=False, csrf_enabl
 auth_o.create_user("bert", password=PW)
 app_o = FastAPI()
 app_o.include_router(auth_o.router())
-_sign_in(app_o, "bert", "falsch")
-r.check("without LDAP: the failed attempt is confirmed immediately (offen=0)",
+_sign_in(app_o, "bert", "wrong")
+r.check("without LDAP: the failed attempt is confirmed immediately (open=0)",
         [z["pending"] for z in auth_o.store._all("SELECT pending FROM login_attempt")] == [0])
 auth_o.store.db.close()
 raw = sqlite3.connect(db_o)

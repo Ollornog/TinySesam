@@ -154,7 +154,7 @@ def _hardness_app(**kw):
     ap.include_router(a.router())
     a.install_error_pages(ap)
 
-    @ap.get("/gast")
+    @ap.get("/guest")
     def guest():
         return PlainTextResponse("x", headers={"Vary": "Accept-Encoding"})
     return a, ap
@@ -169,7 +169,7 @@ _HEAD = {"x-content-type-options": "nosniff", "referrer-policy": "same-origin",
 _app8b = FastAPI()
 _app8b.include_router(_a8.router())
 for cl, away, expected in ((_c8, "/auth/login", 200), (_c8, "/auth/me", 401),
-                          (_c8, "/auth/reset?token=geheim", 400), (_c8, "/auth/admin", 401),
+                          (_c8, "/auth/reset?token=secret", 400), (_c8, "/auth/admin", 401),
                           (_c8, "/auth/admin/api/users", 401),
                           (TestClient(_app8b), "/auth/admin/api/users", 401)):
     rr = cl.get(away, follow_redirects=False)
@@ -178,7 +178,7 @@ for cl, away, expected in ((_c8, "/auth/login", 200), (_c8, "/auth/me", 401),
         assert rr.headers.get(k) == v, (away, k, rr.headers.get(k))
     assert "Cookie" in rr.headers.get("vary", ""), (away, rr.headers.get("vary"))
 ok("nosniff, Referrer-Policy, no-store, Vary: Cookie on page, JSON, token page, raised 401")
-_g = _c8.get("/gast")
+_g = _c8.get("/guest")
 assert "x-content-type-options" not in _g.headers and "cache-control" not in _g.headers, _g.headers
 assert _g.headers.get("vary") == "Accept-Encoding", _g.headers.get("vary")
 ok("host routes stay untouched")
@@ -202,8 +202,8 @@ ok("X-Frame-Options only with csp='strict'; the other headers also apply with 'o
 
 # 9) R8-1: the admin panel runs under the same CSP as every other page — without inline
 #    handlers and without style=, otherwise the policy would break its own buttons.
-_a8.ensure_admin("chef", "geheim-12345")
-_c8.post("/auth/login", data={"username": "chef", "password": "geheim-12345", "next": "/"},
+_a8.ensure_admin("chef", "secret-12345")
+_c8.post("/auth/login", data={"username": "chef", "password": "secret-12345", "next": "/"},
          follow_redirects=False)
 _p = _c8.get("/auth/admin")
 assert _p.status_code == 200, _p.status_code
@@ -225,11 +225,11 @@ ok("admin JSON API carries nosniff and no-store")
 # Also on a freely chosen prefix via `admin_router()`.
 _app9 = FastAPI()
 _app9.include_router(_a8.router())
-_app9.include_router(_a8.admin_router(), prefix="/verwaltung")
+_app9.include_router(_a8.admin_router(), prefix="/admin")
 _c9 = TestClient(_app9)
-_c9.post("/auth/login", data={"username": "chef", "password": "geheim-12345", "next": "/"},
+_c9.post("/auth/login", data={"username": "chef", "password": "secret-12345", "next": "/"},
          follow_redirects=False)
-_p9 = _c9.get("/verwaltung")
+_p9 = _c9.get("/admin")
 assert _p9.status_code == 200 and "nonce-" in _p9.headers.get("content-security-policy", ""), _p9.headers
 assert _p9.headers.get("cache-control") == "no-store"
 ok("admin_router() on its own prefix: the same CSP and the same headers")
@@ -284,14 +284,14 @@ _app11.include_router(_a8.router())
 
 @_app11.exception_handler(_RVE)
 async def _own_422(request, exc):
-    return _JR({"eigen": True}, status_code=400)
+    return _JR({"own": True}, status_code=400)
 
 
 _c11 = TestClient(_app11)
 _c11.cookies.update(_c8.cookies)
 _r11 = _c11.post("/auth/apikeys/abc/revoke")
-assert _r11.status_code == 400 and _r11.json() == {"eigen": True}, _r11.text
-_check_head(_r11, "eigener 422-Handler")
+assert _r11.status_code == 400 and _r11.json() == {"own": True}, _r11.text
+_check_head(_r11, "own 422 handler")
 ok("422: headers included, the app's handler still builds the response")
 _orig_audit = _a8.store.recent_audit
 

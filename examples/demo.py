@@ -19,7 +19,7 @@ auth = TinySesam(TinySesamConfig(
     oidc_enabled=False,
     cookie_secure=False,       # local, without HTTPS
 ))
-auth.ensure_admin("admin", "geheim123")   # only on first start
+auth.ensure_admin("admin", "secret123")   # only on first start
 
 app = FastAPI()
 app.include_router(auth.router())

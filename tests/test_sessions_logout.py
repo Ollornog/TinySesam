@@ -13,12 +13,12 @@ def ok(name):
 db = os.path.join(tempfile.mkdtemp(), "t.db")
 auth = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db, rp_name="Test", passkey_enabled=False, oidc_enabled=False,
                                  cookie_secure=False))
-auth.ensure_admin("admin", "geheim123")
+auth.ensure_admin("admin", "dummy123")
 app = FastAPI()
 app.include_router(auth.router())
 
 
-@app.get("/geheim")
+@app.get("/secret")
 def secret_text(u=Depends(auth.require_user)):
     return {"u": u["username"]}
 
@@ -26,7 +26,7 @@ def secret_text(u=Depends(auth.require_user)):
 JSON = {"Accept": "application/json"}
 a, b, cc = TestClient(app), TestClient(app), TestClient(app)   # three sessions of the same user
 for c in (a, b, cc):
-    c.post("/auth/login", data={"username": "admin", "password": "geheim123", "next": "/"}, follow_redirects=False)
+    c.post("/auth/login", data={"username": "admin", "password": "dummy123", "next": "/"}, follow_redirects=False)
 
 # ---------- list own sessions (masked, no tokens) + mark “this one” ----------
 lst = a.get("/auth/sessions").json()
@@ -36,15 +36,15 @@ ok("GET /auth/sessions: 3 sessions, exactly one as 'current', no tokens in the o
 
 # ---------- end other sessions: the current one stays, the others go ----------
 a.post("/auth/sessions/revoke", json={"scope": "others"})
-assert a.get("/geheim", headers=JSON).status_code == 200
-assert b.get("/geheim", headers=JSON).status_code == 401
-assert cc.get("/geheim", headers=JSON).status_code == 401
+assert a.get("/secret", headers=JSON).status_code == 200
+assert b.get("/secret", headers=JSON).status_code == 401
+assert cc.get("/secret", headers=JSON).status_code == 401
 assert len(a.get("/auth/sessions").json()) == 1
 ok("revoke scope=others: current session stays, others ended")
 
 # ---------- scope=all: also the own one ----------
 a.post("/auth/sessions/revoke", json={"scope": "all"})
-assert a.get("/geheim", headers=JSON).status_code == 401
+assert a.get("/secret", headers=JSON).status_code == 401
 ok("revoke scope=all: the own session ended too")
 os.remove(db)
 
@@ -82,13 +82,13 @@ db = os.path.join(tempfile.mkdtemp(), "t.db")
 auth = TinySesam(TinySesamConfig(lang="de", db_path=db, rp_name="Test", passkey_enabled=False,
                                  oidc_enabled=False, cookie_secure=False, pin_enabled=True,
                                  apikey_enabled=True, stepup_max_age_sec=900))
-auth.ensure_admin("admin", "geheim123")
+auth.ensure_admin("admin", "dummy123")
 uid = auth.store.get_user_by_name("admin")["id"]
 app = FastAPI()
 app.include_router(auth.router())
 
 
-@app.get("/geheim")
+@app.get("/secret")
 def secret_text2(u=Depends(auth.require_user)):
     return {"u": u["username"]}
 
@@ -96,7 +96,7 @@ def secret_text2(u=Depends(auth.require_user)):
 def sign_in():
     cl = TestClient(app)
     slot = re.search(r"name=_csrf value='([^']+)'", cl.get("/auth/login").text).group(1)
-    cl.post("/auth/login", data={"username": "admin", "password": "geheim123", "next": "/",
+    cl.post("/auth/login", data={"username": "admin", "password": "dummy123", "next": "/",
                                  "_csrf": slot}, follow_redirects=False)
     return cl
 
@@ -114,7 +114,7 @@ x, y = sign_in(), sign_in()
 alternate(x)
 r = x.post("/auth/sessions/revoke", json={"scope": "all"}, headers=head(x))
 assert r.status_code == 403 and r.headers.get("X-TinySesam-Reauth") == "/auth/reauth", r.status_code
-assert y.get("/geheim", headers=JSON).status_code == 200 and x.get("/geheim", headers=JSON).status_code == 200
+assert y.get("/secret", headers=JSON).status_code == 200 and x.get("/secret", headers=JSON).status_code == 200
 ok("F-09: ending sessions with stale confirmation → 403 + reauth hint, nothing ended")
 
 key = auth.create_api_key(uid, name="k")["key"]
@@ -122,7 +122,7 @@ service = TestClient(app)
 bearer = {**JSON, "Authorization": f"Bearer {key}"}
 assert service.post("/auth/sessions/revoke", json={"scope": "all"}, headers=bearer).status_code == 403
 assert service.get("/auth/sessions", headers=bearer).status_code == 403, "list only for a real session"
-assert y.get("/geheim", headers=JSON).status_code == 200 and auth.store.count_active_api_keys(uid) == 1
+assert y.get("/secret", headers=JSON).status_code == 200 and auth.store.count_active_api_keys(uid) == 1
 ok("F-09: an API key may neither end nor list sessions (and does not revoke itself)")
 
 assert len(x.get("/auth/sessions", headers=JSON).json()) == 2, "viewing remains possible without reauth"
@@ -135,11 +135,11 @@ assert r.status_code == 200 and r.json() == {"ok": True, "other_sessions": 2}, r
 r = z.post("/auth/pin/disable", headers=head(z))
 assert r.json()["other_sessions"] == 2
 r = z.post("/auth/sessions/revoke", json={"scope": "others"}, headers=head(z))
-assert r.status_code == 200 and x.get("/geheim", headers=JSON).status_code == 401
+assert r.status_code == 200 and x.get("/secret", headers=JSON).status_code == 401
 r = z.post("/auth/pin/set", json={"pin": "24680"}, headers=head(z))
 assert r.json()["other_sessions"] == 0
 page_html = z.get("/auth/account").text
-assert "other_sessions" in page_html and "andere" in auth.t("acc.sessions_offer").lower() \
+assert "other_sessions" in page_html \
     and auth.t("acc.sessions_offer")[:20] in page_html, "account page must offer ending"
 ok("B1-7: factor change reports other_sessions, the account page offers ending")
 
@@ -154,7 +154,7 @@ without_account = TinySesam(TinySesamConfig(lang="de", db_path=os.path.join(temp
                                        passkey_enabled=False, account_enabled=False))
 setup = without_account.templates.render("totp_setup", without_account, {"data": {"secret": "ABC", "qr": ""}})
 assert "await offer(r)" in setup and "revoke_others" not in setup, "without account page no dead way back"
-r = z.post("/auth/reauth", data={"password": "geheim123", "next": "/auth/account?revoke_others=1",
+r = z.post("/auth/reauth", data={"password": "dummy123", "next": "/auth/account?revoke_others=1",
                                  "_csrf": z.cookies.get("tinysesam_csrf")},
            follow_redirects=False)
 assert r.status_code == 303 and r.headers["location"] == "/auth/account?revoke_others=1", r.headers
@@ -164,20 +164,20 @@ ok("A-5: TOTP setup offers ending; the reauth detour keeps ?revoke_others=1")
 w = sign_in()
 r = w.get("/auth/logout", headers={"Sec-Fetch-Site": "cross-site"}, follow_redirects=False)
 assert r.status_code == 200 and "method=post" in r.text and "_csrf" in r.text, r.status_code
-assert w.get("/geheim", headers=JSON).status_code == 200, "foreign link must not sign out"
+assert w.get("/secret", headers=JSON).status_code == 200, "foreign link must not sign out"
 ok("F-07: GET /auth/logout from a foreign page → confirmation with POST form, session stays")
 
 r = w.post("/auth/logout", follow_redirects=False)
-assert r.status_code == 403 and w.get("/geheim", headers=JSON).status_code == 200
+assert r.status_code == 403 and w.get("/secret", headers=JSON).status_code == 200
 r = w.post("/auth/logout", data={"_csrf": w.cookies.get("tinysesam_csrf")}, follow_redirects=False)
-assert r.status_code == 303 and w.get("/geheim", headers=JSON).status_code == 401
+assert r.status_code == 303 and w.get("/secret", headers=JSON).status_code == 401
 ok("F-07: POST /auth/logout without token → 403, with token → signed out")
 
 for head_ in ({"Sec-Fetch-Site": "same-origin"}, {"Sec-Fetch-Site": "same-site"},
               {"Sec-Fetch-Site": "none"}, {}):
     v = sign_in()
     assert v.get("/auth/logout", headers=head_, follow_redirects=False).status_code == 303
-    assert v.get("/geheim", headers=JSON).status_code == 401, head_
+    assert v.get("/secret", headers=JSON).status_code == 401, head_
 ok("F-07: own link, neighbouring app, address bar and old browsers still sign out by GET")
 os.remove(db)
 

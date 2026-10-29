@@ -24,20 +24,20 @@ def build(**over):
     return TinySesam(TinySesamConfig(**base)), db
 
 
-def login(c, u="chef", pw="geheim12345"):
+def login(c, u="chef", pw="dummy12345"):
     return c.post("/auth/login", data={"username": u, "password": pw, "next": "/"}, follow_redirects=False)
 
 
 # ---------- 1) Admin satisfies every role — can be switched off ----------
 auth, db = build()
-uid = auth.create_user("chef", password="geheim12345", is_admin=True)
+uid = auth.create_user("chef", password="dummy12345", is_admin=True)
 admin = auth.store.get_user(uid)
 assert auth.has_role(admin, "editor"), "Default: admin satisfies every role"
 assert not auth.has_role(admin, "editor", admin_implies=False), "can be switched off per call"
 os.unlink(db)
 
 auth, db = build(admin_implies_roles=False)
-uid = auth.create_user("chef", password="geheim12345", is_admin=True)
+uid = auth.create_user("chef", password="dummy12345", is_admin=True)
 admin = auth.store.get_user(uid)
 assert not auth.has_role(admin, "editor"), "config switches the implication off"
 auth.set_roles(uid, ["editor"])
@@ -46,7 +46,7 @@ os.unlink(db)
 
 # … and the guards pass it through
 auth, db = build()
-auth.create_user("chef", password="geheim12345", is_admin=True)
+auth.create_user("chef", password="dummy12345", is_admin=True)
 app = FastAPI()
 app.include_router(auth.router())
 
@@ -56,7 +56,7 @@ def lax(u=Depends(auth.require_role("editor"))):
     return {"ok": True}
 
 
-@app.get("/strikt")
+@app.get("/strict")
 def strict(u=Depends(auth.require_role("editor", admin_implies=False))):
     return {"ok": True}
 
@@ -64,7 +64,7 @@ def strict(u=Depends(auth.require_role("editor", admin_implies=False))):
 c = TestClient(app, headers=JSON)
 assert login(c).status_code == 303
 assert c.get("/lax").status_code == 200, "admin gets through (default)"
-assert c.get("/strikt").status_code == 403, "…but not without a real role"
+assert c.get("/strict").status_code == 403, "…but not without a real role"
 os.unlink(db)
 print("  has_role: admin implication can be switched off via config AND via guard ok")
 
@@ -73,42 +73,42 @@ print("  has_role: admin implication can be switched off via config AND via guar
 # Same OR meaning as ?roles=a,b in forward-auth — otherwise the same question would mean
 # something different depending on the operating mode. Until 2026-09 require_role took exactly one role.
 auth, db = build(admin_implies_roles=False)
-auth.create_user("anna", password="geheim12345", roles=["lektorat"])
-auth.create_user("bob", password="geheim12345", roles=["vertrieb"])
+auth.create_user("anna", password="dummy12345", roles=["lektorat"])
+auth.create_user("bob", password="dummy12345", roles=["sales"])
 app = FastAPI()
 app.include_router(auth.router())
 
 
-@app.get("/eine-von")
-def one_of(u=Depends(auth.require_role("redaktion", "lektorat"))):
+@app.get("/a-from")
+def one_of(u=Depends(auth.require_role("editors", "lektorat"))):
     return {"ok": True}
 
 
-@app.get("/aus-liste")
-def from_items(u=Depends(auth.require_role(["redaktion", "lektorat"]))):
+@app.get("/aus-list")
+def from_items(u=Depends(auth.require_role(["editors", "lektorat"]))):
     return {"ok": True}
 
 
-@app.get("/beide", dependencies=[Depends(auth.require_role("lektorat")),
-                                 Depends(auth.require_role("vertrieb"))])
+@app.get("/both", dependencies=[Depends(auth.require_role("lektorat")),
+                                 Depends(auth.require_role("sales"))])
 def both():
     return {"ok": True}
 
 
 ca = TestClient(app, headers=JSON)
 assert login(ca, "anna").status_code == 303
-assert ca.get("/eine-von").status_code == 200, "one of the named roles suffices"
-assert ca.get("/aus-liste").status_code == 200, "a list instead of single arguments works too"
-assert ca.get("/beide").status_code == 403, "stacked guards require ALL roles"
+assert ca.get("/a-from").status_code == 200, "one of the named roles suffices"
+assert ca.get("/aus-list").status_code == 200, "a list instead of single arguments works too"
+assert ca.get("/both").status_code == 403, "stacked guards require ALL roles"
 
 cb = TestClient(app, headers=JSON)
 assert login(cb, "bob").status_code == 303
-r = cb.get("/eine-von")
+r = cb.get("/a-from")
 assert r.status_code == 403, "none of the roles → 403"
-assert "redaktion" in r.text and "lektorat" in r.text, "the message names both roles"
+assert "editors" in r.text and "lektorat" in r.text, "the message names both roles"
 
 # require(role=[...]) understands the same
-assert auth.require(role=["redaktion", "lektorat"]) and auth.require(role="lektorat")
+assert auth.require(role=["editors", "lektorat"]) and auth.require(role="lektorat")
 
 # An old positional call require_role("x", True) meant mfa=True — now keyword-only.
 # Fail loudly instead of silently treating True as a role.
@@ -129,8 +129,8 @@ os.unlink(db)
 
 auth, db = build(admin_enabled=False)    # pure OIDC app without panel
 assert auth.admin_claim_token() is None, "without panel: no token"
-uid = auth.create_user("wer", password="geheim12345")
-assert not auth._consume_admin_claim("egal", auth.store.get_user(uid)), "and nothing to redeem"
+uid = auth.create_user("wer", password="dummy12345")
+assert not auth._consume_admin_claim("whatever", auth.store.get_user(uid)), "and nothing to redeem"
 os.unlink(db)
 
 auth, db = build(admin_claim_ttl_min=0)
@@ -142,10 +142,10 @@ print("  First-admin token: only with admin_enabled and ttl>0 ok")
 # ---------- 3) Group mapping compares exactly ----------
 auth, db = build()
 assert auth.cfg.group_match == "exact"
-uid = auth.create_user("u", password="geheim12345")
-auth.apply_idp_groups(uid, ["nicht-admin"], {"admin": "__admin__"})
-assert not auth.store.get_user(uid)["is_admin"], "'admin' must not match 'nicht-admin'"
-auth.apply_idp_groups(uid, ["nicht-admin"], {"admin": "editor"})
+uid = auth.create_user("u", password="dummy12345")
+auth.apply_idp_groups(uid, ["not-admin"], {"admin": "__admin__"})
+assert not auth.store.get_user(uid)["is_admin"], "'admin' must not match 'not-admin'"
+auth.apply_idp_groups(uid, ["not-admin"], {"admin": "editor"})
 assert auth.store.get_roles(uid) == [], "no role from partial matches either"
 auth.apply_idp_groups(uid, ["admin"], {"admin": "__admin__"})
 assert auth.store.get_user(uid)["is_admin"], "exact match applies"
@@ -153,13 +153,13 @@ os.unlink(db)
 
 # Substring stays possible — for LDAP DNs
 auth, db = build(group_match="substring")
-uid = auth.create_user("u", password="geheim12345")
+uid = auth.create_user("u", password="dummy12345")
 auth.apply_idp_groups(uid, ["cn=staff,ou=groups,dc=example,dc=com"], {"cn=staff": "editor"})
 assert auth.store.get_roles(uid) == ["editor"], "DN partial match applies"
 os.unlink(db)
 
 auth, db = build()
-uid = auth.create_user("u", password="geheim12345")
+uid = auth.create_user("u", password="dummy12345")
 auth.apply_idp_groups(uid, ["cn=staff,ou=g"], {"cn=staff": "editor"}, substring=True)
 assert auth.store.get_roles(uid) == ["editor"], "can be forced per call (LDAP uses this)"
 os.unlink(db)
@@ -181,9 +181,9 @@ print("  issue_csrf: sets cookie + returns token, no-op when CSRF is off ok")
 
 
 # ---------- 5) OIDC callback path configurable ----------
-cfg = TinySesamConfig(db_path=os.path.join(tempfile.mkdtemp(), "datei"), oidc_callback_path="/sso/cb")
+cfg = TinySesamConfig(db_path=os.path.join(tempfile.mkdtemp(), "file"), oidc_callback_path="/sso/cb")
 assert cfg.oidc_callback_path == "/sso/cb"
-assert TinySesamConfig(db_path=os.path.join(tempfile.mkdtemp(), "datei")).oidc_callback_path == "/auth/oidc/callback"
+assert TinySesamConfig(db_path=os.path.join(tempfile.mkdtemp(), "file")).oidc_callback_path == "/auth/oidc/callback"
 print("  oidc_callback_path: configurable, default unchanged ok")
 
 print("OK test_authz_hardening")

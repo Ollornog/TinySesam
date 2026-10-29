@@ -14,16 +14,16 @@ db = os.path.join(tempfile.mkdtemp(), "t.db")
 auth = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db, rp_name="Test", passkey_enabled=False, oidc_enabled=False,
                                  cookie_secure=False, resource_locks_enabled=True))
 # two areas: one PIN, one passphrase
-auth.set_resource_secret("fotos", "2468", kind="pin", label="Familienfotos")
-auth.set_resource_secret("wiki", "geheime passphrase", kind="password", label="Team-Wiki")
+auth.set_resource_secret("photos", "2468", kind="pin", label="Familienfotos")
+auth.set_resource_secret("wiki", "secret passphrase", kind="password", label="Team-Wiki")
 
 app = FastAPI()
 app.include_router(auth.router())
 
 
-@app.get("/fotos")
-def photos(_=Depends(auth.require_resource("fotos"))):
-    return {"area": "fotos"}
+@app.get("/photos")
+def photos(_=Depends(auth.require_resource("photos"))):
+    return {"area": "photos"}
 
 
 @app.get("/wiki")
@@ -35,42 +35,42 @@ c = TestClient(app)
 JSON = {"Accept": "application/json"}
 
 # locked without unlock → 401 (JSON) or 307 to the unlock page (browser)
-assert c.get("/fotos", headers=JSON).status_code == 401
-r = c.get("/fotos", headers={"Accept": "text/html"}, follow_redirects=False)
-assert r.status_code == 307 and r.headers["location"] == "/auth/resource/fotos?next=/fotos"
+assert c.get("/photos", headers=JSON).status_code == 401
+r = c.get("/photos", headers={"Accept": "text/html"}, follow_redirects=False)
+assert r.status_code == 307 and r.headers["location"] == "/auth/resource/photos?next=/photos"
 ok("locked area: JSON→401, browser→307 to the unlock page")
 
 # unlock page shows PIN or password field depending on kind
-assert "Familienfotos" in c.get("/auth/resource/fotos").text
+assert "Familienfotos" in c.get("/auth/resource/photos").text
 assert "Zugangswort" in c.get("/auth/resource/wiki").text
 ok("unlock page: PIN field or passphrase field depending on kind")
 
 # wrong secret → 401
-assert c.post("/auth/resource/fotos", data={"secret": "0000", "next": "/fotos"}).status_code == 401
+assert c.post("/auth/resource/photos", data={"secret": "0000", "next": "/photos"}).status_code == 401
 ok("wrong secret → 401")
 
 # correct PIN unlocks → access, without any user login
-r = c.post("/auth/resource/fotos", data={"secret": "2468", "next": "/fotos"}, follow_redirects=False)
-assert r.status_code == 303 and r.headers["location"] == "/fotos"
-assert c.get("/fotos", headers=JSON).json() == {"area": "fotos"}
+r = c.post("/auth/resource/photos", data={"secret": "2468", "next": "/photos"}, follow_redirects=False)
+assert r.status_code == 303 and r.headers["location"] == "/photos"
+assert c.get("/photos", headers=JSON).json() == {"area": "photos"}
 ok("PIN correct → area open (no user account needed)")
 
 # unlocking is per area: wiki still locked
 assert c.get("/wiki", headers=JSON).status_code == 401
-r = c.post("/auth/resource/wiki", data={"secret": "geheime passphrase", "next": "/wiki"}, follow_redirects=False)
+r = c.post("/auth/resource/wiki", data={"secret": "secret passphrase", "next": "/wiki"}, follow_redirects=False)
 assert r.status_code == 303
 assert c.get("/wiki", headers=JSON).json() == {"area": "wiki"}
 # the area `fotos` stays open in parallel
-assert c.get("/fotos", headers=JSON).status_code == 200
+assert c.get("/photos", headers=JSON).status_code == 200
 ok("unlock is separate per area (passphrase area separately)")
 
 # lockout after too many failed attempts (pseudo user res:name)
 c2 = TestClient(app)
 LIMIT = auth._sec("resource_max_attempts")
-codes = [c2.post("/auth/resource/fotos", data={"secret": "0000", "next": "/"}).status_code
+codes = [c2.post("/auth/resource/photos", data={"secret": "0000", "next": "/"}).status_code
          for _ in range(LIMIT)]
 assert codes == [401] * LIMIT, codes
-assert c2.post("/auth/resource/fotos", data={"secret": "2468", "next": "/"}).status_code == 429
+assert c2.post("/auth/resource/photos", data={"secret": "2468", "next": "/"}).status_code == 429
 ok("resource lockout takes effect")
 
 # ---------- Round 2: area slips do not lock any SIGN-IN ----------
@@ -85,7 +85,7 @@ db2 = os.path.join(tempfile.mkdtemp(), "t.db")
 auth2 = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db2, rp_name="Test",
                                   passkey_enabled=False, oidc_enabled=False, cookie_secure=False,
                                   resource_locks_enabled=True))
-auth2.create_user("unbeteiligt", "Unbeteiligt-Passwort-1")
+auth2.create_user("uninvolved", "Uninvolved-Password-1x")
 app2 = FastAPI()
 app2.include_router(auth2.router())
 c3 = TestClient(app2)
@@ -106,9 +106,9 @@ assert auth2.store.count_fails(0, ip="testclient", method="resource") >= IP_LIMI
     "attack situation not produced: the test IP has not reached the login IP threshold"
 
 # (a) The attack: the sign-in of an uninvolved person from the same address stays open.
-assert not auth2._is_locked("unbeteiligt", "testclient"), \
+assert not auth2._is_locked("uninvolved", "testclient"), \
     "slips on the area PIN lock the sign-in of uninvolved persons"
-r = c3.post("/auth/login", data={"username": "unbeteiligt", "password": "Unbeteiligt-Passwort-1"},
+r = c3.post("/auth/login", data={"username": "uninvolved", "password": "Uninvolved-Password-1x"},
             follow_redirects=False)
 assert r.status_code == 303, f"Login of the uninvolved user blocked:{r.status_code}"
 ok("area slips lock no sign-in (own bucket)")
@@ -117,14 +117,14 @@ ok("area slips lock no sign-in (own bucket)")
 # Here a stranger guesses, the victim is no particular user, and without it he could keep guessing endlessly via
 # new area names. A FOURTH, never touched area is therefore closed from
 # the same address.
-auth2.set_resource_secret("tresor", "9876", kind="pin", label="Vault")
-assert auth2.store.count_fails(0, username="res:tresor", method="resource") == 0, \
+auth2.set_resource_secret("vault", "9876", kind="pin", label="Vault")
+assert auth2.store.count_fails(0, username="res:vault", method="resource") == 0, \
     "precondition: this area itself has seen no slip"
-r = c3.post("/auth/resource/tresor", data={"secret": "9876", "next": "/"})
+r = c3.post("/auth/resource/vault", data={"secret": "9876", "next": "/"})
 assert r.status_code == 429, f"the IP threshold of the area bucket does not apply: {r.status_code}"
 # …and another connection is unaffected (the lockout sticks to the address, not to the area).
 c4 = TestClient(app2, client=("203.0.113.30", 50000))
-r = c4.post("/auth/resource/tresor", data={"secret": "9876", "next": "/"}, follow_redirects=False)
+r = c4.post("/auth/resource/vault", data={"secret": "9876", "next": "/"}, follow_redirects=False)
 assert r.status_code == 303, f"unrelated connection locked out too:{r.status_code}"
 ok("…the IP threshold of the area bucket remains (locks areas, no sign-ins)")
 os.remove(db2)
@@ -139,29 +139,29 @@ db5 = os.path.join(tempfile.mkdtemp(), "t.db")
 auth5 = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db5, rp_name="Test",
                                   passkey_enabled=False, oidc_enabled=False, cookie_secure=False,
                                   resource_locks_enabled=True))
-auth5.set_resource_secret("garten", "4711", kind="pin", label="Garten")
+auth5.set_resource_secret("garden", "4711", kind="pin", label="Garden")
 app5 = FastAPI()
 app5.include_router(auth5.router())
 G5 = auth5._sec("resource_max_attempts")
 foreign = TestClient(app5, client=("198.51.100.66", 40000))
-codes = [foreign.post("/auth/resource/garten", data={"secret": "0000", "next": "/"}).status_code
+codes = [foreign.post("/auth/resource/garden", data={"secret": "0000", "next": "/"}).status_code
          for _ in range(G5 + 2)]
 assert codes[:G5] == [401] * G5 and codes[G5:] == [429, 429], codes
 identifier = TestClient(app5, client=("203.0.113.77", 40000))
-r = identifier.post("/auth/resource/garten", data={"secret": "4711", "next": "/"}, follow_redirects=False)
+r = identifier.post("/auth/resource/garden", data={"secret": "4711", "next": "/"}, follow_redirects=False)
 assert r.status_code == 303, f"a single stranger locks the area for everyone: {r.status_code}"
 ok("R7-3: a stranger locks only his address, not the area")
 
 # …but distributed guessing stays limited: from `account_attempt_factor` connections the
 # area closes, also for a further, uninvolved one.
 identifier.cookies.clear()
-auth5.store.clear_fails(username="res:garten")
+auth5.store.clear_fails(username="res:garden")
 for i in range(auth5._sec("account_attempt_factor")):
     ci = TestClient(app5, client=(f"198.51.100.{10 + i}", 40000))
     for _ in range(G5):
-        ci.post("/auth/resource/garten", data={"secret": "0000", "next": "/"})
+        ci.post("/auth/resource/garden", data={"secret": "0000", "next": "/"})
 late = TestClient(app5, client=("203.0.113.78", 40000))
-r = late.post("/auth/resource/garten", data={"secret": "4711", "next": "/"}, follow_redirects=False)
+r = late.post("/auth/resource/garden", data={"secret": "4711", "next": "/"}, follow_redirects=False)
 assert r.status_code == 429, f"distributed guessing is unlimited: {r.status_code}"
 ok("…distributed guessing over many addresses still locks the area")
 os.remove(db5)
@@ -169,17 +169,17 @@ os.remove(db5)
 # Admin API manages secrets
 admin = auth.store.get_user_by_name("admin")
 # (no admin created in this test → check via manager)
-auth.set_resource_secret("neu", "1234", kind="pin", label="Neu")
+auth.set_resource_secret("new", "1234", kind="pin", label="New")
 names = {r["name"] for r in auth.list_resource_secrets()}
-assert {"fotos", "wiki", "neu"} <= names
-auth.remove_resource_secret("neu")
-assert "neu" not in {r["name"] for r in auth.list_resource_secrets()}
+assert {"photos", "wiki", "new"} <= names
+auth.remove_resource_secret("new")
+assert "new" not in {r["name"] for r in auth.list_resource_secrets()}
 ok("manager/admin: create + delete secrets")
 
 # F-01: session fixation of the unlock. The attacker plants a token on the victim that he
 # knows (neighbour subdomain, plain-text HTTP); the victim unlocks the area. Before, the
 # unlock afterwards hung on EXACTLY this token — the attacker was in too.
-for _b in ("fotos", "wiki"):     # the lockout checks above locked the areas
+for _b in ("photos", "wiki"):     # the lockout checks above locked the areas
     auth.store.clear_fails(username=f"res:{_b}", method="resource")
 RC = auth.resource_cookie_name
 cf = TestClient(app, client=("198.51.100.41", 50000))   # own address: the lockouts above stick to "testclient"
@@ -197,25 +197,25 @@ def assigned(r):
     return m.group(1) if m else None
 
 
-planted = "vom-angreifer-gewaehlt-0123456789abcdef"
-r = cf.post("/auth/resource/fotos", data={"secret": "2468", "next": "/fotos"},
+planted = "from-attacker-chosen-0123456789abcdefxx"
+r = cf.post("/auth/resource/photos", data={"secret": "2468", "next": "/photos"},
             headers=with_(planted), follow_redirects=False)
 assert r.status_code == 303, (r.status_code, r.text[:200])
 new_tok = assigned(r)
 assert new_tok and new_tok != planted, "the unlock must get a NEW token"
-assert cf.get("/fotos", headers=with_(new_tok)).status_code == 200, "the victim itself is in"
-assert cf.get("/fotos", headers=with_(planted)).status_code == 401, \
+assert cf.get("/photos", headers=with_(new_tok)).status_code == 200, "the victim itself is in"
+assert cf.get("/photos", headers=with_(planted)).status_code == 401, \
     "the planted token is worthless"
 ok("F-01: unlock issues a new token — a planted one is not unlocked")
 
 # What the same browser already had open moves along — and does not stay on the old token.
-r = cf.post("/auth/resource/wiki", data={"secret": "geheime passphrase", "next": "/wiki"},
+r = cf.post("/auth/resource/wiki", data={"secret": "secret passphrase", "next": "/wiki"},
             headers=with_(new_tok), follow_redirects=False)
 third = assigned(r)
 assert third and third != new_tok
-assert cf.get("/fotos", headers=with_(third)).status_code == 200
+assert cf.get("/photos", headers=with_(third)).status_code == 200
 assert cf.get("/wiki", headers=with_(third)).status_code == 200
-assert cf.get("/fotos", headers=with_(new_tok)).status_code == 401, "the previous token must be empty"
+assert cf.get("/photos", headers=with_(new_tok)).status_code == 401, "the previous token must be empty"
 ok("…already open areas move to the new token, the old one holds nothing any more")
 
 # F-08: logout also ends the unlocks of this browser — signing out on a shared machine
@@ -223,7 +223,7 @@ ok("…already open areas move to the new token, the old one holds nothing any m
 r = cf.get("/auth/logout", headers=with_(third), follow_redirects=False)
 assert r.status_code == 303
 assert assigned(r) in ("", '""'), f"unlock cookie must be cleared: {assigned(r)!r}"
-assert cf.get("/fotos", headers=with_(third)).status_code == 401, "unlock survives the logout"
+assert cf.get("/photos", headers=with_(third)).status_code == 401, "unlock survives the logout"
 assert cf.get("/wiki", headers=with_(third)).status_code == 401
 ok("F-08: logout deletes the unlocks server-side and the unlock cookie in the browser")
 

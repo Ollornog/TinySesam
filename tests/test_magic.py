@@ -19,7 +19,7 @@ auth = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db, rp_n
                                  # public address, no longer from the Host header.
                                  base_url="https://auth.example.com"))
 auth.set_mailer(lambda to, subject, text, html=None: sent.append({"to": to, "subject": subject, "text": text}))
-auth.ensure_admin("admin", "geheim123")
+auth.ensure_admin("admin", "dummy123")
 uid = auth.store.get_user_by_name("admin")["id"]
 auth.store._exec("UPDATE users SET email=? WHERE id=?", ("admin@example.com", uid))
 
@@ -27,7 +27,7 @@ app = FastAPI()
 app.include_router(auth.router())
 
 
-@app.get("/geheim")
+@app.get("/secret")
 def secret_text(u=Depends(auth.require_user)):
     return {"u": u["username"]}
 
@@ -43,13 +43,13 @@ ok("login page shows the magic-link option")
 assert "E-Mail" in c.get("/auth/magic/request").text
 
 # unknown address → same response, NO mail (no enumeration)
-r = c.post("/auth/magic/request", data={"email": "fremd@example.com", "next": "/geheim"})
+r = c.post("/auth/magic/request", data={"email": "foreign@example.com", "next": "/secret"})
 assert r.status_code == 200 and "unterwegs" in r.text
 assert sent == []
 ok("unknown address: generic response, no mail (no enumeration)")
 
 # known address → mail with link
-r = c.post("/auth/magic/request", data={"email": "admin@example.com", "next": "/geheim"})
+r = c.post("/auth/magic/request", data={"email": "admin@example.com", "next": "/secret"})
 assert r.status_code == 200 and "unterwegs" in r.text
 assert len(sent) == 1 and sent[0]["to"] == "admin@example.com"
 import re
@@ -59,7 +59,7 @@ token = m.group(1)
 ok("known address: sign-in link sent by mail")
 
 # not logged in yet
-assert c.get("/geheim", headers=JSON).status_code == 401
+assert c.get("/secret", headers=JSON).status_code == 401
 
 # R4-02: The GET from the mail (or from the mail scanner) does NOT sign in and consumes nothing —
 # it only shows a button whose POST redeems.
@@ -67,14 +67,14 @@ scanner = TestClient(app)
 for _ in range(3):
     r = scanner.get(f"/auth/magic/{token}", follow_redirects=False)
     assert r.status_code == 200 and f"action='/auth/magic/{token}'" in r.text and "method=post" in r.text, r.text[:300]
-assert scanner.get("/geheim", headers=JSON).status_code == 401, "a GET must not sign anyone in"
+assert scanner.get("/secret", headers=JSON).status_code == 401, "a GET must not sign anyone in"
 assert auth.peek_magic(token, purpose="login"), "a GET must not consume the token"
 ok("R4-02: GET on the sign-in link consumes nothing and does not sign in")
 
 # redeem link (POST) → logged in, redirect to next
 r = c.post(f"/auth/magic/{token}", follow_redirects=False)
-assert r.status_code == 303 and r.headers["location"] == "/geheim", r.headers.get("location")
-assert c.get("/geheim", headers=JSON).json() == {"u": "admin"}
+assert r.status_code == 303 and r.headers["location"] == "/secret", r.headers.get("location")
+assert c.get("/secret", headers=JSON).json() == {"u": "admin"}
 ok("redeem magic link → logged in (factor 'magic')")
 
 # one-shot: second redemption fails
@@ -140,13 +140,13 @@ auth.rl = type(auth.rl)()
 
 # ---------- B6-12: if sending fails, the token is invalidated immediately ----------
 def _broken(*a, **k):
-    raise OSError("Relay weg")
+    raise OSError("Relay down")
 auth.set_mailer(_broken)
 _before = {z["token_hash"] for z in auth.store._all("SELECT token_hash FROM magic_token")}
 for _call in (lambda: auth.send_login_link("admin@example.com", auth.cfg.base_url),
              lambda: auth.send_password_reset("admin@example.com", auth.cfg.base_url),
              lambda: auth.send_verify_email(uid, "admin@example.com", auth.cfg.base_url),
-             lambda: auth.create_invite("gast@example.com", auth.cfg.base_url)):
+             lambda: auth.create_invite("guest@example.com", auth.cfg.base_url)):
     try:
         _call(); assert False, "sending error must reach the caller"
     except OSError:
@@ -271,7 +271,7 @@ try:
     # `smtp_ca_file` is really used (a missing path is noticed instead of being silently ignored)
     try:
         _mailer_mod.SMTPMailer(TinySesamConfig(smtp_host="mail.example.com", smtp_ssl=True,
-                                               smtp_ca_file="/gibt/es/nicht.pem"))("x@example.com", "s", "t")
+                                               smtp_ca_file="/does/not/exist.pem"))("x@example.com", "s", "t")
         assert False, "smtp_ca_file was ignored"
     except (FileNotFoundError, ssl.SSLError):
         pass
@@ -285,7 +285,7 @@ def _smtp_findings(**kw):
     f, w = _check_config(TinySesamConfig(db_path=os.path.join(tempfile.mkdtemp(), "t.db"),
                                    passkey_enabled=False, **kw))
     return ([x for x in f if "smtp" in x.lower()], [x for x in w if "smtp_host=" in x])
-assert len(_smtp_findings(smtp_host="mail.example.com", smtp_ca_file="/gibt/es/nicht.pem")[0]) == 1
+assert len(_smtp_findings(smtp_host="mail.example.com", smtp_ca_file="/does/not/exist.pem")[0]) == 1
 with tempfile.NamedTemporaryFile(suffix=".pem") as _ca:
     assert _smtp_findings(smtp_host="mail.example.com", smtp_ca_file=_ca.name) == ([], [])
 assert len(_smtp_findings(smtp_host="192.0.2.10")[1]) == 1, "relay by IP: hostname check fails"
@@ -325,13 +325,13 @@ for _language in ("en", "de"):
                                     passkey_enabled=False, oidc_enabled=False, cookie_secure=False,
                                     magiclink_enabled=True, base_url="https://auth.example.com"))
     _am.set_mailer(lambda to, subject, text, html=None, _g=_sent: _g.append((subject, text)))
-    _am.ensure_admin("admin", "geheim123")
+    _am.ensure_admin("admin", "dummy123")
     _uid = _am.store.get_user_by_name("admin")["id"]
     _am.store._exec("UPDATE users SET email=? WHERE id=?", ("admin@example.com", _uid))
     _app = FastAPI()
     _app.include_router(_am.router())
     TestClient(_app).post("/auth/magic/request", data={"email": "admin@example.com", "next": "/"})
-    _am.request_email_change(_uid, "neu@example.com", "https://auth.example.com")()
+    _am.request_email_change(_uid, "new@example.com", "https://auth.example.com")()
     _language_mails[_language] = _sent
 for _language, _subject in (("en", ["Your sign-in link", "Confirm your new email address"]),
                             ("de", ["Dein Anmelde-Link", "Neue E-Mail-Adresse bestätigen"])):

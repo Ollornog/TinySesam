@@ -48,12 +48,12 @@ db = os.path.join(tempfile.mkdtemp(), "t.db")
 
 auth = TinySesam(TinySesamConfig(db_path=db, security_log=log_file, cookie_secure=False,
                                  passkey_enabled=False, csrf_enabled=False))
-auth.create_user("anna", "geheim123-lang-genug")
+auth.create_user("anna", "dummy123-long-enough")
 assert os.path.exists(log_file)
 ok("security_log set → file is created")
 
 # one failed attempt — exactly the line that deploy/fail2ban/tinysesam-filter.conf matches
-auth._check_password("anna", "falsch")
+auth._check_password("anna", "wrong")
 auth._record_login("anna", "203.0.113.7", False, "password")
 with open(log_file, encoding="utf-8") as fh:
     content = fh.read()
@@ -76,7 +76,7 @@ ok("idempotent: the same path is not attached twice")
 # unwritable path: warn but keep running — a log file must not disable sign-in
 assert security.attach_security_log(os.path.join(tmp, "gibtsnicht", "x.log")) is False
 db2 = os.path.join(tempfile.mkdtemp(), "t.db")
-TinySesam(TinySesamConfig(db_path=db2, security_log="/proc/darf/ich/nicht.log",
+TinySesam(TinySesamConfig(db_path=db2, security_log="/proc/not/allowed/here.log",
                           cookie_secure=False, passkey_enabled=False))
 ok("unwritable path → False + warning, startup continues")
 
@@ -168,12 +168,12 @@ try:
     app = FastAPI()
     app.include_router(auth3.router())
     c = TestClient(app)
-    r = c.post("/auth/register", data={"username": "betreiber", "password": "geheim123-lang-genug"},
+    r = c.post("/auth/register", data={"username": "operator", "password": "dummy123-long-enough"},
                follow_redirects=False)
     assert r.status_code == 303, r.status_code
     r = c.get(f"/auth/claim-admin?token={tok3}", follow_redirects=False)
     assert r.status_code == 303, r.status_code
-    assert auth3.store.get_user_by_name("betreiber")["is_admin"]
+    assert auth3.store.get_user_by_name("operator")["is_admin"]
     ok("legitimate route stays intact: the token from the 0600 file makes the first admin")
 
     # And the file must not be the log again — otherwise the value would stand exactly there.
@@ -236,7 +236,7 @@ _clean_up()
 tmp6 = tempfile.mkdtemp()
 token_file6 = os.path.join(tmp6, "admin-claim.token")
 with open(token_file6, "w", encoding="utf-8") as fh:
-    fh.write("ALTES-TOKEN-AUS-EINEM-FRUEHEREN-LAUF-VIEL-LAENGER-ALS-DAS-NEUE-0123456789\n")
+    fh.write("OLD-TOKEN-FROM-AN-EARLIER-RUN-MUCH-LONGER-THAN-THE-NEW-0123456789\n")
 os.chmod(token_file6, 0o600)
 with contextlib.redirect_stderr(io.StringIO()):
     auth6 = TinySesam(TinySesamConfig(db_path=os.path.join(tmp6, "t.db"), cookie_secure=False,
@@ -324,9 +324,9 @@ assert _notice_lines(log8) == 1, \
 ok("the notice about the missing base comes once, not per request")
 
 c8.get("/auth/forward", headers={"x-forwarded-proto": "https",
-                                 "x-forwarded-host": "zweiter.example.com",
+                                 "x-forwarded-host": "second.example.com",
                                  "x-forwarded-uri": "/"})
-assert _notice_lines(log8, "zweiter.example.com") == 1, \
+assert _notice_lines(log8, "second.example.com") == 1, \
     "a DIFFERENT host no longer gets a line of its own — then the spot falls silent on new cases"
 ok("...another host is reported nonetheless (silent is not the same as mute)")
 
@@ -335,7 +335,7 @@ ok("...another host is reported nonetheless (silent is not the same as mute)")
 security.once_report_reset()
 T0 = 1_000_000.0
 assert all(security.report_once(f"probe:{i}", now=T0) for i in range(security._REPORTED_MAX))
-assert not security.report_once("probe:noch einer", now=T0), "without a cap an attacker fills the memory"
+assert not security.report_once("probe:another one", now=T0), "without a cap an attacker fills the memory"
 assert not security.report_once("probe:0", now=T0), "the same key does not report twice"
 ok("report_once() is capped (the key comes from the request)")
 
@@ -344,7 +344,7 @@ ok("report_once() is capped (the key comes from the request)")
 # operational error was missing too. An attacker could thereby switch off a warning deliberately, not just make
 # noise. (Mutation probe: remove the window change in `report_once` → the next line
 # turns red, the rest of the suite stays green.)
-assert security.report_once("probe:nach dem Fenster", now=T0 + security._REPORTED_WINDOW_SEC), \
+assert security.report_once("probe:after the window", now=T0 + security._REPORTED_WINDOW_SEC), \
     "after the window the spot must speak again"
 assert security.report_once("probe:0", now=T0 + security._REPORTED_WINDOW_SEC), \
     "the memory of the old window is emptied"
@@ -359,14 +359,14 @@ _check_lid = logging.StreamHandler(_buffer_lid)
 security.seclog.addHandler(_check_lid)
 try:
     for i in range(security._REPORTED_MAX):
-        security.report_once(f"voll:{i}", now=T0)
+        security.report_once(f"full:{i}", now=T0)
     for i in range(3):
         security.report_once(f"zuviel:{i}", now=T0)
 finally:
     security.seclog.removeHandler(_check_lid)
 _text_lid = _buffer_lid.getvalue()
 assert _text_lid.count("Notice cap reached") == 1, \
-    f"exactly one line per window, not {_text_lid.count('Hinweis-Deckel erreicht')}: {_text_lid[:200]!r}"
+    f"exactly one line per window, not {_text_lid.count('Notice cap reached')}: {_text_lid[:200]!r}"
 assert str(security._REPORTED_MAX) in _text_lid, _text_lid[:200]
 security.once_report_reset()
 ok("...and reaching the cap is reported once (no invisible suppression)")
@@ -405,12 +405,12 @@ auth10 = TinySesam(TinySesamConfig(db_path=os.path.join(tempfile.mkdtemp(), "t.d
                                    base_url="https://auth.example.com/sso"))
 security.once_report_reset()
 for _ in range(4):
-    _link = auth10.magic_url("tok", "https://auth.example.com/falsch", "reset_password")
+    _link = auth10.magic_url("tok", "https://auth.example.com/wrong", "reset_password")
     assert _link.startswith("https://auth.example.com/sso/"), _link
 _lines10 = [z for z in _read(log10).splitlines() if "is replaced by base_url" in z]
 assert len(_lines10) == 1, \
     f"same host, different path: {len(_lines10)} lines — exactly one expected"
-assert "/falsch" in _lines10[0] and "/sso" in _lines10[0], _lines10[0][:200]
+assert "/wrong" in _lines10[0] and "/sso" in _lines10[0], _lines10[0][:200]
 
 # Control: the same address as base_url (just with a trailing slash) is no deviation
 # and must not report — otherwise the line would be noise.
@@ -499,7 +499,7 @@ class _Recording:
 dbf = os.path.join(tempfile.mkdtemp(), "t.db")
 authf = TinySesam(TinySesamConfig(db_path=dbf, cookie_secure=False, passkey_enabled=False,
                                   csrf_enabled=False, lang="de"))
-uid_f = authf.create_user("anna", "Anna-Passwort-2026")
+uid_f = authf.create_user("anna", "Anna-Password-2026")
 
 # (1) Each method individually: sign-in attempts hit the jail, everything else does not.
 for method in ("password", "pin", "totp"):
@@ -546,7 +546,7 @@ cf = TestClient(appf)
 tok_f, _ = authf.start_session(uid_f, "password", remember=True)
 cf.cookies.set(authf.cfg.session_cookie, tok_f)
 with _Recording() as m:
-    codes = [cf.post("/auth/password", json={"current": f"vertippt{i}", "new": "neues-langes-passwort"}).status_code
+    codes = [cf.post("/auth/password", json={"current": f"mistyped{i}", "new": "new-long-passwordxxxx"}).status_code
              for i in range(8)]
 assert 403 in codes and 429 in codes, codes          # guessing happened, and the app lock kicked in
 lines_f = [z for z in m.lines() if "user=anna" in z]
@@ -560,7 +560,7 @@ ok("eight typos at one's own password change: logged, but no hit of the login ja
 # attack from outside — failed sign-ins at the login — still fills the jail.
 with _Recording() as m:
     for i in range(6):
-        cf.post("/auth/login", data={"username": "anna", "password": f"falsch{i}"})
+        cf.post("/auth/login", data={"username": "anna", "password": f"wrong{i}"})
 hit = [z for z in m.lines() if JAIL.search(z)]
 assert len(hit) >= 6, f"only {len(hit)} bannable lines — the jail gets too little to read"
 ok("control: failed sign-ins at the login still hit the jail")
@@ -573,7 +573,7 @@ os.remove(dbf)
 dbp = os.path.join(tempfile.mkdtemp(), "t.db")
 authp = TinySesam(TinySesamConfig(db_path=dbp, cookie_secure=False, passkey_enabled=False,
                                   csrf_enabled=False, lang="de", pin_enabled=True, pin_login=True))
-authp.create_user("paul", "Paul-Passwort-2026")
+authp.create_user("paul", "Paul-Password-2026")
 for _ in range(authp._sec("pin_max_attempts")):
     authp._record_login("paul", "203.0.113.5", False, "pin")
 with _Recording() as m:
@@ -594,12 +594,12 @@ dbc = os.path.join(tempfile.mkdtemp(), "t.db")
 authc = TinySesam(TinySesamConfig(db_path=dbc, cookie_secure=False, passkey_enabled=False,
                                   csrf_enabled=False, lang="de"))
 authc.admin_claim_token()
-authc.create_user("clara", "Clara-Passwort-2026")
+authc.create_user("clara", "Clara-Password-2026")
 authc.set_security("rate_limit_max", 5)
 appc = FastAPI()
 appc.include_router(authc.router())
 cc = TestClient(appc, headers={"Accept": "text/html"})
-cc.post("/auth/login", data={"username": "clara", "password": "Clara-Passwort-2026"})
+cc.post("/auth/login", data={"username": "clara", "password": "Clara-Password-2026"})
 with _Recording() as m:
     codes = [cc.get(f"/auth/claim-admin?token=rate{i}").status_code for i in range(8)]
 assert 403 in codes and codes[-1] == 429, f"B5-16: /auth/claim-admin is not throttled: {codes}"

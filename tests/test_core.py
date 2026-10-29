@@ -10,14 +10,14 @@ from tinysesam import TinySesam, TinySesamConfig
 db = os.path.join(tempfile.mkdtemp(), "t.db")
 auth = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db, rp_name="Test", passkey_enabled=False,
                                  oidc_enabled=False, cookie_secure=False))
-assert auth.ensure_admin("admin", "geheim123"), "admin should be created"
+assert auth.ensure_admin("admin", "dummy123"), "admin should be created"
 assert not auth.ensure_admin("x", "y"), "second ensure_admin must do nothing"
 
 app = FastAPI()
 app.include_router(auth.router())
 
 
-@app.get("/geheim")
+@app.get("/secret")
 def secret_text(u=Depends(auth.require_user)):
     return {"user": u["username"], "admin": bool(u["is_admin"])}
 
@@ -30,7 +30,7 @@ def ok(name):
 
 
 # 1) without login → 401 (JSON client)
-assert c.get("/geheim").status_code == 401
+assert c.get("/secret").status_code == 401
 ok("protected without login → 401")
 
 # 2) login page renders
@@ -39,16 +39,16 @@ assert r.status_code == 200 and "Passwort" in r.text
 ok("login page")
 
 # 3) wrong password
-assert c.post("/auth/login", data={"username": "admin", "password": "falsch", "next": "/geheim"}).status_code == 401
+assert c.post("/auth/login", data={"username": "admin", "password": "wrong", "next": "/secret"}).status_code == 401
 ok("wrong password → 401")
 
 # 4) correct password (no TOTP yet) → 303 + cookie, no MFA
-r = c.post("/auth/login", data={"username": "admin", "password": "geheim123", "next": "/geheim"}, follow_redirects=False)
+r = c.post("/auth/login", data={"username": "admin", "password": "dummy123", "next": "/secret"}, follow_redirects=False)
 assert r.status_code == 303 and "set-cookie" in {k.lower() for k in r.headers}
 ok("login without 2FA → logged in")
 
 # 5) protected now reachable
-r = c.get("/geheim")
+r = c.get("/secret")
 assert r.status_code == 200 and r.json()["user"] == "admin"
 ok("protected reachable with session")
 assert c.get("/auth/me").json()["authenticated"] is True
@@ -62,22 +62,22 @@ ok("TOTP set up")
 
 # 7) logout → login is now MFA-required
 c.get("/auth/logout")
-r = c.post("/auth/login", data={"username": "admin", "password": "geheim123", "next": "/geheim"}, follow_redirects=False)
+r = c.post("/auth/login", data={"username": "admin", "password": "dummy123", "next": "/secret"}, follow_redirects=False)
 assert r.status_code == 303 and "/auth/totp" in r.headers["location"]
-assert c.get("/geheim").status_code == 401, "with 2FA pending not yet fully logged in"
+assert c.get("/secret").status_code == 401, "with 2FA pending not yet fully logged in"
 ok("login with TOTP → 2FA step required")
 
 # 8) wrong + correct TOTP code
-assert c.post("/auth/totp", data={"code": "000000", "next": "/geheim"}).status_code == 401
-r = c.post("/auth/totp", data={"code": pyotp.TOTP(secret).now(), "next": "/geheim"}, follow_redirects=False)
+assert c.post("/auth/totp", data={"code": "000000", "next": "/secret"}).status_code == 401
+r = c.post("/auth/totp", data={"code": pyotp.TOTP(secret).now(), "next": "/secret"}, follow_redirects=False)
 assert r.status_code == 303
-assert c.get("/geheim").json()["user"] == "admin"
+assert c.get("/secret").json()["user"] == "admin"
 ok("TOTP correct → fully signed in")
 
 # 9) roles (optional)
 auth.set_roles(uid, ["editor"])
 u = auth.store.get_user(uid)
-assert auth.has_role(u, "editor") and auth.has_role(u, "irgendwas")  # admin ⇒ all roles
+assert auth.has_role(u, "editor") and auth.has_role(u, "something")  # admin ⇒ all roles
 auth.store.set_disabled(uid, False)
 ok("roles + admin override")
 
@@ -88,7 +88,7 @@ ok("roles + admin override")
 db_b = os.path.join(tempfile.mkdtemp(), "b.db")
 auth_b = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db_b, passkey_enabled=False,
                                    oidc_enabled=False, cookie_secure=False))
-uid_b = auth_b.create_user("berta", "berta-geheim-1")
+uid_b = auth_b.create_user("berta", "berta-secret-1")
 _event = []
 auth_b.on_security_event = lambda e, k, d: _event.append(e)
 secret_text_b = auth_b.totp_begin(uid_b)["secret"]
@@ -106,7 +106,7 @@ auth_b.totp_disable(uid_b)
 app_b = FastAPI()
 app_b.include_router(auth_b.router())
 cb = TestClient(app_b)
-assert cb.post("/auth/login", data={"username": "berta", "password": "berta-geheim-1"},
+assert cb.post("/auth/login", data={"username": "berta", "password": "berta-secret-1"},
                follow_redirects=False).status_code == 303
 secret_text_b = auth_b.totp_begin(uid_b)["secret"]
 limit = auth_b._sec("totp_setup_max_attempts")
@@ -119,7 +119,7 @@ fail = [z for z in auth_b.store.recent_audit(50) if z["event"] == "login_fail" a
 assert len(fail) >= limit, "every failed attempt is in the audit log"
 # Own bucket: the sign-in of the same account stays open.
 assert not auth_b._is_locked("berta", "testclient")
-assert TestClient(app_b).post("/auth/login", data={"username": "berta", "password": "berta-geheim-1"},
+assert TestClient(app_b).post("/auth/login", data={"username": "berta", "password": "berta-secret-1"},
                               follow_redirects=False).status_code == 303
 ok("B2-12/R3-6: setup confirmation throttled, locked, logged — login stays open")
 os.remove(db_b)

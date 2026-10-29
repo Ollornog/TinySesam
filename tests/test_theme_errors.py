@@ -15,13 +15,13 @@ db = os.path.join(tempfile.mkdtemp(), "t.db")
 auth = TinySesam(TinySesamConfig(db_path=db, rp_name="Test", lang="de", brand_css=BRAND,
                                  passkey_enabled=False, oidc_enabled=False, cookie_secure=False,
                                  csrf_enabled=False, pin_enabled=True, allow_signup=True))
-auth.ensure_admin("admin", "geheim123")
+auth.ensure_admin("admin", "dummy123")
 app = FastAPI()
 app.include_router(auth.router())
 auth.install_error_pages(app)
 
 
-@app.get("/geheim")
+@app.get("/secret")
 def secret_text(u=Depends(auth.require_user)):
     return {"u": u["username"]}
 
@@ -44,7 +44,7 @@ JSON = {"Accept": "application/json"}
 for path in ["/auth/login", "/auth/register"]:
     assert BRAND in c.get(path).text, path
 # also account page (own layout) + logged in
-c.post("/auth/login", data={"username": "admin", "password": "geheim123"}, follow_redirects=False)
+c.post("/auth/login", data={"username": "admin", "password": "dummy123"}, follow_redirects=False)
 assert BRAND in c.get("/auth/account").text
 assert BRAND in c.get("/auth/admin", headers=HTML).text
 ok("brand_css re-skins login/register/account/admin panel (one hook)")
@@ -69,7 +69,7 @@ ok("API client (Accept json): 404 as JSON, not HTML")
 
 # ---------- Redirects (login) stay redirects despite the error handler ----------
 c2 = TestClient(app, raise_server_exceptions=False)
-r = c2.get("/geheim", headers=HTML, follow_redirects=False)
+r = c2.get("/secret", headers=HTML, follow_redirects=False)
 assert r.status_code == 307 and "/auth/login" in r.headers["location"]
 ok("login redirect (307) stays a redirect (not caught as an error page)")
 
@@ -136,7 +136,7 @@ _a = TinySesam(TinySesamConfig(db_path=_db, csrf_enabled=False, lang="de", passk
                               cookie_secure=False, allow_signup=True, signup_require_email=False,
                               login_identifier="username",
                               brand_header=_hdr, brand_footer="<footer id=meinfooter>F</footer>"))
-_a.create_user("max", password="geheim12345", is_admin=True)
+_a.create_user("max", password="dummy12345", is_admin=True)
 _app = FastAPI(); _app.include_router(_a.router()); _a.install_error_pages(_app)
 _c = TestClient(_app, headers={"accept": "text/html"}, raise_server_exceptions=False)
 
@@ -146,7 +146,7 @@ for _p in ("/auth/login", "/auth/register", "/gibtsnicht"):
     assert _t.index("meinenav") < _t.index("class=tsmain") < _t.index("meinfooter"), _p
 assert _calls, "callable is evaluated per call"
 
-_c.post("/auth/login", data={"username": "max", "password": "geheim12345", "next": "/"})
+_c.post("/auth/login", data={"username": "max", "password": "dummy12345", "next": "/"})
 for _p in ("/auth/account", "/auth/admin"):
     _t = _c.get(_p).text
     assert "meinenav" in _t and "meinfooter" in _t, _p

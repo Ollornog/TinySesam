@@ -37,7 +37,7 @@ from tinysesam.store import SCHEMA, Store  # noqa: E402
 from _kit.report import Report  # noqa: E402
 
 r = Report("Joining an identifier — limit a for renaming, address change, deletion")
-PW = "Beitritt-Test-7"
+PW = "Join-Test-7xxxx"
 BASE = "http://testserver"
 SPRAYER, OWN = "203.0.113.9", "198.51.100.30"
 
@@ -79,17 +79,17 @@ def _line(auth, uid):
 a, app, _ = _app()
 uid = a.create_user("alt", password=PW)
 a.store._exec("UPDATE users SET created_at = created_at - 7200")
-_failed_attempts(a, "frei", SPRAYER, 3, before=3600)
-a.change_username(uid, "frei")
-note = _login(app, "frei")
+_failed_attempts(a, "free", SPRAYER, 3, before=3600)
+a.change_username(uid, "free")
+note = _login(app, "free")
 r.check("a: rename — the failed attempts of a stranger under the then free name remain "
         "after the full sign-in",
-        note.status_code == 303 and a.store.count_fails(0, username="frei") == 3,
-        f"HTTP {note.status_code}, {a.store.count_fails(0, username='frei')}")
+        note.status_code == 303 and a.store.count_fails(0, username="free") == 3,
+        f"HTTP {note.status_code}, {a.store.count_fails(0, username='free')}")
 r.check("… also in the throttling of HIS IP", a.store.count_fails(0, ip=SPRAYER) == 3,
         str(a.store.count_fails(0, ip=SPRAYER)))
-_failed_attempts(a, "frei", OWN, 2)
-_login(app, "frei")
+_failed_attempts(a, "free", OWN, 2)
+_login(app, "free")
 r.check("… the own ones after the rename are cleared by the sign-in as before",
         a.store.count_fails(0, ip=OWN) == 0 and a.store.count_fails(0, ip=SPRAYER) == 3,
         f"{a.store.count_fails(0, ip=OWN)} / {a.store.count_fails(0, ip=SPRAYER)}")
@@ -99,46 +99,46 @@ r.check("… the own ones after the rename are cleared by the sign-in as before"
 a, app, post = _app()
 uid = a.create_user("mia", password=PW, email="mia@example.com")
 a.store._exec("UPDATE users SET created_at = created_at - 7200")
-_failed_attempts(a, "neu@example.com", SPRAYER, 2, before=3600)
-a.request_email_change(uid, "neu@example.com", BASE)()
+_failed_attempts(a, "new@example.com", SPRAYER, 2, before=3600)
+a.request_email_change(uid, "new@example.com", BASE)()
 a._notice_outcome.wait()
-link = next((t.group(1) for destination, _b, text in post if destination == "neu@example.com"
+link = next((t.group(1) for destination, _b, text in post if destination == "new@example.com"
              for t in [re.search(re.escape(BASE) + r"(/auth/email/\S+)", text)] if t), "")
 confirmed = TestClient(app).post(link, follow_redirects=False) if link else None
-note = _login(app, "neu@example.com")
+note = _login(app, "new@example.com")
 r.check("b: address change via the link — the failed attempts under the new address from before remain",
-        confirmed is not None and confirmed.status_code == 303 and a.get_user(uid)["email"] == "neu@example.com"
-        and note.status_code == 303 and a.store.count_fails(0, username="neu@example.com") == 2,
-        f"Link {bool(link)}, HTTP {note.status_code}, {a.store.count_fails(0, username='neu@example.com')}")
-_failed_attempts(a, "nachtrag@example.com", "203.0.113.10", 2, before=3600)
-a.store.set_email(uid, "nachtrag@example.com", verified=True)      # the path of the OIDC addition
+        confirmed is not None and confirmed.status_code == 303 and a.get_user(uid)["email"] == "new@example.com"
+        and note.status_code == 303 and a.store.count_fails(0, username="new@example.com") == 2,
+        f"Link {bool(link)}, HTTP {note.status_code}, {a.store.count_fails(0, username='new@example.com')}")
+_failed_attempts(a, "addendum@example.com", "203.0.113.10", 2, before=3600)
+a.store.set_email(uid, "addendum@example.com", verified=True)      # the path of the OIDC addition
 _login(app, "mia")
 r.check("… likewise on the addition of an address (store.set_email, the path of OIDC)",
-        a.store.count_fails(0, username="nachtrag@example.com") == 2,
-        str(a.store.count_fails(0, username="nachtrag@example.com")))
+        a.store.count_fails(0, username="addendum@example.com") == 2,
+        str(a.store.count_fails(0, username="addendum@example.com")))
 
 # ── c: the second of creation ─────────────────────────────────────────────────────────────────
 # A timestamp cannot decide whether an attempt of the same second came before or after the creation;
 # the id can. (Mutation probe: `identifier_limits` always returns None → fallback to the
 # creation with `ts >= seit` → red.)
 a, app, _ = _app()
-_failed_attempts(a, "sek@example.com", SPRAYER, 1)
-uid = a.create_user("sek", password=PW, email="sek@example.com")
+_failed_attempts(a, "sec@example.com", SPRAYER, 1)
+uid = a.create_user("sec", password=PW, email="sec@example.com")
 a.store._exec("UPDATE login_attempt SET ts = (SELECT created_at FROM users WHERE id = ?) WHERE ip = ?",
               (uid, SPRAYER))
-note = _login(app, "sek@example.com")
+note = _login(app, "sec@example.com")
 r.check("c: a foreign failed attempt from the second of creation, but BEFORE it, remains",
-        note.status_code == 303 and a.store.count_fails(0, username="sek@example.com") == 1,
-        f"HTTP {note.status_code}, {a.store.count_fails(0, username='sek@example.com')}")
+        note.status_code == 303 and a.store.count_fails(0, username="sec@example.com") == 1,
+        f"HTTP {note.status_code}, {a.store.count_fails(0, username='sec@example.com')}")
 
 # ── d: counter-check — no overcorrection ──────────────────────────────────────────────────────
 # (Mutation probe: watermark + 1 in `WL_ATTEMPT` → red; that also keeps out a time-dependent version
 #  with `ts > seit`, which would leave own attempts of the same second standing.)
 a, app, _ = _app()
-a.create_user("sofort", password=PW, email="sofort@example.com")
-_failed_attempts(a, "sofort", OWN, 1)
-_failed_attempts(a, "sofort@example.com", OWN, 1)
-note = _login(app, "sofort")
+a.create_user("immediately", password=PW, email="immediately@example.com")
+_failed_attempts(a, "immediately", OWN, 1)
+_failed_attempts(a, "immediately@example.com", OWN, 1)
+note = _login(app, "immediately")
 r.check("d: own failed attempts directly after creation (same second) are cleared by the full sign-in",
         note.status_code == 303 and a.store.count_fails(0, ip=OWN) == 0, str(a.store.count_fails(0, ip=OWN)))
 
@@ -150,8 +150,8 @@ r.check("d: own failed attempts directly after creation (same second) are cleare
 a, app, _ = _app()
 uid = a.create_user("Gross", password=PW, email="gross@example.com")
 before = _line(a, uid)
-_failed_attempts(a, "jemand-anders", SPRAYER, 2)
-a.store.audit_log("probe", "jemand-anders")
+_failed_attempts(a, "someone-different", SPRAYER, 2)
+a.store.audit_log("probe", "someone-different")
 a.change_username(uid, "gross")
 a.store.set_email(uid, "GROSS@example.com", verified=True)
 afterwards = _line(a, uid)
@@ -160,8 +160,8 @@ r.check("e: renaming only in upper/lower case (name and address) moves no waterm
         all(before[s] is not None and before[s] == afterwards[s] for s in _columns)
         and afterwards["username"] == "gross" and afterwards["folded_name"] == "gross"
         and afterwards["folded_mail"] == "gross@example.com",
-        f"{[before[s] for s in _columns]} → {[afterwards[s] for s in _columns]}, Topf {afterwards['folded_name']!r}")
-a.change_username(uid, "gross-neu")
+        f"{[before[s] for s in _columns]} → {[afterwards[s] for s in _columns]}, Bucket {afterwards['folded_name']!r}")
+a.change_username(uid, "gross-new")
 new_z = _line(a, uid)
 r.check("… a new name sets it to the current state",
         new_z["name_attempt_from"] == a.store._one("SELECT MAX(id) AS m FROM login_attempt")["m"]
@@ -191,7 +191,7 @@ b = a.create_user("bert", password=PW)
 a.store._exec("UPDATE users SET created_at = created_at - 100 WHERE id = ?", (b,))
 x = a.create_user("xaver", password=PW)
 _login(app, "xaver", ip="198.51.100.77")
-a.change_username(x, "xaver-neu")
+a.change_username(x, "xaver-new")
 a.change_username(b, "xaver")
 own = a.own_events(b)
 r.check("g: whoever takes over a free name does not see the sign-in of the "
@@ -218,23 +218,23 @@ os.close(os.open(_inventory, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600))
 _raw = sqlite3.connect(_inventory)
 _raw.executescript(_old_schema)
 _now = int(time.time())
-_raw.execute("INSERT INTO users(username, email, created_at) VALUES ('bestand', 'bestand@example.com', ?)",
+_raw.execute("INSERT INTO users(username, email, created_at) VALUES ('existing', 'existing@example.com', ?)",
              (_now - 1800,))
 _raw.executemany("INSERT INTO login_attempt(ts, username, ip, success, method) VALUES (?, ?, ?, 0, 'password')",
-                 [(_now - 3600, "bestand@example.com", SPRAYER)] * 3
-                 + [(_now - 60, "bestand@example.com", OWN)] * 2)
+                 [(_now - 3600, "existing@example.com", SPRAYER)] * 3
+                 + [(_now - 60, "existing@example.com", OWN)] * 2)
 _raw.execute(f"PRAGMA user_version = {Store.SCHEMA_VERSION}")
 _raw.commit()
 _raw.close()
 a, app, _ = _app(db_path=_inventory)
-_uid = a.store.get_user_by_name("bestand")["id"]
+_uid = a.store.get_user_by_name("existing")["id"]
 a.set_password(_uid, PW)
 _hb = _line(a, _uid)
 _fi = {z["name"] for z in a.store.db.execute("PRAGMA table_info(federated_identity)")}
 r.check("h: existing data — the columns are added and stay NULL (no limit invented)",
         _n_users == 1 and _n_fi == 1 and all(_hb[s] is None for s in _columns) and "directory_name_folded" in _fi,
         f"cut {_n_users}/{_n_fi}, {[_hb[s] for s in _columns]}, {_fi}")
-note = _login(app, "bestand@example.com")
+note = _login(app, "existing@example.com")
 r.check("… limit is then the creation as before: foreign data from before remains, own data goes",
         note.status_code == 303 and a.store.count_fails(0, ip=SPRAYER) == 3 and a.store.count_fails(0, ip=OWN) == 0,
         f"HTTP {note.status_code}, {a.store.count_fails(0, ip=SPRAYER)} / {a.store.count_fails(0, ip=OWN)}")
@@ -248,12 +248,12 @@ r.check("… a second start changes nothing (idempotent, trigger once each)",
 # The recalculation trigger raises the watermarks — the stricter direction. (Mutation probe: the
 # trigger in the version of G12c, only `topf = NULL` → red.)
 a, app, _ = _app()
-uid = a.create_user("roh-alt", password=PW, email="roh@example.com")
+uid = a.create_user("raw-alt", password=PW, email="raw@example.com")
 a.store._exec("UPDATE users SET created_at = created_at - 7200")
-_failed_attempts(a, "roh-neu", SPRAYER, 3, before=3600)
-a.store.audit_log("probe", "roh-neu")
-a.store._exec("UPDATE users SET username = 'roh-neu' WHERE id = ?", (uid,))
-a.store._exec("UPDATE users SET email = 'roh2@example.com' WHERE id = ?", (uid,))
+_failed_attempts(a, "raw-new", SPRAYER, 3, before=3600)
+a.store.audit_log("probe", "raw-new")
+a.store._exec("UPDATE users SET username = 'raw-new' WHERE id = ?", (uid,))
+a.store._exec("UPDATE users SET email = 'raw2@example.com' WHERE id = ?", (uid,))
 _ri = _line(a, uid)
 _max_v = a.store._one("SELECT MAX(id) AS m FROM login_attempt")["m"]
 _max_a = a.store._one("SELECT MAX(id) AS m FROM audit")["m"]
@@ -261,7 +261,7 @@ r.check("i: raw UPDATE of name and address → watermarks at the current state, 
         _ri["name_attempt_from"] == _max_v == _ri["mail_attempt_from"] and _ri["name_audit_from"] == _max_a
         and _ri["mail_audit_from"] == _max_a and _ri["folded_name"] is None and _ri["folded_mail"] is None,
         f"{dict(_ri)} MAX {_max_v}/{_max_a}")
-note = _login(app, "roh-neu")
+note = _login(app, "raw-new")
 r.check("… and the sign-in under the new name leaves the attempts from before standing",
         note.status_code == 303 and a.store.count_fails(0, ip=SPRAYER) == 3,
         f"HTTP {note.status_code}, {a.store.count_fails(0, ip=SPRAYER)}")
@@ -276,23 +276,23 @@ from tinysesam.store import norm_email, norm_identifier  # noqa: E402
 a, app, _ = _app()
 uid = a.create_user("mia", password=PW, email="mia@example.com")
 a.store._exec("UPDATE users SET created_at = created_at - 7200")
-_failed_attempts(a, "neu@example.com", SPRAYER, 3, before=3600)
+_failed_attempts(a, "new@example.com", SPRAYER, 3, before=3600)
 _wl_c = _line(a, uid)["mail_attempt_from"]
-_new_c = norm_email("neu@example.com")
+_new_c = norm_email("new@example.com")
 a.store._exec("UPDATE users SET email=?, email_verified=?, folded_mail=? WHERE id=?",
               (_new_c, 1, norm_identifier(_new_c), uid))
 _rc = _line(a, uid)
-note = _login(app, "neu@example.com")
+note = _login(app, "new@example.com")
 r.check("i: the writer from 0.20.1 (address and bucket in one statement) raises the watermark too — "
         "the failed attempts under the new address remain",
         _rc["mail_attempt_from"] == a.store._one("SELECT MAX(id) AS m FROM login_attempt")["m"] > _wl_c
-        and _rc["folded_mail"] == "neu@example.com" and note.status_code == 303
-        and a.store.count_fails(0, username="neu@example.com") == 3 and a.store.count_fails(0, ip=SPRAYER) == 3,
+        and _rc["folded_mail"] == "new@example.com" and note.status_code == 303
+        and a.store.count_fails(0, username="new@example.com") == 3 and a.store.count_fails(0, ip=SPRAYER) == 3,
         f"WL {_wl_c} → {_rc['mail_attempt_from']}, HTTP {note.status_code}, {a.store.count_fails(0, ip=SPRAYER)}")
 # Counter-checks: the addition (only the bucket, NULL → bucket) and the own rewrite `B1` → `b1` (the same
 # bucket) move nothing.
 _prior_n = (_rc["name_attempt_from"], _rc["mail_attempt_from"])
-_failed_attempts(a, "anderswo", SPRAYER, 1)                 # otherwise the high-water mark would already stand there
+_failed_attempts(a, "elsewhere", SPRAYER, 1)                 # otherwise the high-water mark would already stand there
 a.store._exec("UPDATE users SET folded_name = NULL WHERE id = ?", (uid,))
 a.store._exec("UPDATE users SET folded_name = ? WHERE id = ?", ("mia", uid))
 a.store.set_username(uid, "MIA")
@@ -306,13 +306,13 @@ r.check("… the addition of a bucket and `mia` → `MIA` (the same bucket) leav
 # join it protected no account. A limit in time would leave a series begun before the join
 # unendable for the new owner. (Mutation probe: `delete_failure_series(…, kinds=())` → red.)
 a, app, _ = _app()
-_failed_attempts(a, "serie@example.com", SPRAYER, 3, before=3600)
-uid = a.create_user("serienkonto", password=PW, email="serie@example.com")
-series_before = a.store.failure_series("serie@example.com")
+_failed_attempts(a, "series@example.com", SPRAYER, 3, before=3600)
+uid = a.create_user("serienkonto", password=PW, email="series@example.com")
+series_before = a.store.failure_series("series@example.com")
 _login(app, "serienkonto")
 r.check("j: the series under the address from before creation ends with the first full sign-in",
-        series_before == 3 and a.store.failure_series("serie@example.com") == 0
+        series_before == 3 and a.store.failure_series("series@example.com") == 0
         and a.store.count_fails(0, ip=SPRAYER) == 3,
-        f"{series_before} → {a.store.failure_series('serie@example.com')}, Fenster {a.store.count_fails(0, ip=SPRAYER)}")
+        f"{series_before} → {a.store.failure_series('series@example.com')}, Window {a.store.count_fails(0, ip=SPRAYER)}")
 
 sys.exit(r.done())

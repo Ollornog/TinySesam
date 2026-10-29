@@ -145,7 +145,7 @@ assert "ollornog.github.io/TinySesam" in legal
 for probe in ("eigenen Server installiert", "on their own server"):
     assert probe in legal, probe
 assert all(f'href="{LEGAL}"' in pages[p] for p in (INDEX, FLOWS_FILE, LEGAL)), "footer linked"
-print("  legal.html: Impressum (§5 DDG), Hosting, Browser-Speicher, Betroffenenrechte")
+print("  legal.html: Impressum (§5 DDG), Hosting, Browser-Storage, Betroffenenrechte")
 
 idx, fl = pages[INDEX], pages[FLOWS_FILE]
 assert "class=hero" in _cut(idx, "<header class=shell>", "</header>")
@@ -233,7 +233,7 @@ with tempfile.TemporaryDirectory() as tmp:
         assert f"src='{src}'" in page, src
     # Nothing runs on Pages — an “Open” button would have no target.
     assert "/auth/login" not in page, "the built page links no running app"
-print("  web.build schreibt Seiten, Demo-Panels, Attrappen-API + .nojekyll")
+print("  web.build writes pages, demo panels, dummy API + .nojekyll")
 
 # ---------- Showcase: the username is text (R8-2) ----------
 # T-12 escaped it on /app and /sensitive; /demo (“Signed in as …”) stayed raw. An account named
@@ -243,10 +243,10 @@ from fastapi.testclient import TestClient  # noqa: E402
 import examples.showcase as showcase  # noqa: E402
 
 _evil = "<img src=x onerror=alert(1)>"
-showcase.auth.create_user(_evil, password="geheim-passwort-1")
+showcase.auth.create_user(_evil, password="dummy-password-1x")
 _c = TestClient(showcase.app)
 _c.get("/auth/login")
-_r = _c.post("/auth/login", data={"username": _evil, "password": "geheim-passwort-1", "next": "/",
+_r = _c.post("/auth/login", data={"username": _evil, "password": "dummy-password-1x", "next": "/",
                                   "_csrf": _c.cookies.get(showcase.auth.cfg.csrf_cookie)},
              follow_redirects=False)
 assert _r.status_code == 303, _r.status_code

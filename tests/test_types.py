@@ -67,15 +67,15 @@ r.check("py.typed is in the package", (ROOT / "tinysesam" / "py.typed").exists()
 
 auth = TinySesam(TinySesamConfig(db_path=str(Path(tempfile.mkdtemp()) / "t.db"),
                                  cookie_secure=False))
-uid = auth.create_user("wer", password="geheim12345", email="wer@example.com")
+uid = auth.create_user("wer", password="dummy12345", email="wer@example.com")
 
 # The six methods that promise `Optional[dict]` — measured on the real return value.
 for name, value in (("get_user", auth.get_user(uid)),
                    ("find_user", auth.find_user("wer")),
-                   ("_check_password", auth._check_password("wer", "geheim12345")),
+                   ("_check_password", auth._check_password("wer", "dummy12345")),
                    ("current_user", None),
                    ("redeem_magic (leer)", auth.redeem_magic("gibtsnicht")),
-                   ("find_user (leer)", auth.find_user("niemand"))):
+                   ("find_user (leer)", auth.find_user("nobody"))):
     if name == "current_user":
         continue
     expected_empty = "leer" in name
@@ -86,7 +86,7 @@ for name, value in (("get_user", auth.get_user(uid)),
                 isinstance(value, dict), f"returns {type(value).__name__}")
 
 # The test on which a user failed: there is no `.get()` on a Row.
-u = auth._check_password("wer", "geheim12345")
+u = auth._check_password("wer", "dummy12345")
 r.check("and a dict access like .get() works",
         u is not None and u.get("email") == "wer@example.com",
         "exactly here whoever believed the annotation failed")

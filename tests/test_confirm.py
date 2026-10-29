@@ -51,8 +51,8 @@ from tinysesam.security import seclog  # noqa: E402
 from _kit.report import Report  # noqa: E402
 
 r = Report("Safe building blocks for custom step-up and password-change pages (confirm_*, change_password, 0.22.0)")
-PW = "Bestaetigt-2026"          # 15 characters
-PW_NEW = "Ganz-Neues-Pw15"      # 15 characters
+PW = "Confirmed-2026x"          # 15 characters
+PW_NEW = "Whole-New-Pw15x"      # 15 characters
 PIN = "4711"
 IP = ("203.0.113.9", 50000)
 LOOSE = {"max_login_attempts": 1000, "rate_limit_max": 100000, "account_max_consecutive_failures": 100000,
@@ -80,7 +80,7 @@ def _app(hardening=None, **cfg):
                                 status_code=erg.status)
         return erg.redirect()
 
-    @app.post("/eigen/confirm/{procedure}")
+    @app.post("/own/confirm/{procedure}")
     def _own_confirm(procedure: str, request: Request, password: str = Form(""), pin: str = Form(""),
                        code: str = Form(""), next: str = Form(""), csrf: str = Form("", alias="_csrf")):
         if procedure == "password":
@@ -89,7 +89,7 @@ def _app(hardening=None, **cfg):
             return response(auth.confirm_pin(request, pin, next=next, csrf=csrf))
         return response(auth.confirm_totp(request, code, next=next, csrf=csrf))
 
-    @app.post("/eigen/confirm-json")
+    @app.post("/own/confirm-json")
     def _own_confirm_json(request: Request, data: dict):
         # The JSON path: no `csrf` argument, the token comes in the X-CSRF-Token header.
         erg = auth.confirm_password(request, data.get("password", ""))
@@ -97,7 +97,7 @@ def _app(hardening=None, **cfg):
         erg.set_cookie(response_)
         return response_
 
-    @app.post("/eigen/password")
+    @app.post("/own/password")
     def _own_password(request: Request, current: str = Form(""), new: str = Form(""),
                         csrf: str = Form("", alias="_csrf")):
         erg = auth.change_password(request, current, new, csrf=csrf)
@@ -105,7 +105,7 @@ def _app(hardening=None, **cfg):
             return JSONResponse({"reason": erg.reason, "detail": erg.message}, status_code=erg.status)
         return {"ok": True, "api_keys_active": erg.api_keys_active}
 
-    @app.post("/eigen/password-json")
+    @app.post("/own/password-json")
     async def _own_password_json(request: Request):
         # `async def` like the built-in route: the check (argon2) runs in the thread pool, the
         # CSRF token (csrf=None) comes from the header.
@@ -206,8 +206,8 @@ auth.create_user("alice", password=PW)
 c = _sign_in(app, "alice")
 _stale(auth, c)
 with Recording() as log_a:
-    sequence_a = [_post(c, "/eigen/confirm/password", password=f"falsch-{i}") for i in range(5)]
-    correct_a = _post(c, "/eigen/confirm/password", password=PW)
+    sequence_a = [_post(c, "/own/confirm/password", password=f"wrong-{i}") for i in range(5)]
+    correct_a = _post(c, "/own/confirm/password", password=PW)
 r.check("(a) custom step-up page: after 3 failed attempts 429 `locked` (text of the page) — no further guessing",
         [a.status_code for a in sequence_a] == [401, 401, 401, 429, 429]
         and [_reason(a) for a in sequence_a] == ["invalid"] * 3 + ["locked"] * 2
@@ -232,7 +232,7 @@ c = _sign_in(app, "bert")
 _stale(auth, c)
 _old = c.cookies.get(auth.session_cookie_name)
 _before = _fresh(c)
-_ok = _post(c, "/eigen/confirm/password", password=PW)
+_ok = _post(c, "/own/confirm/password", password=PW)
 _new = _session(auth, _ok)
 _with_old = TestClient(app, client=IP)
 _with_old.cookies.set(auth.session_cookie_name, _old)
@@ -246,7 +246,7 @@ r.check("(a) … the old token stays valid in the grace period, but without fres
         f"{_with_old.get('/auth/me', headers=JSON).status_code} {[e[0] for e in _audit(auth)]}")
 _erg_json = TestClient(app, client=IP)
 _erg_json.cookies.set(auth.session_cookie_name, _new)
-_j = _erg_json.post("/eigen/confirm-json", json={"password": PW})
+_j = _erg_json.post("/own/confirm-json", json={"password": PW})
 r.check("(a) JSON path: the result is `done`, `set_cookie()` puts the next new token in the cookie",
         _j.status_code == 200 and _j.json() == {"reason": "ok", "done": True}
         and _session(auth, _j) not in (None, _new), _j.text[:200])
@@ -255,7 +255,7 @@ r.check("(a) JSON path: the result is `done`, `set_cookie()` puts the next new t
 auth, app = _app(hardening={"rate_limit_max": 3})
 auth.create_user("cora", password=PW)
 c = _sign_in(app, "cora", ip=("198.51.100.44", 1))
-_throttle = [_post(c, "/eigen/confirm/password", password=f"falsch-{i}") for i in range(5)]
+_throttle = [_post(c, "/own/confirm/password", password=f"wrong-{i}") for i in range(5)]
 r.check("(a) IP throttle: 429 `ratelimit` with the text of the page",
         _throttle[-1].status_code == 429 and _reason(_throttle[-1]) == "ratelimit"
         and _throttle[-1].json()["message"] == auth.t("err.retry"),
@@ -272,13 +272,13 @@ auth, app = _app()
 uid = auth.create_user("dora", password=PW)
 _totp_set_up(auth, uid)
 _guest = _client(app)
-_without_c = _post(_guest, "/eigen/confirm/password", password=PW)
-_without_p = _post(_guest, "/eigen/password", current=PW, new=PW_NEW)
+_without_c = _post(_guest, "/own/confirm/password", password=PW)
+_without_p = _post(_guest, "/own/password", current=PW, new=PW_NEW)
 _half = _client(app, ("203.0.113.40", 1))
 _h1 = _post(_half, "/auth/login", username="dora", password=PW)
 _h_tok = _half.cookies.get(auth.session_cookie_name)
-_half_c = _post(_half, "/eigen/confirm/password", password=PW)
-_half_p = _post(_half, "/eigen/password", current=PW, new=PW_NEW)
+_half_c = _post(_half, "/own/confirm/password", password=PW)
+_half_p = _post(_half, "/own/password", current=PW, new=PW_NEW)
 _h_line = auth.store.get_session(_h_tok)
 r.check("(b) without a session: step-up 401 `no_session` with the login page as next_url, password change 401",
         _without_c.status_code == 401 and _reason(_without_c) == "no_session"
@@ -310,11 +310,11 @@ r.check("(b) … nothing booked, nothing changed: no attempt in `reauth`/`passwo
 auth, app = _app()
 uid = auth.create_user("emil", password=PW)
 _totp_set_up(auth, uid)
-_key = auth.create_api_key(uid, name="automat")["key"]
+_key = auth.create_api_key(uid, name="automation")["key"]
 _sessions_before = len(_sessions(auth, uid))
 _k = TestClient(app, client=IP, headers={"X-API-Key": _key})
-_k_c = _post(_k, "/eigen/confirm/password", password=PW)
-_k_p = _post(_k, "/eigen/password", current=PW, new=PW_NEW)
+_k_c = _post(_k, "/own/confirm/password", password=PW)
+_k_p = _post(_k, "/own/password", current=PW, new=PW_NEW)
 _k_one_c = _k.post("/auth/reauth", data={"password": PW, "next": "/"}, follow_redirects=False)
 _k_one_p = _k.post("/auth/password", json={"current": PW, "new": PW_NEW})
 r.check("(c) API key instead of session: step-up 403 `no_session` (text `api.stepup_session`), built-in route 403 "
@@ -337,7 +337,7 @@ _hk = _client(app, ("203.0.113.41", 1))
 _post(_hk, "/auth/login", username="emil", password=PW)
 _hk_tok = _hk.cookies.get(auth.session_cookie_name)
 _hk.headers["X-API-Key"] = _key
-_hk_c = _post(_hk, "/eigen/confirm/password", password=PW)
+_hk_c = _post(_hk, "/own/confirm/password", password=PW)
 _hk_line = auth.store.get_session(_hk_tok)
 r.check("(c) half session + API key: 403 `no_session`, the half session stays half",
         _hk_c.status_code == 403 and _reason(_hk_c) == "no_session"
@@ -357,9 +357,9 @@ codes = auth.generate_recovery_codes(uid)
 c = _sign_in(app, "frida")
 _post(c, "/auth/totp", code=pyotp.TOTP(secret_text).now())
 _stale(auth, c)
-_d_pw = _post(c, "/eigen/confirm/password", password=PW)
-_d_empty = _post(c, "/eigen/confirm/totp", code="")
-_d_rc = _post(c, "/eigen/confirm/totp", code=codes[0])
+_d_pw = _post(c, "/own/confirm/password", password=PW)
+_d_empty = _post(c, "/own/confirm/totp", code="")
+_d_rc = _post(c, "/own/confirm/totp", code=codes[0])
 _d_attempts = _attempts(auth, "reauth")
 r.check("(d) not offered (stepup_methods=[\"totp\"], password sent): 403 `method_disabled`, "
         "nothing fresh, no failed attempt",
@@ -374,7 +374,7 @@ r.check("(d) one-time code instead of TOTP: 401 `invalid` — the step-up takes 
         _d_rc.status_code == 401 and _reason(_d_rc) == "invalid" and [v[2] for v in _d_attempts] == [0]
         and auth.recovery_codes_remaining(uid) == len(codes),
         f"{_d_rc.status_code} {_d_attempts} {auth.recovery_codes_remaining(uid)}")
-_d_ok = _post(c, "/eigen/confirm/totp", code=pyotp.TOTP(secret_text).at(time.time() + 30))
+_d_ok = _post(c, "/own/confirm/totp", code=pyotp.TOTP(secret_text).at(time.time() + 30))
 r.check("(d) … a TOTP code confirms: 303, fresh", _d_ok.status_code == 303 and _fresh(c),
         f"{_d_ok.status_code} {_d_ok.text[:120]}")
 
@@ -382,7 +382,7 @@ r.check("(d) … a TOTP code confirms: 303, fresh", _d_ok.status_code == 303 and
 auth, app = _app(stepup_methods=["totp"], stepup_strict=True)
 auth.create_user("gerd", password=PW)
 c = _sign_in(app, "gerd")
-_strict = _post(c, "/eigen/confirm/password", password=PW)
+_strict = _post(c, "/own/confirm/password", password=PW)
 r.check("(d) stepup_strict without TOTP: 403 `method_disabled` with the text of the page (err.stepup_none), "
         "no attempt",
         _strict.status_code == 403 and _reason(_strict) == "method_disabled"
@@ -396,12 +396,12 @@ uid = auth.create_user("hanna", password=PW)
 auth.set_pin(uid, PIN)
 c = _sign_in(app, "hanna")
 _stale(auth, c)
-_p_ok = _post(c, "/eigen/confirm/pin", pin=PIN)
+_p_ok = _post(c, "/own/confirm/pin", pin=PIN)
 _stale(auth, c)
 for i in range(2):
     _post(_client(app), "/auth/pin", username="hanna", pin=f"000{i}")
-_p_locked = _post(c, "/eigen/confirm/pin", pin=PIN)
-_pw_locked = _post(c, "/eigen/confirm/password", password=PW)
+_p_locked = _post(c, "/own/confirm/pin", pin=PIN)
+_pw_locked = _post(c, "/own/confirm/password", password=PW)
 r.check("(d) PIN: correct PIN confirms (303); after the PIN lock at login 429 `locked` — also with the "
         "password, as long as the page offers the PIN (C-3)",
         _p_ok.status_code == 303 and _p_locked.status_code == 429 and _reason(_p_locked) == "locked"
@@ -411,7 +411,7 @@ auth, app = _app(pin_enabled=False)
 uid = auth.create_user("ines", password=PW)
 auth.set_pin(uid, PIN)
 c = _sign_in(app, "ines")
-_p_from = _post(c, "/eigen/confirm/pin", pin=PIN)
+_p_from = _post(c, "/own/confirm/pin", pin=PIN)
 r.check("(d) without pin_enabled: `confirm_pin` 403 `method_disabled`, despite the PIN hash in the database",
         _p_from.status_code == 403 and _reason(_p_from) == "method_disabled", f"{_p_from.status_code}")
 
@@ -425,8 +425,8 @@ auth, app = _app(hardening={"password_change_max_attempts": 3})
 uid = auth.create_user("jana", password=PW)
 c = _sign_in(app, "jana")
 with Recording() as log_e:
-    sequence_e = [_post(c, "/eigen/password", current=f"falsch-{i}", new=PW_NEW) for i in range(4)]
-    correct_e = _post(c, "/eigen/password", current=PW, new=PW_NEW)
+    sequence_e = [_post(c, "/own/password", current=f"wrong-{i}", new=PW_NEW) for i in range(4)]
+    correct_e = _post(c, "/own/password", current=PW, new=PW_NEW)
 r.check("(e) custom password-change page: after 3 failed attempts 429 `locked` — even the correct old "
         "password then changes nothing",
         [a.status_code for a in sequence_e] == [403, 403, 403, 429] and _reason(sequence_e[0]) == "invalid"
@@ -445,14 +445,14 @@ r.check("(e) … in the `password_change` bucket, with a line in the security lo
 # (Mutation probe: delete `delete_user_sessions_except` in `change_password` → red.)
 auth, app = _app()
 uid = auth.create_user("karla", password=PW)
-auth.create_api_key(uid, name="automat")
+auth.create_api_key(uid, name="automation")
 c = _sign_in(app, "karla")
 _other = _sign_in(app, "karla", ip=("203.0.113.50", 1))
 _change = auth.create_magic_token("email_change", user_id=uid)
 _sign_in_link = auth.create_magic_token("login", user_id=uid)
-_weak = _post(c, "/eigen/password", current=PW, new="kurz")
-_empty = _post(c, "/eigen/password", current="", new=PW_NEW)
-_e_ok = _post(c, "/eigen/password", current=PW, new=PW_NEW)
+_weak = _post(c, "/own/password", current=PW, new="short")
+_empty = _post(c, "/own/password", current="", new=PW_NEW)
+_e_ok = _post(c, "/own/password", current=PW, new=PW_NEW)
 
 
 def _link_unclosed(raw):
@@ -461,7 +461,7 @@ def _link_unclosed(raw):
 
 r.check("(e) new password too weak: 400 `policy` with the violated rule as text",
         _weak.status_code == 400 and _reason(_weak) == "policy"
-        and _weak.json()["detail"] == auth.password_policy_error("kurz", username="karla", api=True),
+        and _weak.json()["detail"] == auth.password_policy_error("short", username="karla", api=True),
         f"{_weak.status_code} {_weak.text[:160]}")
 r.check("(e) empty old password: 400 `missing`, does not count",
         _empty.status_code == 400 and _reason(_empty) == "missing" and not [
@@ -490,16 +490,16 @@ c.get("/auth/login")
 c.post("/auth/login", data={"username": "lena", "password": PW, "next": "/",
                             "_csrf": c.cookies.get(auth.csrf_cookie_name)}, follow_redirects=False)
 _tok = c.cookies.get(auth.csrf_cookie_name)
-_f_c_without = _post(c, "/eigen/confirm/password", password=PW)
-_f_p_without = _post(c, "/eigen/password", current=PW, new=PW_NEW)
-_f_pj_without = c.post("/eigen/password-json", json={"current": PW, "new": PW_NEW})
+_f_c_without = _post(c, "/own/confirm/password", password=PW)
+_f_p_without = _post(c, "/own/password", current=PW, new=PW_NEW)
+_f_pj_without = c.post("/own/password-json", json={"current": PW, "new": PW_NEW})
 _f_booked = _attempts(auth, "reauth") + _attempts(auth, "password_change")
 _f_pw_old = auth._verify_user_password(uid, PW)
-_f_c_with = _post(c, "/eigen/confirm/password", password=PW, _csrf=_tok)
-_f_cj_with = c.post("/eigen/confirm-json", json={"password": PW}, headers={"X-CSRF-Token": _tok})
-_f_p_empty = c.post("/eigen/password", data={"current": PW, "new": PW_NEW, "_csrf": ""},
+_f_c_with = _post(c, "/own/confirm/password", password=PW, _csrf=_tok)
+_f_cj_with = c.post("/own/confirm-json", json={"password": PW}, headers={"X-CSRF-Token": _tok})
+_f_p_empty = c.post("/own/password", data={"current": PW, "new": PW_NEW, "_csrf": ""},
                    headers={"X-CSRF-Token": _tok})
-_f_pj_with = c.post("/eigen/password-json", json={"current": PW, "new": PW_NEW}, headers={"X-CSRF-Token": _tok})
+_f_pj_with = c.post("/own/password-json", json={"current": PW, "new": PW_NEW}, headers={"X-CSRF-Token": _tok})
 r.check("(f) CSRF: without token 403 (step-up, password change as form and as JSON), nothing changed",
         _f_c_without.status_code == 403 and _f_p_without.status_code == 403 and _f_pj_without.status_code == 403
         and not _f_booked and _f_pw_old,
@@ -518,7 +518,7 @@ try:
 except dataclasses.FrozenInstanceError:
     _frozen = True
 _wrong_built = []
-for kw in ({"ok": False, "reason": "erfunden", "status": 400}, {"ok": True, "reason": "invalid", "status": 200},
+for kw in ({"ok": False, "reason": "invented", "status": 400}, {"ok": True, "reason": "invalid", "status": 200},
            {"ok": False, "reason": "ok", "status": 200}):
     try:
         PasswordChangeResult(**kw)
@@ -554,15 +554,15 @@ def _execution(built_in: bool, steps, setup):
     result = []
     with Recording() as log:
         for kind, value in steps(auth):
-            if kind == "neues_passwort":
+            if kind == "new_password":
                 current, new = value
                 a = (c.post("/auth/password", json={"current": current, "new": new}) if built_in
-                     else _post(c, "/eigen/password", current=current, new=new))
+                     else _post(c, "/own/password", current=current, new=new))
                 result.append((a.status_code, a.json().get("detail"), a.json().get("api_keys_active")))
                 continue
             slot = {"password": "password", "pin": "pin", "totp": "code"}[kind]
             a = (_post(c, "/auth/reauth", **{slot: value}) if built_in
-                 else _post(c, f"/eigen/confirm/{kind}", **{slot: value}))
+                 else _post(c, f"/own/confirm/{kind}", **{slot: value}))
             result.append((a.status_code, a.headers.get("location")))
     return dict(status=result, audit=_audit(auth), log=log.lines(), attempts=_attempts(auth))
 
@@ -597,7 +597,7 @@ def _setup_stepup():
 
 def _stepup_steps(auth):
     g = _secrets[id(auth)]
-    yield "password", "falsch-1"
+    yield "password", "wrong-1"
     yield "pin", ""
     yield "pin", "0000"
     yield "totp", "000000"
@@ -608,7 +608,7 @@ def _stepup_steps(auth):
     yield "password", PW                                   # locked
 
 
-_g_su = _comparison("Step-up (Passwort, PIN, TOTP; falsch, leer, richtig, Sperre)", _stepup_steps, _setup_stepup)
+_g_su = _comparison("Step-up (password, PIN, TOTP; wrong, empty, right, lock)", _stepup_steps, _setup_stepup)
 r.check("(g) … step-up sequence: 401, 400, 401, 401, 303, 303, 401×4, 429",
         [s for s, _ in _g_su["status"]] == [401, 400, 401, 401, 303, 303, 401, 401, 401, 401, 429],
         str(_g_su["status"]))
@@ -636,25 +636,25 @@ r.check("(g) … TOTP-only sequence: 403, 401, 303", [s for s, _ in _g_nt["statu
 def _setup_password():
     auth, app = _app(hardening={"password_change_max_attempts": 3})
     uid = auth.create_user("quirin", password=PW)
-    auth.create_api_key(uid, name="automat")
+    auth.create_api_key(uid, name="automation")
     return auth, app, _sign_in(app, "quirin")
 
 
 _g_pw = _comparison("password change (wrong, empty, too weak, lock, then correct)", lambda a: [
-    ("neues_passwort", ("falsch-1", PW_NEW)),
-    ("neues_passwort", ("", PW_NEW)),
-    ("neues_passwort", (PW, "kurz")),                      # old one correct: clears the bucket
-    ("neues_passwort", ("falsch-2", PW_NEW)),
-    ("neues_passwort", ("falsch-3", PW_NEW)),
-    ("neues_passwort", ("falsch-4", PW_NEW)),
-    ("neues_passwort", (PW, PW_NEW)),                      # locked
+    ("new_password", ("wrong-1", PW_NEW)),
+    ("new_password", ("", PW_NEW)),
+    ("new_password", (PW, "short")),                      # old one correct: clears the bucket
+    ("new_password", ("wrong-2", PW_NEW)),
+    ("new_password", ("wrong-3", PW_NEW)),
+    ("new_password", ("wrong-4", PW_NEW)),
+    ("new_password", (PW, PW_NEW)),                      # locked
 ], _setup_password)
 r.check("(g) … password sequence: 403, 400, 400, 403, 403, 403, 429",
         [s for s, _, _ in _g_pw["status"]] == [403, 400, 400, 403, 403, 403, 429], str(_g_pw["status"]))
 _g_pw_ok = _comparison("password change (success with API key, then the old password wrong)", lambda a: [
-    ("neues_passwort", (PW, PW_NEW)),
-    ("neues_passwort", (PW, "Noch-Ein-Neues1")),
-    ("neues_passwort", (PW_NEW, "Noch-Ein-Neues1")),
+    ("new_password", (PW, PW_NEW)),
+    ("new_password", (PW, "Still-A-New1xxx")),
+    ("new_password", (PW_NEW, "Still-A-New1xxx")),
 ], _setup_password)
 r.check("(g) … success sequence: 200 with api_keys_active=1, 403, 200",
         _g_pw_ok["status"] == [(200, None, 1), (403, auth.t("api.password_wrong"), None), (200, None, 1)],
@@ -685,21 +685,21 @@ def _routes_findings(source_text):
         found.add(fn.name)
         names = {k.attr for k in ast.walk(fn) if isinstance(k, ast.Attribute)}
         findings += [f"{fn.name} does not call {n}" for n in sorted(ROUTES[fn.name] - names)]
-        findings += [f"{fn.name} ruft {n} selbst" for n in sorted(names & INNER)]
+        findings += [f"{fn.name} calls {n} itself" for n in sorted(names & INNER)]
     findings += [f"{n} missing in the router" for n in sorted(set(ROUTES) - found)]
     return findings
 
 
 _itself = {
-    "sauber": ("def reauth_submit(r):\n    e = auth.confirm_totp(r, 'c') if c else auth.confirm_pin(r, 'p')\n"
+    "clean": ("def reauth_submit(r):\n    e = auth.confirm_totp(r, 'c') if c else auth.confirm_pin(r, 'p')\n"
                "    return e or auth.confirm_password(r, 'x')\n"
                "async def change_own_password(r):\n    return await run_in_threadpool(auth.change_password, r)\n", []),
-    "doppelt": ("def reauth_submit(r):\n    auth._verify_user_password(1, 'x')\n"
+    "double": ("def reauth_submit(r):\n    auth._verify_user_password(1, 'x')\n"
                 "    return auth.confirm_totp(r, 'c') or auth.confirm_pin(r, 'p') or auth.confirm_password(r, 'x')\n"
                 "async def change_own_password(r):\n    auth.set_password(1, 'n')\n"
                 "    return auth.change_password(r, 'a', 'b')\n",
-                ["reauth_submit ruft _verify_user_password selbst", "change_own_password ruft set_password selbst"]),
-    "vorbei": ("def reauth_submit(r):\n    return auth.confirm_password(r, 'x')\n", None),
+                ["reauth_submit calls _verify_user_password itself", "change_own_password calls set_password itself"]),
+    "over": ("def reauth_submit(r):\n    return auth.confirm_password(r, 'x')\n", None),
 }
 _router = (ROOT / "tinysesam" / "router.py").read_text(encoding="utf-8")
 for _probe, (_text, _expected) in _itself.items():
@@ -730,7 +730,7 @@ def _readme_example(file, head):
 def _readme_app(file, head):
     source = _readme_example(file, head)
     db = str(Path(tempfile.mkdtemp()) / "app.db")
-    ns: dict = {"__name__": "readme_beispiel"}
+    ns: dict = {"__name__": "readme_example"}
     exec(compile(source.replace('db_path="app.db"', f"db_path={db!r}"), file, "exec"), ns)   # noqa: S102
     return source, ns["auth"], ns["app"]
 
@@ -755,7 +755,7 @@ for _file, _head, _path, _sensitive in (("README.md", "## Own step-up page\n", "
     _stale(_auth, _c)
     _to = _c.get(_sensitive, headers=JSON, follow_redirects=False)
     _tok = _c.cookies.get(_auth.csrf_cookie_name)
-    _sequence = [_c.post(_path, data={"password": f"falsch-{i}", "next": _sensitive, "_csrf": _tok},
+    _sequence = [_c.post(_path, data={"password": f"wrong-{i}", "next": _sensitive, "_csrf": _tok},
                       follow_redirects=False).status_code for i in range(_limit + 1)]
     _locked = _c.post(_path, data={"password": PW, "next": _sensitive, "_csrf": _tok}, follow_redirects=False)
     _c2 = _readme_sign_in(_auth, _app_r, "sven", ("203.0.113.77", 1))
@@ -777,11 +777,11 @@ for _file, _head, _path in (("README.md", "## Own password change page\n", "/pas
     _source, _auth, _app_r = _readme_app(_file, _head)
     _uid_t = _auth.create_user("theo", password=PW)
     _uid_u = _auth.create_user("uwe", password=PW)
-    _auth.create_api_key(_uid_u, name="automat")
+    _auth.create_api_key(_uid_u, name="automation")
     _limit = _auth.all_security()["password_change_max_attempts"]
     _c = _readme_sign_in(_auth, _app_r, "theo", IP)
     _tok = _c.cookies.get(_auth.csrf_cookie_name)
-    _sequence = [_c.post(_path, data={"current": f"falsch-{i}", "new": PW_NEW, "_csrf": _tok}).status_code
+    _sequence = [_c.post(_path, data={"current": f"wrong-{i}", "new": PW_NEW, "_csrf": _tok}).status_code
               for i in range(_limit + 1)]
     _locked = _c.post(_path, data={"current": PW, "new": PW_NEW, "_csrf": _tok})
     _c2 = _readme_sign_in(_auth, _app_r, "uwe", ("203.0.113.78", 1))
@@ -812,7 +812,7 @@ _storage = json.loads((ROOT / "tests" / "api_surface.json").read_text(encoding="
 _deliver = sorted(n for n, f in vars(TinySesam).items()
                   if inspect.isfunction(f) and not n.startswith("_")
                   and inspect.signature(f).return_annotation in (PasswordChangeResult, "PasswordChangeResult"))
-_names = {("tinysesam", PasswordChangeResult.__name__), ("Modul", PasswordChangeResult.__module__)}
+_names = {("tinysesam", PasswordChangeResult.__name__), ("Module", PasswordChangeResult.__module__)}
 for _n in _deliver + ["confirm_password", "confirm_pin", "confirm_totp"]:
     _names.add(("TinySesam", _n))
     _names |= {(f"TinySesam.{_n}()", p) for p in inspect.signature(vars(TinySesam)[_n]).parameters if p != "self"}

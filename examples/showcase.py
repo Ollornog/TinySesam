@@ -318,7 +318,7 @@ def prev_api(path: str):
 
 @app.post("/demo/preview/adminapi/api/{path:path}", include_in_schema=False)
 def prev_api_ro(path: str):
-    return JSONResponse({"detail": "Vorschau — schreibende Aktionen sind abgeschaltet."}, status_code=403)
+    return JSONResponse({"detail": "Preview — write actions are disabled."}, status_code=403)
 
 
 # ---------------------------------------------------------------- Protected example pages

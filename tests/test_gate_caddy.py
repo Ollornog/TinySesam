@@ -66,8 +66,8 @@ auth = TinySesam(TinySesamConfig(
     csrf_enabled=False, lang="de", db_path=os.path.join(_tmp, "t.db"), rp_name="Test",
     passkey_enabled=False, oidc_enabled=False, cookie_secure=False, forward_auth_enabled=True,
     base_url=ISS, trusted_redirect_hosts=["app.example.com"], gate_token_enabled=True))
-auth.ensure_admin("admin", "geheim123")
-uid = auth.create_user("anna", "geheim123", roles=["redaktion"])
+auth.ensure_admin("admin", "dummy123")
+uid = auth.create_user("anna", "dummy123", roles=["editors"])
 auth.store._exec("UPDATE users SET display_name=? WHERE id=?", ("Anna Ärger", uid))
 
 FORWARD = {"n": 0}
@@ -95,11 +95,11 @@ class Application(http.server.BaseHTTPRequestHandler):
     def _response(self):
         n = int(self.headers.get("Content-Length") or 0)
         raw = {k: v for k, v in self.headers.items()}
-        b = json.dumps({"pfad": self.path, "methode": self.command,
+        b = json.dumps({"path": self.path, "method": self.command,
                         "body": self.rfile.read(n).decode(), "header": raw}).encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
-        self.send_header("Set-Cookie", "app_eigen=1; Path=/")
+        self.send_header("Set-Cookie", "app_own=1; Path=/")
         self.end_headers()
         self.wfile.write(b)
 
@@ -221,39 +221,39 @@ try:
     # ---------- session, no gate cookie yet: way back, new token ----------
     from fastapi.testclient import TestClient  # noqa: E402
     tc = TestClient(ts_app)
-    tc.post("/auth/login", data={"username": "anna", "password": "geheim123", "next": "/"},
+    tc.post("/auth/login", data={"username": "anna", "password": "dummy123", "next": "/"},
             follow_redirects=False)
     session = {auth.session_cookie_name: tc.cookies.get(auth.session_cookie_name)}
     assert session[auth.session_cookie_name]
     before = FORWARD["n"]
-    st, h, a = request("/seite", session, {"Remote-User": "admin"}, method="POST", body="feld=wert")
+    st, h, a = request("/page", session, {"Remote-User": "admin"}, method="POST", body="field=value")
     assert st == 200, st
     assert FORWARD["n"] == before + 1
     tok = gate_cookie(h)
     assert tok, f"no gate cookie in the response: {h.get_all('Set-Cookie')}"
-    assert "app_eigen=1; Path=/" in (h.get_all("Set-Cookie") or []), "the application's cookie is missing"
-    assert a["methode"] == "POST" and a["body"] == "feld=wert", a
+    assert "app_own=1; Path=/" in (h.get_all("Set-Cookie") or []), "the application's cookie is missing"
+    assert a["method"] == "POST" and a["body"] == "field=value", a
     assert a["header"].get("Remote-User") == "anna", a["header"]
     assert "tinysesam" not in (a["header"].get("Cookie") or ""), a["header"].get("Cookie")
     ok("session without gate cookie → way back: 200, POST including body, new gate cookie, "
        "Remote-User from the browser overwritten, TinySesam cookies removed")
 
     # ---------- with gate cookie: TinySesam is not asked ----------
-    with_gate = {**session, "__Host-tinysesam_gate": tok, "andere": "1"}
+    with_gate = {**session, "__Host-tinysesam_gate": tok, "other": "1"}
     before = FORWARD["n"]
     for i in range(10):
         st, h, a = request(f"/asset-{i}.js", with_gate, {"Remote-User": "admin", "Remote-Groups": "admin",
                                                          "Remote-Email": "chef@example.com"})
-        assert st == 200 and a["pfad"] == f"/asset-{i}.js", (st, a)
+        assert st == 200 and a["path"] == f"/asset-{i}.js", (st, a)
     assert FORWARD["n"] == before, f"{FORWARD['n'] - before} calls to TinySesam despite a valid gate cookie"
     hd = a["header"]
-    assert hd.get("Remote-User") == "anna" and hd.get("Remote-Groups") == "redaktion", hd
+    assert hd.get("Remote-User") == "anna" and hd.get("Remote-Groups") == "editors", hd
     assert utf8(hd.get("Remote-Name")) == "Anna Ärger", hd.get("Remote-Name")
     assert hd.get("Remote-Id") == str(uid), hd
     # Anna has no address — the claim is empty. The address from the browser must still not
     # get through: for that the template removes every Remote-* of the request before it sets it.
     assert hd.get("Remote-Email", "") == "", hd.get("Remote-Email")
-    assert hd.get("Cookie") == "andere=1", hd.get("Cookie")
+    assert hd.get("Cookie") == "other=1", hd.get("Cookie")
     assert gate_cookie(h) is None, "no new token is issued on the fast path"
     ok("valid gate cookie → 10 requests at the application, 0 at TinySesam; identity from the "
        "token (UTF-8 as with /auth/forward), Remote-* from the browser overwritten, gate cookie removed")
@@ -280,7 +280,7 @@ try:
     for cookies, was in ((with_gate, "gate cookie"), (session, "session only")):
         for path in semi:
             st, loc, a = raw_a(path, cookies)
-            assert st == 200 and a and a["pfad"] == path, (was, path, st, loc, a)
+            assert st == 200 and a and a["path"] == path, (was, path, st, loc, a)
     ok(f"B-3: {len(semi)} paths with ; / %3B / &amp; reach the application unchanged — with gate cookie and with session alone")
     for path in semi:
         st, loc, a = raw_a(path)
@@ -331,11 +331,11 @@ try:
     assert any(v.startswith("__Host-tinysesam_gate=;") and "Max-Age=0" in v for v in h.get_all("Set-Cookie") or []), \
         h.get_all("Set-Cookie")
     assert FORWARD["n"] == before, "the sign-out path must not go through the gate (there is no sign-in to check)"
-    st, h, _ = request("/seite", session)
+    st, h, _ = request("/page", session)
     assert st == 302 and "/auth/login?next=" in h["Location"], (st, dict(h))
     ok("/.tinysesam/logout?scope=app through Caddy: past the gate, gate cookie deleted, then 302 to the login page")
-    tc.post("/auth/gate/resume", data={"next": f"http://app.example.com:{PORT}/seite"}, follow_redirects=False)
-    assert request("/seite", session)[0] == 200
+    tc.post("/auth/gate/resume", data={"next": f"http://app.example.com:{PORT}/page"}, follow_redirects=False)
+    assert request("/page", session)[0] == 200
     ok("“Continue as …” → the application lets through again")
 
     # ---------- Share exception (T-20): public only the prefix, without path tricks ----------
@@ -370,10 +370,10 @@ try:
     for port, was in ((PORT, "gate template"), (PORT_PLAIN, "plain template")):
         before = FORWARD["n"]
         for path in unclosed:
-            st, a = raw(path, {"Remote-User": "admin", "Cookie": "tinysesam_session=GEHEIM; a=1"}, port)
+            st, a = raw(path, {"Remote-User": "admin", "Cookie": "tinysesam_session=SECRET; a=1"}, port)
             assert st == 200 and a and a["header"].get("Remote-User") is None, (was, path, st, a and a["header"])
             assert a["header"].get("Cookie") == "a=1", (was, path, a["header"].get("Cookie"))
-            assert a["pfad"] == path, (was, path, a["pfad"])
+            assert a["path"] == path, (was, path, a["path"])
         assert FORWARD["n"] == before, f"{was}: a share path must not ask TinySesam"
     ok(f"{len(unclosed)} share paths open (also with ; / %3B in the file name), without TinySesam, without identity "
        "(none from the browser either), without TinySesam cookies — gate template and plain template")
@@ -423,7 +423,7 @@ try:
     ok("after signing out: session alone → 302, the gate token applies until its expiry (ADR-9)")
 
     # ---------- Counter-check: without gate the proxy asks every time again ----------
-    tc.post("/auth/login", data={"username": "anna", "password": "geheim123", "next": "/"},
+    tc.post("/auth/login", data={"username": "anna", "password": "dummy123", "next": "/"},
             follow_redirects=False)
     session = {auth.session_cookie_name: tc.cookies.get(auth.session_cookie_name)}
     auth.cfg.gate_token_enabled = False

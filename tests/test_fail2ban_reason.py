@@ -132,7 +132,7 @@ from _seclog_ast import EVENT, format_variants as _format_variants, seclog_calls
 assert EVENT == {"failed login", "failed verification"}, EVENT
 
 
-_KEY_NAME = re.compile(r"\b([A-Za-z_]*(?:grund|reason|cause|why)[A-Za-z_]*)=", re.IGNORECASE)
+_KEY_NAME = re.compile(r"\b([A-Za-z_]*(?:reason|reason|cause|why)[A-Za-z_]*)=", re.IGNORECASE)
 
 
 def _check_source(source, name):
@@ -143,12 +143,12 @@ def _check_source(source, name):
         text = ast.unparse(a)
         key_name = {s for v in variants for s in _KEY_NAME.findall(v)}
         if "grund=" in text:
-            everywhere.append(f"{name}:{a.lineno}: grund= in a security-log call")
+            everywhere.append(f"{name}:{a.lineno}: reason= in a security-log call")
         if any(w in v for v in variants for w in KEYWORDS):
             filter_lines.append((name, a.lineno))
             wrong = sorted(s for s in key_name if s != "reason")
             if wrong or "grund=" in text:
-                in_filter.append(f"{name}:{a.lineno}: filter line with the cause under {wrong or ['grund']}")
+                in_filter.append(f"{name}:{a.lineno}: filter line with the cause under {wrong or ['reason']}")
     return filter_lines, in_filter, everywhere
 
 
@@ -166,7 +166,7 @@ assert len(all_filter_lines) >= 7, all_filter_lines
 assert not all_violations, all_violations
 assert not all_everywhere, all_everywhere
 ok(f"(1) {len(all_filter_lines)} filter-line call sites in {len(files_with_filter_lines)} files: "
-   "cause only as reason=, no grund= in any security-log call")
+   "cause only as reason=, no reason= in any security-log call")
 
 # (3a) mutation of the source text — each variant must turn the analysis red
 MUTATIONS = [
@@ -264,10 +264,10 @@ def new(**cfg):
 # --- local password: wrong sign-in, lockout, verification, deferral -------------------------
 IP1 = "203.0.113.41"
 auth, app = new()
-uid = auth.create_user("anna", "Anna-Passwort-2026")
+uid = auth.create_user("anna", "Anna-Password-2026")
 cl = TestClient(app, client=(IP1, 1))
 with _Recording() as m:
-    cl.post("/auth/login", data={"username": "anna", "password": f"falsch{next(_WRONG)}"})
+    cl.post("/auth/login", data={"username": "anna", "password": f"wrong{next(_WRONG)}"})
 zl = _expect([z for z in m.lines() if z.startswith("WARNING failed")], JAIL, IP1, was="wrong password")
 assert "method=password" in zl[0], zl
 ok("(2) wrong password: `failed login ... method=password` hits the login jail")
@@ -303,11 +303,11 @@ ok("(2) deferral: `deferred login|verification ... reason=pending` — both jail
 # a miss at the first-admin claim by a signed-in account is no sign-in either: real route
 auth_c, app_c = new()
 auth_c.admin_claim_token()
-auth_c.create_user("clara", "Clara-Passwort-2026")
+auth_c.create_user("clara", "Clara-Password-2026")
 ccl = TestClient(app_c, client=(IP1, 1), headers={"Accept": "text/html"})
-ccl.post("/auth/login", data={"username": "clara", "password": "Clara-Passwort-2026"})
+ccl.post("/auth/login", data={"username": "clara", "password": "Clara-Password-2026"})
 with _Recording() as m:
-    ccl.get("/auth/claim-admin?token=falsch")
+    ccl.get("/auth/claim-admin?token=wrong")
 zc = _expect([z for z in m.lines() if "method=claim_admin" in z], JAIL_CHECK, IP1, was="claim_admin")
 assert zc[0].startswith("WARNING failed verification user=clara "), zc
 ok("(2) a miss at the first-admin claim: `failed verification ... method=claim_admin` hits the verify jail only")
@@ -315,7 +315,7 @@ ok("(2) a miss at the first-admin claim: `failed verification ... method=claim_a
 # --- API key: denied -----------------------------------------------------------------------
 IP2 = "203.0.113.42"
 auth_k, app_k = new()
-anna_k = auth_k.create_user("anna", "Anna-Passwort-2026")
+anna_k = auth_k.create_user("anna", "Anna-Password-2026")
 key_name = auth_k.create_api_key(anna_k, name="sync")
 auth_k.revoke_api_key(key_name["id"])
 ck = TestClient(app_k, client=(IP2, 1))
@@ -345,18 +345,18 @@ class _DirectoryAway:
 
 
 auth_l, app_l = new(ldap_enabled=True, ldap_url="ldap://dummy", ldap_allow_plaintext=True)
-auth_l.ensure_admin("admin", "Lokal-Passwort-2026")
+auth_l.ensure_admin("admin", "Local-Password-2026")
 auth_l.ldap = _DirectoryEmpty()
 cle = TestClient(app_l, client=(IP3, 1))
 with _Recording() as m:
-    cle.post("/auth/login", data={"username": "lena", "password": f"falsch{next(_WRONG)}"})
+    cle.post("/auth/login", data={"username": "lena", "password": f"wrong{next(_WRONG)}"})
 zl = _expect([z for z in m.lines() if z.startswith("WARNING failed")], JAIL, IP3, was="LDAP wrong password")
 assert "method=password" in zl[0], zl
 ok("(2) LDAP wrong password: `failed login ... method=password` hits the login jail")
 
 auth_l.ldap = _DirectoryAway()
 with _Recording() as m:
-    cle.post("/auth/login", data={"username": "lena", "password": f"falsch{next(_WRONG)}"})
+    cle.post("/auth/login", data={"username": "lena", "password": f"wrong{next(_WRONG)}"})
 zw = [z for z in m.lines() if "LDAP unreachable" in z]
 assert zw and all(" reason=" in z and "grund=" not in z for z in zw), m.lines()
 assert not any(_hits(JAIL, z) or _hits(JAIL_CHECK, z) for z in m.lines()), \
@@ -367,7 +367,7 @@ ok("(2) LDAP outage: `LDAP unreachable ... reason=` and no ban line (no failed a
 IP4 = "203.0.113.44"
 if _extra_da("webauthn"):
     auth_p, app_p = new(passkey_enabled=True, rp_id="localhost", origin="http://localhost:8000")
-    uid_p = auth_p.create_user("paula", "Paula-Passwort-2026")
+    uid_p = auth_p.create_user("paula", "Paula-Password-2026")
     auth_p.store.add_webauthn(uid_p, "Y3JlZC10ZXN0", "pk", 0, [], "Testschluessel")
     cp = TestClient(app_p, client=(IP4, 1))
 
@@ -400,9 +400,9 @@ if _extra_da("authlib"):
         def validate(self, *a, **k):
             pass
 
-    claims = {"sub": "gesperrt-1", "preferred_username": "gesperrt", "email": "gesperrt@example.com",
+    claims = {"sub": "locked-1xx", "preferred_username": "gesperrt", "email": "locked@example.com",
               "email_verified": True}
-    auth_o, app_o = new(oidc_enabled=True, oidc_issuer=IDP, oidc_client_id="probe", oidc_client_secret="geheim")
+    auth_o, app_o = new(oidc_enabled=True, oidc_issuer=IDP, oidc_client_id="probe", oidc_client_secret="secret")
     auth_o.oidc._meta = {"issuer": IDP, "authorization_endpoint": IDP + "/authorize",
                          "token_endpoint": IDP + "/token", "userinfo_endpoint": IDP + "/userinfo",
                          "jwks_uri": IDP + "/jwks"}
@@ -431,7 +431,7 @@ else:
 
 # --- (3b) mutation in the running process: one place writes `grund=` ------------------------
 auth_m, _ = new()
-auth_m.create_user("mia", "Mia-Passwort-2026")
+auth_m.create_user("mia", "Mia-Password-2026")
 IP6 = "203.0.113.46"
 with _Recording() as m:
     auth_m._rejected("mia", IP6, "lockout_user")                      # real code, untouched
@@ -456,7 +456,7 @@ broken = m.lines()[-1]
 assert "grund=lockout_user" in broken, broken
 assert _problems(broken, JAIL, IP6, reason="lockout_user"), "the dynamic check does not notice grund="
 assert not _hits(JAIL, broken), (
-    "premise gone: a line with grund= is still read by the jail — then reason= no longer matters, "
+    "premise gone: a line with reason= is still read by the jail — then reason= no longer matters, "
     f"check the failregex: {broken!r}")
 ok("(3) mutation in the process: a place writing grund= falls out of the jail (and the check notices it)")
 

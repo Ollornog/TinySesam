@@ -48,7 +48,7 @@ class _Claims(dict):
 
 
 def _oidc_app(**k):
-    auth = TinySesam(_cfg(oidc_enabled=True, oidc_issuer=IDP, oidc_client_id="probe", oidc_client_secret="geheim", **k))
+    auth = TinySesam(_cfg(oidc_enabled=True, oidc_issuer=IDP, oidc_client_id="probe", oidc_client_secret="secret", **k))
     auth.oidc._meta = {"issuer": IDP, "authorization_endpoint": IDP + "/authorize", "token_endpoint": IDP + "/token",
                        "userinfo_endpoint": IDP + "/userinfo", "jwks_uri": IDP + "/jwks"}
     auth.oidc.exchange = lambda code, redirect_uri, nonce, t=None, **_: (
@@ -92,8 +92,8 @@ assert hb.session_cookie_name == "__Host-meineapp_session", hb.session_cookie_na
 ok("prefix: session, CSRF, unlock, flow (OIDC/SAML/passkey); __Host- still comes first")
 
 # (c)
-c = TinySesam(_cfg(cookie_prefix="meineapp_", session_cookie="eigen_sitzung"))
-assert c.session_cookie_name == "eigen_sitzung" and c.flow_cookie_name("__Host-tinysesam_link") == "__Host-tinysesam_link"
+c = TinySesam(_cfg(cookie_prefix="meineapp_", session_cookie="own_session"))
+assert c.session_cookie_name == "own_session" and c.flow_cookie_name("__Host-tinysesam_link") == "__Host-tinysesam_link"
 ok("explicitly set name and __ names (gateway cookies) stay unchanged")
 
 
@@ -127,7 +127,7 @@ f, _ = check_config(_cfg(cookie_prefix="meineapp_"))
 assert not any("cookie_prefix" in z for z in f), f
 f, _ = check_config(_cfg(cookie_prefix="meineapp_", forward_auth_enabled=True, trusted_redirect_hosts=["app.example.com"]))
 assert any("cookie_prefix" in z and "forward_auth_enabled" in z for z in f), f
-f, _ = check_config(_cfg(cookie_prefix="tinysesam_zwei_", forward_auth_enabled=True, trusted_redirect_hosts=["app.example.com"]))
+f, _ = check_config(_cfg(cookie_prefix="tinysesam_two_", forward_auth_enabled=True, trusted_redirect_hosts=["app.example.com"]))
 assert not any("cookie_prefix" in z for z in f), f
 ok("config check: broken prefix and gateway with a foreign prefix -> error; valid cases pass")
 

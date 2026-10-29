@@ -54,7 +54,7 @@ def build(**cfgkw):
     app = FastAPI()
     app.include_router(auth.router())
 
-    @app.get("/geheim")
+    @app.get("/secret")
     def secret_text(u=Depends(auth.require_user)):
         return {"u": u["username"]}
 
@@ -69,17 +69,17 @@ assert auth.saml is not None
 c = TestClient(app)
 assert ">SAML</a>" in c.get("/auth/login").text
 auth.saml = FakeSAML()
-r = c.get("/auth/saml/login?next=/geheim", follow_redirects=False)
+r = c.get("/auth/saml/login?next=/secret", follow_redirects=False)
 assert r.status_code == 303 and r.headers["location"].startswith("https://idp.example.com/sso")
-assert "RelayState=/geheim" in r.headers["location"]
+assert "RelayState=/secret" in r.headers["location"]
 ok("Login page shows SAML button; /auth/saml/login → redirect to the IdP (RelayState=next)")
 
 # ---------- ACS: verified assertion → create user + logged in ----------
 auth.saml = FakeSAML(nameid="alice", attrs={"email": ["alice@corp"], "displayName": ["Alice"],
                                             "groups": ["staff"]})
-r = c.post("/auth/saml/acs", data={"SAMLResponse": "x", "RelayState": "/geheim"}, follow_redirects=False)
-assert r.status_code == 303 and r.headers["location"] == "/geheim", r.headers.get("location")
-assert c.get("/geheim", headers=JSON).json() == {"u": "alice"}
+r = c.post("/auth/saml/acs", data={"SAMLResponse": "x", "RelayState": "/secret"}, follow_redirects=False)
+assert r.status_code == 303 and r.headers["location"] == "/secret", r.headers.get("location")
+assert c.get("/secret", headers=JSON).json() == {"u": "alice"}
 u = auth.store.get_user_by_name("alice")
 # `saml_email_trusted` is off by default (PO decision 2026-09-24): the address from the
 # assertion is not used, like H-3 for OIDC. The display name still comes through.
@@ -128,7 +128,7 @@ h = logging.StreamHandler(buffer)
 seclog = logging.getLogger("tinysesam.security")
 seclog.addHandler(h)
 try:
-    r = c.post("/auth/saml/acs", data={"SAMLResponse": "kaputt"})
+    r = c.post("/auth/saml/acs", data={"SAMLResponse": "broken"})
 finally:
     seclog.removeHandler(h)
 
@@ -176,11 +176,11 @@ os.remove(db)
 # the bolt from F-14 hung on the OIDC callback alone. Now the ACS explicitly passes on
 # "no proof", and `saml` counts as a federated factor (fail-closed).
 db, auth, app = build(admin_identifiers=["boss@example.com"])
-auth.saml = FakeSAML(nameid="angreifer", attrs={"email": ["boss@example.com"]})
+auth.saml = FakeSAML(nameid="attacker", attrs={"email": ["boss@example.com"]})
 c = TestClient(app)
 r = c.post("/auth/saml/acs", data={"SAMLResponse": "x", "RelayState": "/"}, follow_redirects=False)
 assert r.status_code == 303, r.status_code          # the sign-in itself remains allowed
-u = auth.store.get_user_by_name("angreifer")
+u = auth.store.get_user_by_name("attacker")
 assert u is not None and not u["is_admin"], dict(u) if u else None
 assert not auth.admin_exists(), "the instance now has an admin — via an assertion attribute"
 ok("F-14: an allowlist ADDRESS from the assertion does not promote (SAML has no proof)")
@@ -188,9 +188,9 @@ os.remove(db)
 
 # Control: the allowlist NAME still counts. It is allowed only without auto-create (otherwise
 # the constructor guard forbids it) — the operator then created the account themselves.
-db, auth, app = build(admin_identifiers=["chefin"], saml_auto_create=False)
-uid = auth.create_user("chefin", email="chefin@example.com")
-auth.saml = FakeSAML(nameid="chefin", attrs={"email": ["chefin@example.com"]})
+db, auth, app = build(admin_identifiers=["boss"], saml_auto_create=False)
+uid = auth.create_user("boss", email="boss@example.com")
+auth.saml = FakeSAML(nameid="boss", attrs={"email": ["boss@example.com"]})
 r = TestClient(app).post("/auth/saml/acs", data={"SAMLResponse": "x", "RelayState": "/"},
                          follow_redirects=False)
 assert r.status_code == 303, r.status_code
@@ -228,10 +228,10 @@ os.remove(db)
 # Lock 1 alone: `FEDERATED_FACTORS` empty, account with REAL proof (created by the
 # operator). Now only the route's pass-through holds.
 db, auth, app = build(admin_identifiers=["boss@example.com"])
-uid = auth.create_user("angreifer", email="boss@example.com")
+uid = auth.create_user("attacker", email="boss@example.com")
 assert auth.store.get_user(uid)["email_verified"] == 1, "precondition: the account is proven"
 auth._FEDERATED_FACTORS = ()                 # lock 2 detached
-auth.saml = FakeSAML(nameid="angreifer", attrs={"email": ["boss@example.com"]})
+auth.saml = FakeSAML(nameid="attacker", attrs={"email": ["boss@example.com"]})
 assert TestClient(app).post("/auth/saml/acs", data={"SAMLResponse": "x"},
                             follow_redirects=False).status_code == 303
 assert not auth.get_user(uid)["is_admin"], \
@@ -247,7 +247,7 @@ os.remove(db)
 # Lock 2 alone: without the route, directly at the source. A caller that simply forgets the proof
 # (`email_confirmed=None`) must not promote via a federated factor.
 db, auth, app = build(admin_identifiers=["boss@example.com"])
-uid = auth.create_user("angreifer", email="boss@example.com")     # proof on the account: yes
+uid = auth.create_user("attacker", email="boss@example.com")     # proof on the account: yes
 assert auth._maybe_promote_admin(auth.get_user(uid), factor="saml") is False, \
     "the 'saml' factor no longer requires an explicit proof"
 ok("B-bypass-10: lock 2 alone — the 'saml' factor does not promote without an explicit proof")
@@ -262,10 +262,10 @@ os.remove(db)
 # `saml_email_trusted=True`: only then do address and address-name get into the account at all (the
 # default does not use them, see below).
 for was, nameid, attrs in (
-        ("deren Adresse lokal schon Kennung ist", "eve", {"email": ["chef@example.com"]}),
-        ("deren Name lokal schon Adresse ist", "chef@example.com", {"email": ["eve@example.com"]})):
+        ("whose Address local already Identifier is", "eve", {"email": ["chef@example.com"]}),
+        ("whose Name local already Address is", "chef@example.com", {"email": ["eve@example.com"]})):
     db, auth, app = build(saml_email_trusted=True)
-    local = auth.create_user("chef", password="lokal12345", email="chef@example.com")
+    local = auth.create_user("chef", password="local12345", email="chef@example.com")
     auth.saml = FakeSAML(nameid=nameid, attrs=attrs)
     r = TestClient(app).post("/auth/saml/acs", data={"SAMLResponse": "x"}, follow_redirects=False)
     assert r.status_code == 403, f"HTTP {r.status_code} — 303 would be an occupied identifier, 500 a defect"
@@ -278,10 +278,10 @@ for was, nameid, attrs in (
 
 # Counter-check: free identifiers still create accounts.
 db, auth, app = build()
-auth.create_user("chef", password="lokal12345", email="chef@example.com")
-auth.saml = FakeSAML(nameid="neu", attrs={"email": ["neu@example.com"]})
+auth.create_user("chef", password="local12345", email="chef@example.com")
+auth.saml = FakeSAML(nameid="new", attrs={"email": ["new@example.com"]})
 r = TestClient(app).post("/auth/saml/acs", data={"SAMLResponse": "x"}, follow_redirects=False)
-assert r.status_code == 303 and auth.store.get_user_by_name("neu") is not None, r.status_code
+assert r.status_code == 303 and auth.store.get_user_by_name("new") is not None, r.status_code
 ok("... with free identifiers SAML still creates")
 os.remove(db)
 
@@ -290,7 +290,7 @@ os.remove(db)
 # account name with `@` (NameID emailAddress) yields to a substitute name — otherwise it would occupy as
 # `Remote-User` the identifier of the real owner.
 db, auth, app = build(admin_identifiers=["chef@example.com"])
-local = auth.create_user("chef", password="lokal12345", email="chef@example.com")
+local = auth.create_user("chef", password="local12345", email="chef@example.com")
 auth.saml = FakeSAML(nameid="chef＠example.com", attrs={"email": ["chef@example.com"]})   # Vollbreite
 r = TestClient(app).post("/auth/saml/acs", data={"SAMLResponse": "x"}, follow_redirects=False)
 new = [u for u in auth.store.list_users() if u["id"] != local]
@@ -300,11 +300,11 @@ assert (auth.find_user("chef@example.com") or {})["id"] == local and not new[0][
 ok("saml_email_trusted=False: address not used, `@` name (also `＠`) → substitute name, no first admin")
 os.remove(db)
 db, auth, app = build(saml_email_trusted=True)
-auth.saml = FakeSAML(nameid="bea@corp.example", attrs={"email": ["bea@corp.example"]})
+auth.saml = FakeSAML(nameid="bee@corp.example", attrs={"email": ["bee@corp.example"]})
 assert TestClient(app).post("/auth/saml/acs", data={"SAMLResponse": "x"},
                             follow_redirects=False).status_code == 303
-process = auth.store.get_user_by_name("bea@corp.example")
-assert process is not None and process["email"] == "bea@corp.example" and process["email_verified"], process
+process = auth.store.get_user_by_name("bee@corp.example")
+assert process is not None and process["email"] == "bee@corp.example" and process["email_verified"], process
 ok("saml_email_trusted=True: name and address from the assertion, the address counts as proven")
 os.remove(db)
 
@@ -317,8 +317,8 @@ os.remove(db)
 db16, auth16, app16 = build()
 auth16.saml = FakeSAML()
 c16 = TestClient(app16)
-FOREIGN = {"X-Forwarded-Proto": "http", "X-Forwarded-Host": "angreifer.example",
-         "Host": "angreifer.example"}
+FOREIGN = {"X-Forwarded-Proto": "http", "X-Forwarded-Host": "attacker.example",
+         "Host": "attacker.example"}
 
 auth16.saml.contexts.clear()
 c16.get("/auth/saml/login", headers=FOREIGN, follow_redirects=False)
@@ -381,12 +381,12 @@ assert auth11.store.get_federated_identifier("saml", _uid_a) == "nid-alice"
 ok("F-11: an account created via SAML is bound to the NameID")
 
 # (2) The IdP names the same person differently — same NameID, same account.
-assert _saml_sign_in(auth11, app11, "nid-alice", {"uid": ["alice.neu"]}).status_code == 303
-assert auth11.store.get_user_by_name("alice.neu") is None, "a second account was created"
+assert _saml_sign_in(auth11, app11, "nid-alice", {"uid": ["alice.new"]}).status_code == 303
+assert auth11.store.get_user_by_name("alice.new") is None, "a second account was created"
 ok("F-11: a new name with the same NameID leads to the same account")
 
 # (3) The attack: foreign NameID under the old name.
-_r = _saml_sign_in(auth11, app11, "nid-FREMD", {"uid": ["alice"]})
+_r = _saml_sign_in(auth11, app11, "nid-FOREIGN", {"uid": ["alice"]})
 assert _r.status_code == 403, f"HTTP {_r.status_code} — the foreign account got through"
 assert any(e["event"] == "saml_identifier_change" for e in auth11.store.recent_audit(limit=10))
 ok("F-11: a foreign NameID under an old name is rejected")

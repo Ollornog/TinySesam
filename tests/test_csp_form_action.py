@@ -60,7 +60,7 @@ DESTINATION_CALLS = []
 class _Destination(http.server.BaseHTTPRequestHandler):
     def _response(self):
         DESTINATION_CALLS.append((self.command, self.path))
-        body = b"<!doctype html><title>ziel</title>angekommen"
+        body = b"<!doctype html><title>target</title>arrived"
         self.send_response(200)
         self.send_header("Content-Type", "text/html")
         self.send_header("Content-Length", str(len(body)))
@@ -86,7 +86,7 @@ auth = TinySesam(TinySesamConfig(db_path=os.path.join(tempfile.mkdtemp(), "t.db"
                                  csrf_enabled=False, passkey_enabled=False, base_url=BASE, lang="de",
                                  trusted_redirect_hosts=["localhost"]))
 auth.set_security("rate_limit_max", 100000)
-auth.create_user("anna", "Richtiges-Pw-2026")
+auth.create_user("anna", "Correct-Pw-2026xx")
 app = FastAPI()
 app.include_router(auth.router())
 _srv = uvicorn.Server(uvicorn.Config(app, log_level="critical"))
@@ -156,11 +156,11 @@ async def _execution():
 
         await cmd("Page.enable")
         # (b) Sign-in with next to the allowed second host
-        destination = f"http://localhost:{DESTINATION}/ziel"
+        destination = f"http://localhost:{DESTINATION}/target"
         await cmd("Page.navigate", url=f"{BASE}/auth/login?next={destination}")
         await wait_on(lambda: js("!!document.querySelector('input[name=password]')"))
         await js("document.querySelector('input[name=username]').value='anna';"
-                 "document.querySelector('input[name=password]').value='Richtiges-Pw-2026';"
+                 "document.querySelector('input[name=password]').value='Correct-Pw-2026xx';"
                  "document.querySelector('input[name=password]').form.submit()")
         arrived = await wait_on(lambda: js(f"location.href === {json.dumps(destination)}"))
         assert arrived, (await js("location.href"), DESTINATION_CALLS)
@@ -173,11 +173,11 @@ async def _execution():
         await cmd("Page.navigate", url=f"{BASE}/auth/login")
         assert await wait_on(lambda: js("!!document.querySelector('input[name=password]')")), await js("location.href")
         before = len(DESTINATION_CALLS)
-        foreign = f"http://127.0.0.1:{DESTINATION}/fremd"
+        foreign = f"http://127.0.0.1:{DESTINATION}/foreign"
         await js(f"const f=document.createElement('form');f.method='post';f.action={json.dumps(foreign)};"
                  "document.body.appendChild(f);f.submit()")
         await asyncio.sleep(2)
-        assert not any(p == "/fremd" for _, p in DESTINATION_CALLS[before:]), DESTINATION_CALLS
+        assert not any(p == "/foreign" for _, p in DESTINATION_CALLS[before:]), DESTINATION_CALLS
         assert (await js("location.href")).startswith(BASE), await js("location.href")
         ok("form to a foreign origin: blocked, the foreign server sees nothing")
 

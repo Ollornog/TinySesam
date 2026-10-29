@@ -80,9 +80,9 @@ def stubs_from_gitignore() -> list[str]:
         pattern = line.strip()
         if not pattern or pattern.startswith(("#", "!")) or pattern.startswith("/"):
             continue
-        name = pattern.rstrip("/").replace("*", "attrappe")
+        name = pattern.rstrip("/").replace("*", "dummy")
         for tree in GRAFTED:
-            paths.append(f"{tree}/{name}/attrappe.txt" if pattern.endswith("/") else f"{tree}/{name}")
+            paths.append(f"{tree}/{name}/dummy.txt" if pattern.endswith("/") else f"{tree}/{name}")
     return paths
 
 
@@ -103,7 +103,7 @@ def make(shift: float = 0.0, stubs: tuple[str, ...] = (),
         path = os.path.join(source, rel)
         os.makedirs(os.path.dirname(path), exist_ok=True)
         if rel in stubs:
-            pathlib.Path(path).write_text("gehört nicht ins sdist\n", encoding="utf-8")
+            pathlib.Path(path).write_text("does not belong in the sdist\n", encoding="utf-8")
         else:
             shutil.copy2(os.path.join(ROOT, rel), path)
         if shift:
@@ -400,7 +400,7 @@ try:
     #
     # A token belongs nowhere in this file, so the delimitation is not needed at all.
     for forbidden in ("PYPI_API_TOKEN", "TWINE_", "TWINE_PASSWORD", "twine upload"):
-        hit = [f"Zeile {n + 1}: {z.strip()}" for n, z in enumerate(lines) if forbidden in z]
+        hit = [f"Line {n + 1}: {z.strip()}" for n, z in enumerate(lines) if forbidden in z]
         assert not hit, (f"'{forbidden}' in the release workflow: {hit} — Trusted Publishing "
                              "needs no secret")
     # `password:` appears in comments (the file explains why there is none) — hence
@@ -409,7 +409,7 @@ try:
     # Also excepted is the throwaway value of the dress rehearsal (`password: rehearsal`, since 2026-10-11):
     # it only logs in at the local registry and the local package server on the runner — exactly
     # this word, no expression, no secret. The real upload (job `pypi`) stays without a password.
-    pw_lines = [f"Zeile {n + 1}: {z.strip()}" for n, z in enumerate(lines)
+    pw_lines = [f"Line {n + 1}: {z.strip()}" for n, z in enumerate(lines)
                  if _re_pkg.match(r"^\s*password\s*:", z) and "secrets.GITHUB_TOKEN" not in z
                  and z.strip() != "password: rehearsal"]
     assert not pw_lines, (f"`password:` in the release workflow: {pw_lines} — Trusted Publishing "

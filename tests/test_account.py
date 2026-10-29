@@ -18,7 +18,7 @@ auth = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db, rp_n
 # that is checked by test_t13_decisions.py). With a minimum length of 15 characters every short weak
 # example would already fail on length, and the rule behind it would stay unchecked.
 auth.set_security("password_min_length_single_factor", 8)
-auth.ensure_admin("admin", "geheim123")
+auth.ensure_admin("admin", "dummy123")
 app = FastAPI()
 app.include_router(auth.router())
 c = TestClient(app)
@@ -28,26 +28,26 @@ r = c.get("/auth/account", follow_redirects=False)
 assert r.status_code == 303 and "/auth/login" in r.headers["location"]
 ok("Account page requires login")
 
-c.post("/auth/login", data={"username": "admin", "password": "geheim123", "next": "/"}, follow_redirects=False)
+c.post("/auth/login", data={"username": "admin", "password": "dummy123", "next": "/"}, follow_redirects=False)
 html = c.get("/auth/account").text
 assert "Konto · admin" in html
-assert "Passwort" in html and "PIN" in html and "Zwei-Faktor" in html and "API-Keys" in html
+assert "Passwort" in html and "PIN" in html and auth.t("acc.totp") in html and "API-Keys" in html
 assert "Admin-Panel" in html   # admin sees the link
 ok("Account page shows sections (password/PIN/2FA/API keys) + admin link")
 
 # Change password: wrong current one → 403
-assert c.post("/auth/password", json={"current": "falsch", "new": "neuespasswort"}).status_code == 403
+assert c.post("/auth/password", json={"current": "wrong", "new": "newpasswort"}).status_code == 403
 # too short → 400
-assert c.post("/auth/password", json={"current": "geheim123", "new": "x"}).status_code == 400
+assert c.post("/auth/password", json={"current": "dummy123", "new": "x"}).status_code == 400
 # correct → 200, afterwards the new login works
-_pw = c.post("/auth/password", json={"current": "geheim123", "new": "neuespasswort"}).json()
+_pw = c.post("/auth/password", json={"current": "dummy123", "new": "newpasswort"}).json()
 # Since 0.18.0 the response additionally carries `api_keys_active`: API keys deliberately survive
 # the user's own password change, and whoever changes the password after a break-in should see
 # that a second door is still open. Hence no equality comparison any more.
 assert _pw["ok"] is True and _pw["api_keys_active"] == 0, _pw
 c.get("/auth/logout")
-assert c.post("/auth/login", data={"username": "admin", "password": "geheim123"}, follow_redirects=False).status_code == 401
-assert c.post("/auth/login", data={"username": "admin", "password": "neuespasswort"}, follow_redirects=False).status_code == 303
+assert c.post("/auth/login", data={"username": "admin", "password": "dummy123"}, follow_redirects=False).status_code == 401
+assert c.post("/auth/login", data={"username": "admin", "password": "newpasswort"}, follow_redirects=False).status_code == 303
 ok("Self-service password change (current password required, minimum length)")
 
 # Robustness: broken JSON body → 400 (not 500)
@@ -59,37 +59,37 @@ ok("broken JSON body → 400 (not 500)")
 # The same rule as at every place that sets a password: known passwords, trivial sequences and words from
 # the context (username, service name) fail, even dressed up; too long ones as well.
 # (Mutation probe: `return None` at the start of `passwords.password_defect` → red.)
-for _weak in ("password123", "Passwort2026!", "12345678", "qwertzuiop", "aaaaaaaaaa",
+for _weak in ("password123", "Password2026!", "12345678", "qwertzuiop", "aaaaaaaaaa",
                  "Admin2026!", "test!Test1", "45678901"):
-    _r = c.post("/auth/password", json={"current": "neuespasswort", "new": _weak})
+    _r = c.post("/auth/password", json={"current": "newpasswort", "new": _weak})
     assert _r.status_code == 400 and "leicht zu erraten" in _r.json()["detail"], (_weak, _r.text)
 # `test!Test1` → core `testtest` (blocklist); `Test` is the rp_name of this instance.
-_r = c.post("/auth/password", json={"current": "neuespasswort", "new": "Test-2026"})
+_r = c.post("/auth/password", json={"current": "newpasswort", "new": "Test-2026"})
 assert _r.status_code == 400, "the service name (rp_name) is a context word"
-_r = c.post("/auth/password", json={"current": "neuespasswort", "new": "x" * 257})
+_r = c.post("/auth/password", json={"current": "newpasswort", "new": "x" * 257})
 assert _r.status_code == 400 and "zu lang" in _r.json()["detail"], _r.text
-_r = c.post("/auth/password", json={"current": "neuespasswort", "new": "k" + "e1" * 127 + "!"})   # 256 characters
+_r = c.post("/auth/password", json={"current": "newpasswort", "new": "k" + "e1" * 127 + "!"})   # 256 characters
 assert _r.status_code == 200, "exactly the maximum length is allowed"
-_r = c.post("/auth/password", json={"current": "k" + "e1" * 127 + "!", "new": "neuespasswort"})
+_r = c.post("/auth/password", json={"current": "k" + "e1" * 127 + "!", "new": "newpasswort"})
 assert _r.status_code == 200, _r.text
 ok("Account page: blocklist, context words and maximum length (256) take effect")
 
 # The operator's own blocklist (`password_blocklist_file`) — supplements the built-in one.
 _items = os.path.join(tempfile.mkdtemp(), "block.txt")
 with open(_items, "w", encoding="utf-8") as _f:
-    _f.write("# Kommentar\nFirmenname2026\n")
+    _f.write("# Comment\nCompanyname2026\n")
 _start = TinySesam(TinySesamConfig(db_path=os.path.join(tempfile.mkdtemp(), "b.db"), passkey_enabled=False,
                                 password_blocklist_file=_items))
 _start.set_security("password_min_length_single_factor", 8)       # the list is checked, not the length
-assert _start.password_policy_error("firmenname2026") and _start.password_policy_error("Firmenname!!")
-assert _start.password_policy_error("ein-ganz-eigenes-wort") is None
+assert _start.password_policy_error("companyname2026") and _start.password_policy_error("Companyname!!")
+assert _start.password_policy_error("a-whole-own-wordxxxxx") is None
 # Counter-check against over-eagerness: no composition rules (NIST), a digit sequence without a pattern
 # and a passphrase pass.
 for _good in ("24681357", "correct horse battery", "9384756102"):
     assert _start.password_policy_error(_good) is None, _good
 try:
     TinySesam(TinySesamConfig(db_path=os.path.join(tempfile.mkdtemp(), "b.db"), passkey_enabled=False,
-                              password_blocklist_file=_items + ".fehlt"))
+                              password_blocklist_file=_items + ".missing"))
     raise AssertionError("missing blocklist was silently ignored")
 except ConfigError as _e:
     assert "password_blocklist_file" in str(_e)
@@ -121,7 +121,7 @@ for _pw, _name, _mail in (("Mustermann1990!", "maxm", "max.mustermann@example.co
                           ("Mustermann1990!", "MaxMustermann", None)):
     assert _start.password_policy_error(_pw, username=_name, email=_mail), (_pw, _name, _mail)
 # Counter-check: parts under four letters (`max`, `k`) count for nothing.
-assert _start.password_policy_error("Maximal-Ruhig-7", username="max.mustermann") is None
+assert _start.password_policy_error("Maximal-Quiet-7", username="max.mustermann") is None
 ok("A-5: name parts from username and e-mail (separators, inner capitals) are context words")
 
 # A-6: The remaining trivial patterns from the leak lists — descending with wrap-around, repeated
@@ -130,7 +130,7 @@ ok("A-5: name parts from username and e-mail (separators, inner capitals) are co
 for _pattern in ("0987654321", "12341234", "asdfasdf", "abcabcabc", "12121212", "11112222",
                 "qwerasdf", "Asdf1234", "7890123456", "aabbccdd", "yxcvbnm123"):
     assert _start.password_policy_error(_pattern), _pattern
-for _good in ("24681357", "correct horse battery", "9384756102", "Zauberwald-17", "Tischlampe42"):
+for _good in ("24681357", "correct horse battery", "9384756102", "Zauberwald-17", "Desk_lamp42"):
     assert _start.password_policy_error(_good) is None, _good
 ok("A-6: repeated blocks, keyboard and counting sequences count as trivial")
 
@@ -141,7 +141,7 @@ ok("A-6: repeated blocks, keyboard and counting sequences count as trivial")
 _events = []
 auth.on_security_event = lambda e, account, d: _events.append((e, account["username"], d))
 _uid = auth.store.get_user_by_name("admin")["id"]
-assert c.post("/auth/password", json={"current": "neuespasswort", "new": "wieder-ein-neues"}).status_code == 200
+assert c.post("/auth/password", json={"current": "newpasswort", "new": "again-a-newxxxxx"}).status_code == 200
 auth.set_pin(_uid, "24681357")
 auth.disable_pin(_uid)
 auth.create_api_key(_uid, name="ci")
@@ -184,16 +184,16 @@ _sec.seclog.addHandler(_h)
 
 
 def _broken(*_a):
-    raise RuntimeError("smtp weg")
+    raise RuntimeError("smtp down")
 
 
 auth.on_security_event = _broken
-_r = c.post("/auth/password", json={"current": "wieder-ein-neues", "new": "neuespasswort"})
+_r = c.post("/auth/password", json={"current": "again-a-newxxxxx", "new": "newpasswort"})
 _sec.seclog.removeHandler(_h)
 auth.on_security_event = None
 assert _r.status_code == 200, "a failing hook must not break the password change"
 assert any("on_security_event failed" in z and "password_changed" in z for z in _lines), _lines
-assert auth._check_password("admin", "neuespasswort")
+assert auth._check_password("admin", "newpasswort")
 ok("on_security_event: error in the hook → operation stands, line in the security log")
 
 # ---------- The delete buttons check the response before they report success (R3-3) ----------
@@ -260,8 +260,8 @@ assert '"locale": "de-DE"' in _js and '"locale": "en-GB"' in _js_en, "locale fol
 ok("Account page JS texts: English with lang=en, German with lang=de")
 
 # Template override of the account page
-auth.set_template("account", lambda a, ctx: f"<html>MEIN-KONTO {ctx['user']['username']}</html>")
-assert "MEIN-KONTO admin" in c.get("/auth/account").text
+auth.set_template("account", lambda a, ctx: f"<html>MY-ACCOUNT {ctx['user']['username']}</html>")
+assert "MY-ACCOUNT admin" in c.get("/auth/account").text
 ok("Account page replaceable via set_template")
 
 # R8-6: The user sets key and passkey names themselves, and the account page wrote them raw into

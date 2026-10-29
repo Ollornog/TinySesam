@@ -59,8 +59,8 @@ def _app(**cfg):
 auth_a, _ = _app(admin_identifiers=["chef@example.com"], allow_signup=True,
                  signup_require_email=True, signup_verify_email=True,
                  magiclink_enabled=True, smtp_host="mail.example.com")
-attacker = auth_a.create_user("chef@example.com", password="geheim12345",
-                               email="angreifer@evil.example")
+attacker = auth_a.create_user("chef@example.com", password="dummy12345",
+                               email="attacker@evil.example")
 r.check("whoever registers under the admin ADDRESS as username does not become admin",
         not auth_a._maybe_promote_admin(auth_a.get_user(attacker)),
         "he is admin — the guard checks the configuration, the comparison something else")
@@ -71,14 +71,14 @@ r.check("whoever registers under the admin ADDRESS as username does not become a
 auth_a2, _ = _app(admin_identifiers=["chef@example.com"], allow_signup=True,
                   signup_require_email=True, signup_verify_email=True,
                   magiclink_enabled=True, smtp_host="mail.example.com")
-holder = auth_a2.create_user("chefin", password="geheim12345", email="chef@example.com")
+holder = auth_a2.create_user("boss", password="dummy12345", email="chef@example.com")
 r.check("whoever really has the address still becomes admin",
         auth_a2._maybe_promote_admin(auth_a2.get_user(holder)),
         "the intended path is closed")
 
 # And conversely: an entry WITHOUT @ applies only to the username.
 auth_b, _ = _app(admin_identifiers=["chef"])
-with_mail = auth_b.create_user("jemand", password="geheim12345", email="chef")
+with_mail = auth_b.create_user("someone", password="dummy12345", email="chef")
 r.check("an allowlist name without @ is not checked against the e-mail",
         not auth_b._maybe_promote_admin(auth_b.get_user(with_mail)),
         "an e-mail that happens to look like the name promotes")
@@ -110,7 +110,7 @@ def _oidc_app(claims, userinfo=None, **cfg):
     `userinfo` is what the /userinfo endpoint returns — kept separate from the ID token,
     because exactly this separation is under test."""
     auth, app = _app(oidc_enabled=True, oidc_issuer=IDP, oidc_client_id="probe",
-                     oidc_client_secret="geheim", base_url="http://testserver",
+                     oidc_client_secret="secret", base_url="http://testserver",
                      csrf_enabled=False, **cfg)
     auth.oidc._meta = {"issuer": IDP, "authorization_endpoint": IDP + "/authorize",
                        "token_endpoint": IDP + "/token", "userinfo_endpoint": IDP + "/userinfo",
@@ -136,12 +136,12 @@ def _oidc_login(app):
     return c.get(f"/auth/oidc/callback?code=x&state={state}", follow_redirects=False)
 
 
-ATTACK = {"sub": "angreifer-123", "preferred_username": "angreifer", "name": "Angreifer",
+ATTACK = {"sub": "attacker-123x", "preferred_username": "attacker", "name": "Attacker",
            "email": "chef@example.com", "email_verified": False}
 
 auth_f, app_f = _oidc_app(ATTACK, admin_identifiers=["chef@example.com"])
 response = _oidc_login(app_f)
-account = auth_f.store.get_user_by_name("angreifer")
+account = auth_f.store.get_user_by_name("attacker")
 r.check("the attacker gets in (the sign-in itself stays allowed)",
         response.status_code == 303 and account is not None,
         f"HTTP {response.status_code} — then the rest measures nothing")
@@ -168,11 +168,11 @@ r.check("even a login WITHOUT proof in its luggage does not promote this account
         "via a local path the unconfirmed address is first-admin-capable after all")
 
 # Counter-check — without it the check above would also be green if OIDC did nothing at all.
-auth_g, app_g = _oidc_app({**ATTACK, "sub": "chefin-1", "preferred_username": "chefin",
+auth_g, app_g = _oidc_app({**ATTACK, "sub": "boss-1", "preferred_username": "boss",
                            "email_verified": True},
                           admin_identifiers=["chef@example.com"])
 _oidc_login(app_g)
-manager = auth_g.store.get_user_by_name("chefin")
+manager = auth_g.store.get_user_by_name("boss")
 r.check("with email_verified=true the intended first admin is still granted",
         manager is not None and manager["is_admin"] == 1,
         "the documented bootstrap path is closed")
@@ -184,23 +184,23 @@ r.check("and the confirmed address is in the account",
 # The claim is OPTIONAL in OIDC Core 5.1, and some IdPs never send it (the code itself names Entra ID).
 # Whoever vouches for their addresses turns the No for the MISSING claim
 # around — otherwise `admin_identifiers` would be permanently closed for these IdPs.
-auth_v, app_v = _oidc_app({"sub": "entra-1", "preferred_username": "chefin",
+auth_v, app_v = _oidc_app({"sub": "entra-1", "preferred_username": "boss",
                            "email": "chef@example.com"},        # claim missing entirely
                           admin_identifiers=["chef@example.com"],
                           oidc_email_verified_default=True)
 _oidc_login(app_v)
-entra = auth_v.store.get_user_by_name("chefin")
+entra = auth_v.store.get_user_by_name("boss")
 r.check("with oidc_email_verified_default=True an address without claim counts as proven",
         entra is not None and entra["is_admin"] == 1 and bool(entra["email_verified"]),
         f"Account: {dict(entra) if entra else None} — the path would stay closed for Entra IdPs")
 # The switch applies only to the SILENCE of the provider. If it says explicitly "not confirmed",
 # a Yes derived from that would be a circumvention of its statement.
-auth_v2, app_v2 = _oidc_app({"sub": "entra-2", "preferred_username": "luegner",
+auth_v2, app_v2 = _oidc_app({"sub": "entra-2", "preferred_username": "liar",
                              "email": "chef@example.com", "email_verified": False},
                             admin_identifiers=["chef@example.com"],
                             oidc_email_verified_default=True)
 _oidc_login(app_v2)
-liar = auth_v2.store.get_user_by_name("luegner")
+liar = auth_v2.store.get_user_by_name("liar")
 r.check("but the switch does not override an explicit email_verified=false",
         liar is not None and not liar["is_admin"] and not liar["email_verified"],
         "the default beats the statement of the provider")
@@ -238,18 +238,18 @@ def _set_claims(auth, claims):
         _Claims({**claims, "nonce": nonce}), {"access_token": "at"})
 
 
-AFTER = {"sub": "nach-1", "preferred_username": "nachtrag", "email": "nach@example.com"}
+AFTER = {"sub": "after-1", "preferred_username": "addendum", "email": "after@example.com"}
 auth_s, app_s = _oidc_app(AFTER)                      # first login: claim missing → unconfirmed
 _oidc_login(app_s)
-after = auth_s.store.get_user_by_name("nachtrag")
+after = auth_s.store.get_user_by_name("addendum")
 before = bool(after["email_verified"])
 _set_claims(auth_s, {**AFTER, "email_verified": True})
 _oidc_login(app_s)
 afterwards = bool(auth_s.get_user(after["id"])["email_verified"])
 # Since H-3 the first login creates the account WITHOUT address; the later-delivered proof enters it.
 r.check("if the provider delivers the proof later, the address enters the account as proven",
-        not before and afterwards and auth_s.get_user(after["id"])["email"] == "nach@example.com",
-        f"vorher={before} nachher={afterwards} adresse={auth_s.get_user(after['id'])['email']}")
+        not before and afterwards and auth_s.get_user(after["id"])["email"] == "after@example.com",
+        f"before={before} after={afterwards} address={auth_s.get_user(after['id'])['email']}")
 _set_claims(auth_s, {**AFTER, "email_verified": False})
 _oidc_login(app_s)
 r.check("and if it withdraws it, the note falls again",
@@ -267,7 +267,7 @@ for value, expected in [(True, True), ("true", True), ("True", True), (" TRUE ",
                        (1, True), ("1", True),
                        (False, False), ("false", False), ("False", False), (0, False),
                        ("0", False), ("", False), (None, False), ("ja", False), ([], False)]:
-    r.check(f"_flag_wahr({value!r}) → {expected}", _flag_true(value) is expected,
+    r.check(f"_flag_true({value!r}) → {expected}", _flag_true(value) is expected,
             f"yields {_flag_true(value)!r}")
 
 
@@ -276,14 +276,14 @@ for value, expected in [(True, True), ("true", True), ("True", True), (" TRUE ",
 # when merging the address from the ID token won so far, but the proof could come from the
 # userinfo document: `email_verified=true` for a DIFFERENT address would have carried the
 # unchecked one along. OIDC Core 5.1 means by `email_verified` always the `email` of the SAME response.
-auth_m, app_m = _oidc_app({"sub": "misch-1", "preferred_username": "mischer",
+auth_m, app_m = _oidc_app({"sub": "mix-1", "preferred_username": "mixer",
                            "email": "chef@example.com"},              # ID token: without proof
-                          userinfo={"sub": "misch-1",            # mandatory since F-18
-                                      "email": "mischer@fremd.example",
+                          userinfo={"sub": "mix-1",            # mandatory since F-18
+                                      "email": "mixer@foreign.example",
                                       "email_verified": True},        # the proof belongs HERE
                           admin_identifiers=["chef@example.com"])
 _oidc_login(app_m)
-mixer = auth_m.store.get_user_by_name("mischer")
+mixer = auth_m.store.get_user_by_name("mixer")
 r.check("a proof from the userinfo document does not carry the address from the ID token",
         mixer is not None and not mixer["is_admin"],
         "Admin — the foreign email_verified was applied to the unchecked address")
@@ -295,12 +295,12 @@ r.check("… and it is not adopted at all (H-3)",
 # the proof there must count normally — otherwise the protection would be a block for everyone.
 # Since F-18 the response carries its `sub`: without a matching one it is discarded (OIDC Core 5.3.2),
 # which the section below measures separately.
-auth_n, app_n = _oidc_app({"sub": "nur-ui-1", "preferred_username": "nurui"},
-                          userinfo={"sub": "nur-ui-1",           # mandatory since F-18
+auth_n, app_n = _oidc_app({"sub": "only-ui-1", "preferred_username": "onlyui"},
+                          userinfo={"sub": "only-ui-1",           # mandatory since F-18
                                       "email": "chef@example.com", "email_verified": True},
                           admin_identifiers=["chef@example.com"])
 _oidc_login(app_n)
-ui_only = auth_n.store.get_user_by_name("nurui")
+ui_only = auth_n.store.get_user_by_name("onlyui")
 r.check("a confirmed address from the userinfo document still counts",
         ui_only is not None and ui_only["is_admin"] == 1 and ui_only["email"] == "chef@example.com",
         f"Account: {dict(ui_only) if ui_only else None}")
@@ -319,14 +319,14 @@ def _bootstrap_probe():
     Each probe needs its own: `maybe_promote_admin` is not without consequences — a success
     sets the admin flag, and afterwards all further calls only measure `admin_exists`."""
     a, _ = _app(admin_identifiers=["chef@example.com"])
-    return a, a.create_user("chefin", email="chef@example.com")
+    return a, a.create_user("boss", email="chef@example.com")
 
 
 for factor, proof, should, was in (("saml", None, False, "SAML without evidence (argument forgotten)"),
                                  ("oidc", None, False, "OIDC without evidence (argument forgotten)"),
                                  ("saml", False, False, "SAML with an explicit „no evidence\""),
                                  ("password", None, True, "local password login"),
-                                 ("oidc", True, True, "OIDC mit email_verified=true")):
+                                 ("oidc", True, True, "OIDC with email_verified=true")):
     a_p, uid_p = _bootstrap_probe()
     result = a_p._maybe_promote_admin(a_p.get_user(uid_p), proof, factor=factor)
     r.check(f"{was} → first admin {'YES' if should else 'NO'}", result is should,
@@ -433,8 +433,8 @@ r.check("and without a federated path as well",
 # OIDC/LDAP/SAML. This half was never measured: four mutations (fallback name → hard 409,
 # clean rejection → raw 500) left the full suite green.
 auth_k9, app_k9 = _oidc_app({"sub": "k9", "preferred_username": "chef@example.com",
-                             "email": "neu@example.com", "email_verified": True})
-local9 = auth_k9.create_user("chef", password="geheim12345", email="chef@example.com")
+                             "email": "new@example.com", "email_verified": True})
+local9 = auth_k9.create_user("chef", password="dummy12345", email="chef@example.com")
 reply9 = _oidc_login(app_k9)
 r.check("an OIDC name that is the e-mail of an account falls back to a free name",
         reply9.status_code == 303, f"HTTP {reply9.status_code} — the user no longer gets in")
@@ -452,16 +452,16 @@ r.check("...and the identifier still points to the local account",
 
 # What cannot be evaded: the e-mail of the identity. Then only fail-closed remains —
 # as a clean rejection, not as a 500 in the middle of the sign-in process.
-auth_k11, app_k11 = _oidc_app({"sub": "k11", "preferred_username": "fremd",
-                               "email": "kollision@example.com", "email_verified": True})
-local11 = auth_k11.create_user("kollision@example.com", password="geheim12345")
+auth_k11, app_k11 = _oidc_app({"sub": "k11", "preferred_username": "foreign",
+                               "email": "collision@example.com", "email_verified": True})
+local11 = auth_k11.create_user("collision@example.com", password="dummy12345")
 reply11 = _oidc_login(app_k11)
 r.check("an OIDC address that is already a login identifier locally is rejected with 409",
         reply11.status_code == 409, f"HTTP {reply11.status_code} — 500 would be a defect, 303 a hole")
-r.check("...and creates no account", auth_k11.store.get_user_by_name("fremd") is None,
+r.check("...and creates no account", auth_k11.store.get_user_by_name("foreign") is None,
         "the account is in the database despite the rejection")
 r.check("...the owner keeps their identifier",
-        (auth_k11.find_user("kollision@example.com") or {}).get("id") == local11,
+        (auth_k11.find_user("collision@example.com") or {}).get("id") == local11,
         "the identifier was occupied")
 
 
@@ -495,7 +495,7 @@ for slot, an in (("saml_auto_create", dict(saml_enabled=True,
                                            ldap_url="ldaps://dir.example.invalid"))):
     built, text = _builds_f14(admin_identifiers=["chef"], allow_signup=False, **an)
     r.check(f"the same for {slot}", not built and slot in text,
-            f"gebaut={built}, message: {text[:110]!r}")
+            f"built={built}, message: {text[:110]!r}")
 
 # Counter-checks — the guard must not take the viable setups down with it.
 built, text = _builds_f14(admin_identifiers=["chef"], allow_signup=False,
@@ -511,9 +511,9 @@ r.check("an allowlist ADDRESS stays allowed with OIDC (it needs the claim, not a
 # `["tippfehler"]` became `[]`, and `[]` in the database means "no scope, inherits everything".
 # The pruning that was meant to limit made the key more powerful.
 auth_k, _ = _app(apikey_enabled=True)
-uid_k = auth_k.create_user("bob", password="geheim12345", roles=["kasse", "lager"])
+uid_k = auth_k.create_user("bob", password="dummy12345", roles=["cashier", "lager"])
 
-for wish, was in ((["lagre"], "typo"), ([], "explicitly empty")):
+for wish, was in ((["store"], "typo"), ([], "explicitly empty")):
     try:
         auth_k.create_api_key(uid_k, "k", roles=list(wish))
         arisen = True
@@ -522,10 +522,10 @@ for wish, was in ((["lagre"], "typo"), ([], "explicitly empty")):
     r.check(f"a scope that becomes nothing ({was}) creates no key", not arisen,
             "the key is created — and in the database inherits ALL roles of the account")
 
-key_name = auth_k.create_api_key(uid_k, "echt", roles=["lager"])
+key_name = auth_k.create_api_key(uid_k, "real", roles=["lager"])
 _, roles = auth_k.verify_api_key(key_name["key"])
 r.check("a valid subset still works", roles == ["lager"], f"{roles}")
-without = auth_k.create_api_key(uid_k, "ohne")
+without = auth_k.create_api_key(uid_k, "without")
 _, roles2 = auth_k.verify_api_key(without["key"])
 r.check("without `roles` the key inherits as before", roles2 is None, f"{roles2}")
 
@@ -535,20 +535,20 @@ r.check("without `roles` the key inherits as before", roles2 is None, f"{roles2}
 # the sign-in via the session cookie continued. Also with apikey_enabled=False.
 for apikey_an in (False, True):
     auth_c, _ = _app(apikey_enabled=apikey_an)
-    boss = auth_c.create_user("chefin", password="geheim12345", is_admin=True)
+    boss = auth_c.create_user("boss", password="dummy12345", is_admin=True)
     app_c = FastAPI()
     app_c.include_router(auth_c.router())
     cc = TestClient(app_c)
     cc.cookies.set(auth_c.cfg.session_cookie,
                    auth_c.store.create_session(boss, 3600, True, "password"))
     with_ = cc.post("/auth/admin/api/security", json={"max_login_attempts": 7},
-                  headers={"X-API-Key": "voellig-erfunden"})
+                  headers={"X-API-Key": "voellig-invented"})
     r.check(f"an invented X-API-Key does not switch CSRF off (apikey_enabled={apikey_an})",
             with_.status_code == 403, f"HTTP {with_.status_code} — the check can be switched off")
 
 # Counter-check: a REAL key without cookie may still work without a CSRF token.
 auth_d, app_d = _app(apikey_enabled=True)
-uid_d = auth_d.create_user("daemon", password="geheim12345")
+uid_d = auth_d.create_user("daemon", password="dummy12345")
 real = auth_d.create_api_key(uid_d, "bot")["key"]
 cd = TestClient(app_d)
 r.check("a real key gets through without a CSRF token",
@@ -558,17 +558,17 @@ r.check("a real key gets through without a CSRF token",
 
 # ── A key issues itself a more powerful one ──────────────────────────────────
 auth_e, app_e = _app(apikey_enabled=True)
-uid_e = auth_e.create_user("bob", password="geheim12345", roles=["kasse", "lager"])
+uid_e = auth_e.create_user("bob", password="dummy12345", roles=["cashier", "lager"])
 narrow = auth_e.create_api_key(uid_e, "eng", roles=["lager"])["key"]
 ce = TestClient(app_e)
-response = ce.post("/auth/apikeys", json={"name": "selbst"}, headers={"X-API-Key": narrow})
+response = ce.post("/auth/apikeys", json={"name": "self"}, headers={"X-API-Key": narrow})
 r.check("an API key cannot issue an API key", response.status_code == 403,
         f"HTTP {response.status_code} — with it he lifts his own limitation")
 
 
 # ── A TOTP code that is valid several times ──────────────────────────────────
 auth_t, _ = _app()
-uid_t = auth_t.create_user("bob", password="geheim12345")
+uid_t = auth_t.create_user("bob", password="dummy12345")
 auth_t.totp_begin(uid_t)
 secret_text = auth_t.store.get_totp(uid_t)["secret"]
 auth_t.store.set_totp(uid_t, secret_text, confirmed=True)
@@ -585,18 +585,18 @@ r.check("the next time step still works",
 
 # ── Unlocked resources in plain text ─────────────────────────────────────────
 auth_r2, app_r2 = _app(csrf_enabled=False, resource_locks_enabled=True, pin_enabled=True)
-uid_r = auth_r2.create_user("bob", password="geheim12345")
-auth_r2.set_resource_secret("tresor", "geheimwort", kind="password", label="Vault")
+uid_r = auth_r2.create_user("bob", password="dummy12345")
+auth_r2.set_resource_secret("vault", "geheimwort", kind="password", label="Vault")
 cr = TestClient(app_r2)
 cr.cookies.set(auth_r2.cfg.session_cookie, auth_r2.store.create_session(uid_r, 3600, True, "password"))
-cr.post("/auth/resource/tresor", data={"secret": "geheimwort", "next": "/"}, follow_redirects=False)
+cr.post("/auth/resource/vault", data={"secret": "geheimwort", "next": "/"}, follow_redirects=False)
 cookie = cr.cookies.get(auth_r2.cfg.resource_cookie)
 in_db = [z["token"] for z in auth_r2.store._all("SELECT token FROM resource_unlock")]
 r.check("the unlock token is not in plain text in the database",
         cookie not in in_db and in_db and len(in_db[0]) == 64,
         f"DB: {in_db[:1]} — whoever reads the file opens every unlocked resource")
 r.check("the unlock still works",
-        auth_r2.store.is_resource_unlocked(cookie, "tresor"),
+        auth_r2.store.is_resource_unlocked(cookie, "vault"),
         "the hashing broke the function")
 
 
@@ -607,8 +607,8 @@ check.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
 _sec.seclog.addHandler(check)
 try:
     auth_f, _ = _app()
-    auth_f.create_user("opfer", password="geheim12345")
-    auth_f._record_login("opfer\nWARNING failed login user=x ip=198.51.100.5 method=password\nx",
+    auth_f.create_user("victim", password="dummy12345")
+    auth_f._record_login("victim\nWARNING failed login user=x ip=198.51.100.5 method=password\nx",
                          "203.0.113.11", success=False, method="password")
 finally:
     _sec.seclog.removeHandler(check)
@@ -627,8 +627,8 @@ r.check("the filter is anchored to the whole line",
 
 # ── The sign-in fails — and the log does not say why ─────────────────────────
 auth_g, _ = _app()
-auth_g.create_user("anna", password="geheim12345")
-locked = auth_g.create_user("bert", password="geheim12345")
+auth_g.create_user("anna", password="dummy12345")
+locked = auth_g.create_user("bert", password="dummy12345")
 auth_g.store.set_disabled(locked, True)
 for name in ("anna", "bert", "carla"):
     auth_g._record_login(name, "203.0.113.9", success=False, method="password")
@@ -652,21 +652,21 @@ CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT, email TEXT, display_n
 CREATE TABLE session (token TEXT PRIMARY KEY, user_id INT, created_at INT, expires_at INT,
     mfa_ok INT DEFAULT 0, method TEXT);
 INSERT INTO users(id, username) VALUES (1, 'admin');
-INSERT INTO session VALUES ('KLARTEXT', 1, 0, 99999999999, 1, 'password');""")
+INSERT INTO session VALUES ('PLAINTEXT', 1, 0, 99999999999, 1, 'password');""")
 raw.commit()
 raw.close()
 before = ([z[1] for z in sqlite3.connect(str(old_path)).execute("PRAGMA table_info(session)")],
           sqlite3.connect(str(old_path)).execute("PRAGMA user_version").fetchone()[0])
 
 execution = subprocess.run([sys.executable, "-m", "tinysesam", "backup", "--db", str(old_path),
-                       str(folder / "kopie.db")], cwd=ROOT, capture_output=True, text=True)
+                       str(folder / "copy.db")], cwd=ROOT, capture_output=True, text=True)
 afterwards = ([z[1] for z in sqlite3.connect(str(old_path)).execute("PRAGMA table_info(session)")],
            sqlite3.connect(str(old_path)).execute("PRAGMA user_version").fetchone()[0])
 r.check("`tinysesam backup` runs through", execution.returncode == 0, execution.stderr[:120])
 r.check("...and leaves the SOURCE unchanged", before == afterwards,
         f"before {before} → after {afterwards}. Whoever backs up before an update would have migrated "
         "the running installation with it — and closed the way back.")
-copy = sqlite3.connect(str(folder / "kopie.db"))
+copy = sqlite3.connect(str(folder / "copy.db"))
 r.check("the copy is complete and in the old schema",
         copy.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 1
         and "token" in [z[1] for z in copy.execute("PRAGMA table_info(session)")],
@@ -679,9 +679,9 @@ folder2 = Path(tempfile.mkdtemp())
 destination = folder2 / "auth.db"
 auth_s = TinySesam(TinySesamConfig(db_path=str(destination), cookie_secure=False))
 for n in ("alt0", "alt1"):
-    auth_s.create_user(n, password="geheim12345")
+    auth_s.create_user(n, password="dummy12345")
 subprocess.run([sys.executable, "-m", "tinysesam", "backup", "--db", str(destination),
-                str(folder2 / "sicherung.db")], cwd=ROOT, capture_output=True)
+                str(folder2 / "backup.db")], cwd=ROOT, capture_output=True)
 auth_s.store.db.close()
 # A real crash, not a clean close: the latter checkpoints the WAL and deletes it —
 # then the test does not measure the decisive case at all. So a subprocess that ends
@@ -690,7 +690,7 @@ crash = (
     "import os, signal\n"
     "from tinysesam import TinySesam, TinySesamConfig\n"
     f"a = TinySesam(TinySesamConfig(db_path={str(destination)!r}, cookie_secure=False))\n"
-    "a.create_user('neu0', password='geheim12345')\n"
+    "a.create_user('new0', password='dummy12345')\n"
     "os.kill(os.getpid(), signal.SIGKILL)\n")
 subprocess.run([sys.executable, "-c", crash], cwd=ROOT, capture_output=True)
 r.check("the starting position has a leftover WAL",
@@ -704,14 +704,14 @@ probe = folder2 / "probe.db"
 for part in ("", "-wal", "-shm"):
     if (folder2 / f"auth.db{part}").exists():
         _sh.copyfile(folder2 / f"auth.db{part}", folder2 / f"probe.db{part}")
-_sh.copyfile(folder2 / "sicherung.db", probe)
+_sh.copyfile(folder2 / "backup.db", probe)
 naive = [z[0] for z in sqlite3.connect(str(probe)).execute("SELECT username FROM users")]
 r.check("a plain `cp` of the backup does NOT work (the WAL overwrites it)",
-        "neu0" in naive,
+        "new0" in naive,
         f"{naive} — then the test does not measure the difference that `restore` makes")
 
 execution2 = subprocess.run([sys.executable, "-m", "tinysesam", "restore", "--db", str(destination),
-                        str(folder2 / "sicherung.db"), "--yes"],
+                        str(folder2 / "backup.db"), "--yes"],
                        cwd=ROOT, capture_output=True, text=True)
 r.check("`tinysesam restore` runs through", execution2.returncode == 0, execution2.stderr[:140])
 names = [z[0] for z in sqlite3.connect(str(destination)).execute("SELECT username FROM users")]
@@ -721,7 +721,7 @@ r.check("after restoring, the backed-up state is there", names == ["alt0", "alt1
 
 # ── A migration that aborts halfway ──────────────────────────────
 folder3 = Path(tempfile.mkdtemp())
-half = folder3 / "halb.db"
+half = folder3 / "half.db"
 raw3 = sqlite3.connect(str(half))
 raw3.executescript("""
 CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT, email TEXT, display_name TEXT,
@@ -730,7 +730,7 @@ CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT, email TEXT, display_n
 CREATE TABLE session (token_hash TEXT PRIMARY KEY, user_id INT, created_at INT, expires_at INT,
     mfa_ok INT DEFAULT 0, method TEXT);
 INSERT INTO users(id, username) VALUES (1, 'admin');
-INSERT INTO session VALUES ('IMMER-NOCH-KLARTEXT', 1, 0, 99999999999, 1, 'password');
+INSERT INTO session VALUES ('ALWAYS-STILL-PLAINTEXT', 1, 0, 99999999999, 1, 'password');
 PRAGMA user_version = 2;""")
 raw3.commit()
 raw3.close()
@@ -740,7 +740,7 @@ r.check("a half-migrated file is healed at the next start",
         all(len(w) == 64 for w in values),
         f"{values} — plaintext stays forever because the detection never applies again")
 r.check("and the old cookie remains valid afterwards",
-        st3.get_session("IMMER-NOCH-KLARTEXT") is not None,
+        st3.get_session("ALWAYS-STILL-PLAINTEXT") is not None,
         "the healing discarded the session")
 st3.db.close()
 
@@ -754,27 +754,27 @@ script = (
     "from fastapi.testclient import TestClient\n"
     "from tinysesam.gateway import build_app\n"
     "app = build_app(); c = TestClient(app)\n"
-    "print('gesund', c.get('/healthz').status_code)\n"
+    "print('healthy', c.get('/healthz').status_code)\n"
     "app.state.auth.store.db.close()\n"
-    "print('kaputt', c.get('/healthz').status_code)\n")
+    "print('broken', c.get('/healthz').status_code)\n")
 execution3 = subprocess.run([sys.executable, "-c", script], cwd=ROOT, capture_output=True,
                        text=True, env=environment)
 output = execution3.stdout
-r.check("the healthcheck reports a healthy instance with 200", "gesund 200" in output,
+r.check("the healthcheck reports a healthy instance with 200", "healthy 200" in output,
         output[:120] + execution3.stderr[-120:])
-r.check("...and a broken database with 503", "kaputt 503" in output,
+r.check("...and a broken database with 503", "broken 503" in output,
         f"{output[:160]} — Docker kept the container permanently as healthy, "
         "while every signed-in request returned 500")
 
 
 # ── The session token on a change of rights ───────────────────────────────────
 auth_w, app_w = _app(csrf_enabled=False)
-uid_w = auth_w.create_user("bob", password="geheim12345")
+uid_w = auth_w.create_user("bob", password="dummy12345")
 auth_w.totp_begin(uid_w)
 secret_text_w = auth_w.store.get_totp(uid_w)["secret"]
 auth_w.store.set_totp(uid_w, secret_text_w, confirmed=True)
 cw = TestClient(app_w)
-cw.post("/auth/login", data={"username": "bob", "password": "geheim12345", "next": "/"},
+cw.post("/auth/login", data={"username": "bob", "password": "dummy12345", "next": "/"},
         follow_redirects=False)
 prior = cw.cookies.get(auth_w.cfg.session_cookie)
 cw.post("/auth/totp", data={"code": pyotp.TOTP(secret_text_w).now(), "next": "/"},
@@ -887,8 +887,8 @@ if node:
 # taken over, the admin flag could be set, a login entry was created — only the session
 # stayed out. But locking means "this person should no longer be able to do anything"; that their roles
 # still change meanwhile is the opposite. In the log it also looked like a sign-in.
-auth_d, app_d = _oidc_app({"sub": "gesperrt-1", "preferred_username": "gesperrt",
-                           "email": "gesperrt@example.com", "email_verified": True,
+auth_d, app_d = _oidc_app({"sub": "locked-1xx", "preferred_username": "gesperrt",
+                           "email": "locked@example.com", "email_verified": True,
                            "groups": ["admins"]},
                           oidc_group_role_map={"admins": "chef"})
 _oidc_login(app_d)                                   # first login creates the account
@@ -916,13 +916,13 @@ r.check("unlocked: the same login goes through again",
 # The response is not signed and is laid over the claims — it supplies groups, e-mail
 # and thereby indirectly roles and the admin flag. If its `sub` does not match, it does not apply at all
 # (OIDC Core 5.3.2). What is checked here is the path through the real callback.
-auth_x, app_x = _oidc_app({"sub": "echt-1", "preferred_username": "echt"},
-                          userinfo={"sub": "JEMAND-ANDERS", "email": "chef@example.com",
+auth_x, app_x = _oidc_app({"sub": "real-1", "preferred_username": "real"},
+                          userinfo={"sub": "SOMEONE-DIFFERENT", "email": "chef@example.com",
                                       "email_verified": True, "groups": ["admins"]},
                           admin_identifiers=["chef@example.com"],
                           oidc_group_role_map={"admins": "chef"})
 _oidc_login(app_x)
-_real = auth_x.store.get_user_by_name("echt")
+_real = auth_x.store.get_user_by_name("real")
 r.check("foreign sub in the userinfo document: neither address nor roles move into the account",
         _real is not None and not _real["is_admin"] and _real["roles"] == "[]"
         and (_real["email"] or "") != "chef@example.com",
@@ -938,8 +938,8 @@ from tinysesam.__main__ import _audit as _cli_audit, _gc as _cli_gc  # noqa: E40
 auth_t, app_t = _app(csrf_enabled=False, magiclink_enabled=True, passkey_enabled=False,
                      forward_auth_enabled=True)
 auth_t.set_mailer(lambda *a, **k: None)
-_boss_t = auth_t.create_user("chef", password="Geheim12345!-lang", is_admin=True)
-_anna_t = auth_t.create_user("anna", password="Geheim12345!-lang", email="anna@example.com")
+_boss_t = auth_t.create_user("chef", password="Secret12345!-long", is_admin=True)
+_anna_t = auth_t.create_user("anna", password="Secret12345!-long", email="anna@example.com")
 
 
 def _session_t(uid):
@@ -975,7 +975,7 @@ r.check("B5-02: `tinysesam audit --user anna` finds them (filter in SQL on usern
 r.check("B5-07: confirming the TOTP setup leaves `totp_enable`",
         len(_lines_t("totp_enable")) == 1)
 _login_rc = TestClient(app_t)
-_login_rc.post("/auth/login", data={"username": "anna", "password": "Geheim12345!-lang"})
+_login_rc.post("/auth/login", data={"username": "anna", "password": "Secret12345!-long"})
 _rc_response = _login_rc.post("/auth/totp", data={"code": _rc.json()["codes"][0]},
                              follow_redirects=False)
 _rc_lines = _lines_t("recovery_used")
@@ -988,7 +988,7 @@ r.check("B5-07: a recovery code in the TOTP step appears as `recovery_used` in t
 # ── B5-04 / R6-3: the three panel routes without an actor ───────────────────────────────────────
 _key_t = c_boss.post(f"/auth/admin/api/users/{_anna_t}/keys", json={"name": "ci"}).json()
 c_boss.post(f"/auth/admin/api/keys/{_key_t['id']}/revoke")
-c_boss.post("/auth/admin/api/invite", json={"email": "gast@example.com"})
+c_boss.post("/auth/admin/api/invite", json={"email": "guest@example.com"})
 _panel = {e: (_lines_t(e) or [{}])[0] for e in ("apikey_create", "apikey_revoke", "invite_create")}
 r.check("B5-04/R6-3: creating/revoking a key names owner, IP and the admin as actor=",
         all(_panel[e].get("username") == "anna" and _panel[e].get("ip")
@@ -1023,10 +1023,10 @@ r.check("B5-05: an unknown key likewise — and both in the security log",
         _sl_buffer.getvalue())
 
 # ── R6-7: Before/after ──────────────────────────────────────────────────────────────────
-c_boss.post(f"/auth/admin/api/users/{_anna_t}/roles", json={"roles": ["redaktion"], "is_admin": True})
+c_boss.post(f"/auth/admin/api/users/{_anna_t}/roles", json={"roles": ["editors"], "is_admin": True})
 _roles_z = _lines_t("user_roles")[0]["detail"] or ""
 r.check("R6-7: the role change names before → after, including admin flag",
-        "roles=-->redaktion" in _roles_z and "admin=0->1" in _roles_z, _roles_z)
+        "roles=-->editors" in _roles_z and "admin=0->1" in _roles_z, _roles_z)
 c_boss.post(f"/auth/admin/api/users/{_anna_t}/roles", json={"roles": [], "is_admin": False})
 _before_ma = auth_t._sec("max_login_attempts")
 c_boss.post("/auth/admin/api/security", json={"max_login_attempts": _before_ma + 995})
@@ -1055,7 +1055,7 @@ _before_fw = len(_lines_t("forward_denied"))
 TestClient(app_t).get("/auth/forward")                                   # without proof
 _without_proof = len(_lines_t("forward_denied")) - _before_fw
 _fw = TestClient(app_t)
-_fw.cookies.set(auth_t.cfg.session_cookie, "abgelaufen-oder-geraten")
+_fw.cookies.set(auth_t.cfg.session_cookie, "expired-or-guessedxxxxx")
 _fw_status = [_fw.get("/auth/forward").status_code for _ in range(3)]
 _fw_z = _lines_t("forward_denied")
 r.check("B5-17: a 401 with an invalid session cookie appears in the log (throttled: 1× for 3 requests)",
@@ -1083,7 +1083,7 @@ except Exception as e:        # noqa: BLE001
     _try_last = type(e).__name__
 r.check("B5-08: the last admin cannot be deleted (StateError)", _try_last == "StateError",
         str(_try_last))
-auth_t.store.audit_log("invite_create", "chef", None, "an anna@example.com und annabell")
+auth_t.store.audit_log("invite_create", "chef", None, "an anna@example.com and annabell")
 _away = c_boss.post(f"/auth/admin/api/users/{_anna_t}/delete")
 _rest = [dict(z) for z in auth_t.store.recent_audit(1000)]
 r.check("B5-08: account deleted", _away.status_code == 200 and auth_t.store.get_user(_anna_t) is None,
@@ -1100,14 +1100,14 @@ r.check("H-13: … and only whole words are replaced ('annabell' stays)",
 # ── B5-11: retention period and IP truncation ──────────────────────────────────────────────
 auth_f, _ = _app(audit_retention_days=30, audit_ip_pseudonymize=True)
 auth_f.store.audit_log("alt", "x", "203.0.113.77")
-auth_f.store.audit_log("neu", "x", "2001:DB8:1234:5678::1")
+auth_f.store.audit_log("new", "x", "2001:DB8:1234:5678::1")
 auth_f.store._exec("UPDATE audit SET ts = ts - 31*86400 WHERE event='alt'")
 _ips_f = {z["event"]: z["ip"] for z in auth_f.store.recent_audit(10)}
 r.check("B5-11: audit_ip_pseudonymize truncates IPv4 to /24 and IPv6 to /48",
-        _ips_f == {"alt": "203.0.113.0/24", "neu": "2001:db8:1234::/48"}, f"{_ips_f}")
+        _ips_f == {"alt": "203.0.113.0/24", "new": "2001:db8:1234::/48"}, f"{_ips_f}")
 _gc_f = auth_f.gc()
 r.check("B5-11: gc() deletes audit rows beyond the period, the younger ones stay",
-        _gc_f.get("audit") == 1 and [z["event"] for z in auth_f.store.recent_audit(10)] == ["neu"],
+        _gc_f.get("audit") == 1 and [z["event"] for z in auth_f.store.recent_audit(10)] == ["new"],
         f"{_gc_f}")
 auth_g, _ = _app()
 auth_g.store.audit_log("alt", "x", "203.0.113.77")
@@ -1121,15 +1121,15 @@ r.check("B5-11: `tinysesam gc --audit-days N` cleans up the same from the comman
         "audit=1" in _cli_out.getvalue() and not auth_g.store.recent_audit(5), _cli_out.getvalue())
 try:
     _app(audit_retention_days=-1)
-    _neg = "angenommen"
+    _neg = "assumed"
 except ConfigError:
-    _neg = "abgewiesen"
-r.check("B5-11: a negative period (would delete EVERYTHING) is rejected at setup", _neg == "abgewiesen")
+    _neg = "rejected"
+r.check("B5-11: a negative period (would delete EVERYTHING) is rejected at setup", _neg == "rejected")
 
 # ── B5-06: Log-Injection in `tinysesam audit` ─────────────────────────────────────────────
 auth_i, _ = _app()
 auth_i.store.audit_log("login_fail", "x\n2026-01-01 00:00:00  login  admin  198.51.100.1  ok\x1b[2J",
-                       "198.51.100.9", "password\nzweite")
+                       "198.51.100.9", "password\nsecond")
 _cli_out = io.StringIO()
 with _ctxlib.redirect_stdout(_cli_out):
     _cli_audit(["--db", auth_i.cfg.db_path])
@@ -1165,7 +1165,7 @@ r.check("B5-15: an X-Forwarded-For without a valid address does not become the c
 r.check("B5-15: valid addresses arrive canonical (spelling ≠ new client)",
         _sec.client_ip(_Request("127.0.0.1", "2001:DB8:0::1"), _proxy) == "2001:db8::1"
         and _sec.client_ip(_Request("127.0.0.1", "198.51.100.7:4711"), _proxy) == "198.51.100.7")
-auth_i.store.audit_log("probe", "x", "kein\nip")
+auth_i.store.audit_log("probe", "x", "no\nip")
 r.check("B5-15: the audit log accepts nothing with a line break in the ip column",
         "\n" not in auth_i.store.recent_audit(1)[0]["ip"])
 
@@ -1193,10 +1193,10 @@ r.check("A-1: a zone with a line break does not end up in the ip column",
 
 # ── A-2 / A-3: deleting an account does not hit foreign rows, but the sign-in attempts by mail do ──
 auth_d, app_d2 = _app(csrf_enabled=False)
-auth_d.create_user("chef", password="Geheim12345!-lang", is_admin=True)
-_adm = auth_d.create_user("admin", password="Geheim12345!-lang", email="Anna.Admin@example.com",
+auth_d.create_user("chef", password="Secret12345!-long", is_admin=True)
+_adm = auth_d.create_user("admin", password="Secret12345!-long", email="Anna.Admin@example.com",
                           is_admin=True)
-_bob = auth_d.create_user("bob", password="Geheim12345!-lang")
+_bob = auth_d.create_user("bob", password="Secret12345!-long")
 _kd = TestClient(app_d2)
 _kd.cookies.set(auth_d.cfg.session_cookie, auth_d.store.create_session(_adm, 3600, True, "password"))
 _kd.post(f"/auth/admin/api/users/{_bob}/roles", json={"roles": ["ops"], "is_admin": True})
@@ -1239,7 +1239,7 @@ r.check("A-2 (old row): the name behind the old `akteur=` is replaced by `delete
 
 # ── A-4: the CSRF exception checks the key BEFORE current_user — the IP must already be there ─────
 auth_k, app_k = _app()
-_kboss = auth_k.create_user("chef", password="Geheim12345!-lang", is_admin=True)
+_kboss = auth_k.create_user("chef", password="Secret12345!-long", is_admin=True)
 _k_away = auth_k.create_api_key(_kboss, name="alt")
 auth_k.revoke_api_key(_k_away["id"])
 _k_ok = auth_k.create_api_key(_kboss, name="ok")
@@ -1257,8 +1257,8 @@ r.check("A-4: valid key on a POST route: ONE apikey_use row, with IP",
 
 # ── A-5: the account page does not show the admin's IP ─────────────────────────────────────
 auth_e, app_e = _app(csrf_enabled=False)
-_eboss = auth_e.create_user("chef", password="Geheim12345!-lang", is_admin=True)
-_eanna = auth_e.create_user("anna", password="Geheim12345!-lang")
+_eboss = auth_e.create_user("chef", password="Secret12345!-long", is_admin=True)
+_eanna = auth_e.create_user("anna", password="Secret12345!-long")
 _ec = TestClient(app_e, client=("198.51.100.50", 1))
 _ec.cookies.set(auth_e.cfg.session_cookie, auth_e.store.create_session(_eboss, 3600, True, "password"))
 _ea = TestClient(app_e, client=("203.0.113.9", 1))
@@ -1276,20 +1276,20 @@ r.check("A-5: … the own rows keep their IP",
 
 # ── A-6: no query string (approval token) in the audit log ─────────────────────────────────
 _fw6 = TestClient(app_t, client=("198.51.100.66", 1))
-_fw6.cookies.set(auth_t.cfg.session_cookie, "abgelaufen")
+_fw6.cookies.set(auth_t.cfg.session_cookie, "expired")
 _fw6.get("/auth/forward", headers={"x-forwarded-proto": "https", "x-forwarded-host": "app.example.com",
-                                   "x-forwarded-uri": "/share?t=GEHEIM#frag"})
+                                   "x-forwarded-uri": "/share?t=SECRET#frag"})
 _fw6_z = [z["detail"] for z in auth_t.store.recent_audit(50) if z["event"] == "forward_denied"
           and z["ip"] == "198.51.100.66"]
 r.check("A-6: forward_denied names host and path, but not the query string",
-        len(_fw6_z) == 1 and "GEHEIM" not in _fw6_z[0] and "/share?…" in _fw6_z[0], f"{_fw6_z}")
+        len(_fw6_z) == 1 and "SECRET" not in _fw6_z[0] and "/share?…" in _fw6_z[0], f"{_fw6_z}")
 r.check("A-6: url_for_log also for relative targets and without query",
         _sec.url_for_log("/a/b?code=x") == "/a/b?…" and _sec.url_for_log("https://h.example/p")
         == "https://h.example/p" and _sec.url_for_log("/x#t") == "/x?…")
 
 # ── A-7: C1 control characters, line separators and bidi overrides ──────────────────────────────
 auth_c, _ = _app()
-auth_c.store.audit_log("login_fail", "x\x852026-01-01 login admin zeile\x9b2J‮evil",
+auth_c.store.audit_log("login_fail", "x\x852026-01-01 login admin line\x9b2J‮evil",
                        "198.51.100.9", "d ")
 _cli_out = io.StringIO()
 with _ctxlib.redirect_stdout(_cli_out):
@@ -1392,7 +1392,7 @@ def _is_store(node, klass) -> bool:
 # The guard must be able to trigger itself — otherwise it measures nothing (negative test).
 r.check("Guard self-test: a call outside the permission is found",
         any("admin.py" in f for f in _calls_outside("delete_user_sessions", _is_store, set()))
-        and not _calls_outside("gibt_es_nicht", _is_store, set()))
+        and not _calls_outside("does_not_exist", _is_store, set()))
 
 # ── Finding 3: the admin revocation of a passkey notifies the owner ────────────────────────
 # The audit branch brought the panel route, the factors branch attached `passkey_removed` only to
@@ -1401,12 +1401,12 @@ r.check("Guard self-test: a call outside the permission is found",
 # (Mutation probes: remove the `security_event` call in `remove_passkey` → red; let the
 #  panel route call `store.delete_webauthn` + `audit` directly again → red, hook AND guard.)
 auth_f3, app_f3 = _app(csrf_enabled=False)
-_f3_boss = auth_f3.create_user("chef", password="Geheim12345!-lang", is_admin=True)
-_f3_anna = auth_f3.create_user("anna", password="Geheim12345!-lang")
+_f3_boss = auth_f3.create_user("chef", password="Secret12345!-long", is_admin=True)
+_f3_anna = auth_f3.create_user("anna", password="Secret12345!-long")
 _f3_event = []
 auth_f3.on_security_event = lambda e, k, d: _f3_event.append((e, k["username"], dict(d)))
 auth_f3.store.add_webauthn(_f3_anna, b"cred-f3-a", b"pk", 0, [], "Laptop")
-auth_f3.store.add_webauthn(_f3_anna, b"cred-f3-b", b"pk", 0, [], "Telefon")
+auth_f3.store.add_webauthn(_f3_anna, b"cred-f3-b", b"pk", 0, [], "Phone")
 _f3_pk, _f3_pk2 = [c["id"] for c in auth_f3.store.list_webauthn(_f3_anna)]
 _f3_c = TestClient(app_f3, client=("198.51.100.70", 1))
 _f3_c.cookies.set(auth_f3.cfg.session_cookie,
@@ -1437,7 +1437,7 @@ if _ilu.find_spec("webauthn") is not None:
     # and a foreign or invented passkey still wrote a row AND an event).
     auth_f3s, app_f3s = _app(csrf_enabled=False, passkey_enabled=True, rp_id="localhost",
                              origin="http://localhost")
-    _f3s_anna = auth_f3s.create_user("anna", password="Geheim12345!-lang")
+    _f3s_anna = auth_f3s.create_user("anna", password="Secret12345!-long")
     _f3s_event = []
     auth_f3s.on_security_event = lambda e, k, d: _f3s_event.append((e, k["username"], dict(d)))
     auth_f3s.store.add_webauthn(_f3s_anna, b"cred-f3s", b"pk", 0, [], "Laptop")
@@ -1467,7 +1467,7 @@ r.check("Finding 3 (guard): only TinySesam.remove_passkey deletes a passkey — 
 #  paths; let `gc_unconfirmed_accounts` call `self.delete_user` again → red, traces AND
 #  guard; write `signup_expired` with the plain name again → red; let `_revert` call
 #  `store.delete_user` again → red, traces AND guard.)
-_F12_NAME, _F12_MAIL = "squatter", "opfer@example.com"
+_F12_NAME, _F12_MAIL = "squatter", "victim@example.com"
 
 
 def _f12_traces(a) -> tuple:
@@ -1485,7 +1485,7 @@ def _f12_unconfirmed():
     """An account as left behind by registration with a confirmation requirement, with traces: the
     stranger's registration (with his IP) and a failed attempt by the real address owner."""
     a, app_ = _app(csrf_enabled=False)
-    uid = a.create_user(_F12_NAME, password="Geheim12345!-lang", email=_F12_MAIL)
+    uid = a.create_user(_F12_NAME, password="Secret12345!-long", email=_F12_MAIL)
     a.store.set_disabled(uid, True)
     a.create_magic_token("verify_email", user_id=uid)
     # The traces arise AFTER the second of creation (the account is a minute old): A
@@ -1494,7 +1494,7 @@ def _f12_unconfirmed():
     a.store._exec("UPDATE users SET created_at=created_at-60 WHERE id=?", (uid,))
     a.audit("signup", _F12_NAME, "203.0.113.66")
     TestClient(app_, client=("198.51.100.7", 1)).post(
-        "/auth/login", data={"username": _F12_MAIL, "password": f"falsch-falsch-{next(_WRONG)}"})
+        "/auth/login", data={"username": _F12_MAIL, "password": f"wrong-wrong-xx{next(_WRONG)}"})
     a.store._exec("UPDATE magic_token SET expires_at=0 WHERE user_id=?", (uid,))
     before = _f12_traces(a)
     assert before[0] and before[1], f"precondition: traces must be there, otherwise this measures nothing: {before}"
@@ -1516,7 +1516,7 @@ for _f12_away, _f12_execution in (("gc()", lambda a: a.gc()["unverified_accounts
 # And the account page of the real Carol afterwards (finding 12 verbatim): only her own rows.
 _f12_a, _f12_app, _ = _f12_unconfirmed()
 _f12_a.gc()
-_f12_new = _f12_a.create_user(_F12_NAME, password="Geheim12345!-lang", email="echt@example.com")
+_f12_new = _f12_a.create_user(_F12_NAME, password="Secret12345!-long", email="real@example.com")
 _f12_a.audit("signup", _F12_NAME, "198.51.100.8")
 _f12_own = [(e["event"], e["ip"]) for e in _f12_a.own_events(_f12_new)]
 r.check("Finding 12: a later namesake does not see the stranger's registration",
@@ -1528,12 +1528,12 @@ _f12_b, _f12_bapp = _app(allow_signup=True, signup_verify_email=True, signup_req
 
 
 def _f12_broken(*a, **k):
-    raise OSError("Mailserver weg")
+    raise OSError("Mailserver down")
 
 
 _f12_b.set_mailer(_f12_broken)
 _f12_bc = TestClient(_f12_bapp, client=("203.0.113.66", 1), raise_server_exceptions=False)
-_f12_br = _f12_bc.post("/auth/register", data={"username": _F12_NAME, "password": "Geheim12345!-lang",
+_f12_br = _f12_bc.post("/auth/register", data={"username": _F12_NAME, "password": "Secret12345!-long",
                                                 "email": _F12_MAIL, "next": "/"})
 _f12_brest = _f12_traces(_f12_b)
 _f12_bzeile = [z["username"] for z in _f12_b.store.recent_audit(20) if z["event"] == "verify_send_error"]
@@ -1560,7 +1560,7 @@ r.check("Findings 12/18 (guard): only Store.remove_account deletes an account �
 _f12_c, _ = _app()
 _f12_c.store.audit_log("login_fail", "berta", "203.0.113.66", "password")
 _f12_c.store._exec("UPDATE audit SET ts=ts-3600 WHERE username='berta'")
-_f12_berta = _f12_c.create_user("berta", password="Geheim12345!-lang")
+_f12_berta = _f12_c.create_user("berta", password="Secret12345!-long")
 _f12_c.audit("signup", "berta", "198.51.100.10")
 _f12_pref = [(e["event"], e["ip"]) for e in _f12_c.own_events(_f12_berta)]
 r.check("Finding 12: the account page shows no rows from before the creation of the account",
@@ -1623,16 +1623,16 @@ def _n1_execution(mailer, same_second: bool):
     a, app_ = _app(allow_signup=True, signup_verify_email=True, signup_require_email=True,
                    magiclink_enabled=True, csrf_enabled=False)
     a.set_mailer(lambda *x, **k: True)   # the invitation goes out; `mailer` applies afterwards
-    boss = a.create_user("chef", password="Geheim12345!-lang", is_admin=True)
+    boss = a.create_user("chef", password="Secret12345!-long", is_admin=True)
     ca = TestClient(app_, client=("198.51.100.1", 1))
     ca.cookies.set(a.cfg.session_cookie, a.store.create_session(boss, 3600, True, "password"))
     prior_id = a.store._one("SELECT COALESCE(MAX(id), 0) AS m FROM audit")["m"]
     with (_clock_stands() if same_second else _ctxlib.nullcontext()):
         assert ca.post("/auth/admin/api/invite", json={"email": _N1_MAIL}).status_code == 200
         TestClient(app_, client=(_N1_IPS[0], 1)).post(                # sprayer, name still free
-            "/auth/login", data={"username": _N1_NAME, "password": "Passwort1!"})
+            "/auth/login", data={"username": _N1_NAME, "password": "Password1!"})
         TestClient(app_, client=(_N1_IPS[1], 1)).post(                # the real Carol, without an account
-            "/auth/login", data={"username": _N1_MAIL, "password": "irgendwas-langes"})
+            "/auth/login", data={"username": _N1_MAIL, "password": "something-long"})
         if not same_second:
             a.store._exec("UPDATE audit SET ts=ts-60")                # one minute before
             a.store._exec("UPDATE login_attempt SET ts=ts-60")
@@ -1640,7 +1640,7 @@ def _n1_execution(mailer, same_second: bool):
         assert len(before[0]) == 3 and len(before[1]) == 2, f"precondition: {before}"
         a.set_mailer(mailer)
         reg = TestClient(app_, client=("192.0.2.66", 1), raise_server_exceptions=False).post(
-            "/auth/register", data={"username": _N1_NAME, "password": "Fremder-Langes-77",
+            "/auth/register", data={"username": _N1_NAME, "password": "Foreign-Long-77xx",
                                     "email": _N1_MAIL, "next": "/"})
         if same_second:
             _account = a.store.get_user_by_name(_N1_NAME)
@@ -1650,7 +1650,7 @@ def _n1_execution(mailer, same_second: bool):
     return a, app_, reg, before
 
 
-for _n1_position, _n1_same in (("eine Minute davor", False), ("dieselbe Sekunde", True)):
+for _n1_position, _n1_same in (("a Minute before", False), ("same Second", True)):
     _n1_a, _n1_app, _n1_reg, _n1_before = _n1_execution(lambda *x, **k: True, _n1_same)
     _n1_uid = _n1_a.store.get_user_by_name(_N1_NAME)["id"]
     # The same limit on the account page (H-7): The sprayer's failed attempt under the then
@@ -1662,7 +1662,7 @@ for _n1_position, _n1_same in (("eine Minute davor", False), ("dieselbe Sekunde"
     # After creation: a failed attempt under the name — it hits THIS account and goes along.
     # It comes seconds later (the second of creation itself is left by `delete_attempts_for`).
     TestClient(_n1_app, client=("203.0.113.77", 1)).post(
-        "/auth/login", data={"username": _N1_NAME, "password": f"falsch-falsch-{next(_WRONG)}"})
+        "/auth/login", data={"username": _N1_NAME, "password": f"wrong-wrong-xx{next(_WRONG)}"})
     _n1_a.store._exec("UPDATE audit SET ts=ts+5 WHERE ip='203.0.113.77'")
     _n1_a.store._exec("UPDATE login_attempt SET ts=ts+5 WHERE ip='203.0.113.77'")
     _n1_a.store._exec("UPDATE magic_token SET expires_at=0 WHERE user_id=? AND purpose='verify_email'",
@@ -1709,19 +1709,19 @@ def _n7_execution(offset: int, event: str = "signup_taken"):
     a, app_ = _app(allow_signup=True, signup_verify_email=True, signup_require_email=True,
                    csrf_enabled=False)
     a.set_mailer(lambda *x, **k: True)
-    boss = a.create_user("chef", password="Geheim12345!-lang", is_admin=True)
+    boss = a.create_user("chef", password="Secret12345!-long", is_admin=True)
     ca = TestClient(app_, client=("198.51.100.1", 1))
     ca.cookies.set(a.cfg.session_cookie, a.store.create_session(boss, 3600, True, "password"))
     with _clock_stands():                 # creation and `user_create` in one second
-        assert ca.post("/auth/admin/api/users", json={"username": "kasse@example.com"}).status_code == 200
-    account = a.store.get_user_by_name("kasse@example.com")
+        assert ca.post("/auth/admin/api/users", json={"username": "cashier@example.com"}).status_code == 200
+    account = a.store.get_user_by_name("cashier@example.com")
     if event == "signup_taken":
         response = TestClient(app_, client=("203.0.113.66", 1)).post(
-            "/auth/register", data={"username": "kasse@example.com", "password": "Anderes-77!-lang-genug",
-                                    "email": "kasse@example.com", "next": "/"})
+            "/auth/register", data={"username": "cashier@example.com", "password": "Other-77!-long-enoughx",
+                                    "email": "cashier@example.com", "next": "/"})
         status = response.status_code
     else:                              # an embedding app logs its own sign-in
-        a.audit(event, "kasse@example.com", "203.0.113.66")
+        a.audit(event, "cashier@example.com", "203.0.113.66")
         status = 200
     a.store._exec("UPDATE audit SET ts=? WHERE event=?", (account["created_at"] + offset, event))
     anchor = a.store.setup_limit(a.store.get_user(account["id"]))
@@ -1736,7 +1736,7 @@ for _n7_event, _n7_offset in (("signup_taken", 0), ("signup_taken", 1), ("signup
     r.check(f"N-1/S-3: a foreign {_n7_event} row (+{_n7_offset} s after creation) under the "
             "name does not move the limit (user_create from the creation second is anonymized)",
             _n7_status == 200 and _n7_anchor[1] == 0 and _n7_z == [f"deleted#{_n7_uid} service=False"],
-            f"HTTP {_n7_status}, anlage_grenze {_n7_anchor}, {_n7_z}")
+            f"HTTP {_n7_status}, creation_limit {_n7_anchor}, {_n7_z}")
 
 # Counter-check: The signup_taken row OF A PLACEHOLDER is its creation and stays the anchor —
 # otherwise the whole second would count, and `gc()` would attribute the failed attempt of a sprayer who tried the then-free
@@ -1745,14 +1745,14 @@ for _n7_event, _n7_offset in (("signup_taken", 0), ("signup_taken", 1), ("signup
 _s3_a, _s3_app = _app(allow_signup=True, signup_verify_email=True, signup_require_email=True,
                       csrf_enabled=False)
 _s3_a.set_mailer(lambda *x, **k: True)
-_s3_a.create_user("inhaberin", password="Geheim12345!-lang", email="belegt@example.com")
+_s3_a.create_user("holder-f", password="Secret12345!-long", email="taken@example.com")
 with _clock_stands():
     TestClient(_s3_app, client=("203.0.113.9", 1)).post(          # sprayer, name still free
-        "/auth/login", data={"username": "platz", "password": "Passwort1!"})
+        "/auth/login", data={"username": "space", "password": "Password1!"})
     _s3_reg = TestClient(_s3_app, client=("192.0.2.66", 1)).post(
-        "/auth/register", data={"username": "platz", "password": "Fremder-Langes-77",
-                                "email": "belegt@example.com", "next": "/"})
-_s3_place = _s3_a.store.get_user_by_name("platz")
+        "/auth/register", data={"username": "space", "password": "Foreign-Long-77xx",
+                                "email": "taken@example.com", "next": "/"})
+_s3_place = _s3_a.store.get_user_by_name("space")
 _s3_anchor = _s3_a.store.setup_limit(_s3_place) if _s3_place else None
 _s3_a.store._exec("UPDATE magic_token SET expires_at=0 WHERE purpose='verify_email'")
 _s3_gc = _s3_a.gc()["unverified_accounts"]
@@ -1762,7 +1762,7 @@ r.check("S-3: … the signup_taken row of a placeholder stays its anchor — gc(
         "from the same second alone and takes only the own row",
         _s3_reg.status_code == 200 and _s3_place is not None and not _s3_place["email"]
         and _s3_anchor[1] > 0 and _s3_gc == 1
-        and _s3_lines == [("login_fail", "platz"), ("signup_taken", f"deleted#{_s3_place['id']}")],
+        and _s3_lines == [("login_fail", "space"), ("signup_taken", f"deleted#{_s3_place['id']}")],
         f"HTTP {_s3_reg.status_code}, anchor {_s3_anchor}, gc={_s3_gc}, {_s3_lines}")
 
 # The deliberate deletion of an account whose address is CONFIRMED stays as thorough as
@@ -1770,13 +1770,13 @@ r.check("S-3: … the signup_taken row of a placeholder stays its anchor — gc(
 # older rows (the invitation that led to the account). The NAME, however, belonged to nobody before
 # creation — the failed attempt under it stays as it was.
 _n6_a, _ = _app(csrf_enabled=False)
-_n6_a.create_user("chef", password="Geheim12345!-lang", is_admin=True)
+_n6_a.create_user("chef", password="Secret12345!-long", is_admin=True)
 _n6_a.store.audit_log("invite_create", "chef", "198.51.100.1", "dora@example.com")
 _n6_a.store.audit_log("login_fail", "dora", "203.0.113.9", "password reason=no_account")
 _n6_a.store.record_attempt("dora", "203.0.113.9", False, "password")
 _n6_a.store._exec("UPDATE audit SET ts=ts-60")
 _n6_a.store._exec("UPDATE login_attempt SET ts=ts-60")
-_n6_dora = _n6_a.create_user("dora", password="Geheim12345!-lang", email="dora@example.com")
+_n6_dora = _n6_a.create_user("dora", password="Secret12345!-long", email="dora@example.com")
 _n6_a.delete_user(_n6_dora)
 _n6_lines = {z["event"]: (z["username"], z["detail"]) for z in _n6_a.store._all(
     "SELECT * FROM audit WHERE event IN ('invite_create', 'login_fail')")}
@@ -1807,12 +1807,12 @@ def _s2_execution(verify: bool):
                    magiclink_enabled=True, csrf_enabled=False)
     post = []
     a.set_mailer(lambda to, subject, text, html=None: post.append((to, text)))
-    boss = a.create_user("chef", password="Geheim12345!-lang", is_admin=True)
+    boss = a.create_user("chef", password="Secret12345!-long", is_admin=True)
     ca = TestClient(app_, client=("198.51.100.1", 1))
     ca.cookies.set(a.cfg.session_cookie, a.store.create_session(boss, 3600, True, "password"))
     assert ca.post("/auth/admin/api/invite", json={"email": _S2_MAIL}).status_code == 200
     TestClient(app_, client=("198.51.100.50", 1)).post(          # the real Carol, without an account
-        "/auth/login", data={"username": _S2_MAIL, "password": "irgendwas-langes"})
+        "/auth/login", data={"username": _S2_MAIL, "password": "something-long"})
     a.store._exec("UPDATE audit SET ts=ts-60")                    # one minute before creation
     a.store._exec("UPDATE login_attempt SET ts=ts-60")
     return a, app_, ca, post
@@ -1825,7 +1825,7 @@ def _s2_foreign(a) -> list:
 
 def _s2_register(app_):
     return TestClient(app_, client=("192.0.2.66", 1)).post(
-        "/auth/register", data={"username": "fremder", "password": "Fremder-Langes-77",
+        "/auth/register", data={"username": "foreign", "password": "Foreign-Long-77xx",
                                 "email": _S2_MAIL, "next": "/"}, follow_redirects=False)
 
 
@@ -1833,7 +1833,7 @@ def _s2_register(app_):
 _s2_a, _s2_app, _s2_ca, _ = _s2_execution(True)
 _s2_before = _s2_foreign(_s2_a)
 _s2_reg = _s2_register(_s2_app)
-_s2_u = _s2_a.store.get_user_by_name("fremder")
+_s2_u = _s2_a.store.get_user_by_name("foreign")
 _s2_del = _s2_ca.post(f"/auth/admin/api/users/{_s2_u['id']}/delete")
 _s2_after = _s2_foreign(_s2_a)
 _s2_attempt = _s2_a.store._all("SELECT * FROM login_attempt WHERE ip='198.51.100.50'")
@@ -1848,7 +1848,7 @@ r.check("S-2 (open): registration creates the typed-in address without proof, an
 _s2_b, _s2_bapp, _, _ = _s2_execution(False)
 _s2_bbefore = _s2_foreign(_s2_b)
 _s2_breg = _s2_register(_s2_bapp)
-_s2_bu = _s2_b.store.get_user_by_name("fremder")
+_s2_bu = _s2_b.store.get_user_by_name("foreign")
 _s2_b.delete_user(_s2_bu["id"])
 _s2_bafter = _s2_foreign(_s2_b)
 r.check("S-2 (without confirmation requirement): unproven — delete_user leaves the rows from before creation",
@@ -1864,7 +1864,7 @@ _s2_link = [m.group(1) for to, text in _s2_post if to == _S2_MAIL
             for m in [re.search(r"/auth/verify/([\w\-]+)", text)] if m]
 _s2_cver = TestClient(_s2_capp, client=("192.0.2.66", 1)).post(
     f"/auth/verify/{_s2_link[-1]}", follow_redirects=False) if _s2_link else None
-_s2_cu = _s2_c.store.get_user_by_name("fremder")
+_s2_cu = _s2_c.store.get_user_by_name("foreign")
 _s2_c.delete_user(_s2_cu["id"])
 _s2_cafter = dict((e, (u, d)) for e, u, d in _s2_foreign(_s2_c))
 r.check("S-2 (after the link): the redeemed link sets the proof, and the deletion takes the "
@@ -1879,7 +1879,7 @@ r.check("S-2 (after the link): the redeemed link sets the proof, and the deletio
 # confirmation link pending. The note says "proven", the open token contradicts.
 _s2_d, _, _, _ = _s2_execution(True)
 _s2_dbefore = _s2_foreign(_s2_d)
-_s2_duid = _s2_d.create_user("fremder", password="Geheim12345!-lang", email=_S2_MAIL)
+_s2_duid = _s2_d.create_user("foreign", password="Secret12345!-long", email=_S2_MAIL)
 _s2_d.store.set_disabled(_s2_duid, True)
 _s2_d.create_magic_token("verify_email", user_id=_s2_duid, email=_S2_MAIL)
 _s2_unclosed_proven = _s2_d.store.address_proven(_s2_d.store.get_user(_s2_duid))
@@ -1913,7 +1913,7 @@ def _s1_app(n: int):
     a.store.db.executemany(
         "INSERT INTO users(username, display_name, email, is_admin, roles, is_service, created_at) "
         "VALUES (?,?,?,?,?,?,?)",
-        [(f"konto{i}", None, f"konto{i}@example.com", 0, "[]", 0, 1) for i in range(n)])
+        [(f"account{i}", None, f"account{i}@example.com", 0, "[]", 0, 1) for i in range(n)])
     a.store.db.commit()
     a.identifier_taken("aufwaermen")          # fills in the buckets of the raw rows
     return a, app_
@@ -1947,17 +1947,17 @@ def _s1_measure_at(n: int) -> dict:
     a, app_ = _s1_app(n)
     without_bucket = a.store._one("SELECT COUNT(*) AS n FROM users WHERE folded_name IS NULL "
                              "OR folded_mail IS NULL")["n"]
-    last, first = f"konto{n - 1}@example.com", "konto0@example.com"
+    last, first = f"account{n - 1}@example.com", "account0@example.com"
     m = {"without_bucket": without_bucket,
-         "frei": _s1_steps(a, lambda: a.identifier_taken("niemand@example.org")),
+         "free": _s1_steps(a, lambda: a.identifier_taken("nobody@example.org")),
          "taken (first account)": _s1_steps(a, lambda: a.identifier_taken(first)),
          "taken (last account)": _s1_steps(a, lambda: a.identifier_taken(last)),
-         "namesake": _s1_steps(a, lambda: a.identifier_taken("KONTO7")),
+         "namesake": _s1_steps(a, lambda: a.identifier_taken("ACCOUNT7")),
          "registration free": _s1_steps(a, lambda: TestClient(app_, client=("192.0.2.31", 1)).post(
-             "/auth/register", data={"username": "probefrei", "password": "Sehr-Langes-Passwort-77",
-                                     "email": "neu@example.org", "next": "/"})),
+             "/auth/register", data={"username": "probefrei", "password": "Very-Long-Password-77xx",
+                                     "email": "new@example.org", "next": "/"})),
          "registration taken": _s1_steps(a, lambda: TestClient(app_, client=("192.0.2.32", 1)).post(
-             "/auth/register", data={"username": "probevergeben", "password": "Sehr-Langes-Passwort-77",
+             "/auth/register", data={"username": "probevergeben", "password": "Very-Long-Password-77xx",
                                      "email": last, "next": "/"}))}
     for i in range(5):                        # five open accounts, link expired
         uid = a.store.create_user(f"pending{i}", None, f"pending{i}@example.org", False, [], False)
@@ -1979,20 +1979,20 @@ r.check("S-1: the database work of identifier_taken, of registration (free and t
         f"grows: {_s1_grow}\n100: {_s1_small}\n3000: {_s1_gross}")
 r.check("S-1: … free and taken differ with 3000 accounts only by a fixed, small amount",
         abs(_s1_gross["registration free"] - _s1_gross["registration taken"]) <= 200
-        and abs(_s1_gross["frei"] - _s1_gross["taken (last account)"]) <= 200,
+        and abs(_s1_gross["free"] - _s1_gross["taken (last account)"]) <= 200,
         f"{_s1_gross}")
 # The bucket check itself must keep working, also for a row of another writer that
 # someone renames: The trigger sets the bucket to NULL, the next call recomputes it.
 # (Mutation probe: the trigger sets nothing → red, "ärmel" goes unrecognized, "konto3" hits.)
 _s1_a, _ = _s1_app(10)
-_s1_a.store.db.execute("UPDATE users SET username='Ärmel' WHERE username='konto3'")
+_s1_a.store.db.execute("UPDATE users SET username='Ärmel' WHERE username='account3'")
 _s1_a.store.db.execute("INSERT INTO users(username, email, created_at) VALUES ('Özlem', NULL, 1)")
 _s1_a.store.db.commit()
 _s1_hit = {k: (_s1_a.store.account_by_bucket(k) or {"username": None})["username"]
-               for k in ("ärmel", "özlem", "konto3", "KONTO4@EXAMPLE.COM")}
+               for k in ("ärmel", "özlem", "account3", "ACCOUNT4@EXAMPLE.COM")}
 r.check("S-1: … and still finds namesakes — also after renaming and INSERT past the store",
-        _s1_hit == {"ärmel": "Ärmel", "özlem": "Özlem", "konto3": None,
-                        "KONTO4@EXAMPLE.COM": "konto4"}, f"{_s1_hit}")
+        _s1_hit == {"ärmel": "Ärmel", "özlem": "Özlem", "account3": None,
+                        "ACCOUNT4@EXAMPLE.COM": "account4"}, f"{_s1_hit}")
 # Read-only (volume write-protected): A bucket that cannot be filled in must neither prevent the
 # start (that did not happen before either) nor let a namesake be overlooked. At runtime
 # genuinely via `PRAGMA query_only`, at startup via a fill-in that fails as on a read-only
@@ -2037,10 +2037,10 @@ r.check("S-1: … also without write permission: startup succeeds, and rows with
 # (Mutation probes: omit the bucket in `Store.create_user` or `Store.set_email` → red.)
 _s1_uid = _s1_a.store.create_user("Ärger", None, "X@Bücher.example")
 _s1_after_setup = tuple(_s1_a.store._one("SELECT folded_name, folded_mail FROM users WHERE id=?", (_s1_uid,)))
-_s1_a.store.set_email(_s1_uid, "Neu@Example.com")
+_s1_a.store.set_email(_s1_uid, "New@Example.com")
 _s1_after_change = _s1_a.store._one("SELECT folded_mail FROM users WHERE id=?", (_s1_uid,))["folded_mail"]
 r.check("S-1: … create_user and set_email write the bucket along right away",
-        _s1_after_setup == ("ärger", "x@xn--bcher-kva.example") and _s1_after_change == "neu@example.com",
+        _s1_after_setup == ("ärger", "x@xn--bcher-kva.example") and _s1_after_change == "new@example.com",
         f"after creation {_s1_after_setup}, after address change {_s1_after_change}")
 
 # ── N-5: non-ASCII namesakes share a counting bucket ──────────────────────────────────────
@@ -2055,15 +2055,15 @@ r.check("S-1: … create_user and set_email write the bucket along right away",
 _n5_a, _n5_app = _app(allow_signup=True, signup_verify_email=True, signup_require_email=True,
                       csrf_enabled=False)
 _n5_a.set_mailer(_n1_broken)          # if the registration failed after all, B6-5 would take effect immediately
-_n5_a.create_user("Émile", password="Geheim12345!-lang", email="emile@example.com")
+_n5_a.create_user("Émile", password="Secret12345!-long", email="emile@example.com")
 _n5_reg = TestClient(_n5_app, client=("203.0.113.99", 1), raise_server_exceptions=False).post(
-    "/auth/register", data={"username": "émile", "password": "Irgendwas-Langes-77",
+    "/auth/register", data={"username": "émile", "password": "Something-Long-77xx",
                             "email": "gibtsnicht@example.org", "next": "/"})
 _n5_no = None
 try:
     # Lowercase é: SQLite NOCASE sees a different name in it (unlike "ÉMILE", which
     # already fails at ASCII folding) — the path that registration takes above.
-    _n5_a.create_user("émile", password="Anderes-77!-lang-genug")
+    _n5_a.create_user("émile", password="Other-77!-long-enoughx")
 except ConfigError as _e:
     _n5_no = getattr(_e, "field", "?")
 r.check("N-5: 'émile' next to 'Émile' is taken (same counting bucket) — 409, no second account",
@@ -2071,19 +2071,19 @@ r.check("N-5: 'émile' next to 'Émile' is taken (same counting bucket) — 409,
         and len(_n5_a.store._all("SELECT id FROM users")) == 1,
         f"HTTP {_n5_reg.status_code}, create_user: {_n5_no}")
 r.check("N-5: … a different bucket stays free ('Emile' without accent)",
-        bool(_n5_a.create_user("Emile", password="Anderes-77!-lang-genug")))
+        bool(_n5_a.create_user("Emile", password="Other-77!-long-enoughx")))
 
 
 def _n5_rate(a, app_, name):
     for _i in range(4):
         _cl = TestClient(app_, client=(f"203.0.113.{_i + 1}", 1))
         for _ in range(4):
-            _cl.post("/auth/login", data={"username": name, "password": f"falsch-falsch-{next(_WRONG)}"})
+            _cl.post("/auth/login", data={"username": name, "password": f"wrong-wrong-xx{next(_WRONG)}"})
 
 
 # Existing stock from a state before this check: the namesake is already in the database.
 _n5_b, _n5_bapp = _app(csrf_enabled=False)
-_n5_b.create_user("Özlem", password="Geheim12345!-lang", email="oezlem@example.com")
+_n5_b.create_user("Özlem", password="Secret12345!-long", email="oezlem@example.com")
 # Raw INSERT without bucket (foreign writer): Since G12c `store.create_user` itself rejects the
 # namesake.
 _n5_place = _n5_b.store._exec("INSERT INTO users(username, display_name, created_at) VALUES (?,?,?)",
@@ -2105,7 +2105,7 @@ _n5_prior = _n5_bucket(_n5_b, "özlem")
 _n5_b.store._exec("UPDATE magic_token SET expires_at=1 WHERE purpose='verify_email'")
 _n5_gc = _n5_b.gc()["unverified_accounts"]
 _n5_fresh = TestClient(_n5_bapp, client=("198.51.100.200", 1)).post(
-    "/auth/login", data={"username": "Özlem", "password": "falsch"})
+    "/auth/login", data={"username": "Özlem", "password": "wrong"})
 r.check("N-5: gc() of a namesake from the existing stock does not empty the bucket of the remaining account",
         _n5_prior >= 15 and _n5_gc == 1 and _n5_bucket(_n5_b, "özlem") == _n5_prior
         and _n5_fresh.status_code == 429,
@@ -2116,8 +2116,8 @@ r.check("N-5: gc() of a namesake from the existing stock does not empty the buck
 # is `Émile`. A deletion by the admin therefore left the attempt rows lying — the
 # promise of H-13 ("their attempt rows are deleted") applied only to ASCII names.
 _n5_c, _n5_capp = _app(csrf_enabled=False)
-_n5_c.create_user("chef", password="Geheim12345!-lang", is_admin=True)
-_n5_ae = _n5_c.create_user("Ärmel", password="Geheim12345!-lang")
+_n5_c.create_user("chef", password="Secret12345!-long", is_admin=True)
+_n5_ae = _n5_c.create_user("Ärmel", password="Secret12345!-long")
 _n5_c.store._exec("UPDATE users SET created_at=created_at-60 WHERE id=?", (_n5_ae,))
 _n5_rate(_n5_c, _n5_capp, "Ärmel")
 _n5_cbefore = _n5_bucket(_n5_c, "ärmel")
@@ -2134,7 +2134,7 @@ r.check("N-5: deleting an account with non-ASCII capital letters also clears its
 _n2_a, _n2_app = _app(allow_signup=True, signup_invite_only=True, magiclink_enabled=True,
                       csrf_enabled=False)
 _n2_a.set_mailer(lambda *x, **k: True)
-_n2_inv = _n2_a.create_invite("gast@example.com", "http://testserver")
+_n2_inv = _n2_a.create_invite("guest@example.com", "http://testserver")
 _n2_tok = _n2_inv.get("token") or _n2_inv["url"].rsplit("/", 1)[-1]
 _n2_buffer = io.StringIO()
 _n2_check = logging.StreamHandler(_n2_buffer)
@@ -2142,9 +2142,9 @@ _sec.seclog.addHandler(_n2_check)
 _n2_erg = {}
 try:
     _n2_c = TestClient(_n2_app, client=("203.0.113.5", 1))
-    for _n2_name, _n2_path in (("geraten", "/auth/register?invite=geraten-123"),
-                               ("echt", f"/auth/register?invite={_n2_tok}"),
-                               ("ohne", "/auth/register")):
+    for _n2_name, _n2_path in (("guessed", "/auth/register?invite=guessed-123"),
+                               ("real", f"/auth/register?invite={_n2_tok}"),
+                               ("without", "/auth/register")):
         _n2_a0 = len(_n2_a.store._all("SELECT id FROM audit WHERE event='token_invalid'"))
         _n2_l0 = len([z for z in _n2_buffer.getvalue().splitlines()
                       if z.startswith(_sec.LOG_CHECK) and "token_invite" in z])
@@ -2157,9 +2157,9 @@ try:
 finally:
     _sec.seclog.removeHandler(_n2_check)
 r.check("N-2: GET /auth/register with an invented invitation token → token_invalid + 'failed verification'",
-        _n2_erg.get("geraten") == (403, 1, 1), f"{_n2_erg}")
+        _n2_erg.get("guessed") == (403, 1, 1), f"{_n2_erg}")
 r.check("N-2: … with a valid token and without any token, by contrast, no row",
-        _n2_erg.get("echt") == (200, 0, 0) and _n2_erg.get("ohne") == (403, 0, 0), f"{_n2_erg}")
+        _n2_erg.get("real") == (200, 0, 0) and _n2_erg.get("without") == (403, 0, 0), f"{_n2_erg}")
 
 # ── N-3: the self-service passkey ID is an integer — otherwise 400 ──────────────────
 # Only TypeError/ValueError were caught. `1e400`, `Infinity` and `-Infinity` are turned by json.loads
@@ -2169,7 +2169,7 @@ r.check("N-2: … with a valid token and without any token, by contrast, no row"
 if _ilu.find_spec("webauthn") is not None:
     _n3_a, _n3_app = _app(csrf_enabled=False, passkey_enabled=True, rp_id="localhost",
                           origin="http://localhost")
-    _n3_anna = _n3_a.create_user("anna", password="Geheim12345!-lang")
+    _n3_anna = _n3_a.create_user("anna", password="Secret12345!-long")
     _n3_event = []
     _n3_a.on_security_event = lambda e, k, d: _n3_event.append(e)
     _n3_a.store.add_webauthn(_n3_anna, b"cred-n3", b"pk", 0, [], "Laptop")
@@ -2222,7 +2222,7 @@ _SQL_COMMENT = re.compile(r"/\*.*?\*/|--[^\n]*", re.S)
 _SQL_IDENTIFIER = r"(?:\"[^\"]*\"|`[^`]*`|\[[^\]]*\]|\w+)"
 _SQL_DELETES = re.compile(
     r"\b(?:DELETE\s+FROM|DROP\s+TABLE(?:\s+IF\s+EXISTS)?|(?:INSERT\s+OR\s+)?REPLACE\s+INTO)\s*"
-    rf"(?P<ziel>(?:{_SQL_IDENTIFIER}\s*\.\s*)?{_SQL_IDENTIFIER})?", re.IGNORECASE)
+    rf"(?P<target>(?:{_SQL_IDENTIFIER}\s*\.\s*)?{_SQL_IDENTIFIER})?", re.IGNORECASE)
 _SQL_HARMLESS = frozenset(re.findall(r"CREATE TABLE IF NOT EXISTS (\w+)", _store_s4.SCHEMA)) - {
     "users", "webauthn_cred"}
 
@@ -2233,7 +2233,7 @@ def _sql_deletion_targets(text: str) -> list:
     unknown name)."""
     from_ = []
     for hit in _SQL_DELETES.finditer(_SQL_COMMENT.sub(" ", text)):
-        destination = hit.group("ziel") or ""
+        destination = hit.group("target") or ""
         name = re.split(r"\s*\.\s*", destination)[-1].strip("\"`[]").lower() if destination else ""
         if name in _SQL_HARMLESS:
             continue
@@ -2318,12 +2318,12 @@ _N8_PERMITTED_SQL = {"users": {("Store", "delete_user")},
                    # and drops the OLD-named tables of non-account data (`name_binding`, `oidc_session`, ...)
                    "": {("Store", "delete_user"), ("Store", "_english_names")}}
 _N8_PROBES = {
-    "Alias": "class TinySesam:\n    def weg(self, uid):\n        st = self.store\n        st.delete_user(uid)\n",
-    "Attribut": "class Hilfe:\n    def weg(self, uid):\n        self._s.delete_user(uid)\n",
-    "getattr": "def weg(s, uid):\n    getattr(s, 'delete_user')(uid)\n",
-    "SQL": "class TinySesam:\n    def weg(self, uid):\n        self.store._exec('DELETE FROM users WHERE id=?', (uid,))\n",
-    "SQL-Passkey": "def weg(db):\n    db.execute(\"DELETE  FROM webauthn_cred WHERE id=1\")\n",
-    "SQL-Variable": "def weg(db, t):\n    db.execute(f'DELETE FROM {t} WHERE id=1')\n",
+    "Alias": "class TinySesam:\n    def path(self, uid):\n        st = self.store\n        st.delete_user(uid)\n",
+    "Attribute": "class Help:\n    def path(self, uid):\n        self._s.delete_user(uid)\n",
+    "getattr": "def path(s, uid):\n    getattr(s, 'delete_user')(uid)\n",
+    "SQL": "class TinySesam:\n    def path(self, uid):\n        self.store._exec('DELETE FROM users WHERE id=?', (uid,))\n",
+    "SQL-Passkey": "def path(db):\n    db.execute(\"DELETE  FROM webauthn_cred WHERE id=1\")\n",
+    "SQL-Variable": "def path(db, t):\n    db.execute(f'DELETE FROM {t} WHERE id=1')\n",
 }
 _n8_itself = {}
 for _n8_kind, _n8_text in _N8_PROBES.items():
@@ -2332,7 +2332,7 @@ for _n8_kind, _n8_text in _N8_PROBES.items():
         _calls_outside("delete_user", _not_manager, {("Store", "remove_account")}, _n8_q)
         or _getattr_outside("delete_user", set(), _n8_q)
         or _sql_outside(_N8_PERMITTED_SQL, _n8_q))
-_n8_harmless = [("probe.py", "def route(auth, uid):\n    '''DELETE FROM users steht nur im Docstring'''\n"
+_n8_harmless = [("probe.py", "def route(auth, uid):\n    '''DELETE FROM users appears only in the docstring'''\n"
                             "    auth.delete_user(uid)\n")]
 r.check("N-8 (guard self-test): alias, foreign attribute, getattr and raw SQL trigger",
         all(_n8_itself.values()), f"{_n8_itself}")
@@ -2386,13 +2386,13 @@ st4 = auth_g4.store
 _G4_LINES = 120_000
 st4.db.executemany(
     "INSERT INTO audit(ts, event, username, ip, detail) VALUES (?,?,?,?,?)",
-    [(1_700_000_000 + i // 10, "apikey_create" if i % 997 == 0 else "login_fail", f"fremd{i % 50}", None,
-      "key=1 actor=g4opfer" if i % 997 == 0 else
-      "new=g4opfer@example.com" if i % 1499 == 0 else "password reason=wrong")
+    [(1_700_000_000 + i // 10, "apikey_create" if i % 997 == 0 else "login_fail", f"foreign{i % 50}", None,
+      "key=1 actor=g4victim" if i % 997 == 0 else
+      "new=g4victim@example.com" if i % 1499 == 0 else "password reason=wrong")
      for i in range(_G4_LINES)])
 st4.db.commit()
-_g4_first = st4._one("SELECT min(id) AS m FROM audit WHERE detail = 'key=1 actor=g4opfer'")["m"]
-_g4_hit = st4._one("SELECT count(*) AS n FROM audit WHERE instr(detail, 'g4opfer') > 0")["n"]
+_g4_first = st4._one("SELECT min(id) AS m FROM audit WHERE detail = 'key=1 actor=g4victim'")["m"]
+_g4_hit = st4._one("SELECT count(*) AS n FROM audit WHERE instr(detail, 'g4victim') > 0")["n"]
 
 
 class _G4Lock:
@@ -2417,33 +2417,33 @@ class _G4Lock:
 
 
 _g4_foreign = sqlite3.connect(auth_g4.cfg.db_path, timeout=0, isolation_level=None)
-_g4_mess = {"intern": 0, "zweite_verbindung": 0, "gesperrt": 0, "block_gelesen": False, "nachgetragen": False,
+_g4_mess = {"intern": 0, "second_connection": 0, "gesperrt": 0, "block_read": False, "backfilled": False,
             "block_sql": ""}
 
 
 def _g4_parallel():
-    st4.audit_log("g4_parallel", "fremd", None, "intern")            # the same worker, another thread
+    st4.audit_log("g4_parallel", "foreign", None, "intern")            # the same worker, another thread
     _g4_mess["intern"] += 1
     try:
         _g4_foreign.execute("BEGIN IMMEDIATE")                          # another worker, without waiting
         _g4_foreign.execute("INSERT INTO audit(ts, event, username, detail) VALUES (?,?,?,?)",
-                          (int(_t.time()), "g4_parallel", "fremd", "zweite_verbindung"))
+                          (int(_t.time()), "g4_parallel", "foreign", "second_connection"))
         _g4_foreign.execute("COMMIT")
-        _g4_mess["zweite_verbindung"] += 1
+        _g4_mess["second_connection"] += 1
     except sqlite3.OperationalError:
         _g4_mess["gesperrt"] += 1
     # Between reading and writing a block, another one changes the first hit row: The
     # write must take the fresh row, not the state that was read.
-    if _g4_mess["block_gelesen"] and not _g4_mess["nachgetragen"]:
-        _g4_foreign.execute("UPDATE audit SET detail = detail || ' nachtrag=1' WHERE id = ?", (_g4_first,))
-        _g4_mess["nachgetragen"] = True
+    if _g4_mess["block_read"] and not _g4_mess["backfilled"]:
+        _g4_foreign.execute("UPDATE audit SET detail = detail || ' addendum=1' WHERE id = ?", (_g4_first,))
+        _g4_mess["backfilled"] = True
 
 
 
 
 def _g4_trace(sql):
     if "instr(lower(detail)" in sql:        # a block of the detail search (parameters substituted)
-        _g4_mess["block_gelesen"] = True
+        _g4_mess["block_read"] = True
         _g4_mess["block_sql"] = _g4_mess["block_sql"] or sql
 
 
@@ -2452,8 +2452,8 @@ _g4_lock = _G4Lock(st4._lock)
 st4._lock = _g4_lock
 _g4_lock.check = _g4_parallel
 try:
-    st4.anonymize_audit("g4opfer", "deleted#77", ("g4opfer@example.com",),
-                            unlimited=("g4opfer@example.com",))
+    st4.anonymize_audit("g4victim", "deleted#77", ("g4victim@example.com",),
+                            unlimited=("g4victim@example.com",))
 finally:
     _g4_lock.check = None
     st4._lock = _g4_lock.real
@@ -2465,21 +2465,21 @@ _g4_blocks = 20
 r.check(f"G4: {_G4_LINES} rows — the search releases the write lock between the blocks, and "
         "parallel writers get through (the same worker and a second one without wait time)",
         _g4_lock.releases >= _g4_blocks and _g4_mess["intern"] >= _g4_blocks
-        and _g4_mess["zweite_verbindung"] >= _g4_blocks and _g4_mess["gesperrt"] == 0,
+        and _g4_mess["second_connection"] >= _g4_blocks and _g4_mess["gesperrt"] == 0,
         f"{_g4_lock.releases} releases, {_g4_mess} with {_g4_blocks} blocks")
-_g4_rest = st4._one("SELECT count(*) AS n FROM audit WHERE instr(detail, 'g4opfer') > 0")["n"]
+_g4_rest = st4._one("SELECT count(*) AS n FROM audit WHERE instr(detail, 'g4victim') > 0")["n"]
 _g4_replaced = st4._one("SELECT count(*) AS n FROM audit WHERE instr(detail, 'deleted#77') > 0")["n"]
 r.check("… and still replaces every hit in the detail text (name as actor=, address everywhere)",
         _g4_hit > 150 and _g4_rest == 0 and _g4_replaced == _g4_hit,
         f"before {_g4_hit}, remaining {_g4_rest}, replaced {_g4_replaced}")
 r.check("… and takes the fresh row when writing (an addition in between is not lost)",
-        _g4_mess["nachgetragen"] and st4._one("SELECT detail FROM audit WHERE id=?", (_g4_first,))["detail"]
-        == "key=1 actor=deleted#77 nachtrag=1",
+        _g4_mess["backfilled"] and st4._one("SELECT detail FROM audit WHERE id=?", (_g4_first,))["detail"]
+        == "key=1 actor=deleted#77 addendum=1",
         str(dict(st4._one("SELECT detail FROM audit WHERE id=?", (_g4_first,)))))
 r.check("… the rows of the parallel writers stay as they were",
-        st4._one("SELECT count(*) AS n FROM audit WHERE event='g4_parallel' AND username='fremd' "
-                 "AND detail IN ('intern', 'zweite_verbindung')")["n"]
-        == _g4_mess["intern"] + _g4_mess["zweite_verbindung"])
+        st4._one("SELECT count(*) AS n FROM audit WHERE event='g4_parallel' AND username='foreign' "
+                 "AND detail IN ('intern', 'second_connection')")["n"]
+        == _g4_mess["intern"] + _g4_mess["second_connection"])
 # And the search stays linear: A block is read via the primary key (the plan of the
 # statement as it ran), not via an index on `ts` — otherwise every block would read everything from `seit`.
 _g4_plan = [str(tuple(z)) for z in st4.db.execute("EXPLAIN QUERY PLAN " + _g4_mess["block_sql"]).fetchall()] \
@@ -2488,7 +2488,7 @@ r.check("G4: a block reads via the primary key (id range), not via an index on t
         len(_g4_plan) == 1 and "INTEGER PRIMARY KEY (rowid>? AND rowid<?)" in _g4_plan[0], str(_g4_plan))
 
 def _remove_g4_steps_on(name, inventory):
-    uid = auth_g4.create_user(name, password="Geheim-G4-Pw15!")
+    uid = auth_g4.create_user(name, password="Secret-G4-Pw15!")
     if inventory:   # account from the time before G2: no watermark, the creation (`seit`) applies
         st4._exec("UPDATE users SET name_audit_from = NULL, name_attempt_from = NULL WHERE id = ?", (uid,))
     st4.audit_log("apikey_create", "chef", None, f"key=2 actor={name}")
@@ -2506,9 +2506,9 @@ def _remove_g4_steps_on(name, inventory):
     return counter[0], rest
 
 
-_g4_young = {"Wasserlinie": _remove_g4_steps_on("g4jung", False),
-            "Bestand (seit)": _remove_g4_steps_on("g4bestand", True)}
-r.check("G4: a young account does not read the whole log — with watermark and in existing stock from `seit`",
+_g4_young = {"Waterline": _remove_g4_steps_on("g4jung", False),
+            "Existing (since)": _remove_g4_steps_on("g4existing", True)}
+r.check("G4: a young account does not read the whole log — with watermark and in existing stock from `since`",
         all(n < 60 and rest == 0 for n, rest in _g4_young.values()),
         f"{_g4_young} (× 1000 SQLite steps, rows remaining) with {_G4_LINES} rows")
 # (Mutation probes, run individually: `_ANONYMOUS_BLOCK` to 10**9 → the first check red
@@ -2549,7 +2549,7 @@ _f4a, _f4a_app, _ = _f4_app()
 _f4a_uid = _f4a.create_user("Émile", password=_F4_PW, email="emile@example.com")
 _f4a_c = TestClient(_f4a_app, client=("192.0.2.9", 4000))
 for _input in ("Émile", "émile", "Émile ", " emile@example.com", "ＥＭＩＬＥ@example.com", "ÉMILE"):
-    _f4a_c.post("/auth/login", data={"username": _input, "password": "falsch"}, follow_redirects=False)
+    _f4a_c.post("/auth/login", data={"username": _input, "password": "wrong"}, follow_redirects=False)
 _f4a_prior = len(_f4_rest(_f4a, "émile", "emile@", "ｅｍｉｌｅ"))
 _f4a.delete_user(_f4a_uid)
 _f4a_rest = _f4_rest(_f4a, "émile", "emile@", "ｅｍｉｌｅ")
@@ -2574,7 +2574,7 @@ _f4b, _f4b_app, _f4b_post = _f4_app()
 _f4b_uid = _f4b.create_user("bob", password=_F4_PW, email="bob.alt@example.com")
 _f4b_c = TestClient(_f4b_app, client=("192.0.2.11", 1))
 _f4b_c.post("/auth/login", data={"username": "bob", "password": _F4_PW}, follow_redirects=False)
-_f4b_c.post("/auth/login", data={"username": "bob.alt@example.com", "password": "falsch"}, follow_redirects=False)
+_f4b_c.post("/auth/login", data={"username": "bob.alt@example.com", "password": "wrong"}, follow_redirects=False)
 _f4b.change_username(_f4b_uid, "robert")
 _f4b.request_email_change(_f4b_uid, "robert@example.com", "http://testserver")()
 _f4b_link = [t for an, t in _f4b_post if an == "robert@example.com"]
@@ -2603,10 +2603,10 @@ r.check("… only in their span: the rows of the later holder of name and addres
 # LDAP/SAML (`to=`, as `_address_proven_by_source` writes it), the old name (`old=`).
 _f4c, _f4c_app, _ = _f4_app()
 _f4c_uid = _f4c.create_user("carla", password=_F4_PW, email="carla@example.com")
-_f4c.request_email_change(_f4c_uid, "carla.neu@example.com", "http://testserver")()
+_f4c.request_email_change(_f4c_uid, "carla.new@example.com", "http://testserver")()
 _f4c.audit("federation_email_confirm", "carla", None, f"account={_f4c_uid} source=ldap to=carla.ldap@example.com")
-_f4c.audit("username_changed", "carla", None, "old=frueher-carla by=operator actor=root")
-_f4c.audit("email_change_requested", "root", None, "new=root.neu@example.com")      # foreign row
+_f4c.audit("username_changed", "carla", None, "old=earlier-carla by=operator actor=root")
+_f4c.audit("email_change_requested", "root", None, "new=root.new@example.com")      # foreign row
 _f4c.delete_user(_f4c_uid)
 _f4c_own = [z["detail"] for z in _f4c.store._all("SELECT detail FROM audit WHERE username=?",
                                                     (f"deleted#{_f4c_uid}",))]
@@ -2617,7 +2617,7 @@ r.check("F4c: in the own rows `new=`, `to=` and `old=` are replaced",
         f"{_f4_rest(_f4c, 'carla')} {_f4c_own}")
 r.check("… `actor=` in the own rows and the values in foreign rows stay (counter-check)",
         any("actor=root" in d for d in _f4c_own)
-        and bool(_f4c.store._one("SELECT 1 AS x FROM audit WHERE username='root' AND detail='new=root.neu@example.com'")),
+        and bool(_f4c.store._one("SELECT 1 AS x FROM audit WHERE username='root' AND detail='new=root.new@example.com'")),
         str(_f4c_own))
 
 sys.exit(r.done())

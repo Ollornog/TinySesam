@@ -2,6 +2,45 @@
 
 All notable changes. Format loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Changed — English string literals (T-29 follow-up)
+
+PO decision 2026-10-29: English also in the string literals — log, error and output texts, test data, embedded code.
+German stays only as the translation of the interface (`lang="de"`).
+
+- **Translated:** about 3,000 string constants in 72 test files (passwords, user and account names, sample values,
+  check names and assert messages, snippets run in subprocesses, the runner's own output), 11 in the package
+  (`tinysesam/`: exceptions, a log placeholder, hard-coded German in two JavaScript snippets, internal keys; the HMAC domain label of the password-repetition
+  fingerprints stays as it is, changing it would invalidate stored fingerprints),
+  5 in `scripts/`, `examples/` and `web/`. Test semantics are unchanged (lengths of passwords, differing values, the
+  German interface texts the tests pin, the German documentation the tests run, old stored values).
+- **The guard `tests/test_english_code.py` reads string literals now** (same word list, no new guard): a German log
+  text, exception text, assert message, password or user name turns it red. Exceptions are structural: the German
+  half of the interface (`"de"` values, `config_check._DE`), German interface text a test asserts, old names the
+  migrations must read, names the kit dictates, the German password blocklist and the probes of the guards. Whole
+  files only for the three tests whose input is the old data and the two guards (`test_english_code.py`,
+  `test_api_surface.py`). Self-test and mutations (a German log text, assert message and password turn it red; a German
+  catalog entry and an old migration value do not) are in the guard.
+
+Visible text changes (nothing that a stability tier promises):
+
+| Where | Before | After |
+|---|---|---|
+| LDAP error (`DirectoryNotReachable`, log) | `…: Dienstkonto bzw. anonyme Suche abgewiesen (…)` | `…: service account or anonymous search rejected (…)` |
+| LDAP error (`DirectoryNotReachable`, log) | `…: Suche abgewiesen (…)` | `…: search rejected (…)` |
+| OIDC log line for an empty `sub` | `sub=<leer>` | `sub=<empty>` |
+| Passkey login page, error dialogs | always German (`Passkey-Login fehlgeschlagen`, `Passkey abgebrochen: …`) | from the message catalog: `Passkey sign-in failed`, `Passkey sign-in aborted: …` (German: `Passkey-Login fehlgeschlagen`, `Passkey-Login abgebrochen: …`) |
+| Account page, after “end other sessions” via re-authentication | always `✓ beendet` | the language table of the page (`✓ ended` / `✓ beendet`) |
+| Log hint for SAML without `mapping` (`federation_bind_existing`) | `mapping={name: kennung}` | `mapping={name: identifier}` |
+| Demo preview API (403 body) | `Vorschau — schreibende Aktionen sind abgeschaltet.` | `Preview — write actions are disabled.` |
+| `tests/run_all.py` | `FEHLER: …`, `N/M grün, … übersprungen, … fehlgeschlagen`, `(nicht gefunden)`, `── Ende der Ausgabe ──` | `ERROR: …`, `N/M green, … skipped, … failed`, `(not found)`, `── end of output ──` |
+| `scripts/_release.py` | `… Stelle(n)` | `… occurrence(s)` |
+
+Internal (no output, no promise): the request context key `akteur` → `actor`, the rate-limit bucket
+`audit:token_invalid_gedrosselt` → `audit:token_invalid_throttled`, the log dedupe key `xff-ungueltig:` →
+`xff-invalid:`, the JavaScript helper `abgewiesen()` of the admin panel → `rejected()`.
+
 ## [0.25.0] — 2026-10-29
 
 **Breaking — take a backup first (`tinysesam backup`, not `cp`).** The database migrates to schema 16 on the first

@@ -26,12 +26,12 @@ db = os.path.join(tempfile.mkdtemp(), "t.db")
 auth = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db, rp_name="Test", passkey_enabled=False,
                                  oidc_enabled=False, cookie_secure=False,
                                  session_ttl_transient_hours=6))
-auth.ensure_admin("admin", "geheim123")
+auth.ensure_admin("admin", "dummy123")
 app = FastAPI()
 app.include_router(auth.router())
 
 
-@app.get("/geheim")
+@app.get("/secret")
 def secret_text(u=Depends(auth.require_user)):
     return {"user": u["username"]}
 
@@ -39,22 +39,22 @@ def secret_text(u=Depends(auth.require_user)):
 c = TestClient(app)
 
 # ---------- Login with open-redirect next → lands on / instead of at the attacker ----------
-r = c.post("/auth/login", data={"username": "admin", "password": "geheim123", "next": "https://evil.example"},
+r = c.post("/auth/login", data={"username": "admin", "password": "dummy123", "next": "https://evil.example"},
            follow_redirects=False)
 assert r.status_code == 303 and r.headers["location"] == "/", r.headers.get("location")
 ok("login with foreign next → redirect to / (no open redirect)")
 
 # ---------- Remember-me: persistent cookie (Max-Age set) ----------
 c.get("/auth/logout")
-r = c.post("/auth/login", data={"username": "admin", "password": "geheim123", "next": "/", "remember": "1"},
+r = c.post("/auth/login", data={"username": "admin", "password": "dummy123", "next": "/", "remember": "1"},
            follow_redirects=False)
 sc = r.headers.get("set-cookie", "")
 assert "tinysesam_session=" in sc and "Max-Age=" in sc, sc
-ok("Remember an → persistentes Cookie (Max-Age)")
+ok("Remember on → persistent cookie (Max-Age)")
 
 # ---------- Without remember: pure session cookie (no Max-Age/Expires) ----------
 c.get("/auth/logout")
-r = c.post("/auth/login", data={"username": "admin", "password": "geheim123", "next": "/", "remember": ""},
+r = c.post("/auth/login", data={"username": "admin", "password": "dummy123", "next": "/", "remember": ""},
            follow_redirects=False)
 sc = r.headers.get("set-cookie", "")
 assert "tinysesam_session=" in sc and "Max-Age=" not in sc and "Expires=" not in sc, sc
@@ -63,15 +63,15 @@ ok("remember off → pure session cookie (no Max-Age)")
 # Server session TTL follows the transient value
 tok = c.cookies.get("tinysesam_session")
 s = auth.store.get_session(tok)
-assert (s["expires_at"] - s["created_at"]) <= 6 * 3600 + 5, "Transient-TTL zu lang"
+assert (s["expires_at"] - s["created_at"]) <= 6 * 3600 + 5, "Transient TTL too long"
 assert s["remember"] == 0
 ok("remember off → short transient TTL server-side")
 
 # ---------- Template override: own login page replaces the built-in one ----------
-auth.set_template("login", lambda a, ctx: f"<html>MEINE-LOGIN next={ctx['next']}</html>")
+auth.set_template("login", lambda a, ctx: f"<html>MINE-LOGIN next={ctx['next']}</html>")
 c.get("/auth/logout")
-html = c.get("/auth/login?next=/geheim").text
-assert "MEINE-LOGIN" in html and "next=/geheim" in html, html
+html = c.get("/auth/login?next=/secret").text
+assert "MINE-LOGIN" in html and "next=/secret" in html, html
 ok("template override: own login page is served")
 
 # Override may also return its own response (with status/redirect)

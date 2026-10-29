@@ -667,7 +667,7 @@ const p=(u,b)=>fetch(B+u,{method:"POST",headers:{"Content-Type":"application/jso
     return {detail:(j&&typeof j.detail==="string"&&j.detail)||L["err.generic"]}});
 // Show the reason for a rejection — true if there was one. Every action that calls p() goes through
 // here (a test pins that), so the next new action does not fail silently again.
-const abgewiesen=r=>{if(r&&r.detail){alert(r.detail);return true}return false};
+const rejected=r=>{if(r&&r.detail){alert(r.detail);return true}return false};
 const esc=s=>(s??"").toString().replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 // A button gets its action as data-on (name) and data-a (arguments as JSON), never as
 // onclick. Two reasons: the panel's CSP allows script only via nonce, so an inline handler
@@ -708,11 +708,11 @@ async function users(){
 }
 async function mkuser(){const b={username:nu.value,email:ne.value,password:np.value,roles:nr.value.split(",").map(s=>s.trim()).filter(Boolean),is_admin:na.checked,is_service:ns.checked};
   if(REQMAIL&&!ns.checked&&!ne.value.trim())return alert(L["err.email"]);
-  const r=await p("/api/users",b);if(!abgewiesen(r))users()}
-async function own(id,o){if(!confirm(o?L["confirm.owner_on"]:L["confirm.owner_off"]))return;abgewiesen(await p(`/api/users/${id}/owner`,{owner:o}));users()}
-async function dis(id,d){if(!confirm(d?L["confirm.disable"]:L["confirm.enable"]))return;abgewiesen(await p(`/api/users/${id}/disable`,{disabled:d}));users()}
-async function pw(id){const v=prompt(L["prompt.pw"]);if(v&&!abgewiesen(await p(`/api/users/${id}/password`,{password:v})))alert(L.pw_set)}
-async function ren(id,alt){const v=prompt(L["prompt.username"],alt);if(v&&v!==alt&&!abgewiesen(await p(`/api/users/${id}/username`,{username:v})))users()}
+  const r=await p("/api/users",b);if(!rejected(r))users()}
+async function own(id,o){if(!confirm(o?L["confirm.owner_on"]:L["confirm.owner_off"]))return;rejected(await p(`/api/users/${id}/owner`,{owner:o}));users()}
+async function dis(id,d){if(!confirm(d?L["confirm.disable"]:L["confirm.enable"]))return;rejected(await p(`/api/users/${id}/disable`,{disabled:d}));users()}
+async function pw(id){const v=prompt(L["prompt.pw"]);if(v&&!rejected(await p(`/api/users/${id}/password`,{password:v})))alert(L.pw_set)}
+async function ren(id,alt){const v=prompt(L["prompt.username"],alt);if(v&&v!==alt&&!rejected(await p(`/api/users/${id}/username`,{username:v})))users()}
 async function roles(id,cur,isadmin){
   const have=new Set((cur||"").split(",").map(s=>s.trim()).filter(Boolean));
   const inner = ROLES.length
@@ -728,7 +728,7 @@ async function saveroles(id){
   const roles = ROLES.length
     ? [...document.querySelectorAll(".rc_"+id+":checked")].map(c=>c.value)
     : (document.getElementById("rf"+id).value||"").split(",").map(s=>s.trim()).filter(Boolean);
-  abgewiesen(await p(`/api/users/${id}/roles`,{roles,is_admin:document.getElementById("ra"+id).checked}));users();
+  rejected(await p(`/api/users/${id}/roles`,{roles,is_admin:document.getElementById("ra"+id).checked}));users();
 }
 async function keys(id,name){const ks=await g(`/api/users/${id}/keys`);
   document.getElementById("k"+id).innerHTML=`<td colspan=5><div class=card><h2>${esc(L.api_keys)} · ${esc(name)}</h2>
@@ -738,20 +738,20 @@ async function keys(id,name){const ks=await g(`/api/users/${id}/keys`);
       <td>${esc(L.last_used)} ${dt(k.last_used)}</td><td>${k.expires_at?esc(L.expires)+' '+dt(k.expires_at):esc(L.never_expires)}</td>
       <td>${k.revoked?'':`<button class=warn ${on("revk",k.id,id,name)}>${esc(L.revoke)}</button>`}</td></tr>`).join("")+`</table></div></td>`}
 async function mkkey(id){const r=await p(`/api/users/${id}/keys`,{name:kn.value,expires_days:ke.value?parseInt(ke.value):null});
-  if(!abgewiesen(r)&&r.key)prompt(L.key_once,r.key);keys(id,"")}
+  if(!rejected(r)&&r.key)prompt(L.key_once,r.key);keys(id,"")}
 async function pks(id,name){const ps=await g(`/api/users/${id}/passkeys`);
   document.getElementById("k"+id).innerHTML=`<td colspan=5><div class=card><h2>${esc(L.passkeys)} · ${esc(name)}</h2>
     <table>`+(ps.length?ps.map(c=>`<tr><td>${esc(c.name||'')}</td><td>${dt(c.created_at)}</td><td>${esc(L.last_used)} ${dt(c.last_used)}</td>
       <td><button class=warn ${on("delpk",id,c.id,name)}>${esc(L.revoke)}</button></td></tr>`).join(""):`<tr><td class=muted>${esc(L.no_passkeys)}</td></tr>`)+`</table></div></td>`}
-async function delpk(uid,cid,name){if(confirm(L["confirm.pk_delete"])){abgewiesen(await p(`/api/users/${uid}/passkeys/${cid}/delete`));pks(uid,name)}}
-async function deluser(id){if(!confirm(L["confirm.delete"]))return;if(!abgewiesen(await p(`/api/users/${id}/delete`)))users()}
-async function revk(kid,uid,name){if(confirm(L["confirm.revoke"])){abgewiesen(await p(`/api/keys/${kid}/revoke`));keys(uid,name)}}
+async function delpk(uid,cid,name){if(confirm(L["confirm.pk_delete"])){rejected(await p(`/api/users/${uid}/passkeys/${cid}/delete`));pks(uid,name)}}
+async function deluser(id){if(!confirm(L["confirm.delete"]))return;if(!rejected(await p(`/api/users/${id}/delete`)))users()}
+async function revk(kid,uid,name){if(confirm(L["confirm.revoke"])){rejected(await p(`/api/keys/${kid}/revoke`));keys(uid,name)}}
 
 async function sessions(){const ss=await g("/api/sessions");
   V(`<table><tr><th>${esc(L["th.user"])}</th><th>${esc(L["th.method"])}</th><th>${esc(L["th.ip"])}</th><th>${esc(L["th.since"])}</th><th>${esc(L["th.mfa"])}</th><th></th></tr>`+
     ss.map(s=>`<tr><td><b>${esc(s.user)}</b></td><td>${esc(s.method)}</td><td>${esc(s.ip)}</td><td>${dt(s.created_at)}</td>
       <td>${s.mfa_ok?'✓':'—'}</td><td><button class=warn ${on("revs",s.full)}>${esc(L.end_session)}</button></td></tr>`).join("")+`</table>`)}
-async function revs(t){abgewiesen(await p("/api/sessions/revoke",{token:t}));sessions()}
+async function revs(t){rejected(await p("/api/sessions/revoke",{token:t}));sessions()}
 function clr(id){document.getElementById("r"+id).innerHTML=""}
 
 async function security(){const s=await g("/api/security");const v=await g("/api/version");
@@ -761,7 +761,7 @@ async function security(){const s=await g("/api/security");const v=await g("/api
     `<div class=row><button ${on("savesec",Object.keys(s))}>${esc(L.save)}</button></div></div>`+
     `<div class=card><h2>${esc(L.version)}</h2><div class=row>${esc(L.installed)} <code>${esc(v.version)}</code></div>
      <div class="muted small">${esc(L.update_note)}</div></div>`)}
-async function savesec(keys){const b={};keys.forEach(k=>b[k]=parseInt(document.getElementById("s_"+k).value));if(!abgewiesen(await p("/api/security",b)))alert(L.saved)}
+async function savesec(keys){const b={};keys.forEach(k=>b[k]=parseInt(document.getElementById("s_"+k).value));if(!rejected(await p("/api/security",b)))alert(L.saved)}
 
 
 async function audit(){const a=await g("/api/audit?limit=120");

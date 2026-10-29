@@ -57,12 +57,12 @@ def old_hash(pw: str) -> str:
     return "scrypt$" + base64.b64encode(salt).decode() + "$" + base64.b64encode(dk).decode()
 
 
-inventory = old_hash("geheim123")
+inventory = old_hash("dummy123")
 r.check("existing hash from 0.17.0 still verifies",
-        passwords.verify_password("geheim123", inventory),
+        passwords.verify_password("dummy123", inventory),
         "the parameter increase locks out all scrypt accounts")
 r.check("… and a wrong password, on the other hand, does not",
-        not passwords.verify_password("falsch", inventory))
+        not passwords.verify_password("wrong", inventory))
 r.check("existing hash counts as needing renewal",
         passwords.needs_rehash(inventory),
         "otherwise the account stays on the weaker parameters forever")
@@ -70,13 +70,13 @@ r.check("existing hash counts as needing renewal",
 new = "scrypt$%d$%d$%d$%s$%s" % (
     passwords._SCRYPT["n"], passwords._SCRYPT["r"], passwords._SCRYPT["p"],
     base64.b64encode(b"0123456789abcdef").decode(),
-    base64.b64encode(hashlib.scrypt(b"geheim123", salt=b"0123456789abcdef",
+    base64.b64encode(hashlib.scrypt(b"dummy123", salt=b"0123456789abcdef",
                                     **passwords._SCRYPT)).decode())
-r.check("hash in today's format verifies", passwords.verify_password("geheim123", new))
+r.check("hash in today's format verifies", passwords.verify_password("dummy123", new))
 if not passwords._ARGON:
     # Without argon2 hash_password itself produces scrypt — then the new format must come out
     # and must not immediately count as outdated again.
-    own = passwords.hash_password("geheim123")
+    own = passwords.hash_password("dummy123")
     r.check("self-generated hash carries its parameters", own.count("$") == 5, own[:24])
     r.check("… and does not count as needing renewal", not passwords.needs_rehash(own))
 else:
@@ -85,9 +85,9 @@ else:
 
 # And the path that counts in operation: an account whose hash comes from 0.17.0 signs in.
 auth, db = fresh()
-uid = auth.create_user("bestand", password="geheim123")
+uid = auth.create_user("existing", password="dummy123")
 auth.store.set_password_hash(uid, inventory)
-r.check("sign-in with a 0.17.0 hash succeeds", bool(auth._check_password("bestand", "geheim123")),
+r.check("sign-in with a 0.17.0 hash succeeds", bool(auth._check_password("existing", "dummy123")),
         "the login path computes differently from verify_password")
 
 # ---------------------------------------------------------------- migration of an old file
@@ -97,9 +97,9 @@ r.check("sign-in with a 0.17.0 hash succeeds", bool(auth._check_password("bestan
 # the plain text would have been left behind and never matched again.
 old_db = os.path.join(tempfile.mkdtemp(), "alt.db")
 auth0, _ = fresh(db_path=old_db, resource_locks_enabled=True)
-auth0.store.add_resource_unlock("klartext-token", "akte-7", 4102444800)
+auth0.store.add_resource_unlock("plaintext-token", "file-7", 4102444800)
 auth0.store.db.execute("PRAGMA user_version = 0")            # state of a 0.17.0 file
-auth0.store.db.execute("UPDATE resource_unlock SET token='klartext-token'")
+auth0.store.db.execute("UPDATE resource_unlock SET token='plaintext-token'")
 auth0.store.db.commit()
 auth0.store.db.close()
 
@@ -120,11 +120,11 @@ r.check("… and the file then carries the schema stamp", stamp == Store.SCHEMA_
 
 # A hashed unlock must NOT be hit by the cleanup (otherwise every start clears it out).
 auth1, db1 = fresh(resource_locks_enabled=True)
-auth1.store.add_resource_unlock("frisch-token", "akte-8", 4102444800)
+auth1.store.add_resource_unlock("fresh-token", "file-8", 4102444800)
 auth1.store.db.close()
 s2 = Store(db1)
 r.check("hashed unlock survives a restart",
-        s2.is_resource_unlocked("frisch-token", "akte-8"),
+        s2.is_resource_unlocked("fresh-token", "file-8"),
         "the cleanup reaches too far")
 s2.db.close()
 
@@ -144,13 +144,13 @@ s2.db.close()
 #  → red at (c); remove the bucket step of the migration → red at (b).)
 _s10_folder = tempfile.mkdtemp()
 _s10_db = os.path.join(_s10_folder, "schema9.db")
-_s10_cfg = dict(db_path=os.path.join(_s10_folder, "quelle.db"), allow_signup=True,
+_s10_cfg = dict(db_path=os.path.join(_s10_folder, "source.db"), allow_signup=True,
                 signup_require_email=True, signup_verify_email=True, csrf_enabled=False,
                 base_url="https://auth.example.com")
 _s10_old, _ = fresh(**_s10_cfg)
-_s10_old.create_user("chefin", password="Geheim12345!", is_admin=True)
+_s10_old.create_user("boss", password="Secret12345!", is_admin=True)
 _s10_ids, _s10_links = {}, {}
-for _name in ("verdacht", "wartend", "wieder", "altsperre"):
+for _name in ("suspicion", "pending", "again", "altsperre"):
     _uid = _s10_old.store.create_user(_name, None, f"{_name}@example.org")   # mark 1, as back then
     _s10_ids[_name] = _uid
     _s10_old.store.set_disabled(_uid, True)                                # back then: always 1
@@ -158,10 +158,10 @@ for _name in ("verdacht", "wartend", "wieder", "altsperre"):
         _s10_links[_name] = _s10_old.create_magic_token("verify_email", user_id=_uid,
                                                         email=f"{_name}@example.org")
 # The panel lock from back then: audit row with `uid=<id>`, tokens stay in place.
-_s10_old.store.audit_log("user_disable", "chefin", None, f"uid={_s10_ids['verdacht']} api_keys_revoked=1")
-_s10_old.store.audit_log("user_disable", "chefin", None, f"uid={_s10_ids['altsperre']}")
-_s10_old.store.audit_log("user_disable", "chefin", None, f"uid={_s10_ids['wieder']}")
-_s10_old.store.audit_log("user_enable", "chefin", None, f"uid={_s10_ids['wieder']}")
+_s10_old.store.audit_log("user_disable", "boss", None, f"uid={_s10_ids['suspicion']} api_keys_revoked=1")
+_s10_old.store.audit_log("user_disable", "boss", None, f"uid={_s10_ids['altsperre']}")
+_s10_old.store.audit_log("user_disable", "boss", None, f"uid={_s10_ids['again']}")
+_s10_old.store.audit_log("user_enable", "boss", None, f"uid={_s10_ids['again']}")
 _s10_emile = _s10_old.store.create_user("Émile", None, "Emile@Bücher.example")
 _s10_old.store.db.close()
 # The file in the state of schema 9: the schema without the bucket columns (indexes and triggers are only
@@ -211,29 +211,29 @@ _s10_u = {n: _s10.store.get_user(i) for n, i in _s10_ids.items()}
 _s10_unclosed = {n: _s10.store._one("SELECT COUNT(*) AS n FROM magic_token WHERE user_id=? AND used_at IS NULL",
                                  (i,))["n"] for n, i in _s10_ids.items()}
 _s10_link = TestClient(_s10_app, client=("192.0.2.66", 1)).post(
-    f"/auth/verify/{_s10_links['verdacht']}", follow_redirects=False)
+    f"/auth/verify/{_s10_links['suspicion']}", follow_redirects=False)
 r.check("S-5 (a): a panel lock from back then carries the operator mark after the upgrade, its "
         "open tokens are discarded — the old confirmation link does not unlock",
-        _s10_u["verdacht"]["disabled"] == 2 and _s10_unclosed["verdacht"] == 0
+        _s10_u["suspicion"]["disabled"] == 2 and _s10_unclosed["suspicion"] == 0
         and _s10_u["altsperre"]["disabled"] == 2
-        and _s10_link.status_code != 303 and _s10.store.get_user(_s10_ids["verdacht"])["disabled"] == 2
-        and not _s10.store.list_sessions(_s10_ids["verdacht"]),
-        f"verdacht {dict(_s10_u['verdacht'])}, offen {_s10_unclosed}, Link HTTP {_s10_link.status_code}")
+        and _s10_link.status_code != 303 and _s10.store.get_user(_s10_ids["suspicion"])["disabled"] == 2
+        and not _s10.store.list_sessions(_s10_ids["suspicion"]),
+        f"suspicion {dict(_s10_u['suspicion'])}, open {_s10_unclosed}, Link HTTP {_s10_link.status_code}")
 _s10_waits = TestClient(_s10_app, client=("192.0.2.67", 1)).post(
-    f"/auth/verify/{_s10_links['wartend']}", follow_redirects=False)
+    f"/auth/verify/{_s10_links['pending']}", follow_redirects=False)
 r.check("S-5 (a): … a pending signup without a panel lock remains unlockable, a "
         "lock that was lifted again remains the app's (1)",
-        _s10_u["wartend"]["disabled"] == 1 and _s10_unclosed["wartend"] == 1
-        and _s10_waits.status_code == 303 and _s10.store.get_user(_s10_ids["wartend"])["disabled"] == 0
-        and _s10_u["wieder"]["disabled"] == 1 and _s10_unclosed["wieder"] == 1,
-        f"wartend {dict(_s10_u['wartend'])}, Link HTTP {_s10_waits.status_code}, wieder {dict(_s10_u['wieder'])}")
+        _s10_u["pending"]["disabled"] == 1 and _s10_unclosed["pending"] == 1
+        and _s10_waits.status_code == 303 and _s10.store.get_user(_s10_ids["pending"])["disabled"] == 0
+        and _s10_u["again"]["disabled"] == 1 and _s10_unclosed["again"] == 1,
+        f"pending {dict(_s10_u['pending'])}, Link HTTP {_s10_waits.status_code}, again {dict(_s10_u['again'])}")
 r.check("S-2 (c): addresses of open signups carry no proof after the upgrade until the "
         "link arrives — then again",
-        _s10_u["verdacht"]["email_verified"] == 0 and _s10_u["wartend"]["email_verified"] == 0
-        and _s10.store.get_user(_s10_ids["wartend"])["email_verified"] == 1
+        _s10_u["suspicion"]["email_verified"] == 0 and _s10_u["pending"]["email_verified"] == 0
+        and _s10.store.get_user(_s10_ids["pending"])["email_verified"] == 1
         and _s10.store.get_user(_s10_emile)["email_verified"] == 1,
-        f"verdacht {_s10_u['verdacht']['email_verified']}, wartend vorher "
-        f"{_s10_u['wartend']['email_verified']}, nachher {_s10.store.get_user(_s10_ids['wartend'])['email_verified']}")
+        f"suspicion {_s10_u['suspicion']['email_verified']}, pending before "
+        f"{_s10_u['pending']['email_verified']}, after {_s10.store.get_user(_s10_ids['pending'])['email_verified']}")
 _s10_objects = {z["name"] for z in _s10.store._all("SELECT name FROM sqlite_master WHERE tbl_name='users'")}
 _s10_e = _s10.store.get_user(_s10_emile)
 _s10_without = _s10.store._one("SELECT COUNT(*) AS n FROM users WHERE folded_name IS NULL OR folded_mail IS NULL")["n"]
@@ -250,7 +250,7 @@ _s10.store.db.close()
 # file whose stamp is below `BUCKET_SCHEMA`.
 # (Mutation probe: in `_migrate` only ever compute the NULL rows → red.)
 _s10_stale = sqlite3.connect(_s10_db)
-_s10_stale.execute("UPDATE users SET folded_name='alte-faltung' WHERE id=?", (_s10_emile,))
+_s10_stale.execute("UPDATE users SET folded_name='old-folding' WHERE id=?", (_s10_emile,))
 _s10_stale.execute(f"PRAGMA user_version = {Store.BUCKET_SCHEMA - 1}")
 _s10_stale.commit()
 _s10_stale.close()
@@ -262,8 +262,8 @@ _s10_new.db.close()
 _s10_second = Store(_s10_db)
 r.check("… a second start changes nothing more (stamp current, no further lock, no mark)",
         int(_s10_second.db.execute("PRAGMA user_version").fetchone()[0]) == Store.SCHEMA_VERSION
-        and _s10_second.get_user(_s10_ids["wieder"])["disabled"] == 1
-        and _s10_second.get_user(_s10_ids["wartend"])["email_verified"] == 1)
+        and _s10_second.get_user(_s10_ids["again"])["disabled"] == 1
+        and _s10_second.get_user(_s10_ids["pending"])["email_verified"] == 1)
 _s10_second.db.close()
 
 # ---------------------------------------------------------------- downgrade window
@@ -278,9 +278,9 @@ _rs_cfg = dict(db_path=os.path.join(tempfile.mkdtemp(), "rueckschritt.db"), allo
                signup_require_email=True, signup_verify_email=True, csrf_enabled=False,
                base_url="https://auth.example.com")
 _rs_today, _ = fresh(**_rs_cfg)                              # today's version creates the file
-_rs_today.create_user("chefin", password="Geheim12345!", is_admin=True)
+_rs_today.create_user("boss", password="Secret12345!", is_admin=True)
 _rs_ids, _rs_links = {}, {}
-for _name in ("vorher", "hin"):                              # open signups from today
+for _name in ("before", "hin"):                              # open signups from today
     _uid = _rs_today.store.create_user(_name, None, f"{_name}@example.org", email_verified=False)
     _rs_today.store.set_disabled(_uid, True)
     _rs_ids[_name] = _uid
@@ -289,7 +289,7 @@ _rs_today.store.db.close()
 
 _rs_raw = sqlite3.connect(_rs_cfg["db_path"])                # from here on: the older version
 _rs_now = int(time.time())
-for _name in ("rueck", "offen_alt"):
+for _name in ("back", "open_alt"):
     _uid = _rs_raw.execute("INSERT INTO users(username, display_name, email, email_verified, disabled, "
                            "created_at) VALUES (?,?,?,1,1,?)",
                            (_name, _name, f"{_name}@example.org", _rs_now)).lastrowid
@@ -299,11 +299,11 @@ for _name in ("rueck", "offen_alt"):
                     "VALUES (?,?,?,?,?,?)", (hashlib.sha256(_rs_links[_name].encode()).hexdigest(),
                                              "verify_email", _uid, f"{_name}@example.org", _rs_now,
                                              _rs_now + 3600))
-for _name, _event in (("rueck", "user_disable"), ("vorher", "user_disable"),
+for _name, _event in (("back", "user_disable"), ("before", "user_disable"),
                          ("hin", "user_disable"), ("hin", "user_enable")):
     _rs_raw.execute("UPDATE users SET disabled=1 WHERE id=?", (_rs_ids[_name],))
     _rs_raw.execute("INSERT INTO audit(ts, event, username, ip, detail) VALUES (?,?,?,?,?)",
-                    (_rs_now, _event, "chefin", "192.0.2.9", f"uid={_rs_ids[_name]}"))
+                    (_rs_now, _event, "boss", "192.0.2.9", f"uid={_rs_ids[_name]}"))
 _rs_stamp = _rs_raw.execute("PRAGMA user_version").fetchone()[0]
 _rs_raw.commit()
 _rs_raw.close()
@@ -324,7 +324,7 @@ _rs_until = _rs.store.get_setting(getattr(Store, "PANEL_WATERLINE", "panel_lock_
 _rs_max = _rs.store._one("SELECT MAX(id) AS m FROM audit")["m"]
 _rs_response = {n: TestClient(_rs_app, client=(f"192.0.2.{70 + k}", 1)).post(
     f"/auth/verify/{_rs_links[n]}", follow_redirects=False).status_code
-    for k, n in enumerate(("rueck", "vorher", "hin", "offen_alt"))}
+    for k, n in enumerate(("back", "before", "hin", "open_alt"))}
 _rs_afterwards = {n: dict(_rs.store.get_user(i)) for n, i in _rs_ids.items()}
 # (Mutation probes, executed: run the migration steps only when `present_beforehand < 10` again
 #  → red, the old link gives 303 and signs in; do not discard the tokens → red; in the panel step
@@ -332,12 +332,12 @@ _rs_afterwards = {n: dict(_rs.store.get_user(i)) for n, i in _rs_ids.items()}
 #  account → red at „hin“; ignore the high-water mark → green here, red in the effort test below.)
 r.check("downgrade: a panel lock of the older version on a schema-10 file carries the operator mark after the "
         "next start, its tokens are discarded — the old link does not unlock",
-        _rs_stamp == Store.SCHEMA_VERSION and _rs_u["rueck"]["disabled"] == 2 and _rs_tok["rueck"] == 0
-        and _rs_u["vorher"]["disabled"] == 2 and _rs_tok["vorher"] == 0
-        and _rs_response["rueck"] != 303 and _rs_response["vorher"] != 303
-        and _rs_afterwards["rueck"]["disabled"] == 2 and _rs_afterwards["vorher"]["disabled"] == 2
-        and not _rs.store.list_sessions(_rs_ids["rueck"]) and not _rs.store.list_sessions(_rs_ids["vorher"]),
-        f"Stempel {_rs_stamp}, vorher {_rs_u}, Token {_rs_tok}, Links {_rs_response}")
+        _rs_stamp == Store.SCHEMA_VERSION and _rs_u["back"]["disabled"] == 2 and _rs_tok["back"] == 0
+        and _rs_u["before"]["disabled"] == 2 and _rs_tok["before"] == 0
+        and _rs_response["back"] != 303 and _rs_response["before"] != 303
+        and _rs_afterwards["back"]["disabled"] == 2 and _rs_afterwards["before"]["disabled"] == 2
+        and not _rs.store.list_sessions(_rs_ids["back"]) and not _rs.store.list_sessions(_rs_ids["before"]),
+        f"Stamp {_rs_stamp}, before {_rs_u}, Token {_rs_tok}, Links {_rs_response}")
 r.check("downgrade: … a lock that the older version lifted again remains the app's "
         "(1), its link unlocks",
         _rs_u["hin"]["disabled"] == 1 and _rs_tok["hin"] == 1 and _rs_response["hin"] == 303
@@ -349,10 +349,10 @@ r.check("downgrade: … a lock that the older version lifted again remains the a
 #  the panel step that discards the tokens → red at „rueck“.)
 r.check("downgrade: … the address of an open signup of the older version carries no proof after "
         "startup until the link arrives — the panel lock loses it before the tokens are discarded",
-        _rs_u["offen_alt"]["email_verified"] == 0 and _rs_u["offen_alt"]["disabled"] == 1
-        and _rs_response["offen_alt"] == 303 and _rs_afterwards["offen_alt"]["email_verified"] == 1
-        and _rs_u["rueck"]["email_verified"] == 0,
-        f"offen_alt vorher {_rs_u['offen_alt']}, nachher {_rs_afterwards['offen_alt']}, rueck {_rs_u['rueck']}")
+        _rs_u["open_alt"]["email_verified"] == 0 and _rs_u["open_alt"]["disabled"] == 1
+        and _rs_response["open_alt"] == 303 and _rs_afterwards["open_alt"]["email_verified"] == 1
+        and _rs_u["back"]["email_verified"] == 0,
+        f"open_alt before {_rs_u['open_alt']}, after {_rs_afterwards['open_alt']}, back {_rs_u['back']}")
 r.check("downgrade: … the high-water mark is at the latest audit row after startup",
         _rs_until is not None and _rs_max is not None and int(_rs_until) == int(_rs_max),
         f"watermark {_rs_until}, latest row {_rs_max}")
@@ -365,10 +365,10 @@ _rs_raw = sqlite3.connect(_rs_cfg["db_path"])
 _rs_raw.execute("INSERT OR REPLACE INTO setting(key, value) VALUES (?, ?)",
                 (getattr(Store, "PANEL_WATERLINE", "panel_lock_until"), "1000000000"))
 _rs_raw.execute("INSERT INTO users(username, email, email_verified, disabled, created_at) "
-                "VALUES ('spaet', 'spaet@example.org', 1, 1, ?)", (_rs_now,))
-_rs_late = _rs_raw.execute("SELECT id FROM users WHERE username='spaet'").fetchone()[0]
+                "VALUES ('late', 'late@example.org', 1, 1, ?)", (_rs_now,))
+_rs_late = _rs_raw.execute("SELECT id FROM users WHERE username='late'").fetchone()[0]
 _rs_raw.execute("INSERT INTO audit(ts, event, username, ip, detail) VALUES (?,?,?,?,?)",
-                (_rs_now, "user_disable", "chefin", "192.0.2.9", f"uid={_rs_late}"))
+                (_rs_now, "user_disable", "boss", "192.0.2.9", f"uid={_rs_late}"))
 _rs_raw.commit()
 _rs_raw.close()
 _rs_up = Store(_rs_cfg["db_path"])
@@ -390,7 +390,7 @@ def _rs_inventory(n_audit: int, n_locked: int) -> Store:
     """File in the state of schema 9: `n_audit` noise rows in the audit log and as many
     sign-in links, `n_locked` open signups (locked, token open) and `n_locked`
     panel locks from back then."""
-    st = Store(os.path.join(tempfile.mkdtemp(), "aufwand.db"))
+    st = Store(os.path.join(tempfile.mkdtemp(), "effort.db"))
     now = int(time.time())
     with st._lock:
         st.db.executemany("INSERT INTO users(username, email, created_at, disabled) VALUES (?,?,?,1)",
@@ -407,7 +407,7 @@ def _rs_inventory(n_audit: int, n_locked: int) -> Store:
                           ((now, events[i % 5], f"k{i % 50}", "192.0.2.1", None)
                            for i in range(n_audit)))
         st.db.executemany("INSERT INTO audit(ts, event, username, ip, detail) VALUES (?,?,?,?,?)",
-                          [(now, "user_disable", "chefin", None, f"uid={u}") for u in ids[n_locked:]])
+                          [(now, "user_disable", "boss", None, f"uid={u}") for u in ids[n_locked:]])
         st.db.execute("PRAGMA user_version = 9")
         st.db.commit()
     return st
@@ -433,7 +433,7 @@ for _a, _g in ((20000, 10), (20000, 200), (2000, 10)):
     _st = _rs_inventory(_a, _g)
     _rs_mess[(_a, _g, "Upgrade")] = _rs_steps(_st)
     _rs_mess[(_a, _g, "Panel")] = _st._one("SELECT COUNT(*) AS n FROM users WHERE disabled=2")["n"]
-    _rs_mess[(_a, _g, "Neustart")] = _rs_steps(_st)
+    _rs_mess[(_a, _g, "Restart")] = _rs_steps(_st)
     _st.db.close()
 # Per additional locked account (190 more panel locks and 190 more open signups) the
 # upgrade may cost at most a small, fixed amount more — not a pass through the audit log
@@ -444,27 +444,27 @@ for _a, _g in ((20000, 10), (20000, 200), (2000, 10)):
 #  make the address step an EXISTS per account again → red; do not read the high-water mark, every start from
 #  0 → red on restart, 1,080 steps more.)
 _rs_per_account = (_rs_mess[(20000, 200, "Upgrade")] - _rs_mess[(20000, 10, "Upgrade")]) / 380
-_rs_restart = _rs_mess[(20000, 10, "Neustart")] - _rs_mess[(2000, 10, "Neustart")]
+_rs_restart = _rs_mess[(20000, 10, "Restart")] - _rs_mess[(2000, 10, "Restart")]
 r.check("effort: the upgrade grows with audit log PLUS locked accounts, not with their product "
         "(SQLite steps per additional locked account at 20,000 audit rows)",
         _rs_per_account < 20 and _rs_mess[(20000, 200, "Panel")] == 200,
-        f"je Konto {_rs_per_account:.1f} Schritte, Messung {_rs_mess}")
+        f"je Account {_rs_per_account:.1f} Steps, Measurement {_rs_mess}")
 r.check("effort: … a start after the upgrade reads only the audit rows since the last start",
-        _rs_restart < 20, f"Neustart bei 20 000 statt 2 000 Zeilen: {_rs_restart} Schritte mehr, "
-        f"Messung {_rs_mess}")
+        _rs_restart < 20, f"Restart at 20 000 instead of 2 000 lines: {_rs_restart} Steps more, "
+        f"Measurement {_rs_mess}")
 
 # ---------------------------------------------------------------- audit --user
 # The command filtered the latest rows afterwards instead of filtering in SQL: whoever searched in the
 # incident case (brute-force wave) got "Keine Einträge zu 'X'." and exit 0, although they were there.
 auth2, _ = fresh()
-auth2.audit("login_ok", username="opfer", detail="alt")
+auth2.audit("login_ok", username="victim", detail="alt")
 for i in range(300):
-    auth2.audit("login_fail", username="rauschen", detail=str(i))
-hit = auth2.store.recent_audit(30, username="opfer")
+    auth2.audit("login_fail", username="noise", detail=str(i))
+hit = auth2.store.recent_audit(30, username="victim")
 r.check("audit --user finds entries behind 300 rows of noise", len(hit) == 1,
-        f"{len(hit)} gefunden")
+        f"{len(hit)} found")
 r.check("… and filters independently of capitalisation",
-        len(auth2.store.recent_audit(30, username="OPFER")) == 1)
+        len(auth2.store.recent_audit(30, username="VICTIM")) == 1)
 r.check("without a filter the latest rows still come back",
         len(auth2.store.recent_audit(5)) == 5)
 
@@ -485,11 +485,11 @@ r.check("… and creates no admin account in the process",
 # confirmed with whatever they had — including the password they had just signed in with.
 # That is no step-up. The barrier exists now, the default remains the old way.
 auth4, _ = fresh(stepup_methods=["totp"])
-u4 = auth4.store.get_user(auth4.create_user("ohne_totp", password="pw123456"))
+u4 = auth4.store.get_user(auth4.create_user("without_totp", password="pw123456"))
 r.check("stepup_methods remains a wish by default",
         auth4.stepup_options(u4) == ["password"], f"{auth4.stepup_options(u4)}")
 auth5, _ = fresh(stepup_methods=["totp"], stepup_strict=True)
-u5 = auth5.store.get_user(auth5.create_user("ohne_totp", password="pw123456"))
+u5 = auth5.store.get_user(auth5.create_user("without_totp", password="pw123456"))
 r.check("stepup_strict=True lets nothing through that was not wished for",
         auth5.stepup_options(u5) == [], f"{auth5.stepup_options(u5)}")
 auth6, _ = fresh(stepup_methods=[], stepup_strict=True)
@@ -503,18 +503,18 @@ r.check("stepup_strict without stepup_methods changes nothing",
 # page — and the setup page demanded a fully signed-in user, which cannot exist under
 # this chain. Neither in nor to the setup.
 auth7, _ = fresh(login_chain=["password", "totp"], csrf_enabled=False)
-auth7.create_user("kette", password="pw123456")
+auth7.create_user("chain", password="pw123456")
 app7 = FastAPI()
 app7.include_router(auth7.router())
 c7 = TestClient(app7, follow_redirects=False)
-ant = c7.post("/auth/login", data={"username": "kette", "password": "pw123456"})
+ant = c7.post("/auth/login", data={"username": "chain", "password": "pw123456"})
 r.check("correct password leads to the second factor",
         ant.status_code == 303 and "/auth/totp" in ant.headers.get("location", ""),
         f"{ant.status_code} {ant.headers.get('location')}")
 ant = c7.get("/auth/totp")
 r.check("/auth/totp without a secret sends to SETUP, not back to the login",
         ant.status_code == 303 and "/auth/totp/setup" in ant.headers.get("location", ""),
-        f"{ant.status_code} {ant.headers.get('location')} — Sackgasse")
+        f"{ant.status_code} {ant.headers.get('location')} — dead end")
 ant = c7.get("/auth/totp/setup")
 r.check("the setup page is reachable in this state", ant.status_code == 200,
         f"{ant.status_code}")
@@ -596,7 +596,7 @@ trap = _Trap()
 logging.getLogger("tinysesam").addHandler(trap)
 was_argon = passwords._ARGON
 auth_a, db_a = fresh()
-uid_a = auth_a.create_user("altkonto", password="egal12345")
+uid_a = auth_a.create_user("altkonto", password="whatever12345")
 auth_a.store.set_password_hash(uid_a, ARGON_HASH)
 auth_a.store.db.close()
 passwords._ARGON = False
@@ -609,11 +609,11 @@ try:
             f"{trap.lines} — all existing accounts locked, and nobody learns why")
     trap.lines.clear()
     r.check("sign-in keeps failing (an argon2 hash cannot be checked without argon2)",
-            not auth_b._check_password("altkonto", "geheim123"))
+            not auth_b._check_password("altkonto", "dummy123"))
     r.check("…but no longer silent: the failure writes a line",
             any("[argon2]" in z for z in trap.lines), f"{trap.lines}")
     trap.lines.clear()
-    auth_b._check_password("altkonto", "geheim123")
+    auth_b._check_password("altkonto", "dummy123")
     r.check("…and only once, not one per sign-in attempt",
             not any("[argon2]" in z for z in trap.lines), f"{trap.lines}")
 finally:
@@ -650,8 +650,8 @@ def unprotected_subrequests(file: str) -> list[str]:
 
 
 for file in ("deploy/forward-auth/nginx.conf", "deploy/forward-auth/nginx-path.conf"):
-    r.check(f"{file}: every path to TinySesam sets X-Forwarded-For itself (NEU-1)",
-            not unprotected_subrequests(file), f"ohne: {unprotected_subrequests(file)}")
+    r.check(f"{file}: every path to TinySesam sets X-Forwarded-For itself (NEW-1)",
+            not unprotected_subrequests(file), f"without: {unprotected_subrequests(file)}")
 
 
 # B-20: The session cookie does not go to the protected app. What is measured is the rule itself:
@@ -674,13 +674,13 @@ def cookie_to_caddy(cookie: str, file="deploy/forward-auth/Caddyfile") -> str:
 
 _session = TinySesamConfig(db_path=":memory:").session_cookie
 _cases = {
-    f"a=1; {_session}=GEHEIM; b=2": "a=1; b=2",
-    f"{_session}=GEHEIM; b=2": "b=2",
-    f"a=1; {_session}=GEHEIM": "a=1",
-    f"{_session}=GEHEIM": "",
-    f"__Host-{_session}=GEHEIM; x=1": "x=1",
+    f"a=1; {_session}=SECRET; b=2": "a=1; b=2",
+    f"{_session}=SECRET; b=2": "b=2",
+    f"a=1; {_session}=SECRET": "a=1",
+    f"{_session}=SECRET": "",
+    f"__Host-{_session}=SECRET; x=1": "x=1",
     f"{_session}=A; {_session}=B; c=3": "c=3",
-    f"x{_session}=bleibt; y=2": f"x{_session}=bleibt; y=2",
+    f"x{_session}=stays; y=2": f"x{_session}=stays; y=2",
     # A-5: the unlock and the CSRF cookie do not go to the app either.
     "a=1; tinysesam_runlock=R; __Secure-tinysesam_csrf=C; b=2": "a=1; b=2",
     ("tinysesam_oidc_flow=1; tinysesam_saml_flow=2; tinysesam_waflow=3; tinysesam_session=4; "
@@ -690,9 +690,9 @@ _cases = {
     # tinysesam cookies. The six-stage nginx chain let the seventh (here the new session)
     # through to the app. (Mutation probe: the nginx chain at six stages without a latch → red.)
     ("tinysesam_session=ALT; tinysesam_csrf=A; tinysesam_runlock=A; __Host-tinysesam_csrf=c; "
-     "__Host-tinysesam_runlock=r; __Host-tinysesam_waflow=w; __Host-tinysesam_session=NEU; a=1"): "a=1",
+     "__Host-tinysesam_runlock=r; __Host-tinysesam_waflow=w; __Host-tinysesam_session=NEW; a=1"): "a=1",
     ("a=1; tinysesam_session=ALT; tinysesam_csrf=A; tinysesam_runlock=A; __Host-tinysesam_csrf=c; "
-     "__Host-tinysesam_runlock=r; __Host-tinysesam_waflow=w; b=2; __Host-tinysesam_session=NEU"): "a=1; b=2",
+     "__Host-tinysesam_runlock=r; __Host-tinysesam_waflow=w; b=2; __Host-tinysesam_session=NEW"): "a=1; b=2",
 }
 # The gate cookie (ADR-9) is also called tinysesam_* and falls under the same rule.
 _cases["a=1; __Host-tinysesam_gate=eyJ.x.y; b=2"] = "a=1; b=2"
@@ -732,14 +732,14 @@ for file in ("deploy/forward-auth/nginx.conf", "deploy/forward-auth/nginx-path.c
     # (Mutation probe: make the latch `$ts_ck_latch` ineffective → red from 13 cookies.)
     _tiers = len(re.findall(r'^map \$\w+ \$ts_ck\d+ ', (ROOT / file).read_text(encoding="utf-8"), re.M))
     r.check(f"{file}: the chain covers the transition situation (six names, old and __Host-)",
-            _tiers >= 12, f"nur {_tiers} Stufen")
+            _tiers >= 12, f"only {_tiers} Tiers")
     _through = {}
     for _n in range(0, 2 * _tiers + 3):
-        _one = "; ".join([f"eigen{i}=v" for i in range(2)]
-                         + [f"{'__Host-' if i % 2 else ''}tinysesam_x{i}=geheim" for i in range(_n)]
-                         + ["eigen9=v"])
+        _one = "; ".join([f"own{i}=v" for i in range(2)]
+                         + [f"{'__Host-' if i % 2 else ''}tinysesam_x{i}=secret" for i in range(_n)]
+                         + ["own9=v"])
         _out = nginx_app_cookie(file, _one)
-        if "tinysesam_" in _out or (_n <= _tiers and _out != "eigen0=v; eigen1=v; eigen9=v"):
+        if "tinysesam_" in _out or (_n <= _tiers and _out != "own0=v; own1=v; own9=v"):
             _through[_n] = _out
     r.check(f"{file}: arbitrarily many tinysesam cookies — none reaches the app (fail closed)",
             not _through, f"{_through}")

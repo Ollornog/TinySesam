@@ -1337,7 +1337,7 @@ class TinySesam:
         # actor as the account — the same line the panel itself wrote up to 0.21.x.
         request = _REQUEST.get() or {}
         self.audit("user_disable" if disabled else "user_enable",
-                   None if request.get("akteur") else str(u["username"]),
+                   None if request.get("actor") else str(u["username"]),
                    detail=f"uid={uid}" + (f" api_keys_revoked={keys}" if keys else ""))
         return True
 
@@ -2113,7 +2113,7 @@ class TinySesam:
             return
         without_pw = sum(1 for k in accounts if not k["has_password"])
         away = (f"auth.federation_bind_existing('{source}')" if source == "ldap"
-               else f"auth.federation_bind_existing('{source}', mapping={{name: kennung}})")
+               else f"auth.federation_bind_existing('{source}', mapping={{name: identifier}})")
         security.seclog.warning(
             "%s: %d account(s) without a binding to an identifier of the source (of which %d without a local "
             "password). Until %s (federation_name_binding_days=%d) the next sign-in binds "
@@ -3799,7 +3799,7 @@ class TinySesam:
         window = self._TOKEN_AUDIT_WINDOW_SEC
         if self.rl.allow("audit:token_invalid", self._TOKEN_AUDIT_MAX, window):
             self.audit("token_invalid", ip=ip, detail=f"purpose={purpose} reason={reason}")
-        elif self.rl.allow("audit:token_invalid_gedrosselt", 1, window):
+        elif self.rl.allow("audit:token_invalid_throttled", 1, window):
             self.audit("token_invalid_throttled", ip=ip,
                        detail=f"more than {self._TOKEN_AUDIT_MAX} in {window}s — further ones only in the security log")
 
@@ -5951,7 +5951,7 @@ class TinySesam:
         if a:
             if ip is None:
                 ip = a.get("ip")
-            actor = a.get("akteur")
+            actor = a.get("actor")
             if actor:
                 if username is None:
                     username = actor
@@ -5970,7 +5970,7 @@ class TinySesam:
             ip = self.client_ip(request)
         except Exception:        # dummy without header/client — then just without IP
             ip = None
-        _REQUEST.set({"ip": ip, "akteur": str(u["username"]) if u else None})
+        _REQUEST.set({"ip": ip, "actor": str(u["username"]) if u else None})
 
     def gc(self, attempts_older_than_sec: int = 86400) -> dict:
         """Clean up: expired sessions/flows/magic tokens/realm unlocks + old

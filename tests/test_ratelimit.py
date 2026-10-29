@@ -108,12 +108,12 @@ finally:
 # the key dormant longest is evicted — never the one currently being throttled.
 # (Mutation probe: remove the `popitem` loop in `RateLimiter.allow` → red.)
 small = security.RateLimiter(max_keys=100)
-assert small.allow("laut", 2, 60) and small.allow("laut", 2, 60) and not small.allow("laut", 2, 60)
+assert small.allow("loud", 2, 60) and small.allow("loud", 2, 60) and not small.allow("loud", 2, 60)
 for i in range(1000):
     small.allow(f"2001:db8::{i:x}", 5, 60)
-    small.allow("laut", 2, 60)                    # the throttled one keeps asking
+    small.allow("loud", 2, 60)                    # the throttled one keeps asking
 assert len(small) <= 100, f"R7-5: {len(small)} keys despite cap 100"
-assert small.allow("laut", 2, 60) is False, "the one just throttled was evicted and is free again"
+assert small.allow("loud", 2, 60) is False, "the one just throttled was evicted and is free again"
 assert security.RateLimiter().max_keys > 0
 ok("R7-5: number of keys capped; the throttled one stays throttled")
 

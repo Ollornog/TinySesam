@@ -16,7 +16,7 @@ auth = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de",
     db_path=db, rp_name="Test", passkey_enabled=False, oidc_enabled=False, cookie_secure=False,
     forward_auth_enabled=True, base_url="https://auth.example.com",
     trusted_redirect_hosts=["app.example.com"]))
-auth.ensure_admin("admin", "geheim123")
+auth.ensure_admin("admin", "dummy123")
 uid = auth.store.get_user_by_name("admin")["id"]
 auth.store._exec("UPDATE users SET email=?, roles=? WHERE id=?",
                  ("admin@example.com", '["editor"]', uid))
@@ -25,7 +25,7 @@ app = FastAPI()
 app.include_router(auth.router())
 c = TestClient(app)
 
-PROXY = {"X-Forwarded-Proto": "https", "X-Forwarded-Host": "app.example.com", "X-Forwarded-Uri": "/geheim"}
+PROXY = {"X-Forwarded-Proto": "https", "X-Forwarded-Host": "app.example.com", "X-Forwarded-Uri": "/secret"}
 
 # not signed in → 401 + login URL with next back to the app.
 # This instance has NO cookie_domain, so the session cookie is host-only. The login page
@@ -41,7 +41,7 @@ assert urlparse(loc).netloc == "app.example.com"
 ok("not signed in → 401 + X-TinySesam-Location (host-only: login on the requested host)")
 
 # signed in (session) → 200 + Remote-* headers
-c.post("/auth/login", data={"username": "admin", "password": "geheim123", "next": "/"}, follow_redirects=False)
+c.post("/auth/login", data={"username": "admin", "password": "dummy123", "next": "/"}, follow_redirects=False)
 r = c.get("/auth/forward", headers=PROXY)
 assert r.status_code == 200
 assert r.headers["Remote-User"] == "admin"
@@ -61,21 +61,21 @@ assert r.status_code == 200 and r.headers["Remote-User"] == "admin"
 ok("API key → 200 (machine access)")
 
 # Open-redirect protection: safe_next lets the app URL through only because of trusted_redirect_hosts
-assert auth.safe_next("https://app.example.com/geheim") == "https://app.example.com/geheim"
+assert auth.safe_next("https://app.example.com/secret") == "https://app.example.com/secret"
 assert auth.safe_next("https://evil.example/x") == "/"
 ok("safe_next: app host allowed (trusted_redirect_hosts), foreign host blocked")
 
 # ---------- Role check in proxy mode (?roles= / X-TinySesam-Roles) ----------
-auth.create_user("anna", "geheim123", roles=["redaktion"])
+auth.create_user("anna", "dummy123", roles=["editors"])
 ca = TestClient(app)
-ca.post("/auth/login", data={"username": "anna", "password": "geheim123", "next": "/"},
+ca.post("/auth/login", data={"username": "anna", "password": "dummy123", "next": "/"},
         follow_redirects=False)
 
 assert ca.get("/auth/forward", headers=PROXY).status_code == 200
 ok("without roles= /auth/forward stays binary (unchanged behaviour)")
 
-assert ca.get("/auth/forward?roles=redaktion", headers=PROXY).status_code == 200
-assert ca.get("/auth/forward?roles=chef,redaktion", headers=PROXY).status_code == 200
+assert ca.get("/auth/forward?roles=editors", headers=PROXY).status_code == 200
+assert ca.get("/auth/forward?roles=chief,editors", headers=PROXY).status_code == 200
 ok("?roles=a,b — one of the roles suffices")
 
 r = ca.get("/auth/forward?roles=chef", headers=PROXY)
@@ -84,13 +84,13 @@ assert r.headers.get("X-TinySesam-Reason") == "role"
 assert "Remote-User" not in r.headers        # on 403 nothing flows to the app
 ok("missing role → 403 (not 401: otherwise login loop), without Remote-* headers")
 
-assert ca.get("/auth/forward", headers={**PROXY, "X-TinySesam-Roles": "redaktion"}).status_code == 200
+assert ca.get("/auth/forward", headers={**PROXY, "X-TinySesam-Roles": "editors"}).status_code == 200
 assert ca.get("/auth/forward", headers={**PROXY, "X-TinySesam-Roles": "chef"}).status_code == 403
 ok("header X-TinySesam-Roles acts like the query parameter")
 
 # fail-closed: several specifications are AND-combined — a client can only tighten
-assert ca.get("/auth/forward?roles=chef&roles=redaktion", headers=PROXY).status_code == 403
-assert ca.get("/auth/forward?roles=redaktion",
+assert ca.get("/auth/forward?roles=chief&roles=editors", headers=PROXY).status_code == 403
+assert ca.get("/auth/forward?roles=editors",
               headers={**PROXY, "X-TinySesam-Roles": "chef"}).status_code == 403
 ok("several specifications = AND (fail-closed: roles appended by oneself can only tighten)")
 
@@ -106,7 +106,7 @@ ok("rejection is in the audit log (a 403 in the proxy log does not say who faile
 # ---------- Login URL: host-only cookie must not point to a foreign host ----------
 # Without cookie_domain the cookie applies only on the host where the login took place. If the
 # login URL pointed to base_url, a silent endless loop would arise.
-assert auth._forward_login_url("https://app.example.com/geheim").startswith(
+assert auth._forward_login_url("https://app.example.com/secret").startswith(
     "https://app.example.com/auth/login?next=")
 ok("without cookie_domain: login URL on the requested host (no redirect loop)")
 
@@ -123,12 +123,12 @@ sso = TinySesam(TinySesamConfig(db_path=db2, csrf_enabled=False, cookie_secure=F
                                 passkey_enabled=False, forward_auth_enabled=True,
                                 base_url="https://auth.example.com", cookie_domain=".example.com",
                                 trusted_redirect_hosts=["app.example.com"]))
-assert sso._forward_login_url("https://app.example.com/geheim").startswith(
+assert sso._forward_login_url("https://app.example.com/secret").startswith(
     "https://auth.example.com/auth/login?next=")
 ok("with cookie_domain: central login on base_url (real SSO across subdomains)")
 
 # ---------- next= to the own host (single-host operation) ----------
-assert auth.safe_next("https://auth.example.com/tief/drin") == "https://auth.example.com/tief/drin"
+assert auth.safe_next("https://auth.example.com/deep/inside") == "https://auth.example.com/deep/inside"
 assert auth.safe_next("https://evil.example/x") == "/"
 ok("safe_next: the host of the own base_url is always allowed, foreign ones not")
 
@@ -140,18 +140,18 @@ own = TinySesam(TinySesamConfig(
     db_path=db3, csrf_enabled=False, cookie_secure=False, passkey_enabled=False,
     forward_auth_enabled=True, base_url="https://auth.example.com",
     forward_headers={"user": ["X-WEBAUTH-USER", "Remote-User"], "groups": "X-Auth-Request-Groups"}))
-own.create_user("carla", "geheim123", roles=["redaktion"])
+own.create_user("carla", "dummy123", roles=["editors"])
 app3 = FastAPI()
 app3.include_router(own.router())
 c3 = TestClient(app3)
-c3.post("/auth/login", data={"username": "carla", "password": "geheim123", "next": "/"},
+c3.post("/auth/login", data={"username": "carla", "password": "dummy123", "next": "/"},
         follow_redirects=False)
 r = c3.get("/auth/forward", headers={"X-Forwarded-Proto": "https",
                                      "X-Forwarded-Host": "auth.example.com",
                                      "X-Forwarded-Uri": "/x"})
 assert r.status_code == 200
 assert r.headers["X-WEBAUTH-USER"] == "carla" and r.headers["Remote-User"] == "carla"
-assert r.headers["X-Auth-Request-Groups"] == "redaktion"
+assert r.headers["X-Auth-Request-Groups"] == "editors"
 ok("forward_headers: own names, one field may point to several headers")
 
 assert "Remote-Email" not in r.headers and "Remote-Name" not in r.headers
@@ -193,30 +193,30 @@ auth4 = TinySesam(TinySesamConfig(
     cookie_secure=False, forward_auth_enabled=True, base_url="https://auth.example.com",
     trusted_redirect_hosts=["app-a.example.com", "app-b.example.com"],
     oidc_enabled=True, oidc_issuer="https://id.example.com",
-    oidc_client_id="haupt", oidc_client_secret="s-haupt",
+    oidc_client_id="main", oidc_client_secret="s-main",
     oidc_revalidate_minutes=15,
     oidc_clients={
         "app-a.example.com": {"client_id": "a", "client_secret": "s-a"},
         "app-b.example.com": {"client_id": "b", "client_secret": "s-b",
-                              "group_role_map": {"b-team": "redakteur"}},
+                              "group_role_map": {"b-team": "editor"}},
     }))
-auth4.ensure_admin("admin", "geheim123")
+auth4.ensure_admin("admin", "dummy123")
 app4 = FastAPI()
 app4.include_router(auth4.router())
 
 assert auth4.oidc_clients.names() == ["app-a.example.com", "app-b.example.com"]
 assert auth4.oidc_clients.for_host("app-a.example.com").client_id == "a"
 assert auth4.oidc_clients.for_host("app-b.example.com:8443").client_id == "b"
-assert auth4.oidc_clients.key_name_for_host("fremd.example.com") == DEFAULT_CLIENT
+assert auth4.oidc_clients.key_name_for_host("foreign.example.com") == DEFAULT_CLIENT
 ok("T-14: each application has its own client, an unknown host the default client")
 
 c14 = TestClient(app4)
-c14.post("/auth/login", data={"username": "admin", "password": "geheim123", "next": "/"},
+c14.post("/auth/login", data={"username": "admin", "password": "dummy123", "next": "/"},
          follow_redirects=False)
 _session = c14.cookies.get("tinysesam_session")
 _h = auth4.store.session_hash(_session)
 PROXY_A = {"X-Forwarded-Proto": "https", "X-Forwarded-Host": "app-a.example.com",
-           "X-Forwarded-Uri": "/geheim"}
+           "X-Forwarded-Uri": "/secret"}
 PROXY_B = {**PROXY_A, "X-Forwarded-Host": "app-b.example.com"}
 
 # Without approval even a valid session is not enough — the provider was never asked for this
@@ -281,8 +281,8 @@ def _query_of_redirect(path):
 
 assert _query_of_redirect("/auth/oidc/start?app=app-a.example.com")["client_id"] == ["a"]
 assert _query_of_redirect("/auth/oidc/start?app=app-b.example.com")["client_id"] == ["b"]
-assert _query_of_redirect("/auth/oidc/start")["client_id"] == ["haupt"]
-assert _query_of_redirect("/auth/oidc/start?app=fremd.example.com")["client_id"] == ["haupt"]
+assert _query_of_redirect("/auth/oidc/start")["client_id"] == ["main"]
+assert _query_of_redirect("/auth/oidc/start?app=foreign.example.com")["client_id"] == ["main"]
 _query_b = _query_of_redirect("/auth/oidc/start?app=app-b.example.com")
 _flow_b = auth4.store.pop_flow("oidc:" + _query_b["state"][0])
 assert (_flow_b or {}).get("app") == "app-b.example.com", _flow_b
@@ -294,18 +294,18 @@ auth5 = TinySesam(TinySesamConfig(
     csrf_enabled=False, lang="de", db_path=db5, rp_name="Test", passkey_enabled=False,
     cookie_secure=False, forward_auth_enabled=True, base_url="https://auth.example.com",
     trusted_redirect_hosts=["app.example.com"], oidc_enabled=True,
-    oidc_issuer="https://id.example.com", oidc_client_id="haupt", oidc_client_secret="s"))
-auth5.ensure_admin("admin", "geheim123")
+    oidc_issuer="https://id.example.com", oidc_client_id="main", oidc_client_secret="s"))
+auth5.ensure_admin("admin", "dummy123")
 app5 = FastAPI()
 app5.include_router(auth5.router())
 c15 = TestClient(app5)
-c15.post("/auth/login", data={"username": "admin", "password": "geheim123", "next": "/"},
+c15.post("/auth/login", data={"username": "admin", "password": "dummy123", "next": "/"},
          follow_redirects=False)
 r = c15.get("/auth/forward", headers=PROXY)
 assert r.status_code == 200, (r.status_code, r.headers.get("X-TinySesam-Reason"))
 assert auth5._oidc_application("https://app.example.com/x") == ""
 assert "app=" not in auth5._forward_login_url("https://app.example.com/x")
-assert auth5._oidc_approval_valid("egal", "egal") == (True, "")
+assert auth5._oidc_approval_valid("whatever", "whatever") == (True, "")
 ok("T-14: an installation with one client behaves unchanged (no app=, no approval needed)")
 
 # The gateway preset's default is here so that a change to it gets noticed: it is the

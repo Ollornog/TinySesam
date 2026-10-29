@@ -36,50 +36,50 @@ def cli(*argv, stdin=None):
 
 db = os.path.join(tempfile.mkdtemp(), "t.db")
 auth = TinySesam(TinySesamConfig(db_path=db, cookie_secure=False, passkey_enabled=False))
-auth.create_user("admin", "altes-geheim", is_admin=True)
+auth.create_user("admin", "old-secret", is_admin=True)
 uid = auth.store.get_user_by_name("admin")["id"]
 
 code, from_ = cli("version")
 assert code == 0 and from_.strip()
 ok("version prints the installed version")
 
-code, from_ = cli("passwd", "--db", db, "--stdin", "admin", stdin="neues-geheim-lang-genug\n")
+code, from_ = cli("passwd", "--db", db, "--stdin", "admin", stdin="new-secret-long-enoughx\n")
 assert code == 0, from_
-assert auth._check_password("admin", "neues-geheim-lang-genug")
-assert not auth._check_password("admin", "altes-geheim")
+assert auth._check_password("admin", "new-secret-long-enoughx")
+assert not auth._check_password("admin", "old-secret")
 ok("passwd sets the password (the way back without a mailer and without a second admin)")
 
 # open sessions no longer apply after a credential change
 tok = auth.store.create_session(uid, 3600, True, "password")
-cli("passwd", "--db", db, "--stdin", "admin", stdin="noch-eins-geheim\n")
+cli("passwd", "--db", db, "--stdin", "admin", stdin="still-one-secret\n")
 assert auth.store.get_session(tok) is None
 ok("open sessions are ended (--keep-sessions leaves them alone)")
 
 tok = auth.store.create_session(uid, 3600, True, "password")
-cli("passwd", "--db", db, "--stdin", "--keep-sessions", "admin", stdin="und-noch-eins-lang\n")
+cli("passwd", "--db", db, "--stdin", "--keep-sessions", "admin", stdin="and-still-one-long\n")
 assert auth.store.get_session(tok) is not None
 ok("--keep-sessions keeps them")
 
 assert any(a["event"] == "password_reset_cli" for a in auth.store.recent_audit(50))
 ok("the intervention is in the audit log")
 
-code, from_ = cli("passwd", "--db", db, "--stdin", "gibtsnicht", stdin="egal-egal-egal\n")
+code, from_ = cli("passwd", "--db", db, "--stdin", "gibtsnicht", stdin="whatever-whatever-whatever\n")
 assert code == 1 and "gibtsnicht" in from_
 ok("unknown account -> error message, exit 1")
 
-code, from_ = cli("passwd", "--db", db + ".fehlt", "--stdin", "admin", stdin="egal-egal-egal\n")
+code, from_ = cli("passwd", "--db", db + ".missing", "--stdin", "admin", stdin="whatever-whatever-whatever\n")
 assert code == 1 and "No database at" in from_
-assert not os.path.exists(db + ".fehlt")     # otherwise sqlite silently creates an empty file
+assert not os.path.exists(db + ".missing")     # otherwise sqlite silently creates an empty file
 ok("wrong DB path -> clear message, no empty database as a side effect")
 
-code, from_ = cli("passwd", "--db", db, "--stdin", "admin", stdin="kurz\n")
+code, from_ = cli("passwd", "--db", db, "--stdin", "admin", stdin="short\n")
 assert code == 1 and "too short" in from_
-assert auth._check_password("admin", "und-noch-eins-lang")
+assert auth._check_password("admin", "and-still-one-long")
 ok("password_min_length applies here too")
 
 # Without configuration the CLI does not know whether a chain enforces a second factor — it takes
 # the stricter length (B2-4): 15 characters, as long as nobody lowers it in the panel.
-code, from_ = cli("passwd", "--db", db, "--stdin", "admin", stdin="Vierzehn-Zeich\n")   # 14 characters
+code, from_ = cli("passwd", "--db", db, "--stdin", "admin", stdin="Fourteen-Zeich\n")   # 14 characters
 assert code == 1 and "too short (min. 15)" in from_, from_
 ok("passwd takes the single-factor length (15) because it does not know the chain")
 # (Mutation probe: read only `password_min_length` in `_passwd` -> red.)
@@ -89,28 +89,28 @@ ok("passwd takes the single-factor length (15) because it does not know the chai
 auth.store.set_setting("password_min_length_single_factor", "8")
 
 # Same rule as on the web (B2-5/B2-13): blocklist, username, maximum length.
-for _weak, _text in (("Passwort2026!", "too easy to guess"), ("admin-admin", "too easy to guess"),
+for _weak, _text in (("Password2026!", "too easy to guess"), ("admin-admin", "too easy to guess"),
                         ("y" * 257, "too long")):
     code, from_ = cli("passwd", "--db", db, "--stdin", "admin", stdin=_weak + "\n")
     assert code == 1 and _text in from_, (_weak[:20], from_)
-assert auth._check_password("admin", "und-noch-eins-lang")
+assert auth._check_password("admin", "and-still-one-long")
 ok("passwd: blocklist, account word and maximum length apply offline too")
 
 # A-7: The operator blocklist and the service name did not apply offline — a password from the
 # own list could be set via the CLI. Now via the same values as in the config.
 _items = os.path.join(tempfile.mkdtemp(), "block.txt")
 with open(_items, "wb") as _f:
-    _f.write(b"# Kommentar\nfirmengeheimnis\nsch\xf6nwetter99\n")   # second line is Latin-1
-for _args, _pw in ((("--blocklist-file", _items), "Firmengeheimnis2026!"),
-                   (("--blocklist-file", _items), "Schönwetter99"),
-                   (("--rp-name", "Beispielportal"), "Beispielportal1!")):
+    _f.write(b"# Comment\ncompanysecret\ncaf\xe9weather99\n")   # second line is Latin-1
+for _args, _pw in ((("--blocklist-file", _items), "Companysecret2026!"),
+                   (("--blocklist-file", _items), "Caféweather99"),
+                   (("--rp-name", "Exampleportal"), "Exampleportal1!")):
     code, from_ = cli("passwd", "--db", db, "--stdin", *_args, "admin", stdin=_pw + "\n")
     assert code == 1 and "too easy to guess" in from_, (_args, _pw, from_)
-_from_the_list = "Firmengeheimnis2026!"
+_from_the_list = "Companysecret2026!"
 code, from_ = cli("passwd", "--db", db, "--stdin", "admin", stdin=_from_the_list + "\n")
 assert code == 0, from_    # control: without the switch the CLI does not know the list
-code, from_ = cli("passwd", "--db", db, "--stdin", "--blocklist-file", _items + ".fehlt", "admin",
-                stdin="noch-ein-anderes\n")
+code, from_ = cli("passwd", "--db", db, "--stdin", "--blocklist-file", _items + ".missing", "admin",
+                stdin="still-a-other\n")
 assert code == 1 and "cannot be read" in from_, from_
 assert auth._check_password("admin", _from_the_list)
 ok("passwd reads --blocklist-file (also Latin-1 lines) and --rp-name like the config")
@@ -128,7 +128,7 @@ for _old_value in ("4", "0"):
     assert auth._sec("password_min_length") == 8 == _security.read_hardening(auth.store, "password_min_length")
     assert auth._check_password("admin", _from_the_list)
 auth.store.set_setting("password_min_length", "12")                 # valid value: applies as on the web
-code, from_ = cli("passwd", "--db", db, "--stdin", "admin", stdin="Elf-Zeichen\n")   # 11 characters
+code, from_ = cli("passwd", "--db", db, "--stdin", "admin", stdin="Elf-Chars\n")   # 11 characters
 assert code == 1 and "too short (min. 12)" in from_, (code, from_)
 auth.store._exec("DELETE FROM setting WHERE key='password_min_length'")   # back to the default
 auth.store._exec("DELETE FROM setting WHERE key='password_min_length_single_factor'")
@@ -212,7 +212,7 @@ def _setting_read_paths(sources):
                 k = parents[k]
                 if isinstance(k, (_ast.FunctionDef, _ast.AsyncFunctionDef)):
                     return k.name
-            return "<modul>"
+            return "<module>"
         for k in _ast.walk(tree):
             text = _sql_text(k)
             if text is not None:
@@ -238,7 +238,7 @@ def _setting_read_paths(sources):
             call = parents.get(k)
             place = (name, function(k))
             if not (isinstance(call, _ast.Call) and call.func is k):
-                violations.append(f"{name}:{k.lineno} {method} als Wert weitergereicht in {place[1]}")
+                violations.append(f"{name}:{k.lineno} {method} passed on as a value in {place[1]}")
                 continue
             if method == "all_settings":
                 if place in _SETTING_ALL:
@@ -270,7 +270,7 @@ for _spelling in ('n = int(store.get_setting("password_min_length") or 8)',
                       'n = db.execute(\'SELECT value FROM "setting" WHERE key=?\', (k,))',
                       't = "setting"\nn = db.execute(f"SELECT value FROM {t} WHERE key=?", (k,))',
                       'n = getattr(store, "get_setting")("password_min_length")',
-                      'lesen = store.get_setting\nn = lesen("password_min_length")',
+                      'read = store.get_setting\nn = read("password_min_length")',
                       # The same classes in further spellings:
                       'n = db.execute("SELECT value FROM [setting] WHERE key=?", (k,))',
                       'n = db.execute("SELECT value FROM/**/Setting WHERE key=?", (k,))',
@@ -279,23 +279,23 @@ for _spelling in ('n = int(store.get_setting("password_min_length") or 8)',
                       'n = db.execute("SELECT value FROM " + t + " WHERE key=?", (k,))',
                       'n = functools.partial(store.get_setting, "password_min_length")()',
                       'n = operator.methodcaller("get_setting", "password_min_length")(store)',
-                      'alle = getattr(store, "all_settings")()',
+                      'all = getattr(store, "all_settings")()',
                       'def f(get_setting):\n    return get_setting("password_min_length")',
                       'n = Store.get_setting(store, "password_min_length")',
                       'n = db.execute("SELECT value FROM sett" + "ing WHERE key=?", (k,))',
                       'n = db.execute("SELECT value " + "FROM " + t + " WHERE key=?", (k,))',
                       'n = db.execute(\'SELECT value FROM "main"."setting"\')',
                       'n = db.execute("UPDATE setting SET value=value WHERE key=? RETURNING value", (k,))'):
-    assert _setting_read_paths([("fremd.py", _spelling)])[0], f"guard overlooks: {_spelling}"
+    assert _setting_read_paths([("foreign.py", _spelling)])[0], f"guard overlooks: {_spelling}"
 # Control: a literal key without hardening threshold, the mail header `From`, prose about
 # "settings"/"setting" and a docstring stay without a finding — otherwise the self-test would only check that
 # everything trips.
-for _harmless in ('x = store.get_setting("demo_users")', 'msg["From"] = absender',
-                 'hinweis = "Die settings from the panel gelten sofort."',
-                 'hinweis = "Select whether this setting applies."',
-                 'hinweis = f"Login from {ip}"',
-                 'def f():\n    """Liest nie SELECT value FROM setting — nur ein Docstring."""'):
-    assert not _setting_read_paths([("fremd.py", _harmless)])[0], f"false alarm: {_harmless}"
+for _harmless in ('x = store.get_setting("demo_users")', 'msg["From"] = sender',
+                 'notice = "The settings from the panel apply immediately."',
+                 'notice = "Select whether this setting applies."',
+                 'notice = f"Login from {ip}"',
+                 'def f():\n    """Never reads SELECT value FROM setting — only a docstring."""'):
+    assert not _setting_read_paths([("foreign.py", _harmless)])[0], f"false alarm: {_harmless}"
 
 _package = sorted((_pl.Path(__file__).resolve().parent.parent / "tinysesam").rglob("*.py"))
 assert len(_package) >= 10 and any(d.name == "security.py" for d in _package), \
@@ -318,7 +318,7 @@ ok("every read access to the settings goes through literal keys or security.read
 # `security.py:<line>`; `getattr(self.store, "get_setting")` in manager.py -> red with
 # `manager.py:<line>`; an f-string `select value from {_T}` in admin.py -> red with `admin.py:<line>`.)
 
-code, from_ = cli("quatsch")
+code, from_ = cli("nonsense")
 assert code == 2 and "usage" in from_
 ok("unknown command -> usage, exit 2")
 
@@ -360,16 +360,16 @@ code, from_ = cli("backup", "--db", db, bare)
 assert code == 1 and "already exists" in from_, (code, from_)
 ok("backup does not overwrite an existing file")
 
-code, from_ = cli("backup", "--db", os.path.join(tempfile.mkdtemp(), "t.db"), os.path.join(tempfile.mkdtemp(), "datei"))
+code, from_ = cli("backup", "--db", os.path.join(tempfile.mkdtemp(), "t.db"), os.path.join(tempfile.mkdtemp(), "file"))
 assert code == 1 and "No database at" in from_, (code, from_)
 ok("backup of a missing database -> exit 1, no empty file created")
 
 # ---------- gc: cleaning up needs a way from outside ----------
 # R4-09: an account that was never confirmed (locked, expired unused confirmation token) is also
 # removed by the CLI path — and BEFORE the tokens, otherwise the marker would vanish first.
-_sq = auth.create_user("squatter", password="geheim12345", email="opfer@example.com")
+_sq = auth.create_user("squatter", password="dummy12345", email="victim@example.com")
 auth.store.set_disabled(_sq, True)
-auth.store.add_magic_token("abgelaufen-verify", "verify_email", 1, user_id=_sq, email="opfer@example.com")
+auth.store.add_magic_token("expired-verify", "verify_email", 1, user_id=_sq, email="victim@example.com")
 code, from_ = cli("gc", "--db", db)
 assert code == 0 and "sessions=" in from_ and "login_attempts=" in from_, (code, from_)
 assert "unverified_accounts=1" in from_ and auth.store.get_user(_sq) is None, from_
@@ -378,14 +378,14 @@ ok("gc cleans up and names the count per area (for cron/timer), never-confirmed 
 # `--audit-days` is the counterpart of `audit_retention_days` and holds the same limit
 # (T-13 attack, audit x configuration): 10**20 aborted with OverflowError AFTER sessions and
 # tokens were already deleted; seconds instead of days (2592000) let the period silently run into the void.
-auth.store.audit_log("bleibt", "x", None)
+auth.store.audit_log("stays", "x", None)
 for _days in (str(10 ** 20), "2592000", "-1"):
     try:
         code, from_ = cli("gc", "--db", db, "--audit-days", _days)
     except Exception as e:   # noqa: BLE001 — a traceback is the finding here
         code, from_ = f"{type(e).__name__}", str(e)
     assert code == 2 and "--audit-days" in from_, (_days, code, from_[-200:])
-assert any(z["event"] == "bleibt" for z in auth.store.recent_audit(20))
+assert any(z["event"] == "stays" for z in auth.store.recent_audit(20))
 ok("gc --audit-days holds the same limit as audit_retention_days (no crash, nothing deleted)")
 # (Mutation probe: revert the range check in `_gc` to `a.audit_days < 0` -> red.)
 
@@ -414,10 +414,10 @@ for _sec in (str(10 ** 20), str(-10 ** 20), "-1"):
     assert code == 2 and "--attempts-older-than" in from_, (_sec, code, from_[-200:])
 assert _expired_sessions() == 1, "gc deleted although the argument was rejected"
 assert auth._is_locked("gc-probe", "198.51.100.7"), "a rejected gc run lifted the lock"
-for _sec in (10 ** 20, -10 ** 20, -1, True, float("inf"), "viel"):
+for _sec in (10 ** 20, -10 ** 20, -1, True, float("inf"), "much"):
     try:
         auth.gc(attempts_older_than_sec=_sec)
-        _gc_hit = "angenommen"
+        _gc_hit = "assumed"
     except ValueError:
         _gc_hit = None
     except Exception as e:   # noqa: BLE001 — any other crash is the finding here

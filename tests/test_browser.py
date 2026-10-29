@@ -218,7 +218,7 @@ async def run():
         # the strict nonce CSP of the built-in pages blocked a <script>/<style>.
         await p.cmd("Page.addScriptToEvaluateOnNewDocument", source=(
             "window.__csp=[];addEventListener('securitypolicyviolation',function(e){"
-            "window.__csp.push(e.effectiveDirective+' blockte '+(e.blockedURI||'inline'))})"))
+            "window.__csp.push(e.effectiveDirective+' blocked '+(e.blockedURI||'inline'))})"))
 
         # ---------- 1) Every page loads, without console errors and without broken requests ----------
         for path in PAGES:
@@ -235,7 +235,7 @@ async def run():
         # wrong/missing nonce would have blocked them and produced an entry here.
         for path in ("/auth/login", "/auth/register"):
             await p.go(path)
-            viol = await p.js("JSON.stringify(window.__csp===undefined?['(kein Listener)']:window.__csp)")
+            viol = await p.js("JSON.stringify(window.__csp===undefined?['(no Listener)']:window.__csp)")
             assert viol == "[]", f"CSP violation on {path}: {viol}"
         print("  auth pages under strict CSP: no violation (nonce accepted)")
 
@@ -368,7 +368,7 @@ async def run():
         # ---------- 8) Login works — even when the browser fills in a password ----------
         await p.cmd("Page.addScriptToEvaluateOnNewDocument", source="""
             (function(){var n=0,iv=setInterval(function(){var f=document.querySelector('[name=password]');
-              if(f){f.value='falschesAltesPasswort';clearInterval(iv);} if(++n>40)clearInterval(iv);},5);})();""")
+              if(f){f.value='wrongOldPasswort';clearInterval(iv);} if(++n>40)clearInterval(iv);},5);})();""")
         await p.go("/auth/login", wait=2.0)
         assert await p.js("document.querySelector('[name=password]').value") == "", "autofill not discarded"
         await p.click(".demofill[data-u=demoadmin]")
@@ -424,7 +424,7 @@ async def run():
         await asyncio.sleep(0.6)
         assert await p.js("document.querySelector('.tab.on').textContent") != \
             await p.js("document.querySelector('.tab').textContent"), "tab switch without effect"
-        viol = await p.js("JSON.stringify(window.__csp===undefined?['(kein Listener)']:window.__csp)")
+        viol = await p.js("JSON.stringify(window.__csp===undefined?['(no Listener)']:window.__csp)")
         assert viol == "[]", f"CSP violation in the admin panel: {viol}"
         print("  admin panel under strict CSP: buttons and tabs work, no violation")
 
@@ -467,9 +467,9 @@ async def run():
         other, _ = showcase.auth.start_session(demoadmin_id, "password")
         await p.go("/auth/account", wait=1.6)
         await p.js("window.confirm=()=>true")
-        await p.js(f"offer({response}).then(()=>{{window.__offer_fertig=true}});1")
+        await p.js(f"offer({response}).then(()=>{{window.__offer_done=true}});1")
         await asyncio.sleep(1.2)
-        assert await p.js("window.__offer_fertig===true"), "offer() did not return"
+        assert await p.js("window.__offer_done===true"), "offer() did not return"
         assert showcase.auth.store.get_session(other) is None, \
             "offer confirmed, yet the other session keeps running"
         # Freshness expired: detour via reauth, the consent travels along as ?revoke_others=1.

@@ -18,13 +18,13 @@ def fresh(chain=None, strict=True, **kw):
                           cookie_secure=False, login_chain=chain or [], login_chain_strict=strict,
                           pin_enabled=True, **kw)
     auth = TinySesam(cfg)
-    auth.ensure_admin("admin", "geheim123")
+    auth.ensure_admin("admin", "dummy123")
     uid = auth.store.get_user_by_name("admin")["id"]
     auth.set_pin(uid, "2468")
     app = FastAPI()
     app.include_router(auth.router())
 
-    @app.get("/geheim")
+    @app.get("/secret")
     def secret_text(u=Depends(auth.require_user)):
         return {"u": u["username"]}
 
@@ -50,7 +50,7 @@ assert c.get("/area", headers=JSON).status_code == 401
 ok("chain pin->password: after PIN only a redirect to /auth/login, no access yet")
 
 # Second factor password -> chain satisfied -> access
-r = c.post("/auth/login", data={"username": "admin", "password": "geheim123", "next": "/area"}, follow_redirects=False)
+r = c.post("/auth/login", data={"username": "admin", "password": "dummy123", "next": "/area"}, follow_redirects=False)
 assert r.status_code == 303 and r.headers["location"] == "/area", r.headers.get("location")
 assert c.get("/area", headers=JSON).json() == {"u": "admin"}
 ok("chain pin->password: fully logged in after the password")
@@ -60,20 +60,20 @@ os.remove(db)
 db, auth, uid, app = fresh(chain=["pin", "password"], strict=True)
 c = TestClient(app)
 # Password first (wrong order) -> sent to /auth/pin, but never "done"
-r = c.post("/auth/login", data={"username": "admin", "password": "geheim123", "next": "/geheim"}, follow_redirects=False)
+r = c.post("/auth/login", data={"username": "admin", "password": "dummy123", "next": "/secret"}, follow_redirects=False)
 assert r.status_code == 303 and r.headers["location"].startswith("/auth/pin")
-assert c.get("/geheim", headers=JSON).status_code == 401
+assert c.get("/secret", headers=JSON).status_code == 401
 ok("strict: password-before-PIN does not satisfy the chain (no access)")
 os.remove(db)
 
 # ---------- Non-strict: any order suffices ----------
 db, auth, uid, app = fresh(chain=["pin", "password"], strict=False)
 c = TestClient(app)
-c.post("/auth/login", data={"username": "admin", "password": "geheim123", "next": "/geheim"}, follow_redirects=False)
-assert c.get("/geheim", headers=JSON).status_code == 401   # only one factor
-r = c.post("/auth/pin", data={"username": "admin", "pin": "2468", "next": "/geheim"}, follow_redirects=False)
-assert r.status_code == 303 and r.headers["location"] == "/geheim"
-assert c.get("/geheim", headers=JSON).json() == {"u": "admin"}
+c.post("/auth/login", data={"username": "admin", "password": "dummy123", "next": "/secret"}, follow_redirects=False)
+assert c.get("/secret", headers=JSON).status_code == 401   # only one factor
+r = c.post("/auth/pin", data={"username": "admin", "pin": "2468", "next": "/secret"}, follow_redirects=False)
+assert r.status_code == 303 and r.headers["location"] == "/secret"
+assert c.get("/secret", headers=JSON).json() == {"u": "admin"}
 ok("non-strict: password then PIN (reverse order) suffices")
 os.remove(db)
 
@@ -82,12 +82,12 @@ db, auth, uid, app = fresh(chain=["password", "totp"], strict=True)
 secret = auth.totp_begin(uid)["secret"]
 auth.totp_confirm(uid, pyotp.TOTP(secret).at(time.time() - 30))
 c = TestClient(app)
-r = c.post("/auth/login", data={"username": "admin", "password": "geheim123", "next": "/geheim"}, follow_redirects=False)
+r = c.post("/auth/login", data={"username": "admin", "password": "dummy123", "next": "/secret"}, follow_redirects=False)
 assert r.status_code == 303 and r.headers["location"].startswith("/auth/totp")
-assert c.get("/geheim", headers=JSON).status_code == 401
-r = c.post("/auth/totp", data={"code": pyotp.TOTP(secret).now(), "next": "/geheim"}, follow_redirects=False)
-assert r.status_code == 303 and r.headers["location"] == "/geheim"
-assert c.get("/geheim", headers=JSON).json() == {"u": "admin"}
+assert c.get("/secret", headers=JSON).status_code == 401
+r = c.post("/auth/totp", data={"code": pyotp.TOTP(secret).now(), "next": "/secret"}, follow_redirects=False)
+assert r.status_code == 303 and r.headers["location"] == "/secret"
+assert c.get("/secret", headers=JSON).json() == {"u": "admin"}
 ok("chain password->totp satisfied")
 os.remove(db)
 
@@ -102,15 +102,15 @@ def pin_area(u=Depends(auth.require(factors=["password", "pin"]))):
 
 c = TestClient(app)
 # classic password login (complete globally, no TOTP)
-c.post("/auth/login", data={"username": "admin", "password": "geheim123", "next": "/"}, follow_redirects=False)
-assert c.get("/geheim", headers=JSON).json() == {"u": "admin"}       # normal route open
+c.post("/auth/login", data={"username": "admin", "password": "dummy123", "next": "/"}, follow_redirects=False)
+assert c.get("/secret", headers=JSON).json() == {"u": "admin"}       # normal route open
 r = c.get("/pin-area", headers={"Accept": "text/html"}, follow_redirects=False)
 assert r.status_code == 307 and r.headers["location"].startswith("/auth/pin"), r.headers.get("location")
 # attach PIN as an additional factor to the running session
 r = c.post("/auth/pin", data={"username": "admin", "pin": "2468", "next": "/pin-area"}, follow_redirects=False)
 assert r.status_code == 303 and r.headers["location"] == "/pin-area"
 assert c.get("/pin-area", headers=JSON).json() == {"u": "admin"}
-assert c.get("/geheim", headers=JSON).json() == {"u": "admin"}       # normal route still open
+assert c.get("/secret", headers=JSON).json() == {"u": "admin"}       # normal route still open
 ok("per-route factors=[password,pin]: PIN as additional factor, session stays valid")
 os.remove(db)
 
@@ -129,7 +129,7 @@ def _chain_without_totp(**kw):
     auth = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db, rp_name="Test",
                                      passkey_enabled=False, oidc_enabled=False, cookie_secure=False,
                                      login_chain=["password", "totp"], **kw))
-    uid = auth.create_user("neu", password="geheim123")
+    uid = auth.create_user("new", password="dummy123")
     app = FastAPI()
     app.include_router(auth.router())
     return db, auth, uid, app
@@ -137,7 +137,7 @@ def _chain_without_totp(**kw):
 
 def _until_the_second_factor(app):
     c = TestClient(app)
-    c.post("/auth/login", data={"username": "neu", "password": "geheim123", "next": "/"},
+    c.post("/auth/login", data={"username": "new", "password": "dummy123", "next": "/"},
            follow_redirects=False)
     return c
 
@@ -161,9 +161,9 @@ from tinysesam import security as _sec_e                                  # noqa
 
 db_e, auth_e, uid_e, app_e = _chain_without_totp()
 c_e = _until_the_second_factor(app_e)
-assert "value='/ziel'" in c_e.get("/auth/totp/setup?next=/ziel").text
-_page_html = c_e.post("/auth/totp/setup/start", data={"next": "/ziel"}).text
-assert "data-next='/ziel'" in _page_html, "the target is lost on the way through the setup"
+assert "value='/target'" in c_e.get("/auth/totp/setup?next=/target").text
+_page_html = c_e.post("/auth/totp/setup/start", data={"next": "/target"}).text
+assert "data-next='/target'" in _page_html, "the target is lost on the way through the setup"
 assert "location.href=j.next" in _page_html, "the page does not follow the target after confirmation"
 _secret_text = _re.search(r"class=mono>([A-Z2-7]+)<", _page_html).group(1)
 _event_e = []
@@ -173,15 +173,15 @@ _buffer_e = _io_e.StringIO()
 _check_e = _logging_e.StreamHandler(_buffer_e)
 _sec_e.seclog.addHandler(_check_e)
 try:
-    _ant = c_e.post("/auth/totp/setup", data={"code": _code, "next": "/ziel"})
-    assert _ant.status_code == 200 and _ant.json() == {"ok": True, "next": "/ziel",
+    _ant = c_e.post("/auth/totp/setup", data={"code": _code, "next": "/target"})
+    assert _ant.status_code == 200 and _ant.json() == {"ok": True, "next": "/target",
                                                        "other_sessions": 0,
                                                        "other_sessions_after": 0}, _ant.text
     _s = auth_e.store.get_session(c_e.cookies.get(auth_e.cfg.session_cookie))
     assert _s and _s["mfa_ok"], "after the mandatory setup the session is still stuck in the MFA step"
     # The old way — the same code at /auth/totp once more — is thereby superfluous: the setup
     # page forwards straight to the target with `next`.
-    assert not auth_e._is_locked("neu", "testclient")
+    assert not auth_e._is_locked("new", "testclient")
     assert c_e.get("/auth/account", follow_redirects=False).status_code == 200, "not fully signed in"
 finally:
     _sec_e.seclog.removeHandler(_check_e)
@@ -213,11 +213,11 @@ ok("A-4: confirmed TOTP -> 409 at /auth/totp/setup, no second totp_enabled")
 auth_e.totp_disable(uid_e)
 auth_e.grant_mfa_enrollment(uid_e, minutes=30)
 c_b = _until_the_second_factor(app_e)
-_page_html_b = c_b.post("/auth/totp/setup/start", data={"next": "/ziel"}).text
+_page_html_b = c_b.post("/auth/totp/setup/start", data={"next": "/target"}).text
 _secret_text_b = _re.search(r"class=mono>([A-Z2-7]+)<", _page_html_b).group(1)
-_ant_b = c_b.post("/auth/totp/setup", data={"code": pyotp.TOTP(_secret_text_b).now(), "next": "/ziel"})
+_ant_b = c_b.post("/auth/totp/setup", data={"code": pyotp.TOTP(_secret_text_b).now(), "next": "/target"})
 assert _ant_b.status_code == 200, _ant_b.text
-assert _ant_b.json() == {"ok": True, "next": "/ziel", "other_sessions": 1, "other_sessions_after": 0}, _ant_b.json()
+assert _ant_b.json() == {"ok": True, "next": "/target", "other_sessions": 1, "other_sessions_after": 0}, _ant_b.json()
 assert c_e.get("/auth/account", follow_redirects=False).status_code == 200, "device A is still in"
 assert c_b.post("/auth/sessions/revoke", json={"scope": "others"}).status_code == 200
 assert c_e.get("/auth/account", follow_redirects=False).status_code != 200, "device A stayed signed in"
@@ -235,7 +235,7 @@ auth_k = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db_k, 
                                    passkey_enabled=False, oidc_enabled=False, cookie_secure=False,
                                    pin_enabled=True, login_chain=["password", "totp", "pin"],
                                    mfa_enrollment="strict"))
-uid_k = auth_k.create_user("neu", password="geheim123")
+uid_k = auth_k.create_user("new", password="dummy123")
 auth_k.set_pin(uid_k, "2468")
 _secret_text_k = auth_k.totp_begin(uid_k)["secret"]
 assert auth_k.totp_confirm(uid_k, pyotp.TOTP(_secret_text_k).now())
@@ -245,20 +245,20 @@ app_k.include_router(auth_k.router())
 c_ka = _until_the_second_factor(app_k)                       # device A: the whole chain
 assert c_ka.post("/auth/totp", data={"code": _codes_k[0], "next": "/"},
                  follow_redirects=False).headers["location"].startswith("/auth/pin")
-c_ka.post("/auth/pin", data={"username": "neu", "pin": "2468", "next": "/"}, follow_redirects=False)
+c_ka.post("/auth/pin", data={"username": "new", "pin": "2468", "next": "/"}, follow_redirects=False)
 assert c_ka.get("/auth/account", follow_redirects=False).status_code == 200
 auth_k.totp_disable(uid_k)                                  # device lost
 auth_k.grant_mfa_enrollment(uid_k, minutes=30)
 c_kb = _until_the_second_factor(app_k)                       # device B sets up anew
-_page_html_k = c_kb.post("/auth/totp/setup/start", data={"next": "/ziel"}).text
+_page_html_k = c_kb.post("/auth/totp/setup/start", data={"next": "/target"}).text
 _secret_text_kb = _re.search(r"class=mono>([A-Z2-7]+)<", _page_html_k).group(1)
-_ant_k = c_kb.post("/auth/totp/setup", data={"code": pyotp.TOTP(_secret_text_kb).now(), "next": "/ziel"})
+_ant_k = c_kb.post("/auth/totp/setup", data={"code": pyotp.TOTP(_secret_text_kb).now(), "next": "/target"})
 assert _ant_k.status_code == 200, _ant_k.text
 _s_k = auth_k.store.get_session(c_kb.cookies.get(auth_k.cfg.session_cookie))
 assert _s_k and not _s_k["mfa_ok"], "the session is already full after the TOTP step"
 # No offer to redeem IMMEDIATELY (`other_sessions` 0, the half session cannot end anything) —
 # but since limit d (2026-09-24) one for the completion: `other_sessions_after` counts device A.
-assert _ant_k.json() == {"ok": True, "next": "/auth/pin?next=/ziel", "other_sessions": 0,
+assert _ant_k.json() == {"ok": True, "next": "/auth/pin?next=/target", "other_sessions": 0,
                          "other_sessions_after": 1}, \
     f"offer the half session cannot redeem: {_ant_k.json()}"
 assert c_kb.post("/auth/sessions/revoke", json={"scope": "others"}).status_code == 401
@@ -327,11 +327,11 @@ db_o = os.path.join(tempfile.mkdtemp(), "t.db")
 auth_o = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db_o, rp_name="Test",
                                    passkey_enabled=False, oidc_enabled=False, cookie_secure=False,
                                    mfa_enrollment="strict"))
-uid_o = auth_o.create_user("frei", password="geheim123")
+uid_o = auth_o.create_user("free", password="dummy123")
 app_o = FastAPI()
 app_o.include_router(auth_o.router())
 c_o = TestClient(app_o)
-c_o.post("/auth/login", data={"username": "frei", "password": "geheim123", "next": "/"},
+c_o.post("/auth/login", data={"username": "free", "password": "dummy123", "next": "/"},
          follow_redirects=False)
 assert c_o.get("/auth/totp/setup", headers={"Accept": "text/html"}).status_code == 200, \
     "without chain enforcement a voluntary TOTP must remain possible to set up"
@@ -340,7 +340,7 @@ ok("R3-1: if MFA is optional the bolt does not apply — voluntary stays volunta
 # An unknown mode aborts at construction instead of silently allowing.
 try:
     TinySesam(TinySesamConfig(db_path=os.path.join(tempfile.mkdtemp(), "t.db"),
-                              passkey_enabled=False, mfa_enrollment="irgendwas"))
+                              passkey_enabled=False, mfa_enrollment="something"))
     raise AssertionError("unknown mode got through")
 except _ConfigError:
     pass

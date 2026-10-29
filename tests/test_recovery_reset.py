@@ -20,14 +20,14 @@ auth = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db, rp_n
                                  # Mail links have required a promised address since R4-01.
                                  base_url="https://auth.example.com"))
 auth.set_mailer(lambda to, s, t, html=None: sent.append({"to": to, "text": t}))
-auth.ensure_admin("admin", "geheim123-lang-genug")
+auth.ensure_admin("admin", "dummy123-long-enough")
 uid = auth.store.get_user_by_name("admin")["id"]
 auth.store._exec("UPDATE users SET email=? WHERE id=?", ("admin@example.com", uid))
 app = FastAPI()
 app.include_router(auth.router())
 
 
-@app.get("/geheim")
+@app.get("/secret")
 def secret_text(u=Depends(auth.require_user)):
     return {"u": u["username"]}
 
@@ -43,16 +43,16 @@ assert len(codes) == 6 and auth.recovery_codes_remaining(uid) == 6
 ok("generate_recovery_codes → 6 Codes")
 
 # login → TOTP step; enter a recovery code instead of TOTP
-c.post("/auth/login", data={"username": "admin", "password": "geheim123-lang-genug", "next": "/geheim"}, follow_redirects=False)
-assert c.get("/geheim", headers=JSON).status_code == 401
-r = c.post("/auth/totp", data={"code": codes[0], "next": "/geheim"}, follow_redirects=False)
-assert r.status_code == 303 and c.get("/geheim", headers=JSON).json() == {"u": "admin"}
+c.post("/auth/login", data={"username": "admin", "password": "dummy123-long-enough", "next": "/secret"}, follow_redirects=False)
+assert c.get("/secret", headers=JSON).status_code == 401
+r = c.post("/auth/totp", data={"code": codes[0], "next": "/secret"}, follow_redirects=False)
+assert r.status_code == 303 and c.get("/secret", headers=JSON).json() == {"u": "admin"}
 assert auth.recovery_codes_remaining(uid) == 5
 ok("recovery code instead of TOTP → logged in (consumed: 6→5)")
 
 # the same code a second time → invalid
 c.get("/auth/logout")
-c.post("/auth/login", data={"username": "admin", "password": "geheim123-lang-genug", "next": "/"}, follow_redirects=False)
+c.post("/auth/login", data={"username": "admin", "password": "dummy123-long-enough", "next": "/"}, follow_redirects=False)
 assert c.post("/auth/totp", data={"code": codes[0], "next": "/"}).status_code == 401
 ok("consumed recovery code is invalid (one-shot)")
 
@@ -68,7 +68,7 @@ c.get("/auth/logout")
 assert "Passwort vergessen" in c.get("/auth/login").text   # link to the login page
 sent.clear()
 # unknown address → generic, no mail
-c.post("/auth/forgot", data={"email": "fremd@example.com"})
+c.post("/auth/forgot", data={"email": "foreign@example.com"})
 assert sent == []
 # known address → reset mail
 c.post("/auth/forgot", data={"email": "admin@example.com"})
@@ -83,7 +83,7 @@ assert "Neues Passwort" in c.get(f"/auth/reset?token={token}").text
 # password too short → 400
 assert c.post("/auth/reset", data={"token": token, "password": "x"}).status_code == 400
 # set new password → redirect to login, token consumed
-r = c.post("/auth/reset", data={"token": token, "password": "ganzneuespw-lang-genug"}, follow_redirects=False)
+r = c.post("/auth/reset", data={"token": token, "password": "ganzneuespw-long-enough"}, follow_redirects=False)
 assert r.status_code == 303 and "/auth/login" in r.headers["location"]
 assert auth.peek_magic(token, purpose="reset_password") is None
 ok("Reset: new password set, token consumed")
@@ -96,25 +96,25 @@ ax = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db_x, cook
                                passkey_enabled=False, password_reset_enabled=True,
                                magiclink_enabled=False, base_url="https://auth.example.com"))
 ax.set_mailer(lambda to, subject, text, html=None: post_x.append(text))
-ax.create_user("ohne", "altes-geheim", email="ohne@example.com")
+ax.create_user("without", "old-secret", email="without@example.com")
 appx = FastAPI()
 appx.include_router(ax.router())
 cx = TestClient(appx, headers={"Accept": "text/html"})
 assert cx.get("/auth/magic/request").status_code == 404, "magic link is off"
 assert cx.get("/auth/forgot").status_code == 200, "forgot-password remains reachable anyway"
-cx.post("/auth/forgot", data={"email": "ohne@example.com"})
+cx.post("/auth/forgot", data={"email": "without@example.com"})
 tok_x = re.search(r"/auth/reset\?token=([\w\-]+)", post_x[0]).group(1)
-r = cx.post("/auth/reset", data={"token": tok_x, "password": "frisches-passwort"},
+r = cx.post("/auth/reset", data={"token": tok_x, "password": "fresh-passwordxxx"},
             follow_redirects=False)
 assert r.status_code == 303
-assert ax._check_password("ohne", "frisches-passwort")
+assert ax._check_password("without", "fresh-passwordxxx")
 os.remove(db_x)
 ok("password reset works without magic link (coupling removed)")
 
 # old password gone, new one works
 c2 = TestClient(app)
-assert c2.post("/auth/login", data={"username": "admin", "password": "geheim123-lang-genug"}, follow_redirects=False).status_code == 401
-r = c2.post("/auth/login", data={"username": "admin", "password": "ganzneuespw-lang-genug", "next": "/"}, follow_redirects=False)
+assert c2.post("/auth/login", data={"username": "admin", "password": "dummy123-long-enough"}, follow_redirects=False).status_code == 401
+r = c2.post("/auth/login", data={"username": "admin", "password": "ganzneuespw-long-enough", "next": "/"}, follow_redirects=False)
 assert r.status_code == 303
 ok("after reset: old password invalid, new one valid")
 
@@ -131,22 +131,22 @@ a_s = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db_s, coo
                                 passkey_enabled=False, password_reset_enabled=True,
                                 base_url="https://auth.example.com"))
 a_s.set_mailer(lambda to, subject, text, html=None: post_s.append(text))
-a_s.create_user("gesperrt", "altes-geheimnis-1", email="gesperrt@example.com")
+a_s.create_user("gesperrt", "old-secret-1xxxxx", email="locked@example.com")
 app_s = FastAPI()
 app_s.include_router(a_s.router())
 c_s = TestClient(app_s, headers={"Accept": "text/html"})
 for _i in range(a_s._sec("max_login_attempts")):
-    assert c_s.post("/auth/login", data={"username": "gesperrt", "password": f"vergessen-{_i}"}).status_code == 401
+    assert c_s.post("/auth/login", data={"username": "gesperrt", "password": f"forgotten-{_i}"}).status_code == 401
 a_s._record_login("gesperrt", "testclient", False, "totp")       # a slip on the second factor
-assert c_s.post("/auth/login", data={"username": "gesperrt", "password": "altes-geheimnis-1"}).status_code == 429, \
+assert c_s.post("/auth/login", data={"username": "gesperrt", "password": "old-secret-1xxxxx"}).status_code == 429, \
     "precondition: the account is locked"
-c_s.post("/auth/forgot", data={"email": "gesperrt@example.com"})
+c_s.post("/auth/forgot", data={"email": "locked@example.com"})
 # The reset mail — not the first: since ASVS 6.3.5 the lockout notice goes out beforehand.
 a_s._notice_outcome.wait()
 tok_s = re.search(r"/auth/reset\?token=([\w\-]+)", next(m for m in post_s if "/auth/reset?token=" in m)).group(1)
-assert c_s.post("/auth/reset", data={"token": tok_s, "password": "neues-geheimnis-2"},
+assert c_s.post("/auth/reset", data={"token": tok_s, "password": "new-secret-2xxxxx"},
                 follow_redirects=False).status_code == 303, "the reset itself depends on the lockout"
-r = c_s.post("/auth/login", data={"username": "gesperrt", "password": "neues-geheimnis-2"},
+r = c_s.post("/auth/login", data={"username": "gesperrt", "password": "new-secret-2xxxxx"},
              follow_redirects=False)
 assert r.status_code == 303, f"still locked after the reset: {r.status_code}"
 ok("R4-13/H-10: the reset bypasses the lockout and lifts it")
@@ -171,7 +171,7 @@ _a2 = TinySesam(TinySesamConfig(db_path=_db2, rp_name="T", passkey_enabled=False
                                 base_url="https://auth.example.com "))
 _post = []
 _a2.set_mailer(lambda to, subject, text, html=None: _post.append(text))
-_a2.create_user("lea", password="geheim12345-lang-genug", email="lea@example.com")
+_a2.create_user("lea", password="dummy12345-long-enough", email="lea@example.com")
 _a2.send_password_reset("lea@example.com", _a2.cfg.base_url)
 assert _post and " " not in _post[0].split("https://auth.example.com", 1)[1].split()[0] \
     and "https://auth.example.com/auth/reset" in _post[0], _post
@@ -195,14 +195,14 @@ post_r = []
 auth_r.set_mailer(lambda to, s, t, html=None: post_r.append(t))
 event_r = []
 auth_r.on_security_event = lambda e, k, d: event_r.append((e, d))
-uid_r = auth_r.create_user("rita", "rita-geheim-1-lang", email="rita@example.com")
+uid_r = auth_r.create_user("rita", "rita-secret-1-long", email="rita@example.com")
 secret_text_r = auth_r.totp_begin(uid_r)["secret"]
 auth_r.totp_confirm(uid_r, pyotp.TOTP(secret_text_r).at(time.time() - 30))
 codes_r = auth_r.generate_recovery_codes(uid_r)
 app_r = FastAPI()
 app_r.include_router(auth_r.router())
 cr = TestClient(app_r)
-cr.post("/auth/login", data={"username": "rita", "password": "rita-geheim-1-lang"}, follow_redirects=False)
+cr.post("/auth/login", data={"username": "rita", "password": "rita-secret-1-long"}, follow_redirects=False)
 assert cr.post("/auth/totp", data={"code": codes_r[0], "next": "/"}, follow_redirects=False).status_code == 303
 lines = [z for z in auth_r.store.recent_audit(20) if z["event"] == "recovery_used"]
 assert len(lines) == 1 and "remaining=3" in lines[0]["detail"], lines
@@ -226,7 +226,7 @@ tok_r = re.search(r"/auth/reset\?token=([\w\-]+)", post_r[-1]).group(1)
 r = cr.post("/auth/reset", data={"token": tok_r, "password": "Rita2024!Rita2024!"})
 assert r.status_code == 400 and "leicht zu erraten" in r.text
 assert auth_r.peek_magic(tok_r, purpose="reset_password"), "a rejected password invalidates the link"
-r = cr.post("/auth/reset", data={"token": tok_r, "password": "ein-frisches-passwort"}, follow_redirects=False)
+r = cr.post("/auth/reset", data={"token": tok_r, "password": "a-fresh-passwordxxxxx"}, follow_redirects=False)
 assert r.status_code == 303
 assert auth_r.verify_api_key(key_r)[0] is None, "the API key survives the reset"
 assert auth_r.store.count_active_api_keys(uid_r) == 0
@@ -238,7 +238,7 @@ ok("R4-14: password reset by mail revokes the API keys (and checks the password 
 
 # A-8: a dead link takes precedence over the password rule — otherwise it said "too easy", and only the
 # second attempt revealed that the link no longer applies. (tok_r is consumed above.)
-for _tok in ("quatsch", tok_r):
+for _tok in ("nonsense", tok_r):
     r = cr.post("/auth/reset", data={"token": _tok, "password": "password"})
     assert r.status_code == 400 and auth_r.t("magic.invalid") in r.text, r.text[:300]
     assert "leicht zu erraten" not in r.text
@@ -264,9 +264,9 @@ _check_r = _logging.StreamHandler(_buffer_r)
 _security.seclog.addHandler(_check_r)
 try:
     _before_r = _token_traces()
-    for _tok, _pw in (("erfunden-1", "ein-frisches-passwort"),   # guessed, password is acceptable
-                      ("erfunden-2", "x"),                       # guessed, password too short
-                      (tok_r, "noch-ein-frisches-passwort")):     # already redeemed
+    for _tok, _pw in (("invented-1", "a-fresh-passwordxxxxx"),   # guessed, password is acceptable
+                      ("invented-2", "x"),                       # guessed, password too short
+                      (tok_r, "still-a-fresh-passwordxxxx")):     # already redeemed
         r = cr.post("/auth/reset", data={"token": _tok, "password": _pw})
         assert r.status_code == 400, (_tok, r.status_code)
     _new_r = _token_traces() - _before_r
@@ -274,7 +274,7 @@ try:
               if z.startswith(_security.LOG_CHECK) and "token_reset_password" in z]
     assert _new_r == 3 and len(_log_r) == 3, (_new_r, _buffer_r.getvalue())
     # Without a token this is not a presented link (A3) — no row, as with the GET.
-    assert cr.post("/auth/reset", data={"token": "", "password": "egal-was"}).status_code == 400
+    assert cr.post("/auth/reset", data={"token": "", "password": "whatever-was"}).status_code == 400
     assert _token_traces() - _before_r == 3 and len(
         [z for z in _buffer_r.getvalue().splitlines() if "token_reset_password" in z]) == 3
 finally:
@@ -289,12 +289,12 @@ os.remove(db_r)
 # password — a second path around lockout, group removal and the provider's MFA requirement. With
 # LDAP a local password even wins over the directory.
 sent.clear()
-_sso = auth.create_user("sso-nutzer", email="sso@example.com")
+_sso = auth.create_user("sso-user", email="sso@example.com")
 auth.store.link_oidc("https://idp.example.com", "sub-sso", _sso)
-_ldap = auth.create_user("ldap-nutzer", email="ldap@example.com")
+_ldap = auth.create_user("ldap-user", email="ldap@example.com")
 auth.store.link_federated("ldap", "uuid-ldap", _ldap, 0)
-_mixed = auth.create_user("gemischt", password="lokal-pw-123-ab", email="gemischt@example.com")
-auth.store.link_oidc("https://idp.example.com", "sub-gemischt", _mixed)
+_mixed = auth.create_user("mixed", password="local-pw-123-ab", email="mixed@example.com")
+auth.store.link_oidc("https://idp.example.com", "sub-mixed", _mixed)
 for _address in ("sso@example.com", "ldap@example.com"):
     assert c.post("/auth/forgot", data={"email": _address}).status_code == 200
 assert sent == [], f"a pure SSO account got a reset link: {[m['to'] for m in sent]}"
@@ -309,8 +309,8 @@ assert _without_nonce(c.post("/auth/forgot", data={"email": "sso@example.com"}))
 ok("H-4: pure SSO account (OIDC or LDAP bound, no local password) gets no reset link")
 # Counter-check: bound AND with a local password — the local password is a path of its own and
 # remains resettable.
-c.post("/auth/forgot", data={"email": "gemischt@example.com"})
-assert [m["to"] for m in sent] == ["gemischt@example.com"], sent
+c.post("/auth/forgot", data={"email": "mixed@example.com"})
+assert [m["to"] for m in sent] == ["mixed@example.com"], sent
 ok("H-4: …a federated account WITH a local password remains resettable")
 
 os.remove(db)

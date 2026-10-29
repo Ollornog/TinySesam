@@ -27,14 +27,14 @@ def login(app):
 
 
 # 1) freely chosen path
-a, db = fresh(admin_path="/verwaltung")
+a, db = fresh(admin_path="/admin")
 app = FastAPI(); app.include_router(a.router())
 c = login(app)
-assert c.get("/verwaltung/api/users").status_code == 200
-assert c.get("/verwaltung").status_code == 200 and "Admin" in c.get("/verwaltung").text
+assert c.get("/admin/api/users").status_code == 200
+assert c.get("/admin").status_code == 200 and "Admin" in c.get("/admin").text
 assert c.get("/auth/admin/api/users").status_code == 404
 os.remove(db)
-print("  ✓ Admin panel at a freely selectable path (/verwaltung)")
+print("  ✓ Admin panel at a freely selectable path (/admin)")
 
 # 2) mount admin_router() yourself, auto-mount off
 a, db = fresh(admin_enabled=False)

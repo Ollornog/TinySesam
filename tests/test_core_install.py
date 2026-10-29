@@ -196,7 +196,7 @@ r.check("...and prints help instead of starting a server",
         "TINYSESAM_OIDC_ISSUER" in execution.stdout and "0.0.0.0" not in execution.stdout.split("bind address")[0],
         f"Output: {execution.stdout[:120]!r}")
 
-fail = subprocess.run([sys.executable, "-m", "tinysesam.gateway", "--quatsch"],
+fail = subprocess.run([sys.executable, "-m", "tinysesam.gateway", "--nonsense"],
                       cwd=ROOT, capture_output=True, text=True, timeout=30)
 r.check("an unknown argument ends with 2, not with a running server",
         fail.returncode == 2, f"Exit {fail.returncode}")

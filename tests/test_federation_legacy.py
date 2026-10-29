@@ -85,7 +85,7 @@ class Directory:
     def entry_search(self, username):
         self.asked.append(username)
         if username == self.failure_at:
-            raise DirectoryNotReachable("Attrappe: Verzeichnis weg")
+            raise DirectoryNotReachable("Dummy: directory down")
         e = self.entries.get(username)
         if e is None:
             return []
@@ -98,7 +98,7 @@ def _db():
 
 def _ldap(db=None, **cfg):
     reason = dict(db_path=db or _db(), cookie_secure=False, csrf_enabled=False, passkey_enabled=False,
-                 lang="de", ldap_enabled=True, ldap_url="ldap://verzeichnis.example.com",
+                 lang="de", ldap_enabled=True, ldap_url="ldap://directory.example.com",
                  ldap_allow_plaintext=True, ldap_auto_create=True,
                  ldap_group_role_map={"cn=chefs": "chef"})
     reason.update(cfg)
@@ -145,17 +145,17 @@ r.check("The source marker exists right after construction (ldap_enabled), SAML 
 js = a.create_user("jsmith", is_admin=True)
 _alternate(a, js)
 with Recording() as log:
-    u = _sign_in(a, "jsmith", {"id": "uuid-neu", "groups": ["cn=chefs"]})
+    u = _sign_in(a, "jsmith", {"id": "uuid-new", "groups": ["cn=chefs"]})
 to = _audit(a, "ldap_name_binding_closed")
 r.check("Grace period over: the new jsmith from the directory does NOT take over the dormant account",
         u is None and a.store.get_federated_identifier("ldap", js) is None, str(u))
 r.check("… the account keeps its admin right and gets no role from the directory",
         a.get_user(js)["is_admin"] == 1 and a.user_roles(a.store.get_user(js)) == [])
 r.check("… audit `ldap_name_binding_closed` with reason and identifier",
-        len(to) == 1 and to[0]["username"] == "jsmith" and to[0]["detail"] == "reason=binding_window_expired identifier=uuid-neu",
+        len(to) == 1 and to[0]["username"] == "jsmith" and to[0]["detail"] == "reason=binding_window_expired identifier=uuid-new",
         str(to))
 r.check("… the log line names identifier and remedy (federation_unbind, federation_bind_existing)",
-        any("uuid-neu" in z and f"federation_unbind('ldap', {js})" in z
+        any("uuid-new" in z and f"federation_unbind('ldap', {js})" in z
             and "federation_bind_existing('ldap')" in z for z in log.lines("jsmith")), log.buffer.getvalue()[-600:])
 
 # (4) The operator opens the binding explicitly — the next sign-in binds.
@@ -163,20 +163,20 @@ away = a.federation_unbind("ldap", js)
 unclosed = a.store._one("SELECT until FROM name_binding WHERE source='ldap' AND user_id=?", (js,))
 r.check("federation_unbind on an unbound account: 0 released, binding via the name opened",
         away == 0 and unclosed is not None and unclosed["until"] > now() + 29 * TAG, str(unclosed and dict(unclosed)))
-u = _sign_in(a, "jsmith", {"id": "uuid-neu"})
+u = _sign_in(a, "jsmith", {"id": "uuid-new"})
 r.check("… afterwards the next sign-in binds via the name, even after the grace period",
-        u is not None and u["id"] == js and a.store.get_federated_identifier("ldap", js) == "uuid-neu")
+        u is not None and u["id"] == js and a.store.get_federated_identifier("ldap", js) == "uuid-new")
 r.check("… and the opening is used up (row gone)",
         a.store._one("SELECT 1 AS x FROM name_binding WHERE user_id=?", (js,)) is None)
-u = _sign_in(a, "jsmith", {"id": "uuid-dritter"})
+u = _sign_in(a, "jsmith", {"id": "uuid-third"})
 r.check("… a further foreign identifier under the name stays out (situation 3, door closed again)",
-        u is None and a.store.get_federated_identifier("ldap", js) == "uuid-neu")
+        u is None and a.store.get_federated_identifier("ldap", js) == "uuid-new")
 
 # (1b) Replacement of an origin placeholder after the grace period.
-quay = a.create_user("kai")
+quay = a.create_user("ken")
 a.store.link_federated("ldap", f"{Store.WITHOUT_IDENTIFIER}{quay}", quay, now())
 _alternate(a, quay)
-u = _sign_in(a, "kai", {"id": "uuid-kai-neu"})
+u = _sign_in(a, "ken", {"id": "uuid-ken-new"})
 r.check("Placeholder after the grace period: no new identifier, the placeholder stays",
         u is None and a.store.get_federated_identifier("ldap", quay) == f"{Store.WITHOUT_IDENTIFIER}{quay}",
         str(a.store.get_federated_identifier("ldap", quay)))
@@ -234,10 +234,10 @@ s = _saml()
 r.check("SAML: the marker exists after construction", s.store.get_setting("federation_since:saml") is not None)
 sam = s.create_user("sam", is_admin=True)
 _alternate(s, sam, source="saml")
-u = s._check_saml("nid-neu", {"uid": ["sam"]})
+u = s._check_saml("nid-new", {"uid": ["sam"]})
 r.check("SAML after the grace period: a new NameID under the name does not take over the dormant account",
         u is None and s.store.get_federated_identifier("saml", sam) is None
-        and [z["detail"] for z in _audit(s, "saml_name_binding_closed")] == ["reason=binding_window_expired identifier=nid-neu"])
+        and [z["detail"] for z in _audit(s, "saml_name_binding_closed")] == ["reason=binding_window_expired identifier=nid-new"])
 sina = s.create_user("sina")
 u = s._check_saml("nid-sina", {"uid": ["sina"]})
 r.check("SAML pre-creation: binds", u is not None and u["id"] == sina)
@@ -266,22 +266,22 @@ eve = g.create_user("eve", password=PW)
 r.check("Account created by the operator: marker 0", _flag(g, eve) == 0)
 # Alongside LDAP nobody renames themselves any more since 2026-09-27; the marker remains the second
 # safeguard for existing accounts and for accounts that a foreign writer renamed.
-g.store.set_username(eve, "chefin", itself_chosen=True)
+g.store.set_username(eve, "boss", itself_chosen=True)
 r.check("Self-renamed (existing): marker 1", _flag(g, eve) == 1)
 with Recording() as log:
-    u = _sign_in(g, "chefin", {"id": "uuid-chefin", "groups": ["cn=chefs"]}, pw="ldap-pw")
+    u = _sign_in(g, "boss", {"id": "uuid-boss", "groups": ["cn=chefs"]}, pw="ldap-pw")
 to = _audit(g, "ldap_name_binding_closed")
 r.check("PoC: the real boss from the directory does NOT land in eve's account, no binding",
         u is None and g.store.get_federated_identifier("ldap", eve) is None, str(u))
 r.check("… eve then has no role `chef`, not even via her local password",
-        g._check_password("chefin", PW) is not None
+        g._check_password("boss", PW) is not None
         and "chef" not in g.user_roles(g.store.get_user(eve)))
 r.check("… rejection like situation 3: audit with reason and identifier, log line with the way out",
-        [z["detail"] for z in to] == ["reason=self_chosen_name identifier=uuid-chefin"]
-        and any("uuid-chefin" in z and f"federation_unbind('ldap', {eve})" in z
+        [z["detail"] for z in to] == ["reason=self_chosen_name identifier=uuid-boss"]
+        and any("uuid-boss" in z and f"federation_unbind('ldap', {eve})" in z
                 for z in log.lines("chosen by the user")), str(to))
 g.federation_unbind("ldap", eve)
-u = _sign_in(g, "chefin", {"id": "uuid-chefin"}, pw="ldap-pw")
+u = _sign_in(g, "boss", {"id": "uuid-boss"}, pw="ldap-pw")
 r.check("The operator decides explicitly (federation_unbind): then it binds",
         u is not None and u["id"] == eve)
 
@@ -314,7 +314,7 @@ r.check("LDAP without identifier: a self-renamed account is not assigned via the
 # registered account carries the marker, and the SAML sign-in of the same identifier does not bind it.
 try:
     _ldap(allow_signup=True, signup_verify_email=False, base_url="http://testserver")
-    _ldap_reg = "gebaut"
+    _ldap_reg = "built"
 except ConfigError as e:
     _ldap_reg = str(e)
 r.check("allow_signup alongside LDAP: construction error (PO decision 2026-09-27)",
@@ -323,14 +323,14 @@ reg = _saml(allow_signup=True, signup_verify_email=False, base_url="http://tests
 app = FastAPI()
 app.include_router(reg.router())
 c = TestClient(app)
-response = c.post("/auth/register", data={"username": "chefin", "password": PW,
-                                         "email": "chefin.privat@example.com"}, follow_redirects=False)
-rid = reg.store.get_user_by_name("chefin")
+response = c.post("/auth/register", data={"username": "boss", "password": PW,
+                                         "email": "boss.private@example.com"}, follow_redirects=False)
+rid = reg.store.get_user_by_name("boss")
 r.check("Registration (SAML instance): the account carries the marker",
         response.status_code in (200, 303) and rid is not None and _flag(reg, rid["id"]) == 1,
         f"HTTP {response.status_code}")
-u = reg._check_saml("nid-chefin", {"uid": ["chefin"]})
-r.check("… the SAML chefin does not take over the registered account",
+u = reg._check_saml("nid-boss", {"uid": ["boss"]})
+r.check("… the SAML boss does not take over the registered account",
         (u is None or u["id"] != rid["id"]) and reg.store.get_federated_identifier("saml", rid["id"]) is None,
         str(u))
 ks = reg.create_user("konrad", password=PW)
@@ -356,7 +356,7 @@ class _Claims(dict):
 
 def _with_oidc(**cfg):
     auth = _ldap(base_url="http://testserver", oidc_enabled=True, oidc_issuer=IDP,
-                 oidc_client_id="probe", oidc_client_secret="geheim", **cfg)
+                 oidc_client_id="probe", oidc_client_secret="secret", **cfg)
     app = FastAPI()
     app.include_router(auth.router())
     auth.oidc._meta = {"issuer": IDP, "authorization_endpoint": IDP + "/authorize",
@@ -384,22 +384,22 @@ def _source(auth, uid):
 
 # (a) OIDC creates `manager`, then the real boss signs in via LDAP (PoC a1-01, variant A).
 qa, qapp = _with_oidc()
-st, me = _oidc_sign_in(qa, qapp, {"sub": "angreifer-sub", "preferred_username": "chefin"})
-oc = qa.store.get_user_by_name("chefin")
-r.check("OIDC creates `chefin` (preferred_username): origin oidc, no marker \"self-chosen\"",
+st, me = _oidc_sign_in(qa, qapp, {"sub": "attacker-sub", "preferred_username": "boss"})
+oc = qa.store.get_user_by_name("boss")
+r.check("OIDC creates `boss` (preferred_username): origin oidc, no marker \"self-chosen\"",
         st == 303 and oc is not None and _source(qa, oc["id"]) == "oidc" and _flag(qa, oc["id"]) == 0,
         f"HTTP {st} {dict(oc) if oc else None}")
 with Recording() as log:
-    u = _sign_in(qa, "chefin", {"id": "uuid-chefin", "groups": ["cn=chefs"]}, pw="ldap-pw")
+    u = _sign_in(qa, "boss", {"id": "uuid-boss", "groups": ["cn=chefs"]}, pw="ldap-pw")
 to = _audit(qa, "ldap_name_binding_closed")
 r.check("PoC a1-01 (OIDC): the real boss does NOT land in the OIDC account — no identifier, no role",
         u is None and qa.store.get_federated_identifier("ldap", oc["id"]) is None
         and qa.user_roles(qa.store.get_user(oc["id"])) == [], str(u))
 r.check("… rejection like situation 3: audit with reason name_aus_quelle, log line with the way out",
-        [z["detail"] for z in to] == ["reason=name_from_other_source identifier=uuid-chefin"]
-        and any("uuid-chefin" in z and f"federation_unbind('ldap', {oc['id']})" in z
+        [z["detail"] for z in to] == ["reason=name_from_other_source identifier=uuid-boss"]
+        and any("uuid-boss" in z and f"federation_unbind('ldap', {oc['id']})" in z
                 for z in log.lines("another source")), str(to))
-st, me = _oidc_sign_in(qa, qapp, {"sub": "angreifer-sub", "preferred_username": "chefin"})
+st, me = _oidc_sign_in(qa, qapp, {"sub": "attacker-sub", "preferred_username": "boss"})
 r.check("… and via OIDC the attacker still only gets into their own account, without a role",
         st == 303 and me is not None and me["id"] == oc["id"] and me["roles"] == [], str(me))
 
@@ -413,9 +413,9 @@ r.check("federation_bind_existing: an OIDC account is not bound via the name "
 
 # The operator decides explicitly: then it binds.
 qa.federation_unbind("ldap", oc["id"])
-u = _sign_in(qa, "chefin", {"id": "uuid-chefin"}, pw="ldap-pw")
+u = _sign_in(qa, "boss", {"id": "uuid-boss"}, pw="ldap-pw")
 r.check("federation_unbind also opens for a name from another source",
-        u is not None and u["id"] == oc["id"] and qa.store.get_federated_identifier("ldap", oc["id"]) == "uuid-chefin")
+        u is not None and u["id"] == oc["id"] and qa.store.get_federated_identifier("ldap", oc["id"]) == "uuid-boss")
 
 # Renaming: the new name no longer comes from the source.
 st, _ = _oidc_sign_in(qa, qapp, {"sub": "otto-sub", "preferred_username": "otto"})
@@ -431,13 +431,13 @@ r.check("Self-renamed: origin deleted, marker \"self-chosen\" set",
         _source(qa, uw) is None and _flag(qa, uw) == 1)
 
 # (b) SAML creates `manager`; the real boss from the directory is admin (PoC a1-01, variant B).
-_ldap_to_it = dict(ldap_enabled=True, ldap_url="ldap://verzeichnis.example.com", ldap_allow_plaintext=True,
+_ldap_to_it = dict(ldap_enabled=True, ldap_url="ldap://directory.example.com", ldap_allow_plaintext=True,
                   ldap_auto_create=True)
 qs = _saml(ldap_group_role_map={"cn=admins": "__admin__"}, **_ldap_to_it)
 qs.create_user("owner", password=PW, is_admin=True)
-sa = qs._check_saml("nid-angreifer", {"uid": ["chefin"]})
-u = _sign_in(qs, "chefin", {"id": "uuid-chefin", "groups": ["cn=admins"]}, pw="ldap-pw")
-sa2 = qs._check_saml("nid-angreifer", {"uid": ["chefin"]})
+sa = qs._check_saml("nid-attacker", {"uid": ["boss"]})
+u = _sign_in(qs, "boss", {"id": "uuid-boss", "groups": ["cn=admins"]}, pw="ldap-pw")
+sa2 = qs._check_saml("nid-attacker", {"uid": ["boss"]})
 r.check("PoC a1-01 (SAML): origin saml; the directory admin does not land in the SAML account, "
         "and the attacker is not an admin afterwards",
         _source(qs, sa["id"]) == "saml" and u is None and sa2 is not None and sa2["id"] == sa["id"]
@@ -447,8 +447,8 @@ r.check("PoC a1-01 (SAML): origin saml; the directory admin does not land in the
 # (c) Opposite direction: LDAP has created `manager`, a SAML self-registrant chooses `uid=chefin`.
 # Without the bolt this would not have been a privilege escalation but the takeover of the account itself.
 gr = _saml(**_ldap_to_it)
-real = _sign_in(gr, "chefin", {"id": "uuid-chefin"}, pw="ldap-pw")
-given = gr._check_saml("nid-angreifer", {"uid": ["chefin"]})
+real = _sign_in(gr, "boss", {"id": "uuid-boss"}, pw="ldap-pw")
+given = gr._check_saml("nid-attacker", {"uid": ["boss"]})
 r.check("Opposite direction: a SAML name does not bind the account created by LDAP (no takeover)",
         real is not None and _source(gr, real["id"]) == "ldap" and given is None
         and gr.store.get_federated_identifier("saml", real["id"]) is None, str(given))
@@ -463,7 +463,7 @@ r.check("LDAP without identifier creates: origin ldap, placeholder",
         pit is not None and _source(ps, pit["id"]) == "ldap"
         and ps.store.get_federated_identifier("ldap", pit["id"]) == f"{Store.WITHOUT_IDENTIFIER}{pit['id']}")
 r.check("… another source (SAML) does not bind it via the name",
-        ps._check_saml("nid-fremd", {"uid": ["pit"]}) is None)
+        ps._check_saml("nid-foreign", {"uid": ["pit"]}) is None)
 u = _sign_in(ps, "pit", {"id": "uuid-pit"})
 r.check("… the same source replaces its placeholder with the real identifier",
         u is not None and u["id"] == pit["id"] and ps.store.get_federated_identifier("ldap", pit["id"]) == "uuid-pit",
@@ -490,7 +490,7 @@ ids = {n: m.create_user(n) for n in ("anna", "bert", "cara", "dora", "emil", "fr
                                       "jo", "kim", "lea")}
 ids["hans"] = m.create_user("hans", password=PW)
 ids["ina"] = m.create_user("ina", self_chosen_name=True)
-m.create_service("dienst")
+m.create_service("service")
 m.store.link_federated("ldap", "u-fritz", ids["fritz"], now())
 m.store.link_federated("ldap", f"{Store.WITHOUT_IDENTIFIER}{ids['lea']}", ids["lea"], now())
 m.store.set_disabled(ids["jo"], True, through_operator=True)
@@ -536,7 +536,7 @@ r.check("… rejected with reason: unproven mail value as name, self-chosen, dis
         == [("gina", "address_as_name"), ("ina", "self_chosen_name"), ("jo", "disabled")],
         str(tr["refused"]))
 r.check("… account with local password only reported; service accounts and bound ones not asked at all",
-        _names(tr, "local_password") == ["hans"] and "dienst" not in vz.asked and "fritz" not in vz.asked,
+        _names(tr, "local_password") == ["hans"] and "service" not in vz.asked and "fritz" not in vz.asked,
         str(vz.asked))
 with Recording() as log:
     start_from = m.federation_bind_existing("ldap", apply=True)
@@ -574,27 +574,27 @@ sara, tom, udo = z.create_user("sara"), z.create_user("tom"), z.create_user("udo
 zb = z.create_user("zeno", self_chosen_name=True)
 z.store.link_federated("saml", "nid-udo", udo, now())
 empty = z.create_user("leer")
-zr = z.federation_bind_existing("saml", mapping={"sara": "nid-sara", "tom": "nid-udo", "niemand": "nid-x",
+zr = z.federation_bind_existing("saml", mapping={"sara": "nid-sara", "tom": "nid-udo", "nobody": "nid-x",
                                                  "zeno": "nid-zeno", "leer": ""}, apply=True)
 r.check("SAML with mapping: binds, refuses the identifier of another account, reports the unknown",
         _bound(z).get(sara) == "nid-sara" and tom not in _bound(z) and empty not in _bound(z)
         and [e["username"] for e in zr["conflict"]] == ["tom"] and _names(zr, "no_identifier") == ["leer"]
         and sorted((e["username"], e["reason"]) for e in zr["refused"])
-        == [("niemand", "no_account"), ("zeno", "self_chosen_name")], str(zr))
+        == [("nobody", "no_account"), ("zeno", "self_chosen_name")], str(zr))
 u = z._check_saml("nid-sara", {"uid": ["sara"]})
 r.check("… afterwards sara signs in via the NameID", u is not None and u["id"] == sara)
 zd = _saml()
-zd.create_user("doppel1"), zd.create_user("doppel2")
-zdr = zd.federation_bind_existing("saml", mapping={"doppel1": "nid-d", "doppel2": "nid-d"}, apply=True)
+zd.create_user("double1"), zd.create_user("double2")
+zdr = zd.federation_bind_existing("saml", mapping={"double1": "nid-d", "double2": "nid-d"}, apply=True)
 r.check("Mapping with duplicate (two accounts, one identifier): none bound",
-        _bound(zd) == {} and sorted(e["username"] for e in zdr["conflict"]) == ["doppel1", "doppel2"])
+        _bound(zd) == {} and sorted(e["username"] for e in zdr["conflict"]) == ["double1", "double2"])
 try:
     zd.federation_bind_existing("saml")
     _saml_without = False
 except ValueError:
     _saml_without = True
 foreign = _ldap()
-foreign.ldap = type("NurAnmelden", (), {"authenticate": lambda self, u, p: None})()
+foreign.ldap = type("OnlySignin", (), {"authenticate": lambda self, u, p: None})()
 try:
     foreign.federation_bind_existing("ldap")
     _without_search = False
@@ -624,7 +624,7 @@ except ImportError:
 if ldap3 is not None:
 
     GUID = bytes(range(16))
-    _srv = ldap3.Server("mock-verzeichnis", get_info=ldap3.NONE)
+    _srv = ldap3.Server("mock-directory", get_info=ldap3.NONE)
     _fill = ldap3.Connection(_srv, client_strategy=ldap3.MOCK_SYNC)
     _fill.strategy.add_entry("cn=svc,dc=example,dc=com", {"objectClass": "person", "userPassword": "svc-pw"})
     _fill.strategy.add_entry("uid=alice,ou=people,dc=example,dc=com",
@@ -653,7 +653,7 @@ if ldap3 is not None:
     ldap3.Connection = _MockConnection
     try:
         such = LDAPClient(TinySesamConfig(
-            db_path=":memory:", ldap_enabled=True, ldap_url="ldap://verzeichnis.example.com",
+            db_path=":memory:", ldap_enabled=True, ldap_url="ldap://directory.example.com",
             ldap_allow_plaintext=True, ldap_bind_dn="cn=svc,dc=example,dc=com", ldap_bind_password="svc-pw",
             ldap_user_base="ou=people,dc=example,dc=com", ldap_user_filter="(uid={username})"))
         t_alice, t_carl, t_bob, t_empty = (such.entry_search(x) for x in ("alice", "carl", "bob", "nobody"))
@@ -664,13 +664,13 @@ if ldap3 is not None:
         r.check("ldap3: two entries under the name → both (exactly one is required), none → empty",
                 sorted(t["id"] for t in t_bob) == ["e-bob-1", "e-bob-2"] and t_empty == [], str(t_bob))
         tmpl = LDAPClient(TinySesamConfig(
-            db_path=":memory:", ldap_enabled=True, ldap_url="ldap://verzeichnis.example.com",
+            db_path=":memory:", ldap_enabled=True, ldap_url="ldap://directory.example.com",
             ldap_allow_plaintext=True, ldap_user_dn_template="uid={username},ou=people,dc=example,dc=com"))
         r.check("ldap3 direct-bind template: BASE search on the built DN (anonymous), no DN → empty",
                 [t["id"] for t in tmpl.entry_search("carl")] == ["e-carl"] and tmpl.entry_search("nobody") == [])
         wrong = LDAPClient(TinySesamConfig(
-            db_path=":memory:", ldap_enabled=True, ldap_url="ldap://verzeichnis.example.com",
-            ldap_allow_plaintext=True, ldap_bind_dn="cn=svc,dc=example,dc=com", ldap_bind_password="falsch",
+            db_path=":memory:", ldap_enabled=True, ldap_url="ldap://directory.example.com",
+            ldap_allow_plaintext=True, ldap_bind_dn="cn=svc,dc=example,dc=com", ldap_bind_password="wrong",
             ldap_user_base="ou=people,dc=example,dc=com"))
         try:
             wrong.entry_search("alice")
@@ -678,7 +678,7 @@ if ldap3 is not None:
         except DirectoryNotReachable:
             _service = True
         r.check("ldap3: a rejected service account is an outage, not \"not in the directory\"", _service)
-        e2e = _ldap(ldap_url="ldap://verzeichnis.example.com", ldap_bind_dn="cn=svc,dc=example,dc=com",
+        e2e = _ldap(ldap_url="ldap://directory.example.com", ldap_bind_dn="cn=svc,dc=example,dc=com",
                     ldap_bind_password="svc-pw", ldap_user_base="ou=people,dc=example,dc=com")
         ea, eb = e2e.create_user("alice"), e2e.create_user("bob")
         eb_ber = e2e.federation_bind_existing("ldap", apply=True)
@@ -687,7 +687,7 @@ if ldap3 is not None:
         # The sign-in path reads the identifier the same way (`authenticate` → `_stable_identifier`): a GUID
         # that happens to be valid UTF-8 was decoded by ldap3 without a schema into text with control characters —
         # the form check rejected it, the person never got in via LDAP.
-        login = _ldap(ldap_url="ldap://verzeichnis.example.com", ldap_bind_dn="cn=svc,dc=example,dc=com",
+        login = _ldap(ldap_url="ldap://directory.example.com", ldap_bind_dn="cn=svc,dc=example,dc=com",
                       ldap_bind_password="svc-pw", ldap_user_base="ou=people,dc=example,dc=com")
         ul = login._check_ldap("alice", "pw-alice")
         r.check("ldap3 sign-in: the same GUID as hex, the new account is bound to it",
@@ -723,7 +723,7 @@ with Recording() as log:
     sm = _ldap(path)
 r.check("… after the existing-account binding: no line any more", not log.lines("without a binding to an identifier"),
         str(log.lines("without a binding")))
-sm.create_user("spaet")
+sm.create_user("late")
 _alternate(sm, days=31)
 sm.store.db.close()
 with Recording() as log:

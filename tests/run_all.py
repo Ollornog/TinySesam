@@ -95,8 +95,8 @@ def _fail_output(from_: str) -> str:
     if len(from_) > FAIL_END and "\n" in end:
         end = end.split("\n", 1)[1]          # do not start in the middle of a word
     before = [z for z in from_[: len(from_) - len(end)].splitlines() if z.lstrip().startswith("FEHL ")]
-    head = ("  ── gescheiterte Prüfungen oberhalb des Ausschnitts ──\n" + "\n".join(before) + "\n"
-            "  ── Ende der Ausgabe ──\n") if before else ""
+    head = ("  ── failed checks above the excerpt ──\n" + "\n".join(before) + "\n"
+            "  ── end of output ──\n") if before else ""
     return head + end
 
 def warning_filter() -> str:
@@ -208,7 +208,7 @@ def main(argv):
     try:
         jobs = jobs_determine()
     except ValueError as error:
-        print(f"FEHLER: {error}", file=sys.stderr)
+        print(f"ERROR: {error}", file=sys.stderr)
         return 2
     print(f"▸ Test-Jobs: {jobs}", flush=True)
     ok, skipped, failed = [], [], []
@@ -224,7 +224,7 @@ def main(argv):
         for path, future in zip(files, running):
             name = os.path.basename(path)
             if future is None:
-                print(f"  ??   {name} (nicht gefunden)", flush=True)
+                print(f"  ??   {name} (not found)", flush=True)
                 failed.append(name)
                 continue
             r = future.result()
@@ -249,7 +249,7 @@ def main(argv):
         # On Ctrl-C do not start any more waiting suites; let running ones finish.
         pool.shutdown(wait=True, cancel_futures=True)
     total = len(files)
-    print(f"\n{len(ok)}/{total} grün, {len(skipped)} übersprungen, {len(failed)} fehlgeschlagen")
+    print(f"\n{len(ok)}/{total} green, {len(skipped)} skipped, {len(failed)} failed")
     if failed:
         return 1
 
@@ -261,14 +261,14 @@ def main(argv):
     # "✓ all green" above it. The same class of bug that exit 77 was introduced against, just
     # one level higher.
     if not ok:
-        print("\nFEHLER: keine einzige Suite ist gelaufen — das ist kein grüner Lauf.",
+        print("\nERROR: not a single suite ran — that is not a green run.",
               file=sys.stderr)
         return 1
     share = len(skipped) / total if total else 0
     if share > 0.5:
-        print(f"\nFEHLER: {len(skipped)} von {total} Suiten übersprungen ({share:.0%}). "
-              "Ein Lauf, der mehr abwinkt als misst, ist keine Aussage — fehlende Voraussetzungen "
-              "nachinstallieren oder die Auswahl einschränken.", file=sys.stderr)
+        print(f"\nERROR: {len(skipped)} of {total} suites skipped ({share:.0%}). "
+              "A run that waves off more than it measures says nothing — missing prerequisites "
+              "must be installed, or narrow the selection.", file=sys.stderr)
         return 1
     return 0
 

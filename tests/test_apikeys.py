@@ -44,7 +44,7 @@ print("  ✓ require_role via key (service has 'editor')")
 
 # missing/wrong key → 401
 assert c.get("/who").status_code == 401
-assert c.get("/who", headers={"X-API-Key": "tsk_falsch"}).status_code == 401
+assert c.get("/who", headers={"X-API-Key": "tsk_wrong"}).status_code == 401
 print("  ✓ missing/invalid key → 401")
 
 # Revocation = blocking (not deleting) → invalid immediately, key stays in the list
@@ -69,7 +69,7 @@ app2 = FastAPI()
 app2.include_router(auth.router())
 
 
-@app2.get("/nur-admin")
+@app2.get("/only-admin")
 def only_admin(u=Depends(auth.require_admin)):
     return {"ok": True, "via": u.get("_via")}
 
@@ -88,7 +88,7 @@ _human = auth.create_api_key(_admin_id, name="cli", kind="human")
 _a = c2.get("/wer", headers={"X-API-Key": _automaton["key"]})
 assert _a.status_code == 200 and _a.json()["user"] == "admin", _a.text[:120]
 assert _a.json()["admin"] is False, "the automation key carries the admin flag along"
-assert c2.get("/nur-admin", headers={"X-API-Key": _automaton["key"]}).status_code == 403
+assert c2.get("/only-admin", headers={"X-API-Key": _automaton["key"]}).status_code == 403
 print("  ✓ Automation key: signed in yes, admin no (R6-5)")
 
 # The human key alone is worthless — it only counts together with a session of the same account.
@@ -109,11 +109,11 @@ assert c4.get("/wer", headers={"X-API-Key": _human["key"]}).json()["user"] == "z
 print("  ✓ …and only together with the session of ITS account")
 
 # Expiry: the default applies, unlimited needs explicit permission.
-_with_default = auth.create_api_key(svc, name="mit-vorgabe")
+_with_default = auth.create_api_key(svc, name="with-default")
 assert _with_default["expires_at"] is not None
 assert abs((_with_default["expires_at"] - int(__import__("time").time())) / 86400 - 90) < 1
 try:
-    auth.create_api_key(svc, name="ewig", expires_days=0)
+    auth.create_api_key(svc, name="eternal", expires_days=0)
     raise AssertionError("an unlimited key got through without permission")
 except ConfigError:
     pass
@@ -121,12 +121,12 @@ _free = TinySesam(TinySesamConfig(db_path=os.path.join(tempfile.mkdtemp(), "t.db
                                   passkey_enabled=False, cookie_secure=False,
                                   apikey_allow_unlimited=True))
 _uid_free = _free.create_service("geraet")
-assert _free.create_api_key(_uid_free, name="dauer", expires_days=0)["expires_at"] is None
+assert _free.create_api_key(_uid_free, name="duration", expires_days=0)["expires_at"] is None
 print("  ✓ Expiry: 90 days as default, unlimited only with apikey_allow_unlimited")
 
 # An unknown kind is an error, not a silent assumption.
 try:
-    auth.create_api_key(svc, name="quatsch", kind="halbstark")
+    auth.create_api_key(svc, name="nonsense", kind="halfstrong")
     raise AssertionError("unknown kind got through")
 except ConfigError:
     pass

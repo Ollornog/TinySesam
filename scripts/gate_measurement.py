@@ -49,10 +49,10 @@ def free_port() -> int:
 def main(n: int) -> None:
     tmp = tempfile.mkdtemp()
     auth = TinySesam(TinySesamConfig(
-        csrf_enabled=False, lang="de", db_path=os.path.join(tmp, "t.db"), rp_name="Messung",
+        csrf_enabled=False, lang="de", db_path=os.path.join(tmp, "t.db"), rp_name="Measurement",
         passkey_enabled=False, oidc_enabled=False, cookie_secure=False, forward_auth_enabled=True,
         base_url=ISS, trusted_redirect_hosts=["app.example.com"], gate_token_enabled=True))
-    auth.create_user("anna", "geheim123")
+    auth.create_user("anna", "secret123")
     app = FastAPI()
     app.include_router(auth.router())
     s = socket.socket()
@@ -63,7 +63,7 @@ def main(n: int) -> None:
     threading.Thread(target=lambda: server.run(sockets=[s]), daemon=True).start()
 
     tc = TestClient(app)
-    tc.post("/auth/login", data={"username": "anna", "password": "geheim123", "next": "/"},
+    tc.post("/auth/login", data={"username": "anna", "password": "secret123", "next": "/"},
             follow_redirects=False)
     session = f"{auth.session_cookie_name}={tc.cookies.get(auth.session_cookie_name)}"
     r = tc.get("/auth/forward", headers={"X-Forwarded-Proto": "https", "X-Forwarded-Host": "app.example.com",
