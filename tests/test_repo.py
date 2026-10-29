@@ -1406,7 +1406,12 @@ print(f"  READMEs: Python range correct ({_spanne})")
 # it is in both READMEs. The fields are listed completely in CONFIGURATION.md.
 import json as _json  # noqa: E402
 _ablage = _json.loads(_lies("tests/api_surface.json"))
-_stufe_b = sorted({n for _bereich, _eintraege in _ablage.items() if _bereich != "TinySesamConfig.felder"
+# The contract areas (hook, HTTP routes, security log; PO decision 2026-10-29) are not Python building blocks:
+# their documentation is the generated API.md and docs/OPERATIONS.md, checked right below.
+_vertrag = ("TinySesam.attributes", "TinySesam.event_payload", "http.routes", "http.forward", "http.contract",
+            "log.loggers", "log.lines")
+_stufe_b = sorted({n for _bereich, _eintraege in _ablage.items()
+                   if _bereich != "TinySesamConfig.felder" and _bereich not in _vertrag
                    for n, _e in _eintraege.items() if isinstance(_e, dict) and _e.get("stufe") == "B"})
 assert len(_stufe_b) >= 50, f"only {len(_stufe_b)} B names in tests/api_surface.json — baseline broken?"
 for _datei, _kopf in (("README.md", "### For advanced use (tier B)"),
@@ -1423,6 +1428,37 @@ for _datei, _kopf in (("README.md", "### For advanced use (tier B)"),
         assert _name in _text, f"{_datei} does not document {_name}"
 print(f"  READMEs: all {len(_stufe_b)} B building blocks in the section for advanced users, "
       "the used A names documented")
+
+# ---------- The contract beyond the Python names is documented (PO decision 2026-10-29) ----------
+# The measurement is tests/test_api_surface.py; here the documentation is held against it: API.md has the
+# generated sections, both READMEs the paragraph, and docs/OPERATIONS.md names every event word and every literal
+# value of the security log and every logger — a promise the operator cannot read is no promise to them.
+for _kopf in ("## A · Attributes of `TinySesam`", "## HTTP contract", "### A · Forward and gate — for reverse proxies",
+              "### B · Pages and API routes", "## A · Security log — for fail2ban and log shipping"):
+    assert _kopf in _apidoc, f"API.md without section {_kopf!r} — `python3 scripts/_api_docs.py`"
+for _datei, _kopf in (("README.md", "**Beyond the Python names**"), ("i18n/README.de.md", "**Über die Python-Namen hinaus**")):
+    assert _kopf in _readmes[_datei], f"{_datei} without the paragraph {_kopf!r} on the contract beyond the Python names"
+_betrieb = _lies("docs/OPERATIONS.md")
+assert "## Security log contract (fail2ban and log shipping)" in _betrieb, "docs/OPERATIONS.md: security log contract missing"
+_betrieb_abschnitt = _betrieb.split("## Security log contract (fail2ban and log shipping)", 1)[1].split("\n## ", 1)[0]
+_lueckenhaft = []
+for _name in _ablage["log.lines"]:
+    _art, _, _rest = _name.partition(":")
+    if _art == "event" and f"`{_rest}`" not in _betrieb_abschnitt:
+        _lueckenhaft.append(_name)
+    elif _art == "value":
+        _schluessel, _, _wert = _rest.partition("=")
+        if f"`{_wert}`" not in _betrieb_abschnitt or f"`{_schluessel}=`" not in _betrieb_abschnitt:
+            _lueckenhaft.append(_name)
+    elif _art == "format" and f"`{_rest}`" not in _betrieb_abschnitt:
+        _lueckenhaft.append(_name)
+for _name in _ablage["log.loggers"]:
+    if f"`{_name}`" not in _betrieb_abschnitt:
+        _lueckenhaft.append("logger:" + _name)
+assert not _lueckenhaft, ("docs/OPERATIONS.md, “Security log contract” does not name:\n  "
+                          + "\n  ".join(_lueckenhaft))
+print(f"  contract beyond the Python names: API.md sections, README paragraphs and the operator page name "
+      f"{len(_ablage['log.lines'])} log atoms and {len(_ablage['log.loggers'])} loggers")
 
 # ---------- The installation leads with the pinned PyPI path ----------
 # Until 2026-09-27 this guard forbade every PyPI line ("only from 1.0") — by then TinySesam had been

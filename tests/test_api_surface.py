@@ -1724,6 +1724,10 @@ def vertrag_befunde(datei: dict, jetzt: dict, live_routen: "dict | None" = None,
         if CT.canonical_header(h) not in angemeldet:
             befunde.append(f"http.forward: 'forward: signed in' does not carry {h} although "
                            "TinySesam.FORWARD_HEADERS_DEFAULT names it")
+    for w in sorted(CT.filter_words()):
+        if f"event:{w}" not in jetzt["log.lines"]:
+            befunde.append(f"log.lines: the shipped fail2ban filters name the event word {w!r}, "
+                           "but no log call produces it any more")
     if live_routen is not None:
         befunde += [f"http.routes: {z}" for z in CT.routes_differences(jetzt["http.routes"], live_routen)]
     return befunde
@@ -1814,14 +1818,13 @@ def selbstpruefung_vertrag(jetzt: dict) -> None:
     pruefe("log.lines", log, verbogen("security.py", 'logging.Formatter("%(asctime)s %(levelname)s %(message)s")',
                                       'logging.Formatter("%(levelname)s %(message)s")'),
            "format:%(asctime)s %(levelname)s %(message)s", "format:%(levelname)s %(message)s")
-    # An event word the shipped filters name that no call produces any more is refused outright.
-    try:
-        log(verbogen("manager.py", '"deferred %s user=%s ip=%s reason=pending"',
-                     '"postponed %s user=%s ip=%s reason=pending"'))
-    except CT.MeasurementError as e:
-        assert "deferred login" in str(e), e
-    else:
-        raise AssertionError("a vanished event word that a shipped filter names went unnoticed")
+    # An event word the shipped filters name that no call produces any more is a finding of its own.
+    pruefe("log.lines", log, verbogen("manager.py", '"deferred %s user=%s ip=%s reason=pending"',
+                                      '"postponed %s user=%s ip=%s reason=pending"'), "event:deferred login")
+    ohne_wort = json.loads(json.dumps(jetzt))
+    ohne_wort["log.lines"].remove("event:deferred login")
+    assert any("'deferred login'" in z for z in vertrag_befunde(stufen_voll(jetzt), ohne_wort)), \
+        "a vanished event word that a shipped filter names went unnoticed"
     # the payload of the hook: a renamed key is gone, a new key is only an extension
     vor = CT.event_payload(quellen)
     nach = CT.event_payload(verbogen("manager.py", '_security_event("username_changed", user_id, old=alt, new=name)',

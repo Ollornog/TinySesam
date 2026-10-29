@@ -24,9 +24,11 @@ The configuration fields are in [CONFIGURATION.md](CONFIGURATION.md): 172 of 173
 
 **English, names as well as values** (since 0.22.0, without alias): The names of tiers A and B, their parameters and the keys and values they return or accept — result dicts, the `details` passed to `on_security_event`, the context of your own pages (`ctx["prefix"]`, `ctx["purpose"]`), the JSON responses of the routes, the kinds of API keys (`automation`, `human`). Audit and log lines stay as they were. The list old → new is in the CHANGELOG for 0.22.0.
 
+**Beyond the Python names** (PO decision 2026-10-29): `auth.cfg` and `auth.on_security_event`, the HTTP routes (the forward and gate contract that proxies use in tier A, the HTML pages in tier B) and the logger names and security-log lines that fail2ban filters read (tier A) are measured and tiered like the names above — see the sections “Attributes of `TinySesam`”, “HTTP contract” and “Security log” below. For these entries the tier-A clock starts with the release that introduces them, not with 0.22.0; the names above keep theirs.
+
 **`auth.store` is internals** (tier C): the storage layer of the built-in routes, without tier, without promise and without transition period — its methods can change with every release. What an app needs is listed below as a method of `TinySesam` (e.g. `set_disabled` instead of `auth.store.set_disabled`).
 
-**Status:** A 266 · B 66 · C 38 names.
+**Status:** A 372 · B 151 · C 38 names.
 
 ## A · Methods of `TinySesam`
 
@@ -677,6 +679,214 @@ Check the configuration again — for the case that it was changed after setup.
 ### `tinysesam.current_version() -> str`
 
 Installed version — preferably the distribution metadata, which are also correct when TinySesam is a dependency inside a foreign app.
+
+## A · Attributes of `TinySesam`
+
+Instance attributes — measured on a probe instance, recorded in `tests/api_surface.json`.
+
+### `auth.cfg`
+
+`auth.cfg` is the `TinySesamConfig` instance that was passed to the constructor (the same object, not a copy). **Reading it is promised**: the attribute name, its type, and the fields (each with its own tier, [CONFIGURATION.md](CONFIGURATION.md)). **Writing it is not promised.** The object is a plain, mutable dataclass; which fields are read once at construction and which on every request is not part of the promise, and a field changed afterwards can bypass the checks the constructor made — `TinySesamConfig.validate()` (tier A) re-checks, and `router()` and `admin_router()` check again before they build their routes.
+
+Measured: TinySesamConfig; the instance passed to the constructor: True; frozen: False.
+
+### `auth.on_security_event`
+
+`auth.on_security_event` is a plain attribute you set to a callable (default `None`). TinySesam calls `hook(event, account, details)` for every event in `TinySesam.SECURITY_EVENTS`: `event` is the event name, `account` a dict with `id`, `username`, `email`, `display_name`, `details` a dict whose keys are listed below per event. The call is synchronous, inside the request, **after** the change has been written. An exception in the hook does not abort the operation; it lands in the security log. TinySesam sends nothing itself — which mail, which channel, which language is up to the app.
+
+Measured: `Optional[Callable[[str, dict, dict], Any]] = None; hook(str, dict, dict); account keys: display_name, email, id, username; called synchronously (1 call per change); after the change is written; a failing hook does not abort the operation (change written)`.
+
+### Payload of `on_security_event`
+
+The keys of the `details` dict per event, read from the call sites. A key that goes away breaks whoever reads it; a key that is added breaks nobody. (The English wording of the keys is guarded separately.)
+
+| Event | Keys in `details` |
+|---|---|
+| `api_key_created` | `key_id`, `name` |
+| `api_key_revoked` | `key_id` |
+| `api_keys_revoked` | `count`, `reason` |
+| `email_changed` | `new`, `old` |
+| `passkey_added` | `name` |
+| `passkey_removed` | `passkey_id` |
+| `password_changed` | — |
+| `pin_disabled` | — |
+| `pin_set` | — |
+| `recovery_code_used` | `remaining` |
+| `recovery_codes_generated` | `count` |
+| `totp_disabled` | `recovery_codes_deleted` |
+| `totp_enabled` | — |
+| `username_changed` | `new`, `old` |
+
+## HTTP contract
+
+The routes of the built-in router and the admin panel, read from the source (every route a feature flag can switch on, whether or not the extra is installed) and compared with what FastAPI reports for a probe instance. A route exists when its feature is on; the flag is the one named in [README.md](README.md). **Path and method are the promise.** Query and form parameter names are listed and guarded; the JSON bodies some routes read are not measured. `<admin>` is where the admin router is mounted (`admin_path`, default `/auth/admin`), `<oidc_callback_path>` is the field of that name.
+
+### A · Forward and gate — for reverse proxies
+
+What a proxy (Caddy `forward_auth`, nginx `auth_request`, Traefik) and the application host's `/.tinysesam/*` paths depend on. A break here resets the 1.0 clock, like any tier-A name. The pages behind these routes (the sign-out page, the "Signed out" page) are HTML: their path, method, status and redirect target are promised, their appearance is not.
+
+#### Routes
+
+| Method | Path | Query / form parameters |
+|---|---|---|
+| GET | `/.tinysesam/after-logout` | — |
+| GET | `/.tinysesam/callback` | `query:code` |
+| GET | `/.tinysesam/logout` | `query:next`, `query:scope` |
+| POST | `/.tinysesam/logout` | `form:_csrf`, `form:next`, `form:scope` |
+| GET | `/.tinysesam/start` | `query:abgemeldet`, `query:rd` |
+| GET | `/auth/forward` | — |
+| GET | `/auth/gate/authorize` | `query:flow` |
+| GET | `/auth/gate/logged-out` | `query:host` |
+| GET | `/auth/gate/logout` | `query:host` |
+| POST | `/auth/gate/resume` | `form:_csrf`, `form:gate_host`, `form:next` |
+| GET | `/auth/verify` | — |
+
+#### Responses
+
+Observed on probe instances; values are recorded where they are the contract (`X-TinySesam-Reason`, `WWW-Authenticate`), of redirects only the path, of identity headers and cookies only the names (tokens differ on every run).
+
+| Case | Response |
+|---|---|
+| forward: API key | 200 \| headers: Remote-Email, Remote-Groups, Remote-Id, Remote-Name, Remote-User |
+| forward: not signed in | 401 \| WWW-Authenticate: FormBased realm="TinySesam" \| X-TinySesam-Location -> /auth/login |
+| forward: role missing (?roles=) | 403 \| X-TinySesam-Reason: role |
+| forward: role missing (X-TinySesam-Roles) | 403 \| X-TinySesam-Reason: role |
+| forward: role present (?roles=) | 200 \| headers: Remote-Email, Remote-Groups, Remote-Id, Remote-Name, Remote-User, X-TinySesam-Gate-Cookie |
+| forward: signed in | 200 \| headers: Remote-Email, Remote-Groups, Remote-Id, Remote-Name, Remote-User, X-TinySesam-Gate-Cookie |
+| forward: signed out of this application | 401 \| WWW-Authenticate: FormBased realm="TinySesam" \| X-TinySesam-Location -> /auth/login \| X-TinySesam-Reason: app-signed-out |
+| gate logout: host not protected | 404 |
+| gate logout: sign out everywhere | 303 \| Location -> /.tinysesam/after-logout \| cookies: __Host-tinysesam_gate (cleared), tinysesam_session (cleared) |
+| gate logout: sign out of this application only | 303 \| Location -> / \| cookies: __Host-tinysesam_gate (cleared) |
+| gateway authorize: signed in | 303 \| Location -> /.tinysesam/callback |
+| gateway authorize: unknown flow | 400 |
+| gateway callback: unknown code | 400 |
+| gateway callback: valid code | 303 \| Location -> /seite \| cookies: __Host-tinysesam_link, __Host-tinysesam_linkflow (cleared) |
+| gateway forward: not signed in | 401 \| WWW-Authenticate: FormBased realm="TinySesam" \| X-TinySesam-Location -> /.tinysesam/start |
+| gateway forward: signed in via the connection | 200 \| headers: Remote-Email, Remote-Groups, Remote-Id, Remote-Name, Remote-User, X-TinySesam-Gate-Cookie |
+| gateway logged-out page: host not protected | 400 |
+| gateway logout: host not protected | 400 |
+| gateway start | 303 \| Location -> /auth/gate/authorize \| cookies: __Host-tinysesam_linkflow |
+| gateway start: host not protected | 404 |
+| verify alias: signed in | 200 \| headers: Remote-Email, Remote-Groups, Remote-Id, Remote-Name, Remote-User, X-TinySesam-Gate-Cookie |
+
+#### Headers, reasons, inputs, cookies
+
+- **`X-TinySesam-*` headers** (request or response, see the table above): `X-TinySesam-Gate-Cookie`, `X-TinySesam-Location`, `X-TinySesam-Reason`, `X-TinySesam-Roles`.
+- **Values of `X-TinySesam-Reason`:** `app-missing`, `app-signed-out`, `app-stale`, `role` (`app-…` only with several OIDC clients).
+- **Request headers the forward and gate paths read:** `Accept`, `Authorization`, `Host`, `Referer`, `Sec-Fetch-Mode`, `Sec-Fetch-Site`, `X-Api-Key`, `X-Csrf-Token`, `X-Forwarded-For`, `X-Forwarded-Host`, `X-Forwarded-Proto`, `X-Forwarded-Uri`, `X-Original-Uri`, `X-Original-Url`, `X-TinySesam-Roles`.
+- **Request parameters:** `roles`.
+- **Cookies the gate sets itself** (host-only, fixed names): `__Host-tinysesam_link`, `__Host-tinysesam_linkflow`. The gate token cookie is named by the configuration field `gate_cookie_name`.
+
+### B · Pages and API routes
+
+The HTML pages (sign-in, registration, account, admin panel, the pages behind e-mailed links), the JSON routes of the account and admin APIs, the passkey, OIDC and SAML routes and the gateway's own `/` and `/healthz`. Path and method are promised with the weaker B promise: removed or renamed only after the CHANGELOG has announced it under “Deprecated” for two minor versions (a route cannot raise a Python warning). The HTML of a page is **not** promised, nor its look.
+
+| Method | Path | Query / form parameters |
+|---|---|---|
+| GET | `/` | — |
+| GET | `/auth/account` | — |
+| POST | `/auth/account/email` | — |
+| POST | `/auth/account/username` | — |
+| GET | `/auth/apikeys` | — |
+| POST | `/auth/apikeys` | — |
+| POST | `/auth/apikeys/{key_id}/revoke` | — |
+| GET | `/auth/claim-admin` | `query:token` |
+| GET | `/auth/email/{token}` | — |
+| POST | `/auth/email/{token}` | `form:_csrf` |
+| GET | `/auth/forgot` | — |
+| POST | `/auth/forgot` | `form:_csrf`, `form:email` |
+| GET | `/auth/invite/{token}` | — |
+| GET | `/auth/login` | `query:abgemeldet`, `query:app`, `query:error`, `query:gate_host`, `query:next` |
+| POST | `/auth/login` | `form:_csrf`, `form:next`, `form:password`, `form:remember`, `form:username` |
+| GET | `/auth/logout` | — |
+| POST | `/auth/logout` | `form:_csrf` |
+| GET | `/auth/magic/request` | `query:next` |
+| POST | `/auth/magic/request` | `form:_csrf`, `form:email`, `form:next` |
+| GET | `/auth/magic/{token}` | — |
+| POST | `/auth/magic/{token}` | `form:_csrf` |
+| GET | `/auth/me` | — |
+| GET | `/auth/oidc/start` | `query:app`, `query:next` |
+| POST | `/auth/passkey/delete` | — |
+| GET | `/auth/passkey/list` | — |
+| POST | `/auth/passkey/login/begin` | — |
+| POST | `/auth/passkey/login/finish` | `query:next` |
+| POST | `/auth/passkey/register/begin` | — |
+| POST | `/auth/passkey/register/finish` | `query:name` |
+| POST | `/auth/password` | — |
+| GET | `/auth/pin` | `query:error`, `query:next` |
+| POST | `/auth/pin` | `form:_csrf`, `form:next`, `form:pin`, `form:remember`, `form:username` |
+| POST | `/auth/pin/disable` | — |
+| POST | `/auth/pin/set` | — |
+| GET | `/auth/reauth` | `query:error`, `query:next` |
+| POST | `/auth/reauth` | `form:_csrf`, `form:code`, `form:next`, `form:password`, `form:pin` |
+| GET | `/auth/register` | `query:invite`, `query:next` |
+| POST | `/auth/register` | `form:_csrf`, `form:email`, `form:invite`, `form:next`, `form:password`, `form:username` |
+| GET | `/auth/reset` | `query:token` |
+| POST | `/auth/reset` | `form:_csrf`, `form:password`, `form:token` |
+| GET | `/auth/resource/{name}` | `query:error`, `query:next` |
+| POST | `/auth/resource/{name}` | `form:_csrf`, `form:next`, `form:secret` |
+| POST | `/auth/saml/acs` | — |
+| GET | `/auth/saml/login` | `query:next` |
+| GET | `/auth/saml/metadata` | — |
+| GET | `/auth/sessions` | — |
+| POST | `/auth/sessions/revoke` | — |
+| POST | `/auth/sessions/revoke-after-login` | — |
+| GET | `/auth/totp` | `query:error`, `query:next` |
+| POST | `/auth/totp` | `form:_csrf`, `form:code`, `form:next` |
+| POST | `/auth/totp/disable` | — |
+| POST | `/auth/totp/recovery` | — |
+| GET | `/auth/totp/setup` | `query:next` |
+| POST | `/auth/totp/setup` | `form:code`, `form:next` |
+| POST | `/auth/totp/setup/start` | `form:_csrf`, `form:next` |
+| GET | `/auth/verify/{token}` | — |
+| POST | `/auth/verify/{token}` | `form:_csrf` |
+| GET | `/healthz` | — |
+| GET | `<admin>` | — |
+| GET | `<admin>/api/audit` | `query:limit` |
+| POST | `<admin>/api/invite` | — |
+| POST | `<admin>/api/keys/{kid}/revoke` | — |
+| GET | `<admin>/api/resources` | — |
+| POST | `<admin>/api/resources` | — |
+| POST | `<admin>/api/resources/{name}/delete` | — |
+| GET | `<admin>/api/security` | — |
+| POST | `<admin>/api/security` | — |
+| GET | `<admin>/api/sessions` | — |
+| POST | `<admin>/api/sessions/revoke` | — |
+| GET | `<admin>/api/users` | — |
+| POST | `<admin>/api/users` | — |
+| POST | `<admin>/api/users/{uid}/delete` | — |
+| POST | `<admin>/api/users/{uid}/disable` | — |
+| GET | `<admin>/api/users/{uid}/keys` | — |
+| POST | `<admin>/api/users/{uid}/keys` | — |
+| POST | `<admin>/api/users/{uid}/owner` | — |
+| GET | `<admin>/api/users/{uid}/passkeys` | — |
+| POST | `<admin>/api/users/{uid}/passkeys/{cid}/delete` | — |
+| POST | `<admin>/api/users/{uid}/password` | — |
+| POST | `<admin>/api/users/{uid}/roles` | — |
+| POST | `<admin>/api/users/{uid}/username` | — |
+| GET | `<admin>/api/version` | — |
+| GET | `<oidc_callback_path>` | `query:code`, `query:error`, `query:state` |
+
+Hints to the account page's script, tier B: `X-TinySesam-Factor`, `X-TinySesam-Reauth`.
+
+## A · Security log — for fail2ban and log shipping
+
+What a filter matches. **Promised:** the logger names, the format of the log file, the event word at the start of a line, the key names in their order, and the literal values below. **Not promised:** anything after the keys (free text), the values of `user=`, `ip=` and of a `reason=` that is not listed, and every line that does not start with one of these event words.
+
+- **Loggers:** `tinysesam`, `tinysesam.mail`, `tinysesam.security` (`tinysesam.security` is the one the filters read; `security_log` in the configuration writes it to a file).
+- **Format of the log file:** `%(asctime)s %(levelname)s %(message)s`
+- **Lines** (level, event word, `|`, keys in order; `event` words: `deferred login`, `deferred verification`, `failed login`, `failed verification`, `login ok`, `repeated login`):
+  - `INFO login ok | user ip method unban`
+  - `INFO repeated login | user ip method`
+  - `WARNING deferred login | user ip reason`
+  - `WARNING deferred verification | user ip reason`
+  - `WARNING failed login | user ip method`
+  - `WARNING failed login | user ip method reason`
+  - `WARNING failed verification | user ip method`
+  - `WARNING failed verification | user ip method reason`
+- **Literal values** of `method=`, `reason=`, `unban=`: `method=blocked`, `method=claim_admin`, `method=oidc`, `method=passkey`, `method=password`, `method=password_change`, `method=reauth`, `method=resource`, `method=totp_setup`, `reason=account_locked`, `reason=pending`, `reason=unknown_key`, `unban=no`, `unban=yes`.
+
+The shipped fail2ban filters in `deploy/fail2ban/` are held against exactly these lines by `tests/test_fail2ban_reason.py`. Audit event names (`login_fail`, `forward_denied`, …) are in the audit log, not here, and are not part of this promise.
 
 ## C · Deprecated — removed with 1.0
 

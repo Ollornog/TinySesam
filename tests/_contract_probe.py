@@ -12,7 +12,7 @@ from urllib.parse import parse_qs, urlsplit
 from _contract import canonical_header
 
 PROXY = {"X-Forwarded-Proto": "https", "X-Forwarded-Host": "app.example.com", "X-Forwarded-Uri": "/seite"}
-PROBE_PASSWORD = "Probe-Pw-12345"
+PROBE_PW = "Probe-Pw-12345"
 
 
 def brief(resp) -> str:
@@ -64,9 +64,9 @@ def probe_instance(**extra):
 def sign_in(auth, app, create=False):
     from fastapi.testclient import TestClient
     if create:
-        auth.create_user("anna", PROBE_PASSWORD, roles=["redaktion"])
+        auth.create_user("anna", PROBE_PW, roles=["redaktion"])
     c = TestClient(app)
-    c.post("/auth/login", data={"username": "anna", "password": PROBE_PASSWORD, "next": "/"},
+    c.post("/auth/login", data={"username": "anna", "password": PROBE_PW, "next": "/"},
            follow_redirects=False)
     return c
 
@@ -78,56 +78,77 @@ def _cookie_value(resp, name: str) -> str:
 
 def forward_scenarios() -> dict:
     """{scenario: one-line description of the response} — status codes, headers and cookies of the forward
-    endpoint and the gate paths, observed on probe instances."""
+    endpoint and the gate paths, observed on probe instances.
+
+    A step that fails (a route gone, a cookie missing) is recorded as `ERROR <type>` instead of aborting the
+    probe: the comparison then names the scenario that changed, with its tier, rather than a traceback."""
     from fastapi.testclient import TestClient
-    s = {}
+    s, z = {}, {}
+
+    def schritt(name, fn):
+        try:
+            s[name] = fn()
+        except Exception as e:                        # noqa: BLE001 — a failing step IS the finding
+            s[name] = f"ERROR {type(e).__name__}"
+
     # --- forward auth in front of an application, gate token on (no central gateway) ---
     auth, app = probe_instance()
     anonym = TestClient(app)
-    s["forward: not signed in"] = brief(anonym.get("/auth/forward", headers=PROXY))
+    schritt("forward: not signed in", lambda: brief(anonym.get("/auth/forward", headers=PROXY)))
     c = sign_in(auth, app, create=True)
-    s["forward: signed in"] = brief(c.get("/auth/forward", headers=PROXY))
-    s["verify alias: signed in"] = brief(c.get("/auth/verify", headers=PROXY))
-    s["forward: role present (?roles=)"] = brief(c.get("/auth/forward?roles=chef,redaktion", headers=PROXY))
-    s["forward: role missing (?roles=)"] = brief(c.get("/auth/forward?roles=chef", headers=PROXY))
-    s["forward: role missing (X-TinySesam-Roles)"] = brief(
-        c.get("/auth/forward", headers={**PROXY, "X-TinySesam-Roles": "chef"}))
+    schritt("forward: signed in", lambda: brief(c.get("/auth/forward", headers=PROXY)))
+    schritt("verify alias: signed in", lambda: brief(c.get("/auth/verify", headers=PROXY)))
+    schritt("forward: role present (?roles=)",
+            lambda: brief(c.get("/auth/forward?roles=chef,redaktion", headers=PROXY)))
+    schritt("forward: role missing (?roles=)", lambda: brief(c.get("/auth/forward?roles=chef", headers=PROXY)))
+    schritt("forward: role missing (X-TinySesam-Roles)", lambda: brief(
+        c.get("/auth/forward", headers={**PROXY, "X-TinySesam-Roles": "chef"})))
     key = auth.create_api_key(auth.find_user("anna")["id"], name="probe")["key"]
-    s["forward: API key"] = brief(TestClient(app).get("/auth/forward",
-                                                      headers={**PROXY, "Authorization": f"Bearer {key}"}))
-    s["gate logout: host not protected"] = brief(
-        anonym.get("/.tinysesam/logout", headers={**PROXY, "X-Forwarded-Host": "other.example.org"}))
-    s["gate logout: sign out everywhere"] = brief(
-        sign_in(auth, app).get("/.tinysesam/logout?scope=all", headers=PROXY, follow_redirects=False))
-    s["gate logout: sign out of this application only"] = brief(
-        c.get("/.tinysesam/logout?scope=app", headers=PROXY, follow_redirects=False))
-    s["forward: signed out of this application"] = brief(c.get("/auth/forward", headers=PROXY))
+    schritt("forward: API key", lambda: brief(TestClient(app).get(
+        "/auth/forward", headers={**PROXY, "Authorization": f"Bearer {key}"})))
+    schritt("gate logout: host not protected", lambda: brief(
+        anonym.get("/.tinysesam/logout", headers={**PROXY, "X-Forwarded-Host": "other.example.org"})))
+    schritt("gate logout: sign out everywhere", lambda: brief(
+        sign_in(auth, app).get("/.tinysesam/logout?scope=all", headers=PROXY, follow_redirects=False)))
+    schritt("gate logout: sign out of this application only", lambda: brief(
+        c.get("/.tinysesam/logout?scope=app", headers=PROXY, follow_redirects=False)))
+    schritt("forward: signed out of this application", lambda: brief(c.get("/auth/forward", headers=PROXY)))
     # --- central gateway with code exchange (T-26) ---
     auth, app = probe_instance(gate_link_enabled=True)
     anonym = TestClient(app)
-    s["gateway forward: not signed in"] = brief(anonym.get("/auth/forward", headers=PROXY))
-    start = anonym.get("/.tinysesam/start?rd=/seite", headers=PROXY, follow_redirects=False)
-    s["gateway start"] = brief(start)
-    s["gateway start: host not protected"] = brief(
-        anonym.get("/.tinysesam/start", headers={**PROXY, "X-Forwarded-Host": "other.example.org"}))
-    s["gateway callback: unknown code"] = brief(anonym.get("/.tinysesam/callback?code=x", headers=PROXY))
-    s["gateway authorize: unknown flow"] = brief(anonym.get("/auth/gate/authorize?flow=x"))
-    s["gateway logout: host not protected"] = brief(anonym.get("/auth/gate/logout?host=other.example.org"))
-    s["gateway logged-out page: host not protected"] = brief(
-        anonym.get("/auth/gate/logged-out?host=other.example.org"))
+    schritt("gateway forward: not signed in", lambda: brief(anonym.get("/auth/forward", headers=PROXY)))
+
+    def start():
+        z["start"] = anonym.get("/.tinysesam/start?rd=/seite", headers=PROXY, follow_redirects=False)
+        return brief(z["start"])
+    schritt("gateway start", start)
+    schritt("gateway start: host not protected", lambda: brief(
+        anonym.get("/.tinysesam/start", headers={**PROXY, "X-Forwarded-Host": "other.example.org"})))
+    schritt("gateway callback: unknown code", lambda: brief(anonym.get("/.tinysesam/callback?code=x", headers=PROXY)))
+    schritt("gateway authorize: unknown flow", lambda: brief(anonym.get("/auth/gate/authorize?flow=x")))
+    schritt("gateway logout: host not protected", lambda: brief(anonym.get("/auth/gate/logout?host=other.example.org")))
+    schritt("gateway logged-out page: host not protected", lambda: brief(
+        anonym.get("/auth/gate/logged-out?host=other.example.org")))
     # the whole exchange: sign in on the gateway, authorize, redeem the code on the application's host
     c = sign_in(auth, app, create=True)
-    flow = parse_qs(urlsplit(start.headers["location"]).query)["flow"][0]
-    a = c.get(f"/auth/gate/authorize?flow={flow}", follow_redirects=False)
-    s["gateway authorize: signed in"] = brief(a)
-    code = parse_qs(urlsplit(a.headers["location"]).query)["code"][0]
-    cb = TestClient(app).get(f"/.tinysesam/callback?code={code}", follow_redirects=False, headers={
-        **PROXY, "Cookie": f"{auth._GATE_LINKFLOW_COOKIE}={_cookie_value(start, auth._GATE_LINKFLOW_COOKIE)}"})
-    s["gateway callback: valid code"] = brief(cb)
-    s["gateway forward: signed in via the connection"] = brief(TestClient(app).get(
+
+    def authorize():
+        flow = parse_qs(urlsplit(z["start"].headers["location"]).query)["flow"][0]
+        z["authorize"] = c.get(f"/auth/gate/authorize?flow={flow}", follow_redirects=False)
+        return brief(z["authorize"])
+    schritt("gateway authorize: signed in", authorize)
+
+    def callback():
+        code = parse_qs(urlsplit(z["authorize"].headers["location"]).query)["code"][0]
+        flow_cookie = _cookie_value(z["start"], auth._GATE_LINKFLOW_COOKIE)
+        z["callback"] = TestClient(app).get(f"/.tinysesam/callback?code={code}", follow_redirects=False, headers={
+            **PROXY, "Cookie": f"{auth._GATE_LINKFLOW_COOKIE}={flow_cookie}"})
+        return brief(z["callback"])
+    schritt("gateway callback: valid code", callback)
+    schritt("gateway forward: signed in via the connection", lambda: brief(TestClient(app).get(
         "/auth/forward", headers={**PROXY, "Cookie": f"{auth._GATE_LINK_COOKIE}="
-                                                    f"{_cookie_value(cb, auth._GATE_LINK_COOKIE)}"}))
-    return s
+                                                    f"{_cookie_value(z['callback'], auth._GATE_LINK_COOKIE)}"})))
+    return dict(sorted(s.items()))
 
 
 def hook_contract() -> str:
@@ -139,7 +160,7 @@ def hook_contract() -> str:
                           passkey_enabled=False, oidc_enabled=False)
     cfg.cookie_secure = False
     auth = TinySesam(cfg)
-    uid = auth.create_user("hookprobe", PROBE_PASSWORD)
+    uid = auth.create_user("hookprobe", PROBE_PW)
     gesehen = []
 
     def hook(ereignis, konto, details):
@@ -177,5 +198,7 @@ def cfg_attribute() -> str:
     cfg.cookie_secure = False
     auth = TinySesam(cfg)
     params = TinySesamConfig.__dataclass_params__
+    if not hasattr(auth, "cfg"):
+        return "attribute missing"
     return (f"{type(auth.cfg).__name__}; the instance passed to the constructor: {auth.cfg is cfg}; "
             f"frozen: {params.frozen}")
