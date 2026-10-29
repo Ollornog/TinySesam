@@ -43,7 +43,7 @@ r = c.get("/auth/forward", headers={"X-Forwarded-Proto": "https", "X-Forwarded-H
 assert r.status_code == 401
 loc = r.headers.get("X-TinySesam-Location")
 assert loc and loc.startswith("https://auth.example.com/auth/login?next=") and urlparse(parse_qs(urlparse(loc).query)["next"][0]).netloc == "app.example.com"
-ok("Forward-Auth: 401 + X-TinySesam-Location (zentraler Login, next=App-URL)")
+ok("Forward-Auth: 401 + X-TinySesam-Location (central login, next=app URL)")
 
 # ---------- Config from env ----------
 os.environ.update({
@@ -60,7 +60,7 @@ os.environ["TINYSESAM_LANG"] = "de"
 assert gateway.config_from_env().lang == "de"
 os.environ["TINYSESAM_LANG"] = "klingonisch"
 try:
-    gateway.config_from_env(); assert False, "unbekannte Sprache startet"
+    gateway.config_from_env(); assert False, "unknown language starts"
 except SystemExit as e:
     assert "TINYSESAM_LANG" in str(e)
 del os.environ["TINYSESAM_LANG"]
@@ -81,7 +81,7 @@ for good in ("/favicon.svg", "data:image/png;base64,iVBORw0KGgo="):
 for foreign in ("https://cdn.example.com/icon.png", "//cdn.example.com/icon.png", "javascript:alert(1)", "data:text/html,x"):
     os.environ["TINYSESAM_BRAND_ICON"] = foreign
     try:
-        gateway.config_from_env(); assert False, f"fremdes Favicon angenommen: {foreign}"
+        gateway.config_from_env(); assert False, f"foreign favicon accepted:{foreign}"
     except SystemExit as e:
         assert "TINYSESAM_BRAND_ICON" in str(e)
 del os.environ["TINYSESAM_BRAND_ICON"]
@@ -108,7 +108,7 @@ del os.environ["TINYSESAM_OIDC_ISSUER"]
 try:
     gateway.config_from_env(); assert False
 except SystemExit:
-    ok("fehlende Pflicht-Env → SystemExit (klare Fehlermeldung)")
+    ok("missing required env → SystemExit (clear error message)")
 
 # ---------- Start page and error pages (0.24.2) ----------
 sapp = gateway.build_app(TinySesamConfig.oidc_gateway(
@@ -187,7 +187,7 @@ _to = sqlite3.connect(":memory:", check_same_thread=False); _to.close()
 old_db, hstore.db = hstore.db, _to
 assert hc.get("/healthz").status_code == 503, "closed connection hidden behind the throttle"
 hstore.db = old_db
-ok(f"/healthz: 200 Proben → {_writes} commit(s); a dead connection is still noticed immediately")
+ok(f"/healthz: 200 probes → {_writes} commit(s); a dead connection is still noticed immediately")
 os.remove(hdb)
 
 os.remove(db)

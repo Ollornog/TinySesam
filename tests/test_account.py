@@ -114,7 +114,7 @@ ok("A-3: blocklist with Latin-1 and UTF-8 lines loads; unreadable path stays Con
 
 # A-5: context words also in their parts — the surname alone is the most obvious word of an
 # account `max.mustermann`, and comparing the whole name let it through.
-# (Mutation probe: return only `{_core(roh)}` in `passwords._context_parts` → red.)
+# (Mutation probe: return only `{_core(raw)}` in `passwords._context_parts` → red.)
 for _pw, _name, _mail in (("Mustermann1990!", "maxm", "max.mustermann@example.com"),
                           ("Schmidt1985!", "anna.schmidt", None),
                           ("Mueller2026!", "km", "k.mueller@example.com"),

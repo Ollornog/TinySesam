@@ -10,7 +10,7 @@ def ok(name):
     print(f"  ✓ {name}")
 
 
-sent = []   # abgefangene Mails
+sent = []   # intercepted mails
 
 db = os.path.join(tempfile.mkdtemp(), "t.db")
 auth = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db, rp_name="Test", passkey_enabled=False, oidc_enabled=False,
@@ -35,11 +35,11 @@ def secret_text(u=Depends(auth.require_user)):
 c = TestClient(app)
 JSON = {"Accept": "application/json"}
 
-# Login-Seite zeigt Magic-Option
+# login page shows the magic option
 assert "Login-Link per E-Mail" in c.get("/auth/login").text
-ok("Login-Seite zeigt Magic-Link-Option")
+ok("login page shows the magic-link option")
 
-# Request-Seite
+# request page
 assert "E-Mail" in c.get("/auth/magic/request").text
 
 # unknown address → same response, NO mail (no enumeration)
@@ -56,7 +56,7 @@ import re
 m = re.search(r"/auth/magic/([\w\-]+)", sent[0]["text"])
 assert m, sent[0]["text"]
 token = m.group(1)
-ok("bekannte Adresse: Anmelde-Link per Mail verschickt")
+ok("known address: sign-in link sent by mail")
 
 # not logged in yet
 assert c.get("/geheim", headers=JSON).status_code == 401
@@ -84,7 +84,7 @@ assert r.status_code == 400 and "ungültig" in r.text.lower()
 assert c2.get(f"/auth/magic/{token}", follow_redirects=False).status_code == 400
 ok("token is one-shot (second redemption invalid)")
 
-# abgelaufener Token
+# expired token
 raw = auth.create_magic_token("login", user_id=uid, email="admin@example.com", ttl_min=15, payload={"next": "/"})
 h = __import__("hashlib").sha256(raw.encode()).hexdigest()
 auth.store._exec("UPDATE magic_token SET expires_at=0 WHERE token_hash=?", (h,))
@@ -131,7 +131,7 @@ for _ in range(_limit + 3):
     _responses.add((_r.status_code, "unterwegs" in _r.text))
 assert len(sent) == _limit, (len(sent), _limit)
 assert _responses == {(200, True)}, _responses   # invisible to the outside (no enumeration)
-assert auth.store._all("SELECT * FROM audit WHERE event='mail_ratelimit'"), "Flut steht im Audit-Log"
+assert auth.store._all("SELECT * FROM audit WHERE event='mail_ratelimit'"), "flood is in the audit log"
 # … also via the direct API path (own forms of an app)
 assert auth.send_password_reset("admin@example.com", auth.cfg.base_url) is False
 assert len(sent) == _limit
@@ -307,7 +307,7 @@ _mailer_mod.smtplib.SMTP = _CertSMTP
 try:
     try:
         _mailer_mod.SMTPMailer(TinySesamConfig(smtp_host="mail.example.com"))("x@example.com", "s", "t")
-        assert False, "Zertifikatsfehler verschluckt"
+        assert False, "certificate error swallowed"
     except ssl.SSLCertVerificationError:
         pass
 finally:

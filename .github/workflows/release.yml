@@ -50,7 +50,7 @@ name: release
 # `workflow_dispatch`, `GITHUB_REF_NAME` is a branch name) or, had the comparison been missing,
 # publish from a branch. Now EVERY publishing step hangs on
 # `github.ref_type == 'tag'`; without a tag, a separate step checks what can be checked
-# (`scripts/_release.py --pruefen`: package, module, READMEs, compose example, CHANGELOG). So
+# (`scripts/_release.py --check`: package, module, READMEs, compose example, CHANGELOG). So
 # the dry run is a statement and not "skipped" — and the build runs exactly as it does for the tag
 # (the part that was red at the first tag after two months).
 #
@@ -121,7 +121,7 @@ jobs:
 
       - name: "Dry run: check the version states against each other (without a tag)"
         if: github.ref_type != 'tag'
-        run: python3 scripts/_release.py --pruefen
+        run: python3 scripts/_release.py --check
 
       # On a PR, ci.yml runs the same suite on the same commit (required checks `full`,
       # `minimal`, `browser`, `repeat`) — doing it again here would cost five minutes of waiting.

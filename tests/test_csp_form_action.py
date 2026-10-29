@@ -106,7 +106,7 @@ print("CSP form-action")
 head = urllib.request.urlopen(f"{BASE}/auth/login").headers["Content-Security-Policy"]
 fa = [d.strip() for d in head.split(";") if d.strip().startswith("form-action")]
 assert fa and fa[0].split()[1] == "'self'" and "localhost:*" in fa[0].split() and f"127.0.0.1:{APP}" in fa[0], head
-ok(f"Kopf: {fa[0]}")
+ok(f"Header: {fa[0]}")
 
 _profile = tempfile.mkdtemp()
 _log = tempfile.NamedTemporaryFile(prefix="chrome-", suffix=".log", delete=False)
@@ -120,7 +120,7 @@ def _ws_url():
     end = time.time() + float(os.environ.get("CHROME_START_TIMEOUT", "30"))
     while time.time() < end:
         if _chrome.poll() is not None:
-            raise RuntimeError(f"Chrome gestorben (Exit {_chrome.returncode})")
+            raise RuntimeError(f"Chrome died (exit {_chrome.returncode})")
         try:
             with open(file, encoding="utf-8") as fh:
                 port = int(fh.readline().strip())

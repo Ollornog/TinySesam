@@ -45,9 +45,9 @@ assert "Familienfotos" in c.get("/auth/resource/fotos").text
 assert "Zugangswort" in c.get("/auth/resource/wiki").text
 ok("unlock page: PIN field or passphrase field depending on kind")
 
-# falsches Geheimnis → 401
+# wrong secret → 401
 assert c.post("/auth/resource/fotos", data={"secret": "0000", "next": "/fotos"}).status_code == 401
-ok("falsches Geheimnis → 401")
+ok("wrong secret → 401")
 
 # correct PIN unlocks → access, without any user login
 r = c.post("/auth/resource/fotos", data={"secret": "2468", "next": "/fotos"}, follow_redirects=False)
@@ -62,7 +62,7 @@ assert r.status_code == 303
 assert c.get("/wiki", headers=JSON).json() == {"area": "wiki"}
 # fotos stays open in parallel
 assert c.get("/fotos", headers=JSON).status_code == 200
-ok("Freischaltung pro Bereich getrennt (Passphrase-Bereich separat)")
+ok("unlock is separate per area (passphrase area separately)")
 
 # lockout after too many failed attempts (pseudo user res:name)
 c2 = TestClient(app)
@@ -71,7 +71,7 @@ codes = [c2.post("/auth/resource/fotos", data={"secret": "0000", "next": "/"}).s
          for _ in range(LIMIT)]
 assert codes == [401] * LIMIT, codes
 assert c2.post("/auth/resource/fotos", data={"secret": "2468", "next": "/"}).status_code == 429
-ok("Ressourcen-Lockout greift")
+ok("resource lockout takes effect")
 
 # ---------- Round 2: area slips do not lock any SIGN-IN ----------
 # EVERY visitor may try the area PIN — an account is not needed for it. Their
@@ -110,7 +110,7 @@ assert not auth2._is_locked("unbeteiligt", "testclient"), \
     "slips on the area PIN lock the sign-in of uninvolved persons"
 r = c3.post("/auth/login", data={"username": "unbeteiligt", "password": "Unbeteiligt-Passwort-1"},
             follow_redirects=False)
-assert r.status_code == 303, f"Login des Unbeteiligten gesperrt: {r.status_code}"
+assert r.status_code == 303, f"Login of the uninvolved user blocked:{r.status_code}"
 ok("area slips lock no sign-in (own bucket)")
 
 # (b) The IP dimension is nevertheless retained here — unlike with the signed-in paths:
@@ -125,7 +125,7 @@ assert r.status_code == 429, f"the IP threshold of the area bucket does not appl
 # …and another connection is unaffected (the lockout sticks to the address, not to the area).
 c4 = TestClient(app2, client=("203.0.113.30", 50000))
 r = c4.post("/auth/resource/tresor", data={"secret": "9876", "next": "/"}, follow_redirects=False)
-assert r.status_code == 303, f"fremder Anschluss mitgesperrt: {r.status_code}"
+assert r.status_code == 303, f"unrelated connection locked out too:{r.status_code}"
 ok("…the IP threshold of the area bucket remains (locks areas, no sign-ins)")
 os.remove(db2)
 
@@ -166,7 +166,7 @@ assert r.status_code == 429, f"distributed guessing is unlimited: {r.status_code
 ok("…distributed guessing over many addresses still locks the area")
 os.remove(db5)
 
-# Admin-API verwaltet Geheimnisse
+# Admin API manages secrets
 admin = auth.store.get_user_by_name("admin")
 # (no admin created in this test → check via manager)
 auth.set_resource_secret("neu", "1234", kind="pin", label="Neu")

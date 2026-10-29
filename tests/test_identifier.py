@@ -206,7 +206,7 @@ print("  verify without mailer: 500, no account ok")
 for bad in ("mail", "", "Username"):
     try:
         TinySesam(TinySesamConfig(db_path=os.path.join(tempfile.mkdtemp(), "datei"), login_identifier=bad))
-        raise AssertionError(f"login_identifier={bad!r} akzeptiert")
+        raise AssertionError(f"login_identifier={bad!r} accepted")
     except ValueError:
         pass
 try:
@@ -221,7 +221,7 @@ print("  config sanity ok")
 # Promised in the CHANGELOG under "For embedding apps": the message text stays the one from 0.18.x
 # ("… ist bereits vergeben"), so that a caller who checks the text does not break on this fix
 # — and the case can now be told apart WITHOUT text comparison by `e.field` and
-# `e.owner_id` (until 0.21.x `e.feld`/`e.owner_id`). Both halves of the promise were covered by not a
+# `e.owner_id` (until 0.21.x `e.slot`/`e.owner_id`). Both halves of the promise were covered by not a
 # single line: mutation M25 (no longer setting the attributes) and M34 (wording back
 # to "… ist bereits als Login-Kennung vergeben") each ran through green with 46/46.
 # `grep -rn "owner_id" tests/` found nothing. Exactly the promise that was to replace the text comparison, and exactly the text comparison

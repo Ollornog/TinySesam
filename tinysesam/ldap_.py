@@ -188,7 +188,7 @@ class FailureMarker:
     directory is gone; sign-ins that begin within those at most `CONNECTION_TIMEOUT` seconds
     hang until the timeout — once per outage and per process (the marker lives in the
     process, so with `--workers N` N times, simultaneously). Their pre-bookings no longer block anybody,
-    though: the login route books them as pending (`Store.reserve_attempt(schweben=True)`), and
+    though: the login route books them as pending (`Store.reserve_attempt(hover=True)`), and
     anyone who would fail only because of them waits until they are decided (`_begin_attempt`) —
     at most `CONNECTION_TIMEOUT + 2` seconds, without `failed login` and without a lockout notice. Until
     2026-09-26 this window remained a known gap: 429 for bystanders, including the
@@ -210,7 +210,7 @@ class FailureMarker:
         """May this sign-in query the directory? Raises `DirectoryNotReachable` if not.
 
         Return `True`: this sign-in is the probe after a pause — it MUST end with
-        `ausgefallen()`, `erreicht()` or `freigeben()`, otherwise nobody asks again."""
+        `failed()`, `reached()` or `release()`, otherwise nobody asks again."""
         with self._lock:
             if not self._disturbed:
                 return False

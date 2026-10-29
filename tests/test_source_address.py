@@ -264,7 +264,7 @@ r.check("Proof attribute \" \": the check says \"NEVER\", and the runtime does n
 # (a) The target address is currently throttled: no link — but one after the throttle window.
 g_a, _, p_a = _setup()
 for _ in range(int(g_a._sec("mail_per_address_max"))):
-    g_a.rl.allow("wechsel:gerd@example.com", g_a._sec("mail_per_address_max"),
+    g_a.rl.allow("change:gerd@example.com", g_a._sec("mail_per_address_max"),
                  g_a._sec("mail_per_address_window_sec"))
 _sign_in(g_a, "gerd", {"email": "gerd@example.com", "id": "uuid-gerd"})
 r.check("G12a: target address throttled → no link, no federation_email_confirm row",
@@ -393,7 +393,7 @@ def _worker_execution(grant, **cfg):
 
 
 _free, _cmp = _worker_execution(False), _worker_execution(True)
-_res = _worker_execution(False, admin_identifiers=["ziel@example.com"])     # reserviert (Allowlist)
+_res = _worker_execution(False, admin_identifiers=["ziel@example.com"])     # reserved (allowlist)
 r.check("a1-02: account page after four sign-ins across two workers and a restart the same "
         "whether the address is free, taken or reserved (exactly one request each)",
         _free["sicht"] == _cmp["sicht"] == _res["sicht"] == [1, 1, 1, 1, 1],
@@ -463,7 +463,7 @@ def _flight_window(grant):
 
 
 _ff_free, _ff_cmp = _flight_window(False), _flight_window(True)
-# (Mutation probe: in `_address_proven_by_source` again `open_token(…, adresse)` → free: post
+# (Mutation probe: in `_address_proven_by_source` again `open_token(…, address)` → free: post
 #  to probe@ at worker 2, two requests → red.)
 r.check("p2 F2: link to ziel@ hangs in worker 1's outbox, `mail` changed, worker 2 sends "
         "none to probe@ — whether ziel@ is free or taken",
@@ -484,7 +484,7 @@ _unclosed_q = g_q.store.open_token(u_q["id"], "email_change")
 g_q._notice_outcome.max_unclosed = 50
 _elapse(g_q, int(g_q._sec("mail_per_address_window_sec")) + 1)
 _sign_in(g_q, "quentin", {"email": "quentin@example.com", "id": "uuid-quentin"})
-# (Mutation probe: leaving out `senden.verwerfen()` after the overflow → open token, no second
+# (Mutation probe: leaving out `send.discard()` after the overflow → open token, no second
 #  link → red.)
 r.check("Queue full: no link, no open token — after the throttle window the link comes",
         not _unclosed_q and [m[0] for m in p_q] == ["quentin@example.com"] and _link(p_q),

@@ -21,7 +21,7 @@ The building blocks, deliberately small and without a dependency of their own (`
 * **`aud` carries the host AND the required roles.** A token issued for a check without
   role specification must not be valid on a path that requires `?roles=admin` —
   the proxy sees no roles, only the audience. That is why the role specification is in
-  the audience itself (`zielgruppe()`), and the proxy names exactly this string there.
+  the audience itself (`audience()`), and the proxy names exactly this string there.
 """
 from __future__ import annotations
 
@@ -86,8 +86,8 @@ def audience(host: str, roles_groups=()) -> str:
     canonical (sorted, without duplicates) so the same requirement always yields the same string
     — the proxy compares it character by character:
 
-        zielgruppe("app.example.com")                          → "app.example.com"
-        zielgruppe("app.example.com", [["redaktion", "admin"]]) → "app.example.com|roles=admin,redaktion"
+        audience("app.example.com")                            → "app.example.com"
+        audience("app.example.com", [["editor", "admin"]])      → "app.example.com|roles=admin,editor"
     """
     h = str(host or "").strip().lower().rstrip(".")
     groups = sorted({",".join(sorted({r for r in g if r})) for g in (roles_groups or ()) if any(g)})

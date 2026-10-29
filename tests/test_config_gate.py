@@ -109,7 +109,7 @@ def _placeholder(text):
 
 def _used_key_name():
     """Every template that `config_check` passes to `_t(...)` (AST of config_check.py and config.py)
-    plus the values of the label dicts, which `_t(config, wofuer)` takes as variable."""
+    plus the values of the label dicts, which `_t(config, for_what)` takes as variable."""
     key_name, variable = set(), 0
     for file in ("config_check.py", "config.py"):
         tree = ast.parse((Path(config_check.__file__).parent / file).read_text(encoding="utf-8"))
@@ -136,7 +136,7 @@ def _gaps(de):
 
 
 _key_name, _variable = _used_key_name()
-assert len(_key_name) > 50 and _variable == 3, (len(_key_name), _variable)   # the three `_t(config, wofuer)`
+assert len(_key_name) > 50 and _variable == 3, (len(_key_name), _variable)   # the three `_t(config, for_what)`
 assert _gaps(config_check._DE) == [], _gaps(config_check._DE)
 ok("every key that config_check uses is in _DE, placeholders in key and value equal")
 

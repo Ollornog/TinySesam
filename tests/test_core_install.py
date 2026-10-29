@@ -93,7 +93,7 @@ r.check("webauthn does NOT belong to the core (otherwise the switch above would 
 # The BEHAVIOUR is measured, not whether two words appear in the source file. The earlier
 # version checked `"tinysesam[passkey]" in router_py` — whoever removed the protection and left the words
 # as a comment got away with it, while the real call raised a bare
-# ModuleNotFoundError wirft.
+# ModuleNotFoundError raises.
 import importlib  # noqa: E402
 
 

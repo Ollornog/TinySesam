@@ -305,7 +305,7 @@ assert not _violations, f"settings read past the shared read path: {_violations}
 assert _seen == _SETTING_FREE_KEY_NAME | _SETTING_ALL, \
     f"exception list outdated or guard blind: seen {_seen}"
 ok("every read access to the settings goes through literal keys or security.read_hardening")
-# (Mutation probes: in the guard read only `aufruf.args[0]`, skip keywords -> the
+# (Mutation probes: in the guard read only `call.args[0]`, skip keywords -> the
 # self-test turns red; remove the branch for non-literal keys -> red; in `_passwd` again
 # `int(store.get_setting("password_min_length") or …)` -> the guard names `__main__.py:<line>`,
 # checked individually because in the suite the assert further up trips first. Final round,
@@ -428,7 +428,7 @@ assert auth.gc(attempts_older_than_sec=86400)["sessions"] >= 1 and _expired_sess
 code, from_ = cli("gc", "--db", db, "--attempts-older-than", "0")
 assert code == 0 and "login_attempts=" in from_, (code, from_)
 ok("gc --attempts-older-than and auth.gc() check the period before anything is deleted")
-# (Mutation probe: replace `store.versuchsfrist(...)` in `_gc` by the raw value -> red
+# (Mutation probe: replace `store.attempt_deadline(...)` in `_gc` by the raw value -> red
 # (OverflowError or exit 0); the same in `TinySesam.gc` -> red.)
 
 os.remove(bare)

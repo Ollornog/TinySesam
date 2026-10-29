@@ -57,7 +57,7 @@ def place(r):
     return urlsplit(r.headers.get("X-TinySesam-Location", ""))
 
 
-# ---------- Vorgabe im Gateway: direct ----------
+# ---------- Default in the gateway: direct ----------
 auth, app = gateway(forward_apps={"wiki.example.com": {"name": "Wiki", "login": "page"}})
 assert auth.cfg.forward_login == "direct"
 c = TestClient(app)
@@ -84,7 +84,7 @@ ok("background requests → login page (no flow); without Sec-Fetch, Accept: tex
 
 # Add a second method at runtime (`auth.cfg` is mutable): then there are paths that only
 # the login page shows — direct must not skip it, even if the check at start
-# davon nichts wusste.
+# knew nothing about it.
 auth.cfg.password_enabled = True
 r = c.get("/auth/forward", headers={**PROXY, **PAGE_HTML})
 auth.cfg.password_enabled = False
@@ -138,7 +138,7 @@ else:
     raise AssertionError("direct next to the password login starts")
 ok("configuration check: unknown mode, direct next to other methods, typo in the key")
 
-# ---------- B-2: mehrere Clients, Freigabe fehlt ----------
+# ---------- B-2: several clients, approval missing ----------
 auth2, app2 = gateway(trusted_redirect_hosts=["app-a.example.com", "app-b.example.com"],
                       clients={"app-a.example.com": {"client_id": "a", "client_secret": "x"},
                                "app-b.example.com": {"client_id": "b", "client_secret": "y"}})

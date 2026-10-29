@@ -820,7 +820,7 @@ def build_router(auth) -> APIRouter:
                     # clears the placeholder when its token expires (R4-09).
                     try:
                         placeholder = auth.create_user(
-                            f"reserviert-{secrets.token_hex(6)}" if name_is_address else username,
+                            f"reserved-{secrets.token_hex(6)}" if name_is_address else username,
                             password=password, roles=[], self_chosen_name=True)
                     except ConfigError:
                         # Race: the name has been taken since the check above (G12c) — the same
@@ -901,16 +901,16 @@ def build_router(auth) -> APIRouter:
                 except Exception:
                     send = None
                 if send is None:
-                    _revert("versand")
+                    _revert("dispatch")
                     return page_html
 
                 def _dispatch():
                     try:
                         send()
                     except Exception:
-                        _revert("versand")
+                        _revert("dispatch")
                 return auth.after_response(
-                    page_html, _dispatch, on_overflow=lambda: _revert("warteschlange_voll"))
+                    page_html, _dispatch, on_overflow=lambda: _revert("queue_full"))
             token, ok, is_new = auth.apply_factor(request, uid, "password", ip,
                                                   request.headers.get("user-agent"), True)
             resp = RedirectResponse(auth._login_redirect_after(request, token, uid, nxt), 303)
@@ -1408,7 +1408,7 @@ def build_router(auth) -> APIRouter:
                 raise HTTPException(400, str(e))
             # The same answer whether a link goes out or not (taken address, throttle) —
             # and sending only after the response (R4-05): no running time as an oracle.
-            # If the queue is full, the token expires (`senden.verwerfen`): a link that was never
+            # If the queue is full, the token expires (`send.discard`): a link that was never
             # delivered would otherwise block the path via LDAP/SAML until its expiry.
             response = JSONResponse({"ok": True, "sent": True})
             return auth.after_response(response, send, on_overflow=send.discard) \

@@ -303,7 +303,7 @@ def build_app(cfg: Optional[TinySesamConfig] = None):
     def healthz():
         """Reachable without sign-in — otherwise no orchestrator could use it.
 
-        Writes to the database once (`Store.schreibprobe()`). Very early on it only reported
+        Writes to the database once (`Store.write_probe()`). Very early on it only reported
         that the process is alive; after that it asked with `SELECT 1` — and that also succeeds on a
         read-only or full database (B6-4). After a rollback, on a full volume or
         wrong file permissions the service returned 500 to all users on sign-in, while

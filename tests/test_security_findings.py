@@ -1191,7 +1191,7 @@ for path, data, name in (
             f"{_links(post_x)!r} — base_url wins, the header does not count")
 
 # ── Rework N1: the Host header must not choose even among SEVERAL own hosts ──
-# Finding A-umgehung-4: `base_url` was only a warning. If it stayed empty and — with
+# Finding A-bypass-4: `base_url` was only a warning. If it stayed empty and — with
 # forward-auth/SSO the normal case — several names stood in `trusted_redirect_hosts`, the
 # runtime check accepted EACH of them: the attacker triggered "forgot password" for a foreign mailbox
 # and set `Host:` to another co-trusted host. If that one is weaker (foreign team,
@@ -1227,7 +1227,7 @@ _f_hosts, _w_hosts = _kp.check_config(TinySesamConfig(
     trusted_redirect_hosts=["app-a.example.com", "app-b.example.com"]))
 r.check("trusted_redirect_hosts does NOT replace base_url",
         any("base_url is empty" in x for x in _f_hosts),
-        "with several co-trusted hosts the header chooses otherwise (A-umgehung-4)")
+        "with several co-trusted hosts the header chooses otherwise (A-bypass-4)")
 _built_without, _text_without = _builds(magiclink_enabled=True, password_reset_enabled=True)
 r.check("...and the constructor aborts with it (ConfigError instead of silent operation)",
         not _built_without and "base_url" in _text_without, f"built={_built_without}")
@@ -1609,13 +1609,13 @@ r.check("...and on a host from trusted_redirect_hosts it stays absolute (cookie 
 
 # ── The same ONE rule for the documented methods, not only for the routes ───
 # `public_base()` sat only in the routes. An app with its own "forgot password" form —
-# the path shown in both READMEs and in API.md — called `send_password_reset(mail, basis)`
+# the path shown in both READMEs and in API.md — called `send_password_reset(mail, base)`
 # itself and was still fully attackable with `str(request.base_url)`, while the
 # built-in route had long since been fixed. The check now sits in `magic_url()`, where all
 # four mail paths converge, and additionally before the token is issued in every sender.
 #
 # What is measured is the RULE, not its mechanism: If `base_url` is set, it wins — even against
-# a second co-trusted name. That was exactly finding B-umgehung-3: Here the
+# a second co-trusted name. That was exactly finding B-bypass-3: Here the
 # passed host still decided as long as it was in `trusted_redirect_hosts`. The `Host` header thus
 # still chose which of the own names ends up in the reset link — the core of R4-01, one level
 # deeper. Without `base_url` — the only setup in which anything is derived at all — it stays
@@ -1758,7 +1758,7 @@ r.check("the check is idempotent (applied twice, the path does not grow)",
 # Finding B-regression-3: What a mount under a subpath REALLY carries — measured on
 # a real mount (`FastAPI(root_path="/sso")`), not on a replicated URL. The
 # sent link carries the prefix exactly once; since T-15 the built-in pages
-# and their redirects carry it too (`auth.pfad`, placeholder `__TS_P__` in `templates.py`). Until then the
+# and their redirects carry it too (`auth.path`, placeholder `__TS_P__` in `templates.py`). Until then the
 # limit was in README, CONFIGURATION and CHANGELOG, and this test kept it honest; the full
 # measurement (mount and uvicorn --root-path, all pages) is in tests/test_subpath.py.
 _a_mnt = TinySesam(TinySesamConfig(db_path=str(Path(tempfile.mkdtemp()) / "t.db"),
@@ -2011,7 +2011,7 @@ r.check("...and auth.change_username really resolves the collision",
         f"{[dict(z) for z in auth_old.store.identifier_collisions()]}")
 
 # Integration of the round: The message names `store.set_email(...)` — and exactly this method takes
-# the confirmation note ALONG since B-umgehung-8 (default: unconfirmed). Whoever follows the message to
+# the confirmation note ALONG since B-bypass-8 (default: unconfirmed). Whoever follows the message to
 # resolve a collision on an admin's account thereby incidentally deletes the proof of his address.
 # That is fail-closed and right — but it must not surprise the operator, and `verified=True`
 # is the way to keep a real proof. Both are measured together: the sentence in the
@@ -2024,7 +2024,7 @@ auth_old.store.set_email(victim_old, "chef-neu@example.com")
 r.check("...and so it is: the named path stores the new address unconfirmed",
         auth_old.store.get_user(victim_old)["email_verified"] == 0,
         "set_email leaves the proof of the OLD address in place — then the message is wrong, "
-        "and an address change is a bootstrap path again (B-umgehung-8)")
+        "and an address change is a bootstrap path again (B-bypass-8)")
 auth_old.store.set_email(victim_old, "chef-belegt@example.com", verified=True)
 r.check("...and verified=True keeps it, as the message promises",
         auth_old.store.get_user(victim_old)["email_verified"] == 1,
@@ -2253,7 +2253,7 @@ _wall_n = [_T]
 
 
 def _restart_after_2h(secure):
-    """Creates link + session at T, lets 2 h pass, `sichern(store)` saves (or not),
+    """Creates link + session at T, lets 2 h pass, `secure(store)` saves (or not),
     restarts with the clock set back a year. → (link valid?, session valid?, uhr_stand)"""
     _store_mod._CLOCK = _store_mod._Clock(wall=lambda: _wall_n[0])
     _wall_n[0] = _T
@@ -2341,7 +2341,7 @@ r.check("freezegun (monotonic on the epoch scale) sets the clock forward exactly
         f"{[int(x - _T21) for x in _f21]} s from start — expected [0, 3600, 3660, …]")
 r.check("…and after leaving it does not run backwards",
         _f21[3] >= _f21[2], f"{[int(x - _T21) for x in _f21]} s ab Start")
-# (Mutation probe: remove the plausibility check of the monotonic step in `_Clock.jetzt` →
+# (Mutation probe: remove the plausibility check of the monotonic step in `_Clock.now` →
 # both red; check only the upper limit, i.e. carry a negative step forward → the second red.)
 
 # The counter-check to the plausibility limit: The protection from B6-9 also holds after a long
@@ -2779,7 +2779,7 @@ for _slot, _value in (("session_ttl_hours", 0), ("magiclink_ttl_min", 0), ("reco
     r.check(f"B3-12: {_slot}={_value!r} is an error", _names(_finding(**{_slot: _value})[0], _slot))
 r.check("...the defaults themselves all lie within their limits",
         not any(f in x for x in _finding()[0] for f in _kp2.NUMBER_LIMITS))
-# (Mutation probe: comment out `_number_limits(config, fehler)` in check_config() → red.)
+# (Mutation probe: comment out `_number_limits(config, error)` in check_config() → red.)
 
 # T-13 attack (audit × configuration): `audit_retention_days` was added after NUMBER LIMITS and
 # was not in it — its own check rejected only `< 0`. `True` counted as one day (gc()
@@ -2879,16 +2879,16 @@ r.check("…mfa_enrollment='grace' with 0 days remains an error",
 r.check("…admin_claim_token_file with admin_claim_ttl_min=0 remains a warning",
         _names(_finding(admin_claim_token_file="/run/x/admin.token", admin_claim_ttl_min=0)[1],
                "admin_claim_token_file"))
-# (Mutation probe: replace `_integer` with `int(getattr(config, feld, 0) or 0)` → red.)
+# (Mutation probe: replace `_integer` with `int(getattr(config, slot, 0) or 0)` → red.)
 # The class in the code: A field from NUMBER_LIMITS is read by the check only via `_integer` (an
 # integer or None) or in `_number_limits` itself. What a combination does afterwards (int(),
 # comparison, calculation) then happens with an integer. Until the final round the
 # guard reported an int() only if getattr(config, …) stood directly in it — the intermediate variable got
 # through (final finding konfig-3). Now on the syntax tree by class, not by spelling:
 # 1. A string that names exactly one NUMBER_LIMITS field stands as a key in NUMBER_LIMITS or
-#    as a field name in `_integer(config, "<feld>")` — otherwise something else reads it (`getattr`,
+#    as a field name in `_integer(config, "<slot>")` — otherwise something else reads it (`getattr`,
 #    `_an`, `vars(config)[…]`, `attrgetter`, a tuple over which a loop runs).
-# 2. No attribute `.<feld>`, no matter under which name the config stands.
+# 2. No attribute `.<slot>`, no matter under which name the config stands.
 # 3. A `getattr` with a field name at runtime uses the value only as a truth value or text
 #    (directly in `bool()`/`str()` or in a condition, also via `and`/`or`) — that crashes with
 #    no value. `vars`, `__dict__`, `asdict`, `attrgetter`, `__getattribute__` are forbidden.

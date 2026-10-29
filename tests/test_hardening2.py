@@ -296,7 +296,7 @@ assert "reserve_attempt" in _only_try, f"self-test hits nothing: {_only_try}"
 
 def _replace_except(fn_name, type_name):
     """Copy of the store tree in which `fn_name` catches every rolling-back `except` with `type_name`
-    (`typ=None`: no `except`, `finally: pass`)."""
+    (`type_name=None`: no `except`, `finally: pass`)."""
     tree = copy.deepcopy(_STORE_TREE)
     fn = next(f for f in _store_class(tree).body if isinstance(f, ast.FunctionDef) and f.name == fn_name)
     tries = [t for t in ast.walk(fn) if isinstance(t, ast.Try) and (

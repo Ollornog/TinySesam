@@ -73,7 +73,7 @@ def _line(auth, uid):
     return auth.store.get_user(uid)
 
 
-# ── a: Umbenennen ────────────────────────────────────────────────────────────────────────────────
+# ── a: Renaming────────────────────────────────────────────────────────────────────────────────
 # (Mutation probes: in `lift_lockout` only `seit` instead of `from_id` → red; in `_cleanup_limit` always
 #  without limit (`{}`) → red: the sign-in under `free` then already clears at the first factor.)
 a, app, _ = _app()
@@ -290,7 +290,7 @@ r.check("i: the writer from 0.20.1 (address and bucket in one statement) raises 
         and a.store.count_fails(0, username="neu@example.com") == 3 and a.store.count_fails(0, ip=SPRAYER) == 3,
         f"WL {_wl_c} → {_rc['mail_versuch_ab']}, HTTP {note.status_code}, {a.store.count_fails(0, ip=SPRAYER)}")
 # Counter-checks: the addition (only the bucket, NULL → bucket) and the own rewrite `B1` → `b1` (the same
-# Topf) verschieben nichts.
+# bucket) move nothing.
 _prior_n = (_rc["name_versuch_ab"], _rc["mail_versuch_ab"])
 _failed_attempts(a, "anderswo", SPRAYER, 1)                 # otherwise the high-water mark would already stand there
 a.store._exec("UPDATE users SET topf_name = NULL WHERE id = ?", (uid,))
@@ -304,7 +304,7 @@ r.check("… the addition of a bucket and `mia` → `MIA` (the same bucket) leav
 # ── j: the series (B2-6) ─────────────────────────────────────────────────────────────────────
 # Deliberately WITHOUT limit a (reasoning in `lift_lockout`): the series has no IP, and before the
 # join it protected no account. A limit in time would leave a series begun before the join
-# unendable for the new owner. (Mutation probe: `delete_failure_series(…, arten=())` → red.)
+# unendable for the new owner. (Mutation probe: `delete_failure_series(…, kinds=())` → red.)
 a, app, _ = _app()
 _failed_attempts(a, "serie@example.com", SPRAYER, 3, before=3600)
 uid = a.create_user("serienkonto", password=PW, email="serie@example.com")

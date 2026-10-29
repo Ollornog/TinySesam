@@ -28,7 +28,7 @@ def secret_text(u=Depends(auth.require_user)):
 
 @app.get("/boom")
 def boom():
-    raise RuntimeError("kaputt")
+    raise RuntimeError("broken")
 
 
 @app.get("/forbidden")
@@ -40,7 +40,7 @@ c = TestClient(app, raise_server_exceptions=False)
 HTML = {"Accept": "text/html"}
 JSON = {"Accept": "application/json"}
 
-# ---------- brand_css landet in ALLEN eingebauten Seiten ----------
+# ---------- brand_css ends up in ALL built-in pages ----------
 for path in ["/auth/login", "/auth/register"]:
     assert BRAND in c.get(path).text, path
 # also account page (own layout) + logged in
@@ -60,14 +60,14 @@ ok("403: themed error page with message")
 
 r = c.get("/boom", headers=HTML)
 assert r.status_code == 500 and "500" in r.text
-ok("500: unbehandelte Exception → themed 500-Seite")
+ok("500: unhandled exception → themed 500 page")
 
 # API clients get JSON, no HTML page
 r = c.get("/gibtsnicht", headers=JSON)
 assert r.status_code == 404 and r.headers["content-type"].startswith("application/json")
 ok("API client (Accept json): 404 as JSON, not HTML")
 
-# ---------- Redirects (Login) bleiben Redirects trotz Error-Handler ----------
+# ---------- Redirects (login) stay redirects despite the error handler ----------
 c2 = TestClient(app, raise_server_exceptions=False)
 r = c2.get("/geheim", headers=HTML, follow_redirects=False)
 assert r.status_code == 307 and "/auth/login" in r.headers["location"]

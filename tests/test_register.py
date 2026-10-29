@@ -38,14 +38,14 @@ assert c.get("/auth/register").status_code == 404
 os.remove(db)
 ok("allow_signup=False → /auth/register does not exist (404)")
 
-# ---------- Einfache Registrierung → sofort eingeloggt ----------
+# ---------- Simple registration → signed in immediately ----------
 db, auth, app, sent, c = build(allow_signup=True)
 assert "Konto erstellen" in c.get("/auth/register").text
 r = c.post("/auth/register", data={"username": "neu", "password": "supergeheim-lang-genug", "email": "neu@example.com", "next": "/geheim"},
            follow_redirects=False)
 assert r.status_code == 303 and r.headers["location"] == "/geheim"
 assert c.get("/geheim", headers=JSON).json() == {"u": "neu"}
-# zu kurzes Passwort abgelehnt
+# too short password rejected
 r = c.post("/auth/register", data={"username": "x", "password": "1", "next": "/"})
 assert r.status_code == 400
 # E-mail is required (signup_require_email, default on)
@@ -56,7 +56,7 @@ r = c.post("/auth/register", data={"username": "neu", "password": "supergeheim-l
                                    "email": "anders@example.com", "next": "/"})
 assert r.status_code == 409
 os.remove(db)
-ok("allow_signup=True: Konto anlegen → eingeloggt; Validierung greift")
+ok("allow_signup=True: create account → signed in; validation applies")
 
 # ---------- E-mail verification: account only active after the link ----------
 db, auth, app, sent, c = build(allow_signup=True, signup_verify_email=True, magiclink_enabled=True)
@@ -78,7 +78,7 @@ assert auth.peek_magic(token, purpose="verify_email"), "a GET must not consume t
 ok("R4-02: GET on the confirmation link consumes nothing (mail scanner)")
 r = c.post(f"/auth/verify/{token}", follow_redirects=False)
 assert r.status_code == 303
-assert auth.store.get_user(uid)["disabled"] == 0     # aktiviert
+assert auth.store.get_user(uid)["disabled"] == 0     # activated
 assert c.post(f"/auth/verify/{token}", follow_redirects=False).status_code == 400   # one-shot
 assert c.get(f"/auth/verify/{token}", follow_redirects=False).status_code == 400    # the page says so too
 ok("signup_verify_email: own endpoint /auth/verify/{token}, redeemable once")

@@ -67,7 +67,7 @@ def check_config(tok, aud="app.example.com", now=None):
     return gate.check(PUB, tok, aud=aud, iss=ISS, now=int(time.time()) if now is None else now)
 
 
-# ---------- Ausstellen ----------
+# ---------- Issuing ----------
 c = sign_in(app)
 r = c.get("/auth/forward", headers=PROXY)
 assert r.status_code == 200
@@ -178,7 +178,7 @@ else:
     assert claims["ts_user"] == "anna" and claims["aud"] == "app.example.com"
     ok("authlib (foreign JOSE implementation) checks the token and reads the same claims")
 
-# ---------- Claims folgen forward_headers ----------
+# ---------- Claims follow forward_headers ----------
 auth2, app2 = instance(forward_headers={"user": "X-WEBAUTH-USER"})
 auth2.create_user("bea", "geheim123")
 r = sign_in(app2, "bea").get("/auth/forward", headers=PROXY)
@@ -211,7 +211,7 @@ for raw, should in (("Anna Ärger", "Anna Ärger"), ("Иван", "Иван"),
 auth.store._exec("UPDATE users SET display_name=? WHERE id=?", ("Anna Berg", uid))
 ok("claims: umlauts and Cyrillic unchanged (UTF-8), control characters drop out")
 
-# ---------- Ausgeschaltet ----------
+# ---------- Switched off ----------
 auth.cfg.gate_token_enabled = False
 r = c.get("/auth/forward", headers=PROXY)
 assert r.status_code == 200 and token_from(r) == (None, None)

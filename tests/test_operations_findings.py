@@ -33,7 +33,7 @@ from _kit.report import Report  # noqa: E402
 r = Report("Funde aus dem Betrieb (Gruppen-Scope, Claim-Token)")
 
 
-# ── (a) Gruppen-Scope ────────────────────────────────────────────────────────────────────────────
+# ── (a) Group scope────────────────────────────────────────────────────────────────────────────
 # PocketID (and every provider that ties claims to scopes) sends `groups` only with the scope
 # `groups`. The default `oidc_scopes="openid profile email"` does not request it: with
 # `oidc_allowed_groups` nobody got in, with `oidc_group_role_map` nobody got a role —
@@ -123,7 +123,7 @@ r.check("(a) gateway: TINYSESAM_ALLOWED_GROUPS without TINYSESAM_OIDC_SCOPES war
 # Measured in the container (2026-09-27): stderr IS the log. First the token stood there in plain text,
 # then the line „Der Wert steht bewusst NICHT im Log". The container is simulated by having
 # stderr AND the security logger write into the same buffer — that is `docker logs`.
-# (Mutation probe: remove the condition `not konsole` in `_admin_claim_announce`, or drop the
+# (Mutation probe: remove the condition `not console` in `_admin_claim_announce`, or drop the
 # fallback to the file → the token is in the buffer again → red.)
 PW = "Betrieb-Pw-2026"          # 15 characters: the password alone signs in
 

@@ -77,8 +77,8 @@ def _pair(**cfg):
 
 
 def _between(auth, method, before, afterwards=None):
-    """Once: `vorher()` (the simultaneous request of the OTHER instance) runs AFTER `auth`
-    has passed all checks and BEFORE its store writes. `nachher()` runs directly after
+    """Once: `before()` (the simultaneous request of the OTHER instance) runs AFTER `auth`
+    has passed all checks and BEFORE its store writes. `afterwards()` runs directly after
     the write (even if it fails) — before the manager sees the error. A hook
     that no request has triggered is replaced, not nested."""
     auth.store.__dict__.pop(method, None)
@@ -166,7 +166,7 @@ r.check("A: … “B1” keeps its bucket (the recalculation trigger otherwise s
         _pots == ("b1", "") and _rejected(lambda: s.create_user("b1")) == GRANT, str(_pots))
 # A foreign writer that sets the same value again does not take the bucket from the account (until
 # 2026-09-26 it stood at NULL afterwards until the next addition, and the triggers did not see the
-# account). (Mutation probe: remove `NEW.<spalte> IS NOT OLD.<spalte>` in the recalculation trigger → red.)
+# account). (Mutation probe: remove `NEW.<column> IS NOT OLD.<column>` in the recalculation trigger → red.)
 s._exec("UPDATE users SET username=username, email=email WHERE id=?", (a_id,))
 r.check("A: … an UPDATE to the same value leaves the bucket standing",
         tuple(s._one("SELECT topf_name, topf_mail FROM users WHERE id=?", (a_id,))) == ("a1", "frei@example.com"))
@@ -184,7 +184,7 @@ _sql = _new._one("SELECT sql FROM sqlite_master WHERE name='trg_users_topf_name'
 r.check("A: a trigger from an older version is replaced at start",
         "NEW.username IS NOT OLD.username" in _sql, _sql)
 
-# ── B: Wettlauf, deterministisch ─────────────────────────────────────────────────────────────────
+# ── B: race, deterministic─────────────────────────────────────────────────────────────────
 # (Mutation probes: remove the mapping of the IntegrityError in `create_user`, `confirm_email_change`,
 #  `change_username`, in the OIDC addition, in `_address_proven_by_source` and in the routes
 #  `register`/admin → each red, mostly with a 500.)
@@ -341,7 +341,7 @@ r.check("B5: admin API in a race → 409 “existiert schon” or “E-Mail verg
         and b5g.status_code == 409 and b5g.json().get("detail") == a.t("api.email_taken"),
         f"HTTP {b5f.status_code} {b5f.text[:80]} / {b5g.status_code} {b5g.text[:80]}")
 
-# ── C: echt parallel ─────────────────────────────────────────────────────────────────────────────
+# ── C: truly parallel─────────────────────────────────────────────────────────────────────────────
 # Two workers, 20 threads each, all on the same identifier — half as name, the other as address.
 a, b, app_a = _pair(allow_signup=True)
 app_b = FastAPI()

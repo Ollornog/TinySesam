@@ -296,7 +296,7 @@ def build_admin_router(auth) -> APIRouter:
         control characters, no foreign address name, no allowlist name, not in mail mode), but
         as operator: the "self-chosen" marker (G2-N) is dropped, the audit line says
         `by=operator` and carries the admin as `actor=` — `change_username` writes it
-        itself, a second one via `protokoll()` would be doubled. An owner account is renamed only by an
+        itself, a second one via `log()` would be doubled. An owner account is renamed only by an
         owner (like password, keys, passkeys)."""
         owner_protection(guard(request), uid)
         b = await auth.json_body(request)

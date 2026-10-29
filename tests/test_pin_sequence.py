@@ -176,12 +176,12 @@ for i in range(4):
     _pin(cv, f"000{i}")
 _before_u = auth_c.store.failure_series("voll")
 _rc = _unlock(auth_c, "voll")
-# (Mutation probe: `unlock` clears the series only with `arten=("password", "pin")` → red.)
+# (Mutation probe: `unlock` clears the series only with `kinds=("password", "pin")` → red.)
 r.check("(c) `tinysesam unlock` clears pin_folge", _before_u == 4 and _rc == 0 and auth_c.store.failure_series("voll") == 0,
         f"{_before_u}, rc {_rc}, {_kinds(auth_c, 'voll')}")
 
 # ── (d)+(g) Route chain with full session; a correct PIN withdraws only its own pre-booking ────
-auth_d, app_d, _ = _app()                                          # klassisch: Passwort = volle Sitzung
+auth_d, app_d, _ = _app()                                          # classic: password = full session
 uid_d = _account(auth_d, "route")
 cd = TestClient(app_d)
 _password(cd, "route")
@@ -193,7 +193,7 @@ _correct = _pin(cd, PIN)
 r.check("(d) route chain factors=[password, pin] with full session: the slips book under pin_folge",
         _detour.headers.get("location", "").startswith("/auth/pin") and _after_wrong == {SEQUENCE: 3},
         f"{_detour.headers.get('location')}, {_after_wrong}")
-# (Mutation probe: the pre-booking remembers `method` instead of `serie[1]` → lowering hits the kind pin,
+# (Mutation probe: the pre-booking remembers `method` instead of `series[1]` → lowering hits the kind pin,
 #  the pre-booking under pin_folge remains → 4 → red.)
 r.check("(g) a correct PIN withdraws its pre-booking under pin_folge — the series before it remains",
         _correct.status_code == 303 and cd.get("/pinbereich").status_code == 200
@@ -211,7 +211,7 @@ r.check("(e) N1: after the password GET /auth/pin shows the PIN form — without
         and "name=pin" in _page_html.text and "name=username" not in _page_html.text,
         f"HTTP {_page_html.status_code} {_page_html.headers.get('location')}")
 _destination = _pin(ce, PIN)
-# (Mutationsprobe: in `login_pin` `halb = None` → 404 → rot.)
+# (Mutation probe: in `login_pin` `half = None` → 404 → red.)
 r.check("(e) N1: … and the correct PIN makes the session full (/drin 200)",
         _destination.status_code == 303 and _destination.headers.get("location") == "/drin" and ce.get("/drin").status_code == 200,
         f"HTTP {_destination.status_code} {_destination.headers.get('location')}")
@@ -228,7 +228,7 @@ _lines_f = auth_f.store._one("SELECT COUNT(*) AS n FROM login_attempt")["n"]
 # (Mutation probe: in `login_pin` again `cfg.pin_login` instead of `pin_as_first_factor()` → 401/303 → red.)
 r.check("(f) N2: guest PIN without password → 404, wrong or correct, and no row in login_attempt",
         _wrong_f.status_code == 404 and _correct_f.status_code == 404 and _lines_f == 0,
-        f"falsch {_wrong_f.status_code}, richtig {_correct_f.status_code}, Zeilen {_lines_f}")
+        f"wrong {_wrong_f.status_code}, correct {_correct_f.status_code}, rows {_lines_f}")
 _login_f = TestClient(app_f).get("/auth/login").text
 _get_f = TestClient(app_f).get("/auth/pin", headers=HTML, follow_redirects=False)
 # (Mutation probe: `enabled_methods` again with `pin_login` → PIN field on the login page → red.)
@@ -243,7 +243,7 @@ _then = _password(cf2, "vorne")
 r.check("(f) chain pin → password (strict): the guest path stays open, the PIN is the first factor there",
         "/auth/pin" in TestClient(app_f2).get("/auth/login").text and _first.status_code == 303
         and _then.headers.get("location") == "/drin" and cf2.get("/drin").status_code == 200,
-        f"PIN {_first.status_code}, Passwort {_then.headers.get('location')}")
+        f"PIN {_first.status_code}, password {_then.headers.get('location')}")
 auth_f3, app_f3, _ = _app(login_chain=["password", "pin"], login_chain_strict=False)
 _account(auth_f3, "locker")
 r.check("(f) not strict (password, pin): the PIN stays first factor with pin_login (config check warns)",
@@ -326,14 +326,14 @@ cj = TestClient(app_j)
 _start_j = _password(cj, "klassik")
 _wrong_j, _correct_j = _pin(cj, "0000"), _pin(cj, PIN)
 _get_j = cj.get("/auth/pin?next=/drin", headers=HTML, follow_redirects=False)
-# (Mutationsprobe: in `login_pin` wieder `self.pending_user(request)` → 401/303 → rot.)
+# (Mutation probe: in `login_pin` restore `self.pending_user(request)` → 401/303 → red.)
 r.check("(j) case 1 classic, pin_login=False, account with TOTP: the half session (next step TOTP) "
         "gets 404 for wrong and correct PIN, without a row in series and login_attempt",
         _start_j.headers.get("location", "").startswith("/auth/totp")
         and _wrong_j.status_code == 404 and _correct_j.status_code == 404
         and SEQUENCE not in _kinds(auth_j, "klassik") and _pin_lines(auth_j) == 0,
-        f"falsch {_wrong_j.status_code}, richtig {_correct_j.status_code}, {_kinds(auth_j, 'klassik')}, "
-        f"Zeilen {_pin_lines(auth_j)}")
+        f"wrong {_wrong_j.status_code}, correct {_correct_j.status_code}, {_kinds(auth_j, 'klassik')}, "
+        f"rows {_pin_lines(auth_j)}")
 # (Mutation probe: in `pin_page` again `self.pending_user(request)` → 200 with PIN form → red.)
 r.check("(j) case 1: GET /auth/pin shows the half session no PIN form but redirects to the sign-in",
         _get_j.status_code == 303 and _get_j.headers.get("location", "").startswith("/auth/login"),
@@ -356,7 +356,7 @@ r.check("(j) case 2 strict password → totp → pin: before the TOTP 404 (wrong
         and _after_totp.headers.get("location", "").startswith("/auth/pin")
         and _pin_j2.status_code == 303 and _pin_j2.headers.get("location") == "/drin"
         and cj2.get("/drin").status_code == 200,
-        f"before TOTP {_prior_totp}, Zeilen {_lines_prior}, TOTP → {_after_totp.headers.get('location')}, "
+        f"before TOTP {_prior_totp}, rows {_lines_prior}, TOTP → {_after_totp.headers.get('location')}, "
         f"PIN {_pin_j2.status_code} {_pin_j2.headers.get('location')}")
 _second_j2 = _pin(cj2, "0000")
 r.check("(j) … and with a full session /auth/pin is the route factor again (no 404)",
@@ -378,7 +378,7 @@ _double = TestClient(app_j3)
 _password(_double, "locker")
 _pin(_double, PIN)
 _again = _pin(_double, "0000")
-# (Mutationsprobe: `"pin" in done` in `_pin_chain_step` streichen → 401 → rot.)
+# (Mutation probe: remove `"pin" in done` in `_pin_chain_step` → 401 → red.)
 r.check("(j) not strict: if the PIN of the half session has already been provided, /auth/pin checks no further one (404)",
         _again.status_code == 404, f"HTTP {_again.status_code}")
 

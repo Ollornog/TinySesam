@@ -225,7 +225,7 @@ def document(ctx: Ctx, nav: Nav, *, title: str, desc: str = "", css: str = "", b
 def static_document(nav: Nav, css: str, variants: dict) -> str:
     """One file, both languages — for GitHub Pages, which cannot evaluate `?lang=`.
 
-    `variants` = {lang: (title, desc, shell_html)} — `shell_html` kommt aus `shell(ctx, nav, body)`.
+    `variants` = {lang: (title, desc, shell_html)} — `shell_html` comes from `shell(ctx, nav, body)`.
     `LANG_JS` picks on load: `?lang=` beats cookie beats `LANGS[0]` (English). The
     **browser language deliberately does not count** — the project language is English, otherwise a
     German browser would get a German page without anyone having asked for it. **The same

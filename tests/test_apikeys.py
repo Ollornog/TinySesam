@@ -127,7 +127,7 @@ print("  ✓ Expiry: 90 days as default, unlimited only with apikey_allow_unlimi
 # An unknown kind is an error, not a silent assumption.
 try:
     auth.create_api_key(svc, name="quatsch", kind="halbstark")
-    raise AssertionError("unbekannte Art kam durch")
+    raise AssertionError("unknown kind got through")
 except ConfigError:
     pass
 print("  ✓ an unknown key kind aborts instead of passing as automation")

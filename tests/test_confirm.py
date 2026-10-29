@@ -113,7 +113,7 @@ def _app(hardening=None, **cfg):
         erg = await run_in_threadpool(auth.change_password, request, b.get("current", ""), b.get("new", ""))
         return JSONResponse({"reason": erg.reason, "detail": erg.message}, status_code=erg.status)
 
-    @app.get("/sensibel")
+    @app.get("/sensitive")
     def _sensitive(u=Depends(auth.require(mfa=True))):
         return {"u": u["username"]}
 
@@ -140,11 +140,11 @@ def _stale(auth, c):
 
 
 def _fresh(c):
-    return c.get("/sensibel", headers=JSON, follow_redirects=False).status_code == 200
+    return c.get("/sensitive", headers=JSON, follow_redirects=False).status_code == 200
 
 
 def _post(client, path, **data):
-    return client.post(path, data={"next": "/sensibel", **data}, follow_redirects=False)
+    return client.post(path, data={"next": "/sensitive", **data}, follow_redirects=False)
 
 
 def _reason(response):
@@ -199,7 +199,7 @@ def _totp_set_up(auth, uid):
 # Exactly the gap: a custom confirmation via `verify_user_password` would have said 401 five times here
 # and made the session fresh on the sixth attempt. Via the block it locks after the limit
 # (`reauth_max_attempts`), and even the correct password then makes nothing fresh any more.
-# (Mutation probe: switch off the rejection `if versuch is None:` in `_confirm` → fourth
+# (Mutation probe: switch off the rejection `if attempt is None:` in `_confirm` → fourth
 # response 401, the correct password 303 → red.)
 auth, app = _app(hardening={"reauth_max_attempts": 3})
 auth.create_user("alice", password=PW)
@@ -213,7 +213,7 @@ r.check("(a) custom step-up page: after 3 failed attempts 429 `locked` (text of 
         and [_reason(a) for a in sequence_a] == ["invalid"] * 3 + ["locked"] * 2
         and sequence_a[0].json()["message"] == auth.t("err.reauth") and sequence_a[3].json()["message"] == auth.t("err.retry"),
         f"{[(a.status_code, _reason(a)) for a in sequence_a]}")
-r.check("(a) … even the correct password then makes nothing fresh (429, no new cookie, /sensibel closed)",
+r.check("(a) … even the correct password then makes nothing fresh (429, no new cookie, /sensitive closed)",
         correct_a.status_code == 429 and _session(auth, correct_a) is None and not _fresh(c),
         f"HTTP {correct_a.status_code}, Cookie {_session(auth, correct_a)!r}")
 r.check("(a) … every failed attempt is in the `reauth` bucket and as `failed verification` in the security log "
@@ -236,10 +236,10 @@ _ok = _post(c, "/eigen/confirm/password", password=PW)
 _new = _session(auth, _ok)
 _with_old = TestClient(app, client=IP)
 _with_old.cookies.set(auth.session_cookie_name, _old)
-r.check("(a) success: 303 to next, new session token in the cookie, the session is fresh (/sensibel 200)",
-        not _before and _ok.status_code == 303 and _ok.headers["location"] == "/sensibel"
+r.check("(a) success: 303 to next, new session token in the cookie, the session is fresh (/sensitive 200)",
+        not _before and _ok.status_code == 303 and _ok.headers["location"] == "/sensitive"
         and _new and _new != _old and _fresh(c),
-        f"vorher frisch {_before}, HTTP {_ok.status_code} {_ok.headers.get('location')}")
+        f"fresh before {_before}, HTTP {_ok.status_code} {_ok.headers.get('location')}")
 r.check("(a) … the old token stays valid in the grace period, but without freshness; audit `stepup`",
         _with_old.get("/auth/me", headers=JSON).status_code == 200 and not _fresh(_with_old)
         and any(e[0] == "stepup" and e[1] == "bert" for e in _audit(auth)),
@@ -348,7 +348,7 @@ r.check("(c) half session + API key: 403 `no_session`, the half session stays ha
 # ── (d) Only offered methods; empty is not an attempt; PIN bucket; TOTP ───────────────────────
 # `stepup_methods=["totp"]`: otherwise a custom page with a password field would bypass the default. A not
 # offered method is not even checked — 403 `method_disabled`, no failed attempt.
-# (Mutation probe: delete the query `if verfahren not in methods:` in `_confirm` → the
+# (Mutation probe: delete the query `if procedure not in methods:` in `_confirm` → the
 # password confirms despite `stepup_methods=["totp"]` → red.)
 auth, app = _app(stepup_methods=["totp"])
 uid = auth.create_user("frida", password=PW)
@@ -419,7 +419,7 @@ r.check("(d) without pin_enabled: `confirm_pin` 403 `method_disabled`, despite t
 # ── (e) Custom password-change page ───────────────────────────────────────────────────────────
 # The old password is a secret like at login (R4-10): throttled, locked in its own bucket,
 # logged. Until 0.21.x a custom page had only `set_password` and the inner verifiers for this.
-# (Mutation probe: switch off the rejection `if versuch is None:` in `change_password` → fourth
+# (Mutation probe: switch off the rejection `if attempt is None:` in `change_password` → fourth
 # response 403, the correct password 200 → red.)
 auth, app = _app(hardening={"password_change_max_attempts": 3})
 uid = auth.create_user("jana", password=PW)

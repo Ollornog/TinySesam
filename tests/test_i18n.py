@@ -20,7 +20,7 @@ def build(**kw):
     return db, auth, TestClient(app)
 
 
-# ---------- Default: Englisch ----------
+# ---------- Default: English ----------
 db, auth, c = build()   # lang default = "en"
 assert auth.cfg.lang == "en"
 html = c.get("/auth/login").text
@@ -29,7 +29,7 @@ assert "lang=en" in html
 assert "Benutzer" not in html
 ok("default language English: login page in English")
 
-# englische Fehlermeldung
+# English error message
 r = c.post("/auth/login", data={"username": "admin", "password": "falsch"})
 assert "Invalid credentials" in r.text
 ok("error message in English (Invalid credentials)")
@@ -44,7 +44,7 @@ assert "Falsche Zugangsdaten" in r.text
 ok("lang='de': login page + error message in German")
 os.remove(db)
 
-# ---------- auth.t(): Platzhalter, Fallback, unbekannter Key ----------
+# ---------- auth.t(): placeholders, fallback, unknown key ----------
 db, auth, c = build(lang="en")
 assert auth.t("err.pw_short", n=8) == "Password too short (min. 8)"
 assert auth.t("login.user") == "Username"
@@ -92,7 +92,7 @@ html = render_panel(auth, "/auth/admin")
 assert "Accounts" in html
 assert html.count("</script>") == 1, "own translation must not end the script block"
 assert "\\u003c/script>x" in html
-ok("Admin-Panel: de/en, Locale, add_messages, `<` maskiert")
+ok("Admin-Panel: de/en, Locale, add_messages, `<` escaped")
 os.remove(db)
 
 print("\nI18N OK ✅")

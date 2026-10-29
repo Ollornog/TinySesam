@@ -414,9 +414,9 @@ def name_invalid(name) -> bool:
     """Does a username contain control, format or separator characters (Cc/Cf/Zl/Zp)?
 
     Such characters separate two identifiers that look the same to a human and to an HTTP header:
-    `chefin\\x01` is a different name from `manager` for `identifier_taken`, but the forward-auth
+    `manager\\x01` is a different name from `manager` for `identifier_taken`, but the forward-auth
     header sanitising strips the control character — the protected app received
-    `Remote-User: chefin` from a foreign account (attack in the third round). The same rule
+    `Remote-User: manager` from a foreign account (attack in the third round). The same rule
     as for addresses (`valid_email`)."""
     return any(unicodedata.category(z) in ("Cc", "Cf", "Zl", "Zp") for z in str(name or ""))
 
@@ -493,7 +493,7 @@ class _Clock:
     with the elapsed **monotonic** time (`time.monotonic()` knows no jumps). After a
     jump back by an hour it therefore keeps counting normally instead of standing still for an hour
     — deadlines keep expiring. Across a restart the database itself carries the state:
-    `Store()` raises the clock to the most recent timestamp it finds (`mindestens()`) —
+    `Store()` raises the clock to the most recent timestamp it finds (`at_least()`) —
     including the state that `Store` writes at most once a minute (`uhr_stand`, on every
     write access and on every write probe of the health check). What expired in the last minute before
     a restart, or during a time in which nothing was written at all, can therefore
@@ -1093,7 +1093,7 @@ class Store:
 
     #: Message of the identifier triggers (`sqlite3.IntegrityError`): name or address falls into the
     #: counting bucket of ANOTHER account. Callers recognise the case by `IntegrityError`, not by the text.
-    #: Up to 0.24.x the text was `tinysesam: kennung vergeben`; `_set_trigger` replaces the trigger
+    #: Up to 0.24.x the text was `tinysesam: kennung grant`; `_set_trigger` replaces the trigger
     #: because its definition differs (schema 15).
     IDENTIFIER_GRANT = "tinysesam: identifier taken"
 
@@ -1306,7 +1306,7 @@ class Store:
           an identifier (the old one written by an older version after a rollback), the counts are
           ADDED up (stricter, never looser than dropping one) and the old row goes.
 
-        The trigger message (`tinysesam: kennung vergeben` → `identifier taken`) is not touched here:
+        The trigger message (`tinysesam: kennung grant` → `identifier taken`) is not touched here:
         `_set_trigger` replaces a trigger whose definition differs, on every start.
 
         Idempotent (a second run changes 0 rows) and it writes only where there is something to
@@ -1670,10 +1670,10 @@ class Store:
     CLOCK_SECURE_SEC = 60
 
     def _write_clock_state(self) -> None:
-        """Raise `uhr_stand` to `jetzt()` — only UPWARDS (without commit, under `_lock`).
+        """Raise `uhr_stand` to `now()` — only UPWARDS (without commit, under `_lock`).
 
         `_migrate()` already writes before `Store()` has raised the clock from the database;
-        there `jetzt()` is still the wrong wall clock of a boot with an old date. A blind
+        there `now()` is still the wrong wall clock of a boot with an old date. A blind
         overwrite would delete exactly the state that is about to raise the clock."""
         now_s = _now()
         self.db.execute("INSERT OR IGNORE INTO setting(key, value) VALUES (?, ?)",
@@ -1689,7 +1689,7 @@ class Store:
         `time.monotonic` on the epoch scale (≈1.8e9). A write under `freeze_time`
         left the stamps there, and afterwards every distance was negative, hence always "shorter than
         the deadline" — `uhr_stand` was no longer saved in the whole process, the write probe
-        checked only the connection (second attack round, same class as in `_Clock.jetzt`).
+        checked only the connection (second attack round, same class as in `_Clock.now`).
         A distance above any deadline is expired anyway."""
         return since is not None and 0 <= m - since < deadline
 
@@ -1745,7 +1745,7 @@ class Store:
         return cur.lastrowid
 
     def _set_identifier(self, user_id, column: str, value, bucket: str, proof=None) -> list:
-        """The statements that replace name (`spalte="username"`) or address (`"email"`, with `proof`)
+        """The statements that replace name (`column="username"`) or address (`"email"`, with `proof`)
         together with the counting bucket — for `_rewrite`.
 
         If the identifier thereby moves to a DIFFERENT bucket, it belongs to the account only from now on: the
@@ -1841,7 +1841,7 @@ class Store:
         The proof belongs to the address, not to the account: since `users.email_verified` decides
         on rights (`_maybe_promote_admin`, stage 2), a marker left standing would be
         the proof of the **old** address on the **new** one — exactly that was measured
-        (B-umgehung-8 from T-13): `eve@example.com` (proven) → `set_email(uid, "boss@example.com")` →
+        (B-bypass-8 from T-13): `eve@example.com` (proven) → `set_email(uid, "boss@example.com")` →
         first admin via the allowlist, without anyone having confirmed anything.
 
         Until then it said here that the marker stays "fail-closed". That held only for the
@@ -2268,7 +2268,7 @@ class Store:
         is therefore also noticed here. Until 2026-09-26 NOCASE stood here; `Ärmel`/`ärmel` or a
         Unicode against the A-label domain of the same address were missing. A row without a bucket (file
         read-only, backfill not possible) does not count.
-        Rows: `(name_id, kennung, mail_id, adresse)`. An account that carries the same string in
+        Rows: `(name_id, kennung, mail_id, address)`. An account that carries the same string in
         BOTH its own columns is no collision (email mode, intended path).
         """
         self._backfill_pots()     # rows of a foreign writer count too
@@ -2638,9 +2638,9 @@ class Store:
 
     def without_binding(self, source: str) -> list:
         """The accounts without a real identifier for this source — no row or only the
-        origin placeholder —, excluding service accounts (G1). With `hat_passwort` (local password)."""
+        origin placeholder —, excluding service accounts (G1). With `has_password` (local password)."""
         return self._all(
-            "SELECT u.*, EXISTS (SELECT 1 FROM password_cred p WHERE p.user_id = u.id) AS hat_passwort "
+            "SELECT u.*, EXISTS (SELECT 1 FROM password_cred p WHERE p.user_id = u.id) AS has_password "
             "FROM users u WHERE u.is_service = 0 AND NOT EXISTS (SELECT 1 FROM federated_identity f "
             "WHERE f.quelle = ? AND f.user_id = u.id AND substr(f.kennung, 1, ?) <> ?) ORDER BY u.id",
             (source, len(self.WITHOUT_IDENTIFIER), self.WITHOUT_IDENTIFIER))
@@ -2727,7 +2727,7 @@ class Store:
         unique through its nonce."""
         where, value = ("refresh=?", old_encrypted) if old_encrypted else ("token_hash=?", self._handle(handle))
         # `success`: the provider has just said yes — state for the upper limit without a re-check.
-        # `geprueft_at` alone is not suitable for that: after an "fehler" it stands at "in a minute".
+        # `geprueft_at` alone is not suitable for that: after an "error" it stands at "in a minute".
         extra = ", erfolg_at=?" if success else ""
         success_value = (int(when),) if success else ()
         if new_refresh and self.vault is not None:
@@ -3004,7 +3004,7 @@ class Store:
     def secure_file(cls, source: str, destination: str) -> str:
         """Back up a database file WITHOUT touching it — the path for `tinysesam backup`.
 
-        Why not simply `Store(quelle).backup(ziel)`: the constructor sets
+        Why not simply `Store(quelle).backup(destination)`: the constructor sets
         `PRAGMA journal_mode=WAL`, creates missing tables and runs `_migrate()`. It
         **writes**, and does so before anything has been copied. Whoever does the
         only right thing before an update and makes a backup would thereby have lifted the running installation to the new
@@ -3118,7 +3118,7 @@ class Store:
         return n
 
     #: How long a successful commit counts as proof that the database is writable
-    #: (seconds). Within this period `schreibprobe()` only checks the connection.
+    #: (seconds). Within this period `write_probe()` only checks the connection.
     WRITE_PROBE_SEC = 5
 
     def write_probe(self) -> None:
@@ -3164,7 +3164,7 @@ class Store:
         self._exec("INSERT INTO login_attempt(ts, username, ip, success, method) VALUES (?,?,?,?,?)",
                    (_now(), username, ip, 1 if success else 0, method))
 
-    #: How long a pre-booking with an open outcome (`reserve_attempt(schweben=True)`) counts as
+    #: How long a pre-booking with an open outcome (`reserve_attempt(hover=True)`) counts as
     #: pending, not as a failed attempt (seconds, G9). Longer than any directory query up to
     #: its timeout (`ldap_.CONNECTION_TIMEOUT`, connection setup and bind once each) including
     #: compute time. An older open row has been completed by nobody — the process has died
@@ -3211,7 +3211,7 @@ class Store:
         the same table (see `security.NOT_LOGIN_METHODS`). A row without a method
         (`NULL`, conceivable from old data) still counts: when in doubt, lock more strictly.
 
-        Default: a pending pre-booking (`reserve_attempt(schweben=True)`) counts — it
+        Default: a pending pre-booking (`reserve_attempt(hover=True)`) counts — it
         CAN become a failed attempt. `only_confirmed=True` leaves it out (G9).
         """
         if not username and not ip:
@@ -3223,7 +3223,7 @@ class Store:
     def reserve_attempt(self, username, ip, method, rules, series=None, hover=False) -> tuple:
         """Check lockouts and pre-book the attempt **in the same transaction** as a failed attempt.
 
-        `rules` is a list `(grund, grenze, filter)`; `filter` are the keywords of
+        `rules` is a list `(grund, limit, filter)`; `filter` are the keywords of
         `count_fails`. Returns `(id, None)` — the attempt may proceed and already stands as a
         failed attempt in the table — or `(None, grund)` if a rule applies.
 
@@ -3237,7 +3237,7 @@ class Store:
         If the attempt succeeds, `finish_attempt` turns the row into a success; a process
         that dies in between leaves a failed attempt — when in doubt, stricter.
 
-        `serie=(topf, art, grenze)` also pre-books the series of consecutive failed attempts (B2-6) —
+        `series=(topf, art, limit)` also pre-books the series of consecutive failed attempts (B2-6) —
         in the SAME transaction. The first version read the series beforehand and counted it only after
         the check: a parallel burst at the limit read "not full yet" N times and could guess
         N times (measured: 15 instead of 1). Returns then `(id, series state)` after the booking —
@@ -3245,11 +3245,11 @@ class Store:
         the limit, exactly this booking triggered the lockout; a pending one never reaches it here,
         only at its completion (`finish_attempt`, audit round 2026-09-27, p2 F3).
 
-        **Pending (G9).** `schweben=True` books the attempt with an open outcome (`offen=1`): it
+        **Pending (G9).** `hover=True` books the attempt with an open outcome (`offen=1`): it
         can become a failed attempt or none at all (directory outage, F-23 — withdrawn
         only once the outage is reported, with a directory that drops packets, hence after
         the timeout). If a rule or the series applies **only** because of such rows, the
-        answer is `(None, "schwebend")`: not decided yet, no lockout. The caller asks
+        answer is `(None, "pending")`: not decided yet, no lockout. The caller asks
         again after a short pause (`_begin_attempt`). Previously every rejection in this
         window was a lockout with `failed login` for fail2ban and a lockout notice to the holder — even
         if not a single failed attempt remained afterwards. The burst (R7-2) stays slowed down: it
@@ -3283,7 +3283,7 @@ class Store:
                     pending = True
                 if pending:
                     self.db.execute("ROLLBACK")
-                    return None, "schwebend"
+                    return None, "pending"
                 cur = self.db.execute(
                     "INSERT INTO login_attempt(ts, username, ip, success, method, offen) VALUES (?,?,?,0,?,?)",
                     (_now(), username, ip, method, 1 if hover else 0))
@@ -3301,7 +3301,7 @@ class Store:
 
         Both end the pending state (`offen=0`, G9): a failed attempt counts from here also for
         `count_fails(only_confirmed=True)` — until then completing a failed attempt was a
-        no-op. `serie=(topf, art)` withdraws the pre-booking in the series on a success in the SAME
+        no-op. `series=(topf, art)` withdraws the pre-booking in the series on a success in the SAME
         transaction: separately it would stand in between neither as open nor as withdrawn,
         and whoever is waiting right now (`_begin_attempt`) would read the series one too high — at the
         limit a lockout with a lockout notice for nothing.
@@ -3330,7 +3330,7 @@ class Store:
     def cancel_attempt(self, attempt_id, series=None):
         """Withdraw a pre-booked attempt — it was none (e.g. directory outage, F-23).
 
-        `serie=(topf, art)` withdraws its pre-booking in the series in the same transaction —
+        `series=(topf, art)` withdraws its pre-booking in the series in the same transaction —
         for the same reason as in `finish_attempt` (G9)."""
         with self._writing():
             self.db.execute("DELETE FROM login_attempt WHERE id=? AND success=0", (attempt_id,))
@@ -3399,7 +3399,7 @@ class Store:
         """The series without the pending pre-bookings (G9) — under `_lock`, without commit.
 
         Every open row in `login_attempt` has exactly one booking in the series under the same
-        bucket (`reserve_attempt(schweben=True)` books both in one transaction); a row that is
+        bucket (`reserve_attempt(hover=True)` books both in one transaction); a row that is
         older than `PREBOOKING_PENDING_SEC` counts as a failed attempt and is not subtracted."""
         unclosed = self.db.execute(
             "SELECT COUNT(*) AS n FROM login_attempt WHERE username=? COLLATE NOCASE AND offen=1 "
@@ -3464,7 +3464,7 @@ class Store:
                    (bucket, kind or ""))
 
     def delete_failure_series(self, bucket, kinds=None) -> int:
-        """End the series (`arten=None`: entirely, otherwise only these methods); returns how many there were."""
+        """End the series (`kinds=None`: entirely, otherwise only these methods); returns how many there were."""
         if not bucket:
             return 0
         if kinds is None:

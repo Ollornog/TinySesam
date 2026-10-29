@@ -1996,7 +1996,7 @@ What else you will notice:
   `release.yml` checks and builds everything, including the image for both platforms, but publishes
   nothing — no release, no PyPI, no image in the registry, no attestation. Before, the button would
   have failed at the tag comparison (a branch name is not a tag). Without a tag,
-  `scripts/_release.py --pruefen` checks the version states; `tests/test_repo.py` pins that every
+  `scripts/_release.py --check` checks the version states; `tests/test_repo.py` pins that every
   publishing job depends on the tag.
 
 - **Test base on kit 0.21.8:** The kit check that looks for `splitlines()` closes its files again
@@ -2849,8 +2849,8 @@ It would have hit exactly the installations the fallback was built for.
   `FEDERATED_FACTORS`) and the one for LDAP are now measured **individually**: before, each
   covered the other, a refactoring could have lost the remaining one unnoticed.
   Evidence in `tests/test_saml.py`, `tests/test_ldap.py` and `tests/test_audit_round2.py`.
-  Found in the third audit (F-14 from T-13; the two follow-up findings B-umgehung-1 and
-  B-umgehung-10 of the second attack round).
+  Found in the third audit (F-14 from T-13; the two follow-up findings B-bypass-1 and
+  B-bypass-10 of the second attack round).
 - **⚠️ `store.set_email()` now carries the confirmation flag along — behavior change for
   embedders.** Since `users.email_verified` decides about permissions, a leftover
   flag was the proof of the **old** address applied to the **new** one: an account with a confirmed
@@ -2861,7 +2861,7 @@ It would have hit exactly the installations the fallback was built for.
   into the database in ONE statement, by default as **unconfirmed**; anyone who has proof
   for the new address says so (`set_email(uid, mail, verified=True)`). Within the package itself
   the method has no caller — the trap was set for embedders. Evidence in
-  `tests/test_audit_round2.py`. Found in the third audit (B-umgehung-8 from
+  `tests/test_audit_round2.py`. Found in the third audit (B-bypass-8 from
   [T-13](backlog/T-13-audit-2026-09-22-round-3.md)).
 - **LDAP no longer follows a referral — it cost the service account's password.** ldap3
   follows a `SearchResultDone resultCode=10` on its own and builds a new connection

@@ -2,7 +2,7 @@
 """release — do the manual steps before a release and check them. stdlib-only.
 
     python3 scripts/_release.py 0.17.0          set the version, close the CHANGELOG
-    python3 scripts/_release.py --pruefen       check only, change nothing
+    python3 scripts/_release.py --check       check only, change nothing
 
 The version appears in six places (package, module, two READMEs several times, compose example) and
 in the CHANGELOG. By hand this has worked so far because a test enforces it — but "works because
@@ -116,7 +116,7 @@ def main(argv) -> int:
     if not argv or argv[0] in ("-h", "--help"):
         print(__doc__)
         return 0
-    if argv[0] == "--pruefen":
+    if argv[0] == "--check":
         return 1 if check() else 0
     if not SEMVER.match(argv[0]):
         print(f"  '{argv[0]}' is not a version of the form X.Y.Z")

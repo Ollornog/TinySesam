@@ -89,9 +89,9 @@ r.check("counter-check: the admin without owner role is signed in and sets a pas
         and ca.post(f"/auth/admin/api/users/{regular}/password", json={"password": "Normales-Neues-Pw-1"}).status_code == 200)
 r.check("in the panel: delete → rejected",
         ca.post(f"/auth/admin/api/users/{manager['id']}/delete").status_code in (403, 409))
-r.check("… sperren → abgewiesen",
+r.check("… disable → rejected",
         ca.post(f"/auth/admin/api/users/{manager['id']}/disable", json={"disabled": True}).status_code in (400, 403))
-r.check("… entmachten (Admin-Haken weg) → abgewiesen",
+r.check("… strip power (admin flag removed) → rejected",
         ca.post(f"/auth/admin/api/users/{manager['id']}/roles", json={"roles": [], "is_admin": False}).status_code
         in (400, 403))
 r.check("… the owner himself cannot lock or strip himself of power either, as long as he is owner",
@@ -194,12 +194,12 @@ try:
     code_lock = True
 except StateError:
     code_lock = False
-r.check("Fund 12: `store.set_disabled` sperrt keinen Owner (StateError)", not code_lock)
+r.check("Fund 12: `store.set_disabled` does not disable an owner (StateError)", not code_lock)
 waiting = auth3.create_user("wartend", password=PW, email="wartend@example.com")
 auth3.store.set_disabled(waiting, True)
 auth3.create_magic_token("verify_email", user_id=waiting)
 auth3.store._exec("UPDATE magic_token SET expires_at = 1 WHERE user_id=?", (waiting,))
-auth3.store._exec("UPDATE users SET is_owner=1 WHERE id=?", (waiting,))        # konstruiert: wartender Owner
+auth3.store._exec("UPDATE users SET is_owner=1 WHERE id=?", (waiting,))        # constructed: waiting owner
 auth3.gc()
 r.check("… and `gc()` clears no owner, not even one waiting for a confirmation",
         auth3.store.get_user(waiting) is not None)
@@ -216,7 +216,7 @@ _declined_h = _admin_h.post("/auth/admin/api/security", json={"max_login_attempt
 r.check("hardening: an admin without owner role does not change the values (403, nothing stored)",
         _declined_h.status_code == 403 and auth_h.all_security() == _before_h,
         f"HTTP {_declined_h.status_code}")
-r.check("… lesen darf er sie weiter",
+r.check("… he may still read them",
         _admin_h.get("/auth/admin/api/security").json() == _before_h)
 _owner_h = _client(app_h, "chefin-h")
 _ok_h = _owner_h.post("/auth/admin/api/security", json={"max_login_attempts": 7})
@@ -230,7 +230,7 @@ r.check("… if there is no owner, every admin changes them (otherwise they woul
         _free_o.status_code == 200 and auth_o.all_security()["max_login_attempts"] == 9,
         f"HTTP {_free_o.status_code}")
 # (Mutation probe: remove the owner check in `security_set` → first check red;
-#  `owner_count() > 0` streichen → letzte rot.)
+#  `owner_count() > 0` remove → last one red.)
 
 # ── Emergency path via the CLI ────────────────────────────────────────────────────────────
 from tinysesam.__main__ import main as _cli  # noqa: E402
@@ -247,7 +247,7 @@ with sqlite3.connect(auth.cfg.db_path) as _db:
     _line = _db.execute("SELECT detail FROM audit WHERE event='owner_grant' ORDER BY id DESC LIMIT 1").fetchone()
 r.check("… with a row in the audit log", _line is not None and "cli" in (_line[0] or ""))
 # (Mutation probes: remove the owner check in `delete_user` → “do not delete” red;
-#  `owner_protection` empty → “no password/key/passkey” red; remove the `owner_count(ohne=…) == 0` check in
+#  `owner_protection` empty → “no password/key/passkey” red; remove the `owner_count(without=…) == 0` check in
 #  `set_owner` → “the last owner” red; remove `_first_owner` in the bootstrap paths
 #  → first two red; remove `is_admin=1` in `Store.set_owner` → “IdP … keeps it” red.)
 

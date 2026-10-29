@@ -150,7 +150,7 @@ assert auth.get_user(uid)["is_admin"], "the documented bootstrap path via the na
 ok("... the allowlist NAME of a previously created account still promotes")
 os.remove(db)
 
-# ---------- B-umgehung-1: the guard also holds the SECOND login ----------
+# ---------- B-bypass-1: the guard also holds the SECOND login ----------
 # The refusal above closes only THIS sign-in path. If LDAP created the account with the default
 # `email_verified=1`, the account said "proven" although nothing was proven — and the next
 # factor the attacker sets up himself in his freshly signed-in session (PIN,
@@ -170,7 +170,7 @@ r = c.post("/auth/pin", data={"username": "mallory", "pin": "246813"}, follow_re
 assert r.status_code == 303, r.status_code                   # the PIN login itself works
 assert not auth.get_user(mallory["id"])["is_admin"], "first admin via the second jump"
 assert not auth.admin_exists()
-ok("B-umgehung-1: ... a self-configured second factor does not promote the address either")
+ok("B-bypass-1: ... a self-configured second factor does not promote the address either")
 os.remove(db)
 
 # Counter-check: The same second jump with an account whose address someone vouched for (here
@@ -185,7 +185,7 @@ assert auth.get_user(uid)["is_admin"], "the proven path is closed"
 ok("... the proven address of a locally created account still promotes")
 os.remove(db)
 
-# ---------- B-umgehung-10: the lock of the LOGIN ROUTE measured individually ----------
+# ---------- B-bypass-10: the lock of the LOGIN ROUTE measured individually ----------
 # Two locks secure the same path: (1) the route explicitly passes "no proof" through,
 # (2) an account created from the directory carries no proof at all. As long as both stand,
 # removing (1) goes unnoticed anywhere — whoever rebuilds the pass-through later loses it
@@ -200,7 +200,7 @@ assert c.post("/auth/login", data={"username": "chefin", "password": "x"},
               follow_redirects=False).status_code == 303        # login via the directory
 assert not auth.get_user(uid)["is_admin"], \
     "the login route no longer passes \"no proof\" through — LDAP promotes again"
-ok("B-umgehung-10: lock 1 on its own — the login route passes \"no proof\" through, even for a proven account")
+ok("B-bypass-10: lock 1 on its own — the login route passes \"no proof\" through, even for a proven account")
 # Counter-check: Without this pass-through (`email_confirmed=None`) the same note promotes
 # immediately — this measures that the route REALLY decided above and nothing else.
 assert auth._maybe_promote_admin(auth.get_user(uid), factor="password") is True, \
@@ -427,7 +427,7 @@ else:                                              # pragma: no cover
 # referral host. Measured with a substituted ldap3: If one of the two parameters
 # is dropped, this check is red, even when no directory is anywhere near.
 def stub_ldap3(transcript, empty=False, result=None):
-    """Substituted ldap3. `leer=True` + `result=…` simulates the response of a directory
+    """Substituted ldap3. `empty=True` + `result=…` simulates the response of a directory
     that answers the search with a REFERRAL instead of entries."""
     mod = types.ModuleType("ldap3")
     mod.NONE, mod.BASE = "NONE", "BASE"
@@ -935,7 +935,7 @@ os.remove(db23a)
 # lockout_ip`, and fail2ban banned the address. And not just once, but on every attempt
 # during the whole outage. Now the login remembers the outage: Afterwards 503 comes immediately,
 # without asking the directory again. (Mutation probe: remove the call in `check_ldap`
-# `self._ldap_failure.zugang()` → the burst hangs, the directory is asked on every attempt
+# `self._ldap_failure.access()` → the burst hangs, the directory is asked on every attempt
 # again → red. Until G9 the admin also got 429 here; since then he waits until the
 # pending pre-bookings are decided — tests/test_prebooking_pending.py measures that.)
 from concurrent.futures import ThreadPoolExecutor as _Pool24  # noqa: E402
@@ -1015,9 +1015,9 @@ ok(f"F-23 × R7-2: 503 immediately after the first timeout — {len(_colleagues2
 # After the pause EXACTLY ONE sign-in asks again (probe); all others keep getting 503 immediately
 # until it is back — otherwise after every pause all those just knocking would hang again. If
 # the directory answers again (even with "wrong password"), it is free. The change is reported, once
-# each, not on every request. (Mutation probe: in `FailureMarker.zugang` ignore the running probe
+# each, not on every request. (Mutation probe: in `FailureMarker.access` ignore the running probe
 # (`if rest > 0:` instead of `if rest > 0 or self._probe:`) → during the probe everybody asks
-# the directory → red; remove `merker.erreicht()` in `check_ldap` → the returned
+# the directory → red; remove `marker.reached()` in `check_ldap` → the returned
 # directory stays locked → red.)
 _clock24 = [5000.0]
 auth24._ldap_failure = FailureMarker(clock=lambda: _clock24[0])
@@ -1054,11 +1054,11 @@ assert auth24.store.count_fails(0, username="alice") == 0, "the full login clear
 ok("…after the pause exactly one sign-in asks again; outage and return appear once each in the log")
 os.remove(db24)
 
-# Only the probe itself releases the probe's slot (`ausgefallen(was_probe=True)`). A
+# Only the probe itself releases the probe's slot (`failed(was_probe=True)`). A
 # straggler from the first window that only runs into its timeout during the probe reports
 # `was_probe=False` — if it released the slot, the next sign-in would immediately ask in parallel to the
 # running probe, and after every pause several attempts would hang again. (Mutation probe:
-# in `FailureMarker.ausgefallen` always release the slot (`self._probe = False` without
+# in `FailureMarker.failed` always release the slot (`self._probe = False` without
 # `if was_probe`) → red.)
 _clock_n = [100.0]
 _m_n = FailureMarker(clock=lambda: _clock_n[0])
@@ -1082,7 +1082,7 @@ ok("Outage flag: a straggler does not release the slot of the running probe")
 # If the probe ends with a DIFFERENT exception (programming error in our own client, missing extra),
 # `check_ldap` must release its slot — otherwise nobody asks any more, and the LDAP sign-in
 # returns 503 until restart, even with a healthy directory. (Mutation probe: in `check_ldap`
-# remove the branch `except BaseException: if probe: merker.freigeben()` → red.)
+# remove the branch `except BaseException: if probe: marker.release()` → red.)
 class _MoodyLDAP:
     mode = "weg"
 
@@ -1090,7 +1090,7 @@ class _MoodyLDAP:
         if self.mode == "weg":
             raise DirectoryNotReachable("LDAP directory ldap://dummy unusable: timed out")
         if self.mode == "kaputt":
-            raise RuntimeError("unerwarteter Fehler im Client")
+            raise RuntimeError("unexpected error in the client")
         if self.mode == "abgebrochen":
             raise _ldap_mod.RequestAborted("Test: Verbindung nach dem Bind vom Server beendet")
         return {"username": username, "email": None, "name": username, "groups": [], "id": "l-1"}
@@ -1121,7 +1121,7 @@ assert _info_p, _info_p
 # The same if the probe only loses its own request (`RequestAborted`, see below): no
 # proof of an outage, but none of the return either — the next sign-in asks again.
 # (Mutation probe: in the branch `except RequestAborted` of `check_ldap` remove
-# `merker.freigeben()` → red.)
+# `marker.release()` → red.)
 _moody.mode = "weg"
 try:
     _auth_p._check_ldap("alice", "pw")
@@ -1257,7 +1257,7 @@ if HAS_LDAP3:
     # one request (quickly, after the sign-in person's inputs had been sent), that is not an
     # outage of the directory: 503 for this request, the flag stays off, the next
     # sign-in asks normally. (Mutation probe: in `check_ldap` treat `RequestAborted` like any
-    # outage (`merker.ausgefallen`) → alice gets 503 → red; in `authenticate` remove the
+    # outage (`marker.failed`) → alice gets 503 → red; in `authenticate` remove the
     # distinction (always `DirectoryNotReachable`) → red.)
     def _read_tlv(d, i):
         tag = d[i]
@@ -1274,7 +1274,7 @@ if HAS_LDAP3:
     class _MiniDirectory:
         """LDAP directory on loopback with real PDUs. `limit` like slapd's
         `sockbuf_max_incoming` (a larger PDU ends the connection without a response);
-        `haengt=True`: accepts connections, reads along, never answers."""
+        `hangs=True`: accepts connections, reads along, never answers."""
         USER = {b"uid=alice,ou=people,dc=example,dc=com": b"richtig"}
 
         def __init__(self, limit=262143, hangs=False):
@@ -1416,7 +1416,7 @@ if HAS_LDAP3:
     # as for the aborted bind — only that nothing from the person signing in has been sent by then. That is
     # an outage of the directory (e.g. a TLS front end without backend), not an abort of this
     # request. (Mutation probe: in `authenticate` treat connection and StartTLS already as
-    # input step (`eingabe, seit = True, …` before `conn.open()`) → red.)
+    # input step (`input_text, seit = True, …` before `conn.open()`) → red.)
     _st, _pst = listener()
 
     def _closes_at_starttls(sock):

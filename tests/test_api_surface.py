@@ -13,7 +13,7 @@ It forbids nothing — it forces a **deliberate decision**:
 
     python tests/test_api_surface.py --update      # accept the change, then commit
 
-What counts as a break is defined below in `beurteile()`: removed or renamed is a break,
+What counts as a break is defined below in `assess()`: removed or renamed is a break,
 a changed signature usually is too, something new is an extension. The distinction
 appears in the report, so nobody has to look up every line themselves.
 
@@ -108,7 +108,7 @@ def parameter_with_brands(parameter) -> list:
     """`str(p)` per parameter, plus the marks `*` (keyword-only before it) and `/` (positional-only
     before it) at the place where Python requires them in the signature.
 
-    Until 0.22.0 `signatur()` assembled the parameters individually and lost both marks:
+    Until 0.22.0 `signature()` assembled the parameters individually and lost both marks:
     `(request, username, password, *, next='')` was stored as `(…, password, next='')` in the baseline.
     A `*` inserted later — every call `login_password(r, u, p, "/start")` breaks
     — thus looked like no change (finding from step 3 of the tiering, M-1).
@@ -247,7 +247,7 @@ def result_type_surface(type_name=LoginResult) -> dict:
 class WithoutBrands(str):
     """A signature from a baseline from before 0.22.0: measured WITHOUT the marks `*` and `/`.
 
-    Where the marks were, such an entry no longer knows. `beurteile()` therefore compares it
+    Where the marks were, such an entry no longer knows. `assess()` therefore compares it
     with today's measurement without marks (`without_brands`) — otherwise a comparison with an
     older release would report every method with keyword-only parameters as a break, and a real
     one would be lost in it. A difference in names, order, defaults or return stays one.
@@ -262,7 +262,7 @@ def without_brands(sig: str) -> str:
 
 
 def measurement(file: dict) -> dict:
-    """Reduce the baseline to the pure measurement — the form `oberflaeche()` delivers.
+    """Reduce the baseline to the pure measurement — the form `surface()` delivers.
 
     Also tolerates the baseline from before 0.22.0 (value as string, exports as list): A
     comparison with an older release (`git show v0.21.0:tests/api_surface.json`) should not fail on
@@ -336,7 +336,7 @@ def without_tier(file: dict) -> list:
 
 
 def _bracket_and_rest(sig: str) -> tuple:
-    """`(a, b) -> 'bool'` → (`a, b`, ` -> 'bool'`). Until T-13 `teile()` simply cut off the
+    """`(a, b) -> 'bool'` → (`a, b`, ` -> 'bool'`). Until T-13 `parts()` simply cut off the
     first and last character — for a signature WITH a return type that ended up in the
     last parameter, and a harmlessly appended parameter counted as a BREAK."""
     s, depth = sig.strip(), 0
@@ -442,11 +442,11 @@ REQUIRED_PROPERTIES = ("session_cookie_name", "csrf_cookie_name", "resource_cook
 def self_check(now: dict) -> None:
     """Does the guard measure the properties at all? (0.20.1)
 
-    Until 0.20.0 `oberflaeche()` explicitly excluded them (`isinstance(wert, property)`), and
+    Until 0.20.0 `surface()` explicitly excluded them (`isinstance(value, property)`), and
     `getmembers(…, callable)` does not see them anyway. Renaming `csrf_cookie_name` —
     exactly the name that custom JS and custom routes need — thus went unnoticed by every guard.
     Also runs before `--update`: Otherwise the exclusion could be checked in together with the new dump.
-    (Mutation probe: delete the area `TinySesam.properties` in `oberflaeche()` → red.)
+    (Mutation probe: delete the area `TinySesam.properties` in `surface()` → red.)
     """
     own = now.get("TinySesam.properties", {})
     missing = [n for n in REQUIRED_PROPERTIES if n not in own]
@@ -461,7 +461,7 @@ def self_check(now: dict) -> None:
 
 
 def self_check_signature(now: dict) -> None:
-    """Does `signatur()` measure the marks `*` and `/`, and report an inserted `*` as a break? (0.22.0)
+    """Does `signature()` measure the marks `*` and `/`, and report an inserted `*` as a break? (0.22.0)
 
     In addition: A baseline from before 0.22.0 (measured without marks) can still be compared — without
     every method with keyword-only parameters appearing as a break, and without a
@@ -1311,7 +1311,7 @@ class ProbeError(Exception):
 # goes out; the source what the probe does not reach (such as `passkey_added` without the extra).
 # (Mutation probes: `failure_series` in `gc()` back to `fehlserien` → red; `reason=` in
 # `_keys_revoked` back to `grund=` → red; `ctx.setdefault("prefix", …)` back to
-# `"praefix"` → red; `create_api_key` writes `automaton` again → red; no longer calling the probe
+# `"prefix"` → red; `create_api_key` writes `automaton` again → red; no longer calling the probe
 # → wiring red.)
 
 #: The keys and values up to 0.21.x — also those that passed as English as a word (`old` is an

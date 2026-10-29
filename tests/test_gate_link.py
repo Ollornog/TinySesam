@@ -118,7 +118,7 @@ for path in SEMI:
     assert r.status_code == 200 and r.headers["Remote-User"] == "anna", (path, r.status_code, place(r))
 ok(f"B-3: {len(SEMI)} paths with ; / %3B / &amp; — signed out: rd carries the path unchanged; signed in: 200")
 
-# ---------- Angriffe ----------
+# ---------- Attacks ----------
 raw = b["app"].cookies.get("__Host-tinysesam_link")
 foreign = TestClient(fa, base_url=WIKI)
 foreign.cookies.set("__Host-tinysesam_link", raw)

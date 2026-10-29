@@ -29,25 +29,25 @@ def secret_text(u=Depends(auth.require_user)):
 c = TestClient(app)
 uid = auth.store.get_user_by_name("admin")["id"]
 
-# Login-Seite zeigt PIN-Form
+# login page shows the PIN form
 assert "Mit PIN anmelden" in c.get("/auth/login").text
-ok("Login-Seite zeigt PIN-Form (pin_enabled)")
+ok("login page shows the PIN form (pin_enabled)")
 
 # minimum length
 try:
     auth.set_pin(uid, "12")
-    assert False, "zu kurze PIN sollte fehlschlagen"
+    assert False, "too short PIN should fail"
 except ValueError:
     ok("set_pin enforces minimum length")
 
 auth.set_pin(uid, "2468")
 assert auth.has_pin(uid)
 
-# falsche PIN → 401
+# wrong PIN → 401
 assert c.post("/auth/pin", data={"username": "admin", "pin": "0000", "next": "/geheim"}).status_code == 401
-ok("falsche PIN → 401")
+ok("wrong PIN → 401")
 
-# richtige PIN → eingeloggt
+# correct PIN → signed in
 r = c.post("/auth/pin", data={"username": "admin", "pin": "2468", "next": "/geheim"}, follow_redirects=False)
 assert r.status_code == 303 and "set-cookie" in {k.lower() for k in r.headers}
 assert c.get("/geheim").json()["u"] == "admin"
@@ -55,7 +55,7 @@ ok("correct PIN → logged in (PIN is a full factor)")
 
 # self-service: change & remove PIN
 assert c.post("/auth/pin/set", json={"pin": "13579"}).json() == {"ok": True, "other_sessions": 0}
-assert c.post("/auth/pin/set", json={"pin": "1"}).status_code == 400   # zu kurz
+assert c.post("/auth/pin/set", json={"pin": "1"}).status_code == 400   # too short
 c.get("/auth/logout")
 r = c.post("/auth/pin", data={"username": "admin", "pin": "13579", "next": "/"}, follow_redirects=False)
 assert r.status_code == 303
@@ -79,9 +79,9 @@ assert r.status_code == 303 and "/auth/totp" in r.headers["location"]
 assert c2.get("/geheim").status_code == 401   # not full yet
 r = c2.post("/auth/totp", data={"code": pyotp.TOTP(secret).now(), "next": "/geheim"}, follow_redirects=False)
 assert r.status_code == 303 and c2.get("/geheim").json()["u"] == "admin"
-ok("PIN + TOTP kombinierbar (PIN → 2. Faktor)")
+ok("PIN + TOTP combinable (PIN → 2nd factor)")
 
-# entfernen
+# remove
 c3 = TestClient(app)
 c3.post("/auth/pin", data={"username": "admin", "pin": "13579"}, follow_redirects=False)
 # A TOTP code has applied exactly ONCE since 0.18.0. The same code was already consumed above —
@@ -90,7 +90,7 @@ c3.post("/auth/totp", data={"code": pyotp.TOTP(secret).at(int(time.time()) + 30)
         follow_redirects=False)
 assert c3.post("/auth/pin/disable").json()["ok"] is True
 assert not auth.has_pin(uid)
-ok("PIN entfernen")
+ok("PIN removed")
 
 os.remove(db)
 print("\nPIN OK ✅")

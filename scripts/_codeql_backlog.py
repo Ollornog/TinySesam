@@ -2,7 +2,7 @@
 """Pull open CodeQL alerts into the backlog — instead of into a mailbox.
 
     python3 scripts/_codeql_backlog.py            # refresh the table in backlog/T-12-codeql-backlog.md
-    python3 scripts/_codeql_backlog.py --zeige    # only print, write nothing
+    python3 scripts/_codeql_backlog.py --show    # only print, write nothing
 
 CodeQL reports every finding as an e-mail and — on a pull request — as a review thread that
 blocks the merge as long as it is open (even at severity "note"). What is open on `main`, by
@@ -55,7 +55,7 @@ def table(alerts: list[dict]) -> str:
 def main(argv: list[str]) -> int:
     alerts = hole_alerts()
     text = table(alerts)
-    if "--zeige" in argv:
+    if "--show" in argv:
         print(text)
         return 0
     with open(DESTINATION, encoding="utf-8") as fh:

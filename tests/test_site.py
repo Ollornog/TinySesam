@@ -30,7 +30,7 @@ from web.site import DEMO, FLOWS as FLOWS_FILE, INDEX, LEGAL, OWNER, LABELS, bui
 from web.ui import LANG_COOKIE, LANGS, Ctx, Nav, footer, header  # noqa: E402
 
 
-# ---------- Flow-Daten ----------
+# ---------- Flow data ----------
 for f in FLOWS:
     assert f["key"] and f["config"] and callable(f["active"]), f
     for lang in LANGS:
@@ -130,7 +130,7 @@ for name in (INDEX, FLOWS_FILE, LEGAL):
     assert "id=ts-theme" in h and "data-theme=light" in h and "data-theme=dark" in h
     assert "details.dd[open]" in h and "e.key==='Escape'" in h
 
-# ---------- Impressum + Datenschutz ----------
+# ---------- Legal notice + privacy ----------
 legal = pages[LEGAL]
 for probe in ("§ 5 DDG", "Art. 6 Abs. 1 lit. f DSGVO", "GitHub, Inc.", "EU-US Data Privacy Framework",
               "ts_lang", "ts-theme", "Art. 15", "Cookie-Banner"):
@@ -153,13 +153,13 @@ assert "class=brand" not in _cut(idx, "<header class=shell>", "</header>")
 assert "class=brand" in _cut(fl, "<header class=shell>", "</header>")
 print("  header: one container + two nav rows; start page with title area instead of brand")
 
-# ---------- ui-Bausteine ----------
+# ---------- ui building blocks ----------
 _nav = Nav(brand_href="/", icon_url="w.png", repo="https://example.invalid",
            pages=(("/a", "A"), ("/b", "B")), auth=True)
 _ctx = Ctx(lang="de", labels=LABELS["de"], lang_hrefs={"en": "?l=en", "de": "?l=de"}, path="/a")
 h = header(_ctx, _nav)
 assert "class='on' href='/a'" in h and "class='' href='/b'" in h
-assert "Anmelden" in h and "Registrieren" in h, "ausgeloggt: An-/Registrieren"
+assert "Anmelden" in h and "Registrieren" in h, "signed out: sign-in/register"
 _ctx.user = {"username": "max"}
 _ctx.is_admin = True
 h = header(_ctx, _nav)
@@ -236,7 +236,7 @@ with tempfile.TemporaryDirectory() as tmp:
 print("  web.build schreibt Seiten, Demo-Panels, Attrappen-API + .nojekyll")
 
 # ---------- Showcase: the username is text (R8-2) ----------
-# T-12 escaped it on /app and /sensibel; /demo (“Signed in as …”) stayed raw. An account named
+# T-12 escaped it on /app and /sensitive; /demo (“Signed in as …”) stayed raw. An account named
 # <img src=x onerror=…> thereby ran as code on every own visit to the demo page.
 os.environ["TINYSESAM_SHOWCASE_DB"] = os.path.join(tempfile.mkdtemp(), "showcase.db")
 from fastapi.testclient import TestClient  # noqa: E402

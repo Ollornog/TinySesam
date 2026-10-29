@@ -370,7 +370,7 @@ variables = sorted({k.value for d in PACKAGE.rglob("*.py")
                     and k.value.startswith("TINYSESAM_")
                     and any(v in k.value.lower() for v in SUSPICIOUS + ("hash",))})
 r.check("G: no setting and no TINYSESAM_ variable for hash cost", not fields and not variables,
-        f"Felder {fields}, Variablen {variables}")
+        f"fields {fields}, variables {variables}")
 
 # ── H: the gate does not build the website into the tree ─────────────────────────────────────
 # Until the rework `scripts/check.sh` built into `_site/` in the tree and deleted the folder afterwards — a
@@ -405,8 +405,8 @@ exec "{sys.executable}" "$@"
             f"Exit {gate.returncode}\n{gate.stdout[-400:]}{gate.stderr[-400:]}")
     r.check("H: … an existing _site/ stays untouched, and nothing new arises in the tree",
             (copy / "_site" / "eigen.txt").exists() and afterwards_h == before_h,
-            f"eigen.txt da: {(copy / '_site' / 'eigen.txt').exists()}, neu: "
-            f"{sorted(set(afterwards_h) - set(before_h))}, weg: {sorted(set(before_h) - set(afterwards_h))}")
+            f"eigen.txt present: {(copy / '_site' / 'eigen.txt').exists()}, new: "
+            f"{sorted(set(afterwards_h) - set(before_h))}, gone:{sorted(set(before_h) - set(afterwards_h))}")
 
 
 # ── I: the failed check is in the log, even with long output ─────────────────────────────────
@@ -433,7 +433,7 @@ r.check("I: … the end of the output is still there and begins at a line bounda
         and from_i.split("── Ende der Ausgabe ──\n", 1)[-1].startswith("  ok   spätere Prüfung"),
         from_i.split("── Ende der Ausgabe ──", 1)[-1][:120])
 
-# ── J: eigenes Wegwerf-Directory je Suite ───────────────────────────────────────────────────
+# ── J: own throwaway directory per suite───────────────────────────────────────────────────
 # The promise on which the parallel run and “tests are repeatable” stand. Until 2026-10-01 no
 # suite checked it: a shared, never deleted directory for all suites stayed green.
 # (Mutation probe: take a fixed directory in `run_suite` and not delete it → red.)
@@ -451,7 +451,7 @@ execution_j = collect_run([suite(folder_j, "test_j1.py", body_j), suite(folder_j
                     2, COLLECT_TRACE_J=str(trace_j))
 traces = [json.loads(f.read_text()) for f in sorted(trace_j.glob("*.json"))]
 r.check("J: both suites ran and have put down their environment",
-        execution_j.returncode == 0 and len(traces) == 2, f"Exit {execution_j.returncode}, {len(traces)} Spuren")
+        execution_j.returncode == 0 and len(traces) == 2, f"Exit {execution_j.returncode}, {len(traces)} traces")
 if len(traces) == 2:
     one, two = traces
     r.check("J: TMPDIR, HOME, XDG_* and gettempdir point to the same directory of the suite",

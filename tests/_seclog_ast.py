@@ -43,7 +43,7 @@ def security_constants():
 def values(node, const, event, local=None):
     """The strings an expression can evaluate to — or None if unknown.
 
-    `local`: simple `name = expr` assignments of the enclosing function (`wort = A if login else B`)."""
+    `local`: simple `name = expr` assignments of the enclosing function (`word = A if login else B`)."""
     local = local or {}
     if isinstance(node, ast.Constant) and isinstance(node.value, str):
         return {node.value}

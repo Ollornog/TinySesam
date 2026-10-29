@@ -60,7 +60,7 @@ auth.oidc._meta = {"issuer": "https://id.example.invalid",
 url = auth.oidc.end_session_url("https://app.example.com/")
 assert url and url.startswith("https://id.example.invalid/logout?") and "client_id=cid" in url \
     and "post_logout_redirect_uri=" in url
-ok("OIDCClient.end_session_url baut Provider-Logout-URL (client_id + post_logout_redirect_uri)")
+ok("OIDCClient.end_session_url builds the provider logout URL (client_id + post_logout_redirect_uri)")
 
 app = FastAPI(); app.include_router(auth.router())
 c = TestClient(app)

@@ -11,16 +11,16 @@ def ok(name):
     print(f"  ✓ {name}")
 
 
-# ---------- safe_next (Open-Redirect-Schutz) ----------
+# ---------- safe_next (open-redirect protection) ----------
 assert safe_next("/dashboard") == "/dashboard"
 assert safe_next("") == "/"
-assert safe_next("//evil.example") == "/"                       # protokoll-relativ
-assert safe_next("https://evil.example/x") == "/"               # absoluter fremder Host
+assert safe_next("//evil.example") == "/"                       # protocol-relative
+assert safe_next("https://evil.example/x") == "/"               # absolute foreign host
 assert safe_next("javascript:alert(1)") == "/"
 assert safe_next("/ok", allowed_hosts=["app.example.com"]) == "/ok"
 assert safe_next("https://app.example.com/x", allowed_hosts=["app.example.com"]) == "https://app.example.com/x"
 assert safe_next("https://evil.example/x", allowed_hosts=["app.example.com"]) == "/"
-ok("safe_next: relative erlaubt, fremde/protokoll-relative Ziele → /")
+ok("safe_next: relative allowed, foreign/protocol-relative targets → /")
 
 db = os.path.join(tempfile.mkdtemp(), "t.db")
 auth = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db, rp_name="Test", passkey_enabled=False,
@@ -44,7 +44,7 @@ r = c.post("/auth/login", data={"username": "admin", "password": "geheim123", "n
 assert r.status_code == 303 and r.headers["location"] == "/", r.headers.get("location")
 ok("login with foreign next → redirect to / (no open redirect)")
 
-# ---------- Remember-me: persistentes Cookie (Max-Age gesetzt) ----------
+# ---------- Remember-me: persistent cookie (Max-Age set) ----------
 c.get("/auth/logout")
 r = c.post("/auth/login", data={"username": "admin", "password": "geheim123", "next": "/", "remember": "1"},
            follow_redirects=False)
@@ -60,7 +60,7 @@ sc = r.headers.get("set-cookie", "")
 assert "tinysesam_session=" in sc and "Max-Age=" not in sc and "Expires=" not in sc, sc
 ok("remember off → pure session cookie (no Max-Age)")
 
-# Server-Session-TTL folgt Transient-Wert
+# Server session TTL follows the transient value
 tok = c.cookies.get("tinysesam_session")
 s = auth.store.get_session(tok)
 assert (s["expires_at"] - s["created_at"]) <= 6 * 3600 + 5, "Transient-TTL zu lang"
@@ -79,7 +79,7 @@ from fastapi.responses import JSONResponse
 auth.set_template("login", lambda a, ctx: JSONResponse({"custom": True}, status_code=418))
 r = c.get("/auth/login")
 assert r.status_code == 418 and r.json() == {"custom": True}
-ok("Template-Override: eigene Response (Status 418) durchgereicht")
+ok("Template override: custom response (status 418) passed through")
 
 os.remove(db)
 print("\nVIEWS + REMEMBER OK ✅")

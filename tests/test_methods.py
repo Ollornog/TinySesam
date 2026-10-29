@@ -20,7 +20,7 @@ auth = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de",
     oidc_name="PocketID", oidc_issuer="https://id.example.invalid",
     oidc_client_id="cid", oidc_client_secret="sec", cookie_secure=False,
     # Required with oidc_enabled: the redirect URI goes to the IdP and must not come from the
-    # Host-Header kommen (R4-01).
+    # Host header (R4-01).
     base_url="https://auth.example.com"))
 assert auth.oidc is not None and auth.webauthn is not None, "OIDC/passkey modules not loaded"
 
@@ -132,7 +132,7 @@ try:
                               passkey_enabled=True, rp_id="localhost",
                               origin="http://localhost:8000",
                               passkey_user_verification="egal"))
-    raise AssertionError("unbekannter Wert kam durch")
+    raise AssertionError("unknown value got through")
 except _ConfigError:
     pass
 ok_("B2-10: an unknown value for passkey_user_verification aborts startup")

@@ -66,15 +66,15 @@ class Directory:
         if self.mode == "weg":
             raise DirectoryNotReachable("LDAP-Verzeichnis ldap://dummy nicht benutzbar: Test")
         if self.mode == "kaputt":
-            raise RuntimeError("unerwarteter Fehler im Client")
+            raise RuntimeError("unexpected error in the client")
         time.sleep(self.duration)
         if self.mode == "richtig":
             return {"username": username, "email": None, "name": username, "groups": [], "id": f"l-{username}"}
-        return None                                    # „falsch“: Passwort abgelehnt
+        return None                                    # „falsch“: password rejected
 
 
 def wait_until(condition, was, deadline=20.0):
-    """Wait until `bedingung()` is true — instead of a fixed time (T-18).
+    """Wait until `condition()` is true — instead of a fixed time (T-18).
 
     Until 2026-10-07 these places had `time.sleep(HANGS * 0.4)` in the hope that the
     parallel sign-ins had arrived in the hanging directory by then. Under load that once was not
@@ -313,7 +313,7 @@ auth.store._series_minus = _spy
 _sign_in(app, "alice")                                  # failure → withdrawal
 dir_t.mode, dir_t.duration = "richtig", 0
 auth._ldap_failure = type(auth._ldap_failure)()          # the marker is armed after the failure
-status_t = _sign_in(app, "alice")                       # Erfolg → Abschluss
+status_t = _sign_in(app, "alice")                       # success → completion
 r.check("withdrawal and success lower the series in the row's transaction",
         calls == [("alice", "password", True), ("alice", "password", True)] and status_t == 303,
         f"{calls}, {status_t}")
@@ -418,7 +418,7 @@ with Recording() as log_i, ThreadPoolExecutor(max_workers=2) as pool:
     attacker = pool.submit(_sign_in, app, "alice", "falsch", ("203.0.113.66", 40000))
     holder, attacker = holder.result(timeout=30), attacker.result(timeout=30)
 auth._notice_outcome.wait()
-# (Mutation probe: in `record_login` restore `stand = vorgebucht[2]` and `stand == grenze`, plus in
+# (Mutation probe: in `record_login` restore `state = prebooked[2]` and `state == limit`, plus in
 #  `reserve_attempt` the sum instead of the settled state → one row → red.)
 r.check("p2 F3: owner and attacker are pending at limit−2, the owner ends the series — "
         "no `lockout_series` in the audit log, no “locked” in the security log",
@@ -470,7 +470,7 @@ _prior_i3 = _series_lines(auth_i3)
 _v = auth_i3._begin_attempt("bert", "192.0.2.60", "pin")
 auth_i3.lift_lockout(auth_i3.store.get_user_by_name("bert")["id"])
 auth_i3._record_login("bert", "192.0.2.60", False, "pin", attempt=_v)
-# (Mutation probe: replace `min(vorgebucht[2], nachher)` with `vorgebucht[2]` in `record_login` → red.)
+# (Mutation probe: replace `min(prebooked[2], afterwards)` with `prebooked[2]` in `record_login` → red.)
 r.check("p2 F3: booking over the limit, series ended before completion → no row",
         _v is not None and _series_lines(auth_i3) == _prior_i3, f"{_v} {_series_lines(auth_i3) - _prior_i3}")
 _mixed = []
@@ -484,7 +484,7 @@ for order in ("schwebend zuerst", "feststehend zuerst"):
     for v, m in ((_s, "password"), (_f, "pin"))[::1 if order == "schwebend zuerst" else -1]:
         auth_i3._record_login("bert", "192.0.2.61", False, m, attempt=v)
     _mixed.append((order, _s is not None and _f is not None, _series_lines(auth_i3) - _prior))
-# (Mutationsprobe: `vorher < max_series <= nachher` streichen → „schwebend zuerst" 0 Zeilen → rot.)
+# (Mutation probe: delete `before < max_series <= afterwards` → „schwebend zuerst" 0 rows → red.)
 r.check("p2 F3: pending and immediately settled booking at the limit — exactly one row in both orders",
         all(ok_ and n == 1 for _, ok_, n in _mixed), str(_mixed))
 auth_i3.store.db.close()
@@ -556,11 +556,11 @@ def _ldap3_slow(clock, response_sec, transcript):
         def open(self):
             wait(self.server.connect_timeout, lx.LDAPSocketOpenError)
             if self.server.url.startswith("ldaps://"):
-                wait(self.deadline, lx.LDAPSocketReceiveError)       # TLS-Handschlag
+                wait(self.deadline, lx.LDAPSocketReceiveError)       # TLS handshake
 
         def start_tls(self):
             wait(self.deadline, lx.LDAPSocketReceiveError)           # response to StartTLS
-            wait(self.deadline, lx.LDAPSocketReceiveError)           # TLS-Handschlag
+            wait(self.deadline, lx.LDAPSocketReceiveError)           # TLS handshake
 
         def bind(self):
             wait(self.deadline, lx.LDAPSocketReceiveError)
@@ -623,11 +623,11 @@ _cases_j = {"Search-then-Bind + StartTLS": dict(ldap_start_tls=True),
 _measurement_j = {(name, sec): _slow_questions(sec, **cfg)[:2]
               for name, cfg in _cases_j.items() for sec in (0.01, 1.2, 1.9, 2.9, 4.5, 9.5)}
 _to_lang_j = {k: v for k, v in _measurement_j.items() if v[1] > _ldap_mod.TOTAL_DEADLINE_SEC}
-# (Mutationsprobe: in `_Deadline.per_wait_point` wieder immer `CONNECTION_TIMEOUT` → bis zu 95 s → rot.)
+# (Mutation probe: in `_Deadline.per_wait_point` always `CONNECTION_TIMEOUT` again → up to 95 s → red.)
 r.check("p2 V1: every sign-in against a slow but responding directory ends within the "
         f"overall deadline ({_ldap_mod.TOTAL_DEADLINE_SEC} s) — signed in or “nicht erreichbar”, never “abgewiesen”",
         not _to_lang_j and all(a in ("angemeldet", "nicht erreichbar") for a, _ in _measurement_j.values()),
-        f"zu lang: {_to_lang_j}; {[(k, v) for k, v in _measurement_j.items() if v[0] == 'abgewiesen']}")
+        f"too long: {_to_lang_j}; {[(k, v) for k, v in _measurement_j.items() if v[0] == 'abgewiesen']}")
 r.check("… a fast directory notices nothing: signed in, the service account with the half, the "
         "user connection with the whole remaining deadline per response (at most 10 s)",
         all(_measurement_j[(n, 0.01)][0] == "angemeldet" for n in _cases_j)
@@ -641,7 +641,7 @@ try:
     _tight_j = _slow_questions(0.01, ldap_start_tls=True)
 finally:
     _ldap_mod.TOTAL_DEADLINE_SEC = _deadline_before
-# (Mutationsprobe: `except DirectoryNotReachable: raise` in `authenticate` streichen → „abgewiesen“,
+# (Mutationsprobe: `except DirectoryNotReachable: raise` in `authenticate` delete → „abgewiesen“,
 #  a failed attempt for the slowness of the directory → red.)
 r.check("p2 V1: if the deadline is not enough, the directory counts as unreachable before it is asked "
         "(no failed attempt)", _tight_j[0] == "nicht erreichbar" and _tight_j[2] == [], str(_tight_j))

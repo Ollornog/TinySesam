@@ -97,14 +97,14 @@ body{font-family:var(--ts-font);margin:0;min-height:100vh;display:flex;flex-dire
      border-radius:8px;font-size:12px;margin-bottom:10px}
 /* Messages (PO 2026-10-08): a box of their own BELOW the card, one icon per message. Notice, warning and
    error are built alike and differ only in colour and icon. */
-.tsmain .meldungen{width:340px;max-width:92vw;display:flex;flex-direction:column;gap:8px}
-.tsmain .meldung{display:flex;align-items:flex-start;gap:10px;padding:11px 14px;font-size:13px;line-height:1.4;
+.tsmain .notices{width:340px;max-width:92vw;display:flex;flex-direction:column;gap:8px}
+.tsmain .notice{display:flex;align-items:flex-start;gap:10px;padding:11px 14px;font-size:13px;line-height:1.4;
      border-radius:calc(var(--ts-radius) + 2px);border:1px solid var(--ts-line)}
-.tsmain .meldung svg{flex:0 0 18px;width:18px;height:18px;margin-top:1px}
-.tsmain .meldung.info{background:var(--ts-info-bg);color:var(--ts-info-ink)}
-.tsmain .meldung.warn{background:var(--ts-warn-bg);color:var(--ts-warn-ink)}
-.tsmain .meldung.fehler{background:var(--ts-err-bg);color:var(--ts-err-ink)}
-.tsmain .meldung.ok{background:var(--ts-ok-bg);color:var(--ts-ok-ink)}
+.tsmain .notice svg{flex:0 0 18px;width:18px;height:18px;margin-top:1px}
+.tsmain .notice.info{background:var(--ts-info-bg);color:var(--ts-info-ink)}
+.tsmain .notice.warn{background:var(--ts-warn-bg);color:var(--ts-warn-ink)}
+.tsmain .notice.error{background:var(--ts-err-bg);color:var(--ts-err-ink)}
+.tsmain .notice.ok{background:var(--ts-ok-bg);color:var(--ts-ok-ink)}
 /* sits NEXT TO the card, not in it — a demo notice is not part of the form */
 .tsmain .demobar{width:340px;max-width:92vw;background:var(--ts-info-bg);color:var(--ts-info-ink);
      padding:11px 14px;border-radius:calc(var(--ts-radius) + 2px);border:1px solid var(--ts-line);
@@ -156,8 +156,8 @@ def background(cfg) -> tuple[str, str]:
            (".tsbg::after{content:'';position:absolute;inset:0;background:radial-gradient(ellipse at center,"
             "var(--ts-image-overlay),var(--ts-image-overlay-edge))}"),
            "body{background:transparent}",
-           (".tsbg-quelle{position:fixed;right:12px;bottom:8px;font-size:11px;color:var(--ts-muted);opacity:.55;"
-            "text-decoration:none}.tsbg-quelle:hover{opacity:.9;text-decoration:underline}")]
+           (".tsbg-source{position:fixed;right:12px;bottom:8px;font-size:11px;color:var(--ts-muted);opacity:.55;"
+            "text-decoration:none}.tsbg-source:hover{opacity:.9;text-decoration:underline}")]
     if n == 1:
         css.append(".tsbg i{opacity:var(--ts-image-strength)}")
     else:
@@ -173,8 +173,8 @@ def background(cfg) -> tuple[str, str]:
     source = ""
     text, destination = getattr(cfg, "brand_background_credit_text", ""), getattr(cfg, "brand_background_credit_url", "")
     if text:
-        source = (f"<a class=tsbg-quelle href='{html.escape(destination)}' target=_blank rel='noopener noreferrer'>"
-                  f"{html.escape(text)}</a>" if destination else f"<span class=tsbg-quelle>{html.escape(text)}</span>")
+        source = (f"<a class=tsbg-source href='{html.escape(destination)}' target=_blank rel='noopener noreferrer'>"
+                  f"{html.escape(text)}</a>" if destination else f"<span class=tsbg-source>{html.escape(text)}</span>")
     return "".join(css), "<div class=tsbg aria-hidden=true>" + "<i></i>" * n + "</div>" + source
 
 
@@ -220,24 +220,24 @@ def _page(auth, title, body, card=True, top="", below="", head=""):
 _SYMBOL = {
     "info": "<circle cx='12' cy='12' r='9'/><path d='M12 11v5'/><path d='M12 7.5v.5'/>",
     "warn": "<path d='M12 3.5 21 19.5H3z'/><path d='M12 10v4'/><path d='M12 16.5v.5'/>",
-    "fehler": "<circle cx='12' cy='12' r='9'/><path d='M8.5 8.5l7 7'/><path d='M15.5 8.5l-7 7'/>",
+    "error": "<circle cx='12' cy='12' r='9'/><path d='M8.5 8.5l7 7'/><path d='M15.5 8.5l-7 7'/>",
     "ok": "<circle cx='12' cy='12' r='9'/><path d='M8 12.5l2.8 2.8L16 10'/>",
 }
 
 
 def _messages(items) -> str:
-    """Messages as a separate box below the card: `[(art, text), …]`, art ∈ info | ok | warn | fehler.
+    """Messages as a separate box below the card: `[(kind, text), …]`, kind ∈ info | ok | warn | error.
     Empty texts are dropped; without a message there is no box."""
     parts = []
     for kind, text in items:
         if not text:
             continue
         kind = kind if kind in _SYMBOL else "info"
-        role = "alert" if kind == "fehler" else "status"
-        parts.append(f"<div class='meldung {kind}' role={role}>"
+        role = "alert" if kind == "error" else "status"
+        parts.append(f"<div class='notice {kind}' role={role}>"
                      f"<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' "
                      f"stroke-linejoin='round' aria-hidden='true'>{_SYMBOL[kind]}</svg><span>{_e(text)}</span></div>")
-    return f"<div class=meldungen>{''.join(parts)}</div>" if parts else ""
+    return f"<div class=notices>{''.join(parts)}</div>" if parts else ""
 
 
 def _e(s) -> str:
@@ -344,7 +344,7 @@ def _login(auth, ctx) -> str:
     methods = cfg.enabled_methods()
     # Messages (PO 2026-10-08): notice ("You have been signed out"), warning and error of a sign-in attempt stand
     # together in a separate box below the card, each with an icon — no longer scattered in the card.
-    messages = _messages([("info", ctx.get("info")), ("warn", ctx.get("warn")), ("fehler", error)])
+    messages = _messages([("info", ctx.get("info")), ("warn", ctx.get("warn")), ("error", error)])
     _or = f"<div class=or>{_e(t('or'))}</div>"
     remember = ""
     if cfg.remember_me_enabled:
@@ -414,7 +414,7 @@ def _login(auth, ctx) -> str:
 def _totp(auth, ctx) -> str:
     """ctx: next, error."""
     t = auth.t
-    messages = _messages([("fehler", ctx.get("error"))])
+    messages = _messages([("error", ctx.get("error"))])
     body = (f"<h1>{_e(t('totp.title'))}</h1>"
             f"<form method=post action='__TS_P__/auth/totp'>"
             f"<input type=hidden name=next value='{_e(ctx.get('next', '/'))}'>{_cf(ctx)}"
@@ -685,7 +685,7 @@ def _register(auth, ctx) -> str:
                 f"<a class=btn2 href='__TS_P__/auth/login'>{_e(t('magic.to_login'))}</a>")
         return _page(auth, t("reg.verify_title"), body, below=_messages([("ok", t("reg.verify"))]))
     cfg = auth.cfg
-    messages = _messages([("fehler", ctx.get("error"))])
+    messages = _messages([("error", ctx.get("error"))])
     emailro = " readonly" if ctx.get("invite") and ctx.get("email") else ""
     # The fields follow the config: in e-mail mode the address is the identifier; an optional
     # e-mail field appears only if the app does anything with it at all (login link,
@@ -718,7 +718,7 @@ def _magic_request(auth, ctx) -> str:
                 f"<div class=hint>{_e(t('magic.sent_hint'))}</div>"
                 f"<a class=btn2 href='__TS_P__/auth/login'>{_e(t('magic.back_login'))}</a>")
         return _page(auth, t("magic.sent_title"), body, below=_messages([("ok", t("magic.sent"))]))
-    messages = _messages([("fehler", ctx.get("error"))])
+    messages = _messages([("error", ctx.get("error"))])
     body = (f"<h1>{_e(t('magic.title'))}</h1>"
             f"<div class=hint>{_e(t('magic.hint'))}</div>"
             f"<form method=post action='__TS_P__/auth/magic/request'>"
@@ -738,7 +738,7 @@ def _forgot(auth, ctx) -> str:
                       f"<h1>{_e(t('magic.sent_title'))}</h1>"
                       f"<a class=btn2 href='__TS_P__/auth/login'>{_e(t('magic.to_login'))}</a>",
                       below=_messages([("ok", t("magic.sent"))]))
-    messages = _messages([("fehler", ctx.get("error"))])
+    messages = _messages([("error", ctx.get("error"))])
     body = (f"<h1>{_e(t('forgot.title'))}</h1>"
             f"<div class=hint>{_e(t('forgot.hint'))}</div>"
             f"<form method=post action='__TS_P__/auth/forgot'>{_cf(ctx)}"
@@ -751,7 +751,7 @@ def _forgot(auth, ctx) -> str:
 def _reset(auth, ctx) -> str:
     """ctx: token, error. Set a new password."""
     t = auth.t
-    messages = _messages([("fehler", ctx.get("error"))])
+    messages = _messages([("error", ctx.get("error"))])
     body = (f"<h1>{_e(t('reset.title'))}</h1>"
             f"<form method=post action='__TS_P__/auth/reset'>"
             f"<input type=hidden name=token value='{_e(ctx.get('token', ''))}'>{_cf(ctx)}"
@@ -899,13 +899,13 @@ def _magic_invalid(auth, ctx) -> str:
     t = auth.t
     body = (f"<h1>{_e(t('magic.invalid_title'))}</h1>"
             f"<a class=btn2 href='__TS_P__/auth/login'>{_e(t('magic.to_login'))}</a>")
-    return _page(auth, t("magic.invalid_title"), body, below=_messages([("fehler", t("magic.invalid"))]))
+    return _page(auth, t("magic.invalid_title"), body, below=_messages([("error", t("magic.invalid"))]))
 
 
 def _resource_unlock(auth, ctx) -> str:
     """ctx: name, kind ('pin'|'password'), label, next, error. Shared resource secret."""
     t = auth.t
-    messages = _messages([("fehler", ctx.get("error"))])
+    messages = _messages([("error", ctx.get("error"))])
     if ctx.get("kind") == "pin":
         field = "<input name=secret type=password inputmode=numeric autocomplete=off class=code autofocus>"
         lbl = t("res.pin")
@@ -948,7 +948,7 @@ def _reauth(auth, ctx) -> str:
     the password field stays.
     """
     t = auth.t
-    messages = _messages([("fehler", ctx.get("error"))])
+    messages = _messages([("error", ctx.get("error"))])
     methods = ctx.get("methods")
     methods = ["password"] if methods is None else list(methods)
     head = (f"<h1>{_e(t('reauth.title'))}</h1>"
@@ -969,7 +969,7 @@ def _reauth(auth, ctx) -> str:
 def _pin(auth, ctx) -> str:
     """ctx: next, error, username (optional). PIN entry — without a user field if already signed in."""
     t = auth.t
-    messages = _messages([("fehler", ctx.get("error"))])
+    messages = _messages([("error", ctx.get("error"))])
     known = bool(ctx.get("username"))
     id_label, id_ac = _ident(auth)
     user_field = ("" if known else

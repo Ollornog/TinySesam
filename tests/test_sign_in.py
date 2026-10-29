@@ -176,7 +176,7 @@ def _series(auth):
 # Exactly the finding: a custom route via `check_password` would have said 401 five times here and on the
 # sixth attempt — the correct password — opened a session. Via the block it locks
 # after the limit, and even the correct password no longer gets through.
-# (Mutation probe: switch off the rejection `if versuch is None:` in `login_password` → fourth
+# (Mutation probe: switch off the rejection `if attempt is None:` in `login_password` → fourth
 # response 401, the correct password 303 → red.)
 auth, app = _app(hardening={"max_login_attempts": 3})
 auth.create_user("alice", password=PW)
@@ -196,7 +196,7 @@ _f2b = _failregex()
 _hit_a = [m.group("host") for m in (_f2b.match(z) for z in log_a.lines()) if m]
 r.check("(a) … and every failed attempt like every rejection is in the security log as a fail2ban line",
         _hit_a.count(IP[0]) == 6 and len(log_a.lines("reason=lockout_user")) == 3,
-        f"{len(_hit_a)} Treffer: {log_a.lines()[:4]}")
+        f"{len(_hit_a)} hits:{log_a.lines()[:4]}")
 r.check("(a) … and in the audit log (login_fail per attempt, with reason)",
         [e[0] for e in _audit(auth)].count("login_fail") == 3
         and all(e[3].startswith("password reason=") for e in _audit(auth) if e[0] == "login_fail"),
@@ -264,7 +264,7 @@ r.check("(a) remember: without the checkbox no Max-Age on the session cookie, wi
 
 # ── (b) LDAP via the block ────────────────────────────────────────────────────────────────────
 class Directory:
-    """Dummy of the LDAP client after the bind; `weg=True` reports an outage."""
+    """Dummy of the LDAP client after the bind; `away=True` reports an outage."""
 
     def __init__(self, entries, away=False):
         self.entries, self.away, self.questions = entries, away, 0
@@ -364,8 +364,8 @@ def _comparison(name, steps, setup):
     deviating = [k for k in one if one[k] != own[k]]
     r.check(f"(c) {name}: built-in and custom route — the same status, audit, log and counter rows",
             not deviating and len(one["audit"]) >= 3 and one["log"],
-            "; ".join(f"{k}: eingebaut {one[k]} ≠ eigen {own[k]}" for k in deviating)[:900]
-            or f"zu wenig gemessen: {one}")
+            "; ".join(f"{k}: built-in {one[k]} ≠ own {own[k]}" for k in deviating)[:900]
+            or f"too few measured: {one}")
     return one
 
 
@@ -926,7 +926,7 @@ r.check(f"(k) the tier-A surface of the block is English: {len(_names_k)} names 
         "no German word; every name in tier A (4 self-probes)",
         {"login_password", "login_pin", "login_totp"} <= set(_methods_k) and len(_names_k) >= 35
         and len(LoginResult.REASONS) >= 9 and not _german_k and not _tier_k,
-        "; ".join(_german_k + _tier_k) or f"zu wenig gemessen: {_methods_k} {len(_names_k)}")
+        "; ".join(_german_k + _tier_k) or f"too few measured: {_methods_k} {len(_names_k)}")
 
 
 sys.exit(r.done())

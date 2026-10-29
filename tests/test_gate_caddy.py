@@ -110,7 +110,7 @@ _app_srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Application)
 APP = f"127.0.0.1:{_app_srv.server_address[1]}"
 threading.Thread(target=_app_srv.serve_forever, daemon=True).start()
 
-# Warten, bis TinySesam antwortet.
+# Wait until TinySesam responds.
 for _ in range(100):
     try:
         urllib.request.urlopen(f"http://{TS}/auth/forward", timeout=1)
@@ -300,7 +300,7 @@ try:
         return gate.issue(key_name or auth._gate_key_name, iss=iss, aud=aud, sub=str(uid),
                                claims=own, ttl=ttl, now=now if now_ is None else now_)
 
-    assert request("/x", {"__Host-tinysesam_gate": signed()})[0] == 200, "Gegenprobe: frisch signiert"
+    assert request("/x", {"__Host-tinysesam_gate": signed()})[0] == 200, "control: freshly signed"
     k, i, s = tok.split(".")
     cases = {
         # Flip a BYTE of the signature, do not replace the last characters: the last base64 characters
@@ -395,7 +395,7 @@ try:
     ok(f"{len(to)} path tricks and neighbouring paths → through the gate (..;, .;, ..%3b, ..%253b, %2e, %5c, NUL, "
        "/x/../s/, /S/, //s/ …) — gate template and plain template")
 
-    # ---------- Abnahmemuster (T-24): deploy/forward-auth/acceptance.sh gegen diesen Aufbau ----------
+    # ---------- Acceptance pattern (T-24): deploy/forward-auth/acceptance.sh against this setup ----------
     import shutil  # noqa: E402
     assert shutil.which("bash") and shutil.which("curl"), "acceptance.sh needs bash and curl"
     script = ROOT / "deploy/forward-auth/acceptance.sh"

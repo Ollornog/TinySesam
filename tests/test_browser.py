@@ -53,7 +53,7 @@ def _server_socket():
     rarely and inexplicably. uvicorn accepts ready-made sockets (`run(sockets=…)`),
     so we never give this one up again — that way the window does not exist.
 
-    Chrome solves the same problem its own way: `--remote-debugging-port=0` and the actual
+    Chrome solves the same problem its own way: `--remote-debugging-pplace=0` and the actual
     number from `DevToolsActivePort` (see `_cdp_port`).
     """
     s = socket.socket()
@@ -359,9 +359,9 @@ async def run():
         await asyncio.sleep(1.5)
         assert not await p.js("!!document.querySelector('pre')"), "422 JSON instead of a page"
         # Since 0.24.6 errors appear as a message BELOW the card (own box with an icon), no longer inside it.
-        err = (await p.js("(document.querySelector('.meldungen .meldung.fehler')||{textContent:''}).textContent")).strip()
+        err = (await p.js("(document.querySelector('.notices .notice.error')||{textContent:''}).textContent")).strip()
         assert err, "no error message"
-        assert await p.js("!document.querySelector('.card .meldung') && !!document.querySelector('.meldung.fehler svg')"), \
+        assert await p.js("!document.querySelector('.card .notice') && !!document.querySelector('.notice.error svg')"), \
             "message inside the card or without an icon"
         print(f"  empty form: {err!r} instead of JSON")
 

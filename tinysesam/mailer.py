@@ -95,7 +95,7 @@ class Outbox:
       `smtp_timeout` seconds. Forty requests against a hanging mail server occupied all of them —
       in gateway operation that stalled `/auth/forward` and every app protected behind it.
 
-    `nachher()` therefore returns an **async** background task: Starlette sends the
+    `afterwards()` therefore returns an **async** background task: Starlette sends the
     response first, then it runs; it waits for its own worker without holding a slot in the thread pool.
     The queue is capped — when it is full, the mail is dropped and this is
     reported, instead of filling memory with a flood of jobs. `TestClient` waits for
@@ -128,7 +128,7 @@ class Outbox:
             self._unclosed -= 1
 
     def enqueue(self, job) -> bool:
-        """Start `auftrag()` in the own worker without waiting for it — for places without a
+        """Start `job()` in the own worker without waiting for it — for places without a
         response object (the lockout in login, ASVS 6.3.5). False if the queue is full;
         the job is dropped then."""
         if not self._reserve():
@@ -155,7 +155,7 @@ class Outbox:
             z.result(timeout=timeout)
 
     def afterwards(self, job, at_overflow=None):
-        """An async background task that runs `auftrag()` in the own worker.
+        """An async background task that runs `job()` in the own worker.
 
         `job` catches its own errors (it knows what to clean up); whatever still
         gets through is logged here instead of silently swallowed. `at_overflow()` runs when

@@ -79,7 +79,7 @@ r.check("… signing in with the new name works, with the old one not",
 fail = {n: c.post("/auth/account/username", json={"username": n}).status_code
         for n in ("bert", "bert@example.com", "fremd@example.com", "chef-reserviert", "CHEF-reserviert",
                   "zwei\x01", "", "x" * 151)}
-r.check("vergeben, fremde Adresse, Allowlist-Name, Steuerzeichen, leer, zu lang → 400",
+r.check("taken, foreign address, allowlist name, control characters, empty, too long → 400",
         set(fail.values()) == {400} and auth.get_user(uid)["username"] == "anna.neu", str(fail))
 r.check("… the own CONFIRMED address works as a name",
         c.post("/auth/account/username", json={"username": "anna@example.com"}).status_code == 200)
@@ -99,7 +99,7 @@ r.check("mail mode: no separate name change (the name follows the address), page
         ce.post("/auth/account/username", json={"username": "emil"}).status_code == 400
         and "data-act=setname" not in ce.get("/auth/account", headers=HTML).text)
 
-# ── Adresse ──────────────────────────────────────────────────────────────────────────────
+# ── Address ──────────────────────────────────────────────────────────────────────────────
 auth, app, mails, ev = _setup()
 uid = auth.create_user("carla", password=PW, email="carla@example.com")
 auth.create_user("dora", password=PW, email="dora@example.com")
@@ -244,7 +244,7 @@ _destinations = {m[0] for m in post_s if "/auth/email/" in m[2]}
 r.check("an account reaches with change links at most as many addresses as the quota allows",
         0 < len(_destinations) <= int(a_s._sec("mail_per_address_max"))
         and a_s.store._one("SELECT 1 FROM audit WHERE event='mail_ratelimit' AND detail LIKE 'email_change account=%'")
-        is not None, f"{len(_destinations)} Adressen")
+        is not None, f"{len(_destinations)} addresses")
 
 # Checked folded (finding 3 LDAP/SAML round): `＠` (U+FF20) would fold to two `@`.
 r.check("an address that is only invalid when folded → 400",
@@ -388,7 +388,7 @@ a_v, ap_v, post_v, _ = _setup()
 uid_v = a_v.create_user("voll", password=PW, email="voll@example.com")
 a_v._outbox.max_unclosed = 0
 _reply_v = _login(ap_v, "voll").post("/auth/account/email", json={"email": "voll.neu@example.com"})
-# (Mutation probe: leave out `on_overflow=senden.verwerfen` in the route → open token → red.)
+# (Mutation probe: leave out `on_overflow=send.discard` in the route → open token → red.)
 r.check("outbox full: same response, no link, and no open token remains",
         _reply_v.status_code == 200 and not [m for m in post_v if "/auth/email/" in m[2]]
         and a_v.store._one("SELECT COUNT(*) AS n FROM magic_token WHERE purpose='email_change'")["n"] == 1
@@ -427,7 +427,7 @@ r.check("without mailer: no address change",
 #  identifier comparison on confirm removed → 409 red; `revoke_user_magic_tokens` removed → “open links”
 #  red; `verified=True` removed → “WITH proof” red; `Remote-Id` removed → Remote-Id red.
 #  G12b: notice only without “no” → notice red; throttle of the account only for free ones →
-#  Kontingent rot; Abbildung in `own_events` weg → Kontoseite rot; Wegwerf-Token weg → Folge rot;
+#  quota red; mapping in `own_events` removed → account page red; throwaway token removed → sequence red;
 #  token with a real deadline → “already expired” red.)
 
 sys.exit(r.done())

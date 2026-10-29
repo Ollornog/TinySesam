@@ -5,8 +5,8 @@ Integration:
     auth = TinySesam(TinySesamConfig(db_path="app.db", rp_id="app.example.com", origin="https://app.example.com"))
     auth.ensure_admin("admin", "startpw")          # create the first admin (only if there is none)
     app.include_router(auth.router())              # /auth/* routes + login UI
-    @app.get("/geheim")
-    def geheim(user = Depends(auth.require_user)):  # protected
+    @app.get("/secret")
+    def secret(user = Depends(auth.require_user)):  # protected
         return {"hi": user["username"]}
 """
 from __future__ import annotations
@@ -54,7 +54,7 @@ from .password_change_result import PasswordChangeResult
 #: is set where TinySesam resolves the request anyway (`current_user` and
 #: related methods); `audit()` reads it. A ContextVar, not an instance variable: it applies per
 #: request (per asyncio task or per thread-pool call) and cannot leak into a parallel one.
-_REQUEST: contextvars.ContextVar = contextvars.ContextVar("tinysesam_anfrage", default=None)
+_REQUEST: contextvars.ContextVar = contextvars.ContextVar("tinysesam_request", default=None)
 
 
 # Sets nonce="…" in every <script>/<style> that has none yet. Central, instead of threading the
@@ -122,7 +122,7 @@ def _dn_parts(value: str) -> list[str]:
 def group_fits(key_name, group, substring: bool = False, dn: bool = False) -> bool:
     """Does the key from `*_group_role_map`/`ldap_allowed_groups` match this group?
 
-    `teilstring=True` is the old comparison (`schluessel in gruppe`) and exists only on
+    `substring=True` is the old comparison (`key_name in gruppe`) and exists only on
     explicit request (`group_match="substring"`). Up to 0.19.x it applied to LDAP ALWAYS,
     whatever `group_match` said (F-19): `admin` then matched `cn=nicht-admin,…` and
     `staff` matched `cn=staffextern,…` — whoever may name a group in the directory got
@@ -168,7 +168,7 @@ def _substring_notice(key_name, groups, slot: str) -> None:
         return
     if any(group_fits(s, g, dn=True) for g in groups):
         return
-    if security.report_once(f"ldap_teilstring:{slot}:{s}"):
+    if security.report_once(f"ldap_substring:{slot}:{s}"):
         security.seclog.warning(
             "LDAP: the key %r in %s only matches as a substring (%s) and has no effect since "
             "0.20.0 — comparison is by DN components. Change the spelling "
@@ -214,7 +214,7 @@ _CSRF_FORM = re.compile(r"[A-Za-z0-9_-]{32,128}")
 #: Under this key in the ASGI scope a request remembers the token it freshly rolled
 #: — so that `csrf_token(request)` before rendering and `ensure_csrf(request, response)` after
 #: return the same thing. The scope belongs to exactly one request; nothing leaks into another.
-_CSRF_SCOPE = "tinysesam.csrf_neu"
+_CSRF_SCOPE = "tinysesam.csrf_new"
 
 #: How many just-signed-in sessions, not yet set in the cookie, a process remembers.
 #: Between `_create_session()` and `set_cookie()` lies one request; the limit only catches
@@ -623,8 +623,8 @@ class TinySesam:
         `False`. Whoever registers on their own and sends `send_verify_email` also passes
         `False` — otherwise the address counts as verified before anyone has redeemed the link.
 
-        A taken identifier raises `ConfigError` with the wording "<field> ist bereits
-        vergeben" (German runtime text) and `e.field` set (`"username"`/`"email"`) plus `e.owner_id` —
+        A taken identifier raises `ConfigError` with the text "<field> is already
+        taken" (since T-29 an English runtime text) and `e.field` set (`"username"`/`"email"`) plus `e.owner_id` —
         that, not the translated text, is how a caller tells the two cases apart.
 
         ⚠️ **Changed compared to 0.18.x:** only a duplicate *email* raised
@@ -653,7 +653,7 @@ class TinySesam:
         creation from OIDC, SAML and LDAP. A name that a source brings along never binds the account
         via the name to ANOTHER one (`_rebinding_reason`) — `preferred_username`, NameID and
         `uid` are chosen by oneself at an IdP with self-registration. Reproduced: `manager` signs
-        in via OIDC, the real chefin afterwards via LDAP, and the OIDC account then carried her
+        in via OIDC, the real boss afterwards via LDAP, and the OIDC account then carried her
         identifier and her roles. The same source may keep replacing its placeholder with the real
         identifier. Not public: whoever creates on their own uses `self_chosen_name=True` (`create_user`)."""
         username = (username or "").strip()
@@ -672,7 +672,7 @@ class TinySesam:
             if owner:
                 security.seclog.warning(
                     "Account not created: %s is already the login identifier of user_id=%s", slot, owner["id"])
-                # The wording is that of 0.18.x ("… ist bereits vergeben"). Because a
+                # The wording is that of 0.18.x ("… is already taken", then German). Because a
                 # `ConfigError` alone does not reveal WHAT collided, callers check the text —
                 # the most brittle way to control a program, but a common one. A fix
                 # must not pull the ground from under it. It does name the field that REALLY
@@ -823,7 +823,7 @@ class TinySesam:
           together with a valid session of the same account**; in return it carries the full
           rights. Leaked on its own, it is worthless.
 
-        Up to 0.21.x the kinds were called `"automat"` and `"mensch"`. Since 0.22.0 only the
+        Up to 0.21.x the kinds were called `"automaton"` and `"human"`. Since 0.22.0 only the
         English name applies (no alias, PO decision 2026-09-27) — an old one raises `ConfigError`, which
         names the new one. Stored keys were rewritten by the migration (schema 12).
 
@@ -1057,7 +1057,7 @@ class TinySesam:
                                 security.for_log(owner or "-"), security.for_log(ip), reason)
 
     def api_key_kind(self, key) -> str:
-        """The kind of a key (`"automation"`/`"human"`, up to 0.21.x `"automat"`/`"mensch"`) —
+        """The kind of a key (`"automation"`/`"human"`, up to 0.21.x `"automaton"`/`"human"`) —
         without using it. `""` for an unknown key."""
         row = self.store.get_api_key_by_hash(hashlib.sha256((key or "").encode()).hexdigest())
         return self._key_kind(row) if row else ""
@@ -1783,7 +1783,7 @@ class TinySesam:
 
         `kennung` is the **stable** identifier from the directory (objectGUID/entryUUID for LDAP,
         NameID for SAML), `username` the name by which mapping was done alone up to 0.19.0.
-        `anlegen()` creates a new account and returns its ID or `None`.
+        `create()` creates a new account and returns its ID or `None`.
 
         Four cases, and the third is the actual bolt:
 
@@ -1852,7 +1852,7 @@ class TinySesam:
                     source, security.for_log(username), source)
                 self.audit(f"{source}_without_identifier", username, detail="rejected")
                 return None
-            if security.report_once(f"fed_ohne_kennung:{source}"):
+            if security.report_once(f"fed_without_identifier:{source}"):
                 security.seclog.warning(
                     "%s delivers no stable identifier — the mapping hangs on the username, "
                     "as before 0.20.0. Whoever renames in the directory or recreates a deleted account "
@@ -1942,7 +1942,7 @@ class TinySesam:
         existing-data binding check with the SAME function).
 
         * Leading/trailing whitespace or control characters: trimmed, the identifier would fall on the binding of
-          ANOTHER account (`chefin\u2028` → `manager`, counter-check). Something like that does not
+          ANOTHER account (`manager\u2028` → `manager`, counter-check). Something like that does not
           come from a real directory — reject instead of making it fit.
         * The form of the origin placeholder: via `get_federated_user` it would hit exactly the
           account whose ID it names. A directory delivers UUID/GUID — so a manipulated
@@ -2010,12 +2010,12 @@ class TinySesam:
         * **Self-chosen name** (G2-N): an account that registered or was renamed itself
           (`users.name_selbst_gewaehlt`) is never bound via the name. Reproduced:
           `eve` renames herself to `manager`, a name that exists only in the directory; the
-          real chefin signs in via LDAP, her identifier lands on eve's account, the role from
+          real boss signs in via LDAP, her identifier lands on eve's account, the role from
           `ldap_group_role_map` too — and eve keeps signing in with her password.
         * **Name from another source** (`users.name_quelle`, attack round 2026-09-26): an
           account that OIDC, SAML or LDAP created carries the name the person has THERE —
           at an IdP with self-registration a self-chosen one. Reproduced: `manager` via
-          OIDC, then the real chefin via LDAP; her identifier and her roles ended up in the
+          OIDC, then the real boss via LDAP; her identifier and her roles ended up in the
           OIDC account, and the attacker kept signing in via OIDC. The same source is
           exempt: it replaces its own placeholder with the real identifier.
         * **Deadline** (`frist=True`, G1): `federation_name_binding_days` from the source's marker or
@@ -2111,7 +2111,7 @@ class TinySesam:
             return
         if not accounts:
             return
-        without_pw = sum(1 for k in accounts if not k["hat_passwort"])
+        without_pw = sum(1 for k in accounts if not k["has_password"])
         away = (f"auth.federation_bind_existing('{source}')" if source == "ldap"
                else f"auth.federation_bind_existing('{source}', mapping={{name: kennung}})")
         security.seclog.warning(
@@ -2273,7 +2273,7 @@ class TinySesam:
             report["bound"] = plan
             return report
         for e in plan:
-            # Atomic against a sign-in that has bound since the check (`Store.nachbinden`).
+            # Atomic against a sign-in that has bound since the check (`Store.rebind`).
             if self.store.rebind(source, e["identifier"], e["user_id"], _now()):
                 self.audit(f"{source}_identifier_bound", str(e["username"]), detail="migration")
                 report["bound"].append(e)
@@ -2331,7 +2331,7 @@ class TinySesam:
         The second alone protected only THIS login: the attacker set up a PIN or a passkey in the
         freshly signed-in session, signed in again with it
         — that factor travels without evidence —, and the marker on the account promotes them after all
-        (B-umgehung-1 from T-13). Otherwise an allowlist address could determine the first admin via LDAP
+        (B-bypass-1 from T-13). Otherwise an allowlist address could determine the first admin via LDAP
         (F-14).
 
         **One identifier, one account** (review round 2026-09-27, p1-d): the login route asks LDAP only
@@ -2415,7 +2415,7 @@ class TinySesam:
                 # nothing, so the marker on the account must not claim it either. If the default
                 # `True` stood here, the bolt above would be shut only for THIS login — the
                 # next factor the attacker sets up themselves (PIN, passkey)
-                # arrives without evidence, reads the marker and promotes after all (B-umgehung-1 from T-13).
+                # arrives without evidence, reads the marker and promotes after all (B-bypass-1 from T-13).
                 # The operator says whether they trust the directory (`ldap_email_trusted`, default
                 # no, or the evidence attribute): then with evidence, otherwise not at all (H-3).
                 trusted = source_trusted
@@ -2471,7 +2471,7 @@ class TinySesam:
         account name with `@` yields to a substitute name, and via such a name no
         existing account is ever mapped. The factor `saml` is in `_FEDERATED_FACTORS`: an allowlist ADDRESS never becomes first admin via this path,
         even if a caller does not state the evidence — and not via a second,
-        self-set-up factor at the next login either (B-umgehung-1 from T-13).
+        self-set-up factor at the next login either (B-bypass-1 from T-13).
 
         Every substantive rejection leaves an audit line with a reason (F-22): up to 0.20.0
         group gate, missing account and locked account ended silently in a 403 — "I can't get
@@ -2481,7 +2481,7 @@ class TinySesam:
         username = first(attrs, cfg.saml_attr_username) if cfg.saml_attr_username else None
         raw_name = str(username or nameid or "")
         # The UNTRIMMED value is checked: `strip()` also removes U+2028, U+0085 and Unicode
-        # whitespace — `chefin\u2028` would otherwise become `manager` (counter-check).
+        # whitespace — `manager\u2028` would otherwise become `manager` (counter-check).
         username = raw_name.strip()
         if not username:
             self.audit("saml_denied", None, ip, "reason=no_name")
@@ -2528,7 +2528,7 @@ class TinySesam:
                 self.audit("saml_denied", username, ip, "reason=no_account saml_auto_create=False")
                 return None
             try:
-                # As with LDAP (B-umgehung-1 from T-13): the address from the assertion comes without
+                # As with LDAP (B-bypass-1 from T-13): the address from the assertion comes without
                 # evidence, so it is stored without evidence too. Otherwise the marker on the
                 # account would be a free pass for every later sign-in path that itself
                 # proves nothing.
@@ -2626,7 +2626,7 @@ class TinySesam:
         # What passes (throttle, mail server) is dampened by memory per process (G12a): after the
         # window of the mail throttle again. Identical for every target — "taken?" is asked only
         # in `_request_change`, with the same work for both answers (G12b).
-        if not self.rl.allow(f"quellmail:{u['id']}", 1, int(self._sec("mail_per_address_window_sec"))):
+        if not self.rl.allow(f"source_mail:{u['id']}", 1, int(self._sec("mail_per_address_window_sec"))):
             return
         try:
             send = self._request_change(u["id"], address, self.cfg.base_url, source=source or "source")
@@ -2975,7 +2975,7 @@ class TinySesam:
                           series_kind: Optional[str] = None, hover: bool = False) -> Optional[int]:
         """Admit a check attempt **atomically** and pre-book it as a failed attempt.
 
-        Return: an attempt ID that goes back to `_record_login(..., versuch=id)`, or
+        Return: an attempt ID that goes back to `_record_login(..., attempt=id)`, or
         `None` — locked (already reported). Replaces the sequence `_is_locked()` → check →
         `_record_login()`, which let a parallel burst past the lock (R3-2, R3-7,
         R7-2; rationale at `Store.reserve_attempt`).
@@ -2987,7 +2987,7 @@ class TinySesam:
         method — `_PIN_CHAIN_SERIES` for a PIN that comes AFTER an already provided factor
         (chain step, route chain; G7). Window and buckets keep counting under `method`.
 
-        `schweben=True` books the attempt with an open outcome (G9, `Store.reserve_attempt`): for
+        `hover=True` books the attempt with an open outcome (G9, `Store.reserve_attempt`): for
         a check that can also turn out to be "no attempt at all" — the login route with LDAP, whose
         pre-booking is taken back on an outage (F-23). If an attempt would be rejected **only** because of
         such open pre-bookings, it waits until they are decided: at most
@@ -3010,16 +3010,16 @@ class TinySesam:
                                               _valid_rules(rules), series=series, hover=hover)
 
         attempt, response = book()
-        if attempt is None and response == "schwebend":
+        if attempt is None and response == "pending":
             attempt, response = self._wait_pending(book)
         if attempt is None:
             login = method not in security.NOT_LOGIN_METHODS
-            if response == "schwebend":
+            if response == "pending":
                 self._deferred(username, ip, login=login)
             else:
                 self._rejected(username, ip, response, login=login)
         elif series is not None:
-            # The kind under which it WAS booked (`serie[1]`), not the method: otherwise a
+            # The kind under which it WAS booked (`series[1]`), not the method: otherwise a
             # correct follow-up step would lower the kind `pin` and leave its pre-booking under `pin_chain`
             # standing (G7).
             self._series_prebookings[attempt] = (series[0], series[1], response)
@@ -3043,7 +3043,7 @@ class TinySesam:
     def _wait_pending(self, book) -> tuple:
         """Wait until the pending pre-bookings are decided, then book again (G9).
 
-        Return as for `Store.reserve_attempt`; `(None, "schwebend")` if the deadline expires or
+        Return as for `Store.reserve_attempt`; `(None, "pending")` if the deadline expires or
         no waiting slot is free. Without a cap a burst would tie up every worker thread.
 
         Waiting blocks the calling thread — right for the synchronous routes (they run
@@ -3051,15 +3051,15 @@ class TinySesam:
         (`change_password`); it never goes pending anyway: its bucket counts only its own method, and
         that one never books open."""
         if not self._pending_places.acquire(blocking=False):
-            return None, "schwebend"
+            return None, "pending"
         try:
             deadline = time.monotonic() + self._PENDING_DEADLINE_SEC
             while time.monotonic() < deadline:
                 time.sleep(self._PENDING_BEAT_SEC)
                 attempt, response = book()
-                if attempt is not None or response != "schwebend":
+                if attempt is not None or response != "pending":
                     return attempt, response
-            return None, "schwebend"
+            return None, "pending"
         finally:
             self._pending_places.release()
 
@@ -3117,7 +3117,7 @@ class TinySesam:
     def _sign_in_complete(self, user_id, ip, method) -> None:
         """A sign-in is through with all factors: audit `login` and the line `login ok` in the security log.
 
-        `unban=ja|nein` (0.24.10, PO): may a guard (fail2ban) lift the lock on this IP? Only `yes` if, from
+        `unban=ja|no` (0.24.10, PO): may a guard (fail2ban) lift the lock on this IP? Only `yes` if, from
         this IP, there is NO failed attempt against ANOTHER account in the window. Otherwise an attacker with an own
         account lifts their ban by a sign-in between two bursts and guesses without limit at firewall level against
         other accounts. The question is about other accounts, not the own one: the own failed attempts have been
@@ -3992,10 +3992,10 @@ class TinySesam:
     def request_email_change(self, user_id, new_email, base_url):
         """Request the change to a new address: confirmation link to the NEW one. Returns the
         sending function (for `after_response`) — even when the address is taken
-        or reserved and no link goes out; `senden()` says so with True/False. None only
+        or reserved and no link goes out; `send()` says so with True/False. None only
         for a throttle and for the own, already taken address. `ValueError` for an
         invalid address or without a mailer. If sending fails before it begins (full
-        queue), `senden.verwerfen()` lets the token expire — as `on_overflow` for
+        queue), `send.discard()` lets the token expire — as `on_overflow` for
         `after_response` (since 2026-09-27).
 
         The response to the requester is the same in every case: if the address is already the identifier
@@ -4043,14 +4043,14 @@ class TinySesam:
         # BEFORE the question "taken?" (G12b): otherwise an account probed taken addresses without
         # quota, and after three probes the link to the own check address revealed whether they
         # were taken.
-        if not self.rl.allow(f"wechsel-konto:{user_id}", self._sec("mail_per_address_max"),
+        if not self.rl.allow(f"change-account:{user_id}", self._sec("mail_per_address_max"),
                              self._sec("mail_per_address_window_sec")):
             self.audit("mail_ratelimit", account["username"], detail=f"email_change account={user_id}")
             return None
         # Bucket of its own (like the registration notice, attack A2): anyone with an account requests the change to a
         # FOREIGN address — in the `mail` bucket it would use up the quota with which
         # the owner of that address sends themselves a sign-in link.
-        if not self._mail_destination_ok(mail, "email_change", bucket="wechsel"):
+        if not self._mail_destination_ok(mail, "email_change", bucket="change"):
             return None
         # An address from `admin_identifiers` gets no change link (like the name): on an
         # instance without an admin, the owner could easily click "confirm your new address" for their
@@ -4099,12 +4099,12 @@ class TinySesam:
         (attack round, finding 1): if it comes from a taken-over session, the owner learns of it
         before the link is redeemed — and a password change or "end sessions"
         discards it. **Without a link** (nothing whose base would have to be checked; test_self_service)."""
-        if self._mail_destination_ok(old, "email_change_notice", bucket="hinweis"):
+        if self._mail_destination_ok(old, "email_change_notice", bucket="notice"):
             self.send_mail(old, self.t("mail.email_change_notice.subject"),
                            self.t("mail.email_change_notice.text", name=name, new=new))
 
     def _allowlist_address(self, mail) -> bool:
-        """Steht diese Adresse in `admin_identifiers`?"""
+        """Is this address in `admin_identifiers`?"""
         return norm_email(mail or "") in {norm_email(i) for i in (self.cfg.admin_identifiers or [])
                                           if "@" in str(i)}
 
@@ -4172,7 +4172,7 @@ class TinySesam:
         if not u or u["is_service"] or not self.mail_configured():
             return False
         destination = u["email"]
-        if not self._mail_destination_ok(destination, "signup_notice", bucket="hinweis"):
+        if not self._mail_destination_ok(destination, "signup_notice", bucket="notice"):
             return False
         login = f"{base_url}{self.cfg.login_path}"
         self.send_mail(destination, self.t("mail.signup_notice.subject"),
@@ -4206,7 +4206,7 @@ class TinySesam:
 
     # ---------- Sessions ----------
     def _ttl(self, remember: bool = True) -> int:
-        """Server-Session-Lebensdauer. remember=False → kurze Transient-TTL (Session-Cookie)."""
+        """Server session lifetime. remember=False → short transient TTL (session cookie)."""
         hours = self.cfg.session_ttl_hours if remember else self.cfg.session_ttl_transient_hours
         return hours * 3600
 
@@ -4497,7 +4497,7 @@ class TinySesam:
 
             result = auth.login_password(request, username, password, next=next, csrf=csrf)
             if not result:
-                return mein_formular(fehler=result.message, status=result.status)
+                return my_form(error=result.message, status=result.status)
             return result.redirect()     # to the open factor (result.next_factor) or to next
 
         `remember=True` is the ticked "stay signed in" box. Raises only what the route
@@ -4519,7 +4519,7 @@ class TinySesam:
         # Check and book in ONE step (R7-2): with `_is_locked()` beforehand and
         # `_record_login()` afterwards the whole password check lay in between, and a parallel
         # burst read "not yet locked" N times. From here on the attempt already stands as a
-        # failed attempt in the table; `_record_login(..., versuch=…)` turns it into a success.
+        # failed attempt in the table; `_record_login(..., attempt=…)` turns it into a success.
         # With LDAP it stays pending until the directory has answered (G9): on an outage it is
         # taken back (F-23), and until then it must lock nobody, only make them wait.
         attempt = self._begin_attempt(username, ip, "password", hover=cfg.ldap_enabled)
@@ -4843,7 +4843,7 @@ class TinySesam:
 
             result = auth.confirm_password(request, password, next=next, csrf=csrf)
             if not result:
-                return mein_dialog(fehler=result.message, status=result.status)
+                return my_dialog(error=result.message, status=result.status)
             return result.redirect()     # to next, with the renewed session cookie
 
         An empty password is `missing` (400) and does not count. Raises only what the route
@@ -4884,7 +4884,7 @@ class TinySesam:
 
             result = auth.change_password(request, current, new, csrf=csrf)
             if not result:
-                return mein_formular(fehler=result.message, status=result.status)
+                return my_form(error=result.message, status=result.status)
             # result.api_keys_active: this many API keys remain valid — say so, do not conceal
 
         An empty old password is `missing` (400) and does not count. Raises only what the route
@@ -5060,14 +5060,14 @@ class TinySesam:
         # During the exchange the session may have received a new token (step-up, completion
         # of a factor) — its current handle stands at the row, found via the token.
         handle = self.store.oidc_session_handle(client, z["refresh"]) or handle
-        if status == "fehler":
+        if status == "error":
             self.store.oidc_session_checked(handle, client, now - deadline + 60, old_encrypted=z["refresh"])
             security.seclog.warning("OIDC re-check without result (%s): provider unreachable or "
                                     "a client error (credentials, grant) — session stays, "
                                     "new attempt in one minute. user=%s",
                                     security.for_log(str(tok.get("error", "?"))), security.for_log(name))
             return
-        if status == "abgelehnt":
+        if status == "rejected":
             self.store.delete_session_by_handle(handle)
             error = security.for_log(str(tok.get('error', '?')))
             self.store.audit_log("oidc_revoked", name, s["ip"], f"client={client} reason={error}")
@@ -5327,7 +5327,7 @@ class TinySesam:
         return until
 
     def revoke_mfa_enrollment(self, user_id: int) -> None:
-        """Ein offenes Einrichtungsfenster sofort schliessen."""
+        """Close an open enrollment window immediately."""
         self.store.set_mfa_enroll_until(user_id, None)
         u = self.store.get_user(user_id)
         self.audit("mfa_enrollment_revoked", str(u["username"]) if u else None)
@@ -5390,7 +5390,7 @@ class TinySesam:
 
     def _set_flow_cookie(self, response, base: str, value: str, max_age: int,
                            samesite: Optional[str] = None) -> None:
-        """Ein Flow-Cookie setzen: httponly, host-only, kurzlebig."""
+        """Set a flow cookie: httponly, host-only, short-lived."""
         response.set_cookie(self.flow_cookie_name(base), value, max_age=max_age, httponly=True,
                             secure=self.cfg.cookie_secure,
                             samesite=_samesite(samesite or self.cfg.cookie_samesite),
@@ -5796,9 +5796,9 @@ class TinySesam:
                 #
                 # The crossing is that of the SETTLED state (p2 F3). An immediately settled
                 # booking (without pending) crosses the limit at the booking itself
-                # (`vorgebucht[2]`, the settled state afterwards) — it is reported if the
+                # (`prebooked[2]`, the settled state afterwards) — it is reported if the
                 # streak still stands at closing. A pending one crosses it only with its
-                # closing (`vorher < max_series <= nachher`, in one transaction). Until 2026-09-27
+                # closing (`before < max_series <= afterwards`, in one transaction). Until 2026-09-27
                 # the state at booking applied, pending pre-bookings included: if a
                 # parallel full sign-in ended the streak, `lockout_series` stood in the log although
                 # nothing was locked.
@@ -6128,7 +6128,7 @@ class TinySesam:
         Only for a full SESSION of the same account, never for an API key: a machine holds
         no cookie, and a token from a key would live on in the browser after the key
         is revoked. Only for a protected host (`_gate_hosts`). The required roles
-        are in the audience (`gate.zielgruppe`) so that a token from a check without
+        are in the audience (`gate.audience`) so that a token from a check without
         roles does not apply at a path with roles."""
         if not self.cfg.gate_token_enabled:
             return None
@@ -6395,7 +6395,7 @@ class TinySesam:
         silent nothing.
 
         Under a subpath (T-15): `ctx["prefix"]` is the prefix that a TinySesam path
-        needs in the browser (`f"{ctx['prefix']}/auth/logout"`; up to 0.21.x `ctx["praefix"]`).
+        needs in the browser (`f"{ctx['prefix']}/auth/logout"`; up to 0.21.x `ctx["prefix"]`).
         `ctx["next"]` and `ctx["action"]` are already paths of the browser; `ctx["admin_path"]` is
         a path of the app (prefix in front). The page `magic_confirm` gets `ctx["purpose"]`
         (`login`, `verify_email`, `email_change`; up to 0.21.x `ctx["zweck"]`). Which keys
@@ -6746,7 +6746,7 @@ class TinySesam:
         # the CHANGELOG promises to report.
         _comparison = security.normalize_base(raw) or raw.rstrip("/")
         if base and raw and _comparison != base \
-                and security.report_once("gepruefte_basis:" + _comparison):
+                and security.report_once("checked_base:" + _comparison):
             security.seclog.warning(
                 "Passed base address %s is replaced by base_url (%s) — base_url is the "
                 "operator's commitment and always wins. If the value comes from str(request.base_url), "
@@ -6794,7 +6794,7 @@ class TinySesam:
         if not raw:
             return ""
         if not self._PREFIX_FORM.fullmatch(raw):
-            if security.report_once("praefix_form"):
+            if security.report_once("prefix_form"):
                 security.seclog.warning("root_path %s has an unexpected form and is not used for pages and "
                                         "redirects (allowed: /part/part of A–Z a–z 0–9 . _ ~ -).",
                                         security.for_log(raw))
@@ -6962,7 +6962,7 @@ class TinySesam:
         # against the permitted character set: a value with a line break would be header injection.
         if config.forward_headers:
             permitted = set(self.FORWARD_HEADERS_DEFAULT)
-            # First the shape, then the names. `{"user": None}` slipped through (`namen or []`
+            # First the shape, then the names. `{"user": None}` slipped through (`names or []`
             # turned it into an empty list) and later tipped EVERY forward-auth request into
             # a 500; `{"user": 123}` killed the constructor with a raw `TypeError` that
             # an `except ConfigError` does not catch.
@@ -7022,7 +7022,7 @@ class TinySesam:
         return build_admin_router(self)
 
     def _is_secure(self, request: Request) -> bool:
-        """HTTPS aktiv? (direkt, via X-Forwarded-Proto hinter Proxy, oder localhost)."""
+        """Is HTTPS active? (directly, via X-Forwarded-Proto behind a proxy, or localhost)."""
         if request.url.scheme == "https":
             return True
         if request.headers.get("x-forwarded-proto", "").split(",")[0].strip() == "https":
@@ -7220,7 +7220,7 @@ class TinySesam:
         return self._enforce(request)
 
     def require_admin(self, request: Request) -> dict:
-        """FastAPI-Dependency (direkt): eingeloggt + Admin (+ Step-up, wenn admin_require_mfa)."""
+        """FastAPI dependency (direct): signed in + admin (+ step-up, when admin_require_mfa)."""
         return self._enforce(request, admin=True, mfa=self.cfg.admin_require_mfa)
 
     def require_role(self, *roles, mfa: bool = False, admin_implies: Optional[bool] = None):

@@ -56,7 +56,7 @@ c.post("/auth/login", data={"username": "admin", "password": "geheim123-lang-gen
 assert c.post("/auth/totp", data={"code": codes[0], "next": "/"}).status_code == 401
 ok("consumed recovery code is invalid (one-shot)")
 
-# Self-Service-Regenerierung erfordert eingeloggt + TOTP
+# Self-service regeneration requires being logged in + TOTP
 c.post("/auth/totp", data={"code": pyotp.TOTP(secret).now(), "next": "/"}, follow_redirects=False)
 r = c.post("/auth/totp/recovery")
 assert r.status_code == 200 and len(r.json()["codes"]) == 6
@@ -70,7 +70,7 @@ sent.clear()
 # unknown address → generic, no mail
 c.post("/auth/forgot", data={"email": "fremd@example.com"})
 assert sent == []
-# bekannte Adresse → Reset-Mail
+# known address → reset mail
 c.post("/auth/forgot", data={"email": "admin@example.com"})
 assert len(sent) == 1
 # The reset link points straight at the reset page — until 0.15 it went via /auth/magic/ and
@@ -80,13 +80,13 @@ assert "/auth/magic/" not in sent[0]["text"]
 ok("forgot: reset link only for an existing account (no enumeration)")
 
 assert "Neues Passwort" in c.get(f"/auth/reset?token={token}").text
-# zu kurzes Passwort → 400
+# password too short → 400
 assert c.post("/auth/reset", data={"token": token, "password": "x"}).status_code == 400
 # set new password → redirect to login, token consumed
 r = c.post("/auth/reset", data={"token": token, "password": "ganzneuespw-lang-genug"}, follow_redirects=False)
 assert r.status_code == 303 and "/auth/login" in r.headers["location"]
 assert auth.peek_magic(token, purpose="reset_password") is None
-ok("Reset: neues Passwort gesetzt, Token verbraucht")
+ok("Reset: new password set, token consumed")
 
 # The reset depends on the mailer, not on the magic link. Until 0.15 the route required both
 # (password_reset_enabled AND magiclink_enabled) — two things that have nothing to do with each other.
@@ -111,7 +111,7 @@ assert ax._check_password("ohne", "frisches-passwort")
 os.remove(db_x)
 ok("password reset works without magic link (coupling removed)")
 
-# altes Passwort weg, neues geht
+# old password gone, new one works
 c2 = TestClient(app)
 assert c2.post("/auth/login", data={"username": "admin", "password": "geheim123-lang-genug"}, follow_redirects=False).status_code == 401
 r = c2.post("/auth/login", data={"username": "admin", "password": "ganzneuespw-lang-genug", "next": "/"}, follow_redirects=False)
@@ -178,14 +178,14 @@ assert _post and " " not in _post[0].split("https://auth.example.com", 1)[1].spl
 try:
     TinySesam(TinySesamConfig(db_path=_db2, rp_name="T", passkey_enabled=False, oidc_enabled=False,
                               cookie_secure=False, password_reset_enabled=True, base_url="auth.example.com"))
-    raise AssertionError("base_url ohne Schema wurde angenommen")
+    raise AssertionError("base_url without scheme was accepted")
 except _CfgErr as e:
     assert "base_url" in str(e), e
 os.remove(_db2)
 print("  (C-2) base_url is trimmed, rejected without scheme ok")
 
 # ---------- B2-7: a consumed recovery code is tracked and reported ----------
-# (Mutationsprobe: in `verify_recovery_code` direkt `return self.store.consume_recovery_code(…)`
+# (Mutation probe: in `verify_recovery_code` directly `return self.store.consume_recovery_code(…)`
 # as before T-13 → red: no audit row, no event.)
 db_r = os.path.join(tempfile.mkdtemp(), "r.db")
 auth_r = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db_r, passkey_enabled=False,
@@ -216,7 +216,7 @@ assert [e for e, _ in event_r] == ["totp_enabled", "recovery_codes_generated", "
 ok("B2-7: recovery consumption → audit with remainder, event, display on the account page")
 
 # ---------- R4-14: the self-service reset revokes the API keys ----------
-# (Mutationsprobe: `revoke_user_api_keys` in reset_submit streichen → rot.)
+# (Mutation probe: remove `revoke_user_api_keys` from reset_submit → red.)
 key_r = auth_r.create_api_key(uid_r, name="ci")["key"]
 assert auth_r.verify_api_key(key_r)[0] is not None
 auth_r.send_password_reset("rita@example.com", auth_r.cfg.base_url)
@@ -264,8 +264,8 @@ _check_r = _logging.StreamHandler(_buffer_r)
 _security.seclog.addHandler(_check_r)
 try:
     _before_r = _token_traces()
-    for _tok, _pw in (("erfunden-1", "ein-frisches-passwort"),   # geraten, Passwort taugt
-                      ("erfunden-2", "x"),                       # geraten, Passwort zu kurz
+    for _tok, _pw in (("erfunden-1", "ein-frisches-passwort"),   # guessed, password is acceptable
+                      ("erfunden-2", "x"),                       # guessed, password too short
                       (tok_r, "noch-ein-frisches-passwort")):     # already redeemed
         r = cr.post("/auth/reset", data={"token": _tok, "password": _pw})
         assert r.status_code == 400, (_tok, r.status_code)

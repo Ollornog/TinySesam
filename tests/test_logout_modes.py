@@ -73,7 +73,7 @@ def gate_deleted(r, auth):
 auth, app = instance(gate_token_enabled=True,
                     forward_apps={"wiki.example.com": {"name": "Wiki", "logout": "app"}})
 assert auth.cfg.forward_logout == "all" and auth.cfg.oidc_rp_logout is True
-ok("Gateway: Vorgabe forward_logout=all, oidc_rp_logout=True")
+ok("Gateway: default forward_logout=all, oidc_rp_logout=True")
 
 # ---------- sign out of one application only ----------
 c, token, uid = signed_in(auth, app)
@@ -166,7 +166,7 @@ r = c5.get("/.tinysesam/logout?scope=all", headers=APP, follow_redirects=False)
 assert r.headers["location"] == "/.tinysesam/after-logout" and not auth.store.get_session(t5)
 ok("session without OIDC: sign out without a provider detour")
 
-# ---------- fragen ----------
+# ---------- queries ----------
 auth2, app2 = instance(forward_logout="ask", forward_apps={"wiki.example.com": {"name": "Wiki"}})
 c6, t6, _ = signed_in(auth2, app2)
 r = c6.get("/.tinysesam/logout", headers=WIKI)
@@ -179,7 +179,7 @@ ok("logout=ask: page with both paths; “Nur von Wiki” by POST locks only wiki
 assert c6.post("/.tinysesam/logout", data={"scope": "egal"}, headers=WIKI).status_code == 400
 ok("POST with unknown scope → 400")
 
-# ---------- fremder Host ----------
+# ---------- foreign host ----------
 r = TestClient(app).get("/.tinysesam/logout", headers={**APP, "X-Forwarded-Host": "fremd.example.net"})
 assert r.status_code == 404
 ok("a host that this installation does not protect → 404")

@@ -299,9 +299,9 @@ class OIDCClient:
         """Exchange a refresh token at the provider (4a, "revocation follows the IdP").
 
         Returns `(status, info, tok)`: `"ok"` with the fresh data (ID-token claims, otherwise
-        UserInfo) · `"abgelehnt"` — the provider refuses (RFC 6749 5.2: `invalid_grant` etc.;
+        UserInfo) · `"declined"` — the provider refuses (RFC 6749 5.2: `invalid_grant` etc.;
         the user is blocked, deleted, withdrawn from the application or the token was revoked) ·
-        `"fehler"` — the provider is unreachable or answers nonsense. Only `"abgelehnt"`
+        `"error"` — the provider is unreachable or answers nonsense. Only `"declined"`
         ends the session; an outage of the provider must not sign anybody out."""
         try:
             import httpx
@@ -313,9 +313,9 @@ class OIDCClient:
             response = httpx.post(self.meta()["token_endpoint"], timeout=10, data=data)
             tok = response.json()
         except Exception as e:   # noqa: BLE001 — network, JSON: the provider does not answer usably
-            return "fehler", {}, {"error": type(e).__name__}
+            return "error", {}, {"error": type(e).__name__}
         if not isinstance(tok, dict):
-            return "fehler", {}, {"error": "antwort"}
+            return "error", {}, {"error": "response"}
         # An error of the CLIENT says nothing about the person: `invalid_client` after a
         # secret rotation (RFC 6749 5.2: the 401 stands for that, too), `unauthorized_client`, a
         # disabled grant. It counts like an unreachable provider — otherwise
@@ -327,11 +327,11 @@ class OIDCClient:
         error_code = str(tok.get("error") or "")
         if response.status_code >= 500 or response.status_code == 401 or error_code in (
                 "invalid_client", "unauthorized_client", "unsupported_grant_type"):
-            return "fehler", {}, {**tok, "error": error_code or f"http_{response.status_code}"}
+            return "error", {}, {**tok, "error": error_code or f"http_{response.status_code}"}
         if 400 <= response.status_code < 500:
-            return "abgelehnt", {}, {**tok, "error": error_code or f"http_{response.status_code}"}
+            return "rejected", {}, {**tok, "error": error_code or f"http_{response.status_code}"}
         if response.status_code >= 300 or "error" in tok:
-            return "fehler", {}, {**tok, "error": error_code or f"http_{response.status_code}"}
+            return "error", {}, {**tok, "error": error_code or f"http_{response.status_code}"}
         claims: dict = {}
         if tok.get("id_token"):
             options = {"iss": {"essential": True, "value": self.meta()["issuer"]},
@@ -342,11 +342,11 @@ class OIDCClient:
                 checked.validate(leeway=self.CLOCK_TOLERANCE)
                 self._check_audience(checked, lambda key_name, **fmt: key_name)
             except Exception:   # noqa: BLE001 — a token we cannot verify does not count
-                return "fehler", {}, {"error": "id_token"}
+                return "error", {}, {"error": "id_token"}
             claims = dict(checked)
             if str(claims.get("sub") or "") != str(expected_sub):
                 # A different subject than at sign-in: not the same person.
-                return "abgelehnt", {}, {"error": "sub"}
+                return "rejected", {}, {"error": "sub"}
         info: dict = {}
         if tok.get("access_token"):
             try:

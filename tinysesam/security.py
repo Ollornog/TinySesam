@@ -622,7 +622,7 @@ _REPORTED: set = set()
 #: and not two module variables: those would have to be declared `global` in every writing function,
 #: and a variable set via `global` is read by CodeQL as unused (py/unused-global-variable)
 #: — a false alarm that would otherwise have to be rejected anew in every version.
-_REPORTED_WINDOW = {"beginn": 0.0, "ueberlauf": False}
+_REPORTED_WINDOW = {"start": 0.0, "overflow": False}
 
 
 def report_once(key_name: str, now: float | None = None) -> bool:
@@ -644,15 +644,15 @@ def report_once(key_name: str, now: float | None = None) -> bool:
     an hour (a test that sleeps is not a test).
     """
     t = time.time() if now is None else float(now)
-    if t - _REPORTED_WINDOW["beginn"] >= _REPORTED_WINDOW_SEC:
+    if t - _REPORTED_WINDOW["start"] >= _REPORTED_WINDOW_SEC:
         _REPORTED.clear()
-        _REPORTED_WINDOW["beginn"] = t
-        _REPORTED_WINDOW["ueberlauf"] = False
+        _REPORTED_WINDOW["start"] = t
+        _REPORTED_WINDOW["overflow"] = False
     if key_name in _REPORTED:
         return False
     if len(_REPORTED) >= _REPORTED_MAX:
-        if not _REPORTED_WINDOW["ueberlauf"]:
-            _REPORTED_WINDOW["ueberlauf"] = True
+        if not _REPORTED_WINDOW["overflow"]:
+            _REPORTED_WINDOW["overflow"] = True
             # Directly and not via `report_once()` — otherwise the message about the
             # cap would run into the same cap. Exactly one line per window.
             seclog.warning(
@@ -669,8 +669,8 @@ def report_once(key_name: str, now: float | None = None) -> bool:
 def once_report_reset() -> None:
     """Empty the notice store (tests, and an operation that deliberately wants to listen anew)."""
     _REPORTED.clear()
-    _REPORTED_WINDOW["beginn"] = 0.0
-    _REPORTED_WINDOW["ueberlauf"] = False
+    _REPORTED_WINDOW["start"] = 0.0
+    _REPORTED_WINDOW["overflow"] = False
 
 
 def client_ip(request, trusted_nets) -> str:

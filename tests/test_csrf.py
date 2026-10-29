@@ -606,7 +606,7 @@ ok("way 2 + sign-in/sign-out in one response: form carries the old token (403, d
 # in `complete_totp` → red; rotate every full session in `set_cookie` instead of only
 # the flagged ones → red at step-up.)
 def _turns(name, cl, step, ap_=None):
-    """`schritt(cl)` signs in. Checks: exactly one new CSRF line, the old token is dead, the
+    """`step(cl)` signs in. Checks: exactly one new CSRF line, the old token is dead, the
     new one is valid, and the next page — built-in as well as own — renders with the new one."""
     old = cl.cookies.get(CK)
     assert old, f"{name}: precondition — a CSRF cookie exists before sign-in"

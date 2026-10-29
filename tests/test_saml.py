@@ -63,7 +63,7 @@ def build(**cfgkw):
 
 JSON = {"Accept": "application/json"}
 
-# ---------- Login-Seite zeigt SAML-Button; /login redirectet zum IdP ----------
+# ---------- Login page shows SAML button; /login redirects to the IdP ----------
 db, auth, app = build()
 assert auth.saml is not None
 c = TestClient(app)
@@ -72,7 +72,7 @@ auth.saml = FakeSAML()
 r = c.get("/auth/saml/login?next=/geheim", follow_redirects=False)
 assert r.status_code == 303 and r.headers["location"].startswith("https://idp.example.com/sso")
 assert "RelayState=/geheim" in r.headers["location"]
-ok("Login-Seite zeigt SAML-Button; /auth/saml/login → Redirect zum IdP (RelayState=next)")
+ok("Login page shows SAML button; /auth/saml/login → redirect to the IdP (RelayState=next)")
 
 # ---------- ACS: verified assertion → create user + logged in ----------
 auth.saml = FakeSAML(nameid="alice", attrs={"email": ["alice@corp"], "displayName": ["Alice"],
@@ -94,16 +94,16 @@ assert r.status_code == 400
 ok("ACS: invalid/unverified assertion → 400")
 os.remove(db)
 
-# ---------- Gruppen-Gate ----------
+# ---------- Group gate ----------
 db, auth, app = build(saml_allowed_groups=["staff"])
 c = TestClient(app)
 auth.saml = FakeSAML(nameid="eve", attrs={"groups": ["extern"]})
 r = c.post("/auth/saml/acs", data={"SAMLResponse": "x"}, follow_redirects=False)
 assert r.status_code == 403
-ok("Gruppen-Gate: fehlende erlaubte Gruppe → 403")
+ok("Group gate: missing allowed group → 403")
 os.remove(db)
 
-# ---------- echte SP-Metadata via onelogin ----------
+# ---------- real SP metadata via onelogin ----------
 db, auth, app = build()
 from tinysesam.saml_ import SAMLClient
 md = SAMLClient(auth.cfg).metadata("https://app.example.com")
@@ -198,7 +198,7 @@ assert auth.get_user(uid)["is_admin"], "the documented bootstrap path via the na
 ok("... the allowlist NAME of a previously created account still promotes")
 os.remove(db)
 
-# ---------- B-umgehung-1: the bolt also holds the SECOND login ----------
+# ---------- B-bypass-1: the bolt also holds the SECOND login ----------
 # The refusal above closes only THIS sign-in path. If the ACS created the account with the default
 # `email_verified=1`, the account would show "proven" although the assertion proves nothing — and a
 # factor the attacker sets up themselves in their freshly signed-in session (PIN,
@@ -209,17 +209,17 @@ c = TestClient(app)
 assert c.post("/auth/saml/acs", data={"SAMLResponse": "x"}, follow_redirects=False).status_code == 303
 mallory = auth.store.get_user_by_name("mallory")
 assert not mallory["email_verified"], "SAML creates with a proof the assertion never carries"
-assert c.post("/auth/pin/set", json={"pin": "246813"}).status_code == 200   # eigene Sitzung
+assert c.post("/auth/pin/set", json={"pin": "246813"}).status_code == 200   # own session
 c.get("/auth/logout")
 c.cookies.clear()
 r = c.post("/auth/pin", data={"username": "mallory", "pin": "246813"}, follow_redirects=False)
 assert r.status_code == 303, r.status_code                   # the PIN login itself works
 assert not auth.get_user(mallory["id"])["is_admin"], "first admin via the second hop"
 assert not auth.admin_exists()
-ok("B-umgehung-1: ... a second factor set up by oneself does not promote the address either")
+ok("B-bypass-1: ... a second factor set up by oneself does not promote the address either")
 os.remove(db)
 
-# ---------- B-umgehung-10: the two SAML locks measured INDIVIDUALLY ----------
+# ---------- B-bypass-10: the two SAML locks measured INDIVIDUALLY ----------
 # Two bolts secure the same path: (1) the ACS route explicitly passes on "no proof",
 # (2) `saml` is in `FEDERATED_FACTORS` and requires an explicit `True` there.
 # As long as both exist, removing a single one goes unnoticed anywhere — whoever later
@@ -236,7 +236,7 @@ assert TestClient(app).post("/auth/saml/acs", data={"SAMLResponse": "x"},
                             follow_redirects=False).status_code == 303
 assert not auth.get_user(uid)["is_admin"], \
     "the ACS route no longer passes on \"no proof\" — SAML promotes again"
-ok("B-umgehung-10: lock 1 alone — the ACS route passes on \"no proof\" (without FEDERATED_FACTORS)")
+ok("B-bypass-10: lock 1 alone — the ACS route passes on \"no proof\" (without FEDERATED_FACTORS)")
 # Control: without the pass-through the same note promotes immediately — this measures that above
 # the route REALLY decided.
 assert auth._maybe_promote_admin(auth.get_user(uid), factor="saml") is True, \
@@ -247,10 +247,10 @@ os.remove(db)
 # Lock 2 alone: without the route, directly at the source. A caller that simply forgets the proof
 # (`email_confirmed=None`) must not promote via a federated factor.
 db, auth, app = build(admin_identifiers=["boss@example.com"])
-uid = auth.create_user("angreifer", email="boss@example.com")     # Beleg am Konto: ja
+uid = auth.create_user("angreifer", email="boss@example.com")     # proof on the account: yes
 assert auth._maybe_promote_admin(auth.get_user(uid), factor="saml") is False, \
     "the 'saml' factor no longer requires an explicit proof"
-ok("B-umgehung-10: lock 2 alone — the 'saml' factor does not promote without an explicit proof")
+ok("B-bypass-10: lock 2 alone — the 'saml' factor does not promote without an explicit proof")
 assert auth._maybe_promote_admin(auth.get_user(uid), email_confirmed=True, factor="saml") is True, \
     "even with proof the factor does not promote — then the check above measures nothing"
 ok("... control: with an explicit proof the same call promotes")
@@ -276,7 +276,7 @@ for was, nameid, attrs in (
     ok(f"R4-12: a SAML identity, {was}, creates no account (403, no 500)")
     os.remove(db)
 
-# Gegenprobe: freie Kennungen legen weiterhin an.
+# Counter-check: free identifiers still create accounts.
 db, auth, app = build()
 auth.create_user("chef", password="lokal12345", email="chef@example.com")
 auth.saml = FakeSAML(nameid="neu", attrs={"email": ["neu@example.com"]})
@@ -380,7 +380,7 @@ _uid_a = auth11.store.get_user_by_name("alice")["id"]
 assert auth11.store.get_federated_identifier("saml", _uid_a) == "nid-alice"
 ok("F-11: an account created via SAML is bound to the NameID")
 
-# (2) Der IdP nennt denselben Menschen anders — dieselbe NameID, dasselbe Konto.
+# (2) The IdP names the same person differently — same NameID, same account.
 assert _saml_sign_in(auth11, app11, "nid-alice", {"uid": ["alice.neu"]}).status_code == 303
 assert auth11.store.get_user_by_name("alice.neu") is None, "a second account was created"
 ok("F-11: a new name with the same NameID leads to the same account")

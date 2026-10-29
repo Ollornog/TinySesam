@@ -148,7 +148,7 @@ r.check("G13: the panel has the “Rename” button and calls the route",
 # the click silently does nothing.
 _buttons = set(re.findall(r'\bon\("(\w+)"', _js))
 r.check("Panel: every action a button names is wired up (ACT) — also “Make owner”",
-        _buttons and _buttons <= _act and "own" in _buttons, f"fehlen: {sorted(_buttons - _act)}")
+        _buttons and _buttons <= _act and "own" in _buttons, f"missing:{sorted(_buttons - _act)}")
 _read = set(re.findall(r"\bL\.(\w+)", _PAGE)) | set(re.findall(r'\bL\["([^"]+)"\]', _PAGE))
 _empty = {lang: sorted(k for k in _read if not panel_texts(_app(lang=lang)[0]).get(k))
          for lang in ("de", "en")}

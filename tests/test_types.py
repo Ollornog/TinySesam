@@ -47,10 +47,10 @@ execution = subprocess.run([sys.executable, "-m", "mypy", "tinysesam/", "--ignor
                       cwd=ROOT, capture_output=True, text=True)
 r.check("mypy writes its cache into the sandbox, not into the tree",
         any(Path(cache).iterdir()) and (already_da or not in_tree.exists()),
-        f"Cache leer: {not any(Path(cache).iterdir())}, .mypy_cache im Baum angelegt: "
+        f"cache empty: {not any(Path(cache).iterdir())}, .mypy_cache created in the tree: "
         f"{not already_da and in_tree.exists()}")
 error = [z for z in execution.stdout.splitlines() if ": error:" in z]
-r.check("mypy findet keinen Fehler in tinysesam/", not error,
+r.check("mypy finds no error in tinysesam/", not error,
         "\n        " + "\n        ".join(error[:6]) +
         (f"\n        … and {len(error) - 6} more" if len(error) > 6 else ""))
 
@@ -58,11 +58,11 @@ r.check("mypy findet keinen Fehler in tinysesam/", not error,
 # always green and would say nothing.
 r.check("and in doing so has seen the whole library",
         "source file" in execution.stdout and " 0 source files" not in execution.stdout,
-        f"Ausgabe: {execution.stdout.strip()[:120]!r}")
+        f"output: {execution.stdout.strip()[:120]!r}")
 
 # ---------- 2) The promise where it arrives ----------
 # `py.typed` must be shipped, otherwise every type checker ignores the annotations.
-r.check("py.typed liegt im Paket", (ROOT / "tinysesam" / "py.typed").exists(),
+r.check("py.typed is in the package", (ROOT / "tinysesam" / "py.typed").exists(),
         "without this file no type checker evaluates the annotations (PEP 561)")
 
 auth = TinySesam(TinySesamConfig(db_path=str(Path(tempfile.mkdtemp()) / "t.db"),

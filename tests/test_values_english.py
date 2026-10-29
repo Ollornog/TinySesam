@@ -194,7 +194,7 @@ a.store.db.close()
 
 # ── (a') Audit and log lines stay as they were ────────────────────────────────────────────────
 # Operators' filters hang on them (PO decision 2026-09-27): the kind of a key still appears there
-# as `kind=automation`/`kind=human` since schema 15 (up to then `art=automat|mensch`), the security log line
+# as `kind=automation`/`kind=human` since schema 15 (up to then `art=automaton|human`), the security log line
 # (English text) names `'human'`.
 # (Mutation probe: `_key_art_audit` returns the English name → (a') red.)
 path_g = os.path.join(tempfile.mkdtemp(), "g.db")

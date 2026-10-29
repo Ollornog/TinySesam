@@ -44,7 +44,7 @@ def ok(name):
 class Browser:
     """Headless Chrome over the DevTools protocol — the same mechanism as test_browser.py.
 
-    Chrome picks its debug port itself (`--remote-debugging-port=0`) and writes it into the
+    Chrome picks its debug port itself (`--remote-debugging-pplace=0`) and writes it into the
     profile: a port reserved in advance is a race.
     """
 
@@ -72,7 +72,7 @@ class Browser:
             except OSError:
                 pass  # file is still missing or half written — next round
             time.sleep(0.1)
-        raise RuntimeError("Chrome meldet keinen Debug-Port")
+        raise RuntimeError("Chrome reports no debug port")
 
     async def __aenter__(self):
         import websockets
@@ -105,7 +105,7 @@ class Browser:
         while True:
             rest = end - time.time()
             if rest <= 0:
-                raise RuntimeError(f"{method}: keine Antwort nach {deadline} s")
+                raise RuntimeError(f"{method}: no response after {deadline} s")
             m = json.loads(await asyncio.wait_for(self.ws.recv(), rest))
             if m.get("method") == "Page.javascriptDialogOpening":
                 print(f"    (Dialog abgelehnt: {m['params'].get('message', '')[:80]!r})")

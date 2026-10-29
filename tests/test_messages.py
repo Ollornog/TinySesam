@@ -2,7 +2,7 @@
 
 Until 0.24.5 every page put its error line into the card itself (`<div class=err>`), success as `class=ok`, the
 sign-in page the notice after signing out as a grey line. Checked per page: the text is NOT in the card,
-but in the box `.meldungen` behind it, with kind and symbol; without a message there is no empty box.
+but in the box `.messages` behind it, with kind and symbol; without a message there is no empty box.
 """
 import os
 import re
@@ -26,7 +26,7 @@ PROBE = "Probe-Meldung 4711"
 def split(html: str):
     """(card, rest after the card) — the card is the first <div class=card>…, the messages follow it."""
     i = html.index("<div class=card>")
-    j = html.index("<div class=meldungen>") if "<div class=meldungen>" in html else len(html)
+    j = html.index("<div class=notices>") if "<div class=notices>" in html else len(html)
     mapping = html[i:j]
     # The card must be closed BEFORE the box — otherwise the messages would be inside it (equally many <div as </div>).
     if j < len(html):
@@ -48,11 +48,11 @@ for name, ctx in ERROR_PAGES.items():
     html = page_html(name, error=PROBE, **ctx)
     mapping, rest = split(html)
     assert PROBE not in mapping, f"{name}: error is still in the card"
-    m = re.search(r"<div class='meldung fehler' role=alert><svg[^>]*>.*?</svg><span>([^<]*)</span></div>", rest)
+    m = re.search(r"<div class='notice error' role=alert><svg[^>]*>.*?</svg><span>([^<]*)</span></div>", rest)
     assert m and m.group(1) == PROBE, f"{name}: no error message with symbol below the card"
     assert "class=err" not in html, f"{name}: alte Fehlerzeile"
     empty = page_html(name, **ctx)
-    assert "<div class=meldungen>" not in empty, f"{name}: empty message box without a message"
+    assert "<div class=notices>" not in empty, f"{name}: empty message box without a message"
 ok(f"errors on {len(ERROR_PAGES)} pages: as message with symbol below the card, none in the card, no empty box")
 
 # ---------- Success and “Link ungültig” ----------
@@ -60,19 +60,19 @@ for name, ctx, kind, key_name in (
         ("register", {"next": "/", "sent_verify": True}, "ok", "reg.verify"),
         ("magic_request", {"next": "/", "sent": True}, "ok", "magic.sent"),
         ("forgot", {"sent": True}, "ok", "magic.sent"),
-        ("magic_invalid", {}, "fehler", "magic.invalid")):
+        ("magic_invalid", {}, "error", "magic.invalid")):
     html = page_html(name, **ctx)
     mapping, rest = split(html)
     text = auth.t(key_name)
-    assert text not in mapping and f"<div class='meldung {kind}'" in rest and text in rest, f"{name}: {kind}-Meldung"
+    assert text not in mapping and f"<div class='notice {kind}'" in rest and text in rest, f"{name}: {kind} notice"
     assert "class=ok>" not in html, f"{name}: alte Erfolgszeile"
 ok("success (registration, login link, reset link) and “Link ungültig” as message below the card")
 
 # ---------- Sign-in page: all kinds, in fixed order ----------
 html = page_html("login", next="/", info="I-Text", warn="W-Text", error="F-Text")
 mapping, rest = split(html)
-kinds = re.findall(r"<div class='meldung (\w+)'", rest)
-assert kinds == ["info", "warn", "fehler"], kinds
+kinds = re.findall(r"<div class='notice (\w+)'", rest)
+assert kinds == ["info", "warn", "error"], kinds
 assert all(t not in mapping for t in ("I-Text", "W-Text", "F-Text"))
 assert html.count("<svg") >= 3 and "role=status" in rest and "role=alert" in rest
 ok("sign-in page: notice, warning, error each as a box of its own, order info → warn → fehler, with role")

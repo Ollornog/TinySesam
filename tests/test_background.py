@@ -45,7 +45,7 @@ assert "style=" not in h.split("<body>", 1)[1], "inline style in the body — th
 for k, b in enumerate(IMAGES, 1):
     assert f".tsbg i:nth-child({k}){{background-image:url('{b}')" in h, b
 assert "@keyframes tsbg" in h and "prefers-reduced-motion:reduce" in h
-assert "<a class=tsbg-quelle href='https://example.com/' target=_blank rel='noopener noreferrer'>Fotos: Beispiel</a>" in h
+assert "<a class=tsbg-source href='https://example.com/' target=_blank rel='noopener noreferrer'>Fotos: Beispiel</a>" in h
 ok("three images: layers, images in <style>, cross-fade, reduced motion, source link bottom right")
 csp = r.headers["content-security-policy"]
 assert "img-src 'self' data: https://bilder.example.com https://cdn.example.com;" in csp, csp
@@ -71,7 +71,7 @@ ok("configuration: CSS breakout, javascript:, //, whitespace and a javascript: l
 h = page_html(auth(brand_backgrounds=["/a.jpg"], brand_background_credit_text="<b>x</b>",
                brand_background_credit_url="https://e.example/?a=1&b=2")).text
 assert "<b>x</b>" not in h and "&lt;b&gt;x&lt;/b&gt;" in h and "a=1&amp;b=2" in h
-ok("Quellenhinweis maskiert")
+ok("source note escaped")
 
 # Gateway: foreign addresses only with explicit approval.
 for k in [k for k in os.environ if k.startswith("TINYSESAM_")]:

@@ -7,7 +7,7 @@ the details, but nobody looks at it regularly. This is the intermediate stage: a
 backlog that lives in the repo, is versioned, and gets noticed the next time it is touched.
 
     python3 scripts/_codeql.py            # write backlog/S-1-codeql.md
-    python3 scripts/_codeql.py --zeigen   # only print, write nothing
+    python3 scripts/_codeql.py --show   # only print, write nothing
 
 Needs `gh` with read access to the repo. With no findings the file is removed.
 """
@@ -92,7 +92,7 @@ def main() -> int:
             print("No open findings.")
         return 0
     text = build(data)
-    if "--zeigen" in sys.argv:
+    if "--show" in sys.argv:
         print(text)
         return 0
     DESTINATION.write_text(text, encoding="utf-8")

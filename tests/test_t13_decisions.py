@@ -147,7 +147,7 @@ _login(ca, "chefin", PW)
 new = ca.post(f"/auth/admin/api/users/{uid2}/password", json={"password": "Ganz-Neues-Passwort-1"})
 r.check("B2-6: the password reset in the panel ends the series",
         new.status_code == 200 and _login(TestClient(app), "wechsel", "Ganz-Neues-Passwort-1").status_code == 303,
-        f"HTTP {new.status_code}, Serie {auth.store.failure_series('wechsel')}")
+        f"HTTP {new.status_code}, series {auth.store.failure_series('wechsel')}")
 
 for _ in range(10):
     _login(TestClient(app), "wechsel", f"falsch-falsch-falsch-{next(_WRONG)}")
@@ -161,7 +161,7 @@ with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
     except SystemExit as e:
         _code = e.code or 0
 r.check("B2-6: `tinysesam unlock` ends the series", _code == 0 and auth.store.failure_series("wechsel") == 0,
-        f"exit {_code}, Serie {auth.store.failure_series('wechsel')}")
+        f"exit {_code}, series {auth.store.failure_series('wechsel')}")
 
 for value, applies in ((9, False), (10, True), (100000, True), (100001, False)):
     try:
@@ -169,7 +169,7 @@ for value, applies in ((9, False), (10, True), (100000, True), (100001, False)):
         ok_ = True
     except ConfigError:
         ok_ = False
-    r.check(f"B2-6 configurable: {value} {'erlaubt' if applies else 'abgewiesen'}", ok_ is applies)
+    r.check(f"B2-6 configurable: {value} {'allowed' if applies else 'rejected'}", ok_ is applies)
 # (Mutation probes: delete the series check in `begin_attempt` → first check red;
 #  delete `delete_failure_series` in `lift_lockout` → reset/panel red; delete the condition
 #  `anzahl < ?` in `gc_failure_series` → "does not expire" red.)
@@ -272,7 +272,7 @@ r.check("G5: after the rename in the directory the full sign-in ends the series 
         "new name (and clears its window)",
         _first_v.status_code == 303 and _three_v == 3 and _full_v.status_code == 303
         and auth_v.store.failure_series("alice.neu") == 0 and auth_v.store.count_fails(0, username="alice.neu") == 0,
-        f"HTTP {_first_v.status_code}/{_full_v.status_code}, Serie {_three_v} → {auth_v.store.failure_series('alice.neu')}")
+        f"HTTP {_first_v.status_code}/{_full_v.status_code}, series {_three_v} → {auth_v.store.failure_series('alice.neu')}")
 r.check("… the same account; the directory name is on the binding — only because it is not the account's own",
         auth_v.store.get_user(uid_v)["username"] == "alice" and _first_name is None
         and _binding_name(uid_v) == "alice.neu", f"{_first_name!r} → {_binding_name(uid_v)!r}")
@@ -286,7 +286,7 @@ r.check("G5: at the limit (429 even with the correct password) the operator path
         "(`_end_series`) clears the series under the directory name",
         _locked_v.status_code == 429 and auth_v.store.failure_series("alice.neu") == 0
         and _login(TestClient(app_v), "alice.neu", LPW).status_code == 303,
-        f"HTTP {_locked_v.status_code}, Serie {auth_v.store.failure_series('alice.neu')}")
+        f"HTTP {_locked_v.status_code}, series {auth_v.store.failure_series('alice.neu')}")
 for _ in range(10):
     _login(TestClient(app_v), "alice.neu", f"falsch-falsch-1-{next(_WRONG)}")
 auth_v.create_user("chefin-v", password=PW, is_admin=True)
@@ -317,7 +317,7 @@ r.check("G5: `tinysesam unlock alice.neu` — the name as typed — finds the ac
         "its series under all identifiers",
         _code_v == 0 and "Lockout for 'alice.neu' lifted" in _text_v
         and auth_v.store.failure_series("alice.neu") == 0 and auth_v.store.failure_series("alice") == 0,
-        f"exit {_code_v}, {_text_v!r}, Serie {auth_v.store.failure_series('alice.neu')}/{auth_v.store.failure_series('alice')}")
+        f"exit {_code_v}, {_text_v!r}, series {auth_v.store.failure_series('alice.neu')}/{auth_v.store.failure_series('alice')}")
 # Existing data: the series is already full, but the directory name was never noted (it only arises with the
 # next SUCCESSFUL sign-in — and that is locked).
 auth_v.store._exec("UPDATE federated_identity SET name_topf = NULL")
@@ -328,7 +328,7 @@ _code_b, _text_b = _unlock("alice.neu")
 r.check("… also in existing data without a note: no account, but the counters under the identifier are cleared (rc 0)",
         _code_b == 0 and "No account" in _text_b and auth_v.store.failure_series("alice.neu") == 0
         and _login(TestClient(app_v), "alice.neu", LPW).status_code == 303,
-        f"exit {_code_b}, {_text_b!r}, Serie {auth_v.store.failure_series('alice.neu')}")
+        f"exit {_code_b}, {_text_b!r}, series {auth_v.store.failure_series('alice.neu')}")
 _code_n, _text_n = _unlock("gibt-es-nirgends")
 r.check("… an identifier without account and without counters stays an error (rc 1)",
         _code_n == 1 and "No account" in _text_n, f"exit {_code_n}, {_text_n!r}")
@@ -367,7 +367,7 @@ r.check("p1-d (C): the sign-in of a directory third party under the address of a
         and auth_v.store.user_count() == _accounts_w
         and auth_v.store.count_fails(0, username="chefin@example.com") == 5
         and auth_v.store.failure_series("chefin@example.com") == 5,
-        f"vorher {_before_w}, HTTP {_third.status_code}, "
+        f"before {_before_w}, HTTP {_third.status_code}, "
         f"{auth_v.store.count_fails(0, username='chefin@example.com')}/{auth_v.store.failure_series('chefin@example.com')}")
 r.check("… with reason in the audit log (identifier_of_two_accounts, both accounts) and remedy in the security log",
         len(_rejected_w) == 1
@@ -425,7 +425,7 @@ r.check("p1-d (C): a local account under the directory name of another person �
         _hit_d.status_code == 401 and _session_from(a_d, _hit_d) is None
         and a_d.store.get_federated_user("ldap", "uuid-alice") == _alice_d
         and a_d.store._one("SELECT name_topf FROM federated_identity WHERE user_id=?", (_alice_d,))["name_topf"] is None,
-        f"HTTP {_hit_d.status_code}, Sitzung {_session_from(a_d, _hit_d)}")
+        f"HTTP {_hit_d.status_code}, session {_session_from(a_d, _hit_d)}")
 # The rejection arises only if the LDAP password was right — on Mallory's account page it would be the
 # oracle. (Mutation probe: take `ldap_identifier_rejected` out of `_OWN_VIEW` → red.)
 r.check("… and Mallory's account page sees a hit like a miss (no oracle about the rejection)",
@@ -614,7 +614,7 @@ with redirect_stdout(_from_x2), redirect_stderr(_from_x2):
 r.check("… in existing data with two carriers: the name counts for neither, `unlock` names none and clears only under `x`",
         _series_x2 == 3 and a_x.store.failure_series("x") == 0
         and "x" not in a_x.store.count_identifiers(_anton_x) and "x" not in a_x.store.count_identifiers(_berta_x)
-        and "No account 'x'" in _from_x2.getvalue(), f"Serie {_series_x2}, {_from_x2.getvalue()!r}")
+        and "No account 'x'" in _from_x2.getvalue(), f"series {_series_x2}, {_from_x2.getvalue()!r}")
 
 # A stale note does not stop a new person: if someone ELSE is now called `y` in the directory
 # (reassignment), their first sign-in creates the account `y` — the note on the previous owner is
@@ -634,7 +634,7 @@ r.check("p1-a: a new directory entry under a noted name creates its account; the
         _note_y == "y" and _new_y.status_code == 303 and _account_y is not None
         and _session_from(a_y, _new_y) == _account_y["id"] != _old_y
         and a_y.store._one("SELECT name_topf FROM federated_identity WHERE user_id=?", (_old_y,))["name_topf"] is None,
-        f"Vermerk {_note_y!r}, HTTP {_new_y.status_code}")
+        f"note {_note_y!r}, HTTP {_new_y.status_code}")
 
 # p1-d (C), address: filter over uid AND mail, `ldap_email_trusted=False` (default) — LDAP accounts
 # carry no address locally. A local account carries Alice's directory address (in the finding via
@@ -656,7 +656,7 @@ _hit_m = _login(TestClient(ap_m, client=("203.0.113.66", 1)), "alice@corp.exampl
 r.check("p1-d (C): a local account with the directory address of another person — their LDAP password "
         "opens no session under the address",
         bool(_reg_m) and _hit_m.status_code == 401 and _session_from(a_m, _hit_m) is None,
-        f"Registrierung {_reg_m}, HTTP {_hit_m.status_code}")
+        f"registration {_reg_m}, HTTP {_hit_m.status_code}")
 r.check("… under her name Alice continues to sign in (counter-check)",
         _session_from(a_m, _login(TestClient(ap_m), "alice", LPW)) == _alice_m)
 
@@ -800,7 +800,7 @@ for wish, proven, expected in (("opfer@example.com", False, "oidc-"), ("opfer@ex
                         "email": "opfer@example.com", "email_verified": proven})
     _oidc_login(app3g)
     names = [u["username"] for u in a3g.store.list_users()]
-    r.check(f"H-3: preferred_username={wish!r} with {'belegter' if proven else 'unbelegter'} address → {expected}…",
+    r.check(f"H-3: preferred_username={wish!r} with {'proven' if proven else 'unproven'} address → {expected}…",
             len(names) == 1 and names[0].startswith(expected), str(names))
 # (Mutation probes: `proven_mail = mail` in oidc.py → the first H-3 check red; delete the check for
 #  `@` in `preferred_username` → the cases with an address as name red.)
@@ -1143,8 +1143,8 @@ r.check("ASVS 6.3.8: free and taken address respond the same (status and page)",
         and _re.sub(r"nonce=\"[^\"]+\"", "", free.text) == _re.sub(r"nonce=\"[^\"]+\"", "", grant.text),
         f"{free.status_code}/{grant.status_code}")
 r.check("… and do the same work in the request (equally many writes — no timing oracle)",
-        _n_free == _n_grant, f"frei {_n_free}, vergeben {_n_grant}")
-_place = [u for u in a638.store.list_users() if str(u["username"]).startswith("reserviert-")]
+        _n_free == _n_grant, f"free {_n_free}, granted {_n_grant}")
+_place = [u for u in a638.store.list_users() if str(u["username"]).startswith("reserved-")]
 r.check("… the placeholder is locked, carries no address and disappears with gc()",
         len(_place) == 1 and _place[0]["disabled"] and not _place[0]["email"])
 from tinysesam import config_check as _kp  # noqa: E402
@@ -1313,7 +1313,7 @@ a4a._oidc_outcome.wait()
 r.check("… if the groups claim is missing entirely, the roles stay (missing ≠ no groups)",
         "editor" in a4a.user_roles(a4a.store.get_user(_uid4a)))
 _alternate()
-_responses.append(("fehler", {}, {"error": "ConnectError"}))
+_responses.append(("error", {}, {"error": "ConnectError"}))
 c4a.get("/auth/me")
 a4a._oidc_outcome.wait()
 r.check("4a: if the provider is unreachable, the session stays (an outage signs nobody out)",
@@ -1321,7 +1321,7 @@ r.check("4a: if the provider is unreachable, the session stays (an outage signs 
 r.check("… and it is retried within a minute, not only after the full period",
         _now_minus(a4a) <= 15 * 60 - 60 + 5)
 _alternate()
-_responses.append(("abgelehnt", {}, {"error": "invalid_grant"}))
+_responses.append(("rejected", {}, {"error": "invalid_grant"}))
 c4a.get("/auth/me")
 a4a._oidc_outcome.wait()
 r.check("4a: if the provider refuses (locked, deleted, withdrawn), the session is gone",
@@ -1463,7 +1463,7 @@ uid8 = a8.store.get_user_by_name("keyhalter")["id"]
 key8 = a8.create_api_key(uid8, name="backup")["key"]
 r.check("Finding 8: the key of an account freshly signed in via the provider is valid",
         a8.verify_api_key(key8)[0] is not None)
-a8.oidc.refresh = lambda rt, sub: ("abgelehnt", {}, {"error": "invalid_grant"})
+a8.oidc.refresh = lambda rt, sub: ("rejected", {}, {"error": "invalid_grant"})
 a8.store._exec("UPDATE oidc_sitzung SET geprueft_at = geprueft_at - 16 * 60")
 a8._oidc_recheck(a8.store._one("SELECT * FROM session"))
 a8._oidc_outcome.wait()
@@ -1887,10 +1887,10 @@ try:
         _erg3[(code, body.get("error", "-"))] = _oc3.refresh("rt", "sub")[0]
 finally:
     _httpx3.post = _post3
-_should3 = {(401, "invalid_client"): "fehler", (400, "unauthorized_client"): "fehler",
-          (400, "unsupported_grant_type"): "fehler", (401, "-"): "fehler", (503, "-"): "fehler",
-          (400, "-"): "abgelehnt", (400, "invalid_request"): "abgelehnt",      # Dex: revoked token
-          (400, "invalid_grant"): "abgelehnt", (400, "access_denied"): "abgelehnt"}
+_should3 = {(401, "invalid_client"): "error", (400, "unauthorized_client"): "error",
+          (400, "unsupported_grant_type"): "error", (401, "-"): "error", (503, "-"): "error",
+          (400, "-"): "rejected", (400, "invalid_request"): "rejected",      # Dex: revoked token
+          (400, "invalid_grant"): "rejected", (400, "access_denied"): "rejected"}
 r.check("Attack R3/F8-2: client errors, 401 and 5xx → „fehler\"; every other 4xx (also Dex' invalid_request) → no",
         _erg3 == _should3, str({k: v for k, v in _erg3.items() if _should3.get(k) != v}))
 # … and a row of a client that is no longer configured is discarded, not exchanged as a no.
@@ -1898,7 +1898,7 @@ a_f2, _, _ = _oidc_with_refresh("f2-konto")
 _uid_f2 = a_f2.store.get_user_by_name("f2-konto")["id"]
 _h_f2 = a_f2.store._one("SELECT token_hash FROM session")["token_hash"]
 a_f2.store.set_oidc_session(_h_f2, "app-weg", "f2-konto", "rt-weg")
-a_f2.oidc.refresh = lambda rt, sub: ("abgelehnt", {}, {"error": "invalid_grant"})     # the fallback said no
+a_f2.oidc.refresh = lambda rt, sub: ("rejected", {}, {"error": "invalid_grant"})     # the fallback said no
 a_f2.store._exec("UPDATE oidc_sitzung SET geprueft_at = geprueft_at - 16 * 60 WHERE client='app-weg'")
 a_f2._oidc_recheck(a_f2.store._one("SELECT * FROM session"))
 a_f2._oidc_outcome.wait()
@@ -2015,7 +2015,7 @@ r.check("Counter-check R3/V5: SAML name from the address attribute (`chefin`) do
 a_i2, _, _ = _oidc_with_refresh("i2-konto")
 _uid_i2 = a_i2.store.get_user_by_name("i2-konto")["id"]
 a_i2.store._exec("UPDATE oidc_sitzung SET client_id='alte-client-id', geprueft_at = geprueft_at - 16 * 60")
-a_i2.oidc.refresh = lambda rt, sub: ("abgelehnt", {}, {"error": "invalid_grant"})
+a_i2.oidc.refresh = lambda rt, sub: ("rejected", {}, {"error": "invalid_grant"})
 a_i2._oidc_recheck(a_i2.store._one("SELECT * FROM session"))
 a_i2._oidc_outcome.wait()
 r.check("Counter-check R3/I2: token of an old client_id → row discarded, session stays, no no",
@@ -2081,7 +2081,7 @@ c_ob.get("/auth/me")
 a_ob._oidc_outcome.wait()
 r.check("… a yes at the exchange resets the state",
         (a_ob.store._one("SELECT erfolg_at FROM oidc_sitzung")["erfolg_at"] or 0) > _prior_ob)
-a_ob.oidc.refresh = lambda rt, sub: ("fehler", {}, {"error": "invalid_client"})
+a_ob.oidc.refresh = lambda rt, sub: ("error", {}, {"error": "invalid_client"})
 a_ob.store._exec("UPDATE oidc_sitzung SET erfolg_at = ?", (int(_when.time()) - 24 * 3600,))
 r.check("… 24 hours without a yes: the session stays", c_ob.get("/auth/me").status_code == 200)
 a_ob.store._exec("UPDATE oidc_sitzung SET erfolg_at = ?", (int(_when.time()) - 26 * 3600,))
@@ -2093,7 +2093,7 @@ r.check("… 26 hours without a yes: the session ends, with an audit row — and
 a_ob0, _, c_ob0 = _oidc_with_refresh("ob-aus", oidc_session_max_unverified_hours=0)
 a_ob0.store._exec("UPDATE oidc_sitzung SET erfolg_at = 1000")
 r.check("… oidc_session_max_unverified_hours=0 switches the limit off", c_ob0.get("/auth/me").status_code == 200)
-# (Mutation probes: remove the check in `_oidc_recheck` → "26 hours" red; `erfolg=True`
+# (Mutation probes: remove the check in `_oidc_recheck` → "26 hours" red; `success=True`
 #  at the exchange removed → "a yes resets the state" red; `_idp_no` instead of just deleting → keys check
 #  red.)
 

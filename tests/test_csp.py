@@ -30,7 +30,7 @@ def _pages(auth):
         # WITH `events`: the route always passes them, and exactly the section “Latest events”
         # carried a `style=` attribute that the strict CSP blocks. Without `events` it was missing here,
         # and the check below stayed green (integration finding 9).
-        # (Mutationsprobe: in templates.py wieder `<p class=msg style='margin:0 0 8px'>` → rot.)
+        # (Mutation probe: in templates.py put back `<p class=msg style='margin:0 0 8px'>` → rot.)
         "account": auth.render_page("account", request=None,
                                     user={"username": "u", "display_name": "U", "id": 1},
                                     methods=["password", "pin", "passkey"],
@@ -59,8 +59,8 @@ for name, resp in _pages(auth).items():
     tags = len(_TAG.findall(body))
     nonced = len(re.findall(rf'<(?:script|style) nonce="{re.escape(n)}"', body))
     assert tags and tags == nonced, f"{name}: {nonced}/{tags} script/style genonced"
-    assert not re.search(r'\son(click|submit)=', body), f"{name}: Inline-Handler geblieben"
-    assert not re.search(r'\sstyle=', body), f"{name}: style=-Attribut geblieben"
+    assert not re.search(r'\son(click|submit)=', body), f"{name}: inline handler remained"
+    assert not re.search(r'\sstyle=', body), f"{name}: style= attribute remained"
     # Precondition: the section is really there — otherwise the line above checked nothing.
     assert name != "account" or "id=eventlist" in body, "account: „Letzte Ereignisse“ missing"
 ok("strict: header + nonce on every <script>/<style>, no inline handlers/style=")
@@ -68,7 +68,7 @@ ok("strict: header + nonce on every <script>/<style>, no inline handlers/style="
 # 2) A fresh nonce per response
 n1, n2 = _nonce(auth.render_page("login", request=None)), _nonce(auth.render_page("login", request=None))
 assert n1 and n2 and n1 != n2, "nonce not fresh per response"
-ok("Nonce pro Antwort frisch")
+ok("Nonce fresh per response")
 
 # 3) csp='off' → no header (e.g. when a proxy sets the CSP centrally)
 assert not TinySesam(_cfg(csp="off")).render_page("login", request=None) \
@@ -79,12 +79,12 @@ ok("csp='off' → no header")
 cust = TinySesam(_cfg(csp="default-src 'self'; script-src 'nonce-{nonce}' https://cdn.example"))
 csp = cust.render_page("login", request=None).headers["content-security-policy"]
 assert "{nonce}" not in csp and csp.split().count("https://cdn.example") == 1 and "nonce-" in csp, csp
-ok("eigene Policy: {nonce} ersetzt, Rest 1:1")
+ok("custom policy: {nonce} replaced, rest 1:1")
 
 # 5) Invalid csp (not a string) → clear rejection at build time
 try:
     TinySesam(_cfg(csp=123))
-    assert False, "csp=123 haette scheitern muessen"
+    assert False, "csp=123 should have failed"
 except ValueError:
     ok("csp must be a string (build rejects)")
 
@@ -101,7 +101,7 @@ from tinysesam.errors import ConfigError  # noqa: E402
 for wrong in ("Strict", "stirct", "OFF", "scirpt-src 'none'", ";"):
     try:
         TinySesam(_cfg(csp=wrong))
-        assert False, f"csp={wrong!r} haette scheitern muessen"
+        assert False, f"csp={wrong!r} should have failed"
     except ConfigError as e:
         assert "csp=" in str(e), str(e)
 for good in ("strict", "off", "", "default-src 'self'; script-src 'nonce-{nonce}'",
@@ -297,7 +297,7 @@ _orig_audit = _a8.store.recent_audit
 
 
 def _broken(*a, **k):
-    raise RuntimeError("kaputt")
+    raise RuntimeError("broken")
 
 
 _a8.store.recent_audit = _broken

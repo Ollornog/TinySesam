@@ -12,7 +12,7 @@ What is pinned here:
   * the output names counts and the name, never a secret.
 
 (Mutation probes, run by hand and listed in the CHANGELOG: `Store.remove_account` replaced by
-`Store.delete_user` in `_delete` -> the audit checks turn red; `store.loeschsperre` check removed
+`Store.delete_user` in `_delete` -> the audit checks turn red; `store.deletion_guard` check removed
 from `_delete` -> the owner / last-admin checks turn red; the terminal check removed -> the
 "no terminal" check turns red.)
 """

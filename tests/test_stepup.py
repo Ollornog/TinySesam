@@ -401,7 +401,7 @@ assert factors(auth3, uid3) == before3, "an API key must not remove a factor"
 assert auth3._verify_user_pin(uid3, "1357"), "the PIN must not be changeable via API key"
 ok(f"API key (CSRF on): all {len(MANAGEMENT)} factor routes → 403, each with its reason")
 
-# ---------- A-umgehung-2: the same latch applies to CREATING a factor ----------
+# ---------- A-bypass-2: the same latch applies to CREATING a factor ----------
 # The R3-3 fix only covered REMOVAL. Creation still hung on `current_user()`, and that
 # accepts an API key; the CSRF check is skipped for a real key anyway
 # (`_csrf_dispensable`). Two paths were thus open:

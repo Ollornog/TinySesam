@@ -1,4 +1,4 @@
-"""E1: Multi-Worker-Rate-Limit — RedisRateLimiter (Fake-Client), Fallback, eigenes Backend."""
+"""E1: multi-worker rate limit — RedisRateLimiter (fake client), fallback, custom backend."""
 import os
 import tempfile, os
 from tinysesam import TinySesam, TinySesamConfig
@@ -93,7 +93,7 @@ try:
     # The constructor asks Redis at startup (ping), instead of letting the first visitor notice.
     if importlib.util.find_spec("redis"):
         with_.lines.clear()
-        dead = security.RedisRateLimiter("redis://127.0.0.1:1/0")   # Port 1: dort lauscht nichts
+        dead = security.RedisRateLimiter("redis://127.0.0.1:1/0")   # port 1: nothing listens there
         assert any("unreachable" in z for z in with_.lines), \
             "B6-2: an unreachable Redis is not noticed at startup"
         assert dead.allow("a", 1, 60) is True and dead.allow("a", 1, 60) is False, \
@@ -134,7 +134,7 @@ else:
     assert isinstance(auth.rl, security.RateLimiter)
     ok("redis_url without redis package → in-memory fallback (no crash)")
 
-# ---------- eigenes Backend injizieren ----------
+# ---------- inject a custom backend ----------
 class CountingLimiter:
     def __init__(self): self.calls = 0
     def allow(self, key, mx, win): self.calls += 1; return self.calls <= 2

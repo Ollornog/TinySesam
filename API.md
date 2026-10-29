@@ -166,7 +166,7 @@ General guard factory for arbitrary combinations — the "flag on the guard" rou
 
 ### `require_admin(request: 'Request') -> 'dict'`
 
-FastAPI-Dependency (direkt): eingeloggt + Admin (+ Step-up, wenn admin_require_mfa).
+FastAPI dependency (direct): signed in + admin (+ step-up, when admin_require_mfa).
 
 ### `require_csrf(request: 'Request', submitted)`
 
@@ -416,7 +416,7 @@ All hardening thresholds as a dict (defaults, overridden by what is set in the p
 
 ### `api_key_kind(key) -> 'str'`
 
-The kind of a key (`"automation"`/`"human"`, up to 0.21.x `"automat"`/`"mensch"`) — without using it. `""` for an unknown key.
+The kind of a key (`"automation"`/`"human"`, up to 0.21.x `"automaton"`/`"human"`) — without using it. `""` for an unknown key.
 
 ### `apply_factor(request, user_id, factor, ip=None, ua=None, remember=True, email_verified: 'Optional[bool]' = None) -> 'tuple[str, bool, bool]'`
 
@@ -556,7 +556,7 @@ Release a locked resource again (remove the lock, not unlock it).
 
 ### `request_email_change(user_id, new_email, base_url)`
 
-Request the change to a new address: confirmation link to the NEW one. Returns the sending function (for `after_response`) — even when the address is taken or reserved and no link goes out; `senden()` says so with True/False. None only for a throttle and for the own, already taken address. `ValueError` for an invalid address or without a mailer. If sending fails before it begins (full queue), `senden.verwerfen()` lets the token expire — as `on_overflow` for `after_response` (since 2026-09-27).
+Request the change to a new address: confirmation link to the NEW one. Returns the sending function (for `after_response`) — even when the address is taken or reserved and no link goes out; `send()` says so with True/False. None only for a throttle and for the own, already taken address. `ValueError` for an invalid address or without a mailer. If sending fails before it begins (full queue), `send.discard()` lets the token expire — as `on_overflow` for `after_response` (since 2026-09-27).
 
 ### `require_public_base(request: 'Optional[Request]' = None, candidate: 'str' = '') -> 'str'`
 
@@ -568,7 +568,7 @@ Is this resource currently unlocked for this browser?
 
 ### `revoke_mfa_enrollment(user_id: 'int') -> 'None'`
 
-Ein offenes Einrichtungsfenster sofort schliessen.
+Close an open enrollment window immediately.
 
 ### `send_mail(to, subject, text, html=None)`
 

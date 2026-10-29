@@ -162,7 +162,7 @@ def jobs_determine(raw=None, cores=None) -> int:
         except ValueError:
             jobs = 0
         if jobs < 1:
-            raise ValueError(f"{variable}={value!r} — erwartet eine ganze Zahl ≥ 1")
+            raise ValueError(f"{variable}={value!r} — expected an integer ≥ 1")
         return jobs
     return JOBS_DEFAULT
 

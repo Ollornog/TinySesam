@@ -136,7 +136,7 @@ assert c.post("/auth/admin/api/security",
 assert auth._sec("max_login_attempts") == before and auth._sec("rate_limit_max") == 30
 try:
     auth.set_security("rate_limit_max", 0)
-    raise AssertionError("set_security nahm 0 an")
+    raise AssertionError("set_security accepted 0")
 except ConfigError:
     pass
 # A value already in the database (version without limits): it is pulled to the nearest
@@ -185,7 +185,7 @@ r = c.post("/auth/admin/api/security", content=b'{"max_login_attempts": Infinity
 assert r.status_code == 400, r.status_code
 try:
     auth.set_security("max_login_attempts", float("inf"))
-    raise AssertionError("set_security nahm inf an")
+    raise AssertionError("set_security accepted inf")
 except ConfigError:
     pass
 assert auth._sec("max_login_attempts") == security.SECURITY_DEFAULTS["max_login_attempts"]
@@ -314,7 +314,7 @@ _without = [n for n in _writing if "abgewiesen(" not in _pieces[n]]
 assert not _without, f"Actions without display of the rejection: {_without}"
 assert len(_writing) >= 10 and _act <= set(_pieces), (_writing, _act - set(_pieces))
 # And `p()` itself: without the look at `r.ok` it returns the body on 400/500, and
-# `abgewiesen()` sees nothing on a 500 without a JSON body. The runtime probe below needs
+# `rejected()` sees nothing on a 500 without a JSON body. The runtime probe below needs
 # node; this check always runs.
 #
 # Until the final round it only demanded `if(r.ok)return`, `return {detail:` and the text
@@ -424,7 +424,7 @@ def _js_expression(text):
 
     tree = conditional()
     if pos[0] != len(toks):
-        raise ValueError(f"Rest nach dem Ausdruck: {toks[pos[0]:][:3]}")
+        raise ValueError(f"Remainder after the expression:{toks[pos[0]:][:3]}")
     return tree
 
 

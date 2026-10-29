@@ -272,7 +272,7 @@ for value, expected in [(True, True), ("true", True), ("True", True), (" TRUE ",
 
 
 # The proof belongs to ITS address — not to the one from the other document.
-# The callback merges userinfo document and ID token (`{**nutzerinfo, **claims}`), and
+# The callback merges userinfo document and ID token (`{**userinfo, **claims}`), and
 # when merging the address from the ID token won so far, but the proof could come from the
 # userinfo document: `email_verified=true` for a DIFFERENT address would have carried the
 # unchecked one along. OIDC Core 5.1 means by `email_verified` always the `email` of the SAME response.
@@ -338,7 +338,7 @@ for factor, proof, should, was in (("saml", None, False, "SAML without evidence 
 # (`users.email_verified`), and exactly that was created by `check_ldap`/`check_saml` with the default
 # `True`, although via these paths nothing is proven by definition. The attacker signed
 # in once (the promotion was correctly refused), set up a PIN or a passkey in his freshly
-# signed-in session — self-service — and was first admin at the second login, with a factor that itself claims nothing (B-umgehung-1 from T-13).
+# signed-in session — self-service — and was first admin at the second login, with a factor that itself claims nothing (B-bypass-1 from T-13).
 # The complete paths via the routes are in `test_ldap.py`/`test_saml.py`; here the
 # source of the error: the freshly created account.
 class _FakeLDAP:
@@ -379,7 +379,7 @@ for away, create in (
 # An address change does not transfer the proof of the OLD address to the NEW one. Since the note
 # decides about rights, `store.set_email` would otherwise be a bootstrap path: account with proven
 # `eve@example.com` → change the address to the allowlist address → the old proof carries it
-# (B-umgehung-8 from T-13). The docstring called that "fail-closed" and meant only the other direction.
+# (B-bypass-8 from T-13). The docstring called that "fail-closed" and meant only the other direction.
 a_se, _ = _app(admin_identifiers=["chef@example.com"])
 uid_se = a_se.create_user("eve", email="eve@example.com")          # proven (operator)
 a_se.store.set_email(uid_se, "chef@example.com")
@@ -472,7 +472,7 @@ def _builds_f14(**cfg):
     tmp = tempfile.mkdtemp()
     # `base_url` is not an accessory here but necessary for the probe to say anything at all:
     # without it the constructor throws for OIDC/SAML because of the missing base —
-    # `gebaut=False` would then look like a hit of the F-14 guard.
+    # `built=False` would then look like a hit of the F-14 guard.
     reason = dict(db_path=str(Path(tmp) / "t.db"), cookie_secure=False,
                  base_url="http://testserver")
     reason.update(cfg)
@@ -1353,7 +1353,7 @@ import importlib.util as _ilu  # noqa: E402
 
 
 def _calls_outside(method: str, recipient, permitted: set, sources=None) -> list:
-    """Where in `tinysesam/` is there a call `<empfaenger>.<methode>(…)` outside `permitted`?
+    """Where in `tinysesam/` is there a call `<recipient>.<method>(…)` outside `permitted`?
 
     `permitted` are pairs (innermost class, innermost function). By AST and not by text search:
     Docstrings and comments name the method too, and a nested function like
@@ -1580,7 +1580,7 @@ r.check("Finding 12: the account page shows no rows from before the creation of 
 # and in the SAME second (stopped clock — this is how the attacker's proof ran). A limit that is
 # only accurate to the second does not hold the second situation; there the registration row decides
 # (`Store.setup_limit`).
-# (Mutation probes: do not pass `seit=`/`nach=` in `remove_account` → red in both
+# (Mutation probes: do not pass `seit=`/`after=` in `remove_account` → red in both
 #  situations; do not pass `since_id` → red only in "same second"; in `delete_attempts_for`
 #  `ts > ?` to `ts >= ?` → red in "same second"; in `TinySesam.delete_user`
 #  remove `address_unlimited=True` → red at N-6.)
@@ -2249,7 +2249,7 @@ def _is_manager(node, klass) -> bool:
 
 
 def _getattr_outside(method, permitted, sources=None) -> list:
-    """`getattr(x, "<methode>")` outside `permitted` — the detour around every receiver check."""
+    """`getattr(x, "<method>")` outside `permitted` — the detour around every receiver check."""
     hits = []
     for name, text in (sources if sources is not None else _source_texts()):
         for path, node, k, f in _node_with_place(name, text):

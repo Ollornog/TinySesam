@@ -11,7 +11,7 @@ db = os.path.join(tempfile.mkdtemp(), "t.db")
 auth = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db, rp_name="Test", passkey_enabled=False,
                                  oidc_enabled=False, cookie_secure=False))
 assert auth.ensure_admin("admin", "geheim123"), "admin should be created"
-assert not auth.ensure_admin("x", "y"), "zweiter ensure_admin darf nichts tun"
+assert not auth.ensure_admin("x", "y"), "second ensure_admin must do nothing"
 
 app = FastAPI()
 app.include_router(auth.router())
@@ -38,9 +38,9 @@ r = c.get("/auth/login")
 assert r.status_code == 200 and "Passwort" in r.text
 ok("login page")
 
-# 3) falsches Passwort
+# 3) wrong password
 assert c.post("/auth/login", data={"username": "admin", "password": "falsch", "next": "/geheim"}).status_code == 401
-ok("falsches Passwort → 401")
+ok("wrong password → 401")
 
 # 4) correct password (no TOTP yet) → 303 + cookie, no MFA
 r = c.post("/auth/login", data={"username": "admin", "password": "geheim123", "next": "/geheim"}, follow_redirects=False)
@@ -54,11 +54,11 @@ ok("protected reachable with session")
 assert c.get("/auth/me").json()["authenticated"] is True
 ok("/auth/me authenticated")
 
-# 6) TOTP einrichten
+# 6) set up TOTP
 uid = auth.store.get_user_by_name("admin")["id"]
 secret = auth.totp_begin(uid)["secret"]
 assert auth.totp_confirm(uid, pyotp.TOTP(secret).at(time.time() - 30)) and auth.store.has_confirmed_totp(uid)
-ok("TOTP eingerichtet")
+ok("TOTP set up")
 
 # 7) logout → login is now MFA-required
 c.get("/auth/logout")
@@ -67,19 +67,19 @@ assert r.status_code == 303 and "/auth/totp" in r.headers["location"]
 assert c.get("/geheim").status_code == 401, "with 2FA pending not yet fully logged in"
 ok("login with TOTP → 2FA step required")
 
-# 8) falscher + richtiger TOTP-Code
+# 8) wrong + correct TOTP code
 assert c.post("/auth/totp", data={"code": "000000", "next": "/geheim"}).status_code == 401
 r = c.post("/auth/totp", data={"code": pyotp.TOTP(secret).now(), "next": "/geheim"}, follow_redirects=False)
 assert r.status_code == 303
 assert c.get("/geheim").json()["user"] == "admin"
-ok("TOTP korrekt → voll eingeloggt")
+ok("TOTP correct → fully signed in")
 
-# 9) Rollen (optional)
+# 9) roles (optional)
 auth.set_roles(uid, ["editor"])
 u = auth.store.get_user(uid)
 assert auth.has_role(u, "editor") and auth.has_role(u, "irgendwas")  # admin ⇒ all roles
 auth.store.set_disabled(uid, False)
-ok("Rollen + Admin-Override")
+ok("roles + admin override")
 
 # ---------- B2-3: the setup code is consumed ----------
 # Until T-13 `totp_confirm` did not book the time step: the same code, just typed

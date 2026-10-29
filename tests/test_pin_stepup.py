@@ -94,7 +94,7 @@ app = FastAPI()
 app.include_router(auth.router())
 
 
-@app.get("/sensibel")
+@app.get("/sensitive")
 def sensitive(user=Depends(auth.require(mfa=True))):
     return {"ok": user["username"]}
 
@@ -110,24 +110,24 @@ auth.store.set_session_mfa(s["token_hash"], True)
 auth.store.db.execute("UPDATE session SET mfa_at=0 WHERE token_hash=?", (s["token_hash"],))
 auth.store.db.commit()
 
-r = c.get("/sensibel", follow_redirects=False)
+r = c.get("/sensitive", follow_redirects=False)
 assert r.status_code == 307 and r.headers["location"].startswith("/auth/reauth"), r.headers
-page = c.get("/auth/reauth?next=/sensibel").text
+page = c.get("/auth/reauth?next=/sensitive").text
 assert "name=pin" in page and "PIN zur Bestätigung" in page
 assert "name=password" not in page, "stepup_methods=['pin'] → no password field"
-r = c.post("/auth/reauth", data={"pin": "9999", "next": "/sensibel"})
+r = c.post("/auth/reauth", data={"pin": "9999", "next": "/sensitive"})
 assert r.status_code == 401
 # Password is NOT accepted if only PIN is allowed. Since 0.22.0 (`confirm_password`)
 # that is 403 `method_disabled` and not a failed attempt: a method that is not offered is
 # not checked at all — until then 401, and the request counted in the bucket `reauth`.
 _before = auth.store.count_fails(0, username="max", method="reauth")
-r = c.post("/auth/reauth", data={"password": "geheim12345-lang-genug", "next": "/sensibel"})
+r = c.post("/auth/reauth", data={"password": "geheim12345-lang-genug", "next": "/sensitive"})
 assert r.status_code == 403, "password must not pass here"
 assert auth.store.count_fails(0, username="max", method="reauth") == _before, "no failed attempt"
-assert c.get("/sensibel", follow_redirects=False).status_code == 307, "the session is not fresh"
-r = c.post("/auth/reauth", data={"pin": "2468", "next": "/sensibel"}, follow_redirects=False)
-assert r.status_code == 303 and r.headers["location"] == "/sensibel"
-assert c.get("/sensibel", headers={"accept": "application/json"}).json() == {"ok": "max"}
+assert c.get("/sensitive", follow_redirects=False).status_code == 307, "the session is not fresh"
+r = c.post("/auth/reauth", data={"pin": "2468", "next": "/sensitive"}, follow_redirects=False)
+assert r.status_code == 303 and r.headers["location"] == "/sensitive"
+assert c.get("/sensitive", headers={"accept": "application/json"}).json() == {"ok": "max"}
 os.unlink(db)
 print("  stepup_methods=['pin']: sensitive area requires PIN despite login ok")
 

@@ -229,7 +229,7 @@ os.remove(db_e)
 # a half session with 401. The page still asked "end other sessions?", ending failed silently,
 # and the page jumped to the PIN step — the user thought the lost device was signed out.
 # No offer is more honest than an offer that does not hold.
-# (Mutation probe: remove `if erneuert else 0` in the enrollment branch -> red.)
+# (Mutation probe: remove `if renewed else 0` in the enrollment branch -> red.)
 db_k = os.path.join(tempfile.mkdtemp(), "t.db")
 auth_k = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db_k, rp_name="Test",
                                    passkey_enabled=False, oidc_enabled=False, cookie_secure=False,
@@ -341,7 +341,7 @@ ok("R3-1: if MFA is optional the bolt does not apply — voluntary stays volunta
 try:
     TinySesam(TinySesamConfig(db_path=os.path.join(tempfile.mkdtemp(), "t.db"),
                               passkey_enabled=False, mfa_enrollment="irgendwas"))
-    raise AssertionError("unbekannte Betriebsart kam durch")
+    raise AssertionError("unknown mode got through")
 except _ConfigError:
     pass
 ok("R3-1: a typo in mfa_enrollment aborts construction")

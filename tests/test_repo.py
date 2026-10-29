@@ -146,7 +146,7 @@ for f in LIB:
         if not isinstance(node, _ast.Call) or not isinstance(node.func, _ast.Name):
             continue
         if node.func.id in ("print", "breakpoint") and node.lineno not in permitted:
-            raise AssertionError(f"Debug-Ausgabe in der Bibliothek: {f}:{node.lineno}: "
+            raise AssertionError(f"Debug output in the library:{f}:{node.lineno}: "
                                  f"{node.func.id}(...)")
 print("  no print()/breakpoint() in tinysesam/")
 
@@ -186,7 +186,7 @@ _PRIVATE_PATH = re.compile("(?:~/\\." + "|/ho" + "me/[a-z]|\\." + "claude/)")
 
 
 def private_paths(files, read):
-    """`datei:zeile` for every line that names a private home-directory path."""
+    """`file:line` for every line that names a private home-directory path."""
     hit = []
     for rel in files:
         if rel in _KIT_MANAGED or rel.startswith("tests/_kit/"):
@@ -282,8 +282,8 @@ for f in LIB:
             if isinstance(value, _ast.Name):
                 module = alias.get(value.id, value.id)
                 if (module, node.func.attr) in PROCESS_CALLS:
-                    raise AssertionError(f"{f}:{node.lineno} ruft {module}.{node.func.attr}() "
-                                         "— startet einen Prozess")
+                    raise AssertionError(f"{f}:{node.lineno} calls {module}.{node.func.attr}() "
+                                         "— starts a process")
 print(f"  no self-update, no process start in the library "
       f"({len(PROCESS_MODULE)} modules, {len(PROCESS_CALLS)} calls checked)")
 
@@ -872,8 +872,8 @@ assert "push=${{ github.ref_type == 'tag' }}" in _image and "push=true" not in _
 _login = re.search(r"- name: Log in to GHCR\n\s+" + re.escape(_AM_TAG), _image)
 assert _login, "release.yml: the GHCR login in job `image` is not tied to the tag"
 _check = "\n".join(_rel_jobs.get("pruefen", []))
-assert "_release.py --pruefen" in _check and "if: github.ref_type != 'tag'" in _check, \
-    "release.yml: the dry run checks nothing (scripts/_release.py --pruefen missing)"
+assert "_release.py --check" in _check and "if: github.ref_type != 'tag'" in _check, \
+    "release.yml: the dry run checks nothing (scripts/_release.py --check missing)"
 print("  release.yml: dry run without a tag — check and build yes, publish never")
 
 # The dry run is also the mandatory check for automatic updates (PO 2026-09-28): It runs on

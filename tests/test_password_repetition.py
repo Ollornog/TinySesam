@@ -101,7 +101,7 @@ assert OLD not in raw and PW not in raw
 assert all(len(f) == 8 for items in auth._pw_repetition.values() for f, _ in items)
 ok("8-byte fingerprints are in memory, no password")
 
-# (b) Gegenprobe
+# (b) Counter-check
 auth, app, log = _app()
 for i in range(6):
     _login(app, f"falsch-{i}-xxxxxxxx")
@@ -117,7 +117,7 @@ for _ in range(3):
 assert len(_audit(auth, "login_fail")) == 2 and len(_audit(auth, "login_repeat")) == 4
 ok("once per IP: two failed attempts, four repetitions")
 
-# (d) abgeschaltet
+# (d) switched off
 auth, app, log = _app(password_repeat_memory=0)
 for _ in range(6):
     _login(app, OLD)
