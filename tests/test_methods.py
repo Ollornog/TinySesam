@@ -46,6 +46,15 @@ print("  ✓ Passkey login options generated (challenge, rpId=localhost)")
 html = c.get("/auth/login").text
 assert "Passwort" in html and "PocketID" in html and "Passkey" in html
 print("  ✓ Login page: password form + OIDC button + passkey button")
+# The error dialogs of the passkey script come from the message catalog (until 0.25.0 they were German in every language).
+assert "Passkey-Login fehlgeschlagen" in html and "Passkey-Login abgebrochen" in html and "__PK_" not in html
+_en = TinySesam(TinySesamConfig(csrf_enabled=False, lang="en", db_path=os.path.join(tempfile.mkdtemp(), "e.db"),
+                                passkey_enabled=True, oidc_enabled=False))
+_app_en = FastAPI()
+_app_en.include_router(_en.router())
+_html_en = TestClient(_app_en).get("/auth/login").text
+assert "Passkey sign-in failed" in _html_en and "Passkey sign-in aborted" in _html_en and "Passkey-Login" not in _html_en
+print("  ✓ Passkey script: error dialogs in the language of the page (de/en)")
 
 # ---------- register/finish binds the passkey to the SIGNED-IN account (N5) ----------
 # Promise in the CHANGELOG: “`register/finish` additionally binds the new passkey to the signed-in
