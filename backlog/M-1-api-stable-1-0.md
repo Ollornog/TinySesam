@@ -170,7 +170,7 @@ they were already named in English. Values stay: reason codes, audit and log lin
 report of `federation_bind_existing`, database columns.
 
 The name guard from section (k) has been extended to the whole surface
-(`tests/test_api_surface.py`, `pruefe_namen`): every name in A or B, every parameter on the live
+(`tests/test_api_surface.py`, `check_names`): every name in A or B, every parameter on the live
 object, every configuration field, the attributes and constructor parameters of the error types — 566
 entries; words, stems (also in the middle of a word) and umlauts; minimum set and self-probes. State
 unchanged at 354 names, A 240, B 64, C 50.
@@ -207,7 +207,7 @@ next addendum.
 - **Not translated:** audit and log lines (fail2ban, operators' filters) — the
   old names remain in them (`art=automat`, `grund=name_aus_quelle` …); the kind of a failure series
   (`fehlserie.art`, among them `pin_folge`), which is only read internally; the column names.
-- **Guard:** `pruefe_werte` in `tests/test_api_surface.py` measures the keys and values on a probe
+- **Guard:** `check_values` in `tests/test_api_surface.py` measures the keys and values on a probe
   instance, on the constants and in the source code (790 entries) against the word list and the
   names up to 0.21.x.
 - **`auth.set_disabled(user_id, disabled)`** (tier A) instead of the advice to call `auth.store.set_disabled(…,
@@ -260,7 +260,7 @@ entry or tier changed):
 * **`auth.cfg` is not immutable.** `TinySesamConfig` is a plain, mutable dataclass; `examples/showcase.py` and the
   README write to it, `router()` checks it once more, and `TinySesamConfig.validate()` re-checks. So the promise
   is **reading only**; writing is explicitly not promised (README, `API.md`).
-* **The payload keys are not counted twice.** `pruefe_werte` keeps checking the *language* of the keys; the new area
+* **The payload keys are not counted twice.** `check_values` keeps checking the *language* of the keys; the new area
   pins *which* keys exist. A key that goes away is a break, a key that is added is an extension.
 * **Tier rules the guard holds:** everything in `TinySesam.attributes`, `.event_payload`, `http.forward`, `log.*` and
   `http.contract` (bar the two hints) and the forward/gate routes may not sit below A; every other route is B and may
@@ -316,9 +316,25 @@ names is English and correctly tiered *now*; everything earlier counts as broken
   both READMEs, the introduction of `API.md` and `docs/OPERATIONS.md`.
 * **`auth.cfg` is tier A for reading only; writing is expressly not promised** — checked in the READMEs, `API.md` and
   here, the wording is the same everywhere.
-* **The guard** `tests/test_api_surface.py` has a new check (`pruefe_vertragsnamen`): route parameters, header and
+* **The guard** `tests/test_api_surface.py` has a new check (`check_contract_names`): route parameters, header and
   cookie names, logger names, event words, keys and values of the security log, message ids and placeholders, the
   variables the Caddy templates read, command-line options and the free text of every log call may carry no German
   word; the stem `abgemeld` is new in the word list.
+
+**Addendum 2026-10-29 (PO decision, afterwards): internals English as well — the repository is launched in English.** T-29
+translated texts and the promised names; this pass renames the rest **before** the freeze, once, without alias:
+
+* **Database names** (tables, columns, indexes, triggers, six setting keys, the placeholder prefix of
+  `federated_identity.identifier`) — schema **16**, migration `Store._english_names`, rollback SQL in
+  `docs/OPERATIONS.md`, tested against a real schema-15 file (`tests/test_db_names_migration.py`). The file format is
+  not part of the promise, but operators read it and restore backups from it; hence backup advice and the table in the
+  CHANGELOG.
+* **Identifiers** (about 3,100 names in `tinysesam/`, `web/`, `examples/`, `scripts/`, `tests/`), comments, docstrings and
+  test descriptions. **Tiers A and B: 0 changes** (the guard measured). **Tier C: three deprecated aliases changed their
+  parameter names** (`forward_login_url`, `maybe_promote_admin`, `record_login`) — a break of a tier that is removed by
+  1.0 anyway, listed in the CHANGELOG.
+* **The guard** `tests/test_english_code.py` keeps it that way (identifiers, file names, SQL, comments and docstrings);
+  `CONTRIBUTING.md` states the rule.
+* Still German on purpose: the interface texts (`lang="de"`, `i18n/`) and the shared test kit (`repokit sync`).
 
 <!-- What used to be here (closing with 1.0.0) is obsolete together with the milestone itself. -->

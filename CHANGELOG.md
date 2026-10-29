@@ -88,9 +88,10 @@ versions before it is removed or renamed (a route cannot raise a `DeprecationWar
 - **Custom messages:** a text added with `add_messages` under `err.locked_serie` has to be moved to `err.locked_series`.
 - **Rollback:** no SQL needed (`docs/OPERATIONS.md`, “Rollback to 0.24.x (schema 15)”, last paragraph).
 
-**Still German on purpose (unchanged):** the German interface texts (`lang="de"`), names of tables, columns and
-setting keys, private identifiers inside the library. The inventory found nothing German left in a promised name, key,
-value, header, cookie, logger, event word or log keyword.
+**Still German on purpose:** the German interface texts (`lang="de"`). (Names of tables, columns and setting keys and the
+private identifiers inside the library were German when this entry was written; they are English now, see "database
+names, identifiers and comments are English; schema 16" above.) The inventory found nothing German left in a promised
+name, key, value, header, cookie, logger, event word or log keyword.
 
 **The guard** `tests/test_api_surface.py` got a check for what operators and proxies read (query and form parameters,
 header and cookie names, logger names, event words, keys and values of the security log, message ids and placeholders,
@@ -103,12 +104,12 @@ German mail-queue log text, a German message id, the SAML ACS path renamed, `TS_
 ### Added — `tinysesam delete`: remove an account without the admin panel (T-27)
 
 - New command `python -m tinysesam delete --db <file> <user>` (`#<id>` instead of the name works as in `rename`).
-  It goes through the same deletion path as the panel's "Delete" (`Store.konto_entfernen` with the address of a
+  It goes through the same deletion path as the panel's "Delete" (`Store.remove_account` with the address of a
   verified account counting as its own): rows in `users`, `oidc_identity`, `session` and the other credential tables
   go, the sign-in attempts go, the name in the audit log becomes `deleted#<id>`, and one `user_delete … source=cli`
   row is written. Not `Store.delete_user`, which leaves the name in every audit row.
 - Same protection as the panel: an owner and the last admin are not deleted. The rule moved into
-  `Store.loeschsperre` and is used by `TinySesam.delete_user` and the command alike, so the two cannot drift apart.
+  `Store.deletion_guard` and is used by `TinySesam.delete_user` and the command alike, so the two cannot drift apart.
 - Asks on a terminal; `--yes` skips the question for scripts; no terminal and no `--yes` refuses (exit 1). An unknown
   account or database ends with exit 1 and a clear message. The output names the account, the number of sessions,
   identity links and API keys and the replacement name — no address, no secret.
@@ -147,7 +148,7 @@ German mail-queue log text, a German message id, the SAML ACS path renamed, `TS_
   pins the new floor.
 - setuptools 84.2.1 in the gateway image (`deploy/gateway/requirements.txt`) and in the build tools
   (`.github/bau/requirements.txt`), GHSA-xmj3-9gf7-h52w.
-- `security.fuer_log` additionally removes line breaks via `.replace("\n", "")`. This changes nothing in effect but is
+- `security.for_log` additionally removes line breaks via `.replace("\n", "")`. This changes nothing in effect but is
   the form CodeQL recognises as a filter against log injection (#266, `deferred login`). New test: a line break in
   name or address does not produce a second line in the deferral line.
 
@@ -209,11 +210,79 @@ Left as they are because the shared test kit (`repokit sync`) depends on the nam
   page and the "no HTTPS" bar of the admin panel are translated the same way (`templates._ACCOUNT_TEXT`,
   `admin._WARN_HTTP`).
 - `vault.load_key` returns its source as `environment` / `file` / `memory` / `beside_db` / `beside_db_new` (was
-  `umgebung` / `datei` / `speicher` / `neben_db`); it only appears in `TinySesam._schluessel_herkunft` and in the CLI output.
+  `umgebung` / `datei` / `speicher` / `neben_db`); it only appears in `TinySesam._key_name_origin` and in the CLI output.
 - `scripts/_api_docs.py` writes the English headings and no longer strips a German "stattdessen" prefix.
-- **Still German on purpose:** names of database tables, columns and setting keys (`namensbindung`, `fehlserie`,
-  `topf_*`, `name_quelle`, `idp_bestaetigt_at`, …), private identifiers inside the library, and the German user interface
-  itself (`lang="de"`, `i18n/`). The stored and logged vocabulary is English since schema 15 (next entry).
+- **Still German on purpose:** the German user interface itself (`lang="de"`, `i18n/`) and the shared test kit
+  (`tests/_kit/`, `tests/voraussetzung.py`, `scripts/_backlog.py`, managed by `repokit sync`). The database names
+  and the private identifiers were German when this entry was written and are English since the entry "database names,
+  identifiers and comments are English; schema 16"; the stored and logged vocabulary is English since schema 15.
+
+### Changed — database names, identifiers and comments are English; schema 16 (T-29 follow-up, PO decision 2026-10-29)
+
+Everything that was still German in the repository is English now, except the German interface texts and the shared
+test kit. Done **once, without an alias or a transition** (before 1.0; no promised name of tier A or B changes: the
+guard `tests/test_api_surface.py` measured 0 breaks and 0 extensions on tiers A and B). Data that is stored is migrated.
+
+**Operators: take a backup before the update** (`tinysesam backup`, not `cp`). The first start renames the German
+names inside the database file in one transaction and says so in the log (`Database names renamed to English (schema
+16) …`); a second start changes nothing, also on a read-only file. A file with old names that cannot be written does not
+start (the new code needs the new names): mount it writable once. An older version opens the migrated file with the
+"newer schema version" warning but does not find its tables: the way back is a block of SQL in `docs/OPERATIONS.md`
+("Rollback of the English database names (schema 16)"), run by `tests/test_db_names_migration.py` against a real
+schema-15 file. If you read the database with your own SQL (reports, dashboards), use the new names:
+
+| Up to schema 15 | Since schema 16 |
+|---|---|
+| table `namensbindung` (`quelle`, `bis`) | `name_binding` (`source`, `until`) |
+| table `oidc_sitzung` (`geprueft_at`, `erfolg_at`) | `oidc_session` (`checked_at`, `success_at`) |
+| table `gate_abgemeldet` | `gate_signed_out` |
+| table `fehlserie` (`topf`, `art`, `anzahl`, `seit`, `zuletzt`) | `failure_series` (`folded`, `kind`, `count`, `since`, `last_seen`) |
+| `users.topf_name`, `topf_mail` | `folded_name`, `folded_mail` |
+| `users.idp_bestaetigt_at` | `idp_confirmed_at` |
+| `users.name_versuch_ab`, `mail_versuch_ab`, `name_audit_ab`, `mail_audit_ab` | `name_attempt_from`, `mail_attempt_from`, `name_audit_from`, `mail_audit_from` |
+| `users.name_quelle`, `name_selbst_gewaehlt` | `name_source`, `name_self_chosen` |
+| `federated_identity.quelle`, `kennung`, `gebunden_at`, `name_topf` | `source`, `identifier`, `bound_at`, `directory_name_folded` |
+| `session.zuletzt`, `andere_beenden`, `bleiben_gewaehlt`, `nachfolger` | `last_seen`, `end_others`, `stay_chosen`, `successor` |
+| `login_attempt.offen` | `pending` |
+| indexes `idx_fed_quelle_user`, `ix_fed_name_topf`, `ix_users_topf_name`/`_mail` | `idx_fed_source_user`, `ix_fed_directory_name_folded`, `ix_users_folded_name`/`_mail` |
+| triggers `trg_users_topf_name`/`_mail`, `trg_users_wechsel_name`/`_mail`, `trg_users_kennung_insert`/`_update` | `trg_users_folded_name`/`_mail`, `trg_users_change_name`/`_mail`, `trg_users_identifier_insert`/`_update` |
+| `setting` keys `allowlist_nach_idp_entzug`, `idp_bestand_gesetzt`, `name_quelle_nachgetragen`, `name_selbst_nachgetragen`, `uhr_stand`, `panel_sperren_bis`, `foederation_seit:<source>` | `allowlist_after_idp_revocation`, `idp_inventory_set`, `name_source_backfilled`, `name_self_backfilled`, `clock_state`, `panel_lock_until`, `federation_since:<source>` |
+| `federated_identity.identifier` placeholder `~ohne-kennung:<…>` | `~without-identifier:<…>` |
+
+- **Migration** `Store._english_names`: runs before the schema script, only if an old name is present; drops the old
+  indexes and triggers first, renames columns and tables, rewrites the six setting keys, the `foederation_seit:` prefix
+  and the placeholder prefix. A table that exists under the old and the new name (an older version wrote into a migrated
+  file without the SQL) is merged; a doubled column is left alone with a warning. Idempotent.
+- **Internal string values** (not stored, no migration): the OIDC refresh result kinds `fehler`/`abgelehnt` →
+  `error`/`rejected`, the pending marker `schwebend` → `pending`, the message kind `fehler` → `error` and the CSS classes of
+  the message box (`meldung`, `meldungen`, `meldung.fehler`, `tsbg-quelle` → `notice`, `notices`, `notice.error`,
+  `tsbg-source`; custom CSS that targets them has to follow), the rate-limit and log-once keys, the request-state key
+  `tinysesam.csrf_neu` → `tinysesam.csrf_new`, the placeholder username prefix `reserviert-` → `reserved-` (accounts that
+  already carry the old prefix keep their name; nothing depends on it), the example route `/sensibel` → `/sensitive`.
+- **Identifiers**: about 3,100 German names (functions, methods, classes, parameters, variables, constants, attributes)
+  in `tinysesam/`, `web/`, `examples/`, `scripts/` and `tests/` renamed; module `tinysesam/_vokabular.py` →
+  `_vocabulary.py`. Parameters that were German and are English now include `Store.reserve_attempt(series=, as_pending=)`,
+  `Store.clear_fails(since=)`, `TinySesam.maybe_promote_admin(email_confirmed=, factor=)`,
+  `TinySesam.record_login(attempt=, source=, account=)` and `TinySesam.forward_login_url(direct=)` — **the last three are
+  deprecated tier-C names** (removed by 1.0): their parameter names changed, so a caller that still passes the old
+  keyword names to such an alias breaks one release earlier than announced (baseline updated, 0 changes on tiers A/B).
+  Command line options of the maintainer scripts: `scripts/_release.py --pruefen` → `--check`,
+  `scripts/_codeql.py --zeigen` and `scripts/_codeql_backlog.py --zeige` → `--show`.
+- **Comments, docstrings and test descriptions** that were still German are English (finding ids `…-umgehung-…` →
+  `…-bypass-…`). German texts that are quoted on purpose (old values, `lang="de"` expectations, German output) stay in
+  backticks or quotation marks.
+- **The guard** `tests/test_english_code.py`: a German word in an identifier, a file name, a SQL name (the schema and every
+  SQL string of the package) or in a comment or docstring (outside `backticks` and quotation marks) makes the suite red.
+  The word list is `tests/_german_words.py`; the exceptions are explicit and small (the kit files and the names they
+  define, the migration code that has to name the old names). Self-test: every kind of finding is found in a probe, English
+  twins and quoted old values are not; mutations: a German method, parameter, class, table or column (also in
+  `store.SCHEMA` and in a query), comment and docstring put into real source text turn it red.
+- **Left as it is, deliberately:** the German interface texts (`lang="de"`, `i18n/`), the shared test kit (`tests/_kit/`,
+  `tests/voraussetzung.py`, `scripts/_backlog.py`, `scripts/_nur_text.sh`, `scripts/_residue_check.sh`, `.githooks/pre-push`
+  and the lists `werkzeuge.in`; they change with `repokit sync`), the job id `pruefen` in `release.yml` (it is a required
+  check name), the legacy values that the migrations read (`tinysesam/_vocabulary.py`, `Store.KEY_KINDS_OLD`), German test
+  data (names, passwords, German UI expectations) and the deliberately German probes of the name guards (built from source
+  text so that the code itself stays English).
 
 ### Changed — stored and logged vocabulary is English; schema 15 (T-29)
 
@@ -227,13 +296,13 @@ unknown (see "Rollback to 0.24.x (schema 15)" in `docs/OPERATIONS.md`).
   `recovery_verwaist_geloescht` → `recovery_orphan_deleted`, `login_lokal` → `login_local`, and the per-source families
   `<source>_kennung_{abgewiesen,gebunden,geloest,ungueltig,wechsel}` → `<source>_identifier_{rejected,bound,unbound,invalid,change}`,
   `<source>_namensbindung_zu` → `<source>_name_binding_closed`, `<source>_ohne_kennung` → `<source>_without_identifier`
-  (source = `oidc`, `saml`, `ldap`). The complete tables are in `tinysesam/_vokabular.py`.
+  (source = `oidc`, `saml`, `ldap`). The complete tables are in `tinysesam/_vocabulary.py`.
 - **Keys in audit details and in the security log**: `grund=` → `reason=`, `konto=` → `account=`, `quelle=` → `source=`,
   `durch=` → `by=`, `akteur=` → `actor=`, `alt=`/`neu=` → `old=`/`new=`, `kennung=` → `identifier=`, `art=` → `kind=`,
   `anzahl=` → `count=`, `fehlversuche=` → `failed_attempts=`, … and the values behind them (`kein_konto` → `no_account`,
   `konto_gesperrt` → `account_locked`, `falsches_geheimnis` → `wrong_secret`, `betreiber` → `operator`,
   `lokal` → `local`, `unban=ja|nein` → `unban=yes|no`, …). Existing rows are rewritten by the migration
-  (`Store._vokabular_englisch`); only whole `key=` tokens are touched, never free text. Code that reads audit rows
+  (`Store._vocabulary_english`); only whole `key=` tokens are touched, never free text. Code that reads audit rows
   understands both forms, so rows written by an older version after a rollback are not lost.
 - **Substitute name** of a deleted account in the audit log: `gelöscht#<id>` → `deleted#<id>`. **Database trigger message**:
   `tinysesam: kennung vergeben` → `tinysesam: identifier taken` (the triggers are replaced on start; both messages are
