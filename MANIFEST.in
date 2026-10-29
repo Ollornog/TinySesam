@@ -52,7 +52,7 @@ global-exclude .DS_Store
 # in the grafted trees and checks that none ends up in the sdist; a new pattern there
 # without a line here turns red. `*.egg-info/` only under the grafted trees: setuptools puts its
 # own egg-info into the sdist, a `global-exclude` would exclude it as well.
-global-exclude .venv/** venv/** __pycache__/** build/** dist/** _site/** .befunde-*/**
+global-exclude .venv/** venv/** __pycache__/** build/** dist/** _site/** .findings-*/**
 global-exclude *.db *.db-wal *.db-shm .env
 recursive-exclude tests *.egg-info/**
 recursive-exclude examples *.egg-info/**

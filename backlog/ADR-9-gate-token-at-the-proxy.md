@@ -3,7 +3,7 @@ id: ADR-9
 type: Decision
 title: Gate in front of third-party apps — the proxy verifies a short-lived gate token itself, TinySesam only when issuing
 status: erledigt
-tags: [architektur, forward-auth, gateway, oidc, sso, logout]
+tags: [architecture, forward-auth, gateway, oidc, sso, logout]
 created: 2026-10-03
 ---
 

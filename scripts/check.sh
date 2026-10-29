@@ -24,8 +24,8 @@ for cand in "${PYTHON:-}" .venv/bin/python "$(command -v python3 || true)"; do
 done
 
 if [[ -z "$PY" ]]; then
-    command -v uv >/dev/null || fail "Kein Python mit FastAPI und kein uv. → pip install -e '.[all]'"
-    step "Kein Python mit FastAPI gefunden — lege .venv an (einmalig)"
+    command -v uv >/dev/null || fail "No Python with FastAPI and no uv. → pip install -e '.[all]'"
+    step "No Python with FastAPI found — creating .venv (once)"
     uv venv .venv >/dev/null || fail "uv venv"
     # setuptools/wheel: tests/test_packaging.py BUILDS the package (offline, without isolation).
     # A uv venv brings neither, and without a build backend the suite would check nothing.
@@ -45,24 +45,24 @@ step "Interpreter: $("$PY" -c 'import sys; print(sys.version.split()[0], "@", sy
 # Text fast path (repokit 0.35.0, PO 2026-10-15): If the state differs from the default branch only in text from the
 # kit's allowlist (*.md in the root, docs/, backlog/, changelog.d/), only the text's own check runs —
 # tests/test_repo.py: hygiene, links, anchors, frontmatter — and it ends. The required checks still run and
-# report green. Decision and list: scripts/_nur_text.sh (from the kit); narrow it: scripts/nur-text-verengung.txt.
-if grund="$(scripts/_nur_text.sh)"; then
-    step "$grund"
-    "$PY" tests/test_repo.py || fail "Repo-Hygiene"
-    printf '\n\033[32m✓ Nur Text — Hygiene grün\033[0m\n'
+# report green. Decision and list: `scripts/_nur_text.sh` (from the kit); narrow it: `scripts/nur-text-verengung.txt`.
+if reason="$(scripts/_nur_text.sh)"; then
+    step "$reason"
+    "$PY" tests/test_repo.py || fail "repo hygiene"
+    printf '\n\033[32m✓ text only — hygiene green\033[0m\n'
     exit 0
 fi
-step "$grund"
+step "$reason"
 
 if [[ $FAST -eq 1 ]]; then
-    step "Suiten ohne Browser-Test (--fast)"
-    "$PY" tests/run_all.py --no-browser || fail "Testsuite"
+    step "Suites without the browser test (--fast)"
+    "$PY" tests/run_all.py --no-browser || fail "test suite"
 else
-    step "Alle Suiten — Browser- und Hygiene-Test inklusive"
-    "$PY" tests/run_all.py || fail "Testsuite"
+    step "All suites — browser and hygiene test included"
+    "$PY" tests/run_all.py || fail "test suite"
 fi
 
-step "Website bauen — genau das, was die Pages-Action ausliefert"
+step "Build the website — exactly what the Pages action ships"
 # Into a throwaway directory, not into `_site/` in the tree: there the build sat silently next to a
 # `_site/` of its own (and deleted it afterwards), and two runs in the same tree cleaned each other away.
 SITE="$(mktemp -d)"
@@ -70,11 +70,11 @@ trap 'rm -rf "$SITE"' EXIT
 "$PY" -m web.build "$SITE" >/dev/null || fail "web.build"
 for f in index.html demo.html flows.html legal.html theme.css wizard.png \
          demo/login.en.html demo/account.de.html demo/admin.de.html demo/adminapi/api/users; do
-    test -f "$SITE/$f" || fail "_site/$f fehlt"
+    test -f "$SITE/$f" || fail "_site/$f is missing"
 done
-echo "  index.html · demo.html (+ Vorschau-Panels) · flows.html · legal.html · Beilagen"
+echo "  index.html · demo.html (+ preview panels) · flows.html · legal.html · attachments"
 
 if [[ $FAST -eq 1 ]]; then
-    printf '\n\033[33m! Browser-Test übersprungen. Vor dem Push einmal ohne --fast laufen lassen.\033[0m\n'
+    printf '\n\033[33m! Browser test skipped. Run once without --fast before the push.\033[0m\n'
 fi
-printf '\n\033[32m✓ alles grün\033[0m\n'
+printf '\n\033[32m✓ all green\033[0m\n'

@@ -3,8 +3,8 @@
 # build, SBOM, PyPI upload and attestation run with exactly the actions of the tag, without
 # anything going outside; a required check thus covers their updates, and they merge themselves.
 #
-# This file is the source of the images, not the way they are started: the job `generalprobe-ziele`
-# reads it, `generalprobe` starts the registry as a service and the package server via `docker run`
+# This file is the source of the images, not the way they are started: the job `rehearsal-targets`
+# reads it, `rehearsal` starts the registry as a service and the package server via `docker run`
 # (it needs arguments that a service does not know). Dependabot (docker-compose) keeps them up to
 # date, and the dress rehearsal checks the update right away.
 services:

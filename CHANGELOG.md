@@ -193,8 +193,68 @@ calling them now raises `AttributeError` instead of a `DeprecationWarning`):
 | `tests/test_anmelden.py`, `test_bestaetigen.py`, `test_login_modi.py`, `test_logout_modi.py`, `test_meldungen.py`, `test_selbstbedienung.py`, `test_unterpfad.py`, `test_typen.py` and 20 more | the English equivalents (`test_sign_in.py`, `test_confirm.py`, `test_login_modes.py`, …); `run_all.py` collects them by pattern |
 | `backlog/<id>-<german-slug>.md` (39 files) | `backlog/<id>-<english-slug>.md` (ids unchanged) |
 
-Left as they are because the shared test kit (`repokit sync`) depends on the names: `tests/voraussetzung.py`, the
-`werkzeuge.in` lists, and the kit-managed files themselves.
+Left as they are because the shared test kit (`repokit sync`) depends on the names: `tests/voraussetzung.py` and the
+kit-managed files themselves (the `werkzeuge.in` lists were renamed afterwards, see "English outside Python" below).
+
+### Changed — English outside Python (T-29 follow-up)
+
+The English-code rule now covers everything that is not Python, in one last breaking pass before the freeze, again
+**without an alias**. Operators who copied a template, call a script or require a check by name: the names below changed.
+
+| Old | New |
+|---|---|
+| Traefik middleware `tinysesam-cookies-weg` (`deploy/forward-auth/traefik.yml`) | `tinysesam-strip-cookies` |
+| Traefik middleware `tinysesam-auth-redaktion` (example) | `tinysesam-auth-editors` |
+| nginx location `/auth/forward-redaktion` (example, `nginx-path.conf`) | `/auth/forward-editors` |
+| nginx variable `$ts_ck_zu` (`nginx.conf`, `nginx-path.conf`) | `$ts_ck_latch` |
+| compose anchor `x-haertung` / `*haertung` (`deploy/forward-auth/docker-compose.yml`) | `x-hardening` / `*hardening` |
+| Dockerfile stage `bau` (`deploy/forward-auth/caddy-gate/Dockerfile`) | `builder` |
+| Response text `Kein Zugriff: fehlende Rolle.` (403 of `Caddyfile`, `Caddyfile.gate`, `nginx-path.conf`) | `Access denied: missing role.` |
+| Example role names `redaktion` / group `mitarbeiter` in the templates and in `docs/OPERATIONS.md` | `editors` / `staff` |
+| `deploy/forward-auth/acceptance.sh`: functions `pruefe`, `holen`, `zur_anmeldung`, variables `kopf`, `pfad`, `praefix`, `rot` | `check`, `fetch`, `to_sign_in`, `head`, `path`, `prefix`, `failed` (output unchanged) |
+| `scripts/_image_probe.sh`: variables `ABBILD`, `WARTEN_S`, default image `tinysesam-probe:lokal`, German progress and error texts | `IMAGE`, `WAIT_S`, `tinysesam-probe:local`, English texts |
+| `scripts/check.sh`: German messages (`Nur Text — Hygiene grün`, `✓ alles grün`, `Kein Python mit FastAPI …`) | `text only — hygiene green`, `✓ all green`, `No Python with FastAPI …` |
+| Workflow job `pruefen` (`release.yml`) — **required check** | `verify` |
+| Workflow job `bauen` — **required check** | `build` |
+| Workflow job `pruefsummen` — **required check** | `checksums` |
+| Workflow job `abbild-probe` — **required check** | `image-probe` |
+| Workflow job `generalprobe-ziele` — **required check** | `rehearsal-targets` |
+| Workflow job `generalprobe` — **required check** | `rehearsal` |
+| Workflow job `generalprobe-beglaubigen` — **required check** | `rehearsal-attest` |
+| Workflow job `image-beglaubigen` (tag only) | `image-attest` |
+| Image tag of the dry run `trockenlauf`; registry user, password, tag and artifact `generalprobe`, `generalprobe-sbom`, `generalprobe.txt` | `dry-run`; `rehearsal`, `rehearsal-sbom`, `rehearsal.txt` |
+| `.github/bau/`, `.github/generalprobe/` | `.github/packaging/`, `.github/rehearsal/` |
+| `.github/audit/werkzeuge.in`, `.github/bau/werkzeuge.in` | `.github/audit/tools.in`, `.github/packaging/tools.in` (pins and hashes unchanged) |
+| `audit.yml` resolutions `neu`, `boden`, `bau` (comments, temp files) | `newest`, `floor`, `build` |
+| `ci.yml`: `baum-vorher.txt`, `bilder` | `tree-before.txt`, `images` |
+| `.gitignore` / `MANIFEST.in` pattern `.befunde-*` | `.findings-*` |
+| Dependabot group `alle` (`.github/dependabot.yml`, all comments now English) | `all` |
+| Backlog `tags:` (`sicherheit`, `betrieb`, `doku`, `konten` … in 28 entries) | `security`, `operations`, `docs`, `accounts` … |
+| `/seite` in the HTTP-contract example of the gateway callback (`API.md`) | `/page` |
+
+The required checks of branch protection are the job names: the seven `release.yml` jobs above have to be switched to
+the new names before the next merge.
+
+**Docs.** `docs/OPERATIONS.md` pointed to names that no longer exist: `auth.store.schreibprobe()` → `write_probe()`,
+`Store.loeschsperre` → `deletion_guard`, the setting `allowlist_nach_idp_entzug` → `allowlist_after_idp_revocation`,
+`uhr_stand` → `clock_state`, `panel_sperren_bis` → `panel_lock_until`, the rate-limit bucket `wechsel` → `change`,
+`login_attempt.offen` → `pending`, `<quelle>_kennung_geloest` → `<source>_identifier_unbound`, the identifier
+collision message (`identifier '<x>': user_id=…`), the column `quelle` → `source`; the quoted log texts are the real ones
+(`Healthcheck: database not writable`, `Open transaction found on the database connection …`,
+`Redis rate limit unreachable …`, `LDAP directory unreachable (…)`, `… stored values rewritten to the English names`);
+the examples use English names (`report`, `part`, `boss`). The resource example `fotos` in the READMEs is `photos`.
+The backlog entries T-8, T-13, T-15 and T-27 name the current identifiers.
+
+**Guards.** `tests/test_english_code.py` reads the non-Python files too (shell, workflows, compose, Dockerfiles, the
+Caddy/nginx/Traefik templates, the `.in` lists, `pyproject.toml`, dot files; the file and directory names under
+`.github/`, `deploy/`, `scripts/`; the English docs; the backlog tags) with the same word list and the same
+exceptions. What the shared kit dictates (`_nur_text.sh`, `_residue_check.sh --seit`, `CI_KERNE`) stays in the kit's
+spelling. `tests/test_repo.py` checks the other direction: every dotted Python name in the live docs (`auth.…`,
+`Store.…`, `TinySesam.…`, `TinySesamConfig.…`, in backticks or code blocks) has to be defined by the package; old names
+stay where the docs talk about the past (`tests/_german_words.history_lines`: old → new pairs, version numbers,
+"German", `## Rollback` sections). Mutations: a German function in `acceptance.sh`, a German job id in `release.yml`,
+the German response in the `Caddyfile`, a German log text in `OPERATIONS.md`, a German directory under `.github/`,
+`auth.store.schreibprobe()` back in `OPERATIONS.md` — each turns the suite red.
 
 ### Changed — runtime texts are English (T-29)
 
@@ -224,12 +284,15 @@ test kit. Done **once, without an alias or a transition** (before 1.0; no promis
 guard `tests/test_api_surface.py` measured 0 breaks and 0 extensions on tiers A and B). Data that is stored is migrated.
 
 **Operators: take a backup before the update** (`tinysesam backup`, not `cp`). The first start renames the German
-names inside the database file in one transaction and says so in the log (`Database names renamed to English (schema
+names inside the database file in one transaction and logs it at level INFO (the gateway image's log shows WARNING and above, so the line is not visible there; `PRAGMA user_version` shows 16) (`Database names renamed to English (schema
 16) …`); a second start changes nothing, also on a read-only file. A file with old names that cannot be written does not
-start (the new code needs the new names): mount it writable once. An older version opens the migrated file with the
-"newer schema version" warning but does not find its tables: the way back is a block of SQL in `docs/OPERATIONS.md`
-("Rollback of the English database names (schema 16)"), run by `tests/test_db_names_migration.py` against a real
-schema-15 file. If you read the database with your own SQL (reports, dashboards), use the new names:
+start (the new code needs the new names): mount it writable once. Schema 16 is a migration forward only: the hand-written rollback SQL and its test (E) in
+`tests/test_db_names_migration.py` are dropped. The one way back is the backup from before the update: `restore` it
+(with the OLD image the option is `restore … --ja`; same `TINYSESAM_SECRETS_KEY`), then start the old image. Never go
+back without the restore: 0.24.13 on a migrated file aborts in the `Store` constructor (`no such column: quelle`),
+the gateway restarts in a loop and creates empty tables with the old names meanwhile (the newer version merges them
+correctly). A read-only mounted folder cannot hold a WAL database at all, so `restore` onto it fails as well
+(`docs/OPERATIONS.md`, "Rollback of the English database names (schema 16)"). If you read the database with your own SQL (reports, dashboards), use the new names:
 
 | Up to schema 15 | Since schema 16 |
 |---|---|
@@ -279,8 +342,7 @@ schema-15 file. If you read the database with your own SQL (reports, dashboards)
   `store.SCHEMA` and in a query), comment and docstring put into real source text turn it red.
 - **Left as it is, deliberately:** the German interface texts (`lang="de"`, `i18n/`), the shared test kit (`tests/_kit/`,
   `tests/voraussetzung.py`, `scripts/_backlog.py`, `scripts/_nur_text.sh`, `scripts/_residue_check.sh`, `.githooks/pre-push`
-  and the lists `werkzeuge.in`; they change with `repokit sync`), the job id `pruefen` in `release.yml` (it is a required
-  check name), the legacy values that the migrations read (`tinysesam/_vocabulary.py`, `Store.KEY_KINDS_OLD`), German test
+  and the kit-managed `dependabot-auto-merge.yml`; they change with `repokit sync`), the legacy values that the migrations read (`tinysesam/_vocabulary.py`, `Store.KEY_KINDS_OLD`), German test
   data (names, passwords, German UI expectations) and the deliberately German probes of the name guards (built from source
   text so that the code itself stays English).
 

@@ -258,7 +258,7 @@ def main(argv):
     # Up to here "nothing failed" was enough for exit 0 — even for "0 green, everything
     # skipped". That is exactly what the run looked like in a git worktree: the hygiene suites took
     # `.git` (a file there) for "no repo", bailed out, and `scripts/check.sh` printed
-    # "✓ alles grün" above it. The same class of bug that exit 77 was introduced against, just
+    # "✓ all green" above it. The same class of bug that exit 77 was introduced against, just
     # one level higher.
     if not ok:
         print("\nFEHLER: keine einzige Suite ist gelaufen — das ist kein grüner Lauf.",

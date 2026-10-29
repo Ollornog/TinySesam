@@ -19,7 +19,7 @@
 **Super-light auth for FastAPI** where you **use only what you need** — and that grows with you.
 Hang one class in front of your app, done: login page, sessions and route guards included.
 
-- **Just gate one page behind a PIN?** → yes. (`require_resource("fotos")`, no user account at all)
+- **Just gate one page behind a PIN?** → yes. (`require_resource("photos")`, no user account at all)
 - **Forward-auth in front of other apps, like TinyAuth?** → it can. (`/auth/forward` or an OIDC gateway)
 - **An admin panel?** → built in. **Prefer it inside your own?** → that too (JSON API only).
 - **From “a password is enough” to “OIDC → password → TOTP”?** → grows with you — every piece **optional, on/off by config**.

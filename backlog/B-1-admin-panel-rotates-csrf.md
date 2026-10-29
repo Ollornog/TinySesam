@@ -4,7 +4,7 @@ type: Bug
 title: The admin panel rolls a new CSRF token on every request
 status: erledigt
 milestone: M-1
-tags: [csrf, admin, sicherheit]
+tags: [csrf, admin, security]
 created: 2026-09-21
 ---
 
@@ -44,7 +44,7 @@ two tabs open, one of them the panel — the form in the other fails silently.
 
 ## Done (2026-09-21, with [T-9](T-9-audit-2026-09-21-round-2.md))
 
-Pulled forward from M-2 to M-1: the entry carries `tags: [csrf, admin, sicherheit]`, and M-1
+Pulled forward from M-2 to M-1: the entry carries `tags: [csrf, admin, security]`, and M-1
 has explicitly required *no open security findings* since the maturity review. Putting a
 security finding at "after 1.0" while 1.0 requires none open is self-contradictory.
 

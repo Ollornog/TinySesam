@@ -4,7 +4,7 @@ type: Task
 title: Central gateway with code exchange — session stays on the gateway, app hosts only get a connection of their own
 status: erledigt
 milestone: M-3
-tags: [gateway, cookies, sicherheit]
+tags: [gateway, cookies, security]
 created: 2026-10-07
 ---
 

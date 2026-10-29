@@ -4,7 +4,7 @@ type: Task
 title: Do not write the first-admin one-time token to the container log
 status: erledigt
 milestone: M-2
-tags: [sicherheit, erst-admin, container, betrieb, log]
+tags: [security, first-admin, container, operations, log]
 created: 2026-09-27
 ---
 

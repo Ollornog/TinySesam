@@ -4,7 +4,7 @@ type: Task
 title: Assess the CodeQL backlog and track the open alerts in the backlog
 status: erledigt
 milestone: M-1
-tags: [codeql, ci, hygiene, sicherheit]
+tags: [codeql, ci, hygiene, security]
 created: 2026-09-22
 ---
 

@@ -3,7 +3,7 @@ id: ADR-2
 type: Decision
 title: No self-update — whoever installs decides the version
 status: erledigt
-tags: [sicherheit, release]
+tags: [security, release]
 created: 2026-07-09
 ---
 

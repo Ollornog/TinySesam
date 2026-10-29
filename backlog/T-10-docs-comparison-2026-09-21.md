@@ -4,7 +4,7 @@ type: Task
 title: Docs measured against the code — 70 places, 10 real defects
 status: erledigt
 milestone: M-1
-tags: [doku, sicherheit, betrieb, tests]
+tags: [docs, security, operations, tests]
 created: 2026-09-21
 ---
 

@@ -110,7 +110,7 @@ jobs:
   # Gate token through a REAL Caddy with caddy-jwt (ADR-9). Exactly the image from
   # deploy/forward-auth/caddy-gate/Dockerfile is built — the same pins an operator builds. With
   # TINYSESAM_GATE_CADDY set the test is mandatory: a missing or wrong Caddy is
-  # red, not a skip. In the other jobs the variable is absent, there the suite reports "übersprungen" (skipped).
+  # red, not a skip. In the other jobs the variable is absent, there the suite reports "skipped".
   gate-caddy:
     timeout-minutes: 20
     runs-on: ubuntu-latest
@@ -141,10 +141,10 @@ jobs:
           set -euo pipefail
           f=deploy/forward-auth/docker-compose.yml
           docker compose -f "$f" config --quiet
-          bilder="$(docker compose -f "$f" config --images)"
-          [ -n "$bilder" ] || { echo "no images in $f"; exit 1; }
-          while IFS= read -r b; do docker pull -q "$b"; done <<<"$bilder"
-          caddy="$(grep -m1 '^caddy:' <<<"$bilder")" || { echo "no caddy image in $f"; exit 1; }
+          images="$(docker compose -f "$f" config --images)"
+          [ -n "$images" ] || { echo "no images in $f"; exit 1; }
+          while IFS= read -r b; do docker pull -q "$b"; done <<<"$images"
+          caddy="$(grep -m1 '^caddy:' <<<"$images")" || { echo "no caddy image in $f"; exit 1; }
           docker run --rm -e TS_AUTH_UPSTREAM=tinysesam:8000 -e TS_APP_UPSTREAM=app:9000 \
             -v "$PWD/deploy/forward-auth/Caddyfile:/etc/caddy/Caddyfile:ro" \
             "$caddy" caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
@@ -176,7 +176,7 @@ jobs:
       # tree only as "nicht entscheidbar" (undecidable) (exit 2) — the job would turn red, but would not say
       # that the suite was responsible. With the state, a residue is proven (exit 1).
       - name: State of the tree before
-        run: scripts/_residue_check.sh snapshot > "$RUNNER_TEMP/baum-vorher.txt"
+        run: scripts/_residue_check.sh snapshot > "$RUNNER_TEMP/tree-before.txt"
       - name: First run
         run: scripts/check.sh
       - name: Second run (must also be green)
@@ -185,4 +185,4 @@ jobs:
       # `git status --porcelain`, which did not know `.ci-allow-dirty` — the binding
       # gate thus contradicted the local safety net.
       - name: Tree must be unchanged
-        run: scripts/_residue_check.sh check --seit "$RUNNER_TEMP/baum-vorher.txt"
+        run: scripts/_residue_check.sh check --seit "$RUNNER_TEMP/tree-before.txt"

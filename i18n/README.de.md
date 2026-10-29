@@ -15,7 +15,7 @@
 Ein **super-leichtes Auth für FastAPI**, bei dem du **nur nutzt, was du brauchst** — und das mit dir mitwächst.
 Eine Klasse davorhängen, fertig: Login-Seite, Sessions und Route-Guards inklusive.
 
-- **Nur eine Seite mit einer PIN sichern?** → geht. (`require_resource("fotos")`, ganz ohne Benutzerkonto)
+- **Nur eine Seite mit einer PIN sichern?** → geht. (`require_resource("photos")`, ganz ohne Benutzerkonto)
 - **Forward-Auth vor fremde Apps hängen, wie TinyAuth?** → kann er. (`/auth/forward` bzw. OIDC-Gateway)
 - **Ein Admin-Panel?** → eingebaut. **Lieber in dein eigenes einbauen?** → auch das (nur JSON-API).
 - **Von „Passwort reicht" bis „OIDC → Passwort → TOTP"?** → wächst mit — jedes Stück **optional, an/aus per Config**.

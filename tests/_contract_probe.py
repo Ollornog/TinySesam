@@ -11,7 +11,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from _contract import canonical_header
 
-PROXY = {"X-Forwarded-Proto": "https", "X-Forwarded-Host": "app.example.com", "X-Forwarded-Uri": "/seite"}
+PROXY = {"X-Forwarded-Proto": "https", "X-Forwarded-Host": "app.example.com", "X-Forwarded-Uri": "/page"}
 PROBE_PW = "Probe-Pw-12345"
 
 
@@ -119,7 +119,7 @@ def forward_scenarios() -> dict:
     step("gateway forward: not signed in", lambda: brief(anonymous.get("/auth/forward", headers=PROXY)))
 
     def start():
-        z["start"] = anonymous.get("/.tinysesam/start?rd=/seite", headers=PROXY, follow_redirects=False)
+        z["start"] = anonymous.get("/.tinysesam/start?rd=/page", headers=PROXY, follow_redirects=False)
         return brief(z["start"])
     step("gateway start", start)
     step("gateway start: host not protected", lambda: brief(

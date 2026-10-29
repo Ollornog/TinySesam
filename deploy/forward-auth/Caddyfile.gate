@@ -99,7 +99,7 @@ app.example.com {
 			from_cookies __Host-tinysesam_gate
 			issuer_whitelist {$TS_GATE_ISSUER:https://auth.example.com}
 			# The audience is the host. If the fallback path requires roles (X-TinySesam-Roles below),
-			# the token carries them: `app.example.com|roles=admin,redaktion` — roles sorted,
+			# the token carries them: `app.example.com|roles=admin,editors` — roles sorted,
 			# several entries separated by `;`. Exactly this string then belongs here, otherwise
 			# every request falls back to the fallback path (safe, just slow).
 			audience_whitelist app.example.com
@@ -129,7 +129,7 @@ app.example.com {
 				rewrite /auth/forward
 				header_up X-Forwarded-Method {method}
 				header_up X-Forwarded-Uri {uri}
-				# header_up X-TinySesam-Roles redaktion,admin   # then adjust audience_whitelist above
+				# header_up X-TinySesam-Roles editors,admin   # then adjust audience_whitelist above
 				@ok status 200
 				handle_response @ok {
 					request_header Remote-User {rp.header.Remote-User}
@@ -147,7 +147,7 @@ app.example.com {
 				}
 				@norole status 403
 				handle_response @norole {
-					respond "Kein Zugriff: fehlende Rolle." 403
+					respond "Access denied: missing role." 403
 				}
 			}
 			reverse_proxy {$TS_APP_UPSTREAM:127.0.0.1:9000} {

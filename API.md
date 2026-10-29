@@ -764,7 +764,7 @@ Observed on probe instances; values are recorded where they are the contract (`X
 | gateway authorize: signed in | 303 \| Location -> /.tinysesam/callback |
 | gateway authorize: unknown flow | 400 |
 | gateway callback: unknown code | 400 |
-| gateway callback: valid code | 303 \| Location -> /seite \| cookies: __Host-tinysesam_link, __Host-tinysesam_linkflow (cleared) |
+| gateway callback: valid code | 303 \| Location -> /page \| cookies: __Host-tinysesam_link, __Host-tinysesam_linkflow (cleared) |
 | gateway forward: not signed in | 401 \| WWW-Authenticate: FormBased realm="TinySesam" \| X-TinySesam-Location -> /.tinysesam/start |
 | gateway forward: signed in via the connection | 200 \| headers: Remote-Email, Remote-Groups, Remote-Id, Remote-Name, Remote-User, X-TinySesam-Gate-Cookie |
 | gateway logged-out page: host not protected | 400 |

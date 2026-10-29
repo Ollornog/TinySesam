@@ -123,6 +123,8 @@ GERMAN_WORDS = frozenset("""
     zonen zu zuerst zugang zukunft zuletzt zum zuordnen zuordnung zur zurueck zuruecknehmen zuruecksetzen
     zusaetzliche zusage zusammen zusatz zustand zuweisung zuweisungen zweck zwei zweier zweit zweite zweiten
     zweiter zweites zwischen zyklen über
+""".split()) | frozenset("""
+    bericht generierte mitarbeiter redaktion seite trockenlauf
 """.split())
 
 #: The words of `GERMAN_WORDS` that are also English words — counted in identifiers, not in English prose.
@@ -132,3 +134,49 @@ ENGLISH_HOMOGRAPHS = frozenset("""
     lies locker los mit muss muster oder paar privater puffer quell rang rot salve seine sind spur stand stern
     tor tore tot toter und wand war wer
 """.split())
+
+
+# ── History context of the docs ──────────────────────────────────────────────────────────────────────────
+# The English docs quote OLD names and values on purpose (migration tables, "up to 0.24.x `ja|nein`", rollback SQL).
+# Both doc guards — `tests/test_english_code.py` (no German words) and `tests/test_repo.py` (no stale names) —
+# exempt exactly those places and nothing else; this is the one definition of "a place that talks about the past".
+import re as _re
+
+#: A line talks about the past if it carries one of these: an old → new pair of backticked names, a version
+#: number (`0.24.x`, `0.22.0`), "German", "schema 15", "formerly", "previously", "old name/value/spelling ...".
+HISTORY_MARKER = _re.compile(
+    r"`[^`\n]+`\s*→\s*`[^`\n]+`|\b0\.\d+\.[\dx]|\bGerman\b|\bschema \*{0,2}\d+|\bformerly\b|\bpreviously\b"
+    r"|\bold (?:name|value|spelling|word|text)s?\b", _re.I)
+#: Sections whose whole point is to name the old names (the rollback SQL and its tables).
+HISTORY_SECTION = _re.compile(r"^#{1,6} Rollback")
+
+
+def history_lines(text: str) -> set:
+    """Line numbers (1-based) of a Markdown text that may name old names and German values.
+
+    A line is exempt if it, or a neighbouring line of the same paragraph (a wrapped sentence puts the marker on the
+    next line), carries a `HISTORY_MARKER`; a table row only counts for itself (one marker must not excuse the whole
+    table); every line below a `## Rollback …` heading up to the next heading of the same or a higher level is exempt.
+    """
+    lines = text.split("\n")
+    exempt, in_rollback, level, fence = set(), False, 0, False
+    for n, line in enumerate(lines, 1):
+        if line.startswith("```"):
+            fence = not fence
+        head = None if fence or line.startswith("```") else _re.match(r"^(#{1,6}) ", line)
+        if head:
+            if HISTORY_SECTION.match(line):
+                in_rollback, level = True, len(head.group(1))
+            elif in_rollback and len(head.group(1)) <= level:
+                in_rollback = False
+        if in_rollback:
+            exempt.add(n)
+            continue
+        if line.lstrip().startswith("|"):
+            if HISTORY_MARKER.search(line):
+                exempt.add(n)
+        else:
+            near = " ".join(lines[max(0, n - 2):n + 1]) if lines[n - 1].strip() else ""
+            if HISTORY_MARKER.search(near):
+                exempt.add(n)
+    return exempt

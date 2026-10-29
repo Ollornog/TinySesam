@@ -4,7 +4,7 @@ type: Task
 title: CLI command to delete an account (maintenance without the admin panel)
 status: erledigt
 milestone: M-2
-tags: [cli, wartung, konten, datenschutz]
+tags: [cli, maintenance, accounts, privacy]
 created: 2026-10-11
 ---
 
@@ -42,7 +42,7 @@ their cases.
 ## Done 2026-10-29
 
 - `delete --db <file> <user>` (also `#<id>`) in `tinysesam/__main__.py`; goes through `Store.remove_account` like the
-  panel. The protection rule (owner, last admin) was moved into `Store.loeschsperre` and is used by
+  panel. The protection rule (owner, last admin) was moved into `Store.deletion_guard` and is used by
   `TinySesam.delete_user` and the command — one rule, not a copy. Asks on a terminal, `--yes` for scripts, no terminal
   and no `--yes` refuses.
 - Test `tests/test_cli_delete.py` (OIDC account with sessions: rows gone, audit anonymised like the panel's, second

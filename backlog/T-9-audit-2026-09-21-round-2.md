@@ -4,7 +4,7 @@ type: Task
 title: Work through the findings of the second audit (four perspectives)
 status: erledigt
 milestone: M-1
-tags: [sicherheit, betrieb, tests, audit]
+tags: [security, operations, tests, audit]
 created: 2026-09-21
 ---
 

@@ -23,11 +23,11 @@
 # bumps both (entry `docker-compose` in .github/dependabot.yml). The own image stays on the
 # version tag: its digest only comes into existence in the release, i.e. after the commit that would have to name it.
 #
-# Both services run hardened (`x-haertung` below): filesystem read-only, all capabilities
+# Both services run hardened (`x-hardening` below): filesystem read-only, all capabilities
 # dropped, no privilege gain via setuid. Writing happens only into the volumes and a tmpfs.
 # `tests/test_repo.py` demands this for every service in this file.
 
-x-haertung: &haertung
+x-hardening: &hardening
   read_only: true
   cap_drop: [ALL]
   security_opt: ["no-new-privileges:true"]
@@ -35,7 +35,7 @@ x-haertung: &haertung
 
 services:
   tinysesam:
-    <<: *haertung
+    <<: *hardening
     image: ghcr.io/ollornog/tinysesam:v0.24.13
     # No `command:` needed — the entrypoint starts the gateway. It runs as non-root
     # (uid 1000) and ships a HEALTHCHECK on /healthz.
@@ -50,7 +50,7 @@ services:
       # provider gets into every application (deny-by-default, B3-9). Here this happens through the
       # approval per client at the provider (TINYSESAM_OIDC_CLIENTS below). Anyone running only ONE
       # client restricts by groups; with neither, TinySesam warns at startup.
-      # TINYSESAM_ALLOWED_GROUPS: "mitarbeiter"
+      # TINYSESAM_ALLOWED_GROUPS: "staff"
       # Groups arrive at PocketID (and others) only with the scope `groups` — without it the
       # gate rejects everyone, and the startup warns then:
       # TINYSESAM_OIDC_SCOPES: "openid profile email groups"
@@ -93,7 +93,7 @@ services:
     restart: unless-stopped
 
   caddy:
-    <<: *haertung
+    <<: *hardening
     image: caddy:2.11.7@sha256:685ae3d7c34d9b5f8caeddc5d14051db7bbd88ff1f5a2fa0c16bd8ca328fb7af
     # The only capability that comes back: binding ports below 1024 (80/443).
     cap_add: [NET_BIND_SERVICE]
