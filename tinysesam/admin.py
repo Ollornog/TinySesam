@@ -18,17 +18,17 @@ from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import HTMLResponse
 
 from .errors import ConfigError, StateError
-from .router import _key_kind, _mail_basis, gehaertete_route
+from .router import _key_kind, _mail_base, hardened_route
 from . import security
-from ._vokabular import audit_zeile_neu
-from .store import name_ungueltig, norm_email, valid_email
+from ._vocabulary import audit_line_new
+from .store import name_invalid, norm_email, valid_email
 from .templates import brand, favicon_link, inject_nonce as _inject_nonce
 from .theme import TOKENS
 
 
 def build_admin_router(auth) -> APIRouter:
     cfg = auth.cfg
-    ar = APIRouter(tags=["admin"], route_class=gehaertete_route(auth))
+    ar = APIRouter(tags=["admin"], route_class=hardened_route(auth))
 
     def guard(request: Request):
         # Admin + (optional) step-up MFA. Browser page request → redirect to login/reauth;
@@ -42,16 +42,16 @@ def build_admin_router(auth) -> APIRouter:
             auth.require_csrf(request, request.headers.get("x-csrf-token"))
         return auth._enforce(request, admin=True, mfa=cfg.admin_require_mfa)
 
-    def owner_schutz(me, uid: int):
+    def owner_protection(me, uid: int):
         """Only an owner may change an owner account (owner model). Otherwise an admin would set a
         new password for the owner and become owner themselves — the protection against deletion
         would then be a door with an open window next to it."""
-        ziel = auth.store.get_user(uid)
-        if ziel and ziel["is_owner"] and not (me and me.get("is_owner")):
+        destination = auth.store.get_user(uid)
+        if destination and destination["is_owner"] and not (me and me.get("is_owner")):
             raise HTTPException(403, auth.t("api.owner_only"))
-        return ziel
+        return destination
 
-    def protokoll(request: Request, ereignis: str, detail=None):
+    def log(request: Request, event: str, detail=None):
         """Log an admin action — with actor and IP.
 
         Without both, the audit log is worthless for the post-mortem: it recorded THAT an
@@ -59,10 +59,10 @@ def build_admin_router(auth) -> APIRouter:
         several admins that is exactly the question asked afterwards. As with CSRF, this
         lives in one place and not in every route — the next new route inherits it.
         """
-        wer = auth.current_user(request)
-        auth.audit(ereignis, wer["username"] if wer else None, auth.client_ip(request), detail)
+        person = auth.current_user(request)
+        auth.audit(event, person["username"] if person else None, auth.client_ip(request), detail)
 
-    def andere_aktive_admins(uid: int) -> int:
+    def other_active_admins(uid: int) -> int:
         """How many active, interactive admins remain if `uid` stops being one?
 
         Counted are those who can really sign in as admin: not blocked, no
@@ -71,19 +71,19 @@ def build_admin_router(auth) -> APIRouter:
                    if u["is_admin"] and not u["disabled"] and not u["is_service"]
                    and int(u["id"]) != int(uid))
 
-    def rollen_aus(b: dict) -> list:
+    def roles_from(b: dict) -> list:
         """`roles` from the body: a list of strings — otherwise 400, and BEFORE any write.
 
         The database accepts any JSON; a role `1` or `null` was only noticed when logging
         (`','.join`), AFTER roles and admin flag had been written: HTTP 500 without an
         audit line (integration finding 8). A string like `"admin"` was silently split into
         letters by `list()`. If the field is missing (or empty), it means "no roles"."""
-        roh = b.get("roles")
-        if not roh:
+        raw = b.get("roles")
+        if not raw:
             return []
-        if not isinstance(roh, list) or not all(isinstance(x, str) for x in roh):
+        if not isinstance(raw, list) or not all(isinstance(x, str) for x in raw):
             raise HTTPException(400, auth.t("api.invalid", reason="roles"))
-        return list(roh)
+        return list(raw)
 
     def uview(u):
         return {"id": u["id"], "username": u["username"], "display_name": u["display_name"],
@@ -125,11 +125,11 @@ def build_admin_router(auth) -> APIRouter:
             username = email or ""
         if not username:
             raise HTTPException(400, auth.t("api.username_req"))
-        if name_ungueltig(username):
+        if name_invalid(username):
             raise HTTPException(400, auth.t("err.username_invalid"))
         if auth.identifier_taken(username):
             raise HTTPException(409, auth.t("api.user_exists"))
-        roles = rollen_aus(b)
+        roles = roles_from(b)
         # Service account + admin (R6-2): `is_admin` used to be dropped silently here, yet the
         # roles route could still set the flag afterwards. Such an account cannot
         # sign in, its keys never carry the flag (R6-5) — it only counts as "there is
@@ -141,9 +141,9 @@ def build_admin_router(auth) -> APIRouter:
         # panel accepted any password, even `1` — of all places the path on which the
         # initial passwords of whole teams are created. No password stays allowed (SSO/passkey).
         if not b.get("is_service") and b.get("password"):
-            mangel = auth.password_policy_error(b["password"], username=username, email=email, api=True)
-            if mangel:
-                raise HTTPException(400, mangel)
+            defect = auth.password_policy_error(b["password"], username=username, email=email, api=True)
+            if defect:
+                raise HTTPException(400, defect)
         try:
             if b.get("is_service"):
                 uid = auth.create_service(username, roles=roles, display_name=b.get("display_name"))
@@ -156,7 +156,7 @@ def build_admin_router(auth) -> APIRouter:
             # reply as there, instead of a 500.
             raise HTTPException(409, auth.t("api.email_taken" if getattr(e, "field", None) == "email"
                                             else "api.user_exists"))
-        protokoll(request, "user_create", f"{username} service={bool(b.get('is_service'))}")
+        log(request, "user_create", f"{username} service={bool(b.get('is_service'))}")
         return {"id": uid}
 
     @ar.post("/api/users/{uid}/disable")
@@ -166,8 +166,8 @@ def build_admin_router(auth) -> APIRouter:
         disabled = bool(b.get("disabled", True))
         if disabled and uid == me["id"]:
             raise HTTPException(400, auth.t("api.no_self_lock"))
-        ziel = owner_schutz(me, uid)
-        if disabled and ziel and ziel["is_owner"]:
+        destination = owner_protection(me, uid)
+        if disabled and destination and destination["is_owner"]:
             raise HTTPException(400, auth.t("api.owner_protected"))
         # The effect lives in ONE place, `auth.set_disabled` (PO decision 2026-09-27):
         # operator note (no confirmation link lifts the block, H-18), end sessions,
@@ -179,75 +179,75 @@ def build_admin_router(auth) -> APIRouter:
 
     @ar.post("/api/users/{uid}/password")
     async def user_password(request: Request, uid: int):
-        owner_schutz(guard(request), uid)
+        owner_protection(guard(request), uid)
         b = await auth.json_body(request)
         if not b.get("password"):
             raise HTTPException(400, auth.t("api.password_req"))
-        ziel = auth.store.get_user(uid)
-        mangel = auth.password_policy_error(b["password"], username=ziel["username"] if ziel else None,
-                                      email=ziel["email"] if ziel else None, api=True)
-        if mangel:
-            raise HTTPException(400, mangel)   # B2-13: the admin reset obeys the rule as well
+        destination = auth.store.get_user(uid)
+        defect = auth.password_policy_error(b["password"], username=destination["username"] if destination else None,
+                                      email=destination["email"] if destination else None, api=True)
+        if defect:
+            raise HTTPException(400, defect)   # B2-13: the admin reset obeys the rule as well
         auth.set_password(uid, b["password"])
         auth.store.delete_user_sessions(uid)   # admin reset → end all sessions (force re-login)
         # Newly bound: failed password attempts and the series block (B2-6) end here — the series
         # COMPLETELY, unlike the self-service reset: here the operator decides, not whoever
         # holds the mailbox. Otherwise the account would still stand at the door after the reset.
         auth.lift_lockout(uid, methods=("password",))
-        auth._serie_beenden(uid)
+        auth._end_series(uid)
         # An admin resets someone else's password when the account is lost or taken over.
         # If the API keys stayed valid, locking out would only have closed the front door —
         # the key is a second, equivalent sign-in.
-        keys = auth._keys_widerrufen(uid, "admin_password_reset")
+        keys = auth._keys_revoked(uid, "admin_password_reset")
         # And open links — an address change from the taken-over session goes with it (finding 1).
         auth.store.revoke_user_magic_tokens(uid)
-        protokoll(request, "user_password_reset", f"uid={uid} api_keys_revoked={keys}")
+        log(request, "user_password_reset", f"uid={uid} api_keys_revoked={keys}")
         return {"ok": True, "api_keys_revoked": keys}
 
     @ar.post("/api/users/{uid}/roles")
     async def user_roles(request: Request, uid: int):
         me = guard(request)
         b = await auth.json_body(request)
-        ziel = owner_schutz(me, uid)
-        if ziel is None:
+        destination = owner_protection(me, uid)
+        if destination is None:
             raise HTTPException(404)
-        rollen = rollen_aus(b)          # checked BEFORE any write, like R6-1 below
+        roles = roles_from(b)          # checked BEFORE any write, like R6-1 below
         if "is_admin" in b:
-            neu = bool(b["is_admin"])
-            if not neu and ziel["is_owner"]:
+            new = bool(b["is_admin"])
+            if not new and destination["is_owner"]:
                 raise HTTPException(400, auth.t("api.owner_protected"))
-            if neu and ziel["is_service"]:
+            if new and destination["is_service"]:
                 raise HTTPException(400, auth.t("api.service_admin"))      # R6-2, see user_create
             # Do not strip the last admin (R6-1). Without an admin the first-admin
             # path opens again: a new one-time token is created, and whoever reads it — in the log,
             # in the console — becomes admin. The panel is then unreachable for anyone
             # who could turn it back. Checked BEFORE any write, so the roles
             # are not left half set.
-            if not neu and ziel["is_admin"] and not andere_aktive_admins(uid):
+            if not new and destination["is_admin"] and not other_active_admins(uid):
                 raise HTTPException(400, auth.t("api.last_admin"))
         # Before/after in the log (R6-7): "uid=5" said THAT rights changed, not
         # which. Whether someone became admin is exactly the question after an incident.
         # `str` per role: legacy data from before the check (or from own code) must not
         # blow up the line — it is written AFTER the write, and an error here meant
         # "changed, but not logged" (integration finding 8).
-        vorher = ziel
-        rollen_vorher = sorted(map(str, auth.user_roles(vorher))) if vorher else []
-        admin_vorher = bool(vorher["is_admin"]) if vorher else False
-        auth.set_roles(uid, rollen)
+        before = destination
+        roles_before = sorted(map(str, auth.user_roles(before))) if before else []
+        admin_before = bool(before["is_admin"]) if before else False
+        auth.set_roles(uid, roles)
         # Write only on a REAL change (H-5): the panel sends the tick with every
         # save of the roles. `set_admin(True)` then wrote a 1 over the 2 of a flag granted by the
         # identity provider — the revocable flag silently became a permanent
         # admin right, and the next login without the admin group no longer removed it (attack on H-5).
-        if "is_admin" in b and bool(b["is_admin"]) != bool(ziel["is_admin"]):
+        if "is_admin" in b and bool(b["is_admin"]) != bool(destination["is_admin"]):
             auth.store.set_admin(uid, bool(b["is_admin"]))
-        nachher = auth.store.get_user(uid)
-        rollen_nachher = sorted(map(str, auth.user_roles(nachher))) if nachher else []
-        admin_nachher = bool(nachher["is_admin"]) if nachher else False
-        detail = (f"uid={uid} roles={','.join(rollen_vorher) or '-'}"
-                  f"->{','.join(rollen_nachher) or '-'}")
-        if admin_vorher != admin_nachher:
-            detail += f" admin={int(admin_vorher)}->{int(admin_nachher)}"
-        protokoll(request, "user_roles", detail)
+        afterwards = auth.store.get_user(uid)
+        roles_afterwards = sorted(map(str, auth.user_roles(afterwards))) if afterwards else []
+        admin_afterwards = bool(afterwards["is_admin"]) if afterwards else False
+        detail = (f"uid={uid} roles={','.join(roles_before) or '-'}"
+                  f"->{','.join(roles_afterwards) or '-'}")
+        if admin_before != admin_afterwards:
+            detail += f" admin={int(admin_before)}->{int(admin_afterwards)}"
+        log(request, "user_roles", detail)
         return {"ok": True}
 
     # ---------- Passkeys of other accounts / delete account (B5-08) ----------
@@ -262,7 +262,7 @@ def build_admin_router(auth) -> APIRouter:
 
     @ar.post("/api/users/{uid}/passkeys/{cid}/delete")
     def user_passkey_delete(request: Request, uid: int, cid: int):
-        owner_schutz(guard(request), uid)
+        owner_protection(guard(request), uid)
         # Through the same path as self-service (integration finding 3): delete, audit line
         # under the holder (the admin as actor=, so `tinysesam audit --user <holder>`
         # finds the revocation) and `passkey_removed` to `on_security_event` — the holder learns
@@ -298,26 +298,26 @@ def build_admin_router(auth) -> APIRouter:
         `by=operator` and carries the admin as `actor=` — `change_username` writes it
         itself, a second one via `protokoll()` would be doubled. An owner account is renamed only by an
         owner (like password, keys, passkeys)."""
-        owner_schutz(guard(request), uid)
+        owner_protection(guard(request), uid)
         b = await auth.json_body(request)
         if auth.store.get_user(uid) is None:
             raise HTTPException(404, auth.t("api.not_found"))
-        roh = b.get("username")
-        if not isinstance(roh, str):
+        raw = b.get("username")
+        if not isinstance(raw, str):
             raise HTTPException(400, auth.t("err.username_required"))
         try:
-            neu = auth.change_username(uid, roh, auth.client_ip(request), by_operator=True)
+            new = auth.change_username(uid, raw, auth.client_ip(request), by_operator=True)
         except ValueError as e:
             raise HTTPException(400, str(e))
-        return {"ok": True, "username": neu}
+        return {"ok": True, "username": new}
 
     @ar.post("/api/users/{uid}/delete")
     def user_delete(request: Request, uid: int):
         me = guard(request)
         if uid == me["id"]:
             raise HTTPException(400, auth.t("api.no_self_delete"))
-        ziel = owner_schutz(me, uid)
-        if ziel and ziel["is_owner"]:
+        destination = owner_protection(me, uid)
+        if destination and destination["is_owner"]:
             raise HTTPException(409, auth.t("api.owner_protected"))
         try:
             if not auth.delete_user(uid):
@@ -334,14 +334,14 @@ def build_admin_router(auth) -> APIRouter:
 
     @ar.post("/api/users/{uid}/keys")
     async def user_key_create(request: Request, uid: int):
-        wer = guard(request)
-        owner_schutz(wer, uid)
-        # Same rule as on the self-service route (`_nur_mit_sitzung`, R6-6):
+        person = guard(request)
+        owner_protection(person, uid)
+        # Same rule as on the self-service route (`_only_with_session`, R6-6):
         # keys are issued by a human, not by a key. It was missing here — the panel path was
         # the detour on which a key mints a new key, for ANY account.
         # Today R6-5 already holds (a machine key carries no admin flag, a human key
         # is only valid alongside the session); this line does not depend on that staying so.
-        if wer.get("_via") != "session":
+        if person.get("_via") != "session":
             raise HTTPException(403, auth.t("api.key_needs_session"))
         b = await auth.json_body(request)
         # The audit line is written by `create_api_key` — with owner, IP and actor= (B5-04/R6-3).
@@ -357,9 +357,9 @@ def build_admin_router(auth) -> APIRouter:
     @ar.post("/api/keys/{kid}/revoke")
     def key_revoke(request: Request, kid: int):
         me = guard(request)
-        besitzer = auth.store.api_key_owner(kid)
-        if besitzer is not None:
-            owner_schutz(me, besitzer)     # an owner's keys are revoked only by an owner
+        owner = auth.store.api_key_owner(kid)
+        if owner is not None:
+            owner_protection(me, owner)     # an owner's keys are revoked only by an owner
         # The audit line is written by `revoke_api_key` — with owner, IP and actor= (B5-04/R6-3).
         auth.revoke_api_key(kid)
         return {"ok": True}
@@ -370,7 +370,7 @@ def build_admin_router(auth) -> APIRouter:
         guard(request)
         # Reading is logged too (B5-12): the list names IP and sign-in method of every
         # user, and an admin reading along should leave a trace themselves.
-        protokoll(request, "sessions_read")
+        log(request, "sessions_read")
         names = {u["id"]: u["username"] for u in auth.store.list_users()}
         # `full` is the HANDLE (sha256 of the token), not the token: it names the session for
         # ending it and is useless for signing in. Before, the real session token of every
@@ -386,14 +386,14 @@ def build_admin_router(auth) -> APIRouter:
         # An owner's sessions are ended only by an owner (owner model) — otherwise an admin would sign
         # the owner out as often as they liked.
         if b.get("token"):
-            zeile = auth.store._one("SELECT user_id FROM session WHERE token_hash=?", (str(b["token"]),))
-            if zeile is not None:
-                owner_schutz(me, int(zeile["user_id"]))
+            line = auth.store._one("SELECT user_id FROM session WHERE token_hash=?", (str(b["token"]),))
+            if line is not None:
+                owner_protection(me, int(line["user_id"]))
             auth.store.delete_session_by_handle(b["token"])
         elif b.get("user_id"):
-            owner_schutz(me, int(b["user_id"]))
+            owner_protection(me, int(b["user_id"]))
             auth.store.delete_user_sessions(int(b["user_id"]))
-        protokoll(request, "session_revoke", f"user_id={b.get('user_id')}" if b.get("user_id") else "one session")
+        log(request, "session_revoke", f"user_id={b.get('user_id')}" if b.get("user_id") else "one session")
         return {"ok": True}
 
     # ---------- Invitations (magic invite) ----------
@@ -405,10 +405,10 @@ def build_admin_router(auth) -> APIRouter:
             email = (b.get("email") or "").strip()
             # The invitation link goes by mail to a third party and carries a valid
             # token — it must never be built from the Host header (R4-01).
-            base = _mail_basis(auth, request)
+            base = _mail_base(auth, request)
             # Same check as on creation: the roles only land in the account on redemption —
             # a broken role would then fall at the invitee's feet, not the admin's.
-            res = auth.create_invite(email or None, base, roles=rollen_aus(b),
+            res = auth.create_invite(email or None, base, roles=roles_from(b),
                                      is_admin=bool(b.get("is_admin")), ttl_min=b.get("ttl_min"))
             return {"url": res["url"], "emailed": bool(email and auth.mail_configured())}
 
@@ -431,14 +431,14 @@ def build_admin_router(auth) -> APIRouter:
                 auth.set_resource_secret(name, b["secret"], kind=b.get("kind") or "pin", label=b.get("label"))
             except ValueError as e:
                 raise HTTPException(400, str(e))
-            protokoll(request, "resource_set", name)
+            log(request, "resource_set", name)
             return {"ok": True}
 
         @ar.post("/api/resources/{name}/delete")
         def resource_delete(request: Request, name: str):
             guard(request)
             auth.remove_resource_secret(name)
-            protokoll(request, "resource_delete", name)
+            log(request, "resource_delete", name)
             return {"ok": True}
 
     # ---------- Hardening / audit ----------
@@ -460,22 +460,22 @@ def build_admin_router(auth) -> APIRouter:
             raise HTTPException(403, auth.t("api.owner_settings"))
         # Before/after (R6-7): whoever sets `max_login_attempts` from 5 to 5000 effectively
         # switches the block off — the log used to say only THAT something was saved.
-        vorher = auth.all_security()
-        werte = await auth.json_body(request)
+        before = auth.all_security()
+        values = await auth.json_body(request)
         # Check ALL first, then write: an invalid value in the middle otherwise left
         # half saved behind. And without bounds a typo could paralyse the instance
         # (`rate_limit_max=0` blocks every sign-in, also the one to turn it back — R6-4).
         try:
-            geprueft = {k: security.pruefe_haertung(k, v) for k, v in werte.items()}
+            checked = {k: security.check_hardening(k, v) for k, v in values.items()}
         except ValueError as e:
             raise HTTPException(400, auth.t("api.invalid", reason=str(e)))
-        for k, v in geprueft.items():
+        for k, v in checked.items():
             auth.set_security(k, v)
-        nachher = auth.all_security()
-        geaendert = [f"{k}={vorher[k]}->{nachher[k]}" for k in sorted(nachher)
-                     if vorher.get(k) != nachher[k]]
-        protokoll(request, "security_update", " ".join(geaendert) or "unchanged")
-        return nachher
+        afterwards = auth.all_security()
+        changed = [f"{k}={before[k]}->{afterwards[k]}" for k in sorted(afterwards)
+                     if before.get(k) != afterwards[k]]
+        log(request, "security_update", " ".join(changed) or "unchanged")
+        return afterwards
 
     @ar.get("/api/version")
     def version_get(request: Request):
@@ -485,12 +485,12 @@ def build_admin_router(auth) -> APIRouter:
     @ar.get("/api/audit")
     def audit(request: Request, limit: int = 100):
         guard(request)
-        protokoll(request, "audit_read", f"limit={limit}")    # B5-12, see sessions_read
+        log(request, "audit_read", f"limit={limit}")    # B5-12, see sessions_read
         # Always the English spelling: a row that an older version wrote after a rollback carries the
-        # old event names and keys (`_vokabular.audit_zeile_neu`).
-        zeilen = [audit_zeile_neu(a) for a in auth.store.recent_audit(limit)]
+        # old event names and keys (`_vocabulary.audit_line_new`).
+        lines = [audit_line_new(a) for a in auth.store.recent_audit(limit)]
         return [{"ts": a["ts"], "event": a["event"], "username": a["username"], "ip": a["ip"], "detail": a["detail"]}
-                for a in zeilen]
+                for a in lines]
 
     # ---------- built-in UI (optional) ----------
     if cfg.admin_ui_enabled:
@@ -507,8 +507,8 @@ def build_admin_router(auth) -> APIRouter:
             nonce = secrets.token_urlsafe(16)
             # `__TS_P__` in the header (app, logout) becomes the mount prefix (T-15); the API base `B`
             # comes from the request path and already carries it.
-            seite = render_panel(auth, request.url.path.rstrip("/"), warn=warn, praefix=auth._praefix(request))
-            resp = HTMLResponse(_inject_nonce(seite, nonce))
+            page_html = render_panel(auth, request.url.path.rstrip("/"), warn=warn, prefix=auth._prefix(request))
+            resp = HTMLResponse(_inject_nonce(page_html, nonce))
             policy = auth._csp_header(nonce)
             if policy:
                 resp.headers.setdefault("Content-Security-Policy", policy)
@@ -562,7 +562,7 @@ def panel_texts(auth) -> dict:
     return texts
 
 
-def render_panel(auth, base: str, warn: str = "", praefix: str = "") -> str:
+def render_panel(auth, base: str, warn: str = "", prefix: str = "") -> str:
     """Panel HTML for a given API base. The only place where `_PAGE` is filled —
     so that e.g. a demo/preview embedding shows the same UI as the real panel.
 
@@ -571,7 +571,7 @@ def render_panel(auth, base: str, warn: str = "", praefix: str = "") -> str:
     """
     cfg = auth.cfg
     # `__TS_P__` first and only in the scaffold — mark, warning and header/footer come after (T-15).
-    return (_PAGE.replace("__TS_P__", praefix).replace("__TOKENS__", TOKENS)
+    return (_PAGE.replace("__TS_P__", prefix).replace("__TOKENS__", TOKENS)
             .replace("__BRANDHEAD__", getattr(cfg, "brand_head", "") or "")
             .replace("__HEADER__", brand(getattr(cfg, "brand_header", ""), auth))
             .replace("__FOOTER__", brand(getattr(cfg, "brand_footer", ""), auth))

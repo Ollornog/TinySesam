@@ -22,7 +22,7 @@ auth.install_error_pages(app)
 
 
 @app.get("/geheim")
-def geheim(u=Depends(auth.require_user)):
+def secret_text(u=Depends(auth.require_user)):
     return {"u": u["username"]}
 
 

@@ -75,13 +75,13 @@ assert gateway.config_from_env().gate_brand == "Firma A"
 del os.environ["TINYSESAM_GATE_BRAND"]
 ok("TINYSESAM_GATE_BRAND: empty by default, set without margin")
 assert gateway.config_from_env().brand_icon == ""
-for gut in ("/favicon.svg", "data:image/png;base64,iVBORw0KGgo="):
-    os.environ["TINYSESAM_BRAND_ICON"] = gut
-    assert gateway.config_from_env().brand_icon == gut, gut
-for fremd in ("https://cdn.example.com/icon.png", "//cdn.example.com/icon.png", "javascript:alert(1)", "data:text/html,x"):
-    os.environ["TINYSESAM_BRAND_ICON"] = fremd
+for good in ("/favicon.svg", "data:image/png;base64,iVBORw0KGgo="):
+    os.environ["TINYSESAM_BRAND_ICON"] = good
+    assert gateway.config_from_env().brand_icon == good, good
+for foreign in ("https://cdn.example.com/icon.png", "//cdn.example.com/icon.png", "javascript:alert(1)", "data:text/html,x"):
+    os.environ["TINYSESAM_BRAND_ICON"] = foreign
     try:
-        gateway.config_from_env(); assert False, f"fremdes Favicon angenommen: {fremd}"
+        gateway.config_from_env(); assert False, f"fremdes Favicon angenommen: {foreign}"
     except SystemExit as e:
         assert "TINYSESAM_BRAND_ICON" in str(e)
 del os.environ["TINYSESAM_BRAND_ICON"]
@@ -89,17 +89,17 @@ ok("TINYSESAM_BRAND_ICON: path and data:image/ yes; foreign URL, //, javascript:
 
 # With the code exchange host-only is intended — the warning “without cookie_domain” would be a false alarm.
 import logging as _logging
-_gefangen = []
-_h = _logging.Handler(); _h.emit = lambda rec: _gefangen.append(rec.getMessage())
+_caught = []
+_h = _logging.Handler(); _h.emit = lambda rec: _caught.append(rec.getMessage())
 security.seclog.addHandler(_h)
 try:
     for link in (False, True):
-        _gefangen.clear()
+        _caught.clear()
         TinySesam(TinySesamConfig(db_path=":memory:", forward_auth_enabled=True, base_url="https://auth.example.com",
                                   trusted_redirect_hosts=["app.example.com"], gate_token_enabled=True,
                                   gate_link_enabled=link))
-        warnt = any("without cookie_domain" in m for m in _gefangen)
-        assert warnt is (not link), (link, _gefangen)
+        warns = any("without cookie_domain" in m for m in _caught)
+        assert warns is (not link), (link, _caught)
 finally:
     security.seclog.removeHandler(_h)
 ok("warning “without cookie_domain” yes without code exchange, not with it (no false alarm)")
@@ -150,44 +150,44 @@ ok("/healthz: without auth, 200 also with https_mode=force; other paths are redi
 # first INSERT. A `SELECT 1` reported 200 meanwhile — Docker considered the container healthy.
 import sqlite3  # noqa: E402
 hstore = happ.state.auth.store
-nur_lesen = sqlite3.connect(f"file:{hdb}?mode=ro", uri=True, check_same_thread=False)
-nur_lesen.row_factory = sqlite3.Row
-alt_db, hstore.db = hstore.db, nur_lesen
+only_read = sqlite3.connect(f"file:{hdb}?mode=ro", uri=True, check_same_thread=False)
+only_read.row_factory = sqlite3.Row
+old_db, hstore.db = hstore.db, only_read
 # Without the probe's throttle (see below): this is about detection, not about the deadline.
-hstore.SCHREIBPROBE_SEK = 0
+hstore.WRITE_PROBE_SEC = 0
 hc = TestClient(happ, base_url="http://auth.example.com")
 r = hc.get("/healthz")
 assert r.status_code == 503 and r.json()["status"] == "degraded", (r.status_code, r.text)
 assert "readonly" not in r.text and "database" not in r.text, "error text does not belong on the network"
 assert hstore._one("SELECT 1 AS eins")["eins"] == 1, "counter-check: reading must still work here"
 # The same via the switch that SQLite itself has for it.
-hstore.db = alt_db
+hstore.db = old_db
 hstore.db.execute("PRAGMA query_only=ON")
 assert hc.get("/healthz").status_code == 503
 hstore.db.execute("PRAGMA query_only=OFF")
 assert hc.get("/healthz").status_code == 200, "healthy again after the recovery"
-nur_lesen.close()
+only_read.close()
 ok("/healthz: read-only database → 503 degraded (reading alone does not count as healthy)")
 
 # ---------- /healthz can be flooded, but is not expensive (A-B6-4-schreiblast) ----------
 # Reachable without sign-in: a commit with fsync under Store._lock per call let anyone who
 # floods /healthz occupy the write lock that sign-ins wait for, and the WAL grow.
-del hstore.SCHREIBPROBE_SEK                     # back to the class default
-assert hstore.SCHREIBPROBE_SEK >= 1
-hstore._geschrieben = None                      # the next probe really writes
-_befehle = []
-hstore.db.set_trace_callback(_befehle.append)
+del hstore.WRITE_PROBE_SEC                     # back to the class default
+assert hstore.WRITE_PROBE_SEC >= 1
+hstore._written = None                      # the next probe really writes
+_commands = []
+hstore.db.set_trace_callback(_commands.append)
 for _ in range(200):
     assert hc.get("/healthz").status_code == 200
 hstore.db.set_trace_callback(None)
-_schreibvorgaenge = sum(1 for b in _befehle if b.strip().upper() == "COMMIT")
-assert 1 <= _schreibvorgaenge <= 2, f"{_schreibvorgaenge} write operations for 200 probes"
+_writes = sum(1 for b in _commands if b.strip().upper() == "COMMIT")
+assert 1 <= _writes <= 2, f"{_writes} write operations for 200 probes"
 # The throttle does not hide a broken connection: the intermediate probe reads anyway.
-_zu = sqlite3.connect(":memory:", check_same_thread=False); _zu.close()
-alt_db, hstore.db = hstore.db, _zu
+_to = sqlite3.connect(":memory:", check_same_thread=False); _to.close()
+old_db, hstore.db = hstore.db, _to
 assert hc.get("/healthz").status_code == 503, "closed connection hidden behind the throttle"
-hstore.db = alt_db
-ok(f"/healthz: 200 Proben → {_schreibvorgaenge} commit(s); a dead connection is still noticed immediately")
+hstore.db = old_db
+ok(f"/healthz: 200 Proben → {_writes} commit(s); a dead connection is still noticed immediately")
 os.remove(hdb)
 
 os.remove(db)

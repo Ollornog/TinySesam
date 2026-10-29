@@ -82,7 +82,7 @@ def _split(name):
     return [x.strip() for x in os.environ.get(name, "").split(",") if x.strip()]
 
 
-def _host_aus_variable(rest: str, bekannte) -> str:
+def _host_from_variable(rest: str, known) -> str:
     """Recover the host name from `APP_B_EXAMPLE_COM`.
 
     A variable name carries neither dot nor hyphen, both become `_` — the
@@ -95,13 +95,13 @@ def _host_aus_variable(rest: str, bekannte) -> str:
     "why does app-b use the default client". If nothing fits, the dot stays as a guess — then
     `clients_from_env()` reports it loudly.
     """
-    for host in bekannte:
-        if _als_variable(host) == rest.upper():
+    for host in known:
+        if _as_variable(host) == rest.upper():
             return host.strip().lower()
     return rest.lower().replace("_", ".")
 
 
-def _als_variable(host: str) -> str:
+def _as_variable(host: str) -> str:
     return str(host).strip().upper().replace(".", "_").replace("-", "_")
 
 
@@ -115,37 +115,37 @@ def clients_from_env() -> dict:
     Both together are allowed; the individual variables win because they are more specific.
     """
     clients: dict = {}
-    roh = os.environ.get("TINYSESAM_OIDC_CLIENTS", "").strip()
-    if roh:
+    raw = os.environ.get("TINYSESAM_OIDC_CLIENTS", "").strip()
+    if raw:
         import json
         try:
-            geladen = json.loads(roh)
+            loaded = json.loads(raw)
         except ValueError as e:
             raise SystemExit(f"TINYSESAM_OIDC_CLIENTS is not valid JSON: {e}")
-        if not isinstance(geladen, dict):
+        if not isinstance(loaded, dict):
             raise SystemExit("TINYSESAM_OIDC_CLIENTS must be an object: "
                              '{"app.example.com": {"client_id": "...", "client_secret": "..."}}')
-        for host, eintrag in geladen.items():
-            if not isinstance(eintrag, dict):
+        for host, entry in loaded.items():
+            if not isinstance(entry, dict):
                 raise SystemExit(f"TINYSESAM_OIDC_CLIENTS[{host!r}] must be an object "
                                  "(client_id, client_secret, optional scopes/allowed_groups).")
-            clients[str(host).strip().lower()] = dict(eintrag)
-    bekannte = _split("TINYSESAM_PROTECTED_HOSTS")
-    geraten = []
-    for name, wert in sorted(os.environ.items()):
+            clients[str(host).strip().lower()] = dict(entry)
+    known = _split("TINYSESAM_PROTECTED_HOSTS")
+    guessed = []
+    for name, value in sorted(os.environ.items()):
         if not name.startswith("TINYSESAM_OIDC_CLIENT_"):
             continue
         rest = name[len("TINYSESAM_OIDC_CLIENT_"):]
         if rest in ("ID", "SECRET"):      # that is the single client, not an application
             continue
-        for endung, feld in (("_ID", "client_id"), ("_SECRET", "client_secret")):
-            if rest.endswith(endung):
-                roh = rest[:-len(endung)]
-                host = _host_aus_variable(roh, bekannte)
-                if bekannte and host not in [h.strip().lower() for h in bekannte]:
-                    geraten.append((name, host))
-                clients.setdefault(host, {})[feld] = wert
-    if geraten:
+        for suffix, slot in (("_ID", "client_id"), ("_SECRET", "client_secret")):
+            if rest.endswith(suffix):
+                raw = rest[:-len(suffix)]
+                host = _host_from_variable(raw, known)
+                if known and host not in [h.strip().lower() for h in known]:
+                    guessed.append((name, host))
+                clients.setdefault(host, {})[slot] = value
+    if guessed:
         # Loud instead of silent: a host that is in no list never gets a request —
         # the mapping would exist and still never take effect.
         security.seclog.warning(
@@ -153,7 +153,7 @@ def clients_from_env() -> dict:
             "%s. An underscore in the variable name can be a dot OR a hyphen — "
             "if the host is in PROTECTED_HOSTS it is recognised, otherwise a dot is assumed. "
             "TINYSESAM_OIDC_CLIENTS as JSON is safer.",
-            ", ".join(f"{n} → {h}" for n, h in geraten))
+            ", ".join(f"{n} → {h}" for n, h in guessed))
     return clients
 
 
@@ -175,7 +175,7 @@ def config_from_env() -> TinySesamConfig:
         oidc_name=os.environ.get("TINYSESAM_OIDC_NAME", "").strip() or "SSO",
         gate_brand=os.environ.get("TINYSESAM_GATE_BRAND", "").strip(),
         brand_icon=_favicon(),
-        brand_backgrounds=_hintergruende(),
+        brand_backgrounds=_background(),
         brand_background_seconds=int(os.environ.get("TINYSESAM_BRAND_BACKGROUND_SECONDS", "12") or 12),
         brand_background_credit_text=os.environ.get("TINYSESAM_BRAND_BACKGROUND_CREDIT_TEXT", "").strip(),
         brand_background_credit_url=os.environ.get("TINYSESAM_BRAND_BACKGROUND_CREDIT_URL", "").strip(),
@@ -185,43 +185,43 @@ def config_from_env() -> TinySesamConfig:
         trusted_proxies=_split("TINYSESAM_TRUSTED_PROXIES") or ["127.0.0.1/32", "::1/128"],
         clients=clients_from_env(),
         revalidate_minutes=int(os.environ.get("TINYSESAM_OIDC_REVALIDATE_MINUTES", "60") or 0),
-        gate_token_enabled=_schalter("TINYSESAM_GATE"),
-        gate_link_enabled=_schalter("TINYSESAM_GATE_LINK"),
-        lang=_sprache(),
+        gate_token_enabled=_switch("TINYSESAM_GATE"),
+        gate_link_enabled=_switch("TINYSESAM_GATE_LINK"),
+        lang=_language(),
         forward_login=os.environ.get("TINYSESAM_FORWARD_LOGIN", "").strip() or "direct",
-        forward_apps=_json_objekt("TINYSESAM_FORWARD_APPS"),
+        forward_apps=_json_object("TINYSESAM_FORWARD_APPS"),
         forward_logout=os.environ.get("TINYSESAM_FORWARD_LOGOUT", "").strip() or "all",
         forward_logged_out_sec=int(os.environ.get("TINYSESAM_FORWARD_LOGGED_OUT_SEC", "10") or 0),
         gate_token_ttl_sec=int(os.environ.get("TINYSESAM_GATE_TTL_SEC", "300") or 300),
     )
 
 
-def _json_objekt(name: str) -> dict:
+def _json_object(name: str) -> dict:
     """A JSON object from the environment, empty = {}. Broken JSON ends the start — silently
     ignored, the default would apply to every application, and nobody would see why."""
     import json
-    roh = os.environ.get(name, "").strip()
-    if not roh:
+    raw = os.environ.get(name, "").strip()
+    if not raw:
         return {}
     try:
-        wert = json.loads(roh)
+        value = json.loads(raw)
     except ValueError as e:
         raise SystemExit(f"{name} is not valid JSON: {e}")
-    if not isinstance(wert, dict):
+    if not isinstance(value, dict):
         raise SystemExit(f"{name} must be an object: {{\"app.example.com\": {{…}}}}")
-    return wert
+    return value
 
 
-def _schalter(name: str) -> bool:
+def _switch(name: str) -> bool:
     """An on/off from the environment. A value that is neither ends
     the start: reading `TINYSESAM_GATE=ja` silently as "off" would mean a gate that keeps checking
     every request, and nobody would know why it does not get faster."""
-    wert = os.environ.get(name, "").strip().lower()
-    if wert in ("", "0", "false", "no", "off"):
+    value = os.environ.get(name, "").strip().lower()
+    if value in ("", "0", "false", "no", "off"):
         return False
-    if wert in ("1", "true", "yes", "on"):
+    if value in ("1", "true", "yes", "on"):
         return True
-    raise SystemExit(f"{name}={wert!r}: expected 1 or 0 (true/false, yes/no, on/off)")
+    raise SystemExit(f"{name}={value!r}: expected 1 or 0 (true/false, yes/no, on/off)")
 
 
 HEALTH_PATH = "/healthz"
@@ -252,31 +252,31 @@ def _install_https_except_health(auth, app):
 def _favicon() -> str:
     """TINYSESAM_BRAND_ICON: favicon of all pages of the gateway. Only from the own origin — a path (`/…`) or a
     `data:image/…` URI. A foreign URL would mean every visitor reports to third parties when loading the sign-in page."""
-    wert = os.environ.get("TINYSESAM_BRAND_ICON", "").strip()
-    if wert and not (wert.startswith("data:image/") or (wert.startswith("/") and not wert.startswith("//"))):
+    value = os.environ.get("TINYSESAM_BRAND_ICON", "").strip()
+    if value and not (value.startswith("data:image/") or (value.startswith("/") and not value.startswith("//"))):
         raise SystemExit("TINYSESAM_BRAND_ICON: only a path (/…) or a data:image/… URI — no foreign address")
-    return wert
+    return value
 
 
-def _hintergruende() -> list:
+def _background() -> list:
     """TINYSESAM_BRAND_BACKGROUNDS: background images, separated by spaces. An https address means: every
     visitor of the sign-in page loads from that third party. That works only with explicit approval
     (TINYSESAM_BRAND_BACKGROUNDS_EXTERN=1) — otherwise a startup error, so that it never happens by accident."""
-    bilder = os.environ.get("TINYSESAM_BRAND_BACKGROUNDS", "").split()
-    if any(b.startswith(("http://", "https://", "//")) for b in bilder) and not _schalter("TINYSESAM_BRAND_BACKGROUNDS_EXTERN"):
+    images = os.environ.get("TINYSESAM_BRAND_BACKGROUNDS", "").split()
+    if any(b.startswith(("http://", "https://", "//")) for b in images) and not _switch("TINYSESAM_BRAND_BACKGROUNDS_EXTERN"):
         raise SystemExit("TINYSESAM_BRAND_BACKGROUNDS: foreign addresses only with TINYSESAM_BRAND_BACKGROUNDS_EXTERN=1 "
                          "(every visitor then loads from that third party)")
-    return bilder
+    return images
 
 
-def _sprache() -> str:
+def _language() -> str:
     """TINYSESAM_LANG: one of the languages TinySesam ships with — otherwise a startup error instead of
     silent English pages."""
     from .messages import MESSAGES
-    wert = os.environ.get("TINYSESAM_LANG", "").strip().lower() or "en"
-    if wert not in MESSAGES:
-        raise SystemExit(f"TINYSESAM_LANG={wert!r}: known ones are {', '.join(sorted(MESSAGES))}")
-    return wert
+    value = os.environ.get("TINYSESAM_LANG", "").strip().lower() or "en"
+    if value not in MESSAGES:
+        raise SystemExit(f"TINYSESAM_LANG={value!r}: known ones are {', '.join(sorted(MESSAGES))}")
+    return value
 
 
 def build_app(cfg: Optional[TinySesamConfig] = None):
@@ -291,7 +291,7 @@ def build_app(cfg: Optional[TinySesamConfig] = None):
     auth.install_error_pages(app)
 
     @app.get("/", include_in_schema=False)
-    def startseite(request: _Request):
+    def start_page(request: _Request):
         """Whoever opens the gateway's address does not land in the void: signed in, the overview with
         sign-out, otherwise the sign-in."""
         u = auth.session_user(request)
@@ -311,7 +311,7 @@ def build_app(cfg: Optional[TinySesamConfig] = None):
         guard that cannot see the most likely failure is none.
 
         Reachable without sign-in also means: floodable. That is why the probe really writes at most every
-        `Store.SCHREIBPROBE_SEK`, in between it only checks the connection — otherwise
+        `Store.WRITE_PROBE_SEC`, in between it only checks the connection — otherwise
         every call would occupy the write lock that sign-ins wait for. Like any sign-in it waits
         up to `Store.BUSY_TIMEOUT_MS` behind a foreign writer; the HEALTHCHECK in the
         Dockerfile gives it more time for that.
@@ -323,7 +323,7 @@ def build_app(cfg: Optional[TinySesamConfig] = None):
 
         from . import current_version
         try:
-            auth.store.schreibprobe()
+            auth.store.write_probe()
         except Exception as e:
             security.seclog.error("Healthcheck: database not writable (%s: %s)",
                                   type(e).__name__, e)
@@ -344,7 +344,7 @@ def __getattr__(name):
     raise AttributeError(name)
 
 
-HILFE = """tinysesam.gateway — TinySesam as an OIDC forward-auth gateway
+HELP = """tinysesam.gateway — TinySesam as an OIDC forward-auth gateway
 
   python -m tinysesam.gateway          starts the service
   uvicorn tinysesam.gateway:app        the same via your own server invocation
@@ -375,11 +375,11 @@ def main(argv=None):
     # `--help` BEFORE anything else: before, the question landed in the uvicorn import and then in
     # a server on 0.0.0.0:8000 — whoever wanted to know what the thing is called had it running.
     if argv and argv[0] in ("--help", "-h", "help"):
-        print(HILFE)
+        print(HELP)
         return 0
     if argv:
         print(f"Unknown argument: {argv[0]}\n", file=sys.stderr)
-        print(HILFE, file=sys.stderr)
+        print(HELP, file=sys.stderr)
         return 2
     try:
         import uvicorn

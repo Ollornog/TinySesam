@@ -32,7 +32,7 @@ app.include_router(auth.router())
 
 
 @app.get("/geheim")
-def geheim(u=Depends(auth.require_user)):
+def secret_text(u=Depends(auth.require_user)):
     return {"user": u["username"]}
 
 

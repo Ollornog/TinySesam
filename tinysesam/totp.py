@@ -28,7 +28,7 @@ def verify(secret: str, code: str) -> bool:
         return False
 
 
-def passender_schritt(secret: str, code: str, fenster: int = 1):
+def matching_step(secret: str, code: str, window: int = 1):
     """Which time step matches this code — or None.
 
     `verify()` only says yes/no. For single use the caller has to know WHICH
@@ -42,13 +42,13 @@ def passender_schritt(secret: str, code: str, fenster: int = 1):
         import pyotp
     except ModuleNotFoundError:
         return None
-    sauber = str(code).strip().replace(" ", "")
+    clean = str(code).strip().replace(" ", "")
     totp = pyotp.TOTP(secret)
-    jetzt = int(_t.time())
-    for versatz in range(-fenster, fenster + 1):
-        zeitpunkt = jetzt + versatz * totp.interval
-        if pyotp.utils.strings_equal(str(totp.at(zeitpunkt)), sauber):
-            return zeitpunkt // totp.interval
+    now = int(_t.time())
+    for offset in range(-window, window + 1):
+        moment = now + offset * totp.interval
+        if pyotp.utils.strings_equal(str(totp.at(moment)), clean):
+            return moment // totp.interval
     return None
 
 

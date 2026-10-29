@@ -7,8 +7,8 @@ import tempfile
 from pathlib import Path
 
 
-def _lies(*teile: str) -> str:
-    return Path(*teile).read_text(encoding="utf-8")
+def _lies(*parts: str) -> str:
+    return Path(*parts).read_text(encoding="utf-8")
 
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -72,10 +72,10 @@ class _Cfg:
 
     def __getattr__(self, name):
         from tinysesam import TinySesamConfig
-        vorgabe = TinySesamConfig(db_path=":memory:")
-        if not hasattr(vorgabe, name):
+        default = TinySesamConfig(db_path=":memory:")
+        if not hasattr(default, name):
             raise AttributeError(f"neither in the stub nor in TinySesamConfig: {name}")
-        return getattr(vorgabe, name)
+        return getattr(default, name)
 
 
 live = render("de", cfg=_Cfg())
@@ -242,17 +242,17 @@ os.environ["TINYSESAM_SHOWCASE_DB"] = os.path.join(tempfile.mkdtemp(), "showcase
 from fastapi.testclient import TestClient  # noqa: E402
 import examples.showcase as showcase  # noqa: E402
 
-_boese = "<img src=x onerror=alert(1)>"
-showcase.auth.create_user(_boese, password="geheim-passwort-1")
+_evil = "<img src=x onerror=alert(1)>"
+showcase.auth.create_user(_evil, password="geheim-passwort-1")
 _c = TestClient(showcase.app)
 _c.get("/auth/login")
-_r = _c.post("/auth/login", data={"username": _boese, "password": "geheim-passwort-1", "next": "/",
+_r = _c.post("/auth/login", data={"username": _evil, "password": "geheim-passwort-1", "next": "/",
                                   "_csrf": _c.cookies.get(showcase.auth.cfg.csrf_cookie)},
              follow_redirects=False)
 assert _r.status_code == 303, _r.status_code
-for _weg in ("/demo", "/app"):
-    _t = _c.get(_weg).text
-    assert "<img src=x" not in _t and "&lt;img src=x onerror=alert(1)&gt;" in _t, _weg
+for _away in ("/demo", "/app"):
+    _t = _c.get(_away).text
+    assert "<img src=x" not in _t and "&lt;img src=x onerror=alert(1)&gt;" in _t, _away
 print("  showcase: a crafted username stays text on /demo and /app")
 
 print("OK test_site")

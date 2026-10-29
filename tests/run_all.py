@@ -60,9 +60,9 @@ SKIP_EXIT = 77
 STARTER = os.path.join(HERE, "_starter.py")
 JOBS_VARIABLE = "CI_TEST_JOBS"
 #: The worker count the CI runner prescribes. Applies when `CI_TEST_JOBS` is missing.
-KERNE_VARIABLE = "CI_KERNE"
-#: Without both variables: two jobs — a safe default, not a detection (see `jobs_bestimmen`).
-JOBS_VORGABE = 2
+CORES_VARIABLE = "CI_KERNE"
+#: Without both variables: two jobs — a safe default, not a detection (see `jobs_determine`).
+JOBS_DEFAULT = 2
 
 #: These suites start FIRST in a parallel run — the slowest, measured 2026-09-27 (0.22.0).
 #: The list only determines WHEN a suite starts; result and order of the output stay
@@ -71,17 +71,17 @@ JOBS_VORGABE = 2
 #: whole run. With one job it does not apply — that is the serial run of old. A
 #: stale entry costs time, never a result; that every entry is still a suite is checked by
 #: `tests/test_runner.py`.
-LANGE_ZUERST = ("test_browser.py", "test_ldap.py", "test_prebooking_pending.py",
+LONG_FIRST = ("test_browser.py", "test_ldap.py", "test_prebooking_pending.py",
                 "test_audit_round2.py", "test_t13_decisions.py", "test_repo.py",
                 "test_admin_account.py", "test_security_findings.py", "test_hardening2.py")
 
 
 
 #: This much of the end of a red suite's output goes into the log — the context.
-FAIL_ENDE = 2000
+FAIL_END = 2000
 
 
-def _fail_ausgabe(aus: str) -> str:
+def _fail_output(from_: str) -> str:
     """What goes under `FAIL <suite>`: every failed check (`FEHL …`) in full, then the end
     of the output from a line boundary.
 
@@ -91,15 +91,15 @@ def _fail_ausgabe(aus: str) -> str:
     "ufschub" and 42 ok lines, but not WHAT was red. A flaky test that cannot be reproduced
     locally cannot be explained without this line.
     """
-    ende = aus[-FAIL_ENDE:]
-    if len(aus) > FAIL_ENDE and "\n" in ende:
-        ende = ende.split("\n", 1)[1]          # do not start in the middle of a word
-    davor = [z for z in aus[: len(aus) - len(ende)].splitlines() if z.lstrip().startswith("FEHL ")]
-    kopf = ("  ── gescheiterte Prüfungen oberhalb des Ausschnitts ──\n" + "\n".join(davor) + "\n"
-            "  ── Ende der Ausgabe ──\n") if davor else ""
-    return kopf + ende
+    end = from_[-FAIL_END:]
+    if len(from_) > FAIL_END and "\n" in end:
+        end = end.split("\n", 1)[1]          # do not start in the middle of a word
+    before = [z for z in from_[: len(from_) - len(end)].splitlines() if z.lstrip().startswith("FEHL ")]
+    head = ("  ── gescheiterte Prüfungen oberhalb des Ausschnitts ──\n" + "\n".join(before) + "\n"
+            "  ── Ende der Ausgabe ──\n") if before else ""
+    return head + end
 
-def warnfilter() -> str:
+def warning_filter() -> str:
     """`PYTHONWARNINGS`: a deprecated TinySesam name (stage C), called FROM the package itself, is
     an error — in every suite, not just in one (0.22.0, PO decision 2026-09-26).
 
@@ -114,19 +114,19 @@ def warnfilter() -> str:
     foreign `DeprecationWarning`s from tinysesam code, are left untouched.
     """
     module = set()
-    for wurzel, ordner, dateien in os.walk(os.path.join(ROOT, "tinysesam")):
-        ordner[:] = [o for o in ordner if o != "__pycache__"]
-        teile = os.path.relpath(wurzel, ROOT).split(os.sep)
-        for f in dateien:
+    for root, folder, files in os.walk(os.path.join(ROOT, "tinysesam")):
+        folder[:] = [o for o in folder if o != "__pycache__"]
+        parts = os.path.relpath(root, ROOT).split(os.sep)
+        for f in files:
             if f.endswith(".py"):
-                module.add(".".join(teile if f == "__init__.py" else teile + [f[:-3]]))
+                module.add(".".join(parts if f == "__init__.py" else parts + [f[:-3]]))
     module = sorted(module)
     return ",".join(f"error:TinySesam.:DeprecationWarning:{m}" for m in module)
 
 
-def umgebung(sandbox: str) -> dict:
+def environment(sandbox: str) -> dict:
     """The environment of a suite: own throwaway directory, package on the path, warning filter."""
-    vorher = os.environ.get("PYTHONWARNINGS", "")
+    before = os.environ.get("PYTHONWARNINGS", "")
     return {
         **os.environ,
         "PYTHONPATH": ROOT,
@@ -135,11 +135,11 @@ def umgebung(sandbox: str) -> dict:
         "XDG_CACHE_HOME": os.path.join(sandbox, ".cache"),
         "XDG_CONFIG_HOME": os.path.join(sandbox, ".config"),
         "XDG_DATA_HOME": os.path.join(sandbox, ".local", "share"),
-        "PYTHONWARNINGS": ",".join(x for x in (vorher, warnfilter()) if x),
+        "PYTHONWARNINGS": ",".join(x for x in (before, warning_filter()) if x),
     }
 
 
-def jobs_bestimmen(roh=None, kerne=None) -> int:
+def jobs_determine(raw=None, cores=None) -> int:
     """How many suites run concurrently: `CI_TEST_JOBS`, else `CI_KERNE`, else 2.
 
     No detection of the cores: until 2026-10-01 this had `os.cpu_count() // 2`. In a container
@@ -152,34 +152,34 @@ def jobs_bestimmen(roh=None, kerne=None) -> int:
     the default: whoever sets `CI_TEST_JOBS=1` for a serial run and makes a typo should
     learn about it, instead of taking a parallel run for a serial one.
     """
-    roh = os.environ.get(JOBS_VARIABLE, "") if roh is None else roh
-    kerne = os.environ.get(KERNE_VARIABLE, "") if kerne is None else kerne
-    for variable, wert in ((JOBS_VARIABLE, roh), (KERNE_VARIABLE, kerne)):
-        if not wert.strip():
+    raw = os.environ.get(JOBS_VARIABLE, "") if raw is None else raw
+    cores = os.environ.get(CORES_VARIABLE, "") if cores is None else cores
+    for variable, value in ((JOBS_VARIABLE, raw), (CORES_VARIABLE, cores)):
+        if not value.strip():
             continue
         try:
-            jobs = int(wert.strip())
+            jobs = int(value.strip())
         except ValueError:
             jobs = 0
         if jobs < 1:
-            raise ValueError(f"{variable}={wert!r} — erwartet eine ganze Zahl ≥ 1")
+            raise ValueError(f"{variable}={value!r} — erwartet eine ganze Zahl ≥ 1")
         return jobs
-    return JOBS_VORGABE
+    return JOBS_DEFAULT
 
 
-def startreihenfolge(files, jobs) -> list:
+def start_order(files, jobs) -> list:
     """The indices of `files` in the order in which the suites start.
 
-    One job: exactly the order of the list (the serial run). Several: first `LANGE_ZUERST`,
+    One job: exactly the order of the list (the serial run). Several: first `LONG_FIRST`,
     then the rest in list order."""
     if jobs <= 1:
         return list(range(len(files)))
-    rang = {name: i for i, name in enumerate(LANGE_ZUERST)}
+    rank = {name: i for i, name in enumerate(LONG_FIRST)}
     return sorted(range(len(files)),
-                  key=lambda i: (rang.get(os.path.basename(files[i]), len(rang)), i))
+                  key=lambda i: (rank.get(os.path.basename(files[i]), len(rank)), i))
 
 
-def suite_fahren(path):
+def run_suite(path):
     """One suite in its own throwaway directory; output buffered (`CompletedProcess`)."""
     name = os.path.basename(path)
     # Each suite gets its OWN throwaway directory: TMPDIR, HOME and the
@@ -187,7 +187,7 @@ def suite_fahren(path):
     # -- and no suite can disturb the next. Afterwards it is deleted.
     # (Policy: "tests are repeatable"; proof: `ci-local --full`.)
     sandbox = tempfile.mkdtemp(prefix=f"tinysesam-{name[:-3]}-")
-    env = umgebung(sandbox)
+    env = environment(sandbox)
     try:
         return subprocess.run([sys.executable, STARTER, path], cwd=ROOT, env=env,
                               capture_output=True, text=True)
@@ -206,41 +206,41 @@ def main(argv):
     if skip_browser:
         files = [f for f in files if not f.endswith("test_browser.py")]
     try:
-        jobs = jobs_bestimmen()
-    except ValueError as fehler:
-        print(f"FEHLER: {fehler}", file=sys.stderr)
+        jobs = jobs_determine()
+    except ValueError as error:
+        print(f"FEHLER: {error}", file=sys.stderr)
         return 2
     print(f"▸ Test-Jobs: {jobs}", flush=True)
     ok, skipped, failed = [], [], []
-    # Started according to `startreihenfolge` (with one job: the list, i.e. the serial run).
+    # Started according to `start_order` (with one job: the list, i.e. the serial run).
     # Printed in the order of the list, as soon as a suite AND all before it are done
     # — never in the order in which they happen to finish.
     pool = ThreadPoolExecutor(max_workers=jobs)
     try:
-        laufend = [None] * len(files)
-        for i in startreihenfolge(files, jobs):
+        running = [None] * len(files)
+        for i in start_order(files, jobs):
             if os.path.exists(files[i]):
-                laufend[i] = pool.submit(suite_fahren, files[i])
-        for path, zukunft in zip(files, laufend):
+                running[i] = pool.submit(run_suite, files[i])
+        for path, future in zip(files, running):
             name = os.path.basename(path)
-            if zukunft is None:
+            if future is None:
                 print(f"  ??   {name} (nicht gefunden)", flush=True)
                 failed.append(name)
                 continue
-            r = zukunft.result()
+            r = future.result()
             if r.returncode == 0:
                 print(f"  ok   {name}", flush=True)
                 ok.append(name)
             elif r.returncode == SKIP_EXIT:
                 # The suite bailed out itself — the reason is in its own output.
-                grund = (r.stdout or r.stderr or "").strip().splitlines()
+                reason = (r.stdout or r.stderr or "").strip().splitlines()
                 # Do not truncate: the line names the command to install it (`pip install 'tinysesam[…]'`),
                 # and a truncation before the closing bracket looked like a typo in the command.
-                print(f"  skip {name}" + (f" ({grund[-1]})" if grund else ""), flush=True)
+                print(f"  skip {name}" + (f" ({reason[-1]})" if reason else ""), flush=True)
                 skipped.append(name)
             else:
                 print(f"  FAIL {name}", flush=True)
-                sys.stdout.write(_fail_ausgabe(r.stdout or ""))
+                sys.stdout.write(_fail_output(r.stdout or ""))
                 sys.stdout.flush()
                 sys.stderr.write((r.stderr or "")[-2000:])
                 sys.stderr.flush()
@@ -264,9 +264,9 @@ def main(argv):
         print("\nFEHLER: keine einzige Suite ist gelaufen — das ist kein grüner Lauf.",
               file=sys.stderr)
         return 1
-    anteil = len(skipped) / total if total else 0
-    if anteil > 0.5:
-        print(f"\nFEHLER: {len(skipped)} von {total} Suiten übersprungen ({anteil:.0%}). "
+    share = len(skipped) / total if total else 0
+    if share > 0.5:
+        print(f"\nFEHLER: {len(skipped)} von {total} Suiten übersprungen ({share:.0%}). "
               "Ein Lauf, der mehr abwinkt als misst, ist keine Aussage — fehlende Voraussetzungen "
               "nachinstallieren oder die Auswahl einschränken.", file=sys.stderr)
         return 1

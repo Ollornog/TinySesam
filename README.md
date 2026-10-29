@@ -799,7 +799,7 @@ Modeled on Authelia/Fail2Ban — the thresholds are changeable **in the admin pa
   logged, but a wrong guess there does not lock the **login**: otherwise a few typos on your own
   account page would lock you out — behind NAT, colleagues who had nothing to do with it, and at
   the area PIN even passing visitors who have no account at all. Which method is not a sign-in
-  attempt is listed in `security.NICHT_LOGIN_METHODEN` — derived from `security.EIGENE_SPERRE`,
+  attempt is listed in `security.NOT_LOGIN_METHODS` — derived from `security.OWN_LOCK`,
   so no method can end up without a brake. The pots of the **signed-in** paths (password change,
   step-up) deliberately count per account only, not per IP: guessing there requires a valid
   session for that very account. The area PIN keeps the IP threshold — there the guesser is

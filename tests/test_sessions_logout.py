@@ -19,7 +19,7 @@ app.include_router(auth.router())
 
 
 @app.get("/geheim")
-def geheim(u=Depends(auth.require_user)):
+def secret_text(u=Depends(auth.require_user)):
     return {"u": u["username"]}
 
 
@@ -89,39 +89,39 @@ app.include_router(auth.router())
 
 
 @app.get("/geheim")
-def geheim2(u=Depends(auth.require_user)):
+def secret_text2(u=Depends(auth.require_user)):
     return {"u": u["username"]}
 
 
-def anmelden():
+def sign_in():
     cl = TestClient(app)
-    feld = re.search(r"name=_csrf value='([^']+)'", cl.get("/auth/login").text).group(1)
+    slot = re.search(r"name=_csrf value='([^']+)'", cl.get("/auth/login").text).group(1)
     cl.post("/auth/login", data={"username": "admin", "password": "geheim123", "next": "/",
-                                 "_csrf": feld}, follow_redirects=False)
+                                 "_csrf": slot}, follow_redirects=False)
     return cl
 
 
-def kopf(cl):
+def head(cl):
     return {**JSON, "X-CSRF-Token": cl.cookies.get("tinysesam_csrf") or ""}
 
 
-def altern(cl):
+def alternate(cl):
     auth.store._exec("UPDATE session SET mfa_at=? WHERE token_hash=?",
                      (int(time.time()) - 100000, auth.store.session_hash(cl.cookies.get("tinysesam_session"))))
 
 
-x, y = anmelden(), anmelden()
-altern(x)
-r = x.post("/auth/sessions/revoke", json={"scope": "all"}, headers=kopf(x))
+x, y = sign_in(), sign_in()
+alternate(x)
+r = x.post("/auth/sessions/revoke", json={"scope": "all"}, headers=head(x))
 assert r.status_code == 403 and r.headers.get("X-TinySesam-Reauth") == "/auth/reauth", r.status_code
 assert y.get("/geheim", headers=JSON).status_code == 200 and x.get("/geheim", headers=JSON).status_code == 200
 ok("F-09: ending sessions with stale confirmation → 403 + reauth hint, nothing ended")
 
 key = auth.create_api_key(uid, name="k")["key"]
-dienst = TestClient(app)
+service = TestClient(app)
 bearer = {**JSON, "Authorization": f"Bearer {key}"}
-assert dienst.post("/auth/sessions/revoke", json={"scope": "all"}, headers=bearer).status_code == 403
-assert dienst.get("/auth/sessions", headers=bearer).status_code == 403, "list only for a real session"
+assert service.post("/auth/sessions/revoke", json={"scope": "all"}, headers=bearer).status_code == 403
+assert service.get("/auth/sessions", headers=bearer).status_code == 403, "list only for a real session"
 assert y.get("/geheim", headers=JSON).status_code == 200 and auth.store.count_active_api_keys(uid) == 1
 ok("F-09: an API key may neither end nor list sessions (and does not revoke itself)")
 
@@ -129,18 +129,18 @@ assert len(x.get("/auth/sessions", headers=JSON).json()) == 2, "viewing remains 
 ok("F-09: viewing the list works with a session even without fresh confirmation (ASVS 7.5.2)")
 
 # B1-7: after a factor change the response says how many OTHER sessions are running.
-z = anmelden()                                      # fresh → may change factors
-r = z.post("/auth/pin/set", json={"pin": "24680"}, headers=kopf(z))
+z = sign_in()                                      # fresh → may change factors
+r = z.post("/auth/pin/set", json={"pin": "24680"}, headers=head(z))
 assert r.status_code == 200 and r.json() == {"ok": True, "other_sessions": 2}, r.text
-r = z.post("/auth/pin/disable", headers=kopf(z))
+r = z.post("/auth/pin/disable", headers=head(z))
 assert r.json()["other_sessions"] == 2
-r = z.post("/auth/sessions/revoke", json={"scope": "others"}, headers=kopf(z))
+r = z.post("/auth/sessions/revoke", json={"scope": "others"}, headers=head(z))
 assert r.status_code == 200 and x.get("/geheim", headers=JSON).status_code == 401
-r = z.post("/auth/pin/set", json={"pin": "24680"}, headers=kopf(z))
+r = z.post("/auth/pin/set", json={"pin": "24680"}, headers=head(z))
 assert r.json()["other_sessions"] == 0
-seite = z.get("/auth/account").text
-assert "other_sessions" in seite and "andere" in auth.t("acc.sessions_offer").lower() \
-    and auth.t("acc.sessions_offer")[:20] in seite, "account page must offer ending"
+page_html = z.get("/auth/account").text
+assert "other_sessions" in page_html and "andere" in auth.t("acc.sessions_offer").lower() \
+    and auth.t("acc.sessions_offer")[:20] in page_html, "account page must offer ending"
 ok("B1-7: factor change reports other_sessions, the account page offers ending")
 
 # A-5: the own TOTP setup page also offers ending, and when freshness has expired
@@ -149,10 +149,10 @@ ok("B1-7: factor change reports other_sessions, the account page offers ending")
 setup = auth.templates.render("totp_setup", auth, {"data": {"secret": "ABC", "qr": ""}})
 assert "await offer(r)" in setup and "function tsRevokeOthers" in setup, "setup page without offer"
 assert "/auth/account?revoke_others=1" in setup, "consent would be lost during the reauth"
-assert "revoke_others" in seite and "tsRevokeOthers" in seite, "account page without return switch"
-ohne_konto = TinySesam(TinySesamConfig(lang="de", db_path=os.path.join(tempfile.mkdtemp(), "t.db"),
+assert "revoke_others" in page_html and "tsRevokeOthers" in page_html, "account page without return switch"
+without_account = TinySesam(TinySesamConfig(lang="de", db_path=os.path.join(tempfile.mkdtemp(), "t.db"),
                                        passkey_enabled=False, account_enabled=False))
-setup = ohne_konto.templates.render("totp_setup", ohne_konto, {"data": {"secret": "ABC", "qr": ""}})
+setup = without_account.templates.render("totp_setup", without_account, {"data": {"secret": "ABC", "qr": ""}})
 assert "await offer(r)" in setup and "revoke_others" not in setup, "without account page no dead way back"
 r = z.post("/auth/reauth", data={"password": "geheim123", "next": "/auth/account?revoke_others=1",
                                  "_csrf": z.cookies.get("tinysesam_csrf")},
@@ -161,7 +161,7 @@ assert r.status_code == 303 and r.headers["location"] == "/auth/account?revoke_o
 ok("A-5: TOTP setup offers ending; the reauth detour keeps ?revoke_others=1")
 
 # F-07: logout CSRF. From a foreign page (cross-site) the GET does NOT sign out but asks.
-w = anmelden()
+w = sign_in()
 r = w.get("/auth/logout", headers={"Sec-Fetch-Site": "cross-site"}, follow_redirects=False)
 assert r.status_code == 200 and "method=post" in r.text and "_csrf" in r.text, r.status_code
 assert w.get("/geheim", headers=JSON).status_code == 200, "foreign link must not sign out"
@@ -173,11 +173,11 @@ r = w.post("/auth/logout", data={"_csrf": w.cookies.get("tinysesam_csrf")}, foll
 assert r.status_code == 303 and w.get("/geheim", headers=JSON).status_code == 401
 ok("F-07: POST /auth/logout without token → 403, with token → signed out")
 
-for kopf_ in ({"Sec-Fetch-Site": "same-origin"}, {"Sec-Fetch-Site": "same-site"},
+for head_ in ({"Sec-Fetch-Site": "same-origin"}, {"Sec-Fetch-Site": "same-site"},
               {"Sec-Fetch-Site": "none"}, {}):
-    v = anmelden()
-    assert v.get("/auth/logout", headers=kopf_, follow_redirects=False).status_code == 303
-    assert v.get("/geheim", headers=JSON).status_code == 401, kopf_
+    v = sign_in()
+    assert v.get("/auth/logout", headers=head_, follow_redirects=False).status_code == 303
+    assert v.get("/geheim", headers=JSON).status_code == 401, head_
 ok("F-07: own link, neighbouring app, address bar and old browsers still sign out by GET")
 os.remove(db)
 

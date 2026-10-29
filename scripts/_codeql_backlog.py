@@ -21,9 +21,9 @@ import subprocess
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-ZIEL = os.path.join(ROOT, "backlog", "T-12-codeql-backlog.md")
+DESTINATION = os.path.join(ROOT, "backlog", "T-12-codeql-backlog.md")
 START, ENDE = "<!-- CODEQL:START -->", "<!-- CODEQL:END -->"
-RANG = {"error": 0, "warning": 1, "note": 2}
+RANK = {"error": 0, "warning": 1, "note": 2}
 JQ = (".[] | {n:.number, rule:.rule.id, sev:.rule.severity, path:.most_recent_instance.location.path,"
       " line:.most_recent_instance.location.start_line, url:.html_url}")
 
@@ -36,40 +36,40 @@ def hole_alerts() -> list[dict]:
          "--jq", JQ],
         capture_output=True, text=True, check=True, cwd=ROOT).stdout
     alerts = [json.loads(z) for z in raw.splitlines() if z.strip()]
-    return sorted(alerts, key=lambda a: (RANG.get(a["sev"], 9), a["path"], a["line"]))
+    return sorted(alerts, key=lambda a: (RANK.get(a["sev"], 9), a["path"], a["line"]))
 
 
-def tabelle(alerts: list[dict]) -> str:
+def table(alerts: list[dict]) -> str:
     if not alerts:
         return "_No open alerts._"
-    zeilen = ["| # | Severity | Rule | Location |", "|---|---|---|---|"]
+    lines = ["| # | Severity | Rule | Location |", "|---|---|---|---|"]
     for a in alerts:
-        zeilen.append(f"| [{a['n']}]({a['url']}) | {a['sev']} | `{a['rule']}` | `{a['path']}:{a['line']}` |")
-    je = {}
+        lines.append(f"| [{a['n']}]({a['url']}) | {a['sev']} | `{a['rule']}` | `{a['path']}:{a['line']}` |")
+    per = {}
     for a in alerts:
-        je[a["sev"]] = je.get(a["sev"], 0) + 1
-    summe = ", ".join(f"{n} {s}" for s, n in sorted(je.items(), key=lambda x: RANG.get(x[0], 9)))
-    return f"**{len(alerts)} open** ({summe}).\n\n" + "\n".join(zeilen)
+        per[a["sev"]] = per.get(a["sev"], 0) + 1
+    total = ", ".join(f"{n} {s}" for s, n in sorted(per.items(), key=lambda x: RANK.get(x[0], 9)))
+    return f"**{len(alerts)} open** ({total}).\n\n" + "\n".join(lines)
 
 
 def main(argv: list[str]) -> int:
     alerts = hole_alerts()
-    text = tabelle(alerts)
+    text = table(alerts)
     if "--zeige" in argv:
         print(text)
         return 0
-    with open(ZIEL, encoding="utf-8") as fh:
-        alt = fh.read()
-    if START not in alt or ENDE not in alt:
-        print(f"Markers {START} / {ENDE} missing in {ZIEL}", file=sys.stderr)
+    with open(DESTINATION, encoding="utf-8") as fh:
+        old = fh.read()
+    if START not in old or ENDE not in old:
+        print(f"Markers {START} / {ENDE} missing in {DESTINATION}", file=sys.stderr)
         return 1
-    kopf, rest = alt.split(START, 1)
+    head, rest = old.split(START, 1)
     _, fuss = rest.split(ENDE, 1)
-    neu = f"{kopf}{START}\n{text}\n{ENDE}{fuss}"
-    if neu != alt:
-        with open(ZIEL, "w", encoding="utf-8") as fh:
-            fh.write(neu)
-    print(f"{len(alerts)} open alerts → {os.path.relpath(ZIEL, ROOT)}")
+    new = f"{head}{START}\n{text}\n{ENDE}{fuss}"
+    if new != old:
+        with open(DESTINATION, "w", encoding="utf-8") as fh:
+            fh.write(new)
+    print(f"{len(alerts)} open alerts → {os.path.relpath(DESTINATION, ROOT)}")
     return 0
 
 

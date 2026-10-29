@@ -18,7 +18,7 @@ from the database. If it does not match the stored secrets, TinySesam does not s
 (`ConfigError`) instead of silently letting every TOTP sign-in fail.
 
 Format of a value: `v1:` + Base64url(nonce 12 bytes ‖ ciphertext ‖ tag). A value without prefix is
-plain text from the time before and is encrypted at startup (`Store.geheimnisse_heben`).
+plain text from the time before and is encrypted at startup (`Store.extract_secrets`).
 """
 from __future__ import annotations
 
@@ -44,23 +44,23 @@ def _aesgcm():
     return AESGCM
 
 
-def _read_key(text: str, herkunft: str) -> bytes:
+def _read_key(text: str, origin: str) -> bytes:
     try:
-        roh = base64.b64decode(text.strip(), validate=True)
+        raw = base64.b64decode(text.strip(), validate=True)
     except (ValueError, TypeError):
-        raise ConfigError(f"{herkunft}: not valid Base64.") from None
-    if len(roh) != 32:
-        raise ConfigError(f"{herkunft}: the key must be 32 bytes long (Base64 of 32 "
+        raise ConfigError(f"{origin}: not valid Base64.") from None
+    if len(raw) != 32:
+        raise ConfigError(f"{origin}: the key must be 32 bytes long (Base64 of 32 "
                           f"random bytes, e.g. `python -c \"import os,base64;"
-                          f"print(base64.b64encode(os.urandom(32)).decode())\"`), it has {len(roh)}.")
-    return roh
+                          f"print(base64.b64encode(os.urandom(32)).decode())\"`), it has {len(raw)}.")
+    return raw
 
 
 def load_key(db_path: str, key_file: str = "") -> tuple[bytes, str]:
     """Find the key or create it (next to the database). Returns `(key, origin)`."""
-    wert = os.environ.get(ENV_VAR, "")
-    if wert.strip():
-        return _read_key(wert, ENV_VAR), "environment"
+    value = os.environ.get(ENV_VAR, "")
+    if value.strip():
+        return _read_key(value, ENV_VAR), "environment"
     if key_file:
         try:
             with open(key_file, encoding="ascii") as f:
@@ -70,10 +70,10 @@ def load_key(db_path: str, key_file: str = "") -> tuple[bytes, str]:
     if not db_path or db_path == ":memory:":
         # An in-memory database lives as long as the process — so does its key.
         return secrets.token_bytes(32), "memory"
-    pfad = db_path + ".key"
+    path = db_path + ".key"
     try:
-        with open(pfad, encoding="ascii") as f:
-            return _read_key(f.read(), f"key file {pfad!r}"), "beside_db"
+        with open(path, encoding="ascii") as f:
+            return _read_key(f.read(), f"key file {path!r}"), "beside_db"
     except FileNotFoundError:
         pass              # first start: there is none yet — it is created right away
     # Create atomically and exclusively: first a complete temporary file (0600, fsync), then a
@@ -81,24 +81,24 @@ def load_key(db_path: str, key_file: str = "") -> tuple[bytes, str]:
     # for the first time at once would otherwise read a half-written file or fail on
     # O_EXCL (attack on the second round, finding 10: 85 of 240 starts). The loser reads the
     # winner's file.
-    roh = secrets.token_bytes(32)
-    zwischen = f"{pfad}.{os.getpid()}.{secrets.token_hex(4)}.tmp"
-    fd = os.open(zwischen, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    raw = secrets.token_bytes(32)
+    between = f"{path}.{os.getpid()}.{secrets.token_hex(4)}.tmp"
+    fd = os.open(between, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     try:
         with os.fdopen(fd, "w", encoding="ascii") as f:
-            f.write(base64.b64encode(roh).decode("ascii") + "\n")
+            f.write(base64.b64encode(raw).decode("ascii") + "\n")
             f.flush()
             os.fsync(f.fileno())
         try:
-            os.link(zwischen, pfad)
+            os.link(between, path)
         except FileExistsError:
-            with open(pfad, encoding="ascii") as f:
-                return _read_key(f.read(), f"key file {pfad!r}"), "beside_db"
+            with open(path, encoding="ascii") as f:
+                return _read_key(f.read(), f"key file {path!r}"), "beside_db"
     finally:
         # The temporary file has served its purpose (linked or lost) — get rid of it; the link
         # leaves it standing, so in the normal case it is still there.
         try:
-            os.unlink(zwischen)
+            os.unlink(between)
         except FileNotFoundError:
             pass          # a foreign cleaner was faster — the goal was only that it does not remain
     log.warning(
@@ -106,30 +106,30 @@ def load_key(db_path: str, key_file: str = "") -> tuple[bytes, str]:
         "database — that protects against a database file that leaks on its own, not against a "
         "backup of the whole directory. Store it separately: %s or secrets_key_file. And: "
         "without this key all TOTP enrollments are lost — back it up too, separately from the "
-        "database.", pfad, ENV_VAR)
-    return roh, "beside_db_new"
+        "database.", path, ENV_VAR)
+    return raw, "beside_db_new"
 
 
 class Vault:
     """Encrypt and decrypt with ONE key (AES-256-GCM)."""
 
-    def __init__(self, schluessel: bytes):
-        self._aead = _aesgcm()(schluessel)
+    def __init__(self, key_name: bytes):
+        self._aead = _aesgcm()(key_name)
 
-    def encrypt(self, klartext: str) -> str:
+    def encrypt(self, plaintext: str) -> str:
         nonce = secrets.token_bytes(12)
-        chiffrat = self._aead.encrypt(nonce, klartext.encode("utf-8"), PREFIX.encode("ascii"))
-        return PREFIX + base64.urlsafe_b64encode(nonce + chiffrat).decode("ascii")
+        ciphertext = self._aead.encrypt(nonce, plaintext.encode("utf-8"), PREFIX.encode("ascii"))
+        return PREFIX + base64.urlsafe_b64encode(nonce + ciphertext).decode("ascii")
 
-    def decrypt(self, wert: Optional[str]) -> Optional[str]:
+    def decrypt(self, value: Optional[str]) -> Optional[str]:
         """`None` stays `None`; a value without prefix is plain text from the time before
-        encryption and comes back unchanged (until `geheimnisse_heben` encrypts it).
+        encryption and comes back unchanged (until `extract_secrets` encrypts it).
         A wrong key raises `cryptography.exceptions.InvalidTag`."""
-        if wert is None or not str(wert).startswith(PREFIX):
-            return wert
-        roh = base64.urlsafe_b64decode(str(wert)[len(PREFIX):].encode("ascii"))
-        return self._aead.decrypt(roh[:12], roh[12:], PREFIX.encode("ascii")).decode("utf-8")
+        if value is None or not str(value).startswith(PREFIX):
+            return value
+        raw = base64.urlsafe_b64decode(str(value)[len(PREFIX):].encode("ascii"))
+        return self._aead.decrypt(raw[:12], raw[12:], PREFIX.encode("ascii")).decode("utf-8")
 
     @staticmethod
-    def is_encrypted(wert: Optional[str]) -> bool:
-        return bool(wert) and str(wert).startswith(PREFIX)
+    def is_encrypted(value: Optional[str]) -> bool:
+        return bool(value) and str(value).startswith(PREFIX)

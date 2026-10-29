@@ -20,7 +20,7 @@ _WAFLOW = "tinysesam_waflow"
 from . import errors, security
 
 
-def _fehlt_extra(e: ModuleNotFoundError) -> "errors.MissingExtra":
+def _missing_extra(e: ModuleNotFoundError) -> "errors.MissingExtra":
     """Turn a bare import error into a message that says what to do.
 
     The extras are deliberately imported LAZILY here (only on use). The price for that was,
@@ -39,15 +39,15 @@ def register_passkey_routes(router, auth):
                                           ResidentKeyRequirement, UserVerificationRequirement)
     from webauthn.helpers import base64url_to_bytes, bytes_to_base64url
 
-    def _uv_anforderung(cfg):
+    def _uv_request(cfg):
         """The user verification as a WebAuthn value — `required` (default) or `preferred` (B2-10).
 
         A passkey signs in **alone** in TinySesam. Without user verification it proves only
         possession of the key: the unlocked computer, the inserted stick, the phone briefly put
         down. That is why `required` is the default — and the response is also checked at
         login, not just requested."""
-        art = str(getattr(cfg, "passkey_user_verification", "required") or "required")
-        return (UserVerificationRequirement.REQUIRED if art == "required"
+        kind = str(getattr(cfg, "passkey_user_verification", "required") or "required")
+        return (UserVerificationRequirement.REQUIRED if kind == "required"
                 else UserVerificationRequirement.PREFERRED)
 
     if str(getattr(cfg, "passkey_user_verification", "required")) != "required":
@@ -61,7 +61,7 @@ def register_passkey_routes(router, auth):
     def _set_flow_cookie(resp, fk):
         # `__Host-` in front, where possible (A-1): a flow cookie planted by a neighboring subdomain
         # attached the victim to the attacker's challenge.
-        auth._flow_cookie_setzen(resp, _WAFLOW, fk, max_age=300)
+        auth._set_flow_cookie(resp, _WAFLOW, fk, max_age=300)
 
     # ---------- Registration (signed-in user) ----------
     @router.post("/auth/passkey/register/begin")
@@ -69,7 +69,7 @@ def register_passkey_routes(router, auth):
         auth.require_csrf(request, request.headers.get("x-csrf-token"))
         # CREATING a passkey requires an interactive session. `current_user()` was not enough
         # here: it accepts an API key, and for a real key the
-        # CSRF check does not apply anyway (`_csrf_entbehrlich`). A leaked CI key thereby registered
+        # CSRF check does not apply anyway (`_csrf_dispensable`). A leaked CI key thereby registered
         # a passkey OF ITS OWN — and a passkey is a full login: through it
         # the key got a fresh interactive session and suddenly stood in front of exactly the
         # `require_mfa()` routes that have locked it out since R3-3. The creation was the
@@ -82,7 +82,7 @@ def register_passkey_routes(router, auth):
             user_display_name=u["display_name"] or u["username"],
             authenticator_selection=AuthenticatorSelectionCriteria(
                 resident_key=ResidentKeyRequirement.PREFERRED,
-                user_verification=_uv_anforderung(cfg)),
+                user_verification=_uv_request(cfg)),
             exclude_credentials=[PublicKeyCredentialDescriptor(id=base64url_to_bytes(c["credential_id"]))
                                  for c in existing],
         )
@@ -124,7 +124,7 @@ def register_passkey_routes(router, auth):
         resp = JSONResponse({"ok": True, "other_sessions": auth.count_other_sessions(request, u)})  # B1-7
         # The flow is consumed (pop_flow) — the cookie for it binds nothing any more and would only
         # keep going along to every app (B-20). OIDC and SAML delete theirs on the way back as well.
-        auth._flow_cookie_loeschen(resp, _WAFLOW)
+        auth._delete_flow_cookie(resp, _WAFLOW)
         return resp
 
     # ---------- Passwordless login (discoverable credential) ----------
@@ -137,7 +137,7 @@ def register_passkey_routes(router, auth):
         if not auth._rate_ok(auth.client_ip(request)):
             raise HTTPException(429, auth.t("err.rate"))
         opts = generate_authentication_options(rp_id=cfg.rp_id,
-                                               user_verification=_uv_anforderung(cfg))
+                                               user_verification=_uv_request(cfg))
         fk = secrets.token_urlsafe(24)
         auth.store.put_flow("walogin:" + fk, {"challenge": bytes_to_base64url(opts.challenge)}, ttl=300)
         resp = Response(content=options_to_json(opts), media_type="application/json")
@@ -151,8 +151,8 @@ def register_passkey_routes(router, auth):
         flow = auth.store.pop_flow("walogin:" + fk) if fk else None
         if not flow:
             raise HTTPException(400, auth.t("api.passkey_login_expired"))
-        ip_roh = auth.client_ip(request)
-        if not auth._rate_ok(ip_roh):
+        ip_raw = auth.client_ip(request)
+        if not auth._rate_ok(ip_raw):
             raise HTTPException(429, auth.t("err.rate"))
         body = await request.body()
         data = _json.loads(body)
@@ -163,9 +163,9 @@ def register_passkey_routes(router, auth):
             # passkey path left no trace at all: neither creation nor deletion nor failed sign-in
             # (B2-10, B5-01). Whoever probed here did so unobserved.
             security.seclog.warning("%s user=%s ip=%s method=passkey reason=unknown_key",
-                                    security.log_ereignis("passkey"), "?",
-                                    security.fuer_log(ip_roh))
-            auth.audit("passkey_unknown", None, ip_roh)
+                                    security.log_event("passkey"), "?",
+                                    security.for_log(ip_raw))
+            auth.audit("passkey_unknown", None, ip_raw)
             raise HTTPException(400, auth.t("api.passkey_unknown"))
         try:
             v = verify_authentication_response(
@@ -181,12 +181,12 @@ def register_passkey_routes(router, auth):
             # Signature wrong, challenge old, user verification refused — all the same for the
             # attacker, not for the log. The exception type suffices: its text can carry the
             # content of the request and thus does not belong in a line that fail2ban reads.
-            besitzer = auth.store.get_user(row["user_id"])
+            owner = auth.store.get_user(row["user_id"])
             security.seclog.warning("%s user=%s ip=%s method=passkey reason=%s",
-                                    security.log_ereignis("passkey"),
-                                    security.fuer_log(str(besitzer["username"]) if besitzer else "?"),
-                                    security.fuer_log(ip_roh), type(e).__name__)
-            auth.audit("passkey_failed", str(besitzer["username"]) if besitzer else None, ip_roh,
+                                    security.log_event("passkey"),
+                                    security.for_log(str(owner["username"]) if owner else "?"),
+                                    security.for_log(ip_raw), type(e).__name__)
+            auth.audit("passkey_failed", str(owner["username"]) if owner else None, ip_raw,
                        f"reason={type(e).__name__}")
             raise HTTPException(400, auth.t("api.passkey_unknown"))
         auth.store.update_webauthn_signcount(row["id"], v.new_sign_count)
@@ -199,7 +199,7 @@ def register_passkey_routes(router, auth):
         resp = JSONResponse({"ok": True, "redirect": target})
         if is_new:
             auth.set_cookie(resp, token)
-        auth._flow_cookie_loeschen(resp, _WAFLOW)   # flow consumed, see reg_finish
+        auth._delete_flow_cookie(resp, _WAFLOW)   # flow consumed, see reg_finish
         return resp
 
     # ---------- Management ----------
@@ -221,12 +221,12 @@ def register_passkey_routes(router, auth):
         # An integer or a digit string, otherwise 400. `int()` alone took `true` as
         # passkey 1 and `1.9` as 1, and `1e400`/`Infinity` (json.loads: float('inf')) raised
         # OverflowError — HTTP 500 instead of the promised 400.
-        roh = b.get("id")
-        if isinstance(roh, str) and roh.isascii() and roh.isdigit():
-            roh = int(roh)
-        if isinstance(roh, bool) or not isinstance(roh, int):
+        raw = b.get("id")
+        if isinstance(raw, str) and raw.isascii() and raw.isdigit():
+            raw = int(raw)
+        if isinstance(raw, bool) or not isinstance(raw, int):
             raise HTTPException(400, auth.t("api.invalid", reason="id"))
-        passkey_id = roh
+        passkey_id = raw
         # Deletion, audit line (B5-01) and `passkey_removed` in one — the same path as the
         # revocation in the admin panel (integration finding 3). A passkey the account does not have
         # is 404 and leaves neither line nor event.

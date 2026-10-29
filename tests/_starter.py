@@ -16,7 +16,7 @@ variable. The parameters are lowered HERE, in the test process, by monkeypatch; 
 `tests/test_runner.py` pins both. Whoever starts a suite directly (`python tests/test_x.py`)
 computes with the production values, and so does every subprocess a suite starts.
 
-EXCEPTIONS (`PRODUKTIONSWERTE`): suites that check the parameters or the runtime of the hashing
+EXCEPTIONS (`PRODUCTION_VALUES`): suites that check the parameters or the runtime of the hashing
 THEMSELVES run with the real values — with lowered ones their checks would be empty (a dummy
 verify that costs nothing is indistinguishable from "no dummy verify"). Which suite belongs
 here is decided by a guard in `tests/test_runner.py` from the source text of the suites, not
@@ -33,7 +33,7 @@ import runpy
 import sys
 
 #: Suite → reason. These suites compute with the production values.
-PRODUKTIONSWERTE = {
+PRODUCTION_VALUES = {
     "test_legacy_data.py": "prüft die scrypt-Parameter selbst (Altformat 0.17.0, needs_rehash)",
     "test_hardening2.py": "misst, dass der Dummy-Verify so lange rechnet wie ein echter Verify",
 }
@@ -44,10 +44,10 @@ SCRYPT_TEST = {"n": 2 ** 4, "r": 8, "p": 1}
 #: argon2 in the test run: the smallest argon2 allows (m = 8 KiB at p = 1), one round.
 ARGON2_TEST = {"time_cost": 1, "memory_cost": 8, "parallelism": 1}
 
-MODUL = "tinysesam.passwords"
+MODULE = "tinysesam.passwords"
 
 
-def absenken(passwords) -> None:
+def lower(passwords) -> None:
     """Lower the parameters of a freshly loaded `tinysesam.passwords` — in this process."""
     passwords._SCRYPT = {**passwords._SCRYPT, **SCRYPT_TEST}
     if passwords._ARGON:
@@ -57,21 +57,21 @@ def absenken(passwords) -> None:
     passwords._DUMMY = passwords.hash_password("tinysesam-timing-dummy")
 
 
-class _NachDemLaden:
+class _AfterTheLoad:
     """Import hook: loads `tinysesam.passwords` as usual and lowers the parameters afterwards."""
 
-    def find_spec(self, name, pfad=None, ziel=None):
-        if name != MODUL:
+    def find_spec(self, name, path=None, destination=None):
+        if name != MODULE:
             return None
         sys.meta_path.remove(self)                 # once is enough; otherwise it would find itself
         for finder in sys.meta_path:
-            spec = finder.find_spec(name, pfad, ziel) if hasattr(finder, "find_spec") else None
+            spec = finder.find_spec(name, path, destination) if hasattr(finder, "find_spec") else None
             if spec is not None and spec.loader is not None:
-                laden = spec.loader.exec_module
+                load = spec.loader.exec_module
 
-                def exec_module(modul, _laden=laden):
-                    _laden(modul)
-                    absenken(modul)
+                def exec_module(module, _load=load):
+                    _load(module)
+                    lower(module)
                 spec.loader.exec_module = exec_module
                 return spec
         return None
@@ -84,11 +84,11 @@ def main(argv: list[str]) -> None:
     # Like a direct start: sys.argv[0] is the suite, its directory is first on the path.
     sys.argv = [suite, *argv[1:]]
     sys.path[0] = os.path.dirname(suite)
-    if os.path.basename(suite) not in PRODUKTIONSWERTE:
-        if MODUL in sys.modules:                   # pragma: no cover — nobody imports it here
-            absenken(sys.modules[MODUL])
+    if os.path.basename(suite) not in PRODUCTION_VALUES:
+        if MODULE in sys.modules:                   # pragma: no cover — nobody imports it here
+            lower(sys.modules[MODULE])
         else:
-            sys.meta_path.insert(0, _NachDemLaden())
+            sys.meta_path.insert(0, _AfterTheLoad())
     runpy.run_path(suite, run_name="__main__")
 
 

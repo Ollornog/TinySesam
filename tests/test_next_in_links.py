@@ -34,7 +34,7 @@ fa = FastAPI()
 fa.include_router(auth.router())
 c = TestClient(fa)
 
-ZIELE = [
+DESTINATIONS = [
     APP + "/a;b.pdf",
     APP + "/a%3Bb.pdf",
     APP + "/Tom&amp;Jerry.pdf",
@@ -53,48 +53,48 @@ auth_pk = TinySesam(TinySesamConfig(
     passkey_enabled=True, oidc_enabled=False, cookie_secure=False, base_url="https://auth.example.com"))
 
 
-def seite_pk(ziel):
-    return auth_pk.render_page("login", next=ziel).body.decode("utf-8")
+def page_html_pk(destination):
+    return auth_pk.render_page("login", next=destination).body.decode("utf-8")
 
 
-def links(seite):
+def links(page_html):
     """The `next` value of every link/script string on the login page — decoded the way a server decodes a query."""
-    treffer = re.findall(r"""(?:href='[^']*[?&]next=([^'&]*)'|finish\?next=([^'"&\s]*))""", seite)
-    return [parse_qs("next=" + unescape(a or b), keep_blank_values=True)["next"][0] for a, b in treffer]
+    hit = re.findall(r"""(?:href='[^']*[?&]next=([^'&]*)'|finish\?next=([^'"&\s]*))""", page_html)
+    return [parse_qs("next=" + unescape(a or b), keep_blank_values=True)["next"][0] for a, b in hit]
 
 
-for ziel in ZIELE:
-    seite = c.get("/auth/login", params={"next": ziel}).text
-    gefunden = links(seite)
+for destination in DESTINATIONS:
+    page_html = c.get("/auth/login", params={"next": destination}).text
+    found = links(page_html)
     # magic link and register link
-    assert len(gefunden) == 2, (ziel, gefunden)
-    assert all(g == ziel for g in gefunden), (ziel, gefunden)
-    skript = links(seite_pk(ziel))
-    assert len(skript) == 1 and skript[0] == ziel, (ziel, skript)
-ok(f"{len(ZIELE)} targets with ; %3B &amp; & + % # quotes: every link and the passkey script carry them unchanged")
+    assert len(found) == 2, (destination, found)
+    assert all(g == destination for g in found), (destination, found)
+    script = links(page_html_pk(destination))
+    assert len(script) == 1 and script[0] == destination, (destination, script)
+ok(f"{len(DESTINATIONS)} targets with ; %3B &amp; & + % # quotes: every link and the passkey script carry them unchanged")
 
 # The way the browser goes: take the link from the page, follow it, read the target the next page puts into its form.
-for ziel in ZIELE[:5]:
-    seite = c.get("/auth/login", params={"next": ziel}).text
-    href = unescape(re.search(r"href='(__TS_P__)?(/auth/register\?next=[^']*)'", seite.replace("__TS_P__", "")).group(2))
-    folge = c.get(href).text
-    wert = unescape(re.search(r"name=next value='([^']*)'", folge).group(1))
-    assert wert == ziel, (ziel, wert)
+for destination in DESTINATIONS[:5]:
+    page_html = c.get("/auth/login", params={"next": destination}).text
+    href = unescape(re.search(r"href='(__TS_P__)?(/auth/register\?next=[^']*)'", page_html.replace("__TS_P__", "")).group(2))
+    sequence = c.get(href).text
+    value = unescape(re.search(r"name=next value='([^']*)'", sequence).group(1))
+    assert value == destination, (destination, value)
 ok("the register page reached through the link has the same target in its form (round trip)")
 
 # Encoding must not loosen the open-redirect check: decoded, a foreign target is still refused.
-for boese in ["https://evil.example/x", "//evil.example/x", "https://app.example.com.evil.example/x", "\\\\evil"]:
-    seite = c.get("/auth/login", params={"next": boese}).text
-    gefunden = links(seite)
-    assert gefunden, boese
-    for g in gefunden:
-        assert g == "/", (boese, g)
+for evil in ["https://evil.example/x", "//evil.example/x", "https://app.example.com.evil.example/x", "\\\\evil"]:
+    page_html = c.get("/auth/login", params={"next": evil}).text
+    found = links(page_html)
+    assert found, evil
+    for g in found:
+        assert g == "/", (evil, g)
 ok("foreign hosts, // and backslash: the page never offers them in a link (still `/`)")
 
 # And the characters themselves are encoded, not only decodable by luck: nothing but [A-Za-z0-9_.~%-] after `next=`.
-seite = c.get("/auth/login", params={"next": ZIELE[3]}).text
-roh = re.findall(r"""next=([^'"\s]*)""", seite)
-assert roh and all(re.fullmatch(r"[A-Za-z0-9_.~%-]*", r) for r in roh), roh
+page_html = c.get("/auth/login", params={"next": DESTINATIONS[3]}).text
+raw = re.findall(r"""next=([^'"\s]*)""", page_html)
+assert raw and all(re.fullmatch(r"[A-Za-z0-9_.~%-]*", r) for r in raw), raw
 ok("the value after `next=` is plain percent-encoding — safe in an attribute and in a script string")
 
 print("next in links OK")

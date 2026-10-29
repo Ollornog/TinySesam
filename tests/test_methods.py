@@ -56,45 +56,45 @@ print("  ✓ Login-Seite: Passwort-Form + OIDC-Button + Passkey-Button")
 # disappears because its absence changes nothing in normal operation.
 FLOW = "tinysesam_waflow"
 a_id = auth.create_user("konto_a", password="Geheim12345!")
-b_id = auth.create_user("konto_b", password="Geheim12345!")
+b_id = auth.create_user("account_b", password="Geheim12345!")
 
 
 def ok_(name):
     print(f"  ✓ {name}")
 
 
-def _sitzung(uid):
+def _session(uid):
     cx = TestClient(app, raise_server_exceptions=False)
     cx.cookies.set(auth.cfg.session_cookie, auth.store.create_session(uid, 3600, True, "password"))
     return cx
 
 
-c_a = _sitzung(a_id)
+c_a = _session(a_id)
 r_begin = c_a.post("/auth/passkey/register/begin")
 assert r_begin.status_code == 200, r_begin.text[:150]
 flow_a = c_a.cookies.get(FLOW)
 assert flow_a, "register/begin sets no flow cookie — then the attack below plants nothing"
 
 # The attack: B is signed in and brings the flow of A along.
-c_b = _sitzung(b_id)
+c_b = _session(b_id)
 c_b.cookies.set(FLOW, flow_a)
-r_fremd = c_b.post("/auth/passkey/register/finish", json={})
-assert r_fremd.status_code == 400, (
-    f"foreign flow → HTTP {r_fremd.status_code}: {r_fremd.text[:150]!r} — without the bolt "
+r_foreign = c_b.post("/auth/passkey/register/finish", json={})
+assert r_foreign.status_code == 400, (
+    f"foreign flow → HTTP {r_foreign.status_code}: {r_foreign.text[:150]!r} — without the bolt "
     "the registration continues and the passkey lands on the wrong account")
-assert r_fremd.json().get("detail") == auth.t("api.passkey_reg_expired"), r_fremd.text[:150]
+assert r_foreign.json().get("detail") == auth.t("api.passkey_reg_expired"), r_foreign.text[:150]
 assert auth.store.list_webauthn(a_id) == [], "a passkey was added to A"
 assert auth.store.list_webauthn(b_id) == [], "a passkey was added to B"
 
 # Counter-check: with the OWN flow the same (empty) body fails at a different point —
 # otherwise “400 for everyone” would be green too and the bolt not measured at all.
-c_a2 = _sitzung(a_id)
+c_a2 = _session(a_id)
 assert c_a2.post("/auth/passkey/register/begin").status_code == 200
-r_eigen = c_a2.post("/auth/passkey/register/finish", json={})
-assert not (r_eigen.status_code == 400
-            and r_eigen.json().get("detail") == auth.t("api.passkey_reg_expired")), (
+r_own = c_a2.post("/auth/passkey/register/finish", json={})
+assert not (r_own.status_code == 400
+            and r_own.json().get("detail") == auth.t("api.passkey_reg_expired")), (
     "the own flow is rejected just like the foreign one — then the check above only measures "
-    f"that finish() fails with an empty body (HTTP {r_eigen.status_code})")
+    f"that finish() fails with an empty body (HTTP {r_own.status_code})")
 print("  ✓ register/finish: foreign flow → 400, no passkey on either account")
 
 # ---------- B2-10: a passkey without user verification is not a full login ----------
@@ -105,7 +105,7 @@ print("  ✓ register/finish: foreign flow → 400, no passkey on either account
 import json as _json_b210                                                  # noqa: E402
 from tinysesam.errors import ConfigError as _ConfigError                    # noqa: E402
 
-_opt_reg = _json_b210.loads(_sitzung(a_id).post("/auth/passkey/register/begin").text)
+_opt_reg = _json_b210.loads(_session(a_id).post("/auth/passkey/register/begin").text)
 assert _opt_reg["authenticatorSelection"]["userVerification"] == "required", _opt_reg["authenticatorSelection"]
 _opt_log = _json_b210.loads(c.post("/auth/passkey/login/begin").text)
 assert _opt_log["userVerification"] == "required", _opt_log
@@ -162,17 +162,17 @@ _auth_l = TinySesam(TinySesamConfig(db_path=_db_l, csrf_enabled=False, cookie_se
                                     origin="http://localhost:8000"))
 _app_l = FastAPI()
 _app_l.include_router(_auth_l.router())
-_puffer_b = _io_b210.StringIO()
-_haken_b = _logging_b210.StreamHandler(_puffer_b)
-_sec_b210.seclog.addHandler(_haken_b)
+_buffer_b = _io_b210.StringIO()
+_check_b = _logging_b210.StreamHandler(_buffer_b)
+_sec_b210.seclog.addHandler(_check_b)
 try:
     _c_l = TestClient(_app_l)
     _c_l.post("/auth/passkey/login/begin")
     _c_l.post("/auth/passkey/login/finish", content=_json_b210.dumps({"id": "gibtsnicht"}))
 finally:
-    _sec_b210.seclog.removeHandler(_haken_b)
-_text_b = _puffer_b.getvalue()
-assert _sec_b210.log_ereignis("passkey") in _text_b, f"no jail line: {_text_b[:200]!r}"
+    _sec_b210.seclog.removeHandler(_check_b)
+_text_b = _buffer_b.getvalue()
+assert _sec_b210.log_event("passkey") in _text_b, f"no jail line: {_text_b[:200]!r}"
 assert "reason=unknown_key" in _text_b, _text_b[:200]
 assert any(e["event"] == "passkey_unknown" for e in _auth_l.store.recent_audit(limit=10))
 ok_("B2-10: a failed passkey sign-in is in the log and hits the jail")

@@ -24,7 +24,7 @@ def build(**cfgkw):
     app.include_router(auth.router())
 
     @app.get("/geheim")
-    def geheim(u=Depends(auth.require_user)):
+    def secret_text(u=Depends(auth.require_user)):
         return {"u": u["username"]}
 
     return db, auth, app, sent, TestClient(app)
@@ -86,8 +86,8 @@ ok("signup_verify_email: own endpoint /auth/verify/{token}, redeemable once")
 # B5-18: An invalid token leaves a trace (audit + security log, NOT the login jail)
 import logging, io
 from tinysesam import security as _sec
-_puffer = io.StringIO()
-_h = logging.StreamHandler(_puffer)
+_buffer = io.StringIO()
+_h = logging.StreamHandler(_buffer)
 _sec.seclog.addHandler(_h)
 try:
     c.get("/auth/verify/erfunden-123", follow_redirects=False)
@@ -95,26 +95,26 @@ finally:
     _sec.seclog.removeHandler(_h)
 _zeilen = auth.store._all("SELECT * FROM audit WHERE event='token_invalid'")
 assert _zeilen and "verify_email" in (_zeilen[0]["detail"] or ""), _zeilen
-assert "failed verification" in _puffer.getvalue() and "failed login" not in _puffer.getvalue(), _puffer.getvalue()
+assert "failed verification" in _buffer.getvalue() and "failed login" not in _buffer.getvalue(), _buffer.getvalue()
 ok("B5-18: invalid one-time token → audit token_invalid + `failed verification` (no login jail)")
 os.remove(db)
 
 # ---------- R4-03: a taken address answers like a free one (with confirmation) ----------
 db, auth, app, sent, c = build(allow_signup=True, signup_verify_email=True)
 auth.create_user("inhaber", password="supergeheim-lang-genug", email="da@example.com")
-frei = c.post("/auth/register", data={"username": "neu1", "password": "supergeheim-lang-genug",
+free = c.post("/auth/register", data={"username": "neu1", "password": "supergeheim-lang-genug",
                                       "email": "frei@example.com", "next": "/"})
-vergeben = c.post("/auth/register", data={"username": "neu2", "password": "supergeheim-lang-genug",
+grant = c.post("/auth/register", data={"username": "neu2", "password": "supergeheim-lang-genug",
                                           "email": "Da@Example.com", "next": "/"})
-assert frei.status_code == vergeben.status_code == 200, (frei.status_code, vergeben.status_code)
-_rumpf = lambda t: re.sub(r"(nonce|value)=['\"][^'\"]*['\"]", "", t)
-assert _rumpf(frei.text) == _rumpf(vergeben.text), "response differs — enumeration"
+assert free.status_code == grant.status_code == 200, (free.status_code, grant.status_code)
+_body = lambda t: re.sub(r"(nonce|value)=['\"][^'\"]*['\"]", "", t)
+assert _body(free.text) == _body(grant.text), "response differs — enumeration"
 assert auth.store.get_user_by_email("da@example.com")["username"] == "inhaber", "no second account for the address"
 _ph = auth.store.get_user_by_name("neu2")   # A1: name taken as with real creation, but locked and without address
 assert _ph is not None and _ph["disabled"] == 1 and not _ph["email"], dict(_ph) if _ph else None
-_an_inhaber = [m for m in sent if m["to"] == "da@example.com"]
-assert len(_an_inhaber) == 1 and "/auth/verify/" not in _an_inhaber[0]["text"] \
-    and "https://auth.example.com/auth/login" in _an_inhaber[0]["text"], _an_inhaber
+_an_holder = [m for m in sent if m["to"] == "da@example.com"]
+assert len(_an_holder) == 1 and "/auth/verify/" not in _an_holder[0]["text"] \
+    and "https://auth.example.com/auth/login" in _an_holder[0]["text"], _an_holder
 ok("R4-03: taken address → same response, owner gets a notice (without token)")
 # Without confirmation the success case signs in immediately — there 409 remains (limit, named in the code)
 db2, auth2, app2, sent2, c2 = build(allow_signup=True)
@@ -127,9 +127,9 @@ os.remove(db)
 
 # ---------- B6-5: if sending the confirmation fails, no zombie account and no 500 remains ----------
 db, auth, app, sent, c = build(allow_signup=True, signup_verify_email=True)
-def _kaputt(*a, **k):
+def _broken(*a, **k):
     raise OSError("Mailserver weg")
-auth.set_mailer(_kaputt)
+auth.set_mailer(_broken)
 cx = TestClient(app, raise_server_exceptions=False)
 r = cx.post("/auth/register", data={"username": "pech", "password": "supergeheim-lang-genug",
                                     "email": "pech@example.com", "next": "/"})
@@ -151,20 +151,20 @@ c.post("/auth/register", data={"username": "squatter", "password": "supergeheim-
                                "email": "opfer@example.com", "next": "/"})
 sq = auth.store.get_user_by_name("squatter")["id"]
 # Counter-check 1: an existing account locked by the admin without a confirmation token
-alt = auth.create_user("gesperrt", password="supergeheim-lang-genug", email="g@example.com")
-auth.store.set_disabled(alt, True)
+old = auth.create_user("gesperrt", password="supergeheim-lang-genug", email="g@example.com")
+auth.store.set_disabled(old, True)
 # Counter-check 2: a confirmed and later locked account (redeemed token alongside)
 c.post("/auth/register", data={"username": "echt", "password": "supergeheim-lang-genug",
                                "email": "echt@example.com", "next": "/"})
-echt = auth.store.get_user_by_name("echt")["id"]
+real = auth.store.get_user_by_name("echt")["id"]
 _tok = re.search(r"/auth/verify/([\w\-]+)", sent[-1]["text"]).group(1)
 assert auth.redeem_magic(_tok, purpose="verify_email")
 auth.store._exec("UPDATE magic_token SET expires_at=0")
-auth.store.set_disabled(echt, True)
+auth.store.set_disabled(real, True)
 assert auth.gc()["unverified_accounts"] == 1
 assert auth.store.get_user(sq) is None, "never-confirmed account removed after expiry"
-assert auth.store.get_user(alt) is not None, "locked existing account remains"
-assert auth.store.get_user(echt) is not None, "confirmed account remains"
+assert auth.store.get_user(old) is not None, "locked existing account remains"
+assert auth.store.get_user(real) is not None, "confirmed account remains"
 assert c.post("/auth/register", data={"username": "richtig", "password": "supergeheim-lang-genug",
                                       "email": "opfer@example.com", "next": "/"}).status_code == 200
 assert auth.store.get_user_by_name("richtig") is not None, "the address is free again"
@@ -175,14 +175,14 @@ os.remove(db)
 # Before, the registration checked the address BEFORE the name: taken name + taken address
 # → 200, taken name + free address → 409. And a throwaway name revealed on the second attempt
 # by 409 whether the first had created an account.
-for _modus in ("both", "username"):
-    db, auth, app, sent, c = build(allow_signup=True, signup_verify_email=True, login_identifier=_modus)
+for _mode in ("both", "username"):
+    db, auth, app, sent, c = build(allow_signup=True, signup_verify_email=True, login_identifier=_mode)
     auth.create_user("opfer", password="supergeheim-lang-genug", email="vergeben@example.com")
     _reg = lambda n, e: c.post("/auth/register", data={"username": n, "password": "supergeheim-lang-genug",
                                                        "email": e, "next": "/"}).status_code
-    assert _reg("admin", "vergeben@example.com") == _reg("admin", "frei@example.com") == 409, _modus
-    assert _reg("zz1", "vergeben@example.com") == _reg("zz2", "frei2@example.com") == 200, _modus
-    assert _reg("zz1", "zz1@probe.example") == _reg("zz2", "zz2@probe.example") == 409, _modus
+    assert _reg("admin", "vergeben@example.com") == _reg("admin", "frei@example.com") == 409, _mode
+    assert _reg("zz1", "vergeben@example.com") == _reg("zz2", "frei2@example.com") == 200, _mode
+    assert _reg("zz1", "zz1@probe.example") == _reg("zz2", "zz2@probe.example") == 409, _mode
     # The address in the name field (foreign address) revealed the same via the cross check
     assert _reg("vergeben@example.com", "x1@probe.example") == _reg("frei3@example.com", "x2@probe.example") == 400
     assert auth.store._exec("SELECT COUNT(*) FROM users WHERE email='vergeben@example.com'").fetchone()[0] == 1
@@ -208,13 +208,13 @@ auth.create_user("opfer", password="supergeheim-lang-genug", email="opfer@exampl
 for _i in range(5):
     c.post("/auth/register", data={"username": f"angr{_i}", "password": "supergeheim-lang-genug",
                                    "email": "opfer@example.com", "next": "/"})
-_hinweise = [m for m in sent if m["to"] == "opfer@example.com"]
-assert len(_hinweise) == 3, len(_hinweise)          # the notices themselves remain throttled
+_notices = [m for m in sent if m["to"] == "opfer@example.com"]
+assert len(_notices) == 3, len(_notices)          # the notices themselves remain throttled
 _n = len(sent)
 assert c.post("/auth/forgot", data={"email": "opfer@example.com"}).status_code == 200
 assert c.post("/auth/magic/request", data={"email": "opfer@example.com", "next": "/"}).status_code == 200
-_neu = sent[_n:]
-assert len(_neu) == 2 and "/auth/reset" in _neu[0]["text"] and "/auth/magic/" in _neu[1]["text"], _neu
+_new = sent[_n:]
+assert len(_new) == 2 and "/auth/reset" in _new[0]["text"] and "/auth/magic/" in _new[1]["text"], _new
 os.remove(db)
 ok("A2: notices triggered by others do not block the owner's reset and sign-in link")
 
@@ -223,8 +223,8 @@ db, auth, app, sent, c = build(allow_signup=True, signup_verify_email=True, magi
                                password_reset_enabled=True)
 import logging as _logging, io as _io
 from tinysesam import security as _sec2
-_puffer = _io.StringIO()
-_h = _logging.StreamHandler(_puffer)
+_buffer = _io.StringIO()
+_h = _logging.StreamHandler(_buffer)
 _sec2.seclog.addHandler(_h)
 try:
     for _i in range(200):
@@ -234,18 +234,18 @@ finally:
 _z = lambda ev: auth.store._exec("SELECT COUNT(*) FROM audit WHERE event=?", (ev,)).fetchone()[0]
 assert _z("token_invalid") == auth._TOKEN_AUDIT_MAX, _z("token_invalid")
 assert _z("token_invalid_throttled") == 1, "exactly one row when the cap applies"
-assert _puffer.getvalue().count("failed verification") == 200, "the security log (fail2ban) sees everything"
+assert _buffer.getvalue().count("failed verification") == 200, "the security log (fail2ban) sees everything"
 # GET /auth/reset without a token is not a presented link — no entry, no log line
 db2, auth2, app2, sent2, c2 = build(password_reset_enabled=True)
-_puffer = _io.StringIO()
-_h = _logging.StreamHandler(_puffer)
+_buffer = _io.StringIO()
+_h = _logging.StreamHandler(_buffer)
 _sec2.seclog.addHandler(_h)
 try:
     assert c2.get("/auth/reset").status_code == 400
 finally:
     _sec2.seclog.removeHandler(_h)
 assert auth2.store._exec("SELECT COUNT(*) FROM audit WHERE event='token_invalid'").fetchone()[0] == 0
-assert "failed verification" not in _puffer.getvalue()
+assert "failed verification" not in _buffer.getvalue()
 os.remove(db); os.remove(db2)
 ok("A3: token_invalid in the audit log globally capped (+1 notice row), /auth/reset without token no false alarm")
 

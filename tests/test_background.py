@@ -24,25 +24,25 @@ def auth(**kw):
                                      db_path=os.path.join(tempfile.mkdtemp(), "t.db"), **kw))
 
 
-def seite(a, pfad="/auth/login"):
+def page_html(a, path="/auth/login"):
     app = FastAPI(); app.include_router(a.router())
-    return TestClient(app).get(pfad)
+    return TestClient(app).get(path)
 
 
-r = seite(auth())
+r = page_html(auth())
 assert re.search(r"<link rel=icon href='data:image/svg\+xml;base64,[A-Za-z0-9+/=]+'>", r.text)
 assert "tsbg" not in r.text and "bilder.example.com" not in r.headers.get("content-security-policy", "")
 ok("without setting: built-in favicon, no background, CSP unchanged")
-assert "rel=icon" not in seite(auth(brand_icon="none")).text
+assert "rel=icon" not in page_html(auth(brand_icon="none")).text
 ok("brand_icon='none' switches the favicon off")
 
-BILDER = ["https://bilder.example.com/a.jpg?w=1920&q=60", "/bg/b.jpg", "https://cdn.example.com/c.jpg"]
-r = seite(auth(brand_backgrounds=BILDER, brand_background_credit_text="Fotos: Beispiel",
+IMAGES = ["https://bilder.example.com/a.jpg?w=1920&q=60", "/bg/b.jpg", "https://cdn.example.com/c.jpg"]
+r = page_html(auth(brand_backgrounds=IMAGES, brand_background_credit_text="Fotos: Beispiel",
                brand_background_credit_url="https://example.com/"))
 h = r.text
 assert h.count("<i></i>") == 3 and "<div class=tsbg aria-hidden=true>" in h
 assert "style=" not in h.split("<body>", 1)[1], "inline style in the body — the strict CSP blocks that"
-for k, b in enumerate(BILDER, 1):
+for k, b in enumerate(IMAGES, 1):
     assert f".tsbg i:nth-child({k}){{background-image:url('{b}')" in h, b
 assert "@keyframes tsbg" in h and "prefers-reduced-motion:reduce" in h
 assert "<a class=tsbg-quelle href='https://example.com/' target=_blank rel='noopener noreferrer'>Fotos: Beispiel</a>" in h
@@ -52,23 +52,23 @@ assert "img-src 'self' data: https://bilder.example.com https://cdn.example.com;
 assert "script-src 'nonce-" in csp and "'unsafe-inline'" not in csp
 ok("CSP: img-src extended by exactly the two foreign origins, otherwise strict as before")
 
-h1 = seite(auth(brand_backgrounds=["/bg/eins.jpg"])).text
+h1 = page_html(auth(brand_backgrounds=["/bg/eins.jpg"])).text
 assert "@keyframes" not in h1 and ".tsbg i{opacity:var(--ts-image-strength)}" in h1
 ok("one image: stands still, without animation")
 
-for boese in ("https://x.example/a.jpg') ;}body{display:none", "javascript:alert(1)", "//x.example/a.jpg", "a b.jpg"):
+for evil in ("https://x.example/a.jpg') ;}body{display:none", "javascript:alert(1)", "//x.example/a.jpg", "a b.jpg"):
     try:
-        auth(brand_backgrounds=[boese]); assert False, boese
+        auth(brand_backgrounds=[evil]); assert False, evil
     except Exception as e:
-        assert "brand_backgrounds" in str(e), (boese, e)
-for boese in ("javascript:alert(1)",):
+        assert "brand_backgrounds" in str(e), (evil, e)
+for evil in ("javascript:alert(1)",):
     try:
-        auth(brand_background_credit_text="x", brand_background_credit_url=boese); assert False
+        auth(brand_background_credit_text="x", brand_background_credit_url=evil); assert False
     except Exception as e:
         assert "credit_url" in str(e)
 ok("configuration: CSS breakout, javascript:, //, whitespace and a javascript: link are rejected")
 
-h = seite(auth(brand_backgrounds=["/a.jpg"], brand_background_credit_text="<b>x</b>",
+h = page_html(auth(brand_backgrounds=["/a.jpg"], brand_background_credit_text="<b>x</b>",
                brand_background_credit_url="https://e.example/?a=1&b=2")).text
 assert "<b>x</b>" not in h and "&lt;b&gt;x&lt;/b&gt;" in h and "a=1&amp;b=2" in h
 ok("Quellenhinweis maskiert")

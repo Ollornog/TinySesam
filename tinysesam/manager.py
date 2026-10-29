@@ -29,19 +29,19 @@ from fastapi import Request, HTTPException
 from fastapi.responses import HTMLResponse
 from starlette.responses import Response
 
-from . import _vokabular
+from . import _vocabulary
 from . import config_check
 from .errors import ConfigError, StateError
 from .config import TinySesamConfig
-from .store import (Store, key_kind_of, name_ungueltig, norm_email, norm_kennung, jetzt as _jetzt,
-                    payload_lesen, valid_email, versuchsfrist as _versuchsfrist)
+from .store import (Store, key_kind_of, name_invalid, norm_email, norm_identifier, now as _now,
+                    read_payload, valid_email, attempt_deadline as _attempt_deadline)
 from .passwords import hash_password, verify_password, needs_rehash, dummy_verify
 from . import passwords as _passwords
 from . import passwords as _pw
-from .templates import PRAEFIX_PLATZHALTER as _PRAEFIX_PLATZHALTER, Templates, inject_nonce as _inject_nonce
+from .templates import PREFIX_PLACEHOLDER as _PREFIX_PLACEHOLDER, Templates, inject_nonce as _inject_nonce
 from . import totp as _totp
 from . import security
-from .ldap_ import VERBINDUNGS_TIMEOUT as _LDAP_TIMEOUT
+from .ldap_ import CONNECTION_TIMEOUT as _LDAP_TIMEOUT
 from ._deprecated import Deprecated
 from .login_result import LoginResult
 from .password_change_result import PasswordChangeResult
@@ -54,7 +54,7 @@ from .password_change_result import PasswordChangeResult
 #: is set where TinySesam resolves the request anyway (`current_user` and
 #: related methods); `audit()` reads it. A ContextVar, not an instance variable: it applies per
 #: request (per asyncio task or per thread-pool call) and cannot leak into a parallel one.
-_ANFRAGE: contextvars.ContextVar = contextvars.ContextVar("tinysesam_anfrage", default=None)
+_REQUEST: contextvars.ContextVar = contextvars.ContextVar("tinysesam_anfrage", default=None)
 
 
 # Sets nonce="…" in every <script>/<style> that has none yet. Central, instead of threading the
@@ -62,22 +62,22 @@ _ANFRAGE: contextvars.ContextVar = contextvars.ContextVar("tinysesam_anfrage", d
 # string "<script"/"<style" INSIDE a JS string (checked) — only real tags.
 
 
-def _host_aus(wert: str) -> str:
+def _host_from(value: str) -> str:
     """Only the host name of an address — or "" for a broken one (open IPv6 bracket etc.).
 
-    Needed as the key for `security.einmal_melden()`: the notice belongs to the host,
+    Needed as the key for `security.report_once()`: the notice belongs to the host,
     not to the individual URL — otherwise every new path lifts the suppression and the log flood
     is back.
     """
     from urllib.parse import urlsplit
     try:
-        return urlsplit(str(wert or "")).hostname or ""
+        return urlsplit(str(value or "")).hostname or ""
     except ValueError:
         return ""
 
 
-class _DictKopfzeilen:
-    """The three accesses that `_kopfzeilen_in` needs, on top of a plain dict.
+class _DictHeaderLines:
+    """The three accesses that `_header_lines_in` needs, on top of a plain dict.
 
     Lookup is case-insensitive; writes go to the key that already exists — otherwise under the
     spelling passed in. That way `exc.headers["Location"]` stays readable.
@@ -85,41 +85,41 @@ class _DictKopfzeilen:
     def __init__(self, d: dict):
         self.d = d
 
-    def _schluessel(self, name: str):
+    def _key_name(self, name: str):
         return next((k for k in self.d if k.lower() == name.lower()), None)
 
-    def get(self, name: str, vorgabe=None):
-        k = self._schluessel(name)
-        return vorgabe if k is None else self.d[k]
+    def get(self, name: str, default=None):
+        k = self._key_name(name)
+        return default if k is None else self.d[k]
 
-    def setdefault(self, name: str, wert: str):
-        if self._schluessel(name) is None:
-            self.d[name] = wert
+    def setdefault(self, name: str, value: str):
+        if self._key_name(name) is None:
+            self.d[name] = value
 
-    def __setitem__(self, name: str, wert: str):
-        self.d[self._schluessel(name) or name] = wert
+    def __setitem__(self, name: str, value: str):
+        self.d[self._key_name(name) or name] = value
 
 
-def _dn_teile(wert: str) -> list[str]:
+def _dn_parts(value: str) -> list[str]:
     """Split a DN at the UNescaped commas (`cn=a\\,b,ou=x` has two parts, not three)."""
-    teile, aktuell, maskiert = [], [], False
-    for zeichen in str(wert):
-        if maskiert:
-            aktuell.append(zeichen)
-            maskiert = False
-        elif zeichen == "\\":
-            aktuell.append(zeichen)
-            maskiert = True
-        elif zeichen == ",":
-            teile.append("".join(aktuell).strip())
-            aktuell = []
+    parts, current, masked = [], [], False
+    for char in str(value):
+        if masked:
+            current.append(char)
+            masked = False
+        elif char == "\\":
+            current.append(char)
+            masked = True
+        elif char == ",":
+            parts.append("".join(current).strip())
+            current = []
         else:
-            aktuell.append(zeichen)
-    teile.append("".join(aktuell).strip())
-    return teile
+            current.append(char)
+    parts.append("".join(current).strip())
+    return parts
 
 
-def gruppe_passt(schluessel, gruppe, teilstring: bool = False, dn: bool = False) -> bool:
+def group_fits(key_name, group, substring: bool = False, dn: bool = False) -> bool:
     """Does the key from `*_group_role_map`/`ldap_allowed_groups` match this group?
 
     `teilstring=True` is the old comparison (`schluessel in gruppe`) and exists only on
@@ -135,49 +135,49 @@ def gruppe_passt(schluessel, gruppe, teilstring: bool = False, dn: bool = False)
     is the same group. This keeps the familiar spelling valid, without a name fragment
     hitting a foreign group: only whole components are compared, starting at the front.
     """
-    s, g = str(schluessel), str(gruppe)
+    s, g = str(key_name), str(group)
     if not s:
         return False
-    if teilstring:
+    if substring:
         return s in g
     if s == g:
         return True
     if not dn or "=" not in g:
         return False
-    g_teile = [t.lower() for t in _dn_teile(g)]
+    g_parts = [t.lower() for t in _dn_parts(g)]
     if "=" in s:
         # Whole DN or partial DN from the front (A-3): `cn=admins,ou=g` matches
         # `cn=admins,ou=g,dc=example,dc=com`. Until the first fix of this round the substring
         # covered that; without this branch a key written that way silently dropped out after the
         # update — admin mapping gone, or, as ldap_allowed_groups, every user rejected.
-        s_teile = [t.lower() for t in _dn_teile(s)]
-        return g_teile[:len(s_teile)] == s_teile
-    _, _, wert = g_teile[0].partition("=")
-    return s.strip().lower() == wert.strip()
+        s_parts = [t.lower() for t in _dn_parts(s)]
+        return g_parts[:len(s_parts)] == s_parts
+    _, _, value = g_parts[0].partition("=")
+    return s.strip().lower() == value.strip()
 
 
-def _teilstring_hinweis(schluessel, gruppen, feld: str) -> None:
+def _substring_notice(key_name, groups, slot: str) -> None:
     """Say once per key when it would only match as a substring now (A-3).
 
     Up to 0.19.x LDAP always compared by substring (F-19). A key that matched back then and
     no longer does costs roles after the update, silently, or — in `ldap_allowed_groups` — all
     access. It cannot be detected statically (it depends on the directory's DNs),
     so it surfaces at the first login where it happens."""
-    s = str(schluessel)
-    if not s or not any(s in str(g) for g in gruppen):
+    s = str(key_name)
+    if not s or not any(s in str(g) for g in groups):
         return
-    if any(gruppe_passt(s, g, dn=True) for g in gruppen):
+    if any(group_fits(s, g, dn=True) for g in groups):
         return
-    if security.einmal_melden(f"ldap_teilstring:{feld}:{s}"):
+    if security.report_once(f"ldap_teilstring:{slot}:{s}"):
         security.seclog.warning(
             "LDAP: the key %r in %s only matches as a substring (%s) and has no effect since "
             "0.20.0 — comparison is by DN components. Change the spelling "
             "(whole DN, partial DN from the front like 'cn=admins,ou=groups', or just the CN) or "
-            "set group_match='substring'.", security.fuer_log(s), feld,
-            security.fuer_log(next(str(g) for g in gruppen if s in str(g)))[:200])
+            "set group_match='substring'.", security.for_log(s), slot,
+            security.for_log(next(str(g) for g in groups if s in str(g)))[:200])
 
 
-def _auf_stderr(zeile: str) -> None:
+def _on_stderr(line: str) -> None:
     """One line to the operator, not to the log.
 
     The route is deliberately `sys.stderr` and not `seclog`: what is written here is meant for the
@@ -186,18 +186,18 @@ def _auf_stderr(zeile: str) -> None:
     call, so that a redirected stderr (tests, wrappers) really takes effect.
     """
     try:
-        sys.stderr.write(zeile.rstrip("\n") + "\n")
+        sys.stderr.write(line.rstrip("\n") + "\n")
         sys.stderr.flush()
     except Exception:
         pass            # no stderr (pythonw, closed descriptor) — no reason to abort
 
 
-def _stderr_ist_konsole() -> bool:
+def _stderr_is_console() -> bool:
     """Is a human reading along, or is someone collecting stderr (container, journal, pipe)?
 
     In a container stderr IS the log (`docker logs`), under systemd the journal. What is meant
     "for the operator's console only" must then not go there (finding from operations,
-    2026-09-27). Like `_auf_stderr`, looked up afresh on every call.
+    2026-09-27). Like `_on_stderr`, looked up afresh on every call.
     """
     try:
         return bool(sys.stderr is not None and sys.stderr.isatty())
@@ -217,32 +217,32 @@ _CSRF_FORM = re.compile(r"[A-Za-z0-9_-]{32,128}")
 _CSRF_SCOPE = "tinysesam.csrf_neu"
 
 #: How many just-signed-in sessions, not yet set in the cookie, a process remembers.
-#: Between `_sitzung_anlegen()` and `set_cookie()` lies one request; the limit only catches
+#: Between `_create_session()` and `set_cookie()` lies one request; the limit only catches
 #: custom routes that create a session and never set a cookie.
-_FRISCH_MAX = 1024
+_FRESH_MAX = 1024
 
 
-def _samesite(wert: str) -> Literal["lax", "strict", "none"]:
+def _samesite(value: str) -> Literal["lax", "strict", "none"]:
     """The constructor allows only these three values (see TinySesam.__init__); this states it
     once more for the type checker, which does not follow the guarantee from there."""
-    return cast(Literal["lax", "strict", "none"], wert)
+    return cast(Literal["lax", "strict", "none"], value)
 
 
-def _beleg_wahr(wert) -> bool:
+def _proof_true(value) -> bool:
     """Does an LDAP/SAML attribute say "this address is verified"? Only explicitly true values
     count (True, "true", "1", "yes", "ja"); anything else — also a missing attribute — does not."""
-    if isinstance(wert, bool):
-        return wert
-    return str(wert or "").strip().lower() in ("true", "1", "yes", "ja")
+    if isinstance(value, bool):
+        return value
+    return str(value or "").strip().lower() in ("true", "1", "yes", "ja")
 
 
-def _beleg_am_konto(user) -> bool:
+def _proof_on_account(user) -> bool:
     """The `users.email_verified` marker of an account row.
 
     If the column is missing — a row from a foreign source, a test setup with a
     dictionary —, "confirmed" applies: exactly the state of every installation before this column,
     so no silent tightening for existing data. Where a sign-in path knows better,
-    the evidence travels along as a parameter (`_maybe_promote_admin(user, email_bestaetigt=…)`)
+    the evidence travels along as a parameter (`_maybe_promote_admin(user, email_confirmed=…)`)
     and wins."""
     try:
         return bool(user["email_verified"])
@@ -253,7 +253,7 @@ def _beleg_am_konto(user) -> bool:
 #: Which switch needs which extra — switch → (module, extra).
 #: Stated here, not in the test: a copy in tests/ would silently go stale with the next new
 #: method. The test now checks AGAINST this table.
-SCHALTER_BRAUCHT_EXTRA = {
+SWITCH_REQUIRES_EXTRA = {
     "passkey_enabled": ("webauthn", "passkey"),
     "oidc_enabled": ("authlib", "oidc"),
     "saml_enabled": ("onelogin", "saml"),
@@ -262,96 +262,96 @@ SCHALTER_BRAUCHT_EXTRA = {
 
 
 
-def _gueltige_regeln(regeln) -> list:
+def _valid_rules(rules) -> list:
     """Only the rules whose keys are populated.
 
     A rule "per account" without an account would otherwise silently become one "per address"
     with the wrong boundary (`count_fails` simply drops an empty filter)."""
-    return [r for r in regeln
+    return [r for r in rules
             if all(r[2].get(k) for k in ("username", "ip") if k in r[2])]
 
-def _messages_der_sprache(auth) -> dict:
+def _messages_of_language(auth) -> dict:
     from .messages import MESSAGES
     return MESSAGES.get(auth.cfg.lang) or MESSAGES["en"]
 
 
 class TinySesam:
     def __init__(self, config: TinySesamConfig):
-        self._riegel(config, beim_aufbau=True)
+        self._bolt(config, on_setup=True)
         self.cfg = config
         self.store = Store(config.db_path)
-        self.store.leerlauf_sek = (max(0, int(config.session_idle_minutes or 0)) * 60,
+        self.store.idle_sec = (max(0, int(config.session_idle_minutes or 0)) * 60,
                                    max(0, int(config.session_idle_minutes_remember or 0)) * 60)
         # TOTP secrets only encrypted (H-14/H-15, mandatory). Key from the environment, the
         # configuration or next to the database; a wrong one aborts startup.
         from . import vault as _vault
-        _schluessel, self._schluessel_herkunft = _vault.load_key(
+        _key_name, self._key_name_origin = _vault.load_key(
             config.db_path, config.secrets_key_file)
-        self.store.tresor = _vault.Vault(_schluessel)
+        self.store.vault = _vault.Vault(_key_name)
         # Gate token (ADR-9, T-19): the signing key is derived from the same base key
         # — no second secret to back up and distribute. Always derived, even
         # when the gate is off: `tinysesam gate-key` should be able to prepare the proxy before
         # the switch is flipped.
         from . import gate as _gate
-        self._gate_schluessel = _gate.schluessel_ableiten(_schluessel)
+        self._gate_key_name = _gate.derive_key_name(_key_name)
         # Separate subkey for the password fingerprints: without it a leaked memory dump would be a
         # dictionary target against the typos of the real passwords.
-        self._pw_wiederholung_schluessel = hmac.new(_schluessel, b"tinysesam/passwort-wiederholung/v1",
+        self._pw_repetition_key_name = hmac.new(_key_name, b"tinysesam/passwort-wiederholung/v1",
                                                     hashlib.sha256).digest()
-        self.store.geheimnisse_heben()
+        self.store.extract_secrets()
         # B6-8: Without the [argon2] extra every sign-in against an argon2 hash fails — until
         # now without a word, the account just looked like "wrong password" to the user.
         # At startup, count and say how many it affects; startup itself stays possible
         # (passkey, OIDC and SSO do not depend on it, and a service that no longer comes up
         # at all because of a missing package would be the bigger outage).
-        if not _passwords.argon2_verfuegbar():
-            betroffen = self.store.zaehle_argon2_hashes()
-            if betroffen:
-                security.seclog.error("%s (%d affected hashes)", _passwords.ARGON2_FEHLT, betroffen)
+        if not _passwords.argon2_available():
+            affected = self.store.count_argon2_hashes()
+            if affected:
+                security.seclog.error("%s (%d affected hashes)", _passwords.ARGON2_MISSING, affected)
         self.store.audit_ip_pseudonym = bool(config.audit_ip_pseudonymize)
-        self._protokoll_drossel: dict = {}   # see `_einmal_je`
+        self._log_throttle: dict = {}   # see `_once_per`
         # Just fully signed-in sessions (handle) whose cookie is not set yet — see
-        # `_sitzung_anlegen` and `set_cookie` (CSRF rotation at sign-in, 0.20.1).
+        # `_create_session` and `set_cookie` (CSRF rotation at sign-in, 0.20.1).
         from collections import OrderedDict
         import threading
-        self._frische_anmeldungen: "OrderedDict[str, None]" = OrderedDict()
-        self._frisch_lock = threading.Lock()
+        self._fresh_sign_ins: "OrderedDict[str, None]" = OrderedDict()
+        self._fresh_lock = threading.Lock()
         self.templates = Templates()
         self._messages: dict = {}
         self._mailer_override = None
-        from .mailer import Postausgang
-        self._postausgang = Postausgang()
+        from .mailer import Outbox
+        self._outbox = Outbox()
         # Own small outbox for lockout notices (ASVS 6.3.5): it is filled by whoever sends
         # failed attempts — a flood must not displace sign-in links and resets in the main outbox.
-        self._hinweis_ausgang = Postausgang(arbeiter=1, max_offen=50)
+        self._notice_outcome = Outbox(worker=1, max_unclosed=50)
         # The OIDC re-check (4a) exchanges refresh tokens in the background: a hanging provider
         # would otherwise hold every due request until the timeout — from `async` routes including the event loop
         # (attack on the second round, finding 6, same class as B6-6).
-        self._oidc_ausgang = Postausgang(arbeiter=2, max_offen=200)
+        self._oidc_outcome = Outbox(worker=2, max_unclosed=200)
         #: Opt-in notification for security events on one's own account (finding B2-2,
         #: recommendation H-6) — see `SECURITY_EVENTS`. Call `hook(event, account,
         #: details)`; `account` has `id`, `username`, `email`, `display_name`. TinySesam
         #: sends nothing itself: which mail, which channel, which language is decided by
         #: the app.
         self.on_security_event: Optional[Callable[[str, dict, dict], Any]] = None
-        self._blockliste = self._blockliste_laden(config.password_blocklist_file)
+        self._blocklist = self._load_blocklist(config.password_blocklist_file)
         # Attempt ID → (identifier, method, series state after booking) for the series
         # pre-booked in `_begin_attempt` (B2-6). In memory is enough: if the process dies
         # in between, the pre-booking remains as a failed attempt — stricter in doubt.
-        self._serie_vorbuchungen: dict = {}
-        # Fingerprints of wrong passwords per (account, IP) — memory only, never on disk (`_passwort_wiederholt`).
-        self._pw_wiederholung: "OrderedDict[tuple, list]" = OrderedDict()
-        self._pw_wiederholung_sperre = threading.Lock()
+        self._series_prebookings: dict = {}
+        # Fingerprints of wrong passwords per (account, IP) — memory only, never on disk (`_password_repeated`).
+        self._pw_repetition: "OrderedDict[tuple, list]" = OrderedDict()
+        self._pw_repetition_lock = threading.Lock()
         # Waiting slots for sign-ins that would not get further only because of pending
         # pre-bookings (G9, `_begin_attempt`) — capped, so waiters do not occupy all worker threads.
-        self._schwebe_plaetze = threading.BoundedSemaphore(self._SCHWEBE_WARTEPLAETZE)
+        self._pending_places = threading.BoundedSemaphore(self._PENDING_WAIT_SLOTS)
         self.oidc = None
         self.webauthn = None
         self.ldap = None
         # The failure marker hangs on the manager, not on the client: it also applies to a client
-        # set by hand (`auth.ldap = own_client`) — rationale at `AusfallMerker`.
-        from .ldap_ import AusfallMerker
-        self._ldap_ausfall = AusfallMerker()
+        # set by hand (`auth.ldap = own_client`) — rationale at `FailureMarker`.
+        from .ldap_ import FailureMarker
+        self._ldap_failure = FailureMarker()
         self.saml = None
         if config.security_log:
             security.attach_security_log(config.security_log)
@@ -381,10 +381,10 @@ class TinySesam:
         # that. Raising happens at the place where it can never be wrong: at the lazy import
         # in the respective module. The operator thus sees it at startup in the log and, if they
         # overlook that, at the first sign-in attempt as a readable `MissingExtra` instead of a 500.
-        def _verlange(modul, schalter, extra):
+        def _demand(module, switch, extra):
             import importlib.util as _ilu
             try:
-                da = _ilu.find_spec(modul) is not None
+                da = _ilu.find_spec(module) is not None
             except (ImportError, ValueError):
                 da = False
             if not da:
@@ -392,27 +392,27 @@ class TinySesam:
                     "%s=True, but the extra [%s] is not installed (pip install "
                     "'tinysesam[%s]') — the module '%s' is missing. Unless the client is set "
                     "separately, sign-in via this method will fail.",
-                    schalter, extra, extra, modul)
+                    switch, extra, extra, module)
 
         if config.ldap_enabled and config.ldap_url:
-            _verlange("ldap3", "ldap_enabled", "ldap")
+            _demand("ldap3", "ldap_enabled", "ldap")
             from .ldap_ import LDAPClient
             self.ldap = LDAPClient(config)
         if config.saml_enabled and config.saml_idp_sso_url and config.saml_idp_x509cert:
-            _verlange("onelogin", "saml_enabled", "saml")
+            _demand("onelogin", "saml_enabled", "saml")
             from .saml_ import SAMLClient
             self.saml = SAMLClient(config)
         if config.oidc_enabled and config.oidc_issuer and config.oidc_client_id:
-            _verlange("authlib", "oidc_enabled", "oidc")
-            from .oidc import OIDCClients, VORGABE_CLIENT
+            _demand("authlib", "oidc_enabled", "oidc")
+            from .oidc import OIDCClients, DEFAULT_CLIENT
             # `self.oidc` stays the single client and with it the public surface of 0.18.0
             # (tests and foreign code access it). `self.oidc_clients` is the mapping
             # host → client; without `cfg.oidc_clients` it contains exactly this one (T-14).
             self.oidc_clients = OIDCClients(config)
-            self.oidc = self.oidc_clients[VORGABE_CLIENT]
+            self.oidc = self.oidc_clients[DEFAULT_CLIENT]
         if config.passkey_enabled:
             # Passkey has no incomplete configuration: whoever flips the switch means it.
-            _verlange("webauthn", "passkey_enabled", "passkey")
+            _demand("webauthn", "passkey_enabled", "passkey")
             from . import webauthn_ as wa
             self.webauthn = wa
         if config.demo_mode and not self.store.get_setting("demo_users") \
@@ -448,13 +448,13 @@ class TinySesam:
                 and not getattr(config, "gate_link_enabled", False)):
             from urllib.parse import urlsplit
             own = urlsplit(config.base_url).hostname or ""
-            fremd = [h for h in (config.trusted_redirect_hosts or []) if h and h != own]
-            if fremd:
+            foreign = [h for h in (config.trusted_redirect_hosts or []) if h and h != own]
+            if foreign:
                 security.seclog.warning(
                     "Forward auth without cookie_domain: the session cookie is host-only on %s, "
                     "not on %s. Each of these hosts demands its own sign-in (the login page "
                     "is built there). For shared SSO across subdomains set cookie_domain, "
-                    "e.g. '.%s'.", own or "?", ", ".join(fremd),
+                    "e.g. '.%s'.", own or "?", ", ".join(foreign),
                     ".".join(own.split(".")[-2:]) if own.count(".") >= 1 else "example.com")
         # Collisions in the identifier space from existing data: the database has prevented new ones
         # since 2026-09-26 (trigger over the counting buckets, `Store._trigger_sql`), but one from an
@@ -464,12 +464,12 @@ class TinySesam:
         # lockout threshold. Cleanup is by hand (which account keeps the name cannot be decided by
         # any library) — it is said at startup, and completely: until then the
         # message only saw "name = foreign address" via NOCASE, not `Alice`/`alice` or two
-        # spellings of the same address (`topf_kollisionen`).
-        kollisionen = self.store.topf_kollisionen()
-        if kollisionen:
-            beispiele = "; ".join(
-                f"identifier '{security.fuer_log(z['kennung'])}': "
-                + ", ".join(f"user_id={i}" for i in z["ids"]) for z in kollisionen[:5])
+        # spellings of the same address (`bucket_collisions`).
+        collisions = self.store.bucket_collisions()
+        if collisions:
+            examples = "; ".join(
+                f"identifier '{security.for_log(z['kennung'])}': "
+                + ", ".join(f"user_id={i}" for i in z["ids"]) for z in collisions[:5])
             security.seclog.warning(
                 "%d identifier collision(s) in existing data: username and email are ONE "
                 "identifier space (find_user searches both columns, namesakes like Alice/alice "
@@ -488,14 +488,14 @@ class TinySesam:
                 "store.set_email() stores the new address as UNCONFIRMED by default "
                 "(users.email_verified=0) — the evidence for the old address does not carry over to a "
                 "different one. Whoever has evidence for the new one passes verified=True.",
-                len(kollisionen), beispiele,
-                " (more follow)" if len(kollisionen) > 5 else "")
+                len(collisions), examples,
+                " (more follow)" if len(collisions) > 5 else "")
         # Account names with control/format characters (no longer creatable since 2026-09-24) in existing data:
         # forward auth rejects those whose characters the header sanitising would remove (otherwise
         # `Remote-User` would be a foreign name). It is said at startup, not only per request.
-        auffaellig = [z for z in self.store._all("SELECT id, username FROM users")
-                      if name_ungueltig(z["username"])]
-        if auffaellig:
+        conspicuous = [z for z in self.store._all("SELECT id, username FROM users")
+                      if name_invalid(z["username"])]
+        if conspicuous:
             security.seclog.warning(
                 "%d account name(s) with control or format characters in existing data (user_id %s). "
                 "TinySesam no longer creates new ones; names with C0 control characters get no "
@@ -504,22 +504,22 @@ class TinySesam:
                 "<new-name>, the owner themselves on the account page, or from the embedding "
                 "service auth.change_username(user_id, new_username, by_operator=True) — all check "
                 "that the new name is free among usernames AND addresses.",
-                len(auffaellig), ", ".join(str(z["id"]) for z in auffaellig[:10]))
+                len(conspicuous), ", ".join(str(z["id"]) for z in conspicuous[:10]))
         # Binding by name (G1): the grace period starts per source at the first start at which it is
         # switched on — for existing data thus with the update — and exactly once (the marker
         # stays, see `Store.foederation_seit`). After that, one line per source for as long as there are
         # accounts that would bind via the name and the door is still open.
-        for _quelle, _an in (("ldap", config.ldap_enabled), ("saml", config.saml_enabled)):
+        for _source, _an in (("ldap", config.ldap_enabled), ("saml", config.saml_enabled)):
             if _an:
-                self._namensbindung_bestand_melden(_quelle, self._foederation_seit(_quelle))
+                self._report_name_binding_inventory(_source, self._federation_since(_source))
         tok = self.admin_claim_token()
         if tok:
-            self._admin_claim_bekanntgeben(tok)
+            self._admin_claim_announce(tok)
         else:
-            self._claim_datei_weg()          # a leftover from a run without admin (T-17)
+            self._claim_file_away()          # a leftover from a run without admin (T-17)
 
     # ---------- Owner ----------
-    def _erster_owner(self, user_id) -> None:
+    def _first_owner(self, user_id) -> None:
         """The first admin of an instance also becomes its first owner (bootstrap paths)."""
         if self.store.owner_count() == 0:
             self.store.set_owner(user_id, True)
@@ -544,7 +544,7 @@ class TinySesam:
                 self.audit("owner_grant", u["username"])
             return True
         if u["is_owner"]:
-            if self.store.owner_count(ohne=user_id) == 0:
+            if self.store.owner_count(without=user_id) == 0:
                 raise StateError(f"Account {user_id} is the last owner. Appoint another owner "
                                  "first, then hand over the role.")
             self.store.set_owner(user_id, False)
@@ -566,8 +566,8 @@ class TinySesam:
         live at once. The return value is the account the identifier belongs to, otherwise None. `exclude_id`
         leaves one account out — for checks on an existing account.
 
-        And via the **counting bucket** of the lockout counter (`Store.konto_mit_topf`): `Émile` and
-        `émile` are two names for SQLite NOCASE (ASCII only), one for `norm_kennung`. Two
+        And via the **counting bucket** of the lockout counter (`Store.account_by_bucket`): `Émile` and
+        `émile` are two names for SQLite NOCASE (ASCII only), one for `norm_identifier`. Two
         such accounts shared the account threshold against distributed guessing — and if one was
         removed (also triggerable anonymously: a registration that `gc()` sweeps away), the
         failed attempts of the other went with it. Such a namesake is therefore considered taken.
@@ -579,7 +579,7 @@ class TinySesam:
         sign-ins cleared the counters under which that person's LDAP password was being guessed —
         the lockouts stopped working. A name that stands on the binding of ANOTHER account is
         therefore considered taken (the identifier that stands there in the directory after renaming, and
-        the old name of a renamed LDAP account, see `Store._verzeichnisname_merken`).
+        the old name of a renamed LDAP account, see `Store._remember_directory_name`).
 
         **A pre-check, the database decides** (since 2026-09-26): between this
         answer and the write a concurrent request can claim the identifier. The
@@ -589,11 +589,11 @@ class TinySesam:
         identifier = (identifier or "").strip()
         if not identifier:
             return None
-        for treffer in (self.store.get_user_by_name(identifier), self.store.get_user_by_email(identifier),
-                        self.store.konto_mit_topf(identifier, ausser=exclude_id),
-                        self.store.konto_mit_verzeichnisname(identifier, ausser=exclude_id)):
-            if treffer is not None and treffer["id"] != exclude_id:
-                return self._als_dict(treffer)
+        for hit in (self.store.get_user_by_name(identifier), self.store.get_user_by_email(identifier),
+                        self.store.account_by_bucket(identifier, other_than=exclude_id),
+                        self.store.account_with_directory_name(identifier, other_than=exclude_id)):
+            if hit is not None and hit["id"] != exclude_id:
+                return self._as_dict(hit)
         return None
 
     def create_user(self, username, password=None, is_admin=False, roles=None,
@@ -643,35 +643,35 @@ class TinySesam:
         their own passes it too. Default `False`: the operator assigns the name. Whoever
         creates accounts from their OWN foreign source (another identity provider) passes it
         too: names chosen there say nothing about who in the directory has that name."""
-        return self._konto_anlegen(username, password, is_admin, roles, display_name, email,
-                                   is_service, email_verified, name_selbst_gewaehlt=self_chosen_name)
+        return self._create_account(username, password, is_admin, roles, display_name, email,
+                                   is_service, email_verified, name_itself_chosen=self_chosen_name)
 
-    def _konto_anlegen(self, username, password=None, is_admin=False, roles=None, display_name=None,
+    def _create_account(self, username, password=None, is_admin=False, roles=None, display_name=None,
                        email=None, is_service=False, email_verified: bool = True, *,
-                       name_selbst_gewaehlt: bool = False, name_quelle: Optional[str] = None) -> int:
+                       name_itself_chosen: bool = False, name_source: Optional[str] = None) -> int:
         """`create_user` including the origin of the name (`users.name_quelle`, attack round 2026-09-26):
         creation from OIDC, SAML and LDAP. A name that a source brings along never binds the account
-        via the name to ANOTHER one (`_nachbindung_grund`) — `preferred_username`, NameID and
-        `uid` are chosen by oneself at an IdP with self-registration. Reproduced: `chefin` signs
+        via the name to ANOTHER one (`_rebinding_reason`) — `preferred_username`, NameID and
+        `uid` are chosen by oneself at an IdP with self-registration. Reproduced: `manager` signs
         in via OIDC, the real chefin afterwards via LDAP, and the OIDC account then carried her
         identifier and her roles. The same source may keep replacing its placeholder with the real
         identifier. Not public: whoever creates on their own uses `self_chosen_name=True` (`create_user`)."""
         username = (username or "").strip()
         email = norm_email(email)
-        if name_ungueltig(username):
+        if name_invalid(username):
             # Central here, because every creation path ends here (registration, panel, CLI, OIDC,
             # SAML, LDAP): a name with control characters becomes a DIFFERENT name in `Remote-User`
-            # (see `name_ungueltig`). The federated paths switch to a substitute
+            # (see `name_invalid`). The federated paths switch to a substitute
             # name beforehand; whoever lands here gets a rejection.
-            fehler = ConfigError("Username contains control or format characters")
-            fehler.field = "username"
-            raise fehler
-        for feld, schluessel, kennung in (("username", "username", username),
+            error = ConfigError("Username contains control or format characters")
+            error.field = "username"
+            raise error
+        for slot, key_name, identifier in (("username", "username", username),
                                           ("email address", "email", email)):
-            besitzer = self.identifier_taken(kennung) if kennung else None
-            if besitzer:
+            owner = self.identifier_taken(identifier) if identifier else None
+            if owner:
                 security.seclog.warning(
-                    "Account not created: %s is already the login identifier of user_id=%s", feld, besitzer["id"])
+                    "Account not created: %s is already the login identifier of user_id=%s", slot, owner["id"])
                 # The wording is that of 0.18.x ("… ist bereits vergeben"). Because a
                 # `ConfigError` alone does not reveal WHAT collided, callers check the text —
                 # the most brittle way to control a program, but a common one. A fix
@@ -679,32 +679,32 @@ class TinySesam:
                 # collides, though: the new trigger (username = foreign email and vice versa)
                 # carries the username OR the email text depending on direction, not always
                 # the same. It can be told apart reliably by `field`/`owner_id`.
-                fehler = ConfigError(f"{feld} is already taken")
-                fehler.field = schluessel
-                fehler.owner_id = int(besitzer["id"])
-                raise fehler
+                error = ConfigError(f"{slot} is already taken")
+                error.field = key_name
+                error.owner_id = int(owner["id"])
+                raise error
         try:
             uid = self.store.create_user(username, display_name, email, is_admin, roles, is_service,
                                          email_verified=email_verified,
-                                         name_selbst_gewaehlt=name_selbst_gewaehlt,
-                                         name_quelle=name_quelle)
-        except sqlite3.IntegrityError as fehler_db:
+                                         name_itself_chosen=name_itself_chosen,
+                                         name_source=name_source)
+        except sqlite3.IntegrityError as error_db:
             # Race (G12c): between the check above and the INSERT a concurrent
             # request claimed the identifier, and the database rejects (identifier trigger, UNIQUE on
             # name or address). Every IntegrityError of this INSERT means "taken". Which
             # identifier, a second check says — if the other account is already gone again, it stays
             # with the username without an owner.
-            treffer = [(feld, schluessel, self.identifier_taken(kennung) if kennung else None)
-                       for feld, schluessel, kennung in (("username", "username", username),
+            hit = [(slot, key_name, self.identifier_taken(identifier) if identifier else None)
+                       for slot, key_name, identifier in (("username", "username", username),
                                                          ("email address", "email", email))]
-            feld, schluessel, besitzer = next((t for t in treffer if t[2]), treffer[0])
+            slot, key_name, owner = next((t for t in hit if t[2]), hit[0])
             security.seclog.warning(
                 "Account not created (race): %s became the login identifier of user_id=%s "
-                "between check and creation", feld, besitzer["id"] if besitzer else "?")
-            fehler = ConfigError(f"{feld} is already taken")
-            fehler.field = schluessel
-            fehler.owner_id = int(besitzer["id"]) if besitzer else None
-            raise fehler from fehler_db
+                "between check and creation", slot, owner["id"] if owner else "?")
+            error = ConfigError(f"{slot} is already taken")
+            error.field = key_name
+            error.owner_id = int(owner["id"]) if owner else None
+            raise error from error_db
         if password:
             self.store.set_password_hash(uid, hash_password(password))
         return uid
@@ -744,7 +744,7 @@ class TinySesam:
 
         Target '__admin__' sets the admin flag — and, since H-5, also takes it back when the provider
         no longer delivers the group, but **only a flag it granted itself**
-        (`is_admin=2`, `Store.set_admin_vom_idp`). Until then it was "grant only": whoever was thrown
+        (`is_admin=2`, `Store.set_admin_from_idp`). Until then it was "grant only": whoever was thrown
         out of the admin group at the provider stayed admin here until someone noticed it in the panel. An admin
         from the panel, the CLI, `admin_identifiers` or `/auth/claim-admin` remains untouched — otherwise
         a misconfigured provider would strip the operator of their own access. A flag
@@ -755,7 +755,7 @@ class TinySesam:
 
         By default comparison is **exact** (`config.group_match`). Otherwise `admin` would also
         match `nicht-admin`: a silent privilege escalation. `dn=True` (LDAP) compares a
-        group DN by its components instead of as text (`gruppe_passt`): whole DN, first
+        group DN by its components instead of as text (`group_fits`): whole DN, first
         RDN (`cn=staff`) or its value (`staff`) — never a substring."""
         if not mapping:
             return
@@ -763,10 +763,10 @@ class TinySesam:
             substring = self.cfg.group_match == "substring"
         gs = [str(g) for g in (groups or [])]
         matched = {role for key, role in mapping.items()
-                   if any(gruppe_passt(key, g, substring, dn) for g in gs)}
+                   if any(group_fits(key, g, substring, dn) for g in gs)}
         if dn and not substring:
             for key in mapping:
-                _teilstring_hinweis(key, gs, "ldap_group_role_map")
+                _substring_notice(key, gs, "ldap_group_role_map")
         managed = {role for role in mapping.values() if role != "__admin__"}
         current = set(self.store.get_roles(user_id))
         new_roles = (current - managed) | {r for r in matched if r != "__admin__"}
@@ -775,7 +775,7 @@ class TinySesam:
         u = self.store.get_user(user_id)
         if "__admin__" in matched:
             if u and not u["is_admin"]:
-                self.store.set_admin_vom_idp(user_id)
+                self.store.set_admin_from_idp(user_id)
                 self.audit("idp_admin_grant", u["username"], detail="source=idp")
         elif "__admin__" in mapping.values() and u and u["is_admin"] == 2:
             # The mapping knows an admin group, the provider no longer delivers it: the flag
@@ -783,7 +783,7 @@ class TinySesam:
             self.store.set_admin(user_id, False)
             self.audit("idp_admin_revoke", u["username"], detail="source=idp group_removed=1")
             security.seclog.warning("Admin flag withdrawn: user=%s, the identity provider no longer "
-                                    "delivers the admin group.", security.fuer_log(u["username"]))
+                                    "delivers the admin group.", security.for_log(u["username"]))
             if not self.admin_exists():
                 # If it was the last admin (G6), the allowlist stays closed from now on: otherwise
                 # `_maybe_promote_admin` in the same login — via `apply_factor` — would promote the person again,
@@ -793,7 +793,7 @@ class TinySesam:
                 # one-time token, now issued immediately (until then only at startup), and the CLI.
                 # The marker applies to the instance and is never reset; it only takes effect
                 # as long as there is no admin. Parallel withdrawals set it idempotently.
-                self.store.set_setting("allowlist_nach_idp_entzug", str(_jetzt()))
+                self.store.set_setting("allowlist_nach_idp_entzug", str(_now()))
                 security.seclog.warning(
                     "No admin left: the identity provider has withdrawn the instance's last admin. "
                     "admin_identifiers promotes nobody afterwards. Emergency route: "
@@ -801,7 +801,7 @@ class TinySesam:
                     "one-time token (console or admin_claim_token_file).")
                 tok = self.admin_claim_token()
                 if tok:
-                    self._admin_claim_bekanntgeben(tok)
+                    self._admin_claim_announce(tok)
 
     # ---------- API keys / service accounts (machine access, daemons) ----------
     def create_service(self, username, roles=None, display_name=None) -> int:
@@ -850,10 +850,10 @@ class TinySesam:
         database stayed role-less. In forward-auth operation the invented role went on as Remote-Group
         to the downstream app.
         """
-        if kind not in self._KEY_ARTEN:
-            neu_name = Store.KEY_ARTEN_ALT.get(str(kind))
+        if kind not in self._KEY_KINDS:
+            new_name = Store.KEY_KINDS_OLD.get(str(kind))
             raise ConfigError(
-                (f"API key kind {kind!r} has been called {neu_name!r} since 0.22.0. " if neu_name else
+                (f"API key kind {kind!r} has been called {new_name!r} since 0.22.0. " if new_name else
                  f"There is no API key kind {kind!r}. ")
                 + "'automation' works on its own (without admin rights), 'human' only counts "
                   "together with a session of the same account.")
@@ -879,15 +879,15 @@ class TinySesam:
                     "no other way, apikey_allow_unlimited=True.")
             expires_at = None
         else:
-            expires_at = _jetzt() + expires_days * 86400
+            expires_at = _now() + expires_days * 86400
 
-        abgeschnitten = []
+        truncated = []
         if roles is not None:
-            besitzer = self.store.get_user(user_id)
-            erlaubt = set(self.user_roles(besitzer)) if besitzer else set()
-            gewuenscht = [str(x) for x in roles]
-            abgeschnitten = sorted(set(gewuenscht) - erlaubt)
-            roles = sorted(set(gewuenscht) & erlaubt)
+            owner = self.store.get_user(user_id)
+            permitted = set(self.user_roles(owner)) if owner else set()
+            wished = [str(x) for x in roles]
+            truncated = sorted(set(wished) - permitted)
+            roles = sorted(set(wished) & permitted)
             # If NOTHING is left after trimming, the key must not come into being.
             #
             # The column `api_key.roles` knows only one empty value, and that means "no
@@ -900,8 +900,8 @@ class TinySesam:
             # Hence an error instead of an assumption: only the caller knows what was meant.
             if not roles:
                 raise ConfigError(
-                    f"API key scope {sorted(set(gewuenscht))} contains no role that the account "
-                    f"has ({sorted(erlaubt) or 'none'}). A key can only do less than "
+                    f"API key scope {sorted(set(wished))} contains no role that the account "
+                    f"has ({sorted(permitted) or 'none'}). A key can only do less than "
                     "its owner, never more - and an empty scope would mean "
                     "'inherits everything' in the database. Either name an existing role or leave out `roles` "
                     "(then the key inherits the account's roles).")
@@ -912,22 +912,22 @@ class TinySesam:
             # Explicitly into the log: an unlimited key is a decision, not a
             # setting — whoever later asks "since when has this thing been lying around" finds something here.
             detail += " expiry=unlimited"
-        if abgeschnitten:
+        if truncated:
             # Into the audit entry, not just discarded: whoever tries this should be visible.
-            detail += f" dropped_roles={','.join(abgeschnitten)}"
-        self.audit("apikey_create", self._kontoname(user_id), detail=detail)
+            detail += f" dropped_roles={','.join(truncated)}"
+        self.audit("apikey_create", self._account_name(user_id), detail=detail)
         self._security_event("api_key_created", user_id, key_id=kid, name=name or "")
         return {"id": kid, "key": raw, "prefix": prefix, "expires_at": expires_at,
-                "roles": roles, "dropped_roles": abgeschnitten, "kind": kind}
+                "roles": roles, "dropped_roles": truncated, "kind": kind}
 
     #: The kinds of an API key (R6-5), English since 0.22.0: `automation` works alone and
     #: never carries the admin flag, `human` applies only together with a session of the same account.
-    _KEY_ARTEN = ("automation", "human")
+    _KEY_KINDS = ("automation", "human")
     @staticmethod
     def _key_kind(row) -> str:
         """The kind of a key row with its English name (schema 12).
 
-        A value up to 0.21.x (`automat`, `mensch`) is mapped (`Store.KEY_ARTEN_ALT`) — an
+        A value up to 0.21.x (`automaton`, `human`) is mapped (`Store.KEY_KINDS_OLD`) — an
         older version that ran on the file after a downgrade writes it again. Empty
         or without the column (file before schema 7) means `automation`. Anything else stays as it
         is, and counts as an automation key because it is not `human` (fail-closed, R6-6)."""
@@ -936,42 +936,42 @@ class TinySesam:
     def verify_api_key(self, key):
         """(user, key_roles|None) for a valid key, otherwise (None, None).
 
-        The key's **kind** is afterwards in `self._letzte_key_art` — `current_user()` needs
+        The key's **kind** is afterwards in `self._last_key_kind` — `current_user()` needs
         it, and a third return value would have broken every foreign caller (M-1 freezes the
         surface for 1.0). Whoever wants to know the kind themselves uses `api_key_kind(key)`.
         `user` is an account dict as with `get_user()` (since 0.22.0; before, the database row).
         """
-        self._letzte_key_art = "automation"
+        self._last_key_kind = "automation"
         if not key or not key.startswith("tsk_"):
             return None, None
         row = self.store.get_api_key_by_hash(hashlib.sha256(key.encode()).hexdigest())
         if not row:
-            self._key_protokoll(None, "unknown")
+            self._key_log(None, "unknown")
             return None, None
         if row["revoked"]:
-            self._key_protokoll(row, "revoked")
+            self._key_log(row, "revoked")
             return None, None
-        if row["expires_at"] and row["expires_at"] < _jetzt():
-            self._key_protokoll(row, "expired")
+        if row["expires_at"] and row["expires_at"] < _now():
+            self._key_log(row, "expired")
             return None, None
         u = self.store.get_user(row["user_id"])
         if not u or u["disabled"]:
-            self._key_protokoll(row, "account_locked")
+            self._key_log(row, "account_locked")
             return None, None
-        ruht = self._key_ruht(u)
-        if ruht:
-            self._key_protokoll(row, ruht)
+        rests = self._key_rests(u)
+        if rests:
+            self._key_log(row, rests)
             return None, None
         self.store.touch_api_key(row["id"])
-        self._key_protokoll(row, None)
-        self._letzte_key_art = self._key_kind(row)
+        self._key_log(row, None)
+        self._last_key_kind = self._key_kind(row)
         try:
             kr = json.loads(row["roles"] or "[]")
         except Exception:
             kr = []
-        return self._als_dict(u), (kr or None)
+        return self._as_dict(u), (kr or None)
 
-    def _key_ruht(self, u) -> Optional[str]:
+    def _key_rests(self, u) -> Optional[str]:
         """Are this account's API keys dormant because the identity provider does not (or no longer) back it?
         Returns: the reason (`idp_no`, `idp_unconfirmed`) or None (finding 8).
 
@@ -991,70 +991,70 @@ class TinySesam:
         if self.oidc is None:
             return None
         try:
-            stand = u["idp_bestaetigt_at"]
+            state = u["idp_bestaetigt_at"]
         except (IndexError, KeyError):
             return None                       # row without the column: only before `_migrate`
-        if not self.store.ist_oidc_konto(u["id"]):
+        if not self.store.is_oidc_account(u["id"]):
             return None
-        if int(stand if stand is not None else 1) <= 0:
+        if int(state if state is not None else 1) <= 0:
             return "idp_no"
-        frist = int(self.cfg.oidc_apikey_confirm_days or 0) * 86400
-        if frist and (stand is None or _jetzt() - int(stand) > frist):
+        deadline = int(self.cfg.oidc_apikey_confirm_days or 0) * 86400
+        if deadline and (state is None or _now() - int(state) > deadline):
             return "idp_unconfirmed"
         return None
 
-    def _idp_nein(self, user_id, name, ip, client, grund) -> None:
+    def _idp_no(self, user_id, name, ip, client, reason) -> None:
         """The provider said no (4a): the session has already ended — now the
         keys go dormant too (finding 8). One line in the audit log says how many it affects."""
-        self.store.idp_verweigert(user_id)
-        aktiv = [k for k in self.store.list_api_keys(user_id) if not k["revoked"]]
-        if aktiv:
+        self.store.idp_refused(user_id)
+        active = [k for k in self.store.list_api_keys(user_id) if not k["revoked"]]
+        if active:
             self.store.audit_log("api_keys_dormant", name, ip,
-                                 f"client={client} reason={grund} count={len(aktiv)}")
+                                 f"client={client} reason={reason} count={len(active)}")
 
     #: How long the same key use (key, IP, outcome) is not written to the audit log again (B5-05).
     #: A key exists for automations that present it every second; one line per request
     #: would bury the rest of the log. One per hour and address answers the questions one asks after
     #: a leak: since when, from where, and did a NEW address join.
     _APIKEY_AUDIT_WINDOW = 3600
-    _DROSSEL_MAX = 10000
+    _THROTTLE_MAX = 10000
 
-    def _einmal_je(self, schluessel, fenster_sek: float) -> bool:
-        """True if `schluessel` has not yet been logged within the window — and remembers it in advance.
+    def _once_per(self, key_name, window_sec: float) -> bool:
+        """True if `key_name` has not yet been logged within the window — and remembers it in advance.
 
         For events that come in bursts (key use, rejected forward auth). Per process;
         several workers therefore each write one line, which is deliberately cheaper than a reconciliation.
         """
-        jetzt = _jetzt()
-        if jetzt - self._protokoll_drossel.get(schluessel, 0) < fenster_sek:
+        now = _now()
+        if now - self._log_throttle.get(key_name, 0) < window_sec:
             return False
-        if len(self._protokoll_drossel) >= self._DROSSEL_MAX:
-            self._protokoll_drossel.clear()   # cap: whoever probes addresses does not fill memory
-        self._protokoll_drossel[schluessel] = jetzt
+        if len(self._log_throttle) >= self._THROTTLE_MAX:
+            self._log_throttle.clear()   # cap: whoever probes addresses does not fill memory
+        self._log_throttle[key_name] = now
         return True
 
-    def _key_protokoll(self, row, grund: Optional[str]) -> None:
+    def _key_log(self, row, reason: Optional[str]) -> None:
         """Log a key use (grund=None) or rejection (`reason=<grund>`) — throttled (B5-05).
 
         Until here the system knew only `last_used` of a key: no who, no from where, and
         a rejected key left nothing at all. That is exactly the signal, though — a
         revoked key that keeps knocking means: it is still lying around somewhere, or it has
-        leaked. The IP comes from the running request (`_ANFRAGE`).
+        leaked. The IP comes from the running request (`_REQUEST`).
         """
-        a = _ANFRAGE.get() or {}
+        a = _REQUEST.get() or {}
         ip = a.get("ip")
         kid = row["id"] if row is not None else None
-        if not self._einmal_je(("apikey", kid, ip, grund), self._APIKEY_AUDIT_WINDOW):
+        if not self._once_per(("apikey", kid, ip, reason), self._APIKEY_AUDIT_WINDOW):
             return
-        besitzer = self._kontoname(row["user_id"]) if row is not None else None
-        art = self._key_kind(row) if row is not None else "?"
-        if grund is None:
-            self.store.audit_log("apikey_use", besitzer, ip, f"key={kid} kind={art}")
+        owner = self._account_name(row["user_id"]) if row is not None else None
+        kind = self._key_kind(row) if row is not None else "?"
+        if reason is None:
+            self.store.audit_log("apikey_use", owner, ip, f"key={kid} kind={kind}")
             return
-        detail = f"key={kid} reason={grund}" if kid is not None else f"reason={grund}"
-        self.store.audit_log("apikey_denied", besitzer, ip, detail)
+        detail = f"key={kid} reason={reason}" if kid is not None else f"reason={reason}"
+        self.store.audit_log("apikey_denied", owner, ip, detail)
         security.seclog.warning("api key denied user=%s ip=%s reason=%s",
-                                security.fuer_log(besitzer or "-"), security.fuer_log(ip), grund)
+                                security.for_log(owner or "-"), security.for_log(ip), reason)
 
     def api_key_kind(self, key) -> str:
         """The kind of a key (`"automation"`/`"human"`, up to 0.21.x `"automat"`/`"mensch"`) —
@@ -1081,30 +1081,30 @@ class TinySesam:
 
     def revoke_api_key(self, key_id, user_id=None):
         """Revoke a key. It stays in the list — whoever issued it should see that."""
-        besitzer = self.store.api_key_owner(key_id)
-        vorher = self.store.count_active_api_keys(besitzer) if besitzer is not None else 0
+        owner = self.store.api_key_owner(key_id)
+        before = self.store.count_active_api_keys(owner) if owner is not None else 0
         self.store.revoke_api_key(key_id, user_id)
-        self.audit("apikey_revoke", self._kontoname(besitzer), detail=f"key={key_id}")
-        if besitzer is not None and self.store.count_active_api_keys(besitzer) < vorher:
-            self._security_event("api_key_revoked", besitzer, key_id=key_id)
+        self.audit("apikey_revoke", self._account_name(owner), detail=f"key={key_id}")
+        if owner is not None and self.store.count_active_api_keys(owner) < before:
+            self._security_event("api_key_revoked", owner, key_id=key_id)
 
     #: Why all keys of an account were revoked — `reason` in the event `api_keys_revoked`
-    #: (`on_security_event`). Up to 0.21.x German (`sperre`, `admin_passwort`, `passwort_reset`,
-    #: `sitzungen_beendet`), with the keys `anzahl`/`grund` instead of `count`/`reason`.
-    _KEYS_WIDERRUFEN_GRUENDE = ("account_disabled", "admin_password_reset", "password_reset",
+    #: (`on_security_event`). Up to 0.21.x German (`lock`, `admin_passwort`, `passwort_reset`,
+    #: `sitzungen_beendet`), with the keys `anzahl`/`reason` instead of `count`/`reason`.
+    _KEYS_REVOKED_REASONS = ("account_disabled", "admin_password_reset", "password_reset",
                                 "sessions_revoked")
 
-    def _keys_widerrufen(self, user_id, grund: str) -> int:
+    def _keys_revoked(self, user_id, reason: str) -> int:
         """Revoke all valid keys of an account — and notify the owner (limit e).
 
         The one path for reset, lockout, admin password and `sessions/revoke`: before, the
-        revocation was only in the audit log there, the owner learned nothing. `grund` is one of
-        `_KEYS_WIDERRUFEN_GRUENDE`."""
-        if grund not in self._KEYS_WIDERRUFEN_GRUENDE:
-            raise ValueError(f"unknown reason {grund!r} — allowed: {self._KEYS_WIDERRUFEN_GRUENDE}")
+        revocation was only in the audit log there, the owner learned nothing. `reason` is one of
+        `_KEYS_REVOKED_REASONS`."""
+        if reason not in self._KEYS_REVOKED_REASONS:
+            raise ValueError(f"unknown reason {reason!r} — allowed: {self._KEYS_REVOKED_REASONS}")
         n = self.store.revoke_user_api_keys(user_id)
         if n:
-            self._security_event("api_keys_revoked", user_id, count=n, reason=grund)
+            self._security_event("api_keys_revoked", user_id, count=n, reason=reason)
         return n
 
     def set_password(self, user_id, password):
@@ -1118,19 +1118,19 @@ class TinySesam:
         self._security_event("password_changed", user_id)
 
     @staticmethod
-    def _blockliste_laden(pfad) -> frozenset:
+    def _load_blocklist(path) -> frozenset:
         """Read in the operator blocklist (`password_blocklist_file`) — once, at startup.
 
         If the file is missing, startup aborts (`ConfigError`) instead of silently continuing
         without a list: whoever specifies a list relies on it. Lines that are not
-        UTF-8 are read by `blockliste_lesen` as Latin-1 — otherwise a raw
+        UTF-8 are read by `read_blocklist` as Latin-1 — otherwise a raw
         `UnicodeDecodeError` came here instead of a usable list (A-3)."""
-        if not pfad:
+        if not path:
             return frozenset()
         try:
-            return _pw.blockliste_lesen(pfad)
+            return _pw.read_blocklist(path)
         except OSError as e:
-            raise ConfigError(f"password_blocklist_file {pfad!r} cannot be read: {e}") from e
+            raise ConfigError(f"password_blocklist_file {path!r} cannot be read: {e}") from e
 
     def password_policy_error(self, password, *, username=None, email=None, api: bool = False) -> Optional[str]:
         """The password rule for a NEW password — `None` means "fine", otherwise the
@@ -1140,21 +1140,21 @@ class TinySesam:
         admin panel (there every check was missing until T-13, finding B2-13). It checks minimum
         (`password_min_length`) and maximum length (R4-07), the built-in plus the custom
         blocklist and context-related words — service name (`rp_name`), username and the
-        local part of the email address (B2-5/H-17). Details: `passwords.passwort_mangel`."""
-        kontext = [self.cfg.rp_name, username or ""]
+        local part of the email address (B2-5/H-17). Details: `passwords.password_defect`."""
+        context = [self.cfg.rp_name, username or ""]
         if email:
-            kontext.append(str(email).split("@", 1)[0])
-        befund = _pw.passwort_mangel(password or "", self._passwort_mindestlaenge(),
-                                     kontext=kontext, blockliste=self._blockliste)
-        if befund is None:
+            context.append(str(email).split("@", 1)[0])
+        finding = _pw.password_defect(password or "", self._password_min_length(),
+                                     context=context, blocklist=self._blocklist)
+        if finding is None:
             return None
-        grund, werte = befund
-        schluessel = {"short": ("api.password_short", "err.pw_short"),
+        reason, values = finding
+        key_name = {"short": ("api.password_short", "err.pw_short"),
                       "long": ("api.password_long", "err.pw_long"),
-                      "weak": ("api.password_weak", "err.pw_weak")}[grund]
-        return self.t(schluessel[0] if api else schluessel[1], **werte)
+                      "weak": ("api.password_weak", "err.pw_weak")}[reason]
+        return self.t(key_name[0] if api else key_name[1], **values)
 
-    def _passwort_allein_moeglich(self) -> bool:
+    def _password_alone_possible(self) -> bool:
         """Can the password, in this configuration, sign in COMPLETELY on its own?
 
         Yes in classic mode (no `login_chain`): an account without TOTP signs in with the
@@ -1173,12 +1173,12 @@ class TinySesam:
         attack on B2-4). Only when the operator grants the enrolment is the password never
         alone. Limit: a window opened by the operator (`grant_mfa_enrollment`) — that is
         their deliberate decision for exactly one account."""
-        kette = list(self.cfg.login_chain or ())
-        if not kette or not (set(kette) - {"password"}):
+        chain = list(self.cfg.login_chain or ())
+        if not chain or not (set(chain) - {"password"}):
             return True
         return self.cfg.mfa_enrollment != "strict"
 
-    def _passwort_mindestlaenge(self) -> int:
+    def _password_min_length(self) -> int:
         """The minimum length for a NEW password (B2-4, NIST SP 800-63B-4, 3.1.1.2).
 
         The standard demands 15 characters if the password can sign in alone, and 8 if it is only
@@ -1186,10 +1186,10 @@ class TinySesam:
         (`password_min_length_single_factor`, `password_min_length`); whoever does not want the stricter
         rule sets the first to 8. Existing passwords remain valid — the rule applies
         where a password is set."""
-        basis = self._sec("password_min_length")
-        if self._passwort_allein_moeglich():
-            return max(basis, self._sec("password_min_length_single_factor"))
-        return basis
+        base = self._sec("password_min_length")
+        if self._password_alone_possible():
+            return max(base, self._sec("password_min_length_single_factor"))
+        return base
 
     # ---------- Notification on security events (opt-in) ----------
     #: The events for which `on_security_event` is called — everything that creates, changes,
@@ -1212,7 +1212,7 @@ class TinySesam:
         "email_changed", "username_changed",
     )
 
-    def _security_event(self, ereignis: str, user_id, **details) -> None:
+    def _security_event(self, event: str, user_id, **details) -> None:
         """Call `on_security_event` for an event from `SECURITY_EVENTS`, if set.
 
         An error in the hook does **not** abort the operation — the change has by then
@@ -1223,22 +1223,22 @@ class TinySesam:
         hook = self.on_security_event
         if hook is None:
             return
-        zeile = self.store.get_user(user_id)
-        if zeile is None:
+        line = self.store.get_user(user_id)
+        if line is None:
             return
-        konto = {"id": zeile["id"], "username": zeile["username"], "email": zeile["email"],
-                 "display_name": zeile["display_name"]}
+        account = {"id": line["id"], "username": line["username"], "email": line["email"],
+                 "display_name": line["display_name"]}
         try:
-            hook(ereignis, konto, dict(details))
+            hook(event, account, dict(details))
         except Exception as e:
             security.seclog.warning("on_security_event failed event=%s user_id=%s: %s",
-                                    ereignis, zeile["id"], security.fuer_log(repr(e)))
+                                    event, line["id"], security.for_log(repr(e)))
 
     def ensure_admin(self, username, password) -> bool:
         """Bootstrap: creates an admin IF no user exists yet. True on creation."""
         if self.store.user_count() == 0:
             uid = self.create_user(username, password, is_admin=True)
-            self._erster_owner(uid)
+            self._first_owner(uid)
             return True
         return False
 
@@ -1252,7 +1252,7 @@ class TinySesam:
 
         The audit lines stay (what happened, when, from which IP), only the name becomes
         `deleted#<id>` (up to 0.24.x `gelöscht#<id>`) — also for sign-in attempts under the email address and where the name
-        (`actor=`) or address appears in the detail text (see `Store.audit_anonymisieren`). A
+        (`actor=`) or address appears in the detail text (see `Store.anonymize_audit`). A
         deleted account whose name still appears in every line is not deleted; a log
         with missing lines is no longer fit for follow-up.
 
@@ -1263,10 +1263,10 @@ class TinySesam:
 
         What arose from the creation of the account onward is replaced; a VERIFIED address also in
         older lines (for instance in the invitation that led to the account) — it demonstrably
-        belongs to the account (`Store.adresse_belegt`). The address of an open account (link never
+        belongs to the account (`Store.address_proven`). The address of an open account (link never
         redeemed) or of a registration without a confirmation requirement is not verified; a
         stranger may have typed it. A name belonged to nobody or to someone else before creation;
-        a failed attempt under it stays as it was (see `Store.konto_entfernen`).
+        a failed attempt under it stays as it was (see `Store.remove_account`).
 
         The last admin cannot be deleted (`StateError`) — otherwise the instance would be left without
         administration, and the first-admin path would open up for the next best person. Returns False
@@ -1275,21 +1275,21 @@ class TinySesam:
         u = self.store.get_user(user_id)
         if not u:
             return False
-        sperre = self.store.loeschsperre(u)        # the same rule as `tinysesam delete`
-        if sperre == "owner":
+        lock = self.store.deletion_guard(u)        # the same rule as `tinysesam delete`
+        if lock == "owner":
             raise StateError(f"Account {user_id} is an owner and cannot be deleted — hand over the "
                              "owner role first (this requires another owner to exist).")
-        if sperre == "last_admin":
+        if lock == "last_admin":
             raise StateError(f"Account {user_id} is the last admin and cannot be deleted.")
-        # The one deletion path (`Store.konto_entfernen`) — the same through which `gc()`, `tinysesam gc`
+        # The one deletion path (`Store.remove_account`) — the same through which `gc()`, `tinysesam gc`
         # and the withdrawal of a registration delete (integration findings 12/18). Only here, in
         # the deliberate deletion, does a verified address count as the account's own even from before creation —
-        # the other paths can be triggered by a stranger (`Store.adresse_belegt`).
-        entfernt = self.store.konto_entfernen(user_id, adresse_unbefristet=True)
-        if entfernt is None:
+        # the other paths can be triggered by a stranger (`Store.address_proven`).
+        removed = self.store.remove_account(user_id, address_unlimited=True)
+        if removed is None:
             return False
-        ersatz, n = entfernt
-        self.audit("user_delete", ersatz, detail=f"uid={user_id} audit_anonymized={n}")
+        replacement, n = removed
+        self.audit("user_delete", replacement, detail=f"uid={user_id} audit_anonymized={n}")
         return True
 
     def set_disabled(self, user_id: int, disabled: bool) -> bool:
@@ -1314,7 +1314,7 @@ class TinySesam:
         panel lets nobody lock themselves and changes an owner account only by an owner.
         Returns False if the account does not exist (then nothing happens).
 
-        Up to 0.21.x the docs showed `auth.store.set_disabled(uid, True, durch_betreiber=True)` for this
+        Up to 0.21.x the docs showed `auth.store.set_disabled(uid, True, through_operator=True)` for this
         — that sets only the marker: sessions, keys and links stayed valid. `auth.store` is
         internals with no guarantee (PO decision 2026-09-27)."""
         u = self.store.get_user(user_id)
@@ -1322,22 +1322,22 @@ class TinySesam:
             return False
         uid = int(u["id"])
         # The marker first: with an owner the store raises before anything has happened.
-        self.store.set_disabled(uid, bool(disabled), durch_betreiber=True)
+        self.store.set_disabled(uid, bool(disabled), through_operator=True)
         keys = 0
         if disabled:
             self.store.delete_user_sessions(uid)
             # `verify_api_key` already rejects keys of locked accounts. Revoke anyway: if
             # the account is released again later, a key nobody knows about any more would
             # otherwise come back to life.
-            keys = self._keys_widerrufen(uid, "account_disabled")
+            keys = self._keys_revoked(uid, "account_disabled")
             # The same for open one-time tokens: a confirmation link from registration otherwise lifted the
             # lock again (H-18, "a disabled account via no path").
             self.store.revoke_user_magic_tokens(uid)
         # From a request with a signed-in account (panel, own admin route) `audit()` names the
         # actor as the account — the same line the panel itself wrote up to 0.21.x.
-        anfrage = _ANFRAGE.get() or {}
+        request = _REQUEST.get() or {}
         self.audit("user_disable" if disabled else "user_enable",
-                   None if anfrage.get("akteur") else str(u["username"]),
+                   None if request.get("akteur") else str(u["username"]),
                    detail=f"uid={uid}" + (f" api_keys_revoked={keys}" if keys else ""))
         return True
 
@@ -1350,7 +1350,7 @@ class TinySesam:
     #: is under the typed-in identifier and arises only if the LDAP password of the OTHER entry was right — on the
     #: local owner's account page it would be exactly the oracle that the rejection closes. The
     #: operator's audit log keeps the real names.
-    _EIGENE_ANSICHT = {"email_change_taken": "email_change_requested",
+    _OWN_VIEW = {"email_change_taken": "email_change_requested",
                        "email_change_reserved": "email_change_requested",
                        "federation_email_confirm": None,
                        "ldap_identifier_rejected": None}
@@ -1366,7 +1366,7 @@ class TinySesam:
         theirs — the admin's. That is omitted; `by_admin` says instead that it was not
         the account owner.
 
-        Counting starts only from the creation of the account (`Store.anlage_grenze`). The filter goes by
+        Counting starts only from the creation of the account (`Store.setup_limit`). The filter goes by
         the NAME, and a name may have belonged to someone else before: a deleted account
         whose lines an older version did not anonymise (integration finding 12), or
         to nobody — then the failed attempt of a stranger under the then-free name is there,
@@ -1378,32 +1378,32 @@ class TinySesam:
 
         Likewise since 2026-09-26 it always shows an address-change request as
         `email_change_requested`, whether the address was free, taken or reserved, and
-        `federation_email_confirm` not at all (`_EIGENE_ANSICHT`, G12b). A rejection ON
+        `federation_email_confirm` not at all (`_OWN_VIEW`, G12b). A rejection ON
         CONFIRMATION (`on_confirmation=1`) keeps its name: the 409 told the person clicking
         anyway, and only whoever has the link from the mailbox gets there.
 
         Rows written up to 0.24.x carry the old names and keys (`akteur=`, `beim_bestaetigen=1`,
         `ldap_kennung_abgewiesen`): both spellings are read, and the event is always shown in the
-        English spelling (`_vokabular`).
+        English spelling (`_vocabulary`).
         """
         u = self.store.get_user(user_id) if user_id is not None else None
         if not u:
             return []
-        aus = []
-        # The same boundary as `konto_entfernen`: the name's watermark, otherwise the creation.
+        from_ = []
+        # The same boundary as `remove_account`: the name's watermark, otherwise the creation.
         name = str(u["username"])
-        audit_ab = self.store.kennung_grenzen(u).get(norm_kennung(name), (None, None))[1]
-        seit, seit_id = self.store.anlage_grenze(u) if audit_ab is None else (None, 0)
-        ausblenden = tuple(e for e, ansicht in self._EIGENE_ANSICHT.items() if ansicht is None)
-        for z in self.store.recent_audit(max(1, int(limit)), username=name, seit=seit, seit_id=seit_id,
-                                         ab_id=audit_ab, ohne_events=ausblenden):
-            fremd = _vokabular.detail_hat_schluessel(z["detail"], "actor")
-            ereignis = _vokabular.audit_ereignis_neu(z["event"])
-            if not _vokabular.detail_hat_wert(z["detail"], "on_confirmation", "1"):
-                ereignis = self._EIGENE_ANSICHT.get(ereignis, ereignis)
-            aus.append({"ts": z["ts"], "event": ereignis,
-                        "ip": None if fremd else z["ip"], "by_admin": fremd})
-        return aus
+        audit_from = self.store.identifier_limits(u).get(norm_identifier(name), (None, None))[1]
+        since, since_id = self.store.setup_limit(u) if audit_from is None else (None, 0)
+        hide = tuple(e for e, view in self._OWN_VIEW.items() if view is None)
+        for z in self.store.recent_audit(max(1, int(limit)), username=name, since=since, since_id=since_id,
+                                         from_id=audit_from, without_events=hide):
+            foreign = _vocabulary.detail_has_key(z["detail"], "actor")
+            event = _vocabulary.audit_event_new(z["event"])
+            if not _vocabulary.detail_has_value(z["detail"], "on_confirmation", "1"):
+                event = self._OWN_VIEW.get(event, event)
+            from_.append({"ts": z["ts"], "event": event,
+                        "ip": None if foreign else z["ip"], "by_admin": foreign})
+        return from_
 
     def admin_exists(self) -> bool:
         """Is there at least one admin? The two bootstrap paths apply only while there is not."""
@@ -1418,8 +1418,8 @@ class TinySesam:
     #: at all, explicitly as `False`.
     _FEDERATED_FACTORS = ("oidc", "saml")
 
-    def _maybe_promote_admin(self, user, email_bestaetigt: Optional[bool] = None,
-                             faktor: Optional[str] = None) -> bool:
+    def _maybe_promote_admin(self, user, email_confirmed: Optional[bool] = None,
+                             factor: Optional[str] = None) -> bool:
         """Path 1: allowlist. Whoever is in `admin_identifiers` becomes admin at login — regardless of
         the method (also OIDC/SAML/LDAP); an allowlist ADDRESS, however, only with evidence
         that it belongs to the person signing in, and via SAML/LDAP there is none. Never again afterwards —
@@ -1434,7 +1434,7 @@ class TinySesam:
         first admin. The guard checked the configuration, but the comparison here checked something
         different; the gap had merely moved.
 
-        `email_bestaetigt` is the **evidence for the address** with which the caller arrives:
+        `email_confirmed` is the **evidence for the address** with which the caller arrives:
         a federated sign-in path states `True`/`False` via the claim `email_verified`,
         `None` means "this sign-in path does not know". Without evidence a matching address
         does not count: otherwise an IdP with self-registration would suffice to register the
@@ -1446,12 +1446,12 @@ class TinySesam:
            `email_verified`, OIDC Core 5.1). **SAML and LDAP have none** — no
            standard attribute says that a directory verified the address, and in many directories the user maintains a
            `mail` attribute themselves. So that this does not depend on the
-           caller's memory: `faktor` from `_FEDERATED_FACTORS` demands
-           `email_bestaetigt is True`, a forgotten argument refuses. LDAP writes the
+           caller's memory: `factor` from `_FEDERATED_FACTORS` demands
+           `email_confirmed is True`, a forgotten argument refuses. LDAP writes the
            factor `password` and cannot be recognised by it — there the caller passes
-           `email_bestaetigt=False`.
+           `email_confirmed=False`.
         2. **Otherwise the marker on the account decides** (`users.email_verified`, read by
-           `_beleg_am_konto`). The address from an IdP without the claim is, since this version, written into the account quite
+           `_proof_on_account`). The address from an IdP without the claim is, since this version, written into the account quite
            normally (otherwise an existing installation would lose account name and
            `Remote-Email`) — it just must not carry anything. If that hung on the parameter alone, the
            protection would be a question of the sign-in path: the same record, signed in once via a local
@@ -1471,11 +1471,11 @@ class TinySesam:
         ids = {str(i).strip().lower() for i in self.cfg.admin_identifiers if str(i).strip()}
         if not ids or not user or user["is_admin"] or self.admin_exists():
             return False
-        adressen = {i for i in ids if "@" in i}
-        namen = ids - adressen
-        trifft_adresse = str(user["email"] or "").lower() in adressen
-        trifft_name = str(user["username"] or "").lower() in namen
-        if not (trifft_adresse or trifft_name):
+        addresses = {i for i in ids if "@" in i}
+        names = ids - addresses
+        hits_address = str(user["email"] or "").lower() in addresses
+        hits_name = str(user["username"] or "").lower() in names
+        if not (hits_address or hits_name):
             return False
         if self.store.get_setting("allowlist_nach_idp_entzug"):
             # G6: The identity provider has withdrawn the instance's last admin
@@ -1484,39 +1484,39 @@ class TinySesam:
                 "First admin NOT granted: %s is in admin_identifiers, but the identity "
                 "provider has withdrawn the instance's last admin — the allowlist does not open "
                 "again afterwards. Emergency route: tinysesam owner --db <file> <user> or "
-                "/auth/claim-admin.", security.fuer_log(user["username"]))
+                "/auth/claim-admin.", security.for_log(user["username"]))
             self.audit("admin_bootstrap_denied", user["username"], detail="after_idp_withdrawal")
             return False
-        if trifft_adresse and not trifft_name:
+        if hits_address and not hits_name:
             # Two stages, both fail-closed: explicit evidence from the sign-in path wins.
             # If the path is silent (`None`), a federated factor refuses on principle — even
             # if it simply forgot the argument —, and otherwise the marker
             # on the account decides.
-            if email_bestaetigt is not None:
-                belegt, grund = email_bestaetigt is True, "email_unconfirmed"
-            elif (faktor or "") in self._FEDERATED_FACTORS:
-                belegt, grund = False, f"without_proof:{faktor or '?'}"
+            if email_confirmed is not None:
+                proven, reason = email_confirmed is True, "email_unconfirmed"
+            elif (factor or "") in self._FEDERATED_FACTORS:
+                proven, reason = False, f"without_proof:{factor or '?'}"
             else:
-                belegt, grund = _beleg_am_konto(user), "email_unconfirmed"
-            if not belegt:
+                proven, reason = _proof_on_account(user), "email_unconfirmed"
+            if not proven:
                 security.seclog.warning(
                     "First admin NOT granted: %s carries the allowlist address %s, but there is no "
                     "confirmation evidence for this sign-in path (%s) (OIDC: claim "
                     "email_verified; SAML and LDAP have none; otherwise the note on the account). "
                     "The address stays on the account, it just does not support this decision. "
                     "Evidenced route: /auth/claim-admin.",
-                    security.fuer_log(user["username"]), security.fuer_log(user["email"]),
-                    faktor or "?")
-                self.audit("admin_bootstrap_denied", user["username"], detail=grund)
+                    security.for_log(user["username"]), security.for_log(user["email"]),
+                    factor or "?")
+                self.audit("admin_bootstrap_denied", user["username"], detail=reason)
                 return False
         self.store.set_admin(user["id"], True)
-        self._erster_owner(user["id"])
+        self._first_owner(user["id"])
         self.audit("admin_bootstrap", user["username"], detail="admin_identifiers")
         security.seclog.warning("First admin granted via admin_identifiers: %s",
-                                security.fuer_log(user["username"]))
+                                security.for_log(user["username"]))
         return True
 
-    def _claim_datei_auto(self) -> str:
+    def _claim_file_auto(self) -> str:
         """`<db_path>.claim` — where the one-time token goes when stderr is not a console (T-17).
 
         Next to the database, because whoever operates the service may write there anyway, and because
@@ -1525,21 +1525,21 @@ class TinySesam:
         db = str(self.cfg.db_path or "").strip()
         return "" if db in ("", ":memory:") else db + ".claim"
 
-    def _claim_datei_weg(self) -> None:
+    def _claim_file_away(self) -> None:
         """Remove the automatically created token file — after redemption, and at startup
         when there is no token (any more). A self-chosen `admin_claim_token_file` stays
         in place (its path may be a mounted secret); its content is then invalid."""
-        pfad = self._claim_datei_auto()
-        if pfad:
+        path = self._claim_file_auto()
+        if path:
             try:
-                os.remove(pfad)
+                os.remove(path)
             except FileNotFoundError:
                 pass  # already gone (never created or already redeemed) — exactly the target state
             except OSError as e:
                 security.seclog.warning("Token file %s could not be removed (%s) — its "
-                                        "content is invalid.", pfad, type(e).__name__)
+                                        "content is invalid.", path, type(e).__name__)
 
-    def _admin_claim_bekanntgeben(self, token: str) -> None:
+    def _admin_claim_announce(self, token: str) -> None:
         """Show the value of the first-admin one-time token to the **operator** — not to the log.
 
         Up to 0.18.x the token stood in plaintext in the line that `security.seclog` writes. If
@@ -1560,28 +1560,28 @@ class TinySesam:
         `docker logs` — directly before the line "The value is deliberately NOT in the log" (German runtime text). Without a
         database file (`:memory:`) or if the file is not created, only stderr remains, and
         the text honestly says that the value is then in the service's log. After redemption
-        the file disappears (`_claim_datei_weg`).
+        the file disappears (`_claim_file_away`).
         """
         ttl = self.cfg.admin_claim_ttl_min
-        pfad = str(self.cfg.admin_claim_token_file or "").strip()
-        konsole = _stderr_ist_konsole()
-        automatisch = False
-        if not pfad and not konsole:
-            pfad = self._claim_datei_auto()
-            automatisch = bool(pfad)
+        path = str(self.cfg.admin_claim_token_file or "").strip()
+        console = _stderr_is_console()
+        automatic = False
+        if not path and not console:
+            path = self._claim_file_auto()
+            automatic = bool(path)
         # What the line in the log says must be true — also in the fallback. Up to 0.21.x it said there
         # "The value is deliberately NOT in the log" while in the container it stood two lines above.
-        wohin = ("is on the console (stderr), not in this line" if konsole else
+        where_to = ("is on the console (stderr), not in this line" if console else
                  "is on stderr — and stderr is NOT a console here: the value is therefore in the "
                  "service's log (journal, docker logs). Remedy: set admin_claim_token_file "
                  "or use a database file instead of :memory:")
-        geschrieben = False
-        if pfad:
+        written = False
+        if path:
             try:
                 # Open without O_TRUNC and set the permissions on the descriptor BEFORE the secret
                 # goes in: with an already existing file the mode parameter of
                 # os.open ignores the default, and a chmod afterwards would leave a window open.
-                fd = os.open(pfad, os.O_CREAT | os.O_WRONLY, 0o600)
+                fd = os.open(path, os.O_CREAT | os.O_WRONLY, 0o600)
                 try:
                     if hasattr(os, "fchmod"):
                         os.fchmod(fd, 0o600)
@@ -1589,22 +1589,22 @@ class TinySesam:
                     os.write(fd, (token + "\n").encode("utf-8"))
                 finally:
                     os.close(fd)
-                wohin = f"is in {pfad} (mode 0600), not in the log"
-                geschrieben = True
+                where_to = f"is in {path} (mode 0600), not in the log"
+                written = True
             except OSError as e:
                 # No reason to refuse startup — but the operator must get the token,
                 # otherwise they cannot reach their own instance.
-                name = "the token file" if automatisch else "admin_claim_token_file"
-                _auf_stderr(f"TinySesam: {name} {pfad} not writable "
+                name = "the token file" if automatic else "admin_claim_token_file"
+                _on_stderr(f"TinySesam: {name} {path} not writable "
                             f"({type(e).__name__}) — the token is here instead:")
-                wohin = f"{wohin} ({pfad} was not writable: {type(e).__name__})"
-        if not geschrieben:
-            _auf_stderr(f"TinySesam: No admin exists. Set the first admin — sign in, then "
+                where_to = f"{where_to} ({path} was not writable: {type(e).__name__})"
+        if not written:
+            _on_stderr(f"TinySesam: No admin exists. Set the first admin — sign in, then "
                         f"/auth/claim-admin?token={token} (valid {ttl} minutes, can be redeemed "
                         f"exactly once).")
         security.seclog.warning(
             "No admin exists. The one-time token for /auth/claim-admin %s — valid %d "
-            "minutes, can be redeemed exactly once.", wohin, ttl)
+            "minutes, can be redeemed exactly once.", where_to, ttl)
 
     def admin_claim_token(self) -> Optional[str]:
         """Path 2: one-time token. As long as no admin exists, there is a token that can be redeemed
@@ -1616,7 +1616,7 @@ class TinySesam:
         if not self.cfg.admin_enabled or self.cfg.admin_claim_ttl_min <= 0 or self.admin_exists():
             return None
         raw = self.store.get_setting("admin_claim")
-        now = _jetzt()
+        now = _now()
         if raw:
             token, exp = raw.split(":", 1)
             if int(exp) > now:
@@ -1633,22 +1633,22 @@ class TinySesam:
         if not raw:
             return False
         want, exp = raw.split(":", 1)
-        if int(exp) <= _jetzt() or not secrets.compare_digest(token, want):
+        if int(exp) <= _now() or not secrets.compare_digest(token, want):
             return False
         self.store.set_setting("admin_claim", "")     # one-time
-        self._claim_datei_weg()                        # the file now holds only invalid content (T-17)
+        self._claim_file_away()                        # the file now holds only invalid content (T-17)
         self.store.set_admin(user["id"], True)
-        self._erster_owner(user["id"])
+        self._first_owner(user["id"])
         self.audit("admin_bootstrap", user["username"], detail="claim_token")
         security.seclog.warning("First admin granted via one-time token: %s",
-                                security.fuer_log(user["username"]))
+                                security.for_log(user["username"]))
         return True
 
     def _admin_claim_failure(self, username, ip) -> None:
         """Record a failed first-admin claim — audit log and security log (B5-16)."""
         self.audit("admin_claim_fail", username, ip)
-        security.seclog.warning("%s user=%s ip=%s method=claim_admin", security.LOG_PRUEFUNG,
-                                security.fuer_log(username), security.fuer_log(ip))
+        security.seclog.warning("%s user=%s ip=%s method=claim_admin", security.LOG_CHECK,
+                                security.for_log(username), security.for_log(ip))
 
     # ---------- Demo mode ----------
     _DEMO_USERS = ("demo", "demoadmin")
@@ -1687,7 +1687,7 @@ class TinySesam:
             if u and u["username"] in self._DEMO_USERS:
                 # Via the one deletion path (H-13): if `_seed_demo` later recreates the names, the
                 # new account would otherwise see the old one's events as its own (H-7).
-                self.store.konto_entfernen(u["id"])
+                self.store.remove_account(u["id"])
                 n += 1
         self.store.set_setting("demo_users", "")
         return n
@@ -1702,14 +1702,14 @@ class TinySesam:
     #: public surface is English (PO decision 2026-09-27), and internals do not belong in
     #: its guarantee. A list of the allowed rather than the forbidden columns: a new column of the
     #: store does not silently become part of the guarantee. Depending on the path, `_via` and `_key_kind` are added.
-    _KONTO_FELDER = ("id", "username", "display_name", "email", "email_verified", "is_admin",
+    _ACCOUNT_FIELDS = ("id", "username", "display_name", "email", "email_verified", "is_admin",
                      "is_owner", "roles", "is_service", "disabled", "first_login_at",
                      "mfa_enroll_until", "created_at")
 
     @classmethod
-    def _als_dict(cls, zeile) -> Optional[dict]:
+    def _as_dict(cls, line) -> Optional[dict]:
         """Return an account row as what the signature promises — a `dict` with the
-        fields from `_KONTO_FELDER`.
+        fields from `_ACCOUNT_FIELDS`.
 
         The user-facing methods have always been annotated `-> Optional[dict]` and returned
         a `sqlite3.Row`. The package carries `Typing :: Typed` and a `py.typed` — the guarantee
@@ -1718,14 +1718,14 @@ class TinySesam:
         line that, according to the type, cannot be wrong. At the store level the Row remains — there
         it is documented and intended, with all columns.
         """
-        if zeile is None:
+        if line is None:
             return None
-        da = set(zeile.keys())
-        return {k: zeile[k] for k in cls._KONTO_FELDER if k in da}
+        da = set(line.keys())
+        return {k: line[k] for k in cls._ACCOUNT_FIELDS if k in da}
 
     def get_user(self, user_id) -> Optional[dict]:
         """Read an account by ID, or None."""
-        return self._als_dict(self.store.get_user(user_id))
+        return self._as_dict(self.store.get_user(user_id))
 
     # ---------- Password login ----------
     def find_user(self, identifier) -> Optional[dict]:
@@ -1739,14 +1739,14 @@ class TinySesam:
             return None
         mode = getattr(self.cfg, "login_identifier", "both")
         if mode == "username":
-            gefunden = self.store.get_user_by_name(ident)
+            found = self.store.get_user_by_name(ident)
         elif mode == "email":
-            gefunden = self.store.get_user_by_email(ident)
+            found = self.store.get_user_by_email(ident)
         elif "@" in ident:
-            gefunden = self.store.get_user_by_email(ident) or self.store.get_user_by_name(ident)
+            found = self.store.get_user_by_email(ident) or self.store.get_user_by_name(ident)
         else:
-            gefunden = self.store.get_user_by_name(ident) or self.store.get_user_by_email(ident)
-        return self._als_dict(gefunden)
+            found = self.store.get_user_by_name(ident) or self.store.get_user_by_email(ident)
+        return self._as_dict(found)
 
     def _check_password(self, username, password) -> Optional[dict]:
         """Check username/email + password. Returns the account or None — and takes equally long for both outcomes (no account probing)."""
@@ -1773,12 +1773,12 @@ class TinySesam:
     #: it would count as local for `federated_only()` and would get a reset link whose password
     #: then wins over the directory. Unique per account (primary key source+identifier),
     #: never read for a mapping, and a real identifier replaces it at the next login —
-    #: through the same door as case 4 (`_nachbindung_grund`).
-    _OHNE_KENNUNG = Store.OHNE_KENNUNG
+    #: through the same door as case 4 (`_rebinding_reason`).
+    _WITHOUT_IDENTIFIER = Store.WITHOUT_IDENTIFIER
 
-    def _fremde_identitaet_aufloesen(self, quelle: str, kennung: str, username: str,
-                                     anlegen, name_zuordnen: bool = True,
-                                     nur_konto: Optional[int] = None) -> Optional[dict]:
+    def _resolve_foreign_identity(self, source: str, identifier: str, username: str,
+                                     create, name_assign: bool = True,
+                                     only_account: Optional[int] = None) -> Optional[dict]:
         """Find, bind or create a local account for a foreign identity (F-11).
 
         `kennung` is the **stable** identifier from the directory (objectGUID/entryUUID for LDAP,
@@ -1798,7 +1798,7 @@ class TinySesam:
            each of them has to get one. The PO explicitly approved this path for this round;
            it relies on the name once more, but only a
            single time per account, and it leaves an audit line. Since 2026-09-26 only
-           through one door (`_nachbindung_grund`): not after the deadline
+           through one door (`_rebinding_reason`): not after the deadline
            (`federation_name_binding_days`, G1 — otherwise a dormant account would fall to the next
            person with that name) and never for a self-chosen name
            (`users.name_selbst_gewaehlt`, G2-N — otherwise a local account renames itself after
@@ -1813,114 +1813,114 @@ class TinySesam:
         that into a rejection. The FIRST mapping of an existing account goes through
         the same door as case 4; an account the source already knows (placeholder) stays.
 
-        `name_zuordnen=False`: the name says nothing about the person — an unverified
+        `name_assign=False`: the name says nothing about the person — an unverified
         address from a source the operator does not trust (`*_email_trusted=False`). Then
         there is neither case 4 (binding afterwards via the name) nor a mapping without an identifier: whoever
         registers the address of a local account as a name at the IdP would otherwise take over exactly
         that account (attack on the third round). Without an identifier it is rejected, with an identifier
         bound or newly created — never via the name.
 
-        `nur_konto`: the resolution may only end at THIS account (`_check_ldap`: the account whose
+        `only_account`: the resolution may only end at THIS account (`_check_ldap`: the account whose
         local secret is checked under the same identifier). If it leads to another one — a
         binding, a name, a creation —, it is rejected before anything is written
-        (`_kennung_zweier_konten`). None: no restriction.
+        (`_identifier_two_accounts`). None: no restriction.
         """
-        jetzt = _jetzt()
-        roh = str(kennung or "")
-        kennung = roh.strip()
-        formfehler = self._kennung_formfehler(roh)
-        if formfehler:
-            security.seclog.warning("%s: identifier %s rejected (user=%s)", quelle,
+        now = _now()
+        raw = str(identifier or "")
+        identifier = raw.strip()
+        form_error = self._identifier_form_error(raw)
+        if form_error:
+            security.seclog.warning("%s: identifier %s rejected (user=%s)", source,
                                     "with edge or control characters"
-                                    if formfehler == "edge_or_control_characters"
-                                    else "in placeholder form", security.fuer_log(username))
-            self.audit(f"{quelle}_identifier_invalid", username, detail=formfehler)
+                                    if form_error == "edge_or_control_characters"
+                                    else "in placeholder form", security.for_log(username))
+            self.audit(f"{source}_identifier_invalid", username, detail=form_error)
             return None
-        if not kennung and not name_zuordnen:
+        if not identifier and not name_assign:
             security.seclog.warning(
                 "%s: the name is an unverified address and there is no stable identifier (user=%s) — "
                 "rejected. A mapping via this name would be a takeover. Remedy: "
                 "set %s_attr_id or trust the source (%s_email_trusted).",
-                quelle, security.fuer_log(username), quelle, quelle)
-            self.audit(f"{quelle}_without_identifier", username, detail="rejected: address as name")
+                source, security.for_log(username), source, source)
+            self.audit(f"{source}_without_identifier", username, detail="rejected: address as name")
             return None
-        if not kennung:
+        if not identifier:
             if self.cfg.federation_require_stable_id:
                 security.seclog.warning(
                     "%s: no stable identifier in the response (user=%s) — rejected because "
                     "federation_require_stable_id=True. The attribute is named in %s_attr_id.",
-                    quelle, security.fuer_log(username), quelle)
-                self.audit(f"{quelle}_without_identifier", username, detail="rejected")
+                    source, security.for_log(username), source)
+                self.audit(f"{source}_without_identifier", username, detail="rejected")
                 return None
-            if security.einmal_melden(f"fed_ohne_kennung:{quelle}"):
+            if security.report_once(f"fed_ohne_kennung:{source}"):
                 security.seclog.warning(
                     "%s delivers no stable identifier — the mapping hangs on the username, "
                     "as before 0.20.0. Whoever renames in the directory or recreates a deleted account "
                     "under the same name gets the same local account. "
                     "Remedy: set %s_attr_id (entryUUID, objectGUID) and then "
-                    "federation_require_stable_id=True.", quelle, quelle)
-            gebunden_uid = None
+                    "federation_require_stable_id=True.", source, source)
+            bound_uid = None
         else:
-            gebunden_uid = self.store.get_federated_user(quelle, kennung)
+            bound_uid = self.store.get_federated_user(source, identifier)
 
-        if gebunden_uid:
-            if nur_konto is not None and int(gebunden_uid) != int(nur_konto):
-                self._kennung_zweier_konten(quelle, username, nur_konto, gebunden_uid)
+        if bound_uid:
+            if only_account is not None and int(bound_uid) != int(only_account):
+                self._identifier_two_accounts(source, username, only_account, bound_uid)
                 return None
-            u = self.store.get_user(gebunden_uid)
-            return self._als_dict(u) if u else None
+            u = self.store.get_user(bound_uid)
+            return self._as_dict(u) if u else None
 
-        u = self.store.get_user_by_name(username) if name_zuordnen else None
-        if nur_konto is not None and (u is None or int(u["id"]) != int(nur_konto)):
-            self._kennung_zweier_konten(quelle, username, nur_konto, u["id"] if u else None)
+        u = self.store.get_user_by_name(username) if name_assign else None
+        if only_account is not None and (u is None or int(u["id"]) != int(only_account)):
+            self._identifier_two_accounts(source, username, only_account, u["id"] if u else None)
             return None
         if u is None:
-            uid = anlegen()
+            uid = create()
             if uid is None:
                 return None
-            self.store.link_federated(quelle, kennung or f"{self._OHNE_KENNUNG}{uid}", uid, jetzt)
-            neu = self.store.get_user(uid)
-            return self._als_dict(neu) if neu else None
+            self.store.link_federated(source, identifier or f"{self._WITHOUT_IDENTIFIER}{uid}", uid, now)
+            new = self.store.get_user(uid)
+            return self._as_dict(new) if new else None
 
-        vorhandene = self.store.get_federated_kennung(quelle, u["id"])
+        existing = self.store.get_federated_identifier(source, u["id"])
         # Only the origin placeholder, no identifier: treated as unbound (case 4). It is resolved
         # only when the door is open — a rejection leaves the account as it was.
-        platzhalter = bool(vorhandene) and str(vorhandene).startswith(self._OHNE_KENNUNG)
-        if not kennung:
-            if not vorhandene:
+        placeholder = bool(existing) and str(existing).startswith(self._WITHOUT_IDENTIFIER)
+        if not identifier:
+            if not existing:
                 # First mapping of an existing account, via the name alone: the same door
-                # as case 4 (G1, G2-N). Then record the origin (A-4) — see _OHNE_KENNUNG.
-                if not self._namensbindung_erlaubt(quelle, "", u, username):
+                # as case 4 (G1, G2-N). Then record the origin (A-4) — see _WITHOUT_IDENTIFIER.
+                if not self._name_binding_permitted(source, "", u, username):
                     return None
-                self.store.link_federated(quelle, f"{self._OHNE_KENNUNG}{u['id']}", u["id"], jetzt)
-                self.store.namensbindung_schliessen(quelle, u["id"])
+                self.store.link_federated(source, f"{self._WITHOUT_IDENTIFIER}{u['id']}", u["id"], now)
+                self.store.name_binding_close(source, u["id"])
         else:
-            if vorhandene and not platzhalter and vorhandene != kennung:
+            if existing and not placeholder and existing != identifier:
                 # Case 3: The account belongs to someone else, even if the name is the same.
                 security.seclog.warning(
                     "%s: account %s is already bound to a different identifier — signing in with "
                     "a new identifier under the same name is rejected. The directory "
                     "was probably renamed or an account recreated. The operator releases "
-                    "the binding if that is intended.", quelle, security.fuer_log(username))
-                self.audit(f"{quelle}_identifier_change", str(u["username"]),
+                    "the binding if that is intended.", source, security.for_log(username))
+                self.audit(f"{source}_identifier_change", str(u["username"]),
                            detail="rejected: account already carries a different identifier")
                 return None
-            if not vorhandene or platzhalter:
+            if not existing or placeholder:
                 # Case 4: binding afterwards — a single time per account, only through the door, and it
                 # is logged.
-                if not self._namensbindung_erlaubt(quelle, kennung, u, username):
+                if not self._name_binding_permitted(source, identifier, u, username):
                     return None
-                if platzhalter:
-                    self.store.unlink_federated(quelle, u["id"])
-                self.store.link_federated(quelle, kennung, u["id"], jetzt)
-                self.store.namensbindung_schliessen(quelle, u["id"])
-                self.audit(f"{quelle}_identifier_bound", str(u["username"]),
+                if placeholder:
+                    self.store.unlink_federated(source, u["id"])
+                self.store.link_federated(source, identifier, u["id"], now)
+                self.store.name_binding_close(source, u["id"])
+                self.audit(f"{source}_identifier_bound", str(u["username"]),
                            detail="bound later at sign-in")
-        return self._als_dict(self.store.get_user(u["id"]))
+        return self._as_dict(self.store.get_user(u["id"]))
 
-    def _kennung_zweier_konten(self, quelle: str, username: str, lokal_id, ziel_id) -> None:
+    def _identifier_two_accounts(self, source: str, username: str, local_id, destination_id) -> None:
         """Reject the sign-in via `quelle`: the typed-in identifier locally belongs to account
-        `lokal_id`, but the directory entry to another one (`ziel_id`, None = it would be newly
+        `local_id`, but the directory entry to another one (`destination_id`, None = it would be newly
         created). Log line with remedy, audit `<quelle>_identifier_rejected reason=identifier_of_two_accounts`.
         The caller then returns None, the route books a failed attempt (review round
         2026-09-27, p1-d)."""
@@ -1930,31 +1930,31 @@ class TinySesam:
             "secrets of two people: the sign-in of one would otherwise clear the lockout counters under "
             "which the other is being guessed. Remedy: rename the local account (panel or "
             "`tinysesam rename`) or change the name in the directory.",
-            quelle.upper(), security.fuer_log(username), lokal_id,
-            f"account {ziel_id}" if ziel_id is not None else "no account (it would be newly created)")
-        self.audit(f"{quelle}_identifier_rejected", username,
-                   detail=f"reason=identifier_of_two_accounts local={lokal_id} "
-                          f"directory={ziel_id if ziel_id is not None else 'new'}")
+            source.upper(), security.for_log(username), local_id,
+            f"account {destination_id}" if destination_id is not None else "no account (it would be newly created)")
+        self.audit(f"{source}_identifier_rejected", username,
+                   detail=f"reason=identifier_of_two_accounts local={local_id} "
+                          f"directory={destination_id if destination_id is not None else 'new'}")
 
     @classmethod
-    def _kennung_formfehler(cls, roh) -> Optional[str]:
+    def _identifier_form_error(cls, raw) -> Optional[str]:
         """Is this value usable as a foreign identifier? None = yes, otherwise the reason (sign-in and
         existing-data binding check with the SAME function).
 
         * Leading/trailing whitespace or control characters: trimmed, the identifier would fall on the binding of
-          ANOTHER account (`chefin\u2028` → `chefin`, counter-check). Something like that does not
+          ANOTHER account (`chefin\u2028` → `manager`, counter-check). Something like that does not
           come from a real directory — reject instead of making it fit.
         * The form of the origin placeholder: via `get_federated_user` it would hit exactly the
           account whose ID it names. A directory delivers UUID/GUID — so a manipulated
           attribute."""
-        roh = str(roh or "")
-        if roh != roh.strip() or name_ungueltig(roh):
+        raw = str(raw or "")
+        if raw != raw.strip() or name_invalid(raw):
             return "edge_or_control_characters"
-        if roh.startswith(cls._OHNE_KENNUNG):
+        if raw.startswith(cls._WITHOUT_IDENTIFIER):
             return "placeholder_form"
         return None
 
-    #: Why an account is not bound via the name (`_nachbindung_grund`) — short code and
+    #: Why an account is not bound via the name (`_rebinding_reason`) — short code and
     #: explanation, for the report of `federation_bind_existing` (`reason`). English since 0.22.0
     #: (PO decision 2026-09-27); the codes up to 0.21.x remain in audit and security log.
     NAME_BINDING_REFUSALS = {
@@ -1974,9 +1974,9 @@ class TinySesam:
     }
     #: The same reasons in the security log (the audit line `<source>_name_binding_closed … reason=` carries
     #: the code itself). Up to 0.24.x the codes in audit and log were German (`adresse_als_name`,
-    #: `kennung_ungueltig`, `konflikt`, `anders_gebunden`, `name_selbst_gewaehlt`, `name_aus_quelle`, `frist`);
-    #: the migration to schema 15 rewrote them (`_vokabular.TOKENS_ALT`).
-    _NACHBINDUNG_PROTOKOLL = {
+    #: `kennung_ungueltig`, `konflikt`, `anders_gebunden`, `name_selbst_gewaehlt`, `name_aus_quelle`, `deadline`);
+    #: the migration to schema 15 rewrote them (`_vocabulary.TOKENS_OLD`).
+    _REBINDING_LOG = {
         "address_as_name": "the name says nothing about the person "
                            "(control characters, or the unverified mail value of a source that "
                            "is not trusted)",
@@ -1993,134 +1993,134 @@ class TinySesam:
                                   "passed (federation_name_binding_days)",
     }
 
-    def _nachbindung_grund(self, quelle: str, kennung: str, konto, *, name_belegt: bool = True,
-                           frist: bool = True) -> Optional[str]:
-        """May the account `konto` be bound to the foreign identifier `kennung` via its name?
+    def _rebinding_reason(self, source: str, identifier: str, account, *, name_proven: bool = True,
+                           deadline: bool = True) -> Optional[str]:
+        """May the account `account` be bound to the foreign identifier `kennung` via its name?
         `None` = yes, otherwise the reason (key from `NAME_BINDING_REFUSALS`; the same code in audit
-        and security log, text in `_NACHBINDUNG_PROTOKOLL`).
+        and security log, text in `_REBINDING_LOG`).
 
         ONE decision for the sign-in (case 4, replacement of a placeholder, first mapping without an
         identifier — `kennung=""`) and for the existing-data binding (`federation_bind_existing`). Copied,
         the two drifted apart, and one path would bind what the other rejects (G1).
 
-        * `name_belegt=False`: the name is the unverified `mail` value of a source that is not
-          trusted (`_ldap_name_belegt`) — it says nothing about the person.
-        * Identifier: form (`_kennung_formfehler`), not already bound to another account, the
+        * `name_proven=False`: the name is the unverified `mail` value of a source that is not
+          trusted (`_ldap_name_proven`) — it says nothing about the person.
+        * Identifier: form (`_identifier_form_error`), not already bound to another account, the
           account does not already carry another one (case 3).
         * **Self-chosen name** (G2-N): an account that registered or was renamed itself
           (`users.name_selbst_gewaehlt`) is never bound via the name. Reproduced:
-          `eve` renames herself to `chefin`, a name that exists only in the directory; the
+          `eve` renames herself to `manager`, a name that exists only in the directory; the
           real chefin signs in via LDAP, her identifier lands on eve's account, the role from
           `ldap_group_role_map` too — and eve keeps signing in with her password.
         * **Name from another source** (`users.name_quelle`, attack round 2026-09-26): an
           account that OIDC, SAML or LDAP created carries the name the person has THERE —
-          at an IdP with self-registration a self-chosen one. Reproduced: `chefin` via
+          at an IdP with self-registration a self-chosen one. Reproduced: `manager` via
           OIDC, then the real chefin via LDAP; her identifier and her roles ended up in the
           OIDC account, and the attacker kept signing in via OIDC. The same source is
           exempt: it replaces its own placeholder with the real identifier.
         * **Deadline** (`frist=True`, G1): `federation_name_binding_days` from the source's marker or
-          the creation of the account, whichever is later (`_namensfrist_offen`). The existing-data binding does not check
+          the creation of the account, whichever is later (`_name_deadline_unclosed`). The existing-data binding does not check
           it — it IS the operator's explicit path.
 
         The last three are lifted by a binding opened by the operator (`federation_unbind`,
         table `namensbindung`)."""
-        if not name_belegt or name_ungueltig(str(konto["username"] or "")):
+        if not name_proven or name_invalid(str(account["username"] or "")):
             return "address_as_name"
-        if kennung:
-            if self._kennung_formfehler(kennung):
+        if identifier:
+            if self._identifier_form_error(identifier):
                 return "invalid_identifier"
-            anderes = self.store.get_federated_user(quelle, kennung)
-            if anderes is not None and int(anderes) != int(konto["id"]):
+            other = self.store.get_federated_user(source, identifier)
+            if other is not None and int(other) != int(account["id"]):
                 return "conflict"
-            vorhandene = self.store.get_federated_kennung(quelle, konto["id"])
-            if vorhandene and not vorhandene.startswith(self._OHNE_KENNUNG) and vorhandene != kennung:
+            existing = self.store.get_federated_identifier(source, account["id"])
+            if existing and not existing.startswith(self._WITHOUT_IDENTIFIER) and existing != identifier:
                 return "bound_elsewhere"
-        jetzt = _jetzt()
-        if self.store.namensbindung_offen(quelle, konto["id"], jetzt):
+        now = _now()
+        if self.store.name_binding_unclosed(source, account["id"], now):
             return None
         try:
-            selbst = bool(konto["name_selbst_gewaehlt"])
+            itself = bool(account["name_selbst_gewaehlt"])
         except (IndexError, KeyError):
-            selbst = False       # row without the column (foreign source): like existing data
-        if selbst:
+            itself = False       # row without the column (foreign source): like existing data
+        if itself:
             return "self_chosen_name"
         try:
-            herkunft = str(konto["name_quelle"] or "")
+            origin = str(account["name_quelle"] or "")
         except (IndexError, KeyError):
-            herkunft = ""        # row without the column (foreign source): like existing data
-        if herkunft and herkunft != quelle:
+            origin = ""        # row without the column (foreign source): like existing data
+        if origin and origin != source:
             return "name_from_other_source"
-        if frist and not self._namensfrist_offen(quelle, konto, jetzt):
+        if deadline and not self._name_deadline_unclosed(source, account, now):
             return "binding_window_expired"
         return None
 
-    def _namensbindung_erlaubt(self, quelle: str, kennung: str, konto, username: str) -> bool:
-        """The door for case 4 at sign-in: `_nachbindung_grund`, and a rejection as in
+    def _name_binding_permitted(self, source: str, identifier: str, account, username: str) -> bool:
+        """The door for case 4 at sign-in: `_rebinding_reason`, and a rejection as in
         case 3 — log line with identifier and remedy, audit `<quelle>_name_binding_closed`."""
-        grund = self._nachbindung_grund(quelle, kennung, konto)
-        if grund is None:
+        reason = self._rebinding_reason(source, identifier, account)
+        if reason is None:
             return True
-        text = self._NACHBINDUNG_PROTOKOLL.get(grund, grund)
-        tage = int(self.cfg.federation_name_binding_days)
+        text = self._REBINDING_LOG.get(reason, reason)
+        days = int(self.cfg.federation_name_binding_days)
         security.seclog.warning(
             "%s: account %s (user_id=%s) is not bound by name to the identifier %s — %s. "
             "The sign-in is rejected. If it is the same person: "
             "auth.federation_unbind('%s', %s) opens the binding for the next sign-in "
             "(%d day(s)); existing accounts are bound by auth.federation_bind_existing('%s').",
-            quelle, security.fuer_log(username), konto["id"],
-            security.fuer_log(kennung) if kennung else "(none)",
-            text, quelle, konto["id"], max(tage, 1), quelle)
-        self.audit(f"{quelle}_name_binding_closed", str(konto["username"]),
-                   detail=f"reason={grund} identifier={kennung or '-'}")
+            source, security.for_log(username), account["id"],
+            security.for_log(identifier) if identifier else "(none)",
+            text, source, account["id"], max(days, 1), source)
+        self.audit(f"{source}_name_binding_closed", str(account["username"]),
+                   detail=f"reason={reason} identifier={identifier or '-'}")
         return False
 
-    def _foederation_seit(self, quelle: str) -> int:
+    def _federation_since(self, source: str) -> int:
         """From when does the deadline for binding via the name apply (G1)? The source's marker
         (`Store.foederation_seit`), set at the first start with the source switched on — or
         here, if it is used without the switch (a client set by hand). Exactly once:
         a marker that were set anew at every start would grant every restart a new
         deadline. Only readable: then from now on."""
         try:
-            return self.store.foederation_seit(quelle, _jetzt())
+            return self.store.federation_since(source, _now())
         except (sqlite3.OperationalError, ValueError):
-            return _jetzt()
+            return _now()
 
-    def _namensfrist_offen(self, quelle: str, konto, jetzt: int) -> bool:
+    def _name_deadline_unclosed(self, source: str, account, now: int) -> bool:
         """Does the name still bind this account (G1)? `federation_name_binding_days` days from the
         source's marker or the creation of the account, whichever is later — a pre-creation in the panel
         thus has its own deadline. `-1` = always, `0` = never."""
-        tage = int(self.cfg.federation_name_binding_days)
-        if tage < 0:
+        days = int(self.cfg.federation_name_binding_days)
+        if days < 0:
             return True
-        ab = max(int(konto["created_at"] or 0), self._foederation_seit(quelle))
-        return jetzt < ab + tage * 86400
+        start_from = max(int(account["created_at"] or 0), self._federation_since(source))
+        return now < start_from + days * 86400
 
-    def _namensbindung_bestand_melden(self, quelle: str, seit: int) -> None:
+    def _report_name_binding_inventory(self, source: str, since: int) -> None:
         """Startup message (G1): how many accounts still carry no identifier for this source, and until
         when does the name bind them? Only as long as the door is open for existing data — afterwards
         each rejection reports itself, and a local admin would otherwise stay in the log forever."""
-        tage = int(self.cfg.federation_name_binding_days)
-        if tage <= 0:
+        days = int(self.cfg.federation_name_binding_days)
+        if days <= 0:
             return            # 0: explicit only; -1: the configuration check warns
-        bis = seit + tage * 86400
-        if _jetzt() >= bis:
+        until = since + days * 86400
+        if _now() >= until:
             return
         try:
-            konten = self.store.ohne_bindung(quelle)
+            accounts = self.store.without_binding(source)
         except sqlite3.OperationalError:
             return
-        if not konten:
+        if not accounts:
             return
-        ohne_pw = sum(1 for k in konten if not k["hat_passwort"])
-        weg = (f"auth.federation_bind_existing('{quelle}')" if quelle == "ldap"
-               else f"auth.federation_bind_existing('{quelle}', mapping={{name: kennung}})")
+        without_pw = sum(1 for k in accounts if not k["hat_passwort"])
+        away = (f"auth.federation_bind_existing('{source}')" if source == "ldap"
+               else f"auth.federation_bind_existing('{source}', mapping={{name: kennung}})")
         security.seclog.warning(
             "%s: %d account(s) without a binding to an identifier of the source (of which %d without a local "
             "password). Until %s (federation_name_binding_days=%d) the next sign-in binds "
             "them via the name, afterwards no longer — a dormant account would otherwise fall to the next "
             "person with the same name. Bind now: %s (dry run), then with apply=True.",
-            quelle.upper(), len(konten), ohne_pw,
-            time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime(bis)), tage, weg)
+            source.upper(), len(accounts), without_pw,
+            time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime(until)), days, away)
 
     def federation_unbind(self, source: str, user_id: int) -> int:
         """Release an account's binding to a foreign identity (operator path) — and open the
@@ -2138,15 +2138,15 @@ class TinySesam:
         `max(federation_name_binding_days, 1)` days or until the binding is in place. On an
         unbound account the call thus means "open for the next sign-in" (pre-creation,
         returnee, an account that missed the deadline). The rejection in the log names the call."""
-        weg = self.store.unlink_federated(source, user_id)
+        away = self.store.unlink_federated(source, user_id)
         u = self.store.get_user(user_id)
-        bis = None
+        until = None
         if u is not None:
-            bis = _jetzt() + max(int(self.cfg.federation_name_binding_days), 1) * 86400
-            self.store.namensbindung_oeffnen(source, user_id, bis)
+            until = _now() + max(int(self.cfg.federation_name_binding_days), 1) * 86400
+            self.store.open_name_binding(source, user_id, until)
         self.audit(f"{source}_identifier_unbound", str(u["username"]) if u else None,
-                   detail=f"name_binding_open_until={bis}" if bis else None)
-        return weg
+                   detail=f"name_binding_open_until={until}" if until else None)
+        return away
 
     def federation_bind_existing(self, source: str, *, mapping: Optional[dict] = None,
                                  apply: bool = False) -> dict:
@@ -2159,15 +2159,15 @@ class TinySesam:
         `apply=True` is anything written.
 
         * **LDAP without `mapping`**: one directory search per account without an identifier
-          (`LDAPClient.eintrag_suchen`, service account or anonymous, without the user's password). It
-          must be exactly ONE entry. A failure (`VerzeichnisNichtErreichbar`) aborts —
+          (`LDAPClient.entry_search`, service account or anonymous, without the user's password). It
+          must be exactly ONE entry. A failure (`DirectoryNotReachable`) aborts —
           before the first write: everything is searched first, then bound.
         * **`mapping={account name: identifier}`** — for SAML (there is no search path without sign-in;
           the NameIDs e.g. from an export of the IdP) or for individual LDAP accounts. Runs without a
           directory.
 
         Each account is decided with the same helper as at sign-in
-        (`_nachbindung_grund`, without the deadline). Accounts with a local password are only reported
+        (`_rebinding_reason`, without the deadline). Accounts with a local password are only reported
         (`local_password`): their name may belong to a different person than the entry in the
         directory — the operator opens them individually with `federation_unbind`.
 
@@ -2187,14 +2187,14 @@ class TinySesam:
         * `local_password` — account with a local password, only reported
 
         Plus `source` and `applied`. Up to 0.21.x the keys and reasons were German
-        (`quelle`, `ausgefuehrt`, `gebunden`, `abgewiesen`/`grund` …; PO decision 2026-09-27,
+        (`quelle`, `ausgefuehrt`, `bound`, `rejected`/`reason` …; PO decision 2026-09-27,
         table in the CHANGELOG for 0.22.0). Each binding writes `<source>_identifier_bound` with
         `detail=migration`, the run a summary line into the security log — both as before.
         There is no CLI command: LDAP and SAML run only embedded, and the CLI does not know the
         configuration."""
         if source not in self.FEDERATED_SOURCES:
             raise ValueError(f"source must be one of {self.FEDERATED_SOURCES}, not {source!r}")
-        suchen = None
+        search = None
         if mapping is None:
             if source != "ldap":
                 raise ValueError(
@@ -2203,109 +2203,109 @@ class TinySesam:
             if not self.ldap:
                 raise ConfigError("LDAP is not set up (ldap_enabled, ldap_url) — or pass "
                                   "mapping={account name: identifier}.")
-            suchen = getattr(self.ldap, "eintrag_suchen", None)
-            if not callable(suchen):
-                raise ConfigError("The LDAP client in use cannot search (eintrag_suchen) — "
+            search = getattr(self.ldap, "entry_search", None)
+            if not callable(search):
+                raise ConfigError("The LDAP client in use cannot search (entry_search) — "
                                   "pass mapping={account name: identifier}.")
-        bericht: dict = {"source": source, "applied": bool(apply), "bound": [],
+        report: dict = {"source": source, "applied": bool(apply), "bound": [],
                          "conflict": [], "ambiguous": [], "not_in_directory": [],
                          "no_identifier": [], "refused": [], "local_password": []}
         # Account → identifier from the mapping (None: search in the directory).
-        paare: list[tuple[Any, Optional[str]]] = []
+        pairs: list[tuple[Any, Optional[str]]] = []
         if mapping is None:
-            paare = [(k, None) for k in self.store.ohne_bindung(source)]
+            pairs = [(k, None) for k in self.store.without_binding(source)]
         else:
-            for name, wert in mapping.items():
+            for name, value in mapping.items():
                 k = self.store.get_user_by_name(str(name or "").strip())
                 if k is None:
-                    bericht["refused"].append({"user_id": None, "username": str(name),
+                    report["refused"].append({"user_id": None, "username": str(name),
                                                "reason": "no_account"})
                 else:
-                    paare.append((k, str(wert or "")))
+                    pairs.append((k, str(value or "")))
         plan = []
-        for konto, vorgabe in paare:
-            e: dict = {"user_id": int(konto["id"]), "username": konto["username"],
-                       "local": {"name": konto["display_name"], "email": konto["email"]}}
-            if konto["is_service"] or konto["disabled"]:
-                bericht["refused"].append(dict(e, reason="service_account" if konto["is_service"]
+        for account, default in pairs:
+            e: dict = {"user_id": int(account["id"]), "username": account["username"],
+                       "local": {"name": account["display_name"], "email": account["email"]}}
+            if account["is_service"] or account["disabled"]:
+                report["refused"].append(dict(e, reason="service_account" if account["is_service"]
                                                else "disabled"))
                 continue
-            vorhandene = self.store.get_federated_kennung(source, konto["id"])
-            if vorhandene and not vorhandene.startswith(self._OHNE_KENNUNG):
-                bericht["refused"].append(dict(e, identifier=vorhandene, reason=(
-                    "already_bound" if vorgabe is None or vorhandene == vorgabe else "bound_elsewhere")))
+            existing = self.store.get_federated_identifier(source, account["id"])
+            if existing and not existing.startswith(self._WITHOUT_IDENTIFIER):
+                report["refused"].append(dict(e, identifier=existing, reason=(
+                    "already_bound" if default is None or existing == default else "bound_elsewhere")))
                 continue
-            name_belegt = True
-            kennung = vorgabe or ""
-            if suchen is not None:
-                treffer = suchen(konto["username"])     # VerzeichnisNichtErreichbar aborts
-                if not treffer:
-                    bericht["not_in_directory"].append(e)
+            name_proven = True
+            identifier = default or ""
+            if search is not None:
+                hit = search(account["username"])     # DirectoryNotReachable aborts
+                if not hit:
+                    report["not_in_directory"].append(e)
                     continue
-                if len(treffer) > 1:
-                    bericht["ambiguous"].append(dict(e, matches=len(treffer)))
+                if len(hit) > 1:
+                    report["ambiguous"].append(dict(e, matches=len(hit)))
                     continue
-                info = treffer[0]
+                info = hit[0]
                 e["directory"] = {"name": info.get("name"), "email": info.get("email")}
-                kennung = str(info.get("id") or "")
-                name_belegt = self._ldap_name_belegt(konto["username"], info)
-            if not kennung:
+                identifier = str(info.get("id") or "")
+                name_proven = self._ldap_name_proven(account["username"], info)
+            if not identifier:
                 # No identifier, also an empty one in the mapping: binding would be via the name.
-                bericht["no_identifier"].append(e)
+                report["no_identifier"].append(e)
                 continue
-            e["identifier"] = kennung
-            grund = self._nachbindung_grund(source, kennung, konto, name_belegt=name_belegt,
-                                            frist=False)
-            if grund == "conflict":
-                bericht["conflict"].append(dict(e, bound_to=self.store.get_federated_user(source, kennung)))
-            elif grund:
-                bericht["refused"].append(dict(e, reason=grund))
-            elif self.store.get_password_hash(konto["id"]):
-                bericht["local_password"].append(e)
+            e["identifier"] = identifier
+            reason = self._rebinding_reason(source, identifier, account, name_proven=name_proven,
+                                            deadline=False)
+            if reason == "conflict":
+                report["conflict"].append(dict(e, bound_to=self.store.get_federated_user(source, identifier)))
+            elif reason:
+                report["refused"].append(dict(e, reason=reason))
+            elif self.store.get_password_hash(account["id"]):
+                report["local_password"].append(e)
             else:
                 plan.append(e)
         # Two accounts, one identifier (mapping with a duplicate): neither.
         from collections import Counter
-        doppelt = {k for k, n in Counter(e["identifier"] for e in plan).items() if n > 1}
-        bericht["conflict"] += [e for e in plan if e["identifier"] in doppelt]
-        plan = [e for e in plan if e["identifier"] not in doppelt]
+        double = {k for k, n in Counter(e["identifier"] for e in plan).items() if n > 1}
+        report["conflict"] += [e for e in plan if e["identifier"] in double]
+        plan = [e for e in plan if e["identifier"] not in double]
         if not apply:
-            bericht["bound"] = plan
-            return bericht
+            report["bound"] = plan
+            return report
         for e in plan:
             # Atomic against a sign-in that has bound since the check (`Store.nachbinden`).
-            if self.store.nachbinden(source, e["identifier"], e["user_id"], _jetzt()):
+            if self.store.rebind(source, e["identifier"], e["user_id"], _now()):
                 self.audit(f"{source}_identifier_bound", str(e["username"]), detail="migration")
-                bericht["bound"].append(e)
+                report["bound"].append(e)
             else:
-                bericht["conflict"].append(dict(e, bound_to=self.store.get_federated_user(source, e["identifier"])))
+                report["conflict"].append(dict(e, bound_to=self.store.get_federated_user(source, e["identifier"])))
         security.seclog.warning(
             "federation_bind_existing(%s): %d bound, %d conflict, %d ambiguous, %d not in the "
             "directory, %d without identifier, %d refused, %d with local password (reported only).",
-            source, len(bericht["bound"]), len(bericht["conflict"]), len(bericht["ambiguous"]),
-            len(bericht["not_in_directory"]), len(bericht["no_identifier"]),
-            len(bericht["refused"]), len(bericht["local_password"]))
-        return bericht
+            source, len(report["bound"]), len(report["conflict"]), len(report["ambiguous"]),
+            len(report["not_in_directory"]), len(report["no_identifier"]),
+            len(report["refused"]), len(report["local_password"]))
+        return report
 
-    def _ldap_vertraut(self, info) -> bool:
+    def _ldap_trusted(self, info) -> bool:
         """Does the operator trust the address of this entry? Blanket (`ldap_email_trusted`) or
         verified for THIS entry (evidence attribute `ldap_attr_email_verified`)."""
         return bool(self.cfg.ldap_email_trusted) or (
-            bool(security.beleg_attribut(self.cfg, "ldap")) and _beleg_wahr(info.get("email_verified")))
+            bool(security.proof_attribute(self.cfg, "ldap")) and _proof_true(info.get("email_verified")))
 
-    def _ldap_name_belegt(self, username, info) -> bool:
+    def _ldap_name_proven(self, username, info) -> bool:
         """Does the name say something about the person in the directory? No for control characters — and if it
         IS the entry's unverified `mail` value (source not trusted). Sign-in and
         existing-data binding ask here; only then may an account be mapped via the name.
 
         What matters is whether the input IS the unverified value — not whether it looks like an
         address: `mail` is a free attribute (RFC 4524), an attacker also sets it to
-        `chefin` (counter-check); a UPN with `@`, on the other hand, is the bind identifier and counts as verified."""
-        if name_ungueltig(username):
+        `manager` (counter-check); a UPN with `@`, on the other hand, is the bind identifier and counts as verified."""
+        if name_invalid(username):
             return False
-        mail_wert = norm_kennung(info.get("email") or "")
-        return not (not self._ldap_vertraut(info) and mail_wert
-                    and norm_kennung(username) == mail_wert)
+        mail_value = norm_identifier(info.get("email") or "")
+        return not (not self._ldap_trusted(info) and mail_value
+                    and norm_identifier(username) == mail_value)
 
     def _check_ldap(self, username, password) -> Optional[dict]:
         """Check the password against LDAP. On success find/create the local user and return it.
@@ -2316,7 +2316,7 @@ class TinySesam:
         (`ldap_email_trusted`, default no since the PO decision 2026-09-25; or for this
         entry via `ldap_attr_email_verified`): then it counts as verified and carries rights. If
         they do not trust it, it is not used directly (confirmation link, see
-        `_adresse_aus_quelle_belegen`), and a
+        `_address_proven_by_source`), and a
         typed-in address does not become the account name (substitute name `ldap-…`, no mapping via the
         name). For this case — and that was the rule until then — **two**
         consequences applied and apply, both necessary:
@@ -2337,7 +2337,7 @@ class TinySesam:
         **One identifier, one account** (review round 2026-09-27, p1-d): the login route asks LDAP only
         after the local password of the account for the identifier (`find_user`) did not match. If
         the directory entry leads to ANOTHER account (bound, via the name or newly
-        created), it is rejected before anything is written (`_kennung_zweier_konten`) — the
+        created), it is rejected before anything is written (`_identifier_two_accounts`) — the
         route books a failed attempt. Otherwise one identifier would check the secrets of two
         people, and the sign-in of one would clear the counters under which the other
         is being guessed (local `alice.neu` next to the directory name `alice.neu` of another person,
@@ -2346,51 +2346,51 @@ class TinySesam:
         then secured only for the counters, G5-N1)."""
         if not self.ldap:
             return None
-        from .ldap_ import AnfrageAbgebrochen, VerzeichnisNichtErreichbar, eingabe_zu_lang
+        from .ldap_ import RequestAborted, DirectoryNotReachable, input_too_long
         # Longer than any real sign-in: not to the directory, but treated like a wrong
         # password (failed attempt, `failed login`). Here and not only in the client, so that it also applies to
         # a client set by hand — and before the marker hands out a probe slot.
         # Before, the login route sent every length through: a password with 270,000 characters
-        # made slapd close the connection (see `ldap_.AnfrageAbgebrochen`).
-        if eingabe_zu_lang(username, password):
+        # made slapd close the connection (see `ldap_.RequestAborted`).
+        if input_too_long(username, password):
             return None
         # After an outage the directory is not even asked for a while: the route
         # has already pre-booked the attempt (R7-2) and takes it back only once the outage
         # is reported — without the marker it would hang on every attempt until the timeout and
-        # meanwhile lock out bystanders (rationale at `ldap_.AusfallMerker`).
-        merker = self._ldap_ausfall
-        probe = merker.zugang()
+        # meanwhile lock out bystanders (rationale at `ldap_.FailureMarker`).
+        marker = self._ldap_failure
+        probe = marker.access()
         try:
             info = self.ldap.authenticate(username, password)
-        except AnfrageAbgebrochen:
+        except RequestAborted:
             # Only THIS request failed, quickly and after sending its inputs —
             # no evidence of an outage. Arming the marker would give the sender of
             # any crafted sign-in a switch that turns LDAP off for everyone. If it was the
             # probe, the next sign-in asks again.
             if probe:
-                merker.freigeben()
+                marker.release()
             raise
-        except VerzeichnisNichtErreichbar as e:
-            merker.ausgefallen(e, war_probe=probe)
+        except DirectoryNotReachable as e:
+            marker.failed(e, was_probe=probe)
             raise
         except BaseException:
             if probe:
-                merker.freigeben()
+                marker.release()
             raise
-        merker.erreicht()
+        marker.reached()
         if not info:
             return None
         # Group gate against memberOf — by DN components, not as a substring (F-19):
         # `staff` would otherwise also let `cn=staffextern,…` through. `group_match="substring"` brings
         # back the old comparison explicitly.
         allowed = self.cfg.ldap_allowed_groups
-        teilstring = self.cfg.group_match == "substring"
+        substring = self.cfg.group_match == "substring"
         if allowed:
             groups = info.get("groups") or []
-            if not teilstring:
+            if not substring:
                 for a in allowed:
-                    _teilstring_hinweis(a, groups, "ldap_allowed_groups")
-            if not any(gruppe_passt(a, g, teilstring, dn=True) for a in allowed for g in groups):
+                    _substring_notice(a, groups, "ldap_allowed_groups")
+            if not any(group_fits(a, g, substring, dn=True) for a in allowed for g in groups):
                 self.audit("ldap_group_denied", username,
                            detail=f"required={sorted(str(a) for a in allowed)}")
                 return None
@@ -2399,15 +2399,15 @@ class TinySesam:
         # `Remote-User` it would occupy the owner's identifier, and bound via the name
         # it would take over her account (attack on the third round). As with SAML: substitute name,
         # no mapping via the name.
-        kennung_ldap = info.get("id") or ""
-        quelle_vertraut = self._ldap_vertraut(info)
+        identifier_ldap = info.get("id") or ""
+        source_trusted = self._ldap_trusted(info)
         ldap_name = username
-        name_zuordnen = True
-        if not self._ldap_name_belegt(username, info):
-            ldap_name = "ldap-" + hashlib.sha256((kennung_ldap or username).encode()).hexdigest()[:8]
-            name_zuordnen = False
+        name_assign = True
+        if not self._ldap_name_proven(username, info):
+            ldap_name = "ldap-" + hashlib.sha256((identifier_ldap or username).encode()).hexdigest()[:8]
+            name_assign = False
 
-        def _anlegen():
+        def _create():
             if not self.cfg.ldap_auto_create:
                 return None
             try:
@@ -2418,21 +2418,21 @@ class TinySesam:
                 # arrives without evidence, reads the marker and promotes after all (B-umgehung-1 from T-13).
                 # The operator says whether they trust the directory (`ldap_email_trusted`, default
                 # no, or the evidence attribute): then with evidence, otherwise not at all (H-3).
-                vertraut = quelle_vertraut
+                trusted = source_trusted
                 name = ldap_name
                 if name == username:
                     # The directory has just signed in this very entry under that name; if it still stands
                     # on another account's binding, it is outdated there (p1-a) — and would
                     # otherwise hold up the creation as "taken".
-                    self.store.verzeichnisname_freigeben(name)
+                    self.store.release_directory_name(name)
                 i = 1
                 while name != username and self.identifier_taken(name):
                     i += 1
                     name = f"{ldap_name}{i}"
-                return self._konto_anlegen(name, display_name=info.get("name") or name,
-                                           email=info.get("email") if vertraut else None,
-                                           email_verified=vertraut and bool(info.get("email")),
-                                           name_quelle="ldap")
+                return self._create_account(name, display_name=info.get("name") or name,
+                                           email=info.get("email") if trusted else None,
+                                           email_verified=trusted and bool(info.get("email")),
+                                           name_source="ldap")
             except ConfigError:
                 # Name or address already belong to someone locally (finding R4-12). Fail-closed:
                 # better no sign-in than an account that occupies a foreign identifier.
@@ -2442,24 +2442,24 @@ class TinySesam:
         # Mapping is done via the directory's STABLE identifier, not via the name
         # (F-11). The name remains the fallback for accounts that have no binding yet. If the
         # identifier locally belongs to an account, the resolution may end only there (p1-d, see above).
-        lokal = self.find_user(username)
-        u = self._fremde_identitaet_aufloesen("ldap", kennung_ldap, username, _anlegen,
-                                              name_zuordnen=name_zuordnen,
-                                              nur_konto=int(lokal["id"]) if lokal else None)
+        local = self.find_user(username)
+        u = self._resolve_foreign_identity("ldap", identifier_ldap, username, _create,
+                                              name_assign=name_assign,
+                                              only_account=int(local["id"]) if local else None)
         if not u or u["disabled"]:
             return None
         # Note the typed-in name on the binding if it is neither name nor address of the
         # account (G5): after a rename in the directory (local `alice`, there `alice.neu`)
         # the series (B2-6) counts under `alice.neu`, and without the note no way back would clear it —
         # neither the full sign-in nor the panel reset nor `tinysesam unlock`. Who else
-        # it may belong to is checked by the reader (`Store.zaehl_kennungen`), not by this writer.
-        if not name_ungueltig(username):
-            self.store.bindung_name_setzen("ldap", u["id"], username)
-        self._adresse_aus_quelle_belegen(u, info.get("email"), quelle_vertraut, "ldap")
+        # it may belong to is checked by the reader (`Store.count_identifiers`), not by this writer.
+        if not name_invalid(username):
+            self.store.set_binding_name("ldap", u["id"], username)
+        self._address_proven_by_source(u, info.get("email"), source_trusted, "ldap")
         # memberOf delivers whole DNs → comparison by components (F-19). Up to 0.20.0
         # `substring=True` was hard-wired here, and `group_match` had no effect for LDAP.
         self.apply_idp_groups(u["id"], info.get("groups"), self.cfg.ldap_group_role_map, dn=True)
-        return self._als_dict(self.store.get_user(u["id"]))   # fresh (mapped roles)
+        return self._as_dict(self.store.get_user(u["id"]))   # fresh (mapped roles)
 
     # ---------- SAML (attributes → local user) ----------
     def _check_saml(self, nameid, attrs, ip: Optional[str] = None) -> Optional[dict]:
@@ -2479,15 +2479,15 @@ class TinySesam:
         from .saml_ import first, as_list
         cfg = self.cfg
         username = first(attrs, cfg.saml_attr_username) if cfg.saml_attr_username else None
-        roh_name = str(username or nameid or "")
+        raw_name = str(username or nameid or "")
         # The UNTRIMMED value is checked: `strip()` also removes U+2028, U+0085 and Unicode
-        # whitespace — `chefin\u2028` would otherwise become `chefin` (counter-check).
-        username = roh_name.strip()
+        # whitespace — `chefin\u2028` would otherwise become `manager` (counter-check).
+        username = raw_name.strip()
         if not username:
             self.audit("saml_denied", None, ip, "reason=no_name")
             return None
-        pauschal = bool(cfg.saml_email_trusted)
-        _attr = security.beleg_attribut(cfg, "saml")
+        blanket = bool(cfg.saml_email_trusted)
+        _attr = security.proof_attribute(cfg, "saml")
         mail = first(attrs, cfg.saml_attr_email)
         # The evidence attribute proves the ADDRESS of this login — not the name. At an IdP with
         # self-registration (exactly what it is for) the user chooses their NameID themselves:
@@ -2495,35 +2495,35 @@ class TinySesam:
         # verified and was mapped via case 4 to the local account `bob@example.com` —
         # takeover (self-service attack round, finding 1). As with OIDC (`email_verified`):
         # a name with `@` is verified only if it is EXACTLY the verified address.
-        beleg = bool(_attr) and _beleg_wahr(first(attrs, _attr)) and valid_email(norm_email(mail or "") or "")
-        vertraut = pauschal or beleg
+        proof = bool(_attr) and _proof_true(first(attrs, _attr)) and valid_email(norm_email(mail or "") or "")
+        trusted = blanket or proof
         # The stable identifier is the `NameID` — or an attribute if the IdP sends transient
         # NameIDs (`saml_attr_id`). The name is only the fallback (F-11).
-        kennung = (first(attrs, cfg.saml_attr_id) if cfg.saml_attr_id else nameid) or ""
+        identifier = (first(attrs, cfg.saml_attr_id) if cfg.saml_attr_id else nameid) or ""
         # Without trust in this IdP's addresses (default) as with H-3 for OIDC: a name with `@`
         # (NameID in emailAddress format, a UPN) is the same unverified address under another
         # name — as account name and `Remote-User` it would occupy the real owner's identifier.
         # Applies only to NEW accounts; a bound one keeps its name. Checked folded
         # (`＠` U+FF20 becomes `@`, R2-1).
-        neu_name = username
-        name_zuordnen = True
+        new_name = username
+        name_assign = True
         # The name is unverified if it is an address — or if it comes from the address attribute
         # itself (`saml_attr_username` = `saml_attr_email`): then it carries what the user
-        # entered there, also `chefin` without `@` (counter-check).
-        unbelegt = (not pauschal) and (
-            "@" in norm_kennung(username)
+        # entered there, also `manager` without `@` (counter-check).
+        unproven = (not blanket) and (
+            "@" in norm_identifier(username)
             or (bool(cfg.saml_attr_username) and cfg.saml_attr_username == cfg.saml_attr_email)
-        ) and not (beleg and norm_kennung(username) == norm_kennung(mail or ""))
-        if name_ungueltig(roh_name) or unbelegt:
-            neu_name = "saml-" + hashlib.sha256((kennung or username).encode()).hexdigest()[:8]
-            name_zuordnen = False
+        ) and not (proof and norm_identifier(username) == norm_identifier(mail or ""))
+        if name_invalid(raw_name) or unproven:
+            new_name = "saml-" + hashlib.sha256((identifier or username).encode()).hexdigest()[:8]
+            name_assign = False
         if cfg.saml_allowed_groups:
             groups = as_list(attrs, cfg.saml_attr_groups)
             if not (set(cfg.saml_allowed_groups) & set(str(g) for g in groups)):
                 self.audit("saml_denied", username, ip,
                            f"reason=group required={sorted(cfg.saml_allowed_groups)}")
                 return None
-        def _anlegen():
+        def _create():
             if not cfg.saml_auto_create:
                 self.audit("saml_denied", username, ip, "reason=no_account saml_auto_create=False")
                 return None
@@ -2532,33 +2532,33 @@ class TinySesam:
                 # evidence, so it is stored without evidence too. Otherwise the marker on the
                 # account would be a free pass for every later sign-in path that itself
                 # proves nothing.
-                name = neu_name
+                name = new_name
                 i = 1
                 while name != username and self.identifier_taken(name):
                     i += 1
-                    name = f"{neu_name}{i}"
-                anzeige = first(attrs, cfg.saml_attr_name) or name
-                return self._konto_anlegen(name, display_name=anzeige,
-                                           email=mail if vertraut else None,
-                                           email_verified=vertraut and bool(mail),
-                                           name_quelle="saml")
+                    name = f"{new_name}{i}"
+                display = first(attrs, cfg.saml_attr_name) or name
+                return self._create_account(name, display_name=display,
+                                           email=mail if trusted else None,
+                                           email_verified=trusted and bool(mail),
+                                           name_source="saml")
             except ConfigError:
                 # As with LDAP (finding R4-12): an already taken identifier creates no account.
                 self.audit("saml_ident_taken", username)
                 return None
 
-        u = self._fremde_identitaet_aufloesen("saml", kennung, username, _anlegen,
-                                              name_zuordnen=name_zuordnen)
+        u = self._resolve_foreign_identity("saml", identifier, username, _create,
+                                              name_assign=name_assign)
         if u and u["disabled"]:
             self.audit("saml_denied", str(u["username"]), ip, "reason=account_locked")
             return None
         if not u:
             return None     # the reason is already in the audit log (creation/identifier)
-        self._adresse_aus_quelle_belegen(u, mail, vertraut, "saml")
+        self._address_proven_by_source(u, mail, trusted, "saml")
         self.apply_idp_groups(u["id"], as_list(attrs, cfg.saml_attr_groups), cfg.saml_group_role_map)
-        return self._als_dict(self.store.get_user(u["id"]))   # fresh (mapped roles)
+        return self._as_dict(self.store.get_user(u["id"]))   # fresh (mapped roles)
 
-    def _adresse_aus_quelle_belegen(self, u, mail, vertraut, quelle: str = "") -> None:
+    def _address_proven_by_source(self, u, mail, trusted, source: str = "") -> None:
         """Bring the address from a source (LDAP/SAML) to the account.
 
         * **Trusted** (switch or evidence attribute of this login): verifies THE SAME address on the
@@ -2575,7 +2575,7 @@ class TinySesam:
         attempt itself used up the daily allowance (per process, in memory): a throttled
         target address or a failed delivery cost the link for a whole day, and
         several workers each sent one. Now the delivery is in the database
-        (`federation_email_confirm … account=<id>`, only after sending, `Store.quellmail_seit`).
+        (`federation_email_confirm … account=<id>`, only after sending, `Store.source_mail_since`).
         A taken or reserved address never gets a link; its attempt (with
         audit line `account=<id> …`) is likewise counted in the database, at most one per day. Until
         the attack round 2026-09-26 only memory dampened it — per worker and until restart:
@@ -2585,18 +2585,18 @@ class TinySesam:
         passes — a throttle, a mail server error: after `mail_per_address_window_sec` again."""
         if not mail or not u:
             return
-        adresse = norm_email(mail)
-        konto_mail = norm_email(u["email"] or "")
-        if vertraut:
-            if konto_mail == adresse and not u["email_verified"]:
+        address = norm_email(mail)
+        account_mail = norm_email(u["email"] or "")
+        if trusted:
+            if account_mail == address and not u["email_verified"]:
                 self.store.set_email_verified(u["id"], True)
-            elif not konto_mail and not self.identifier_taken(adresse, exclude_id=u["id"]):
+            elif not account_mail and not self.identifier_taken(address, exclude_id=u["id"]):
                 try:
-                    self.store.set_email(u["id"], adresse, verified=True)
+                    self.store.set_email(u["id"], address, verified=True)
                 except sqlite3.IntegrityError:
                     # Race: meanwhile identifier of another account — the account stays without an
                     # address, as with the pre-check (fail-closed).
-                    self.audit(f"{quelle or 'source'}_email_taken", str(u["username"]), None,
+                    self.audit(f"{source or 'source'}_email_taken", str(u["username"]), None,
                                "backfilled=0 race=1")
             return
         # An account with a verified address keeps it — also a different one from the source's: the
@@ -2611,44 +2611,44 @@ class TinySesam:
         # workers. Otherwise every sign-in would write an audit line, and their count on the account page
         # would reveal whether the address is taken (attack round 2026-09-26). If a link lives longer
         # than a day (`email_change_ttl_min`), then that long: a delivered one holds up the next
-        # attempt until its expiry anyway (`offener_token`), a rejection must do the same
+        # attempt until its expiry anyway (`open_token`), a rejection must do the same
         # — and also when the owner discards their open link (password change).
         # Every open link of the account holds things up, whichever address it goes to (p2 F2): the line
         # `federation_email_confirm` arises only after sending. With the filter on the address
         # a second worker, while the first link was still in the outbox, would send one to a
         # different `mail` — if it arrived, the first address was free (a taken one writes its
         # rejection immediately), and the account got two links in one day.
-        frist = max(86400, int(self.cfg.email_change_ttl_min) * 60)
-        if self.store.offener_token(u["id"], "email_change"):
+        deadline = max(86400, int(self.cfg.email_change_ttl_min) * 60)
+        if self.store.open_token(u["id"], "email_change"):
             return
-        if self.store.quellmail_seit(u["id"], _jetzt() - frist):
+        if self.store.source_mail_since(u["id"], _now() - deadline):
             return
         # What passes (throttle, mail server) is dampened by memory per process (G12a): after the
         # window of the mail throttle again. Identical for every target — "taken?" is asked only
-        # in `_wechsel_beantragen`, with the same work for both answers (G12b).
+        # in `_request_change`, with the same work for both answers (G12b).
         if not self.rl.allow(f"quellmail:{u['id']}", 1, int(self._sec("mail_per_address_window_sec"))):
             return
         try:
-            senden = self._wechsel_beantragen(u["id"], adresse, self.cfg.base_url, quelle=quelle or "source")
+            send = self._request_change(u["id"], address, self.cfg.base_url, source=source or "source")
         except (ValueError, ConfigError):
             return
-        if senden is None:
+        if send is None:
             return
         uid, name = u["id"], u["username"]
         # Write the line in the context of the request (IP as before), but only in the outbox
         # and only if the link really went out — it is the daily allowance.
-        anfrage = contextvars.copy_context()
+        request = contextvars.copy_context()
 
-        def _versand():
-            if senden():
-                anfrage.run(self.audit, "federation_email_confirm", name,
-                            detail=f"account={uid} source={quelle} to={adresse}")
-        if not self._hinweis_ausgang.einreihen(_versand):
+        def _dispatch():
+            if send():
+                request.run(self.audit, "federation_email_confirm", name,
+                            detail=f"account={uid} source={source} to={address}")
+        if not self._notice_outcome.enqueue(_dispatch):
             # Queue full: the link never goes out. Its token expires at once — otherwise
-            # it would hold up every new one as an open link (`offener_token`) until its expiry,
+            # it would hold up every new one as an open link (`open_token`) until its expiry,
             # without one ever having been delivered. The next attempt is dampened by memory as
             # after a failed delivery (`quellmail:<id>`, the window of the mail throttle).
-            senden.verwerfen()
+            send.discard()
 
     # ---------- Manage passkeys ----------
     def remove_passkey(self, user_id: int, passkey_id: int, ip: Optional[str] = None) -> bool:
@@ -2668,7 +2668,7 @@ class TinySesam:
             return False
         self.store.delete_webauthn(int(passkey_id), user_id)
         # Losing a factor is exactly what one wants to look up later (B5-01).
-        self.audit("passkey_delete", self._kontoname(user_id), ip, f"id={int(passkey_id)}")
+        self.audit("passkey_delete", self._account_name(user_id), ip, f"id={int(passkey_id)}")
         self._security_event("passkey_removed", user_id, passkey_id=int(passkey_id))
         return True
 
@@ -2688,7 +2688,7 @@ class TinySesam:
     def disable_pin(self, user_id):
         """Remove an account's PIN (is logged — a second factor does not vanish unnoticed)."""
         self.store.delete_pin(user_id)
-        self.audit("pin_disable", self._kontoname(user_id), detail=f"user={user_id}")
+        self.audit("pin_disable", self._account_name(user_id), detail=f"user={user_id}")
         self._security_event("pin_disabled", user_id)
 
     def _check_pin(self, username, pin) -> Optional[dict]:
@@ -2762,12 +2762,12 @@ class TinySesam:
     def _is_pin_locked(self, username, ip, login: bool = True) -> bool:
         """Own, method-scoped lockout for the PIN (short keyspace). In addition to is_locked().
 
-        The rejection is reported here (`_abgewiesen`), as with every other lockout: until
+        The rejection is reported here (`_rejected`), as with every other lockout: until
         T-13 this was the only one to reject silently, and the security log was silent exactly when
         fail2ban was supposed to read. `login=False` for the step-up page — there the PIN is not a
         sign-in, the line then carries `failed verification`.
         """
-        return self._sperre_pruefen(self._regeln_pin(username, ip), username, ip, login)
+        return self._check_lock(self._rules_pin(username, ip), username, ip, login)
 
     def _is_password_change_locked(self, username, ip) -> bool:
         """Own, method-scoped lockout for the old-password prompt on the account page.
@@ -2788,9 +2788,9 @@ class TinySesam:
 
         The rejection is reported here, not in the route: otherwise the
         security log would fall silent exactly when fail2ban is supposed to ban the IP (rationale at
-        `_abgewiesen`).
+        `_rejected`).
         """
-        return self._sperre_pruefen(self._regeln(username, ip, "password_change"),
+        return self._check_lock(self._rules(username, ip, "password_change"),
                                     username, ip, login=False)
 
     def _is_reauth_locked(self, username, ip) -> bool:
@@ -2804,7 +2804,7 @@ class TinySesam:
         the own account, an IP threshold would behind NAT hit only bystanders (`ip` goes only
         into the log line). The path stays throttled via `_rate_ok(ip)`.
         """
-        return self._sperre_pruefen(self._regeln(username, ip, "reauth"), username, ip, login=False)
+        return self._check_lock(self._rules(username, ip, "reauth"), username, ip, login=False)
 
     def _is_resource_locked(self, username, ip) -> bool:
         """Own, method-scoped lockout for the area PIN (`/auth/resource/…`).
@@ -2825,7 +2825,7 @@ class TinySesam:
         dropped entirely: without it a distributed attacker guesses a four-digit
         PIN in hours, because every address brings its own attempts.
         """
-        return self._sperre_pruefen(self._regeln(username, ip, "resource"), username, ip, login=False)
+        return self._check_lock(self._rules(username, ip, "resource"), username, ip, login=False)
 
     def _is_totp_setup_locked(self, username, ip) -> bool:
         """Dedicated, method-scoped lockout for confirming the TOTP setup.
@@ -2841,23 +2841,23 @@ class TinySesam:
         one step — with this method beforehand and `_record_login()` afterwards a parallel
         burst got past the limit.
         """
-        return self._sperre_pruefen(self._regeln(username, ip, "totp_setup"), username, ip, login=False)
+        return self._check_lock(self._rules(username, ip, "totp_setup"), username, ip, login=False)
 
     # ---------- The lock rules: one source for checking and atomic booking ----------
-    def _regeln_pin(self, username, ip, since=None) -> list:
+    def _rules_pin(self, username, ip, since=None) -> list:
         """The dedicated PIN bucket: `pin_max_attempts` per account, `ip_attempt_factor` times that per address.
 
         Per account and not per pair of account and address: a PIN often has only four digits,
         a distributed attacker would get through it within hours with pair counting."""
-        since = self._fenster_beginn() if since is None else since
-        username = norm_kennung(username)
-        grenze = self._sec("pin_max_attempts")
-        return [("lockout_pin", grenze, dict(since=since, username=username, method="pin")),
-                ("lockout_pin_ip", grenze * self._sec("ip_attempt_factor"),
+        since = self._window_start() if since is None else since
+        username = norm_identifier(username)
+        limit = self._sec("pin_max_attempts")
+        return [("lockout_pin", limit, dict(since=since, username=username, method="pin")),
+                ("lockout_pin_ip", limit * self._sec("ip_attempt_factor"),
                  dict(since=since, ip=ip, method="pin"))]
 
     @staticmethod
-    def _topf(username, method) -> str:
+    def _bucket(username, method) -> str:
         """Under which name an attempt counts: the identifier folded the way `find_user` reads it.
 
         Up to the third round, attempts were counted under the RAW typed text, but looked up
@@ -2865,18 +2865,18 @@ class TinySesam:
         the same account and each filled a bucket of its own — the account threshold against distributed
         guessing (R7-6/H-8) thus bound nothing. The exception is the realm pseudo-name
         `res:<name>`: the server sets it from a realm that has to exist."""
-        return username if method == "resource" else norm_kennung(username)
+        return username if method == "resource" else norm_identifier(username)
 
-    def _fenster_beginn(self) -> int:
-        return _jetzt() - self._sec("lockout_window_sec")
+    def _window_start(self) -> int:
+        return _now() - self._sec("lockout_window_sec")
 
-    def _regeln(self, username, ip, method) -> list:
+    def _rules(self, username, ip, method) -> list:
         """Which counters apply to an attempt of this method? List of `(reason, limit, filter)`.
 
         `is_*_locked()` checks them, `_begin_attempt()` checks them AND books atomically — both read
         the same list so that the two paths are never of different strictness.
 
-        **Sign-in** (everything except `security.NICHT_LOGIN_METHODEN`, R7-6/H-8): the first
+        **Sign-in** (everything except `security.NOT_LOGIN_METHODS`, R7-6/H-8): the first
         threshold counts per **pair of account and address** (`max_login_attempts`). Until T-13 it counted
         per account alone — then any stranger could lock out any account whose name they knew
         for a window with five requests, including the owner with the correct password. Per
@@ -2885,36 +2885,36 @@ class TinySesam:
         stops them first. Per address the NAT threshold (`ip_attempt_factor` times) remains against
         trying out many accounts.
 
-        The account key is `_topf(username)`, not the raw text — otherwise an
+        The account key is `_bucket(username)`, not the raw text — otherwise an
         attacker could set up arbitrarily many buckets for the same account with whitespace and spellings.
         """
-        since = self._fenster_beginn()
-        username = self._topf(username, method)
+        since = self._window_start()
+        username = self._bucket(username, method)
         if method in ("password_change", "reauth", "totp_setup"):
-            grenze = self._sec(f"{method}_max_attempts")
-            return [(f"lockout_{method}", grenze, dict(since=since, username=username, method=method))]
+            limit = self._sec(f"{method}_max_attempts")
+            return [(f"lockout_{method}", limit, dict(since=since, username=username, method=method))]
         if method == "resource":
-            grenze = self._sec("resource_max_attempts")
-            return [("lockout_resource_ip", grenze, dict(since=since, ip=ip, method=method)),
-                    ("lockout_resource", grenze * self._sec("account_attempt_factor"),
+            limit = self._sec("resource_max_attempts")
+            return [("lockout_resource_ip", limit, dict(since=since, ip=ip, method=method)),
+                    ("lockout_resource", limit * self._sec("account_attempt_factor"),
                      dict(since=since, username=username, method=method))]
-        ohne = security.NICHT_LOGIN_METHODEN
-        grenze = self._sec("max_login_attempts")
-        regeln = []
+        without = security.NOT_LOGIN_METHODS
+        limit = self._sec("max_login_attempts")
+        rules = []
         if username and ip:
-            regeln.append(("lockout_user", grenze,
-                           dict(since=since, username=username, ip=ip, exclude_methods=ohne)))
-        regeln += [
-            ("lockout_account", grenze * self._sec("account_attempt_factor"),
-             dict(since=since, username=username, exclude_methods=ohne)),
-            ("lockout_ip", grenze * self._sec("ip_attempt_factor"),
-             dict(since=since, ip=ip, exclude_methods=ohne)),
+            rules.append(("lockout_user", limit,
+                           dict(since=since, username=username, ip=ip, exclude_methods=without)))
+        rules += [
+            ("lockout_account", limit * self._sec("account_attempt_factor"),
+             dict(since=since, username=username, exclude_methods=without)),
+            ("lockout_ip", limit * self._sec("ip_attempt_factor"),
+             dict(since=since, ip=ip, exclude_methods=without)),
         ]
         if method == "pin":
-            regeln += self._regeln_pin(username, ip, since)
-        return regeln
+            rules += self._rules_pin(username, ip, since)
+        return rules
 
-    def _serie_voll(self, username) -> bool:
+    def _series_full(self, username) -> bool:
         """Has this identifier reached `account_max_consecutive_failures` failed attempts IN A ROW (B2-6)?
 
         Unlike every window threshold, this lock does not expire: it ends with a
@@ -2923,56 +2923,56 @@ class TinySesam:
         per folded identifier, whether the account exists or not — otherwise the lock would reveal which
         names exist.
 
-        Only what is settled (`fehlserie_bestaetigt`, G9): a pending pre-booking can still
+        Only what is settled (`failure_series_confirmed`, G9): a pending pre-booking can still
         be taken back — a deferral therefore never shows the streak-lock text."""
-        return (self.store.fehlserie_bestaetigt(norm_kennung(username))
+        return (self.store.failure_series_confirmed(norm_identifier(username))
                 >= self._sec("account_max_consecutive_failures"))
 
-    def _serie_reset_hilft(self, username) -> bool:
+    def _series_reset_helps(self, username) -> bool:
         """Does a self-service reset lift the streak lock under this identifier?
 
-        It clears only the shares of the first factors (`_SERIE_RESET_ARTEN`), not TOTP and not
+        It clears only the shares of the first factors (`_SERIES_RESET_KINDS`), not TOTP and not
         the PIN in the chain step (`_PIN_CHAIN_SERIES`, G7). If those alone are at the limit, the lockout
         notice and security log still named the reset as a way out until 2026-09-27 — the owner
         reset their password and stayed locked. Only for texts to the owner and operator: the
         sign-in page shows everyone the same text (`err.locked_series`), otherwise it would reveal that
         someone is guessing the second factor under an identifier — and thus that the account exists."""
-        return (self.store.fehlserie_ohne(norm_kennung(username), self._SERIE_RESET_ARTEN)
+        return (self.store.failure_series_without(norm_identifier(username), self._SERIES_RESET_KINDS)
                 < self._sec("account_max_consecutive_failures"))
 
-    def _serie_ausweg(self, username) -> str:
+    def _series_way_out(self, username) -> str:
         """What the streak lock under this identifier lifts — for the security log."""
-        if self._serie_reset_hilft(username):
+        if self._series_reset_helps(username):
             return "password reset, signing in another way, or `tinysesam unlock`"
         return ("signing in another way or `tinysesam unlock` (a password reset does not clear "
                 "the failed attempts after the password: TOTP, PIN in the chain step)")
 
-    def _sperre_pruefen(self, regeln, username, ip, login: bool) -> bool:
-        """Check the rules read-only; the first one that applies is reported (`_abgewiesen`).
+    def _check_lock(self, rules, username, ip, login: bool) -> bool:
+        """Check the rules read-only; the first one that applies is reported (`_rejected`).
 
         If a rule applies only because of pending pre-bookings (G9, `Store.reserve_attempt`), that is
         a deferral, not a lock: `True` without `failed login` and without a lockout notice
-        (`_aufgeschoben`). A rule that applies as confirmed as well takes precedence."""
-        schwebend = False
+        (`_deferred`). A rule that applies as confirmed as well takes precedence."""
+        pending = False
         if login and username:
-            if self._serie_voll(username):
-                self._abgewiesen(username, ip, "lockout_series", login=True)
+            if self._series_full(username):
+                self._rejected(username, ip, "lockout_series", login=True)
                 return True
-            schwebend = (self.store.fehlserie(norm_kennung(username))
+            pending = (self.store.failure_series(norm_identifier(username))
                          >= self._sec("account_max_consecutive_failures"))
-        for grund, grenze, filt in _gueltige_regeln(regeln):
-            if self.store.count_fails(**filt) < grenze:
+        for reason, limit, filt in _valid_rules(rules):
+            if self.store.count_fails(**filt) < limit:
                 continue
-            if self.store.count_fails(**filt, nur_bestaetigt=True) >= grenze:
-                self._abgewiesen(username, ip, grund, login=login)
+            if self.store.count_fails(**filt, only_confirmed=True) >= limit:
+                self._rejected(username, ip, reason, login=login)
                 return True
-            schwebend = True
-        if schwebend:
-            self._aufgeschoben(username, ip, login=login)
-        return schwebend
+            pending = True
+        if pending:
+            self._deferred(username, ip, login=login)
+        return pending
 
     def _begin_attempt(self, username, ip, method, include_pin: bool = False,
-                          series_kind: Optional[str] = None, schweben: bool = False) -> Optional[int]:
+                          series_kind: Optional[str] = None, hover: bool = False) -> Optional[int]:
         """Admit a check attempt **atomically** and pre-book it as a failed attempt.
 
         Return: an attempt ID that goes back to `_record_login(..., versuch=id)`, or
@@ -2991,56 +2991,56 @@ class TinySesam:
         a check that can also turn out to be "no attempt at all" — the login route with LDAP, whose
         pre-booking is taken back on an outage (F-23). If an attempt would be rejected **only** because of
         such open pre-bookings, it waits until they are decided: at most
-        `_SCHWEBE_FRIST_SEK`, at most `_SCHWEBE_WARTEPLAETZE` waiters per process. If it stays
+        `_PENDING_DEADLINE_SEC`, at most `_PENDING_WAIT_SLOTS` waiters per process. If it stays
         open, the answer is `None` as with a lock — but with `deferred login` instead of
         `failed login` in the security log (fail2ban does not ban) and without a lockout notice.
         """
-        regeln = self._regeln(username, ip, method)
+        rules = self._rules(username, ip, method)
         if include_pin:
-            regeln = regeln + self._regeln_pin(username, ip)
+            rules = rules + self._rules_pin(username, ip)
         # The streak (B2-6) belongs in the SAME transaction as the attempt: checked and pre-booked
         # in `reserve_attempt`. Before, it was read ahead of it and counted only after the check — a
         # parallel burst at the limit could then guess for one attempt per request.
-        serie = None
-        if method not in security.NICHT_LOGIN_METHODEN:
-            serie = (norm_kennung(username), series_kind or method, self._sec("account_max_consecutive_failures"))
+        series = None
+        if method not in security.NOT_LOGIN_METHODS:
+            series = (norm_identifier(username), series_kind or method, self._sec("account_max_consecutive_failures"))
 
-        def buchen():
-            return self.store.reserve_attempt(self._topf(username, method), ip, method,
-                                              _gueltige_regeln(regeln), serie=serie, schweben=schweben)
+        def book():
+            return self.store.reserve_attempt(self._bucket(username, method), ip, method,
+                                              _valid_rules(rules), series=series, hover=hover)
 
-        versuch, antwort = buchen()
-        if versuch is None and antwort == "schwebend":
-            versuch, antwort = self._schwebe_abwarten(buchen)
-        if versuch is None:
-            login = method not in security.NICHT_LOGIN_METHODEN
-            if antwort == "schwebend":
-                self._aufgeschoben(username, ip, login=login)
+        attempt, response = book()
+        if attempt is None and response == "schwebend":
+            attempt, response = self._wait_pending(book)
+        if attempt is None:
+            login = method not in security.NOT_LOGIN_METHODS
+            if response == "schwebend":
+                self._deferred(username, ip, login=login)
             else:
-                self._abgewiesen(username, ip, antwort, login=login)
-        elif serie is not None:
+                self._rejected(username, ip, response, login=login)
+        elif series is not None:
             # The kind under which it WAS booked (`serie[1]`), not the method: otherwise a
             # correct follow-up step would lower the kind `pin` and leave its pre-booking under `pin_chain`
             # standing (G7).
-            self._serie_vorbuchungen[versuch] = (serie[0], serie[1], antwort)
+            self._series_prebookings[attempt] = (series[0], series[1], response)
             # Capped: an attempt that nobody ever completes (exception in the middle of the route)
             # would otherwise remain forever. Whoever drops out counts as a failed attempt — stricter,
             # never looser.
-            while len(self._serie_vorbuchungen) > self._SERIE_VORBUCHUNGEN_MAX:
-                self._serie_vorbuchungen.pop(next(iter(self._serie_vorbuchungen)), None)
-        return versuch
+            while len(self._series_prebookings) > self._SERIES_PREBOOKINGS_MAX:
+                self._series_prebookings.pop(next(iter(self._series_prebookings)), None)
+        return attempt
 
-    _SERIE_VORBUCHUNGEN_MAX = 10000
+    _SERIES_PREBOOKINGS_MAX = 10000
 
     #: Pending pre-bookings (G9, `_begin_attempt`): how many sign-ins per process may
     #: wait at the same time, for how long at most (one directory question up to its timeout
     #: and some headroom) and at what interval they ask again. Every re-ask takes the write lock
     #: (`BEGIN IMMEDIATE`) — at full occupancy at most about 40 short transactions per second.
-    _SCHWEBE_WARTEPLAETZE = 8
-    _SCHWEBE_FRIST_SEK = _LDAP_TIMEOUT + 2
-    _SCHWEBE_TAKT_SEK = 0.2
+    _PENDING_WAIT_SLOTS = 8
+    _PENDING_DEADLINE_SEC = _LDAP_TIMEOUT + 2
+    _PENDING_BEAT_SEC = 0.2
 
-    def _schwebe_abwarten(self, buchen) -> tuple:
+    def _wait_pending(self, book) -> tuple:
         """Wait until the pending pre-bookings are decided, then book again (G9).
 
         Return as for `Store.reserve_attempt`; `(None, "schwebend")` if the deadline expires or
@@ -3050,20 +3050,20 @@ class TinySesam:
         in the thread pool). `POST /auth/password` has also called its check in the thread pool since 0.22.0
         (`change_password`); it never goes pending anyway: its bucket counts only its own method, and
         that one never books open."""
-        if not self._schwebe_plaetze.acquire(blocking=False):
+        if not self._pending_places.acquire(blocking=False):
             return None, "schwebend"
         try:
-            frist = time.monotonic() + self._SCHWEBE_FRIST_SEK
-            while time.monotonic() < frist:
-                time.sleep(self._SCHWEBE_TAKT_SEK)
-                versuch, antwort = buchen()
-                if versuch is not None or antwort != "schwebend":
-                    return versuch, antwort
+            deadline = time.monotonic() + self._PENDING_DEADLINE_SEC
+            while time.monotonic() < deadline:
+                time.sleep(self._PENDING_BEAT_SEC)
+                attempt, response = book()
+                if attempt is not None or response != "schwebend":
+                    return attempt, response
             return None, "schwebend"
         finally:
-            self._schwebe_plaetze.release()
+            self._pending_places.release()
 
-    def _aufgeschoben(self, username, ip, login: bool = True) -> None:
+    def _deferred(self, username, ip, login: bool = True) -> None:
         """A rejection that is not a lock: only pending pre-bookings in the way (G9).
 
         Own event word (`deferred login`/`deferred verification`) — the bundled
@@ -3072,16 +3072,16 @@ class TinySesam:
         operator can attribute the 429."""
         security.seclog.warning("deferred %s user=%s ip=%s reason=pending",
                                 "login" if login else "verification",
-                                security.fuer_log(username) or "-", security.fuer_log(ip))
+                                security.for_log(username) or "-", security.for_log(ip))
 
     #: Maximum number of remembered (account, IP) pairs per process — after that the oldest drops out. An attacker with many
     #: addresses can thereby only displace entries, i.e. make failed attempts COUNT again, never fewer.
-    _PW_WIEDERHOLUNG_PAARE = 10000
+    _PW_REPETITION_PAIRS = 10000
     #: PBKDF2 rounds of the fingerprint: noticeable for someone trying out a memory dump, but only a few
     #: milliseconds per failed attempt (measured 2026-10-09 on the development machine).
-    _PW_WIEDERHOLUNG_RUNDEN = 20000
+    _PW_REPETITION_ROUNDS = 20000
 
-    def _passwort_wiederholt(self, username, ip, password) -> bool:
+    def _password_repeated(self, username, ip, password) -> bool:
         """Has the same IP already sent exactly this wrong password to this account? Remembers it otherwise.
 
         Call only after a FAILED ATTEMPT: a correct password is never remembered. What is remembered is an HMAC with a
@@ -3094,30 +3094,30 @@ class TinySesam:
         n = self._sec("password_repeat_memory")
         if n <= 0 or not password:
             return False
-        fenster = self._sec("password_repeat_window_sec")
-        kennung = norm_kennung(username)
+        window = self._sec("password_repeat_window_sec")
+        identifier = norm_identifier(username)
         # PBKDF2 instead of a plain HMAC: the value arises from a password, so a hash that makes guessing expensive —
         # with a secret as salt so that a memory dump yields nothing without the master key.
         fp = hashlib.pbkdf2_hmac("sha256", str(password).encode("utf-8", "surrogatepass"),
-                                 self._pw_wiederholung_schluessel + kennung.encode("utf-8", "surrogatepass"),
-                                 self._PW_WIEDERHOLUNG_RUNDEN)[:8]
-        schl = (kennung, security.ip_normiert(ip) or str(ip))
-        jetzt = time.monotonic()
-        with self._pw_wiederholung_sperre:
-            liste = [(f, t) for f, t in self._pw_wiederholung.get(schl, ()) if jetzt - t < fenster]
-            treffer = any(hmac.compare_digest(f, fp) for f, _ in liste)
-            if not treffer:
-                liste = (liste + [(fp, jetzt)])[-n:]
-            self._pw_wiederholung[schl] = liste
-            self._pw_wiederholung.move_to_end(schl)
-            while len(self._pw_wiederholung) > self._PW_WIEDERHOLUNG_PAARE:
-                self._pw_wiederholung.popitem(last=False)
-        return treffer
+                                 self._pw_repetition_key_name + identifier.encode("utf-8", "surrogatepass"),
+                                 self._PW_REPETITION_ROUNDS)[:8]
+        key = (identifier, security.ip_normalized(ip) or str(ip))
+        now = time.monotonic()
+        with self._pw_repetition_lock:
+            items = [(f, t) for f, t in self._pw_repetition.get(key, ()) if now - t < window]
+            hit = any(hmac.compare_digest(f, fp) for f, _ in items)
+            if not hit:
+                items = (items + [(fp, now)])[-n:]
+            self._pw_repetition[key] = items
+            self._pw_repetition.move_to_end(key)
+            while len(self._pw_repetition) > self._PW_REPETITION_PAIRS:
+                self._pw_repetition.popitem(last=False)
+        return hit
 
-    def _anmeldung_vollstaendig(self, user_id, ip, method) -> None:
+    def _sign_in_complete(self, user_id, ip, method) -> None:
         """A sign-in is through with all factors: audit `login` and the line `login ok` in the security log.
 
-        `unban=ja|nein` (0.24.10, PO): may a guard (fail2ban) lift the lock on this IP? Only `ja` if, from
+        `unban=ja|nein` (0.24.10, PO): may a guard (fail2ban) lift the lock on this IP? Only `yes` if, from
         this IP, there is NO failed attempt against ANOTHER account in the window. Otherwise an attacker with an own
         account lifts their ban by a sign-in between two bursts and guesses without limit at firewall level against
         other accounts. The question is about other accounts, not the own one: the own failed attempts have been
@@ -3125,30 +3125,30 @@ class TinySesam:
         u = self.store.get_user(user_id)
         name = u["username"] if u else None
         self.store.audit_log("login", name, ip, method)
-        fremd = (self.store.count_fails(self._fenster_beginn(), ip=ip, ausser_username=norm_kennung(name),
-                                        exclude_methods=security.NICHT_LOGIN_METHODEN)
+        foreign = (self.store.count_fails(self._window_start(), ip=ip, except_username=norm_identifier(name),
+                                        exclude_methods=security.NOT_LOGIN_METHODS)
                  if ip and name else 1)
-        security.seclog.info("%s user=%s ip=%s method=%s unban=%s", security.LOG_ERFOLG,
-                             security.fuer_log(name or "?"), security.fuer_log(ip), security.fuer_log(method),
-                             "yes" if fremd == 0 else "no")
+        security.seclog.info("%s user=%s ip=%s method=%s unban=%s", security.LOG_SUCCESS,
+                             security.for_log(name or "?"), security.for_log(ip), security.for_log(method),
+                             "yes" if foreign == 0 else "no")
 
-    def _versuch_zuruecknehmen(self, versuch) -> None:
+    def _revert_attempt(self, attempt) -> None:
         """Take back a pre-booked attempt — it was none (directory outage, F-23).
 
         Together with its pre-booking in the streak (B2-6), in one transaction (G9): an outage is
         not a failed attempt, neither in the window nor in a row."""
-        gebucht = self._serie_vorbuchungen.pop(versuch, None)
-        self.store.cancel_attempt(versuch, serie=gebucht[:2] if gebucht else None)
+        booked = self._series_prebookings.pop(attempt, None)
+        self.store.cancel_attempt(attempt, series=booked[:2] if booked else None)
 
-    def _versuch_gescheitert(self, versuch) -> None:
+    def _attempt_failed(self, attempt) -> None:
         """Close a pre-booked attempt as a failed attempt, without `_record_login` (G9).
 
         For a route whose check ends with an unexpected exception: the attempt counts
         immediately — stricter in doubt, as with a process that dies in the middle — instead of
-        staying pending for `Store.VORBUCHUNG_SCHWEBE_SEK` and making sign-ins from the same address wait.
+        staying pending for `Store.PREBOOKING_PENDING_SEC` and making sign-ins from the same address wait.
         The streak stays booked."""
-        self._serie_vorbuchungen.pop(versuch, None)
-        self.store.finish_attempt(versuch, False)
+        self._series_prebookings.pop(attempt, None)
+        self.store.finish_attempt(attempt, False)
 
     # ---------- MFA (TOTP) ----------
     def _mfa_pending(self, user_id) -> bool:
@@ -3171,11 +3171,11 @@ class TinySesam:
         t = self.store.get_totp(user_id)
         if not t or not t["confirmed"]:
             return False
-        schritt = _totp.passender_schritt(t["secret"], code)
-        if schritt is None:
+        step = _totp.matching_step(t["secret"], code)
+        if step is None:
             return False
         # Book before the factor counts: whoever no longer gets the step was the second one.
-        return self.store.totp_step_verbrauchen(user_id, schritt)
+        return self.store.consume_totp_step(user_id, step)
 
     def totp_begin(self, user_id):
         """Start the setup: returns the secret and the `otpauth://` address for the
@@ -3198,7 +3198,7 @@ class TinySesam:
         if self.store.has_confirmed_totp(user_id):
             # The attempt itself is the interesting line: up to 0.18.0 this path left
             # no trace although it removed the second factor.
-            self.audit("totp_setup_denied", self._kontoname(user_id),
+            self.audit("totp_setup_denied", self._account_name(user_id),
                        detail=f"user={user_id} reason=already_confirmed")
             raise StateError(
                 f"Account {user_id} already has a confirmed TOTP — disable it first "
@@ -3209,11 +3209,11 @@ class TinySesam:
         # Recovery codes without a confirmed TOTP belong to a secret that nobody has any more.
         # Leaving them in place would keep the second factor open via codes that do not fit
         # the new setup.
-        verwaist = self.store.count_recovery_codes(user_id)
-        if verwaist:
+        orphaned = self.store.count_recovery_codes(user_id)
+        if orphaned:
             self.store.delete_recovery_codes(user_id)
             self.audit("recovery_orphan_deleted", str(u["username"]),
-                       detail=f"user={user_id} n={verwaist}")
+                       detail=f"user={user_id} n={orphaned}")
         secret = _totp.new_secret()
         self.store.set_totp(user_id, secret, confirmed=False)
         self.audit("totp_setup_start", str(u["username"]), detail=f"user={user_id}")
@@ -3237,29 +3237,29 @@ class TinySesam:
         t = self.store.get_totp(user_id)
         if not t or not code or t["confirmed"]:
             return False
-        schritt = _totp.passender_schritt(t["secret"], code)
-        if schritt is None or not self.store.totp_step_verbrauchen(user_id, schritt):
+        step = _totp.matching_step(t["secret"], code)
+        if step is None or not self.store.consume_totp_step(user_id, step):
             return False
         self.store.confirm_totp(user_id)
         # From here on a new second factor applies — the counterpart to `totp_disable` and
         # until now the only factor change without a line (B5-07). It is precisely this that an
         # attacker with a taken-over session does in order to come back.
-        self.audit("totp_enable", self._kontoname(user_id), detail=f"user={user_id}")
+        self.audit("totp_enable", self._account_name(user_id), detail=f"user={user_id}")
         self._security_event("totp_enabled", user_id)
         return True
 
     def totp_disable(self, user_id):
         """Remove TOTP, together with the recovery codes (both are logged)."""
-        offen = self.store.count_recovery_codes(user_id)   # count before deleting
-        hatte = self.store.has_confirmed_totp(user_id)
+        unclosed = self.store.count_recovery_codes(user_id)   # count before deleting
+        had = self.store.has_confirmed_totp(user_id)
         self.store.delete_totp(user_id)
         self.store.delete_recovery_codes(user_id)   # without TOTP, recovery codes are moot
         # Switching off a second factor is what an attacker does first once they have
         # a session. Without an entry it cannot be traced afterwards — until 2026-09-21
         # it left no trace, although TOTP AND all recovery codes fall in the process.
-        self.audit("totp_disable", self._kontoname(user_id), detail=f"user={user_id} recovery_codes_deleted={offen}")
-        if hatte:
-            self._security_event("totp_disabled", user_id, recovery_codes_deleted=offen)
+        self.audit("totp_disable", self._account_name(user_id), detail=f"user={user_id} recovery_codes_deleted={unclosed}")
+        if had:
+            self._security_event("totp_disabled", user_id, recovery_codes_deleted=unclosed)
 
     # ---------- Recovery codes (2FA substitute for a lost authenticator) ----------
     #: Random bytes per half of a recovery code. Two halves of 7 bytes = **112 bits**.
@@ -3282,7 +3282,7 @@ class TinySesam:
         codes = ["-".join(secrets.token_hex(self._RECOVERY_BYTES) for _ in range(2)) for _ in range(n)]
         self.store.delete_recovery_codes(user_id)
         self.store.add_recovery_codes(user_id, [self._rc_hash(c) for c in codes])
-        self.audit("recovery_generate", self._kontoname(user_id), detail=f"user={user_id} n={n}")
+        self.audit("recovery_generate", self._account_name(user_id), detail=f"user={user_id} n={n}")
         self._security_event("recovery_codes_generated", user_id, count=n)
         return codes
 
@@ -3302,7 +3302,7 @@ class TinySesam:
         # TOTP sign-in (finding B2-7). Until T-13 nothing of that remained: no
         # audit line, no hint how many codes are left.
         rest = self.store.count_recovery_codes(user_id)
-        self.audit("recovery_used", self._kontoname(user_id), detail=f"user={user_id} remaining={rest}")
+        self.audit("recovery_used", self._account_name(user_id), detail=f"user={user_id} remaining={rest}")
         security.seclog.warning("recovery code used user_id=%s remaining=%s", user_id, rest)
         self._security_event("recovery_code_used", user_id, remaining=rest)
         return True
@@ -3316,7 +3316,7 @@ class TinySesam:
         """Pure SSO account: bound to an IdP/a directory and without a local password.
 
         If the directory delivers no stable identifier, the login binds an origin placeholder
-        (`_OHNE_KENNUNG`, A-4) — such an account also counts as federated here.
+        (`_WITHOUT_IDENTIFIER`, A-4) — such an account also counts as federated here.
 
         Limit: an LDAP or SAML account that has not signed in since the update to this version
         carries no row yet and counts as local here.
@@ -3341,7 +3341,7 @@ class TinySesam:
         If delivery fails, the token is invalidated immediately (B6-12) and the error is passed on
         to the caller.
         """
-        base_url = self._gepruefte_basis(base_url)
+        base_url = self._checked_base(base_url)
         u = self.store.get_user_by_email(email)
         if not u or u["disabled"] or u["is_service"]:
             return False
@@ -3353,13 +3353,13 @@ class TinySesam:
             # to the outside stays the same (no account probing); the reason is in the audit log.
             self.audit("reset_sso_only", u["username"], detail="no local password, federated")
             return False
-        ziel = u["email"]
-        if not self._mail_ziel_ok(ziel, "reset_password"):
+        destination = u["email"]
+        if not self._mail_destination_ok(destination, "reset_password"):
             return False
-        raw = self.create_magic_token("reset_password", user_id=u["id"], email=ziel)
+        raw = self.create_magic_token("reset_password", user_id=u["id"], email=destination)
         url = self.magic_url(raw, base_url, "reset_password")
         mins = self.cfg.magiclink_ttl_min
-        self._token_mail(raw, ziel, self.t("mail.reset.subject"),
+        self._token_mail(raw, destination, self.t("mail.reset.subject"),
                          self.t("mail.reset.text", mins=mins, url=url),
                          html=self.t("mail.reset.html", mins=mins, url=url))
         return True
@@ -3400,7 +3400,7 @@ class TinySesam:
             ok = self._chain_satisfied(req, strict, done)
         else:
             ok = self._default_satisfied(user_id, done)
-        return ok and self._link_braucht(user_id, done) is None
+        return ok and self._link_requires(user_id, done) is None
 
     def _next_login_step(self, user_id, done):
         """Next open factor up to the full (global) sign-in, or None when done."""
@@ -3410,9 +3410,9 @@ class TinySesam:
                 return self._next_factor(req, strict, done)
         elif not self._default_satisfied(user_id, done):
             return "totp"
-        return self._link_braucht(user_id, done)
+        return self._link_requires(user_id, done)
 
-    def _link_braucht(self, user_id, done) -> Optional[str]:
+    def _link_requires(self, user_id, done) -> Optional[str]:
         """Which second factor is still missing because the sign-in went through the sign-in link?
         None if none (ASVS 6.3.6, PO decision 2026-09-24, `magiclink_require_second_factor`).
 
@@ -3450,9 +3450,9 @@ class TinySesam:
             raise HTTPException(400, self.t("api.json_invalid"))
         if not isinstance(data, dict):
             raise HTTPException(400, self.t("api.json_object"))
-        if self.cfg.csrf_enabled and not self._csrf_entbehrlich(request):
+        if self.cfg.csrf_enabled and not self._csrf_dispensable(request):
             token = request.headers.get("x-csrf-token") or data.get("_csrf")
-            if not self._herkunft_ok(request) or not self._verify_csrf(request, token):
+            if not self._origin_ok(request) or not self._verify_csrf(request, token):
                 raise HTTPException(403, self.t("api.csrf"))
         return data
 
@@ -3468,7 +3468,7 @@ class TinySesam:
         if not self.cfg.csrf_enabled:
             return ""
         token = secrets.token_urlsafe(24)
-        self._csrf_cookie_setzen(response, token)
+        self._set_csrf_cookie(response, token)
         return token
 
     def ensure_csrf(self, request: Request, response: Response) -> str:
@@ -3498,21 +3498,21 @@ class TinySesam:
         from the form field `_csrf` and sends it as `X-CSRF-Token`."""
         if not self.cfg.csrf_enabled:
             return ""
-        in_antwort = self._csrf_in_antwort(response)
-        if in_antwort is not None and _CSRF_FORM.fullmatch(in_antwort):
-            return in_antwort                       # just rotated or already set
-        if in_antwort is not None:
+        in_response = self._csrf_in_response(response)
+        if in_response is not None and _CSRF_FORM.fullmatch(in_response):
+            return in_response                       # just rotated or already set
+        if in_response is not None:
             # Deleted in this response (sign-out) or set to something unusable — the token
             # from the request is then no longer valid, so a fresh one.
-            token = self._csrf_neu(request)
+            token = self._csrf_new(request)
         else:
-            token, neu = self._csrf_der_anfrage(request)
-            if not neu:
+            token, new = self._csrf_of_request(request)
+            if not new:
                 return token
-        self._csrf_cookie_setzen(response, token)
+        self._set_csrf_cookie(response, token)
         return token
 
-    def _csrf_der_anfrage(self, request) -> tuple:
+    def _csrf_of_request(self, request) -> tuple:
         """(token, new): the valid token from the cookie, otherwise a new one — exactly one per
         request, so that `csrf_token()` and `ensure_csrf()` agree. Shared by
         `render_page`, `csrf_token`, `ensure_csrf` and the admin panel: where one would
@@ -3521,56 +3521,56 @@ class TinySesam:
         if cur and _CSRF_FORM.fullmatch(cur):
             return cur, False
         scope = getattr(request, "scope", None)
-        gemerkt = scope.get(_CSRF_SCOPE) if isinstance(scope, dict) else None
-        if gemerkt:
-            return gemerkt, True
-        return self._csrf_neu(request), True
+        remembered = scope.get(_CSRF_SCOPE) if isinstance(scope, dict) else None
+        if remembered:
+            return remembered, True
+        return self._csrf_new(request), True
 
     @staticmethod
-    def _csrf_neu(request) -> str:
+    def _csrf_new(request) -> str:
         token = secrets.token_urlsafe(24)
         scope = getattr(request, "scope", None)
         if isinstance(scope, dict):
             scope[_CSRF_SCOPE] = token
         return token
 
-    def _csrf_cookie_setzen(self, response, token: str) -> None:
+    def _set_csrf_cookie(self, response, token: str) -> None:
         """THE place that writes the CSRF cookie — replaces a line that this response
         already carries for it instead of appending a second one. NOT httponly: the built-in
         JS calls read the cookie and send `X-CSRF-Token`."""
-        self._set_cookie_entfernen(response, self.csrf_cookie_name)
+        self._remove_set_cookie(response, self.csrf_cookie_name)
         response.set_cookie(self.csrf_cookie_name, token, secure=self.cfg.cookie_secure,
                             samesite=_samesite(self.cfg.cookie_samesite), path=self.cfg.cookie_path)
 
-    def _csrf_cookie_loeschen(self, response) -> None:
+    def _delete_csrf_cookie(self, response) -> None:
         """Delete the CSRF cookie in the browser — with Secure and path as when setting it, otherwise
         the browser silently discards the deletion of a `__Host-` cookie."""
-        self._set_cookie_entfernen(response, self.csrf_cookie_name)
+        self._remove_set_cookie(response, self.csrf_cookie_name)
         response.delete_cookie(self.csrf_cookie_name, path=self.cfg.cookie_path,
                                secure=self.cfg.cookie_secure,
                                samesite=_samesite(self.cfg.cookie_samesite))
 
-    def _csrf_in_antwort(self, response) -> Optional[str]:
+    def _csrf_in_response(self, response) -> Optional[str]:
         """The value this response already sets for the CSRF cookie: None = no line,
         "" = deleted."""
-        praefix = self.csrf_cookie_name.encode("latin-1") + b"="
-        wert = None
-        for schluessel, zeile in getattr(response, "raw_headers", None) or []:
-            if schluessel.lower() == b"set-cookie" and zeile.startswith(praefix):
-                wert = zeile[len(praefix):].split(b";", 1)[0].strip().decode("latin-1")
-        if wert is None:
+        prefix = self.csrf_cookie_name.encode("latin-1") + b"="
+        value = None
+        for key_name, line in getattr(response, "raw_headers", None) or []:
+            if key_name.lower() == b"set-cookie" and line.startswith(prefix):
+                value = line[len(prefix):].split(b";", 1)[0].strip().decode("latin-1")
+        if value is None:
             return None
-        return "" if wert in ("", '""') else wert
+        return "" if value in ("", '""') else value
 
     @staticmethod
-    def _set_cookie_entfernen(response, name: str) -> None:
+    def _remove_set_cookie(response, name: str) -> None:
         """Take the Set-Cookie lines for exactly this name out of the response. The list is changed
         in place: `response.headers` holds a reference to the same list."""
-        roh = getattr(response, "raw_headers", None)
-        if roh is None:
+        raw = getattr(response, "raw_headers", None)
+        if raw is None:
             return
-        praefix = name.encode("latin-1") + b"="
-        roh[:] = [(k, v) for k, v in roh if not (k.lower() == b"set-cookie" and v.startswith(praefix))]
+        prefix = name.encode("latin-1") + b"="
+        raw[:] = [(k, v) for k, v in raw if not (k.lower() == b"set-cookie" and v.startswith(prefix))]
 
     def _verify_csrf(self, request: Request, submitted) -> bool:
         """Does the submitted CSRF token match the cookie? Comparison in constant time."""
@@ -3580,7 +3580,7 @@ class TinySesam:
         cookie = request.cookies.get(self.csrf_cookie_name)
         return bool(cookie) and bool(submitted) and hmac.compare_digest(str(cookie), str(submitted))
 
-    def _csrf_entbehrlich(self, request: Request) -> bool:
+    def _csrf_dispensable(self, request: Request) -> bool:
         """May this request skip the CSRF check?
 
         Only if it is signed in **actually via API key**. Until the second audit
@@ -3606,19 +3606,19 @@ class TinySesam:
         # `verify_api_key` logs use and rejection (B5-05). Without the call, a
         # revoked key at a POST route stood in the log without an address, and a valid one twice —
         # once without, once with IP, because the IP is part of the throttle key.
-        self._anfrage_merken(request)
+        self._remember_request(request)
         return self.verify_api_key(key)[0] is not None
 
     def require_csrf(self, request: Request, submitted):
         """For form POSTs: raises 403 if the CSRF token is missing/does not match.
 
         Exempt are only requests that are really signed in via API key — see
-        `_csrf_entbehrlich`."""
-        if self.cfg.csrf_enabled and not self._csrf_entbehrlich(request) \
-                and not (self._herkunft_ok(request) and self._verify_csrf(request, submitted)):
+        `_csrf_dispensable`."""
+        if self.cfg.csrf_enabled and not self._csrf_dispensable(request) \
+                and not (self._origin_ok(request) and self._verify_csrf(request, submitted)):
             raise HTTPException(403, self.t("api.csrf"))
 
-    def _eigene_hosts(self, request: Request) -> set:
+    def _own_hosts(self, request: Request) -> set:
         """The hostnames under which this instance is reachable in the browser.
 
         A foreign script in the victim's browser cannot set the Host header and X-Forwarded-Host —
@@ -3644,7 +3644,7 @@ class TinySesam:
         hosts.discard("")
         return hosts
 
-    def _herkunft_ok(self, request: Request) -> bool:
+    def _origin_ok(self, request: Request) -> bool:
         """Pre-check before the double-submit comparison (H-2, F-02).
 
         The token alone proves only that cookie and form field match each other. Whoever can set a cookie
@@ -3690,18 +3690,18 @@ class TinySesam:
                 host = (urlsplit(origin).hostname or "").lower()
             except ValueError:
                 host = ""
-            if host and host in self._eigene_hosts(request):
+            if host and host in self._own_hosts(request):
                 return True
             security.seclog.warning(
                 "csrf origin rejected origin=%s ip=%s — foreign origin. If the app sits behind "
                 "a proxy that rewrites the host: set base_url.",
-                security.fuer_log(origin[:200]), security.fuer_log(self.client_ip(request)))
+                security.for_log(origin[:200]), security.for_log(self.client_ip(request)))
             return False
-        seite = (request.headers.get("sec-fetch-site") or "").strip().lower()
-        if seite in ("same-site", "cross-site"):
+        page_html = (request.headers.get("sec-fetch-site") or "").strip().lower()
+        if page_html in ("same-site", "cross-site"):
             security.seclog.warning("csrf origin rejected sec-fetch-site=%s origin=%s ip=%s",
-                                    seite, "null" if origin else "-",
-                                    security.fuer_log(self.client_ip(request)))
+                                    page_html, "null" if origin else "-",
+                                    security.for_log(self.client_ip(request)))
             return False
         return True
 
@@ -3720,7 +3720,7 @@ class TinySesam:
         fn = self._mailer_override or SMTPMailer(self.cfg)
         fn(to, subject, text, html)
 
-    def _mail_ziel_ok(self, adresse, zweck, topf="mail") -> bool:
+    def _mail_destination_ok(self, address, purpose, bucket="mail") -> bool:
         """May another mail go to this address? Throttled per **target**, not per sender (R4-04).
 
         The routes' IP throttle protects the server, not the mailbox: whoever triggers "forgot password"
@@ -3735,11 +3735,11 @@ class TinySesam:
         quota with which the owner sends themselves a link — with operation using only the
         sign-in link, a repeatable lockout.
         """
-        schluessel = f"{topf}:" + (norm_email(adresse) or "")
-        if self.rl.allow(schluessel, self._sec("mail_per_address_max"),
+        key_name = f"{bucket}:" + (norm_email(address) or "")
+        if self.rl.allow(key_name, self._sec("mail_per_address_max"),
                          self._sec("mail_per_address_window_sec")):
             return True
-        self.audit("mail_ratelimit", detail=f"{zweck} to={adresse}")
+        self.audit("mail_ratelimit", detail=f"{purpose} to={address}")
         return False
 
     @staticmethod
@@ -3758,8 +3758,8 @@ class TinySesam:
 
         True if the mail went out; False if the token was already gone (G12a counts only
         delivered links); a delivery error comes as an exception."""
-        zeile = self.store.get_magic_token(self._token_hash(raw))
-        if not zeile or zeile["used_at"]:
+        line = self.store.get_magic_token(self._token_hash(raw))
+        if not line or line["used_at"]:
             return False
         try:
             self.send_mail(to, subject, text, html)
@@ -3770,16 +3770,16 @@ class TinySesam:
 
     def after_response(self, resp, task, on_overflow=None):
         """Run `task()` only AFTER the response has been sent, in the own mail worker
-        (`mailer.Postausgang`, R4-05/B6-6). Returns `resp`."""
+        (`mailer.Outbox`, R4-05/B6-6). Returns `resp`."""
         from starlette.background import BackgroundTask
-        resp.background = BackgroundTask(self._postausgang.nachher(task, on_overflow))
+        resp.background = BackgroundTask(self._outbox.afterwards(task, on_overflow))
         return resp
 
     #: Cap for `token_invalid` lines in the audit log: at most this many per window (global).
     _TOKEN_AUDIT_MAX = 20
-    _TOKEN_AUDIT_FENSTER_SEC = 60
+    _TOKEN_AUDIT_WINDOW_SEC = 60
 
-    def _token_rejected(self, zweck, request: Optional[Request] = None, grund="invalid"):
+    def _token_rejected(self, purpose, request: Optional[Request] = None, reason="invalid"):
         """An invalid/expired/consumed one-time token was presented (B5-18).
 
         Until now that left no trace: whoever tried out reset or sign-in tokens was seen by the
@@ -3790,18 +3790,18 @@ class TinySesam:
         ip = self.client_ip(request) if request is not None else None
         # The security log gets every line: it rotates, and fail2ban's verify jail
         # bans from it exactly the one who tries out links.
-        self._abgewiesen(None, ip, f"token_{zweck}", login=False)
+        self._rejected(None, ip, f"token_{purpose}", login=False)
         # The audit log, by contrast, is never cleaned up by `gc()`, and the routes are anonymous and unthrottled
         # (attack A3): every GET on /auth/magic/<nonsense> wrote a database row permanently —
         # a disk could be filled that way. The cap is therefore global per time window,
         # not per IP (an attacker changes that), and when the cap applies, exactly
         # ONE line about it appears in the audit — otherwise the operator would not see the flood.
-        fenster = self._TOKEN_AUDIT_FENSTER_SEC
-        if self.rl.allow("audit:token_invalid", self._TOKEN_AUDIT_MAX, fenster):
-            self.audit("token_invalid", ip=ip, detail=f"purpose={zweck} reason={grund}")
-        elif self.rl.allow("audit:token_invalid_gedrosselt", 1, fenster):
+        window = self._TOKEN_AUDIT_WINDOW_SEC
+        if self.rl.allow("audit:token_invalid", self._TOKEN_AUDIT_MAX, window):
+            self.audit("token_invalid", ip=ip, detail=f"purpose={purpose} reason={reason}")
+        elif self.rl.allow("audit:token_invalid_gedrosselt", 1, window):
             self.audit("token_invalid_throttled", ip=ip,
-                       detail=f"more than {self._TOKEN_AUDIT_MAX} in {fenster}s — further ones only in the security log")
+                       detail=f"more than {self._TOKEN_AUDIT_MAX} in {window}s — further ones only in the security log")
 
     # ---------- Magic / one-time tokens ----------
     def create_magic_token(self, purpose, user_id=None, email=None, ttl_min=None, payload=None) -> str:
@@ -3809,7 +3809,7 @@ class TinySesam:
         raw = secrets.token_urlsafe(32)
         h = hashlib.sha256(raw.encode()).hexdigest()
         ttl = int(ttl_min if ttl_min is not None else self.cfg.magiclink_ttl_min) * 60
-        self.store.add_magic_token(h, purpose, _jetzt() + ttl, user_id, email, payload)
+        self.store.add_magic_token(h, purpose, _now() + ttl, user_id, email, payload)
         return raw
 
     #: Where a token is redeemed — a separate endpoint per purpose. Up to 0.15 all four ran
@@ -3834,14 +3834,14 @@ class TinySesam:
         from `trusted_redirect_hosts` and loopback.
         """
         from urllib.parse import quote
-        pfad = self.TOKEN_PATHS[purpose].format(t=quote(str(raw), safe=""))
-        return f"{self._gepruefte_basis(base_url)}{pfad}"
+        path = self.TOKEN_PATHS[purpose].format(t=quote(str(raw), safe=""))
+        return f"{self._checked_base(base_url)}{path}"
 
     def redeem_magic(self, raw, purpose=None) -> Optional[dict]:
         """Redeem a token (one-shot). Returns {purpose,user_id,email,payload} or None (invalid/expired/used).
 
         `payload` with English keys (schema 12): an address-change link carries `old`, the
-        previous address — up to 0.21.x `alt`, which is mapped on reading (`payload_lesen`)."""
+        previous address — up to 0.21.x `old`, which is mapped on reading (`read_payload`)."""
         if not raw:
             return None
         h = hashlib.sha256(raw.encode()).hexdigest()
@@ -3851,7 +3851,7 @@ class TinySesam:
         if not self.store.use_magic_token(h):
             return None
         return {"purpose": row["purpose"], "user_id": row["user_id"], "email": row["email"],
-                "payload": payload_lesen(row["purpose"], row["payload"])}
+                "payload": read_payload(row["purpose"], row["payload"])}
 
     def peek_magic(self, raw, purpose=None) -> Optional[dict]:
         """Check a token WITHOUT consuming it (for the invite flow: redeem only at registration).
@@ -3859,12 +3859,12 @@ class TinySesam:
         if not raw:
             return None
         row = self.store.get_magic_token(hashlib.sha256(raw.encode()).hexdigest())
-        if not row or row["used_at"] or row["expires_at"] < _jetzt():
+        if not row or row["used_at"] or row["expires_at"] < _now():
             return None
         if purpose and row["purpose"] != purpose:
             return None
         return {"purpose": row["purpose"], "user_id": row["user_id"], "email": row["email"],
-                "payload": payload_lesen(row["purpose"], row["payload"])}
+                "payload": read_payload(row["purpose"], row["payload"])}
 
     def create_invite(self, email, base_url, roles=None, is_admin=False, ttl_min=None) -> dict:
         """Create an invitation (+ optionally send it). Return {url, token}. The token carries the
@@ -3874,7 +3874,7 @@ class TinySesam:
         The check happens before the token is issued, so that a rejected call leaves no
         invitation token behind. If sending fails, the token is invalidated (B6-12).
         """
-        base_url = self._gepruefte_basis(base_url)
+        base_url = self._checked_base(base_url)
         raw = self.create_magic_token("invite", email=email, ttl_min=ttl_min,
                                       payload={"roles": list(roles or []), "is_admin": bool(is_admin)})
         url = self.magic_url(raw, base_url, "invite")
@@ -3896,10 +3896,10 @@ class TinySesam:
         When redeemed it sets the evidence for the address (`email_verified`), as long as it is still the
         account's.
         """
-        senden = self._verify_mail(user_id, email, base_url)
-        if senden is None:
+        send = self._verify_mail(user_id, email, base_url)
+        if send is None:
             return False
-        senden()
+        send()
         return True
 
     def _verify_mail(self, user_id, email, base_url):
@@ -3910,17 +3910,17 @@ class TinySesam:
         not the token issuing: the operator's lock discards open tokens (H-18).
         If the token only came into being in the mail worker, a lock in the waiting window found nothing, and
         the delayed link lifted it again afterwards (T-13 attack, mail × operation)."""
-        base_url = self._gepruefte_basis(base_url)
+        base_url = self._checked_base(base_url)
         if not (email and self.mail_configured()):
             return None
         raw = self.create_magic_token("verify_email", user_id=user_id, email=email)
         url = self.magic_url(raw, base_url, "verify_email")
 
-        def senden():
+        def send():
             self._token_mail(raw, email, self.t("mail.verify.subject"),
                              self.t("mail.verify.text", url=url),
                              html=self.t("mail.verify.html", url=url))
-        return senden
+        return send
 
     # ---------- Self-service: username and address (PO decision 2026-09-25) ----------
     #: Longer is no longer a name but a payload (header, log lines, panel).
@@ -3953,8 +3953,8 @@ class TinySesam:
         * **Alongside LDAP only as operator** (`by_operator=True`, since 2026-09-27): there the
           names come from the directory; an account that renames itself could adopt the name of a
           person who has never signed in, and lock them out."""
-        konto = self.store.get_user(user_id)
-        if not konto:
+        account = self.store.get_user(user_id)
+        if not account:
             raise ValueError(self.t("api.not_found"))
         if self.cfg.login_identifier == "email":
             raise ValueError(self.t("api.username_follows_email"))
@@ -3966,27 +3966,27 @@ class TinySesam:
         name = str(new_username or "").strip()
         if not name:
             raise ValueError(self.t("err.username_required"))
-        if len(name) > self.NAME_MAX or name_ungueltig(name):
+        if len(name) > self.NAME_MAX or name_invalid(name):
             raise ValueError(self.t("err.username_invalid"))
-        eigene = norm_email(konto["email"]) if konto["email"] and konto["email_verified"] else None
-        if "@" in norm_kennung(name) and norm_email(name) != eigene:
+        own = norm_email(account["email"]) if account["email"] and account["email_verified"] else None
+        if "@" in norm_identifier(name) and norm_email(name) != own:
             raise ValueError(self.t("api.username_is_address"))
-        if name == konto["username"]:
+        if name == account["username"]:
             return name
-        erlaubt = {norm_kennung(i) for i in (self.cfg.admin_identifiers or []) if str(i).strip()}
-        if self.identifier_taken(name, exclude_id=user_id) or norm_kennung(name) in erlaubt:
+        permitted = {norm_identifier(i) for i in (self.cfg.admin_identifiers or []) if str(i).strip()}
+        if self.identifier_taken(name, exclude_id=user_id) or norm_identifier(name) in permitted:
             raise ValueError(self.t("api.user_exists"))
-        alt = konto["username"]
+        old = account["username"]
         try:
             # Marker and name in one transaction (G2-N) — in between, a sign-in via
             # LDAP/SAML could otherwise still bind the account via the new name.
-            self.store.set_username(user_id, name, selbst_gewaehlt=not by_operator)
+            self.store.set_username(user_id, name, itself_chosen=not by_operator)
         except sqlite3.IntegrityError:
             # Race: taken between check and write — the database decides.
             raise ValueError(self.t("api.user_exists")) from None
         self.audit("username_changed", name, ip,
-                   f"old={alt} by=operator" if by_operator else f"old={alt}")
-        self._security_event("username_changed", user_id, old=alt, new=name)
+                   f"old={old} by=operator" if by_operator else f"old={old}")
+        self._security_event("username_changed", user_id, old=old, new=name)
         return name
 
     def request_email_change(self, user_id, new_email, base_url):
@@ -4011,30 +4011,30 @@ class TinySesam:
         named `email_change_taken`. Plus the runtime: one row fewer in the database and
         no sending after the response. Now: first the throttles (for every target), then in every
         case a token and an audit line — for "no" a throwaway token, expired from the start
-        (nobody knows the plaintext, `offener_token` and redeeming do not see it,
+        (nobody knows the plaintext, `open_token` and redeeming do not see it,
         `gc()` clears it; the pattern of R4-03 for registration) —, then always a sender
         that sends the notice to the own address in every case. The account page shows every
         request as `email_change_requested` (`own_events`)."""
-        return self._wechsel_beantragen(user_id, new_email, base_url)
+        return self._request_change(user_id, new_email, base_url)
 
-    def _wechsel_beantragen(self, user_id, neu, base_url, quelle: str = ""):
+    def _request_change(self, user_id, new, base_url, source: str = ""):
         """`request_email_change`, with the source for the path via LDAP/SAML
-        (`_adresse_aus_quelle_belegen`). With `quelle` the detail of the audit line begins with
+        (`_address_proven_by_source`). With `quelle` the detail of the audit line begins with
         `account=<id> source=<quelle>` — the same for every result, free like taken. From that the
-        database also counts the rejections (`Store.quellmail_seit`, attack round 2026-09-26)."""
-        konto = self.store.get_user(user_id)
-        if not konto:
+        database also counts the rejections (`Store.source_mail_since`, attack round 2026-09-26)."""
+        account = self.store.get_user(user_id)
+        if not account:
             raise ValueError(self.t("api.not_found"))
         # Fold first, then check (like registration and admin API): `x＠evil.test@example.com`
         # is valid raw and, folded, an address with two `@` — it would be the token target, recipient
         # and, after the click, the account's taken address (attack round, finding 3).
-        mail = norm_email(neu or "") or ""
+        mail = norm_email(new or "") or ""
         if not valid_email(mail):
             raise ValueError(self.t("api.email_invalid"))
         if not self.mail_configured():
             raise ValueError(self.t("api.no_mail"))
-        base_url = self._gepruefte_basis(base_url)
-        if mail == norm_email(konto["email"] or "") and konto["email_verified"]:
+        base_url = self._checked_base(base_url)
+        if mail == norm_email(account["email"] or "") and account["email_verified"]:
             return None
         # Throttled per ACCOUNT (attack round, finding 3 of self-service): the bucket per target address
         # protects a mailbox, not against scattering — otherwise an account would send mails to arbitrarily
@@ -4045,37 +4045,37 @@ class TinySesam:
         # were taken.
         if not self.rl.allow(f"wechsel-konto:{user_id}", self._sec("mail_per_address_max"),
                              self._sec("mail_per_address_window_sec")):
-            self.audit("mail_ratelimit", konto["username"], detail=f"email_change account={user_id}")
+            self.audit("mail_ratelimit", account["username"], detail=f"email_change account={user_id}")
             return None
         # Bucket of its own (like the registration notice, attack A2): anyone with an account requests the change to a
         # FOREIGN address — in the `mail` bucket it would use up the quota with which
         # the owner of that address sends themselves a sign-in link.
-        if not self._mail_ziel_ok(mail, "email_change", topf="wechsel"):
+        if not self._mail_destination_ok(mail, "email_change", bucket="wechsel"):
             return None
         # An address from `admin_identifiers` gets no change link (like the name): on an
         # instance without an admin, the owner could easily click "confirm your new address" for their
         # own setup — and the FOREIGN account would afterwards carry the taken allowlist address and
         # be first admin at the next sign-in. The same response as "taken".
-        nein = ("email_change_taken" if self.identifier_taken(mail, exclude_id=user_id)
-                else "email_change_reserved" if self._allowlist_adresse(mail) else None)
+        no = ("email_change_taken" if self.identifier_taken(mail, exclude_id=user_id)
+                else "email_change_reserved" if self._allowlist_address(mail) else None)
         # The same database work in both cases (G12b): for "no" a token that has already
         # expired when it is created.
         raw = self.create_magic_token("email_change", user_id=user_id, email=mail,
-                                      ttl_min=(-1 if nein else int(self.cfg.email_change_ttl_min)),
-                                      payload={"old": konto["email"] or ""})
+                                      ttl_min=(-1 if no else int(self.cfg.email_change_ttl_min)),
+                                      payload={"old": account["email"] or ""})
         url = self.magic_url(raw, base_url, "email_change")
-        herkunft = f"account={int(user_id)} source={quelle} " if quelle else ""
-        self.audit(nein or "email_change_requested", konto["username"], detail=f"{herkunft}new={mail}")
+        origin = f"account={int(user_id)} source={source} " if source else ""
+        self.audit(no or "email_change_requested", account["username"], detail=f"{origin}new={mail}")
         # The mail names the account: whoever confirms an address should see for WHICH one — otherwise
         # a good-faith click confirms the own address for a foreign account (suspicion from
         # the attack round; mainly concerns the path via LDAP/SAML, where the request does not come from the
         # owner of the address).
-        name = str(konto["username"])
-        alt = norm_email(konto["email"] or "") if konto["email_verified"] else None
+        name = str(account["username"])
+        old = norm_email(account["email"] or "") if account["email_verified"] else None
 
-        def senden() -> bool:
+        def send() -> bool:
             try:
-                return (not nein) and self._token_mail(
+                return (not no) and self._token_mail(
                     raw, mail, self.t("mail.email_change.subject"),
                     self.t("mail.email_change.text", name=name, url=url),
                     html=self.t("mail.email_change.html", name_html=_html.escape(name), url=url))
@@ -4083,27 +4083,27 @@ class TinySesam:
                 # In EVERY case (G12b) — even if no link went out, and even if sending
                 # the link failed: the text ("applies only once the link is clicked") is correct
                 # always, and its absence would reveal "taken".
-                if alt and alt != mail:
-                    self._wechsel_antrag_hinweis(alt, name, mail)
+                if old and old != mail:
+                    self._change_request_notice(old, name, mail)
 
-        def verwerfen() -> None:
+        def discard() -> None:
             """Sending fails before it begins (queue full): the token expires
             immediately, as after a failed sending (B6-12) — a never delivered link would
-            otherwise, as an open one, hold up the next until its expiry (`offener_token`)."""
+            otherwise, as an open one, hold up the next until its expiry (`open_token`)."""
             self.store.expire_magic_token(self._token_hash(raw))
-        senden.verwerfen = verwerfen   # type: ignore[attr-defined]
-        return senden
+        send.discard = discard   # type: ignore[attr-defined]
+        return send
 
-    def _wechsel_antrag_hinweis(self, alt, name, neu) -> None:
+    def _change_request_notice(self, old, name, new) -> None:
         """Even the REQUEST for an address change goes to the previous, taken address
         (attack round, finding 1): if it comes from a taken-over session, the owner learns of it
         before the link is redeemed — and a password change or "end sessions"
         discards it. **Without a link** (nothing whose base would have to be checked; test_self_service)."""
-        if self._mail_ziel_ok(alt, "email_change_notice", topf="hinweis"):
-            self.send_mail(alt, self.t("mail.email_change_notice.subject"),
-                           self.t("mail.email_change_notice.text", name=name, new=neu))
+        if self._mail_destination_ok(old, "email_change_notice", bucket="hinweis"):
+            self.send_mail(old, self.t("mail.email_change_notice.subject"),
+                           self.t("mail.email_change_notice.text", name=name, new=new))
 
-    def _allowlist_adresse(self, mail) -> bool:
+    def _allowlist_address(self, mail) -> bool:
         """Steht diese Adresse in `admin_identifiers`?"""
         return norm_email(mail or "") in {norm_email(i) for i in (self.cfg.admin_identifiers or [])
                                           if "@" in str(i)}
@@ -4122,40 +4122,40 @@ class TinySesam:
         if not data or not data.get("user_id"):
             return None
         uid = data["user_id"]
-        konto = self.store.get_user(uid)
-        if not konto or konto["disabled"]:
+        account = self.store.get_user(uid)
+        if not account or account["disabled"]:
             return None
         mail = norm_email(data.get("email") or "")
         if not mail:
             return None
         if self.identifier_taken(mail, exclude_id=uid):
-            self.audit("email_change_taken", konto["username"], ip, f"new={mail} on_confirmation=1")
+            self.audit("email_change_taken", account["username"], ip, f"new={mail} on_confirmation=1")
             return "taken"
-        if self._allowlist_adresse(mail):     # only got onto the list after the request
-            self.audit("email_change_reserved", konto["username"], ip, f"new={mail} on_confirmation=1")
+        if self._allowlist_address(mail):     # only got onto the list after the request
+            self.audit("email_change_reserved", account["username"], ip, f"new={mail} on_confirmation=1")
             return "taken"
-        alt = konto["email"] or ""
+        old = account["email"] or ""
         # Address and (in email mode) the name in ONE transaction: written separately,
         # the new address would stand next to the old name after a failure of the second.
-        name_folgt = (self.cfg.login_identifier == "email" and bool(alt)
-                      and norm_email(konto["username"]) == norm_email(alt))
+        name_follows = (self.cfg.login_identifier == "email" and bool(old)
+                      and norm_email(account["username"]) == norm_email(old))
         try:
-            self.store.adresse_wechseln(uid, mail, name_folgt=name_folgt)
+            self.store.address_switch(uid, mail, name_follows=name_follows)
         except sqlite3.IntegrityError:
             # Race (G12c): the address has become the identifier of another account between check
             # and write. The same response as above; nothing is changed.
-            self.audit("email_change_taken", konto["username"], ip,
+            self.audit("email_change_taken", account["username"], ip,
                        f"new={mail} on_confirmation=1 race=1")
             return "taken"
         self.store.revoke_user_magic_tokens(uid)
-        name = self._kontoname(uid)
-        self.audit("email_changed", name, ip, f"old={alt} new={mail}")
-        self._security_event("email_changed", uid, old=alt, new=mail)
-        if alt and self.mail_configured():
-            def hinweis():
-                self.send_mail(alt, self.t("mail.email_changed.subject"),
+        name = self._account_name(uid)
+        self.audit("email_changed", name, ip, f"old={old} new={mail}")
+        self._security_event("email_changed", uid, old=old, new=mail)
+        if old and self.mail_configured():
+            def notice():
+                self.send_mail(old, self.t("mail.email_changed.subject"),
                                self.t("mail.email_changed.text", mail=mail))
-            self._hinweis_ausgang.einreihen(hinweis)
+            self._notice_outcome.enqueue(notice)
         return "ok"
 
     def _send_signup_notice(self, email, base_url) -> bool:
@@ -4167,15 +4167,15 @@ class TinySesam:
         this mail: no token, only the way to sign in. Throttled like any mail (R4-04), but
         in a bucket of its own — otherwise it would lock the owner out of their own links (A2).
         """
-        base_url = self._gepruefte_basis(base_url)
+        base_url = self._checked_base(base_url)
         u = self.store.get_user_by_email(email)
         if not u or u["is_service"] or not self.mail_configured():
             return False
-        ziel = u["email"]
-        if not self._mail_ziel_ok(ziel, "signup_notice", topf="hinweis"):
+        destination = u["email"]
+        if not self._mail_destination_ok(destination, "signup_notice", bucket="hinweis"):
             return False
         login = f"{base_url}{self.cfg.login_path}"
-        self.send_mail(ziel, self.t("mail.signup_notice.subject"),
+        self.send_mail(destination, self.t("mail.signup_notice.subject"),
                        self.t("mail.signup_notice.text", login=login),
                        html=self.t("mail.signup_notice.html", login=login))
         return True
@@ -4189,17 +4189,17 @@ class TinySesam:
         Sending goes to the stored address (R4-11), throttled per target (R4-04); a
         failed sending invalidates the token (B6-12).
         """
-        base_url = self._gepruefte_basis(base_url)
+        base_url = self._checked_base(base_url)
         u = self.store.get_user_by_email(email)
         if not u or u["disabled"] or u["is_service"]:
             return False
-        ziel = u["email"]
-        if not self._mail_ziel_ok(ziel, "login"):
+        destination = u["email"]
+        if not self._mail_destination_ok(destination, "login"):
             return False
-        raw = self.create_magic_token("login", user_id=u["id"], email=ziel, payload={"next": next})
+        raw = self.create_magic_token("login", user_id=u["id"], email=destination, payload={"next": next})
         url = self.magic_url(raw, base_url)
         mins = self.cfg.magiclink_ttl_min
-        self._token_mail(raw, ziel, self.t("mail.login_link.subject"),
+        self._token_mail(raw, destination, self.t("mail.login_link.subject"),
                          self.t("mail.login_link.text", mins=mins, url=url),
                          html=self.t("mail.login_link.html", mins=mins, url=url))
         return True
@@ -4214,15 +4214,15 @@ class TinySesam:
         """New session with the first factor. Returns (token, session_ok). session_ok=False → further steps needed."""
         done = [method]
         mfa_ok = self._session_ok(user_id, done)
-        token = self._sitzung_anlegen(user_id, self._ttl(remember), mfa_ok, method, ip, ua, remember,
+        token = self._create_session(user_id, self._ttl(remember), mfa_ok, method, ip, ua, remember,
                                       factors=done)
         if mfa_ok:   # full login completed → audit
-            self._anmeldung_vollstaendig(user_id, ip, method)
-            self._vermerke_erstlogin(user_id)
+            self._sign_in_complete(user_id, ip, method)
+            self._note_first_login(user_id)
             self.lift_lockout(user_id)
         return token, mfa_ok
 
-    def _sitzung_anlegen(self, user_id, ttl, mfa_ok, method, ip=None, ua=None, remember=True,
+    def _create_session(self, user_id, ttl, mfa_ok, method, ip=None, ua=None, remember=True,
                          factors=None) -> str:
         """THE place where a session row comes into being — and the full one is noted.
 
@@ -4236,28 +4236,28 @@ class TinySesam:
         token = self.store.create_session(user_id, ttl, mfa_ok, method, ip, ua, remember,
                                           factors=factors)
         if mfa_ok:
-            self._anmeldung_vormerken(token)
+            self._reserve_sign_in(token)
         return token
 
-    def _anmeldung_vormerken(self, token: str) -> None:
+    def _reserve_sign_in(self, token: str) -> None:
         h = self.store.session_hash(token)
-        with self._frisch_lock:
-            self._frische_anmeldungen[h] = None
-            while len(self._frische_anmeldungen) > _FRISCH_MAX:
-                self._frische_anmeldungen.popitem(last=False)
+        with self._fresh_lock:
+            self._fresh_sign_ins[h] = None
+            while len(self._fresh_sign_ins) > _FRESH_MAX:
+                self._fresh_sign_ins.popitem(last=False)
 
-    def _anmeldung_einloesen(self, token) -> bool:
+    def _redeem_sign_in(self, token) -> bool:
         """Was this token a sign-in just now? Once yes, afterwards no."""
         if not token:
             return False
         h = self.store.session_hash(token)
-        with self._frisch_lock:
-            if h in self._frische_anmeldungen:
-                del self._frische_anmeldungen[h]
+        with self._fresh_lock:
+            if h in self._fresh_sign_ins:
+                del self._fresh_sign_ins[h]
                 return True
         return False
 
-    def _vermerke_erstlogin(self, user_id: int) -> None:
+    def _note_first_login(self, user_id: int) -> None:
         """Record the first complete login (R3-1).
 
         The self-enrollment in the default operating mode hangs on this: an account may set up the factor required
@@ -4265,14 +4265,14 @@ class TinySesam:
         closes this window — at the FIRST complete login, no matter by which
         route it came about. An open setup window is closed in the process: it was meant for
         exactly this one process."""
-        if not self.store.mark_first_login(user_id, _jetzt()):
+        if not self.store.mark_first_login(user_id, _now()):
             return
         u = self.store.get_user(user_id)
         try:
-            offen = u["mfa_enroll_until"] if u else None
+            unclosed = u["mfa_enroll_until"] if u else None
         except (IndexError, KeyError):
-            offen = None
-        if offen:
+            unclosed = None
+        if unclosed:
             self.store.set_mfa_enroll_until(user_id, None)
 
     def apply_factor(self, request, user_id, factor, ip=None, ua=None, remember=True,
@@ -4292,9 +4292,9 @@ class TinySesam:
         routes remains, but the class no longer depends on every new route knowing it
         (H-18: sign-in link and passkey created a session for a locked account, which only
         `current_user()` discarded again)."""
-        konto = self.store.get_user(user_id)
-        if not konto or konto["disabled"]:
-            self.audit("login_disabled", str(konto["username"]) if konto else None, ip, factor)
+        account = self.store.get_user(user_id)
+        if not account or account["disabled"]:
+            self.audit("login_disabled", str(account["username"]) if account else None, ip, factor)
             raise HTTPException(403, self.t("api.account_disabled"))
         s = self._session_from_request(request)
         if s and s["user_id"] == user_id:
@@ -4307,10 +4307,10 @@ class TinySesam:
             ok = self._session_ok(user_id, done)
             self.store.set_session_factors(s["token_hash"], done, mfa_ok=ok)
             self._maybe_promote_admin(self.store.get_user(user_id), email_verified,
-                                      faktor=factor)
+                                      factor=factor)
             if ok and not was_ok:
-                self._anmeldung_vollstaendig(user_id, s["ip"], factor)
-                self._vermerke_erstlogin(user_id)
+                self._sign_in_complete(user_id, s["ip"], factor)
+                self._note_first_login(user_id)
                 self.lift_lockout(user_id)
                 # **New token on privilege change.** Here the session turns from a half login
                 # into a fully valid one — OWASP Session Management Cheat Sheet: "The session ID must
@@ -4318,42 +4318,42 @@ class TinySesam:
                 # change." Before, it kept its token: whoever could set a cookie on the victim before the login
                 # (subdomain, plaintext HTTP) held a fully authenticated session
                 # after the victim's second factor.
-                neu_token = self._sitzung_anlegen(
+                new_token = self._create_session(
                     user_id, self._ttl(bool(s["remember"])), True, s["method"],
                     s["ip"], s["user_agent"], bool(s["remember"]), factors=done)
-                self._nachfolger(s, neu_token)
+                self._successor(s, new_token)
                 self.store.delete_session_by_handle(s["token_hash"])
-                self._andere_nach_abschluss(s, neu_token)
-                return neu_token, ok, True      # is_new → the caller sets the cookie anew
+                self._other_after_completion(s, new_token)
+                return new_token, ok, True      # is_new → the caller sets the cookie anew
             if ok and was_ok:
                 # The session was already fully valid, the factor only refreshes it — that is a
                 # step-up (mfa_at has just been set anew). That one also gets a new token
                 # (F-06, ASVS 5.0 7.2.4); lifetime and sign-in time remain.
-                gedreht = self.store.rotate_session(s["token_hash"], self._gnade())
-                if gedreht:
-                    return gedreht, ok, True
+                turned = self.store.rotate_session(s["token_hash"], self._mercy())
+                if turned:
+                    return turned, ok, True
             # The plaintext token from the cookie is returned — the caller builds
             # redirects and cookies from it. The session row holds only the handle.
             return request.cookies.get(self.session_cookie_name), ok, False
         token, ok = self.start_session(user_id, factor, ip, ua, remember)
-        self._maybe_promote_admin(self.store.get_user(user_id), email_verified, faktor=factor)
+        self._maybe_promote_admin(self.store.get_user(user_id), email_verified, factor=factor)
         return token, ok, True
 
-    def _nachfolger(self, alte_zeile, neu_token) -> None:
+    def _successor(self, old_line, new_token) -> None:
         """What hangs on the half session passes to the full one that replaces it — BEFORE
         deleting the old one: the OIDC rows (4a, otherwise the foreign key would take them along) and the
         explicit choice "stay signed in" (F-05).
 
-        `alte_zeile` is a whole row from `get_session` (`SELECT *`); the column has always existed since
+        `old_line` is a whole row from `get_session` (`SELECT *`); the column has always existed since
         the migration to schema 11. If it is missing after all, that should fail loudly — a
         silent skip would lose the choice and with it the long idle period, without anyone
         noticing."""
-        neu = self.store.session_hash(neu_token)
-        self.store.oidc_sitzung_umhaengen(alte_zeile["token_hash"], neu)
-        if alte_zeile["bleiben_gewaehlt"]:
-            self.store.set_session_bleiben(neu)
+        new = self.store.session_hash(new_token)
+        self.store.move_oidc_session(old_line["token_hash"], new)
+        if old_line["bleiben_gewaehlt"]:
+            self.store.set_session_stay(new)
 
-    def _andere_nach_abschluss(self, alte_zeile, neu_token) -> None:
+    def _other_after_completion(self, old_line, new_token) -> None:
         """If the half session recorded that the remaining ones are to be ended (limit d), then now — with
         the full session that has just come into being as the only one that stays.
 
@@ -4361,19 +4361,19 @@ class TinySesam:
         ends with a HALF session, and a half one must not end the remaining ones. The offer
         under ASVS 7.4.3 was previously omitted there entirely. Now the page asks as usual, and the
         consent is redeemed here as soon as the sign-in is complete. The column has existed
-        since schema 11 (as with `_nachfolger`: if missing, it fails loudly)."""
-        if not alte_zeile["andere_beenden"]:
+        since schema 11 (as with `_successor`: if missing, it fails loudly)."""
+        if not old_line["andere_beenden"]:
             return
-        self.store.delete_user_sessions_except(alte_zeile["user_id"], self.store.session_hash(neu_token))
-        u = self.store.get_user(alte_zeile["user_id"])
-        self.store.audit_log("sessions_revoke", u["username"] if u else None, alte_zeile["ip"],
+        self.store.delete_user_sessions_except(old_line["user_id"], self.store.session_hash(new_token))
+        u = self.store.get_user(old_line["user_id"])
+        self.store.audit_log("sessions_revoke", u["username"] if u else None, old_line["ip"],
                              "scope=others after_enrollment=1")
 
     def _login_redirect_after(self, request, token, user_id, nxt):
         """Target redirect after a factor: nxt if the session is complete, otherwise the input page of the next factor."""
-        return self._nach_dem_faktor(request, token, user_id, nxt)[0]
+        return self._after_the_factor(request, token, user_id, nxt)[0]
 
-    def _nach_dem_faktor(self, request, token, user_id, nxt) -> tuple:
+    def _after_the_factor(self, request, token, user_id, nxt) -> tuple:
         """(onward, next, done) after a provided factor — the one source for the
         redirect of every sign-in route and for `LoginResult.next_url`/`next_factor`/`done`."""
         s = self.store.get_session(token)
@@ -4383,9 +4383,9 @@ class TinySesam:
             # an earlier sign-out "here only" (T-22) no longer applies to that.
             if "://" in str(nxt or ""):
                 from urllib.parse import urlsplit
-                ziel = (urlsplit(str(nxt)).hostname or "").lower()
-                if ziel:
-                    self.store.gate_fortsetzen(s["token_hash"], ziel)
+                destination = (urlsplit(str(nxt)).hostname or "").lower()
+                if destination:
+                    self.store.gate_resume(s["token_hash"], destination)
             return nxt, None, True
         step = self._next_login_step(user_id, done)
         return (self.browser_path(request, self._factor_entry(step, nxt)) if step else nxt), step, False
@@ -4408,37 +4408,37 @@ class TinySesam:
         s = self.store.get_session(token)
         if not s:
             return None
-        konto = self.store.get_user(s["user_id"])
-        if not konto or konto["disabled"]:
+        account = self.store.get_user(s["user_id"])
+        if not account or account["disabled"]:
             # Locked between the first factor and TOTP: the half session ends here instead of
             # becoming a fully valid one (H-18, the same rule as in `apply_factor`).
             self.store.delete_session_by_handle(s["token_hash"])
             return None
-        war_ok = bool(s["mfa_ok"])
+        was_ok = bool(s["mfa_ok"])
         done = json.loads(s["factors_done"] or "[]")
         if "totp" not in done:
             done.append("totp")
         ok = self._session_ok(s["user_id"], done)
         self.store.set_session_factors(s["token_hash"], done, mfa_ok=ok)
         if ok:
-            self._anmeldung_vollstaendig(s["user_id"], s["ip"], "totp")
-        if ok and not war_ok:
+            self._sign_in_complete(s["user_id"], s["ip"], "totp")
+        if ok and not was_ok:
             self.lift_lockout(s["user_id"])
             # Privilege change → new token (OWASP Session Management). Returns it so that the
             # caller can set the cookie — the old token belongs to a deleted row.
-            neu_token = self._sitzung_anlegen(
+            new_token = self._create_session(
                 s["user_id"], self._ttl(bool(s["remember"])), True, s["method"],
                 s["ip"], s["user_agent"], bool(s["remember"]), factors=done)
-            self._nachfolger(s, neu_token)
+            self._successor(s, new_token)
             self.store.delete_session_by_handle(s["token_hash"])
-            self._andere_nach_abschluss(s, neu_token)
-            return neu_token
-        if ok and war_ok:
+            self._other_after_completion(s, new_token)
+            return new_token
+        if ok and was_ok:
             # The session was already fully valid; `set_session_factors` has just set `mfa_at` anew
             # — that is a step-up, and it rotates the token like `/auth/reauth` and
             # `apply_factor` (F-06, ASVS 5.0 7.2.4). Before, it stayed: a cookie that was read along
             # thus got fresh sudo rights. Lifetime and sign-in time remain.
-            return self.store.rotate_session(s["token_hash"], self._gnade())
+            return self.store.rotate_session(s["token_hash"], self._mercy())
         return None
 
     # ---------- Signing in for own pages (stage A, 0.22.0) ----------
@@ -4451,38 +4451,38 @@ class TinySesam:
     # built-in ones (the same audit and log lines).
 
     @staticmethod
-    def _csrf_mitgeschickt(request, csrf: Optional[str]) -> Optional[str]:
+    def _csrf_sent_along(request, csrf: Optional[str]) -> Optional[str]:
         """The submitted CSRF token: the argument, otherwise the header `X-CSRF-Token`."""
         return request.headers.get("x-csrf-token") if csrf is None else csrf
 
-    def _bleiben_gewaehlt(self, remember: Optional[bool]) -> bool:
+    def _stay_chosen(self, remember: Optional[bool]) -> bool:
         """Is "stay signed in" chosen? Without a tick in the form (`remember_me_enabled=False`) every
         session counts as persistent, as before; otherwise only an explicit True (F-05)."""
         return True if not self.cfg.remember_me_enabled else remember is True
 
-    def _anmeldung_nein(self, grund: str, status: int, text: str, weiter: str,
-                        naechster: Optional[str] = None) -> LoginResult:
+    def _sign_in_no(self, reason: str, status: int, text: str, further: str,
+                        next_one: Optional[str] = None) -> LoginResult:
         """A failure: no session, no cookie — only reason, status and text."""
-        return LoginResult(ok=False, reason=grund, status=status, message=self.t(text) if text else "",
-                           next_url=weiter, next_factor=naechster)
+        return LoginResult(ok=False, reason=reason, status=status, message=self.t(text) if text else "",
+                           next_url=further, next_factor=next_one)
 
-    def _anmeldung_gesperrt(self, kennung: str, weiter: str, naechster: Optional[str] = None,
-                            text: str = "err.locked", grund: str = "locked") -> LoginResult:
+    def _sign_in_locked(self, identifier: str, further: str, next_one: Optional[str] = None,
+                            text: str = "err.locked", reason: str = "locked") -> LoginResult:
         """The pre-booking was rejected. A streak lock (B2-6) does not expire —
         "temporary" would be a lie, and the user needs the way out. The message reveals
         nothing about the existence of the account: counting is per identifier, whether it exists or not.
         A deferral (G9) gets the same 429 and the same reason as a lock — otherwise
         the response would reveal that someone else is currently signing in under this identifier or address."""
-        if self._serie_voll(kennung):
-            return self._anmeldung_nein("locked_series", 429, "err.locked_series", weiter, naechster)
-        return self._anmeldung_nein(grund, 429, text, weiter, naechster)
+        if self._series_full(identifier):
+            return self._sign_in_no("locked_series", 429, "err.locked_series", further, next_one)
+        return self._sign_in_no(reason, 429, text, further, next_one)
 
-    def _angemeldet(self, request, token, neu: bool, user_id: int, nxt: str) -> LoginResult:
+    def _signed_in(self, request, token, new: bool, user_id: int, nxt: str) -> LoginResult:
         """A success: target and open factor from the same source as every redirect."""
-        weiter, naechster, fertig = self._nach_dem_faktor(request, token, user_id, nxt)
-        return LoginResult._with_session(self, token if neu else None, ok=True, reason="ok",
-                                         status=303, next_url=weiter, next_factor=naechster,
-                                         done=fertig, user=self.get_user(user_id))
+        further, next_one, done = self._after_the_factor(request, token, user_id, nxt)
+        return LoginResult._with_session(self, token if new else None, ok=True, reason="ok",
+                                         status=303, next_url=further, next_factor=next_one,
+                                         done=done, user=self.get_user(user_id))
 
     def login_password(self, request: Request, username: str, password: str, *, next: str = "",
                        remember: Optional[bool] = None, csrf: Optional[str] = None) -> LoginResult:
@@ -4506,46 +4506,46 @@ class TinySesam:
         failed attempt. Synchronous: call from a `def` route (FastAPI uses the thread pool for it),
         in an `async def` route via `run_in_threadpool`."""
         cfg = self.cfg
-        self.require_csrf(request, self._csrf_mitgeschickt(request, csrf))
+        self.require_csrf(request, self._csrf_sent_along(request, csrf))
         nxt = self.safe_next(next, request)
         if not cfg.password_enabled:
-            return self._anmeldung_nein("method_disabled", 404, "api.password_off", nxt)
+            return self._sign_in_no("method_disabled", 404, "api.password_off", nxt)
         if not username or not password:
-            return self._anmeldung_nein("missing", 400, "err.required", nxt)
-        bleiben = self._bleiben_gewaehlt(remember)
+            return self._sign_in_no("missing", 400, "err.required", nxt)
+        stay = self._stay_chosen(remember)
         ip = self.client_ip(request)
         if not self._rate_ok(ip):
-            return self._anmeldung_nein("ratelimit", 429, "err.rate", nxt)
+            return self._sign_in_no("ratelimit", 429, "err.rate", nxt)
         # Check and book in ONE step (R7-2): with `_is_locked()` beforehand and
         # `_record_login()` afterwards the whole password check lay in between, and a parallel
         # burst read "not yet locked" N times. From here on the attempt already stands as a
         # failed attempt in the table; `_record_login(..., versuch=…)` turns it into a success.
         # With LDAP it stays pending until the directory has answered (G9): on an outage it is
         # taken back (F-23), and until then it must lock nobody, only make them wait.
-        versuch = self._begin_attempt(username, ip, "password", schweben=cfg.ldap_enabled)
-        if versuch is None:
-            return self._anmeldung_gesperrt(username, nxt)
+        attempt = self._begin_attempt(username, ip, "password", hover=cfg.ldap_enabled)
+        if attempt is None:
+            return self._sign_in_locked(username, nxt)
         # The unexpected (programming error in the client, database gone, an HTTPException from the
         # check) turns the attempt into a failed attempt immediately — stricter in doubt, as before.
-        # Without that it would stay pending for `Store.VORBUCHUNG_SCHWEBE_SEK` and make sign-ins
+        # Without that it would stay pending for `Store.PREBOOKING_PENDING_SEC` and make sign-ins
         # from the same address wait (G9). From `_record_login` on it is closed.
         try:
             u = self._check_password(username, password)
-            aus_verzeichnis = False
+            from_directory = False
             if not u and cfg.ldap_enabled:
-                from .ldap_ import VerzeichnisNichtErreichbar
+                from .ldap_ import DirectoryNotReachable
                 try:
                     u = self._check_ldap(username, password)   # LDAP/lldap backend (factor 'password')
-                except VerzeichnisNichtErreichbar as e:
+                except DirectoryNotReachable as e:
                     # An outage is not a failed attempt (F-23): book nothing against account or IP
                     # and no `failed login` in the security log — otherwise a few minutes of
                     # directory outage would lock the users out, and fail2ban would ban them on top. The
                     # response is the same 503 for every account, so it reveals nothing about its
                     # existence (local wrong password and unknown name both end up here).
-                    self.audit("ldap_unavailable", username, ip, security.fuer_log(str(e))[:300])
+                    self.audit("ldap_unavailable", username, ip, security.for_log(str(e))[:300])
                     security.seclog.error("LDAP unreachable user=%s ip=%s reason=%s",
-                                          security.fuer_log(username), security.fuer_log(ip),
-                                          security.fuer_log(str(e)))
+                                          security.for_log(username), security.for_log(ip),
+                                          security.for_log(str(e)))
                     # …but only the DIRECTORY's share is excused (A-1). If the account has
                     # a local password and it was wrong, that is a failed attempt as always —
                     # otherwise every outage would be a rate pause without account lock against precisely the
@@ -4558,28 +4558,28 @@ class TinySesam:
                     # taken back, not merely not booked additionally. Until then it lets
                     # sign-ins that would fail because of it wait instead of locking them; so that
                     # this does not take until the timeout on every attempt, `_check_ldap` does not ask at all for
-                    # a pause after an outage (`ldap_.AusfallMerker`) and
+                    # a pause after an outage (`ldap_.FailureMarker`) and
                     # raises immediately.
-                    lokal = self.find_user(username)
-                    if lokal and self.store.get_password_hash(lokal["id"]):
-                        self._record_login(username, ip, False, "password", versuch=versuch, quelle="local")
+                    local = self.find_user(username)
+                    if local and self.store.get_password_hash(local["id"]):
+                        self._record_login(username, ip, False, "password", attempt=attempt, source="local")
                     else:
-                        self._versuch_zuruecknehmen(versuch)
-                    return self._anmeldung_nein("directory_down", 503, "err.directory_down", nxt)
-                aus_verzeichnis = u is not None
+                        self._revert_attempt(attempt)
+                    return self._sign_in_no("directory_down", 503, "err.directory_down", nxt)
+                from_directory = u is not None
         except BaseException:
-            self._versuch_gescheitert(versuch)
+            self._attempt_failed(attempt)
             raise
         # The same wrong password once more (0.24.9): no new failed attempt — neither in the window nor in the streak,
         # and no `failed login` for fail2ban. The response is the same 401 as for every failed attempt.
-        if not u and self._passwort_wiederholt(username, ip, password):
-            self._versuch_zuruecknehmen(versuch)
+        if not u and self._password_repeated(username, ip, password):
+            self._revert_attempt(attempt)
             # In the audit a `login_fail` like any other (account page and panel show it the same, no oracle), only the
             # reason says "repeated".
             self.store.audit_log("login_fail", username, ip, "password reason=repeated")
-            security.seclog.info("%s user=%s ip=%s method=password", security.LOG_WIEDERHOLT,
-                                 security.fuer_log(username), security.fuer_log(ip))
-            return self._anmeldung_nein("invalid", 401, "err.credentials", nxt)
+            security.seclog.info("%s user=%s ip=%s method=password", security.LOG_REPEATED,
+                                 security.for_log(username), security.for_log(ip))
+            return self._sign_in_no("invalid", 401, "err.credentials", nxt)
         # Which route decided is recorded in the audit log (F-29): before, a
         # directory sign-in could not be told apart from a local one — both wrote
         # factor `password`, and on a failed attempt it said `reason=no_account`, although the
@@ -4587,13 +4587,13 @@ class TinySesam:
         # From the directory: pass along the account to which the identifier was resolved (G5-N1) —
         # a filter via `mail` also matches an identifier that locally belongs to ANOTHER account.
         # `_check_ldap` has rejected this case since 2026-09-27 (one identifier, one account); the
-        # guard in `_raeumgrenze` remains the second safeguard.
-        self._record_login(username, ip, bool(u), "password", versuch=versuch,
-                           quelle=("" if not cfg.ldap_enabled else "ldap" if aus_verzeichnis
+        # guard in `_cleanup_limit` remains the second safeguard.
+        self._record_login(username, ip, bool(u), "password", attempt=attempt,
+                           source=("" if not cfg.ldap_enabled else "ldap" if from_directory
                                    else "local" if u else "local+ldap"),
-                           konto=u["id"] if aus_verzeichnis and u else None)
+                           account=u["id"] if from_directory and u else None)
         if not u:
-            return self._anmeldung_nein("invalid", 401, "err.credentials", nxt)
+            return self._sign_in_no("invalid", 401, "err.credentials", nxt)
         # If the account came from the directory, the email is an LDAP attribute — in many
         # directories maintained by whoever it belongs to, and confirmed by nobody. If the
         # operator trusts the directory (`ldap_email_trusted`) or names an evidence attribute
@@ -4601,15 +4601,15 @@ class TinySesam:
         # sets it only if the source is trusted; otherwise "no
         # evidence" explicitly travels along here: an allowlist ADDRESS must not lead to first admin via LDAP (F-14).
         # The route cannot be recognised from the factor name — LDAP deliberately counts as `password`.
-        token, _ok, neu = self.apply_factor(request, u["id"], "password", ip,
-                                            request.headers.get("user-agent"), bleiben,
+        token, _ok, new = self.apply_factor(request, u["id"], "password", ip,
+                                            request.headers.get("user-agent"), stay,
                                             email_verified=(None if (cfg.ldap_email_trusted
-                                                                       or security.beleg_attribut(cfg, "ldap"))
+                                                                       or security.proof_attribute(cfg, "ldap"))
                                                               else False)
-                                            if aus_verzeichnis else None)
-        if cfg.remember_me_enabled and bleiben:
-            self.store.set_session_bleiben(self.store.session_hash(token))     # F-05: explicitly chosen
-        return self._angemeldet(request, token, neu, u["id"], nxt)
+                                            if from_directory else None)
+        if cfg.remember_me_enabled and stay:
+            self.store.set_session_stay(self.store.session_hash(token))     # F-05: explicitly chosen
+        return self._signed_in(request, token, new, u["id"], nxt)
 
     def login_pin(self, request: Request, pin: str, username: str = "", *, next: str = "",
                   remember: Optional[bool] = None, csrf: Optional[str] = None) -> LoginResult:
@@ -4625,9 +4625,9 @@ class TinySesam:
         `remember` and exceptions as with `login_password`; `result.next_factor == "pin"` after a
         failure means: the same PIN page once more, without a name field."""
         cfg = self.cfg
-        self.require_csrf(request, self._csrf_mitgeschickt(request, csrf))
+        self.require_csrf(request, self._csrf_sent_along(request, csrf))
         nxt = self.safe_next(next, request)
-        bleiben = self._bleiben_gewaehlt(remember)
+        stay = self._stay_chosen(remember)
         ip = self.client_ip(request)
         # Already signed in → the PIN belongs to the running session, no user field needed.
         # "Signed in" here means: a full SESSION (0.20.1, `session_user`). With
@@ -4646,48 +4646,48 @@ class TinySesam:
         # The half session counts only if the PIN is now its chain step (p2 F1): otherwise it
         # would check PINs in classic mode (oracle with only the password) or before the TOTP
         # of a strict chain, whose order could then never be fulfilled.
-        halb = None if me else self._pin_kettenschritt(request)
-        if halb and username:
-            gemeint = self.find_user(username)
-            if not gemeint or gemeint["id"] != halb["id"]:
-                halb = None
-        folge = me or halb      # the PIN comes AFTER an already provided factor
-        offen = "pin" if folge else None
-        if not cfg.pin_enabled or (not folge and not cfg.pin_as_first_factor()):
+        half = None if me else self._pin_chain_step(request)
+        if half and username:
+            meant = self.find_user(username)
+            if not meant or meant["id"] != half["id"]:
+                half = None
+        sequence = me or half      # the PIN comes AFTER an already provided factor
+        unclosed = "pin" if sequence else None
+        if not cfg.pin_enabled or (not sequence and not cfg.pin_as_first_factor()):
             # PIN is not a first factor — switched off or, in a strict chain behind
             # another factor, never fulfillable (G7: otherwise an oracle without a password).
-            return self._anmeldung_nein("method_disabled", 404, "api.not_found", nxt)
-        if not pin or (not folge and not username):
-            return self._anmeldung_nein("missing", 400, "err.required", nxt, offen)
+            return self._sign_in_no("method_disabled", 404, "api.not_found", nxt)
+        if not pin or (not sequence and not username):
+            return self._sign_in_no("missing", 400, "err.required", nxt, unclosed)
         if not self._rate_ok(ip):
-            return self._anmeldung_nein("ratelimit", 429, "err.rate", nxt, offen)
-        ident = folge["username"] if folge else username
+            return self._sign_in_no("ratelimit", 429, "err.rate", nxt, unclosed)
+        ident = sequence["username"] if sequence else username
         if not ident:
-            return self._anmeldung_nein("invalid", 401, "err.credentials", nxt, offen)
+            return self._sign_in_no("invalid", 401, "err.credentials", nxt, unclosed)
         # Login and PIN buckets in one atomic step (R3-7): a four-digit PIN
         # is the most grateful target of a parallel burst. Behind a provided factor
         # the streak books under its own kind: these wrong guesses arise only for whoever has the first
         # factor, and a self-service reset does not clear them (like TOTP, G7).
-        versuch = self._begin_attempt(ident, ip, "pin",
-                                         series_kind=self._PIN_CHAIN_SERIES if folge else None)
-        if versuch is None:
-            return self._anmeldung_gesperrt(ident, nxt, offen)
+        attempt = self._begin_attempt(ident, ip, "pin",
+                                         series_kind=self._PIN_CHAIN_SERIES if sequence else None)
+        if attempt is None:
+            return self._sign_in_locked(ident, nxt, unclosed)
         try:
-            if folge:
-                u = self.get_user(folge["id"]) if self._verify_user_pin(folge["id"], pin) else None
+            if sequence:
+                u = self.get_user(sequence["id"]) if self._verify_user_pin(sequence["id"], pin) else None
             else:
                 u = self._check_pin(ident, pin)
         except BaseException:
-            self._versuch_gescheitert(versuch)       # the unexpected counts immediately (as with the password)
+            self._attempt_failed(attempt)       # the unexpected counts immediately (as with the password)
             raise
-        self._record_login(ident, ip, bool(u), "pin", versuch=versuch)
+        self._record_login(ident, ip, bool(u), "pin", attempt=attempt)
         if not u:
-            return self._anmeldung_nein("invalid", 401, "err.credentials", nxt, offen)
-        token, _ok, neu = self.apply_factor(request, u["id"], "pin", ip,
-                                            request.headers.get("user-agent"), bleiben)
-        if cfg.remember_me_enabled and bleiben:
-            self.store.set_session_bleiben(self.store.session_hash(token))  # F-05: explicitly chosen
-        return self._angemeldet(request, token, neu, u["id"], nxt)
+            return self._sign_in_no("invalid", 401, "err.credentials", nxt, unclosed)
+        token, _ok, new = self.apply_factor(request, u["id"], "pin", ip,
+                                            request.headers.get("user-agent"), stay)
+        if cfg.remember_me_enabled and stay:
+            self.store.set_session_stay(self.store.session_hash(token))  # F-05: explicitly chosen
+        return self._signed_in(request, token, new, u["id"], nxt)
 
     def login_totp(self, request: Request, code: str, *, next: str = "",
                    csrf: Optional[str] = None) -> LoginResult:
@@ -4701,44 +4701,44 @@ class TinySesam:
         set it; whoever ignores it has a dead session in the cookie. Result, CSRF and
         exceptions as with `login_password`."""
         cfg = self.cfg
-        self.require_csrf(request, self._csrf_mitgeschickt(request, csrf))
+        self.require_csrf(request, self._csrf_sent_along(request, csrf))
         nxt = self.safe_next(next, request)
         s = self._session_from_request(request)
         # The code of the account is checked whose session then proceeds — both from the
         # cookie (0.20.1, `session_user`). `current_user()` fell back to an API key here
         # if the session's account was locked; then the key account's code would have counted.
         pu = self.pending_user(request) or self.session_user(request)
-        offen = "totp" if s and pu else None
+        unclosed = "totp" if s and pu else None
         if not code:
-            return self._anmeldung_nein("missing", 400, "err.required", nxt, offen)
+            return self._sign_in_no("missing", 400, "err.required", nxt, unclosed)
         if not s or not pu:
-            return self._anmeldung_nein("no_session", 401, "api.not_signed_in",
+            return self._sign_in_no("no_session", 401, "api.not_signed_in",
                                         self.browser_path(request, cfg.login_path))
         ip = self.client_ip(request)
         # Atomic as at login (R3-2): otherwise the check lies between lock and counting.
-        drossel_ok = self._rate_ok(ip)
-        versuch = self._begin_attempt(pu["username"], ip, "totp") if drossel_ok else None
-        if versuch is None:
-            return self._anmeldung_gesperrt(pu["username"], nxt, offen, text="err.retry",
-                                            grund="locked" if drossel_ok else "ratelimit")
+        throttle_ok = self._rate_ok(ip)
+        attempt = self._begin_attempt(pu["username"], ip, "totp") if throttle_ok else None
+        if attempt is None:
+            return self._sign_in_locked(pu["username"], nxt, unclosed, text="err.retry",
+                                            reason="locked" if throttle_ok else "ratelimit")
         try:
             # accept a TOTP code OR a one-time recovery code
-            richtig = self._verify_totp(pu["id"], code) or self._verify_recovery_code(pu["id"], code)
+            correct = self._verify_totp(pu["id"], code) or self._verify_recovery_code(pu["id"], code)
         except BaseException:
-            self._versuch_gescheitert(versuch)       # the unexpected counts immediately (as with the password)
+            self._attempt_failed(attempt)       # the unexpected counts immediately (as with the password)
             raise
-        if not richtig:
-            self._record_login(pu["username"], ip, False, "totp", versuch=versuch)
-            return self._anmeldung_nein("invalid", 401, "err.code", nxt, offen)
-        self._record_login(pu["username"], ip, True, "totp", versuch=versuch)
-        sitzungs_token = request.cookies.get(self.session_cookie_name)   # plaintext only here, in the cookie
+        if not correct:
+            self._record_login(pu["username"], ip, False, "totp", attempt=attempt)
+            return self._sign_in_no("invalid", 401, "err.code", nxt, unclosed)
+        self._record_login(pu["username"], ip, True, "totp", attempt=attempt)
+        session_token = request.cookies.get(self.session_cookie_name)   # plaintext only here, in the cookie
         # If the session becomes fully valid through this factor, it gets a new token — the
         # privilege change. Likewise in a step-up on an already full session (F-06). In both
         # cases the cookie has to come along; if the session becomes full here (login), `set_cookie` also
         # rotates the CSRF token, in a step-up it does not — it would only invalidate the forms of the
         # other open tabs.
-        erneuert = self.complete_totp(sitzungs_token)
-        return self._angemeldet(request, erneuert or sitzungs_token, bool(erneuert), pu["id"], nxt)
+        renewed = self.complete_totp(session_token)
+        return self._signed_in(request, renewed or session_token, bool(renewed), pu["id"], nxt)
 
     # ---------- Step-up and password change for own pages (stage A, 0.22.0) ----------
     # PO decision 2026-09-27: the same pattern as `login_*` for confirmation before sensitive
@@ -4752,9 +4752,9 @@ class TinySesam:
     #: Whoever attempts a confirmation or a password change without a session gets `no_session`.
     #: If the request shows an API key instead of a session, that means 403 with this text — the
     #: key is not checked in the process, it simply does not count here (0.20.1).
-    _OHNE_SITZUNG_KEY = {"reauth": "api.stepup_session", "password_change": "api.password_needs_session"}
+    _WITHOUT_SESSION_KEY = {"reauth": "api.stepup_session", "password_change": "api.password_needs_session"}
 
-    def _nur_mit_sitzung(self, request, zweck: str) -> tuple:
+    def _only_with_session(self, request, purpose: str) -> tuple:
         """(account of the full session, None) — or (None, (status, text key)) for `no_session`.
 
         The account comes from `session_user()`, never from an API key (0.20.1): `/auth/reauth`
@@ -4767,19 +4767,19 @@ class TinySesam:
         if u is not None:
             return u, None
         if self.cfg.apikey_enabled and self._extract_api_key(request):
-            return None, (403, self._OHNE_SITZUNG_KEY[zweck])
+            return None, (403, self._WITHOUT_SESSION_KEY[purpose])
         return None, (401, "api.not_signed_in")
 
-    def _bestaetigen(self, request: Request, verfahren: str, geheimnis, next: str,
+    def _confirm(self, request: Request, procedure: str, secret, next: str,
                      csrf: Optional[str]) -> LoginResult:
         """The one source of `confirm_password`, `confirm_pin` and `confirm_totp` — and thus of
         `POST /auth/reauth`, which calls one of them depending on the field filled in."""
         cfg = self.cfg
-        self.require_csrf(request, self._csrf_mitgeschickt(request, csrf))
+        self.require_csrf(request, self._csrf_sent_along(request, csrf))
         nxt = self.safe_next(next, request)
-        u, ohne = self._nur_mit_sitzung(request, "reauth")
+        u, without = self._only_with_session(request, "reauth")
         if u is None:
-            return self._anmeldung_nein("no_session", ohne[0], ohne[1],
+            return self._sign_in_no("no_session", without[0], without[1],
                                         self.browser_path(request, cfg.login_path))
         methods = self.stepup_options(u)
         if not methods:
@@ -4787,16 +4787,16 @@ class TinySesam:
             # (`stepup_strict`, or no factor set up at all yet). The attempt CANNOT
             # succeed — it is therefore not logged as a failed attempt, otherwise the
             # hopeless page feeds the lock of the same account.
-            return self._anmeldung_nein("method_disabled", 403, "err.stepup_none", nxt)
-        if not geheimnis:
+            return self._sign_in_no("method_disabled", 403, "err.stepup_none", nxt)
+        if not secret:
             # Empty is not a guess (0.22.0): until then a form submitted empty at
             # `/auth/reauth` counted as a failed attempt — as at login, `missing` now applies, without booking.
-            return self._anmeldung_nein("missing", 400, "err.required", nxt)
-        if verfahren not in methods:
+            return self._sign_in_no("missing", 400, "err.required", nxt)
+        if procedure not in methods:
             # Only an offered method counts (`stepup_options`: `stepup_methods`,
             # `stepup_strict`). Otherwise an own page with a password field would bypass the default
             # `stepup_methods=["totp"]`. Nothing is checked here — so nothing is counted either.
-            return self._anmeldung_nein("method_disabled", 403, "err.reauth", nxt)
+            return self._sign_in_no("method_disabled", 403, "err.reauth", nxt)
         ip = self.client_ip(request)
         # Own bucket (`_is_reauth_locked`), not that of the login: a step-up confirmation
         # is not a sign-in — whoever is here is already signed in. With the shared
@@ -4805,27 +4805,27 @@ class TinySesam:
         # remains throttled and logged, just in its own bucket. If the page offers the PIN,
         # its bucket applies too (C-3): a PIN locked at login cannot be guessed
         # on here.
-        drossel_ok = self._rate_ok(ip, login=False)
-        versuch = (self._begin_attempt(u["username"], ip, "reauth", include_pin="pin" in methods)
-                   if drossel_ok else None)
-        if versuch is None:
-            return self._anmeldung_nein("locked" if drossel_ok else "ratelimit", 429, "err.retry", nxt)
-        pruefer = {"totp": self._verify_totp, "pin": self._verify_user_pin,
-                   "password": self._verify_user_password}[verfahren]
-        richtig = pruefer(u["id"], geheimnis)
-        self._record_login(u["username"], ip, richtig, "reauth", versuch=versuch)
-        if not richtig:
-            return self._anmeldung_nein("invalid", 401, "err.reauth", nxt)
+        throttle_ok = self._rate_ok(ip, login=False)
+        attempt = (self._begin_attempt(u["username"], ip, "reauth", include_pin="pin" in methods)
+                   if throttle_ok else None)
+        if attempt is None:
+            return self._sign_in_no("locked" if throttle_ok else "ratelimit", 429, "err.retry", nxt)
+        checker = {"totp": self._verify_totp, "pin": self._verify_user_pin,
+                   "password": self._verify_user_password}[procedure]
+        correct = checker(u["id"], secret)
+        self._record_login(u["username"], ip, correct, "reauth", attempt=attempt)
+        if not correct:
+            return self._sign_in_no("invalid", 401, "err.reauth", nxt)
         s = self._session_from_request(request)
-        neu = None
+        new = None
         if s:
             self.store.set_session_mfa(s["token_hash"], True)   # sets mfa_at=now → fresh again
             # Freshly confirmed means a new token (F-06): an old cookie that was read along would otherwise
             # hold exactly the session that has just received sudo rights. The old one still applies for
             # `session_rotation_grace_sec`, without freshness (A-6). The CSRF token stays.
-            neu = self.store.rotate_session(s["token_hash"], self._gnade())
+            new = self.store.rotate_session(s["token_hash"], self._mercy())
         self.audit("stepup", u["username"], ip)
-        return LoginResult._with_session(self, neu, ok=True, reason="ok", status=303, next_url=nxt,
+        return LoginResult._with_session(self, new, ok=True, reason="ok", status=303, next_url=nxt,
                                          done=True, user=self.get_user(u["id"]))
 
     def confirm_password(self, request: Request, password: str, *, next: str = "",
@@ -4849,7 +4849,7 @@ class TinySesam:
         An empty password is `missing` (400) and does not count. Raises only what the route
         raises too: `HTTPException(403)` for a wrong CSRF token, plus the unexpected. Synchronous: call from
         a `def` route, in an `async def` route via `run_in_threadpool`."""
-        return self._bestaetigen(request, "password", password, next, csrf)
+        return self._confirm(request, "password", password, next, csrf)
 
     def confirm_pin(self, request: Request, pin: str, *, next: str = "",
                     csrf: Optional[str] = None) -> LoginResult:
@@ -4858,7 +4858,7 @@ class TinySesam:
         Like `confirm_password`, only with the PIN (`pin_enabled`, the account has one). If the
         page offers the PIN, the PIN bucket applies in addition (C-3): a PIN locked at the PIN sign-in
         cannot be guessed on here. The failed attempts themselves count in the `reauth` bucket."""
-        return self._bestaetigen(request, "pin", pin, next, csrf)
+        return self._confirm(request, "pin", pin, next, csrf)
 
     def confirm_totp(self, request: Request, code: str, *, next: str = "",
                      csrf: Optional[str] = None) -> LoginResult:
@@ -4867,7 +4867,7 @@ class TinySesam:
         Like `confirm_password`, only with a TOTP code (each is valid once); a one-time code
         (recovery) does not count here — as on the built-in page. Not to be confused with
         `totp_confirm(user_id, code)`, which completes the setup of TOTP."""
-        return self._bestaetigen(request, "totp", code, next, csrf)
+        return self._confirm(request, "totp", code, next, csrf)
 
     def change_password(self, request: Request, current: str, new: str, *,
                         csrf: Optional[str] = None) -> PasswordChangeResult:
@@ -4890,17 +4890,17 @@ class TinySesam:
         An empty old password is `missing` (400) and does not count. Raises only what the route
         raises too: `HTTPException(403)` for a wrong CSRF token, plus the unexpected. Synchronous:
         call from a `def` route, in an `async def` route via `run_in_threadpool`."""
-        self.require_csrf(request, self._csrf_mitgeschickt(request, csrf))
+        self.require_csrf(request, self._csrf_sent_along(request, csrf))
 
-        def nein(grund, status, text, **werte) -> PasswordChangeResult:
-            return PasswordChangeResult(ok=False, reason=grund, status=status,
-                                        message=self.t(text, **werte) if text else "")
+        def no(reason, status, text, **values) -> PasswordChangeResult:
+            return PasswordChangeResult(ok=False, reason=reason, status=status,
+                                        message=self.t(text, **values) if text else "")
 
-        u, ohne = self._nur_mit_sitzung(request, "password_change")
+        u, without = self._only_with_session(request, "password_change")
         if u is None:
-            return nein("no_session", *ohne)
+            return no("no_session", *without)
         if not current:
-            return nein("missing", 400, "err.required")
+            return no("missing", 400, "err.required")
         ip = self.client_ip(request)
         # The old password is a secret as at login — so the same triad of
         # throttle, lock and log. Without it `/auth/password` was a silent, unlimited
@@ -4915,24 +4915,24 @@ class TinySesam:
         # which the user could have worked off the lock. Behind NAT it even hit uninvolved colleagues via
         # `ip_attempt_factor`. It remains throttled (`_rate_ok`),
         # and logged too.
-        drossel_ok = self._rate_ok(ip, login=False)
-        versuch = self._begin_attempt(u["username"], ip, "password_change") if drossel_ok else None
-        if versuch is None:
-            return nein("locked" if drossel_ok else "ratelimit", 429, "api.too_many")
+        throttle_ok = self._rate_ok(ip, login=False)
+        attempt = self._begin_attempt(u["username"], ip, "password_change") if throttle_ok else None
+        if attempt is None:
+            return no("locked" if throttle_ok else "ratelimit", 429, "api.too_many")
         # Checked against the **ID** of the own session, not against the login identifier:
         # `_check_password(u["username"], …)` went through `find_user()` and could thereby resolve to a
         # FOREIGN account (attacker's username = victim's email, R4-12).
         # Then one would guess here not one's own password but the victim's — and the hit
         # silently set one's own password, so it stayed invisible.
-        richtig = self._verify_user_password(u["id"], current)
+        correct = self._verify_user_password(u["id"], current)
         # Own method: a hit here does NOT clear the login path's failed attempts
         # (`_record_login` deletes only those of the same method) — the lock stays where it applies.
-        self._record_login(u["username"], ip, richtig, "password_change", versuch=versuch)
-        if not richtig:
-            return nein("invalid", 403, "api.password_wrong")
-        mangel = self.password_policy_error(new or "", username=u["username"], email=u.get("email"), api=True)
-        if mangel:
-            return PasswordChangeResult(ok=False, reason="policy", status=400, message=mangel)
+        self._record_login(u["username"], ip, correct, "password_change", attempt=attempt)
+        if not correct:
+            return no("invalid", 403, "api.password_wrong")
+        defect = self.password_policy_error(new or "", username=u["username"], email=u.get("email"), api=True)
+        if defect:
+            return PasswordChangeResult(ok=False, reason="policy", status=400, message=defect)
         self.set_password(u["id"], new)
         # end the user's other sessions (keep the current one) — default after a credential change
         s = self._session_from_request(request)
@@ -4944,9 +4944,9 @@ class TinySesam:
         # and a routine change should not shut those down wholesale (one account = often one
         # key = several integrations). It is still not concealed — whoever changes the password after a
         # break-in must know that a door is still open.
-        aktiv = self.store.count_active_api_keys(u["id"])
-        self.audit("password_change", u["username"], ip, f"api_keys_active={aktiv}" if aktiv else None)
-        return PasswordChangeResult(ok=True, reason="ok", status=200, api_keys_active=aktiv)
+        active = self.store.count_active_api_keys(u["id"])
+        self.audit("password_change", u["username"], ip, f"api_keys_active={active}" if active else None)
+        return PasswordChangeResult(ok=True, reason="ok", status=200, api_keys_active=active)
 
     def _session_from_request(self, request):
         """The session row for this request, or None. `row["token_hash"]` is its handle.
@@ -4954,72 +4954,72 @@ class TinySesam:
         An OIDC session is re-verified with the provider here every `oidc_session_refresh_minutes`
         (4a): if it refuses, the session is gone, and this request counts as not signed in."""
         s = self.store.get_session(request.cookies.get(self.session_cookie_name))
-        if s is not None and not self._oidc_nachpruefen(s):
+        if s is not None and not self._oidc_recheck(s):
             return None
         return s
 
-    def _oidc_sitzung_merken(self, token, client, sub, refresh_token) -> None:
+    def _remember_oidc_session(self, token, client, sub, refresh_token) -> None:
         """Store the refresh token for the (just created) session (4a) — with the client_id to
         which it went."""
         if not int(self.cfg.oidc_session_refresh_minutes or 0) or not token:
             return
-        self.store.set_oidc_sitzung(self.store.session_hash(token), client, sub, refresh_token,
+        self.store.set_oidc_session(self.store.session_hash(token), client, sub, refresh_token,
                                     client_id=self.oidc_clients[client].client_id)
 
-    def _gnade(self) -> int:
+    def _mercy(self) -> int:
         """Grace period of the old token after rotation, in seconds (A-6)."""
         return max(0, int(self.cfg.session_rotation_grace_sec or 0))
 
-    def _oidc_nachpruefen(self, s) -> bool:
+    def _oidc_recheck(self, s) -> bool:
         """Does the session still follow the provider? False = the session has ended (4a).
 
         Every `oidc_session_refresh_minutes` the refresh token is exchanged — per client of the
-        session, in the background (`_oidc_tausch`). This request merely claims the due exchange
-        (`oidc_sitzung_beanspruchen`, exactly one of many parallel ones) and carries on; the
+        session, in the background (`_oidc_swap`). This request merely claims the due exchange
+        (`claim_oidc_session`, exactly one of many parallel ones) and carries on; the
         result applies from the next request. So a hanging provider blocks nothing, and two
         requests never exchange the same token (rotation at the provider). Nobody asks the provider about locked
         accounts — they do not get in anyway (F-17)."""
-        frist = int(self.cfg.oidc_session_refresh_minutes or 0) * 60
-        if not frist or self.oidc is None:
+        deadline = int(self.cfg.oidc_session_refresh_minutes or 0) * 60
+        if not deadline or self.oidc is None:
             return True
-        zeilen = self.store.get_oidc_sitzungen(s["token_hash"])
-        if not zeilen:
+        lines = self.store.get_oidc_sessions(s["token_hash"])
+        if not lines:
             return True
-        konto = self.store.get_user(s["user_id"])
-        if not konto or konto["disabled"]:
+        account = self.store.get_user(s["user_id"])
+        if not account or account["disabled"]:
             return True
-        jetzt = _jetzt()
-        grenze = int(self.cfg.oidc_session_max_unverified_hours or 0) * 3600
-        for z in zeilen:
+        now = _now()
+        limit = int(self.cfg.oidc_session_max_unverified_hours or 0) * 3600
+        for z in lines:
             try:
-                erfolg = z["erfolg_at"]
+                success = z["erfolg_at"]
             except (IndexError, KeyError):
-                erfolg = None
+                success = None
             # Since when has the provider not said yes? Without a value (row from the time before
             # the column) the last exchange counts.
-            seit = int(erfolg if erfolg is not None else z["geprueft_at"])
-            if grenze and jetzt - seit > grenze:
+            since = int(success if success is not None else z["geprueft_at"])
+            if limit and now - since > limit:
                 # Upper limit without a successful re-check: the session ends. That is NOT a no
                 # from the provider — the API keys therefore do not go dormant (finding 8 stays with the real no).
                 self.store.delete_session_by_handle(s["token_hash"])
-                konto_name = konto["username"] if konto else None
-                self.store.audit_log("oidc_unconfirmed", konto_name, s["ip"],
-                                     f"client={z['client']} hours={grenze // 3600}")
+                account_name = account["username"] if account else None
+                self.store.audit_log("oidc_unconfirmed", account_name, s["ip"],
+                                     f"client={z['client']} hours={limit // 3600}")
                 security.seclog.warning(
                     "OIDC re-check without result for over %d hours — session ended. Check: "
                     "client secret/client at the provider, reachability. user=%s",
-                    grenze // 3600, security.fuer_log(konto_name))
+                    limit // 3600, security.for_log(account_name))
                 return False
-            if jetzt - int(z["geprueft_at"]) < frist:
+            if now - int(z["geprueft_at"]) < deadline:
                 continue
-            if not self.store.oidc_sitzung_beanspruchen(s["token_hash"], z["client"], z["geprueft_at"], jetzt):
+            if not self.store.claim_oidc_session(s["token_hash"], z["client"], z["geprueft_at"], now):
                 continue          # another request is exchanging right now
-            if not self._oidc_ausgang.einreihen(lambda z=z: self._oidc_tausch(s, z, frist)):
+            if not self._oidc_outcome.enqueue(lambda z=z: self._oidc_swap(s, z, deadline)):
                 # Queue full: give the claim back, the next request tries again.
-                self.store.oidc_sitzung_geprueft(s["token_hash"], z["client"], z["geprueft_at"])
+                self.store.oidc_session_checked(s["token_hash"], z["client"], z["geprueft_at"])
         return True
 
-    def _oidc_tausch(self, s, z, frist) -> None:
+    def _oidc_swap(self, s, z, deadline) -> None:
         """Exchange a refresh token at the provider and apply the result (4a, in the background).
 
         * if the provider refuses (locked, deleted, removed from the group, withdrawn from the application) → the
@@ -5031,65 +5031,65 @@ class TinySesam:
         * if it is unreachable → nothing changes, new attempt in a minute. An outage
           of the provider should sign nobody out."""
         handle, client = s["token_hash"], z["client"]
-        konto = self.store.get_user(s["user_id"])
-        name = konto["username"] if konto else None
+        account = self.store.get_user(s["user_id"])
+        name = account["username"] if account else None
         try:
-            ausgestellt_fuer = z["client_id"]
+            issued_for = z["client_id"]
         except (IndexError, KeyError):
-            ausgestellt_fuer = None
-        if not self.oidc_clients.bekannt(client) or (
-                ausgestellt_fuer and ausgestellt_fuer != self.oidc_clients[client].client_id):
+            issued_for = None
+        if not self.oidc_clients.known(client) or (
+                issued_for and issued_for != self.oidc_clients[client].client_id):
             # The application was removed from `oidc_clients`, or the client was recreated
             # at the provider (different client_id). The exchange would run with wrong credentials, the
             # provider would say no, and that would hit the account (attack on the third round and
             # counter-check). The row goes, the session stays until its expiry.
-            self.store.oidc_sitzung_verwerfen(handle, client)
+            self.store.discard_oidc_session(handle, client)
             security.seclog.warning("OIDC re-check: client %s is no longer set up (like this) — "
                                     "row discarded, not counted as a no. user=%s",
-                                    security.fuer_log(client), security.fuer_log(name))
+                                    security.for_log(client), security.for_log(name))
             return
         try:
-            refresh = self.store.tresor.decrypt(z["refresh"])
+            refresh = self.store.vault.decrypt(z["refresh"])
         except Exception:   # noqa: BLE001 — wrong key: the start checks that; do not burn anything here
-            self.store.oidc_sitzung_geprueft(handle, client, _jetzt() - frist + 60,
-                                             alt_verschluesselt=z["refresh"])
+            self.store.oidc_session_checked(handle, client, _now() - deadline + 60,
+                                             old_encrypted=z["refresh"])
             return
-        gefragt = _jetzt()
+        asked = _now()
         status, info, tok = self.oidc_clients[client].refresh(refresh, z["sub"])
-        jetzt = _jetzt()
+        now = _now()
         # During the exchange the session may have received a new token (step-up, completion
         # of a factor) — its current handle stands at the row, found via the token.
-        handle = self.store.oidc_sitzung_handle(client, z["refresh"]) or handle
+        handle = self.store.oidc_session_handle(client, z["refresh"]) or handle
         if status == "fehler":
-            self.store.oidc_sitzung_geprueft(handle, client, jetzt - frist + 60, alt_verschluesselt=z["refresh"])
+            self.store.oidc_session_checked(handle, client, now - deadline + 60, old_encrypted=z["refresh"])
             security.seclog.warning("OIDC re-check without result (%s): provider unreachable or "
                                     "a client error (credentials, grant) — session stays, "
                                     "new attempt in one minute. user=%s",
-                                    security.fuer_log(str(tok.get("error", "?"))), security.fuer_log(name))
+                                    security.for_log(str(tok.get("error", "?"))), security.for_log(name))
             return
         if status == "abgelehnt":
             self.store.delete_session_by_handle(handle)
-            fehler = security.fuer_log(str(tok.get('error', '?')))
-            self.store.audit_log("oidc_revoked", name, s["ip"], f"client={client} reason={fehler}")
-            self._idp_nein(s["user_id"], name, s["ip"], client, fehler)
+            error = security.for_log(str(tok.get('error', '?')))
+            self.store.audit_log("oidc_revoked", name, s["ip"], f"client={client} reason={error}")
+            self._idp_no(s["user_id"], name, s["ip"], client, error)
             return
-        lebt = self.store.oidc_sitzung_geprueft(handle, client, jetzt, tok.get("refresh_token"),
-                                                alt_verschluesselt=z["refresh"], erfolg=True)
-        eintrag = self.oidc_clients.eintrag(client)
+        lives = self.store.oidc_session_checked(handle, client, now, tok.get("refresh_token"),
+                                                old_encrypted=z["refresh"], success=True)
+        entry = self.oidc_clients.entry(client)
         if self.cfg.oidc_group_claim in info:
-            roh = info.get(self.cfg.oidc_group_claim) or []
-            gruppen = roh if isinstance(roh, list) else [roh]
-            erlaubte = eintrag["allowed_groups"]
-            if erlaubte and not (set(erlaubte) & set(map(str, gruppen))):
+            raw = info.get(self.cfg.oidc_group_claim) or []
+            groups = raw if isinstance(raw, list) else [raw]
+            allowed = entry["allowed_groups"]
+            if allowed and not (set(allowed) & set(map(str, groups))):
                 self.store.delete_session_by_handle(handle)
                 self.store.audit_log("oidc_revoked", name, s["ip"], f"client={client} reason=group")
-                self._idp_nein(s["user_id"], name, s["ip"], client, "group")
+                self._idp_no(s["user_id"], name, s["ip"], client, "group")
                 return
-            self.apply_idp_groups(s["user_id"], gruppen, eintrag["group_role_map"])
-        if lebt:
+            self.apply_idp_groups(s["user_id"], groups, entry["group_role_map"])
+        if lives:
             # Only if the session is still there: a parallel no via another client
             # may have ended it in the meantime — then this yes confirms nothing any more.
-            self.store.idp_bestaetigen(s["user_id"], gefragt)
+            self.store.confirm_idp(s["user_id"], asked)
 
     def current_user(self, request) -> Optional[dict]:
         """The signed-in account for this request — from the session OR an API key. None if nobody is signed in.
@@ -5098,10 +5098,10 @@ class TinySesam:
         or ends it — there the account belongs from `session_user()` (0.20.1)."""
         # Remember the IP first, then resolve: even a rejected API key (B5-05) should appear in the log
         # with the address it came from.
-        self._anfrage_merken(request)
-        u = self._current_user_ermitteln(request)
+        self._remember_request(request)
+        u = self._determine_current_user(request)
         if u:
-            self._anfrage_merken(request, u)
+            self._remember_request(request, u)
         return u
 
     def session_user(self, request) -> Optional[dict]:
@@ -5121,26 +5121,26 @@ class TinySesam:
         takes its account from a source that accepts a key.
         The same rule applies to own routes of the app that call `apply_factor()` for "the
         signed-in account"."""
-        self._anfrage_merken(request)
-        u = self._konto_der_sitzung(self._session_from_request(request))
+        self._remember_request(request)
+        u = self._account_of_session(self._session_from_request(request))
         if u:
-            self._anfrage_merken(request, u)
+            self._remember_request(request, u)
         return u
 
-    def _konto_der_sitzung(self, s) -> Optional[dict]:
+    def _account_of_session(self, s) -> Optional[dict]:
         """The account of a FULL session row, locked accounts excluded — or None."""
         if s and s["mfa_ok"]:
             u = self.store.get_user(s["user_id"])
             if u and not u["disabled"]:
-                d: dict = self._als_dict(u) or {}
+                d: dict = self._as_dict(u) or {}
                 d["_via"] = "session"
                 return d
         return None
 
-    def _current_user_ermitteln(self, request) -> Optional[dict]:
+    def _determine_current_user(self, request) -> Optional[dict]:
         # 1) Session (human, incl. MFA) — the same resolution as `session_user()`
         s = self._session_from_request(request)
-        d = self._konto_der_sitzung(s)
+        d = self._account_of_session(s)
         if d:
             return d
         # 2) API key (machine / daemon) — the key IS the factor, no MFA
@@ -5148,8 +5148,8 @@ class TinySesam:
             key = self._extract_api_key(request)
             if key:
                 u, key_roles = self.verify_api_key(key)
-                art = getattr(self, "_letzte_key_art", "automation")
-                if u and art == "human":
+                kind = getattr(self, "_last_key_kind", "automation")
+                if u and kind == "human":
                     # A human key counts ONLY together with a session of the same account
                     # (R6-5). Leaked on its own it is worthless — that is the whole difference
                     # from the machine key, and for that it may carry the full rights.
@@ -5157,18 +5157,18 @@ class TinySesam:
                         security.seclog.warning(
                             "API key of kind 'human' presented without a matching session "
                             "(user=%s ip=%s) — rejected.",
-                            security.fuer_log(str(u["username"])),
-                            security.fuer_log(self.client_ip(request)))
+                            security.for_log(str(u["username"])),
+                            security.for_log(self.client_ip(request)))
                         return None
                 if u:
                     d = dict(u)
                     d["_via"] = "apikey"
-                    d["_key_kind"] = art
+                    d["_key_kind"] = kind
                     # `!= "human"` instead of `== "automation"`: fail-closed for every kind that does not
                     # exist (a typo in the column, a value from a foreign version).
                     # Before, a key with `kind="Automat"` kept the admin flag (R6-6). The
-                    # values up to 0.21.x (`mensch`) arrive already mapped (`_key_kind`).
-                    if art != "human" and d.get("is_admin"):
+                    # values up to 0.21.x (`human`) arrive already mapped (`_key_kind`).
+                    if kind != "human" and d.get("is_admin"):
                         # The core of R6-5: a machine key does NOT carry its owner's
                         # admin flag. Before, every key of an admin was a complete
                         # admin write API — without a second factor, without a CSRF layer. The roles
@@ -5188,12 +5188,12 @@ class TinySesam:
         s = self._session_from_request(request)
         if not s or s["mfa_ok"]:
             return None
-        u = self._als_dict(self.store.get_user(s["user_id"]))
+        u = self._as_dict(self.store.get_user(s["user_id"]))
         if u:
-            self._anfrage_merken(request, u)
+            self._remember_request(request, u)
         return u
 
-    def _pin_kettenschritt(self, request) -> Optional[dict]:
+    def _pin_chain_step(self, request) -> Optional[dict]:
         """The account of the half session if the PIN is now its chain step — otherwise None.
 
         Yes only if the global `login_chain` requires the PIN, it is still missing in this session
@@ -5248,28 +5248,28 @@ class TinySesam:
             # Accounts WITHOUT a second factor may continue to — that is the deliberate price of option C.
             s = self._session_from_request(request)
             done = json.loads(s["factors_done"] or "[]") if s else []
-            konto = self.store.get_user(u["id"])
-            fenster = konto["mfa_enroll_until"] if konto else None
-            if "passkey" not in done and not (fenster and int(fenster) > _jetzt()):
-                self.audit("mfa_enrollment_denied", str(konto["username"]) if konto else None,
+            account = self.store.get_user(u["id"])
+            window = account["mfa_enroll_until"] if account else None
+            if "passkey" not in done and not (window and int(window) > _now()):
+                self.audit("mfa_enrollment_denied", str(account["username"]) if account else None,
                            detail="account has a passkey that is missing in this session")
                 return None
         if not self.mfa_enrollment_allowed(u["id"]):
             # No silent no: whoever fails here has the correct password and stands before
             # a door that does not open. The line tells the operator which route remains.
             #
-            # **Without `log_ereignis`**, i.e. without the word the fail2ban jail matches on: this
+            # **Without `log_event`**, i.e. without the word the fail2ban jail matches on: this
             # is not a failed attempt. Whoever gets this far has entered their correct password
             # — having them locked out for that as well would be exactly backwards. The
             # name comes from the freshly fetched account row, not from the request.
-            konto = self.store.get_user(u["id"])
+            account = self.store.get_user(u["id"])
             security.seclog.warning(
                 "mfa enrollment denied user=%s kind=%s — the second factor is missing and may not "
                 "be set up here any more. Route: auth.grant_mfa_enrollment(uid) or the "
                 "admin panel.",
-                security.fuer_log(str(konto["username"]) if konto else "?"),
+                security.for_log(str(account["username"]) if account else "?"),
                 self.cfg.mfa_enrollment)
-            self.audit("mfa_enrollment_denied", str(konto["username"]) if konto else None,
+            self.audit("mfa_enrollment_denied", str(account["username"]) if account else None,
                        detail=f"kind={self.cfg.mfa_enrollment}")
             return None
         return u
@@ -5290,23 +5290,23 @@ class TinySesam:
         risk is a different one — there the first person to sign in is the rightful one, just as with an
         invitation link.
         """
-        now = _jetzt() if now is None else int(now)
+        now = _now() if now is None else int(now)
         u = self.store.get_user(user_id)
         if not u:
             return False
-        fenster = None
+        window = None
         try:
-            fenster = u["mfa_enroll_until"]
+            window = u["mfa_enroll_until"]
         except (IndexError, KeyError):
-            fenster = None            # file from before schema 8
-        if fenster and int(fenster) > now:
+            window = None            # file from before schema 8
+        if window and int(window) > now:
             return True
-        art = str(self.cfg.mfa_enrollment or "first_login")
-        if art == "strict":
+        kind = str(self.cfg.mfa_enrollment or "first_login")
+        if kind == "strict":
             return False
-        if art == "grace":
-            tage = max(0, int(self.cfg.mfa_enrollment_grace_days or 0))
-            return (now - int(u["created_at"])) <= tage * 86400
+        if kind == "grace":
+            days = max(0, int(self.cfg.mfa_enrollment_grace_days or 0))
+            return (now - int(u["created_at"])) <= days * 86400
         # "first_login": allowed as long as this account has never been fully signed in.
         try:
             return u["first_login_at"] is None
@@ -5319,12 +5319,12 @@ class TinySesam:
         The operator's way if someone has lost their device or `mfa_enrollment="strict"`
         applies. Deliberately time-limited: a permanently open window would be the old gap under a
         new name."""
-        bis = _jetzt() + max(1, int(minutes)) * 60
-        self.store.set_mfa_enroll_until(user_id, bis)
+        until = _now() + max(1, int(minutes)) * 60
+        self.store.set_mfa_enroll_until(user_id, until)
         u = self.store.get_user(user_id)
         self.audit("mfa_enrollment_granted", str(u["username"]) if u else None,
                    detail=f"minutes={minutes}")
-        return bis
+        return until
 
     def revoke_mfa_enrollment(self, user_id: int) -> None:
         """Ein offenes Einrichtungsfenster sofort schliessen."""
@@ -5350,7 +5350,7 @@ class TinySesam:
         return self.issue_csrf(response)
 
     # ---------- Cookie names (H-1) ----------
-    def _cookie_name(self, basis: str, host_only: bool = False) -> str:
+    def _cookie_name(self, base: str, host_only: bool = False) -> str:
         """`__Host-` in front, where the browser allows it (Secure, no Domain, path `/`).
 
         A `__Host-` cookie can be set only by the own host over HTTPS — a neighbouring subdomain
@@ -5370,14 +5370,14 @@ class TinySesam:
         `cookie_prefix` replaces a leading `tinysesam_` (app with its own TinySesam behind a
         gateway whose templates remove every `tinysesam_*` cookie). Names with `__` remain."""
         c = self.cfg
-        praefix = getattr(c, "cookie_prefix", "tinysesam_") or "tinysesam_"
-        if praefix != "tinysesam_" and basis.startswith("tinysesam_"):
-            basis = praefix + basis[len("tinysesam_"):]
+        prefix = getattr(c, "cookie_prefix", "tinysesam_") or "tinysesam_"
+        if prefix != "tinysesam_" and base.startswith("tinysesam_"):
+            base = prefix + base[len("tinysesam_"):]
         if (getattr(c, "cookie_host_prefix", True) and c.cookie_secure
                 and (host_only or not c.cookie_domain)
-                and c.cookie_path == "/" and not basis.startswith("__")):
-            return "__Host-" + basis
-        return basis
+                and c.cookie_path == "/" and not base.startswith("__")):
+            return "__Host-" + base
+        return base
 
     def flow_cookie_name(self, base: str) -> str:
         """Name of a flow cookie (OIDC, SAML, passkey) — with `__Host-` where possible (A-1).
@@ -5388,19 +5388,19 @@ class TinySesam:
         session cookie itself is already prefixed."""
         return self._cookie_name(base, host_only=True)
 
-    def _flow_cookie_setzen(self, response, basis: str, wert: str, max_age: int,
+    def _set_flow_cookie(self, response, base: str, value: str, max_age: int,
                            samesite: Optional[str] = None) -> None:
         """Ein Flow-Cookie setzen: httponly, host-only, kurzlebig."""
-        response.set_cookie(self.flow_cookie_name(basis), wert, max_age=max_age, httponly=True,
+        response.set_cookie(self.flow_cookie_name(base), value, max_age=max_age, httponly=True,
                             secure=self.cfg.cookie_secure,
                             samesite=_samesite(samesite or self.cfg.cookie_samesite),
                             path=self.cfg.cookie_path)
 
-    def _flow_cookie_loeschen(self, response, basis: str,
+    def _delete_flow_cookie(self, response, base: str,
                              samesite: Optional[str] = None) -> None:
         # With Secure: the browser does not accept a `__Host-` Set-Cookie without Secure, not
         # even the deleting one.
-        response.delete_cookie(self.flow_cookie_name(basis), path=self.cfg.cookie_path,
+        response.delete_cookie(self.flow_cookie_name(base), path=self.cfg.cookie_path,
                                secure=self.cfg.cookie_secure, httponly=True,
                                samesite=_samesite(samesite or self.cfg.cookie_samesite))
 
@@ -5456,8 +5456,8 @@ class TinySesam:
         response.set_cookie(self.session_cookie_name, token, **kw)
         # A sign-in rotates the CSRF token (OWASP: "changes with each login"). Centrally here,
         # not per route: every sign-in sets this cookie, and every full session is noted
-        # at its creation (`_sitzung_anlegen`). A step-up does not rotate.
-        if self._anmeldung_einloesen(token):
+        # at its creation (`_create_session`). A step-up does not rotate.
+        if self._redeem_sign_in(token):
             self._rotate_csrf(response)
 
     def rotate_session(self, request, response) -> Optional[str]:
@@ -5475,11 +5475,11 @@ class TinySesam:
         s = self._session_from_request(request)
         if not s:
             return None
-        neu = self.store.rotate_session(s["token_hash"], self._gnade())
-        if neu:
-            self.set_cookie(response, neu, remember=bool(s["remember"]))
-            self._altnamen_loeschen(request, response)
-        return neu
+        new = self.store.rotate_session(s["token_hash"], self._mercy())
+        if new:
+            self.set_cookie(response, new, remember=bool(s["remember"]))
+            self._delete_old_names(request, response)
+        return new
 
     def count_other_sessions(self, request, user, token: Optional[str] = None) -> int:
         """How many sessions of this account are running EXCEPT the current one? (B1-7)
@@ -5491,17 +5491,17 @@ class TinySesam:
         The mandatory setup of TOTP in the middle of a chain (`password → totp → pin`) reports
         0 here, because the session is still half afterwards and a half one must not end the others
         — it reports the number as `other_sessions_after`, and the consent is redeemed at the
-        completion of the chain (`_andere_nach_abschluss`, limit d).
+        completion of the chain (`_other_after_completion`, limit d).
 
         `token`: the plaintext token of the own session if it has changed in THIS response
         (the mandatory setup of TOTP completes the sign-in and rotates the
         token in the process). The request's cookie then names a session that no longer exists — counted
         against it, the new own session would count as "other"."""
         s = self.store.get_session(token) if token else self._session_from_request(request)
-        eigen = s["token_hash"] if s else None
-        return sum(1 for z in self.store.list_sessions(user["id"]) if z["token_hash"] != eigen)
+        own = s["token_hash"] if s else None
+        return sum(1 for z in self.store.list_sessions(user["id"]) if z["token_hash"] != own)
 
-    def _cookie_loeschen(self, response, name):
+    def _delete_cookie(self, response, name):
         # Secure must come along: a browser does not accept a `__Host-` Set-Cookie without Secure —
         # not even the one meant to delete it.
         kw = dict(path=self.cfg.cookie_path, secure=self.cfg.cookie_secure, httponly=True,
@@ -5510,17 +5510,17 @@ class TinySesam:
             kw["domain"] = self.cfg.cookie_domain
         response.delete_cookie(name, **kw)
 
-    def _altnamen(self) -> list:
+    def _old_names(self) -> list:
         """The names of session, CSRF and unlock cookie from the time before the
         `__Host-` prefix (H-1) — only those for which the prefix now actually applies. Where it
         does not apply, the old name IS the current one. The flow cookies are deliberately missing: they
         live only minutes."""
-        paare = ((self.session_cookie_name, self.cfg.session_cookie),
+        pairs = ((self.session_cookie_name, self.cfg.session_cookie),
                  (self.csrf_cookie_name, self.cfg.csrf_cookie),
                  (self.resource_cookie_name, self.cfg.resource_cookie))
-        return [basis for name, basis in paare if name != basis]
+        return [base for name, base in pairs if name != base]
 
-    def _altnamen_loeschen(self, request, response) -> None:
+    def _delete_old_names(self, request, response) -> None:
         """Delete cookies under the old names in the browser when this response
         writes the session (sign-in, sign-out, step-up).
 
@@ -5543,22 +5543,22 @@ class TinySesam:
         otherwise valid for up to seven days longer — presented under the new name, it signed
         in, and it was precisely the cookie that slipped through to the apps. Whoever presents it may
         also end it; that is the same rule as with sign-out."""
-        alt = [n for n in self._altnamen() if n in request.cookies]
-        if not alt:
+        old = [n for n in self._old_names() if n in request.cookies]
+        if not old:
             return
-        gesetzt = {wert.split(b"=", 1)[0].strip().decode("latin-1")
-                   for schluessel, wert in getattr(response, "raw_headers", [])
-                   if schluessel.lower() == b"set-cookie"}
-        if self.session_cookie_name not in gesetzt:
+        assigned = {value.split(b"=", 1)[0].strip().decode("latin-1")
+                   for key_name, value in getattr(response, "raw_headers", [])
+                   if key_name.lower() == b"set-cookie"}
+        if self.session_cookie_name not in assigned:
             return
-        for name in alt:
-            if name in gesetzt:
+        for name in old:
+            if name in assigned:
                 continue
-            wert = request.cookies.get(name) or ""
-            if wert and name == self.cfg.session_cookie:
-                self.store.delete_session(wert)
-            elif wert and name == self.cfg.resource_cookie:
-                self.store.delete_resource_unlocks(wert)
+            value = request.cookies.get(name) or ""
+            if value and name == self.cfg.session_cookie:
+                self.store.delete_session(value)
+            elif value and name == self.cfg.resource_cookie:
+                self.store.delete_resource_unlocks(value)
             response.delete_cookie(name, path=self.cfg.cookie_path,
                                    secure=self.cfg.cookie_secure, httponly=True,
                                    samesite=_samesite(self.cfg.cookie_samesite))
@@ -5574,19 +5574,19 @@ class TinySesam:
         s = self._session_from_request(request)
         if s:
             self.store.delete_session_by_handle(s["token_hash"])
-        self._cookie_loeschen(response, self.session_cookie_name)
-        freigabe = request.cookies.get(self.resource_cookie_name)
-        if freigabe:
-            self.store.delete_resource_unlocks(freigabe)
-            self._cookie_loeschen(response, self.resource_cookie_name)
+        self._delete_cookie(response, self.session_cookie_name)
+        release = request.cookies.get(self.resource_cookie_name)
+        if release:
+            self.store.delete_resource_unlocks(release)
+            self._delete_cookie(response, self.resource_cookie_name)
         # The CSRF token ends with the session (0.20.1): up to 0.20.0 it survived sign-out and
         # signing in again until the browser was closed. The next page sets a fresh one;
         # `ensure_csrf()` in the same response likewise.
         if self.cfg.csrf_enabled or request.cookies.get(self.csrf_cookie_name):
-            self._csrf_cookie_loeschen(response)
+            self._delete_csrf_cookie(response)
         # Here too, not only in the route class: `logout()` is public and is called from
         # own routes of the app that the class does not cover.
-        self._altnamen_loeschen(request, response)
+        self._delete_old_names(request, response)
 
     # ---------- Hardening (regulation / rate limit / audit) ----------
     def client_ip(self, request: Request) -> str:
@@ -5594,11 +5594,11 @@ class TinySesam:
         return security.client_ip(request, self.cfg.trusted_proxies)
 
     def _sec(self, key) -> int:
-        """Hardening value: store setting (panel) OR default, always within `security.SECURITY_GRENZEN`.
+        """Hardening value: store setting (panel) OR default, always within `security.SECURITY_LIMITS`.
 
-        Read via `security.haertung_lesen` — the CLI (`tinysesam passwd`) takes the same route;
+        Read via `security.read_hardening` — the CLI (`tinysesam passwd`) takes the same route;
         an existing value beyond the limits counts there as here as the nearest limit."""
-        return security.haertung_lesen(self.store, key)
+        return security.read_hardening(self.store, key)
 
     def all_security(self) -> dict:
         """All hardening thresholds as a dict (defaults, overridden by what is set in the panel)."""
@@ -5607,15 +5607,15 @@ class TinySesam:
     def set_security(self, key, value):
         """Set a hardening threshold at runtime; it survives the restart in the database.
 
-        Unknown key or value outside `security.SECURITY_GRENZEN` → `ConfigError`,
+        Unknown key or value outside `security.SECURITY_LIMITS` → `ConfigError`,
         and nothing is written. Up to 0.19.x an unknown key silently dropped out and every
         value was accepted — `rate_limit_max=0` then locked every sign-in, including the one with which
         the value could have been turned back (R6-4)."""
         try:
-            zahl = security.pruefe_haertung(key, value)
+            number = security.check_hardening(key, value)
         except ValueError as e:
             raise ConfigError(str(e)) from None
-        self.store.set_setting(key, zahl)
+        self.store.set_setting(key, number)
 
     def set_rate_limiter(self, limiter):
         """Attach a custom rate-limit backend — any object with allow(key, max, window)->bool."""
@@ -5633,22 +5633,22 @@ class TinySesam:
     # in installations that never touch their filter file. `reason=` says why.
     #
     # `login=False` for the rejections of the non-login buckets: they carry the other
-    # event word (`security.LOG_PRUEFUNG`) and thus pass by the bundled jail
+    # event word (`security.LOG_CHECK`) and thus pass by the bundled jail
     # — otherwise a signed-in user would ban themselves at firewall level with a few typos on their
     # own account page, and every further click after the
-    # app lock would speed up the ban (rationale at `security.LOG_ANMELDUNG`).
+    # app lock would speed up the ban (rationale at `security.LOG_SIGN_IN`).
     #: Lock reasons that concern an ACCOUNT (not an address or the rate limit): only they trigger
     #: the notice to the owner (ASVS 6.3.5).
-    _KONTO_SPERREN = ("lockout_user", "lockout_account", "lockout_series", "lockout_pin")
+    _ACCOUNT_LOCKS = ("lockout_user", "lockout_account", "lockout_series", "lockout_pin")
 
-    def _abgewiesen(self, username, ip, grund: str, login: bool = True):
-        wort = security.LOG_ANMELDUNG if login else security.LOG_PRUEFUNG
-        security.seclog.warning("%s user=%s ip=%s method=blocked reason=%s", wort,
-                                security.fuer_log(username) or "-", security.fuer_log(ip), grund)
-        if login and grund in self._KONTO_SPERREN and username:
-            self._sperrhinweis(username, ip, grund)
+    def _rejected(self, username, ip, reason: str, login: bool = True):
+        word = security.LOG_SIGN_IN if login else security.LOG_CHECK
+        security.seclog.warning("%s user=%s ip=%s method=blocked reason=%s", word,
+                                security.for_log(username) or "-", security.for_log(ip), reason)
+        if login and reason in self._ACCOUNT_LOCKS and username:
+            self._lockout_notice(username, ip, reason)
 
-    def _sperrhinweis(self, username, ip, grund) -> None:
+    def _lockout_notice(self, username, ip, reason) -> None:
         """Notify the owner that their account has been locked (ASVS 6.3.5, B1-12).
 
         In the request the same thing happens for EVERY name — one throttle per name, one job into
@@ -5658,39 +5658,39 @@ class TinySesam:
         service account; at most one notice per name and lock window."""
         if not self.cfg.notify_login_failures or not self.mail_configured():
             return
-        schluessel = "lockout_notice:" + norm_kennung(username)
-        if not self.rl.allow(schluessel, 1, self._sec("lockout_window_sec")):
+        key_name = "lockout_notice:" + norm_identifier(username)
+        if not self.rl.allow(key_name, 1, self._sec("lockout_window_sec")):
             return
-        zeit = _jetzt()
+        when = _now()
 
-        def _senden():
+        def _send():
             u = self.find_user(username)
-            if not u or u.get("is_service") or not u.get("email") or not _beleg_am_konto(u):
+            if not u or u.get("is_service") or not u.get("email") or not _proof_on_account(u):
                 return
             # The actual throttle is in the database, not in memory: the key above
             # lies in the shared, capped limiter and can be displaced with enough foreign keys;
             # with several workers each has its own (finding 11). The audit log applies to
             # all processes and forgets nothing before the deadline.
-            seit = _jetzt() - self._sec("lockout_window_sec")
+            since = _now() - self._sec("lockout_window_sec")
             # Both spellings: a notice that an older version wrote after a rollback counts as well.
-            alt_neu = _vokabular.ereignis_formen("lockout_notice")
+            old_new = _vocabulary.event_forms("lockout_notice")
             if self.store._one("SELECT 1 FROM audit WHERE event IN (?, ?) AND lower(username)=lower(?) "
-                               "AND ts >= ? LIMIT 1", (*alt_neu, u["username"], seit)):
+                               "AND ts >= ? LIMIT 1", (*old_new, u["username"], since)):
                 return
-            betreff = self.t("mail.lockout.subject")
+            subject = self.t("mail.lockout.subject")
             # Name the reset only if it also clears the streak (it does not clear TOTP and the PIN in the chain step,
-            # `_serie_reset_hilft`).
-            bis = ""
-            if grund == "lockout_series":
-                bis = (self.t("mail.lockout.until_reset") if self._serie_reset_hilft(username)
+            # `_series_reset_helps`).
+            until = ""
+            if reason == "lockout_series":
+                until = (self.t("mail.lockout.until_reset") if self._series_reset_helps(username)
                        else self.t("mail.lockout.until_operator"))
-            text = self.t("mail.lockout.text", name=u["username"], until=bis,
-                          time=time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime(zeit)),
-                          ip=security.fuer_log(ip) or self.t("mail.unknown"))
-            self.send_mail(u["email"], betreff, text)
-            self.store.audit_log("lockout_notice", u["username"], ip, f"reason={grund}")
+            text = self.t("mail.lockout.text", name=u["username"], until=until,
+                          time=time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime(when)),
+                          ip=security.for_log(ip) or self.t("mail.unknown"))
+            self.send_mail(u["email"], subject, text)
+            self.store.audit_log("lockout_notice", u["username"], ip, f"reason={reason}")
 
-        self._hinweis_ausgang.einreihen(_senden)
+        self._notice_outcome.enqueue(_send)
 
     def _rate_ok(self, ip, login: bool = True) -> bool:
         """May this IP still? A no writes a line into the security log (fail2ban reads along).
@@ -5699,32 +5699,32 @@ class TinySesam:
         their line then carries `failed verification` instead of `failed login` — otherwise the
         bundled jail banned a signed-in user who keeps clicking on their own
         account page (final attack C-1)."""
-        erlaubt = self.rl.allow(ip or "?", self._sec("rate_limit_max"), self._sec("rate_limit_window_sec"))
-        if not erlaubt:
-            self._abgewiesen(None, ip, "ratelimit", login=login)
-        return erlaubt
+        permitted = self.rl.allow(ip or "?", self._sec("rate_limit_max"), self._sec("rate_limit_window_sec"))
+        if not permitted:
+            self._rejected(None, ip, "ratelimit", login=login)
+        return permitted
 
     def _is_locked(self, username, ip) -> bool:
         """Too many failed attempts in the window — per pair of account and IP, per account, per IP.
 
-        The thresholds are in `_regeln` (rationale there): the pair at `max_login_attempts`,
+        The thresholds are in `_rules` (rationale there): the pair at `max_login_attempts`,
         the account alone at `account_attempt_factor` times that, the address alone at
         `ip_attempt_factor` times that (NAT). Without `ip` only the account threshold applies.
 
         Everything in `login_attempt` that was a **sign-in attempt** is counted; the methods from
-        `security.NICHT_LOGIN_METHODEN` stay out. Otherwise a wrong guess that was not
+        `security.NOT_LOGIN_METHODS` stay out. Otherwise a wrong guess that was not
         a sign-in at all would lock the sign-in too. The counter of these methods is not lost,
         it just has its own bucket (e.g. `_is_password_change_locked`).
 
         Read-only: the routes take `_begin_attempt()`, which checks and books in one step.
         """
-        return self._sperre_pruefen(self._regeln(username, ip, "password"), username, ip, login=True)
+        return self._check_lock(self._rules(username, ip, "password"), username, ip, login=True)
 
-    def _record_login(self, username, ip, success, method, versuch: Optional[int] = None,
-                      quelle: str = "", konto: Optional[int] = None):
+    def _record_login(self, username, ip, success, method, attempt: Optional[int] = None,
+                      source: str = "", account: Optional[int] = None):
         """Book a sign-in attempt. A success clears only the failed attempts of the SAME method.
 
-        `versuch` is the ID from `_begin_attempt()`: then the attempt already stands as a
+        `attempt` is the ID from `_begin_attempt()`: then the attempt already stands as a
         failed attempt in the table and is only closed here instead of being counted a second time.
 
         `quelle` tells the audit log WHO checked the secret where the method does not
@@ -5734,7 +5734,7 @@ class TinySesam:
         `login_local`), a failed attempt appends `source=…` to `login_fail` (`local+ldap`: both
         were asked, both refused). Empty = as before, no additional information.
 
-        `konto` is the ID of the account to which the identifier was resolved if that did not happen via
+        `account` is the ID of the account to which the identifier was resolved if that did not happen via
         name or address — with a directory sign-in (G5-N1). Then a success clears
         the failed attempts under the typed identifier only if it does not belong to ANOTHER account:
         a directory filter via `mail` also resolves `boss@example.com` to a third party
@@ -5745,29 +5745,29 @@ class TinySesam:
         If the identifier is the name or address of a local account, clearing starts from its joining that
         account (limit a, G2): failed attempts that a stranger made under the then free identifier
         before the rename or address change remain — they count in the
-        throttling of THEIR IP. Details in `_raeumgrenze`."""
-        topf = self._topf(username, method)   # the same key as when counting
-        vorgebucht = self._serie_vorbuchungen.pop(versuch, None) if versuch is not None else None
-        uebergang = None
-        if versuch is None:
-            self.store.record_attempt(topf, ip, success, method)
+        throttling of THEIR IP. Details in `_cleanup_limit`."""
+        bucket = self._bucket(username, method)   # the same key as when counting
+        prebooked = self._series_prebookings.pop(attempt, None) if attempt is not None else None
+        transition = None
+        if attempt is None:
+            self.store.record_attempt(bucket, ip, success, method)
         else:
             # On a success the pre-booking in the streak does not apply — taken back in the same
             # transaction as the closing (G9). The streak before it remains: a correct first
             # factor is not yet a complete sign-in (`lift_lockout`). On a
             # failed attempt the closing says how the streak stood before and after (p2 F3).
-            uebergang = self.store.finish_attempt(versuch, bool(success),
-                                                  serie=vorgebucht[:2] if vorgebucht else None)
-        if success and quelle:
-            self.store.audit_log(f"login_{quelle}", username, ip, f"{method} source={quelle}")
+            transition = self.store.finish_attempt(attempt, bool(success),
+                                                  series=prebooked[:2] if prebooked else None)
+        if success and source:
+            self.store.audit_log(f"login_{source}", username, ip, f"{method} source={source}")
         if success:
             # ONLY the failed attempts of the same method: a password success says nothing about
             # whether someone is currently trying out TOTP codes. Before, it cleared them too and made
             # the second factor guessable. Everything else is cleared only by the COMPLETE sign-in
             # (`lift_lockout`).
-            grenze = self._raeumgrenze(topf, method, konto)
-            if grenze is not None:     # 'login' audit only at full completion
-                self.store.clear_fails(username=topf, method=method, **grenze)
+            limit = self._cleanup_limit(bucket, method, account)
+            if limit is not None:     # 'login' audit only at full completion
+                self.store.clear_fails(username=bucket, method=method, **limit)
         else:
             # The REASON belongs in the server-side log. The HTTP response deliberately stays
             # the same (no account probing) — but in the audit log only the operator reads along,
@@ -5775,21 +5775,21 @@ class TinySesam:
             # mistyped" all said the same to them so far: `login_fail … password`. That is the most frequent
             # support case, and it could not be answered with built-in means.
             self.store.audit_log("login_fail", username, ip,
-                                 f"{method} reason={self._fehl_grund(username, method)}"
-                                 + (f" source={quelle}" if quelle else ""))
+                                 f"{method} reason={self._fail_reason(username, method)}"
+                                 + (f" source={source}" if source else ""))
             # fail2ban parses this line (ip=…)
-            # `fuer_log`: the username comes from a form field. Unfiltered, it could be used
+            # `for_log`: the username comes from a form field. Unfiltered, it could be used
             # to create a second log line with a foreign IP and point fail2ban at third parties
             # (verified against real fail2ban 1.1.1).
             # The event word separates sign-in attempts from everything else: only `failed login`
             # matches the bundled failregex. A wrong guess at the password change, at the
             # step-up page or at a realm PIN is not a sign-in and must not lock out a
             # legitimate, signed-in user at firewall level (see
-            # `security.log_ereignis`).
-            security.seclog.warning("%s user=%s ip=%s method=%s", security.log_ereignis(method),
-                                    security.fuer_log(username), security.fuer_log(ip), method)
-            if method not in security.NICHT_LOGIN_METHODEN:
-                # The streak counts per folded identifier, like the account bucket (`_topf`). Pre-booked
+            # `security.log_event`).
+            security.seclog.warning("%s user=%s ip=%s method=%s", security.log_event(method),
+                                    security.for_log(username), security.for_log(ip), method)
+            if method not in security.NOT_LOGIN_METHODS:
+                # The streak counts per folded identifier, like the account bucket (`_bucket`). Pre-booked
                 # by `_begin_attempt`; only a route without pre-booking counts here. Exactly at the
                 # crossing of the limit one line: from there the sign-in is permanently closed, and
                 # the operator must know why someone can no longer sign in.
@@ -5798,47 +5798,47 @@ class TinySesam:
                 # booking (without pending) crosses the limit at the booking itself
                 # (`vorgebucht[2]`, the settled state afterwards) — it is reported if the
                 # streak still stands at closing. A pending one crosses it only with its
-                # closing (`vorher < max_serie <= nachher`, in one transaction). Until 2026-09-27
+                # closing (`vorher < max_series <= nachher`, in one transaction). Until 2026-09-27
                 # the state at booking applied, pending pre-bookings included: if a
                 # parallel full sign-in ended the streak, `lockout_series` stood in the log although
                 # nothing was locked.
-                max_serie = self._sec("account_max_consecutive_failures")
-                if vorgebucht and uebergang:
-                    vorher, nachher = uebergang
-                    stand = nachher
-                    gesperrt = vorher < max_serie <= nachher or max_serie <= min(vorgebucht[2], nachher)
+                max_series = self._sec("account_max_consecutive_failures")
+                if prebooked and transition:
+                    before, afterwards = transition
+                    state = afterwards
+                    locked = before < max_series <= afterwards or max_series <= min(prebooked[2], afterwards)
                 else:
-                    stand = self.store.fehlserie_erhoehen(norm_kennung(username), method)
-                    gesperrt = stand == max_serie
-                if gesperrt:
-                    self.store.audit_log("lockout_series", username, ip, f"failed_in_a_row={stand}")
+                    state = self.store.increase_failure_series(norm_identifier(username), method)
+                    locked = state == max_series
+                if locked:
+                    self.store.audit_log("lockout_series", username, ip, f"failed_in_a_row={state}")
                     security.seclog.warning(
                         "Sign-in for user=%s locked: %d failed attempts in a row. Lift: %s.",
-                        security.fuer_log(username), stand, self._serie_ausweg(username))
+                        security.for_log(username), state, self._series_way_out(username))
 
-    def _raeumgrenze(self, topf, method, konto: Optional[int] = None) -> Optional[dict]:
+    def _cleanup_limit(self, bucket, method, account: Optional[int] = None) -> Optional[dict]:
         """From where does a success clear the failed attempts under `topf`? Keywords for
         `Store.clear_fails` — or None: not at all (`_record_login`).
 
-        * `konto` given (directory sign-in): if the identifier belongs to ANOTHER account → None
-          (G5-N1, `Store.topf_eines_anderen`). Otherwise without limit, as until then: the identifier
+        * `account` given (directory sign-in): if the identifier belongs to ANOTHER account → None
+          (G5-N1, `Store.bucket_of_another`). Otherwise without limit, as until then: the identifier
           belongs to the entry in the directory, not only from the local creation — that often arises
           only with exactly this sign-in, and the typos before it were made by the same person.
-        * The identifier is the name or address of a local account → from its watermark (`ab_id`,
+        * The identifier is the name or address of a local account → from its watermark (`from_id`,
           G2), for existing data without a watermark from the creation (`seit`).
         * Otherwise (a realm `res:<name>`, no identifier of an account) → without limit, as until
           then: there is no account to which the identifier belongs only from a point in time."""
-        if method == "resource" or not topf:
+        if method == "resource" or not bucket:
             return {}
-        if konto is not None:
-            return None if self.store.topf_eines_anderen(topf, konto) else {}
-        u = self.store.konto_mit_topf(topf)
+        if account is not None:
+            return None if self.store.bucket_of_another(bucket, account) else {}
+        u = self.store.account_by_bucket(bucket)
         if u is None:
             return {}
-        grenze = self.store.kennung_grenzen(u).get(topf)
-        if grenze is None:
+        limit = self.store.identifier_limits(u).get(bucket)
+        if limit is None:
             return {}
-        return {"ab_id": grenze[0]} if grenze[0] is not None else {"seit": int(u["created_at"] or 0)}
+        return {"from_id": limit[0]} if limit[0] is not None else {"since": int(u["created_at"] or 0)}
 
     #: Which shares of the streak (B2-6) a self-service reset clears: those of the FIRST factors.
     #: Anyone can produce them without knowing a secret — a stranger locks, with wrong PINs,
@@ -5849,7 +5849,7 @@ class TinySesam:
     #: half session, route chain of the full one): it books under `_PIN_CHAIN_SERIES` and stays
     #: like TOTP (G7). Until 2026-09-26 the kind did not know the position — in a chain
     #: `password → pin` the reset cleared the second factor's wrong guesses too.
-    _SERIE_RESET_ARTEN = ("password", "pin")
+    _SERIES_RESET_KINDS = ("password", "pin")
     #: The kind of the streak for a PIN behind an already provided factor (G7). `login_attempt`
     #: and the PIN bucket keep counting it as `pin`; only the self-service reset distinguishes.
     _PIN_CHAIN_SERIES = "pin_chain"
@@ -5862,7 +5862,7 @@ class TinySesam:
         only its own method. Whoever signed in by PIN after three mistyped TOTP codes
         carried the three along, and the account was never "fresh" again. A complete
         sign-in has passed every required factor; afterwards there is nothing left against which
-        the old failed attempts protect. The own buckets (`NICHT_LOGIN_METHODEN`) remain:
+        the old failed attempts protect. The own buckets (`NOT_LOGIN_METHODS`) remain:
         they belong to processes AFTER the sign-in.
 
         With `methods`: only these. The self-service reset (R4-13) clears `("password",)`:
@@ -5872,18 +5872,18 @@ class TinySesam:
 
         Counting happened under the identifier someone typed — username OR email,
         with a directory sign-in also the name there (G5). Clearing therefore happens under all of them
-        (`Store.zaehl_kennungen`).
+        (`Store.count_identifiers`).
         """
         u = self.store.get_user(user_id)
         if not u:
             return 0
-        weg = 0
+        away = 0
         # The streak (B2-6): a complete sign-in ends it entirely. A password reset
-        # clears the shares of the first factors (`_SERIE_RESET_ARTEN`), not the second — the same
+        # clears the shares of the first factors (`_SERIES_RESET_KINDS`), not the second — the same
         # reason as below (R4-13): the self-service reset proves the mailbox, not the
         # second factor. If it cleared the TOTP wrong guesses too, anyone with a mailbox and
         # password would get a fresh streak against TOTP per reset (measured in the attack on B2-6). The
-        # operator clears entirely (`_serie_beenden`, panel reset, `tinysesam unlock`).
+        # operator clears entirely (`_end_series`, panel reset, `tinysesam unlock`).
         #
         # The streak is deliberately cleared WITHOUT limit a, even if it began before the identifier
         # joined (G2, option A): it has no IP and protects only whoever owns the identifier
@@ -5891,10 +5891,10 @@ class TinySesam:
         # and launders no throttling of an IP. A limit in time would not work either:
         # the streak knows no individual times, and a streak begun before the joining
         # could otherwise no longer be ended by the new owner with any sign-in (permanent lock).
-        arten = None if methods is None else tuple(
-            set(methods) | (set(self._SERIE_RESET_ARTEN) if "password" in methods else set()))
-        for kennung in self.store.zaehl_kennungen(user_id):
-            self.store.fehlserie_loeschen(kennung, arten=arten)
+        kinds = None if methods is None else tuple(
+            set(methods) | (set(self._SERIES_RESET_KINDS) if "password" in methods else set()))
+        for identifier in self.store.count_identifiers(user_id):
+            self.store.delete_failure_series(identifier, kinds=kinds)
         # The window from the joining of the identifier (limit a, G2): otherwise the first
         # complete sign-in would also clear the failed attempts that a stranger had made BEFORE the creation, the
         # rename or the address change under the same identifier — also from the
@@ -5903,27 +5903,27 @@ class TinySesam:
         # The directory name (G5) has no watermark: its window is cleared by the sign-in itself
         # (`_record_login`), here only the streak.
         since = int(u["created_at"] or 0)
-        for kennung, (ab_id, _) in self.store.kennung_grenzen(u).items():
-            grenze = {"seit": since} if ab_id is None else {"ab_id": ab_id}
-            ab = since if ab_id is None else 0
+        for identifier, (from_id, _) in self.store.identifier_limits(u).items():
+            limit = {"since": since} if from_id is None else {"from_id": from_id}
+            start_from = since if from_id is None else 0
             if methods is None:
-                ohne = security.NICHT_LOGIN_METHODEN
-                weg += self.store.count_fails(ab, username=kennung, exclude_methods=ohne, ab_id=ab_id)
-                self.store.clear_fails(username=kennung, exclude_methods=ohne, **grenze)
+                without = security.NOT_LOGIN_METHODS
+                away += self.store.count_fails(start_from, username=identifier, exclude_methods=without, from_id=from_id)
+                self.store.clear_fails(username=identifier, exclude_methods=without, **limit)
             else:
                 for m in methods:
-                    weg += self.store.count_fails(ab, username=kennung, method=m, ab_id=ab_id)
-                    self.store.clear_fails(username=kennung, method=m, **grenze)
-        return weg
+                    away += self.store.count_fails(start_from, username=identifier, method=m, from_id=from_id)
+                    self.store.clear_fails(username=identifier, method=m, **limit)
+        return away
 
-    def _serie_beenden(self, user_id) -> int:
+    def _end_series(self, user_id) -> int:
         """End the streak of an account entirely (B2-6) — the operator's way (panel reset).
 
-        Under name, address and the name in the directory (G5, `Store.zaehl_kennungen`): counting
+        Under name, address and the name in the directory (G5, `Store.count_identifiers`): counting
         happens under what someone typed."""
-        return sum(self.store.fehlserie_loeschen(k) for k in self.store.zaehl_kennungen(user_id))
+        return sum(self.store.delete_failure_series(k) for k in self.store.count_identifiers(user_id))
 
-    def _fehl_grund(self, username, method=None) -> str:
+    def _fail_reason(self, username, method=None) -> str:
         """Why did the sign-in fail — for the log, not for the response."""
         if method == "resource":
             # The pseudo-name `res:<name>` is never an account. `no_account` therefore stood at
@@ -5947,30 +5947,30 @@ class TinySesam:
         issues a key to a foreign account. `username` is thus always the account at issue;
         `tinysesam audit --user X` also finds what others did to X.
         """
-        a = _ANFRAGE.get()
+        a = _REQUEST.get()
         if a:
             if ip is None:
                 ip = a.get("ip")
-            akteur = a.get("akteur")
-            if akteur:
+            actor = a.get("akteur")
+            if actor:
                 if username is None:
-                    username = akteur
-                elif str(username).lower() != str(akteur).lower():
-                    detail = f"{detail} actor={akteur}" if detail else f"actor={akteur}"
+                    username = actor
+                elif str(username).lower() != str(actor).lower():
+                    detail = f"{detail} actor={actor}" if detail else f"actor={actor}"
         self.store.audit_log(event, username, ip, detail)
 
-    def _kontoname(self, user_id) -> Optional[str]:
+    def _account_name(self, user_id) -> Optional[str]:
         """The username for an ID — for audit lines that would otherwise carry only `user=<id>`."""
         u = self.store.get_user(user_id) if user_id is not None else None
         return str(u["username"]) if u else None
 
-    def _anfrage_merken(self, request, u=None) -> None:
-        """Record the IP and signed-in account of the running request for `audit()` (`_ANFRAGE`)."""
+    def _remember_request(self, request, u=None) -> None:
+        """Record the IP and signed-in account of the running request for `audit()` (`_REQUEST`)."""
         try:
             ip = self.client_ip(request)
         except Exception:        # dummy without header/client — then just without IP
             ip = None
-        _ANFRAGE.set({"ip": ip, "akteur": str(u["username"]) if u else None})
+        _REQUEST.set({"ip": ip, "akteur": str(u["username"]) if u else None})
 
     def gc(self, attempts_older_than_sec: int = 86400) -> dict:
         """Clean up: expired sessions/flows/magic tokens/realm unlocks + old
@@ -5981,7 +5981,7 @@ class TinySesam:
         `failure_series` (until 0.21.x `fehlserien`), possibly `audit`.
         `attempts_older_than_sec` lies between 0 (all failed attempts) and ten years in
         seconds, otherwise `ValueError`, before anything is deleted."""
-        older = _jetzt() - _versuchsfrist(attempts_older_than_sec)
+        older = _now() - _attempt_deadline(attempts_older_than_sec)
         # BEFORE the tokens: the characteristic "never confirmed" is the expired confirmation token —
         # if `gc_magic_tokens` clears it first, the account can no longer be recognised (R4-09).
         # Without this step an address that someone foreign had registered and never
@@ -5989,21 +5989,21 @@ class TinySesam:
         # The same loop as `tinysesam gc` — it is in the store so that both go through the one
         # deletion route (H-13, integration findings 12/18). Before, `gc()` had its own copy
         # that deleted the account past the anonymisation.
-        zahlen = {
-            "unverified_accounts": self.store.gc_unbestaetigte_konten(),
+        numbers = {
+            "unverified_accounts": self.store.gc_unconfirmed_accounts(),
             "sessions": self.store.gc_sessions(),
             "flow": self.store.gc_flow(),
             "magic_tokens": self.store.gc_magic_tokens(),
             "resource_unlocks": self.store.gc_resource_unlocks(),
             "login_attempts": self.store.gc_attempts(older),
             # Streaks not triggered after 90 days of rest; triggered ones remain (B2-6).
-            "failure_series": self.store.gc_fehlserien(
-                _jetzt() - 90 * 86400, self._sec("account_max_consecutive_failures")),
+            "failure_series": self.store.gc_failure_series(
+                _now() - 90 * 86400, self._sec("account_max_consecutive_failures")),
         }
-        tage = int(self.cfg.audit_retention_days or 0)
-        if tage > 0:
-            zahlen["audit"] = self.store.gc_audit(_jetzt() - tage * 86400)
-        return zahlen
+        days = int(self.cfg.audit_retention_days or 0)
+        if days > 0:
+            numbers["audit"] = self.store.gc_audit(_now() - days * 86400)
+        return numbers
 
     def version(self) -> str:
         """The running version — for the panel. TinySesam does not update itself;
@@ -6030,20 +6030,20 @@ class TinySesam:
         if any(z < " " or z == "\x7f" for z in str(user["username"] or "")):
             # The cleaning below would remove the character and send the name of ANOTHER
             # account (`boss\x01` → `boss`). Fail-closed: better no approval than a
-            # foreign identity. Exactly the characters that `_header_wert` removes (C0, DEL) — a
+            # foreign identity. Exactly the characters that `_header_value` removes (C0, DEL) — a
             # ZWNJ in a Persian existing name passes through losslessly and does not collide
             # (counter-check). `create_user` no longer permits new names like that at all.
             security.seclog.warning("forward-auth rejected: account name with control characters (user_id=%s)",
                                     user["id"])
             raise HTTPException(403, self.t("api.name_invalid"))
-        werte = self._forward_werte(user)
+        values = self._forward_values(user)
         out = {}
-        for feld, namen in (self.cfg.forward_headers or self.FORWARD_HEADERS_DEFAULT).items():
-            for name in ([namen] if isinstance(namen, str) else namen):
-                out[name] = self._header_wert(werte[feld])
+        for slot, names in (self.cfg.forward_headers or self.FORWARD_HEADERS_DEFAULT).items():
+            for name in ([names] if isinstance(names, str) else names):
+                out[name] = self._header_value(values[slot])
         return out
 
-    def _forward_werte(self, user) -> dict:
+    def _forward_values(self, user) -> dict:
         """The values behind the forward-auth headers and the claims of the gate token — ONE source,
         so that the proxy passes on the same identity on both routes."""
         return {
@@ -6061,12 +6061,12 @@ class TinySesam:
         It follows the installation's master key (`TINYSESAM_SECRETS_KEY`, `secrets_key_file`
         resp. `<db>.key`). If that is changed, the proxy needs this value anew."""
         from . import gate as _gate
-        return _gate.oeffentlich_b64(self._gate_schluessel)
+        return _gate.public_b64(self._gate_key_name)
 
     def gate_issuer(self) -> str:
         """`iss` of the gate tokens: `base_url` without a trailing slash, without it `"tinysesam"`.
         Fixed rather than derived from the request — the proxy compares it with its configuration."""
-        return (security.normalisiere_basis(str(self.cfg.base_url or "").strip()) or "").rstrip("/") or "tinysesam"
+        return (security.normalize_base(str(self.cfg.base_url or "").strip()) or "").rstrip("/") or "tinysesam"
 
     def _gate_hosts(self) -> set:
         """Hosts for which a gate token is issued: the protected ones (`trusted_redirect_hosts`,
@@ -6076,15 +6076,15 @@ class TinySesam:
         from urllib.parse import urlsplit
         hosts = {str(h).strip().lower().rstrip(".") for h in (self.cfg.trusted_redirect_hosts or []) if h}
         hosts |= {str(h).strip().lower().rstrip(".") for h in (self.cfg.oidc_clients or {}) if h}
-        eigen = urlsplit(self.gate_issuer()).hostname
-        if eigen:
-            hosts.add(eigen.lower())
+        own = urlsplit(self.gate_issuer()).hostname
+        if own:
+            hosts.add(own.lower())
         return hosts
 
     _GATE_LINK_COOKIE = "__Host-tinysesam_link"
     _GATE_LINKFLOW_COOKIE = "__Host-tinysesam_linkflow"
 
-    def _gate_link_sitzung(self, request, host: str):
+    def _gate_link_session(self, request, host: str):
         """The session row behind the connection cookie of this app host (T-26) — or None.
 
         The cookie applies only to the host for which it was issued: the row in `gate_link` carries
@@ -6092,25 +6092,25 @@ class TinySesam:
         with the same rules as via the own cookie (expiry, inactivity, OIDC re-check)."""
         if not self.cfg.gate_link_enabled or not host:
             return None
-        roh = request.cookies.get(self._GATE_LINK_COOKIE) or ""
-        if not roh:
+        raw = request.cookies.get(self._GATE_LINK_COOKIE) or ""
+        if not raw:
             return None
-        handle = self.store.gate_link_handle(self.store.session_hash(roh), host)
+        handle = self.store.gate_link_handle(self.store.session_hash(raw), host)
         if not handle:
             return None
         s = self.store.get_session_by_handle(handle)
-        if s is not None and not self._oidc_nachpruefen(s):
+        if s is not None and not self._oidc_recheck(s):
             return None
         return s
 
-    def _gate_sitzung(self, request, host: str = ""):
+    def _gate_session(self, request, host: str = ""):
         """The session of this request for the gate: the own cookie, otherwise the host's connection."""
-        return self._session_from_request(request) or self._gate_link_sitzung(request, host)
+        return self._session_from_request(request) or self._gate_link_session(request, host)
 
-    def _gate_set_cookie(self, response, name: str, wert: str, max_age: int) -> None:
+    def _gate_set_cookie(self, response, name: str, value: str, max_age: int) -> None:
         """A host-only cookie under `__Host-` — Secure, Path=/, without Domain (otherwise the
         browser discards it). With `max_age=0` it deletes."""
-        response.headers.append("set-cookie", f"{name}={wert}; Path=/; Max-Age={int(max_age)}; "
+        response.headers.append("set-cookie", f"{name}={value}; Path=/; Max-Age={int(max_age)}; "
                                               "Secure; HttpOnly; SameSite=Lax")
 
     def _gate_link_url(self, host: str, orig_url: str, request=None) -> str:
@@ -6122,7 +6122,7 @@ class TinySesam:
         rest = (o.path or "/") + (("?" + o.query) if o.query else "")
         return f"{schema}://{netloc}/.tinysesam/start?rd={quote(rest, safe='')}"
 
-    def _gate_cookie(self, request, user, orig_url: str, rollen_gruppen, sitzung=None) -> Optional[str]:
+    def _gate_cookie(self, request, user, orig_url: str, roles_groups, session=None) -> Optional[str]:
         """The `Set-Cookie` value with a fresh gate token — or None.
 
         Only for a full SESSION of the same account, never for an API key: a machine holds
@@ -6137,20 +6137,20 @@ class TinySesam:
         host = (urlsplit(orig_url or "").hostname or "").lower().rstrip(".")
         if not host or host not in self._gate_hosts():
             return None
-        s = sitzung if sitzung is not None else self._session_from_request(request)
+        s = session if session is not None else self._session_from_request(request)
         if not s or not s["mfa_ok"] or s["user_id"] != user["id"]:
             return None
-        felder = self.cfg.forward_headers or self.FORWARD_HEADERS_DEFAULT
-        werte = self._forward_werte(user)
-        claims = {feld: "".join(z for z in werte[feld] if z >= " " and z != "\x7f") for feld in felder}
+        fields = self.cfg.forward_headers or self.FORWARD_HEADERS_DEFAULT
+        values = self._forward_values(user)
+        claims = {slot: "".join(z for z in values[slot] if z >= " " and z != "\x7f") for slot in fields}
         ttl = int(self.cfg.gate_token_ttl_sec)
-        token = _gate.ausstellen(self._gate_schluessel, iss=self.gate_issuer(),
-                                 aud=_gate.zielgruppe(host, rollen_gruppen), sub=str(user["id"]),
-                                 claims=claims, ttl=ttl, jetzt=_jetzt())
+        token = _gate.issue(self._gate_key_name, iss=self.gate_issuer(),
+                                 aud=_gate.audience(host, roles_groups), sub=str(user["id"]),
+                                 claims=claims, ttl=ttl, now=_now())
         return _gate.set_cookie(self.cfg.gate_cookie_name, token, ttl)
 
     @staticmethod
-    def _header_wert(wert: str) -> str:
+    def _header_value(value: str) -> str:
         """Prepare a value so that it passes as an HTTP header.
 
         Up to 0.18.0 it went out raw, and two things broke on it:
@@ -6174,8 +6174,8 @@ class TinySesam:
         know what it has. For pure ASCII — the normal case — nothing changes, because
         ASCII has the same bytes in both encodings.
         """
-        sauber = "".join(z for z in str(wert or "") if z >= " " and z != "\x7f")
-        return sauber.encode("utf-8").decode("latin-1")
+        clean = "".join(z for z in str(value or "") if z >= " " and z != "\x7f")
+        return clean.encode("utf-8").decode("latin-1")
 
     def _forwarded_url(self, request: Request) -> str:
         """Reconstruct the original URL requested by the proxy (Caddy/Traefik: X-Forwarded-*,
@@ -6195,12 +6195,12 @@ class TinySesam:
         """The gate's settings for an application (T-21): `name` and `login`, from
         `forward_apps[host]` with `forward_login` as fallback. The host without port, lowercase."""
         from urllib.parse import urlsplit
-        roh = str(url_or_host or "")
-        host = ((urlsplit(roh).hostname if "://" in roh else roh.split(":", 1)[0]) or "").lower().rstrip(".")
+        raw = str(url_or_host or "")
+        host = ((urlsplit(raw).hostname if "://" in raw else raw.split(":", 1)[0]) or "").lower().rstrip(".")
         e = {}
-        for h, werte in (self.cfg.forward_apps or {}).items():
+        for h, values in (self.cfg.forward_apps or {}).items():
             if str(h).strip().lower().rstrip(".") == host:
-                e = dict(werte or {})
+                e = dict(values or {})
                 break
         return {"name": str(e.get("name") or ""), "login": str(e.get("login") or self.cfg.forward_login),
                 "logout": str(e.get("logout") or self.cfg.forward_logout)}
@@ -6210,18 +6210,18 @@ class TinySesam:
         Host) — or "" if this installation does not protect it. For the sign-out routes under
         `/.tinysesam/`: they act on the gate cookie of EXACTLY this host."""
         h = request.headers
-        roh = (h.get("x-forwarded-host") or h.get("host") or "").split(",")[0].strip()
-        host = roh.rsplit(":", 1)[0] if roh.count(":") == 1 else roh
+        raw = (h.get("x-forwarded-host") or h.get("host") or "").split(",")[0].strip()
+        host = raw.rsplit(":", 1)[0] if raw.count(":") == 1 else raw
         host = host.lower().rstrip(".")
         return host if host and host in self._gate_hosts() else ""
 
-    def _gate_cookie_loeschen(self, response) -> None:
+    def _delete_gate_cookie(self, response) -> None:
         """Delete this host's gate cookie (attributes as when setting it, otherwise it does not apply)."""
         response.headers.append("set-cookie", f"{self.cfg.gate_cookie_name}=; Path=/; Max-Age=0; "
                                               "Secure; HttpOnly; SameSite=Lax")
 
     @staticmethod
-    def _ist_seitenaufruf(request: Optional[Request]) -> bool:
+    def _is_page_view(request: Optional[Request]) -> bool:
         """Is the browser loading a PAGE here (and not a script, an image, an XHR)?
 
         `Sec-Fetch-Mode: navigate` says so explicitly; the proxy passes the request's headers on to
@@ -6232,13 +6232,13 @@ class TinySesam:
         if request is None:
             return False
         h = request.headers
-        modus = (h.get("sec-fetch-mode") or "").strip().lower()
-        if modus:
-            return modus == "navigate"
+        mode = (h.get("sec-fetch-mode") or "").strip().lower()
+        if mode:
+            return mode == "navigate"
         return "text/html" in (h.get("accept") or "").lower()
 
     def _forward_login_url(self, orig_url: str, request: Optional[Request] = None,
-                           direkt: bool = False) -> str:
+                           direct: bool = False) -> str:
         """Central login URL (on base_url resp. derived) with next=<orig_url>.
 
         Exception against a silent endless loop: **without `cookie_domain` the session cookie applies
@@ -6260,7 +6260,7 @@ class TinySesam:
         goes round in circles. `config_check` announces this case at startup.
         """
         from urllib.parse import quote, urlsplit
-        kandidat = ""
+        candidate = ""
         if not self.cfg.base_url and request is not None:
             h = request.headers
             proto = (h.get("x-forwarded-proto") or request.url.scheme or "https").split(",")[0].strip()
@@ -6269,8 +6269,8 @@ class TinySesam:
             # derived base does not withstand the check, the login URL stays relative — the
             # browser resolves it against the called host, so a foreign name does
             # not get into the redirect.
-            kandidat = f"{self._login_schema(proto, host)}://{host}" if host else ""
-        base = self.public_base(candidate=kandidat)
+            candidate = f"{self._login_schema(proto, host)}://{host}" if host else ""
+        base = self.public_base(candidate=candidate)
         if base and not self.cfg.cookie_domain:
             # Host from orig_url, not again from the headers: forwarded_url() has already evaluated
             # X-Original-URL and X-Forwarded-*. The whitelist trusted_redirect_hosts is
@@ -6283,27 +6283,27 @@ class TinySesam:
                 # Through the same form check as every other base (R5-1): `o.netloc` is raw and
                 # carried a user part (`https://foreign.example@app.example.com`) unchanged
                 # into the login URL; the scheme came unchecked from X-Forwarded-Proto/X-Original-URL.
-                base = security.normalisiere_basis(
+                base = security.normalize_base(
                     f"{self._login_schema(o.scheme, o.hostname)}://{o.netloc}") or base
         # Origin of the base + path of the login page WITH prefix (T-15): the base may already
         # carry the prefix (base_url) or not at all (derived, rebuilt for the requested host) —
         # `browser_path()` sets it from the one source, so only scheme and host count from the base.
-        ursprung = ""
+        origin = ""
         if base:
-            teile = urlsplit(str(base))
-            ursprung = f"{teile.scheme}://{teile.netloc}"
-        # `direkt` (T-21, and every re-check at the provider, B-2): straight into the OIDC round instead of
+            parts = urlsplit(str(base))
+            origin = f"{parts.scheme}://{parts.netloc}"
+        # `direct` (T-21, and every re-check at the provider, B-2): straight into the OIDC round instead of
         # onto the login page.
-        pfad = "/auth/oidc/start" if direkt else self.cfg.login_path
-        ziel = f"{ursprung}{self.browser_path(request, pfad)}?next={quote(orig_url or '/', safe='')}"
+        path = "/auth/oidc/start" if direct else self.cfg.login_path
+        destination = f"{origin}{self.browser_path(request, path)}?next={quote(orig_url or '/', safe='')}"
         # If this installation protects several applications, the target host belongs in the login URL:
         # only then does `/auth/oidc/start` know for which client it has to begin the round (T-14).
         # Without that every sign-in would run via the default client, and the approval that the
         # provider grants per client would be ineffective.
-        anwendung = self._oidc_application(orig_url)
-        if anwendung:
-            ziel += f"&app={quote(anwendung, safe='')}"
-        return ziel
+        application = self._oidc_application(orig_url)
+        if application:
+            destination += f"&app={quote(application, safe='')}"
+        return destination
 
     def _login_schema(self, schema: str, host: str) -> str:
         """The scheme of the login URL if it comes from the request (R5-1).
@@ -6321,7 +6321,7 @@ class TinySesam:
                 name = urlsplit("//" + (host or "")).hostname or ""
             except ValueError:
                 name = ""
-            if not security.eigener_host(name):      # without a list: only loopback counts
+            if not security.own_host(name):      # without a list: only loopback counts
                 schema = "https"
         return schema
 
@@ -6332,16 +6332,16 @@ class TinySesam:
         word-for-word at the behaviour of 0.18.0 as long as `oidc_clients` is empty."""
         from urllib.parse import urlsplit
         registry = getattr(self, "oidc_clients", None)
-        if not registry or not registry.mehrere:
+        if not registry or not registry.several:
             return ""
-        roh = str(url_or_host or "")
-        host = urlsplit(roh).hostname if "://" in roh else roh
-        return registry.schluessel_fuer_host(host or "")
+        raw = str(url_or_host or "")
+        host = urlsplit(raw).hostname if "://" in raw else raw
+        return registry.key_name_for_host(host or "")
 
-    def _record_oidc_approval(self, token: str, client: str, rollen=None) -> None:
+    def _record_oidc_approval(self, token: str, client: str, roles=None) -> None:
         """The provider has approved for this application — note it on the session."""
         self.store.put_oidc_grant(self.store.session_hash(token), client or "*",
-                                  _jetzt(), rollen)
+                                  _now(), roles)
 
     def _oidc_approval_valid(self, token_hash: str, client: str) -> tuple:
         """May this session enter this application? Return `(yes, reason)`.
@@ -6357,13 +6357,13 @@ class TinySesam:
         there is no per-application approval there that could expire.
         """
         registry = getattr(self, "oidc_clients", None)
-        if not registry or not registry.mehrere:
+        if not registry or not registry.several:
             return True, ""
         grant = self.store.get_oidc_grant(token_hash, client or "*")
         if not grant:
             return False, "missing"
-        frist = int(self.cfg.oidc_revalidate_minutes or 0) * 60
-        if frist and (_jetzt() - int(grant["checked_at"])) > frist:
+        deadline = int(self.cfg.oidc_revalidate_minutes or 0) * 60
+        if deadline and (_now() - int(grant["checked_at"])) > deadline:
             return False, "stale"
         return True, ""
 
@@ -6414,7 +6414,7 @@ class TinySesam:
         Jinja's `TemplateResponse` — not for one that signs in or out, see `ensure_csrf`). A
         cookie that does not look like a token does not count."""
         if request is not None and self.cfg.csrf_enabled:
-            return self._csrf_der_anfrage(request)[0]
+            return self._csrf_of_request(request)[0]
         return secrets.token_urlsafe(24)
 
     def render_page(self, template, status=200, request: Optional[Request] = None, **ctx) -> Response:
@@ -6423,9 +6423,9 @@ class TinySesam:
         forms (the classic "form expired" trap)."""
         tok, fresh = None, False
         if request is not None:
-            self._pruefe_secure_flag(request)
+            self._check_secure_flag(request)
         if self.cfg.csrf_enabled:
-            tok, fresh = self._csrf_der_anfrage(request)
+            tok, fresh = self._csrf_of_request(request)
             ctx.setdefault("csrf", tok)      # templates embed <input name=_csrf> / JS reads the cookie
         # One nonce per response. The built-in pages manage without inline handlers/style=;
         # the nonce travels centrally into every <script>/<style> (no threading through the templates)
@@ -6434,8 +6434,8 @@ class TinySesam:
         nonce = secrets.token_urlsafe(16)
         ctx.setdefault("nonce", nonce)
         # For own templates (set_template): the prefix that app paths need in the browser (T-15).
-        ctx.setdefault("prefix", self._praefix(request))
-        eingebaut = not self.templates.ueberschrieben(template)
+        ctx.setdefault("prefix", self._prefix(request))
+        built_in = not self.templates.overridden(template)
         out = self.templates.render(template, self, ctx)
         if isinstance(out, Response):
             resp = out
@@ -6444,19 +6444,19 @@ class TinySesam:
             # fetch calls) — here it becomes the mount prefix (T-15). ONLY for them: the output
             # of an own template stays byte-identical (counter-check: a placeholder in data
             # would there have altered a checked target after the fact).
-            if eingebaut:
-                out = str(out).replace(_PRAEFIX_PLATZHALTER, ctx["prefix"])
+            if built_in:
+                out = str(out).replace(_PREFIX_PLACEHOLDER, ctx["prefix"])
             resp = HTMLResponse(_inject_nonce(out, nonce), status_code=status)
             policy = self._csp_header(nonce)
             if policy:
                 resp.headers.setdefault("Content-Security-Policy", policy)
         if tok is not None and fresh:
-            self._csrf_cookie_setzen(resp, tok)
+            self._set_csrf_cookie(resp, tok)
         # Here too, not only in the route: error pages from `install_error_pages` pass
         # by no TinySesam route and otherwise carry not a single hardening header.
-        return self._kopfzeilen(resp)
+        return self._header_lines(resp)
 
-    def _kopfzeilen(self, resp: Response) -> Response:
+    def _header_lines(self, resp: Response) -> Response:
         """The hardening headers of every TinySesam response (R8-1, R8-5, R4-08, R5-2).
 
         Up to 0.19.0 only the rendered page carried a CSP; everything else — admin panel, JSON API,
@@ -6475,12 +6475,12 @@ class TinySesam:
           it repeats for older browsers. An own policy or `off` (the proxy sets the
           CSP) itself decides who may embed; a fixed XFO would override that.
         """
-        self._kopfzeilen_in(resp.headers)
+        self._header_lines_in(resp.headers)
         return resp
 
-    _secure_flag_gemeldet = False
+    _secure_flag_reported = False
 
-    def _pruefe_secure_flag(self, request: Request) -> None:
+    def _check_secure_flag(self, request: Request) -> None:
         """`cookie_secure=False` although the browser comes over HTTPS? Say so loudly once (F-04).
 
         The most common production form is a TLS proxy in front of an app that itself sees only HTTP.
@@ -6491,18 +6491,18 @@ class TinySesam:
         though: scheme `https` or `X-Forwarded-Proto: https`. Loopback does NOT count here as
         secure (unlike in `_is_secure`) — local without a certificate is exactly the permitted case.
         One line per instance so that the log does not fill up."""
-        if self.cfg.cookie_secure or self._secure_flag_gemeldet:
+        if self.cfg.cookie_secure or self._secure_flag_reported:
             return
         proto = (request.headers.get("x-forwarded-proto") or "").split(",")[0].strip().lower()
         if request.url.scheme != "https" and proto != "https":
             return
-        self._secure_flag_gemeldet = True
+        self._secure_flag_reported = True
         security.seclog.warning(
             "Configuration: cookie_secure=False, but the browser comes in over HTTPS — session and "
             "CSRF cookie go out without the Secure flag and thus also over any plaintext connection "
             "to the same host. Set cookie_secure=True (that is the default).")
 
-    def _kopfzeilen_fehler(self, exc) -> None:
+    def _header_lines_error(self, exc) -> None:
         """The same headers for an `HTTPException` from a TinySesam route.
 
         The response there is built by the host's exception handler (or Starlette's default) —
@@ -6516,9 +6516,9 @@ class TinySesam:
         a target (A1). Hence: ignore case only when looking up, never when writing.
         """
         exc.headers = dict(exc.headers or {})
-        self._kopfzeilen_in(_DictKopfzeilen(exc.headers))
+        self._header_lines_in(_DictHeaderLines(exc.headers))
 
-    def _kopfzeilen_in(self, h) -> None:
+    def _header_lines_in(self, h) -> None:
         h.setdefault("X-Content-Type-Options", "nosniff")
         h.setdefault("Referrer-Policy", "same-origin")
         h.setdefault("Cache-Control", "no-store")
@@ -6537,16 +6537,16 @@ class TinySesam:
             return ""
         if csp == "strict":
             # Background images from https addresses (brand_backgrounds) — exactly their origin, nothing beyond.
-            fremd = sorted({"https://" + b[len("https://"):].split("/", 1)[0].split("?", 1)[0]
+            foreign = sorted({"https://" + b[len("https://"):].split("/", 1)[0].split("?", 1)[0]
                             for b in (getattr(self.cfg, "brand_backgrounds", None) or []) if b.startswith("https://")})
             return ("default-src 'self'; "
                     f"script-src 'nonce-{nonce}'; style-src 'nonce-{nonce}'; "
-                    f"img-src 'self' data:{''.join(' ' + h for h in fremd)}; base-uri 'none'; "
-                    f"form-action 'self'{''.join(' ' + h for h in self._form_ziele())}; "
+                    f"img-src 'self' data:{''.join(' ' + h for h in foreign)}; base-uri 'none'; "
+                    f"form-action 'self'{''.join(' ' + h for h in self._form_destinations())}; "
                     "frame-ancestors 'self'; object-src 'none'")
         return csp.replace("{nonce}", nonce)
 
-    def _form_ziele(self) -> list:
+    def _form_destinations(self) -> list:
         """Where a form of the own pages may lead, beyond `'self'` (0.24.13, `form-action`).
 
         `form-action` does not fall back to `default-src` (DAST 2026-10-11, ZAP 10055-13): without the directive an
@@ -6573,7 +6573,7 @@ class TinySesam:
         if isinstance(meta, dict):
             # Only what is already loaded — the head of a response triggers no network access.
             urls.append(str(meta.get("end_session_endpoint") or ""))
-        ziele = {host(u) for u in urls if u and "://" in u}
+        destinations = {host(u) for u in urls if u and "://" in u}
         # Hosts from trusted_redirect_hosts (and the client hosts): `safe_next` compares only the name, any port
         # is allowed. In the CSP a host without a port counts only for the default port — hence `name:*`, otherwise
         # a redirect would get stuck that `next` has just allowed.
@@ -6581,8 +6581,8 @@ class TinySesam:
             n = host(str(h)).rsplit("]", 1)
             name = (n[0] + "]") if len(n) == 2 else n[0].split(":", 1)[0]
             if name:
-                ziele.add(name + ":*")
-        return sorted(z for z in ziele if z)
+                destinations.add(name + ":*")
+        return sorted(z for z in destinations if z)
 
     def public_base(self, request: Optional[Request] = None, candidate: str = "") -> str:
         """The public base URL for everything that leaves the house — mail links,
@@ -6598,11 +6598,11 @@ class TinySesam:
         protected only `?next=`, not this route.
 
         Now: `base_url` always wins — if it is set, nothing at all comes from the request.
-        Otherwise the derived host is checked (`security.eigener_host`), and only a
+        Otherwise the derived host is checked (`security.own_host`), and only a
         host from `trusted_redirect_hosts` or a loopback address counts as the own.
 
         **This is the only place where this question is decided.**
-        `require_public_base()` and `_gepruefte_basis()` both call it and only turn the
+        `require_public_base()` and `_checked_base()` both call it and only turn the
         empty result into an error — with the text that fits their caller.
         `_forward_login_url()` also asks here (with its one exception, justified in the docstring
         there). Two versions of the same rule diverged as soon as several
@@ -6614,12 +6614,12 @@ class TinySesam:
 
         **The path part belongs to it**, from both sources: `base_url="https://example.com/sso"`
         keeps its prefix, and a derived base takes over the server's `root_path`
-        (`security.sichere_basis`). Without that, an app mounted under a subpath got
+        (`security.secure_base`). Without that, an app mounted under a subpath got
         mail links without the prefix — and whoever appends it once more afterwards, links with it four times.
         The result is the **finished** base: nothing is appended to it any more.
 
         The links sent carry the subpath via this base; the built-in pages and
-        redirects since T-15 via `_praefix()`/`browser_path()` — from the same `base_url`.
+        redirects since T-15 via `_prefix()`/`browser_path()` — from the same `base_url`.
 
         Whoever needs a base and must not continue without one takes
         `require_public_base()` — this method here returns "" and leaves the
@@ -6635,29 +6635,29 @@ class TinySesam:
             # the appended token. `config_check` already rejects both at construction —
             # this line is the floor beneath it, because a config can still be changed after the
             # constructor.
-            basis = security.normalisiere_basis(str(self.cfg.base_url))
-            if not basis:
+            base = security.normalize_base(str(self.cfg.base_url))
+            if not base:
                 raise StateError(
                     "base_url is set, but is not a usable base address: "
                     f"{str(self.cfg.base_url)!r}. Expected is scheme http/https and a host, "
                     "without user info, query or fragment (a subpath is allowed, e.g. "
                     "\"https://example.com/sso\"). Nothing is guessed here.")
-            return basis
-        roh = str(candidate or (str(request.base_url) if request is not None else "")).strip()
-        basis = security.sichere_basis(roh, self.cfg.trusted_redirect_hosts)
-        if not basis and roh and security.einmal_melden("public_base:" + _host_aus(roh)):
+            return base
+        raw = str(candidate or (str(request.base_url) if request is not None else "")).strip()
+        base = security.secure_base(raw, self.cfg.trusted_redirect_hosts)
+        if not base and raw and security.report_once("public_base:" + _host_from(raw)):
             # Say loudly once why nothing happens — otherwise the operator looks for the error
             # at the mailer. fail2ban reads this logger along, and the forward auth asks here on
             # EVERY anonymous request (one page load is twenty subresources): a
-            # storm of identical lines would itself be a finding, so `einmal_melden()` says it
+            # storm of identical lines would itself be a finding, so `report_once()` says it
             # once per process and host — the hint about base_url is in the line.
             security.seclog.warning(
                 "No trustworthy public host: %s comes from the Host header and "
                 "is neither in trusted_redirect_hosts nor loopback. The operation aborts "
                 "(otherwise a link to a foreign host would go out). Remedy: set "
                 "base_url. This line appears once per host, not per request.",
-                security.fuer_log(roh))
-        return basis
+                security.for_log(raw))
+        return base
 
     def require_public_base(self, request: Optional[Request] = None, candidate: str = "") -> str:
         """Like `public_base()`, only without a way back: no checked base → `ConfigError`.
@@ -6680,8 +6680,8 @@ class TinySesam:
         after the constructor (it is read at request time). Then the process aborts with a
         message that says what to enter — not with silent success.
         """
-        basis = self.public_base(request, candidate)
-        if not basis:
+        base = self.public_base(request, candidate)
+        if not base:
             raise ConfigError(
                 "No trustworthy public address: base_url is empty, and the host "
                 "from the request is not established as our own (it is not in "
@@ -6691,9 +6691,9 @@ class TinySesam:
                 "to the public address of this app, e.g. "
                 "base_url=\"https://auth.example.com\"; mounted under a subpath, with "
                 "prefix (\"https://example.com/sso\").")
-        return basis
+        return base
 
-    def _gepruefte_basis(self, base_url) -> str:
+    def _checked_base(self, base_url) -> str:
         """Check a base address passed in from OUTSIDE before it goes into a link.
 
         `public_base()` sits in the routes — but whoever embeds TinySesam often builds their own "forgot
@@ -6716,7 +6716,7 @@ class TinySesam:
           still *choose* which of the own names goes into the reset link — exactly the core
           of R4-01, only one level deeper.
         * Without `base_url` the host must come from `trusted_redirect_hosts` or be loopback
-          (`security.sichere_basis`). A path in the base is preserved (app mounted under a
+          (`security.secure_base`). A path in the base is preserved (app mounted under a
           subpath), a user part in the host is not.
         * Everything else is a foreign name → `ConfigError`. No token, no mail, an error
           that the developer sees on the first attempt — instead of a link that the victim
@@ -6725,15 +6725,15 @@ class TinySesam:
         **Idempotent**, and that is no subtlety: the four senders check their base before the
         token is issued, `magic_url()` checks it once more, because an app also lands there that
         calls only this one method. The first version appended the path part each time anew
-        to a base that already carried it (`sichere_basis()` has returned it as well since N1) — from
+        to a base that already carried it (`secure_base()` has returned it as well since N1) — from
         `https://example.com/portal` became, over four stations,
         `https://example.com/portal/portal/portal/portal/auth/reset?token=…`. The mail went
         out, the recipient clicked, the link was 404: no error, no log line. Therefore
         nothing is appended here any more, and a test sends a base WITH a path through all
         five routes and **counts** the occurrences of the prefix.
         """
-        roh = str(base_url or "").strip()
-        basis = self.public_base(candidate=roh)
+        raw = str(base_url or "").strip()
+        base = self.public_base(candidate=raw)
         # It is replaced silently — but not noiselessly: whoever passes a different address than the one that
         # ends up in the link has either passed the request through (then that is exactly the
         # protection) or made a mistake (then they would otherwise search for a long time). Once per address, not per
@@ -6744,34 +6744,34 @@ class TinySesam:
         # `https://auth.example/sso` previously got no line — same host, so
         # the place stayed silent. Exactly this case (wrong prefix → 404 at the recipient) is the one
         # the CHANGELOG promises to report.
-        _vergleich = security.normalisiere_basis(roh) or roh.rstrip("/")
-        if basis and roh and _vergleich != basis \
-                and security.einmal_melden("gepruefte_basis:" + _vergleich):
+        _comparison = security.normalize_base(raw) or raw.rstrip("/")
+        if base and raw and _comparison != base \
+                and security.report_once("gepruefte_basis:" + _comparison):
             security.seclog.warning(
                 "Passed base address %s is replaced by base_url (%s) — base_url is the "
                 "operator's commitment and always wins. If the value comes from str(request.base_url), "
                 "it is the requester's Host header; that is exactly how a reset link pointed to "
                 "a foreign server (R4-01). This line appears once per host, not per request.",
-                security.fuer_log(roh), security.fuer_log(basis))
-        if not basis:
+                security.for_log(raw), security.for_log(base))
+        if not base:
             # `public_base()` has already logged (once per host). In the text of the exception is
             # the shortened version freed of control characters: the value comes from the requester,
             # and an exception travels into logs and error pages.
             raise ConfigError(
                 f"This base address does not go into a sent link: "
-                f"{security.fuer_log(roh)!r}. Allowed "
+                f"{security.for_log(raw)!r}. Allowed "
                 "are base_url, a host from trusted_redirect_hosts, and loopback. Whoever takes the base "
                 "from the request takes the requester's Host header — with a mail to "
                 "a foreign mailbox, that is the attacker's. In a route "
                 "auth.public_base(request) returns the checked base (empty = abort).")
-        return basis
+        return base
 
     #: What may serve as a mount prefix (`root_path`) in pages and redirects (T-15). The value comes
     #: from the ASGI server (`--root-path`) or from a Starlette mount, not from the browser — but it
     #: lands unmasked in attributes and scripts, hence only these characters.
-    _PRAEFIX_FORM = re.compile(r"(?:/[A-Za-z0-9._~-]+)*")
+    _PREFIX_FORM = re.compile(r"(?:/[A-Za-z0-9._~-]+)*")
 
-    def _praefix(self, request: Optional[Request]) -> str:
+    def _prefix(self, request: Optional[Request]) -> str:
         """The prefix under which TinySesam's pages lie in the browser, without a trailing slash.
 
         One source for all built-in pages and redirects (T-15): under `uvicorn --root-path
@@ -6786,20 +6786,20 @@ class TinySesam:
         used (loudly, once) — better a 404 than a prefix that carries markup into a page."""
         if self.cfg.base_url:
             from urllib.parse import urlsplit
-            roh = urlsplit(self.cfg.base_url).path.rstrip("/")
+            raw = urlsplit(self.cfg.base_url).path.rstrip("/")
         elif request is None:
             return ""
         else:
-            roh = str(request.scope.get("root_path") or "").rstrip("/")
-        if not roh:
+            raw = str(request.scope.get("root_path") or "").rstrip("/")
+        if not raw:
             return ""
-        if not self._PRAEFIX_FORM.fullmatch(roh):
-            if security.einmal_melden("praefix_form"):
+        if not self._PREFIX_FORM.fullmatch(raw):
+            if security.report_once("praefix_form"):
                 security.seclog.warning("root_path %s has an unexpected form and is not used for pages and "
                                         "redirects (allowed: /part/part of A–Z a–z 0–9 . _ ~ -).",
-                                        security.fuer_log(roh))
+                                        security.for_log(raw))
             return ""
-        return roh
+        return raw
 
     def browser_path(self, request: Optional[Request], path: str) -> str:
         """Convert an app path (`/auth/login`, `login_path`, `admin_path`, …) into the path
@@ -6811,7 +6811,7 @@ class TinySesam:
         p = str(path or "")
         if not p.startswith("/") or p.startswith("//"):
             return p
-        return self._praefix(request) + p
+        return self._prefix(request) + p
 
     def safe_next(self, next_: str, request: Optional[Request] = None) -> str:
         """Secure the ?next= target against open redirect (only relative paths resp. trusted_redirect_hosts).
@@ -6831,23 +6831,23 @@ class TinySesam:
             own = urlsplit(self.cfg.base_url).hostname or ""
             if own and own not in hosts:
                 hosts.append(own)
-        rueckfall = self.browser_path(request, self.cfg.login_redirect)
-        if _PRAEFIX_PLATZHALTER in str(next_ or ""):
+        fallback = self.browser_path(request, self.cfg.login_redirect)
+        if _PREFIX_PLACEHOLDER in str(next_ or ""):
             # The placeholder of the built-in pages has no business in a target: on replacing,
             # `/__TS_P__/evil.example` would become `//evil.example` (counter-check T-15).
-            return rueckfall
-        return security.safe_next(next_, rueckfall, hosts or None)
+            return fallback
+        return security.safe_next(next_, fallback, hosts or None)
 
     # ---------- FastAPI-Integration ----------
-    def _riegel(self, config: TinySesamConfig, *, beim_aufbau: bool) -> None:
+    def _bolt(self, config: TinySesamConfig, *, on_setup: bool) -> None:
         """All checks that make construction fail — in the constructor and once more before
         `router()`/`admin_router()` (A2).
 
-        Until then they stood only in the constructor; `_nachpruefen` knew only `config_check` and
+        Until then they stood only in the constructor; `_recheck` knew only `config_check` and
         the cookie fields. Whoever set `auth.cfg.allow_signup = True` afterwards built, alongside
         `admin_identifiers=["boss"]`, a router in which the first visitor registered as "boss"
-        and became first admin. `beim_aufbau=False` leaves out only `config_check` —
-        `_nachpruefen` has already run it via `TinySesamConfig._befunde()`, warnings included."""
+        and became first admin. `on_setup=False` leaves out only `config_check` —
+        `_recheck` has already run it via `TinySesamConfig._findings()`, warnings included."""
         if config.login_identifier not in ("username", "email", "both"):
             raise ConfigError("login_identifier must be 'username', 'email' or 'both'")
         if config.login_identifier == "email" and config.allow_signup and not config.signup_require_email:
@@ -6857,12 +6857,12 @@ class TinySesam:
         # checks above raise individually because each tells its own story;
         # what comes after is collected by config_check.py and reported together. Whoever has three things
         # wrong should read them once and not start three times.
-        if beim_aufbau:
-            befunde, hinweise = config_check.check_config(config)
-            for hinweis in hinweise:
-                security.seclog.warning("configuration: %s", hinweis)
-            if befunde:
-                raise ConfigError("The configuration does not work like this:\n  - " + "\n  - ".join(befunde))
+        if on_setup:
+            findings, notices = config_check.check_config(config)
+            for notice in notices:
+                security.seclog.warning("configuration: %s", notice)
+            if findings:
+                raise ConfigError("The configuration does not work like this:\n  - " + "\n  - ".join(findings))
 
         if config.cookie_samesite not in ("lax", "strict", "none"):
             raise ConfigError(
@@ -6928,21 +6928,21 @@ class TinySesam:
         # the sign-in name. That is the same situation as with open registration — only
         # there the visitor determines the name and here the IdP, and with an IdP
         # with self-registration that is the same person.
-        offene_tueren = []
+        open_doors = []
         if config.allow_signup:
-            offene_tueren.append("allow_signup=True")
-        for an, anlegen, name in (("oidc_enabled", "oidc_auto_create", "OIDC"),
+            open_doors.append("allow_signup=True")
+        for an, create, name in (("oidc_enabled", "oidc_auto_create", "OIDC"),
                                   ("saml_enabled", "saml_auto_create", "SAML"),
                                   ("ldap_enabled", "ldap_auto_create", "LDAP")):
-            if getattr(config, an, False) and getattr(config, anlegen, False):
-                offene_tueren.append(f"{anlegen}=True ({name})")
-        if config.admin_identifiers and offene_tueren:
+            if getattr(config, an, False) and getattr(config, create, False):
+                open_doors.append(f"{create}=True ({name})")
+        if config.admin_identifiers and open_doors:
             ids = [str(i).strip() for i in config.admin_identifiers if str(i).strip()]
-            namen = [i for i in ids if "@" not in i]
-            if namen:
+            names = [i for i in ids if "@" not in i]
+            if names:
                 raise ConfigError(
-                    f"admin_identifiers={namen} are usernames, and accounts arise here "
-                    f"on their own ({', '.join(offene_tueren)}): nobody confirms a "
+                    f"admin_identifiers={names} are usernames, and accounts arise here "
+                    f"on their own ({', '.join(open_doors)}): nobody confirms a "
                     "username — whoever signs in first like that becomes first admin. With open "
                     "registration enter an email address instead (with "
                     "signup_require_email=True and signup_verify_email=True); with an IdP "
@@ -6961,31 +6961,31 @@ class TinySesam:
         # header — silently, and visible only when debugging the foreign app. Header names are checked
         # against the permitted character set: a value with a line break would be header injection.
         if config.forward_headers:
-            erlaubt = set(self.FORWARD_HEADERS_DEFAULT)
+            permitted = set(self.FORWARD_HEADERS_DEFAULT)
             # First the shape, then the names. `{"user": None}` slipped through (`namen or []`
             # turned it into an empty list) and later tipped EVERY forward-auth request into
             # a 500; `{"user": 123}` killed the constructor with a raw `TypeError` that
             # an `except ConfigError` does not catch.
-            for feld, wert in config.forward_headers.items():
-                if isinstance(wert, str):
+            for slot, value in config.forward_headers.items():
+                if isinstance(value, str):
                     continue
-                if isinstance(wert, (list, tuple)) and all(isinstance(x, str) for x in wert):
+                if isinstance(value, (list, tuple)) and all(isinstance(x, str) for x in value):
                     continue
                 raise ConfigError(
-                    f"forward_headers[{feld!r}] must be a header name or a list of them "
-                    f"— but is {type(wert).__name__}. Example: "
+                    f"forward_headers[{slot!r}] must be a header name or a list of them "
+                    f"— but is {type(value).__name__}. Example: "
                     '{"user": "Remote-User"} or {"user": ["Remote-User", "X-Auth-User"]}')
-            unbekannt = [k for k in config.forward_headers if k not in erlaubt]
-            if unbekannt:
-                raise ConfigError(f"forward_headers: unknown field {unbekannt} — allowed are "
-                                 f"{sorted(erlaubt)}")
-            for feld, namen in config.forward_headers.items():
-                for name in ([namen] if isinstance(namen, str) else namen or []):
+            unknown = [k for k in config.forward_headers if k not in permitted]
+            if unknown:
+                raise ConfigError(f"forward_headers: unknown field {unknown} — allowed are "
+                                 f"{sorted(permitted)}")
+            for slot, names in config.forward_headers.items():
+                for name in ([names] if isinstance(names, str) else names or []):
                     if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9!#$%&'*+.^_`|~-]+", name):
-                        raise ConfigError(f"forward_headers[{feld!r}]: {name!r} is not a valid "
+                        raise ConfigError(f"forward_headers[{slot!r}]: {name!r} is not a valid "
                                          "header name")
 
-    def _nachpruefen(self) -> None:
+    def _recheck(self) -> None:
         """Check the config once more before routes arise from it (B3-14).
 
         The constructor checks and afterwards holds a **reference** to the config object. Whoever
@@ -6994,30 +6994,30 @@ class TinySesam:
         called it. Here is the last point at which an error is still noticed at startup instead of at the
         first click. The constructor has already issued warnings; here only what would have made
         construction fail counts — and ALL of it: `config_check` including the cookie fields and
-        the constructor's bolts (`_riegel`, A2)."""
-        fehler, _ = self.cfg._befunde()
-        if not fehler:
+        the constructor's bolts (`_bolt`, A2)."""
+        error, _ = self.cfg._findings()
+        if not error:
             try:
-                self._riegel(self.cfg, beim_aufbau=False)
+                self._bolt(self.cfg, on_setup=False)
             except ConfigError as e:
-                fehler = [str(e)]
-        if fehler:
+                error = [str(e)]
+        if error:
             raise ConfigError("The configuration was changed after construction and does not "
-                              "work like this:\n  - " + "\n  - ".join(fehler))
+                              "work like this:\n  - " + "\n  - ".join(error))
 
     def router(self):
         """The FastAPI router with all enabled routes. Mount once, done.
 
-        Checks the config once more beforehand (`_nachpruefen`) — a config broken
+        Checks the config once more beforehand (`_recheck`) — a config broken
         after the constructor fails here with `ConfigError`, not only in operation."""
-        self._nachpruefen()
+        self._recheck()
         from .router import build_router
         return build_router(self)
 
     def admin_router(self):
         """Standalone admin router (relative paths) — mountable at any prefix / sub-app / port,
         or (admin_ui_enabled=False) only the JSON API for the own panel."""
-        self._nachpruefen()
+        self._recheck()
         from .admin import build_admin_router
         return build_admin_router(self)
 
@@ -7048,16 +7048,16 @@ class TinySesam:
             if _wants_html(request):
                 # Starlette's default text ("Not Found") is English — on the page in the language of the
                 # installation, where there is a text for it. Own messages remain as they are.
-                nachricht = exc.detail
+                message = exc.detail
                 from http import HTTPStatus as _HS
                 try:
                     standard = _HS(exc.status_code).phrase
                 except ValueError:
                     standard = None
-                if nachricht == standard and f"error.{exc.status_code}" in _messages_der_sprache(self):
-                    nachricht = self.t(f"error.{exc.status_code}")
+                if message == standard and f"error.{exc.status_code}" in _messages_of_language(self):
+                    message = self.t(f"error.{exc.status_code}")
                 return self.render_page("error", status=exc.status_code, request=request,
-                                       code=exc.status_code, message=nachricht)
+                                       code=exc.status_code, message=message)
             return JSONResponse({"detail": exc.detail}, status_code=exc.status_code, headers=headers or None)
 
         @app.exception_handler(Exception)
@@ -7066,7 +7066,7 @@ class TinySesam:
                 return self.render_page("error", status=500, request=request, code=500,
                                        message=self.t("error.oops"))
             # The JSON branch bypassed `render_page` and came without any hardening header (A2).
-            return self._kopfzeilen(JSONResponse({"detail": "internal server error"}, status_code=500))
+            return self._header_lines(JSONResponse({"detail": "internal server error"}, status_code=500))
 
     def install_https(self, app):
         """HTTPS according to config.https_mode: 'force' → HTTP→HTTPS redirect middleware; 'warn'/'off' →
@@ -7103,7 +7103,7 @@ class TinySesam:
         if not s or not s["mfa_ok"]:
             return False
         if self.cfg.stepup_max_age_sec > 0:
-            if not s["mfa_at"] or (_jetzt() - s["mfa_at"]) > self.cfg.stepup_max_age_sec:
+            if not s["mfa_at"] or (_now() - s["mfa_at"]) > self.cfg.stepup_max_age_sec:
                 return False
         return True
 
@@ -7127,7 +7127,7 @@ class TinySesam:
         if not s:
             return False
         if self.cfg.stepup_max_age_sec > 0:
-            if (_jetzt() - (s["created_at"] or 0)) > self.cfg.stepup_max_age_sec:
+            if (_now() - (s["created_at"] or 0)) > self.cfg.stepup_max_age_sec:
                 return False
         return True
 
@@ -7149,10 +7149,10 @@ class TinySesam:
         opened the route to a half session whose account still owed TOTP, and
         `["pin", "password"]` that of an account with TOTP that had provided only PIN and password.
         After that the route's own list (`_chain_satisfied`) and the second factor after the
-        sign-in link (`_link_braucht`, G10). An API key does not satisfy a route chain."""
+        sign-in link (`_link_requires`, G10). An API key does not satisfy a route chain."""
         strict = self.cfg.login_chain_strict if strict is None else strict
         s = self._session_from_request(request)
-        usr = self._als_dict(self.store.get_user(s["user_id"])) if s else None
+        usr = self._as_dict(self.store.get_user(s["user_id"])) if s else None
         if usr and usr["disabled"]:
             usr = None
         done = json.loads(s["factors_done"] or "[]") if s else []
@@ -7168,9 +7168,9 @@ class TinySesam:
         # the account has a second factor, a route chain like `["magic"]` demands it too — otherwise
         # the mailbox alone would open the route of an account that protected itself with TOTP/passkey.
         # If the chain itself contains `totp`/`passkey`, it is already provided (no double step).
-        fehlt = self._link_braucht(usr["id"], done)
-        if fehlt is not None:
-            self._redirect_factor(request, fehlt)
+        missing = self._link_requires(usr["id"], done)
+        if missing is not None:
+            self._redirect_factor(request, missing)
         d = dict(usr)
         d["_via"] = "session"
         return d
@@ -7195,7 +7195,7 @@ class TinySesam:
             u = self.current_user(request)
             if not u:
                 s = self._session_from_request(request)
-                usr = self._als_dict(self.store.get_user(s["user_id"])) if s else None
+                usr = self._as_dict(self.store.get_user(s["user_id"])) if s else None
                 if not usr or usr["disabled"]:
                     self._deny(request)   # no identity → login (first factor)
                 done = json.loads(s["factors_done"] or "[]")
@@ -7205,9 +7205,9 @@ class TinySesam:
         if role:
             # One role or several (then ONE of them suffices — the same OR meaning as
             # ?roles=a,b in forward auth). Whoever requires ALL stacks two guards.
-            noetig = [role] if isinstance(role, str) else list(role)
-            if not any(self.has_role(u, r, admin_implies) for r in noetig):
-                raise HTTPException(403, self.t("api.role", roles=", ".join(f"'{r}'" for r in noetig)))
+            necessary = [role] if isinstance(role, str) else list(role)
+            if not any(self.has_role(u, r, admin_implies) for r in necessary):
+                raise HTTPException(403, self.t("api.role", roles=", ".join(f"'{r}'" for r in necessary)))
         if mfa and not self.stepup_fresh(request, u):
             if u.get("_via") == "apikey":
                 raise HTTPException(403, self.t("api.stepup_session"))
@@ -7237,24 +7237,24 @@ class TinySesam:
         An admin satisfies the role by default — `admin_implies=False` really requires it.
         mfa=True additionally requires step-up freshness.
         """
-        flach = []
+        flat = []
         for r in roles:
             if isinstance(r, str):
-                flach.append(r)
+                flat.append(r)
                 continue
             try:
-                flach.extend(r)
+                flat.extend(r)
             except TypeError:
                 # Catches the one call that changes through the variadic signature:
                 # require_role("editor", True) used to mean mfa=True. mfa and admin_implies
                 # are now keyword-only — loud instead of silently wrong.
                 raise TypeError(f"require_role(): {r!r} is not a role. "
                                 "Pass mfa/admin_implies as keyword arguments only.") from None
-        if not flach:
+        if not flat:
             raise ConfigError("require_role() needs at least one role")
 
         def dep(request: Request) -> dict:
-            return self._enforce(request, role=flach, mfa=mfa, admin_implies=admin_implies)
+            return self._enforce(request, role=flat, mfa=mfa, admin_implies=admin_implies)
         return dep
 
     def require(self, mfa: bool = False, admin: bool = False, role=None,
@@ -7339,12 +7339,12 @@ class TinySesam:
         (neighbouring subdomain, plaintext HTTP) knew afterwards the token of an unlocked
         browser — session fixation, only for the realm PIN. What this browser already had
         open moves over to the new token."""
-        alt = request.cookies.get(self.resource_cookie_name)
+        old = request.cookies.get(self.resource_cookie_name)
         token = secrets.token_urlsafe(32)
-        if alt:
-            self.store.move_resource_unlocks(alt, token)
+        if old:
+            self.store.move_resource_unlocks(old, token)
         ttl = self.cfg.resource_unlock_ttl_hours * 3600
-        self.store.add_resource_unlock(token, name, _jetzt() + ttl)
+        self.store.add_resource_unlock(token, name, _now() + ttl)
         kw = dict(httponly=True, secure=self.cfg.cookie_secure, samesite=_samesite(self.cfg.cookie_samesite),
                   path=self.cfg.cookie_path, max_age=ttl)
         if self.cfg.cookie_domain:
@@ -7383,12 +7383,12 @@ class TinySesam:
         a checking method that is exactly the kind of change nobody notices until it matters —
         hence a warning that is visible without a filter (not a `DeprecationWarning`)."""
         super().__init_subclass__(**kwargs)
-        for name, wert in vars(cls).items():
+        for name, value in vars(cls).items():
             alias = next((vars(b)[name] for b in cls.__mro__[1:] if name in vars(b)), None)
-            if isinstance(alias, Deprecated) and not isinstance(wert, Deprecated):
+            if isinstance(alias, Deprecated) and not isinstance(value, Deprecated):
                 warnings.warn(
                     f"{cls.__name__}.{name} overrides a deprecated name and has had no effect since "
-                    f"0.22.0: TinySesam internally calls `{alias.ziel}`. {alias.meldung}",
+                    f"0.22.0: TinySesam internally calls `{alias.destination}`. {alias.message}",
                     RuntimeWarning, stacklevel=2)
 
     check_ldap = Deprecated(

@@ -13,101 +13,101 @@ import os
 import re
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-PAKET = os.path.join(ROOT, "tinysesam")
+PACKAGE = os.path.join(ROOT, "tinysesam")
 
 LEVEL = {"debug", "info", "warning", "error", "critical", "exception"}
 
 
-def lies(pfad):
-    with open(pfad, encoding="utf-8") as fh:
+def read(path):
+    with open(path, encoding="utf-8") as fh:
         return fh.read()
 
 
-def sicherheit_konstanten():
-    """Module-level string constants of security.py and the possible results of `log_ereignis`."""
-    baum = ast.parse(lies(os.path.join(PAKET, "security.py")))
-    konst = {}
-    for k in baum.body:
+def security_constants():
+    """Module-level string constants of security.py and the possible results of `log_event`."""
+    tree = ast.parse(read(os.path.join(PACKAGE, "security.py")))
+    const = {}
+    for k in tree.body:
         if (isinstance(k, ast.Assign) and len(k.targets) == 1 and isinstance(k.targets[0], ast.Name)
                 and isinstance(k.value, ast.Constant) and isinstance(k.value.value, str)):
-            konst[k.targets[0].id] = k.value.value
-    ereignis = set()
-    for k in baum.body:
-        if isinstance(k, ast.FunctionDef) and k.name == "log_ereignis":
+            const[k.targets[0].id] = k.value.value
+    event = set()
+    for k in tree.body:
+        if isinstance(k, ast.FunctionDef) and k.name == "log_event":
             for r in ast.walk(k):
                 if isinstance(r, ast.Return):
-                    ereignis |= werte(r.value, konst, set()) or set()
-    return konst, ereignis
+                    event |= values(r.value, const, set()) or set()
+    return const, event
 
 
-def werte(knoten, konst, ereignis, lokal=None):
+def values(node, const, event, local=None):
     """The strings an expression can evaluate to — or None if unknown.
 
-    `lokal`: simple `name = expr` assignments of the enclosing function (`wort = A if login else B`)."""
-    lokal = lokal or {}
-    if isinstance(knoten, ast.Constant) and isinstance(knoten.value, str):
-        return {knoten.value}
-    if isinstance(knoten, ast.Attribute) and knoten.attr in konst:
-        return {konst[knoten.attr]}
-    if isinstance(knoten, ast.Name) and knoten.id in lokal:
-        rest = {k: v for k, v in lokal.items() if k != knoten.id}      # no cycles
-        return werte(lokal[knoten.id], konst, ereignis, rest)
-    if isinstance(knoten, ast.Name) and knoten.id in konst:
-        return {konst[knoten.id]}
-    if isinstance(knoten, ast.IfExp):
-        a = werte(knoten.body, konst, ereignis, lokal)
-        b = werte(knoten.orelse, konst, ereignis, lokal)
+    `local`: simple `name = expr` assignments of the enclosing function (`wort = A if login else B`)."""
+    local = local or {}
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return {node.value}
+    if isinstance(node, ast.Attribute) and node.attr in const:
+        return {const[node.attr]}
+    if isinstance(node, ast.Name) and node.id in local:
+        rest = {k: v for k, v in local.items() if k != node.id}      # no cycles
+        return values(local[node.id], const, event, rest)
+    if isinstance(node, ast.Name) and node.id in const:
+        return {const[node.id]}
+    if isinstance(node, ast.IfExp):
+        a = values(node.body, const, event, local)
+        b = values(node.orelse, const, event, local)
         return (a | b) if a is not None and b is not None else None
-    if isinstance(knoten, ast.Call):
-        name = knoten.func.attr if isinstance(knoten.func, ast.Attribute) else getattr(knoten.func, "id", "")
-        if name == "log_ereignis" and ereignis:
-            return set(ereignis)
+    if isinstance(node, ast.Call):
+        name = node.func.attr if isinstance(node.func, ast.Attribute) else getattr(node.func, "id", "")
+        if name == "log_event" and event:
+            return set(event)
     return None
 
 
-KONST, EREIGNIS = sicherheit_konstanten()
+CONST, EVENT = security_constants()
 
-SPEZIFIKATION = re.compile(r"(%%|%(?:\([^)]*\))?[-#0 +]*\d*(?:\.\d+)?[a-zA-Z])")
+SPECIFICATION = re.compile(r"(%%|%(?:\([^)]*\))?[-#0 +]*\d*(?:\.\d+)?[a-zA-Z])")
 
 
-def formatvarianten(aufruf, lokal=None):
+def format_variants(call, local=None):
     """All texts a `seclog.<level>(fmt, *args)` call can produce, with the event word substituted."""
-    if not aufruf.args or not (isinstance(aufruf.args[0], ast.Constant) and isinstance(aufruf.args[0].value, str)):
+    if not call.args or not (isinstance(call.args[0], ast.Constant) and isinstance(call.args[0].value, str)):
         return []
-    teile = SPEZIFIKATION.split(aufruf.args[0].value)
-    argumente = list(aufruf.args[1:])
-    optionen, i = [], 0
-    for t in teile:
+    parts = SPECIFICATION.split(call.args[0].value)
+    arguments = list(call.args[1:])
+    options, i = [], 0
+    for t in parts:
         if t == "%%":
-            optionen.append(["%"])
+            options.append(["%"])
         elif t.startswith("%") and len(t) > 1:
-            wert = werte(argumente[i], KONST, EREIGNIS, lokal) if i < len(argumente) else None
-            optionen.append(sorted(wert) if wert else ["<?>"])
+            value = values(arguments[i], CONST, EVENT, local) if i < len(arguments) else None
+            options.append(sorted(value) if value else ["<?>"])
             i += 1
         else:
-            optionen.append([t])
-    return ["".join(p) for p in itertools.product(*optionen)]
+            options.append([t])
+    return ["".join(p) for p in itertools.product(*options)]
 
 
-def seclog_aufrufe(quelle):
+def seclog_calls(source):
     """-> (call, local assignments of the enclosing function)."""
-    baum = ast.parse(quelle)
-    bereiche = [(baum, {})]
-    for f in ast.walk(baum):
+    tree = ast.parse(source)
+    areas = [(tree, {})]
+    for f in ast.walk(tree):
         if isinstance(f, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            lokal = {}
+            local = {}
             for z in ast.walk(f):
                 if (isinstance(z, ast.Assign) and len(z.targets) == 1 and isinstance(z.targets[0], ast.Name)):
-                    lokal[z.targets[0].id] = z.value
-            bereiche.append((f, lokal))
-    gesehen = set()
-    for bereich, lokal in reversed(bereiche):          # innermost scopes first
-        for k in ast.walk(bereich):
-            if id(k) in gesehen:
+                    local[z.targets[0].id] = z.value
+            areas.append((f, local))
+    seen = set()
+    for area, local in reversed(areas):          # innermost scopes first
+        for k in ast.walk(area):
+            if id(k) in seen:
                 continue
             if (isinstance(k, ast.Call) and isinstance(k.func, ast.Attribute) and k.func.attr in LEVEL):
                 w = k.func.value
                 if (isinstance(w, ast.Name) and w.id == "seclog") or \
                    (isinstance(w, ast.Attribute) and w.attr == "seclog"):
-                    gesehen.add(id(k))
-                    yield k, lokal
+                    seen.add(id(k))
+                    yield k, local

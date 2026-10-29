@@ -22,7 +22,7 @@ app.include_router(auth.router())
 
 
 @app.get("/fotos")
-def fotos(_=Depends(auth.require_resource("fotos"))):
+def photos(_=Depends(auth.require_resource("fotos"))):
     return {"area": "fotos"}
 
 
@@ -66,10 +66,10 @@ ok("Freischaltung pro Bereich getrennt (Passphrase-Bereich separat)")
 
 # lockout after too many failed attempts (pseudo user res:name)
 c2 = TestClient(app)
-GRENZE = auth._sec("resource_max_attempts")
+LIMIT = auth._sec("resource_max_attempts")
 codes = [c2.post("/auth/resource/fotos", data={"secret": "0000", "next": "/"}).status_code
-         for _ in range(GRENZE)]
-assert codes == [401] * GRENZE, codes
+         for _ in range(LIMIT)]
+assert codes == [401] * LIMIT, codes
 assert c2.post("/auth/resource/fotos", data={"secret": "2468", "next": "/"}).status_code == 429
 ok("Ressourcen-Lockout greift")
 
@@ -80,7 +80,7 @@ ok("Ressourcen-Lockout greift")
 # three areas with five slips each from the same address were enough to lock the sign-in of accounts
 # that had nothing to do with it. Now the own bucket locks what it
 # protects: areas. (Mutation probe: check `is_locked` again in `resource_submit` and
-# remove "resource" from `security.EIGENE_SPERRE` → (a) turns red.)
+# remove "resource" from `security.OWN_LOCK` → (a) turns red.)
 db2 = os.path.join(tempfile.mkdtemp(), "t.db")
 auth2 = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db2, rp_name="Test",
                                   passkey_enabled=False, oidc_enabled=False, cookie_secure=False,
@@ -89,20 +89,20 @@ auth2.create_user("unbeteiligt", "Unbeteiligt-Passwort-1")
 app2 = FastAPI()
 app2.include_router(auth2.router())
 c3 = TestClient(app2)
-bereiche = ["lager", "archiv", "keller"]
-for n in bereiche:
+areas = ["lager", "archiv", "keller"]
+for n in areas:
     auth2.set_resource_secret(n, "1234", kind="pin", label=n)
 # Since R7-3 the ADDRESS locks already at `resource_max_attempts` — the attack situation (the address
 # reaches the login IP threshold) can therefore no longer be produced with the default.
 # For this probe the area threshold is therefore raised to the login IP threshold.
-JE_BEREICH = auth2._sec("resource_max_attempts")     # as before: five per area, 15 together
+PER_AREA = auth2._sec("resource_max_attempts")     # as before: five per area, 15 together
 auth2.set_security("resource_max_attempts",
                    auth2._sec("max_login_attempts") * auth2._sec("ip_attempt_factor"))
-for n in bereiche:
-    for _ in range(JE_BEREICH):
+for n in areas:
+    for _ in range(PER_AREA):
         c3.post(f"/auth/resource/{n}", data={"secret": "0000", "next": "/"})
-IP_GRENZE = auth2._sec("max_login_attempts") * auth2._sec("ip_attempt_factor")
-assert auth2.store.count_fails(0, ip="testclient", method="resource") >= IP_GRENZE, \
+IP_LIMIT = auth2._sec("max_login_attempts") * auth2._sec("ip_attempt_factor")
+assert auth2.store.count_fails(0, ip="testclient", method="resource") >= IP_LIMIT, \
     "attack situation not produced: the test IP has not reached the login IP threshold"
 
 # (a) The attack: the sign-in of an uninvolved person from the same address stays open.
@@ -134,7 +134,7 @@ os.remove(db2)
 # who the slips came from. Five requests from a stranger locked the area for everyone,
 # even for those who know the secret. Now the address stops the stranger first; the
 # area itself only closes at `account_attempt_factor` times that, i.e. only if several
-# connections guess. (Mutation probe: swap the two resource limits in `_regeln` → red.)
+# connections guess. (Mutation probe: swap the two resource limits in `_rules` → red.)
 db5 = os.path.join(tempfile.mkdtemp(), "t.db")
 auth5 = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db5, rp_name="Test",
                                   passkey_enabled=False, oidc_enabled=False, cookie_secure=False,
@@ -143,25 +143,25 @@ auth5.set_resource_secret("garten", "4711", kind="pin", label="Garten")
 app5 = FastAPI()
 app5.include_router(auth5.router())
 G5 = auth5._sec("resource_max_attempts")
-fremd = TestClient(app5, client=("198.51.100.66", 40000))
-codes = [fremd.post("/auth/resource/garten", data={"secret": "0000", "next": "/"}).status_code
+foreign = TestClient(app5, client=("198.51.100.66", 40000))
+codes = [foreign.post("/auth/resource/garten", data={"secret": "0000", "next": "/"}).status_code
          for _ in range(G5 + 2)]
 assert codes[:G5] == [401] * G5 and codes[G5:] == [429, 429], codes
-kenner = TestClient(app5, client=("203.0.113.77", 40000))
-r = kenner.post("/auth/resource/garten", data={"secret": "4711", "next": "/"}, follow_redirects=False)
+identifier = TestClient(app5, client=("203.0.113.77", 40000))
+r = identifier.post("/auth/resource/garten", data={"secret": "4711", "next": "/"}, follow_redirects=False)
 assert r.status_code == 303, f"a single stranger locks the area for everyone: {r.status_code}"
 ok("R7-3: a stranger locks only his address, not the area")
 
 # …but distributed guessing stays limited: from `account_attempt_factor` connections the
 # area closes, also for a further, uninvolved one.
-kenner.cookies.clear()
+identifier.cookies.clear()
 auth5.store.clear_fails(username="res:garten")
 for i in range(auth5._sec("account_attempt_factor")):
     ci = TestClient(app5, client=(f"198.51.100.{10 + i}", 40000))
     for _ in range(G5):
         ci.post("/auth/resource/garten", data={"secret": "0000", "next": "/"})
-spaet = TestClient(app5, client=("203.0.113.78", 40000))
-r = spaet.post("/auth/resource/garten", data={"secret": "4711", "next": "/"}, follow_redirects=False)
+late = TestClient(app5, client=("203.0.113.78", 40000))
+r = late.post("/auth/resource/garten", data={"secret": "4711", "next": "/"}, follow_redirects=False)
 assert r.status_code == 429, f"distributed guessing is unlimited: {r.status_code}"
 ok("…distributed guessing over many addresses still locks the area")
 os.remove(db5)
@@ -185,46 +185,46 @@ RC = auth.resource_cookie_name
 cf = TestClient(app, client=("198.51.100.41", 50000))   # own address: the lockouts above stick to "testclient"
 
 
-def mit(tok):
+def with_(tok):
     """Cookie explicitly in the header — the client's jar would otherwise stay at the old value."""
     cf.cookies.clear()
     return {**JSON, "Cookie": f"{RC}={tok}"} if tok else dict(JSON)
 
 
-def gesetzt(r):
+def assigned(r):
     import re as _re
     m = _re.search(RC + r"=([^;]*)", ";".join(r.headers.get_list("set-cookie")))
     return m.group(1) if m else None
 
 
-untergeschoben = "vom-angreifer-gewaehlt-0123456789abcdef"
+planted = "vom-angreifer-gewaehlt-0123456789abcdef"
 r = cf.post("/auth/resource/fotos", data={"secret": "2468", "next": "/fotos"},
-            headers=mit(untergeschoben), follow_redirects=False)
+            headers=with_(planted), follow_redirects=False)
 assert r.status_code == 303, (r.status_code, r.text[:200])
-neu_tok = gesetzt(r)
-assert neu_tok and neu_tok != untergeschoben, "the unlock must get a NEW token"
-assert cf.get("/fotos", headers=mit(neu_tok)).status_code == 200, "the victim itself is in"
-assert cf.get("/fotos", headers=mit(untergeschoben)).status_code == 401, \
+new_tok = assigned(r)
+assert new_tok and new_tok != planted, "the unlock must get a NEW token"
+assert cf.get("/fotos", headers=with_(new_tok)).status_code == 200, "the victim itself is in"
+assert cf.get("/fotos", headers=with_(planted)).status_code == 401, \
     "the planted token is worthless"
 ok("F-01: unlock issues a new token — a planted one is not unlocked")
 
 # What the same browser already had open moves along — and does not stay on the old token.
 r = cf.post("/auth/resource/wiki", data={"secret": "geheime passphrase", "next": "/wiki"},
-            headers=mit(neu_tok), follow_redirects=False)
-drittes = gesetzt(r)
-assert drittes and drittes != neu_tok
-assert cf.get("/fotos", headers=mit(drittes)).status_code == 200
-assert cf.get("/wiki", headers=mit(drittes)).status_code == 200
-assert cf.get("/fotos", headers=mit(neu_tok)).status_code == 401, "the previous token must be empty"
+            headers=with_(new_tok), follow_redirects=False)
+third = assigned(r)
+assert third and third != new_tok
+assert cf.get("/fotos", headers=with_(third)).status_code == 200
+assert cf.get("/wiki", headers=with_(third)).status_code == 200
+assert cf.get("/fotos", headers=with_(new_tok)).status_code == 401, "the previous token must be empty"
 ok("…already open areas move to the new token, the old one holds nothing any more")
 
 # F-08: logout also ends the unlocks of this browser — signing out on a shared machine
 # so far left the locked area open for up to resource_unlock_ttl_hours.
-r = cf.get("/auth/logout", headers=mit(drittes), follow_redirects=False)
+r = cf.get("/auth/logout", headers=with_(third), follow_redirects=False)
 assert r.status_code == 303
-assert gesetzt(r) in ("", '""'), f"unlock cookie must be cleared: {gesetzt(r)!r}"
-assert cf.get("/fotos", headers=mit(drittes)).status_code == 401, "unlock survives the logout"
-assert cf.get("/wiki", headers=mit(drittes)).status_code == 401
+assert assigned(r) in ("", '""'), f"unlock cookie must be cleared: {assigned(r)!r}"
+assert cf.get("/fotos", headers=with_(third)).status_code == 401, "unlock survives the logout"
+assert cf.get("/wiki", headers=with_(third)).status_code == 401
 ok("F-08: logout deletes the unlocks server-side and the unlock cookie in the browser")
 
 os.remove(db)

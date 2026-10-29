@@ -734,34 +734,34 @@ class TinySesamConfig:
         (empty = fine). Freezing the dataclass would be the harder solution — but it would
         also forbid what is allowed.
         """
-        fehler, warnungen = self._befunde()
-        return fehler + warnungen
+        error, warnings = self._findings()
+        return error + warnings
 
-    def _befunde(self) -> tuple[list[str], list[str]]:
+    def _findings(self) -> tuple[list[str], list[str]]:
         """(errors, warnings) kept apart — `validate()` returns both in one list, and from
         that one could no longer read what would have made the setup fail. `TinySesam.router()`
         needs exactly this distinction (B3-14)."""
         from .config_check import _t, check_config
-        fehler, warnungen = check_config(self)
+        error, warnings = check_config(self)
         if self.cookie_samesite not in ("lax", "strict", "none"):
-            fehler.append(_t(
+            error.append(_t(
                 self, "cookie_samesite={value!r} — allowed are 'lax', 'strict', 'none' (lower case)",
                 value=self.cookie_samesite))
         if self.cookie_samesite == "none" and not self.cookie_secure:
-            fehler.append(_t(
+            error.append(_t(
                 self, "cookie_samesite='none' without cookie_secure=True — the browser discards "
                 "such a cookie"))
         if self.https_mode not in ("off", "warn", "force"):
-            fehler.append(_t(
+            error.append(_t(
                 self, "https_mode={value!r} — allowed are 'off', 'warn', 'force'",
                 value=self.https_mode))
         if not isinstance(self.csp, str):
-            fehler.append(_t(self, "csp must be a string, is {type}", type=type(self.csp).__name__))
+            error.append(_t(self, "csp must be a string, is {type}", type=type(self.csp).__name__))
         if not self.cookie_secure and self.https_mode == "force":
-            fehler.append(_t(
+            error.append(_t(
                 self, "https_mode='force' with cookie_secure=False — the session cookie would go "
                 "out without the Secure flag"))
-        return fehler, warnungen
+        return error, warnings
 
     def enabled_methods(self) -> list[str]:
         """First factors that the login page offers. A PIN that cannot be a first factor
@@ -798,5 +798,5 @@ class TinySesamConfig:
         last — the config check warns about this."""
         if not (self.pin_enabled and self.pin_login):
             return False
-        kette = list(self.login_chain or [])
-        return not (self.login_chain_strict and "pin" in kette and kette[0] != "pin")
+        chain = list(self.login_chain or [])
+        return not (self.login_chain_strict and "pin" in chain and chain[0] != "pin")

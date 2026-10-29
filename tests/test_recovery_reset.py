@@ -28,7 +28,7 @@ app.include_router(auth.router())
 
 
 @app.get("/geheim")
-def geheim(u=Depends(auth.require_user)):
+def secret_text(u=Depends(auth.require_user)):
     return {"u": u["username"]}
 
 
@@ -142,7 +142,7 @@ assert c_s.post("/auth/login", data={"username": "gesperrt", "password": "altes-
     "precondition: the account is locked"
 c_s.post("/auth/forgot", data={"email": "gesperrt@example.com"})
 # The reset mail — not the first: since ASVS 6.3.5 the lockout notice goes out beforehand.
-a_s._hinweis_ausgang.abwarten()
+a_s._notice_outcome.wait()
 tok_s = re.search(r"/auth/reset\?token=([\w\-]+)", next(m for m in post_s if "/auth/reset?token=" in m)).group(1)
 assert c_s.post("/auth/reset", data={"token": tok_s, "password": "neues-geheimnis-2"},
                 follow_redirects=False).status_code == 303, "the reset itself depends on the lockout"
@@ -154,8 +154,8 @@ ok("R4-13/H-10: the reset bypasses the lockout and lifts it")
 # reset is therefore measured directly on the counter, with a fresh slip per method.
 a_s._record_login("gesperrt", "testclient", False, "password")
 a_s._record_login("gesperrt", "testclient", False, "totp")
-weg = a_s.lift_lockout(a_s.store.get_user_by_name("gesperrt")["id"], methods=("password",))
-assert weg == 1 and a_s.store.count_fails(0, username="gesperrt", method="totp") == 1, \
+away = a_s.lift_lockout(a_s.store.get_user_by_name("gesperrt")["id"], methods=("password",))
+assert away == 1 and a_s.store.count_fails(0, username="gesperrt", method="totp") == 1, \
     "the reset also clears failed attempts on the second factor"
 assert any("failed_attempts_discarded=" in (z["detail"] or "") for z in a_s.store.recent_audit(20)
            if z["event"] == "password_reset"), "the audit log does not say what the reset cleared"
@@ -193,26 +193,26 @@ auth_r = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db_r, 
                                    password_reset_enabled=True, base_url="https://auth.example.com"))
 post_r = []
 auth_r.set_mailer(lambda to, s, t, html=None: post_r.append(t))
-ereig_r = []
-auth_r.on_security_event = lambda e, k, d: ereig_r.append((e, d))
+event_r = []
+auth_r.on_security_event = lambda e, k, d: event_r.append((e, d))
 uid_r = auth_r.create_user("rita", "rita-geheim-1-lang", email="rita@example.com")
-geheim_r = auth_r.totp_begin(uid_r)["secret"]
-auth_r.totp_confirm(uid_r, pyotp.TOTP(geheim_r).at(time.time() - 30))
+secret_text_r = auth_r.totp_begin(uid_r)["secret"]
+auth_r.totp_confirm(uid_r, pyotp.TOTP(secret_text_r).at(time.time() - 30))
 codes_r = auth_r.generate_recovery_codes(uid_r)
 app_r = FastAPI()
 app_r.include_router(auth_r.router())
 cr = TestClient(app_r)
 cr.post("/auth/login", data={"username": "rita", "password": "rita-geheim-1-lang"}, follow_redirects=False)
 assert cr.post("/auth/totp", data={"code": codes_r[0], "next": "/"}, follow_redirects=False).status_code == 303
-zeilen = [z for z in auth_r.store.recent_audit(20) if z["event"] == "recovery_used"]
-assert len(zeilen) == 1 and "remaining=3" in zeilen[0]["detail"], zeilen
-assert ("recovery_code_used", {"remaining": 3}) in ereig_r, ereig_r
-seite = cr.get("/auth/account").text
-assert "Nur noch 3 Recovery-Codes" in seite, "the account page does not show the small remainder"
+lines = [z for z in auth_r.store.recent_audit(20) if z["event"] == "recovery_used"]
+assert len(lines) == 1 and "remaining=3" in lines[0]["detail"], lines
+assert ("recovery_code_used", {"remaining": 3}) in event_r, event_r
+page_html = cr.get("/auth/account").text
+assert "Nur noch 3 Recovery-Codes" in page_html, "the account page does not show the small remainder"
 auth_r.generate_recovery_codes(uid_r)
 assert "4 Recovery-Codes übrig" in cr.get("/auth/account").text
-assert [e for e, _ in ereig_r] == ["totp_enabled", "recovery_codes_generated", "recovery_code_used",
-                                   "recovery_codes_generated"], ereig_r
+assert [e for e, _ in event_r] == ["totp_enabled", "recovery_codes_generated", "recovery_code_used",
+                                   "recovery_codes_generated"], event_r
 ok("B2-7: recovery consumption → audit with remainder, event, display on the account page")
 
 # ---------- R4-14: the self-service reset revokes the API keys ----------
@@ -233,7 +233,7 @@ assert auth_r.store.count_active_api_keys(uid_r) == 0
 assert any(z["event"] == "password_reset" and "api_keys_revoked=1" in (z["detail"] or "")
            for z in auth_r.store.recent_audit(20))
 # Since limit e the reset also reports the collected key revocation — after the password change.
-assert [e for e, _ in ereig_r[-2:]] == ["password_changed", "api_keys_revoked"], ereig_r[-2:]
+assert [e for e, _ in event_r[-2:]] == ["password_changed", "api_keys_revoked"], event_r[-2:]
 ok("R4-14: password reset by mail revokes the API keys (and checks the password rule)")
 
 # A-8: a dead link takes precedence over the password rule — otherwise it said "too easy", and only the
@@ -254,34 +254,34 @@ import logging as _logging  # noqa: E402
 from tinysesam import security as _security  # noqa: E402
 
 
-def _token_spuren():
+def _token_traces():
     return len(auth_r.store._all("SELECT id FROM audit WHERE event='token_invalid' "
                                  "AND detail LIKE 'purpose=reset_password%'"))
 
 
-_puffer_r = _io.StringIO()
-_haken_r = _logging.StreamHandler(_puffer_r)
-_security.seclog.addHandler(_haken_r)
+_buffer_r = _io.StringIO()
+_check_r = _logging.StreamHandler(_buffer_r)
+_security.seclog.addHandler(_check_r)
 try:
-    _vorher_r = _token_spuren()
+    _before_r = _token_traces()
     for _tok, _pw in (("erfunden-1", "ein-frisches-passwort"),   # geraten, Passwort taugt
                       ("erfunden-2", "x"),                       # geraten, Passwort zu kurz
                       (tok_r, "noch-ein-frisches-passwort")):     # already redeemed
         r = cr.post("/auth/reset", data={"token": _tok, "password": _pw})
         assert r.status_code == 400, (_tok, r.status_code)
-    _neu_r = _token_spuren() - _vorher_r
-    _log_r = [z for z in _puffer_r.getvalue().splitlines()
-              if z.startswith(_security.LOG_PRUEFUNG) and "token_reset_password" in z]
-    assert _neu_r == 3 and len(_log_r) == 3, (_neu_r, _puffer_r.getvalue())
+    _new_r = _token_traces() - _before_r
+    _log_r = [z for z in _buffer_r.getvalue().splitlines()
+              if z.startswith(_security.LOG_CHECK) and "token_reset_password" in z]
+    assert _new_r == 3 and len(_log_r) == 3, (_new_r, _buffer_r.getvalue())
     # Without a token this is not a presented link (A3) — no row, as with the GET.
     assert cr.post("/auth/reset", data={"token": "", "password": "egal-was"}).status_code == 400
-    assert _token_spuren() - _vorher_r == 3 and len(
-        [z for z in _puffer_r.getvalue().splitlines() if "token_reset_password" in z]) == 3
+    assert _token_traces() - _before_r == 3 and len(
+        [z for z in _buffer_r.getvalue().splitlines() if "token_reset_password" in z]) == 3
 finally:
-    _security.seclog.removeHandler(_haken_r)
+    _security.seclog.removeHandler(_check_r)
 ok("finding 4: POST /auth/reset with dead token → token_invalid in the audit + “failed verification” (like the GET)")
 auth_r.totp_disable(uid_r)
-assert ereig_r[-1] == ("totp_disabled", {"recovery_codes_deleted": 4}), ereig_r[-1]
+assert event_r[-1] == ("totp_disabled", {"recovery_codes_deleted": 4}), event_r[-1]
 os.remove(db_r)
 
 # ---------- H-4: no reset link for a pure SSO account ----------
@@ -293,19 +293,19 @@ _sso = auth.create_user("sso-nutzer", email="sso@example.com")
 auth.store.link_oidc("https://idp.example.com", "sub-sso", _sso)
 _ldap = auth.create_user("ldap-nutzer", email="ldap@example.com")
 auth.store.link_federated("ldap", "uuid-ldap", _ldap, 0)
-_gemischt = auth.create_user("gemischt", password="lokal-pw-123-ab", email="gemischt@example.com")
-auth.store.link_oidc("https://idp.example.com", "sub-gemischt", _gemischt)
-for _adresse in ("sso@example.com", "ldap@example.com"):
-    assert c.post("/auth/forgot", data={"email": _adresse}).status_code == 200
+_mixed = auth.create_user("gemischt", password="lokal-pw-123-ab", email="gemischt@example.com")
+auth.store.link_oidc("https://idp.example.com", "sub-gemischt", _mixed)
+for _address in ("sso@example.com", "ldap@example.com"):
+    assert c.post("/auth/forgot", data={"email": _address}).status_code == 200
 assert sent == [], f"a pure SSO account got a reset link: {[m['to'] for m in sent]}"
 assert sum(1 for z in auth.store.recent_audit(30) if z["event"] == "reset_sso_only") == 2
 # The outward answer is the same as for an unknown address — no account probing.
-def _ohne_nonce(antwort):
-    return antwort.status_code, re.sub(r'nonce="[^"]*"', "", antwort.text)
+def _without_nonce(response):
+    return response.status_code, re.sub(r'nonce="[^"]*"', "", response.text)
 
 
-assert _ohne_nonce(c.post("/auth/forgot", data={"email": "sso@example.com"})) == \
-    _ohne_nonce(c.post("/auth/forgot", data={"email": "gibtsnicht@example.com"}))
+assert _without_nonce(c.post("/auth/forgot", data={"email": "sso@example.com"})) == \
+    _without_nonce(c.post("/auth/forgot", data={"email": "gibtsnicht@example.com"}))
 ok("H-4: pure SSO account (OIDC or LDAP bound, no local password) gets no reset link")
 # Counter-check: bound AND with a local password — the local password is a path of its own and
 # remains resettable.

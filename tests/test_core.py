@@ -18,7 +18,7 @@ app.include_router(auth.router())
 
 
 @app.get("/geheim")
-def geheim(u=Depends(auth.require_user)):
+def secret_text(u=Depends(auth.require_user)):
     return {"user": u["username"], "admin": bool(u["is_admin"])}
 
 
@@ -84,19 +84,19 @@ ok("Rollen + Admin-Override")
 # ---------- B2-3: the setup code is consumed ----------
 # Until T-13 `totp_confirm` did not book the time step: the same code, just typed
 # in for the setup, still signed in for up to 90 seconds afterwards. (Mutation probe: in `totp_confirm`
-# `_totp.verify(...)` instead of `passender_schritt` + `totp_step_verbrauchen` → red.)
+# `_totp.verify(...)` instead of `matching_step` + `consume_totp_step` → red.)
 db_b = os.path.join(tempfile.mkdtemp(), "b.db")
 auth_b = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db_b, passkey_enabled=False,
                                    oidc_enabled=False, cookie_secure=False))
 uid_b = auth_b.create_user("berta", "berta-geheim-1")
-_ereig = []
-auth_b.on_security_event = lambda e, k, d: _ereig.append(e)
-geheim_b = auth_b.totp_begin(uid_b)["secret"]
-code_b = pyotp.TOTP(geheim_b).now()
+_event = []
+auth_b.on_security_event = lambda e, k, d: _event.append(e)
+secret_text_b = auth_b.totp_begin(uid_b)["secret"]
+code_b = pyotp.TOTP(secret_text_b).now()
 assert auth_b.totp_confirm(uid_b, code_b)
 assert not auth_b._verify_totp(uid_b, code_b), "the setup code still signs in afterwards"
 assert not auth_b.totp_confirm(uid_b, code_b), "…and confirms a second time"
-assert _ereig == ["totp_enabled"], _ereig
+assert _event == ["totp_enabled"], _event
 assert any(z["event"] == "totp_enable" for z in auth_b.store.recent_audit(20))
 ok("B2-3: the setup code applies exactly once (afterwards not at /auth/totp either)")
 
@@ -108,15 +108,15 @@ app_b.include_router(auth_b.router())
 cb = TestClient(app_b)
 assert cb.post("/auth/login", data={"username": "berta", "password": "berta-geheim-1"},
                follow_redirects=False).status_code == 303
-geheim_b = auth_b.totp_begin(uid_b)["secret"]
-grenze = auth_b._sec("totp_setup_max_attempts")
-antworten = [cb.post("/auth/totp/setup", data={"code": "000000"}).json().get("ok") for _ in range(grenze)]
-assert antworten == [False] * grenze, antworten
-r = cb.post("/auth/totp/setup", data={"code": pyotp.TOTP(geheim_b).now()})
-assert r.status_code == 429, f"after {grenze} failed attempts the confirmation must lock, was {r.status_code}"
+secret_text_b = auth_b.totp_begin(uid_b)["secret"]
+limit = auth_b._sec("totp_setup_max_attempts")
+responses = [cb.post("/auth/totp/setup", data={"code": "000000"}).json().get("ok") for _ in range(limit)]
+assert responses == [False] * limit, responses
+r = cb.post("/auth/totp/setup", data={"code": pyotp.TOTP(secret_text_b).now()})
+assert r.status_code == 429, f"after {limit} failed attempts the confirmation must lock, was {r.status_code}"
 assert not auth_b.store.has_confirmed_totp(uid_b)
-fehl = [z for z in auth_b.store.recent_audit(50) if z["event"] == "login_fail" and "totp_setup" in (z["detail"] or "")]
-assert len(fehl) >= grenze, "every failed attempt is in the audit log"
+fail = [z for z in auth_b.store.recent_audit(50) if z["event"] == "login_fail" and "totp_setup" in (z["detail"] or "")]
+assert len(fail) >= limit, "every failed attempt is in the audit log"
 # Own bucket: the sign-in of the same account stays open.
 assert not auth_b._is_locked("berta", "testclient")
 assert TestClient(app_b).post("/auth/login", data={"username": "berta", "password": "berta-geheim-1"},

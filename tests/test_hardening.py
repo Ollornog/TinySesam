@@ -59,7 +59,7 @@ print("  ✓ real client IP: XFF only behind a trusted proxy")
 # unlimited and silently — no 429, no failed attempt, no log entry, and a hit
 # silently set the own password (so the attack stayed invisible even on success).
 AT = chr(64)          # no address in plain text in the source
-def _mail(lokal): return lokal + AT + "example.com"
+def _mail(local): return local + AT + "example.com"
 
 db2 = os.path.join(tempfile.mkdtemp(), "t.db")
 auth2 = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db2, passkey_enabled=False,
@@ -74,47 +74,47 @@ auth2.set_security("password_change_max_attempts", 3)
 auth2.set_security("rate_limit_max", 500)
 app2 = FastAPI()
 app2.include_router(auth2.router())
-OPFER_PW = "Opfer-Passwort-2026"
-ANG_PW = "Angreifer-Passwort-1"
-uid_opfer = auth2.create_user("chef", OPFER_PW, email=_mail("chef"), is_admin=True)
+VICTIM_PW = "Opfer-Passwort-2026"
+GIVEN_PW = "Angreifer-Passwort-1"
+uid_victim = auth2.create_user("chef", VICTIM_PW, email=_mail("chef"), is_admin=True)
 # The collision arises via a raw INSERT, i.e. past the guard — it thereby represents a
 # database from BEFORE R4-12 (legacy data). Since R4-12 `create_user` locks the two
 # namespaces crosswise, a new collision can no longer arise via the API; an
 # existing one is not resolved retroactively, though — the ID check here protects against exactly that.
 # Since G12c `store.create_user` rejects it too (identifier trigger); an INSERT without a bucket is
 # the route of a foreign writer (older version, sqlite3 tool) that the trigger does not see.
-from tinysesam.store import jetzt as _jetzt                                     # noqa: E402
-uid_ang = auth2.store._exec("INSERT INTO users(username, display_name, email, created_at) "
+from tinysesam.store import now as _now                                     # noqa: E402
+uid_given = auth2.store._exec("INSERT INTO users(username, display_name, email, created_at) "
                             "VALUES (?,?,?,?)", (_mail("chef"), _mail("chef"), _mail("eve"),
-                                                 _jetzt())).lastrowid
-auth2.set_password(uid_ang, ANG_PW)
+                                                 _now())).lastrowid
+auth2.set_password(uid_given, GIVEN_PW)
 
 # Precondition: the attacker's identifier really points to the foreign account. Without it
 # the attack would come to nothing and the test would prove nothing.
-assert auth2.find_user(_mail("chef"))["id"] == uid_opfer != uid_ang, "attack situation not established"
+assert auth2.find_user(_mail("chef"))["id"] == uid_victim != uid_given, "attack situation not established"
 
-ang = TestClient(app2)
-tok, _ = auth2.start_session(uid_ang, "password", remember=True)
-ang.cookies.set(auth2.cfg.session_cookie, tok)
+given = TestClient(app2)
+tok, _ = auth2.start_session(uid_given, "password", remember=True)
+given.cookies.set(auth2.cfg.session_cookie, tok)
 
 # (a) The victim's CORRECT password is no longer a hit for this session.
-r = ang.post("/auth/password", json={"current": OPFER_PW, "new": "neues-langes-passwort"})
+r = given.post("/auth/password", json={"current": VICTIM_PW, "new": "neues-langes-passwort"})
 assert r.status_code == 403, f"foreign password was accepted: {r.status_code}"
-assert auth2._check_password("chef", OPFER_PW) is not None, "victim's password was changed"
+assert auth2._check_password("chef", VICTIM_PW) is not None, "victim's password was changed"
 print("  ✓ /auth/password checks the own account ID, not the resolved login identifier")
 
 # (b) Guessing is throttled: after password_change_max_attempts at the latest a 429 comes instead of a 403.
 auth2.store.clear_fails(username=_mail("chef"))
-GRENZE = auth2._sec("password_change_max_attempts")
-codes = [ang.post("/auth/password", json={"current": f"falsch{i}", "new": "neues-langes-passwort"}).status_code
-         for i in range(GRENZE + 2)]
+LIMIT = auth2._sec("password_change_max_attempts")
+codes = [given.post("/auth/password", json={"current": f"falsch{i}", "new": "neues-langes-passwort"}).status_code
+         for i in range(LIMIT + 2)]
 assert 429 in codes, f"no lockout on /auth/password: {codes}"
 # The threshold is wired, not just present: the first 429 sits EXACTLY behind it.
 # (Mutation probe: `limit = self.sec("password_change_max_attempts") - 1` in
 # `is_password_change_locked` → [403, 403, 429, 429, 429]. `429 in codes` still holds, this
 # line falls — which is why it is here.)
-assert codes.index(429) == GRENZE, f"429 not after {GRENZE} failed attempts: {codes}"
-assert auth2.store.count_fails(0, username=_mail("chef"), method="password_change") >= GRENZE, \
+assert codes.index(429) == LIMIT, f"429 not after {LIMIT} failed attempts: {codes}"
+assert auth2.store.count_fails(0, username=_mail("chef"), method="password_change") >= LIMIT, \
     "failed attempts were not booked"
 assert any(a["event"] == "login_fail" and "password_change" in (a["detail"] or "")
            for a in auth2.store.recent_audit(20)), "no log entry for the failed attempt"
@@ -122,10 +122,10 @@ print("  ✓ old-password guessing runs into lock + log (429, login_attempt, aud
 
 # (c) The legitimate route keeps working — with the OWN password.
 auth2.store.clear_fails(username=_mail("chef"))
-r = ang.post("/auth/password", json={"current": ANG_PW, "new": "neues-langes-passwort"})
+r = given.post("/auth/password", json={"current": GIVEN_PW, "new": "neues-langes-passwort"})
 assert r.status_code == 200, f"own password change fails: {r.status_code} {r.text[:120]}"
-assert auth2._verify_user_password(uid_ang, "neues-langes-passwort"), "new password not set"
-assert auth2._check_password("chef", OPFER_PW) is not None, "foreign account touched"
+assert auth2._verify_user_password(uid_given, "neues-langes-passwort"), "new password not set"
+assert auth2._check_password("chef", VICTIM_PW) is not None, "foreign account touched"
 print("  ✓ own password change still possible unchanged")
 
 # (d) Regression: the counter is METHOD-BOUND. Failed attempts at the password change are no
@@ -139,15 +139,15 @@ uid_anna = auth2.create_user("anna", ANNA_PW)
 anna = TestClient(app2)
 tok_anna, _ = auth2.start_session(uid_anna, "password", remember=True)
 anna.cookies.set(auth2.cfg.session_cookie, tok_anna)
-for i in range(GRENZE + 1):
+for i in range(LIMIT + 1):
     anna.post("/auth/password", json={"current": f"vertippt{i}", "new": "neues-langes-passwort"})
-assert auth2.store.count_fails(0, username="anna", method="password_change") >= GRENZE, \
+assert auth2.store.count_fails(0, username="anna", method="password_change") >= LIMIT, \
     "typos were not booked — the test measures nothing"
 assert not auth2._is_locked("anna", "testclient"), "typos at the password change lock the login"
-frisch = TestClient(app2)
-r = frisch.post("/auth/login", data={"username": "anna", "password": ANNA_PW}, follow_redirects=False)
+fresh = TestClient(app2)
+r = fresh.post("/auth/login", data={"username": "anna", "password": ANNA_PW}, follow_redirects=False)
 assert r.status_code == 303, f"login locked after typos at the password change: {r.status_code}"
-assert auth2.cfg.session_cookie in frisch.cookies, "no session after the login"
+assert auth2.cfg.session_cookie in fresh.cookies, "no session after the login"
 print("  ✓ typos at the password change do not lock the sign-in (own counter)")
 
 # (e) The lock still applies — where guessing happened: Anna's password change stays shut, even
@@ -165,27 +165,27 @@ print("  ✓ lock applies at the password change itself and can be lifted")
 # The failed attempts here all come from the same test IP — exactly the
 # situation of an office behind NAT. (Mutation probe: remove `exclude_methods` in the IP branch of `is_locked`
 # → `is_locked("unbeteiligt", …)` becomes True and the third party's login 429.)
-IP_GRENZE = auth2._sec("max_login_attempts") * auth2._sec("ip_attempt_factor")
+IP_LIMIT = auth2._sec("max_login_attempts") * auth2._sec("ip_attempt_factor")
 assert auth2.store.count_fails(0, ip="testclient", method="password_change") == 0, \
     "precondition: the test IP starts without failed attempts at the password change"
 for n in range(1, 9):
-    if auth2.store.count_fails(0, ip="testclient", method="password_change") >= IP_GRENZE:
+    if auth2.store.count_fails(0, ip="testclient", method="password_change") >= IP_LIMIT:
         break
     uid = auth2.create_user(f"kollege{n}", "Kollegen-Passwort-1")
-    kollege = TestClient(app2)
+    colleague = TestClient(app2)
     t, _ = auth2.start_session(uid, "password", remember=True)
-    kollege.cookies.set(auth2.cfg.session_cookie, t)
-    for _ in range(GRENZE):
-        kollege.post("/auth/password", json={"current": "vertippt", "new": "neues-langes-passwort"})
+    colleague.cookies.set(auth2.cfg.session_cookie, t)
+    for _ in range(LIMIT):
+        colleague.post("/auth/password", json={"current": "vertippt", "new": "neues-langes-passwort"})
 # The IP threshold of the LOGIN is reached — with the method-blind counter every
 # login from this IP would be locked from here on, even that of an account that never did anything wrong.
-assert auth2.store.count_fails(0, ip="testclient", method="password_change") >= IP_GRENZE, \
+assert auth2.store.count_fails(0, ip="testclient", method="password_change") >= IP_LIMIT, \
     "attack situation not established: the test IP has not reached the login IP threshold"
 auth2.create_user("unbeteiligt", "Dritte-Passwort-1")
 assert not auth2._is_locked("unbeteiligt", "testclient"), \
     "mistyping colleagues behind NAT lock out an uninvolved user"
-dritter = TestClient(app2)
-r = dritter.post("/auth/login", data={"username": "unbeteiligt", "password": "Dritte-Passwort-1"},
+third = TestClient(app2)
+r = third.post("/auth/login", data={"username": "unbeteiligt", "password": "Dritte-Passwort-1"},
                  follow_redirects=False)
 assert r.status_code == 303, f"login of the uninvolved user locked: {r.status_code}"
 print("  ✓ no NAT amplification: mistyping colleagues do not lock out uninvolved users")
@@ -197,15 +197,15 @@ print("  ✓ no NAT amplification: mistyping colleagues do not lock out uninvolv
 # either: whoever guesses here already needs a valid session of THIS account.
 # (Mutation probe: give `ip_faktor=self.sec("ip_attempt_factor")` back to `is_password_change_locked`
 # → these three lines fall, the fourth gets 429.)
-assert auth2.store.count_fails(0, ip="testclient", method="password_change") >= IP_GRENZE, \
+assert auth2.store.count_fails(0, ip="testclient", method="password_change") >= IP_LIMIT, \
     "precondition: the test IP has long exceeded the login IP threshold"
-uid_vierter = auth2.create_user("vierter", "Vierte-Passwort-1")
-vierter = TestClient(app2)
-t4, _ = auth2.start_session(uid_vierter, "password", remember=True)
-vierter.cookies.set(auth2.cfg.session_cookie, t4)
+uid_fourth = auth2.create_user("vierter", "Vierte-Passwort-1")
+fourth = TestClient(app2)
+t4, _ = auth2.start_session(uid_fourth, "password", remember=True)
+fourth.cookies.set(auth2.cfg.session_cookie, t4)
 assert not auth2._is_password_change_locked("vierter", "testclient"), \
     "mistyping colleagues lock the uninvolved user's own password change"
-r = vierter.post("/auth/password", json={"current": "Vierte-Passwort-1", "new": "neues-langes-passwort"})
+r = fourth.post("/auth/password", json={"current": "Vierte-Passwort-1", "new": "neues-langes-passwort"})
 assert r.status_code == 200, f"password change of the uninvolved user locked: {r.status_code} {r.text[:120]}"
 print("  ✓ the own bucket locks per account, not per connection (no NAT collateral)")
 
@@ -220,64 +220,64 @@ import ast                                                                      
 from pathlib import Path                                                        # noqa: E402
 from tinysesam import security as _sec                                          # noqa: E402
 
-QUELLEN = sorted((Path(__file__).resolve().parent.parent / "tinysesam").glob("*.py"))
-ECHTE_ANMELDUNG = {"password", "pin", "totp"}     # deliberately maintained here, not derived
+SOURCES = sorted((Path(__file__).resolve().parent.parent / "tinysesam").glob("*.py"))
+REAL_SIGN_IN = {"password", "pin", "totp"}     # deliberately maintained here, not derived
 
 
-def _record_login_methoden(pfad: Path) -> set:
+def _record_login_methods(path: Path) -> set:
     """With which methods does this module source call `record_login()`? (AST, not grep:
     a docstring quoting the line is no call.)"""
-    baum = ast.parse(pfad.read_text(encoding="utf-8"))
-    gefunden = set()
-    for knoten in ast.walk(baum):
-        if not (isinstance(knoten, ast.Call) and isinstance(knoten.func, ast.Attribute)):
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    found = set()
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):
             continue
-        if knoten.func.attr != "_record_login":
+        if node.func.attr != "_record_login":
             continue
-        arg = knoten.args[3] if len(knoten.args) > 3 else None
-        for kw in knoten.keywords:
+        arg = node.args[3] if len(node.args) > 3 else None
+        for kw in node.keywords:
             if kw.arg == "method":
                 arg = kw.value
         if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
-            gefunden.add(arg.value)
+            found.add(arg.value)
         else:
-            gefunden.add(f"<non-constant in {pfad.name}:{knoten.lineno}>")
-    return gefunden
+            found.add(f"<non-constant in {path.name}:{node.lineno}>")
+    return found
 
 
-benutzt = set().union(*(_record_login_methoden(q) for q in QUELLEN))
-assert "password" in benutzt and "reauth" in benutzt and "resource" in benutzt, \
-    f"the collector no longer finds the known call sites: {sorted(benutzt)}"
-unbekannt = benutzt - ECHTE_ANMELDUNG - set(_sec.NICHT_LOGIN_METHODEN)
-assert not unbekannt, (f"new record_login method(s) {sorted(unbekannt)}: either a real "
-                       "sign-in attempt (then add to ECHTE_ANMELDUNG above) or none "
-                       "(then to security.EIGENE_SPERRE — with an own bucket)")
-print(f"  ✓ every record_login method is classified ({len(benutzt)} found, AST over tinysesam/)")
+used = set().union(*(_record_login_methods(q) for q in SOURCES))
+assert "password" in used and "reauth" in used and "resource" in used, \
+    f"the collector no longer finds the known call sites: {sorted(used)}"
+unknown = used - REAL_SIGN_IN - set(_sec.NOT_LOGIN_METHODS)
+assert not unknown, (f"new record_login method(s) {sorted(unknown)}: either a real "
+                       "sign-in attempt (then add to REAL_SIGN_IN above) or none "
+                       "(then to security.OWN_LOCK — with an own bucket)")
+print(f"  ✓ every record_login method is classified ({len(used)} found, AST over tinysesam/)")
 
 # No entry without a brake: taking a method out of the login lockout without giving it an
 # own bucket would mean making it guessable without limit.
 db3 = os.path.join(tempfile.mkdtemp(), "t.db")
 auth3 = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db3, cookie_secure=False,
                                   passkey_enabled=False, oidc_enabled=False))
-for _m in _sec.NICHT_LOGIN_METHODEN:
-    riegel = getattr(auth3, _sec.EIGENE_SPERRE[_m], None)
-    assert callable(riegel), f"{_m} is in NICHT_LOGIN_METHODEN but has no bucket of its own"
+for _m in _sec.NOT_LOGIN_METHODS:
+    bolt = getattr(auth3, _sec.OWN_LOCK[_m], None)
+    assert callable(bolt), f"{_m} is in NICHT_LOGIN_METHODEN but has no bucket of its own"
     name = f"probant-{_m}"
     for _ in range(20):
         auth3._record_login(name, "198.51.100.4", False, _m)
     assert not auth3._is_locked(name, "198.51.100.4"), \
         f"failed attempts with method={_m} lock the sign-in (neither sign-in nor exception?)"
-    assert riegel(name, "198.51.100.4"), \
-        f"method={_m} is taken out of the login lockout, but {_sec.EIGENE_SPERRE[_m]} does not brake"
-print(f"  ✓ every non-login method has a brake of its own ({', '.join(_sec.NICHT_LOGIN_METHODEN)})")
+    assert bolt(name, "198.51.100.4"), \
+        f"method={_m} is taken out of the login lockout, but {_sec.OWN_LOCK[_m]} does not brake"
+print(f"  ✓ every non-login method has a brake of its own ({', '.join(_sec.NOT_LOGIN_METHODS)})")
 
 # And the buckets are separate: one does not fill the other.
-for _m in _sec.NICHT_LOGIN_METHODEN:
-    for _anderer in _sec.NICHT_LOGIN_METHODEN:
-        if _anderer == _m:
+for _m in _sec.NOT_LOGIN_METHODS:
+    for _other in _sec.NOT_LOGIN_METHODS:
+        if _other == _m:
             continue
-        assert not getattr(auth3, _sec.EIGENE_SPERRE[_anderer])(f"probant-{_m}", None), \
-            f"failed attempts with method={_m} lock {_anderer} too"
+        assert not getattr(auth3, _sec.OWN_LOCK[_other])(f"probant-{_m}", None), \
+            f"failed attempts with method={_m} lock {_other} too"
 print("  ✓ the buckets are sealed against each other (a misstep of one method does not lock the other)")
 os.remove(db3)
 
@@ -287,31 +287,31 @@ os.remove(db3)
 # N times "not locked yet" and was allowed to guess N times. The probe artificially slows the check
 # (otherwise chance wins) and sends twelve requests at once: no more than the limit may
 # get through to the check. (Mutation probe: in `login_password` again
-# `is_locked()` + `record_login()` without `versuch` → all twelve get through.)
+# `is_locked()` + `record_login()` without `attempt` → all twelve get through.)
 import threading                                                                # noqa: E402
 import time as _time                                                            # noqa: E402
 from concurrent.futures import ThreadPoolExecutor                               # noqa: E402
 import pyotp                                                                    # noqa: E402
 
 
-def _salve(anzahl, aufruf):
+def _volley(count, call):
     """Release `anzahl` calls at once (barrier), return status codes."""
-    start = threading.Barrier(anzahl)
+    start = threading.Barrier(count)
 
-    def eins(i):
+    def one(i):
         start.wait(timeout=10)
-        return aufruf(i)
-    with ThreadPoolExecutor(max_workers=anzahl) as pool:
-        return sorted(pool.map(eins, range(anzahl)))
+        return call(i)
+    with ThreadPoolExecutor(max_workers=count) as pool:
+        return sorted(pool.map(one, range(count)))
 
 
-def _langsam(obj, name, sek=0.25):
-    echt = getattr(obj, name)
+def _slow(obj, name, sec=0.25):
+    real = getattr(obj, name)
 
-    def bremse(*a, **k):
-        _time.sleep(sek)
-        return echt(*a, **k)
-    setattr(obj, name, bremse)
+    def brake(*a, **k):
+        _time.sleep(sec)
+        return real(*a, **k)
+    setattr(obj, name, brake)
 
 
 db_t = os.path.join(tempfile.mkdtemp(), "t.db")
@@ -327,8 +327,8 @@ app_t = FastAPI()
 app_t.include_router(auth_t.router())
 
 # (1) Password login (R7-2)
-_langsam(auth_t, "_check_password")
-codes = _salve(12, lambda i: TestClient(app_t).post(
+_slow(auth_t, "_check_password")
+codes = _volley(12, lambda i: TestClient(app_t).post(
     "/auth/login", data={"username": "toni", "password": f"falsch{i}"}).status_code)
 assert codes.count(401) <= 3, f"R7-2: {codes.count(401)} of 12 parallel attempts were allowed to guess: {codes}"
 assert codes.count(429) >= 9, codes
@@ -340,40 +340,40 @@ auth_t.store.clear_fails(username="toni")
 # (Mutation probe: `begin_attempt` counts via `count_fails` and then books with its own
 # INSERT → red.)
 del auth_t._check_password                         # the real check again
-_langsam(auth_t.store, "_fails_abfrage", 0.05)
+_slow(auth_t.store, "_fails_query", 0.05)
 # New passwords, not those of volley (1): one already tried counts only once since 0.24.9.
-codes = _salve(12, lambda i: TestClient(app_t).post(
+codes = _volley(12, lambda i: TestClient(app_t).post(
     "/auth/login", data={"username": "toni", "password": f"anders{i}"}).status_code)
 assert codes.count(401) <= 3, f"counting and booking are separate steps: {codes.count(401)} of 12 through"
-del auth_t.store._fails_abfrage
+del auth_t.store._fails_query
 print(f"  ✓ …counting and booking in one transaction ({codes.count(401)} checked, {codes.count(429)} locked)")
 auth_t.store.clear_fails(username="toni")
 
 # (2) PIN login (R3-7) — the short key space is the actual target
-_langsam(auth_t, "_check_pin")
-codes = _salve(12, lambda i: TestClient(app_t).post(
+_slow(auth_t, "_check_pin")
+codes = _volley(12, lambda i: TestClient(app_t).post(
     "/auth/pin", data={"username": "toni", "pin": f"{i:04d}"}).status_code)
 assert codes.count(401) <= 3, f"R3-7: {codes.count(401)} of 12 parallel PIN attempts were allowed to guess: {codes}"
 print(f"  ✓ R3-7: parallel volley at the PIN — {codes.count(401)} checked, {codes.count(429)} locked")
 auth_t.store.clear_fails(username="toni")
 
 # (3) TOTP step (R3-2) — with known password, same half session for all
-geheim_t = auth_t.totp_begin(uid_t)["secret"]
-auth_t.totp_confirm(uid_t, pyotp.TOTP(geheim_t).now())
+secret_text_t = auth_t.totp_begin(uid_t)["secret"]
+auth_t.totp_confirm(uid_t, pyotp.TOTP(secret_text_t).now())
 c_t = TestClient(app_t)
 assert c_t.post("/auth/login", data={"username": "toni", "password": "Toni-Passwort-2026"},
                 follow_redirects=False).status_code == 303
-halb = c_t.cookies.get(auth_t.cfg.session_cookie)
-_langsam(auth_t, "_verify_totp")
+half = c_t.cookies.get(auth_t.cfg.session_cookie)
+_slow(auth_t, "_verify_totp")
 
 
 def _totp(i):
     ci = TestClient(app_t)
-    ci.cookies.set(auth_t.cfg.session_cookie, halb)
+    ci.cookies.set(auth_t.cfg.session_cookie, half)
     return ci.post("/auth/totp", data={"code": "000000"}).status_code
 
 
-codes = _salve(12, _totp)
+codes = _volley(12, _totp)
 assert codes.count(401) <= 3, f"R3-2: {codes.count(401)} of 12 parallel TOTP attempts were allowed to guess: {codes}"
 print(f"  ✓ R3-2: parallel volley at the TOTP step — {codes.count(401)} checked, {codes.count(429)} locked")
 
@@ -382,31 +382,31 @@ print(f"  ✓ R3-2: parallel volley at the TOTP step — {codes.count(401)} chec
 # 40 parallel codes reached the check, with a limit of 5. The effect is small (whoever sets up
 # sees the secret), but the promised limit only held for well-behaved single requests.
 # (Mutation probe: in `totp_setup_confirm` again `is_totp_setup_locked()` + `record_login()`
-# without `versuch` → 12 of 12 get through → red.)
+# without `attempt` → 12 of 12 get through → red.)
 auth_t.set_security("totp_setup_max_attempts", 3)
 uid_tilda = auth_t.create_user("tilda", "Tilda-Passwort-2026")
 c_tilda = TestClient(app_t)
 assert c_tilda.post("/auth/login", data={"username": "tilda", "password": "Tilda-Passwort-2026"},
                     follow_redirects=False).status_code == 303
-sitzung_tilda = c_tilda.cookies.get(auth_t.cfg.session_cookie)
+session_tilda = c_tilda.cookies.get(auth_t.cfg.session_cookie)
 auth_t.totp_begin(uid_tilda)
-_langsam(auth_t, "totp_confirm")
+_slow(auth_t, "totp_confirm")
 
 
-def _einrichten(i):
+def _set_up(i):
     ci = TestClient(app_t)
-    ci.cookies.set(auth_t.cfg.session_cookie, sitzung_tilda)
+    ci.cookies.set(auth_t.cfg.session_cookie, session_tilda)
     return ci.post("/auth/totp/setup", data={"code": "000000"}).status_code
 
 
-codes = _salve(12, _einrichten)
-geprueft = codes.count(200)
-assert geprueft <= 3, f"B2-12: {geprueft} of 12 parallel setup codes were allowed to guess: {codes}"
+codes = _volley(12, _set_up)
+checked = codes.count(200)
+assert checked <= 3, f"B2-12: {checked} of 12 parallel setup codes were allowed to guess: {codes}"
 assert codes.count(429) >= 9, codes
-assert auth_t.store.count_fails(0, username="tilda", method="totp_setup") == geprueft, \
+assert auth_t.store.count_fails(0, username="tilda", method="totp_setup") == checked, \
     "every checked code appears exactly once as a failed attempt in the own bucket"
 del auth_t.totp_confirm
-print(f"  ✓ B2-12: parallel volley at the TOTP setup — {geprueft} checked, {codes.count(429)} locked")
+print(f"  ✓ B2-12: parallel volley at the TOTP setup — {checked} checked, {codes.count(429)} locked")
 os.remove(db_t)
 
 # ---------- R7-6 / H-8: account AND address, not account alone ----------
@@ -414,7 +414,7 @@ os.remove(db_t)
 # a username locked out its owner for a window, correct password included.
 # Now the first threshold stops the pair of account and address; the account alone only closes at
 # `account_attempt_factor` times that, i.e. only when several connections guess.
-# (Mutation probe: remove the pair rule in `_regeln` and set `lockout_account` to
+# (Mutation probe: remove the pair rule in `_rules` and set `lockout_account` to
 # `max_login_attempts` → the owner gets 429.)
 db_f = os.path.join(tempfile.mkdtemp(), "t.db")
 auth_f = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db_f, cookie_secure=False,
@@ -423,25 +423,25 @@ auth_f.create_user("inhaber", "Inhaber-Passwort-1")
 app_f = FastAPI()
 app_f.include_router(auth_f.router())
 G = auth_f._sec("max_login_attempts")
-fremd = TestClient(app_f, client=("198.51.100.20", 40000))
-codes = [fremd.post("/auth/login", data={"username": "inhaber", "password": f"rate-{_i}"}).status_code
+foreign = TestClient(app_f, client=("198.51.100.20", 40000))
+codes = [foreign.post("/auth/login", data={"username": "inhaber", "password": f"rate-{_i}"}).status_code
          for _i in range(G + 1)]
 assert codes == [401] * G + [429], codes
-assert fremd.post("/auth/login", data={"username": "inhaber", "password": "Inhaber-Passwort-1"}
+assert foreign.post("/auth/login", data={"username": "inhaber", "password": "Inhaber-Passwort-1"}
                   ).status_code == 429, "the stranger's address is not locked for this account"
-inhaber = TestClient(app_f, client=("203.0.113.21", 40000))
-r = inhaber.post("/auth/login", data={"username": "inhaber", "password": "Inhaber-Passwort-1"},
+holder = TestClient(app_f, client=("203.0.113.21", 40000))
+r = holder.post("/auth/login", data={"username": "inhaber", "password": "Inhaber-Passwort-1"},
                  follow_redirects=False)
 assert r.status_code == 303, f"R7-6: a stranger locks out the owner: {r.status_code}"
 print("  ✓ R7-6/H-8: a stranger locks only the account+address pair, not the owner")
-inhaber.get("/auth/logout")
+holder.get("/auth/logout")
 # The account threshold stays against distributed guessing: many connections together lock the account.
 # (The login above was complete and cleared the failed attempts — R7-1 —, so count anew.)
 for i in range(auth_f._sec("account_attempt_factor")):
     ci = TestClient(app_f, client=(f"198.51.100.{30 + i}", 40000))
     for _j in range(G):
         ci.post("/auth/login", data={"username": "inhaber", "password": f"rate-{i}-{_j}"})
-r = inhaber.post("/auth/login", data={"username": "inhaber", "password": "Inhaber-Passwort-1"})
+r = holder.post("/auth/login", data={"username": "inhaber", "password": "Inhaber-Passwort-1"})
 assert r.status_code == 429, f"distributed guessing across many addresses stays unlimited: {r.status_code}"
 print("  ✓ …the account threshold still applies when many addresses guess together")
 os.remove(db_f)
@@ -450,7 +450,7 @@ os.remove(db_f)
 # Until the third round ' opfer', 'OPFER\t', '\xa0opfer' … hit the same account, but filled
 # a bucket of their own each: an address pool with one spelling per address guessed without limit, and
 # the probe above did not see it because it only typed the canonical identifier. (Mutation probe: in
-# `TinySesam._topf` return the raw `username` → 60 attempts reach the check.)
+# `TinySesam._bucket` return the raw `username` → 60 attempts reach the check.)
 db_v = os.path.join(tempfile.mkdtemp(), "t.db")
 auth_v = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db_v, cookie_secure=False,
                                    passkey_enabled=False, oidc_enabled=False))
@@ -458,23 +458,23 @@ auth_v.create_user("opfer", "Opfer-Passwort-1", email="opfer@example.com")
 app_v = FastAPI()
 app_v.include_router(auth_v.router())
 G = auth_v._sec("max_login_attempts")
-DECKEL = G * auth_v._sec("account_attempt_factor")
-varianten = [" opfer", "opfer ", "\topfer", "OPFER", " Opfer\t", "\xa0opfer", "opfer\n", "  oPfEr  ",
+LID = G * auth_v._sec("account_attempt_factor")
+variants = [" opfer", "opfer ", "\topfer", "OPFER", " Opfer\t", "\xa0opfer", "opfer\n", "  oPfEr  ",
              "\nOPFER", "opfer ", " opfer ", "Opfer"]
-assert all(auth_v.find_user(v) for v in varianten), "the variants no longer hit the same account"
-geprueft = 0
-for i, v in enumerate(varianten):
+assert all(auth_v.find_user(v) for v in variants), "the variants no longer hit the same account"
+checked = 0
+for i, v in enumerate(variants):
     ci = TestClient(app_v, client=(f"2001:db8:1::{i:x}", 40000))
     for _j in range(G):
-        geprueft += ci.post("/auth/login", data={"username": v, "password": f"rate-{i}-{_j}"}).status_code == 401
-assert geprueft <= DECKEL, \
-    f"R7-6/H-8: {geprueft} attempts via spellings of the identifier, at most {DECKEL} are promised"
+        checked += ci.post("/auth/login", data={"username": v, "password": f"rate-{i}-{_j}"}).status_code == 401
+assert checked <= LID, \
+    f"R7-6/H-8: {checked} attempts via spellings of the identifier, at most {LID} are promised"
 r = TestClient(app_v, client=("203.0.113.22", 40000)).post(
     "/auth/login", data={"username": "opfer", "password": "Opfer-Passwort-1"})
-assert r.status_code == 429, f"the account threshold did not apply at {geprueft} attempts: {r.status_code}"
-print(f"  ✓ …also across whitespace and spellings of the identifier: {geprueft} checked, then closed")
+assert r.status_code == 429, f"the account threshold did not apply at {checked} attempts: {r.status_code}"
+print(f"  ✓ …also across whitespace and spellings of the identifier: {checked} checked, then closed")
 # Lifting must hit the same bucket: the failed attempts stand under 'opfer', not under '  oPfEr  '.
-assert auth_v.lift_lockout(auth_v.find_user("opfer")["id"]) == geprueft
+assert auth_v.lift_lockout(auth_v.find_user("opfer")["id"]) == checked
 assert auth_v.store.count_fails(0, username="opfer") == 0
 os.remove(db_v)
 
@@ -505,8 +505,8 @@ assert auth_m.store.count_fails(0, username="mia", method="password_change") == 
 print("  ✓ R7-1: a full sign-in clears all sign-in buckets, not the own ones")
 c_m.get("/auth/logout")
 # Partial success: the password succeeds, TOTP is still pending → the TOTP failed attempts stay.
-geheim_m = auth_m.totp_begin(uid_m)["secret"]
-auth_m.totp_confirm(uid_m, pyotp.TOTP(geheim_m).now())
+secret_text_m = auth_m.totp_begin(uid_m)["secret"]
+auth_m.totp_confirm(uid_m, pyotp.TOTP(secret_text_m).now())
 auth_m._record_login("mia", "testclient", False, "totp")
 assert c_m.post("/auth/login", data={"username": "mia", "password": "Mia-Passwort-2026"},
                 follow_redirects=False).status_code == 303

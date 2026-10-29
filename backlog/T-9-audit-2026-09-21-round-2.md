@@ -23,7 +23,7 @@ As in T-8, every item is first reproduced against the code before it is touched.
       `admin_identifiers` when registration is open — but `maybe_promote_admin` still compared
       "name OR email". Anyone who registers as `username="chef@example.com"` and confirms their
       own mailbox became first admin. The hole had only moved.
-- [x] **`tinysesam backup` migrates the source database.** `_oeffne()` takes the full
+- [x] **`tinysesam backup` migrates the source database.** `_open()` takes the full
       `Store` constructor, which runs `_migrate()` — **before** copying. Anyone who does the one
       right thing before the update and takes a backup thereby lifts the running installation to
       the new schema while the old code is running. The way back is closed afterwards, and a file
@@ -107,7 +107,7 @@ As in T-8, every item is first reproduced against the code before it is touched.
       own `examples/showcase.py` does exactly that.
 - [x] `forward_headers={"user": None}` passes the guard and turns every forward-auth request
       into a 500; `{"user": 123}` kills the constructor with a raw `TypeError`.
-- [x] `_fehlt_extra` in `webauthn_.py` is dead code; the passkey case raises `RuntimeError`
+- [x] `_missing_extra` in `webauthn_.py` is dead code; the passkey case raises `RuntimeError`
       instead of `MissingExtra`.
 - [x] `ldap_.authenticate()` **swallows** the missing extra and answers as for a wrong
       password; `saml_.metadata()` imports unguarded → 500.

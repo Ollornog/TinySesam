@@ -2,800 +2,841 @@
   "LoginResult": {
     "REASONS": {
       "sig": "('ok', 'missing', 'invalid', 'locked', 'locked_series', 'ratelimit', 'directory_down', 'method_disabled', 'no_session')",
-      "stufe": "A"
+      "tier": "A"
     },
     "done": {
       "sig": "bool = False",
-      "stufe": "A"
+      "tier": "A"
     },
     "message": {
       "sig": "str = ''",
-      "stufe": "A"
+      "tier": "A"
     },
     "next_factor": {
       "sig": "Optional[str] = None",
-      "stufe": "A"
+      "tier": "A"
     },
     "next_url": {
       "sig": "str = ''",
-      "stufe": "A"
+      "tier": "A"
     },
     "ok": {
-      "sig": "bool = <pflicht>",
-      "stufe": "A"
+      "sig": "bool = <required>",
+      "tier": "A"
     },
     "reason": {
-      "sig": "str = <pflicht>",
-      "stufe": "A"
+      "sig": "str = <required>",
+      "tier": "A"
     },
     "redirect": {
       "sig": "()",
-      "stufe": "A"
+      "tier": "A"
     },
     "set_cookie": {
       "sig": "(response) -> 'None'",
-      "stufe": "A"
+      "tier": "A"
     },
     "status": {
-      "sig": "int = <pflicht>",
-      "stufe": "A"
+      "sig": "int = <required>",
+      "tier": "A"
     },
     "user": {
       "sig": "Optional[dict] = None",
-      "stufe": "A"
+      "tier": "A"
     }
   },
   "PasswordChangeResult": {
     "REASONS": {
       "sig": "('ok', 'missing', 'invalid', 'locked', 'ratelimit', 'policy', 'no_session')",
-      "stufe": "A"
+      "tier": "A"
     },
     "api_keys_active": {
       "sig": "int = 0",
-      "stufe": "A"
+      "tier": "A"
     },
     "message": {
       "sig": "str = ''",
-      "stufe": "A"
+      "tier": "A"
     },
     "ok": {
-      "sig": "bool = <pflicht>",
-      "stufe": "A"
+      "sig": "bool = <required>",
+      "tier": "A"
     },
     "reason": {
-      "sig": "str = <pflicht>",
-      "stufe": "A"
+      "sig": "str = <required>",
+      "tier": "A"
     },
     "status": {
-      "sig": "int = <pflicht>",
-      "stufe": "A"
+      "sig": "int = <required>",
+      "tier": "A"
     }
   },
   "TinySesam": {
     "add_messages": {
       "sig": "(lang, mapping: 'dict')",
-      "stufe": "A"
+      "tier": "A"
     },
     "admin_claim_token": {
       "sig": "() -> 'Optional[str]'",
-      "stufe": "B"
+      "tier": "B"
     },
     "admin_exists": {
       "sig": "() -> 'bool'",
-      "stufe": "B"
+      "tier": "B"
     },
     "admin_router": {
       "sig": "()",
-      "stufe": "A"
+      "tier": "A"
     },
     "after_response": {
       "sig": "(resp, task, on_overflow=None)",
-      "stufe": "B"
+      "tier": "B"
     },
     "all_security": {
       "sig": "() -> 'dict'",
-      "stufe": "B"
+      "tier": "B"
     },
     "api_key_kind": {
       "sig": "(key) -> 'str'",
-      "stufe": "B"
+      "tier": "B"
     },
     "apply_factor": {
       "sig": "(request, user_id, factor, ip=None, ua=None, remember=True, email_verified: 'Optional[bool]' = None) -> 'tuple[str, bool, bool]'",
-      "stufe": "B"
+      "tier": "B"
     },
     "apply_idp_groups": {
       "sig": "(user_id, groups, mapping: 'dict', substring: 'Optional[bool]' = None, dn: 'bool' = False)",
-      "stufe": "B"
+      "tier": "B"
     },
     "audit": {
       "sig": "(event, username=None, ip=None, detail=None)",
-      "stufe": "B"
+      "tier": "B"
     },
     "browser_path": {
       "sig": "(request: 'Optional[Request]', path: 'str') -> 'str'",
-      "stufe": "B"
+      "tier": "B"
     },
     "change_password": {
       "sig": "(request: 'Request', current: 'str', new: 'str', *, csrf: 'Optional[str]' = None) -> 'PasswordChangeResult'",
-      "stufe": "A"
+      "tier": "A"
     },
     "change_username": {
       "sig": "(user_id, new_username, ip: 'Optional[str]' = None, *, by_operator: 'bool' = False) -> 'str'",
-      "stufe": "A"
+      "tier": "A"
     },
     "check_ldap": {
-      "bis": "1.0",
-      "seit": "0.22.0",
       "sig": "(username, password) -> 'Optional[dict]'",
-      "stufe": "C",
-      "ziel": "_check_ldap"
+      "since": "0.22.0",
+      "target": "_check_ldap",
+      "tier": "C",
+      "until": "1.0"
     },
     "check_password": {
-      "bis": "1.0",
-      "seit": "0.22.0",
       "sig": "(username, password) -> 'Optional[dict]'",
-      "stufe": "C",
-      "ziel": "_check_password"
+      "since": "0.22.0",
+      "target": "_check_password",
+      "tier": "C",
+      "until": "1.0"
     },
     "check_pin": {
-      "bis": "1.0",
-      "seit": "0.22.0",
       "sig": "(username, pin) -> 'Optional[dict]'",
-      "stufe": "C",
-      "ziel": "_check_pin"
+      "since": "0.22.0",
+      "target": "_check_pin",
+      "tier": "C",
+      "until": "1.0"
     },
     "check_resource": {
-      "bis": "1.0",
-      "seit": "0.22.0",
       "sig": "(name, secret) -> 'bool'",
-      "stufe": "C",
-      "ziel": "_check_resource"
+      "since": "0.22.0",
+      "target": "_check_resource",
+      "tier": "C",
+      "until": "1.0"
     },
     "check_saml": {
-      "bis": "1.0",
-      "seit": "0.22.0",
       "sig": "(nameid, attrs, ip: 'Optional[str]' = None) -> 'Optional[dict]'",
-      "stufe": "C",
-      "ziel": "_check_saml"
+      "since": "0.22.0",
+      "target": "_check_saml",
+      "tier": "C",
+      "until": "1.0"
     },
     "client_ip": {
       "sig": "(request: 'Request') -> 'str'",
-      "stufe": "B"
+      "tier": "B"
     },
     "complete_mfa": {
-      "bis": "1.0",
-      "seit": "0.22.0",
       "sig": "(token) -> 'Optional[str]'",
-      "stufe": "C",
-      "ziel": "complete_totp"
+      "since": "0.22.0",
+      "target": "complete_totp",
+      "tier": "C",
+      "until": "1.0"
     },
     "complete_totp": {
       "sig": "(token) -> 'Optional[str]'",
-      "stufe": "A"
+      "tier": "A"
     },
     "confirm_email_change": {
       "sig": "(raw, ip: 'Optional[str]' = None) -> 'Optional[str]'",
-      "stufe": "B"
+      "tier": "B"
     },
     "confirm_password": {
       "sig": "(request: 'Request', password: 'str', *, next: 'str' = '', csrf: 'Optional[str]' = None) -> 'LoginResult'",
-      "stufe": "A"
+      "tier": "A"
     },
     "confirm_pin": {
       "sig": "(request: 'Request', pin: 'str', *, next: 'str' = '', csrf: 'Optional[str]' = None) -> 'LoginResult'",
-      "stufe": "A"
+      "tier": "A"
     },
     "confirm_totp": {
       "sig": "(request: 'Request', code: 'str', *, next: 'str' = '', csrf: 'Optional[str]' = None) -> 'LoginResult'",
-      "stufe": "A"
+      "tier": "A"
     },
     "consume_admin_claim": {
-      "bis": "1.0",
-      "seit": "0.22.0",
       "sig": "(token, user) -> 'bool'",
-      "stufe": "C",
-      "ziel": "_consume_admin_claim"
+      "since": "0.22.0",
+      "target": "_consume_admin_claim",
+      "tier": "C",
+      "until": "1.0"
     },
     "count_other_sessions": {
       "sig": "(request, user, token: 'Optional[str]' = None) -> 'int'",
-      "stufe": "B"
+      "tier": "B"
     },
     "create_api_key": {
       "sig": "(user_id, name=None, expires_days=None, roles=None, kind: 'str' = 'automation') -> 'dict'",
-      "stufe": "A"
+      "tier": "A"
     },
     "create_invite": {
       "sig": "(email, base_url, roles=None, is_admin=False, ttl_min=None) -> 'dict'",
-      "stufe": "A"
+      "tier": "A"
     },
     "create_magic_token": {
       "sig": "(purpose, user_id=None, email=None, ttl_min=None, payload=None) -> 'str'",
-      "stufe": "B"
+      "tier": "B"
     },
     "create_service": {
       "sig": "(username, roles=None, display_name=None) -> 'int'",
-      "stufe": "A"
+      "tier": "A"
     },
     "create_user": {
       "sig": "(username, password=None, is_admin=False, roles=None, display_name=None, email=None, is_service=False, email_verified: 'bool' = True, *, self_chosen_name: 'bool' = False) -> 'int'",
-      "stufe": "A"
+      "tier": "A"
     },
     "csrf_token": {
       "sig": "(request: 'Optional[Request]' = None) -> 'str'",
-      "stufe": "A"
+      "tier": "A"
     },
     "current_user": {
       "sig": "(request) -> 'Optional[dict]'",
-      "stufe": "A"
+      "tier": "A"
     },
     "delete_user": {
       "sig": "(user_id: 'int') -> 'bool'",
-      "stufe": "B"
+      "tier": "B"
     },
     "disable_pin": {
       "sig": "(user_id)",
-      "stufe": "B"
+      "tier": "B"
     },
     "ensure_admin": {
       "sig": "(username, password) -> 'bool'",
-      "stufe": "A"
+      "tier": "A"
     },
     "ensure_csrf": {
       "sig": "(request: 'Request', response: 'Response') -> 'str'",
-      "stufe": "A"
+      "tier": "A"
     },
     "factor_entry": {
-      "bis": "1.0",
-      "seit": "0.22.0",
       "sig": "(step, nxt='/') -> 'str'",
-      "stufe": "C",
-      "ziel": "_factor_entry"
+      "since": "0.22.0",
+      "target": "_factor_entry",
+      "tier": "C",
+      "until": "1.0"
     },
     "federated_only": {
       "sig": "(user_id) -> 'bool'",
-      "stufe": "B"
+      "tier": "B"
     },
     "federation_bind_existing": {
       "sig": "(source: 'str', *, mapping: 'Optional[dict]' = None, apply: 'bool' = False) -> 'dict'",
-      "stufe": "A"
+      "tier": "A"
     },
     "federation_unbind": {
       "sig": "(source: 'str', user_id: 'int') -> 'int'",
-      "stufe": "A"
+      "tier": "A"
     },
     "find_user": {
       "sig": "(identifier) -> 'Optional[dict]'",
-      "stufe": "B"
+      "tier": "B"
     },
     "flow_cookie_name": {
       "sig": "(base: 'str') -> 'str'",
-      "stufe": "B"
+      "tier": "B"
     },
     "forward_login_url": {
-      "bis": "1.0",
-      "seit": "0.22.0",
-      "sig": "(orig_url: 'str', request: 'Optional[Request]' = None, direkt: 'bool' = False) -> 'str'",
-      "stufe": "C",
-      "ziel": "_forward_login_url"
+      "sig": "(orig_url: 'str', request: 'Optional[Request]' = None, direct: 'bool' = False) -> 'str'",
+      "since": "0.22.0",
+      "target": "_forward_login_url",
+      "tier": "C",
+      "until": "1.0"
     },
     "forward_response_headers": {
-      "bis": "1.0",
-      "seit": "0.22.0",
       "sig": "(user) -> 'dict'",
-      "stufe": "C",
-      "ziel": "_forward_response_headers"
+      "since": "0.22.0",
+      "target": "_forward_response_headers",
+      "tier": "C",
+      "until": "1.0"
     },
     "forwarded_url": {
-      "bis": "1.0",
-      "seit": "0.22.0",
       "sig": "(request: 'Request') -> 'str'",
-      "stufe": "C",
-      "ziel": "_forwarded_url"
+      "since": "0.22.0",
+      "target": "_forwarded_url",
+      "tier": "C",
+      "until": "1.0"
     },
     "gate_issuer": {
       "sig": "() -> 'str'",
-      "stufe": "B"
+      "tier": "B"
     },
     "gate_public_key": {
       "sig": "() -> 'str'",
-      "stufe": "B"
+      "tier": "B"
     },
     "gc": {
       "sig": "(attempts_older_than_sec: 'int' = 86400) -> 'dict'",
-      "stufe": "A"
+      "tier": "A"
     },
     "generate_recovery_codes": {
       "sig": "(user_id, n=None) -> 'list'",
-      "stufe": "B"
+      "tier": "B"
     },
     "get_user": {
       "sig": "(user_id) -> 'Optional[dict]'",
-      "stufe": "B"
+      "tier": "B"
     },
     "grant_mfa_enrollment": {
       "sig": "(user_id: 'int', minutes: 'int' = 60) -> 'int'",
-      "stufe": "A"
+      "tier": "A"
     },
     "has_pin": {
       "sig": "(user_id) -> 'bool'",
-      "stufe": "B"
+      "tier": "B"
     },
     "has_role": {
       "sig": "(user, role, admin_implies=None) -> 'bool'",
-      "stufe": "A"
+      "tier": "A"
     },
     "identifier_taken": {
       "sig": "(identifier, exclude_id=None) -> 'Optional[dict]'",
-      "stufe": "B"
+      "tier": "B"
     },
     "install_error_pages": {
       "sig": "(app)",
-      "stufe": "A"
+      "tier": "A"
     },
     "install_https": {
       "sig": "(app)",
-      "stufe": "A"
+      "tier": "A"
     },
     "is_admin": {
       "sig": "(user) -> 'bool'",
-      "stufe": "A"
+      "tier": "A"
     },
     "is_locked": {
-      "bis": "1.0",
-      "seit": "0.22.0",
       "sig": "(username, ip) -> 'bool'",
-      "stufe": "C",
-      "ziel": "_is_locked"
+      "since": "0.22.0",
+      "target": "_is_locked",
+      "tier": "C",
+      "until": "1.0"
     },
     "is_password_change_locked": {
-      "bis": "1.0",
-      "seit": "0.22.0",
       "sig": "(username, ip) -> 'bool'",
-      "stufe": "C",
-      "ziel": "_is_password_change_locked"
+      "since": "0.22.0",
+      "target": "_is_password_change_locked",
+      "tier": "C",
+      "until": "1.0"
     },
     "is_pin_locked": {
-      "bis": "1.0",
-      "seit": "0.22.0",
       "sig": "(username, ip, login: 'bool' = True) -> 'bool'",
-      "stufe": "C",
-      "ziel": "_is_pin_locked"
+      "since": "0.22.0",
+      "target": "_is_pin_locked",
+      "tier": "C",
+      "until": "1.0"
     },
     "is_reauth_locked": {
-      "bis": "1.0",
-      "seit": "0.22.0",
       "sig": "(username, ip) -> 'bool'",
-      "stufe": "C",
-      "ziel": "_is_reauth_locked"
+      "since": "0.22.0",
+      "target": "_is_reauth_locked",
+      "tier": "C",
+      "until": "1.0"
     },
     "is_resource_locked": {
-      "bis": "1.0",
-      "seit": "0.22.0",
       "sig": "(username, ip) -> 'bool'",
-      "stufe": "C",
-      "ziel": "_is_resource_locked"
+      "since": "0.22.0",
+      "target": "_is_resource_locked",
+      "tier": "C",
+      "until": "1.0"
     },
     "is_secure": {
-      "bis": "1.0",
-      "seit": "0.22.0",
       "sig": "(request: 'Request') -> 'bool'",
-      "stufe": "C",
-      "ziel": "_is_secure"
+      "since": "0.22.0",
+      "target": "_is_secure",
+      "tier": "C",
+      "until": "1.0"
     },
     "is_totp_setup_locked": {
-      "bis": "1.0",
-      "seit": "0.22.0",
       "sig": "(username, ip) -> 'bool'",
-      "stufe": "C",
-      "ziel": "_is_totp_setup_locked"
+      "since": "0.22.0",
+      "target": "_is_totp_setup_locked",
+      "tier": "C",
+      "until": "1.0"
     },
     "issue_csrf": {
       "sig": "(response: 'Response') -> 'str'",
-      "stufe": "A"
+      "tier": "A"
     },
     "json_body": {
       "sig": "(request: 'Request') -> 'dict'",
-      "stufe": "B"
+      "tier": "B"
     },
     "lift_lockout": {
       "sig": "(user_id, methods=None) -> 'int'",
-      "stufe": "B"
+      "tier": "B"
     },
     "list_api_keys": {
       "sig": "(user_id) -> 'list'",
-      "stufe": "B"
+      "tier": "B"
     },
     "list_resource_secrets": {
       "sig": "()",
-      "stufe": "B"
+      "tier": "B"
     },
     "login_fresh": {
       "sig": "(request: 'Request', user: 'Optional[dict]' = None) -> 'bool'",
-      "stufe": "A"
+      "tier": "A"
     },
     "login_password": {
       "sig": "(request: 'Request', username: 'str', password: 'str', *, next: 'str' = '', remember: 'Optional[bool]' = None, csrf: 'Optional[str]' = None) -> 'LoginResult'",
-      "stufe": "A"
+      "tier": "A"
     },
     "login_pin": {
       "sig": "(request: 'Request', pin: 'str', username: 'str' = '', *, next: 'str' = '', remember: 'Optional[bool]' = None, csrf: 'Optional[str]' = None) -> 'LoginResult'",
-      "stufe": "A"
+      "tier": "A"
     },
     "login_redirect_after": {
-      "bis": "1.0",
-      "seit": "0.22.0",
       "sig": "(request, token, user_id, nxt)",
-      "stufe": "C",
-      "ziel": "_login_redirect_after"
+      "since": "0.22.0",
+      "target": "_login_redirect_after",
+      "tier": "C",
+      "until": "1.0"
     },
     "login_totp": {
       "sig": "(request: 'Request', code: 'str', *, next: 'str' = '', csrf: 'Optional[str]' = None) -> 'LoginResult'",
-      "stufe": "A"
+      "tier": "A"
     },
     "logout": {
       "sig": "(request, response)",
-      "stufe": "A"
+      "tier": "A"
     },
     "magic_url": {
       "sig": "(raw, base_url, purpose='login') -> 'str'",
-      "stufe": "B"
+      "tier": "B"
     },
     "mail_configured": {
       "sig": "() -> 'bool'",
-      "stufe": "B"
+      "tier": "B"
     },
     "maybe_promote_admin": {
-      "bis": "1.0",
-      "seit": "0.22.0",
-      "sig": "(user, email_bestaetigt: 'Optional[bool]' = None, faktor: 'Optional[str]' = None) -> 'bool'",
-      "stufe": "C",
-      "ziel": "_maybe_promote_admin"
+      "sig": "(user, email_confirmed: 'Optional[bool]' = None, factor: 'Optional[str]' = None) -> 'bool'",
+      "since": "0.22.0",
+      "target": "_maybe_promote_admin",
+      "tier": "C",
+      "until": "1.0"
     },
     "mfa_enrollment_allowed": {
       "sig": "(user_id: 'int', now: 'Optional[int]' = None) -> 'bool'",
-      "stufe": "B"
+      "tier": "B"
     },
     "mfa_pending": {
-      "bis": "1.0",
-      "seit": "0.22.0",
       "sig": "(user_id) -> 'bool'",
-      "stufe": "C",
-      "ziel": "_mfa_pending"
+      "since": "0.22.0",
+      "target": "_mfa_pending",
+      "tier": "C",
+      "until": "1.0"
     },
     "next_login_step": {
-      "bis": "1.0",
-      "seit": "0.22.0",
       "sig": "(user_id, done)",
-      "stufe": "C",
-      "ziel": "_next_login_step"
+      "since": "0.22.0",
+      "target": "_next_login_step",
+      "tier": "C",
+      "until": "1.0"
     },
     "own_events": {
       "sig": "(user_id: 'int', limit: 'int' = 20) -> 'list'",
-      "stufe": "B"
+      "tier": "B"
     },
     "password_policy_error": {
       "sig": "(password, *, username=None, email=None, api: 'bool' = False) -> 'Optional[str]'",
-      "stufe": "B"
+      "tier": "B"
     },
     "peek_magic": {
       "sig": "(raw, purpose=None) -> 'Optional[dict]'",
-      "stufe": "B"
+      "tier": "B"
     },
     "pending_user": {
       "sig": "(request) -> 'Optional[dict]'",
-      "stufe": "B"
+      "tier": "B"
     },
     "public_base": {
       "sig": "(request: 'Optional[Request]' = None, candidate: 'str' = '') -> 'str'",
-      "stufe": "A"
+      "tier": "A"
     },
     "purge_demo": {
-      "bis": "1.0",
-      "seit": "0.22.0",
       "sig": "() -> 'int'",
-      "stufe": "C",
-      "ziel": "_purge_demo"
+      "since": "0.22.0",
+      "target": "_purge_demo",
+      "tier": "C",
+      "until": "1.0"
     },
     "rate_ok": {
-      "bis": "1.0",
-      "seit": "0.22.0",
       "sig": "(ip, login: 'bool' = True) -> 'bool'",
-      "stufe": "C",
-      "ziel": "_rate_ok"
+      "since": "0.22.0",
+      "target": "_rate_ok",
+      "tier": "C",
+      "until": "1.0"
     },
     "record_login": {
-      "bis": "1.0",
-      "seit": "0.22.0",
-      "sig": "(username, ip, success, method, versuch: 'Optional[int]' = None, quelle: 'str' = '', konto: 'Optional[int]' = None)",
-      "stufe": "C",
-      "ziel": "_record_login"
+      "sig": "(username, ip, success, method, attempt: 'Optional[int]' = None, source: 'str' = '', account: 'Optional[int]' = None)",
+      "since": "0.22.0",
+      "target": "_record_login",
+      "tier": "C",
+      "until": "1.0"
     },
     "recovery_codes_remaining": {
       "sig": "(user_id) -> 'int'",
-      "stufe": "B"
+      "tier": "B"
     },
     "redeem_magic": {
       "sig": "(raw, purpose=None) -> 'Optional[dict]'",
-      "stufe": "B"
+      "tier": "B"
     },
     "remove_passkey": {
       "sig": "(user_id: 'int', passkey_id: 'int', ip: 'Optional[str]' = None) -> 'bool'",
-      "stufe": "B"
+      "tier": "B"
     },
     "remove_resource_secret": {
       "sig": "(name)",
-      "stufe": "B"
+      "tier": "B"
     },
     "render_page": {
       "sig": "(template, status=200, request: 'Optional[Request]' = None, **ctx) -> 'Response'",
-      "stufe": "A"
+      "tier": "A"
     },
     "request_email_change": {
       "sig": "(user_id, new_email, base_url)",
-      "stufe": "B"
+      "tier": "B"
     },
     "require": {
       "sig": "(mfa: 'bool' = False, admin: 'bool' = False, role=None, factors: 'Optional[list]' = None, strict: 'Optional[bool]' = None, admin_implies: 'Optional[bool]' = None)",
-      "stufe": "A"
+      "tier": "A"
     },
     "require_admin": {
       "sig": "(request: 'Request') -> 'dict'",
-      "stufe": "A"
+      "tier": "A"
     },
     "require_csrf": {
       "sig": "(request: 'Request', submitted)",
-      "stufe": "A"
+      "tier": "A"
     },
     "require_mfa": {
       "sig": "(request: 'Request') -> 'dict'",
-      "stufe": "A"
+      "tier": "A"
     },
     "require_public_base": {
       "sig": "(request: 'Optional[Request]' = None, candidate: 'str' = '') -> 'str'",
-      "stufe": "B"
+      "tier": "B"
     },
     "require_resource": {
       "sig": "(name: 'str')",
-      "stufe": "A"
+      "tier": "A"
     },
     "require_role": {
       "sig": "(*roles, mfa: 'bool' = False, admin_implies: 'Optional[bool]' = None)",
-      "stufe": "A"
+      "tier": "A"
     },
     "require_session": {
       "sig": "(request: 'Request', user: 'Optional[dict]' = None) -> 'dict'",
-      "stufe": "A"
+      "tier": "A"
     },
     "require_user": {
       "sig": "(request: 'Request') -> 'dict'",
-      "stufe": "A"
+      "tier": "A"
     },
     "resource_unlocked": {
       "sig": "(request: 'Request', name) -> 'bool'",
-      "stufe": "B"
+      "tier": "B"
     },
     "revoke_api_key": {
       "sig": "(key_id, user_id=None)",
-      "stufe": "A"
+      "tier": "A"
     },
     "revoke_mfa_enrollment": {
       "sig": "(user_id: 'int') -> 'None'",
-      "stufe": "B"
+      "tier": "B"
     },
     "rotate_session": {
       "sig": "(request, response) -> 'Optional[str]'",
-      "stufe": "A"
+      "tier": "A"
     },
     "router": {
       "sig": "()",
-      "stufe": "A"
+      "tier": "A"
     },
     "safe_next": {
       "sig": "(next_: 'str', request: 'Optional[Request]' = None) -> 'str'",
-      "stufe": "A"
+      "tier": "A"
     },
     "sec": {
-      "bis": "1.0",
-      "seit": "0.22.0",
       "sig": "(key) -> 'int'",
-      "stufe": "C",
-      "ziel": "_sec"
+      "since": "0.22.0",
+      "target": "_sec",
+      "tier": "C",
+      "until": "1.0"
     },
     "seed_demo": {
-      "bis": "1.0",
-      "seit": "0.22.0",
       "sig": "() -> 'None'",
-      "stufe": "C",
-      "ziel": "_seed_demo"
+      "since": "0.22.0",
+      "target": "_seed_demo",
+      "tier": "C",
+      "until": "1.0"
     },
     "send_login_link": {
       "sig": "(email, base_url, next='/') -> 'bool'",
-      "stufe": "A"
+      "tier": "A"
     },
     "send_mail": {
       "sig": "(to, subject, text, html=None)",
-      "stufe": "B"
+      "tier": "B"
     },
     "send_password_reset": {
       "sig": "(email, base_url) -> 'bool'",
-      "stufe": "A"
+      "tier": "A"
     },
     "send_signup_notice": {
-      "bis": "1.0",
-      "seit": "0.22.0",
       "sig": "(email, base_url) -> 'bool'",
-      "stufe": "C",
-      "ziel": "_send_signup_notice"
+      "since": "0.22.0",
+      "target": "_send_signup_notice",
+      "tier": "C",
+      "until": "1.0"
     },
     "send_verify_email": {
       "sig": "(user_id, email, base_url) -> 'bool'",
-      "stufe": "A"
+      "tier": "A"
     },
     "session_from_request": {
-      "bis": "1.0",
-      "seit": "0.22.0",
       "sig": "(request)",
-      "stufe": "C",
-      "ziel": "_session_from_request"
+      "since": "0.22.0",
+      "target": "_session_from_request",
+      "tier": "C",
+      "until": "1.0"
     },
     "session_user": {
       "sig": "(request) -> 'Optional[dict]'",
-      "stufe": "B"
+      "tier": "B"
     },
     "set_cookie": {
       "sig": "(response, token, remember: 'Optional[bool]' = None)",
-      "stufe": "A"
+      "tier": "A"
     },
     "set_disabled": {
       "sig": "(user_id: 'int', disabled: 'bool') -> 'bool'",
-      "stufe": "A"
+      "tier": "A"
     },
     "set_mailer": {
       "sig": "(fn)",
-      "stufe": "A"
+      "tier": "A"
     },
     "set_owner": {
       "sig": "(user_id: 'int', owner: 'bool') -> 'bool'",
-      "stufe": "A"
+      "tier": "A"
     },
     "set_password": {
       "sig": "(user_id, password)",
-      "stufe": "A"
+      "tier": "A"
     },
     "set_pin": {
       "sig": "(user_id, pin)",
-      "stufe": "A"
+      "tier": "A"
     },
     "set_rate_limiter": {
       "sig": "(limiter)",
-      "stufe": "B"
+      "tier": "B"
     },
     "set_resource_secret": {
       "sig": "(name, secret, kind='pin', label=None)",
-      "stufe": "A"
+      "tier": "A"
     },
     "set_roles": {
       "sig": "(user_id, roles)",
-      "stufe": "B"
+      "tier": "B"
     },
     "set_security": {
       "sig": "(key, value)",
-      "stufe": "A"
+      "tier": "A"
     },
     "set_template": {
       "sig": "(name, fn)",
-      "stufe": "A"
+      "tier": "A"
     },
     "start_session": {
       "sig": "(user_id, method, ip=None, ua=None, remember: 'bool' = True) -> 'tuple[str, bool]'",
-      "stufe": "A"
+      "tier": "A"
     },
     "stepup_fresh": {
       "sig": "(request: 'Request', user: 'Optional[dict]' = None) -> 'bool'",
-      "stufe": "B"
+      "tier": "B"
     },
     "stepup_options": {
       "sig": "(user) -> 'list[str]'",
-      "stufe": "A"
+      "tier": "A"
     },
     "t": {
       "sig": "(key, **fmt) -> 'str'",
-      "stufe": "B"
+      "tier": "B"
     },
     "totp_begin": {
       "sig": "(user_id)",
-      "stufe": "B"
+      "tier": "B"
     },
     "totp_confirm": {
       "sig": "(user_id, code) -> 'bool'",
-      "stufe": "B"
+      "tier": "B"
     },
     "totp_disable": {
       "sig": "(user_id)",
-      "stufe": "A"
+      "tier": "A"
     },
     "totp_enrollment_user": {
       "sig": "(request) -> 'Optional[dict]'",
-      "stufe": "B"
+      "tier": "B"
     },
     "unlock_resource": {
-      "bis": "1.0",
-      "seit": "0.22.0",
       "sig": "(request: 'Request', response, name)",
-      "stufe": "C",
-      "ziel": "_unlock_resource"
+      "since": "0.22.0",
+      "target": "_unlock_resource",
+      "tier": "C",
+      "until": "1.0"
     },
     "user_roles": {
       "sig": "(user) -> 'list'",
-      "stufe": "B"
+      "tier": "B"
     },
     "verify_api_key": {
       "sig": "(key)",
-      "stufe": "B"
+      "tier": "B"
     },
     "verify_csrf": {
-      "bis": "1.0",
-      "seit": "0.22.0",
       "sig": "(request: 'Request', submitted) -> 'bool'",
-      "stufe": "C",
-      "ziel": "_verify_csrf"
+      "since": "0.22.0",
+      "target": "_verify_csrf",
+      "tier": "C",
+      "until": "1.0"
     },
     "verify_recovery_code": {
-      "bis": "1.0",
-      "seit": "0.22.0",
       "sig": "(user_id, code) -> 'bool'",
-      "stufe": "C",
-      "ziel": "_verify_recovery_code"
+      "since": "0.22.0",
+      "target": "_verify_recovery_code",
+      "tier": "C",
+      "until": "1.0"
     },
     "verify_totp": {
-      "bis": "1.0",
-      "seit": "0.22.0",
       "sig": "(user_id, code) -> 'bool'",
-      "stufe": "C",
-      "ziel": "_verify_totp"
+      "since": "0.22.0",
+      "target": "_verify_totp",
+      "tier": "C",
+      "until": "1.0"
     },
     "verify_user_password": {
-      "bis": "1.0",
-      "seit": "0.22.0",
       "sig": "(user_id, password) -> 'bool'",
-      "stufe": "C",
-      "ziel": "_verify_user_password"
+      "since": "0.22.0",
+      "target": "_verify_user_password",
+      "tier": "C",
+      "until": "1.0"
     },
     "verify_user_pin": {
-      "bis": "1.0",
-      "seit": "0.22.0",
       "sig": "(user_id, pin) -> 'bool'",
-      "stufe": "C",
-      "ziel": "_verify_user_pin"
+      "since": "0.22.0",
+      "target": "_verify_user_pin",
+      "tier": "C",
+      "until": "1.0"
     },
     "version": {
       "sig": "() -> 'str'",
-      "stufe": "B"
+      "tier": "B"
     }
   },
   "TinySesam.attributes": {
     "cfg": {
-      "stufe": "A",
-      "wert": "TinySesamConfig; the instance passed to the constructor: True; frozen: False"
+      "tier": "A",
+      "value": "TinySesamConfig; the instance passed to the constructor: True; frozen: False"
     },
     "on_security_event": {
-      "stufe": "A",
-      "wert": "Optional[Callable[[str, dict, dict], Any]] = None; hook(str, dict, dict); account keys: display_name, email, id, username; called synchronously (1 call per change); after the change is written; a failing hook does not abort the operation (change written)"
+      "tier": "A",
+      "value": "Optional[Callable[[str, dict, dict], Any]] = None; hook(str, dict, dict); account keys: display_name, email, id, username; called synchronously (1 call per change); after the change is written; a failing hook does not abort the operation (change written)"
     }
   },
-  "TinySesam.eigenschaften": {
-    "csrf_cookie_name": {
-      "sig": "() -> 'str'",
-      "stufe": "A"
+  "TinySesam.constants": {
+    "DEMO_USERS": {
+      "since": "0.22.0",
+      "target": "_DEMO_USERS",
+      "tier": "C",
+      "until": "1.0",
+      "value": "('demo', 'demoadmin')"
     },
-    "resource_cookie_name": {
-      "sig": "() -> 'str'",
-      "stufe": "A"
+    "FEDERATED_SOURCES": {
+      "tier": "B",
+      "value": "('ldap', 'saml')"
     },
-    "session_cookie_name": {
-      "sig": "() -> 'str'",
-      "stufe": "A"
+    "FORWARD_HEADERS_DEFAULT": {
+      "tier": "A",
+      "value": "{'user': 'Remote-User', 'name': 'Remote-Name', 'email': 'Remote-Email', 'groups': 'Remote-Groups', 'id': 'Remote-Id'}"
+    },
+    "IDENTIFYING": {
+      "since": "0.22.0",
+      "target": "_IDENTIFYING",
+      "tier": "C",
+      "until": "1.0",
+      "value": "('password', 'pin', 'oidc', 'passkey', 'magic', 'saml')"
+    },
+    "MFA_ENROLLMENT_MODES": {
+      "tier": "B",
+      "value": "('first_login', 'grace', 'strict')"
+    },
+    "NAME_BINDING_REFUSALS": {
+      "tier": "B",
+      "value": "{'address_as_name': 'the name says nothing about the person (control characters, or the unverified mail value of a source that is not trusted)', 'invalid_identifier': 'the identifier is unusable (leading/trailing or control characters, or placeholder form)', 'conflict': 'the identifier already belongs to another account', 'bound_elsewhere': 'the account already carries a different identifier', 'self_chosen_name': 'the name was chosen by the person (sign-up or rename) and says nothing about who has that name in the directory', 'name_from_other_source': 'the name comes from another source that created the account (OIDC, SAML or LDAP) and says nothing about who has that name in this one', 'binding_window_expired': 'the window for binding by name has passed (federation_name_binding_days)'}"
+    },
+    "NAME_MAX": {
+      "tier": "B",
+      "value": "150"
+    },
+    "PAGES": {
+      "tier": "B",
+      "value": "('account', 'error', 'forgot', 'gate_logged_out', 'gate_logout', 'gateway_home', 'login', 'logout', 'magic_confirm', 'magic_invalid', 'magic_request', 'pin', 'reauth', 'register', 'reset', 'resource_unlock', 'totp', 'totp_setup')"
+    },
+    "RECOVERY_BYTES": {
+      "since": "0.22.0",
+      "target": "_RECOVERY_BYTES",
+      "tier": "C",
+      "until": "1.0",
+      "value": "7"
+    },
+    "SECURITY_EVENTS": {
+      "tier": "A",
+      "value": "('password_changed', 'pin_set', 'pin_disabled', 'totp_enabled', 'totp_disabled', 'recovery_codes_generated', 'recovery_code_used', 'passkey_added', 'passkey_removed', 'api_key_created', 'api_key_revoked', 'api_keys_revoked', 'email_changed', 'username_changed')"
+    },
+    "TOKEN_PATHS": {
+      "tier": "B",
+      "value": "{'login': '/auth/magic/{t}', 'verify_email': '/auth/verify/{t}', 'invite': '/auth/invite/{t}', 'reset_password': '/auth/reset?token={t}', 'email_change': '/auth/email/{t}'}"
     }
   },
   "TinySesam.event_payload": {
@@ -804,1141 +845,1100 @@
         "key_id",
         "name"
       ],
-      "stufe": "A"
+      "tier": "A"
     },
     "api_key_revoked": {
       "keys": [
         "key_id"
       ],
-      "stufe": "A"
+      "tier": "A"
     },
     "api_keys_revoked": {
       "keys": [
         "count",
         "reason"
       ],
-      "stufe": "A"
+      "tier": "A"
     },
     "email_changed": {
       "keys": [
         "new",
         "old"
       ],
-      "stufe": "A"
+      "tier": "A"
     },
     "passkey_added": {
       "keys": [
         "name"
       ],
-      "stufe": "A"
+      "tier": "A"
     },
     "passkey_removed": {
       "keys": [
         "passkey_id"
       ],
-      "stufe": "A"
+      "tier": "A"
     },
     "password_changed": {
       "keys": [],
-      "stufe": "A"
+      "tier": "A"
     },
     "pin_disabled": {
       "keys": [],
-      "stufe": "A"
+      "tier": "A"
     },
     "pin_set": {
       "keys": [],
-      "stufe": "A"
+      "tier": "A"
     },
     "recovery_code_used": {
       "keys": [
         "remaining"
       ],
-      "stufe": "A"
+      "tier": "A"
     },
     "recovery_codes_generated": {
       "keys": [
         "count"
       ],
-      "stufe": "A"
+      "tier": "A"
     },
     "totp_disabled": {
       "keys": [
         "recovery_codes_deleted"
       ],
-      "stufe": "A"
+      "tier": "A"
     },
     "totp_enabled": {
       "keys": [],
-      "stufe": "A"
+      "tier": "A"
     },
     "username_changed": {
       "keys": [
         "new",
         "old"
       ],
-      "stufe": "A"
+      "tier": "A"
     }
   },
-  "TinySesam.konstanten": {
-    "DEMO_USERS": {
-      "bis": "1.0",
-      "seit": "0.22.0",
-      "stufe": "C",
-      "wert": "('demo', 'demoadmin')",
-      "ziel": "_DEMO_USERS"
+  "TinySesam.properties": {
+    "csrf_cookie_name": {
+      "sig": "() -> 'str'",
+      "tier": "A"
     },
-    "FEDERATED_SOURCES": {
-      "stufe": "B",
-      "wert": "('ldap', 'saml')"
+    "resource_cookie_name": {
+      "sig": "() -> 'str'",
+      "tier": "A"
     },
-    "FORWARD_HEADERS_DEFAULT": {
-      "stufe": "A",
-      "wert": "{'user': 'Remote-User', 'name': 'Remote-Name', 'email': 'Remote-Email', 'groups': 'Remote-Groups', 'id': 'Remote-Id'}"
-    },
-    "IDENTIFYING": {
-      "bis": "1.0",
-      "seit": "0.22.0",
-      "stufe": "C",
-      "wert": "('password', 'pin', 'oidc', 'passkey', 'magic', 'saml')",
-      "ziel": "_IDENTIFYING"
-    },
-    "MFA_ENROLLMENT_MODES": {
-      "stufe": "B",
-      "wert": "('first_login', 'grace', 'strict')"
-    },
-    "NAME_BINDING_REFUSALS": {
-      "stufe": "B",
-      "wert": "{'address_as_name': 'the name says nothing about the person (control characters, or the unverified mail value of a source that is not trusted)', 'invalid_identifier': 'the identifier is unusable (leading/trailing or control characters, or placeholder form)', 'conflict': 'the identifier already belongs to another account', 'bound_elsewhere': 'the account already carries a different identifier', 'self_chosen_name': 'the name was chosen by the person (sign-up or rename) and says nothing about who has that name in the directory', 'name_from_other_source': 'the name comes from another source that created the account (OIDC, SAML or LDAP) and says nothing about who has that name in this one', 'binding_window_expired': 'the window for binding by name has passed (federation_name_binding_days)'}"
-    },
-    "NAME_MAX": {
-      "stufe": "B",
-      "wert": "150"
-    },
-    "PAGES": {
-      "stufe": "B",
-      "wert": "('account', 'error', 'forgot', 'gate_logged_out', 'gate_logout', 'gateway_home', 'login', 'logout', 'magic_confirm', 'magic_invalid', 'magic_request', 'pin', 'reauth', 'register', 'reset', 'resource_unlock', 'totp', 'totp_setup')"
-    },
-    "RECOVERY_BYTES": {
-      "bis": "1.0",
-      "seit": "0.22.0",
-      "stufe": "C",
-      "wert": "7",
-      "ziel": "_RECOVERY_BYTES"
-    },
-    "SECURITY_EVENTS": {
-      "stufe": "A",
-      "wert": "('password_changed', 'pin_set', 'pin_disabled', 'totp_enabled', 'totp_disabled', 'recovery_codes_generated', 'recovery_code_used', 'passkey_added', 'passkey_removed', 'api_key_created', 'api_key_revoked', 'api_keys_revoked', 'email_changed', 'username_changed')"
-    },
-    "TOKEN_PATHS": {
-      "stufe": "B",
-      "wert": "{'login': '/auth/magic/{t}', 'verify_email': '/auth/verify/{t}', 'invite': '/auth/invite/{t}', 'reset_password': '/auth/reset?token={t}', 'email_change': '/auth/email/{t}'}"
+    "session_cookie_name": {
+      "sig": "() -> 'str'",
+      "tier": "A"
     }
   },
-  "TinySesamConfig.felder": {
+  "TinySesamConfig.fields": {
     "account_enabled": {
-      "feld": "bool = True",
-      "stufe": "A"
+      "field": "bool = True",
+      "tier": "A"
     },
     "admin_claim_token_file": {
-      "feld": "str = ''",
-      "stufe": "A"
+      "field": "str = ''",
+      "tier": "A"
     },
     "admin_claim_ttl_min": {
-      "feld": "int = 60",
-      "stufe": "A"
+      "field": "int = 60",
+      "tier": "A"
     },
     "admin_enabled": {
-      "feld": "bool = True",
-      "stufe": "A"
+      "field": "bool = True",
+      "tier": "A"
     },
     "admin_identifiers": {
-      "feld": "list[str] = []",
-      "stufe": "A"
+      "field": "list[str] = []",
+      "tier": "A"
     },
     "admin_implies_roles": {
-      "feld": "bool = True",
-      "stufe": "A"
+      "field": "bool = True",
+      "tier": "A"
     },
     "admin_path": {
-      "feld": "str = '/auth/admin'",
-      "stufe": "A"
+      "field": "str = '/auth/admin'",
+      "tier": "A"
     },
     "admin_require_mfa": {
-      "feld": "bool = False",
-      "stufe": "A"
+      "field": "bool = False",
+      "tier": "A"
     },
     "admin_ui_enabled": {
-      "feld": "bool = True",
-      "stufe": "A"
+      "field": "bool = True",
+      "tier": "A"
     },
     "allow_signup": {
-      "feld": "bool = False",
-      "stufe": "A"
+      "field": "bool = False",
+      "tier": "A"
     },
     "apikey_allow_unlimited": {
-      "feld": "bool = False",
-      "stufe": "A"
+      "field": "bool = False",
+      "tier": "A"
     },
     "apikey_default_days": {
-      "feld": "int = 90",
-      "stufe": "A"
+      "field": "int = 90",
+      "tier": "A"
     },
     "apikey_enabled": {
-      "feld": "bool = True",
-      "stufe": "A"
+      "field": "bool = True",
+      "tier": "A"
     },
     "audit_ip_pseudonymize": {
-      "feld": "bool = False",
-      "stufe": "A"
+      "field": "bool = False",
+      "tier": "A"
     },
     "audit_retention_days": {
-      "feld": "int = 0",
-      "stufe": "A"
+      "field": "int = 0",
+      "tier": "A"
     },
     "available_roles": {
-      "feld": "list[str] = []",
-      "stufe": "A"
+      "field": "list[str] = []",
+      "tier": "A"
     },
     "base_url": {
-      "feld": "str = ''",
-      "stufe": "A"
+      "field": "str = ''",
+      "tier": "A"
     },
     "brand_background_credit_text": {
-      "feld": "str = ''",
-      "stufe": "A"
+      "field": "str = ''",
+      "tier": "A"
     },
     "brand_background_credit_url": {
-      "feld": "str = ''",
-      "stufe": "A"
+      "field": "str = ''",
+      "tier": "A"
     },
     "brand_background_seconds": {
-      "feld": "int = 12",
-      "stufe": "A"
+      "field": "int = 12",
+      "tier": "A"
     },
     "brand_backgrounds": {
-      "feld": "list = []",
-      "stufe": "A"
+      "field": "list = []",
+      "tier": "A"
     },
     "brand_css": {
-      "feld": "str = ''",
-      "stufe": "A"
+      "field": "str = ''",
+      "tier": "A"
     },
     "brand_footer": {
-      "feld": "object = ''",
-      "stufe": "A"
+      "field": "object = ''",
+      "tier": "A"
     },
     "brand_head": {
-      "feld": "str = ''",
-      "stufe": "A"
+      "field": "str = ''",
+      "tier": "A"
     },
     "brand_header": {
-      "feld": "object = ''",
-      "stufe": "A"
+      "field": "object = ''",
+      "tier": "A"
     },
     "brand_icon": {
-      "feld": "str = ''",
-      "stufe": "A"
+      "field": "str = ''",
+      "tier": "A"
     },
     "cookie_domain": {
-      "feld": "str = ''",
-      "stufe": "A"
+      "field": "str = ''",
+      "tier": "A"
     },
     "cookie_host_prefix": {
-      "feld": "bool = True",
-      "stufe": "A"
+      "field": "bool = True",
+      "tier": "A"
     },
     "cookie_path": {
-      "feld": "str = '/'",
-      "stufe": "A"
+      "field": "str = '/'",
+      "tier": "A"
     },
     "cookie_prefix": {
-      "feld": "str = 'tinysesam_'",
-      "stufe": "A"
+      "field": "str = 'tinysesam_'",
+      "tier": "A"
     },
     "cookie_samesite": {
-      "feld": "str = 'lax'",
-      "stufe": "A"
+      "field": "str = 'lax'",
+      "tier": "A"
     },
     "cookie_secure": {
-      "feld": "bool = True",
-      "stufe": "A"
+      "field": "bool = True",
+      "tier": "A"
     },
     "csp": {
-      "feld": "str = 'strict'",
-      "stufe": "A"
+      "field": "str = 'strict'",
+      "tier": "A"
     },
     "csrf_cookie": {
-      "feld": "str = 'tinysesam_csrf'",
-      "stufe": "A"
+      "field": "str = 'tinysesam_csrf'",
+      "tier": "A"
     },
     "csrf_enabled": {
-      "feld": "bool = True",
-      "stufe": "A"
+      "field": "bool = True",
+      "tier": "A"
     },
     "csrf_origin_check": {
-      "feld": "bool = True",
-      "stufe": "A"
+      "field": "bool = True",
+      "tier": "A"
     },
     "db_path": {
-      "feld": "str = 'tinysesam.db'",
-      "stufe": "A"
+      "field": "str = 'tinysesam.db'",
+      "tier": "A"
     },
     "demo_mode": {
-      "feld": "bool = False",
-      "stufe": "A"
+      "field": "bool = False",
+      "tier": "A"
     },
     "demo_password": {
-      "feld": "str = 'demo1234'",
-      "stufe": "A"
+      "field": "str = 'demo1234'",
+      "tier": "A"
     },
     "demo_pin": {
-      "feld": "str = '1234'",
-      "stufe": "A"
+      "field": "str = '1234'",
+      "tier": "A"
     },
     "email_change_ttl_min": {
-      "feld": "int = 60",
-      "stufe": "A"
+      "field": "int = 60",
+      "tier": "A"
     },
     "federation_email_confirm": {
-      "feld": "bool = True",
-      "stufe": "A"
+      "field": "bool = True",
+      "tier": "A"
     },
     "federation_name_binding_days": {
-      "feld": "int = 30",
-      "stufe": "A"
+      "field": "int = 30",
+      "tier": "A"
     },
     "federation_require_stable_id": {
-      "feld": "bool = False",
-      "stufe": "A"
+      "field": "bool = False",
+      "tier": "A"
     },
     "forward_apps": {
-      "feld": "dict = {}",
-      "stufe": "A"
+      "field": "dict = {}",
+      "tier": "A"
     },
     "forward_auth_enabled": {
-      "feld": "bool = False",
-      "stufe": "A"
+      "field": "bool = False",
+      "tier": "A"
     },
     "forward_headers": {
-      "feld": "dict = {}",
-      "stufe": "A"
+      "field": "dict = {}",
+      "tier": "A"
     },
     "forward_logged_out_sec": {
-      "feld": "int = 10",
-      "stufe": "A"
+      "field": "int = 10",
+      "tier": "A"
     },
     "forward_login": {
-      "feld": "str = 'page'",
-      "stufe": "A"
+      "field": "str = 'page'",
+      "tier": "A"
     },
     "forward_logout": {
-      "feld": "str = 'all'",
-      "stufe": "A"
+      "field": "str = 'all'",
+      "tier": "A"
     },
     "gate_brand": {
-      "feld": "str = ''",
-      "stufe": "A"
+      "field": "str = ''",
+      "tier": "A"
     },
     "gate_cookie_name": {
-      "feld": "str = '__Host-tinysesam_gate'",
-      "stufe": "A"
+      "field": "str = '__Host-tinysesam_gate'",
+      "tier": "A"
     },
     "gate_link_enabled": {
-      "feld": "bool = False",
-      "stufe": "A"
+      "field": "bool = False",
+      "tier": "A"
     },
     "gate_token_enabled": {
-      "feld": "bool = False",
-      "stufe": "A"
+      "field": "bool = False",
+      "tier": "A"
     },
     "gate_token_ttl_sec": {
-      "feld": "int = 300",
-      "stufe": "A"
+      "field": "int = 300",
+      "tier": "A"
     },
     "group_match": {
-      "feld": "str = 'exact'",
-      "stufe": "A"
+      "field": "str = 'exact'",
+      "tier": "A"
     },
     "https_mode": {
-      "feld": "str = 'warn'",
-      "stufe": "A"
+      "field": "str = 'warn'",
+      "tier": "A"
     },
     "lang": {
-      "feld": "str = 'en'",
-      "stufe": "A"
+      "field": "str = 'en'",
+      "tier": "A"
     },
     "ldap_allow_plaintext": {
-      "feld": "bool = False",
-      "stufe": "A"
+      "field": "bool = False",
+      "tier": "A"
     },
     "ldap_allowed_groups": {
-      "feld": "list[str] = []",
-      "stufe": "A"
+      "field": "list[str] = []",
+      "tier": "A"
     },
     "ldap_attr_email": {
-      "feld": "str = 'mail'",
-      "stufe": "A"
+      "field": "str = 'mail'",
+      "tier": "A"
     },
     "ldap_attr_email_verified": {
-      "feld": "str = ''",
-      "stufe": "A"
+      "field": "str = ''",
+      "tier": "A"
     },
     "ldap_attr_id": {
-      "feld": "str = ''",
-      "stufe": "A"
+      "field": "str = ''",
+      "tier": "A"
     },
     "ldap_attr_name": {
-      "feld": "str = 'cn'",
-      "stufe": "A"
+      "field": "str = 'cn'",
+      "tier": "A"
     },
     "ldap_auto_create": {
-      "feld": "bool = True",
-      "stufe": "A"
+      "field": "bool = True",
+      "tier": "A"
     },
     "ldap_bind_dn": {
-      "feld": "str = ''",
-      "stufe": "A"
+      "field": "str = ''",
+      "tier": "A"
     },
     "ldap_bind_password": {
-      "feld": "str = ''",
-      "stufe": "A"
+      "field": "str = ''",
+      "tier": "A"
     },
     "ldap_email_trusted": {
-      "feld": "bool = False",
-      "stufe": "A"
+      "field": "bool = False",
+      "tier": "A"
     },
     "ldap_enabled": {
-      "feld": "bool = False",
-      "stufe": "A"
+      "field": "bool = False",
+      "tier": "A"
     },
     "ldap_group_attr": {
-      "feld": "str = 'memberOf'",
-      "stufe": "A"
+      "field": "str = 'memberOf'",
+      "tier": "A"
     },
     "ldap_group_role_map": {
-      "feld": "dict = {}",
-      "stufe": "A"
+      "field": "dict = {}",
+      "tier": "A"
     },
     "ldap_start_tls": {
-      "feld": "bool = False",
-      "stufe": "A"
+      "field": "bool = False",
+      "tier": "A"
     },
     "ldap_tls_ca_file": {
-      "feld": "str = ''",
-      "stufe": "A"
+      "field": "str = ''",
+      "tier": "A"
     },
     "ldap_tls_verify": {
-      "feld": "bool = True",
-      "stufe": "A"
+      "field": "bool = True",
+      "tier": "A"
     },
     "ldap_url": {
-      "feld": "str = ''",
-      "stufe": "A"
+      "field": "str = ''",
+      "tier": "A"
     },
     "ldap_user_base": {
-      "feld": "str = ''",
-      "stufe": "A"
+      "field": "str = ''",
+      "tier": "A"
     },
     "ldap_user_dn_template": {
-      "feld": "str = ''",
-      "stufe": "A"
+      "field": "str = ''",
+      "tier": "A"
     },
     "ldap_user_filter": {
-      "feld": "str = '(uid={username})'",
-      "stufe": "A"
+      "field": "str = '(uid={username})'",
+      "tier": "A"
     },
     "login_chain": {
-      "feld": "list[str] = []",
-      "stufe": "A"
+      "field": "list[str] = []",
+      "tier": "A"
     },
     "login_chain_strict": {
-      "feld": "bool = True",
-      "stufe": "A"
+      "field": "bool = True",
+      "tier": "A"
     },
     "login_identifier": {
-      "feld": "str = 'both'",
-      "stufe": "A"
+      "field": "str = 'both'",
+      "tier": "A"
     },
     "login_path": {
-      "feld": "str = '/auth/login'",
-      "stufe": "A"
+      "field": "str = '/auth/login'",
+      "tier": "A"
     },
     "login_redirect": {
-      "feld": "str = '/'",
-      "stufe": "A"
+      "field": "str = '/'",
+      "tier": "A"
     },
     "logout_redirect": {
-      "feld": "str = '/auth/login'",
-      "stufe": "A"
+      "field": "str = '/auth/login'",
+      "tier": "A"
     },
     "magiclink_enabled": {
-      "feld": "bool = False",
-      "stufe": "A"
+      "field": "bool = False",
+      "tier": "A"
     },
     "magiclink_require_second_factor": {
-      "feld": "bool = True",
-      "stufe": "A"
+      "field": "bool = True",
+      "tier": "A"
     },
     "magiclink_ttl_min": {
-      "feld": "int = 15",
-      "stufe": "A"
+      "field": "int = 15",
+      "tier": "A"
     },
     "mail_subject_prefix": {
-      "feld": "str = ''",
-      "stufe": "A"
+      "field": "str = ''",
+      "tier": "A"
     },
     "mfa_enrollment": {
-      "feld": "str = 'first_login'",
-      "stufe": "A"
+      "field": "str = 'first_login'",
+      "tier": "A"
     },
     "mfa_enrollment_grace_days": {
-      "feld": "int = 7",
-      "stufe": "A"
+      "field": "int = 7",
+      "tier": "A"
     },
     "notify_login_failures": {
-      "feld": "bool = True",
-      "stufe": "A"
+      "field": "bool = True",
+      "tier": "A"
     },
     "oidc_allowed_groups": {
-      "feld": "list[str] = []",
-      "stufe": "A"
+      "field": "list[str] = []",
+      "tier": "A"
     },
     "oidc_apikey_confirm_days": {
-      "feld": "int = 30",
-      "stufe": "A"
+      "field": "int = 30",
+      "tier": "A"
     },
     "oidc_auto_create": {
-      "feld": "bool = True",
-      "stufe": "A"
+      "field": "bool = True",
+      "tier": "A"
     },
     "oidc_callback_path": {
-      "feld": "str = '/auth/oidc/callback'",
-      "stufe": "A"
+      "field": "str = '/auth/oidc/callback'",
+      "tier": "A"
     },
     "oidc_client_id": {
-      "feld": "str = ''",
-      "stufe": "A"
+      "field": "str = ''",
+      "tier": "A"
     },
     "oidc_client_secret": {
-      "feld": "str = ''",
-      "stufe": "A"
+      "field": "str = ''",
+      "tier": "A"
     },
     "oidc_clients": {
-      "feld": "dict = {}",
-      "stufe": "A"
+      "field": "dict = {}",
+      "tier": "A"
     },
     "oidc_email_verified_default": {
-      "feld": "bool = False",
-      "stufe": "A"
+      "field": "bool = False",
+      "tier": "A"
     },
     "oidc_enabled": {
-      "feld": "bool = False",
-      "stufe": "A"
+      "field": "bool = False",
+      "tier": "A"
     },
     "oidc_group_claim": {
-      "feld": "str = 'groups'",
-      "stufe": "A"
+      "field": "str = 'groups'",
+      "tier": "A"
     },
     "oidc_group_role_map": {
-      "feld": "dict = {}",
-      "stufe": "A"
+      "field": "dict = {}",
+      "tier": "A"
     },
     "oidc_issuer": {
-      "feld": "str = ''",
-      "stufe": "A"
+      "field": "str = ''",
+      "tier": "A"
     },
     "oidc_name": {
-      "feld": "str = 'SSO'",
-      "stufe": "A"
+      "field": "str = 'SSO'",
+      "tier": "A"
     },
     "oidc_revalidate_minutes": {
-      "feld": "int = 0",
-      "stufe": "A"
+      "field": "int = 0",
+      "tier": "A"
     },
     "oidc_rp_logout": {
-      "feld": "bool = False",
-      "stufe": "A"
+      "field": "bool = False",
+      "tier": "A"
     },
     "oidc_scopes": {
-      "feld": "str = 'openid profile email'",
-      "stufe": "A"
+      "field": "str = 'openid profile email'",
+      "tier": "A"
     },
     "oidc_session_max_unverified_hours": {
-      "feld": "int = 25",
-      "stufe": "A"
+      "field": "int = 25",
+      "tier": "A"
     },
     "oidc_session_refresh_minutes": {
-      "feld": "int = 15",
-      "stufe": "A"
+      "field": "int = 15",
+      "tier": "A"
     },
     "origin": {
-      "feld": "str = 'http://localhost:8000'",
-      "stufe": "A"
+      "field": "str = 'http://localhost:8000'",
+      "tier": "A"
     },
     "passkey_enabled": {
-      "feld": "bool = False",
-      "stufe": "A"
+      "field": "bool = False",
+      "tier": "A"
     },
     "passkey_user_verification": {
-      "feld": "str = 'required'",
-      "stufe": "A"
+      "field": "str = 'required'",
+      "tier": "A"
     },
     "password_blocklist_file": {
-      "feld": "str = ''",
-      "stufe": "A"
+      "field": "str = ''",
+      "tier": "A"
     },
     "password_enabled": {
-      "feld": "bool = True",
-      "stufe": "A"
+      "field": "bool = True",
+      "tier": "A"
     },
     "password_reset_enabled": {
-      "feld": "bool = False",
-      "stufe": "A"
+      "field": "bool = False",
+      "tier": "A"
     },
     "pin_enabled": {
-      "feld": "bool = False",
-      "stufe": "A"
+      "field": "bool = False",
+      "tier": "A"
     },
     "pin_login": {
-      "feld": "bool = True",
-      "stufe": "A"
+      "field": "bool = True",
+      "tier": "A"
     },
     "pin_min_length": {
-      "feld": "int = 4",
-      "stufe": "A"
+      "field": "int = 4",
+      "tier": "A"
     },
     "recovery_code_count": {
-      "feld": "int = 10",
-      "stufe": "A"
+      "field": "int = 10",
+      "tier": "A"
     },
     "redis_url": {
-      "feld": "str = ''",
-      "stufe": "A"
+      "field": "str = ''",
+      "tier": "A"
     },
     "remember_me_enabled": {
-      "feld": "bool = True",
-      "stufe": "A"
+      "field": "bool = True",
+      "tier": "A"
     },
     "resource_cookie": {
-      "feld": "str = 'tinysesam_runlock'",
-      "stufe": "A"
+      "field": "str = 'tinysesam_runlock'",
+      "tier": "A"
     },
     "resource_locks_enabled": {
-      "feld": "bool = False",
-      "stufe": "A"
+      "field": "bool = False",
+      "tier": "A"
     },
     "resource_unlock_ttl_hours": {
-      "feld": "int = 12",
-      "stufe": "A"
+      "field": "int = 12",
+      "tier": "A"
     },
     "rp_id": {
-      "feld": "str = 'localhost'",
-      "stufe": "A"
+      "field": "str = 'localhost'",
+      "tier": "A"
     },
     "rp_name": {
-      "feld": "str = 'TinySesam'",
-      "stufe": "A"
+      "field": "str = 'TinySesam'",
+      "tier": "A"
     },
     "saml_acs_url": {
-      "feld": "str = ''",
-      "stufe": "A"
+      "field": "str = ''",
+      "tier": "A"
     },
     "saml_allowed_groups": {
-      "feld": "list[str] = []",
-      "stufe": "A"
+      "field": "list[str] = []",
+      "tier": "A"
     },
     "saml_attr_email": {
-      "feld": "str = 'email'",
-      "stufe": "A"
+      "field": "str = 'email'",
+      "tier": "A"
     },
     "saml_attr_email_verified": {
-      "feld": "str = ''",
-      "stufe": "A"
+      "field": "str = ''",
+      "tier": "A"
     },
     "saml_attr_groups": {
-      "feld": "str = 'groups'",
-      "stufe": "A"
+      "field": "str = 'groups'",
+      "tier": "A"
     },
     "saml_attr_id": {
-      "feld": "str = ''",
-      "stufe": "A"
+      "field": "str = ''",
+      "tier": "A"
     },
     "saml_attr_name": {
-      "feld": "str = 'displayName'",
-      "stufe": "A"
+      "field": "str = 'displayName'",
+      "tier": "A"
     },
     "saml_attr_username": {
-      "feld": "str = ''",
-      "stufe": "A"
+      "field": "str = ''",
+      "tier": "A"
     },
     "saml_auto_create": {
-      "feld": "bool = True",
-      "stufe": "A"
+      "field": "bool = True",
+      "tier": "A"
     },
     "saml_email_trusted": {
-      "feld": "bool = False",
-      "stufe": "A"
+      "field": "bool = False",
+      "tier": "A"
     },
     "saml_enabled": {
-      "feld": "bool = False",
-      "stufe": "A"
+      "field": "bool = False",
+      "tier": "A"
     },
     "saml_group_role_map": {
-      "feld": "dict = {}",
-      "stufe": "A"
+      "field": "dict = {}",
+      "tier": "A"
     },
     "saml_idp_entity_id": {
-      "feld": "str = ''",
-      "stufe": "A"
+      "field": "str = ''",
+      "tier": "A"
     },
     "saml_idp_sso_url": {
-      "feld": "str = ''",
-      "stufe": "A"
+      "field": "str = ''",
+      "tier": "A"
     },
     "saml_idp_x509cert": {
-      "feld": "str = ''",
-      "stufe": "A"
+      "field": "str = ''",
+      "tier": "A"
     },
     "saml_name": {
-      "feld": "str = 'SAML'",
-      "stufe": "A"
+      "field": "str = 'SAML'",
+      "tier": "A"
     },
     "saml_sp_entity_id": {
-      "feld": "str = ''",
-      "stufe": "A"
+      "field": "str = ''",
+      "tier": "A"
     },
     "secrets_key_file": {
-      "feld": "str = ''",
-      "stufe": "A"
+      "field": "str = ''",
+      "tier": "A"
     },
     "security_log": {
-      "feld": "str = ''",
-      "stufe": "A"
+      "field": "str = ''",
+      "tier": "A"
     },
     "self_service_email_change": {
-      "feld": "bool = True",
-      "stufe": "A"
+      "field": "bool = True",
+      "tier": "A"
     },
     "self_service_username_change": {
-      "feld": "bool = True",
-      "stufe": "A"
+      "field": "bool = True",
+      "tier": "A"
     },
     "session_cookie": {
-      "feld": "str = 'tinysesam_session'",
-      "stufe": "A"
+      "field": "str = 'tinysesam_session'",
+      "tier": "A"
     },
     "session_idle_minutes": {
-      "feld": "int = 480",
-      "stufe": "A"
+      "field": "int = 480",
+      "tier": "A"
     },
     "session_idle_minutes_remember": {
-      "feld": "int = 0",
-      "stufe": "A"
+      "field": "int = 0",
+      "tier": "A"
     },
     "session_rotation_grace_sec": {
-      "feld": "int = 10",
-      "stufe": "A"
+      "field": "int = 10",
+      "tier": "A"
     },
     "session_ttl_hours": {
-      "feld": "int = 168",
-      "stufe": "A"
+      "field": "int = 168",
+      "tier": "A"
     },
     "session_ttl_transient_hours": {
-      "feld": "int = 12",
-      "stufe": "A"
+      "field": "int = 12",
+      "tier": "A"
     },
     "signup_default_roles": {
-      "feld": "list[str] = []",
-      "stufe": "A"
+      "field": "list[str] = []",
+      "tier": "A"
     },
     "signup_invite_only": {
-      "feld": "bool = False",
-      "stufe": "A"
+      "field": "bool = False",
+      "tier": "A"
     },
     "signup_require_email": {
-      "feld": "bool = True",
-      "stufe": "A"
+      "field": "bool = True",
+      "tier": "A"
     },
     "signup_verify_email": {
-      "feld": "bool = False",
-      "stufe": "A"
+      "field": "bool = False",
+      "tier": "A"
     },
     "smtp_ca_file": {
-      "feld": "str = ''",
-      "stufe": "A"
+      "field": "str = ''",
+      "tier": "A"
     },
     "smtp_from": {
-      "feld": "str = ''",
-      "stufe": "A"
+      "field": "str = ''",
+      "tier": "A"
     },
     "smtp_host": {
-      "feld": "str = ''",
-      "stufe": "A"
+      "field": "str = ''",
+      "tier": "A"
     },
     "smtp_password": {
-      "feld": "str = ''",
-      "stufe": "A"
+      "field": "str = ''",
+      "tier": "A"
     },
     "smtp_port": {
-      "feld": "int = 587",
-      "stufe": "A"
+      "field": "int = 587",
+      "tier": "A"
     },
     "smtp_ssl": {
-      "feld": "bool = False",
-      "stufe": "A"
+      "field": "bool = False",
+      "tier": "A"
     },
     "smtp_starttls": {
-      "feld": "bool = True",
-      "stufe": "A"
+      "field": "bool = True",
+      "tier": "A"
     },
     "smtp_timeout": {
-      "feld": "int = 15",
-      "stufe": "A"
+      "field": "int = 15",
+      "tier": "A"
     },
     "smtp_user": {
-      "feld": "str = ''",
-      "stufe": "A"
+      "field": "str = ''",
+      "tier": "A"
     },
     "stepup_max_age_sec": {
-      "feld": "int = 900",
-      "stufe": "A"
+      "field": "int = 900",
+      "tier": "A"
     },
     "stepup_methods": {
-      "feld": "list[str] = []",
-      "stufe": "A"
+      "field": "list[str] = []",
+      "tier": "A"
     },
     "stepup_strict": {
-      "feld": "bool = False",
-      "stufe": "A"
+      "field": "bool = False",
+      "tier": "A"
     },
     "totp_enabled": {
-      "feld": "bool = True",
-      "stufe": "A"
+      "field": "bool = True",
+      "tier": "A"
     },
     "totp_required": {
-      "feld": "bool = False",
-      "stufe": "B"
+      "field": "bool = False",
+      "tier": "B"
     },
     "trusted_proxies": {
-      "feld": "list[str] = ['127.0.0.1/32', '::1/128']",
-      "stufe": "A"
+      "field": "list[str] = ['127.0.0.1/32', '::1/128']",
+      "tier": "A"
     },
     "trusted_redirect_hosts": {
-      "feld": "list[str] = []",
-      "stufe": "A"
+      "field": "list[str] = []",
+      "tier": "A"
     }
   },
-  "TinySesamConfig.methoden": {
+  "TinySesamConfig.methods": {
     "active_directory": {
       "sig": "(*, ldap_url, upn_suffix=None, base_dn=None, bind_dn='', bind_password='', allowed_groups=None, **overrides)",
-      "stufe": "A"
+      "tier": "A"
     },
     "enabled_methods": {
       "sig": "() -> 'list[str]'",
-      "stufe": "B"
+      "tier": "B"
     },
     "entra_id": {
       "sig": "(*, tenant_id, client_id, client_secret, oidc_name='Microsoft', **overrides)",
-      "stufe": "A"
+      "tier": "A"
     },
     "local_accounts": {
       "sig": "(**overrides)",
-      "stufe": "A"
+      "tier": "A"
     },
     "oidc_gateway": {
       "sig": "(*, issuer, client_id, client_secret, base_url, cookie_domain='', trusted_redirect_hosts=None, allowed_groups=None, group_claim='groups', oidc_name='SSO', oidc_scopes='openid profile email', db_path='tinysesam-gateway.db', https_mode='warn', session_ttl_hours=168, trusted_proxies=None, clients=None, revalidate_minutes=60, **overrides)",
-      "stufe": "A"
+      "tier": "A"
     },
     "pin_as_first_factor": {
       "sig": "() -> 'bool'",
-      "stufe": "B"
+      "tier": "B"
     },
     "validate": {
       "sig": "() -> 'list[str]'",
-      "stufe": "B"
+      "tier": "B"
     }
   },
-  "exporte": {
+  "exports": {
     "ConfigError": {
-      "stufe": "A"
+      "tier": "A"
     },
     "LoginResult": {
-      "stufe": "A"
+      "tier": "A"
     },
     "MailNotConfigured": {
-      "stufe": "A"
+      "tier": "A"
     },
     "MissingExtra": {
-      "stufe": "A"
+      "tier": "A"
     },
     "PasswordChangeResult": {
-      "stufe": "A"
+      "tier": "A"
     },
     "StateError": {
-      "stufe": "A"
+      "tier": "A"
     },
     "TinySesam": {
-      "stufe": "A"
+      "tier": "A"
     },
     "TinySesamConfig": {
-      "stufe": "A"
+      "tier": "A"
     },
     "TinySesamError": {
-      "stufe": "A"
+      "tier": "A"
     },
     "current_version": {
-      "stufe": "B"
+      "tier": "B"
     }
   },
   "http.contract": {
     "cookie:__Host-tinysesam_link": {
-      "stufe": "A"
+      "tier": "A"
     },
     "cookie:__Host-tinysesam_linkflow": {
-      "stufe": "A"
+      "tier": "A"
     },
     "header:X-TinySesam-Factor": {
-      "stufe": "B"
+      "tier": "B"
     },
     "header:X-TinySesam-Gate-Cookie": {
-      "stufe": "A"
+      "tier": "A"
     },
     "header:X-TinySesam-Location": {
-      "stufe": "A"
+      "tier": "A"
     },
     "header:X-TinySesam-Reason": {
-      "stufe": "A"
+      "tier": "A"
     },
     "header:X-TinySesam-Reauth": {
-      "stufe": "B"
+      "tier": "B"
     },
     "header:X-TinySesam-Roles": {
-      "stufe": "A"
+      "tier": "A"
     },
     "reason:app-missing": {
-      "stufe": "A"
+      "tier": "A"
     },
     "reason:app-signed-out": {
-      "stufe": "A"
+      "tier": "A"
     },
     "reason:app-stale": {
-      "stufe": "A"
+      "tier": "A"
     },
     "reason:role": {
-      "stufe": "A"
+      "tier": "A"
     },
     "request-header:Accept": {
-      "stufe": "B"
+      "tier": "B"
     },
     "request-header:Authorization": {
-      "stufe": "A"
+      "tier": "A"
     },
     "request-header:Host": {
-      "stufe": "A"
+      "tier": "A"
     },
     "request-header:Referer": {
-      "stufe": "B"
+      "tier": "B"
     },
     "request-header:Sec-Fetch-Mode": {
-      "stufe": "B"
+      "tier": "B"
     },
     "request-header:Sec-Fetch-Site": {
-      "stufe": "B"
+      "tier": "B"
     },
     "request-header:X-Api-Key": {
-      "stufe": "A"
+      "tier": "A"
     },
     "request-header:X-Csrf-Token": {
-      "stufe": "B"
+      "tier": "B"
     },
     "request-header:X-Forwarded-For": {
-      "stufe": "A"
+      "tier": "A"
     },
     "request-header:X-Forwarded-Host": {
-      "stufe": "A"
+      "tier": "A"
     },
     "request-header:X-Forwarded-Proto": {
-      "stufe": "A"
+      "tier": "A"
     },
     "request-header:X-Forwarded-Uri": {
-      "stufe": "A"
+      "tier": "A"
     },
     "request-header:X-Original-Uri": {
-      "stufe": "A"
+      "tier": "A"
     },
     "request-header:X-Original-Url": {
-      "stufe": "A"
+      "tier": "A"
     },
     "request-header:X-TinySesam-Roles": {
-      "stufe": "A"
+      "tier": "A"
     },
     "request-param:roles": {
-      "stufe": "A"
+      "tier": "A"
     }
   },
   "http.forward": {
     "forward: API key": {
       "response": "200 | headers: Remote-Email, Remote-Groups, Remote-Id, Remote-Name, Remote-User",
-      "stufe": "A"
+      "tier": "A"
     },
     "forward: not signed in": {
       "response": "401 | WWW-Authenticate: FormBased realm=\"TinySesam\" | X-TinySesam-Location -> /auth/login",
-      "stufe": "A"
+      "tier": "A"
     },
     "forward: role missing (?roles=)": {
       "response": "403 | X-TinySesam-Reason: role",
-      "stufe": "A"
+      "tier": "A"
     },
     "forward: role missing (X-TinySesam-Roles)": {
       "response": "403 | X-TinySesam-Reason: role",
-      "stufe": "A"
+      "tier": "A"
     },
     "forward: role present (?roles=)": {
       "response": "200 | headers: Remote-Email, Remote-Groups, Remote-Id, Remote-Name, Remote-User, X-TinySesam-Gate-Cookie",
-      "stufe": "A"
+      "tier": "A"
     },
     "forward: signed in": {
       "response": "200 | headers: Remote-Email, Remote-Groups, Remote-Id, Remote-Name, Remote-User, X-TinySesam-Gate-Cookie",
-      "stufe": "A"
+      "tier": "A"
     },
     "forward: signed out of this application": {
       "response": "401 | WWW-Authenticate: FormBased realm=\"TinySesam\" | X-TinySesam-Location -> /auth/login | X-TinySesam-Reason: app-signed-out",
-      "stufe": "A"
+      "tier": "A"
     },
     "gate logout: host not protected": {
       "response": "404",
-      "stufe": "A"
+      "tier": "A"
     },
     "gate logout: sign out everywhere": {
       "response": "303 | Location -> /.tinysesam/after-logout | cookies: __Host-tinysesam_gate (cleared), tinysesam_session (cleared)",
-      "stufe": "A"
+      "tier": "A"
     },
     "gate logout: sign out of this application only": {
       "response": "303 | Location -> / | cookies: __Host-tinysesam_gate (cleared)",
-      "stufe": "A"
+      "tier": "A"
     },
     "gateway authorize: signed in": {
       "response": "303 | Location -> /.tinysesam/callback",
-      "stufe": "A"
+      "tier": "A"
     },
     "gateway authorize: unknown flow": {
       "response": "400",
-      "stufe": "A"
+      "tier": "A"
     },
     "gateway callback: unknown code": {
       "response": "400",
-      "stufe": "A"
+      "tier": "A"
     },
     "gateway callback: valid code": {
       "response": "303 | Location -> /seite | cookies: __Host-tinysesam_link, __Host-tinysesam_linkflow (cleared)",
-      "stufe": "A"
+      "tier": "A"
     },
     "gateway forward: not signed in": {
       "response": "401 | WWW-Authenticate: FormBased realm=\"TinySesam\" | X-TinySesam-Location -> /.tinysesam/start",
-      "stufe": "A"
+      "tier": "A"
     },
     "gateway forward: signed in via the connection": {
       "response": "200 | headers: Remote-Email, Remote-Groups, Remote-Id, Remote-Name, Remote-User, X-TinySesam-Gate-Cookie",
-      "stufe": "A"
+      "tier": "A"
     },
     "gateway logged-out page: host not protected": {
       "response": "400",
-      "stufe": "A"
+      "tier": "A"
     },
     "gateway logout: host not protected": {
       "response": "400",
-      "stufe": "A"
+      "tier": "A"
     },
     "gateway start": {
       "response": "303 | Location -> /auth/gate/authorize | cookies: __Host-tinysesam_linkflow",
-      "stufe": "A"
+      "tier": "A"
     },
     "gateway start: host not protected": {
       "response": "404",
-      "stufe": "A"
+      "tier": "A"
     },
     "verify alias: signed in": {
       "response": "200 | headers: Remote-Email, Remote-Groups, Remote-Id, Remote-Name, Remote-User, X-TinySesam-Gate-Cookie",
-      "stufe": "A"
+      "tier": "A"
     }
   },
   "http.routes": {
     "GET /": {
       "keys": [],
-      "stufe": "B"
+      "tier": "B"
     },
     "GET /.tinysesam/after-logout": {
       "keys": [],
-      "stufe": "A"
+      "tier": "A"
     },
     "GET /.tinysesam/callback": {
       "keys": [
         "query:code"
       ],
-      "stufe": "A"
+      "tier": "A"
     },
     "GET /.tinysesam/logout": {
       "keys": [
         "query:next",
         "query:scope"
       ],
-      "stufe": "A"
+      "tier": "A"
     },
     "GET /.tinysesam/start": {
       "keys": [
         "query:rd",
         "query:signed_out"
       ],
-      "stufe": "A"
+      "tier": "A"
     },
     "GET /auth/account": {
       "keys": [],
-      "stufe": "B"
+      "tier": "B"
     },
     "GET /auth/apikeys": {
       "keys": [],
-      "stufe": "B"
+      "tier": "B"
     },
     "GET /auth/claim-admin": {
       "keys": [
         "query:token"
       ],
-      "stufe": "B"
+      "tier": "B"
     },
     "GET /auth/email/{token}": {
       "keys": [],
-      "stufe": "B"
+      "tier": "B"
     },
     "GET /auth/forgot": {
       "keys": [],
-      "stufe": "B"
+      "tier": "B"
     },
     "GET /auth/forward": {
       "keys": [],
-      "stufe": "A"
+      "tier": "A"
     },
     "GET /auth/gate/authorize": {
       "keys": [
         "query:flow"
       ],
-      "stufe": "A"
+      "tier": "A"
     },
     "GET /auth/gate/logged-out": {
       "keys": [
         "query:host"
       ],
-      "stufe": "A"
+      "tier": "A"
     },
     "GET /auth/gate/logout": {
       "keys": [
         "query:host"
       ],
-      "stufe": "A"
+      "tier": "A"
     },
     "GET /auth/invite/{token}": {
       "keys": [],
-      "stufe": "B"
+      "tier": "B"
     },
     "GET /auth/login": {
       "keys": [
@@ -1948,147 +1948,147 @@
         "query:next",
         "query:signed_out"
       ],
-      "stufe": "B"
+      "tier": "B"
     },
     "GET /auth/logout": {
       "keys": [],
-      "stufe": "B"
+      "tier": "B"
     },
     "GET /auth/magic/request": {
       "keys": [
         "query:next"
       ],
-      "stufe": "B"
+      "tier": "B"
     },
     "GET /auth/magic/{token}": {
       "keys": [],
-      "stufe": "B"
+      "tier": "B"
     },
     "GET /auth/me": {
       "keys": [],
-      "stufe": "B"
+      "tier": "B"
     },
     "GET /auth/oidc/start": {
       "keys": [
         "query:app",
         "query:next"
       ],
-      "stufe": "B"
+      "tier": "B"
     },
     "GET /auth/passkey/list": {
       "keys": [],
-      "stufe": "B"
+      "tier": "B"
     },
     "GET /auth/pin": {
       "keys": [
         "query:error",
         "query:next"
       ],
-      "stufe": "B"
+      "tier": "B"
     },
     "GET /auth/reauth": {
       "keys": [
         "query:error",
         "query:next"
       ],
-      "stufe": "B"
+      "tier": "B"
     },
     "GET /auth/register": {
       "keys": [
         "query:invite",
         "query:next"
       ],
-      "stufe": "B"
+      "tier": "B"
     },
     "GET /auth/reset": {
       "keys": [
         "query:token"
       ],
-      "stufe": "B"
+      "tier": "B"
     },
     "GET /auth/resource/{name}": {
       "keys": [
         "query:error",
         "query:next"
       ],
-      "stufe": "B"
+      "tier": "B"
     },
     "GET /auth/saml/login": {
       "keys": [
         "query:next"
       ],
-      "stufe": "B"
+      "tier": "B"
     },
     "GET /auth/saml/metadata": {
       "keys": [],
-      "stufe": "A"
+      "tier": "A"
     },
     "GET /auth/sessions": {
       "keys": [],
-      "stufe": "B"
+      "tier": "B"
     },
     "GET /auth/totp": {
       "keys": [
         "query:error",
         "query:next"
       ],
-      "stufe": "B"
+      "tier": "B"
     },
     "GET /auth/totp/setup": {
       "keys": [
         "query:next"
       ],
-      "stufe": "B"
+      "tier": "B"
     },
     "GET /auth/verify": {
       "keys": [],
-      "stufe": "A"
+      "tier": "A"
     },
     "GET /auth/verify/{token}": {
       "keys": [],
-      "stufe": "B"
+      "tier": "B"
     },
     "GET /healthz": {
       "keys": [],
-      "stufe": "A"
+      "tier": "A"
     },
     "GET <admin>": {
       "keys": [],
-      "stufe": "B"
+      "tier": "B"
     },
     "GET <admin>/api/audit": {
       "keys": [
         "query:limit"
       ],
-      "stufe": "B"
+      "tier": "B"
     },
     "GET <admin>/api/resources": {
       "keys": [],
-      "stufe": "B"
+      "tier": "B"
     },
     "GET <admin>/api/security": {
       "keys": [],
-      "stufe": "B"
+      "tier": "B"
     },
     "GET <admin>/api/sessions": {
       "keys": [],
-      "stufe": "B"
+      "tier": "B"
     },
     "GET <admin>/api/users": {
       "keys": [],
-      "stufe": "B"
+      "tier": "B"
     },
     "GET <admin>/api/users/{uid}/keys": {
       "keys": [],
-      "stufe": "B"
+      "tier": "B"
     },
     "GET <admin>/api/users/{uid}/passkeys": {
       "keys": [],
-      "stufe": "B"
+      "tier": "B"
     },
     "GET <admin>/api/version": {
       "keys": [],
-      "stufe": "B"
+      "tier": "B"
     },
     "GET <oidc_callback_path>": {
       "keys": [
@@ -2096,7 +2096,7 @@
         "query:error",
         "query:state"
       ],
-      "stufe": "A"
+      "tier": "A"
     },
     "POST /.tinysesam/logout": {
       "keys": [
@@ -2104,36 +2104,36 @@
         "form:next",
         "form:scope"
       ],
-      "stufe": "A"
+      "tier": "A"
     },
     "POST /auth/account/email": {
       "keys": [],
-      "stufe": "B"
+      "tier": "B"
     },
     "POST /auth/account/username": {
       "keys": [],
-      "stufe": "B"
+      "tier": "B"
     },
     "POST /auth/apikeys": {
       "keys": [],
-      "stufe": "B"
+      "tier": "B"
     },
     "POST /auth/apikeys/{key_id}/revoke": {
       "keys": [],
-      "stufe": "B"
+      "tier": "B"
     },
     "POST /auth/email/{token}": {
       "keys": [
         "form:_csrf"
       ],
-      "stufe": "B"
+      "tier": "B"
     },
     "POST /auth/forgot": {
       "keys": [
         "form:_csrf",
         "form:email"
       ],
-      "stufe": "B"
+      "tier": "B"
     },
     "POST /auth/gate/resume": {
       "keys": [
@@ -2141,7 +2141,7 @@
         "form:gate_host",
         "form:next"
       ],
-      "stufe": "A"
+      "tier": "A"
     },
     "POST /auth/login": {
       "keys": [
@@ -2151,13 +2151,13 @@
         "form:remember",
         "form:username"
       ],
-      "stufe": "B"
+      "tier": "B"
     },
     "POST /auth/logout": {
       "keys": [
         "form:_csrf"
       ],
-      "stufe": "B"
+      "tier": "B"
     },
     "POST /auth/magic/request": {
       "keys": [
@@ -2165,41 +2165,41 @@
         "form:email",
         "form:next"
       ],
-      "stufe": "B"
+      "tier": "B"
     },
     "POST /auth/magic/{token}": {
       "keys": [
         "form:_csrf"
       ],
-      "stufe": "B"
+      "tier": "B"
     },
     "POST /auth/passkey/delete": {
       "keys": [],
-      "stufe": "B"
+      "tier": "B"
     },
     "POST /auth/passkey/login/begin": {
       "keys": [],
-      "stufe": "B"
+      "tier": "B"
     },
     "POST /auth/passkey/login/finish": {
       "keys": [
         "query:next"
       ],
-      "stufe": "B"
+      "tier": "B"
     },
     "POST /auth/passkey/register/begin": {
       "keys": [],
-      "stufe": "B"
+      "tier": "B"
     },
     "POST /auth/passkey/register/finish": {
       "keys": [
         "query:name"
       ],
-      "stufe": "B"
+      "tier": "B"
     },
     "POST /auth/password": {
       "keys": [],
-      "stufe": "B"
+      "tier": "B"
     },
     "POST /auth/pin": {
       "keys": [
@@ -2209,15 +2209,15 @@
         "form:remember",
         "form:username"
       ],
-      "stufe": "B"
+      "tier": "B"
     },
     "POST /auth/pin/disable": {
       "keys": [],
-      "stufe": "B"
+      "tier": "B"
     },
     "POST /auth/pin/set": {
       "keys": [],
-      "stufe": "B"
+      "tier": "B"
     },
     "POST /auth/reauth": {
       "keys": [
@@ -2227,7 +2227,7 @@
         "form:password",
         "form:pin"
       ],
-      "stufe": "B"
+      "tier": "B"
     },
     "POST /auth/register": {
       "keys": [
@@ -2238,7 +2238,7 @@
         "form:password",
         "form:username"
       ],
-      "stufe": "B"
+      "tier": "B"
     },
     "POST /auth/reset": {
       "keys": [
@@ -2246,7 +2246,7 @@
         "form:password",
         "form:token"
       ],
-      "stufe": "B"
+      "tier": "B"
     },
     "POST /auth/resource/{name}": {
       "keys": [
@@ -2254,19 +2254,19 @@
         "form:next",
         "form:secret"
       ],
-      "stufe": "B"
+      "tier": "B"
     },
     "POST /auth/saml/acs": {
       "keys": [],
-      "stufe": "A"
+      "tier": "A"
     },
     "POST /auth/sessions/revoke": {
       "keys": [],
-      "stufe": "B"
+      "tier": "B"
     },
     "POST /auth/sessions/revoke-after-login": {
       "keys": [],
-      "stufe": "B"
+      "tier": "B"
     },
     "POST /auth/totp": {
       "keys": [
@@ -2274,195 +2274,195 @@
         "form:code",
         "form:next"
       ],
-      "stufe": "B"
+      "tier": "B"
     },
     "POST /auth/totp/disable": {
       "keys": [],
-      "stufe": "B"
+      "tier": "B"
     },
     "POST /auth/totp/recovery": {
       "keys": [],
-      "stufe": "B"
+      "tier": "B"
     },
     "POST /auth/totp/setup": {
       "keys": [
         "form:code",
         "form:next"
       ],
-      "stufe": "B"
+      "tier": "B"
     },
     "POST /auth/totp/setup/start": {
       "keys": [
         "form:_csrf",
         "form:next"
       ],
-      "stufe": "B"
+      "tier": "B"
     },
     "POST /auth/verify/{token}": {
       "keys": [
         "form:_csrf"
       ],
-      "stufe": "B"
+      "tier": "B"
     },
     "POST <admin>/api/invite": {
       "keys": [],
-      "stufe": "B"
+      "tier": "B"
     },
     "POST <admin>/api/keys/{kid}/revoke": {
       "keys": [],
-      "stufe": "B"
+      "tier": "B"
     },
     "POST <admin>/api/resources": {
       "keys": [],
-      "stufe": "B"
+      "tier": "B"
     },
     "POST <admin>/api/resources/{name}/delete": {
       "keys": [],
-      "stufe": "B"
+      "tier": "B"
     },
     "POST <admin>/api/security": {
       "keys": [],
-      "stufe": "B"
+      "tier": "B"
     },
     "POST <admin>/api/sessions/revoke": {
       "keys": [],
-      "stufe": "B"
+      "tier": "B"
     },
     "POST <admin>/api/users": {
       "keys": [],
-      "stufe": "B"
+      "tier": "B"
     },
     "POST <admin>/api/users/{uid}/delete": {
       "keys": [],
-      "stufe": "B"
+      "tier": "B"
     },
     "POST <admin>/api/users/{uid}/disable": {
       "keys": [],
-      "stufe": "B"
+      "tier": "B"
     },
     "POST <admin>/api/users/{uid}/keys": {
       "keys": [],
-      "stufe": "B"
+      "tier": "B"
     },
     "POST <admin>/api/users/{uid}/owner": {
       "keys": [],
-      "stufe": "B"
+      "tier": "B"
     },
     "POST <admin>/api/users/{uid}/passkeys/{cid}/delete": {
       "keys": [],
-      "stufe": "B"
+      "tier": "B"
     },
     "POST <admin>/api/users/{uid}/password": {
       "keys": [],
-      "stufe": "B"
+      "tier": "B"
     },
     "POST <admin>/api/users/{uid}/roles": {
       "keys": [],
-      "stufe": "B"
+      "tier": "B"
     },
     "POST <admin>/api/users/{uid}/username": {
       "keys": [],
-      "stufe": "B"
+      "tier": "B"
     }
   },
   "log.lines": {
     "event:deferred login": {
-      "stufe": "A"
+      "tier": "A"
     },
     "event:deferred verification": {
-      "stufe": "A"
+      "tier": "A"
     },
     "event:failed login": {
-      "stufe": "A"
+      "tier": "A"
     },
     "event:failed verification": {
-      "stufe": "A"
+      "tier": "A"
     },
     "event:login ok": {
-      "stufe": "A"
+      "tier": "A"
     },
     "event:repeated login": {
-      "stufe": "A"
+      "tier": "A"
     },
     "format:%(asctime)s %(levelname)s %(message)s": {
-      "stufe": "A"
+      "tier": "A"
     },
     "line:INFO login ok | user ip method unban": {
-      "stufe": "A"
+      "tier": "A"
     },
     "line:INFO repeated login | user ip method": {
-      "stufe": "A"
+      "tier": "A"
     },
     "line:WARNING deferred login | user ip reason": {
-      "stufe": "A"
+      "tier": "A"
     },
     "line:WARNING deferred verification | user ip reason": {
-      "stufe": "A"
+      "tier": "A"
     },
     "line:WARNING failed login | user ip method": {
-      "stufe": "A"
+      "tier": "A"
     },
     "line:WARNING failed login | user ip method reason": {
-      "stufe": "A"
+      "tier": "A"
     },
     "line:WARNING failed verification | user ip method": {
-      "stufe": "A"
+      "tier": "A"
     },
     "line:WARNING failed verification | user ip method reason": {
-      "stufe": "A"
+      "tier": "A"
     },
     "value:method=blocked": {
-      "stufe": "A"
+      "tier": "A"
     },
     "value:method=claim_admin": {
-      "stufe": "A"
+      "tier": "A"
     },
     "value:method=oidc": {
-      "stufe": "A"
+      "tier": "A"
     },
     "value:method=passkey": {
-      "stufe": "A"
+      "tier": "A"
     },
     "value:method=password": {
-      "stufe": "A"
+      "tier": "A"
     },
     "value:method=password_change": {
-      "stufe": "A"
+      "tier": "A"
     },
     "value:method=reauth": {
-      "stufe": "A"
+      "tier": "A"
     },
     "value:method=resource": {
-      "stufe": "A"
+      "tier": "A"
     },
     "value:method=totp_setup": {
-      "stufe": "A"
+      "tier": "A"
     },
     "value:reason=account_locked": {
-      "stufe": "A"
+      "tier": "A"
     },
     "value:reason=pending": {
-      "stufe": "A"
+      "tier": "A"
     },
     "value:reason=unknown_key": {
-      "stufe": "A"
+      "tier": "A"
     },
     "value:unban=no": {
-      "stufe": "A"
+      "tier": "A"
     },
     "value:unban=yes": {
-      "stufe": "A"
+      "tier": "A"
     }
   },
   "log.loggers": {
     "tinysesam": {
-      "stufe": "A"
+      "tier": "A"
     },
     "tinysesam.mail": {
-      "stufe": "A"
+      "tier": "A"
     },
     "tinysesam.security": {
-      "stufe": "A"
+      "tier": "A"
     }
   }
 }

@@ -57,7 +57,7 @@ def lax(u=Depends(auth.require_role("editor"))):
 
 
 @app.get("/strikt")
-def strikt(u=Depends(auth.require_role("editor", admin_implies=False))):
+def strict(u=Depends(auth.require_role("editor", admin_implies=False))):
     return {"ok": True}
 
 
@@ -80,18 +80,18 @@ app.include_router(auth.router())
 
 
 @app.get("/eine-von")
-def eine_von(u=Depends(auth.require_role("redaktion", "lektorat"))):
+def one_of(u=Depends(auth.require_role("redaktion", "lektorat"))):
     return {"ok": True}
 
 
 @app.get("/aus-liste")
-def aus_liste(u=Depends(auth.require_role(["redaktion", "lektorat"]))):
+def from_items(u=Depends(auth.require_role(["redaktion", "lektorat"]))):
     return {"ok": True}
 
 
 @app.get("/beide", dependencies=[Depends(auth.require_role("lektorat")),
                                  Depends(auth.require_role("vertrieb"))])
-def beide():
+def both():
     return {"ok": True}
 
 
@@ -112,10 +112,10 @@ assert auth.require(role=["redaktion", "lektorat"]) and auth.require(role="lekto
 
 # An old positional call require_role("x", True) meant mfa=True — now keyword-only.
 # Fail loudly instead of silently treating True as a role.
-for kaputt in ((), ("editor", True)):
+for broken in ((), ("editor", True)):
     try:
-        auth.require_role(*kaputt)
-        raise AssertionError(f"require_role{kaputt} should have failed")
+        auth.require_role(*broken)
+        raise AssertionError(f"require_role{broken} should have failed")
     except (ValueError, TypeError):
         pass
 os.unlink(db)

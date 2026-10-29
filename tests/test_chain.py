@@ -25,7 +25,7 @@ def fresh(chain=None, strict=True, **kw):
     app.include_router(auth.router())
 
     @app.get("/geheim")
-    def geheim(u=Depends(auth.require_user)):
+    def secret_text(u=Depends(auth.require_user)):
         return {"u": u["username"]}
 
     return db, auth, uid, app
@@ -119,11 +119,11 @@ os.remove(db)
 # Up to 0.18.x that was not true: an account without TOTP was allowed to set it up itself at
 # exactly this point — so whoever had only the password bound their own authenticator and was
 # fully in. The chain protected everyone except those it was meant for.
-import time as _zeit                                                      # noqa: E402
+import time as _when                                                      # noqa: E402
 from tinysesam.errors import ConfigError as _ConfigError                  # noqa: E402
 
 
-def _kette_ohne_totp(**kw):
+def _chain_without_totp(**kw):
     """An app with a password+totp chain and an account that has NO TOTP."""
     db = os.path.join(tempfile.mkdtemp(), "t.db")
     auth = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db, rp_name="Test",
@@ -135,7 +135,7 @@ def _kette_ohne_totp(**kw):
     return db, auth, uid, app
 
 
-def _bis_zum_zweiten_faktor(app):
+def _until_the_second_factor(app):
     c = TestClient(app)
     c.post("/auth/login", data={"username": "neu", "password": "geheim123", "next": "/"},
            follow_redirects=False)
@@ -144,9 +144,9 @@ def _bis_zum_zweiten_faktor(app):
 
 # Default "first_login": a fresh account may set itself up — otherwise every new account would be
 # a dead end and the operator would have to touch the database.
-db_a, auth_a, uid_a, app_a = _kette_ohne_totp()
+db_a, auth_a, uid_a, app_a = _chain_without_totp()
 assert auth_a.mfa_enrollment_allowed(uid_a) is True
-c_a = _bis_zum_zweiten_faktor(app_a)
+c_a = _until_the_second_factor(app_a)
 assert c_a.get("/auth/totp", headers={"Accept": "text/html"}, follow_redirects=False
                ).headers.get("location", "").startswith("/auth/totp/setup")
 ok("R3-1: a never-used account sets up the second factor itself (default)")
@@ -159,19 +159,19 @@ ok("R3-1: a never-used account sets up the second factor itself (default)")
 import io as _io_e, logging as _logging_e, re as _re                     # noqa: E402
 from tinysesam import security as _sec_e                                  # noqa: E402
 
-db_e, auth_e, uid_e, app_e = _kette_ohne_totp()
-c_e = _bis_zum_zweiten_faktor(app_e)
+db_e, auth_e, uid_e, app_e = _chain_without_totp()
+c_e = _until_the_second_factor(app_e)
 assert "value='/ziel'" in c_e.get("/auth/totp/setup?next=/ziel").text
-_seite = c_e.post("/auth/totp/setup/start", data={"next": "/ziel"}).text
-assert "data-next='/ziel'" in _seite, "the target is lost on the way through the setup"
-assert "location.href=j.next" in _seite, "the page does not follow the target after confirmation"
-_geheim = _re.search(r"class=mono>([A-Z2-7]+)<", _seite).group(1)
-_ereig_e = []
-auth_e.on_security_event = lambda e, k, d: _ereig_e.append(e)
-_code = pyotp.TOTP(_geheim).now()
-_puffer_e = _io_e.StringIO()
-_haken_e = _logging_e.StreamHandler(_puffer_e)
-_sec_e.seclog.addHandler(_haken_e)
+_page_html = c_e.post("/auth/totp/setup/start", data={"next": "/ziel"}).text
+assert "data-next='/ziel'" in _page_html, "the target is lost on the way through the setup"
+assert "location.href=j.next" in _page_html, "the page does not follow the target after confirmation"
+_secret_text = _re.search(r"class=mono>([A-Z2-7]+)<", _page_html).group(1)
+_event_e = []
+auth_e.on_security_event = lambda e, k, d: _event_e.append(e)
+_code = pyotp.TOTP(_secret_text).now()
+_buffer_e = _io_e.StringIO()
+_check_e = _logging_e.StreamHandler(_buffer_e)
+_sec_e.seclog.addHandler(_check_e)
 try:
     _ant = c_e.post("/auth/totp/setup", data={"code": _code, "next": "/ziel"})
     assert _ant.status_code == 200 and _ant.json() == {"ok": True, "next": "/ziel",
@@ -184,22 +184,22 @@ try:
     assert not auth_e._is_locked("neu", "testclient")
     assert c_e.get("/auth/account", follow_redirects=False).status_code == 200, "not fully signed in"
 finally:
-    _sec_e.seclog.removeHandler(_haken_e)
-assert "failed login" not in _puffer_e.getvalue(), _puffer_e.getvalue()
-assert _ereig_e == ["totp_enabled"], _ereig_e
+    _sec_e.seclog.removeHandler(_check_e)
+assert "failed login" not in _buffer_e.getvalue(), _buffer_e.getvalue()
+assert _event_e == ["totp_enabled"], _event_e
 ok("A-1: mandatory setup under the chain signs in with the confirmation (no failed attempt afterwards)")
 
 # A-4: An already active TOTP is not "confirmed once more" — neither via the route (409 like
 # GET and /start) nor via the method. Before: 200 {"ok": true}, a wrong `totp_enabled` event
 # and a second code verifier for the active factor.
 # (Mutation probe: remove `or t["confirmed"]` in totp_confirm OR the 409 guard -> red.)
-_folge = pyotp.TOTP(_geheim).at(_zeit.time() + 30)
-_ant = c_e.post("/auth/totp/setup", data={"code": _folge})
+_sequence = pyotp.TOTP(_secret_text).at(_when.time() + 30)
+_ant = c_e.post("/auth/totp/setup", data={"code": _sequence})
 assert _ant.status_code == 409, (_ant.status_code, _ant.text)
-assert not auth_e.totp_confirm(uid_e, _folge), "totp_confirm confirms an active TOTP again"
-assert _ereig_e == ["totp_enabled"], _ereig_e
+assert not auth_e.totp_confirm(uid_e, _sequence), "totp_confirm confirms an active TOTP again"
+assert _event_e == ["totp_enabled"], _event_e
 assert sum(z["event"] == "totp_enable" for z in auth_e.store.recent_audit(50)) == 1
-assert auth_e._verify_totp(uid_e, _folge), "the follow-up code must stay free for sign-in"
+assert auth_e._verify_totp(uid_e, _sequence), "the follow-up code must stay free for sign-in"
 ok("A-4: confirmed TOTP -> 409 at /auth/totp/setup, no second totp_enabled")
 
 # B1-7 also in the mandatory setup: the confirmation reports `other_sessions`, measured against
@@ -212,10 +212,10 @@ ok("A-4: confirmed TOTP -> 409 at /auth/totp/setup, no second totp_enabled")
 # cookie, i.e. `count_other_sessions(request, u)` without token -> red, already at A-1 above with 1 instead of 0.)
 auth_e.totp_disable(uid_e)
 auth_e.grant_mfa_enrollment(uid_e, minutes=30)
-c_b = _bis_zum_zweiten_faktor(app_e)
-_seite_b = c_b.post("/auth/totp/setup/start", data={"next": "/ziel"}).text
-_geheim_b = _re.search(r"class=mono>([A-Z2-7]+)<", _seite_b).group(1)
-_ant_b = c_b.post("/auth/totp/setup", data={"code": pyotp.TOTP(_geheim_b).now(), "next": "/ziel"})
+c_b = _until_the_second_factor(app_e)
+_page_html_b = c_b.post("/auth/totp/setup/start", data={"next": "/ziel"}).text
+_secret_text_b = _re.search(r"class=mono>([A-Z2-7]+)<", _page_html_b).group(1)
+_ant_b = c_b.post("/auth/totp/setup", data={"code": pyotp.TOTP(_secret_text_b).now(), "next": "/ziel"})
 assert _ant_b.status_code == 200, _ant_b.text
 assert _ant_b.json() == {"ok": True, "next": "/ziel", "other_sessions": 1, "other_sessions_after": 0}, _ant_b.json()
 assert c_e.get("/auth/account", follow_redirects=False).status_code == 200, "device A is still in"
@@ -237,22 +237,22 @@ auth_k = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db_k, 
                                    mfa_enrollment="strict"))
 uid_k = auth_k.create_user("neu", password="geheim123")
 auth_k.set_pin(uid_k, "2468")
-_geheim_k = auth_k.totp_begin(uid_k)["secret"]
-assert auth_k.totp_confirm(uid_k, pyotp.TOTP(_geheim_k).now())
+_secret_text_k = auth_k.totp_begin(uid_k)["secret"]
+assert auth_k.totp_confirm(uid_k, pyotp.TOTP(_secret_text_k).now())
 _codes_k = auth_k.generate_recovery_codes(uid_k)
 app_k = FastAPI()
 app_k.include_router(auth_k.router())
-c_ka = _bis_zum_zweiten_faktor(app_k)                       # device A: the whole chain
+c_ka = _until_the_second_factor(app_k)                       # device A: the whole chain
 assert c_ka.post("/auth/totp", data={"code": _codes_k[0], "next": "/"},
                  follow_redirects=False).headers["location"].startswith("/auth/pin")
 c_ka.post("/auth/pin", data={"username": "neu", "pin": "2468", "next": "/"}, follow_redirects=False)
 assert c_ka.get("/auth/account", follow_redirects=False).status_code == 200
 auth_k.totp_disable(uid_k)                                  # device lost
 auth_k.grant_mfa_enrollment(uid_k, minutes=30)
-c_kb = _bis_zum_zweiten_faktor(app_k)                       # device B sets up anew
-_seite_k = c_kb.post("/auth/totp/setup/start", data={"next": "/ziel"}).text
-_geheim_kb = _re.search(r"class=mono>([A-Z2-7]+)<", _seite_k).group(1)
-_ant_k = c_kb.post("/auth/totp/setup", data={"code": pyotp.TOTP(_geheim_kb).now(), "next": "/ziel"})
+c_kb = _until_the_second_factor(app_k)                       # device B sets up anew
+_page_html_k = c_kb.post("/auth/totp/setup/start", data={"next": "/ziel"}).text
+_secret_text_kb = _re.search(r"class=mono>([A-Z2-7]+)<", _page_html_k).group(1)
+_ant_k = c_kb.post("/auth/totp/setup", data={"code": pyotp.TOTP(_secret_text_kb).now(), "next": "/ziel"})
 assert _ant_k.status_code == 200, _ant_k.text
 _s_k = auth_k.store.get_session(c_kb.cookies.get(auth_k.cfg.session_cookie))
 assert _s_k and not _s_k["mfa_ok"], "the session is already full after the TOTP step"
@@ -267,12 +267,12 @@ os.remove(db_k)
 
 # ...but only until the first complete login. After that the way is shut — exactly the case in
 # which someone has the password of an EXISTING account.
-auth_a.store.mark_first_login(uid_a, int(_zeit.time()))
+auth_a.store.mark_first_login(uid_a, int(_when.time()))
 assert auth_a.mfa_enrollment_allowed(uid_a) is False
-c_a2 = _bis_zum_zweiten_faktor(app_a)
-_ziel = c_a2.get("/auth/totp", headers={"Accept": "text/html"}, follow_redirects=False
+c_a2 = _until_the_second_factor(app_a)
+_destination = c_a2.get("/auth/totp", headers={"Accept": "text/html"}, follow_redirects=False
                  ).headers.get("location", "")
-assert not _ziel.startswith("/auth/totp/setup"), f"setup stayed open: {_ziel!r}"
+assert not _destination.startswith("/auth/totp/setup"), f"setup stayed open: {_destination!r}"
 assert auth_a.store.get_user(uid_a)["first_login_at"] is not None
 ok("R3-1: after the first complete login the self-setup is closed")
 
@@ -283,42 +283,42 @@ ok("R3-1: after the first complete login the self-setup is closed")
 import io as _io, logging as _logging                                     # noqa: E402
 from tinysesam import security as _security                               # noqa: E402
 
-_puffer = _io.StringIO()
-_haken = _logging.StreamHandler(_puffer)
-_security.seclog.addHandler(_haken)
+_buffer = _io.StringIO()
+_check = _logging.StreamHandler(_buffer)
+_security.seclog.addHandler(_check)
 try:
-    _bis_zum_zweiten_faktor(app_a).get("/auth/totp", headers={"Accept": "text/html"},
+    _until_the_second_factor(app_a).get("/auth/totp", headers={"Accept": "text/html"},
                                        follow_redirects=False)
 finally:
-    _security.seclog.removeHandler(_haken)
-_text = _puffer.getvalue()
+    _security.seclog.removeHandler(_check)
+_text = _buffer.getvalue()
 assert "mfa enrollment denied" in _text, f"no message: {_text[:200]!r}"
-assert _security.log_ereignis("totp") not in _text, \
+assert _security.log_event("totp") not in _text, \
     f"the blocked setup carries the login jail word: {_text[:200]!r}"
 ok("R3-1: ...the message about it does not hit the fail2ban jail (it is not a failed attempt)")
 
 # The operator can open a window — the way for "device lost" and for strict.
-_bis = auth_a.grant_mfa_enrollment(uid_a, minutes=30)
-assert _bis > int(_zeit.time())
+_until = auth_a.grant_mfa_enrollment(uid_a, minutes=30)
+assert _until > int(_when.time())
 assert auth_a.mfa_enrollment_allowed(uid_a) is True
-assert auth_a.mfa_enrollment_allowed(uid_a, now=_bis + 1) is False
+assert auth_a.mfa_enrollment_allowed(uid_a, now=_until + 1) is False
 auth_a.revoke_mfa_enrollment(uid_a)
 assert auth_a.mfa_enrollment_allowed(uid_a) is False
 ok("R3-1: an operator enrollment window wins — time-limited and revocable")
 
 # "strict": never on its own, not even the first time.
-db_s, auth_s, uid_s, app_s = _kette_ohne_totp(mfa_enrollment="strict")
+db_s, auth_s, uid_s, app_s = _chain_without_totp(mfa_enrollment="strict")
 assert auth_s.mfa_enrollment_allowed(uid_s) is False
-_ziel_s = _bis_zum_zweiten_faktor(app_s).get("/auth/totp", headers={"Accept": "text/html"},
+_destination_s = _until_the_second_factor(app_s).get("/auth/totp", headers={"Accept": "text/html"},
                                              follow_redirects=False).headers.get("location", "")
-assert not _ziel_s.startswith("/auth/totp/setup"), _ziel_s
+assert not _destination_s.startswith("/auth/totp/setup"), _destination_s
 assert auth_s.grant_mfa_enrollment(uid_s, minutes=5) and auth_s.mfa_enrollment_allowed(uid_s) is True
 ok("R3-1: mfa_enrollment='strict' refuses even the fresh account — until the operator opens")
 
 # "grace": a period from account creation, closed afterwards.
-db_g, auth_g, uid_g, app_g = _kette_ohne_totp(mfa_enrollment="grace", mfa_enrollment_grace_days=7)
+db_g, auth_g, uid_g, app_g = _chain_without_totp(mfa_enrollment="grace", mfa_enrollment_grace_days=7)
 assert auth_g.mfa_enrollment_allowed(uid_g) is True
-assert auth_g.mfa_enrollment_allowed(uid_g, now=int(_zeit.time()) + 8 * 86400) is False
+assert auth_g.mfa_enrollment_allowed(uid_g, now=int(_when.time()) + 8 * 86400) is False
 ok("R3-1: mfa_enrollment='grace' expires after the configured number of days")
 
 # Without enforcement everything stays as it was: if the chain demands no second factor, every

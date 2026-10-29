@@ -91,9 +91,9 @@ class LoginResult:
         object.__setattr__(self, "_auth", None)
 
     @classmethod
-    def _with_session(cls, auth: Any, token: Optional[str], **felder) -> "LoginResult":
+    def _with_session(cls, auth: Any, token: Optional[str], **fields) -> "LoginResult":
         """A success whose session token still has to go into the cookie (None: the cookie is already valid)."""
-        result = cls(**felder)
+        result = cls(**fields)
         object.__setattr__(result, "_auth", auth)
         object.__setattr__(result, "_token", token)
         return result
@@ -118,6 +118,6 @@ class LoginResult:
         For `no_session` it leads to the login page; on any other failure to `next`,
         without a session — from there the guard sends back to the sign-in."""
         from fastapi.responses import RedirectResponse
-        antwort = RedirectResponse(self.next_url, 303)
-        self.set_cookie(antwort)
-        return antwort
+        response = RedirectResponse(self.next_url, 303)
+        self.set_cookie(response)
+        return response

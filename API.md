@@ -408,7 +408,7 @@ Is there at least one admin? The two bootstrap paths apply only while there is n
 
 ### `after_response(resp, task, on_overflow=None)`
 
-Run `task()` only AFTER the response has been sent, in the own mail worker (`mailer.Postausgang`, R4-05/B6-6). Returns `resp`.
+Run `task()` only AFTER the response has been sent, in the own mail worker (`mailer.Outbox`, R4-05/B6-6). Returns `resp`.
 
 ### `all_security() -> 'dict'`
 
@@ -636,7 +636,7 @@ Value: `('first_login', 'grace', 'strict')`
 
 ### `NAME_BINDING_REFUSALS` — Constant
 
-Why an account is not bound via the name (`_nachbindung_grund`) — short code and explanation, for the report of `federation_bind_existing` (`reason`).
+Why an account is not bound via the name (`_rebinding_reason`) — short code and explanation, for the report of `federation_bind_existing` (`reason`).
 
 Keys: `address_as_name`, `invalid_identifier`, `conflict`, `bound_elsewhere`, `self_chosen_name`, `name_from_other_source`, `binding_window_expired`
 

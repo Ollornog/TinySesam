@@ -38,7 +38,7 @@ from tinysesam import TinySesam, TinySesamConfig  # noqa: E402
 ISS = "https://auth.example.com"
 
 
-def freier_port() -> int:
+def free_port() -> int:
     s = socket.socket()
     s.bind(("127.0.0.1", 0))
     port = s.getsockname()[1]
@@ -65,47 +65,47 @@ def main(n: int) -> None:
     tc = TestClient(app)
     tc.post("/auth/login", data={"username": "anna", "password": "geheim123", "next": "/"},
             follow_redirects=False)
-    sitzung = f"{auth.session_cookie_name}={tc.cookies.get(auth.session_cookie_name)}"
+    session = f"{auth.session_cookie_name}={tc.cookies.get(auth.session_cookie_name)}"
     r = tc.get("/auth/forward", headers={"X-Forwarded-Proto": "https", "X-Forwarded-Host": "app.example.com",
                                          "X-Forwarded-Uri": "/"})
     gate = r.headers["X-TinySesam-Gate-Cookie"].split(";", 1)[0]
 
-    port, app_port = freier_port(), freier_port()
-    vorlage = (ROOT / "deploy/forward-auth/Caddyfile.gate").read_text(encoding="utf-8")
+    port, app_port = free_port(), free_port()
+    template = (ROOT / "deploy/forward-auth/Caddyfile.gate").read_text(encoding="utf-8")
     text = ("{\n\tauto_https off\n\tadmin off\n}\n"
-            + vorlage.replace("\napp.example.com {", f"\nhttp://app.example.com:{port} {{", 1)
+            + template.replace("\napp.example.com {", f"\nhttp://app.example.com:{port} {{", 1)
                      .replace("\nauth.example.com {", f"\nhttp://auth.example.com:{port} {{", 1)
             + f"\nhttp://127.0.0.1:{app_port} {{\n\trespond \"ok\"\n}}\n")
     (pathlib.Path(tmp) / "Caddyfile").write_text(text, encoding="utf-8")
-    umg = {**os.environ, "TS_GATE_PUBKEY": auth.gate_public_key(), "TS_GATE_ISSUER": ISS,
+    env = {**os.environ, "TS_GATE_PUBKEY": auth.gate_public_key(), "TS_GATE_ISSUER": ISS,
            "TS_AUTH_UPSTREAM": ts, "TS_APP_UPSTREAM": f"127.0.0.1:{app_port}",
            "XDG_DATA_HOME": tmp, "XDG_CONFIG_HOME": tmp}
     with open(os.path.join(tmp, "caddy.log"), "w") as log:
         caddy = subprocess.Popen([CADDY, "run", "--config", os.path.join(tmp, "Caddyfile"),
-                                  "--adapter", "caddyfile"], stdout=log, stderr=subprocess.STDOUT, env=umg)
+                                  "--adapter", "caddyfile"], stdout=log, stderr=subprocess.STDOUT, env=env)
     time.sleep(2)
 
-    def last(cookie: str, gleichzeitig: int):
-        aus = subprocess.run([HEY, "-n", str(n), "-c", str(gleichzeitig), "-host", f"app.example.com:{port}",
+    def last(cookie: str, simultaneous: int):
+        from_ = subprocess.run([HEY, "-n", str(n), "-c", str(simultaneous), "-host", f"app.example.com:{port}",
                               "-H", f"Cookie: {cookie}", f"http://127.0.0.1:{port}/asset.js"],
                              capture_output=True, text=True, check=True).stdout
-        codes = dict(re.findall(r"\[(\d+)\]\s+(\d+) responses", aus))
+        codes = dict(re.findall(r"\[(\d+)\]\s+(\d+) responses", from_))
         assert codes == {"200": str(n)}, codes
-        rps = float(re.search(r"Requests/sec:\s+([\d.]+)", aus).group(1))
-        p50, p95 = (float(re.search(rf"{q}%+ in ([\d.]+)", aus).group(1)) * 1000 for q in (50, 95))
+        rps = float(re.search(r"Requests/sec:\s+([\d.]+)", from_).group(1))
+        p50, p95 = (float(re.search(rf"{q}%+ in ([\d.]+)", from_).group(1)) * 1000 for q in (50, 95))
         return rps, p50, p95
 
     try:
         print(f"{n} requests per row, one session, application = static response\n")
         print("| concurrent | path | throughput | median | 95 % |")
         print("|---|---|---|---|---|")
-        for gleichzeitig in (1, 20):
+        for simultaneous in (1, 20):
             auth.cfg.gate_token_enabled = False
-            a = last(sitzung, gleichzeitig)
+            a = last(session, simultaneous)
             auth.cfg.gate_token_enabled = True
-            b = last(f"{sitzung}; {gate}", gleichzeitig)
-            for weg, (rps, p50, p95) in (("`/auth/forward` per request", a), ("gate token", b)):
-                print(f"| {gleichzeitig} | {weg} | {rps:,.0f} /s | {p50:.2f} ms | {p95:.2f} ms |".replace(",", " "))
+            b = last(f"{session}; {gate}", simultaneous)
+            for away, (rps, p50, p95) in (("`/auth/forward` per request", a), ("gate token", b)):
+                print(f"| {simultaneous} | {away} | {rps:,.0f} /s | {p50:.2f} ms | {p95:.2f} ms |".replace(",", " "))
     finally:
         caddy.terminate()
         server.should_exit = True

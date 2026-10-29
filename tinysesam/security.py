@@ -20,7 +20,7 @@ _BIDI = frozenset("؜‎‏‪‫‬‭‮"
                   "⁦⁧⁨⁩")
 
 
-def _zeilenbrecher(z: str) -> bool:
+def _line_breaker(z: str) -> bool:
     """A character that has no business in a log line.
 
     Not only ASCII < 0x20 and DEL: also the C1 control characters (U+0080–U+009F, including NEL as
@@ -31,16 +31,16 @@ def _zeilenbrecher(z: str) -> bool:
     return o < 0x20 or 0x7f <= o <= 0x9f or o in (0x2028, 0x2029) or z in _BIDI
 
 
-def beleg_attribut(cfg, quelle: str) -> str:
+def proof_attribute(cfg, source: str) -> str:
     """The evidence attribute of a source (`ldap`/`saml`), trimmed — `""` means: none.
 
     The ONE read site for runtime, router and configuration check: if the check reads it trimmed
     and the runtime raw, `" "` there means "never first admin" and here "there is evidence"
     (self-service attack round, finding 2)."""
-    return str(getattr(cfg, f"{quelle}_attr_email_verified", "") or "").strip()
+    return str(getattr(cfg, f"{source}_attr_email_verified", "") or "").strip()
 
 
-def fuer_log(wert) -> str:
+def for_log(value) -> str:
     """Prepare a foreign value so that it cannot blow up a log line.
 
     The username comes raw from a form field and used to land unfiltered in the line that
@@ -54,8 +54,8 @@ def fuer_log(wert) -> str:
     So control characters are removed, and the length is capped (a 4 kB username is not a
     login but an attempt to flood the log).
     """
-    text = "".join(z for z in str(wert if wert is not None else "") if not _zeilenbrecher(z))
-    # Without effect — `_zeilenbrecher` has already removed every line break —, but this is the form CodeQL
+    text = "".join(z for z in str(value if value is not None else "") if not _line_breaker(z))
+    # Without effect — `_line_breaker` has already removed every line break —, but this is the form CodeQL
     # recognises as a filter against log injection (`ReplaceLineBreaksSanitizer`: `.replace("\n", …)`).
     # Without it `py/log-injection` flags every line whose values pass through this function, and
     # every alert had to be closed by hand as a false positive (most recently #266).
@@ -63,18 +63,18 @@ def fuer_log(wert) -> str:
     return (text[:64] + "…") if len(text) > 64 else text
 
 
-def zeilenfest(wert) -> str:
-    """Like `fuer_log`, but without the length cap — for displays that need the whole value.
+def line_fixed(value) -> str:
+    """Like `for_log`, but without the length cap — for displays that need the whole value.
 
     A line break becomes visible (`\\n`) instead of being silently removed: in the forensic view it
     should be noticeable THAT someone wrote a line break into a username (B5-06).
     """
-    text = str(wert if wert is not None else "")
-    return "".join(z if not _zeilenbrecher(z) else
+    text = str(value if value is not None else "")
+    return "".join(z if not _line_breaker(z) else
                    {"\n": "\\n", "\r": "\\r", "\t": "\\t"}.get(z, "?") for z in text)
 
 
-def url_fuer_log(url) -> str:
+def url_for_log(url) -> str:
     """A URL without query and fragment, line-safe and capped — for the audit log.
 
     Behind the `?` there are often secrets in protected applications: approval links
@@ -83,21 +83,21 @@ def url_fuer_log(url) -> str:
     host and path suffice; a `?…` shows that there was a query.
     """
     text = str(url or "")
-    teile = urlsplit(text) if "://" in text else None
-    if teile is not None and teile.netloc:
-        rest = "?…" if (teile.query or teile.fragment) else ""
-        text = f"{teile.scheme}://{teile.netloc}{teile.path}{rest}"
+    parts = urlsplit(text) if "://" in text else None
+    if parts is not None and parts.netloc:
+        rest = "?…" if (parts.query or parts.fragment) else ""
+        text = f"{parts.scheme}://{parts.netloc}{parts.path}{rest}"
     else:
-        kopf, trenner, _ = text.partition("?")
-        kopf, trenner2, _ = kopf.partition("#")
-        text = kopf + ("?…" if (trenner or trenner2) else "")
-    return zeilenfest(text)[:200]
+        head, separator, _ = text.partition("?")
+        head, separator2, _ = head.partition("#")
+        text = head + ("?…" if (separator or separator2) else "")
+    return line_fixed(text)[:200]
 
 
-class _ZeilenSchutz(logging.Filter):
+class _LinesProtection(logging.Filter):
     """Neutralizes control characters in the ARGUMENTS of every `seclog` line (B5-14).
 
-    `fuer_log` at every call site is a convention — and two sites did not have it
+    `for_log` at every call site is a convention — and two sites did not have it
     (the `X-Forwarded-For` warning and the OIDC address without evidence). The next new line
     forgets it again. The filter hangs on the logger itself and therefore applies to every line,
     including future ones. The format string stays untouched: it is code, not input.
@@ -106,22 +106,22 @@ class _ZeilenSchutz(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
         args = record.args
         if isinstance(args, tuple):
-            record.args = tuple(self._sauber(a) for a in args)
+            record.args = tuple(self._clean(a) for a in args)
         elif isinstance(args, dict):
-            record.args = {k: self._sauber(v) for k, v in args.items()}
+            record.args = {k: self._clean(v) for k, v in args.items()}
         return True
 
     @staticmethod
-    def _sauber(a):
+    def _clean(a):
         if isinstance(a, (int, float)) or a is None:
             return a            # %d/%.1f need the number, and a number does not break a line
-        return zeilenfest(a)
+        return line_fixed(a)
 
 
-seclog.addFilter(_ZeilenSchutz())
+seclog.addFilter(_LinesProtection())
 
 
-def ip_normiert(wert) -> str | None:
+def ip_normalized(value) -> str | None:
     """The canonical notation of an IP address, or None if it is not one (B5-15).
 
     Canonical means: `2001:DB8::1` and `2001:db8:0::1` are the same address and end up as
@@ -129,15 +129,15 @@ def ip_normiert(wert) -> str | None:
     as its own client. A port specification (`1.2.3.4:5678`, `[2001:db8::1]:443`), as some
     proxies write it into `X-Forwarded-For`, is stripped off.
     """
-    roh = str(wert or "").strip()
-    if not roh:
+    raw = str(value or "").strip()
+    if not raw:
         return None
-    if roh.startswith("[") and "]" in roh:
-        roh = roh[1:roh.index("]")]
-    elif roh.count(":") == 1:
-        roh = roh.split(":", 1)[0]
+    if raw.startswith("[") and "]" in raw:
+        raw = raw[1:raw.index("]")]
+    elif raw.count(":") == 1:
+        raw = raw.split(":", 1)[0]
     try:
-        addr = ipaddress.ip_address(roh)
+        addr = ipaddress.ip_address(raw)
     except ValueError:
         return None
     if getattr(addr, "scope_id", None) is not None:
@@ -157,26 +157,26 @@ def ip_pseudonym(ip: str) -> str:
     person". For forensics the network remains — enough to recognize a provider or a wave,
     not enough to name a connection. No IP → value unchanged.
     """
-    norm = ip_normiert(ip)
+    norm = ip_normalized(ip)
     if norm is None:
         return ip
     addr = ipaddress.ip_address(norm)
     if isinstance(addr, ipaddress.IPv6Address) and addr.ipv4_mapped:
         addr = addr.ipv4_mapped             # ::ffff:1.2.3.4 is an IPv4 address
-    netz = ipaddress.ip_network(f"{addr}/{24 if addr.version == 4 else 48}", strict=False)
-    return str(netz)
+    network = ipaddress.ip_network(f"{addr}/{24 if addr.version == 4 else 48}", strict=False)
+    return str(network)
 
 
 #: Permissions with which the security log file is created — on the first line and after every
 #: rotation. Before, it was created with the process umask, in practice `-rw-rw-r--`: world-readable.
 #: The lines contain usernames and IP addresses; up to 0.18.x even the first-admin one-time
 #: token was in there (B5-03). fail2ban reads the file as root, log shipping via the group
-#: suffices — nobody else needs it. Counterpart to `Store.DATEIRECHTE` (0600).
-LOG_DATEIRECHTE = 0o640
+#: suffices — nobody else needs it. Counterpart to `Store.FILE_PERMISSIONS` (0600).
+LOG_FILE_PERMISSIONS = 0o640
 
 
-class _SicherheitsLogHandler(logging.handlers.WatchedFileHandler):
-    """WatchedFileHandler that creates the file with `LOG_DATEIRECHTE` instead of the umask.
+class _SecurityLogHandler(logging.handlers.WatchedFileHandler):
+    """WatchedFileHandler that creates the file with `LOG_FILE_PERMISSIONS` instead of the umask.
 
     The `mode` argument of `os.open` can only **remove** permissions (the umask is still
     subtracted), never add any — setups configured narrower than 0640 therefore stay narrow.
@@ -186,8 +186,8 @@ class _SicherheitsLogHandler(logging.handlers.WatchedFileHandler):
     """
 
     def _open(self):
-        def opener(pfad, flags):
-            return os.open(pfad, flags, LOG_DATEIRECHTE)
+        def opener(path, flags):
+            return os.open(path, flags, LOG_FILE_PERMISSIONS)
         return open(self.baseFilename, self.mode, encoding=self.encoding,
                     errors=self.errors, opener=opener)
 
@@ -202,14 +202,14 @@ def attach_security_log(path: str) -> bool:
     but none to shut down sign-in. The format carries the timestamp up front, which fail2ban
     needs to date the hits.
 
-    The file is newly created with `LOG_DATEIRECHTE` (0640), no longer with the umask; an
+    The file is newly created with `LOG_FILE_PERMISSIONS` (0640), no longer with the umask; an
     already existing, world-readable file is reported but not rewritten.
     """
     path = str(path)
     for h in seclog.handlers:
         if getattr(h, "_tinysesam_path", None) == path:
             return True
-    schon_da = os.path.exists(path)
+    already_da = os.path.exists(path)
     try:
         # WatchedFileHandler, not FileHandler: logrotate renames the file and creates a new one
         # — a FileHandler keeps the old inode open and from then on keeps writing into the
@@ -218,7 +218,7 @@ def attach_security_log(path: str) -> bool:
         # guards. The watched handler checks inode and device before every line and reopens.
         # (No effect on Windows — an open file cannot be renamed there anyway, and
         # `copytruncate` is the way.)
-        h = _SicherheitsLogHandler(path, encoding="utf-8")
+        h = _SecurityLogHandler(path, encoding="utf-8")
     except OSError as e:
         seclog.warning("security_log %s not writable (%s) — fail2ban gets nothing to read.",
                        path, e)
@@ -238,15 +238,15 @@ def attach_security_log(path: str) -> bool:
     # is not rewritten — a deliberate release to a group (log shipping, `adm`) is a decision of
     # the operator, not a hole. It does not stay silent anyway: the lines contain usernames and
     # IP addresses.
-    if schon_da:
+    if already_da:
         try:
-            modus = stat.S_IMODE(os.stat(path).st_mode)
+            mode = stat.S_IMODE(os.stat(path).st_mode)
         except OSError:
-            modus = 0
-        if modus & 0o007:
+            mode = 0
+        if mode & 0o007:
             seclog.warning(
                 "security_log %s is world-readable (%o). It contains usernames and "
-                "IP addresses. Tighten it: chmod 640 %s", path, modus, path)
+                "IP addresses. Tighten it: chmod 640 %s", path, mode, path)
     return True
 
 
@@ -290,7 +290,7 @@ SECURITY_DEFAULTS = {
 #: legitimate choice — only `0` or years turn it into an outage. `rate_limit_max` stays at
 #: 3, because a sign-in with a second factor needs several requests; below that nobody
 #: gets through any more.
-SECURITY_GRENZEN = {
+SECURITY_LIMITS = {
     "max_login_attempts": (1, 1000),
     "lockout_window_sec": (60, 30 * 86400),
     "ip_attempt_factor": (1, 100),
@@ -314,7 +314,7 @@ SECURITY_GRENZEN = {
 }
 
 
-def pruefe_haertung(key: str, value) -> int:
+def check_hardening(key: str, value) -> int:
     """Check a hardening value and return it as int — or `ValueError` with readable text.
 
     One place for panel, `set_security()` and reading from the database: two versions of the
@@ -326,21 +326,21 @@ def pruefe_haertung(key: str, value) -> int:
     if isinstance(value, bool):
         raise ValueError(f"{key}: {value!r} is not a number")
     try:
-        zahl = int(value)
+        number = int(value)
     except (TypeError, ValueError, OverflowError):
         # OverflowError: `int(float("inf"))` — Starlette's JSON accepts the literal `Infinity`,
         # and without this case it became a 500 instead of a 400 (A4).
         raise ValueError(f"{key}: {value!r} is not an integer") from None
-    if isinstance(value, float) and value != zahl:
+    if isinstance(value, float) and value != number:
         raise ValueError(f"{key}: {value!r} is not an integer")
-    unten, oben = SECURITY_GRENZEN[key]
-    if not unten <= zahl <= oben:
-        raise ValueError(f"{key}={zahl} is outside {unten}…{oben}")
-    return zahl
+    below, above = SECURITY_LIMITS[key]
+    if not below <= number <= above:
+        raise ValueError(f"{key}={number} is outside {below}…{above}")
+    return number
 
 
-def klemme_haertung(key: str, value) -> int:
-    """Pull a legacy value from the database that `pruefe_haertung` rejects to the nearest bound.
+def clamp_hardening(key: str, value) -> int:
+    """Pull a legacy value from the database that `check_hardening` rejects to the nearest bound.
 
     Not reset to the default: an existing value beyond the bound is almost always on the
     STRICT side (2 attempts, one week lockout), and the default would then be the weaker
@@ -348,16 +348,16 @@ def klemme_haertung(key: str, value) -> int:
     strictest value that does not shut operation down, and the panel accepts it. Only what is
     not a number at all falls back to the default."""
     try:
-        zahl = int(str(value).strip())
+        number = int(str(value).strip())
     except (TypeError, ValueError, OverflowError):
         return SECURITY_DEFAULTS[key]
-    unten, oben = SECURITY_GRENZEN[key]
-    return min(max(zahl, unten), oben)
+    below, above = SECURITY_LIMITS[key]
+    return min(max(number, below), above)
 
 
-def haertung_lesen(store, key: str) -> int:
+def read_hardening(store, key: str) -> int:
     """Read a hardening threshold from the database as it applies: the value from the panel or
-    the default, always within `SECURITY_GRENZEN`.
+    the default, always within `SECURITY_LIMITS`.
 
     The ONE read path for `TinySesam._sec()` and the CLI (`tinysesam passwd`). The CLI read
     `password_min_length` raw until T-13: a legacy value from a version without bounds (4, 0)
@@ -365,21 +365,21 @@ def haertung_lesen(store, key: str) -> int:
     setting site rejects. Two read paths drift apart, and the weaker one decides.
 
     A value outside the bounds that is already in the database (from a version without
-    bounds, or written directly) is pulled to the nearest bound (`klemme_haertung`):
+    bounds, or written directly) is pulled to the nearest bound (`clamp_hardening`):
     continuing to apply it would mean leaving a shut-down instance shut down (R6-4); setting it
     to the default would silently loosen every stricter existing setting (A1)."""
     v = store.get_setting(key)
     if v is None:
         return SECURITY_DEFAULTS[key]
     try:
-        return pruefe_haertung(key, v)
+        return check_hardening(key, v)
     except ValueError as e:
-        wert = klemme_haertung(key, v)
-        if einmal_melden("sec:" + key):
+        value = clamp_hardening(key, v)
+        if report_once("sec:" + key):
             seclog.warning(
                 "Hardening value in the database invalid (%s) — %s applies. The value can "
-                "be confirmed or changed in the admin panel.", e, wert)
-        return wert
+                "be confirmed or changed in the admin panel.", e, value)
+        return value
 
 # Methods from `login_attempt` that are NOT a sign-in attempt and therefore must not count into
 # the login lockout (`_is_locked`) — and next to it the latch that throttles each of them
@@ -396,7 +396,7 @@ def haertung_lesen(store, key: str) -> int:
 #
 # The mapping is deliberate and not a convenience: whoever enters a method here takes it out of
 # the login lockout — without its own bucket it would thereby be guessable without limit. That
-# is why the replacement stands next to it, `NICHT_LOGIN_METHODEN` is derived from it (a method
+# is why the replacement stands next to it, `NOT_LOGIN_METHODS` is derived from it (a method
 # without a latch cannot even be entered), and a test holds the table against the methods with
 # which the router really calls `_record_login()`.
 #
@@ -404,38 +404,38 @@ def haertung_lesen(store, key: str) -> int:
 # sign-in method thereby counts on its own. A forgotten line costs convenience here
 # (a lockout counts stricter than necessary), a forgotten line in a positive list would have
 # cost a hole in the lockout.
-EIGENE_SPERRE = {
+OWN_LOCK = {
     "password_change": "_is_password_change_locked",
     "reauth": "_is_reauth_locked",
     "resource": "_is_resource_locked",
     "totp_setup": "_is_totp_setup_locked",
 }
 
-NICHT_LOGIN_METHODEN = tuple(EIGENE_SPERRE)
+NOT_LOGIN_METHODS = tuple(OWN_LOCK)
 
 #: The event word of the line in the security log. **Only `failed login` hits the shipped
 #: fail2ban failregex** (`deploy/fail2ban/tinysesam-filter.conf`) — and that is the point: a
-#: miss from `NICHT_LOGIN_METHODEN` comes from someone who is already signed in (account page,
+#: miss from `NOT_LOGIN_METHODS` comes from someone who is already signed in (account page,
 #: step-up) or who needs no account at all (area PIN). With the same word, the shipped jail
 #: (`maxretry = 6`) banned a legitimate user at firewall level after a few typos — and for the
 #: whole instance, not for the route. Aggravating: from the app lockout on, every further click
 #: produces a further line. So it is logged unchanged, only under its own name; whoever also
 #: wants to ban these lines takes the second, milder jail from `deploy/fail2ban/`.
-LOG_ANMELDUNG = "failed login"
-LOG_PRUEFUNG = "failed verification"
+LOG_SIGN_IN = "failed login"
+LOG_CHECK = "failed verification"
 #: A wrong password that the same IP has already sent to the same account (`password_repeat_memory`). Deliberately
 #: its own word and INFO: the shipped failregex requires `WARNING failed login`, so this line does not count.
-LOG_WIEDERHOLT = "repeated login"
+LOG_REPEATED = "repeated login"
 #: A COMPLETE sign-in (all factors) — for evaluation and filters that want to reset a lockout ladder.
-LOG_ERFOLG = "login ok"
+LOG_SUCCESS = "login ok"
 
 
-def log_ereignis(method) -> str:
+def log_event(method) -> str:
     """Which event word belongs in the security log line of this method?
 
-    `failed login` only for real sign-in attempts — everything from `NICHT_LOGIN_METHODEN` gets
+    `failed login` only for real sign-in attempts — everything from `NOT_LOGIN_METHODS` gets
     `failed verification` and thereby bypasses the shipped fail2ban jail."""
-    return LOG_PRUEFUNG if method in NICHT_LOGIN_METHODEN else LOG_ANMELDUNG
+    return LOG_CHECK if method in NOT_LOGIN_METHODS else LOG_SIGN_IN
 
 
 def safe_next(next_: str, default: str = "/", allowed_hosts=None) -> str:
@@ -462,7 +462,7 @@ def safe_next(next_: str, default: str = "/", allowed_hosts=None) -> str:
     return default
 
 
-def eigener_host(host: str, allowed_hosts=None) -> bool:
+def own_host(host: str, allowed_hosts=None) -> bool:
     """May this host go into an address that leaves the house (mail link, redirect URI)?
 
     The host from `request.base_url` is the raw `Host` header, i.e. an **input of the
@@ -496,13 +496,13 @@ def eigener_host(host: str, allowed_hosts=None) -> bool:
 #: double slash, percent sign or whitespace falls through, and `.`/`..` as a segment
 #: likewise (`/../etc` is normalized nowhere and otherwise stood exactly so in the mail) — then
 #: there is no base, instead of a half-guessed one.
-_PFAD_OK = re.compile(r"(?:/(?!\.{1,2}(?:/|$))[A-Za-z0-9._~-]+)+")
+_PATH_OK = re.compile(r"(?:/(?!\.{1,2}(?:/|$))[A-Za-z0-9._~-]+)+")
 
 
-def normalisiere_basis(kandidat: str) -> str:
+def normalize_base(candidate: str) -> str:
     """Check a base URL for its **form** and assemble it canonically — or "" (fail closed).
 
-    Does **not** answer the question whether the host is our own; `sichere_basis()` does that.
+    Does **not** answer the question whether the host is our own; `secure_base()` does that.
     Separated since 0.18.0, because both branches of `TinySesam.public_base()` need the same form:
     until then only the **derived** branch went through here, while a configured `base_url`
     saw merely `strip().rstrip("/")` and the configuration check accepted it with a coarse
@@ -516,68 +516,68 @@ def normalisiere_basis(kandidat: str) -> str:
     mounted the app under a subpath got mail links without the prefix — thus
     404 instead of the reset form. The `root_path` is server configuration, not client input
     (neither uvicorn nor Starlette derives it from a header), but it is checked against
-    `_PFAD_OK` anyway: a base that we cannot assemble cleanly does not exist.
+    `_PATH_OK` anyway: a base that we cannot assemble cleanly does not exist.
     """
-    roh = str(kandidat or "").strip()
-    if not roh:
+    raw = str(candidate or "").strip()
+    if not raw:
         return ""
     try:
-        teile = urlsplit(roh)
+        parts = urlsplit(raw)
     except Exception:
         return ""
-    if teile.scheme not in ("http", "https") or not teile.netloc:
+    if parts.scheme not in ("http", "https") or not parts.netloc:
         return ""
     # Query and fragment do not belong in a base: what is appended at the end (token, path)
     # would otherwise stand BEHIND the `#` and never reach the server — the link would look valid
     # and lead nowhere.
-    if teile.query or teile.fragment:
+    if parts.query or parts.fragment:
         return ""
-    host = teile.hostname or ""
+    host = parts.hostname or ""
     if not host:
         return ""
     # Assembled anew instead of taking over `netloc`: a user part in the host
     # (`https://trusted.example@…`) would otherwise be part of every outgoing link. Only
     # `hostname` is checked anyway, so only that may go out.
     try:
-        port = teile.port
+        port = parts.port
     except ValueError:
         return ""
     if ":" in host:
         host = f"[{host}]"
-    pfad = (teile.path or "").rstrip("/")
-    if pfad and not _PFAD_OK.fullmatch(pfad):
+    path = (parts.path or "").rstrip("/")
+    if path and not _PATH_OK.fullmatch(path):
         return ""
-    return f"{teile.scheme}://{host}" + (f":{port}" if port else "") + pfad
+    return f"{parts.scheme}://{host}" + (f":{port}" if port else "") + path
 
 
-def sichere_basis(kandidat: str, allowed_hosts=None) -> str:
-    """Check a **derived** base URL: form (`normalisiere_basis`) **and** own host.
+def secure_base(candidate: str, allowed_hosts=None) -> str:
+    """Check a **derived** base URL: form (`normalize_base`) **and** own host.
 
     Empty means: there is no trustworthy public address. Do not guess — abort.
-    The difference to `normalisiere_basis()` is the origin: what comes from the `Host` header
+    The difference to `normalize_base()` is the origin: what comes from the `Host` header
     must additionally prove that it is a name of our own (R4-01/CWE-644).
     """
-    roh = str(kandidat or "").strip()
-    if not roh:
+    raw = str(candidate or "").strip()
+    if not raw:
         return ""
     try:
-        host = urlsplit(roh).hostname or ""
+        host = urlsplit(raw).hostname or ""
     except Exception:
         return ""
-    if not eigener_host(host, allowed_hosts):
+    if not own_host(host, allowed_hosts):
         return ""
-    return normalisiere_basis(roh)
+    return normalize_base(raw)
 
 
-def ungueltige_netze(trusted_nets) -> list:
+def invalid_networks(trusted_nets) -> list:
     """The entries of a `trusted_proxies` list that are not an IP network (B3-3)."""
-    schlecht = []
+    bad = []
     for n in trusted_nets or []:
         try:
             ipaddress.ip_network(str(n).strip(), strict=False)
         except ValueError:
-            schlecht.append(n)
-    return schlecht
+            bad.append(n)
+    return bad
 
 
 def is_trusted(ip: str, trusted_nets) -> bool:
@@ -602,9 +602,9 @@ def is_trusted(ip: str, trusted_nets) -> bool:
 
 # Peers that have already been complained about — a misconfiguration reports once, not per
 # request. A log storm is filtered away and helps nobody.
-_GEMELDETE_PEERS: set = set()
+_REPORTED_PEERS: set = set()
 
-#: Keys for which a notice line already stands in the security log (`einmal_melden`).
+#: Keys for which a notice line already stands in the security log (`report_once`).
 #: Capped: the key comes from the request, and whoever probes the `Host` header
 #: should fill neither the file nor the memory.
 #:
@@ -612,23 +612,23 @@ _GEMELDETE_PEERS: set = set()
 #: before, 512 invented `Host` values sufficed to disable the site until restart —
 #: afterwards the notice about the **real** operational error also stayed away. An attacker
 #: could thus not only make noise but deliberately switch off a warning. Now a new window
-#: begins after `_GEMELDET_FENSTER_SEK`, and reaching the cap says once, loudly,
+#: begins after `_REPORTED_WINDOW_SEC`, and reaching the cap says once, loudly,
 #: that silence starts from here — an invisible suppression would be the same hole.
-_GEMELDET_MAX = 512
-_GEMELDET_FENSTER_SEK = 3600
-_GEMELDET: set = set()
+_REPORTED_MAX = 512
+_REPORTED_WINDOW_SEC = 3600
+_REPORTED: set = set()
 
 #: Start of the current window and whether the cap has already been reported in it. Deliberately a dict
 #: and not two module variables: those would have to be declared `global` in every writing function,
 #: and a variable set via `global` is read by CodeQL as unused (py/unused-global-variable)
 #: — a false alarm that would otherwise have to be rejected anew in every version.
-_GEMELDET_FENSTER = {"beginn": 0.0, "ueberlauf": False}
+_REPORTED_WINDOW = {"beginn": 0.0, "ueberlauf": False}
 
 
-def einmal_melden(schluessel: str, jetzt: float | None = None) -> bool:
+def report_once(key_name: str, now: float | None = None) -> bool:
     """True exactly on the first call with this key, False afterwards — against log storms.
 
-    The same idea as `_GEMELDETE_PEERS` in `client_ip()`, only general: a notice about a
+    The same idea as `_REPORTED_PEERS` in `client_ip()`, only general: a notice about a
     **misconfiguration** says everything the first time; if it repeats per request, it fills
     the file the fail2ban jail points to and that logrotate keeps for weeks. A
     page view with twenty sub-resources thus wrote twenty identical lines, a crawler
@@ -637,40 +637,40 @@ def einmal_melden(schluessel: str, jetzt: float | None = None) -> bool:
     The key belongs to the cause, not to the single request (so the host, not the
     full URL) — otherwise every new path lifts the lock again.
 
-    The state is process-wide: a test that wants to see the line empties `_GEMELDET` beforehand
-    (tests must stay repeatable) — `einmal_melden_zuruecksetzen()` exists for that.
+    The state is process-wide: a test that wants to see the line empties `_REPORTED` beforehand
+    (tests must stay repeatable) — `once_report_reset()` exists for that.
 
-    `jetzt` exists only for tests: this way the window change can be checked without waiting
+    `now` exists only for tests: this way the window change can be checked without waiting
     an hour (a test that sleeps is not a test).
     """
-    t = time.time() if jetzt is None else float(jetzt)
-    if t - _GEMELDET_FENSTER["beginn"] >= _GEMELDET_FENSTER_SEK:
-        _GEMELDET.clear()
-        _GEMELDET_FENSTER["beginn"] = t
-        _GEMELDET_FENSTER["ueberlauf"] = False
-    if schluessel in _GEMELDET:
+    t = time.time() if now is None else float(now)
+    if t - _REPORTED_WINDOW["beginn"] >= _REPORTED_WINDOW_SEC:
+        _REPORTED.clear()
+        _REPORTED_WINDOW["beginn"] = t
+        _REPORTED_WINDOW["ueberlauf"] = False
+    if key_name in _REPORTED:
         return False
-    if len(_GEMELDET) >= _GEMELDET_MAX:
-        if not _GEMELDET_FENSTER["ueberlauf"]:
-            _GEMELDET_FENSTER["ueberlauf"] = True
-            # Directly and not via `einmal_melden()` — otherwise the message about the
+    if len(_REPORTED) >= _REPORTED_MAX:
+        if not _REPORTED_WINDOW["ueberlauf"]:
+            _REPORTED_WINDOW["ueberlauf"] = True
+            # Directly and not via `report_once()` — otherwise the message about the
             # cap would run into the same cap. Exactly one line per window.
             seclog.warning(
                 "Notice cap reached: %d distinct keys in this window (%d s). "
                 "Further notices of this kind are suppressed until the window changes. Whoever "
                 "probes the Host header produces exactly this picture — if base_url is set, "
                 "the Host header has no effect anyway.",
-                _GEMELDET_MAX, _GEMELDET_FENSTER_SEK)
+                _REPORTED_MAX, _REPORTED_WINDOW_SEC)
         return False
-    _GEMELDET.add(schluessel)
+    _REPORTED.add(key_name)
     return True
 
 
-def einmal_melden_zuruecksetzen() -> None:
+def once_report_reset() -> None:
     """Empty the notice store (tests, and an operation that deliberately wants to listen anew)."""
-    _GEMELDET.clear()
-    _GEMELDET_FENSTER["beginn"] = 0.0
-    _GEMELDET_FENSTER["ueberlauf"] = False
+    _REPORTED.clear()
+    _REPORTED_WINDOW["beginn"] = 0.0
+    _REPORTED_WINDOW["ueberlauf"] = False
 
 
 def client_ip(request, trusted_nets) -> str:
@@ -693,17 +693,17 @@ def client_ip(request, trusted_nets) -> str:
                 # or 4 kB of text, and that as a key for rate limit, lockout and audit log.
                 # A proxy that merely passes the client header through instead of appending makes
                 # exactly this entry client-controllable. Then rather the peer IP (collective, but real).
-                norm = ip_normiert(ip)
+                norm = ip_normalized(ip)
                 if norm is not None:
                     return norm
-                if einmal_melden("xff-ungueltig:" + peer):
+                if report_once("xff-ungueltig:" + peer):
                     seclog.warning(
                         "X-Forwarded-For from %s names no valid address (%s) — the peer IP "
                         "is kept. Does the proxy only pass the client's header through instead of "
-                        "appending?", peer, fuer_log(ip))
+                        "appending?", peer, for_log(ip))
                 return peer
-    if xff and peer not in _GEMELDETE_PEERS:
-        _GEMELDETE_PEERS.add(peer)
+    if xff and peer not in _REPORTED_PEERS:
+        _REPORTED_PEERS.add(peer)
         if not is_trusted(peer, trusted_nets):
             seclog.warning(
                 "X-Forwarded-For from %s is ignored: the peer is not in trusted_proxies "
@@ -719,7 +719,7 @@ def client_ip(request, trusted_nets) -> str:
                 "X-Forwarded-For (%s) contains no address outside trusted_proxies (%s) "
                 "— the peer IP %s is kept. An entry like 0.0.0.0/0 devalues XFF instead of "
                 "trusting it: enter only the network of your own proxy.",
-                fuer_log(xff), list(trusted_nets or []), peer)
+                for_log(xff), list(trusted_nets or []), peer)
     return peer
 
 
@@ -782,31 +782,31 @@ class RedisRateLimiter:
         import redis   # extra [redis]
         self.client = redis.from_url(url, socket_connect_timeout=timeout_sec, socket_timeout=timeout_sec)
         self.prefix = prefix
-        self._einrichten(pause_sec)
+        self._set_up(pause_sec)
         try:
             self.client.ping()
         except Exception as e:
-            self._ausgefallen(e)
+            self._failed(e)
 
-    def _einrichten(self, pause_sec: float = 30.0) -> None:
+    def _set_up(self, pause_sec: float = 30.0) -> None:
         """Create the fallback state (also for tests that bypass `__init__`)."""
-        self.ersatz = RateLimiter()
+        self.replacement = RateLimiter()
         self.pause_sec = pause_sec
-        self._pause_bis = 0.0
-        self._gestoert = False
+        self._pause_until = 0.0
+        self._disturbed = False
 
-    def _ausgefallen(self, fehler) -> None:
-        self._pause_bis = time.time() + self.pause_sec
-        if not self._gestoert:
-            self._gestoert = True
+    def _failed(self, error) -> None:
+        self._pause_until = time.time() + self.pause_sec
+        if not self._disturbed:
+            self._disturbed = True
             seclog.warning("Redis rate limit unreachable (%s) — every process now counts "
-                           "on its own until Redis answers again.", fehler)
+                           "on its own until Redis answers again.", error)
 
     def allow(self, key: str, max_requests: int, window_sec: int) -> bool:
-        if not hasattr(self, "ersatz"):
-            self._einrichten()
-        if self._gestoert and time.time() < self._pause_bis:
-            return self.ersatz.allow(key, max_requests, window_sec)
+        if not hasattr(self, "replacement"):
+            self._set_up()
+        if self._disturbed and time.time() < self._pause_until:
+            return self.replacement.allow(key, max_requests, window_sec)
         try:
             bucket = int(time.time() // max(1, window_sec))
             rk = f"{self.prefix}:{key}:{window_sec}:{bucket}"
@@ -815,9 +815,9 @@ class RedisRateLimiter:
             pipe.expire(rk, window_sec)
             count = pipe.execute()[0]
         except Exception as e:
-            self._ausgefallen(e)
-            return self.ersatz.allow(key, max_requests, window_sec)
-        if self._gestoert:
-            self._gestoert = False
+            self._failed(e)
+            return self.replacement.allow(key, max_requests, window_sec)
+        if self._disturbed:
+            self._disturbed = False
             seclog.warning("Redis rate limit reachable again — counting across all processes again.")
         return int(count) <= max_requests

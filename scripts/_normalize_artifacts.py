@@ -28,53 +28,53 @@ import tarfile
 import zipfile
 
 
-def _rechte(modus: int) -> int:
-    return 0o755 if modus & 0o111 else 0o644
+def _permissions(mode: int) -> int:
+    return 0o755 if mode & 0o111 else 0o644
 
 
-def sdist_normalisieren(pfad: str, epoch: int) -> None:
-    """Rewrite the sdist at `pfad` deterministically (see module docstring)."""
-    with tarfile.open(pfad, "r:gz") as alt:
-        eintraege = []
-        for m in alt.getmembers():
-            fh = alt.extractfile(m) if m.isfile() else None
-            daten = fh.read() if fh is not None else None
-            eintraege.append((m, daten))
-    puffer = io.BytesIO()
-    with tarfile.open(fileobj=puffer, mode="w", format=tarfile.PAX_FORMAT) as neu:
-        for m, daten in sorted(eintraege, key=lambda e: e[0].name):
+def normalize_sdist(path: str, epoch: int) -> None:
+    """Rewrite the sdist at `path` deterministically (see module docstring)."""
+    with tarfile.open(path, "r:gz") as old:
+        entries = []
+        for m in old.getmembers():
+            fh = old.extractfile(m) if m.isfile() else None
+            data = fh.read() if fh is not None else None
+            entries.append((m, data))
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w", format=tarfile.PAX_FORMAT) as new:
+        for m, data in sorted(entries, key=lambda e: e[0].name):
             m.mtime = epoch
             m.uid = m.gid = 0
             m.uname = m.gname = ""
             m.pax_headers = {}
-            m.mode = 0o755 if m.isdir() else _rechte(m.mode)
-            neu.addfile(m, io.BytesIO(daten) if daten is not None else None)
+            m.mode = 0o755 if m.isdir() else _permissions(m.mode)
+            new.addfile(m, io.BytesIO(data) if data is not None else None)
     # Otherwise gzip writes the current time and the file name into the header.
-    with open(pfad, "wb") as ziel:
-        with gzip.GzipFile(filename="", mode="wb", fileobj=ziel, mtime=epoch, compresslevel=9) as gz:
-            gz.write(puffer.getvalue())
+    with open(path, "wb") as destination:
+        with gzip.GzipFile(filename="", mode="wb", fileobj=destination, mtime=epoch, compresslevel=9) as gz:
+            gz.write(buffer.getvalue())
 
 
-def wheel_normalisieren(pfad: str) -> None:
-    """Rewrite the wheel at `pfad` with fixed file permissions (see module docstring).
+def normalize_wheel(path: str) -> None:
+    """Rewrite the wheel at `path` with fixed file permissions (see module docstring).
 
     Order and timestamps of the entries stay as setuptools set them (RECORD last, as PEP 427
     recommends); the timestamps are already fixed by `SOURCE_DATE_EPOCH`.
     """
-    with zipfile.ZipFile(pfad) as alt:
-        eintraege = [(i, alt.read(i)) for i in alt.infolist()]
-    puffer = io.BytesIO()
-    with zipfile.ZipFile(puffer, "w") as neu:
-        for alt_info, daten in eintraege:
-            info = zipfile.ZipInfo(alt_info.filename, date_time=alt_info.date_time)
-            info.compress_type = alt_info.compress_type
+    with zipfile.ZipFile(path) as old:
+        entries = [(i, old.read(i)) for i in old.infolist()]
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as new:
+        for old_info, data in entries:
+            info = zipfile.ZipInfo(old_info.filename, date_time=old_info.date_time)
+            info.compress_type = old_info.compress_type
             info.create_system = 3                      # Unix — otherwise the permissions do not apply
-            ist_dir = alt_info.filename.endswith("/")
-            modus = 0o755 if ist_dir else _rechte(alt_info.external_attr >> 16)
-            info.external_attr = ((0o040000 if ist_dir else 0o100000) | modus) << 16
-            neu.writestr(info, daten)
-    with open(pfad, "wb") as ziel:
-        ziel.write(puffer.getvalue())
+            is_dir = old_info.filename.endswith("/")
+            mode = 0o755 if is_dir else _permissions(old_info.external_attr >> 16)
+            info.external_attr = ((0o040000 if is_dir else 0o100000) | mode) << 16
+            new.writestr(info, data)
+    with open(path, "wb") as destination:
+        destination.write(buffer.getvalue())
 
 
 def main(argv: list[str]) -> int:
@@ -83,13 +83,13 @@ def main(argv: list[str]) -> int:
         # Without a fixed time there is nothing two builds could agree on.
         print(__doc__, file=sys.stderr)
         return 2
-    for pfad in argv:
-        if pfad.endswith(".whl"):
-            wheel_normalisieren(pfad)
-        elif pfad.endswith(".tar.gz"):
-            sdist_normalisieren(pfad, int(epoch))
+    for path in argv:
+        if path.endswith(".whl"):
+            normalize_wheel(path)
+        elif path.endswith(".tar.gz"):
+            normalize_sdist(path, int(epoch))
         else:
-            print(f"neither wheel nor sdist: {pfad}", file=sys.stderr)
+            print(f"neither wheel nor sdist: {path}", file=sys.stderr)
             return 2
     return 0
 

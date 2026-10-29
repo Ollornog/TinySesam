@@ -136,13 +136,13 @@ ok("safe_next: the host of the own base_url is always allowed, foreign ones not"
 # The default is the Authelia set; not every downstream app wants all of them, and some
 # expect other names (Grafana: X-WEBAUTH-USER, oauth2-proxy style: X-Auth-Request-*).
 db3 = os.path.join(tempfile.mkdtemp(), "t.db")
-eigen = TinySesam(TinySesamConfig(
+own = TinySesam(TinySesamConfig(
     db_path=db3, csrf_enabled=False, cookie_secure=False, passkey_enabled=False,
     forward_auth_enabled=True, base_url="https://auth.example.com",
     forward_headers={"user": ["X-WEBAUTH-USER", "Remote-User"], "groups": "X-Auth-Request-Groups"}))
-eigen.create_user("carla", "geheim123", roles=["redaktion"])
+own.create_user("carla", "geheim123", roles=["redaktion"])
 app3 = FastAPI()
-app3.include_router(eigen.router())
+app3.include_router(own.router())
 c3 = TestClient(app3)
 c3.post("/auth/login", data={"username": "carla", "password": "geheim123", "next": "/"},
         follow_redirects=False)
@@ -158,23 +158,23 @@ assert "Remote-Email" not in r.headers and "Remote-Name" not in r.headers
 ok("the list is complete, not supplementary — omitting it does not hand out the email")
 
 # Without the field it stays with the previous set
-vorgabe = auth._forward_response_headers(auth.store.get_user_by_name("admin"))
+default = auth._forward_response_headers(auth.store.get_user_by_name("admin"))
 # Since 2026-09-25 `Remote-Id` (the account ID) is part of it — not silently: CHANGELOG and the
 # proxy examples under deploy/ name it, and the examples set it themselves (otherwise the
 # proxy would pass on one forged by the browser).
-assert sorted(vorgabe) == ["Remote-Email", "Remote-Groups", "Remote-Id", "Remote-Name", "Remote-User"]
-assert vorgabe["Remote-Id"] == str(auth.store.get_user_by_name("admin")["id"])
+assert sorted(default) == ["Remote-Email", "Remote-Groups", "Remote-Id", "Remote-Name", "Remote-User"]
+assert default["Remote-Id"] == str(auth.store.get_user_by_name("admin")["id"])
 ok("default: Remote-User/-Name/-Email/-Groups and Remote-Id (the account ID)")
 
 # A typo in the field name would silently omit the header — hence abort at startup.
 # A header name with a line break would be header injection.
-for kaputt in ({"mail": "X-Mail"}, {"user": "Bad Name"}, {"user": "X-U\r\nSet-Cookie: a=b"},
+for broken in ({"mail": "X-Mail"}, {"user": "Bad Name"}, {"user": "X-U\r\nSet-Cookie: a=b"},
                {"user": ["Remote-User", ""]}):
     try:
         TinySesam(TinySesamConfig(db_path=os.path.join(tempfile.mkdtemp(), "t.db"), cookie_secure=False,
                                   passkey_enabled=False, forward_auth_enabled=True,
-                                  forward_headers=kaputt))
-        raise AssertionError(f"forward_headers={kaputt} should have been rejected")
+                                  forward_headers=broken))
+        raise AssertionError(f"forward_headers={broken} should have been rejected")
     except ValueError:
         pass
 ok("unknown field and invalid header name abort at startup, not silently at runtime")
@@ -184,8 +184,8 @@ ok("unknown field and invalid header name abort at startup, not silently at runt
 # therefore no longer the same question as "may enter here": the approval depends on the session AND
 # the application. Without this block the state from before T-14 would be back — a sign-in for
 # app-a would also open app-b.
-import time as _zeit                                                        # noqa: E402
-from tinysesam.oidc import VORGABE_CLIENT                                    # noqa: E402
+import time as _when                                                        # noqa: E402
+from tinysesam.oidc import DEFAULT_CLIENT                                    # noqa: E402
 
 db4 = os.path.join(tempfile.mkdtemp(), "t.db")
 auth4 = TinySesam(TinySesamConfig(
@@ -204,17 +204,17 @@ auth4.ensure_admin("admin", "geheim123")
 app4 = FastAPI()
 app4.include_router(auth4.router())
 
-assert auth4.oidc_clients.namen() == ["app-a.example.com", "app-b.example.com"]
-assert auth4.oidc_clients.fuer_host("app-a.example.com").client_id == "a"
-assert auth4.oidc_clients.fuer_host("app-b.example.com:8443").client_id == "b"
-assert auth4.oidc_clients.schluessel_fuer_host("fremd.example.com") == VORGABE_CLIENT
+assert auth4.oidc_clients.names() == ["app-a.example.com", "app-b.example.com"]
+assert auth4.oidc_clients.for_host("app-a.example.com").client_id == "a"
+assert auth4.oidc_clients.for_host("app-b.example.com:8443").client_id == "b"
+assert auth4.oidc_clients.key_name_for_host("fremd.example.com") == DEFAULT_CLIENT
 ok("T-14: each application has its own client, an unknown host the default client")
 
 c14 = TestClient(app4)
 c14.post("/auth/login", data={"username": "admin", "password": "geheim123", "next": "/"},
          follow_redirects=False)
-_sitzung = c14.cookies.get("tinysesam_session")
-_h = auth4.store.session_hash(_sitzung)
+_session = c14.cookies.get("tinysesam_session")
+_h = auth4.store.session_hash(_session)
 PROXY_A = {"X-Forwarded-Proto": "https", "X-Forwarded-Host": "app-a.example.com",
            "X-Forwarded-Uri": "/geheim"}
 PROXY_B = {**PROXY_A, "X-Forwarded-Host": "app-b.example.com"}
@@ -228,7 +228,7 @@ assert "app=app-a.example.com" in r.headers.get("X-TinySesam-Location", ""), r.h
 ok("T-14: signed in, but without approval for this application → 401 with app= in the login URL")
 
 # The provider has agreed for A.
-auth4._record_oidc_approval(_sitzung, "app-a.example.com", rollen=["a-team"])
+auth4._record_oidc_approval(_session, "app-a.example.com", roles=["a-team"])
 r = c14.get("/auth/forward", headers=PROXY_A)
 assert r.status_code == 200, (r.status_code, r.headers.get("X-TinySesam-Reason"))
 
@@ -240,21 +240,21 @@ ok("T-14: the approval for A does not apply to B — same session, two answers")
 
 # Revocation: the period expires, the session stays. The next call goes via the provider.
 auth4.store._exec("UPDATE oidc_grant SET checked_at=? WHERE token_hash=? AND client=?",
-                  (int(_zeit.time()) - 16 * 60, _h, "app-a.example.com"))
+                  (int(_when.time()) - 16 * 60, _h, "app-a.example.com"))
 r = c14.get("/auth/forward", headers=PROXY_A)
 assert r.status_code == 401 and r.headers.get("X-TinySesam-Reason") == "app-stale", dict(r.headers)
 assert c14.get("/auth/forward", headers=PROXY_A).status_code == 401
 # The session itself is untouched — that is the difference from signing out.
-assert auth4.store.get_session(_sitzung) is not None, "the session must survive the expired approval"
-auth4._record_oidc_approval(_sitzung, "app-a.example.com")
+assert auth4.store.get_session(_session) is not None, "the session must survive the expired approval"
+auth4._record_oidc_approval(_session, "app-a.example.com")
 assert c14.get("/auth/forward", headers=PROXY_A).status_code == 200
 ok("T-14: after oidc_revalidate_minutes the approval lapses (session stays), confirmation opens it again")
 
 # Revocation by hand: one application closed, the other open.
-auth4._record_oidc_approval(_sitzung, "app-b.example.com")
+auth4._record_oidc_approval(_session, "app-b.example.com")
 assert c14.get("/auth/forward", headers=PROXY_B).status_code == 200
-_weg = auth4.store.drop_oidc_grant(_h, "app-b.example.com")
-assert _weg == 1
+_away = auth4.store.drop_oidc_grant(_h, "app-b.example.com")
+assert _away == 1
 assert c14.get("/auth/forward", headers=PROXY_B).status_code == 401
 assert c14.get("/auth/forward", headers=PROXY_A).status_code == 200
 ok("T-14: withdrawing an approval affects exactly one application")
@@ -266,25 +266,25 @@ ok("T-14: withdrawing an approval affects exactly one application")
 _META = {"issuer": "https://id.example.com", "jwks_uri": "https://id.example.com/jwks",
          "token_endpoint": "https://id.example.com/token",
          "authorization_endpoint": "https://id.example.com/auth"}
-for _schluessel in [VORGABE_CLIENT] + auth4.oidc_clients.namen():
-    _k = auth4.oidc_clients[_schluessel]
-    _k._meta, _k._meta_zeit = dict(_META), _zeit.time()
+for _key_name in [DEFAULT_CLIENT] + auth4.oidc_clients.names():
+    _k = auth4.oidc_clients[_key_name]
+    _k._meta, _k._meta_when = dict(_META), _when.time()
 
 from urllib.parse import parse_qs as _pq                                      # noqa: E402
 
 
-def _abfrage_der_umleitung(pfad):
+def _query_of_redirect(path):
     """The query of the provider redirect that /auth/oidc/start builds."""
-    a = TestClient(app4).get(pfad, follow_redirects=False)
-    assert a.status_code == 303, (pfad, a.status_code)
+    a = TestClient(app4).get(path, follow_redirects=False)
+    assert a.status_code == 303, (path, a.status_code)
     return _pq(urlparse(a.headers["location"]).query)
 
-assert _abfrage_der_umleitung("/auth/oidc/start?app=app-a.example.com")["client_id"] == ["a"]
-assert _abfrage_der_umleitung("/auth/oidc/start?app=app-b.example.com")["client_id"] == ["b"]
-assert _abfrage_der_umleitung("/auth/oidc/start")["client_id"] == ["haupt"]
-assert _abfrage_der_umleitung("/auth/oidc/start?app=fremd.example.com")["client_id"] == ["haupt"]
-_abfrage_b = _abfrage_der_umleitung("/auth/oidc/start?app=app-b.example.com")
-_flow_b = auth4.store.pop_flow("oidc:" + _abfrage_b["state"][0])
+assert _query_of_redirect("/auth/oidc/start?app=app-a.example.com")["client_id"] == ["a"]
+assert _query_of_redirect("/auth/oidc/start?app=app-b.example.com")["client_id"] == ["b"]
+assert _query_of_redirect("/auth/oidc/start")["client_id"] == ["haupt"]
+assert _query_of_redirect("/auth/oidc/start?app=fremd.example.com")["client_id"] == ["haupt"]
+_query_b = _query_of_redirect("/auth/oidc/start?app=app-b.example.com")
+_flow_b = auth4.store.pop_flow("oidc:" + _query_b["state"][0])
 assert (_flow_b or {}).get("app") == "app-b.example.com", _flow_b
 ok("T-14: /auth/oidc/start chooses the client of the application and holds it in the flow record")
 

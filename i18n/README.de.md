@@ -807,8 +807,8 @@ Nach dem Vorbild von Authelia/Fail2Ban — die Schwellen sind **im Admin-Panel /
   Fehlgriff dort sperrt die **Anmeldung** nicht: Sonst hätten ein paar Tippfehler auf der
   eigenen Kontoseite den Nutzer ausgeschlossen — hinter NAT auch Kollegen, die nichts damit zu
   tun hatten, und bei der Bereichs-PIN sogar fremde Besucher, die gar kein Konto haben.
-  Welche Methode kein Anmeldeversuch ist, steht in `security.NICHT_LOGIN_METHODEN` — abgeleitet
-  aus `security.EIGENE_SPERRE`, damit keine Methode ohne Bremse dastehen kann.
+  Welche Methode kein Anmeldeversuch ist, steht in `security.NOT_LOGIN_METHODS` — abgeleitet
+  aus `security.OWN_LOCK`, damit keine Methode ohne Bremse dastehen kann.
   Die Töpfe der **angemeldeten** Wege (Passwortwechsel, Step-up) zählen bewusst nur pro Konto,
   nicht pro IP: Wer dort rät, braucht bereits eine Sitzung genau dieses Kontos. Die Bereichs-PIN
   behält die IP-Schwelle, denn dort rät ein Unangemeldeter.
