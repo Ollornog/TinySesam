@@ -4,7 +4,7 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
-### Fixed — `next` on the login page travels as one query value (B-3)
+### Fixed — `next` on the login page travels as one query value (B-4)
 
 - The links of the login page (`/auth/register`, `/auth/magic/request`, the OIDC and SAML buttons) and the passkey
   script carried the return target with HTML escaping only. `&` cut the target off (`/a?x=1&y=2` lost `&y=2`), `+`
