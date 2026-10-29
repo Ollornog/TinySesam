@@ -333,8 +333,15 @@ def contract_atoms(sources: dict) -> list:
 # ---------------------------------------------------------------------------
 # Loggers and security-log lines
 # ---------------------------------------------------------------------------
+#: Loggers of OTHER packages the package touches (not its own names, so not part of the promise): the gateway drops
+#: uvicorn's upgrade warnings on `uvicorn.error` (B-5). Every other name outside `tinysesam*` is refused — a typo
+#: such as `tinysesm.security` must not slip out of the measurement as "foreign".
+FOREIGN_LOGGERS = ("uvicorn.error",)
+
+
 def loggers_static(sources: dict) -> list:
-    """The names passed to `logging.getLogger(...)` in the package. A name that is not a literal is refused."""
+    """The names passed to `logging.getLogger(...)` in the package. A name that is not a literal is refused; a
+    foreign logger (`FOREIGN_LOGGERS`) is not measured, any other name outside `tinysesam*` is refused."""
     names = set()
     for file, text in sources.items():
         for k in ast.walk(ast.parse(text)):
@@ -344,6 +351,11 @@ def loggers_static(sources: dict) -> list:
                 a = k.args[0]
                 if not (isinstance(a, ast.Constant) and isinstance(a.value, str)):
                     raise MeasurementError(f"{file}:{k.lineno}: logger name is not a literal")
+                if a.value in FOREIGN_LOGGERS:
+                    continue
+                if a.value != "tinysesam" and not a.value.startswith("tinysesam."):
+                    raise MeasurementError(f"{file}:{k.lineno}: logger {a.value!r} is neither tinysesam* nor "
+                                           "listed in FOREIGN_LOGGERS")
                 names.add(a.value)
     return sorted(names)
 

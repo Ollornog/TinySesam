@@ -336,10 +336,47 @@ def build_app(cfg: Optional[TinySesamConfig] = None):
     return app
 
 
+#: The two warnings uvicorn writes for every request with an `Upgrade` header it does not serve.
+_UPGRADE_WARNINGS = ("Unsupported upgrade request.", "No supported WebSocket library detected.")
+
+
+class _QuietUpgrade:
+    """Drops uvicorn's upgrade warnings (B-5). The gateway speaks HTTP only: a forward-auth check of a
+    WebSocket app arrives WITH the client's `Upgrade: websocket` (Caddy copies the headers) and is
+    answered as a plain request. Logged, it was one warning pair per WebSocket connection — noise
+    without a finding."""
+
+    def filter(self, record) -> bool:
+        return not record.getMessage().startswith(_UPGRADE_WARNINGS)
+
+
+def _quiet_upgrade_warnings() -> None:
+    import logging
+    log = logging.getLogger("uvicorn.error")
+    if not any(isinstance(f, _QuietUpgrade) for f in log.filters):
+        log.addFilter(_QuietUpgrade())
+
+
+def _server_config(app, host: str, port: int):
+    """The uvicorn configuration of `python -m tinysesam.gateway`.
+
+    `ws="none"` (B-5): with a WebSocket library installed (`websockets`, `wsproto`, e.g. via
+    `uvicorn[standard]`), uvicorn takes a forward-auth check that carries `Upgrade: websocket` for a
+    WebSocket handshake and answers 403 — every WebSocket app behind the gateway would be locked out.
+    The gateway image had no such library, a pip install could. Created BEFORE the filter: the
+    configuration sets up uvicorn's logging."""
+    import uvicorn
+    config = uvicorn.Config(app, host=host, port=port, ws="none")
+    _quiet_upgrade_warnings()
+    return config
+
+
 def __getattr__(name):
     # Lazy `app`, so that `uvicorn tinysesam.gateway:app` works without import-time env,
     # but a plain `import tinysesam.gateway` (e.g. in tests) does NOT demand env right away.
+    # Your own uvicorn invocation has configured its logging by now; it needs `--ws none` itself (B-5).
     if name == "app":
+        _quiet_upgrade_warnings()
         return build_app()
     raise AttributeError(name)
 
@@ -347,7 +384,9 @@ def __getattr__(name):
 HELP = """tinysesam.gateway — TinySesam as an OIDC forward-auth gateway
 
   python -m tinysesam.gateway          starts the service
-  uvicorn tinysesam.gateway:app        the same via your own server invocation
+  uvicorn tinysesam.gateway:app --ws none
+                                       the same via your own server invocation
+                                       (--ws none: forward-auth checks of WebSocket apps)
 
 Installation:  pip install 'tinysesam[gateway]'   (not [oidc] — that is the library
                                                    without a server)
@@ -394,7 +433,7 @@ def main(argv=None):
         return 1
     host = os.environ.get("TINYSESAM_HOST", "0.0.0.0")
     port = int(os.environ.get("TINYSESAM_PORT", "8000"))
-    uvicorn.run(build_app(), host=host, port=port)
+    uvicorn.Server(_server_config(build_app(), host, port)).run()
     return 0
 
 

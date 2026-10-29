@@ -1251,8 +1251,12 @@ export TINYSESAM_OIDC_ISSUER=https://id.example.com \
        TINYSESAM_BASE_URL=https://auth.example.com \
        TINYSESAM_COOKIE_DOMAIN=.example.com \
        TINYSESAM_PROTECTED_HOSTS=app.example.com,wiki.example.com
-python -m tinysesam.gateway          # oder: uvicorn tinysesam.gateway:app
+python -m tinysesam.gateway          # oder: uvicorn tinysesam.gateway:app --ws none
 ```
+
+Mit eigenem `uvicorn`-Aufruf `--ws none` mitgeben: Ist eine WebSocket-Bibliothek installiert, beantwortet uvicorn
+sonst die Forward-Auth-Prüfung einer WebSocket-App (sie trägt das `Upgrade: websocket` des Clients) mit 403 (B-5).
+`python -m tinysesam.gateway` setzt das selbst.
 
 Der Reverse-Proxy ruft je Request `GET /auth/forward`. Der Gateway hängt den vollen
 `/auth/*`-Router ein — mit `password_enabled=False` und OIDC als einziger Methode bleiben davon
