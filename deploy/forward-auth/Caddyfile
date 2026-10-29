@@ -47,10 +47,13 @@ app.example.com {
 	#
 	# The RAW path (`orig_uri.path`) is checked, not the one cleaned up by Caddy: otherwise Caddy
 	# compares `/x/../s/a` as `/s/a`, but passes `/x/../s/a` on to the application — which may
-	# resolve it differently. Therefore every path with a `.` or `..` segment, `;`
-	# (Tomcat/Spring read `/s/..;/admin` as `/admin`), backslash, NUL or an encoded form
-	# of these (%2e %2f %5c %00 %3b) is rejected. Case counts (`/S/` is not `/s/`). Measured against
-	# Caddy 2.11.7 in tests/test_gate_caddy.py. Never allow by file extension (`*.js`): many
+	# resolve it differently. Therefore every path with a `.` or `..` segment, also one with a
+	# path parameter (`..;x`, `.;`; Tomcat/Spring read `/s/..;/admin` as `/admin`), backslash, NUL or
+	# an encoded form of these (%2e %2f %5c %00; `%3b` only right behind a dot segment) is rejected.
+	# Caddy matches the DECODED path: a plain `;` or `%3B` elsewhere is an ordinary file-name character
+	# (`/s/<token>/file_%3B%29.bin`) and passes — rejecting every `;` sent such downloads to the login
+	# (B-3). Case counts (`/S/` is not `/s/`). Measured against Caddy 2.11.7 in
+	# tests/test_gate_caddy.py. Never allow by file extension (`*.js`): many
 	# applications serve dynamic content under `/admin/x.css`.
 	#
 	# A share page usually loads its own scripts and calls its own APIs — these belong in
@@ -58,7 +61,7 @@ app.example.com {
 	# of the application in these paths stays open. As narrow as possible.
 	@share {
 		vars_regexp share {http.request.orig_uri.path} {$TS_SHARE_PRAEFIX:^$}
-		not vars_regexp {http.request.orig_uri.path} (?i)(^|/)\.\.?(/|$)|[;\\\x00]|%(2e|2f|5c|00|3b)
+		not vars_regexp {http.request.orig_uri.path} (?i)(^|/)\.\.?(/|;|%3b|$)|[\\\x00]|%(2e|2f|5c|00)
 	}
 	handle @share {
 		reverse_proxy {$TS_APP_UPSTREAM:127.0.0.1:9000} {
