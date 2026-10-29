@@ -1378,6 +1378,28 @@ und die Meldung der Kennungs-Trigger. Der erste Start schreibt eine bestehende D
 eigene Filter, die auf die alten Wörter passen, müssen angepasst werden. Die ganze Liste alt → neu steht im
 CHANGELOG, der Rückweg in `docs/OPERATIONS.md` („Rollback to 0.24.x").
 
+**Über die Python-Namen hinaus** (PO-Entscheidung 2026-10-29). Die Stufen decken auch ab, was kein
+Python-Name ist; gemessen in `tests/api_surface.json`, aufgeführt in [`API.md`](../API.md):
+
+- **Stufe A:** `auth.cfg` — das *Lesen* (das Attribut und sein Typ; es ist die Instanz, die du übergeben hast).
+  **Das Schreiben ist nicht zugesagt:** es ist eine einfache, veränderliche Dataclass, und welches Feld einmal
+  und welches je Anfrage gelesen wird, gehört nicht zur Zusage. Und `auth.on_security_event` — das Attribut,
+  der Aufruf `hook(event, account, details)`, dass er synchron nach dem Schreiben der Änderung läuft, dass ein
+  fehlschlagender Hook den Vorgang nicht abbricht, und die Schlüssel von `details` je Ereignis.
+- **Stufe A — der Forward- und Gate-Vertrag**, auf den sich Reverse-Proxys verlassen: `/auth/forward`,
+  `/auth/verify`, `/.tinysesam/*`, `/auth/gate/*`, ihre Statuscodes, die `X-TinySesam-*`-Header und die Werte
+  von `X-TinySesam-Reason`, die Eingangs-Header und -Parameter, die sie lesen (`X-Forwarded-Uri`, `?roles=` …),
+  und die Namen der Cookies, die das Gate setzt.
+- **Stufe B — Seiten und API-Routen:** die HTML-Seiten (Anmeldung, Registrierung, Konto, Admin-Panel …) und die
+  JSON-Routen — **Pfad und Methode** sind zugesagt, das HTML und das Aussehen nicht.
+- **Stufe A — das Sicherheitslog**, das fail2ban-Filter lesen: die Logger-Namen (`tinysesam.security`), das
+  Format der Logdatei, die Ereigniswörter (`failed login`, `failed verification`, `deferred login`,
+  `repeated login`, `login ok`) und ihre Schlüssel in der Reihenfolge (`user= ip= method= reason= unban=`).
+  Freitext hinter den Schlüsseln ist nicht zugesagt. Siehe `docs/OPERATIONS.md`, „Security log contract“.
+
+Für diese neuen Einträge beginnt die Uhr der Stufe A mit dem Release, das sie einführt (dem nach 0.24.13),
+nicht mit 0.22.0; die Namen oben behalten ihre.
+
 **`auth.store` ist Innenleben (Stufe C).** Das ist die Speicherschicht der eingebauten Routen; ihre
 Methoden haben keine Stufe, keine Zusage und keine Übergangsfrist und können sich mit jedem Release
 ändern. Was eine App braucht, hat eine öffentliche Methode (`set_disabled`, `find_user`,

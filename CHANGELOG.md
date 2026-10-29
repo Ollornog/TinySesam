@@ -4,6 +4,41 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+### Added — the stability promise covers the hook, the HTTP contract and the security log (M-1, no break)
+
+PO decision 2026-10-29: besides the Python names the promise now covers the following. **Nothing changes in the
+code or in any existing tier** — this is new promise, measured by `tests/test_api_surface.py` (191 new entries in
+`tests/api_surface.json`: A 106, B 85; the totals are now A 372, B 151, C 38).
+
+- **Tier A — `auth.cfg` (reading) and `auth.on_security_event`.** `auth.cfg` is the `TinySesamConfig` instance that was
+  passed to the constructor. Writing it is **not** promised: it is a plain mutable dataclass, which field is read when is
+  not part of the promise. The hook is called as `hook(event, account, details)`, synchronously, after the change is
+  written; a failing hook does not abort the operation. The keys of `details` per event are pinned (a lost key is a
+  break, a new one an extension).
+- **Tier A — the forward and gate contract for proxies:** `/auth/forward`, `/auth/verify`, `/.tinysesam/*`,
+  `/auth/gate/*` with their parameters; 21 observed cases of status code, redirect path, headers and cookies (the
+  whole code exchange included); the `X-TinySesam-*` headers, the values of `X-TinySesam-Reason`, the request headers
+  and the `roles` parameter the forward and gate paths read, the cookie names the gate sets.
+- **Tier B — pages and API routes** (83 routes): path and method, not the HTML.
+- **Tier A — the security log:** the logger names (`tinysesam`, `tinysesam.mail`, `tinysesam.security`), the format of the
+  log file, the event words (`failed login`, `failed verification`, `deferred login|verification`, `repeated login`,
+  `login ok`), their keys in order and the literal `method=`/`reason=`/`unban=` values that filters match. Free text
+  after the keys is not promised. Documented in `docs/OPERATIONS.md`.
+- **The clock** for these new tier-A entries starts with the release that introduces them (the next one after 0.24.13);
+  the existing names keep theirs (0.22.0).
+- `API.md` (generated) has the new sections “Attributes of `TinySesam`”, “HTTP contract” and “Security log”; both READMEs
+  have a paragraph “Beyond the Python names”; `backlog/M-1-api-stable-1-0.md` has the addendum with the table and the
+  open points.
+- **Mutations (real runs on a copy of the tree, 24 of 24 turn the guard red):** a gate route renamed, a gate path
+  renamed, an HTML page renamed (tier B), a route parameter dropped, a new route without a tier, a route registered
+  with `add_api_route`, `X-TinySesam-Reason: role` changed, the status of "role missing" 403 → 401, of "signed in"
+  200 → 204, `X-TinySesam-Location` renamed, `x-forwarded-uri` no longer read, the link cookie renamed, the logger
+  renamed, `failed login` renamed, `unban=` → `lift=`, the log file format changed, a payload key renamed, the hook
+  no longer isolated from the operation, `on_security_event` renamed, `auth.cfg` replaced by a copy, `auth.cfg`
+  renamed away in the whole package, an entry without a tier, a gate route and the logger lowered to B.
+- Refactor: the static reading of the `seclog` call sites moved from `tests/test_fail2ban_reason.py` to
+  `tests/_seclog_ast.py`; both guards use it.
+
 ### Added — `tinysesam delete`: remove an account without the admin panel (T-27)
 
 - New command `python -m tinysesam delete --db <file> <user>` (`#<id>` instead of the name works as in `rename`).

@@ -122,98 +122,14 @@ ok(f"filter keywords read from deploy/fail2ban: {sorted(STICHWORTE)}")
 # ---------------------------------------------------------------------------
 # (1) static analysis (AST)
 # ---------------------------------------------------------------------------
-LEVEL = {"debug", "info", "warning", "error", "critical", "exception"}
+# The reading of the call sites lives in `tests/_seclog_ast.py` (shared with `tests/test_api_surface.py`,
+# which pins the line shapes the operator promise covers).
+import sys  # noqa: E402
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _seclog_ast import EREIGNIS, formatvarianten as _formatvarianten, seclog_aufrufe as _seclog_aufrufe  # noqa: E402
 
-def _sicherheit_konstanten():
-    """Module-level string constants of security.py and the possible results of `log_ereignis`."""
-    baum = ast.parse(_lies(os.path.join(PAKET, "security.py")))
-    konst = {}
-    for k in baum.body:
-        if (isinstance(k, ast.Assign) and len(k.targets) == 1 and isinstance(k.targets[0], ast.Name)
-                and isinstance(k.value, ast.Constant) and isinstance(k.value.value, str)):
-            konst[k.targets[0].id] = k.value.value
-    ereignis = set()
-    for k in baum.body:
-        if isinstance(k, ast.FunctionDef) and k.name == "log_ereignis":
-            for r in ast.walk(k):
-                if isinstance(r, ast.Return):
-                    ereignis |= _werte(r.value, konst, set()) or set()
-    return konst, ereignis
-
-
-def _werte(knoten, konst, ereignis, lokal=None):
-    """The strings an expression can evaluate to — or None if unknown.
-
-    `lokal`: simple `name = expr` assignments of the enclosing function (`wort = A if login else B`)."""
-    lokal = lokal or {}
-    if isinstance(knoten, ast.Constant) and isinstance(knoten.value, str):
-        return {knoten.value}
-    if isinstance(knoten, ast.Attribute) and knoten.attr in konst:
-        return {konst[knoten.attr]}
-    if isinstance(knoten, ast.Name) and knoten.id in lokal:
-        rest = {k: v for k, v in lokal.items() if k != knoten.id}      # no cycles
-        return _werte(lokal[knoten.id], konst, ereignis, rest)
-    if isinstance(knoten, ast.Name) and knoten.id in konst:
-        return {konst[knoten.id]}
-    if isinstance(knoten, ast.IfExp):
-        a = _werte(knoten.body, konst, ereignis, lokal)
-        b = _werte(knoten.orelse, konst, ereignis, lokal)
-        return (a | b) if a is not None and b is not None else None
-    if isinstance(knoten, ast.Call):
-        name = knoten.func.attr if isinstance(knoten.func, ast.Attribute) else getattr(knoten.func, "id", "")
-        if name == "log_ereignis" and ereignis:
-            return set(ereignis)
-    return None
-
-
-KONST, EREIGNIS = _sicherheit_konstanten()
 assert EREIGNIS == {"failed login", "failed verification"}, EREIGNIS
-
-_SPEZIFIKATION = re.compile(r"(%%|%(?:\([^)]*\))?[-#0 +]*\d*(?:\.\d+)?[a-zA-Z])")
-
-
-def _formatvarianten(aufruf, lokal=None):
-    """All texts a `seclog.<level>(fmt, *args)` call can produce, with the event word substituted."""
-    if not aufruf.args or not (isinstance(aufruf.args[0], ast.Constant) and isinstance(aufruf.args[0].value, str)):
-        return []
-    teile = _SPEZIFIKATION.split(aufruf.args[0].value)
-    argumente = list(aufruf.args[1:])
-    optionen, i = [], 0
-    for t in teile:
-        if t == "%%":
-            optionen.append(["%"])
-        elif t.startswith("%") and len(t) > 1:
-            werte = _werte(argumente[i], KONST, EREIGNIS, lokal) if i < len(argumente) else None
-            optionen.append(sorted(werte) if werte else ["<?>"])
-            i += 1
-        else:
-            optionen.append([t])
-    return ["".join(p) for p in itertools.product(*optionen)]
-
-
-def _seclog_aufrufe(quelle):
-    """-> (call, local assignments of the enclosing function)."""
-    baum = ast.parse(quelle)
-    bereiche = [(baum, {})]
-    for f in ast.walk(baum):
-        if isinstance(f, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            lokal = {}
-            for z in ast.walk(f):
-                if (isinstance(z, ast.Assign) and len(z.targets) == 1 and isinstance(z.targets[0], ast.Name)):
-                    lokal[z.targets[0].id] = z.value
-            bereiche.append((f, lokal))
-    gesehen = set()
-    for bereich, lokal in reversed(bereiche):          # innermost scopes first
-        for k in ast.walk(bereich):
-            if id(k) in gesehen:
-                continue
-            if (isinstance(k, ast.Call) and isinstance(k.func, ast.Attribute) and k.func.attr in LEVEL):
-                w = k.func.value
-                if (isinstance(w, ast.Name) and w.id == "seclog") or \
-                   (isinstance(w, ast.Attribute) and w.attr == "seclog"):
-                    gesehen.add(id(k))
-                    yield k, lokal
 
 
 _SCHLUESSEL = re.compile(r"\b([A-Za-z_]*(?:grund|reason|cause|why)[A-Za-z_]*)=", re.IGNORECASE)

@@ -130,6 +130,11 @@ def signatur(fn) -> str:
     return "(" + ", ".join(teile) + ")" + zurueck
 
 
+def basis() -> dict:
+    """The whole checked-in baseline (measured values and tiers), or {}."""
+    return json.loads(ABLAGE.read_text(encoding="utf-8")) if ABLAGE.exists() else {}
+
+
 def stufen() -> dict:
     """{area: {name: tier}} from the guard's store; missing tier = None."""
     if not ABLAGE.exists():
@@ -231,6 +236,137 @@ def ergebnistyp_abschnitt(typ, titel, stufe_von) -> str:
     return "".join(teile)
 
 
+#: The areas of the contract measurement (`tests/_contract.py`), in the order the page shows them.
+VERTRAG_BEREICHE = ("TinySesam.attributes", "TinySesam.event_payload", "http.routes", "http.forward",
+                    "http.contract", "log.loggers", "log.lines")
+
+HOOK_TEXT = (
+    "`auth.on_security_event` is a plain attribute you set to a callable (default `None`). TinySesam calls "
+    "`hook(event, account, details)` for every event in `TinySesam.SECURITY_EVENTS`: `event` is the event name, "
+    "`account` a dict with `id`, `username`, `email`, `display_name`, `details` a dict whose keys are listed "
+    "below per event. The call is synchronous, inside the request, **after** the change has been written. An "
+    "exception in the hook does not abort the operation; it lands in the security log. TinySesam sends nothing "
+    "itself — which mail, which channel, which language is up to the app.")
+
+CFG_TEXT = (
+    "`auth.cfg` is the `TinySesamConfig` instance that was passed to the constructor (the same object, not a "
+    "copy). **Reading it is promised**: the attribute name, its type, and the fields (each with its own tier, "
+    "[CONFIGURATION.md](CONFIGURATION.md)). **Writing it is not promised.** The object is a plain, mutable "
+    "dataclass; which fields are read once at construction and which on every request is not part of the "
+    "promise, and a field changed afterwards can bypass the checks the constructor made — "
+    "`TinySesamConfig.validate()` (tier A) re-checks, and `router()` and `admin_router()` check again before "
+    "they build their routes.")
+
+
+def _ab(datei: dict, bereich: str, stufe: str) -> list:
+    """Names of an area at one tier, sorted."""
+    return sorted(n for n, e in (datei.get(bereich) or {}).items() if isinstance(e, dict) and e.get("stufe") == stufe)
+
+
+def _zelle(text) -> str:
+    return str(text).replace("|", "\\|")
+
+
+def _route_tabelle(datei: dict, stufe: str) -> str:
+    namen = _ab(datei, "http.routes", stufe)
+    zeilen = ["| Method | Path | Query / form parameters |\n|---|---|---|\n"]
+    for n in sorted(namen, key=lambda k: (k.split(" ", 1)[1], k.split(" ", 1)[0])):
+        methode, pfad = n.split(" ", 1)
+        params = ", ".join(f"`{p}`" for p in datei["http.routes"][n]["keys"]) or "—"
+        zeilen.append(f"| {methode} | `{_zelle(pfad)}` | {params} |\n")
+    return "".join(zeilen) + "\n"
+
+
+def _atome(datei: dict, praefix: str, stufe: str) -> list:
+    return [n.split(":", 1)[1] for n in _ab(datei, "http.contract", stufe) if n.startswith(praefix + ":")]
+
+
+def vertrag_abschnitte(datei: dict) -> str:
+    """The sections for the contract beyond the Python names (PO decision 2026-10-29), from the baseline."""
+    if not all(b in datei for b in VERTRAG_BEREICHE):
+        return ""
+    t = []
+    # --- attributes and the hook ---
+    t.append("## A · Attributes of `TinySesam`\n\nInstance attributes — measured on a probe instance, "
+             "recorded in `tests/api_surface.json`.\n\n")
+    t.append(f"### `auth.cfg`\n\n{CFG_TEXT}\n\nMeasured: {datei['TinySesam.attributes']['cfg']['wert']}.\n\n")
+    t.append(f"### `auth.on_security_event`\n\n{HOOK_TEXT}\n\nMeasured: "
+             f"`{_zelle(datei['TinySesam.attributes']['on_security_event']['wert'])}`.\n\n")
+    t.append("### Payload of `on_security_event`\n\nThe keys of the `details` dict per event, read from the call "
+             "sites. A key that goes away breaks whoever reads it; a key that is added breaks nobody. "
+             "(The English wording of the keys is guarded separately.)\n\n| Event | Keys in `details` |\n|---|---|\n")
+    for e in _ab(datei, "TinySesam.event_payload", "A"):
+        schluessel = ", ".join(f"`{k}`" for k in datei["TinySesam.event_payload"][e]["keys"]) or "—"
+        t.append(f"| `{e}` | {schluessel} |\n")
+    t.append("\n")
+    # --- HTTP contract ---
+    t.append(
+        "## HTTP contract\n\nThe routes of the built-in router and the admin panel, read from the source (every "
+        "route a feature flag can switch on, whether or not the extra is installed) and compared with what "
+        "FastAPI reports for a probe instance. A route exists when its feature is on; the flag is the one named "
+        "in [README.md](README.md). **Path and method are the promise.** Query and form parameter names are "
+        "listed and guarded; the JSON bodies some routes read are not measured. `<admin>` is where the admin "
+        "router is mounted (`admin_path`, default `/auth/admin`), `<oidc_callback_path>` is the field of that "
+        "name.\n\n")
+    t.append("### A · Forward and gate — for reverse proxies\n\n"
+             "What a proxy (Caddy `forward_auth`, nginx `auth_request`, Traefik) and the application host's "
+             "`/.tinysesam/*` paths depend on. A break here resets the 1.0 clock, like any tier-A name. The "
+             "pages behind these routes (the sign-out page, the \"Signed out\" page) are HTML: their path, "
+             "method, status and redirect target are promised, their appearance is not.\n\n"
+             "#### Routes\n\n" + _route_tabelle(datei, "A"))
+    t.append("#### Responses\n\nObserved on probe instances; values are recorded where they are the contract "
+             "(`X-TinySesam-Reason`, `WWW-Authenticate`), of redirects only the path, of identity headers and "
+             "cookies only the names (tokens differ on every run).\n\n| Case | Response |\n|---|---|\n")
+    for n in _ab(datei, "http.forward", "A"):
+        t.append(f"| {_zelle(n)} | {_zelle(datei['http.forward'][n]['response'])} |\n")
+    t.append("\n#### Headers, reasons, inputs, cookies\n\n")
+    kopf_a = _atome(datei, "header", "A")
+    t.append("- **`X-TinySesam-*` headers** (request or response, see the table above): "
+             + ", ".join(f"`{h}`" for h in kopf_a) + ".\n")
+    t.append("- **Values of `X-TinySesam-Reason`:** " + ", ".join(f"`{r}`" for r in _atome(datei, "reason", "A"))
+             + " (`app-…` only with several OIDC clients).\n")
+    t.append("- **Request headers the forward and gate paths read:** "
+             + ", ".join(f"`{h}`" for h in _atome(datei, "request-header", "A")) + ".\n")
+    t.append("- **Request parameters:** " + ", ".join(f"`{p}`" for p in _atome(datei, "request-param", "A")) + ".\n")
+    t.append("- **Cookies the gate sets itself** (host-only, fixed names): "
+             + ", ".join(f"`{c}`" for c in _atome(datei, "cookie", "A"))
+             + ". The gate token cookie is named by the configuration field `gate_cookie_name`.\n\n")
+    t.append(f"### B · Pages and API routes\n\nThe HTML pages (sign-in, registration, account, admin panel, the "
+             f"pages behind e-mailed links), the JSON routes of the account and admin APIs, the passkey, OIDC "
+             f"and SAML routes and the gateway's own `/` and `/healthz`. Path and method are promised with the "
+             f"weaker B promise: removed or renamed only after the CHANGELOG has announced it under “Deprecated” "
+             f"for two minor versions (a route cannot raise a Python warning). The HTML of a page is **not** "
+             f"promised, nor its look.\n\n"
+             f"{_route_tabelle(datei, 'B')}")
+    b_kopf = _atome(datei, "header", "B")
+    if b_kopf:
+        t.append("Hints to the account page's script, tier B: " + ", ".join(f"`{h}`" for h in b_kopf) + ".\n\n")
+    # --- security log ---
+    logger = _ab(datei, "log.loggers", "A")
+    zeilen = _ab(datei, "log.lines", "A")
+    t.append("## A · Security log — for fail2ban and log shipping\n\n"
+             "What a filter matches. **Promised:** the logger names, the format of the log file, the event word "
+             "at the start of a line, the key names in their order, and the literal values below. **Not "
+             "promised:** anything after the keys (free text), the values of `user=`, `ip=` and of a `reason=` "
+             "that is not listed, and every line that does not start with one of these event words.\n\n"
+             "- **Loggers:** " + ", ".join(f"`{n}`" for n in logger) + " (`tinysesam.security` is the one the "
+             "filters read; `security_log` in the configuration writes it to a file).\n")
+    for z in zeilen:
+        if z.startswith("format:"):
+            t.append(f"- **Format of the log file:** `{z.split(':', 1)[1]}`\n")
+    t.append("- **Lines** (level, event word, `|`, keys in order; `event` words: "
+             + ", ".join(f"`{z.split(':', 1)[1]}`" for z in zeilen if z.startswith("event:")) + "):\n")
+    for z in zeilen:
+        if z.startswith("line:"):
+            t.append(f"  - `{z.split(':', 1)[1]}`\n")
+    t.append("- **Literal values** of `method=`, `reason=`, `unban=`: "
+             + ", ".join(f"`{z.split(':', 1)[1]}`" for z in zeilen if z.startswith("value:")) + ".\n\n"
+             "The shipped fail2ban filters in `deploy/fail2ban/` are held against exactly these lines by "
+             "`tests/test_fail2ban_reason.py`. Audit event names (`login_fail`, `forward_denied`, …) are in the "
+             "audit log, not here, and are not part of this promise.\n\n")
+    return "".join(t)
+
+
 def _abschnitt(titel: str, eintraege: list, vorspann: str = "") -> str:
     if not eintraege:
         return ""
@@ -279,6 +415,8 @@ def bauen() -> str:
             + [("TinySesamConfig.methoden", n) for n, _ in presets]
             + [("TinySesamConfig.felder", n) for n in felder] + [("exporte", n) for n in exporte]
             + ergebnistyp)
+    datei = basis()
+    alle += [(b, n) for b in VERTRAG_BEREICHE for n in (datei.get(b) or {})]
     zahl = {s: sum(1 for b, n in alle if von(b, n) == s) for s in STUFEN}
     ohne = [(b, n) for b, n in alle if von(b, n) not in STUFEN]
 
@@ -306,6 +444,12 @@ def bauen() -> str:
         "(`ctx[\"prefix\"]`, `ctx[\"purpose\"]`), the JSON responses of the routes, the kinds of "
         "API keys (`automation`, `human`). Audit and log lines stay as they were. The list "
         "old → new is in the CHANGELOG for 0.22.0.\n\n"
+        "**Beyond the Python names** (PO decision 2026-10-29): `auth.cfg` and `auth.on_security_event`, the "
+        "HTTP routes (the forward and gate contract that proxies use in tier A, the HTML pages in tier B) and "
+        "the logger names and security-log lines that fail2ban filters read (tier A) are measured and tiered "
+        "like the names above — see the sections “Attributes of `TinySesam`”, “HTTP contract” and “Security log” "
+        "below. For these entries the tier-A clock starts with the release that introduces them, not with "
+        "0.22.0; the names above keep theirs.\n\n"
         "**`auth.store` is internals** (tier C): the storage layer of the built-in routes, "
         "without tier, without promise and without transition period — its methods can change with every "
         "release. What an app needs is listed below as a method of `TinySesam` (e.g. "
@@ -369,6 +513,8 @@ def bauen() -> str:
             + [f"### `tinysesam.{n}{signatur(getattr(paket, n))}`\n\n"
                f"{erster_satz(getattr(paket, n))}\n\n"
                for n in uebrige if inspect.isfunction(getattr(paket, n))]))
+
+    teile.append(vertrag_abschnitte(datei))
 
     intern = [(b, n) for b, n in alle if von(b, n) == "C"]
     if intern:

@@ -153,10 +153,10 @@ storage file from before 0.22.0 is read in without marks and compared without ma
 `v0.21.0`/`v0.20.1` reports only real differences. `API.md` shows the marks as well.
 
 Not measured and thus outside the classification: instance attributes (`auth.store`, `auth.cfg`,
-`on_security_event` …), the HTTP routes and the logger names (`tinysesam.security`). Whether they belong in
-the commitment is an open question with the PO. **Partly decided 2026-09-27:**
-`auth.store` is internals, tier C, without commitment (addendum below); `auth.cfg`,
-`on_security_event`, the routes and the logger names remain open.
+`on_security_event` …), the HTTP routes and the logger names (`tinysesam.security`).
+~~Whether they belong in the commitment is an open question with the PO.~~ **Decided:** `auth.store` is
+internals, tier C, without commitment (addendum of 2026-09-27 below); `auth.cfg`, `on_security_event`, the routes
+and the logger names are measured and tiered since the **addendum of 2026-10-29** at the end of this page.
 
 **Addendum 2026-09-27 (PO decision): The whole surface of tiers A and B is named in English,
 without alias.** After the login building block, now the rest: 11 methods, 5 constants, 2 methods of
@@ -239,5 +239,65 @@ actions and for a custom password change: there were only the routes `/auth/reau
 
 State 365 names: A 251 (+ 4 methods, the export and 6 names on `PasswordChangeResult`), B 64,
 C 50; the name guard measures 593 entries.
+
+**Addendum 2026-10-29 (PO decision): the promise covers the hook, the HTTP contract and the security log.**
+What was "not measured" is measured now (`tests/_contract.py`, `tests/_contract_probe.py`, wired into
+`tests/test_api_surface.py`; 191 new entries in seven areas of `tests/api_surface.json`, **A 106, B 85**; no existing
+entry or tier changed):
+
+| What | Tier | Area in `api_surface.json` | How it is measured |
+|---|---|---|---|
+| `auth.cfg` — **reading** it | A | `TinySesam.attributes` | a probe instance: type, "is the instance that was passed in", not frozen |
+| `auth.on_security_event` — attribute, call `hook(event, account, details)`, synchronous, after the change is written, a failing hook does not abort | A | `TinySesam.attributes` | declaration read from `__init__`; a probe hook observes arguments, thread, state and failure isolation |
+| keys of `details` per event | A | `TinySesam.event_payload` | the keyword names of every `_security_event(...)` call; the events must equal `SECURITY_EVENTS` |
+| forward/gate routes (`/auth/forward`, `/auth/verify`, `/.tinysesam/*`, `/auth/gate/*`) with their query/form parameters | A | `http.routes` | decorators of the route modules (static, independent of installed extras), compared with FastAPI's reading of a probe instance; `add_api_route`, `mount` and the like are refused |
+| status codes, redirect paths, headers and cookie names of the forward endpoint and the gate paths | A | `http.forward` | 21 observed cases on probe instances, including the whole code exchange |
+| `X-TinySesam-*` headers, values of `X-TinySesam-Reason`, request headers and parameters read, gate cookie names | A (the two account-page hints `X-TinySesam-Factor`, `-Reauth`: B) | `http.contract` | string constants and `.get("…")` reads in the forward/gate code |
+| HTML pages, JSON/API routes, passkey/OIDC/SAML routes, `/healthz` — **path and method**, not the HTML | B | `http.routes` | as above |
+| logger names | A | `log.loggers` | `getLogger("…")` literals; the security logger must be among them |
+| log file format, event words, the keys of the lines in order, the literal `method=`/`reason=`/`unban=` values | A | `log.lines` | the AST reader of `tests/_seclog_ast.py`, shared with `tests/test_fail2ban_reason.py`; the event words the shipped filters name must still be produced |
+
+* **`auth.cfg` is not immutable.** `TinySesamConfig` is a plain, mutable dataclass; `examples/showcase.py` and the
+  README write to it, `router()` checks it once more, and `TinySesamConfig.validate()` re-checks. So the promise
+  is **reading only**; writing is explicitly not promised (README, `API.md`).
+* **The payload keys are not counted twice.** `pruefe_werte` keeps checking the *language* of the keys; the new area
+  pins *which* keys exist. A key that goes away is a break, a key that is added is an extension.
+* **Tier rules the guard holds:** everything in `TinySesam.attributes`, `.event_payload`, `http.forward`, `log.*` and
+  `http.contract` (bar the two hints) and the forward/gate routes may not sit below A; every other route is B and may
+  be promoted. `--update` still assigns no tier. A route the static scan cannot see turns the guard red.
+* **Tier B for routes** reads as in the table of the first addendum, with one adaptation: a route cannot raise a
+  `DeprecationWarning`, so a removal or rename must be announced in the CHANGELOG under "Deprecated" two minor
+  versions ahead.
+* **The clock.** The existing A entries keep their clock (counted from 0.22.0). The new A entries start theirs with
+  the release that introduces them — the one after 0.24.13; nothing here was released yet. As the condition is
+  worded ("the public API has not broken across two minor versions"), it can be met for these entries at the
+  earliest two minor versions after that release.
+* **Operator documentation:** `docs/OPERATIONS.md` ("Security log contract", "HTTP contract for proxies"), the READMEs
+  ("Beyond the Python names"), `API.md` (generated: "Attributes of `TinySesam`", "HTTP contract", "Security log").
+
+| Condition | Status |
+|---|---|
+| Classification of the Python names | built (0.22.0) |
+| `auth.cfg` (reading), `on_security_event` | **built** — tier A, clock from the next release |
+| HTTP: forward/gate contract A, pages and API routes B | **built** |
+| Logger names, security-log lines for filters | **built** — tier A |
+| Two minor versions without breakage **in tier A** | existing names: clock since 0.22.0; the entries above: from the release that introduces them |
+
+**Open, found while measuring:**
+
+* The query parameter `abgemeldet` is German and sits in a tier-A route (`GET /.tinysesam/start`, written by
+  TinySesam's own redirects) and in a tier-B one (`GET /auth/login`). The guard for English names covers names, keys
+  and values of the Python surface, not the parameters of routes; renaming it is a behaviour change (in-flight
+  links, `tests/test_gate_link.py`) and is a decision for the PO.
+* Routes the decision did not name are tier B: the JSON routes (`/auth/me`, `/auth/apikeys`, `/auth/sessions`, the
+  admin API), the passkey routes and — worth a look — the paths other systems have registered by hand:
+  `<oidc_callback_path>` and `/auth/oidc/start` (the identity provider), `/auth/saml/acs`, `/auth/saml/metadata`,
+  `/healthz` (the image's health check) and the links in e-mails (`/auth/magic/{token}`, `/auth/verify/{token}`,
+  `/auth/invite/{token}`, `/auth/reset`). A move would cost an operator a reconfiguration; promotion to A is a
+  one-word change in `tests/api_surface.json`.
+* `X-Csrf-Token`, `Sec-Fetch-Site` and `Referer` are in the request headers because the gate paths read them; they
+  are tier A with the rest of `http.contract`. Say so if a narrower set is wanted.
+* Still not measured: the shape of the JSON bodies of the routes, `Set-Cookie` attributes, `Location` targets beyond
+  their path, the audit event names, the HTML.
 
 <!-- What used to be here (closing with 1.0.0) is obsolete together with the milestone itself. -->

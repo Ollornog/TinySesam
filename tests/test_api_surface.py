@@ -52,10 +52,14 @@ import sys
 import warnings
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import importlib
-from tinysesam import ConfigError, LoginResult, PasswordChangeResult, TinySesam, TinySesamConfig
+from tinysesam import ConfigError, LoginResult, PasswordChangeResult, TinySesam, TinySesamConfig, security
 from tinysesam._deprecated import BIS, Deprecated
+
+import _contract as CT           # static measurement: routes, header/cookie atoms, loggers, log lines, payloads
+import _contract_probe as PR     # observed measurement: forward/gate responses, the hook, `auth.cfg`
 
 _paket = importlib.import_module("tinysesam")
 WURZEL = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -81,7 +85,15 @@ C_SEIT = "0.22.0"
 MESSWERT = {"TinySesam": "sig", "TinySesam.eigenschaften": "sig",
             "TinySesamConfig.methoden": "sig", "TinySesam.konstanten": "wert",
             "TinySesamConfig.felder": "feld", "exporte": None, "LoginResult": "sig",
-            "PasswordChangeResult": "sig"}
+            "PasswordChangeResult": "sig",
+            # The operator and proxy contract (PO decision 2026-10-29, `tests/_contract.py`):
+            "TinySesam.attributes": "wert",         # `auth.cfg`, `auth.on_security_event`
+            "TinySesam.event_payload": "keys",      # event -> keys of the `details` dict (list)
+            "http.routes": "keys",                  # "METHOD /path" -> query/form parameters (list)
+            "http.forward": "response",             # scenario -> status, contract headers, cookies
+            "http.contract": None,                  # atoms: headers, reasons, request inputs, cookie names
+            "log.loggers": None,                    # atoms: logger names
+            "log.lines": None}                      # atoms: log-file format, line shapes, literal values
 
 #: The result types of the building blocks for custom pages (0.22.0, tier A), each with its own area in
 #: the baseline: `LoginResult` (`login_*`, `confirm_*`), `PasswordChangeResult` (`change_password`).
@@ -186,11 +198,31 @@ def oberflaeche() -> dict:
                      for name, wert in inspect.getmembers_static(
                          TinySesam, lambda w: isinstance(w, property))
                      if not name.startswith("_")}
+    quellen = CT.read_sources()
     return {"TinySesam": manager, "TinySesam.konstanten": konstanten,
             "TinySesam.eigenschaften": eigenschaften,
             "TinySesamConfig.felder": felder,
             "TinySesamConfig.methoden": presets, "exporte": exporte,
-            **{name: ergebnistyp_oberflaeche(typ) for name, typ in ERGEBNISTYPEN.items()}}
+            **{name: ergebnistyp_oberflaeche(typ) for name, typ in ERGEBNISTYPEN.items()},
+            **vertrag_oberflaeche(quellen)}
+
+
+def vertrag_oberflaeche(quellen: dict) -> dict:
+    """The contract beyond the Python names (PO decision 2026-10-29): the attributes `auth.cfg` and
+    `auth.on_security_event`, the HTTP routes and the proxy-facing responses, the logger names and the
+    security-log lines that filters read. Measured in `tests/_contract.py` (source) and
+    `tests/_contract_probe.py` (probe instances). Related to — and not repeating — `pruefe_werte`: that one checks
+    the LANGUAGE of the payload keys, this one pins WHICH keys there are."""
+    return {
+        "TinySesam.attributes": {"cfg": PR.cfg_attribute(),
+                                 "on_security_event": f"{CT.hook_annotation(quellen)}; {PR.hook_contract()}"},
+        "TinySesam.event_payload": CT.event_payload(quellen),
+        "http.routes": CT.routes_static(quellen),
+        "http.forward": PR.forward_scenarios(),
+        "http.contract": CT.contract_atoms(quellen),
+        "log.loggers": CT.loggers_static(quellen),
+        "log.lines": CT.log_atoms(quellen, security.NICHT_LOGIN_METHODEN),
+    }
 
 
 def ergebnistyp_oberflaeche(typ=LoginResult) -> dict:
@@ -383,6 +415,15 @@ def beurteile(alt: dict, neu: dict, stufen: "dict | None" = None):
             if isinstance(a[name], OhneMarken) and isinstance(jetzt, str):
                 jetzt = ohne_marken(jetzt)        # old baseline: measured without `*`/`/`
             if a[name] == jetzt:
+                continue
+            if isinstance(a[name], list) and isinstance(jetzt, list):
+                # A set of names (parameters of a route, keys of a payload): losing one breaks whoever
+                # reads it, gaining one breaks nobody.
+                fort, dazu = sorted(set(a[name]) - set(jetzt)), sorted(set(jetzt) - set(a[name]))
+                if fort:
+                    brueche.append(f"{marke(bereich, name)}{bereich}.{name}: lost {', '.join(fort)}")
+                if dazu:
+                    erweiterungen.append(f"{bereich}.{name}: gained {', '.join(dazu)}")
                 continue
             zeile = (f"{bereich}.{name}:\n        before {a[name]}\n        now    {n[name]}")
             if isinstance(a[name], str) and a[name].startswith("(") and nur_erweitert(a[name], jetzt):
@@ -1599,6 +1640,250 @@ def selbstpruefung_werte() -> None:
        "of a page, in a JSON response, in a ctx helper; minimum count and wiring")
 
 
+# ---------- The operator and proxy contract (PO decision 2026-10-29) ----------
+# Besides the Python names the promise covers: `auth.cfg` and `auth.on_security_event` (tier A), the forward/gate
+# contract that proxies use (tier A) and the HTML pages (tier B, path and method), the logger names and the
+# security-log lines that fail2ban filters read (tier A). The MEASUREMENT is in `tests/_contract.py` and
+# `tests/_contract_probe.py`; the tiers are decisions in `tests/api_surface.json`. What follows holds the
+# decision against that file: nothing that the decision puts in A may sit lower, the scan must see what FastAPI
+# sees, and the measurement must not shrink without anyone noticing.
+
+#: The areas of the contract measurement.
+VERTRAG_BEREICHE = ("TinySesam.attributes", "TinySesam.event_payload", "http.routes", "http.forward",
+                    "http.contract", "log.loggers", "log.lines")
+#: Entries of these areas are tier A in whole (the decision names them as a block).
+VERTRAG_BEREICHE_A = ("TinySesam.attributes", "TinySesam.event_payload", "http.forward", "log.loggers", "log.lines")
+#: In `http.contract` everything is tier A except these — hints to the account page's script, not to proxies.
+VERTRAG_CONTRACT_NICHT_A = ("header:X-TinySesam-Factor", "header:X-TinySesam-Reauth")
+#: The paths of the forward/gate contract, tier A at least; every other route may be B (path and method).
+GATE_PFADE = ("/auth/forward", "/auth/verify")
+GATE_PRAEFIXE = ("/.tinysesam/", "/auth/gate/")
+
+#: What the contract measurement must see at minimum — otherwise it silently measures less than it promises.
+VERTRAG_PFLICHT = (
+    ("http.routes", "GET /auth/forward"), ("http.routes", "GET /auth/verify"),
+    ("http.routes", "GET /.tinysesam/start"), ("http.routes", "GET /.tinysesam/callback"),
+    ("http.routes", "POST /.tinysesam/logout"), ("http.routes", "GET /auth/gate/authorize"),
+    ("http.routes", "POST /auth/login"), ("http.routes", "GET <admin>/api/users"),
+    ("http.forward", "forward: role missing (?roles=)"), ("http.forward", "gateway callback: valid code"),
+    ("http.contract", "header:X-TinySesam-Reason"), ("http.contract", "header:X-TinySesam-Location"),
+    ("http.contract", "header:X-TinySesam-Gate-Cookie"), ("http.contract", "reason:role"),
+    ("http.contract", "reason:app-signed-out"), ("http.contract", "request-header:X-Forwarded-Uri"),
+    ("http.contract", "request-header:X-Forwarded-Host"), ("http.contract", "request-param:roles"),
+    ("http.contract", "cookie:__Host-tinysesam_link"),
+    ("log.loggers", "tinysesam.security"), ("log.loggers", "tinysesam"),
+    ("log.lines", "event:failed login"), ("log.lines", "event:failed verification"),
+    ("log.lines", "event:deferred login"), ("log.lines", "line:WARNING failed login | user ip method reason"),
+    ("log.lines", "format:%(asctime)s %(levelname)s %(message)s"), ("log.lines", "value:unban=yes"),
+    ("TinySesam.attributes", "cfg"), ("TinySesam.attributes", "on_security_event"),
+    ("TinySesam.event_payload", "username_changed"), ("TinySesam.event_payload", "api_keys_revoked"))
+VERTRAG_MINDESTENS = {"http.routes": 80, "http.forward": 20, "http.contract": 20, "log.lines": 20,
+                      "TinySesam.event_payload": 14, "log.loggers": 3}
+
+
+def vertrag_untergrenze(bereich: str, name: str) -> "str | None":
+    """The lowest tier the decision of 2026-10-29 allows this entry: "A", or None where A or B is free."""
+    if bereich in VERTRAG_BEREICHE_A:
+        return "A"
+    if bereich == "http.contract":
+        return None if name in VERTRAG_CONTRACT_NICHT_A else "A"
+    if bereich == "http.routes":
+        pfad = name.split(" ", 1)[1]
+        return "A" if pfad in GATE_PFADE or pfad.startswith(GATE_PRAEFIXE) else None
+    return None
+
+
+def vertrag_befunde(datei: dict, jetzt: dict, live_routen: "dict | None" = None,
+                    pflicht=VERTRAG_PFLICHT, mindestens=VERTRAG_MINDESTENS) -> list:
+    """The whole contract check of the normal run — the same function checks the self-probe."""
+    befunde = []
+    for bereich in VERTRAG_BEREICHE:
+        for name, e in sorted((datei.get(bereich) or {}).items()):
+            soll = vertrag_untergrenze(bereich, name)
+            stufe = e.get("stufe") if isinstance(e, dict) else None
+            if soll == "A" and stufe is not None and stufe != "A":
+                befunde.append(f"{bereich}.{name}: tier {stufe}, but the decision of 2026-10-29 puts it in A")
+    for bereich, name in pflicht:
+        gemessen = jetzt.get(bereich, {})
+        if name not in gemessen:
+            befunde.append(f"{bereich}: {name!r} is not measured — measurement broken or the contract changed?")
+    for bereich, zahl in mindestens.items():
+        if len(jetzt.get(bereich, {})) < zahl:
+            befunde.append(f"{bereich}: only {len(jetzt.get(bereich, {}))} entries measured (expected at "
+                           f"least {zahl}) — measurement broken?")
+    # Cross-checks against things the surface already pins by itself.
+    if set(jetzt["TinySesam.event_payload"]) != set(TinySesam.SECURITY_EVENTS):
+        befunde.append("TinySesam.event_payload: events with a payload "
+                       f"{sorted(set(jetzt['TinySesam.event_payload']) ^ set(TinySesam.SECURITY_EVENTS))} "
+                       "differ from TinySesam.SECURITY_EVENTS")
+    if security.seclog.name not in jetzt["log.loggers"]:
+        befunde.append(f"log.loggers: the security logger is called {security.seclog.name!r}, "
+                       "which the source scan does not list")
+    angemeldet = jetzt["http.forward"].get("forward: signed in", "")
+    for h in TinySesam.FORWARD_HEADERS_DEFAULT.values():
+        if CT.canonical_header(h) not in angemeldet:
+            befunde.append(f"http.forward: 'forward: signed in' does not carry {h} although "
+                           "TinySesam.FORWARD_HEADERS_DEFAULT names it")
+    for w in sorted(CT.filter_words()):
+        if f"event:{w}" not in jetzt["log.lines"]:
+            befunde.append(f"log.lines: the shipped fail2ban filters name the event word {w!r}, "
+                           "but no log call produces it any more")
+    if live_routen is not None:
+        befunde += [f"http.routes: {z}" for z in CT.routes_differences(jetzt["http.routes"], live_routen)]
+    return befunde
+
+
+def selbstpruefung_vertrag(jetzt: dict) -> None:
+    """Does the contract measurement react — on mutated copies of the source, not on the real tree?
+
+    Each case bends ONE place and demands that the matching entry disappears (or changes), and that the
+    comparison reports it as a break with the tier of the entry. The real mutation runs (the package itself
+    changed, the suite run) are in the CHANGELOG; this keeps the measurement honest between them."""
+    quellen = CT.read_sources()
+
+    def verbogen(datei, alt, neu, anzahl=1):
+        assert quellen[datei].count(alt) >= 1, f"{datei}: mutation anchor {alt!r} not found"
+        kopie = dict(quellen)
+        kopie[datei] = quellen[datei].replace(alt, neu, anzahl)
+        return kopie
+
+    def pruefe(bereich, messen, kopie, weg, hinzu=None):
+        vorher, nachher = messen(quellen), messen(kopie)
+        assert weg in vorher and weg not in nachher, (bereich, weg, "is still there after the mutation")
+        if hinzu is not None:
+            assert hinzu in nachher, (bereich, hinzu)
+        s = {bereich: {weg: "A"}}
+        b, _ = beurteile({bereich: vorher}, {bereich: nachher}, s)
+        assert any(weg in z and z.startswith("[A]") for z in b), (bereich, weg, b)
+
+    routen = CT.routes_static
+    pruefe("http.routes", routen, verbogen("router.py", '@r.get("/auth/forward")', '@r.get("/auth/forwards")'),
+           "GET /auth/forward", "GET /auth/forwards")
+    pruefe("http.routes", routen, verbogen("router.py", '@r.post("/.tinysesam/logout")', '@r.get("/.tinysesam/logout2")'),
+           "POST /.tinysesam/logout", "GET /.tinysesam/logout2")
+    # a dropped parameter is a break (list value), a gained one an extension
+    vorher = routen(quellen)["GET /.tinysesam/start"]
+    kopie = verbogen("router.py", "def gate_link_start(request: Request, rd: str = \"/\", abgemeldet: str = \"\"):",
+                     "def gate_link_start(request: Request, rd: str = \"/\"):")
+    b, e = beurteile({"http.routes": {"GET /.tinysesam/start": vorher}},
+                     {"http.routes": {"GET /.tinysesam/start": routen(kopie)["GET /.tinysesam/start"]}},
+                     {"http.routes": {"GET /.tinysesam/start": "A"}})
+    assert b and b[0].startswith("[A]") and "query:abgemeldet" in b[0] and not e, (b, e)
+    b, e = beurteile({"http.routes": {"GET /.tinysesam/start": routen(kopie)["GET /.tinysesam/start"]}},
+                     {"http.routes": {"GET /.tinysesam/start": vorher}})
+    assert not b and e and "query:abgemeldet" in e[0], (b, e)
+    # a route the scan cannot see is refused, not ignored
+    for fremd in ("app.add_api_route('/x', f)", "app.mount('/x', sub)"):
+        try:
+            routen(verbogen("gateway.py", "def build_app(", fremd + "\ndef build_app(", 1))
+        except CT.MeasurementError:
+            pass
+        else:
+            raise AssertionError(f"{fremd}: the route scan accepted a registration it cannot see")
+    atome = CT.contract_atoms
+    pruefe("http.contract", atome, verbogen("router.py", 'headers={"X-TinySesam-Reason": "role"}',
+                                            'headers={"X-TinySesam-Reason": "denied"}'),
+           "reason:role", "reason:denied")
+    pruefe("http.contract", atome, verbogen("router.py", '"X-TinySesam-Reason": "app-signed-out"',
+                                            '"X-TinySesam-Reason": "app-out"'), "reason:app-signed-out")
+    pruefe("http.contract", atome, verbogen("manager.py", '_GATE_LINK_COOKIE = "__Host-tinysesam_link"',
+                                            '_GATE_LINK_COOKIE = "__Host-tinysesam_conn"'),
+           "cookie:__Host-tinysesam_link", "cookie:__Host-tinysesam_conn")
+    pruefe("http.contract", atome, verbogen("manager.py", 'h.get("x-forwarded-uri")', 'h.get("x-fwd-uri")'),
+           "request-header:X-Forwarded-Uri", "request-header:X-Fwd-Uri")
+    pruefe("http.contract", atome, verbogen("router.py", 'getlist("roles")', 'getlist("role")'),
+           "request-param:roles", "request-param:role")
+    pruefe("http.contract", atome, verbogen("router.py", 'kopf["X-TinySesam-Gate-Cookie"]', 'kopf["X-Gate-Cookie"]'),
+           "header:X-TinySesam-Gate-Cookie")
+    pruefe("log.loggers", CT.loggers_static,
+           verbogen("security.py", 'getLogger("tinysesam.security")', 'getLogger("tinysesam.sec")'),
+           "tinysesam.security", "tinysesam.sec")
+    log = lambda q: CT.log_atoms(q, security.NICHT_LOGIN_METHODEN)           # noqa: E731
+    # A shape produced by ONE call site: bending that site makes it disappear. (A shape several sites produce,
+    # such as `failed login | user ip method reason`, survives bending one of them on purpose: merging or
+    # moving call sites is no break of what a filter reads.)
+    generisch = 'security.seclog.warning("%s user=%s ip=%s method=%s", security.log_ereignis(method),'
+    pruefe("log.lines", log, verbogen("manager.py", generisch, generisch.replace('ip=%s', 'client=%s')),
+           "line:WARNING failed login | user ip method", "line:WARNING failed login | user client method")
+    pruefe("log.lines", log, verbogen("manager.py", generisch, generisch.replace(".warning(", ".error(")),
+           "line:WARNING failed login | user ip method", "line:ERROR failed login | user ip method")
+    pruefe("log.lines", log, verbogen("manager.py", "ip=%s method=blocked reason=%s", "ip=%s method=refused reason=%s"),
+           "value:method=blocked", "value:method=refused")
+    pruefe("log.lines", log, verbogen("manager.py", '"%s user=%s ip=%s method=%s unban=%s"',
+                                      '"%s user=%s ip=%s method=%s lift=%s"'),
+           "line:INFO login ok | user ip method unban")
+    pruefe("log.lines", log, verbogen("security.py", 'logging.Formatter("%(asctime)s %(levelname)s %(message)s")',
+                                      'logging.Formatter("%(levelname)s %(message)s")'),
+           "format:%(asctime)s %(levelname)s %(message)s", "format:%(levelname)s %(message)s")
+    # An event word the shipped filters name that no call produces any more is a finding of its own.
+    pruefe("log.lines", log, verbogen("manager.py", '"deferred %s user=%s ip=%s reason=pending"',
+                                      '"postponed %s user=%s ip=%s reason=pending"'), "event:deferred login")
+    ohne_wort = json.loads(json.dumps(jetzt))
+    ohne_wort["log.lines"].remove("event:deferred login")
+    assert any("'deferred login'" in z for z in vertrag_befunde(stufen_voll(jetzt), ohne_wort)), \
+        "a vanished event word that a shipped filter names went unnoticed"
+    # the payload of the hook: a renamed key is gone, a new key is only an extension
+    vor = CT.event_payload(quellen)
+    nach = CT.event_payload(verbogen("manager.py", '_security_event("username_changed", user_id, old=alt, new=name)',
+                                     '_security_event("username_changed", user_id, was=alt, new=name)'))
+    assert vor["username_changed"] == ["new", "old"] and nach["username_changed"] == ["new", "was"], nach
+    b, e = beurteile({"TinySesam.event_payload": {"username_changed": vor["username_changed"]}},
+                     {"TinySesam.event_payload": {"username_changed": nach["username_changed"]}},
+                     {"TinySesam.event_payload": {"username_changed": "A"}})
+    assert b and b[0].startswith("[A]") and "old" in b[0] and e and "was" in e[0], (b, e)
+    try:
+        CT.event_payload(verbogen("manager.py", '_security_event("username_changed", user_id, old=alt, new=name)',
+                                  '_security_event(ereignis_name, user_id, old=alt, new=name)'))
+    except CT.MeasurementError:
+        pass
+    else:
+        raise AssertionError("an event name that is not a literal was accepted")
+    # the tier floor: A decided, B entered -> reported; a promotion B -> A is free; C never
+    datei = json.loads(json.dumps(stufen_voll(jetzt)))
+    assert vertrag_befunde(datei, jetzt) == [], vertrag_befunde(datei, jetzt)
+    for bereich, name in (("http.routes", "GET /auth/forward"), ("http.routes", "GET /.tinysesam/start"),
+                          ("http.routes", "GET /auth/gate/logout"), ("http.forward", "forward: not signed in"),
+                          ("log.loggers", "tinysesam.security"), ("log.lines", "event:failed login"),
+                          ("TinySesam.attributes", "cfg"), ("TinySesam.attributes", "on_security_event"),
+                          ("TinySesam.event_payload", "pin_set"), ("http.contract", "reason:role"),
+                          ("http.contract", "request-header:X-Forwarded-Uri")):
+        gesenkt = json.loads(json.dumps(datei))
+        gesenkt[bereich][name]["stufe"] = "B"
+        assert any(f"{bereich}.{name}: tier B" in z for z in vertrag_befunde(gesenkt, jetzt)), (bereich, name)
+    frei = json.loads(json.dumps(datei))
+    frei["http.routes"]["GET /auth/login"]["stufe"] = "B"             # an HTML page: B is the decision
+    frei["http.contract"]["header:X-TinySesam-Reauth"]["stufe"] = "B"
+    frei["http.routes"]["POST /auth/pin"]["stufe"] = "A"              # a promotion needs no excuse
+    assert vertrag_befunde(frei, jetzt) == [], vertrag_befunde(frei, jetzt)
+    # the measurement may not shrink silently
+    klein = json.loads(json.dumps(jetzt))
+    klein["http.contract"].remove("reason:role")
+    assert any("reason:role" in z for z in vertrag_befunde(datei, klein)), "a lost mandatory entry went unnoticed"
+    klein = json.loads(json.dumps(jetzt))
+    klein["http.routes"] = {k: v for k, v in list(klein["http.routes"].items())[:10]}
+    assert any("http.routes: only 10" in z for z in vertrag_befunde(datei, klein)), "a shrunken scan went unnoticed"
+    # the scan must see what FastAPI sees
+    live = {"GET /auth/forward": [], "GET /invented": []}
+    assert any("live route 'GET /invented'" in z for z in CT.routes_differences(jetzt["http.routes"], live))
+    live = {"GET /.tinysesam/start": ["query:rd"]}
+    assert any("query:abgemeldet" in z for z in CT.routes_differences(jetzt["http.routes"], live))
+    gerufen = {k.func.id for k in ast.walk(ast.parse(inspect.getsource(main)))
+               if isinstance(k, ast.Call) and isinstance(k.func, ast.Name)}
+    assert "vertrag_befunde" in gerufen, "main() does not call vertrag_befunde"
+    ok("Contract measurement triggers: a renamed route or parameter, a changed header/reason/cookie/input, a "
+       "renamed logger, a changed log shape or file format, a renamed payload key; unseen routes refused; "
+       "the tier floor holds; the measurement cannot shrink silently")
+
+
+def stufen_voll(jetzt: dict) -> dict:
+    """A synthetic baseline for the self-check: every entry tiered as the decision of 2026-10-29 puts it."""
+    datei = mit_stufen(jetzt, {})
+    for bereich in VERTRAG_BEREICHE:
+        for name, e in datei[bereich].items():
+            e["stufe"] = vertrag_untergrenze(bereich, name) or "B"
+    return datei
+
+
 def _zaehle_stufen(datei: dict) -> str:
     zahl = {s: 0 for s in STUFEN}
     for je_name in stufen_aus(datei).values():
@@ -1627,6 +1912,7 @@ def main(argv):
     selbstpruefung_c()
     selbstpruefung_namen()
     selbstpruefung_werte()
+    selbstpruefung_vertrag(jetzt)
 
     frueher_datei = {}
     if os.path.exists(ABLAGE):
@@ -1702,6 +1988,22 @@ def main(argv):
     else:
         ok(f"Keys and values of tiers A and B English: {w_zahl} measured (probe instance, "
            "constants, source), no German word, none from 0.21.x")
+
+    # The operator and proxy contract (PO decision 2026-10-29): routes, forward/gate responses, hook, logs.
+    v_fehler = vertrag_befunde(frueher_datei, jetzt, CT.routes_live())
+    if v_fehler:
+        rot = True
+        print(f"\n  {len(v_fehler)} findings on the HTTP/log contract:\n")
+        for zeile in v_fehler:
+            print(f"    CONTRACT     {zeile}")
+        print("\n  The decision of 2026-10-29 (backlog/M-1): what proxies and filters read is tier A, the")
+        print("  HTML pages are tier B. A finding here is a tier that sits lower than decided, a measurement")
+        print("  that shrank, or a route the static scan does not see (tests/_contract.py).\n")
+    else:
+        ok(f"HTTP/log contract: {len(jetzt['http.routes'])} routes (static scan = FastAPI's reading), "
+           f"{len(jetzt['http.forward'])} observed forward/gate responses, {len(jetzt['http.contract'])} header/"
+           f"reason/input/cookie atoms, {len(jetzt['log.loggers'])} loggers, {len(jetzt['log.lines'])} log atoms, "
+           f"{len(jetzt['TinySesam.event_payload'])} event payloads, auth.cfg and on_security_event")
 
     if not brueche and not erweiterungen:
         n = sum(len(v) for v in jetzt.values())

@@ -1350,6 +1350,28 @@ probe instance and in the source. **Audit and log lines are English too, since s
 (back it up first); filters of your own that match the old words have to be adjusted. The full old → new
 list is in the CHANGELOG, the way back in `docs/OPERATIONS.md` ("Rollback to 0.24.x").
 
+**Beyond the Python names** (PO decision 2026-10-29). The tiers also cover what is not a Python name,
+measured in `tests/api_surface.json` and listed in [`API.md`](https://github.com/Ollornog/TinySesam/blob/main/API.md):
+
+- **Tier A:** `auth.cfg` — *reading* it (the attribute and its type; it is the instance you passed in).
+  **Writing it is not promised:** it is a plain, mutable dataclass, and which field is read once and which
+  per request is not part of the promise. And `auth.on_security_event` — the attribute, the call
+  `hook(event, account, details)`, that it runs synchronously after the change is written, that a failing
+  hook does not abort the operation, and the keys of `details` per event.
+- **Tier A — the forward and gate contract** that reverse proxies depend on: `/auth/forward`, `/auth/verify`,
+  `/.tinysesam/*`, `/auth/gate/*`, their status codes, the `X-TinySesam-*` headers and the values of
+  `X-TinySesam-Reason`, the request headers and parameters they read (`X-Forwarded-Uri`, `?roles=` …) and
+  the names of the cookies the gate sets.
+- **Tier B — pages and API routes:** the HTML pages (sign-in, registration, account, admin panel …) and the
+  JSON routes — **path and method** are promised, the HTML and the look are not.
+- **Tier A — the security log** that fail2ban filters read: the logger names (`tinysesam.security`), the
+  format of the log file, the event words (`failed login`, `failed verification`, `deferred login`,
+  `repeated login`, `login ok`) and their keys in order (`user= ip= method= reason= unban=`). Free text
+  after the keys is not promised. See `docs/OPERATIONS.md`, “Security log contract”.
+
+For these new entries the tier-A clock starts with the release that introduces them (the one after 0.24.13),
+not with 0.22.0; the names above keep theirs.
+
 **`auth.store` is internal (tier C).** It is the storage layer the built-in routes use; its methods
 have no tier, no promise and no deprecation period, and they may change in any release. Everything
 an app needs has a public method (`set_disabled`, `find_user`, `list_api_keys`, `lift_lockout` …);
