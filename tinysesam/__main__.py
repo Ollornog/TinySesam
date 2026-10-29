@@ -10,6 +10,7 @@
     unlock --db auth.db <user>       lift a brute-force lockout
     owner --db auth.db <user>        make an account an owner (emergency route)
     rename --db auth.db <old> <new>  rename an account (resolve an identifier collision)
+    delete --db auth.db <user>       delete an account (asks; --ja for scripts; not an owner)
     gate-key --db auth.db            public key of the gate tokens (for the proxy, ADR-9)
 
 Deliberately lean. TinySesam does not install itself — an auth module that reloads
@@ -459,6 +460,87 @@ def _rename(argv) -> int:
     return 0
 
 
+def _delete(argv) -> int:
+    ap = argparse.ArgumentParser(
+        prog="tinysesam delete",
+        description="Delete an account — as operator, without a running service or admin panel.",
+        epilog="The same route and the same protection rules as the panel's \"Delete\" (H-13): "
+               "credentials, sessions and identities go, the sign-in attempts under name and address "
+               "go, and the name in the audit log becomes deleted#<id> — the rows themselves stay. "
+               "An owner and the last admin are not deleted. Without --ja the command asks, and "
+               "without a terminal it refuses. A raw DELETE in the database is the wrong way: it "
+               "leaves the name in every audit row.")
+    ap.add_argument("username", help="username of the account, or #<id> (the user_id from the "
+                                     "startup message — for a name that cannot be typed in)")
+    ap.add_argument("--db", required=True, help="path to the TinySesam database")
+    ap.add_argument("--ja", action="store_true", help="do not ask for confirmation (for scripts)")
+    a = ap.parse_args(argv)
+    store = _oeffne(a.db)
+    if store is None:
+        return 1
+    from .security import zeilenfest as _z
+
+    def finde():
+        k = store.get_user_by_name(a.username)
+        if k is None and a.username[:1] == "#" and a.username[1:].isascii() and a.username[1:].isdigit():
+            k = store.get_user(int(a.username[1:]))
+        return k
+
+    def sperre_melden(k) -> bool:
+        # THE rule of the panel (`TinySesam.delete_user`), not a copy of it.
+        grund = store.loeschsperre(k)
+        if grund == "owner":
+            print(f"'{_z(k['username'])}' is an owner and cannot be deleted — hand over the owner "
+                  "role first (this requires another owner to exist).", file=sys.stderr)
+        elif grund == "last_admin":
+            print(f"'{_z(k['username'])}' is the last admin and cannot be deleted.", file=sys.stderr)
+        return grund is not None
+
+    konto = finde()
+    if not konto:
+        print(f"No account '{_z(a.username)}' in {a.db}.", file=sys.stderr)
+        return 1
+    if sperre_melden(konto):
+        return 1
+    bestand = store.konto_bestand(konto["id"])
+    name = _z(konto["username"])
+    umfang = (f"{bestand['sessions']} session(s), {bestand['identities']} identity link(s), "
+              f"{bestand['api_keys']} API key(s)")
+    if not a.ja:
+        # Without a person to answer there is no confirmation: a script has to say --ja.
+        if not sys.stdin.isatty():
+            print("Not a terminal and no --ja — nothing deleted.", file=sys.stderr)
+            return 1
+        print(f"This deletes the account '{name}' (id {konto['id']}) with {umfang}. "
+              "The service may keep running.")
+        try:
+            antwort = input("Delete? [y/N] ")
+        except EOFError:
+            antwort = ""
+        if antwort.strip().lower() not in ("j", "ja", "y", "yes"):
+            print("Aborted.")
+            return 1
+        # The service may have changed the account while the question stood.
+        konto = finde()
+        if not konto:
+            print(f"The account '{name}' is gone in the meantime — nothing to do.", file=sys.stderr)
+            return 1
+        if sperre_melden(konto):
+            return 1
+    # The ONE deletion path (`Store.konto_entfernen`), as in `TinySesam.delete_user`: only here, in
+    # the deliberate deletion, does a verified address count as the account's own from before creation.
+    # NOT `Store.delete_user`: that leaves the name in every audit row.
+    entfernt = store.konto_entfernen(konto["id"], adresse_unbefristet=True)
+    if entfernt is None:
+        print(f"The account '{name}' is gone in the meantime — nothing to do.", file=sys.stderr)
+        return 1
+    ersatz, n = entfernt
+    store.audit_log("user_delete", ersatz, None,
+                    f"uid={konto['id']} audit_anonymized={n} source=cli")
+    print(f"Deleted '{name}' (id {konto['id']}): {umfang}; {n} audit row(s) anonymised as {ersatz}.")
+    return 0
+
+
 def _gate_key(argv) -> int:
     ap = argparse.ArgumentParser(
         prog="tinysesam gate-key",
@@ -507,6 +589,8 @@ def main(argv=None):
         sys.exit(_owner(argv[1:]))
     elif cmd == "rename":
         sys.exit(_rename(argv[1:]))
+    elif cmd == "delete":
+        sys.exit(_delete(argv[1:]))
     elif cmd == "gate-key":
         sys.exit(_gate_key(argv[1:]))
     else:
@@ -522,6 +606,7 @@ def main(argv=None):
               "       python -m tinysesam unlock --db <file> <user>\n"
               "       python -m tinysesam owner  --db <file> <user>\n"
               "       python -m tinysesam rename --db <file> <user> <new-name>\n"
+              "       python -m tinysesam delete --db <file> <user> [--ja]\n"
               "       python -m tinysesam gate-key --db <file>",
               file=sys.stdout if hilfe else sys.stderr)
         sys.exit(0 if hilfe else 2)

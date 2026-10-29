@@ -1915,6 +1915,31 @@ class Store:
         return self._one("SELECT * FROM users WHERE email COLLATE NOCASE IN (?, ?, ?) ORDER BY id LIMIT 1",
                          (kanonisch, alt, unicode_form))
 
+    def loeschsperre(self, user) -> Optional[str]:
+        """Why can this account NOT be deleted on purpose? `"owner"`, `"last_admin"` or None.
+
+        The one protection rule of the deliberate deletion — shared by `TinySesam.delete_user`
+        (panel, library) and `tinysesam delete` (command line), so that the two cannot drift
+        apart: an owner is never deleted (the role must be handed over first), and neither is the
+        last admin (otherwise the instance has no administration and the first-admin path opens up
+        for the next best person)."""
+        if user["is_owner"]:
+            return "owner"
+        if user["is_admin"] and sum(1 for x in self.list_users() if x["is_admin"]) <= 1:
+            return "last_admin"
+        return None
+
+    def konto_bestand(self, user_id) -> dict:
+        """What hangs on an account, as counts only (for the confirmation of `tinysesam delete`)."""
+        def n(sql):
+            return int(self._one(sql, (user_id,))["n"])
+        return {
+            "sessions": n("SELECT COUNT(*) AS n FROM session WHERE user_id=?"),
+            "identities": (n("SELECT COUNT(*) AS n FROM oidc_identity WHERE user_id=?")
+                           + n("SELECT COUNT(*) AS n FROM federated_identity WHERE user_id=?")),
+            "api_keys": n("SELECT COUNT(*) AS n FROM api_key WHERE user_id=?"),
+        }
+
     def konto_entfernen(self, user_id, adresse_unbefristet: bool = False) -> Optional[tuple[str, int]]:
         """Delete an account — the ONE deletion path that every caller goes through (H-13).
 
