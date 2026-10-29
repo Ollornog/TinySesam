@@ -40,7 +40,7 @@ from tinysesam.security import seclog  # noqa: E402
 from tinysesam.store import SCHEMA, Store, jetzt  # noqa: E402
 from _kit.report import Report  # noqa: E402
 
-r = Report("Bindung über den Namen — Frist, Bestandsbindung, selbst gewählte Namen (G1, G2-N)")
+r = Report("Binding via the name — grace period, existing-account binding, self-chosen names (G1, G2-N)")
 TAG = 86400
 PW = "Kiefer-Spur-478"
 
@@ -279,7 +279,7 @@ r.check("… eve then has no role `chef`, not even via her local password",
 r.check("… rejection like situation 3: audit with reason and identifier, log line with the way out",
         [z["detail"] for z in zu] == ["grund=name_selbst_gewaehlt kennung=uuid-chefin"]
         and any("uuid-chefin" in z and f"federation_unbind('ldap', {eve})" in z
-                for z in log.zeilen("selbst gewählt")), str(zu))
+                for z in log.zeilen("chosen by the user")), str(zu))
 g.federation_unbind("ldap", eve)
 u = _anmelden(g, "chefin", {"id": "uuid-chefin"}, pw="ldap-pw")
 r.check("The operator decides explicitly (federation_unbind): then it binds",
@@ -398,7 +398,7 @@ r.check("PoC a1-01 (OIDC): the real chefin does NOT land in the OIDC account —
 r.check("… rejection like situation 3: audit with reason name_aus_quelle, log line with the way out",
         [z["detail"] for z in zu] == ["grund=name_aus_quelle kennung=uuid-chefin"]
         and any("uuid-chefin" in z and f"federation_unbind('ldap', {oc['id']})" in z
-                for z in log.zeilen("anderen Quelle")), str(zu))
+                for z in log.zeilen("another source")), str(zu))
 st, me = _oidc_anmelden(qa, qapp, {"sub": "angreifer-sub", "preferred_username": "chefin"})
 r.check("… and via OIDC the attacker still only gets into their own account, without a role",
         st == 303 and me is not None and me["id"] == oc["id"] and me["roles"] == [], str(me))
@@ -549,7 +549,7 @@ r.check("… nothing else: no binding for hans, ina, gina, emil, jo",
         and jetzt_gebunden[ids["fritz"]] == "u-fritz")
 r.check("… per binding audit `ldap_kennung_gebunden detail=migration`, one summary line in the log",
         sorted(z["username"] for z in _audit(m, "ldap_kennung_gebunden") if z["detail"] == "migration")
-        == ["anna", "ida", "kim", "lea"] and len(log.zeilen("federation_bind_existing(ldap): 4 gebunden")) == 1,
+        == ["anna", "ida", "kim", "lea"] and len(log.zeilen("federation_bind_existing(ldap): 4 bound")) == 1,
         log.puffer.getvalue()[-400:])
 u = _anmelden(m, "kim", {"id": "u-kim"})
 r.check("… afterwards the bound account signs in (situation 1)", u is not None and u["id"] == ids["kim"])
@@ -710,10 +710,10 @@ sm.store.link_federated("ldap", f"{Store.OHNE_KENNUNG}{p1}", p1, jetzt())
 sm.store.db.close()
 with Mitschnitt() as log:
     sm = _ldap(pfad)
-zeile = log.zeilen("ohne Bindung an eine Kennung")
+zeile = log.zeilen("without a binding to an identifier")
 r.check("Startup message: 3 accounts without identifier (service account and bound one do not count, the "
         "placeholder does), of which 2 without local password, with the way out",
-        len(zeile) == 1 and "LDAP: 3 Konto(en)" in zeile[0] and "davon 2 ohne lokales Passwort" in zeile[0]
+        len(zeile) == 1 and "LDAP: 3 account(s)" in zeile[0] and "of which 2 without a local password" in zeile[0]
         and "auth.federation_bind_existing('ldap')" in zeile[0], str(zeile))
 sm.ldap = Verzeichnis({"a1": {"id": "u-a1"}, "p1": {"id": "u-p1"}})
 sm.federation_bind_existing("ldap", apply=True)
@@ -721,15 +721,15 @@ sm.store._exec("DELETE FROM users WHERE id=?", (a2,))
 sm.store.db.close()
 with Mitschnitt() as log:
     sm = _ldap(pfad)
-r.check("… after the existing-account binding: no line any more", not log.zeilen("ohne Bindung an eine Kennung"),
-        str(log.zeilen("ohne Bindung")))
+r.check("… after the existing-account binding: no line any more", not log.zeilen("without a binding to an identifier"),
+        str(log.zeilen("without a binding")))
 sm.create_user("spaet")
 _altern(sm, tage=31)
 sm.store.db.close()
 with Mitschnitt() as log:
     sm = _ldap(pfad)
 r.check("… after the grace period it is silent (the door is closed, every rejection reports itself)",
-        not log.zeilen("ohne Bindung an eine Kennung"))
+        not log.zeilen("without a binding to an identifier"))
 pfad = _db()
 ss = _saml(pfad)
 ss.create_user("s1")
@@ -737,8 +737,8 @@ ss.store.db.close()
 with Mitschnitt() as log:
     _saml(pfad)
 r.check("SAML startup message names the mapping",
-        any("SAML: 1 Konto(en)" in z and "mapping=" in z for z in log.zeilen("ohne Bindung")),
-        str(log.zeilen("ohne Bindung")))
+        any("SAML: 1 account(s)" in z and "mapping=" in z for z in log.zeilen("without a binding")),
+        str(log.zeilen("without a binding")))
 
 # ══ Existing accounts: file at schema 11 without table and column, marker from the audit log ════════════
 # Built from SCHEMA without the two novelties (a `DROP COLUMN` fails on the comments in
@@ -792,7 +792,7 @@ r.check("Account deleted: its opened name binding goes with it",
 # A file from the state before: stamp 11, `name_selbst_gewaehlt` already back-filled, but without
 # `users.name_quelle`. Back-filling happens only where the origin is proven: OIDC (the callback creates
 # every linked account itself) and an LDAP/SAML binding from the same second as the creation.
-_alt_q, _nq = re.subn(r"\n\s*-- Aus welcher föderierten Quelle stammt der Name.*?name_quelle\s+TEXT,", "",
+_alt_q, _nq = re.subn(r"\n\s*-- From which federated source does the name originate.*?name_quelle\s+TEXT,", "",
                       SCHEMA, flags=re.S)
 pfad = _db()
 os.close(os.open(pfad, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600))

@@ -27,8 +27,8 @@ def _fehlt_extra(e: ModuleNotFoundError) -> "errors.MissingExtra":
     up to 0.18.0, a `ModuleNotFoundError: webauthn` in the middle of the sign-in — for the operator
     a defect, when only one word was missing in the install command."""
     return errors.MissingExtra(
-        "Das Extra [passkey] ist nicht installiert (pip install 'tinysesam[passkey]') — "
-        f"es fehlt: {e.name or 'webauthn'}.", extra="passkey")
+        "The extra [passkey] is not installed (pip install 'tinysesam[passkey]') — "
+        f"missing: {e.name or 'webauthn'}.", extra="passkey")
 
 
 def register_passkey_routes(router, auth):
@@ -52,10 +52,10 @@ def register_passkey_routes(router, auth):
 
     if str(getattr(cfg, "passkey_user_verification", "required")) != "required":
         security.seclog.warning(
-            "passkey_user_verification=%r: Ein Passkey ohne Nutzerprüfung meldet allein an und "
-            "belegt dann nur den Besitz des Schlüssels — ein entsperrter Rechner oder ein "
-            "eingesteckter Stick genügt. Das ist eine bewusste Entscheidung für alte "
-            "Authentikatoren; für einen neuen Bestand gehört der Wert auf 'required'.",
+            "passkey_user_verification=%r: A passkey without user verification signs in on its own and "
+            "then only proves possession of the key — an unlocked computer or a "
+            "plugged-in stick suffices. This is a deliberate decision for old "
+            "authenticators; for new deployments the value belongs on 'required'.",
             cfg.passkey_user_verification)
 
     def _set_flow_cookie(resp, fk):

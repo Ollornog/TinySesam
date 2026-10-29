@@ -38,7 +38,7 @@ from tinysesam import ConfigError, TinySesam, TinySesamConfig  # noqa: E402
 from tinysesam.store import Store, jetzt  # noqa: E402
 from _kit.report import Report  # noqa: E402
 
-r = Report("Kennungsraum — Name und Adresse, von der Datenbank erzwungen")
+r = Report("Identifier space — name and address, enforced by the database")
 PW = "Kennung-Test-15"
 BASIS = "http://testserver"
 VERGEBEN = Store.KENNUNG_VERGEBEN
@@ -131,19 +131,19 @@ blockiert["Alice / alice"] = _abgewiesen(lambda: s.create_user("alice"))
 s.create_user("Émile")
 blockiert["Émile / émile"] = _abgewiesen(lambda: s.create_user("émile"))
 s.create_user("ｂｏｂ")
-blockiert["ｂｏｂ (Vollbreite) / bob"] = _abgewiesen(lambda: s.create_user("bob"))
+blockiert["ｂｏｂ (full-width) / bob"] = _abgewiesen(lambda: s.create_user("bob"))
 s.create_user("k1", email="x@example.com")
-blockiert["Name = fremde Adresse"] = _abgewiesen(lambda: s.create_user("X@example.com"))
+blockiert["name = foreign address"] = _abgewiesen(lambda: s.create_user("X@example.com"))
 s.create_user("q@example.com")
-blockiert["Adresse = fremder Name"] = _abgewiesen(lambda: s.create_user("q2", email="q@example.com"))
+blockiert["address = foreign name"] = _abgewiesen(lambda: s.create_user("q2", email="q@example.com"))
 s.create_user("u1", email="u@bücher.example")
-blockiert["Adresse in A-Label-Form"] = _abgewiesen(lambda: s.create_user("u2", email="u@xn--bcher-kva.example"))
+blockiert["address in A-label form"] = _abgewiesen(lambda: s.create_user("u2", email="u@xn--bcher-kva.example"))
 a_id, b_id = s.create_user("a1"), s.create_user("b1")
 s.set_email(a_id, "frei@example.com")
-blockiert["set_email → fremde Adresse"] = _abgewiesen(lambda: s.set_email(b_id, "FREI@example.com"))
-blockiert["set_email → fremder Name"] = _abgewiesen(lambda: s.set_email(b_id, "q@example.com"))
-blockiert["set_username → fremde Adresse"] = _abgewiesen(lambda: s.set_username(b_id, "x@example.com"))
-blockiert["set_username → Namensvetter"] = _abgewiesen(lambda: s.set_username(b_id, "ALICE"))
+blockiert["set_email → foreign address"] = _abgewiesen(lambda: s.set_email(b_id, "FREI@example.com"))
+blockiert["set_email → foreign name"] = _abgewiesen(lambda: s.set_email(b_id, "q@example.com"))
+blockiert["set_username → foreign address"] = _abgewiesen(lambda: s.set_username(b_id, "x@example.com"))
+blockiert["set_username → namesake"] = _abgewiesen(lambda: s.set_username(b_id, "ALICE"))
 r.check("A: the database rejects every new collision in the identifier space (IntegrityError)",
         set(blockiert.values()) == {VERGEBEN}, str(blockiert))
 _b = s.get_user(b_id)
@@ -151,14 +151,14 @@ r.check("A: … nothing changes in the process, and no transaction stays open",
         _b["username"] == "b1" and not _b["email"] and not s.db.in_transaction
         and len(s._all("SELECT id FROM users")) == 8, f"{dict(_b)} offen={s.db.in_transaction}")
 durch = {}
-durch["Name = eigene Adresse (E-Mail-Modus)"] = _abgewiesen(
+durch["name = own address (email mode)"] = _abgewiesen(
     lambda: s.create_user("solo@example.com", email="solo@example.com"))
-durch["dieselbe Adresse erneut setzen"] = _abgewiesen(lambda: s.set_email(a_id, "frei@example.com", verified=True))
-durch["b1 → B1 (eigener Topf)"] = _abgewiesen(lambda: s.set_username(b_id, "B1"))
+durch["set the same address again"] = _abgewiesen(lambda: s.set_email(a_id, "frei@example.com", verified=True))
+durch["b1 → B1 (own bucket)"] = _abgewiesen(lambda: s.set_username(b_id, "B1"))
 _e = s.create_user("em@example.com", email="em@example.com")
-durch["Mail-Modus: Adresse und Name wechseln"] = _abgewiesen(
+durch["mail mode: change address and name"] = _abgewiesen(
     lambda: s.adresse_wechseln(_e, "em2@example.com", name_folgt=True))
-durch["die alte Adresse ist danach frei"] = _abgewiesen(lambda: s.create_user("em@example.com"))
+durch["the old address is free afterwards"] = _abgewiesen(lambda: s.create_user("em@example.com"))
 r.check("A: … these pass: name = own address, the same address again, a name in the own bucket, "
         "the change in mail mode", set(durch.values()) == {"durch"}, str(durch))
 _toepfe = tuple(s._one("SELECT topf_name, topf_mail FROM users WHERE id=?", (b_id,)))
@@ -213,7 +213,7 @@ try:
 except ConfigError as fehler:
     b1c = (fehler.field, fehler.owner_id, str(fehler))
 r.check("B1: … if the other account is already gone again: ConfigError without owner, not IntegrityError",
-        b1c == ("username", None, "Benutzername ist bereits vergeben"), str(b1c))
+        b1c == ("username", None, "username is already taken"), str(b1c))
 r.check("B1: … no collision in the database", a.store.topf_kollisionen() == [], str(a.store.topf_kollisionen()))
 
 # B2: address change against a registration with name = address.
@@ -402,30 +402,30 @@ except Exception as fehler:
 r.check("D: existing data with collisions starts, no bucket stays empty",
         start_d == "ok" and auth_d.store._one("SELECT COUNT(*) AS n FROM users WHERE topf_name IS NULL "
                                               "OR topf_mail IS NULL")["n"] == 0, start_d)
-_zeile = next((z for z in text_d.splitlines() if "Kennungs-Kollision" in z), "")
+_zeile = next((z for z in text_d.splitlines() if "identifier collision(s)" in z), "")
 r.check("D: … the start message names all three (namesakes, name = foreign address, two spellings "
         "of one address) with their accounts",
-        _zeile.startswith("3 Kennungs-Kollision")
+        _zeile.startswith("3 identifier collision(s)")
         and all(f"user_id={i}" in _zeile for i in (oe1, oe2, chef, eve, ubu, uxn)), _zeile[:400])
 if auth_d is not None:
     in_kollision = {
-        "neues Konto „ÖZLEM“": _abgewiesen(lambda: auth_d.store.create_user("ÖZLEM")),
-        "Name → belegter Topf": _abgewiesen(lambda: auth_d.store.set_username(chef, "özlem")),
+        "new account „ÖZLEM“": _abgewiesen(lambda: auth_d.store.create_user("ÖZLEM")),
+        "name → occupied bucket": _abgewiesen(lambda: auth_d.store.set_username(chef, "özlem")),
     }
     r.check("D: … nobody makes a collision worse any more", set(in_kollision.values()) == {VERGEBEN},
             str(in_kollision))
     aufloesen = {
-        "eigene Adresse erneut": _abgewiesen(lambda: auth_d.store.set_email(chef, "chef@example.com", verified=True)),
-        "Konto mit belegter Adresse umbenennen": _abgewiesen(lambda: auth_d.store.set_username(ubu, "ubu-neu")),
-        "change_username auf einen freien Namen": _abgewiesen(lambda: auth_d.change_username(oe2, "oezlem-zwei")),
-        "set_email auf eine freie Adresse": _abgewiesen(lambda: auth_d.store.set_email(uxn, "u2@example.com")),
+        "own address again": _abgewiesen(lambda: auth_d.store.set_email(chef, "chef@example.com", verified=True)),
+        "rename account with occupied address": _abgewiesen(lambda: auth_d.store.set_username(ubu, "ubu-neu")),
+        "change_username to a free name": _abgewiesen(lambda: auth_d.change_username(oe2, "oezlem-zwei")),
+        "set_email to a free address": _abgewiesen(lambda: auth_d.store.set_email(uxn, "u2@example.com")),
         "rohes UPDATE des Betreibers": _abgewiesen(
             lambda: auth_d.store._exec("UPDATE users SET username='eve-umbenannt' WHERE id=?", (eve,))),
     }
     r.check("D: … resolving works: rename, set the own address anew, a free address, the raw UPDATE",
             set(aufloesen.values()) == {"durch"}, str(aufloesen))
     _, text_d2 = _start(_db_d)
-    r.check("D: … afterwards the start message is silent", "Kennungs-Kollision" not in text_d2
+    r.check("D: … afterwards the start message is silent", "identifier collision(s)" not in text_d2
             and auth_d.store.topf_kollisionen() == [], text_d2[:300])
     # A row of a foreign writer counts as soon as someone looks — not only at start.
     # (Mutation probe: remove the addition in `topf_kollisionen` → red.)
@@ -476,7 +476,7 @@ except Exception as fehler:
 finally:
     Store._trigger_setzen = _setzen
 r.check("F: if the triggers cannot be created (read-only), the store starts anyway and says so",
-        start_f == "ok" and "Kennungsraum erst nach einem Start mit Schreibzugriff" in text_f,
+        start_f == "ok" and "only enforces the shared identifier space after a start with write access" in text_f,
         f"{start_f} {text_f[:200]!r}")
 
 # ── G: the check does not cost more with the number of accounts ───────────────────────────────

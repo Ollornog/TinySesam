@@ -23,11 +23,11 @@ import shutil  # noqa: E402
 from voraussetzung import braucht  # noqa: E402
 import pathlib  # noqa: E402
 
-braucht(shutil.which("git"), "git fehlt")
+braucht(shutil.which("git"), "git missing")
 # git on the PATH is not enough: measuring is done against `git ls-files`, and that needs a
 # repo. The unpacked sdist has none — decline there instead of turning red.
 braucht((pathlib.Path(__file__).resolve().parent.parent / ".git").exists(),
-        "kein Git-Repo (z.B. ausgepacktes sdist) — der Paket-Test vergleicht gegen `git ls-files`")
+        "no Git repo (e.g. unpacked sdist) — the package test compares against `git ls-files`")
 import email.parser
 import re
 import shutil

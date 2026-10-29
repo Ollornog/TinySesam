@@ -28,7 +28,7 @@ from tinysesam.manager import _ANFRAGE  # noqa: E402
 from tinysesam.ldap_ import _attributliste  # noqa: E402
 from _kit.report import Report  # noqa: E402
 
-r = Report("Adressen aus LDAP und SAML — Bestätigung per Link")
+r = Report("Addresses from LDAP and SAML — confirmation by link")
 BASIS = "https://app.example.com"
 
 
@@ -203,8 +203,8 @@ for wert, soll in (("TRUE", True), ("FALSE", False)):
 _w_attr = " ".join(_kp.check_config(TinySesamConfig(
     db_path=":memory:", admin_identifiers=["boss@example.com"], ldap_enabled=True,
     ldap_url="ldaps://d.example", ldap_auto_create=True, ldap_attr_email_verified="emailVerified"))[1])
-r.check("Config check: with proof attribute \"vertraute Quelle\", not \"NIE\"",
-        "vertraute Quelle" in _w_attr and "NIE" not in _w_attr, _w_attr[:200])
+r.check("Config check: with proof attribute \"trusted source\", not \"NEVER\"",
+        "trusted source" in _w_attr and "NEVER" not in _w_attr, _w_attr[:200])
 
 # ── SAML ─────────────────────────────────────────────────────────────────────────────────
 a7, _, p7 = _aufbau()
@@ -249,9 +249,11 @@ k11 = a11.create_user("bossin", email="boss@example.com")
 a11.store.set_email_verified(k11, True)
 a11.ldap = Verzeichnis({"bossin": {"pw": "pw", "email": "boss@example.com"}})
 TestClient(app11).post("/auth/login", data={"username": "bossin", "password": "pw"}, follow_redirects=False)
-_w11 = " ".join(_kp.check_config(a11.cfg)[1])
-r.check("Proof attribute \" \": the check says \"NIE\", and the runtime does not promote either",
-        "NIE" in _w11 and not a11.get_user(k11)["is_admin"], f"is_admin={a11.get_user(k11)['is_admin']}")
+import dataclasses as _dc
+_w11 = " ".join(_kp.check_config(_dc.replace(a11.cfg, lang="en"))[1])
+_w11_de = " ".join(_kp.check_config(a11.cfg)[1])      # the suite runs with lang="de": same finding in German
+r.check("Proof attribute \" \": the check says \"NEVER\", and the runtime does not promote either",
+        "NEVER" in _w11 and "NIE" in _w11_de and not a11.get_user(k11)["is_admin"], f"is_admin={a11.get_user(k11)['is_admin']}")
 
 # ── G12a: deliveries count, attempts dampen ───────────────────────────────────────────────────
 # Until 2026-09-26 the ATTEMPT already consumed the daily quota, per process in memory: a
@@ -281,7 +283,7 @@ versuche = {"n": 0}
 def _erst_kaputt(to, betreff, text, html=None):
     versuche["n"] += 1
     if versuche["n"] == 1:
-        raise OSError("Mailserver nicht erreichbar")
+        raise OSError("mail server unreachable")
     p_b.append((to, betreff, text))
 
 

@@ -110,7 +110,7 @@ auth, c, db = build()
 auth.create_user("a", password="geheim12345-lang-genug", email="dup@example.com")
 try:
     auth.create_user("b", password="geheim12345-lang-genug", email="DUP@example.com")
-    raise AssertionError("Dublette wurde angenommen")
+    raise AssertionError("duplicate was accepted")
 except ValueError:
     pass
 assert auth.store.email_taken("dup@example.com")
@@ -212,7 +212,7 @@ for bad in ("mail", "", "Username"):
 try:
     TinySesam(TinySesamConfig(db_path=os.path.join(tempfile.mkdtemp(), "datei"), login_identifier="email",
                               allow_signup=True, signup_require_email=False))
-    raise AssertionError("email-only ohne E-Mail-Pflicht akzeptiert")
+    raise AssertionError("email-only without mandatory email accepted")
 except ValueError:
     pass
 print("  config sanity ok")
@@ -234,16 +234,16 @@ for kennung, mail, feld in (("chef@example.com", None, "username"),   # name == 
                             ("neu", "chef@example.com", "email")):    # email == foreign email
     try:
         auth.create_user(kennung, email=mail)
-        raise AssertionError(f"{feld}: die Kreuzprüfung greift nicht, das Konto entstand")
+        raise AssertionError(f"{feld}: the cross check does not take effect, the account was created")
     except ConfigError as e:
-        assert "bereits vergeben" in str(e), (
+        assert "is already taken" in str(e), (
             f"{feld}: wording changed ({str(e)!r}) — callers from 0.18.x check exactly this "
             "text, and the CHANGELOG promises them that it stays")
         assert getattr(e, "field", None) == feld, (
-            f"e.field is {getattr(e, 'field', '<fehlt>')!r}, expected {feld!r} — without the attribute "
+            f"e.field is {getattr(e, 'field', '<missing>')!r}, expected {feld!r} — without the attribute "
             "the text comparison remains the only way to tell the two cases apart")
         assert getattr(e, "owner_id", None) == opfer_id, (
-            f"e.owner_id is {getattr(e, 'owner_id', '<fehlt>')!r}, expected {opfer_id}")
+            f"e.owner_id is {getattr(e, 'owner_id', '<missing>')!r}, expected {opfer_id}")
 # Control: a free identifier does not raise — otherwise "always raises" would be green too.
 frei_id = auth.create_user("frei", email="frei@example.com")
 assert frei_id and auth.store.get_user(frei_id)["username"] == "frei"

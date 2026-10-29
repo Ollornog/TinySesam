@@ -277,7 +277,7 @@ code{font-family:var(--ts-mono);font-size:.86em;background:var(--chip);border:1p
   border-radius:5px;padding:1px 5px;color:var(--ink)}
 main{max-width:var(--nav-w);margin:0 auto;padding:56px 22px 72px}
 
-/* ---- Kopf: Titelzeile + zwei Navreihen ---- */
+/* ---- Header: title row + two nav rows ---- */
 header.shell>*{max-width:var(--nav-w);margin:0 auto;font-size:var(--nav-fs)}
 header.shell .brand{display:flex;align-items:center;gap:10px;padding:14px 22px;
   text-decoration:none;color:var(--ink);width:fit-content}
@@ -287,11 +287,11 @@ header.shell .brand b{color:var(--accent)}
 header.shell .brand:hover{text-decoration:none}
 nav.row{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
 nav.row .l,nav.row .r{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
-/* eigener Stapelkontext: sonst malen animierte Abschnitte über ein offenes Dropdown */
+/* own stacking context: otherwise animated sections paint over an open dropdown */
 nav.pages{position:relative;z-index:30;background:var(--paper);padding:11px 22px;
   border-bottom:1px solid var(--line)}
 nav.tools{position:relative;z-index:29;padding:8px 22px}
-/* :not(.ilink) — sonst schlaegt diese Regel (0,1,2) das .ilink-Padding (0,1,0) und quetscht das Icon */
+/* :not(.ilink) — otherwise this rule (0,1,2) beats the .ilink padding (0,1,0) and squeezes the icon */
 nav.row a:not(.ilink){padding:6px 11px}
 nav.row a{display:inline-flex;align-items:center;gap:6px;border-radius:8px;
   color:var(--muted);white-space:nowrap;text-decoration:none;font-size:var(--nav-fs)}
@@ -306,13 +306,13 @@ nav.row code{font-size:1em;background:none;border:0;padding:0;color:inherit}
 .btn.ghost{border:1px solid var(--line);color:var(--ink)}
 .btn.ghost:hover{text-decoration:none;border-color:var(--accent)}
 nav .btn{padding:6px 13px;font-size:var(--nav-fs);border-radius:9px}
-/* genauso hoch wie die Wechsel-Pillen (18px Segment + 2px Polsterung + 2px Rand = 22px) */
+/* exactly as tall as the switch pills (18px segment + 2px padding + 2px border = 22px) */
 .ilink{display:inline-flex;align-items:center;justify-content:center;width:26px;height:22px;
   padding:0;border-radius:7px;color:var(--muted)}
 .ilink:hover{background:var(--chip);color:var(--ink);text-decoration:none}
 .ilink svg{width:20px;height:20px;flex:0 0 auto;fill:currentColor}
 
-/* ---- Zweisegment-Pille (Sprache, Hell/Dunkel) ---- */
+/* ---- Two-segment pill (language, light/dark) ---- */
 .pill2{display:inline-flex;align-items:center;gap:1px;padding:1px;border-radius:999px;
   background:var(--chip);border:1px solid var(--line)}
 .pill2 .seg{display:inline-flex;align-items:center;justify-content:center;min-width:24px;height:18px;
@@ -322,7 +322,7 @@ nav .btn{padding:6px 13px;font-size:var(--nav-fs);border-radius:9px}
 .pill2 .seg.on{background:var(--card);color:var(--ink);box-shadow:0 1px 3px rgba(90,60,70,.12)}
 .pill2 .seg svg{width:14px;height:14px;fill:currentColor}
 
-/* ---- Aufklapper ---- */
+/* ---- Dropdown ---- */
 .dd{position:relative}
 .dd summary{list-style:none;cursor:pointer;padding:6px 11px;border-radius:8px;color:var(--muted);
   display:inline-flex;align-items:center;gap:7px;white-space:nowrap;font-size:var(--nav-fs)}
@@ -335,29 +335,29 @@ nav .btn{padding:6px 13px;font-size:var(--nav-fs);border-radius:9px}
   box-shadow:0 14px 40px rgba(90,60,70,.14)}
 .dd.r .ddmenu{right:0}
 .dd:not(.r) .ddmenu{left:0}
-/* muss `nav.row a` schlagen (gleiche Spezifität) — sonst stehen die Einträge nebeneinander */
+/* must beat `nav.row a` (same specificity) — otherwise the entries sit side by side */
 .ddmenu a,nav.row .ddmenu a{display:block;padding:8px 10px;border-radius:8px;color:var(--ink);
   white-space:normal;font-size:var(--nav-fs)}
 .ddmenu a:hover,nav.row .ddmenu a:hover{background:var(--chip);text-decoration:none}
 .ddmenu b{display:block;font-weight:600}
 .ddmenu span{display:block;color:var(--muted);font-size:12.5px}
 
-/* ---- Fußzeile ---- */
+/* ---- Footer ---- */
 footer{margin-top:72px;color:var(--muted);font-size:14px}
 footer .inner{max-width:var(--nav-w);margin:0 auto;padding:26px 22px 60px;text-align:center;
   border-top:1px solid var(--line)}
 footer a{margin:0 9px}
 footer .credits{margin-top:14px;font-size:12.5px}
 
-/* ---- Codeblock mit Kopierknopf ---- */
-/* Farben aus theme.css: hell im hellen Thema, dunkel im dunklen. Kasten und Rahmen sitzen auf
-   `.cw`, nicht auf `.code` — so steht der Knopf in einer eigenen Zeile INNERHALB des Blocks,
-   oben rechts, und verdeckt trotzdem keine Codezeile. `overflow-x` bleibt beim Code, damit
-   langes Kopieren den Knopf nicht mit wegscrollt. */
+/* ---- Code block with copy button ---- */
+/* Colors from theme.css: light in the light theme, dark in the dark one. Box and border sit on
+   `.cw`, not on `.code` — so the button stands in a row of its own INSIDE the block,
+   top right, and still covers no code line. `overflow-x` stays on the code, so that
+   long copying does not scroll the button away. */
 .cw{display:flex;flex-direction:column;gap:6px;background:var(--code-bg);color:var(--code-fg);
   border:1px solid var(--code-line);border-radius:12px;padding:10px 12px 16px}
-/* `white-space:pre` ist Pflicht: sonst kollabieren die Zeilenumbrüche im Quelltext zu Leerzeichen
-   — und `innerText` gäbe dem Kopierknopf eine einzige endlose Zeile. */
+/* `white-space:pre` is mandatory: otherwise the line breaks in the source collapse into spaces
+   — and `innerText` would give the copy button one single endless line. */
 .cw .code{padding:0 6px;overflow-x:auto;white-space:pre;
   font-family:var(--ts-mono);font-size:13.5px;line-height:1.7}
 .cw .code .c{color:var(--code-com)}
@@ -383,7 +383,7 @@ footer .credits{margin-top:14px;font-size:12.5px}
 """
 
 UI_JS = """<script>
-// Hell/Dunkel früh anwenden, damit beim Laden nichts umspringt. theme.css kennt [data-theme].
+// Apply light/dark early so nothing jumps on load. theme.css knows [data-theme].
 (function(){var t=localStorage.getItem('ts-theme'); if(t) document.documentElement.dataset.theme=t;})();
 document.addEventListener('DOMContentLoaded',function(){
   var root=document.documentElement;
@@ -397,7 +397,7 @@ document.addEventListener('DOMContentLoaded',function(){
   });
   paint();
 });
-// <details> schliesst von sich aus nicht bei Klick daneben.
+// <details> does not close on its own when clicking elsewhere.
 document.addEventListener('click',function(e){
   document.querySelectorAll('details.dd[open]').forEach(function(d){
     if(!d.contains(e.target)) d.open=false;});
@@ -405,8 +405,8 @@ document.addEventListener('click',function(e){
 document.addEventListener('keydown',function(e){
   if(e.key==='Escape') document.querySelectorAll('details.dd[open]').forEach(function(d){d.open=false;});
 });
-// Kopierknopf. `navigator.clipboard` gibt es nur im sicheren Kontext — das Showcase laeuft aber
-// oft ueber http:// im LAN. Deshalb der execCommand-Notweg; er ist veraltet, aber dort das Einzige.
+// Copy button. `navigator.clipboard` exists only in a secure context — but the showcase often runs
+// over http:// on the LAN. Hence the execCommand fallback; it is deprecated, but the only option there.
 function tsCopy(text){
   if(navigator.clipboard && window.isSecureContext) return navigator.clipboard.writeText(text);
   return new Promise(function(res,rej){

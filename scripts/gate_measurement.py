@@ -27,7 +27,7 @@ sys.path.insert(0, str(ROOT))
 CADDY = os.environ.get("TINYSESAM_GATE_CADDY", "")
 HEY = os.environ.get("HEY") or shutil.which("hey") or ""
 if not (CADDY and os.access(CADDY, os.X_OK) and HEY and os.access(HEY, os.X_OK)):
-    sys.exit("TINYSESAM_GATE_CADDY (Caddy mit caddy-jwt) und HEY bzw. `hey` im PATH werden gebraucht.")
+    sys.exit("TINYSESAM_GATE_CADDY (Caddy with caddy-jwt) and HEY or `hey` on the PATH are required.")
 
 import uvicorn  # noqa: E402
 from fastapi import FastAPI  # noqa: E402
@@ -96,15 +96,15 @@ def main(n: int) -> None:
         return rps, p50, p95
 
     try:
-        print(f"{n} Anfragen je Zeile, eine Sitzung, Anwendung = statische Antwort\n")
-        print("| gleichzeitig | Weg | Durchsatz | Median | 95 % |")
+        print(f"{n} requests per row, one session, application = static response\n")
+        print("| concurrent | path | throughput | median | 95 % |")
         print("|---|---|---|---|---|")
         for gleichzeitig in (1, 20):
             auth.cfg.gate_token_enabled = False
             a = last(sitzung, gleichzeitig)
             auth.cfg.gate_token_enabled = True
             b = last(f"{sitzung}; {gate}", gleichzeitig)
-            for weg, (rps, p50, p95) in (("`/auth/forward` je Anfrage", a), ("Gate-Token", b)):
+            for weg, (rps, p50, p95) in (("`/auth/forward` per request", a), ("gate token", b)):
                 print(f"| {gleichzeitig} | {weg} | {rps:,.0f} /s | {p50:.2f} ms | {p95:.2f} ms |".replace(",", " "))
     finally:
         caddy.terminate()

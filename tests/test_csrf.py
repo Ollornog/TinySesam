@@ -629,7 +629,7 @@ def _dreht(name, cl, schritt, ap_=None):
     return neu
 
 
-def _bleibt(name, cl, schritt, warum="ein Step-up entwertet keine anderen Reiter"):
+def _bleibt(name, cl, schritt, warum="a step-up does not invalidate other tabs"):
     alt = cl.cookies.get(CK)
     r = schritt(cl)
     assert r.status_code in (200, 303), (name, r.status_code, r.text[:200])
@@ -655,7 +655,7 @@ _bleibt("Step-up /auth/reauth", _c, lambda cl: cl.post(
     follow_redirects=False))
 # Signing in again as the same person with a full session is a step-up, as another person a login.
 _a.create_user("otto", password="geheim67890-lang-genug")
-_dreht("Identitätswechsel (andere Person meldet sich an)", _c,
+_dreht("identity change (another person logs in)", _c,
        lambda cl: _passwort(cl, "otto", "geheim67890-lang-genug"))
 
 # Registration with immediate sign-in
@@ -693,8 +693,8 @@ _geheim = _a.totp_begin(_uid)["secret"]
 assert _a.totp_confirm(_uid, pyotp.TOTP(_geheim).at(int(_time.time()) - 30))
 _c = _client(_ap)
 _c.get("/auth/login")
-_bleibt("Kette: erster Faktor", _c, _passwort, "die halbe Sitzung ist noch keine Anmeldung")
-_dreht("Kette Passwort → TOTP", _c, lambda cl: cl.post(
+_bleibt("chain: first factor", _c, _passwort, "the half session is not yet a login")
+_dreht("chain password → TOTP", _c, lambda cl: cl.post(
     "/auth/totp", data={"code": pyotp.TOTP(_geheim).now(), "next": "/",
                         "_csrf": _feld(cl.get("/auth/totp").text)}, follow_redirects=False))
 _bleibt("Step-up per TOTP", _c, lambda cl: cl.post(
@@ -710,7 +710,7 @@ assert _passwort(_c).status_code == 303
 _start = _c.post("/auth/totp/setup/start", data={"next": "/", "_csrf": _c.cookies.get(CK)})
 assert _start.status_code == 200, _start.status_code
 _geheim = _a.store.get_totp(_uid)["secret"]
-_dreht("Kette mit TOTP-Einrichtung", _c, lambda cl: cl.post(
+_dreht("chain with TOTP setup", _c, lambda cl: cl.post(
     "/auth/totp/setup", data={"code": pyotp.TOTP(_geheim).now(), "next": "/"},
     headers={"X-CSRF-Token": cl.cookies.get(CK)}))
 
@@ -829,9 +829,9 @@ def _abmelden_loescht(name, schritt):
 
 _abmelden_loescht("POST /auth/logout", lambda cl: cl.post(
     "/auth/logout", data={"_csrf": cl.cookies.get(CK)}, follow_redirects=False))
-_abmelden_loescht("GET /auth/logout (eigene Seite)",
+_abmelden_loescht("GET /auth/logout (own page)",
                   lambda cl: cl.get("/auth/logout", follow_redirects=False))
-_abmelden_loescht("auth.logout() in einer eigenen Route", lambda cl: cl.post("/app/nur-abmelden"))
+_abmelden_loescht("auth.logout() in a custom route", lambda cl: cl.post("/app/nur-abmelden"))
 
 
 # ---------- E3. Guard: no sign-in route can bypass the rotation ----------

@@ -56,7 +56,7 @@ from tinysesam.ldap_ import VerzeichnisNichtErreichbar  # noqa: E402
 from tinysesam.security import seclog  # noqa: E402
 from _kit.report import Report  # noqa: E402
 
-r = Report("Der sichere Login-Baustein für eigene Seiten (login_password/_pin/_totp, 0.22.0)")
+r = Report("The secure sign-in building block for custom pages (login_password/_pin/_totp, 0.22.0)")
 PW = "Anmelde-Pw-2026"          # 15 characters: the password signs in alone (B2-4)
 PIN = "4711"
 IP = ("203.0.113.9", 50000)
@@ -234,8 +234,8 @@ r.check("(a) … it does not expire: even the correct password from a new addres
         f"HTTP {_serie_richtig.status_code}")
 r.check("(a) … audit `lockout_serie` and the log line for the operator",
         any(e[0] == "lockout_serie" for e in _audit(auth))
-        and log_s.zeilen("Anmeldung für user=carol gesperrt: 10 Fehlversuche in Folge"),
-        f"{[e[0] for e in _audit(auth)]} {log_s.zeilen('gesperrt')[:2]}")
+        and log_s.zeilen("Sign-in for user=carol locked: 10 failed attempts in a row"),
+        f"{[e[0] for e in _audit(auth)]} {log_s.zeilen('locked')[:2]}")
 
 # Success: redirect with cookie, result complete, the cookie carries a full session.
 auth, app = _app()
@@ -272,7 +272,7 @@ class Verzeichnis:
     def authenticate(self, username, password):
         self.fragen += 1
         if self.weg:
-            raise VerzeichnisNichtErreichbar("LDAP-Verzeichnis ldap://dummy nicht benutzbar: Test")
+            raise VerzeichnisNichtErreichbar("LDAP directory ldap://dummy unusable: Test")
         e = self.eintraege.get(username)
         if not e or e["pw"] != password:
             return None
@@ -314,7 +314,7 @@ r.check("(b) directory gone: 503 `directory_down` with the text of the outage",
         f"HTTP {_weg_verz.status_code} {_reason(_weg_verz)}")
 r.check("(b) … without a local password it is no failed attempt: pre-booking rolled back, no `failed login`",
         _z["verz"] == [] and not [z for z in log_b.zeilen("failed login") if "user=verz" in z]
-        and log_b.zeilen("LDAP nicht erreichbar user=verz"),
+        and log_b.zeilen("LDAP unreachable user=verz"),
         f"{_z['verz']} {log_b.zeilen()[:3]}")
 r.check("(b) … with a wrong local password it counts (A-1), the local emergency account signs in",
         [v[2:] for v in _z["notfall"]] == [(0, "password", 0)] and _weg_lokal.status_code == 503
@@ -376,7 +376,7 @@ def _aufbau_pw():
     return auth, app
 
 
-_c_pw = _vergleich("Passwort (falsch, leer, richtig, Sperre, unbekannter Name)", lambda a: [
+_c_pw = _vergleich("Password (wrong, empty, correct, lockout, unknown name)", lambda a: [
     ("login", {"username": "erika", "password": "falsch-1"}),
     ("login", {"username": "erika", "password": ""}),
     ("login", {"username": "fritz", "password": PW}),
@@ -407,7 +407,7 @@ def _ldap_folge(auth):
     yield "login", {"username": "notfall", "password": PW}
 
 
-_c_ldap = _vergleich("LDAP (Rückfall, abgelehnt, Ausfall mit und ohne lokales Passwort)", _ldap_folge,
+_c_ldap = _vergleich("LDAP (fallback, rejected, outage with and without local password)", _ldap_folge,
                      _aufbau_ldap)
 r.check("(c) … LDAP sequence: 303, 401, 503, 503, 303",
         [s for s, _ in _c_ldap["status"]] == [303, 401, 503, 503, 303], str(_c_ldap["status"]))
@@ -653,7 +653,7 @@ r.check("(f) every reason the block returns is in REASONS (also the measured one
 # closed. Until 0.21.0 this held only for the password — since the block for all three steps.
 # (Mutation probe: delete the `except BaseException` branch in `login_totp` resp. `login_pin` → red.)
 def _kaputt(*_a, **_k):
-    raise RuntimeError("Prüfung kaputt (Test)")
+    raise RuntimeError("check broken (test)")
 
 
 for art in ("totp", "pin"):
@@ -699,9 +699,9 @@ def _routen_befunde(quelltext):
         gefunden.add(fn.name)
         namen = {k.attr for k in ast.walk(fn) if isinstance(k, ast.Attribute)}
         if ROUTEN[fn.name] not in namen:
-            befunde.append(f"{fn.name} ruft {ROUTEN[fn.name]} nicht")
-        befunde += [f"{fn.name} ruft {n} selbst" for n in sorted(namen & INNERE)]
-    befunde += [f"{n} fehlt im Router" for n in sorted(set(ROUTEN) - gefunden)]
+            befunde.append(f"{fn.name} does not call {ROUTEN[fn.name]}")
+        befunde += [f"{fn.name} calls {n} itself" for n in sorted(namen & INNERE)]
+    befunde += [f"{n} missing in the router" for n in sorted(set(ROUTEN) - gefunden)]
     return befunde
 
 
@@ -712,14 +712,14 @@ _selbst = {
                "def totp_submit(r):\n    return auth.login_totp(r, '1')\n", []),
     "doppelt": ("def login_submit(r):\n    auth._check_password('a', 'b')\n    return auth.login_password(r, 'a', 'b')\n"
                 "def pin_submit(r):\n    return auth.login_pin(r, '1')\n"
-                "def totp_submit(r):\n    return auth.login_totp(r, '1')\n", ["login_submit ruft _check_password selbst"]),
+                "def totp_submit(r):\n    return auth.login_totp(r, '1')\n", ["login_submit calls _check_password itself"]),
     "vorbei": ("def login_submit(r):\n    return auth._begin_attempt('a', 'b', 'password')\n"
                "def pin_submit(r):\n    return auth.login_pin(r, '1')\n", None),
 }
 for _probe, (_text, _erwartet) in _selbst.items():
     _b = _routen_befunde(_text)
     if _erwartet is None:
-        assert any("ruft login_password nicht" in x for x in _b) and any("totp_submit fehlt" in x for x in _b), _b
+        assert any("does not call login_password" in x for x in _b) and any("totp_submit missing" in x for x in _b), _b
     else:
         assert _b == _erwartet, (_probe, _b)
 _befunde_h = _routen_befunde(_router)

@@ -16,93 +16,93 @@ CREATE TABLE IF NOT EXISTS users (
     username      TEXT UNIQUE NOT NULL,
     display_name  TEXT,
     email         TEXT,
-    -- Trägt die Adresse einen Beleg? 1 = ja (lokale Registrierung, sobald der Bestätigungslink
-    -- eingelöst ist, oder über eine Einladung an genau diese Adresse; vom Admin/CLI gesetzt; ein
-    -- IdP mit dem Claim), 0 = nein. Nein heisst NICHT „ungültig": Die
-    -- Adresse wird ganz normal geführt und weitergereicht (`Remote-Email`), sie trägt nur keine
-    -- Rechte — Erst-Admin/Allowlist verlangen den Beleg (`maybe_promote_admin`). Ein IdP, der
-    -- `email_verified` nicht schickt (OIDC Core 5.1: optional; Entra ID), landet damit auf 0,
-    -- statt die Adresse zu verlieren. Vorgabe 1: ein Bestand aus der Zeit vor dieser Spalte
-    -- behält sein Verhalten (das ALTER TABLE füllt jede vorhandene Zeile damit).
+    -- Does the address carry proof? 1 = yes (local registration once the confirmation link
+    -- has been redeemed, or via an invitation to exactly this address; set by admin/CLI; an
+    -- IdP with the claim), 0 = no. No does NOT mean "invalid": the
+    -- address is kept and passed on as usual (`Remote-Email`), it just carries no
+    -- rights — first admin/allowlist require the proof (`maybe_promote_admin`). An IdP that does not
+    -- send `email_verified` (OIDC Core 5.1: optional; Entra ID) thereby ends up at 0,
+    -- instead of losing the address. Default 1: existing data from before this column
+    -- keeps its behaviour (the ALTER TABLE fills every existing row with it).
     email_verified INTEGER NOT NULL DEFAULT 1,
     is_admin      INTEGER NOT NULL DEFAULT 0,
-    -- Owner (Entscheid 2026-09-24): immer Admin (von Hand, 1), nicht löschbar, nicht sperrbar, nicht
-    -- entmachtbar; die Rolle lässt sich weitergeben, es gibt mindestens einen. Nur Owner vergeben sie.
+    -- Owner (decision 2026-09-24): always admin (set by hand, 1), cannot be deleted, cannot be locked, cannot be
+    -- demoted; the role can be passed on, there is always at least one. Only owners grant it.
     is_owner      INTEGER NOT NULL DEFAULT 0,
-    roles         TEXT NOT NULL DEFAULT '[]',   -- JSON-Liste feingranularer Rollen (optional)
-    is_service    INTEGER NOT NULL DEFAULT 0,   -- Service-/Daemon-Account: kein interaktiver Login, nur API-Key
-    -- 0 = aktiv. 1 = gesperrt, weil die Bestätigung der Adresse aussteht (Registrierung, oder
-    -- `set_disabled(uid, True)` einer einbettenden App) — die hebt der Bestätigungslink auf.
-    -- 2 = gesperrt durch den Betreiber (Admin-Panel) — die hebt KEIN Link auf, nur der Betreiber.
+    roles         TEXT NOT NULL DEFAULT '[]',   -- JSON list of fine-grained roles (optional)
+    is_service    INTEGER NOT NULL DEFAULT 0,   -- service/daemon account: no interactive login, API key only
+    -- 0 = active. 1 = locked because confirmation of the address is pending (registration, or
+    -- `set_disabled(uid, True)` of an embedding app) — the confirmation link lifts that.
+    -- 2 = locked by the operator (admin panel) — NO link lifts that, only the operator.
     disabled      INTEGER NOT NULL DEFAULT 0,
-    -- Wann war dieses Konto zum ERSTEN Mal vollständig angemeldet? NULL = noch nie (R3-1).
-    -- Daran hängt das Selbst-Enrollment: Verlangt die Kette einen zweiten Faktor, darf ein
-    -- Konto ihn selbst einrichten, solange es noch nie benutzt wurde — danach nicht mehr.
-    -- Sonst genügt das Passwort eines BESTEHENDEN Kontos, um sich den zweiten Faktor selbst
-    -- zu geben, und die Kette schützt genau die nicht, für die sie gedacht war.
+    -- When was this account fully signed in for the FIRST time? NULL = never (R3-1).
+    -- Self-enrollment hangs on it: if the chain requires a second factor, an
+    -- account may set it up itself as long as it has never been used — not afterwards.
+    -- Otherwise the password of an EXISTING account would suffice to give oneself the second factor,
+    -- and the chain would protect exactly those it was not meant for.
     first_login_at INTEGER,
-    -- Ein vom Betreiber geöffnetes Zeitfenster für die Einrichtung (Admin-Panel, Einladung).
-    -- NULL/abgelaufen = zu. Der Weg für jedes Konto, dem die Betriebsart es sonst verwehrt.
+    -- A time window for enrollment opened by the operator (admin panel, invitation).
+    -- NULL/expired = closed. The way for any account the operating mode would otherwise deny it.
     mfa_enroll_until INTEGER,
     created_at    INTEGER NOT NULL,
-    -- Der Zähl-Topf des Sperrzählers (`norm_kennung`) von Name und Adresse, als Spalten mit Index
-    -- (Schema 10). `konto_mit_topf` faltete vorher bei JEDEM Aufruf alle Konten in Python: Die
-    -- Registrierung mit einer freien Adresse lief dadurch messbar länger als mit einer vergebenen
-    -- (R4-03), und `gc()` wuchs mit offenen Konten × allen Konten. Gesetzt von `create_user` und
-    -- `set_email`. NULL heisst „noch nicht gerechnet" — eine Zeile eines anderen Schreibers
-    -- (ältere Fassung nach einem Rückschritt, rohes SQL, eine Umbenennung von Hand, s. die
-    -- Trigger in `_migrate`) — und wird nachgetragen (`_toepfe_nachtragen`). '' = keine Adresse.
-    -- Über die Töpfe erzwingt die Datenbank auch den gemeinsamen Kennungsraum (`_trigger_sql`).
+    -- The counting bucket of the lockout counter (`norm_kennung`) of name and address, as columns with an index
+    -- (schema 10). `konto_mit_topf` used to fold all accounts in Python on EVERY call: registration
+    -- with a free address thereby took measurably longer than with a taken one
+    -- (R4-03), and `gc()` grew with open accounts × all accounts. Set by `create_user` and
+    -- `set_email`. NULL means "not computed yet" — a row from another writer
+    -- (older version after a downgrade, raw SQL, a rename by hand, see the
+    -- triggers in `_migrate`) — and is filled in later (`_toepfe_nachtragen`). '' = no address.
+    -- Through the buckets the database also enforces the shared identifier space (`_trigger_sql`).
     topf_name     TEXT,
     topf_mail     TEXT,
-    idp_bestaetigt_at INTEGER, -- letzte Bestätigung durch den OIDC-Provider; 0 = Nein, NULL = nie (Fund 8)
-    -- Ab wann gehört die Kennung diesem Konto? (Grenze a, G2) Die höchste `login_attempt.id`
-    -- bzw. `audit.id` in dem Moment, in dem Name oder Adresse in ihren Zähl-Topf kamen — bei der
-    -- Anlage, beim Umbenennen, beim Adresswechsel und beim Nachtrag einer Adresse. Was darunter
-    -- liegt, galt niemandem oder jemand anderem. Eine Id statt einer Zeit: exakt auch innerhalb
-    -- einer Sekunde, und unabhängig von der Uhr. NULL = Bestand von vor dieser Spalte, dann gilt
-    -- die Anlage als Grenze (`created_at`, `anlage_grenze`). Gesetzt von `create_user` und
-    -- `_kennung_setzen`, bei einem fremden Schreiber vom Nachrechnen-Trigger (`_trigger_sql`).
+    idp_bestaetigt_at INTEGER, -- last confirmation by the OIDC provider; 0 = no, NULL = never (finding 8)
+    -- From when does the identifier belong to this account? (limit a, G2) The highest `login_attempt.id`
+    -- or `audit.id` at the moment name or address entered their counting bucket — at
+    -- creation, on rename, on address change and when an address is added later. What lies below
+    -- belonged to nobody or to someone else. An id instead of a time: exact even within
+    -- one second, and independent of the clock. NULL = data from before this column, then
+    -- creation counts as the limit (`created_at`, `anlage_grenze`). Set by `create_user` and
+    -- `_kennung_setzen`, with a foreign writer by the recompute trigger (`_trigger_sql`).
     name_versuch_ab INTEGER,
     mail_versuch_ab INTEGER,
     name_audit_ab   INTEGER,
     mail_audit_ab   INTEGER,
-    -- Aus welcher föderierten Quelle stammt der Name ('oidc', 'saml', 'ldap')? Gesetzt, wenn die
-    -- Quelle das Konto anlegt; NULL = vom Betreiber vergeben, selbst gewählt oder Bestand von vor
-    -- dieser Spalte. Ein Name aus einer Quelle sagt nichts darüber, wer in einer ANDEREN so heisst:
-    -- `preferred_username` oder `uid` wählt man bei einem IdP mit Selbstregistrierung selbst. Eine
-    -- Anmeldung über eine andere Quelle bindet dieses Konto deshalb nie über den Namen
-    -- (`_nachbindung_grund`, Angriffsrunde 2026-09-26); dieselbe Quelle darf ihren Platzhalter
-    -- weiter durch die echte Kennung ersetzen. Ein Umbenennen setzt sie zurück.
+    -- From which federated source does the name originate ('oidc', 'saml', 'ldap')? Set when the
+    -- source creates the account; NULL = assigned by the operator, chosen by the person or data from before
+    -- this column. A name from one source says nothing about who is called that in ANOTHER:
+    -- `preferred_username` or `uid` is chosen by oneself with an IdP that has self-registration. A
+    -- sign-in via another source therefore never binds this account via the name
+    -- (`_nachbindung_grund`, attack round 2026-09-26); the same source may keep replacing its placeholder
+    -- with the real identifier. A rename resets it.
     name_quelle     TEXT,
-    -- Hat die Person den Namen selbst gewählt (Registrierung, Umbenennen in der Selbstbedienung)?
-    -- 1 = ja: Dann sagt er nichts darüber, wer im Verzeichnis so heisst, und eine Anmeldung über
-    -- LDAP/SAML bindet dieses Konto nie über den Namen (G2-N, `_nachbindung_grund`). 0 = vom
-    -- Betreiber vergeben (Panel, API, Umbenennen mit `by_operator=True`) oder aus einer Quelle
-    -- (dann sagt `name_quelle`, aus welcher).
+    -- Did the person choose the name themselves (registration, renaming in self-service)?
+    -- 1 = yes: then it says nothing about who is called that in the directory, and a sign-in via
+    -- LDAP/SAML never binds this account via the name (G2-N, `_nachbindung_grund`). 0 = assigned by the
+    -- operator (panel, API, rename with `by_operator=True`) or from a source
+    -- (then `name_quelle` says which).
     name_selbst_gewaehlt INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS api_key (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     name       TEXT,
-    prefix     TEXT NOT NULL,                   -- Anzeige (tsk_xxxx…), NICHT der Key
-    key_hash   TEXT UNIQUE NOT NULL,            -- sha256(vollständiger Key)
-    roles      TEXT NOT NULL DEFAULT '[]',      -- Key-Scope; leer = erbt User-Rollen
-    -- Welche Art Key ist das? (R6-5)
-    --   'automation' (Vorgabe): arbeitet allein, trägt NIE das Admin-Flag seines Besitzers und
-    --                           erfüllt keine Route, die Admin verlangt. Für Dienste und Skripte.
-    --   'human'               : gilt nur ZUSAMMEN mit einer gültigen Sitzung desselben Kontos.
-    --                           Dafür trägt er die vollen Rechte — der Weg für ein Werkzeug, das
-    --                           ein Mensch selbst bedient (CLI am eigenen Rechner).
-    -- Bis 0.21.x hiessen die Werte 'automat' und 'mensch' (Schema 12, `_werte_englisch`); gelesen
-    -- werden sie weiter (`KEY_ARTEN_ALT`). Bis 0.18.x gab es die Unterscheidung nicht: Jeder Key
-    -- eines Admins war eine vollständige Admin-Schreib-API, ohne zweiten Faktor und ohne
-    -- CSRF-Schicht — ein abgeflossener CI-Key war die Instanz.
+    prefix     TEXT NOT NULL,                   -- display (tsk_xxxx…), NOT the key
+    key_hash   TEXT UNIQUE NOT NULL,            -- sha256(full key)
+    roles      TEXT NOT NULL DEFAULT '[]',      -- key scope; empty = inherits user roles
+    -- What kind of key is this? (R6-5)
+    --   'automation' (default): works on its own, NEVER carries its owner's admin flag and
+    --                           satisfies no route that requires admin. For services and scripts.
+    --   'human'               : only valid TOGETHER with a valid session of the same account.
+    --                           In return it carries the full rights — the way for a tool that
+    --                           a person operates themselves (CLI on their own machine).
+    -- Up to 0.21.x the values were called 'automat' and 'mensch' (schema 12, `_werte_englisch`); they are
+    -- still read (`KEY_ARTEN_ALT`). Up to 0.18.x there was no such distinction: every key
+    -- of an admin was a complete admin write API, without a second factor and without a
+    -- CSRF layer — a leaked CI key was the instance.
     kind       TEXT NOT NULL DEFAULT 'automation',
     created_at INTEGER NOT NULL,
     last_used  INTEGER,
-    expires_at INTEGER,                          -- NULL = unbefristet
+    expires_at INTEGER,                          -- NULL = no expiry
     revoked    INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS password_cred (
@@ -112,7 +112,7 @@ CREATE TABLE IF NOT EXISTS password_cred (
 );
 CREATE TABLE IF NOT EXISTS pin_cred (
     user_id  INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
-    hash     TEXT NOT NULL,               -- wie Passwort gehasht (argon2/scrypt)
+    hash     TEXT NOT NULL,               -- hashed like a password (argon2/scrypt)
     updated_at INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS totp_cred (
@@ -120,14 +120,14 @@ CREATE TABLE IF NOT EXISTS totp_cred (
     secret    TEXT NOT NULL,
     confirmed INTEGER NOT NULL DEFAULT 0,
     created_at INTEGER NOT NULL,
-    last_step INTEGER                          -- zuletzt verbrauchter Zeitschritt; ein Code gilt
-                                               -- genau einmal (NIST SP 800-63B: „SHALL accept a
+    last_step INTEGER                          -- last consumed time step; a code is valid
+                                               -- exactly once (NIST SP 800-63B: "SHALL accept a
                                                -- given OTP only once while it is valid")
 );
-CREATE TABLE IF NOT EXISTS recovery_code (   -- Einmal-Codes als 2FA-Ersatz (verlorener Authenticator)
+CREATE TABLE IF NOT EXISTS recovery_code (   -- one-time codes as 2FA substitute (lost authenticator)
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    code_hash  TEXT NOT NULL,                 -- sha256(normalisierter Code)
+    code_hash  TEXT NOT NULL,                 -- sha256(normalized code)
     created_at INTEGER NOT NULL,
     used_at    INTEGER
 );
@@ -137,7 +137,7 @@ CREATE TABLE IF NOT EXISTS webauthn_cred (
     credential_id TEXT UNIQUE NOT NULL,   -- base64url
     public_key    TEXT NOT NULL,          -- base64url (COSE)
     sign_count    INTEGER NOT NULL DEFAULT 0,
-    transports    TEXT,                   -- JSON-Liste
+    transports    TEXT,                   -- JSON list
     name          TEXT,
     created_at    INTEGER NOT NULL,
     last_used     INTEGER
@@ -148,31 +148,31 @@ CREATE TABLE IF NOT EXISTS oidc_identity (
     user_id  INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     PRIMARY KEY (issuer, subject)
 );
--- Fremde Identität → lokales Konto, über eine STABILE Kennung des Verzeichnisses (F-11).
--- OIDC hat dafür `oidc_identity` (issuer+sub); LDAP und SAML banden bis 0.19.0 allein über den
--- Benutzernamen. Ein Name ist aber nicht fälschungssicher: Wer im Verzeichnis umbenennt oder ein
--- gelöschtes Konto unter demselben Namen neu anlegt, bekommt dasselbe lokale Konto mitsamt
--- seinen Rollen. Die Kennung hier ist objectGUID/entryUUID (LDAP) bzw. die NameID (SAML) — sie
--- überlebt eine Umbenennung und wird nicht wiederverwendet.
+-- Foreign identity → local account, via a STABLE identifier of the directory (F-11).
+-- OIDC has `oidc_identity` for that (issuer+sub); LDAP and SAML bound solely via the
+-- username up to 0.19.0. A name is not forgery-proof, though: whoever renames in the directory or
+-- recreates a deleted account under the same name gets the same local account including
+-- its roles. The identifier here is objectGUID/entryUUID (LDAP) or the NameID (SAML) — it
+-- survives a rename and is not reused.
 CREATE TABLE IF NOT EXISTS federated_identity (
     quelle      TEXT NOT NULL,              -- 'ldap' | 'saml'
-    kennung     TEXT NOT NULL,              -- die stabile Kennung aus dem Verzeichnis
+    kennung     TEXT NOT NULL,              -- the stable identifier from the directory
     user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    gebunden_at INTEGER NOT NULL,           -- wann die Bindung entstand (auch: nachgebunden)
-    -- Der Name, unter dem sich das Konto zuletzt über diese Quelle angemeldet hat, im Zähl-Topf
-    -- (`norm_kennung`) — nur wenn er weder Name noch Adresse des Kontos ist (G5). Nach einer
-    -- Umbenennung im Verzeichnis tippt die Person den NEUEN Namen, und unter ihm zählt die Serie
-    -- (B2-6); ohne diese Spalte räumte kein Rückweg sie. NULL = keiner (oder noch nie gesehen).
-    -- Der Name gehört dem Konto, das sich zuletzt so angemeldet hat (`bindung_name_setzen` löscht
-    -- ihn an fremden Bindungen), und kein anderes Konto kann ihn als Name oder Adresse annehmen
-    -- (Kennungs-Trigger, `TinySesam.identifier_taken`; Prüfrunde Sperren/Zähler 2026-09-27).
+    gebunden_at INTEGER NOT NULL,           -- when the binding came about (also: bound later)
+    -- The name under which the account last signed in via this source, in the counting bucket
+    -- (`norm_kennung`) — only if it is neither name nor address of the account (G5). After a
+    -- rename in the directory the person types the NEW name, and the series is counted under it
+    -- (B2-6); without this column no way back would clear it. NULL = none (or never seen).
+    -- The name belongs to the account that last signed in like this (`bindung_name_setzen` deletes
+    -- it from foreign bindings), and no other account can take it as name or address
+    -- (identifier trigger, `TinySesam.identifier_taken`; review round lockouts/counters 2026-09-27).
     name_topf   TEXT,
     PRIMARY KEY (quelle, kennung)
 );
--- Vom Betreiber geöffnete Bindung über den Namen (G1): Bis `bis` bindet die nächste Anmeldung über
--- LDAP/SAML dieses Konto über seinen Namen, auch nach der Frist (`federation_name_binding_days`)
--- und auch mit selbst gewähltem Namen. Geschrieben von `federation_unbind`, gelöscht, sobald
--- die Bindung steht. Ohne Zeile entscheidet die Frist.
+-- Binding via the name opened by the operator (G1): until `bis` the next sign-in via
+-- LDAP/SAML binds this account via its name, even after the deadline (`federation_name_binding_days`)
+-- and even with a self-chosen name. Written by `federation_unbind`, deleted as soon as
+-- the binding stands. Without a row the deadline decides.
 CREATE TABLE IF NOT EXISTS namensbindung (
     quelle  TEXT NOT NULL,
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -180,62 +180,62 @@ CREATE TABLE IF NOT EXISTS namensbindung (
     PRIMARY KEY (quelle, user_id)
 );
 CREATE TABLE IF NOT EXISTS session (
-    token_hash TEXT PRIMARY KEY,               -- sha256(Klartext-Token); der Klartext steht NUR im
-                                               -- Cookie des Browsers. Wer die Datei liest, bekommt
-                                               -- damit keine übernehmbare Sitzung (s. magic_token,
-                                               -- das es von Anfang an so hält).
+    token_hash TEXT PRIMARY KEY,               -- sha256(plaintext token); the plaintext is ONLY in the
+                                               -- browser's cookie. Whoever reads the file does not get
+                                               -- a hijackable session that way (see magic_token,
+                                               -- which has done it like this from the start).
     user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     created_at INTEGER NOT NULL,
     expires_at INTEGER NOT NULL,
-    mfa_ok     INTEGER NOT NULL DEFAULT 0,   -- erfüllt die aktive Login-Policy (Kette/2FA) vollständig
-    mfa_at     INTEGER,                       -- Zeitpunkt der letzten Faktor-Bestätigung (Step-up-Frische)
-    method     TEXT,                          -- erster/primärer Faktor: password|pin|passkey|oidc|magic
-    factors_done TEXT NOT NULL DEFAULT '[]',  -- JSON-Liste erfüllter Faktoren (Ketten-Engine)
-    remember   INTEGER NOT NULL DEFAULT 1,   -- „Angemeldet bleiben" (persistentes Cookie)
+    mfa_ok     INTEGER NOT NULL DEFAULT 0,   -- fully satisfies the active login policy (chain/2FA)
+    mfa_at     INTEGER,                       -- time of the last factor confirmation (step-up freshness)
+    method     TEXT,                          -- first/primary factor: password|pin|passkey|oidc|magic
+    factors_done TEXT NOT NULL DEFAULT '[]',  -- JSON list of satisfied factors (chain engine)
+    remember   INTEGER NOT NULL DEFAULT 1,   -- "stay signed in" (persistent cookie)
     ip         TEXT,
     user_agent TEXT,
-    zuletzt    INTEGER,                       -- letzte Anfrage mit dieser Sitzung (Inaktivitäts-Timeout, F-05)
-    andere_beenden INTEGER NOT NULL DEFAULT 0, -- halbe Sitzung: bei Abschluss der Kette die übrigen beenden (Grenze d)
-    bleiben_gewaehlt INTEGER NOT NULL DEFAULT 0, -- „Angemeldet bleiben" AUSDRÜCKLICH gewählt (F-05: dann gilt die zweite Leerlauf-Grenze)
-    nachfolger TEXT                           -- abgelöst durch diese Sitzung (Gnadenfrist nach dem Drehen, A-6); NULL = aktuell
+    zuletzt    INTEGER,                       -- last request with this session (inactivity timeout, F-05)
+    andere_beenden INTEGER NOT NULL DEFAULT 0, -- half session: end the others when the chain completes (limit d)
+    bleiben_gewaehlt INTEGER NOT NULL DEFAULT 0, -- "stay signed in" EXPLICITLY chosen (F-05: then the second idle limit applies)
+    nachfolger TEXT                           -- superseded by this session (grace period after rotation, A-6); NULL = current
 );
--- Welche Anwendung hat der Provider dieser Sitzung freigegeben? (T-14)
--- Eine Zeile je Sitzung UND Anwendung: Wer sich für app-a anmeldet, bekommt damit keinen
--- Zugang zu app-b — dort entscheidet der Provider erneut. Ohne diese Tabelle gäbe es nur die
--- Frage „angemeldet ja/nein", und die kann die Freigabe je Client nicht abbilden.
+-- Which application has the provider approved for this session? (T-14)
+-- One row per session AND application: whoever signs in for app-a does not thereby get
+-- access to app-b — the provider decides again there. Without this table there would only be the
+-- question "signed in yes/no", and that cannot represent the approval per client.
 CREATE TABLE IF NOT EXISTS oidc_grant (
     token_hash TEXT NOT NULL REFERENCES session(token_hash) ON DELETE CASCADE,
-    client     TEXT NOT NULL,                 -- Schlüssel aus cfg.oidc_clients, "*" = Einzel-Client
-    granted_at INTEGER NOT NULL,              -- erste Freigabe (bleibt stehen, auch über Nachprüfungen)
-    checked_at INTEGER NOT NULL,              -- letzte Bestätigung durch den Provider
-    roles      TEXT NOT NULL DEFAULT '[]',    -- Rollen, die der Provider FÜR DIESE Anwendung ergab
+    client     TEXT NOT NULL,                 -- key from cfg.oidc_clients, "*" = single client
+    granted_at INTEGER NOT NULL,              -- first approval (stays, even across re-checks)
+    checked_at INTEGER NOT NULL,              -- last confirmation by the provider
+    roles      TEXT NOT NULL DEFAULT '[]',    -- roles the provider yielded FOR THIS application
     PRIMARY KEY (token_hash, client)
 );
-CREATE TABLE IF NOT EXISTS oidc_sitzung (    -- Refresh-Token einer OIDC-Sitzung je Client (4a, Widerruf folgt dem IdP)
+CREATE TABLE IF NOT EXISTS oidc_sitzung (    -- refresh token of an OIDC session per client (4a, revocation follows the IdP)
     token_hash  TEXT NOT NULL REFERENCES session(token_hash) ON DELETE CASCADE,
-    client      TEXT NOT NULL,                -- Schlüssel aus cfg.oidc_clients, "*" = Einzel-Client
-    sub         TEXT NOT NULL,                -- Subjekt beim Provider; ein anderes beendet die Sitzung
-    refresh     TEXT NOT NULL,                -- verschlüsselt (vault.Vault), nie im Klartext
-    geprueft_at INTEGER NOT NULL,             -- letzter Tausch (oder: beansprucht, s. Store)
-    client_id   TEXT,                         -- an welche client_id das Token ging (NULL: vor dieser Spalte)
-    erfolg_at   INTEGER,                      -- letzte ERFOLGREICHE Nachprüfung (Obergrenze ohne Nachprüfung); NULL: vor dieser Spalte
+    client      TEXT NOT NULL,                -- key from cfg.oidc_clients, "*" = single client
+    sub         TEXT NOT NULL,                -- subject at the provider; a different one ends the session
+    refresh     TEXT NOT NULL,                -- encrypted (vault.Vault), never in plaintext
+    geprueft_at INTEGER NOT NULL,             -- last exchange (or: claimed, see Store)
+    client_id   TEXT,                         -- to which client_id the token went (NULL: before this column)
+    erfolg_at   INTEGER,                      -- last SUCCESSFUL re-check (upper bound without re-check); NULL: before this column
     PRIMARY KEY (token_hash, client)
 );
--- Nur von DIESER Anwendung abgemeldet (T-22, `forward_logout="app"`): Die Sitzung bleibt, die
--- Forward-Auth lässt sie für diesen Host aber nicht mehr durch, bis der Mensch auf der Login-Seite
--- ausdrücklich „weiter“ wählt. Ohne die Zeile wäre „nur hier abmelden“ ein Neuladen der Seite.
+-- Signed out of ONLY THIS application (T-22, `forward_logout="app"`): the session stays, but the
+-- forward auth no longer lets it through for this host until the person explicitly
+-- chooses "continue" on the login page. Without the row "sign out only here" would be a page reload.
 CREATE TABLE IF NOT EXISTS gate_abgemeldet (
     token_hash TEXT NOT NULL REFERENCES session(token_hash) ON DELETE CASCADE,
     host       TEXT NOT NULL,
     at         INTEGER NOT NULL,
     PRIMARY KEY (token_hash, host)
 );
--- Das ID-Token der Anmeldung, verschlüsselt (vault.Vault) — nur als `id_token_hint` für den
--- Logout beim Provider (T-22). PocketID beendet seine Sitzung ohne den Hinweis nicht, sondern
--- zeigt eine Rückfrage und leitet danach nicht zurück.
--- Die Verbindung eines App-Hosts zur zentralen Sitzung (Code-Austausch, T-26): Die Sitzung bleibt
--- auf dem Host des Gateways; der App-Host bekommt nur ein eigenes Cookie, dessen Hash hier steht.
--- Es gilt NUR für seinen Host und endet mit der Sitzung (ON DELETE CASCADE).
+-- The ID token of the sign-in, encrypted (vault.Vault) — only as `id_token_hint` for the
+-- logout at the provider (T-22). PocketID does not end its session without the hint, but
+-- shows a confirmation prompt and does not redirect back afterwards.
+-- The link of an app host to the central session (code exchange, T-26): the session stays
+-- on the gateway's host; the app host only gets a cookie of its own, whose hash is stored here.
+-- It is valid ONLY for its host and ends with the session (ON DELETE CASCADE).
 CREATE TABLE IF NOT EXISTS gate_link (
     link_hash  TEXT PRIMARY KEY,
     token_hash TEXT NOT NULL REFERENCES session(token_hash) ON DELETE CASCADE,
@@ -247,56 +247,56 @@ CREATE TABLE IF NOT EXISTS oidc_id_token (
     client     TEXT NOT NULL,
     id_token   TEXT NOT NULL
 );
-CREATE TABLE IF NOT EXISTS flow (            -- kurzlebiger State (OIDC state/nonce, WebAuthn-Challenge)
+CREATE TABLE IF NOT EXISTS flow (            -- short-lived state (OIDC state/nonce, WebAuthn challenge)
     key        TEXT PRIMARY KEY,
     data       TEXT NOT NULL,               -- JSON
     expires_at INTEGER NOT NULL
 );
-CREATE TABLE IF NOT EXISTS setting (         -- Runtime-Settings (Härtungs-Schwellen, Panel-editierbar)
+CREATE TABLE IF NOT EXISTS setting (         -- runtime settings (hardening thresholds, editable in the panel)
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
-CREATE TABLE IF NOT EXISTS magic_token (      -- Einmal-Token (Magic-Link / Invite / E-Mail-Verify)
-    token_hash TEXT PRIMARY KEY,               -- sha256(Klartext-Token)
+CREATE TABLE IF NOT EXISTS magic_token (      -- one-time token (magic link / invite / e-mail verify)
+    token_hash TEXT PRIMARY KEY,               -- sha256(plaintext token)
     purpose    TEXT NOT NULL,                  -- login | invite | verify_email | …
-    user_id    INTEGER,                        -- optional: an bestehenden User gebunden
+    user_id    INTEGER,                        -- optional: bound to an existing user
     email      TEXT,
-    payload    TEXT,                            -- JSON (z.B. Rollen, Ressource)
+    payload    TEXT,                            -- JSON (e.g. roles, resource)
     created_at INTEGER NOT NULL,
     expires_at INTEGER NOT NULL,
-    used_at    INTEGER                          -- gesetzt bei Einlösung → one-shot
+    used_at    INTEGER                          -- set on redemption → one-shot
 );
-CREATE TABLE IF NOT EXISTS resource_secret (  -- geteiltes Ressourcen-Geheimnis (ohne User-Konto)
+CREATE TABLE IF NOT EXISTS resource_secret (  -- shared resource secret (without a user account)
     name       TEXT PRIMARY KEY,
-    hash       TEXT NOT NULL,                 -- wie Passwort gehasht
-    kind       TEXT NOT NULL DEFAULT 'pin',   -- 'pin' (numerisch) | 'password' (Passphrase)
+    hash       TEXT NOT NULL,                 -- hashed like a password
+    kind       TEXT NOT NULL DEFAULT 'pin',   -- 'pin' (numeric) | 'password' (passphrase)
     label      TEXT,
     created_at INTEGER NOT NULL
 );
-CREATE TABLE IF NOT EXISTS resource_unlock (  -- freigeschaltete Ressourcen je Unlock-Token (Cookie)
+CREATE TABLE IF NOT EXISTS resource_unlock (  -- unlocked resources per unlock token (cookie)
     token      TEXT NOT NULL,
     resource   TEXT NOT NULL,
     expires_at INTEGER NOT NULL,
     PRIMARY KEY (token, resource)
 );
-CREATE TABLE IF NOT EXISTS login_attempt (   -- Brute-Force-Regulation
+CREATE TABLE IF NOT EXISTS login_attempt (   -- brute-force regulation
     id       INTEGER PRIMARY KEY AUTOINCREMENT,
     ts       INTEGER NOT NULL,
     username TEXT,
     ip       TEXT,
     success  INTEGER NOT NULL,
     method   TEXT,
-    offen    INTEGER NOT NULL DEFAULT 0      -- 1: vorgebucht, Ausgang noch offen (G9, `reserve_attempt`)
+    offen    INTEGER NOT NULL DEFAULT 0      -- 1: pre-booked, outcome still open (G9, `reserve_attempt`)
 );
-CREATE TABLE IF NOT EXISTS fehlserie (       -- Fehlversuche IN FOLGE je Kennung, ohne Zeitfenster (B2-6)
-    topf    TEXT NOT NULL,                   -- gefaltete Kennung, derselbe Schlüssel wie login_attempt.username
-    art     TEXT NOT NULL,                   -- Methode (password, pin, totp …): ein Reset räumt nur seine
+CREATE TABLE IF NOT EXISTS fehlserie (       -- failed attempts IN A ROW per identifier, without a time window (B2-6)
+    topf    TEXT NOT NULL,                   -- folded identifier, the same key as login_attempt.username
+    art     TEXT NOT NULL,                   -- method (password, pin, totp …): a reset only clears its own
     anzahl  INTEGER NOT NULL,
-    seit    INTEGER NOT NULL,                -- erster Fehlversuch der laufenden Serie
+    seit    INTEGER NOT NULL,                -- first failed attempt of the current series
     zuletzt INTEGER NOT NULL,
     PRIMARY KEY (topf, art)
 );
-CREATE TABLE IF NOT EXISTS audit (           -- Audit-Log (Login/Logout/Admin-Aktionen)
+CREATE TABLE IF NOT EXISTS audit (           -- audit log (login/logout/admin actions)
     id       INTEGER PRIMARY KEY AUTOINCREMENT,
     ts       INTEGER NOT NULL,
     event    TEXT NOT NULL,
@@ -306,17 +306,17 @@ CREATE TABLE IF NOT EXISTS audit (           -- Audit-Log (Login/Logout/Admin-Ak
 );
 CREATE INDEX IF NOT EXISTS idx_session_user ON session(user_id);
 CREATE INDEX IF NOT EXISTS idx_webauthn_user ON webauthn_cred(user_id);
--- Grenze c (Integrationsangriff): `anlage_grenze` und `audit_anonymisieren` suchen nach Name und
--- Zeit. Ohne Index lief das über das ganze Audit-Log — seine Grösse wächst mit der Aufbewahrung.
--- Nur Name und Zeit: Die Suche im DETAILTEXT (`audit_anonymisieren`) ist eine Teilstring-Suche,
--- die kein Index eingrenzt — sie bleibt ein Scan, läuft seit G4 aber blockweise ohne Schreibsperre.
+-- Limit c (integration attack): `anlage_grenze` and `audit_anonymisieren` search by name and
+-- time. Without an index that ran over the whole audit log — its size grows with the retention.
+-- Only name and time: the search in the DETAIL text (`audit_anonymisieren`) is a substring search
+-- that no index narrows down — it remains a scan, but since G4 runs in blocks without a write lock.
 CREATE INDEX IF NOT EXISTS idx_audit_name_ts ON audit(lower(username), ts);
 CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit(ts);
 CREATE INDEX IF NOT EXISTS idx_attempt_user ON login_attempt(username, ts);
 CREATE INDEX IF NOT EXISTS idx_attempt_ip ON login_attempt(ip, ts);
 CREATE INDEX IF NOT EXISTS idx_apikey_user ON api_key(user_id);
--- G1: „Welche Konten tragen für diese Quelle noch keine Kennung?" (Startmeldung, Bestandsbindung)
--- fragt je Konto nach seiner Zeile; ohne Index läse das je Konto alle Bindungen der Quelle.
+-- G1: "Which accounts still carry no identifier for this source?" (startup message, binding of existing accounts)
+-- asks for its row per account; without an index that would read all bindings of the source per account.
 CREATE INDEX IF NOT EXISTS idx_fed_quelle_user ON federated_identity(quelle, user_id);
 """
 
@@ -578,11 +578,11 @@ class _Uhr:
         if rueckstand > self.WARN_AB_SEK and not self._gemeldet:
             self._gemeldet = True
             logging.getLogger("tinysesam").warning(
-                "Die Systemuhr steht %d s hinter der zuletzt benutzten Zeit (Rückwärtssprung "
-                "oder falsches Datum nach dem Start). TinySesam zählt monoton weiter, damit "
-                "abgelaufene Sitzungen und Einmal-Token nicht wieder gelten (nach einem "
-                "Neustart ab dem zuletzt gesicherten Stand, höchstens eine Minute alt) — "
-                "Uhrzeit (NTP) prüfen.", int(rueckstand))
+                "The system clock is %d s behind the last time used (backward jump "
+                "or wrong date after startup). TinySesam keeps counting monotonically so that "
+                "expired sessions and one-time tokens do not become valid again (after a "
+                "restart from the last saved state, at most one minute old) — "
+                "check the time (NTP).", int(rueckstand))
         elif rueckstand <= self.WARN_AB_SEK:
             self._gemeldet = False
 
@@ -616,10 +616,10 @@ def versuchsfrist(sekunden) -> int:
             raise ValueError
         zahl = int(sekunden)
     except (TypeError, ValueError, OverflowError):
-        raise ValueError(f"attempts_older_than_sec={sekunden!r} ist keine ganze Zahl von Sekunden.") from None
+        raise ValueError(f"attempts_older_than_sec={sekunden!r} is not a whole number of seconds.") from None
     if not 0 <= zahl <= VERSUCHSFRIST_MAX_SEK:
-        raise ValueError(f"attempts_older_than_sec={zahl} liegt ausserhalb von 0…{VERSUCHSFRIST_MAX_SEK} "
-                         "(Sekunden). 0 räumt alle Fehlversuche.")
+        raise ValueError(f"attempts_older_than_sec={zahl} is outside 0…{VERSUCHSFRIST_MAX_SEK} "
+                         "(seconds). 0 clears all failed attempts.")
     return zahl
 
 
@@ -748,8 +748,8 @@ class Store:
                 pass                              # file system without permissions (Windows, some mounts)
         if not neu and modus & 0o077:
             logging.getLogger("tinysesam").warning(
-                "Die Datenbank %s ist für andere Konten lesbar (%o). Darin stehen Passwort-Hashes "
-                "und TOTP-Geheimnisse. Enger stellen: chmod 600 %s", db_path, modus, db_path)
+                "The database %s is readable by other accounts (%o). It contains password hashes "
+                "and TOTP secrets. Tighten it: chmod 600 %s", db_path, modus, db_path)
 
     #: State of the schema. Raised by one with every change to SCHEMA/_migrate().
     #:
@@ -874,7 +874,7 @@ class Store:
             if _fs and "art" not in _fs:
                 ddl = re.search(r"CREATE TABLE IF NOT EXISTS fehlserie \(.*?\n\);", SCHEMA, re.S)
                 if ddl is None:     # it is in SCHEMA; if it is missing there, that is an error here
-                    raise RuntimeError("SCHEMA enthält keine Tabelle fehlserie")
+                    raise RuntimeError("SCHEMA contains no table fehlserie")
                 self.db.execute("DROP TABLE fehlserie")
                 self.db.execute(ddl.group(0))
             for table, cols in adds.items():
@@ -917,7 +917,7 @@ class Store:
                 raise
             if zeilen:
                 logging.getLogger("tinysesam").info(
-                    "Sitzungstabelle migriert: %d Token gehasht, Anmeldungen bleiben gültig.",
+                    "Session table migrated: %d tokens hashed, sign-ins stay valid.",
                     len(zeilen))
 
             # Unlocks from the time before the switch cannot be converted: the hash
@@ -942,7 +942,7 @@ class Store:
                     " OR token GLOB '*[^0-9a-f]*'").rowcount
                 if weg:
                     logging.getLogger("tinysesam").info(
-                        "%d Ressourcen-Freigaben verworfen (Token werden jetzt gehasht abgelegt).", weg)
+                        "%d resource approvals discarded (tokens are now stored hashed).", weg)
 
             # Schema 10. The steps run in the same transaction as the stamp below: if
             # the start aborts in between, the stamp is missing too, and the next start runs them again
@@ -986,12 +986,12 @@ class Store:
                     raise
                 umgeschrieben = 0
                 logging.getLogger("tinysesam").warning(
-                    "Werte einer älteren Fassung nicht auf die englischen Namen umgeschrieben (%s): "
-                    "Die Datenbank ist nicht schreibbar. Gelesen werden sie trotzdem richtig.", e)
+                    "Values of an older version not rewritten to the English names (%s): "
+                    "the database is not writable. They are still read correctly.", e)
             if umgeschrieben:
                 logging.getLogger("tinysesam").info(
-                    "%d gespeicherte Werte auf die englischen Namen umgeschrieben (Schema 12: "
-                    "API-Key-Arten, Adresswechsel-Links).", umgeschrieben)
+                    "%d stored values rewritten to the English names (schema 12: "
+                    "API key kinds, address-change links).", umgeschrieben)
             if vorhanden_vorab < 10:
                 self._bestand_nachziehen(True, ohne_topf)
             else:
@@ -1002,9 +1002,9 @@ class Store:
                     # With this stamp the transaction contains only this step.
                     self.db.rollback()
                     logging.getLogger("tinysesam").warning(
-                        "Bestandsschritte nicht nachgezogen (%s): Sperren aus dem Panel einer älteren "
-                        "Fassung tragen den Betreiber-Vermerk erst nach einem Start mit "
-                        "Schreibzugriff.", e)
+                        "Existing-data steps not applied (%s): lockouts from the panel of an older "
+                        "version only carry the operator marker after a start with "
+                        "write access.", e)
             try:
                 self._toepfe_schreiben(ohne_topf)
             except sqlite3.OperationalError:
@@ -1015,8 +1015,8 @@ class Store:
                 if vorhanden_vorab < self.TOPF_SCHEMA:
                     raise
                 logging.getLogger("tinysesam").warning(
-                    "Zähl-Töpfe von %d Konto(en) nicht nachgetragen: Die Datenbank ist nicht "
-                    "schreibbar. Die Topf-Prüfung sieht sie trotzdem, nur langsamer.", len(ohne_topf))
+                    "Counting buckets of %d account(s) not filled in: the database is not "
+                    "writable. The bucket check still sees them, only more slowly.", len(ohne_topf))
 
             # A file from the future: this version does not fully know its tables
             # and would leave gaps when writing. That is no reason to crash —
@@ -1024,10 +1024,10 @@ class Store:
             vorhanden = int(self.db.execute("PRAGMA user_version").fetchone()[0] or 0)
             if vorhanden > self.SCHEMA_VERSION:
                 logging.getLogger("tinysesam").warning(
-                    "Die Datenbank trägt Schema-Version %d, diese TinySesam-Fassung kennt nur %d. "
-                    "Sie stammt aus einer neueren Version — mit dieser hier zu schreiben kann "
-                    "Daten unvollständig lassen. Passende Version installieren oder die Datei "
-                    "aus einer Sicherung zurückspielen.", vorhanden, self.SCHEMA_VERSION)
+                    "The database carries schema version %d, this TinySesam version only knows %d. "
+                    "It comes from a newer version — writing with this one can leave "
+                    "data incomplete. Install the matching version or restore the file "
+                    "from a backup.", vorhanden, self.SCHEMA_VERSION)
             elif vorhanden != self.SCHEMA_VERSION:
                 self.db.execute(f"PRAGMA user_version = {self.SCHEMA_VERSION}")
             # Email unique (login identifier) — partial, so that accounts without an email stay allowed.
@@ -1037,8 +1037,8 @@ class Store:
                                 "ON users(lower(email)) WHERE email IS NOT NULL AND email <> ''")
             except sqlite3.IntegrityError:
                 logging.getLogger("tinysesam").warning(
-                    "users.email enthält Dubletten — Eindeutigkeits-Index nicht angelegt. "
-                    "Doppelte Adressen bereinigen, sonst ist Login per E-Mail mehrdeutig.")
+                    "users.email contains duplicates — uniqueness index not created. "
+                    "Clean up duplicate addresses, otherwise login by e-mail is ambiguous.")
             # Schema 10: every lookup of an identifier goes through an index, none through the whole
             # table. With a scan, the runtime of a registration depended on whether (and how
             # early) the address is found — with many accounts an oracle for taken addresses
@@ -1061,9 +1061,9 @@ class Store:
                 self._trigger_setzen()
             except sqlite3.OperationalError as e:
                 logging.getLogger("tinysesam").warning(
-                    "Trigger über Benutzername und Adresse nicht angelegt (%s): Die Datenbank "
-                    "erzwingt den gemeinsamen Kennungsraum erst nach einem Start mit "
-                    "Schreibzugriff.", e)
+                    "Triggers over username and address not created (%s): the database "
+                    "only enforces the shared identifier space after a start with "
+                    "write access.", e)
             self.db.commit()
 
     #: Message of the identifier triggers (`sqlite3.IntegrityError`): name or address falls into the
@@ -1341,16 +1341,16 @@ class Store:
         if u is None:
             if self.db.execute("SELECT 1 FROM users WHERE is_admin <> 0 LIMIT 1").fetchone():
                 logging.getLogger("tinysesam").warning(
-                    "Kein Owner: Es gibt Admins, aber keinen aktiven, von Hand gesetzten (nur vom "
-                    "Identity Provider vergebene oder gesperrte). Einen Owner bestimmen: "
-                    "`tinysesam owner --db <datei> <benutzer>`.")
+                    "No owner: there are admins, but none active and set by hand (only ones "
+                    "granted by the identity provider, or locked). Designate an owner: "
+                    "`tinysesam owner --db <file> <user>`.")
             return
         self.db.execute("UPDATE users SET is_owner=1, is_admin=1 WHERE id=?", (u["id"],))
         self.db.execute("INSERT INTO audit(ts, event, username, ip, detail) VALUES (?,?,?,?,?)",
                         (_now(), "owner_grant", u["username"], None, "quelle=bestand aeltester_admin"))
         logging.getLogger("tinysesam").warning(
-            "Owner-Modell: %s ist jetzt Owner (ältester Admin). Weitere Owner vergibt ein Owner im "
-            "Admin-Panel.", u["username"])
+            "Owner model: %s is now owner (oldest admin). Further owners are granted by an owner in the "
+            "admin panel.", u["username"])
 
     def _bestand_nachziehen(self, ab_anfang: bool, ohne_topf) -> None:
         """Bring existing data to schema 10 (without commit, under `_lock` — part of `_migrate`).
@@ -1447,14 +1447,14 @@ class Store:
             self.db.execute("INSERT OR REPLACE INTO setting(key, value) VALUES (?, ?)",
                             (self.PANEL_WASSERLINIE, str(bis)))
         if ab_anfang and (adressen or panel):
-            log.info("Schema 10: %d Sperre(n) aus dem Panel tragen jetzt den Betreiber-Vermerk (offene "
-                     "Einmal-Token verworfen), %d Adresse(n) offener Registrierungen gelten bis zur "
-                     "Bestätigung als unbelegt.", len(panel), adressen)
+            log.info("Schema 10: %d lockout(s) from the panel now carry the operator marker (open "
+                     "one-time tokens discarded), %d address(es) of open registrations count as "
+                     "unproven until confirmed.", len(panel), adressen)
         elif adressen or panel:
-            log.warning("Eine ältere TinySesam-Fassung hat in diese Datenbank geschrieben (Rückschritt "
-                        "ohne Sicherung?): %d Sperre(n) aus ihrem Panel tragen jetzt den "
-                        "Betreiber-Vermerk (offene Einmal-Token verworfen), %d Adresse(n) ihrer "
-                        "offenen Registrierungen gelten bis zur Bestätigung als unbelegt.",
+            log.warning("An older TinySesam version has written to this database (downgrade "
+                        "without a backup?): %d lockout(s) from its panel now carry the "
+                        "operator marker (open one-time tokens discarded), %d address(es) of its "
+                        "open registrations count as unproven until confirmed.",
                         len(panel), adressen)
 
     def _toepfe_schreiben(self, zeilen) -> None:
@@ -1511,8 +1511,8 @@ class Store:
             # of a FAILED write; it is discarded, not booked along. Loud, because
             # it is an error elsewhere.
             logging.getLogger("tinysesam").warning(
-                "Offene Transaktion auf der Datenbankverbindung vorgefunden (Rest eines "
-                "gescheiterten Schreibzugriffs) — verworfen, bevor der Anmeldeversuch zählt.")
+                "Open transaction found on the database connection (remnant of a "
+                "failed write) — discarded before the sign-in attempt counts.")
             self._verwerfen()
         self.db.execute("BEGIN IMMEDIATE")
 
@@ -2196,8 +2196,8 @@ class Store:
             zeile = self._one("SELECT is_owner FROM users WHERE id=?", (user_id,))
             if zeile is not None and zeile["is_owner"]:
                 from .errors import StateError
-                raise StateError(f"Konto {user_id} ist Owner und lässt sich nicht sperren — erst die "
-                                 "Owner-Rolle abgeben.")
+                raise StateError(f"Account {user_id} is an owner and cannot be locked — hand over the "
+                                 "owner role first.")
         if not disabled:
             self._exec("UPDATE users SET disabled=0 WHERE id=?", (user_id,))
         elif durch_betreiber:
@@ -2281,8 +2281,8 @@ class Store:
         # the confirmation code of a discarded attempt would lock the first code of the new one
         # if both fall into the same 30-second window.
         if self.tresor is None:
-            raise RuntimeError("TOTP-Geheimnisse werden nur verschlüsselt abgelegt — der Store hat "
-                               "keinen Schlüssel (vault.Vault).")
+            raise RuntimeError("TOTP secrets are only stored encrypted — the store has "
+                               "no key (vault.Vault).")
         self._exec("INSERT INTO totp_cred(user_id, secret, confirmed, created_at) VALUES (?,?,?,?) "
                    "ON CONFLICT(user_id) DO UPDATE SET secret=excluded.secret, "
                    "confirmed=excluded.confirmed, last_step=NULL",
@@ -2318,17 +2318,17 @@ class Store:
                 self.tresor.decrypt(probe["wert"])
             except Exception:
                 raise ConfigError(
-                    "Der Schlüssel passt nicht zu den gespeicherten Geheimnissen (TOTP/OIDC; falsche "
-                    "TINYSESAM_SECRETS_KEY/secrets_key_file, oder die Schlüsseldatei neben der "
-                    "Datenbank fehlt bzw. ist eine andere). Den richtigen Schlüssel einsetzen — ohne ihn "
-                    "müssen alle Konten TOTP neu einrichten.") from None
+                    "The key does not match the stored secrets (TOTP/OIDC; wrong "
+                    "TINYSESAM_SECRETS_KEY/secrets_key_file, or the key file next to the "
+                    "database is missing or a different one). Use the right key — without it "
+                    "all accounts have to set up TOTP again.") from None
         klar = self._all("SELECT user_id, secret FROM totp_cred WHERE secret NOT LIKE 'v1:%'")
         for z in klar:
             self._exec("UPDATE totp_cred SET secret=? WHERE user_id=? AND secret=?",
                        (self.tresor.encrypt(z["secret"]), z["user_id"], z["secret"]))
         if klar:
             logging.getLogger("tinysesam").info(
-                "%d TOTP-Geheimnis(se) verschlüsselt (bisher Klartext in der Datenbank).", len(klar))
+                "%d TOTP secret(s) encrypted (previously plaintext in the database).", len(klar))
         return len(klar)
 
     def delete_totp(self, user_id):
@@ -2546,7 +2546,7 @@ class Store:
         client must not overwrite the re-check of the first — otherwise the user would choose
         which provider entry is still re-checked (attack on the second round, finding 7)."""
         if self.tresor is None:
-            raise RuntimeError("Refresh-Tokens werden nur verschlüsselt abgelegt (vault.Vault).")
+            raise RuntimeError("Refresh tokens are only stored encrypted (vault.Vault).")
         self._exec("INSERT INTO oidc_sitzung(token_hash, client, sub, refresh, geprueft_at, client_id, erfolg_at) "
                    "VALUES (?,?,?,?,?,?,?) ON CONFLICT(token_hash, client) DO UPDATE SET sub=excluded.sub, "
                    "refresh=excluded.refresh, geprueft_at=excluded.geprueft_at, client_id=excluded.client_id, "
@@ -2636,7 +2636,7 @@ class Store:
     # ---------- ID token as a sign-out hint (T-22) ----------
     def set_oidc_id_token(self, handle, client: str, id_token: str) -> None:
         if self.tresor is None:
-            raise RuntimeError("ID-Tokens werden nur verschlüsselt abgelegt (vault.Vault).")
+            raise RuntimeError("ID tokens are only stored encrypted (vault.Vault).")
         self._exec("INSERT OR REPLACE INTO oidc_id_token(token_hash, client, id_token) VALUES (?,?,?)",
                    (self._handle(handle), client, self.tresor.encrypt(id_token)))
 
@@ -2724,8 +2724,8 @@ class Store:
         until it is missing)."""
         h = str(wert or "")
         if len(h) != 64 or any(c not in "0123456789abcdef" for c in h):
-            raise ValueError("Sitzungs-Handle erwartet (token_hash aus der Sitzungs-Zeile), "
-                             f"kein Klartext-Token: {h[:12]!r}…")
+            raise ValueError("Session handle expected (token_hash from the session row), "
+                             f"not a plaintext token: {h[:12]!r}…")
         return h
 
     def set_session_factors(self, handle, factors, mfa_ok=None):

@@ -62,7 +62,7 @@ for name, resp in _pages(auth).items():
     assert not re.search(r'\son(click|submit)=', body), f"{name}: Inline-Handler geblieben"
     assert not re.search(r'\sstyle=', body), f"{name}: style=-Attribut geblieben"
     # Precondition: the section is really there — otherwise the line above checked nothing.
-    assert name != "account" or "id=eventlist" in body, "account: „Letzte Ereignisse“ fehlt"
+    assert name != "account" or "id=eventlist" in body, "account: „Letzte Ereignisse“ missing"
 ok("strict: header + nonce on every <script>/<style>, no inline handlers/style=")
 
 # 2) A fresh nonce per response
@@ -130,8 +130,8 @@ for gemischt in ("default-src 'self'; require-sri-for script",
     _fang.zeilen.clear()
     _gm = TinySesam(_cfg(csp=gemischt))
     assert config_check.csp_fehler(gemischt) == "", gemischt
-    assert any("nicht kennt" in z for z in _fang.zeilen), (gemischt, _fang.zeilen)
-    assert any("nicht kennt" in b for b in _gm.cfg.validate()), _gm.cfg.validate()
+    assert any("does not know" in z for z in _fang.zeilen), (gemischt, _fang.zeilen)
+    assert any("does not know" in b for b in _gm.cfg.validate()), _gm.cfg.validate()
 logging.getLogger("tinysesam.security").removeHandler(_fang)
 assert config_check.csp_warnung("default-src 'self'; script-src 'none'") == ""
 ok("csp: unknown directive next to known ones warns instead of preventing the start")
@@ -191,7 +191,7 @@ _v = _a8._kopfzeilen(PlainTextResponse("x", headers={"Vary": "Accept-Encoding"})
 assert _v.headers["vary"] == "Accept-Encoding, Cookie", _v.headers["vary"]
 _v2 = _a8._kopfzeilen(PlainTextResponse("x", headers={"Vary": "cookie"}))
 assert _v2.headers["vary"] == "cookie", _v2.headers["vary"]
-ok("Vary: vorhandene Werte bleiben, Cookie kommt genau einmal dazu")
+ok("Vary: existing values stay, Cookie is added exactly once")
 # X-Frame-Options only with 'strict' — an own policy or 'off' decides itself.
 assert _c8.get("/auth/login").headers.get("x-frame-options") == "SAMEORIGIN"
 _, _app_off = _haerte_app(csp="off")

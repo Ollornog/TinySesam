@@ -65,11 +65,11 @@ ABLAGE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "api_surface.j
 #: The tiers of the public surface (PO decision 2026-09-26). Only A carries the commitment
 #: from M-1 ("two minor versions without a break"); the counter starts at 0.22.0.
 STUFEN = {
-    "A": "öffentlich, stabil ab 1.0 — ein Bruch setzt die 1.0-Uhr zurück (M-1)",
-    "B": "für Fortgeschrittene — entfernen oder umbauen erst nach einer DeprecationWarning "
-         "über zwei Minor-Versionen",
-    "C": "intern — die Implementierung trägt einen führenden Unterstrich, der alte Name bleibt "
-         "bis 1.0 als Alias mit DeprecationWarning (Eintrag mit `ziel`, `seit`, `bis`)",
+    "A": "public, stable from 1.0 — a break resets the 1.0 clock (M-1)",
+    "B": "for advanced users — remove or rebuild only after a DeprecationWarning "
+         "over two minor versions",
+    "C": "internal — the implementation carries a leading underscore, the old name stays "
+         "until 1.0 as an alias with DeprecationWarning (entry with `ziel`, `seit`, `bis`)",
 }
 
 #: Since when the C aliases warn (extra field `seit` on every C entry).
@@ -290,16 +290,16 @@ def ohne_stufe(datei: dict) -> list:
     for bereich in sorted(datei):
         eintraege = datei[bereich]
         if not isinstance(eintraege, dict):
-            fehlt.append(f"{bereich}: ganze Liste ohne Stufen (Form vor 0.22.0)")
+            fehlt.append(f"{bereich}: whole list without tiers (form before 0.22.0)")
             continue
         for name in sorted(eintraege):
             e = eintraege[name]
             stufe = e.get("stufe") if isinstance(e, dict) else None
             if stufe is None:
-                fehlt.append(f"{bereich}.{name}: keine Stufe")
+                fehlt.append(f"{bereich}.{name}: no tier")
             elif stufe not in STUFEN:
-                fehlt.append(f"{bereich}.{name}: unbekannte Stufe {stufe!r} "
-                             f"(erlaubt: {', '.join(STUFEN)})")
+                fehlt.append(f"{bereich}.{name}: unknown tier {stufe!r} "
+                             f"(allowed: {', '.join(STUFEN)})")
     return fehlt
 
 
@@ -370,24 +370,24 @@ def beurteile(alt: dict, neu: dict, stufen: "dict | None" = None):
         if isinstance(a, list) or isinstance(n, list):
             fort = sorted(set(a) - set(n))
             dazu = sorted(set(n) - set(a))
-            brueche += [f"{marke(bereich, x)}{bereich}: '{x}' ist fort" for x in fort]
-            erweiterungen += [f"{bereich}: '{x}' ist neu" for x in dazu]
+            brueche += [f"{marke(bereich, x)}{bereich}: '{x}' is gone" for x in fort]
+            erweiterungen += [f"{bereich}: '{x}' is new" for x in dazu]
             continue
         for name in sorted(set(a) - set(n)):
-            brueche.append(f"{marke(bereich, name)}{bereich}.{name} ist fort "
-                           "(entfernt oder umbenannt)")
+            brueche.append(f"{marke(bereich, name)}{bereich}.{name} is gone "
+                           "(removed or renamed)")
         for name in sorted(set(n) - set(a)):
-            erweiterungen.append(f"{bereich}.{name} ist neu")
+            erweiterungen.append(f"{bereich}.{name} is new")
         for name in sorted(set(a) & set(n)):
             jetzt = n[name]
             if isinstance(a[name], OhneMarken) and isinstance(jetzt, str):
                 jetzt = ohne_marken(jetzt)        # old baseline: measured without `*`/`/`
             if a[name] == jetzt:
                 continue
-            zeile = (f"{bereich}.{name}:\n        vorher {a[name]}\n        jetzt  {n[name]}")
+            zeile = (f"{bereich}.{name}:\n        before {a[name]}\n        now    {n[name]}")
             if isinstance(a[name], str) and a[name].startswith("(") and nur_erweitert(a[name], jetzt):
-                erweiterungen.append(zeile + "\n        (nur angehängt, mit Vorgabewert — "
-                                            "bestehende Aufrufe laufen weiter)")
+                erweiterungen.append(zeile + "\n        (only appended, with default value — "
+                                            "existing calls keep working)")
             else:
                 brueche.append(marke(bereich, name) + zeile)
     return brueche, erweiterungen
@@ -415,7 +415,7 @@ def selbstpruefung(jetzt: dict) -> None:
     umbenannt["TinySesam.eigenschaften"]["csrf_cookie"] = \
         umbenannt["TinySesam.eigenschaften"].pop("csrf_cookie_name")
     brueche, _ = beurteile(jetzt, umbenannt)
-    assert any("csrf_cookie_name ist fort" in b for b in brueche), brueche
+    assert any("csrf_cookie_name is gone" in b for b in brueche), brueche
     ok(f"Properties frozen ({len(eig)}), renaming one would count as a break")
 
 
@@ -488,9 +488,9 @@ def selbstpruefung_stufen(jetzt: dict) -> None:
         kaputt = json.loads(json.dumps(voll))
         name = sorted(kaputt[bereich])[0]
         kaputt[bereich][name]["stufe"] = falsch
-        assert any(f"{bereich}.{name}: unbekannte Stufe" in z for z in ohne_stufe(kaputt)), falsch
+        assert any(f"{bereich}.{name}: unknown tier" in z for z in ohne_stufe(kaputt)), falsch
         del kaputt[bereich][name]["stufe"]
-        assert f"{bereich}.{name}: keine Stufe" in ohne_stufe(kaputt), bereich
+        assert f"{bereich}.{name}: no tier" in ohne_stufe(kaputt), bereich
     # 3. `--update` carries decisions over, re-measures, and a new name stays without a tier.
     frueher = json.loads(json.dumps(voll))
     methode = sorted(frueher["TinySesam"])[0]
@@ -502,15 +502,15 @@ def selbstpruefung_stufen(jetzt: dict) -> None:
     assert neu["TinySesam"][methode] == {"sig": jetzt["TinySesam"][methode], "stufe": "B",
                                          "ersatz": "neu_name"}, neu["TinySesam"][methode]
     assert "fort_seit_langem" not in neu["TinySesam"]
-    assert ohne_stufe(neu) == [f"TinySesam.{sorted(jetzt['TinySesam'])[1]}: keine Stufe",
-                               f"exporte.{sorted(jetzt['exporte'])[0]}: keine Stufe"], ohne_stufe(neu)
+    assert ohne_stufe(neu) == [f"TinySesam.{sorted(jetzt['TinySesam'])[1]}: no tier",
+                               f"exporte.{sorted(jetzt['exporte'])[0]}: no tier"], ohne_stufe(neu)
     # 4. The baseline leads back to the measurement losslessly — otherwise `beurteile` would compare apples.
     assert messung(neu) == jetzt
     # 5. A break names the tier of the name.
     weg = json.loads(json.dumps(jetzt))
     del weg["TinySesam"][methode]
     brueche, _ = beurteile(jetzt, weg, stufen_aus(neu))
-    assert brueche and brueche[0].startswith(f"[B] TinySesam.{methode} ist fort"), brueche
+    assert brueche and brueche[0].startswith(f"[B] TinySesam.{methode} is gone"), brueche
     # 6. The normal run — the same function `main()` executes — is red as soon as ONE name
     #    has no tier, even if nothing about the measurement changed.
     rot, fehlt, b, e = vergleiche(voll, jetzt)
@@ -518,7 +518,7 @@ def selbstpruefung_stufen(jetzt: dict) -> None:
     luecke = json.loads(json.dumps(voll))
     del luecke["TinySesam.eigenschaften"]["csrf_cookie_name"]["stufe"]
     rot, fehlt, b, e = vergleiche(luecke, jetzt)
-    assert rot and fehlt == ["TinySesam.eigenschaften.csrf_cookie_name: keine Stufe"] \
+    assert rot and fehlt == ["TinySesam.eigenschaften.csrf_cookie_name: no tier"] \
         and not b and not e, (rot, fehlt, b, e)
     ok(f"Tier requirement works ({gesamt} names): missing and unknown tier reported, "
        "`--update` assigns none")
@@ -569,28 +569,28 @@ def _warnt(klasse, name: str, alias: Deprecated) -> list:
             probe.__dict__[alias.ziel] = lambda *a, **k: (erhalten.append((a, k)), zeichen)[1]
             fn = getattr(probe, name)
             if gewarnt:
-                fehler.append("warnt schon beim Nachschlagen (hasattr, getmembers) statt beim Aufruf")
+                fehler.append("warns already on lookup (hasattr, getmembers) instead of on call")
                 del gewarnt[:]
             ergebnis = fn(1, zwei=2)
             if ergebnis is not zeichen or erhalten != [((1,), {"zwei": 2})]:
-                fehler.append(f"reicht nicht unverändert an {alias.ziel} weiter "
-                              f"(erhalten {erhalten!r})")
+                fehler.append(f"does not pass through unchanged to {alias.ziel} "
+                              f"(received {erhalten!r})")
         else:
             ergebnis = getattr(klasse, name)
             if ergebnis is not vars(klasse)[alias.ziel]:
-                fehler.append(f"liefert nicht den Wert von {alias.ziel}")
+                fehler.append(f"does not return the value of {alias.ziel}")
     if len(gewarnt) != 1:
-        fehler.append(f"löst {len(gewarnt)} Warnungen aus statt genau einer")
+        fehler.append(f"raises {len(gewarnt)} warnings instead of exactly one")
     for w in gewarnt[:1]:
         text = str(w.message)
         if w.category is not DeprecationWarning:
-            fehler.append(f"warnt als {w.category.__name__}, nicht als DeprecationWarning")
+            fehler.append(f"warns as {w.category.__name__}, not as DeprecationWarning")
         if os.path.abspath(w.filename) != os.path.abspath(__file__):
-            fehler.append(f"die Warnung zeigt auf {os.path.basename(w.filename)} statt auf den "
-                          "Aufrufer (stacklevel)")
-        for teil in (f"{klasse.__name__}.{name} ", f"fällt mit {BIS} weg", alias.ersatz):
+            fehler.append(f"the warning points to {os.path.basename(w.filename)} instead of to the "
+                          "caller (stacklevel)")
+        for teil in (f"{klasse.__name__}.{name} ", f"goes away with {BIS}", alias.ersatz):
             if teil not in text:
-                fehler.append(f"die Meldung nennt {teil!r} nicht: {text!r}")
+                fehler.append(f"the message does not name {teil!r}: {text!r}")
     return [f"TinySesam{'' if alias.methode else '.konstanten'}.{name}: Alias {f}" for f in fehler]
 
 
@@ -611,22 +611,22 @@ def _zuweisung(klasse, name: str, alias: Deprecated) -> list:
             gelesen = probe.__dict__.get(name, None) is fake and getattr(probe, name) is fake
             delattr(probe, name)
         except Exception as e:                     # noqa: BLE001 — every exception is a finding
-            return [f"TinySesam.{name}: Alias: Zuweisung am Objekt wirft {type(e).__name__}: {e}"]
+            return [f"TinySesam.{name}: Alias: assignment on the object raises {type(e).__name__}: {e}"]
     if [w.category for w in gewarnt] != [RuntimeWarning]:
-        fehler.append(f"Zuweisung am Objekt löst {[w.category.__name__ for w in gewarnt]} aus "
-                      "statt genau einer RuntimeWarning")
+        fehler.append(f"assignment on the object raises {[w.category.__name__ for w in gewarnt]} "
+                      "instead of exactly one RuntimeWarning")
     else:
         text = str(gewarnt[0].message)
         if f"`{alias.ziel}`" not in text:
-            fehler.append(f"die Warnung bei einer Zuweisung nennt das Ziel `{alias.ziel}` nicht: "
+            fehler.append(f"the warning on an assignment does not name the target `{alias.ziel}`: "
                           f"{text!r}")
         if os.path.abspath(gewarnt[0].filename) != os.path.abspath(__file__):
-            fehler.append(f"die Warnung bei einer Zuweisung zeigt auf "
-                          f"{os.path.basename(gewarnt[0].filename)} statt auf die Zuweisung")
+            fehler.append(f"the warning on an assignment points to "
+                          f"{os.path.basename(gewarnt[0].filename)} instead of to the assignment")
     if not gelesen:
-        fehler.append("liefert nach einer Zuweisung am Objekt nicht den gesetzten Wert")
+        fehler.append("does not return the assigned value after an assignment on the object")
     if name in probe.__dict__:
-        fehler.append("`del` lässt den am Objekt gesetzten Wert stehen")
+        fehler.append("`del` leaves the value set on the object in place")
     art = "" if alias.methode else ".konstanten"
     return [f"TinySesam{art}.{name}: Alias {f}" for f in fehler]
 
@@ -639,37 +639,37 @@ def alias_befunde(datei: dict, klasse=TinySesam) -> list:
     c = c_eintraege(datei)
     for (bereich, name), e in sorted(c.items()):
         if bereich not in C_BEREICHE:
-            befunde.append(f"{bereich}.{name}: Stufe C gibt es nur für Methoden und Konstanten "
-                           "der Klasse — dort als Alias")
+            befunde.append(f"{bereich}.{name}: tier C exists only for methods and constants "
+                           "of the class — there as an alias")
             continue
         alias = inspect.getattr_static(klasse, name, None)
         if not isinstance(alias, Deprecated):
-            art = "fehlt in der Klasse" if alias is None else "hat eine eigene Implementierung"
-            befunde.append(f"{bereich}.{name}: Stufe C, {art} — die Implementierung heisst "
-                           f"`_{name}`, der alte Name wird `Deprecated(\"_{name}\", \"<Ersatz>\")`")
+            art = "is missing in the class" if alias is None else "has its own implementation"
+            befunde.append(f"{bereich}.{name}: tier C, {art} — the implementation is called "
+                           f"`_{name}`, the old name becomes `Deprecated(\"_{name}\", \"<Ersatz>\")`")
             continue
         if alias.methode != C_BEREICHE[bereich]:
-            befunde.append(f"{bereich}.{name}: der Alias zeigt auf "
-                           f"{'eine Methode' if alias.methode else 'eine Konstante'}")
+            befunde.append(f"{bereich}.{name}: the alias points to "
+                           f"{'a method' if alias.methode else 'a constant'}")
         if e.get("ziel") != alias.ziel:
-            befunde.append(f"{bereich}.{name}: die Ablage nennt `ziel` {e.get('ziel')!r}, der "
-                           f"Alias zeigt auf {alias.ziel!r}")
+            befunde.append(f"{bereich}.{name}: the baseline names `ziel` {e.get('ziel')!r}, the "
+                           f"alias points to {alias.ziel!r}")
         ziel = inspect.getattr_static(klasse, alias.ziel, None)
         if ziel is None or isinstance(ziel, Deprecated):
-            befunde.append(f"{bereich}.{name}: das Ziel {alias.ziel!r} ist keine Implementierung")
+            befunde.append(f"{bereich}.{name}: the target {alias.ziel!r} is not an implementation")
         elif alias.ziel != f"_{name}" and stufe.get((bereich, alias.ziel)) != "A":
-            befunde.append(f"{bereich}.{name}: zeigt auf {alias.ziel!r} — erlaubt ist `_{name}` "
-                           "oder ein Name der Stufe A (so `complete_mfa` → `complete_totp`)")
+            befunde.append(f"{bereich}.{name}: points to {alias.ziel!r} — allowed is `_{name}` "
+                           "or a name of tier A (e.g. `complete_mfa` → `complete_totp`)")
         if not e.get("seit") or e.get("bis") != alias.bis:
-            befunde.append(f"{bereich}.{name}: `seit`/`bis` fehlen oder passen nicht zum Alias "
-                           f"(Ablage {e.get('seit')!r}/{e.get('bis')!r}, Alias bis {alias.bis})")
+            befunde.append(f"{bereich}.{name}: `seit`/`bis` are missing or do not match the alias "
+                           f"(baseline {e.get('seit')!r}/{e.get('bis')!r}, alias until {alias.bis})")
         befunde += _warnt(klasse, name, alias) + _zuweisung(klasse, name, alias)
     for name, alias in sorted(vars(klasse).items()):
         if isinstance(alias, Deprecated):
             bereich = "TinySesam" if alias.methode else "TinySesam.konstanten"
             if (bereich, name) not in c:
-                befunde.append(f"{bereich}.{name}: ist in der Klasse ein Alias (Deprecated), in der "
-                               "Ablage aber nicht Stufe C")
+                befunde.append(f"{bereich}.{name}: is an alias (Deprecated) in the class, but in the "
+                               "baseline not tier C")
     return befunde
 
 
@@ -679,11 +679,11 @@ def alte_namen_im_text(text: str, ziele: dict, zeichenketten: bool) -> list:
     treffer = []
     for k in ast.walk(ast.parse(text)):
         if isinstance(k, ast.Attribute) and k.attr in ziele:
-            treffer.append((k.lineno, f"`.{k.attr}` ist der alte Name — `.{ziele[k.attr]}` nehmen"))
+            treffer.append((k.lineno, f"`.{k.attr}` is the old name — use `.{ziele[k.attr]}`"))
         elif (zeichenketten and isinstance(k, ast.Constant) and isinstance(k.value, str)
               and k.value in ziele):
-            treffer.append((k.lineno, f"Zeichenkette {k.value!r} — getattr/setattr auf den alten "
-                                      f"Namen? `{ziele[k.value]}` nehmen"))
+            treffer.append((k.lineno, f"string {k.value!r} — getattr/setattr on the old "
+                                      f"name? use `{ziele[k.value]}`"))
     return sorted(treffer)
 
 
@@ -723,8 +723,8 @@ def _version(text: str) -> tuple:
 
 def frist_befunde(datei: dict, version: str) -> list:
     """With 1.0 the aliases fall — if one is still there, that is red, not forgotten."""
-    return [f"{bereich}.{name}: der Alias hätte mit {e.get('bis', BIS)} fallen müssen "
-            f"(Version {version}) — Alias und Eintrag entfernen, CHANGELOG „Removed“"
+    return [f"{bereich}.{name}: the alias should have fallen with {e.get('bis', BIS)} "
+            f"(version {version}) — remove alias and entry, CHANGELOG Removed"
             for (bereich, name), e in sorted(c_eintraege(datei).items())
             if _version(version) >= _version(e.get("bis", BIS))]
 
@@ -769,27 +769,27 @@ def seit_befunde(datei: dict, changelog: str) -> list:
     abschnitte = changelog_veraltet(changelog)
     releases = [kopf for kopf, _ in abschnitte if kopf != OFFEN and kopf[:1].isdigit()]
     if not releases:
-        return ["CHANGELOG.md: kein Release-Abschnitt `## [X.Y.Z]` gefunden — `seit` der Aliase "
-                "lässt sich nicht prüfen"]
+        return ["CHANGELOG.md: no release section `## [X.Y.Z]` found — the `seit` of the aliases "
+                "cannot be checked"]
     juengstes = max(releases, key=_version)
     befunde = []
     for (bereich, name), e in sorted(c_eintraege(datei).items()):
         seit = str(e.get("seit") or "")
         wo = [kopf for kopf, namen in abschnitte if name in namen]
         if not wo:
-            befunde.append(f"{bereich}.{name}: CHANGELOG nennt den Alias in keinem Abschnitt unter "
-                           f"„Deprecated“ — dort gehört er hin, mit Ersatz (`seit` {seit!r})")
+            befunde.append(f"{bereich}.{name}: CHANGELOG lists the alias in no section under "
+                           f"Deprecated — it belongs there, with replacement (`seit` {seit!r})")
             continue
         einfuehrung = wo[-1]                   # the oldest section that names it
         if einfuehrung == OFFEN:
             if _version(seit) <= _version(juengstes):
                 befunde.append(
-                    f"{bereich}.{name}: `seit` {seit!r}, aber der Alias steht erst unter "
-                    f"[{OFFEN}] — {juengstes} ist schon veröffentlicht und kannte ihn nicht; "
-                    f"`seit` auf das nächste Release setzen (grösser als {juengstes})")
+                    f"{bereich}.{name}: `seit` {seit!r}, but the alias is only under "
+                    f"[{OFFEN}] — {juengstes} is already published and did not know it; "
+                    f"set `seit` to the next release (greater than {juengstes})")
         elif _version(seit) != _version(einfuehrung):
-            befunde.append(f"{bereich}.{name}: `seit` {seit!r}, eingeführt hat den Alias aber "
-                           f"[{einfuehrung}] (CHANGELOG, „Deprecated“)")
+            befunde.append(f"{bereich}.{name}: `seit` {seit!r}, but the alias was introduced by "
+                           f"[{einfuehrung}] (CHANGELOG, Deprecated)")
     return befunde
 
 
@@ -892,8 +892,8 @@ def selbstpruefung_c() -> None:
 
     def klasse(alias_typ=Deprecated, echt_f=False):
         ns = {"_f": lambda self, *a, **k: ("f", a, k), "_K": (1, 2),
-              "g": lambda self: None, "K": alias_typ("_K", "ohne Ersatz, intern")}
-        ns["f"] = (lambda self: None) if echt_f else alias_typ("_f", "stattdessen `g`")
+              "g": lambda self: None, "K": alias_typ("_K", "no replacement; internal")}
+        ns["f"] = (lambda self: None) if echt_f else alias_typ("_f", "use `g` instead")
         return type("TinySesam", (), ns)
 
     def ablage(**zusatz):
@@ -957,23 +957,23 @@ def selbstpruefung_c() -> None:
             obj.__dict__[self.name] = wert
 
     rot(alias_befunde(ablage(), klasse(StilleZuweisung)),
-        "TinySesam.f: Alias Zuweisung am Objekt löst [] aus")
-    rot(alias_befunde(ablage(), klasse(Falsch)), "nennt das Ziel `_f` nicht")
-    rot(alias_befunde(ablage(), klasse(Anderswo)), "zeigt auf anderswo.py statt auf die Zuweisung")
-    rot(alias_befunde(ablage(), klasse(Stumm)), "löst 0 Warnungen aus")
-    rot(alias_befunde(ablage(), klasse(Tief)), "statt auf den Aufrufer")
-    rot(alias_befunde(ablage(), klasse(Verschluckt)), "reicht nicht unverändert")
-    rot(alias_befunde(ablage(), klasse(echt_f=True)), "TinySesam.f: Stufe C, hat eine eigene")
-    rot(alias_befunde(ablage(m__f__stufe="A"), klasse()), "in der Ablage aber nicht Stufe C")
-    rot(alias_befunde(ablage(m__f__ziel="_g"), klasse()), "die Ablage nennt `ziel` '_g'")
-    rot(alias_befunde(ablage(m__f__bis=None), klasse()), "`seit`/`bis` fehlen")
-    rot(alias_befunde(ablage(x__Neu__stufe="C"), klasse()), "exporte.Neu: Stufe C gibt es nur")
-    rot(alias_befunde(ablage(m__h__ziel="_h"), klasse()), "TinySesam.h: Stufe C, fehlt")
+        "TinySesam.f: Alias assignment on the object raises []")
+    rot(alias_befunde(ablage(), klasse(Falsch)), "does not name the target `_f`")
+    rot(alias_befunde(ablage(), klasse(Anderswo)), "points to anderswo.py instead of to the assignment")
+    rot(alias_befunde(ablage(), klasse(Stumm)), "raises 0 warnings")
+    rot(alias_befunde(ablage(), klasse(Tief)), "instead of to the caller")
+    rot(alias_befunde(ablage(), klasse(Verschluckt)), "does not pass through unchanged")
+    rot(alias_befunde(ablage(), klasse(echt_f=True)), "TinySesam.f: tier C, has its own")
+    rot(alias_befunde(ablage(m__f__stufe="A"), klasse()), "in the baseline not tier C")
+    rot(alias_befunde(ablage(m__f__ziel="_g"), klasse()), "the baseline names `ziel` '_g'")
+    rot(alias_befunde(ablage(m__f__bis=None), klasse()), "`seit`/`bis` are missing")
+    rot(alias_befunde(ablage(x__Neu__stufe="C"), klasse()), "exporte.Neu: tier C exists only")
+    rot(alias_befunde(ablage(m__h__ziel="_h"), klasse()), "TinySesam.h: tier C, is missing")
     umgelenkt = type("TinySesam", (), {"_f": lambda self: None, "g": lambda self: None,
                                         "_K": 1, "K": Deprecated("_K", "x"),
-                                        "f": Deprecated("g", "stattdessen `g`")})
+                                        "f": Deprecated("g", "use `g` instead")})
     assert alias_befunde(ablage(m__f__ziel="g"), umgelenkt) == [], "target of tier A is allowed"
-    rot(alias_befunde(ablage(m__f__ziel="g", m__g__stufe="B"), umgelenkt), "erlaubt ist `_f`")
+    rot(alias_befunde(ablage(m__f__ziel="g", m__g__stufe="B"), umgelenkt), "allowed is `_f`")
     # Internal calls: AST over a probe repo — attribute everywhere, string only in the package.
     probe = tempfile.mkdtemp(prefix="tinysesam-c-")
     for rel, text in (("tinysesam/m.py", "auth.f(1)\nauth._f(2)\ngetattr(auth, 'f')\n# auth.f\n"),
@@ -992,28 +992,28 @@ def selbstpruefung_c() -> None:
     # introduces it; in the open section `seit` is greater than the latest release, otherwise exactly that one.
     def changelog(offen="", release=""):
         return ("# Changelog\n\n## [Unreleased]\n\n### Deprecated\n\n" + offen + "\n\n"
-                "## [0.21.0] — 2026-09-27\n\n### Changed\n\n- `f` und `K` zählen hier nicht\n\n"
+                "## [0.21.0] — 2026-09-27\n\n### Changed\n\n- `f` and `K` do not count here\n\n"
                 "### Deprecated\n\n" + release + "\n\n## [0.20.1] — 2026-09-24\n")
     beide = "- `f` → `_f`, `K` → `_K`"
     neu = ablage(m__f__seit="0.22.0", k__K__seit="0.21.1")
     assert seit_befunde(neu, changelog(offen=beide)) == [], seit_befunde(neu, changelog(offen=beide))
     rot(seit_befunde(ablage(m__f__seit="0.21.0"), changelog(offen=beide)),
-        "TinySesam.f: `seit` '0.21.0', aber der Alias steht erst unter [Unreleased]")
+        "TinySesam.f: `seit` '0.21.0', but the alias is only under [Unreleased]")
     rot(seit_befunde(ablage(k__K__seit="0.19.0"), changelog(offen=beide)),
-        "TinySesam.konstanten.K: `seit` '0.19.0', aber")
+        "TinySesam.konstanten.K: `seit` '0.19.0', but")
     alt = ablage(m__f__seit="0.21.0", k__K__seit="0.21.0")
     assert seit_befunde(alt, changelog(release=beide)) == []
     assert seit_befunde(alt, changelog(offen=beide, release=beide)) == [], "the oldest counts"
     rot(seit_befunde(ablage(m__f__seit="0.22.0"), changelog(release=beide)),
-        "TinySesam.f: `seit` '0.22.0', eingeführt hat den Alias aber [0.21.0]")
-    rot(seit_befunde(ablage(), changelog(offen="- `K` → `_K`")), "TinySesam.f: CHANGELOG nennt")
-    rot(seit_befunde(ablage(), "# Changelog\n\n## [Unreleased]\n"), "kein Release-Abschnitt")
+        "TinySesam.f: `seit` '0.22.0', but the alias was introduced by [0.21.0]")
+    rot(seit_befunde(ablage(), changelog(offen="- `K` → `_K`")), "TinySesam.f: CHANGELOG lists")
+    rot(seit_befunde(ablage(), "# Changelog\n\n## [Unreleased]\n"), "no release section")
     # The normal run goes through the same function and sees all four kinds.
     befunde, _ = c_befunde(ablage(m__f__seit="0.21.0", k__K__seit="0.22.0"), klasse(Stumm),
                            "1.0.0", probe, changelog(offen=beide))
     import shutil
     shutil.rmtree(probe, ignore_errors=True)
-    for art in ("löst 0 Warnungen", "tinysesam/m.py:1", "fallen müssen", "kannte ihn nicht"):
+    for art in ("raises 0 warnings", "tinysesam/m.py:1", "should have fallen", "did not know it"):
         rot(befunde, art)
     ok("Tier-C rules trigger: silent alias, wrong stacklevel, swallowed arguments, "
        "silent assignment on the object, own implementation, baseline ≠ class, wrong target, "
@@ -1150,14 +1150,14 @@ def pruefe_namen(datei: dict, klasse=TinySesam, paket=_paket, pflicht=NAMEN_PFLI
     """(findings, count) — the whole name check of the normal run, with minimum count. The same
     function checks the self-probe; a check that existed only there would run into the void in the run."""
     namen = oberflaeche_namen(datei, klasse=klasse, paket=paket)
-    fehlt = [f"{wo}: {name!r} wird nicht gemessen — Messung kaputt?"
+    fehlt = [f"{wo}: {name!r} is not measured — measurement broken?"
              for wo, name in pflicht if (wo, name) not in namen]
     parameter = sum(1 for wo, _ in namen if wo.endswith("()"))
     felder = sum(1 for wo, _ in namen if wo == "TinySesamConfig.felder")
     # As of 0.22.0: 596 entries, of which 278 parameters and 159 fields — with headroom downwards.
     if len(namen) < mindestens[0] or parameter < mindestens[1] or felder < mindestens[2]:
-        fehlt.append(f"zu wenig gemessen: {len(namen)} Namen, {parameter} Parameter, {felder} "
-                     f"Felder (erwartet mindestens {'/'.join(map(str, mindestens))})")
+        fehlt.append(f"too little measured: {len(namen)} names, {parameter} parameters, {felder} "
+                     f"fields (expected at least {'/'.join(map(str, mindestens))})")
     return fehlt + namens_befunde(namen), len(namen)
 
 
@@ -1237,8 +1237,8 @@ def selbstpruefung_namen() -> None:
     # … and the minimum count triggers when a kind is missing or too little is measured.
     befunde, _ = pruefe_namen(ablage, klasse=Probe, paket=probe_paket,
                               pflicht=(("ProbeError()", "message"),), mindestens=(zahl + 1, 0, 0))
-    assert len(befunde) == 6 and "'message' wird nicht gemessen" in befunde[0] \
-        and "zu wenig gemessen" in befunde[1], befunde
+    assert len(befunde) == 6 and "'message' is not measured" in befunde[0] \
+        and "too little measured" in befunde[1], befunde
     # Wired up: The normal run calls exactly this function — a check that would only
     # exist here would stay silent in the run.
     gerufen = {k.func.id for k in ast.walk(ast.parse(inspect.getsource(main)))
@@ -1558,10 +1558,10 @@ def pruefe_werte(datei: dict, klasse=TinySesam, quellen: "dict | None" = None,
     paare = (werte_der_probe(klasse) + werte_der_konstanten(datei)
              + werte_im_code(_quellen() if quellen is None else quellen))
     gesehen = set(paare)
-    fehlt = [f"{wo}: {wert!r} wird nicht gemessen — Probe oder Messung kaputt?"
+    fehlt = [f"{wo}: {wert!r} is not measured — probe or measurement broken?"
              for wo, wert in pflicht if (wo, wert) not in gesehen]
     if len(paare) < mindestens:
-        fehlt.append(f"zu wenig gemessen: {len(paare)} Schlüssel und Werte (erwartet mindestens "
+        fehlt.append(f"too little measured: {len(paare)} keys and values (expected at least "
                      f"{mindestens})")
     return fehlt + wert_befunde(sorted(gesehen)), len(paare)
 
@@ -1588,9 +1588,9 @@ def selbstpruefung_werte() -> None:
               "templates.py": 'def _p(auth, ctx):\n    return ctx.get("praefix") + ctx["alt"]\n'}
     funde = sorted({w for _, w in werte_im_code(quelle) if wert_befunde([("", w)])})
     assert funde == ["alt", "anzahl", "gebunden", "kennung", "praefix", "zweck"], funde
-    befunde, _ = pruefe_werte({}, quellen={}, pflicht=(("gc()", "gibt-es-nicht"),),
+    befunde, _ = pruefe_werte({}, quellen={}, pflicht=(("gc()", "does-not-exist"),),
                               mindestens=10 ** 6)
-    assert "'gibt-es-nicht' wird nicht gemessen" in befunde[0] and "zu wenig gemessen" in befunde[1], \
+    assert "'does-not-exist' is not measured" in befunde[0] and "too little measured" in befunde[1], \
         befunde[:2]
     gerufen = {k.func.id for k in ast.walk(ast.parse(inspect.getsource(main)))
                if isinstance(k, ast.Call) and isinstance(k.func, ast.Name)}

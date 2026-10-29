@@ -22,7 +22,7 @@ sys.path.insert(0, str(ROOT / "tests"))
 from tinysesam import TinySesamConfig  # noqa: E402
 from _kit.report import Report  # noqa: E402
 
-r = Report("Kern-Install — was ohne Extras gehen muss")
+r = Report("Core install — what must work without extras")
 
 # Which switch needs which extra — from the CODE, not as a copy. A table here
 # would silently go stale with the next new method and the test would be green without checking it.
@@ -193,8 +193,8 @@ lauf = subprocess.run([sys.executable, "-m", "tinysesam.gateway", "--help"],
 r.check("`python -m tinysesam.gateway --help` exits with 0", lauf.returncode == 0,
         f"Exit {lauf.returncode}: {(lauf.stderr or lauf.stdout)[:100]}")
 r.check("...and prints help instead of starting a server",
-        "TINYSESAM_OIDC_ISSUER" in lauf.stdout and "0.0.0.0" not in lauf.stdout.split("Bindeadresse")[0],
-        f"Ausgabe: {lauf.stdout[:120]!r}")
+        "TINYSESAM_OIDC_ISSUER" in lauf.stdout and "0.0.0.0" not in lauf.stdout.split("bind address")[0],
+        f"Output: {lauf.stdout[:120]!r}")
 
 fehl = subprocess.run([sys.executable, "-m", "tinysesam.gateway", "--quatsch"],
                       cwd=ROOT, capture_output=True, text=True, timeout=30)

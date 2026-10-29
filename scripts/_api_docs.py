@@ -211,9 +211,9 @@ def ergebnistyp_abschnitt(typ, titel, stufe_von) -> str:
     methoden = [(n, f) for n, f in inspect.getmembers(typ, inspect.isfunction)
                 if not n.startswith("_") and stufe_von(n) == "A"]
     for f in felder:
-        assert notiz.get(f.name), f"{name}.{f.name} ohne `#:`-Erklärung — Zusage ins Blaue"
+        assert notiz.get(f.name), f"{name}.{f.name} without a `#:` explanation — a promise made blind"
     von = liefern(typ)
-    assert von, f"keine Methode von TinySesam liefert {name} — Abschnitt ohne Baustein"
+    assert von, f"no method of TinySesam returns {name} — section without a building block"
     token = (" The session token is deliberately not a field — `set_cookie()` and `redirect()` set it."
              if hasattr(typ, "set_cookie") else "")
     teile = [f"## A · {titel}: `tinysesam.{name}`\n\n{erster_satz(typ)} "
@@ -284,10 +284,10 @@ def bauen() -> str:
 
     for name in UNGEDROSSELT:
         assert von("TinySesam", name) == "C", (
-            f"{name} ist nicht mehr Stufe C — den Warnsatz in scripts/_api_docs.py anpassen")
+            f"{name} is no longer tier C — adjust the warning sentence in scripts/_api_docs.py")
     for name in BAUSTEINE + WEITERE_BAUSTEINE:
         assert von("TinySesam", name) == "A", (
-            f"{name} ist nicht Stufe A — der Warnsatz zu C nennt ihn als sicheren Weg")
+            f"{name} is not tier A — the warning sentence for C names it as the safe way")
 
     teile = [KOPF]
     for s, (titel, was, zusage) in STUFEN.items():
@@ -393,7 +393,7 @@ def bauen() -> str:
             alias = aliase.get(n)
             art = "Constant" if b == "TinySesam.konstanten" else "Method"
             ersatz = alias.ersatz if alias else "— (no alias: guard red)"
-            ersatz = ersatz.removeprefix("stattdessen ").replace("|", "\\|")
+            ersatz = ersatz.replace("|", "\\|")
             teile.append(f"| `{n}` | {art} | {ersatz[:1].upper()}{ersatz[1:]} |\n")
         teile.append("\n")
 
@@ -415,11 +415,11 @@ def main() -> int:
     alt = ZIEL.read_text(encoding="utf-8") if ZIEL.exists() else ""
     if "--dry-run" in sys.argv:
         if alt != neu:
-            print(f"{ZIEL.name} ist veraltet — `python3 scripts/_api_docs.py` fahren", file=sys.stderr)
+            print(f"{ZIEL.name} is out of date — run `python3 scripts/_api_docs.py`", file=sys.stderr)
             return 1
         return 0
     ZIEL.write_text(neu, encoding="utf-8")
-    print(f"geschrieben: {ZIEL.name}")
+    print(f"written: {ZIEL.name}")
     return 0
 
 

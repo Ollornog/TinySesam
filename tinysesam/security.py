@@ -220,7 +220,7 @@ def attach_security_log(path: str) -> bool:
         # `copytruncate` is the way.)
         h = _SicherheitsLogHandler(path, encoding="utf-8")
     except OSError as e:
-        seclog.warning("security_log %s nicht schreibbar (%s) — fail2ban bekommt nichts zu lesen.",
+        seclog.warning("security_log %s not writable (%s) — fail2ban gets nothing to read.",
                        path, e)
         return False
     h.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
@@ -245,8 +245,8 @@ def attach_security_log(path: str) -> bool:
             modus = 0
         if modus & 0o007:
             seclog.warning(
-                "security_log %s ist welt-lesbar (%o). Darin stehen Benutzernamen und "
-                "IP-Adressen. Enger stellen: chmod 640 %s", path, modus, path)
+                "security_log %s is world-readable (%o). It contains usernames and "
+                "IP addresses. Tighten it: chmod 640 %s", path, modus, path)
     return True
 
 
@@ -320,22 +320,22 @@ def pruefe_haertung(key: str, value) -> int:
     One place for panel, `set_security()` and reading from the database: two versions of the
     bounds would otherwise drift apart, and the weaker one would decide."""
     if key not in SECURITY_DEFAULTS:
-        raise ValueError(f"{key!r} ist keine Härtungs-Schwelle. Bekannt sind: "
+        raise ValueError(f"{key!r} is not a hardening threshold. Known ones are: "
                          f"{', '.join(sorted(SECURITY_DEFAULTS))}")
     # bool is an int in Python — `True` as "1 attempt" would be a silent typo.
     if isinstance(value, bool):
-        raise ValueError(f"{key}: {value!r} ist keine Zahl")
+        raise ValueError(f"{key}: {value!r} is not a number")
     try:
         zahl = int(value)
     except (TypeError, ValueError, OverflowError):
         # OverflowError: `int(float("inf"))` — Starlette's JSON accepts the literal `Infinity`,
         # and without this case it became a 500 instead of a 400 (A4).
-        raise ValueError(f"{key}: {value!r} ist keine ganze Zahl") from None
+        raise ValueError(f"{key}: {value!r} is not an integer") from None
     if isinstance(value, float) and value != zahl:
-        raise ValueError(f"{key}: {value!r} ist keine ganze Zahl")
+        raise ValueError(f"{key}: {value!r} is not an integer")
     unten, oben = SECURITY_GRENZEN[key]
     if not unten <= zahl <= oben:
-        raise ValueError(f"{key}={zahl} liegt ausserhalb von {unten}…{oben}")
+        raise ValueError(f"{key}={zahl} is outside {unten}…{oben}")
     return zahl
 
 
@@ -377,8 +377,8 @@ def haertung_lesen(store, key: str) -> int:
         wert = klemme_haertung(key, v)
         if einmal_melden("sec:" + key):
             seclog.warning(
-                "Härtungs-Wert in der Datenbank ungültig (%s) — es gilt %s. Der Wert lässt "
-                "sich im Admin-Panel bestätigen oder ändern.", e, wert)
+                "Hardening value in the database invalid (%s) — %s applies. The value can "
+                "be confirmed or changed in the admin panel.", e, wert)
         return wert
 
 # Methods from `login_attempt` that are NOT a sign-in attempt and therefore must not count into
@@ -656,10 +656,10 @@ def einmal_melden(schluessel: str, jetzt: float | None = None) -> bool:
             # Directly and not via `einmal_melden()` — otherwise the message about the
             # cap would run into the same cap. Exactly one line per window.
             seclog.warning(
-                "Hinweis-Deckel erreicht: %d verschiedene Schlüssel in diesem Fenster (%d s). "
-                "Weitere Hinweise dieser Art bleiben bis zum Fensterwechsel aus. Wer den "
-                "Host-Header durchprobiert, erzeugt genau dieses Bild — steht base_url, ist "
-                "der Host-Header ohnehin ohne Wirkung.",
+                "Notice cap reached: %d distinct keys in this window (%d s). "
+                "Further notices of this kind are suppressed until the window changes. Whoever "
+                "probes the Host header produces exactly this picture — if base_url is set, "
+                "the Host header has no effect anyway.",
                 _GEMELDET_MAX, _GEMELDET_FENSTER_SEK)
         return False
     _GEMELDET.add(schluessel)
@@ -698,27 +698,27 @@ def client_ip(request, trusted_nets) -> str:
                     return norm
                 if einmal_melden("xff-ungueltig:" + peer):
                     seclog.warning(
-                        "X-Forwarded-For von %s nennt keine gültige Adresse (%s) — es bleibt bei "
-                        "der Peer-IP. Reicht der Proxy den Header des Clients nur durch, statt "
-                        "anzuhängen?", peer, fuer_log(ip))
+                        "X-Forwarded-For from %s names no valid address (%s) — the peer IP "
+                        "is kept. Does the proxy only pass the client's header through instead of "
+                        "appending?", peer, fuer_log(ip))
                 return peer
     if xff and peer not in _GEMELDETE_PEERS:
         _GEMELDETE_PEERS.add(peer)
         if not is_trusted(peer, trusted_nets):
             seclog.warning(
-                "X-Forwarded-For von %s wird ignoriert: Der Peer steht nicht in trusted_proxies "
-                "(%s). Alle Nutzer erscheinen jetzt unter dieser einen IP — Rate-Limit und "
-                "IP-Sperre wirken kollektiv. Im Container ist der Proxy KEIN 127.0.0.1: das "
-                "Netz des Proxys eintragen, z.B. trusted_proxies=['172.28.0.0/16'].",
+                "X-Forwarded-For from %s is ignored: the peer is not in trusted_proxies "
+                "(%s). All users now appear under this one IP — rate limit and "
+                "IP lockout act collectively. In a container the proxy is NOT 127.0.0.1: "
+                "enter the proxy's network, e.g. trusted_proxies=['172.28.0.0/16'].",
                 peer, list(trusted_nets or []))
         else:
             # Peer trusted, but NO non-trusted address found in XFF — that
             # is the case `trusted_proxies=['0.0.0.0/0']`: if every address counts as a proxy,
             # none remains as client, and XFF is ineffective instead of generous.
             seclog.warning(
-                "X-Forwarded-For (%s) enthält keine Adresse ausserhalb von trusted_proxies (%s) "
-                "— es bleibt bei der Peer-IP %s. Ein Eintrag wie 0.0.0.0/0 entwertet XFF, statt "
-                "ihm zu vertrauen: Nur das Netz des eigenen Proxys eintragen.",
+                "X-Forwarded-For (%s) contains no address outside trusted_proxies (%s) "
+                "— the peer IP %s is kept. An entry like 0.0.0.0/0 devalues XFF instead of "
+                "trusting it: enter only the network of your own proxy.",
                 fuer_log(xff), list(trusted_nets or []), peer)
     return peer
 
@@ -799,8 +799,8 @@ class RedisRateLimiter:
         self._pause_bis = time.time() + self.pause_sec
         if not self._gestoert:
             self._gestoert = True
-            seclog.warning("Redis-Rate-Limit nicht erreichbar (%s) — es zählt jetzt jeder Prozess "
-                           "für sich weiter, bis Redis wieder antwortet.", fehler)
+            seclog.warning("Redis rate limit unreachable (%s) — every process now counts "
+                           "on its own until Redis answers again.", fehler)
 
     def allow(self, key: str, max_requests: int, window_sec: int) -> bool:
         if not hasattr(self, "ersatz"):
@@ -819,5 +819,5 @@ class RedisRateLimiter:
             return self.ersatz.allow(key, max_requests, window_sec)
         if self._gestoert:
             self._gestoert = False
-            seclog.warning("Redis-Rate-Limit wieder erreichbar — es zählt wieder über alle Prozesse.")
+            seclog.warning("Redis rate limit reachable again — counting across all processes again.")
         return int(count) <= max_requests

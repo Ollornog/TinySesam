@@ -45,14 +45,14 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
         with:
           python-version: ${{ matrix.python-version }}
-      - name: Systempaket für SAML (xmlsec)
+      - name: System package for SAML (xmlsec)
         run: sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update && sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y libxmlsec1-dev pkg-config
-      - name: Install (alle Extras)
+      - name: Install (all extras)
         run: pip install -e '.[all]' setuptools wheel mypy
       # xmlsec has no wheel for every Python series (3.15: none). Then it builds against the system's libxml2,
       # but the lxml wheel ships its own — `import xmlsec` fails with "lxml & xmlsec libxml2 library
       # version mismatch". In that case lxml from source against the same libxml2 (as in the image ci-python-web).
-      - name: lxml passend zu xmlsec
+      - name: lxml matching xmlsec
         run: |
           python -c "import xmlsec" 2>/dev/null && exit 0
           sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y libxml2-dev libxslt1-dev
@@ -73,9 +73,9 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
         with:
           python-version: "3.13"
-      - name: Install (nur Kern + httpx fürs TestClient-Werkzeug)
+      - name: Install (core only + httpx for the TestClient tool)
         run: pip install -e . httpx setuptools wheel
-      - name: Tests (Kern / scrypt-Fallback; Passkey/OIDC-Suiten werden übersprungen)
+      - name: Tests (core / scrypt fallback; passkey/OIDC suites are skipped)
         run: python tests/run_all.py
 
   # The pages in a real browser: console errors, widths, language switch, dark mode, login.
@@ -90,21 +90,21 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
         with:
           python-version: "3.13"
-      - name: Chrome installieren
+      - name: Install Chrome
         uses: browser-actions/setup-chrome@48ad923757ca74d66703209fe939badbdf80f2f4  # v2.2.0
         with:
           install-dependencies: true
-      - name: Chrome vorhanden?
+      - name: Chrome present?
         run: which chrome || which google-chrome; chrome --version || google-chrome --version
-      - name: Abhängigkeiten
+      - name: Dependencies
         run: pip install -e . uvicorn websockets httpx setuptools wheel
-      - name: Website bauen (muss durchlaufen)
+      - name: Build the website (must succeed)
         run: python -m web.build _site
-      - name: Browser-Test
+      - name: Browser test
         run: python tests/test_browser.py
-      - name: Repo-Hygiene
+      - name: Repo hygiene
         run: python tests/test_repo.py
-      - name: Website-Test
+      - name: Website test
         run: python tests/test_site.py
 
   # Gate token through a REAL Caddy with caddy-jwt (ADR-9). Exactly the image from
@@ -121,30 +121,30 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
         with:
           python-version: "3.13"
-      - name: Abhängigkeiten
+      - name: Dependencies
         run: pip install -e . uvicorn httpx setuptools wheel
-      - name: Caddy mit caddy-jwt bauen (deploy/forward-auth/caddy-gate)
+      - name: Build Caddy with caddy-jwt (deploy/forward-auth/caddy-gate)
         run: |
           docker build -t caddy-gate deploy/forward-auth/caddy-gate
           id="$(docker create caddy-gate)"
           docker cp "$id:/usr/bin/caddy" "$RUNNER_TEMP/caddy-gate"
           docker rm "$id"
           "$RUNNER_TEMP/caddy-gate" version
-      - name: Gate-Token durch Caddy
+      - name: Gate token through Caddy
         run: TINYSESAM_GATE_CADDY="$RUNNER_TEMP/caddy-gate" python tests/test_gate_caddy.py
       # Acceptance of the reference stack deploy/forward-auth/docker-compose.yml (since 2026-10-11): This way a
       # required check also covers the Dependabot PRs of the docker-compose entry, and they merge themselves. The file must
       # resolve, every image in it must be pullable by tag and digest, and the Caddy FROM THE
       # COMPOSE FILE must accept the shipped Caddyfile.
-      - name: Referenz-Stack (docker-compose) abnehmen
+      - name: Accept the reference stack (docker-compose)
         run: |
           set -euo pipefail
           f=deploy/forward-auth/docker-compose.yml
           docker compose -f "$f" config --quiet
           bilder="$(docker compose -f "$f" config --images)"
-          [ -n "$bilder" ] || { echo "keine Abbilder in $f"; exit 1; }
+          [ -n "$bilder" ] || { echo "no images in $f"; exit 1; }
           while IFS= read -r b; do docker pull -q "$b"; done <<<"$bilder"
-          caddy="$(grep -m1 '^caddy:' <<<"$bilder")" || { echo "kein caddy-Abbild in $f"; exit 1; }
+          caddy="$(grep -m1 '^caddy:' <<<"$bilder")" || { echo "no caddy image in $f"; exit 1; }
           docker run --rm -e TS_AUTH_UPSTREAM=tinysesam:8000 -e TS_APP_UPSTREAM=app:9000 \
             -v "$PWD/deploy/forward-auth/Caddyfile:/etc/caddy/Caddyfile:ro" \
             "$caddy" caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
@@ -164,25 +164,25 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
         with:
           python-version: "3.13"
-      - name: Chrome installieren
+      - name: Install Chrome
         uses: browser-actions/setup-chrome@48ad923757ca74d66703209fe939badbdf80f2f4  # v2.2.0
         with:
           install-dependencies: true
-      - name: Systempaket für SAML (xmlsec)
+      - name: System package for SAML (xmlsec)
         run: sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update && sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y libxmlsec1-dev pkg-config
-      - name: Install (alle Extras)
+      - name: Install (all extras)
         run: pip install -e '.[all]' uvicorn websockets setuptools wheel mypy
       # Record the before state: since kit 0.20.1 the check, without it, reports a changed
       # tree only as "nicht entscheidbar" (undecidable) (exit 2) — the job would turn red, but would not say
       # that the suite was responsible. With the state, a residue is proven (exit 1).
-      - name: Vorher-Stand des Baums
+      - name: State of the tree before
         run: scripts/_residue_check.sh snapshot > "$RUNNER_TEMP/baum-vorher.txt"
-      - name: Erster Lauf
+      - name: First run
         run: scripts/check.sh
-      - name: Zweiter Lauf (muss ebenfalls grün sein)
+      - name: Second run (must also be green)
         run: scripts/check.sh
       # The same check that the pre-push hook runs. This used to be a raw
       # `git status --porcelain`, which did not know `.ci-allow-dirty` — the binding
       # gate thus contradicted the local safety net.
-      - name: Baum muss unverändert sein
+      - name: Tree must be unchanged
         run: scripts/_residue_check.sh check --seit "$RUNNER_TEMP/baum-vorher.txt"

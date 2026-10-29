@@ -78,14 +78,14 @@ try:
     rl._pause_bis = 0.0
     for _ in range(50):
         rl.allow("y", 1000, 60)
-    ausfall = [z for z in mit.zeilen if "nicht erreichbar" in z]
+    ausfall = [z for z in mit.zeilen if "unreachable" in z]
     assert len(ausfall) == 1, f"B6-2: {len(ausfall)} warning lines for 55 requests during the outage"
     # Redis is back: after the pause it is asked again, and the change is reported once.
     rl.client = FakeRedis()
     rl._pause_bis = 0.0
     assert rl.allow("z", 3, 60) is True
     assert rl.allow("z", 3, 60) is True
-    zurueck = [z for z in mit.zeilen if "wieder erreichbar" in z]
+    zurueck = [z for z in mit.zeilen if "reachable again" in z]
     assert len(zurueck) == 1, f"B6-2: the return is reported {len(zurueck)} times"
     assert rl.client.store, "after the return Redis counts again"
     ok("B6-2: outage and return ONE line each, not one per request")
@@ -94,7 +94,7 @@ try:
     if importlib.util.find_spec("redis"):
         mit.zeilen.clear()
         tot = security.RedisRateLimiter("redis://127.0.0.1:1/0")   # Port 1: dort lauscht nichts
-        assert any("nicht erreichbar" in z for z in mit.zeilen), \
+        assert any("unreachable" in z for z in mit.zeilen), \
             "B6-2: an unreachable Redis is not noticed at startup"
         assert tot.allow("a", 1, 60) is True and tot.allow("a", 1, 60) is False, \
             "B6-1: the outage detected at startup does not throttle"

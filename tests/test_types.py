@@ -28,7 +28,7 @@ braucht_modul("mypy")
 from tinysesam import TinySesam, TinySesamConfig  # noqa: E402
 from _kit.report import Report  # noqa: E402
 
-r = Report("Typen — die Zusage `Typing :: Typed`")
+r = Report("Types — the promise `Typing :: Typed`")
 
 # ---------- 1) The type checker itself ----------
 # `--check-untyped-defs`: without it mypy does not check the BODIES of unannotated functions at all —

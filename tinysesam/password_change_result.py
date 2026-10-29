@@ -55,9 +55,9 @@ class PasswordChangeResult:
 
     def __post_init__(self) -> None:
         if self.reason not in self.REASONS:
-            raise ValueError(f"unbekannter Grund {self.reason!r} (erlaubt: {', '.join(self.REASONS)})")
+            raise ValueError(f"unknown reason {self.reason!r} (allowed: {', '.join(self.REASONS)})")
         if bool(self.ok) != (self.reason == "ok"):
-            raise ValueError("ok und reason widersprechen sich")
+            raise ValueError("ok and reason contradict each other")
 
     def __bool__(self) -> bool:
         return bool(self.ok)

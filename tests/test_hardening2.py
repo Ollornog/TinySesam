@@ -108,7 +108,7 @@ try:
         except sqlite3.OperationalError:
             pass
         else:
-            raise AssertionError(f"{name}: Vorbedingung verfehlt — der fremde Schreiber sperrt nicht")
+            raise AssertionError(f"{name}: precondition missed — the foreign writer does not lock")
         assert not auth_s.store.db.in_transaction, \
             f"{name} leaves a transaction open on the shared connection after the failure"
 finally:

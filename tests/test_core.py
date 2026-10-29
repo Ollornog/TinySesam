@@ -33,10 +33,10 @@ def ok(name):
 assert c.get("/geheim").status_code == 401
 ok("protected without login → 401")
 
-# 2) Login-Seite rendert
+# 2) login page renders
 r = c.get("/auth/login")
 assert r.status_code == 200 and "Passwort" in r.text
-ok("Login-Seite")
+ok("login page")
 
 # 3) falsches Passwort
 assert c.post("/auth/login", data={"username": "admin", "password": "falsch", "next": "/geheim"}).status_code == 401

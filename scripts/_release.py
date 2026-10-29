@@ -41,7 +41,7 @@ def pruefen() -> int:
 
     modul = (WURZEL / "tinysesam/__init__.py").read_text(encoding="utf-8")
     if f'__version__ = "{version}"' not in modul:
-        fehler.append(f"tinysesam/__init__.py nennt nicht {version}")
+        fehler.append(f"tinysesam/__init__.py does not name {version}")
 
     for name in DATEIEN[2:]:
         text = (WURZEL / name).read_text(encoding="utf-8")
@@ -49,16 +49,16 @@ def pruefen() -> int:
         # that this release is just replacing.
         alt = {v for v in re.findall(r"tinysesam[:@/-]v?(\d+\.\d+\.\d+)", text)} - {version}
         if alt:
-            fehler.append(f"{name} verweist noch auf {', '.join(sorted(alt))}")
+            fehler.append(f"{name} still refers to {', '.join(sorted(alt))}")
 
     text = CHANGELOG.read_text(encoding="utf-8")
     if not re.search(rf"^## \[{re.escape(version)}\] — \d{{4}}-\d{{2}}-\d{{2}}", text, re.M):
-        fehler.append(f"CHANGELOG hat keinen abgeschlossenen Abschnitt [{version}] — <Datum>")
+        fehler.append(f"CHANGELOG has no closed section [{version}] — <date>")
 
     for f in fehler:
         print(f"  ✗ {f}")
     if not fehler:
-        print(f"  ✓ alles auf {version}: Paket, Modul, beide READMEs, Compose-Beispiel, CHANGELOG")
+        print(f"  ✓ everything on {version}: package, module, both READMEs, compose example, CHANGELOG")
     return len(fehler)
 
 
@@ -78,7 +78,7 @@ def ersetze_pins(text: str, alt: str, neu: str) -> tuple[str, int]:
 def setzen(neu: str) -> int:
     alt = aktuelle_version()
     if alt == neu:
-        print(f"  Version ist bereits {neu} — nichts zu tun.")
+        print(f"  Version is already {neu} — nothing to do.")
         return 0
     print(f"  {alt} → {neu}")
 
@@ -91,23 +91,23 @@ def setzen(neu: str) -> int:
 
     text = CHANGELOG.read_text(encoding="utf-8")
     heute = dt.date.today().isoformat()
-    # The CHANGELOG is German and names the section "[Unveröffentlicht]"; up to 0.20.0 the script
-    # looked only for the English form and asked for manual work on every release.
-    for offen in ("## [Unveröffentlicht]", "## [Unreleased]"):
+    # The CHANGELOG is English (since T-29; before, German with "[Unveröffentlicht]") and names the open section
+    # "[Unreleased]".
+    for offen in ("## [Unreleased]",):
         if offen in text:
             CHANGELOG.write_text(text.replace(offen, f"## [{neu}] — {heute}", 1), encoding="utf-8")
             print(f"    CHANGELOG: {offen[3:]} → [{neu}] — {heute}")
             break
     else:
-        print("    CHANGELOG: kein [Unveröffentlicht]-Abschnitt gefunden — bitte von Hand nachsehen")
+        print("    CHANGELOG: no [Unreleased] section found — please check by hand")
 
-    print("\n  Was noch fehlt (und ein Mensch entscheiden soll):")
-    print("    1. Im CHANGELOG-Abschnitt oben zusammenfassen, WER dieses Release braucht.")
-    print("       Bei einem Bruch gehört die Warnung in die erste Zeile.")
-    print("    2. Suite fahren, Release-PR nach main, mergen.")
-    print(f"    3. Tag setzen: git tag -a v{neu} -m \"…\" && git push origin v{neu}")
-    print("    4. Danach die Artefakte selbst prüfen — nicht die Ampel:")
-    print("       gh release view · Manifest (beide Architekturen, kein latest) ·")
+    print("\n  What is still missing (and a human should decide):")
+    print("    1. Summarise at the top of the CHANGELOG section WHO needs this release.")
+    print("       For a breaking change, the warning belongs in the first line.")
+    print("    2. Run the suite, open the release PR against main, merge it.")
+    print(f"    3. Set the tag: git tag -a v{neu} -m \"…\" && git push origin v{neu}")
+    print("    4. Then check the artifacts yourself — not the traffic light:")
+    print("       gh release view · manifest (both architectures, no latest) ·")
     print("       gh attestation verify")
     return 0
 
@@ -119,7 +119,7 @@ def main(argv) -> int:
     if argv[0] == "--pruefen":
         return 1 if pruefen() else 0
     if not SEMVER.match(argv[0]):
-        print(f"  '{argv[0]}' ist keine Version der Form X.Y.Z")
+        print(f"  '{argv[0]}' is not a version of the form X.Y.Z")
         return 2
     return setzen(argv[0])
 

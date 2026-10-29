@@ -23,8 +23,8 @@ def _fehlt_extra(e: ModuleNotFoundError) -> "errors.MissingExtra":
     up to 0.18.0, a `ModuleNotFoundError: onelogin` in the middle of the sign-in — for the operator
     a defect, when only one word was missing in the install command."""
     return errors.MissingExtra(
-        "Das Extra [saml] ist nicht installiert (pip install 'tinysesam[saml]') — "
-        f"es fehlt: {e.name or 'onelogin'}.", extra="saml")
+        "The extra [saml] is not installed (pip install 'tinysesam[saml]') — "
+        f"missing: {e.name or 'onelogin'}.", extra="saml")
 
 
 def request_kontext(basis: str, pfad: str, form=None, query=None) -> dict:
@@ -145,11 +145,11 @@ class SAMLClient:
         irt = auth.get_last_response_in_response_to()
         if not request_id or not irt or not _secrets.compare_digest(str(irt), str(request_id)):
             security.seclog.warning(
-                "SAML-Antwort abgelehnt: InResponseTo=%r passt nicht zum angeforderten "
-                "AuthnRequest (%s). Entweder nie angefordert (IdP-initiiert wird nicht "
-                "unterstützt) oder das Flow-Cookie kam nicht mit — bei cookie_secure=False "
-                "sendet der Browser es beim Cross-Site-POST des IdP nicht.",
-                irt, "keine ID mitgegeben" if not request_id else "andere ID")
+                "SAML response rejected: InResponseTo=%r does not match the requested "
+                "AuthnRequest (%s). Either never requested (IdP-initiated is not "
+                "supported) or the flow cookie did not come along — with cookie_secure=False "
+                "the browser does not send it on the IdP's cross-site POST.",
+                irt, "no ID supplied" if not request_id else "different ID")
             return None
         return {"nameid": auth.get_nameid(), "attrs": auth.get_attributes() or {}}
 

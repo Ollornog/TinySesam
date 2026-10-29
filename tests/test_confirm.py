@@ -50,7 +50,7 @@ from tinysesam import LoginResult, PasswordChangeResult, TinySesam, TinySesamCon
 from tinysesam.security import seclog  # noqa: E402
 from _kit.report import Report  # noqa: E402
 
-r = Report("Sichere Bausteine für eigene Step-up- und Passwortwechsel-Seiten (confirm_*, change_password, 0.22.0)")
+r = Report("Safe building blocks for custom step-up and password-change pages (confirm_*, change_password, 0.22.0)")
 PW = "Bestaetigt-2026"          # 15 characters
 PW_NEU = "Ganz-Neues-Pw15"      # 15 characters
 PIN = "4711"
@@ -627,7 +627,7 @@ def _nur_totp_schritte(auth):
     yield "totp", pyotp.TOTP(_geheimnisse[id(auth)]).at(time.time() + 30)
 
 
-_g_nt = _vergleich("stepup_methods=[\"totp\"] (Passwort nicht angeboten, TOTP falsch, richtig)",
+_g_nt = _vergleich("stepup_methods=[\"totp\"] (password not offered, TOTP wrong, correct)",
                    _nur_totp_schritte, _aufbau_nur_totp)
 r.check("(g) … TOTP-only sequence: 403, 401, 303", [s for s, _ in _g_nt["status"]] == [403, 401, 303],
         str(_g_nt["status"]))
@@ -640,7 +640,7 @@ def _aufbau_passwort():
     return auth, app, _anmelden(app, "quirin")
 
 
-_g_pw = _vergleich("Passwortwechsel (falsch, leer, zu schwach, Sperre, danach richtig)", lambda a: [
+_g_pw = _vergleich("password change (wrong, empty, too weak, lock, then correct)", lambda a: [
     ("neues_passwort", ("falsch-1", PW_NEU)),
     ("neues_passwort", ("", PW_NEU)),
     ("neues_passwort", (PW, "kurz")),                      # old one correct: clears the bucket
@@ -651,7 +651,7 @@ _g_pw = _vergleich("Passwortwechsel (falsch, leer, zu schwach, Sperre, danach ri
 ], _aufbau_passwort)
 r.check("(g) … password sequence: 403, 400, 400, 403, 403, 403, 429",
         [s for s, _, _ in _g_pw["status"]] == [403, 400, 400, 403, 403, 403, 429], str(_g_pw["status"]))
-_g_pw_ok = _vergleich("Passwortwechsel (Erfolg mit API-Key, dann das alte Passwort falsch)", lambda a: [
+_g_pw_ok = _vergleich("password change (success with API key, then the old password wrong)", lambda a: [
     ("neues_passwort", (PW, PW_NEU)),
     ("neues_passwort", (PW, "Noch-Ein-Neues1")),
     ("neues_passwort", (PW_NEU, "Noch-Ein-Neues1")),
@@ -684,9 +684,9 @@ def _routen_befunde(quelltext):
             continue
         gefunden.add(fn.name)
         namen = {k.attr for k in ast.walk(fn) if isinstance(k, ast.Attribute)}
-        befunde += [f"{fn.name} ruft {n} nicht" for n in sorted(ROUTEN[fn.name] - namen)]
+        befunde += [f"{fn.name} does not call {n}" for n in sorted(ROUTEN[fn.name] - namen)]
         befunde += [f"{fn.name} ruft {n} selbst" for n in sorted(namen & INNERE)]
-    befunde += [f"{n} fehlt im Router" for n in sorted(set(ROUTEN) - gefunden)]
+    befunde += [f"{n} missing in the router" for n in sorted(set(ROUTEN) - gefunden)]
     return befunde
 
 
@@ -705,7 +705,7 @@ _router = (ROOT / "tinysesam" / "router.py").read_text(encoding="utf-8")
 for _probe, (_text, _erwartet) in _selbst.items():
     _b = _routen_befunde(_text)
     if _erwartet is None:
-        assert "reauth_submit ruft confirm_pin nicht" in _b and "change_own_password fehlt im Router" in _b, _b
+        assert "reauth_submit does not call confirm_pin" in _b and "change_own_password missing in the router" in _b, _b
     else:
         assert _b == _erwartet, (_probe, _b)
 _befunde_h = _routen_befunde(_router)

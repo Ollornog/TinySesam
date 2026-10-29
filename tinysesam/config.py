@@ -741,21 +741,26 @@ class TinySesamConfig:
         """(errors, warnings) kept apart — `validate()` returns both in one list, and from
         that one could no longer read what would have made the setup fail. `TinySesam.router()`
         needs exactly this distinction (B3-14)."""
-        from .config_check import check_config
+        from .config_check import _t, check_config
         fehler, warnungen = check_config(self)
         if self.cookie_samesite not in ("lax", "strict", "none"):
-            fehler.append(f"cookie_samesite={self.cookie_samesite!r} — erlaubt sind 'lax', "
-                          "'strict', 'none' (klein geschrieben)")
+            fehler.append(_t(
+                self, "cookie_samesite={value!r} — allowed are 'lax', 'strict', 'none' (lower case)",
+                value=self.cookie_samesite))
         if self.cookie_samesite == "none" and not self.cookie_secure:
-            fehler.append("cookie_samesite='none' ohne cookie_secure=True — der Browser "
-                          "verwirft so ein Cookie")
+            fehler.append(_t(
+                self, "cookie_samesite='none' without cookie_secure=True — the browser discards "
+                "such a cookie"))
         if self.https_mode not in ("off", "warn", "force"):
-            fehler.append(f"https_mode={self.https_mode!r} — erlaubt sind 'off', 'warn', 'force'")
+            fehler.append(_t(
+                self, "https_mode={value!r} — allowed are 'off', 'warn', 'force'",
+                value=self.https_mode))
         if not isinstance(self.csp, str):
-            fehler.append(f"csp muss ein String sein, ist {type(self.csp).__name__}")
+            fehler.append(_t(self, "csp must be a string, is {type}", type=type(self.csp).__name__))
         if not self.cookie_secure and self.https_mode == "force":
-            fehler.append("https_mode='force' mit cookie_secure=False — das Sitzungs-Cookie ginge "
-                          "ohne Secure-Flag hinaus")
+            fehler.append(_t(
+                self, "https_mode='force' with cookie_secure=False — the session cookie would go "
+                "out without the Secure flag"))
         return fehler, warnungen
 
     def enabled_methods(self) -> list[str]:

@@ -39,8 +39,8 @@ def _aesgcm():
     try:
         from cryptography.hazmat.primitives.ciphers.aead import AESGCM
     except ImportError as e:   # pragma: no cover — cryptography is a mandatory dependency
-        raise ConfigError("Das Paket `cryptography` fehlt — es ist seit 0.21.0 Pflicht "
-                          "(TOTP-Geheimnisse werden verschlüsselt).") from e
+        raise ConfigError("The package `cryptography` is missing — it has been required since 0.21.0 "
+                          "(TOTP secrets are encrypted).") from e
     return AESGCM
 
 
@@ -48,11 +48,11 @@ def _read_key(text: str, herkunft: str) -> bytes:
     try:
         roh = base64.b64decode(text.strip(), validate=True)
     except (ValueError, TypeError):
-        raise ConfigError(f"{herkunft}: kein gültiges Base64.") from None
+        raise ConfigError(f"{herkunft}: not valid Base64.") from None
     if len(roh) != 32:
-        raise ConfigError(f"{herkunft}: der Schlüssel muss 32 Byte lang sein (Base64 von 32 "
-                          f"Zufallsbytes, z. B. `python -c \"import os,base64;"
-                          f"print(base64.b64encode(os.urandom(32)).decode())\"`), er hat {len(roh)}.")
+        raise ConfigError(f"{herkunft}: the key must be 32 bytes long (Base64 of 32 "
+                          f"random bytes, e.g. `python -c \"import os,base64;"
+                          f"print(base64.b64encode(os.urandom(32)).decode())\"`), it has {len(roh)}.")
     return roh
 
 
@@ -60,20 +60,20 @@ def load_key(db_path: str, key_file: str = "") -> tuple[bytes, str]:
     """Find the key or create it (next to the database). Returns `(key, origin)`."""
     wert = os.environ.get(ENV_VAR, "")
     if wert.strip():
-        return _read_key(wert, ENV_VAR), "umgebung"
+        return _read_key(wert, ENV_VAR), "environment"
     if key_file:
         try:
             with open(key_file, encoding="ascii") as f:
-                return _read_key(f.read(), f"secrets_key_file {key_file!r}"), "datei"
+                return _read_key(f.read(), f"secrets_key_file {key_file!r}"), "file"
         except OSError as e:
-            raise ConfigError(f"secrets_key_file {key_file!r} lässt sich nicht lesen: {e}") from e
+            raise ConfigError(f"secrets_key_file {key_file!r} cannot be read: {e}") from e
     if not db_path or db_path == ":memory:":
         # An in-memory database lives as long as the process — so does its key.
-        return secrets.token_bytes(32), "speicher"
+        return secrets.token_bytes(32), "memory"
     pfad = db_path + ".key"
     try:
         with open(pfad, encoding="ascii") as f:
-            return _read_key(f.read(), f"Schlüsseldatei {pfad!r}"), "neben_db"
+            return _read_key(f.read(), f"key file {pfad!r}"), "beside_db"
     except FileNotFoundError:
         pass              # first start: there is none yet — it is created right away
     # Create atomically and exclusively: first a complete temporary file (0600, fsync), then a
@@ -93,7 +93,7 @@ def load_key(db_path: str, key_file: str = "") -> tuple[bytes, str]:
             os.link(zwischen, pfad)
         except FileExistsError:
             with open(pfad, encoding="ascii") as f:
-                return _read_key(f.read(), f"Schlüsseldatei {pfad!r}"), "neben_db"
+                return _read_key(f.read(), f"key file {pfad!r}"), "beside_db"
     finally:
         # The temporary file has served its purpose (linked or lost) — get rid of it; the link
         # leaves it standing, so in the normal case it is still there.
@@ -102,12 +102,12 @@ def load_key(db_path: str, key_file: str = "") -> tuple[bytes, str]:
         except FileNotFoundError:
             pass          # a foreign cleaner was faster — the goal was only that it does not remain
     log.warning(
-        "TinySesam: Schlüssel für die TOTP-Geheimnisse neu erzeugt: %s (0600). Er liegt neben der "
-        "Datenbank — das schützt gegen eine Datenbankdatei, die allein abfliesst, nicht gegen eine "
-        "Sicherung des ganzen Verzeichnisses. Getrennt ablegen: %s oder secrets_key_file. Und: "
-        "Ohne diesen Schlüssel sind alle TOTP-Einrichtungen verloren — mitsichern, getrennt von der "
-        "Datenbank.", pfad, ENV_VAR)
-    return roh, "neben_db_neu"
+        "TinySesam: key for the TOTP secrets newly generated: %s (0600). It sits next to the "
+        "database — that protects against a database file that leaks on its own, not against a "
+        "backup of the whole directory. Store it separately: %s or secrets_key_file. And: "
+        "without this key all TOTP enrollments are lost — back it up too, separately from the "
+        "database.", pfad, ENV_VAR)
+    return roh, "beside_db_new"
 
 
 class Vault:

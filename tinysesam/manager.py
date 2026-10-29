@@ -169,10 +169,10 @@ def _teilstring_hinweis(schluessel, gruppen, feld: str) -> None:
         return
     if security.einmal_melden(f"ldap_teilstring:{feld}:{s}"):
         security.seclog.warning(
-            "LDAP: der Schlüssel %r in %s trifft nur noch als Teilstring (%s) und greift seit "
-            "0.20.0 nicht mehr — verglichen wird nach DN-Bestandteilen. Schreibweise ändern "
-            "(ganzer DN, Teil-DN von vorn wie 'cn=admins,ou=groups', oder nur der CN) oder "
-            "group_match='substring' setzen.", security.fuer_log(s), feld,
+            "LDAP: the key %r in %s only matches as a substring (%s) and has no effect since "
+            "0.20.0 — comparison is by DN components. Change the spelling "
+            "(whole DN, partial DN from the front like 'cn=admins,ou=groups', or just the CN) or "
+            "set group_match='substring'.", security.fuer_log(s), feld,
             security.fuer_log(next(str(g) for g in gruppen if s in str(g)))[:200])
 
 
@@ -361,7 +361,7 @@ class TinySesam:
             try:
                 self.rl = security.RedisRateLimiter(config.redis_url)
             except Exception:
-                security.seclog.warning("Redis-Rate-Limit nicht verfügbar → In-Memory-Fallback")
+                security.seclog.warning("Redis rate limit unavailable → in-memory fallback")
         # A missing extra here is an operational error and not a subtlety: the setup
         # fails with the name of the package instead of a ModuleNotFoundError from the depths
         # or — worse — only at the first sign-in attempt as a 500.
@@ -388,9 +388,9 @@ class TinySesam:
                 da = False
             if not da:
                 security.seclog.warning(
-                    "%s=True, aber das Extra [%s] ist nicht installiert (pip install "
-                    "'tinysesam[%s]') — das Modul '%s' fehlt. Sofern der Client nicht selbst "
-                    "gesetzt wird, scheitert die Anmeldung über dieses Verfahren.",
+                    "%s=True, but the extra [%s] is not installed (pip install "
+                    "'tinysesam[%s]') — the module '%s' is missing. Unless the client is set "
+                    "separately, sign-in via this method will fail.",
                     schalter, extra, extra, modul)
 
         if config.ldap_enabled and config.ldap_url:
@@ -423,19 +423,19 @@ class TinySesam:
             # that already has accounts, switches it on for existing data — i.e. in
             # production. Before, that silently created an admin account with a known password.
             raise ConfigError(
-                "demo_mode=True auf einer Datenbank, die schon Konten hat und nie eine Demo war "
-                f"({config.db_path!r}). Die Demo legt ein Admin-Konto mit bekanntem Passwort an — "
-                "auf Bestandsdaten ist das eine Hintertür. Für eine Demo eine eigene, leere "
-                "Datenbank nehmen (db_path).")
+                "demo_mode=True on a database that already has accounts and was never a demo "
+                f"({config.db_path!r}). The demo creates an admin account with a known password — "
+                "on existing data that is a backdoor. For a demo use a separate, empty "
+                "database (db_path).")
         if config.demo_mode:
             security.seclog.warning(
-                "DEMO-MODUS aktiv: Beispielkonten %s mit bekanntem Passwort. NICHT produktiv betreiben.",
+                "DEMO MODE active: example accounts %s with a known password. DO NOT run in production.",
                 ", ".join(self._DEMO_USERS))
             self._seed_demo()
         elif self.store.get_setting("demo_users"):
             n = self._purge_demo()                       # demo mode switched off → accounts are gone
             if n:
-                security.seclog.warning("Demo-Modus aus: %d Beispielkonto(en) gelöscht.", n)
+                security.seclog.warning("Demo mode off: %d example account(s) deleted.", n)
         # Forward auth across several hosts, but without cookie_domain: the session cookie is
         # host-only, so there is NO shared SSO — every host demands its own sign-in.
         # The login URL is built per host (see forward_login_url), so that at least no silent
@@ -450,10 +450,10 @@ class TinySesam:
             fremd = [h for h in (config.trusted_redirect_hosts or []) if h and h != own]
             if fremd:
                 security.seclog.warning(
-                    "Forward-Auth ohne cookie_domain: Das Session-Cookie gilt nur host-only auf %s, "
-                    "nicht auf %s. Diese Hosts verlangen je eine eigene Anmeldung (die Login-Seite "
-                    "wird dort gebaut). Für gemeinsames SSO über Subdomains cookie_domain setzen, "
-                    "z.B. '.%s'.", own or "?", ", ".join(fremd),
+                    "Forward auth without cookie_domain: the session cookie is host-only on %s, "
+                    "not on %s. Each of these hosts demands its own sign-in (the login page "
+                    "is built there). For shared SSO across subdomains set cookie_domain, "
+                    "e.g. '.%s'.", own or "?", ", ".join(fremd),
                     ".".join(own.split(".")[-2:]) if own.count(".") >= 1 else "example.com")
         # Collisions in the identifier space from existing data: the database has prevented new ones
         # since 2026-09-26 (trigger over the counting buckets, `Store._trigger_sql`), but one from an
@@ -467,28 +467,28 @@ class TinySesam:
         kollisionen = self.store.topf_kollisionen()
         if kollisionen:
             beispiele = "; ".join(
-                f"Kennung '{security.fuer_log(z['kennung'])}': "
+                f"identifier '{security.fuer_log(z['kennung'])}': "
                 + ", ".join(f"user_id={i}" for i in z["ids"]) for z in kollisionen[:5])
             security.seclog.warning(
-                "%d Kennungs-Kollision(en) im Bestand: Benutzername und E-Mail sind EIN "
-                "Kennungs-Raum (find_user sucht in beiden Spalten, Namensvetter wie Alice/alice "
-                "teilen sich die Sperrschwelle). Neue verhindert die Datenbank; diese stammen aus "
-                "der Zeit davor und bleiben, bis eine der Kennungen geändert ist. Die Anmeldung "
-                "mit dieser Kennung ist mehrdeutig, der rechtmäßige Inhaber kann ausgesperrt "
-                "sein. Betroffen: %s%s. Zu ändern ist eine der Kennungen. Den Benutzernamen: im "
-                "Admin-Panel („Umbenennen“, POST <admin_path>/api/users/<id>/username), mit "
-                "tinysesam rename --db <datei> '#<user_id>' <neuer-name>, der Inhaber selbst auf "
-                "der Konto-Seite oder aus dem einbettenden Dienst "
-                "auth.change_username(user_id, new_username, by_operator=True) — alle prüfen beide "
-                "Namensräume (im Modus login_identifier='email' folgt der Name der Adresse). Die "
-                "E-Mail aus dem einbettenden Dienst über "
-                "store.set_email(user_id, adresse) (wirft sqlite3.IntegrityError, wenn die neue "
-                "Adresse schon Kennung eines anderen Kontos ist). Achtung bei der E-Mail: "
-                "store.set_email() legt die neue Adresse vorgabegemäss als UNBESTÄTIGT ab "
-                "(users.email_verified=0) — der Beleg der alten Adresse gilt nicht für eine "
-                "andere. Wer einen Beleg für die neue hat, übergibt verified=True.",
+                "%d identifier collision(s) in existing data: username and email are ONE "
+                "identifier space (find_user searches both columns, namesakes like Alice/alice "
+                "share the lockout threshold). The database prevents new ones; these date from "
+                "the time before and stay until one of the identifiers is changed. Signing in "
+                "with this identifier is ambiguous, the rightful owner may be locked "
+                "out. Affected: %s%s. One of the identifiers has to change. The username: in the "
+                "admin panel (\"Rename\", POST <admin_path>/api/users/<id>/username), with "
+                "tinysesam rename --db <file> '#<user_id>' <new-name>, the owner themselves on "
+                "the account page, or from the embedding service "
+                "auth.change_username(user_id, new_username, by_operator=True) — all check both "
+                "namespaces (in login_identifier='email' mode the name follows the address). The "
+                "email from the embedding service via "
+                "store.set_email(user_id, address) (raises sqlite3.IntegrityError if the new "
+                "address is already the identifier of another account). Note on the email: "
+                "store.set_email() stores the new address as UNCONFIRMED by default "
+                "(users.email_verified=0) — the evidence for the old address does not carry over to a "
+                "different one. Whoever has evidence for the new one passes verified=True.",
                 len(kollisionen), beispiele,
-                " (weitere folgen)" if len(kollisionen) > 5 else "")
+                " (more follow)" if len(kollisionen) > 5 else "")
         # Account names with control/format characters (no longer creatable since 2026-09-24) in existing data:
         # forward auth rejects those whose characters the header sanitising would remove (otherwise
         # `Remote-User` would be a foreign name). It is said at startup, not only per request.
@@ -496,13 +496,13 @@ class TinySesam:
                       if name_ungueltig(z["username"])]
         if auffaellig:
             security.seclog.warning(
-                "%d Kontoname(n) mit Steuer- oder Formatzeichen im Bestand (user_id %s). Neue legt "
-                "TinySesam so nicht mehr an; Namen mit C0-Steuerzeichen bekommen an der "
-                "Forward-Auth keine Freigabe (Remote-User wäre ein anderer Name). Umbenennen: im "
-                "Admin-Panel („Umbenennen“), mit tinysesam rename --db <datei> '#<user_id>' "
-                "<neuer-name>, der Inhaber selbst auf der Konto-Seite oder aus dem einbettenden "
-                "Dienst auth.change_username(user_id, new_username, by_operator=True) — alle prüfen, "
-                "dass der neue Name in Benutzernamen UND Adressen frei ist.",
+                "%d account name(s) with control or format characters in existing data (user_id %s). "
+                "TinySesam no longer creates new ones; names with C0 control characters get no "
+                "approval at forward auth (Remote-User would be a different name). Rename: in the "
+                "admin panel (\"Rename\"), with tinysesam rename --db <file> '#<user_id>' "
+                "<new-name>, the owner themselves on the account page, or from the embedding "
+                "service auth.change_username(user_id, new_username, by_operator=True) — all check "
+                "that the new name is free among usernames AND addresses.",
                 len(auffaellig), ", ".join(str(z["id"]) for z in auffaellig[:10]))
         # Binding by name (G1): the grace period starts per source at the first start at which it is
         # switched on — for existing data thus with the update — and exactly once (the marker
@@ -537,15 +537,15 @@ class TinySesam:
             return False
         if owner:
             if u["is_service"] or u["disabled"]:
-                raise ConfigError("Owner kann nur ein aktives, interaktives Konto werden.")
+                raise ConfigError("Only an active, interactive account can become owner.")
             if not u["is_owner"]:
                 self.store.set_owner(user_id, True)
                 self.audit("owner_grant", u["username"])
             return True
         if u["is_owner"]:
             if self.store.owner_count(ohne=user_id) == 0:
-                raise StateError(f"Konto {user_id} ist der letzte Owner. Erst einen anderen Owner "
-                                 "bestimmen, dann die Rolle abgeben.")
+                raise StateError(f"Account {user_id} is the last owner. Appoint another owner "
+                                 "first, then hand over the role.")
             self.store.set_owner(user_id, False)
             self.audit("owner_revoke", u["username"])
         return True
@@ -662,15 +662,15 @@ class TinySesam:
             # SAML, LDAP): a name with control characters becomes a DIFFERENT name in `Remote-User`
             # (see `name_ungueltig`). The federated paths switch to a substitute
             # name beforehand; whoever lands here gets a rejection.
-            fehler = ConfigError("Benutzername enthält Steuer- oder Formatzeichen")
+            fehler = ConfigError("Username contains control or format characters")
             fehler.field = "username"
             raise fehler
-        for feld, schluessel, kennung in (("Benutzername", "username", username),
-                                          ("E-Mail-Adresse", "email", email)):
+        for feld, schluessel, kennung in (("username", "username", username),
+                                          ("email address", "email", email)):
             besitzer = self.identifier_taken(kennung) if kennung else None
             if besitzer:
                 security.seclog.warning(
-                    "Konto nicht angelegt: %s ist bereits Login-Kennung von user_id=%s", feld, besitzer["id"])
+                    "Account not created: %s is already the login identifier of user_id=%s", feld, besitzer["id"])
                 # The wording is that of 0.18.x ("… ist bereits vergeben"). Because a
                 # `ConfigError` alone does not reveal WHAT collided, callers check the text —
                 # the most brittle way to control a program, but a common one. A fix
@@ -678,7 +678,7 @@ class TinySesam:
                 # collides, though: the new trigger (username = foreign email and vice versa)
                 # carries the username OR the email text depending on direction, not always
                 # the same. It can be told apart reliably by `field`/`owner_id`.
-                fehler = ConfigError(f"{feld} ist bereits vergeben")
+                fehler = ConfigError(f"{feld} is already taken")
                 fehler.field = schluessel
                 fehler.owner_id = int(besitzer["id"])
                 raise fehler
@@ -694,13 +694,13 @@ class TinySesam:
             # identifier, a second check says — if the other account is already gone again, it stays
             # with the username without an owner.
             treffer = [(feld, schluessel, self.identifier_taken(kennung) if kennung else None)
-                       for feld, schluessel, kennung in (("Benutzername", "username", username),
-                                                         ("E-Mail-Adresse", "email", email))]
+                       for feld, schluessel, kennung in (("username", "username", username),
+                                                         ("email address", "email", email))]
             feld, schluessel, besitzer = next((t for t in treffer if t[2]), treffer[0])
             security.seclog.warning(
-                "Konto nicht angelegt (Wettlauf): %s wurde zwischen Prüfung und Anlage "
-                "Login-Kennung von user_id=%s", feld, besitzer["id"] if besitzer else "?")
-            fehler = ConfigError(f"{feld} ist bereits vergeben")
+                "Account not created (race): %s became the login identifier of user_id=%s "
+                "between check and creation", feld, besitzer["id"] if besitzer else "?")
+            fehler = ConfigError(f"{feld} is already taken")
             fehler.field = schluessel
             fehler.owner_id = int(besitzer["id"]) if besitzer else None
             raise fehler from fehler_db
@@ -781,8 +781,8 @@ class TinySesam:
             # it granted goes. Loudly, because it can also be the last admin.
             self.store.set_admin(user_id, False)
             self.audit("idp_admin_revoke", u["username"], detail="quelle=idp gruppe_entfallen=1")
-            security.seclog.warning("Admin-Flag entzogen: user=%s, der Identity Provider liefert die "
-                                    "Admin-Gruppe nicht mehr.", security.fuer_log(u["username"]))
+            security.seclog.warning("Admin flag withdrawn: user=%s, the identity provider no longer "
+                                    "delivers the admin group.", security.fuer_log(u["username"]))
             if not self.admin_exists():
                 # If it was the last admin (G6), the allowlist stays closed from now on: otherwise
                 # `_maybe_promote_admin` in the same login — via `apply_factor` — would promote the person again,
@@ -794,10 +794,10 @@ class TinySesam:
                 # as long as there is no admin. Parallel withdrawals set it idempotently.
                 self.store.set_setting("allowlist_nach_idp_entzug", str(_jetzt()))
                 security.seclog.warning(
-                    "Kein Admin mehr: Der Identity Provider hat der Instanz ihren letzten Admin "
-                    "entzogen. admin_identifiers befördert danach niemanden mehr. Notweg: "
-                    "tinysesam owner --db <datei> <benutzer> oder /auth/claim-admin mit dem "
-                    "Einmal-Token (Konsole bzw. admin_claim_token_file).")
+                    "No admin left: the identity provider has withdrawn the instance's last admin. "
+                    "admin_identifiers promotes nobody afterwards. Emergency route: "
+                    "tinysesam owner --db <file> <user> or /auth/claim-admin with the "
+                    "one-time token (console or admin_claim_token_file).")
                 tok = self.admin_claim_token()
                 if tok:
                     self._admin_claim_bekanntgeben(tok)
@@ -852,10 +852,10 @@ class TinySesam:
         if kind not in self._KEY_ARTEN:
             neu_name = Store.KEY_ARTEN_ALT.get(str(kind))
             raise ConfigError(
-                (f"API-Key-Art {kind!r} heisst seit 0.22.0 {neu_name!r}. " if neu_name else
-                 f"API-Key-Art {kind!r} gibt es nicht. ")
-                + "'automation' arbeitet allein (ohne Admin-Rechte), 'human' gilt nur zusammen "
-                  "mit einer Sitzung desselben Kontos.")
+                (f"API key kind {kind!r} has been called {neu_name!r} since 0.22.0. " if neu_name else
+                 f"There is no API key kind {kind!r}. ")
+                + "'automation' works on its own (without admin rights), 'human' only counts "
+                  "together with a session of the same account.")
         raw = "tsk_" + secrets.token_urlsafe(32)
         key_hash = hashlib.sha256(raw.encode()).hexdigest()
         prefix = raw[:12] + "…"
@@ -871,11 +871,11 @@ class TinySesam:
         if expires_days == 0:
             if not self.cfg.apikey_allow_unlimited:
                 raise ConfigError(
-                    "Ein API-Key ohne Ablauf ist ein Geheimnis, das niemand mehr zurücknimmt — er "
-                    "überlebt den Menschen, der ihn ausgestellt hat, und das Projekt, für das er "
-                    "gedacht war. Entweder expires_days setzen (Vorgabe: "
-                    f"apikey_default_days={self.cfg.apikey_default_days}) oder, wenn es wirklich "
-                    "keinen anderen Weg gibt, apikey_allow_unlimited=True.")
+                    "An API key without an expiry is a secret that nobody takes back — it "
+                    "outlives the person who issued it and the project it was meant "
+                    "for. Either set expires_days (default: "
+                    f"apikey_default_days={self.cfg.apikey_default_days}) or, if there really is "
+                    "no other way, apikey_allow_unlimited=True.")
             expires_at = None
         else:
             expires_at = _jetzt() + expires_days * 86400
@@ -899,11 +899,11 @@ class TinySesam:
             # Hence an error instead of an assumption: only the caller knows what was meant.
             if not roles:
                 raise ConfigError(
-                    f"API-Key-Scope {sorted(set(gewuenscht))} enthält keine Rolle, die das Konto "
-                    f"hat ({sorted(erlaubt) or 'keine'}). Ein Key kann nur weniger können als "
-                    "sein Besitzer, nie mehr - und ein leerer Scope hiesse in der Datenbank "
-                    "'erbt alles'. Entweder eine vorhandene Rolle nennen oder `roles` weglassen "
-                    "(dann erbt der Key die Rollen des Kontos).")
+                    f"API key scope {sorted(set(gewuenscht))} contains no role that the account "
+                    f"has ({sorted(erlaubt) or 'none'}). A key can only do less than "
+                    "its owner, never more - and an empty scope would mean "
+                    "'inherits everything' in the database. Either name an existing role or leave out `roles` "
+                    "(then the key inherits the account's roles).")
 
         kid = self.store.add_api_key(user_id, name, prefix, key_hash, roles, expires_at, kind=kind)
         detail = f"user={user_id} key={kid} name={name} art={self._key_art_audit(kind)}"
@@ -1109,7 +1109,7 @@ class TinySesam:
         revocation was only in the audit log there, the owner learned nothing. `grund` is one of
         `_KEYS_WIDERRUFEN_GRUENDE`."""
         if grund not in self._KEYS_WIDERRUFEN_GRUENDE:
-            raise ValueError(f"unbekannter Grund {grund!r} — erlaubt: {self._KEYS_WIDERRUFEN_GRUENDE}")
+            raise ValueError(f"unknown reason {grund!r} — allowed: {self._KEYS_WIDERRUFEN_GRUENDE}")
         n = self.store.revoke_user_api_keys(user_id)
         if n:
             self._security_event("api_keys_revoked", user_id, count=n, reason=grund)
@@ -1138,7 +1138,7 @@ class TinySesam:
         try:
             return _pw.blockliste_lesen(pfad)
         except OSError as e:
-            raise ConfigError(f"password_blocklist_file {pfad!r} lässt sich nicht lesen: {e}") from e
+            raise ConfigError(f"password_blocklist_file {pfad!r} cannot be read: {e}") from e
 
     def password_policy_error(self, password, *, username=None, email=None, api: bool = False) -> Optional[str]:
         """The password rule for a NEW password — `None` means "fine", otherwise the
@@ -1284,10 +1284,10 @@ class TinySesam:
         if not u:
             return False
         if u["is_owner"]:
-            raise StateError(f"Konto {user_id} ist Owner und kann nicht gelöscht werden — erst die "
-                             "Owner-Rolle abgeben (dazu muss ein anderer Owner bestehen).")
+            raise StateError(f"Account {user_id} is an owner and cannot be deleted — hand over the "
+                             "owner role first (this requires another owner to exist).")
         if u["is_admin"] and sum(1 for x in self.store.list_users() if x["is_admin"]) <= 1:
-            raise StateError(f"Konto {user_id} ist der letzte Admin und kann nicht gelöscht werden.")
+            raise StateError(f"Account {user_id} is the last admin and cannot be deleted.")
         # The one deletion path (`Store.konto_entfernen`) — the same through which `gc()`, `tinysesam gc`
         # and the withdrawal of a registration delete (integration findings 12/18). Only here, in
         # the deliberate deletion, does a verified address count as the account's own even from before creation —
@@ -1484,9 +1484,9 @@ class TinySesam:
             # G6: The identity provider has withdrawn the instance's last admin
             # (`apply_idp_groups`) — the allowlist does not open again afterwards, for nobody.
             security.seclog.warning(
-                "Erst-Admin NICHT vergeben: %s steht in admin_identifiers, aber der Identity "
-                "Provider hat der Instanz ihren letzten Admin entzogen — die Allowlist öffnet sich "
-                "danach nicht wieder. Notweg: tinysesam owner --db <datei> <benutzer> oder "
+                "First admin NOT granted: %s is in admin_identifiers, but the identity "
+                "provider has withdrawn the instance's last admin — the allowlist does not open "
+                "again afterwards. Emergency route: tinysesam owner --db <file> <user> or "
                 "/auth/claim-admin.", security.fuer_log(user["username"]))
             self.audit("admin_bootstrap_denied", user["username"], detail="nach_idp_entzug")
             return False
@@ -1503,11 +1503,11 @@ class TinySesam:
                 belegt, grund = _beleg_am_konto(user), "email_unbestaetigt"
             if not belegt:
                 security.seclog.warning(
-                    "Erst-Admin NICHT vergeben: %s trägt die Allowlist-Adresse %s, für diesen "
-                    "Anmeldeweg (%s) liegt aber kein Bestätigungsbeleg vor (OIDC: Claim "
-                    "email_verified; SAML und LDAP kennen keinen; sonst der Vermerk am Konto). "
-                    "Die Adresse bleibt am Konto, sie trägt nur diese Entscheidung nicht. "
-                    "Belegter Weg: /auth/claim-admin.",
+                    "First admin NOT granted: %s carries the allowlist address %s, but there is no "
+                    "confirmation evidence for this sign-in path (%s) (OIDC: claim "
+                    "email_verified; SAML and LDAP have none; otherwise the note on the account). "
+                    "The address stays on the account, it just does not support this decision. "
+                    "Evidenced route: /auth/claim-admin.",
                     security.fuer_log(user["username"]), security.fuer_log(user["email"]),
                     faktor or "?")
                 self.audit("admin_bootstrap_denied", user["username"], detail=grund)
@@ -1539,8 +1539,8 @@ class TinySesam:
             except FileNotFoundError:
                 pass  # already gone (never created or already redeemed) — exactly the target state
             except OSError as e:
-                security.seclog.warning("Token-Datei %s liess sich nicht entfernen (%s) — ihr "
-                                        "Inhalt ist ungültig.", pfad, type(e).__name__)
+                security.seclog.warning("Token file %s could not be removed (%s) — its "
+                                        "content is invalid.", pfad, type(e).__name__)
 
     def _admin_claim_bekanntgeben(self, token: str) -> None:
         """Show the value of the first-admin one-time token to the **operator** — not to the log.
@@ -1574,10 +1574,10 @@ class TinySesam:
             automatisch = bool(pfad)
         # What the line in the log says must be true — also in the fallback. Up to 0.21.x it said there
         # "The value is deliberately NOT in the log" while in the container it stood two lines above.
-        wohin = ("steht auf der Konsole (stderr), nicht in dieser Zeile" if konsole else
-                 "steht auf stderr — und stderr ist hier KEINE Konsole: Der Wert steht damit im "
-                 "Log des Dienstes (journal, docker logs). Abhilfe: admin_claim_token_file setzen "
-                 "oder eine Datenbank-Datei statt :memory:")
+        wohin = ("is on the console (stderr), not in this line" if konsole else
+                 "is on stderr — and stderr is NOT a console here: the value is therefore in the "
+                 "service's log (journal, docker logs). Remedy: set admin_claim_token_file "
+                 "or use a database file instead of :memory:")
         geschrieben = False
         if pfad:
             try:
@@ -1592,22 +1592,22 @@ class TinySesam:
                     os.write(fd, (token + "\n").encode("utf-8"))
                 finally:
                     os.close(fd)
-                wohin = f"steht in {pfad} (Rechte 0600), nicht im Log"
+                wohin = f"is in {pfad} (mode 0600), not in the log"
                 geschrieben = True
             except OSError as e:
                 # No reason to refuse startup — but the operator must get the token,
                 # otherwise they cannot reach their own instance.
-                name = "die Token-Datei" if automatisch else "admin_claim_token_file"
-                _auf_stderr(f"TinySesam: {name} {pfad} nicht schreibbar "
-                            f"({type(e).__name__}) — der Token steht stattdessen hier:")
-                wohin = f"{wohin} ({pfad} war nicht schreibbar: {type(e).__name__})"
+                name = "the token file" if automatisch else "admin_claim_token_file"
+                _auf_stderr(f"TinySesam: {name} {pfad} not writable "
+                            f"({type(e).__name__}) — the token is here instead:")
+                wohin = f"{wohin} ({pfad} was not writable: {type(e).__name__})"
         if not geschrieben:
-            _auf_stderr(f"TinySesam: Kein Admin vorhanden. Ersten Admin setzen — anmelden, dann "
-                        f"/auth/claim-admin?token={token} (gültig {ttl} Minuten, genau einmal "
-                        f"einlösbar).")
+            _auf_stderr(f"TinySesam: No admin exists. Set the first admin — sign in, then "
+                        f"/auth/claim-admin?token={token} (valid {ttl} minutes, can be redeemed "
+                        f"exactly once).")
         security.seclog.warning(
-            "Kein Admin vorhanden. Das Einmal-Token für /auth/claim-admin %s — gültig %d "
-            "Minuten, genau einmal einlösbar.", wohin, ttl)
+            "No admin exists. The one-time token for /auth/claim-admin %s — valid %d "
+            "minutes, can be redeemed exactly once.", wohin, ttl)
 
     def admin_claim_token(self) -> Optional[str]:
         """Path 2: one-time token. As long as no admin exists, there is a token that can be redeemed
@@ -1666,9 +1666,9 @@ class TinySesam:
         """
         if not self.cfg.demo_mode:
             raise ConfigError(
-                "seed_demo() verlangt demo_mode=True. Ohne den Schalter entstünden sonst zwei "
-                "anmeldefähige Konten mit bekanntem Passwort — eines davon Admin — und der "
-                "Warnhinweis im Log bliebe aus.")
+                "seed_demo() requires demo_mode=True. Without the switch two accounts able to "
+                "sign in with a known password would be created — one of them admin — and the "
+                "warning in the log would be missing.")
         ids = []
         for name in self._DEMO_USERS:
             u = self.store.get_user_by_name(name)
@@ -1833,33 +1833,33 @@ class TinySesam:
         kennung = roh.strip()
         formfehler = self._kennung_formfehler(roh)
         if formfehler:
-            security.seclog.warning("%s: Kennung %s abgewiesen (user=%s)", quelle,
-                                    "mit Rand- oder Steuerzeichen" if formfehler == "Rand-/Steuerzeichen"
-                                    else "in Platzhalter-Form", security.fuer_log(username))
+            security.seclog.warning("%s: identifier %s rejected (user=%s)", quelle,
+                                    "with edge or control characters" if formfehler == "Rand-/Steuerzeichen"
+                                    else "in placeholder form", security.fuer_log(username))
             self.audit(f"{quelle}_kennung_ungueltig", username, detail=formfehler)
             return None
         if not kennung and not name_zuordnen:
             security.seclog.warning(
-                "%s: Name ist eine unbelegte Adresse und es gibt keine stabile Kennung (user=%s) — "
-                "abgewiesen. Eine Zuordnung über diesen Namen wäre eine Übernahme. Abhilfe: "
-                "%s_attr_id setzen oder der Quelle trauen (%s_email_trusted).",
+                "%s: the name is an unverified address and there is no stable identifier (user=%s) — "
+                "rejected. A mapping via this name would be a takeover. Remedy: "
+                "set %s_attr_id or trust the source (%s_email_trusted).",
                 quelle, security.fuer_log(username), quelle, quelle)
             self.audit(f"{quelle}_ohne_kennung", username, detail="abgewiesen: Adresse als Name")
             return None
         if not kennung:
             if self.cfg.federation_require_stable_id:
                 security.seclog.warning(
-                    "%s: keine stabile Kennung in der Antwort (user=%s) — abgewiesen, weil "
-                    "federation_require_stable_id=True. Das Attribut steht in %s_attr_id.",
+                    "%s: no stable identifier in the response (user=%s) — rejected because "
+                    "federation_require_stable_id=True. The attribute is named in %s_attr_id.",
                     quelle, security.fuer_log(username), quelle)
                 self.audit(f"{quelle}_ohne_kennung", username, detail="abgewiesen")
                 return None
             if security.einmal_melden(f"fed_ohne_kennung:{quelle}"):
                 security.seclog.warning(
-                    "%s liefert keine stabile Kennung — die Zuordnung hängt am Benutzernamen, "
-                    "wie vor 0.20.0. Wer im Verzeichnis umbenennt oder ein gelöschtes Konto "
-                    "unter demselben Namen neu anlegt, bekommt damit dasselbe lokale Konto. "
-                    "Abhilfe: %s_attr_id setzen (entryUUID, objectGUID) und danach "
+                    "%s delivers no stable identifier — the mapping hangs on the username, "
+                    "as before 0.20.0. Whoever renames in the directory or recreates a deleted account "
+                    "under the same name gets the same local account. "
+                    "Remedy: set %s_attr_id (entryUUID, objectGUID) and then "
                     "federation_require_stable_id=True.", quelle, quelle)
             gebunden_uid = None
         else:
@@ -1900,12 +1900,12 @@ class TinySesam:
             if vorhandene and not platzhalter and vorhandene != kennung:
                 # Case 3: The account belongs to someone else, even if the name is the same.
                 security.seclog.warning(
-                    "%s: Konto %s ist schon an eine andere Kennung gebunden — die Anmeldung mit "
-                    "einer neuen Kennung unter demselben Namen wird abgewiesen. Im Verzeichnis "
-                    "wurde vermutlich umbenannt oder ein Konto neu angelegt. Der Betreiber löst "
-                    "die Bindung, wenn das gewollt ist.", quelle, security.fuer_log(username))
+                    "%s: account %s is already bound to a different identifier — signing in with "
+                    "a new identifier under the same name is rejected. The directory "
+                    "was probably renamed or an account recreated. The operator releases "
+                    "the binding if that is intended.", quelle, security.fuer_log(username))
                 self.audit(f"{quelle}_kennung_wechsel", str(u["username"]),
-                           detail="abgewiesen: Konto traegt bereits eine andere Kennung")
+                           detail="rejected: account already carries a different identifier")
                 return None
             if not vorhandene or platzhalter:
                 # Case 4: binding afterwards — a single time per account, only through the door, and it
@@ -1927,13 +1927,13 @@ class TinySesam:
         The caller then returns None, the route books a failed attempt (review round
         2026-09-27, p1-d)."""
         security.seclog.warning(
-            "%s: Anmeldung unter %s abgewiesen — die Kennung ist Name oder Adresse von Konto %s, der "
-            "Eintrag im Verzeichnis gehört aber %s. Unter einer Kennung prüft TinySesam nie die "
-            "Geheimnisse zweier Personen: Die Anmeldung der einen räumte sonst die Sperrzähler, unter "
-            "denen gegen die andere geraten wird. Abhilfe: das lokale Konto umbenennen (Panel oder "
-            "`tinysesam rename`) oder den Namen im Verzeichnis ändern.",
+            "%s: sign-in under %s rejected — the identifier is the name or address of account %s, but "
+            "the directory entry belongs to %s. Under one identifier TinySesam never checks the "
+            "secrets of two people: the sign-in of one would otherwise clear the lockout counters under "
+            "which the other is being guessed. Remedy: rename the local account (panel or "
+            "`tinysesam rename`) or change the name in the directory.",
             quelle.upper(), security.fuer_log(username), lokal_id,
-            f"Konto {ziel_id}" if ziel_id is not None else "keinem Konto (es würde neu angelegt)")
+            f"account {ziel_id}" if ziel_id is not None else "no account (it would be newly created)")
         self.audit(f"{quelle}_kennung_abgewiesen", username,
                    detail=f"grund=kennung_zweier_konten lokal={lokal_id} "
                           f"verzeichnis={ziel_id if ziel_id is not None else 'neu'}")
@@ -1978,20 +1978,20 @@ class TinySesam:
     #: and text of 0.21.x. These lines do not change with the translation — operators'
     #: filters depend on them (PO decision 2026-09-27).
     _NACHBINDUNG_PROTOKOLL = {
-        "address_as_name": ("adresse_als_name", "der Name sagt nichts über die Person "
-                            "(Steuerzeichen, oder der unbelegte mail-Wert einer Quelle, der nicht "
-                            "vertraut wird)"),
-        "invalid_identifier": ("kennung_ungueltig", "die Kennung taugt nicht (Rand-/Steuerzeichen "
-                               "oder Platzhalter-Form)"),
-        "conflict": ("konflikt", "die Kennung gehört schon einem anderen Konto"),
-        "bound_elsewhere": ("anders_gebunden", "das Konto trägt schon eine andere Kennung"),
-        "self_chosen_name": ("name_selbst_gewaehlt", "der Name ist selbst gewählt (Registrierung "
-                             "oder Umbenennen) und sagt nichts darüber, wer im Verzeichnis so heisst"),
-        "name_from_other_source": ("name_aus_quelle", "der Name stammt aus einer anderen Quelle, "
-                                   "die das Konto angelegt hat (OIDC, SAML oder LDAP), und sagt "
-                                   "nichts darüber, wer in dieser so heisst"),
-        "binding_window_expired": ("frist", "die Frist für die Bindung über den Namen ist "
-                                   "abgelaufen (federation_name_binding_days)"),
+        "address_as_name": ("adresse_als_name", "the name says nothing about the person "
+                            "(control characters, or the unverified mail value of a source that "
+                            "is not trusted)"),
+        "invalid_identifier": ("kennung_ungueltig", "the identifier is unusable (edge/control characters "
+                               "or placeholder form)"),
+        "conflict": ("konflikt", "the identifier already belongs to another account"),
+        "bound_elsewhere": ("anders_gebunden", "the account already carries a different identifier"),
+        "self_chosen_name": ("name_selbst_gewaehlt", "the name was chosen by the user (registration "
+                             "or rename) and says nothing about who has that name in the directory"),
+        "name_from_other_source": ("name_aus_quelle", "the name comes from another source that created the "
+                                   "account (OIDC, SAML or LDAP) and says nothing about who has "
+                                   "that name in this one"),
+        "binding_window_expired": ("frist", "the window for binding by name has "
+                                   "passed (federation_name_binding_days)"),
     }
 
     def _nachbindung_grund(self, quelle: str, kennung: str, konto, *, name_belegt: bool = True,
@@ -2064,12 +2064,12 @@ class TinySesam:
         kuerzel, text = self._NACHBINDUNG_PROTOKOLL.get(grund, (grund, grund))
         tage = int(self.cfg.federation_name_binding_days)
         security.seclog.warning(
-            "%s: Konto %s (user_id=%s) wird nicht über den Namen an die Kennung %s gebunden — %s. "
-            "Die Anmeldung wird abgewiesen. Ist es dieselbe Person: "
-            "auth.federation_unbind('%s', %s) öffnet die Bindung für die nächste Anmeldung "
-            "(%d Tag(e)); den Bestand bindet auth.federation_bind_existing('%s').",
+            "%s: account %s (user_id=%s) is not bound by name to the identifier %s — %s. "
+            "The sign-in is rejected. If it is the same person: "
+            "auth.federation_unbind('%s', %s) opens the binding for the next sign-in "
+            "(%d day(s)); existing accounts are bound by auth.federation_bind_existing('%s').",
             quelle, security.fuer_log(username), konto["id"],
-            security.fuer_log(kennung) if kennung else "(keine)",
+            security.fuer_log(kennung) if kennung else "(none)",
             text, quelle, konto["id"], max(tage, 1), quelle)
         self.audit(f"{quelle}_namensbindung_zu", str(konto["username"]),
                    detail=f"grund={kuerzel} kennung={kennung or '-'}")
@@ -2116,10 +2116,10 @@ class TinySesam:
         weg = (f"auth.federation_bind_existing('{quelle}')" if quelle == "ldap"
                else f"auth.federation_bind_existing('{quelle}', mapping={{name: kennung}})")
         security.seclog.warning(
-            "%s: %d Konto(en) ohne Bindung an eine Kennung der Quelle (davon %d ohne lokales "
-            "Passwort). Bis %s (federation_name_binding_days=%d) bindet die nächste Anmeldung "
-            "sie über den Namen, danach nicht mehr — ein ruhendes Konto fiele sonst an die nächste "
-            "Person mit demselben Namen. Jetzt binden: %s (Trockenlauf), dann mit apply=True.",
+            "%s: %d account(s) without a binding to an identifier of the source (of which %d without a local "
+            "password). Until %s (federation_name_binding_days=%d) the next sign-in binds "
+            "them via the name, afterwards no longer — a dormant account would otherwise fall to the next "
+            "person with the same name. Bind now: %s (dry run), then with apply=True.",
             quelle.upper(), len(konten), ohne_pw,
             time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime(bis)), tage, weg)
 
@@ -2194,20 +2194,20 @@ class TinySesam:
         There is no CLI command: LDAP and SAML run only embedded, and the CLI does not know the
         configuration."""
         if source not in self.FEDERATED_SOURCES:
-            raise ValueError(f"source muss eine von {self.FEDERATED_SOURCES} sein, nicht {source!r}")
+            raise ValueError(f"source must be one of {self.FEDERATED_SOURCES}, not {source!r}")
         suchen = None
         if mapping is None:
             if source != "ldap":
                 raise ValueError(
-                    "SAML kennt keinen Suchweg ohne Anmeldung — die Kennungen kommen als "
-                    "mapping={Kontoname: NameID} (etwa aus einem Export des IdP).")
+                    "SAML has no lookup path without a sign-in — the identifiers come as "
+                    "mapping={account name: NameID} (e.g. from an export of the IdP).")
             if not self.ldap:
-                raise ConfigError("LDAP ist nicht eingerichtet (ldap_enabled, ldap_url) — oder "
-                                  "mapping={Kontoname: Kennung} übergeben.")
+                raise ConfigError("LDAP is not set up (ldap_enabled, ldap_url) — or pass "
+                                  "mapping={account name: identifier}.")
             suchen = getattr(self.ldap, "eintrag_suchen", None)
             if not callable(suchen):
-                raise ConfigError("Der gesetzte LDAP-Client kann nicht suchen (eintrag_suchen) — "
-                                  "mapping={Kontoname: Kennung} übergeben.")
+                raise ConfigError("The LDAP client in use cannot search (eintrag_suchen) — "
+                                  "pass mapping={account name: identifier}.")
         bericht: dict = {"source": source, "applied": bool(apply), "bound": [],
                          "conflict": [], "ambiguous": [], "not_in_directory": [],
                          "no_identifier": [], "refused": [], "local_password": []}
@@ -2281,8 +2281,8 @@ class TinySesam:
             else:
                 bericht["conflict"].append(dict(e, bound_to=self.store.get_federated_user(source, e["identifier"])))
         security.seclog.warning(
-            "federation_bind_existing(%s): %d gebunden, %d Konflikt, %d mehrdeutig, %d nicht im "
-            "Verzeichnis, %d ohne Kennung, %d abgewiesen, %d mit lokalem Passwort (nur berichtet).",
+            "federation_bind_existing(%s): %d bound, %d conflict, %d ambiguous, %d not in the "
+            "directory, %d without identifier, %d refused, %d with local password (reported only).",
             source, len(bericht["bound"]), len(bericht["conflict"]), len(bericht["ambiguous"]),
             len(bericht["not_in_directory"]), len(bericht["no_identifier"]),
             len(bericht["refused"]), len(bericht["local_password"]))
@@ -2678,7 +2678,7 @@ class TinySesam:
         """Set/change the PIN. Minimum length from cfg.pin_min_length."""
         pin = str(pin or "")
         if len(pin) < self.cfg.pin_min_length:
-            raise ConfigError(f"PIN zu kurz (min. {self.cfg.pin_min_length})")
+            raise ConfigError(f"PIN too short (min. {self.cfg.pin_min_length})")
         self.store.set_pin_hash(user_id, hash_password(pin))
         self._security_event("pin_set", user_id)
 
@@ -2944,9 +2944,9 @@ class TinySesam:
     def _serie_ausweg(self, username) -> str:
         """What the streak lock under this identifier lifts — for the security log."""
         if self._serie_reset_hilft(username):
-            return "Passwort-Reset, Anmeldung über einen anderen Weg oder `tinysesam unlock`"
-        return ("Anmeldung über einen anderen Weg oder `tinysesam unlock` (ein Passwort-Reset räumt "
-                "die Fehlversuche nach dem Passwort nicht: TOTP, PIN im Kettenschritt)")
+            return "password reset, signing in another way, or `tinysesam unlock`"
+        return ("signing in another way or `tinysesam unlock` (a password reset does not clear "
+                "the failed attempts after the password: TOTP, PIN in the chain step)")
 
     def _sperre_pruefen(self, regeln, username, ip, login: bool) -> bool:
         """Check the rules read-only; the first one that applies is reported (`_abgewiesen`).
@@ -3202,11 +3202,11 @@ class TinySesam:
             self.audit("totp_setup_denied", self._kontoname(user_id),
                        detail=f"user={user_id} grund=bereits_bestaetigt")
             raise StateError(
-                f"Konto {user_id} hat bereits ein bestätigtes TOTP — erst abschalten "
-                f"(totp_disable), dann neu einrichten.")
+                f"Account {user_id} already has a confirmed TOTP — disable it first "
+                f"(totp_disable), then set it up again.")
         u = self.store.get_user(user_id)
         if u is None:
-            raise ConfigError(f"Kein Konto mit der ID {user_id} — TOTP lässt sich nicht einrichten.")
+            raise ConfigError(f"No account with ID {user_id} — TOTP cannot be set up.")
         # Recovery codes without a confirmed TOTP belong to a secret that nobody has any more.
         # Leaving them in place would keep the second factor open via codes that do not fit
         # the new setup.
@@ -3352,7 +3352,7 @@ class TinySesam:
             # and the provider's MFA requirement would then no longer apply, and with LDAP the
             # local password even wins over the directory (`_check_password` first). The response
             # to the outside stays the same (no account probing); the reason is in the audit log.
-            self.audit("reset_sso_only", u["username"], detail="kein lokales Passwort, föderiert")
+            self.audit("reset_sso_only", u["username"], detail="no local password, federated")
             return False
         ziel = u["email"]
         if not self._mail_ziel_ok(ziel, "reset_password"):
@@ -3360,10 +3360,9 @@ class TinySesam:
         raw = self.create_magic_token("reset_password", user_id=u["id"], email=ziel)
         url = self.magic_url(raw, base_url, "reset_password")
         mins = self.cfg.magiclink_ttl_min
-        self._token_mail(raw, ziel, "Passwort zurücksetzen",
-                         f"Zum Zurücksetzen deines Passworts diesen Link öffnen (gültig {mins} Minuten):\n\n{url}\n\n"
-                         f"Wenn du das nicht angefordert hast, ignoriere diese E-Mail.",
-                         html=f'<p>Passwort zurücksetzen (gültig {mins} Minuten):</p><p><a href="{url}">Neues Passwort setzen</a></p>')
+        self._token_mail(raw, ziel, self.t("mail.reset.subject"),
+                         self.t("mail.reset.text", mins=mins, url=url),
+                         html=self.t("mail.reset.html", mins=mins, url=url))
         return True
 
     # ---------- Factor-chain engine ----------
@@ -3695,8 +3694,8 @@ class TinySesam:
             if host and host in self._eigene_hosts(request):
                 return True
             security.seclog.warning(
-                "csrf origin rejected origin=%s ip=%s — fremde Herkunft. Steht die App hinter "
-                "einem Proxy, der den Host umschreibt: base_url setzen.",
+                "csrf origin rejected origin=%s ip=%s — foreign origin. If the app sits behind "
+                "a proxy that rewrites the host: set base_url.",
                 security.fuer_log(origin[:200]), security.fuer_log(self.client_ip(request)))
             return False
         seite = (request.headers.get("sec-fetch-site") or "").strip().lower()
@@ -3881,9 +3880,9 @@ class TinySesam:
                                       payload={"roles": list(roles or []), "is_admin": bool(is_admin)})
         url = self.magic_url(raw, base_url, "invite")
         if email and self.mail_configured():
-            self._token_mail(raw, email, "Deine Einladung",
-                             f"Du wurdest eingeladen, ein Konto anzulegen:\n\n{url}\n",
-                             html=f'<p>Du wurdest eingeladen, ein Konto anzulegen:</p><p><a href="{url}">Konto erstellen</a></p>')
+            self._token_mail(raw, email, self.t("mail.invite.subject"),
+                             self.t("mail.invite.text", url=url),
+                             html=self.t("mail.invite.html", url=url))
         self.audit("invite_create", detail=email)
         return {"url": url, "token": raw}
 
@@ -3919,9 +3918,9 @@ class TinySesam:
         url = self.magic_url(raw, base_url, "verify_email")
 
         def senden():
-            self._token_mail(raw, email, "E-Mail bestätigen",
-                             f"Bitte bestätige deine E-Mail-Adresse:\n\n{url}\n",
-                             html=f'<p>Bitte bestätige deine E-Mail-Adresse:</p><p><a href="{url}">Bestätigen</a></p>')
+            self._token_mail(raw, email, self.t("mail.verify.subject"),
+                             self.t("mail.verify.text", url=url),
+                             html=self.t("mail.verify.html", url=url))
         return senden
 
     # ---------- Self-service: username and address (PO decision 2026-09-25) ----------
@@ -4078,16 +4077,9 @@ class TinySesam:
         def senden() -> bool:
             try:
                 return (not nein) and self._token_mail(
-                    raw, mail, "Neue E-Mail-Adresse bestätigen",
-                    f"Bitte bestätige, dass dies die E-Mail-Adresse deines Kontos „{name}“ "
-                    f"werden soll:\n\n{url}\n\n"
-                    "Ist das nicht dein Konto oder warst du das nicht, ignoriere diese E-Mail — "
-                    "es ändert sich nichts.",
-                    html=f'<p>Bitte bestätige, dass dies die E-Mail-Adresse deines Kontos '
-                         f'„{_html.escape(name)}“ werden soll:</p>'
-                         f'<p><a href="{url}">Adresse bestätigen</a></p>'
-                         f'<p>Ist das nicht dein Konto oder warst du das nicht, ignoriere diese '
-                         f'E-Mail — es ändert sich nichts.</p>')
+                    raw, mail, self.t("mail.email_change.subject"),
+                    self.t("mail.email_change.text", name=name, url=url),
+                    html=self.t("mail.email_change.html", name_html=_html.escape(name), url=url))
             finally:
                 # In EVERY case (G12b) — even if no link went out, and even if sending
                 # the link failed: the text ("applies only once the link is clicked") is correct
@@ -4109,11 +4101,8 @@ class TinySesam:
         before the link is redeemed — and a password change or "end sessions"
         discards it. **Without a link** (nothing whose base would have to be checked; test_self_service)."""
         if self._mail_ziel_ok(alt, "email_change_notice", topf="hinweis"):
-            self.send_mail(alt, "Änderung deiner E-Mail-Adresse beantragt",
-                           f"Für dein Konto „{name}“ wurde beantragt, die E-Mail-Adresse auf {neu} "
-                           "zu ändern. Sie gilt erst, wenn der Link an die neue Adresse geklickt ist.\n\n"
-                           "Warst du das nicht, ändere sofort dein Passwort oder beende alle Sitzungen — "
-                           "das verwirft den Antrag.")
+            self.send_mail(alt, self.t("mail.email_change_notice.subject"),
+                           self.t("mail.email_change_notice.text", name=name, new=neu))
 
     def _allowlist_adresse(self, mail) -> bool:
         """Steht diese Adresse in `admin_identifiers`?"""
@@ -4165,9 +4154,8 @@ class TinySesam:
         self._security_event("email_changed", uid, old=alt, new=mail)
         if alt and self.mail_configured():
             def hinweis():
-                self.send_mail(alt, "Deine E-Mail-Adresse wurde geändert",
-                               f"Die E-Mail-Adresse deines Kontos ist jetzt {mail}.\n\n"
-                               "Warst du das nicht, melde dich sofort beim Betreiber — und ändere dein Passwort.")
+                self.send_mail(alt, self.t("mail.email_changed.subject"),
+                               self.t("mail.email_changed.text", mail=mail))
             self._hinweis_ausgang.einreihen(hinweis)
         return "ok"
 
@@ -4188,13 +4176,9 @@ class TinySesam:
         if not self._mail_ziel_ok(ziel, "signup_notice", topf="hinweis"):
             return False
         login = f"{base_url}{self.cfg.login_path}"
-        self.send_mail(ziel, "Registrierung mit deiner Adresse",
-                       f"Jemand wollte mit dieser Adresse ein neues Konto anlegen. Es gibt aber schon eines.\n\n"
-                       f"Warst du das, melde dich hier an:\n{login}\n\n"
-                       f"Wenn nicht, kannst du diese E-Mail ignorieren.",
-                       html=f'<p>Jemand wollte mit dieser Adresse ein neues Konto anlegen. Es gibt aber schon eines.</p>'
-                            f'<p><a href="{login}">Zur Anmeldung</a></p>'
-                            f'<p>Wenn du das nicht warst, kannst du diese E-Mail ignorieren.</p>')
+        self.send_mail(ziel, self.t("mail.signup_notice.subject"),
+                       self.t("mail.signup_notice.text", login=login),
+                       html=self.t("mail.signup_notice.html", login=login))
         return True
 
     def send_login_link(self, email, base_url, next="/") -> bool:
@@ -4216,12 +4200,9 @@ class TinySesam:
         raw = self.create_magic_token("login", user_id=u["id"], email=ziel, payload={"next": next})
         url = self.magic_url(raw, base_url)
         mins = self.cfg.magiclink_ttl_min
-        self._token_mail(raw, ziel, "Dein Anmelde-Link",
-                         f"Zum Anmelden diesen Link öffnen (gültig {mins} Minuten):\n\n{url}\n\n"
-                         f"Wenn du das nicht angefordert hast, ignoriere diese E-Mail.",
-                         html=f'<p>Zum Anmelden diesen Link öffnen (gültig {mins} Minuten):</p>'
-                              f'<p><a href="{url}">Jetzt anmelden</a></p>'
-                              f'<p style="color:#888">Wenn du das nicht angefordert hast, ignoriere diese E-Mail.</p>')
+        self._token_mail(raw, ziel, self.t("mail.login_link.subject"),
+                         self.t("mail.login_link.text", mins=mins, url=url),
+                         html=self.t("mail.login_link.html", mins=mins, url=url))
         return True
 
     # ---------- Sessions ----------
@@ -4563,7 +4544,7 @@ class TinySesam:
                     # response is the same 503 for every account, so it reveals nothing about its
                     # existence (local wrong password and unknown name both end up here).
                     self.audit("ldap_unavailable", username, ip, security.fuer_log(str(e))[:300])
-                    security.seclog.error("LDAP nicht erreichbar user=%s ip=%s grund=%s",
+                    security.seclog.error("LDAP unreachable user=%s ip=%s reason=%s",
                                           security.fuer_log(username), security.fuer_log(ip),
                                           security.fuer_log(str(e)))
                     # …but only the DIRECTORY's share is excused (A-1). If the account has
@@ -5026,8 +5007,8 @@ class TinySesam:
                 self.store.audit_log("oidc_unbestaetigt", konto_name, s["ip"],
                                      f"client={z['client']} stunden={grenze // 3600}")
                 security.seclog.warning(
-                    "OIDC-Nachprüfung seit über %d Stunden ohne Ergebnis — Sitzung beendet. Prüfen: "
-                    "Client-Secret/Client beim Provider, Erreichbarkeit. user=%s",
+                    "OIDC re-check without result for over %d hours — session ended. Check: "
+                    "client secret/client at the provider, reachability. user=%s",
                     grenze // 3600, security.fuer_log(konto_name))
                 return False
             if jetzt - int(z["geprueft_at"]) < frist:
@@ -5064,8 +5045,8 @@ class TinySesam:
             # provider would say no, and that would hit the account (attack on the third round and
             # counter-check). The row goes, the session stays until its expiry.
             self.store.oidc_sitzung_verwerfen(handle, client)
-            security.seclog.warning("OIDC-Nachprüfung: Client %s ist nicht mehr (so) eingerichtet — "
-                                    "Zeile verworfen, kein Nein. user=%s",
+            security.seclog.warning("OIDC re-check: client %s is no longer set up (like this) — "
+                                    "row discarded, not counted as a no. user=%s",
                                     security.fuer_log(client), security.fuer_log(name))
             return
         try:
@@ -5082,9 +5063,9 @@ class TinySesam:
         handle = self.store.oidc_sitzung_handle(client, z["refresh"]) or handle
         if status == "fehler":
             self.store.oidc_sitzung_geprueft(handle, client, jetzt - frist + 60, alt_verschluesselt=z["refresh"])
-            security.seclog.warning("OIDC-Nachprüfung ohne Ergebnis (%s): Provider nicht erreichbar oder "
-                                    "ein Fehler des Clients (Zugangsdaten, Grant) — Sitzung bleibt, "
-                                    "neuer Versuch in einer Minute. user=%s",
+            security.seclog.warning("OIDC re-check without result (%s): provider unreachable or "
+                                    "a client error (credentials, grant) — session stays, "
+                                    "new attempt in one minute. user=%s",
                                     security.fuer_log(str(tok.get("error", "?"))), security.fuer_log(name))
             return
         if status == "abgelehnt":
@@ -5175,8 +5156,8 @@ class TinySesam:
                     # from the machine key, and for that it may carry the full rights.
                     if not (s and s["mfa_ok"] and s["user_id"] == u["id"]):
                         security.seclog.warning(
-                            "API-Key der Art 'mensch' ohne passende Sitzung vorgelegt "
-                            "(user=%s ip=%s) — abgewiesen.",
+                            "API key of kind 'human' presented without a matching session "
+                            "(user=%s ip=%s) — rejected.",
                             security.fuer_log(str(u["username"])),
                             security.fuer_log(self.client_ip(request)))
                         return None
@@ -5272,7 +5253,7 @@ class TinySesam:
             fenster = konto["mfa_enroll_until"] if konto else None
             if "passkey" not in done and not (fenster and int(fenster) > _jetzt()):
                 self.audit("mfa_enrollment_denied", str(konto["username"]) if konto else None,
-                           detail="Konto hat einen Passkey, der in dieser Sitzung fehlt")
+                           detail="account has a passkey that is missing in this session")
                 return None
         if not self.mfa_enrollment_allowed(u["id"]):
             # No silent no: whoever fails here has the correct password and stands before
@@ -5284,9 +5265,9 @@ class TinySesam:
             # name comes from the freshly fetched account row, not from the request.
             konto = self.store.get_user(u["id"])
             security.seclog.warning(
-                "mfa enrollment denied user=%s art=%s — der zweite Faktor fehlt und darf hier "
-                "nicht mehr eingerichtet werden. Weg: auth.grant_mfa_enrollment(uid) oder das "
-                "Admin-Panel.",
+                "mfa enrollment denied user=%s art=%s — the second factor is missing and may not "
+                "be set up here any more. Route: auth.grant_mfa_enrollment(uid) or the "
+                "admin panel.",
                 security.fuer_log(str(konto["username"]) if konto else "?"),
                 self.cfg.mfa_enrollment)
             self.audit("mfa_enrollment_denied", str(konto["username"]) if konto else None,
@@ -5695,20 +5676,16 @@ class TinySesam:
             if self.store._one("SELECT 1 FROM audit WHERE event='sperrhinweis' AND lower(username)=lower(?) "
                                "AND ts >= ? LIMIT 1", (u["username"], seit)):
                 return
-            betreff = "Gesperrte Anmeldung bei deinem Konto"
+            betreff = self.t("mail.lockout.subject")
             # Name the reset only if it also clears the streak (it does not clear TOTP and the PIN in the chain step,
             # `_serie_reset_hilft`).
             bis = ""
             if grund == "lockout_serie":
-                bis = (" — bis du dein Passwort zurücksetzt oder der Betreiber sie freigibt"
-                       if self._serie_reset_hilft(username) else
-                       " — bis der Betreiber sie freigibt. Ein Passwort-Reset hebt diese Sperre nicht "
-                       "auf: Die Fehlversuche galten dem Schritt nach dem Passwort")
-            text = (f"Für dein Konto „{u['username']}“ gab es mehrere fehlgeschlagene Anmeldeversuche; "
-                    f"die Anmeldung ist deshalb vorübergehend gesperrt" + bis
-                    + f".\n\nZeitpunkt: {time.strftime('%Y-%m-%d %H:%M UTC', time.gmtime(zeit))}\n"
-                    f"Adresse der Versuche: {security.fuer_log(ip) or 'unbekannt'}\n\n"
-                    "Warst du das nicht, ändere dein Passwort und richte einen zweiten Faktor ein.")
+                bis = (self.t("mail.lockout.until_reset") if self._serie_reset_hilft(username)
+                       else self.t("mail.lockout.until_operator"))
+            text = self.t("mail.lockout.text", name=u["username"], until=bis,
+                          time=time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime(zeit)),
+                          ip=security.fuer_log(ip) or self.t("mail.unknown"))
             self.send_mail(u["email"], betreff, text)
             self.store.audit_log("sperrhinweis", u["username"], ip, f"grund={grund}")
 
@@ -5835,7 +5812,7 @@ class TinySesam:
                 if gesperrt:
                     self.store.audit_log("lockout_serie", username, ip, f"fehlversuche_in_folge={stand}")
                     security.seclog.warning(
-                        "Anmeldung für user=%s gesperrt: %d Fehlversuche in Folge. Aufheben: %s.",
+                        "Sign-in for user=%s locked: %d failed attempts in a row. Lift: %s.",
                         security.fuer_log(username), stand, self._serie_ausweg(username))
 
     def _raeumgrenze(self, topf, method, konto: Optional[int] = None) -> Optional[dict]:
@@ -6055,7 +6032,7 @@ class TinySesam:
             # foreign identity. Exactly the characters that `_header_wert` removes (C0, DEL) — a
             # ZWNJ in a Persian existing name passes through losslessly and does not collide
             # (counter-check). `create_user` no longer permits new names like that at all.
-            security.seclog.warning("forward-auth abgewiesen: Kontoname mit Steuerzeichen (user_id=%s)",
+            security.seclog.warning("forward-auth rejected: account name with control characters (user_id=%s)",
                                     user["id"])
             raise HTTPException(403, self.t("api.name_invalid"))
         werte = self._forward_werte(user)
@@ -6425,7 +6402,7 @@ class TinySesam:
         (`tinysesam/templates.py`) — all English since 0.22.0.
         """
         if name not in self.PAGES:
-            raise ConfigError(f"Unbekannte Seite {name!r} — es gibt: {', '.join(self.PAGES)}")
+            raise ConfigError(f"Unknown page {name!r} — available: {', '.join(self.PAGES)}")
         self.templates.set(name, fn)
 
     def csrf_token(self, request: Optional[Request] = None) -> str:
@@ -6520,9 +6497,9 @@ class TinySesam:
             return
         self._secure_flag_gemeldet = True
         security.seclog.warning(
-            "Konfiguration: cookie_secure=False, aber der Browser kommt über HTTPS — Sitzungs- und "
-            "CSRF-Cookie gehen ohne Secure-Flag hinaus und damit auch über jede Klartext-Verbindung "
-            "zum selben Host. cookie_secure=True setzen (das ist die Vorgabe).")
+            "Configuration: cookie_secure=False, but the browser comes in over HTTPS — session and "
+            "CSRF cookie go out without the Secure flag and thus also over any plaintext connection "
+            "to the same host. Set cookie_secure=True (that is the default).")
 
     def _kopfzeilen_fehler(self, exc) -> None:
         """The same headers for an `HTTPException` from a TinySesam route.
@@ -6660,10 +6637,10 @@ class TinySesam:
             basis = security.normalisiere_basis(str(self.cfg.base_url))
             if not basis:
                 raise StateError(
-                    "base_url ist gesetzt, aber keine brauchbare Basis-Adresse: "
-                    f"{str(self.cfg.base_url)!r}. Erwartet wird Schema http/https und ein Host, "
-                    "ohne Benutzerangabe, Abfrage oder Fragment (erlaubt ist ein Unterpfad, z.B. "
-                    "\"https://example.com/sso\"). Geraten wird hier nichts.")
+                    "base_url is set, but is not a usable base address: "
+                    f"{str(self.cfg.base_url)!r}. Expected is scheme http/https and a host, "
+                    "without user info, query or fragment (a subpath is allowed, e.g. "
+                    "\"https://example.com/sso\"). Nothing is guessed here.")
             return basis
         roh = str(candidate or (str(request.base_url) if request is not None else "")).strip()
         basis = security.sichere_basis(roh, self.cfg.trusted_redirect_hosts)
@@ -6674,10 +6651,10 @@ class TinySesam:
             # storm of identical lines would itself be a finding, so `einmal_melden()` says it
             # once per process and host — the hint about base_url is in the line.
             security.seclog.warning(
-                "Kein vertrauenswürdiger öffentlicher Host: %s stammt aus dem Host-Header und "
-                "steht weder in trusted_redirect_hosts noch ist er Loopback. Der Vorgang bricht "
-                "ab (sonst ginge ein Link auf einen fremden Host hinaus). Abhilfe: base_url "
-                "setzen. Diese Zeile kommt einmal je Host, nicht je Anfrage.",
+                "No trustworthy public host: %s comes from the Host header and "
+                "is neither in trusted_redirect_hosts nor loopback. The operation aborts "
+                "(otherwise a link to a foreign host would go out). Remedy: set "
+                "base_url. This line appears once per host, not per request.",
                 security.fuer_log(roh))
         return basis
 
@@ -6705,14 +6682,14 @@ class TinySesam:
         basis = self.public_base(request, candidate)
         if not basis:
             raise ConfigError(
-                "Keine vertrauenswürdige öffentliche Adresse: base_url ist leer, und der Host "
-                "aus der Anfrage ist nicht als eigener belegt (er steht nicht in "
-                "trusted_redirect_hosts und ist keine Loopback-Adresse). Aus dem Host-Header "
-                "wird hier nichts geraten — er ist eine Eingabe des Anfragenden, und bei einer "
-                "Mail an ein fremdes Postfach ist das der Angreifer (R4-01). Abhilfe: base_url "
-                "auf die öffentliche Adresse dieser App setzen, z.B. "
-                "base_url=\"https://auth.example.com\"; unter einem Unterpfad montiert mit "
-                "Präfix (\"https://example.com/sso\").")
+                "No trustworthy public address: base_url is empty, and the host "
+                "from the request is not established as our own (it is not in "
+                "trusted_redirect_hosts and is not a loopback address). Nothing is guessed "
+                "from the Host header — it is an input of the requester, and with a "
+                "mail to a foreign mailbox that is the attacker (R4-01). Remedy: set base_url "
+                "to the public address of this app, e.g. "
+                "base_url=\"https://auth.example.com\"; mounted under a subpath, with "
+                "prefix (\"https://example.com/sso\").")
         return basis
 
     def _gepruefte_basis(self, base_url) -> str:
@@ -6770,22 +6747,22 @@ class TinySesam:
         if basis and roh and _vergleich != basis \
                 and security.einmal_melden("gepruefte_basis:" + _vergleich):
             security.seclog.warning(
-                "Übergebene Basis-Adresse %s wird durch base_url (%s) ersetzt — base_url ist die "
-                "Zusage des Betreibers und gewinnt immer. Kommt der Wert aus str(request.base_url), "
-                "ist es der Host-Header des Anfragenden; genau darüber zeigte ein Reset-Link auf "
-                "einen fremden Server (R4-01). Diese Zeile kommt einmal je Host, nicht je Anfrage.",
+                "Passed base address %s is replaced by base_url (%s) — base_url is the "
+                "operator's commitment and always wins. If the value comes from str(request.base_url), "
+                "it is the requester's Host header; that is exactly how a reset link pointed to "
+                "a foreign server (R4-01). This line appears once per host, not per request.",
                 security.fuer_log(roh), security.fuer_log(basis))
         if not basis:
             # `public_base()` has already logged (once per host). In the text of the exception is
             # the shortened version freed of control characters: the value comes from the requester,
             # and an exception travels into logs and error pages.
             raise ConfigError(
-                f"Diese Basis-Adresse geht nicht in einen verschickten Link: "
-                f"{security.fuer_log(roh)!r}. Erlaubt "
-                "sind base_url, ein Host aus trusted_redirect_hosts und Loopback. Wer die Basis "
-                "aus dem Request nimmt, nimmt den Host-Header des Anfragenden — bei einer Mail an "
-                "ein fremdes Postfach also den des Angreifers. In einer Route liefert "
-                "auth.public_base(request) die geprüfte Basis (leer = abbrechen).")
+                f"This base address does not go into a sent link: "
+                f"{security.fuer_log(roh)!r}. Allowed "
+                "are base_url, a host from trusted_redirect_hosts, and loopback. Whoever takes the base "
+                "from the request takes the requester's Host header — with a mail to "
+                "a foreign mailbox, that is the attacker's. In a route "
+                "auth.public_base(request) returns the checked base (empty = abort).")
         return basis
 
     #: What may serve as a mount prefix (`root_path`) in pages and redirects (T-15). The value comes
@@ -6817,8 +6794,8 @@ class TinySesam:
             return ""
         if not self._PRAEFIX_FORM.fullmatch(roh):
             if security.einmal_melden("praefix_form"):
-                security.seclog.warning("root_path %s hat eine unerwartete Form und wird für Seiten und "
-                                        "Umleitungen nicht benutzt (erlaubt: /teil/teil aus A–Z a–z 0–9 . _ ~ -).",
+                security.seclog.warning("root_path %s has an unexpected form and is not used for pages and "
+                                        "redirects (allowed: /part/part of A–Z a–z 0–9 . _ ~ -).",
                                         security.fuer_log(roh))
             return ""
         return roh
@@ -6871,10 +6848,10 @@ class TinySesam:
         and became first admin. `beim_aufbau=False` leaves out only `config_check` —
         `_nachpruefen` has already run it via `TinySesamConfig._befunde()`, warnings included."""
         if config.login_identifier not in ("username", "email", "both"):
-            raise ConfigError("login_identifier muss 'username', 'email' oder 'both' sein")
+            raise ConfigError("login_identifier must be 'username', 'email' or 'both'")
         if config.login_identifier == "email" and config.allow_signup and not config.signup_require_email:
-            raise ConfigError("login_identifier='email' braucht signup_require_email=True — "
-                             "sonst entstehen Konten, die sich nicht anmelden können")
+            raise ConfigError("login_identifier='email' needs signup_require_email=True — "
+                             "otherwise accounts arise that cannot sign in")
         # All remaining contradictions at once — at construction, not at the first login. The
         # checks above raise individually because each tells its own story;
         # what comes after is collected by config_check.py and reported together. Whoever has three things
@@ -6882,25 +6859,25 @@ class TinySesam:
         if beim_aufbau:
             befunde, hinweise = config_check.check_config(config)
             for hinweis in hinweise:
-                security.seclog.warning("Konfiguration: %s", hinweis)
+                security.seclog.warning("configuration: %s", hinweis)
             if befunde:
-                raise ConfigError("Die Konfiguration geht so nicht auf:\n  - " + "\n  - ".join(befunde))
+                raise ConfigError("The configuration does not work like this:\n  - " + "\n  - ".join(befunde))
 
         if config.cookie_samesite not in ("lax", "strict", "none"):
             raise ConfigError(
-                "cookie_samesite muss 'lax', 'strict' oder 'none' sein (klein geschrieben). "
-                "Starlette prüft den Wert erst beim ersten Cookie — und unter `python -O` gar "
-                "nicht, dann stünde der Tippfehler im Set-Cookie-Header.")
+                "cookie_samesite must be 'lax', 'strict' or 'none' (lower case). "
+                "Starlette only checks the value at the first cookie — and under `python -O` not at "
+                "all, so the typo would end up in the Set-Cookie header.")
         if config.cookie_samesite == "none" and not config.cookie_secure:
             raise ConfigError(
-                "cookie_samesite='none' verlangt cookie_secure=True — ein Browser verwirft ein "
-                "SameSite=None-Cookie ohne Secure-Flag, die Anmeldung käme nie an.")
+                "cookie_samesite='none' requires cookie_secure=True — a browser discards a "
+                "SameSite=None cookie without the Secure flag, the sign-in would never arrive.")
         if not isinstance(config.csp, str):
-            raise ConfigError("csp muss ein String sein ('strict', 'off' oder eine eigene Policy)")
+            raise ConfigError("csp must be a string ('strict', 'off' or a custom policy)")
         if config.https_mode not in ("off", "warn", "force"):
-            raise ConfigError("https_mode muss 'off', 'warn' oder 'force' sein — alles andere "
-                             "gilt als 'kein Redirect', ein Tippfehler schaltet den HTTPS-Zwang "
-                             "also still ab")
+            raise ConfigError("https_mode must be 'off', 'warn' or 'force' — anything else "
+                             "counts as 'no redirect', so a typo silently switches the "
+                             "HTTPS enforcement off")
         # cookie_secure=False is right for local setups without a certificate and remains
         # allowed. Together with https_mode='force' it contradicts itself, though: the app then redirects
         # every request to HTTPS and still hands out the session cookie without the
@@ -6921,16 +6898,16 @@ class TinySesam:
         # instead of continuing to ignore it silently — and names the route that really applies.
         if getattr(config, "totp_required", False):
             raise ConfigError(
-                "totp_required hat nie etwas bewirkt — der Schalter wurde an keiner Stelle "
-                "gelesen. Wer TOTP verbindlich verlangen will, nimmt die Faktor-Kette: "
-                "login_chain=['password', 'totp'] (mit login_chain_strict=True). Ohne Kette "
-                "gilt die klassische Policy: TOTP wird verlangt, sobald es eingerichtet ist.")
+                "totp_required has never had any effect — the switch was not read anywhere. "
+                "Whoever wants to make TOTP mandatory uses the factor chain: "
+                "login_chain=['password', 'totp'] (with login_chain_strict=True). Without a chain "
+                "the classic policy applies: TOTP is required as soon as it is set up.")
         if not config.cookie_secure and config.https_mode == "force":
             raise ConfigError(
-                "https_mode='force' und cookie_secure=False widersprechen sich: Die App "
-                "leitet jeden Request auf HTTPS um, gibt das Session-Cookie aber ohne "
-                "Secure-Flag heraus. Entweder cookie_secure=True, oder https_mode='warn' "
-                "(lokal/ohne Zertifikat).")
+                "https_mode='force' and cookie_secure=False contradict each other: the app "
+                "redirects every request to HTTPS but hands out the session cookie without the "
+                "Secure flag. Either cookie_secure=True, or https_mode='warn' "
+                "(local/without certificate).")
 
         # First admin via allowlist + open self-registration: the allowlist vouches only for
         # WHICH name becomes admin — not WHO gets that name. If `admin_identifiers` stands
@@ -6963,22 +6940,22 @@ class TinySesam:
             namen = [i for i in ids if "@" not in i]
             if namen:
                 raise ConfigError(
-                    f"admin_identifiers={namen} sind Benutzernamen, und Konten entstehen hier "
-                    f"von selbst ({', '.join(offene_tueren)}): Einen Benutzernamen bestätigt "
-                    "niemand — wer sich als Erster so anmeldet, wird Erst-Admin. Bei offener "
-                    "Registrierung stattdessen eine E-Mail-Adresse eintragen (mit "
-                    "signup_require_email=True und signup_verify_email=True); bei einem IdP "
-                    "den Einmal-Token-Weg nutzen (/auth/claim-admin, s. admin_claim_ttl_min) "
-                    "oder das Auto-Anlegen abschalten und das Konto vorher selbst vergeben "
-                    "(bei OIDC grenzt oidc_allowed_groups den Kreis zusätzlich ein).")
+                    f"admin_identifiers={namen} are usernames, and accounts arise here "
+                    f"on their own ({', '.join(offene_tueren)}): nobody confirms a "
+                    "username — whoever signs in first like that becomes first admin. With open "
+                    "registration enter an email address instead (with "
+                    "signup_require_email=True and signup_verify_email=True); with an IdP "
+                    "use the one-time-token route (/auth/claim-admin, see admin_claim_ttl_min) "
+                    "or switch off auto-creation and assign the account yourself beforehand "
+                    "(with OIDC, oidc_allowed_groups narrows the circle further).")
         if config.admin_identifiers and config.allow_signup:
             if not (config.signup_require_email and config.signup_verify_email):
                 raise ConfigError(
-                    "admin_identifiers zusammen mit allow_signup=True verlangt "
-                    "signup_require_email=True UND signup_verify_email=True — sonst trägt "
-                    "jeder die Admin-Adresse bei der Registrierung einfach ein und wird beim "
-                    "ersten Login Admin. Alternativ allow_signup=False oder der Einmal-Token-Weg "
-                    "(/auth/claim-admin, s. admin_claim_ttl_min).")
+                    "admin_identifiers together with allow_signup=True requires "
+                    "signup_require_email=True AND signup_verify_email=True — otherwise "
+                    "anyone simply enters the admin address at registration and becomes admin at the "
+                    "first login. Alternatively allow_signup=False or the one-time-token route "
+                    "(/auth/claim-admin, see admin_claim_ttl_min).")
         # A typo in the field name ("mail" instead of "email") would otherwise simply omit the
         # header — silently, and visible only when debugging the foreign app. Header names are checked
         # against the permitted character set: a value with a line break would be header injection.
@@ -6994,18 +6971,18 @@ class TinySesam:
                 if isinstance(wert, (list, tuple)) and all(isinstance(x, str) for x in wert):
                     continue
                 raise ConfigError(
-                    f"forward_headers[{feld!r}] muss ein Header-Name sein oder eine Liste davon "
-                    f"— ist aber {type(wert).__name__}. Beispiel: "
-                    '{"user": "Remote-User"} oder {"user": ["Remote-User", "X-Auth-User"]}')
+                    f"forward_headers[{feld!r}] must be a header name or a list of them "
+                    f"— but is {type(wert).__name__}. Example: "
+                    '{"user": "Remote-User"} or {"user": ["Remote-User", "X-Auth-User"]}')
             unbekannt = [k for k in config.forward_headers if k not in erlaubt]
             if unbekannt:
-                raise ConfigError(f"forward_headers: unbekanntes Feld {unbekannt} — erlaubt sind "
+                raise ConfigError(f"forward_headers: unknown field {unbekannt} — allowed are "
                                  f"{sorted(erlaubt)}")
             for feld, namen in config.forward_headers.items():
                 for name in ([namen] if isinstance(namen, str) else namen or []):
                     if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9!#$%&'*+.^_`|~-]+", name):
-                        raise ConfigError(f"forward_headers[{feld!r}]: {name!r} ist kein gültiger "
-                                         "Header-Name")
+                        raise ConfigError(f"forward_headers[{feld!r}]: {name!r} is not a valid "
+                                         "header name")
 
     def _nachpruefen(self) -> None:
         """Check the config once more before routes arise from it (B3-14).
@@ -7024,8 +7001,8 @@ class TinySesam:
             except ConfigError as e:
                 fehler = [str(e)]
         if fehler:
-            raise ConfigError("Die Konfiguration wurde nach dem Aufbau geändert und geht so nicht "
-                              "auf:\n  - " + "\n  - ".join(fehler))
+            raise ConfigError("The configuration was changed after construction and does not "
+                              "work like this:\n  - " + "\n  - ".join(fehler))
 
     def router(self):
         """The FastAPI router with all enabled routes. Mount once, done.
@@ -7270,10 +7247,10 @@ class TinySesam:
                 # Catches the one call that changes through the variadic signature:
                 # require_role("editor", True) used to mean mfa=True. mfa and admin_implies
                 # are now keyword-only — loud instead of silently wrong.
-                raise TypeError(f"require_role(): {r!r} ist keine Rolle. "
-                                "mfa/admin_implies nur noch als Schlüsselwort übergeben.") from None
+                raise TypeError(f"require_role(): {r!r} is not a role. "
+                                "Pass mfa/admin_implies as keyword arguments only.") from None
         if not flach:
-            raise ConfigError("require_role() braucht mindestens eine Rolle")
+            raise ConfigError("require_role() needs at least one role")
 
         def dep(request: Request) -> dict:
             return self._enforce(request, role=flach, mfa=mfa, admin_implies=admin_implies)
@@ -7331,9 +7308,9 @@ class TinySesam:
     def set_resource_secret(self, name, secret, kind="pin", label=None):
         """Set/change the secret for a realm. kind='pin' (numeric) | 'password' (passphrase)."""
         if not secret:
-            raise ConfigError("leeres Geheimnis")
+            raise ConfigError("empty secret")
         if kind not in ("pin", "password"):
-            raise ConfigError("kind muss 'pin' oder 'password' sein")
+            raise ConfigError("kind must be 'pin' or 'password'")
         self.store.set_resource_secret(name, hash_password(str(secret)), kind, label)
 
     def remove_resource_secret(self, name):
@@ -7409,103 +7386,103 @@ class TinySesam:
             alias = next((vars(b)[name] for b in cls.__mro__[1:] if name in vars(b)), None)
             if isinstance(alias, Deprecated) and not isinstance(wert, Deprecated):
                 warnings.warn(
-                    f"{cls.__name__}.{name} überschreibt einen veralteten Namen und wirkt seit "
-                    f"0.22.0 nicht mehr: TinySesam ruft intern `{alias.ziel}`. {alias.meldung}",
+                    f"{cls.__name__}.{name} overrides a deprecated name and has had no effect since "
+                    f"0.22.0: TinySesam internally calls `{alias.ziel}`. {alias.meldung}",
                     RuntimeWarning, stacklevel=2)
 
     check_ldap = Deprecated(
-        "_check_ldap", "stattdessen `login_password` (fragt das Verzeichnis als Rückfall, "
-        "drosselt und sperrt wie `POST /auth/login`)")
+        "_check_ldap", "use `login_password` instead (asks the directory as a fallback, "
+        "throttles and locks like `POST /auth/login`)")
     check_password = Deprecated(
-        "_check_password", "stattdessen `login_password` (drosselt, zählt und sperrt wie "
-        "`POST /auth/login`), für ein eigenes Aussehen allein `set_template(\"login\", …)`; "
-        "`check_password` selbst drosselt nicht")
+        "_check_password", "use `login_password` instead (throttles, counts and locks like "
+        "`POST /auth/login`), for a custom look use `set_template(\"login\", …)` alone; "
+        "`check_password` itself does not throttle")
     check_pin = Deprecated(
-        "_check_pin", "stattdessen `login_pin` (drosselt, zählt und sperrt wie `POST /auth/pin`), "
-        "für ein eigenes Aussehen allein `set_template(\"pin\", …)`; `check_pin` selbst drosselt "
-        "nicht")
+        "_check_pin", "use `login_pin` instead (throttles, counts and locks like `POST /auth/pin`), "
+        "for a custom look use `set_template(\"pin\", …)` alone; `check_pin` itself does not "
+        "throttle")
     check_resource = Deprecated(
-        "_check_resource", "stattdessen `POST /auth/resource/{name}` (drosselt und sperrt) bzw. "
-        "`require_resource`")
+        "_check_resource", "use `POST /auth/resource/{name}` (throttles and locks) or "
+        "`require_resource` instead")
     check_saml = Deprecated(
-        "_check_saml", "stattdessen `POST /auth/saml/acs`, das die Signatur der Assertion prüft; "
-        "`check_saml` vertraut seinen Argumenten")
-    complete_mfa = Deprecated("complete_totp", "stattdessen `complete_totp` (gleiches Verhalten)")
+        "_check_saml", "use `POST /auth/saml/acs` instead, which checks the assertion's signature; "
+        "`check_saml` trusts its arguments")
+    complete_mfa = Deprecated("complete_totp", "use `complete_totp` instead (same behaviour)")
     consume_admin_claim = Deprecated(
-        "_consume_admin_claim", "stattdessen die Route `/auth/claim-admin`, `ensure_admin` oder "
-        "`admin_identifiers`")
+        "_consume_admin_claim", "use the route `/auth/claim-admin`, `ensure_admin` or "
+        "`admin_identifiers` instead")
     factor_entry = Deprecated(
-        "_factor_entry", "ohne Ersatz; `require_user`/`require` leiten selbst zum offenen Faktor")
+        "_factor_entry", "no replacement; `require_user`/`require` redirect to the open factor themselves")
     forward_login_url = Deprecated(
-        "_forward_login_url", "ohne Ersatz; die Route `/auth/forward` baut die Login-Adresse selbst")
+        "_forward_login_url", "no replacement; the route `/auth/forward` builds the login address itself")
     forward_response_headers = Deprecated(
-        "_forward_response_headers", "ohne Ersatz; welche Header `/auth/forward` setzt, steuert "
+        "_forward_response_headers", "no replacement; which headers `/auth/forward` sets is controlled by "
         "`forward_headers`")
     forwarded_url = Deprecated(
-        "_forwarded_url", "ohne Ersatz; die Route `/auth/forward` liest die Proxy-Header selbst")
+        "_forwarded_url", "no replacement; the route `/auth/forward` reads the proxy headers itself")
     is_locked = Deprecated(
-        "_is_locked", "stattdessen `login_password`, `login_pin` bzw. `login_totp`, die "
-        "atomar prüfen und buchen; `is_locked` liest nur und lässt parallele Salven durch")
+        "_is_locked", "use `login_password`, `login_pin` or `login_totp` instead, which "
+        "check and book atomically; `is_locked` only reads and lets parallel bursts through")
     is_password_change_locked = Deprecated(
-        "_is_password_change_locked", "stattdessen `change_password` (prüft und bucht atomar wie "
+        "_is_password_change_locked", "use `change_password` instead (checks and books atomically like "
         "`POST /auth/password`)")
     is_pin_locked = Deprecated(
-        "_is_pin_locked", "stattdessen `login_pin` (prüft und bucht atomar wie `POST /auth/pin`)")
+        "_is_pin_locked", "use `login_pin` instead (checks and books atomically like `POST /auth/pin`)")
     is_reauth_locked = Deprecated(
-        "_is_reauth_locked", "stattdessen `confirm_password`, `confirm_pin` bzw. `confirm_totp` "
-        "(prüfen und buchen atomar wie `/auth/reauth`, wohin `require(mfa=True)` leitet)")
+        "_is_reauth_locked", "use `confirm_password`, `confirm_pin` or `confirm_totp` instead "
+        "(check and book atomically like `/auth/reauth`, where `require(mfa=True)` redirects to)")
     is_resource_locked = Deprecated(
-        "_is_resource_locked", "stattdessen `POST /auth/resource/{name}` (prüft und bucht atomar)")
+        "_is_resource_locked", "use `POST /auth/resource/{name}` instead (checks and books atomically)")
     is_secure = Deprecated(
-        "_is_secure", "ohne Ersatz; die Warnung ohne HTTPS steuert `https_mode`")
+        "_is_secure", "no replacement; the warning without HTTPS is controlled by `https_mode`")
     is_totp_setup_locked = Deprecated(
-        "_is_totp_setup_locked", "stattdessen `POST /auth/totp/setup` (prüft und bucht atomar)")
+        "_is_totp_setup_locked", "use `POST /auth/totp/setup` instead (checks and books atomically)")
     login_redirect_after = Deprecated(
-        "_login_redirect_after", "stattdessen `next_url` bzw. `redirect()` am Ergebnis von "
-        "`login_password`, `login_pin` oder `login_totp` (nächster Faktor oder `next`)")
+        "_login_redirect_after", "use `next_url` or `redirect()` on the result of "
+        "`login_password`, `login_pin` or `login_totp` instead (next factor or `next`)")
     maybe_promote_admin = Deprecated(
-        "_maybe_promote_admin", "stattdessen `admin_identifiers` oder `ensure_admin`; direkt "
-        "gerufen umgeht es den Adressbeleg")
+        "_maybe_promote_admin", "use `admin_identifiers` or `ensure_admin` instead; called "
+        "directly it bypasses the address evidence")
     mfa_pending = Deprecated(
-        "_mfa_pending", "ohne Ersatz (der Name meint „hat ein bestätigtes TOTP“); dasselbe "
-        "liefert `auth.store.has_confirmed_totp(user_id)` — Innenleben, ohne Zusage")
+        "_mfa_pending", "no replacement (the name means “has a confirmed TOTP”); the same is "
+        "returned by `auth.store.has_confirmed_totp(user_id)` — internals, no promise")
     next_login_step = Deprecated(
-        "_next_login_step", "ohne Ersatz; `require_user`/`require` leiten selbst zum offenen "
-        "Faktor")
+        "_next_login_step", "no replacement; `require_user`/`require` redirect to the open "
+        "factor themselves")
     purge_demo = Deprecated(
-        "_purge_demo", "stattdessen `demo_mode=False` (räumt die Demo-Konten beim Start)")
+        "_purge_demo", "use `demo_mode=False` instead (clears the demo accounts at startup)")
     rate_ok = Deprecated(
-        "_rate_ok", "stattdessen `login_password`, `login_pin` bzw. `login_totp` (drosseln "
-        "je IP), ein eigener Limiter per `set_rate_limiter`")
+        "_rate_ok", "use `login_password`, `login_pin` or `login_totp` instead (they throttle "
+        "per IP), or your own limiter via `set_rate_limiter`")
     record_login = Deprecated(
-        "_record_login", "stattdessen `login_password`, `login_pin` bzw. `login_totp`, die "
-        "jeden Versuch verbuchen; falsch gerufen räumt es fremde Fehlversuchszähler")
-    sec = Deprecated("_sec", "stattdessen `all_security()`")
+        "_record_login", "use `login_password`, `login_pin` or `login_totp` instead, which "
+        "book every attempt; called wrongly it clears other accounts' failed-attempt counters")
+    sec = Deprecated("_sec", "use `all_security()` instead")
     seed_demo = Deprecated(
-        "_seed_demo", "stattdessen `demo_mode=True` (legt die Demo-Konten beim Start an)")
+        "_seed_demo", "use `demo_mode=True` instead (creates the demo accounts at startup)")
     send_signup_notice = Deprecated(
-        "_send_signup_notice", "ohne Ersatz; `POST /auth/register` verschickt den Hinweis selbst")
+        "_send_signup_notice", "no replacement; `POST /auth/register` sends the notice itself")
     session_from_request = Deprecated(
-        "_session_from_request", "stattdessen `current_user` bzw. `session_user`")
+        "_session_from_request", "use `current_user` or `session_user` instead")
     unlock_resource = Deprecated(
-        "_unlock_resource", "stattdessen `POST /auth/resource/{name}` (prüft das Geheimnis vorher)")
-    verify_csrf = Deprecated("_verify_csrf", "stattdessen `require_csrf`")
+        "_unlock_resource", "use `POST /auth/resource/{name}` instead (checks the secret first)")
+    verify_csrf = Deprecated("_verify_csrf", "use `require_csrf` instead")
     verify_recovery_code = Deprecated(
-        "_verify_recovery_code", "stattdessen `login_totp` (nimmt auch Einmal-Codes, drosselt "
-        "und sperrt wie `POST /auth/totp`); `verify_recovery_code` selbst drosselt nicht")
+        "_verify_recovery_code", "use `login_totp` instead (also accepts one-time codes, throttles "
+        "and locks like `POST /auth/totp`); `verify_recovery_code` itself does not throttle")
     verify_totp = Deprecated(
-        "_verify_totp", "stattdessen `login_totp` (drosselt und sperrt wie `POST /auth/totp`), "
-        "für den Step-up `confirm_totp`; `verify_totp` selbst drosselt nicht")
+        "_verify_totp", "use `login_totp` instead (throttles and locks like `POST /auth/totp`), "
+        "for the step-up `confirm_totp`; `verify_totp` itself does not throttle")
     verify_user_password = Deprecated(
-        "_verify_user_password", "stattdessen `confirm_password` (Step-up, drosselt und sperrt wie "
-        "`/auth/reauth`) bzw. `change_password` (wie `POST /auth/password`); "
-        "`verify_user_password` selbst drosselt nicht")
+        "_verify_user_password", "use `confirm_password` instead (step-up, throttles and locks like "
+        "`/auth/reauth`) or `change_password` (like `POST /auth/password`); "
+        "`verify_user_password` itself does not throttle")
     verify_user_pin = Deprecated(
-        "_verify_user_pin", "stattdessen `confirm_pin` (Step-up, drosselt und sperrt wie "
-        "`/auth/reauth`); `verify_user_pin` selbst drosselt nicht")
+        "_verify_user_pin", "use `confirm_pin` instead (step-up, throttles and locks like "
+        "`/auth/reauth`); `verify_user_pin` itself does not throttle")
 
     DEMO_USERS = Deprecated(
-        "_DEMO_USERS", "ohne Ersatz; die Demo-Konten heissen `demo` und `demoadmin` (README)")
+        "_DEMO_USERS", "no replacement; the demo accounts are called `demo` and `demoadmin` (README)")
     IDENTIFYING = Deprecated(
-        "_IDENTIFYING", "ohne Ersatz; welche Faktoren identifizieren, steht in docs/OPERATIONS.md")
-    RECOVERY_BYTES = Deprecated("_RECOVERY_BYTES", "ohne Ersatz, ein interner Wert")
+        "_IDENTIFYING", "no replacement; which factors identify is documented in docs/OPERATIONS.md")
+    RECOVERY_BYTES = Deprecated("_RECOVERY_BYTES", "no replacement, an internal value")

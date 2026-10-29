@@ -23,7 +23,7 @@ import pathlib  # noqa: E402
 from voraussetzung import braucht  # noqa: E402
 
 braucht((pathlib.Path(__file__).resolve().parent.parent / "web").is_dir(),
-        "kein `web/` — der Website-Generator liegt nur im Repo, nicht im sdist")
+        "no `web/` — the website generator lives only in the repo, not in the sdist")
 
 from web.flows import FLOWS, render                       # noqa: E402
 from web.site import DEMO, FLOWS as FLOWS_FILE, INDEX, LEGAL, OWNER, LABELS, build_pages  # noqa: E402
@@ -74,7 +74,7 @@ class _Cfg:
         from tinysesam import TinySesamConfig
         vorgabe = TinySesamConfig(db_path=":memory:")
         if not hasattr(vorgabe, name):
-            raise AttributeError(f"weder in der Attrappe noch in TinySesamConfig: {name}")
+            raise AttributeError(f"neither in the stub nor in TinySesamConfig: {name}")
         return getattr(vorgabe, name)
 
 
@@ -137,7 +137,7 @@ for probe in ("§ 5 DDG", "Art. 6 Abs. 1 lit. f DSGVO", "GitHub, Inc.", "EU-US D
     assert probe in legal, probe
 # Placeholders stand out in red — but are now filled in
 for key in ("name", "street", "city", "email"):
-    assert OWNER[key] and not OWNER[key].startswith("«"), f"OWNER[{key}] fehlt"
+    assert OWNER[key] and not OWNER[key].startswith("«"), f"OWNER[{key}] missing"
     assert OWNER[key] in legal, key
 assert "class=todo" not in legal, "no unfilled details any more"
 # The scope must make clear: only this one address, not self-hosted copies

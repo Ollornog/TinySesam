@@ -35,7 +35,7 @@ from tinysesam.admin import _PAGE, panel_texts  # noqa: E402
 from tinysesam.store import Store  # noqa: E402
 from _kit.report import Report  # noqa: E402
 
-r = Report("Admin am fremden Konto — umbenennen (G13), Grund der Sperre (G3)")
+r = Report("Admin on someone else's account — rename (G13), reason for the lock (G3)")
 PW = "Konto-Test-Pw15"
 
 
@@ -196,7 +196,7 @@ r.check("G13 (CLI): taken (name, address, look-alike name), someone else's addre
 # the counting bucket sees. (Without the pre-check only the database would reject, without this information.)
 _kollision = ("bert", "BERT", "\uff42\uff45\uff52\uff54")
 r.check("… and on a collision names the account the name belongs to (name, NOCASE, counting bucket)",
-        all(f"vergeben (Konto {bert}," in _cli_fehl[n][1] for n in _kollision),
+        all(f"is already taken (account {bert}," in _cli_fehl[n][1] for n in _kollision),
         str({n: _cli_fehl[n][1][-90:] for n in _kollision}))
 code, aus = _cli("rename", "--db", db, "anna2", "anna@example.com")
 r.check("G13 (CLI): one's own confirmed address as name works (as in the panel)",
@@ -218,7 +218,7 @@ try:
 finally:
     Store.konto_mit_topf = _orig_topf
 r.check("G13 (CLI): if the database rejects (race), there is exit 1 and a clear message — no traceback",
-        code == 1 and "Datenbank" in aus and "Traceback" not in aus
+        code == 1 and "the database rejected" in aus and "Traceback" not in aus
         and auth.store.get_user(anna)["username"] == "anna3", f"{code} {aus[-200:]}")
 r.check("G13 (CLI): same maximum length as the web", cli_modul._NAME_MAX == TinySesam.NAME_MAX)
 code, aus = _cli("--help")

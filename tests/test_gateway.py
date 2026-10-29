@@ -98,7 +98,7 @@ try:
         TinySesam(TinySesamConfig(db_path=":memory:", forward_auth_enabled=True, base_url="https://auth.example.com",
                                   trusted_redirect_hosts=["app.example.com"], gate_token_enabled=True,
                                   gate_link_enabled=link))
-        warnt = any("ohne cookie_domain" in m for m in _gefangen)
+        warnt = any("without cookie_domain" in m for m in _gefangen)
         assert warnt is (not link), (link, _gefangen)
 finally:
     security.seclog.removeHandler(_h)

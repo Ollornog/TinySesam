@@ -410,10 +410,10 @@ def build_router(auth) -> APIRouter:
             versuch = auth._begin_attempt(pseudo, ip, "resource") if auth._rate_ok(ip, login=False) else None
             if versuch is None:
                 return auth.render_page("resource_unlock", request=request, status=429,
-                                        **_res_ctx(row, name, nxt, "Zu viele Versuche — bitte warten."))
+                                        **_res_ctx(row, name, nxt, auth.t("err.retry")))
             if not auth._check_resource(name, secret):
                 auth._record_login(pseudo, ip, False, "resource", versuch=versuch)
-                return auth.render_page("resource_unlock", request=request, status=401, **_res_ctx(row, name, nxt, "Falsch"))
+                return auth.render_page("resource_unlock", request=request, status=401, **_res_ctx(row, name, nxt, auth.t("err.credentials")))
             auth._record_login(pseudo, ip, True, "resource", versuch=versuch)
             resp = RedirectResponse(nxt, 303)
             auth._unlock_resource(request, resp, name)
@@ -516,7 +516,7 @@ def build_router(auth) -> APIRouter:
                     auth._token_rejected("verify_email", request)
                     return auth.render_page("magic_invalid", request=request, status=400)
                 auth.audit("verify_blocked", konto, auth.client_ip(request),
-                           "Konto vom Betreiber gesperrt")
+                           "account locked by operator")
                 return auth.render_page("magic_invalid", request=request, status=403)
             # The redeemed link vouches for the address it went to — as long as it is still the account's
             # (it has not vouched for an address changed in the meantime). Before the sign-in
@@ -885,7 +885,7 @@ def build_router(auth) -> APIRouter:
                     # would see them on their account page as their own events (H-7).
                     auth.store.konto_entfernen(uid)
                     auth.audit("verify_send_error", ersatzname(uid), ip,
-                               detail=f"{grund}, Konto entfernt")
+                               detail=f"{grund}, account removed")
 
                 seite = auth.render_page("register", request=request, **_reg_ctx(nxt, sent_verify=True))
                 # The token is created HERE, in the request; only the sending waits for the
@@ -1302,7 +1302,7 @@ def build_router(auth) -> APIRouter:
                 bindung = request.cookies.get(auth._GATE_LINKFLOW_COOKIE) or ""
                 if (not f or f.get("host") != host or not bindung
                         or not secrets.compare_digest(_h(bindung), str(f.get("bindung") or ""))):
-                    security.seclog.warning("gate-link: Rückweg ohne passenden Code oder ohne Bindung — abgewiesen (host=%s)",
+                    security.seclog.warning("gate-link: return path without a matching code or without a binding — rejected (host=%s)",
                                             security.fuer_log(host))
                     raise HTTPException(400, auth.t("api.invalid", grund="code"))
                 s = auth.store.get_session_by_handle(f["handle"])
@@ -1460,7 +1460,7 @@ def build_router(auth) -> APIRouter:
         await auth.json_body(request)                     # CSRF like every write route
         s = auth._session_from_request(request)
         if not s or s["mfa_ok"]:
-            raise HTTPException(400, auth.t("api.invalid", grund="keine halbe Anmeldung"))
+            raise HTTPException(400, auth.t("api.invalid", grund="no half-finished sign-in"))
         auth.store.set_session_andere_beenden(s["token_hash"])
         return {"ok": True}
 
@@ -1577,9 +1577,9 @@ def build_router(auth) -> APIRouter:
             # `RuntimeError`, so existing code keeps catching it.)
             from .errors import MissingExtra
             raise MissingExtra(
-                "passkey_enabled=True, aber das Extra [passkey] ist nicht installiert "
-                "(pip install 'tinysesam[passkey]'). Ohne es gibt es keine Passkey-Routen; "
-                "passkey_enabled=False schaltet sie ab.", extra="passkey") from e
+                "passkey_enabled=True, but the extra [passkey] is not installed "
+                "(pip install 'tinysesam[passkey]'). Without it there are no passkey routes; "
+                "passkey_enabled=False switches them off.", extra="passkey") from e
 
     # ---------- SAML 2.0 SP (only if enabled) ----------
     if auth.saml:
@@ -1646,7 +1646,7 @@ def build_router(auth) -> APIRouter:
                 # NOT the magic-link page ("this link is invalid, expired or already
                 # used") — this was about no link, and the message sent the first
                 # run against a real IdP in the wrong direction. The reason is in the log.
-                auth.audit("saml_invalid", None, ip, "Assertion abgelehnt (Grund im Sicherheits-Log)")
+                auth.audit("saml_invalid", None, ip, "assertion rejected (reason in the security log)")
                 raise HTTPException(400, auth.t("err.saml"))
             u = auth._check_saml(data.get("nameid"), data.get("attrs") or {}, ip=ip)
             if not u:
@@ -1752,7 +1752,7 @@ def _mail_basis(auth, request) -> str:
         return auth.require_public_base(request)
     except ConfigError as e:
         if security.einmal_melden("mail_basis"):
-            security.seclog.error("Verschickter Link nicht möglich, Anfrage mit 503 beantwortet: %s", e)
+            security.seclog.error("Cannot send a link, request answered with 503: %s", e)
         raise HTTPException(503, auth.t("api.base_missing"))
 
 

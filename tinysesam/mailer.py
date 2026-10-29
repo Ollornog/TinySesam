@@ -47,7 +47,7 @@ class SMTPMailer:
     def __call__(self, to, subject, text, html=None):
         cfg = self.cfg
         if not cfg.smtp_host:
-            raise MailNotConfigured("kein smtp_host konfiguriert")
+            raise MailNotConfigured("no smtp_host configured")
         msg = EmailMessage()
         msg["From"] = cfg.smtp_from or cfg.smtp_user
         msg["To"] = to
@@ -61,8 +61,8 @@ class SMTPMailer:
             # Since B3-1 the certificate is verified. Whoever sent before with a self-signed certificate
             # or via IP address would otherwise see only `*_send_error` in the audit log —
             # here it says what to do (attack A4).
-            log.error("SMTP: Zertifikat von %s nicht vertrauenswürdig (%s). Eigene CA in "
-                      "smtp_ca_file eintragen bzw. smtp_host auf den Namen im Zertifikat setzen.",
+            log.error("SMTP: certificate of %s not trusted (%s). Enter your own CA in "
+                      "smtp_ca_file or set smtp_host to the name in the certificate.",
                       cfg.smtp_host, getattr(e, "verify_message", None) or e)
             raise
 
@@ -168,7 +168,7 @@ class Postausgang:
                     try:
                         bei_ueberlauf()
                     except Exception:   # noqa: BLE001 — cleanup must not bring the server down
-                        log.exception("Aufräumen nach verworfenem Versand gescheitert")
+                        log.exception("Cleanup after a discarded send failed")
                 return
             try:
                 await asyncio.wrap_future(self._executor().submit(auftrag))

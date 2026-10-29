@@ -25,7 +25,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 from tinysesam import TinySesam, TinySesamConfig  # noqa: E402
 from _kit.report import Report  # noqa: E402
 
-r = Report("Selbstbedienung — Benutzername und Adresse ändern")
+r = Report("Self-service — change username and address")
 PW = "Selbst-Test-Pw15"
 HTML = {"accept": "text/html"}
 

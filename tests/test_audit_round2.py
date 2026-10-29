@@ -35,7 +35,7 @@ from tinysesam import security as _sec  # noqa: E402
 from tinysesam.store import Store  # noqa: E402
 from _kit.report import Report  # noqa: E402
 
-r = Report("Audit Runde 2 — die Reparaturen der Reparaturen")
+r = Report("Audit round 2 — the repairs of the repairs")
 
 
 def _app(**cfg):
@@ -322,10 +322,10 @@ def _bootstrap_probe():
     return a, a.create_user("chefin", email="chef@example.com")
 
 
-for faktor, beleg, soll, was in (("saml", None, False, "SAML ohne Beleg (Argument vergessen)"),
-                                 ("oidc", None, False, "OIDC ohne Beleg (Argument vergessen)"),
-                                 ("saml", False, False, "SAML mit ausdrücklichem „kein Beleg\""),
-                                 ("password", None, True, "lokaler Passwort-Login"),
+for faktor, beleg, soll, was in (("saml", None, False, "SAML without evidence (argument forgotten)"),
+                                 ("oidc", None, False, "OIDC without evidence (argument forgotten)"),
+                                 ("saml", False, False, "SAML with an explicit „no evidence\""),
+                                 ("password", None, True, "local password login"),
                                  ("oidc", True, True, "OIDC mit email_verified=true")):
     a_p, uid_p = _bootstrap_probe()
     ergebnis = a_p._maybe_promote_admin(a_p.get_user(uid_p), beleg, faktor=faktor)
@@ -513,7 +513,7 @@ r.check("an allowlist ADDRESS stays allowed with OIDC (it needs the claim, not a
 auth_k, _ = _app(apikey_enabled=True)
 uid_k = auth_k.create_user("bob", password="geheim12345", roles=["kasse", "lager"])
 
-for wunsch, was in ((["lagre"], "Tippfehler"), ([], "ausdrücklich leer")):
+for wunsch, was in ((["lagre"], "typo"), ([], "explicitly empty")):
     try:
         auth_k.create_api_key(uid_k, "k", roles=list(wunsch))
         entstanden = True
@@ -864,7 +864,7 @@ r.check("after HTML decoding, JSON.parse returns exactly the arguments",
 from voraussetzung import pflicht_werkzeug  # noqa: E402
 
 # If node is missing, this is red rather than silently less checked (see `pflicht_werkzeug`).
-node = pflicht_werkzeug("node", "Panel-Helfer esc/on gegen präparierte Namen")
+node = pflicht_werkzeug("node", "panel helpers esc/on against prepared names")
 if node:
     import json as _json2
 
@@ -1942,13 +1942,13 @@ def _s1_messen_bei(n: int) -> dict:
     letzte, erste = f"konto{n - 1}@example.com", "konto0@example.com"
     m = {"ohne_topf": ohne_topf,
          "frei": _s1_schritte(a, lambda: a.identifier_taken("niemand@example.org")),
-         "vergeben (erstes Konto)": _s1_schritte(a, lambda: a.identifier_taken(erste)),
-         "vergeben (letztes Konto)": _s1_schritte(a, lambda: a.identifier_taken(letzte)),
-         "Namensvetter": _s1_schritte(a, lambda: a.identifier_taken("KONTO7")),
-         "Registrierung frei": _s1_schritte(a, lambda: TestClient(app_, client=("192.0.2.31", 1)).post(
+         "taken (first account)": _s1_schritte(a, lambda: a.identifier_taken(erste)),
+         "taken (last account)": _s1_schritte(a, lambda: a.identifier_taken(letzte)),
+         "namesake": _s1_schritte(a, lambda: a.identifier_taken("KONTO7")),
+         "registration free": _s1_schritte(a, lambda: TestClient(app_, client=("192.0.2.31", 1)).post(
              "/auth/register", data={"username": "probefrei", "password": "Sehr-Langes-Passwort-77",
                                      "email": "neu@example.org", "next": "/"})),
-         "Registrierung vergeben": _s1_schritte(a, lambda: TestClient(app_, client=("192.0.2.32", 1)).post(
+         "registration taken": _s1_schritte(a, lambda: TestClient(app_, client=("192.0.2.32", 1)).post(
              "/auth/register", data={"username": "probevergeben", "password": "Sehr-Langes-Passwort-77",
                                      "email": letzte, "next": "/"}))}
     for i in range(5):                        # five open accounts, link expired
@@ -1956,7 +1956,7 @@ def _s1_messen_bei(n: int) -> dict:
         a.store.set_disabled(uid, True)
         a.create_magic_token("verify_email", user_id=uid)
     a.store._exec("UPDATE magic_token SET expires_at=1 WHERE purpose='verify_email'")
-    m["gc (5 offene Konten)"] = _s1_schritte(a, a.store.gc_unbestaetigte_konten)
+    m["gc (5 open accounts)"] = _s1_schritte(a, a.store.gc_unbestaetigte_konten)
     return m
 
 
@@ -1970,8 +1970,8 @@ r.check("S-1: the database work of identifier_taken, of registration (free and t
         not _s1_wachsen and _s1_gross["ohne_topf"] == 0,
         f"grows: {_s1_wachsen}\n100: {_s1_klein}\n3000: {_s1_gross}")
 r.check("S-1: … free and taken differ with 3000 accounts only by a fixed, small amount",
-        abs(_s1_gross["Registrierung frei"] - _s1_gross["Registrierung vergeben"]) <= 200
-        and abs(_s1_gross["frei"] - _s1_gross["vergeben (letztes Konto)"]) <= 200,
+        abs(_s1_gross["registration free"] - _s1_gross["registration taken"]) <= 200
+        and abs(_s1_gross["frei"] - _s1_gross["taken (last account)"]) <= 200,
         f"{_s1_gross}")
 # The bucket check itself must keep working, also for a row of another writer that
 # someone renames: The trigger sets the bucket to NULL, the next call recomputes it.
@@ -2337,11 +2337,11 @@ r.check("N-8 (guard self-test): … the manager call and a docstring do not",
 _S4_PROBEN = {
     "%-Format": "class TinySesam:\n    def w(self, t, uid):\n        self.store._exec('DELETE FROM %s WHERE id=?' % t, (uid,))\n",
     ".format()": "class TinySesam:\n    def w(self, uid):\n        self.store._exec('DELETE FROM {} WHERE id=?'.format('users'), (uid,))\n",
-    "Schema-Präfix": "class TinySesam:\n    def w(self, uid):\n        self.store._exec('DELETE FROM main.users WHERE id=?', (uid,))\n",
-    "Schema-Präfix Passkey": "def w(db):\n    db.execute('DELETE FROM main.webauthn_cred WHERE id=1')\n",
-    "Präfix in Anführungszeichen": "def w(db):\n    db.execute('DELETE FROM \"main\".\"users\" WHERE id=1')\n",
-    "Kommentar dazwischen": "def w(db):\n    db.execute('DELETE /* x */ FROM users WHERE id=1')\n",
-    "Verkettung": "def w(db, t):\n    db.execute('DELETE FROM ' + t + ' WHERE id=1')\n",
+    "schema prefix": "class TinySesam:\n    def w(self, uid):\n        self.store._exec('DELETE FROM main.users WHERE id=?', (uid,))\n",
+    "schema prefix passkey": "def w(db):\n    db.execute('DELETE FROM main.webauthn_cred WHERE id=1')\n",
+    "prefix in quotation marks": "def w(db):\n    db.execute('DELETE FROM \"main\".\"users\" WHERE id=1')\n",
+    "comment in between": "def w(db):\n    db.execute('DELETE /* x */ FROM users WHERE id=1')\n",
+    "concatenation": "def w(db, t):\n    db.execute('DELETE FROM ' + t + ' WHERE id=1')\n",
     "DROP TABLE": "def w(db):\n    db.execute('DROP TABLE IF EXISTS users')\n",
     "REPLACE INTO": "def w(db):\n    db.execute('INSERT OR REPLACE INTO users(id, username) VALUES (1, ?)', ('x',))\n",
 }

@@ -326,6 +326,64 @@ MESSAGES = {
         "admin.installed": "Installed:",
         "admin.update_note": "TinySesam does not update itself. For a new version: move the pinned "
                              "tag up, reinstall, restart the service.",
+
+        # --- Mails (sent by the library; language = config.lang). The *.html variants
+        # carry the same sentences as the plain text; {url}/{login} go into an href unchanged,
+        # {name_html} is already HTML-escaped.
+        "mail.reset.subject": "Reset your password",
+        "mail.reset.text": "Open this link to reset your password (valid {mins} minutes):\n\n{url}\n\n"
+                           "If you did not request this, ignore this email.",
+        "mail.reset.html": '<p>Reset your password (valid {mins} minutes):</p>'
+                           '<p><a href="{url}">Set a new password</a></p>',
+        "mail.invite.subject": "Your invitation",
+        "mail.invite.text": "You have been invited to create an account:\n\n{url}\n",
+        "mail.invite.html": '<p>You have been invited to create an account:</p>'
+                            '<p><a href="{url}">Create account</a></p>',
+        "mail.verify.subject": "Confirm your email address",
+        "mail.verify.text": "Please confirm your email address:\n\n{url}\n",
+        "mail.verify.html": '<p>Please confirm your email address:</p>'
+                            '<p><a href="{url}">Confirm</a></p>',
+        "mail.email_change.subject": "Confirm your new email address",
+        "mail.email_change.text": "Please confirm that this should become the email address of your account "
+                                  "“{name}”:\n\n{url}\n\n"
+                                  "If this is not your account or you did not request it, ignore this email "
+                                  "— nothing will change.",
+        "mail.email_change.html": '<p>Please confirm that this should become the email address of your account '
+                                  '“{name_html}”:</p>'
+                                  '<p><a href="{url}">Confirm address</a></p>'
+                                  '<p>If this is not your account or you did not request it, ignore this '
+                                  'email — nothing will change.</p>',
+        "mail.email_change_notice.subject": "Email address change requested",
+        "mail.email_change_notice.text": "A change of the email address of your account “{name}” to {new} "
+                                         "was requested. It only takes effect once the link sent to the new "
+                                         "address has been clicked.\n\n"
+                                         "If this was not you, change your password right away or end all "
+                                         "sessions — that voids the request.",
+        "mail.email_changed.subject": "Your email address was changed",
+        "mail.email_changed.text": "The email address of your account is now {mail}.\n\n"
+                                   "If this was not you, contact the operator right away — and change your password.",
+        "mail.signup_notice.subject": "Registration with your address",
+        "mail.signup_notice.text": "Someone tried to create a new account with this address. There already is one.\n\n"
+                                   "If that was you, sign in here:\n{login}\n\n"
+                                   "If not, you can ignore this email.",
+        "mail.signup_notice.html": '<p>Someone tried to create a new account with this address. There already is one.</p>'
+                                   '<p><a href="{login}">Go to sign-in</a></p>'
+                                   '<p>If this was not you, you can ignore this email.</p>',
+        "mail.login_link.subject": "Your sign-in link",
+        "mail.login_link.text": "Open this link to sign in (valid {mins} minutes):\n\n{url}\n\n"
+                                "If you did not request this, ignore this email.",
+        "mail.login_link.html": '<p>Open this link to sign in (valid {mins} minutes):</p>'
+                                '<p><a href="{url}">Sign in now</a></p>'
+                                '<p style="color:#888">If you did not request this, ignore this email.</p>',
+        "mail.lockout.subject": "Blocked sign-in on your account",
+        "mail.lockout.until_reset": " — until you reset your password or the operator releases it",
+        "mail.lockout.until_operator": " — until the operator releases it. A password reset does not lift this "
+                                       "lock: the failed attempts were against the step after the password",
+        "mail.lockout.text": "There were several failed sign-in attempts on your account “{name}”; "
+                             "sign-in is therefore temporarily blocked{until}.\n\n"
+                             "Time: {time}\nAddress of the attempts: {ip}\n\n"
+                             "If this was not you, change your password and set up a second factor.",
+        "mail.unknown": "unknown",
     },
     "de": {
         # --- Replies to machines (HTTPException detail). Kept separate from `err.*`,
@@ -634,6 +692,61 @@ MESSAGES = {
         "admin.installed": "Installiert:",
         "admin.update_note": "TinySesam aktualisiert sich nicht selbst. Neue Version: gepinnten Tag "
                              "hochziehen, neu installieren, Dienst neu starten.",
+
+        # --- Mails (von der Bibliothek verschickt; Sprache = config.lang), Aufbau wie im Block "en".
+        "mail.reset.subject": "Passwort zurücksetzen",
+        "mail.reset.text": "Zum Zurücksetzen deines Passworts diesen Link öffnen (gültig {mins} Minuten):\n\n{url}\n\n"
+                           "Wenn du das nicht angefordert hast, ignoriere diese E-Mail.",
+        "mail.reset.html": '<p>Passwort zurücksetzen (gültig {mins} Minuten):</p>'
+                           '<p><a href="{url}">Neues Passwort setzen</a></p>',
+        "mail.invite.subject": "Deine Einladung",
+        "mail.invite.text": "Du wurdest eingeladen, ein Konto anzulegen:\n\n{url}\n",
+        "mail.invite.html": '<p>Du wurdest eingeladen, ein Konto anzulegen:</p>'
+                            '<p><a href="{url}">Konto erstellen</a></p>',
+        "mail.verify.subject": "E-Mail bestätigen",
+        "mail.verify.text": "Bitte bestätige deine E-Mail-Adresse:\n\n{url}\n",
+        "mail.verify.html": '<p>Bitte bestätige deine E-Mail-Adresse:</p>'
+                            '<p><a href="{url}">Bestätigen</a></p>',
+        "mail.email_change.subject": "Neue E-Mail-Adresse bestätigen",
+        "mail.email_change.text": "Bitte bestätige, dass dies die E-Mail-Adresse deines Kontos „{name}“ "
+                                  "werden soll:\n\n{url}\n\n"
+                                  "Ist das nicht dein Konto oder warst du das nicht, ignoriere diese E-Mail — "
+                                  "es ändert sich nichts.",
+        "mail.email_change.html": '<p>Bitte bestätige, dass dies die E-Mail-Adresse deines Kontos '
+                                  '„{name_html}“ werden soll:</p>'
+                                  '<p><a href="{url}">Adresse bestätigen</a></p>'
+                                  '<p>Ist das nicht dein Konto oder warst du das nicht, ignoriere diese '
+                                  'E-Mail — es ändert sich nichts.</p>',
+        "mail.email_change_notice.subject": "Änderung deiner E-Mail-Adresse beantragt",
+        "mail.email_change_notice.text": "Für dein Konto „{name}“ wurde beantragt, die E-Mail-Adresse auf {new} "
+                                         "zu ändern. Sie gilt erst, wenn der Link an die neue Adresse geklickt ist.\n\n"
+                                         "Warst du das nicht, ändere sofort dein Passwort oder beende alle Sitzungen — "
+                                         "das verwirft den Antrag.",
+        "mail.email_changed.subject": "Deine E-Mail-Adresse wurde geändert",
+        "mail.email_changed.text": "Die E-Mail-Adresse deines Kontos ist jetzt {mail}.\n\n"
+                                   "Warst du das nicht, melde dich sofort beim Betreiber — und ändere dein Passwort.",
+        "mail.signup_notice.subject": "Registrierung mit deiner Adresse",
+        "mail.signup_notice.text": "Jemand wollte mit dieser Adresse ein neues Konto anlegen. Es gibt aber schon eines.\n\n"
+                                   "Warst du das, melde dich hier an:\n{login}\n\n"
+                                   "Wenn nicht, kannst du diese E-Mail ignorieren.",
+        "mail.signup_notice.html": '<p>Jemand wollte mit dieser Adresse ein neues Konto anlegen. Es gibt aber schon eines.</p>'
+                                   '<p><a href="{login}">Zur Anmeldung</a></p>'
+                                   '<p>Wenn du das nicht warst, kannst du diese E-Mail ignorieren.</p>',
+        "mail.login_link.subject": "Dein Anmelde-Link",
+        "mail.login_link.text": "Zum Anmelden diesen Link öffnen (gültig {mins} Minuten):\n\n{url}\n\n"
+                                "Wenn du das nicht angefordert hast, ignoriere diese E-Mail.",
+        "mail.login_link.html": '<p>Zum Anmelden diesen Link öffnen (gültig {mins} Minuten):</p>'
+                                '<p><a href="{url}">Jetzt anmelden</a></p>'
+                                '<p style="color:#888">Wenn du das nicht angefordert hast, ignoriere diese E-Mail.</p>',
+        "mail.lockout.subject": "Gesperrte Anmeldung bei deinem Konto",
+        "mail.lockout.until_reset": " — bis du dein Passwort zurücksetzt oder der Betreiber sie freigibt",
+        "mail.lockout.until_operator": " — bis der Betreiber sie freigibt. Ein Passwort-Reset hebt diese Sperre nicht "
+                                       "auf: Die Fehlversuche galten dem Schritt nach dem Passwort",
+        "mail.lockout.text": "Für dein Konto „{name}“ gab es mehrere fehlgeschlagene Anmeldeversuche; "
+                             "die Anmeldung ist deshalb vorübergehend gesperrt{until}.\n\n"
+                             "Zeitpunkt: {time}\nAdresse der Versuche: {ip}\n\n"
+                             "Warst du das nicht, ändere dein Passwort und richte einen zweiten Faktor ein.",
+        "mail.unknown": "unbekannt",
     },
 }
 

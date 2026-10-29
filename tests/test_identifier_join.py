@@ -36,7 +36,7 @@ from tinysesam import TinySesam, TinySesamConfig  # noqa: E402
 from tinysesam.store import SCHEMA, Store  # noqa: E402
 from _kit.report import Report  # noqa: E402
 
-r = Report("Beitritt einer Kennung — Grenze a für Umbenennen, Adresswechsel, Löschen")
+r = Report("Joining an identifier — limit a for renaming, address change, deletion")
 PW = "Beitritt-Test-7"
 BASIS = "http://testserver"
 SPRAYER, EIGEN = "203.0.113.9", "198.51.100.30"
@@ -209,10 +209,10 @@ r.check("… and his deleting does not rewrite the previous owner's rows",
 # the limit is then the creation as before. (Mutation probes: the fallback in `lift_lockout`
 # clears from id 0 instead of from the creation → red; likewise in `_raeumgrenze` → red.)
 _bestand = str(Path(tempfile.mkdtemp()) / "t.db")
-_alt_schema, _n_users = re.subn(r"(idp_bestaetigt_at INTEGER), (--[^\n]*)\n\s*-- Ab wann gehört die Kennung.*?"
+_alt_schema, _n_users = re.subn(r"(idp_bestaetigt_at INTEGER), (--[^\n]*)\n\s*-- From when does the identifier belong.*?"
                                 r"mail_audit_ab\s+INTEGER,\n.*?name_selbst_gewaehlt INTEGER NOT NULL DEFAULT 0\n",
                                 r"\1  \2\n", SCHEMA, flags=re.S)
-_alt_schema, _n_fi = re.subn(r"\n\s*-- Der Name, unter dem sich das Konto zuletzt.*?name_topf\s+TEXT,", "",
+_alt_schema, _n_fi = re.subn(r"\n\s*-- The name under which the account last signed in.*?name_topf\s+TEXT,", "",
                              _alt_schema, flags=re.S)
 os.close(os.open(_bestand, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600))
 _roh = sqlite3.connect(_bestand)
@@ -233,7 +233,7 @@ _hb = _zeile(a, _uid)
 _fi = {z["name"] for z in a.store.db.execute("PRAGMA table_info(federated_identity)")}
 r.check("h: existing data — the columns are added and stay NULL (no limit invented)",
         _n_users == 1 and _n_fi == 1 and all(_hb[s] is None for s in _spalten) and "name_topf" in _fi,
-        f"Schnitt {_n_users}/{_n_fi}, {[_hb[s] for s in _spalten]}, {_fi}")
+        f"cut {_n_users}/{_n_fi}, {[_hb[s] for s in _spalten]}, {_fi}")
 anm = _login(app, "bestand@example.com")
 r.check("… limit is then the creation as before: foreign data from before remains, own data goes",
         anm.status_code == 303 and a.store.count_fails(0, ip=SPRAYER) == 3 and a.store.count_fails(0, ip=EIGEN) == 0,

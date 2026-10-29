@@ -28,8 +28,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from voraussetzung import braucht, braucht_modul  # noqa: E402
 
 CADDY = os.environ.get("TINYSESAM_GATE_CADDY", "")
-braucht(CADDY, "TINYSESAM_GATE_CADDY nicht gesetzt — Caddy mit caddy-jwt fehlt "
-               "(bauen: deploy/forward-auth/caddy-gate/Dockerfile)")
+braucht(CADDY, "TINYSESAM_GATE_CADDY not set — Caddy with caddy-jwt missing "
+               "(build: deploy/forward-auth/caddy-gate/Dockerfile)")
 braucht_modul("uvicorn")
 # Set means required: a wrong path or a Caddy without the plugin is an error, not a skip.
 assert os.access(CADDY, os.X_OK), f"TINYSESAM_GATE_CADDY={CADDY!r} is not an executable file"
@@ -117,7 +117,7 @@ for _ in range(100):
     except Exception:
         time.sleep(0.1)
 else:
-    raise RuntimeError("TinySesam startet nicht")
+    raise RuntimeError("TinySesam does not start")
 FORWARD["n"] = 0
 
 
@@ -162,7 +162,7 @@ def caddy_starten():
                 time.sleep(0.1)
         p.kill()
     with open(os.path.join(_tmp, "caddy.log"), encoding="utf-8", errors="replace") as log:
-        raise RuntimeError("Caddy startet nicht: " + log.read()[-2000:])
+        raise RuntimeError("Caddy does not start: " + log.read()[-2000:])
 
 
 _caddy, PORT = caddy_starten()
@@ -269,13 +269,13 @@ try:
     faelle = {
         # Flip a BYTE of the signature, do not replace the last characters: the last base64 characters
         # carry padding bits, and `…AA` instead of `…AB` is sometimes the same signature (1 in 256 runs).
-        "Signatur verändert": f"{k}.{i}." + gate._b64u(bytes([gate._b64u_lesen(s)[0] ^ 1]) + gate._b64u_lesen(s)[1:]),
+        "signature altered": f"{k}.{i}." + gate._b64u(bytes([gate._b64u_lesen(s)[0] ^ 1]) + gate._b64u_lesen(s)[1:]),
         "alg none": base64.urlsafe_b64encode(b'{"alg":"none"}').rstrip(b"=").decode() + f".{i}.",
-        "fremder Schlüssel": signiert(schluessel=gate.schluessel_ableiten(b"\x00" * 32)),
-        "abgelaufen": signiert(jetzt_=jetzt - 400),
-        "anderer Aussteller": signiert(iss="https://evil.example"),
-        "andere Zielgruppe": signiert(aud="wiki.example.com"),
-        "Zielgruppe mit Rollen an einem Pfad ohne": signiert(aud="app.example.com|roles=admin"),
+        "foreign key": signiert(schluessel=gate.schluessel_ableiten(b"\x00" * 32)),
+        "expired": signiert(jetzt_=jetzt - 400),
+        "other issuer": signiert(iss="https://evil.example"),
+        "other audience": signiert(aud="wiki.example.com"),
+        "audience with roles on a path without": signiert(aud="app.example.com|roles=admin"),
     }
     for was, falsch in faelle.items():
         vorher = FORWARD["n"]
@@ -284,8 +284,8 @@ try:
     ok(f"{len(faelle)} forged gate cookies → way back, without session 302 (the counter-check gets through)")
 
     # With a session the way back replaces an expired token with a new one.
-    st, h, _ = anfrage("/x", {**sitzung, "__Host-tinysesam_gate": faelle["abgelaufen"]})
-    assert st == 200 and gate_cookie(h) and gate_cookie(h) != faelle["abgelaufen"]
+    st, h, _ = anfrage("/x", {**sitzung, "__Host-tinysesam_gate": faelle["expired"]})
+    assert st == 200 and gate_cookie(h) and gate_cookie(h) != faelle["expired"]
     ok("expired token + session → 200 and a new gate cookie")
 
     # ---------- Signing out at the application (T-22): /.tinysesam/* bypasses the gate ----------
@@ -347,16 +347,16 @@ try:
              "SESSION": "; ".join(f"{k}={v}" for k, v in sitzung.items()),
              "CURL_EXTRA": f"--resolve app.example.com:{PORT}:127.0.0.1"}
     a = subprocess.run(["bash", str(skript)], env=umg_a, capture_output=True, text=True, timeout=120)
-    assert a.returncode == 0 and "bestanden" in a.stdout and "ROT" not in a.stdout, a.stdout + a.stderr
+    assert a.returncode == 0 and "passed" in a.stdout and "FAIL" not in a.stdout, a.stdout + a.stderr
     zeilen = [z for z in a.stdout.splitlines() if z.startswith("  ok")]
     assert len(zeilen) >= 15, a.stdout
-    ok(f"acceptance.sh gegen diesen Aufbau: {len(zeilen)} checks passed")
+    ok(f"acceptance.sh against this setup: {len(zeilen)} checks passed")
     # Counter-check: the script must turn red when an expectation is wrong — here a path that is
     # closed but is given as a share. Otherwise “passed” would also be the answer of a script that
     # checks nothing.
     a = subprocess.run(["bash", str(skript)], env={**umg_a, "SHARE": "/admin/x.js"},
                        capture_output=True, text=True, timeout=120)
-    assert a.returncode == 1 and "ROT  Share-Pfad /admin/x.js ist offen" in a.stdout, a.stdout
+    assert a.returncode == 1 and "FAIL Share path /admin/x.js is open" in a.stdout, a.stdout
     ok("counter-check: a path that is closed, given as share → acceptance.sh red (exit 1)")
     tc.post("/auth/gate/resume", data={"next": f"http://app.example.com:{PORT}/"}, follow_redirects=False)
 

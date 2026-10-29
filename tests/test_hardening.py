@@ -241,7 +241,7 @@ def _record_login_methoden(pfad: Path) -> set:
         if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
             gefunden.add(arg.value)
         else:
-            gefunden.add(f"<nicht-konstant in {pfad.name}:{knoten.lineno}>")
+            gefunden.add(f"<non-constant in {pfad.name}:{knoten.lineno}>")
     return gefunden
 
 

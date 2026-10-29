@@ -58,7 +58,13 @@ print("  ✓ admin_ui_enabled=False → JSON API only")
 a, db = fresh(https_mode="warn")
 app = FastAPI(); a.install_https(app); app.include_router(a.router())
 c = login(app)
-assert "Unverschlüsselt" in c.get("/auth/admin").text
+assert "Unverschlüsselt" in c.get("/auth/admin").text and "Unencrypted" not in c.get("/auth/admin").text
+os.remove(db)
+# same warning bar in English with lang="en"
+a, db = fresh(https_mode="warn", lang="en")
+app = FastAPI(); a.install_https(app); app.include_router(a.router())
+c = login(app)
+assert "Unencrypted (no HTTPS)" in c.get("/auth/admin").text and "Unverschlüsselt" not in c.get("/auth/admin").text
 os.remove(db)
 print("  ✓ https_mode=warn: usable without certificate + warning notice")
 

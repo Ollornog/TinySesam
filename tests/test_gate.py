@@ -145,20 +145,20 @@ fremd = gate.schluessel_ableiten(b"\x00" * 32)
 faelle = {
     # Flip a BYTE of the signature, do not replace the last characters: the last base64 characters
     # carry padding bits, and `…AA` instead of `…AB` is sometimes the same signature (1 in 256 runs).
-    "Signatur verändert": f"{k}.{i}." + gate._b64u(bytes([gate._b64u_lesen(s)[0] ^ 1]) + gate._b64u_lesen(s)[1:]),
-    "Inhalt verändert (anderes Konto)": f"{k}.{gate._b64u(json.dumps({**basis, 'sub': '1'}).encode())}.{s}",
+    "signature altered": f"{k}.{i}." + gate._b64u(bytes([gate._b64u_lesen(s)[0] ^ 1]) + gate._b64u_lesen(s)[1:]),
+    "content altered (other account)": f"{k}.{gate._b64u(json.dumps({**basis, 'sub': '1'}).encode())}.{s}",
     "alg none": f"{gate._b64u(json.dumps({'alg': 'none'}).encode())}.{i}.",
     "alg HS256": f"{gate._b64u(json.dumps({'alg': 'HS256'}).encode())}.{i}.{s}",
     # Validly signed, but the header names another algorithm: only the comparison with
     # `EdDSA` catches that — the signature itself is correct.
-    "alg HS256, gültig signiert": neu_signiert(basis, kopf_neu={"alg": "HS256", "typ": "JWT"}),
-    "fremder Schlüssel": neu_signiert(basis, schluessel=fremd),
-    "abgelaufen": neu_signiert({**basis, "exp": jetzt - 1}),
-    "noch nicht gültig": neu_signiert({**basis, "nbf": jetzt + 60}),
-    "anderer Aussteller": neu_signiert({**basis, "iss": "https://evil.example"}),
-    "andere Zielgruppe": neu_signiert({**basis, "aud": "wiki.example.com"}),
-    "kein Token": "",
-    "Unsinn": "a.b.c",
+    "alg HS256, validly signed": neu_signiert(basis, kopf_neu={"alg": "HS256", "typ": "JWT"}),
+    "foreign key": neu_signiert(basis, schluessel=fremd),
+    "expired": neu_signiert({**basis, "exp": jetzt - 1}),
+    "not yet valid": neu_signiert({**basis, "nbf": jetzt + 60}),
+    "other issuer": neu_signiert({**basis, "iss": "https://evil.example"}),
+    "other audience": neu_signiert({**basis, "aud": "wiki.example.com"}),
+    "no token": "",
+    "nonsense": "a.b.c",
 }
 for was, falsch in faelle.items():
     assert check_config(falsch) is None, was
@@ -281,7 +281,7 @@ try:
 except ConfigError as e:
     assert "forward_auth_enabled" in str(e)
 else:
-    raise AssertionError("gate_token_enabled ohne forward_auth_enabled startet")
+    raise AssertionError("gate_token_enabled without forward_auth_enabled starts")
 ok("configuration check: without forward_auth, wrong cookie name, lifetime outside 30–3600")
 
 # ---------- Template: the proxy sets the identity, not the browser ----------

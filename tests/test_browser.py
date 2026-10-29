@@ -36,12 +36,12 @@ import uvicorn               # noqa: E402
 # `browser-actions/setup-chrome` installs the binary as `chrome`, Debian as `chromium`.
 CHROME = next((b for b in ("google-chrome", "chrome", "chromium", "chromium-browser")
                if shutil.which(b)), None)
-braucht(CHROME, "kein Chrome gefunden")
+braucht(CHROME, "no Chrome found")
 # The showcase lives in the repo, not in the sdist — skip there instead of going red.
 braucht((pathlib.Path(__file__).resolve().parent.parent / "examples").is_dir(),
-        "kein `examples/` — der Browser-Test fährt das Showcase aus dem Repo")
+        "no `examples/` — the browser test runs the showcase from the repo")
 braucht((pathlib.Path(__file__).resolve().parent.parent / "web").is_dir(),
-        "kein `web/` — das Showcase rendert die Seiten des Website-Generators")
+        "no `web/` — the showcase renders the pages of the website generator")
 
 
 def _server_socket():
@@ -83,12 +83,12 @@ for _ in range(100):
     except Exception:
         time.sleep(0.1)
 else:
-    raise RuntimeError("Showcase startet nicht")
+    raise RuntimeError("Showcase does not start")
 
 _profile = tempfile.mkdtemp()
 
 # Do NOT send Chrome's output to DEVNULL: if it dies at startup, the error message used to
-# be gone and the test only reported "Chrome antwortet nicht" — without a reason.
+# be gone and the test only reported "Chrome does not respond" — without a reason.
 # Into a file (not PIPE): a full pipe buffer would block Chrome.
 _chrome_log = tempfile.NamedTemporaryFile(prefix="chrome-", suffix=".log", delete=False)
 _chrome = subprocess.Popen(
@@ -110,7 +110,7 @@ def _chrome_output():
         with open(_chrome_log.name, encoding="utf-8", errors="replace") as fh:
             return fh.read().strip()[-2000:]
     except OSError:
-        return "(keine Ausgabe)"
+        return "(no output)"
 
 
 def _cdp_port():
@@ -125,8 +125,8 @@ def _cdp_port():
     while time.time() < deadline:
         if _chrome.poll() is not None:
             raise RuntimeError(
-                f"Chrome ist beim Start gestorben (Exit {_chrome.returncode}).\n"
-                f"--- Chrome-Ausgabe ---\n{_chrome_output()}")
+                f"Chrome died at startup (exit {_chrome.returncode}).\n"
+                f"--- Chrome output ---\n{_chrome_output()}")
         try:
             with open(port_file, encoding="utf-8", errors="replace") as fh:
                 erste = fh.readline().strip()
@@ -136,8 +136,8 @@ def _cdp_port():
             pass  # Port file not there yet — Chrome is still starting
         time.sleep(0.1)
     raise RuntimeError(
-        f"Chrome schrieb keinen DevTools-Port (nach {CHROME_START_TIMEOUT:.0f}s).\n"
-        f"--- Chrome-Ausgabe ---\n{_chrome_output()}")
+        f"Chrome wrote no DevTools port (after {CHROME_START_TIMEOUT:.0f}s).\n"
+        f"--- Chrome output ---\n{_chrome_output()}")
 
 
 def _ws_url():
@@ -146,16 +146,16 @@ def _ws_url():
     while time.time() < deadline:
         if _chrome.poll() is not None:
             raise RuntimeError(
-                f"Chrome ist beim Start gestorben (Exit {_chrome.returncode}).\n"
-                f"--- Chrome-Ausgabe ---\n{_chrome_output()}")
+                f"Chrome died at startup (exit {_chrome.returncode}).\n"
+                f"--- Chrome output ---\n{_chrome_output()}")
         try:
             tabs = json.load(urllib.request.urlopen(f"http://127.0.0.1:{port}/json"))
             return [t for t in tabs if t["type"] == "page"][0]["webSocketDebuggerUrl"]
         except Exception:
             time.sleep(0.1)
     raise RuntimeError(
-        f"Chrome antwortet nicht (nach {CHROME_START_TIMEOUT:.0f}s auf Port {port}).\n"
-        f"--- Chrome-Ausgabe ---\n{_chrome_output()}")
+        f"Chrome does not respond (after {CHROME_START_TIMEOUT:.0f}s on port {port}).\n"
+        f"--- Chrome output ---\n{_chrome_output()}")
 
 
 class Page:
@@ -184,7 +184,7 @@ class Page:
     async def js(self, expr):
         r = await self.cmd("Runtime.evaluate", expression=expr, returnByValue=True)
         if "exceptionDetails" in r:
-            raise AssertionError(f"JS-Fehler: {r['exceptionDetails'].get('text')} — {expr[:60]}")
+            raise AssertionError(f"JS error: {r['exceptionDetails'].get('text')} — {expr[:60]}")
         return r.get("result", {}).get("value")
 
     async def go(self, path, wait=1.4):

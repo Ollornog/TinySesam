@@ -46,7 +46,7 @@ from tinysesam.errors import ConfigError, StateError           # noqa: E402
 from tinysesam.store import Store                              # noqa: E402
 from _kit.report import Report                                 # noqa: E402
 
-r = Report("Werte englisch (Schema 12) und auth.set_disabled")
+r = Report("Values in English (schema 12) and auth.set_disabled")
 
 PW = "Probe-Pw-12345"
 BASIS = "https://app.example.com"
@@ -174,7 +174,7 @@ r.check("precondition: the file carries the values of 0.21.x and the stamp 11",
         vorher_a == (11, ["mensch", "automat"], [{"alt": "anna@example.com"}]), str(vorher_a))
 r.check("(a) the start migrates: current stamp (from 12), `automation`/`human`, payload `old` — and says so in the log",
         nachher_a == (Store.SCHEMA_VERSION, ["human", "automation"], [{"old": "anna@example.com"}])
-        and "3 gespeicherte Werte auf die englischen Namen umgeschrieben" in log_a,
+        and "3 stored values rewritten to the English names" in log_a,
         f"{nachher_a} {log_a[-300:]!r}")
 w_a = _wirkung(a, mensch_a, automat_a)
 r.check("(a) … the keys work as before: the human key only with a session, the automation key alone",
@@ -187,14 +187,14 @@ r.check("(a) … `api_key_kind`, `list_api_keys` and the open link name the Engl
 a.store.db.close()
 a, log_a2 = _mitschreiben(lambda: _aufbau(pfad_a, post_a))
 r.check("(a) second start: nothing left to rewrite (idempotent), same file",
-        _stand(pfad_a) == nachher_a and "umgeschrieben" not in log_a2, log_a2[-300:])
+        _stand(pfad_a) == nachher_a and "rewritten to the English names" not in log_a2, log_a2[-300:])
 r.check("(a) … and the link from 0.21.x redeems like any other",
         a.confirm_email_change(link_a) == "ok" and a.get_user(anna)["email"] == "anna.neu@example.com")
 a.store.db.close()
 
 # ── (a') Audit and log lines stay as they were ────────────────────────────────────────────────
 # Operators' filters hang on them (PO decision 2026-09-27): the kind of a key still appears there
-# as `art=automat`/`art=mensch`, the line in the security log names `'mensch'`.
+# as `art=automat`/`art=mensch`, the security log line (now English text) names `'human'`.
 # (Mutation probe: `_key_art_audit` returns the English name → (a') red.)
 pfad_g = os.path.join(tempfile.mkdtemp(), "g.db")
 g = _aufbau(pfad_g)
@@ -216,8 +216,8 @@ _details = {f"{z['event']}:{m.group(1)}"
             for m in [re.search(r"(?:^| )art=(\S+)", z["detail"] or "")] if m}
 r.check("(a') audit: `apikey_create`/`apikey_use` still name the kind with `art=automat|mensch`",
         {"apikey_create:mensch", "apikey_create:automat", "apikey_use:automat"} <= _details, str(_details))
-r.check("(a') security log: the human key without a session is still called `'mensch'` there",
-        "API-Key der Art 'mensch' ohne passende Sitzung" in _sec.getvalue(), _sec.getvalue()[-300:])
+r.check("(a') security log: the human key without a session is named `'human'` in the (English) log text",
+        "API key of kind 'human' presented without a matching session" in _sec.getvalue(), _sec.getvalue()[-300:])
 g.store.db.close()
 
 # ── (b) Rollback: 0.21.x wrote old values again on the file (stamp 12) ─────────────────────────
@@ -255,7 +255,7 @@ b.store.db.close()
 b, log_b = _mitschreiben(lambda: _aufbau(pfad_b))
 r.check("(b) the next start rewrites the keys (at every start), the link not (stamp already 12)",
         _stand(pfad_b) == (Store.SCHEMA_VERSION, ["human", "human", "automation"], [{"alt": "anna@example.com"}])
-        and "2 gespeicherte Werte" in log_b, f"{_stand(pfad_b)} {log_b[-200:]!r}")
+        and "2 stored values rewritten to the English names" in log_b, f"{_stand(pfad_b)} {log_b[-200:]!r}")
 r.check("(b) … and it remains valid, redeemed with `old` in the result",
         b.redeem_magic(link_b, purpose="email_change")["payload"] == {"old": "anna@example.com"})
 b.store.db.close()
@@ -263,7 +263,7 @@ b.store.db.close()
 # ── (c) The way back from docs/OPERATIONS.md: exactly the block that is stated there ──────────────
 # (Mutation probe: remove the line for `mensch` in the SQL block of the docs → (c) red.)
 _doku = (ROOT / "docs" / "OPERATIONS.md").read_text(encoding="utf-8")
-_abschnitt = _doku.split("## Rückschritt auf 0.21.x", 1)[-1] if "## Rückschritt auf 0.21.x" in _doku else ""
+_abschnitt = _doku.split("## Rollback to 0.21.x", 1)[-1] if "## Rollback to 0.21.x" in _doku else ""
 _sql = re.search(r"```sql\n(.*?)```", _abschnitt, re.S)
 r.check("docs/OPERATIONS.md has the section “Rollback to 0.21.x” with an SQL block",
         bool(_sql), "section or ```sql block missing")
@@ -314,7 +314,7 @@ try:
     except Exception as fehler:          # the start itself fails
         log_d, start_d = "", f"{type(fehler).__name__}: {fehler}"
     r.check("(d) read-only, stamp 12, old values: the start succeeds, says so, reads `mensch` as `human`",
-            start_d == "ok" and "nicht auf die englischen Namen umgeschrieben" in log_d
+            start_d == "ok" and "not rewritten to the English names" in log_d
             and d.api_key_kind(mensch_d) == "human" and _stand(pfad_d)[1] == ["mensch"],
             f"{start_d} {log_d[-200:]!r}")
     if start_d == "ok":
@@ -342,7 +342,7 @@ for alt_name, neu_name in (("automat", "automation"), ("mensch", "human")):
     except ConfigError as fehler:
         _texte[alt_name] = str(fehler)
 r.check("(e) `create_api_key(kind='automat'|'mensch')` → ConfigError that names the new name",
-        all(f"heisst seit 0.22.0 {neu!r}" in _texte[alt] for alt, neu in
+        all(f"has been called {neu!r} since 0.22.0" in _texte[alt] for alt, neu in
             (("automat", "automation"), ("mensch", "human"))), str(_texte))
 _ce = TestClient(_app(e))
 _ce.post("/auth/login", data={"username": "bert", "password": PW}, follow_redirects=False)

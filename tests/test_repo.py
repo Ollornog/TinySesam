@@ -23,7 +23,7 @@ import pathlib  # noqa: E402
 # is a FILE with a pointer. With `.is_dir()` the whole repo hygiene bowed out there
 # — private infrastructure, secrets, SHA pins, everything — and the run reported green.
 braucht((pathlib.Path(__file__).resolve().parent.parent / ".git").exists(),
-        "kein Git-Repo (z.B. ausgepacktes sdist) — die Hygiene misst gegen `git ls-files`")
+        "no git repo (e.g. an unpacked sdist) — the hygiene check measures against `git ls-files`")
 import fnmatch
 import os
 import re
@@ -118,7 +118,7 @@ for f in LIB:
         continue
     for line in read(f).splitlines():
         if HEX.search(line) and "#fff" not in line:
-            raise AssertionError(f"Farbwert außerhalb theme.py: {f}: {line.strip()[:70]}")
+            raise AssertionError(f"colour value outside theme.py: {f}: {line.strip()[:70]}")
 print("  Colour values: only in tinysesam/theme.py (app) or docs/theme.css (website)")
 
 # ---------- No forgotten debug output in the library ----------
@@ -634,10 +634,10 @@ def _erlaubt(befehl: str) -> bool:
 # red (the set must match exactly).
 CHECKOUT_MIT_RECHT = {
     (".github/workflows/codeql.yml", "analyse"): ({"security-events"},
-                                                   "CodeQL braucht den Quelltext; kein `run:`"),
+                                                   "CodeQL needs the source; no `run:`"),
     (".github/workflows/release.yml", "image"): ({"packages"},
-                                                 "Build-Kontext fürs Abbild; pip läuft im BuildKit-"
-                                                 "Container, der das Token nicht sieht"),
+                                                 "build context for the image; pip runs in the BuildKit "
+                                                 "container, which does not see the token"),
 }
 
 _geprueft_identitaet, _ausnahmen_gesehen = 0, set()
@@ -768,12 +768,12 @@ WERKZEUG_PFLICHT = {
                                    r"^\s+cache-binary:\s*false\s*$"],
 }
 # Checked and fixed without a statement: the tool version is a constant in the pinned commit.
-WERKZEUG_IM_SHA = {"anchore/sbom-action": "syft als Konstante in src/SyftVersion.ts",
-                   "github/codeql-action": "CodeQL-Bundle gehört zur Action-Fassung",
-                   "pypa/gh-action-pypi-publish": "Abbild ghcr.io/pypa/…:<sha> bzw. Dockerfile mit Constraints"}
+WERKZEUG_IM_SHA = {"anchore/sbom-action": "syft as a constant in src/SyftVersion.ts",
+                   "github/codeql-action": "the CodeQL bundle belongs to the action version",
+                   "pypa/gh-action-pypi-publish": "image ghcr.io/pypa/…:<sha> or a Dockerfile with constraints"}
 # Deliberately floating: the browser test is meant to run against the current stable Chrome. The job has only
 # read permission and ships nothing.
-WERKZEUG_WANDERND_OK = {"browser-actions/setup-chrome": "ci.yml, nur Leserecht, liefert nichts aus"}
+WERKZEUG_WANDERND_OK = {"browser-actions/setup-chrome": "ci.yml, read permission only, ships nothing"}
 for wf in WORKFLOWS:
     zeilen = _code(read(wf))
     for i, z in enumerate(zeilen):
@@ -869,7 +869,7 @@ for _a in ("docker/login-action", "docker/build-push-action", "anchore/sbom-acti
 _image = "\n".join(_rel_jobs.get("image", []))
 assert "push=${{ github.ref_type == 'tag' }}" in _image and "push=true" not in _image, \
     "release.yml: the image is also pushed without a tag"
-_login = re.search(r"- name: An GHCR anmelden\n\s+" + re.escape(_AM_TAG), _image)
+_login = re.search(r"- name: Log in to GHCR\n\s+" + re.escape(_AM_TAG), _image)
 assert _login, "release.yml: the GHCR login in job `image` is not tied to the tag"
 _pruef = "\n".join(_rel_jobs.get("pruefen", []))
 assert "_release.py --pruefen" in _pruef and "if: github.ref_type != 'tag'" in _pruef, \
@@ -900,7 +900,7 @@ assert any("sha256sum -c SHA256SUMS" in k for k in _kommandos(_rel_jobs.get("pru
 assert any(k.startswith("scripts/_image_probe.sh") for k in _kommandos(_rel_jobs.get("abbild-probe", []))), \
     "release.yml: `abbild-probe` does not start the image (scripts/_image_probe.sh)"
 # The suite in `pruefen` may be skipped ONLY on a PR (there ci.yml runs it) — on the tag it runs.
-_suite = re.search(r"- name: Suite fahren[^\n]*\n((?:\s{8}.*\n)+)", "\n".join(_rel_jobs.get("pruefen", [])) + "\n")
+_suite = re.search(r"- name: Run the suite[^\n]*\n((?:\s{8}.*\n)+)", "\n".join(_rel_jobs.get("pruefen", [])) + "\n")
 assert _suite, "release.yml: the suite step in `pruefen` is missing"
 _suite_if = [z.strip() for z in _suite.group(1).splitlines() if z.strip().startswith("if:")]
 assert _suite_if in ([], ["if: github.event_name != 'pull_request'"]), \
@@ -1504,17 +1504,17 @@ try:
                     _cfg = eval(_quelle, {"TinySesamConfig": TinySesamConfig})   # noqa: S307
                 except Exception as _e:
                     raise AssertionError(
-                        f"{_datei}, Block {_nr}: `{_quelle.splitlines()[0]}…` lässt sich nicht "
-                        f"einmal auswerten — {type(_e).__name__}: {_e}")
+                        f"{_datei}, Block {_nr}: `{_quelle.splitlines()[0]}…` cannot even be "
+                        f"evaluated — {type(_e).__name__}: {_e}")
                 _cfg.db_path = os.path.join(_tmp.mkdtemp(), "beispiel.db")
                 try:
                     with _cl.redirect_stderr(_io.StringIO()):     # first-admin token to the operator
                         TinySesam(_cfg)
                 except _CfgErr as _e:
                     raise AssertionError(
-                        f"{_datei}, Block {_nr}: das Beispiel baut nicht.\n  {_quelle[:90]}…\n  "
-                        f"ConfigError: {str(_e)[:300]}\n  (Wer es kopiert, kommt nicht über die "
-                        f"erste Zeile hinaus — wie beim `pip install` oben.)")
+                        f"{_datei}, Block {_nr}: the example does not build.\n  {_quelle[:90]}…\n  "
+                        f"ConfigError: {str(_e)[:300]}\n  (Whoever copies it does not get past the "
+                        f"first line — like the `pip install` above.)")
                 _gebaut += 1
 finally:
     _seclog.setLevel(_vorher)

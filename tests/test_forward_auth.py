@@ -174,7 +174,7 @@ for kaputt in ({"mail": "X-Mail"}, {"user": "Bad Name"}, {"user": "X-U\r\nSet-Co
         TinySesam(TinySesamConfig(db_path=os.path.join(tempfile.mkdtemp(), "t.db"), cookie_secure=False,
                                   passkey_enabled=False, forward_auth_enabled=True,
                                   forward_headers=kaputt))
-        raise AssertionError(f"forward_headers={kaputt} hätte abgelehnt werden müssen")
+        raise AssertionError(f"forward_headers={kaputt} should have been rejected")
     except ValueError:
         pass
 ok("unknown field and invalid header name abort at startup, not silently at runtime")

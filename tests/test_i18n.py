@@ -48,7 +48,7 @@ os.remove(db)
 db, auth, c = build(lang="en")
 assert auth.t("err.pw_short", n=8) == "Password too short (min. 8)"
 assert auth.t("login.user") == "Username"
-assert auth.t("gibt.es.nicht") == "gibt.es.nicht"       # unbekannter Key → Key selbst
+assert auth.t("gibt.es.nicht") == "gibt.es.nicht"       # unknown key → the key itself
 auth.cfg.lang = "de"
 assert auth.t("login.user") == "Benutzer"
 auth.cfg.lang = "fr"                                     # no fr table → fallback en

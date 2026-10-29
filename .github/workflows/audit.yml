@@ -47,7 +47,7 @@ jobs:
 
       # Separate environment, pinned with hashes: the checking tool does not belong in the environment it
       # checks, and does not come from the index in whatever the newest version is.
-      - name: Werkzeuge
+      - name: Tools
         run: |
           python -m venv "$RUNNER_TEMP/audit"
           "$RUNNER_TEMP/audit/bin/pip" install --require-hashes --no-deps -r .github/audit/requirements.txt
@@ -55,7 +55,7 @@ jobs:
       # Only resolve, install nothing: resolution runs against the index, without executing any package
       # code (metadata from the wheels). `--python-version` = the lower bound from
       # requires-python, where the resolution is oldest.
-      - name: Auflösen (neueste und niedrigste erlaubte Fassungen)
+      - name: Resolve (newest and lowest allowed versions)
         run: |
           uv="$RUNNER_TEMP/audit/bin/uv"
           "$uv" pip compile pyproject.toml --all-extras --python-version 3.13 --no-header \
@@ -65,7 +65,7 @@ jobs:
           # Zero packages would be a green run without findings: that is no evidence but an error.
           for f in neu boden; do
             [ "$(grep -cE '^[A-Za-z0-9_.-]+==' "$RUNNER_TEMP/$f.txt")" -gt 0 ] \
-              || { echo "::error::$f: nichts aufgelöst — der Lauf prüfte nichts"; exit 1; }
+              || { echo "::error::$f: nothing resolved — the run checked nothing"; exit 1; }
           done
 
       # `--strict`: a package that pip-audit cannot look up is an error, not a skip.
@@ -90,7 +90,7 @@ jobs:
       # bump brings a new dependency along, it is missing. Without this step such a PR would go green, and
       # only the published image would abort at startup. The same steps as in the Dockerfile,
       # then `pip check` and the import. Read permission only; the wheels are fixed by hash.
-      - name: Sperrliste des Abbilds vollständig
+      - name: Lock list of the image complete
         run: |
           python3.14 -m venv "$RUNNER_TEMP/gw"
           gw="$RUNNER_TEMP/gw/bin"

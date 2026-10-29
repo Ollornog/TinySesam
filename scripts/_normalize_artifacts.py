@@ -89,7 +89,7 @@ def main(argv: list[str]) -> int:
         elif pfad.endswith(".tar.gz"):
             sdist_normalisieren(pfad, int(epoch))
         else:
-            print(f"weder Wheel noch sdist: {pfad}", file=sys.stderr)
+            print(f"neither wheel nor sdist: {pfad}", file=sys.stderr)
             return 2
     return 0
 

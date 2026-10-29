@@ -55,7 +55,7 @@ def _scrypt_teile(stored: str) -> tuple[int, int, int, str, str]:
 
 def hash_password(pw: str) -> str:
     if not pw:
-        raise ValueError("leeres Passwort")
+        raise ValueError("empty password")
     if _ARGON:
         return _PH.hash(pw)
     salt = os.urandom(16)
@@ -91,9 +91,9 @@ def verify_password(pw: str, stored: str) -> bool:
 
 
 #: Notice when an argon2 hash shows up without the extra — one line, with the remedy.
-ARGON2_FEHLT = ("Das Extra [argon2] fehlt, die Datenbank enthält aber argon2-Hashes: Diese "
-                "Passwörter/PINs lassen sich nicht prüfen, jede Anmeldung damit scheitert. "
-                "Abhilfe: pip install 'tinysesam[argon2]' und neu starten.")
+ARGON2_FEHLT = ("The extra [argon2] is missing, but the database contains argon2 hashes: these "
+                "passwords/PINs cannot be verified, every sign-in with them fails. "
+                "Remedy: pip install 'tinysesam[argon2]' and restart.")
 _ARGON2_GEMELDET = {"ja": False}
 
 

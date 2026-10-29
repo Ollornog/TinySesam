@@ -57,7 +57,7 @@ auth = TinySesam(demo_config(
     demo_mode=True,                  # creates `demo` + `demoadmin` and shows the credentials
     demo_pin="1234",
 ))
-auth.set_resource_secret("gaeste", "2468", kind="pin", label="Gäste-Bereich")
+auth.set_resource_secret("gaeste", "2468", kind="pin", label="Guest area")
 
 
 app = FastAPI()
@@ -354,4 +354,4 @@ def guests(request: Request, _=Depends(auth.require_resource("gaeste"))):
 
 @app.get("/boom", response_class=HTMLResponse)
 def boom():
-    raise RuntimeError("absichtlicher Fehler für die Demo")   # → themed 500 page
+    raise RuntimeError("intentional error for the demo")   # → themed 500 page

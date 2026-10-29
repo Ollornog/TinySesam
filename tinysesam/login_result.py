@@ -83,9 +83,9 @@ class LoginResult:
 
     def __post_init__(self) -> None:
         if self.reason not in self.REASONS:
-            raise ValueError(f"unbekannter Grund {self.reason!r} (erlaubt: {', '.join(self.REASONS)})")
+            raise ValueError(f"unknown reason {self.reason!r} (allowed: {', '.join(self.REASONS)})")
         if bool(self.ok) != (self.reason == "ok"):
-            raise ValueError("ok und reason widersprechen sich")
+            raise ValueError("ok and reason contradict each other")
         # Without a session: only `_with_session` attaches token and TinySesam — outside the fields.
         object.__setattr__(self, "_token", None)
         object.__setattr__(self, "_auth", None)

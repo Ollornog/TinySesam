@@ -39,7 +39,7 @@ from tinysesam import config_check  # noqa: E402
 from tinysesam.__main__ import main as _cli  # noqa: E402
 from _kit.report import Report  # noqa: E402
 
-r = Report("G7 — PIN als Erst- oder Folgefaktor (Serie, Kettenschritt, Gästeweg)")
+r = Report("G7 — PIN as first or follow-up factor (series, chain step, guest path)")
 PW = "Folge-Pin-Pw-15"          # 15 characters: the password may sign in on its own here (B2-4)
 NEU = "Neues-Pw-G7-123"
 PIN = "4711"
@@ -283,7 +283,7 @@ r.check("(h) guest door closed (strict chain): 404, the half session A stays as 
 # ── (i) Configuration check: warning exactly for not strict + PIN last + pin_login ─────────────
 def _warnt(**cfg):
     _, warnungen = config_check.check_config(TinySesamConfig(db_path=":memory:", **{"pin_enabled": True, **cfg}))
-    return any("Folgefaktor" in w and "pin_login=False" in w for w in warnungen)
+    return any("follow-up factor" in w and "pin_login=False" in w for w in warnungen)
 
 
 _faelle = {
@@ -436,7 +436,7 @@ class _Log:
         _seclog.removeHandler(self.haken)
 
     def gesperrt(self):
-        return [z for z in self.puffer.getvalue().splitlines() if "gesperrt:" in z]
+        return [z for z in self.puffer.getvalue().splitlines() if "locked:" in z]
 
 
 def _serie_ausweg(art):
@@ -475,9 +475,9 @@ r.check("lockout notice: for a series of TOTP or PIN in the chain step no reset 
             _reset_de not in _aus[a][1] and "bis der Betreiber sie freigibt" in _aus[a][1]
             and "Passwort-Reset hebt diese Sperre nicht auf" in _aus[a][1] for a in ("totp", FOLGE)),
         str({a: (v[3], v[1][:160]) for a, v in _aus.items()}))
-r.check("security log: “Lifting: password reset, …” only for a password series",
-        "Aufheben: Passwort-Reset," in _aus["password"][2]
-        and all(_aus[a][2] and "Aufheben: Passwort-Reset" not in _aus[a][2] and "tinysesam unlock" in _aus[a][2]
+r.check("security log: “Lift: password reset, …” only for a password series",
+        "Lift: password reset," in _aus["password"][2]
+        and all(_aus[a][2] and "Lift: password reset" not in _aus[a][2] and "tinysesam unlock" in _aus[a][2]
                 for a in ("totp", FOLGE)), str({a: v[2][-160:] for a, v in _aus.items()}))
 # (Mutation probe: `err.locked_serie` again “reset the password or the operator …” → red.)
 r.check("sign-in page: the same text for every kind (no oracle), it names the operator first and the "

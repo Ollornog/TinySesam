@@ -141,12 +141,12 @@ def main() -> int:
     alt = ZIEL.read_text(encoding="utf-8") if ZIEL.exists() else ""
     if trocken:
         if alt != neu:
-            print(f"{ZIEL.name} ist veraltet — `python3 scripts/_config_docs.py` fahren",
+            print(f"{ZIEL.name} is out of date — run `python3 scripts/_config_docs.py`",
                   file=sys.stderr)
             return 1
         return 0
     ZIEL.write_text(neu, encoding="utf-8")
-    print(f"geschrieben: {ZIEL.name}")
+    print(f"written: {ZIEL.name}")
     return 0
 
 

@@ -107,25 +107,25 @@ jobs:
         with:
           python-version: "3.13"
 
-      - name: Tag gegen die Paketversion prüfen
+      - name: Check the tag against the package version
         if: github.ref_type == 'tag'
         run: |
           tag="${GITHUB_REF_NAME#v}"
           pkg="$(python -c 'import tomllib,pathlib;
           print(tomllib.loads(pathlib.Path("pyproject.toml").read_text())["project"]["version"])')"
           if [ "$tag" != "$pkg" ]; then
-            echo "Tag $GITHUB_REF_NAME passt nicht zu pyproject-Version $pkg" >&2
+            echo "Tag $GITHUB_REF_NAME does not match pyproject version $pkg" >&2
             exit 1
           fi
-          echo "Tag und Paketversion stimmen überein: $pkg"
+          echo "Tag and package version match: $pkg"
 
-      - name: "Trockenlauf: Versionsstände gegeneinander prüfen (ohne Tag)"
+      - name: "Dry run: check the version states against each other (without a tag)"
         if: github.ref_type != 'tag'
         run: python3 scripts/_release.py --pruefen
 
       # On a PR, ci.yml runs the same suite on the same commit (required checks `full`,
       # `minimal`, `browser`, `repeat`) — doing it again here would cost five minutes of waiting.
-      - name: Suite fahren, bevor irgendetwas veröffentlicht wird
+      - name: Run the suite before anything is published
         if: github.event_name != 'pull_request'
         run: |
           sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update && sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y libxmlsec1-dev pkg-config
@@ -160,7 +160,7 @@ jobs:
       # To rebuild: the same three steps on the tag, then `sha256sum -c SHA256SUMS`.
       # `tests/test_packaging.py` builds twice with different file timestamps and permissions
       # and compares.
-      - name: Pakete bauen
+      - name: Build the packages
         run: |
           python -m venv "$RUNNER_TEMP/bau"
           "$RUNNER_TEMP/bau/bin/pip" install --require-hashes --no-deps -r .github/bau/requirements.txt
@@ -169,14 +169,14 @@ jobs:
           "$RUNNER_TEMP/bau/bin/python" -m build --no-isolation   # dist/*.whl and dist/*.tar.gz
           python scripts/_normalize_artifacts.py dist/*.whl dist/*.tar.gz
 
-      - name: Prüfsummen
+      - name: Checksums
         run: cd dist && sha256sum ./* > SHA256SUMS && cat SHA256SUMS
 
       # Only wheel and sdist go to PyPI: the upload job uploads everything it finds in the
       # directory, and would fail on `SHA256SUMS` (not a distribution).
       # The build happens exactly ONCE — the PyPI artifact is the same one attached to the release
       # and whose provenance is attested.
-      - name: Wheel und sdist weitergeben
+      - name: Pass on wheel and sdist
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
           name: pypi-dist
@@ -184,7 +184,7 @@ jobs:
             dist/*.whl
             dist/*.tar.gz
           if-no-files-found: error
-      - name: Prüfsummen weitergeben
+      - name: Pass on checksums
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
           name: pruefsummen
@@ -207,7 +207,7 @@ jobs:
         with:
           name: pruefsummen
           path: dist
-      - name: Prüfsummen gegen die heruntergeladenen Artefakte
+      - name: Checksums against the downloaded artifacts
         run: |
           cd dist
           ls -1 ./*.whl ./*.tar.gz
@@ -233,7 +233,7 @@ jobs:
           path: dist
 
       # Attest the provenance BEFORE publishing — over exactly the bytes from `bauen`.
-      - name: Herkunft von Wheel und sdist beglaubigen
+      - name: Attest the provenance of wheel and sdist
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8  # v4.2.2
         with:
           subject-path: "dist/*.whl, dist/*.tar.gz"
@@ -241,7 +241,7 @@ jobs:
       # Deliberately `gh` instead of a third-party action: that would need `contents: write` on this repo,
       # and its tag could be moved. `gh` is preinstalled on the runners. Without a checkout
       # `gh` does not know the repo from `.git` — hence `--repo`.
-      - name: Release anlegen
+      - name: Create the release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --generate-notes --verify-tag
@@ -290,7 +290,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
-      - name: Abbild bauen, starten, HEALTHCHECK und /healthz prüfen
+      - name: Build the image, start it, check HEALTHCHECK and /healthz
         run: scripts/_image_probe.sh
 
   image:
@@ -334,16 +334,16 @@ jobs:
       # Container registries require lowercase repository names; `repository_owner`
       # returns the spelling of the GitHub account. With capitals `buildx` aborts:
       # `invalid tag …: repository name must be lowercase`.
-      - name: Eigentümer kleinschreiben
+      - name: Lowercase the owner
         run: echo "OWNER_LC=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_ENV"
 
       # Timestamp of the commit for the image build (B4-7): BuildKit passes it on as a build arg
       # (Dockerfile: .pyc, /etc/shadow) and writes it into every layer with `rewrite-timestamp`.
       # The dependencies are fixed, with hashes, by deploy/gateway/requirements.txt.
-      - name: Zeitstempel des Commits
+      - name: Timestamp of the commit
         run: echo "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)" >> "$GITHUB_ENV"
 
-      - name: An GHCR anmelden
+      - name: Log in to GHCR
         if: github.ref_type == 'tag'
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f  # v4.6.0
         with:
@@ -351,7 +351,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Abbild bauen und schieben
+      - name: Build and push the image
         id: push
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc  # v7.4.0
         with:
@@ -381,13 +381,13 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
-      - name: Abbilder der Wegwerf-Ziele lesen (nur per Digest gepinnt)
+      - name: Read the images of the throwaway targets (pinned by digest only)
         id: lesen
         run: |
           set -euo pipefail
           for dienst in registry pypi; do
             abbild="$(yq -r ".services.${dienst}.image" .github/generalprobe/docker-compose.yml)"
-            [[ "$abbild" =~ @sha256:[0-9a-f]{64}$ ]] || { echo "$dienst: $abbild ist nicht per Digest gepinnt"; exit 1; }
+            [[ "$abbild" =~ @sha256:[0-9a-f]{64}$ ]] || { echo "$dienst: $abbild is not pinned by digest"; exit 1; }
             echo "${dienst}=${abbild}" >> "$GITHUB_OUTPUT"
           done
 
@@ -411,27 +411,27 @@ jobs:
 
       # The package server needs arguments (upload without login) that a service does not know.
       # It sits in the network of the job so that the upload action (a container) reaches it as `pypi`.
-      - name: "Generalprobe: Wegwerf-Paketserver starten"
+      - name: "Dress rehearsal: start the throwaway package server"
         env:
           ABBILD: ${{ needs.generalprobe-ziele.outputs.pypi }}
         run: |
           set -euo pipefail
           netz="$(docker network ls -q --filter name=github_network_)"
-          [ "$(wc -w <<<"$netz")" = "1" ] || { echo "Netz des Jobs nicht eindeutig: '$netz'"; exit 1; }
+          [ "$(wc -w <<<"$netz")" = "1" ] || { echo "Job network not unique: '$netz'"; exit 1; }
           befehl="$(yq -r '.services.pypi.command | join(" ")' .github/generalprobe/docker-compose.yml)"
           # shellcheck disable=SC2086  # the arguments from the compose file, deliberately split
           docker run -d --name pypi --network "$netz" --network-alias pypi -p 127.0.0.1:8080:8080 "$ABBILD" $befehl
           for _ in $(seq 1 30); do curl -fsS http://127.0.0.1:8080/simple/ >/dev/null && break; sleep 1; done
           curl -fsS http://127.0.0.1:8080/simple/ >/dev/null
 
-      - name: "Generalprobe: an der Wegwerf-Registry anmelden"
+      - name: "Dress rehearsal: log in to the throwaway registry"
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f  # v4.6.0
         with:
           registry: localhost:5000
           username: generalprobe
           password: generalprobe
 
-      - name: "Generalprobe: Abbild bauen und schieben"
+      - name: "Dress rehearsal: build and push the image"
         id: push
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc  # v7.4.0
         with:
@@ -440,7 +440,7 @@ jobs:
           tags: localhost:5000/tinysesam:generalprobe
           provenance: false
 
-      - name: "Generalprobe: SBOM aus dem geschobenen Abbild"
+      - name: "Dress rehearsal: SBOM from the pushed image"
         uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c  # v0.24.3
         env:
           SYFT_REGISTRY_INSECURE_USE_HTTP: "true"
@@ -455,7 +455,7 @@ jobs:
           name: pypi-dist
           path: dist
 
-      - name: "Generalprobe: Wheel und sdist an den Wegwerf-Paketserver"
+      - name: "Dress rehearsal: wheel and sdist to the throwaway package server"
         uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33  # v1.14.2
         with:
           repository-url: http://pypi:8080/
@@ -465,16 +465,16 @@ jobs:
           print-hash: true
 
       # Only what the package server serves counts as arrived, plus an SBOM that knows the package.
-      - name: "Generalprobe: Upload und SBOM nachlesen"
+      - name: "Dress rehearsal: read back upload and SBOM"
         run: |
           set -euo pipefail
           liste="$(curl -fsS http://127.0.0.1:8080/simple/tinysesam/)"
           for datei in dist/*.whl dist/*.tar.gz; do
-            grep -qF "$(basename "$datei")" <<<"$liste" || { echo "$(basename "$datei") fehlt auf dem Paket-Server"; exit 1; }
+            grep -qF "$(basename "$datei")" <<<"$liste" || { echo "$(basename "$datei") is missing on the package server"; exit 1; }
           done
           jq -e '[.packages[].name] | index("tinysesam")' sbom.spdx.json >/dev/null \
-            || { echo "SBOM kennt tinysesam nicht"; exit 1; }
-          echo "Upload und SBOM stimmen"
+            || { echo "SBOM does not know tinysesam"; exit 1; }
+          echo "Upload and SBOM match"
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
@@ -497,13 +497,13 @@ jobs:
         with:
           name: generalprobe-sbom
           path: .
-      - name: "Generalprobe: Probedatei"
-        run: echo "TinySesam Generalprobe ${GITHUB_SHA} — kein Artefakt" > generalprobe.txt
-      - name: "Generalprobe: Herkunft beglaubigen"
+      - name: "Dress rehearsal: sample file"
+        run: echo "TinySesam dress rehearsal ${GITHUB_SHA} — no artifact" > generalprobe.txt
+      - name: "Dress rehearsal: attest provenance"
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8  # v4.2.2
         with:
           subject-path: generalprobe.txt
-      - name: "Generalprobe: SBOM beglaubigen"
+      - name: "Dress rehearsal: attest SBOM"
         uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e  # v4.1.0
         with:
           subject-path: generalprobe.txt
@@ -521,10 +521,10 @@ jobs:
       id-token: write      # Sigstore identity for the attestation
       attestations: write  # hand the attestation to GitHub
     steps:
-      - name: Eigentümer kleinschreiben
+      - name: Lowercase the owner
         run: echo "OWNER_LC=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_ENV"
 
-      - name: An GHCR anmelden
+      - name: Log in to GHCR
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f  # v4.6.0
         with:
           registry: ghcr.io
@@ -535,7 +535,7 @@ jobs:
       # thus does not prove exactly what matters here. Instead an attestation signed via Sigstore,
       # which also lands in the registry next to the image — whoever pulls it can verify the
       # provenance without knowing this repo.
-      - name: Herkunft des Abbilds beglaubigen
+      - name: Attest the provenance of the image
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8  # v4.2.2
         with:
           subject-name: ghcr.io/${{ env.OWNER_LC }}/tinysesam
@@ -547,7 +547,7 @@ jobs:
       # otherwise it would describe something other than what was shipped. The action fetches Syft
       # itself; the version is a constant in the pinned commit of the action (at this
       # SHA v1.51.1) — so the SHA pin fixes it, unlike qemu/BuildKit above.
-      - name: SBOM aus dem geschobenen Abbild erzeugen
+      - name: Generate the SBOM from the pushed image
         uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c  # v0.24.3
         with:
           image: ghcr.io/${{ env.OWNER_LC }}/tinysesam@${{ needs.image.outputs.digest }}
@@ -555,7 +555,7 @@ jobs:
           output-file: sbom.spdx.json
           upload-artifact: false
 
-      - name: SBOM beglaubigen
+      - name: Attest the SBOM
         uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e  # v4.1.0
         with:
           subject-name: ghcr.io/${{ env.OWNER_LC }}/tinysesam
@@ -563,10 +563,10 @@ jobs:
           sbom-path: sbom.spdx.json
           push-to-registry: true
 
-      - name: Digest ausgeben (für einen unveränderlichen Pin)
+      - name: Print the digest (for an immutable pin)
         env:
           DIGEST: ${{ needs.image.outputs.digest }}
         run: |
-          echo "Abbild: ghcr.io/${OWNER_LC}/tinysesam:${GITHUB_REF_NAME}"
+          echo "Image: ghcr.io/${OWNER_LC}/tinysesam:${GITHUB_REF_NAME}"
           echo "Digest: ${DIGEST}"
-          echo "Unveränderlich pinnen: ghcr.io/${OWNER_LC}/tinysesam@${DIGEST}"
+          echo "Pin immutably: ghcr.io/${OWNER_LC}/tinysesam@${DIGEST}"

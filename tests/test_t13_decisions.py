@@ -229,7 +229,7 @@ r.check("B2-6: a miss at the password change (via begin_attempt) books no series
 # `alice`, bound via entryUUID, there `alice.neu`) the person types `alice.neu`. Until 2026-09-26
 # no way back cleared the series under it: own typos added up over the years, a
 # stranger could lock them out permanently with enough failed attempts, and `tinysesam unlock alice.neu` aborted
-# with "Kein Konto".
+# with "No account".
 class _Verzeichnis:
     """Dummy of the LDAP client after the bind: the entry for the typed identifier (with a
     filter over `uid` AND `mail` also for the address)."""
@@ -315,7 +315,7 @@ _code_v, _text_v = _unlock("alice.neu")
 #  under `alice` stays → red.)
 r.check("G5: `tinysesam unlock alice.neu` — the name as typed — finds the account and ends "
         "its series under all identifiers",
-        _code_v == 0 and "Sperre für 'alice.neu' aufgehoben" in _text_v
+        _code_v == 0 and "Lockout for 'alice.neu' lifted" in _text_v
         and auth_v.store.fehlserie("alice.neu") == 0 and auth_v.store.fehlserie("alice") == 0,
         f"exit {_code_v}, {_text_v!r}, Serie {auth_v.store.fehlserie('alice.neu')}/{auth_v.store.fehlserie('alice')}")
 # Existing data: the series is already full, but the directory name was never noted (it only arises with the
@@ -324,14 +324,14 @@ auth_v.store._exec("UPDATE federated_identity SET name_topf = NULL")
 for _ in range(10):
     _login(TestClient(app_v), "alice.neu", f"falsch-falsch-1-{next(_FALSCH)}")
 _code_b, _text_b = _unlock("alice.neu")
-# (Mutation probe: rebuild the abort "Kein Konto" before the clearing → red.)
+# (Mutation probe: rebuild the abort "No account" before the clearing → red.)
 r.check("… also in existing data without a note: no account, but the counters under the identifier are cleared (rc 0)",
-        _code_b == 0 and "Kein Konto" in _text_b and auth_v.store.fehlserie("alice.neu") == 0
+        _code_b == 0 and "No account" in _text_b and auth_v.store.fehlserie("alice.neu") == 0
         and _login(TestClient(app_v), "alice.neu", LPW).status_code == 303,
         f"exit {_code_b}, {_text_b!r}, Serie {auth_v.store.fehlserie('alice.neu')}")
 _code_n, _text_n = _unlock("gibt-es-nirgends")
 r.check("… an identifier without account and without counters stays an error (rc 1)",
-        _code_n == 1 and "Kein Konto" in _text_n, f"exit {_code_n}, {_text_n!r}")
+        _code_n == 1 and "No account" in _text_n, f"exit {_code_n}, {_text_n!r}")
 
 # The guard: a directory filter over `mail` also resolves an identifier to a third party whose
 # `mail` attribute is the address of a LOCAL account (default `ldap_email_trusted=False`). Until
@@ -488,9 +488,9 @@ r.check("… and the database rejects it — rename and create (identifier trigg
 r.check("… renaming (also by the operator) and `tinysesam rename` refuse, registering does not "
         "exist alongside LDAP at all",
         _selbst_a == "abgewiesen" and "allow_signup" in _reg_a and "ldap_enabled" in _reg_a and _cli_a == 1
-        and "Name im Verzeichnis" in _cli_aus_a.getvalue()
+        and "name in the directory" in _cli_aus_a.getvalue()
         and a_a.store.get_user(_mallory_a)["username"] == "mallory",
-        f"{_selbst_a}, Registrierung HTTP {_reg_a}, CLI rc {_cli_a} {_cli_aus_a.getvalue()[:120]!r}")
+        f"{_selbst_a}, registration {_reg_a}, CLI rc {_cli_a} {_cli_aus_a.getvalue()[:120]!r}")
 # Alongside LDAP nobody renames themselves, not even to a free name (PO decision
 # 2026-09-27): otherwise a local account could take the directory name of a person who has
 # never signed in, and lock them out. (Mutation probe: switch off the check in `change_username`
@@ -605,7 +605,7 @@ with redirect_stdout(_aus_x2), redirect_stderr(_aus_x2):
 r.check("… in existing data with two carriers: the name counts for neither, `unlock` names none and clears only under `x`",
         _serie_x2 == 3 and a_x.store.fehlserie("x") == 0
         and "x" not in a_x.store.zaehl_kennungen(_anton_x) and "x" not in a_x.store.zaehl_kennungen(_berta_x)
-        and "Kein Konto 'x'" in _aus_x2.getvalue(), f"Serie {_serie_x2}, {_aus_x2.getvalue()!r}")
+        and "No account 'x'" in _aus_x2.getvalue(), f"Serie {_serie_x2}, {_aus_x2.getvalue()!r}")
 
 # A stale note does not stop a new person: if someone ELSE is now called `y` in the directory
 # (reassignment), their first sign-in creates the account `y` — the note on the previous owner is
@@ -1228,7 +1228,7 @@ with open(_datei14, "w") as _f:
     _f.write(_b64.b64encode(_os.urandom(32)).decode())
 a14c, _ = _app(secrets_key_file=_datei14)
 r.check("… secrets_key_file is taken, then no file next to the database is created",
-        a14c._schluessel_herkunft == "datei" and not _os.path.exists(a14c.cfg.db_path + ".key"))
+        a14c._schluessel_herkunft == "file" and not _os.path.exists(a14c.cfg.db_path + ".key"))
 with open(_datei14, "w") as _f:
     _f.write("zu-kurz")
 try:
@@ -1921,8 +1921,18 @@ _w_v = " ".join(_kp3.check_config(TinySesamConfig(db_path=":memory:", admin_iden
 _w_n = " ".join(_kp3.check_config(TinySesamConfig(db_path=":memory:", admin_identifiers=["chef@example.com"],
                                              ldap_enabled=True, ldap_url="ldaps://d.example", ldap_auto_create=True,
                                              ldap_email_trusted=False))[1])
-r.check("Attack R3/S5: config check — trusted source: „wird Erst-Admin\"; not trusted: „NIE\"",
-        "vertraute Quelle" in _w_v and "NIE" not in _w_v and "NIE" in _w_n, _w_v[:200])
+r.check("Attack R3/S5: config check — trusted source: „becomes first admin\"; not trusted: „NEVER\"",
+        "trusted source" in _w_v and "NEVER" not in _w_v and "NEVER" in _w_n, _w_v[:200])
+# The same check in German (`lang="de"`): the old wording.
+_w_vd = " ".join(_kp3.check_config(TinySesamConfig(db_path=":memory:", admin_identifiers=["chef@example.com"],
+                                              ldap_enabled=True, ldap_url="ldaps://d.example", ldap_auto_create=True,
+                                              ldap_email_trusted=True, lang="de"))[1])
+_w_nd = " ".join(_kp3.check_config(TinySesamConfig(db_path=":memory:", admin_identifiers=["chef@example.com"],
+                                              ldap_enabled=True, ldap_url="ldaps://d.example", ldap_auto_create=True,
+                                              ldap_email_trusted=False, lang="de"))[1])
+r.check("… and in German (lang=\"de\"): „vertraute Quelle\" vs. „NIE\"",
+        "vertraute Quelle" in _w_vd and "NIE" not in _w_vd and "NIE" in _w_nd and "trusted source" not in _w_vd,
+        _w_vd[:200])
 # (Mutation probes are in the commit: ignore name_zuordnen → S1 red; remove rejection without identifier →
 #  S3 red; remove LDAP substitute name → S2 red; remove name_ungueltig in create_user → S4 red; header latch
 #  removed → "fail-closed" red; client errors as a no again → F8-2 red; remove `bekannt` → "removed
@@ -1968,7 +1978,7 @@ try:
 finally:
     _log3.getLogger("tinysesam.security").removeHandler(_h_v3)
 r.check("… and the startup names existing names with control/format characters",
-        any("Kontoname(n) mit Steuer- oder Formatzeichen" in m and str(_c0) in m for m in _fang_v3))
+        any("account name(s) with control or format characters" in m and str(_c0) in m for m in _fang_v3))
 # The named route (since self-service) works: renamed, then the remote user is back.
 _neu_v3 = a_v3.change_username(_c0, "chefin-neu")
 r.check("… and the route it names (auth.change_username) cleans the name up",

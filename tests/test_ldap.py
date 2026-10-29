@@ -369,7 +369,7 @@ if HAT_LDAP3:
         assert LDAPClient(cfg_svc).authenticate("alice", "egal") is None
     finally:
         _seclog2.removeHandler(_haken)
-    assert "VERWEIS" in _puffer.getvalue() and "Global Catalog" in _puffer.getvalue(), \
+    assert "REFERRAL" in _puffer.getvalue() and "Global Catalog" in _puffer.getvalue(), \
         f"real ldap3: the discarded referral stayed silent: {_puffer.getvalue()[:200]!r}"
     time.sleep(0.5)
     beute = eimer[0] if eimer else b""
@@ -396,7 +396,7 @@ if HAT_LDAP3:
         _seclog2.removeHandler(_haken_b)
     # On this path too the referral must not stay silent: Without the attributes
     # e-mail, name and groups are missing — with `ldap_allowed_groups` that is a rejection without reason.
-    assert "Attribut-Suche" in _puffer_b.getvalue(), \
+    assert "attribute search" in _puffer_b.getvalue(), \
         f"the referral on the attribute search stayed silent: {_puffer_b.getvalue()[:200]!r}"
     time.sleep(0.5)
     beute = eimer[0] if eimer else b""
@@ -559,7 +559,7 @@ finally:
         else:
             sys.modules[name] = mod
 
-assert "VERWEIS" in _text and "referral" in _text, f"no hint of the referral: {_text[:200]!r}"
+assert "REFERRAL" in _text and "Global Catalog" in _text, f"no hint of the referral: {_text[:200]!r}"
 # The host is checked with word boundaries, not by substring: `x-fremd.example.com.evil`
 # would contain the name too, but would be a different host (CodeQL py/incomplete-url-substring-
 # sanitization — a test guarantee here, but the same trap).
@@ -733,7 +733,7 @@ try:
     assert auth11b._check_ldap("ohne", "pw") is not None
 finally:
     _sec11.seclog.removeHandler(_haken11)
-assert "keine stabile Kennung" in _puffer11.getvalue(), _puffer11.getvalue()[:200]
+assert "no stable identifier" in _puffer11.getvalue(), _puffer11.getvalue()[:200]
 ok("F-11: a directory without a stable identifier reports itself but locks nobody out")
 
 # …unless the operator demands one.
@@ -847,7 +847,7 @@ assert _ada is not None, "README key as ldap_allowed_groups rejects everyone"
 assert _ada["is_admin"], "README key as admin mapping does not apply"
 assert auth19c.store.get_roles(_ada["id"]) == [], "substring 'ou=g' must not match"
 # The key that would only match as a substring does not silently drop out: one line in the log.
-assert "'ou=g'" in _puffer19.getvalue() and "Teilstring" in _puffer19.getvalue(), _puffer19.getvalue()[:300]
+assert "'ou=g'" in _puffer19.getvalue() and "only matches as a substring" in _puffer19.getvalue(), _puffer19.getvalue()[:300]
 assert "cn=admins,ou=g'" not in _puffer19.getvalue(), "a key that applies must not warn"
 ok("A-3: partial DN from the front (README example) applies again; a pure substring key reports itself")
 os.remove(db19c)
@@ -862,7 +862,7 @@ from tinysesam import ldap_ as _ldap_mod                    # noqa: E402
 
 class AusfallLDAP:
     def authenticate(self, username, password):
-        raise VerzeichnisNichtErreichbar("LDAP-Verzeichnis ldap://dummy nicht benutzbar: Test")
+        raise VerzeichnisNichtErreichbar("LDAP directory ldap://dummy unusable: Test")
 
 
 db23, auth23, c23 = build()
@@ -886,7 +886,7 @@ assert "nicht erreichbar" in antworten23[0].text, antworten23[0].text[:300]
 assert auth23.store.count_fails(0, username="alice") == 0, "the outage was booked as a failed attempt"
 assert not auth23._is_locked("alice", "testclient"), "an outage locks the account"
 assert "failed login" not in _puffer23.getvalue(), "fail2ban would take an outage for an attack"
-assert "LDAP nicht erreichbar" in _puffer23.getvalue(), _puffer23.getvalue()[:300]
+assert "LDAP directory unreachable (" in _puffer23.getvalue(), _puffer23.getvalue()[:300]
 assert any(z["event"] == "ldap_unavailable" for z in auth23.store.recent_audit(20))
 ok("F-23: directory outage → 503, no failed attempt, no lockout, no 'failed login', own audit line")
 # Counter-check: the same route with a reachable directory and a wrong password counts —
@@ -954,7 +954,7 @@ class HaengendesLDAP:
         with self._zaehler:
             self.fragen += 1
         time.sleep(HAENGT24)
-        raise VerzeichnisNichtErreichbar("LDAP-Verzeichnis ldap://dummy nicht benutzbar: timed out")
+        raise VerzeichnisNichtErreichbar("LDAP directory ldap://dummy unusable: timed out")
 
 
 db24, auth24, c24 = build()
@@ -1047,8 +1047,8 @@ try:
 finally:
     _seclog23.removeHandler(_haken24b)
 _text24 = _puffer24b.getvalue()
-assert _text24.count("LDAP-Verzeichnis nicht erreichbar (") == 1, _text24
-assert _text24.count("LDAP-Verzeichnis wieder erreichbar") == 1, _text24
+assert _text24.count("LDAP directory unreachable (") == 1, _text24
+assert _text24.count("LDAP directory reachable again") == 1, _text24
 assert "failed login user=kollege" not in _text24, _text24
 assert auth24.store.count_fails(0, username="alice") == 0, "the full login clears the failed attempt"
 ok("…after the pause exactly one sign-in asks again; outage and return appear once each in the log")
@@ -1065,14 +1065,14 @@ _m_n = AusfallMerker(uhr=lambda: _uhr_n[0])
 _m_n.ausgefallen(VerzeichnisNichtErreichbar("Test: timed out"))
 _uhr_n[0] += AUSFALL_PAUSE_SEK + 1
 assert _m_n.zugang() is True, "precondition: after the pause the next sign-in is the probe"
-_m_n.ausgefallen(VerzeichnisNichtErreichbar("Test: Nachzügler"), war_probe=False)   # straggler
+_m_n.ausgefallen(VerzeichnisNichtErreichbar("Test: straggler"), war_probe=False)   # straggler
 _uhr_n[0] += AUSFALL_PAUSE_SEK + 1
 try:
     _m_n.zugang()
     _zweite_probe = True
 except VerzeichnisNichtErreichbar as _e_n:
     _zweite_probe = False
-    assert "fragt gerade nach" in str(_e_n), str(_e_n)
+    assert "is asking right now" in str(_e_n), str(_e_n)
 assert not _zweite_probe, "a straggler released the slot of the running probe — two probes at once"
 _m_n.ausgefallen(VerzeichnisNichtErreichbar("Test: Probe gescheitert"), war_probe=True)
 _uhr_n[0] += AUSFALL_PAUSE_SEK + 1
@@ -1088,7 +1088,7 @@ class _LaunischesLDAP:
 
     def authenticate(self, username, password):
         if self.modus == "weg":
-            raise VerzeichnisNichtErreichbar("LDAP-Verzeichnis ldap://dummy nicht benutzbar: timed out")
+            raise VerzeichnisNichtErreichbar("LDAP directory ldap://dummy unusable: timed out")
         if self.modus == "kaputt":
             raise RuntimeError("unerwarteter Fehler im Client")
         if self.modus == "abgebrochen":
@@ -1109,14 +1109,14 @@ _uhr_p[0] += AUSFALL_PAUSE_SEK + 1
 _launisch.modus = "kaputt"
 try:
     _auth_p._check_ldap("alice", "pw")
-    raise AssertionError("Vorbedingung: die Probe hätte mit RuntimeError enden müssen")
+    raise AssertionError("precondition: the probe should have ended with RuntimeError")
 except RuntimeError:
     pass
 _launisch.modus = "gesund"
 try:
     _info_p = _auth_p._check_ldap("alice", "pw")
 except VerzeichnisNichtErreichbar as _e_p:
-    raise AssertionError(f"nach einer Probe mit fremder Ausnahme fragt niemand mehr nach: {_e_p}")
+    raise AssertionError(f"after a probe with a foreign exception nobody asks any more: {_e_p}")
 assert _info_p, _info_p
 # The same if the probe only loses its own request (`AnfrageAbgebrochen`, see below): no
 # proof of an outage, but none of the return either — the next sign-in asks again.
@@ -1131,14 +1131,14 @@ _uhr_p[0] += AUSFALL_PAUSE_SEK + 1
 _launisch.modus = "abgebrochen"
 try:
     _auth_p._check_ldap("alice", "pw")
-    raise AssertionError("Vorbedingung: die Probe hätte abgebrochen werden müssen")
+    raise AssertionError("precondition: the probe should have been aborted")
 except _ldap_mod.AnfrageAbgebrochen:
     pass
 _launisch.modus = "gesund"
 try:
     _info_p = _auth_p._check_ldap("alice", "pw")
 except VerzeichnisNichtErreichbar as _e_p:
-    raise AssertionError(f"nach einer abgebrochenen Probe fragt niemand mehr nach: {_e_p}")
+    raise AssertionError(f"after an aborted probe nobody asks any more: {_e_p}")
 assert _info_p, _info_p
 ok("Outage flag: if the probe ends with a foreign exception or an abort, the next one asks again")
 
@@ -1378,8 +1378,8 @@ if HAT_LDAP3:
         finally:
             _seclog23.removeHandler(_haken_v)
         # Distinguishable in the security log — even after the reason is truncated to 64 characters.
-        assert "grund=LDAP: nur diese Anfrage abgebrochen" in _puffer_v.getvalue(), _puffer_v.getvalue()
-        assert "LDAP-Verzeichnis nicht erreichbar (" not in _puffer_v.getvalue(), "the flag reported"
+        assert "reason=LDAP: only this request aborted" in _puffer_v.getvalue(), _puffer_v.getvalue()
+        assert "LDAP directory unreachable (" not in _puffer_v.getvalue(), "the flag reported"
         assert any(z.startswith("zu gross") for z in _v.log), f"precondition: no abort in the directory: {_v.log}"
         assert _abbruch_v == 503, f"the aborted request itself: {_abbruch_v}"
         _vorher_v = len(_v.log)
@@ -1509,10 +1509,10 @@ from tinysesam import config_check as _kp  # noqa: E402
 _f30, _w30 = _kp.check_config(TinySesamConfig(db_path=":memory:", password_enabled=False,
                                         passkey_enabled=False, ldap_enabled=True,
                                         ldap_url="ldaps://ldap.example.com"))
-_meldung30 = next(f for f in _f30 if "Keine einzige Anmelde-Methode" in f)
-assert "ldap_enabled=True," not in _meldung30.split("LDAP allein")[0], _meldung30
-assert "password_enabled=True" in _meldung30.split("LDAP allein")[1], _meldung30
-assert any("ldap_enabled=True, aber password_enabled=False" in w for w in _w30), _w30
+_meldung30 = next(f for f in _f30 if "Not a single login method" in f)
+assert "ldap_enabled=True," not in _meldung30.split("LDAP alone")[0], _meldung30
+assert "password_enabled=True" in _meldung30.split("LDAP alone")[1], _meldung30
+assert any("ldap_enabled=True, but password_enabled=False" in w for w in _w30), _w30
 # Counter-check: the named remedy is actually accepted.
 _f30b, _w30b = _kp.check_config(TinySesamConfig(db_path=":memory:", password_enabled=True,
                                           passkey_enabled=False, ldap_enabled=True,

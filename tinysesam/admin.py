@@ -392,7 +392,7 @@ def build_admin_router(auth) -> APIRouter:
         elif b.get("user_id"):
             owner_schutz(me, int(b["user_id"]))
             auth.store.delete_user_sessions(int(b["user_id"]))
-        protokoll(request, "session_revoke", f"user_id={b.get('user_id')}" if b.get("user_id") else "eine Sitzung")
+        protokoll(request, "session_revoke", f"user_id={b.get('user_id')}" if b.get("user_id") else "one session")
         return {"ok": True}
 
     # ---------- Invitations (magic invite) ----------
@@ -473,7 +473,7 @@ def build_admin_router(auth) -> APIRouter:
         nachher = auth.all_security()
         geaendert = [f"{k}={vorher[k]}->{nachher[k]}" for k in sorted(nachher)
                      if vorher.get(k) != nachher[k]]
-        protokoll(request, "security_update", " ".join(geaendert) or "unverändert")
+        protokoll(request, "security_update", " ".join(geaendert) or "unchanged")
         return nachher
 
     @ar.get("/api/version")
@@ -495,8 +495,7 @@ def build_admin_router(auth) -> APIRouter:
             guard(request)
             warn = ""
             if cfg.https_mode == "warn" and not auth._is_secure(request):
-                warn = ("<div class=warnbar>⚠ Unverschlüsselt (kein HTTPS) — Zugangsdaten gehen im Klartext. "
-                        "Nur im vertrauenswürdigen Netz nutzen oder HTTPS davorschalten.</div>")
+                warn = f"<div class=warnbar>{_WARN_HTTP.get(cfg.lang) or _WARN_HTTP['en']}</div>"
             # mount point → relative API base
             # Same CSP as every other built-in page (R8-1). Until 0.19.0, of all pages the
             # panel that creates accounts and grants rights came without CSP and without protection against
@@ -522,6 +521,15 @@ def build_admin_router(auth) -> APIRouter:
 
     return ar
 
+
+#: Warning bar for an unencrypted connection (`https_mode="warn"`). No key in `messages.py` yet,
+#: so the two languages live here; other `config.lang` values fall back to English.
+_WARN_HTTP = {
+    "en": "⚠ Unencrypted (no HTTPS) — credentials are sent in clear text. "
+          "Only use on a trusted network or put HTTPS in front.",
+    "de": "⚠ Unverschlüsselt (kein HTTPS) — Zugangsdaten gehen im Klartext. "
+          "Nur im vertrauenswürdigen Netz nutzen oder HTTPS davorschalten.",
+}
 
 #: All panel texts. The panel builds its UI in the browser, so they travel as
 #: JSON (`const L`) instead of being inserted into the template text. One key per entry,
@@ -586,7 +594,7 @@ _PAGE = r"""<!doctype html><html lang=__LANG__><head><meta charset=utf-8>
 <meta name=viewport content="width=device-width,initial-scale=1">__ICON__<title>__RP__ — Admin</title>
 <style>
 __TOKENS__
-/* Alles unter .tsadmin gekapselt — sonst faerbt es auf brand_header/brand_footer ab. */
+/* Everything is scoped to .tsadmin — otherwise it bleeds onto brand_header/brand_footer. */
 *{box-sizing:border-box}
 body{font-family:var(--ts-font);margin:0;background:var(--ts-bg);color:var(--ts-ink);
   min-height:100vh;display:flex;flex-direction:column}
@@ -636,33 +644,33 @@ __WARN__
 <div class=tabs id=tabs></div>
 <div class=wrap id=view></div>
 <script>
-const B="__BASE__";                                    // Mountpunkt (frei wählbar) → relative API-Aufrufe
-const ROLES=__ROLES__;                                 // bekannte Rollen/Gruppen (config.available_roles)
-const REQMAIL=__REQMAIL__;                             // config.signup_require_email (E-Mail Pflicht)
-const L=__I18N__;                                      // Texte in config.lang — siehe messages.py
+const B="__BASE__";                                    // mount point (freely chosen) → relative API calls
+const ROLES=__ROLES__;                                 // known roles/groups (config.available_roles)
+const REQMAIL=__REQMAIL__;                             // config.signup_require_email (e-mail required)
+const L=__I18N__;                                      // texts in config.lang — see messages.py
 document.getElementById("applink").textContent="← "+L.app;
 document.getElementById("outlink").textContent=L.logout;
 const TABS=[["users",L["tab.users"]],["sessions",L["tab.sessions"]],["security",L["tab.security"]],["audit",L["tab.audit"]]];
 let cur="users";
 const g=(u)=>fetch(B+u).then(r=>r.json());
 function tsCsrf(){return (document.cookie.match(/(?:^|; )__CSRFCK__=([^;]+)/)||[])[1]||''}
-// Eine Abweisung (4xx/5xx) kommt IMMER als {detail:"<Text>"} zurück, auch ohne JSON-Körper. Vorher
-// sah p() nur den Körper: savesec meldete „gespeichert", obwohl der Server 400 sagte, pw „Passwort
-// gesetzt" trotz abgelehnter Regel, saveroles lud still neu (Integrationsfund 10).
+// A rejection (4xx/5xx) ALWAYS comes back as {detail:"<text>"}, even without a JSON body. Before,
+// p() only saw the body: savesec reported "saved" although the server said 400, pw "password
+// set" despite a rejected rule, saveroles silently reloaded (integration finding 10).
 const p=(u,b)=>fetch(B+u,{method:"POST",headers:{"Content-Type":"application/json","X-CSRF-Token":tsCsrf()},body:JSON.stringify(b||{})})
   .then(async r=>{let j=null;try{j=await r.json()}catch(e){}
     if(r.ok)return j||{};
     return {detail:(j&&typeof j.detail==="string"&&j.detail)||L["err.generic"]}});
-// Den Grund einer Abweisung zeigen — true, wenn es eine war. Jede Aktion, die p() ruft, geht hier
-// durch (ein Test hält das fest), damit die nächste neue Aktion nicht wieder still scheitert.
+// Show the reason for a rejection — true if there was one. Every action that calls p() goes through
+// here (a test pins that), so the next new action does not fail silently again.
 const abgewiesen=r=>{if(r&&r.detail){alert(r.detail);return true}return false};
 const esc=s=>(s??"").toString().replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
-// Ein Knopf bekommt seine Aktion als data-on (Name) und data-a (Argumente als JSON), nie als
-// onclick. Zwei Gruende: Die CSP des Panels erlaubt Skript nur per Nonce, ein Inline-Handler
-// liefe gar nicht (R8-1). Und Daten in einem onclick sind Code — der Browser dekodiert das
-// Attribut und laesst den JS-Parser darueber laufen; aus &#39; wurde wieder ein Apostroph, und
-// ein Benutzername wie  bob');alert(document.cookie);//  lief im Browser der Administratorin.
-// data-a dagegen wird nur mit JSON.parse gelesen: Was darin steht, bleibt ein Wert.
+// A button gets its action as data-on (name) and data-a (arguments as JSON), never as
+// onclick. Two reasons: the panel's CSP allows script only via nonce, so an inline handler
+// would not run at all (R8-1). And data in an onclick is code — the browser decodes the
+// attribute and runs the JS parser over it; &#39; became an apostrophe again, and
+// a username like  bob');alert(document.cookie);//  ran in the administrator's browser.
+// data-a, by contrast, is only read with JSON.parse: whatever is in there stays a value.
 const on=(f,...a)=>`data-on="${f}" data-a="${esc(JSON.stringify(a))}"`;
 const dt=t=>t?new Date(t*1000).toLocaleString(L.locale):"—";
 function tabs(){document.getElementById("tabs").innerHTML=TABS.map(([k,l])=>`<div class="tab ${k==cur?'on':''}" ${on("go",k)}>${esc(l)}</div>`).join("")}
@@ -756,8 +764,8 @@ async function audit(){const a=await g("/api/audit?limit=120");
   V(`<table><tr><th>${esc(L["th.time"])}</th><th>${esc(L["th.event"])}</th><th>${esc(L["th.user"])}</th><th>${esc(L["th.ip"])}</th><th>${esc(L["th.detail"])}</th></tr>`+
     a.map(e=>`<tr><td>${dt(e.ts)}</td><td>${esc(e.event)}</td><td>${esc(e.username)||'—'}</td><td>${esc(e.ip)||'—'}</td><td>${esc(e.detail)||''}</td></tr>`).join("")+`</table>`)}
 
-// Ein delegierter Listener fuer alle Knoepfe, auch die per innerHTML nachgeladenen. Nur Namen
-// aus ACT sind aufrufbar — data-on waehlt eine Aktion aus, es nennt keinen beliebigen Code.
+// One delegated listener for all buttons, including those loaded later via innerHTML. Only names
+// from ACT are callable — data-on selects an action, it does not name arbitrary code.
 const ACT={go,mkuser,own,dis,pw,ren,roles,saveroles,clr,keys,mkkey,revk,revs,savesec,pks,delpk,deluser};
 document.addEventListener("click",e=>{const el=e.target.closest("[data-on]");
   if(!el||!ACT[el.dataset.on])return;ACT[el.dataset.on](...JSON.parse(el.dataset.a||"[]"))});

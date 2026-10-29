@@ -25,7 +25,7 @@ exceptions are listed explicitly below (Redis, security log): there a *throttle*
 | **Extra missing at runtime** (`[oidc]`, `[saml]`, `[ldap]`, `[passkey]`) | Sign-in via this method fails with a readable message | At start a warning line with `pip install 'tinysesam[…]'` (the start itself remains possible — a custom client can be set); on the first attempt `MissingExtra` with the package name instead of a 500 from deep inside. |
 | **Extra `[argon2]` missing** (new image, venv rebuilt) | Every account with an argon2 hash: "wrong password". | At start a line with the number of affected hashes and `pip install 'tinysesam[argon2]'`; during operation the same remedy once per process (B6-8). Every installation verifies scrypt hashes. |
 | **System clock jumps back** (NTP, Pi without backup battery, VM snapshot) | nothing — deadlines keep running normally | Warning line `Die Systemuhr steht … hinter der zuletzt benutzten Zeit`. TinySesam keeps counting monotonically; expired sessions, one-time tokens and step-ups do not come back to life (B6-9). Across a **restart** the database carries the state: it saves it at most once a minute (`uhr_stand`, on every write and on the write probe of `/healthz`). What expired in the time after that — the last minute, or the whole idle period of an instance without healthcheck and without sign-ins — is valid again after a boot with an old date, until the clock has caught up that gap. If the clock once jumped wrongly **forward**, timestamps stay there until the wall clock catches up. |
-| **Security log** (`security_log`) not writable | nothing | At start: `security_log … nicht schreibbar — fail2ban bekommt nichts zu lesen`. Sign-in continues anyway — a missing log is no reason to shut the service down. |
+| **Security log** (`security_log`) not writable | nothing | At start: `security_log … not writable — fail2ban gets nothing to read`. Sign-in continues anyway — a missing log is no reason to shut the service down. |
 
 **Healthcheck.** The gateway (`python -m tinysesam.gateway`) ships `/healthz`: reachable without
 sign-in, also over HTTP with `https_mode="force"`, answer 200 `{"status": "ok"}` or 503
@@ -619,7 +619,7 @@ For each application behind the gate, in this order:
 `app` and `direct` together: signing out "only here" holds because the application afterwards always shows the
 login page (never the direct path to the provider) — with "Continue as …" for the way back.
 
-## Rückschritt auf 0.21.x (rollback to 0.21.x)
+## Rollback to 0.21.x
 
 (Schema **13**, after 0.22.0: two new tables `gate_abgemeldet` and `oidc_id_token`, nothing else. 0.22.0
 opens the file with the warning "newer schema version" and leaves both in place. Only
@@ -637,7 +637,7 @@ as `art=automat`/`art=mensch`. (If 0.21.x runs on the migrated file without the 
 `art=automation`/`art=human` — it outputs the stored value raw.)
 
 **What 0.21.x does with a migrated file** (measured with 0.21.0): It starts and warns once at
-start: `Die Datenbank trägt Schema-Version 12, diese TinySesam-Fassung kennt nur 11. …`.
+start: `The database carries schema version 12, this TinySesam version only knows 11. …`.
 It does not know `human` and takes such a key for an automation key — **it then acts without a
 session**, with the rights of its account without the admin flag. A human key that was previously worthless on its own
 is valid on its own under 0.21.x. `automation` keys act there like `automat`. The payload
@@ -655,8 +655,8 @@ UPDATE magic_token SET payload = json_object('alt', json_extract(payload, '$.old
 PRAGMA user_version = 11;
 ```
 
-For example `sqlite3 auth.db < rueckweg.sql`, or from Python
-`sqlite3.connect("auth.db").executescript(open("rueckweg.sql").read())`; `json_object` needs
+For example `sqlite3 auth.db < rollback.sql`, or from Python
+`sqlite3.connect("auth.db").executescript(open("rollback.sql").read())`; `json_object` needs
 SQLite 3.38 or JSON1 (included in the Python images). Afterwards 0.21.x no longer reports a newer
 schema version, and a human key again applies only with a session. The stamp 11 is correct:
 no column was added, and a later start of 0.22.0 migrates again. `tests/test_values_english.py`
@@ -700,7 +700,7 @@ there. If it should be only a follow-up factor: `pin_login=False`.
 
 **The way out of the series lockout** (since 2026-09-27): If the failed attempts after the password
 (TOTP, `pin_folge`) alone reach the limit, a password reset does not lift the lockout. Lockout notice
-and security log (`Anmeldung für user=… gesperrt: … Aufheben: …`) then do not name the reset: the
+and security log (`Sign-in for user=… locked: … Lift: …`) then do not name the reset: the
 notice names only the operator (`tinysesam unlock`, password reset in the panel), the log in addition the sign-in
 by another way; the
 sign-in page shows everyone the same text ("Ask the operator for approval; if the failed attempts

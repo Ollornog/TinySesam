@@ -119,7 +119,7 @@ try:
     # even if the bootstrap path were simply switched off — the test would then measure nothing.
     token = auth2.admin_claim_token()
     assert token and len(token) >= 20, token
-    assert "Kein Admin vorhanden" in inhalt2, inhalt2      # the line is still written
+    assert "No admin exists" in inhalt2, inhalt2      # the line is still written
     ok("precondition: without an admin a one-time token is created and the log reports the situation")
 
     # The attack: the PoC read the value from the log file with exactly this pattern.
@@ -127,7 +127,7 @@ try:
     assert token not in inhalt2, inhalt2
     ok("B5-03: the token value is NOT in the file fail2ban reads")
 
-    assert "steht auf der Konsole (stderr), nicht in dieser Zeile" in inhalt2, inhalt2
+    assert "is on the console (stderr), not in this line" in inhalt2, inhalt2
     ok("the log names only the retrieval route, not the value")
 
     modus = stat.S_IMODE(os.stat(log2).st_mode)
@@ -181,9 +181,9 @@ try:
         TinySesam(TinySesamConfig(db_path=os.path.join(tempfile.mkdtemp(), "t.db"),
                                   security_log=log3, admin_claim_token_file=log3,
                                   cookie_secure=False, passkey_enabled=False))
-        raise AssertionError("admin_claim_token_file == security_log wurde angenommen")
+        raise AssertionError("admin_claim_token_file == security_log was accepted")
     except ConfigError as e:
-        assert "dieselbe Datei" in str(e), str(e)
+        assert "the same file" in str(e), str(e)
     ok("configuration check: admin_claim_token_file must not be the security_log")
 finally:
     os.umask(alte_maske)
@@ -209,7 +209,7 @@ try:
 finally:
     security.seclog.removeHandler(haken5)
 text5 = puffer5.getvalue()
-assert "welt-lesbar" in text5, f"no message: {text5[:160]!r}"
+assert "world-readable" in text5, f"no message: {text5[:160]!r}"
 assert log5 in text5 and "chmod 640" in text5, text5[:200]
 assert stat.S_IMODE(os.stat(log5).st_mode) == 0o666, "the existing file was rewritten"
 ok("an already existing world-readable log file is reported (and not rewritten)")
@@ -226,7 +226,7 @@ try:
     security.attach_security_log(log5b)
 finally:
     security.seclog.removeHandler(haken5b)
-assert "welt-lesbar" not in puffer5b.getvalue(), puffer5b.getvalue()[:160]
+assert "world-readable" not in puffer5b.getvalue(), puffer5b.getvalue()[:160]
 ok("...an already tight file does not report")
 
 # (2) The token file is truncated before writing. Without `os.ftruncate` the tail of a longer
@@ -256,11 +256,11 @@ _gemeinsam7 = dict(db_path=os.path.join(tempfile.mkdtemp(), "t.db"),
 for _lage, _cfg in (("admin_claim_ttl_min=0", TinySesamConfig(admin_claim_ttl_min=0, **_gemeinsam7)),
                     ("admin_enabled=False", TinySesamConfig(admin_enabled=False, **_gemeinsam7))):
     _f7, _w7 = check_config(_cfg)
-    assert any("admin_claim_token_file ist gesetzt" in w and "nie geschrieben" in w for w in _w7), \
+    assert any("admin_claim_token_file is set" in w and "never written" in w for w in _w7), \
         f"{_lage}: no warning — {_w7!r}"
     assert not _f7, _f7
 _f7, _w7 = check_config(TinySesamConfig(**_gemeinsam7))          # route on → silent
-assert not any("admin_claim_token_file ist gesetzt" in w for w in _w7), _w7
+assert not any("admin_claim_token_file is set" in w for w in _w7), _w7
 ok("admin_claim_token_file without a token route is reported at setup (with a route: silent)")
 
 # (3b) …and this warning must name a route that EXISTS. It advised „Der Erst-Admin kommt
@@ -269,10 +269,10 @@ ok("admin_claim_token_file without a token route is reported at setup (with a ro
 #      zunächst mit in der Liste — es kann gar keine Konten anlegen"), this time in a text that
 #      the operator gets to read. Whoever followed it searched for a command that does not exist.
 _f8, _w8 = check_config(TinySesamConfig(admin_claim_ttl_min=0, **_gemeinsam7))
-_zeile8 = next(w for w in _w8 if "admin_claim_token_file ist gesetzt" in w)
+_zeile8 = next(w for w in _w8 if "admin_claim_token_file is set" in w)
 assert "ensure_admin" in _zeile8 and hasattr(TinySesam, "ensure_admin"), \
     f"the warning names no route that exists: {_zeile8!r}"
-assert "oder die CLI zustande" not in _zeile8, \
+assert "or the CLI" not in _zeile8, \
     f"the CLI creates no accounts — it must not appear here as a route: {_zeile8!r}"
 # Control: the CLI really cannot do it. `main()` knows exactly these seven commands;
 # if one were added that creates accounts, the line above would have to be changed rather than kept.
@@ -311,7 +311,7 @@ c8 = TestClient(app8)
 
 def _hinweiszeilen(pfad, host=None) -> int:
     with open(pfad, encoding="utf-8") as fh:
-        return len([z for z in fh if "Kein vertrauenswürdiger öffentlicher Host" in z
+        return len([z for z in fh if "No trustworthy public host" in z
                     and (host is None or host in z)])
 
 
@@ -365,7 +365,7 @@ try:
 finally:
     security.seclog.removeHandler(_haken_deckel)
 _text_deckel = _puffer_deckel.getvalue()
-assert _text_deckel.count("Hinweis-Deckel erreicht") == 1, \
+assert _text_deckel.count("Notice cap reached") == 1, \
     f"exactly one line per window, not {_text_deckel.count('Hinweis-Deckel erreicht')}: {_text_deckel[:200]!r}"
 assert str(security._GEMELDET_MAX) in _text_deckel, _text_deckel[:200]
 security.einmal_melden_zuruecksetzen()
@@ -386,7 +386,7 @@ for _ in range(5):
     assert auth9.magic_url("tok", "https://app-b.example.com", "reset_password").startswith(
         "https://auth.example.com/"), "base_url must win even against a second own name"
 with open(log9, encoding="utf-8") as fh:
-    _ersetzt = [z for z in fh if "wird durch base_url" in z]
+    _ersetzt = [z for z in fh if "is replaced by base_url" in z]
 assert len(_ersetzt) == 1, f"{len(_ersetzt)} lines after 5 calls — once per address, not per request"
 security.einmal_melden_zuruecksetzen()
 ok("a replaced base reports once per address (not silent, not as a storm)")
@@ -407,7 +407,7 @@ security.einmal_melden_zuruecksetzen()
 for _ in range(4):
     _link = auth10.magic_url("tok", "https://auth.example.com/falsch", "reset_password")
     assert _link.startswith("https://auth.example.com/sso/"), _link
-_zeilen10 = [z for z in _lies(log10).splitlines() if "wird durch base_url" in z]
+_zeilen10 = [z for z in _lies(log10).splitlines() if "is replaced by base_url" in z]
 assert len(_zeilen10) == 1, \
     f"same host, different path: {len(_zeilen10)} lines — exactly one expected"
 assert "/falsch" in _zeilen10[0] and "/sso" in _zeilen10[0], _zeilen10[0][:200]
@@ -430,19 +430,19 @@ for _kaputt in ("https://auth.example.com/x#y", "https://auth.example.com/x?y=1"
         TinySesam(TinySesamConfig(db_path=os.path.join(tempfile.mkdtemp(), "t.db"),
                                   cookie_secure=False, passkey_enabled=False,
                                   base_url=_kaputt, oidc_enabled=False))
-        raise AssertionError(f"base_url={_kaputt!r} kam durch die Konfigurationsprüfung")
+        raise AssertionError(f"base_url={_kaputt!r} got through the configuration check")
     except ConfigError:
         pass
 # A user value is usable but gets removed — the check says so instead of doing it silently.
 try:
     TinySesam(TinySesamConfig(db_path=os.path.join(tempfile.mkdtemp(), "t.db"), cookie_secure=False,
                               passkey_enabled=False, base_url="https://wer:was@auth.example.com"))
-    raise AssertionError("die veränderte Adresse wurde nicht gemeldet")
+    raise AssertionError("the changed address was not reported")
 except ConfigError as _e:
     # Checked against the canonical value in its quoted form, not by substring: otherwise
     # "https://auth.example.com.angreifer.test" anywhere in the text would suffice (CodeQL
     # py/incomplete-url-substring-sanitization).
-    assert "wird als" in str(_e) and repr("https://auth.example.com") in str(_e), str(_e)[:200]
+    assert "is used as" in str(_e) and repr("https://auth.example.com") in str(_e), str(_e)[:200]
 ok("base_url is checked by the same rule as a derived base (C-7)")
 
 # ---------------------------------------------------------------------------

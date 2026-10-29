@@ -1,7 +1,7 @@
-<!-- Links hier ABSOLUT: Diese Datei ist zugleich die Projektbeschreibung auf PyPI
-     (pyproject.toml: readme = "README.md"), und dort löst nichts relative Repo-Pfade auf —
-     Logo und sieben Verweise waren auf der Paketseite tot. tests/test_repo.py hält das fest.
-     Die deutsche Fassung unter i18n/ wird nur auf GitHub gelesen und darf relativ bleiben. -->
+<!-- Links here are ABSOLUTE: this file is also the project description on PyPI
+     (pyproject.toml: readme = "README.md"), and nothing resolves relative repo paths there —
+     the logo and seven links were dead on the package page. tests/test_repo.py enforces this.
+     The German version under i18n/ is only read on GitHub and may stay relative. -->
 <p align="center"><img src="https://raw.githubusercontent.com/Ollornog/TinySesam/main/docs/wizard.png" alt="TinySesam" width="250" height="250"></p>
 
 <h1 align="center">TinySesam</h1>

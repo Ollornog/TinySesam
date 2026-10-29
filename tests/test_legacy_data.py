@@ -33,7 +33,7 @@ from tinysesam.errors import ConfigError                       # noqa: E402
 from tinysesam.store import Store                              # noqa: E402
 from _kit.report import Report                                 # noqa: E402
 
-r = Report("Bestandsdaten — was ein Upgrade überleben muss")
+r = Report("Legacy data — what an upgrade must survive")
 
 
 def frisch(**cfg) -> tuple[TinySesam, str]:
@@ -173,10 +173,10 @@ from tinysesam.store import SCHEMA as _S10_SCHEMA  # noqa: E402
 # (schema 11, G2), which have since stood behind `topf_mail`, plus `name_selbst_gewaehlt` behind them
 # (schema 11, G2-N) — and `federated_identity.name_topf` (schema 11, G5), whose name and comment
 # would otherwise hit the „no leftovers with topf" probe.
-_s10_schema9, _s10_n = re.subn(r",\n\s*-- Der Zähl-Topf.*?topf_mail\s+TEXT,\n\s*idp_bestaetigt_at INTEGER.*?"
+_s10_schema9, _s10_n = re.subn(r",\n\s*-- The counting bucket.*?topf_mail\s+TEXT,\n\s*idp_bestaetigt_at INTEGER.*?"
                                r"mail_audit_ab\s+INTEGER,\n.*?name_selbst_gewaehlt INTEGER NOT NULL DEFAULT 0\n",
                                "\n", _S10_SCHEMA, flags=re.S)
-_s10_schema9, _s10_nfi = re.subn(r"\n\s*-- Der Name, unter dem sich das Konto zuletzt.*?name_topf\s+TEXT,", "",
+_s10_schema9, _s10_nfi = re.subn(r"\n\s*-- The name under which the account last signed in.*?name_topf\s+TEXT,", "",
                                  _s10_schema9, flags=re.S)
 # Schema 11 (B2-6) came afterwards: a file in the state of 9 does not have the table `fehlserie` yet.
 _s10_schema9, _s10_n11 = re.subn(r"CREATE TABLE IF NOT EXISTS fehlserie \(.*?\n\);\n", "", _s10_schema9,
@@ -201,7 +201,7 @@ _s10_cfg["db_path"] = _s10_db
 r.check("precondition: the file is at schema 9, without bucket columns, indexes and triggers, with all accounts",
         _s10_n == 1 and _s10_n11 == 1 and _s10_nfi == 1 and not _s10_rest and _s10_zahl == 6
         and Store.SCHEMA_VERSION >= 10,
-        f"Schnitt {_s10_n}/{_s10_n11}/{_s10_nfi}, Reste {_s10_rest}, Konten {_s10_zahl}, "
+        f"cut {_s10_n}/{_s10_n11}/{_s10_nfi}, leftovers {_s10_rest}, accounts {_s10_zahl}, "
         f"SCHEMA_VERSION={Store.SCHEMA_VERSION}")
 
 _s10, _ = frisch(**_s10_cfg)                                      # = upgrade to schema 10
@@ -630,7 +630,7 @@ r.check("with [argon2] startup stays quiet (control, provided the extra is prese
 CADDYFILES = ("deploy/forward-auth/Caddyfile", "deploy/forward-auth/Caddyfile.gate")
 for datei in ("deploy/forward-auth/nginx.conf", *CADDYFILES):
     fehlt = fehlende_header(datei)
-    r.check(f"{datei} sets all remote headers", not fehlt, f"fehlt: {fehlt}")
+    r.check(f"{datei} sets all remote headers", not fehlt, f"missing: {fehlt}")
 
 
 # NEU-1: Every sub-request to TinySesam sets X-Forwarded-For itself. If it does not, nginx passes
@@ -774,10 +774,10 @@ for datei, extra in ((CADDYFILES[0], set()), (CADDYFILES[1], {"X-TinySesam-Gate-
     _platzhalter = re.findall(r"\{rp\.header\.([A-Za-z0-9-]+)\}", (ROOT / datei).read_text(encoding="utf-8"))
     _schief = [p for p in _platzhalter if p != go_kanonisch(p)]
     r.check(f"{datei}: every {{rp.header.…}} placeholder is in Go-canonical form (H-16)",
-            _platzhalter and not _schief, f"nicht kanonisch: {_schief}")
+            _platzhalter and not _schief, f"not canonical: {_schief}")
     _gesendet = set(TinySesam.FORWARD_HEADERS_DEFAULT.values()) | {"X-TinySesam-Location"} | extra
     _fehlt = [h for h in _gesendet if go_kanonisch(h) not in _platzhalter]
     r.check(f"{datei}: every header TinySesam sends has its placeholder", not _fehlt,
-            f"fehlt: {_fehlt}")
+            f"missing: {_fehlt}")
 
 raise SystemExit(r.done())

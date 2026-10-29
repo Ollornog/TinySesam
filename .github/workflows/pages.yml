@@ -44,10 +44,10 @@ jobs:
           python-version: "3.13"
       # The demo page renders its panels from the library itself — for that it must be
       # importable. Without extras: the previews need neither OIDC nor SAML.
-      - name: Bibliothek installieren
+      - name: Install the library
         run: pip install .
 
-      - name: Website bauen
+      - name: Build the website
         run: python -m web.build _site
       - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d  # v6.0.0
       # include-hidden-files: since v4 dotfiles are OMITTED by default.

@@ -41,15 +41,15 @@ def hole_alerts() -> list[dict]:
 
 def tabelle(alerts: list[dict]) -> str:
     if not alerts:
-        return "_Keine offenen Alerts._"
-    zeilen = ["| # | Schwere | Regel | Stelle |", "|---|---|---|---|"]
+        return "_No open alerts._"
+    zeilen = ["| # | Severity | Rule | Location |", "|---|---|---|---|"]
     for a in alerts:
         zeilen.append(f"| [{a['n']}]({a['url']}) | {a['sev']} | `{a['rule']}` | `{a['path']}:{a['line']}` |")
     je = {}
     for a in alerts:
         je[a["sev"]] = je.get(a["sev"], 0) + 1
     summe = ", ".join(f"{n} {s}" for s, n in sorted(je.items(), key=lambda x: RANG.get(x[0], 9)))
-    return f"**{len(alerts)} offen** ({summe}).\n\n" + "\n".join(zeilen)
+    return f"**{len(alerts)} open** ({summe}).\n\n" + "\n".join(zeilen)
 
 
 def main(argv: list[str]) -> int:
@@ -61,7 +61,7 @@ def main(argv: list[str]) -> int:
     with open(ZIEL, encoding="utf-8") as fh:
         alt = fh.read()
     if START not in alt or ENDE not in alt:
-        print(f"Marker {START} / {ENDE} fehlen in {ZIEL}", file=sys.stderr)
+        print(f"Markers {START} / {ENDE} missing in {ZIEL}", file=sys.stderr)
         return 1
     kopf, rest = alt.split(START, 1)
     _, fuss = rest.split(ENDE, 1)
@@ -69,7 +69,7 @@ def main(argv: list[str]) -> int:
     if neu != alt:
         with open(ZIEL, "w", encoding="utf-8") as fh:
             fh.write(neu)
-    print(f"{len(alerts)} offene Alerts → {os.path.relpath(ZIEL, ROOT)}")
+    print(f"{len(alerts)} open alerts → {os.path.relpath(ZIEL, ROOT)}")
     return 0
 
 

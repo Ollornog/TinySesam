@@ -55,7 +55,7 @@ r = c.post("/auth/password", content="{kaputt}", headers={"Content-Type": "appli
 assert r.status_code == 400, r.status_code
 ok("broken JSON body → 400 (not 500)")
 
-# ---------- Passwortregel an der Kontoseite (B2-5/H-17, R4-07) ----------
+# ---------- Password rule on the account page (B2-5/H-17, R4-07) ----------
 # The same rule as at every place that sets a password: known passwords, trivial sequences and words from
 # the context (username, service name) fail, even dressed up; too long ones as well.
 # (Mutation probe: `return None` at the start of `passwords.passwort_mangel` → red.)
@@ -90,7 +90,7 @@ for _gut in ("24681357", "correct horse battery", "9384756102"):
 try:
     TinySesam(TinySesamConfig(db_path=os.path.join(tempfile.mkdtemp(), "b.db"), passkey_enabled=False,
                               password_blocklist_file=_liste + ".fehlt"))
-    raise AssertionError("fehlende Blockliste wurde still übergangen")
+    raise AssertionError("missing blocklist was silently ignored")
 except ConfigError as _e:
     assert "password_blocklist_file" in str(_e)
 ok("password_blocklist_file supplements the list; if the file is missing, startup aborts")
@@ -107,7 +107,7 @@ assert _am.password_policy_error("Schön123!") and _am.password_policy_error("M�
 try:
     TinySesam(TinySesamConfig(db_path=os.path.join(tempfile.mkdtemp(), "b.db"), passkey_enabled=False,
                               password_blocklist_file=os.path.dirname(_misch)))
-    raise AssertionError("ein Verzeichnis als Blockliste wurde still übergangen")
+    raise AssertionError("a directory as blocklist was silently ignored")
 except ConfigError as _e:
     assert "password_blocklist_file" in str(_e)
 ok("A-3: blocklist with Latin-1 and UTF-8 lines loads; unreadable path stays ConfigError")
@@ -216,7 +216,7 @@ auth.totp_begin(_uid)
 auth.store.confirm_totp(_uid)
 _js = c.get("/auth/account").text
 auth.cfg.pin_login = False
-_ERFOLG = "\u2713 entfernt"
+_ERFOLG = "TXT.removed"   # the success text now comes from the language table (`TXT`), not literal in the JS
 
 
 def _funktion(quelle, name):
@@ -244,6 +244,21 @@ assert "data-act=delpin" in _js and "data-act=deltotp" in _js, "no delete button
 assert _ERFOLG in _funktion(_js, "delpin"), "delpin() no longer reports success at all"
 ok("Delete buttons (PIN and 2FA) report success only after `r.ok`")
 
+# The JS texts follow `config.lang` (this suite runs with lang="de"): German here, English once switched.
+# (JSON is ASCII-escaped, so "✓" appears as \u2713.)
+assert '"removed": "\\u2713 entfernt"' in _js and "\\u2713 removed" not in _js, "lang=de: German JS texts expected"
+_lang_alt = auth.cfg.lang
+auth.cfg.pin_login = True
+auth.cfg.lang = "en"
+try:
+    _js_en = c.get("/auth/account").text
+finally:
+    auth.cfg.lang = _lang_alt
+    auth.cfg.pin_login = False
+assert '"removed": "\\u2713 removed"' in _js_en and "\\u2713 entfernt" not in _js_en, "lang=en: English JS texts expected"
+assert '"locale": "de-DE"' in _js and '"locale": "en-GB"' in _js_en, "locale follows the language"
+ok("Account page JS texts: English with lang=en, German with lang=de")
+
 # Template override of the account page
 auth.set_template("account", lambda a, ctx: f"<html>MEIN-KONTO {ctx['user']['username']}</html>")
 assert "MEIN-KONTO admin" in c.get("/auth/account").text
@@ -268,7 +283,7 @@ from voraussetzung import pflicht_werkzeug  # noqa: E402
 
 # If node is missing, that is red, not silently skipped (see `pflicht_werkzeug`).
 # (Mutation probe: run with a PATH without node → red; with TINYSESAM_OHNE_NODE=1 → ⚠ line.)
-_node = pflicht_werkzeug("node", "Konto-Seite: Listen-Funktionen gegen präparierte Namen")
+_node = pflicht_werkzeug("node", "account page: list functions against prepared names")
 if _node:
     _boese = '<img src=x onerror=alert(1)>"\'&'
     _daten = {"/auth/apikeys": [{"id": 7, "prefix": "ts_ab", "name": _boese, "revoked": 0}],
@@ -278,6 +293,9 @@ if _node:
     # Like `render_page` for an app at the root: the mount prefix (T-15) is then empty.
     from tinysesam.templates import PRAEFIX_PLATZHALTER as _PP  # noqa: E402
     _skript = _ACCOUNT_JS.split("<script>", 1)[1].rsplit("</script>", 1)[0].replace(_PP, "")
+    # `__TXT__` is the language table, which `render_page` fills in (T-29): do the same, in the page's language.
+    from tinysesam.templates import _account_texts  # noqa: E402
+    _skript = _skript.replace("__TXT__", _account_texts(auth))
     _probe = ("const E={};const document={cookie:'',addEventListener(){},"
               "getElementById:i=>E[i]||(E[i]={innerHTML:''})};"
               f"const D={_json.dumps(_daten)};"

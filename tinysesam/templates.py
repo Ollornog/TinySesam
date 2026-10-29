@@ -46,7 +46,7 @@ class Templates:
     def render(self, name: str, auth, ctx: dict):
         fn = self._overrides.get(name) or DEFAULTS.get(name)
         if fn is None:
-            raise KeyError(f"kein Template '{name}'")
+            raise KeyError(f"no template '{name}'")
         return fn(auth, ctx)
 
 
@@ -56,8 +56,8 @@ class Templates:
 PRAEFIX_PLATZHALTER = "__TS_P__"
 
 _CSS = TOKENS + """
-/* WICHTIG: alles unterhalb von .tsmain gekapselt. Sonst faerbt das Karten-CSS auf `brand_header`
-   und `brand_footer` der Host-App ab (nackte button/input/h1-Selektoren). */
+/* IMPORTANT: everything below is scoped to .tsmain. Otherwise the card CSS bleeds onto the host
+   app's `brand_header` and `brand_footer` (bare button/input/h1 selectors). */
 *{box-sizing:border-box}
 body{font-family:var(--ts-font);margin:0;min-height:100vh;display:flex;flex-direction:column;
      background:var(--ts-bg);color:var(--ts-ink)}
@@ -95,8 +95,8 @@ body{font-family:var(--ts-font);margin:0;min-height:100vh;display:flex;flex-dire
      text-align:center;word-break:break-all}
 .tsmain .warnbar{background:var(--ts-warn-bg);color:var(--ts-warn-ink);padding:9px 12px;
      border-radius:8px;font-size:12px;margin-bottom:10px}
-/* Meldungen (PO 2026-10-08): ein eigener Kasten UNTER der Karte, je Meldung ein Symbol. Hinweis, Warnung und
-   Fehler sehen gleich gebaut aus und unterscheiden sich nur über Farbe und Symbol. */
+/* Messages (PO 2026-10-08): a box of their own BELOW the card, one icon per message. Notice, warning and
+   error are built alike and differ only in colour and icon. */
 .tsmain .meldungen{width:340px;max-width:92vw;display:flex;flex-direction:column;gap:8px}
 .tsmain .meldung{display:flex;align-items:flex-start;gap:10px;padding:11px 14px;font-size:13px;line-height:1.4;
      border-radius:calc(var(--ts-radius) + 2px);border:1px solid var(--ts-line)}
@@ -105,7 +105,7 @@ body{font-family:var(--ts-font);margin:0;min-height:100vh;display:flex;flex-dire
 .tsmain .meldung.warn{background:var(--ts-warn-bg);color:var(--ts-warn-ink)}
 .tsmain .meldung.fehler{background:var(--ts-err-bg);color:var(--ts-err-ink)}
 .tsmain .meldung.ok{background:var(--ts-ok-bg);color:var(--ts-ok-ink)}
-/* steht NEBEN der Karte, nicht darin — ein Demo-Hinweis ist kein Teil des Formulars */
+/* sits NEXT TO the card, not in it — a demo notice is not part of the form */
 .tsmain .demobar{width:340px;max-width:92vw;background:var(--ts-info-bg);color:var(--ts-info-ink);
      padding:11px 14px;border-radius:calc(var(--ts-radius) + 2px);border:1px solid var(--ts-line);
      font-size:12.5px;line-height:1.5}
@@ -117,8 +117,8 @@ body{font-family:var(--ts-font);margin:0;min-height:100vh;display:flex;flex-dire
 .tsmain .demowarn{margin-top:6px;color:var(--ts-warn-ink);background:var(--ts-warn-bg);padding:6px 8px;
      border-radius:6px;font-size:11.5px}
 .tsmain .demowarn code{background:none;border:0;padding:0}
-/* Fehlerseite (_error): ersetzt frueheres Inline-Styling — ein CSP-Nonce deckt
-   Attribut-Styles nicht ab, nur <style>-Bloecke. */
+/* Error page (_error): replaces earlier inline styling — a CSP nonce does not cover
+   attribute styles, only <style> blocks. */
 .tsmain .errcode{font-size:52px;margin:.1em 0}
 .tsmain .errhint{font-size:14px;margin-top:0}
 """
@@ -259,8 +259,8 @@ def _ident(auth) -> tuple[str, str]:
 # login fails with "wrong credentials" without you seeing the reason.
 _DEMO_JS = """<script>
 (function(){
-  // Browser fuellen gespeicherte Passwoerter zu unterschiedlichen Zeitpunkten ein — deshalb mehrfach
-  // nachfassen. Sobald jemand selbst tippt, wird nicht mehr geleert.
+  // Browsers fill in saved passwords at different times — so clear repeatedly.
+  // As soon as someone types themselves, nothing is cleared any more.
   var typed = false;
   function clear(){
     if(typed) return;
@@ -543,7 +543,7 @@ def _account(auth, ctx) -> str:
     body = (f"<header><h1>{_e(t('acc.title'))} · {name}</h1>"
             f"<div>{admin_link} <a href='__TS_P__/auth/logout'>{_e(t('logout'))}</a></div></header>"
             + "".join(sections)
-            + ("" if static else _ACCOUNT_JS.replace("__CSRFCK__", _e(auth.csrf_cookie_name))
+            + ("" if static else _ACCOUNT_JS.replace("__CSRFCK__", _e(auth.csrf_cookie_name)).replace("__TXT__", _account_texts(auth))
                + _revoke_js(auth, "location.pathname+'?revoke_others=1'") + _ACCOUNT_RUECKKEHR_JS
                .replace("__CONFIRM__", json.dumps(t("acc.sessions_confirm"))))
             + pkjs)
@@ -551,59 +551,91 @@ def _account(auth, ctx) -> str:
     return _page(auth, t("acc.title"), f"<style>{css}</style>{body}", card=False)
 
 
+#: Texts of the account page's JavaScript (no keys in `messages.py` yet — they are chosen by
+#: `config.lang`, fallback "en"; the "de" column is the earlier German wording).
+_ACCOUNT_TEXT = {
+    "en": {
+        "locale": "en-GB", "error": "Error", "mail_sent": "Link sent — please confirm it in the new mailbox",
+        "changed": "✓ changed", "set": "✓ set", "removed": "✓ removed",
+        "confirm_2fa_off": "Really disable 2FA?",
+        "confirm_recovery": "Generate new recovery codes? The old ones become invalid.",
+        "recovery_note": "Write these down safely now (visible only once):",
+        "revoked": "(revoked)", "revoke": "revoke", "none": "none", "delete": "delete", "this": "(this one)",
+        "key_copy": "API key — copy it NOW:", "confirm_end_others": "End all other sessions?",
+        "ended": "✓ ended", "added": "✓ added", "failed": "failed", "aborted": "aborted: ",
+    },
+    "de": {
+        "locale": "de-DE", "error": "Fehler", "mail_sent": "Link verschickt — bitte in der neuen Adresse bestätigen",
+        "changed": "✓ geändert", "set": "✓ gesetzt", "removed": "✓ entfernt",
+        "confirm_2fa_off": "2FA wirklich deaktivieren?",
+        "confirm_recovery": "Neue Recovery-Codes erzeugen? Alte werden ungültig.",
+        "recovery_note": "Jetzt sicher notieren (einmalig sichtbar):",
+        "revoked": "(widerrufen)", "revoke": "widerrufen", "none": "keine", "delete": "löschen", "this": "(diese)",
+        "key_copy": "API-Key — JETZT kopieren:", "confirm_end_others": "Alle anderen Sitzungen beenden?",
+        "ended": "✓ beendet", "added": "✓ hinzugefügt", "failed": "fehlgeschlagen", "aborted": "abgebrochen: ",
+    },
+}
+
+
+def _account_texts(auth) -> str:
+    """The account page's JS texts as a JSON literal (ASCII-escaped, so it is safe inside `<script>`)."""
+    return json.dumps(_ACCOUNT_TEXT.get(auth.cfg.lang) or _ACCOUNT_TEXT["en"])
+
+
 _ACCOUNT_JS = """
 <script>
 function tsCsrf(){return (document.cookie.match(/(?:^|; )__CSRFCK__=([^;]+)/)||[])[1]||''}
+const TXT=__TXT__;
 async function J(u,b){const r=await fetch(u,{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':tsCsrf()},body:JSON.stringify(b||{})});
-  // 403 + X-TinySesam-Reauth: die Faktor-Verwaltung verlangt seit R3-3 eine frische
-  // Bestätigung. Ohne diese Weiche scheiterte der Knopf nach Ablauf der Frische stumm.
+  // 403 + X-TinySesam-Reauth: factor management has required a fresh confirmation since R3-3.
+  // Without this switch the button failed silently once the freshness had expired.
   const re=r.headers.get('X-TinySesam-Reauth');
   if(r.status===403&&re){location.href=re+'?next='+encodeURIComponent(location.pathname);return r}
   return r}
 const say=(id,t,good)=>{const e=document.getElementById(id);if(e){e.textContent=t;e.className='msg '+(good?'good':'bad')}};
 async function setname(){const r=await J('__TS_P__/auth/account/username',{username:un_new.value});
-  const j=await r.json().catch(()=>({}));say('un_msg',r.ok?'✓':(j.detail||'Fehler'),r.ok)}
+  const j=await r.json().catch(()=>({}));say('un_msg',r.ok?'✓':(j.detail||TXT.error),r.ok)}
 async function setmail(){const r=await J('__TS_P__/auth/account/email',{email:mail_new.value});
-  const j=await r.json().catch(()=>({}));say('mail_msg',r.ok?'✓ '+(document.documentElement.lang==='de'?'Link verschickt — bitte in der neuen Adresse bestätigen':'Link sent — please confirm it in the new mailbox'):(j.detail||'Fehler'),r.ok);if(r.ok)mail_new.value=''}
+  const j=await r.json().catch(()=>({}));say('mail_msg',r.ok?'✓ '+TXT.mail_sent:(j.detail||TXT.error),r.ok);if(r.ok)mail_new.value=''}
 async function changepw(){const r=await J('__TS_P__/auth/password',{current:pw_cur.value,new:pw_new.value});
-  say('pw_msg',r.ok?'✓ geändert':(await r.json()).detail||'Fehler',r.ok);if(r.ok){pw_cur.value='';pw_new.value=''}}
+  say('pw_msg',r.ok?TXT.changed:(await r.json()).detail||TXT.error,r.ok);if(r.ok){pw_cur.value='';pw_new.value=''}}
 async function setpin(){const r=await J('__TS_P__/auth/pin/set',{pin:pin_new.value});await offer(r);
-  say('pin_msg',r.ok?'✓ gesetzt':(await r.json()).detail||'Fehler',r.ok);if(r.ok)setTimeout(()=>location.reload(),600)}
-// Erst prüfen, dann melden: Beide Knöpfe sagten früher UNBEDINGT „erledigt" und luden neu —
-// auch bei 403 (abgelaufene Step-up-Frische, fehlendes CSRF-Token) oder 500. Der Nutzer sah
-// „entfernt", der Faktor stand noch.
+  say('pin_msg',r.ok?TXT.set:(await r.json()).detail||TXT.error,r.ok);if(r.ok)setTimeout(()=>location.reload(),600)}
+// Check first, then report: both buttons used to say "done" UNCONDITIONALLY and reload —
+// even on 403 (expired step-up freshness, missing CSRF token) or 500. The user saw
+// "removed", the factor was still there.
 async function delpin(){const r=await J('__TS_P__/auth/pin/disable');await offer(r);
-  say('pin_msg',r.ok?'✓ entfernt':(await r.json().catch(()=>({}))).detail||'Fehler',r.ok);
+  say('pin_msg',r.ok?TXT.removed:(await r.json().catch(()=>({}))).detail||TXT.error,r.ok);
   if(r.ok)setTimeout(()=>location.reload(),600)}
-async function deltotp(){if(!confirm('2FA wirklich deaktivieren?'))return;
+async function deltotp(){if(!confirm(TXT.confirm_2fa_off))return;
   const r=await J('__TS_P__/auth/totp/disable');await offer(r);
-  if(r.ok)location.reload();else say('totp_msg',(await r.json().catch(()=>({}))).detail||'Fehler',false)}
-async function recovery(){if(!confirm('Neue Recovery-Codes erzeugen? Alte werden ung\\u00fcltig.'))return;
+  if(r.ok)location.reload();else say('totp_msg',(await r.json().catch(()=>({}))).detail||TXT.error,false)}
+async function recovery(){if(!confirm(TXT.confirm_recovery))return;
   const r=await (await J('__TS_P__/auth/totp/recovery')).json();
-  if(r.codes){document.getElementById('rc_out').textContent='Jetzt sicher notieren (einmalig sichtbar):\\n'+r.codes.join('\\n')}else say('totp_msg',r.detail||'Fehler',false)}
+  if(r.codes){document.getElementById('rc_out').textContent=TXT.recovery_note+'\\n'+r.codes.join('\\n')}else say('totp_msg',r.detail||TXT.error,false)}
 async function loadkeys(){const el=document.getElementById('keylist');if(!el)return;
   const ks=await (await fetch('__TS_P__/auth/apikeys')).json().catch(()=>[]);
   if(!Array.isArray(ks)){el.innerHTML='<li>—</li>';return}
-  el.innerHTML=ks.map(k=>`<li>${esc0(k.prefix)} ${esc0(k.name)} ${k.revoked?'<span class=bad>(widerrufen)</span>':`<button class=warn data-act=revk data-id="${esc0(k.id)}">widerrufen</button>`}</li>`).join('')||'<li>keine</li>'}
+  el.innerHTML=ks.map(k=>`<li>${esc0(k.prefix)} ${esc0(k.name)} ${k.revoked?'<span class=bad>'+TXT.revoked+'</span>':`<button class=warn data-act=revk data-id="${esc0(k.id)}">${TXT.revoke}</button>`}</li>`).join('')||'<li>'+TXT.none+'</li>'}
 async function mkkey(){const r=await (await J('__TS_P__/auth/apikeys',{name:key_name.value})).json();
-  if(r.key)prompt('API-Key — JETZT kopieren:',r.key);loadkeys()}
+  if(r.key)prompt(TXT.key_copy,r.key);loadkeys()}
 async function revk(id){await J('__TS_P__/auth/apikeys/'+id+'/revoke');loadkeys()}
 async function loadpk(){const el=document.getElementById('pklist');if(!el)return;
   const ps=await (await fetch('__TS_P__/auth/passkey/list')).json();
-  el.innerHTML=ps.map(p=>`<li>${esc0(p.name||'Passkey')} <button class=warn data-act=delpk data-id="${esc0(p.id)}">löschen</button></li>`).join('')||'<li>keine</li>'}
+  el.innerHTML=ps.map(p=>`<li>${esc0(p.name||'Passkey')} <button class=warn data-act=delpk data-id="${esc0(p.id)}">${TXT.delete}</button></li>`).join('')||'<li>'+TXT.none+'</li>'}
 async function delpk(id){await offer(await J('__TS_P__/auth/passkey/delete',{id}));loadpk()}
 async function loadsess(){const el=document.getElementById('sesslist');if(!el)return;
   const ss=await (await fetch('__TS_P__/auth/sessions')).json().catch(()=>[]);
   if(!Array.isArray(ss)){el.innerHTML='<li>—</li>';return}
-  el.innerHTML=ss.map(s=>`<li>${new Date(s.created_at*1000).toLocaleString('de-DE')} · ${esc0(s.method)} · ${esc0(s.ip)||'?'} ${s.current?'<b>(diese)</b>':''}<br><small class=msg>${esc0(s.user_agent)}</small></li>`).join('')||'<li>keine</li>'}
-// Jeder Wert aus der API geht durch esc0, bevor er in innerHTML landet (R8-6): Key- und
-// Passkey-Namen setzt der Nutzer selbst, und bis 0.19.0 standen sie roh im Markup — ein Name
-// wie <img src=x onerror=…> lief als Code. Alle fünf Zeichen, weil Werte auch in Attributen stehen.
+  el.innerHTML=ss.map(s=>`<li>${new Date(s.created_at*1000).toLocaleString(TXT.locale)} · ${esc0(s.method)} · ${esc0(s.ip)||'?'} ${s.current?'<b>'+TXT.this+'</b>':''}<br><small class=msg>${esc0(s.user_agent)}</small></li>`).join('')||'<li>'+TXT.none+'</li>'}
+// Every value from the API goes through esc0 before it lands in innerHTML (R8-6): key and
+// passkey names are set by the user, and up to 0.19.0 they stood raw in the markup — a name
+// like <img src=x onerror=…> ran as code. All five characters, because values also appear in attributes.
 function esc0(s){return (s??'').toString().replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
-async function revokeothers(){if(!confirm('Alle anderen Sitzungen beenden?'))return;
-  if(await tsRevokeOthers())say('sess_msg','\\u2713 beendet',true);loadsess()}
-// Ein delegierter Listener statt Inline-Klick-Handlern — sonst blockt die strenge CSP
-// die Buttons. Auch die per JS nachgeladenen Buttons (data-act=revk/delpk) werden erreicht.
+async function revokeothers(){if(!confirm(TXT.confirm_end_others))return;
+  if(await tsRevokeOthers())say('sess_msg',TXT.ended,true);loadsess()}
+// One delegated listener instead of inline click handlers — otherwise the strict CSP
+// blocks the buttons. The buttons loaded later via JS (data-act=revk/delpk) are reached as well.
 document.addEventListener('click',function(e){var b=e.target.closest('[data-act]');if(!b)return;
   var f=window[b.dataset.act];if(typeof f==='function'){e.preventDefault();f(b.dataset.id)}});
 loadkeys();loadpk();loadsess();
@@ -624,8 +656,8 @@ async function addpk(){
       clientDataJSON:enc(cred.response.clientDataJSON),attestationObject:enc(cred.response.attestationObject),
       transports:(cred.response.getTransports&&cred.response.getTransports())||[]}};
     const r=await fetch('__TS_P__/auth/passkey/register/finish',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':tsCsrf()},body:JSON.stringify(payload)});
-    say('pk_msg',r.ok?'✓ hinzugefügt':'fehlgeschlagen',r.ok);loadpk();await offer(r);loadsess();
-  }catch(e){say('pk_msg','abgebrochen: '+e,false)}
+    say('pk_msg',r.ok?TXT.added:TXT.failed,r.ok);loadpk();await offer(r);loadsess();
+  }catch(e){say('pk_msg',TXT.aborted+e,false)}
 }
 </script>
 """

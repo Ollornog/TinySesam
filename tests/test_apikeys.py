@@ -114,7 +114,7 @@ assert _mit_vorgabe["expires_at"] is not None
 assert abs((_mit_vorgabe["expires_at"] - int(__import__("time").time())) / 86400 - 90) < 1
 try:
     auth.create_api_key(svc, name="ewig", expires_days=0)
-    raise AssertionError("ein unbefristeter Key kam ohne Erlaubnis durch")
+    raise AssertionError("an unlimited key got through without permission")
 except ConfigError:
     pass
 _frei = TinySesam(TinySesamConfig(db_path=os.path.join(tempfile.mkdtemp(), "t.db"),

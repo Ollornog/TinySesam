@@ -121,13 +121,13 @@ def clients_from_env() -> dict:
         try:
             geladen = json.loads(roh)
         except ValueError as e:
-            raise SystemExit(f"TINYSESAM_OIDC_CLIENTS ist kein gültiges JSON: {e}")
+            raise SystemExit(f"TINYSESAM_OIDC_CLIENTS is not valid JSON: {e}")
         if not isinstance(geladen, dict):
-            raise SystemExit("TINYSESAM_OIDC_CLIENTS muss ein Objekt sein: "
+            raise SystemExit("TINYSESAM_OIDC_CLIENTS must be an object: "
                              '{"app.example.com": {"client_id": "...", "client_secret": "..."}}')
         for host, eintrag in geladen.items():
             if not isinstance(eintrag, dict):
-                raise SystemExit(f"TINYSESAM_OIDC_CLIENTS[{host!r}] muss ein Objekt sein "
+                raise SystemExit(f"TINYSESAM_OIDC_CLIENTS[{host!r}] must be an object "
                                  "(client_id, client_secret, optional scopes/allowed_groups).")
             clients[str(host).strip().lower()] = dict(eintrag)
     bekannte = _split("TINYSESAM_PROTECTED_HOSTS")
@@ -149,10 +149,10 @@ def clients_from_env() -> dict:
         # Loud instead of silent: a host that is in no list never gets a request —
         # the mapping would exist and still never take effect.
         security.seclog.warning(
-            "Diese Client-Variablen nennen Hosts, die nicht in TINYSESAM_PROTECTED_HOSTS stehen: "
-            "%s. Ein Unterstrich im Variablennamen kann ein Punkt ODER ein Bindestrich sein — "
-            "steht der Host in PROTECTED_HOSTS, wird er erkannt, sonst wird der Punkt vermutet. "
-            "Sicherer ist TINYSESAM_OIDC_CLIENTS als JSON.",
+            "These client variables name hosts that are not in TINYSESAM_PROTECTED_HOSTS: "
+            "%s. An underscore in the variable name can be a dot OR a hyphen — "
+            "if the host is in PROTECTED_HOSTS it is recognised, otherwise a dot is assumed. "
+            "TINYSESAM_OIDC_CLIENTS as JSON is safer.",
             ", ".join(f"{n} → {h}" for n, h in geraten))
     return clients
 
@@ -161,7 +161,7 @@ def config_from_env() -> TinySesamConfig:
     def req(key):
         v = os.environ.get(key)
         if not v:
-            raise SystemExit(f"Umgebungsvariable {key} fehlt (siehe python -m tinysesam.gateway --help / Modul-Docstring)")
+            raise SystemExit(f"Environment variable {key} is missing (see python -m tinysesam.gateway --help / module docstring)")
         return v
     return TinySesamConfig.oidc_gateway(
         issuer=req("TINYSESAM_OIDC_ISSUER"),
@@ -206,9 +206,9 @@ def _json_objekt(name: str) -> dict:
     try:
         wert = json.loads(roh)
     except ValueError as e:
-        raise SystemExit(f"{name} ist kein gültiges JSON: {e}")
+        raise SystemExit(f"{name} is not valid JSON: {e}")
     if not isinstance(wert, dict):
-        raise SystemExit(f"{name} muss ein Objekt sein: {{\"app.example.com\": {{…}}}}")
+        raise SystemExit(f"{name} must be an object: {{\"app.example.com\": {{…}}}}")
     return wert
 
 
@@ -221,7 +221,7 @@ def _schalter(name: str) -> bool:
         return False
     if wert in ("1", "true", "yes", "on"):
         return True
-    raise SystemExit(f"{name}={wert!r}: erwartet 1 oder 0 (true/false, yes/no, on/off)")
+    raise SystemExit(f"{name}={wert!r}: expected 1 or 0 (true/false, yes/no, on/off)")
 
 
 HEALTH_PATH = "/healthz"
@@ -254,7 +254,7 @@ def _favicon() -> str:
     `data:image/…` URI. A foreign URL would mean every visitor reports to third parties when loading the sign-in page."""
     wert = os.environ.get("TINYSESAM_BRAND_ICON", "").strip()
     if wert and not (wert.startswith("data:image/") or (wert.startswith("/") and not wert.startswith("//"))):
-        raise SystemExit("TINYSESAM_BRAND_ICON: nur ein Pfad (/…) oder eine data:image/…-URI — keine fremde Adresse")
+        raise SystemExit("TINYSESAM_BRAND_ICON: only a path (/…) or a data:image/… URI — no foreign address")
     return wert
 
 
@@ -264,8 +264,8 @@ def _hintergruende() -> list:
     (TINYSESAM_BRAND_BACKGROUNDS_EXTERN=1) — otherwise a startup error, so that it never happens by accident."""
     bilder = os.environ.get("TINYSESAM_BRAND_BACKGROUNDS", "").split()
     if any(b.startswith(("http://", "https://", "//")) for b in bilder) and not _schalter("TINYSESAM_BRAND_BACKGROUNDS_EXTERN"):
-        raise SystemExit("TINYSESAM_BRAND_BACKGROUNDS: fremde Adressen nur mit TINYSESAM_BRAND_BACKGROUNDS_EXTERN=1 "
-                         "(jeder Besucher laedt dann bei diesem Dritten)")
+        raise SystemExit("TINYSESAM_BRAND_BACKGROUNDS: foreign addresses only with TINYSESAM_BRAND_BACKGROUNDS_EXTERN=1 "
+                         "(every visitor then loads from that third party)")
     return bilder
 
 
@@ -275,7 +275,7 @@ def _sprache() -> str:
     from .messages import MESSAGES
     wert = os.environ.get("TINYSESAM_LANG", "").strip().lower() or "en"
     if wert not in MESSAGES:
-        raise SystemExit(f"TINYSESAM_LANG={wert!r}: bekannt sind {', '.join(sorted(MESSAGES))}")
+        raise SystemExit(f"TINYSESAM_LANG={wert!r}: known ones are {', '.join(sorted(MESSAGES))}")
     return wert
 
 
@@ -325,7 +325,7 @@ def build_app(cfg: Optional[TinySesamConfig] = None):
         try:
             auth.store.schreibprobe()
         except Exception as e:
-            security.seclog.error("Healthcheck: Datenbank nicht beschreibbar (%s: %s)",
+            security.seclog.error("Healthcheck: database not writable (%s: %s)",
                                   type(e).__name__, e)
             return JSONResponse({"status": "degraded", "version": current_version()},
                                 status_code=503)
@@ -344,29 +344,29 @@ def __getattr__(name):
     raise AttributeError(name)
 
 
-HILFE = """tinysesam.gateway — TinySesam als OIDC-Forward-Auth-Gateway
+HILFE = """tinysesam.gateway — TinySesam as an OIDC forward-auth gateway
 
-  python -m tinysesam.gateway          startet den Dienst
-  uvicorn tinysesam.gateway:app        dasselbe über einen eigenen Server-Aufruf
+  python -m tinysesam.gateway          starts the service
+  uvicorn tinysesam.gateway:app        the same via your own server invocation
 
-Installation:  pip install 'tinysesam[gateway]'   (nicht [oidc] — das ist die Bibliothek
-                                                   ohne Server)
+Installation:  pip install 'tinysesam[gateway]'   (not [oidc] — that is the library
+                                                   without a server)
 
-Konfiguriert wird über Umgebungsvariablen:
-  TINYSESAM_OIDC_ISSUER          Adresse des Providers            (Pflicht)
-  TINYSESAM_OIDC_CLIENT_ID       Client-ID                        (Pflicht)
-  TINYSESAM_OIDC_CLIENT_SECRET   Client-Secret                    (Pflicht)
-  TINYSESAM_BASE_URL             eigene öffentliche Adresse       (Pflicht)
-  TINYSESAM_PROTECTED_HOSTS      Hosts hinter dem Proxy, kommagetrennt
-  TINYSESAM_COOKIE_DOMAIN        z.B. .example.com — für mehrere Hosts
-  TINYSESAM_TRUSTED_PROXIES      Netz des Proxys, z.B. 172.28.0.0/16
-  TINYSESAM_OIDC_CLIENTS         mehrere Anwendungen als JSON (Host → Client)
-  TINYSESAM_OIDC_CLIENT_<HOST>_ID / _SECRET   dasselbe je Host einzeln
-  TINYSESAM_OIDC_REVALIDATE_MINUTES           Frist der Nachprüfung (Default 60)
-  TINYSESAM_DB                   Pfad der Datenbank
-  TINYSESAM_HOST / _PORT         Bindeadresse (Vorgabe 0.0.0.0:8000)
+Configured via environment variables:
+  TINYSESAM_OIDC_ISSUER          address of the provider          (required)
+  TINYSESAM_OIDC_CLIENT_ID       client ID                        (required)
+  TINYSESAM_OIDC_CLIENT_SECRET   client secret                    (required)
+  TINYSESAM_BASE_URL             own public address               (required)
+  TINYSESAM_PROTECTED_HOSTS      hosts behind the proxy, comma-separated
+  TINYSESAM_COOKIE_DOMAIN        e.g. .example.com — for several hosts
+  TINYSESAM_TRUSTED_PROXIES      network of the proxy, e.g. 172.28.0.0/16
+  TINYSESAM_OIDC_CLIENTS         several applications as JSON (host → client)
+  TINYSESAM_OIDC_CLIENT_<HOST>_ID / _SECRET   the same, one host at a time
+  TINYSESAM_OIDC_REVALIDATE_MINUTES           re-check interval (default 60)
+  TINYSESAM_DB                   path of the database
+  TINYSESAM_HOST / _PORT         bind address (default 0.0.0.0:8000)
 
-Beispielaufbau mit Caddy: deploy/forward-auth/
+Example setup with Caddy: deploy/forward-auth/
 """
 
 
@@ -378,7 +378,7 @@ def main(argv=None):
         print(HILFE)
         return 0
     if argv:
-        print(f"Unbekanntes Argument: {argv[0]}\n", file=sys.stderr)
+        print(f"Unknown argument: {argv[0]}\n", file=sys.stderr)
         print(HILFE, file=sys.stderr)
         return 2
     try:
@@ -387,9 +387,9 @@ def main(argv=None):
         # The README named `pip install 'tinysesam[oidc]'` and this start command in one
         # breath — yet [oidc] brings no server. The bare ModuleNotFoundError made
         # that look like a defect instead of a missing line in the install command.
-        print("Zum Starten fehlt ein ASGI-Server.\n"
+        print("An ASGI server is missing to start.\n"
               "  pip install 'tinysesam[gateway]'\n"
-              "Oder einen eigenen mitbringen:  uvicorn tinysesam.gateway:app --host 0.0.0.0 --port 8000",
+              "Or bring your own:  uvicorn tinysesam.gateway:app --host 0.0.0.0 --port 8000",
               file=sys.stderr)
         return 1
     host = os.environ.get("TINYSESAM_HOST", "0.0.0.0")

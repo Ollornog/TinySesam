@@ -686,44 +686,44 @@ These names are not part of the promise. Since 0.22.0 the implementation is call
 
 | Old name | Kind | Replacement |
 |---|---|---|
-| `check_ldap` | Method | `login_password` (fragt das Verzeichnis als Rückfall, drosselt und sperrt wie `POST /auth/login`) |
-| `check_password` | Method | `login_password` (drosselt, zählt und sperrt wie `POST /auth/login`), für ein eigenes Aussehen allein `set_template("login", …)`; `check_password` selbst drosselt nicht |
-| `check_pin` | Method | `login_pin` (drosselt, zählt und sperrt wie `POST /auth/pin`), für ein eigenes Aussehen allein `set_template("pin", …)`; `check_pin` selbst drosselt nicht |
-| `check_resource` | Method | `POST /auth/resource/{name}` (drosselt und sperrt) bzw. `require_resource` |
-| `check_saml` | Method | `POST /auth/saml/acs`, das die Signatur der Assertion prüft; `check_saml` vertraut seinen Argumenten |
-| `complete_mfa` | Method | `complete_totp` (gleiches Verhalten) |
-| `consume_admin_claim` | Method | Die Route `/auth/claim-admin`, `ensure_admin` oder `admin_identifiers` |
-| `DEMO_USERS` | Constant | Ohne Ersatz; die Demo-Konten heissen `demo` und `demoadmin` (README) |
-| `factor_entry` | Method | Ohne Ersatz; `require_user`/`require` leiten selbst zum offenen Faktor |
-| `forward_login_url` | Method | Ohne Ersatz; die Route `/auth/forward` baut die Login-Adresse selbst |
-| `forward_response_headers` | Method | Ohne Ersatz; welche Header `/auth/forward` setzt, steuert `forward_headers` |
-| `forwarded_url` | Method | Ohne Ersatz; die Route `/auth/forward` liest die Proxy-Header selbst |
-| `IDENTIFYING` | Constant | Ohne Ersatz; welche Faktoren identifizieren, steht in docs/OPERATIONS.md |
-| `is_locked` | Method | `login_password`, `login_pin` bzw. `login_totp`, die atomar prüfen und buchen; `is_locked` liest nur und lässt parallele Salven durch |
-| `is_password_change_locked` | Method | `change_password` (prüft und bucht atomar wie `POST /auth/password`) |
-| `is_pin_locked` | Method | `login_pin` (prüft und bucht atomar wie `POST /auth/pin`) |
-| `is_reauth_locked` | Method | `confirm_password`, `confirm_pin` bzw. `confirm_totp` (prüfen und buchen atomar wie `/auth/reauth`, wohin `require(mfa=True)` leitet) |
-| `is_resource_locked` | Method | `POST /auth/resource/{name}` (prüft und bucht atomar) |
-| `is_secure` | Method | Ohne Ersatz; die Warnung ohne HTTPS steuert `https_mode` |
-| `is_totp_setup_locked` | Method | `POST /auth/totp/setup` (prüft und bucht atomar) |
-| `login_redirect_after` | Method | `next_url` bzw. `redirect()` am Ergebnis von `login_password`, `login_pin` oder `login_totp` (nächster Faktor oder `next`) |
-| `maybe_promote_admin` | Method | `admin_identifiers` oder `ensure_admin`; direkt gerufen umgeht es den Adressbeleg |
-| `mfa_pending` | Method | Ohne Ersatz (der Name meint „hat ein bestätigtes TOTP“); dasselbe liefert `auth.store.has_confirmed_totp(user_id)` — Innenleben, ohne Zusage |
-| `next_login_step` | Method | Ohne Ersatz; `require_user`/`require` leiten selbst zum offenen Faktor |
-| `purge_demo` | Method | `demo_mode=False` (räumt die Demo-Konten beim Start) |
-| `rate_ok` | Method | `login_password`, `login_pin` bzw. `login_totp` (drosseln je IP), ein eigener Limiter per `set_rate_limiter` |
-| `record_login` | Method | `login_password`, `login_pin` bzw. `login_totp`, die jeden Versuch verbuchen; falsch gerufen räumt es fremde Fehlversuchszähler |
-| `RECOVERY_BYTES` | Constant | Ohne Ersatz, ein interner Wert |
-| `sec` | Method | `all_security()` |
-| `seed_demo` | Method | `demo_mode=True` (legt die Demo-Konten beim Start an) |
-| `send_signup_notice` | Method | Ohne Ersatz; `POST /auth/register` verschickt den Hinweis selbst |
-| `session_from_request` | Method | `current_user` bzw. `session_user` |
-| `unlock_resource` | Method | `POST /auth/resource/{name}` (prüft das Geheimnis vorher) |
-| `verify_csrf` | Method | `require_csrf` |
-| `verify_recovery_code` | Method | `login_totp` (nimmt auch Einmal-Codes, drosselt und sperrt wie `POST /auth/totp`); `verify_recovery_code` selbst drosselt nicht |
-| `verify_totp` | Method | `login_totp` (drosselt und sperrt wie `POST /auth/totp`), für den Step-up `confirm_totp`; `verify_totp` selbst drosselt nicht |
-| `verify_user_password` | Method | `confirm_password` (Step-up, drosselt und sperrt wie `/auth/reauth`) bzw. `change_password` (wie `POST /auth/password`); `verify_user_password` selbst drosselt nicht |
-| `verify_user_pin` | Method | `confirm_pin` (Step-up, drosselt und sperrt wie `/auth/reauth`); `verify_user_pin` selbst drosselt nicht |
+| `check_ldap` | Method | Use `login_password` instead (asks the directory as a fallback, throttles and locks like `POST /auth/login`) |
+| `check_password` | Method | Use `login_password` instead (throttles, counts and locks like `POST /auth/login`), for a custom look use `set_template("login", …)` alone; `check_password` itself does not throttle |
+| `check_pin` | Method | Use `login_pin` instead (throttles, counts and locks like `POST /auth/pin`), for a custom look use `set_template("pin", …)` alone; `check_pin` itself does not throttle |
+| `check_resource` | Method | Use `POST /auth/resource/{name}` (throttles and locks) or `require_resource` instead |
+| `check_saml` | Method | Use `POST /auth/saml/acs` instead, which checks the assertion's signature; `check_saml` trusts its arguments |
+| `complete_mfa` | Method | Use `complete_totp` instead (same behaviour) |
+| `consume_admin_claim` | Method | Use the route `/auth/claim-admin`, `ensure_admin` or `admin_identifiers` instead |
+| `DEMO_USERS` | Constant | No replacement; the demo accounts are called `demo` and `demoadmin` (README) |
+| `factor_entry` | Method | No replacement; `require_user`/`require` redirect to the open factor themselves |
+| `forward_login_url` | Method | No replacement; the route `/auth/forward` builds the login address itself |
+| `forward_response_headers` | Method | No replacement; which headers `/auth/forward` sets is controlled by `forward_headers` |
+| `forwarded_url` | Method | No replacement; the route `/auth/forward` reads the proxy headers itself |
+| `IDENTIFYING` | Constant | No replacement; which factors identify is documented in docs/OPERATIONS.md |
+| `is_locked` | Method | Use `login_password`, `login_pin` or `login_totp` instead, which check and book atomically; `is_locked` only reads and lets parallel bursts through |
+| `is_password_change_locked` | Method | Use `change_password` instead (checks and books atomically like `POST /auth/password`) |
+| `is_pin_locked` | Method | Use `login_pin` instead (checks and books atomically like `POST /auth/pin`) |
+| `is_reauth_locked` | Method | Use `confirm_password`, `confirm_pin` or `confirm_totp` instead (check and book atomically like `/auth/reauth`, where `require(mfa=True)` redirects to) |
+| `is_resource_locked` | Method | Use `POST /auth/resource/{name}` instead (checks and books atomically) |
+| `is_secure` | Method | No replacement; the warning without HTTPS is controlled by `https_mode` |
+| `is_totp_setup_locked` | Method | Use `POST /auth/totp/setup` instead (checks and books atomically) |
+| `login_redirect_after` | Method | Use `next_url` or `redirect()` on the result of `login_password`, `login_pin` or `login_totp` instead (next factor or `next`) |
+| `maybe_promote_admin` | Method | Use `admin_identifiers` or `ensure_admin` instead; called directly it bypasses the address evidence |
+| `mfa_pending` | Method | No replacement (the name means “has a confirmed TOTP”); the same is returned by `auth.store.has_confirmed_totp(user_id)` — internals, no promise |
+| `next_login_step` | Method | No replacement; `require_user`/`require` redirect to the open factor themselves |
+| `purge_demo` | Method | Use `demo_mode=False` instead (clears the demo accounts at startup) |
+| `rate_ok` | Method | Use `login_password`, `login_pin` or `login_totp` instead (they throttle per IP), or your own limiter via `set_rate_limiter` |
+| `record_login` | Method | Use `login_password`, `login_pin` or `login_totp` instead, which book every attempt; called wrongly it clears other accounts' failed-attempt counters |
+| `RECOVERY_BYTES` | Constant | No replacement, an internal value |
+| `sec` | Method | Use `all_security()` instead |
+| `seed_demo` | Method | Use `demo_mode=True` instead (creates the demo accounts at startup) |
+| `send_signup_notice` | Method | No replacement; `POST /auth/register` sends the notice itself |
+| `session_from_request` | Method | Use `current_user` or `session_user` instead |
+| `unlock_resource` | Method | Use `POST /auth/resource/{name}` instead (checks the secret first) |
+| `verify_csrf` | Method | Use `require_csrf` instead |
+| `verify_recovery_code` | Method | Use `login_totp` instead (also accepts one-time codes, throttles and locks like `POST /auth/totp`); `verify_recovery_code` itself does not throttle |
+| `verify_totp` | Method | Use `login_totp` instead (throttles and locks like `POST /auth/totp`), for the step-up `confirm_totp`; `verify_totp` itself does not throttle |
+| `verify_user_password` | Method | Use `confirm_password` instead (step-up, throttles and locks like `/auth/reauth`) or `change_password` (like `POST /auth/password`); `verify_user_password` itself does not throttle |
+| `verify_user_pin` | Method | Use `confirm_pin` instead (step-up, throttles and locks like `/auth/reauth`); `verify_user_pin` itself does not throttle |
 
 ---
 

@@ -31,8 +31,8 @@ def _fehlt_extra(e: ModuleNotFoundError) -> "errors.MissingExtra":
     until 0.18.0, a `ModuleNotFoundError: authlib` in the middle of the sign-in process — for the
     operator a defect, although only one line was missing in the install command."""
     return errors.MissingExtra(
-        "Das Extra [oidc] ist nicht installiert (pip install 'tinysesam[oidc]') — "
-        f"es fehlt: {e.name or 'authlib'}.", extra="oidc")
+        "The extra [oidc] is not installed (pip install 'tinysesam[oidc]') — "
+        f"missing: {e.name or 'authlib'}.", extra="oidc")
 
 
 def _hash(wert: str) -> str:
@@ -159,9 +159,9 @@ class OIDCClient:
                                 timeout=10, follow_redirects=False)
             if antwort.status_code != 200:
                 raise errors.ConfigError(
-                    f"OIDC-Discovery unter {self.issuer}/.well-known/openid-configuration antwortet mit "
-                    f"{antwort.status_code} statt 200 (Umleitungen werden nicht gefolgt — oidc_issuer muss "
-                    "die endgültige Adresse sein, z.B. https statt http, ohne Pfadumleitung).")
+                    f"OIDC discovery at {self.issuer}/.well-known/openid-configuration answers with "
+                    f"{antwort.status_code} instead of 200 (redirects are not followed — oidc_issuer must be "
+                    "the final address, e.g. https instead of http, without a path redirect).")
             meta = antwort.json()
             self._pruefe_issuer(meta)
             self._meta = meta
@@ -176,9 +176,9 @@ class OIDCClient:
         gefunden = str(meta.get("issuer") or "").rstrip("/")
         if gefunden != self.issuer:
             raise errors.ConfigError(
-                f"OIDC-Discovery: das Dokument nennt issuer={gefunden or '?'}, konfiguriert ist "
-                f"oidc_issuer={self.issuer}. Beides muss übereinstimmen — sonst prüft TinySesam Tokens "
-                "gegen einen Provider, den niemand konfiguriert hat.")
+                f"OIDC discovery: the document names issuer={gefunden or '?'}, configured is "
+                f"oidc_issuer={self.issuer}. The two must match — otherwise TinySesam checks tokens "
+                "against a provider nobody configured.")
 
     def _jwkset(self, erzwingen: bool = False):
         alt_genug = self._jwks_zeit and (time.time() - self._jwks_zeit) > self.JWKS_TTL
@@ -196,8 +196,8 @@ class OIDCClient:
             status = getattr(antwort, "status_code", 200)
             if status != 200:
                 raise errors.ConfigError(
-                    f"OIDC: JWKS unter {self.meta()['jwks_uri']} antwortet mit {status} statt 200 "
-                    "— nichts zwischengespeichert, der nächste Login fragt erneut.")
+                    f"OIDC: JWKS at {self.meta()['jwks_uri']} answers with {status} instead of 200 "
+                    "— nothing cached, the next login asks again.")
             self._jwks = JsonWebKey.import_key_set(antwort.json())
             self._jwks_zeit = time.time()
         return self._jwks
@@ -221,9 +221,9 @@ class OIDCClient:
         fremd = [a for a in self.ID_TOKEN_ALGS if not str(a).startswith(("RS", "PS", "ES", "Ed"))]
         if fremd:
             raise errors.ConfigError(
-                f"OIDC: ID_TOKEN_ALGS nennt {fremd}. Das ID-Token wird gegen das öffentliche JWKS "
-                "des Providers geprüft — ein HMAC-Verfahren (HS*) oder 'none' macht damit den "
-                "öffentlichen Schlüssel zum Signaturgeheimnis. Nur asymmetrische Verfahren.")
+                f"OIDC: ID_TOKEN_ALGS names {fremd}. The ID token is checked against the provider's "
+                "public JWKS — an HMAC algorithm (HS*) or 'none' would thereby turn the "
+                "public key into the signing secret. Asymmetric algorithms only.")
         return JsonWebToken(list(self.ID_TOKEN_ALGS))
 
     def _jwks_auffrischbar(self) -> bool:
@@ -286,7 +286,7 @@ class OIDCClient:
             if not self._jwks_auffrischbar():
                 raise
             security.seclog.warning(
-                "OIDC: ID-Token nicht verifizierbar — JWKS wird neu geholt (Schlüsselrotation?).")
+                "OIDC: ID token not verifiable — fetching JWKS again (key rotation?).")
             claims = dekoder.decode(tok["id_token"], self._jwkset(erzwingen=True),
                                     claims_options=optionen)
         claims.validate(leeway=self.UHR_TOLERANZ)  # exp/iat/nbf, with clock tolerance (F-26)
@@ -377,18 +377,18 @@ class OIDCClient:
         publikum = [str(a) for a in (aud if isinstance(aud, (list, tuple)) else [aud] if aud else [])]
         azp = claims.get("azp")
         if self.client_id not in publikum:
-            security.seclog.warning("OIDC: ID-Token nennt aud=%s, erwartet wurde %s",
+            security.seclog.warning("OIDC: ID token names aud=%s, expected %s",
                                     security.fuer_log(",".join(publikum)),
                                     security.fuer_log(self.client_id))
             raise HTTPException(400, t("api.oidc_audience"))
         if len(publikum) > 1 and not azp:
             security.seclog.warning(
-                "OIDC: ID-Token nennt %d Empfänger, aber kein azp — nicht entscheidbar, für wen "
-                "es ausgestellt wurde (OIDC Core 3.1.3.7).", len(publikum))
+                "OIDC: ID token names %d audiences but no azp — cannot be decided for whom "
+                "it was issued (OIDC Core 3.1.3.7).", len(publikum))
             raise HTTPException(400, t("api.oidc_audience"))
         if azp and str(azp) != self.client_id:
             security.seclog.warning(
-                "OIDC: ID-Token ist für azp=%s ausgestellt, nicht für %s — abgewiesen.",
+                "OIDC: ID token was issued for azp=%s, not for %s — rejected.",
                 security.fuer_log(str(azp)), security.fuer_log(self.client_id))
             raise HTTPException(400, t("api.oidc_audience"))
 
@@ -450,9 +450,9 @@ class OIDCClient:
         gemeldet = str(antwort.get("sub") or "")
         if gemeldet != str(erwartetes_sub or ""):
             security.seclog.warning(
-                "OIDC: UserInfo meldet sub=%s, das ID-Token nennt sub=%s — Antwort verworfen "
-                "(OIDC Core 5.3.2). Gruppen, E-Mail und Admin-Flag stammen damit allein aus dem "
-                "signierten Token.",
+                "OIDC: UserInfo reports sub=%s, the ID token names sub=%s — response discarded "
+                "(OIDC Core 5.3.2). Groups, e-mail and admin flag thus come solely from the "
+                "signed token.",
                 security.fuer_log(gemeldet or "<leer>"), security.fuer_log(str(erwartetes_sub or "<leer>")))
             return {}
         return antwort
@@ -689,9 +689,9 @@ def register_oidc_routes(router, auth):
             # `_email_mit_beleg` treats like evidence. An explicit `false` always stays
             # unconfirmed.
             security.seclog.warning(
-                "OIDC: Der Provider meldet %s ohne Beleg (email_verified fehlt oder ist nicht "
-                "wahr) — die Adresse wird NICHT verwendet (kein Kontoname, kein Remote-Email). "
-                "Prüft dieser Provider jede Adresse, schickt aber den Claim nicht: "
+                "OIDC: The provider reports %s without proof (email_verified missing or not "
+                "true) — the address is NOT used (no account name, no Remote-Email). "
+                "If this provider verifies every address but does not send the claim: "
                 "oidc_email_verified_default=True.", security.fuer_log(mail))
             auth.audit("oidc_email_unverified", str(mail), auth.client_ip(request),
                        "verwendet=0")

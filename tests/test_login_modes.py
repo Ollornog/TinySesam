@@ -120,8 +120,11 @@ def befunde(**w):
 
 
 assert any("forward_login" in b for b in befunde(forward_login="unsichtbar"))
-assert any("einzige Anmeldemethode" in b for b in befunde(forward_login="direct"))   # password is on
-assert any("einzige Anmeldemethode" in b
+assert any("the only login method" in b for b in befunde(forward_login="direct"))   # password is on
+# the German wording of the same finding with lang="de"
+assert any("einzige Anmeldemethode" in b for b in befunde(forward_login="direct", lang="de"))
+assert not any("einzige Anmeldemethode" in b for b in befunde(forward_login="direct"))
+assert any("the only login method" in b
            for b in befunde(forward_apps={"app.example.com": {"login": "direct"}}))
 assert any("logn" in b for b in befunde(forward_apps={"app.example.com": {"logn": "page"}}))
 assert any("['login']" in b for b in befunde(forward_apps={"app.example.com": {"login": "fenster"}}))
@@ -130,9 +133,9 @@ assert not [b for b in befunde(forward_apps={"app.example.com": {"name": "App", 
 try:
     TinySesam(TinySesamConfig(db_path=":memory:", forward_auth_enabled=True, forward_login="direct"))
 except ConfigError as e:
-    assert "einzige Anmeldemethode" in str(e)
+    assert "the only login method" in str(e)
 else:
-    raise AssertionError("direct neben der Passwort-Anmeldung startet")
+    raise AssertionError("direct next to the password login starts")
 ok("configuration check: unknown mode, direct next to other methods, typo in the key")
 
 # ---------- B-2: mehrere Clients, Freigabe fehlt ----------

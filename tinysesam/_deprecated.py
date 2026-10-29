@@ -51,7 +51,7 @@ class Deprecated:
 
     def __init__(self, ziel: str, ersatz: str, bis: str = BIS):
         if not ziel or not ersatz or not ersatz.strip():
-            raise ValueError("Deprecated braucht ein Ziel und einen Ersatz")
+            raise ValueError("Deprecated needs a target and a replacement")
         self.ziel, self.ersatz, self.bis = ziel, ersatz.strip().rstrip("."), bis
         self.name = self.klasse = ""
         self.methode = False
@@ -61,13 +61,13 @@ class Deprecated:
         # At class construction, not at the first call: an alias to a target that does not
         # exist should make the import fail — not the caller only a year later.
         if self.ziel not in vars(owner):
-            raise TypeError(f"{self.klasse}.{name}: Ziel {self.ziel!r} fehlt in der Klasse")
+            raise TypeError(f"{self.klasse}.{name}: target {self.ziel!r} is missing in the class")
         self.methode = isinstance(vars(owner)[self.ziel],
                                   (types.FunctionType, staticmethod, classmethod))
 
     @property
     def meldung(self) -> str:
-        return (f"{self.klasse}.{self.name} ist intern (Stufe C) und fällt mit {self.bis} weg — "
+        return (f"{self.klasse}.{self.name} is internal (tier C) and goes away with {self.bis} — "
                 f"{self.ersatz}.")
 
     def _warnen(self) -> None:
@@ -98,9 +98,9 @@ class Deprecated:
         """Assignment on the object: store as before, but loudly — the value no longer takes effect."""
         # Stack: 1 = __set__, 2 = the assignment (or `setattr` in `mock.patch`).
         warnings.warn(
-            f"{type(obj).__name__}.{self.name} am Objekt gesetzt (Test-Fake?) — das wirkt seit "
-            f"0.22.0 nicht mehr: TinySesam ruft intern `{self.ziel}`; den Fake auf `{self.ziel}` "
-            f"setzen. {self.meldung}", RuntimeWarning, stacklevel=2)
+            f"{type(obj).__name__}.{self.name} set on the object (test fake?) — this has had no effect since "
+            f"0.22.0: TinySesam calls `{self.ziel}` internally; set the fake on `{self.ziel}` "
+            f"instead. {self.meldung}", RuntimeWarning, stacklevel=2)
         obj.__dict__[self.name] = wert
 
     def __delete__(self, obj) -> None:

@@ -109,7 +109,7 @@ _opt_reg = _json_b210.loads(_sitzung(a_id).post("/auth/passkey/register/begin").
 assert _opt_reg["authenticatorSelection"]["userVerification"] == "required", _opt_reg["authenticatorSelection"]
 _opt_log = _json_b210.loads(c.post("/auth/passkey/login/begin").text)
 assert _opt_log["userVerification"] == "required", _opt_log
-ok_("B2-10: Registrierung und Login verlangen die Nutzerprüfung (Vorgabe)")
+ok_("B2-10: registration and login require user verification (default)")
 
 # Can be switched off, but not silently: the build says so, and the configuration check warns.
 _db_p = os.path.join(tempfile.mkdtemp(), "t.db")
@@ -124,7 +124,7 @@ assert _opt_p["userVerification"] == "preferred", _opt_p
 from tinysesam.config_check import check_config as _check_config                      # noqa: E402
 _f, _w = _check_config(_auth_p.cfg)
 assert any("passkey_user_verification" in x for x in _w), _w
-ok_("B2-10: 'preferred' ist möglich, meldet sich aber beim Aufbau und in der Konfigprüfung")
+ok_("B2-10: 'preferred' is possible but reports itself at startup and in the config check")
 
 # A typo aborts instead of silently switching the check off.
 try:
@@ -135,7 +135,7 @@ try:
     raise AssertionError("unbekannter Wert kam durch")
 except _ConfigError:
     pass
-ok_("B2-10: ein unbekannter Wert für passkey_user_verification bricht den Aufbau ab")
+ok_("B2-10: an unknown value for passkey_user_verification aborts startup")
 
 # Throttling: the passkey login was the only sign-in path without a brake — and every call
 # created a flow row that expired only after five minutes.
@@ -149,7 +149,7 @@ _app_r.include_router(_auth_r.router())
 _c_r = TestClient(_app_r)
 _codes = [_c_r.post("/auth/passkey/login/begin").status_code for _ in range(6)]
 assert 429 in _codes, f"no throttling on the passkey login: {_codes}"
-ok_("B2-10: der Passkey-Login ist gedrosselt wie jeder andere Einstieg")
+ok_("B2-10: the passkey login is throttled like every other entry")
 
 # Protocol: an unknown key is a failed attempt and hits the fail2ban jail.
 import io as _io_b210, logging as _logging_b210                             # noqa: E402
@@ -175,7 +175,7 @@ _text_b = _puffer_b.getvalue()
 assert _sec_b210.log_ereignis("passkey") in _text_b, f"no jail line: {_text_b[:200]!r}"
 assert "unbekannter_schluessel" in _text_b, _text_b[:200]
 assert any(e["event"] == "passkey_unknown" for e in _auth_l.store.recent_audit(limit=10))
-ok_("B2-10: eine Passkey-Fehlanmeldung steht im Protokoll und trifft die Jail")
+ok_("B2-10: a failed passkey sign-in is in the log and hits the jail")
 
 for _d in (_db_p, _db_r, _db_l):
     os.remove(_d)

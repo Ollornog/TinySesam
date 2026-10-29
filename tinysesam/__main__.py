@@ -30,19 +30,19 @@ from . import current_version
 
 def _passwd(argv) -> int:
     ap = argparse.ArgumentParser(prog="tinysesam passwd",
-                                 description="Passwort eines Kontos offline neu setzen.")
-    ap.add_argument("username", help="Benutzername des Kontos")
-    ap.add_argument("--db", required=True, help="Pfad zur TinySesam-Datenbank (config.db_path)")
+                                 description="Reset an account's password offline.")
+    ap.add_argument("username", help="username of the account")
+    ap.add_argument("--db", required=True, help="path to the TinySesam database (config.db_path)")
     ap.add_argument("--stdin", action="store_true",
-                    help="Passwort von der Standardeingabe lesen statt interaktiv fragen")
+                    help="read the password from standard input instead of prompting")
     ap.add_argument("--keep-sessions", action="store_true",
-                    help="offene Sitzungen des Kontos NICHT beenden (Vorgabe: beenden)")
+                    help="do NOT end the account's open sessions (default: end them)")
     # The CLI reads no config — what stands there for the password rule, it gets here.
     # Without these two switches a weaker rule applied offline than on the web (A-7).
     ap.add_argument("--blocklist-file", default="",
-                    help="eigene Blockliste wie config.password_blocklist_file")
+                    help="custom blocklist like config.password_blocklist_file")
     ap.add_argument("--rp-name", default="",
-                    help="Dienstname wie config.rp_name (gilt als Kontextwort)")
+                    help="service name like config.rp_name (counts as a context word)")
     a = ap.parse_args(argv)
 
     # Store instead of TinySesam: no FastAPI needed, and the instance would have side effects
@@ -53,22 +53,22 @@ def _passwd(argv) -> int:
     from .security import haertung_lesen
 
     # Without this check sqlite3 silently creates the file and the typo in the path
-    # would come back as "Kein Konto 'admin'" — the most baffling of all error messages.
+    # would come back as "No account 'admin'" — the most baffling of all error messages.
     if not os.path.exists(a.db):
-        print(f"Keine Datenbank unter {a.db}.", file=sys.stderr)
+        print(f"No database at {a.db}.", file=sys.stderr)
         return 1
     store = Store(a.db)
     user = store.get_user_by_name(a.username)
     if not user:
-        print(f"Kein Konto '{a.username}' in {a.db}.", file=sys.stderr)
+        print(f"No account '{a.username}' in {a.db}.", file=sys.stderr)
         return 1
 
     if a.stdin:
         pw = sys.stdin.readline().rstrip("\n")
     else:
-        pw = getpass.getpass("Neues Passwort: ")
-        if pw != getpass.getpass("Wiederholen:    "):
-            print("Die beiden Eingaben sind verschieden.", file=sys.stderr)
+        pw = getpass.getpass("New password: ")
+        if pw != getpass.getpass("Repeat:       "):
+            print("The two entries differ.", file=sys.stderr)
             return 1
     # The minimum length via THE SAME read path as `TinySesam._sec()`: read raw, a
     # legacy value without bounds (4, 0) kept applying here, while the web pulled it up to 8.
@@ -87,15 +87,15 @@ def _passwd(argv) -> int:
         try:
             blockliste = blockliste_lesen(a.blocklist_file)
         except OSError as e:
-            print(f"Blockliste {a.blocklist_file!r} lässt sich nicht lesen: {e}", file=sys.stderr)
+            print(f"Blocklist {a.blocklist_file!r} cannot be read: {e}", file=sys.stderr)
             return 1
     mangel = passwort_mangel(pw, minlen, blockliste=blockliste,
                              kontext=(a.username, (user["email"] or "").split("@", 1)[0], a.rp_name))
     if mangel:
         grund, werte = mangel
-        print({"short": f"Passwort zu kurz (min. {werte.get('n')}).",
-               "long": f"Passwort zu lang (max. {werte.get('n')}).",
-               "weak": "Passwort zu leicht zu erraten (bekannt, trivial oder aus dem Kontonamen)."}[grund],
+        print({"short": f"Password too short (min. {werte.get('n')}).",
+               "long": f"Password too long (max. {werte.get('n')}).",
+               "weak": "Password too easy to guess (known, trivial or derived from the account name)."}[grund],
               file=sys.stderr)
         return 1
 
@@ -108,9 +108,9 @@ def _passwd(argv) -> int:
     if not a.keep_sessions:
         # Standard after every credential change: open sessions no longer count.
         store.delete_user_sessions(user["id"])
-        note = " (offene Sitzungen beendet)"
+        note = " (open sessions ended)"
     store.audit_log("password_reset_cli", a.username, None, "offline")
-    print(f"Passwort für '{a.username}' gesetzt{note}.")
+    print(f"Password for '{a.username}' set{note}.")
     return 0
 
 
@@ -120,7 +120,7 @@ def _oeffne(pfad: str):
     import os
     from .store import Store
     if not os.path.exists(pfad):
-        print(f"Keine Datenbank unter {pfad}.", file=sys.stderr)
+        print(f"No database at {pfad}.", file=sys.stderr)
         return None
     return Store(pfad)
 
@@ -128,21 +128,21 @@ def _oeffne(pfad: str):
 def _backup(argv) -> int:
     ap = argparse.ArgumentParser(
         prog="tinysesam backup",
-        description="Konsistente Kopie der Datenbank ziehen, auch im laufenden Betrieb.",
-        epilog="Eine Datei-Kopie (cp/rsync) taugt NICHT: Die Datenbank läuft im WAL-Modus, alles "
-               "seit dem letzten Checkpoint steht in der -wal-Datei. Wer nur die .db sichert, "
-               "bekommt einen Torso — und merkt es erst beim Zurückspielen.")
-    ap.add_argument("ziel", help="Pfad der Sicherungsdatei (wird angelegt)")
-    ap.add_argument("--db", required=True, help="Pfad zur TinySesam-Datenbank (config.db_path)")
+        description="Take a consistent copy of the database, even while the service is running.",
+        epilog="A file copy (cp/rsync) is NOT enough: the database runs in WAL mode, everything "
+               "since the last checkpoint is in the -wal file. Backing up only the .db "
+               "gives you a stump — and you only notice when restoring.")
+    ap.add_argument("ziel", help="path of the backup file (will be created)")
+    ap.add_argument("--db", required=True, help="path to the TinySesam database (config.db_path)")
     a = ap.parse_args(argv)
     import os
 
     from .store import Store
     if not os.path.exists(a.db):
-        print(f"Keine Datenbank unter {a.db}.", file=sys.stderr)
+        print(f"No database at {a.db}.", file=sys.stderr)
         return 1
     if os.path.exists(a.ziel):
-        print(f"{a.ziel} gibt es schon — nichts überschrieben.", file=sys.stderr)
+        print(f"{a.ziel} already exists — nothing overwritten.", file=sys.stderr)
         return 1
     # NOT via `_oeffne()`: the Store constructor migrates the file before a copy
     # exists — a backup that changes its source is none. `sichere_datei` opens
@@ -150,42 +150,42 @@ def _backup(argv) -> int:
     try:
         Store.sichere_datei(a.db, a.ziel)
     except Exception as e:
-        print(f"Sicherung fehlgeschlagen: {type(e).__name__}: {e}", file=sys.stderr)
+        print(f"Backup failed: {type(e).__name__}: {e}", file=sys.stderr)
         for rest in ("", "-wal", "-shm"):
             if os.path.exists(a.ziel + rest):
                 os.remove(a.ziel + rest)      # leave no half file behind
         return 1
-    print(f"Sicherung geschrieben: {a.ziel} ({os.path.getsize(a.ziel)} Bytes, Rechte 0600).")
+    print(f"Backup written: {a.ziel} ({os.path.getsize(a.ziel)} bytes, mode 0600).")
     # The backup contains the TOTP secrets only encrypted (H-14/H-15). Without the key
     # it is worthless for TOTP — it belongs backed up separately, not in the same storage.
     if os.path.exists(a.db + ".key"):
-        print(f"Hinweis: Der Schlüssel der TOTP-Geheimnisse liegt in {a.db}.key und ist NICHT in der "
-              "Sicherung. Getrennt sichern — ohne ihn müssen alle Konten TOTP neu einrichten.")
+        print(f"Note: the key for the TOTP secrets is in {a.db}.key and is NOT in the "
+              "backup. Back it up separately — without it all accounts have to set up TOTP again.")
     else:
-        print("Hinweis: Den Schlüssel der TOTP-Geheimnisse (TINYSESAM_SECRETS_KEY bzw. "
-              "secrets_key_file) getrennt sichern — ohne ihn ist TOTP aus dieser Sicherung verloren.")
+        print("Note: back up the key for the TOTP secrets (TINYSESAM_SECRETS_KEY or "
+              "secrets_key_file) separately — without it TOTP is lost from this backup.")
     return 0
 
 
 def _restore(argv) -> int:
     ap = argparse.ArgumentParser(
         prog="tinysesam restore",
-        description="Eine Sicherung zurückspielen — mit der Reihenfolge, auf die es ankommt.",
-        epilog="Den Dienst VORHER stoppen. Ein blosses `cp sicherung.db auth.db` genügt nicht: "
-               "Nach einem Absturz liegen `auth.db-wal` und `auth.db-shm` daneben, und SQLite "
-               "spielt sie beim nächsten Start auf die frisch zurückgespielte Datei — der alte "
-               "Stand ist wieder da, ohne Fehlermeldung, und `PRAGMA integrity_check` sagt `ok`. "
-               "Dieses Kommando räumt beide Dateien weg, bevor es ersetzt.")
-    ap.add_argument("quelle", help="die Sicherungsdatei")
-    ap.add_argument("--db", required=True, help="Ziel: die Datenbank des Dienstes")
-    ap.add_argument("--ja", action="store_true", help="nicht nachfragen (für Skripte)")
+        description="Restore a backup — in the order that matters.",
+        epilog="Stop the service FIRST. A plain `cp backup.db auth.db` is not enough: "
+               "after a crash `auth.db-wal` and `auth.db-shm` sit next to it, and SQLite "
+               "replays them onto the freshly restored file at the next start — the old "
+               "state is back, without an error message, and `PRAGMA integrity_check` says `ok`. "
+               "This command removes both files before it replaces.")
+    ap.add_argument("quelle", help="the backup file")
+    ap.add_argument("--db", required=True, help="target: the service's database")
+    ap.add_argument("--ja", action="store_true", help="do not ask for confirmation (for scripts)")
     a = ap.parse_args(argv)
     import os
     import shutil
     import sqlite3
 
     if not os.path.exists(a.quelle):
-        print(f"Keine Sicherung unter {a.quelle}.", file=sys.stderr)
+        print(f"No backup at {a.quelle}.", file=sys.stderr)
         return 1
     # First check whether the backup is any good at all — not only after overwriting.
     try:
@@ -195,24 +195,24 @@ def _restore(argv) -> int:
         stand = pruef.execute("PRAGMA user_version").fetchone()[0]
         pruef.close()
     except Exception as e:
-        print(f"{a.quelle} ist keine lesbare TinySesam-Datenbank: {e}", file=sys.stderr)
+        print(f"{a.quelle} is not a readable TinySesam database: {e}", file=sys.stderr)
         return 1
     if heil != "ok":
-        print(f"Die Sicherung ist beschädigt (integrity_check: {heil}).", file=sys.stderr)
+        print(f"The backup is damaged (integrity_check: {heil}).", file=sys.stderr)
         return 1
 
     from .store import Store
     if stand > Store.SCHEMA_VERSION:
-        print(f"Die Sicherung trägt Schema-Version {stand}, diese Fassung kennt {Store.SCHEMA_VERSION}. "
-              "Sie stammt aus einer neueren TinySesam-Version — passende Version installieren.",
+        print(f"The backup carries schema version {stand}, this version knows {Store.SCHEMA_VERSION}. "
+              "It comes from a newer TinySesam version — install the matching version.",
               file=sys.stderr)
         return 1
 
-    print(f"Sicherung: {a.quelle} — {konten} Konten, Schema {stand}, integrity_check ok")
+    print(f"Backup: {a.quelle} — {konten} accounts, schema {stand}, integrity_check ok")
     if os.path.exists(a.db) and not a.ja:
-        print(f"Das überschreibt {a.db}. Der Dienst muss GESTOPPT sein.")
-        if input("Weiter? [j/N] ").strip().lower() not in ("j", "ja", "y", "yes"):
-            print("Abgebrochen.")
+        print(f"This overwrites {a.db}. The service must be STOPPED.")
+        if input("Continue? [y/N] ").strip().lower() not in ("j", "ja", "y", "yes"):
+            print("Aborted.")
             return 1
 
     # The order is the actual content of this command.
@@ -224,37 +224,37 @@ def _restore(argv) -> int:
         os.chmod(a.db, Store.DATEIRECHTE)
     except OSError:
         pass  # file system without Unix permissions — the copy itself is complete
-    print(f"Zurückgespielt: {a.db} (Rechte 0600). Dienst wieder starten.")
+    print(f"Restored: {a.db} (mode 0600). Start the service again.")
     return 0
 
 
 def _gc(argv) -> int:
     ap = argparse.ArgumentParser(
         prog="tinysesam gc",
-        description="Abgelaufene Sitzungen, Flows, Einmal-Token und alte Login-Versuche löschen.",
-        epilog="Läuft nicht von selbst. Für einen Timer/Cron gedacht. Das Audit-Log bleibt "
-               "unangetastet, solange --audit-days nicht gesetzt ist.")
-    ap.add_argument("--db", required=True, help="Pfad zur TinySesam-Datenbank (config.db_path)")
-    ap.add_argument("--attempts-older-than", type=int, default=86400, metavar="SEK",
-                    help="Login-Versuche älter als N Sekunden löschen (Vorgabe: 86400)")
-    ap.add_argument("--audit-days", type=int, default=0, metavar="TAGE",
-                    help="Audit-Einträge älter als N Tage löschen (Vorgabe: 0 = keine; "
-                         "Gegenstück zu config.audit_retention_days)")
+        description="Delete expired sessions, flows, one-time tokens and old login attempts.",
+        epilog="Does not run by itself. Meant for a timer/cron. The audit log is left "
+               "untouched unless --audit-days is set.")
+    ap.add_argument("--db", required=True, help="path to the TinySesam database (config.db_path)")
+    ap.add_argument("--attempts-older-than", type=int, default=86400, metavar="SEC",
+                    help="delete login attempts older than N seconds (default: 86400)")
+    ap.add_argument("--audit-days", type=int, default=0, metavar="DAYS",
+                    help="delete audit entries older than N days (default: 0 = none; "
+                         "counterpart to config.audit_retention_days)")
     a = ap.parse_args(argv)
     # The same bound as `audit_retention_days` — checked before anything is deleted.
     # 10**20 otherwise aborted with OverflowError when sessions and tokens were already gone.
     from .config_check import ZAHLENGRENZEN
     unten, oben = ZAHLENGRENZEN["audit_retention_days"]
     if not unten <= a.audit_days <= oben:
-        ap.error(f"--audit-days muss zwischen {unten} und {oben} liegen (Tage, nicht Sekunden)")
+        ap.error(f"--audit-days must be between {unten} and {oben} (days, not seconds)")
     # The same for the login attempts (second attack round): ±10**20 aborted after the first
     # deletion steps, a negative value also cleared the running lockout window.
     from .store import versuchsfrist, VERSUCHSFRIST_MAX_SEK
     try:
         versuchsfrist(a.attempts_older_than)
     except ValueError:
-        ap.error(f"--attempts-older-than muss zwischen 0 und {VERSUCHSFRIST_MAX_SEK} liegen "
-                 "(Sekunden; 0 räumt alle Fehlversuche)")
+        ap.error(f"--attempts-older-than must be between 0 and {VERSUCHSFRIST_MAX_SEK} "
+                 "(seconds; 0 clears all failed attempts)")
     store = _oeffne(a.db)
     if store is None:
         return 1
@@ -276,12 +276,12 @@ def _gc(argv) -> int:
 def _audit(argv) -> int:
     ap = argparse.ArgumentParser(
         prog="tinysesam audit",
-        description="Ins Audit-Log sehen — von der Kommandozeile.",
-        epilog="Gelesen wurde es bisher nur über das Admin-Panel, also nur als angemeldeter "
-               "Admin — ausgerechnet dann unerreichbar, wenn die Anmeldung das Problem ist.")
-    ap.add_argument("--db", required=True, help="Pfad zur TinySesam-Datenbank")
-    ap.add_argument("--user", default="", help="nur Einträge zu diesem Konto")
-    ap.add_argument("-n", type=int, default=30, help="wie viele Zeilen (Vorgabe: 30)")
+        description="Look into the audit log — from the command line.",
+        epilog="Until now it could only be read through the admin panel, i.e. only as a signed-in "
+               "admin — unreachable precisely when signing in is the problem.")
+    ap.add_argument("--db", required=True, help="path to the TinySesam database")
+    ap.add_argument("--user", default="", help="only entries for this account")
+    ap.add_argument("-n", type=int, default=30, help="how many lines (default: 30)")
     a = ap.parse_args(argv)
     store = _oeffne(a.db)
     if store is None:
@@ -289,10 +289,10 @@ def _audit(argv) -> int:
     import datetime as _dt
     # Filter in SQL, not here: post-filtering the most recent rows found an account's entries
     # only if they happened to fall into the window — so precisely not during a brute-force wave.
-    # The command then reported "Keine Einträge zu 'X'." and exit 0, although they were there.
+    # The command then reported "No entries for 'X'." and exit 0, although they were there.
     zeilen = store.recent_audit(a.n, username=a.user or None)
     if not zeilen:
-        print("Keine Einträge." if not a.user else f"Keine Einträge zu '{a.user}'.")
+        print("No entries." if not a.user else f"No entries for '{a.user}'.")
         return 0
     # Every field through `zeilenfest` (B5-06): username and detail come from forms and
     # foreign responses. A `\n` in them printed a second, freely invented line here — with
@@ -309,13 +309,13 @@ def _audit(argv) -> int:
 def _unlock(argv) -> int:
     ap = argparse.ArgumentParser(
         prog="tinysesam unlock",
-        description="Die Brute-Force-Sperre eines Kontos aufheben.",
-        epilog="Bisher gab es dafür keinen Weg: `clear_fails` lief nur intern nach einer "
-               "erfolgreichen Anmeldung — und genau die ist ja gesperrt. Übrig blieb `gc "
-               "--attempts-older-than 0`, das die Fehlversuche ALLER Konten wegräumt.")
-    ap.add_argument("username", help="die Kennung, wie sie eingetippt wird: Benutzername, Adresse "
-                                     "oder der Name im Verzeichnis (LDAP)")
-    ap.add_argument("--db", required=True, help="Pfad zur TinySesam-Datenbank")
+        description="Lift an account's brute-force lockout.",
+        epilog="There used to be no way to do this: `clear_fails` only ran internally after a "
+               "successful sign-in — and that is exactly what is locked. What remained was `gc "
+               "--attempts-older-than 0`, which clears the failed attempts of ALL accounts.")
+    ap.add_argument("username", help="the identifier as typed: username, address "
+                                     "or the name in the directory (LDAP)")
+    ap.add_argument("--db", required=True, help="path to the TinySesam database")
     a = ap.parse_args(argv)
     store = _oeffne(a.db)
     if store is None:
@@ -340,44 +340,44 @@ def _unlock(argv) -> int:
         # is one), and an existing database does not know the name in the directory yet (it only comes into being
         # with the next successful sign-in). What stood under the identifier is cleared.
         if not (offen or serie):
-            print(f"Kein Konto '{a.username}' in {a.db}, und unter dieser Kennung steht keine Sperre.",
+            print(f"No account '{a.username}' in {a.db}, and there is no lockout under this identifier.",
                   file=sys.stderr)
             return 1
         store.audit_log("unlock_cli", a.username, None, f"fehlversuche={offen} in_folge={serie} ohne_konto=1")
-        print(f"Kein Konto '{a.username}' — die Sperre unter dieser Kennung ist trotzdem aufgehoben "
-              f"({offen} Fehlversuche, {serie} in Folge verworfen).")
+        print(f"No account '{a.username}' — the lockout under this identifier is lifted anyway "
+              f"({offen} failed attempts, {serie} in a row discarded).")
         return 0
     store.audit_log("unlock_cli", str(konto["username"]), None,
                     f"fehlversuche={offen} in_folge={serie}"
                     + (f" kennung={a.username}" if norm_kennung(konto["username"]) != topf else ""))
-    print(f"Sperre für '{a.username}' aufgehoben ({offen} Fehlversuche verworfen).")
+    print(f"Lockout for '{a.username}' lifted ({offen} failed attempts discarded).")
     return 0
 
 
 def _owner(argv) -> int:
     ap = argparse.ArgumentParser(
         prog="tinysesam owner",
-        description="Ein Konto zum Owner machen — der Notweg, wenn kein Owner mehr herankommt.",
-        epilog="Im Panel vergibt nur ein Owner die Rolle. Ist der einzige Owner ausgesperrt (Passkey "
-               "verloren, Person weg), bleibt der Weg über die Datenbank: wer sie in der Hand hat, "
-               "betreibt die Instanz ohnehin.")
-    ap.add_argument("username", help="Benutzername des Kontos")
-    ap.add_argument("--db", required=True, help="Pfad zur TinySesam-Datenbank")
+        description="Make an account an owner — the emergency route when no owner can get in any more.",
+        epilog="In the panel only an owner grants the role. If the only owner is locked out (passkey "
+               "lost, person gone), the way in is through the database: whoever holds it "
+               "runs the instance anyway.")
+    ap.add_argument("username", help="username of the account")
+    ap.add_argument("--db", required=True, help="path to the TinySesam database")
     a = ap.parse_args(argv)
     store = _oeffne(a.db)
     if store is None:
         return 1
     konto = store.get_user_by_name(a.username)
     if not konto:
-        print(f"Kein Konto '{a.username}' in {a.db}.", file=sys.stderr)
+        print(f"No account '{a.username}' in {a.db}.", file=sys.stderr)
         return 1
     if konto["is_service"] or konto["disabled"]:
-        print(f"'{a.username}' ist gesperrt oder ein Service-Konto — Owner muss sich anmelden können.",
+        print(f"'{a.username}' is locked or a service account — an owner must be able to sign in.",
               file=sys.stderr)
         return 1
     store.set_owner(konto["id"], True)
     store.audit_log("owner_grant", a.username, None, "quelle=cli")
-    print(f"'{a.username}' ist Owner (und Admin).")
+    print(f"'{a.username}' is an owner (and admin).")
     return 0
 
 
@@ -389,19 +389,19 @@ _NAME_MAX = 150
 def _rename(argv) -> int:
     ap = argparse.ArgumentParser(
         prog="tinysesam rename",
-        description="Ein Konto umbenennen — als Betreiber, ohne laufenden Dienst.",
-        epilog="Der Weg für eine Kennungs-Kollision im Bestand, die der Start meldet (G13). Dieselben "
-               "Grundregeln wie im Panel: frei in Benutzernamen UND Adressen (auch als Namensvetter "
-               "wie Alice/alice) und nicht der Name eines anderen Kontos im Verzeichnis, keine Steuerzeichen, höchstens 150 Zeichen, ein Name mit @ nur als "
-               "die eigene bestätigte Adresse. Die Konfiguration kennt das CLI nicht: Einen Namen aus "
-               "admin_identifiers prüft es nicht, und im Modus login_identifier='email' folgt der "
-               "Name der Adresse — dort nicht umbenennen. Sitzungen, Keys, Faktoren und Bindungen "
-               "hängen an der Konto-ID und bleiben; nach aussen ändert sich Remote-User.")
-    ap.add_argument("username", help="heutiger Benutzername des Kontos, oder #<id> (die user_id "
-                                     "aus der Startmeldung — für einen Namen, der sich nicht "
-                                     "eintippen lässt)")
-    ap.add_argument("neuer_name", help="der neue Benutzername")
-    ap.add_argument("--db", required=True, help="Pfad zur TinySesam-Datenbank")
+        description="Rename an account — as operator, without a running service.",
+        epilog="The way out of an identifier collision in existing data, which startup reports (G13). The same "
+               "ground rules as in the panel: free among usernames AND addresses (also as namesakes "
+               "like Alice/alice) and not the name of another account in the directory, no control characters, at most 150 characters, a name with @ only as "
+               "the account's own confirmed address. The CLI does not know the configuration: it does not check a name from "
+               "admin_identifiers, and in login_identifier='email' mode the "
+               "name follows the address — do not rename there. Sessions, keys, factors and bindings "
+               "hang on the account ID and stay; Remote-User changes towards the outside.")
+    ap.add_argument("username", help="current username of the account, or #<id> (the user_id "
+                                     "from the startup message — for a name that cannot "
+                                     "be typed in)")
+    ap.add_argument("neuer_name", help="the new username")
+    ap.add_argument("--db", required=True, help="path to the TinySesam database")
     a = ap.parse_args(argv)
     store = _oeffne(a.db)
     if store is None:
@@ -414,23 +414,23 @@ def _rename(argv) -> int:
         # a collision the startup message names the accounts via their user_id anyway.
         konto = store.get_user(int(a.username[1:]))
     if not konto:
-        print(f"Kein Konto '{a.username}' in {a.db}.", file=sys.stderr)
+        print(f"No account '{a.username}' in {a.db}.", file=sys.stderr)
         return 1
     neu = a.neuer_name.strip()
     if not neu or len(neu) > _NAME_MAX or name_ungueltig(neu):
-        print("Ungültiger Benutzername (leer, länger als 150 Zeichen oder mit Steuerzeichen).",
+        print("Invalid username (empty, longer than 150 characters or containing control characters).",
               file=sys.stderr)
         return 1
     eigene = norm_email(konto["email"]) if konto["email"] and konto["email_verified"] else None
     if "@" in norm_kennung(neu) and norm_email(neu) != eigene:
         # As with `change_username`: a name that is a foreign address would occupy the mailbox
         # of a person who does not exist here yet.
-        print(f"'{neu}' ist eine Adresse — als Name nur die eigene bestätigte Adresse des Kontos.",
+        print(f"'{neu}' is an address — as a name only the account's own confirmed address is allowed.",
               file=sys.stderr)
         return 1
     alt = str(konto["username"])
     if neu == alt:
-        print(f"'{alt}' heisst schon so — nichts geändert.")
+        print(f"'{alt}' is already called that — nothing changed.")
         return 0
     # Cross-wise, like `TinySesam.identifier_taken`: name, address, counting bucket and the name in the
     # directory of another account (review round 2026-09-27).
@@ -438,8 +438,8 @@ def _rename(argv) -> int:
                     store.konto_mit_topf(neu, ausser=konto["id"]),
                     store.konto_mit_verzeichnisname(neu, ausser=konto["id"])):
         if treffer is not None and treffer["id"] != konto["id"]:
-            print(f"'{neu}' ist schon vergeben (Konto {treffer['id']}, als Name, Adresse oder Name "
-                  "im Verzeichnis).", file=sys.stderr)
+            print(f"'{neu}' is already taken (account {treffer['id']}, as name, address or name "
+                  "in the directory).", file=sys.stderr)
             return 1
     try:
         # As operator: the marker "chosen by themselves" (G2-N) is dropped — the name stands for the
@@ -447,22 +447,22 @@ def _rename(argv) -> int:
         store.set_username(konto["id"], neu, selbst_gewaehlt=False)
     except sqlite3.IntegrityError:
         # Race with the running service: assigned in between — the database decides (G12c).
-        print(f"'{neu}' ist schon vergeben — die Datenbank hat das Umbenennen abgewiesen, nichts "
-              "geändert.", file=sys.stderr)
+        print(f"'{neu}' is already taken — the database rejected the rename, nothing "
+              "changed.", file=sys.stderr)
         return 1
     store.audit_log("username_changed", neu, None, f"alt={alt} durch=betreiber quelle=cli")
-    print(f"'{alt}' heisst jetzt '{neu}'. Apps sehen den neuen Namen als Remote-User; die Konto-ID "
-          "(Remote-Id) bleibt.")
+    print(f"'{alt}' is now called '{neu}'. Apps see the new name as Remote-User; the account ID "
+          "(Remote-Id) stays.")
     return 0
 
 
 def _gate_key(argv) -> int:
     ap = argparse.ArgumentParser(
         prog="tinysesam gate-key",
-        description="Den öffentlichen Schlüssel der Gate-Token ausgeben (sign_key für caddy-jwt, "
-                    "sign_alg EdDSA). Öffentlich, kein Geheimnis.")
-    ap.add_argument("--db", required=True, help="Pfad zur TinySesam-Datenbank (config.db_path)")
-    ap.add_argument("--secrets-key-file", default="", help="wie config.secrets_key_file")
+        description="Print the public key of the gate tokens (sign_key for caddy-jwt, "
+                    "sign_alg EdDSA). Public, not a secret.")
+    ap.add_argument("--db", required=True, help="path to the TinySesam database (config.db_path)")
+    ap.add_argument("--secrets-key-file", default="", help="like config.secrets_key_file")
     a = ap.parse_args(argv)
     import os
     from . import gate, vault
@@ -471,8 +471,8 @@ def _gate_key(argv) -> int:
     # that the service (with its environment) does not use at all.
     if not (os.environ.get(vault.ENV_VAR, "").strip() or a.secrets_key_file
             or os.path.exists(a.db + ".key")):
-        print(f"Kein Grundschlüssel: weder {vault.ENV_VAR} noch --secrets-key-file noch "
-              f"{a.db}.key. Mit derselben Umgebung aufrufen wie den Dienst.", file=sys.stderr)
+        print(f"No base key: neither {vault.ENV_VAR} nor --secrets-key-file nor "
+              f"{a.db}.key. Call it with the same environment as the service.", file=sys.stderr)
         return 1
     try:
         schluessel, _herkunft = vault.load_key(a.db, a.secrets_key_file)
@@ -511,15 +511,15 @@ def main(argv=None):
         # typo, on the other hand, goes to stderr and ends with 2, otherwise no script notices the difference.
         hilfe = cmd in ("--help", "-h", "help")
         print("usage: python -m tinysesam version\n"
-              "       python -m tinysesam passwd --db <datei> <benutzer>\n"
-              "       python -m tinysesam backup --db <datei> <ziel>\n"
-              "       python -m tinysesam restore --db <datei> <sicherung>\n"
-              "       python -m tinysesam gc     --db <datei>\n"
-              "       python -m tinysesam audit  --db <datei> [--user X]\n"
-              "       python -m tinysesam unlock --db <datei> <benutzer>\n"
-              "       python -m tinysesam owner  --db <datei> <benutzer>\n"
-              "       python -m tinysesam rename --db <datei> <benutzer> <neuer-name>\n"
-              "       python -m tinysesam gate-key --db <datei>",
+              "       python -m tinysesam passwd --db <file> <user>\n"
+              "       python -m tinysesam backup --db <file> <target>\n"
+              "       python -m tinysesam restore --db <file> <backup>\n"
+              "       python -m tinysesam gc     --db <file>\n"
+              "       python -m tinysesam audit  --db <file> [--user X]\n"
+              "       python -m tinysesam unlock --db <file> <user>\n"
+              "       python -m tinysesam owner  --db <file> <user>\n"
+              "       python -m tinysesam rename --db <file> <user> <new-name>\n"
+              "       python -m tinysesam gate-key --db <file>",
               file=sys.stdout if hilfe else sys.stderr)
         sys.exit(0 if hilfe else 2)
 

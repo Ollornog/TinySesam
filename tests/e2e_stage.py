@@ -63,7 +63,7 @@ class Browser:
         ende = time.time() + 30
         while time.time() < ende:
             if self.proc.poll() is not None:
-                raise RuntimeError("Chrome ist beim Start gestorben")
+                raise RuntimeError("Chrome died at startup")
             try:
                 with open(datei, encoding="utf-8") as fh:
                     erste = fh.readline().strip()
@@ -178,7 +178,7 @@ class Browser:
         """
         for sel in felder:
             if not await self.warte_bis(f"!!document.querySelector({sel!r})", 15):
-                raise RuntimeError(f"Feld {sel} erscheint nicht — falsche Seite?")
+                raise RuntimeError(f"Field {sel} does not appear — wrong page?")
         setzen = "".join(
             f"document.querySelector({s!r}).value = {w!r};" for s, w in felder.items())
         wo = next(iter(felder))
@@ -197,13 +197,13 @@ class Browser:
         the troubleshooting.)
         """
         text = (await self.js("document.body.innerText")) or ""
-        for muster, was in (("too many", "Rate-Limit"), ("zu viele", "Rate-Limit"),
-                            ("locked", "Konto-Lockout"), ("gesperrt", "Konto-Lockout")):
+        for muster, was in (("too many", "rate limit"), ("zu viele", "rate limit"),
+                            ("locked", "account lockout"), ("gesperrt", "account lockout")):
             if muster in text.lower():
                 raise RuntimeError(
-                    f"{was} der Instanz hat zugeschlagen — nicht die Anmeldung ist kaputt, "
-                    f"sondern es kamen zu viele Versuche. Kurz warten und erneut fahren. "
-                    f"Seite sagt: {text[:80].strip()!r}")
+                    f"The instance's {was} kicked in — sign-in is not broken, "
+                    f"there were just too many attempts. Wait briefly and run again. "
+                    f"Page says: {text[:80].strip()!r}")
 
 
 async def teil_passkey():
@@ -216,7 +216,7 @@ async def teil_passkey():
     user = os.environ.get("STAGE_ADMIN_USER", "admin")
     pw = os.environ.get("STAGE_ADMIN_PW")
     if not pw:
-        return "übersprungen (STAGE_ADMIN_PW fehlt)"
+        return "skipped (STAGE_ADMIN_PW missing)"
     async with Browser() as b:
         await b.cmd("WebAuthn.enable")
         auth_id = (await b.cmd("WebAuthn.addVirtualAuthenticator", {"options": {
@@ -262,14 +262,14 @@ async def teil_passkey():
         rest = await b.js("fetch('/auth/passkey/list').then(r => r.json()).then(j => j.length)")
         assert rest == 0, f"cleanup incomplete ({rest} passkeys remain)"
         ok("cleaned up: account without passkey, the next run starts the same")
-    return "grün"
+    return "green"
 
 
 async def teil_saml():
     """SAML: AuthnRequest → IdP login → signed assertion at the ACS → session."""
     user, pw = os.environ.get("STAGE_SAML_USER"), os.environ.get("STAGE_SAML_PW")
     if not (user and pw):
-        return "übersprungen (STAGE_SAML_USER/_PW fehlen)"
+        return "skipped (STAGE_SAML_USER/_PW missing)"
     async with Browser() as b:
         await b.geh("/auth/saml/login", 4)
         wohin = await b.js("location.href")
@@ -280,7 +280,7 @@ async def teil_saml():
         wer = await b.angemeldet_als(20)
         assert wer, "assertion was not accepted (the reason is in the instance log)"
         ok(f"Assertion accepted, signed in as {wer}")
-    return "grün"
+    return "green"
 
 
 async def teil_oidc():
@@ -292,7 +292,7 @@ async def teil_oidc():
     """
     cred_datei = os.environ.get("STAGE_OIDC_CRED")
     if not cred_datei or not os.path.exists(cred_datei):
-        return "übersprungen (STAGE_OIDC_CRED fehlt)"
+        return "skipped (STAGE_OIDC_CRED missing)"
     with open(cred_datei, encoding="utf-8") as fh:
         cred = json.load(fh)
     async with Browser() as b:
@@ -328,7 +328,7 @@ async def teil_oidc():
         assert wer, ("no access token redeemed — last page: "
                      + ((await b.js("document.body.innerText")) or "")[:120].replace(chr(10), " | "))
         ok(f"Code redeemed, signed in as {wer}")
-    return "grün"
+    return "green"
 
 
 TEILE = {"passkey": teil_passkey, "saml": teil_saml, "oidc": teil_oidc}
@@ -336,7 +336,7 @@ TEILE = {"passkey": teil_passkey, "saml": teil_saml, "oidc": teil_oidc}
 
 async def main(namen):
     if not BASE:
-        sys.exit("STAGE_BASE_URL fehlt — dieser Test läuft gegen eine ausgerollte Instanz.")
+        sys.exit("STAGE_BASE_URL missing — this test runs against a deployed instance.")
     if not CHROME:
         sys.exit("kein Chrome gefunden")
     print(f"E2E gegen {BASE}")
@@ -348,7 +348,7 @@ async def main(namen):
         except Exception as e:
             ergebnis[name] = f"ROT: {e}"
             rot = True
-        if ergebnis[name].startswith("über"):
+        if ergebnis[name].startswith("skipped"):
             print(f"  – {ergebnis[name]}")
         elif ergebnis[name].startswith("ROT"):
             print(f"  ✗ {ergebnis[name]}")

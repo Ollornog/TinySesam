@@ -569,8 +569,8 @@ PASSWORT = {"/auth/password"}
 NUR_SITZUNG = {"/auth/totp/setup/start", "/auth/totp/setup", "/auth/passkey/register/begin",
                "/auth/passkey/register/finish"}
 #: Known open — with justification. If one of them gets bound, it belongs in STEPUP.
-OFFEN = {"/auth/apikeys": "Key-Ausgabe ohne Step-up (gemeldet mit H-18)",
-         "/auth/apikeys/{key_id}/revoke": "Key-Widerruf ohne Step-up (gemeldet mit H-18)"}
+OFFEN = {"/auth/apikeys": "key issuance without step-up (reported as H-18)",
+         "/auth/apikeys/{key_id}/revoke": "key revocation without step-up (reported as H-18)"}
 
 # From the router itself, not from `app6.routes`: newer FastAPI versions store included
 # routers there as an object without a path — the list would be empty and the check silently green.

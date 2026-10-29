@@ -41,7 +41,7 @@ r = Report("Funde aus dem Betrieb (Gruppen-Scope, Claim-Token)")
 # (Mutation probe: remove the call `_gruppen_scope(...)` in `config_check.check_config` → red.)
 OIDC = dict(oidc_enabled=True, oidc_issuer="https://id.example.com", oidc_client_id="app",
             oidc_client_secret="geheim", base_url="https://app.example.com")
-MERKMAL = "der Scope 'groups' wird nicht angefordert"
+MERKMAL = "the scope 'groups' is not requested"
 
 
 def _warnungen(**felder):
@@ -159,7 +159,7 @@ _datei_k = auth_k.cfg.db_path + ".claim"
 r.check("(b) stderr is a console: the token is there, no file next to the database, and "
         "the log line says „on the console“ without the value",
         f"/auth/claim-admin?token={_tok_k}" in _k.getvalue() and not os.path.exists(_datei_k)
-        and "steht auf der Konsole (stderr), nicht in dieser Zeile" in _k.getvalue()
+        and "is on the console (stderr), not in this line" in _k.getvalue()
         and _k.getvalue().count(_tok_k) == 1, _k.getvalue()[-300:])
 
 # No terminal (container, journal, pipe): file with 0600, only the path in the „log".
@@ -176,8 +176,8 @@ r.check("(b) … the file has mode 0600",
 r.check("(b) … the value is NOT in the log (stderr + security log), but the path is, and the "
         "text says where the token is",
         _tok_c not in _c.getvalue() and "claim-admin?token=" not in _c.getvalue()
-        and f"steht in {_datei_c} (Rechte 0600), nicht im Log" in _c.getvalue()
-        and "bewusst NICHT" not in _c.getvalue(), _c.getvalue()[-300:])
+        and f"is in {_datei_c} (mode 0600), not in the log" in _c.getvalue()
+        and "deliberately NOT" not in _c.getvalue(), _c.getvalue()[-300:])
 
 # The file carries what it should: redeeming makes the user admin and removes the file.
 _app_c = FastAPI()
@@ -215,10 +215,10 @@ _m = io.StringIO()
 auth_m = _start(_m, db_path=":memory:")
 _tok_m = auth_m.admin_claim_token()
 r.check("(b) :memory: without a console: fallback to stderr, and the log line says that the value "
-        "is therefore in the service log (instead of „nicht im Log“)",
+        "is therefore in the service log (instead of “not in the log”)",
         f"claim-admin?token={_tok_m}" in _m.getvalue()
-        and "stderr ist hier KEINE Konsole: Der Wert steht damit im Log des Dienstes" in _m.getvalue()
-        and "nicht im Log" not in _m.getvalue(), _m.getvalue()[-400:])
+        and "stderr is NOT a console here: the value is therefore in the service's log" in _m.getvalue()
+        and "not in the log" not in _m.getvalue(), _m.getvalue()[-400:])
 
 # Fallback when the file cannot be created (a directory is in its place).
 _s = io.StringIO()
@@ -227,8 +227,8 @@ os.mkdir(_db_s + ".claim")
 auth_s = _start(_s, db_path=_db_s)
 _tok_s = auth_s.admin_claim_token()
 r.check("(b) file cannot be created: fallback to stderr with reason, honestly named",
-        f"claim-admin?token={_tok_s}" in _s.getvalue() and "nicht schreibbar" in _s.getvalue()
-        and "Log des Dienstes" in _s.getvalue(), _s.getvalue()[-400:])
+        f"claim-admin?token={_tok_s}" in _s.getvalue() and "not writable" in _s.getvalue()
+        and "service's log" in _s.getvalue(), _s.getvalue()[-400:])
 
 # A file chosen by the operator takes precedence — even on a console — and remains after redeeming.
 _eigen = str(Path(tempfile.mkdtemp()) / "claim.token")

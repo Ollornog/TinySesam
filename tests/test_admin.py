@@ -343,7 +343,7 @@ def _js_ausdruck(text):
             break
         m = _JS_TOKEN.match(text, i)
         if not m or m.end() == i:
-            raise ValueError(f"nicht auswertbar ab {text[i:i + 20]!r}")
+            raise ValueError(f"cannot be evaluated from {text[i:i + 20]!r}")
         art = m.lastgroup
         toks.append((art, m.group(art)))
         i = m.end()
@@ -357,7 +357,7 @@ def _js_ausdruck(text):
 
     def muss(wert):
         if not nimm(wert):
-            raise ValueError(f"erwartet {wert!r} bei Stück {pos[0]}")
+            raise ValueError(f"expected {wert!r} at token {pos[0]}")
 
     def bedingt():
         a = oder()
@@ -396,7 +396,7 @@ def _js_ausdruck(text):
     def glied():
         t = nimm()
         if t is None:
-            raise ValueError("Ausdruck endet zu früh")
+            raise ValueError("expression ends too early")
         if t[1] == "(":
             a = bedingt()
             muss(")")
@@ -405,19 +405,19 @@ def _js_ausdruck(text):
         elif t[0] == "str":
             a = ("str", t[1][1:-1])
         else:
-            raise ValueError(f"unerwartet {t[1]!r}")
+            raise ValueError(f"unexpected {t[1]!r}")
         while True:
             if nimm(".") or nimm("?."):
                 optional = toks[pos[0] - 1][1] == "?."
                 n = nimm()
                 if not n or n[0] != "name":
-                    raise ValueError("nach . fehlt ein Name")
+                    raise ValueError("a name is missing after .")
                 a = ("mem", a, n[1], optional)
             elif nimm("["):
                 k = bedingt()
                 muss("]")
                 if k[0] != "str":
-                    raise ValueError("Index ist kein fester Text")
+                    raise ValueError("index is not a fixed text")
                 a = ("mem", a, k[1], False)
             else:
                 return a
@@ -474,17 +474,17 @@ def _p_pruefen(code):
     rm = _re.search(r"\.then\(\s*(?:async\s*)?\(?\s*(\w+)\s*\)?\s*=>", code)
     r_ = rm.group(1) if rm else "r"
     if not _re.search(rf"if\s*\(\s*{r_}\.ok\s*\)\s*\{{?\s*return", code):
-        probleme.append("p() liest r.ok nicht")
+        probleme.append("p() does not read r.ok")
     jm = _re.search(rf"(\w+)\s*=\s*await\s+{r_}\.json\(\)", code)
     if not jm:
-        probleme.append("p() liest den Körper der Antwort nicht")
+        probleme.append("p() does not read the response body")
     stelle = _p_detail_stelle(code)
     if stelle is None:
-        return probleme + ["p() gibt eine Abweisung nicht als {detail: …} zurück"]
+        return probleme + ["p() does not return a rejection as {detail: …}"]
     try:
         ergebnisse = _js_ergebnisse(_js_ausdruck(code[stelle[0]:stelle[1]]))
     except ValueError as e:
-        return probleme + [f"detail-Ausdruck nicht auswertbar ({e}): {code[stelle[0]:stelle[1]]}"]
+        return probleme + [f"detail expression cannot be evaluated ({e}): {code[stelle[0]:stelle[1]]}"]
     j = jm.group(1) if jm else "j"
 
     def ist_grund(a):
@@ -510,9 +510,9 @@ def _p_pruefen(code):
         return False
 
     if not any(ist_grund(w) and geschuetzt(bed) for w, bed in ergebnisse):
-        probleme.append(f"p() reicht den Grund des Servers ({j}.detail, nur als Text, null-sicher) nicht durch")
+        probleme.append(f"p() does not pass on the server's reason ({j}.detail, only as text, null-safe) through")
     if not any(w == ("mem", ("name", "L"), "err.generic", False) for w, _ in ergebnisse):
-        probleme.append('p() hat keinen Rückfalltext L["err.generic"]')
+        probleme.append('p() has no fallback text L["err.generic"]')
     return probleme
 
 
@@ -532,24 +532,24 @@ def _p_mit(detail):
 
 
 _p_kaputt = {
-    "Schlussfund audit-3": _p_mit('L["err.generic"]'),
-    "fester Text statt Grund": _p_mit('(j&&typeof j.detail==="string"&&"Fehler")||L["err.generic"]'),
-    "Grund ohne Text- und null-Prüfung": _p_mit('j.detail||L["err.generic"]'),
-    "Grund ohne Textprüfung": _p_mit('(j&&j.detail)||L["err.generic"]'),
-    "typeof vor der null-Prüfung": _p_mit('(typeof j.detail==="string"&&j&&j.detail)||L["err.generic"]'),
-    "Textprüfung verneint": _p_mit('(j&&typeof j.detail!=="string"&&j.detail)||L["err.generic"]'),
-    "Textprüfung an einem anderen Feld": _p_mit('(j&&typeof j.fehler==="string"&&j.detail)||L["err.generic"]'),
-    "null-Prüfung verneint": _p_mit('(!j&&typeof j.detail==="string"&&j.detail)||L["err.generic"]'),
-    "Grund aus einer anderen Variable": _p_mit('(j&&typeof j.detail==="string"&&k.detail)||L["err.generic"]'),
-    "Zweige vertauscht": _p_mit('j&&typeof j.detail==="string"?L["err.generic"]:j.detail'),
-    "ohne Rückfalltext": _p_mit('(j&&typeof j.detail==="string"&&j.detail)'),
-    "Funktionsaufruf (ausserhalb des Teils)": _p_mit('grund(j)||L["err.generic"]'),
-    "ohne Blick auf r.ok": _re.sub(r"if\s*\(\s*r\.ok\s*\)\s*return[^;]*;", "", _p_code),
-    "Fund 4": '.then(r=>r.json());\n',
-    "Fund 7 (Körper immer)": '.then(async r=>{let j=null;try{j=await r.json()}catch(e){} return j});\n',
+    "final finding audit-3": _p_mit('L["err.generic"]'),
+    "fixed text instead of reason": _p_mit('(j&&typeof j.detail==="string"&&"Fehler")||L["err.generic"]'),
+    "reason without text and null check": _p_mit('j.detail||L["err.generic"]'),
+    "reason without text check": _p_mit('(j&&j.detail)||L["err.generic"]'),
+    "typeof before the null check": _p_mit('(typeof j.detail==="string"&&j&&j.detail)||L["err.generic"]'),
+    "text check negated": _p_mit('(j&&typeof j.detail!=="string"&&j.detail)||L["err.generic"]'),
+    "text check on another field": _p_mit('(j&&typeof j.fehler==="string"&&j.detail)||L["err.generic"]'),
+    "null check negated": _p_mit('(!j&&typeof j.detail==="string"&&j.detail)||L["err.generic"]'),
+    "reason from another variable": _p_mit('(j&&typeof j.detail==="string"&&k.detail)||L["err.generic"]'),
+    "branches swapped": _p_mit('j&&typeof j.detail==="string"?L["err.generic"]:j.detail'),
+    "without fallback text": _p_mit('(j&&typeof j.detail==="string"&&j.detail)'),
+    "function call (outside the part)": _p_mit('grund(j)||L["err.generic"]'),
+    "without looking at r.ok": _re.sub(r"if\s*\(\s*r\.ok\s*\)\s*return[^;]*;", "", _p_code),
+    "finding 4": '.then(r=>r.json());\n',
+    "finding 7 (body always)": '.then(async r=>{let j=null;try{j=await r.json()}catch(e){} return j});\n',
 }
 _p_durch = [n for n, c in _p_kaputt.items() if not _p_pruefen(c)]
-assert not _p_durch and _p_kaputt["ohne Blick auf r.ok"] != _p_code, f"structure check misses: {_p_durch}"
+assert not _p_durch and _p_kaputt["without looking at r.ok"] != _p_code, f"structure check misses: {_p_durch}"
 _p_gleichwertig = [
     'j&&typeof j.detail==="string"?j.detail:L["err.generic"]',
     '(typeof j?.detail==="string"&&j.detail)||L["err.generic"]',
@@ -563,7 +563,7 @@ from voraussetzung import pflicht_werkzeug  # noqa: E402
 # If node is missing, that is red — everywhere, not only on GitHub (see `pflicht_werkzeug`). Since the
 # ci-local image ships node, level 1 checks exactly as much here as the gate.
 # (Mutation probe: with PATH without node → red; with TINYSESAM_OHNE_NODE=1 → ⚠ line.)
-_node = pflicht_werkzeug("node", "Fund 10: Laufzeitprobe der Panel-Aktionen")
+_node = pflicht_werkzeug("node", "finding 10: runtime probe of the panel actions")
 if _node:
     _probe = ("const A=[];let ANTWORT=null;const E={};\n"
               "const document={cookie:'',addEventListener(){},querySelectorAll:()=>[],"

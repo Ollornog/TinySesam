@@ -28,7 +28,7 @@ braucht_modul("httpx")
 from tinysesam.oidc import OIDCClient  # noqa: E402
 from _kit.report import Report  # noqa: E402
 
-r = Report("OIDC — JWKS und Schlüsselrotation")
+r = Report("OIDC — JWKS and key rotation")
 
 META = {"issuer": "https://id.example.com", "jwks_uri": "https://id.example.com/jwks",
         "token_endpoint": "https://id.example.com/token",

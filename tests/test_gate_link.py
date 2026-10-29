@@ -250,7 +250,7 @@ try:
 except ConfigError as e:
     assert "cookie_domain" in str(e)
 else:
-    raise AssertionError("Link-Modus mit cookie_domain startet")
+    raise AssertionError("link mode with cookie_domain starts")
 assert any("gate_token_enabled" in f for f in config_check.check_config(TinySesamConfig(
     db_path=":memory:", forward_auth_enabled=True, gate_link_enabled=True, base_url=GW))[0])
 ok("configuration check: link mode not with cookie_domain, not without gate token")

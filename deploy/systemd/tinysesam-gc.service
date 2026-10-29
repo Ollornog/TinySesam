@@ -1,5 +1,5 @@
 [Unit]
-Description=TinySesam aufräumen (abgelaufene Sitzungen, Flows, Einmal-Token)
+Description=TinySesam cleanup (expired sessions, flows, one-time tokens)
 # Without an umlaut: systemd silently discards a Documentation= line with non-ASCII, `systemctl show`
 # then shows none at all. The anchor is that of the English README — which github.com serves.
 Documentation=https://github.com/Ollornog/TinySesam#backups-and-cleanup

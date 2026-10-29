@@ -42,7 +42,7 @@ MOCK = {
                   "created": 1_770_000_000, "expires": 1_770_600_000}],
     "security": {"max_login_attempts": 5, "lockout_window_sec": 900, "rate_limit_max": 30},
     "audit": [{"ts": 1_770_000_000, "event": "login", "username": "demoadmin", "ip": "203.0.113.7", "detail": ""}],
-    "resources": [{"name": "gaeste", "kind": "pin", "label": "Gäste-Bereich"}],
+    "resources": [{"name": "gaeste", "kind": "pin", "label": "Guest area"}],
 }
 
 #: Paths the panel queries → JSON. `version` comes from the running library.

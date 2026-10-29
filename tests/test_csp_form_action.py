@@ -38,7 +38,7 @@ from fastapi import FastAPI  # noqa: E402
 from tinysesam import TinySesam, TinySesamConfig  # noqa: E402
 
 CHROME = next((b for b in ("google-chrome", "chrome", "chromium", "chromium-browser") if shutil.which(b)), None)
-braucht(CHROME, "kein Chrome gefunden")
+braucht(CHROME, "no Chrome found")
 
 
 def ok(text):
@@ -98,7 +98,7 @@ for _ in range(100):
     except Exception:
         time.sleep(0.1)
 else:
-    raise RuntimeError("App startet nicht")
+    raise RuntimeError("App does not start")
 
 print("CSP form-action")
 
@@ -128,7 +128,7 @@ def _ws_url():
             return [t for t in tabs if t["type"] == "page"][0]["webSocketDebuggerUrl"]
         except Exception:
             time.sleep(0.1)
-    raise RuntimeError("Chrome antwortet nicht")
+    raise RuntimeError("Chrome does not respond")
 
 
 async def _lauf():

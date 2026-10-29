@@ -689,7 +689,7 @@ echte_ip, log_a = _mit_log(lambda: _sec.client_ip(_Anfrage("192.0.2.5", "203.0.1
 r.check("with the default behind a container proxy it stays at the proxy IP",
         echte_ip == "192.0.2.5", f"yielded {echte_ip} — then the test measures the wrong thing")
 r.check("...and this is reported instead of silently accepted",
-        "trusted_proxies" in log_a and "ignoriert" in log_a,
+        "trusted_proxies" in log_a and "is ignored" in log_a,
         f"no hint: {log_a[:90]!r}")
 
 # 0.0.0.0/0 sounds generous and devalues XFF completely: if every address counts as a proxy,
@@ -698,7 +698,7 @@ alles, log_b = _mit_log(lambda: _sec.client_ip(_Anfrage("192.0.2.7", "203.0.113.
                                                ["0.0.0.0/0"]))
 r.check("0.0.0.0/0 does NOT yield the client IP", alles == "192.0.2.7",
         f"yielded {alles} — then XFF would be forgeable")
-r.check("...and this is reported too", "entwertet" in log_b,
+r.check("...and this is reported too", "devalues XFF" in log_b,
         f"no hint: {log_b[:90]!r}")
 
 # Configured correctly the real address comes through — and then there is nothing to report.
@@ -865,8 +865,8 @@ def _antworten(auth_obj, app_obj, benutzer):
     klient.cookies.set(auth_obj.cfg.session_cookie,
                        auth_obj.store.create_session(uid, 3600, True, "password"))
     return [
-        ("CSRF fehlt", klient.post("/auth/apikeys", json={"name": "x"})),
-        ("Ressource unbekannt", klient.get("/auth/resource/gibtsnicht")),
+        ("CSRF missing", klient.post("/auth/apikeys", json={"name": "x"})),
+        ("resource unknown", klient.get("/auth/resource/gibtsnicht")),
     ]
 
 
@@ -1046,7 +1046,7 @@ try:
 finally:
     log_st.removeHandler(haken_st)
 r.check("a file from a newer version is reported",
-        "neueren Version" in puffer_st.getvalue(),
+        "from a newer version" in puffer_st.getvalue(),
         f"silent: {puffer_st.getvalue()[:80]!r}")
 r.check("...and the higher stamp is NOT reset",
         int(zukunft.db.execute("PRAGMA user_version").fetchone()[0]) == Store.SCHEMA_VERSION + 50,
@@ -1180,7 +1180,7 @@ for pfad, daten, name in (
         ("/auth/forgot", {"email": "opfer@example.com"}, "Reset-Link"),
         ("/auth/magic/request", {"email": "opfer@example.com", "next": "/"}, "Magic-Link"),
         ("/auth/register", {"username": "neu", "password": "Geheim12345!abc",
-                            "email": "neu@example.com"}, "Bestätigungslink")):
+                            "email": "neu@example.com"}, "Confirmation link")):
     auth_x, c_x, post_x = _mailapp()
     antwort_x = c_x.post(pfad, data=daten, headers={"host": BOESE})
     r.check(f"{name}: forged Host header produces no mail to {BOESE}",
@@ -1220,13 +1220,13 @@ for _feld, _zusatz in (("magiclink_enabled", {}),
                                          "saml_idp_x509cert": "PEM"})):
     _f, _w = _kp.check_config(TinySesamConfig(db_path=":memory:", **{_feld: True}, **_zusatz))
     r.check(f"without base_url {_feld} is an ERROR, not a warning",
-            any("base_url ist leer" in x for x in _f),
+            any("base_url is empty" in x for x in _f),
             f"only warnings: {[x[:60] for x in _w]!r} — a warning starts up anyway")
 _f_hosts, _w_hosts = _kp.check_config(TinySesamConfig(
     db_path=":memory:", magiclink_enabled=True,
     trusted_redirect_hosts=["app-a.example.com", "app-b.example.com"]))
 r.check("trusted_redirect_hosts does NOT replace base_url",
-        any("base_url ist leer" in x for x in _f_hosts),
+        any("base_url is empty" in x for x in _f_hosts),
         "with several co-trusted hosts the header chooses otherwise (A-umgehung-4)")
 _gebaut_ohne, _text_ohne = _baut(magiclink_enabled=True, password_reset_enabled=True)
 r.check("...and the constructor aborts with it (ConfigError instead of silent operation)",
@@ -1386,10 +1386,10 @@ from tinysesam import config_check as _kp  # noqa: E402
 
 _fehler, _warn = _kp.check_config(TinySesamConfig(password_reset_enabled=True))
 r.check("config_check names the missing base_url",
-        any("base_url ist leer" in f for f in _fehler), f"{_fehler!r}")
+        any("base_url is empty" in f for f in _fehler), f"{_fehler!r}")
 _fehler2, _warn2 = _kp.check_config(auth_ok.cfg)
 r.check("with base_url set it stays silent about it",
-        not any("base_url ist leer" in m for m in _fehler2 + _warn2), f"{_fehler2!r} {_warn2!r}")
+        not any("base_url is empty" in m for m in _fehler2 + _warn2), f"{_fehler2!r} {_warn2!r}")
 
 # The warning is measured for EVERY switch that builds an absolute address — not only for
 # the mail paths. Before, the suite covered three of the six entries: `BRAUCHT_BASE_URL` could
@@ -1417,13 +1417,13 @@ r.check("the table names all six functions that build absolute addresses",
 for _feld in _BRAUCHT_BASIS:
     _f3, _w3 = _kp.check_config(TinySesamConfig(**{_feld: True}))
     r.check(f"config_check reports {_feld} without base_url as an ERROR",
-            any("base_url ist leer" in f for f in _f3),
+            any("base_url is empty" in f for f in _f3),
             f"{_f3!r} — this switch hands an absolute address out of hand but tells nobody")
 for _feld in _EMPFIEHLT_BASIS:
     _f3, _w3 = _kp.check_config(TinySesamConfig(**{_feld: True}))
     r.check(f"config_check warns for {_feld} without base_url (not an error)",
-            any("base_url ist leer" in w for w in _w3)
-            and not any("base_url ist leer" in f for f in _f3),
+            any("base_url is empty" in w for w in _w3)
+            and not any("base_url is empty" in f for f in _f3),
             f"E={_f3!r} W={_w3!r} — the redirect stays relative, this must not refuse the start")
 
 # ── R4-01, the six places without mail: OIDC, SAML, forward-auth ───────────────
@@ -1973,7 +1973,7 @@ r.check("precondition: the cross collision really is in the database",
         len(auth_alt.store.kennungs_kollisionen()) == 1,
         f"{[dict(z) for z in auth_alt.store.kennungs_kollisionen()]} — then the test measures nothing")
 _text_k = _start_log(auth_alt.cfg.db_path)
-r.check("startup reports an identifier collision in the existing stock", "Kennungs-Kollision" in _text_k,
+r.check("startup reports an identifier collision in the existing stock", "identifier collision(s) in existing data" in _text_k,
         f"silent: {_text_k[:120]!r} — nobody learns why an account can no longer get in")
 r.check("...and names both accounts involved",
         f"user_id={eve_alt}" in _text_k and f"user_id={opfer_alt}" in _text_k,
@@ -2007,7 +2007,7 @@ r.check("...and names panel and CLI — both paths really exist",
 auth_alt.change_username(eve_alt, "eve-umbenannt")
 r.check("...and auth.change_username really resolves the collision",
         not auth_alt.store.kennungs_kollisionen()
-        and "Kennungs-Kollision" not in _start_log(auth_alt.cfg.db_path),
+        and "identifier collision(s) in existing data" not in _start_log(auth_alt.cfg.db_path),
         f"{[dict(z) for z in auth_alt.store.kennungs_kollisionen()]}")
 
 # Integration of the round: The message names `store.set_email(...)` — and exactly this method takes
@@ -2033,7 +2033,7 @@ r.check("...and verified=True keeps it, as the message promises",
 # Counter-check, otherwise the message would be noise: In auth_n2 ONE account carries the same value in
 # both own columns (chef / chef@example.com) — that is the intended path, no collision.
 r.check("a database without cross collision stays silent",
-        "Kennungs-Kollision" not in _start_log(auth_n2.cfg.db_path),
+        "identifier collision(s) in existing data" not in _start_log(auth_n2.cfg.db_path),
         "the same character string in both columns of the SAME account is reported as a collision")
 # ── A GET removes the confirmed second factor (B2-1, audit round 3) ────
 # Attack: The victim is fully signed in (password + TOTP) and clicks a link to /auth/totp/setup
@@ -2237,7 +2237,7 @@ try:
     r.check("after a restart with the clock set back, the session stays expired",
             st_n.get_session(tok_n) is None, "the restart forgot the deadline")
     r.check("…and the lag of the system clock appears in the log",
-            "Systemuhr" in _uhr_log.getvalue(), _uhr_log.getvalue()[:200])
+            "system clock" in _uhr_log.getvalue(), _uhr_log.getvalue()[:200])
     st_n.db.close()
 finally:
     _store_mod._UHR = _alte_uhr
@@ -2762,10 +2762,10 @@ r.check("...and the setup fails on it", _b36)
 # B3-10: rp_id/origin are examined.
 r.check("B3-10: rp_id that does not match the origin is an error",
         _nennt(_befund(passkey_enabled=True, rp_id="example.org", origin="https://auth.example.com")[0],
-               "rp_id", "passt nicht"))
+               "rp_id", "does not match"))
 r.check("...origin with path is not an origin",
         _nennt(_befund(passkey_enabled=True, rp_id="example.com",
-                       origin="https://auth.example.com/login")[0], "ist kein Origin"))
+                       origin="https://auth.example.com/login")[0], "is not an origin"))
 r.check("...developer values next to a public base_url are reported",
         _nennt(_befund(passkey_enabled=True, base_url="https://auth.example.com")[1], "origin", "base_url"))
 r.check("...matching values remain without finding",
@@ -2824,7 +2824,7 @@ def _rv_befund(minuten):
 for _min in (3600, 7200, 43200):
     _f, _w = _rv_befund(_min)
     r.check(f"oidc_revalidate_minutes={_min} (over a day) warns about seconds instead of minutes",
-            _nennt(_w, "oidc_revalidate_minutes", "Sekunden") and not _nennt(_f, "oidc_revalidate_minutes"),
+            _nennt(_w, "oidc_revalidate_minutes", "seconds") and not _nennt(_f, "oidc_revalidate_minutes"),
             f"warnings: {[x[:80] for x in _w]}")
 for _min in (60, 1440):
     r.check(f"…{_min} minutes remain without warning",
@@ -2854,19 +2854,19 @@ for _feld in _kp2.ZAHLENGRENZEN:
     for _wert in ("sieben", float("inf"), float("nan")):
         for _dazu in ({}, _TORE):
             try:
-                _kf = _nennt(_befund(**{_feld: _wert}, **_dazu)[0], _feld, "keine ganze Zahl")
+                _kf = _nennt(_befund(**{_feld: _wert}, **_dazu)[0], _feld, "is not an integer")
             except Exception as e:   # noqa: BLE001 — a crash of the check is the finding here
                 _kf = f"{type(e).__name__}: {e}"
             try:
                 TinySesam(TinySesamConfig(db_path=str(Path(tempfile.mkdtemp()) / "k.db"),
                                           **{_feld: _wert}, **_dazu))
-                _kb = "baut"
+                _kb = "builds"
             except ConfigError as e:
-                _kb = _feld in str(e) or "ConfigError ohne das Feld"
+                _kb = _feld in str(e) or "ConfigError without the field"
             except Exception as e:   # noqa: BLE001
                 _kb = f"{type(e).__name__}: {e}"
             if _kf is not True or _kb is not True:
-                _abstuerze.append(f"{_wert!r}{' mit Schaltern' if _dazu else ''}: check_config {_kf!r} · Aufbau {_kb!r}")
+                _abstuerze.append(f"{_wert!r}{' with switches' if _dazu else ''}: check_config {_kf!r} · startup {_kb!r}")
     r.check(f"{_feld}=text/inf/nan: collected ConfigError instead of a crash of the check",
             not _abstuerze, "; ".join(_abstuerze[:3]))
 r.check("…the probe runs over the fields from ZAHLENGRENZEN (not over an empty list)", len(_kp2.ZAHLENGRENZEN) >= 10,
@@ -2942,7 +2942,7 @@ def _kp_rohe_zahlen(baum):
             ueber_ganzzahl = (isinstance(p, _ast_k.Call) and isinstance(p.func, _ast_k.Name)
                               and p.func.id == "_ganzzahl" and len(p.args) >= 2 and p.args[1] is k)
             if not (ueber_ganzzahl or ist_grenzen_schluessel(k)):
-                befunde.append(f"{k.lineno}: {k.value!r} in {wo} nicht über _ganzzahl gelesen")
+                befunde.append(f"{k.lineno}: {k.value!r} in {wo} not read via _ganzzahl")
         elif isinstance(k, _ast_k.Attribute) and (k.attr in felder or k.attr in _KP_VERBOTEN):
             befunde.append(f"{k.lineno}: .{k.attr} in {wo}")
         elif isinstance(k, _ast_k.Name) and k.id in _KP_VERBOTEN:
@@ -2952,7 +2952,7 @@ def _kp_rohe_zahlen(baum):
                 befunde.append(f"{k.lineno}: {k.func.id}() in {wo}")
             elif (k.func.id == "getattr" and not (len(k.args) > 1 and isinstance(k.args[1], _ast_k.Constant))
                   and not nur_wahrheit_oder_text(k)):
-                befunde.append(f"{k.lineno}: getattr mit Laufzeit-Namen in {wo}, Wert nicht nur als Wahrheitswert/Text")
+                befunde.append(f"{k.lineno}: getattr with runtime name in {wo}, value not only used as truth value/text")
     return befunde
 
 
@@ -3009,15 +3009,15 @@ r.check("…and the read path itself remains without finding", not _kp_fehlalarm
 _gw = TinySesamConfig.oidc_gateway(issuer="https://id.example.com", client_id="g", client_secret="s",
                                    base_url="https://auth.example.com", db_path=":memory:")
 r.check("H-11/B3-9: gateway preset without groups and without clients warns about the open gate",
-        _nennt(_kp2.check_config(_gw)[1], "offenem Tor", "OIDC"))
+        _nennt(_kp2.check_config(_gw)[1], "open gate", "OIDC"))
 _gw2 = TinySesamConfig.oidc_gateway(issuer="https://id.example.com", client_id="g", client_secret="s",
                                     base_url="https://auth.example.com", db_path=":memory:",
                                     allowed_groups=["mitarbeiter"])
-r.check("...with allowed_groups the warning stays silent", not _nennt(_kp2.check_config(_gw2)[1], "offenem Tor"))
+r.check("...with allowed_groups the warning stays silent", not _nennt(_kp2.check_config(_gw2)[1], "open gate"))
 r.check("...open registration in front of forward-auth is reported",
-        _nennt(_befund(forward_auth_enabled=True, allow_signup=True)[1], "Selbst-Registrierung"))
+        _nennt(_befund(forward_auth_enabled=True, allow_signup=True)[1], "self-registration"))
 r.check("...without forward-auth no gate, no message",
-        not _nennt(_befund(allow_signup=True)[1], "Selbst-Registrierung"))
+        not _nennt(_befund(allow_signup=True)[1], "self-registration"))
 
 # B3-16: combinations.
 r.check("B3-16: e-mail confirmation without mandatory address is an error",
@@ -3035,7 +3035,7 @@ r.check("...a shorter session without \"stay signed in\" than with it is reporte
 # `getattr(config, "session_ttl_hours", 0)` with `isinstance(…, int)` → red.)
 _tt_f, _tt_w = _befund(session_ttl_hours=True, session_ttl_transient_hours=12)
 r.check("...session_ttl_hours=True: only the type error, no combination warning beside it",
-        _nennt(_tt_f, "session_ttl_hours=True", "keine ganze Zahl") and not _nennt(_tt_w, "länger als"),
+        _nennt(_tt_f, "session_ttl_hours=True", "is not an integer") and not _nennt(_tt_w, "is longer than"),
         f"errors {_tt_f} · warnings {_tt_w}")
 
 # B3-8: demo mode has technical barriers.
@@ -3115,7 +3115,7 @@ for _titel, _aend, _cfg, _wort in (
         ("totp_required=True", {"totp_required": True}, {}, "totp_required")):
     _erg = _nachtraeglich(_aend, **_cfg)
     r.check(f"A2: {_titel} added afterwards fails at router() and admin_router()",
-            all(_wort in x and "nach dem Aufbau" in x for x in _erg), f"{_erg}")
+            all(_wort in x and "after construction" in x for x in _erg), f"{_erg}")
 # The attack itself: With the guard, no router arises at all, so no registration either.
 _a2, _ = _app(admin_identifiers=["chef"], csrf_enabled=False, signup_require_email=False)
 _a2.cfg.allow_signup = True
@@ -3145,12 +3145,12 @@ r.check("A5: origin as a list of matching origins is no error",
 # (Mutation probe: in _proxies_und_passkey check `str(origin)` instead of the list again → red.)
 r.check("...a bad entry in the list remains an error",
         _nennt(_befund(passkey_enabled=True, rp_id="example.com",
-                       origin=["https://a.example.com", "https://b.example.com/pfad"])[0], "ist kein Origin"))
+                       origin=["https://a.example.com", "https://b.example.com/pfad"])[0], "is not an origin"))
 r.check("...an entry outside the rp_id likewise",
         _nennt(_befund(passkey_enabled=True, rp_id="example.com",
-                       origin=["https://a.example.com", "https://a.example.org"])[0], "passt nicht"))
+                       origin=["https://a.example.com", "https://a.example.org"])[0], "does not match"))
 r.check("...an empty list too",
-        _nennt(_befund(passkey_enabled=True, rp_id="example.com", origin=[])[0], "leere Liste"))
+        _nennt(_befund(passkey_enabled=True, rp_id="example.com", origin=[])[0], "empty list"))
 r.check("...and base_url outside the list is still reported",
         _nennt(_befund(passkey_enabled=True, rp_id="example.com", origin=_zwei,
                        base_url="https://c.example.com")[1], "base_url"))

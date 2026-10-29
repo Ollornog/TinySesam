@@ -31,8 +31,8 @@ def _fehlt_extra(e: ModuleNotFoundError) -> "errors.MissingExtra":
     up to 0.18.0, a `ModuleNotFoundError: ldap3` in the middle of the sign-in — for the operator
     a defect, although only one line was missing from the install command."""
     return errors.MissingExtra(
-        "Das Extra [ldap] ist nicht installiert (pip install 'tinysesam[ldap]') — "
-        f"es fehlt: {e.name or 'ldap3'}.", extra="ldap")
+        "The extra [ldap] is not installed (pip install 'tinysesam[ldap]') — "
+        f"missing: {e.name or 'ldap3'}.", extra="ldap")
 
 
 #: Do NOT follow referrals — on EVERY connection this module opens.
@@ -76,13 +76,13 @@ def _verweis_melden(conn, was: str, username: str) -> None:
     if not verweise and code != 10:
         return
     seclog.warning(
-        "LDAP: %s für user=%s endete mit einem VERWEIS (referral) auf %s — dem folgt TinySesam "
-        "bewusst nicht (sonst ginge das Passwort an den verwiesenen Host, Fund F-28). Die "
-        "Anmeldung scheitert deshalb, obwohl das Konto existieren kann. Wer über mehrere "
-        "AD-Domänen sucht, fragt den Global Catalog ab (Port 3268/3269) und setzt "
-        "ldap_user_base auf die Wurzel.",
+        "LDAP: %s for user=%s ended with a REFERRAL to %s — TinySesam deliberately does not "
+        "follow it (otherwise the password would go to the referred host, finding F-28). The "
+        "sign-in therefore fails although the account may exist. Whoever searches across several "
+        "AD domains queries the Global Catalog (port 3268/3269) and sets "
+        "ldap_user_base to the root.",
         was, fuer_log(username),
-        ", ".join(fuer_log(v) for v in verweise[:3]) or "(Host nicht genannt)")
+        ", ".join(fuer_log(v) for v in verweise[:3]) or "(host not named)")
 
 
 class VerzeichnisNichtErreichbar(errors.TinySesamError, RuntimeError):
@@ -217,13 +217,13 @@ class AusfallMerker:
             rest = self._pause_bis - self._uhr()
             if rest > 0 or self._probe:
                 grund = self._grund
-                warum = (f"nächster Versuch in {rest:.0f} s" if rest > 0
-                         else "eine andere Anmeldung fragt gerade nach")
+                warum = (f"next attempt in {rest:.0f} s" if rest > 0
+                         else "another sign-in is asking right now")
             else:
                 self._probe = True
                 return True
         raise VerzeichnisNichtErreichbar(
-            f"LDAP-Verzeichnis gilt nach einem Fehlschlag als nicht erreichbar ({warum}): {grund}")
+            f"LDAP directory is considered unreachable after a failure ({warum}): {grund}")
 
     def ausgefallen(self, fehler, war_probe: bool = False) -> None:
         """The question failed: start the pause (again), report the transition once.
@@ -238,9 +238,9 @@ class AusfallMerker:
             neu = not self._gestoert
             self._gestoert = True
         if neu:
-            seclog.warning("LDAP-Verzeichnis nicht erreichbar (%s) — Anmeldungen über das "
-                           "Verzeichnis bekommen %d s lang sofort 503, danach fragt eine einzelne "
-                           "Anmeldung wieder nach.", fuer_log(str(fehler)), int(self.pause_sec))
+            seclog.warning("LDAP directory unreachable (%s) — sign-ins via the "
+                           "directory get 503 immediately for %d s, afterwards a single "
+                           "sign-in asks again.", fuer_log(str(fehler)), int(self.pause_sec))
 
     def erreicht(self) -> None:
         """The directory has answered (even with "wrong password"): free again."""
@@ -251,7 +251,7 @@ class AusfallMerker:
             self._gestoert = False
             self._probe = False
         if war:
-            seclog.warning("LDAP-Verzeichnis wieder erreichbar — Anmeldungen fragen es wieder.")
+            seclog.warning("LDAP directory reachable again — sign-ins ask it again.")
 
     def freigeben(self) -> None:
         """A probe ended without an answer and without an outage (other error): release the slot."""
@@ -287,8 +287,8 @@ class _Frist:
         frist = min(int(VERBINDUNGS_TIMEOUT), int(rest // max(1, wartestellen)))
         if frist < 1:
             raise VerzeichnisNichtErreichbar(
-                f"LDAP: Gesamtfrist von {GESAMT_FRIST_SEK} s für eine Anmeldung aufgebraucht "
-                f"(noch {max(0.0, rest):.1f} s für {wartestellen} Antworten)")
+                f"LDAP: total deadline of {GESAMT_FRIST_SEK} s for one sign-in used up "
+                f"({max(0.0, rest):.1f} s left for {wartestellen} responses)")
         return frist
 
 
@@ -404,7 +404,7 @@ class LDAPClient:
                 eingabe, seit = True, time.monotonic()        # the filter carries the username
                 svc.search(cfg.ldap_user_base, flt, attributes=attrs)
                 if not svc.entries:
-                    _verweis_melden(svc, "die Benutzersuche", username)
+                    _verweis_melden(svc, "the user search", username)
                     svc.unbind()
                     return None
                 user_dn = svc.entries[0].entry_dn
@@ -428,7 +428,7 @@ class LDAPClient:
             if entry is None:
                 # Here too: a referral on the attribute search leaves email, name and groups
                 # missing — with ldap_allowed_groups that is a rejection for no recognisable reason.
-                _verweis_melden(conn, "die Attribut-Suche", username)
+                _verweis_melden(conn, "the attribute search", username)
             info = _info_aus_eintrag(entry, username, cfg)
             conn.unbind()
             return info
@@ -446,10 +446,10 @@ class LDAPClient:
             # The tag comes FIRST: route and audit truncate the reason (`fuer_log`, 64 characters).
             if nur_diese:
                 raise AnfrageAbgebrochen(
-                    f"LDAP: nur diese Anfrage abgebrochen — {type(e).__name__}: {e} "
+                    f"LDAP: only this request aborted — {type(e).__name__}: {e} "
                     f"({cfg.ldap_url})") from e
             raise VerzeichnisNichtErreichbar(
-                f"LDAP-Verzeichnis {cfg.ldap_url} nicht benutzbar: {type(e).__name__}: {e}") from e
+                f"LDAP directory {cfg.ldap_url} unusable: {type(e).__name__}: {e}") from e
         except VerzeichnisNichtErreichbar:
             raise                # the total limit (`_Frist`) — not "wrong password"
         except Exception:
@@ -510,7 +510,7 @@ class LDAPClient:
             code = (conn.result or {}).get("result")
             eintraege = list(conn.entries)[:2]
             if not eintraege and code == 10:
-                _verweis_melden(conn, "die Bestandssuche", username)
+                _verweis_melden(conn, "the existing-account search", username)
             elif code not in (0, 4, 32):
                 # 0 hits or end, 4 more than two hits (size_limit), 32 no such DN.
                 raise VerzeichnisNichtErreichbar(
@@ -522,7 +522,7 @@ class LDAPClient:
             raise
         except (lx.LDAPException, OSError) as e:
             raise VerzeichnisNichtErreichbar(
-                f"LDAP-Verzeichnis {cfg.ldap_url} nicht benutzbar: {type(e).__name__}: {e}") from e
+                f"LDAP directory {cfg.ldap_url} unusable: {type(e).__name__}: {e}") from e
 
 
 def _info_aus_eintrag(entry, username: str, cfg) -> dict:

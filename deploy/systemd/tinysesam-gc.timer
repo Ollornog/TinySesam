@@ -1,5 +1,5 @@
 [Unit]
-Description=TinySesam täglich aufräumen
+Description=TinySesam daily cleanup
 
 [Timer]
 # At night, with jitter — and `Persistent`, so a missed run is caught up.

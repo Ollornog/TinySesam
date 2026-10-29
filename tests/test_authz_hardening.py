@@ -115,7 +115,7 @@ assert auth.require(role=["redaktion", "lektorat"]) and auth.require(role="lekto
 for kaputt in ((), ("editor", True)):
     try:
         auth.require_role(*kaputt)
-        raise AssertionError(f"require_role{kaputt} hätte scheitern müssen")
+        raise AssertionError(f"require_role{kaputt} should have failed")
     except (ValueError, TypeError):
         pass
 os.unlink(db)

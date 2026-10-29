@@ -361,10 +361,10 @@ INDEX_CSS = """
   .solves .yes{color:var(--accent);font-weight:700;font-family:var(--ts-serif)}
   .solves b{font-weight:600}
   .solves span{color:var(--muted)}
-  /* Grid auf der Liste, `li{display:contents}` — sonst ist jedes li sein eigenes Raster
-     und die Beschreibungen fluchten nicht. */
-  /* Eine Schriftgröße für den ganzen Block: `code` schrumpft global auf .86em, die Beschreibung
-     nicht — nebeneinander sähen sie ungleich aus. Beide auf die kleinere Größe (wie `.note`). */
+  /* Grid on the list, `li{display:contents}` — otherwise each li is its own grid
+     and the descriptions do not line up. */
+  /* One font size for the whole block: `code` shrinks globally to .86em, the description
+     does not — side by side they would look uneven. Both on the smaller size (like `.note`). */
   .extras{list-style:none;padding:0;margin:12px 0;display:grid;
           grid-template-columns:auto 1fr;gap:8px 14px;align-items:baseline;font-size:13.5px}
   .extras li{display:contents}

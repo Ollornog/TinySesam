@@ -60,7 +60,28 @@ calling them now raises `AttributeError` instead of a `DeprecationWarning`):
 Left as they are because the shared test kit (`repokit sync`) depends on the names: `tests/voraussetzung.py`, the
 `werkzeuge.in` lists, and the kit-managed files themselves.
 
-- Not yet translated (runtime texts; tests depend on their wording): see the next entry once it lands.
+### Changed — runtime texts are English (T-29)
+
+- **Log lines, exception messages, CLI output, start-up warnings and the replacement texts of deprecated names are
+  English now.** Whoever greps the service log for the old German wording has to adjust the filter. The fail2ban
+  filters under `deploy/fail2ban/` are unaffected: `failed login`, `failed verification … reason=` and the other
+  keywords were English before. The LDAP line "directory unreachable" now carries `reason=` instead of `grund=`.
+- **Configuration check:** the findings of `TinySesamConfig.validate()` / the constructor (`config_check.check_config`)
+  are English; with `lang="de"` they are the German texts of before (catalogue `config_check._DE`, English template as
+  key; `tests/test_config_gate.py` checks that every template has a German version with the same placeholders).
+- **E-mails** (sign-in link, password reset, invitation, address confirmation and change notice, lockout notice, …) now
+  come from `messages.py` (`mail.*`): English by default, the previous German wording with `lang="de"`. The account
+  page and the "no HTTPS" bar of the admin panel are translated the same way (`templates._ACCOUNT_TEXT`,
+  `admin._WARN_HTTP`).
+- `vault.load_key` returns its source as `environment` / `file` / `memory` / `beside_db` / `beside_db_new` (was
+  `umgebung` / `datei` / `speicher` / `neben_db`); it only appears in `TinySesam._schluessel_herkunft` and in the CLI output.
+- `scripts/_api_docs.py` writes the English headings and no longer strips a German "stattdessen" prefix.
+- **Deliberately still German** (persisted or operator-facing vocabulary; renaming needs a migration and a decision):
+  the keys and tokens in audit details and security-log lines (`grund=`, `konto=`, `quelle=`, `durch=betreiber`,
+  `kein_konto`, `konto_gesperrt`, `falsches_geheimnis`, audit event names like `oidc_widerruf`), the substitute name
+  `gelöscht#<id>` in the audit log, the SQL trigger message `tinysesam: kennung vergeben`, German identifiers inside
+  the library (private functions, variables, `{grund}` message placeholders, the CSS variables `--ts-bild-*`), and the
+  German user interface itself (`lang="de"`, `i18n/`).
 
 ### Changed — Python 3.13–3.15 (test kit 0.37.0)
 

@@ -41,7 +41,7 @@ from tinysesam.security import seclog  # noqa: E402
 from tinysesam.store import Store, jetzt  # noqa: E402
 from _kit.report import Report  # noqa: E402
 
-r = Report("Schwebende Vorbuchungen — das erste Fenster eines LDAP-Ausfalls (G9)")
+r = Report("Pending pre-bookings — the first window of an LDAP outage (G9)")
 HAENGT = 1.5
 FRIST = 4.0
 PW = "Notfall-Pw-15!"
@@ -83,7 +83,7 @@ def warte_bis(bedingung, was, frist=20.0):
     ende = time.monotonic() + frist
     while not bedingung():
         if time.monotonic() > ende:
-            raise AssertionError(f"Zeitüberschreitung ({frist} s): {was}")
+            raise AssertionError(f"Timeout ({frist} s): {was}")
         time.sleep(0.01)
 
 
@@ -156,7 +156,7 @@ with Mitschnitt() as log_a, ThreadPoolExecutor(max_workers=schwelle_ip + 4) as p
     # Impatient Alice clicks five times, the office behind the same NAT address signs in.
     laufend = [pool.submit(_anmelden, app, "alice") for _ in range(paar)]
     laufend += [pool.submit(_anmelden, app, f"kollege{i}") for i in range(schwelle_ip - paar)]
-    warte_bis(lambda: verz_a.fragen >= schwelle_ip, f"{schwelle_ip} Anläufe im hängenden Verzeichnis")
+    warte_bis(lambda: verz_a.fragen >= schwelle_ip, f"{schwelle_ip} attempts in the hanging directory")
     schwebend = auth.store.count_fails(0, ip=NAT[0])
     bestaetigt = auth.store.count_fails(0, ip=NAT[0], nur_bestaetigt=True)
     zeit_admin: list = []
@@ -254,7 +254,7 @@ for _ in range(grenze_s - 1):
     auth.store.fehlserie_erhoehen("alice")
 with Mitschnitt() as log_d, ThreadPoolExecutor(max_workers=2) as pool:
     haengend_d = pool.submit(_anmelden, app, "alice", "x", ("192.0.2.60", 40000))
-    warte_bis(lambda: verz_d.fragen >= 1, "der hängende Anlauf im Verzeichnis")
+    warte_bis(lambda: verz_d.fragen >= 1, "the hanging attempt in the directory")
     stand_d = (auth.store.fehlserie("alice"), auth.store.fehlserie_bestaetigt("alice"))
     parallel_d = pool.submit(_anmelden, app, "alice", "y", ("192.0.2.61", 40000)).result(timeout=30)
     haengend_d = haengend_d.result(timeout=30)
@@ -279,7 +279,7 @@ for _ in range(grenze_s - 1):
     auth.store.fehlserie_erhoehen("alice")
 with Mitschnitt() as log_d3, ThreadPoolExecutor(max_workers=1) as pool:
     haengend_d3 = pool.submit(_anmelden, app, "alice", "x", ("192.0.2.60", 40000))
-    warte_bis(lambda: verz_d3.fragen >= 1, "der hängende Anlauf im Verzeichnis")
+    warte_bis(lambda: verz_d3.fragen >= 1, "the hanging attempt in the directory")
     seite_d3 = TestClient(app, client=("192.0.2.61", 40000)).post(
         "/auth/login", data={"username": "alice", "password": "y"}, follow_redirects=False)
     gesperrt_d3 = auth._is_locked("alice", "192.0.2.62")
@@ -327,7 +327,7 @@ auth._schwebe_plaetze = threading.BoundedSemaphore(1)
 zeiten_e: list = []
 with Mitschnitt() as log_e, ThreadPoolExecutor(max_workers=3) as pool:
     haengend_e = pool.submit(_anmelden, app, "alice")
-    warte_bis(lambda: verz_e.fragen >= 1, "der hängende Anlauf hält den einen Warteplatz")
+    warte_bis(lambda: verz_e.fragen >= 1, "the hanging attempt holds the single waiting slot")
     wartende = [pool.submit(_anmelden, app, "alice", "x", NAT, zeiten_e) for _ in range(2)]
     status_e = sorted(f.result(timeout=30) for f in wartende)
     haengend_e.result(timeout=30)
@@ -362,7 +362,7 @@ verz_h = Verzeichnis("haengt")
 auth, app, post, db = _aufbau(verz_h)
 with Mitschnitt() as log_h, ThreadPoolExecutor(max_workers=auth._sec("max_login_attempts")) as pool:
     laufend = [pool.submit(_anmelden, app, "alice") for _ in range(auth._sec("max_login_attempts"))]
-    warte_bis(lambda: verz_h.fragen >= auth._sec("max_login_attempts"), "alle Anläufe im hängenden Verzeichnis")
+    warte_bis(lambda: verz_h.fragen >= auth._sec("max_login_attempts"), "all attempts in the hanging directory")
     gesperrt_h = auth._is_locked("alice", NAT[0])
     [f.result(timeout=30) for f in laufend]
     frei_h = not auth._is_locked("alice", NAT[0])
@@ -387,7 +387,7 @@ os.remove(db)
 # pre-bookings. The owner (correct password) and an attacker (wrong) are pending at the same time,
 # the series is at limit−2: the owner is fully signed in and ends the series, the
 # attacker fails with the booked state = limit — `lockout_serie` in the audit log and "locked"
-# im Sicherheits-Log, obwohl nichts gesperrt war.
+# in the security log, although nothing was locked.
 RICHTIG_I = "richtig-im-verz"
 
 
@@ -414,18 +414,18 @@ for _ in range(grenze_i - 2):
     auth.store.fehlserie_erhoehen("alice")
 with Mitschnitt() as log_i, ThreadPoolExecutor(max_workers=2) as pool:
     inhaberin = pool.submit(_anmelden, app, "alice", RICHTIG_I, ("198.51.100.1", 40000))
-    warte_bis(lambda: verz_i.fragen >= 1, "die Inhaberin im Verzeichnis")
+    warte_bis(lambda: verz_i.fragen >= 1, "the owner in the directory")
     angreifer = pool.submit(_anmelden, app, "alice", "falsch", ("203.0.113.66", 40000))
     inhaberin, angreifer = inhaberin.result(timeout=30), angreifer.result(timeout=30)
 auth._hinweis_ausgang.abwarten()
 # (Mutation probe: in `record_login` restore `stand = vorgebucht[2]` and `stand == grenze`, plus in
 #  `reserve_attempt` the sum instead of the settled state → one row → red.)
 r.check("p2 F3: owner and attacker are pending at limit−2, the owner ends the series — "
-        "no `lockout_serie` in the audit log, no “gesperrt” in the security log",
+        "no `lockout_serie` in the audit log, no “locked” in the security log",
         inhaberin == 303 and angreifer == 401 and auth.store.fehlserie("alice") == 0
-        and _serien_zeilen(auth) == 0 and not log_i.zeilen("gesperrt") and post == [],
+        and _serien_zeilen(auth) == 0 and not log_i.zeilen("locked") and post == [],
         f"{inhaberin}/{angreifer}, Serie {auth.store.fehlserie('alice')}, Zeilen {_serien_zeilen(auth)}, "
-        f"{log_i.zeilen('gesperrt')} {post}"[:400])
+        f"{log_i.zeilen('locked')} {post}"[:400])
 os.remove(db)
 
 # Counter-check: the real lockout by burst — exactly one row, with pending (LDAP) and without.
@@ -441,7 +441,7 @@ r.check("p2 F3 counter-check with LDAP (pending): burst at limit−1 → one que
         "stands, exactly one `lockout_serie` row",
         verz_i2.fragen == 1 and salve_i2 == [401] + [429] * 5
         and auth.store.fehlserie_bestaetigt("alice") == grenze_i and _serien_zeilen(auth) == 1
-        and len(log_i2.zeilen("gesperrt: ")) == 1,
+        and len(log_i2.zeilen("locked: ")) == 1,
         f"{verz_i2.fragen} {salve_i2} {auth.store.fehlserie_bestaetigt('alice')} {_serien_zeilen(auth)}")
 os.remove(db)
 

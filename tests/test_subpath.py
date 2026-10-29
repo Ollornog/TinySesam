@@ -77,7 +77,7 @@ def _pruefe_seite(was: str, antwort, praefix: str, fehler: list) -> None:
         if praefix and not ziel.startswith(praefix + "/"):
             fehler.append(f"{was}: {ziel!r}")
         if not praefix and ziel.startswith("/sso"):
-            fehler.append(f"{was}: Präfix ohne Montage {ziel!r}")
+            fehler.append(f"{was}: prefix without mount {ziel!r}")
 
 
 def _rundgang(name: str, client: TestClient, auth, mails: list, praefix: str, basis: str) -> None:

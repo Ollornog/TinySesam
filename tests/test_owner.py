@@ -21,7 +21,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 from tinysesam import ConfigError, StateError, TinySesam, TinySesamConfig  # noqa: E402
 from _kit.report import Report  # noqa: E402
 
-r = Report("Owner — nicht löschbar, weitergebbar, mindestens einer")
+r = Report("Owner — not deletable, transferable, at least one")
 PW = "Owner-Test-Passwort-1"
 
 

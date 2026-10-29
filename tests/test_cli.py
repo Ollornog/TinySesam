@@ -68,19 +68,19 @@ assert code == 1 and "gibtsnicht" in aus
 ok("unknown account -> error message, exit 1")
 
 code, aus = cli("passwd", "--db", db + ".fehlt", "--stdin", "admin", stdin="egal-egal-egal\n")
-assert code == 1 and "Keine Datenbank" in aus
+assert code == 1 and "No database at" in aus
 assert not os.path.exists(db + ".fehlt")     # otherwise sqlite silently creates an empty file
 ok("wrong DB path -> clear message, no empty database as a side effect")
 
 code, aus = cli("passwd", "--db", db, "--stdin", "admin", stdin="kurz\n")
-assert code == 1 and "zu kurz" in aus
+assert code == 1 and "too short" in aus
 assert auth._check_password("admin", "und-noch-eins-lang")
 ok("password_min_length applies here too")
 
 # Without configuration the CLI does not know whether a chain enforces a second factor — it takes
 # the stricter length (B2-4): 15 characters, as long as nobody lowers it in the panel.
 code, aus = cli("passwd", "--db", db, "--stdin", "admin", stdin="Vierzehn-Zeich\n")   # 14 characters
-assert code == 1 and "zu kurz (min. 15)" in aus, aus
+assert code == 1 and "too short (min. 15)" in aus, aus
 ok("passwd takes the single-factor length (15) because it does not know the chain")
 # (Mutation probe: read only `password_min_length` in `_passwd` -> red.)
 
@@ -89,8 +89,8 @@ ok("passwd takes the single-factor length (15) because it does not know the chai
 auth.store.set_setting("password_min_length_single_factor", "8")
 
 # Same rule as on the web (B2-5/B2-13): blocklist, username, maximum length.
-for _schwach, _text in (("Passwort2026!", "leicht zu erraten"), ("admin-admin", "leicht zu erraten"),
-                        ("y" * 257, "zu lang")):
+for _schwach, _text in (("Passwort2026!", "too easy to guess"), ("admin-admin", "too easy to guess"),
+                        ("y" * 257, "too long")):
     code, aus = cli("passwd", "--db", db, "--stdin", "admin", stdin=_schwach + "\n")
     assert code == 1 and _text in aus, (_schwach[:20], aus)
 assert auth._check_password("admin", "und-noch-eins-lang")
@@ -105,13 +105,13 @@ for _args, _pw in ((("--blocklist-file", _liste), "Firmengeheimnis2026!"),
                    (("--blocklist-file", _liste), "Schönwetter99"),
                    (("--rp-name", "Beispielportal"), "Beispielportal1!")):
     code, aus = cli("passwd", "--db", db, "--stdin", *_args, "admin", stdin=_pw + "\n")
-    assert code == 1 and "leicht zu erraten" in aus, (_args, _pw, aus)
+    assert code == 1 and "too easy to guess" in aus, (_args, _pw, aus)
 _von_der_liste = "Firmengeheimnis2026!"
 code, aus = cli("passwd", "--db", db, "--stdin", "admin", stdin=_von_der_liste + "\n")
 assert code == 0, aus    # control: without the switch the CLI does not know the list
 code, aus = cli("passwd", "--db", db, "--stdin", "--blocklist-file", _liste + ".fehlt", "admin",
                 stdin="noch-ein-anderes\n")
-assert code == 1 and "lässt sich nicht lesen" in aus, aus
+assert code == 1 and "cannot be read" in aus, aus
 assert auth._check_password("admin", _von_der_liste)
 ok("passwd reads --blocklist-file (also Latin-1 lines) and --rp-name like the config")
 
@@ -124,12 +124,12 @@ from tinysesam import security as _security
 for _altwert in ("4", "0"):
     auth.store.set_setting("password_min_length", _altwert)
     code, aus = cli("passwd", "--db", db, "--stdin", "admin", stdin="k9T#q7\n")   # 6 characters
-    assert code == 1 and "zu kurz (min. 8)" in aus, (_altwert, code, aus)
+    assert code == 1 and "too short (min. 8)" in aus, (_altwert, code, aus)
     assert auth._sec("password_min_length") == 8 == _security.haertung_lesen(auth.store, "password_min_length")
     assert auth._check_password("admin", _von_der_liste)
 auth.store.set_setting("password_min_length", "12")                 # valid value: applies as on the web
 code, aus = cli("passwd", "--db", db, "--stdin", "admin", stdin="Elf-Zeichen\n")   # 11 characters
-assert code == 1 and "zu kurz (min. 12)" in aus, (code, aus)
+assert code == 1 and "too short (min. 12)" in aus, (code, aus)
 auth.store._exec("DELETE FROM setting WHERE key='password_min_length'")   # back to the default
 auth.store._exec("DELETE FROM setting WHERE key='password_min_length_single_factor'")
 ok("passwd reads the minimum length like the web (legacy value beyond the limit counts as the limit)")
@@ -221,11 +221,11 @@ def _setting_lesewege(quellen):
                             and isinstance(p, _ast.BinOp))
                 if name != "store.py" and ganz and not isinstance(p, _ast.Expr):
                     if _SQL_SETTING.search(text):
-                        verstoesse.append(f"{name}:{k.lineno} rohes SQL auf die Settings-Tabelle")
+                        verstoesse.append(f"{name}:{k.lineno} raw SQL on the settings table")
                     elif _SQL_ANFANG.search(text) and _SQL_TABELLE_OFFEN.search(text):
-                        verstoesse.append(f"{name}:{k.lineno} SQL mit Tabellennamen zur Laufzeit")
+                        verstoesse.append(f"{name}:{k.lineno} SQL with table name at runtime")
                 if isinstance(k, _ast.Constant) and k.value in _SETTING_METHODEN:
-                    verstoesse.append(f"{name}:{k.lineno} {k.value!r} als Text (getattr o. ä.)")
+                    verstoesse.append(f"{name}:{k.lineno} {k.value!r} as text (getattr or similar)")
                 continue
             if isinstance(k, _ast.Attribute):
                 methode = k.attr
@@ -250,11 +250,11 @@ def _setting_lesewege(quellen):
                 (w.value for w in aufruf.keywords if w.arg == "key"), None)
             if isinstance(schluessel, _ast.Constant) and isinstance(schluessel.value, str):
                 if schluessel.value in _security.SECURITY_DEFAULTS:
-                    verstoesse.append(f"{name}:{k.lineno} Härtungs-Schwelle {schluessel.value!r} roh gelesen")
+                    verstoesse.append(f"{name}:{k.lineno} hardening threshold {schluessel.value!r} read raw")
             elif stelle in _SETTING_FREIER_SCHLUESSEL:
                 gesehen.add(stelle)
             else:
-                verstoesse.append(f"{name}:{k.lineno} get_setting ohne literalen Schlüssel in {stelle[1]}")
+                verstoesse.append(f"{name}:{k.lineno} get_setting without a literal key in {stelle[1]}")
     return verstoesse, gesehen
 
 
@@ -333,7 +333,7 @@ import sqlite3
 
 nackt = os.path.join(tempfile.mkdtemp(), "t.db")
 code, aus = cli("backup", "--db", db, nackt)
-assert code == 0 and "Sicherung geschrieben" in aus, (code, aus)
+assert code == 0 and "Backup written" in aus, (code, aus)
 namen = {z[0] for z in sqlite3.connect(nackt).execute("SELECT username FROM users")}
 assert namen, "backup without accounts"
 ok(f"backup takes a copy that is consistent on its own ({len(namen)} accounts)")
@@ -357,11 +357,11 @@ assert not naiv_ok, "the plain file copy was usable — then the test measures n
 ok("a plain file copy is unusable (WAL) — that is why the command exists")
 
 code, aus = cli("backup", "--db", db, nackt)
-assert code == 1 and "gibt es schon" in aus, (code, aus)
+assert code == 1 and "already exists" in aus, (code, aus)
 ok("backup does not overwrite an existing file")
 
 code, aus = cli("backup", "--db", os.path.join(tempfile.mkdtemp(), "t.db"), os.path.join(tempfile.mkdtemp(), "datei"))
-assert code == 1 and "Keine Datenbank" in aus, (code, aus)
+assert code == 1 and "No database at" in aus, (code, aus)
 ok("backup of a missing database -> exit 1, no empty file created")
 
 # ---------- gc: cleaning up needs a way from outside ----------

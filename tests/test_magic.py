@@ -317,4 +317,27 @@ assert "smtp_ca_file" in _puffer.getvalue() and re.search(r"\bmail\.example\.com
     _puffer.getvalue()
 ok("A4: missing smtp_ca_file is a build error, relay by IP warns, certificate error names the remedy")
 
+# Mail wording follows `lang`: English for "en", the old German wording for "de" (messages.py `mail.*`).
+_sprachmails = {}
+for _sprache in ("en", "de"):
+    _gesendet: list = []
+    _am = TinySesam(TinySesamConfig(csrf_enabled=False, lang=_sprache, db_path=os.path.join(tempfile.mkdtemp(), "l.db"),
+                                    passkey_enabled=False, oidc_enabled=False, cookie_secure=False,
+                                    magiclink_enabled=True, base_url="https://auth.example.com"))
+    _am.set_mailer(lambda to, subject, text, html=None, _g=_gesendet: _g.append((subject, text)))
+    _am.ensure_admin("admin", "geheim123")
+    _uid = _am.store.get_user_by_name("admin")["id"]
+    _am.store._exec("UPDATE users SET email=? WHERE id=?", ("admin@example.com", _uid))
+    _app = FastAPI()
+    _app.include_router(_am.router())
+    TestClient(_app).post("/auth/magic/request", data={"email": "admin@example.com", "next": "/"})
+    _am.request_email_change(_uid, "neu@example.com", "https://auth.example.com")()
+    _sprachmails[_sprache] = _gesendet
+for _sprache, _betreffe in (("en", ["Your sign-in link", "Confirm your new email address"]),
+                            ("de", ["Dein Anmelde-Link", "Neue E-Mail-Adresse bestätigen"])):
+    assert [s for s, _t in _sprachmails[_sprache]][:2] == _betreffe, (_sprache, _sprachmails[_sprache])
+assert "Open this link to sign in" in _sprachmails["en"][0][1] and "Zum Anmelden" not in _sprachmails["en"][0][1]
+assert "Zum Anmelden" in _sprachmails["de"][0][1] and "Open this link" not in _sprachmails["de"][0][1]
+ok("mail wording follows lang: sign-in link and email-change confirmation in English (en) and German (de)")
+
 print("\nMAGIC-LINK OK ✅")
