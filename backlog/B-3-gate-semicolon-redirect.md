@@ -2,7 +2,7 @@
 id: B-3
 type: Bug
 title: 'Gate: paths containing ; or %3B are redirected to /.tinysesam/start'
-status: erledigt
+status: offen
 milestone: M-2
 tags: [gate, forward-auth]
 created: 2026-10-23
@@ -16,7 +16,7 @@ To clarify: where is `;` lost? In the reverse proxy (`forward_auth`: forwarding 
 
 Acceptance: a test with `;`, `%3B` and `&amp;` in the path — signed in → the file, signed out → the login; a mutation proves it.
 
-## Done 2026-10-29
+## Investigation 2026-10-29 (not reproducible; still open)
 
 **Finding on the question "where is `;` lost?": not in TinySesam, and not in the repository's proxy templates.**
 Measured, not read:
@@ -37,11 +37,7 @@ Measured, not read:
   that builds `X-Forwarded-Uri` from `{http.request.uri.path}` instead of `{uri}` turns `%3B` into `;` (and drops the
   query) — `tests/test_gate_caddy.py` goes red on it.
 
-**The same error class, found and fixed (the login page).** `next` was put into the links of the login page
-(`/auth/register?next=…`, `/auth/magic/request?next=…`, OIDC and SAML buttons) and into the passkey script with HTML
-escaping only, not as a query value: `&` cut the target off, `+` came back as a space, `%3B` as `;`, and `&amp;` went
-through the escaping twice. `templates._next_q` percent-encodes it; the server decodes once and still runs `safe_next`
-(test: foreign hosts stay `/`). Test `tests/test_next_in_links.py`; mutation: `_next_q` back to `html.escape` → red.
+**The same error class, found and fixed on the way** (login page, `next` not percent-encoded): split out as B-4.
 
 Mutations of the `;` pins: `_forwarded_url` cutting at `;` → `test_gate_link` and `test_gate_caddy` red;
 `X-Forwarded-Uri {http.request.uri.path}` in `Caddyfile.gate` → `test_gate_caddy` red.
