@@ -1293,8 +1293,9 @@ Gateway-Seiten wählt `TINYSESAM_LANG` (`en`, `de`).
 ### Öffentliche Pfade: Share-Links (T-20)
 
 Beide Caddy-Vorlagen lassen mit `TS_SHARE_PRAEFIX='^/(s|public/share)/'` Pfade ohne Anmeldung
-durch, ohne Identität. Geprüft wird der rohe Pfad; `..`, `;`, Backslash, NUL und ihre kodierten Formen
-weist die Regel ab (`/s/..;/admin` lesen Tomcat und Spring als `/admin`). Von sich aus aus. Wie man die
+durch, ohne Identität. Geprüft wird der rohe Pfad; `.`/`..`-Segmente (auch mit Pfadparameter: `..;`), Backslash, NUL
+und ihre kodierten Formen weist die Regel ab (`/s/..;/admin` lesen Tomcat und Spring als `/admin`); ein `;` oder `%3B`
+anderswo, etwa in einem Dateinamen, lässt sie durch. Von sich aus aus. Wie man die
 Pfade einer Anwendung nachmisst: `docs/OPERATIONS.md`.
 
 ### Abmelden an der Anwendung: nur hier oder überall (T-22)
@@ -1466,7 +1467,7 @@ zusätzlich die Website baut.
 
 ## Status
 
-**76 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
+**77 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
 (`tests/test_matrix.py`).
 
 Gebaut und getestet: Passwort/TOTP/Sitzungen/Rollen, Remember-me, Step-up und per-Route-MFA,

@@ -1,4 +1,5 @@
 """Gate token through a REAL Caddy with caddy-jwt — the template deploy/forward-auth/Caddyfile.gate.
+The share exception (T-20, B-3) is measured against the plain template Caddyfile as well.
 
 The claim of ADR-9 is one about the proxy: with a valid gate cookie a request reaches
 the application without TinySesam being asked. That can only be proven with the proxy itself.
@@ -23,6 +24,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from urllib.parse import parse_qs, urlsplit
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from voraussetzung import braucht, braucht_modul  # noqa: E402
@@ -126,11 +128,11 @@ FORWARD["n"] = 0
 SHARE = "^/(s|public/share)/"
 
 
-def caddy_starten():
+def caddy_starten(vorlagen_datei="Caddyfile.gate"):
     """Caddy needs a port that it binds itself — a bound socket cannot be
     passed on. So find a free one, release it and let Caddy bind; if that fails (another
     process was faster), try again with the next one."""
-    vorlage = (ROOT / "deploy/forward-auth/Caddyfile.gate").read_text(encoding="utf-8")
+    vorlage = (ROOT / "deploy/forward-auth" / vorlagen_datei).read_text(encoding="utf-8")
     for _ in range(5):
         s = socket.socket()
         s.bind(("127.0.0.1", 0))
@@ -140,7 +142,7 @@ def caddy_starten():
         text = text.replace("\nauth.example.com {", f"\nhttp://auth.example.com:{port} {{", 1)
         text = text.replace("\napp.example.com {", f"\nhttp://app.example.com:{port} {{", 1)
         assert text.count(f":{port} {{") == 2, "the site addresses of the template have shifted"
-        datei = os.path.join(_tmp, "Caddyfile")
+        datei = os.path.join(_tmp, vorlagen_datei)
         with open(datei, "w", encoding="utf-8") as f:
             f.write(text)
         umg = {**os.environ, "TS_GATE_PUBKEY": auth.gate_public_key(), "TS_GATE_ISSUER": ISS,
@@ -149,7 +151,7 @@ def caddy_starten():
                "XDG_CONFIG_HOME": _tmp}
         # Popen gives the child its own copy of the file descriptor — the parent process's one
         # may be closed right away.
-        with open(os.path.join(_tmp, "caddy.log"), "w") as log:
+        with open(os.path.join(_tmp, vorlagen_datei + ".log"), "w") as log:
             p = subprocess.Popen([CADDY, "run", "--config", datei, "--adapter", "caddyfile"],
                                  stdout=log, stderr=subprocess.STDOUT, env=umg)
         for _ in range(100):
@@ -161,11 +163,14 @@ def caddy_starten():
             except OSError:
                 time.sleep(0.1)
         p.kill()
-    with open(os.path.join(_tmp, "caddy.log"), encoding="utf-8", errors="replace") as log:
+    with open(os.path.join(_tmp, vorlagen_datei + ".log"), encoding="utf-8", errors="replace") as log:
         raise RuntimeError("Caddy does not start: " + log.read()[-2000:])
 
 
 _caddy, PORT = caddy_starten()
+#: The plain template (forward_auth without gate token) carries the same share exception — it needs
+#: no plugin, but its own Caddy, and it is measured just the same (B-3).
+_caddy_plain, PORT_PLAIN = caddy_starten("Caddyfile")
 
 
 class _OhneUmleitung(urllib.request.HTTPRedirectHandler):
@@ -253,6 +258,37 @@ try:
     ok("valid gate cookie → 10 requests at the application, 0 at TinySesam; identity from the "
        "token (UTF-8 as with /auth/forward), Remote-* from the browser overwritten, gate cookie removed")
 
+    # ---------- B-3: `;` and `%3B` in the path ----------
+    def roh_a(pfad, cookies=None):
+        """Raw path on the wire, headers of the dummy back (http.client normalises nothing)."""
+        import http.client
+        v = http.client.HTTPConnection("127.0.0.1", PORT, timeout=10)
+        v.putrequest("GET", pfad, skip_host=True)
+        v.putheader("Host", f"app.example.com:{PORT}")
+        if cookies:
+            v.putheader("Cookie", "; ".join(f"{k}={w}" for k, w in cookies.items()))
+        v.endheaders()
+        a = v.getresponse()
+        text = a.read()
+        v.close()
+        try:
+            return a.status, a.getheader("Location"), json.loads(text)
+        except ValueError:
+            return a.status, a.getheader("Location"), None
+
+    semi = ["/a;b.pdf", "/a%3Bb.pdf", "/a%3bb.pdf", "/Tom&amp;Jerry.pdf", "/a;b.pdf?x=1&y=;z", "/d/x;y/z"]
+    for cookies, was in ((mit_gate, "gate cookie"), (sitzung, "session only")):
+        for pfad in semi:
+            st, loc, a = roh_a(pfad, cookies)
+            assert st == 200 and a and a["pfad"] == pfad, (was, pfad, st, loc, a)
+    ok(f"B-3: {len(semi)} paths with ; / %3B / &amp; reach the application unchanged — with gate cookie and with session alone")
+    for pfad in semi:
+        st, loc, a = roh_a(pfad)
+        assert st == 302 and a is None, (pfad, st, loc)
+        nxt = parse_qs(urlsplit(loc).query)["next"][0]
+        assert nxt == f"http://app.example.com:{PORT}{pfad}", (pfad, nxt)
+    ok("B-3: signed out → login, and `next` carries the path unchanged (; survives, & stays encoded)")
+
     # ---------- every forgery falls back to the way back ----------
     jetzt = int(time.time())
     basis = gate.pruefen(base64.b64decode(auth.gate_public_key()), tok, aud="app.example.com",
@@ -303,13 +339,14 @@ try:
     ok("“Continue as …” → the application lets through again")
 
     # ---------- Share exception (T-20): public only the prefix, without path tricks ----------
-    def roh(pfad, kopf=None):
+    def roh(pfad, kopf=None, port=None):
         """Like `anfrage`, but the path goes onto the wire UNCHANGED (http.client normalises
         nothing) — otherwise the test would not check the path tricks at all."""
         import http.client
-        v = http.client.HTTPConnection("127.0.0.1", PORT, timeout=10)
+        port = port or PORT
+        v = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
         v.putrequest("GET", pfad, skip_host=True)
-        v.putheader("Host", f"app.example.com:{PORT}")
+        v.putheader("Host", f"app.example.com:{port}")
         for k, w in (kopf or {}).items():
             v.putheader(k, w)
         v.endheaders()
@@ -321,23 +358,42 @@ try:
         except ValueError:
             return a.status, None
 
-    offen = ["/s/abc", "/s/abc/def.js", "/public/share/x", "/s/abc?x=../../admin", "/s/a.b..c"]
-    vorher = FORWARD["n"]
-    for pfad in offen:
-        st, a = roh(pfad, {"Remote-User": "admin", "Cookie": "tinysesam_session=GEHEIM; a=1"})
-        assert st == 200 and a and a["header"].get("Remote-User") is None, (pfad, st, a and a["header"])
-        assert a["header"].get("Cookie") == "a=1", (pfad, a["header"].get("Cookie"))
-    assert FORWARD["n"] == vorher, "a share path must not ask TinySesam"
-    ok(f"{len(offen)} share paths open, without TinySesam, without identity (none from the browser either), without TinySesam cookies")
-
-    zu = ["/s/..;/admin", "/s/%2e%2e;/admin", "/s/abc;jsessionid=1", "/s/..%5cadmin", "/s/..\\admin",
-          "/s%2f..%2fadmin", "/s/abc%00", "/x/../s/abc", "/s/../admin", "/s/./abc", "/S/abc", "//s/abc",
-          "/s/%3b", "/sx/abc", "/s", "/admin/x.js"]
-    for pfad in zu:
+    offen = ["/s/abc", "/s/abc/def.js", "/public/share/x", "/s/abc?x=../../admin", "/s/a.b..c",
+             # B-3: `;` and `%3B` are ordinary characters in a file name. A share download such as
+             # /s/<token>/file_%3B%29.bin must reach the application, not the login.
+             "/s/abc;jsessionid=1", "/s/%3b", "/s/%3B", "/s/a;b.pdf", "/s/a%3Bb.pdf", "/s/file_%3B%29.bin",
+             "/s/tok/file_;).bin", "/s/x;y/z", "/s/x/a.;b", "/s/x/;", "/public/share/a;b",
+             # a literal `%3b` in the file name (raw %253b) is no dot segment either
+             "/s/a%253Bb"]
+    # Both templates carry the same exception and are measured alike: the gate template (caddy-jwt) and
+    # the plain forward_auth template.
+    for port, was in ((PORT, "gate template"), (PORT_PLAIN, "plain template")):
         vorher = FORWARD["n"]
-        st, _ = roh(pfad)
-        assert st == 302 and FORWARD["n"] == vorher + 1, (pfad, st)
-    ok(f"{len(zu)} path tricks and neighbouring paths → through the gate (..;, %2e, %5c, NUL, /x/../s/, /S/, //s/ …)")
+        for pfad in offen:
+            st, a = roh(pfad, {"Remote-User": "admin", "Cookie": "tinysesam_session=GEHEIM; a=1"}, port)
+            assert st == 200 and a and a["header"].get("Remote-User") is None, (was, pfad, st, a and a["header"])
+            assert a["header"].get("Cookie") == "a=1", (was, pfad, a["header"].get("Cookie"))
+            assert a["pfad"] == pfad, (was, pfad, a["pfad"])
+        assert FORWARD["n"] == vorher, f"{was}: a share path must not ask TinySesam"
+    ok(f"{len(offen)} share paths open (also with ; / %3B in the file name), without TinySesam, without identity "
+       "(none from the browser either), without TinySesam cookies — gate template and plain template")
+
+    # T-20 path tricks, unchanged. Only the two cases `;`/`%3b` as an ordinary character moved to `offen` (B-3);
+    # a `;` that makes a dot segment (`..;`, `.;`, `..%3b`, doubly encoded `..%253b`) stays closed.
+    zu = ["/s/..;/admin", "/s/%2e%2e;/admin", "/s/..%5cadmin", "/s/..\\admin",
+          "/s%2f..%2fadmin", "/s/abc%00", "/x/../s/abc", "/s/../admin", "/s/./abc", "/S/abc", "//s/abc",
+          "/sx/abc", "/s", "/admin/x.js",
+          # B-3: the dot segment counts with a path parameter — Tomcat/Spring read `..;x` as `..`
+          "/s/.;/x", "/s/..;", "/s/..;jsessionid=1/admin", "/s/x/.;y/z", "/s/..%3b/admin", "/s/..%3B/admin",
+          "/s/%2e%2e%3b/admin", "/s/..%253b/admin", "/s/..%253B/admin", "/s/.%253b/x", "/s/.%2e;/admin",
+          "/s/x/..%00", "/s/a%5Cb", "/s/a%252fb", "/s/a%2500", "/s/a%252e%252e"]
+    for port, was in ((PORT, "gate template"), (PORT_PLAIN, "plain template")):
+        for pfad in zu:
+            vorher = FORWARD["n"]
+            st, _ = roh(pfad, None, port)
+            assert st == 302 and FORWARD["n"] == vorher + 1, (was, pfad, st)
+    ok(f"{len(zu)} path tricks and neighbouring paths → through the gate (..;, .;, ..%3b, ..%253b, %2e, %5c, NUL, "
+       "/x/../s/, /S/, //s/ …) — gate template and plain template")
 
     # ---------- Abnahmemuster (T-24): deploy/forward-auth/acceptance.sh gegen diesen Aufbau ----------
     import shutil  # noqa: E402
@@ -379,11 +435,12 @@ try:
     auth.cfg.gate_token_enabled = True
     ok("gate_token_enabled=False → every request goes via /auth/forward (as without gate)")
 finally:
-    _caddy.terminate()
-    try:
-        _caddy.wait(timeout=10)
-    except subprocess.TimeoutExpired:
-        _caddy.kill()
+    for _c in (_caddy, _caddy_plain):
+        _c.terminate()
+        try:
+            _c.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            _c.kill()
     _app_srv.shutdown()
     _ts_server.should_exit = True
 

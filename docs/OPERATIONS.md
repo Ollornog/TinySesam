@@ -591,9 +591,10 @@ TS_SHARE_PRAEFIX='^/(s|index\.php/s|apps/files_sharing/publicpreview)/'
   under `/admin/x.css`.
 - **What the rule rejects** (measured with Caddy 2.11.7, `tests/test_gate_caddy.py`): `.` and
   `..` segments in the raw path (`/x/../s/a` — Caddy would otherwise compare the cleaned path, the
-  application would get the raw one), `;` (`/s/..;/admin` is read by Tomcat and Spring as `/admin`), backslash,
-  NUL and their encoded forms, wrong upper/lower case (`/S/`), `//s/`. A `..` in the
-  query and in a file name (`a.b..c`) remains allowed.
+  application would get the raw one), also with a path parameter (`/s/..;/admin` is read by Tomcat and Spring as
+  `/admin`), backslash, NUL and their encoded forms, wrong upper/lower case (`/S/`), `//s/`. A `..` in the
+  query and in a file name (`a.b..c`) remains allowed, and so does a `;` or `%3B` in a file name
+  (`/s/<token>/file_%3B%29.bin`; the rule rejected every `;` until B-3 was fixed — copied templates need the new line).
 - **What stays open:** These paths are publicly reachable. A vulnerability of the application there is not protected
   by the gate — keep them as narrow as possible.
 

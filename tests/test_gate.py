@@ -305,6 +305,7 @@ ok("template: every Remote-* header is removed first, then set on both paths; si
 
 # Share exception (T-20), in BOTH templates: off as long as nobody sets it; and without identity —
 # the normal template, too, otherwise removes the Remote-* headers nowhere before the application.
+_sperren = {}
 for _datei in ("deploy/forward-auth/Caddyfile", "deploy/forward-auth/Caddyfile.gate"):
     _t = (pathlib.Path(__file__).resolve().parent.parent / _datei).read_text(encoding="utf-8")
     _code = "\n".join(z.split("#", 1)[0] if not z.lstrip().startswith("header_up Cookie") else z
@@ -313,10 +314,13 @@ for _datei in ("deploy/forward-auth/Caddyfile", "deploy/forward-auth/Caddyfile.g
     assert _block, f"{_datei}: no handle @share"
     assert "{$TS_SHARE_PRAEFIX:^$}" in _code, f"{_datei}: the share exception is not off by itself"
     assert "vars_regexp share {http.request.orig_uri.path}" in _code, f"{_datei}: share does not check the raw path"
-    assert re.search(r"not vars_regexp \{http\.request\.orig_uri\.path\} ", _code), f"{_datei}: without a block for path tricks"
+    _sperre = re.search(r"not vars_regexp \{http\.request\.orig_uri\.path\} (\S+)", _code)
+    assert _sperre, f"{_datei}: without a block for path tricks"
+    _sperren[_datei] = _sperre.group(1)
     for kopfname in TinySesam.FORWARD_HEADERS_DEFAULT.values():
         assert f"header_up -{kopfname}" in _block.group(1), f"{_datei}: share passes {kopfname} through from the browser"
     assert _code.index("handle @share") < _code.index("route {"), f"{_datei}: share only after the gate"
+assert len(set(_sperren.values())) == 1, f"the two templates block path tricks differently: {_sperren}"
 ok("templates: share exception off by itself, checks the raw path, passes no identity through")
 
 print("Gate-Token OK")

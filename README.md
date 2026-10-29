@@ -1269,8 +1269,9 @@ gateway and with it every connection — also after the app was signed out “he
 ### Public paths: share links (T-20)
 
 With `TS_SHARE_PRAEFIX='^/(s|public/share)/'` both Caddy templates let paths through without sign-in
-and without an identity. The raw path is checked; the rule rejects `..`, `;`, backslash, NUL and
-their encoded forms (Tomcat and Spring read `/s/..;/admin` as `/admin`). Off by default. How to
+and without an identity. The raw path is checked; the rule rejects `.`/`..` segments (also with a path
+parameter: `..;`), backslash, NUL and their encoded forms (Tomcat and Spring read `/s/..;/admin` as `/admin`); a `;` or `%3B`
+elsewhere, such as in a file name, passes. Off by default. How to
 measure an app's paths: `docs/OPERATIONS.md`.
 
 ### Signing out at the app: here only or everywhere (T-22)
@@ -1436,7 +1437,7 @@ without extras (guards the stdlib-scrypt fallback), and a browser job that also 
 
 ## Status
 
-**76 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
+**77 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
 
 Implemented and tested: password/TOTP/sessions/roles, remember-me, step-up and per-route MFA,
 factor chains, personal PIN, shared resource secrets, magic links + mailer hook, registration and

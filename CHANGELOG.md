@@ -4,6 +4,28 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+### Fixed — `next` on the login page travels as one query value (B-4)
+
+- The links of the login page (`/auth/register`, `/auth/magic/request`, the OIDC and SAML buttons) and the passkey
+  script carried the return target with HTML escaping only. `&` cut the target off (`/a?x=1&y=2` lost `&y=2`), `+`
+  came back as a space, `%3B` as `;`, and `&amp;` in a file name was escaped twice — the person landed on another
+  file than the one requested. The target is now percent-encoded (`templates._next_q`); the server still decodes once
+  and runs `safe_next`, so nothing about the open-redirect rules changes. Test: `tests/test_next_in_links.py`.
+- The pins from the B-3 investigation (`;`, `%3B`, `&amp;`, query with `;` outside the share exception) stay:
+  `tests/test_gate_link.py`, `tests/test_gate_caddy.py`.
+
+### Fixed — share exception: a `;` in the file name no longer sends the download to the login (B-3)
+
+- The path filter of the share exception (`@share` in `deploy/forward-auth/Caddyfile` and `Caddyfile.gate`, T-20)
+  rejected **every** `;` and `%3B`, as a hardening against `/s/..;/admin`. Caddy matches the decoded path, so a share
+  download with `;` or `%3B` in the file name (`/s/<token>/file_%3B%29.bin`) fell out of the exception and ran through
+  the gate: 302 to `/.tinysesam/start`, the client received the login page instead of the file. A `;` now only counts
+  behind a dot segment: `(?i)(^|/)\.\.?(/|;|%3b|$)|[\\\x00]|%(2e|2f|5c|00)`. `..;`, `.;`, `..%3b` and the doubly
+  encoded `..%253b` stay closed; backslash, NUL, `%2e %2f %5c %00` and the case rule are unchanged. Tests:
+  `tests/test_gate_caddy.py` (real Caddy, both templates), `tests/test_gate.py` (both templates carry the same filter).
+- **Migration:** whoever copied the template into their own Caddyfile must take over the changed `not vars_regexp`
+  line in the `@share` block. Without `TS_SHARE_PRAEFIX` (exception off) nothing changes.
+
 ### Security — authlib floor 1.9.1, setuptools 84.2.1, log filter for CodeQL
 
 - Lower bound `authlib>=1.9.1` (extras `oidc`, `gateway`, `all`; previously 1.6.12): The lowest permitted resolution

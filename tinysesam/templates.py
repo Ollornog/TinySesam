@@ -244,6 +244,19 @@ def _e(s) -> str:
     return html.escape(str(s or ""))
 
 
+def _next_q(s) -> str:
+    """A `next` target as ONE query value, for links and script strings (B-3).
+
+    `_e` is the escaping for HTML text and attributes — it leaves `&`, `+`, `%`, `;` and `#` alone,
+    which in a query string have a meaning of their own: `?next=/a?x=1&y=2` lost `&y=2`, `+` came back
+    as a space, `%3B` as `;` — the person landed on another file than the one requested (and
+    `&amp;` in a file name even went through `_e` twice). Percent-encoding everything leaves only
+    `[A-Za-z0-9_.~%-]`, which is safe in an HTML attribute and in a JS string as well. The server decodes
+    exactly once and still runs `safe_next` on the result — encoding changes nothing about what is allowed.
+    """
+    return _quote(str(s or ""), safe="")
+
+
 def _ident(auth) -> tuple[str, str]:
     """Label + autocomplete for the identifier field, depending on `config.login_identifier`."""
     mode = getattr(auth.cfg, "login_identifier", "both")
@@ -358,24 +371,24 @@ def _login(auth, ctx) -> str:
                f"<button type=submit>{_e(t('login.pin_submit'))}</button></form>")
     magic = ""
     if "magic" in methods:
-        magic = f"<a class=btn2 href='__TS_P__/auth/magic/request?next={_e(next_)}'>{_e(t('login.magic'))}</a>"
+        magic = f"<a class=btn2 href='__TS_P__/auth/magic/request?next={_next_q(next_)}'>{_e(t('login.magic'))}</a>"
     # `app` (T-14) travels along: without it the button would start the round with the default client,
     # and the approval for THIS application would never come about (B-2).
     app_q = f"&app={_e(_quote(ctx['app']))}" if ctx.get("app") else ""
-    oidc = (f"<a class=btn2 href='__TS_P__/auth/oidc/start?next={_e(next_)}{app_q}'>{_e(cfg.oidc_name)}</a>"
+    oidc = (f"<a class=btn2 href='__TS_P__/auth/oidc/start?next={_next_q(next_)}{app_q}'>{_e(cfg.oidc_name)}</a>"
             if "oidc" in methods else "")
-    saml = (f"<a class=btn2 href='__TS_P__/auth/saml/login?next={_e(next_)}'>{_e(cfg.saml_name)}</a>"
+    saml = (f"<a class=btn2 href='__TS_P__/auth/saml/login?next={_next_q(next_)}'>{_e(cfg.saml_name)}</a>"
             if "saml" in methods else "")
     passkey = f"<button class=btn2 type=button id=pkbtn>{_e(t('login.passkey'))}</button>" if "passkey" in methods else ""
     others = oidc + saml + passkey + magic
     sep = _or if others and (pw or pin) else ""
     links = []
     if cfg.allow_signup:
-        links.append(f"<a href='__TS_P__/auth/register?next={_e(next_)}'>{_e(t('login.signup'))}</a>")
+        links.append(f"<a href='__TS_P__/auth/register?next={_next_q(next_)}'>{_e(t('login.signup'))}</a>")
     if getattr(cfg, "password_reset_enabled", False) and cfg.magiclink_enabled:
         links.append(f"<a href='__TS_P__/auth/forgot'>{_e(t('login.forgot'))}</a>")
     signup = f"<div class=hint>{' · '.join(links)}</div>" if links else ""
-    js = (_csrf_js(auth) + _PASSKEY_LOGIN_JS.replace("__NEXT__", _e(next_))) if "passkey" in methods else ""
+    js = (_csrf_js(auth) + _PASSKEY_LOGIN_JS.replace("__NEXT__", _next_q(next_))) if "passkey" in methods else ""
     # In front of an application (forward_apps[host].name, T-21) the page says what you sign in for. With a brand
     # (gate_brand) the brand stands on top and the application as its own line below.
     marke = getattr(cfg, "gate_brand", "") or ""
