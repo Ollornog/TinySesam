@@ -132,14 +132,14 @@ class Postausgang:
         response object (the lockout in login, ASVS 6.3.5). False if the queue is full;
         the job is dropped then."""
         if not self._reservieren():
-            log.warning("Hinweis-Warteschlange voll (%d) — Versand verworfen", self.max_offen)
+            log.warning("Notice queue full (%d) — send dropped", self.max_offen)
             return False
 
         def _lauf():
             try:
                 auftrag()
             except Exception:   # noqa: BLE001
-                log.exception("Hinweis-Auftrag gescheitert")
+                log.exception("Notice job failed")
             finally:
                 self._freigeben()
         zukunft = self._executor().submit(_lauf)
@@ -163,7 +163,7 @@ class Postausgang:
         """
         async def _lauf():
             if not self._reservieren():
-                log.warning("Mail-Warteschlange voll (%d) — Versand verworfen", self.max_offen)
+                log.warning("Mail queue full (%d) — send dropped", self.max_offen)
                 if bei_ueberlauf:
                     try:
                         bei_ueberlauf()
@@ -173,7 +173,7 @@ class Postausgang:
             try:
                 await asyncio.wrap_future(self._executor().submit(auftrag))
             except Exception:   # noqa: BLE001
-                log.exception("Mail-Auftrag gescheitert")
+                log.exception("Mail job failed")
             finally:
                 self._freigeben()
         return _lauf

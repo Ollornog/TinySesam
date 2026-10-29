@@ -227,7 +227,7 @@ with Mitschnitt() as log_s:
 r.check("(a) series: after 10 failed attempts in a row 429 `locked_series` with the text of the series lock",
         [a.status_code for a in _serie_folge] == [401] * 10 + [429]
         and _reason(_serie_folge[-1]) == "locked_series"
-        and _serie_folge[-1].json()["message"] == auth.t("err.locked_serie"),
+        and _serie_folge[-1].json()["message"] == auth.t("err.locked_series"),
         f"{[(a.status_code, _reason(a)) for a in _serie_folge]}")
 r.check("(a) … it does not expire: even the correct password from a new address stays out",
         _serie_richtig.status_code == 429 and _reason(_serie_richtig) == "locked_series",

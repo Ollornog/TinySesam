@@ -91,7 +91,7 @@ MESSAGES = {
         "err.required": "Please fill in every field.",
         "err.rate": "Too many requests — please wait a moment.",
         "err.locked": "Too many failed attempts — temporarily locked.",
-        "err.locked_serie": "Too many failed attempts in a row — sign-in is locked. Ask the operator "
+        "err.locked_series": "Too many failed attempts in a row — sign-in is locked. Ask the operator "
                             "to unlock it; if the failed attempts were password attempts, resetting "
                             "your password also works.",
         "err.retry": "Too many attempts — please wait.",
@@ -467,7 +467,7 @@ MESSAGES = {
         "err.required": "Bitte alle Felder ausfüllen.",
         "err.rate": "Zu viele Anfragen — bitte kurz warten.",
         "err.locked": "Zu viele Fehlversuche — vorübergehend gesperrt.",
-        "err.locked_serie": "Zu viele Fehlversuche in Folge — die Anmeldung ist gesperrt. Den "
+        "err.locked_series": "Zu viele Fehlversuche in Folge — die Anmeldung ist gesperrt. Den "
                             "Betreiber um Freigabe bitten; galten die Fehlversuche dem Passwort, hilft "
                             "auch ein Passwort-Reset.",
         "err.retry": "Zu viele Versuche — bitte warten.",

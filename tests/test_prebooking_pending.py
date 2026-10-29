@@ -287,7 +287,7 @@ with Mitschnitt() as log_d3, ThreadPoolExecutor(max_workers=1) as pool:
 auth._hinweis_ausgang.abwarten()
 r.check("deferral at the series limit: 429 with the text of the window lockout, not of the series lockout",
         seite_d3.status_code == 429 and auth.t("err.locked") in seite_d3.text
-        and "in Folge" not in seite_d3.text and "in Folge" in auth.t("err.locked_serie"),
+        and "in Folge" not in seite_d3.text and "in Folge" in auth.t("err.locked_series"),
         f"{seite_d3.status_code}")
 r.check("is_locked at the series limit with pending pre-booking: True, as deferral",
         gesperrt_d3 and len(log_d3.zeilen("deferred login")) == 2

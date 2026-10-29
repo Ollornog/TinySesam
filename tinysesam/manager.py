@@ -307,7 +307,7 @@ class TinySesam:
         if not _passwords.argon2_verfuegbar():
             betroffen = self.store.zaehle_argon2_hashes()
             if betroffen:
-                security.seclog.error("%s (%d betroffene Hashes)", _passwords.ARGON2_FEHLT, betroffen)
+                security.seclog.error("%s (%d affected hashes)", _passwords.ARGON2_FEHLT, betroffen)
         self.store.audit_ip_pseudonym = bool(config.audit_ip_pseudonymize)
         self._protokoll_drossel: dict = {}   # see `_einmal_je`
         # Just fully signed-in sessions (handle) whose cookie is not set yet — see
@@ -1512,7 +1512,7 @@ class TinySesam:
         self.store.set_admin(user["id"], True)
         self._erster_owner(user["id"])
         self.audit("admin_bootstrap", user["username"], detail="admin_identifiers")
-        security.seclog.warning("Erst-Admin per admin_identifiers vergeben: %s",
+        security.seclog.warning("First admin granted via admin_identifiers: %s",
                                 security.fuer_log(user["username"]))
         return True
 
@@ -1640,7 +1640,7 @@ class TinySesam:
         self.store.set_admin(user["id"], True)
         self._erster_owner(user["id"])
         self.audit("admin_bootstrap", user["username"], detail="claim_token")
-        security.seclog.warning("Erst-Admin per Einmal-Token vergeben: %s",
+        security.seclog.warning("First admin granted via one-time token: %s",
                                 security.fuer_log(user["username"]))
         return True
 
@@ -2935,7 +2935,7 @@ class TinySesam:
         the PIN in the chain step (`_PIN_CHAIN_SERIES`, G7). If those alone are at the limit, the lockout
         notice and security log still named the reset as a way out until 2026-09-27 — the owner
         reset their password and stayed locked. Only for texts to the owner and operator: the
-        sign-in page shows everyone the same text (`err.locked_serie`), otherwise it would reveal that
+        sign-in page shows everyone the same text (`err.locked_series`), otherwise it would reveal that
         someone is guessing the second factor under an identifier — and thus that the account exists."""
         return (self.store.fehlserie_ohne(norm_kennung(username), self._SERIE_RESET_ARTEN)
                 < self._sec("account_max_consecutive_failures"))
@@ -4474,7 +4474,7 @@ class TinySesam:
         A deferral (G9) gets the same 429 and the same reason as a lock — otherwise
         the response would reveal that someone else is currently signing in under this identifier or address."""
         if self._serie_voll(kennung):
-            return self._anmeldung_nein("locked_series", 429, "err.locked_serie", weiter, naechster)
+            return self._anmeldung_nein("locked_series", 429, "err.locked_series", weiter, naechster)
         return self._anmeldung_nein(grund, 429, text, weiter, naechster)
 
     def _angemeldet(self, request, token, neu: bool, user_id: int, nxt: str) -> LoginResult:
