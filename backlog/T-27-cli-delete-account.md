@@ -2,7 +2,7 @@
 id: T-27
 type: Task
 title: CLI command to delete an account (maintenance without the admin panel)
-status: offen
+status: erledigt
 milestone: M-2
 tags: [cli, wartung, konten, datenschutz]
 created: 2026-10-11
@@ -38,3 +38,14 @@ their cases.
 - A test creates an OIDC account with a session, deletes it via the CLI and checks: rows in `users`, `oidc_identity`,
   `session` gone, audit entry anonymised as when deleting via the panel, second call → exit ≠ 0.
 - Mutation: command bent to `Store.delete_user` → the audit test turns red; protection rule removed → red.
+
+## Done 2026-10-29
+
+- `delete --db <file> <user>` (also `#<id>`) in `tinysesam/__main__.py`; goes through `Store.konto_entfernen` like the
+  panel. The protection rule (owner, last admin) was moved into `Store.loeschsperre` and is used by
+  `TinySesam.delete_user` and the command — one rule, not a copy. Asks on a terminal, `--ja` for scripts, no terminal
+  and no `--ja` refuses.
+- Test `tests/test_cli_delete.py` (OIDC account with sessions: rows gone, audit anonymised like the panel's, second
+  call exit 1, owner / last admin, confirmation paths). Mutations red: command bent to `Store.delete_user`, protection
+  rule removed, `--ja` / terminal check removed.
+- Docs: README (en/de) "Removing an account", `docs/OPERATIONS.md`, CHANGELOG. API.md does not list CLI commands.

@@ -1275,10 +1275,11 @@ class TinySesam:
         u = self.store.get_user(user_id)
         if not u:
             return False
-        if u["is_owner"]:
+        sperre = self.store.loeschsperre(u)        # the same rule as `tinysesam delete`
+        if sperre == "owner":
             raise StateError(f"Account {user_id} is an owner and cannot be deleted — hand over the "
                              "owner role first (this requires another owner to exist).")
-        if u["is_admin"] and sum(1 for x in self.store.list_users() if x["is_admin"]) <= 1:
+        if sperre == "last_admin":
             raise StateError(f"Account {user_id} is the last admin and cannot be deleted.")
         # The one deletion path (`Store.konto_entfernen`) — the same through which `gc()`, `tinysesam gc`
         # and the withdrawal of a registration delete (integration findings 12/18). Only here, in

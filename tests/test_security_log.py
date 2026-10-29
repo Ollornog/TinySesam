@@ -284,9 +284,10 @@ _kommandos = set(re.findall(r'cmd == "([a-z]+)"', _inspect.getsource(_cli_main))
 # existing account (emergency route when no owner can get in anymore). `rename` (G13, 2026-09-26) likewise
 # creates no account but does change an identifier — which is why the startup messages on
 # identifier collisions and control characters now name it (tests/test_security_findings.py checks that
-# the named route exists); the first-admin warning here stays as it is.
+# the named route exists); the first-admin warning here stays as it is. `delete` (T-27) removes an
+# account — it creates none and changes no identifier (it frees them), so this warning stays too.
 assert _kommandos == {"version", "passwd", "backup", "restore", "gc", "audit", "unlock", "owner",
-                      "rename"}, \
+                      "rename", "delete"}, \
     (f"CLI commands changed: {sorted(_kommandos)} — if one of them can now create accounts "
      "or change identifiers, the operator messages must be changed along")
 ok("first-admin warning names ensure_admin instead of the CLI (which creates no accounts)")

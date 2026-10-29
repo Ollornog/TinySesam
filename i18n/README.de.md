@@ -738,6 +738,22 @@ Das Audit-Log hält fest, *warum* eine Anmeldung scheiterte (`no_account`, `acco
 `wrong_secret`) — die HTTP-Antwort tut das bewusst nicht, sonst liesse sich damit nach
 Konten suchen. Im Protokoll liest nur der Betreiber mit.
 
+### Ein Konto entfernen
+
+```bash
+python -m tinysesam delete --db auth.db alice           # fragt vorher nach; --ja für Skripte
+```
+
+Für Instanzen ohne Admin-Panel — etwa nur OIDC, wo ein Abnahmetest mit einem Testkonto ein lokales
+Konto hinterlässt. Es nimmt denselben Weg und dieselben Schutzregeln wie „Löschen" im Panel:
+Zugangsdaten, Sitzungen und Identitätsverknüpfungen verschwinden, die Anmeldeversuche unter Name und
+Adresse ebenfalls, und der Name im Audit-Log wird zu `deleted#<id>` (die Zeilen selbst bleiben). Ein
+Owner und der letzte Admin werden nicht gelöscht. Das Kommando nennt, was es entfernt hat (Name, Zahl
+der Sitzungen und Identitätsverknüpfungen), nie ein Geheimnis. Ohne `--ja` fragt es nach, ohne
+Terminal verweigert es; ein unbekanntes Konto endet mit Exit 1. `#<id>` statt des Namens geht wie bei
+`rename`. Ein rohes `DELETE` in der Datenbank ist der falsche Weg — es lässt den Namen in jeder
+Audit-Zeile stehen.
+
 ## Demo-Modus
 
 `demo_mode=True` legt die Konten `demo` und `demoadmin` an, zeigt ihre Zugangsdaten auf der
@@ -1467,7 +1483,7 @@ zusätzlich die Website baut.
 
 ## Status
 
-**77 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
+**78 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
 (`tests/test_matrix.py`).
 
 Gebaut und getestet: Passwort/TOTP/Sitzungen/Rollen, Remember-me, Step-up und per-Route-MFA,
