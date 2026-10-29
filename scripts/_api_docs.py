@@ -54,7 +54,8 @@ STUFEN = {
           "extension points",
           "Stays. Removal or rework only after a `DeprecationWarning` has pointed to it for two "
           "minor versions. Weaker than A: A rework with advance notice "
-          "is allowed."),
+          "is allowed. A route cannot warn: a path in tier B is announced in the CHANGELOG under "
+          "“Deprecated” at least two minor versions before it is removed or renamed."),
     "C": ("internal",
           "Wiring of the built-in routes",
           "None. Since 0.22.0 the implementation carries a leading underscore; the old "
@@ -308,9 +309,12 @@ def vertrag_abschnitte(datei: dict) -> str:
         "listed and guarded; the JSON bodies some routes read are not measured. `<admin>` is where the admin "
         "router is mounted (`admin_path`, default `/auth/admin`), `<oidc_callback_path>` is the field of that "
         "name.\n\n")
-    t.append("### A · Forward and gate — for reverse proxies\n\n"
+    t.append("### A · Forward, gate and provider paths — for reverse proxies, identity providers and the "
+             "health check\n\n"
              "What a proxy (Caddy `forward_auth`, nginx `auth_request`, Traefik) and the application host's "
-             "`/.tinysesam/*` paths depend on. A break here resets the 1.0 clock, like any tier-A name. The "
+             "`/.tinysesam/*` paths depend on, plus the paths other systems have registered by hand or poll: the "
+             "OIDC callback (`<oidc_callback_path>`), the SAML ACS and metadata paths and `/healthz` (the image's "
+             "health check). A break here resets the 1.0 clock, like any tier-A name. The "
              "pages behind these routes (the sign-out page, the \"Signed out\" page) are HTML: their path, "
              "method, status and redirect target are promised, their appearance is not.\n\n"
              "#### Routes\n\n" + _route_tabelle(datei, "A"))
@@ -325,15 +329,18 @@ def vertrag_abschnitte(datei: dict) -> str:
              + ", ".join(f"`{h}`" for h in kopf_a) + ".\n")
     t.append("- **Values of `X-TinySesam-Reason`:** " + ", ".join(f"`{r}`" for r in _atome(datei, "reason", "A"))
              + " (`app-…` only with several OIDC clients).\n")
-    t.append("- **Request headers the forward and gate paths read:** "
-             + ", ".join(f"`{h}`" for h in _atome(datei, "request-header", "A")) + ".\n")
+    t.append("- **Request headers the forward and gate paths read** — what a proxy sets or passes on: "
+             + ", ".join(f"`{h}`" for h in _atome(datei, "request-header", "A"))
+             + ". The `Cookie` header is passed on as the browser sent it. Headers a browser sends on its own "
+             "(" + ", ".join(f"`{h}`" for h in _atome(datei, "request-header", "B"))
+             + ") are read as well but are tier B: no proxy has to set them.\n")
     t.append("- **Request parameters:** " + ", ".join(f"`{p}`" for p in _atome(datei, "request-param", "A")) + ".\n")
     t.append("- **Cookies the gate sets itself** (host-only, fixed names): "
              + ", ".join(f"`{c}`" for c in _atome(datei, "cookie", "A"))
              + ". The gate token cookie is named by the configuration field `gate_cookie_name`.\n\n")
     t.append(f"### B · Pages and API routes\n\nThe HTML pages (sign-in, registration, account, admin panel, the "
              f"pages behind e-mailed links), the JSON routes of the account and admin APIs, the passkey, OIDC "
-             f"and SAML routes and the gateway's own `/` and `/healthz`. Path and method are promised with the "
+             f"and SAML routes (except the provider paths above) and the gateway's own `/`. Path and method are promised with the "
              f"weaker B promise: removed or renamed only after the CHANGELOG has announced it under “Deprecated” "
              f"for two minor versions (a route cannot raise a Python warning). The HTML of a page is **not** "
              f"promised, nor its look.\n\n"
@@ -442,10 +449,14 @@ def bauen() -> str:
         "their parameters and the keys and values they return or accept — "
         "result dicts, the `details` passed to `on_security_event`, the context of your own pages "
         "(`ctx[\"prefix\"]`, `ctx[\"purpose\"]`), the JSON responses of the routes, the kinds of "
-        "API keys (`automation`, `human`). Audit and log lines stay as they were. The list "
-        "old → new is in the CHANGELOG for 0.22.0.\n\n"
+        "API keys (`automation`, `human`). Since the last breaking pass before the freeze (PO decision "
+        "2026-10-29) the same holds for what operators and proxies read — query and form parameters, header and "
+        "cookie names, logger names, the event words and keys of the security log, message ids — and audit "
+        "and log lines are English as well. The lists old → new are in the CHANGELOG (0.22.0, "
+        "[Unreleased]).\n\n"
         "**Beyond the Python names** (PO decision 2026-10-29): `auth.cfg` and `auth.on_security_event`, the "
-        "HTTP routes (the forward and gate contract that proxies use in tier A, the HTML pages in tier B) and "
+        "HTTP routes (the forward and gate contract that proxies use and the paths of the identity provider "
+        "and the health check in tier A, the HTML pages in tier B) and "
         "the logger names and security-log lines that fail2ban filters read (tier A) are measured and tiered "
         "like the names above — see the sections “Attributes of `TinySesam`”, “HTTP contract” and “Security log” "
         "below. For these entries the tier-A clock starts with the release that introduces them, not with "

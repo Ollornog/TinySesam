@@ -133,7 +133,7 @@ class SAMLClient:
         auth = self._auth(req, base_url)
         auth.process_response(request_id=request_id or None)
         if auth.get_errors() or not auth.is_authenticated():
-            security.seclog.warning("SAML-Antwort abgelehnt: errors=%s reason=%s authenticated=%s",
+            security.seclog.warning("SAML response rejected: errors=%s reason=%s authenticated=%s",
                                     auth.get_errors(), auth.get_last_error_reason(),
                                     auth.is_authenticated())
             return None

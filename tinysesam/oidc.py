@@ -633,7 +633,7 @@ def register_oidc_routes(router, auth):
         erwartet = flow.get("fk")
         mitgebracht = request.cookies.get(auth.flow_cookie_name(_OIDCFLOW)) or ""
         if not erwartet or not secrets.compare_digest(_hash(mitgebracht), erwartet):
-            security.seclog.warning("OIDC-Callback ohne passendes Flow-Cookie — abgewiesen")
+            security.seclog.warning("OIDC callback without a matching flow cookie — rejected")
             raise HTTPException(400, auth.t("api.oidc_browser"))
         # The exchange is done with the client with which the flow began. A different client would have
         # a different secret — the exchange then fails at the provider, rightly so.

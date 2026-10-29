@@ -8,7 +8,7 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 PO decision 2026-10-29: besides the Python names the promise now covers the following. **Nothing changes in the
 code or in any existing tier** — this is new promise, measured by `tests/test_api_surface.py` (191 new entries in
-`tests/api_surface.json`: A 106, B 85; the totals are now A 372, B 151, C 38).
+`tests/api_surface.json`: A 106, B 85; the totals are now A 372, B 151, C 38; the entry “the last breaking pass” below re-tiers nine of them: A 371, B 152, C 38).
 
 - **Tier A — `auth.cfg` (reading) and `auth.on_security_event`.** `auth.cfg` is the `TinySesamConfig` instance that was
   passed to the constructor. Writing it is **not** promised: it is a plain mutable dataclass, which field is read when is
@@ -39,6 +39,67 @@ code or in any existing tier** — this is new promise, measured by `tests/test_
 - Refactor: the static reading of the `seclog` call sites moved from `tests/test_fail2ban_reason.py` to
   `tests/_seclog_ast.py`; both guards use it.
 
+### Changed — the last breaking pass before the API freeze (M-1, PO decision 2026-10-29)
+
+What the stability promise names is English and correctly tiered **now**. Everything below is a break against the
+earlier state, made **once, without alias or transition** (nothing of it was released with the new promise). No stored
+data changes, the schema version stays 15. **Take a backup before the update anyway** (`tinysesam backup`, not `cp`).
+
+**Renamed**
+
+| Old | New | Where | Tier |
+|---|---|---|---|
+| query parameter `abgemeldet=1` | `signed_out=1` | `GET /.tinysesam/start` (also written by TinySesam's own redirects) | A |
+| query parameter `abgemeldet=1` | `signed_out=1` | `GET /auth/login` | B |
+| message id `err.locked_serie` | `err.locked_series` | `add_messages`, `auth.t` | — |
+| option `--ja` | `--yes` | `tinysesam restore`, `tinysesam delete` | outside the measured promise |
+| template variable `TS_SHARE_PRAEFIX` | `TS_SHARE_PREFIX` | `deploy/forward-auth/Caddyfile`, `Caddyfile.gate` | outside the measured promise |
+| log text `Hinweis-Warteschlange voll …`, `Mail-Warteschlange voll …`, `Hinweis-Auftrag gescheitert`, `Mail-Auftrag gescheitert` | `Notice queue full …`, `Mail queue full …`, `Notice job failed`, `Mail job failed` | logger `tinysesam.mail` | free text, not promised |
+| log text `Erst-Admin per admin_identifiers vergeben`, `… per Einmal-Token vergeben` | `First admin granted via admin_identifiers`, `… via one-time token` | `tinysesam.security` | free text |
+| log text `OIDC-Callback ohne passendes Flow-Cookie — abgewiesen`, `SAML-Antwort abgelehnt`, `(%d betroffene Hashes)` | `OIDC callback without a matching flow cookie — rejected`, `SAML response rejected`, `(%d affected hashes)` | `tinysesam.security` | free text |
+
+Internal, not promised: the fields `abgemeldet` and `bindung` of the gate-link flow (stored for 2 to 10 minutes) are
+`signed_out` and `binding` now. A login in flight during the update ends in a plain 400 and is repeated.
+
+**Re-tiered**
+
+| Entry | Before | Now | Why |
+|---|---|---|---|
+| `GET <oidc_callback_path>`, `POST /auth/saml/acs`, `GET /auth/saml/metadata`, `GET /healthz` | B | **A** | registered by hand at the identity provider and in the orchestrator |
+| request headers `Accept`, `Referer`, `Sec-Fetch-Mode`, `Sec-Fetch-Site`, `X-Csrf-Token` | A | **B** | sent by browsers, no proxy has to set or pass them on specially |
+
+Totals: A 371, B 152, C 38. Tier A for request headers is what a proxy sets or passes on: `Host`, `Authorization`,
+`X-Api-Key`, `Cookie`, `X-Forwarded-For|Host|Proto|Uri`, `X-Original-Uri|Url`, `X-TinySesam-Roles`. `auth.cfg` stays tier
+A for **reading only**; writing it is not promised.
+
+**Deprecated policy for routes:** a path in tier B is announced in the CHANGELOG under “Deprecated” at least two minor
+versions before it is removed or renamed (a route cannot raise a `DeprecationWarning`).
+
+**Operators**
+
+- **Proxy rules:** nothing to change unless a rule matches `abgemeldet`. A saved link with the old name still works, but
+  without the hint “You have been signed out”. A rule that strips browser headers is not affected by the new tier.
+  Whoever copied a Caddy template: rename `TS_SHARE_PRAEFIX` to `TS_SHARE_PREFIX` in the environment, otherwise the
+  share exception stays off.
+- **fail2ban:** the filters under `deploy/fail2ban/` and the keywords they match (`failed login`, `failed verification`,
+  `reason=`, …) are unchanged in this pass; the filter update that goes with schema 15 (`reason=`) still applies. Only
+  free text of a few log lines changed.
+- **Scripts:** `tinysesam restore --db … --yes`, `tinysesam delete --db … --yes`.
+- **Custom messages:** a text added with `add_messages` under `err.locked_serie` has to be moved to `err.locked_series`.
+- **Rollback:** no SQL needed (`docs/OPERATIONS.md`, “Rollback to 0.24.x (schema 15)”, last paragraph).
+
+**Still German on purpose (unchanged):** the German interface texts (`lang="de"`), names of tables, columns and
+setting keys, private identifiers inside the library. The inventory found nothing German left in a promised name, key,
+value, header, cookie, logger, event word or log keyword.
+
+**The guard** `tests/test_api_surface.py` got a check for what operators and proxies read (query and form parameters,
+header and cookie names, logger names, event words, keys and values of the security log, message ids and placeholders,
+the variables of the Caddy templates, command-line options, the free text of every log call) and holds both new tier
+rules in both directions. Mutations (real runs on copies of the tree, 12 of 12 turn the suite red): `signed_out` back to
+`abgemeldet` in `/auth/login` and in the redirect (`tests/test_gate_link.py`), a German value in a security-log line, a
+German mail-queue log text, a German message id, the SAML ACS path renamed, `TS_SHARE_PRAEFIX` back, `--ja` back,
+`/healthz` and the OIDC callback lowered to B, `X-Csrf-Token` raised to A, the stem `abgemeld` removed from the word list.
+
 ### Added — `tinysesam delete`: remove an account without the admin panel (T-27)
 
 - New command `python -m tinysesam delete --db <file> <user>` (`#<id>` instead of the name works as in `rename`).
@@ -48,13 +109,13 @@ code or in any existing tier** — this is new promise, measured by `tests/test_
   row is written. Not `Store.delete_user`, which leaves the name in every audit row.
 - Same protection as the panel: an owner and the last admin are not deleted. The rule moved into
   `Store.loeschsperre` and is used by `TinySesam.delete_user` and the command alike, so the two cannot drift apart.
-- Asks on a terminal; `--ja` skips the question for scripts; no terminal and no `--ja` refuses (exit 1). An unknown
+- Asks on a terminal; `--yes` skips the question for scripts; no terminal and no `--yes` refuses (exit 1). An unknown
   account or database ends with exit 1 and a clear message. The output names the account, the number of sessions,
   identity links and API keys and the replacement name — no address, no secret.
 - Occasion: an acceptance test with a test account on an OIDC-only instance left a local account behind, and the CLI
   had no way to remove it. Test: `tests/test_cli_delete.py`.
 - Mutations (real runs): the command bent to `Store.delete_user` -> the audit checks turn red; protection rule
-  removed -> the owner check turns red; `--ja`/terminal check removed -> the "no terminal" check turns red.
+  removed -> the owner check turns red; `--yes`/terminal check removed -> the "no terminal" check turns red.
 
 ### Fixed — `next` on the login page travels as one query value (B-4)
 
@@ -76,7 +137,7 @@ code or in any existing tier** — this is new promise, measured by `tests/test_
   encoded `..%253b` stay closed; backslash, NUL, `%2e %2f %5c %00` and the case rule are unchanged. Tests:
   `tests/test_gate_caddy.py` (real Caddy, both templates), `tests/test_gate.py` (both templates carry the same filter).
 - **Migration:** whoever copied the template into their own Caddyfile must take over the changed `not vars_regexp`
-  line in the `@share` block. Without `TS_SHARE_PRAEFIX` (exception off) nothing changes.
+  line in the `@share` block. Without `TS_SHARE_PREFIX` (exception off) nothing changes.
 
 ### Security — authlib floor 1.9.1, setuptools 84.2.1, log filter for CodeQL
 

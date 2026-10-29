@@ -479,16 +479,16 @@ r.check("security log: “Lift: password reset, …” only for a password serie
         "Lift: password reset," in _aus["password"][2]
         and all(_aus[a][2] and "Lift: password reset" not in _aus[a][2] and "tinysesam unlock" in _aus[a][2]
                 for a in ("totp", FOLGE)), str({a: v[2][-160:] for a, v in _aus.items()}))
-# (Mutation probe: `err.locked_serie` again “reset the password or the operator …” → red.)
+# (Mutation probe: `err.locked_series` again “reset the password or the operator …” → red.)
 r.check("sign-in page: the same text for every kind (no oracle), it names the operator first and the "
         "reset only conditionally — German and English",
         all(v[0].status_code == 429 for v in _aus.values())
-        and len({auth_m.t("err.locked_serie") in v[0].text for v in _aus.values()}) == 1
-        and auth_m.t("err.locked_serie") in _aus["totp"][0].text
-        and auth_m.t("err.locked_serie").startswith("Zu viele Fehlversuche in Folge — die Anmeldung ist gesperrt. "
+        and len({auth_m.t("err.locked_series") in v[0].text for v in _aus.values()}) == 1
+        and auth_m.t("err.locked_series") in _aus["totp"][0].text
+        and auth_m.t("err.locked_series").startswith("Zu viele Fehlversuche in Folge — die Anmeldung ist gesperrt. "
                                                     "Den Betreiber um Freigabe bitten")
         and "Ask the operator to unlock it; if the failed attempts were password attempts"
-        in TinySesam(TinySesamConfig(db_path=":memory:", lang="en")).t("err.locked_serie"),
+        in TinySesam(TinySesamConfig(db_path=":memory:", lang="en")).t("err.locked_series"),
         str([v[0].status_code for v in _aus.values()]))
 
 sys.exit(r.done())

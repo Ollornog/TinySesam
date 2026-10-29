@@ -736,7 +736,7 @@ accounts. The log is only read by the operator.
 ### Removing an account
 
 ```bash
-python -m tinysesam delete --db auth.db alice           # asks first; --ja for scripts
+python -m tinysesam delete --db auth.db alice           # asks first; --yes for scripts
 ```
 
 For instances without an admin panel — for instance OIDC only, where an acceptance test with a
@@ -744,7 +744,7 @@ test account leaves a local account behind. It takes the same route and the same
 the panel's "Delete": credentials, sessions and identity links go, the sign-in attempts under name and
 address go, and the name in the audit log becomes `deleted#<id>` (the rows themselves stay). An owner
 and the last admin are not deleted. The command names what it removed (name, number of sessions and
-identity links), never a secret. Without `--ja` it asks, and without a terminal it refuses; an
+identity links), never a secret. Without `--yes` it asks, and without a terminal it refuses; an
 unknown account ends with exit 1. `#<id>` instead of the name works as in `rename`. A raw `DELETE`
 in the database is the wrong way — it leaves the name in every audit row.
 
@@ -1283,7 +1283,7 @@ gateway and with it every connection — also after the app was signed out “he
 
 ### Public paths: share links (T-20)
 
-With `TS_SHARE_PRAEFIX='^/(s|public/share)/'` both Caddy templates let paths through without sign-in
+With `TS_SHARE_PREFIX='^/(s|public/share)/'` both Caddy templates let paths through without sign-in
 and without an identity. The raw path is checked; the rule rejects `.`/`..` segments (also with a path
 parameter: `..;`), backslash, NUL and their encoded forms (Tomcat and Spring read `/s/..;/admin` as `/admin`); a `;` or `%3B`
 elsewhere, such as in a file name, passes. Off by default. How to
@@ -1321,7 +1321,7 @@ Not everything without a leading underscore is a promise. Since 0.22.0 every pub
 | Tier | What | Promise |
 |---|---|---|
 | **A — public, stable from 1.0** | what this README shows, and what embedding apps use | No breaking change across two minor releases — the condition for 1.0. The count starts with 0.22.0. |
-| **B — for advanced use** | building blocks for your own account and admin pages (below) | Stays. Removed or reshaped only after a `DeprecationWarning` across two minor releases. |
+| **B — for advanced use** | building blocks for your own account and admin pages (below) | Stays. Removed or reshaped only after a `DeprecationWarning` across two minor releases. A route has no warning: a path in tier B is announced in the CHANGELOG under “Deprecated” at least two minor releases before it goes. |
 | **C — internal** | the wiring of the built-in routes | None. Since 0.22.0 the implementation carries a leading underscore; the old name stays until 1.0 as an alias that warns when called, then goes. Don't start using them. |
 
 A new public name has no tier until someone decides; the guard `tests/test_api_surface.py` stays
@@ -1360,10 +1360,15 @@ measured in `tests/api_surface.json` and listed in [`API.md`](https://github.com
   hook does not abort the operation, and the keys of `details` per event.
 - **Tier A — the forward and gate contract** that reverse proxies depend on: `/auth/forward`, `/auth/verify`,
   `/.tinysesam/*`, `/auth/gate/*`, their status codes, the `X-TinySesam-*` headers and the values of
-  `X-TinySesam-Reason`, the request headers and parameters they read (`X-Forwarded-Uri`, `?roles=` …) and
-  the names of the cookies the gate sets.
+  `X-TinySesam-Reason`, the request headers a proxy sets or passes on (`X-Forwarded-Uri`, `X-Forwarded-Host`,
+  `X-Forwarded-Proto`, `Cookie`, `Authorization` …) and `?roles=`, and the names of the cookies the gate sets.
+  Tier A as well, because other systems have registered or poll them by hand: the OIDC callback, the SAML
+  ACS and metadata paths and `/healthz`. The headers a browser sends on its own (`X-Csrf-Token`,
+  `Sec-Fetch-Site`, `Referer`, …) are tier B.
 - **Tier B — pages and API routes:** the HTML pages (sign-in, registration, account, admin panel …) and the
-  JSON routes — **path and method** are promised, the HTML and the look are not.
+  JSON routes — **path and method** are promised, the HTML and the look are not. A path in tier B is announced
+  in the CHANGELOG under “Deprecated” at least two minor releases before it is removed or renamed (a route cannot
+  raise a `DeprecationWarning`).
 - **Tier A — the security log** that fail2ban filters read: the logger names (`tinysesam.security`), the
   format of the log file, the event words (`failed login`, `failed verification`, `deferred login`,
   `repeated login`, `login ok`) and their keys in order (`user= ip= method= reason= unban=`). Free text
@@ -1416,8 +1421,8 @@ Building blocks for pages you build yourself — signatures and descriptions in
   (links to TinySesam pages under a mount prefix), `flow_cookie_name`, `t` (translated text in
   `config.lang`), `set_rate_limiter`, `apply_idp_groups`, `version` and
   `tinysesam.current_version()`, `PAGES` (the page names `set_template` accepts),
-  `MFA_ENROLLMENT_MODES`, `TinySesamConfig.validate()` (re-check after changing `auth.cfg` at
-  runtime), `TinySesamConfig.enabled_methods()`, `TinySesamConfig.pin_as_first_factor()`.
+  `MFA_ENROLLMENT_MODES`, `TinySesamConfig.validate()` (re-check after you changed a config object at
+  runtime; writing `auth.cfg` itself is not promised), `TinySesamConfig.enabled_methods()`, `TinySesamConfig.pin_as_first_factor()`.
 - **`apply_factor`** attaches a factor to the session **without checking it**. Call it only after
   you verified that factor yourself, with the account from `session_user()` — it is the most
   powerful block here, and a mistake in front of it is a way in. Not needed for password, PIN and

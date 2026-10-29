@@ -1729,7 +1729,7 @@
       "stufe": "A"
     },
     "request-header:Accept": {
-      "stufe": "A"
+      "stufe": "B"
     },
     "request-header:Authorization": {
       "stufe": "A"
@@ -1738,19 +1738,19 @@
       "stufe": "A"
     },
     "request-header:Referer": {
-      "stufe": "A"
+      "stufe": "B"
     },
     "request-header:Sec-Fetch-Mode": {
-      "stufe": "A"
+      "stufe": "B"
     },
     "request-header:Sec-Fetch-Site": {
-      "stufe": "A"
+      "stufe": "B"
     },
     "request-header:X-Api-Key": {
       "stufe": "A"
     },
     "request-header:X-Csrf-Token": {
-      "stufe": "A"
+      "stufe": "B"
     },
     "request-header:X-Forwarded-For": {
       "stufe": "A"
@@ -1887,8 +1887,8 @@
     },
     "GET /.tinysesam/start": {
       "keys": [
-        "query:abgemeldet",
-        "query:rd"
+        "query:rd",
+        "query:signed_out"
       ],
       "stufe": "A"
     },
@@ -1942,11 +1942,11 @@
     },
     "GET /auth/login": {
       "keys": [
-        "query:abgemeldet",
         "query:app",
         "query:error",
         "query:gate_host",
-        "query:next"
+        "query:next",
+        "query:signed_out"
       ],
       "stufe": "B"
     },
@@ -2021,7 +2021,7 @@
     },
     "GET /auth/saml/metadata": {
       "keys": [],
-      "stufe": "B"
+      "stufe": "A"
     },
     "GET /auth/sessions": {
       "keys": [],
@@ -2050,7 +2050,7 @@
     },
     "GET /healthz": {
       "keys": [],
-      "stufe": "B"
+      "stufe": "A"
     },
     "GET <admin>": {
       "keys": [],
@@ -2096,7 +2096,7 @@
         "query:error",
         "query:state"
       ],
-      "stufe": "B"
+      "stufe": "A"
     },
     "POST /.tinysesam/logout": {
       "keys": [
@@ -2258,7 +2258,7 @@
     },
     "POST /auth/saml/acs": {
       "keys": [],
-      "stufe": "B"
+      "stufe": "A"
     },
     "POST /auth/sessions/revoke": {
       "keys": [],

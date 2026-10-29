@@ -146,7 +146,7 @@ def caddy_starten(vorlagen_datei="Caddyfile.gate"):
         with open(datei, "w", encoding="utf-8") as f:
             f.write(text)
         umg = {**os.environ, "TS_GATE_PUBKEY": auth.gate_public_key(), "TS_GATE_ISSUER": ISS,
-               "TS_SHARE_PRAEFIX": SHARE,
+               "TS_SHARE_PREFIX": SHARE,
                "TS_AUTH_UPSTREAM": TS, "TS_APP_UPSTREAM": APP, "XDG_DATA_HOME": _tmp,
                "XDG_CONFIG_HOME": _tmp}
         # Popen gives the child its own copy of the file descriptor — the parent process's one

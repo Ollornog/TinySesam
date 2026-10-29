@@ -41,8 +41,8 @@ app.example.com {
 	}
 
 	# Public paths of the application (T-20), such as share links: without sign-in, without identity.
-	# TS_SHARE_PRAEFIX is a regular expression over the beginning of the path, e.g.
-	#   TS_SHARE_PRAEFIX='^/(s|public/share)/'
+	# TS_SHARE_PREFIX is a regular expression over the beginning of the path, e.g.
+	#   TS_SHARE_PREFIX='^/(s|public/share)/'
 	# Without the variable `^$` applies — it matches no path, the exception is off.
 	#
 	# The RAW path (`orig_uri.path`) is checked, not the one cleaned up by Caddy: otherwise Caddy
@@ -60,7 +60,7 @@ app.example.com {
 	# the expression too, measured per application. Whatever is listed here is publicly reachable: a vulnerability
 	# of the application in these paths stays open. As narrow as possible.
 	@share {
-		vars_regexp share {http.request.orig_uri.path} {$TS_SHARE_PRAEFIX:^$}
+		vars_regexp share {http.request.orig_uri.path} {$TS_SHARE_PREFIX:^$}
 		not vars_regexp {http.request.orig_uri.path} (?i)(^|/)\.\.?(/|;|%3b|$)|[\\\x00]|%(2e|2f|5c|00)
 	}
 	handle @share {

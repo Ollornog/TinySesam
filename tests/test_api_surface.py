@@ -1094,13 +1094,13 @@ DEUTSCH = frozenset("""
     vergeben verzeichnis von weg weiter weiterleitung wert werte zahl zeit ziel zu zuordnung zurueck
     zweck
     abgewiesen anders ausgefuehrt automat dienstkonto gebunden konflikt lokal mehrdeutig mensch
-    schon treffer verbleibend
+    schon treffer verbleibend ja nein
 """.split())
 #: German word stems that are also conspicuous INSIDE a word: A constant like
 #: `SICHERHEITSEREIGNISSE` is ONE word after splitting. Only stems of five or more letters that are in
 #: no English word (`bindung` ≠ `binding`, `sitzung`, `kennung` …).
 STAMM = ("anmeld", "aufheb", "ausfuehr", "benutzer", "besitzer", "bestaetig", "betreiber",
-         "bindung", "einricht", "ereignis", "ergebnis", "erstfaktor", "fehlgriff", "fehlserie",
+         "abgemeld", "bindung", "einricht", "ereignis", "ergebnis", "erstfaktor", "fehlgriff", "fehlserie",
          "foederi", "gesperrt", "gewaehlt", "gueltig", "kennung", "loesch", "nachricht", "passwort",
          "pruef", "schluessel", "sicherheit", "sitzung", "ueberlauf", "verworfen", "verzeichnis",
          "zuordnung")
@@ -1655,9 +1655,19 @@ VERTRAG_BEREICHE = ("TinySesam.attributes", "TinySesam.event_payload", "http.rou
 VERTRAG_BEREICHE_A = ("TinySesam.attributes", "TinySesam.event_payload", "http.forward", "log.loggers", "log.lines")
 #: In `http.contract` everything is tier A except these — hints to the account page's script, not to proxies.
 VERTRAG_CONTRACT_NICHT_A = ("header:X-TinySesam-Factor", "header:X-TinySesam-Reauth")
+#: Request headers a BROWSER sends (PO decision 2026-10-29, "last breaking pass"): not an operator contract, because
+#: no proxy has to set or pass them on specially. They sit in tier B, and the guard refuses A for them. Tier A in
+#: `request-header:*` is what a proxy sets or passes on: `Host`, `Authorization`, `X-Api-Key`, `X-Forwarded-*`,
+#: `X-Original-Uri|Url`, `X-TinySesam-Roles` (the `Cookie` header and its names are described in OPERATIONS.md).
+VERTRAG_BROWSER_HEADER = ("request-header:Accept", "request-header:Referer", "request-header:Sec-Fetch-Mode",
+                          "request-header:Sec-Fetch-Site", "request-header:X-Csrf-Token")
 #: The paths of the forward/gate contract, tier A at least; every other route may be B (path and method).
 GATE_PFADE = ("/auth/forward", "/auth/verify")
 GATE_PRAEFIXE = ("/.tinysesam/", "/auth/gate/")
+#: Paths that other systems have registered by hand or poll — the identity provider (OIDC callback, SAML ACS and
+#: metadata) and the container health check: tier A at least (PO decision 2026-10-29). Moving one costs an operator a
+#: reconfiguration at the provider. `<oidc_callback_path>` is the configured path (`TinySesamConfig.oidc_callback_path`).
+IDP_PFADE = ("<oidc_callback_path>", "/auth/saml/acs", "/auth/saml/metadata", "/healthz")
 
 #: What the contract measurement must see at minimum — otherwise it silently measures less than it promises.
 VERTRAG_PFLICHT = (
@@ -1686,10 +1696,10 @@ def vertrag_untergrenze(bereich: str, name: str) -> "str | None":
     if bereich in VERTRAG_BEREICHE_A:
         return "A"
     if bereich == "http.contract":
-        return None if name in VERTRAG_CONTRACT_NICHT_A else "A"
+        return None if name in VERTRAG_CONTRACT_NICHT_A or name in VERTRAG_BROWSER_HEADER else "A"
     if bereich == "http.routes":
         pfad = name.split(" ", 1)[1]
-        return "A" if pfad in GATE_PFADE or pfad.startswith(GATE_PRAEFIXE) else None
+        return "A" if pfad in GATE_PFADE + IDP_PFADE or pfad.startswith(GATE_PRAEFIXE) else None
     return None
 
 
@@ -1703,6 +1713,11 @@ def vertrag_befunde(datei: dict, jetzt: dict, live_routen: "dict | None" = None,
             stufe = e.get("stufe") if isinstance(e, dict) else None
             if soll == "A" and stufe is not None and stufe != "A":
                 befunde.append(f"{bereich}.{name}: tier {stufe}, but the decision of 2026-10-29 puts it in A")
+    for name in VERTRAG_BROWSER_HEADER:
+        e = (datei.get("http.contract") or {}).get(name)
+        if isinstance(e, dict) and e.get("stufe") == "A":
+            befunde.append(f"http.contract.{name}: tier A, but a header the browser sends is no operator contract "
+                           "(decision of 2026-10-29, last breaking pass): tier B")
     for bereich, name in pflicht:
         gemessen = jetzt.get(bereich, {})
         if name not in gemessen:
@@ -1763,15 +1778,15 @@ def selbstpruefung_vertrag(jetzt: dict) -> None:
            "POST /.tinysesam/logout", "GET /.tinysesam/logout2")
     # a dropped parameter is a break (list value), a gained one an extension
     vorher = routen(quellen)["GET /.tinysesam/start"]
-    kopie = verbogen("router.py", "def gate_link_start(request: Request, rd: str = \"/\", abgemeldet: str = \"\"):",
+    kopie = verbogen("router.py", "def gate_link_start(request: Request, rd: str = \"/\", signed_out: str = \"\"):",
                      "def gate_link_start(request: Request, rd: str = \"/\"):")
     b, e = beurteile({"http.routes": {"GET /.tinysesam/start": vorher}},
                      {"http.routes": {"GET /.tinysesam/start": routen(kopie)["GET /.tinysesam/start"]}},
                      {"http.routes": {"GET /.tinysesam/start": "A"}})
-    assert b and b[0].startswith("[A]") and "query:abgemeldet" in b[0] and not e, (b, e)
+    assert b and b[0].startswith("[A]") and "query:signed_out" in b[0] and not e, (b, e)
     b, e = beurteile({"http.routes": {"GET /.tinysesam/start": routen(kopie)["GET /.tinysesam/start"]}},
                      {"http.routes": {"GET /.tinysesam/start": vorher}})
-    assert not b and e and "query:abgemeldet" in e[0], (b, e)
+    assert not b and e and "query:signed_out" in e[0], (b, e)
     # a route the scan cannot see is refused, not ignored
     for fremd in ("app.add_api_route('/x', f)", "app.mount('/x', sub)"):
         try:
@@ -1850,6 +1865,22 @@ def selbstpruefung_vertrag(jetzt: dict) -> None:
         gesenkt = json.loads(json.dumps(datei))
         gesenkt[bereich][name]["stufe"] = "B"
         assert any(f"{bereich}.{name}: tier B" in z for z in vertrag_befunde(gesenkt, jetzt)), (bereich, name)
+    # the paths the identity provider and the health check use (decision of 2026-10-29): not below A
+    for name in ("GET <oidc_callback_path>", "POST /auth/saml/acs", "GET /auth/saml/metadata", "GET /healthz"):
+        assert name in datei["http.routes"], f"{name}: the provider path is no longer measured (renamed or removed?)"
+        gesenkt = json.loads(json.dumps(datei))
+        gesenkt["http.routes"][name]["stufe"] = "B"
+        assert any(f"http.routes.{name}: tier B" in z for z in vertrag_befunde(gesenkt, jetzt)), name
+    # the headers a browser sends: not A (the narrowing of the same decision is held, too)
+    for name in VERTRAG_BROWSER_HEADER:
+        assert name in datei["http.contract"], f"{name}: the browser header is no longer measured"
+        gehoben = json.loads(json.dumps(datei))
+        assert gehoben["http.contract"][name]["stufe"] == "B", name
+        gehoben["http.contract"][name]["stufe"] = "A"
+        assert any(f"http.contract.{name}: tier A" in z for z in vertrag_befunde(gehoben, jetzt)), name
+    assert all(datei["http.contract"][n]["stufe"] == "A" for n in jetzt["http.contract"]
+               if n.startswith("request-header:") and n not in VERTRAG_BROWSER_HEADER), \
+        "a header a proxy sets or passes on must be tier A"
     frei = json.loads(json.dumps(datei))
     frei["http.routes"]["GET /auth/login"]["stufe"] = "B"             # an HTML page: B is the decision
     frei["http.contract"]["header:X-TinySesam-Reauth"]["stufe"] = "B"
@@ -1866,13 +1897,202 @@ def selbstpruefung_vertrag(jetzt: dict) -> None:
     live = {"GET /auth/forward": [], "GET /invented": []}
     assert any("live route 'GET /invented'" in z for z in CT.routes_differences(jetzt["http.routes"], live))
     live = {"GET /.tinysesam/start": ["query:rd"]}
-    assert any("query:abgemeldet" in z for z in CT.routes_differences(jetzt["http.routes"], live))
+    assert any("query:signed_out" in z for z in CT.routes_differences(jetzt["http.routes"], live))
     gerufen = {k.func.id for k in ast.walk(ast.parse(inspect.getsource(main)))
                if isinstance(k, ast.Call) and isinstance(k.func, ast.Name)}
     assert "vertrag_befunde" in gerufen, "main() does not call vertrag_befunde"
     ok("Contract measurement triggers: a renamed route or parameter, a changed header/reason/cookie/input, a "
        "renamed logger, a changed log shape or file format, a renamed payload key; unseen routes refused; "
        "the tier floor holds; the measurement cannot shrink silently")
+
+
+# ---------- What operators and proxies read: English too (PO decision 2026-10-29, "last breaking pass") ----------
+# `pruefe_namen` covers the Python names, `pruefe_werte` the keys and values the Python surface returns. This
+# check covers the rest of what the promise now names: query/form parameters of the routes, header and cookie
+# names, logger names, event words and keys of the security log (and the values behind `reason=`, `method=` and
+# `unban=`), the ids and placeholders of the message catalogue (`add_messages`), the names the deployment
+# templates read from the environment, the options of the command line and the free text of the log lines.
+# (Mutation probes: `signed_out` back to `abgemeldet` in a route → red; a German event word or key in the
+# security log → red; a German message id → red; `TS_SHARE_PREFIX` back to `TS_SHARE_PRAEFIX` → red; a German
+# log text in the mail queue → red; a German option → red.)
+
+#: German words that stand in running log text. As a whole word, lower case; none of them is an English word.
+LOG_DEUTSCH = frozenset("""
+    hinweis warteschlange versand gescheitert betroffene betroffenen passendes erst einmal vergeben abgelehnt
+    antwort verworfen auftrag abgewiesen ohne voll nicht wurde wird werden ist sind nur kein keine fuer wegen
+    und oder mit von nach bei zur zum aus auf einer eines einem
+""".split())
+
+
+def deutsch_im_text(text: str) -> set:
+    """What is German in a running text (a log format string): whole words from `LOG_DEUTSCH`/`DEUTSCH` that
+    are no English word, stems from `STAMM`, umlauts. `%s`-style fields and punctuation do not count."""
+    funde = {z for z in text if not z.isascii() and z not in "—–…→←“”„’•·×≥≤≠±°²"}
+    for w in re.findall(r"[A-Za-zÄÖÜäöüß]+", text):
+        w = w.lower()
+        if w in LOG_DEUTSCH or (w in DEUTSCH and w not in ENGLISCH_IM_TEXT) or any(s in w for s in STAMM):
+            funde.add(w)
+    return funde
+
+
+#: Entries of `DEUTSCH` that are also ordinary English words in running text (`art`, `basis`); every other word
+#: of `DEUTSCH` counts as German in a log text, and a false hit there is a finding about the list.
+ENGLISCH_IM_TEXT = frozenset({"art", "basis"})
+
+
+def log_texte(quellen: dict) -> list:
+    """[(where, text)] — the literal format string of every log call (`<x>.debug|info|warning|error|critical|
+    exception("...")`, also an f-string's literal parts) in the package."""
+    paare = []
+    for datei, text in sorted(quellen.items()):
+        for k in ast.walk(ast.parse(text)):
+            if not (isinstance(k, ast.Call) and isinstance(k.func, ast.Attribute)
+                    and k.func.attr in ("debug", "info", "warning", "error", "critical", "exception") and k.args):
+                continue
+            a = k.args[0]
+            if isinstance(a, ast.Constant) and isinstance(a.value, str):
+                paare.append((f"{datei}:{k.lineno}", a.value))
+            elif isinstance(a, ast.JoinedStr):
+                paare.append((f"{datei}:{k.lineno}", " ".join(
+                    v.value for v in a.values if isinstance(v, ast.Constant) and isinstance(v.value, str))))
+    return paare
+
+
+def cli_optionen(quelle: str) -> list:
+    """The option strings of the command line (`add_argument("--x", ...)`) and its sub-command names."""
+    namen = []
+    for k in ast.walk(ast.parse(quelle)):
+        if isinstance(k, ast.Call) and isinstance(k.func, ast.Attribute) and k.func.attr == "add_argument":
+            namen += [a.value for a in k.args if isinstance(a, ast.Constant) and isinstance(a.value, str)
+                      and a.value.startswith("-")]
+    return namen
+
+
+def deploy_umgebungsnamen(wurzel: str = WURZEL) -> list:
+    """[(file, name)] — the `TS_*` variables the deployment templates read (`{$TS_X:default}`, comments)."""
+    paare = []
+    ordner = os.path.join(wurzel, "deploy", "forward-auth")
+    for datei in sorted(os.listdir(ordner)):
+        pfad = os.path.join(ordner, datei)
+        if not os.path.isfile(pfad):
+            continue
+        with open(pfad, encoding="utf-8", errors="replace") as fh:
+            for n in sorted(set(re.findall(r"\bTS_[A-Z0-9_]+", fh.read()))):
+                paare.append((f"deploy/forward-auth/{datei}", n))
+    return paare
+
+
+def vertragsnamen(datei: dict, quellen: dict, wurzel: str = WURZEL, nachrichten=None) -> list:
+    """[(where, name)] — every name the contract measurement carries that a person could read as German.
+    The baseline (`datei`) supplies the routes, headers, cookies, loggers and log atoms; the sources the rest."""
+    from tinysesam import messages as _msg
+    paare = []
+    for route, e in (datei.get("http.routes") or {}).items():
+        if e.get("stufe") not in ("A", "B"):
+            continue
+        paare += [(f"{route} parameter", p.split(":", 1)[1]) for p in e.get("keys", [])]
+        paare += [(f"{route} path segment", s) for s in re.split(r"[/{}<>]", route.split(" ", 1)[1]) if s]
+    for atom in (datei.get("http.contract") or {}):
+        art, _, rest = atom.partition(":")
+        paare.append((f"http.contract {art}", rest.removeprefix("__Host-")))
+    for atom in (datei.get("log.loggers") or {}):
+        paare.append(("log.loggers", atom))
+    for atom in (datei.get("log.lines") or {}):
+        art, _, rest = atom.partition(":")
+        if art == "format":
+            continue
+        if art == "line":
+            paare += [("log.lines keys", w) for w in rest.split("|", 1)[1].split()]
+            paare += [("log.lines event", rest.split("|", 1)[0].split(" ", 1)[1].strip())]
+        elif art == "value":
+            paare.append(("log.lines value", rest))
+        else:
+            paare.append((f"log.lines {art}", rest))
+    for f in dataclasses.fields(TinySesamConfig):
+        if "cookie" in f.name and isinstance(f.default, str):
+            paare.append((f"TinySesamConfig.{f.name} (default)", f.default))
+    katalog = _msg.MESSAGES if nachrichten is None else nachrichten
+    ids, platzhalter = set(), set()
+    for sprache, texte in katalog.items():
+        ids |= set(texte)
+        for t in texte.values():
+            platzhalter |= set(re.findall(r"\{(\w+)\}", t))
+    paare += [("messages id", i) for i in sorted(ids)] + [("messages placeholder", p) for p in sorted(platzhalter)]
+    if "__main__.py" in quellen:
+        paare += [("command line option", o.lstrip("-")) for o in cli_optionen(quellen["__main__.py"])]
+    paare += [(f"{d}", n) for d, n in deploy_umgebungsnamen(wurzel)]
+    return paare
+
+
+def _wortweise(name: str) -> str:
+    """Event words, `key=value` atoms and hyphenated header names split into words like an identifier."""
+    return re.sub(r"[ \-=:|]", "_", name)
+
+
+def vertragsnamen_befunde(paare: list) -> list:
+    return [f"{wo}: {name!r} ({', '.join(sorted(deutsch_in(_wortweise(name))))})"
+            for wo, name in paare if deutsch_in(_wortweise(name))]
+
+
+#: What the measurement must see at minimum — otherwise it silently measures less than it promises.
+VERTRAGSNAMEN_PFLICHT = (("GET /.tinysesam/start parameter", "signed_out"), ("GET /auth/login parameter", "signed_out"),
+                         ("http.contract reason", "app-signed-out"), ("http.contract cookie", "tinysesam_link"),
+                         ("log.loggers", "tinysesam.security"), ("log.lines event", "failed login"),
+                         ("log.lines keys", "unban"), ("log.lines value", "reason=account_locked"),
+                         ("messages id", "login.logged_out"), ("messages placeholder", "reason"),
+                         ("command line option", "db"), ("deploy/forward-auth/Caddyfile.gate", "TS_GATE_PUBKEY"))
+
+
+def pruefe_vertragsnamen(datei: dict, quellen: "dict | None" = None, pflicht=VERTRAGSNAMEN_PFLICHT,
+                         mindestens: int = 300, wurzel: str = WURZEL) -> tuple:
+    """(findings, count) — names of the contract in English, free text of the log lines included."""
+    quellen = _quellen(wurzel) if quellen is None else quellen
+    paare = vertragsnamen(datei, quellen, wurzel)
+    gesehen = set(paare)
+    fehlt = [f"{wo}: {name!r} is not measured — measurement broken?" for wo, name in pflicht
+             if (wo, name) not in gesehen]
+    if len(paare) < mindestens:
+        fehlt.append(f"too little measured: {len(paare)} names (expected at least {mindestens})")
+    texte = log_texte(quellen)
+    if len(texte) < 90:
+        fehlt.append(f"too little measured: {len(texte)} log texts (expected at least 90)")
+    befunde = vertragsnamen_befunde(sorted(gesehen))
+    befunde += [f"log text {wo}: {t[:70]!r} ({', '.join(sorted(deutsch_im_text(t)))})"
+                for wo, t in texte if deutsch_im_text(t)]
+    return fehlt + befunde, len(paare) + len(texte)
+
+
+def selbstpruefung_vertragsnamen() -> None:
+    """Does the check find a German route parameter, header, event word, key, message id, environment variable,
+    option and log text — and nothing in the English ones?"""
+    basis = {"http.routes": {"GET /x": {"keys": ["query:abgemeldet"], "stufe": "B"}},
+             "http.contract": {"cookie:__Host-tinysesam_verbindung": {"stufe": "A"},
+                               "header:X-TinySesam-Grund": {"stufe": "A"}},
+             "log.loggers": {"tinysesam.sicherheit": {"stufe": "A"}},
+             "log.lines": {"line:WARNING anmeldung gescheitert | konto ip": {"stufe": "A"},
+                           "value:reason=konto_gesperrt": {"stufe": "A"}}}
+    gefunden = " ".join(vertragsnamen_befunde(vertragsnamen(basis, {}, nachrichten={
+        "en": {"err.locked_serie": "x {grund}"}})))
+    for wort in ("abgemeldet", "verbindung", "grund", "sicherheit", "gescheitert", "konto", "serie"):
+        assert wort in gefunden, (wort, gefunden)
+    assert not vertragsnamen_befunde([("x", w) for w in (
+        "signed_out", "tinysesam_link", "reason", "failed login", "account_locked", "locked_series", "yes", "db",
+        "TS_SHARE_PREFIX", "app-signed-out")]), "false alarm on the English names"
+    assert cli_optionen('ap.add_argument("--ja")\nap.add_argument("db")\nap.add_argument("-n", "--yes")') \
+        == ["--ja", "-n", "--yes"]
+    assert any("Warteschlange" in t or "warteschlange" in deutsch_im_text(t) for t in
+               ["Mail-Warteschlange voll (%d) — Versand verworfen"]) and \
+        deutsch_im_text("Mail-Warteschlange voll (%d) — Versand verworfen") == {"warteschlange", "voll", "versand", "verworfen"}
+    assert not deutsch_im_text("Sign-in for user=%s locked: %d failed attempts in a row. Lift: %s.")
+    funde = log_texte({"m.py": 'log.warning("Hinweis voll")\nlog.error(f"Auftrag {x} gescheitert")\nlog.info(x)\n'})
+    assert [" ".join(t.split()) for _, t in funde] == ["Hinweis voll", "Auftrag gescheitert"], funde
+    befunde, _ = pruefe_vertragsnamen({}, quellen={}, pflicht=(("log.loggers", "none"),), mindestens=10 ** 6)
+    assert "'none' is not measured" in befunde[0] and "too little measured" in befunde[1], befunde[:2]
+    gerufen = {k.func.id for k in ast.walk(ast.parse(inspect.getsource(main)))
+               if isinstance(k, ast.Call) and isinstance(k.func, ast.Name)}
+    assert "pruefe_vertragsnamen" in gerufen, "main() does not call pruefe_vertragsnamen"
+    ok("Contract-name check triggers: route parameter, header, cookie, logger, event word, key, value, message id, "
+       "placeholder, environment variable, option, log text; minimum count and wiring")
 
 
 def stufen_voll(jetzt: dict) -> dict:
@@ -1912,6 +2132,7 @@ def main(argv):
     selbstpruefung_c()
     selbstpruefung_namen()
     selbstpruefung_werte()
+    selbstpruefung_vertragsnamen()
     selbstpruefung_vertrag(jetzt)
 
     frueher_datei = {}
@@ -1988,6 +2209,20 @@ def main(argv):
     else:
         ok(f"Keys and values of tiers A and B English: {w_zahl} measured (probe instance, "
            "constants, source), no German word, none from 0.21.x")
+
+    # What operators and proxies read is English too: parameters, headers, cookies, loggers, log lines, ids.
+    t_fehler, t_zahl = pruefe_vertragsnamen(frueher_datei)
+    if t_fehler:
+        rot = True
+        print(f"\n  {len(t_fehler)} names of the operator contract German (or measurement too small):\n")
+        for zeile in t_fehler:
+            print(f"    GERMAN       {zeile}")
+        print("\n  Query/form parameters, header and cookie names, logger names, event words and keys of the")
+        print("  security log, message ids and placeholders, deployment variables, command-line options and")
+        print("  the free text of the log lines are English (PO decision 2026-10-29, last breaking pass).\n")
+    else:
+        ok(f"Operator contract English: {t_zahl} names and log texts (routes, headers, cookies, loggers, log "
+           "lines, message ids, deployment variables, options), no German word")
 
     # The operator and proxy contract (PO decision 2026-10-29): routes, forward/gate responses, hook, logs.
     v_fehler = vertrag_befunde(frueher_datei, jetzt, CT.routes_live())
