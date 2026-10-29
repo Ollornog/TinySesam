@@ -224,9 +224,9 @@ carla = a.create_user("carla", password=PW, email="carla@example.com")
 a.request_email_change(carla, "neu@example.com", BASIS)()
 _dazwischen(a, "adresse_wechseln", lambda: b.create_user("neu@example.com", password=PW))
 b2 = TestClient(app_a, raise_server_exceptions=False).post(_link(post, "neu@example.com"), follow_redirects=False)
-r.check("B2: confirm_email_change in a race → 409, the address stays, audit row with wettlauf=1",
+r.check("B2: confirm_email_change in a race → 409, the address stays, audit row with race=1",
         b2.status_code == 409 and a.get_user(carla)["email"] == "carla@example.com"
-        and "wettlauf=1" in (_audit(a, "email_change_taken") or "") and a.store.topf_kollisionen() == [],
+        and "race=1" in (_audit(a, "email_change_taken") or "") and a.store.topf_kollisionen() == [],
         f"HTTP {b2.status_code}, {a.get_user(carla)['email']}, {_audit(a, 'email_change_taken')}")
 
 # B3: rename on the account page.
@@ -247,7 +247,7 @@ lars = a.create_user("lars", password=PW)
 _dazwischen(a, "set_email", lambda: b.create_user("lars2", password=PW, email="lars@example.com"))
 a._adresse_aus_quelle_belegen(a.store.get_user(lars), "lars@example.com", True, "ldap")
 r.check("B4: address from LDAP in a race → the account stays without, audit row",
-        not a.get_user(lars)["email"] and "wettlauf=1" in (_audit(a, "ldap_email_taken") or ""),
+        not a.get_user(lars)["email"] and "race=1" in (_audit(a, "ldap_email_taken") or ""),
         f"{a.get_user(lars)['email']} {_audit(a, 'ldap_email_taken')}")
 
 # … and from OIDC (if the provider supplies the proof afterwards, the address enters the account — H-3).
@@ -284,7 +284,7 @@ b4 = _oidc_login(app_a)
 _olga = a.store.get_user_by_name("olga")
 r.check("B4: address from OIDC in a race → no 500, the account stays without, audit row",
         b4.status_code == 303 and _olga is not None and not _olga["email"]
-        and "wettlauf=1" in (_audit(a, "oidc_email_taken") or ""),
+        and "race=1" in (_audit(a, "oidc_email_taken") or ""),
         f"HTTP {b4.status_code} {dict(_olga) if _olga else None} {_audit(a, 'oidc_email_taken')}")
 
 # B5: the routes — registration and admin API answer in substance, never with a 500.
@@ -309,10 +309,10 @@ a.set_mailer(lambda *x, **k: True)
 _dazwischen(a, "create_user", lambda: b.create_user("dritter", password=PW, email="r3@example.com"))
 b5c = _registrieren(app_a, username="rennen3", email="r3@example.com")
 r.check("B5: … with confirmation: an address taken in a race gets the neutral page (R4-03), "
-        "Audit signup_taken wettlauf=1",
+        "Audit signup_taken race=1",
         b5c.status_code == 200 and html.escape(a.t("reg.verify")) in b5c.text
         and a.store.get_user_by_name("rennen3") is None
-        and "wettlauf=1" in (_audit(a, "signup_taken") or ""),
+        and "race=1" in (_audit(a, "signup_taken") or ""),
         f"HTTP {b5c.status_code} {_audit(a, 'signup_taken')}")
 a.create_user("inhaber", password=PW, email="besetzt@example.com")
 _dazwischen(a, "create_user", lambda: b.create_user("platz", password=PW))

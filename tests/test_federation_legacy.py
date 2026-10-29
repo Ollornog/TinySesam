@@ -146,13 +146,13 @@ js = a.create_user("jsmith", is_admin=True)
 _altern(a, js)
 with Mitschnitt() as log:
     u = _anmelden(a, "jsmith", {"id": "uuid-neu", "groups": ["cn=chefs"]})
-zu = _audit(a, "ldap_namensbindung_zu")
+zu = _audit(a, "ldap_name_binding_closed")
 r.check("Grace period over: the new jsmith from the directory does NOT take over the dormant account",
         u is None and a.store.get_federated_kennung("ldap", js) is None, str(u))
 r.check("… the account keeps its admin right and gets no role from the directory",
         a.get_user(js)["is_admin"] == 1 and a.user_roles(a.store.get_user(js)) == [])
-r.check("… audit `ldap_namensbindung_zu` with reason and identifier",
-        len(zu) == 1 and zu[0]["username"] == "jsmith" and zu[0]["detail"] == "grund=frist kennung=uuid-neu",
+r.check("… audit `ldap_name_binding_closed` with reason and identifier",
+        len(zu) == 1 and zu[0]["username"] == "jsmith" and zu[0]["detail"] == "reason=binding_window_expired identifier=uuid-neu",
         str(zu))
 r.check("… the log line names identifier and remedy (federation_unbind, federation_bind_existing)",
         any("uuid-neu" in z and f"federation_unbind('ldap', {js})" in z
@@ -193,8 +193,8 @@ alt = b.create_user("altbestand")
 b.store._exec("UPDATE users SET created_at=? WHERE id=?", (jetzt() - 730 * TAG, alt))
 u = _anmelden(b, "altbestand", {"id": "uuid-alt"})
 r.check("Existing account (no password, not self-named) within the grace period: still binds afterwards",
-        u is not None and u["id"] == alt and _audit(b, "ldap_kennung_gebunden")[-1]["detail"]
-        == "nachgebunden beim Login")
+        u is not None and u["id"] == alt and _audit(b, "ldap_identifier_bound")[-1]["detail"]
+        == "bound later at sign-in")
 
 # (3) -1 = old behaviour, 0 = explicit only, -2 = construction error.
 c1 = _ldap(federation_name_binding_days=-1)
@@ -237,7 +237,7 @@ _altern(s, sam, quelle="saml")
 u = s._check_saml("nid-neu", {"uid": ["sam"]})
 r.check("SAML after the grace period: a new NameID under the name does not take over the dormant account",
         u is None and s.store.get_federated_kennung("saml", sam) is None
-        and [z["detail"] for z in _audit(s, "saml_namensbindung_zu")] == ["grund=frist kennung=nid-neu"])
+        and [z["detail"] for z in _audit(s, "saml_name_binding_closed")] == ["reason=binding_window_expired identifier=nid-neu"])
 sina = s.create_user("sina")
 u = s._check_saml("nid-sina", {"uid": ["sina"]})
 r.check("SAML pre-creation: binds", u is not None and u["id"] == sina)
@@ -270,14 +270,14 @@ g.store.set_username(eve, "chefin", selbst_gewaehlt=True)
 r.check("Self-renamed (existing): marker 1", _flag(g, eve) == 1)
 with Mitschnitt() as log:
     u = _anmelden(g, "chefin", {"id": "uuid-chefin", "groups": ["cn=chefs"]}, pw="ldap-pw")
-zu = _audit(g, "ldap_namensbindung_zu")
+zu = _audit(g, "ldap_name_binding_closed")
 r.check("PoC: the real chefin from the directory does NOT land in eve's account, no binding",
         u is None and g.store.get_federated_kennung("ldap", eve) is None, str(u))
 r.check("… eve then has no role `chef`, not even via her local password",
         g._check_password("chefin", PW) is not None
         and "chef" not in g.user_roles(g.store.get_user(eve)))
 r.check("… rejection like situation 3: audit with reason and identifier, log line with the way out",
-        [z["detail"] for z in zu] == ["grund=name_selbst_gewaehlt kennung=uuid-chefin"]
+        [z["detail"] for z in zu] == ["reason=self_chosen_name identifier=uuid-chefin"]
         and any("uuid-chefin" in z and f"federation_unbind('ldap', {eve})" in z
                 for z in log.zeilen("chosen by the user")), str(zu))
 g.federation_unbind("ldap", eve)
@@ -292,8 +292,8 @@ g.change_username(op, "oskar", by_operator=True)
 u = _anmelden(g, "oskar", {"id": "uuid-oskar"})
 r.check("Renamed by the operator (by_operator=True): marker 0, binds",
         _flag(g, op) == 0 and u is not None and u["id"] == op)
-r.check("… the audit row says durch=betreiber",
-        _audit(g, "username_changed")[-1]["detail"] == "alt=olga durch=betreiber")
+r.check("… the audit row says by=operator",
+        _audit(g, "username_changed")[-1]["detail"] == "old=olga by=operator")
 
 # SAML and without identifier: the same rule.
 s2 = _saml()
@@ -391,12 +391,12 @@ r.check("OIDC creates `chefin` (preferred_username): origin oidc, no marker \"se
         f"HTTP {st} {dict(oc) if oc else None}")
 with Mitschnitt() as log:
     u = _anmelden(qa, "chefin", {"id": "uuid-chefin", "groups": ["cn=chefs"]}, pw="ldap-pw")
-zu = _audit(qa, "ldap_namensbindung_zu")
+zu = _audit(qa, "ldap_name_binding_closed")
 r.check("PoC a1-01 (OIDC): the real chefin does NOT land in the OIDC account — no identifier, no role",
         u is None and qa.store.get_federated_kennung("ldap", oc["id"]) is None
         and qa.user_roles(qa.store.get_user(oc["id"])) == [], str(u))
 r.check("… rejection like situation 3: audit with reason name_aus_quelle, log line with the way out",
-        [z["detail"] for z in zu] == ["grund=name_aus_quelle kennung=uuid-chefin"]
+        [z["detail"] for z in zu] == ["reason=name_from_other_source identifier=uuid-chefin"]
         and any("uuid-chefin" in z and f"federation_unbind('ldap', {oc['id']})" in z
                 for z in log.zeilen("another source")), str(zu))
 st, me = _oidc_anmelden(qa, qapp, {"sub": "angreifer-sub", "preferred_username": "chefin"})
@@ -407,7 +407,7 @@ r.check("… and via OIDC the attacker still only gets into their own account, w
 st, _ = _oidc_anmelden(qa, qapp, {"sub": "olli-sub", "preferred_username": "olli"})
 bb = qa.federation_bind_existing("ldap", mapping={"olli": "uuid-olli"})
 r.check("federation_bind_existing: an OIDC account is not bound via the name "
-        "(name_from_other_source; in the audit still `grund=name_aus_quelle`)",
+        "(name_from_other_source; in the audit still `reason=name_from_other_source`)",
         [(e["username"], e["reason"]) for e in bb["refused"]] == [("olli", "name_from_other_source")]
         and bb["bound"] == [], str(bb))
 
@@ -482,7 +482,7 @@ u = _anmelden(ge, "gerda", {"id": "u-gerda", "email": "gerda"})
 r.check("Sign-in: name = unproven mail value → no access to the local account of the same name",
         u is None and ge.store.get_federated_kennung("ldap", gl) is None
         and ge.store.get_federated_user("ldap", "u-gerda") is None and ge.store.user_count() == _n_ge
-        and bool(_audit(ge, "ldap_kennung_abgewiesen")), str(u and u["username"]))
+        and bool(_audit(ge, "ldap_identifier_rejected")), str(u and u["username"]))
 
 # ══ Existing-account binding: federation_bind_existing ════════════════════════════════════════════════════
 m = _ldap()
@@ -519,7 +519,7 @@ vorher = _gebunden(m)
 tr = m.federation_bind_existing("ldap")
 r.check("Dry run (default): nothing written", _gebunden(m) == vorher and tr["applied"] is False
         and tr["source"] == "ldap"
-        and not _audit(m, "ldap_kennung_gebunden"))
+        and not _audit(m, "ldap_identifier_bound"))
 r.check("… reports what would be bound (also after the grace period and the placeholders)",
         _namen(tr, "bound") == ["anna", "ida", "kim", "lea"], str(_namen(tr, "bound")))
 anna = next(e for e in tr["bound"] if e["username"] == "anna")
@@ -547,8 +547,8 @@ r.check("apply=True: bound as announced, the placeholder is replaced",
 r.check("… nothing else: no binding for hans, ina, gina, emil, jo",
         all(ids[n] not in jetzt_gebunden for n in ("hans", "ina", "gina", "emil", "jo"))
         and jetzt_gebunden[ids["fritz"]] == "u-fritz")
-r.check("… per binding audit `ldap_kennung_gebunden detail=migration`, one summary line in the log",
-        sorted(z["username"] for z in _audit(m, "ldap_kennung_gebunden") if z["detail"] == "migration")
+r.check("… per binding audit `ldap_identifier_bound detail=migration`, one summary line in the log",
+        sorted(z["username"] for z in _audit(m, "ldap_identifier_bound") if z["detail"] == "migration")
         == ["anna", "ida", "kim", "lea"] and len(log.zeilen("federation_bind_existing(ldap): 4 bound")) == 1,
         log.puffer.getvalue()[-400:])
 u = _anmelden(m, "kim", {"id": "u-kim"})

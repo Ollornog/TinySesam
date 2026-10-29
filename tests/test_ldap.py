@@ -214,12 +214,12 @@ os.remove(db)
 # it must arrive here as a clean rejection, not as a 500 in the middle of the sign-in.
 # The second case has ended BEFORE creation since the review round of 2026-09-27 (p1-d): The identifier
 # `chef@example.com` belongs to one account locally, the directory entry led to another —
-# `ldap_kennung_abgewiesen grund=kennung_zweier_konten` instead of `ldap_ident_taken`. The result stays.
+# `ldap_identifier_rejected reason=identifier_of_two_accounts` instead of `ldap_ident_taken`. The result stays.
 for was, verzeichnis, kennung, ereignis in (
         ("deren Adresse lokal schon Kennung ist", {"password": "x", "email": "chef@example.com"}, "eve",
          "ldap_ident_taken"),
         ("deren Name lokal schon Adresse ist", {"password": "x", "email": "eve@example.com"}, "chef@example.com",
-         "ldap_kennung_abgewiesen")):
+         "ldap_identifier_rejected")):
     # With a trusted source: Only then does the address enter the account at all (default since 2026-09-25:
     # not trusted — then it occupies nothing anyway).
     db, auth, c = baue_ohne_admin(ldap_email_trusted=True)
@@ -697,7 +697,7 @@ ok("F-11: a rename in the directory is not an account switch")
 auth11.ldap = FakeLDAP({"alice": {"password": "pw", "id": "uuid-FREMD"}})
 assert auth11._check_ldap("alice", "pw") is None, \
     "a new directory account under the same name took over the local account"
-assert any(e["event"] == "ldap_kennung_wechsel" for e in auth11.store.recent_audit(limit=10))
+assert any(e["event"] == "ldap_identifier_change" for e in auth11.store.recent_audit(limit=10))
 ok("F-11: a new directory account under the old name does NOT inherit the local account")
 
 # (4) Existing case: an account without a binding is re-bound at the next login (PO decision).
@@ -706,7 +706,7 @@ assert auth11.store.get_federated_kennung("ldap", _uid_b) is None
 auth11.ldap = FakeLDAP({"bestand": {"password": "pw", "id": "uuid-bestand"}})
 assert auth11._check_ldap("bestand", "pw") is not None
 assert auth11.store.get_federated_kennung("ldap", _uid_b) == "uuid-bestand"
-assert any(e["event"] == "ldap_kennung_gebunden" for e in auth11.store.recent_audit(limit=10))
+assert any(e["event"] == "ldap_identifier_bound" for e in auth11.store.recent_audit(limit=10))
 ok("F-11: an existing account is re-bound at the next login — once, with an audit line")
 
 # …and afterwards the guard from (3) also applies to this account.
@@ -1485,11 +1485,11 @@ c29.post("/auth/login", data={"username": "niemand", "password": "x"})
 _zeilen29 = auth29.store.recent_audit(50)
 _ereignisse = {(z["event"], z["username"]) for z in _zeilen29}
 assert ("login_ldap", "ldapnutzer") in _ereignisse, _ereignisse
-assert ("login_lokal", "admin") in _ereignisse, _ereignisse
-assert ("login_ldap", "admin") not in _ereignisse and ("login_lokal", "ldapnutzer") not in _ereignisse
+assert ("login_local", "admin") in _ereignisse, _ereignisse
+assert ("login_ldap", "admin") not in _ereignisse and ("login_local", "ldapnutzer") not in _ereignisse
 _fail29 = [z for z in _zeilen29 if z["event"] == "login_fail" and z["username"] == "niemand"]
-assert _fail29 and "quelle=lokal+ldap" in (_fail29[0]["detail"] or ""), _fail29
-ok("F-29: login_ldap / login_lokal separate, a failed attempt names quelle=lokal+ldap")
+assert _fail29 and "source=local+ldap" in (_fail29[0]["detail"] or ""), _fail29
+ok("F-29: login_ldap / login_local separate, a failed attempt names source=local+ldap")
 os.remove(db29)
 # Without LDAP the audit log stays as before — no new line for every local login.
 db29b = os.path.join(tempfile.mkdtemp(), "t.db")

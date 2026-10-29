@@ -282,7 +282,7 @@ auth.store._exec("UPDATE users SET roles=? WHERE id=?", ("[1, null]", _carl))
 r = c.post(f"/auth/admin/api/users/{_carl}/roles", json={"roles": ["x"], "is_admin": False})
 assert r.status_code == 200, (r.status_code, r.text)
 _z8 = [z["detail"] for z in auth.store.recent_audit(20) if z["event"] == "user_roles"]
-assert _zeilen("user_roles") == _vorher8 + 1 and "rollen=1,None->x" in _z8[0], _z8
+assert _zeilen("user_roles") == _vorher8 + 1 and "roles=1,None->x" in _z8[0] and "rollen=" not in _z8[0], _z8
 print("  ✓ Finding 8: roles without text → 400 before any write; legacy data is logged instead of 500")
 
 # ---------- Integration finding 10: the panel shows what the server rejects ----------

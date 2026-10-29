@@ -167,7 +167,7 @@ auth.store._exec("DELETE FROM audit")
 c.get("/auth/magic/gibtsnicht", follow_redirects=False)
 c.post("/auth/magic/gibtsnicht", follow_redirects=False)
 _spur = auth.store._all("SELECT * FROM audit WHERE event='token_invalid'")
-assert len(_spur) == 2 and all("zweck=login" in z["detail"] for z in _spur), [dict(z) for z in _spur]
+assert len(_spur) == 2 and all("purpose=login" in z["detail"] for z in _spur), [dict(z) for z in _spur]
 ok("B5-18: invalid sign-in token (GET and POST) is in the audit log")
 
 # ---------- R4-05 + B6-6: the response does not wait for the mail server ----------

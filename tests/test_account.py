@@ -192,7 +192,7 @@ _r = c.post("/auth/password", json={"current": "wieder-ein-neues", "new": "neues
 _sec.seclog.removeHandler(_h)
 auth.on_security_event = None
 assert _r.status_code == 200, "a failing hook must not break the password change"
-assert any("on_security_event fehlgeschlagen" in z and "password_changed" in z for z in _zeilen), _zeilen
+assert any("on_security_event failed" in z and "password_changed" in z for z in _zeilen), _zeilen
 assert auth._check_password("admin", "neuespasswort")
 ok("on_security_event: error in the hook → operation stands, line in the security log")
 

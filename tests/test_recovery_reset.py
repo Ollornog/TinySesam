@@ -157,7 +157,7 @@ a_s._record_login("gesperrt", "testclient", False, "totp")
 weg = a_s.lift_lockout(a_s.store.get_user_by_name("gesperrt")["id"], methods=("password",))
 assert weg == 1 and a_s.store.count_fails(0, username="gesperrt", method="totp") == 1, \
     "the reset also clears failed attempts on the second factor"
-assert any("fehlversuche_verworfen=" in (z["detail"] or "") for z in a_s.store.recent_audit(20)
+assert any("failed_attempts_discarded=" in (z["detail"] or "") for z in a_s.store.recent_audit(20)
            if z["event"] == "password_reset"), "the audit log does not say what the reset cleared"
 ok("…only the password failed attempts, not those of the second factor; the audit log gives the number")
 os.remove(db_s)
@@ -205,7 +205,7 @@ cr = TestClient(app_r)
 cr.post("/auth/login", data={"username": "rita", "password": "rita-geheim-1-lang"}, follow_redirects=False)
 assert cr.post("/auth/totp", data={"code": codes_r[0], "next": "/"}, follow_redirects=False).status_code == 303
 zeilen = [z for z in auth_r.store.recent_audit(20) if z["event"] == "recovery_used"]
-assert len(zeilen) == 1 and "verbleibend=3" in zeilen[0]["detail"], zeilen
+assert len(zeilen) == 1 and "remaining=3" in zeilen[0]["detail"], zeilen
 assert ("recovery_code_used", {"remaining": 3}) in ereig_r, ereig_r
 seite = cr.get("/auth/account").text
 assert "Nur noch 3 Recovery-Codes" in seite, "the account page does not show the small remainder"
@@ -256,7 +256,7 @@ from tinysesam import security as _security  # noqa: E402
 
 def _token_spuren():
     return len(auth_r.store._all("SELECT id FROM audit WHERE event='token_invalid' "
-                                 "AND detail LIKE 'zweck=reset_password%'"))
+                                 "AND detail LIKE 'purpose=reset_password%'"))
 
 
 _puffer_r = _io.StringIO()

@@ -66,7 +66,7 @@ owner = [u["username"] for u in neu.store.list_users() if u["is_owner"]]
 r.check("existing data without owner: the oldest hand-set admin becomes owner (not the IdP admin)",
         owner == ["hand-admin"], str(owner))
 r.check("… with a row in the audit log",
-        any(z["event"] == "owner_grant" and "bestand" in (z["detail"] or "") for z in neu.store.recent_audit(20)))
+        any(z["event"] == "owner_grant" and z["detail"] == "source=existing oldest_admin" for z in neu.store.recent_audit(20)))
 
 # ── Protection: not deletable, not lockable, not strippable of power ───────────────────
 auth, app = _app()

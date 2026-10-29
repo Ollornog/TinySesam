@@ -85,12 +85,12 @@ assert auth.store.get_session(token), "the session must stay"
 ok("logout=app: 303 back to the application, gate cookie deleted, session stays")
 
 r = forward(c, WIKI)
-assert r.status_code == 401 and r.headers.get("X-TinySesam-Reason") == "app-abgemeldet", dict(r.headers)
+assert r.status_code == 401 and r.headers.get("X-TinySesam-Reason") == "app-signed-out", dict(r.headers)
 loc = urlsplit(r.headers["X-TinySesam-Location"])
 assert loc.path == "/auth/login", "after “sign out here only” never straight to the provider (it signed in silently)"
 assert forward(c, APP).status_code == 200
 assert "X-TinySesam-Gate-Cookie" not in forward(c, WIKI).headers
-ok("afterwards: wiki → 401 app-abgemeldet to the login page (not direct), app still 200, no gate token for wiki")
+ok("afterwards: wiki → 401 app-signed-out to the login page (not direct), app still 200, no gate token for wiki")
 
 seite = c.get(loc.path + "?" + loc.query)
 assert seite.status_code == 200, seite.status_code

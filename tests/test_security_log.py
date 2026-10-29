@@ -612,14 +612,14 @@ ok("B5-16: missteps at the first-admin claim are throttled, in the audit and in 
 os.remove(dbc)
 
 # (7) The resource PIN writes a reason that can be evaluated. `res:<name>` is never an
-# account — until T-13 every misstep had `grund=kein_konto`.
+# account — until T-13 every misstep had `reason=no_account`.
 dbr = os.path.join(tempfile.mkdtemp(), "t.db")
 authr = TinySesam(TinySesamConfig(db_path=dbr, cookie_secure=False, passkey_enabled=False,
                                   csrf_enabled=False, lang="de"))
 authr._record_login("res:lager", "203.0.113.6", False, "resource")
 detail = [z["detail"] for z in authr.store.recent_audit(5) if z["event"] == "login_fail"][0]
-assert "grund=falsches_bereichsgeheimnis" in detail and "kein_konto" not in detail, detail
-ok("resource PIN: grund=falsches_bereichsgeheimnis instead of the misleading kein_konto")
+assert "reason=wrong_area_secret" in detail and "no_account" not in detail, detail
+ok("resource PIN: reason=wrong_area_secret instead of the misleading no_account")
 os.remove(dbr)
 
 _abraeumen()

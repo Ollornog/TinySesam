@@ -173,7 +173,7 @@ finally:
     _sec_b210.seclog.removeHandler(_haken_b)
 _text_b = _puffer_b.getvalue()
 assert _sec_b210.log_ereignis("passkey") in _text_b, f"no jail line: {_text_b[:200]!r}"
-assert "unbekannter_schluessel" in _text_b, _text_b[:200]
+assert "reason=unknown_key" in _text_b, _text_b[:200]
 assert any(e["event"] == "passkey_unknown" for e in _auth_l.store.recent_audit(limit=10))
 ok_("B2-10: a failed passkey sign-in is in the log and hits the jail")
 

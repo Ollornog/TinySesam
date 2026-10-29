@@ -223,7 +223,7 @@ PROXY_B = {**PROXY_A, "X-Forwarded-Host": "app-b.example.com"}
 # application. (Mutation probe: remove the check in `_forward` → 200 instead of 401.)
 r = c14.get("/auth/forward", headers=PROXY_A)
 assert r.status_code == 401, (r.status_code, dict(r.headers))
-assert r.headers.get("X-TinySesam-Reason") == "app-fehlt", dict(r.headers)
+assert r.headers.get("X-TinySesam-Reason") == "app-missing", dict(r.headers)
 assert "app=app-a.example.com" in r.headers.get("X-TinySesam-Location", ""), r.headers.get("X-TinySesam-Location")
 ok("T-14: signed in, but without approval for this application → 401 with app= in the login URL")
 
@@ -234,7 +234,7 @@ assert r.status_code == 200, (r.status_code, r.headers.get("X-TinySesam-Reason")
 
 # …and precisely because of that not for B by a long way.
 r = c14.get("/auth/forward", headers=PROXY_B)
-assert r.status_code == 401 and r.headers.get("X-TinySesam-Reason") == "app-fehlt", dict(r.headers)
+assert r.status_code == 401 and r.headers.get("X-TinySesam-Reason") == "app-missing", dict(r.headers)
 assert "app=app-b.example.com" in r.headers.get("X-TinySesam-Location", "")
 ok("T-14: the approval for A does not apply to B — same session, two answers")
 
@@ -242,7 +242,7 @@ ok("T-14: the approval for A does not apply to B — same session, two answers")
 auth4.store._exec("UPDATE oidc_grant SET checked_at=? WHERE token_hash=? AND client=?",
                   (int(_zeit.time()) - 16 * 60, _h, "app-a.example.com"))
 r = c14.get("/auth/forward", headers=PROXY_A)
-assert r.status_code == 401 and r.headers.get("X-TinySesam-Reason") == "app-veraltet", dict(r.headers)
+assert r.status_code == 401 and r.headers.get("X-TinySesam-Reason") == "app-stale", dict(r.headers)
 assert c14.get("/auth/forward", headers=PROXY_A).status_code == 401
 # The session itself is untouched — that is the difference from signing out.
 assert auth4.store.get_session(_sitzung) is not None, "the session must survive the expired approval"

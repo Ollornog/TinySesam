@@ -92,7 +92,18 @@ r.check("… the panel list shows the new name, Remote-Id stays the account ID",
         and auth._forward_response_headers(auth.get_user(anna))["Remote-Id"] == id_vorher == str(anna))
 _zeilen = _umbenannt(auth, anna)
 r.check("… EXACTLY one audit row, as operator and with the admin as actor",
-        _zeilen == [("anna.neu", "alt=anna durch=betreiber akteur=helfer")], str(_zeilen))
+        _zeilen == [("anna.neu", "old=anna by=operator actor=helfer")], str(_zeilen))
+# Read path: a row written up to 0.24.x (German keys) is still understood — `akteur=` marks a foreign trigger
+# (its IP is not shown), and the event comes out in the English spelling.
+auth.store.audit_log("username_changed", "anna.neu", "203.0.113.9", "alt=x durch=betreiber akteur=helfer")
+auth.store.audit_log("oidc_widerruf", "anna.neu", "203.0.113.9", "grund=idp_nein")
+_eigene = auth.own_events(anna, limit=50)
+_alt_zeile = [e for e in _eigene if e["event"] == "username_changed" and e["by_admin"]]
+r.check("… legacy row (`akteur=`) counts as an admin action: no IP, shown as by_admin; new row too",
+        len(_alt_zeile) >= 2 and all(e["ip"] is None for e in _alt_zeile), str(_eigene))
+r.check("… legacy event names come out in English (`oidc_widerruf` → `oidc_revoked`), never in the old form",
+        any(e["event"] == "oidc_revoked" for e in _eigene) and all(e["event"] != "oidc_widerruf" for e in _eigene),
+        str([e["event"] for e in _eigene]))
 r.check("… the security event reaches the owner",
         ("username_changed", {"old": "anna", "new": "anna.neu"}) in ereignisse, str(ereignisse))
 r.check("… and the “self-chosen” marker (G2-N) is cleared: the name now stands for the operator",
@@ -182,8 +193,8 @@ auth.store.set_username(anna, "anna.neu", selbst_gewaehlt=True)       # back to 
 code, aus = _cli("rename", "--db", db, "anna.neu", "anna2")
 r.check("G13 (CLI): rename renames, exit 0",
         code == 0 and auth.store.get_user(anna)["username"] == "anna2" and "anna2" in aus, f"{code} {aus}")
-r.check("… audit row as operator with quelle=cli, “self-chosen” marker is cleared",
-        _umbenannt(auth, anna)[:1] == [("anna2", "alt=anna.neu durch=betreiber quelle=cli")]
+r.check("… audit row as operator with source=cli, “self-chosen” marker is cleared",
+        _umbenannt(auth, anna)[:1] == [("anna2", "old=anna.neu by=operator source=cli")]
         and auth.store.get_user(anna)["name_selbst_gewaehlt"] == 0, str(_umbenannt(auth, anna)))
 _cli_fehl = {n: _cli("rename", "--db", db, "anna2", n) for n in
              ("bert", "BERT", "\uff42\uff45\uff52\uff54", "bert@example.com", "fremd@example.com", "zwei\x01", "",

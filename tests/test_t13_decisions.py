@@ -104,7 +104,7 @@ gesperrt = _login(c, "serie", PW)
 r.check("B2-6: after 10 failed attempts in a row the sign-in locks — even with the correct password",
         gesperrt.status_code == 429 and "in Folge" in gesperrt.text, f"HTTP {gesperrt.status_code}")
 r.check("… the lock appears exactly once in the audit log",
-        sum(1 for z in auth.store.recent_audit(200) if z["event"] == "lockout_serie") == 1)
+        sum(1 for z in auth.store.recent_audit(200) if z["event"] == "lockout_series") == 1)
 for _ in range(10):
     _login(c, "gibt-es-nicht", f"falsch-falsch-falsch-{next(_FALSCH)}")
 fremd = _login(c, "gibt-es-nicht", f"falsch-falsch-falsch-{next(_FALSCH)}")
@@ -357,7 +357,7 @@ try:
     _dritter = _login(TestClient(app_v), "chefin@example.com", LPW)
 finally:
     _sec_g5.seclog.removeHandler(_haken_w)
-_abgewiesen_w = [dict(z) for z in auth_v.store._all("SELECT * FROM audit WHERE event='ldap_kennung_abgewiesen'")]
+_abgewiesen_w = [dict(z) for z in auth_v.store._all("SELECT * FROM audit WHERE event='ldap_identifier_rejected'")]
 # (Mutation probe: switch off the check against `nur_konto` in `_fremde_identitaet_aufloesen` → the
 #  third party gets 303 and an account → red.)
 r.check("p1-d (C): the sign-in of a directory third party under the address of a local account is "
@@ -369,9 +369,9 @@ r.check("p1-d (C): the sign-in of a directory third party under the address of a
         and auth_v.store.fehlserie("chefin@example.com") == 5,
         f"vorher {_vorher_w}, HTTP {_dritter.status_code}, "
         f"{auth_v.store.count_fails(0, username='chefin@example.com')}/{auth_v.store.fehlserie('chefin@example.com')}")
-r.check("… with reason in the audit log (kennung_zweier_konten, both accounts) and remedy in the security log",
+r.check("… with reason in the audit log (identifier_of_two_accounts, both accounts) and remedy in the security log",
         len(_abgewiesen_w) == 1
-        and _abgewiesen_w[0]["detail"] == f"grund=kennung_zweier_konten lokal={_chefin_w} verzeichnis=neu"
+        and _abgewiesen_w[0]["detail"] == f"reason=identifier_of_two_accounts local={_chefin_w} directory=new"
         and "tinysesam rename" in _puffer_w.getvalue(), f"{_abgewiesen_w} {_puffer_w.getvalue()[:200]!r}")
 _inhaberin = _login(TestClient(app_v), "chefin@example.com", PW)
 # Until 2026-09-27 this counter-check held on to the defect: the 4 failed attempts also applied to the
@@ -427,11 +427,20 @@ r.check("p1-d (C): a local account under the directory name of another person �
         and a_d.store._one("SELECT name_topf FROM federated_identity WHERE user_id=?", (_alice_d,))["name_topf"] is None,
         f"HTTP {_treffer_d.status_code}, Sitzung {_sitzung_von(a_d, _treffer_d)}")
 # The rejection arises only if the LDAP password was right — on Mallory's account page it would be the
-# oracle. (Mutation probe: take `ldap_kennung_abgewiesen` out of `_EIGENE_ANSICHT` → red.)
+# oracle. (Mutation probe: take `ldap_identifier_rejected` out of `_EIGENE_ANSICHT` → red.)
 r.check("… and Mallory's account page sees a hit like a miss (no oracle about the rejection)",
         len(_ev_d1) - len(_ev_d0) == len(_ev_d2) - len(_ev_d1) == 1 and _ev_d1[0] == _ev_d2[0]
-        and bool(a_d.store._one("SELECT 1 AS x FROM audit WHERE event='ldap_kennung_abgewiesen'")),
+        and bool(a_d.store._one("SELECT 1 AS x FROM audit WHERE event='ldap_identifier_rejected'")),
         f"{_ev_d0[:2]} {_ev_d1[:2]} {_ev_d2[:2]}")
+# Read path with OLD rows (an older version after a rollback wrote them): the rejection under its up-to-0.24.x
+# name stays just as hidden, and the old name `login_lokal` is shown in the English spelling.
+a_d.store.audit_log("ldap_kennung_abgewiesen", "alice.neu", "203.0.113.66", "grund=kennung_zweier_konten")
+a_d.store.audit_log("login_lokal", "alice.neu", "203.0.113.66", "password")
+_ev_d3 = [e["event"] for e in a_d.own_events(_mallory_d, 1000)]
+r.check("… old rows: `ldap_kennung_abgewiesen` stays hidden on the account page, `login_lokal` appears as `login_local`",
+        len(_ev_d3) - len(_ev_d2) == 1 and _ev_d3[0] == "login_local"
+        and "ldap_kennung_abgewiesen" not in _ev_d3 and "ldap_identifier_rejected" not in _ev_d3,
+        f"{_ev_d2[:2]} {_ev_d3[:3]}")
 r.check("… Mallory's own sign-in continues to work (counter-check)",
         _login(TestClient(ap_d), "alice.neu", MPW).status_code == 303)
 a_d.change_username(_mallory_d, "mallory", by_operator=True)
@@ -865,8 +874,8 @@ _chef6 = a6.store.get_user_by_name("chef6")
 _audit6 = [(z["event"], z["username"], z["detail"]) for z in a6.store.recent_audit(50)]
 r.check("G6: the IdP takes the last admin — the allowlist does NOT promote again in the same login",
         (_chef6["is_admin"], _chef6["is_owner"]) == (0, 0), str(dict(_chef6)))
-r.check("… with line admin_bootstrap_denied nach_idp_entzug, without admin_bootstrap",
-        ("admin_bootstrap_denied", "chef6", "nach_idp_entzug") in _audit6
+r.check("… with line admin_bootstrap_denied after_idp_withdrawal, without admin_bootstrap",
+        ("admin_bootstrap_denied", "chef6", "after_idp_withdrawal") in _audit6
         and not any(e == "admin_bootstrap" for e, _, _ in _audit6), str(_audit6[:6]))
 # stderr is a buffer here, not a console (as in the container) — the token therefore goes to
 # `<db_path>.claim` (T-17), not to stderr; `tests/test_operations_findings.py` (b) measures both paths.
@@ -1163,7 +1172,7 @@ r.check("ASVS 6.3.5: with configured mail delivery the owner gets a notice (defa
 r.check("… the notice carries no link (there is no base an attacker could bend)",
         post635 and "://" not in post635[0][2], post635[0][2][:120] if post635 else "")
 r.check("… exactly one per lock window, not one per rejected attempt",
-        len(post635) == 1 and any(z["event"] == "sperrhinweis" for z in a635.store.recent_audit(50)))
+        len(post635) == 1 and any(z["event"] == "lockout_notice" for z in a635.store.recent_audit(50)))
 for _ in range(a635._sec("max_login_attempts") + 2):
     _login(TestClient(app635), "niemand", f"falsch-falsch-falsch-{next(_FALSCH)}")
 a635._hinweis_ausgang.abwarten()
@@ -1318,7 +1327,7 @@ a4a._oidc_ausgang.abwarten()
 r.check("4a: if the provider refuses (locked, deleted, withdrawn), the session is gone",
         c4a.get("/auth/me").status_code == 401
         and a4a.store._one("SELECT COUNT(*) AS n FROM session")["n"] == 0
-        and any(z["event"] == "oidc_widerruf" for z in a4a.store.recent_audit(20)))
+        and any(z["event"] == "oidc_revoked" for z in a4a.store.recent_audit(20)))
 a4b, app4b = _oidc({"sub": "r-2", "preferred_username": "ohne"}, oidc_session_refresh_minutes=0)
 a4b.oidc.exchange = lambda code, redirect_uri, nonce, t=None, **_: (
     _Claims({"sub": "r-2", "preferred_username": "ohne", "nonce": nonce}),
@@ -1460,9 +1469,9 @@ a8._oidc_nachpruefen(a8.store._one("SELECT * FROM session"))
 a8._oidc_ausgang.abwarten()
 r.check("Finding 8: after the provider's no the key rests (session gone, key rejected)",
         a8.store._one("SELECT COUNT(*) AS n FROM session")["n"] == 0 and a8.verify_api_key(key8)[0] is None)
-_zeile8 = a8.store._one("SELECT detail FROM audit WHERE event='api_keys_ruhen'")
+_zeile8 = a8.store._one("SELECT detail FROM audit WHERE event='api_keys_dormant'")
 r.check("… with a row in the audit log (how many keys it affects)",
-        _zeile8 is not None and "anzahl=1" in _zeile8["detail"], str(_zeile8 and dict(_zeile8)))
+        _zeile8 is not None and "count=1" in _zeile8["detail"], str(_zeile8 and dict(_zeile8)))
 r.check("… nothing is deleted or revoked",
         not a8.store._one("SELECT revoked FROM api_key")["revoked"])
 # The no is stored as a NEGATIVE timestamp; a yes only wakes if its question went out afterwards. Here
@@ -2079,7 +2088,7 @@ a_ob.store._exec("UPDATE oidc_sitzung SET erfolg_at = ?", (int(_zeit.time()) - 2
 _antw_ob = c_ob.get("/auth/me").status_code
 r.check("… 26 hours without a yes: the session ends, with an audit row — and that is NOT a no for the keys",
         _antw_ob == 401 and a_ob.store._one("SELECT COUNT(*) AS n FROM session")["n"] == 0
-        and a_ob.store._one("SELECT 1 FROM audit WHERE event='oidc_unbestaetigt'") is not None
+        and a_ob.store._one("SELECT 1 FROM audit WHERE event='oidc_unconfirmed'") is not None
         and (a_ob.store.get_user(_uid_ob)["idp_bestaetigt_at"] or 0) > 0, f"HTTP {_antw_ob}")
 a_ob0, _, c_ob0 = _oidc_mit_refresh("ob-aus", oidc_session_max_unverified_hours=0)
 a_ob0.store._exec("UPDATE oidc_sitzung SET erfolg_at = 1000")

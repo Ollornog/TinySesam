@@ -93,7 +93,7 @@ r.check("… a confirmation link went to the address from the directory",
         [m[0] for m in post] == ["bob@example.com"] and _link(post), str(post))
 r.check("… with audit row (source and target)",
         auth.store._one("SELECT 1 FROM audit WHERE event='federation_email_confirm' "
-                        "AND detail LIKE '%quelle=ldap%an=bob@example.com%'") is not None)
+                        "AND detail LIKE '%source=ldap%to=bob@example.com%'") is not None)
 link = _link(post)
 post.clear()
 _anmelden(auth, "bob", {"email": "bob@example.com", "id": "uuid-bob"})
@@ -258,7 +258,7 @@ r.check("Proof attribute \" \": the check says \"NEVER\", and the runtime does n
 # ── G12a: deliveries count, attempts dampen ───────────────────────────────────────────────────
 # Until 2026-09-26 the ATTEMPT already consumed the daily quota, per process in memory: a
 # throttled target address or a failed delivery cost the link for a day, and two
-# workers sent two. Now the database counts deliveries (`federation_email_confirm konto=<id>`
+# workers sent two. Now the database counts deliveries (`federation_email_confirm account=<id>`
 # only after delivery); the memory only dampens attempts.
 
 # (a) The target address is currently throttled: no link — but one after the throttle window.
@@ -299,10 +299,10 @@ r.check("… right afterwards (same process, within the window) no new attempt y
         versuche["n"] == 1, str(versuche))
 _vergehen(g_b, int(g_b._sec("mail_per_address_window_sec")) + 1)
 _anmelden(g_b, "hilde", {"email": "hilde@example.com", "id": "uuid-hilde"})
-r.check("… after the window same day: the link is delivered, now with row (konto=<id> first)",
+r.check("… after the window same day: the link is delivered, now with row (account=<id> first)",
         [m[0] for m in p_b] == ["hilde@example.com"] and _link(p_b)
         and g_b.store._one("SELECT 1 FROM audit WHERE event='federation_email_confirm' AND detail LIKE ?",
-                           (f"konto={u_b['id']} quelle=ldap an=hilde@example.com",)) is not None,
+                           (f"account={u_b['id']} source=ldap to=hilde@example.com",)) is not None,
         f"{versuche} {p_b}")
 
 # (c) Two workers on one database: each with its own memory, but ONE daily quota.
@@ -403,8 +403,8 @@ r.check("… in the operator's audit log one row each, the link only to the free
         and _verg["post"] == _res["post"] == []
         and _res["w"].store._one("SELECT COUNT(*) AS n FROM audit WHERE event='email_change_reserved'")["n"] == 1,
         f"{_frei['zeilen']}/{_verg['zeilen']} {_frei['post']} {_verg['post']} {_res['post']}")
-r.check("… the row carries `konto=<id> quelle=ldap` first, built the same for every outcome",
-        all(re.fullmatch(r"konto=\d+ quelle=ldap neu=ziel@example\.com", z["detail"] or "")
+r.check("… the row carries `account=<id> source=ldap` first, built the same for every outcome",
+        all(re.fullmatch(r"account=\d+ source=ldap new=ziel@example\.com", z["detail"] or "")
             for lauf in (_frei, _verg, _res) for z in lauf["w"].store._all(
                 "SELECT detail FROM audit WHERE event LIKE 'email_change_%'")))
 for lauf in (_frei, _verg):
@@ -512,6 +512,6 @@ r.check("Change requests by others to the address do not consume the quota of th
 #  G12a: quota again before the attempt for one day → (a)/(b) red; audit row
 #  before delivery → (b) red; check in the database removed → (c) and "same day" red; quota
 #  not per account → "another account" red. a1-02: rejection not counted in the database → (d) and
-#  "account page the same" red; `konto=` not in the detail → likewise; expiry only one day → "3 days" red.)
+#  "account page the same" red; `account=` not in the detail → likewise; expiry only one day → "3 days" red.)
 
 sys.exit(r.done())

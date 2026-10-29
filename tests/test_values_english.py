@@ -194,7 +194,8 @@ a.store.db.close()
 
 # ── (a') Audit and log lines stay as they were ────────────────────────────────────────────────
 # Operators' filters hang on them (PO decision 2026-09-27): the kind of a key still appears there
-# as `art=automat`/`art=mensch`, the security log line (now English text) names `'human'`.
+# as `kind=automation`/`kind=human` since schema 15 (up to then `art=automat|mensch`), the security log line
+# (English text) names `'human'`.
 # (Mutation probe: `_key_art_audit` returns the English name → (a') red.)
 pfad_g = os.path.join(tempfile.mkdtemp(), "g.db")
 g = _aufbau(pfad_g)
@@ -213,9 +214,11 @@ finally:
     seclog.removeHandler(_sec_haken)
 _details = {f"{z['event']}:{m.group(1)}"
             for z in g.store._all("SELECT event, detail FROM audit WHERE event IN ('apikey_create', 'apikey_use')")
-            for m in [re.search(r"(?:^| )art=(\S+)", z["detail"] or "")] if m}
-r.check("(a') audit: `apikey_create`/`apikey_use` still name the kind with `art=automat|mensch`",
-        {"apikey_create:mensch", "apikey_create:automat", "apikey_use:automat"} <= _details, str(_details))
+            for m in [re.search(r"(?:^| )kind=(\S+)", z["detail"] or "")] if m}
+r.check("(a') audit: `apikey_create`/`apikey_use` name the kind with `kind=automation|human` (not `art=`)",
+        {"apikey_create:human", "apikey_create:automation", "apikey_use:automation"} <= _details
+        and not any(re.search(r"(?:^| )art=", z["detail"] or "") for z in g.store._all(
+            "SELECT detail FROM audit WHERE event IN ('apikey_create', 'apikey_use')")), str(_details))
 r.check("(a') security log: the human key without a session is named `'human'` in the (English) log text",
         "API key of kind 'human' presented without a matching session" in _sec.getvalue(), _sec.getvalue()[-300:])
 g.store.db.close()
@@ -263,10 +266,23 @@ b.store.db.close()
 # ── (c) The way back from docs/OPERATIONS.md: exactly the block that is stated there ──────────────
 # (Mutation probe: remove the line for `mensch` in the SQL block of the docs → (c) red.)
 _doku = (ROOT / "docs" / "OPERATIONS.md").read_text(encoding="utf-8")
-_abschnitt = _doku.split("## Rollback to 0.21.x", 1)[-1] if "## Rollback to 0.21.x" in _doku else ""
+_abschnitt = (_doku.split("## Rollback to 0.21.x", 1)[-1].split("\n## ", 1)[0]
+              if "## Rollback to 0.21.x" in _doku else "")
 _sql = re.search(r"```sql\n(.*?)```", _abschnitt, re.S)
 r.check("docs/OPERATIONS.md has the section “Rollback to 0.21.x” with an SQL block",
         bool(_sql), "section or ```sql block missing")
+# Section “Rollback to 0.24.x (schema 15)”: it must name every renamed audit event, old and new, as in
+# `_vokabular` (a table row that drifts from the code is red).
+from tinysesam import _vokabular as _voc  # noqa: E402
+_a24 = (_doku.split("## Rollback to 0.24.x (schema 15)", 1)[-1].split("\n## ", 1)[0]
+        if "## Rollback to 0.24.x (schema 15)" in _doku else "")
+_fehlt24 = [n for alt, neu in _voc.AUDIT_EREIGNISSE_ALT.items() for n in (alt, neu)
+            if n not in _a24 and n not in ("login_local", "login_lokal", "source_email_taken", "quelle_email_taken")]
+_fehlt24 += [s for s in ("_kennung_abgewiesen", "_identifier_rejected", "_namensbindung_zu", "_name_binding_closed",
+                         "_ohne_kennung", "_without_identifier", "gelöscht#", "deleted#", "pin_folge", "pin_chain",
+                         "kennung vergeben", "identifier taken") if s not in _a24]
+r.check("docs/OPERATIONS.md has the section “Rollback to 0.24.x (schema 15)” naming the old and new events",
+        bool(_a24) and not _fehlt24, str(_fehlt24))
 if _sql:
     pfad_c = os.path.join(tempfile.mkdtemp(), "c.db")
     post_c: list = []

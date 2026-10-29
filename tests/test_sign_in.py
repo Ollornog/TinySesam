@@ -199,7 +199,7 @@ r.check("(a) … and every failed attempt like every rejection is in the securit
         f"{len(_treffer_a)} Treffer: {log_a.zeilen()[:4]}")
 r.check("(a) … and in the audit log (login_fail per attempt, with reason)",
         [e[0] for e in _audit(auth)].count("login_fail") == 3
-        and all(e[3].startswith("password grund=") for e in _audit(auth) if e[0] == "login_fail"),
+        and all(e[3].startswith("password reason=") for e in _audit(auth) if e[0] == "login_fail"),
         str(_audit(auth)[-4:]))
 
 # IP throttle: many accounts from one address — the block throttles per IP before it checks.
@@ -232,8 +232,8 @@ r.check("(a) series: after 10 failed attempts in a row 429 `locked_series` with 
 r.check("(a) … it does not expire: even the correct password from a new address stays out",
         _serie_richtig.status_code == 429 and _reason(_serie_richtig) == "locked_series",
         f"HTTP {_serie_richtig.status_code}")
-r.check("(a) … audit `lockout_serie` and the log line for the operator",
-        any(e[0] == "lockout_serie" for e in _audit(auth))
+r.check("(a) … audit `lockout_series` and the log line for the operator",
+        any(e[0] == "lockout_series" for e in _audit(auth))
         and log_s.zeilen("Sign-in for user=carol locked: 10 failed attempts in a row"),
         f"{[e[0] for e in _audit(auth)]} {log_s.zeilen('locked')[:2]}")
 
@@ -292,9 +292,9 @@ r.check("(b) LDAP fallback via the block: account from the directory, session, a
         and any(e[0] == "login_ldap" and e[1] == "lena" for e in _audit(auth)),
         f"HTTP {_l_ok.status_code}, {[e[0] for e in _audit(auth)]}")
 _l_falsch = _post(c, "/eigen/login", username="lena", password="falsch-falsch-1")
-r.check("(b) … rejected: 401 `invalid`, login_fail with quelle=lokal+ldap (both asked)",
+r.check("(b) … rejected: 401 `invalid`, login_fail with source=local+ldap (both asked)",
         _l_falsch.status_code == 401 and _reason(_l_falsch) == "invalid"
-        and any(e[0] == "login_fail" and "quelle=lokal+ldap" in (e[3] or "") for e in _audit(auth)),
+        and any(e[0] == "login_fail" and "source=local+ldap" in (e[3] or "") for e in _audit(auth)),
         f"HTTP {_l_falsch.status_code}")
 
 # Outage: without a local password the pre-booking is rolled back, with a local one the failed attempt counts.
@@ -318,7 +318,7 @@ r.check("(b) … without a local password it is no failed attempt: pre-booking r
         f"{_z['verz']} {log_b.zeilen()[:3]}")
 r.check("(b) … with a wrong local password it counts (A-1), the local emergency account signs in",
         [v[2:] for v in _z["notfall"]] == [(0, "password", 0)] and _weg_lokal.status_code == 503
-        and any(e[0] == "login_fail" and e[1] == "notfall" and "quelle=lokal" in (e[3] or "")
+        and any(e[0] == "login_fail" and e[1] == "notfall" and "source=local" in (e[3] or "")
                 for e in _audit(auth))
         and _weg_richtig.status_code == 303 and _sitzung(auth, _weg_richtig),
         f"{_z['notfall']} {_weg_lokal.status_code} {_weg_richtig.status_code}")
@@ -333,10 +333,10 @@ auth.create_user("alice.neu", password="Mallory-Pw-15xy")
 auth.ldap = Verzeichnis({"alice.neu": {"pw": LPW, "id": "uuid-alice"}})
 _fremd = _post(_client(app), "/eigen/login", username="alice.neu", password=LPW)
 r.check("(b) one identifier, one account: the LDAP password of another person opens no session under a locally "
-        "assigned identifier (401), audit `ldap_kennung_abgewiesen` names Alice's account "
+        "assigned identifier (401), audit `ldap_identifier_rejected` names Alice's account "
         "as owner of the directory entry",
         _fremd.status_code == 401 and _sitzung(auth, _fremd) is None
-        and any(e[0] == "ldap_kennung_abgewiesen" and f"verzeichnis={_alice}" in (e[3] or "")
+        and any(e[0] == "ldap_identifier_rejected" and f"directory={_alice}" in (e[3] or "")
                 for e in _audit(auth)),
         f"HTTP {_fremd.status_code}, {[(e[0], e[3]) for e in _audit(auth)][-3:]}")
 
@@ -829,7 +829,7 @@ r.check("(j) the same fake on the new name (`auth._check_password = fake`) works
 # type, its fields, public methods and constants; the values of `REASONS`. Each name is
 # split into words (`_`, `.` and CamelCase) and held against a short list of German words.
 # In addition each of these names carries tier A in `tests/api_surface.json` — a name that silently
-# slips into B would lose the 1.0 promise. Not meant: audit and log lines (`login_fail … grund=`,
+# slips into B would lose the 1.0 promise. Not meant: audit and log lines (`login_fail … reason=`,
 # fail2ban) — they are no names of the block and stay as they are.
 # Since the second PO decision of 2026-09-27 (the whole surface of tiers
 # A and B English, without alias) the word list is the ONE from `tests/test_api_surface.py` (`deutsch_in`: whole

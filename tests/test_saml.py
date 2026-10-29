@@ -388,7 +388,7 @@ ok("F-11: a new name with the same NameID leads to the same account")
 # (3) The attack: foreign NameID under the old name.
 _r = _saml_anmelden(auth11, app11, "nid-FREMD", {"uid": ["alice"]})
 assert _r.status_code == 403, f"HTTP {_r.status_code} — the foreign account got through"
-assert any(e["event"] == "saml_kennung_wechsel" for e in auth11.store.recent_audit(limit=10))
+assert any(e["event"] == "saml_identifier_change" for e in auth11.store.recent_audit(limit=10))
 ok("F-11: a foreign NameID under an old name is rejected")
 
 # (4) `saml_attr_id`: if the IdP sends transient NameIDs, an attribute binds.
@@ -420,7 +420,7 @@ _antw22 = [c22.post("/auth/saml/acs", data={"SAMLResponse": "x"}, follow_redirec
 assert _antw22[:3] == [403, 403, 403] and _antw22[3:] == [429, 429], _antw22
 ok("F-22: the ACS is rate-limited (after rate_limit_max → 429, before the signature check)")
 _z22 = auth22.store.recent_audit(50)
-assert any(z["event"] == "saml_denied" and z["username"] == "eve" and "grund=gruppe" in (z["detail"] or "")
+assert any(z["event"] == "saml_denied" and z["username"] == "eve" and "reason=group" in (z["detail"] or "")
            and z["ip"] for z in _z22), [dict(z) for z in _z22][:5]
 ok("F-22: group rejection → audit line saml_denied with reason and IP")
 os.remove(db22)
@@ -429,7 +429,7 @@ db22b, auth22b, app22b = build(saml_auto_create=False)
 auth22b.saml = FakeSAML(nameid="unbekannt", attrs={})
 assert TestClient(app22b).post("/auth/saml/acs", data={"SAMLResponse": "x"},
                                follow_redirects=False).status_code == 403
-assert any(z["event"] == "saml_denied" and "grund=kein_konto" in (z["detail"] or "")
+assert any(z["event"] == "saml_denied" and "reason=no_account" in (z["detail"] or "")
            for z in auth22b.store.recent_audit(20))
 _uid22 = auth22b.create_user("gesperrt")
 auth22b.store._exec("UPDATE users SET disabled=1 WHERE id=?", (_uid22,))
@@ -437,7 +437,7 @@ auth22b.saml = FakeSAML(nameid="gesperrt", attrs={})
 assert TestClient(app22b).post("/auth/saml/acs", data={"SAMLResponse": "x"},
                                follow_redirects=False).status_code == 403
 assert any(z["event"] == "saml_denied" and z["username"] == "gesperrt"
-           and "grund=konto_gesperrt" in (z["detail"] or "") for z in auth22b.store.recent_audit(20))
+           and "reason=account_locked" in (z["detail"] or "") for z in auth22b.store.recent_audit(20))
 auth22b.saml = FakeSAML(valid=False)
 assert TestClient(app22b).post("/auth/saml/acs", data={"SAMLResponse": "x"}).status_code == 400
 assert any(z["event"] == "saml_invalid" for z in auth22b.store.recent_audit(20))

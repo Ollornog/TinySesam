@@ -53,7 +53,7 @@ assert "script-src 'nonce-" in csp and "'unsafe-inline'" not in csp
 ok("CSP: img-src extended by exactly the two foreign origins, otherwise strict as before")
 
 h1 = seite(auth(brand_backgrounds=["/bg/eins.jpg"])).text
-assert "@keyframes" not in h1 and ".tsbg i{opacity:var(--ts-bild-staerke)}" in h1
+assert "@keyframes" not in h1 and ".tsbg i{opacity:var(--ts-image-strength)}" in h1
 ok("one image: stands still, without animation")
 
 for boese in ("https://x.example/a.jpg') ;}body{display:none", "javascript:alert(1)", "//x.example/a.jpg", "a b.jpg"):

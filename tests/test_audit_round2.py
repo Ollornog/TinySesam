@@ -635,9 +635,9 @@ for name in ("anna", "bert", "carla"):
 gruende = {z["username"]: (z["detail"] or "") for z in auth_g.store.recent_audit(20)
            if z["event"] == "login_fail"}
 r.check("the log distinguishes wrong secret, locked and missing account",
-        "falsches_geheimnis" in gruende.get("anna", "")
-        and "konto_gesperrt" in gruende.get("bert", "")
-        and "kein_konto" in gruende.get("carla", ""),
+        "wrong_secret" in gruende.get("anna", "")
+        and "account_locked" in gruende.get("bert", "")
+        and "no_account" in gruende.get("carla", ""),
         f"{gruende}")
 
 
@@ -982,7 +982,7 @@ _rc_zeilen = _zeilen_t("recovery_used")
 r.check("B5-07: a recovery code in the TOTP step appears as `recovery_used` in the log",
         _rc_antwort.status_code == 303 and len(_rc_zeilen) == 1
         and _rc_zeilen[0]["username"] == "anna" and _rc_zeilen[0]["ip"]
-        and "verbleibend=9" in (_rc_zeilen[0]["detail"] or ""),
+        and "remaining=9" in (_rc_zeilen[0]["detail"] or ""),
         f"HTTP {_rc_antwort.status_code}, rows {_rc_zeilen}")
 
 # ── B5-04 / R6-3: the three panel routes without an actor ───────────────────────────────────────
@@ -990,9 +990,9 @@ _key_t = c_chef.post(f"/auth/admin/api/users/{_anna_t}/keys", json={"name": "ci"
 c_chef.post(f"/auth/admin/api/keys/{_key_t['id']}/revoke")
 c_chef.post("/auth/admin/api/invite", json={"email": "gast@example.com"})
 _panel = {e: (_zeilen_t(e) or [{}])[0] for e in ("apikey_create", "apikey_revoke", "invite_create")}
-r.check("B5-04/R6-3: creating/revoking a key names owner, IP and the admin as akteur=",
+r.check("B5-04/R6-3: creating/revoking a key names owner, IP and the admin as actor=",
         all(_panel[e].get("username") == "anna" and _panel[e].get("ip")
-            and "akteur=chef" in (_panel[e].get("detail") or "")
+            and "actor=chef" in (_panel[e].get("detail") or "")
             for e in ("apikey_create", "apikey_revoke")), f"{_panel}")
 r.check("B5-04: the invitation names the inviting admin and his IP",
         _panel["invite_create"].get("username") == "chef" and _panel["invite_create"].get("ip"),
@@ -1014,19 +1014,19 @@ try:
     TestClient(app_t).get("/auth/me", headers={"X-API-Key": "tsk_" + "x" * 40})  # unknown
 finally:
     _sec.seclog.removeHandler(_sl_h)
-_abgewiesen = {z["detail"].split("grund=")[-1]: z for z in _zeilen_t("apikey_denied")}
+_abgewiesen = {z["detail"].split("reason=")[-1]: z for z in _zeilen_t("apikey_denied")}
 r.check("B5-05: a REVOKED key that keeps knocking appears in the log (account, IP, reason)",
-        _abgewiesen.get("widerrufen", {}).get("username") == "anna"
-        and _abgewiesen["widerrufen"].get("ip"), f"{_abgewiesen}")
+        _abgewiesen.get("revoked", {}).get("username") == "anna"
+        and _abgewiesen["revoked"].get("ip"), f"{_abgewiesen}")
 r.check("B5-05: an unknown key likewise — and both in the security log",
-        "unbekannt" in _abgewiesen and _sl_puffer.getvalue().count("api key denied") == 2,
+        "unknown" in _abgewiesen and _sl_puffer.getvalue().count("api key denied") == 2,
         _sl_puffer.getvalue())
 
 # ── R6-7: Before/after ──────────────────────────────────────────────────────────────────
 c_chef.post(f"/auth/admin/api/users/{_anna_t}/roles", json={"roles": ["redaktion"], "is_admin": True})
 _rollen_z = _zeilen_t("user_roles")[0]["detail"] or ""
 r.check("R6-7: the role change names before → after, including admin flag",
-        "rollen=-->redaktion" in _rollen_z and "admin=0->1" in _rollen_z, _rollen_z)
+        "roles=-->redaktion" in _rollen_z and "admin=0->1" in _rollen_z, _rollen_z)
 c_chef.post(f"/auth/admin/api/users/{_anna_t}/roles", json={"roles": [], "is_admin": False})
 _vorher_ma = auth_t._sec("max_login_attempts")
 c_chef.post("/auth/admin/api/security", json={"max_login_attempts": _vorher_ma + 995})
@@ -1048,7 +1048,7 @@ r.check("H-7: the account page shows the own events",
         "Recent activity" in _konto_seite and "totp_enable" in _konto_seite
         and "recovery_used" in _konto_seite)
 r.check("H-7: … without detail text (for admin actions, foreign accounts stand there)",
-        "akteur=" not in _konto_seite and "verbleibend=" not in _konto_seite)
+        "actor=" not in _konto_seite and "remaining=" not in _konto_seite)
 
 # ── B5-17: rejected forward-auth ───────────────────────────────────────────────────────
 _vorher_fw = len(_zeilen_t("forward_denied"))
@@ -1060,7 +1060,7 @@ _fw_status = [_fw.get("/auth/forward").status_code for _ in range(3)]
 _fw_z = _zeilen_t("forward_denied")
 r.check("B5-17: a 401 with an invalid session cookie appears in the log (throttled: 1× for 3 requests)",
         _fw_status == [401] * 3 and len(_fw_z) - _vorher_fw == 1
-        and "grund=sitzung_ungueltig" in _fw_z[0]["detail"] and _fw_z[0]["ip"],
+        and "reason=session_invalid" in _fw_z[0]["detail"] and _fw_z[0]["ip"],
         f"{_fw_status} {_fw_z}")
 r.check("B5-17: … a call without any proof (the first visit), by contrast, does not", _ohne_nachweis == 0)
 
@@ -1071,7 +1071,7 @@ _pk_weg = c_chef.post(f"/auth/admin/api/users/{_anna_t}/passkeys/{_pk[0]['id']}/
 _pk_z = _zeilen_t("passkey_delete")[0]
 r.check("B5-08: the admin revokes a foreign passkey — logged for the owner",
         len(_pk) == 1 and _pk_weg.status_code == 200 and not auth_t.store.list_webauthn(_anna_t)
-        and _pk_z["username"] == "anna" and "akteur=chef" in _pk_z["detail"], f"{_pk} {_pk_z}")
+        and _pk_z["username"] == "anna" and "actor=chef" in _pk_z["detail"], f"{_pk} {_pk_z}")
 r.check("B5-08: foreign passkey via the wrong account ID → 404, nothing deleted",
         c_chef.post(f"/auth/admin/api/users/{_chef_t}/passkeys/999/delete").status_code == 404)
 r.check("B5-08: the own account cannot be deleted in the panel",
@@ -1092,8 +1092,8 @@ r.check("H-13: the name appears nowhere in the audit log any more, neither as ac
         not any("anna" == (z["username"] or "") or "anna@example.com" in (z["detail"] or "")
                 for z in _rest),
         f"{[z for z in _rest if 'anna' in str(z)][:3]}")
-r.check("H-13: … the rows themselves remain (forensics), under `gelöscht#<id>`",
-        len(auth_t.store.recent_audit(1000, username=f"gelöscht#{_anna_t}")) >= 10)
+r.check("H-13: … the rows themselves remain (forensics), under `deleted#<id>`",
+        len(auth_t.store.recent_audit(1000, username=f"deleted#{_anna_t}")) >= 10)
 r.check("H-13: … and only whole words are replaced ('annabell' stays)",
         any("annabell" in (z["detail"] or "") for z in _rest))
 
@@ -1207,27 +1207,35 @@ auth_d.delete_user(_adm)
 _zd = [dict(z) for z in auth_d.store.recent_audit(200)]
 _rollen_d = next(z for z in _zd if z["event"] == "user_roles")
 r.check("A-2: a deleted account `admin` does not mangle `admin=0->1` of a FOREIGN row",
-        "admin=0->1" in _rollen_d["detail"] and "gelöscht" not in _rollen_d["detail"],
+        "admin=0->1" in _rollen_d["detail"] and "deleted" not in _rollen_d["detail"],
         _rollen_d["detail"])
 r.check("A-2: … the same row no longer names the deleted admin as the actor",
-        _rollen_d["username"] == f"gelöscht#{_adm}", f"{_rollen_d}")
+        _rollen_d["username"] == f"deleted#{_adm}", f"{_rollen_d}")
 _bob_fail = next(z for z in _zd if z["event"] == "login_fail" and z["username"] == "bob")
 r.check("A-2: the method in the detail of foreign failed attempts stays untouched",
         _bob_fail["detail"].startswith("password "), _bob_fail["detail"])
 _mail_rest = [z for z in _zd if "anna.admin@example.com" in str(z).lower()]
 r.check("A-3: sign-in attempts under the e-mail address are anonymized in the audit log",
         not _mail_rest and sum(1 for z in _zd if z["event"] == "login_fail"
-                               and z["username"] == f"gelöscht#{_adm}") == 2, f"{_mail_rest}")
+                               and z["username"] == f"deleted#{_adm}") == 2, f"{_mail_rest}")
 _versuche = auth_d.store._all("SELECT username FROM login_attempt", ())
 r.check("A-3: … and their login_attempt rows are deleted (only bob remains)",
         [v["username"] for v in _versuche] == ["bob"], f"{[dict(v) for v in _versuche]}")
-auth_d.store.audit_log("apikey_create", "bob", None, "key=9 akteur=Admin")
+auth_d.store.audit_log("apikey_create", "bob", None, "key=9 actor=Admin")
 auth_d.store.audit_log("user_create", "chef", None, "admin service=False")
-auth_d.store.audit_anonymisieren("admin", "gelöscht#99")
+auth_d.store.audit_anonymisieren("admin", "deleted#99")
 _nach = {z["event"]: z["detail"] for z in auth_d.store.recent_audit(2)}
-r.check("A-2: where a name stands (akteur=, head of user_create), it is still replaced",
-        _nach == {"apikey_create": "key=9 akteur=gelöscht#99",
-                  "user_create": "gelöscht#99 service=False"}, f"{_nach}")
+r.check("A-2: where a name stands (actor=, head of user_create), it is still replaced",
+        _nach == {"apikey_create": "key=9 actor=deleted#99",
+                  "user_create": "deleted#99 service=False"}, f"{_nach}")
+# Old spelling as INPUT (a row from a version before schema 15, written back after a rollback): the name
+# behind `akteur=` is replaced all the same, and the replacement is the new `deleted#<id>`.
+auth_d.store.audit_log("apikey_create", "bob", None, "key=8 akteur=Altadmin")
+auth_d.store.audit_anonymisieren("altadmin", "deleted#98")
+_alt_z = auth_d.store.recent_audit(1)[0]
+r.check("A-2 (old row): the name behind the old `akteur=` is replaced by `deleted#<id>`",
+        _alt_z["event"] == "apikey_create" and "Altadmin" not in (_alt_z["detail"] or "")
+        and "deleted#98" in (_alt_z["detail"] or ""), f"{dict(_alt_z)}")
 
 # ── A-4: the CSRF exception checks the key BEFORE current_user — the IP must already be there ─────
 auth_k, app_k = _app()
@@ -1412,8 +1420,8 @@ r.check("Finding 3: the admin revocation removes the passkey and reports passkey
         f"HTTP {_f3_r.status_code}, Hook {_f3_ereig}")
 _f3_audit = [(z["username"], z["detail"]) for z in auth_f3.store.recent_audit(20)
              if z["event"] == "passkey_delete"]
-r.check("Finding 3: … the audit row stands under the owner, the admin as akteur=",
-        _f3_audit == [("anna", f"id={_f3_pk} akteur=chef")], f"{_f3_audit}")
+r.check("Finding 3: … the audit row stands under the owner, the admin as actor=",
+        _f3_audit == [("anna", f"id={_f3_pk} actor=chef")], f"{_f3_audit}")
 _f3_ereig.clear()
 _f3_r2 = _f3_c.post(f"/auth/admin/api/users/{_f3_anna}/passkeys/{_f3_pk}/delete")
 r.check("Finding 3: a passkey the account does not (any more) have → 404, no notification, no row",
@@ -1503,7 +1511,7 @@ for _f12_weg, _f12_lauf in (("gc()", lambda a: a.gc()["unverified_accounts"]),
             f"n={_f12_n}, remaining: {_f12_rest}")
     _f12_ablauf = [z["username"] for z in _f12_a.store.recent_audit(20) if z["event"] == "signup_expired"]
     r.check(f"Findings 12/18: {_f12_weg} writes signup_expired under the substitute name",
-            _f12_ablauf == [f"gelöscht#{_f12_uid}"], f"{_f12_ablauf}")
+            _f12_ablauf == [f"deleted#{_f12_uid}"], f"{_f12_ablauf}")
 
 # And the account page of the real Carol afterwards (finding 12 verbatim): only her own rows.
 _f12_a, _f12_app, _ = _f12_unbestaetigt()
@@ -1532,7 +1540,7 @@ _f12_bzeile = [z["username"] for z in _f12_b.store.recent_audit(20) if z["event"
 r.check("Findings 12/18: the B6-5 rollback takes the account out of the log, verify_send_error under substitute name",
         _f12_br.status_code == 200 and _f12_b.store.get_user_by_name(_F12_NAME) is None
         and _f12_brest == ([], []) and len(_f12_bzeile) == 1
-        and _f12_bzeile[0].startswith("gelöscht#"), f"HTTP {_f12_br.status_code}, remaining {_f12_brest}, {_f12_bzeile}")
+        and _f12_bzeile[0].startswith("deleted#"), f"HTTP {_f12_br.status_code}, remaining {_f12_brest}, {_f12_bzeile}")
 
 # purge_demo (demo mode off) — the same path, even if the finding did not name it.
 _f12_d, _ = _app(demo_mode=True)
@@ -1670,7 +1678,7 @@ for _n1_lage, _n1_gleich in (("eine Minute davor", False), ("dieselbe Sekunde", 
     _n1_versuch77 = _n1_a.store._all("SELECT * FROM login_attempt WHERE ip='203.0.113.77'")
     r.check(f"N-1 ({_n1_lage}): … what arose from the creation on is still taken along (registration, "
             "later failed attempt)",
-            _n1_danach == [("signup", f"gelöscht#{_n1_uid}"), ("login_fail", f"gelöscht#{_n1_uid}")]
+            _n1_danach == [("signup", f"deleted#{_n1_uid}"), ("login_fail", f"deleted#{_n1_uid}")]
             and not _n1_versuch77, f"{_n1_danach}, attempts {[dict(v) for v in _n1_versuch77]}")
 
     _n1_b, _, _n1_breg, _n1_bvorher = _n1_lauf(_n1_kaputt, _n1_gleich)
@@ -1680,7 +1688,7 @@ for _n1_lage, _n1_gleich in (("eine Minute davor", False), ("dieselbe Sekunde", 
             "rows — and takes the own registration out of the log",
             _n1_breg.status_code == 200 and _n1_b.store.get_user_by_name(_N1_NAME) is None
             and _n1_bnach == _n1_bvorher and len(_n1_bsignup) == 1
-            and _n1_bsignup[0].startswith("gelöscht#"),
+            and _n1_bsignup[0].startswith("deleted#"),
             f"HTTP {_n1_breg.status_code}, signup {_n1_bsignup}\nbefore {_n1_bvorher}\n"
             f"after {_n1_bnach}")
 
@@ -1727,7 +1735,7 @@ for _n7_ereignis, _n7_versatz in (("signup_taken", 0), ("signup_taken", 1), ("si
     _n7_status, _n7_uid, _n7_anker, _n7_z = _n7_lauf(_n7_versatz, _n7_ereignis)
     r.check(f"N-1/S-3: a foreign {_n7_ereignis} row (+{_n7_versatz} s after creation) under the "
             "name does not move the limit (user_create from the creation second is anonymized)",
-            _n7_status == 200 and _n7_anker[1] == 0 and _n7_z == [f"gelöscht#{_n7_uid} service=False"],
+            _n7_status == 200 and _n7_anker[1] == 0 and _n7_z == [f"deleted#{_n7_uid} service=False"],
             f"HTTP {_n7_status}, anlage_grenze {_n7_anker}, {_n7_z}")
 
 # Counter-check: The signup_taken row OF A PLACEHOLDER is its creation and stays the anchor —
@@ -1754,7 +1762,7 @@ r.check("S-3: … the signup_taken row of a placeholder stays its anchor — gc(
         "from the same second alone and takes only the own row",
         _s3_reg.status_code == 200 and _s3_platz is not None and not _s3_platz["email"]
         and _s3_anker[1] > 0 and _s3_gc == 1
-        and _s3_zeilen == [("login_fail", "platz"), ("signup_taken", f"gelöscht#{_s3_platz['id']}")],
+        and _s3_zeilen == [("login_fail", "platz"), ("signup_taken", f"deleted#{_s3_platz['id']}")],
         f"HTTP {_s3_reg.status_code}, anchor {_s3_anker}, gc={_s3_gc}, {_s3_zeilen}")
 
 # The deliberate deletion of an account whose address is CONFIRMED stays as thorough as
@@ -1764,7 +1772,7 @@ r.check("S-3: … the signup_taken row of a placeholder stays its anchor — gc(
 _n6_a, _ = _app(csrf_enabled=False)
 _n6_a.create_user("chef", password="Geheim12345!-lang", is_admin=True)
 _n6_a.store.audit_log("invite_create", "chef", "198.51.100.1", "dora@example.com")
-_n6_a.store.audit_log("login_fail", "dora", "203.0.113.9", "password grund=kein_konto")
+_n6_a.store.audit_log("login_fail", "dora", "203.0.113.9", "password reason=no_account")
 _n6_a.store.record_attempt("dora", "203.0.113.9", False, "password")
 _n6_a.store._exec("UPDATE audit SET ts=ts-60")
 _n6_a.store._exec("UPDATE login_attempt SET ts=ts-60")
@@ -1773,9 +1781,9 @@ _n6_a.delete_user(_n6_dora)
 _n6_zeilen = {z["event"]: (z["username"], z["detail"]) for z in _n6_a.store._all(
     "SELECT * FROM audit WHERE event IN ('invite_create', 'login_fail')")}
 r.check("N-6: deletion by an admin also takes a confirmed address out of older rows (H-13)",
-        _n6_zeilen.get("invite_create") == ("chef", f"gelöscht#{_n6_dora}"), f"{_n6_zeilen}")
+        _n6_zeilen.get("invite_create") == ("chef", f"deleted#{_n6_dora}"), f"{_n6_zeilen}")
 r.check("N-6: … but the name only from creation on — the failed attempt under the free name stays together with the attempt",
-        _n6_zeilen.get("login_fail") == ("dora", "password grund=kein_konto")
+        _n6_zeilen.get("login_fail") == ("dora", "password reason=no_account")
         and len(_n6_a.store._all("SELECT id FROM login_attempt WHERE username='dora'")) == 1,
         f"{_n6_zeilen}")
 
@@ -1784,7 +1792,7 @@ r.check("N-6: … but the name only from creation on — the failed attempt unde
 # typed-in address as "confirmed" as long as the link was outstanding — without
 # confirmation requirement even forever. If an admin deleted such an account (cleanup, deletion request
 # of the stranger), the admin's invitation and the failed attempt of the real owner from BEFORE the
-# creation passed to `gelöscht#<id>` — the damage from N-1, only via the deliberate deletion path.
+# creation passed to `deleted#<id>` — the damage from N-1, only via the deliberate deletion path.
 # Now only the redeemed link sets the proof, and `Store.adresse_belegt` sees an open account
 # (locked, token open) even if an app creates it with the default `email_verified=True`.
 # (Mutation probes: create again without `email_verified=` in `register_submit` → red at "without
@@ -1863,7 +1871,7 @@ r.check("S-2 (after the link): the redeemed link sets the proof, and the deletio
         "address out of the older invitation too (H-13)",
         _s2_creg.status_code == 200 and _s2_cver is not None and _s2_cver.status_code == 303
         and _s2_cu["email_verified"] == 1
-        and _s2_cnach.get("invite_create") == ("chef", f"gelöscht#{_s2_cu['id']}"),
+        and _s2_cnach.get("invite_create") == ("chef", f"deleted#{_s2_cu['id']}"),
         f"HTTP {_s2_creg.status_code}/{getattr(_s2_cver, 'status_code', None)}, "
         f"email_verified={_s2_cu['email_verified']}, {_s2_cnach}")
 
@@ -2377,11 +2385,11 @@ _G4_ZEILEN = 120_000
 st4.db.executemany(
     "INSERT INTO audit(ts, event, username, ip, detail) VALUES (?,?,?,?,?)",
     [(1_700_000_000 + i // 10, "apikey_create" if i % 997 == 0 else "login_fail", f"fremd{i % 50}", None,
-      "key=1 akteur=g4opfer" if i % 997 == 0 else
-      "neu=g4opfer@example.com" if i % 1499 == 0 else "password grund=falsch")
+      "key=1 actor=g4opfer" if i % 997 == 0 else
+      "new=g4opfer@example.com" if i % 1499 == 0 else "password reason=wrong")
      for i in range(_G4_ZEILEN)])
 st4.db.commit()
-_g4_erste = st4._one("SELECT min(id) AS m FROM audit WHERE detail = 'key=1 akteur=g4opfer'")["m"]
+_g4_erste = st4._one("SELECT min(id) AS m FROM audit WHERE detail = 'key=1 actor=g4opfer'")["m"]
 _g4_treffer = st4._one("SELECT count(*) AS n FROM audit WHERE instr(detail, 'g4opfer') > 0")["n"]
 
 
@@ -2442,7 +2450,7 @@ _g4_schloss = _G4Schloss(st4._lock)
 st4._lock = _g4_schloss
 _g4_schloss.haken = _g4_parallel
 try:
-    st4.audit_anonymisieren("g4opfer", "gelöscht#77", ("g4opfer@example.com",),
+    st4.audit_anonymisieren("g4opfer", "deleted#77", ("g4opfer@example.com",),
                             unbefristet=("g4opfer@example.com",))
 finally:
     _g4_schloss.haken = None
@@ -2458,13 +2466,13 @@ r.check(f"G4: {_G4_ZEILEN} rows — the search releases the write lock between t
         and _g4_mess["zweite_verbindung"] >= _g4_bloecke and _g4_mess["gesperrt"] == 0,
         f"{_g4_schloss.freigaben} releases, {_g4_mess} with {_g4_bloecke} blocks")
 _g4_rest = st4._one("SELECT count(*) AS n FROM audit WHERE instr(detail, 'g4opfer') > 0")["n"]
-_g4_ersetzt = st4._one("SELECT count(*) AS n FROM audit WHERE instr(detail, 'gelöscht#77') > 0")["n"]
-r.check("… and still replaces every hit in the detail text (name as akteur=, address everywhere)",
+_g4_ersetzt = st4._one("SELECT count(*) AS n FROM audit WHERE instr(detail, 'deleted#77') > 0")["n"]
+r.check("… and still replaces every hit in the detail text (name as actor=, address everywhere)",
         _g4_treffer > 150 and _g4_rest == 0 and _g4_ersetzt == _g4_treffer,
         f"before {_g4_treffer}, remaining {_g4_rest}, replaced {_g4_ersetzt}")
 r.check("… and takes the fresh row when writing (an addition in between is not lost)",
         _g4_mess["nachgetragen"] and st4._one("SELECT detail FROM audit WHERE id=?", (_g4_erste,))["detail"]
-        == "key=1 akteur=gelöscht#77 nachtrag=1",
+        == "key=1 actor=deleted#77 nachtrag=1",
         str(dict(st4._one("SELECT detail FROM audit WHERE id=?", (_g4_erste,)))))
 r.check("… the rows of the parallel writers stay as they were",
         st4._one("SELECT count(*) AS n FROM audit WHERE event='g4_parallel' AND username='fremd' "
@@ -2481,7 +2489,7 @@ def _g4_schritte_beim_entfernen(name, bestand):
     uid = auth_g4.create_user(name, password="Geheim-G4-Pw15!")
     if bestand:   # account from the time before G2: no watermark, the creation (`seit`) applies
         st4._exec("UPDATE users SET name_audit_ab = NULL, name_versuch_ab = NULL WHERE id = ?", (uid,))
-    st4.audit_log("apikey_create", "chef", None, f"key=2 akteur={name}")
+    st4.audit_log("apikey_create", "chef", None, f"key=2 actor={name}")
     zaehler = [0]
 
     def schritt():
@@ -2492,7 +2500,7 @@ def _g4_schritte_beim_entfernen(name, bestand):
         st4.konto_entfernen(uid)
     finally:
         st4.db.set_progress_handler(None, 1000)
-    rest = st4._one("SELECT count(*) AS n FROM audit WHERE detail = ?", (f"key=2 akteur={name}",))["n"]
+    rest = st4._one("SELECT count(*) AS n FROM audit WHERE detail = ?", (f"key=2 actor={name}",))["n"]
     return zaehler[0], rest
 
 
@@ -2579,7 +2587,7 @@ _f4b.delete_user(_f4b_uid)
 _f4b_rest = [z for z in _f4b.store._all("SELECT id, event, username, ip, detail FROM audit WHERE id <= ?",
                                         (_f4b_grenze,))
              if z["username"] == "bob" or any(s in f"{z['username']} {z['detail']}".casefold()
-                                               for s in ("robert", "bob.alt@", "alt=bob"))]
+                                               for s in ("robert", "bob.alt@", "old=bob", "alt=bob"))]
 _f4b_spaeter = _f4b.store._all("SELECT event, ip FROM audit WHERE id > ? AND username = 'bob'", (_f4b_grenze,))
 # (Mutation probe: `_fruehere_kennungen` returns [] → the sign-in under `bob` including IP and the
 #  failed attempt under the old address remain → red.)
@@ -2589,25 +2597,25 @@ r.check("… only in their span: the rows of the later holder of name and addres
         any(z["event"] == "login" and z["ip"] == "192.0.2.12" for z in _f4b_spaeter),
         str([dict(z) for z in _f4b_spaeter]))
 
-# 4c: the values in the own rows — a never redeemed address change (`neu=`), the address from
-# LDAP/SAML (`an=`, as `_adresse_aus_quelle_belegen` writes it), the old name (`alt=`).
+# 4c: the values in the own rows — a never redeemed address change (`new=`), the address from
+# LDAP/SAML (`to=`, as `_adresse_aus_quelle_belegen` writes it), the old name (`old=`).
 _f4c, _f4c_app, _ = _f4_app()
 _f4c_uid = _f4c.create_user("carla", password=_F4_PW, email="carla@example.com")
 _f4c.request_email_change(_f4c_uid, "carla.neu@example.com", "http://testserver")()
-_f4c.audit("federation_email_confirm", "carla", None, f"konto={_f4c_uid} quelle=ldap an=carla.ldap@example.com")
-_f4c.audit("username_changed", "carla", None, "alt=frueher-carla durch=betreiber akteur=root")
-_f4c.audit("email_change_requested", "root", None, "neu=root.neu@example.com")      # foreign row
+_f4c.audit("federation_email_confirm", "carla", None, f"account={_f4c_uid} source=ldap to=carla.ldap@example.com")
+_f4c.audit("username_changed", "carla", None, "old=frueher-carla by=operator actor=root")
+_f4c.audit("email_change_requested", "root", None, "new=root.neu@example.com")      # foreign row
 _f4c.delete_user(_f4c_uid)
 _f4c_eigen = [z["detail"] for z in _f4c.store._all("SELECT detail FROM audit WHERE username=?",
-                                                    (f"gelöscht#{_f4c_uid}",))]
-# (Mutation probe: switch off `_eigene_werte_ersetzen` → `neu=carla.neu@…`, `an=…`, `alt=…` remain → red.)
-r.check("F4c: in the own rows `neu=`, `an=` and `alt=` are replaced",
-        _f4_rest(_f4c, "carla") == [] and any("neu=gelöscht#" in d for d in _f4c_eigen)
-        and any("an=gelöscht#" in d for d in _f4c_eigen) and any("alt=gelöscht#" in d for d in _f4c_eigen),
+                                                    (f"deleted#{_f4c_uid}",))]
+# (Mutation probe: switch off `_eigene_werte_ersetzen` → `new=carla.neu@…`, `to=…`, `old=…` remain → red.)
+r.check("F4c: in the own rows `new=`, `to=` and `old=` are replaced",
+        _f4_rest(_f4c, "carla") == [] and any("new=deleted#" in d for d in _f4c_eigen)
+        and any("to=deleted#" in d for d in _f4c_eigen) and any("old=deleted#" in d for d in _f4c_eigen),
         f"{_f4_rest(_f4c, 'carla')} {_f4c_eigen}")
-r.check("… `akteur=` in the own rows and the values in foreign rows stay (counter-check)",
-        any("akteur=root" in d for d in _f4c_eigen)
-        and bool(_f4c.store._one("SELECT 1 AS x FROM audit WHERE username='root' AND detail='neu=root.neu@example.com'")),
+r.check("… `actor=` in the own rows and the values in foreign rows stay (counter-check)",
+        any("actor=root" in d for d in _f4c_eigen)
+        and bool(_f4c.store._one("SELECT 1 AS x FROM audit WHERE username='root' AND detail='new=root.neu@example.com'")),
         str(_f4c_eigen))
 
 sys.exit(r.done())

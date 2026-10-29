@@ -153,7 +153,7 @@ PB = {**PA, "X-Forwarded-Host": "app-b.example.com"}
 
 assert c2.get("/auth/forward", headers=PA).status_code == 200
 r = c2.get("/auth/forward", headers=PB)
-assert r.status_code == 401 and r.headers.get("X-TinySesam-Reason") == "app-fehlt"
+assert r.status_code == 401 and r.headers.get("X-TinySesam-Reason") == "app-missing"
 assert ort(r).path == "/auth/oidc/start", r.headers.get("X-TinySesam-Location")
 assert parse_qs(ort(r).query)["app"] == ["app-b.example.com"]
 ok("B-2: unlock for B missing → straight to /auth/oidc/start with app=B (not the login page)")

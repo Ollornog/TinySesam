@@ -243,7 +243,7 @@ a_s._hinweis_ausgang.abwarten()
 _ziele = {m[0] for m in post_s if "/auth/email/" in m[2]}
 r.check("an account reaches with change links at most as many addresses as the quota allows",
         0 < len(_ziele) <= int(a_s._sec("mail_per_address_max"))
-        and a_s.store._one("SELECT 1 FROM audit WHERE event='mail_ratelimit' AND detail LIKE 'email_change konto=%'")
+        and a_s.store._one("SELECT 1 FROM audit WHERE event='mail_ratelimit' AND detail LIKE 'email_change account=%'")
         is not None, f"{len(_ziele)} Adressen")
 
 # Checked folded (finding 3 LDAP/SAML round): `＠` (U+FF20) would fold to two `@`.

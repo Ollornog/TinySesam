@@ -65,9 +65,9 @@ def _zeilen(log, wort):
 
 
 def _audit(auth, ereignis):
-    """`login_fail` = counted failed attempts, `login_repeat` = repetitions (audit `login_fail … grund=wiederholt`)."""
+    """`login_fail` = counted failed attempts, `login_repeat` = repetitions (audit `login_fail … reason=repeated`)."""
     alle = [e for e in auth.store.recent_audit(limit=500) if e["event"] == "login_fail"]
-    wdh = [e for e in alle if "grund=wiederholt" in (e["detail"] or "")]
+    wdh = [e for e in alle if "reason=repeated" in (e["detail"] or "")]
     return wdh if ereignis == "login_repeat" else [e for e in alle if e not in wdh]
 
 
@@ -81,7 +81,7 @@ assert antworten[0].status_code in (200, 401), antworten[0].status_code
 assert len({re.sub(r"[A-Za-z0-9_-]{20,}", "", r.text) for r in antworten}) == 1, "the response to a repetition differs from the first failed attempt"
 ok("ten times the same wrong password: the same response every time (except for the nonce)")
 assert len(_audit(auth, "login_fail")) == 1 and len(_audit(auth, "login_repeat")) == 9
-ok("audit: ten times login_fail, nine of them with grund=wiederholt")
+ok("audit: ten times login_fail, nine of them with reason=repeated")
 r = _login(app, PW)
 assert r.status_code in (302, 303) and "set-cookie" in r.headers, (r.status_code, r.text[:200])
 ok("afterwards the correct password gets through — no lockout (window 5)")
@@ -137,7 +137,7 @@ ok("three passwords in a circle with memory 2: each counts")
 
 print("Passwort-Wiederholung OK")
 
-# (h) `login ok … unban=ja|nein` (0.24.10): ja only without failed attempts against OTHER accounts from the same IP
+# (h) `login ok … unban=yes|no` (0.24.10): yes only without failed attempts against OTHER accounts from the same IP
 print("login ok: unban")
 
 
@@ -148,20 +148,20 @@ def _unban(log):
 
 auth, app, log = _app()
 _login(app, PW)
-assert _unban(log) == "ja", _zeilen(log, "login ok")
-ok("without failed attempts: unban=ja")
+assert _unban(log) == "yes", _zeilen(log, "login ok")
+ok("without failed attempts: unban=yes")
 for i in range(3):
     _login(app, f"vertippt-{i}-xxxxxxxx")
 _login(app, PW)
-assert _unban(log) == "ja"
-ok("eigene Tippfehler vorher: unban=ja")
+assert _unban(log) == "yes"
+ok("own typos before: unban=yes")
 auth.create_user("bob", "Bobs-Passwort-2026")
 for i in range(3):
     TestClient(app, client=IP_A).post("/auth/login", data={"username": "bob", "password": f"rate-{i}-xxxxxx"})
 _login(app, PW)
-assert _unban(log) == "nein", _zeilen(log, "login ok")
-ok("failed attempts against a foreign account from the same IP: unban=nein")
+assert _unban(log) == "no", _zeilen(log, "login ok")
+ok("failed attempts against a foreign account from the same IP: unban=no")
 _login(app, PW, IP_B)
-assert _unban(log) == "ja"
-ok("the same sign-in from another IP: unban=ja")
+assert _unban(log) == "yes"
+ok("the same sign-in from another IP: unban=yes")
 print("login ok: unban OK")

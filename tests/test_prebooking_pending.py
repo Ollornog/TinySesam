@@ -222,9 +222,9 @@ for _ in range(grenze_s):
 zeit_c2: list = []
 with Mitschnitt() as log_c2:
     status_c2 = _anmelden(app, "alice", zeit=zeit_c2)
-r.check("orphaned pre-bookings in the series: immediate `lockout_serie`, no deferral",
+r.check("orphaned pre-bookings in the series: immediate `lockout_series`, no deferral",
         status_c2 == 429 and zeit_c2[0] < FRIST / 2
-        and any("reason=lockout_serie" in z for z in log_c2.zeilen("failed login"))
+        and any("reason=lockout_series" in z for z in log_c2.zeilen("failed login"))
         and not log_c2.zeilen("deferred"), f"{status_c2} after {zeit_c2[0]:.1f} s; {log_c2.zeilen()}"[:400])
 os.remove(db)
 
@@ -263,14 +263,14 @@ r.check("precondition: the series is at the limit with the hanging pre-booking",
         stand_d == (grenze_s, grenze_s - 1), f"{stand_d}")
 r.check("parallel login at the limit: outage (503), no series lockout",
         parallel_d == 503 and haengend_d == 503, f"{parallel_d}, {haengend_d}")
-r.check("parallel login at the limit: no `lockout_serie`, no lockout mail",
-        not any("lockout_serie" in z for z in log_d.zeilen()) and post == [], f"{log_d.zeilen()} {post}"[:300])
+r.check("parallel login at the limit: no `lockout_series`, no lockout mail",
+        not any("lockout_series" in z for z in log_d.zeilen()) and post == [], f"{log_d.zeilen()} {post}"[:300])
 r.check("…and the series is afterwards back at limit−1", auth.store.fehlserie("alice") == grenze_s - 1,
         f"{auth.store.fehlserie('alice')}")
 os.remove(db)
 
 # Without a waiting slot at the same spot: the deferral does not show the text of the series lockout ("until you
-# reset your password"), and `is_locked` reports it as a deferral — without `lockout_serie`, without mail.
+# reset your password"), and `is_locked` reports it as a deferral — without `lockout_series`, without mail.
 verz_d3 = Verzeichnis("haengt")
 auth, app, post, db = _aufbau(verz_d3, max_login_attempts=100)
 auth._schwebe_plaetze = threading.BoundedSemaphore(1)
@@ -291,7 +291,7 @@ r.check("deferral at the series limit: 429 with the text of the window lockout, 
         f"{seite_d3.status_code}")
 r.check("is_locked at the series limit with pending pre-booking: True, as deferral",
         gesperrt_d3 and len(log_d3.zeilen("deferred login")) == 2
-        and not any("lockout_serie" in z for z in log_d3.zeilen()) and post == [],
+        and not any("lockout_series" in z for z in log_d3.zeilen()) and post == [],
         f"{gesperrt_d3} {log_d3.zeilen()} {post}"[:400])
 os.remove(db)
 
@@ -382,11 +382,11 @@ r.check("exception in the directory client: 500, the attempt is a confirmed fail
         status_f == 500 and zeilen_f == [(0, 0)], f"{status_f}, {zeilen_f}")
 os.remove(db)
 
-# ── (i) p2 F3: `lockout_serie` exactly at the transition of the settled state ──────────────────
+# ── (i) p2 F3: `lockout_series` exactly at the transition of the settled state ──────────────────
 # Until 2026-09-27 a failed attempt logged the series state at ITS booking, including pending
 # pre-bookings. The owner (correct password) and an attacker (wrong) are pending at the same time,
 # the series is at limit−2: the owner is fully signed in and ends the series, the
-# attacker fails with the booked state = limit — `lockout_serie` in the audit log and "locked"
+# attacker fails with the booked state = limit — `lockout_series` in the audit log and "locked"
 # in the security log, although nothing was locked.
 RICHTIG_I = "richtig-im-verz"
 
@@ -404,7 +404,7 @@ class Pruefendes(Verzeichnis):
 
 
 def _serien_zeilen(auth):
-    return auth.store._one("SELECT COUNT(*) AS n FROM audit WHERE event='lockout_serie'")["n"]
+    return auth.store._one("SELECT COUNT(*) AS n FROM audit WHERE event='lockout_series'")["n"]
 
 
 verz_i = Pruefendes(dauer=0.6)
@@ -421,7 +421,7 @@ auth._hinweis_ausgang.abwarten()
 # (Mutation probe: in `record_login` restore `stand = vorgebucht[2]` and `stand == grenze`, plus in
 #  `reserve_attempt` the sum instead of the settled state → one row → red.)
 r.check("p2 F3: owner and attacker are pending at limit−2, the owner ends the series — "
-        "no `lockout_serie` in the audit log, no “locked” in the security log",
+        "no `lockout_series` in the audit log, no “locked” in the security log",
         inhaberin == 303 and angreifer == 401 and auth.store.fehlserie("alice") == 0
         and _serien_zeilen(auth) == 0 and not log_i.zeilen("locked") and post == [],
         f"{inhaberin}/{angreifer}, Serie {auth.store.fehlserie('alice')}, Zeilen {_serien_zeilen(auth)}, "
@@ -438,7 +438,7 @@ with Mitschnitt() as log_i2, ThreadPoolExecutor(max_workers=6) as pool:
                                range(6)))
 auth._hinweis_ausgang.abwarten()
 r.check("p2 F3 counter-check with LDAP (pending): burst at limit−1 → one question to the directory, series "
-        "stands, exactly one `lockout_serie` row",
+        "stands, exactly one `lockout_series` row",
         verz_i2.fragen == 1 and salve_i2 == [401] + [429] * 5
         and auth.store.fehlserie_bestaetigt("alice") == grenze_i and _serien_zeilen(auth) == 1
         and len(log_i2.zeilen("locked: ")) == 1,
@@ -458,7 +458,7 @@ for _ in range(grenze_i - 1):
 with ThreadPoolExecutor(max_workers=6) as pool:
     salve_i3 = sorted(pool.map(lambda i: _anmelden(app_i3, "bert", f"falsch{i}", (f"192.0.2.{40 + i}", 40000)),
                                range(6)))
-r.check("p2 F3 counter-check without LDAP (settled immediately): burst at limit−1 → exactly one `lockout_serie` row",
+r.check("p2 F3 counter-check without LDAP (settled immediately): burst at limit−1 → exactly one `lockout_series` row",
         salve_i3 == [401] + [429] * 5 and _serien_zeilen(auth_i3) == 1, f"{salve_i3} {_serien_zeilen(auth_i3)}")
 # Immediately settled booking over the limit, the series is ended before its completion (a full
 # sign-in by another route): no row. And mixed — one pending and one immediately
