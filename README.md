@@ -733,6 +733,21 @@ The audit log records *why* a sign-in failed (`no_account`, `account_locked`,
 `wrong_secret`) — the HTTP response deliberately does not, so it cannot be used to probe for
 accounts. The log is only read by the operator.
 
+### Removing an account
+
+```bash
+python -m tinysesam delete --db auth.db alice           # asks first; --ja for scripts
+```
+
+For instances without an admin panel — for instance OIDC only, where an acceptance test with a
+test account leaves a local account behind. It takes the same route and the same protection rules as
+the panel's "Delete": credentials, sessions and identity links go, the sign-in attempts under name and
+address go, and the name in the audit log becomes `deleted#<id>` (the rows themselves stay). An owner
+and the last admin are not deleted. The command names what it removed (name, number of sessions and
+identity links), never a secret. Without `--ja` it asks, and without a terminal it refuses; an
+unknown account ends with exit 1. `#<id>` instead of the name works as in `rename`. A raw `DELETE`
+in the database is the wrong way — it leaves the name in every audit row.
+
 ## Demo mode
 
 `demo_mode=True` creates the accounts `demo` and `demoadmin`, shows their credentials on the sign-in

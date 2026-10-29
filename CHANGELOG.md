@@ -4,6 +4,23 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+### Added — `tinysesam delete`: remove an account without the admin panel (T-27)
+
+- New command `python -m tinysesam delete --db <file> <user>` (`#<id>` instead of the name works as in `rename`).
+  It goes through the same deletion path as the panel's "Delete" (`Store.konto_entfernen` with the address of a
+  verified account counting as its own): rows in `users`, `oidc_identity`, `session` and the other credential tables
+  go, the sign-in attempts go, the name in the audit log becomes `deleted#<id>`, and one `user_delete … source=cli`
+  row is written. Not `Store.delete_user`, which leaves the name in every audit row.
+- Same protection as the panel: an owner and the last admin are not deleted. The rule moved into
+  `Store.loeschsperre` and is used by `TinySesam.delete_user` and the command alike, so the two cannot drift apart.
+- Asks on a terminal; `--ja` skips the question for scripts; no terminal and no `--ja` refuses (exit 1). An unknown
+  account or database ends with exit 1 and a clear message. The output names the account, the number of sessions,
+  identity links and API keys and the replacement name — no address, no secret.
+- Occasion: an acceptance test with a test account on an OIDC-only instance left a local account behind, and the CLI
+  had no way to remove it. Test: `tests/test_cli_delete.py`.
+- Mutations (real runs): the command bent to `Store.delete_user` -> the audit checks turn red; protection rule
+  removed -> the owner check turns red; `--ja`/terminal check removed -> the "no terminal" check turns red.
+
 ### Fixed — `next` on the login page travels as one query value (B-4)
 
 - The links of the login page (`/auth/register`, `/auth/magic/request`, the OIDC and SAML buttons) and the passkey
