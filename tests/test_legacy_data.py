@@ -605,7 +605,7 @@ try:
     auth_b, _ = frisch(db_path=db_a)
     beim_start = [z for z in fang.zeilen if "[argon2]" in z]
     r.check("if [argon2] is missing, startup names the affected hashes along with the remedy",
-            any("1 betroffene" in z and "pip install" in z for z in beim_start),
+            any("1 affected hashes" in z and "pip install" in z for z in beim_start),
             f"{fang.zeilen} — all existing accounts locked, and nobody learns why")
     fang.zeilen.clear()
     r.check("sign-in keeps failing (an argon2 hash cannot be checked without argon2)",
