@@ -324,8 +324,8 @@ The result, a `tinysesam.LoginResult`, carries `ok` (also its truth value), `rea
 `directory_down`, `method_disabled`, `no_session`), `status` (what the built-in page answers:
 303, 400, 401, 404, 429, 503), `message` (the translated text), `next_url` (the checked target),
 `next_factor` (the open factor, e.g. `"totp"`), `done` (session complete) and `user` (only on
-success). `reason` is meant for programs; it is not the audit or security log, whose lines stay
-as they are. A failure has no session and sets no cookie — ignoring the result signs no one in. A
+success). `reason` is meant for programs; it is not the audit or security log (their event names, keys and
+tokens are English as well since schema 15, but a different vocabulary). A failure has no session and sets no cookie — ignoring the result signs no one in. A
 JSON route that prefers to raise writes `if not result: raise HTTPException(result.status,
 result.message)`, leaves `csrf` out (then the `X-CSRF-Token` header counts) and sets the cookie on
 its own response with `result.set_cookie(response)`. The session token is deliberately not a
@@ -729,8 +729,8 @@ python -m tinysesam audit  --db auth.db --user alice    # the audit log, from th
 python -m tinysesam unlock --db auth.db alice           # lift a brute-force lockout
 ```
 
-The audit log records *why* a sign-in failed (`kein_konto`, `konto_gesperrt`,
-`falsches_geheimnis`) — the HTTP response deliberately does not, so it cannot be used to probe for
+The audit log records *why* a sign-in failed (`no_account`, `account_locked`,
+`wrong_secret`) — the HTTP response deliberately does not, so it cannot be used to probe for
 accounts. The log is only read by the operator.
 
 ## Demo mode
@@ -791,7 +791,8 @@ Modeled on Authelia/Fail2Ban — the thresholds are changeable **in the admin pa
   anonymous.
 - **Rate limiting:** token bucket per IP on the login/2FA endpoints (`rate_limit_max` / `rate_limit_window_sec`).
 - **fail2ban:** every failed attempt is logged via the `tinysesam.security` logger with the real client IP
-  (`failed login … ip=…`). Filter + jail in [`deploy/fail2ban/`](https://github.com/Ollornog/TinySesam/tree/main/deploy/fail2ban/) → IP ban at the firewall level.
+  (`failed login … ip=…`; the reason, if any, stands last as `reason=…` — since schema 15 on the OIDC and passkey
+  lines too, so update the filter files from `deploy/fail2ban/` together with the release). Filter + jail in [`deploy/fail2ban/`](https://github.com/Ollornog/TinySesam/tree/main/deploy/fail2ban/) → IP ban at the firewall level.
   **Only real sign-in attempts carry `failed login`.** A wrong guess that was not a sign-in
   (password change, step-up confirmation, area PIN) is logged as `failed verification …` and is
   deliberately **not** banned by the shipped jail: those lines come from someone who is already
@@ -1326,8 +1327,12 @@ accept (the report of `federation_bind_existing`, `gc()`, `create_api_key`, the 
 `human`. The two values that live in the database (the key kind, the `old` address in a pending
 address-change link) are migrated on start (schema 12) and still read correctly in their old form;
 rolling back to 0.21.x takes one SQL block from `docs/OPERATIONS.md`. The same guard measures them on a
-probe instance and in the source. **Audit and log lines stay as they are** — fail2ban filters and
-your own filters depend on them (`apikey_create … art=automat` keeps its wording).
+probe instance and in the source. **Audit and log lines are English too, since schema 15** (a one-time rename, PO decision
+2026-10-29): event names (`oidc_widerruf` → `oidc_revoked`), keys (`grund=` → `reason=`) and tokens
+(`kein_konto` → `no_account`), the replacement name of a deleted account (`gelöscht#<id>` →
+`deleted#<id>`) and the message of the identifier triggers. The first start rewrites an existing database
+(back it up first); filters of your own that match the old words have to be adjusted. The full old → new
+list is in the CHANGELOG, the way back in `docs/OPERATIONS.md` ("Rollback to 0.24.x").
 
 **`auth.store` is internal (tier C).** It is the storage layer the built-in routes use; its methods
 have no tier, no promise and no deprecation period, and they may change in any release. Everything
@@ -1431,7 +1436,7 @@ without extras (guards the stdlib-scrypt fallback), and a browser job that also 
 
 ## Status
 
-**74 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
+**76 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
 
 Implemented and tested: password/TOTP/sessions/roles, remember-me, step-up and per-route MFA,
 factor chains, personal PIN, shared resource secrets, magic links + mailer hook, registration and

@@ -321,7 +321,8 @@ Das Ergebnis, ein `tinysesam.LoginResult`, trägt `ok` (auch sein Wahrheitswert)
 Seite antwortet: 303, 400, 401, 404, 429, 503), `message` (der übersetzte Text), `next_url` (das
 geprüfte Ziel), `next_factor` (der offene Faktor, etwa `"totp"`), `done` (Sitzung vollständig)
 und `user` (nur bei Erfolg). `reason` ist für Programme gedacht; mit dem Audit- und
-Sicherheits-Log hat es nichts zu tun, dessen Zeilen bleiben, wie sie sind. Ein Misserfolg hat
+Sicherheits-Log hat es nichts zu tun (deren Ereignisnamen, Schlüssel und Tokens sind seit Schema 15
+ebenfalls englisch, aber ein eigenes Vokabular). Ein Misserfolg hat
 keine Sitzung und setzt kein Cookie — wer das Ergebnis ignoriert, meldet niemanden an. Eine
 JSON-Route, die lieber wirft, schreibt `if not result: raise HTTPException(result.status,
 result.message)`, lässt `csrf` weg (dann zählt der Header `X-CSRF-Token`) und setzt das Cookie
@@ -733,8 +734,8 @@ python -m tinysesam audit  --db auth.db --user alice    # ins Protokoll, von der
 python -m tinysesam unlock --db auth.db alice           # eine Brute-Force-Sperre aufheben
 ```
 
-Das Audit-Log hält fest, *warum* eine Anmeldung scheiterte (`kein_konto`, `konto_gesperrt`,
-`falsches_geheimnis`) — die HTTP-Antwort tut das bewusst nicht, sonst liesse sich damit nach
+Das Audit-Log hält fest, *warum* eine Anmeldung scheiterte (`no_account`, `account_locked`,
+`wrong_secret`) — die HTTP-Antwort tut das bewusst nicht, sonst liesse sich damit nach
 Konten suchen. Im Protokoll liest nur der Betreiber mit.
 
 ## Demo-Modus
@@ -797,7 +798,8 @@ Nach dem Vorbild von Authelia/Fail2Ban — die Schwellen sind **im Admin-Panel /
   behält die IP-Schwelle, denn dort rät ein Unangemeldeter.
 - **Rate-Limiting:** Token-Bucket pro IP auf Login-/2FA-Endpoints (`rate_limit_max` / `rate_limit_window_sec`).
 - **fail2ban:** jeder Fehlversuch wird über den Logger `tinysesam.security` mit echter Client-IP geloggt
-  (`failed login … ip=…`). Filter + Jail in [`deploy/fail2ban/`](../deploy/fail2ban/) → IP-Ban auf Firewall-Ebene.
+  (`failed login … ip=…`; der Grund, falls es einen gibt, steht zuletzt als `reason=…` — seit Schema 15
+  auch in den OIDC- und Passkey-Zeilen, die Filterdateien aus `deploy/fail2ban/` also mit dem Release aktualisieren). Filter + Jail in [`deploy/fail2ban/`](../deploy/fail2ban/) → IP-Ban auf Firewall-Ebene.
   **Nur echte Anmeldeversuche tragen `failed login`.** Ein Fehlgriff, der keine Anmeldung war
   (Passwortwechsel, Step-up-Bestätigung, Bereichs-PIN), wird als `failed verification …`
   protokolliert und von der mitgelieferten Jail bewusst **nicht** gebannt: Diese Zeilen kommen
@@ -1352,8 +1354,12 @@ Grund-Kürzel), die `details` an `on_security_event`, der Kontext eigener Seiten
 `old` in einem offenen Adresswechsel-Link), schreibt der Start um (Schema 12), gelesen werden sie
 auch in alter Form richtig; der Rückschritt auf 0.21.x braucht einen SQL-Block aus
 `docs/OPERATIONS.md`. Derselbe Wächter misst sie an einer Probeinstanz und im Quelltext. **Audit- und
-Log-Zeilen bleiben, wie sie sind** — fail2ban und eigene Filter hängen an ihnen
-(`apikey_create … art=automat` behält seinen Wortlaut).
+Log-Zeilen sind seit Schema 15 ebenfalls englisch** (einmaliges Umbenennen, PO-Entscheidung 2026-10-29):
+Ereignisnamen (`oidc_widerruf` → `oidc_revoked`), Schlüssel (`grund=` → `reason=`) und Tokens
+(`kein_konto` → `no_account`), der Ersatzname eines gelöschten Kontos (`gelöscht#<id>` → `deleted#<id>`)
+und die Meldung der Kennungs-Trigger. Der erste Start schreibt eine bestehende Datenbank um (vorher sichern);
+eigene Filter, die auf die alten Wörter passen, müssen angepasst werden. Die ganze Liste alt → neu steht im
+CHANGELOG, der Rückweg in `docs/OPERATIONS.md` („Rollback to 0.24.x").
 
 **`auth.store` ist Innenleben (Stufe C).** Das ist die Speicherschicht der eingebauten Routen; ihre
 Methoden haben keine Stufe, keine Zusage und keine Übergangsfrist und können sich mit jedem Release
@@ -1460,7 +1466,7 @@ zusätzlich die Website baut.
 
 ## Status
 
-**74 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
+**76 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
 (`tests/test_matrix.py`).
 
 Gebaut und getestet: Passwort/TOTP/Sitzungen/Rollen, Remember-me, Step-up und per-Route-MFA,

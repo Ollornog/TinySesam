@@ -10,6 +10,8 @@ from __future__ import annotations
 import contextlib, sqlite3, threading, time, secrets, json, logging, hashlib, os, re, stat, unicodedata
 from typing import Any, Optional
 
+from . import _vokabular
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -628,11 +630,11 @@ def _now() -> int:
 
 
 def ersatzname(user_id) -> str:
-    """Who represents a deleted account in the audit log (H-13): `gelöscht#<id>`.
+    """Who represents a deleted account in the audit log (H-13): `deleted#<id>` (up to 0.24.x `gelöscht#<id>`).
 
     One place for the format — every deletion path writes its closing line under it, even
     one that no longer finds the account (otherwise the clear name would appear there again)."""
-    return f"gelöscht#{int(user_id)}"
+    return f"{_vokabular.ERSATZ_PRAEFIX}{int(user_id)}"
 
 
 #: Keys in the payload of an address-change link up to 0.21.x and their English replacement (schema 12).
@@ -794,7 +796,19 @@ class Store:
     #: 14 — `gate_link`: connection of an app host to the central session (code exchange, T-26).
     #:      Additive; an older version leaves the table in place and does not rotate it along —
     #:      the app host then loses its connection and fetches a new one via the code exchange.
-    SCHEMA_VERSION = 14
+    #: 15 — the stored and logged key vocabulary in English (PO decision 2026-10-29,
+    #:      `Store._vokabular_englisch`, `tinysesam/_vokabular.py`): `audit.event` (`oidc_widerruf` →
+    #:      `oidc_revoked`, `ldap_kennung_gebunden` → `ldap_identifier_bound` …), the keys and tokens in
+    #:      `audit.detail` (`grund=kein_konto` → `reason=no_account` …), the replacement name in
+    #:      `audit.username` (`gelöscht#<id>` → `deleted#<id>`), `fehlserie.art`/`login_attempt.method`
+    #:      (`pin_folge` → `pin_chain`), and the message of the identifier triggers (`tinysesam: kennung
+    #:      vergeben` → `tinysesam: identifier taken`; replaced by `_trigger_setzen` on every start). No
+    #:      column changes. The stamp rises because an older version does not know the new values: it
+    #:      still opens the file and reports the newer schema version at start, shows the new event names
+    #:      as unknown (display only) — and does not recognise an address-change conflict
+    #:      (`on_confirmation=1`, `own_events`) or the counted lockout notice (`lockout_notice`) in a new row.
+    #:      Way back with SQL in docs/OPERATIONS.md. Read paths take the old and the new spelling.
+    SCHEMA_VERSION = 15
 
     #: The stored values up to 0.21.x and their English replacement (schema 12). The migration
     #: rewrites them, and whoever reads still maps an old value: an older version that ran
@@ -992,6 +1006,17 @@ class Store:
                 logging.getLogger("tinysesam").info(
                     "%d stored values rewritten to the English names (schema 12: "
                     "API key kinds, address-change links).", umgeschrieben)
+            # Schema 15: the audit log and the series kinds in English (see `_vokabular_englisch`). Only on
+            # the jump over the stamp: the audit log can be large, and a row that an older version writes
+            # afterwards is mapped by the read paths (`_vokabular`). An upgrade writes, like every
+            # migration — a read-only file with an old stamp already failed at the steps above.
+            if vorhanden_vorab < 15:
+                umgeschrieben = self._vokabular_englisch()
+                if umgeschrieben:
+                    logging.getLogger("tinysesam").info(
+                        "%d stored values rewritten to the English vocabulary (schema 15: audit events, "
+                        "keys and tokens in the audit details, replacement names, series kinds).",
+                        umgeschrieben)
             if vorhanden_vorab < 10:
                 self._bestand_nachziehen(True, ohne_topf)
             else:
@@ -1068,7 +1093,9 @@ class Store:
 
     #: Message of the identifier triggers (`sqlite3.IntegrityError`): name or address falls into the
     #: counting bucket of ANOTHER account. Callers recognise the case by `IntegrityError`, not by the text.
-    KENNUNG_VERGEBEN = "tinysesam: kennung vergeben"
+    #: Up to 0.24.x the text was `tinysesam: kennung vergeben`; `_trigger_setzen` replaces the trigger
+    #: because its definition differs (schema 15).
+    KENNUNG_VERGEBEN = "tinysesam: identifier taken"
 
     #: The watermarks of an identifier (G2) as an SQL expression: the highest id that exists NOW.
     #: Everything created afterwards has a larger one (`AUTOINCREMENT` never issues an id twice).
@@ -1234,8 +1261,8 @@ class Store:
         Idempotent; it writes only where there is something to rewrite — a read-only file
         without old values starts as before. Returns: the number of changed rows.
 
-        Not translated is what is only read internally (the kind of a series `fehlserie.art`, the
-        column names) and what is in the audit log — its rows stay as they are."""
+        Not translated here: the audit log and the kinds of the series (`fehlserie.art`) — those are
+        rewritten on the jump to schema 15 (`_vokabular_englisch`) — and the column names (they stay)."""
         n = 0
         for alt, neu in self.KEY_ARTEN_ALT.items():
             if self.db.execute("SELECT 1 FROM api_key WHERE kind=? LIMIT 1", (alt,)).fetchone():
@@ -1253,6 +1280,91 @@ class Store:
                         self.db.execute("UPDATE magic_token SET payload=? WHERE token_hash=?",
                                         (neu_text, z["token_hash"]))
                         n += 1
+        return n
+
+    #: Rows per block when `_vokabular_englisch` walks through `audit.detail`.
+    _VOKABULAR_BLOCK = 5000
+
+    def _vokabular_englisch(self) -> int:
+        """Bring the stored and logged key vocabulary to its English names (schema 15, PO decision
+        2026-10-29) — without commit, under `_lock`, part of `_migrate`, on the jump over the stamp.
+
+        What is rewritten, and only that (the mapping itself is in `tinysesam/_vokabular.py`, pure
+        functions that the tests use as well):
+
+        * `audit.event`: the exact names (`oidc_widerruf` → `oidc_revoked`, …) and the families
+          `<oidc|saml|ldap>_kennung_gebunden` → `<…>_identifier_bound` etc. (`audit_ereignis_neu`) —
+          in ONE statement, one pass over the table.
+        * `audit.detail`: the keys of the `key=value` pairs and the tokens behind `reason=`/`source=`/…
+          (`audit_detail_neu`): keys only where one stands as a key (start or after a space, directly
+          before `=`), values only behind their key, never free text that happens to contain the word.
+          Rows of free-text events (`ldap_unavailable`, `resource_unlock`, `user_create`) keep their keys.
+          Block by block over `id`, each changed row written once.
+        * `audit.username`: `gelöscht#<id>` → `deleted#<id>` (digits only; a name that merely begins with
+          it stays), likewise inside the details (`actor=`, the head of `user_create`).
+        * `fehlserie.art` and `login_attempt.method`: `pin_folge` → `pin_chain`. If both kinds exist for
+          an identifier (the old one written by an older version after a rollback), the counts are
+          ADDED up (stricter, never looser than dropping one) and the old row goes.
+
+        The trigger message (`tinysesam: kennung vergeben` → `identifier taken`) is not touched here:
+        `_trigger_setzen` replaces a trigger whose definition differs, on every start.
+
+        Idempotent (a second run changes 0 rows) and it writes only where there is something to
+        rewrite — a read-only file without old values starts as before. Returns the number of changed
+        rows (event names count per row, details per row, series per row)."""
+        V = _vokabular
+        n = 0
+        # (1) event names: one statement for all of them.
+        paare = dict(V.AUDIT_EREIGNISSE_ALT)
+        for quelle in V.AUDIT_QUELLEN:
+            for alt, neu in V.AUDIT_FAMILIEN_ALT.items():
+                paare[quelle + alt] = quelle + neu
+        platz = ",".join("?" * len(paare))
+        if self.db.execute(f"SELECT 1 FROM audit WHERE event IN ({platz}) LIMIT 1", tuple(paare)).fetchone():
+            fall = " ".join("WHEN ? THEN ?" for _ in paare)
+            args = [x for alt, neu in paare.items() for x in (alt, neu)]
+            n += self.db.execute(
+                f"UPDATE audit SET event = CASE event {fall} ELSE event END WHERE event IN ({platz})",
+                (*args, *paare)).rowcount
+        # (2) the replacement name of deleted accounts (digits only after the prefix).
+        alt_praefix, neu_praefix = V.ERSATZ_PRAEFIX_ALT, V.ERSATZ_PRAEFIX
+        laenge = len(alt_praefix)
+        where_ersatz = ("substr(username, 1, ?) = ? AND length(username) > ? "
+                        "AND substr(username, ?) NOT GLOB '*[^0-9]*'")
+        werte_ersatz = (laenge, alt_praefix, laenge, laenge + 1)
+        if self.db.execute(f"SELECT 1 FROM audit WHERE {where_ersatz} LIMIT 1", werte_ersatz).fetchone():
+            n += self.db.execute(
+                f"UPDATE audit SET username = ? || substr(username, ?) WHERE {where_ersatz}",
+                (neu_praefix, laenge + 1, *werte_ersatz)).rowcount
+        # (3) the detail text, block by block over the primary key. The event is read AFTER step 1, so
+        # it is already the new name — `audit_detail_neu` takes either.
+        letzte = 0
+        while True:
+            zeilen = self.db.execute(
+                "SELECT id, event, detail FROM audit WHERE id > ? AND detail IS NOT NULL AND detail <> '' "
+                "ORDER BY id LIMIT ?", (letzte, self._VOKABULAR_BLOCK)).fetchall()
+            if not zeilen:
+                break
+            for z in zeilen:
+                neu_detail = V.audit_detail_neu(z["detail"], z["event"])
+                if neu_detail != z["detail"]:
+                    self.db.execute("UPDATE audit SET detail=? WHERE id=?", (neu_detail, z["id"]))
+                    n += 1
+            letzte = zeilen[-1]["id"]
+        # (4) the kinds of the streak and the methods.
+        for alt, neu in V.KINDS_ALT.items():
+            for z in self.db.execute("SELECT topf, anzahl, seit, zuletzt FROM fehlserie WHERE art=?",
+                                     (alt,)).fetchall():
+                if self.db.execute("SELECT 1 FROM fehlserie WHERE topf=? AND art=?", (z["topf"], neu)).fetchone():
+                    self.db.execute(
+                        "UPDATE fehlserie SET anzahl = anzahl + ?, seit = MIN(seit, ?), zuletzt = MAX(zuletzt, ?) "
+                        "WHERE topf=? AND art=?", (z["anzahl"], z["seit"], z["zuletzt"], z["topf"], neu))
+                    self.db.execute("DELETE FROM fehlserie WHERE topf=? AND art=?", (z["topf"], alt))
+                else:
+                    self.db.execute("UPDATE fehlserie SET art=? WHERE topf=? AND art=?", (neu, z["topf"], alt))
+                n += 1
+            if self.db.execute("SELECT 1 FROM login_attempt WHERE method=? LIMIT 1", (alt,)).fetchone():
+                n += self.db.execute("UPDATE login_attempt SET method=? WHERE method=?", (neu, alt)).rowcount
         return n
 
     #: Setting key: has `users.name_quelle` been backfilled for existing data (attack round 2026-09-26)?
@@ -1347,7 +1459,7 @@ class Store:
             return
         self.db.execute("UPDATE users SET is_owner=1, is_admin=1 WHERE id=?", (u["id"],))
         self.db.execute("INSERT INTO audit(ts, event, username, ip, detail) VALUES (?,?,?,?,?)",
-                        (_now(), "owner_grant", u["username"], None, "quelle=bestand aeltester_admin"))
+                        (_now(), "owner_grant", u["username"], None, "source=existing oldest_admin"))
         logging.getLogger("tinysesam").warning(
             "Owner model: %s is now owner (oldest admin). Further owners are granted by an owner in the "
             "admin panel.", u["username"])
@@ -1807,7 +1919,7 @@ class Store:
         """Delete an account — the ONE deletion path that every caller goes through (H-13).
 
         Account together with credentials and sessions, the sign-in attempts under name and address, and
-        in the audit log the name becomes `gelöscht#<id>` (`audit_anonymisieren`). A deleted
+        in the audit log the name becomes `deleted#<id>` (`audit_anonymisieren`). A deleted
         account whose name still stands in every row is not deleted.
 
         Why here and not in the manager: until the T-13 integration there were four deletion paths with two
@@ -1842,7 +1954,7 @@ class Store:
         PROVEN address: that of an open account (registration, link never redeemed) or
         of a registration without confirmation requirement was typed in by a stranger — without this
         distinction, clearing such accounts in the panel would rewrite the admin's invitation
-        and the failed attempts of the real holder from BEFORE creation to `gelöscht#<id>`.
+        and the failed attempts of the real holder from BEFORE creation to `deleted#<id>`.
 
         The sign-in attempts of a counting bucket (`norm_kennung`) that a REMAINING account
         shares stay in place (see `delete_attempts_for`).
@@ -3130,7 +3242,7 @@ class Store:
                 if topf_s and self._serie_summe(topf_s) >= grenze_s:
                     if self._serie_bestaetigt(topf_s) >= grenze_s:
                         self.db.execute("ROLLBACK")
-                        return None, "lockout_serie"
+                        return None, "lockout_series"
                     schwebend = True
                 for grund, grenze, filt in regeln:
                     if not filt.get("username") and not filt.get("ip"):
@@ -3174,7 +3286,7 @@ class Store:
         (`_serie_bestaetigt`) before and after the completion, both in one transaction
         (`BEGIN IMMEDIATE`, also across several processes). From that `_record_login` sees whether EXACTLY
         this completion crossed the limit (p2 F3). Until 2026-09-27 the state counted at
-        booking: if in the meantime a full sign-in had ended the series, `lockout_serie`
+        booking: if in the meantime a full sign-in had ended the series, `lockout_series`
         stood in the log although nothing was locked. Without `serie` None."""
         with self._schreibend():
             vorher = None
@@ -3297,7 +3409,7 @@ class Store:
 
     def fehlserie_ohne(self, topf, arten) -> int:
         """The series of this identifier WITHOUT the named kinds — what clearing only these kinds
-        would leave standing (e.g. the self-service reset, which does not clear TOTP and `pin_folge`)."""
+        would leave standing (e.g. the self-service reset, which does not clear TOTP and `pin_chain`)."""
         if not topf:
             return 0
         arten = [str(a) for a in arten]
@@ -3558,10 +3670,10 @@ class Store:
         additional identifiers (the email address): under it, sign-in attempts stand in the
         column `username` (`find_user` accepts the address), and it occurs in the detail text.
 
-        In the detail text the USERNAME is replaced only where one stands — `akteur=<name>`
-        and the head of `user_create`. Freely replacing every identical word hit
+        In the detail text the USERNAME is replaced only where one stands — `actor=<name>` (up to 0.24.x
+        `akteur=<name>`, both are found) and the head of `user_create`. Freely replacing every identical word hit
         foreign rows: with the account `admin`, `admin=0->1` in the role change of an
-        OTHER account became `gelöscht#2=0->1`, with `password` the method of every failed attempt. An
+        OTHER account became `deleted#2=0->1`, with `password` the method of every failed attempt. An
         identifier with `@`, on the other hand, is unmistakable and is replaced everywhere.
 
         `seit`/`seit_id` restrict this to rows from the creation of the account (`anlage_grenze`,
@@ -3595,11 +3707,11 @@ class Store:
           only for queries of this connection), with the same limits per identifier. If a
           REMAINING account shares the bucket (namesake from existing data, as with
           `delete_attempts_for`), it stays with `lower()` — otherwise it would hit its rows.
-        * **Earlier names and addresses** (4b): from the own rows `username_changed alt=…` and
-          `email_changed alt=…` (`_fruehere_kennungen`), each in the span in which the account
+        * **Earlier names and addresses** (4b): from the own rows `username_changed old=…` and
+          `email_changed old=…` (up to 0.24.x `alt=…`, `_fruehere_kennungen`), each in the span in which the account
           carried them — the sign-in under the old name would otherwise keep standing with its IP.
         * **Values in the own rows** (4c): in every row whose `username` is afterwards
-          the replacement name, the values of `alt=`, `neu=` and `an=` — the never redeemed address change,
+          the replacement name, the values of `old=`, `new=` and `to=` (up to 0.24.x `alt=`, `neu=`, `an=`) — the never redeemed address change,
           the address from LDAP/SAML, the old name.
         """
         if not username:
@@ -3641,14 +3753,14 @@ class Store:
             if "@" in wert:
                 muster = _re.compile(r"(?<![\w@.-])" + w + ende, _re.IGNORECASE)
             else:
-                muster = _re.compile(r"(?<![\w@.-])akteur=" + w + ende, _re.IGNORECASE)
+                muster = _re.compile(r"(?<![\w@.-])(akteur|actor)=" + w + ende, _re.IGNORECASE)
             topf = norm_kennung(wert)
             gefaltet = topf in falten
 
             def umschreiben(event, alt, wert=wert, w=w, muster=muster) -> str:
                 if "@" in wert:
                     return muster.sub(ersatz, alt)
-                neu = muster.sub("akteur=" + ersatz, alt)
+                neu = muster.sub(lambda m: m.group(1) + "=" + ersatz, alt)
                 if event == "user_create":   # detail: "<name> service=…"
                     neu = _re.sub(r"^" + w + r"(?=\s|$)", ersatz, neu, count=1, flags=_re.IGNORECASE)
                 return neu
@@ -3705,13 +3817,14 @@ class Store:
     _OHNE_OBERGRENZE = 2 ** 62
     #: How many earlier names or addresses `_fruehere_kennungen` traces back at most.
     _FRUEHERE_MAX = 100
-    #: The old name in `username_changed` (`alt=<name>[ durch=betreiber][ quelle=cli][ akteur=…]`)
-    #: and the old address in `email_changed` (`alt=<adresse> neu=<adresse>`). A name may
-    #: carry spaces, an address may not (`valid_email`).
-    _ALT_NAME = re.compile(r"^alt=(.*?)(?= durch=| quelle=| akteur=|$)")
-    _ALT_MAIL = re.compile(r"^alt=(\S*)")
+    #: The old name in `username_changed` (`old=<name>[ by=operator][ source=cli][ actor=…]`)
+    #: and the old address in `email_changed` (`old=<address> new=<address>`). A name may
+    #: carry spaces, an address may not (`valid_email`). Up to 0.24.x the keys were `alt=`, `durch=`,
+    #: `quelle=`, `akteur=`, `neu=`: both spellings are read (a row of an older version after a rollback).
+    _ALT_NAME = re.compile(r"^(?:alt|old)=(.*?)(?= (?:durch|by)=| (?:quelle|source)=| (?:akteur|actor)=|$)")
+    _ALT_MAIL = re.compile(r"^(?:alt|old)=(\S*)")
     #: The values in the own rows that carry an identifier (4c): up to the next ` key=`.
-    _EIGENE_WERTE = re.compile(r"(?<![\w@.-])(alt|neu|an)=(\S.*?)(?=\s[\w-]+=|$)")
+    _EIGENE_WERTE = re.compile(r"(?<![\w@.-])(alt|old|neu|new|an|to)=(\S.*?)(?=\s[\w-]+=|$)")
 
     def _fruehere_kennungen(self, heutige, anlage, grenze) -> list:
         """Earlier names and addresses of an account, each with the span in which it carried them —
@@ -3720,8 +3833,8 @@ class Store:
         without an upper bound.
 
         Read from the own rows: `username_changed` stands under the NEW name and names the
-        old one (`alt=`), `email_changed` under the name at the time of the change and names the old
-        address. Backwards from today's name: the most recent rename in its span names the
+        old one (`old=`, up to 0.24.x `alt=`), `email_changed` under the name at the time of the change and
+        names the old address. Backwards from today's name: the most recent rename in its span names the
         predecessor. It belonged to the account until that row, from the row that introduced IT — the
         most recent rename under it before that, not before creation —, otherwise from creation. Likewise the
         addresses, from the change rows under all names. Not covered: an address that came and went
@@ -3760,9 +3873,9 @@ class Store:
 
     def _eigene_werte_ersetzen(self, ersatz, oben) -> None:
         """In the rows of the deleted account (`username` = replacement name, up to `oben`) replace the values of
-        `alt=`, `neu=` and `an=` (H-13, audit round 2026-09-27, 4c): the requested, never
-        redeemed address change (`email_change_requested neu=…`), the address from LDAP/SAML
-        (`federation_email_confirm an=…`), the old name (`username_changed alt=…`). Empty values
+        `old=`, `new=` and `to=` (up to 0.24.x `alt=`, `neu=`, `an=`; H-13, audit round 2026-09-27, 4c): the
+        requested, never redeemed address change (`email_change_requested new=…`), the address from LDAP/SAML
+        (`federation_email_confirm to=…`), the old name (`username_changed old=…`). Empty values
         stay empty. Via `idx_audit_name_ts`; written per `_ANONYM_BLOCK` rows, the row
         read fresh."""
         def ersetzen(detail) -> str:
@@ -3790,17 +3903,21 @@ class Store:
         `seit` (Unix seconds, inclusive) also filters in SQL; from the second `seit`
         itself only rows from `seit_id` (see `anlage_grenze`). `ab_id`: only rows with a
         larger id — the watermark of an identifier (`kennung_grenzen`, G2). `ohne_events`
-        leaves out these events, likewise in SQL: a display that discards rows only afterwards
+        leaves out these events (in the new and the old spelling, `_vokabular.ereignis_formen`), likewise in SQL: a display that discards rows only afterwards
         would show fewer than `limit` — and the gap would reveal that there had been one (G12b).
         """
         bedingungen: list[str] = []
         werte: list[object] = []
         if ohne_events:
-            bedingungen.append(f"event NOT IN ({','.join('?' * len(ohne_events))})")
-            werte.extend(ohne_events)
+            # Both spellings: a row that an older version wrote after a rollback carries the old name.
+            formen = _vokabular.ereignis_formen(*ohne_events)
+            bedingungen.append(f"event NOT IN ({','.join('?' * len(formen))})")
+            werte.extend(formen)
         if username:
-            bedingungen.append("lower(username)=lower(?)")
-            werte.append(username)
+            # A replacement name in both spellings (`deleted#4`, up to 0.24.x `gelöscht#4`).
+            namen = _vokabular.ersatz_formen(username)
+            bedingungen.append("lower(username) IN (" + ",".join("lower(?)" for _ in namen) + ")")
+            werte.extend(namen)
         if seit:
             bedingungen.append("(ts > ? OR (ts = ? AND id >= ?))")
             werte.extend((int(seit), int(seit), int(seit_id or 0)))
@@ -3838,12 +3955,14 @@ class Store:
         the successful send) or rejected because the address is taken or
         reserved (`email_change_taken`/`_reserved` from this path, attack round 2026-09-26 —
         otherwise every worker wrote its own row, and the account page counted along). Recognised by the
-        detail that begins with `konto=<id> `; self-service does not write it. Via
+        detail that begins with `account=<id> ` (up to 0.24.x `konto=<id> `, both are taken); self-service
+        does not write it. Via
         `idx_audit_ts`, in the database and thus across all workers and every restart.
         The id instead of the name: a rename does not reset the daily quota."""
         return bool(self._one(
-            "SELECT 1 FROM audit WHERE ts >= ? AND event IN (?, ?, ?) AND detail LIKE ? LIMIT 1",
-            (int(seit), *self.QUELLMAIL_ERLEDIGT, f"konto={int(user_id)} %")))
+            "SELECT 1 FROM audit WHERE ts >= ? AND event IN (?, ?, ?) AND (detail LIKE ? OR detail LIKE ?) "
+            "LIMIT 1",
+            (int(seit), *self.QUELLMAIL_ERLEDIGT, f"account={int(user_id)} %", f"konto={int(user_id)} %")))
 
     def offener_token(self, user_id, purpose, email=None) -> bool:
         """Is there already an open (unused, valid) link of this purpose for this account —

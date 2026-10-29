@@ -20,6 +20,7 @@ from fastapi.responses import HTMLResponse
 from .errors import ConfigError, StateError
 from .router import _key_kind, _mail_basis, gehaertete_route
 from . import security
+from ._vokabular import audit_zeile_neu
 from .store import name_ungueltig, norm_email, valid_email
 from .templates import brand, favicon_link, inject_nonce as _inject_nonce
 from .theme import TOKENS
@@ -81,7 +82,7 @@ def build_admin_router(auth) -> APIRouter:
         if not roh:
             return []
         if not isinstance(roh, list) or not all(isinstance(x, str) for x in roh):
-            raise HTTPException(400, auth.t("api.invalid", grund="roles"))
+            raise HTTPException(400, auth.t("api.invalid", reason="roles"))
         return list(roh)
 
     def uview(u):
@@ -242,7 +243,7 @@ def build_admin_router(auth) -> APIRouter:
         nachher = auth.store.get_user(uid)
         rollen_nachher = sorted(map(str, auth.user_roles(nachher))) if nachher else []
         admin_nachher = bool(nachher["is_admin"]) if nachher else False
-        detail = (f"uid={uid} rollen={','.join(rollen_vorher) or '-'}"
+        detail = (f"uid={uid} roles={','.join(rollen_vorher) or '-'}"
                   f"->{','.join(rollen_nachher) or '-'}")
         if admin_vorher != admin_nachher:
             detail += f" admin={int(admin_vorher)}->{int(admin_nachher)}"
@@ -263,7 +264,7 @@ def build_admin_router(auth) -> APIRouter:
     def user_passkey_delete(request: Request, uid: int, cid: int):
         owner_schutz(guard(request), uid)
         # Through the same path as self-service (integration finding 3): delete, audit line
-        # under the holder (the admin as akteur=, so `tinysesam audit --user <holder>`
+        # under the holder (the admin as actor=, so `tinysesam audit --user <holder>`
         # finds the revocation) and `passkey_removed` to `on_security_event` — the holder learns
         # that a factor was taken from them, even if someone else did it.
         if not auth.remove_passkey(uid, cid):
@@ -294,7 +295,7 @@ def build_admin_router(auth) -> APIRouter:
         Same path as self-service (`change_username`: free in names AND addresses, no
         control characters, no foreign address name, no allowlist name, not in mail mode), but
         as operator: the "self-chosen" marker (G2-N) is dropped, the audit line says
-        `durch=betreiber` and carries the admin as `akteur=` — `change_username` writes it
+        `by=operator` and carries the admin as `actor=` — `change_username` writes it
         itself, a second one via `protokoll()` would be doubled. An owner account is renamed only by an
         owner (like password, keys, passkeys)."""
         owner_schutz(guard(request), uid)
@@ -343,7 +344,7 @@ def build_admin_router(auth) -> APIRouter:
         if wer.get("_via") != "session":
             raise HTTPException(403, auth.t("api.key_needs_session"))
         b = await auth.json_body(request)
-        # The audit line is written by `create_api_key` — with owner, IP and akteur= (B5-04/R6-3).
+        # The audit line is written by `create_api_key` — with owner, IP and actor= (B5-04/R6-3).
         # `create_api_key` raises `ConfigError` for a scope without a valid role and for
         # "unlimited" without permission; an unusable number is a `ValueError`. Uncaught,
         # that was an HTTP 500 (R6-8) — the admin saw "internal server error" instead of the reason.
@@ -351,7 +352,7 @@ def build_admin_router(auth) -> APIRouter:
             return auth.create_api_key(uid, name=b.get("name"), expires_days=b.get("expires_days"),
                                        roles=b.get("roles"))
         except (ConfigError, ValueError, TypeError) as e:
-            raise HTTPException(400, auth.t("api.invalid", grund=str(e)))
+            raise HTTPException(400, auth.t("api.invalid", reason=str(e)))
 
     @ar.post("/api/keys/{kid}/revoke")
     def key_revoke(request: Request, kid: int):
@@ -359,7 +360,7 @@ def build_admin_router(auth) -> APIRouter:
         besitzer = auth.store.api_key_owner(kid)
         if besitzer is not None:
             owner_schutz(me, besitzer)     # an owner's keys are revoked only by an owner
-        # The audit line is written by `revoke_api_key` — with owner, IP and akteur= (B5-04/R6-3).
+        # The audit line is written by `revoke_api_key` — with owner, IP and actor= (B5-04/R6-3).
         auth.revoke_api_key(kid)
         return {"ok": True}
 
@@ -467,7 +468,7 @@ def build_admin_router(auth) -> APIRouter:
         try:
             geprueft = {k: security.pruefe_haertung(k, v) for k, v in werte.items()}
         except ValueError as e:
-            raise HTTPException(400, auth.t("api.invalid", grund=str(e)))
+            raise HTTPException(400, auth.t("api.invalid", reason=str(e)))
         for k, v in geprueft.items():
             auth.set_security(k, v)
         nachher = auth.all_security()
@@ -485,8 +486,11 @@ def build_admin_router(auth) -> APIRouter:
     def audit(request: Request, limit: int = 100):
         guard(request)
         protokoll(request, "audit_read", f"limit={limit}")    # B5-12, see sessions_read
+        # Always the English spelling: a row that an older version wrote after a rollback carries the
+        # old event names and keys (`_vokabular.audit_zeile_neu`).
+        zeilen = [audit_zeile_neu(a) for a in auth.store.recent_audit(limit)]
         return [{"ts": a["ts"], "event": a["event"], "username": a["username"], "ip": a["ip"], "detail": a["detail"]}
-                for a in auth.store.recent_audit(limit)]
+                for a in zeilen]
 
     # ---------- built-in UI (optional) ----------
     if cfg.admin_ui_enabled:

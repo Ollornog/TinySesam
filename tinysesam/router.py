@@ -703,7 +703,7 @@ def build_router(auth) -> APIRouter:
             # the link lies in THEIR mailbox, one click later, and the next reset would go to them.
             links = auth.store.revoke_user_magic_tokens(uid)
             auth.audit("password_reset", auth._kontoname(uid), auth.client_ip(request),
-                       f"uid={uid} fehlversuche_verworfen={weg}"
+                       f"uid={uid} failed_attempts_discarded={weg}"
                        + (f" api_keys_revoked={keys}" if keys else "")
                        + (f" links_revoked={links}" if links else ""))
             return RedirectResponse(f"{auth.browser_path(request, cfg.login_path)}?next={_q(auth.browser_path(request, '/'))}", 303)
@@ -865,7 +865,7 @@ def build_router(auth) -> APIRouter:
                 if getattr(e, "field", None) == "username" and not name_ist_adresse:
                     return err(auth.t("err.username_taken"), 409)
                 if verify:
-                    auth.audit("signup_taken", username, ip, detail=f"{email_final} wettlauf=1")
+                    auth.audit("signup_taken", username, ip, detail=f"{email_final} race=1")
                     return auth.render_page("register", request=request, **_reg_ctx(nxt, sent_verify=True))
                 return err(auth.t("err.email_taken"), 409)
             if inv:
@@ -953,15 +953,15 @@ def build_router(auth) -> APIRouter:
             (images, scripts) rejected individually.
             """
             if request.cookies.get(auth.session_cookie_name):
-                grund = "mfa_offen" if auth.pending_user(request) else "sitzung_ungueltig"
+                grund = "mfa_open" if auth.pending_user(request) else "session_invalid"
             elif cfg.apikey_enabled and auth._extract_api_key(request):
-                grund = "api_key_ungueltig"
+                grund = "api_key_invalid"
             else:
                 return
             ip = auth.client_ip(request)
             if auth._einmal_je(("forward401", ip, grund), 300):
                 auth.audit("forward_denied", None, ip,
-                           f"grund={grund} url={security.url_fuer_log(orig)}")
+                           f"reason={grund} url={security.url_fuer_log(orig)}")
 
         def _link_modus(host: str) -> bool:
             """Central gateway with code exchange (T-26): for a protected app host that is not
@@ -999,7 +999,7 @@ def build_router(auth) -> APIRouter:
                 if handle and _host and auth.store.gate_ist_abgemeldet(handle, _host):
                     return Response(status_code=401,
                                     headers={"X-TinySesam-Location": _anmelden_url(orig, request),
-                                             "X-TinySesam-Reason": "app-abgemeldet",
+                                             "X-TinySesam-Reason": "app-signed-out",
                                              "WWW-Authenticate": 'FormBased realm="TinySesam"'})
                 if anwendung and handle:
                     ja, grund = auth._oidc_approval_valid(handle, anwendung)
@@ -1009,7 +1009,7 @@ def build_router(auth) -> APIRouter:
                         # Only if the provider declines does the human see its own refusal —
                         # namely the provider's, because the approval is maintained there.
                         auth.audit("oidc_app_revalidate", u["username"], auth.client_ip(request),
-                                   f"app={anwendung} grund={grund}")
+                                   f"app={anwendung} reason={grund}")
                         # Directly to the provider (B-2): via the login page it went in circles, the
                         # page saw the session and sent back.
                         login = _anmelden_url(orig, request, direkt=True)
@@ -1026,7 +1026,7 @@ def build_router(auth) -> APIRouter:
                     # A 403 in the proxy log does not say who failed at what. The panel has
                     # the audit log anyway — so there, where one looks later.
                     auth.audit("forward_role_denied", u["username"], auth.client_ip(request),
-                               f"url={security.url_fuer_log(orig)} fehlt={';'.join(','.join(g) for g in fehlend)}")
+                               f"url={security.url_fuer_log(orig)} missing={';'.join(','.join(g) for g in fehlend)}")
                     return Response(status_code=403, headers={"X-TinySesam-Reason": "role"})
                 # Which headers these are is controlled by config.forward_headers (default: Remote-*).
                 kopf = auth._forward_response_headers(u)
@@ -1144,7 +1144,7 @@ def build_router(auth) -> APIRouter:
             host = _gate_host_oder_404(request)
             auth.require_csrf(request, csrf_tok or request.headers.get("x-csrf-token"))
             if scope not in GATE_SCOPES:
-                raise HTTPException(400, auth.t("api.invalid", grund="scope (app | all)"))
+                raise HTTPException(400, auth.t("api.invalid", reason="scope (app | all)"))
             return _gate_logout(request, host, scope, auth.safe_next(next or "/", request))
 
         @r.get("/.tinysesam/after-logout", response_class=HTMLResponse)
@@ -1223,7 +1223,7 @@ def build_router(auth) -> APIRouter:
                 this app host and go back there."""
                 f = auth.store.pop_flow("gatelink:" + str(flow or ""))
                 if not f or f.get("host") not in auth._gate_hosts():
-                    raise HTTPException(400, auth.t("api.invalid", grund="flow"))
+                    raise HTTPException(400, auth.t("api.invalid", reason="flow"))
                 host = f["host"]
                 hier = f"{auth.browser_path(request, '/auth/gate/authorize')}?flow={_q(flow)}"
 
@@ -1268,7 +1268,7 @@ def build_router(auth) -> APIRouter:
                 back to the confirmation on the app host — whose confirmation then comes same-site."""
                 h = str(host or "").strip().lower()
                 if h not in auth._gate_hosts():
-                    raise HTTPException(400, auth.t("api.invalid", grund="host"))
+                    raise HTTPException(400, auth.t("api.invalid", reason="host"))
                 if (request.headers.get("sec-fetch-site") or "").strip().lower() == "cross-site":
                     proto = (request.headers.get("x-forwarded-proto") or request.url.scheme or "https").split(",")[0].strip()
                     return RedirectResponse(f"{'http' if proto == 'http' else 'https'}://{h}/.tinysesam/logout", 303)
@@ -1285,7 +1285,7 @@ def build_router(auth) -> APIRouter:
                 For paths on which the app host has no TinySesam in front of it (mesh bypassing the gate)."""
                 h = str(host or "").strip().lower()
                 if h not in auth._gate_hosts():
-                    raise HTTPException(400, auth.t("api.invalid", grund="host"))
+                    raise HTTPException(400, auth.t("api.invalid", reason="host"))
                 proto = (request.headers.get("x-forwarded-proto") or request.url.scheme or "https").split(",")[0].strip()
                 basis = f"{'http' if proto == 'http' else 'https'}://{h}"
                 if auth._forward_app(h)["login"] == "page":
@@ -1304,10 +1304,10 @@ def build_router(auth) -> APIRouter:
                         or not secrets.compare_digest(_h(bindung), str(f.get("bindung") or ""))):
                     security.seclog.warning("gate-link: return path without a matching code or without a binding — rejected (host=%s)",
                                             security.fuer_log(host))
-                    raise HTTPException(400, auth.t("api.invalid", grund="code"))
+                    raise HTTPException(400, auth.t("api.invalid", reason="code"))
                 s = auth.store.get_session_by_handle(f["handle"])
                 if not s or not s["mfa_ok"]:
-                    raise HTTPException(400, auth.t("api.invalid", grund="session"))
+                    raise HTTPException(400, auth.t("api.invalid", reason="session"))
                 verbindung = secrets.token_urlsafe(32)
                 auth.store.gate_link_anlegen(auth.store.session_hash(verbindung), s["token_hash"], host)
                 u = auth._konto_der_sitzung(s)
@@ -1460,7 +1460,7 @@ def build_router(auth) -> APIRouter:
         await auth.json_body(request)                     # CSRF like every write route
         s = auth._session_from_request(request)
         if not s or s["mfa_ok"]:
-            raise HTTPException(400, auth.t("api.invalid", grund="no half-finished sign-in"))
+            raise HTTPException(400, auth.t("api.invalid", reason="no half-finished sign-in"))
         auth.store.set_session_andere_beenden(s["token_hash"])
         return {"ok": True}
 
@@ -1720,7 +1720,7 @@ def build_router(auth) -> APIRouter:
                                            expires_days=b.get("expires_days"), roles=b.get("roles"),
                                            kind=str(b.get("kind") or "automation"))
             except (ConfigError, ValueError, TypeError) as e:
-                raise HTTPException(400, auth.t("api.invalid", grund=str(e)))
+                raise HTTPException(400, auth.t("api.invalid", reason=str(e)))
 
         @r.post("/auth/apikeys/{key_id}/revoke")
         def apikeys_revoke(request: Request, key_id: int):

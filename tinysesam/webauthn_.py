@@ -162,7 +162,7 @@ def register_passkey_routes(router, auth):
             # event word the fail2ban jail matches on. Up to 0.18.x the
             # passkey path left no trace at all: neither creation nor deletion nor failed sign-in
             # (B2-10, B5-01). Whoever probed here did so unobserved.
-            security.seclog.warning("%s user=%s ip=%s method=passkey grund=unbekannter_schluessel",
+            security.seclog.warning("%s user=%s ip=%s method=passkey reason=unknown_key",
                                     security.log_ereignis("passkey"), "?",
                                     security.fuer_log(ip_roh))
             auth.audit("passkey_unknown", None, ip_roh)
@@ -182,12 +182,12 @@ def register_passkey_routes(router, auth):
             # attacker, not for the log. The exception type suffices: its text can carry the
             # content of the request and thus does not belong in a line that fail2ban reads.
             besitzer = auth.store.get_user(row["user_id"])
-            security.seclog.warning("%s user=%s ip=%s method=passkey grund=%s",
+            security.seclog.warning("%s user=%s ip=%s method=passkey reason=%s",
                                     security.log_ereignis("passkey"),
                                     security.fuer_log(str(besitzer["username"]) if besitzer else "?"),
                                     security.fuer_log(ip_roh), type(e).__name__)
             auth.audit("passkey_failed", str(besitzer["username"]) if besitzer else None, ip_roh,
-                       f"grund={type(e).__name__}")
+                       f"reason={type(e).__name__}")
             raise HTTPException(400, auth.t("api.passkey_unknown"))
         auth.store.update_webauthn_signcount(row["id"], v.new_sign_count)
         # client_ip, not request.client.host: behind a reverse proxy the peer is the
@@ -225,7 +225,7 @@ def register_passkey_routes(router, auth):
         if isinstance(roh, str) and roh.isascii() and roh.isdigit():
             roh = int(roh)
         if isinstance(roh, bool) or not isinstance(roh, int):
-            raise HTTPException(400, auth.t("api.invalid", grund="id"))
+            raise HTTPException(400, auth.t("api.invalid", reason="id"))
         passkey_id = roh
         # Deletion, audit line (B5-01) and `passkey_removed` in one — the same path as the
         # revocation in the admin panel (integration finding 3). A passkey the account does not have

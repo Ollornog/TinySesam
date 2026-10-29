@@ -269,7 +269,7 @@ class OIDCClient:
             daten["code_verifier"] = code_verifier
         tok = httpx.post(self.meta()["token_endpoint"], timeout=15, data=daten).json()
         if "id_token" not in tok:
-            raise HTTPException(502, t("api.oidc_token", grund=tok.get("error", "?")))
+            raise HTTPException(502, t("api.oidc_token", reason=tok.get("error", "?")))
         # `exp` is mandatory (F-25). authlib checks expiry only if the claim is THERE — an
         # ID token without `exp` was thus valid forever. OIDC Core 2 requires it ("REQUIRED"), a
         # provider that omits it is defective or the token is not from it.
@@ -625,7 +625,7 @@ def register_oidc_routes(router, auth):
     @router.get(cfg.oidc_callback_path)
     def oidc_callback(request: Request, code: str = "", state: str = "", error: str = ""):
         if error:
-            raise HTTPException(400, auth.t("api.oidc_error", grund=error))
+            raise HTTPException(400, auth.t("api.oidc_error", reason=error))
         flow = auth.store.pop_flow("oidc:" + state)
         if not flow:
             raise HTTPException(400, auth.t("api.oidc_state"))
@@ -663,7 +663,7 @@ def register_oidc_routes(router, auth):
                 # (`forward_role_denied` in router.py).
                 auth.audit("oidc_group_denied", str(info.get("email") or info.get("sub") or "?"),
                            auth.client_ip(request),
-                           f"app={ziel} verlangt={sorted(erlaubte)}")
+                           f"app={ziel} required={sorted(erlaubte)}")
                 raise HTTPException(403, auth.t("api.oidc_group"))
 
         issuer, sub = client.meta()["issuer"], claims["sub"]
@@ -694,7 +694,7 @@ def register_oidc_routes(router, auth):
                 "If this provider verifies every address but does not send the claim: "
                 "oidc_email_verified_default=True.", security.fuer_log(mail))
             auth.audit("oidc_email_unverified", str(mail), auth.client_ip(request),
-                       "verwendet=0")
+                       "used=0")
 
         uid = auth.store.get_oidc_user(issuer, sub)
         if not uid:
@@ -765,17 +765,17 @@ def register_oidc_routes(router, auth):
                 # creation); the operator sees the line.
                 if auth.identifier_taken(mail, exclude_id=uid):
                     auth.audit("oidc_email_taken", str(konto["username"]), auth.client_ip(request),
-                               "nachgetragen=0")
+                               "backfilled=0")
                 else:
                     try:
                         auth.store.set_email(uid, mail, verified=True)
                         auth.audit("oidc_email_added", str(konto["username"]), auth.client_ip(request),
-                                   "beleg=1")
+                                   "proof=1")
                     except sqlite3.IntegrityError:
                         # Race (G12c): assigned between check and write — the database
                         # decides, the account stays without an address as above.
                         auth.audit("oidc_email_taken", str(konto["username"]), auth.client_ip(request),
-                                   "nachgetragen=0 wettlauf=1")
+                                   "backfilled=0 race=1")
             elif konto and str(konto["email"] or "").lower() == str(mail).strip().lower() \
                     and bool(konto["email_verified"]) is not bool(mail_bestaetigt):
                 auth.store.set_email_verified(uid, mail_bestaetigt)
@@ -795,7 +795,7 @@ def register_oidc_routes(router, auth):
         if _konto and _konto["disabled"]:
             auth.audit("oidc_disabled", str(_konto["username"]), auth.client_ip(request),
                        f"app={ziel} sub={security.fuer_log(sub)}")
-            security.seclog.warning("%s user=%s ip=%s method=oidc grund=konto_gesperrt",
+            security.seclog.warning("%s user=%s ip=%s method=oidc reason=account_locked",
                                     security.log_ereignis("oidc"),
                                     security.fuer_log(str(_konto["username"])),
                                     security.fuer_log(auth.client_ip(request)))

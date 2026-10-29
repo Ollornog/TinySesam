@@ -299,7 +299,9 @@ def _audit(argv) -> int:
     # timestamp, event and IP of choice — exactly in the view one relies on in
     # the case at hand. A control character (ESC) could moreover reconfigure the terminal itself.
     from .security import zeilenfest as _z
+    from ._vokabular import audit_zeile_neu
     for z in reversed(zeilen):
+        z = audit_zeile_neu(z)       # always the English spelling (rows written by an older version too)
         zeit = _dt.datetime.fromtimestamp(z["ts"]).strftime("%Y-%m-%d %H:%M:%S")
         print(f"{zeit}  {_z(z['event']):22} {_z(z['username'] or '-'):16} "
               f"{_z(z['ip'] or '-'):18} {_z(z['detail'] or '')}")
@@ -343,13 +345,14 @@ def _unlock(argv) -> int:
             print(f"No account '{a.username}' in {a.db}, and there is no lockout under this identifier.",
                   file=sys.stderr)
             return 1
-        store.audit_log("unlock_cli", a.username, None, f"fehlversuche={offen} in_folge={serie} ohne_konto=1")
+        store.audit_log("unlock_cli", a.username, None,
+                        f"failed_attempts={offen} in_a_row={serie} without_account=1")
         print(f"No account '{a.username}' — the lockout under this identifier is lifted anyway "
               f"({offen} failed attempts, {serie} in a row discarded).")
         return 0
     store.audit_log("unlock_cli", str(konto["username"]), None,
-                    f"fehlversuche={offen} in_folge={serie}"
-                    + (f" kennung={a.username}" if norm_kennung(konto["username"]) != topf else ""))
+                    f"failed_attempts={offen} in_a_row={serie}"
+                    + (f" identifier={a.username}" if norm_kennung(konto["username"]) != topf else ""))
     print(f"Lockout for '{a.username}' lifted ({offen} failed attempts discarded).")
     return 0
 
@@ -376,7 +379,7 @@ def _owner(argv) -> int:
               file=sys.stderr)
         return 1
     store.set_owner(konto["id"], True)
-    store.audit_log("owner_grant", a.username, None, "quelle=cli")
+    store.audit_log("owner_grant", a.username, None, "source=cli")
     print(f"'{a.username}' is an owner (and admin).")
     return 0
 
@@ -450,7 +453,7 @@ def _rename(argv) -> int:
         print(f"'{neu}' is already taken — the database rejected the rename, nothing "
               "changed.", file=sys.stderr)
         return 1
-    store.audit_log("username_changed", neu, None, f"alt={alt} durch=betreiber quelle=cli")
+    store.audit_log("username_changed", neu, None, f"old={alt} by=operator source=cli")
     print(f"'{alt}' is now called '{neu}'. Apps see the new name as Remote-User; the account ID "
           "(Remote-Id) stays.")
     return 0

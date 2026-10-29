@@ -34,10 +34,10 @@ TOKENS = """
   --ts-ok-bg:#12331f;    --ts-ok-ink:#4ade80;
   --ts-warn-bg:#442006;  --ts-warn-ink:#fdba74;  --ts-warn-line:#7c2d12;
   --ts-info-bg:#12283a;  --ts-info-ink:#60a5fa;
-  --ts-bild-grund:#050608;    /* behind the background images (brand_backgrounds) */
-  --ts-bild-decke:rgba(5,6,8,.45);   --ts-bild-decke-rand:rgba(5,6,8,.75);   /* darkening on top */
-  --ts-bild-staerke:.6;       /* opacity of the background images */
-  --ts-bild-hell:.8;          /* brightness of the background images (CSS brightness) */
+  --ts-image-base:#050608;    /* behind the background images (brand_backgrounds) */
+  --ts-image-overlay:rgba(5,6,8,.45);   --ts-image-overlay-edge:rgba(5,6,8,.75);   /* darkening on top */
+  --ts-image-strength:.6;       /* opacity of the background images */
+  --ts-image-brightness:.8;          /* brightness of the background images (CSS brightness) */
   --ts-radius:12px;
   --ts-font:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
   --ts-mono:ui-monospace,Menlo,Consolas,monospace;
