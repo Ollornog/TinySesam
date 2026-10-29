@@ -56,6 +56,48 @@ and, in its own rows, the values of `old=`, `new=` and `to=` (up to 0.24.x `alt=
 Not covered: an address that came and
 went without `email_changed` (added later from OIDC/LDAP), and the name in the directory.
 
+## Security log contract (fail2ban and log shipping)
+
+Since the PO decision of 2026-10-29 (M-1) the security log is part of the stability promise, tier A. What a
+filter or a log shipper may rely on:
+
+- **The logger** `tinysesam.security` (and its parent `tinysesam`; `tinysesam.mail` for mail). `security_log`
+  writes the first to a file.
+- **The format of that file:** `%(asctime)s %(levelname)s %(message)s` — so a line starts with the date, then
+  the level, then the message. The shipped filters strip the date and anchor on the level (`^\s*WARNING …`).
+- **The event word** at the start of the message and **the keys behind it, in this order:**
+
+  | Level | Event word | Keys |
+  |---|---|---|
+  | WARNING | `failed login` | `user=` `ip=` `method=` and, with a cause, `reason=` |
+  | WARNING | `failed verification` | `user=` `ip=` `method=` and, with a cause, `reason=` |
+  | WARNING | `deferred login`, `deferred verification` | `user=` `ip=` `reason=` |
+  | INFO | `repeated login` | `user=` `ip=` `method=` |
+  | INFO | `login ok` | `user=` `ip=` `method=` `unban=` |
+
+- **Literal values** a filter can match on: `method=` `blocked`, `claim_admin`, `oidc`, `passkey`, `password`,
+  and for `failed verification` the methods that are not a sign-in (`password_change`, `reauth`, `resource`,
+  `totp_setup`); `reason=` `account_locked`, `pending`, `unknown_key`; `unban=` `yes`, `no`. A `reason=` or
+  `method=` that is not listed may take other values — match it with `\S+`, as the shipped filters do.
+
+**Not promised:** everything after the keys (free text), the values of `user=` and `ip=`, every line that does
+not start with one of these event words (LDAP outage, API key denied, configuration notices, …), the audit
+event names (`login_fail`, …) in the database, and the file permissions beyond what `deploy/fail2ban/` says.
+
+If one of these changes, it is a break of a tier-A name: it resets the 1.0 clock and the CHANGELOG names the old
+and the new line. `tests/test_api_surface.py` holds the lines against `tests/api_surface.json`,
+`tests/test_fail2ban_reason.py` holds them against the shipped filters. For these entries the clock starts with
+the release that introduces them (the one after 0.24.13), not with 0.22.0.
+
+## HTTP contract for proxies
+
+The forward and gate endpoints are tier A as well: `GET /auth/forward` and its alias `/auth/verify` (`200` with
+the identity headers, `401` with `X-TinySesam-Location` and `WWW-Authenticate`, `403` with
+`X-TinySesam-Reason: role`), the `/.tinysesam/*` paths on the application's host (`start`, `callback`, `logout`,
+`after-logout`) and `/auth/gate/*` on the gateway, the `X-TinySesam-*` headers and the cookie names the gate
+sets. The exact list, with every observed status, is in [API.md](../API.md), section “HTTP contract”. The
+HTML pages are tier B: path and method stay, the HTML does not.
+
 ## Managing sessions
 
 A session is a row in `session`; the cookie holds the token, the database only its sha256 (the
