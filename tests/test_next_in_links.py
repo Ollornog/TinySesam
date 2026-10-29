@@ -12,7 +12,7 @@ import os
 import re
 import tempfile
 from html import unescape
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
