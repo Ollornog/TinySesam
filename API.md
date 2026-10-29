@@ -106,7 +106,7 @@ Release an account's binding to a foreign identity (operator path) — and open 
 
 ### `gc(attempts_older_than_sec: 'int' = 86400) -> 'dict'`
 
-Clean up: expired sessions/flows/magic tokens/realm unlocks + old login attempts. Call regularly (cron/startup/scheduler) — otherwise the tables grow. The audit log only if `audit_retention_days` sets a deadline (B5-11) — then the number appears under `audit`. Returns the number of deleted rows per area: `unverified_accounts`, `sessions`, `flow`, `magic_tokens`, `resource_unlocks`, `login_attempts`, `failure_series` (until 0.21.x `fehlserien`), possibly `audit`. `attempts_older_than_sec` lies between 0 (all failed attempts) and ten years in seconds, otherwise `ValueError`, before anything is deleted.
+Clean up: expired sessions/flows/magic tokens/realm unlocks + old login attempts. Call regularly (cron/startup/scheduler) — otherwise the tables grow. The audit log only if `audit_retention_days` sets a deadline (B5-11) — then the number appears under `audit`. Returns the number of deleted rows per area: `unverified_accounts`, `sessions`, `flow`, `magic_tokens`, `resource_unlocks`, `login_attempts`, `failure_series` (until 0.21.x `failure_seriesn`), possibly `audit`. `attempts_older_than_sec` lies between 0 (all failed attempts) and ten years in seconds, otherwise `ValueError`, before anything is deleted.
 
 ### `grant_mfa_enrollment(user_id: 'int', minutes: 'int' = 60) -> 'int'`
 

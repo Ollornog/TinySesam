@@ -113,12 +113,12 @@ r.check("… an unknown name gets the same response (no oracle for existing acco
 
 # Aged, otherwise this would test only the 90 days and not the limit (as measured: the mutation
 # "gc also clears triggered ones" stayed green as long as the series was fresh).
-auth.store._exec("UPDATE fehlserie SET zuletzt = zuletzt - 91 * 86400 WHERE topf='serie'")
+auth.store._exec("UPDATE failure_series SET last_seen = last_seen - 91 * 86400 WHERE folded='serie'")
 auth.gc()
 r.check("B2-6: gc() does not clear a triggered series, not even after 90 days (it does not expire)",
         auth.store.failure_series("serie") == 10, str(auth.store.failure_series("serie")))
 auth.store.increase_failure_series("alt-und-halb")
-auth.store._exec("UPDATE fehlserie SET zuletzt = zuletzt - 91 * 86400 WHERE topf='alt-und-halb'")
+auth.store._exec("UPDATE failure_series SET last_seen = last_seen - 91 * 86400 WHERE folded='alt-und-halb'")
 auth.gc()
 r.check("… but it does clear one that was not triggered after 90 days of quiet", auth.store.failure_series("alt-und-halb") == 0)
 
@@ -257,8 +257,8 @@ uid_v = auth_v.store.get_user_by_name("alice")["id"]
 
 
 def _binding_name(uid):
-    z = auth_v.store._one("SELECT name_topf FROM federated_identity WHERE user_id=?", (uid,))
-    return z["name_topf"] if z else "(keine Bindung)"
+    z = auth_v.store._one("SELECT directory_name_folded FROM federated_identity WHERE user_id=?", (uid,))
+    return z["directory_name_folded"] if z else "(keine Bindung)"
 
 
 _first_name = _binding_name(uid_v)
@@ -320,7 +320,7 @@ r.check("G5: `tinysesam unlock alice.neu` — the name as typed — finds the ac
         f"exit {_code_v}, {_text_v!r}, series {auth_v.store.failure_series('alice.neu')}/{auth_v.store.failure_series('alice')}")
 # Existing data: the series is already full, but the directory name was never noted (it only arises with the
 # next SUCCESSFUL sign-in — and that is locked).
-auth_v.store._exec("UPDATE federated_identity SET name_topf = NULL")
+auth_v.store._exec("UPDATE federated_identity SET directory_name_folded = NULL")
 for _ in range(10):
     _login(TestClient(app_v), "alice.neu", f"falsch-falsch-1-{next(_WRONG)}")
 _code_b, _text_b = _unlock("alice.neu")
@@ -424,7 +424,7 @@ r.check("p1-d (C): a local account under the directory name of another person �
         "LDAP password opens no session under this identifier, guessing there is worthless",
         _hit_d.status_code == 401 and _session_from(a_d, _hit_d) is None
         and a_d.store.get_federated_user("ldap", "uuid-alice") == _alice_d
-        and a_d.store._one("SELECT name_topf FROM federated_identity WHERE user_id=?", (_alice_d,))["name_topf"] is None,
+        and a_d.store._one("SELECT directory_name_folded FROM federated_identity WHERE user_id=?", (_alice_d,))["directory_name_folded"] is None,
         f"HTTP {_hit_d.status_code}, session {_session_from(a_d, _hit_d)}")
 # The rejection arises only if the LDAP password was right — on Mallory's account page it would be the
 # oracle. (Mutation probe: take `ldap_identifier_rejected` out of `_OWN_VIEW` → red.)
@@ -559,7 +559,7 @@ a_x, ap_x = _ldap_app()
 a_x.ldap = _Directory({"x": {"pw": LPW, "id": "uuid-a"}, "berta": {"pw": LPW, "id": "uuid-b"}})
 _login(TestClient(ap_x), "berta", LPW)
 _berta_x = a_x.store.get_user_by_name("berta")["id"]
-a_x.store._exec("UPDATE federated_identity SET gebunden_at = gebunden_at - 100 WHERE user_id=?", (_berta_x,))
+a_x.store._exec("UPDATE federated_identity SET bound_at = bound_at - 100 WHERE user_id=?", (_berta_x,))
 _login(TestClient(ap_x), "x", LPW)
 _anton_x = a_x.store.get_user_by_name("x")["id"]
 a_x.change_username(_anton_x, "anton", by_operator=True)
@@ -569,7 +569,7 @@ _login(TestClient(ap_x), "x", LPW)                  # Berta is now called `x` in
 
 
 def _binding_name_x(uid):
-    return a_x.store._one("SELECT name_topf FROM federated_identity WHERE user_id=?", (uid,))["name_topf"]
+    return a_x.store._one("SELECT directory_name_folded FROM federated_identity WHERE user_id=?", (uid,))["directory_name_folded"]
 
 
 _names_x = (_binding_name_x(_anton_x), _binding_name_x(_berta_x))
@@ -598,7 +598,7 @@ r.check("… `tinysesam unlock x` names the new owner and leaves the previous ow
         and a_x.store.failure_series("anton") == 3, f"{_unlock_x}, anton {a_x.store.failure_series('anton')}")
 # Existing data: both still carry the name (written before this version). Then it counts for neither, and
 # `unlock` names no account (which one signed in most recently like this is recorded nowhere).
-a_x.store._exec("UPDATE federated_identity SET name_topf='x' WHERE user_id=?", (_anton_x,))
+a_x.store._exec("UPDATE federated_identity SET directory_name_folded='x' WHERE user_id=?", (_anton_x,))
 for _i in range(3):
     _login(TestClient(ap_x, client=(f"203.0.113.{_i + 70}", 1)), "x", f"falsch-falsch-1-{next(_WRONG)}")
 _login(TestClient(ap_x), "anton", PW)
@@ -610,7 +610,7 @@ with redirect_stdout(_from_x2), redirect_stderr(_from_x2):
     except SystemExit:
         pass    # the CLI ends with sys.exit; what is measured is the output and the database
 # (Mutation probes: omit the second safeguard in `count_identifiers` → Anton's sign-in clears the
-#  series → red; `account_with_binding_name` by `gebunden_at` again → names anton → red.)
+#  series → red; `account_with_binding_name` by `bound_at` again → names anton → red.)
 r.check("… in existing data with two carriers: the name counts for neither, `unlock` names none and clears only under `x`",
         _series_x2 == 3 and a_x.store.failure_series("x") == 0
         and "x" not in a_x.store.count_identifiers(_anton_x) and "x" not in a_x.store.count_identifiers(_berta_x)
@@ -625,7 +625,7 @@ a_y.ldap = _Directory({"y": {"pw": LPW, "id": "uuid-a"}})
 _login(TestClient(ap_y), "y", LPW)
 _old_y = a_y.store.get_user_by_name("y")["id"]
 a_y.change_username(_old_y, "yves", by_operator=True)           # notes `y` (p1-b)
-_note_y = a_y.store._one("SELECT name_topf FROM federated_identity WHERE user_id=?", (_old_y,))["name_topf"]
+_note_y = a_y.store._one("SELECT directory_name_folded FROM federated_identity WHERE user_id=?", (_old_y,))["directory_name_folded"]
 a_y.ldap = _Directory({"y.alt": {"pw": LPW, "id": "uuid-a"}, "y": {"pw": LPW, "id": "uuid-c"}})
 _new_y = _login(TestClient(ap_y), "y", LPW)
 _account_y = a_y.store.get_user_by_name("y")
@@ -633,7 +633,7 @@ r.check("p1-a: a new directory entry under a noted name creates its account; the
         "on the previous owner is dropped",
         _note_y == "y" and _new_y.status_code == 303 and _account_y is not None
         and _session_from(a_y, _new_y) == _account_y["id"] != _old_y
-        and a_y.store._one("SELECT name_topf FROM federated_identity WHERE user_id=?", (_old_y,))["name_topf"] is None,
+        and a_y.store._one("SELECT directory_name_folded FROM federated_identity WHERE user_id=?", (_old_y,))["directory_name_folded"] is None,
         f"note {_note_y!r}, HTTP {_new_y.status_code}")
 
 # p1-d (C), address: filter over uid AND mail, `ldap_email_trusted=False` (default) — LDAP accounts
@@ -908,7 +908,7 @@ _set(a6h, {**_C6, "sub": "g6-h", "groups": []})
 _oidc_login(app6h)
 r.check("G6: if the IdP revokes an admin while an admin by hand remains, no marker arises",
         not a6h.store.get_user_by_name("chef6")["is_admin"]
-        and a6h.store.get_setting("allowlist_nach_idp_entzug") is None)
+        and a6h.store.get_setting("allowlist_after_idp_revocation") is None)
 a6f, app6f = _app(admin_identifiers=_ITEMS6)
 _f6 = a6f.create_user("vize6", password=PW, email="vize6@example.com")
 _login(TestClient(app6f), "vize6", PW)
@@ -945,13 +945,13 @@ auth_i.create_user("ruhig", password=PW)
 ci = TestClient(app_i)
 ci.post("/auth/login", data={"username": "ruhig", "password": PW}, follow_redirects=False)   # without remember
 r.check("… freshly signed in one gets in", ci.get("/drin", follow_redirects=False).status_code == 200)
-auth_i.store._exec("UPDATE session SET zuletzt = zuletzt - 8 * 3600 - 5")
+auth_i.store._exec("UPDATE session SET last_seen = last_seen - 8 * 3600 - 5")
 r.check("… after 8 h without a request the session is gone (not just rejected, deleted)",
         ci.get("/drin", follow_redirects=False).status_code != 200
         and auth_i.store._one("SELECT COUNT(*) AS n FROM session")["n"] == 0)
 ci2 = TestClient(app_i)
 ci2.post("/auth/login", data={"username": "ruhig", "password": PW, "remember": "1"}, follow_redirects=False)
-auth_i.store._exec("UPDATE session SET zuletzt = zuletzt - 30 * 86400")
+auth_i.store._exec("UPDATE session SET last_seen = last_seen - 30 * 86400")
 r.check("… with “Stay signed in” only the absolute lifetime counts (default)",
         ci2.get("/drin", follow_redirects=False).status_code == 200)
 auth_j, app_j = _app(session_idle_minutes_remember=60)
@@ -966,20 +966,20 @@ auth_j.create_user("ruhig", password=PW)
 cj = TestClient(app_j)
 cj.post("/auth/login", data={"username": "ruhig", "password": PW, "remember": "1"}, follow_redirects=False)
 cj.get("/drin")
-_before = auth_j.store._one("SELECT zuletzt FROM session")["zuletzt"]
+_before = auth_j.store._one("SELECT last_seen FROM session")["last_seen"]
 cj.get("/drin")
 r.check("F-05: a second request in the same minute does not write (no lock per request)",
-        auth_j.store._one("SELECT zuletzt FROM session")["zuletzt"] == _before)
-auth_j.store._exec("UPDATE session SET zuletzt = zuletzt - 61 * 60")
+        auth_j.store._one("SELECT last_seen FROM session")["last_seen"] == _before)
+auth_j.store._exec("UPDATE session SET last_seen = last_seen - 61 * 60")
 r.check("F-05 configurable: also for “Stay signed in” (here 60 min)",
         cj.get("/drin", follow_redirects=False).status_code != 200)
 auth_j.create_user("aktiv", password=PW)
 ck = TestClient(app_j)
 ck.post("/auth/login", data={"username": "aktiv", "password": PW, "remember": "1"}, follow_redirects=False)
-auth_j.store._exec("UPDATE session SET zuletzt = zuletzt - 50 * 60, created_at = created_at - 50 * 60 "
+auth_j.store._exec("UPDATE session SET last_seen = last_seen - 50 * 60, created_at = created_at - 50 * 60 "
                    "WHERE user_id = (SELECT id FROM users WHERE username='aktiv')")
 ck.get("/drin")                                              # activity resets the clock
-auth_j.store._exec("UPDATE session SET zuletzt = zuletzt - 50 * 60 "
+auth_j.store._exec("UPDATE session SET last_seen = last_seen - 50 * 60 "
                    "WHERE user_id = (SELECT id FROM users WHERE username='aktiv')")
 r.check("F-05: whoever is active stays in (50 + 50 min, but never 60 in one stretch)",
         ck.get("/drin", follow_redirects=False).status_code == 200)
@@ -1005,14 +1005,14 @@ _secret_text_k = auth_k.totp_begin(uid_k)["secret"]
 auth_k.totp_confirm(uid_k, _pyotp.TOTP(_secret_text_k).at(_clock_k.time() - 30))
 ckk = TestClient(app_k)
 ckk.post("/auth/login", data={"username": "zweifach", "password": PW, "remember": "1"}, follow_redirects=False)
-_half_k = auth_k.store._one("SELECT token_hash, bleiben_gewaehlt FROM session")
+_half_k = auth_k.store._one("SELECT token_hash, stay_chosen FROM session")
 ckk.post("/auth/totp", data={"code": _pyotp.TOTP(_secret_text_k).now(), "next": "/"}, follow_redirects=False)
-_full_k = auth_k.store._all("SELECT token_hash, bleiben_gewaehlt, mfa_ok FROM session")
+_full_k = auth_k.store._all("SELECT token_hash, stay_chosen, mfa_ok FROM session")
 r.check("F-05: “Stay signed in” survives the second factor (new full session carries the choice)",
-        _half_k["bleiben_gewaehlt"] == 1 and len(_full_k) == 1
-        and _full_k[0]["token_hash"] != _half_k["token_hash"] and _full_k[0]["bleiben_gewaehlt"] == 1,
+        _half_k["stay_chosen"] == 1 and len(_full_k) == 1
+        and _full_k[0]["token_hash"] != _half_k["token_hash"] and _full_k[0]["stay_chosen"] == 1,
         str([dict(z) for z in _full_k]))
-auth_k.store._exec("UPDATE session SET zuletzt = zuletzt - 30 * 86400")
+auth_k.store._exec("UPDATE session SET last_seen = last_seen - 30 * 86400")
 r.check("… and so after password + TOTP still only the absolute lifetime applies",
         ckk.get("/drin", follow_redirects=False).status_code == 200)
 # (Mutation probe: delete the transfer in `_successor` → both red.)
@@ -1255,8 +1255,8 @@ r.check("… a broken key (not Base64 of 32 bytes) is an error, no silent replac
 def _now_minus(auth):
     """Seconds until the next re-check of the (single) OIDC session."""
     import time as _t
-    z = auth.store._one("SELECT geprueft_at FROM oidc_sitzung")
-    return int(z["geprueft_at"]) + int(auth.cfg.oidc_session_refresh_minutes) * 60 - int(_t.time())
+    z = auth.store._one("SELECT checked_at FROM oidc_session")
+    return int(z["checked_at"]) + int(auth.cfg.oidc_session_refresh_minutes) * 60 - int(_t.time())
 
 
 # ── 4a: revocation follows the provider (refresh token every N minutes) ─────────────────────
@@ -1279,7 +1279,7 @@ c4a = TestClient(app4a, raise_server_exceptions=False)
 _start = c4a.get("/auth/oidc/start", follow_redirects=False)
 _st = parse_qs(urlparse(_start.headers["location"]).query)["state"][0]
 c4a.get(f"/auth/oidc/callback?code=x&state={_st}", follow_redirects=False)
-_roh4a = a4a.store._one("SELECT refresh FROM oidc_sitzung")
+_roh4a = a4a.store._one("SELECT refresh FROM oidc_session")
 r.check("4a: the refresh token is stored with the session, encrypted",
         _roh4a is not None and _roh4a["refresh"].startswith("v1:") and "rt-1" not in _roh4a["refresh"])
 r.check("… within the period TinySesam does not ask the provider",
@@ -1287,7 +1287,7 @@ r.check("… within the period TinySesam does not ask the provider",
 
 
 def _alternate():
-    a4a.store._exec("UPDATE oidc_sitzung SET geprueft_at = geprueft_at - 16 * 60")
+    a4a.store._exec("UPDATE oidc_session SET checked_at = checked_at - 16 * 60")
 
 
 _uid4a = a4a.store.get_user_by_name("refresher")["id"]
@@ -1298,7 +1298,7 @@ a4a._oidc_outcome.wait()                                  # the exchange happens
 r.check("4a: after the period it is exchanged; the provider says yes → the session stays",
         _first == 200 and c4a.get("/auth/me").status_code == 200 and _called == [("rt-1", "r-1")])
 r.check("… a newly issued refresh token replaces the old one (rotation)",
-        a4a.store.get_oidc_session(a4a.store._one("SELECT token_hash FROM oidc_sitzung")["token_hash"])["refresh"] == "rt-2")
+        a4a.store.get_oidc_session(a4a.store._one("SELECT token_hash FROM oidc_session")["token_hash"])["refresh"] == "rt-2")
 _alternate()
 _responses.append(("ok", {"sub": "r-1", "groups": []}, {}))
 c4a.get("/auth/me")
@@ -1334,7 +1334,7 @@ a4b.oidc.exchange = lambda code, redirect_uri, nonce, t=None, **_: (
     {"access_token": "at", "refresh_token": "rt-x"})
 _oidc_login(app4b)
 r.check("4a configurable: oidc_session_refresh_minutes=0 stores nothing",
-        a4b.store._one("SELECT COUNT(*) AS n FROM oidc_sitzung")["n"] == 0)
+        a4b.store._one("SELECT COUNT(*) AS n FROM oidc_session")["n"] == 0)
 # (Mutation probes: `_oidc_recheck` always True → "session gone" red; remove the group re-evaluation
 #  → "flag … gone" red; remove `in info` → "missing ≠ no groups" red; remove the
 #  retry within a minute → "within a minute" red.)
@@ -1360,7 +1360,7 @@ def _oidc_with_refresh(sub, claims=None, **cfg):
 a5r, _, c5r = _oidc_with_refresh("parallel")
 _swap = []
 a5r.oidc.refresh = lambda rt, sub: (_swap.append(rt) or ("ok", {"sub": sub}, {}))
-a5r.store._exec("UPDATE oidc_sitzung SET geprueft_at = geprueft_at - 16 * 60")
+a5r.store._exec("UPDATE oidc_session SET checked_at = checked_at - 16 * 60")
 _s5 = a5r.store._one("SELECT * FROM session")
 for _ in range(4):
     a5r._oidc_recheck(_s5)
@@ -1371,7 +1371,7 @@ r.check("Finding 5: four requests after the period exchange the refresh token ex
 # Finding 6: a hanging provider does not hold up the request.
 a6r, _, c6r = _oidc_with_refresh("haengt")
 a6r.oidc.refresh = lambda rt, sub: (_when.sleep(1.5), ("ok", {"sub": sub}, {}))[1]
-a6r.store._exec("UPDATE oidc_sitzung SET geprueft_at = geprueft_at - 16 * 60")
+a6r.store._exec("UPDATE oidc_session SET checked_at = checked_at - 16 * 60")
 _t0 = _when.monotonic()
 _st6 = c6r.get("/auth/me").status_code
 _duration = _when.monotonic() - _t0
@@ -1380,7 +1380,7 @@ r.check("Finding 6: the request does not wait for the provider (exchange in the 
         _st6 == 200 and _duration < 1.0, f"{_duration:.2f}s")
 
 # Finding 7: one row per client — a login via a second client does not overwrite the first.
-_h7 = a6r.store._one("SELECT token_hash FROM oidc_sitzung")["token_hash"]
+_h7 = a6r.store._one("SELECT token_hash FROM oidc_session")["token_hash"]
 a6r.store.set_oidc_session(_h7, "app-b", "haengt", "rt-b")
 r.check("Finding 7: several clients of one session — every row stays and is re-checked",
         {z["client"] for z in a6r.store.get_oidc_sessions(_h7)} == {"*", "app-b"})
@@ -1389,7 +1389,7 @@ r.check("Finding 7: several clients of one session — every row stays and is re
 a13, _, c13 = _oidc_with_refresh("gesperrt13")
 _t13 = []
 a13.oidc.refresh = lambda rt, sub: (_t13.append(rt) or ("ok", {"sub": sub, "groups": ["admins"]}, {}))
-a13.store._exec("UPDATE oidc_sitzung SET geprueft_at = geprueft_at - 16 * 60")
+a13.store._exec("UPDATE oidc_session SET checked_at = checked_at - 16 * 60")
 a13.store._exec("UPDATE users SET disabled = 2")
 c13.get("/auth/me")
 a13._oidc_outcome.wait()
@@ -1410,7 +1410,7 @@ r.check("Finding 4: wrong key + only OIDC refresh tokens → startup aborts", _f
 
 # Finding 9: the 8-h limit applies to every session without an EXPLICIT "stay signed in".
 a9, app9, c9 = _oidc_with_refresh("leerlauf9")
-a9.store._exec("UPDATE session SET zuletzt = zuletzt - 9 * 3600")
+a9.store._exec("UPDATE session SET last_seen = last_seen - 9 * 3600")
 r.check("Finding 9: an OIDC session (persistent, but without choice) ends after 8 h of inactivity",
         c9.get("/auth/me").status_code == 401)
 
@@ -1448,7 +1448,7 @@ r.check("Finding 11: even without the memory throttle at most one notice per loc
         str(len(post11)))
 # (Mutation probes: remove the claim in `_oidc_recheck` → finding 5 red; the exchange
 #  synchronous instead of via `_oidc_outcome` → finding 6 red; remove the audit throttle in `_send` →
-#  finding 11 red; remove `bleiben_gewaehlt` in `get_session` → finding 9 red.)
+#  finding 11 red; remove `stay_chosen` in `get_session` → finding 9 red.)
 
 # ── Finding 8: API keys follow the identity provider (PO decision 2026-09-24) ─────────────
 # If the provider says no (4a), the keys of the OIDC account rest; likewise without confirmation within
@@ -1464,7 +1464,7 @@ key8 = a8.create_api_key(uid8, name="backup")["key"]
 r.check("Finding 8: the key of an account freshly signed in via the provider is valid",
         a8.verify_api_key(key8)[0] is not None)
 a8.oidc.refresh = lambda rt, sub: ("rejected", {}, {"error": "invalid_grant"})
-a8.store._exec("UPDATE oidc_sitzung SET geprueft_at = geprueft_at - 16 * 60")
+a8.store._exec("UPDATE oidc_session SET checked_at = checked_at - 16 * 60")
 a8._oidc_recheck(a8.store._one("SELECT * FROM session"))
 a8._oidc_outcome.wait()
 r.check("Finding 8: after the provider's no the key rests (session gone, key rejected)",
@@ -1476,7 +1476,7 @@ r.check("… nothing is deleted or revoked",
         not a8.store._one("SELECT revoked FROM api_key")["revoked"])
 # The no is stored as a NEGATIVE timestamp; a yes only wakes if its question went out afterwards. Here
 # the no is five seconds old, the sign-in starts now.
-a8.store._exec("UPDATE users SET idp_bestaetigt_at = ? WHERE id=?", (-(int(_when.time()) - 5), uid8))
+a8.store._exec("UPDATE users SET idp_confirmed_at = ? WHERE id=?", (-(int(_when.time()) - 5), uid8))
 r.check("… and the next sign-in via the provider wakes it again",
         _again_over_idp(c8).status_code == 303 and a8.verify_api_key(key8)[0] is not None)
 # The race: the question went out BEFORE the no (two sessions, two workers), but the yes is
@@ -1485,14 +1485,14 @@ a8.store.idp_refused(uid8)
 _question_before = int(_when.time()) - 10
 r.check("Finding 8: a yes whose question went out BEFORE the no does not wake the keys (race)",
         not a8.store.confirm_idp(uid8, _question_before) and a8.verify_api_key(key8)[0] is None)
-a8.store._exec("UPDATE users SET idp_bestaetigt_at = ? WHERE id=?", (-(int(_when.time()) - 5), uid8))
+a8.store._exec("UPDATE users SET idp_confirmed_at = ? WHERE id=?", (-(int(_when.time()) - 5), uid8))
 r.check("… one whose question went out afterwards does",
         a8.store.confirm_idp(uid8, int(_when.time())) and a8.verify_api_key(key8)[0] is not None)
 
 # Period without session (script-only): 30 days default.
-a8.store._exec("UPDATE users SET idp_bestaetigt_at = ? WHERE id=?", (int(_when.time()) - 29 * 86400, uid8))
+a8.store._exec("UPDATE users SET idp_confirmed_at = ? WHERE id=?", (int(_when.time()) - 29 * 86400, uid8))
 _inside8 = a8.verify_api_key(key8)[0] is not None
-a8.store._exec("UPDATE users SET idp_bestaetigt_at = ? WHERE id=?", (int(_when.time()) - 31 * 86400, uid8))
+a8.store._exec("UPDATE users SET idp_confirmed_at = ? WHERE id=?", (int(_when.time()) - 31 * 86400, uid8))
 r.check("Finding 8: without confirmation within 30 days the key rests (29 days: valid, 31: rests)",
         _inside8 and a8.verify_api_key(key8)[0] is None)
 a8.cfg.oidc_apikey_confirm_days = 0
@@ -1506,25 +1506,25 @@ a8.cfg.oidc_apikey_confirm_days = 30
 a8b, app8b, c8b = _oidc_with_refresh("gruppe8", claims={"groups": ["team"]}, oidc_allowed_groups=["team"])
 uid8b = a8b.store.get_user_by_name("gruppe8")["id"]
 key8b = a8b.create_api_key(uid8b, name="ci")["key"]
-a8b.store._exec("UPDATE users SET idp_bestaetigt_at = 1000 WHERE id=?", (uid8b,))
+a8b.store._exec("UPDATE users SET idp_confirmed_at = 1000 WHERE id=?", (uid8b,))
 a8b.oidc.refresh = lambda rt, sub: ("ok", {"sub": sub, "groups": ["team"]}, {})
-a8b.store._exec("UPDATE oidc_sitzung SET geprueft_at = geprueft_at - 16 * 60")
+a8b.store._exec("UPDATE oidc_session SET checked_at = checked_at - 16 * 60")
 a8b._oidc_recheck(a8b.store._one("SELECT * FROM session"))
 a8b._oidc_outcome.wait()
 r.check("Finding 8: a yes at the refresh exchange confirms the account (the old state becomes fresh)",
-        a8b.store.get_user(uid8b)["idp_bestaetigt_at"] > 1000 and a8b.verify_api_key(key8b)[0] is not None)
+        a8b.store.get_user(uid8b)["idp_confirmed_at"] > 1000 and a8b.verify_api_key(key8b)[0] is not None)
 a8b.oidc.refresh = lambda rt, sub: ("ok", {"sub": sub, "groups": ["andere"]}, {})
-a8b.store._exec("UPDATE oidc_sitzung SET geprueft_at = geprueft_at - 16 * 60")
+a8b.store._exec("UPDATE oidc_session SET checked_at = checked_at - 16 * 60")
 a8b._oidc_recheck(a8b.store._one("SELECT * FROM session"))
 a8b._oidc_outcome.wait()
 r.check("… withdrawal of the allowed group is a no: the key rests",
-        a8b.verify_api_key(key8b)[0] is None and a8b.store.get_user(uid8b)["idp_bestaetigt_at"] < 0)
+        a8b.verify_api_key(key8b)[0] is None and a8b.store.get_user(uid8b)["idp_confirmed_at"] < 0)
 
 # Accounts without an OIDC binding are not affected — not even with a state that would mean "no".
 local8 = a8.create_user("lokal8", password=PW)
 key8l = a8.create_api_key(local8, name="lokal")["key"]
-a8.store._exec("UPDATE users SET idp_bestaetigt_at = 0 WHERE id=?", (local8,))
-r.check("Finding 8: an account without an OIDC binding keeps its key (even with idp_bestaetigt_at=0)",
+a8.store._exec("UPDATE users SET idp_confirmed_at = 0 WHERE id=?", (local8,))
+r.check("Finding 8: an account without an OIDC binding keeps its key (even with idp_confirmed_at=0)",
         a8.verify_api_key(key8l)[0] is not None)
 
 # Existing data: the period starts with the update, exactly once.
@@ -1532,31 +1532,31 @@ _path8 = str(Path(tempfile.mkdtemp()) / "bestand8.db")
 _old8 = Store(_path8)
 _old8.create_user("bestand-oidc", None, None, False, [], False)
 _old8.link_oidc("https://idp.example", "sub-b", 1)
-_old8.db.execute("ALTER TABLE users DROP COLUMN idp_bestaetigt_at")
-_old8.db.execute("DELETE FROM setting WHERE key='idp_bestand_gesetzt'")   # a 0.20 file does not know it
+_old8.db.execute("ALTER TABLE users DROP COLUMN idp_confirmed_at")
+_old8.db.execute("DELETE FROM setting WHERE key='idp_inventory_set'")   # a 0.20 file does not know it
 _old8.db.commit()
 _old8.db.close()
 _new8 = Store(_path8)
-_state8 = _new8.get_user(1)["idp_bestaetigt_at"]
+_state8 = _new8.get_user(1)["idp_confirmed_at"]
 # Afterwards without state (an account bound by a route without confirmation): a restart
 # must NOT grant it a fresh period.
-_new8.db.execute("UPDATE users SET idp_bestaetigt_at = NULL WHERE id=1")
+_new8.db.execute("UPDATE users SET idp_confirmed_at = NULL WHERE id=1")
 _new8.db.commit()
 _new8.db.close()
 r.check("Finding 8, existing data: the period of an OIDC account starts with the update — and only once",
         _state8 is not None and abs(_state8 - int(_when.time())) < 60
-        and Store(_path8).get_user(1)["idp_bestaetigt_at"] is None, f"{_state8}")
+        and Store(_path8).get_user(1)["idp_confirmed_at"] is None, f"{_state8}")
 # Abort in the middle of the update: the column is already there (the ALTER is durable immediately), state and
 # marker are not. The next start catches up.
 _pfad8c = str(Path(tempfile.mkdtemp()) / "abbruch8.db")
 _from8 = Store(_pfad8c)
 _from8.create_user("abbruch-oidc", None, None, False, [], False)
 _from8.link_oidc("https://idp.example", "sub-c", 1)
-_from8.db.execute("DELETE FROM setting WHERE key='idp_bestand_gesetzt'")
+_from8.db.execute("DELETE FROM setting WHERE key='idp_inventory_set'")
 _from8.db.commit()
 _from8.db.close()
 r.check("Finding 8, existing data: after an abort (column present, marker not) the next start sets the state",
-        Store(_pfad8c).get_user(1)["idp_bestaetigt_at"] is not None)
+        Store(_pfad8c).get_user(1)["idp_confirmed_at"] is not None)
 # (Mutation probes: remove `_key_rests` in `verify_api_key` → "rests" red; remove `confirm_idp` in the
 #  callback → "wakes it again" red; remove the period check → "31: rests" red;
 #  remove `_idp_no` in the group branch → group withdrawal red; remove the binding check →
@@ -1899,13 +1899,13 @@ _uid_f2 = a_f2.store.get_user_by_name("f2-konto")["id"]
 _h_f2 = a_f2.store._one("SELECT token_hash FROM session")["token_hash"]
 a_f2.store.set_oidc_session(_h_f2, "app-weg", "f2-konto", "rt-weg")
 a_f2.oidc.refresh = lambda rt, sub: ("rejected", {}, {"error": "invalid_grant"})     # the fallback said no
-a_f2.store._exec("UPDATE oidc_sitzung SET geprueft_at = geprueft_at - 16 * 60 WHERE client='app-weg'")
+a_f2.store._exec("UPDATE oidc_session SET checked_at = checked_at - 16 * 60 WHERE client='app-weg'")
 a_f2._oidc_recheck(a_f2.store._one("SELECT * FROM session"))
 a_f2._oidc_outcome.wait()
 r.check("… a row of a removed client goes, the session stays, the account gets no no",
-        a_f2.store._one("SELECT COUNT(*) AS n FROM oidc_sitzung WHERE client='app-weg'")["n"] == 0
+        a_f2.store._one("SELECT COUNT(*) AS n FROM oidc_session WHERE client='app-weg'")["n"] == 0
         and a_f2.store._one("SELECT COUNT(*) AS n FROM session")["n"] == 1
-        and (a_f2.store.get_user(_uid_f2)["idp_bestaetigt_at"] or 0) > 0)
+        and (a_f2.store.get_user(_uid_f2)["idp_confirmed_at"] or 0) > 0)
 
 # 3c/M1: chain ["magic","totp"], account with passkey without TOTP — the mailbox does not set up a TOTP for itself.
 a_m1, ap_m1 = _link_app(login_chain=["magic", "totp"])
@@ -2014,14 +2014,14 @@ r.check("Counter-check R3/V5: SAML name from the address attribute (`chefin`) do
 # I2: client newly created at the provider (different client_id) — no no, the row goes.
 a_i2, _, _ = _oidc_with_refresh("i2-konto")
 _uid_i2 = a_i2.store.get_user_by_name("i2-konto")["id"]
-a_i2.store._exec("UPDATE oidc_sitzung SET client_id='alte-client-id', geprueft_at = geprueft_at - 16 * 60")
+a_i2.store._exec("UPDATE oidc_session SET client_id='alte-client-id', checked_at = checked_at - 16 * 60")
 a_i2.oidc.refresh = lambda rt, sub: ("rejected", {}, {"error": "invalid_grant"})
 a_i2._oidc_recheck(a_i2.store._one("SELECT * FROM session"))
 a_i2._oidc_outcome.wait()
 r.check("Counter-check R3/I2: token of an old client_id → row discarded, session stays, no no",
-        a_i2.store._one("SELECT COUNT(*) AS n FROM oidc_sitzung")["n"] == 0
+        a_i2.store._one("SELECT COUNT(*) AS n FROM oidc_session")["n"] == 0
         and a_i2.store._one("SELECT COUNT(*) AS n FROM session")["n"] == 1
-        and (a_i2.store.get_user(_uid_i2)["idp_bestaetigt_at"] or 0) > 0)
+        and (a_i2.store.get_user(_uid_i2)["idp_confirmed_at"] or 0) > 0)
 
 # I3 + I4: a passkey account sets up TOTP only with a passkey in the session or in the operator window.
 a_i3, ap_i3 = _link_app(login_chain=["password", "totp"])
@@ -2051,16 +2051,16 @@ _old_i5 = a_i5.store._one("SELECT token_hash FROM session")["token_hash"]
 def _swap_with_rotation(rt, sub):
     # In the middle of the exchange: step-up or similar gives the session a new token, the OIDC row follows.
     a_i5.store._exec("UPDATE session SET token_hash='neu-i5' WHERE token_hash=?", (_old_i5,))
-    a_i5.store._exec("UPDATE oidc_sitzung SET token_hash='neu-i5' WHERE token_hash=?", (_old_i5,))
+    a_i5.store._exec("UPDATE oidc_session SET token_hash='neu-i5' WHERE token_hash=?", (_old_i5,))
     return "ok", {"sub": sub}, {"refresh_token": "rt-rotiert"}
 
 
 a_i5.oidc.refresh = _swap_with_rotation
 a_i5.store._exec("PRAGMA foreign_keys=OFF")
-a_i5.store._exec("UPDATE oidc_sitzung SET geprueft_at = geprueft_at - 16 * 60")
+a_i5.store._exec("UPDATE oidc_session SET checked_at = checked_at - 16 * 60")
 a_i5._oidc_recheck(a_i5.store._one("SELECT * FROM session"))
 a_i5._oidc_outcome.wait()
-_z_i5 = a_i5.store._one("SELECT refresh FROM oidc_sitzung WHERE token_hash='neu-i5'")
+_z_i5 = a_i5.store._one("SELECT refresh FROM oidc_session WHERE token_hash='neu-i5'")
 r.check("Counter-check R3/I5: rotation during the exchange — the new refresh token lands on the row",
         _z_i5 is not None and a_i5.store.vault.decrypt(_z_i5["refresh"]) == "rt-rotiert")
 # (Mutation probes: LDAP back on "@" instead of the mail value → V1 red, V2 red; forward latch back to
@@ -2073,57 +2073,57 @@ a_ob, _, c_ob = _oidc_with_refresh("ob-konto")
 _uid_ob = a_ob.store.get_user_by_name("ob-konto")["id"]
 r.check("Upper limit: default 25 hours, state of the row set at login",
         a_ob.cfg.oidc_session_max_unverified_hours == 25
-        and a_ob.store._one("SELECT erfolg_at FROM oidc_sitzung")["erfolg_at"] is not None)
+        and a_ob.store._one("SELECT success_at FROM oidc_session")["success_at"] is not None)
 a_ob.oidc.refresh = lambda rt, sub: ("ok", {"sub": sub}, {})
 _prior_ob = int(_when.time()) - 2 * 3600
-a_ob.store._exec("UPDATE oidc_sitzung SET geprueft_at = geprueft_at - 16 * 60, erfolg_at = ?", (_prior_ob,))
+a_ob.store._exec("UPDATE oidc_session SET checked_at = checked_at - 16 * 60, success_at = ?", (_prior_ob,))
 c_ob.get("/auth/me")
 a_ob._oidc_outcome.wait()
 r.check("… a yes at the exchange resets the state",
-        (a_ob.store._one("SELECT erfolg_at FROM oidc_sitzung")["erfolg_at"] or 0) > _prior_ob)
+        (a_ob.store._one("SELECT success_at FROM oidc_session")["success_at"] or 0) > _prior_ob)
 a_ob.oidc.refresh = lambda rt, sub: ("error", {}, {"error": "invalid_client"})
-a_ob.store._exec("UPDATE oidc_sitzung SET erfolg_at = ?", (int(_when.time()) - 24 * 3600,))
+a_ob.store._exec("UPDATE oidc_session SET success_at = ?", (int(_when.time()) - 24 * 3600,))
 r.check("… 24 hours without a yes: the session stays", c_ob.get("/auth/me").status_code == 200)
-a_ob.store._exec("UPDATE oidc_sitzung SET erfolg_at = ?", (int(_when.time()) - 26 * 3600,))
+a_ob.store._exec("UPDATE oidc_session SET success_at = ?", (int(_when.time()) - 26 * 3600,))
 _reply_ob = c_ob.get("/auth/me").status_code
 r.check("… 26 hours without a yes: the session ends, with an audit row — and that is NOT a no for the keys",
         _reply_ob == 401 and a_ob.store._one("SELECT COUNT(*) AS n FROM session")["n"] == 0
         and a_ob.store._one("SELECT 1 FROM audit WHERE event='oidc_unconfirmed'") is not None
-        and (a_ob.store.get_user(_uid_ob)["idp_bestaetigt_at"] or 0) > 0, f"HTTP {_reply_ob}")
+        and (a_ob.store.get_user(_uid_ob)["idp_confirmed_at"] or 0) > 0, f"HTTP {_reply_ob}")
 a_ob0, _, c_ob0 = _oidc_with_refresh("ob-aus", oidc_session_max_unverified_hours=0)
-a_ob0.store._exec("UPDATE oidc_sitzung SET erfolg_at = 1000")
+a_ob0.store._exec("UPDATE oidc_session SET success_at = 1000")
 r.check("… oidc_session_max_unverified_hours=0 switches the limit off", c_ob0.get("/auth/me").status_code == 200)
 # (Mutation probes: remove the check in `_oidc_recheck` → "26 hours" red; `success=True`
 #  at the exchange removed → "a yes resets the state" red; `_idp_no` instead of just deleting → keys check
 #  red.)
 
-# ── Schema 11, intermediate state: `fehlserie` without column `art` is recreated (R2-3) ────────
+# ── Schema 11, intermediate state: `failure_series` without column `art` is recreated (R2-3) ────────
 _path_z = str(Path(tempfile.mkdtemp()) / "zwischen.db")
 Store(_path_z).db.close()
 _raw = sqlite3.connect(_path_z)
-_raw.execute("DROP TABLE fehlserie")
-_raw.execute("CREATE TABLE fehlserie (topf TEXT PRIMARY KEY, anzahl INTEGER NOT NULL, "
-             "seit INTEGER NOT NULL, zuletzt INTEGER NOT NULL)")
+_raw.execute("DROP TABLE failure_series")
+_raw.execute("CREATE TABLE failure_series (folded TEXT PRIMARY KEY, count INTEGER NOT NULL, "
+             "since INTEGER NOT NULL, last_seen INTEGER NOT NULL)")
 _raw.commit()
 _raw.close()
 _z = Store(_path_z)
-_columns = {z["name"] for z in _z._all("PRAGMA table_info(fehlserie)")}
-r.check("Intermediate state: a `fehlserie` without `art` is recreated instead of breaking every sign-in",
-        "art" in _columns and _z.increase_failure_series("x", "password") == 1, str(_columns))
+_columns = {z["name"] for z in _z._all("PRAGMA table_info(failure_series)")}
+r.check("Intermediate state: a `failure_series` without `art` is recreated instead of breaking every sign-in",
+        "kind" in _columns and _z.increase_failure_series("x", "password") == 1, str(_columns))
 _z.db.close()
 
 # ── Schema 11: a file from 0.20.x gets the table at startup ───────────────────────────────
 _path = str(Path(tempfile.mkdtemp()) / "alt.db")
 Store(_path).db.close()
 _raw = sqlite3.connect(_path)
-_raw.execute("DROP TABLE fehlserie")
+_raw.execute("DROP TABLE failure_series")
 _raw.execute("PRAGMA user_version = 10")
 _raw.commit()
 _raw.close()
 _new = Store(_path)
 _tables = {z["name"] for z in _new._all("SELECT name FROM sqlite_master WHERE type='table'")}
-r.check("Schema 10 → today: `fehlserie` is created at startup, the stamp follows",
-        "fehlserie" in _tables
+r.check("Schema 10 → today: `failure_series` is created at startup, the stamp follows",
+        "failure_series" in _tables
         and int(_new.db.execute("PRAGMA user_version").fetchone()[0]) == Store.SCHEMA_VERSION >= 11)
 _new.db.close()
 os.remove(_path)

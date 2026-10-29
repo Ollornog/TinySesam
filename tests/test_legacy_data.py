@@ -169,30 +169,30 @@ _s10_old.store.db.close()
 # DROP COLUMN`: when removing the last column SQLite searches backwards in the text for the comma before it
 # and finds one in the comment above („incomplete input“).
 from tinysesam.store import SCHEMA as _S10_SCHEMA  # noqa: E402
-# Cut out along with it: `idp_bestaetigt_at` (schema 11, finding 8) and the high-water marks of the identifiers
-# (schema 11, G2), which have since stood behind `topf_mail`, plus `name_selbst_gewaehlt` behind them
-# (schema 11, G2-N) — and `federated_identity.name_topf` (schema 11, G5), whose name and comment
-# would otherwise hit the „no leftovers with topf" probe.
-_s10_schema9, _s10_n = re.subn(r",\n\s*-- The counting bucket.*?topf_mail\s+TEXT,\n\s*idp_bestaetigt_at INTEGER.*?"
-                               r"mail_audit_ab\s+INTEGER,\n.*?name_selbst_gewaehlt INTEGER NOT NULL DEFAULT 0\n",
+# Cut out along with it: `idp_confirmed_at` (schema 11, finding 8) and the high-water marks of the identifiers
+# (schema 11, G2), which have since stood behind `folded_mail`, plus `name_self_chosen` behind them
+# (schema 11, G2-N) — and `federated_identity.directory_name_folded` (schema 11, G5), whose name and comment
+# would otherwise hit the "no leftovers with `topf`" probe.
+_s10_schema9, _s10_n = re.subn(r",\n\s*-- The counting bucket.*?folded_mail\s+TEXT,\n\s*idp_confirmed_at INTEGER.*?"
+                               r"mail_audit_from\s+INTEGER,\n.*?name_self_chosen INTEGER NOT NULL DEFAULT 0\n",
                                "\n", _S10_SCHEMA, flags=re.S)
-_s10_schema9, _s10_nfi = re.subn(r"\n\s*-- The name under which the account last signed in.*?name_topf\s+TEXT,", "",
+_s10_schema9, _s10_nfi = re.subn(r"\n\s*-- The name under which the account last signed in.*?directory_name_folded\s+TEXT,", "",
                                  _s10_schema9, flags=re.S)
-# Schema 11 (B2-6) came afterwards: a file in the state of 9 does not have the table `fehlserie` yet.
-_s10_schema9, _s10_n11 = re.subn(r"CREATE TABLE IF NOT EXISTS fehlserie \(.*?\n\);\n", "", _s10_schema9,
+# Schema 11 (B2-6) came afterwards: a file in the state of 9 does not have the table `failure_series` yet.
+_s10_schema9, _s10_n11 = re.subn(r"CREATE TABLE IF NOT EXISTS failure_series \(.*?\n\);\n", "", _s10_schema9,
                                  flags=re.S)
 os.close(os.open(_s10_db, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600))
 _s10_raw = sqlite3.connect(_s10_db)
 _s10_raw.executescript(_s10_schema9)
-_s10_raw.execute("ATTACH DATABASE ? AS quelle", (_s10_cfg["db_path"],))
+_s10_raw.execute("ATTACH DATABASE ? AS source", (_s10_cfg["db_path"],))
 for (_tab,) in _s10_raw.execute("SELECT name FROM main.sqlite_master WHERE type='table' "
                                 "AND name NOT LIKE 'sqlite_%'").fetchall():
     _sp = ", ".join(z[1] for z in _s10_raw.execute(f"PRAGMA main.table_info({_tab})"))
-    _s10_raw.execute(f"INSERT INTO main.{_tab}({_sp}) SELECT {_sp} FROM quelle.{_tab}")
+    _s10_raw.execute(f"INSERT INTO main.{_tab}({_sp}) SELECT {_sp} FROM source.{_tab}")
 _s10_raw.commit()
-_s10_raw.execute("DETACH DATABASE quelle")
+_s10_raw.execute("DETACH DATABASE source")
 _s10_raw.execute("PRAGMA user_version = 9")
-_s10_rest = _s10_raw.execute("SELECT name FROM sqlite_master WHERE sql LIKE '%topf%' "
+_s10_rest = _s10_raw.execute("SELECT name FROM sqlite_master WHERE sql LIKE '%folded%' "
                              "OR name LIKE 'ix_users_%'").fetchall()
 _s10_number = _s10_raw.execute("SELECT COUNT(*) FROM users").fetchone()[0]
 _s10_raw.commit()
@@ -236,28 +236,28 @@ r.check("S-2 (c): addresses of open signups carry no proof after the upgrade unt
         f"{_s10_u['wartend']['email_verified']}, nachher {_s10.store.get_user(_s10_ids['wartend'])['email_verified']}")
 _s10_objects = {z["name"] for z in _s10.store._all("SELECT name FROM sqlite_master WHERE tbl_name='users'")}
 _s10_e = _s10.store.get_user(_s10_emile)
-_s10_without = _s10.store._one("SELECT COUNT(*) AS n FROM users WHERE topf_name IS NULL OR topf_mail IS NULL")["n"]
+_s10_without = _s10.store._one("SELECT COUNT(*) AS n FROM users WHERE folded_name IS NULL OR folded_mail IS NULL")["n"]
 r.check("S-1 (b): every existing row gets its counting bucket, indexes and triggers exist",
-        _s10_without == 0 and _s10_e["topf_name"] == "émile"
-        and _s10_e["topf_mail"] == "emile@xn--bcher-kva.example"
-        and {"ix_users_topf_name", "ix_users_topf_mail", "ix_users_name_nocase", "ix_users_email_nocase",
-             "trg_users_topf_name", "trg_users_topf_mail"} <= _s10_objects
+        _s10_without == 0 and _s10_e["folded_name"] == "émile"
+        and _s10_e["folded_mail"] == "emile@xn--bcher-kva.example"
+        and {"ix_users_folded_name", "ix_users_folded_mail", "ix_users_name_nocase", "ix_users_email_nocase",
+             "trg_users_folded_name", "trg_users_folded_mail"} <= _s10_objects
         and (_s10.store.account_by_bucket("émile") or {"id": None})["id"] == _s10_emile,
-        f"without bucket {_s10_without}, Émile {(_s10_e['topf_name'], _s10_e['topf_mail'])}, objects {_s10_objects}")
+        f"without bucket {_s10_without}, Émile {(_s10_e['folded_name'], _s10_e['folded_mail'])}, objects {_s10_objects}")
 _s10.store.db.close()
 # Whoever changes the folding in `norm_identifier` raises the schema — then startup recomputes ALL buckets
 # (`Store.BUCKET_SCHEMA`), not just the missing ones. Simulated with an outdated bucket in a
 # file whose stamp is below `BUCKET_SCHEMA`.
 # (Mutation probe: in `_migrate` only ever compute the NULL rows → red.)
 _s10_stale = sqlite3.connect(_s10_db)
-_s10_stale.execute("UPDATE users SET topf_name='alte-faltung' WHERE id=?", (_s10_emile,))
+_s10_stale.execute("UPDATE users SET folded_name='alte-faltung' WHERE id=?", (_s10_emile,))
 _s10_stale.execute(f"PRAGMA user_version = {Store.BUCKET_SCHEMA - 1}")
 _s10_stale.commit()
 _s10_stale.close()
 _s10_new = Store(_s10_db)
 r.check("S-1 (b): … a stamp below BUCKET_SCHEMA also recomputes existing buckets",
-        _s10_new.get_user(_s10_emile)["topf_name"] == "émile",
-        f"{_s10_new.get_user(_s10_emile)['topf_name']}")
+        _s10_new.get_user(_s10_emile)["folded_name"] == "émile",
+        f"{_s10_new.get_user(_s10_emile)['folded_name']}")
 _s10_new.db.close()
 _s10_second = Store(_s10_db)
 r.check("… a second start changes nothing more (stamp current, no further lock, no mark)",
@@ -320,7 +320,7 @@ def _rs_unclosed(uid) -> int:
 
 _rs_u = {n: dict(_rs.store.get_user(i)) for n, i in _rs_ids.items()}
 _rs_tok = {n: _rs_unclosed(i) for n, i in _rs_ids.items()}
-_rs_until = _rs.store.get_setting(getattr(Store, "PANEL_WATERLINE", "panel_sperren_bis"))
+_rs_until = _rs.store.get_setting(getattr(Store, "PANEL_WATERLINE", "panel_lock_until"))
 _rs_max = _rs.store._one("SELECT MAX(id) AS m FROM audit")["m"]
 _rs_response = {n: TestClient(_rs_app, client=(f"192.0.2.{70 + k}", 1)).post(
     f"/auth/verify/{_rs_links[n]}", follow_redirects=False).status_code
@@ -363,7 +363,7 @@ _rs.store.db.close()
 # (Mutation probe, executed: remove the reset to 0 → red.)
 _rs_raw = sqlite3.connect(_rs_cfg["db_path"])
 _rs_raw.execute("INSERT OR REPLACE INTO setting(key, value) VALUES (?, ?)",
-                (getattr(Store, "PANEL_WATERLINE", "panel_sperren_bis"), "1000000000"))
+                (getattr(Store, "PANEL_WATERLINE", "panel_lock_until"), "1000000000"))
 _rs_raw.execute("INSERT INTO users(username, email, email_verified, disabled, created_at) "
                 "VALUES ('spaet', 'spaet@example.org', 1, 1, ?)", (_rs_now,))
 _rs_late = _rs_raw.execute("SELECT id FROM users WHERE username='spaet'").fetchone()[0]
@@ -374,7 +374,7 @@ _rs_raw.close()
 _rs_up = Store(_rs_cfg["db_path"])
 r.check("downgrade: … a high-water mark above the audit log counter skips no lock",
         _rs_up.get_user(_rs_late)["disabled"] == 2
-        and int(_rs_up.get_setting(getattr(Store, "PANEL_WATERLINE", "panel_sperren_bis"))) < 1000000000,
+        and int(_rs_up.get_setting(getattr(Store, "PANEL_WATERLINE", "panel_lock_until"))) < 1000000000,
         f"{dict(_rs_up.get_user(_rs_late))}")
 _rs_up.db.close()
 
@@ -579,7 +579,7 @@ def missing_header(file: str) -> list[str]:
 # Simulated without uninstalling the extra: `_ARGON` switched off for the duration of the check.
 import logging  # noqa: E402
 
-# An argon2id hash of „geheim123" with minimal parameters (test data only, no secret).
+# An argon2id hash of `geheim123` with minimal parameters (test data only, no secret).
 ARGON_HASH = "$argon2id$v=19$m=8,t=1,p=1$lwj6WKW+poScm3635SRZ9Q$GB7yXwpoOqfsI27pXnI9FDaNWilsn2lwG85zAqfypFo"
 
 

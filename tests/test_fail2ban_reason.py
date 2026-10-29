@@ -44,7 +44,7 @@ def ok(name):
     print(f"  ✓ {name}")
 
 
-def _lies(path):
+def _read(path):
     with open(path, encoding="utf-8") as fh:
         return fh.read()
 
@@ -65,7 +65,7 @@ IP_PATTERN = r"(?P<host>(?:\d{1,3}(?:\.\d{1,3}){3}|[0-9a-fA-F:]*:[0-9a-fA-F:]+))
 def _failregex_raw(file):
     """All `failregex` patterns of a filter file (the first line and indented continuation lines)."""
     pattern, in_block = [], False
-    for z in _lies(os.path.join(FILTER_DIR, file)).splitlines():
+    for z in _read(os.path.join(FILTER_DIR, file)).splitlines():
         if z.startswith("failregex"):
             pattern.append(z.split("=", 1)[1].strip())
             in_block = True
@@ -106,7 +106,7 @@ def _keywords():
     for file in sorted(os.listdir(FILTER_DIR)):
         if not file.endswith("-filter.conf"):
             continue
-        text = _lies(os.path.join(FILTER_DIR, file))
+        text = _read(os.path.join(FILTER_DIR, file))
         words.update(re.findall(r"`((?:failed|deferred) [a-z]+)", text))
         for m in _failregex_raw(file):
             words.update(re.findall(r"WARNING ((?:failed|deferred) [a-z]+) ", m))
@@ -155,7 +155,7 @@ def _check_source(source, name):
 all_filter_lines, all_violations, all_everywhere = [], [], []
 for file in sorted(os.listdir(PACKAGE)):
     if file.endswith(".py"):
-        f, v, u = _check_source(_lies(os.path.join(PACKAGE, file)), file)
+        f, v, u = _check_source(_read(os.path.join(PACKAGE, file)), file)
         all_filter_lines += f
         all_violations += v
         all_everywhere += u
@@ -177,7 +177,7 @@ MUTATIONS = [
     ("manager.py", "ip=%s reason=pending", "ip=%s grund=pending"),
 ]
 for file, old, new in MUTATIONS:
-    source = _lies(os.path.join(PACKAGE, file))
+    source = _read(os.path.join(PACKAGE, file))
     assert source.count(old) == 1, f"{file}: mutation anchor {old!r} occurs {source.count(old)}x"
     f, v, _u = _check_source(source.replace(old, new), file)
     assert v, f"{file}: '{old}' -> '{new}' was not noticed"
@@ -429,7 +429,7 @@ if _extra_da("authlib"):
 else:
     print("  - SSO: extra `authlib` missing -> dynamic part SKIPPED (call site covered by (1))")
 
-# --- (3b) mutation in the running process: one place writes grund= ------------------------
+# --- (3b) mutation in the running process: one place writes `grund=` ------------------------
 auth_m, _ = new()
 auth_m.create_user("mia", "Mia-Passwort-2026")
 IP6 = "203.0.113.46"

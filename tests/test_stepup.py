@@ -569,7 +569,7 @@ PASSWORD = {"/auth/password"}
 ONLY_SESSION = {"/auth/totp/setup/start", "/auth/totp/setup", "/auth/passkey/register/begin",
                "/auth/passkey/register/finish"}
 #: Known open — with justification. If one of them gets bound, it belongs in STEPUP.
-OFFEN = {"/auth/apikeys": "key issuance without step-up (reported as H-18)",
+OPEN = {"/auth/apikeys": "key issuance without step-up (reported as H-18)",
          "/auth/apikeys/{key_id}/revoke": "key revocation without step-up (reported as H-18)"}
 
 # From the router itself, not from `app6.routes`: newer FastAPI versions store included
@@ -577,7 +577,7 @@ OFFEN = {"/auth/apikeys": "key issuance without step-up (reported as H-18)",
 _post6 = {rt.path for rt in router6.routes
           if "POST" in (getattr(rt, "methods", None) or ())
           and not str(getattr(rt, "path", "")).startswith(auth6.cfg.admin_path)}
-_classes = [SIGN_IN_FLOW, STEPUP, PASSWORD, ONLY_SESSION, set(OFFEN)]
+_classes = [SIGN_IN_FLOW, STEPUP, PASSWORD, ONLY_SESSION, set(OPEN)]
 _unclassified = sorted(p for p in _post6 if not any(p in k for k in _classes))
 assert not _unclassified, f"self-service route without classification: {_unclassified}"
 _double = [p for p in _post6 if sum(p in k for k in _classes) > 1]
@@ -613,14 +613,14 @@ for path in sorted(ONLY_SESSION & _post6):
 r = _stale_client().post("/auth/password", headers=JSON, **_payload["/auth/password"])
 assert r.status_code == 403 and auth6._check_password("selbst", "Geheim12345!"), \
     f"/auth/password without the old password: {r.status_code}"
-for path in sorted(set(OFFEN) & _post6):
+for path in sorted(set(OPEN) & _post6):
     destination = path.replace("{key_id}", str(auth6.list_api_keys(uid6)[0]["id"]))
     r = _stale_client().post(destination, headers=JSON, **_payload.get(path, {}))
     assert r.status_code == 200, (
-        f"{path} now demands a confirmation ({r.status_code}) — move from OFFEN to STEPUP "
-        f"({OFFEN[path]})")
+        f"{path} now demands a confirmation ({r.status_code}) — move from OPEN to STEPUP "
+        f"({OPEN[path]})")
 ok(f"H-18: {len(STEPUP & _post6)} routes demand step-up, {len(ONLY_SESSION & _post6)} only a "
-   f"session, {len(set(OFFEN) & _post6)} known open ({', '.join(sorted(set(OFFEN.values())))})")
+   f"session, {len(set(OPEN) & _post6)} known open ({', '.join(sorted(set(OPEN.values())))})")
 os.remove(db6)
 
 # ---------- A-2: the step-up keeps the kind of the session cookie ----------

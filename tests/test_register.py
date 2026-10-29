@@ -1,4 +1,4 @@
-"""Phase 6: Registrierung (deaktivierbar) + E-Mail-Verifikation + Einladung (invite-only)."""
+"""Phase 6: registration (can be switched off) + e-mail verification + invitation (invite-only)."""
 import os
 import tempfile, os, re
 from fastapi import FastAPI, Depends
@@ -93,8 +93,8 @@ try:
     c.get("/auth/verify/erfunden-123", follow_redirects=False)
 finally:
     _sec.seclog.removeHandler(_h)
-_zeilen = auth.store._all("SELECT * FROM audit WHERE event='token_invalid'")
-assert _zeilen and "verify_email" in (_zeilen[0]["detail"] or ""), _zeilen
+_lines = auth.store._all("SELECT * FROM audit WHERE event='token_invalid'")
+assert _lines and "verify_email" in (_lines[0]["detail"] or ""), _lines
 assert "failed verification" in _buffer.getvalue() and "failed login" not in _buffer.getvalue(), _buffer.getvalue()
 ok("B5-18: invalid one-time token → audit token_invalid + `failed verification` (no login jail)")
 os.remove(db)

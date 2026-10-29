@@ -336,7 +336,7 @@ def foreign_host(sock, bucket):
 
 
 def setup(reference=True):
-    """Start both servers; returns (port_a, gesehen_a, eimer_b, sockets)."""
+    """Start both servers; returns (port_a, seen_a, bucket_b, sockets)."""
     sa, pa = listener()
     sb, pb = listener()
     seen, bucket = [], []

@@ -54,7 +54,7 @@ assert not error, error
 print(f"  Version {pv}: pyproject = __init__ = CHANGELOG")
 
 # ---------- Required files ----------
-PFLICHT = ["LICENSE", "SECURITY.md", "i18n/SECURITY.de.md", "CHANGELOG.md", "README.md", "i18n/README.de.md",
+REQUIRED = ["LICENSE", "SECURITY.md", "i18n/SECURITY.de.md", "CHANGELOG.md", "README.md", "i18n/README.de.md",
            "TODO.md", "tinysesam/py.typed", ".gitignore",
            ".github/workflows/ci.yml", ".github/workflows/pages.yml",
            ".github/workflows/release.yml", "Dockerfile", ".dockerignore",
@@ -64,7 +64,7 @@ PFLICHT = ["LICENSE", "SECURITY.md", "i18n/SECURITY.de.md", "CHANGELOG.md", "REA
            ".github/dependabot.yml",
            "CODE_OF_CONDUCT.md", "i18n/CODE_OF_CONDUCT.de.md",
            "CONTRIBUTING.md", "i18n/CONTRIBUTING.de.md"]
-absent = hygiene.pruefe_pflichtdateien(ROOT, PFLICHT)
+absent = hygiene.pruefe_pflichtdateien(ROOT, REQUIRED)
 assert not absent, f"Required files missing: {absent}"
 print("  License, SECURITY, CHANGELOG, both READMEs, py.typed, all workflows present")
 
@@ -97,7 +97,7 @@ print(f"  docs/OPERATIONS.md: wait time {_busy // 1000} s, /healthz and all {len
 
 # The image's HEALTHCHECK must wait longer than the database: `/healthz` writes and, like every sign-in,
 # waits up to BUSY_TIMEOUT_MS behind a foreign writer. With 4 s the
-# check aborted on a 6-s lock, although the service returned 200 afterwards (A-B6-4-healthz-sperre).
+# check aborted on a 6-s lock, although the service returned 200 afterwards (A-B6-4-healthz-lock).
 _df = read("Dockerfile")
 _hc_docker = int(re.search(r"HEALTHCHECK [^\n]*--timeout=(\d+)s", _df).group(1))
 _hc_client = int(re.search(r"HTTPConnection\(.*?timeout=(\d+)\)", _df).group(1))
@@ -827,8 +827,8 @@ print("  Build and check tools in release/audit only from hashed lists, build wi
 _rel_jobs = _jobs(rel)
 _AM_TAG = "if: github.ref_type == 'tag'"
 for _j in ("release", "pypi", "image-beglaubigen"):
-    _zeilen = [z.strip() for z in _rel_jobs.get(_j, [])]
-    assert _AM_TAG in _zeilen, f"release.yml: job `{_j}` also publishes without a tag (button = dry run)"
+    _lines = [z.strip() for z in _rel_jobs.get(_j, [])]
+    assert _AM_TAG in _lines, f"release.yml: job `{_j}` also publishes without a tag (button = dry run)"
 # Exception dress rehearsal (PO 2026-10-11): `generalprobe-beglaubigen` holds `id-token` WITHOUT a tag, so that
 # the attestation actions run on every PR. Allowed only this narrowly: never on the tag, no checkout, no
 # environment, and only the probe file is attested — never an artifact, never an image.
@@ -836,11 +836,11 @@ for _j in ("release", "pypi", "image-beglaubigen"):
 # `if:` to `== 'tag'` → each red.)
 _PROBE = "if: github.ref_type != 'tag'"
 _probe_certified = 0
-for _j, _zeilen in _rel_jobs.items():
-    _permissions = " ".join(z.strip() for z in _zeilen)
-    _st = [z.strip() for z in _zeilen]
+for _j, _lines in _rel_jobs.items():
+    _permissions = " ".join(z.strip() for z in _lines)
+    _st = [z.strip() for z in _lines]
     if re.search(r"\b(id-token|contents|attestations): write\b", _permissions) or \
-            any(z.strip().startswith("environment:") for z in _zeilen):
+            any(z.strip().startswith("environment:") for z in _lines):
         if _j == "generalprobe-beglaubigen":
             assert _PROBE in _st and _AM_TAG not in _st, f"release.yml: `{_j}` does not run exactly without a tag"
             assert not any("actions/checkout" in z for z in _st), f"release.yml: `{_j}` checks out"
@@ -852,14 +852,14 @@ for _j, _zeilen in _rel_jobs.items():
             assert not re.search(r"\bcontents: write\b", _permissions), f"release.yml: `{_j}` holds contents: write"
             _probe_certified += 1
             continue
-        assert _AM_TAG in [z.strip() for z in _zeilen], \
+        assert _AM_TAG in [z.strip() for z in _lines], \
             f"release.yml: job `{_j}` holds an identity or write permission, but is not tied to the tag"
 assert _probe_certified == 1, "release.yml: the job `generalprobe-beglaubigen` is missing"
 # Every action that runs only on the tag also runs the dress rehearsal — with the same version. Otherwise
 # its update would be unchecked (the auto-merge would then leave it lying, but this says so earlier).
 _tag_actions, _probe_actions = set(), set()
-for _j, _zeilen in _rel_jobs.items():
-    for _m in re.finditer(r"uses:\s*(\S+@\S+)", "\n".join(_zeilen)):
+for _j, _lines in _rel_jobs.items():
+    for _m in re.finditer(r"uses:\s*(\S+@\S+)", "\n".join(_lines)):
         (_probe_actions if _j.startswith("generalprobe") else _tag_actions).add(_m.group(1))
 for _a in ("docker/login-action", "docker/build-push-action", "anchore/sbom-action",
            "pypa/gh-action-pypi-publish", "actions/attest-build-provenance", "actions/attest-sbom"):
@@ -1237,10 +1237,10 @@ print(f"  Backlog: {len(entries)} entries, structure clean, index current")
 # only showed up in the GitHub matrix. This check catches both.
 import re as _re  # noqa: E402
 
-_lies = lambda *parts: pathlib.Path(ROOT, *parts).read_text(encoding="utf-8", errors="replace")
-_pp = _lies("pyproject.toml")
+_read = lambda *parts: pathlib.Path(ROOT, *parts).read_text(encoding="utf-8", errors="replace")
+_pp = _read("pyproject.toml")
 promised = set(_re.findall(r"Programming Language :: Python :: (\d+\.\d+)", _pp))
-_ci = _lies(".github", "workflows", "ci.yml")
+_ci = _read(".github", "workflows", "ci.yml")
 _m = _re.search(r"python-version:\s*\[([^\]]+)\]", _ci)
 driven = set(_re.findall(r"[\"']([\d.]+)[\"']", _m.group(1))) if _m else set()
 missing = sorted(promised - driven, key=lambda v: [int(t) for t in v.split(".")])
@@ -1258,7 +1258,7 @@ to_new = []
 for path in FILES:
     if not path.endswith(".py"):
         continue
-    text = _lies(path)
+    text = _read(path)
     for name, start_from in TO_NEW.items():
         if start_from <= _min:
             continue
@@ -1273,10 +1273,10 @@ print(f"  no standard library beyond Python {_min[0]}.{_min[1]} ({len(TO_NEW)} p
 # Nothing resolves relative repo paths there: Until 0.18.0 the logo and
 # seven links were dead on the package page — the first page a prospect sees. The German version under
 # i18n/ is read only on GitHub and may stay relative.
-_readme = _lies("pyproject.toml")
+_readme = _read("pyproject.toml")
 assert 'readme = "README.md"' in _readme, ("pyproject no longer points to README.md — "
                                            "this check then belongs on the other file")
-_r = _lies("README.md")
+_r = _read("README.md")
 _rel = _re.findall(r"!?\[[^\]]*\]\((?!https?://|#)([^)]+)\)", _r)
 _rel += _re.findall(r'<img src="(?!https?://)([^"]+)"', _r)
 _rel += _re.findall(r'<a href="(?!https?://|#)([^"]+)"', _r)
@@ -1292,7 +1292,7 @@ _gen = subprocess.run([sys.executable, "scripts/_config_docs.py", "--dry-run"],
                       cwd=ROOT, capture_output=True, text=True)
 assert _gen.returncode == 0, ("CONFIGURATION.md is stale — "
                               "run `python3 scripts/_config_docs.py`")
-_config = _lies("CONFIGURATION.md")
+_config = _read("CONFIGURATION.md")
 # B3-15: Descriptions slipped. The indented continuation of a trailing comment ended up
 # at the NEXT field — `login_identifier` began with the text of `https_mode`, `admin_identifiers`
 # broke off mid-sentence. Measured on three fields that have exactly this form, and on the
@@ -1322,7 +1322,7 @@ assert _number == len(_dc_fields(_TSC)), (f"CONFIGURATION.md lists {_number} fie
 # someone would read the tombstone `totp_required` as a commitment until 1.0.
 import json as _json_k  # noqa: E402
 _field_tiers = {n: e.get("tier") for n, e in
-               _json_k.loads(_lies("tests/api_surface.json"))["TinySesamConfig.fields"].items()}
+               _json_k.loads(_read("tests/api_surface.json"))["TinySesamConfig.fields"].items()}
 _not_a = sorted(n for n, st in _field_tiers.items() if st != "A")
 assert _not_a, "no field outside tier A — `totp_required` is B (PO decision 2026-09-26)"
 for _slot in _not_a:
@@ -1337,7 +1337,7 @@ _api = subprocess.run([sys.executable, "scripts/_api_docs.py", "--dry-run"],
                       cwd=ROOT, capture_output=True, text=True)
 assert _api.returncode == 0, ("API.md is stale or the generator rejects something — "
                               "run `python3 scripts/_api_docs.py`\n" + _api.stderr[-400:])
-_apidoc = _lies("API.md")
+_apidoc = _read("API.md")
 # Methods `### \`name(…)\``, properties `### \`name\` — Property …` (frozen since 0.20.1),
 # since 0.22.0 also the constants (`— Constant`, explanation from the `#:` block above), the
 # methods of TinySesamConfig and the function exports: With the tiering they stand as a
@@ -1358,7 +1358,7 @@ for _head in ("## A · Methods of `TinySesam`", "## B · Methods of `TinySesam`"
               "## C · Deprecated — removed with 1.0"):
     assert _head in _apidoc, f"API.md without section {_head!r} — structure by tier is missing"
 _c_lines = _re.findall(r"^\| `(\w+)` \| (?:Method|Constant) \| (.+) \|$", _apidoc, _re.M)
-_c_names = sorted(n for _b, _ee in _json_k.loads(_lies("tests/api_surface.json")).items()
+_c_names = sorted(n for _b, _ee in _json_k.loads(_read("tests/api_surface.json")).items()
                   for n, _e in _ee.items() if isinstance(_e, dict) and _e.get("tier") == "C")
 assert sorted(n for n, _ in _c_lines) == _c_names, (
     "API.md: the table „Deprecated“ does not match the C names of the baseline")
@@ -1375,7 +1375,7 @@ print(f"  API reference: {_apidoc.count(chr(10) + '### ')} entries, each explain
 # it stands precisely in the section where a prospect reads off the maturity.
 import glob as _glob  # noqa: E402
 
-_readmes = {"README.md": _lies("README.md"), "i18n/README.de.md": _lies("i18n/README.de.md")}
+_readmes = {"README.md": _read("README.md"), "i18n/README.de.md": _read("i18n/README.de.md")}
 
 _should_tests = len(_glob.glob(os.path.join(ROOT, "tests", "test_*.py")))
 for _file, _text in _readmes.items():
@@ -1386,7 +1386,7 @@ for _file, _text in _readmes.items():
 print(f"  READMEs: test file count correct ({_should_tests})")
 
 # The Python matrix: the READMEs name a range, ci.yml the list. Both must mean the same.
-_ci = _lies(".github/workflows/ci.yml")
+_ci = _read(".github/workflows/ci.yml")
 _matrix = _re.search(r'python-version:\s*\[([^\]]+)\]', _ci)
 assert _matrix, "python-version matrix in ci.yml not found"
 _versions = _re.findall(r'"([\d.]+)"', _matrix.group(1))
@@ -1405,7 +1405,7 @@ print(f"  READMEs: Python range correct ({_span})")
 # comes from the guard's baseline, not from this test: A new B name turns it red until
 # it is in both READMEs. The fields are listed completely in CONFIGURATION.md.
 import json as _json  # noqa: E402
-_storage = _json.loads(_lies("tests/api_surface.json"))
+_storage = _json.loads(_read("tests/api_surface.json"))
 # The contract areas (hook, HTTP routes, security log; PO decision 2026-10-29) are not Python building blocks:
 # their documentation is the generated API.md and docs/OPERATIONS.md, checked right below.
 _contract = ("TinySesam.attributes", "TinySesam.event_payload", "http.routes", "http.forward", "http.contract",
@@ -1438,7 +1438,7 @@ for _head in ("## A · Attributes of `TinySesam`", "## HTTP contract", "### A ·
     assert _head in _apidoc, f"API.md without section {_head!r} — `python3 scripts/_api_docs.py`"
 for _file, _head in (("README.md", "**Beyond the Python names**"), ("i18n/README.de.md", "**Über die Python-Namen hinaus**")):
     assert _head in _readmes[_file], f"{_file} without the paragraph {_head!r} on the contract beyond the Python names"
-_operation = _lies("docs/OPERATIONS.md")
+_operation = _read("docs/OPERATIONS.md")
 assert "## Security log contract (fail2ban and log shipping)" in _operation, "docs/OPERATIONS.md: security log contract missing"
 _operation_section = _operation.split("## Security log contract (fail2ban and log shipping)", 1)[1].split("\n## ", 1)[0]
 _gappy = []

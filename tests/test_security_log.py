@@ -18,7 +18,7 @@ from tinysesam import TinySesam, TinySesamConfig, security
 from tinysesam.errors import ConfigError
 
 
-def _lies(path):
+def _read(path):
     """Read a file completely and close the handle again.
 
     `open(...).read()` leaves the handle open until the next collection; CodeQL rightly reports it
@@ -113,7 +113,7 @@ try:
         auth2 = TinySesam(TinySesamConfig(db_path=db4, security_log=log2, cookie_secure=False,
                                           passkey_enabled=False, allow_signup=True,
                                           signup_require_email=False))
-    content2 = _lies(log2)
+    content2 = _read(log2)
 
     # Precondition: there IS a token to leak. Without this check everything that follows would be green
     # even if the bootstrap path were simply switched off — the test would then measure nothing.
@@ -157,10 +157,10 @@ try:
                                           passkey_enabled=False, csrf_enabled=False,
                                           allow_signup=True, signup_require_email=False,
                                           admin_claim_token_file=token_file))
-    tok3 = _lies(token_file).strip()
+    tok3 = _read(token_file).strip()
     assert tok3 == auth3.admin_claim_token(), tok3
     assert stat.S_IMODE(os.stat(token_file).st_mode) == 0o600, oct(stat.S_IMODE(os.stat(token_file).st_mode))
-    _log3 = _lies(log3)
+    _log3 = _read(log3)
     assert tok3 not in _log3
     assert token_file in _log3                                   # the path may be named
     ok("admin_claim_token_file: value in a dedicated file with 0600, log names only the path")
@@ -242,7 +242,7 @@ with contextlib.redirect_stderr(io.StringIO()):
     auth6 = TinySesam(TinySesamConfig(db_path=os.path.join(tmp6, "t.db"), cookie_secure=False,
                                       passkey_enabled=False, csrf_enabled=False,
                                       admin_claim_token_file=token_file6))
-content6 = _lies(token_file6)
+content6 = _read(token_file6)
 assert content6 == auth6.admin_claim_token() + "\n", repr(content6)
 assert "ALTES-TOKEN" not in content6, f"remainder of the predecessor file: {content6!r}"
 ok("the token file is truncated — no remainder of a longer predecessor")
@@ -263,11 +263,10 @@ _f7, _w7 = check_config(TinySesamConfig(**_shared7))          # route on → sil
 assert not any("admin_claim_token_file is set" in w for w in _w7), _w7
 ok("admin_claim_token_file without a token route is reported at setup (with a route: silent)")
 
-# (3b) …and this warning must name a route that EXISTS. It advised „Der Erst-Admin kommt
-#      dann nur über admin_identifiers oder die CLI zustande" — the same false CLI promise that
-#      the CHANGELOG explicitly retracted elsewhere („Das CLI stand hier
-#      zunächst mit in der Liste — es kann gar keine Konten anlegen"), this time in a text that
-#      the operator gets to read. Whoever followed it searched for a command that does not exist.
+# (3b) …and this warning must name a route that EXISTS. It advised that the first admin then only comes
+#      about via `admin_identifiers` or the CLI — the same false CLI promise that the CHANGELOG explicitly
+#      retracted elsewhere (the CLI was listed at first, but it cannot create any accounts), this time in a
+#      text that the operator gets to read. Whoever followed it searched for a command that does not exist.
 _f8, _w8 = check_config(TinySesamConfig(admin_claim_ttl_min=0, **_shared7))
 _line8 = next(w for w in _w8 if "admin_claim_token_file is set" in w)
 assert "ensure_admin" in _line8 and hasattr(TinySesam, "ensure_admin"), \
@@ -292,7 +291,7 @@ assert _command_list == {"version", "passwd", "backup", "restore", "gc", "audit"
      "or change identifiers, the operator messages must be changed along")
 ok("first-admin warning names ensure_admin instead of the CLI (which creates no accounts)")
 
-# (4) Finding B-regression-6: the notice „Kein vertrauenswürdiger öffentlicher Host" came with
+# (4) Finding B-regression-6: the notice "no trusted public host" came with
 #     EVERY anonymous forward-auth request. `forward_login_url()` has asked `public_base()` since N1,
 #     and without `base_url` (allowed: forward_auth_enabled is only a warning) the
 #     derived base does not survive the check. A page load with twenty sub-resources
@@ -408,7 +407,7 @@ security.once_report_reset()
 for _ in range(4):
     _link = auth10.magic_url("tok", "https://auth.example.com/falsch", "reset_password")
     assert _link.startswith("https://auth.example.com/sso/"), _link
-_lines10 = [z for z in _lies(log10).splitlines() if "is replaced by base_url" in z]
+_lines10 = [z for z in _read(log10).splitlines() if "is replaced by base_url" in z]
 assert len(_lines10) == 1, \
     f"same host, different path: {len(_lines10)} lines — exactly one expected"
 assert "/falsch" in _lines10[0] and "/sso" in _lines10[0], _lines10[0][:200]
@@ -416,9 +415,9 @@ assert "/falsch" in _lines10[0] and "/sso" in _lines10[0], _lines10[0][:200]
 # Control: the same address as base_url (just with a trailing slash) is no deviation
 # and must not report — otherwise the line would be noise.
 security.once_report_reset()
-_before10 = len(_lies(log10).splitlines())
+_before10 = len(_read(log10).splitlines())
 auth10.magic_url("tok", "https://auth.example.com/sso/", "reset_password")
-assert len(_lies(log10).splitlines()) == _before10, "an identical value is no replacement"
+assert len(_read(log10).splitlines()) == _before10, "an identical value is no replacement"
 security.once_report_reset()
 ok("...also with the same host and a deviating path (and silence for an identical value)")
 
@@ -465,7 +464,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 def _failregex(file):
-    text = _lies(os.path.join(ROOT, "deploy", "fail2ban", file))
+    text = _read(os.path.join(ROOT, "deploy", "fail2ban", file))
     line = [z for z in text.splitlines() if z.startswith("failregex =")][0]
     pattern = line.split("=", 1)[1].strip().replace("<HOST>", r"(?P<host>\S+)")
     return re.compile(pattern)

@@ -532,7 +532,7 @@ class OIDCClients:
 
     def known(self, key_name: str) -> bool:
         """Is this client (still) set up? `__getitem__` otherwise falls back to the default client
-        — for a row from `oidc_sitzung` that would mean exchanging a foreign refresh token with
+        — for a row from `oidc_session` that would mean exchanging a foreign refresh token with
         the wrong credentials."""
         return key_name in self._clients
 
@@ -734,7 +734,7 @@ def register_oidc_routes(router, auth):
                 # Address AND evidence go into the account together (F-14): the note decides
                 # later about first admin/allowlist — regardless of by which route this
                 # account signs in the next time.
-                # The name comes from the provider (`name_quelle`): a sign-in via LDAP/SAML never binds
+                # The name comes from the provider (`name_source`): a sign-in via LDAP/SAML never binds
                 # this account via it (attack round 2026-09-26, `_create_account`).
                 uid = auth._create_account(username, display_name=info.get("name") or username,
                                           email=proven_mail, email_verified=bool(proven_mail),

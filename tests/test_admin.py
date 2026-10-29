@@ -258,19 +258,19 @@ print("  ✓ B2-13: creating and resetting in the panel check length, blocklist 
 import json as _json  # noqa: E402
 
 
-def _zeilen(event):
+def _lines(event):
     return len([z for z in auth.store.recent_audit(500) if z["event"] == event])
 
 
 _carl = auth.create_user("carl", password="carl-geheim-1")
-_before8 = _zeilen("user_roles")
+_before8 = _lines("user_roles")
 for _body in ({"roles": [1], "is_admin": True}, {"roles": [None], "is_admin": True},
                  {"roles": "admin", "is_admin": True}, {"roles": {"a": 1}}, {"roles": ["ok", 2]}):
     r = c.post(f"/auth/admin/api/users/{_carl}/roles", json=_body)
     assert r.status_code == 400 and "roles" in r.json()["detail"], (_body, r.status_code, r.text)
     _z = auth.store.get_user(_carl)
     assert _json.loads(_z["roles"]) == [] and not _z["is_admin"], (_body, dict(_z))
-assert _zeilen("user_roles") == _before8, "rejected means: nothing written, nothing to log"
+assert _lines("user_roles") == _before8, "rejected means: nothing written, nothing to log"
 # Creating and inviting use the same check — otherwise the broken role would sit in the
 # database and hit the next role change.
 r = c.post("/auth/admin/api/users", json={"username": "dora", "roles": [1]})
@@ -282,7 +282,7 @@ auth.store._exec("UPDATE users SET roles=? WHERE id=?", ("[1, null]", _carl))
 r = c.post(f"/auth/admin/api/users/{_carl}/roles", json={"roles": ["x"], "is_admin": False})
 assert r.status_code == 200, (r.status_code, r.text)
 _z8 = [z["detail"] for z in auth.store.recent_audit(20) if z["event"] == "user_roles"]
-assert _zeilen("user_roles") == _before8 + 1 and "roles=1,None->x" in _z8[0] and "rollen=" not in _z8[0], _z8
+assert _lines("user_roles") == _before8 + 1 and "roles=1,None->x" in _z8[0] and "rollen=" not in _z8[0], _z8
 print("  ✓ Finding 8: roles without text → 400 before any write; legacy data is logged instead of 500")
 
 # ---------- Integration finding 10: the panel shows what the server rejects ----------
@@ -562,7 +562,7 @@ from voraussetzung import pflicht_werkzeug  # noqa: E402
 
 # If node is missing, that is red — everywhere, not only on GitHub (see `pflicht_werkzeug`). Since the
 # ci-local image ships node, level 1 checks exactly as much here as the gate.
-# (Mutation probe: with PATH without node → red; with TINYSESAM_OHNE_NODE=1 → ⚠ line.)
+# (Mutation probe: with PATH without node → red; with `TINYSESAM_OHNE_NODE`=1 → ⚠ line.)
 _node = pflicht_werkzeug("node", "finding 10: runtime probe of the panel actions")
 if _node:
     _probe = ("const A=[];let ANTWORT=null;const E={};\n"

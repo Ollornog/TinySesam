@@ -90,9 +90,9 @@ r.check("G13: an admin renames another account (admin API)",
 r.check("… the panel list shows the new name, Remote-Id stays the account ID",
         any(u["id"] == anna and u["username"] == "anna.neu" for u in ch.get("/auth/admin/api/users").json())
         and auth._forward_response_headers(auth.get_user(anna))["Remote-Id"] == id_before == str(anna))
-_zeilen = _renamed(auth, anna)
+_lines = _renamed(auth, anna)
 r.check("… EXACTLY one audit row, as operator and with the admin as actor",
-        _zeilen == [("anna.neu", "old=anna by=operator actor=helfer")], str(_zeilen))
+        _lines == [("anna.neu", "old=anna by=operator actor=helfer")], str(_lines))
 # Read path: a row written up to 0.24.x (German keys) is still understood — `akteur=` marks a foreign trigger
 # (its IP is not shown), and the event comes out in the English spelling.
 auth.store.audit_log("username_changed", "anna.neu", "203.0.113.9", "alt=x durch=betreiber akteur=helfer")
@@ -107,7 +107,7 @@ r.check("… legacy event names come out in English (`oidc_widerruf` → `oidc_r
 r.check("… the security event reaches the owner",
         ("username_changed", {"old": "anna", "new": "anna.neu"}) in events, str(events))
 r.check("… and the “self-chosen” marker (G2-N) is cleared: the name now stands for the operator",
-        auth.store.get_user(anna)["name_selbst_gewaehlt"] == 0)
+        auth.store.get_user(anna)["name_self_chosen"] == 0)
 _fail = {n: ch.post(f"/auth/admin/api/users/{anna}/username", json={"username": n}).status_code
          for n in ("bert", "BERT", "bert@example.com", "fremd@example.com", "chef-reserviert",
                    "zwei\x01", "", "x" * 151)}
@@ -195,7 +195,7 @@ r.check("G13 (CLI): rename renames, exit 0",
         code == 0 and auth.store.get_user(anna)["username"] == "anna2" and "anna2" in from_, f"{code} {from_}")
 r.check("… audit row as operator with source=cli, “self-chosen” marker is cleared",
         _renamed(auth, anna)[:1] == [("anna2", "old=anna.neu by=operator source=cli")]
-        and auth.store.get_user(anna)["name_selbst_gewaehlt"] == 0, str(_renamed(auth, anna)))
+        and auth.store.get_user(anna)["name_self_chosen"] == 0, str(_renamed(auth, anna)))
 _cli_fail = {n: _cli("rename", "--db", db, "anna2", n) for n in
              ("bert", "BERT", "\uff42\uff45\uff52\uff54", "bert@example.com", "fremd@example.com", "zwei\x01", "",
               "  ", "x" * 151)}

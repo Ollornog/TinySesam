@@ -147,7 +147,7 @@ os.remove(db_s)
 # (also as `builtins.…`, also in a tuple) — the FULL name is compared. Until the final
 # round any last component `Error`, `DatabaseError` or `OperationalError` counted:
 # `except sqlite3.OperationalError:` in `reserve_attempt` stayed green, and a binding error after
-# `BEGIN IMMEDIATE` (ProgrammingError) left the transaction open (final finding sperren-0).
+# `BEGIN IMMEDIATE` (ProgrammingError) left the transaction open (final finding lock-0).
 # `sqlite3.Error` is not enough either: `OverflowError` (a number above 2**63 as a parameter) is
 # not a sqlite3.Error and ends the same way. `_clock_record` therefore caught too narrowly until then.
 # Limits the syntax tree does not see: whether the rollback in the handler is actually EXECUTED
@@ -165,7 +165,7 @@ import re                                                                       
 import copy                                                                     # noqa: E402
 from pathlib import Path                                                        # noqa: E402
 
-ITSELF_KEPT = {"__init__", "_migrate", "rotate_session", "reserve_attempt", "_clock_record"}
+ITSELF_KEPT = {"__init__", "_migrate", "_english_names", "rotate_session", "reserve_attempt", "_clock_record"}
 STORE_SOURCE = (Path(__file__).resolve().parent.parent / "tinysesam" / "store.py").read_text("utf-8")
 _WIDE = {"Exception", "BaseException"}
 

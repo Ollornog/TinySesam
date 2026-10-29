@@ -42,7 +42,7 @@ LoginResult, PasswordChangeResult = package.LoginResult, package.PasswordChangeR
 TinySesam, TinySesamConfig, error_module = package.TinySesam, package.TinySesamConfig, package.errors
 
 #: Heading and promise per tier — the same wording as in the READMEs ("Public API: three
-#: tiers" / "Öffentliche API: drei Stufen").
+#: tiers" / `"Öffentliche API: drei Stufen"`).
 TIERS = {
     "A": ("public, stable from 1.0",
           "documented and/or used by embedders",

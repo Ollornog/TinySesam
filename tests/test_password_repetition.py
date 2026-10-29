@@ -59,7 +59,7 @@ def _login(app, pw, ip=IP_A):
                                            follow_redirects=False)
 
 
-def _zeilen(log, word):
+def _lines(log, word):
     with open(log, encoding="utf-8") as fh:
         return [z for z in fh.read().splitlines() if f" {word} " in z]
 
@@ -85,8 +85,8 @@ ok("audit: ten times login_fail, nine of them with reason=repeated")
 r = _login(app, PW)
 assert r.status_code in (302, 303) and "set-cookie" in r.headers, (r.status_code, r.text[:200])
 ok("afterwards the correct password gets through — no lockout (window 5)")
-assert len(_zeilen(log, "failed login")) == 1 and len(_zeilen(log, "repeated login")) == 9
-assert len(_zeilen(log, "login ok")) == 1, _zeilen(log, "login ok")
+assert len(_lines(log, "failed login")) == 1 and len(_lines(log, "repeated login")) == 9
+assert len(_lines(log, "login ok")) == 1, _lines(log, "login ok")
 FAILREGEX = re.compile(r"^\s*WARNING failed login user=.* ip=(?P<host>\S+) method=\S+(?: reason=\S+)?$")
 with open(ROOT / "deploy" / "fail2ban" / "tinysesam-filter.conf", encoding="utf-8") as fh:
     assert "WARNING failed login user=.* ip=<HOST>" in fh.read()
@@ -142,13 +142,13 @@ print("login ok: unban")
 
 
 def _unban(log):
-    z = _zeilen(log, "login ok")[-1]
+    z = _lines(log, "login ok")[-1]
     return z.rsplit("unban=", 1)[1]
 
 
 auth, app, log = _app()
 _login(app, PW)
-assert _unban(log) == "yes", _zeilen(log, "login ok")
+assert _unban(log) == "yes", _lines(log, "login ok")
 ok("without failed attempts: unban=yes")
 for i in range(3):
     _login(app, f"vertippt-{i}-xxxxxxxx")
@@ -159,7 +159,7 @@ auth.create_user("bob", "Bobs-Passwort-2026")
 for i in range(3):
     TestClient(app, client=IP_A).post("/auth/login", data={"username": "bob", "password": f"rate-{i}-xxxxxx"})
 _login(app, PW)
-assert _unban(log) == "no", _zeilen(log, "login ok")
+assert _unban(log) == "no", _lines(log, "login ok")
 ok("failed attempts against a foreign account from the same IP: unban=no")
 _login(app, PW, IP_B)
 assert _unban(log) == "yes"

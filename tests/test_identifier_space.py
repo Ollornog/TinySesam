@@ -161,7 +161,7 @@ through["mail mode: change address and name"] = _rejected(
 through["the old address is free afterwards"] = _rejected(lambda: s.create_user("em@example.com"))
 r.check("A: … these pass: name = own address, the same address again, a name in the own bucket, "
         "the change in mail mode", set(through.values()) == {"durch"}, str(through))
-_pots = tuple(s._one("SELECT topf_name, topf_mail FROM users WHERE id=?", (b_id,)))
+_pots = tuple(s._one("SELECT folded_name, folded_mail FROM users WHERE id=?", (b_id,)))
 r.check("A: … “B1” keeps its bucket (the recalculation trigger otherwise sets it to NULL), “b1” stays taken",
         _pots == ("b1", "") and _rejected(lambda: s.create_user("b1")) == GRANT, str(_pots))
 # A foreign writer that sets the same value again does not take the bucket from the account (until
@@ -169,18 +169,18 @@ r.check("A: … “B1” keeps its bucket (the recalculation trigger otherwise s
 # account). (Mutation probe: remove `NEW.<column> IS NOT OLD.<column>` in the recalculation trigger → red.)
 s._exec("UPDATE users SET username=username, email=email WHERE id=?", (a_id,))
 r.check("A: … an UPDATE to the same value leaves the bucket standing",
-        tuple(s._one("SELECT topf_name, topf_mail FROM users WHERE id=?", (a_id,))) == ("a1", "frei@example.com"))
+        tuple(s._one("SELECT folded_name, folded_mail FROM users WHERE id=?", (a_id,))) == ("a1", "frei@example.com"))
 # A trigger from schema 10 (the version of 0.20.1) is replaced by today's — with
 # `IF NOT EXISTS` alone it would stand there forever. (Mutation probe: leave every existing trigger standing
 # lassen → rot.)
 _old_db = _file()
 _old = Store(_old_db)
-_old._exec("DROP TRIGGER trg_users_topf_name")
-_old._exec("CREATE TRIGGER trg_users_topf_name AFTER UPDATE OF username ON users WHEN NEW.topf_name "
-           "IS OLD.topf_name BEGIN UPDATE users SET topf_name = NULL WHERE id = NEW.id; END")
+_old._exec("DROP TRIGGER trg_users_folded_name")
+_old._exec("CREATE TRIGGER trg_users_folded_name AFTER UPDATE OF username ON users WHEN NEW.folded_name "
+           "IS OLD.folded_name BEGIN UPDATE users SET folded_name = NULL WHERE id = NEW.id; END")
 _old.db.close()
 _new = Store(_old_db)
-_sql = _new._one("SELECT sql FROM sqlite_master WHERE name='trg_users_topf_name'")["sql"]
+_sql = _new._one("SELECT sql FROM sqlite_master WHERE name='trg_users_folded_name'")["sql"]
 r.check("A: a trigger from an older version is replaced at start",
         "NEW.username IS NOT OLD.username" in _sql, _sql)
 
@@ -371,7 +371,7 @@ for _t in _threads:
     _t.start()
 for _t in _threads:
     _t.join(timeout=120)
-_halter = a.store._all("SELECT id FROM users WHERE topf_name=? OR topf_mail=?", (IDENTIFIER, IDENTIFIER))
+_halter = a.store._all("SELECT id FROM users WHERE folded_name=? OR folded_mail=?", (IDENTIFIER, IDENTIFIER))
 r.check("C: 40 simultaneous registrations of the same identifier (name and address, two workers): "
         "only 303/409, exactly one account holds it, no collision",
         len(responses) == N and set(responses) <= {303, 409} and responses.count(303) == 1
@@ -380,7 +380,7 @@ r.check("C: 40 simultaneous registrations of the same identifier (name and addre
 
 # ── D: existing data with collisions ──────────────────────────────────────────────────────────
 # (Mutation probes: remove `NEW IS NOT OLD` → red on renaming, the own address and the
-#  raw UPDATE; the UPDATE trigger on `OF topf_name, topf_mail` → red, the start fails on the
+#  raw UPDATE; the UPDATE trigger on `OF folded_name, folded_mail` → red, the start fails on the
 #  addition; the start message back to “name = foreign address” via NOCASE → red.)
 _db_d = _file()
 _st = Store(_db_d)
@@ -400,8 +400,8 @@ try:
 except Exception as error:
     auth_d, text_d, start_d = None, "", f"{type(error).__name__}: {error}"
 r.check("D: existing data with collisions starts, no bucket stays empty",
-        start_d == "ok" and auth_d.store._one("SELECT COUNT(*) AS n FROM users WHERE topf_name IS NULL "
-                                              "OR topf_mail IS NULL")["n"] == 0, start_d)
+        start_d == "ok" and auth_d.store._one("SELECT COUNT(*) AS n FROM users WHERE folded_name IS NULL "
+                                              "OR folded_mail IS NULL")["n"] == 0, start_d)
 _line = next((z for z in text_d.splitlines() if "identifier collision(s)" in z), "")
 r.check("D: … the start message names all three (namesakes, name = foreign address, two spellings "
         "of one address) with their accounts",
@@ -432,7 +432,7 @@ if auth_d is not None:
     _late = _raw(auth_d.store, "ANNA-Maria")
     _raw(auth_d.store, "anna-maria")
     r.check("D: … a collision that a foreign writer creates at runtime is named by bucket_collisions immediately",
-            [z["kennung"] for z in auth_d.store.bucket_collisions()] == ["anna-maria"], str(_late))
+            [z["identifier"] for z in auth_d.store.bucket_collisions()] == ["anna-maria"], str(_late))
 
 # ── E: the address change in mail mode is one transaction ─────────────────────────────────────
 # A TEMP trigger makes the rename fail. Written separately, the new address then stood
@@ -482,7 +482,7 @@ r.check("F: if the triggers cannot be created (read-only), the store starts anyw
 # ── G: the check does not cost more with the number of accounts ───────────────────────────────
 # SQLite steps are counted (like S-1 in tests/test_audit_round2.py): a scan over the accounts
 # costs at least one step per row, an index access one, no matter how deep the tree is.
-# (Mutation probe: in the trigger `topf_name || '' = …` instead of `topf_name = …` — no index any more → red.)
+# (Mutation probe: in the trigger `folded_name || '' = …` instead of `folded_name = …` — no index any more → red.)
 def _steps(st, fn) -> int:
     counter = [0]
 

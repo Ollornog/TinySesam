@@ -2,7 +2,7 @@
 
     pip install -e '.[all]'          # or without extras: password + TOTP only
     uvicorn examples.demo:app --reload
-    # → http://127.0.0.1:8000  (redirects to the login; admin / geheim123)
+    # → http://127.0.0.1:8000  (redirects to the login; admin / `geheim123`)
 """
 from html import escape
 

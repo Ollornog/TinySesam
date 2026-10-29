@@ -6,7 +6,7 @@ audit rows from before do not belong to the account. But an account also gets na
 full sign-in afterwards cleared the failed attempts that a stranger had made earlier under the then free identifier,
 also from the throttling of his IP; the account page showed the sign-in of the
 previous owner including his IP, and deleting rewrote his rows. The limit is now an
-id watermark per identifier (`users.name_versuch_ab` …): exact even in the second of joining.
+id watermark per identifier (`users.name_attempt_from` …): exact even in the second of joining.
 
 a  rename              f  deleting after the rename
 b  address change      g  account page and audit after takeover of a free name
@@ -155,18 +155,18 @@ a.store.audit_log("probe", "jemand-anders")
 a.change_username(uid, "gross")
 a.store.set_email(uid, "GROSS@example.com", verified=True)
 afterwards = _line(a, uid)
-_columns = ("name_versuch_ab", "name_audit_ab", "mail_versuch_ab", "mail_audit_ab")
+_columns = ("name_attempt_from", "name_audit_from", "mail_attempt_from", "mail_audit_from")
 r.check("e: renaming only in upper/lower case (name and address) moves no watermark",
         all(before[s] is not None and before[s] == afterwards[s] for s in _columns)
-        and afterwards["username"] == "gross" and afterwards["topf_name"] == "gross"
-        and afterwards["topf_mail"] == "gross@example.com",
-        f"{[before[s] for s in _columns]} → {[afterwards[s] for s in _columns]}, Topf {afterwards['topf_name']!r}")
+        and afterwards["username"] == "gross" and afterwards["folded_name"] == "gross"
+        and afterwards["folded_mail"] == "gross@example.com",
+        f"{[before[s] for s in _columns]} → {[afterwards[s] for s in _columns]}, Topf {afterwards['folded_name']!r}")
 a.change_username(uid, "gross-neu")
 new_z = _line(a, uid)
 r.check("… a new name sets it to the current state",
-        new_z["name_versuch_ab"] == a.store._one("SELECT MAX(id) AS m FROM login_attempt")["m"]
-        and new_z["name_audit_ab"] is not None and new_z["name_audit_ab"] > before["name_audit_ab"]
-        and new_z["mail_versuch_ab"] == before["mail_versuch_ab"],
+        new_z["name_attempt_from"] == a.store._one("SELECT MAX(id) AS m FROM login_attempt")["m"]
+        and new_z["name_audit_from"] is not None and new_z["name_audit_from"] > before["name_audit_from"]
+        and new_z["mail_attempt_from"] == before["mail_attempt_from"],
         str(dict(new_z)))
 
 # ── f: deleting after the rename ─────────────────────────────────────────────────────────────
@@ -205,14 +205,14 @@ r.check("… and his deleting does not rewrite the previous owner's rows",
 
 # ── h: existing data without watermark ───────────────────────────────────────────────────────
 # A file from before this column (schema 11 without it; the later
-# `name_selbst_gewaehlt`, G2-N, behind it is recorded along): the columns are added and stay NULL,
+# `name_self_chosen`, G2-N, behind it is recorded along): the columns are added and stay NULL,
 # the limit is then the creation as before. (Mutation probes: the fallback in `lift_lockout`
 # clears from id 0 instead of from the creation → red; likewise in `_cleanup_limit` → red.)
 _inventory = str(Path(tempfile.mkdtemp()) / "t.db")
-_old_schema, _n_users = re.subn(r"(idp_bestaetigt_at INTEGER), (--[^\n]*)\n\s*-- From when does the identifier belong.*?"
-                                r"mail_audit_ab\s+INTEGER,\n.*?name_selbst_gewaehlt INTEGER NOT NULL DEFAULT 0\n",
+_old_schema, _n_users = re.subn(r"(idp_confirmed_at INTEGER), (--[^\n]*)\n\s*-- From when does the identifier belong.*?"
+                                r"mail_audit_from\s+INTEGER,\n.*?name_self_chosen INTEGER NOT NULL DEFAULT 0\n",
                                 r"\1  \2\n", SCHEMA, flags=re.S)
-_old_schema, _n_fi = re.subn(r"\n\s*-- The name under which the account last signed in.*?name_topf\s+TEXT,", "",
+_old_schema, _n_fi = re.subn(r"\n\s*-- The name under which the account last signed in.*?directory_name_folded\s+TEXT,", "",
                              _old_schema, flags=re.S)
 os.close(os.open(_inventory, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600))
 _raw = sqlite3.connect(_inventory)
@@ -232,7 +232,7 @@ a.set_password(_uid, PW)
 _hb = _line(a, _uid)
 _fi = {z["name"] for z in a.store.db.execute("PRAGMA table_info(federated_identity)")}
 r.check("h: existing data — the columns are added and stay NULL (no limit invented)",
-        _n_users == 1 and _n_fi == 1 and all(_hb[s] is None for s in _columns) and "name_topf" in _fi,
+        _n_users == 1 and _n_fi == 1 and all(_hb[s] is None for s in _columns) and "directory_name_folded" in _fi,
         f"cut {_n_users}/{_n_fi}, {[_hb[s] for s in _columns]}, {_fi}")
 note = _login(app, "bestand@example.com")
 r.check("… limit is then the creation as before: foreign data from before remains, own data goes",
@@ -240,7 +240,7 @@ r.check("… limit is then the creation as before: foreign data from before rema
         f"HTTP {note.status_code}, {a.store.count_fails(0, ip=SPRAYER)} / {a.store.count_fails(0, ip=OWN)}")
 a2, _, _ = _app(db_path=_inventory)
 _second = _line(a2, _uid)
-_trigger = a2.store._all("SELECT name FROM sqlite_master WHERE type='trigger' AND name LIKE 'trg_users_topf_%'")
+_trigger = a2.store._all("SELECT name FROM sqlite_master WHERE type='trigger' AND name LIKE 'trg_users_folded_%'")
 r.check("… a second start changes nothing (idempotent, trigger once each)",
         all(_second[s] is None for s in _columns) and len(_trigger) == 2, f"{dict(_second)} {len(_trigger)}")
 
@@ -258,8 +258,8 @@ _ri = _line(a, uid)
 _max_v = a.store._one("SELECT MAX(id) AS m FROM login_attempt")["m"]
 _max_a = a.store._one("SELECT MAX(id) AS m FROM audit")["m"]
 r.check("i: raw UPDATE of name and address → watermarks at the current state, bucket recalculated",
-        _ri["name_versuch_ab"] == _max_v == _ri["mail_versuch_ab"] and _ri["name_audit_ab"] == _max_a
-        and _ri["mail_audit_ab"] == _max_a and _ri["topf_name"] is None and _ri["topf_mail"] is None,
+        _ri["name_attempt_from"] == _max_v == _ri["mail_attempt_from"] and _ri["name_audit_from"] == _max_a
+        and _ri["mail_audit_from"] == _max_a and _ri["folded_name"] is None and _ri["folded_mail"] is None,
         f"{dict(_ri)} MAX {_max_v}/{_max_a}")
 note = _login(app, "roh-neu")
 r.check("… and the sign-in under the new name leaves the attempts from before standing",
@@ -267,39 +267,39 @@ r.check("… and the sign-in under the new name leaves the attempts from before 
         f"HTTP {note.status_code}, {a.store.count_fails(0, ip=SPRAYER)}")
 
 # A foreign writer that carries the bucket ITSELF — `store.set_email` from 0.20.1 sets address and
-# `topf_mail` in ONE statement (review round 2026-09-27, p1-c). The recalculation trigger then does
+# `folded_mail` in ONE statement (review round 2026-09-27, p1-c). The recalculation trigger then does
 # not fire (the bucket does change), and until then the watermark stayed at the state of the OLD
 # address: the first full sign-in cleared the stranger's failed attempts under the new one, also from
-# the throttling of his IP. (Mutation probe: leave out `trg_users_wechsel_mail` → red.)
+# the throttling of his IP. (Mutation probe: leave out `trg_users_change_mail` → red.)
 from tinysesam.store import norm_email, norm_identifier  # noqa: E402
 
 a, app, _ = _app()
 uid = a.create_user("mia", password=PW, email="mia@example.com")
 a.store._exec("UPDATE users SET created_at = created_at - 7200")
 _failed_attempts(a, "neu@example.com", SPRAYER, 3, before=3600)
-_wl_c = _line(a, uid)["mail_versuch_ab"]
+_wl_c = _line(a, uid)["mail_attempt_from"]
 _new_c = norm_email("neu@example.com")
-a.store._exec("UPDATE users SET email=?, email_verified=?, topf_mail=? WHERE id=?",
+a.store._exec("UPDATE users SET email=?, email_verified=?, folded_mail=? WHERE id=?",
               (_new_c, 1, norm_identifier(_new_c), uid))
 _rc = _line(a, uid)
 note = _login(app, "neu@example.com")
 r.check("i: the writer from 0.20.1 (address and bucket in one statement) raises the watermark too — "
         "the failed attempts under the new address remain",
-        _rc["mail_versuch_ab"] == a.store._one("SELECT MAX(id) AS m FROM login_attempt")["m"] > _wl_c
-        and _rc["topf_mail"] == "neu@example.com" and note.status_code == 303
+        _rc["mail_attempt_from"] == a.store._one("SELECT MAX(id) AS m FROM login_attempt")["m"] > _wl_c
+        and _rc["folded_mail"] == "neu@example.com" and note.status_code == 303
         and a.store.count_fails(0, username="neu@example.com") == 3 and a.store.count_fails(0, ip=SPRAYER) == 3,
-        f"WL {_wl_c} → {_rc['mail_versuch_ab']}, HTTP {note.status_code}, {a.store.count_fails(0, ip=SPRAYER)}")
+        f"WL {_wl_c} → {_rc['mail_attempt_from']}, HTTP {note.status_code}, {a.store.count_fails(0, ip=SPRAYER)}")
 # Counter-checks: the addition (only the bucket, NULL → bucket) and the own rewrite `B1` → `b1` (the same
 # bucket) move nothing.
-_prior_n = (_rc["name_versuch_ab"], _rc["mail_versuch_ab"])
+_prior_n = (_rc["name_attempt_from"], _rc["mail_attempt_from"])
 _failed_attempts(a, "anderswo", SPRAYER, 1)                 # otherwise the high-water mark would already stand there
-a.store._exec("UPDATE users SET topf_name = NULL WHERE id = ?", (uid,))
-a.store._exec("UPDATE users SET topf_name = ? WHERE id = ?", ("mia", uid))
+a.store._exec("UPDATE users SET folded_name = NULL WHERE id = ?", (uid,))
+a.store._exec("UPDATE users SET folded_name = ? WHERE id = ?", ("mia", uid))
 a.store.set_username(uid, "MIA")
 _rn = _line(a, uid)
 r.check("… the addition of a bucket and `mia` → `MIA` (the same bucket) leave the watermarks standing",
-        (_rn["name_versuch_ab"], _rn["mail_versuch_ab"]) == _prior_n and _rn["topf_name"] == "mia",
-        f"{_prior_n} → {(_rn['name_versuch_ab'], _rn['mail_versuch_ab'])}")
+        (_rn["name_attempt_from"], _rn["mail_attempt_from"]) == _prior_n and _rn["folded_name"] == "mia",
+        f"{_prior_n} → {(_rn['name_attempt_from'], _rn['mail_attempt_from'])}")
 
 # ── j: the series (B2-6) ─────────────────────────────────────────────────────────────────────
 # Deliberately WITHOUT limit a (reasoning in `lift_lockout`): the series has no IP, and before the

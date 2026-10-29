@@ -181,7 +181,7 @@ def _audit(auth):
 
 def _attempts(auth, method=None):
     lines = [tuple(z) for z in auth.store._all(
-        "SELECT username, ip, success, method, offen FROM login_attempt ORDER BY id")]
+        "SELECT username, ip, success, method, pending FROM login_attempt ORDER BY id")]
     return [z for z in lines if method is None or z[3] == method]
 
 

@@ -1,7 +1,7 @@
 """The key vocabulary in English (schema 15): migration of a real old database, idempotence, free text, read paths.
 
 PO decision 2026-10-29: the audit log (`audit.event`, `audit.detail`, `audit.username`) and the kinds of the
-failed-attempt streak (`fehlserie.art`, `login_attempt.method`) carried German event names, `key=value` keys and
+failed-attempt streak (`failure_series.kind`, `login_attempt.method`) carried German event names, `key=value` keys and
 tokens up to 0.24.x (`grund=kein_konto`, `oidc_widerruf`, `gelöscht#<id>`). Schema 15 rewrites an existing file once
 (`Store._vocabulary_english`), and every read path still understands an old row (`tinysesam/_vocabulary.py`) — an older
 version that ran on the file after a rollback, or a writer outside the process, leaves old rows behind again.
@@ -310,8 +310,8 @@ def _audit(path: str) -> list:
 def _tables(path: str) -> tuple:
     """The three tables the migration touches, complete and ordered — for before/after comparisons."""
     return (_audit(path),
-            _read(path, "SELECT topf, art, anzahl, seit, zuletzt FROM fehlserie ORDER BY topf, art"),
-            _read(path, "SELECT id, ts, username, ip, method, offen FROM login_attempt ORDER BY id"))
+            _read(path, "SELECT folded, kind, count, since, last_seen FROM failure_series ORDER BY folded, kind"),
+            _read(path, "SELECT id, ts, username, ip, method, pending FROM login_attempt ORDER BY id"))
 
 
 def _start(path: str):
@@ -348,7 +348,7 @@ def fixture_problems(path: str) -> list:
     store.db.close()
     problem = []
     afterwards = _audit(path)
-    if _stamp(path) != 15:
+    if _stamp(path) != Store.SCHEMA_VERSION:
         problem.append(f"stamp {_stamp(path)}")
     if MESSAGE not in log:
         problem.append("the migration does not say that it rewrote something")
@@ -359,11 +359,11 @@ def fixture_problems(path: str) -> list:
             problem.append(f"row {z[0]}: {(z[2], z[3], z[5])} instead of {p[3:]}")
     if [(z[0], z[1], z[4]) for z in before] != [(z[0], z[1], z[4]) for z in afterwards]:
         problem.append("id, ts or ip of a row changed")
-    if _read(path, "SELECT topf, art, anzahl, seit, zuletzt FROM fehlserie ORDER BY topf, art") != [
+    if _read(path, "SELECT folded, kind, count, since, last_seen FROM failure_series ORDER BY folded, kind") != [
             ("alice", "pin_chain", 5, 1793237188, 1793237233),
             ("bob", "pin_chain", 4, 1793237188, 1793237233),
             ("bob", "totp", 1, 1793237188, 1793237233)]:
-        problem.append("fehlserie")
+        problem.append("failure_series")
     if _read(path, "SELECT id, method FROM login_attempt ORDER BY id") != [(1, "pin_chain"), (2, "pin")]:
         problem.append("login_attempt.method")
     return problem
@@ -388,8 +388,8 @@ r.check("precondition: the old-vocabulary detector (independent of `_vocabulary.
 store_a, log_a = _start(path_a)
 store_a.db.close()
 afterwards_a = _audit(path_a)
-r.check("(A) the start migrates: stamp 15 and a log line that says something was rewritten",
-        _stamp(path_a) == 15 == Store.SCHEMA_VERSION and MESSAGE in log_a, f"{_stamp(path_a)} {log_a[-300:]!r}")
+r.check("(A) the start migrates: the current stamp and a log line that says something was rewritten",
+        _stamp(path_a) == Store.SCHEMA_VERSION and MESSAGE in log_a, f"{_stamp(path_a)} {log_a[-300:]!r}")
 wrong = [(z[0], (z[2], z[3], z[5]), p[3:]) for p, z in zip(PAIRS, afterwards_a) if (z[2], z[3], z[5]) != p[3:]]
 r.check("(A) all 114 audit rows come out exactly as spelled out in PAIRS (event, username, detail)",
         not wrong and len(afterwards_a) == 114, str(wrong[:3]))
@@ -520,8 +520,8 @@ r.check("(A) a detail that is already in the new form stays (`reason=no_account`
         n("login_fail", "x", "password reason=no_account")[2] == "password reason=no_account"
         and n("login_fail", "x", "password altgrund=kein_konto")[2] == "password altgrund=kein_konto"
         and n("login_fail", "x", "password mygrund=kein_konto")[2] == "password mygrund=kein_konto")
-fail = _read(path_a, "SELECT topf, art, anzahl, seit, zuletzt FROM fehlserie ORDER BY topf, art")
-r.check("(A) `fehlserie.art` `pin_folge` -> `pin_chain`; where both exist (the collision) the counts are ADDED up "
+fail = _read(path_a, "SELECT folded, kind, count, since, last_seen FROM failure_series ORDER BY folded, kind")
+r.check("(A) `failure_series.kind` `pin_folge` -> `pin_chain`; where both exist (the collision) the counts are ADDED up "
         "(3+2), the window widens (earliest start, latest end), exactly one row is left",
         fail == [("alice", "pin_chain", 5, 1793237188, 1793237233), ("bob", "pin_chain", 4, 1793237188, 1793237233),
                  ("bob", "totp", 1, 1793237188, 1793237233)], str(fail))
@@ -529,7 +529,7 @@ r.check("(A) `login_attempt.method` `pin_folge` -> `pin_chain`, other methods st
         _read(path_a, "SELECT id, method FROM login_attempt ORDER BY id") == [(1, "pin_chain"), (2, "pin")])
 def trigger_texts(path: str) -> list:
     return [z[0] for z in _read(path, "SELECT sql FROM sqlite_master WHERE type='trigger' "
-                                       "AND name LIKE 'trg_users_kennung_%'")]
+                                       "AND name LIKE 'trg_users_identifier_%'")]
 
 
 trigger_a = trigger_texts(path_a)
@@ -564,14 +564,14 @@ def idempotence_problems(path: str) -> list:
     st, _ = _start(path)
     st.db.close()
     s1 = _tables(path)
-    st, log2 = _start(path)                                  # (1) an ordinary second start (stamp 15)
+    st, log2 = _start(path)                                  # (1) an ordinary second start (current stamp)
     st.db.close()
     if _tables(path) != s1 or MESSAGE in log2:
         problem.append("second start changed something")
     _raw(path, "PRAGMA user_version = 14;")                 # (2) the step runs again over migrated data
     st, log3 = _start(path)
     st.db.close()
-    if _tables(path) != s1 or MESSAGE in log3 or _stamp(path) != 15:
+    if _tables(path) != s1 or MESSAGE in log3 or _stamp(path) != Store.SCHEMA_VERSION:
         problem.append(f"forced second run changed something ({log3[-120:]!r})")
     st = Store(path)                                         # (3) the step itself: 0 rows, 0 changes on the connection
     prior = st.db.total_changes
@@ -769,7 +769,7 @@ st_d.db.close()
 path_t = _new_path("t.db")
 t0 = _setup(path_t)
 t0.store.db.close()
-for name_, sql_ in _read(path_t, "SELECT name, sql FROM sqlite_master WHERE type='trigger' AND name LIKE 'trg_users_kennung_%'"):
+for name_, sql_ in _read(path_t, "SELECT name, sql FROM sqlite_master WHERE type='trigger' AND name LIKE 'trg_users_identifier_%'"):
     _raw(path_t, f"DROP TRIGGER {name_};", sql_.replace("tinysesam: identifier taken", "tinysesam: kennung vergeben"))
 def replace_not(self):                                                   # a start that cannot rewrite the trigger
     raise sqlite3.OperationalError("attempt to write a readonly database")
@@ -790,7 +790,7 @@ e0.create_user("anna", password=PW)
 e0.store.db.close()
 _raw(path_e, ("INSERT INTO audit(ts, event, username, ip, detail) VALUES (?,?,?,?,?)",
               (int(time.time()), "oidc_widerruf", "anna", None, "client=wiki grund=gruppe akteur=gelöscht#7")))
-_raw(path_e, ("INSERT INTO fehlserie(topf, art, anzahl, seit, zuletzt) VALUES ('anna', 'pin_folge', 2, 1, 2)"))
+_raw(path_e, ("INSERT INTO failure_series(folded, kind, count, since, last_seen) VALUES ('anna', 'pin_folge', 2, 1, 2)"))
 prior_e = _tables(path_e)
 connection = sqlite3.connect
 
@@ -808,8 +808,8 @@ try:
         e1, log_e, start_e = None, "", f"{type(error).__name__}: {error}"
 finally:
     sqlite3.connect = connection
-r.check("(E) a read-only file at stamp 15 with old rows (event, detail, name, streak kind): the start succeeds",
-        start_e == "ok" and _stamp(path_e) == 15, start_e)
+r.check("(E) a read-only file at the current stamp with old rows (event, detail, name, streak kind): the start succeeds",
+        start_e == "ok" and _stamp(path_e) == Store.SCHEMA_VERSION, start_e)
 if start_e == "ok":
     lines_e = e1.store.recent_audit(10)
     r.check("(E) … nothing is rewritten (the old rows are still there, byte for byte) and no log line claims it",
@@ -856,7 +856,7 @@ r.check("(F) … in the expected new form: `reason=wrong_secret`/`reason=no_acco
         not missing_f, f"missing {missing_f} in {text_f[-500:]}")
 r.check("(F) the series kind and the method of a failed PIN step are written as `pin_chain` (no `pin_folge` anywhere "
         "in the tables)",
-        not _read(path_f, "SELECT 1 FROM fehlserie WHERE art='pin_folge' UNION ALL "
+        not _read(path_f, "SELECT 1 FROM failure_series WHERE kind='pin_folge' UNION ALL "
                            "SELECT 1 FROM login_attempt WHERE method='pin_folge'"))
 f.store.db.close()
 

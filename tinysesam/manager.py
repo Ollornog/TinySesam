@@ -468,7 +468,7 @@ class TinySesam:
         collisions = self.store.bucket_collisions()
         if collisions:
             examples = "; ".join(
-                f"identifier '{security.for_log(z['kennung'])}': "
+                f"identifier '{security.for_log(z['identifier'])}': "
                 + ", ".join(f"user_id={i}" for i in z["ids"]) for z in collisions[:5])
             security.seclog.warning(
                 "%d identifier collision(s) in existing data: username and email are ONE "
@@ -507,7 +507,7 @@ class TinySesam:
                 len(conspicuous), ", ".join(str(z["id"]) for z in conspicuous[:10]))
         # Binding by name (G1): the grace period starts per source at the first start at which it is
         # switched on — for existing data thus with the update — and exactly once (the marker
-        # stays, see `Store.foederation_seit`). After that, one line per source for as long as there are
+        # stays, see `Store.federation_since`). After that, one line per source for as long as there are
         # accounts that would bind via the name and the door is still open.
         for _source, _an in (("ldap", config.ldap_enabled), ("saml", config.saml_enabled)):
             if _an:
@@ -572,7 +572,7 @@ class TinySesam:
         removed (also triggerable anonymously: a registration that `gc()` sweeps away), the
         failed attempts of the other went with it. Such a namesake is therefore considered taken.
 
-        **And via the name in the directory** (`federated_identity.name_topf`, G5; review round
+        **And via the name in the directory** (`federated_identity.directory_name_folded`, G5; review round
         2026-09-27): under one identifier the login route checks the local password of the account AND
         the LDAP password of the entry. If a local account was named like another person in the
         directory (self-service, registration, renaming in the panel), each of its
@@ -639,7 +639,7 @@ class TinySesam:
 
         `self_chosen_name=True`: the person typed the name themselves (registration,
         also with an invitation). A sign-in via LDAP/SAML then never binds this account via the
-        name (G2-N, `users.name_selbst_gewaehlt`). The built-in registration sets it; whoever builds
+        name (G2-N, `users.name_self_chosen`). The built-in registration sets it; whoever builds
         their own passes it too. Default `False`: the operator assigns the name. Whoever
         creates accounts from their OWN foreign source (another identity provider) passes it
         too: names chosen there say nothing about who in the directory has that name."""
@@ -649,7 +649,7 @@ class TinySesam:
     def _create_account(self, username, password=None, is_admin=False, roles=None, display_name=None,
                        email=None, is_service=False, email_verified: bool = True, *,
                        name_itself_chosen: bool = False, name_source: Optional[str] = None) -> int:
-        """`create_user` including the origin of the name (`users.name_quelle`, attack round 2026-09-26):
+        """`create_user` including the origin of the name (`users.name_source`, attack round 2026-09-26):
         creation from OIDC, SAML and LDAP. A name that a source brings along never binds the account
         via the name to ANOTHER one (`_rebinding_reason`) — `preferred_username`, NameID and
         `uid` are chosen by oneself at an IdP with self-registration. Reproduced: `manager` signs
@@ -793,7 +793,7 @@ class TinySesam:
                 # one-time token, now issued immediately (until then only at startup), and the CLI.
                 # The marker applies to the instance and is never reset; it only takes effect
                 # as long as there is no admin. Parallel withdrawals set it idempotently.
-                self.store.set_setting("allowlist_nach_idp_entzug", str(_now()))
+                self.store.set_setting("allowlist_after_idp_revocation", str(_now()))
                 security.seclog.warning(
                     "No admin left: the identity provider has withdrawn the instance's last admin. "
                     "admin_identifiers promotes nobody afterwards. Emergency route: "
@@ -978,7 +978,7 @@ class TinySesam:
         Only for accounts with an OIDC binding, and only as long as OIDC is set up — without a provider
         there would be nobody who could confirm, and every key would be dead after the deadline.
 
-        * **No from the provider** (`idp_bestaetigt_at = 0`, set by the re-check 4a): the
+        * **No from the provider** (`idp_confirmed_at = 0`, set by the re-check 4a): the
           session ended there already; without this check an automation key kept working for up to
           `apikey_default_days` — the same flaw PocketID itself had until 2.5.0
           (CVE-2026-43983: a locked account keeps access via an old token).
@@ -991,7 +991,7 @@ class TinySesam:
         if self.oidc is None:
             return None
         try:
-            state = u["idp_bestaetigt_at"]
+            state = u["idp_confirmed_at"]
         except (IndexError, KeyError):
             return None                       # row without the column: only before `_migrate`
         if not self.store.is_oidc_account(u["id"]):
@@ -1034,7 +1034,7 @@ class TinySesam:
         return True
 
     def _key_log(self, row, reason: Optional[str]) -> None:
-        """Log a key use (grund=None) or rejection (`reason=<grund>`) — throttled (B5-05).
+        """Log a key use (`reason=None`) or rejection (`reason=<reason>`) — throttled (B5-05).
 
         Until here the system knew only `last_used` of a key: no who, no from where, and
         a rejected key left nothing at all. That is exactly the signal, though — a
@@ -1477,7 +1477,7 @@ class TinySesam:
         hits_name = str(user["username"] or "").lower() in names
         if not (hits_address or hits_name):
             return False
-        if self.store.get_setting("allowlist_nach_idp_entzug"):
+        if self.store.get_setting("allowlist_after_idp_revocation"):
             # G6: The identity provider has withdrawn the instance's last admin
             # (`apply_idp_groups`) — the allowlist does not open again afterwards, for nobody.
             security.seclog.warning(
@@ -1695,9 +1695,9 @@ class TinySesam:
     #: What an account dict of the public surface carries (`current_user`, `session_user`,
     #: `pending_user`, `get_user`, `find_user`, `identifier_taken`, `verify_api_key`,
     #: `LoginResult.user`, the `require_*` guards) — the columns that describe the account. The
-    #: store's bookkeeping stays outside: counting buckets (`topf_name`, `topf_mail`),
-    #: watermarks (`name_versuch_ab` …), origin and self-choice of the name (`name_quelle`,
-    #: `name_selbst_gewaehlt`), the last confirmation by the IdP (`idp_bestaetigt_at`). Up to
+    #: store's bookkeeping stays outside: counting buckets (`folded_name`, `folded_mail`),
+    #: watermarks (`name_attempt_from` …), origin and self-choice of the name (`name_source`,
+    #: `name_self_chosen`), the last confirmation by the IdP (`idp_confirmed_at`). Up to
     #: 0.21.x the whole row went out, with German column names; since 0.22.0 the
     #: public surface is English (PO decision 2026-09-27), and internals do not belong in
     #: its guarantee. A list of the allowed rather than the forbidden columns: a new column of the
@@ -1801,9 +1801,9 @@ class TinySesam:
            through one door (`_rebinding_reason`): not after the deadline
            (`federation_name_binding_days`, G1 — otherwise a dormant account would fall to the next
            person with that name) and never for a self-chosen name
-           (`users.name_selbst_gewaehlt`, G2-N — otherwise a local account renames itself after
+           (`users.name_self_chosen`, G2-N — otherwise a local account renames itself after
            someone from the directory and inherits their groups) and never for a name that
-           another source brought along on creation (`users.name_quelle`, attack round
+           another source brought along on creation (`users.name_source`, attack round
            2026-09-26 — the same attack via `preferred_username` or SAML), unless the
            operator has opened the binding for this account (`federation_unbind`). Otherwise
            it is rejected as in case 3. The same applies to the replacement of an origin placeholder.
@@ -1974,7 +1974,7 @@ class TinySesam:
     }
     #: The same reasons in the security log (the audit line `<source>_name_binding_closed … reason=` carries
     #: the code itself). Up to 0.24.x the codes in audit and log were German (`adresse_als_name`,
-    #: `kennung_ungueltig`, `konflikt`, `anders_gebunden`, `name_selbst_gewaehlt`, `name_aus_quelle`, `deadline`);
+    #: `kennung_ungueltig`, `konflikt`, `anders_gebunden`, `name_self_chosen`, `name_aus_quelle`, `deadline`);
     #: the migration to schema 15 rewrote them (`_vocabulary.TOKENS_OLD`).
     _REBINDING_LOG = {
         "address_as_name": "the name says nothing about the person "
@@ -2008,11 +2008,11 @@ class TinySesam:
         * Identifier: form (`_identifier_form_error`), not already bound to another account, the
           account does not already carry another one (case 3).
         * **Self-chosen name** (G2-N): an account that registered or was renamed itself
-          (`users.name_selbst_gewaehlt`) is never bound via the name. Reproduced:
+          (`users.name_self_chosen`) is never bound via the name. Reproduced:
           `eve` renames herself to `manager`, a name that exists only in the directory; the
           real boss signs in via LDAP, her identifier lands on eve's account, the role from
           `ldap_group_role_map` too — and eve keeps signing in with her password.
-        * **Name from another source** (`users.name_quelle`, attack round 2026-09-26): an
+        * **Name from another source** (`users.name_source`, attack round 2026-09-26): an
           account that OIDC, SAML or LDAP created carries the name the person has THERE —
           at an IdP with self-registration a self-chosen one. Reproduced: `manager` via
           OIDC, then the real boss via LDAP; her identifier and her roles ended up in the
@@ -2023,7 +2023,7 @@ class TinySesam:
           it — it IS the operator's explicit path.
 
         The last three are lifted by a binding opened by the operator (`federation_unbind`,
-        table `namensbindung`)."""
+        table `name_binding`)."""
         if not name_proven or name_invalid(str(account["username"] or "")):
             return "address_as_name"
         if identifier:
@@ -2039,13 +2039,13 @@ class TinySesam:
         if self.store.name_binding_unclosed(source, account["id"], now):
             return None
         try:
-            itself = bool(account["name_selbst_gewaehlt"])
+            itself = bool(account["name_self_chosen"])
         except (IndexError, KeyError):
             itself = False       # row without the column (foreign source): like existing data
         if itself:
             return "self_chosen_name"
         try:
-            origin = str(account["name_quelle"] or "")
+            origin = str(account["name_source"] or "")
         except (IndexError, KeyError):
             origin = ""        # row without the column (foreign source): like existing data
         if origin and origin != source:
@@ -2076,7 +2076,7 @@ class TinySesam:
 
     def _federation_since(self, source: str) -> int:
         """From when does the deadline for binding via the name apply (G1)? The source's marker
-        (`Store.foederation_seit`), set at the first start with the source switched on — or
+        (`Store.federation_since`), set at the first start with the source switched on — or
         here, if it is used without the switch (a client set by hand). Exactly once:
         a marker that were set anew at every start would grant every restart a new
         deadline. Only readable: then from now on."""
@@ -2134,7 +2134,7 @@ class TinySesam:
         Since 2026-09-26 (G1, G2-N) the call at the same time opens the door for case 4: the next
         sign-in via this source binds the account via its name, even after the deadline
         (`federation_name_binding_days`), even with a self-chosen name and even with a name
-        from another source (`users.name_quelle`) — for
+        from another source (`users.name_source`) — for
         `max(federation_name_binding_days, 1)` days or until the binding is in place. On an
         unbound account the call thus means "open for the next sign-in" (pre-creation,
         returnee, an account that missed the deadline). The rejection in the log names the call."""
@@ -2972,7 +2972,7 @@ class TinySesam:
         return pending
 
     def _begin_attempt(self, username, ip, method, include_pin: bool = False,
-                          series_kind: Optional[str] = None, hover: bool = False) -> Optional[int]:
+                          series_kind: Optional[str] = None, as_pending: bool = False) -> Optional[int]:
         """Admit a check attempt **atomically** and pre-book it as a failed attempt.
 
         Return: an attempt ID that goes back to `_record_login(..., attempt=id)`, or
@@ -2987,7 +2987,7 @@ class TinySesam:
         method — `_PIN_CHAIN_SERIES` for a PIN that comes AFTER an already provided factor
         (chain step, route chain; G7). Window and buckets keep counting under `method`.
 
-        `hover=True` books the attempt with an open outcome (G9, `Store.reserve_attempt`): for
+        `as_pending=True` books the attempt with an open outcome (G9, `Store.reserve_attempt`): for
         a check that can also turn out to be "no attempt at all" — the login route with LDAP, whose
         pre-booking is taken back on an outage (F-23). If an attempt would be rejected **only** because of
         such open pre-bookings, it waits until they are decided: at most
@@ -3007,7 +3007,7 @@ class TinySesam:
 
         def book():
             return self.store.reserve_attempt(self._bucket(username, method), ip, method,
-                                              _valid_rules(rules), series=series, hover=hover)
+                                              _valid_rules(rules), series=series, as_pending=as_pending)
 
         attempt, response = book()
         if attempt is None and response == "pending":
@@ -3932,7 +3932,7 @@ class TinySesam:
         reason if it is not possible.
 
         **A self-chosen name does not bind via LDAP/SAML** (G2-N): the account afterwards carries
-        `users.name_selbst_gewaehlt`, and a sign-in via a federated source never binds it
+        `users.name_self_chosen`, and a sign-in via a federated source never binds it
         via the name — otherwise a local account renames itself after someone from the directory
         and inherits identifier and groups at their next sign-in. Whoever renames as **operator**
         (from the embedding service, e.g. to resolve a collision) passes
@@ -4350,7 +4350,7 @@ class TinySesam:
         noticing."""
         new = self.store.session_hash(new_token)
         self.store.move_oidc_session(old_line["token_hash"], new)
-        if old_line["bleiben_gewaehlt"]:
+        if old_line["stay_chosen"]:
             self.store.set_session_stay(new)
 
     def _other_after_completion(self, old_line, new_token) -> None:
@@ -4362,7 +4362,7 @@ class TinySesam:
         under ASVS 7.4.3 was previously omitted there entirely. Now the page asks as usual, and the
         consent is redeemed here as soon as the sign-in is complete. The column has existed
         since schema 11 (as with `_successor`: if missing, it fails loudly)."""
-        if not old_line["andere_beenden"]:
+        if not old_line["end_others"]:
             return
         self.store.delete_user_sessions_except(old_line["user_id"], self.store.session_hash(new_token))
         u = self.store.get_user(old_line["user_id"])
@@ -4522,7 +4522,7 @@ class TinySesam:
         # failed attempt in the table; `_record_login(..., attempt=…)` turns it into a success.
         # With LDAP it stays pending until the directory has answered (G9): on an outage it is
         # taken back (F-23), and until then it must lock nobody, only make them wait.
-        attempt = self._begin_attempt(username, ip, "password", hover=cfg.ldap_enabled)
+        attempt = self._begin_attempt(username, ip, "password", as_pending=cfg.ldap_enabled)
         if attempt is None:
             return self._sign_in_locked(username, nxt)
         # The unexpected (programming error in the client, database gone, an HTTPException from the
@@ -4992,12 +4992,12 @@ class TinySesam:
         limit = int(self.cfg.oidc_session_max_unverified_hours or 0) * 3600
         for z in lines:
             try:
-                success = z["erfolg_at"]
+                success = z["success_at"]
             except (IndexError, KeyError):
                 success = None
             # Since when has the provider not said yes? Without a value (row from the time before
             # the column) the last exchange counts.
-            since = int(success if success is not None else z["geprueft_at"])
+            since = int(success if success is not None else z["checked_at"])
             if limit and now - since > limit:
                 # Upper limit without a successful re-check: the session ends. That is NOT a no
                 # from the provider — the API keys therefore do not go dormant (finding 8 stays with the real no).
@@ -5010,13 +5010,13 @@ class TinySesam:
                     "client secret/client at the provider, reachability. user=%s",
                     limit // 3600, security.for_log(account_name))
                 return False
-            if now - int(z["geprueft_at"]) < deadline:
+            if now - int(z["checked_at"]) < deadline:
                 continue
-            if not self.store.claim_oidc_session(s["token_hash"], z["client"], z["geprueft_at"], now):
+            if not self.store.claim_oidc_session(s["token_hash"], z["client"], z["checked_at"], now):
                 continue          # another request is exchanging right now
             if not self._oidc_outcome.enqueue(lambda z=z: self._oidc_swap(s, z, deadline)):
                 # Queue full: give the claim back, the next request tries again.
-                self.store.oidc_session_checked(s["token_hash"], z["client"], z["geprueft_at"])
+                self.store.oidc_session_checked(s["token_hash"], z["client"], z["checked_at"])
         return True
 
     def _oidc_swap(self, s, z, deadline) -> None:
@@ -5978,7 +5978,7 @@ class TinySesam:
         The audit log only if `audit_retention_days` sets a deadline (B5-11) — then the number
         appears under `audit`. Returns the number of deleted rows per area: `unverified_accounts`,
         `sessions`, `flow`, `magic_tokens`, `resource_unlocks`, `login_attempts`,
-        `failure_series` (until 0.21.x `fehlserien`), possibly `audit`.
+        `failure_series` (until 0.21.x `failure_seriesn`), possibly `audit`.
         `attempts_older_than_sec` lies between 0 (all failed attempts) and ten years in
         seconds, otherwise `ValueError`, before anything is deleted."""
         older = _now() - _attempt_deadline(attempts_older_than_sec)

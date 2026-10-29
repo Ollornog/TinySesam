@@ -39,7 +39,7 @@ print("  norm_email/valid_email ok")
 # ---------- R4-06: compatibility characters, IDNA, look-alikes ----------
 assert norm_email("ａｄｍｉｎ@ｅｘａｍｐｌｅ.com") == "admin@example.com", "NFKC folds full-width"
 assert norm_email("u@Bücher.example") == norm_email("u@xn--bcher-kva.example") == "u@xn--bcher-kva.example"
-# IDNA 2003 (stdlib) turned straße.example into strasse.example — a different domain. Stays unchanged.
+# IDNA 2003 (stdlib) turned `straße.example` into `strasse.example` — a different domain. Stays unchanged.
 assert norm_email("u@straße.example") == "u@straße.example"
 assert not valid_email("аdmin@example.com"), "Cyrillic а between Latin letters"
 assert not valid_email("admin@exаmple.com"), "look-alike in the domain"

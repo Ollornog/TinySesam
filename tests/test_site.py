@@ -7,7 +7,7 @@ import tempfile
 from pathlib import Path
 
 
-def _lies(*parts: str) -> str:
+def _read(*parts: str) -> str:
     return Path(*parts).read_text(encoding="utf-8")
 
 
@@ -205,14 +205,14 @@ with tempfile.TemporaryDirectory() as tmp:
                                               "resources", "version"])
     # Without extension, but JSON: `fetch(...).json()` checks no Content-Type, and Pages
     # serves the file unchanged.
-    users = json.loads(_lies(api, "users"))
+    users = json.loads(_read(api, "users"))
     assert [u["username"] for u in users] == ["demoadmin", "demo", "martin", "backup-daemon"]
-    version = json.loads(_lies(api, "version"))
+    version = json.loads(_read(api, "version"))
     assert version["version"] == TS_VERSION, "the panel shows the built version"
 
     # The panels are real pages, but locked — and the demo page embeds exactly them.
     def panel(name):
-        return _lies(tmp, "demo", name)
+        return _read(tmp, "demo", name)
 
     for name in ("admin.en.html", "admin.de.html", "login.en.html", "account.de.html"):
         assert "pointer-events:none" in panel(name), f"{name} must be read-only"
@@ -227,7 +227,7 @@ with tempfile.TemporaryDirectory() as tmp:
         assert f"lang={lang}" in html or f'lang="{lang}"' in html, name
         assert want in html and nope not in html, (name, want, nope)
 
-    page = _lies(tmp, "demo.html")
+    page = _read(tmp, "demo.html")
     for src in ("demo/login.en.html", "demo/account.de.html", "demo/admin.en.html",
                 "demo/admin.de.html"):
         assert f"src='{src}'" in page, src

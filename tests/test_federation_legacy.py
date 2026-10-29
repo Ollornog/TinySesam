@@ -5,7 +5,7 @@ via their name (situation 4). Until 2026-09-26 without any limit: a dormant acco
 the company — fell, including its admin right, to the next person who gets the same name
 in the directory (G1). And a local account that renamed itself after someone from the directory
 received that person's identifier and groups at their sign-in (G2-N). The attack round 2026-09-26 found the same
-via a name that OIDC or SAML brought along on creation (a1-01, `users.name_quelle`).
+via a name that OIDC or SAML brought along on creation (a1-01, `users.name_source`).
 
 What is measured is the effect: who ends up in which account after a sign-in, which binding stands,
 which role the account carries, what is in the audit and security log — plus the existing-account binding
@@ -116,7 +116,7 @@ def _saml(db=None, **cfg):
 def _alternate(auth, *uids, source="ldap", days=31):
     """The grace period is over: marker of the source set back `days`, the accounts two years old."""
     auth.store._exec("INSERT OR REPLACE INTO setting(key, value) VALUES (?, ?)",
-                     (f"foederation_seit:{source}", str(now() - days * TAG)))
+                     (f"federation_since:{source}", str(now() - days * TAG)))
     for uid in uids:
         auth.store._exec("UPDATE users SET created_at=? WHERE id=?", (now() - 730 * TAG, uid))
 
@@ -126,7 +126,7 @@ def _audit(auth, event):
 
 
 def _flag(auth, uid):
-    return auth.store._one("SELECT name_selbst_gewaehlt AS f FROM users WHERE id=?", (uid,))["f"]
+    return auth.store._one("SELECT name_self_chosen AS f FROM users WHERE id=?", (uid,))["f"]
 
 
 def _sign_in(auth, name, entry, pw="pw"):
@@ -138,8 +138,8 @@ def _sign_in(auth, name, entry, pw="pw"):
 a = _ldap()
 r.check("Default: federation_name_binding_days = 30", a.cfg.federation_name_binding_days == 30)
 r.check("The source marker exists right after construction (ldap_enabled), SAML without switch does not",
-        a.store.get_setting("foederation_seit:ldap") is not None
-        and a.store.get_setting("foederation_seit:saml") is None)
+        a.store.get_setting("federation_since:ldap") is not None
+        and a.store.get_setting("federation_since:saml") is None)
 
 # (1) Dormant account with admin right, grace period over, new entry with a foreign identifier.
 js = a.create_user("jsmith", is_admin=True)
@@ -160,14 +160,14 @@ r.check("… the log line names identifier and remedy (federation_unbind, federa
 
 # (4) The operator opens the binding explicitly — the next sign-in binds.
 away = a.federation_unbind("ldap", js)
-unclosed = a.store._one("SELECT bis FROM namensbindung WHERE quelle='ldap' AND user_id=?", (js,))
+unclosed = a.store._one("SELECT until FROM name_binding WHERE source='ldap' AND user_id=?", (js,))
 r.check("federation_unbind on an unbound account: 0 released, binding via the name opened",
-        away == 0 and unclosed is not None and unclosed["bis"] > now() + 29 * TAG, str(unclosed and dict(unclosed)))
+        away == 0 and unclosed is not None and unclosed["until"] > now() + 29 * TAG, str(unclosed and dict(unclosed)))
 u = _sign_in(a, "jsmith", {"id": "uuid-neu"})
 r.check("… afterwards the next sign-in binds via the name, even after the grace period",
         u is not None and u["id"] == js and a.store.get_federated_identifier("ldap", js) == "uuid-neu")
 r.check("… and the opening is used up (row gone)",
-        a.store._one("SELECT 1 AS x FROM namensbindung WHERE user_id=?", (js,)) is None)
+        a.store._one("SELECT 1 AS x FROM name_binding WHERE user_id=?", (js,)) is None)
 u = _sign_in(a, "jsmith", {"id": "uuid-dritter"})
 r.check("… a further foreign identifier under the name stays out (situation 3, door closed again)",
         u is None and a.store.get_federated_identifier("ldap", js) == "uuid-neu")
@@ -223,15 +223,15 @@ r.check("federation_name_binding_days=-2: ConfigError on construction", _throws)
 path = _db()
 m1 = _ldap(path)
 _alternate(m1, days=40)
-before = m1.store.get_setting("foederation_seit:ldap")
+before = m1.store.get_setting("federation_since:ldap")
 m1.store.db.close()
 m2 = _ldap(path)
 r.check("Marker once only: a second start does not set it anew (otherwise every restart would grant a grace period)",
-        m2.store.get_setting("foederation_seit:ldap") == before, f"{before} → {m2.store.get_setting('foederation_seit:ldap')}")
+        m2.store.get_setting("federation_since:ldap") == before, f"{before} → {m2.store.get_setting('federation_since:ldap')}")
 
 # (1c) SAML: the same via the NameID.
 s = _saml()
-r.check("SAML: the marker exists after construction", s.store.get_setting("foederation_seit:saml") is not None)
+r.check("SAML: the marker exists after construction", s.store.get_setting("federation_since:saml") is not None)
 sam = s.create_user("sam", is_admin=True)
 _alternate(s, sam, source="saml")
 u = s._check_saml("nid-neu", {"uid": ["sam"]})
@@ -271,7 +271,7 @@ r.check("Self-renamed (existing): marker 1", _flag(g, eve) == 1)
 with Recording() as log:
     u = _sign_in(g, "chefin", {"id": "uuid-chefin", "groups": ["cn=chefs"]}, pw="ldap-pw")
 to = _audit(g, "ldap_name_binding_closed")
-r.check("PoC: the real chefin from the directory does NOT land in eve's account, no binding",
+r.check("PoC: the real boss from the directory does NOT land in eve's account, no binding",
         u is None and g.store.get_federated_identifier("ldap", eve) is None, str(u))
 r.check("… eve then has no role `chef`, not even via her local password",
         g._check_password("chefin", PW) is not None
@@ -344,8 +344,8 @@ r.check("Renaming via the account page (/auth/account/username): marker 1",
 # Finding a1-01: G2-N marked only registration and renaming. An account that OIDC or SAML
 # creates, however, also carries a name that the person may have chosen themselves — `preferred_username`
 # or `uid` with an IdP with self-registration. Whoever chose `manager` there got, at the first
-# LDAP sign-in of the real chefin, her identifier and roles into their own account and signed in
-# further via OIDC. Creation now remembers the source (`users.name_quelle`).
+# LDAP sign-in of the real boss, her identifier and roles into their own account and signed in
+# further via OIDC. Creation now remembers the source (`users.name_source`).
 IDP = "https://idp.example.com"
 
 
@@ -379,10 +379,10 @@ def _oidc_sign_in(auth, app, claims):
 
 
 def _source(auth, uid):
-    return auth.store._one("SELECT name_quelle AS q FROM users WHERE id=?", (uid,))["q"]
+    return auth.store._one("SELECT name_source AS q FROM users WHERE id=?", (uid,))["q"]
 
 
-# (a) OIDC creates `manager`, then the real chefin signs in via LDAP (PoC a1-01, variant A).
+# (a) OIDC creates `manager`, then the real boss signs in via LDAP (PoC a1-01, variant A).
 qa, qapp = _with_oidc()
 st, me = _oidc_sign_in(qa, qapp, {"sub": "angreifer-sub", "preferred_username": "chefin"})
 oc = qa.store.get_user_by_name("chefin")
@@ -392,7 +392,7 @@ r.check("OIDC creates `chefin` (preferred_username): origin oidc, no marker \"se
 with Recording() as log:
     u = _sign_in(qa, "chefin", {"id": "uuid-chefin", "groups": ["cn=chefs"]}, pw="ldap-pw")
 to = _audit(qa, "ldap_name_binding_closed")
-r.check("PoC a1-01 (OIDC): the real chefin does NOT land in the OIDC account — no identifier, no role",
+r.check("PoC a1-01 (OIDC): the real boss does NOT land in the OIDC account — no identifier, no role",
         u is None and qa.store.get_federated_identifier("ldap", oc["id"]) is None
         and qa.user_roles(qa.store.get_user(oc["id"])) == [], str(u))
 r.check("… rejection like situation 3: audit with reason name_aus_quelle, log line with the way out",
@@ -430,7 +430,7 @@ qa.store.set_username(uw, "ulla", itself_chosen=True)
 r.check("Self-renamed: origin deleted, marker \"self-chosen\" set",
         _source(qa, uw) is None and _flag(qa, uw) == 1)
 
-# (b) SAML creates `manager`; the real chefin from the directory is admin (PoC a1-01, variant B).
+# (b) SAML creates `manager`; the real boss from the directory is admin (PoC a1-01, variant B).
 _ldap_to_it = dict(ldap_enabled=True, ldap_url="ldap://verzeichnis.example.com", ldap_allow_plaintext=True,
                   ldap_auto_create=True)
 qs = _saml(ldap_group_role_map={"cn=admins": "__admin__"}, **_ldap_to_it)
@@ -512,7 +512,7 @@ def _names(report, part):
 
 
 def _bound(auth):
-    return {z["user_id"]: z["kennung"] for z in auth.store._all("SELECT * FROM federated_identity")}
+    return {z["user_id"]: z["identifier"] for z in auth.store._all("SELECT * FROM federated_identity")}
 
 
 before = _bound(m)
@@ -743,9 +743,9 @@ r.check("SAML startup message names the mapping",
 # ══ Existing accounts: file at schema 11 without table and column, marker from the audit log ════════════
 # Built from SCHEMA without the two novelties (a `DROP COLUMN` fails on the comments in
 # the table definition) — like a state from before this commit, stamp 11.
-_old, _n1 = re.subn(r"(mail_audit_ab\s+INTEGER),\n.*?name_selbst_gewaehlt INTEGER NOT NULL DEFAULT 0\n",
+_old, _n1 = re.subn(r"(mail_audit_from\s+INTEGER),\n.*?name_self_chosen INTEGER NOT NULL DEFAULT 0\n",
                     r"\1\n", SCHEMA, flags=re.S)
-_old, _n2 = re.subn(r"CREATE TABLE IF NOT EXISTS namensbindung \(.*?\n\);\n", "", _old, flags=re.S)
+_old, _n2 = re.subn(r"CREATE TABLE IF NOT EXISTS name_binding \(.*?\n\);\n", "", _old, flags=re.S)
 path = _db()
 os.close(os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600))
 raw = sqlite3.connect(path)
@@ -761,15 +761,15 @@ raw.commit()
 _before_sp = {z[1] for z in raw.execute("PRAGMA table_info(users)")}
 _before_tab = {z[0] for z in raw.execute("SELECT name FROM sqlite_master WHERE type='table'")}
 raw.close()
-r.check("Precondition: file at stamp 11 without `namensbindung` and without `users.name_selbst_gewaehlt`",
-        _n1 == 1 and _n2 == 1 and "name_selbst_gewaehlt" not in _before_sp
-        and "namensbindung" not in _before_tab and "fehlserie" in _before_tab, f"{_n1}/{_n2}")
+r.check("Precondition: file at stamp 11 without `name_binding` and without `users.name_self_chosen`",
+        _n1 == 1 and _n2 == 1 and "name_self_chosen" not in _before_sp
+        and "name_binding" not in _before_tab and "failure_series" in _before_tab, f"{_n1}/{_n2}")
 new = _ldap(path)
 tab = {z["name"] for z in new.store._all("SELECT name FROM sqlite_master WHERE type='table'")}
-fl = {z["username"]: z["name_selbst_gewaehlt"] for z in new.store._all("SELECT * FROM users")}
+fl = {z["username"]: z["name_self_chosen"] for z in new.store._all("SELECT * FROM users")}
 r.check("Schema 11 without the novelties: table and column are added, the stamp moves to the "
         "current one (since 0.22.0: 12)",
-        "namensbindung" in tab and len(fl) == 4
+        "name_binding" in tab and len(fl) == 4
         and int(new.store.db.execute("PRAGMA user_version").fetchone()[0]) == Store.SCHEMA_VERSION >= 11)
 r.check("Existing accounts: registered and self-renamed ones carry the marker, an older namesake and "
         "an operator-created account do not",
@@ -780,19 +780,19 @@ new.store._exec("INSERT INTO audit(ts, event, username) VALUES (?,?,?)", (now(),
 new.store.db.close()
 again = _ldap(path)
 r.check("Second start: idempotent, the back-fill does not run again",
-        again.store._one("SELECT name_selbst_gewaehlt AS f FROM users WHERE username='op'")["f"] == 0
+        again.store._one("SELECT name_self_chosen AS f FROM users WHERE username='op'")["f"] == 0
         and again.store.get_setting(Store.NAME_ITSELF_BACKFILLED) is not None)
 lo = again.create_user("loesch")
 again.federation_unbind("ldap", lo)
 again.delete_user(lo)
 r.check("Account deleted: its opened name binding goes with it",
-        again.store._one("SELECT COUNT(*) AS n FROM namensbindung")["n"] == 0)
+        again.store._one("SELECT COUNT(*) AS n FROM name_binding")["n"] == 0)
 
 # ══ Existing accounts: origin of the name back-filled (attack round 2026-09-26) ═══════════════════════
-# A file from the state before: stamp 11, `name_selbst_gewaehlt` already back-filled, but without
-# `users.name_quelle`. Back-filling happens only where the origin is proven: OIDC (the callback creates
+# A file from the state before: stamp 11, `name_self_chosen` already back-filled, but without
+# `users.name_source`. Back-filling happens only where the origin is proven: OIDC (the callback creates
 # every linked account itself) and an LDAP/SAML binding from the same second as the creation.
-_old_q, _nq = re.subn(r"\n\s*-- From which federated source does the name originate.*?name_quelle\s+TEXT,", "",
+_old_q, _nq = re.subn(r"\n\s*-- From which federated source does the name originate.*?name_source\s+TEXT,", "",
                       SCHEMA, flags=re.S)
 path = _db()
 os.close(os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600))
@@ -802,7 +802,7 @@ t0 = now() - 20 * TAG
 _bq = {}
 for name, itself, service in (("oi", 0, 0), ("ld", 0, 0), ("ph", 0, 0), ("nb", 0, 0), ("op", 0, 0),
                              ("ren", 1, 0), ("svc", 0, 1)):
-    _bq[name] = raw.execute("INSERT INTO users(username, created_at, name_selbst_gewaehlt, is_service) "
+    _bq[name] = raw.execute("INSERT INTO users(username, created_at, name_self_chosen, is_service) "
                             "VALUES (?,?,?,?)", (name, t0, itself, service)).lastrowid
 for name in ("oi", "ren", "svc"):
     raw.execute("INSERT INTO oidc_identity(issuer, subject, user_id) VALUES (?,?,?)",
@@ -810,17 +810,17 @@ for name in ("oi", "ren", "svc"):
 for source, identifier, name, offset in (("ldap", "u-ld", "ld", 0),
                                        ("saml", f"{Store.WITHOUT_IDENTIFIER}{_bq['ph']}", "ph", 1),
                                        ("ldap", "u-nb", "nb", 5 * TAG)):
-    raw.execute("INSERT INTO federated_identity(quelle, kennung, user_id, gebunden_at) VALUES (?,?,?,?)",
+    raw.execute("INSERT INTO federated_identity(source, identifier, user_id, bound_at) VALUES (?,?,?,?)",
                 (source, identifier, _bq[name], t0 + offset))
 raw.execute("INSERT INTO setting(key, value) VALUES (?, ?)", (Store.NAME_ITSELF_BACKFILLED, str(t0)))
 raw.execute("PRAGMA user_version = 11")
 raw.commit()
 _sp_q = {z[1] for z in raw.execute("PRAGMA table_info(users)")}
 raw.close()
-r.check("Precondition: file at stamp 11 with `name_selbst_gewaehlt`, without `users.name_quelle`",
-        _nq == 1 and "name_quelle" not in _sp_q and "name_selbst_gewaehlt" in _sp_q, str(_nq))
+r.check("Precondition: file at stamp 11 with `name_self_chosen`, without `users.name_source`",
+        _nq == 1 and "name_source" not in _sp_q and "name_self_chosen" in _sp_q, str(_nq))
 bq = _ldap(path)
-_hq = {z["username"]: z["name_quelle"] for z in bq.store._all("SELECT username, name_quelle FROM users")}
+_hq = {z["username"]: z["name_source"] for z in bq.store._all("SELECT username, name_source FROM users")}
 r.check("Back-fill: OIDC account → oidc, binding from creation → its source (also the placeholder); "
         "a later re-binding, the operator account, a self-chosen name and a service account not",
         _hq == {"oi": "oidc", "ld": "ldap", "ph": "saml", "nb": None, "op": None, "ren": None, "svc": None},
@@ -830,11 +830,11 @@ r.check("… the back-filled OIDC account does not bind via the name over LDAP",
         u is None and bq.store.get_federated_identifier("ldap", _bq["oi"]) is None)
 u = _sign_in(bq, "nb", {"id": "u-nb"})
 r.check("… a bound account keeps signing in (situation 1)", u is not None and u["id"] == _bq["nb"])
-bq.store._exec("UPDATE users SET name_quelle = NULL WHERE username = 'ld'")
+bq.store._exec("UPDATE users SET name_source = NULL WHERE username = 'ld'")
 bq.store.db.close()
 bq2 = _ldap(path)
 r.check("Second start: the back-fill does not run again (marker set)",
-        bq2.store._one("SELECT name_quelle AS q FROM users WHERE username='ld'")["q"] is None
+        bq2.store._one("SELECT name_source AS q FROM users WHERE username='ld'")["q"] is None
         and bq2.store.get_setting(Store.NAME_SOURCE_BACKFILLED) is not None)
 
 # ══ Configuration check ═════════════════════════════════════════════════════════════════════

@@ -121,7 +121,7 @@ r.check("(a) gateway: TINYSESAM_ALLOWED_GROUPS without TINYSESAM_OIDC_SCOPES war
 
 # ── (b) Claim-Token im Container-Log ─────────────────────────────────────────────────────────────
 # Measured in the container (2026-09-27): stderr IS the log. First the token stood there in plain text,
-# then the line „Der Wert steht bewusst NICHT im Log". The container is simulated by having
+# then the line "Der Wert steht bewusst NICHT im Log" (German output, quoted). The container is simulated by having
 # stderr AND the security logger write into the same buffer — that is `docker logs`.
 # (Mutation probe: remove the condition `not console` in `_admin_claim_announce`, or drop the
 # fallback to the file → the token is in the buffer again → red.)

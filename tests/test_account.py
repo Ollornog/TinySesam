@@ -177,9 +177,9 @@ ok("A-2: SECURITY.md (en/de) describes on_security_event with all events")
 # A broken hook aborts nothing, but is not silent.
 import logging as _logging
 from tinysesam import security as _sec
-_zeilen = []
+_lines = []
 _h = _logging.Handler()
-_h.emit = lambda rec: _zeilen.append(rec.getMessage())
+_h.emit = lambda rec: _lines.append(rec.getMessage())
 _sec.seclog.addHandler(_h)
 
 
@@ -192,7 +192,7 @@ _r = c.post("/auth/password", json={"current": "wieder-ein-neues", "new": "neues
 _sec.seclog.removeHandler(_h)
 auth.on_security_event = None
 assert _r.status_code == 200, "a failing hook must not break the password change"
-assert any("on_security_event failed" in z and "password_changed" in z for z in _zeilen), _zeilen
+assert any("on_security_event failed" in z and "password_changed" in z for z in _lines), _lines
 assert auth._check_password("admin", "neuespasswort")
 ok("on_security_event: error in the hook → operation stands, line in the security log")
 
@@ -282,7 +282,7 @@ import subprocess as _sp  # noqa: E402
 from voraussetzung import pflicht_werkzeug  # noqa: E402
 
 # If node is missing, that is red, not silently skipped (see `pflicht_werkzeug`).
-# (Mutation probe: run with a PATH without node → red; with TINYSESAM_OHNE_NODE=1 → ⚠ line.)
+# (Mutation probe: run with a PATH without node → red; with `TINYSESAM_OHNE_NODE`=1 → ⚠ line.)
 _node = pflicht_werkzeug("node", "account page: list functions against prepared names")
 if _node:
     _evil = '<img src=x onerror=alert(1)>"\'&'

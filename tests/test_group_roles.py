@@ -1,4 +1,4 @@
-"""Group→Role-Mapping (IdP-Gruppen → lokale Rollen) + available_roles im Admin-Panel."""
+"""Group→Role-Mapping (IdP groups → local roles) + available_roles im Admin-Panel."""
 import os
 import tempfile, os
 from fastapi import FastAPI

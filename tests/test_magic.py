@@ -1,4 +1,4 @@
-"""Phase 5: Mailer-Hook + Magic-Link (Einmal-Login per E-Mail)."""
+"""Phase 5: Mailer-Hook + Magic-Link (one-time login by e-mail)."""
 import os
 import tempfile, os
 from fastapi import FastAPI, Depends

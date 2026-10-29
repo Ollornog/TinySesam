@@ -368,7 +368,7 @@ def _set_cookies(response) -> list:
     return list(h.get_list("set-cookie") if hasattr(h, "get_list") else h.getlist("set-cookie"))
 
 
-def _zeilen(response, name=CK) -> list:
+def _lines(response, name=CK) -> list:
     """The raw Set-Cookie lines of this response for exactly this name."""
     return [z for z in _set_cookies(response) if z.startswith(name + "=")]
 
@@ -489,7 +489,7 @@ def _client(ap):
 _a0, _ = _instance()
 _r0 = Response()
 _a0.issue_csrf(_r0)
-_ATTR = _attribute(_zeilen(_r0)[0])
+_ATTR = _attribute(_lines(_r0)[0])
 assert _ATTR == {"path=/", "samesite=lax", "secure"}, _ATTR
 
 # ---------- E1. ensure_csrf(): keep an existing token, otherwise set one ----------
@@ -497,19 +497,19 @@ assert _ATTR == {"path=/", "samesite=lax", "secure"}, _ATTR
 _a, _ap = _instance()
 _c = _client(_ap)
 _r = _c.get("/app/formular")
-assert _r.status_code == 200 and len(_zeilen(_r)) == 1, _set_cookies(_r)
-_t1 = _value(_zeilen(_r)[0])
+assert _r.status_code == 200 and len(_lines(_r)) == 1, _set_cookies(_r)
+_t1 = _value(_lines(_r)[0])
 assert _slot(_r.text) == _t1 and _FORM.fullmatch(_t1), (_slot(_r.text), _t1)
-assert _attribute(_zeilen(_r)[0]) == _ATTR, "ensure_csrf sets different attributes than issue_csrf"
+assert _attribute(_lines(_r)[0]) == _ATTR, "ensure_csrf sets different attributes than issue_csrf"
 assert f"content='{_a.csrf_cookie_name}'" in _r.text
 ok("ensure_csrf: first visit sets the cookie (attributes like issue_csrf), return value = form value")
 
 _r = _c.get("/app/formular")
-assert not _zeilen(_r) and _slot(_r.text) == _t1, (_set_cookies(_r), _slot(_r.text))
+assert not _lines(_r) and _slot(_r.text) == _t1, (_set_cookies(_r), _slot(_r.text))
 _r = _c.get("/app/fertig")
-assert not _zeilen(_r) and _slot(_r.text) == _t1 == _r.headers["x-ensure"]
+assert not _lines(_r) and _slot(_r.text) == _t1 == _r.headers["x-ensure"]
 _r = _c.get("/auth/login")
-assert not _zeilen(_r) and _slot(_r.text) == _t1, "render_page and ensure_csrf share the token"
+assert not _lines(_r) and _slot(_r.text) == _t1, "render_page and ensure_csrf share the token"
 assert _c.post("/app/speichern", data={"_csrf": _t1}).status_code == 200
 assert _c.post("/app/speichern", data={"_csrf": "falsch"}).status_code == 403
 ok("ensure_csrf: existing token stays (no Set-Cookie) — the forms of other tabs stay valid")
@@ -518,7 +518,7 @@ ok("ensure_csrf: existing token stays (no Set-Cookie) — the forms of other tab
 # (Mutation probe: in `_csrf_of_request` do not remember the new token per request → red.)
 _c2 = _client(_ap)
 _r = _c2.get("/app/fertig")
-assert len(_zeilen(_r)) == 1 and _value(_zeilen(_r)[0]) == _slot(_r.text) == _r.headers["x-ensure"], \
+assert len(_lines(_r)) == 1 and _value(_lines(_r)[0]) == _slot(_r.text) == _r.headers["x-ensure"], \
     (_set_cookies(_r), _slot(_r.text), _r.headers.get("x-ensure"))
 ok("csrf_token() + ensure_csrf(finished response): the same token in form and cookie")
 
@@ -530,15 +530,15 @@ for _bad in ("kurz", "A" * 31, "A" * 129, "A" * 30 + "<>", "A" * 30 + "'x"):
         _cs = _client(_ap)
         _cs.cookies.set(CK, _bad)
         _r = _cs.get(_path)
-        assert len(_zeilen(_r)) == 1, (_bad, _path, _set_cookies(_r))
-        _new = _value(_zeilen(_r)[0])
+        assert len(_lines(_r)) == 1, (_bad, _path, _set_cookies(_r))
+        _new = _value(_lines(_r)[0])
         assert _new != _bad and _FORM.fullmatch(_new) and _slot(_r.text) == _new, \
             (_bad, _path, _new, _slot(_r.text))
 _good = "B" * 43                          # e.g. secrets.token_urlsafe(32) — valid, stays
 _cs = _client(_ap)
 _cs.cookies.set(CK, _good)
 _r = _cs.get("/app/formular")
-assert not _zeilen(_r) and _slot(_r.text) == _good
+assert not _lines(_r) and _slot(_r.text) == _good
 ok("ensure_csrf/csrf_token/render_page: invalid cookie (short, too long, foreign characters) is replaced")
 
 _ax, _apx = _instance(csrf_enabled=False)
@@ -551,18 +551,18 @@ ok("csrf_enabled=False: ensure_csrf sets nothing and returns ''")
 _c3 = _client(_ap)
 _old = _slot(_c3.get("/app/formular").text)
 _r = _c3.post("/app/anmelden")
-assert len(_zeilen(_r)) == 1, _set_cookies(_r)
-_new = _value(_zeilen(_r)[0])
+assert len(_lines(_r)) == 1, _set_cookies(_r)
+_new = _value(_lines(_r)[0])
 assert _new != _old and _r.headers["x-csrf"] == _new, (_old, _new, _r.headers.get("x-csrf"))
 _r = _c3.get("/app/formular")
-assert not _zeilen(_r) and _slot(_r.text) == _new
+assert not _lines(_r) and _slot(_r.text) == _new
 ok("own sign-in route (start_session + set_cookie): token rotated, ensure_csrf afterwards returns the new one")
 
 # Signing out in the same response: ensure_csrf afterwards sets a NEW one (replacing the delete line).
 # (Mutation probe: in `_set_csrf_cookie` do not remove the existing line → red.)
 _r = _c3.post("/app/abmelden")
-assert len(_zeilen(_r)) == 1 and not _deleted(_zeilen(_r)[0]), _set_cookies(_r)
-assert _value(_zeilen(_r)[0]) == _r.headers["x-csrf"] not in (_new, _old)
+assert len(_lines(_r)) == 1 and not _deleted(_lines(_r)[0]), _set_cookies(_r)
+assert _value(_lines(_r)[0]) == _r.headers["x-csrf"] not in (_new, _old)
 ok("logout() + ensure_csrf() in one response: exactly one line, a new token instead of the deletion")
 
 # Way 2 (finished response) and sign-in/sign-out in the SAME response does not work — the limit the
@@ -612,7 +612,7 @@ def _turns(name, cl, step, ap_=None):
     assert old, f"{name}: precondition — a CSRF cookie exists before sign-in"
     r = step(cl)
     assert r.status_code in (200, 303), (name, r.status_code, r.text[:200])
-    lines = _zeilen(r)
+    lines = _lines(r)
     assert len(lines) == 1, f"{name}: the CSRF token was not rotated: {_set_cookies(r)}"
     new = _value(lines[0])
     assert new != old and _FORM.fullmatch(new), (name, old, new)
@@ -621,7 +621,7 @@ def _turns(name, cl, step, ap_=None):
     assert cl.post("/app/speichern", data={"_csrf": old}).status_code == 403, f"{name}: old token is valid"
     assert cl.post("/app/speichern", data={"_csrf": new}).status_code == 200, f"{name}: new one is not valid"
     page_html = cl.get("/app/formular")
-    assert not _zeilen(page_html) and _slot(page_html.text) == new, (name, _slot(page_html.text))
+    assert not _lines(page_html) and _slot(page_html.text) == new, (name, _slot(page_html.text))
     # A built-in page after sign-in (the sign-out prompt) carries the new token.
     page_html = cl.get("/auth/logout", headers={"Sec-Fetch-Site": "cross-site"})
     assert page_html.status_code == 200 and _slot(page_html.text) == new, (name, page_html.status_code)
@@ -633,7 +633,7 @@ def _stays(name, cl, step, why="a step-up does not invalidate other tabs"):
     old = cl.cookies.get(CK)
     r = step(cl)
     assert r.status_code in (200, 303), (name, r.status_code, r.text[:200])
-    assert not _zeilen(r) and cl.cookies.get(CK) == old, f"{name}: rotates the CSRF token: {_set_cookies(r)}"
+    assert not _lines(r) and cl.cookies.get(CK) == old, f"{name}: rotates the CSRF token: {_set_cookies(r)}"
     ok(f"{name}: CSRF token stays ({why})")
 
 
@@ -818,7 +818,7 @@ def _sign_out_deletes(name, step):
     assert _password(cl).status_code == 303
     old = cl.cookies.get(CK)
     r = step(cl)
-    lines = _zeilen(r)
+    lines = _lines(r)
     assert len(lines) == 1 and _deleted(lines[0]), f"{name}: {_set_cookies(r)}"
     assert _attribute(lines[0]) == _ATTR, (name, lines[0])     # Secure + Path=/: otherwise the browser
     assert cl.cookies.get(CK) is None                            # discards the __Host- deletion

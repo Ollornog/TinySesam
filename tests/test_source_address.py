@@ -429,8 +429,8 @@ r.check("… after the link expires exactly one further for both",
 # ── Review round 2026-09-27 (p2 F2): the in-flight window of the outbox ─────────────────────────────
 # The row `federation_email_confirm` arises only after delivery, the rejection of a taken
 # address immediately. `open_token` asked only for a link to the SAME address. If the link to
-# ziel@ is still in worker 1's outbox (slow relay), the user sets their `mail` to probe@
-# and signs in via worker 2: that sent a link to probe@ if ziel@ was free, and
+# `ziel@` is still in worker 1's outbox (slow relay), the user sets their `mail` to probe@
+# and signs in via worker 2: that sent a link to probe@ if `ziel@` was free, and
 # none if it was taken — plus two links on the same day. Now every open link holds it off.
 import threading  # noqa: E402
 

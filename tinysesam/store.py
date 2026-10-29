@@ -55,9 +55,9 @@ CREATE TABLE IF NOT EXISTS users (
     -- (older version after a downgrade, raw SQL, a rename by hand, see the
     -- triggers in `_migrate`) — and is filled in later (`_backfill_pots`). '' = no address.
     -- Through the buckets the database also enforces the shared identifier space (`_trigger_sql`).
-    topf_name     TEXT,
-    topf_mail     TEXT,
-    idp_bestaetigt_at INTEGER, -- last confirmation by the OIDC provider; 0 = no, NULL = never (finding 8)
+    folded_name     TEXT,
+    folded_mail     TEXT,
+    idp_confirmed_at INTEGER, -- last confirmation by the OIDC provider; 0 = no, NULL = never (finding 8)
     -- From when does the identifier belong to this account? (limit a, G2) The highest `login_attempt.id`
     -- or `audit.id` at the moment name or address entered their counting bucket — at
     -- creation, on rename, on address change and when an address is added later. What lies below
@@ -65,10 +65,10 @@ CREATE TABLE IF NOT EXISTS users (
     -- one second, and independent of the clock. NULL = data from before this column, then
     -- creation counts as the limit (`created_at`, `setup_limit`). Set by `create_user` and
     -- `_set_identifier`, with a foreign writer by the recompute trigger (`_trigger_sql`).
-    name_versuch_ab INTEGER,
-    mail_versuch_ab INTEGER,
-    name_audit_ab   INTEGER,
-    mail_audit_ab   INTEGER,
+    name_attempt_from INTEGER,
+    mail_attempt_from INTEGER,
+    name_audit_from   INTEGER,
+    mail_audit_from   INTEGER,
     -- From which federated source does the name originate ('oidc', 'saml', 'ldap')? Set when the
     -- source creates the account; NULL = assigned by the operator, chosen by the person or data from before
     -- this column. A name from one source says nothing about who is called that in ANOTHER:
@@ -76,13 +76,13 @@ CREATE TABLE IF NOT EXISTS users (
     -- sign-in via another source therefore never binds this account via the name
     -- (`_rebinding_reason`, attack round 2026-09-26); the same source may keep replacing its placeholder
     -- with the real identifier. A rename resets it.
-    name_quelle     TEXT,
+    name_source     TEXT,
     -- Did the person choose the name themselves (registration, renaming in self-service)?
     -- 1 = yes: then it says nothing about who is called that in the directory, and a sign-in via
     -- LDAP/SAML never binds this account via the name (G2-N, `_rebinding_reason`). 0 = assigned by the
     -- operator (panel, API, rename with `by_operator=True`) or from a source
-    -- (then `name_quelle` says which).
-    name_selbst_gewaehlt INTEGER NOT NULL DEFAULT 0
+    -- (then `name_source` says which).
+    name_self_chosen INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS api_key (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -157,10 +157,10 @@ CREATE TABLE IF NOT EXISTS oidc_identity (
 -- its roles. The identifier here is objectGUID/entryUUID (LDAP) or the NameID (SAML) — it
 -- survives a rename and is not reused.
 CREATE TABLE IF NOT EXISTS federated_identity (
-    quelle      TEXT NOT NULL,              -- 'ldap' | 'saml'
-    kennung     TEXT NOT NULL,              -- the stable identifier from the directory
+    source      TEXT NOT NULL,              -- 'ldap' | 'saml'
+    identifier     TEXT NOT NULL,              -- the stable identifier from the directory
     user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    gebunden_at INTEGER NOT NULL,           -- when the binding came about (also: bound later)
+    bound_at INTEGER NOT NULL,           -- when the binding came about (also: bound later)
     -- The name under which the account last signed in via this source, in the counting bucket
     -- (`norm_identifier`) — only if it is neither name nor address of the account (G5). After a
     -- rename in the directory the person types the NEW name, and the series is counted under it
@@ -168,18 +168,18 @@ CREATE TABLE IF NOT EXISTS federated_identity (
     -- The name belongs to the account that last signed in like this (`set_binding_name` deletes
     -- it from foreign bindings), and no other account can take it as name or address
     -- (identifier trigger, `TinySesam.identifier_taken`; review round lockouts/counters 2026-09-27).
-    name_topf   TEXT,
-    PRIMARY KEY (quelle, kennung)
+    directory_name_folded   TEXT,
+    PRIMARY KEY (source, identifier)
 );
--- Binding via the name opened by the operator (G1): until `bis` the next sign-in via
+-- Binding via the name opened by the operator (G1): until `until` the next sign-in via
 -- LDAP/SAML binds this account via its name, even after the deadline (`federation_name_binding_days`)
 -- and even with a self-chosen name. Written by `federation_unbind`, deleted as soon as
 -- the binding stands. Without a row the deadline decides.
-CREATE TABLE IF NOT EXISTS namensbindung (
-    quelle  TEXT NOT NULL,
+CREATE TABLE IF NOT EXISTS name_binding (
+    source  TEXT NOT NULL,
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    bis     INTEGER NOT NULL,
-    PRIMARY KEY (quelle, user_id)
+    until     INTEGER NOT NULL,
+    PRIMARY KEY (source, user_id)
 );
 CREATE TABLE IF NOT EXISTS session (
     token_hash TEXT PRIMARY KEY,               -- sha256(plaintext token); the plaintext is ONLY in the
@@ -196,10 +196,10 @@ CREATE TABLE IF NOT EXISTS session (
     remember   INTEGER NOT NULL DEFAULT 1,   -- "stay signed in" (persistent cookie)
     ip         TEXT,
     user_agent TEXT,
-    zuletzt    INTEGER,                       -- last request with this session (inactivity timeout, F-05)
-    andere_beenden INTEGER NOT NULL DEFAULT 0, -- half session: end the others when the chain completes (limit d)
-    bleiben_gewaehlt INTEGER NOT NULL DEFAULT 0, -- "stay signed in" EXPLICITLY chosen (F-05: then the second idle limit applies)
-    nachfolger TEXT                           -- superseded by this session (grace period after rotation, A-6); NULL = current
+    last_seen    INTEGER,                       -- last request with this session (inactivity timeout, F-05)
+    end_others INTEGER NOT NULL DEFAULT 0, -- half session: end the others when the chain completes (limit d)
+    stay_chosen INTEGER NOT NULL DEFAULT 0, -- "stay signed in" EXPLICITLY chosen (F-05: then the second idle limit applies)
+    successor TEXT                           -- superseded by this session (grace period after rotation, A-6); NULL = current
 );
 -- Which application has the provider approved for this session? (T-14)
 -- One row per session AND application: whoever signs in for app-a does not thereby get
@@ -213,20 +213,20 @@ CREATE TABLE IF NOT EXISTS oidc_grant (
     roles      TEXT NOT NULL DEFAULT '[]',    -- roles the provider yielded FOR THIS application
     PRIMARY KEY (token_hash, client)
 );
-CREATE TABLE IF NOT EXISTS oidc_sitzung (    -- refresh token of an OIDC session per client (4a, revocation follows the IdP)
+CREATE TABLE IF NOT EXISTS oidc_session (    -- refresh token of an OIDC session per client (4a, revocation follows the IdP)
     token_hash  TEXT NOT NULL REFERENCES session(token_hash) ON DELETE CASCADE,
     client      TEXT NOT NULL,                -- key from cfg.oidc_clients, "*" = single client
     sub         TEXT NOT NULL,                -- subject at the provider; a different one ends the session
     refresh     TEXT NOT NULL,                -- encrypted (vault.Vault), never in plaintext
-    geprueft_at INTEGER NOT NULL,             -- last exchange (or: claimed, see Store)
+    checked_at INTEGER NOT NULL,             -- last exchange (or: claimed, see Store)
     client_id   TEXT,                         -- to which client_id the token went (NULL: before this column)
-    erfolg_at   INTEGER,                      -- last SUCCESSFUL re-check (upper bound without re-check); NULL: before this column
+    success_at   INTEGER,                      -- last SUCCESSFUL re-check (upper bound without re-check); NULL: before this column
     PRIMARY KEY (token_hash, client)
 );
 -- Signed out of ONLY THIS application (T-22, `forward_logout="app"`): the session stays, but the
 -- forward auth no longer lets it through for this host until the person explicitly
 -- chooses "continue" on the login page. Without the row "sign out only here" would be a page reload.
-CREATE TABLE IF NOT EXISTS gate_abgemeldet (
+CREATE TABLE IF NOT EXISTS gate_signed_out (
     token_hash TEXT NOT NULL REFERENCES session(token_hash) ON DELETE CASCADE,
     host       TEXT NOT NULL,
     at         INTEGER NOT NULL,
@@ -288,15 +288,15 @@ CREATE TABLE IF NOT EXISTS login_attempt (   -- brute-force regulation
     ip       TEXT,
     success  INTEGER NOT NULL,
     method   TEXT,
-    offen    INTEGER NOT NULL DEFAULT 0      -- 1: pre-booked, outcome still open (G9, `reserve_attempt`)
+    pending    INTEGER NOT NULL DEFAULT 0      -- 1: pre-booked, outcome still open (G9, `reserve_attempt`)
 );
-CREATE TABLE IF NOT EXISTS fehlserie (       -- failed attempts IN A ROW per identifier, without a time window (B2-6)
-    topf    TEXT NOT NULL,                   -- folded identifier, the same key as login_attempt.username
-    art     TEXT NOT NULL,                   -- method (password, pin, totp …): a reset only clears its own
-    anzahl  INTEGER NOT NULL,
-    seit    INTEGER NOT NULL,                -- first failed attempt of the current series
-    zuletzt INTEGER NOT NULL,
-    PRIMARY KEY (topf, art)
+CREATE TABLE IF NOT EXISTS failure_series (       -- failed attempts IN A ROW per identifier, without a time window (B2-6)
+    folded    TEXT NOT NULL,                   -- folded identifier, the same key as login_attempt.username
+    kind     TEXT NOT NULL,                   -- method (password, pin, totp …): a reset only clears its own
+    count  INTEGER NOT NULL,
+    since    INTEGER NOT NULL,                -- first failed attempt of the current series
+    last_seen INTEGER NOT NULL,
+    PRIMARY KEY (folded, kind)
 );
 CREATE TABLE IF NOT EXISTS audit (           -- audit log (login/logout/admin actions)
     id       INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -319,7 +319,7 @@ CREATE INDEX IF NOT EXISTS idx_attempt_ip ON login_attempt(ip, ts);
 CREATE INDEX IF NOT EXISTS idx_apikey_user ON api_key(user_id);
 -- G1: "Which accounts still carry no identifier for this source?" (startup message, binding of existing accounts)
 -- asks for its row per account; without an index that would read all bindings of the source per account.
-CREATE INDEX IF NOT EXISTS idx_fed_quelle_user ON federated_identity(quelle, user_id);
+CREATE INDEX IF NOT EXISTS idx_fed_source_user ON federated_identity(source, user_id);
 """
 
 
@@ -450,7 +450,7 @@ def norm_identifier(identifier) -> str:
 
 
 def _identifier_sql(value) -> Optional[str]:
-    """`norm_identifier` for SQLite (`tinysesam_kennung`): NULL stays NULL, and an error becomes NULL
+    """`norm_identifier` for SQLite (`tinysesam_identifier`): NULL stays NULL, and an error becomes NULL
     instead of an exception in the middle of the query."""
     if value is None:
         return None
@@ -494,7 +494,7 @@ class _Clock:
     jump back by an hour it therefore keeps counting normally instead of standing still for an hour
     — deadlines keep expiring. Across a restart the database itself carries the state:
     `Store()` raises the clock to the most recent timestamp it finds (`at_least()`) —
-    including the state that `Store` writes at most once a minute (`uhr_stand`, on every
+    including the state that `Store` writes at most once a minute (`clock_state`, on every
     write access and on every write probe of the health check). What expired in the last minute before
     a restart, or during a time in which nothing was written at all, can therefore
     remain valid for up to that interval longer — but not for its full remaining lifetime.
@@ -517,7 +517,7 @@ class _Clock:
     after leaving, it continues from the advanced state with the real
     monotonic time — as after `mock.patch`. The lead therefore remains: for the lifetime
     of the process (real time does not catch up, both run at the same speed) and via
-    `uhr_stand` in this database for every later opening, as long as the pause in between is shorter
+    `clock_state` in this database for every later opening, as long as the pause in between is shorter
     than the lead. That is the safe direction; a test that sets the clock far ahead
     therefore uses its own throwaway database. The price of the plausibility limit is paid only by
     a backwards jump of the wall clock that falls into a pause of more than a year without any call:
@@ -558,7 +558,7 @@ class _Clock:
             if not 0.0 <= step <= self.MONO_STEP_MAX_SEC:
                 # No real monotonic clock (backwards, or a jump of decades: freezegun
                 # replaces `time.monotonic` with the epoch time). Do not advance — otherwise
-                # the clock jumped ahead by ≈57 years and `uhr_stand` pinned every later opening of the
+                # the clock jumped ahead by ≈57 years and `clock_state` pinned every later opening of the
                 # database there. The wall clock forwards still applies, backwards the clock stands —
                 # even if the monotonic source itself jumps back (leaving freeze_time).
                 step = 0.0
@@ -692,11 +692,12 @@ class Store:
         self.db.execute("PRAGMA secure_delete=ON")
         # The counting bucket as an SQL function — ONLY for queries of this connection (`anonymize_audit`),
         # never in schema, trigger or index: there it would break every writer without it (`_trigger_sql`).
-        self.db.create_function("tinysesam_kennung", 1, _identifier_sql, deterministic=True)
+        self.db.create_function("tinysesam_identifier", 1, _identifier_sql, deterministic=True)
         self._lock = threading.Lock()
         self._clock_secured: Optional[float] = None   # monotonic time of the last saved clock state
         self._written: Optional[float] = None     # monotonic time of the last successful commit
         with self._lock:
+            self._english_names()
             self.db.executescript(SCHEMA)
             self.db.commit()
         self._migrate()
@@ -764,20 +765,20 @@ class Store:
     #: 7 — `api_key.kind`: automation and human keys (R6-5)
     #: 8 — `users.first_login_at`, `users.mfa_enroll_until` (R3-1) — state of 0.19.0
     #: 9 — `federated_identity`: stable directory identifiers for LDAP/SAML (F-11)
-    #: 10 — `users.topf_name`/`topf_mail` with index and triggers, indexes for the search by name
+    #: 10 — `users.folded_name`/`folded_mail` with index and triggers, indexes for the search by name
     #:      and address (NOCASE); existing data: lockouts from the panel to the operator mark
     #:      (`disabled=2`), addresses of open sign-ups without proof (`_migrate`)
-    #: 11 — `fehlserie`: consecutive failed attempts per identifier (B2-6); `users.is_admin=2` means
+    #: 11 — `failure_series`: consecutive failed attempts per identifier (B2-6); `users.is_admin=2` means
     #:      "granted by the identity provider" (H-5) — the column itself stays as it is;
-    #:      `users.is_owner` (owner); `session.zuletzt` (inactivity timeout, F-05);
-    #:      `session.andere_beenden` (limit d); `oidc_sitzung` (refresh token, 4a);
-    #:      `users.idp_bestaetigt_at` (API keys follow the IdP, finding 8); triggers
-    #:      `trg_users_kennung_insert`/`_update`: name and address are ONE identifier space, enforced
+    #:      `users.is_owner` (owner); `session.last_seen` (inactivity timeout, F-05);
+    #:      `session.end_others` (limit d); `oidc_session` (refresh token, 4a);
+    #:      `users.idp_confirmed_at` (API keys follow the IdP, finding 8); triggers
+    #:      `trg_users_identifier_insert`/`_update`: name and address are ONE identifier space, enforced
     #:      by the database (G12c; created on every start, not at the stamp);
-    #:      `users.name_versuch_ab`/`mail_versuch_ab`/`name_audit_ab`/`mail_audit_ab`: from when an
+    #:      `users.name_attempt_from`/`mail_attempt_from`/`name_audit_from`/`mail_audit_from`: from when an
     #:      identifier belongs to the account (G2, NULL in existing data), plus the recompute triggers that raise them on
-    #:      a foreign writer; `federated_identity.name_topf`: the name in the directory
-    #:      (G5); `login_attempt.offen`: a pre-booking whose outcome is still open (G9). All
+    #:      a foreign writer; `federated_identity.directory_name_folded`: the name in the directory
+    #:      (G5); `login_attempt.pending`: a pre-booking whose outcome is still open (G9). All
     #:      of it additive and idempotent on every start — state of 0.21.0.
     #: 12 — 0.22.0: stored values of the public interface in English (PO decision
     #:      2026-09-27): `api_key.kind` `automaton`/`human` → `automation`/`human` (on EVERY start —
@@ -788,7 +789,7 @@ class Store:
     #:      0.21.x takes a `human` key for an automation key (valid without a session). It
     #:      still opens the file, but reports the newer schema version at start — way back
     #:      with SQL in docs/OPERATIONS.md.
-    #: 13 — `gate_abgemeldet` (signed out of one application only, T-22) and `oidc_id_token` (the
+    #: 13 — `gate_signed_out` (signed out of one application only, T-22) and `oidc_id_token` (the
     #:      ID token as a sign-out hint for the provider, encrypted). Additive; an older version
     #:      leaves both tables in place, but does not rotate them along when rotating a session — the
     #:      rows then drop away with the old session (sign-out "here only" forgotten, provider
@@ -800,26 +801,167 @@ class Store:
     #:      `Store._vocabulary_english`, `tinysesam/_vocabulary.py`): `audit.event` (`oidc_widerruf` →
     #:      `oidc_revoked`, `ldap_kennung_gebunden` → `ldap_identifier_bound` …), the keys and tokens in
     #:      `audit.detail` (`grund=kein_konto` → `reason=no_account` …), the replacement name in
-    #:      `audit.username` (`gelöscht#<id>` → `deleted#<id>`), `fehlserie.art`/`login_attempt.method`
-    #:      (`pin_folge` → `pin_chain`), and the message of the identifier triggers (`tinysesam: kennung
-    #:      vergeben` → `tinysesam: identifier taken`; replaced by `_set_trigger` on every start). No
+    #:      `audit.username` (`gelöscht#<id>` → `deleted#<id>`), `failure_series.kind`/`login_attempt.method`
+    #:      (`pin_folge` → `pin_chain`), and the message of the identifier triggers
+    #:      (`tinysesam: kennung vergeben` → `tinysesam: identifier taken`; replaced by `_set_trigger` on every start). No
     #:      column changes. The stamp rises because an older version does not know the new values: it
     #:      still opens the file and reports the newer schema version at start, shows the new event names
     #:      as unknown (display only) — and does not recognise an address-change conflict
     #:      (`on_confirmation=1`, `own_events`) or the counted lockout notice (`lockout_notice`) in a new row.
     #:      Way back with SQL in docs/OPERATIONS.md. Read paths take the old and the new spelling.
-    SCHEMA_VERSION = 15
+    #: 16 — the database names in English (PO decision 2026-10-29, T-29 follow-up; `Store._english_names`):
+    #:      tables `namensbindung` → `name_binding`, `oidc_sitzung` → `oidc_session`, `gate_abgemeldet` →
+    #:      `gate_signed_out`, `fehlserie` → `failure_series`; the columns of `users`, `federated_identity`,
+    #:      `name_binding`, `session`, `oidc_session`, `login_attempt` and `failure_series` (see `RENAMED_COLUMNS`),
+    #:      the indexes and triggers built on them, six keys in `setting` and the placeholder prefix
+    #:      `~ohne-kennung:` of `federated_identity.identifier`. No data changes beyond that. Runs
+    #:      BEFORE the schema script (the new names must not appear as empty tables next to the old ones) and
+    #:      only if an old name is present; on every other start it reads `sqlite_master` and is done. An older
+    #:      version opens the file with the "newer schema version" warning and then does not find its tables —
+    #:      way back with SQL in docs/OPERATIONS.md.
+    SCHEMA_VERSION = 16
+
+    #: Old table name → new table name (schema 16).
+    RENAMED_TABLES = {"namensbindung": "name_binding", "oidc_sitzung": "oidc_session",
+                      "gate_abgemeldet": "gate_signed_out", "fehlserie": "failure_series"}
+
+    #: Table (by its NEW name) → {old column: new column} (schema 16).
+    RENAMED_COLUMNS = {
+        "users": {"topf_name": "folded_name", "topf_mail": "folded_mail", "idp_bestaetigt_at": "idp_confirmed_at",
+                  "name_versuch_ab": "name_attempt_from", "mail_versuch_ab": "mail_attempt_from",
+                  "name_audit_ab": "name_audit_from", "mail_audit_ab": "mail_audit_from",
+                  "name_quelle": "name_source", "name_selbst_gewaehlt": "name_self_chosen"},
+        "federated_identity": {"quelle": "source", "kennung": "identifier", "gebunden_at": "bound_at",
+                               "name_topf": "directory_name_folded"},
+        "name_binding": {"quelle": "source", "bis": "until"},
+        "session": {"zuletzt": "last_seen", "andere_beenden": "end_others", "bleiben_gewaehlt": "stay_chosen",
+                    "nachfolger": "successor"},
+        "oidc_session": {"geprueft_at": "checked_at", "erfolg_at": "success_at"},
+        "login_attempt": {"offen": "pending"},
+        "failure_series": {"topf": "folded", "art": "kind", "anzahl": "count", "seit": "since",
+                           "zuletzt": "last_seen"},
+    }
+
+    #: Indexes and triggers of the old names (dropped; the new names are created by the schema script, `_migrate`
+    #: and `_set_trigger`).
+    RENAMED_OBJECTS = {
+        "index": ("idx_fed_quelle_user", "ix_fed_name_topf", "ix_users_topf_name", "ix_users_topf_mail"),
+        "trigger": ("trg_users_topf_name", "trg_users_topf_mail", "trg_users_wechsel_name", "trg_users_wechsel_mail",
+                    "trg_users_kennung_insert", "trg_users_kennung_update"),
+    }
+
+    #: Keys in `setting` (schema 16), and the prefix of `foederation_seit:<source>`.
+    RENAMED_SETTINGS = {"allowlist_nach_idp_entzug": "allowlist_after_idp_revocation",
+                        "idp_bestand_gesetzt": "idp_inventory_set",
+                        "name_quelle_nachgetragen": "name_source_backfilled",
+                        "name_selbst_nachgetragen": "name_self_backfilled",
+                        "uhr_stand": "clock_state", "panel_sperren_bis": "panel_lock_until"}
+    RENAMED_SETTING_PREFIXES = {"foederation_seit:": "federation_since:"}
 
     #: The stored values up to 0.21.x and their English replacement (schema 12). The migration
     #: rewrites them, and whoever reads still maps an old value: an older version that ran
     #: on the same file after a rollback has left old values behind again.
     KEY_KINDS_OLD = {"automat": "automation", "mensch": "human"}
 
-    #: From this schema state on, `topf_name`/`topf_mail` are computed with today's `norm_identifier`.
+    #: From this schema state on, `folded_name`/`folded_mail` are computed with today's `norm_identifier`.
     #: Whoever changes the folding in `norm_identifier` raises `SCHEMA_VERSION` and sets this
     #: value to match — otherwise the buckets of the existing data would stand in the old folding in the index, and
     #: `account_by_bucket` would no longer find namesakes.
     BUCKET_SCHEMA = 10
+
+    def _english_names(self) -> int:
+        """Schema 16: bring the old German table, column, index, trigger and setting names of a file to
+        the English ones (before the schema script; see `SCHEMA_VERSION`). Returns the number of renamed things.
+
+        Idempotent and cheap on every start: if no old name is present, only `sqlite_master`, the column lists
+        of the seven tables and the keys of `setting` are read and nothing is written (also on a read-only file).
+        Everything happens in ONE transaction (`BEGIN IMMEDIATE`, as with the session tokens in `_migrate`): an
+        abort leaves the old names, and the next start runs it again.
+
+        * Old triggers and indexes are dropped first (SQLite would otherwise carry them along with the column
+          rename; the new ones come from the schema script and `_set_trigger`).
+        * A table that exists under the old AND the new name (a version without these names wrote into a file of
+          this one, after a rollback without the SQL) is merged: the rows of the old one are added to the new one
+          (`INSERT OR IGNORE`, the columns both have), then the old one goes.
+        * A column that exists under the old AND the new name (same cause) is left alone, with a warning.
+        * `setting` keys and the placeholder prefix of `federated_identity.identifier` are renamed row by row;
+          if the new key already exists, it wins and the old row goes.
+        """
+        log = logging.getLogger("tinysesam")
+        names = {r[0] for r in self.db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+
+        def sources(table):
+            """The names under which `table` may exist right now: the new one and the old one."""
+            return [t for t in (table, *[o for o, n in self.RENAMED_TABLES.items() if n == table]) if t in names]
+
+        todo = [old for old in self.RENAMED_TABLES if old in names]
+        for table, columns in self.RENAMED_COLUMNS.items():
+            for source in sources(table):
+                have = {r["name"] for r in self.db.execute(f"PRAGMA table_info({source})")}
+                todo += [f"{source}.{old}" for old in columns if old in have]
+        if "setting" in names:
+            keys = {r[0] for r in self.db.execute("SELECT key FROM setting")}
+            todo += [old for old in self.RENAMED_SETTINGS if old in keys]
+            todo += [k for k in keys if any(k.startswith(p) for p in self.RENAMED_SETTING_PREFIXES)]
+        old_objects = [(kind, name) for kind, items in self.RENAMED_OBJECTS.items() for name in items
+                       if self.db.execute("SELECT 1 FROM sqlite_master WHERE type=? AND name=?",
+                                          (kind, name)).fetchone()]
+        placeholder = False
+        if "federated_identity" in names:
+            have = {r["name"] for r in self.db.execute("PRAGMA table_info(federated_identity)")}
+            column = "kennung" if "kennung" in have else ("identifier" if "identifier" in have else None)
+            placeholder = column is not None and self.db.execute(
+                f"SELECT 1 FROM federated_identity WHERE {column} LIKE '~ohne-kennung:%' LIMIT 1").fetchone() is not None
+        if not (todo or old_objects or placeholder):
+            return 0
+        done = 0
+        self.db.execute("BEGIN IMMEDIATE")
+        try:
+            for kind, name in old_objects:
+                self.db.execute(f"DROP {kind.upper()} IF EXISTS {name}")
+            # columns first, on whichever name the table has now: then a merge sees the same column names
+            for table, columns in self.RENAMED_COLUMNS.items():
+                for source in sources(table):
+                    have = {r["name"] for r in self.db.execute(f"PRAGMA table_info({source})")}
+                    for old, new in columns.items():
+                        if old not in have:
+                            continue
+                        if new in have:
+                            log.warning("Table %s has the old column %s and the new column %s — left as it is "
+                                        "(a version without the new names wrote into this file).", source, old, new)
+                            continue
+                        self.db.execute(f"ALTER TABLE {source} RENAME COLUMN {old} TO {new}")
+                        done += 1
+            for old, new in self.RENAMED_TABLES.items():
+                if old not in names:
+                    continue
+                if new in names:
+                    new_cols = {c["name"] for c in self.db.execute(f"PRAGMA table_info({new})")}
+                    common = [r["name"] for r in self.db.execute(f"PRAGMA table_info({old})") if r["name"] in new_cols]
+                    cols = ", ".join(common)
+                    self.db.execute(f"INSERT OR IGNORE INTO {new}({cols}) SELECT {cols} FROM {old}")
+                    self.db.execute(f"DROP TABLE {old}")
+                else:
+                    self.db.execute(f"ALTER TABLE {old} RENAME TO {new}")
+                done += 1
+            if "setting" in names:
+                for old, new in self.RENAMED_SETTINGS.items():
+                    self.db.execute("UPDATE OR IGNORE setting SET key=? WHERE key=?", (new, old))
+                    done += self.db.execute("DELETE FROM setting WHERE key=?", (old,)).rowcount
+                for old, new in self.RENAMED_SETTING_PREFIXES.items():
+                    self.db.execute("UPDATE OR IGNORE setting SET key = ? || substr(key, ?) WHERE key LIKE ?",
+                                    (new, len(old) + 1, old + "%"))
+                    done += self.db.execute("DELETE FROM setting WHERE key LIKE ?", (old + "%",)).rowcount
+            if placeholder:
+                self.db.execute("UPDATE federated_identity SET identifier = '~without-identifier:' || "
+                                "substr(identifier, 15) WHERE identifier LIKE '~ohne-kennung:%'")
+            self.db.execute("COMMIT")
+        except Exception:
+            self.db.execute("ROLLBACK")
+            raise
+        log.info("Database names renamed to English (schema 16): %d tables, columns and settings. "
+                 "Take a backup before updating (`tinysesam backup`); the way back is in docs/OPERATIONS.md.", done)
+        return done
 
     def _migrate(self):
         """Additive migrations for existing DBs: add missing columns (idempotent).
@@ -833,16 +975,16 @@ class Store:
             "session": [("mfa_at", "INTEGER"), ("remember", "INTEGER NOT NULL DEFAULT 1"),
                         ("factors_done", "TEXT NOT NULL DEFAULT '[]'"),
                         # NULL for existing sessions: counts as `created_at` (F-05).
-                        ("zuletzt", "INTEGER"),
-                        ("andere_beenden", "INTEGER NOT NULL DEFAULT 0"),
-                        ("bleiben_gewaehlt", "INTEGER NOT NULL DEFAULT 0"),
+                        ("last_seen", "INTEGER"),
+                        ("end_others", "INTEGER NOT NULL DEFAULT 0"),
+                        ("stay_chosen", "INTEGER NOT NULL DEFAULT 0"),
                         # NULL = the current session; set only for a superseded token in the
                         # grace period after rotation (A-6).
-                        ("nachfolger", "TEXT")],
+                        ("successor", "TEXT")],
             "totp_cred": [("last_step", "INTEGER")],
             # The client_id to which a refresh token went: if the operator recreates the client at the
             # provider, it rejects every old token — that is no "no" to the account.
-            "oidc_sitzung": [("client_id", "TEXT"), ("erfolg_at", "INTEGER")],
+            "oidc_session": [("client_id", "TEXT"), ("success_at", "INTEGER")],
             # Existing keys count as automation keys: the narrower interpretation. A key
             # that could previously serve admin routes loses that — exactly that is
             # the point of R6-5, and a rejected call leaves a row.
@@ -856,40 +998,40 @@ class Store:
                       ("first_login_at", "INTEGER"), ("mfa_enroll_until", "INTEGER"),
                       # NULL = not yet computed; backfilled further below for existing data.
                       # Without NOT NULL: an older version (rollback) keeps creating accounts.
-                      ("topf_name", "TEXT"), ("topf_mail", "TEXT"),
+                      ("folded_name", "TEXT"), ("folded_mail", "TEXT"),
                       # 0 for existing data; who becomes owner is decided by `Store._catch_up_owner`.
                       ("is_owner", "INTEGER NOT NULL DEFAULT 0"),
                       # Existing data: set to "now" below for OIDC accounts (finding 8).
-                      ("idp_bestaetigt_at", "INTEGER"),
+                      ("idp_confirmed_at", "INTEGER"),
                       # NULL for existing data: the limit is then the creation, as until 2026-09-26 (G2).
                       # Do not backfill "now" — the account page would otherwise show nothing from before
                       # the update, and own failed attempts would remain until the end of the window.
-                      ("name_versuch_ab", "INTEGER"), ("mail_versuch_ab", "INTEGER"),
-                      ("name_audit_ab", "INTEGER"), ("mail_audit_ab", "INTEGER"),
+                      ("name_attempt_from", "INTEGER"), ("mail_attempt_from", "INTEGER"),
+                      ("name_audit_from", "INTEGER"), ("mail_audit_from", "INTEGER"),
                       # 0 for existing data; whoever registered or renamed themselves backfills
                       # it once below (`NAME_ITSELF_BACKFILLED`, G2-N).
-                      ("name_selbst_gewaehlt", "INTEGER NOT NULL DEFAULT 0"),
+                      ("name_self_chosen", "INTEGER NOT NULL DEFAULT 0"),
                       # NULL for existing data; where the origin is proven, backfilled once below
                       # (`NAME_SOURCE_BACKFILLED`, attack round 2026-09-26).
-                      ("name_quelle", "TEXT")],
+                      ("name_source", "TEXT")],
             # NULL: never logged in under a different name yet (G5); arises at the next login.
-            "federated_identity": [("name_topf", "TEXT")],
+            "federated_identity": [("directory_name_folded", "TEXT")],
             # 0 for existing data: every present row is a completed attempt (G9).
-            "login_attempt": [("offen", "INTEGER NOT NULL DEFAULT 0")],
+            "login_attempt": [("pending", "INTEGER NOT NULL DEFAULT 0")],
         }
         # `_writing`, not only `_lock`: the final commit below takes DELETE and stamp with it.
         # If something fails before that, without a rollback a transaction would stay open on the
         # connection (the AST guard in tests/test_hardening2.py demands this for every commit).
         with self._writing():
-            # `fehlserie` initially came with schema 11 without a column `art` (a never published
+            # `failure_series` initially came with schema 11 without a column `art` (a never published
             # intermediate state). Such a table is recreated — otherwise every login would end in
             # a 500. The series in it are lost; that is the lesser harm.
-            _fs = {r["name"] for r in self.db.execute("PRAGMA table_info(fehlserie)")}
-            if _fs and "art" not in _fs:
-                ddl = re.search(r"CREATE TABLE IF NOT EXISTS fehlserie \(.*?\n\);", SCHEMA, re.S)
+            _fs = {r["name"] for r in self.db.execute("PRAGMA table_info(failure_series)")}
+            if _fs and "kind" not in _fs:
+                ddl = re.search(r"CREATE TABLE IF NOT EXISTS failure_series \(.*?\n\);", SCHEMA, re.S)
                 if ddl is None:     # it is in SCHEMA; if it is missing there, that is an error here
-                    raise RuntimeError("SCHEMA contains no table fehlserie")
-                self.db.execute("DROP TABLE fehlserie")
+                    raise RuntimeError("SCHEMA contains no table failure_series")
+                self.db.execute("DROP TABLE failure_series")
                 self.db.execute(ddl.group(0))
             for table, cols in adds.items():
                 have = {r["name"] for r in self.db.execute(f"PRAGMA table_info({table})")}
@@ -965,8 +1107,8 @@ class Store:
             # since then (`_catch_up_inventory`).
             without_bucket = self.db.execute(
                 "SELECT * FROM users" + ("" if present_beforehand < self.BUCKET_SCHEMA else
-                                         " WHERE topf_name IS NULL OR topf_mail IS NULL")).fetchall()
-            if self.db.execute("SELECT 1 FROM setting WHERE key='idp_bestand_gesetzt'").fetchone() is None:
+                                         " WHERE folded_name IS NULL OR folded_mail IS NULL")).fetchall()
+            if self.db.execute("SELECT 1 FROM setting WHERE key='idp_inventory_set'").fetchone() is None:
                 # The deadline for the API keys of an OIDC account (finding 8) starts for existing data
                 # with the update — otherwise all keys would be dormant right after the update until everyone has
                 # signed in once via the provider. Exactly once: if it ran on every start,
@@ -978,9 +1120,9 @@ class Store:
                 # start backfilled it (attack on the third round). Marker and value go in the
                 # same commit. Here and not directly after the ALTER: an UPDATE opens a
                 # transaction in Python's sqlite3, and the `BEGIN IMMEDIATE` above would fail.
-                self.db.execute("UPDATE users SET idp_bestaetigt_at=? WHERE idp_bestaetigt_at IS NULL "
+                self.db.execute("UPDATE users SET idp_confirmed_at=? WHERE idp_confirmed_at IS NULL "
                                 "AND id IN (SELECT user_id FROM oidc_identity)", (_now(),))
-                self.db.execute("INSERT OR REPLACE INTO setting(key, value) VALUES ('idp_bestand_gesetzt', ?)",
+                self.db.execute("INSERT OR REPLACE INTO setting(key, value) VALUES ('idp_inventory_set', ?)",
                                 (str(_now()),))
             if self.db.execute("SELECT 1 FROM setting WHERE key=?",
                                (self.NAME_ITSELF_BACKFILLED,)).fetchone() is None:
@@ -1072,9 +1214,9 @@ class Store:
             # that, so SQLite read every row.
             # The name in the directory (G5) counts in the identifier space (audit round 2026-09-27) — the
             # identifier triggers ask for it on every creation and every rename.
-            for sql in ("CREATE INDEX IF NOT EXISTS ix_users_topf_name ON users(topf_name)",
-                        "CREATE INDEX IF NOT EXISTS ix_users_topf_mail ON users(topf_mail)",
-                        "CREATE INDEX IF NOT EXISTS ix_fed_name_topf ON federated_identity(name_topf)",
+            for sql in ("CREATE INDEX IF NOT EXISTS ix_users_folded_name ON users(folded_name)",
+                        "CREATE INDEX IF NOT EXISTS ix_users_folded_mail ON users(folded_mail)",
+                        "CREATE INDEX IF NOT EXISTS ix_fed_directory_name_folded ON federated_identity(directory_name_folded)",
                         "CREATE INDEX IF NOT EXISTS ix_users_name_nocase ON users(username COLLATE NOCASE)",
                         "CREATE INDEX IF NOT EXISTS ix_users_email_nocase ON users(email COLLATE NOCASE)"):
                 self.db.execute(sql)
@@ -1110,21 +1252,21 @@ class Store:
         Python function in the trigger or in the index expression would break every writer without it with
         "no such function").
 
-        **Recompute** (`trg_users_topf_name`/`_mail`, schema 10): another writer changes
+        **Recompute** (`trg_users_folded_name`/`_mail`, schema 10): another writer changes
         name or address without carrying the bucket along (an older version after a rollback,
         the manual rename that the collision guard recommends at start): then the bucket is
         stale — and NULL means "recompute". Only if the value REALLY changes: whoever sets
         the same address again keeps their bucket (until 2026-09-26 it stood at NULL afterwards until the
         next backfill, and the identifier triggers did not see the account for that long).
-        The same trigger raises the watermarks of the identifier (`name_versuch_ab` … , G2) to the
+        The same trigger raises the watermarks of the identifier (`name_attempt_from` … , G2) to the
         current state: a foreign writer has assigned a new identifier, and what stood before under
         it did not belong to this account. That is the stricter direction — also for a
         rename that only changes the spelling. The own writers never fire it
         (`_set_identifier`); otherwise even `B1` → `b1` would shift the limit.
 
-        **Change with bucket** (`trg_users_wechsel_name`/`_mail`, audit round 2026-09-27): a foreign
+        **Change with bucket** (`trg_users_change_name`/`_mail`, audit round 2026-09-27): a foreign
         writer that carries the bucket ITSELF (`store.set_email` from 0.20.1 sets address and
-        `topf_mail` in one statement) does not fire the recompute trigger — the bucket does
+        `folded_mail` in one statement) does not fire the recompute trigger — the bucket does
         change. Until then the watermark stayed at the state of the OLD identifier, and the first
         full sign-in cleared the failed attempts that a stranger had made under the new one before the change,
         also from the throttling of his IP. This trigger raises them when, in the same
@@ -1133,7 +1275,7 @@ class Store:
         (there the bucket is at NULL in between); on a real change in
         `_set_identifier` it sets the same state that the statement has already written.
 
-        **Identifier space** (`trg_users_kennung_insert`/`_update`, G12c): username and address
+        **Identifier space** (`trg_users_identifier_insert`/`_update`, G12c): username and address
         are ONE space (`find_user` searches both), and the counting bucket folds more coarsely than NOCASE
         (`Alice`/`alice`, `Émile`/`émile`, full-width, Unicode and A-label domain). Until then the database
         knew only `UNIQUE(username)` (BINARY) and `ux_users_email` — check
@@ -1152,7 +1294,7 @@ class Store:
           (email mode). On INSERT the row is not yet in the table.
         * Rows without a bucket (NULL: a foreign writer, not yet backfilled) count only from
           the backfill — which `identifier_taken` triggers before every creation.
-        * **The name in the directory of ANOTHER account** (`federated_identity.name_topf`, G5)
+        * **The name in the directory of ANOTHER account** (`federated_identity.directory_name_folded`, G5)
           counts (audit round 2026-09-27). Under one identifier the login route checks two
           secrets — the local password of the account and the LDAP password of the entry. If
           a local account took on the directory name of another person (self-service,
@@ -1160,38 +1302,38 @@ class Store:
           LDAP password was being guessed. On UPDATE only foreign bindings (`user_id IS NOT NEW.id`):
           whoever returns to their own directory name may do so.
 
-        The lookup runs over `ix_users_topf_name`/`ix_users_topf_mail`/`ix_fed_name_topf`, no
+        The lookup runs over `ix_users_folded_name`/`ix_users_folded_mail`/`ix_fed_directory_name_folded`, no
         scan: the work does not depend on the number of accounts (step counting in
         tests/test_identifier_space.py and tests/test_audit_round2.py)."""
         def new(column, old, id_from):
             other = "id IS NOT NEW.id AND " if id_from else ""
             foreign = "user_id IS NOT NEW.id AND " if id_from else ""
             return (f"(NEW.{column} IS NOT {old} AND NEW.{column} <> '' AND (EXISTS (SELECT 1 FROM users "
-                    f"WHERE {other}(topf_name = NEW.{column} OR topf_mail = NEW.{column})) "
-                    f"OR EXISTS (SELECT 1 FROM federated_identity WHERE {foreign}name_topf = NEW.{column})))")
+                    f"WHERE {other}(folded_name = NEW.{column} OR folded_mail = NEW.{column})) "
+                    f"OR EXISTS (SELECT 1 FROM federated_identity WHERE {foreign}directory_name_folded = NEW.{column})))")
         reject = f"BEGIN SELECT RAISE(ABORT, '{cls.IDENTIFIER_GRANT}'); END"
-        kinds = (("username", "topf_name", "name"), ("email", "topf_mail", "mail"))
+        kinds = (("username", "folded_name", "name"), ("email", "folded_mail", "mail"))
         sql = [(f"trg_users_{bucket}",
                 f"CREATE TRIGGER IF NOT EXISTS trg_users_{bucket} AFTER UPDATE OF {column} ON users "
                 f"WHEN NEW.{bucket} IS OLD.{bucket} AND NEW.{column} IS NOT OLD.{column} "
-                f"BEGIN UPDATE users SET {bucket} = NULL, {kind}_versuch_ab = {cls.WL_ATTEMPT}, "
-                f"{kind}_audit_ab = {cls.WL_AUDIT} WHERE id = NEW.id; END")
+                f"BEGIN UPDATE users SET {bucket} = NULL, {kind}_attempt_from = {cls.WL_ATTEMPT}, "
+                f"{kind}_audit_from = {cls.WL_AUDIT} WHERE id = NEW.id; END")
                for column, bucket, kind in kinds]
-        sql += [(f"trg_users_wechsel_{kind}",
-                 f"CREATE TRIGGER IF NOT EXISTS trg_users_wechsel_{kind} AFTER UPDATE OF {bucket} ON users "
+        sql += [(f"trg_users_change_{kind}",
+                 f"CREATE TRIGGER IF NOT EXISTS trg_users_change_{kind} AFTER UPDATE OF {bucket} ON users "
                  f"WHEN NEW.{bucket} IS NOT NULL AND NEW.{bucket} IS NOT OLD.{bucket} "
                  f"AND NEW.{column} IS NOT OLD.{column} "
-                 f"BEGIN UPDATE users SET {kind}_versuch_ab = {cls.WL_ATTEMPT}, "
-                 f"{kind}_audit_ab = {cls.WL_AUDIT} WHERE id = NEW.id; END")
+                 f"BEGIN UPDATE users SET {kind}_attempt_from = {cls.WL_ATTEMPT}, "
+                 f"{kind}_audit_from = {cls.WL_AUDIT} WHERE id = NEW.id; END")
                 for column, bucket, kind in kinds]
-        sql.append(("trg_users_kennung_insert",
-                    "CREATE TRIGGER IF NOT EXISTS trg_users_kennung_insert BEFORE INSERT ON users "
-                    f"WHEN {new('topf_name', 'NULL', False)} OR {new('topf_mail', 'NULL', False)} "
+        sql.append(("trg_users_identifier_insert",
+                    "CREATE TRIGGER IF NOT EXISTS trg_users_identifier_insert BEFORE INSERT ON users "
+                    f"WHEN {new('folded_name', 'NULL', False)} OR {new('folded_mail', 'NULL', False)} "
                     + reject))
-        sql.append(("trg_users_kennung_update",
-                    "CREATE TRIGGER IF NOT EXISTS trg_users_kennung_update BEFORE UPDATE OF username, email "
-                    f"ON users WHEN {new('topf_name', 'OLD.topf_name', True)} "
-                    f"OR {new('topf_mail', 'OLD.topf_mail', True)} " + reject))
+        sql.append(("trg_users_identifier_update",
+                    "CREATE TRIGGER IF NOT EXISTS trg_users_identifier_update BEFORE UPDATE OF username, email "
+                    f"ON users WHEN {new('folded_name', 'OLD.folded_name', True)} "
+                    f"OR {new('folded_mail', 'OLD.folded_mail', True)} " + reject))
         return sql
 
     def _set_trigger(self) -> None:
@@ -1212,11 +1354,11 @@ class Store:
                 self.db.execute(f"DROP TRIGGER IF EXISTS {name}")
             self.db.execute(sql)
 
-    #: Setting key: has `users.name_selbst_gewaehlt` been backfilled for existing data (G2-N)?
-    NAME_ITSELF_BACKFILLED = "name_selbst_nachgetragen"
+    #: Setting key: has `users.name_self_chosen` been backfilled for existing data (G2-N)?
+    NAME_ITSELF_BACKFILLED = "name_self_backfilled"
 
     def _backfill_name_itself(self) -> None:
-        """Backfill `users.name_selbst_gewaehlt` once for existing data from the audit log (G2-N;
+        """Backfill `users.name_self_chosen` once for existing data from the audit log (G2-N;
         without commit, under `_lock`, part of `_migrate`).
 
         The column came after 0.20.1; until then nothing recorded where a name came from. The
@@ -1236,7 +1378,7 @@ class Store:
         start, the row of a later rename by the operator would make the account a
         self-named one again."""
         self.db.execute(
-            "UPDATE users SET name_selbst_gewaehlt = 1 WHERE name_selbst_gewaehlt = 0 AND is_service = 0 "
+            "UPDATE users SET name_self_chosen = 1 WHERE name_self_chosen = 0 AND is_service = 0 "
             "AND EXISTS (SELECT 1 FROM audit a WHERE lower(a.username) = lower(users.username) "
             "AND a.ts >= users.created_at AND a.event IN ('signup', 'username_changed'))")
         self.db.execute("INSERT OR REPLACE INTO setting(key, value) VALUES (?, ?)",
@@ -1261,7 +1403,7 @@ class Store:
         Idempotent; it writes only where there is something to rewrite — a read-only file
         without old values starts as before. Returns: the number of changed rows.
 
-        Not translated here: the audit log and the kinds of the series (`fehlserie.art`) — those are
+        Not translated here: the audit log and the kinds of the series (`failure_series.kind`) — those are
         rewritten on the jump to schema 15 (`_vocabulary_english`) — and the column names (they stay)."""
         n = 0
         for old, new in self.KEY_KINDS_OLD.items():
@@ -1302,7 +1444,7 @@ class Store:
           Block by block over `id`, each changed row written once.
         * `audit.username`: `gelöscht#<id>` → `deleted#<id>` (digits only; a name that merely begins with
           it stays), likewise inside the details (`actor=`, the head of `user_create`).
-        * `fehlserie.art` and `login_attempt.method`: `pin_folge` → `pin_chain`. If both kinds exist for
+        * `failure_series.kind` and `login_attempt.method`: `pin_folge` → `pin_chain`. If both kinds exist for
           an identifier (the old one written by an older version after a rollback), the counts are
           ADDED up (stricter, never looser than dropping one) and the old row goes.
 
@@ -1353,22 +1495,22 @@ class Store:
             last = lines[-1]["id"]
         # (4) the kinds of the streak and the methods.
         for old, new in V.KINDS_OLD.items():
-            for z in self.db.execute("SELECT topf, anzahl, seit, zuletzt FROM fehlserie WHERE art=?",
+            for z in self.db.execute("SELECT folded, count, since, last_seen FROM failure_series WHERE kind=?",
                                      (old,)).fetchall():
-                if self.db.execute("SELECT 1 FROM fehlserie WHERE topf=? AND art=?", (z["topf"], new)).fetchone():
+                if self.db.execute("SELECT 1 FROM failure_series WHERE folded=? AND kind=?", (z["folded"], new)).fetchone():
                     self.db.execute(
-                        "UPDATE fehlserie SET anzahl = anzahl + ?, seit = MIN(seit, ?), zuletzt = MAX(zuletzt, ?) "
-                        "WHERE topf=? AND art=?", (z["anzahl"], z["seit"], z["zuletzt"], z["topf"], new))
-                    self.db.execute("DELETE FROM fehlserie WHERE topf=? AND art=?", (z["topf"], old))
+                        "UPDATE failure_series SET count = count + ?, since = MIN(since, ?), last_seen = MAX(last_seen, ?) "
+                        "WHERE folded=? AND kind=?", (z["count"], z["since"], z["last_seen"], z["folded"], new))
+                    self.db.execute("DELETE FROM failure_series WHERE folded=? AND kind=?", (z["folded"], old))
                 else:
-                    self.db.execute("UPDATE fehlserie SET art=? WHERE topf=? AND art=?", (new, z["topf"], old))
+                    self.db.execute("UPDATE failure_series SET kind=? WHERE folded=? AND kind=?", (new, z["folded"], old))
                 n += 1
             if self.db.execute("SELECT 1 FROM login_attempt WHERE method=? LIMIT 1", (old,)).fetchone():
                 n += self.db.execute("UPDATE login_attempt SET method=? WHERE method=?", (new, old)).rowcount
         return n
 
-    #: Setting key: has `users.name_quelle` been backfilled for existing data (attack round 2026-09-26)?
-    NAME_SOURCE_BACKFILLED = "name_quelle_nachgetragen"
+    #: Setting key: has `users.name_source` been backfilled for existing data (attack round 2026-09-26)?
+    NAME_SOURCE_BACKFILLED = "name_source_backfilled"
 
     #: How far apart creation and binding of a source may be for the binding to count as "the
     #: source created the account" (`_backfill_name_source`). On creation both happen in
@@ -1376,13 +1518,13 @@ class Store:
     SETUP_TOLERANCE_SEC = 2
 
     def _backfill_name_source(self) -> None:
-        """Backfill `users.name_quelle` once for existing data where the origin is proven (without
+        """Backfill `users.name_source` once for existing data where the origin is proven (without
         commit, under `_lock`, part of `_migrate`).
 
         * **OIDC:** every row in `oidc_identity` has been written by the callback since v0.1 on CREATING
           the account — it never links an existing one. The account therefore carries the provider's name.
         * **LDAP/SAML:** a binding (also the placeholder) that arose with the creation of the account
-          (`gebunden_at` at most `SETUP_TOLERANCE_SEC` before or after `created_at`). A later
+          (`bound_at` at most `SETUP_TOLERANCE_SEC` before or after `created_at`). A later
           re-binding does not count — the account already existed then, and its name came from elsewhere.
 
         Excluded: service accounts and self-chosen names (the marker above already carries them).
@@ -1395,14 +1537,14 @@ class Store:
         Exactly once, via the marker `NAME_SOURCE_BACKFILLED` in the same commit: if it ran on every start,
         an account renamed by the operator would get its source back."""
         self.db.execute(
-            "UPDATE users SET name_quelle = 'oidc' WHERE name_quelle IS NULL AND is_service = 0 "
-            "AND name_selbst_gewaehlt = 0 AND id IN (SELECT user_id FROM oidc_identity)")
+            "UPDATE users SET name_source = 'oidc' WHERE name_source IS NULL AND is_service = 0 "
+            "AND name_self_chosen = 0 AND id IN (SELECT user_id FROM oidc_identity)")
         from_setup = ("FROM federated_identity f WHERE f.user_id = users.id "
-                      "AND abs(f.gebunden_at - users.created_at) <= ?")
+                      "AND abs(f.bound_at - users.created_at) <= ?")
         self.db.execute(
-            f"UPDATE users SET name_quelle = (SELECT f.quelle {from_setup} "
-            "ORDER BY f.gebunden_at, f.quelle LIMIT 1) "
-            "WHERE name_quelle IS NULL AND is_service = 0 AND name_selbst_gewaehlt = 0 "
+            f"UPDATE users SET name_source = (SELECT f.source {from_setup} "
+            "ORDER BY f.bound_at, f.source LIMIT 1) "
+            "WHERE name_source IS NULL AND is_service = 0 AND name_self_chosen = 0 "
             f"AND EXISTS (SELECT 1 {from_setup})",
             (self.SETUP_TOLERANCE_SEC, self.SETUP_TOLERANCE_SEC))
         self.db.execute("INSERT OR REPLACE INTO setting(key, value) VALUES (?, ?)",
@@ -1411,7 +1553,7 @@ class Store:
     #: Setting key: up to which `audit.id` the panel lockouts of older writers have already been
     #: caught up (`_catch_up_inventory`). If it is missing, the next start reads the audit log
     #: in full once — that is only slower, not wrong (every step is repeatable).
-    PANEL_WATERLINE = "panel_sperren_bis"
+    PANEL_WATERLINE = "panel_lock_until"
 
     #: How many identifiers at most in one `IN (…)` (SQLite up to 3.32: 999 parameters).
     IN_PIECE = 500
@@ -1474,7 +1616,7 @@ class Store:
         confirmation link, and if the step hung on the stamp, it would never run again: the old link
         would lift the lock and sign in (H-18, measured with 0.19.0). The trace of the older
         writer is different per step — audit rows since the watermark for the locks,
-        rows without a bucket (`topf_name`) for the registrations.
+        rows without a bucket (`folded_name`) for the registrations.
 
         1. **Locks from the panel get the operator mark** (`disabled=2`). Up to this
            version the panel lock wrote `disabled=1` — the same value as a pending
@@ -1570,23 +1712,23 @@ class Store:
                         len(panel), addresses)
 
     def _write_pots(self, lines) -> None:
-        """Compute `topf_name`/`topf_mail` for these account rows (without commit, under `_lock`).
+        """Compute `folded_name`/`folded_mail` for these account rows (without commit, under `_lock`).
 
         Written only if name and address are still the ones read: if another
         writer changes them in between, its trigger sets the bucket to NULL, and the next call
         recomputes — instead of the bucket of the old name remaining here."""
         self.db.executemany(
-            "UPDATE users SET topf_name=?, topf_mail=? WHERE id=? AND username IS ? AND email IS ?",
+            "UPDATE users SET folded_name=?, folded_mail=? WHERE id=? AND username IS ? AND email IS ?",
             [(norm_identifier(z["username"]), norm_identifier(z["email"]), z["id"], z["username"], z["email"])
              for z in lines])
 
     def _backfill_pots(self) -> list:
-        """Backfill missing counting buckets — the rows of another writer (see `topf_name`).
+        """Backfill missing counting buckets — the rows of another writer (see `folded_name`).
 
         Returns the rows that could NOT be written (database read-only, locked);
         the caller checks those itself. Normally that is none, and it costs one query
         over the index — independent of which identifier is being looked up."""
-        unclosed = self._all("SELECT * FROM users WHERE topf_name IS NULL OR topf_mail IS NULL")
+        unclosed = self._all("SELECT * FROM users WHERE folded_name IS NULL OR folded_mail IS NULL")
         if not unclosed:
             return []
         try:
@@ -1666,11 +1808,11 @@ class Store:
 
     #: Setting key of the saved clock state (see `_Clock`) and how often it is written at most
     #: (seconds).
-    CLOCK_STATE = "uhr_stand"
+    CLOCK_STATE = "clock_state"
     CLOCK_SECURE_SEC = 60
 
     def _write_clock_state(self) -> None:
-        """Raise `uhr_stand` to `now()` — only UPWARDS (without commit, under `_lock`).
+        """Raise `clock_state` to `now()` — only UPWARDS (without commit, under `_lock`).
 
         `_migrate()` already writes before `Store()` has raised the clock from the database;
         there `now()` is still the wrong wall clock of a boot with an old date. A blind
@@ -1688,7 +1830,7 @@ class Store:
         A NEGATIVE distance counts as expired, not as fresh: freezegun delivers
         `time.monotonic` on the epoch scale (≈1.8e9). A write under `freeze_time`
         left the stamps there, and afterwards every distance was negative, hence always "shorter than
-        the deadline" — `uhr_stand` was no longer saved in the whole process, the write probe
+        the deadline" — `clock_state` was no longer saved in the whole process, the write probe
         checked only the connection (second attack round, same class as in `_Clock.now`).
         A distance above any deadline is expired anyway."""
         return since is not None and 0 <= m - since < deadline
@@ -1729,13 +1871,13 @@ class Store:
 
         Name and address belong to the account from this statement on: the watermarks (G2) arise in
         the same INSERT, as the highest id currently in `login_attempt` and `audit`. Likewise the
-        marker `name_selbst_gewaehlt` (G2-N) and the origin of the name (`name_quelle`) — between
+        marker `name_self_chosen` (G2-N) and the origin of the name (`name_source`) — between
         creation and marker there is no sign-in that could bind the account via the name."""
         mail = norm_email(email)
         cur = self._exec(
             "INSERT INTO users(username, display_name, email, email_verified, is_admin, roles, "
-            "is_service, created_at, topf_name, topf_mail, name_versuch_ab, mail_versuch_ab, "
-            "name_audit_ab, mail_audit_ab, name_selbst_gewaehlt, name_quelle) VALUES (?,?,?,?,?,?,?,?,?,?,"
+            "is_service, created_at, folded_name, folded_mail, name_attempt_from, mail_attempt_from, "
+            "name_audit_from, mail_audit_from, name_self_chosen, name_source) VALUES (?,?,?,?,?,?,?,?,?,?,"
             f"{self.WL_ATTEMPT},{self.WL_ATTEMPT},{self.WL_AUDIT},{self.WL_AUDIT},?,?)",
             (username, display_name or username, mail, 1 if email_verified else 0,
              1 if is_admin else 0,
@@ -1749,7 +1891,7 @@ class Store:
         together with the counting bucket — for `_rewrite`.
 
         If the identifier thereby moves to a DIFFERENT bucket, it belongs to the account only from now on: the
-        watermarks (`name_versuch_ab`/`name_audit_ab` or `mail_…`, G2) go to the current state in the same
+        watermarks (`name_attempt_from`/`name_audit_from` or `mail_…`, G2) go to the current state in the same
         statement. If the bucket stays (`B1` → `b1`, `u@bücher.example` →
         `u@xn--bcher-kva.example`), they stay — it is the same identifier. SQLite evaluates
         every expression in SET with the OLD row; the comparison therefore sees the previous bucket.
@@ -1767,11 +1909,11 @@ class Store:
         an account with an LDAP binding whose name was the name in the directory keeps the old one as
         directory name — otherwise it would drop out of `count_identifiers` and out of the
         identifier space on renaming, until the next successful LDAP sign-in."""
-        bucket_column, kind = ("topf_name", "name") if column == "username" else ("topf_mail", "mail")
+        bucket_column, kind = ("folded_name", "name") if column == "username" else ("folded_mail", "mail")
         same = f"CASE WHEN {bucket_column} IS ? THEN"
         set_value = (f"{bucket_column} = {same} NULL ELSE ? END, "
-                  f"{kind}_versuch_ab = {same} {kind}_versuch_ab ELSE {self.WL_ATTEMPT} END, "
-                  f"{kind}_audit_ab = {same} {kind}_audit_ab ELSE {self.WL_AUDIT} END")
+                  f"{kind}_attempt_from = {same} {kind}_attempt_from ELSE {self.WL_ATTEMPT} END, "
+                  f"{kind}_audit_from = {same} {kind}_audit_from ELSE {self.WL_AUDIT} END")
         first: tuple
         if proof is None:
             first = (f"UPDATE users SET {column}=?, {set_value} WHERE id=?",
@@ -1784,7 +1926,7 @@ class Store:
 
     def _remember_directory_name(self, user_id, new_bucket) -> tuple:
         """The statement that, before a rename, records the previous name as the name in the directory
-        on the LDAP binding (`federated_identity.name_topf`, G5) — for `_set_identifier`.
+        on the LDAP binding (`federated_identity.directory_name_folded`, G5) — for `_set_identifier`.
 
         Occasion (audit round 2026-09-27): if an account is named the same locally and in the directory, NULL stands there
         (`set_binding_name` records only a differing name). If the operator
@@ -1800,9 +1942,9 @@ class Store:
         belongs to this account. Only if NULL stands (a differing name is already recorded and
         the younger one) and only if the bucket really changes. The old bucket is read in
         the same transaction, before the new name is written."""
-        old = "(SELECT topf_name FROM users WHERE id = ?)"
-        return (f"UPDATE federated_identity SET name_topf = {old} WHERE quelle = 'ldap' AND user_id = ? "
-                "AND name_topf IS NULL AND substr(kennung, 1, length(?)) <> ? "
+        old = "(SELECT folded_name FROM users WHERE id = ?)"
+        return (f"UPDATE federated_identity SET directory_name_folded = {old} WHERE source = 'ldap' AND user_id = ? "
+                "AND directory_name_folded IS NULL AND substr(identifier, 1, length(?)) <> ? "
                 f"AND {old} IS NOT NULL AND {old} <> '' AND {old} IS NOT ?",
                 (user_id, user_id, self.WITHOUT_IDENTIFIER, self.WITHOUT_IDENTIFIER, user_id, user_id, user_id,
                  new_bucket))
@@ -1819,19 +1961,19 @@ class Store:
             self._clock_record()
 
     def set_username(self, user_id, username, itself_chosen: Optional[bool] = None) -> None:
-        """Replace the username — together with the counting bucket (`topf_name`) in the same transaction.
+        """Replace the username — together with the counting bucket (`folded_name`) in the same transaction.
         The check happens beforehand (`TinySesam.change_username`); this only writes. If the name is
         already the identifier of another account (name, address or namesake in the bucket), the
         database rejects it: `sqlite3.IntegrityError`, nothing changed.
 
-        `itself_chosen` sets the marker `users.name_selbst_gewaehlt` (G2-N) in the same
-        transaction and deletes the origin `users.name_quelle`: the new name comes from the person
+        `itself_chosen` sets the marker `users.name_self_chosen` (G2-N) in the same
+        transaction and deletes the origin `users.name_source`: the new name comes from the person
         or the operator, no longer from the source that created the account. `None` leaves
         both as they are."""
         name = str(username or "").strip()
         steps = self._set_identifier(user_id, "username", name, norm_identifier(name))
         if itself_chosen is not None:
-            steps.append(("UPDATE users SET name_selbst_gewaehlt=?, name_quelle=NULL WHERE id=?",
+            steps.append(("UPDATE users SET name_self_chosen=?, name_source=NULL WHERE id=?",
                              (1 if itself_chosen else 0, user_id)))
         self._rewrite(steps)
 
@@ -1851,7 +1993,7 @@ class Store:
         explicitly (`set_email(uid, mail, verified=True)`) or sets it afterwards with
         `set_email_verified`. Address and proof go into the database in ONE statement,
         so that there is no state in between in which the new address carries the old proof.
-        The counting bucket of the address (`topf_mail`) goes along in the same transaction.
+        The counting bucket of the address (`folded_mail`) goes along in the same transaction.
 
         If the address is already the identifier of another account (address, name or namesake in the
         bucket), the database rejects it: `sqlite3.IntegrityError`, nothing changed. Until
@@ -2069,7 +2211,7 @@ class Store:
         The bucket is `norm_identifier` (Python `lower()`), whereas the database's name check is
         `COLLATE NOCASE` — and that folds only ASCII. `Émile` and `émile` are two
         names for SQLite, one for the lockout counter. That is why each account carries its bucket as a column
-        (`topf_name`/`topf_mail`, computed in Python), and the lookup goes through its index.
+        (`folded_name`/`folded_mail`, computed in Python), and the lookup goes through its index.
 
         Up to schema 10 the lookup ran as a loop over ALL accounts in Python — on every
         registration, and for one with a free address twice as often as for one with a
@@ -2085,7 +2227,7 @@ class Store:
         # normally none.
         hit = [z for z in self._backfill_pots()
                    if z["id"] != other_than and bucket in (norm_identifier(z["username"]), norm_identifier(z["email"]))]
-        z = self._one("SELECT * FROM users WHERE (topf_name = ? OR topf_mail = ?) AND id IS NOT ? "
+        z = self._one("SELECT * FROM users WHERE (folded_name = ? OR folded_mail = ?) AND id IS NOT ? "
                       "ORDER BY id LIMIT 1", (bucket, bucket, other_than))
         if z is not None:
             hit.append(z)
@@ -2134,7 +2276,7 @@ class Store:
             if not bucket:
                 continue
             values = tuple(None if w is None else int(w)
-                          for w in (self._slot(user, f"{kind}_versuch_ab"), self._slot(user, f"{kind}_audit_ab")))
+                          for w in (self._slot(user, f"{kind}_attempt_from"), self._slot(user, f"{kind}_audit_from")))
             if bucket in from_:
                 values = tuple(None if a is None or b is None else min(a, b) for a, b in zip(from_[bucket], values))
             from_[bucket] = values
@@ -2142,13 +2284,13 @@ class Store:
 
     def account_with_directory_name(self, identifier, other_than=None) -> Optional[sqlite3.Row]:
         """The account (not `other_than`) on whose binding this identifier stands as the name in the directory
-        (`federated_identity.name_topf`, G5) — or None. For `TinySesam.identifier_taken` and
+        (`federated_identity.directory_name_folded`, G5) — or None. For `TinySesam.identifier_taken` and
         `tinysesam rename`; the database checks the same in the identifier triggers (`_trigger_sql`).
-        Via `ix_fed_name_topf`, no scan."""
+        Via `ix_fed_directory_name_folded`, no scan."""
         bucket = norm_identifier(identifier)
         if not bucket:
             return None
-        z = self._one("SELECT user_id FROM federated_identity WHERE name_topf = ? AND user_id IS NOT ? "
+        z = self._one("SELECT user_id FROM federated_identity WHERE directory_name_folded = ? AND user_id IS NOT ? "
                       "ORDER BY user_id LIMIT 1", (bucket, other_than))
         return self.get_user(z["user_id"]) if z else None
 
@@ -2156,7 +2298,7 @@ class Store:
         """All identifiers (in the counting bucket) under which the series (B2-6) of this account can stand.
 
         Name and address — and the name under which the account signs in via a directory source
-        (`federated_identity.name_topf`, G5), provided it is not the name or address of an
+        (`federated_identity.directory_name_folded`, G5), provided it is not the name or address of an
         OTHER account (`bucket_of_another`) and does not also stand on another account's binding
         (audit round 2026-09-27, p1-a: after renaming and reassignment in the directory,
         two accounts carried the same name, and every full sign-in of the previous owner ended the series
@@ -2173,9 +2315,9 @@ class Store:
         if u is None:
             return set()
         identifiers = {norm_identifier(u["username"]), norm_identifier(u["email"])} - {""}
-        for z in self._all("SELECT DISTINCT name_topf FROM federated_identity WHERE user_id=? "
-                           "AND name_topf IS NOT NULL AND name_topf <> ''", (user_id,)):
-            bucket = norm_identifier(z["name_topf"])
+        for z in self._all("SELECT DISTINCT directory_name_folded FROM federated_identity WHERE user_id=? "
+                           "AND directory_name_folded IS NOT NULL AND directory_name_folded <> ''", (user_id,)):
+            bucket = norm_identifier(z["directory_name_folded"])
             if (bucket and bucket not in identifiers and not self.bucket_of_another(bucket, user_id)
                     and self.account_with_directory_name(bucket, other_than=user_id) is None):
                 identifiers.add(bucket)
@@ -2183,7 +2325,7 @@ class Store:
 
     def set_binding_name(self, source: str, user_id, name) -> bool:
         """Record the name under which the account has just signed in via `quelle` on its
-        binding (`federated_identity.name_topf`, G5). Returns whether anything was written.
+        binding (`federated_identity.directory_name_folded`, G5). Returns whether anything was written.
 
         Folded (`norm_identifier`) and only if it is neither name nor address of the account — the
         ways back know those anyway; then NULL stands. Only the most recent name: after two
@@ -2203,13 +2345,13 @@ class Store:
             return False
         bucket = norm_identifier(name)
         if bucket and self.account_with_directory_name(bucket, other_than=user_id) is not None:
-            self._exec("UPDATE federated_identity SET name_topf=NULL WHERE name_topf=? AND user_id IS NOT ?",
+            self._exec("UPDATE federated_identity SET directory_name_folded=NULL WHERE directory_name_folded=? AND user_id IS NOT ?",
                        (bucket, user_id))
         value = None if not bucket or bucket in {norm_identifier(u["username"]), norm_identifier(u["email"])} else bucket
-        if self._one("SELECT 1 AS x FROM federated_identity WHERE quelle=? AND user_id=? AND name_topf IS NOT ?",
+        if self._one("SELECT 1 AS x FROM federated_identity WHERE source=? AND user_id=? AND directory_name_folded IS NOT ?",
                      (source, user_id, value)) is None:
             return False
-        self._exec("UPDATE federated_identity SET name_topf=? WHERE quelle=? AND user_id=?",
+        self._exec("UPDATE federated_identity SET directory_name_folded=? WHERE source=? AND user_id=?",
                    (value, source, user_id))
         return True
 
@@ -2222,11 +2364,11 @@ class Store:
         bucket = norm_identifier(name)
         if not bucket or self.account_with_directory_name(bucket) is None:
             return 0
-        return self._exec("UPDATE federated_identity SET name_topf=NULL WHERE name_topf=?", (bucket,)).rowcount
+        return self._exec("UPDATE federated_identity SET directory_name_folded=NULL WHERE directory_name_folded=?", (bucket,)).rowcount
 
     def account_with_binding_name(self, identifier) -> Optional[sqlite3.Row]:
         """The account that last signed in under this identifier via a directory source
-        (`federated_identity.name_topf`, G5) — for `tinysesam unlock <name as typed>`.
+        (`federated_identity.directory_name_folded`, G5) — for `tinysesam unlock <name as typed>`.
         None if none or if the identifier is the name or address of an account (then THAT
         account is meant, `account_by_bucket`). Several hits (existing data, see `set_binding_name`):
         None — which one signed in last that way is recorded nowhere. Until 2026-09-27 it was the
@@ -2234,7 +2376,7 @@ class Store:
         bucket = norm_identifier(identifier)
         if not bucket or self.account_by_bucket(bucket) is not None:
             return None
-        z = self._all("SELECT DISTINCT user_id FROM federated_identity WHERE name_topf=? LIMIT 2", (bucket,))
+        z = self._all("SELECT DISTINCT user_id FROM federated_identity WHERE directory_name_folded=? LIMIT 2", (bucket,))
         return self.get_user(z[0]["user_id"]) if len(z) == 1 else None
 
     def delete_user(self, user_id):
@@ -2245,7 +2387,7 @@ class Store:
         that there is no other caller."""
         with self._writing():
             for table in ("api_key", "password_cred", "pin_cred", "totp_cred", "recovery_code",
-                          "webauthn_cred", "oidc_identity", "federated_identity", "namensbindung",
+                          "webauthn_cred", "oidc_identity", "federated_identity", "name_binding",
                           "session", "magic_token"):
                 self.db.execute(f"DELETE FROM {table} WHERE user_id=?", (user_id,))
             self.db.execute("DELETE FROM users WHERE id=?", (user_id,))
@@ -2273,9 +2415,9 @@ class Store:
         """
         self._backfill_pots()     # rows of a foreign writer count too
         return self._all(
-            "SELECT n.id AS name_id, n.username AS kennung, e.id AS mail_id, e.email AS adresse "
+            "SELECT n.id AS name_id, n.username AS identifier, e.id AS mail_id, e.email AS address "
             "FROM users n JOIN users e ON e.id <> n.id "
-            "  AND e.topf_mail <> '' AND e.topf_mail = n.topf_name "
+            "  AND e.folded_mail <> '' AND e.folded_mail = n.folded_name "
             "ORDER BY n.id LIMIT ?", (int(limit),))
 
     def bucket_collisions(self, limit: int = 50) -> list:
@@ -2292,11 +2434,11 @@ class Store:
         they do not count."""
         self._backfill_pots()
         lines = self._all(
-            "SELECT topf, group_concat(id) AS ids FROM ("
-            "  SELECT id, topf_name AS topf FROM users WHERE topf_name <> ''"
-            "  UNION SELECT id, topf_mail FROM users WHERE topf_mail <> '') "
-            "GROUP BY topf HAVING COUNT(*) > 1 ORDER BY MIN(id) LIMIT ?", (int(limit),))
-        return [{"kennung": z["topf"], "ids": sorted(int(i) for i in str(z["ids"]).split(","))}
+            "SELECT folded, group_concat(id) AS ids FROM ("
+            "  SELECT id, folded_name AS folded FROM users WHERE folded_name <> ''"
+            "  UNION SELECT id, folded_mail FROM users WHERE folded_mail <> '') "
+            "GROUP BY folded HAVING COUNT(*) > 1 ORDER BY MIN(id) LIMIT ?", (int(limit),))
+        return [{"identifier": z["folded"], "ids": sorted(int(i) for i in str(z["ids"]).split(","))}
                 for z in lines]
 
     def list_users(self):
@@ -2447,11 +2589,11 @@ class Store:
             return 0
         # Both tables with encrypted data: if there are only refresh tokens (OIDC instance without TOTP),
         # a wrong key would otherwise start — and every request with an old cookie ended in a 500.
-        probe = self._one("SELECT secret AS wert FROM totp_cred WHERE secret LIKE 'v1:%' "
-                          "UNION ALL SELECT refresh FROM oidc_sitzung WHERE refresh LIKE 'v1:%' LIMIT 1")
+        probe = self._one("SELECT secret AS value FROM totp_cred WHERE secret LIKE 'v1:%' "
+                          "UNION ALL SELECT refresh FROM oidc_session WHERE refresh LIKE 'v1:%' LIMIT 1")
         if probe is not None:
             try:
-                self.vault.decrypt(probe["wert"])
+                self.vault.decrypt(probe["value"])
             except Exception:
                 raise ConfigError(
                     "The key does not match the stored secrets (TOTP/OIDC; wrong "
@@ -2551,25 +2693,25 @@ class Store:
         now = _now()
         asked = int(asked_at if asked_at is not None else now)
         return self._exec(
-            "UPDATE users SET idp_bestaetigt_at=? WHERE id=? AND (idp_bestaetigt_at IS NULL "
-            "OR idp_bestaetigt_at > 0 OR -idp_bestaetigt_at < ?)", (now, user_id, asked)).rowcount > 0
+            "UPDATE users SET idp_confirmed_at=? WHERE id=? AND (idp_confirmed_at IS NULL "
+            "OR idp_confirmed_at > 0 OR -idp_confirmed_at < ?)", (now, user_id, asked)).rowcount > 0
 
     def idp_refused(self, user_id) -> None:
         """The provider said no: the API keys of the account are dormant until the next
         confirmation (finding 8). Stored as a NEGATIVE time of the no — NULL means "never
         confirmed", ≤ 0 "refused", and the time decides whether a later-applied yes
         is younger (`confirm_idp`)."""
-        self._exec("UPDATE users SET idp_bestaetigt_at=? WHERE id=?", (-max(_now(), 1), user_id))
+        self._exec("UPDATE users SET idp_confirmed_at=? WHERE id=?", (-max(_now(), 1), user_id))
 
     def oidc_session_handle(self, client, old_encrypted) -> Optional[str]:
         """TODAY's handle of the session whose row carries this (encrypted) token."""
-        r = self._one("SELECT token_hash FROM oidc_sitzung WHERE client=? AND refresh=?",
+        r = self._one("SELECT token_hash FROM oidc_session WHERE client=? AND refresh=?",
                       (client, old_encrypted))
         return r["token_hash"] if r else None
 
     def discard_oidc_session(self, handle, client) -> None:
         """Discard an OIDC row without a configured client — the session itself stays."""
-        self._exec("DELETE FROM oidc_sitzung WHERE token_hash=? AND client=?", (self._handle(handle), client))
+        self._exec("DELETE FROM oidc_session WHERE token_hash=? AND client=?", (self._handle(handle), client))
 
     def get_oidc_user(self, issuer, subject) -> Optional[int]:
         r = self._one("SELECT user_id FROM oidc_identity WHERE issuer=? AND subject=?", (issuer, subject))
@@ -2578,11 +2720,11 @@ class Store:
     # ---------- Federated identities via a stable identifier (F-11) ----------
     def link_federated(self, source: str, identifier: str, user_id: int, now: int) -> None:
         """Bind a foreign identity to a local account (or renew the binding)."""
-        self._exec("INSERT OR REPLACE INTO federated_identity(quelle, kennung, user_id, gebunden_at)"
+        self._exec("INSERT OR REPLACE INTO federated_identity(source, identifier, user_id, bound_at)"
                    " VALUES (?,?,?,?)", (source, identifier, user_id, now))
 
     def get_federated_user(self, source: str, identifier: str) -> Optional[int]:
-        r = self._one("SELECT user_id FROM federated_identity WHERE quelle=? AND kennung=?",
+        r = self._one("SELECT user_id FROM federated_identity WHERE source=? AND identifier=?",
                       (source, identifier))
         return r["user_id"] if r else None
 
@@ -2592,9 +2734,9 @@ class Store:
         The way back is the actual bolt: if an account already carries an identifier, it must
         **not** be bound to a second one. That is exactly what would happen if a deleted account
         were recreated under the same name in the directory."""
-        r = self._one("SELECT kennung FROM federated_identity WHERE quelle=? AND user_id=?",
+        r = self._one("SELECT identifier FROM federated_identity WHERE source=? AND user_id=?",
                       (source, user_id))
-        return r["kennung"] if r else None
+        return r["identifier"] if r else None
 
     def has_foreign_identity(self, user_id: int) -> bool:
         """Is this account bound to any foreign identity (OIDC, LDAP, SAML)?"""
@@ -2604,11 +2746,11 @@ class Store:
 
     def unlink_federated(self, source: str, user_id: int) -> int:
         """Release the binding of an account for a source (operator path after a move)."""
-        return self._exec("DELETE FROM federated_identity WHERE quelle=? AND user_id=?",
+        return self._exec("DELETE FROM federated_identity WHERE source=? AND user_id=?",
                           (source, user_id)).rowcount
 
-    #: Prefix of the origin placeholders in `federated_identity.kennung` (see `TinySesam._WITHOUT_IDENTIFIER`).
-    WITHOUT_IDENTIFIER = "~ohne-kennung:"
+    #: Prefix of the origin placeholders in `federated_identity.identifier` (see `TinySesam._WITHOUT_IDENTIFIER`).
+    WITHOUT_IDENTIFIER = "~without-identifier:"
 
     def rebind(self, source: str, identifier: str, user_id: int, now: int) -> bool:
         """Bind an account to an identifier that belongs to nobody yet — or do nothing (G1).
@@ -2619,18 +2761,18 @@ class Store:
         meanwhile signed in. Hence in ONE transaction: if the identifier already belongs
         to an account or this account already carries a real identifier, everything stays as it is
         (`False`). Otherwise an origin placeholder yields, the binding is created, and an open
-        name binding (`namensbindung`) is done."""
+        name binding (`name_binding`) is done."""
         with self._writing():
             occupied = self.db.execute(
-                "SELECT 1 FROM federated_identity WHERE quelle=? AND (kennung=? OR "
-                "(user_id=? AND substr(kennung, 1, ?) <> ?)) LIMIT 1",
+                "SELECT 1 FROM federated_identity WHERE source=? AND (identifier=? OR "
+                "(user_id=? AND substr(identifier, 1, ?) <> ?)) LIMIT 1",
                 (source, identifier, user_id, len(self.WITHOUT_IDENTIFIER), self.WITHOUT_IDENTIFIER)).fetchone()
             if occupied is not None:
                 return False
-            self.db.execute("DELETE FROM federated_identity WHERE quelle=? AND user_id=?", (source, user_id))
-            self.db.execute("INSERT INTO federated_identity(quelle, kennung, user_id, gebunden_at) "
+            self.db.execute("DELETE FROM federated_identity WHERE source=? AND user_id=?", (source, user_id))
+            self.db.execute("INSERT INTO federated_identity(source, identifier, user_id, bound_at) "
                             "VALUES (?,?,?,?)", (source, identifier, user_id, now))
-            self.db.execute("DELETE FROM namensbindung WHERE quelle=? AND user_id=?", (source, user_id))
+            self.db.execute("DELETE FROM name_binding WHERE source=? AND user_id=?", (source, user_id))
             self.db.commit()
             self._written = time.monotonic()
             self._clock_record()
@@ -2642,30 +2784,30 @@ class Store:
         return self._all(
             "SELECT u.*, EXISTS (SELECT 1 FROM password_cred p WHERE p.user_id = u.id) AS has_password "
             "FROM users u WHERE u.is_service = 0 AND NOT EXISTS (SELECT 1 FROM federated_identity f "
-            "WHERE f.quelle = ? AND f.user_id = u.id AND substr(f.kennung, 1, ?) <> ?) ORDER BY u.id",
+            "WHERE f.source = ? AND f.user_id = u.id AND substr(f.identifier, 1, ?) <> ?) ORDER BY u.id",
             (source, len(self.WITHOUT_IDENTIFIER), self.WITHOUT_IDENTIFIER))
 
     def open_name_binding(self, source: str, user_id: int, until: int) -> None:
         """Open the binding via the name for this account until `bis` (G1, `federation_unbind`)."""
-        self._exec("INSERT OR REPLACE INTO namensbindung(quelle, user_id, bis) VALUES (?,?,?)",
+        self._exec("INSERT OR REPLACE INTO name_binding(source, user_id, until) VALUES (?,?,?)",
                    (source, user_id, int(until)))
 
     def name_binding_unclosed(self, source: str, user_id: int, now: int) -> bool:
         """Has the operator opened the binding via the name for this account (and is it still running)?"""
-        return self._one("SELECT 1 AS x FROM namensbindung WHERE quelle=? AND user_id=? AND bis > ?",
+        return self._one("SELECT 1 AS x FROM name_binding WHERE source=? AND user_id=? AND until > ?",
                          (source, user_id, int(now))) is not None
 
     def name_binding_close(self, source: str, user_id: int) -> None:
         """The opened binding via the name is done (the binding stands)."""
-        self._exec("DELETE FROM namensbindung WHERE quelle=? AND user_id=?", (source, user_id))
+        self._exec("DELETE FROM name_binding WHERE source=? AND user_id=?", (source, user_id))
 
     def federation_since(self, source: str, now: int) -> int:
-        """The marker of a federated source (`foederation_seit:<quelle>`): from when the deadline for
+        """The marker of a federated source (`federation_since:<quelle>`): from when the deadline for
         the binding via the name runs (G1). Set to `now` on the first call, never
         again afterwards — a marker that were set anew on every start would give every restart a
         new deadline. `INSERT OR IGNORE`: if several workers start at the same time, the first wins, and
         all afterwards read the same value."""
-        key_name = f"foederation_seit:{source}"
+        key_name = f"federation_since:{source}"
         z = self._one("SELECT value FROM setting WHERE key=?", (key_name,))
         if z is None:
             self._exec("INSERT OR IGNORE INTO setting(key, value) VALUES (?,?)", (key_name, str(int(now))))
@@ -2683,22 +2825,22 @@ class Store:
         which provider entry is still re-checked (attack on the second round, finding 7)."""
         if self.vault is None:
             raise RuntimeError("Refresh tokens are only stored encrypted (vault.Vault).")
-        self._exec("INSERT INTO oidc_sitzung(token_hash, client, sub, refresh, geprueft_at, client_id, erfolg_at) "
+        self._exec("INSERT INTO oidc_session(token_hash, client, sub, refresh, checked_at, client_id, success_at) "
                    "VALUES (?,?,?,?,?,?,?) ON CONFLICT(token_hash, client) DO UPDATE SET sub=excluded.sub, "
-                   "refresh=excluded.refresh, geprueft_at=excluded.geprueft_at, client_id=excluded.client_id, "
-                   "erfolg_at=excluded.erfolg_at",
+                   "refresh=excluded.refresh, checked_at=excluded.checked_at, client_id=excluded.client_id, "
+                   "success_at=excluded.success_at",
                    (self._handle(handle), client, sub, self.vault.encrypt(refresh), _now(), client_id,
                     _now()))
 
     def get_oidc_sessions(self, handle) -> list:
         """The OIDC rows of a session — the refresh token ENCRYPTED (it is decrypted
         only when exchanging; a request before the deadline expires does not touch the key)."""
-        return [dict(z) for z in self._all("SELECT * FROM oidc_sitzung WHERE token_hash=?",
+        return [dict(z) for z in self._all("SELECT * FROM oidc_session WHERE token_hash=?",
                                           (self._handle(handle),))]
 
     def get_oidc_session(self, handle, client="*") -> Optional[dict]:
         """One OIDC row, with the refresh token decrypted, or None (for tools and tests)."""
-        z = self._one("SELECT * FROM oidc_sitzung WHERE token_hash=? AND client=?", (self._handle(handle), client))
+        z = self._one("SELECT * FROM oidc_session WHERE token_hash=? AND client=?", (self._handle(handle), client))
         if z is None:
             return None
         d = dict(z)
@@ -2707,12 +2849,12 @@ class Store:
         return d
 
     def claim_oidc_session(self, handle, client, old: int, now: int) -> bool:
-        """Claim the due exchange for EXACTLY one request: `geprueft_at` from `old` to
+        """Claim the due exchange for EXACTLY one request: `checked_at` from `old` to
         `now`, only if it is still `old`. Several simultaneous requests (also across workers) —
         only one exchanges. Otherwise all would exchange the same refresh token, and a provider with
         token rotation rejected the second exchange: the session ended for no reason (finding 5)."""
-        return self._exec("UPDATE oidc_sitzung SET geprueft_at=? WHERE token_hash=? AND client=? "
-                          "AND geprueft_at=?", (int(now), self._handle(handle), client, int(old))).rowcount == 1
+        return self._exec("UPDATE oidc_session SET checked_at=? WHERE token_hash=? AND client=? "
+                          "AND checked_at=?", (int(now), self._handle(handle), client, int(old))).rowcount == 1
 
     def oidc_session_checked(self, handle, client, when: int, new_refresh=None,
                               old_encrypted: Optional[str] = None, success: bool = False) -> bool:
@@ -2727,33 +2869,33 @@ class Store:
         unique through its nonce."""
         where, value = ("refresh=?", old_encrypted) if old_encrypted else ("token_hash=?", self._handle(handle))
         # `success`: the provider has just said yes — state for the upper limit without a re-check.
-        # `geprueft_at` alone is not suitable for that: after an "error" it stands at "in a minute".
-        extra = ", erfolg_at=?" if success else ""
+        # `checked_at` alone is not suitable for that: after an "error" it stands at "in a minute".
+        extra = ", success_at=?" if success else ""
         success_value = (int(when),) if success else ()
         if new_refresh and self.vault is not None:
-            return self._exec(f"UPDATE oidc_sitzung SET geprueft_at=?, refresh=?{extra} WHERE {where} AND client=?",
+            return self._exec(f"UPDATE oidc_session SET checked_at=?, refresh=?{extra} WHERE {where} AND client=?",
                               (int(when), self.vault.encrypt(new_refresh), *success_value, value,
                                client)).rowcount > 0
-        return self._exec(f"UPDATE oidc_sitzung SET geprueft_at=?{extra} WHERE {where} AND client=?",
+        return self._exec(f"UPDATE oidc_session SET checked_at=?{extra} WHERE {where} AND client=?",
                           (int(when), *success_value, value, client)).rowcount > 0
 
     def move_oidc_session(self, old, new) -> None:
         """Attach the OIDC rows to a new session (new token at the completion of the chain) —
         BEFORE deleting the old ones, otherwise the foreign key would take them along."""
-        self._exec("UPDATE oidc_sitzung SET token_hash=? WHERE token_hash=?",
+        self._exec("UPDATE oidc_session SET token_hash=? WHERE token_hash=?",
                    (self._handle(new), self._handle(old)))
 
     # ---------- Gate: signed out of one application only (T-22) ----------
     def gate_sign_out(self, handle, host: str) -> None:
-        self._exec("INSERT OR REPLACE INTO gate_abgemeldet(token_hash, host, at) VALUES (?,?,?)",
+        self._exec("INSERT OR REPLACE INTO gate_signed_out(token_hash, host, at) VALUES (?,?,?)",
                    (self._handle(handle), str(host).lower(), _now()))
 
     def gate_is_signed_out(self, handle, host: str) -> bool:
-        return bool(self._one("SELECT 1 FROM gate_abgemeldet WHERE token_hash=? AND host=?",
+        return bool(self._one("SELECT 1 FROM gate_signed_out WHERE token_hash=? AND host=?",
                               (self._handle(handle), str(host).lower())))
 
     def gate_resume(self, handle, host: str) -> int:
-        return self._exec("DELETE FROM gate_abgemeldet WHERE token_hash=? AND host=?",
+        return self._exec("DELETE FROM gate_signed_out WHERE token_hash=? AND host=?",
                           (self._handle(handle), str(host).lower())).rowcount
 
     # ---------- Connection of an app host to the central session (T-26) ----------
@@ -2839,7 +2981,7 @@ class Store:
         token = secrets.token_urlsafe(32)
         now = _now()
         self._exec("INSERT INTO session(token_hash, user_id, created_at, expires_at, mfa_ok, mfa_at, "
-                   "method, factors_done, remember, ip, user_agent, zuletzt) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                   "method, factors_done, remember, ip, user_agent, last_seen) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
                    (self.session_hash(token), user_id, now, now + ttl_seconds, 1 if mfa_ok else 0,
                     (now if mfa_ok else None), method, json.dumps(list(factors or [])),
                     1 if remember else 0, ip, ua, now))
@@ -2898,22 +3040,22 @@ class Store:
         # session that is permanent only because the path knows no choice (OIDC, passkey,
         # sign-in link) or the checkbox is switched off would otherwise never get an idle end
         # (attack on the second round, finding 9).
-        limit = self.idle_sec[1 if (r["remember"] and r["bleiben_gewaehlt"]) else 0]
-        last = r["zuletzt"] if r["zuletzt"] is not None else r["created_at"]
+        limit = self.idle_sec[1 if (r["remember"] and r["stay_chosen"]) else 0]
+        last = r["last_seen"] if r["last_seen"] is not None else r["created_at"]
         if limit and now - int(last) > limit:
             self.delete_session_by_handle(h)
             return None
         if now - int(last) >= self.IDLE_STEP_SEC:
-            self._exec("UPDATE session SET zuletzt=? WHERE token_hash=?", (now, r["token_hash"]))
+            self._exec("UPDATE session SET last_seen=? WHERE token_hash=?", (now, r["token_hash"]))
         return r
 
     def set_session_stay(self, handle):
         """Record: "stay signed in" was explicitly chosen (F-05)."""
-        self._exec("UPDATE session SET bleiben_gewaehlt=1 WHERE token_hash=?", (self._handle(handle),))
+        self._exec("UPDATE session SET stay_chosen=1 WHERE token_hash=?", (self._handle(handle),))
 
     def set_session_end_others(self, handle):
         """Record: if this (half) session becomes full, the account's other ones end (limit d)."""
-        self._exec("UPDATE session SET andere_beenden=1 WHERE token_hash=?", (self._handle(handle),))
+        self._exec("UPDATE session SET end_others=1 WHERE token_hash=?", (self._handle(handle),))
 
     def set_session_mfa(self, handle, ok=True):
         self._exec("UPDATE session SET mfa_ok=?, mfa_at=? WHERE token_hash=?",
@@ -2927,7 +3069,7 @@ class Store:
         """Handle from a session row — for the admin panel and "end other sessions"."""
         h = self._handle(handle)
         # A superseded token in the grace period (A-6) belongs to this session and goes with it.
-        self._exec("DELETE FROM session WHERE token_hash=? OR nachfolger=?", (h, h))
+        self._exec("DELETE FROM session WHERE token_hash=? OR successor=?", (h, h))
 
     def rotate_session(self, handle, mercy_sec: int = 0) -> Optional[str]:
         """Give the session a new token without otherwise changing it (F-06).
@@ -2948,26 +3090,26 @@ class Store:
         token = secrets.token_urlsafe(32)
         new = self.session_hash(token)
         columns = ("user_id, created_at, expires_at, mfa_ok, mfa_at, method, factors_done, "
-                   "remember, ip, user_agent, zuletzt, bleiben_gewaehlt")
+                   "remember, ip, user_agent, last_seen, stay_chosen")
         with self._lock:
             try:
                 cur = self.db.execute(
                     f"INSERT INTO session(token_hash, {columns}) SELECT ?, {columns} FROM session "
-                    "WHERE token_hash=? AND nachfolger IS NULL", (new, old))
+                    "WHERE token_hash=? AND successor IS NULL", (new, old))
                 if cur.rowcount != 1:
                     self.db.rollback()
                     return None
                 self.db.execute("UPDATE oidc_grant SET token_hash=? WHERE token_hash=?", (new, old))
-                self.db.execute("UPDATE oidc_sitzung SET token_hash=? WHERE token_hash=?", (new, old))
-                self.db.execute("UPDATE gate_abgemeldet SET token_hash=? WHERE token_hash=?", (new, old))
+                self.db.execute("UPDATE oidc_session SET token_hash=? WHERE token_hash=?", (new, old))
+                self.db.execute("UPDATE gate_signed_out SET token_hash=? WHERE token_hash=?", (new, old))
                 self.db.execute("UPDATE oidc_id_token SET token_hash=? WHERE token_hash=?", (new, old))
                 self.db.execute("UPDATE gate_link SET token_hash=? WHERE token_hash=?", (new, old))
                 if mercy_sec > 0:
                     self.db.execute("UPDATE session SET expires_at=MIN(expires_at, ?), mfa_at=NULL, "
-                                    "nachfolger=? WHERE token_hash=?", (_now() + int(mercy_sec), new, old))
+                                    "successor=? WHERE token_hash=?", (_now() + int(mercy_sec), new, old))
                     # An earlier predecessor that points to the old token now points to the new one —
                     # otherwise it would survive a sign-out of the new session.
-                    self.db.execute("UPDATE session SET nachfolger=? WHERE nachfolger=?", (new, old))
+                    self.db.execute("UPDATE session SET successor=? WHERE successor=?", (new, old))
                 else:
                     self.db.execute("DELETE FROM session WHERE token_hash=?", (old,))
                 self.db.commit()
@@ -3076,9 +3218,9 @@ class Store:
     def list_sessions(self, user_id=None):
         # Superseded tokens in the grace period (A-6) are not a session of their own.
         if user_id is not None:
-            return self._all("SELECT * FROM session WHERE user_id=? AND nachfolger IS NULL "
+            return self._all("SELECT * FROM session WHERE user_id=? AND successor IS NULL "
                              "ORDER BY created_at DESC", (user_id,))
-        return self._all("SELECT * FROM session WHERE nachfolger IS NULL ORDER BY created_at DESC")
+        return self._all("SELECT * FROM session WHERE successor IS NULL ORDER BY created_at DESC")
 
     # ---------- Flow state (OIDC / WebAuthn, short-lived, one-shot) ----------
     def put_flow(self, key, data: dict, ttl=600):
@@ -3131,7 +3273,7 @@ class Store:
         Raises the sqlite3 exception unchanged; what of it reaches the outside is decided by the
         caller.
 
-        What is written is the clock state (`uhr_stand`) — so the health check also saves it
+        What is written is the clock state (`clock_state`) — so the health check also saves it
         on the side, in times when nothing else is written. But at most every
         `WRITE_PROBE_SEC`: `/healthz` is reachable without sign-in, and one commit
         with fsync under `_lock` per call would mean that whoever floods it occupies the write lock that
@@ -3164,7 +3306,7 @@ class Store:
         self._exec("INSERT INTO login_attempt(ts, username, ip, success, method) VALUES (?,?,?,?,?)",
                    (_now(), username, ip, 1 if success else 0, method))
 
-    #: How long a pre-booking with an open outcome (`reserve_attempt(hover=True)`) counts as
+    #: How long a pre-booking with an open outcome (`reserve_attempt(as_pending=True)`) counts as
     #: pending, not as a failed attempt (seconds, G9). Longer than any directory query up to
     #: its timeout (`ldap_.CONNECTION_TIMEOUT`, connection setup and bind once each) including
     #: compute time. An older open row has been completed by nobody — the process has died
@@ -3179,7 +3321,7 @@ class Store:
         q = "SELECT COUNT(*) c FROM login_attempt WHERE success=0 AND ts>=?"
         args = [since]
         if only_confirmed:
-            q += " AND (offen=0 OR ts<?)"
+            q += " AND (pending=0 OR ts<?)"
             args.append(_now() - self.PREBOOKING_PENDING_SEC)
         if from_id is not None:
             q += " AND id>?"
@@ -3211,7 +3353,7 @@ class Store:
         the same table (see `security.NOT_LOGIN_METHODS`). A row without a method
         (`NULL`, conceivable from old data) still counts: when in doubt, lock more strictly.
 
-        Default: a pending pre-booking (`reserve_attempt(hover=True)`) counts — it
+        Default: a pending pre-booking (`reserve_attempt(as_pending=True)`) counts — it
         CAN become a failed attempt. `only_confirmed=True` leaves it out (G9).
         """
         if not username and not ip:
@@ -3220,7 +3362,7 @@ class Store:
                                       only_confirmed, except_username)
         return self._one(q, args)["c"]
 
-    def reserve_attempt(self, username, ip, method, rules, series=None, hover=False) -> tuple:
+    def reserve_attempt(self, username, ip, method, rules, series=None, as_pending=False) -> tuple:
         """Check lockouts and pre-book the attempt **in the same transaction** as a failed attempt.
 
         `rules` is a list `(grund, limit, filter)`; `filter` are the keywords of
@@ -3245,7 +3387,7 @@ class Store:
         the limit, exactly this booking triggered the lockout; a pending one never reaches it here,
         only at its completion (`finish_attempt`, audit round 2026-09-27, p2 F3).
 
-        **Pending (G9).** `hover=True` books the attempt with an open outcome (`offen=1`): it
+        **Pending (G9).** `as_pending=True` books the attempt with an open outcome (`offen=1`): it
         can become a failed attempt or none at all (directory outage, F-23 — withdrawn
         only once the outage is reported, with a directory that drops packets, hence after
         the timeout). If a rule or the series applies **only** because of such rows, the
@@ -3285,8 +3427,8 @@ class Store:
                     self.db.execute("ROLLBACK")
                     return None, "pending"
                 cur = self.db.execute(
-                    "INSERT INTO login_attempt(ts, username, ip, success, method, offen) VALUES (?,?,?,0,?,?)",
-                    (_now(), username, ip, method, 1 if hover else 0))
+                    "INSERT INTO login_attempt(ts, username, ip, success, method, pending) VALUES (?,?,?,0,?,?)",
+                    (_now(), username, ip, method, 1 if as_pending else 0))
                 if bucket_s:
                     self._series_plus(bucket_s, kind_s)
                     state = self._series_confirmed(bucket_s)
@@ -3317,7 +3459,7 @@ class Store:
             if series:
                 self._begin_immediate()
                 before = self._series_confirmed(series[0])
-            self.db.execute("UPDATE login_attempt SET success=?, offen=0 WHERE id=?",
+            self.db.execute("UPDATE login_attempt SET success=?, pending=0 WHERE id=?",
                             (1 if success else 0, attempt_id))
             if success and series:
                 self._series_minus(*series)
@@ -3391,7 +3533,7 @@ class Store:
     # what gets cleared is what the way back proves (a self-service reset only the password part,
     # R4-13). The booking lies in `reserve_attempt`, atomic with the attempt itself.
     def _series_sum(self, bucket) -> int:
-        line = self.db.execute("SELECT COALESCE(SUM(anzahl), 0) AS n FROM fehlserie WHERE topf=?",
+        line = self.db.execute("SELECT COALESCE(SUM(count), 0) AS n FROM failure_series WHERE folded=?",
                                 (bucket,)).fetchone()
         return int(line["n"])
 
@@ -3399,22 +3541,22 @@ class Store:
         """The series without the pending pre-bookings (G9) — under `_lock`, without commit.
 
         Every open row in `login_attempt` has exactly one booking in the series under the same
-        bucket (`reserve_attempt(hover=True)` books both in one transaction); a row that is
+        bucket (`reserve_attempt(as_pending=True)` books both in one transaction); a row that is
         older than `PREBOOKING_PENDING_SEC` counts as a failed attempt and is not subtracted."""
         unclosed = self.db.execute(
-            "SELECT COUNT(*) AS n FROM login_attempt WHERE username=? COLLATE NOCASE AND offen=1 "
+            "SELECT COUNT(*) AS n FROM login_attempt WHERE username=? COLLATE NOCASE AND pending=1 "
             "AND ts>=?", (bucket, _now() - self.PREBOOKING_PENDING_SEC)).fetchone()
         return max(0, self._series_sum(bucket) - int(unclosed["n"]))
 
     def _series_minus(self, bucket, kind):
-        self.db.execute("UPDATE fehlserie SET anzahl = anzahl - 1 WHERE topf=? AND art=? AND anzahl > 0",
+        self.db.execute("UPDATE failure_series SET count = count - 1 WHERE folded=? AND kind=? AND count > 0",
                         (bucket, kind or ""))
 
     def _series_plus(self, bucket, kind):
         now = _now()
-        self.db.execute("INSERT INTO fehlserie(topf, art, anzahl, seit, zuletzt) VALUES (?, ?, 1, ?, ?) "
-                        "ON CONFLICT(topf, art) DO UPDATE SET anzahl = anzahl + 1, "
-                        "zuletzt = excluded.zuletzt", (bucket, kind or "", now, now))
+        self.db.execute("INSERT INTO failure_series(folded, kind, count, since, last_seen) VALUES (?, ?, 1, ?, ?) "
+                        "ON CONFLICT(folded, kind) DO UPDATE SET count = count + 1, "
+                        "last_seen = excluded.last_seen", (bucket, kind or "", now, now))
 
     def failure_series(self, bucket) -> int:
         """How many consecutive failed attempts stand for this (folded) identifier, across all methods?"""
@@ -3424,7 +3566,7 @@ class Store:
             return self._series_sum(bucket)
 
     def failure_series_confirmed(self, bucket) -> int:
-        """Like `fehlserie`, without the pending pre-bookings (G9): the consecutive failed attempts that
+        """Like `failure_series`, without the pending pre-bookings (G9): the consecutive failed attempts that
         are settled. The series lockout hangs on it; the sum alone can still fall."""
         if not bucket:
             return 0
@@ -3439,8 +3581,8 @@ class Store:
         kinds = [str(a) for a in kinds]
         place = ",".join("?" for _ in kinds)
         with self._lock:
-            line = self.db.execute(f"SELECT COALESCE(SUM(anzahl), 0) AS n FROM fehlserie "
-                                    f"WHERE topf=? AND art NOT IN ({place})", [bucket, *kinds]).fetchone()
+            line = self.db.execute(f"SELECT COALESCE(SUM(count), 0) AS n FROM failure_series "
+                                    f"WHERE folded=? AND kind NOT IN ({place})", [bucket, *kinds]).fetchone()
         return int(line["n"])
 
     def increase_failure_series(self, bucket, kind="password") -> int:
@@ -3448,8 +3590,8 @@ class Store:
         if not bucket:
             return 0
         now = _now()
-        self._exec("INSERT INTO fehlserie(topf, art, anzahl, seit, zuletzt) VALUES (?, ?, 1, ?, ?) "
-                   "ON CONFLICT(topf, art) DO UPDATE SET anzahl = anzahl + 1, zuletzt = excluded.zuletzt",
+        self._exec("INSERT INTO failure_series(folded, kind, count, since, last_seen) VALUES (?, ?, 1, ?, ?) "
+                   "ON CONFLICT(folded, kind) DO UPDATE SET count = count + 1, last_seen = excluded.last_seen",
                    (bucket, kind or "", now, now))
         return self.failure_series(bucket)
 
@@ -3460,7 +3602,7 @@ class Store:
         sign-in. The series before it stays, only this attempt does not count."""
         if not bucket:
             return
-        self._exec("UPDATE fehlserie SET anzahl = anzahl - 1 WHERE topf=? AND art=? AND anzahl > 0",
+        self._exec("UPDATE failure_series SET count = count - 1 WHERE folded=? AND kind=? AND count > 0",
                    (bucket, kind or ""))
 
     def delete_failure_series(self, bucket, kinds=None) -> int:
@@ -3469,13 +3611,13 @@ class Store:
             return 0
         if kinds is None:
             away = self.failure_series(bucket)
-            self._exec("DELETE FROM fehlserie WHERE topf=?", (bucket,))
+            self._exec("DELETE FROM failure_series WHERE folded=?", (bucket,))
             return away
         kinds = [str(a) for a in kinds]
         place = ",".join("?" for _ in kinds)
-        line = self._one(f"SELECT COALESCE(SUM(anzahl), 0) AS n FROM fehlserie WHERE topf=? AND art IN ({place})",
+        line = self._one(f"SELECT COALESCE(SUM(count), 0) AS n FROM failure_series WHERE folded=? AND kind IN ({place})",
                           [bucket, *kinds])
-        self._exec(f"DELETE FROM fehlserie WHERE topf=? AND art IN ({place})", [bucket, *kinds])
+        self._exec(f"DELETE FROM failure_series WHERE folded=? AND kind IN ({place})", [bucket, *kinds])
         return int(line["n"])
 
     def gc_failure_series(self, older_than, limit) -> int:
@@ -3486,8 +3628,8 @@ class Store:
         invented names; with it each remaining row costs an attacker `limit`
         failed attempts, each slowed down by the window thresholds."""
         return self._exec(
-            "DELETE FROM fehlserie WHERE topf IN (SELECT topf FROM fehlserie GROUP BY topf "
-            "HAVING MAX(zuletzt) < ? AND SUM(anzahl) < ?)", (int(older_than), int(limit))).rowcount
+            "DELETE FROM failure_series WHERE folded IN (SELECT folded FROM failure_series GROUP BY folded "
+            "HAVING MAX(last_seen) < ? AND SUM(count) < ?)", (int(older_than), int(limit))).rowcount
 
     # ---------- Magic / one-time tokens ----------
     def add_magic_token(self, token_hash, purpose, expires_at, user_id=None, email=None, payload=None):
@@ -3636,10 +3778,10 @@ class Store:
         self._exec("INSERT INTO audit(ts, event, username, ip, detail) VALUES (?,?,?,?,?)",
                    (_now(), event, username, ip, detail))
 
-    def delete_attempts_for(self, username, weitere=(), after=None, unlimited=(), from_ids=None) -> int:
+    def delete_attempts_for(self, username, additional=(), after=None, unlimited=(), from_ids=None) -> int:
         """Delete the sign-in attempts of an account (when deleting the account, H-13).
 
-        `weitere` are additional identifiers under which it could sign in (the
+        `additional` are additional identifiers under which it could sign in (the
         email address — `find_user` accepts it, and the attempt then stands under it).
 
         Counting happens under the bucket `norm_identifier` (NFKC, Python `lower()`, IDNA for addresses),
@@ -3663,7 +3805,7 @@ class Store:
           Otherwise removing an account, which an anonymous party can create and have cleared via `gc()`,
           would empty the account threshold of a stranger (R7-6/H-8)."""
         n = 0
-        for value in (username, *[w for w in weitere if w]):
+        for value in (username, *[w for w in additional if w]):
             bucket = norm_identifier(value)
             if not bucket or self.account_by_bucket(bucket) is not None:
                 continue
@@ -3685,12 +3827,12 @@ class Store:
         """Delete audit rows before a point in time (`audit_retention_days`, B5-11)."""
         return self._exec("DELETE FROM audit WHERE ts < ?", (int(older_than_ts),)).rowcount
 
-    def anonymize_audit(self, username, replacement, weitere=(), since=None, since_id=0,
+    def anonymize_audit(self, username, replacement, additional=(), since=None, since_id=0,
                             unlimited=(), from_ids=None) -> int:
         """Take an account out of the audit log without deleting the rows (H-13).
 
         The row "on the 3rd at 14:02 a password was reset, from this IP" stays for
-        forensics; WHO it was then stands only as `replacement`. `weitere` are
+        forensics; WHO it was then stands only as `replacement`. `additional` are
         additional identifiers (the email address): under it, sign-in attempts stand in the
         column `username` (`find_user` accepts the address), and it occurs in the detail text.
 
@@ -3727,7 +3869,7 @@ class Store:
         * **Every spelling of the typed identifier** (4a): `login_fail` writes the RAW
           input (`Émile `, ` emile@example.com`, `ＥＭＩＬＥ@example.com`), counted in the
           bucket (`norm_identifier`). `lower(username)` hit only ASCII variants of these. The block scan
-          therefore also compares the column `username` in the bucket (SQL function `tinysesam_kennung`,
+          therefore also compares the column `username` in the bucket (SQL function `tinysesam_identifier`,
           only for queries of this connection), with the same limits per identifier. If a
           REMAINING account shares the bucket (namesake from existing data, as with
           `delete_attempts_for`), it stays with `lower()` — otherwise it would hit its rows.
@@ -3757,7 +3899,7 @@ class Store:
         setup = (-1, -1, 0, -1) if since is None else (int(since), int(since), int(since_id or 0), -1)
         # Every identifier with its span: today's, then the earlier ones (4b) — read BEFORE
         # anything is rewritten; afterwards the rows they come from stand under `replacement`.
-        identifiers = [(str(w), start_from(str(w))) for w in (username, *weitere) if w]
+        identifiers = [(str(w), start_from(str(w))) for w in (username, *additional) if w]
         identifiers += self._earlier_identifiers(identifiers, setup, limit)
         # Compared folded (4a) only where no remaining account shares the bucket.
         fold = {t for t in {norm_identifier(w) for w, _ in identifiers} - {""}
@@ -3803,7 +3945,7 @@ class Store:
             finish = min(above, limits[4])
             # The column `username` in the bucket (4a) only where folding is done: the function costs a
             # Python call per row.
-            also_name = "OR tinysesam_kennung(username) = ?" if folded else ""
+            also_name = "OR tinysesam_identifier(username) = ?" if folded else ""
             while below < finish:
                 until = min(below + self._ANONYMOUS_BLOCK, finish)
                 # The block via the primary key (`id > ? AND id <= ?`, so it stands in the plan) —

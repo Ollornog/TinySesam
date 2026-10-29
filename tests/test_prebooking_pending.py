@@ -8,7 +8,7 @@ pre-bookings as failed attempts — 429 for the colleagues behind the same NAT a
 emergency admin with the correct password, plus `failed login … reason=lockout_ip` for fail2ban and a
 "Locked sign-in" mail to bystanders. Afterwards not a single failed attempt was in the table.
 
-Now the pre-booking is pending in the database (`login_attempt.offen`). Whoever would fail only on pending
+Now the pre-booking is pending in the database (`login_attempt.pending`). Whoever would fail only on pending
 pre-bookings waits until they are decided — bounded in time and number. The
 burst (R7-2) stays throttled: it waits along and then gets the real lockout.
 
@@ -143,7 +143,7 @@ def _old_unclosed(auth, name, ip, count):
     """Open pre-bookings that nobody completed (process died) — older than the deadline."""
     old = now() - Store.PREBOOKING_PENDING_SEC - 1
     for _ in range(count):
-        auth.store._exec("INSERT INTO login_attempt(ts, username, ip, success, method, offen) "
+        auth.store._exec("INSERT INTO login_attempt(ts, username, ip, success, method, pending) "
                          "VALUES (?,?,?,0,'password',1)", (old, name, ip))
 
 
@@ -197,7 +197,7 @@ r.check("R7-2: the lockout appears with `reason=lockout_user` in the security lo
 r.check("R7-2: the real failed attempts appear in it as `failed login … method=password`",
         len([z for z in log_b.lines("failed login user=alice") if "method=password" in z]) == pair)
 r.check("R7-2: after the burst nothing is open any more",
-        auth.store._one("SELECT COUNT(*) AS n FROM login_attempt WHERE offen=1")["n"] == 0)
+        auth.store._one("SELECT COUNT(*) AS n FROM login_attempt WHERE pending=1")["n"] == 0)
 os.remove(db)
 
 # ── (c) An open pre-booking that nobody completes becomes a failed attempt after the deadline ──
@@ -233,7 +233,7 @@ os.remove(db)
 # them right now), and the address has already reached its threshold with confirmed failed attempts.
 auth, app, post, db = _setup(Directory("falsch", duration=0))
 for _ in range(auth._sec("max_login_attempts")):
-    auth.store._exec("INSERT INTO login_attempt(ts, username, ip, success, method, offen) "
+    auth.store._exec("INSERT INTO login_attempt(ts, username, ip, success, method, pending) "
                      "VALUES (?,'alice',?,0,'password',1)", (now(), NAT[0]))
 for i in range(auth._sec("max_login_attempts") * auth._sec("ip_attempt_factor")):
     auth.store.record_attempt(f"kollege{i}", NAT[0], False, "password")
@@ -377,7 +377,7 @@ os.remove(db)
 # ── (f) An unexpected exception leaves no pending row behind ───────────────────────────────────
 auth, app, post, db = _setup(Directory("kaputt"))
 status_f = _sign_in(app, "alice")
-lines_f = [(z["offen"], z["success"]) for z in auth.store._all("SELECT offen, success FROM login_attempt")]
+lines_f = [(z["pending"], z["success"]) for z in auth.store._all("SELECT pending, success FROM login_attempt")]
 r.check("exception in the directory client: 500, the attempt is a confirmed failed attempt",
         status_f == 500 and lines_f == [(0, 0)], f"{status_f}, {lines_f}")
 os.remove(db)
@@ -479,12 +479,12 @@ for order in ("schwebend zuerst", "feststehend zuerst"):
     for _ in range(limit_i - 2):
         auth_i3.store.increase_failure_series("bert")
     _prior = _series_lines(auth_i3)
-    _s = auth_i3._begin_attempt("bert", "192.0.2.61", "password", hover=True)
+    _s = auth_i3._begin_attempt("bert", "192.0.2.61", "password", as_pending=True)
     _f = auth_i3._begin_attempt("bert", "192.0.2.62", "pin")
     for v, m in ((_s, "password"), (_f, "pin"))[::1 if order == "schwebend zuerst" else -1]:
         auth_i3._record_login("bert", "192.0.2.61", False, m, attempt=v)
     _mixed.append((order, _s is not None and _f is not None, _series_lines(auth_i3) - _prior))
-# (Mutation probe: delete `before < max_series <= afterwards` → „schwebend zuerst" 0 rows → red.)
+# (Mutation probe: delete `before < max_series <= afterwards` → "pending first" 0 rows → red.)
 r.check("p2 F3: pending and immediately settled booking at the limit — exactly one row in both orders",
         all(ok_ and n == 1 for _, ok_, n in _mixed), str(_mixed))
 auth_i3.store.db.close()
@@ -655,16 +655,16 @@ app_o = FastAPI()
 app_o.include_router(auth_o.router())
 _sign_in(app_o, "bert", "falsch")
 r.check("without LDAP: the failed attempt is confirmed immediately (offen=0)",
-        [z["offen"] for z in auth_o.store._all("SELECT offen FROM login_attempt")] == [0])
+        [z["pending"] for z in auth_o.store._all("SELECT pending FROM login_attempt")] == [0])
 auth_o.store.db.close()
 raw = sqlite3.connect(db_o)
-raw.execute("ALTER TABLE login_attempt DROP COLUMN offen")
+raw.execute("ALTER TABLE login_attempt DROP COLUMN pending")
 stamp = raw.execute("PRAGMA user_version").fetchone()[0]
 raw.close()
 auth_o = TinySesam(TinySesamConfig(db_path=db_o, cookie_secure=False, passkey_enabled=False, oidc_enabled=False))
 columns = {z["name"] for z in auth_o.store._all("PRAGMA table_info(login_attempt)")}
 r.check("a file from schema 11 without the column gets it at start (idempotent)",
-        stamp == Store.SCHEMA_VERSION >= 11 and "offen" in columns
+        stamp == Store.SCHEMA_VERSION >= 11 and "pending" in columns
         and auth_o.store.count_fails(0, username="bert", only_confirmed=True) == 1, f"{stamp} {columns}")
 auth_o.store.db.close()
 os.remove(db_o)

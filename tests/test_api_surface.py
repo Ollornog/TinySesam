@@ -771,7 +771,7 @@ def deadline_findings(file: dict, version: str) -> list:
 
 
 #: The name of the still-open section in the CHANGELOG — what is in it is in no release.
-OFFEN = "Unreleased"
+OPEN = "Unreleased"
 
 
 def changelog_stale(text: str) -> list:
@@ -808,7 +808,7 @@ def since_findings(file: dict, changelog: str) -> list:
       `[Unreleased]` to the new release the same rule keeps applying.
     """
     sections = changelog_stale(changelog)
-    releases = [head for head, _ in sections if head != OFFEN and head[:1].isdigit()]
+    releases = [head for head, _ in sections if head != OPEN and head[:1].isdigit()]
     if not releases:
         return ["CHANGELOG.md: no release section `## [X.Y.Z]` found — the `since` of the aliases "
                 "cannot be checked"]
@@ -822,11 +822,11 @@ def since_findings(file: dict, changelog: str) -> list:
                            f"Deprecated — it belongs there, with replacement (`since` {since!r})")
             continue
         introduction = where[-1]                   # the oldest section that names it
-        if introduction == OFFEN:
+        if introduction == OPEN:
             if _version(since) <= _version(youngest):
                 findings.append(
                     f"{area}.{name}: `since` {since!r}, but the alias is only under "
-                    f"[{OFFEN}] — {youngest} is already published and did not know it; "
+                    f"[{OPEN}] — {youngest} is already published and did not know it; "
                     f"set `since` to the next release (greater than {youngest})")
         elif _version(since) != _version(introduction):
             findings.append(f"{area}.{name}: `since` {since!r}, but the alias was introduced by "
@@ -1767,7 +1767,7 @@ def self_check_contract(now: dict) -> None:
         copy[file] = sources[file].replace(old, new, count)
         return copy
 
-    def pruefe(area, measure, copy, away, add=None):
+    def check(area, measure, copy, away, add=None):
         before, afterwards = measure(sources), measure(copy)
         assert away in before and away not in afterwards, (area, away, "is still there after the mutation")
         if add is not None:
@@ -1777,9 +1777,9 @@ def self_check_contract(now: dict) -> None:
         assert any(away in z and z.startswith("[A]") for z in b), (area, away, b)
 
     routes = CT.routes_static
-    pruefe("http.routes", routes, bent("router.py", '@r.get("/auth/forward")', '@r.get("/auth/forwards")'),
+    check("http.routes", routes, bent("router.py", '@r.get("/auth/forward")', '@r.get("/auth/forwards")'),
            "GET /auth/forward", "GET /auth/forwards")
-    pruefe("http.routes", routes, bent("router.py", '@r.post("/.tinysesam/logout")', '@r.get("/.tinysesam/logout2")'),
+    check("http.routes", routes, bent("router.py", '@r.post("/.tinysesam/logout")', '@r.get("/.tinysesam/logout2")'),
            "POST /.tinysesam/logout", "GET /.tinysesam/logout2")
     # a dropped parameter is a break (list value), a gained one an extension
     before = routes(sources)["GET /.tinysesam/start"]
@@ -1801,21 +1801,21 @@ def self_check_contract(now: dict) -> None:
         else:
             raise AssertionError(f"{foreign}: the route scan accepted a registration it cannot see")
     atoms = CT.contract_atoms
-    pruefe("http.contract", atoms, bent("router.py", 'headers={"X-TinySesam-Reason": "role"}',
+    check("http.contract", atoms, bent("router.py", 'headers={"X-TinySesam-Reason": "role"}',
                                             'headers={"X-TinySesam-Reason": "denied"}'),
            "reason:role", "reason:denied")
-    pruefe("http.contract", atoms, bent("router.py", '"X-TinySesam-Reason": "app-signed-out"',
+    check("http.contract", atoms, bent("router.py", '"X-TinySesam-Reason": "app-signed-out"',
                                             '"X-TinySesam-Reason": "app-out"'), "reason:app-signed-out")
-    pruefe("http.contract", atoms, bent("manager.py", '_GATE_LINK_COOKIE = "__Host-tinysesam_link"',
+    check("http.contract", atoms, bent("manager.py", '_GATE_LINK_COOKIE = "__Host-tinysesam_link"',
                                             '_GATE_LINK_COOKIE = "__Host-tinysesam_conn"'),
            "cookie:__Host-tinysesam_link", "cookie:__Host-tinysesam_conn")
-    pruefe("http.contract", atoms, bent("manager.py", 'h.get("x-forwarded-uri")', 'h.get("x-fwd-uri")'),
+    check("http.contract", atoms, bent("manager.py", 'h.get("x-forwarded-uri")', 'h.get("x-fwd-uri")'),
            "request-header:X-Forwarded-Uri", "request-header:X-Fwd-Uri")
-    pruefe("http.contract", atoms, bent("router.py", 'getlist("roles")', 'getlist("role")'),
+    check("http.contract", atoms, bent("router.py", 'getlist("roles")', 'getlist("role")'),
            "request-param:roles", "request-param:role")
-    pruefe("http.contract", atoms, bent("router.py", 'head["X-TinySesam-Gate-Cookie"]', 'head["X-Gate-Cookie"]'),
+    check("http.contract", atoms, bent("router.py", 'head["X-TinySesam-Gate-Cookie"]', 'head["X-Gate-Cookie"]'),
            "header:X-TinySesam-Gate-Cookie")
-    pruefe("log.loggers", CT.loggers_static,
+    check("log.loggers", CT.loggers_static,
            bent("security.py", 'getLogger("tinysesam.security")', 'getLogger("tinysesam.sec")'),
            "tinysesam.security", "tinysesam.sec")
     log = lambda q: CT.log_atoms(q, security.NOT_LOGIN_METHODS)           # noqa: E731
@@ -1823,20 +1823,20 @@ def self_check_contract(now: dict) -> None:
     # such as `failed login | user ip method reason`, survives bending one of them on purpose: merging or
     # moving call sites is no break of what a filter reads.)
     generic = 'security.seclog.warning("%s user=%s ip=%s method=%s", security.log_event(method),'
-    pruefe("log.lines", log, bent("manager.py", generic, generic.replace('ip=%s', 'client=%s')),
+    check("log.lines", log, bent("manager.py", generic, generic.replace('ip=%s', 'client=%s')),
            "line:WARNING failed login | user ip method", "line:WARNING failed login | user client method")
-    pruefe("log.lines", log, bent("manager.py", generic, generic.replace(".warning(", ".error(")),
+    check("log.lines", log, bent("manager.py", generic, generic.replace(".warning(", ".error(")),
            "line:WARNING failed login | user ip method", "line:ERROR failed login | user ip method")
-    pruefe("log.lines", log, bent("manager.py", "ip=%s method=blocked reason=%s", "ip=%s method=refused reason=%s"),
+    check("log.lines", log, bent("manager.py", "ip=%s method=blocked reason=%s", "ip=%s method=refused reason=%s"),
            "value:method=blocked", "value:method=refused")
-    pruefe("log.lines", log, bent("manager.py", '"%s user=%s ip=%s method=%s unban=%s"',
+    check("log.lines", log, bent("manager.py", '"%s user=%s ip=%s method=%s unban=%s"',
                                       '"%s user=%s ip=%s method=%s lift=%s"'),
            "line:INFO login ok | user ip method unban")
-    pruefe("log.lines", log, bent("security.py", 'logging.Formatter("%(asctime)s %(levelname)s %(message)s")',
+    check("log.lines", log, bent("security.py", 'logging.Formatter("%(asctime)s %(levelname)s %(message)s")',
                                       'logging.Formatter("%(levelname)s %(message)s")'),
            "format:%(asctime)s %(levelname)s %(message)s", "format:%(levelname)s %(message)s")
     # An event word the shipped filters name that no call produces any more is a finding of its own.
-    pruefe("log.lines", log, bent("manager.py", '"deferred %s user=%s ip=%s reason=pending"',
+    check("log.lines", log, bent("manager.py", '"deferred %s user=%s ip=%s reason=pending"',
                                       '"postponed %s user=%s ip=%s reason=pending"'), "event:deferred login")
     without_word = json.loads(json.dumps(now))
     without_word["log.lines"].remove("event:deferred login")

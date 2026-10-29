@@ -1945,8 +1945,8 @@ def _s1_measure(n: int) -> dict:
 
 def _s1_measure_at(n: int) -> dict:
     a, app_ = _s1_app(n)
-    without_bucket = a.store._one("SELECT COUNT(*) AS n FROM users WHERE topf_name IS NULL "
-                             "OR topf_mail IS NULL")["n"]
+    without_bucket = a.store._one("SELECT COUNT(*) AS n FROM users WHERE folded_name IS NULL "
+                             "OR folded_mail IS NULL")["n"]
     last, first = f"konto{n - 1}@example.com", "konto0@example.com"
     m = {"without_bucket": without_bucket,
          "frei": _s1_steps(a, lambda: a.identifier_taken("niemand@example.org")),
@@ -1960,7 +1960,7 @@ def _s1_measure_at(n: int) -> dict:
              "/auth/register", data={"username": "probevergeben", "password": "Sehr-Langes-Passwort-77",
                                      "email": last, "next": "/"}))}
     for i in range(5):                        # five open accounts, link expired
-        uid = a.store.create_user(f"offen{i}", None, f"offen{i}@example.org", False, [], False)
+        uid = a.store.create_user(f"pending{i}", None, f"pending{i}@example.org", False, [], False)
         a.store.set_disabled(uid, True)
         a.create_magic_token("verify_email", user_id=uid)
     a.store._exec("UPDATE magic_token SET expires_at=1 WHERE purpose='verify_email'")
@@ -2036,9 +2036,9 @@ r.check("S-1: … also without write permission: startup succeeds, and rows with
 # there for foreign writers, not for its own.
 # (Mutation probes: omit the bucket in `Store.create_user` or `Store.set_email` → red.)
 _s1_uid = _s1_a.store.create_user("Ärger", None, "X@Bücher.example")
-_s1_after_setup = tuple(_s1_a.store._one("SELECT topf_name, topf_mail FROM users WHERE id=?", (_s1_uid,)))
+_s1_after_setup = tuple(_s1_a.store._one("SELECT folded_name, folded_mail FROM users WHERE id=?", (_s1_uid,)))
 _s1_a.store.set_email(_s1_uid, "Neu@Example.com")
-_s1_after_change = _s1_a.store._one("SELECT topf_mail FROM users WHERE id=?", (_s1_uid,))["topf_mail"]
+_s1_after_change = _s1_a.store._one("SELECT folded_mail FROM users WHERE id=?", (_s1_uid,))["folded_mail"]
 r.check("S-1: … create_user and set_email write the bucket along right away",
         _s1_after_setup == ("ärger", "x@xn--bcher-kva.example") and _s1_after_change == "neu@example.com",
         f"after creation {_s1_after_setup}, after address change {_s1_after_change}")
@@ -2314,7 +2314,9 @@ def _not_manager(node, klass) -> bool:
 
 _N8_PERMITTED_SQL = {"users": {("Store", "delete_user")},
                    "webauthn_cred": {("Store", "delete_user"), ("Store", "delete_webauthn")},
-                   "": {("Store", "delete_user")}}
+                   # a table name from a variable: only the account deletion and the schema-16 migration, which merges
+                   # and drops the OLD-named tables of non-account data (`name_binding`, `oidc_session`, ...)
+                   "": {("Store", "delete_user"), ("Store", "_english_names")}}
 _N8_PROBES = {
     "Alias": "class TinySesam:\n    def weg(self, uid):\n        st = self.store\n        st.delete_user(uid)\n",
     "Attribut": "class Hilfe:\n    def weg(self, uid):\n        self._s.delete_user(uid)\n",
@@ -2488,7 +2490,7 @@ r.check("G4: a block reads via the primary key (id range), not via an index on t
 def _remove_g4_steps_on(name, inventory):
     uid = auth_g4.create_user(name, password="Geheim-G4-Pw15!")
     if inventory:   # account from the time before G2: no watermark, the creation (`seit`) applies
-        st4._exec("UPDATE users SET name_audit_ab = NULL, name_versuch_ab = NULL WHERE id = ?", (uid,))
+        st4._exec("UPDATE users SET name_audit_from = NULL, name_attempt_from = NULL WHERE id = ?", (uid,))
     st4.audit_log("apikey_create", "chef", None, f"key=2 actor={name}")
     counter = [0]
 

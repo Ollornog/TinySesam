@@ -87,8 +87,8 @@ def _pin(client, pin, **extra):
 
 
 def _kinds(auth, identifier):
-    return {z["art"]: z["anzahl"] for z in auth.store._all("SELECT art, anzahl FROM fehlserie WHERE topf=?",
-                                                            (identifier,)) if z["anzahl"]}
+    return {z["kind"]: z["count"] for z in auth.store._all("SELECT kind, count FROM failure_series WHERE folded=?",
+                                                            (identifier,)) if z["count"]}
 
 
 def _unlock(auth, identifier):
@@ -101,7 +101,7 @@ def _unlock(auth, identifier):
     return code
 
 
-# ── (a) Chain step after the password: slips of kind pin_folge, the reset does not clear them ──
+# ── (a) Chain step after the password: slips of kind `pin_folge`, the reset does not clear them ──
 auth, app, _ = _app(login_chain=["password", "pin"], password_reset_enabled=True)
 uid = _account(auth, "kette")
 c = TestClient(app)
@@ -142,7 +142,7 @@ r.check("(b) R2-2: slips via the guest path book under pin, and the reset clears
         _before_b == {"pin": 5} and auth_b.store.failure_series("gast") == 0,
         f"{_before_b} → {_kinds(auth_b, 'gast')}")
 
-# ── (c) full sign-in, panel reset and `tinysesam unlock` also clear pin_folge ─────────────────
+# ── (c) full sign-in, panel reset and `tinysesam unlock` also clear `pin_folge` ─────────────────
 auth_c, app_c, _ = _app(login_chain=["password", "pin"])
 uid_c = _account(auth_c, "voll")
 cc = TestClient(app_c)
@@ -194,7 +194,7 @@ r.check("(d) route chain factors=[password, pin] with full session: the slips bo
         _detour.headers.get("location", "").startswith("/auth/pin") and _after_wrong == {SEQUENCE: 3},
         f"{_detour.headers.get('location')}, {_after_wrong}")
 # (Mutation probe: the pre-booking remembers `method` instead of `series[1]` → lowering hits the kind pin,
-#  the pre-booking under pin_folge remains → 4 → red.)
+#  the pre-booking under `pin_folge` remains → 4 → red.)
 r.check("(g) a correct PIN withdraws its pre-booking under pin_folge — the series before it remains",
         _correct.status_code == 303 and cd.get("/pinbereich").status_code == 200
         and _kinds(auth_d, "route") == {SEQUENCE: 3}, f"HTTP {_correct.status_code}, {_kinds(auth_d, 'route')}")
@@ -349,7 +349,7 @@ _after_totp = cj2.post("/auth/totp", data={"code": _pyotp.TOTP(_secret_text_j2).
                       follow_redirects=False)
 _pin_j2 = _pin(cj2, PIN)
 # (Mutation probe: remove the condition "next step" in `_pin_chain_step` → 401/303 before
-#  the TOTP, afterwards /drin 401 → red.)
+#  the TOTP, afterwards `/drin` 401 → red.)
 r.check("(j) case 2 strict password → totp → pin: before the TOTP 404 (wrong as well as correct, no row); "
         "after the TOTP the PIN makes the session full (/drin 200)",
         _prior_totp == (404, 404) and _lines_prior == 0
@@ -468,7 +468,7 @@ def _series_way_out(kind):
 
 _out = {kind: _series_way_out(kind) for kind in ("password", "totp", SEQUENCE)}
 _reset_de = "bis du dein Passwort zurücksetzt"
-# (Mutation probe: `_series_reset_helps` always True → TOTP/pin_folge name the reset → red.)
+# (Mutation probe: `_series_reset_helps` always True → TOTP/`pin_folge` name the reset → red.)
 r.check("lockout notice: for a series of TOTP or PIN in the chain step no reset as a way out, "
         "but the operator — for a password series still the reset",
         _reset_de in _out["password"][1] and all(

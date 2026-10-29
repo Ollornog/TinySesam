@@ -721,9 +721,9 @@ finally:
     _sec.seclog.removeHandler(check_w)
 # MESSAGES are counted, not words: the message itself names `trusted_proxies` twice
 # (once as finding, once in the advice), so a word counter would always stand at 2.
-_zeilen = [z for z in buffer_w.getvalue().splitlines() if "X-Forwarded-For" in z]
-r.check("the warning comes once per peer, not at every request", len(_zeilen) == 1,
-        f"{len(_zeilen)} messages for 5 requests")
+_lines = [z for z in buffer_w.getvalue().splitlines() if "X-Forwarded-For" in z]
+r.check("the warning comes once per peer, not at every request", len(_lines) == 1,
+        f"{len(_lines)} messages for 5 requests")
 
 # SSO and passkey login wrote the raw peer IP into the session and into the log.
 for module in ("oidc.py", "webauthn_.py"):
@@ -1968,7 +1968,7 @@ def _start_log(db_path):
 # another path has filled it in (since G2 every successful sign-in cleans up from the account's watermark
 # and looks it up via `account_by_bucket`). Without this the probe no longer measures whether
 # `identifier_collisions` fills it in itself.
-auth_old.store._exec("UPDATE users SET topf_name = NULL, topf_mail = NULL WHERE id = ?", (eve_old,))
+auth_old.store._exec("UPDATE users SET folded_name = NULL, folded_mail = NULL WHERE id = ?", (eve_old,))
 r.check("precondition: the cross collision really is in the database",
         len(auth_old.store.identifier_collisions()) == 1,
         f"{[dict(z) for z in auth_old.store.identifier_collisions()]} — then the test measures nothing")
@@ -2244,7 +2244,7 @@ finally:
     logging.getLogger("tinysesam").removeHandler(_clock_h)
 
 # Across a restart up to the last SAVED state, not only up to the last event
-# (A-B6-9-neustart): A link and a session, expired two hours before the restart, without
+# (A-B6-9-restart): A link and a session, expired two hours before the restart, without
 # anything having been created afterwards. The Pi boots with a date a year back. Before, `Store()`
 # knew only MAX(created_at/ts) and raised the clock to the time of creation — both counted
 # again for their full remaining period.
@@ -2254,7 +2254,7 @@ _wall_n = [_T]
 
 def _restart_after_2h(secure):
     """Creates link + session at T, lets 2 h pass, `secure(store)` saves (or not),
-    restarts with the clock set back a year. → (link valid?, session valid?, uhr_stand)"""
+    restarts with the clock set back a year. → (link valid?, session valid?, clock_state)"""
     _store_mod._CLOCK = _store_mod._Clock(wall=lambda: _wall_n[0])
     _wall_n[0] = _T
     a = TinySesam(TinySesamConfig(db_path=str(Path(tempfile.mkdtemp()) / "n.db"),
@@ -2301,7 +2301,7 @@ r.check("after a restart, what expired AFTER the last event stays expired "
 r.check("…likewise with the state that an ordinary write access saves along",
         _sz[:2] == (False, False), f"link valid: {_sz[0]}, session valid: {_sz[1]}")
 r.check("a writer with a non-raised clock does not reset the saved state",
-        _hc[2] >= _T + 7200 and _sz[2] >= _T + 7200, f"uhr_stand={_hc[2]}/{_sz[2]}")
+        _hc[2] >= _T + 7200 and _sz[2] >= _T + 7200, f"clock_state={_hc[2]}/{_sz[2]}")
 
 # `time.time` is not bound at import (A-B6-9-zeitpatch): An embedding app that sets the time forward
 # in its tests thereby also sets TinySesam's clock forward. Bound, TinySesam never saw the
@@ -2324,7 +2324,7 @@ r.check("mock.patch('time.time') forward lets a session expire",
 # freezegun also replaces `time.monotonic` — by the frozen time on the EPOCH scale
 # (`calendar.timegm`, ≈1.8e9), not by the uptime (T-13 attack, note on B6-9). The
 # clock carried this step forward as elapsed time and jumped about 57 years ahead; on
-# leaving freeze_time it fell back, and `uhr_stand` raised every later opening of the database
+# leaving freeze_time it fell back, and `clock_state` raised every later opening of the database
 # permanently into the year 2083. Reproduced with set sources, exactly in freezegun values.
 _T21, _OPERATION = 1_790_000_000.0, 200_000.0     # wall clock / real monotonic time (uptime)
 _w21, _m21 = [_T21], [_OPERATION]
@@ -2359,7 +2359,7 @@ r.check("after a 200-day pause the clock still protects against a backward jump"
 # The same class in the store (second attack round, konfig): `_clock_secured` and `_written`
 # keep their own monotonic stamps. After a write under freezegun they stood on the
 # epoch scale (≈1.8e9); afterwards the distance to the real monotonic time was negative and thus always
-# "shorter than the period" — `uhr_stand` was no longer saved in the whole process (arithmetically
+# "shorter than the period" — `clock_state` was no longer saved in the whole process (arithmetically
 # for 57 years), and the write probe of /healthz checked only the connection.
 _st23 = _store_mod.Store(str(Path(tempfile.mkdtemp()) / "uhr23.db"))
 _st23.set_setting("x", "0")
@@ -2372,7 +2372,7 @@ def _write_under_freezegun():
 
 
 def _clock_state_back():
-    # As if `uhr_stand` had last been saved two minutes ago (without `_exec`, so that
+    # As if `clock_state` had last been saved two minutes ago (without `_exec`, so that
     # the stamps stay as the write under freezegun left them).
     _st23.db.execute("UPDATE setting SET value=? WHERE key=?",
                      (str(_store_mod.now() - 120), _st23.CLOCK_STATE))
@@ -2385,14 +2385,14 @@ _old23 = _clock_state_back()
 _st23.write_probe()
 r.check("after a write access under freezegun the write probe of /healthz writes again",
         int(_st23.get_setting(_st23.CLOCK_STATE)) > _old23,
-        f"uhr_stand stayed {int(_st23.get_setting(_st23.CLOCK_STATE)) - _store_mod.now()} s behind — "
+        f"clock_state stayed {int(_st23.get_setting(_st23.CLOCK_STATE)) - _store_mod.now()} s behind — "
         "only the connection checked")
 _write_under_freezegun()
 _old23 = _clock_state_back()
 _st23.set_setting("x", "1")
-r.check("…and an ordinary write access saves uhr_stand along again",
+r.check("…and an ordinary write access saves clock_state along again",
         int(_st23.get_setting(_st23.CLOCK_STATE)) > _old23,
-        f"uhr_stand stayed {int(_st23.get_setting(_st23.CLOCK_STATE)) - _store_mod.now()} s behind")
+        f"clock_state stayed {int(_st23.get_setting(_st23.CLOCK_STATE)) - _store_mod.now()} s behind")
 _st23.db.close()
 # (Mutation probe: remove the condition `0 <=` in `Store._fresh` → both red.)
 

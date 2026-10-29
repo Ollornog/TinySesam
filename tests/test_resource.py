@@ -60,7 +60,7 @@ assert c.get("/wiki", headers=JSON).status_code == 401
 r = c.post("/auth/resource/wiki", data={"secret": "geheime passphrase", "next": "/wiki"}, follow_redirects=False)
 assert r.status_code == 303
 assert c.get("/wiki", headers=JSON).json() == {"area": "wiki"}
-# fotos stays open in parallel
+# the area `fotos` stays open in parallel
 assert c.get("/fotos", headers=JSON).status_code == 200
 ok("unlock is separate per area (passphrase area separately)")
 

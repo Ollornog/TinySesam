@@ -165,11 +165,11 @@ def _audit(auth):
 
 def _attempts(auth):
     return [tuple(z) for z in auth.store._all(
-        "SELECT username, ip, success, method, offen FROM login_attempt ORDER BY id")]
+        "SELECT username, ip, success, method, pending FROM login_attempt ORDER BY id")]
 
 
 def _series(auth):
-    return sorted(tuple(z) for z in auth.store._all("SELECT topf, art, anzahl FROM fehlserie"))
+    return sorted(tuple(z) for z in auth.store._all("SELECT folded, kind, count FROM failure_series"))
 
 
 # ── (a) Custom login page: lock, IP throttle, series ──────────────────────────────────────────
@@ -450,8 +450,8 @@ c = _client(app)
 _k1 = _post(c, "/eigen/login", username="ines", password=PW)
 _k_inside = c.get("/drin", headers={"Accept": "application/json"}, follow_redirects=False)
 _k_wrong = _post(c, "/eigen/pin", pin="0000")
-_k_series = [(z["art"], z["anzahl"]) for z in auth.store._all(
-    "SELECT art, anzahl FROM fehlserie WHERE topf='ines' AND anzahl > 0")]
+_k_series = [(z["kind"], z["count"]) for z in auth.store._all(
+    "SELECT kind, count FROM failure_series WHERE folded='ines' AND count > 0")]
 _k_page_html = c.post("/auth/pin", data={"pin": "0001", "next": "/drin"}, headers={"Accept": "text/html"},
                   follow_redirects=False)
 _k_ok = _post(c, "/eigen/pin", pin=PIN)

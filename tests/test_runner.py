@@ -158,7 +158,7 @@ r.check("C: start order with one job = list; with several the long ones first, r
 be_missing = [n for n in run_all.LONG_FIRST if not (ROOT / "tests" / n).exists()]
 r.check("C: every entry in LONG_FIRST is still a suite", not be_missing, f"{be_missing}")
 
-# ── D: CI_TEST_JOBS / CI_KERNE ──────────────────────────────────────────────────────────────
+# ── D: CI_TEST_JOBS / `CI_KERNE` ──────────────────────────────────────────────────────────────
 r.check("D: CI_TEST_JOBS takes precedence over CI_KERNE; whitespace does not matter",
         run_all.jobs_determine(" 3 ", "7") == 3 and run_all.jobs_determine("1", "7") == 1)
 r.check("D: without CI_TEST_JOBS, CI_KERNE applies (the number of the runner)",
@@ -285,7 +285,7 @@ TRIGGER = {"_SCRYPT", "_SCRYPT_OLD", "_MAXMEM", "_PH", "_DUMMY", "needs_rehash",
              "check_needs_rehash", "dummy_verify", "PasswordHasher", "scrypt", "perf_counter"}
 
 
-def ausloeser(path: Path) -> set:
+def trigger(path: Path) -> set:
     tree = ast.parse(path.read_text(encoding="utf-8"))
     return ({n.attr for n in ast.walk(tree) if isinstance(n, ast.Attribute)}
             | {n.id for n in ast.walk(tree) if isinstance(n, ast.Name)}
@@ -293,8 +293,8 @@ def ausloeser(path: Path) -> set:
         & TRIGGER
 
 
-found = {p.name: sorted(ausloeser(p)) for p in sorted((ROOT / "tests").glob("test_*.py"))
-            if p.name != Path(__file__).name and ausloeser(p)}
+found = {p.name: sorted(trigger(p)) for p in sorted((ROOT / "tests").glob("test_*.py"))
+            if p.name != Path(__file__).name and trigger(p)}
 r.check("F: every suite that checks hash parameters or runtimes is in PRODUCTION_VALUES — "
         "and only those", set(found) == set(_starter.PRODUCTION_VALUES),
         f"found {found}, entered {sorted(_starter.PRODUCTION_VALUES)} — such a suite "

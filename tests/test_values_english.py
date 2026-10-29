@@ -350,16 +350,16 @@ finally:
 path_e = os.path.join(tempfile.mkdtemp(), "e.db")
 e = _setup(path_e)
 bert = e.create_user("bert", password=PW)
-_texte = {}
+_texts = {}
 for old_name, new_name in (("automat", "automation"), ("mensch", "human")):
     try:
         e.create_api_key(bert, name="x", kind=old_name)
-        _texte[old_name] = "angenommen"
+        _texts[old_name] = "angenommen"
     except ConfigError as error:
-        _texte[old_name] = str(error)
+        _texts[old_name] = str(error)
 r.check("(e) `create_api_key(kind='automat'|'mensch')` → ConfigError that names the new name",
-        all(f"has been called {new!r} since 0.22.0" in _texte[old] for old, new in
-            (("automat", "automation"), ("mensch", "human"))), str(_texte))
+        all(f"has been called {new!r} since 0.22.0" in _texts[old] for old, new in
+            (("automat", "automation"), ("mensch", "human"))), str(_texts))
 _ce = TestClient(_app(e))
 _ce.post("/auth/login", data={"username": "bert", "password": PW}, follow_redirects=False)
 _response = _ce.post("/auth/apikeys", json={"name": "x", "kind": "mensch"})
@@ -427,7 +427,7 @@ r.check("(f) an unknown account: False, no audit row",
         and f.store._one("SELECT 1 FROM audit WHERE id > ?", (_prior,)) is None)
 
 # The panel calls exactly this method — and writes the same line as up to 0.21.x: the admin as
-# Konto, seine IP, `uid=… api_keys_revoked=…`.
+# account, its IP, `uid=… api_keys_revoked=…`.
 ca = TestClient(app_f)
 ca.post("/auth/login", data={"username": "chefin", "password": PW}, follow_redirects=False)
 f.create_api_key(bert_f, name="zwei")
