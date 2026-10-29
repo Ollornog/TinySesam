@@ -36,7 +36,7 @@ META = {"issuer": "https://id.example.com", "jwks_uri": "https://id.example.com/
 
 
 def fresh_client():
-    c = OIDCClient("https://id.example.com", "cid", "geheim", "openid")
+    c = OIDCClient("https://id.example.com", "cid", "secret", "openid")
     c._meta, c._meta_when = dict(META), time.time()
     return c
 
@@ -100,7 +100,7 @@ finally:
 
 # ---------- 2) The throttle against foreign load ----------
 c2 = fresh_client()
-c2._jwks, c2._jwks_when = "irgendwas", time.time()
+c2._jwks, c2._jwks_when = "something", time.time()
 r.check("directly after a fetch the refresh is blocked", not c2._jwks_refreshable(),
         "every broken id_token could trigger a fetch at the provider")
 c2._jwks_when -= c2.JWKS_MIN_GAP + 1
@@ -128,18 +128,18 @@ def make_exchange_environment(c, attempts):
         def import_key_set(data):
             return data["set"]
 
-    state = {"aktuelles_set": "alt"}
+    state = {"current_set": "alt"}
 
     def fake_get(url, **kw):
         class A:
             @staticmethod
             def json():
-                return {"set": state["aktuelles_set"]}
+                return {"set": state["current_set"]}
         return A()
 
     def fake_decode(token, key_name, claims_options=None):
         attempts.append(key_name)
-        if key_name != "neu":
+        if key_name != "new":
             raise ValueError("bad signature: unknown kid")
         # `aud` belongs here since `exchange()` checks the audience (F-15): a token without a
         # matching `aud` is none for us, and the stand-in is to reproduce a valid one.
@@ -161,12 +161,12 @@ real_jose = sys.modules.get("authlib.jose")
 state = make_exchange_environment(c3, attempts)
 try:
     c3._jwks, c3._jwks_when = "alt", time.time() - c3.JWKS_MIN_GAP - 1
-    state["aktuelles_set"] = "neu"          # the provider has rotated
+    state["current_set"] = "new"          # the provider has rotated
     claims, tok = c3.exchange("code", "https://app.example.com/cb", None)
     r.check("after a key rotation the login succeeds on the second attempt",
             claims.get("sub") == "u1", f"claims={dict(claims) if claims else None}")
     r.check("and indeed through exactly ONE re-fetch, not through guessing",
-            attempts == ["alt", "neu"], f"attempts: {attempts}")
+            attempts == ["alt", "new"], f"attempts: {attempts}")
 
     # The throttle may close the emergency exit: freshly fetched → no second attempt.
     c4 = fresh_client()
@@ -266,7 +266,7 @@ try:
     # b) The attack: same JWKS, but `alg: HS256` with the public key as
     #    HMAC secret. The attacker knows the JWKS — it is publicly retrievable.
     public = json.dumps(private.as_dict(is_private=False), separators=(",", ":")).encode()
-    forged = _hs256(public, {**PAYLOAD, "sub": "angreifer"})
+    forged = _hs256(public, {**PAYLOAD, "sub": "attacker"})
     c8 = fresh_client()
     _oidc_environment(JWKS_RSA, forged)
     try:
@@ -283,12 +283,12 @@ try:
     #    Without the fixed list in `_decoder()` both lines would be equal — and this test red.
     secret_text = b"0123456789abcdef0123456789abcdef"
     jwks_oct = {"keys": [{"kty": "oct", "kid": "k1", "k": _b64(secret_text).decode()}]}
-    tok_oct = _hs256(secret_text, {**PAYLOAD, "sub": "angreifer"})
+    tok_oct = _hs256(secret_text, {**PAYLOAD, "sub": "attacker"})
     sentence = _JWK.import_key_set(jwks_oct)
     try:
         default = _default_decoder.decode(tok_oct, sentence, claims_options=OPTIONS)
         default.validate()
-        default_took_an = default.get("sub") == "angreifer"
+        default_took_an = default.get("sub") == "attacker"
     except Exception:
         default_took_an = False
     r.check("precondition: authlib's default decoder accepts exactly this HS256 token",
@@ -332,7 +332,7 @@ def discovery_client(status, document):
         return Response()
 
     sys.modules["httpx"] = types.SimpleNamespace(get=fake_get)
-    return OIDCClient("https://id.example.com", "cid", "geheim", "openid"), calls
+    return OIDCClient("https://id.example.com", "cid", "secret", "openid"), calls
 
 
 def meta_error(c):
@@ -386,7 +386,7 @@ from tinysesam.oidc import OIDCClients, DEFAULT_CLIENT                   # noqa:
 _cfg14 = TinySesamConfig(
     db_path="/dev/null", passkey_enabled=False,
     oidc_enabled=True, oidc_issuer="https://id.example.com",
-    oidc_client_id="haupt", oidc_client_secret="s-haupt",
+    oidc_client_id="main", oidc_client_secret="s-main",
     oidc_clients={"app-a.example.com": {"client_id": "a", "client_secret": "s-a"},
                   "app-b.example.com": {"client_id": "b", "client_secret": "s-b",
                                         "scopes": "openid profile email groups"}})
@@ -397,7 +397,7 @@ _reg._parts_meta()
 r.check("each application has its own client at the same provider",
         [_reg.for_host(h).client_id for h in ("app-a.example.com", "app-b.example.com")] == ["a", "b"])
 r.check("an unknown host gets the default client, the flow does not abort",
-        _reg.for_host("fremd.example.com").client_id == "haupt")
+        _reg.for_host("foreign.example.com").client_id == "main")
 r.check("the port is not part of the application name",
         _reg.for_host("app-b.example.com:8443").client_id == "b")
 r.check("an own scope per application is adopted",
@@ -429,16 +429,16 @@ def _audience_error(**claims):
 
 r.check("a token only for us goes through", _audience_error(aud="cid") is None)
 r.check("several recipients WITH matching azp go through",
-        _audience_error(aud=["cid", "andere"], azp="cid") is None)
+        _audience_error(aud=["cid", "other"], azp="cid") is None)
 r.check("several recipients WITHOUT azp are rejected",
-        _audience_error(aud=["cid", "andere"]) == "api.oidc_audience")
+        _audience_error(aud=["cid", "other"]) == "api.oidc_audience")
 r.check("a foreign azp is rejected, even if we are in aud",
-        _audience_error(aud=["cid", "andere"], azp="andere") == "api.oidc_audience")
+        _audience_error(aud=["cid", "other"], azp="other") == "api.oidc_audience")
 r.check("a token entirely without us is rejected",
-        _audience_error(aud=["andere"]) == "api.oidc_audience")
+        _audience_error(aud=["other"]) == "api.oidc_audience")
 r.check("a token without aud is rejected", _audience_error() == "api.oidc_audience")
 r.check("a single foreign azp alone suffices for rejection",
-        _audience_error(aud="cid", azp="andere") == "api.oidc_audience")
+        _audience_error(aud="cid", azp="other") == "api.oidc_audience")
 
 # ---------- 8) F-18: the UserInfo response must match the ID token ----------
 # The response is NOT signed and is laid over the claims in the callback — it supplies
@@ -474,7 +474,7 @@ r.check("response without sub → discarded (fail-closed instead of partly adopt
 r.check("without an expected sub the caller gets nothing",
         _userinfo_with({"sub": "u1", "groups": ["a"]}, "") == {})
 r.check("a response that is not an object is discarded",
-        _userinfo_with(["kein", "objekt"], "u1") == {})
+        _userinfo_with(["no", "object"], "u1") == {})
 
 # ---------- 9) F-20/H-12: PKCE with S256 ----------
 # Without PKCE an intercepted authorization code (referer, proxy log, browser history) was
@@ -557,7 +557,7 @@ finally:
 # of the provider would be an outage here for 24 hours.
 real_httpx12 = sys.modules.get("httpx")
 try:
-    _sequence = [(503, {"error": "wartung"}), (200, {"error": "server_error"}), (200, dict(META))]
+    _sequence = [(503, {"error": "maintenance"}), (200, {"error": "server_error"}), (200, dict(META))]
     _fetches12 = []
 
     def _get12(url, **kw):
@@ -566,7 +566,7 @@ try:
         return types.SimpleNamespace(status_code=status, json=lambda d=doc: d)
 
     sys.modules["httpx"] = types.SimpleNamespace(get=_get12)
-    c12 = OIDCClient("https://id.example.com", "cid", "geheim", "openid")
+    c12 = OIDCClient("https://id.example.com", "cid", "secret", "openid")
     _f1, _f2 = meta_error(c12), meta_error(c12)
     r.check("F-24: 503 and a 200 with an error document are rejected and NOT remembered",
             _f1 is not None and _f2 is not None and c12._meta is None and len(_fetches12) == 2,

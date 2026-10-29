@@ -36,13 +36,13 @@ from tinysesam.store import Store  # noqa: E402
 from _kit.report import Report  # noqa: E402
 
 r = Report("Admin on someone else's account — rename (G13), reason for the lock (G3)")
-PW = "Konto-Test-Pw15"
+PW = "Account-Test-Pw15"
 
 
 def _app(**cfg):
     reason = dict(db_path=str(Path(tempfile.mkdtemp()) / "t.db"), cookie_secure=False,
                  csrf_enabled=False, base_url="http://testserver", lang="de",
-                 admin_identifiers=["chef-reserviert"])
+                 admin_identifiers=["chief-reserved"])
     reason.update(cfg)
     auth = TinySesam(TinySesamConfig(**reason))
     app = FastAPI()
@@ -74,29 +74,29 @@ def _renamed(auth, uid):
 
 # ── G13: admin API ──────────────────────────────────────────────────────────────────────────
 auth, app = _app()
-manager = auth.create_user("chefin", password=PW, is_admin=True)
+manager = auth.create_user("boss", password=PW, is_admin=True)
 auth.set_owner(manager, True)
-helper = auth.create_user("helfer", password=PW, is_admin=True)
+helper = auth.create_user("helper", password=PW, is_admin=True)
 anna = auth.create_user("anna", password=PW, email="anna@example.com", self_chosen_name=True)
 bert = auth.create_user("bert", password=PW, email="bert@example.com")
 events: list = []
 auth.on_security_event = lambda e, account, d: events.append((e, d))
-ch = _client(app, "helfer")
+ch = _client(app, "helper")
 id_before = auth._forward_response_headers(auth.get_user(anna))["Remote-Id"]
-a = ch.post(f"/auth/admin/api/users/{anna}/username", json={"username": "anna.neu"})
+a = ch.post(f"/auth/admin/api/users/{anna}/username", json={"username": "anna.new"})
 r.check("G13: an admin renames another account (admin API)",
-        a.status_code == 200 and a.json() == {"ok": True, "username": "anna.neu"}
-        and auth.store.get_user(anna)["username"] == "anna.neu", f"{a.status_code} {a.text[:160]}")
+        a.status_code == 200 and a.json() == {"ok": True, "username": "anna.new"}
+        and auth.store.get_user(anna)["username"] == "anna.new", f"{a.status_code} {a.text[:160]}")
 r.check("… the panel list shows the new name, Remote-Id stays the account ID",
-        any(u["id"] == anna and u["username"] == "anna.neu" for u in ch.get("/auth/admin/api/users").json())
+        any(u["id"] == anna and u["username"] == "anna.new" for u in ch.get("/auth/admin/api/users").json())
         and auth._forward_response_headers(auth.get_user(anna))["Remote-Id"] == id_before == str(anna))
 _lines = _renamed(auth, anna)
 r.check("… EXACTLY one audit row, as operator and with the admin as actor",
-        _lines == [("anna.neu", "old=anna by=operator actor=helfer")], str(_lines))
+        _lines == [("anna.new", "old=anna by=operator actor=helper")], str(_lines))
 # Read path: a row written up to 0.24.x (German keys) is still understood — `akteur=` marks a foreign trigger
 # (its IP is not shown), and the event comes out in the English spelling.
-auth.store.audit_log("username_changed", "anna.neu", "203.0.113.9", "alt=x durch=betreiber akteur=helfer")
-auth.store.audit_log("oidc_widerruf", "anna.neu", "203.0.113.9", "grund=idp_nein")
+auth.store.audit_log("username_changed", "anna.new", "203.0.113.9", "alt=x by=operator actor=helper")
+auth.store.audit_log("oidc_widerruf", "anna.new", "203.0.113.9", "grund=idp_nein")
 _own = auth.own_events(anna, limit=50)
 _old_line = [e for e in _own if e["event"] == "username_changed" and e["by_admin"]]
 r.check("… legacy row (`akteur=`) counts as an admin action: no IP, shown as by_admin; new row too",
@@ -105,32 +105,32 @@ r.check("… legacy event names come out in English (`oidc_widerruf` → `oidc_r
         any(e["event"] == "oidc_revoked" for e in _own) and all(e["event"] != "oidc_widerruf" for e in _own),
         str([e["event"] for e in _own]))
 r.check("… the security event reaches the owner",
-        ("username_changed", {"old": "anna", "new": "anna.neu"}) in events, str(events))
+        ("username_changed", {"old": "anna", "new": "anna.new"}) in events, str(events))
 r.check("… and the “self-chosen” marker (G2-N) is cleared: the name now stands for the operator",
         auth.store.get_user(anna)["name_self_chosen"] == 0)
 _fail = {n: ch.post(f"/auth/admin/api/users/{anna}/username", json={"username": n}).status_code
-         for n in ("bert", "BERT", "bert@example.com", "fremd@example.com", "chef-reserviert",
-                   "zwei\x01", "", "x" * 151)}
+         for n in ("bert", "BERT", "bert@example.com", "foreign@example.com", "chief-reserved",
+                   "two\x01", "", "x" * 151)}
 r.check("G13: taken (also as an address or look-alike name), someone else's address, allowlist name, "
         "control characters, empty, too long → 400",
-        set(_fail.values()) == {400} and auth.store.get_user(anna)["username"] == "anna.neu", str(_fail))
+        set(_fail.values()) == {400} and auth.store.get_user(anna)["username"] == "anna.new", str(_fail))
 r.check("… no name in the body → 400, not 500",
         ch.post(f"/auth/admin/api/users/{anna}/username", json={"username": 7}).status_code == 400
         and ch.post(f"/auth/admin/api/users/{anna}/username", json={}).status_code == 400)
 r.check("G13: an account that does not exist → 404",
-        ch.post("/auth/admin/api/users/9999/username", json={"username": "neu"}).status_code == 404)
-_owner_foreign = ch.post(f"/auth/admin/api/users/{manager}/username", json={"username": "chefin2"})
+        ch.post("/auth/admin/api/users/9999/username", json={"username": "new"}).status_code == 404)
+_owner_foreign = ch.post(f"/auth/admin/api/users/{manager}/username", json={"username": "boss2"})
 r.check("G13: an admin who is not owner does not rename the owner (403)",
-        _owner_foreign.status_code == 403 and auth.store.get_user(manager)["username"] == "chefin",
+        _owner_foreign.status_code == 403 and auth.store.get_user(manager)["username"] == "boss",
         f"HTTP {_owner_foreign.status_code}")
-cc = _client(app, "chefin")
+cc = _client(app, "boss")
 r.check("… an owner does (also other admins)",
-        cc.post(f"/auth/admin/api/users/{manager}/username", json={"username": "chefin2"}).status_code == 200
-        and cc.post(f"/auth/admin/api/users/{helper}/username", json={"username": "helfer2"}).status_code == 200)
+        cc.post(f"/auth/admin/api/users/{manager}/username", json={"username": "boss2"}).status_code == 200
+        and cc.post(f"/auth/admin/api/users/{helper}/username", json={"username": "helper2"}).status_code == 200)
 cn = _client(app, "bert")
 r.check("G13: no rename without admin right (403)",
         cn.post(f"/auth/admin/api/users/{anna}/username", json={"username": "anna3"}).status_code == 403
-        and auth.store.get_user(anna)["username"] == "anna.neu")
+        and auth.store.get_user(anna)["username"] == "anna.new")
 auth_m, app_m = _app(login_identifier="email")
 auth_m.create_user("admin@example.com", password=PW, email="admin@example.com", is_admin=True)
 _mu = auth_m.create_user("mu@example.com", password=PW, email="mu@example.com")
@@ -160,9 +160,9 @@ auth_s, app_s = _app(allow_signup=True, signup_require_email=True, signup_verify
                      admin_identifiers=[])
 auth_s.set_mailer(lambda *x, **k: True)
 auth_s.create_user("panel", password=PW, is_admin=True)
-TestClient(app_s).post("/auth/register", data={"username": "wartet", "password": PW,
-                                               "email": "wartet@example.com"}, follow_redirects=False)
-_concerning = auth_s.create_user("betrieb", password=PW)
+TestClient(app_s).post("/auth/register", data={"username": "waits", "password": PW,
+                                               "email": "waits@example.com"}, follow_redirects=False)
+_concerning = auth_s.create_user("operation", password=PW)
 cs = _client(app_s, "panel")
 cs.post(f"/auth/admin/api/users/{_concerning}/disable", json={"disabled": True})
 
@@ -173,31 +173,31 @@ def _items():
 
 _l = _items()
 r.check("G3: pending confirmation (registration) → disabled_by=confirmation",
-        "wartet" in _l and _l["wartet"]["disabled"] is True and _l["wartet"]["disabled_by"] == "confirmation",
+        "waits" in _l and _l["waits"]["disabled"] is True and _l["waits"]["disabled_by"] == "confirmation",
         str({k: (v["disabled"], v["disabled_by"]) for k, v in _l.items()}))
 r.check("G3: locked via the panel route → disabled_by=operator",
-        _l["betrieb"]["disabled"] is True and _l["betrieb"]["disabled_by"] == "operator",
-        str(_l["betrieb"]))
+        _l["operation"]["disabled"] is True and _l["operation"]["disabled_by"] == "operator",
+        str(_l["operation"]))
 cs.post(f"/auth/admin/api/users/{_concerning}/disable", json={"disabled": False})
 _l = _items()
 r.check("… unlocked → disabled_by=null, active accounts likewise",
-        _l["betrieb"]["disabled"] is False and _l["betrieb"]["disabled_by"] is None
-        and _l["panel"]["disabled_by"] is None, str(_l["betrieb"]))
+        _l["operation"]["disabled"] is False and _l["operation"]["disabled_by"] is None
+        and _l["panel"]["disabled_by"] is None, str(_l["operation"]))
 r.check("… and the panel badge carries both texts (not empty)",
         panel_texts(auth_s)["disabled_confirmation"] and panel_texts(auth_s)["disabled"]
         and panel_texts(auth_s)["disabled_confirmation"] != panel_texts(auth_s)["disabled"])
 
 # ── G13: CLI `tinysesam rename` ───────────────────────────────────────────────────────────────
 db = auth.cfg.db_path
-auth.store.set_username(anna, "anna.neu", itself_chosen=True)       # back to "self-chosen"
-code, from_ = _cli("rename", "--db", db, "anna.neu", "anna2")
+auth.store.set_username(anna, "anna.new", itself_chosen=True)       # back to "self-chosen"
+code, from_ = _cli("rename", "--db", db, "anna.new", "anna2")
 r.check("G13 (CLI): rename renames, exit 0",
         code == 0 and auth.store.get_user(anna)["username"] == "anna2" and "anna2" in from_, f"{code} {from_}")
 r.check("… audit row as operator with source=cli, “self-chosen” marker is cleared",
-        _renamed(auth, anna)[:1] == [("anna2", "old=anna.neu by=operator source=cli")]
+        _renamed(auth, anna)[:1] == [("anna2", "old=anna.new by=operator source=cli")]
         and auth.store.get_user(anna)["name_self_chosen"] == 0, str(_renamed(auth, anna)))
 _cli_fail = {n: _cli("rename", "--db", db, "anna2", n) for n in
-             ("bert", "BERT", "\uff42\uff45\uff52\uff54", "bert@example.com", "fremd@example.com", "zwei\x01", "",
+             ("bert", "BERT", "\uff42\uff45\uff52\uff54", "bert@example.com", "foreign@example.com", "two\x01", "",
               "  ", "x" * 151)}
 r.check("G13 (CLI): taken (name, address, look-alike name), someone else's address, control characters, empty, "
         "too long → exit 1, nothing changed",
@@ -216,9 +216,9 @@ code, from_ = _cli("rename", "--db", db, f"#{anna}", "anna3")
 r.check("G13 (CLI): #<id> finds the account (for a name that cannot be typed in)",
         code == 0 and auth.store.get_user(anna)["username"] == "anna3", from_)
 r.check("G13 (CLI): an unknown account and a missing database → exit 1",
-        _cli("rename", "--db", db, "niemand", "x1")[0] == 1
-        and _cli("rename", "--db", db + ".fehlt", "anna3", "x1")[0] == 1
-        and not Path(db + ".fehlt").exists())
+        _cli("rename", "--db", db, "nobody", "x1")[0] == 1
+        and _cli("rename", "--db", db + ".missing", "anna3", "x1")[0] == 1
+        and not Path(db + ".missing").exists())
 # The race with the running service: the pre-check sees nothing, the database rejects (G12c).
 # Reproduced by making the pre-check via the counting bucket fail — `ｂｅｒｔ` (full-width) is found
 # only by it; NOCASE and the address search do not see it.

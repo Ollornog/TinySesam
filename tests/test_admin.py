@@ -143,7 +143,7 @@ except ConfigError:
 # limit — 0 would paralyse the instance, the lower bound keeps it alive.
 auth.store.set_setting("rate_limit_max", "0")
 assert auth._sec("rate_limit_max") == 3, auth._sec("rate_limit_max")
-auth.store.set_setting("rate_limit_max", "keine Zahl")          # only the unreadable falls back to the default
+auth.store.set_setting("rate_limit_max", "no Number")          # only the unreadable falls back to the default
 assert auth._sec("rate_limit_max") == 30, auth._sec("rate_limit_max")
 auth.store.set_setting("rate_limit_max", "30")
 print("  ✓ R6-4/B2-9: limits in the panel and in set_security, all-or-nothing, legacy value pulled to the limit")
@@ -194,7 +194,7 @@ print("  ✓ A4: Infinity in the panel → 400, in set_security → ConfigError"
 
 # ---------- R6-8: key route answers 400 instead of 500 ----------
 for evil in ({"name": "x", "roles": ["gibtsnicht"]}, {"name": "x", "expires_days": 0},
-              {"name": "x", "expires_days": "morgen"}):
+              {"name": "x", "expires_days": "tomorrow"}):
     r = c.post(f"/auth/admin/api/users/{sid}/keys", json=evil)
     assert r.status_code == 400, (evil, r.status_code)
 # Self-service: the same class.
@@ -206,7 +206,7 @@ print("  ✓ R6-8: unusable scope/expiry → 400 with reason (panel and /auth/ap
 #     "automation". Before, `kind="Automat"` (typo in the column) kept the admin rights —
 #     a value that the value mapping up to 0.21.x (`automaton`/`human`) does not know either.
 k = auth.create_api_key(mid, name="ci")
-auth.store._exec("UPDATE api_key SET kind='Automat' WHERE id=?", (k["id"],))
+auth.store._exec("UPDATE api_key SET kind='Automation' WHERE id=?", (k["id"],))
 without = TestClient(app)
 assert without.get("/auth/admin/api/users", headers={"x-api-key": k["key"]}).status_code == 403
 # (b) The panel route itself requires a session — independent of whether R6-5 already removes the
@@ -227,14 +227,14 @@ print("  ✓ R6-6: unknown key kind carries no admin flag; panel key only from a
 # ---------- B2-13: the panel obeys the same password rule ----------
 # Until T-13 the admin path accepted any password — `1` for a new account, `password` when
 # resetting. (Mutation probe: delete the two `password_policy_error` calls in admin.py → red.)
-r = c.post("/auth/admin/api/users", json={"username": "neu1", "password": "1"})
+r = c.post("/auth/admin/api/users", json={"username": "new1", "password": "1"})
 assert r.status_code == 400 and "zu kurz" in r.json()["detail"], r.text
-r = c.post("/auth/admin/api/users", json={"username": "neu1", "password": "password123"})
+r = c.post("/auth/admin/api/users", json={"username": "new1", "password": "password123"})
 assert r.status_code == 400 and "leicht zu erraten" in r.json()["detail"], r.text
 r = c.post("/auth/admin/api/users", json={"username": "karl", "password": "Karl1990!"})
 assert r.status_code == 400, "the username is a context word"
-assert auth.store.get_user_by_name("neu1") is None and auth.store.get_user_by_name("karl") is None
-r = c.post("/auth/admin/api/users", json={"username": "neu1", "password": "brauchbar-und-lang"})
+assert auth.store.get_user_by_name("new1") is None and auth.store.get_user_by_name("karl") is None
+r = c.post("/auth/admin/api/users", json={"username": "new1", "password": "usable-and-long"})
 assert r.status_code == 200, r.text
 _bob = auth.store.get_user_by_name("bob")["id"]
 r = c.post(f"/auth/admin/api/users/{_bob}/password", json={"password": "Letmein-2024"})
@@ -242,8 +242,8 @@ assert r.status_code == 400 and "leicht zu erraten" in r.json()["detail"], r.tex
 r = c.post(f"/auth/admin/api/users/{_bob}/password", json={"password": "x" * 300})
 assert r.status_code == 400 and "zu lang" in r.json()["detail"], r.text
 assert auth._check_password("bob", "bobpw"), "rejected means: the old password still applies"
-r = c.post(f"/auth/admin/api/users/{_bob}/password", json={"password": "ein-gutes-neues"})
-assert r.status_code == 200 and auth._check_password("bob", "ein-gutes-neues")
+r = c.post(f"/auth/admin/api/users/{_bob}/password", json={"password": "a-good-newxxxxx"})
+assert r.status_code == 200 and auth._check_password("bob", "a-good-newxxxxx")
 # Creating without a password stays allowed (SSO/passkey accounts).
 assert c.post("/auth/admin/api/users", json={"username": "nurssso"}).status_code == 200
 print("  ✓ B2-13: creating and resetting in the panel check length, blocklist and context words")
@@ -262,7 +262,7 @@ def _lines(event):
     return len([z for z in auth.store.recent_audit(500) if z["event"] == event])
 
 
-_carl = auth.create_user("carl", password="carl-geheim-1")
+_carl = auth.create_user("carl", password="carl-secret-1")
 _before8 = _lines("user_roles")
 for _body in ({"roles": [1], "is_admin": True}, {"roles": [None], "is_admin": True},
                  {"roles": "admin", "is_admin": True}, {"roles": {"a": 1}}, {"roles": ["ok", 2]}):
@@ -275,8 +275,8 @@ assert _lines("user_roles") == _before8, "rejected means: nothing written, nothi
 # database and hit the next role change.
 r = c.post("/auth/admin/api/users", json={"username": "dora", "roles": [1]})
 assert r.status_code == 400 and auth.store.get_user_by_name("dora") is None, r.text
-r = c.post("/auth/admin/api/users", json={"username": "dora", "roles": ["leser"]})
-assert r.status_code == 200 and auth.user_roles(auth.store.get_user_by_name("dora")) == ["leser"], r.text
+r = c.post("/auth/admin/api/users", json={"username": "dora", "roles": ["reader"]})
+assert r.status_code == 200 and auth.user_roles(auth.store.get_user_by_name("dora")) == ["reader"], r.text
 # Legacy data (from a time without the check): the change goes through AND appears in the log.
 auth.store._exec("UPDATE users SET roles=? WHERE id=?", ("[1, null]", _carl))
 r = c.post(f"/auth/admin/api/users/{_carl}/roles", json={"roles": ["x"], "is_admin": False})
@@ -310,7 +310,7 @@ _pieces = {m.group(1): "\n".join(z for z in m.group(0).splitlines() if not z.lst
             for m in _re.finditer(r"(?:async )?function (\w+)\(.*?(?=\n(?:async )?function \w+\(|\nconst ACT=)",
                                   _js, _re.S)}
 _writing = [n for n in sorted(_act) if _re.search(r"(?<![\w.])p\(", _pieces.get(n, ""))]
-_without = [n for n in _writing if "abgewiesen(" not in _pieces[n]]
+_without = [n for n in _writing if "rejected(" not in _pieces[n]]
 assert not _without, f"Actions without display of the rejection: {_without}"
 assert len(_writing) >= 10 and _act <= set(_pieces), (_writing, _act - set(_pieces))
 # And `p()` itself: without the look at `r.ok` it returns the body on 400/500, and
@@ -533,17 +533,17 @@ def _p_with(detail):
 
 _p_broken = {
     "final finding audit-3": _p_with('L["err.generic"]'),
-    "fixed text instead of reason": _p_with('(j&&typeof j.detail==="string"&&"Fehler")||L["err.generic"]'),
+    "fixed text instead of reason": _p_with('(j&&typeof j.detail==="string"&&"Error")||L["err.generic"]'),
     "reason without text and null check": _p_with('j.detail||L["err.generic"]'),
     "reason without text check": _p_with('(j&&j.detail)||L["err.generic"]'),
     "typeof before the null check": _p_with('(typeof j.detail==="string"&&j&&j.detail)||L["err.generic"]'),
     "text check negated": _p_with('(j&&typeof j.detail!=="string"&&j.detail)||L["err.generic"]'),
-    "text check on another field": _p_with('(j&&typeof j.fehler==="string"&&j.detail)||L["err.generic"]'),
+    "text check on another field": _p_with('(j&&typeof j.error==="string"&&j.detail)||L["err.generic"]'),
     "null check negated": _p_with('(!j&&typeof j.detail==="string"&&j.detail)||L["err.generic"]'),
     "reason from another variable": _p_with('(j&&typeof j.detail==="string"&&k.detail)||L["err.generic"]'),
     "branches swapped": _p_with('j&&typeof j.detail==="string"?L["err.generic"]:j.detail'),
     "without fallback text": _p_with('(j&&typeof j.detail==="string"&&j.detail)'),
-    "function call (outside the part)": _p_with('grund(j)||L["err.generic"]'),
+    "function call (outside the part)": _p_with('reason(j)||L["err.generic"]'),
     "without looking at r.ok": _re.sub(r"if\s*\(\s*r\.ok\s*\)\s*return[^;]*;", "", _p_code),
     "finding 4": '.then(r=>r.json());\n',
     "finding 7 (body always)": '.then(async r=>{let j=null;try{j=await r.json()}catch(e){} return j});\n',
@@ -565,22 +565,22 @@ from voraussetzung import pflicht_werkzeug  # noqa: E402
 # (Mutation probe: with PATH without node → red; with `TINYSESAM_OHNE_NODE`=1 → ⚠ line.)
 _node = pflicht_werkzeug("node", "finding 10: runtime probe of the panel actions")
 if _node:
-    _probe = ("const A=[];let ANTWORT=null;const E={};\n"
+    _probe = ("const A=[];let REPLY=null;const E={};\n"
               "const document={cookie:'',addEventListener(){},querySelectorAll:()=>[],"
               "getElementById:i=>E[i]||(E[i]={value:'0',checked:false,textContent:'',innerHTML:''})};\n"
-              "const alert=m=>A.push(String(m));const confirm=()=>true;const prompt=()=>'neu-und-lang';\n"
+              "const alert=m=>A.push(String(m));const confirm=()=>true;const prompt=()=>'new-und-long';\n"
               # The panel reads input fields by their ID as global names (browser behaviour).
               "const kn={value:'k'},ke={value:''};\n"
-              "const fetch=async()=>({ok:ANTWORT[0]<400,status:ANTWORT[0],"
-              "json:async()=>{if(ANTWORT[1]===null)throw new Error('kein JSON');return ANTWORT[1]}});\n"
+              "const fetch=async()=>({ok:REPLY[0]<400,status:REPLY[0],"
+              "json:async()=>{if(REPLY[1]===null)throw new Error('no JSON');return REPLY[1]}});\n"
               + _js.replace("tabs();users();", "")
               + "\nusers=async()=>{};keys=async()=>{};pks=async()=>{};sessions=async()=>{};\n"
-              "const FAELLE=[['savesec',[['rate_limit_max']]],['saveroles',[1]],['pw',[1]],['dis',[1,true]],"
+              "const CASES=[['savesec',[['rate_limit_max']]],['saveroles',[1]],['pw',[1]],['dis',[1,true]],"
               "['delpk',[1,2,'x']],['revk',[1,1,'x']],['mkkey',[1]],['deluser',[1]]];\n"
-              "(async()=>{const E2={};for(const [name,args] of FAELLE){\n"
-              "  for(const [k,antw] of [['400',[400,{detail:'Grund vom Server'}]],['500',[500,null]],"
+              "(async()=>{const E2={};for(const [name,args] of CASES){\n"
+              "  for(const [k,reply] of [['400',[400,{detail:'Reason from the server'}]],['500',[500,null]],"
               "['200',[200,{ok:true}]]]){\n"
-              "    ANTWORT=antw;A.length=0;await (globalThis[name]||eval(name))(...args);"
+              "    REPLY=reply;A.length=0;await (globalThis[name]||eval(name))(...args);"
               "E2[name+' '+k]=[...A]}}\n"
               "  process.stdout.write(JSON.stringify(E2))})();\n")
     _out = _sp.run([_node, "-e", _probe], capture_output=True, text=True, timeout=30)
@@ -588,7 +588,7 @@ if _node:
     _erg = _json.loads(_out.stdout)
     _Lp = _json.loads(_re.search(r"const L=(\{.*?\});", _js).group(1))   # the texts of the panel
     for _name in ("savesec", "saveroles", "pw", "dis", "delpk", "revk", "mkkey", "deluser"):
-        assert _erg[f"{_name} 400"] == ["Grund vom Server"], (_name, _erg[f"{_name} 400"])
+        assert _erg[f"{_name} 400"] == ["Reason from the server"], (_name, _erg[f"{_name} 400"])
         assert len(_erg[f"{_name} 500"]) == 1 and _erg[f"{_name} 500"][0] not in ("", "undefined"), \
             (_name, _erg[f"{_name} 500"])
     assert _erg["savesec 200"] == [_Lp["saved"]] and _erg["pw 200"] == [_Lp["pw_set"]] \
@@ -596,7 +596,7 @@ if _node:
     assert _Lp["saved"] not in _erg["savesec 400"] + _erg["savesec 500"], _erg
     assert _erg["pw 500"] == [_Lp["err.generic"]], _erg
     print("  ✓ Finding 10 (node): 400/500 show the reason instead of \"saved\", 200 stays silent or reports success")
-print("  ✓ Finding 10 (structure): every panel action that writes routes the result through abgewiesen(),"
+print("  ✓ Finding 10 (structure): every panel action that writes routes the result through rejected(),"
       " and p() reads r.ok and passes on the server's reason")
 
 os.remove(db)

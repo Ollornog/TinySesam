@@ -25,7 +25,7 @@ def ok(name):
 META = {"issuer": "https://id.example.com", "jwks_uri": "https://id.example.com/jwks",
         "token_endpoint": "https://id.example.com/token",
         "authorization_endpoint": "https://id.example.com/auth"}
-PROXY = {"X-Forwarded-Proto": "https", "X-Forwarded-Host": "app.example.com", "X-Forwarded-Uri": "/seite"}
+PROXY = {"X-Forwarded-Proto": "https", "X-Forwarded-Host": "app.example.com", "X-Forwarded-Uri": "/page"}
 PAGE_HTML = {"Sec-Fetch-Mode": "navigate", "Accept": "text/html"}
 
 
@@ -41,10 +41,10 @@ def instance(cfg: TinySesamConfig):
 
 
 def gateway(**extra):
-    values = dict(issuer="https://id.example.com", client_id="haupt", client_secret="s",
+    values = dict(issuer="https://id.example.com", client_id="main", client_secret="s",
                  base_url="https://auth.example.com", db_path=os.path.join(tempfile.mkdtemp(), "g.db"),
                  trusted_redirect_hosts=["app.example.com", "wiki.example.com"],
-                 allowed_groups=["leute"], oidc_scopes="openid profile email groups",
+                 allowed_groups=["people"], oidc_scopes="openid profile email groups",
                  https_mode="off", lang="de")
     values.update(extra)
     cfg = TinySesamConfig.oidc_gateway(**values)
@@ -65,7 +65,7 @@ c = TestClient(app)
 r = c.get("/auth/forward", headers={**PROXY, **PAGE_HTML})
 assert r.status_code == 401
 assert place(r).path == "/auth/oidc/start", r.headers.get("X-TinySesam-Location")
-assert parse_qs(place(r).query)["next"] == ["https://app.example.com/seite"]
+assert parse_qs(place(r).query)["next"] == ["https://app.example.com/page"]
 ok("gateway (default direct): page request → straight to /auth/oidc/start with next")
 
 # Where does this entry point lead? To the provider, with exactly one redirect.
@@ -74,8 +74,8 @@ assert a.status_code == 303 and a.headers["location"].startswith("https://id.exa
 ok("… and from there with one redirect to the provider")
 
 for name, head in (("XHR (Sec-Fetch-Mode: cors)", {"Sec-Fetch-Mode": "cors", "Accept": "*/*"}),
-                   ("Skript (no-cors)", {"Sec-Fetch-Mode": "no-cors", "Accept": "*/*"}),
-                   ("Werkzeug ohne Sec-Fetch, Accept */*", {"Accept": "*/*"})):
+                   ("Script (no-cors)", {"Sec-Fetch-Mode": "no-cors", "Accept": "*/*"}),
+                   ("Tool without Sec-Fetch, Accept */*", {"Accept": "*/*"})):
     r = c.get("/auth/forward", headers={**PROXY, **head})
     assert place(r).path == "/auth/login", (name, r.headers.get("X-TinySesam-Location"))
 r = c.get("/auth/forward", headers={**PROXY, "Accept": "text/html,application/xhtml+xml"})
@@ -119,7 +119,7 @@ def findings(**w):
     return config_check.check_config(TinySesamConfig(**values))[0]
 
 
-assert any("forward_login" in b for b in findings(forward_login="unsichtbar"))
+assert any("forward_login" in b for b in findings(forward_login="invisible"))
 assert any("the only login method" in b for b in findings(forward_login="direct"))   # password is on
 # the German wording of the same finding with lang="de"
 assert any("einzige Anmeldemethode" in b for b in findings(forward_login="direct", lang="de"))
@@ -127,7 +127,7 @@ assert not any("einzige Anmeldemethode" in b for b in findings(forward_login="di
 assert any("the only login method" in b
            for b in findings(forward_apps={"app.example.com": {"login": "direct"}}))
 assert any("logn" in b for b in findings(forward_apps={"app.example.com": {"logn": "page"}}))
-assert any("['login']" in b for b in findings(forward_apps={"app.example.com": {"login": "fenster"}}))
+assert any("['login']" in b for b in findings(forward_apps={"app.example.com": {"login": "window"}}))
 assert not [b for b in findings(forward_apps={"app.example.com": {"name": "App", "login": "page"}})
             if "forward" in b]
 try:
@@ -169,7 +169,7 @@ ok("B-2: login page with session without unlock → to the provider, not back to
 r = c2.get("/auth/login?next=https%3A%2F%2Fapp-a.example.com%2Fx&app=app-a.example.com",
            follow_redirects=False)
 assert r.status_code == 303 and r.headers["location"] == "https://app-a.example.com/x"
-r = c2.get("/auth/login?next=https%3A%2F%2Fapp-b.example.com%2Fx&app=erfunden.example.com",
+r = c2.get("/auth/login?next=https%3A%2F%2Fapp-b.example.com%2Fx&app=invented.example.com",
            follow_redirects=False)
 assert r.status_code == 303 and r.headers["location"] == "https://app-b.example.com/x"
 ok("B-2: with unlock → back to next; an unknown app name is not carried on")
@@ -184,8 +184,8 @@ ok("B-2: the OIDC button of the login page carries app=")
 # /auth/oidc/start without app: the host of next decides.
 a = empty.get("/auth/oidc/start?next=https%3A%2F%2Fapp-b.example.com%2Fx", follow_redirects=False)
 assert parse_qs(urlsplit(a.headers["location"]).query)["client_id"] == ["b"]
-a = empty.get("/auth/oidc/start?next=/lokal", follow_redirects=False)
-assert parse_qs(urlsplit(a.headers["location"]).query)["client_id"] == ["haupt"]
+a = empty.get("/auth/oidc/start?next=/local", follow_redirects=False)
+assert parse_qs(urlsplit(a.headers["location"]).query)["client_id"] == ["main"]
 ok("B-2: /auth/oidc/start without app takes the client for the host of next (otherwise the default client)")
 
 print("Login-Modi OK")

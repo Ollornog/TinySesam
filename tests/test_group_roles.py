@@ -39,7 +39,7 @@ assert auth.user_roles(auth.store.get_user(uid)) == before
 ok("empty mapping → no change")
 
 # exact comparison: 'editors' must NOT match 'nicht-editors'
-auth.apply_idp_groups(uid, ["nicht-editors"], {"editors": "editor"})
+auth.apply_idp_groups(uid, ["not-editors"], {"editors": "editor"})
 assert "editor" not in auth.user_roles(auth.store.get_user(uid))
 ok("default exact: partial match grants no role")
 
@@ -68,10 +68,10 @@ os.remove(db)
 db = os.path.join(tempfile.mkdtemp(), "t.db")
 auth = TinySesam(TinySesamConfig(db_path=db, csrf_enabled=False, cookie_secure=False,
                                  available_roles=["editor", "viewer"]))
-auth.ensure_admin("admin", "geheim123")
+auth.ensure_admin("admin", "dummy123")
 app = FastAPI(); app.include_router(auth.router())
 c = TestClient(app)
-c.post("/auth/login", data={"username": "admin", "password": "geheim123"}, follow_redirects=False)
+c.post("/auth/login", data={"username": "admin", "password": "dummy123"}, follow_redirects=False)
 html = c.get("/auth/admin", headers={"Accept": "text/html"}).text
 assert 'const ROLES=["editor", "viewer"]' in html or 'const ROLES=["editor","viewer"]' in html
 ok("admin panel: available_roles injected as ROLES (checkbox editor)")

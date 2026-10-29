@@ -125,6 +125,19 @@ GERMAN_WORDS = frozenset("""
     zweiter zweites zwischen zyklen über
 """.split()) | frozenset("""
     bericht generierte mitarbeiter redaktion seite trockenlauf
+""".split()) | frozenset(  # words found in string literals (test data, messages, snippets) by the string-literal follow-up
+    """
+    egal verdacht anders irgendwas buchhaltung nachtrag erfunden unbeteiligt rennen meine kasse firma garten ruhig
+    doppel pech referenz richtiges vertippt laut frisches gedrosselt quatsch gesund langes deren vorne klassik
+    zweifach sicherung jemand falsches sofort leute ruft akte statt aktuelles orakel geheime einfach misst einzige
+    gutes leser immer angenommen vertrieb vorbei nachbar dritte vierte beendet benutzbar galt gibt erneuern
+    absichtlich roten stellvertreter zeilenumbruch rotiert rechnet echter gelaufen gescheiterte oberhalb ausschnitts
+    abwinkt voraussetzungen nachinstallieren auswahl tischlampe morgen brauchbar ewig halbstark telefon dieselbe
+    lagre niemand blockte gelten liest weitergereicht redakteur beitritt wett scheitert rohes betreibers faltung
+    sackgasse rauschen unsichtbar greifen wartung mandant gefeuert normales feststehend vergessen fortgeschrittene
+    hinaus weniger billige menschen nachgestellte angriffe uhrzeit besucher kyrillisch chinesisch konfiguration
+    fremden eigenen sieben einzel weder woanders viel weist anmelde topfs falscher richtiger speicher verschachtelt
+    tippfehler eingebaute sickert entscheidungen nirgends neuling persistentes
 """.split())
 
 #: The words of `GERMAN_WORDS` that are also English words — counted in identifiers, not in English prose.

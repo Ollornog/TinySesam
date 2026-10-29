@@ -27,7 +27,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 from tinysesam import ConfigError, StateError, TinySesam, TinySesamConfig  # noqa: E402
 from _kit.report import Report  # noqa: E402
 
-r = Report("Sicherheit — nachgestellte Angriffe")
+r = Report("Security — follow-up attacks")
 
 
 def _app(**cfg):
@@ -46,13 +46,13 @@ def _app(**cfg):
 # {"roles": ["buchhaltung"]} and gets a key that carries exactly this role.
 # The scope overwrote the account roles instead of intersecting them.
 auth, app = _app()
-auth.create_user("mitarbeiter", password="Geheim12345!abc")
-user = auth.store.get_user_by_name("mitarbeiter")
+auth.create_user("employee", password="Secret12345!abc")
+user = auth.store.get_user_by_name("employee")
 
 
-@app.get("/nur-buchhaltung")
-def _protected(u=Depends(auth.require_role("buchhaltung"))):
-    return {"gesehen_von": u["username"]}
+@app.get("/only-accounting")
+def _protected(u=Depends(auth.require_role("accounting"))):
+    return {"seen_from": u["username"]}
 
 
 r.check("Starting point: the account has no roles", auth.user_roles(user) == [])
@@ -62,33 +62,33 @@ r.check("Starting point: the account has no roles", auth.user_roles(user) == [])
 # trimming would have made the key more powerful instead of weaker. An error is the only honest
 # answer here; only the caller knows what was meant.
 try:
-    auth.create_api_key(user["id"], name="probe", roles=["buchhaltung"])
+    auth.create_api_key(user["id"], name="probe", roles=["accounting"])
     rejected = None
 except ConfigError as e:
     rejected = e
 r.check("a key with a role the owner does not have is not created in the first place",
         rejected is not None,
         "the key was issued — and an empty scope inherits ALL roles in the database")
-r.check("and the message names the requested role", "buchhaltung" in str(rejected or ""),
+r.check("and the message names the requested role", "accounting" in str(rejected or ""),
         f"{str(rejected)[:80]!r}")
 
 # The key must not come into being via the HTTP route either — that is where the request comes from.
 with TestClient(app) as c:
     c.cookies.set(auth.cfg.session_cookie,
                   auth.store.create_session(user["id"], 3600, True, "password"))
-    over_http = c.post("/auth/apikeys", json={"name": "probe", "roles": ["buchhaltung"]})
+    over_http = c.post("/auth/apikeys", json={"name": "probe", "roles": ["accounting"]})
 r.check("it is not created via POST /auth/apikeys either", over_http.status_code >= 400,
         f"HTTP {over_http.status_code} — the way the attack ran")
 
 # Counter-check: whoever really has the role also gets it in the key — otherwise the fix would be
 # a brake on functionality instead of a safeguard.
-auth.set_roles(user["id"], ["buchhaltung"]) if hasattr(auth, "set_roles") else None
-user2 = auth.store.get_user_by_name("mitarbeiter")
-if auth.user_roles(user2) == ["buchhaltung"]:
-    key2 = auth.create_api_key(user2["id"], name="echt", roles=["buchhaltung"])
-    r.check("whoever has the role keeps it in the key", key2.get("roles") == ["buchhaltung"])
+auth.set_roles(user["id"], ["accounting"]) if hasattr(auth, "set_roles") else None
+user2 = auth.store.get_user_by_name("employee")
+if auth.user_roles(user2) == ["accounting"]:
+    key2 = auth.create_api_key(user2["id"], name="real", roles=["accounting"])
+    r.check("whoever has the role keeps it in the key", key2.get("roles") == ["accounting"])
     with TestClient(app) as c:
-        a2 = c.get("/nur-buchhaltung", headers={"Authorization": f"Bearer {key2['key']}"})
+        a2 = c.get("/only-accounting", headers={"Authorization": f"Bearer {key2['key']}"})
     r.check("and gets through with it", a2.status_code == 200, f"HTTP {a2.status_code}")
 
 # ── OIDC: the flow must be bound to the browser ───────────────────────────────
@@ -97,7 +97,7 @@ if auth.user_roles(user2) == ["buchhaltung"]:
 # ordinary top-level GET suffices — SameSite does not help, because no cookie is needed at all.
 # What is tested is the binding itself; a real IdP is not needed for that.
 auth_o, app_o = _app(oidc_enabled=True, oidc_issuer="https://idp.example.invalid",
-                     oidc_client_id="probe", oidc_client_secret="geheim",
+                     oidc_client_id="probe", oidc_client_secret="secret",
                      base_url="http://testserver")
 # Pre-fill the metadata so that no network is needed: what is tested is the browser binding,
 # not the discovery. Otherwise `meta()` fetches the well-known URL on the first call.
@@ -123,7 +123,7 @@ r.check("the state is in the redirect as expected", bool(state))
 
 # Callback from a FOREIGN browser (own cookie jar, without the flow cookie).
 with TestClient(app_o) as foreign:
-    response = foreign.get(f"/auth/oidc/callback?code=egal&state={state}", follow_redirects=False)
+    response = foreign.get(f"/auth/oidc/callback?code=whatever&state={state}", follow_redirects=False)
 r.check("a callback without a matching flow cookie is rejected",
         response.status_code == 400,
         f"HTTP {response.status_code} — the account substitution is back")
@@ -133,7 +133,7 @@ r.check("a callback without a matching flow cookie is rejected",
 # prefix, otherwise it plants the attacker's flow, value included, on the victim, and the
 # victim lands in the attacker's account despite the prefixed session cookie.
 auth_s, app_s = _app(oidc_enabled=True, oidc_issuer="https://idp.example.invalid",
-                     oidc_client_id="probe", oidc_client_secret="geheim", cookie_secure=True,
+                     oidc_client_id="probe", oidc_client_secret="secret", cookie_secure=True,
                      base_url="https://auth.example.com")
 auth_s.oidc._meta = dict(auth_o.oidc._meta)
 with TestClient(app_s, base_url="https://auth.example.com") as attacker:
@@ -144,7 +144,7 @@ r.check("with Secure the flow cookie is called __Host-tinysesam_oidc_flow", bool
 state_s = parse_qs(urlparse(start.headers["location"]).query).get("state", [""])[0]
 with TestClient(app_s, base_url="https://auth.example.com") as victim_b:
     victim_b.cookies.set("tinysesam_oidc_flow", flow_value or "")   # what a neighbouring subdomain can set
-    response = victim_b.get(f"/auth/oidc/callback?code=egal&state={state_s}", follow_redirects=False)
+    response = victim_b.get(f"/auth/oidc/callback?code=whatever&state={state_s}", follow_redirects=False)
 r.check("an unprefixed (planted) flow cookie does not bind the callback",
         response.status_code == 400 and auth_s.t("api.oidc_browser") in response.text,
         f"HTTP {response.status_code} {response.text[:80]} — login CSRF via cookie tossing")
@@ -154,7 +154,7 @@ with TestClient(app_s, base_url="https://auth.example.com") as itself:
     start = itself.get("/auth/oidc/start", follow_redirects=False)
     state_s = parse_qs(urlparse(start.headers["location"]).query).get("state", [""])[0]
     try:
-        response = itself.get(f"/auth/oidc/callback?code=egal&state={state_s}", follow_redirects=False)
+        response = itself.get(f"/auth/oidc/callback?code=whatever&state={state_s}", follow_redirects=False)
         text = response.text
     except Exception as e:      # the exchange with idp.example.invalid may raise
         text = repr(e)
@@ -169,13 +169,13 @@ r.check("SAML and passkey flow cookies carry the prefix as well",
 # `POST /auth/totp/disable` thereby deleted TOTP AND all recovery codes — without confirmation,
 # without fresh factor confirmation and without an audit entry.
 auth_c, app_c = _app(pin_enabled=True)
-auth_c.create_user("opfer", password="Geheim12345!abc")
-victim = auth_c.store.get_user_by_name("opfer")
+auth_c.create_user("victim", password="Secret12345!abc")
+victim = auth_c.store.get_user_by_name("victim")
 auth_c.totp_enable(victim["id"], auth_c.totp_new_secret()) if hasattr(auth_c, "totp_new_secret") else None
 
 WITHOUT_CSRF = ("/auth/totp/disable", "/auth/totp/recovery", "/auth/pin/disable")
 with TestClient(app_c) as c:
-    c.post("/auth/login", data={"username": "opfer", "password": "Geheim12345!abc"},
+    c.post("/auth/login", data={"username": "victim", "password": "Secret12345!abc"},
            follow_redirects=False)
     for path in WITHOUT_CSRF:
         response = c.post(path)          # no X-CSRF-Token, no body — like a foreign form
@@ -197,30 +197,30 @@ r.check("disabling the PIN likewise",
 # TOTP guess. The success deleted ALL failed attempts of the account — including those
 # of the TOTP attempts. The lockout thus never applied to the second factor.
 auth_b, _app_b = _app()
-auth_b.create_user("ziel", password="Geheim12345!abc")
+auth_b.create_user("target", password="Secret12345!abc")
 
 # Five failed attempts at the second factor …
 for _ in range(5):
-    auth_b._record_login("ziel", "203.0.113.9", success=False, method="totp")
-unclosed_before = len(auth_b.store.recent_fails("ziel")) if hasattr(auth_b.store, "recent_fails") else None
+    auth_b._record_login("target", "203.0.113.9", success=False, method="totp")
+unclosed_before = len(auth_b.store.recent_fails("target")) if hasattr(auth_b.store, "recent_fails") else None
 
 # … then a SUCCESSFUL password login.
-auth_b._record_login("ziel", "203.0.113.9", success=True, method="password")
+auth_b._record_login("target", "203.0.113.9", success=True, method="password")
 
 # The failed TOTP attempts must remain.
 rest = auth_b.store._all(
-    "SELECT method FROM login_attempt WHERE username=? COLLATE NOCASE AND success=0", ("ziel",))
+    "SELECT method FROM login_attempt WHERE username=? COLLATE NOCASE AND success=0", ("target",))
 totp_left = [z["method"] for z in rest].count("totp")
 r.check("a password success does NOT clear the failed TOTP attempts", totp_left == 5,
         f"{totp_left} of 5 left — the second factor is guessable again")
 
 # Counter-check: it does clear failed password attempts, otherwise the fix would be a brake.
 for _ in range(3):
-    auth_b._record_login("ziel2", "203.0.113.9", success=False, method="password")
-auth_b._record_login("ziel2", "203.0.113.9", success=True, method="password")
+    auth_b._record_login("target2", "203.0.113.9", success=False, method="password")
+auth_b._record_login("target2", "203.0.113.9", success=True, method="password")
 pw_left = [z["method"] for z in auth_b.store._all(
     "SELECT method FROM login_attempt WHERE username=? COLLATE NOCASE AND success=0",
-    ("ziel2",))].count("password")
+    ("target2",))].count("password")
 r.check("own failed attempts are still cleared by a success", pw_left == 0,
         f"{pw_left} left — the fix brakes more than necessary")
 
@@ -280,7 +280,7 @@ class _Response:
 
     def __init__(self, in_response_to):
         self.irt = in_response_to
-        self.seen = "__nie_gesetzt__"
+        self.seen = "__never_set__"
 
     def process_response(self, request_id=None):
         self.seen = request_id
@@ -298,7 +298,7 @@ class _Response:
         return self.irt
 
     def get_nameid(self):
-        return "angreifer@example.com"
+        return "attacker@example.com"
 
     def get_attributes(self):
         return {}
@@ -312,30 +312,30 @@ def _saml_execution(in_response_to, request_id):
     return client.process({}, "https://app.example.com", request_id=request_id), idp
 
 
-data, _ = _saml_execution(None, "_meine-id")
+data, _ = _saml_execution(None, "_mine-id")
 r.check("assertion WITHOUT InResponseTo is rejected", data is None,
         "accepted — every signed assertion logs everybody in (login CSRF)")
 
-data, _ = _saml_execution("_fremde-id", "_meine-id")
+data, _ = _saml_execution("_foreign-id", "_mine-id")
 r.check("assertion with a FOREIGN InResponseTo is rejected", data is None,
         "accepted — the response belongs to a different sign-in attempt")
 
-data, _ = _saml_execution("_meine-id", "")
+data, _ = _saml_execution("_mine-id", "")
 r.check("without a requested request the ACS stays closed", data is None,
         "accepted — nothing may be redeemed without an own request")
 
 # Counter-check: the regular path must get through, otherwise the fix is a wall.
-data, idp = _saml_execution("_meine-id", "_meine-id")
+data, idp = _saml_execution("_mine-id", "_mine-id")
 r.check("the requested assertion still gets through", data is not None,
         "the regular SAML login is closed")
-r.check("the request ID is also passed on to the library", idp.seen == "_meine-id",
+r.check("the request ID is also passed on to the library", idp.seen == "_mine-id",
         f"process_response saw {idp.seen!r} — the check would only run in TinySesam, not in python3-saml")
 
 
 # And the anchor must be WIRED: the router stores the request ID and hands it back again.
 class _FakeSAML:
     def __init__(self):
-        self.seen_request_id = "__nie_gesetzt__"
+        self.seen_request_id = "__never_set__"
 
     def login_url(self, req, base, return_to="/"):
         return ("https://idp.example.com/sso?SAMLRequest=abc", "_authnreq-4711")
@@ -374,8 +374,8 @@ r.check("the ACS passes the stored request ID on to the check",
 # response signs in as any user. Now only the sha256 is stored; the panel gets this handle, with
 # which one can terminate but not sign in.
 auth_t, app_t = _app()
-auth_t.create_user("opfer", password="geheim12345")
-victim_id = auth_t.store.get_user_by_name("opfer")["id"]
+auth_t.create_user("victim", password="dummy12345")
+victim_id = auth_t.store.get_user_by_name("victim")["id"]
 # `create_session` returns what goes into the cookie — exactly the value in question.
 cookie_value = auth_t.store.create_session(victim_id, 3600, True, "password")
 
@@ -412,7 +412,7 @@ r.check("the handle still terminates the session",
 # And a plain-text token at a handle position is an error, not a silent no-op:
 # an UPDATE that hits no row would let a confirmed factor vanish silently.
 try:
-    auth_t.store.set_session_mfa("nicht-ein-hash", True)
+    auth_t.store.set_session_mfa("not-a-hash", True)
     silent = True
 except ValueError:
     silent = False
@@ -428,9 +428,9 @@ from tinysesam.store import Store  # noqa: E402
 
 old_path = str(Path(tempfile.mkdtemp()) / "alt.db")
 auth_old, _ = _app(db_path=old_path)
-auth_old.create_user("bestand", password="geheim12345")
+auth_old.create_user("existing", password="dummy12345")
 old_token = auth_old.store.create_session(
-    auth_old.store.get_user_by_name("bestand")["id"], 3600, True, "password")
+    auth_old.store.get_user_by_name("existing")["id"], 3600, True, "password")
 old_handle = hashlib.sha256(old_token.encode()).hexdigest()
 auth_old.store.db.close()
 
@@ -461,9 +461,9 @@ import os as _os  # noqa: E402
 import stat as _stat  # noqa: E402
 
 folder = tempfile.mkdtemp()
-path = str(Path(folder) / "rechte.db")
+path = str(Path(folder) / "rights.db")
 auth_d, _ = _app(db_path=path)
-auth_d.create_user("wer", password="geheim12345")
+auth_d.create_user("wer", password="dummy12345")
 auth_d.store.create_session(auth_d.store.get_user_by_name("wer")["id"], 3600, True, "password")
 
 
@@ -502,7 +502,7 @@ r.check("and not changed behind one's back", _mode(path) == 0o644,
 # 0.18.0. (The key of a DEACTIVATED account was always worthless — `verify_api_key`
 # checks the flag; this is about reset, block and the user's panic button.)
 auth_k, app_k = _app(apikey_enabled=True)
-uid_k = auth_k.create_user("bot-halter", password="geheim12345")
+uid_k = auth_k.create_user("bot-halter", password="dummy12345")
 
 
 def _key_applies(auth_obj, key_name):
@@ -534,9 +534,9 @@ r.check("a second revocation does not count anything twice",
 # Admin password reset: there the intent is locking out. CSRF is switched off for this block
 # — the panel's protection has its own check further up, here it is about the keys.
 auth_a, _ = _app(apikey_enabled=True, csrf_enabled=False)
-uid_a = auth_a.create_user("bot-halter", password="geheim12345")
+uid_a = auth_a.create_user("bot-halter", password="dummy12345")
 second = auth_a.create_api_key(uid_a, "bot2")["key"]
-admin_a = auth_a.create_user("chefin", password="geheim12345", is_admin=True)
+admin_a = auth_a.create_user("boss", password="dummy12345", is_admin=True)
 app_a = FastAPI()
 app_a.include_router(auth_a.router())          # admin panel hangs under /auth/admin via auto-mount
 ca = TestClient(app_a)
@@ -564,8 +564,8 @@ r.check("a key does not revive after blocking and unblocking", not _key_applies(
 # The log recorded THAT an account was blocked — not by whom and from where. With several
 # admins that is exactly the question one asks afterwards.
 auth_p, _ = _app(csrf_enabled=False)
-victim_p = auth_p.create_user("betroffen", password="geheim12345")
-boss_p = auth_p.create_user("chefin2", password="geheim12345", is_admin=True)
+victim_p = auth_p.create_user("affected", password="dummy12345")
+boss_p = auth_p.create_user("boss2", password="dummy12345", is_admin=True)
 app_p = FastAPI()
 app_p.include_router(auth_p.router())
 cp = TestClient(app_p)
@@ -578,7 +578,7 @@ entry = next((z for z in auth_p.store.recent_audit(50) if z["event"] == "user_di
 r.check("the blocking appears in the log at all", entry is not None,
         "no row — then the test says nothing about the rest")
 r.check("and names the admin who did it",
-        bool(entry) and entry["username"] == "chefin2",
+        bool(entry) and entry["username"] == "boss2",
         f"username={entry['username'] if entry else None!r}")
 r.check("and the IP it came from", bool(entry) and bool(entry["ip"]),
         f"ip={entry['ip'] if entry else None!r}")
@@ -587,7 +587,7 @@ r.check("and the IP it came from", bool(entry) and bool(entry["ip"]),
 cp.post(f"/auth/admin/api/users/{victim_p}/password", json={"password": "ganzneu12345abc"})
 reset = next((z for z in auth_p.store.recent_audit(50) if z["event"] == "user_password_reset"), None)
 r.check("the admin password reset also names actor and IP",
-        bool(reset) and reset["username"] == "chefin2" and bool(reset["ip"]),
+        bool(reset) and reset["username"] == "boss2" and bool(reset["ip"]),
         f"{dict(reset) if reset else None}")
 
 
@@ -601,16 +601,16 @@ from tinysesam.security import attach_security_log, seclog  # noqa: E402
 log_folder = tempfile.mkdtemp()
 log_file = str(Path(log_folder) / "security.log")
 attach_security_log(log_file)
-seclog.warning("failed login user=vorher ip=203.0.113.1 method=password")
+seclog.warning("failed login user=before ip=203.0.113.1 method=password")
 _os2.rename(log_file, log_file + ".1")          # exactly what logrotate does
 open(log_file, "w").close()
-seclog.warning("failed login user=nachher ip=203.0.113.2 method=password")
+seclog.warning("failed login user=after ip=203.0.113.2 method=password")
 
 r.check("after a log rotation the next line lands in the NEW file",
-        "nachher" in Path(log_file).read_text(encoding="utf-8"),
+        "after" in Path(log_file).read_text(encoding="utf-8"),
         "it is in the renamed file — from now on the jail reads into the void")
 r.check("and no longer in the rotated one",
-        "nachher" not in Path(log_file + ".1").read_text(encoding="utf-8"),
+        "after" not in Path(log_file + ".1").read_text(encoding="utf-8"),
         "the old inode keeps receiving lines")
 
 
@@ -618,15 +618,15 @@ r.check("and no longer in the rotated one",
 # As long as it was locked, nobody called `record_login()` any more: the app answered 429 and wrote
 # no line. The log fell silent exactly when the IP should have been banned.
 auth_l, _ = _app()
-auth_l.create_user("ziel3", password="geheim12345")
+auth_l.create_user("target3", password="dummy12345")
 for _ in range(10):
-    auth_l._record_login("ziel3", "203.0.113.77", success=False, method="password")
+    auth_l._record_login("target3", "203.0.113.77", success=False, method="password")
 
 buffer_l = io.StringIO()
 check_l = logging.StreamHandler(buffer_l)
 seclog.addHandler(check_l)
 try:
-    locked = auth_l._is_locked("ziel3", "203.0.113.77")
+    locked = auth_l._is_locked("target3", "203.0.113.77")
 finally:
     seclog.removeHandler(check_l)
 line_l = buffer_l.getvalue()
@@ -746,7 +746,7 @@ r.check("the compose example does not set trusted_proxies to 0.0.0.0/0",
 # (header injection — h11 catches it, but with an abort, i.e. self-lockout) and a name
 # beyond Latin-1 (500, entirely without an attacker).
 auth_h, _ = _app(forward_auth_enabled=True)
-uid_h = auth_h.create_user("intl", password="geheim12345")
+uid_h = auth_h.create_user("intl", password="dummy12345")
 
 
 def _header_value(raw):
@@ -772,8 +772,8 @@ def _goes_out(value):
         return False, f"{type(e).__name__}: {e}"
 
 
-for raw, was in (("Bose\r\nX-Remote-Groups: admin", "Zeilenumbruch"),
-                 ("Müller", "Umlaut"), ("Иван", "Kyrillisch"), ("测试 Wang", "Chinesisch")):
+for raw, was in (("Bose\r\nX-Remote-Groups: admin", "Line break"),
+                 ("Müller", "Umlaut"), ("Иван", "Cyrillic"), ("测试 Wang", "Chinese")):
     value = _header_value(raw)
     goes, error = _goes_out(value)
     r.check(f"{was} in the display name gets through the HTTP serializer", goes, error)
@@ -853,7 +853,7 @@ r.check("every rendered page is in TinySesam.PAGES", not absent,
 # 32 HTTP responses carried fixed German text — even in an installation set to English. The UI
 # was bilingual, the responses to machines and proxies were not.
 auth_en, app_en = _app(lang="en")
-auth_en.create_user("someone", password="geheim12345")
+auth_en.create_user("someone", password="dummy12345")
 cen = TestClient(app_en)
 
 # Measure real responses, do not query the translation table. That needs a signed-in
@@ -885,8 +885,8 @@ r.check("and the responses carry a message of their own at all",
 
 # And with German, German must still come out, otherwise the translation would only be moved.
 auth_de, app_de = _app(lang="de")
-auth_de.create_user("jemand", password="geheim12345")
-german_ones = " ".join((a.text or "") for _, a in _responses(auth_de, app_de, "jemand"))
+auth_de.create_user("someone", password="dummy12345")
+german_ones = " ".join((a.text or "") for _, a in _responses(auth_de, app_de, "someone"))
 r.check("with lang='de' German still comes out",
         any(z in german_ones for z in umlauts) or "nötig" in german_ones,
         f"{german_ones[:100]!r}")
@@ -905,7 +905,7 @@ r.check("no HTTPException with fixed text any more", not raw, ", ".join(raw[:5])
 # A recovery code REPLACES the second factor and is valid until used. A TOTP code has only
 # a million possibilities, but is worthless after 30 seconds — the comparison does not hold.
 auth_rc, _ = _app()
-uid_rc = auth_rc.create_user("rc", password="geheim12345")
+uid_rc = auth_rc.create_user("rc", password="dummy12345")
 codes = auth_rc.generate_recovery_codes(uid_rc)
 hex_chars = sum(1 for z in codes[0] if z in "0123456789abcdef")
 r.check("a recovery code carries at least 64 bits", hex_chars * 4 >= 64,
@@ -1024,7 +1024,7 @@ r.check("the table is intact again after the counter-check", built,
 # Which state a file had could only be guessed from its column names. A file from a
 # NEWER version opened an older version silently — with tables it does not
 # know, and writes that leave gaps.
-stamp_path = str(Path(tempfile.mkdtemp()) / "stempel.db")
+stamp_path = str(Path(tempfile.mkdtemp()) / "stamp.db")
 st = Store(stamp_path)
 stamped = int(st.db.execute("PRAGMA user_version").fetchone()[0] or 0)
 r.check("a fresh database carries the schema version",
@@ -1101,7 +1101,7 @@ try:
 finally:
     _sec.seclog.removeHandler(check_n)
 r.check("the default configuration builds without finding", built, text[:110])
-r.check("...and without configuration warning", "Konfiguration:" not in buffer_n.getvalue(),
+r.check("...and without configuration warning", "Configuration:" not in buffer_n.getvalue(),
         f"warns without cause: {buffer_n.getvalue()[:90]!r}")
 
 
@@ -1118,7 +1118,7 @@ r.check("the old name complete_mfa is kept until 1.0", hasattr(auth_cm, "complet
 # It warns when called (wording and target are checked by the guard tests/test_api_surface.py).
 import warnings as _warnings  # noqa: E402
 
-uid_cm = auth_cm.create_user("cm", password="geheim12345")
+uid_cm = auth_cm.create_user("cm", password="dummy12345")
 tok_old = auth_cm.store.create_session(uid_cm, 3600, False, "password")
 with _warnings.catch_warnings(record=True) as _warned:
     _warnings.simplefilter("always")
@@ -1144,7 +1144,7 @@ r.check("both names append the same factor", factors[0] == factors[1] == ["totp"
 # exactly this header — the victim received a real mail from the real app with a valid token
 # in a link to the attacker's server (CWE-644). `trusted_redirect_hosts` only protected
 # `?next=`, not this path; `X-Forwarded-Host` is not needed for it.
-EVIL = "angreifer.example"
+EVIL = "attacker.example"
 REAL = "https://auth.example.com"
 
 
@@ -1154,12 +1154,12 @@ def _mailapp(**cfg):
     # a mail path is on — an instance without it no longer exists (check for that further down).
     reason = dict(csrf_enabled=False, magiclink_enabled=True, password_reset_enabled=True,
                  signup_verify_email=True, allow_signup=True, signup_require_email=True,
-                 passkey_enabled=False, trusted_redirect_hosts=["nur-das-hier.example"],
+                 passkey_enabled=False, trusted_redirect_hosts=["only-this-here.example"],
                  base_url=REAL)
     reason.update(cfg)
     auth, app = _app(**reason)
     auth.set_mailer(lambda to, subject, text, html=None: post.append(text))
-    auth.create_user("opfer", password="Geheim12345!abc", email="opfer@example.com")
+    auth.create_user("victim", password="Secret12345!abc", email="victim@example.com")
     return auth, TestClient(app), post
 
 
@@ -1170,17 +1170,17 @@ def _links(post) -> list[str]:
 # Precondition: without this check "no mail to the attacker host" would be green even if
 # the mailer is not wired at all — the attack would then prove nothing.
 _a, _c, _post = _mailapp()
-_c.post("/auth/forgot", data={"email": "opfer@example.com"})
+_c.post("/auth/forgot", data={"email": "victim@example.com"})
 r.check("precondition: the path works at all (mail goes out)",
         len(_post) == 1 and _links(_post)[0].startswith(REAL + "/auth/reset"),
         f"{_post!r} — without this assurance the attack below checks nothing")
 
 # The attack itself, at all three places that send a mail with a token.
 for path, data, name in (
-        ("/auth/forgot", {"email": "opfer@example.com"}, "Reset-Link"),
-        ("/auth/magic/request", {"email": "opfer@example.com", "next": "/"}, "Magic-Link"),
-        ("/auth/register", {"username": "neu", "password": "Geheim12345!abc",
-                            "email": "neu@example.com"}, "Confirmation link")):
+        ("/auth/forgot", {"email": "victim@example.com"}, "Reset-Link"),
+        ("/auth/magic/request", {"email": "victim@example.com", "next": "/"}, "Magic-Link"),
+        ("/auth/register", {"username": "new", "password": "Secret12345!abc",
+                            "email": "new@example.com"}, "Confirmation link")):
     auth_x, c_x, post_x = _mailapp()
     response_x = c_x.post(path, data=data, headers={"host": EVIL})
     r.check(f"{name}: forged Host header produces no mail to {EVIL}",
@@ -1198,7 +1198,7 @@ for path, data, name in (
 # open redirect, captured access log), the reset token leaks there. Now `base_url`
 # is mandatory and always wins — the header no longer has a say.
 auth_m, c_m, post_m = _mailapp(trusted_redirect_hosts=["app-a.example.com", "app-b.example.com"])
-c_m.post("/auth/forgot", data={"email": "opfer@example.com"},
+c_m.post("/auth/forgot", data={"email": "victim@example.com"},
          headers={"host": "app-b.example.com"})
 r.check("a second co-trusted host in the header does not win against base_url",
         len(post_m) == 1 and _links(post_m)[0].startswith(REAL + "/auth/reset"),
@@ -1250,8 +1250,8 @@ r.check("forward_auth alone stays a warning (the redirect stays relative)",
 # (`router._mail_base`), no longer as an uncaught ConfigError.
 from tinysesam import ConfigError as _CfgErr  # noqa: E402
 
-for _path, _data, _name in (("/auth/forgot", {"email": "opfer@example.com"}, "Passwort vergessen"),
-                             ("/auth/magic/request", {"email": "opfer@example.com", "next": "/"},
+for _path, _data, _name in (("/auth/forgot", {"email": "victim@example.com"}, "Passwort vergessen"),
+                             ("/auth/magic/request", {"email": "victim@example.com", "next": "/"},
                               "Magic-Link")):
     auth_l, c_l, post_l = _mailapp()
     auth_l.cfg.base_url = ""            # mutation probe: the base drops away at runtime
@@ -1275,10 +1275,10 @@ auth_500, app_500 = _app(csrf_enabled=False, magiclink_enabled=True, password_re
                          passkey_enabled=False, base_url=REAL)
 _post_500: list = []
 auth_500.set_mailer(lambda to, subject, text, html=None: _post_500.append(text))
-auth_500.create_user("opfer", password="Geheim12345!abc", email="opfer@example.com")
+auth_500.create_user("victim", password="Secret12345!abc", email="victim@example.com")
 auth_500.cfg.base_url = ""              # the situation the second lock is built for
 _c500 = TestClient(app_500, raise_server_exceptions=False)
-_response_500 = _c500.post("/auth/forgot", data={"email": "opfer@example.com"})
+_response_500 = _c500.post("/auth/forgot", data={"email": "victim@example.com"})
 r.check("no silent success: without a base /auth/forgot does not report \"mail is on its way\"",
         _response_500.status_code != 200 and not _post_500,
         f"HTTP {_response_500.status_code}, mails={len(_post_500)} — the same answer prevents "
@@ -1291,11 +1291,11 @@ r.check("...but HTTP 503 from the route, no uncaught 500",
 auth_inv, app_inv = _app(csrf_enabled=False, magiclink_enabled=True, passkey_enabled=False,
                          base_url=REAL)
 auth_inv.set_mailer(lambda *a, **k: None)
-auth_inv.ensure_admin("chefin", "Geheim12345!abc")
+auth_inv.ensure_admin("boss", "Secret12345!abc")
 _ci = TestClient(app_inv, raise_server_exceptions=False)
-_ci.post("/auth/login", data={"username": "chefin", "password": "Geheim12345!abc"})
+_ci.post("/auth/login", data={"username": "boss", "password": "Secret12345!abc"})
 auth_inv.cfg.base_url = ""
-_inv = _ci.post("/auth/admin/api/invite", json={"email": "gast@example.com"})
+_inv = _ci.post("/auth/admin/api/invite", json={"email": "guest@example.com"})
 r.check("admin invitation without a base: 503, no 500 and no link",
         _inv.status_code == 503 and "claim" not in _inv.text and "/auth/" not in _inv.text,
         f"HTTP {_inv.status_code}: {_inv.text[:120]!r}")
@@ -1307,7 +1307,7 @@ for _name, _an in (("OIDC", dict(oidc_enabled=True, oidc_issuer="https://idp.exa
                                  oidc_client_id="c", oidc_client_secret="s")),
                    ("SAML", dict(saml_enabled=True, saml_idp_sso_url="https://idp.example.com/sso",
                                  saml_idp_x509cert="PEM")),
-                   ("Einladung/Magic", dict(magiclink_enabled=True))):
+                   ("Invitation/Magic", dict(magiclink_enabled=True))):
     _built, _text = _builds(**_an)
     r.check(f"{_name} without base_url: abort at setup, no 500 at runtime",
             not _built and "base_url" in _text, f"built={_built}: {_text[:90]!r}")
@@ -1315,7 +1315,7 @@ for _name, _an in (("OIDC", dict(oidc_enabled=True, oidc_issuer="https://idp.exa
 # The legitimate path stays: with a committed base_url the mail goes out, and the forged
 # host is not in it. Without this check the fix "never a mail again" would be green too.
 auth_ok, c_ok, post_ok = _mailapp(base_url=REAL)
-c_ok.post("/auth/forgot", data={"email": "opfer@example.com"}, headers={"host": EVIL})
+c_ok.post("/auth/forgot", data={"email": "victim@example.com"}, headers={"host": EVIL})
 r.check("legitimate path: base_url set → mail goes out and carries the real address",
         len(post_ok) == 1 and _links(post_ok)[0].startswith(REAL + "/auth/reset"),
         f"{_links(post_ok)!r}")
@@ -1327,12 +1327,12 @@ r.check("and the forged host appears nowhere", EVIL not in "\n".join(post_ok),
 auth_inv, app_inv = _app(csrf_enabled=False, magiclink_enabled=True, passkey_enabled=False,
                          base_url=REAL)
 auth_inv.set_mailer(lambda *a, **k: None)
-auth_inv.create_user("chef", password="Geheim12345!abc", is_admin=True)
+auth_inv.create_user("chef", password="Secret12345!abc", is_admin=True)
 with TestClient(app_inv) as c_inv:
     c_inv.cookies.set(auth_inv.cfg.session_cookie,
                       auth_inv.store.create_session(auth_inv.store.get_user_by_name("chef")["id"],
                                                     3600, True, "password"))
-    invitation = c_inv.post("/auth/admin/api/invite", json={"email": "gast@example.com"},
+    invitation = c_inv.post("/auth/admin/api/invite", json={"email": "guest@example.com"},
                            headers={"host": EVIL})
 r.check("admin invitation: the link comes from base_url, not from the Host header",
         invitation.status_code == 200 and EVIL not in invitation.text
@@ -1446,7 +1446,7 @@ _OIDC_META = {
 def _oidc_app(**cfg):
     cfg.setdefault("base_url", REAL)
     auth_x, app_x = _app(oidc_enabled=True, oidc_issuer="https://idp.example.invalid",
-                         oidc_client_id="probe", oidc_client_secret="geheim",
+                         oidc_client_id="probe", oidc_client_secret="secret",
                          csrf_enabled=False, passkey_enabled=False, **cfg)
     auth_x.oidc._meta = dict(_OIDC_META)   # no network needed: what is checked is the base, not discovery
     return auth_x, app_x
@@ -1504,7 +1504,7 @@ r.check("...and with base_url the flow continues, on the own address",
 # (2) OIDC post-logout. The `post_logout_redirect_uri` goes to the IdP; derived from the Host
 # header, the IdP sends the victim to the attacker's server after signing out.
 def _sign_out(auth_x, app_x):
-    uid = auth_x.create_user("wer", password="Geheim12345!abc")
+    uid = auth_x.create_user("wer", password="Secret12345!abc")
     tok = auth_x.store.create_session(uid, 3600, True, "oidc")
     with TestClient(app_x) as c:
         c.cookies.set(auth_x.cfg.session_cookie, tok)
@@ -1591,11 +1591,11 @@ _a_fa, _app_fa = _app(forward_auth_enabled=True, csrf_enabled=False, passkey_ena
 with TestClient(_app_fa) as _c:
     _fa_evil = _c.get("/auth/forward", headers={"host": EVIL, "x-forwarded-host": EVIL,
                                                  "x-forwarded-proto": "https",
-                                                 "x-forwarded-uri": "/geheim"})
+                                                 "x-forwarded-uri": "/secret"})
     _fa_good = _c.get("/auth/forward", headers={"host": "app.example.com",
                                                "x-forwarded-host": "app.example.com",
                                                "x-forwarded-proto": "https",
-                                               "x-forwarded-uri": "/geheim"})
+                                               "x-forwarded-uri": "/secret"})
 _loc_fa = _fa_evil.headers.get("X-TinySesam-Location", "")
 r.check("Forward-Auth: the 401 redirect points to no foreign host",
         _fa_evil.status_code == 401 and not (urlsplit(_loc_fa).hostname or "")
@@ -1625,7 +1625,7 @@ _a_api, _app_api = _app(magiclink_enabled=True, password_reset_enabled=True, pas
                         trusted_redirect_hosts=["auth.example.com", "app-b.example.com"])
 _mails_api: list = []
 _a_api.set_mailer(lambda to, subject, text, html=None: _mails_api.append(text))
-_a_api.create_user("opfer", password="Geheim12345!abc", email="opfer@example.com")
+_a_api.create_user("victim", password="Secret12345!abc", email="victim@example.com")
 # This round sends a dozen mails to the same address; what is measured is the base, not the
 # throttle per target address (R4-04, own test in test_magic.py) — it gets room here.
 _a_api.set_security("mail_per_address_max", 100)
@@ -1644,23 +1644,23 @@ def _paths(auth_x, base):
     """The documented paths, all with the SAME passed base."""
     return (
         ("magic_url", lambda: auth_x.magic_url("rohtoken", base, "reset_password")),
-        ("send_password_reset", lambda: auth_x.send_password_reset("opfer@example.com", base)),
-        ("send_login_link", lambda: auth_x.send_login_link("opfer@example.com", base)),
-        ("send_verify_email", lambda: auth_x.send_verify_email(1, "opfer@example.com", base)),
+        ("send_password_reset", lambda: auth_x.send_password_reset("victim@example.com", base)),
+        ("send_login_link", lambda: auth_x.send_login_link("victim@example.com", base)),
+        ("send_verify_email", lambda: auth_x.send_verify_email(1, "victim@example.com", base)),
         # Registration creates the token in the request and sends later (T-13 attack,
         # mail × operation) — it calls `_verify_mail` directly, so it is also measured directly.
-        ("_verify_mail", lambda: _send(auth_x._verify_mail(1, "opfer@example.com", base))),
-        ("create_invite", lambda: auth_x.create_invite("gast@example.com", base)),
+        ("_verify_mail", lambda: _send(auth_x._verify_mail(1, "victim@example.com", base))),
+        ("create_invite", lambda: auth_x.create_invite("guest@example.com", base)),
         # R4-03: the notice to the owner of a taken address carries the way to sign in.
-        ("_send_signup_notice", lambda: auth_x._send_signup_notice("opfer@example.com", base)),
+        ("_send_signup_notice", lambda: auth_x._send_signup_notice("victim@example.com", base)),
         # Self-service (2026-09-25): the link to the NEW address; the confirmation path for
         # addresses from LDAP/SAML also runs through here (`_address_proven_by_source`).
         ("request_email_change", lambda: _send(auth_x.request_email_change(
-            auth_x.store.get_user_by_name("opfer")["id"], "opfer-neu@example.com", base))),
+            auth_x.store.get_user_by_name("victim")["id"], "victim-new@example.com", base))),
         # …and since the attack round of 2026-09-26 via the wrapper with the source that
         # `_address_proven_by_source` calls (detail `konto=<id> quelle=…`). The same link.
         ("_request_change", lambda: _send(auth_x._request_change(
-            auth_x.store.get_user_by_name("opfer")["id"], "opfer-quelle@example.com", base,
+            auth_x.store.get_user_by_name("victim")["id"], "victim-source@example.com", base,
             source="ldap"))),
     )
 
@@ -1670,8 +1670,8 @@ def _trace(erg, mails) -> str:
     return repr(erg) + " " + " ".join(mails)
 
 
-for _foreign, _was in (("https://" + EVIL, "einen fremden Host"),
-                     ("https://app-b.example.com", "einen ZWEITEN eigenen Namen")):
+for _foreign, _was in (("https://" + EVIL, "a foreign host"),
+                     ("https://app-b.example.com", "a SECOND own name")):
     for _name, _call in _paths(_a_api, _foreign):
         _mails_api.clear()
         try:                            # a ConfigError would be a finding here too, not an abort
@@ -1688,7 +1688,7 @@ for _foreign, _was in (("https://" + EVIL, "einen fremden Host"),
 _a_without, _app_without = _app(passkey_enabled=False, trusted_redirect_hosts=["auth.example.com"])
 _mails_without: list = []
 _a_without.set_mailer(lambda to, subject, text, html=None: _mails_without.append(text))
-_a_without.create_user("opfer", password="Geheim12345!abc", email="opfer@example.com")
+_a_without.create_user("victim", password="Secret12345!abc", email="victim@example.com")
 for _name, _call in _paths(_a_without, "https://" + EVIL):
     try:
         _rejected, _like = False, repr(_call())
@@ -1714,7 +1714,7 @@ r.check("str(request.base_url) on the own host stays usable — and does not bec
         == REAL + "/auth/reset?token=rohtoken",
         _a_api.magic_url("rohtoken", "http://auth.example.com/", "reset_password"))
 r.check("and the sender sends with it again (the method lives)",
-        _a_api.send_password_reset("opfer@example.com", REAL) is True
+        _a_api.send_password_reset("victim@example.com", REAL) is True
         and len(_mails_api) == 1 and REAL + "/auth/reset" in _mails_api[0],
         f"{_mails_api!r}")
 r.check("the legitimate path works even without base_url (derived, proven base)",
@@ -1732,7 +1732,7 @@ _UNDER = "https://portal.example.com/portal"
 _a_path, _app_path = _app(passkey_enabled=False, trusted_redirect_hosts=["portal.example.com"])
 _mails_path: list = []
 _a_path.set_mailer(lambda to, subject, text, html=None: _mails_path.append(text))
-_a_path.create_user("opfer", password="Geheim12345!abc", email="opfer@example.com")
+_a_path.create_user("victim", password="Secret12345!abc", email="victim@example.com")
 _a_path.set_security("mail_per_address_max", 100)   # as above: the path is measured, not R4-04
 def _links(texts) -> list:
     """All addresses on the subpath host that a call gave to the outside."""
@@ -1767,7 +1767,7 @@ _a_mnt = TinySesam(TinySesamConfig(db_path=str(Path(tempfile.mkdtemp()) / "t.db"
                                    base_url="https://example.com/sso"))
 _mails_mnt: list = []
 _a_mnt.set_mailer(lambda to, subject, text, html=None: _mails_mnt.append(text))
-_a_mnt.create_user("anna", password="Geheim12345!abc", email="anna@example.com")
+_a_mnt.create_user("anna", password="Secret12345!abc", email="anna@example.com")
 _app_mnt = FastAPI(root_path="/sso")
 _app_mnt.include_router(_a_mnt.router())
 _c_mnt = TestClient(_app_mnt, root_path="/sso", follow_redirects=False)
@@ -1789,7 +1789,7 @@ r.check("...and the built-in pages carry it too (T-15): form, links, redirect",
 # And the rule itself, mechanically: Where `public_base()` supplies a base,
 # `_checked_base()` supplies EXACTLY the same, and where it stays empty, the method raises. Two paths,
 # one result — otherwise they are two rules again, and the gap sits in the difference.
-for _lab, _auth_x in (("mit base_url", _a_api), ("ohne base_url", _a_path)):
+for _lab, _auth_x in (("with base_url", _a_api), ("without base_url", _a_path)):
     for _case in (REAL, "http://auth.example.com/", "https://app-b.example.com",
                   "https://" + EVIL, _UNDER, ""):
         _pb = _auth_x.public_base(candidate=_case)
@@ -1797,9 +1797,9 @@ for _lab, _auth_x in (("mit base_url", _a_api), ("ohne base_url", _a_path)):
             _gb, _threw = _auth_x._checked_base(_case), False
         except ConfigError:
             _gb, _threw = "", True
-        r.check(f"one rule ({_lab}): public_base == _gepruefte_basis for {_case!r}",
+        r.check(f"one rule ({_lab}): public_base == _checked_base for {_case!r}",
                 _gb == _pb and _threw == (not _pb),
-                f"public_base={_pb!r} _gepruefte_basis={_gb!r} raised={_threw}")
+                f"public_base={_pb!r} _checked_base={_gb!r} raised={_threw}")
 
 # ── A foreign registration occupied the login identifier of an account ────────
 # Finding R4-12 (third audit). Registration checked the two name spaces only SEPARATELY:
@@ -1808,7 +1808,7 @@ for _lab, _auth_x in (("mit base_url", _a_api), ("ohne base_url", _a_path)):
 # a stranger occupied the identifier of an existing account — the owner (even an admin) got
 # 401 despite the correct password, and /auth/password from then on checked a foreign secret.
 
-PW_HOLDER, PW_EVE = "Geheim12345!abc", "Angreifer12345!"
+PW_HOLDER, PW_EVE = "Secret12345!abc", "Attacker12345!x"
 
 
 def _sign_in(client, identifier, password=PW_HOLDER):
@@ -1854,8 +1854,8 @@ r.check("...and the e-mail identifier still points to the owner",
 
 # The legitimate path stays open — otherwise the guard would just be a broken registration.
 fresh = c_n2.post("/auth/register",
-                   data={"username": "neu", "password": "Neues12345!abcd",
-                         "email": "neu@example.com", "next": "/"}, follow_redirects=False)
+                   data={"username": "new", "password": "New12345!abcdxx",
+                         "email": "new@example.com", "next": "/"}, follow_redirects=False)
 r.check("a registration with free identifiers still goes through", fresh.status_code == 303,
         f"HTTP {fresh.status_code}: {fresh.text[:120]}")
 
@@ -1864,17 +1864,17 @@ r.check("a registration with free identifiers still goes through", fresh.status_
 auth_n3, app_n3 = _app(allow_signup=True, signup_require_email=True,
                        login_identifier="email", csrf_enabled=False)
 solo = TestClient(app_n3).post("/auth/register",
-                               data={"password": "Einzel-Weg-2468!", "email": "solo@example.com",
+                               data={"password": "Single-Path-2468!", "email": "solo@example.com",
                                      "next": "/"}, follow_redirects=False)
 r.check("in e-mail mode the address remains the username at the same time", solo.status_code == 303,
         f"HTTP {solo.status_code}: {solo.text[:120]}")
 
 # The guard sits in create_user, not only in the route: CLI, invitation and creation from
 # OIDC/LDAP/SAML pass through here.
-for was, call in (("einen Benutzernamen, der fremde E-Mail ist",
+for was, call in (("a username that is a foreign e-mail",
                   lambda: auth_n2.create_user("chef@example.com", password=PW_EVE)),
-                 ("eine E-Mail, die fremder Benutzername ist",
-                  lambda: auth_n2.create_user("zweitkonto", password=PW_EVE, email="chef"))):
+                 ("an e-mail that is a foreign username",
+                  lambda: auth_n2.create_user("secondaccount", password=PW_EVE, email="chef"))):
     try:
         call()
         arisen = True
@@ -1935,14 +1935,14 @@ r.check("precondition: the attacker's identifier resolves to the foreign account
 c_old = TestClient(app_old)
 c_old.cookies.set(auth_old.cfg.session_cookie,
                   auth_old.store.create_session(eve_old, 3600, True, "password"))
-foreign = c_old.post("/auth/password", json={"current": PW_HOLDER, "new": "Neues12345!abcd"})
+foreign = c_old.post("/auth/password", json={"current": PW_HOLDER, "new": "New12345!abcdxx"})
 r.check("/auth/password does not accept the password of a FOREIGN account",
         foreign.status_code == 403,
         f"HTTP {foreign.status_code} — the route is an oracle for foreign passwords")
 r.check("...and the foreign password remains valid unchanged",
         auth_old._check_password("chef", PW_HOLDER) is not None,
         "the victim's secret was overwritten")
-own = c_old.post("/auth/password", json={"current": PW_EVE, "new": "Neues12345!abcd"})
+own = c_old.post("/auth/password", json={"current": PW_EVE, "new": "New12345!abcdxx"})
 r.check("...but still checks the own one", own.status_code == 200,
         f"HTTP {own.status_code}: {own.text[:120]}")
 
@@ -2001,10 +2001,10 @@ _routes_k = {getattr(_rt, "path", "") for _rt in _bar(auth_old).routes}
 r.check("...and names panel and CLI — both paths really exist",
         "/api/users/<id>/username" in _text_k and "/api/users/{uid}/username" in _routes_k
         and "tinysesam rename" in _text_k and callable(getattr(_cli_module, "_rename", None))
-        and "weder im Admin-Panel noch im CLI" not in _text_k,
+        and "neither in the admin panel nor in the CLI" not in _text_k,
         f"{_text_k[:420]!r}, routes: {sorted(p for p in _routes_k if 'username' in p)}")
 # The named path works: renaming resolves the collision, startup is silent afterwards.
-auth_old.change_username(eve_old, "eve-umbenannt")
+auth_old.change_username(eve_old, "eve-renamed")
 r.check("...and auth.change_username really resolves the collision",
         not auth_old.store.identifier_collisions()
         and "identifier collision(s) in existing data" not in _start_log(auth_old.cfg.db_path),
@@ -2020,12 +2020,12 @@ r.check("...and says that store.set_email takes the confirmation note along",
         "email_verified=0" in _text_k and "verified=True" in _text_k,
         f"{_text_k[:400]!r} — the operator follows the message and silently loses the proof")
 auth_old.store.set_email_verified(victim_old, True)
-auth_old.store.set_email(victim_old, "chef-neu@example.com")
+auth_old.store.set_email(victim_old, "chief-new@example.com")
 r.check("...and so it is: the named path stores the new address unconfirmed",
         auth_old.store.get_user(victim_old)["email_verified"] == 0,
         "set_email leaves the proof of the OLD address in place — then the message is wrong, "
         "and an address change is a bootstrap path again (B-bypass-8)")
-auth_old.store.set_email(victim_old, "chef-belegt@example.com", verified=True)
+auth_old.store.set_email(victim_old, "chief-taken@example.com", verified=True)
 r.check("...and verified=True keeps it, as the message promises",
         auth_old.store.get_user(victim_old)["email_verified"] == 1,
         "verified=True does not carry the proof — then the message names a path that does not exist")
@@ -2046,13 +2046,13 @@ import pyotp  # noqa: E402
 import time
 
 auth_b21, app_b21 = _app()
-uid_b21 = auth_b21.create_user("nina", password="geheim12345", email="nina@example.com")
+uid_b21 = auth_b21.create_user("nina", password="dummy12345", email="nina@example.com")
 secret_text_b21 = auth_b21.totp_begin(uid_b21)["secret"]
 auth_b21.totp_confirm(uid_b21, pyotp.TOTP(secret_text_b21).at(time.time() - 30))
 codes_b21 = auth_b21.generate_recovery_codes(uid_b21)
 c_b21 = TestClient(app_b21, base_url="https://app.example.com")
 c_b21.get("/auth/login")
-c_b21.post("/auth/login", data={"username": "nina", "password": "geheim12345", "next": "/",
+c_b21.post("/auth/login", data={"username": "nina", "password": "dummy12345", "next": "/",
                                 "_csrf": c_b21.cookies.get(auth_b21.cfg.csrf_cookie)},
            follow_redirects=False)
 c_b21.post("/auth/totp", data={"code": pyotp.TOTP(secret_text_b21).now(), "next": "/",
@@ -2106,7 +2106,7 @@ r.check("the repelled attempt appears in the audit log",
 # scanned (the confirmation then failed inexplicably) and triggered audit lines
 # from outside.
 auth_b7, app_b7 = _app()
-uid_b7 = auth_b7.create_user("paul", password="geheim12345")
+uid_b7 = auth_b7.create_user("paul", password="dummy12345")
 c_b7 = TestClient(app_b7, base_url="https://app.example.com")
 c_b7.cookies.set(auth_b7.cfg.session_cookie,
                  auth_b7.store.create_session(uid_b7, 3600, True, "password"))
@@ -2149,7 +2149,7 @@ r.check("...the confirmation with the code from THIS secret arms it",
 
 # The legitimate path must remain: set up where nothing exists yet …
 auth_ok, app_ok = _app(csrf_enabled=False)
-uid_ok = auth_ok.create_user("tom", password="geheim12345")
+uid_ok = auth_ok.create_user("tom", password="dummy12345")
 c_ok = TestClient(app_ok, follow_redirects=False)
 c_ok.cookies.set(auth_ok.cfg.session_cookie,
                  auth_ok.store.create_session(uid_ok, 3600, True, "password"))
@@ -2172,7 +2172,7 @@ r.check("after the regular switch-off the setup is open again",
 
 # Orphaned recovery codes (secret gone, codes still there) are cleaned up by the setup.
 auth_v, _ = _app()
-uid_v = auth_v.create_user("vera", password="geheim12345")
+uid_v = auth_v.create_user("vera", password="dummy12345")
 secret_text_v = auth_v.totp_begin(uid_v)["secret"]
 auth_v.totp_confirm(uid_v, pyotp.TOTP(secret_text_v).at(time.time() - 30))
 auth_v.generate_recovery_codes(uid_v)
@@ -2200,7 +2200,7 @@ r.check("after a backward jump the clock keeps counting monotonically and follow
         _sequence == [1000, 1010, 2000], f"{_sequence}")
 
 auth_u, _ = _app()
-uid_u = auth_u.create_user("uhrzeit", password="geheim12345")
+uid_u = auth_u.create_user("time_of_day", password="dummy12345")
 tok_u = auth_u.store.create_session(uid_u, 3600, True, "password")
 raw_magic = auth_u.create_magic_token("login", user_id=uid_u, ttl_min=10)
 now_u = _store_mod.now()
@@ -2221,7 +2221,7 @@ finally:
 
 # Across a restart: The database carries the state. Fresh clock, wall clock back an hour.
 auth_n, _ = _app()
-uid_n = auth_n.create_user("neustart", password="geheim12345")
+uid_n = auth_n.create_user("restart", password="dummy12345")
 tok_n = auth_n.store.create_session(uid_n, 3600, True, "password")
 now_n = _store_mod.now()
 auth_n.store._exec("UPDATE session SET expires_at=? WHERE token_hash=?",
@@ -2259,7 +2259,7 @@ def _restart_after_2h(secure):
     _wall_n[0] = _T
     a = TinySesam(TinySesamConfig(db_path=str(Path(tempfile.mkdtemp()) / "n.db"),
                                   cookie_secure=False))
-    uid = a.create_user("pi", password="geheim12345")
+    uid = a.create_user("pi", password="dummy12345")
     raw = a.create_magic_token("login", user_id=uid, ttl_min=15)
     tok = a.store.create_session(uid, 1800, False, "password")
     _wall_n[0] = _T + 7200
@@ -2272,7 +2272,7 @@ def _restart_after_2h(secure):
     # the backup) must not overwrite the saved state downwards.
     _store_mod._CLOCK = _store_mod._Clock(wall=lambda: _T - 365 * 86400)
     a.store.CLOCK_SECURE_SEC = 0
-    a.create_user("nach-dem-boot")
+    a.create_user("after-dem-boot")
     state = int(a.store.get_setting(a.store.CLOCK_STATE) or 0)
     a.store.db.close()
     return applies + (state,)
@@ -2285,7 +2285,7 @@ def _per_healthcheck(st):
 
 def _per_write_access(st):
     st.CLOCK_SECURE_SEC = 0                   # "a minute has passed"
-    st.set_setting("irgendwas", "1")
+    st.set_setting("something", "1")
 
 
 logging.getLogger("tinysesam").addHandler(_clock_h)
@@ -2311,7 +2311,7 @@ import time as _time  # noqa: E402
 _store_mod._CLOCK = _store_mod._Clock()          # fresh clock: the jump should not remain in the process
 try:
     auth_p, _ = _app()
-    uid_p = auth_p.create_user("zeitpatch", password="geheim12345")
+    uid_p = auth_p.create_user("zeitpatch", password="dummy12345")
     tok_p = auth_p.store.create_session(uid_p, 60, False, "password")
     _real_t = _time.time()
     with mock.patch("time.time", lambda: _real_t + 3600):
@@ -2361,7 +2361,7 @@ r.check("after a 200-day pause the clock still protects against a backward jump"
 # epoch scale (≈1.8e9); afterwards the distance to the real monotonic time was negative and thus always
 # "shorter than the period" — `clock_state` was no longer saved in the whole process (arithmetically
 # for 57 years), and the write probe of /healthz checked only the connection.
-_st23 = _store_mod.Store(str(Path(tempfile.mkdtemp()) / "uhr23.db"))
+_st23 = _store_mod.Store(str(Path(tempfile.mkdtemp()) / "clock23.db"))
 _st23.set_setting("x", "0")
 
 
@@ -2405,7 +2405,7 @@ _st23.db.close()
 auth_f, _ = _app()
 st_a = auth_f.store
 st_b = _store_mod.Store(auth_f.cfg.db_path)
-st_a.put_flow("oidc:zustand", {"nonce": "n-1"})
+st_a.put_flow("oidc:state", {"nonce": "n-1"})
 
 
 class _Between:
@@ -2417,7 +2417,7 @@ class _Between:
     def execute(self, sql, *args):
         cur = self._db.execute(sql, *args)
         if sql.startswith("SELECT data, expires_at FROM flow") and self.second is None:
-            self.second = st_b.pop_flow("oidc:zustand")
+            self.second = st_b.pop_flow("oidc:state")
         return cur
 
     def __getattr__(self, name):
@@ -2426,14 +2426,14 @@ class _Between:
 
 _zw = _Between(st_a.db)
 st_a.db = _zw
-first = st_a.pop_flow("oidc:zustand")
+first = st_a.pop_flow("oidc:state")
 st_a.db = _zw._db
 r.check("the second worker gets the flow state", _zw.second == {"nonce": "n-1"}, f"{_zw.second}")
 r.check("…and the first then no longer — exactly one wins",
         first is None, f"both got {first}: challenge/state consumed twice")
-st_a.put_flow("oidc:einfach", {"x": 1})
+st_a.put_flow("oidc:simple", {"x": 1})
 r.check("without a race the flow comes out exactly once",
-        st_a.pop_flow("oidc:einfach") == {"x": 1} and st_a.pop_flow("oidc:einfach") is None)
+        st_a.pop_flow("oidc:simple") == {"x": 1} and st_a.pop_flow("oidc:simple") is None)
 st_b.db.close()
 
 
@@ -2452,7 +2452,7 @@ foreign.execute("BEGIN IMMEDIATE")                  # a second writer holds the 
 _free = _threading.Timer(0.5, lambda: foreign.execute("COMMIT"))
 _free.start()
 try:
-    auth_b.store.put_flow("warten", {"ok": True})  # … and this writer waits instead of failing
+    auth_b.store.put_flow("wait", {"ok": True})  # … and this writer waits instead of failing
     waited = True
 except _sqlite3.OperationalError as e:
     waited = str(e)
@@ -2474,17 +2474,17 @@ auth_g, app_g = _app(csrf_enabled=False, pin_enabled=True, pin_login=True,
                      allow_signup=True, signup_require_email=True, signup_verify_email=True,
                      base_url=REAL)
 auth_g.set_mailer(lambda to, subject, text, html=None: None)
-uid_g = auth_g.create_user("gesperrt", password="Geheim12345!abc", email="gesperrt@example.com")
+uid_g = auth_g.create_user("gesperrt", password="Secret12345!abc", email="locked@example.com")
 auth_g.set_pin(uid_g, "471193")
 key_g = auth_g.create_api_key(uid_g, "bot")["key"]
 old_g = auth_g.store.create_session(uid_g, 3600, True, "password")
-magic_g = auth_g.create_magic_token("login", user_id=uid_g, email="gesperrt@example.com")
+magic_g = auth_g.create_magic_token("login", user_id=uid_g, email="locked@example.com")
 # Locked directly in the store, not via the panel: The tokens and the old session thus
 # remain — what is checked is that no PATH can use them, not that the panel cleans up.
 auth_g.store.set_disabled(uid_g, True)
 
 
-@app_g.get("/geschuetzt")
+@app_g.get("/protected")
 def _protected_g(u=Depends(auth_g.require_user)):
     return {"u": u["username"]}
 
@@ -2495,7 +2495,7 @@ def _sessions_g():
 
 before_g = _sessions_g()
 cg = TestClient(app_g)
-cg.post("/auth/login", data={"username": "gesperrt", "password": "Geheim12345!abc", "next": "/"},
+cg.post("/auth/login", data={"username": "gesperrt", "password": "Secret12345!abc", "next": "/"},
         follow_redirects=False)
 cg.post("/auth/pin", data={"username": "gesperrt", "pin": "471193", "next": "/"},
         follow_redirects=False)
@@ -2523,13 +2523,13 @@ r.check("…and no new session arose via any path", _sessions_g() == before_g,
         f"{len(_sessions_g() - before_g)} new session(s) for a locked account")
 cg.cookies.set(auth_g.cfg.session_cookie, old_g)
 r.check("a session from before the lock opens nothing any more",
-        cg.get("/geschuetzt").status_code == 401)
+        cg.get("/protected").status_code == 401)
 cg.cookies.clear()
 r.check("an API key of the locked account opens nothing",
-        cg.get("/geschuetzt", headers={"X-API-Key": key_g}).status_code == 401)
+        cg.get("/protected", headers={"X-API-Key": key_g}).status_code == 401)
 
 # The half session (first factor provided, TOTP open) does not become fully valid after a lock.
-uid_h = auth_g.create_user("halb", password="Geheim12345!abc")
+uid_h = auth_g.create_user("half", password="Secret12345!abc")
 half_tok = auth_g.store.create_session(uid_h, 3600, False, "password")
 auth_g.store.set_disabled(uid_h, True)
 r.check("a half session does not become fully valid via TOTP after the lock",
@@ -2537,10 +2537,10 @@ r.check("a half session does not become fully valid via TOTP after the lock",
         "complete_totp issued a full session to a locked account")
 
 # The operator's lock holds against an open confirmation link.
-admin_g = auth_g.create_user("chefin-g", password="Geheim12345!abc", is_admin=True)
-uid_v = auth_g.create_user("wartend", password="Geheim12345!abc", email="wartend@example.com")
+admin_g = auth_g.create_user("boss-g", password="Secret12345!abc", is_admin=True)
+uid_v = auth_g.create_user("pending", password="Secret12345!abc", email="pending@example.com")
 auth_g.store.set_disabled(uid_v, True)                      # as after registration
-verify_g = auth_g.create_magic_token("verify_email", user_id=uid_v, email="wartend@example.com")
+verify_g = auth_g.create_magic_token("verify_email", user_id=uid_v, email="pending@example.com")
 ca_g = TestClient(app_g)
 ca_g.cookies.set(auth_g.cfg.session_cookie, auth_g.store.create_session(admin_g, 3600, True, "password"))
 ca_g.post(f"/auth/admin/api/users/{uid_v}/disable", json={"disabled": True})
@@ -2580,8 +2580,8 @@ auth_g.set_mailer(lambda to, subject, text, html=None: _mails_w.append((to, text
 auth_g._outbox.afterwards = _record_w
 try:
     TestClient(app_g).post("/auth/register", data={
-        "username": "wartet-noch", "password": "Neues-Passwort-lang-7", "email": "wartet@example.org"})
-    _new_w = auth_g.store.get_user_by_name("wartet-noch")
+        "username": "waits-still", "password": "New-Password-long-7xx", "email": "waits@example.org"})
+    _new_w = auth_g.store.get_user_by_name("waits-still")
     _tok_w = auth_g.store._all("SELECT 1 FROM magic_token WHERE user_id=? AND purpose='verify_email' "
                                "AND used_at IS NULL", (_new_w["id"],)) if _new_w else []
     r.check("the confirmation token exists when the registration response goes out",
@@ -2595,7 +2595,7 @@ try:
     ca_g.post(f"/auth/admin/api/users/{_new_w['id']}/disable", json={"disabled": True})
     for _a in _jobs_w:
         _a()                                     # only now is the mail worker's turn
-    _link_w = [re.search(r"/auth/verify/([\w\-]+)", t) for to, t in _mails_w if to == "wartet@example.org"]
+    _link_w = [re.search(r"/auth/verify/([\w\-]+)", t) for to, t in _mails_w if to == "waits@example.org"]
     for _m in filter(None, _link_w):
         cv.post(f"/auth/verify/{_m.group(1)}", follow_redirects=False)
     r.check("a lock in the outbox's waiting window holds against the confirmation link",
@@ -2627,7 +2627,7 @@ def _record_p(job, at_overflow=None):
 
 @app_g.post("/app/signup")
 def _app_signup_p(name: str):
-    _uid = auth_g.create_user(name, password="Neues-Passwort#lang-7", email=f"{name}@example.org")
+    _uid = auth_g.create_user(name, password="New-Password#long-7xx", email=f"{name}@example.org")
     auth_g.store.set_disabled(_uid, True)                   # waits for the confirmation
     return auth_g.after_response(
         _TextResponse("Mail unterwegs"),
@@ -2643,13 +2643,13 @@ def _app_link_p(name):
 auth_g.set_mailer(lambda to, subject, text, html=None: _mails_p.append((to, text)))
 auth_g._outbox.afterwards = _record_p
 try:
-    TestClient(app_g).post("/app/signup", params={"name": "app-gesperrt"})
-    _uid_p = auth_g.store.get_user_by_name("app-gesperrt")["id"]
+    TestClient(app_g).post("/app/signup", params={"name": "app-locked"})
+    _uid_p = auth_g.store.get_user_by_name("app-locked")["id"]
     ca_g.post(f"/auth/admin/api/users/{_uid_p}/disable", json={"disabled": True})
     for _a in _jobs_p:
         _a()                                     # the mail worker creates the token only now
     _jobs_p.clear()
-    _link_p = _app_link_p("app-gesperrt")
+    _link_p = _app_link_p("app-locked")
     r.check("Guard: the app sends its confirmation link only after the lock",
             bool(_link_p), f"Mails: {len(_mails_p)}")
     _response_p = cv.post(f"/auth/verify/{_link_p}", follow_redirects=False) if _link_p else None
@@ -2658,7 +2658,7 @@ try:
             f"HTTP {getattr(_response_p, 'status_code', None)}, disabled="
             f"{auth_g.store.get_user(_uid_p)['disabled']}, sessions={len(auth_g.store.list_sessions(_uid_p))}")
     r.check("…the attempt appears in the audit log (verify_blocked)",
-            any(z["event"] == "verify_blocked" and z["username"] == "app-gesperrt"
+            any(z["event"] == "verify_blocked" and z["username"] == "app-locked"
                 for z in auth_g.store.recent_audit(30)),
             f"{[z['event'] for z in auth_g.store.recent_audit(8)]}")
     # (Mutation probe: in `/auth/verify` again `auth.store.set_disabled(uid, False)` instead of
@@ -2666,11 +2666,11 @@ try:
 
     # Counter-check: Without an operator lock the same path unlocks the account — the
     # public API keeps its promise.
-    TestClient(app_g).post("/app/signup", params={"name": "app-frei"})
-    _uid_f = auth_g.store.get_user_by_name("app-frei")["id"]
+    TestClient(app_g).post("/app/signup", params={"name": "app-free"})
+    _uid_f = auth_g.store.get_user_by_name("app-free")["id"]
     for _a in _jobs_p:
         _a()
-    _link_f = _app_link_p("app-frei")
+    _link_f = _app_link_p("app-free")
     _response_f = TestClient(app_g).post(f"/auth/verify/{_link_f}", follow_redirects=False)
     r.check("…without an operator lock the link unlocks the app's account and signs in",
             _response_f.status_code == 303 and not auth_g.store.get_user(_uid_f)["disabled"]
@@ -2679,8 +2679,8 @@ try:
     # A renewed lock without operator note (`set_disabled(uid, True)`) does not downgrade an operator's
     # lock to "waiting for confirmation".
     auth_g.store.set_disabled(_uid_p, True)
-    auth_g.send_verify_email(_uid_p, "app-gesperrt@example.org", REAL)
-    cv.post(f"/auth/verify/{_app_link_p('app-gesperrt')}", follow_redirects=False)
+    auth_g.send_verify_email(_uid_p, "app-locked@example.org", REAL)
+    cv.post(f"/auth/verify/{_app_link_p('app-locked')}", follow_redirects=False)
     r.check("…and a later set_disabled(uid, True) does not turn the operator lock into a liftable one",
             bool(auth_g.store.get_user(_uid_p)["disabled"]),
             f"disabled={auth_g.store.get_user(_uid_p)['disabled']}")
@@ -2830,7 +2830,7 @@ for _min in (60, 1440):
     r.check(f"…{_min} minutes remain without warning",
             not _names(_rv_finding(_min)[1], "oidc_revalidate_minutes"))
 # (Mutation probe: remove the warning in `check_config` → red; set the threshold to 43200 → red.)
-_rv_broken = "keine Zahl"
+_rv_broken = "no Number"
 try:
     _rv_hit = _names(_finding(oidc_revalidate_minutes=_rv_broken)[0], "oidc_revalidate_minutes")
 except Exception as e:   # noqa: BLE001 — a crash of the check is the finding here
@@ -2851,7 +2851,7 @@ r.check("…and a text instead of a number is a finding, not a crash of the chec
 _GATES = {"admin_claim_token_file": "/run/x/admin.token", "mfa_enrollment": "grace"}
 for _slot in _kp2.NUMBER_LIMITS:
     _crashes = []
-    for _value in ("sieben", float("inf"), float("nan")):
+    for _value in ("seven", float("inf"), float("nan")):
         for _to_it in ({}, _GATES):
             try:
                 _kf = _names(_finding(**{_slot: _value}, **_to_it)[0], _slot, "is not an integer")
@@ -2914,7 +2914,7 @@ def _kp_raw_numbers(tree):
             k = parents[k]
             if isinstance(k, (_ast_k.FunctionDef, _ast_k.AsyncFunctionDef)):
                 return k.name
-        return "<modul>"
+        return "<module>"
 
     def only_truth_or_text(k):
         while isinstance(parents.get(k), _ast_k.BoolOp):
@@ -2942,7 +2942,7 @@ def _kp_raw_numbers(tree):
             over_integer = (isinstance(p, _ast_k.Call) and isinstance(p.func, _ast_k.Name)
                               and p.func.id == "_integer" and len(p.args) >= 2 and p.args[1] is k)
             if not (over_integer or is_limits_key_name(k)):
-                findings.append(f"{k.lineno}: {k.value!r} in {where} not read via _ganzzahl")
+                findings.append(f"{k.lineno}: {k.value!r} in {where} not read via _integer")
         elif isinstance(k, _ast_k.Attribute) and (k.attr in fields or k.attr in _KP_FORBIDDEN):
             findings.append(f"{k.lineno}: .{k.attr} in {where}")
         elif isinstance(k, _ast_k.Name) and k.id in _KP_FORBIDDEN:
@@ -2962,7 +2962,7 @@ _kp_getattr = [k for k in _ast_k.walk(_kp_tree) if isinstance(k, _ast_k.Call)
 _kp_integer = [k for k in _ast_k.walk(_kp_tree) if isinstance(k, _ast_k.Call)
                 and isinstance(k.func, _ast_k.Name) and k.func.id == "_integer"]
 r.check("Guard: it finds the read accesses of the check at all",
-        len(_kp_getattr) >= 20 and len(_kp_integer) >= 3, f"getattr {len(_kp_getattr)}, _ganzzahl {len(_kp_integer)}")
+        len(_kp_getattr) >= 20 and len(_kp_integer) >= 3, f"getattr {len(_kp_getattr)}, _integer {len(_kp_integer)}")
 _kp_raw = _kp_raw_numbers(_kp_tree)
 r.check("no combination check reads a number field past the read path _integer or converts itself",
         not _kp_raw, f"{_kp_raw}")
@@ -2983,7 +2983,7 @@ _kp_overlooked = [x for x in (
     'if config.magiclink_ttl_min > 600:\n    pass',
     '_f = "smtp_port"\nif getattr(config, _f) > 1:\n    pass',
     'for _f in ("smtp_port",):\n    if getattr(config, _f) > 1:\n        pass',
-    'for _f in felder_von_woanders():\n    if getattr(config, _f) > 1:\n        pass',
+    'for _f in fields_from_elsewhere():\n    if getattr(config, _f) > 1:\n        pass',
     'if vars(config)["pin_min_length"] > 4:\n    pass',
     'if config.__dict__.get(name, 0) > 4:\n    pass',
     'for _k, _v in vars(config).items():\n    if _v > 4:\n        pass',
@@ -3012,7 +3012,7 @@ r.check("H-11/B3-9: gateway preset without groups and without clients warns abou
         _names(_kp2.check_config(_gw)[1], "open gate", "OIDC"))
 _gw2 = TinySesamConfig.oidc_gateway(issuer="https://id.example.com", client_id="g", client_secret="s",
                                     base_url="https://auth.example.com", db_path=":memory:",
-                                    allowed_groups=["mitarbeiter"])
+                                    allowed_groups=["employee"])
 r.check("...with allowed_groups the warning stays silent", not _names(_kp2.check_config(_gw2)[1], "open gate"))
 r.check("...open registration in front of forward-auth is reported",
         _names(_finding(forward_auth_enabled=True, allow_signup=True)[1], "self-registration"))
@@ -3043,7 +3043,7 @@ r.check("B3-8: demo_mode next to a real sign-in path is an error",
         _names(_finding(demo_mode=True, forward_auth_enabled=True)[0], "demo_mode"))
 _demo_db = str(Path(tempfile.mkdtemp()) / "t.db")
 _inventory = TinySesam(TinySesamConfig(db_path=_demo_db))
-_inventory.create_user("echt", password="Geheim12345!abc")
+_inventory.create_user("real", password="Secret12345!abc")
 try:
     TinySesam(TinySesamConfig(db_path=_demo_db, demo_mode=True))
     _b38 = False
@@ -3055,7 +3055,7 @@ r.check("...demo_mode on a database with existing accounts fails at setup",
 # Counter-check: A real demo starts again, even with visitors registered in the meantime.
 _demo_db2 = str(Path(tempfile.mkdtemp()) / "t.db")
 _d1 = TinySesam(TinySesamConfig(db_path=_demo_db2, demo_mode=True))
-_d1.create_user("besucher", password="Geheim12345!abc")
+_d1.create_user("visitor", password="Secret12345!abc")
 try:
     TinySesam(TinySesamConfig(db_path=_demo_db2, demo_mode=True))
     _b38b = True
@@ -3110,7 +3110,7 @@ for _title, _change, _cfg, _word in (
         ("admin_identifiers + oidc_auto_create", {"oidc_enabled": True, "oidc_auto_create": True},
          {"admin_identifiers": ["chef"], "base_url": "https://auth.example.com"}, "admin_identifiers"),
         ("login_identifier='bogus'", {"login_identifier": "bogus"}, {}, "login_identifier"),
-        ("forward_headers mit Zeilenumbruch", {"forward_headers": {"user": "X-User\r\nSet-Cookie: a=b"}}, {},
+        ("forward_headers with a line break", {"forward_headers": {"user": "X-User\r\nSet-Cookie: a=b"}}, {},
          "forward_headers"),
         ("totp_required=True", {"totp_required": True}, {}, "totp_required")):
     _erg = _retroactive(_change, **_cfg)
@@ -3124,8 +3124,8 @@ try:
     _app2 = FastAPI()
     _app2.include_router(_a2.router())
     with TestClient(_app2) as _c2:
-        _c2.post("/auth/register", data={"username": "chef", "password": "Fremder-123456"})
-        _c2.post("/auth/login", data={"username": "chef", "password": "Fremder-123456"})
+        _c2.post("/auth/register", data={"username": "chef", "password": "Foreign-123456"})
+        _c2.post("/auth/login", data={"username": "chef", "password": "Foreign-123456"})
         _admin_api = _c2.get("/auth/admin/api/users").status_code
 except _CfgErr:
     pass   # the setup may be rejected — what is checked below is that nobody became admin
@@ -3145,7 +3145,7 @@ r.check("A5: origin as a list of matching origins is no error",
 # (Mutation probe: in _proxies_and_passkey check `str(origin)` instead of the list again → red.)
 r.check("...a bad entry in the list remains an error",
         _names(_finding(passkey_enabled=True, rp_id="example.com",
-                       origin=["https://a.example.com", "https://b.example.com/pfad"])[0], "is not an origin"))
+                       origin=["https://a.example.com", "https://b.example.com/path"])[0], "is not an origin"))
 r.check("...an entry outside the rp_id likewise",
         _names(_finding(passkey_enabled=True, rp_id="example.com",
                        origin=["https://a.example.com", "https://a.example.org"])[0], "does not match"))
@@ -3163,12 +3163,12 @@ with TestClient(_app51) as _c51:
                                              "x-forwarded-host": "app.example.com",
                                              "x-forwarded-uri": "/x"}).headers.get("x-tinysesam-location", "")
     _l2 = _c51.get("/auth/forward", headers={"host": "127.0.0.1",
-                                             "x-original-url": "http://fremd.example@app.example.com/x"}
+                                             "x-original-url": "http://foreign.example@app.example.com/x"}
                    ).headers.get("x-tinysesam-location", "")
 r.check("R5-1: X-Forwarded-Proto: http does not downgrade the login URL with cookie_secure",
         _l1.startswith("https://app.example.com/auth/login"), _l1)
 r.check("...user information from X-Original-URL does not end up in front of the host of the login URL",
-        _l2.startswith("https://app.example.com/auth/login") and "fremd.example@" not in _l2.split("?")[0],
+        _l2.startswith("https://app.example.com/auth/login") and "foreign.example@" not in _l2.split("?")[0],
         _l2)
 _a51b, _app51b = _app(forward_auth_enabled=True, cookie_secure=False)
 with TestClient(_app51b) as _c51b:

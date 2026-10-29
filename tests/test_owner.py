@@ -22,7 +22,7 @@ from tinysesam import ConfigError, StateError, TinySesam, TinySesamConfig  # noq
 from _kit.report import Report  # noqa: E402
 
 r = Report("Owner — not deletable, transferable, at least one")
-PW = "Owner-Test-Passwort-1"
+PW = "Owner-Test-Password-1"
 
 
 def _app(**cfg):
@@ -53,12 +53,12 @@ r.check("… likewise via /auth/claim-admin (one-time token)",
         and auth_c.store.get_user(candidate)["is_owner"] == 1)
 
 # ── Existing data: admins without owner → the oldest hand-made admin becomes owner ─────
-path = str(Path(tempfile.mkdtemp()) / "bestand.db")
+path = str(Path(tempfile.mkdtemp()) / "existing.db")
 old, _ = _app(db_path=path)
 old.create_user("idp-admin", password=PW)
 old.store._exec("UPDATE users SET is_admin=2 WHERE username='idp-admin'")      # from the IdP, older
 old.create_user("hand-admin", password=PW, is_admin=True)
-old.create_user("zweit-admin", password=PW, is_admin=True)
+old.create_user("second-admin", password=PW, is_admin=True)
 old.store._exec("UPDATE users SET is_owner=0")
 old.store.db.close()
 new, _ = _app(db_path=path)
@@ -70,8 +70,8 @@ r.check("… with a row in the audit log",
 
 # ── Protection: not deletable, not lockable, not strippable of power ───────────────────
 auth, app = _app()
-auth.ensure_admin("chefin", PW)
-manager = auth.store.get_user_by_name("chefin")
+auth.ensure_admin("boss", PW)
+manager = auth.store.get_user_by_name("boss")
 admin2 = auth.create_user("admin2", password=PW, is_admin=True)
 try:
     auth.delete_user(manager["id"])
@@ -80,13 +80,13 @@ except StateError:
     deleted = False
 r.check("an owner cannot be deleted (also via the Python API)", not deleted)
 ca = _client(app, "admin2")            # an admin, but no owner
-co = _client(app, "chefin")            # the owner
+co = _client(app, "boss")            # the owner
 # Counter-check: the admin without owner role is really signed in and may do what an admin may —
 # otherwise all the 403s below would be green even without owner protection (rejected because not signed in at all).
-regular = auth.create_user("normalo", password=PW)
+regular = auth.create_user("regular", password=PW)
 r.check("counter-check: the admin without owner role is signed in and sets a password on a normal account",
         ca.get("/auth/admin/api/users").status_code == 200
-        and ca.post(f"/auth/admin/api/users/{regular}/password", json={"password": "Normales-Neues-Pw-1"}).status_code == 200)
+        and ca.post(f"/auth/admin/api/users/{regular}/password", json={"password": "Normal-New-Pw-1xxxx"}).status_code == 200)
 r.check("in the panel: delete → rejected",
         ca.post(f"/auth/admin/api/users/{manager['id']}/delete").status_code in (403, 409))
 r.check("… disable → rejected",
@@ -101,8 +101,8 @@ r.check("owner account stays what it was", auth.store.get_user(manager["id"])["i
 
 # ── Only an owner changes an owner account (otherwise: set password and be owner oneself) ─
 r.check("an admin without owner role sets no password on the owner",
-        ca.post(f"/auth/admin/api/users/{manager['id']}/password", json={"password": "Uebernahme-Versuch-1"}).status_code == 403
-        and auth._check_password("chefin", PW) is not None)
+        ca.post(f"/auth/admin/api/users/{manager['id']}/password", json={"password": "Uebernahme-Attempt-1"}).status_code == 403
+        and auth._check_password("boss", PW) is not None)
 r.check("… issues him no API key",
         ca.post(f"/auth/admin/api/users/{manager['id']}/keys", json={"name": "x"}).status_code == 403)
 r.check("… deletes no passkey of his",
@@ -128,7 +128,7 @@ try:
 except StateError:
     last = True
 r.check("… not via the Python API either (StateError)", last)
-service = auth.create_user("dienst", is_service=True)
+service = auth.create_user("service", is_service=True)
 try:
     auth.set_owner(service, True)
     service_owner = True
@@ -139,7 +139,7 @@ r.check("the user list in the panel shows who is owner",
         any(u.get("is_owner") for u in co2.get("/auth/admin/api/users").json()))
 
 # ── Owner and identity provider (H-5) ────────────────────────────────────────────────────
-idp = auth.create_user("idp-nutzer", password=PW)
+idp = auth.create_user("idp-user", password=PW)
 auth.apply_idp_groups(idp, ["admins"], {"admins": "__admin__"})
 co2.post(f"/auth/admin/api/users/{idp}/owner", json={"owner": True})
 auth.apply_idp_groups(idp, [], {"admins": "__admin__"})
@@ -151,7 +151,7 @@ r.check("an owner who had his admin right from the IdP keeps it when the IdP tak
 # could withdraw the right from him any more.
 path_i = str(Path(tempfile.mkdtemp()) / "idp.db")
 idp_a, _ = _app(db_path=path_i)
-idp_uid = idp_a.create_user("nur-idp-admin", password=PW)
+idp_uid = idp_a.create_user("only-idp-admin", password=PW)
 idp_a.apply_idp_groups(idp_uid, ["admins"], {"admins": "__admin__"})
 idp_a.store.db.close()
 idp_b, _ = _app(db_path=path_i)
@@ -161,9 +161,9 @@ idp_b.apply_idp_groups(idp_uid, [], {"admins": "__admin__"})
 r.check("… and the provider still takes the right from him", not idp_b.store.get_user(idp_uid)["is_admin"])
 idp_b.store.db.close()
 # Finding 2: a locked hand-made admin does not become owner, an active one does.
-path_g = str(Path(tempfile.mkdtemp()) / "gesperrt.db")
+path_g = str(Path(tempfile.mkdtemp()) / "locked.db")
 g_a, _ = _app(db_path=path_g)
-old_admin = g_a.create_user("gefeuert", password=PW, is_admin=True)
+old_admin = g_a.create_user("fired", password=PW, is_admin=True)
 active_admin = g_a.create_user("aktiv", password=PW, is_admin=True)
 g_a.store._exec("UPDATE users SET is_owner=0")
 g_a.store._exec("UPDATE users SET disabled=2 WHERE id=?", (old_admin,))
@@ -195,7 +195,7 @@ try:
 except StateError:
     code_lock = False
 r.check("Fund 12: `store.set_disabled` does not disable an owner (StateError)", not code_lock)
-waiting = auth3.create_user("wartend", password=PW, email="wartend@example.com")
+waiting = auth3.create_user("pending", password=PW, email="pending@example.com")
 auth3.store.set_disabled(waiting, True)
 auth3.create_magic_token("verify_email", user_id=waiting)
 auth3.store._exec("UPDATE magic_token SET expires_at = 1 WHERE user_id=?", (waiting,))
@@ -208,7 +208,7 @@ r.check("… and `gc()` clears no owner, not even one waiting for a confirmation
 # Without that an admin would tighten the lockout thresholds and lock the owner out with a few
 # failed attempts under his name — a detour around “an owner cannot be locked”.
 auth_h, app_h = _app()
-auth_h.ensure_admin("chefin-h", PW)
+auth_h.ensure_admin("boss-h", PW)
 auth_h.create_user("admin-h", password=PW, is_admin=True)
 _before_h = auth_h.all_security()
 _admin_h = _client(app_h, "admin-h")
@@ -218,14 +218,14 @@ r.check("hardening: an admin without owner role does not change the values (403,
         f"HTTP {_declined_h.status_code}")
 r.check("… he may still read them",
         _admin_h.get("/auth/admin/api/security").json() == _before_h)
-_owner_h = _client(app_h, "chefin-h")
+_owner_h = _client(app_h, "boss-h")
 _ok_h = _owner_h.post("/auth/admin/api/security", json={"max_login_attempts": 7})
 r.check("… the owner changes them", _ok_h.status_code == 200 and auth_h.all_security()["max_login_attempts"] == 7,
         f"HTTP {_ok_h.status_code}")
 auth_o, app_o = _app()
-auth_o.create_user("nur-admin", password=PW, is_admin=True)
+auth_o.create_user("only-admin", password=PW, is_admin=True)
 auth_o.store._exec("UPDATE users SET is_owner=0")              # existing data without owner
-_free_o = _client(app_o, "nur-admin").post("/auth/admin/api/security", json={"max_login_attempts": 9})
+_free_o = _client(app_o, "only-admin").post("/auth/admin/api/security", json={"max_login_attempts": 9})
 r.check("… if there is no owner, every admin changes them (otherwise they would be unreachable)",
         _free_o.status_code == 200 and auth_o.all_security()["max_login_attempts"] == 9,
         f"HTTP {_free_o.status_code}")
@@ -234,11 +234,11 @@ r.check("… if there is no owner, every admin changes them (otherwise they woul
 
 # ── Emergency path via the CLI ────────────────────────────────────────────────────────────
 from tinysesam.__main__ import main as _cli  # noqa: E402
-emergency = auth.create_user("notfall", password=PW)
+emergency = auth.create_user("emergency", password=PW)
 _code = 0
 with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
     try:
-        _cli(["owner", "--db", auth.cfg.db_path, "notfall"])
+        _cli(["owner", "--db", auth.cfg.db_path, "emergency"])
     except SystemExit as e:
         _code = e.code or 0
 r.check("`tinysesam owner` makes an account owner (when nobody can get at it any more)",

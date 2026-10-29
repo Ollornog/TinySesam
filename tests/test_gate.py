@@ -47,7 +47,7 @@ def token_from(r):
     return name, rest.split(";", 1)[0]
 
 
-def sign_in(app, name="anna", pw="geheim123"):
+def sign_in(app, name="anna", pw="dummy123"):
     c = TestClient(app)
     r = c.post("/auth/login", data={"username": name, "password": pw, "next": "/"}, follow_redirects=False)
     assert r.status_code in (302, 303), r.status_code
@@ -55,8 +55,8 @@ def sign_in(app, name="anna", pw="geheim123"):
 
 
 auth, app = instance()
-auth.ensure_admin("admin", "geheim123")
-uid = auth.create_user("anna", "geheim123", roles=["redaktion"])
+auth.ensure_admin("admin", "dummy123")
+uid = auth.create_user("anna", "dummy123", roles=["editors"])
 auth.store._exec("UPDATE users SET email=?, display_name=? WHERE id=?",
                  ("anna@example.com", "Anna Berg", uid))
 PUB = base64.b64decode(auth.gate_public_key())
@@ -81,7 +81,7 @@ content = check_config(tok)
 assert content, "the fresh token does not pass the check"
 assert content["sub"] == str(uid) and content["ts_user"] == "anna" and content["ts_id"] == str(uid)
 assert content["ts_name"] == "Anna Berg" and content["ts_email"] == "anna@example.com"
-assert content["ts_groups"] == "redaktion"
+assert content["ts_groups"] == "editors"
 assert content["exp"] - content["iat"] == 300 and content["nbf"] == content["iat"]
 ok("session → 200 with gate cookie (__Host-, Secure, HttpOnly, without Domain); claims = forward headers")
 
@@ -91,7 +91,7 @@ assert r.headers["Remote-Id"] == content["ts_id"]
 ok("headers and claims name the same identity")
 
 # No token for a host that this installation does not protect.
-r = c.get("/auth/forward", headers={**PROXY, "X-Forwarded-Host": "fremd.example.net"})
+r = c.get("/auth/forward", headers={**PROXY, "X-Forwarded-Host": "foreign.example.net"})
 assert token_from(r) == (None, None)
 ok("foreign host → no gate token")
 
@@ -113,20 +113,20 @@ assert r.status_code == 403 and token_from(r) == (None, None)
 ok("role missing → 403, no gate token")
 
 # ---------- Audience with roles ----------
-r = c.get("/auth/forward?roles=redaktion,chef", headers=PROXY)
+r = c.get("/auth/forward?roles=editors,chief", headers=PROXY)
 _, tok_r = token_from(r)
 assert check_config(tok_r) is None, "a token from a check WITH roles applies on the path without roles"
-assert check_config(tok_r, aud="app.example.com|roles=chef,redaktion")
+assert check_config(tok_r, aud="app.example.com|roles=chief,editors")
 ok("roles are in the audience (canonically sorted)")
 
 # Conversely the actual attack: a token without role information must not apply on a path with roles
 # — the proxy sees only the audience.
-assert check_config(tok, aud="app.example.com|roles=redaktion") is None
+assert check_config(tok, aud="app.example.com|roles=editors") is None
 ok("token without role information does not apply on a path with roles")
 
 assert gate.audience("App.Example.com.", [["b", "a", "a"], ["c"], []]) == "app.example.com|roles=a,b;c"
 assert gate.audience("app.example.com", [["c"], ["a", "b"]]) == gate.audience("app.example.com", [["b", "a"], ["c"]])
-ok("zielgruppe(): upper/lower case, trailing dot, duplicates and order change nothing")
+ok("audience(): upper/lower case, trailing dot, duplicates and order change nothing")
 
 # ---------- Check as at the proxy: every forgery fails ----------
 k, i, s = tok.split(".")
@@ -180,8 +180,8 @@ else:
 
 # ---------- Claims follow forward_headers ----------
 auth2, app2 = instance(forward_headers={"user": "X-WEBAUTH-USER"})
-auth2.create_user("bea", "geheim123")
-r = sign_in(app2, "bea").get("/auth/forward", headers=PROXY)
+auth2.create_user("bee", "dummy123")
+r = sign_in(app2, "bee").get("/auth/forward", headers=PROXY)
 _, t2 = token_from(r)
 content2 = gate.check(base64.b64decode(auth2.gate_public_key()), t2, aud="app.example.com", iss=ISS,
                     now=int(time.time()))

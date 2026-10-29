@@ -696,7 +696,7 @@ def client_ip(request, trusted_nets) -> str:
                 norm = ip_normalized(ip)
                 if norm is not None:
                     return norm
-                if report_once("xff-ungueltig:" + peer):
+                if report_once("xff-invalid:" + peer):
                     seclog.warning(
                         "X-Forwarded-For from %s names no valid address (%s) — the peer IP "
                         "is kept. Does the proxy only pass the client's header through instead of "

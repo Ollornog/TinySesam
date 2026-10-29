@@ -16,11 +16,11 @@ def ok(name):
 
 
 auth = TinySesam(TinySesamConfig(
-    csrf_enabled=False, lang="de", db_path=os.path.join(tempfile.mkdtemp(), "t.db"), rp_name="Meldungen",
+    csrf_enabled=False, lang="de", db_path=os.path.join(tempfile.mkdtemp(), "t.db"), rp_name="Messages",
     passkey_enabled=False, pin_enabled=True, magiclink_enabled=True, password_reset_enabled=True,
     allow_signup=True, totp_enabled=True, resource_locks_enabled=True, base_url="https://auth.example.com"))
 
-PROBE = "Probe-Meldung 4711"
+PROBE = "Probe message 4711"
 
 
 def split(html: str):
@@ -42,7 +42,7 @@ def page_html(page_name, **ctx):
 ERROR_PAGES = {
     "login": {"next": "/"}, "totp": {"next": "/"}, "register": {"next": "/"}, "magic_request": {"next": "/"},
     "forgot": {}, "reset": {"token": "x"}, "reauth": {"next": "/"}, "pin": {"next": "/"},
-    "resource_unlock": {"name": "tresor", "kind": "pin", "label": "Vault", "next": "/"},
+    "resource_unlock": {"name": "vault", "kind": "pin", "label": "Vault", "next": "/"},
 }
 for name, ctx in ERROR_PAGES.items():
     html = page_html(name, error=PROBE, **ctx)
@@ -50,7 +50,7 @@ for name, ctx in ERROR_PAGES.items():
     assert PROBE not in mapping, f"{name}: error is still in the card"
     m = re.search(r"<div class='notice error' role=alert><svg[^>]*>.*?</svg><span>([^<]*)</span></div>", rest)
     assert m and m.group(1) == PROBE, f"{name}: no error message with symbol below the card"
-    assert "class=err" not in html, f"{name}: alte Fehlerzeile"
+    assert "class=err" not in html, f"{name}: old error line"
     empty = page_html(name, **ctx)
     assert "<div class=notices>" not in empty, f"{name}: empty message box without a message"
 ok(f"errors on {len(ERROR_PAGES)} pages: as message with symbol below the card, none in the card, no empty box")
@@ -65,7 +65,7 @@ for name, ctx, kind, key_name in (
     mapping, rest = split(html)
     text = auth.t(key_name)
     assert text not in mapping and f"<div class='notice {kind}'" in rest and text in rest, f"{name}: {kind} notice"
-    assert "class=ok>" not in html, f"{name}: alte Erfolgszeile"
+    assert "class=ok>" not in html, f"{name}: old success line"
 ok("success (registration, login link, reset link) and “Link ungültig” as message below the card")
 
 # ---------- Sign-in page: all kinds, in fixed order ----------
@@ -75,11 +75,11 @@ kinds = re.findall(r"<div class='notice (\w+)'", rest)
 assert kinds == ["info", "warn", "error"], kinds
 assert all(t not in mapping for t in ("I-Text", "W-Text", "F-Text"))
 assert html.count("<svg") >= 3 and "role=status" in rest and "role=alert" in rest
-ok("sign-in page: notice, warning, error each as a box of its own, order info → warn → fehler, with role")
+ok("sign-in page: notice, warning, error each as a box of its own, order info → warn → error, with role")
 
 # ---------- the text is masked ----------
 html = page_html("login", next="/", error="<script>x</script>")
 assert "<script>x</script>" not in html and "&lt;script&gt;" in html
 ok("message text is masked")
 
-print("Meldungen OK")
+print("Messages OK")

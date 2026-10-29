@@ -34,7 +34,7 @@ from tinysesam import ConfigError, TinySesam, TinySesamConfig  # noqa: E402
 from tinysesam.store import Store  # noqa: E402
 from _kit.report import Report  # noqa: E402
 
-r = Report("T-13-Entscheidungen (B2-4, B2-6, B2-8, F-27, H-3, H-5)")
+r = Report("T-13 decisions (B2-4, B2-6, B2-8, F-27, H-3, H-5)")
 IDP = "https://idp.example.invalid"
 
 
@@ -56,7 +56,7 @@ r.check("B2-4: default (no chain, the password signs in alone): 14 characters to
 r.check("… 15 characters pass", auth.password_policy_error(FIFTEEN) is None,
         str(auth.password_policy_error(FIFTEEN)))
 with TestClient(_app(allow_signup=True)[1]) as c:
-    response = c.post("/auth/register", data={"username": "neuling", "password": FOURTEEN})
+    response = c.post("/auth/register", data={"username": "newcomer", "password": FOURTEEN})
 r.check("… and registration adheres to it", response.status_code == 400 and "min. 15" in response.text,
         f"HTTP {response.status_code}")
 # A chain with a second factor protects the password only if nobody may set it up themselves:
@@ -89,8 +89,8 @@ auth, app = _app()
 for k, v in (("max_login_attempts", 1000), ("rate_limit_max", 100000),
              ("account_max_consecutive_failures", 10)):
     auth.set_security(k, v)
-PW = "Serien-Passwort-2026"
-uid = auth.create_user("serie", password=PW, email="serie@example.com")
+PW = "Series-Password-2026"
+uid = auth.create_user("series", password=PW, email="series@example.com")
 c = TestClient(app)
 
 
@@ -99,69 +99,69 @@ def _login(client, name, pw):
 
 
 for _ in range(10):
-    _login(c, "serie", f"falsch-falsch-falsch-{next(_WRONG)}")
-locked = _login(c, "serie", PW)
+    _login(c, "series", f"wrong-wrong-wrong-xxx{next(_WRONG)}")
+locked = _login(c, "series", PW)
 r.check("B2-6: after 10 failed attempts in a row the sign-in locks — even with the correct password",
         locked.status_code == 429 and "in Folge" in locked.text, f"HTTP {locked.status_code}")
 r.check("… the lock appears exactly once in the audit log",
         sum(1 for z in auth.store.recent_audit(200) if z["event"] == "lockout_series") == 1)
 for _ in range(10):
-    _login(c, "gibt-es-nicht", f"falsch-falsch-falsch-{next(_WRONG)}")
-foreign = _login(c, "gibt-es-nicht", f"falsch-falsch-falsch-{next(_WRONG)}")
+    _login(c, "does-not-exist", f"wrong-wrong-wrong-xxx{next(_WRONG)}")
+foreign = _login(c, "does-not-exist", f"wrong-wrong-wrong-xxx{next(_WRONG)}")
 r.check("… an unknown name gets the same response (no oracle for existing accounts)",
         foreign.status_code == 429 and "in Folge" in foreign.text, f"HTTP {foreign.status_code}")
 
 # Aged, otherwise this would test only the 90 days and not the limit (as measured: the mutation
 # "gc also clears triggered ones" stayed green as long as the series was fresh).
-auth.store._exec("UPDATE failure_series SET last_seen = last_seen - 91 * 86400 WHERE folded='serie'")
+auth.store._exec("UPDATE failure_series SET last_seen = last_seen - 91 * 86400 WHERE folded='series'")
 auth.gc()
 r.check("B2-6: gc() does not clear a triggered series, not even after 90 days (it does not expire)",
-        auth.store.failure_series("serie") == 10, str(auth.store.failure_series("serie")))
-auth.store.increase_failure_series("alt-und-halb")
-auth.store._exec("UPDATE failure_series SET last_seen = last_seen - 91 * 86400 WHERE folded='alt-und-halb'")
+        auth.store.failure_series("series") == 10, str(auth.store.failure_series("series")))
+auth.store.increase_failure_series("old-and-half")
+auth.store._exec("UPDATE failure_series SET last_seen = last_seen - 91 * 86400 WHERE folded='old-and-half'")
 auth.gc()
-r.check("… but it does clear one that was not triggered after 90 days of quiet", auth.store.failure_series("alt-und-halb") == 0)
+r.check("… but it does clear one that was not triggered after 90 days of quiet", auth.store.failure_series("old-and-half") == 0)
 
 auth.lift_lockout(uid, methods=("password",))           # the path of the self-service reset
-r.check("B2-6: a reset ends the series (rebind)", _login(c, "serie", PW).status_code == 303,
+r.check("B2-6: a reset ends the series (rebind)", _login(c, "series", PW).status_code == 303,
         "still locked after the reset")
 
-uid2 = auth.create_user("wechsel", password=PW)
+uid2 = auth.create_user("change", password=PW)
 for _ in range(9):
-    _login(TestClient(app), "wechsel", f"falsch-falsch-falsch-{next(_WRONG)}")
-_login(TestClient(app), "wechsel", PW)                        # successful access
+    _login(TestClient(app), "change", f"wrong-wrong-wrong-xxx{next(_WRONG)}")
+_login(TestClient(app), "change", PW)                        # successful access
 for _ in range(9):
-    _login(TestClient(app), "wechsel", f"falsch-falsch-falsch-{next(_WRONG)}")
+    _login(TestClient(app), "change", f"wrong-wrong-wrong-xxx{next(_WRONG)}")
 r.check("B2-6: a successful access resets the series (9 + success + 9 does not lock)",
-        _login(TestClient(app), "wechsel", PW).status_code == 303, str(auth.store.failure_series("wechsel")))
+        _login(TestClient(app), "change", PW).status_code == 303, str(auth.store.failure_series("change")))
 
-auth._record_login("wechsel", "198.51.100.1", False, "password_change")
+auth._record_login("change", "198.51.100.1", False, "password_change")
 r.check("B2-6: a miss that is not a sign-in (password change) does not count",
-        auth.store.failure_series("wechsel") == 0, str(auth.store.failure_series("wechsel")))
+        auth.store.failure_series("change") == 0, str(auth.store.failure_series("change")))
 
 for _ in range(10):
-    _login(TestClient(app), "wechsel", f"falsch-falsch-falsch-{next(_WRONG)}")
-admin_id = auth.create_user("chefin", password=PW, is_admin=True)
+    _login(TestClient(app), "change", f"wrong-wrong-wrong-xxx{next(_WRONG)}")
+admin_id = auth.create_user("boss", password=PW, is_admin=True)
 ca = TestClient(app)
-_login(ca, "chefin", PW)
-new = ca.post(f"/auth/admin/api/users/{uid2}/password", json={"password": "Ganz-Neues-Passwort-1"})
+_login(ca, "boss", PW)
+new = ca.post(f"/auth/admin/api/users/{uid2}/password", json={"password": "Whole-New-Password-1x"})
 r.check("B2-6: the password reset in the panel ends the series",
-        new.status_code == 200 and _login(TestClient(app), "wechsel", "Ganz-Neues-Passwort-1").status_code == 303,
-        f"HTTP {new.status_code}, series {auth.store.failure_series('wechsel')}")
+        new.status_code == 200 and _login(TestClient(app), "change", "Whole-New-Password-1x").status_code == 303,
+        f"HTTP {new.status_code}, series {auth.store.failure_series('change')}")
 
 for _ in range(10):
-    _login(TestClient(app), "wechsel", f"falsch-falsch-falsch-{next(_WRONG)}")
+    _login(TestClient(app), "change", f"wrong-wrong-wrong-xxx{next(_WRONG)}")
 from tinysesam.__main__ import main as _cli  # noqa: E402
 # The CLI ends via `sys.exit` — uncaught that ended this test with exit 0, in the middle of the run
 # and green (a skip is not a green).
 _code = 0
 with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
     try:
-        _cli(["unlock", "--db", auth.cfg.db_path, "wechsel"])
+        _cli(["unlock", "--db", auth.cfg.db_path, "change"])
     except SystemExit as e:
         _code = e.code or 0
-r.check("B2-6: `tinysesam unlock` ends the series", _code == 0 and auth.store.failure_series("wechsel") == 0,
-        f"exit {_code}, series {auth.store.failure_series('wechsel')}")
+r.check("B2-6: `tinysesam unlock` ends the series", _code == 0 and auth.store.failure_series("change") == 0,
+        f"exit {_code}, series {auth.store.failure_series('change')}")
 
 for value, applies in ((9, False), (10, True), (100000, True), (100001, False)):
     try:
@@ -194,14 +194,14 @@ auth._revert_attempt(v)
 r.check("B2-6: a withdrawn attempt (directory outage) does not count",
         auth.store.failure_series("atom") == 9, str(auth.store.failure_series("atom")))
 
-uid_t = auth.create_user("zweit", password=PW)
+uid_t = auth.create_user("second", password=PW)
 for _ in range(10):
-    auth._record_login("zweit", "198.51.100.4", False, "totp",
-                       attempt=auth._begin_attempt("zweit", "198.51.100.4", "totp"))
+    auth._record_login("second", "198.51.100.4", False, "totp",
+                       attempt=auth._begin_attempt("second", "198.51.100.4", "totp"))
 auth.lift_lockout(uid_t, methods=("password",))            # self-service reset
 r.check("B2-6 + R4-13: the self-service reset does NOT clear TOTP misses of the series",
-        auth.store.failure_series("zweit") == 10 and auth._begin_attempt("zweit", "198.51.100.5", "password") is None,
-        str(auth.store.failure_series("zweit")))
+        auth.store.failure_series("second") == 10 and auth._begin_attempt("second", "198.51.100.5", "password") is None,
+        str(auth.store.failure_series("second")))
 # Conversely the FIRST factors: anyone can send wrong PINs, even without knowing a secret.
 # If they stayed after the reset, the reset the message recommends would no longer help (R2-2).
 uid_pin = auth.create_user("pinopfer", password=PW)
@@ -212,17 +212,17 @@ auth.lift_lockout(uid_pin, methods=("password",))          # self-service reset
 r.check("B2-6: the reset clears a series of wrong PINs (first factor, producible by anyone)",
         auth.store.failure_series("pinopfer") == 0, str(auth.store.failure_series("pinopfer")))
 
-manager_t = auth.create_user("chefin-t", password=PW, is_admin=True)
+manager_t = auth.create_user("boss-t", password=PW, is_admin=True)
 cpt = TestClient(app)
-cpt.post("/auth/login", data={"username": "chefin-t", "password": PW}, follow_redirects=False)
-new_t = cpt.post(f"/auth/admin/api/users/{uid_t}/password", json={"password": "Vom-Betreiber-Gesetzt-1"})
+cpt.post("/auth/login", data={"username": "boss-t", "password": PW}, follow_redirects=False)
+new_t = cpt.post(f"/auth/admin/api/users/{uid_t}/password", json={"password": "From-Operator-Set-1xxxx"})
 r.check("… the operator clears it entirely (password reset in the panel, also the TOTP part)",
-        new_t.status_code == 200 and auth.store.failure_series("zweit") == 0, str(auth.store.failure_series("zweit")))
+        new_t.status_code == 200 and auth.store.failure_series("second") == 0, str(auth.store.failure_series("second")))
 # And via the path the routes take: a non-login attempt pre-books nothing.
-v_pc = auth._begin_attempt("zweit", "198.51.100.6", "password_change")
-auth._record_login("zweit", "198.51.100.6", False, "password_change", attempt=v_pc)
+v_pc = auth._begin_attempt("second", "198.51.100.6", "password_change")
+auth._record_login("second", "198.51.100.6", False, "password_change", attempt=v_pc)
 r.check("B2-6: a miss at the password change (via begin_attempt) books no series",
-        auth.store.failure_series("zweit") == 0, str(auth.store.failure_series("zweit")))
+        auth.store.failure_series("second") == 0, str(auth.store.failure_series("second")))
 
 # ── B2-6 × directory: the series under the name in the directory (G5, G5-N1) ───────────────────
 # The series counts under the TYPED identifier. After a rename in the directory (locally
@@ -245,7 +245,7 @@ class _Directory:
                 "id": e.get("id"), "email_verified": None}
 
 
-LPW = "Verzeichnis-Pw1"
+LPW = "Directory-Pw1xx"
 auth_v, app_v = _app(ldap_enabled=True, ldap_url="ldap://dummy", ldap_allow_plaintext=True,
                      ldap_auto_create=True, passkey_enabled=False)
 for k, v in (("max_login_attempts", 1000), ("rate_limit_max", 100000),
@@ -258,43 +258,43 @@ uid_v = auth_v.store.get_user_by_name("alice")["id"]
 
 def _binding_name(uid):
     z = auth_v.store._one("SELECT directory_name_folded FROM federated_identity WHERE user_id=?", (uid,))
-    return z["directory_name_folded"] if z else "(keine Bindung)"
+    return z["directory_name_folded"] if z else "(no Binding)"
 
 
 _first_name = _binding_name(uid_v)
-auth_v.ldap = _Directory({"alice.neu": {"pw": LPW, "id": "uuid-alice"}})     # renamed in the directory
+auth_v.ldap = _Directory({"alice.new": {"pw": LPW, "id": "uuid-alice"}})     # renamed in the directory
 for _ in range(3):
-    _login(TestClient(app_v), "alice.neu", f"falsch-falsch-1-{next(_WRONG)}")
-_three_v = auth_v.store.failure_series("alice.neu")
-_full_v = _login(TestClient(app_v), "alice.neu", LPW)
+    _login(TestClient(app_v), "alice.new", f"wrong-wrong-1-xx{next(_WRONG)}")
+_three_v = auth_v.store.failure_series("alice.new")
+_full_v = _login(TestClient(app_v), "alice.new", LPW)
 # (Mutation probe: omit the name from the binding in `Store.count_identifiers` → 3 → red.)
 r.check("G5: after the rename in the directory the full sign-in ends the series under the "
         "new name (and clears its window)",
         _first_v.status_code == 303 and _three_v == 3 and _full_v.status_code == 303
-        and auth_v.store.failure_series("alice.neu") == 0 and auth_v.store.count_fails(0, username="alice.neu") == 0,
-        f"HTTP {_first_v.status_code}/{_full_v.status_code}, series {_three_v} → {auth_v.store.failure_series('alice.neu')}")
+        and auth_v.store.failure_series("alice.new") == 0 and auth_v.store.count_fails(0, username="alice.new") == 0,
+        f"HTTP {_first_v.status_code}/{_full_v.status_code}, series {_three_v} → {auth_v.store.failure_series('alice.new')}")
 r.check("… the same account; the directory name is on the binding — only because it is not the account's own",
         auth_v.store.get_user(uid_v)["username"] == "alice" and _first_name is None
-        and _binding_name(uid_v) == "alice.neu", f"{_first_name!r} → {_binding_name(uid_v)!r}")
+        and _binding_name(uid_v) == "alice.new", f"{_first_name!r} → {_binding_name(uid_v)!r}")
 
 for _ in range(10):
-    _login(TestClient(app_v), "alice.neu", f"falsch-falsch-1-{next(_WRONG)}")
-_locked_v = _login(TestClient(app_v), "alice.neu", LPW)
+    _login(TestClient(app_v), "alice.new", f"wrong-wrong-1-xx{next(_WRONG)}")
+_locked_v = _login(TestClient(app_v), "alice.new", LPW)
 auth_v._end_series(uid_v)
 # (Mutation probe: only name and address again in `_end_series` → red.)
 r.check("G5: at the limit (429 even with the correct password) the operator path "
         "(`_end_series`) clears the series under the directory name",
-        _locked_v.status_code == 429 and auth_v.store.failure_series("alice.neu") == 0
-        and _login(TestClient(app_v), "alice.neu", LPW).status_code == 303,
-        f"HTTP {_locked_v.status_code}, series {auth_v.store.failure_series('alice.neu')}")
+        _locked_v.status_code == 429 and auth_v.store.failure_series("alice.new") == 0
+        and _login(TestClient(app_v), "alice.new", LPW).status_code == 303,
+        f"HTTP {_locked_v.status_code}, series {auth_v.store.failure_series('alice.new')}")
 for _ in range(10):
-    _login(TestClient(app_v), "alice.neu", f"falsch-falsch-1-{next(_WRONG)}")
-auth_v.create_user("chefin-v", password=PW, is_admin=True)
+    _login(TestClient(app_v), "alice.new", f"wrong-wrong-1-xx{next(_WRONG)}")
+auth_v.create_user("boss-v", password=PW, is_admin=True)
 _cv = TestClient(app_v)
-_login(_cv, "chefin-v", PW)
-_panel_v = _cv.post(f"/auth/admin/api/users/{uid_v}/password", json={"password": "Betreiber-Pw-15"})
+_login(_cv, "boss-v", PW)
+_panel_v = _cv.post(f"/auth/admin/api/users/{uid_v}/password", json={"password": "Operator-Pw-15x"})
 r.check("… likewise the password reset in the panel", _panel_v.status_code == 200
-        and auth_v.store.failure_series("alice.neu") == 0, f"HTTP {_panel_v.status_code}, {auth_v.store.failure_series('alice.neu')}")
+        and auth_v.store.failure_series("alice.new") == 0, f"HTTP {_panel_v.status_code}, {auth_v.store.failure_series('alice.new')}")
 
 
 def _unlock(identifier):
@@ -308,28 +308,28 @@ def _unlock(identifier):
 
 
 for _ in range(10):
-    _login(TestClient(app_v), "alice.neu", f"falsch-falsch-1-{next(_WRONG)}")
-_login(TestClient(app_v), "alice", f"falsch-falsch-1-{next(_WRONG)}")          # the old name: gone from the directory
-_code_v, _text_v = _unlock("alice.neu")
+    _login(TestClient(app_v), "alice.new", f"wrong-wrong-1-xx{next(_WRONG)}")
+_login(TestClient(app_v), "alice", f"wrong-wrong-1-xx{next(_WRONG)}")          # the old name: gone from the directory
+_code_v, _text_v = _unlock("alice.new")
 # (Mutation probe: delete `account_with_binding_name` → the account is not found, the series
 #  under `alice` stays → red.)
-r.check("G5: `tinysesam unlock alice.neu` — the name as typed — finds the account and ends "
+r.check("G5: `tinysesam unlock alice.new` — the name as typed — finds the account and ends "
         "its series under all identifiers",
-        _code_v == 0 and "Lockout for 'alice.neu' lifted" in _text_v
-        and auth_v.store.failure_series("alice.neu") == 0 and auth_v.store.failure_series("alice") == 0,
-        f"exit {_code_v}, {_text_v!r}, series {auth_v.store.failure_series('alice.neu')}/{auth_v.store.failure_series('alice')}")
+        _code_v == 0 and "Lockout for 'alice.new' lifted" in _text_v
+        and auth_v.store.failure_series("alice.new") == 0 and auth_v.store.failure_series("alice") == 0,
+        f"exit {_code_v}, {_text_v!r}, series {auth_v.store.failure_series('alice.new')}/{auth_v.store.failure_series('alice')}")
 # Existing data: the series is already full, but the directory name was never noted (it only arises with the
 # next SUCCESSFUL sign-in — and that is locked).
 auth_v.store._exec("UPDATE federated_identity SET directory_name_folded = NULL")
 for _ in range(10):
-    _login(TestClient(app_v), "alice.neu", f"falsch-falsch-1-{next(_WRONG)}")
-_code_b, _text_b = _unlock("alice.neu")
+    _login(TestClient(app_v), "alice.new", f"wrong-wrong-1-xx{next(_WRONG)}")
+_code_b, _text_b = _unlock("alice.new")
 # (Mutation probe: rebuild the abort "No account" before the clearing → red.)
 r.check("… also in existing data without a note: no account, but the counters under the identifier are cleared (rc 0)",
-        _code_b == 0 and "No account" in _text_b and auth_v.store.failure_series("alice.neu") == 0
-        and _login(TestClient(app_v), "alice.neu", LPW).status_code == 303,
-        f"exit {_code_b}, {_text_b!r}, series {auth_v.store.failure_series('alice.neu')}")
-_code_n, _text_n = _unlock("gibt-es-nirgends")
+        _code_b == 0 and "No account" in _text_b and auth_v.store.failure_series("alice.new") == 0
+        and _login(TestClient(app_v), "alice.new", LPW).status_code == 303,
+        f"exit {_code_b}, {_text_b!r}, series {auth_v.store.failure_series('alice.new')}")
+_code_n, _text_n = _unlock("gives-es-nowhere")
 r.check("… an identifier without account and without counters stays an error (rc 1)",
         _code_n == 1 and "No account" in _text_n, f"exit {_code_n}, {_text_n!r}")
 
@@ -344,17 +344,17 @@ r.check("… an identifier without account and without counters stays an error (
 import logging as _log_g5  # noqa: E402
 from tinysesam import security as _sec_g5  # noqa: E402
 
-_manager_w = auth_v.create_user("chefin", password=PW, email="chefin@example.com")
-auth_v.ldap = _Directory({"chefin@example.com": {"pw": LPW, "id": "uuid-dritter", "email": "chefin@example.com"}})
+_manager_w = auth_v.create_user("boss", password=PW, email="boss@example.com")
+auth_v.ldap = _Directory({"boss@example.com": {"pw": LPW, "id": "uuid-third", "email": "boss@example.com"}})
 for _ in range(4):
-    _login(TestClient(app_v), "chefin@example.com", f"falsch-falsch-1-{next(_WRONG)}")
-_before_w = (auth_v.store.count_fails(0, username="chefin@example.com"), auth_v.store.failure_series("chefin@example.com"))
+    _login(TestClient(app_v), "boss@example.com", f"wrong-wrong-1-xx{next(_WRONG)}")
+_before_w = (auth_v.store.count_fails(0, username="boss@example.com"), auth_v.store.failure_series("boss@example.com"))
 _accounts_w = auth_v.store.user_count()
 _buffer_w = io.StringIO()
 _check_w = _log_g5.StreamHandler(_buffer_w)
 _sec_g5.seclog.addHandler(_check_w)
 try:
-    _third = _login(TestClient(app_v), "chefin@example.com", LPW)
+    _third = _login(TestClient(app_v), "boss@example.com", LPW)
 finally:
     _sec_g5.seclog.removeHandler(_check_w)
 _rejected_w = [dict(z) for z in auth_v.store._all("SELECT * FROM audit WHERE event='ldap_identifier_rejected'")]
@@ -363,24 +363,24 @@ _rejected_w = [dict(z) for z in auth_v.store._all("SELECT * FROM audit WHERE eve
 r.check("p1-d (C): the sign-in of a directory third party under the address of a local account is "
         "rejected and booked as a failed attempt — without account, without binding",
         _before_w == (4, 4) and _third.status_code == 401
-        and auth_v.store.get_federated_user("ldap", "uuid-dritter") is None
+        and auth_v.store.get_federated_user("ldap", "uuid-third") is None
         and auth_v.store.user_count() == _accounts_w
-        and auth_v.store.count_fails(0, username="chefin@example.com") == 5
-        and auth_v.store.failure_series("chefin@example.com") == 5,
+        and auth_v.store.count_fails(0, username="boss@example.com") == 5
+        and auth_v.store.failure_series("boss@example.com") == 5,
         f"before {_before_w}, HTTP {_third.status_code}, "
-        f"{auth_v.store.count_fails(0, username='chefin@example.com')}/{auth_v.store.failure_series('chefin@example.com')}")
+        f"{auth_v.store.count_fails(0, username='boss@example.com')}/{auth_v.store.failure_series('boss@example.com')}")
 r.check("… with reason in the audit log (identifier_of_two_accounts, both accounts) and remedy in the security log",
         len(_rejected_w) == 1
         and _rejected_w[0]["detail"] == f"reason=identifier_of_two_accounts local={_manager_w} directory=new"
         and "tinysesam rename" in _buffer_w.getvalue(), f"{_rejected_w} {_buffer_w.getvalue()[:200]!r}")
-_holder = _login(TestClient(app_v), "chefin@example.com", PW)
+_holder = _login(TestClient(app_v), "boss@example.com", PW)
 # Until 2026-09-27 this counter-check held on to the defect: the 4 failed attempts also applied to the
 # third party's LDAP password, and the owner cleared them. Now only her own secret opens a session under her
 # address — her sign-in clears what can only be directed against her.
 r.check("… the owner clears both with her sign-in — under her address only her secret still applies",
-        _holder.status_code == 303 and auth_v.store.count_fails(0, username="chefin@example.com") == 0
-        and auth_v.store.failure_series("chefin@example.com") == 0,
-        f"HTTP {_holder.status_code}, {auth_v.store.count_fails(0, username='chefin@example.com')}")
+        _holder.status_code == 303 and auth_v.store.count_fails(0, username="boss@example.com") == 0
+        and auth_v.store.failure_series("boss@example.com") == 0,
+        f"HTTP {_holder.status_code}, {auth_v.store.count_fails(0, username='boss@example.com')}")
 
 
 # ── Review round locks/counters (2026-09-27): one identifier, one account ──────────────────────
@@ -408,16 +408,16 @@ a_d, ap_d = _ldap_app()
 a_d.ldap = _Directory({"alice": {"pw": LPW, "id": "uuid-alice"}})
 _login(TestClient(ap_d), "alice", LPW)
 _alice_d = a_d.store.get_user_by_name("alice")["id"]
-_mallory_d = a_d.create_user("alice.neu", password=MPW)
-a_d.ldap = _Directory({"alice.neu": {"pw": LPW, "id": "uuid-alice"}})
+_mallory_d = a_d.create_user("alice.new", password=MPW)
+a_d.ldap = _Directory({"alice.new": {"pw": LPW, "id": "uuid-alice"}})
 for _ in range(10):
     for _ in range(4):
-        _login(TestClient(ap_d, client=("203.0.113.66", 1)), "alice.neu", f"falsch-falsch-1-{next(_WRONG)}")
-    _login(TestClient(ap_d, client=("203.0.113.66", 1)), "alice.neu", MPW)
+        _login(TestClient(ap_d, client=("203.0.113.66", 1)), "alice.new", f"wrong-wrong-1-xx{next(_WRONG)}")
+    _login(TestClient(ap_d, client=("203.0.113.66", 1)), "alice.new", MPW)
 _ev_d0 = [e["event"] for e in a_d.own_events(_mallory_d, 1000)]
-_login(TestClient(ap_d, client=("203.0.113.66", 1)), "alice.neu", f"falsch-falsch-1-{next(_WRONG)}")
+_login(TestClient(ap_d, client=("203.0.113.66", 1)), "alice.new", f"wrong-wrong-1-xx{next(_WRONG)}")
 _ev_d1 = [e["event"] for e in a_d.own_events(_mallory_d, 1000)]
-_hit_d = _login(TestClient(ap_d, client=("203.0.113.66", 1)), "alice.neu", LPW)
+_hit_d = _login(TestClient(ap_d, client=("203.0.113.66", 1)), "alice.new", LPW)
 _ev_d2 = [e["event"] for e in a_d.own_events(_mallory_d, 1000)]
 # (Mutation probe: switch off the check against `only_account` → 303, session of Alice → red.)
 r.check("p1-d (C): a local account under the directory name of another person — their correct "
@@ -434,19 +434,19 @@ r.check("… and Mallory's account page sees a hit like a miss (no oracle about 
         f"{_ev_d0[:2]} {_ev_d1[:2]} {_ev_d2[:2]}")
 # Read path with OLD rows (an older version after a rollback wrote them): the rejection under its up-to-0.24.x
 # name stays just as hidden, and the old name `login_lokal` is shown in the English spelling.
-a_d.store.audit_log("ldap_kennung_abgewiesen", "alice.neu", "203.0.113.66", "grund=kennung_zweier_konten")
-a_d.store.audit_log("login_lokal", "alice.neu", "203.0.113.66", "password")
+a_d.store.audit_log("ldap_kennung_abgewiesen", "alice.new", "203.0.113.66", "grund=kennung_zweier_konten")
+a_d.store.audit_log("login_lokal", "alice.new", "203.0.113.66", "password")
 _ev_d3 = [e["event"] for e in a_d.own_events(_mallory_d, 1000)]
 r.check("… old rows: `ldap_kennung_abgewiesen` stays hidden on the account page, `login_lokal` appears as `login_local`",
         len(_ev_d3) - len(_ev_d2) == 1 and _ev_d3[0] == "login_local"
         and "ldap_kennung_abgewiesen" not in _ev_d3 and "ldap_identifier_rejected" not in _ev_d3,
         f"{_ev_d2[:2]} {_ev_d3[:3]}")
 r.check("… Mallory's own sign-in continues to work (counter-check)",
-        _login(TestClient(ap_d), "alice.neu", MPW).status_code == 303)
+        _login(TestClient(ap_d), "alice.new", MPW).status_code == 303)
 a_d.change_username(_mallory_d, "mallory", by_operator=True)
-_afterwards_d = _login(TestClient(ap_d), "alice.neu", LPW)
+_afterwards_d = _login(TestClient(ap_d), "alice.new", LPW)
 r.check("… after the rename by the operator (the remedy from the log line) Alice signs in under "
-        "`alice.neu`", _afterwards_d.status_code == 303 and _session_from(a_d, _afterwards_d) == _alice_d,
+        "`alice.new`", _afterwards_d.status_code == 303 and _session_from(a_d, _afterwards_d) == _alice_d,
         f"HTTP {_afterwards_d.status_code}")
 
 # p1-d (A): Once Alice has signed in under `alice.neu`, the name is on her binding — and no
@@ -455,22 +455,22 @@ a_a, ap_a = _ldap_app()
 a_a.ldap = _Directory({"alice": {"pw": LPW, "id": "uuid-alice"}})
 _login(TestClient(ap_a), "alice", LPW)
 _alice_a = a_a.store.get_user_by_name("alice")["id"]
-a_a.ldap = _Directory({"alice.neu": {"pw": LPW, "id": "uuid-alice"}})
-_login(TestClient(ap_a), "alice.neu", LPW)
+a_a.ldap = _Directory({"alice.new": {"pw": LPW, "id": "uuid-alice"}})
+_login(TestClient(ap_a), "alice.new", LPW)
 _mallory_a = a_a.create_user("mallory", password=MPW)
-_grant_a = a_a.identifier_taken("ALICE.NEU")
+_grant_a = a_a.identifier_taken("ALICE.NEW")
 try:
-    a_a.change_username(_mallory_a, "alice.neu", by_operator=True)    # not even the operator
-    _itself_a = "umbenannt"
+    a_a.change_username(_mallory_a, "alice.new", by_operator=True)    # not even the operator
+    _itself_a = "renamed"
 except ValueError:
-    _itself_a = "abgewiesen"
+    _itself_a = "rejected"
 try:
-    a_a.store.set_username(_mallory_a, "Alice.Neu")
-    _raw_a = "geschrieben"
+    a_a.store.set_username(_mallory_a, "Alice.New")
+    _raw_a = "written"
 except sqlite3.IntegrityError:
     _raw_a = "IntegrityError"
 try:
-    a_a.store.create_user("alice.neu")
+    a_a.store.create_user("alice.new")
     _setup_a = "angelegt"
 except sqlite3.IntegrityError:
     _setup_a = "IntegrityError"
@@ -478,13 +478,13 @@ except sqlite3.IntegrityError:
 try:
     _app(ldap_enabled=True, ldap_url="ldap://dummy", ldap_allow_plaintext=True,
          passkey_enabled=False, allow_signup=True)
-    _reg_a = "gebaut"
+    _reg_a = "built"
 except ConfigError as _e_reg:
     _reg_a = str(_e_reg)
 _cli_from_a = io.StringIO()
 with redirect_stdout(_cli_from_a), redirect_stderr(_cli_from_a):
     try:
-        _cli(["rename", "--db", a_a.cfg.db_path, "mallory", "alice.neu"])
+        _cli(["rename", "--db", a_a.cfg.db_path, "mallory", "alice.new"])
         _cli_a = 0
     except SystemExit as e:
         _cli_a = e.code
@@ -496,7 +496,7 @@ r.check("… and the database rejects it — rename and create (identifier trigg
         _raw_a == "IntegrityError" and _setup_a == "IntegrityError", f"{_raw_a} {_setup_a}")
 r.check("… renaming (also by the operator) and `tinysesam rename` refuse, registering does not "
         "exist alongside LDAP at all",
-        _itself_a == "abgewiesen" and "allow_signup" in _reg_a and "ldap_enabled" in _reg_a and _cli_a == 1
+        _itself_a == "rejected" and "allow_signup" in _reg_a and "ldap_enabled" in _reg_a and _cli_a == 1
         and "name in the directory" in _cli_from_a.getvalue()
         and a_a.store.get_user(_mallory_a)["username"] == "mallory",
         f"{_itself_a}, registration {_reg_a}, CLI rc {_cli_a} {_cli_from_a.getvalue()[:120]!r}")
@@ -506,7 +506,7 @@ r.check("… renaming (also by the operator) and `tinysesam rename` refuse, regi
 # → red; the flag of the account page → red.)
 try:
     a_a.change_username(_mallory_a, "mallory2")
-    _ldap_itself = "umbenannt"
+    _ldap_itself = "renamed"
 except ValueError as _e_sb:
     _ldap_itself = str(_e_sb)
 _c_sb = TestClient(ap_a)
@@ -517,9 +517,9 @@ r.check("Alongside LDAP: no self-rename (method, route, account page)",
         _ldap_itself == a_a.t("api.username_from_directory") and _route_sb.status_code in (400, 403)
         and "data-act=setname" not in _page_html_sb and a_a.store.get_user(_mallory_a)["username"] == "mallory",
         f"{_ldap_itself!r} HTTP {_route_sb.status_code}")
-a_a.change_username(_alice_a, "alice.neu", by_operator=True)
+a_a.change_username(_alice_a, "alice.new", by_operator=True)
 r.check("… Alice's account may take it (her own binding does not count)",
-        a_a.store.get_user(_alice_a)["username"] == "alice.neu")
+        a_a.store.get_user(_alice_a)["username"] == "alice.new")
 
 # p1-b: The operator renames an LDAP account whose name is the directory name (G13). Until then
 # the binding held NULL (the name was its own, after all), and after the rename `alice` dropped out of
@@ -530,15 +530,15 @@ a_b, ap_b = _ldap_app()
 a_b.ldap = _Directory({"alice": {"pw": LPW, "id": "uuid-alice"}})
 _login(TestClient(ap_b), "alice", LPW)
 _alice_b = a_b.store.get_user_by_name("alice")["id"]
-a_b.create_user("chefin-b", password=PW, is_admin=True)
+a_b.create_user("boss-b", password=PW, is_admin=True)
 a_b.change_username(_alice_b, "alice.meier", by_operator=True)
 _identifiers_b = a_b.store.count_identifiers(_alice_b)
 for _i in range(10):
-    _login(TestClient(ap_b, client=(f"203.0.113.{_i + 10}", 1)), "alice", f"falsch-falsch-1-{next(_WRONG)}")
+    _login(TestClient(ap_b, client=(f"203.0.113.{_i + 10}", 1)), "alice", f"wrong-wrong-1-xx{next(_WRONG)}")
 _prior_b = _login(TestClient(ap_b), "alice", LPW).status_code
 _c_b = TestClient(ap_b)
-_login(_c_b, "chefin-b", PW)
-_panel_b = _c_b.post(f"/auth/admin/api/users/{_alice_b}/password", json={"password": "Betreiber-Pw-15"}).status_code
+_login(_c_b, "boss-b", PW)
+_panel_b = _c_b.post(f"/auth/admin/api/users/{_alice_b}/password", json={"password": "Operator-Pw-15x"}).status_code
 _after_b = _login(TestClient(ap_b), "alice", LPW)
 _mallory_b = a_b.create_user("mallory", password=MPW)
 # (Mutation probe: omit `_remember_directory_name` in `_set_identifier` → series stays, 429, and
@@ -574,7 +574,7 @@ def _binding_name_x(uid):
 
 _names_x = (_binding_name_x(_anton_x), _binding_name_x(_berta_x))
 for _i in range(9):
-    _login(TestClient(ap_x, client=(f"203.0.113.{_i + 10}", 1)), "x", f"falsch-falsch-1-{next(_WRONG)}")
+    _login(TestClient(ap_x, client=(f"203.0.113.{_i + 10}", 1)), "x", f"wrong-wrong-1-xx{next(_WRONG)}")
 _login(TestClient(ap_x), "anton", PW)                # full sign-in of the previous owner
 a_x._end_series(_anton_x)                         # operator reset for him
 # (Mutation probe: omit the deletion on foreign bindings in `set_binding_name` → Anton's
@@ -583,9 +583,9 @@ r.check("p1-a: the most recent sign-in under `x` proves who owns the name — th
         "his sign-in and his reset leave the series of the new owner standing",
         _names_x == (None, "x") and a_x.store.count_identifiers(_anton_x) == {"anton"}
         and a_x.store.failure_series("x") == 9, f"{_names_x}, {a_x.store.count_identifiers(_anton_x)}, {a_x.store.failure_series('x')}")
-_login(TestClient(ap_x, client=("203.0.113.99", 1)), "x", f"falsch-falsch-1-{next(_WRONG)}")
+_login(TestClient(ap_x, client=("203.0.113.99", 1)), "x", f"wrong-wrong-1-xx{next(_WRONG)}")
 for _i in range(3):
-    _login(TestClient(ap_x, client=(f"203.0.113.{_i + 50}", 1)), "anton", f"falsch-falsch-1-{next(_WRONG)}")
+    _login(TestClient(ap_x, client=(f"203.0.113.{_i + 50}", 1)), "anton", f"wrong-wrong-1-xx{next(_WRONG)}")
 _from_x = io.StringIO()
 with redirect_stdout(_from_x), redirect_stderr(_from_x):
     try:
@@ -600,7 +600,7 @@ r.check("… `tinysesam unlock x` names the new owner and leaves the previous ow
 # `unlock` names no account (which one signed in most recently like this is recorded nowhere).
 a_x.store._exec("UPDATE federated_identity SET directory_name_folded='x' WHERE user_id=?", (_anton_x,))
 for _i in range(3):
-    _login(TestClient(ap_x, client=(f"203.0.113.{_i + 70}", 1)), "x", f"falsch-falsch-1-{next(_WRONG)}")
+    _login(TestClient(ap_x, client=(f"203.0.113.{_i + 70}", 1)), "x", f"wrong-wrong-1-xx{next(_WRONG)}")
 _login(TestClient(ap_x), "anton", PW)
 _series_x2 = a_x.store.failure_series("x")
 _from_x2 = io.StringIO()
@@ -649,7 +649,7 @@ _alice_m = a_m.store.get_user_by_name("alice")["id"]
 _reg_m = a_m.create_user("mallory", password=MPW, email="alice@corp.example")
 for _ in range(10):
     for _ in range(4):
-        _login(TestClient(ap_m, client=("203.0.113.66", 1)), "alice@corp.example", f"falsch-falsch-1-{next(_WRONG)}")
+        _login(TestClient(ap_m, client=("203.0.113.66", 1)), "alice@corp.example", f"wrong-wrong-1-xx{next(_WRONG)}")
     _login(TestClient(ap_m, client=("203.0.113.66", 1)), "alice@corp.example", MPW)
 _hit_m = _login(TestClient(ap_m, client=("203.0.113.66", 1)), "alice@corp.example", LPW)
 # (Mutation probe: switch off the check against `only_account` → 303, session of Alice → red.)
@@ -664,7 +664,7 @@ r.check("… under her name Alice continues to sign in (counter-check)",
 auth, app = _app(pin_enabled=True)
 
 
-@app.get("/allgemein")
+@app.get("/general")
 def _general(user=Depends(auth.require())):
     return {"ok": True}
 
@@ -682,7 +682,7 @@ r.check("B2-8: the login page offers the PIN as first factor (pin_login, default
         "/auth/pin" in page_html.text, "no PIN route on the login page")
 cp.post("/auth/pin", data={"username": "pinnutzer", "pin": "4711"}, follow_redirects=False)
 r.check("… with the PIN alone one reaches the general page",
-        cp.get("/allgemein", follow_redirects=False).status_code == 200)
+        cp.get("/general", follow_redirects=False).status_code == 200)
 r.check("… the detail page demands more (chain pin → password per route)",
         cp.get("/detail", follow_redirects=False).status_code != 200)
 _login(cp, "pinnutzer", PW)
@@ -711,7 +711,7 @@ class _Claims(dict):
 
 def _oidc(claims, **cfg):
     auth, app = _app(oidc_enabled=True, oidc_issuer=IDP, oidc_client_id="probe",
-                     oidc_client_secret="geheim", **cfg)
+                     oidc_client_secret="secret", **cfg)
     auth.oidc._meta = {"issuer": IDP, "authorization_endpoint": IDP + "/authorize",
                        "token_endpoint": IDP + "/token", "userinfo_endpoint": IDP + "/userinfo",
                        "jwks_uri": IDP + "/jwks"}
@@ -734,70 +734,70 @@ def _oidc_login(app):
 
 
 # ── F-27: email collision with a local account ───────────────────────────────────────────
-a27, app27 = _oidc({"sub": "k-1", "preferred_username": "neu", "email": "lokal@example.com",
+a27, app27 = _oidc({"sub": "k-1", "preferred_username": "new", "email": "local@example.com",
                     "email_verified": True})
-local = a27.create_user("lokal", password=PW, email="lokal@example.com")
+local = a27.create_user("local", password=PW, email="local@example.com")
 response = _oidc_login(app27)
 r.check("F-27: proven address of a local account → 409, no 500", response.status_code == 409,
         f"HTTP {response.status_code}")
 r.check("… no second account, no link, a line for the operator",
-        a27.store.get_user_by_name("neu") is None and not a27.store.get_oidc_user(IDP, "k-1")
+        a27.store.get_user_by_name("new") is None and not a27.store.get_oidc_user(IDP, "k-1")
         and any(z["event"] == "oidc_ident_taken" for z in a27.store.recent_audit(50)))
-a27b, app27b = _oidc({"sub": "k-2", "preferred_username": "neu2", "email": "lokal@example.com",
+a27b, app27b = _oidc({"sub": "k-2", "preferred_username": "new2", "email": "local@example.com",
                       "email_verified": False})
-local_b = a27b.create_user("lokal", password=PW, email="lokal@example.com")
+local_b = a27b.create_user("local", password=PW, email="local@example.com")
 response = _oidc_login(app27b)
-new2 = a27b.store.get_user_by_name("neu2")
+new2 = a27b.store.get_user_by_name("new2")
 r.check("F-27 + H-3: an UNPROVEN foreign address does not collide and takes nothing over",
         response.status_code == 303 and new2 is not None and not new2["email"]
-        and a27b.store.get_user(local_b)["email"] == "lokal@example.com",
+        and a27b.store.get_user(local_b)["email"] == "local@example.com",
         f"HTTP {response.status_code}")
 
 # ── H-3: an address without proof is not used ────────────────────────────────────────────
-a3, app3 = _oidc({"sub": "h3-1", "email": "fremd@example.com", "email_verified": False})
+a3, app3 = _oidc({"sub": "h3-1", "email": "foreign@example.com", "email_verified": False})
 _oidc_login(app3)
 accounts = [dict(u) for u in a3.store.list_users()]
 k3 = accounts[0] if accounts else None
 r.check("H-3: without proof no name from the address, no address in the account, no Remote-Email",
         k3 is not None and k3["username"].startswith("oidc-") and not k3["email"]
         and not a3._forward_response_headers(k3).get("Remote-Email"), str(k3))
-a3b, app3b = _oidc({"sub": "h3-2", "email": "belegt@example.com", "email_verified": True})
+a3b, app3b = _oidc({"sub": "h3-2", "email": "taken@example.com", "email_verified": True})
 _oidc_login(app3b)
-k3b = a3b.store.get_user_by_name("belegt@example.com")
+k3b = a3b.store.get_user_by_name("taken@example.com")
 r.check("… with proof it is used (name, account, Remote-Email)",
-        k3b is not None and k3b["email"] == "belegt@example.com" and k3b["email_verified"]
-        and a3b._forward_response_headers(k3b).get("Remote-Email") == "belegt@example.com")
+        k3b is not None and k3b["email"] == "taken@example.com" and k3b["email_verified"]
+        and a3b._forward_response_headers(k3b).get("Remote-Email") == "taken@example.com")
 a3c, app3c = _oidc({"sub": "h3-3", "email": "entra@example.com"}, oidc_email_verified_default=True)
 _oidc_login(app3c)
 r.check("… a provider without a claim counts only with the operator's explicit statement",
         a3c.store.get_user_by_name("entra@example.com") is not None)
-a3d, app3d = _oidc({"sub": "h3-4", "email": "nein@example.com", "email_verified": False},
+a3d, app3d = _oidc({"sub": "h3-4", "email": "no@example.com", "email_verified": False},
                    oidc_email_verified_default=True)
 _oidc_login(app3d)
 r.check("… an explicit false stays false, even with this statement",
         all(not u["email"] for u in a3d.store.list_users()))
-a3e, app3e = _oidc({"sub": "h3-5", "preferred_username": "spaet", "email": "spaet@example.com"})
+a3e, app3e = _oidc({"sub": "h3-5", "preferred_username": "late", "email": "late@example.com"})
 _oidc_login(app3e)
-_set(a3e, {"sub": "h3-5", "preferred_username": "spaet", "email": "spaet@example.com",
+_set(a3e, {"sub": "h3-5", "preferred_username": "late", "email": "late@example.com",
              "email_verified": True})
 _oidc_login(app3e)
 r.check("H-3: if the provider supplies the proof later, the address enters the account as proven",
-        a3e.store.get_user_by_name("spaet")["email"] == "spaet@example.com"
-        and a3e.store.get_user_by_name("spaet")["email_verified"])
-a3f, app3f = _oidc({"sub": "h3-6", "preferred_username": "spaet2", "email": "vergeben@example.com"})
+        a3e.store.get_user_by_name("late")["email"] == "late@example.com"
+        and a3e.store.get_user_by_name("late")["email_verified"])
+a3f, app3f = _oidc({"sub": "h3-6", "preferred_username": "late2", "email": "taken@example.com"})
 _oidc_login(app3f)
-a3f.create_user("inhaber", password=PW, email="vergeben@example.com")
-_set(a3f, {"sub": "h3-6", "preferred_username": "spaet2", "email": "vergeben@example.com",
+a3f.create_user("holder", password=PW, email="taken@example.com")
+_set(a3f, {"sub": "h3-6", "preferred_username": "late2", "email": "taken@example.com",
              "email_verified": True})
 _oidc_login(app3f)
 r.check("… unless it now belongs to another account (then it stays without)",
-        not a3f.store.get_user_by_name("spaet2")["email"]
+        not a3f.store.get_user_by_name("late2")["email"]
         and any(z["event"] == "oidc_email_taken" for z in a3f.store.recent_audit(50)))
-for wish, proven, expected in (("opfer@example.com", False, "oidc-"), ("opfer@example.com", True, "opfer@example.com"),
-                                 ("opfer\uff20example.com", False, "oidc-"), ("opfer\ufe6bexample.com", False, "oidc-"),
-                                 ("anderer@example.com", True, "opfer@example.com"), ("klarname", False, "klarname")):
+for wish, proven, expected in (("victim@example.com", False, "oidc-"), ("victim@example.com", True, "victim@example.com"),
+                                 ("victim\uff20example.com", False, "oidc-"), ("victim\ufe6bexample.com", False, "oidc-"),
+                                 ("other@example.com", True, "victim@example.com"), ("klarname", False, "klarname")):
     a3g, app3g = _oidc({"sub": f"h3-pu-{wish}-{proven}", "preferred_username": wish,
-                        "email": "opfer@example.com", "email_verified": proven})
+                        "email": "victim@example.com", "email_verified": proven})
     _oidc_login(app3g)
     names = [u["username"] for u in a3g.store.list_users()]
     r.check(f"H-3: preferred_username={wish!r} with {'proven' if proven else 'unproven'} address → {expected}…",
@@ -806,14 +806,14 @@ for wish, proven, expected in (("opfer@example.com", False, "oidc-"), ("opfer@ex
 #  `@` in `preferred_username` → the cases with an address as name red.)
 
 # ── H-5: the IdP takes back what it has given ────────────────────────────────────────────
-MAP = {"admins": "__admin__", "redaktion": "editor"}
-a5, app5 = _oidc({"sub": "h5-1", "preferred_username": "idpchef", "groups": ["admins", "redaktion"]},
+MAP = {"admins": "__admin__", "editors": "editor"}
+a5, app5 = _oidc({"sub": "h5-1", "preferred_username": "idpchef", "groups": ["admins", "editors"]},
                  oidc_group_role_map=MAP)
 _oidc_login(app5)
 boss = a5.store.get_user_by_name("idpchef")
 r.check("H-5: admin group at the IdP → admin flag, noted as “from the IdP” (2)", boss["is_admin"] == 2,
         str(boss["is_admin"]))
-_set(a5, {"sub": "h5-1", "preferred_username": "idpchef", "groups": ["redaktion"]})
+_set(a5, {"sub": "h5-1", "preferred_username": "idpchef", "groups": ["editors"]})
 _oidc_login(app5)
 boss = a5.store.get_user_by_name("idpchef")
 r.check("… if the IdP no longer delivers the group, the flag is gone at the next login",
@@ -824,11 +824,11 @@ a5.apply_idp_groups(hand, [], MAP)
 r.check("H-5: an admin flag granted by hand is never taken by the IdP", a5.store.get_user(hand)["is_admin"] == 1)
 idp_admin = a5.create_user("idpzwei", password=PW)
 a5.apply_idp_groups(idp_admin, ["admins"], MAP)
-a5.apply_idp_groups(idp_admin, [], {"redaktion": "editor"})
+a5.apply_idp_groups(idp_admin, [], {"editors": "editor"})
 r.check("… and a mapping without an admin target revokes nothing (it manages no admin right)",
         a5.store.get_user(idp_admin)["is_admin"] == 2)
 a5.apply_idp_groups(idp_admin, ["cn=admins,ou=g,dc=x"], {"cn=admins": "__admin__"}, dn=True)
-a5.apply_idp_groups(idp_admin, ["cn=andere,ou=g,dc=x"], {"cn=admins": "__admin__"}, dn=True)
+a5.apply_idp_groups(idp_admin, ["cn=other,ou=g,dc=x"], {"cn=admins": "__admin__"}, dn=True)
 r.check("H-5 also applies to LDAP DNs (the same path)", not a5.store.get_user(idp_admin)["is_admin"])
 # Finding from the attack on H-5: the panel sends the admin checkbox with every save of the roles
 # — `set_admin(True)` silently turned the 2 into a 1, and the revocation never worked again.
@@ -836,9 +836,9 @@ a5p, app5p = _oidc({"sub": "h5-p", "preferred_username": "panelfall", "groups": 
                    oidc_group_role_map=MAP)
 _oidc_login(app5p)
 _pf = a5p.store.get_user_by_name("panelfall")
-a5p.create_user("chefin", password=PW, is_admin=True)
+a5p.create_user("boss", password=PW, is_admin=True)
 cpan = TestClient(app5p)
-cpan.post("/auth/login", data={"username": "chefin", "password": PW}, follow_redirects=False)
+cpan.post("/auth/login", data={"username": "boss", "password": PW}, follow_redirects=False)
 stored = cpan.post(f"/auth/admin/api/users/{_pf['id']}/roles", json={"roles": ["editor"], "is_admin": True})
 r.check("H-5: saving roles in the panel leaves an IdP admin flag as it is (2)",
         stored.status_code == 200 and a5p.store.get_user(_pf["id"])["is_admin"] == 2,
@@ -846,7 +846,7 @@ r.check("H-5: saving roles in the panel leaves an IdP admin flag as it is (2)",
 _set(a5p, {"sub": "h5-p", "preferred_username": "panelfall", "groups": []})
 _oidc_login(app5p)
 r.check("… and the next login without admin group takes it", not a5p.store.get_user(_pf["id"])["is_admin"])
-_normal = a5p.create_user("normalo", password=PW)
+_normal = a5p.create_user("regular", password=PW)
 cpan.post(f"/auth/admin/api/users/{_normal}/roles", json={"roles": [], "is_admin": True})
 r.check("… a checkbox the operator newly sets stays a 1 (by hand)",
         a5p.store.get_user(_normal)["is_admin"] == 1)
@@ -859,13 +859,13 @@ r.check("… a checkbox the operator newly sets stays a 1 (by hand)",
 # "by hand" (1) and first owner, whom no provider revokes any more (`maybe_promote_admin` via
 # `apply_factor`, because at that moment there was no admin).
 _C6 = {"sub": "g6-1", "preferred_username": "chef6", "email": "chef6@example.com", "email_verified": True}
-_ITEMS6 = ["chef6@example.com", "vize6@example.com"]
+_ITEMS6 = ["chef6@example.com", "deputy6@example.com"]
 a6, app6 = _oidc({**_C6, "groups": ["admins"]}, oidc_group_role_map=MAP, admin_identifiers=_ITEMS6)
 _oidc_login(app6)
 _boss6 = a6.store.get_user_by_name("chef6")
 r.check("G6: admin group at the IdP → admin from the IdP (2), no owner", (_boss6["is_admin"], _boss6["is_owner"]) == (2, 0),
         str(dict(_boss6)))
-_vice6 = a6.create_user("vize6", password=PW, email="vize6@example.com")
+_vice6 = a6.create_user("deputy6", password=PW, email="deputy6@example.com")
 _set(a6, {**_C6, "groups": []})
 _err6 = io.StringIO()
 with redirect_stderr(_err6):
@@ -889,10 +889,10 @@ with redirect_stderr(io.StringIO()):
     _oidc_login(app6)
 r.check("… the next login does not promote either", not a6.store.get_user_by_name("chef6")["is_admin"])
 with redirect_stderr(io.StringIO()):
-    _login(TestClient(app6), "vize6", PW)
+    _login(TestClient(app6), "deputy6", PW)
 r.check("… and no other allowlist account (the marker applies to the instance)",
         (a6.store.get_user(_vice6)["is_admin"], a6.store.get_user(_vice6)["is_owner"]) == (0, 0)
-        and any(z["event"] == "admin_bootstrap_denied" and z["username"] == "vize6"
+        and any(z["event"] == "admin_bootstrap_denied" and z["username"] == "deputy6"
                 for z in a6.store.recent_audit(20)), str(dict(a6.store.get_user(_vice6))))
 _boss6 = a6.store.get_user_by_name("chef6")
 r.check("G6: the emergency path remains — the one-time token makes admin and owner",
@@ -910,16 +910,16 @@ r.check("G6: if the IdP revokes an admin while an admin by hand remains, no mark
         not a6h.store.get_user_by_name("chef6")["is_admin"]
         and a6h.store.get_setting("allowlist_after_idp_revocation") is None)
 a6f, app6f = _app(admin_identifiers=_ITEMS6)
-_f6 = a6f.create_user("vize6", password=PW, email="vize6@example.com")
-_login(TestClient(app6f), "vize6", PW)
+_f6 = a6f.create_user("deputy6", password=PW, email="deputy6@example.com")
+_login(TestClient(app6f), "deputy6", PW)
 r.check("G6: fresh instance — the first allowlist login becomes admin and owner",
         (a6f.store.get_user(_f6)["is_admin"], a6f.store.get_user(_f6)["is_owner"]) == (1, 1))
 _db6d = str(Path(tempfile.mkdtemp()) / "t.db")
 with redirect_stderr(io.StringIO()), redirect_stdout(io.StringIO()):
     TinySesam(TinySesamConfig(db_path=_db6d, cookie_secure=False, demo_mode=True))
     a6d, app6d = _app(db_path=_db6d, admin_identifiers=_ITEMS6)
-_d6 = a6d.create_user("vize6", password=PW, email="vize6@example.com")
-_login(TestClient(app6d), "vize6", PW)
+_d6 = a6d.create_user("deputy6", password=PW, email="deputy6@example.com")
+_login(TestClient(app6d), "deputy6", PW)
 r.check("G6: demo → operation (purge_demo deletes the demo admin): the allowlist applies",
         a6d.store.get_user_by_name("demoadmin") is None
         and (a6d.store.get_user(_d6)["is_admin"], a6d.store.get_user(_d6)["is_owner"]) == (1, 1),
@@ -934,55 +934,55 @@ r.check("G6: demo → operation (purge_demo deletes the demo admin): the allowli
 auth_i, app_i = _app()
 
 
-@app_i.get("/drin")
+@app_i.get("/inside")
 def _inside(user=Depends(auth_i.require())):
     return {"ok": True}
 
 
 r.check("F-05: default 8 h inactivity without “Stay signed in”, with it: off",
         auth_i.store.idle_sec == (8 * 3600, 0), str(auth_i.store.idle_sec))
-auth_i.create_user("ruhig", password=PW)
+auth_i.create_user("quiet", password=PW)
 ci = TestClient(app_i)
-ci.post("/auth/login", data={"username": "ruhig", "password": PW}, follow_redirects=False)   # without remember
-r.check("… freshly signed in one gets in", ci.get("/drin", follow_redirects=False).status_code == 200)
+ci.post("/auth/login", data={"username": "quiet", "password": PW}, follow_redirects=False)   # without remember
+r.check("… freshly signed in one gets in", ci.get("/inside", follow_redirects=False).status_code == 200)
 auth_i.store._exec("UPDATE session SET last_seen = last_seen - 8 * 3600 - 5")
 r.check("… after 8 h without a request the session is gone (not just rejected, deleted)",
-        ci.get("/drin", follow_redirects=False).status_code != 200
+        ci.get("/inside", follow_redirects=False).status_code != 200
         and auth_i.store._one("SELECT COUNT(*) AS n FROM session")["n"] == 0)
 ci2 = TestClient(app_i)
-ci2.post("/auth/login", data={"username": "ruhig", "password": PW, "remember": "1"}, follow_redirects=False)
+ci2.post("/auth/login", data={"username": "quiet", "password": PW, "remember": "1"}, follow_redirects=False)
 auth_i.store._exec("UPDATE session SET last_seen = last_seen - 30 * 86400")
 r.check("… with “Stay signed in” only the absolute lifetime counts (default)",
-        ci2.get("/drin", follow_redirects=False).status_code == 200)
+        ci2.get("/inside", follow_redirects=False).status_code == 200)
 auth_j, app_j = _app(session_idle_minutes_remember=60)
 
 
-@app_j.get("/drin")
+@app_j.get("/inside")
 def _inside_j(user=Depends(auth_j.require())):
     return {"ok": True}
 
 
-auth_j.create_user("ruhig", password=PW)
+auth_j.create_user("quiet", password=PW)
 cj = TestClient(app_j)
-cj.post("/auth/login", data={"username": "ruhig", "password": PW, "remember": "1"}, follow_redirects=False)
-cj.get("/drin")
+cj.post("/auth/login", data={"username": "quiet", "password": PW, "remember": "1"}, follow_redirects=False)
+cj.get("/inside")
 _before = auth_j.store._one("SELECT last_seen FROM session")["last_seen"]
-cj.get("/drin")
+cj.get("/inside")
 r.check("F-05: a second request in the same minute does not write (no lock per request)",
         auth_j.store._one("SELECT last_seen FROM session")["last_seen"] == _before)
 auth_j.store._exec("UPDATE session SET last_seen = last_seen - 61 * 60")
 r.check("F-05 configurable: also for “Stay signed in” (here 60 min)",
-        cj.get("/drin", follow_redirects=False).status_code != 200)
+        cj.get("/inside", follow_redirects=False).status_code != 200)
 auth_j.create_user("aktiv", password=PW)
 ck = TestClient(app_j)
 ck.post("/auth/login", data={"username": "aktiv", "password": PW, "remember": "1"}, follow_redirects=False)
 auth_j.store._exec("UPDATE session SET last_seen = last_seen - 50 * 60, created_at = created_at - 50 * 60 "
-                   "WHERE user_id = (SELECT id FROM users WHERE username='aktiv')")
-ck.get("/drin")                                              # activity resets the clock
+                   "WHERE user_id = (SELECT id FROM users WHERE username='active')")
+ck.get("/inside")                                              # activity resets the clock
 auth_j.store._exec("UPDATE session SET last_seen = last_seen - 50 * 60 "
-                   "WHERE user_id = (SELECT id FROM users WHERE username='aktiv')")
+                   "WHERE user_id = (SELECT id FROM users WHERE username='active')")
 r.check("F-05: whoever is active stays in (50 + 50 min, but never 60 in one stretch)",
-        ck.get("/drin", follow_redirects=False).status_code == 200)
+        ck.get("/inside", follow_redirects=False).status_code == 200)
 # (Mutation probes: delete the idle check in `get_session` → "after 8 h … gone" red; delete the
 #  write-back of `zuletzt` → "whoever is active stays in" red.)
 
@@ -995,16 +995,16 @@ import pyotp as _pyotp  # noqa: E402
 auth_k, app_k = _app(login_chain=["password", "totp"])
 
 
-@app_k.get("/drin")
+@app_k.get("/inside")
 def _inside_k(user=Depends(auth_k.require())):
     return {"ok": True}
 
 
-uid_k = auth_k.create_user("zweifach", password=PW)
+uid_k = auth_k.create_user("twofold", password=PW)
 _secret_text_k = auth_k.totp_begin(uid_k)["secret"]
 auth_k.totp_confirm(uid_k, _pyotp.TOTP(_secret_text_k).at(_clock_k.time() - 30))
 ckk = TestClient(app_k)
-ckk.post("/auth/login", data={"username": "zweifach", "password": PW, "remember": "1"}, follow_redirects=False)
+ckk.post("/auth/login", data={"username": "twofold", "password": PW, "remember": "1"}, follow_redirects=False)
 _half_k = auth_k.store._one("SELECT token_hash, stay_chosen FROM session")
 ckk.post("/auth/totp", data={"code": _pyotp.TOTP(_secret_text_k).now(), "next": "/"}, follow_redirects=False)
 _full_k = auth_k.store._all("SELECT token_hash, stay_chosen, mfa_ok FROM session")
@@ -1014,7 +1014,7 @@ r.check("F-05: “Stay signed in” survives the second factor (new full session
         str([dict(z) for z in _full_k]))
 auth_k.store._exec("UPDATE session SET last_seen = last_seen - 30 * 86400")
 r.check("… and so after password + TOTP still only the absolute lifetime applies",
-        ckk.get("/drin", follow_redirects=False).status_code == 200)
+        ckk.get("/inside", follow_redirects=False).status_code == 200)
 # (Mutation probe: delete the transfer in `_successor` → both red.)
 
 # ── Limits a–e from the integration attack (PO: build) ─────────────────────────────────
@@ -1024,13 +1024,13 @@ import pyotp  # noqa: E402
 # (a) A complete sign-in clears only failed attempts from the creation of the account.
 auth_a8, app_a8 = _app()
 for _ in range(3):
-    auth_a8._record_login("vorher@example.com", "198.51.100.20", False, "password")
+    auth_a8._record_login("before@example.com", "198.51.100.20", False, "password")
 auth_a8.store._exec("UPDATE login_attempt SET ts = ts - 3600")
-uid_a8 = auth_a8.create_user("neukonto", password=PW, email="vorher@example.com")
+uid_a8 = auth_a8.create_user("neukonto", password=PW, email="before@example.com")
 _login(TestClient(app_a8), "neukonto", PW)
 r.check("Limit a: failed attempts under the address from BEFORE the creation remain after the first login",
-        auth_a8.store.count_fails(0, username="vorher@example.com") == 3,
-        str(auth_a8.store.count_fails(0, username="vorher@example.com")))
+        auth_a8.store.count_fails(0, username="before@example.com") == 3,
+        str(auth_a8.store.count_fails(0, username="before@example.com")))
 auth_a8._record_login("neukonto", "198.51.100.21", False, "password")
 _login(TestClient(app_a8), "neukonto", PW)
 r.check("… it clears the account's own (after the creation) as before",
@@ -1039,15 +1039,15 @@ r.check("… it clears the account's own (after the creation) as before",
 # (b) The panel distinguishes the two locks.
 auth_b8, app_b8 = _app()
 auth_b8.create_user("panelchef", password=PW, is_admin=True)
-waits = auth_b8.create_user("wartet", password=PW)
-concerning = auth_b8.create_user("betreiber-gesperrt", password=PW)
+waits = auth_b8.create_user("waits", password=PW)
+concerning = auth_b8.create_user("operator-locked", password=PW)
 auth_b8.store.set_disabled(waits, True)
 auth_b8.store.set_disabled(concerning, True, through_operator=True)
 cb8 = TestClient(app_b8)
 _login(cb8, "panelchef", PW)
 items = {u["username"]: u for u in cb8.get("/auth/admin/api/users").json()}
 r.check("Limit b: the panel names the reason for the lock (confirmation/app vs. operator)",
-        items["wartet"]["disabled_by"] == "confirmation" and items["betreiber-gesperrt"]["disabled_by"] == "operator"
+        items["waits"]["disabled_by"] == "confirmation" and items["operator-locked"]["disabled_by"] == "operator"
         and items["panelchef"]["disabled_by"] is None, str({k: v["disabled_by"] for k, v in items.items()}))
 
 # (c) The audit searches run via an index.
@@ -1060,11 +1060,11 @@ r.check("Limit c: `setup_limit` searches via the index instead of through the wh
 # (d) Chain password → totp → pin with mandatory enrollment: the offer to end the other sessions
 #     is redeemed as soon as the chain is complete.
 auth_d8, app_d8 = _app(login_chain=["password", "totp", "pin"], pin_enabled=True)
-uid_d8 = auth_d8.create_user("kette", password=PW)
+uid_d8 = auth_d8.create_user("chain", password=PW)
 auth_d8.set_pin(uid_d8, "4812")
 old_token = auth_d8.store.create_session(uid_d8, 3600, True, "password")   # the lost device
 cd8 = TestClient(app_d8)
-_login(cd8, "kette", PW)
+_login(cd8, "chain", PW)
 _page_html = cd8.post("/auth/totp/setup/start", data={"next": "/"})
 _secret_text = _re.search(r"secret=([A-Z2-7]+)", _page_html.text) or _re.search(r"\b([A-Z2-7]{32})\b", _page_html.text)
 _confirmed = cd8.post("/auth/totp/setup", data={"code": pyotp.TOTP(_secret_text.group(1)).now(), "next": "/"}).json()
@@ -1073,13 +1073,13 @@ r.check("Limit d: the enrollment in the middle of the chain reports the other se
 _note = cd8.post("/auth/sessions/revoke-after-login", json={})
 r.check("… the consent is noted, but nothing is ended yet",
         _note.status_code == 200 and auth_d8.store.get_session(old_token) is not None)
-cd8.post("/auth/pin", data={"username": "kette", "pin": "4812"}, follow_redirects=False)   # half session: with name
+cd8.post("/auth/pin", data={"username": "chain", "pin": "4812"}, follow_redirects=False)   # half session: with name
 r.check("… and with the last factor (PIN) the other sessions end",
         auth_d8.store.get_session(old_token) is None and cd8.get("/auth/me").status_code == 200)
 auth_v8, app_v8 = _app()                                      # without chain: password = full session
-auth_v8.create_user("voll", password=PW)
+auth_v8.create_user("full", password=PW)
 cfull = TestClient(app_v8)
-_login(cfull, "voll", PW)
+_login(cfull, "full", PW)
 r.check("… a full session cannot set the note (that is what /auth/sessions/revoke is for)",
         cfull.post("/auth/sessions/revoke-after-login", json={}).status_code in (400, 401))
 
@@ -1119,7 +1119,7 @@ def _reg_app():
 
 
 a638, app638 = _reg_app()
-a638.create_user("vergeben@example.com", password=PW, email="vergeben@example.com")
+a638.create_user("taken@example.com", password=PW, email="taken@example.com")
 _counter = {"n": 0}
 _orig_exec = a638.store._exec
 
@@ -1132,10 +1132,10 @@ def _counting(sql, args=()):
 a638.store._exec = _counting
 c638 = TestClient(app638)
 _counter["n"] = 0
-free = c638.post("/auth/register", data={"email": "frei@example.com", "password": FIFTEEN + "x"})
+free = c638.post("/auth/register", data={"email": "free@example.com", "password": FIFTEEN + "x"})
 _n_free = _counter["n"]
 _counter["n"] = 0
-grant = c638.post("/auth/register", data={"email": "vergeben@example.com", "password": FIFTEEN + "x"})
+grant = c638.post("/auth/register", data={"email": "taken@example.com", "password": FIFTEEN + "x"})
 _n_grant = _counter["n"]
 a638.store._exec = _orig_exec
 r.check("ASVS 6.3.8: free and taken address respond the same (status and page)",
@@ -1163,31 +1163,31 @@ def _notice_app(**cfg):
 
 
 a635, app635, post635 = _notice_app()
-a635.create_user("inhaberin", password=PW, email="inhaberin@example.com")
+a635.create_user("holder-f", password=PW, email="holder-f@example.com")
 for _ in range(a635._sec("max_login_attempts") + 2):
-    _login(TestClient(app635), "inhaberin", f"falsch-falsch-falsch-{next(_WRONG)}")
+    _login(TestClient(app635), "holder-f", f"wrong-wrong-wrong-xxx{next(_WRONG)}")
 a635._notice_outcome.wait()
 r.check("ASVS 6.3.5: with configured mail delivery the owner gets a notice (default on, opt-out)",
-        len(post635) == 1 and post635[0][0] == "inhaberin@example.com", str(post635))
+        len(post635) == 1 and post635[0][0] == "holder-f@example.com", str(post635))
 r.check("… the notice carries no link (there is no base an attacker could bend)",
         post635 and "://" not in post635[0][2], post635[0][2][:120] if post635 else "")
 r.check("… exactly one per lock window, not one per rejected attempt",
         len(post635) == 1 and any(z["event"] == "lockout_notice" for z in a635.store.recent_audit(50)))
 for _ in range(a635._sec("max_login_attempts") + 2):
-    _login(TestClient(app635), "niemand", f"falsch-falsch-falsch-{next(_WRONG)}")
+    _login(TestClient(app635), "nobody", f"wrong-wrong-wrong-xxx{next(_WRONG)}")
 a635._notice_outcome.wait()
 r.check("… an unknown name triggers nothing (and the same happens in the request)", len(post635) == 1)
 a635u, app635u, post635u = _notice_app()
-_u = a635u.create_user("unbelegt", password=PW, email="unbelegt@example.com")
+_u = a635u.create_user("free", password=PW, email="free@example.com")
 a635u.store.set_email_verified(_u, False)
 for _ in range(a635u._sec("max_login_attempts") + 2):
-    _login(TestClient(app635u), "unbelegt", f"falsch-falsch-falsch-{next(_WRONG)}")
+    _login(TestClient(app635u), "free", f"wrong-wrong-wrong-xxx{next(_WRONG)}")
 a635u._notice_outcome.wait()
 r.check("… nothing goes to an UNPROVEN address (H-3)", post635u == [], str(post635u))
 a635o, app635o, post635o = _notice_app(notify_login_failures=False)
 a635o.create_user("still", password=PW, email="still@example.com")
 for _ in range(a635o._sec("max_login_attempts") + 2):
-    _login(TestClient(app635o), "still", f"falsch-falsch-falsch-{next(_WRONG)}")
+    _login(TestClient(app635o), "still", f"wrong-wrong-wrong-xxx{next(_WRONG)}")
 a635o._notice_outcome.wait()
 r.check("… opt-out: notify_login_failures=False sends nothing", post635o == [], str(post635o))
 # (Mutation probes: do not call `_lockout_notice` in `_rejected` → first check red; delete the
@@ -1232,14 +1232,14 @@ finally:
 r.check("H-14/15: a key that does not fit aborts startup (ConfigError)", _wrong)
 
 # Precedence: environment before file before "next to the database"; a broken value is an error.
-_file14 = str(Path(tempfile.mkdtemp()) / "schluessel")
+_file14 = str(Path(tempfile.mkdtemp()) / "key")
 with open(_file14, "w") as _f:
     _f.write(_b64.b64encode(_os.urandom(32)).decode())
 a14c, _ = _app(secrets_key_file=_file14)
 r.check("… secrets_key_file is taken, then no file next to the database is created",
         a14c._key_name_origin == "file" and not _os.path.exists(a14c.cfg.db_path + ".key"))
 with open(_file14, "w") as _f:
-    _f.write("zu-kurz")
+    _f.write("to-short")
 try:
     _app(secrets_key_file=_file14)
     _broken = False
@@ -1328,9 +1328,9 @@ r.check("4a: if the provider refuses (locked, deleted, withdrawn), the session i
         c4a.get("/auth/me").status_code == 401
         and a4a.store._one("SELECT COUNT(*) AS n FROM session")["n"] == 0
         and any(z["event"] == "oidc_revoked" for z in a4a.store.recent_audit(20)))
-a4b, app4b = _oidc({"sub": "r-2", "preferred_username": "ohne"}, oidc_session_refresh_minutes=0)
+a4b, app4b = _oidc({"sub": "r-2", "preferred_username": "without"}, oidc_session_refresh_minutes=0)
 a4b.oidc.exchange = lambda code, redirect_uri, nonce, t=None, **_: (
-    _Claims({"sub": "r-2", "preferred_username": "ohne", "nonce": nonce}),
+    _Claims({"sub": "r-2", "preferred_username": "without", "nonce": nonce}),
     {"access_token": "at", "refresh_token": "rt-x"})
 _oidc_login(app4b)
 r.check("4a configurable: oidc_session_refresh_minutes=0 stores nothing",
@@ -1369,7 +1369,7 @@ r.check("Finding 5: four requests after the period exchange the refresh token ex
         str(_swap))
 
 # Finding 6: a hanging provider does not hold up the request.
-a6r, _, c6r = _oidc_with_refresh("haengt")
+a6r, _, c6r = _oidc_with_refresh("hangs")
 a6r.oidc.refresh = lambda rt, sub: (_when.sleep(1.5), ("ok", {"sub": sub}, {}))[1]
 a6r.store._exec("UPDATE oidc_session SET checked_at = checked_at - 16 * 60")
 _t0 = _when.monotonic()
@@ -1381,12 +1381,12 @@ r.check("Finding 6: the request does not wait for the provider (exchange in the 
 
 # Finding 7: one row per client — a login via a second client does not overwrite the first.
 _h7 = a6r.store._one("SELECT token_hash FROM oidc_session")["token_hash"]
-a6r.store.set_oidc_session(_h7, "app-b", "haengt", "rt-b")
+a6r.store.set_oidc_session(_h7, "app-b", "hangs", "rt-b")
 r.check("Finding 7: several clients of one session — every row stays and is re-checked",
         {z["client"] for z in a6r.store.get_oidc_sessions(_h7)} == {"*", "app-b"})
 
 # Finding 13: nobody asks the provider about a locked account.
-a13, _, c13 = _oidc_with_refresh("gesperrt13")
+a13, _, c13 = _oidc_with_refresh("locked13xx")
 _t13 = []
 a13.oidc.refresh = lambda rt, sub: (_t13.append(rt) or ("ok", {"sub": sub, "groups": ["admins"]}, {}))
 a13.store._exec("UPDATE oidc_session SET checked_at = checked_at - 16 * 60")
@@ -1409,7 +1409,7 @@ finally:
 r.check("Finding 4: wrong key + only OIDC refresh tokens → startup aborts", _f4)
 
 # Finding 9: the 8-h limit applies to every session without an EXPLICIT "stay signed in".
-a9, app9, c9 = _oidc_with_refresh("leerlauf9")
+a9, app9, c9 = _oidc_with_refresh("idle9")
 a9.store._exec("UPDATE session SET last_seen = last_seen - 9 * 3600")
 r.check("Finding 9: an OIDC session (persistent, but without choice) ends after 8 h of inactivity",
         c9.get("/auth/me").status_code == 401)
@@ -1438,11 +1438,11 @@ r.check("Finding 10: 24 simultaneous first starts — no error, a single key",
 # Finding 11: the throttle of the lock notice lives in the database — an evicted memory key
 # (or a second worker) sends no second one.
 a11, app11, post11 = _notice_app()
-a11.create_user("gedrosselt", password=PW, email="gedrosselt@example.com")
-a11._lockout_notice("gedrosselt", "198.51.100.30", "lockout_user")
+a11.create_user("throttled", password=PW, email="throttled@example.com")
+a11._lockout_notice("throttled", "198.51.100.30", "lockout_user")
 a11._notice_outcome.wait()
 a11.rl.allow = lambda *a, **k: True                             # as after the eviction
-a11._lockout_notice("gedrosselt", "198.51.100.31", "lockout_user")
+a11._lockout_notice("throttled", "198.51.100.31", "lockout_user")
 a11._notice_outcome.wait()
 r.check("Finding 11: even without the memory throttle at most one notice per lock window", len(post11) == 1,
         str(len(post11)))
@@ -1503,8 +1503,8 @@ r.check("… `oidc_apikey_confirm_days=0` switches off only the period — the n
 a8.cfg.oidc_apikey_confirm_days = 30
 
 # A yes at the exchange confirms; a group withdrawal is a no.
-a8b, app8b, c8b = _oidc_with_refresh("gruppe8", claims={"groups": ["team"]}, oidc_allowed_groups=["team"])
-uid8b = a8b.store.get_user_by_name("gruppe8")["id"]
+a8b, app8b, c8b = _oidc_with_refresh("group8", claims={"groups": ["team"]}, oidc_allowed_groups=["team"])
+uid8b = a8b.store.get_user_by_name("group8")["id"]
 key8b = a8b.create_api_key(uid8b, name="ci")["key"]
 a8b.store._exec("UPDATE users SET idp_confirmed_at = 1000 WHERE id=?", (uid8b,))
 a8b.oidc.refresh = lambda rt, sub: ("ok", {"sub": sub, "groups": ["team"]}, {})
@@ -1513,7 +1513,7 @@ a8b._oidc_recheck(a8b.store._one("SELECT * FROM session"))
 a8b._oidc_outcome.wait()
 r.check("Finding 8: a yes at the refresh exchange confirms the account (the old state becomes fresh)",
         a8b.store.get_user(uid8b)["idp_confirmed_at"] > 1000 and a8b.verify_api_key(key8b)[0] is not None)
-a8b.oidc.refresh = lambda rt, sub: ("ok", {"sub": sub, "groups": ["andere"]}, {})
+a8b.oidc.refresh = lambda rt, sub: ("ok", {"sub": sub, "groups": ["other"]}, {})
 a8b.store._exec("UPDATE oidc_session SET checked_at = checked_at - 16 * 60")
 a8b._oidc_recheck(a8b.store._one("SELECT * FROM session"))
 a8b._oidc_outcome.wait()
@@ -1521,16 +1521,16 @@ r.check("… withdrawal of the allowed group is a no: the key rests",
         a8b.verify_api_key(key8b)[0] is None and a8b.store.get_user(uid8b)["idp_confirmed_at"] < 0)
 
 # Accounts without an OIDC binding are not affected — not even with a state that would mean "no".
-local8 = a8.create_user("lokal8", password=PW)
-key8l = a8.create_api_key(local8, name="lokal")["key"]
+local8 = a8.create_user("local8", password=PW)
+key8l = a8.create_api_key(local8, name="local")["key"]
 a8.store._exec("UPDATE users SET idp_confirmed_at = 0 WHERE id=?", (local8,))
 r.check("Finding 8: an account without an OIDC binding keeps its key (even with idp_confirmed_at=0)",
         a8.verify_api_key(key8l)[0] is not None)
 
 # Existing data: the period starts with the update, exactly once.
-_path8 = str(Path(tempfile.mkdtemp()) / "bestand8.db")
+_path8 = str(Path(tempfile.mkdtemp()) / "existing8.db")
 _old8 = Store(_path8)
-_old8.create_user("bestand-oidc", None, None, False, [], False)
+_old8.create_user("existing-oidc", None, None, False, [], False)
 _old8.link_oidc("https://idp.example", "sub-b", 1)
 _old8.db.execute("ALTER TABLE users DROP COLUMN idp_confirmed_at")
 _old8.db.execute("DELETE FROM setting WHERE key='idp_inventory_set'")   # a 0.20 file does not know it
@@ -1548,9 +1548,9 @@ r.check("Finding 8, existing data: the period of an OIDC account starts with the
         and Store(_path8).get_user(1)["idp_confirmed_at"] is None, f"{_state8}")
 # Abort in the middle of the update: the column is already there (the ALTER is durable immediately), state and
 # marker are not. The next start catches up.
-_pfad8c = str(Path(tempfile.mkdtemp()) / "abbruch8.db")
+_pfad8c = str(Path(tempfile.mkdtemp()) / "abort8.db")
 _from8 = Store(_pfad8c)
-_from8.create_user("abbruch-oidc", None, None, False, [], False)
+_from8.create_user("abort-oidc", None, None, False, [], False)
 _from8.link_oidc("https://idp.example", "sub-c", 1)
 _from8.db.execute("DELETE FROM setting WHERE key='idp_inventory_set'")
 _from8.db.commit()
@@ -1568,7 +1568,7 @@ def _link_app(**cfg):
     a, ap = _app(magiclink_enabled=True, **cfg)
     a.set_mailer(lambda *x, **k: True)
 
-    @ap.get("/drin")
+    @ap.get("/inside")
     def _inside(user=Depends(a.require())):
         return {"u": user["username"]}
     return a, ap
@@ -1577,50 +1577,50 @@ def _link_app(**cfg):
 def _link_login(a, ap, name):
     c = TestClient(ap)
     uid = a.store.get_user_by_name(name)["id"]
-    tok = a.create_magic_token("login", user_id=uid, payload={"next": "/drin"})
+    tok = a.create_magic_token("login", user_id=uid, payload={"next": "/inside"})
     return c, c.post(f"/auth/magic/{tok}", follow_redirects=False)
 
 
 # Classic (no chain), account with passkey only: up to here the link alone signed in fully.
 a3c, ap3c = _link_app()
-u3c = a3c.create_user("passkey-konto", password=PW, email="pk@example.com")
+u3c = a3c.create_user("passkey-account", password=PW, email="pk@example.com")
 a3c.store.add_webauthn(u3c, b"cred-3c", b"pub", 0, "[]", "Laptop")
-c3c, antw3c = _link_login(a3c, ap3c, "passkey-konto")
+c3c, antw3c = _link_login(a3c, ap3c, "passkey-account")
 r.check("3c: account with passkey — the link alone does not sign in fully (continue to the passkey)",
         antw3c.status_code == 303 and antw3c.headers["location"].startswith(a3c.cfg.login_path)
-        and c3c.get("/drin", follow_redirects=False).status_code != 200,
+        and c3c.get("/inside", follow_redirects=False).status_code != 200,
         f"{antw3c.status_code} {antw3c.headers.get('location')}")
 # Chain ["magic"] with TOTP: the link satisfied the chain, the authenticator did not count.
 a3k, ap3k = _link_app(login_chain=["magic"])
-u3k = a3k.create_user("totp-konto", password=PW, email="tk@example.com")
+u3k = a3k.create_user("totp-account", password=PW, email="tk@example.com")
 _g3k = a3k.totp_begin(u3k)["secret"]
 a3k.totp_confirm(u3k, pyotp.TOTP(_g3k).at(_when.time() - 30))
-c3k, antw3k = _link_login(a3k, ap3k, "totp-konto")
+c3k, antw3k = _link_login(a3k, ap3k, "totp-account")
 r.check("3c: chain [\"magic\"], account with TOTP — the TOTP step follows the link",
         antw3k.status_code == 303 and antw3k.headers["location"].startswith("/auth/totp")
-        and c3k.get("/drin", follow_redirects=False).status_code != 200,
+        and c3k.get("/inside", follow_redirects=False).status_code != 200,
         f"{antw3k.status_code} {antw3k.headers.get('location')}")
-_fertig3k = c3k.post("/auth/totp", data={"code": pyotp.TOTP(_g3k).now(), "next": "/drin"},
+_fertig3k = c3k.post("/auth/totp", data={"code": pyotp.TOTP(_g3k).now(), "next": "/inside"},
                      follow_redirects=False)
 r.check("… with the code the sign-in is complete",
-        _fertig3k.status_code == 303 and c3k.get("/drin").json() == {"u": "totp-konto"})
+        _fertig3k.status_code == 303 and c3k.get("/inside").json() == {"u": "totp-account"})
 a3o, ap3o = _link_app(login_chain=["magic"])
-a3o.create_user("ohne-faktor", password=PW, email="of@example.com")
-c3o, _ = _link_login(a3o, ap3o, "ohne-faktor")
+a3o.create_user("without-factor", password=PW, email="of@example.com")
+c3o, _ = _link_login(a3o, ap3o, "without-factor")
 r.check("3c: an account without a second factor is still signed in by the link alone (C, not D)",
-        c3o.get("/drin").json() == {"u": "ohne-faktor"})
+        c3o.get("/inside").json() == {"u": "without-factor"})
 a3a, ap3a = _link_app(login_chain=["magic"], magiclink_require_second_factor=False)
 u3a = a3a.create_user("totp-a", password=PW, email="ta@example.com")
 _g3a = a3a.totp_begin(u3a)["secret"]
 a3a.totp_confirm(u3a, pyotp.TOTP(_g3a).at(_when.time() - 30))
 c3a, _ = _link_login(a3a, ap3a, "totp-a")
 r.check("3c configurable: magiclink_require_second_factor=False — the link suffices again (A)",
-        c3a.get("/drin").json() == {"u": "totp-a"})
+        c3a.get("/inside").json() == {"u": "totp-a"})
 _pw3 = TestClient(ap3k)
-_pw3.post("/auth/login", data={"username": "totp-konto", "password": PW, "next": "/drin"},
+_pw3.post("/auth/login", data={"username": "totp-account", "password": PW, "next": "/inside"},
           follow_redirects=False)
 r.check("… other routes stay as they were (password alone in the chain [\"magic\"]: no login)",
-        _pw3.get("/drin", follow_redirects=False).status_code != 200)
+        _pw3.get("/inside", follow_redirects=False).status_code != 200)
 # (Mutation probes: remove `_link_requires` in `_session_ok` → the first two red; remove the
 #  passkey line → passkey account red; do not read the switch → "configurable" red.)
 
@@ -1696,9 +1696,9 @@ r.check("G10: route [\"magic\"], account with passkey only — 401, step passkey
         _j10p.status_code == 401 and _j10p.headers.get("x-tinysesam-factor") == "passkey",
         f"HTTP {_j10p.status_code} {_j10p.headers.get('x-tinysesam-factor')}")
 a10o, ap10o = _route_app()
-a10o.create_user("rt-ohne", password=PW, email="rto@example.com")
+a10o.create_user("rt-without", password=PW, email="rto@example.com")
 r.check("G10: without a second factor the link still opens the route alone (C, not D)",
-        _route_link(a10o, ap10o, "rt-ohne").get("/r", headers=_JSON).json() == {"u": "rt-ohne"})
+        _route_link(a10o, ap10o, "rt-without").get("/r", headers=_JSON).json() == {"u": "rt-without"})
 # magiclink_require_second_factor=False switches off the rule of the sign-in link — not the global one:
 # the classic policy demands a set-up TOTP anyway, and a route chain no longer falls below
 # it since 2026-09-27. Measured on the account with passkey only (only the link rule demands it).
@@ -1713,13 +1713,13 @@ r.check("… a set-up TOTP is demanded by the classic rule anyway (the route doe
         _j10a.status_code == 401 and _j10a.headers.get("x-tinysesam-factor") == "totp",
         f"HTTP {_j10a.status_code} {_j10a.headers.get('x-tinysesam-factor')}")
 a10k, ap10k = _route_app()
-_g10k = _with_totp(a10k, "rt-kette")
-c10k = _route_link(a10k, ap10k, "rt-kette")
+_g10k = _with_totp(a10k, "rt-chain")
+c10k = _route_link(a10k, ap10k, "rt-chain")
 _prior10k = c10k.get("/r2", headers=_JSON)
 c10k.post("/auth/totp", data={"code": pyotp.TOTP(_g10k).now(), "next": "/r2"}, follow_redirects=False)
 r.check("G10: route [\"magic\", \"totp\"] — exactly one TOTP step, then open (no double step)",
         _prior10k.status_code == 401 and _prior10k.headers.get("x-tinysesam-factor") == "totp"
-        and c10k.get("/r2", headers=_JSON).json() == {"u": "rt-kette"},
+        and c10k.get("/r2", headers=_JSON).json() == {"u": "rt-chain"},
         f"HTTP {_prior10k.status_code} {_prior10k.headers.get('x-tinysesam-factor')}")
 # (Mutation probe, executed: switch off the call of `_link_requires` in
 #  `_enforce_route_chain` → the TOTP, passkey and chain cases turn red.)
@@ -1764,15 +1764,15 @@ r.check("… route [\"pin\", \"password\"] after PIN and password: TOTP first th
         _j_kp.status_code == 401 and _j_kp.headers.get("x-tinysesam-factor") == "totp",
         f"HTTP {_j_kp.status_code} {_j_kp.headers.get('x-tinysesam-factor')}")
 a_ko, ap_ko = _chain_app()
-a_ko.create_user("rk-ohne", password=PW)
+a_ko.create_user("rk-without", password=PW)
 c_ko = TestClient(ap_ko)
-_login(c_ko, "rk-ohne", PW)
+_login(c_ko, "rk-without", PW)
 r.check("… without a second factor the session is full after the password — the route opens at once (control)",
-        c_ko.get("/pw", headers=_JSON).json() == {"u": "rk-ohne"})
+        c_ko.get("/pw", headers=_JSON).json() == {"u": "rk-without"})
 a_kc, ap_kc = _chain_app(login_chain=["password", "totp"])
-a_kc.create_user("rk-kette", password=PW)
+a_kc.create_user("rk-chain", password=PW)
 c_kc = TestClient(ap_kc)
-_login(c_kc, "rk-kette", PW)
+_login(c_kc, "rk-chain", PW)
 _j_kc = c_kc.get("/pw", headers=_JSON)
 r.check("… login_chain [password, totp], account still without TOTP: route [\"password\"] sends to the setup, "
         "instead of opening after the password",
@@ -1818,10 +1818,10 @@ r.check("Attack R3/S3: SAML not trusted, address name without identifier → rej
 # S2 (medium): LDAP not trusted, sign-in with an address (filter via mail).
 a_s2, _ = _app(ldap_enabled=True, ldap_url="ldaps://dir.example.invalid", ldap_email_trusted=False,
                login_identifier="both")
-manager_s2 = a_s2.create_user("chefin@example.com", password=PW, email="chefin@example.com")
-a_s2.ldap = _LDAP3({"chefin@example.com": {"id": "uuid-mallory", "email": "chefin@example.com", "name": "M"}})
+manager_s2 = a_s2.create_user("boss@example.com", password=PW, email="boss@example.com")
+a_s2.ldap = _LDAP3({"boss@example.com": {"id": "uuid-mallory", "email": "boss@example.com", "name": "M"}})
 _n_s2 = a_s2.store.user_count()
-new_s2 = a_s2._check_ldap("chefin@example.com", "x")
+new_s2 = a_s2._check_ldap("boss@example.com", "x")
 # Until 2026-09-27 this created an account `ldap-…`; since the review round (p1-d) the sign-in rejects —
 # the address locally belongs to one account, the entry led to another.
 r.check("Attack R3/S2: LDAP not trusted — the typed address neither becomes the account name nor binds an account",
@@ -1831,24 +1831,24 @@ r.check("Attack R3/S2: LDAP not trusted — the typed address neither becomes th
 # S4 (high, pre-existing): control characters in the account name.
 a_s4, app_s4 = _app(allow_signup=True)
 try:
-    a_s4.create_user("chefin\x01", password=PW)
+    a_s4.create_user("boss\x01", password=PW)
     _s4_create = False
 except ConfigError:
     _s4_create = True
-_s4_reg = TestClient(app_s4).post("/auth/register", data={"username": "chefin​", "password": PW + "xyz",
+_s4_reg = TestClient(app_s4).post("/auth/register", data={"username": "boss​", "password": PW + "xyz",
                                                          "next": "/"}, follow_redirects=False)
 r.check("Attack R3/S4: no account with control/format characters in the name (create_user, registration)",
-        _s4_create and _s4_reg.status_code == 400 and a_s4.store.get_user_by_name("chefin​") is None,
+        _s4_create and _s4_reg.status_code == 400 and a_s4.store.get_user_by_name("boss​") is None,
         f"create={_s4_create} reg={_s4_reg.status_code}")
-a_s4.create_user("chefin", password=PW)
-_old_s4 = a_s4.store.create_user("chefin\x01", None, None, False, [], False)       # existing data past the latch
+a_s4.create_user("boss", password=PW)
+_old_s4 = a_s4.store.create_user("boss\x01", None, None, False, [], False)       # existing data past the latch
 try:
     a_s4._forward_response_headers(a_s4.get_user(_old_s4))
     _s4_fwd = False
 except _HTTPEx as e:
     _s4_fwd = e.status_code == 403
-r.check("… and such existing data gets no remote user (fail-closed instead of `chefin`)", _s4_fwd)
-a_s4o, app_s4o = _oidc({"sub": "s4-sub", "preferred_username": "chefin\x01", "email": "c4@example.com",
+r.check("… and such existing data gets no remote user (fail-closed instead of `boss`)", _s4_fwd)
+a_s4o, app_s4o = _oidc({"sub": "s4-sub", "preferred_username": "boss\x01", "email": "c4@example.com",
                         "email_verified": True})
 _oidc_login(app_s4o)
 _s4o = [u["username"] for u in a_s4o.store.list_users()]
@@ -1894,32 +1894,32 @@ _should3 = {(401, "invalid_client"): "error", (400, "unauthorized_client"): "err
 r.check("Attack R3/F8-2: client errors, 401 and 5xx → „fehler\"; every other 4xx (also Dex' invalid_request) → no",
         _erg3 == _should3, str({k: v for k, v in _erg3.items() if _should3.get(k) != v}))
 # … and a row of a client that is no longer configured is discarded, not exchanged as a no.
-a_f2, _, _ = _oidc_with_refresh("f2-konto")
-_uid_f2 = a_f2.store.get_user_by_name("f2-konto")["id"]
+a_f2, _, _ = _oidc_with_refresh("f2-account")
+_uid_f2 = a_f2.store.get_user_by_name("f2-account")["id"]
 _h_f2 = a_f2.store._one("SELECT token_hash FROM session")["token_hash"]
-a_f2.store.set_oidc_session(_h_f2, "app-weg", "f2-konto", "rt-weg")
+a_f2.store.set_oidc_session(_h_f2, "app-path", "f2-account", "rt-path")
 a_f2.oidc.refresh = lambda rt, sub: ("rejected", {}, {"error": "invalid_grant"})     # the fallback said no
-a_f2.store._exec("UPDATE oidc_session SET checked_at = checked_at - 16 * 60 WHERE client='app-weg'")
+a_f2.store._exec("UPDATE oidc_session SET checked_at = checked_at - 16 * 60 WHERE client='app-path'")
 a_f2._oidc_recheck(a_f2.store._one("SELECT * FROM session"))
 a_f2._oidc_outcome.wait()
 r.check("… a row of a removed client goes, the session stays, the account gets no no",
-        a_f2.store._one("SELECT COUNT(*) AS n FROM oidc_session WHERE client='app-weg'")["n"] == 0
+        a_f2.store._one("SELECT COUNT(*) AS n FROM oidc_session WHERE client='app-path'")["n"] == 0
         and a_f2.store._one("SELECT COUNT(*) AS n FROM session")["n"] == 1
         and (a_f2.store.get_user(_uid_f2)["idp_confirmed_at"] or 0) > 0)
 
 # 3c/M1: chain ["magic","totp"], account with passkey without TOTP — the mailbox does not set up a TOTP for itself.
 a_m1, ap_m1 = _link_app(login_chain=["magic", "totp"])
-u_m1 = a_m1.create_user("pk-kette", password=PW, email="pkk@example.com")
+u_m1 = a_m1.create_user("pk-chain", password=PW, email="pkk@example.com")
 a_m1.store.add_webauthn(u_m1, b"cred-m1", b"pub", 0, "[]", "Laptop")
-c_m1, _ = _link_login(a_m1, ap_m1, "pk-kette")
+c_m1, _ = _link_login(a_m1, ap_m1, "pk-chain")
 _setup_m1 = c_m1.post("/auth/totp/setup/start", data={"next": "/"}, follow_redirects=False)
 r.check("Attack R3/M1: sign-in link only + account with passkey → no TOTP self-setup",
         _setup_m1.status_code != 200 and not a_m1.store.has_confirmed_totp(u_m1)
         and any(z["event"] == "mfa_enrollment_denied" for z in a_m1.store.recent_audit(20)),
         f"HTTP {_setup_m1.status_code}")
 a_m2, ap_m2 = _link_app(login_chain=["magic", "totp"])
-a_m2.create_user("frisch-kette", password=PW, email="fk@example.com")
-c_m2, _ = _link_login(a_m2, ap_m2, "frisch-kette")
+a_m2.create_user("fresh-chain", password=PW, email="fk@example.com")
+c_m2, _ = _link_login(a_m2, ap_m2, "fresh-chain")
 r.check("… an account without a second factor still may (the price of C)",
         c_m2.post("/auth/totp/setup/start", data={"next": "/"}, follow_redirects=False).status_code == 200)
 
@@ -1952,10 +1952,10 @@ import logging as _log3  # noqa: E402
 
 # V1: LDAP not trusted — a mail value WITHOUT "@" is just as unproven.
 a_v1, _ = _app(ldap_enabled=True, ldap_url="ldaps://dir.example.invalid", ldap_email_trusted=False)
-manager_v1 = a_v1.create_user("chefin", password=PW, is_admin=True)
-a_v1.ldap = _LDAP3({"chefin": {"id": "uuid-mallory", "email": "chefin", "name": "M"}})
+manager_v1 = a_v1.create_user("boss", password=PW, is_admin=True)
+a_v1.ldap = _LDAP3({"boss": {"id": "uuid-mallory", "email": "boss", "name": "M"}})
 _n_v1 = a_v1.store.user_count()
-new_v1 = a_v1._check_ldap("chefin", "x")
+new_v1 = a_v1._check_ldap("boss", "x")
 # Until 2026-09-27 this created an account `ldap-…`; since the review round (p1-d) it rejects: the identifier
 # `manager` locally belongs to one account, the entry led to another.
 r.check("Counter-check R3/V1: LDAP not trusted, input = own mail value without „@\" → no takeover",
@@ -1971,7 +1971,7 @@ r.check("… a UPN that is not the mail value signs in as before the fix (no reg
 # V3: forward auth blocks only what the cleaning really removes; start finding for existing data.
 a_v3, _ = _app()
 _zwnj = a_v3.store.create_user("علی‌رضا", None, None, False, [], False)
-_c0 = a_v3.store.create_user("chefin\x01", None, None, False, [], False)
+_c0 = a_v3.store.create_user("boss\x01", None, None, False, [], False)
 try:
     _head_v3 = a_v3._forward_response_headers(a_v3.get_user(_zwnj))
 except _HTTPEx:
@@ -1989,32 +1989,32 @@ finally:
 r.check("… and the startup names existing names with control/format characters",
         any("account name(s) with control or format characters" in m and str(_c0) in m for m in _trap_v3))
 # The named route (since self-service) works: renamed, then the remote user is back.
-_new_v3 = a_v3.change_username(_c0, "chefin-neu")
+_new_v3 = a_v3.change_username(_c0, "boss-new")
 r.check("… and the route it names (auth.change_username) cleans the name up",
-        any("auth.change_username" in m for m in _trap_v3) and _new_v3 == "chefin-neu"
-        and a_v3._forward_response_headers(a_v3.get_user(_c0))["Remote-User"] == "chefin-neu")
+        any("auth.change_username" in m for m in _trap_v3) and _new_v3 == "boss-new"
+        and a_v3._forward_response_headers(a_v3.get_user(_c0))["Remote-User"] == "boss-new")
 
 # V4: SAML identifier with edge control characters hits no foreign binding.
 a_v4, _ = _app(saml_enabled=True, saml_idp_entity_id="https://idp.example", saml_idp_sso_url="https://idp.example/sso",
                saml_idp_x509cert="MII", saml_email_trusted=True)
-real_v4 = a_v4._check_saml("chefin", {})
-foreign_v4 = a_v4._check_saml("chefin ", {})
-r.check("Counter-check R3/V4: NameID `chefin` + U+2028 does not end up in the account of the bound `chefin`",
+real_v4 = a_v4._check_saml("boss", {})
+foreign_v4 = a_v4._check_saml("boss ", {})
+r.check("Counter-check R3/V4: NameID `boss` + U+2028 does not end up in the account of the bound `boss`",
         real_v4 is not None and foreign_v4 is None, f"{real_v4 and real_v4['id']} / {foreign_v4}")
 
 # V5: SAML not trusted, the name comes from the address attribute itself (even without "@").
 a_v5, _ = _app(saml_enabled=True, saml_idp_entity_id="https://idp.example", saml_idp_sso_url="https://idp.example/sso",
                saml_idp_x509cert="MII", saml_attr_username="email")
-manager_v5 = a_v5.create_user("chefin", password=PW, is_admin=True)
-new_v5 = a_v5._check_saml("opaque-mallory", {"email": ["chefin"]})
-r.check("Counter-check R3/V5: SAML name from the address attribute (`chefin`) does not bind the local account",
+manager_v5 = a_v5.create_user("boss", password=PW, is_admin=True)
+new_v5 = a_v5._check_saml("opaque-mallory", {"email": ["boss"]})
+r.check("Counter-check R3/V5: SAML name from the address attribute (`boss`) does not bind the local account",
         new_v5 is not None and new_v5["id"] != manager_v5 and new_v5["username"].startswith("saml-")
         and a_v5.store.get_federated_identifier("saml", manager_v5) is None, str(new_v5))
 
 # I2: client newly created at the provider (different client_id) — no no, the row goes.
-a_i2, _, _ = _oidc_with_refresh("i2-konto")
-_uid_i2 = a_i2.store.get_user_by_name("i2-konto")["id"]
-a_i2.store._exec("UPDATE oidc_session SET client_id='alte-client-id', checked_at = checked_at - 16 * 60")
+a_i2, _, _ = _oidc_with_refresh("i2-account")
+_uid_i2 = a_i2.store.get_user_by_name("i2-account")["id"]
+a_i2.store._exec("UPDATE oidc_session SET client_id='old-client-id', checked_at = checked_at - 16 * 60")
 a_i2.oidc.refresh = lambda rt, sub: ("rejected", {}, {"error": "invalid_grant"})
 a_i2._oidc_recheck(a_i2.store._one("SELECT * FROM session"))
 a_i2._oidc_outcome.wait()
@@ -2036,23 +2036,23 @@ a_i3.store.set_session_factors(_h_i3, ["password", "passkey"], mfa_ok=False)
 r.check("… with the passkey in the same session the owner may",
         c_i3.post("/auth/totp/setup/start", data={"next": "/"}, follow_redirects=False).status_code == 200)
 a_i4, ap_i4 = _link_app(login_chain=["magic", "totp"])
-u_i4 = a_i4.create_user("pk-verloren", password=PW, email="pkv@example.com")
+u_i4 = a_i4.create_user("pk-lost", password=PW, email="pkv@example.com")
 a_i4.store.add_webauthn(u_i4, b"cred-i4", b"pub", 0, "[]", "Altes Handy")
 a_i4.grant_mfa_enrollment(u_i4, 60)
-c_i4, _ = _link_login(a_i4, ap_i4, "pk-verloren")
+c_i4, _ = _link_login(a_i4, ap_i4, "pk-lost")
 r.check("Counter-check R3/I4: a window opened by the operator wins (lost device, link only)",
         c_i4.post("/auth/totp/setup/start", data={"next": "/"}, follow_redirects=False).status_code == 200)
 
 # I5: if the session gets a new token during the exchange, the rotated refresh token is not lost.
-a_i5, _, _ = _oidc_with_refresh("i5-konto")
+a_i5, _, _ = _oidc_with_refresh("i5-account")
 _old_i5 = a_i5.store._one("SELECT token_hash FROM session")["token_hash"]
 
 
 def _swap_with_rotation(rt, sub):
     # In the middle of the exchange: step-up or similar gives the session a new token, the OIDC row follows.
-    a_i5.store._exec("UPDATE session SET token_hash='neu-i5' WHERE token_hash=?", (_old_i5,))
-    a_i5.store._exec("UPDATE oidc_session SET token_hash='neu-i5' WHERE token_hash=?", (_old_i5,))
-    return "ok", {"sub": sub}, {"refresh_token": "rt-rotiert"}
+    a_i5.store._exec("UPDATE session SET token_hash='new-i5' WHERE token_hash=?", (_old_i5,))
+    a_i5.store._exec("UPDATE oidc_session SET token_hash='new-i5' WHERE token_hash=?", (_old_i5,))
+    return "ok", {"sub": sub}, {"refresh_token": "rt-rotated"}
 
 
 a_i5.oidc.refresh = _swap_with_rotation
@@ -2060,17 +2060,17 @@ a_i5.store._exec("PRAGMA foreign_keys=OFF")
 a_i5.store._exec("UPDATE oidc_session SET checked_at = checked_at - 16 * 60")
 a_i5._oidc_recheck(a_i5.store._one("SELECT * FROM session"))
 a_i5._oidc_outcome.wait()
-_z_i5 = a_i5.store._one("SELECT refresh FROM oidc_session WHERE token_hash='neu-i5'")
+_z_i5 = a_i5.store._one("SELECT refresh FROM oidc_session WHERE token_hash='new-i5'")
 r.check("Counter-check R3/I5: rotation during the exchange — the new refresh token lands on the row",
-        _z_i5 is not None and a_i5.store.vault.decrypt(_z_i5["refresh"]) == "rt-rotiert")
+        _z_i5 is not None and a_i5.store.vault.decrypt(_z_i5["refresh"]) == "rt-rotated")
 # (Mutation probes: LDAP back on "@" instead of the mail value → V1 red, V2 red; forward latch back to
 #  name_invalid → V3 red; start finding removed → V3b red; trim the identifier → V4 red; client_id comparison
 #  removed → I2 red; "not magic" instead of "passkey" → I3 red; window check removed → I4 red;
 #  old_encrypted removed → I5 red.)
 
 # ── Upper limit without successful re-check (PO decision 2026-09-25: 25 hours) ───────────────
-a_ob, _, c_ob = _oidc_with_refresh("ob-konto")
-_uid_ob = a_ob.store.get_user_by_name("ob-konto")["id"]
+a_ob, _, c_ob = _oidc_with_refresh("ob-account")
+_uid_ob = a_ob.store.get_user_by_name("ob-account")["id"]
 r.check("Upper limit: default 25 hours, state of the row set at login",
         a_ob.cfg.oidc_session_max_unverified_hours == 25
         and a_ob.store._one("SELECT success_at FROM oidc_session")["success_at"] is not None)
@@ -2098,7 +2098,7 @@ r.check("… oidc_session_max_unverified_hours=0 switches the limit off", c_ob0.
 #  red.)
 
 # ── Schema 11, intermediate state: `failure_series` without column `art` is recreated (R2-3) ────────
-_path_z = str(Path(tempfile.mkdtemp()) / "zwischen.db")
+_path_z = str(Path(tempfile.mkdtemp()) / "between.db")
 Store(_path_z).db.close()
 _raw = sqlite3.connect(_path_z)
 _raw.execute("DROP TABLE failure_series")

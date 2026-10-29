@@ -19,11 +19,11 @@ def build(**cfgkw):
                                      # no longer from the Host header (overridable).
                                      **{"base_url": "https://auth.example.com", **cfgkw}))
     auth.set_mailer(lambda to, s, t, html=None: sent.append({"to": to, "text": t}))
-    auth.ensure_admin("admin", "geheim123-lang-genug")
+    auth.ensure_admin("admin", "dummy123-long-enough")
     app = FastAPI()
     app.include_router(auth.router())
 
-    @app.get("/geheim")
+    @app.get("/secret")
     def secret_text(u=Depends(auth.require_user)):
         return {"u": u["username"]}
 
@@ -41,26 +41,26 @@ ok("allow_signup=False → /auth/register does not exist (404)")
 # ---------- Simple registration → signed in immediately ----------
 db, auth, app, sent, c = build(allow_signup=True)
 assert "Konto erstellen" in c.get("/auth/register").text
-r = c.post("/auth/register", data={"username": "neu", "password": "supergeheim-lang-genug", "email": "neu@example.com", "next": "/geheim"},
+r = c.post("/auth/register", data={"username": "new", "password": "supergeheim-long-enough", "email": "new@example.com", "next": "/secret"},
            follow_redirects=False)
-assert r.status_code == 303 and r.headers["location"] == "/geheim"
-assert c.get("/geheim", headers=JSON).json() == {"u": "neu"}
+assert r.status_code == 303 and r.headers["location"] == "/secret"
+assert c.get("/secret", headers=JSON).json() == {"u": "new"}
 # too short password rejected
 r = c.post("/auth/register", data={"username": "x", "password": "1", "next": "/"})
 assert r.status_code == 400
 # E-mail is required (signup_require_email, default on)
-r = c.post("/auth/register", data={"username": "y", "password": "supergeheim-lang-genug", "next": "/"})
+r = c.post("/auth/register", data={"username": "y", "password": "supergeheim-long-enough", "next": "/"})
 assert r.status_code == 400
 # taken name (with own, free e-mail → really fails on the name)
-r = c.post("/auth/register", data={"username": "neu", "password": "supergeheim-lang-genug",
-                                   "email": "anders@example.com", "next": "/"})
+r = c.post("/auth/register", data={"username": "new", "password": "supergeheim-long-enough",
+                                   "email": "different@example.com", "next": "/"})
 assert r.status_code == 409
 os.remove(db)
 ok("allow_signup=True: create account → signed in; validation applies")
 
 # ---------- E-mail verification: account only active after the link ----------
 db, auth, app, sent, c = build(allow_signup=True, signup_verify_email=True, magiclink_enabled=True)
-r = c.post("/auth/register", data={"username": "verify", "password": "supergeheim-lang-genug", "email": "v@example.com", "next": "/"})
+r = c.post("/auth/register", data={"username": "verify", "password": "supergeheim-long-enough", "email": "v@example.com", "next": "/"})
 assert "Bestätigung" in r.text or "bestätig" in r.text.lower()
 uid = auth.store.get_user_by_name("verify")["id"]
 assert auth.store.get_user(uid)["disabled"] == 1     # still locked
@@ -90,7 +90,7 @@ _buffer = io.StringIO()
 _h = logging.StreamHandler(_buffer)
 _sec.seclog.addHandler(_h)
 try:
-    c.get("/auth/verify/erfunden-123", follow_redirects=False)
+    c.get("/auth/verify/invented-123", follow_redirects=False)
 finally:
     _sec.seclog.removeHandler(_h)
 _lines = auth.store._all("SELECT * FROM audit WHERE event='token_invalid'")
@@ -101,16 +101,16 @@ os.remove(db)
 
 # ---------- R4-03: a taken address answers like a free one (with confirmation) ----------
 db, auth, app, sent, c = build(allow_signup=True, signup_verify_email=True)
-auth.create_user("inhaber", password="supergeheim-lang-genug", email="da@example.com")
-free = c.post("/auth/register", data={"username": "neu1", "password": "supergeheim-lang-genug",
-                                      "email": "frei@example.com", "next": "/"})
-grant = c.post("/auth/register", data={"username": "neu2", "password": "supergeheim-lang-genug",
+auth.create_user("holder", password="supergeheim-long-enough", email="da@example.com")
+free = c.post("/auth/register", data={"username": "new1", "password": "supergeheim-long-enough",
+                                      "email": "free@example.com", "next": "/"})
+grant = c.post("/auth/register", data={"username": "new2", "password": "supergeheim-long-enough",
                                           "email": "Da@Example.com", "next": "/"})
 assert free.status_code == grant.status_code == 200, (free.status_code, grant.status_code)
 _body = lambda t: re.sub(r"(nonce|value)=['\"][^'\"]*['\"]", "", t)
 assert _body(free.text) == _body(grant.text), "response differs — enumeration"
-assert auth.store.get_user_by_email("da@example.com")["username"] == "inhaber", "no second account for the address"
-_ph = auth.store.get_user_by_name("neu2")   # A1: name taken as with real creation, but locked and without address
+assert auth.store.get_user_by_email("da@example.com")["username"] == "holder", "no second account for the address"
+_ph = auth.store.get_user_by_name("new2")   # A1: name taken as with real creation, but locked and without address
 assert _ph is not None and _ph["disabled"] == 1 and not _ph["email"], dict(_ph) if _ph else None
 _an_holder = [m for m in sent if m["to"] == "da@example.com"]
 assert len(_an_holder) == 1 and "/auth/verify/" not in _an_holder[0]["text"] \
@@ -118,8 +118,8 @@ assert len(_an_holder) == 1 and "/auth/verify/" not in _an_holder[0]["text"] \
 ok("R4-03: taken address → same response, owner gets a notice (without token)")
 # Without confirmation the success case signs in immediately — there 409 remains (limit, named in the code)
 db2, auth2, app2, sent2, c2 = build(allow_signup=True)
-auth2.create_user("inhaber", password="supergeheim-lang-genug", email="da@example.com")
-assert c2.post("/auth/register", data={"username": "neu2", "password": "supergeheim-lang-genug",
+auth2.create_user("holder", password="supergeheim-long-enough", email="da@example.com")
+assert c2.post("/auth/register", data={"username": "new2", "password": "supergeheim-long-enough",
                                        "email": "da@example.com", "next": "/"}).status_code == 409
 os.remove(db2)
 ok("R4-03: without confirmation it stays 409 (success signs in immediately — cannot be hidden)")
@@ -128,35 +128,35 @@ os.remove(db)
 # ---------- B6-5: if sending the confirmation fails, no zombie account and no 500 remains ----------
 db, auth, app, sent, c = build(allow_signup=True, signup_verify_email=True)
 def _broken(*a, **k):
-    raise OSError("Mailserver weg")
+    raise OSError("Mailserver down")
 auth.set_mailer(_broken)
 cx = TestClient(app, raise_server_exceptions=False)
-r = cx.post("/auth/register", data={"username": "pech", "password": "supergeheim-lang-genug",
-                                    "email": "pech@example.com", "next": "/"})
+r = cx.post("/auth/register", data={"username": "unlucky", "password": "supergeheim-long-enough",
+                                    "email": "unlucky@example.com", "next": "/"})
 assert r.status_code == 200, r.status_code
-assert auth.store.get_user_by_name("pech") is None, "account must be withdrawn"
+assert auth.store.get_user_by_name("unlucky") is None, "account must be withdrawn"
 _ev = [z["event"] for z in auth.store._all("SELECT event FROM audit")]
 assert "verify_send_error" in _ev, _ev
 # … and the registration can be repeated as soon as the mailer works again
 auth.set_mailer(lambda to, s_, t, html=None: sent.append({"to": to, "text": t}))
-r = cx.post("/auth/register", data={"username": "pech", "password": "supergeheim-lang-genug",
-                                    "email": "pech@example.com", "next": "/"})
-assert r.status_code == 200 and auth.store.get_user_by_name("pech") is not None
+r = cx.post("/auth/register", data={"username": "unlucky", "password": "supergeheim-long-enough",
+                                    "email": "unlucky@example.com", "next": "/"})
+assert r.status_code == 200 and auth.store.get_user_by_name("unlucky") is not None
 ok("B6-5: mailer error during registration → no 500, account withdrawn, possible again")
 os.remove(db)
 
 # ---------- R4-09: never-confirmed accounts are cleared by gc() — and ONLY those ----------
 db, auth, app, sent, c = build(allow_signup=True, signup_verify_email=True)
-c.post("/auth/register", data={"username": "squatter", "password": "supergeheim-lang-genug",
-                               "email": "opfer@example.com", "next": "/"})
+c.post("/auth/register", data={"username": "squatter", "password": "supergeheim-long-enough",
+                               "email": "victim@example.com", "next": "/"})
 sq = auth.store.get_user_by_name("squatter")["id"]
 # Counter-check 1: an existing account locked by the admin without a confirmation token
-old = auth.create_user("gesperrt", password="supergeheim-lang-genug", email="g@example.com")
+old = auth.create_user("gesperrt", password="supergeheim-long-enough", email="g@example.com")
 auth.store.set_disabled(old, True)
 # Counter-check 2: a confirmed and later locked account (redeemed token alongside)
-c.post("/auth/register", data={"username": "echt", "password": "supergeheim-lang-genug",
-                               "email": "echt@example.com", "next": "/"})
-real = auth.store.get_user_by_name("echt")["id"]
+c.post("/auth/register", data={"username": "real", "password": "supergeheim-long-enough",
+                               "email": "real@example.com", "next": "/"})
+real = auth.store.get_user_by_name("real")["id"]
 _tok = re.search(r"/auth/verify/([\w\-]+)", sent[-1]["text"]).group(1)
 assert auth.redeem_magic(_tok, purpose="verify_email")
 auth.store._exec("UPDATE magic_token SET expires_at=0")
@@ -165,9 +165,9 @@ assert auth.gc()["unverified_accounts"] == 1
 assert auth.store.get_user(sq) is None, "never-confirmed account removed after expiry"
 assert auth.store.get_user(old) is not None, "locked existing account remains"
 assert auth.store.get_user(real) is not None, "confirmed account remains"
-assert c.post("/auth/register", data={"username": "richtig", "password": "supergeheim-lang-genug",
-                                      "email": "opfer@example.com", "next": "/"}).status_code == 200
-assert auth.store.get_user_by_name("richtig") is not None, "the address is free again"
+assert c.post("/auth/register", data={"username": "right", "password": "supergeheim-long-enough",
+                                      "email": "victim@example.com", "next": "/"}).status_code == 200
+assert auth.store.get_user_by_name("right") is not None, "the address is free again"
 ok("R4-09: gc() removes never-confirmed accounts after the link expires — only those")
 os.remove(db)
 
@@ -177,42 +177,42 @@ os.remove(db)
 # by 409 whether the first had created an account.
 for _mode in ("both", "username"):
     db, auth, app, sent, c = build(allow_signup=True, signup_verify_email=True, login_identifier=_mode)
-    auth.create_user("opfer", password="supergeheim-lang-genug", email="vergeben@example.com")
-    _reg = lambda n, e: c.post("/auth/register", data={"username": n, "password": "supergeheim-lang-genug",
+    auth.create_user("victim", password="supergeheim-long-enough", email="taken@example.com")
+    _reg = lambda n, e: c.post("/auth/register", data={"username": n, "password": "supergeheim-long-enough",
                                                        "email": e, "next": "/"}).status_code
-    assert _reg("admin", "vergeben@example.com") == _reg("admin", "frei@example.com") == 409, _mode
-    assert _reg("zz1", "vergeben@example.com") == _reg("zz2", "frei2@example.com") == 200, _mode
+    assert _reg("admin", "taken@example.com") == _reg("admin", "free@example.com") == 409, _mode
+    assert _reg("zz1", "taken@example.com") == _reg("zz2", "free2@example.com") == 200, _mode
     assert _reg("zz1", "zz1@probe.example") == _reg("zz2", "zz2@probe.example") == 409, _mode
     # The address in the name field (foreign address) revealed the same via the cross check
-    assert _reg("vergeben@example.com", "x1@probe.example") == _reg("frei3@example.com", "x2@probe.example") == 400
-    assert auth.store._exec("SELECT COUNT(*) FROM users WHERE email='vergeben@example.com'").fetchone()[0] == 1
+    assert _reg("taken@example.com", "x1@probe.example") == _reg("free3@example.com", "x2@probe.example") == 400
+    assert auth.store._exec("SELECT COUNT(*) FROM users WHERE email='taken@example.com'").fetchone()[0] == 1
     # The placeholder is cleared by gc() after expiry — like a never-confirmed real account
     auth.store._exec("UPDATE magic_token SET expires_at=0")
     auth.gc()
     assert auth.store.get_user_by_name("zz1") is None and auth.store.get_user_by_name("zz2") is None
-    assert auth.store.get_user_by_name("opfer") is not None
+    assert auth.store.get_user_by_name("victim") is not None
     os.remove(db)
 # Name = own address remains allowed and goes through the address check (same response)
 db, auth, app, sent, c = build(allow_signup=True, signup_verify_email=True)
-auth.create_user("opfer", password="supergeheim-lang-genug", email="vergeben@example.com")
-_reg = lambda n, e: c.post("/auth/register", data={"username": n, "password": "supergeheim-lang-genug",
+auth.create_user("victim", password="supergeheim-long-enough", email="taken@example.com")
+_reg = lambda n, e: c.post("/auth/register", data={"username": n, "password": "supergeheim-long-enough",
                                                    "email": e, "next": "/"}).status_code
-assert _reg("vergeben@example.com", "vergeben@example.com") == _reg("frei@example.com", "frei@example.com") == 200
+assert _reg("taken@example.com", "taken@example.com") == _reg("free@example.com", "free@example.com") == 200
 os.remove(db)
 ok("A1: taken name, throwaway name and address in the name field no longer reveal the address")
 
 # ---------- Attack A2: notice mails do not use up the owner's quota ----------
 db, auth, app, sent, c = build(allow_signup=True, signup_verify_email=True, magiclink_enabled=True,
                                password_reset_enabled=True)
-auth.create_user("opfer", password="supergeheim-lang-genug", email="opfer@example.com")
+auth.create_user("victim", password="supergeheim-long-enough", email="victim@example.com")
 for _i in range(5):
-    c.post("/auth/register", data={"username": f"angr{_i}", "password": "supergeheim-lang-genug",
-                                   "email": "opfer@example.com", "next": "/"})
-_notices = [m for m in sent if m["to"] == "opfer@example.com"]
+    c.post("/auth/register", data={"username": f"angr{_i}", "password": "supergeheim-long-enough",
+                                   "email": "victim@example.com", "next": "/"})
+_notices = [m for m in sent if m["to"] == "victim@example.com"]
 assert len(_notices) == 3, len(_notices)          # the notices themselves remain throttled
 _n = len(sent)
-assert c.post("/auth/forgot", data={"email": "opfer@example.com"}).status_code == 200
-assert c.post("/auth/magic/request", data={"email": "opfer@example.com", "next": "/"}).status_code == 200
+assert c.post("/auth/forgot", data={"email": "victim@example.com"}).status_code == 200
+assert c.post("/auth/magic/request", data={"email": "victim@example.com", "next": "/"}).status_code == 200
 _new = sent[_n:]
 assert len(_new) == 2 and "/auth/reset" in _new[0]["text"] and "/auth/magic/" in _new[1]["text"], _new
 os.remove(db)
@@ -254,18 +254,18 @@ db, auth, app, sent, c = build(allow_signup=True)
 auth.store._exec("INSERT INTO users(username, email, created_at) VALUES ('alt', 'user@bücher.example', 0)")
 assert auth.store.get_user_by_email("user@xn--bcher-kva.example")["username"] == "alt"
 assert auth.store.get_user_by_email("USER@XN--BCHER-KVA.example")["username"] == "alt"
-assert c.post("/auth/register", data={"username": "neu", "password": "supergeheim-lang-genug",
+assert c.post("/auth/register", data={"username": "new", "password": "supergeheim-long-enough",
                                       "email": "user@xn--bcher-kva.example", "next": "/"}).status_code == 409
-assert auth.store._exec("SELECT COUNT(*) FROM users WHERE username IN ('alt','neu')").fetchone()[0] == 1
+assert auth.store._exec("SELECT COUNT(*) FROM users WHERE username IN ('alt','new')").fetchone()[0] == 1
 os.remove(db)
 ok("A5: A-label input finds the existing address in Unicode form — no second account")
 
 # … and that works WITHOUT magic link. That was the actual error: both hung on the same
 # endpoint, so losing the sign-in link also lost the confirmation.
 db, auth, app, sent, c = build(allow_signup=True, signup_verify_email=True, magiclink_enabled=False)
-c.post("/auth/register", data={"username": "ohne", "password": "supergeheim-lang-genug",
+c.post("/auth/register", data={"username": "without", "password": "supergeheim-long-enough",
                                "email": "o@example.com", "next": "/"})
-uid = auth.store.get_user_by_name("ohne")["id"]
+uid = auth.store.get_user_by_name("without")["id"]
 token = re.search(r"/auth/verify/([\w\-]+)", sent[0]["text"]).group(1)
 assert c.post(f"/auth/verify/{token}", follow_redirects=False).status_code == 303
 assert auth.store.get_user(uid)["disabled"] == 0
@@ -278,7 +278,7 @@ db, auth, app, sent, c = build(allow_signup=True, signup_invite_only=True, magic
 assert c.get("/auth/register").status_code == 403        # without invitation
 # The base comes from base_url, not from the host of the TestClient: `create_invite` checks it
 # itself since R4-01 and rejects a foreign host with ConfigError (no token, no mail).
-inv = auth.create_invite("gast@example.com", auth.cfg.base_url, roles=["editor"])
+inv = auth.create_invite("guest@example.com", auth.cfg.base_url, roles=["editor"])
 token = inv["token"]
 # open link → redirect to registration (token NOT consumed)
 assert "/auth/invite/" in inv["url"] and "/auth/magic/" not in inv["url"]
@@ -286,12 +286,12 @@ r = c.get(f"/auth/invite/{token}", follow_redirects=False)
 assert r.status_code == 303 and "/auth/register?invite=" in r.headers["location"]
 # registration page reachable with invitation, e-mail prefilled
 page = c.get(f"/auth/register?invite={token}").text
-assert "gast@example.com" in page
+assert "guest@example.com" in page
 # register → account with roles from the invitation, logged in
-r = c.post("/auth/register", data={"username": "gast", "password": "supergeheim-lang-genug", "invite": token, "next": "/geheim"},
+r = c.post("/auth/register", data={"username": "guest", "password": "supergeheim-long-enough", "invite": token, "next": "/secret"},
            follow_redirects=False)
-assert r.status_code == 303 and r.headers["location"] == "/geheim"
-u = auth.store.get_user_by_name("gast")
+assert r.status_code == 303 and r.headers["location"] == "/secret"
+u = auth.store.get_user_by_name("guest")
 assert u and auth.has_role(u, "editor")
 # invitation is consumed → using it again fails
 assert auth.peek_magic(token, purpose="invite") is None

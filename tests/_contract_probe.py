@@ -64,7 +64,7 @@ def probe_instance(**extra):
 def sign_in(auth, app, create=False):
     from fastapi.testclient import TestClient
     if create:
-        auth.create_user("anna", PROBE_PW, roles=["redaktion"])
+        auth.create_user("anna", PROBE_PW, roles=["editors"])
     c = TestClient(app)
     c.post("/auth/login", data={"username": "anna", "password": PROBE_PW, "next": "/"},
            follow_redirects=False)
@@ -99,7 +99,7 @@ def forward_scenarios() -> dict:
     step("forward: signed in", lambda: brief(c.get("/auth/forward", headers=PROXY)))
     step("verify alias: signed in", lambda: brief(c.get("/auth/verify", headers=PROXY)))
     step("forward: role present (?roles=)",
-            lambda: brief(c.get("/auth/forward?roles=chef,redaktion", headers=PROXY)))
+            lambda: brief(c.get("/auth/forward?roles=chief,editors", headers=PROXY)))
     step("forward: role missing (?roles=)", lambda: brief(c.get("/auth/forward?roles=chef", headers=PROXY)))
     step("forward: role missing (X-TinySesam-Roles)", lambda: brief(
         c.get("/auth/forward", headers={**PROXY, "X-TinySesam-Roles": "chef"})))
@@ -165,8 +165,8 @@ def hook_contract() -> str:
 
     def hook(event, account, details):
         seen.append({"args": (type(event).__name__, type(account).__name__, type(details).__name__),
-                        "konto": sorted(account), "thread": threading.get_ident(),
-                        "neu_geschrieben": auth.store.get_user(uid)["username"] == "hookprobe2"})
+                        "account": sorted(account), "thread": threading.get_ident(),
+                        "new_written": auth.store.get_user(uid)["username"] == "hookprobe2"})
     auth.on_security_event = hook
     auth.change_username(uid, "hookprobe2")
     before = len(seen)
@@ -183,9 +183,9 @@ def hook_contract() -> str:
     except RuntimeError:
         aborted = True
     changed = auth.store.get_user(uid)["username"] == "hookprobe3"
-    return (f"hook({', '.join(g['args'])}); account keys: {', '.join(g['konto'])}; "
+    return (f"hook({', '.join(g['args'])}); account keys: {', '.join(g['account'])}; "
             f"called {'synchronously' if g['thread'] == threading.get_ident() else 'in another thread'} "
-            f"({before} call per change); {'after' if g['neu_geschrieben'] else 'before'} the change is written; "
+            f"({before} call per change); {'after' if g['new_written'] else 'before'} the change is written; "
             f"a failing hook {'aborts' if aborted else 'does not abort'} the operation "
             f"(change {'written' if changed else 'lost'})")
 

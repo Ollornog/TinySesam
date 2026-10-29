@@ -27,17 +27,17 @@ assert head(without.render_page("login", next="/", app_name="Paperless").body.de
 assert head(without.render_page("login", next="/").body.decode()) == ("Probe", None)
 ok("without brand: “Anmelden bei <Anwendung>”, without app line (as before)")
 
-with_ = auth_with("Firma A")
-assert head(with_.render_page("login", next="/", app_name="Paperless").body.decode()) == ("Anmelden bei Firma A", "App: Paperless")
-assert head(with_.render_page("login", next="/").body.decode()) == ("Anmelden bei Firma A", None)
+with_ = auth_with("Company A")
+assert head(with_.render_page("login", next="/", app_name="Paperless").body.decode()) == ("Anmelden bei Company A", "App: Paperless")
+assert head(with_.render_page("login", next="/").body.decode()) == ("Anmelden bei Company A", None)
 ok("with brand: “Anmelden bei <Marke>”, below it “App: <Name>”; without application no empty line")
 
 title = lambda h: re.search(r"<title>([^<]*)</title>", h).group(1)
-assert title(with_.render_page("login", next="/", app_name="Paperless").body.decode()) == "Firma A Login"
+assert title(with_.render_page("login", next="/", app_name="Paperless").body.decode()) == "Company A Login"
 assert title(without.render_page("login", next="/", app_name="Paperless").body.decode()) == "Anmelden"
 ok("page title: with brand “<Marke> Login”, without it stays “Anmelden”")
 
-ikon = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", gate_brand="Firma A", brand_icon="data:image/svg+xml;base64,PHN2Zy8+",
+ikon = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", gate_brand="Company A", brand_icon="data:image/svg+xml;base64,PHN2Zy8+",
                                  db_path=os.path.join(tempfile.mkdtemp(), "t.db"), passkey_enabled=False))
 for page_html, ctx in (("login", {"next": "/", "app_name": "Paperless"}), ("gate_logged_out", {"app_name": "Paperless"})):
     assert "<link rel=icon href='data:image/svg+xml;base64,PHN2Zy8+'>" in ikon.render_page(page_html, **ctx).body.decode(), page_html
@@ -47,4 +47,4 @@ evil = auth_with("<b>x</b>")
 html = evil.render_page("login", next="/", app_name="<i>y</i>").body.decode()
 assert "<b>x</b>" not in html and "<i>y</i>" not in html and "&lt;b&gt;x&lt;/b&gt;" in html and "&lt;i&gt;y&lt;/i&gt;" in html
 ok("brand and app name are masked")
-print("Gate-Marke OK")
+print("Gate-Brand OK")

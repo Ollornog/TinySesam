@@ -31,10 +31,10 @@ WIKI = {**APP, "X-Forwarded-Host": "wiki.example.com"}
 
 
 def instance(**extra):
-    values = dict(issuer="https://id.example.com", client_id="haupt", client_secret="s",
+    values = dict(issuer="https://id.example.com", client_id="main", client_secret="s",
                  base_url="https://auth.example.com", db_path=os.path.join(tempfile.mkdtemp(), "g.db"),
                  trusted_redirect_hosts=["app.example.com", "wiki.example.com"],
-                 allowed_groups=["leute"], oidc_scopes="openid profile email groups",
+                 allowed_groups=["people"], oidc_scopes="openid profile email groups",
                  https_mode="off", lang="de")
     values.update(extra)
     cfg = TinySesamConfig.oidc_gateway(**values)
@@ -60,7 +60,7 @@ def signed_in(auth, app, name="anna", id_token=None):
     return c, token, uid
 
 
-def forward(c, head, uri="/seite"):
+def forward(c, head, uri="/page"):
     return c.get("/auth/forward", headers={**head, "X-Forwarded-Uri": uri,
                                            "Sec-Fetch-Mode": "navigate", "Accept": "text/html"})
 
@@ -119,13 +119,13 @@ assert forward(c, WIKI).status_code == 401 and forward(c, APP).status_code == 20
 ok("“signed out here only” moves along when the session is rotated")
 
 # ---------- sign out everywhere, with id_token_hint ----------
-c2, token2, _ = signed_in(auth, app, "bea", id_token="eyJ.ID.TOKEN")
+c2, token2, _ = signed_in(auth, app, "bee", id_token="eyJ.ID.TOKEN")
 r = c2.get("/.tinysesam/logout?scope=all", headers=APP, follow_redirects=False)
 assert r.status_code == 303, r.status_code
 destination = urlsplit(r.headers["location"])
 q = parse_qs(destination.query)
 assert f"{destination.scheme}://{destination.netloc}{destination.path}" == META["end_session_endpoint"], r.headers["location"]
-assert q["id_token_hint"] == ["eyJ.ID.TOKEN"] and q["client_id"] == ["haupt"], q
+assert q["id_token_hint"] == ["eyJ.ID.TOKEN"] and q["client_id"] == ["main"], q
 assert q["post_logout_redirect_uri"] == ["https://app.example.com/.tinysesam/after-logout"], q
 assert not auth.store.get_session(token2), "the session must end"
 assert gate_deleted(r, auth)
@@ -176,11 +176,11 @@ r = c6.post("/.tinysesam/logout", data={"scope": "app", "next": "/"}, headers=WI
 assert r.status_code == 303 and auth2.store.get_session(t6) and forward(c6, WIKI).status_code == 401
 ok("logout=ask: page with both paths; “Nur von Wiki” by POST locks only wiki")
 
-assert c6.post("/.tinysesam/logout", data={"scope": "egal"}, headers=WIKI).status_code == 400
+assert c6.post("/.tinysesam/logout", data={"scope": "whatever"}, headers=WIKI).status_code == 400
 ok("POST with unknown scope → 400")
 
 # ---------- foreign host ----------
-r = TestClient(app).get("/.tinysesam/logout", headers={**APP, "X-Forwarded-Host": "fremd.example.net"})
+r = TestClient(app).get("/.tinysesam/logout", headers={**APP, "X-Forwarded-Host": "foreign.example.net"})
 assert r.status_code == 404
 ok("a host that this installation does not protect → 404")
 
@@ -189,8 +189,8 @@ def findings(**w):
     return config_check.check_config(TinySesamConfig(db_path=":memory:", **w))[0]
 
 
-assert any("forward_logout" in b for b in findings(forward_logout="nur_hier"))
-assert any("['logout']" in b for b in findings(forward_apps={"a.example.com": {"logout": "jetzt"}}))
+assert any("forward_logout" in b for b in findings(forward_logout="only_here"))
+assert any("['logout']" in b for b in findings(forward_apps={"a.example.com": {"logout": "now"}}))
 assert not [b for b in findings(forward_logout="ask", forward_apps={"a.example.com": {"logout": "app"}})
             if "logout" in b]
 ok("configuration check: unknown logout mode (global and per app)")

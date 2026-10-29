@@ -33,19 +33,19 @@ assert c.get("/auth/login").status_code == 200
 assert c.get("/auth/me").status_code == 401
 assert c.post("/auth/passkey/register/begin").status_code == 401   # exists, just not logged in
 assert c.get("/auth/passkey/list").status_code == 401
-print("  ✓ Routen vorhanden + Guards greifen (Passwort/TOTP/OIDC/Passkey)")
+print("  ✓ Routes present + guards apply (password/TOTP/OIDC/passkey)")
 
 # passkey login options can be generated without a browser
 r = c.post("/auth/passkey/login/begin")
 assert r.status_code == 200, r.text
 j = r.json()
 assert "challenge" in j and j.get("rpId") == "localhost", j
-print("  ✓ Passkey-Login-Options generiert (challenge, rpId=localhost)")
+print("  ✓ Passkey login options generated (challenge, rpId=localhost)")
 
 # login page shows all active methods
 html = c.get("/auth/login").text
 assert "Passwort" in html and "PocketID" in html and "Passkey" in html
-print("  ✓ Login-Seite: Passwort-Form + OIDC-Button + Passkey-Button")
+print("  ✓ Login page: password form + OIDC button + passkey button")
 
 # ---------- register/finish binds the passkey to the SIGNED-IN account (N5) ----------
 # Promise in the CHANGELOG: “`register/finish` additionally binds the new passkey to the signed-in
@@ -55,8 +55,8 @@ print("  ✓ Login-Seite: Passwort-Form + OIDC-Button + Passkey-Button")
 # “whoever can set a cookie via a subdomain” — exactly the sort of protection that silently
 # disappears because its absence changes nothing in normal operation.
 FLOW = "tinysesam_waflow"
-a_id = auth.create_user("konto_a", password="Geheim12345!")
-b_id = auth.create_user("account_b", password="Geheim12345!")
+a_id = auth.create_user("account_a", password="Secret12345!")
+b_id = auth.create_user("account_b", password="Secret12345!")
 
 
 def ok_(name):
@@ -131,7 +131,7 @@ try:
     TinySesam(TinySesamConfig(db_path=os.path.join(tempfile.mkdtemp(), "t.db"),
                               passkey_enabled=True, rp_id="localhost",
                               origin="http://localhost:8000",
-                              passkey_user_verification="egal"))
+                              passkey_user_verification="whatever"))
     raise AssertionError("unknown value got through")
 except _ConfigError:
     pass
@@ -181,4 +181,4 @@ for _d in (_db_p, _db_r, _db_l):
     os.remove(_d)
 
 os.remove(db)
-print("\nMETHODEN-STRUKTUR OK ✅")
+print("\nMETHOD STRUCTURE OK ✅")

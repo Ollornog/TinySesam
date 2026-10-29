@@ -57,7 +57,7 @@ from tinysesam.security import seclog  # noqa: E402
 from _kit.report import Report  # noqa: E402
 
 r = Report("The secure sign-in building block for custom pages (login_password/_pin/_totp, 0.22.0)")
-PW = "Anmelde-Pw-2026"          # 15 characters: the password signs in alone (B2-4)
+PW = "Signin-Pw-2026x"          # 15 characters: the password signs in alone (B2-4)
 PIN = "4711"
 IP = ("203.0.113.9", 50000)
 LOOSE = {"max_login_attempts": 1000, "rate_limit_max": 100000,
@@ -84,23 +84,23 @@ def _app(hardening=None, **cfg):
                                  "next_factor": erg.next_factor}, status_code=erg.status)
         return erg.redirect()
 
-    @app.post("/eigen/login")
+    @app.post("/own/login")
     def _own_login(request: Request, username: str = Form(""), password: str = Form(""),
                      next: str = Form(""), csrf: str = Form("", alias="_csrf"), stay: str = Form("")):
         return response(auth.login_password(request, username, password, next=next, csrf=csrf,
                                               remember=True if stay else None))
 
-    @app.post("/eigen/pin")
+    @app.post("/own/pin")
     def _own_pin(request: Request, pin: str = Form(""), username: str = Form(""),
                    next: str = Form(""), csrf: str = Form("", alias="_csrf")):
         return response(auth.login_pin(request, pin, username, next=next, csrf=csrf))
 
-    @app.post("/eigen/totp")
+    @app.post("/own/totp")
     def _own_totp(request: Request, code: str = Form(""), next: str = Form(""),
                     csrf: str = Form("", alias="_csrf")):
         return response(auth.login_totp(request, code, next=next, csrf=csrf))
 
-    @app.post("/eigen/json")
+    @app.post("/own/json")
     def _own_json(request: Request, data: dict):
         # The JSON path: no `csrf` argument, the token comes in the X-CSRF-Token header.
         erg = auth.login_password(request, data.get("username", ""), data.get("password", ""))
@@ -110,7 +110,7 @@ def _app(hardening=None, **cfg):
         erg.set_cookie(response_)
         return response_
 
-    @app.get("/drin")
+    @app.get("/inside")
     def _inside(u=Depends(auth.require_user)):
         return {"u": u["username"]}
 
@@ -122,7 +122,7 @@ def _client(app, ip=IP):
 
 
 def _post(client, path, **data):
-    return client.post(path, data={"next": "/drin", **data}, follow_redirects=False)
+    return client.post(path, data={"next": "/inside", **data}, follow_redirects=False)
 
 
 def _reason(response):
@@ -182,8 +182,8 @@ auth, app = _app(hardening={"max_login_attempts": 3})
 auth.create_user("alice", password=PW)
 c = _client(app)
 with Recording() as log_a:
-    sequence_a = [_post(c, "/eigen/login", username="alice", password=f"falsch-{i}") for i in range(5)]
-    correct_a = _post(c, "/eigen/login", username="alice", password=PW)
+    sequence_a = [_post(c, "/own/login", username="alice", password=f"wrong-{i}") for i in range(5)]
+    correct_a = _post(c, "/own/login", username="alice", password=PW)
 r.check("(a) custom login page: after 3 failed attempts 429 `locked` — no further guessing",
         [a.status_code for a in sequence_a] == [401, 401, 401, 429, 429]
         and [_reason(a) for a in sequence_a] == ["invalid"] * 3 + ["locked"] * 2
@@ -206,8 +206,8 @@ r.check("(a) … and in the audit log (login_fail per attempt, with reason)",
 auth, app = _app(hardening={"rate_limit_max": 4})
 auth.create_user("bob", password=PW)
 c = _client(app, ("198.51.100.44", 1))
-_throttle = [_post(c, "/eigen/login", username=f"konto{i}", password="egal-egal-1") for i in range(6)]
-_other_network = _post(_client(app, ("198.51.100.45", 1)), "/eigen/login", username="bob", password=PW)
+_throttle = [_post(c, "/own/login", username=f"account{i}", password="whatever-it-1") for i in range(6)]
+_other_network = _post(_client(app, ("198.51.100.45", 1)), "/own/login", username="bob", password=PW)
 r.check("(a) IP throttle: after rate_limit_max requests 429 `ratelimit` with the text of the throttle",
         [a.status_code for a in _throttle][-2:] == [429, 429] and _reason(_throttle[-1]) == "ratelimit"
         and _throttle[-1].json()["message"] == auth.t("err.rate"),
@@ -221,9 +221,9 @@ auth.create_user("carol", password=PW)
 _series_sequence = []
 with Recording() as log_s:
     for i in range(11):    # every request from a different address: no window applies
-        _series_sequence.append(_post(_client(app, (f"192.0.2.{10 + i}", 1)), "/eigen/login",
-                                  username="carol", password=f"falsch-{i}"))
-    _series_correct = _post(_client(app, ("192.0.2.99", 1)), "/eigen/login", username="carol", password=PW)
+        _series_sequence.append(_post(_client(app, (f"192.0.2.{10 + i}", 1)), "/own/login",
+                                  username="carol", password=f"wrong-{i}"))
+    _series_correct = _post(_client(app, ("192.0.2.99", 1)), "/own/login", username="carol", password=PW)
 r.check("(a) series: after 10 failed attempts in a row 429 `locked_series` with the text of the series lock",
         [a.status_code for a in _series_sequence] == [401] * 10 + [429]
         and _reason(_series_sequence[-1]) == "locked_series"
@@ -241,15 +241,15 @@ r.check("(a) … audit `lockout_series` and the log line for the operator",
 auth, app = _app()
 auth.create_user("dora", password=PW)
 c = _client(app)
-_ok = _post(c, "/eigen/login", username="dora", password=PW)
-r.check("(a) success: 303 to next, session cookie set, the session carries /drin",
-        _ok.status_code == 303 and _ok.headers["location"] == "/drin" and _session(auth, _ok)
-        and c.get("/drin").json() == {"u": "dora"},
+_ok = _post(c, "/own/login", username="dora", password=PW)
+r.check("(a) success: 303 to next, session cookie set, the session carries /inside",
+        _ok.status_code == 303 and _ok.headers["location"] == "/inside" and _session(auth, _ok)
+        and c.get("/inside").json() == {"u": "dora"},
         f"HTTP {_ok.status_code} {_ok.headers.get('location')}")
 # “Stay signed in” (F-05): without `remember` a session cookie (ends with the browser), with
 # `remember=True` a persistent one — like the checkbox of the built-in page.
-_short = _post(_client(app, ("203.0.113.20", 1)), "/eigen/login", username="dora", password=PW)
-_lang = _post(_client(app, ("203.0.113.21", 1)), "/eigen/login", username="dora", password=PW, stay="1")
+_short = _post(_client(app, ("203.0.113.20", 1)), "/own/login", username="dora", password=PW)
+_lang = _post(_client(app, ("203.0.113.21", 1)), "/own/login", username="dora", password=PW, stay="1")
 
 
 def _max_age(response):
@@ -280,18 +280,18 @@ class Directory:
                 "id": e.get("id"), "email_verified": None}
 
 
-LPW = "Verzeichnis-Pw1"
+LPW = "Directory-Pw1xx"
 LDAP = dict(ldap_enabled=True, ldap_url="ldap://dummy", ldap_allow_plaintext=True, ldap_auto_create=True)
 auth, app = _app(**LDAP)
 auth.ldap = Directory({"lena": {"pw": LPW, "id": "uuid-lena"}})
 c = _client(app)
-_l_ok = _post(c, "/eigen/login", username="lena", password=LPW)
+_l_ok = _post(c, "/own/login", username="lena", password=LPW)
 _l_uid = auth.store.get_user_by_name("lena")["id"] if auth.store.get_user_by_name("lena") else None
 r.check("(b) LDAP fallback via the block: account from the directory, session, audit `login_ldap`",
         _l_ok.status_code == 303 and _l_uid and auth.store.get_federated_user("ldap", "uuid-lena") == _l_uid
         and any(e[0] == "login_ldap" and e[1] == "lena" for e in _audit(auth)),
         f"HTTP {_l_ok.status_code}, {[e[0] for e in _audit(auth)]}")
-_l_wrong = _post(c, "/eigen/login", username="lena", password="falsch-falsch-1")
+_l_wrong = _post(c, "/own/login", username="lena", password="wrong-wrong-1xx")
 r.check("(b) … rejected: 401 `invalid`, login_fail with source=local+ldap (both asked)",
         _l_wrong.status_code == 401 and _reason(_l_wrong) == "invalid"
         and any(e[0] == "login_fail" and "source=local+ldap" in (e[3] or "") for e in _audit(auth)),
@@ -299,39 +299,39 @@ r.check("(b) … rejected: 401 `invalid`, login_fail with source=local+ldap (bot
 
 # Outage: without a local password the pre-booking is rolled back, with a local one the failed attempt counts.
 auth, app = _app(**LDAP)
-auth.create_user("notfall", password=PW)
-auth.create_user("verz")                                   # directory account without local password
+auth.create_user("emergency", password=PW)
+auth.create_user("dir")                                   # directory account without local password
 auth.ldap = Directory({}, away=True)
 c = _client(app)
 with Recording() as log_b:
-    _away_dir = _post(c, "/eigen/login", username="verz", password="egal-egal-1")
-    _away_local = _post(c, "/eigen/login", username="notfall", password="falsch-falsch-1")
-    _z = {u: [v for v in _attempts(auth) if v[0] == u] for u in ("verz", "notfall")}
-    _away_correct = _post(c, "/eigen/login", username="notfall", password=PW)
+    _away_dir = _post(c, "/own/login", username="dir", password="whatever-it-1")
+    _away_local = _post(c, "/own/login", username="emergency", password="wrong-wrong-1xx")
+    _z = {u: [v for v in _attempts(auth) if v[0] == u] for u in ("dir", "emergency")}
+    _away_correct = _post(c, "/own/login", username="emergency", password=PW)
 r.check("(b) directory gone: 503 `directory_down` with the text of the outage",
         _away_dir.status_code == 503 and _reason(_away_dir) == "directory_down"
         and _away_dir.json()["message"] == auth.t("err.directory_down"),
         f"HTTP {_away_dir.status_code} {_reason(_away_dir)}")
 r.check("(b) … without a local password it is no failed attempt: pre-booking rolled back, no `failed login`",
-        _z["verz"] == [] and not [z for z in log_b.lines("failed login") if "user=verz" in z]
-        and log_b.lines("LDAP unreachable user=verz"),
-        f"{_z['verz']} {log_b.lines()[:3]}")
+        _z["dir"] == [] and not [z for z in log_b.lines("failed login") if "user=dir" in z]
+        and log_b.lines("LDAP unreachable user=dir"),
+        f"{_z['dir']} {log_b.lines()[:3]}")
 r.check("(b) … with a wrong local password it counts (A-1), the local emergency account signs in",
-        [v[2:] for v in _z["notfall"]] == [(0, "password", 0)] and _away_local.status_code == 503
-        and any(e[0] == "login_fail" and e[1] == "notfall" and "source=local" in (e[3] or "")
+        [v[2:] for v in _z["emergency"]] == [(0, "password", 0)] and _away_local.status_code == 503
+        and any(e[0] == "login_fail" and e[1] == "emergency" and "source=local" in (e[3] or "")
                 for e in _audit(auth))
         and _away_correct.status_code == 303 and _session(auth, _away_correct),
-        f"{_z['notfall']} {_away_local.status_code} {_away_correct.status_code}")
+        f"{_z['emergency']} {_away_local.status_code} {_away_correct.status_code}")
 
 # One identifier, one account (review round 2026-09-27): Mallory is called `alice.neu` locally, Alice in the
 # directory too — her LDAP password opens nothing under this identifier via the block.
 auth, app = _app(**LDAP)
 auth.ldap = Directory({"alice": {"pw": LPW, "id": "uuid-alice"}})
-_post(_client(app), "/eigen/login", username="alice", password=LPW)
+_post(_client(app), "/own/login", username="alice", password=LPW)
 _alice = auth.store.get_user_by_name("alice")["id"]
-auth.create_user("alice.neu", password="Mallory-Pw-15xy")
-auth.ldap = Directory({"alice.neu": {"pw": LPW, "id": "uuid-alice"}})
-_foreign = _post(_client(app), "/eigen/login", username="alice.neu", password=LPW)
+auth.create_user("alice.new", password="Mallory-Pw-15xy")
+auth.ldap = Directory({"alice.new": {"pw": LPW, "id": "uuid-alice"}})
+_foreign = _post(_client(app), "/own/login", username="alice.new", password=LPW)
 r.check("(b) one identifier, one account: the LDAP password of another person opens no session under a locally "
         "assigned identifier (401), audit `ldap_identifier_rejected` names Alice's account "
         "as owner of the directory entry",
@@ -348,7 +348,7 @@ r.check("(b) one identifier, one account: the LDAP password of another person op
 def _execution(built_in: bool, steps, setup):
     auth, app = setup()
     paths = {"login": "/auth/login", "pin": "/auth/pin", "totp": "/auth/totp"} if built_in else \
-        {"login": "/eigen/login", "pin": "/eigen/pin", "totp": "/eigen/totp"}
+        {"login": "/own/login", "pin": "/own/pin", "totp": "/own/totp"}
     c = _client(app)
     result = []
     with Recording() as log:
@@ -377,13 +377,13 @@ def _setup_pw():
 
 
 _c_pw = _comparison("Password (wrong, empty, correct, lockout, unknown name)", lambda a: [
-    ("login", {"username": "erika", "password": "falsch-1"}),
+    ("login", {"username": "erika", "password": "wrong-1"}),
     ("login", {"username": "erika", "password": ""}),
     ("login", {"username": "fritz", "password": PW}),
-    ("login", {"username": "erika", "password": "falsch-2"}),
-    ("login", {"username": "erika", "password": "falsch-3"}),
+    ("login", {"username": "erika", "password": "wrong-2"}),
+    ("login", {"username": "erika", "password": "wrong-3"}),
     ("login", {"username": "erika", "password": PW}),                # pair locked
-    ("login", {"username": "niemand", "password": "falsch-4"}),
+    ("login", {"username": "nobody", "password": "wrong-4"}),
 ], _setup_pw)
 r.check("(c) … the sequence saw lock and success (otherwise it compared little)",
         [s for s, _ in _c_pw["status"]] == [401, 400, 303, 401, 401, 429, 401],
@@ -392,19 +392,19 @@ r.check("(c) … the sequence saw lock and success (otherwise it compared little
 
 def _setup_ldap():
     auth, app = _app(**LDAP)
-    auth.create_user("notfall", password=PW)
-    auth.create_user("verz")
+    auth.create_user("emergency", password=PW)
+    auth.create_user("dir")
     auth.ldap = Directory({"lena": {"pw": LPW, "id": "uuid-lena"}})
     return auth, app
 
 
 def _ldap_sequence(auth):
     yield "login", {"username": "lena", "password": LPW}
-    yield "login", {"username": "lena", "password": "falsch-falsch-1"}
+    yield "login", {"username": "lena", "password": "wrong-wrong-1xx"}
     auth.ldap.away = True
-    yield "login", {"username": "verz", "password": "egal-egal-1"}
-    yield "login", {"username": "notfall", "password": "falsch-falsch-1"}
-    yield "login", {"username": "notfall", "password": PW}
+    yield "login", {"username": "dir", "password": "whatever-it-1"}
+    yield "login", {"username": "emergency", "password": "wrong-wrong-1xx"}
+    yield "login", {"username": "emergency", "password": PW}
 
 
 _c_ldap = _comparison("LDAP (fallback, rejected, outage with and without local password)", _ldap_sequence,
@@ -420,7 +420,7 @@ def _setup_pin():
     return auth, app
 
 
-_c_pin = _comparison("PIN als Erstfaktor (falsch, Sperre des PIN-Topfs)", lambda a: [
+_c_pin = _comparison("PIN as first factor (wrong, lock of the PIN bucket)", lambda a: [
     ("pin", {"username": "gustav", "pin": "0000"}),
     ("pin", {"username": "gustav", "pin": ""}),
     ("pin", {"username": "gustav", "pin": "0001"}),
@@ -436,27 +436,27 @@ auth, app = _app(pin_enabled=True, pin_login=True)
 uid = auth.create_user("hanna", password=PW)
 auth.set_pin(uid, PIN)
 c = _client(app)
-_p_wrong = _post(c, "/eigen/pin", username="hanna", pin="0000")
-_p_ok = _post(c, "/eigen/pin", username="hanna", pin=PIN)
+_p_wrong = _post(c, "/own/pin", username="hanna", pin="0000")
+_p_ok = _post(c, "/own/pin", username="hanna", pin=PIN)
 r.check("(d) guest path: wrong PIN 401 `invalid` (next_factor None), correct PIN 303 with session",
         _p_wrong.status_code == 401 and _reason(_p_wrong) == "invalid" and _p_wrong.json()["next_factor"] is None
-        and _p_ok.status_code == 303 and c.get("/drin").json() == {"u": "hanna"},
+        and _p_ok.status_code == 303 and c.get("/inside").json() == {"u": "hanna"},
         f"{_p_wrong.status_code} {_p_ok.status_code}")
 
 auth, app = _app(pin_enabled=True, pin_login=False, login_chain=["password", "pin"])
 uid = auth.create_user("ines", password=PW)
 auth.set_pin(uid, PIN)
 c = _client(app)
-_k1 = _post(c, "/eigen/login", username="ines", password=PW)
-_k_inside = c.get("/drin", headers={"Accept": "application/json"}, follow_redirects=False)
-_k_wrong = _post(c, "/eigen/pin", pin="0000")
+_k1 = _post(c, "/own/login", username="ines", password=PW)
+_k_inside = c.get("/inside", headers={"Accept": "application/json"}, follow_redirects=False)
+_k_wrong = _post(c, "/own/pin", pin="0000")
 _k_series = [(z["kind"], z["count"]) for z in auth.store._all(
     "SELECT kind, count FROM failure_series WHERE folded='ines' AND count > 0")]
-_k_page_html = c.post("/auth/pin", data={"pin": "0001", "next": "/drin"}, headers={"Accept": "text/html"},
+_k_page_html = c.post("/auth/pin", data={"pin": "0001", "next": "/inside"}, headers={"Accept": "text/html"},
                   follow_redirects=False)
-_k_ok = _post(c, "/eigen/pin", pin=PIN)
-_guest = _post(_client(app), "/eigen/pin", username="ines", pin=PIN)
-r.check("(d) chain step: after the password `next_url` leads to /auth/pin, /drin still closed",
+_k_ok = _post(c, "/own/pin", pin=PIN)
+_guest = _post(_client(app), "/own/pin", username="ines", pin=PIN)
+r.check("(d) chain step: after the password `next_url` leads to /auth/pin, /inside still closed",
         _k1.status_code == 303 and _k1.headers["location"].startswith("/auth/pin")
         and _k_inside.status_code != 200,
         f"{_k1.status_code} {_k1.headers.get('location')}")
@@ -469,7 +469,7 @@ r.check("(d) … the built-in route then shows the PIN page again: without name 
         _k_page_html.status_code == 401 and "name=pin " in _k_page_html.text and "name=username" not in _k_page_html.text
         and auth.t("reauth.hint", user="ines") in _k_page_html.text, _k_page_html.text[:200])
 r.check("(d) … correct PIN without name field: 303, full session",
-        _k_ok.status_code == 303 and c.get("/drin").json() == {"u": "ines"}, f"{_k_ok.status_code}")
+        _k_ok.status_code == 303 and c.get("/inside").json() == {"u": "ines"}, f"{_k_ok.status_code}")
 r.check("(d) … without a session the PIN is no first factor here: 404 `method_disabled`",
         _guest.status_code == 404 and _reason(_guest) == "method_disabled", f"{_guest.status_code} {_guest.text[:80]}")
 
@@ -481,9 +481,9 @@ auth, app = _app(pin_enabled=False)
 uid = auth.create_user("jan", password=PW)
 auth.set_pin(uid, PIN)
 c = _client(app)
-_p_from = _post(c, "/eigen/pin", username="jan", pin=PIN)
-_post(c, "/eigen/login", username="jan", password=PW)
-_p_from_full = _post(c, "/eigen/pin", pin=PIN)
+_p_from = _post(c, "/own/pin", username="jan", pin=PIN)
+_post(c, "/own/login", username="jan", password=PW)
+_p_from_full = _post(c, "/own/pin", pin=PIN)
 r.check("(d) without pin_enabled: `method_disabled` (404) — as guest and on a full session, despite PIN hash",
         _p_from.status_code == 404 and _reason(_p_from) == "method_disabled"
         and _p_from_full.status_code == 404 and _reason(_p_from_full) == "method_disabled",
@@ -497,41 +497,41 @@ secret_text = auth.totp_begin(uid)["secret"]
 auth.totp_confirm(uid, pyotp.TOTP(secret_text).at(time.time() - 30))
 codes = auth.generate_recovery_codes(uid)
 c = _client(app)
-_t1 = _post(c, "/eigen/login", username="karl", password=PW)
+_t1 = _post(c, "/own/login", username="karl", password=PW)
 _half = _session(auth, _t1)
-_t_wrong = _post(c, "/eigen/totp", code="000000")
-_t_ok = _post(c, "/eigen/totp", code=pyotp.TOTP(secret_text).now())
-r.check("(e) password with TOTP: 303 to /auth/totp, half session (no /drin)",
+_t_wrong = _post(c, "/own/totp", code="000000")
+_t_ok = _post(c, "/own/totp", code=pyotp.TOTP(secret_text).now())
+r.check("(e) password with TOTP: 303 to /auth/totp, half session (no /inside)",
         _t1.status_code == 303 and _t1.headers["location"].startswith("/auth/totp") and _half,
         f"{_t1.status_code} {_t1.headers.get('location')}")
 r.check("(e) … wrong code: 401 `invalid`, `next_factor` stays \"totp\", text of the code",
         _t_wrong.status_code == 401 and _t_wrong.json()["next_factor"] == "totp"
         and _t_wrong.json()["message"] == auth.t("err.code"), _t_wrong.text[:160])
 r.check("(e) … correct code: new token (privilege change), session full, the half token dead",
-        _t_ok.status_code == 303 and _t_ok.headers["location"] == "/drin"
-        and _session(auth, _t_ok) not in (None, _half) and c.get("/drin").json() == {"u": "karl"}
+        _t_ok.status_code == 303 and _t_ok.headers["location"] == "/inside"
+        and _session(auth, _t_ok) not in (None, _half) and c.get("/inside").json() == {"u": "karl"}
         and auth.store.get_session(_half) is None, f"{_t_ok.status_code}")
 
-_j = _client(app, ("203.0.113.12", 1)).post("/eigen/json", json={"username": "karl", "password": PW})
+_j = _client(app, ("203.0.113.12", 1)).post("/own/json", json={"username": "karl", "password": PW})
 r.check("(e) the result after the password names the open step: done False, next_factor \"totp\", "
         "next_url to /auth/totp",
         _j.status_code == 200 and _j.json()["done"] is False and _j.json()["next_factor"] == "totp"
         and _j.json()["next_url"].startswith("/auth/totp"), _j.text[:200])
 
 c2 = _client(app, ("203.0.113.10", 1))
-_post(c2, "/eigen/login", username="karl", password=PW)
-_rc = _post(c2, "/eigen/totp", code=codes[0])
+_post(c2, "/own/login", username="karl", password=PW)
+_rc = _post(c2, "/own/totp", code=codes[0])
 r.check("(e) one-time code instead of TOTP: accepted, like /auth/totp", _rc.status_code == 303
-        and c2.get("/drin").json() == {"u": "karl"}, f"{_rc.status_code}")
+        and c2.get("/inside").json() == {"u": "karl"}, f"{_rc.status_code}")
 
-_without = _post(_client(app), "/eigen/totp", code="123456")
+_without = _post(_client(app), "/own/totp", code="123456")
 r.check("(e) without a session: 401 `no_session`, `next_url` is the login page",
         _without.status_code == 401 and _reason(_without) == "no_session"
         and _without.json()["next_url"] == "/auth/login", _without.text[:160])
 
 c3 = _client(app, ("203.0.113.11", 1))
-_post(c3, "/eigen/login", username="karl", password=PW)
-_t_lock = [_post(c3, "/eigen/totp", code=f"00000{i}") for i in range(4)]
+_post(c3, "/own/login", username="karl", password=PW)
+_t_lock = [_post(c3, "/own/totp", code=f"00000{i}") for i in range(4)]
 r.check("(e) TOTP guessing: after 3 misses 429 `locked` with the text of the page (err.retry)",
         [a.status_code for a in _t_lock] == [401, 401, 401, 429] and _reason(_t_lock[-1]) == "locked"
         and _t_lock[-1].json()["message"] == auth.t("err.retry"),
@@ -559,7 +559,7 @@ def _totp_steps(auth):
     yield "totp", {"code": pyotp.TOTP(g).now()}
 
 
-_c_totp = _comparison("TOTP (Passwort, falscher Code, leer, richtiger Code)", _totp_steps, _setup_totp_with)
+_c_totp = _comparison("TOTP (password, wrong code, empty, right code)", _totp_steps, _setup_totp_with)
 r.check("(c) … TOTP sequence: 303, 401, 400, 303", [s for s, _ in _c_totp["status"]] == [303, 401, 400, 303],
         str(_c_totp["status"]))
 
@@ -570,21 +570,21 @@ auth.create_user("mia", password=PW)
 c = _client(app)
 c.get("/auth/login")                                          # sets the CSRF cookie
 tok = c.cookies.get(auth.csrf_cookie_name)
-_without_tok = _post(c, "/eigen/login", username="mia", password=PW)
-_with_tok = _post(c, "/eigen/login", username="mia", password=PW, _csrf=tok)
+_without_tok = _post(c, "/own/login", username="mia", password=PW)
+_with_tok = _post(c, "/own/login", username="mia", password=PW, _csrf=tok)
 r.check("(f) CSRF like every sign-in route: without token 403, with token 303",
         _without_tok.status_code == 403 and _session(auth, _without_tok) is None and _with_tok.status_code == 303,
         f"{_without_tok.status_code} {_with_tok.status_code}")
 c = _client(app)
 c.get("/auth/login")
 tok = c.cookies.get(auth.csrf_cookie_name)
-_json = c.post("/eigen/json", json={"username": "mia", "password": PW}, headers={"X-CSRF-Token": tok})
-_json_without = _client(app).post("/eigen/json", json={"username": "mia", "password": PW})
+_json = c.post("/own/json", json={"username": "mia", "password": PW}, headers={"X-CSRF-Token": tok})
+_json_without = _client(app).post("/own/json", json={"username": "mia", "password": PW})
 # With a fresh token: after the sign-in above `set_cookie` rotated the CSRF token, an old
 # token would be wrong anyway — then the probe would check nothing.
 c_empty = _client(app)
 c_empty.get("/auth/login")
-_empty_arg = c_empty.post("/eigen/login", data={"username": "mia", "password": PW, "_csrf": ""},
+_empty_arg = c_empty.post("/own/login", data={"username": "mia", "password": PW, "_csrf": ""},
                         headers={"X-CSRF-Token": c_empty.cookies.get(auth.csrf_cookie_name)},
                         follow_redirects=False)
 r.check("(f) `csrf=None` takes the X-CSRF-Token header (JSON path), without it 403; an empty "
@@ -599,25 +599,25 @@ auth.create_user("nora", password=PW)
 _results = {}
 
 
-@app.post("/eigen/roh")
+@app.post("/own/raw")
 def _raw(request: Request, username: str = Form(""), password: str = Form("")):
-    erg = auth.login_password(request, username, password, next="/drin")
+    erg = auth.login_password(request, username, password, next="/inside")
     _results[password] = erg
     return erg.redirect()                # the result ignored — the worst case
 
 
 c = _client(app)
-_ign = c.post("/eigen/roh", data={"username": "nora", "password": "falsch-1"}, follow_redirects=False)
-_ign_destination = c.get("/drin", headers={"Accept": "application/json"})
-r.check("(f) fail-closed: whoever ignores the result and redirects ends up on /drin without a session (401)",
+_ign = c.post("/own/raw", data={"username": "nora", "password": "wrong-1"}, follow_redirects=False)
+_ign_destination = c.get("/inside", headers={"Accept": "application/json"})
+r.check("(f) fail-closed: whoever ignores the result and redirects ends up on /inside without a session (401)",
         _ign.status_code == 303 and "set-cookie" not in {k.lower() for k in _ign.headers}
         and _ign_destination.status_code == 401, f"{_ign.status_code} {dict(_ign.headers)} {_ign_destination.status_code}")
-c.post("/eigen/roh", data={"username": "nora", "password": PW}, follow_redirects=False)
+c.post("/own/raw", data={"username": "nora", "password": PW}, follow_redirects=False)
 _success = _results[PW]
 _fields = {f.name for f in dataclasses.fields(LoginResult)}
 r.check("(f) result type: bool = ok, the token is no field and appears neither in repr() nor in asdict()",
-        bool(_success) and not bool(_results["falsch-1"]) and _success.done and _success.user["username"] == "nora"
-        and _results["falsch-1"].user is None
+        bool(_success) and not bool(_results["wrong-1"]) and _success.done and _success.user["username"] == "nora"
+        and _results["wrong-1"].user is None
         and _fields == {"ok", "reason", "status", "message", "next_url", "next_factor", "done", "user"}
         and _success._token and _success._token not in repr(_success)
         and _success._token not in repr(dataclasses.asdict(_success)),
@@ -628,7 +628,7 @@ try:
 except dataclasses.FrozenInstanceError:
     _frozen = True
 _wrong_built = []
-for kw in ({"ok": False, "reason": "erfunden", "status": 400}, {"ok": True, "reason": "invalid", "status": 303},
+for kw in ({"ok": False, "reason": "invented", "status": 400}, {"ok": True, "reason": "invalid", "status": 303},
            {"ok": False, "reason": "ok", "status": 303}):
     try:
         LoginResult(**kw)
@@ -666,12 +666,12 @@ for kind in ("totp", "pin"):
         auth.set_pin(uid, PIN)
     c = TestClient(app, client=IP, raise_server_exceptions=False)
     if kind == "totp":
-        _post(c, "/eigen/login", username="otto", password=PW)
+        _post(c, "/own/login", username="otto", password=PW)
         auth._verify_totp = _broken
-        _k = _post(c, "/eigen/totp", code="123456")
+        _k = _post(c, "/own/totp", code="123456")
     else:
         auth._check_pin = _broken
-        _k = _post(c, "/eigen/pin", username="otto", pin=PIN)
+        _k = _post(c, "/own/pin", username="otto", pin=PIN)
     _line = [v for v in _attempts(auth) if v[3] == kind]
     r.check(f"(g) {kind}: exception in the check → 500, the attempt is closed as a failed attempt, "
             "no series pre-booking is left over",
@@ -685,9 +685,9 @@ for kind in ("totp", "pin"):
 # every name of the bookkeeping is forbidden to them.
 # (Mutation probe: call `auth._check_password(...)` again in `login_submit` → red.)
 INNER = {"_check_password", "_check_pin", "_check_ldap", "_verify_totp", "_verify_recovery_code",
-          "_verify_user_pin", "_begin_attempt", "_versuch_gescheitert", "_versuch_zuruecknehmen",
-          "_record_login", "_rate_ok", "_serie_voll", "apply_factor", "complete_totp", "set_cookie",
-          "start_session", "_login_redirect_after", "_pin_kettenschritt"}
+          "_verify_user_pin", "_begin_attempt", "_attempt_failed", "_attempt_withdraw",
+          "_record_login", "_rate_ok", "_series_full", "apply_factor", "complete_totp", "set_cookie",
+          "start_session", "_login_redirect_after", "_pin_chainstep"}
 ROUTES = {"login_submit": "login_password", "pin_submit": "login_pin", "totp_submit": "login_totp"}
 
 
@@ -707,13 +707,13 @@ def _routes_findings(source_text):
 
 _router = (ROOT / "tinysesam" / "router.py").read_text(encoding="utf-8")
 _itself = {
-    "sauber": ("def login_submit(r):\n    erg = auth.login_password(r, 'a', 'b')\n    return erg.redirect()\n"
+    "clean": ("def login_submit(r):\n    erg = auth.login_password(r, 'a', 'b')\n    return erg.redirect()\n"
                "def pin_submit(r):\n    return auth.login_pin(r, '1')\n"
                "def totp_submit(r):\n    return auth.login_totp(r, '1')\n", []),
-    "doppelt": ("def login_submit(r):\n    auth._check_password('a', 'b')\n    return auth.login_password(r, 'a', 'b')\n"
+    "double": ("def login_submit(r):\n    auth._check_password('a', 'b')\n    return auth.login_password(r, 'a', 'b')\n"
                 "def pin_submit(r):\n    return auth.login_pin(r, '1')\n"
                 "def totp_submit(r):\n    return auth.login_totp(r, '1')\n", ["login_submit calls _check_password itself"]),
-    "vorbei": ("def login_submit(r):\n    return auth._begin_attempt('a', 'b', 'password')\n"
+    "over": ("def login_submit(r):\n    return auth._begin_attempt('a', 'b', 'password')\n"
                "def pin_submit(r):\n    return auth.login_pin(r, '1')\n", None),
 }
 for _probe, (_text, _expected) in _itself.items():
@@ -744,7 +744,7 @@ def _readme_example(file, head):
 for _file, _head in (("README.md", "## Your own login page\n"), ("i18n/README.de.md", "## Eigene Login-Seite\n")):
     _source = _readme_example(_file, _head)
     _db = str(Path(tempfile.mkdtemp()) / "app.db")
-    _ns: dict = {"__name__": "readme_beispiel"}
+    _ns: dict = {"__name__": "readme_example"}
     exec(compile(_source.replace('db_path="app.db"', f"db_path={_db!r}"), _file, "exec"), _ns)   # noqa: S102
     _auth, _app_r = _ns.get("auth"), _ns.get("app")
     _auth.create_user("quentin", password=PW)
@@ -752,7 +752,7 @@ for _file, _head in (("README.md", "## Your own login page\n"), ("i18n/README.de
     _c.get("/auth/login")
     _tok = _c.cookies.get(_auth.csrf_cookie_name)
     _limit = _auth.all_security()["max_login_attempts"]
-    _sequence = [_c.post("/login", data={"username": "quentin", "password": f"falsch-{i}", "_csrf": _tok},
+    _sequence = [_c.post("/login", data={"username": "quentin", "password": f"wrong-{i}", "_csrf": _tok},
                       follow_redirects=False).status_code for i in range(_limit + 1)]
     _locked = _c.post("/login", data={"username": "quentin", "password": PW, "_csrf": _tok},
                         follow_redirects=False)
@@ -790,7 +790,7 @@ with warnings.catch_warnings(record=True) as _w_old:
     warnings.simplefilter("always")
     auth.check_password = _fake
 _s_old = [_post(_client(app), path, username="fritz", password=PW).status_code
-          for path in ("/auth/login", "/eigen/login")]
+          for path in ("/auth/login", "/own/login")]
 r.check("(j) fake on the old name (`auth.check_password = fake`): exactly one RuntimeWarning, "
         "it names `_check_password` and points to the assignment; the fake is never called (303, 303)",
         [w.category for w in _w_old] == [RuntimeWarning] and "`_check_password`" in str(_w_old[0].message)
@@ -848,7 +848,7 @@ def _block(klass, type_name) -> tuple:
     methods = sorted(n for n, f in vars(klass).items()
                       if inspect.isfunction(f) and not n.startswith("_")
                       and inspect.signature(f).return_annotation in (type_name, type_name.__name__))
-    names = {("tinysesam", type_name.__name__), ("Modul", type_name.__module__)}
+    names = {("tinysesam", type_name.__name__), ("Module", type_name.__module__)}
     for n in methods:
         names.add((klass.__name__, n))
         names |= {(f"{klass.__name__}.{n}()", p) for p in inspect.signature(vars(klass)[n]).parameters
@@ -873,7 +873,7 @@ def _tier_findings(methods, type_name, storage) -> list:
         for n in names:
             tier = storage.get(area, {}).get(n, {}).get("tier")
             if tier != "A":
-                findings.append(f"{area}.{n}: Stufe {tier!r} statt 'A'")
+                findings.append(f"{area}.{n}: tier {tier!r} instead of 'A'")
     return findings
 
 
@@ -906,16 +906,18 @@ class ProbeKlasse:
 _probe_module = type(sys)("probe_module")
 sys.modules["probe_module"] = _probe_module
 exec(_probe_source, _probe_module.__dict__)
-ProbeResult, ProbeClass = _probe_module.__dict__["ProbeErgebnis"], _probe_module.__dict__["ProbeKlasse"]
+# The German names of the probe: its test data (named once, here, because the probe source is German on purpose).
+_PROBE_GERMAN = ("ProbeErgebnis", "ProbeKlasse", "anmelden_passkey", "kennung", "grund", "gesperrt")
+ProbeResult, ProbeClass = _probe_module.__dict__[_PROBE_GERMAN[0]], _probe_module.__dict__[_PROBE_GERMAN[1]]
 
 
 _p_methods, _p_names = _block(ProbeClass, ProbeResult)
 _p_hits = {name for where, name in _p_names if german_in(name)}
-assert _p_methods == ["anmelden_passkey", "login_other"], _p_methods
-assert _p_hits == {"anmelden_passkey", "kennung", "grund", "gesperrt", "ProbeErgebnis"}, _p_hits
+assert _p_methods == [_PROBE_GERMAN[2], "login_other"], _p_methods
+assert _p_hits == {_PROBE_GERMAN[2], _PROBE_GERMAN[3], _PROBE_GERMAN[4], _PROBE_GERMAN[5], _PROBE_GERMAN[0]}, _p_hits
 assert _tier_findings(["login_other"], ProbeResult,
                       {"TinySesam": {"login_other": {"tier": "B"}}}) [:1] == [
-    "TinySesam.login_other: Stufe 'B' statt 'A'"], "tier B must stand out"
+    "TinySesam.login_other: tier 'B' instead of 'A'"], "tier B must stand out"
 
 _methods_k, _names_k = _block(TinySesam, LoginResult)
 _storage_k = json.loads((ROOT / "tests" / "api_surface.json").read_text(encoding="utf-8"))

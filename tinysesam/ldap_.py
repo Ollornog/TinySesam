@@ -498,7 +498,7 @@ class LDAPClient:
                 conn.start_tls()
             if not conn.bind():
                 raise DirectoryNotReachable(
-                    f"LDAP {cfg.ldap_url}: Dienstkonto bzw. anonyme Suche abgewiesen "
+                    f"LDAP {cfg.ldap_url}: service account or anonymous search rejected "
                     f"({(conn.result or {}).get('description') or '?'})")
             attrs = _attribute_list(cfg)
             if cfg.ldap_user_dn_template:
@@ -514,7 +514,7 @@ class LDAPClient:
             elif code not in (0, 4, 32):
                 # 0 hits or end, 4 more than two hits (size_limit), 32 no such DN.
                 raise DirectoryNotReachable(
-                    f"LDAP {cfg.ldap_url}: Suche abgewiesen "
+                    f"LDAP {cfg.ldap_url}: search rejected "
                     f"({(conn.result or {}).get('description') or code})")
             conn.unbind()
             return [_info_from_entry(e, username, cfg) for e in entries]

@@ -14,7 +14,7 @@ applies only to this project.
 # a missing prerequisite, not a failure.
 import shutil  # noqa: E402
 from voraussetzung import braucht  # noqa: E402
-braucht(shutil.which("git"), "git fehlt")
+braucht(shutil.which("git"), "git missing")
 # git on the PATH is not enough: Measurement is against `git ls-files`, and that needs a
 # repo. There is none in the unpacked sdist — decline there instead of turning red.
 import pathlib  # noqa: E402
@@ -160,17 +160,17 @@ _stale = [f"{d}:{n}: {name} → {unknown}" for d in _live_docs for n, name, unkn
 assert not _stale, "the docs name Python names that no longer exist:\n  " + "\n  ".join(_stale[:8])
 # Self-test and mutations: a renamed name is found; the same name inside history is not; a real doc with a stale name is red.
 _probe_words = {"auth", "store", "write_probe", "Store", "deletion_guard", "set_disabled"}
-assert stale_doc_names("Use `auth.store.schreibprobe()` here.\n", _probe_words) == [(1, "auth.store.schreibprobe", ["schreibprobe"])]
-assert stale_doc_names("| Row | `Store.loeschsperre` |\n", _probe_words)
-assert stale_doc_names("```python\nauth.store.write_probe()\nauth.store.schreibprobe()\n```\n", _probe_words)
+assert stale_doc_names("Use `auth.store.old_write_probe()` here.\n", _probe_words) == [(1, "auth.store.old_write_probe", ["old_write_probe"])]
+assert stale_doc_names("| Row | `Store.old_deletion_guard` |\n", _probe_words)
+assert stale_doc_names("```python\nauth.store.write_probe()\nauth.store.old_write_probe()\n```\n", _probe_words)
 assert not stale_doc_names("Use `auth.store.write_probe()` and `Store.deletion_guard`, see `auth.example.com`.\n", _probe_words)
-assert not stale_doc_names("Up to 0.24.x `auth.store.schreibprobe()`, now `auth.store.write_probe()`.\n", _probe_words)
-assert not stale_doc_names("Renamed: `auth.store.schreibprobe()` → `auth.store.write_probe()`.\n", _probe_words)
-assert not stale_doc_names("## Rollback to 0.24.x\n\nSee `Store.loeschsperre`.\n\n## Next\n", _probe_words)
-assert stale_doc_names("## Rollback to 0.24.x\n\n## Next\n\nSee `Store.loeschsperre`.\n", _probe_words), \
+assert not stale_doc_names("Up to 0.24.x `auth.store.old_write_probe()`, now `auth.store.write_probe()`.\n", _probe_words)
+assert not stale_doc_names("Renamed: `auth.store.old_write_probe()` → `auth.store.write_probe()`.\n", _probe_words)
+assert not stale_doc_names("## Rollback to 0.24.x\n\nSee `Store.old_deletion_guard`.\n\n## Next\n", _probe_words)
+assert stale_doc_names("## Rollback to 0.24.x\n\n## Next\n\nSee `Store.old_deletion_guard`.\n", _probe_words), \
     "the exemption of a rollback section must end with the section"
-for _old_text, _new_text in (("`auth.store.write_probe()`", "`auth.store.schreibprobe()`"),
-                             ("`Store.deletion_guard`", "`Store.loeschsperre`")):
+for _old_text, _new_text in (("`auth.store.write_probe()`", "`auth.store.old_write_probe()`"),
+                             ("`Store.deletion_guard`", "`Store.old_deletion_guard`")):
     assert _old_text in operation, f"mutation anchor {_old_text} not in OPERATIONS.md"
     assert stale_doc_names(operation.replace(_old_text, _new_text, 1), _package_words), \
         f"a stale name in OPERATIONS.md ({_new_text}) goes unnoticed"
@@ -1016,10 +1016,10 @@ _run = re.sub(r"\\\n\s*", " ", _df)
 _chain = next((z for z in _run.splitlines() if "-r requirements.txt" in z), "")
 _tiers = [s.strip() for s in _chain.split("&&")]
 _pos = {n: next((i for i, s in enumerate(_tiers) if re.search(m, s)), -1) for n, m in (
-    ("sperrliste", r"--require-hashes"), ("eigen", r"--no-index"), ("check", r"/pip check$"),
+    ("blocklist", r"--require-hashes"), ("own", r"--no-index"), ("check", r"/pip check$"),
     ("import", r"python -c \"import tinysesam\.gateway\"$"), ("setuptools", r"uninstall"))}
 assert -1 not in _pos.values(), f"Dockerfile: step missing in the installation RUN: {_pos}"
-assert _pos["sperrliste"] < _pos["eigen"] < _pos["check"] < _pos["import"] < _pos["setuptools"], \
+assert _pos["blocklist"] < _pos["own"] < _pos["check"] < _pos["import"] < _pos["setuptools"], \
     f"Dockerfile: `pip check`/import not after the installation and before the cleanup: {_pos}"
 _audit_execution = _command_list(_code(read(".github/workflows/audit.yml")))
 for _m in (rf"pip\"? install --require-hashes --no-deps -r {re.escape(BLOCKLIST)}$",
@@ -1112,7 +1112,7 @@ def _version(g: str) -> tuple:
     return tuple(int(t) for t in re.findall(r"\d+", g))
 assert set(_one) == set(_should), (f"{INPUT} names different packages than pyproject (dependencies + gateway): "
                                  f"only there {sorted(set(_one) - set(_should))}, only in pyproject {sorted(set(_should) - set(_one))}")
-_to_deep = [f"{p}: {_one[p] or 'ohne Grenze'} < {_should[p]}" for p in _should
+_to_deep = [f"{p}: {_one[p] or 'without Limit'} < {_should[p]}" for p in _should
             if _should[p] and (not _one[p] or _version(_one[p]) < _version(_should[p]))]
 assert not _to_deep, f"{INPUT}: lower bound below that of the package: {_to_deep}"
 # The command line itself, not just any comment: Dependabot does look for the switches in the whole text, but only this
@@ -1122,8 +1122,8 @@ for _switch in ("uv pip compile requirements.in", "--universal", "--generate-has
                   f"--python-version {re.search(r'^FROM python:(3\.\d+)', dockerfile, re.M).group(1)}",
                   "--output-file requirements.txt"):
     assert _switch in _head, f"{BLOCKLIST}: header without `{_switch}` — Dependabot (uv) would otherwise regenerate differently"
-assert not os.path.exists(os.path.join(ROOT, "deploy/gateway/bau.in")), \
-    "deploy/gateway/bau.in is back — setuptools is in requirements.in (one input for Dependabot)"
+assert not os.path.exists(os.path.join(ROOT, "deploy/gateway/build.in")), \
+    "deploy/gateway/build.in is back — setuptools is in requirements.in (one input for Dependabot)"
 print(f"  Gateway image: {len(_lock)} packages from hashed lock list, covers pyproject, no pip upgrade, "
       f"input = pyproject")
 
@@ -1192,7 +1192,7 @@ _anchor = re.search(r"^x-hardening: &hardening\n((?:  .*\n)+)", "\n".join(_cz) +
 assert _anchor, "compose: the hardening anchor x-hardening is missing"
 for necessary in ("read_only: true", "cap_drop: [ALL]", 'security_opt: ["no-new-privileges:true"]'):
     assert necessary in _anchor.group(1), f"compose: x-hardening without `{necessary}`"
-_services = re.search(r"^services:\n(.*?)^\S", "\n".join(_cz) + "\nENDE", re.M | re.S).group(1)
+_services = re.search(r"^services:\n(.*?)^\S", "\n".join(_cz) + "\nEND", re.M | re.S).group(1)
 _names = re.findall(r"^  ([a-z0-9_-]+):\s*$", _services, re.M)
 _blocks = re.split(r"^  [a-z0-9_-]+:\s*$", _services, flags=re.M)[1:]
 assert len(_names) == len(_blocks) >= 2, _names
@@ -1279,9 +1279,9 @@ print(f"  Scorecard: {len(_scorecard)} achieved criteria guarded ({', '.join(sor
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
 import _release  # noqa: E402
 _probe = ("x@v0.19.0\ntinysesam:v0.19.0\n/v0.19.0/tinysesam-0.19.0-py3\n==0.19.0\n"
-          'version = "0.19.0"\n__version__ = "0.19.0"\nBis 0.19.0 galt\n0.19.0 took it\nv0.19.01')
+          'version = "0.19.0"\n__version__ = "0.19.0"\nUntil 0.19.0 applied\n0.19.0 took it\nv0.19.01')
 _new, _n = _release.replace_pins(_probe, "0.19.0", "0.20.0")
-assert _n == 7 and "Bis 0.19.0 galt" in _new and "0.19.0 took it" in _new and "v0.19.01" in _new, (_n, _new)
+assert _n == 7 and "Until 0.19.0 applied" in _new and "0.19.0 took it" in _new and "v0.19.01" in _new, (_n, _new)
 print("  Release script replaces only pins (7 forms), narrative text stays")
 
 # ---------- Docs travel along: the changelog knows the current state ----------
@@ -1347,7 +1347,7 @@ for path in FILES:
         short = name.split(".")[-1]
         if _re.search(rf"^\s*import {_re.escape(name)}\b", text, _re.M) or \
            _re.search(rf"^\s*from {_re.escape(name.rsplit('.', 1)[0])} import .*\b{short}\b", text, _re.M):
-            to_new.append(f"{path}: {name} gibt es erst ab Python {start_from[0]}.{start_from[1]}")
+            to_new.append(f"{path}: {name} is only available from Python {start_from[0]}.{start_from[1]}")
 assert not to_new, ("Promised from Python %d.%d onwards:\n  " % _min) + "\n  ".join(to_new)
 print(f"  no standard library beyond Python {_min[0]}.{_min[1]} ({len(TO_NEW)} patterns)")
 
@@ -1624,7 +1624,7 @@ try:
                     raise AssertionError(
                         f"{_file}, Block {_nr}: `{_source.splitlines()[0]}…` cannot even be "
                         f"evaluated — {type(_e).__name__}: {_e}")
-                _cfg.db_path = os.path.join(_tmp.mkdtemp(), "beispiel.db")
+                _cfg.db_path = os.path.join(_tmp.mkdtemp(), "example.db")
                 try:
                     with _cl.redirect_stderr(_io.StringIO()):     # first-admin token to the operator
                         TinySesam(_cfg)
@@ -1651,7 +1651,7 @@ for _file, _text in _readmes.items():
             _skipped.append(f"{_file} Block {_nr}: " + ", ".join(_missing))
             continue
         _where = _tmp.mkdtemp()
-        _script = os.path.join(_where, "beispiel.py")
+        _script = os.path.join(_where, "example.py")
         with open(_script, "w", encoding="utf-8") as _fh:
             _fh.write(_block)
         _env = dict(os.environ, PYTHONPATH=ROOT + os.pathsep + os.environ.get("PYTHONPATH", ""))

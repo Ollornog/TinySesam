@@ -26,7 +26,7 @@ auth = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db, rp_n
                                  # F-06 itself (old token dead immediately) — the grace period (A-6)
                                  # has its own checks below.
                                  session_rotation_grace_sec=0))
-auth.ensure_admin("admin", "geheim123")
+auth.ensure_admin("admin", "dummy123")
 app = FastAPI()
 app.include_router(auth.router())
 
@@ -54,7 +54,7 @@ def stale():
 
 
 # ---------- fresh after login → sudo reachable ----------
-c.post("/auth/login", data={"username": "admin", "password": "geheim123", "next": "/"}, follow_redirects=False)
+c.post("/auth/login", data={"username": "admin", "password": "dummy123", "next": "/"}, follow_redirects=False)
 assert c.get("/normal", headers=JSON).status_code == 200
 assert c.get("/sudo", headers=JSON).status_code == 200
 ok("fresh session: require_user AND require(mfa=True) reachable")
@@ -74,8 +74,8 @@ ok("expired freshness: browser → 307 /auth/reauth?next=/sudo")
 # ---------- Reauth via password (user without TOTP) → fresh again ----------
 r = c.get("/auth/reauth", follow_redirects=False)
 assert r.status_code == 200 and "Passwort" in r.text
-assert c.post("/auth/reauth", data={"password": "falsch", "next": "/sudo"}).status_code == 401
-r = c.post("/auth/reauth", data={"password": "geheim123", "next": "/sudo"}, follow_redirects=False)
+assert c.post("/auth/reauth", data={"password": "wrong", "next": "/sudo"}).status_code == 401
+r = c.post("/auth/reauth", data={"password": "dummy123", "next": "/sudo"}, follow_redirects=False)
 assert r.status_code == 303 and r.headers["location"] == "/sudo"
 assert c.get("/sudo", headers=JSON).status_code == 200
 ok("reauth via password → sudo reachable again")
@@ -86,7 +86,7 @@ ok("reauth via password → sudo reachable again")
 stale()
 before = c.cookies.get("tinysesam_session")
 line_before = auth.store.get_session(before)
-r = c.post("/auth/reauth", data={"password": "geheim123", "next": "/sudo"}, follow_redirects=False)
+r = c.post("/auth/reauth", data={"password": "dummy123", "next": "/sudo"}, follow_redirects=False)
 assert r.status_code == 303 and "tinysesam_session=" in r.headers.get("set-cookie", ""), r.headers
 afterwards = c.cookies.get("tinysesam_session")
 assert afterwards and afterwards != before, "reauth must issue a new token"
@@ -104,7 +104,7 @@ ok("F-06: reauth rotates the token (old one dead, lifetime and created_at unchan
 # an already full session): new token, old session gone, no second one alongside.
 before = c.cookies.get("tinysesam_session")
 count = len(auth.store.list_sessions(uid))
-r = c.post("/auth/login", data={"username": "admin", "password": "geheim123", "next": "/"},
+r = c.post("/auth/login", data={"username": "admin", "password": "dummy123", "next": "/"},
            follow_redirects=False)
 assert r.status_code == 303 and c.cookies.get("tinysesam_session") != before
 assert auth.store.get_session(before) is None and len(auth.store.list_sessions(uid)) == count
@@ -119,7 +119,7 @@ db_t = os.path.join(tempfile.mkdtemp(), "t.db")
 auth_t = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db_t, passkey_enabled=False,
                                    oidc_enabled=False, cookie_secure=False, stepup_max_age_sec=900,
                                    session_rotation_grace_sec=0))
-uid_t = auth_t.create_user("eva", password="Eva-Geheim-2026")
+uid_t = auth_t.create_user("eva", password="Eva-Secret-2026")
 assert auth_t.totp_confirm(uid_t, pyotp.TOTP(auth_t.totp_begin(uid_t)["secret"]).now())
 codes_t = auth_t.generate_recovery_codes(uid_t)   # two codes without waiting for the next TOTP window
 app_t = FastAPI()
@@ -132,7 +132,7 @@ def sudo_t(u=Depends(auth_t.require(mfa=True))):
 
 
 c_t = TestClient(app_t)
-c_t.post("/auth/login", data={"username": "eva", "password": "Eva-Geheim-2026", "next": "/"},
+c_t.post("/auth/login", data={"username": "eva", "password": "Eva-Secret-2026", "next": "/"},
          follow_redirects=False)
 assert c_t.post("/auth/totp", data={"code": codes_t[0], "next": "/"}, follow_redirects=False
                 ).status_code == 303
@@ -167,7 +167,7 @@ ok("F-06: step-up via /auth/totp on a full session rotates the token (old one de
 from fastapi import Request as _Req, Response as _Resp   # noqa: E402
 
 
-@app_t.post("/eigen/stepup")
+@app_t.post("/own/stepup")
 def own_stepup(request: _Req, code: str = ""):
     response = _Resp()
     tok = request.cookies.get(auth_t.session_cookie_name)
@@ -184,10 +184,10 @@ auth_t.store._exec("UPDATE session SET mfa_at=? WHERE token_hash=?",
                    (int(time.time()) - 100000, auth_t.store.session_hash(before)))
 assert c_t.get("/sudo", headers=JSON).status_code == 403
 codes_t2 = auth_t.generate_recovery_codes(uid_t)
-assert c_t.post("/eigen/stepup", params={"code": codes_t2[0]}).status_code == 200
+assert c_t.post("/own/stepup", params={"code": codes_t2[0]}).status_code == 200
 assert c_t.cookies.get("tinysesam_session") != before and auth_t.store.get_session(before) is None
 assert c_t.get("/sudo", headers=JSON).status_code == 200, "own step-up following the docs pattern signs out"
-ok("F-06: own step-up route with `neu = complete_totp(tok); set_cookie(resp, neu)` stays signed in")
+ok("F-06: own step-up route with `new = complete_totp(tok); set_cookie(resp, new)` stays signed in")
 os.remove(db_t)
 
 # On step-up via /auth/totp TinySesam rotates the session token but not the CSRF token —
@@ -198,7 +198,7 @@ db_x = os.path.join(tempfile.mkdtemp(), "t.db")
 auth_x = TinySesam(TinySesamConfig(lang="de", db_path=db_x, passkey_enabled=False, oidc_enabled=False,
                                    cookie_secure=False, stepup_max_age_sec=900,
                                    session_rotation_grace_sec=0))
-uid_x = auth_x.create_user("eva", password="Eva-Geheim-2026")
+uid_x = auth_x.create_user("eva", password="Eva-Secret-2026")
 assert auth_x.totp_confirm(uid_x, pyotp.TOTP(auth_x.totp_begin(uid_x)["secret"]).now())
 codes_x = auth_x.generate_recovery_codes(uid_x)
 app_x = FastAPI()
@@ -216,7 +216,7 @@ def _assigned(response):
 
 c_x = TestClient(app_x)
 _slot = re.search(r"name=_csrf value='([^']+)'", c_x.get("/auth/login").text).group(1)
-c_x.post("/auth/login", data={"username": "eva", "password": "Eva-Geheim-2026", "next": "/",
+c_x.post("/auth/login", data={"username": "eva", "password": "Eva-Secret-2026", "next": "/",
                               "_csrf": _slot}, follow_redirects=False)
 r = c_x.post("/auth/totp", data={"code": codes_x[0], "next": "/", "_csrf": c_x.cookies.get("tinysesam_csrf")},
              follow_redirects=False)
@@ -250,7 +250,7 @@ auth.totp_confirm(uid, pyotp.TOTP(secret).at(time.time() - 30))
 auth.cfg.admin_require_mfa = True
 c3 = TestClient(app)
 # Login → TOTP step → fully logged in (fresh)
-c3.post("/auth/login", data={"username": "admin", "password": "geheim123", "next": "/"}, follow_redirects=False)
+c3.post("/auth/login", data={"username": "admin", "password": "dummy123", "next": "/"}, follow_redirects=False)
 c3.post("/auth/totp", data={"code": pyotp.TOTP(secret).now(), "next": "/"}, follow_redirects=False)
 r = c3.get("/auth/admin", headers={"Accept": "text/html"}, follow_redirects=False)
 assert r.status_code == 200, r.status_code
@@ -281,7 +281,7 @@ auth2 = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db2, rp
                                   cookie_secure=False, oidc_enabled=False, pin_enabled=True,
                                   apikey_enabled=True, passkey_enabled=HAS_PASSKEY,
                                   stepup_max_age_sec=900))
-uid2 = auth2.create_user("opfer", password="geheim123")
+uid2 = auth2.create_user("victim", password="dummy123")
 sec2 = auth2.totp_begin(uid2)["secret"]
 assert auth2.totp_confirm(uid2, pyotp.TOTP(sec2).at(time.time() - 30))
 auth2.set_pin(uid2, "2468")
@@ -321,7 +321,7 @@ def factors(a, uid):
 
 
 c4 = TestClient(app2)
-c4.post("/auth/login", data={"username": "opfer", "password": "geheim123", "next": "/"},
+c4.post("/auth/login", data={"username": "victim", "password": "dummy123", "next": "/"},
         follow_redirects=False)
 c4.post("/auth/totp", data={"code": pyotp.TOTP(sec2).now(), "next": "/"}, follow_redirects=False)
 assert c4.get("/sudo2", headers=JSON).status_code == 200
@@ -365,7 +365,7 @@ db3 = os.path.join(tempfile.mkdtemp(), "t.db")
 auth3 = TinySesam(TinySesamConfig(lang="de", db_path=db3, rp_name="Test", cookie_secure=False,
                                   oidc_enabled=False, pin_enabled=True, apikey_enabled=True,
                                   passkey_enabled=HAS_PASSKEY))
-uid3 = auth3.create_user("opfer", password="geheim123")
+uid3 = auth3.create_user("victim", password="dummy123")
 sec3 = auth3.totp_begin(uid3)["secret"]
 assert auth3.totp_confirm(uid3, pyotp.TOTP(sec3).at(time.time() - 30))
 auth3.set_pin(uid3, "1357")
@@ -417,7 +417,7 @@ db4 = os.path.join(tempfile.mkdtemp(), "t.db")
 auth4 = TinySesam(TinySesamConfig(lang="de", db_path=db4, rp_name="Test", cookie_secure=False,
                                   oidc_enabled=False, pin_enabled=True, apikey_enabled=True,
                                   passkey_enabled=HAS_PASSKEY))
-uid4 = auth4.create_user("opfer", password="geheim123")      # NO TOTP, NO PIN
+uid4 = auth4.create_user("victim", password="dummy123")      # NO TOTP, NO PIN
 app4 = FastAPI()
 app4.include_router(auth4.router())
 c6 = TestClient(app4)
@@ -450,7 +450,7 @@ ok("API key: CREATION too (totp/setup" + (", passkey/register" if HAS_PASSKEY el
 # And the legitimate path of the same account keeps working — otherwise the latch would be a dead end.
 c7 = TestClient(app4)
 c7.get("/auth/login", headers={"Accept": "text/html"})     # fetches the CSRF cookie
-assert c7.post("/auth/login", data={"username": "opfer", "password": "geheim123", "next": "/",
+assert c7.post("/auth/login", data={"username": "victim", "password": "dummy123", "next": "/",
                                     "_csrf": c7.cookies.get("tinysesam_csrf") or ""},
                follow_redirects=False).status_code == 303
 page_html = c7.get("/auth/totp/setup", headers={"Accept": "text/html"})
@@ -480,9 +480,9 @@ ok("session of the same account: setting up TOTP works unchanged (secret, confir
 db5 = os.path.join(tempfile.mkdtemp(), "t.db")
 auth5 = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db5, passkey_enabled=False,
                                   oidc_enabled=False, cookie_secure=False, stepup_max_age_sec=900))
-PW_ANNA, PW_PROCESS = "Anna-Passwort-2026", "Bea-Passwort-2026"      # literals: not next to `password=`
+PW_ANNA, PW_PROCESS = "Anna-Password-2026", "Bee-Password-2026"      # literals: not next to `password=`
 auth5.create_user("anna", PW_ANNA)
-auth5.create_user("bea", PW_PROCESS)
+auth5.create_user("bee", PW_PROCESS)
 app5 = FastAPI()
 app5.include_router(auth5.router())
 c8 = TestClient(app5)
@@ -490,7 +490,7 @@ assert c8.post("/auth/login", data={"username": "anna", "password": PW_ANNA, "ne
                follow_redirects=False).status_code == 303
 LIMIT_R = auth5._sec("reauth_max_attempts")
 for i in range(LIMIT_R):
-    r = c8.post("/auth/reauth", data={"password": f"tippfehler{i}", "next": "/"})
+    r = c8.post("/auth/reauth", data={"password": f"typo{i}", "next": "/"})
     assert r.status_code == 401, (i, r.status_code)
 assert auth5.store.count_fails(0, username="anna", method="reauth") >= LIMIT_R, \
     "the failed attempts were not recorded at all — then the test measures nothing"
@@ -512,9 +512,9 @@ ok("…the confirmation itself is locked after reauth_max_attempts (429)")
 
 # (c) No IP dimension: a second user behind the same address can still confirm.
 c9 = TestClient(app5)
-assert c9.post("/auth/login", data={"username": "bea", "password": PW_PROCESS, "next": "/"},
+assert c9.post("/auth/login", data={"username": "bee", "password": PW_PROCESS, "next": "/"},
                follow_redirects=False).status_code == 303
-assert not auth5._is_reauth_locked("bea", "testclient"), \
+assert not auth5._is_reauth_locked("bee", "testclient"), \
     "a colleague's failed attempts lock an uninvolved person's confirmation behind NAT"
 r = c9.post("/auth/reauth", data={"password": PW_PROCESS, "next": "/"}, follow_redirects=False)
 assert r.status_code == 303, f"uninvolved person's confirmation locked: {r.status_code}"
@@ -542,7 +542,7 @@ auth6 = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db6, rp
 app6 = FastAPI()
 router6 = auth6.router()
 app6.include_router(router6)
-uid6 = auth6.create_user("selbst", password="Geheim12345!")
+uid6 = auth6.create_user("self", password="Secret12345!")
 auth6.set_pin(uid6, "471193")
 _sec6 = auth6.totp_begin(uid6)["secret"]
 assert auth6.totp_confirm(uid6, pyotp.TOTP(_sec6).now())
@@ -598,11 +598,11 @@ def _stale_client():
 
 
 _payload = {"/auth/pin/set": {"json": {"pin": "999999"}}, "/auth/totp/setup": {"data": {"code": "000000"}},
-             "/auth/password": {"json": {"current": "falsch-falsch", "new": "Neu1234567890!"}},
+             "/auth/password": {"json": {"current": "wrong-wrong", "new": "New1234567890!"}},
              "/auth/sessions/revoke": {"json": {"scope": "others"}},
-             "/auth/apikeys": {"json": {"name": "neu"}},
-             "/auth/account/username": {"json": {"username": "anders"}},
-             "/auth/account/email": {"json": {"email": "anders@example.com"}}}
+             "/auth/apikeys": {"json": {"name": "new"}},
+             "/auth/account/username": {"json": {"username": "different"}},
+             "/auth/account/email": {"json": {"email": "different@example.com"}}}
 for path in sorted(STEPUP & _post6):
     r = _stale_client().post(path, headers=JSON, **_payload.get(path, {}))
     assert r.status_code == 403 and r.headers.get("X-TinySesam-Reauth"), \
@@ -611,7 +611,7 @@ for path in sorted(ONLY_SESSION & _post6):
     r = TestClient(app6).post(path, headers={**JSON, "X-API-Key": key6}, **_payload.get(path, {}))
     assert r.status_code in (401, 403), f"{path}: API key sets up a factor ({r.status_code})"
 r = _stale_client().post("/auth/password", headers=JSON, **_payload["/auth/password"])
-assert r.status_code == 403 and auth6._check_password("selbst", "Geheim12345!"), \
+assert r.status_code == 403 and auth6._check_password("self", "Secret12345!"), \
     f"/auth/password without the old password: {r.status_code}"
 for path in sorted(set(OPEN) & _post6):
     destination = path.replace("{key_id}", str(auth6.list_api_keys(uid6)[0]["id"]))
@@ -633,7 +633,7 @@ auth6 = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db6, pa
                                   oidc_enabled=False, cookie_secure=False, magiclink_enabled=True,
                                   pin_enabled=True, base_url="https://auth.example.com"))
 auth6.set_mailer(lambda *a, **k: None)
-auth6.ensure_admin("admin", "geheim123")
+auth6.ensure_admin("admin", "dummy123")
 uid6 = auth6.store.get_user_by_name("admin")["id"]
 auth6.set_pin(uid6, "24680")
 app6 = FastAPI()
@@ -648,7 +648,7 @@ def _session_cookie(response):
 
 for remember in ("", "on"):
     c6 = TestClient(app6)
-    r = c6.post("/auth/login", data={"username": "admin", "password": "geheim123", "next": "/",
+    r = c6.post("/auth/login", data={"username": "admin", "password": "dummy123", "next": "/",
                                      "remember": remember}, follow_redirects=False)
     assert ("max-age" in _session_cookie(r)) == bool(remember), _session_cookie(r)
     before = c6.cookies.get("tinysesam_session")
@@ -688,10 +688,10 @@ os.remove(db6)
 db7 = os.path.join(tempfile.mkdtemp(), "t.db")
 auth7 = TinySesam(TinySesamConfig(lang="de", db_path=db7, rp_name="Test", cookie_secure=False,
                                   oidc_enabled=False, passkey_enabled=False, apikey_enabled=True))
-auth7.ensure_admin("chefin", "Geheim-Admin-1")
-uid7_adm = auth7.store.get_user_by_name("chefin")["id"]
-uid7_victim = auth7.create_user("opfer", password="Geheim-Opfer-1")
-uid7_perpetrator = auth7.create_user("taeter", password="Geheim-Taeter-1")
+auth7.ensure_admin("boss", "Secret-Admin-1")
+uid7_adm = auth7.store.get_user_by_name("boss")["id"]
+uid7_victim = auth7.create_user("victim", password="Secret-Victim-1")
+uid7_perpetrator = auth7.create_user("culprit", password="Secret-Thief-12")
 _secret_text7 = {}
 for _u7 in (uid7_adm, uid7_victim):
     _secret_text7[_u7] = auth7.totp_begin(_u7)["secret"]
@@ -724,16 +724,16 @@ def _reauth_with_key(cl, key, password):
 
 
 # (a) foreign account
-c7 = _half_signed_in("opfer", "Geheim-Opfer-1")
-r = _reauth_with_key(c7, key7_perpetrator, "Geheim-Taeter-1")
+c7 = _half_signed_in("victim", "Secret-Victim-1")
+r = _reauth_with_key(c7, key7_perpetrator, "Secret-Thief-12")
 assert r.status_code == 403 and r.json().get("detail") == auth7.t("api.stepup_session"), \
     (r.status_code, r.text[:120])
 s = auth7.store.get_session(c7.cookies.get("tinysesam_session"))
 assert s and not s["mfa_ok"], "the victim's half session was made full via a foreign key"
 assert c7.get("/auth/me", headers=JSON).status_code == 401, "victim signed in without TOTP"
 # (b) own account: key + password do not replace the second factor
-c7 = _half_signed_in("chefin", "Geheim-Admin-1")
-r = _reauth_with_key(c7, key7_adm, "Geheim-Admin-1")
+c7 = _half_signed_in("boss", "Secret-Admin-1")
+r = _reauth_with_key(c7, key7_adm, "Secret-Admin-1")
 assert r.status_code == 403 and r.json().get("detail") == auth7.t("api.stepup_session"), \
     (r.status_code, r.text[:120])
 s = auth7.store.get_session(c7.cookies.get("tinysesam_session"))
@@ -748,7 +748,7 @@ assert r.status_code == 403 and r.json().get("detail") == auth7.t("api.stepup_se
 ok("0.20.1: /auth/reauth with API key → 403, a half session (foreign or own) stays half")
 
 # The legitimate route stays open: full session, freshness expired, confirmation via TOTP.
-c7 = _half_signed_in("opfer", "Geheim-Opfer-1")
+c7 = _half_signed_in("victim", "Secret-Victim-1")
 _totp7 = pyotp.TOTP(_secret_text7[uid7_victim])
 r = c7.post("/auth/totp", data={"code": _totp7.now(), "next": "/",
                                 "_csrf": c7.cookies.get("tinysesam_csrf") or ""},
@@ -781,10 +781,10 @@ db8 = os.path.join(tempfile.mkdtemp(), "t.db")
 auth8 = TinySesam(TinySesamConfig(lang="de", db_path=db8, rp_name="Test", cookie_secure=False,
                                   oidc_enabled=False, passkey_enabled=False, apikey_enabled=True,
                                   pin_enabled=True, pin_login=False, stepup_max_age_sec=900))
-auth8.ensure_admin("chef", "Geheim-Chef-2026")
+auth8.ensure_admin("chef", "Secret-Chief-2026")
 uid8 = auth8.store.get_user_by_name("chef")["id"]
 auth8.set_pin(uid8, "4711")
-uid8_victim = auth8.create_user("opfer", password="Geheim-Opfer-8")
+uid8_victim = auth8.create_user("victim", password="Secret-Victim-8")
 _secret_text8 = auth8.totp_begin(uid8_victim)["secret"]
 assert auth8.totp_confirm(uid8_victim, pyotp.TOTP(_secret_text8).at(time.time() - 30))
 KEY8 = {"X-API-Key": auth8.create_api_key(uid8, name="ci", kind="automation")["key"]}
@@ -816,7 +816,7 @@ ok("0.20.1: /auth/pin with automation key + PIN at pin_login=False → 404, no s
 # (d) Half session of another in the cookie + own key + own PIN: the cookie stays as it was.
 c8d = TestClient(app8)
 c8d.get("/auth/login", headers={"Accept": "text/html"})     # fetches the CSRF cookie
-r = c8d.post("/auth/login", data={"username": "opfer", "password": "Geheim-Opfer-8", "next": "/",
+r = c8d.post("/auth/login", data={"username": "victim", "password": "Secret-Victim-8", "next": "/",
                                   "_csrf": c8d.cookies.get("tinysesam_csrf") or ""},
              follow_redirects=False)
 assert r.status_code == 303 and r.headers["location"].startswith("/auth/totp"), r.headers.get("location")
@@ -840,7 +840,7 @@ ok("0.20.1: half foreign session (next step TOTP) + key + PIN → 404, cookie an
 # (e) The legitimate route stays: full session, PIN as additional factor at pin_login=False.
 c8e = TestClient(app8)
 c8e.get("/auth/login", headers={"Accept": "text/html"})
-assert c8e.post("/auth/login", data={"username": "chef", "password": "Geheim-Chef-2026", "next": "/",
+assert c8e.post("/auth/login", data={"username": "chef", "password": "Secret-Chief-2026", "next": "/",
                                      "_csrf": c8e.cookies.get("tinysesam_csrf") or ""},
                 follow_redirects=False).status_code == 303
 assert "name=pin" in c8e.get("/auth/pin", headers={"Accept": "text/html"}).text
@@ -949,23 +949,23 @@ def _session_effect(source_text, file="?"):
 # Self-test: the guard must see the class in every form it promises — otherwise its
 # green says nothing (a switched-off helper tracking would otherwise go unnoticed).
 _PROBES = {
-    "direkt": ("def r(request):\n    me = auth.current_user(request)\n"
+    "direct": ("def r(request):\n    me = auth.current_user(request)\n"
                "    auth.apply_factor(request, me['id'], 'pin')\n", True),
-    "helfer": ("def _h(request):\n    return auth.current_user(request)\n"
+    "helper": ("def _h(request):\n    return auth.current_user(request)\n"
                "def r(request, resp):\n    u = _h(request)\n    auth.rotate_session(request, resp)\n", True),
     "depends": ("def r(request, u=Depends(auth.require_user)):\n    auth.logout(request, resp)\n", True),
-    "sauber": ("def r(request):\n    me = auth.session_user(request)\n"
+    "clean": ("def r(request):\n    me = auth.session_user(request)\n"
                "    auth.apply_factor(request, me['id'], 'pin')\n", False),
     "uebergeben": ("async def r(request):\n    auth.current_user(request)\n"
                    "    return await run_in_threadpool(auth.change_password, request, 'a', 'b')\n", True),
-    "methode": ("class T:\n    def _h(self, request):\n        return self.current_user(request)\n"
+    "method": ("class T:\n    def _h(self, request):\n        return self.current_user(request)\n"
                 "    def c(self, request):\n        u = self._h(request)\n"
                 "        self.store.rotate_session(u, 1)\n", True),
-    "senke_selbst": ("class T:\n    def change_password(self, request):\n"
+    "sink_self": ("class T:\n    def change_password(self, request):\n"
                      "        u = self.current_user(request)\n        self.store.delete_user_sessions_except(u)\n",
                      True),
-    "verschachtelt": ("def aussen():\n    auth.current_user(x)\n"
-                      "    def innen(request):\n        auth.complete_totp(t)\n", False),
+    "nested": ("def outside():\n    auth.current_user(x)\n"
+                      "    def inside(request):\n        auth.complete_totp(t)\n", False),
 }
 for _probe, (_text, _expected_red) in _PROBES.items():
     assert bool(_session_effect(_text)[1]) == _expected_red, f"guard self-test '{_probe}' wrong"
@@ -995,7 +995,7 @@ db_g = os.path.join(tempfile.mkdtemp(), "g.db")
 auth_g = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db_g, passkey_enabled=False,
                                    oidc_enabled=False, cookie_secure=False, stepup_max_age_sec=900))
 assert auth_g.cfg.session_rotation_grace_sec == 10, "default of the grace period is 10 seconds"
-uid_g = auth_g.create_user("gina", password="Gin-Geheim-2026")
+uid_g = auth_g.create_user("gina", password="Gin-Secret-2026")
 app_g = FastAPI()
 app_g.include_router(auth_g.router())
 
@@ -1011,10 +1011,10 @@ def sudo_g(u=Depends(auth_g.require(mfa=True))):
 
 
 cg = TestClient(app_g)
-cg.post("/auth/login", data={"username": "gina", "password": "Gin-Geheim-2026"}, follow_redirects=False)
+cg.post("/auth/login", data={"username": "gina", "password": "Gin-Secret-2026"}, follow_redirects=False)
 old_g = cg.cookies.get("tinysesam_session")
 auth_g.store._exec("UPDATE session SET mfa_at=?", (int(time.time()) - 100000,))
-cg.post("/auth/reauth", data={"password": "Gin-Geheim-2026", "next": "/sudo"}, follow_redirects=False)
+cg.post("/auth/reauth", data={"password": "Gin-Secret-2026", "next": "/sudo"}, follow_redirects=False)
 new_g = cg.cookies.get("tinysesam_session")
 assert new_g and new_g != old_g and cg.get("/sudo", headers=JSON).status_code == 200
 second_tab = TestClient(app_g)
@@ -1028,10 +1028,10 @@ auth_g.store._exec("UPDATE session SET expires_at=? WHERE token_hash=?",
 assert second_tab.get("/normal", headers=JSON).status_code == 401, "after the period it no longer works"
 ok("A-6: after the period has elapsed the old token is dead")
 # Signing out the new session takes the superseded token along.
-cg.post("/auth/login", data={"username": "gina", "password": "Gin-Geheim-2026"}, follow_redirects=False)
+cg.post("/auth/login", data={"username": "gina", "password": "Gin-Secret-2026"}, follow_redirects=False)
 old2 = cg.cookies.get("tinysesam_session")
 auth_g.store._exec("UPDATE session SET mfa_at=?", (int(time.time()) - 100000,))
-cg.post("/auth/reauth", data={"password": "Gin-Geheim-2026", "next": "/"}, follow_redirects=False)
+cg.post("/auth/reauth", data={"password": "Gin-Secret-2026", "next": "/"}, follow_redirects=False)
 auth_g.store.delete_session_by_handle(auth_g.store.session_hash(cg.cookies.get("tinysesam_session")))
 assert auth_g.store.get_session(old2) is None, "the superseded token survives the sign-out"
 ok("A-6: sign-out/revocation of the new session also ends the superseded token")

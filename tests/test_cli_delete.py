@@ -82,19 +82,19 @@ def audit_lines(name):
         "SELECT * FROM audit WHERE username=? OR detail LIKE ?", (name, f"%{name}%"))]
 
 
-boss = auth.create_user("boss", "Geheim-Boss-12345", is_admin=True)
+boss = auth.create_user("boss", "Secret-Boss-12345", is_admin=True)
 auth.set_owner(boss, True)
-second = auth.create_user("zweit", "Geheim-Zweit-12345", is_admin=True)
+second = auth.create_user("second", "Secret-Second-12345", is_admin=True)
 
 # ---------- the reference: deleting through the panel's route ----------
-ref = oidc_account("referenz", "sub-ref", "referenz@example.com")
+ref = oidc_account("reference", "sub-ref", "reference@example.com")
 assert count(ref) == {"oidc_identity": 1, "session": 2, "users": 1}
 assert auth.delete_user(ref)
 ref_audit = [(z["event"], z["username"]) for z in st._all("SELECT * FROM audit ORDER BY id")
              if z["username"] and z["username"].startswith("deleted#")]
 assert ref_audit, "reference: the panel route left no anonymised rows"
-assert not audit_lines("referenz") or all(
-    z["username"] != "referenz" for z in audit_lines("referenz"))
+assert not audit_lines("reference") or all(
+    z["username"] != "reference" for z in audit_lines("reference"))
 ok("reference: deleting through TinySesam.delete_user removes the rows and anonymises the audit")
 
 # ---------- the command ----------
@@ -136,8 +136,8 @@ code, from_ = cli("delete", "--db", db, "--yes", "tester")
 assert code == 1 and "No account 'tester'" in from_, (code, from_)
 ok("second call -> exit 1, clear message")
 
-code, from_ = cli("delete", "--db", db + ".fehlt", "--yes", "tester")
-assert code == 1 and "No database at" in from_ and not os.path.exists(db + ".fehlt")
+code, from_ = cli("delete", "--db", db + ".missing", "--yes", "tester")
+assert code == 1 and "No database at" in from_ and not os.path.exists(db + ".missing")
 ok("wrong DB path -> clear message, no empty database created")
 
 # ---------- protection rules (the panel's) ----------
@@ -149,7 +149,7 @@ ok("an owner is not deleted")
 # identity provider demoted): set it up by hand. (With no owner at all the store promotes the oldest
 # admin itself at opening, so that state cannot be tested through the command.)
 st._exec("UPDATE users SET is_admin=0 WHERE id=?", (boss,))
-code, from_ = cli("delete", "--db", db, "--yes", "zweit")
+code, from_ = cli("delete", "--db", db, "--yes", "second")
 assert code == 1 and "last admin" in from_ and st.get_user(second) is not None, (code, from_)
 try:
     auth.delete_user(second)
@@ -171,21 +171,21 @@ for uid_k, name_k in ((boss, "boss"),):
 ok("panel route and CLI refuse the same account")
 
 # ---------- confirmation ----------
-u2 = oidc_account("frage", "sub-frage", "frage@example.com")
-code, from_ = cli("delete", "--db", db, "frage")
+u2 = oidc_account("question", "sub-question", "question@example.com")
+code, from_ = cli("delete", "--db", db, "question")
 assert code == 1 and "Not a terminal" in from_ and st.get_user(u2) is not None, (code, from_)
 ok("no --yes and no terminal -> nothing deleted, exit 1")
 
-code, from_ = cli("delete", "--db", db, "frage", stdin="n\n", tty=True)
+code, from_ = cli("delete", "--db", db, "question", stdin="n\n", tty=True)
 assert code == 1 and "Aborted" in from_ and st.get_user(u2) is not None, (code, from_)
 assert "2 session(s)" in from_      # the question names what would go
 ok("on a terminal the command asks; \"n\" aborts and names what would have been removed")
 
-code, from_ = cli("delete", "--db", db, "frage", stdin="", tty=True)
+code, from_ = cli("delete", "--db", db, "question", stdin="", tty=True)
 assert code == 1 and st.get_user(u2) is not None, (code, from_)
 ok("a closed input counts as \"no\"")
 
-code, from_ = cli("delete", "--db", db, "frage", stdin="y\n", tty=True)
+code, from_ = cli("delete", "--db", db, "question", stdin="y\n", tty=True)
 assert code == 0 and st.get_user(u2) is None, (code, from_)
 ok("\"y\" on a terminal deletes")
 

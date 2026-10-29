@@ -30,7 +30,7 @@ from tinysesam import config_check  # noqa: E402
 from tinysesam.security import seclog  # noqa: E402
 from _kit.report import Report  # noqa: E402
 
-r = Report("Funde aus dem Betrieb (Gruppen-Scope, Claim-Token)")
+r = Report("Findings from operations (group scope, claim token)")
 
 
 # ── (a) Group scope────────────────────────────────────────────────────────────────────────────
@@ -40,7 +40,7 @@ r = Report("Funde aus dem Betrieb (Gruppen-Scope, Claim-Token)")
 # and startup said nothing.
 # (Mutation probe: remove the call `_groups_scope(...)` in `config_check.check_config` → red.)
 OIDC = dict(oidc_enabled=True, oidc_issuer="https://id.example.com", oidc_client_id="app",
-            oidc_client_secret="geheim", base_url="https://app.example.com")
+            oidc_client_secret="secret", base_url="https://app.example.com")
 FEATURE = "the scope 'groups' is not requested"
 
 
@@ -49,27 +49,27 @@ def _warnings(**fields):
     return error, [w for w in warnings if FEATURE in w]
 
 
-_f, _w = _warnings(oidc_allowed_groups=["mitarbeiter"])
+_f, _w = _warnings(oidc_allowed_groups=["employee"])
 r.check("(a) oidc_allowed_groups + claim 'groups' + default scopes → exactly one warning, no error; "
         "it names oidc_scopes, PocketID and the way out (gateway: TINYSESAM_OIDC_SCOPES)",
         not [x for x in _f if "groups" in x] and len(_w) == 1
         and "oidc_scopes='openid profile email'" in _w[0] and "PocketID" in _w[0]
         and "TINYSESAM_OIDC_SCOPES" in _w[0], str(_w))
-_, _w = _warnings(oidc_group_role_map={"redaktion": "editor"})
+_, _w = _warnings(oidc_group_role_map={"editors": "editor"})
 r.check("(a) … likewise with oidc_group_role_map alone (no role instead of rejection)", len(_w) == 1, str(_w))
-_, _w = _warnings(oidc_allowed_groups=["mitarbeiter"], oidc_scopes="openid profile email groups")
+_, _w = _warnings(oidc_allowed_groups=["employee"], oidc_scopes="openid profile email groups")
 r.check("(a) with the scope 'groups' → no warning", not _w, str(_w))
-_cfg = TinySesamConfig(**{**OIDC, "oidc_allowed_groups": ["mitarbeiter"]})
+_cfg = TinySesamConfig(**{**OIDC, "oidc_allowed_groups": ["employee"]})
 r.check("(a) nothing is requested additionally: oidc_scopes stays as set",
         _cfg.oidc_scopes == "openid profile email")
-for _name, _fields in (("ohne Gruppenregel", {}),
-                       ("anderer Claim (oidc_group_claim='roles')",
+for _name, _fields in (("without group rule", {}),
+                       ("another claim (oidc_group_claim='roles')",
                         {"oidc_allowed_groups": ["x"], "oidc_group_claim": "roles"}),
                        ("OIDC aus", {"oidc_allowed_groups": ["x"], "oidc_enabled": False,
                                      "password_enabled": True}),
-                       ("Entra ID (Gruppen über optional claims; ein Scope 'groups' bräche die Anmeldung)",
+                       ("Entra ID (groups via optional claims; a 'groups' scope would break sign-in)",
                         {"oidc_allowed_groups": ["x"],
-                         "oidc_issuer": "https://login.microsoftonline.com/mandant/v2.0"})):
+                         "oidc_issuer": "https://login.microsoftonline.com/tenant/v2.0"})):
     _, _w = _warnings(**_fields)
     r.check(f"(a) no warning: {_name}", not _w, str(_w))
 
@@ -78,11 +78,11 @@ _clients = {"app.example.com": {"client_id": "a", "client_secret": "s"},
             "wiki.example.com": {"client_id": "w", "client_secret": "s",
                                  "scopes": "openid profile email groups"}}
 _, _w = _warnings(oidc_allowed_groups=["x"], oidc_scopes="openid groups",
-                   oidc_clients={**_clients, "neu.example.com": {"client_id": "n", "client_secret": "s",
+                   oidc_clients={**_clients, "new.example.com": {"client_id": "n", "client_secret": "s",
                                                                    "scopes": "openid email"}},
                    forward_auth_enabled=True, trusted_redirect_hosts=[])
 r.check("(a) per application: an own `scopes` entry without 'groups' is named, the others are not",
-        len(_w) == 1 and "oidc_clients['neu.example.com']" in _w[0]
+        len(_w) == 1 and "oidc_clients['new.example.com']" in _w[0]
         and "app.example.com" not in _w[0] and "oidc_scopes=" not in _w[0], str(_w))
 _, _w = _warnings(oidc_clients={"app.example.com": {"client_id": "a", "client_secret": "s",
                                                      "allowed_groups": ["team-a"]}},
@@ -95,8 +95,8 @@ r.check("(a) … a group rule only on the entry, scopes inherited without 'group
 from tinysesam import gateway  # noqa: E402
 
 _env = {"TINYSESAM_OIDC_ISSUER": "https://id.example.com", "TINYSESAM_OIDC_CLIENT_ID": "gw",
-        "TINYSESAM_OIDC_CLIENT_SECRET": "geheim", "TINYSESAM_BASE_URL": "https://auth.example.com",
-        "TINYSESAM_ALLOWED_GROUPS": "mitarbeiter", "TINYSESAM_DB": ":memory:"}
+        "TINYSESAM_OIDC_CLIENT_SECRET": "secret", "TINYSESAM_BASE_URL": "https://auth.example.com",
+        "TINYSESAM_ALLOWED_GROUPS": "employee", "TINYSESAM_DB": ":memory:"}
 _before = {k: os.environ.get(k) for k in [*_env, "TINYSESAM_OIDC_SCOPES"]}
 try:
     os.environ.update(_env)
@@ -125,7 +125,7 @@ r.check("(a) gateway: TINYSESAM_ALLOWED_GROUPS without TINYSESAM_OIDC_SCOPES war
 # stderr AND the security logger write into the same buffer — that is `docker logs`.
 # (Mutation probe: remove the condition `not console` in `_admin_claim_announce`, or drop the
 # fallback to the file → the token is in the buffer again → red.)
-PW = "Betrieb-Pw-2026"          # 15 characters: the password alone signs in
+PW = "Operation-Pw-2026"          # 15 characters: the password alone signs in
 
 
 class _Console(io.StringIO):
@@ -172,7 +172,7 @@ r.check("(b) stderr is not a console: the token is in <db_path>.claim — only t
         bool(_tok_c) and _content_c == _tok_c + "\n", repr(_content_c))
 r.check("(b) … the file has mode 0600",
         os.path.exists(_file_c) and stat.S_IMODE(os.stat(_file_c).st_mode) == 0o600,
-        oct(stat.S_IMODE(os.stat(_file_c).st_mode)) if os.path.exists(_file_c) else "fehlt")
+        oct(stat.S_IMODE(os.stat(_file_c).st_mode)) if os.path.exists(_file_c) else "missing")
 r.check("(b) … the value is NOT in the log (stderr + security log), but the path is, and the "
         "text says where the token is",
         _tok_c not in _c.getvalue() and "claim-admin?token=" not in _c.getvalue()
@@ -183,11 +183,11 @@ r.check("(b) … the value is NOT in the log (stderr + security log), but the pa
 _app_c = FastAPI()
 _app_c.include_router(auth_c.router())
 _cl = TestClient(_app_c)
-_reg = _cl.post("/auth/register", data={"username": "betreiber", "password": PW}, follow_redirects=False)
+_reg = _cl.post("/auth/register", data={"username": "operator", "password": PW}, follow_redirects=False)
 _one = _cl.get(f"/auth/claim-admin?token={_content_c.strip()}", follow_redirects=False)
 r.check("(b) the token from the file makes the first admin, afterwards the file is gone",
         _reg.status_code == 303 and _one.status_code == 303
-        and auth_c.store.get_user_by_name("betreiber")["is_admin"] and not os.path.exists(_file_c),
+        and auth_c.store.get_user_by_name("operator")["is_admin"] and not os.path.exists(_file_c),
         f"{_reg.status_code} {_one.status_code} {os.path.exists(_file_c)}")
 
 # A leftover from an earlier run (e.g. admin set later via CLI) disappears at startup.
@@ -202,7 +202,7 @@ auth_v = _start(_v)
 _file_v = auth_v.cfg.db_path + ".claim"
 _old_v = Path(_file_v).read_text(encoding="utf-8").strip()
 auth_v.store.set_setting("admin_claim", f"{_old_v}:{int(time.time()) - 1}")
-_uid_v = auth_v.create_user("spaet", password=PW)
+_uid_v = auth_v.create_user("late", password=PW)
 _expired = auth_v._consume_admin_claim(_old_v, auth_v.store.get_user(_uid_v))
 _start(io.StringIO(), db_path=auth_v.cfg.db_path)
 _new_v = Path(_file_v).read_text(encoding="utf-8").strip()
@@ -235,7 +235,7 @@ _own = str(Path(tempfile.mkdtemp()) / "claim.token")
 _e = _Console()
 auth_e = _start(_e, admin_claim_token_file=_own)
 _tok_e = auth_e.admin_claim_token()
-_uid_e = auth_e.create_user("chefin", password=PW)
+_uid_e = auth_e.create_user("boss", password=PW)
 _ok_e = auth_e._consume_admin_claim(_tok_e, auth_e.store.get_user(_uid_e))
 r.check("(b) admin_claim_token_file takes precedence (even on a console): value in the file, not on "
         "stderr, no <db_path>.claim; the own file remains after redeeming (content invalid)",

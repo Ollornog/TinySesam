@@ -44,7 +44,7 @@ a = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de",
     forward_auth_enabled=True, account_enabled=True, admin_enabled=True,
     remember_me_enabled=True, cookie_secure=False, base_url="https://auth.example.com"))
 a.set_mailer(lambda *x, **k: None)
-a.ensure_admin("admin", "geheim123")
+a.ensure_admin("admin", "dummy123")
 uid = a.store.get_user_by_name("admin")["id"]
 a.set_pin(uid, "2468")
 a.set_resource_secret("z", "1234", kind="pin", label="Z")

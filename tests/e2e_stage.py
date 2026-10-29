@@ -32,6 +32,12 @@ import tempfile
 import time
 import urllib.request
 
+#: The German texts of the pages the browser drives (button labels of the identity providers, TinySesam's own German
+#: messages): matched next to the English ones, because a stage runs in the language of its users.
+_DE_CONFIRM = "anmelden|autorisieren|zustimmen|erlauben|weiter|akzeptieren"
+_DE_REFUSE = "abbrechen|ablehnen"
+_DE_RATE = ("zu viele", "gesperrt")
+
 BASE = (os.environ.get("STAGE_BASE_URL") or "").rstrip("/")
 CHROME = next((b for b in ("google-chrome", "chrome", "chromium", "chromium-browser")
                if shutil.which(b)), None)
@@ -108,7 +114,7 @@ class Browser:
                 raise RuntimeError(f"{method}: no response after {deadline} s")
             m = json.loads(await asyncio.wait_for(self.ws.recv(), rest))
             if m.get("method") == "Page.javascriptDialogOpening":
-                print(f"    (Dialog abgelehnt: {m['params'].get('message', '')[:80]!r})")
+                print(f"    (Dialog declined: {m['params'].get('message', '')[:80]!r})")
                 self._n += 1
                 await self.ws.send(json.dumps({"id": self._n, "method": "Page.handleJavaScriptDialog",
                                                "params": {"accept": False}}))
@@ -127,7 +133,7 @@ class Browser:
         await self.cmd("Page.navigate", {"url": path if "://" in path else BASE + path})
         await asyncio.sleep(wait)
 
-    async def wait_until(self, expression, seconds=20, was="Zustand"):
+    async def wait_until(self, expression, seconds=20, was="State"):
         """Wait for a state, not for the clock.
 
         Fixed waits make an E2E test moody: the machine is sometimes faster, the
@@ -197,8 +203,8 @@ class Browser:
         the troubleshooting.)
         """
         text = (await self.js("document.body.innerText")) or ""
-        for pattern, was in (("too many", "rate limit"), ("zu viele", "rate limit"),
-                            ("locked", "account lockout"), ("gesperrt", "account lockout")):
+        for pattern, was in (("too many", "rate limit"), (_DE_RATE[0], "rate limit"),
+                            ("locked", "account lockout"), (_DE_RATE[1], "account lockout")):
             if pattern in text.lower():
                 raise RuntimeError(
                     f"The instance's {was} kicked in — sign-in is not broken, "
@@ -317,9 +323,9 @@ async def part_oidc():
                 break
             clicked = await b.js("""(() => {
                 const b = [...document.querySelectorAll('button')].find(e =>
-                    /anmelden|sign in|authorize|autorisieren|zustimmen|erlauben|allow|continue|weiter|akzeptieren/i
-                        .test(e.innerText) && !/abbrechen|cancel|deny|ablehnen/i.test(e.innerText));
-                if (!b) return null; b.click(); return b.innerText.trim(); })()""")
+                    /sign in|authorize|allow|continue|next|%s/i
+                        .test(e.innerText) && !/cancel|deny|%s/i.test(e.innerText));
+                if (!b) return null; b.click(); return b.innerText.trim(); })()""" % (_DE_CONFIRM, _DE_REFUSE))
             if not clicked:
                 break
             ok(f"confirmed at the provider: {clicked!r}")
@@ -338,8 +344,8 @@ async def main(names):
     if not BASE:
         sys.exit("STAGE_BASE_URL missing — this test runs against a deployed instance.")
     if not CHROME:
-        sys.exit("kein Chrome gefunden")
-    print(f"E2E gegen {BASE}")
+        sys.exit("no Chrome found")
+    print(f"E2E against {BASE}")
     result, red = {}, False
     for name in names:
         print(f"\n▸ {name}")

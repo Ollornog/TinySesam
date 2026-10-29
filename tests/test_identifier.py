@@ -23,7 +23,7 @@ def build(**over):
     return auth, TestClient(app), db
 
 
-def login(c, ident, pw="geheim12345-lang-genug"):
+def login(c, ident, pw="dummy12345-long-enough"):
     return c.post("/auth/login", data={"username": ident, "password": pw, "next": "/"},
                   follow_redirects=False)
 
@@ -51,10 +51,10 @@ assert valid_email("山田たろう@example.jp") and valid_email("user@例え.�
 assert valid_email("ラーメン@example.jp") and valid_email("홍길동漢@example.kr"), "kana long vowel mark, Hangul+Hanja"
 assert not valid_email("山田a@example.jp") and not valid_email("たаро@example.jp"), "Latin/Cyrillic does not mix in"
 auth, c, db = build(login_identifier="email", allow_signup=True)
-auth.create_user("admin@example.com", password="geheim12345-lang-genug", email="admin@example.com")
-r = c.post("/auth/register", data={"password": "geheim12345-lang-genug", "email": "ａｄｍｉｎ@example.com", "next": "/"})
+auth.create_user("admin@example.com", password="dummy12345-long-enough", email="admin@example.com")
+r = c.post("/auth/register", data={"password": "dummy12345-long-enough", "email": "ａｄｍｉｎ@example.com", "next": "/"})
 assert r.status_code == 409, "full-width doppelganger is the same identifier"
-r = c.post("/auth/register", data={"password": "geheim12345-lang-genug", "email": "аdmin@example.com", "next": "/"})
+r = c.post("/auth/register", data={"password": "dummy12345-long-enough", "email": "аdmin@example.com", "next": "/"})
 assert r.status_code == 400, "look-alike is rejected"
 assert auth.store._exec("SELECT COUNT(*) FROM users").fetchone()[0] == 1
 # Existing accounts from BEFORE R4-06: an umlaut domain in Unicode form is still found
@@ -65,11 +65,11 @@ print("  R4-06: NFKC, IDNA A-label, look-alikes rejected, existing accounts stil
 
 # ---------- Mode "both": login with either ----------
 auth, c, db = build(login_identifier="both")
-auth.create_user("max", password="geheim12345-lang-genug", email="Max@Example.com")
+auth.create_user("max", password="dummy12345-long-enough", email="Max@Example.com")
 assert login(c, "max").status_code == 303, "username login"
 assert login(c, "max@example.com").status_code == 303, "email login"
 assert login(c, "MAX@EXAMPLE.COM").status_code == 303, "email case-insensitive"
-assert login(c, "max", "falsch").status_code != 303
+assert login(c, "max", "wrong").status_code != 303
 assert login(c, "gibtsnicht@example.com").status_code != 303
 c.cookies.clear()          # otherwise /auth/login redirects a signed-in user to /
 assert "Benutzer oder E-Mail" in c.get("/auth/login").text
@@ -78,17 +78,17 @@ os.unlink(db)
 
 # ---------- Mode "username": email must NOT work ----------
 auth, c, db = build(login_identifier="username")
-auth.create_user("max", password="geheim12345-lang-genug", email="max@example.com")
+auth.create_user("max", password="dummy12345-long-enough", email="max@example.com")
 assert login(c, "max").status_code == 303
 assert login(c, "max@example.com").status_code != 303, "email must not apply in username mode"
 c.cookies.clear()
 page = c.get("/auth/login").text
-assert "Benutzer</label>" in page and "Benutzer oder E-Mail" not in page
+assert auth.t("login.user") + "</label>" in page and auth.t("login.identifier") not in page
 os.unlink(db)
 
 # ---------- Mode "email": username must NOT work ----------
 auth, c, db = build(login_identifier="email")
-auth.create_user("max", password="geheim12345-lang-genug", email="max@example.com")
+auth.create_user("max", password="dummy12345-long-enough", email="max@example.com")
 assert login(c, "max@example.com").status_code == 303
 assert login(c, "max").status_code != 303, "username must not apply in email mode"
 c.cookies.clear()
@@ -98,7 +98,7 @@ print("  username-/email-only: only the permitted identifier each ok")
 
 # ---------- PIN uses the same identifier ----------
 auth, c, db = build(login_identifier="both", pin_enabled=True)
-uid = auth.create_user("max", password="geheim12345-lang-genug", email="max@example.com")
+uid = auth.create_user("max", password="dummy12345-long-enough", email="max@example.com")
 auth.set_pin(uid, "2468")
 r = c.post("/auth/pin", data={"username": "max@example.com", "pin": "2468", "next": "/"}, follow_redirects=False)
 assert r.status_code == 303, "PIN login by email"
@@ -107,9 +107,9 @@ print("  PIN accepts the same identifier ok")
 
 # ---------- Email unique ----------
 auth, c, db = build()
-auth.create_user("a", password="geheim12345-lang-genug", email="dup@example.com")
+auth.create_user("a", password="dummy12345-long-enough", email="dup@example.com")
 try:
-    auth.create_user("b", password="geheim12345-lang-genug", email="DUP@example.com")
+    auth.create_user("b", password="dummy12345-long-enough", email="DUP@example.com")
     raise AssertionError("duplicate was accepted")
 except ValueError:
     pass
@@ -121,16 +121,16 @@ print("  email uniqueness (case-insensitive) ok")
 # ---------- Registration: email required (default) ----------
 auth, c, db = build(allow_signup=True)
 assert auth.cfg.signup_require_email is True, "default = required"
-r = c.post("/auth/register", data={"username": "neu", "password": "geheim12345-lang-genug", "next": "/"})
+r = c.post("/auth/register", data={"username": "new", "password": "dummy12345-long-enough", "next": "/"})
 assert r.status_code == 400 and "E-Mail nötig" in r.text
-r = c.post("/auth/register", data={"username": "neu", "password": "geheim12345-lang-genug", "email": "keine-mail", "next": "/"})
+r = c.post("/auth/register", data={"username": "new", "password": "dummy12345-long-enough", "email": "no-mail", "next": "/"})
 assert r.status_code == 400 and "gültige E-Mail" in r.text
-r = c.post("/auth/register", data={"username": "neu", "password": "geheim12345-lang-genug",
-                                   "email": "Neu@Example.com", "next": "/"}, follow_redirects=False)
+r = c.post("/auth/register", data={"username": "new", "password": "dummy12345-long-enough",
+                                   "email": "New@Example.com", "next": "/"}, follow_redirects=False)
 assert r.status_code == 303, r.text[:300]
-assert auth.store.get_user_by_name("neu")["email"] == "neu@example.com", "stored canonically"
-r = c.post("/auth/register", data={"username": "neu2", "password": "geheim12345-lang-genug",
-                                   "email": "NEU@example.com", "next": "/"})
+assert auth.store.get_user_by_name("new")["email"] == "new@example.com", "stored canonically"
+r = c.post("/auth/register", data={"username": "new2", "password": "dummy12345-long-enough",
+                                   "email": "NEW@example.com", "next": "/"})
 assert r.status_code == 409 and "bereits registriert" in r.text
 c.cookies.clear()
 reg = c.get("/auth/register").text
@@ -144,7 +144,7 @@ auth, c, db = build(allow_signup=True, login_identifier="email")
 page = c.get("/auth/register").text
 assert "name=username" not in page, "no username field in email mode"
 assert "name=email" in page and "required" in page
-r = c.post("/auth/register", data={"password": "geheim12345-lang-genug", "email": "Solo@Example.com", "next": "/"},
+r = c.post("/auth/register", data={"password": "dummy12345-long-enough", "email": "Solo@Example.com", "next": "/"},
            follow_redirects=False)
 assert r.status_code == 303, r.text[:300]
 u = auth.store.get_user_by_email("solo@example.com")
@@ -164,10 +164,10 @@ print("  registration follows login_identifier ok")
 
 # ---------- Registration: email can be switched off as optional ----------
 auth, c, db = build(allow_signup=True, signup_require_email=False)
-r = c.post("/auth/register", data={"username": "ohne", "password": "geheim12345-lang-genug", "next": "/"},
+r = c.post("/auth/register", data={"username": "without", "password": "dummy12345-long-enough", "next": "/"},
            follow_redirects=False)
 assert r.status_code == 303
-assert auth.store.get_user_by_name("ohne")["email"] is None
+assert auth.store.get_user_by_name("without")["email"] is None
 os.unlink(db)
 print("  signup_require_email=False: account without email ok")
 
@@ -176,7 +176,7 @@ sent = []
 auth, c, db = build(allow_signup=True, signup_verify_email=True, magiclink_enabled=True,
                     base_url="http://testserver")
 auth.set_mailer(lambda to, subject, text, html=None: sent.append((to, text)))
-r = c.post("/auth/register", data={"username": "verify", "password": "geheim12345-lang-genug",
+r = c.post("/auth/register", data={"username": "verify", "password": "dummy12345-long-enough",
                                    "email": "v@example.com", "next": "/"})
 assert r.status_code == 200 and "Fast fertig" in r.text, r.text[:200]
 u = auth.store.get_user_by_name("verify")
@@ -195,7 +195,7 @@ print("  signup_verify_email: locked → link → unlocked → login ok")
 # (otherwise the constructor already fails). What is checked is the situation afterwards: base yes, mailer no.
 auth, c, db = build(allow_signup=True, signup_verify_email=True, magiclink_enabled=True,
                     base_url="http://testserver")
-r = c.post("/auth/register", data={"username": "x", "password": "geheim12345-lang-genug",
+r = c.post("/auth/register", data={"username": "x", "password": "dummy12345-long-enough",
                                    "email": "x@example.com", "next": "/"})
 assert r.status_code == 500 and "kein Mailer" in r.text
 assert auth.store.get_user_by_name("x") is None, "no half-finished account created"
@@ -205,12 +205,12 @@ print("  verify without mailer: 500, no account ok")
 # ---------- Config sanity ----------
 for bad in ("mail", "", "Username"):
     try:
-        TinySesam(TinySesamConfig(db_path=os.path.join(tempfile.mkdtemp(), "datei"), login_identifier=bad))
+        TinySesam(TinySesamConfig(db_path=os.path.join(tempfile.mkdtemp(), "file"), login_identifier=bad))
         raise AssertionError(f"login_identifier={bad!r} accepted")
     except ValueError:
         pass
 try:
-    TinySesam(TinySesamConfig(db_path=os.path.join(tempfile.mkdtemp(), "datei"), login_identifier="email",
+    TinySesam(TinySesamConfig(db_path=os.path.join(tempfile.mkdtemp(), "file"), login_identifier="email",
                               allow_signup=True, signup_require_email=False))
     raise AssertionError("email-only without mandatory email accepted")
 except ValueError:
@@ -229,9 +229,9 @@ print("  config sanity ok")
 from tinysesam import ConfigError  # noqa: E402
 
 auth, c, db = build(login_identifier="both")
-victim_id = auth.create_user("opfer", password="geheim12345-lang-genug", email="chef@example.com")
+victim_id = auth.create_user("victim", password="dummy12345-long-enough", email="chef@example.com")
 for identifier, mail, slot in (("chef@example.com", None, "username"),   # name == foreign email
-                            ("neu", "chef@example.com", "email")):    # email == foreign email
+                            ("new", "chef@example.com", "email")):    # email == foreign email
     try:
         auth.create_user(identifier, email=mail)
         raise AssertionError(f"{slot}: the cross check does not take effect, the account was created")
@@ -245,8 +245,8 @@ for identifier, mail, slot in (("chef@example.com", None, "username"),   # name 
         assert getattr(e, "owner_id", None) == victim_id, (
             f"e.owner_id is {getattr(e, 'owner_id', '<missing>')!r}, expected {victim_id}")
 # Control: a free identifier does not raise — otherwise "always raises" would be green too.
-free_id = auth.create_user("frei", email="frei@example.com")
-assert free_id and auth.store.get_user(free_id)["username"] == "frei"
+free_id = auth.create_user("free", email="free@example.com")
+assert free_id and auth.store.get_user(free_id)["username"] == "free"
 os.unlink(db)
 print("  cross collision: wording stays, e.field/e.owner_id name the case ok")
 
@@ -269,8 +269,8 @@ def _full(text, mask):
 
 
 auth, c, db = build(login_identifier="both")
-victim_id = auth.create_user("opfer", "Richtiges-Passwort-42x", email="victim@example.com")
-idn_id = auth.create_user("idn", "Idn-Passwort-2026x", email="u@bücher.example")
+victim_id = auth.create_user("victim", "Correct-Password-42xxx", email="victim@example.com")
+idn_id = auth.create_user("idn", "Idn-Password-2026x", email="u@bücher.example")
 base = "victim@example.com"
 variants = [_full(base, m) for m in (0b1, 0b111111, 0b1000000, 0b111111111111111111, 0b10101010101,
                                        (1 << 18) - 1 - 0b1000000)]
@@ -295,12 +295,12 @@ LID = auth._sec("max_login_attempts") * auth._sec("account_attempt_factor")
 checked = 0
 for i in range(LID + 25):
     ci = TestClient(app_k, client=(f"198.51.100.{i + 1}", 40000))
-    r = ci.post("/auth/login", data={"username": _full(base, i + 1), "password": f"falsch-{i}"},
+    r = ci.post("/auth/login", data={"username": _full(base, i + 1), "password": f"wrong-{i}"},
                 follow_redirects=False)
     checked += r.status_code == 401
 assert checked <= LID, f"{checked} guesses via full-width spellings, promised are at most {LID}"
 r = TestClient(app_k, client=("192.0.2.200", 40000)).post(
-    "/auth/login", data={"username": base, "password": "Richtiges-Passwort-42x"}, follow_redirects=False)
+    "/auth/login", data={"username": base, "password": "Correct-Password-42xxx"}, follow_redirects=False)
 assert r.status_code == 429, f"the account threshold did not take effect after {checked} attempts: {r.status_code}"
 # Lifting hits the same bucket: counting was done under the folded address.
 assert auth.lift_lockout(victim_id) == checked
@@ -316,9 +316,9 @@ print(f"  lockout bucket via the route: {checked} checked, then closed (account 
 # — against the H-13 promise "their attempt rows are deleted". (Mutation probe:
 # `delete_attempts_for` again only with the raw form and `lower(username)=lower(?)` → red.)
 auth, c, db = build(login_identifier="both")
-berta_id = auth.create_user("ｂｅｒｔａ", "Berta-Passwort-2026x")
-finn_id = auth.create_user("ﬁnn", "Finn-Passwort-2026x")
-inventory_id = auth.create_user("bestand", "Bestand-Passwort-2026x", email="u2@example.org")
+berta_id = auth.create_user("ｂｅｒｔａ", "Berta-Password-2026x")
+finn_id = auth.create_user("ﬁnn", "Finn-Password-2026x")
+inventory_id = auth.create_user("existing", "Existing-Password-2026x", email="u2@example.org")
 auth.store.db.execute("UPDATE users SET email='u2@bücher.example' WHERE id=?", (inventory_id,))
 auth.store.db.commit()
 assert auth.find_user("u2@bücher.example")["id"] == inventory_id, "precondition: existing address is found"
@@ -328,9 +328,9 @@ assert auth.find_user("u2@bücher.example")["id"] == inventory_id, "precondition
 auth.store.db.execute("UPDATE users SET created_at = created_at - 60 WHERE id IN (?, ?, ?)",
                       (berta_id, finn_id, inventory_id))
 auth.store.db.commit()
-for i, identifier in enumerate(("ｂｅｒｔａ", "ﬁnn", "u2@bücher.example", "BESTAND")):
+for i, identifier in enumerate(("ｂｅｒｔａ", "ﬁnn", "u2@bücher.example", "EXISTING")):
     for ip in ("198.51.100.1", "198.51.100.2"):
-        r = login(TestClient(c.app, client=(ip, 40000 + i)), identifier, "falsch-geraten-1")
+        r = login(TestClient(c.app, client=(ip, 40000 + i)), identifier, "wrong-guessed-1x")
         assert r.status_code == 401, (identifier, r.status_code)
 
 
@@ -353,7 +353,7 @@ print("  H-13: delete_user clears the attempts also under an NFKC-/IDNA-folded i
 # `account_by_bucket` assigns to a remaining account → red.)
 auth, c, db = build()
 auth.set_security("rate_limit_max", 1000)
-full_id = auth.create_user("ｃｌａｒａ", "Clara-Voll-2026x")
+full_id = auth.create_user("ｃｌａｒａ", "Clara-Full-2026x")
 # The namesake can no longer be created anew (`identifier_taken` asks the bucket, since
 # G12c the store rejects it too) — it comes from an existing state from before, hence as a raw
 # INSERT without bucket, as from a foreign writer.
@@ -363,7 +363,7 @@ clara_id = auth.store._exec("INSERT INTO users(username, display_name, created_a
 auth.set_password(clara_id, "Clara-Ascii-2026x")
 fail = auth._sec("max_login_attempts") * auth._sec("account_attempt_factor")   # account threshold across all addresses
 for i in range(fail):
-    login(TestClient(c.app, client=(f"198.51.100.{i + 1}", 40000)), "clara", f"falsch-{i}")
+    login(TestClient(c.app, client=(f"198.51.100.{i + 1}", 40000)), "clara", f"wrong-{i}")
 r = login(TestClient(c.app, client=("192.0.2.50", 40000)), "clara", "Clara-Ascii-2026x")
 assert r.status_code == 429, f"precondition: clara is locked after {fail} failed attempts ({r.status_code})"
 assert auth.delete_user(full_id)

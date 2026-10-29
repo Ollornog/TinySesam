@@ -40,7 +40,7 @@ import _starter  # noqa: E402
 import run_all  # noqa: E402
 from _kit.report import Report  # noqa: E402
 
-r = Report("Sammellauf — parallel, billige Hashes nur im Test")
+r = Report("Collect run — parallel, cheap hashes in the test only")
 RUN_ALL = str(ROOT / "tests" / "run_all.py")
 
 
@@ -67,22 +67,22 @@ def lines(execution) -> list[str]:
 
 
 # ── A + B: red stays red, order of the list, same log ────────────────────────────────────────
-start_from = Path(tempfile.mkdtemp(prefix="sammel-ab-"))
+start_from = Path(tempfile.mkdtemp(prefix="collect-ab-"))
 from_suites = [
     # a takes the longest — so it finishes last and must still be first in the log.
-    suite(start_from, "test_a_gruen.py", "import time\ntime.sleep(0.8)\nprint('a fertig')\n"),
+    suite(start_from, "test_a_gruen.py", "import time\ntime.sleep(0.8)\nprint('a done')\n"),
     suite(start_from, "test_b_rot.py", """\
         import sys
-        print("Grund: absichtlich rot (Probe 4711)")
-        print("stderr der roten Suite", file=sys.stderr)
+        print("Reason: deliberately red (probe 4711)")
+        print("stderr of the red suite", file=sys.stderr)
         sys.exit(1)
     """),
     suite(start_from, "test_c_skip.py", """\
         import sys
-        print("uebersprungen: Modul 'xyz' fehlt — pip install 'tinysesam[xyz]'")
+        print("uebersprungen: module 'xyz' missing — pip install 'tinysesam[xyz]'")
         sys.exit(77)
     """),
-    suite(start_from, "test_d_gruen.py", "print('d fertig')\n"),
+    suite(start_from, "test_d_gruen.py", "print('d done')\n"),
 ]
 execution1 = collect_run(from_suites, 4)
 execution2 = collect_run(from_suites, 4)
@@ -92,12 +92,12 @@ r.check("A: a red suite makes the parallel run red (exit 1)", execution1.returnc
 r.check("A: the first line names the number of jobs", z1[:1] == ["▸ Test-Jobs: 4"], f"{z1[:1]}")
 fail_line = next((i for i, z in enumerate(z1) if z == "  FAIL test_b_rot.py"), None)
 r.check("A: … it appears as FAIL in the log, below it its reason (stdout), its stderr on stderr",
-        fail_line is not None and "Grund: absichtlich rot (Probe 4711)" in z1[fail_line + 1]
-        and "stderr der roten Suite" in execution1.stderr, f"{z1}\nstderr: {execution1.stderr[-300:]}")
+        fail_line is not None and "Reason: deliberately red (probe 4711)" in z1[fail_line + 1]
+        and "stderr of the red suite" in execution1.stderr, f"{z1}\nstderr: {execution1.stderr[-300:]}")
 r.check("A: the skip reason is there in full, including the install command",
-        "  skip test_c_skip.py (uebersprungen: Modul 'xyz' fehlt — pip install 'tinysesam[xyz]')" in z1,
+        "  skip test_c_skip.py (uebersprungen: module 'xyz' missing — pip install 'tinysesam[xyz]')" in z1,
         f"{z1}")
-r.check("A: the tally is correct", "2/4 grün, 1 übersprungen, 1 fehlgeschlagen" in z1, f"{z1[-2:]}")
+r.check("A: the tally is correct", "2/4 green, 1 skipped, 1 failed" in z1, f"{z1[-2:]}")
 row = [z.split()[1] for z in z1 if z.split()[:1] and z.split()[0] in ("ok", "FAIL", "skip")]
 r.check("B: output in the order of the list, although the first suite finishes last",
         row == ["test_a_gruen.py", "test_b_rot.py", "test_c_skip.py", "test_d_gruen.py"], f"{row}")
@@ -108,27 +108,27 @@ r.check("B: two runs, one log (identical line by line)",
 # ── C: really simultaneous — and with one job really serial ──────────────────────────────────
 # Simultaneous: three suites wait for each other (each drops a marker and waits for the two
 # others). Started one after another, the first waits in vain and turns red.
-hit = Path(tempfile.mkdtemp(prefix="sammel-treff-"))
+hit = Path(tempfile.mkdtemp(prefix="collect-meeting-"))
 match = """\
     import os, sys, time
-    ordner = os.environ["COLLECT_MEETING_POINT"]
-    open(os.path.join(ordner, os.path.basename(__file__)), "w").close()
-    frist = time.monotonic() + 15
-    while len(os.listdir(ordner)) < 3 and time.monotonic() < frist:
+    folder = os.environ["COLLECT_MEETING_POINT"]
+    open(os.path.join(folder, os.path.basename(__file__)), "w").close()
+    deadline = time.monotonic() + 15
+    while len(os.listdir(folder)) < 3 and time.monotonic() < deadline:
         time.sleep(0.02)
-    da = len(os.listdir(ordner))
-    print(f"{da} von 3 da")
+    da = len(os.listdir(folder))
+    print(f"{da} of 3 present")
     sys.exit(0 if da == 3 else 1)
 """
-c = Path(tempfile.mkdtemp(prefix="sammel-c-"))
-execution_c = collect_run([suite(c, f"test_treffen_{i}.py", match) for i in (1, 2, 3)], 3,
+c = Path(tempfile.mkdtemp(prefix="collect-c-"))
+execution_c = collect_run([suite(c, f"test_meet_{i}.py", match) for i in (1, 2, 3)], 3,
                     COLLECT_MEETING_POINT=str(hit))
 r.check("C: with 3 jobs 3 suites really run simultaneously (they meet)",
         execution_c.returncode == 0, f"Exit {execution_c.returncode}\n{execution_c.stdout[-500:]}")
 
 # Serial: every suite writes start and end into a shared log. `test_ldap.py` is
 # in `LONG_FIRST` — with one job that must change NOTHING about the order.
-trace = Path(tempfile.mkdtemp(prefix="sammel-spur-")) / "spur.txt"
+trace = Path(tempfile.mkdtemp(prefix="collect-spur-")) / "spur.txt"
 traces = """\
     import os, time
     name = os.path.basename(__file__)
@@ -138,7 +138,7 @@ traces = """\
     with open(os.environ["COLLECT_TRACE"], "a") as f:
         f.write(f"aus {name}\\n")
 """
-s = Path(tempfile.mkdtemp(prefix="sammel-s-"))
+s = Path(tempfile.mkdtemp(prefix="collect-s-"))
 serial = [suite(s, n, traces) for n in ("test_a.py", "test_ldap.py", "test_z.py")]
 assert "test_ldap.py" in run_all.LONG_FIRST
 execution_s = collect_run(serial, 1, COLLECT_TRACE=str(trace))
@@ -167,15 +167,15 @@ r.check("D: without CI_TEST_JOBS, CI_KERNE applies (the number of the runner)",
 r.check("D: without both the fixed default 2 — no detection of the cores",
         run_all.jobs_determine("", "") == 2 == run_all.JOBS_DEFAULT,
         f"{run_all.jobs_determine('', '')}")
-for broken in ("0", "zwei"):
+for broken in ("0", "two"):
     try:
         run_all.jobs_determine("", broken)
         declined = False
     except ValueError as error:
         declined = "CI_KERNE" in str(error)
     r.check(f"D: CI_KERNE={broken!r} is an error, not a silent default", declined)
-trace_d = Path(tempfile.mkdtemp(prefix="sammel-d-")) / "spur.txt"
-for broken in ("0", "-2", "zwei", "1.5"):
+trace_d = Path(tempfile.mkdtemp(prefix="collect-d-")) / "spur.txt"
+for broken in ("0", "-2", "two", "1.5"):
     execution_d = collect_run([serial[0]], broken, COLLECT_TRACE=str(trace_d))
     r.check(f"D: CI_TEST_JOBS={broken!r} aborts instead of silently taking a default",
             execution_d.returncode not in (0, 1) and "CI_TEST_JOBS" in execution_d.stderr
@@ -183,13 +183,13 @@ for broken in ("0", "-2", "zwei", "1.5"):
             f"Exit {execution_d.returncode}: {execution_d.stdout[-200:]} {execution_d.stderr[-200:]}")
 execution_0 = collect_run([from_suites[2]], 2)
 r.check("D: the floor stays — only skipped is not a green run",
-        execution_0.returncode == 1 and "keine einzige Suite" in execution_0.stderr, f"Exit {execution_0.returncode}")
+        execution_0.returncode == 1 and "not a single suite ran" in execution_0.stderr, f"Exit {execution_0.returncode}")
 
 # ── E: the warning filter works through the starter ──────────────────────────────────────────
-e = Path(tempfile.mkdtemp(prefix="sammel-e-"))
+e = Path(tempfile.mkdtemp(prefix="collect-e-"))
 execution_e = collect_run([suite(e, "test_w_alt.py", """\
         import warnings
-        warnings.warn_explicit("TinySesam.alt ist veraltet", DeprecationWarning, "x.py", 1,
+        warnings.warn_explicit("TinySesam.old is outdated", DeprecationWarning, "x.py", 1,
                                module="tinysesam.router")
     """), from_suites[3]], 2)
 r.check("E: a deprecated name, called from the package, makes the suite red — also in parallel",
@@ -199,18 +199,18 @@ r.check("E: a deprecated name, called from the package, makes the suite red — 
 # ── F: the starter ───────────────────────────────────────────────────────────────────────────
 PROBE = """\
     import json, os, sys
-    vorher = sorted(m for m in sys.modules if m == "tinysesam" or m.startswith("tinysesam."))
+    before = sorted(m for m in sys.modules if m == "tinysesam" or m.startswith("tinysesam."))
     from tinysesam import passwords as p
     h = p.hash_password("Probe-Pw-12")
-    aus = {"vorher": vorher, "argon": p._ARGON, "scrypt": [p._SCRYPT["n"], p._SCRYPT["r"], p._SCRYPT["p"]],
+    aus = {"before": before, "argon": p._ARGON, "scrypt": [p._SCRYPT["n"], p._SCRYPT["r"], p._SCRYPT["p"]],
            "hash": h.split("$")[:4],
-           "dummy": p._DUMMY.split("$")[:4], "stimmt": p.verify_password("Probe-Pw-12", h),
-           "falsch": p.verify_password("Probe-Pw-13", h), "erneuern": p.needs_rehash(h)}
+           "dummy": p._DUMMY.split("$")[:4], "correct": p.verify_password("Probe-Pw-12", h),
+           "wrong": p.verify_password("Probe-Pw-13", h), "renew": p.needs_rehash(h)}
     if p._ARGON:
         from argon2 import PasswordHasher
-        vorgabe = PasswordHasher()
-        aus["argon_vorgabe"] = [vorgabe.memory_cost, vorgabe.time_cost, vorgabe.parallelism]
-        aus["argon_aktiv"] = [p._PH.memory_cost, p._PH.time_cost, p._PH.parallelism]
+        default = PasswordHasher()
+        aus["argon_default"] = [default.memory_cost, default.time_cost, default.parallelism]
+        aus["argon_active"] = [p._PH.memory_cost, p._PH.time_cost, p._PH.parallelism]
     with open(os.environ["COLLECT_PROBE"], "w") as f:
         json.dump(aus, f)
 """
@@ -230,7 +230,7 @@ def lowered(p: dict) -> bool:
         destination = [_starter.ARGON2_TEST["memory_cost"], _starter.ARGON2_TEST["time_cost"],
                 _starter.ARGON2_TEST["parallelism"]]
         part = f"m={destination[0]},t={destination[1]},p={destination[2]}"
-        return p["argon_aktiv"] == destination and p["hash"][3] == part and p["dummy"][3] == part
+        return p["argon_active"] == destination and p["hash"][3] == part and p["dummy"][3] == part
     return p["hash"] == ["scrypt", str(n), str(rr), str(pp)] and p["dummy"] == p["hash"]
 
 
@@ -238,24 +238,24 @@ def production(p: dict) -> bool:
     if not p or p["scrypt"] != [2 ** 15, 8, 3]:
         return False
     if p["argon"]:
-        return p["argon_aktiv"] == p["argon_vorgabe"] and p["dummy"][3] == p["hash"][3]
+        return p["argon_active"] == p["argon_default"] and p["dummy"][3] == p["hash"][3]
     return p["hash"] == ["scrypt", "32768", "8", "3"] and p["dummy"] == p["hash"]
 
 
-f = Path(tempfile.mkdtemp(prefix="sammel-f-"))
-probe_in_execution = f / "im_lauf.json"
+f = Path(tempfile.mkdtemp(prefix="collect-f-"))
+probe_in_execution = f / "in_run.json"
 execution_f = collect_run([suite(f, "test_probe.py", PROBE)], 2, COLLECT_PROBE=str(probe_in_execution))
 p_execution = read_probe(probe_in_execution)
 r.check("F: in the collective run a suite calculates with the lowered parameters — hash AND dummy",
         execution_f.returncode == 0 and lowered(p_execution), f"Exit {execution_f.returncode}, {p_execution}")
 r.check("F: … method and check remain the same (right/wrong, no renewal)",
-        p_execution.get("stimmt") is True and p_execution.get("falsch") is False
-        and p_execution.get("erneuern") is False, f"{p_execution}")
+        p_execution.get("correct") is True and p_execution.get("wrong") is False
+        and p_execution.get("renew") is False, f"{p_execution}")
 r.check("F: the starter does not import tinysesam before the suite (import order unchanged)",
-        p_execution.get("vorher") == [], f"{p_execution.get('vorher')}")
+        p_execution.get("before") == [], f"{p_execution.get('before')}")
 
 # Started directly — and with variables that look like a switch: production values.
-probe_direct = f / "direkt.json"
+probe_direct = f / "direct.json"
 direct = subprocess.run([sys.executable, str(f / "test_probe.py")], cwd=str(ROOT), timeout=60,
                         env={**os.environ, "PYTHONPATH": str(ROOT), "COLLECT_PROBE": str(probe_direct),
                              "TINYSESAM_SCRYPT_N": "16", "TINYSESAM_SCRYPT_P": "1",
@@ -268,12 +268,12 @@ r.check("F: started directly the same suite calculates with the production value
         f"Exit {direct.returncode}, {p_direct} {direct.stderr[-300:]}")
 
 # The exceptions: under the name of a suite from PRODUCTION_VALUES it stays with the real values.
-probe_exception = f / "ausnahme.json"
+probe_exception = f / "exception.json"
 exception = next(iter(sorted(_starter.PRODUCTION_VALUES)))
-g = Path(tempfile.mkdtemp(prefix="sammel-g-"))
+g = Path(tempfile.mkdtemp(prefix="collect-g-"))
 execution_g = collect_run([suite(g, exception, PROBE)], 2, COLLECT_PROBE=str(probe_exception))
 p_exception = read_probe(probe_exception)
-r.check(f"F: a suite from PRODUKTIONSWERTE ({exception}) also calculates with the real values in the collective run",
+r.check(f"F: a suite from PRODUCTION_VALUES ({exception}) also calculates with the real values in the collective run",
         execution_g.returncode == 0 and production(p_exception), f"Exit {execution_g.returncode}, {p_exception}")
 r.check("F: every exception is a suite and has a reason",
         all((ROOT / "tests" / n).exists() and str(g_).strip()
@@ -382,16 +382,16 @@ items = subprocess.run(["git", "ls-files", "-z"], cwd=str(ROOT), capture_output=
 if items.returncode != 0 or not (ROOT / "scripts" / "check.sh").exists():
     print("  H: no Git checkout with scripts/check.sh (source package) — the gate does not exist here")
 else:
-    copy = Path(tempfile.mkdtemp(prefix="sammel-h-")) / "baum"
+    copy = Path(tempfile.mkdtemp(prefix="collect-h-")) / "baum"
     for rel in (n for n in items.stdout.decode("utf-8").split("\0") if n):
         if (ROOT / rel).is_file():
             (copy / rel).parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(ROOT / rel, copy / rel)
     (copy / "_site").mkdir()
-    (copy / "_site" / "eigen.txt").write_text("gehört dem Menschen, nicht dem Tor\n", encoding="utf-8")
-    representative = copy.parent / "python-stellvertreter"
+    (copy / "_site" / "own.txt").write_text("belongs to the people, not to the gate\n", encoding="utf-8")
+    representative = copy.parent / "python-proxy"
     representative.write_text(f'''#!/bin/sh
-if [ "$1" = "tests/run_all.py" ]; then echo "Sammellauf: Stellvertreter"; exit 0; fi
+if [ "$1" = "tests/run_all.py" ]; then echo "Collect-run: Proxy"; exit 0; fi
 exec "{sys.executable}" "$@"
 ''', encoding="utf-8")
     representative.chmod(representative.stat().st_mode | stat.S_IXUSR)
@@ -404,8 +404,8 @@ exec "{sys.executable}" "$@"
             gate.returncode == 0 and "all green" in gate.stdout,
             f"Exit {gate.returncode}\n{gate.stdout[-400:]}{gate.stderr[-400:]}")
     r.check("H: … an existing _site/ stays untouched, and nothing new arises in the tree",
-            (copy / "_site" / "eigen.txt").exists() and afterwards_h == before_h,
-            f"eigen.txt present: {(copy / '_site' / 'eigen.txt').exists()}, new: "
+            (copy / "_site" / "own.txt").exists() and afterwards_h == before_h,
+            f"own.txt present: {(copy / '_site' / 'own.txt').exists()}, new: "
             f"{sorted(set(afterwards_h) - set(before_h))}, gone:{sorted(set(before_h) - set(afterwards_h))}")
 
 
@@ -413,39 +413,39 @@ exec "{sys.executable}" "$@"
 # Until 2026-09-28 only the end of the output (2000 characters) stood under `FAIL`. If an early
 # check failed, its line was missing — seen in the CI job `repeat` at test_prebooking_pending.py.
 # (Mutation probe: return only `end` in `_fail_output` → red.)
-folder_i = Path(tempfile.mkdtemp(prefix="sammel-i-"))
+folder_i = Path(tempfile.mkdtemp(prefix="collect-i-"))
 lang = suite(folder_i, "test_lang_rot.py", """\
     import sys
-    print("  FEHL frühe Prüfung (Probe 4712): erwartet 1, war 2")
+    print("  FEHL early check (probe 4712): expected 1, was 2")
     for i in range(120):
-        print(f"  ok   spätere Prüfung {i:03d}, die das Ende der Ausgabe füllt")
+        print(f"  ok   later check {i:03d}, which fills the end of the output")
     print("120 ok, 1 Fehler")
     sys.exit(1)
 """)
 execution_i = collect_run([lang], 1)
 from_i = execution_i.stdout
 r.check("I: the early FEHL line is under FAIL, although more than 2000 characters follow",
-        execution_i.returncode == 1 and "FEHL frühe Prüfung (Probe 4712): erwartet 1, war 2" in from_i
-        and from_i.index("FAIL test_lang_rot.py") < from_i.index("Probe 4712"),
+        execution_i.returncode == 1 and "FEHL early check (probe 4712): expected 1, was 2" in from_i
+        and from_i.index("FAIL test_lang_rot.py") < from_i.index("probe 4712"),
         from_i[-600:])
 r.check("I: … the end of the output is still there and begins at a line boundary",
-        "120 ok, 1 Fehler" in from_i and "── Ende der Ausgabe ──" in from_i
-        and from_i.split("── Ende der Ausgabe ──\n", 1)[-1].startswith("  ok   spätere Prüfung"),
-        from_i.split("── Ende der Ausgabe ──", 1)[-1][:120])
+        "120 ok, 1 Fehler" in from_i and "── end of output ──" in from_i
+        and from_i.split("── end of output ──\n", 1)[-1].startswith("  ok   later check"),
+        from_i.split("── end of output ──", 1)[-1][:120])
 
 # ── J: own throwaway directory per suite───────────────────────────────────────────────────
 # The promise on which the parallel run and “tests are repeatable” stand. Until 2026-10-01 no
 # suite checked it: a shared, never deleted directory for all suites stayed green.
 # (Mutation probe: take a fixed directory in `run_suite` and not delete it → red.)
-folder_j = Path(tempfile.mkdtemp(prefix="sammel-j-"))
-trace_j = Path(tempfile.mkdtemp(prefix="sammel-j-spur-"))
+folder_j = Path(tempfile.mkdtemp(prefix="collect-j-"))
+trace_j = Path(tempfile.mkdtemp(prefix="collect-j-spur-"))
 body_j = """\
     import json, os, sys, tempfile
     from pathlib import Path
-    werte = {k: os.environ.get(k, "") for k in ("TMPDIR", "HOME", "XDG_CACHE_HOME", "XDG_CONFIG_HOME",
+    values = {k: os.environ.get(k, "") for k in ("TMPDIR", "HOME", "XDG_CACHE_HOME", "XDG_CONFIG_HOME",
                                                 "XDG_DATA_HOME")}
-    werte["gettempdir"] = tempfile.gettempdir()
-    Path(os.environ["COLLECT_TRACE_J"], Path(sys.argv[0]).name + ".json").write_text(json.dumps(werte))
+    values["gettempdir"] = tempfile.gettempdir()
+    Path(os.environ["COLLECT_TRACE_J"], Path(sys.argv[0]).name + ".json").write_text(json.dumps(values))
 """
 execution_j = collect_run([suite(folder_j, "test_j1.py", body_j), suite(folder_j, "test_j2.py", body_j)],
                     2, COLLECT_TRACE_J=str(trace_j))

@@ -453,7 +453,7 @@ class OIDCClient:
                 "OIDC: UserInfo reports sub=%s, the ID token names sub=%s — response discarded "
                 "(OIDC Core 5.3.2). Groups, e-mail and admin flag thus come solely from the "
                 "signed token.",
-                security.for_log(reported or "<leer>"), security.for_log(str(expected_sub or "<leer>")))
+                security.for_log(reported or "<empty>"), security.for_log(str(expected_sub or "<empty>")))
             return {}
         return response
 

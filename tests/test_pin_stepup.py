@@ -15,7 +15,7 @@ from tinysesam import TinySesam, TinySesamConfig
 HTML = {"accept": "text/html"}
 
 
-def login(c, u="max", pw="geheim12345-lang-genug"):
+def login(c, u="max", pw="dummy12345-long-enough"):
     return c.post("/auth/login", data={"username": u, "password": pw, "next": "/"}, follow_redirects=False)
 
 
@@ -33,14 +33,14 @@ c = TestClient(app, headers=HTML)
 
 page = c.get("/auth/register").text
 assert "name=username" in page and "name=email" not in page or "required" not in page
-r = c.post("/auth/register", data={"username": "max", "password": "geheim12345-lang-genug", "next": "/"},
+r = c.post("/auth/register", data={"username": "max", "password": "dummy12345-long-enough", "next": "/"},
            follow_redirects=False)
 assert r.status_code == 303, r.text[:200]
 assert auth.store.get_user_by_name("max")["email"] is None
 c.cookies.clear()
 
 lp = c.get("/auth/login").text
-assert "Benutzer</label>" in lp, "no combined field"
+assert auth.t("login.user") + "</label>" in lp, "no combined field"
 for gone in ("/auth/magic/request", "/auth/forgot"):
     assert gone not in lp, f"{gone} must not be offered"
 assert c.get("/auth/magic/request").status_code == 404
@@ -55,13 +55,13 @@ db = os.path.join(tempfile.mkdtemp(), "t.db")
 auth = TinySesam(TinySesamConfig.local_accounts(db_path=db, csrf_enabled=False, lang="de",
                                                 passkey_enabled=False, pin_enabled=True,
                                                 cookie_secure=False))
-uid = auth.create_user("max", password="geheim12345-lang-genug")
+uid = auth.create_user("max", password="dummy12345-long-enough")
 auth.set_pin(uid, "2468")
 app = FastAPI()
 app.include_router(auth.router())
 
 
-@app.get("/tresor")
+@app.get("/vault")
 def vault(user=Depends(auth.require(factors=["password", "pin"]))):
     return {"ok": user["username"]}
 
@@ -69,15 +69,15 @@ def vault(user=Depends(auth.require(factors=["password", "pin"]))):
 c = TestClient(app, headers=HTML)
 assert login(c).status_code == 303
 # Password alone is not enough — the route sends to the PIN step
-r = c.get("/tresor", follow_redirects=False)
+r = c.get("/vault", follow_redirects=False)
 assert r.status_code in (303, 307) and r.headers["location"].startswith("/auth/pin"), r.headers
-page = c.get("/auth/pin?next=/tresor").text
+page = c.get("/auth/pin?next=/vault").text
 assert "name=pin" in page and "name=username" not in page, "signed in → no user field"
-r = c.post("/auth/pin", data={"pin": "1111", "next": "/tresor"})
+r = c.post("/auth/pin", data={"pin": "1111", "next": "/vault"})
 assert r.status_code == 401 and "name=username" not in r.text
-r = c.post("/auth/pin", data={"pin": "2468", "next": "/tresor"}, follow_redirects=False)
-assert r.status_code == 303 and r.headers["location"] == "/tresor"
-assert c.get("/tresor", headers={"accept": "application/json"}).json() == {"ok": "max"}
+r = c.post("/auth/pin", data={"pin": "2468", "next": "/vault"}, follow_redirects=False)
+assert r.status_code == 303 and r.headers["location"] == "/vault"
+assert c.get("/vault", headers={"accept": "application/json"}).json() == {"ok": "max"}
 os.unlink(db)
 print("  require(factors=[password,pin]): PIN without user field, route open afterwards ok")
 
@@ -88,7 +88,7 @@ auth = TinySesam(TinySesamConfig.local_accounts(db_path=db, csrf_enabled=False, 
                                                 passkey_enabled=False, pin_enabled=True,
                                                 stepup_methods=["pin"], stepup_max_age_sec=1,
                                                 cookie_secure=False))
-uid = auth.create_user("max", password="geheim12345-lang-genug")
+uid = auth.create_user("max", password="dummy12345-long-enough")
 auth.set_pin(uid, "2468")
 app = FastAPI()
 app.include_router(auth.router())
@@ -121,7 +121,7 @@ assert r.status_code == 401
 # that is 403 `method_disabled` and not a failed attempt: a method that is not offered is
 # not checked at all — until then 401, and the request counted in the bucket `reauth`.
 _before = auth.store.count_fails(0, username="max", method="reauth")
-r = c.post("/auth/reauth", data={"password": "geheim12345-lang-genug", "next": "/sensitive"})
+r = c.post("/auth/reauth", data={"password": "dummy12345-long-enough", "next": "/sensitive"})
 assert r.status_code == 403, "password must not pass here"
 assert auth.store.count_fails(0, username="max", method="reauth") == _before, "no failed attempt"
 assert c.get("/sensitive", follow_redirects=False).status_code == 307, "the session is not fresh"
@@ -137,7 +137,7 @@ db = os.path.join(tempfile.mkdtemp(), "t.db")
 auth = TinySesam(TinySesamConfig.local_accounts(db_path=db, csrf_enabled=False, lang="de",
                                                 passkey_enabled=False, pin_enabled=True,
                                                 stepup_methods=["pin"], cookie_secure=False))
-uid = auth.create_user("ohnepin", password="geheim12345-lang-genug")   # no PIN set
+uid = auth.create_user("ohnepin", password="dummy12345-long-enough")   # no PIN set
 u = auth.store.get_user(uid)
 assert auth.stepup_options(u) == ["password"], "without PIN → password instead of a dead end"
 os.unlink(db)
@@ -148,7 +148,7 @@ db = os.path.join(tempfile.mkdtemp(), "t.db")
 auth = TinySesam(TinySesamConfig.local_accounts(db_path=db, csrf_enabled=False, lang="de",
                                                 passkey_enabled=False, pin_enabled=True,
                                                 pin_login=False, cookie_secure=False))
-uid = auth.create_user("max", password="geheim12345-lang-genug")
+uid = auth.create_user("max", password="dummy12345-long-enough")
 auth.set_pin(uid, "2468")
 app = FastAPI(); app.include_router(auth.router())
 c = TestClient(app, headers=HTML)
@@ -192,13 +192,13 @@ db = os.path.join(tempfile.mkdtemp(), "t.db")
 auth = TinySesam(TinySesamConfig.local_accounts(db_path=db, csrf_enabled=False, lang="de",
                                                 passkey_enabled=False, cookie_secure=False,
                                                 admin_identifiers=["chef"]))
-auth.create_user("fremder", password="geheim12345-lang-genug")
-auth.create_user("chef", password="geheim12345-lang-genug")
+auth.create_user("foreign", password="dummy12345-long-enough")
+auth.create_user("chef", password="dummy12345-long-enough")
 app = FastAPI(); app.include_router(auth.router()); c = TestClient(app, headers=HTML)
-c.post("/auth/login", data={"username": "fremder", "password": "geheim12345-lang-genug", "next": "/"})
-assert not auth.store.get_user_by_name("fremder")["is_admin"], "a stranger must not become admin"
+c.post("/auth/login", data={"username": "foreign", "password": "dummy12345-long-enough", "next": "/"})
+assert not auth.store.get_user_by_name("foreign")["is_admin"], "a stranger must not become admin"
 c.cookies.clear()
-c.post("/auth/login", data={"username": "chef", "password": "geheim12345-lang-genug", "next": "/"})
+c.post("/auth/login", data={"username": "chef", "password": "dummy12345-long-enough", "next": "/"})
 assert auth.store.get_user_by_name("chef")["is_admin"]
 os.unlink(db)
 
@@ -208,15 +208,15 @@ auth = TinySesam(TinySesamConfig.local_accounts(db_path=db, csrf_enabled=False, 
                                                 passkey_enabled=False, cookie_secure=False))
 tok = auth.admin_claim_token()
 assert tok
-auth.create_user("erster", password="geheim12345-lang-genug")
+auth.create_user("first", password="dummy12345-long-enough")
 app = FastAPI(); app.include_router(auth.router()); c = TestClient(app, headers=HTML)
 r = c.get(f"/auth/claim-admin?token={tok}", follow_redirects=False)
 assert r.status_code == 303 and "/auth/login" in r.headers["location"], "sign in first without login"
-c.post("/auth/login", data={"username": "erster", "password": "geheim12345-lang-genug", "next": "/"})
-assert c.get("/auth/claim-admin?token=falsch").status_code == 403
+c.post("/auth/login", data={"username": "first", "password": "dummy12345-long-enough", "next": "/"})
+assert c.get("/auth/claim-admin?token=wrong").status_code == 403
 r = c.get(f"/auth/claim-admin?token={tok}", follow_redirects=False)
 assert r.status_code == 303 and r.headers["location"] == "/auth/admin"
-assert auth.store.get_user_by_name("erster")["is_admin"]
+assert auth.store.get_user_by_name("first")["is_admin"]
 assert c.get(f"/auth/claim-admin?token={tok}").status_code == 404, "route disappears with the first admin"
 assert auth.admin_claim_token() is None
 os.unlink(db)
@@ -237,7 +237,7 @@ auth = TinySesam(TinySesamConfig(db_path=db, csrf_enabled=False, lang="de", cook
                                  passkey_enabled=False, oidc_enabled=False,
                                  password_enabled=False,      # purely federated account
                                  pin_enabled=True, totp_enabled=True, stepup_max_age_sec=900))
-uid = auth.create_user("sso-nutzer")
+uid = auth.create_user("sso-user")
 app = FastAPI(); app.include_router(auth.router())
 c = TestClient(app, headers=HTML)
 J = {"Accept": "application/json"}
@@ -280,7 +280,7 @@ db = os.path.join(tempfile.mkdtemp(), "t.db")
 auth = TinySesam(TinySesamConfig(db_path=db, csrf_enabled=False, lang="de", cookie_secure=False,
                                  passkey_enabled=False, oidc_enabled=False, password_enabled=False,
                                  pin_enabled=True, totp_enabled=True, stepup_max_age_sec=900))
-uid = auth.create_user("sso-nutzer")
+uid = auth.create_user("sso-user")
 app = FastAPI(); app.include_router(auth.router())
 c = TestClient(app, headers=HTML)
 tok, _ = auth.start_session(uid, "oidc", remember=True)
@@ -299,9 +299,9 @@ page_html = c.get("/auth/reauth")
 fields = re.findall(r"<input[^>]*name=[\"\']?(\w+)", page_html.text)
 assert fields == [], fields
 assert auth.t("err.stepup_none") in page_html.text, page_html.text[:300]
-response = c.post("/auth/reauth", data={"password": "geraten", "next": "/"})
+response = c.post("/auth/reauth", data={"password": "guessed", "next": "/"})
 assert response.status_code == 403, response.status_code
-assert auth.store.count_fails(0, username="sso-nutzer") == 0, "no failed attempt in the lockout bucket"
+assert auth.store.count_fails(0, username="sso-user") == 0, "no failed attempt in the lockout bucket"
 os.unlink(db)
 print("  (b) sign-in too old: 403 'sign in again', reauth page without field ok")
 
@@ -320,7 +320,7 @@ db = os.path.join(tempfile.mkdtemp(), "t.db")
 auth = TinySesam(TinySesamConfig(db_path=db, csrf_enabled=False, lang="de", cookie_secure=False,
                                  passkey_enabled=False, oidc_enabled=False, pin_enabled=True,
                                  pin_login=True, stepup_max_age_sec=900))
-PW = "Anna-Passwort-2026"
+PW = "Anna-Password-2026"
 uid = auth.create_user("anna", PW)
 app = FastAPI(); app.include_router(auth.router())
 c = TestClient(app, headers=HTML)
@@ -367,7 +367,7 @@ auth = TinySesam(TinySesamConfig.local_accounts(db_path=db, csrf_enabled=False, 
                                                 passkey_enabled=False, pin_enabled=True,
                                                 stepup_methods=["pin"], stepup_max_age_sec=1,
                                                 cookie_secure=False))
-uid = auth.create_user("max", password="geheim12345-lang-genug")
+uid = auth.create_user("max", password="dummy12345-long-enough")
 auth.set_pin(uid, "2468")
 app = FastAPI()
 app.include_router(auth.router())

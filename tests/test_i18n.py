@@ -14,7 +14,7 @@ def build(**kw):
     db = os.path.join(tempfile.mkdtemp(), "t.db")
     auth = TinySesam(TinySesamConfig(db_path=db, rp_name="Test", passkey_enabled=False, oidc_enabled=False,
                                      cookie_secure=False, csrf_enabled=False, **kw))
-    auth.ensure_admin("admin", "geheim123")
+    auth.ensure_admin("admin", "dummy123")
     app = FastAPI()
     app.include_router(auth.router())
     return db, auth, TestClient(app)
@@ -30,7 +30,7 @@ assert "Benutzer" not in html
 ok("default language English: login page in English")
 
 # English error message
-r = c.post("/auth/login", data={"username": "admin", "password": "falsch"})
+r = c.post("/auth/login", data={"username": "admin", "password": "wrong"})
 assert "Invalid credentials" in r.text
 ok("error message in English (Invalid credentials)")
 os.remove(db)
@@ -39,7 +39,7 @@ os.remove(db)
 db, auth, c = build(lang="de")
 html = c.get("/auth/login").text
 assert "Benutzer" in html and "Passwort" in html and "Anmelden" in html and "lang=de" in html
-r = c.post("/auth/login", data={"username": "admin", "password": "falsch"})
+r = c.post("/auth/login", data={"username": "admin", "password": "wrong"})
 assert "Falsche Zugangsdaten" in r.text
 ok("lang='de': login page + error message in German")
 os.remove(db)
@@ -48,7 +48,7 @@ os.remove(db)
 db, auth, c = build(lang="en")
 assert auth.t("err.pw_short", n=8) == "Password too short (min. 8)"
 assert auth.t("login.user") == "Username"
-assert auth.t("gibt.es.nicht") == "gibt.es.nicht"       # unknown key → the key itself
+assert auth.t("does.not.exist") == "does.not.exist"       # unknown key → the key itself
 auth.cfg.lang = "de"
 assert auth.t("login.user") == "Benutzer"
 auth.cfg.lang = "fr"                                     # no fr table → fallback en

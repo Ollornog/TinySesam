@@ -30,7 +30,7 @@ def lib(**w):
 def gateway(**w):
     values = dict(issuer="https://id.example.com", client_id="c", client_secret="s",
                  base_url="https://auth.example.com", db_path=":memory:",
-                 trusted_redirect_hosts=["app.example.com"], allowed_groups=["leute"],
+                 trusted_redirect_hosts=["app.example.com"], allowed_groups=["people"],
                  oidc_scopes="openid profile email groups")
     values.update(w)
     return TinySesamConfig.oidc_gateway(**values)
@@ -148,7 +148,7 @@ _renamed = {(k + " ") if k == _k else k: v for k, v in _real.items()}
 _place = {k: (v.replace("{real}", "{mutated}") if "{real}" in k else v) for k, v in _real.items()}
 _foreign = dict(_real)
 _foreign["{where} is not in trusted_redirect_hosts — there is no redirect back for this host, the "
-       "setting never takes effect."] = "{xx} fehlt"
+       "setting never takes effect."] = "{xx} missing"
 assert _real is config_check._DE and _gaps(_real) == []
 assert _gaps(_without) and _gaps(_renamed) and _gaps(_place) and _gaps(_foreign)
 # … and the effect: with the key missing, lang="de" falls back to English and the language check goes red.

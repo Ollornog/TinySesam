@@ -23,6 +23,26 @@ After the identifiers and the database names were renamed, this guard keeps it t
    (`tests/_german_words.history_lines`: old → new pairs, version numbers, "German", "schema 15", the rollback
    sections) — and the `tags:` of the backlog entries. `i18n/` is German on purpose and not read.
 
+7. **String literals of the Python sources** (since the string-literal follow-up) — every string and bytes constant
+   outside docstrings (f-string parts included): log, error, output and assert messages, test data (passwords,
+   usernames, account names, sample values), embedded code (JavaScript, a Python snippet run in a subprocess). A word
+   of the list counts anywhere in such a string, quoted or not: a string IS the text. Non-ASCII letters alone do not
+   count (a Unicode test input such as `Özlem` or `bücher.example` is no German text). The exceptions are structural:
+
+   * the German half of the interface: a value under a `"de"` key (the message catalog, the account-page texts, the
+     demo and website texts), the table `config_check._DE`, and the German data tables listed in `GERMAN_DATA_TABLES`
+     (the password blocklist, the probe of the API-name guard, the German page texts of the end-to-end smoke test);
+   * German UI text that a TEST asserts: a phrase that is a piece of a German interface text (placeholders cut out:
+     `Anmelden bei {app}` is asserted as `Anmelden bei Wiki`), a word that is a whole German interface text of its own
+     (`Konto`) next to other text, an all-caps word of such a text (`NIE`), a passage in curly quotation marks
+     “…”/„…“, and — in the tests that read `i18n/` — a phrase from the German documentation;
+   * the old names the migrations must name, as whole tokens: a compound from the tables of `_vocabulary.py`,
+     `Store.RENAMED_*`, `Store.KEY_KINDS_OLD`, `Store._english_names` (`oidc_widerruf`, `kein_konto`), a single old
+     key before `=` (`akteur=`), and the code that defines or reads them (`old_value_nodes`); the three tests whose
+     INPUT is the old data (`OLD_DATA_TESTS`);
+   * names that the kit dictates (`_KIT_NAMES`, its identifier-like strings with an underscore), the HMAC domain
+     label `PROTOCOL_CONSTANTS`, and the guards' own probes and word lists (`GUARD_FILES`: German on purpose).
+
 Explicit and small exceptions (everything else is a finding):
 
 * files that the shared test kit manages (`repokit sync`, they change there, not here): `tests/_kit/**`,
@@ -59,7 +79,7 @@ sys.path.insert(0, str(ROOT / "tests"))
 from _german_words import ENGLISH_HOMOGRAPHS, GERMAN_WORDS, history_lines     # noqa: E402
 from _kit.report import Report                                 # noqa: E402
 
-r = Report("English code: identifiers, file names, SQL, comments, docstrings")
+r = Report("English code: identifiers, file names, SQL, comments, docstrings, string literals")
 
 DIRS = ("tinysesam", "web", "examples", "scripts", "tests")
 KIT_FILES = ("scripts/_backlog.py", "scripts/_nur_text.sh", "scripts/_residue_check.sh", "tests/voraussetzung.py",
@@ -79,7 +99,9 @@ SKIP_SUFFIXES = (".py", ".pyc", ".png", ".ico", ".svg", ".woff2")
 OLD_NAMES_ALLOWED = {("tinysesam/store.py", "_english_names"), ("tinysesam/store.py", "RENAMED_TABLES"),
                      ("tinysesam/store.py", "RENAMED_COLUMNS"), ("tinysesam/store.py", "RENAMED_OBJECTS"),
                      ("tinysesam/store.py", "RENAMED_SETTINGS"), ("tinysesam/store.py", "RENAMED_SETTING_PREFIXES"),
-                     ("tinysesam/store.py", "KEY_KINDS_OLD")}
+                     ("tinysesam/store.py", "KEY_KINDS_OLD"), ("tinysesam/store.py", "anonymize_audit"),
+                     ("tinysesam/store.py", "source_mail_since"), ("tinysesam/store.py", "_OLD_NAME"),
+                     ("tinysesam/store.py", "_OLD_MAIL"), ("tinysesam/store.py", "_OWN_VALUES")}
 SQL_KEYWORDS = re.compile(r"\b(SELECT|INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|WHERE|FROM|PRAGMA|TRIGGER|VALUES)\b")
 
 
@@ -94,11 +116,12 @@ def german_in_identifier(name: str) -> list:
                   | {c for c in str(name) if not c.isascii()})
 
 
-def german_in_text(text: str, quoted: bool = False) -> list:
+def german_in_text(text: str, quoted: bool = False, umlaut: bool = True) -> list:
     """German words in running English text outside `backticks`, "quotes" and 'quotes' — what a person reads as prose.
 
     `quoted=True` reads the quoted parts too (output texts of a shell script, names in the docs): there a quotation
-    mark does not quote an old value but holds the text itself.
+    mark does not quote an old value but holds the text itself. `umlaut=False` counts only the words of the list (a
+    string literal may hold a non-ASCII name on purpose: a Unicode test input is no German text).
     """
     if not quoted:
         text = re.sub(r"`[^`]*`", " ", text)
@@ -111,7 +134,7 @@ def german_in_text(text: str, quoted: bool = False) -> list:
             continue
         if lw in GERMAN_WORDS and lw not in ENGLISH_HOMOGRAPHS and lw not in NOT_GERMAN_TOKENS:
             found.add(lw)
-        elif any(c in "äöüß" for c in lw):
+        elif umlaut and any(c in "äöüß" for c in lw):
             found.add(lw)
     return sorted(found)
 
@@ -267,6 +290,261 @@ def sql_findings(path: str, text: str, skip_defs=()) -> list:
     return out
 
 
+# ── string literals of the Python sources ───────────────────────────────────────────────────────
+#: Module-level tables whose strings are German on purpose, as (file, name): the German finding templates and the German
+#: password blocklist (a list of what German speakers try first).
+GERMAN_DATA_TABLES = {("tinysesam/config_check.py", "_DE"), ("tinysesam/passwords.py", "BLOCKLIST"),
+                      ("tinysesam/passwords.py", "CONTEXT_BASE_WORDS"),
+                      # the probe of the API-name guard in section (k): its German names are its test data
+                      ("tests/test_sign_in.py", "_probe_source"), ("tests/test_sign_in.py", "_PROBE_GERMAN"),
+                      # the German texts of the pages the end-to-end smoke test drives
+                      ("tests/e2e_stage.py", "_DE_CONFIRM"), ("tests/e2e_stage.py", "_DE_REFUSE"),
+                      ("tests/e2e_stage.py", "_DE_RATE")}
+#: The guards themselves: their probes and word lists are German on purpose (that is their subject). Besides this guard and
+#: its word list that is `tests/test_api_surface.py`, the second, narrower guard (the names of the public API, the
+#: contract and the log texts): its own German word lists, the old values it must not find again and the probes that
+#: prove it finds a German name are spread over its functions.
+GUARD_FILES = ("tests/test_english_code.py", "tests/_german_words.py", "tests/test_api_surface.py")
+#: Names that the shared test kit dictates and that stay as they are in a string: the worker-count variable, the
+#: workflow list of the auto-merge file, the kit scripts and their option, the backlog status value of the kit
+#: convention (`status: offen`), and the German OUTPUT of the kit's report
+#: (`FEHL <check>`, `<n> ok, <n> Fehler, <n> übersprungen` from `tests/_kit/report.py`, `uebersprungen: <reason>` from
+#: `tests/voraussetzung.py`), which `tests/run_all.py` reads and `tests/test_runner.py` imitates.
+_KIT_NAMES = re.compile(r"CI_KERNE|PFLICHT_WORKFLOWS|[\w./-]*(?:_nur_text|_residue_check|nur-text-verengung)[\w./-]*"
+                        r"|--seit\b|\bstatus: offen\b|\bFEHL\b|\b\d+ ok, \d+ Fehler\b|, \d+ übersprungen\b|\buebersprungen:")
+#: Tests whose INPUT is the old German data (audit lines, key kinds, table and column names of the old schema, free text of
+#: the old messages): whole files, because the fixtures are the subject — they are the tests that prove the migrations.
+OLD_DATA_TESTS = ("tests/test_vocabulary_migration.py", "tests/test_db_names_migration.py",
+                  "tests/test_values_english.py")
+#: Patterns that must NOT appear in the English and the German docs (the German half is the point): exact strings.
+GERMAN_DOC_PATTERNS = frozenset({"within a few days|innerhalb weniger Tage"})
+#: Strings that are part of a stored or derived value and must not change: the HMAC domain label of the password-
+#: repetition fingerprints (changing a letter would invalidate every stored fingerprint).
+PROTOCOL_CONSTANTS = frozenset({"tinysesam/passwort-wiederholung/v1"})
+#: Not German in a string, although the word list knows it: `typ` is the JWT header name (RFC 7519).
+ENGLISH_STRING_TOKENS = frozenset({"typ"})
+
+
+_KIT_TOKEN_CACHE: list = []
+
+
+def kit_string_tokens() -> frozenset:
+    """The identifier-like strings WITH an underscore that the shared kit defines or reads (policy keys such as
+    `private_namen_sha256_16`, the cookie key `_wert`, `pruefe_cookie_flags` ...): a test string that names one of them
+    cannot name it differently."""
+    if not _KIT_TOKEN_CACHE:
+        found = set()
+        for path in [*KIT_FILES, *(str(p.relative_to(ROOT)) for p in (ROOT / "tests" / "_kit").glob("*.py"))]:
+            if path.endswith(".py"):
+                found |= {text_of(n) for n in _string_nodes(ast.parse((ROOT / path).read_text(encoding="utf-8")))
+                          if "_" in text_of(n) and re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]{2,}", text_of(n))}
+        _KIT_TOKEN_CACHE.append(frozenset(found))
+    return _KIT_TOKEN_CACHE[0]
+
+
+def without_kit_tokens(value: str) -> str:
+    """`value` without the names of the kit (`_KIT_NAMES` and the identifier-like strings of the kit files)."""
+    kit = kit_string_tokens()
+    value = _KIT_NAMES.sub(" ", value)
+    return re.sub(r"[A-Za-z_][A-Za-z_0-9]*", lambda m: " " if m.group(0) in kit else m.group(0), value)
+
+
+def _string_nodes(tree) -> list:
+    """Every string constant of a module that is no docstring (an f-string's literal parts are constants too)."""
+    docs = set()
+    for n in ast.walk(tree):
+        if isinstance(n, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)) and n.body \
+                and isinstance(n.body[0], ast.Expr) and isinstance(getattr(n.body[0], "value", None), ast.Constant):
+            docs.add(id(n.body[0].value))
+    return [n for n in ast.walk(tree) if isinstance(n, ast.Constant) and isinstance(n.value, (str, bytes)) and id(n) not in docs]
+
+
+def text_of(node) -> str:
+    """The text of a string or bytes constant (bytes read as Latin-1: `b"richtig"` is a password like any other)."""
+    return node.value if isinstance(node.value, str) else node.value.decode("latin-1")
+
+
+def _within(root) -> set:
+    return {id(k) for k in ast.walk(root)}
+
+
+def german_ui_nodes(path: str, tree) -> set:
+    """ids of the nodes that hold the German half of the interface: the value under a `"de"` key, and the tables of
+    `GERMAN_DATA_TABLES` that sit in this file."""
+    out = set()
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Dict):
+            for k, v in zip(n.keys, n.values):
+                if isinstance(k, ast.Constant) and k.value == "de":
+                    out |= _within(v)
+        if isinstance(n, (ast.Assign, ast.AnnAssign)):
+            targets = n.targets if isinstance(n, ast.Assign) else [n.target]
+            if any(isinstance(t, ast.Name) and (path, t.id) in GERMAN_DATA_TABLES for t in targets):
+                out |= _within(n)
+    return out
+
+
+def old_value_nodes(path: str, tree) -> set:
+    """ids of the nodes that DEFINE or READ the old names of the migrations: the module-level tables of `_vocabulary.py`
+    and what `OLD_NAMES_ALLOWED` lists (`Store.RENAMED_*`, `_english_names`, the readers of old audit rows)."""
+    out = set()
+    if path == "tinysesam/_vocabulary.py":
+        for n in tree.body:
+            if isinstance(n, ast.Assign):
+                out |= _within(n)
+    for n in ast.walk(tree):
+        if isinstance(n, (ast.FunctionDef, ast.ClassDef)) and (path, n.name) in OLD_NAMES_ALLOWED:
+            out |= _within(n)
+        if isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and (path, t.id) in OLD_NAMES_ALLOWED for t in n.targets):
+            out |= _within(n)
+    return out
+
+
+def german_ui_corpus() -> list:
+    """The German interface texts of the library, to see whether a test string is a fragment of one."""
+    out = []
+    for path in source_files():
+        if not path.endswith(".py") or is_kit(path) or not path.startswith(("tinysesam/", "web/", "examples/")):
+            continue
+        tree = ast.parse((ROOT / path).read_text(encoding="utf-8"))
+        ui = german_ui_nodes(path, tree)
+        out += [text_of(n) for n in _string_nodes(tree) if id(n) in ui]
+    return out
+
+
+_GERMAN_DOCS_CACHE: list = []
+
+
+def german_docs_text() -> str:
+    """The text of the German translations (`i18n/*.de.md`): German on purpose, and read by tests that run their examples."""
+    if not _GERMAN_DOCS_CACHE:
+        _GERMAN_DOCS_CACHE.append("\n".join(p.read_text(encoding="utf-8") for p in sorted((ROOT / "i18n").glob("*.de.md"))))
+    return _GERMAN_DOCS_CACHE[0]
+
+
+def old_value_tokens() -> frozenset:
+    """The OLD names the migrations must name, as whole tokens: every string of a module-level table of
+    `_vocabulary.py`, of `Store.RENAMED_*` / `KEY_KINDS_OLD` and of `Store._english_names`, the words in it
+    (split at everything but letters, digits, `_` and `#`: `reason=kein_konto` → `kein_konto`) and the audit event
+    families (`<source>_kennung_gebunden`). A string that names such a token (`oidc_widerruf`, `akteur=`,
+    `gelöscht#7`) quotes an old value on purpose (see `is_old_name`)."""
+    tokens = set()
+    tables = {}
+    for path in ("tinysesam/_vocabulary.py", "tinysesam/store.py"):
+        tree = ast.parse((ROOT / path).read_text(encoding="utf-8"))
+        roots = []
+        for n in ast.walk(tree):
+            if isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and (
+                    path.endswith("_vocabulary.py") and t.id.isupper() or (path, t.id) in OLD_NAMES_ALLOWED)
+                    for t in n.targets):
+                roots.append(n)
+                for t in n.targets:
+                    if isinstance(t, ast.Name):
+                        try:
+                            tables[t.id] = ast.literal_eval(n.value)
+                        except ValueError:
+                            pass
+            elif isinstance(n, ast.FunctionDef) and (path, n.name) in OLD_NAMES_ALLOWED:
+                roots.append(n)
+        for root in roots:
+            for s in _string_nodes(root):
+                tokens.add(text_of(s).lower())
+                tokens |= {w.lower() for w in re.findall(r"[\w#]+", text_of(s)) if len(w) > 1}
+    for source in tables.get("AUDIT_SOURCES", ()):
+        tokens |= {(source + suffix).lower() for suffix in tables.get("AUDIT_FAMILIES_OLD", {})}
+    return frozenset(tokens)
+
+
+def is_old_name(value: str, m: "re.Match", old_tokens) -> bool:
+    """Does the token `m` in `value` name an old value on purpose? A compound (`kein_konto`, `oidc_widerruf`,
+    `gelöscht#`) always does; a single word (`akteur`, `grund`) only as a key before `=`, so that a username `neu` or a
+    password word is no excuse."""
+    if m.group(0).lower() not in old_tokens:
+        return False
+    if "_" in m.group(0) or "#" in m.group(0):
+        return True
+    return value[m.end():m.end() + 1] == "="
+
+
+def without_old_tokens(value: str, old_tokens) -> str:
+    return re.sub(r"[\w#]+", lambda m: " " if is_old_name(value, m, old_tokens) else m.group(0), value)
+
+
+_PLACEHOLDER = re.compile(r"\{[^{}]*\}|%\([A-Za-z_]+\)[sdr]|%[sdr]|<[^<>]*>|__[A-Z_]+__")
+_CURLY_QUOTED = re.compile(r"“[^”]*”|„[^“”\"]*[“”\"]")
+
+
+def ui_words(ui_corpus) -> frozenset:
+    """The German interface texts that are ONE word (`Konto`, `Passwort`, `Zwei-Faktor`): a test that asserts them next
+    to other text (`Konto · admin`) quotes the interface. Only as a word of its own, set off by blanks."""
+    return frozenset(e.strip() for e in ui_corpus if e.strip() and not re.search(r"\s", e.strip()) and len(e.strip()) >= 3)
+
+
+def ui_caps(ui_corpus) -> frozenset:
+    """Words in CAPITALS inside the German interface texts (`NIE`, `JETZT`): a test that pins them quotes the interface."""
+    return frozenset(w for e in ui_corpus for w in re.findall(r"\b[A-ZÄÖÜ]{3,}\b", e))
+
+
+def ui_fragments(ui_corpus) -> list:
+    """The literal pieces of the German interface texts (a phrase of at least 6 characters, or a word of at least 16), longest first: a test string that
+    contains one of them quotes the interface (`Anmelden bei {app}` is asserted as `Anmelden bei Wiki`)."""
+    pieces = {p.strip() for entry in ui_corpus for p in _PLACEHOLDER.split(entry)
+              if (len(p.strip()) >= 6 and " " in p.strip()) or len(p.strip()) >= 16}
+    return sorted(pieces, key=len, reverse=True)
+
+
+def string_hits(path: str, text: str, ui_corpus=(), old_tokens=frozenset(), fragments=None) -> list:
+    """[(node, words)] — the string constants of a Python source that hold German words.
+
+    Not counted: the German half of the interface itself (`german_ui_nodes`); in a test, a string that is a part of a
+    German interface text or quotes one (the pieces around the placeholders), and a piece of the German
+    documentation (`german_docs_text`); a passage in curly quotation marks
+    “…” / „…“ (an English description quoting the interface); an old name of the migrations (`old_value_tokens`);
+    the names of the kit (`without_kit_tokens`)."""
+    if path in GUARD_FILES or path in OLD_DATA_TESTS:
+        return []
+    fragments = ui_fragments(ui_corpus) if fragments is None else fragments
+    words_ui, caps_ui = ui_words(ui_corpus), ui_caps(ui_corpus)
+    out = []
+    tree = ast.parse(text)
+    ui = german_ui_nodes(path, tree) | old_value_nodes(path, tree)
+    for n in _string_nodes(tree):
+        if id(n) in ui:
+            continue
+        if text_of(n) in GERMAN_DOC_PATTERNS or text_of(n) in PROTOCOL_CONSTANTS:
+            continue
+        value = _CURLY_QUOTED.sub(" ", text_of(n))
+        if path.startswith("tinysesam/") and SQL_KEYWORDS.search(value) and len(value) > 12:
+            value = re.sub(r"'[^']*'|--[^\n]*", " ", value)          # SQL: values and comments (as in `sql_findings`)
+        if path.startswith("tests/") and "i18n/" in text and len(value.strip()) >= 8 \
+                and (" " in value.strip() or value.strip()[0] in "/#") and value.strip() in german_docs_text():
+            continue                # a test finds or runs a piece of the German documentation
+        if path.startswith("tests/") and re.search(r"[|\\()]", value) and all(
+                w in german_docs_text().lower() for w in german_in_text(value, quoted=True, umlaut=False)):
+            continue                # a pattern that finds German documentation (`(?:days|Tage)`)
+        if path.startswith("tests/"):
+            if any(value.strip() == c.strip() or (" " in value.strip() and len(value.strip()) >= 6 and value.strip() in c)
+                   for c in ui_corpus):
+                continue            # a test asserts a German interface text or a part of it
+            for frag in fragments:
+                if frag in value:
+                    value = value.replace(frag, " ")
+            if " " in value.strip():
+                value = " ".join("" if w in words_ui else w for w in value.split(" "))
+            value = " ".join("" if w.strip('"\'.,;:()') in caps_ui else w for w in value.split(" "))
+        value = without_old_tokens(without_kit_tokens(value), old_tokens)
+        found = [w for w in german_in_text(value, quoted=True, umlaut=False) if w not in ENGLISH_STRING_TOKENS]
+        if found:
+            out.append((n, found))
+    return out
+
+
+def string_findings(path: str, text: str, ui_corpus=(), old_tokens=frozenset(), fragments=None) -> list:
+    """[(path:line, text, words)] — German words in the string literals of a Python source (see `string_hits`)."""
+    return [(f"{path}:{n.lineno}", text_of(n)[:70].replace("\n", " "), found)
+            for n, found in string_hits(path, text, ui_corpus, old_tokens, fragments)]
+
+
 def filename_findings(paths: list) -> list:
     out = []
     for p in paths:
@@ -391,6 +669,8 @@ def nonpython_all_findings() -> list:
 def all_findings() -> list:
     paths = source_files()
     skip = kit_names()
+    ui_corpus, old_tokens = german_ui_corpus(), old_value_tokens()
+    fragments = ui_fragments(ui_corpus)
     out = [("file name", *f) for f in filename_findings(paths)]
     for path in paths:
         if is_kit(path) or not path.endswith(".py"):
@@ -400,6 +680,7 @@ def all_findings() -> list:
         out += [("comment/docstring", *f) for f in prose_findings(path, text)]
         if path.startswith("tinysesam/"):
             out += [("sql", *f) for f in sql_findings(path, text)]
+        out += [("string", *f) for f in string_findings(path, text, ui_corpus, old_tokens, fragments)]
     return out + nonpython_all_findings()
 
 
@@ -410,7 +691,7 @@ def report(findings: list, limit=int(os.environ.get("ENGLISH_CODE_LIMIT", "25"))
 
 # ── the real tree ─────────────────────────────────────────────────────────────────────────────────
 tree_findings = all_findings()
-r.check("no German identifier, file name, SQL name, comment or docstring in tinysesam/, web/, examples/, scripts/, tests/",
+r.check("no German identifier, file name, SQL name, comment, docstring or string literal in tinysesam/, web/, examples/, scripts/, tests/",
         not tree_findings, report(tree_findings))
 store_text = (ROOT / "tinysesam" / "store.py").read_text(encoding="utf-8")
 r.check("the guard sees the schema: `store.SCHEMA` is SQL text and is measured (more than 20 tables)",
@@ -501,6 +782,90 @@ for what, path, old, new in (
     except AssertionError as error:
         found, ok = [str(error)], False
     r.check(f"mutation: {what} — the check turns red", ok, str(found[:2]))
+
+# ── string literals: probes and mutations ────────────────────────────────────────────────────────
+_UI = german_ui_corpus()
+_OLD = old_value_tokens()
+_FR = ui_fragments(_UI)
+_PROBE_UI = ["Anmelden bei {app}", "Konto", "Passwort", "Zu viele Fehlversuche — vorübergehend gesperrt.",
+             "Achtung: NIE freigeben"]
+
+
+def probe_strings(path: str, text: str, ui=None) -> list:
+    return string_findings(path, text, _PROBE_UI if ui is None else ui, _OLD, ui_fragments(_PROBE_UI if ui is None else ui))
+
+
+STR_BAD = {
+    "log message in the package": ("tinysesam/x.py", 'log.warning("Datenbank nicht erreichbar")\n'),
+    "exception text": ("tinysesam/x.py", 'raise ValueError(f"Konto {user} gesperrt")\n'),
+    "f-string part": ("tinysesam/x.py", 'print(f"Fehler bei {x}")\n'),
+    "assert message in a test": ("tests/test_x.py", 'assert ok, "Anmeldung fehlgeschlagen"\n'),
+    "test password": ("tests/test_x.py", 'create_user("max", password="Geheim-lang-genug")\n'),
+    "test user name": ("tests/test_x.py", 'create_user("chefin")\n'),
+    "single old word that is no key": ("tests/test_x.py", 'create_user("neu")\n'),
+    "password that contains a word of the interface": ("tests/test_x.py", 'create_user("u", password="Dritte-Passwort")\n'),
+    "snippet run in a subprocess": ("tests/test_x.py", 'SRC = "def pruefe():\\n    return 1\\n"\n'),
+    "bytes constant": ("tests/test_x.py", 'USER = {b"uid=alice": b"richtig"}\n'),
+    "English test text with a German word": ("tests/test_x.py", 'r.check("login works für Kunden", ok)\n'),
+}
+STR_GOOD = {
+    "English log text": ("tinysesam/x.py", 'log.warning("database unreachable: %s", error)\n'),
+    "German interface text under a de key": ("tinysesam/x.py", 'MESSAGES = {"en": {"a": "Account"}, "de": {"a": "Konto gelöscht"}}\n'),
+    "German table of the findings": ("tinysesam/config_check.py", '_DE = {"English": "Deutsch und nicht gesperrt"}\n'),
+    "German password blocklist": ("tinysesam/passwords.py", 'BLOCKLIST = frozenset("passwort kennwort geheimnis".split())\n'),
+    "old compound value": ("tests/test_x.py", 'assert "oidc_widerruf" not in line\n'),
+    "old key before =": ("tests/test_x.py", 'detail = "old=x akteur=helper"\n'),
+    "Unicode input": ("tests/test_x.py", 'folded("Özlem") == folded("u@bücher.example")\n'),
+    "phrase of the interface with a placeholder filled": ("tests/test_x.py", 'assert "Anmelden bei Wiki" in html\n'),
+    "whole interface word next to other text": ("tests/test_x.py", 'assert "Konto · admin" in html\n'),
+    "all-caps word of the interface": ("tests/test_x.py", 'assert "NIE" in text\n'),
+    "quoted interface text in a description": ("tests/test_x.py", 'r.check("page “Anmelden bei Wiki” shown", ok)\n'),
+    "name the kit dictates": ("tests/test_x.py", 'env = {"CI_KERNE": "3"}\n'),
+    "docstring (read as prose, not as a string)": ("tinysesam/x.py", 'def f():\n    """Löscht nichts."""\n'),
+    "German names inside a guard file": ("tests/_german_words.py", 'GERMAN = frozenset("konto passwort".split())\n'),
+    "English twin": ("tests/test_x.py", 'create_user("boss", password="Third-Password")\n'),
+}
+_bad_str = {k: bool(probe_strings(*v)) for k, v in STR_BAD.items()}
+_good_str = {k: bool(probe_strings(*v)) for k, v in STR_GOOD.items()}
+r.check("self-test string literals: a German log text, exception text, f-string part, assert message, password, user name, "
+        "a single old word that is no key, a password with an interface word in it, a snippet, a bytes constant and an "
+        "English text with a German word are found; their English twins, a German interface text, the German finding "
+        "table, the blocklist, an old name, Unicode input, a quoted or asserted interface text, a kit name and a "
+        "docstring are not",
+        all(_bad_str.values()) and not any(_good_str.values()), f"{_bad_str} {_good_str}")
+
+
+def mutated_string_findings(path: str, old: str, new: str) -> list:
+    text = (ROOT / path).read_text(encoding="utf-8")
+    assert old in text, f"mutation anchor {old!r} not in {path}"
+    return string_findings(path, text.replace(old, new, 1), _UI, _OLD, _FR)
+
+
+for _path in ("tinysesam/ldap_.py", "tests/test_cookies.py", "tests/test_hardening.py", "tinysesam/messages.py",
+              "tinysesam/_vocabulary.py", "tinysesam/store.py"):
+    _base = string_findings(_path, (ROOT / _path).read_text(encoding="utf-8"), _UI, _OLD, _FR)
+    r.check(f"mutation baseline: the unbroken {_path} has no string finding", not _base, str(_base[:2]))
+for what, path, old, new, red in (
+        ("a German log/exception text in the package", "tinysesam/ldap_.py", ': search rejected "', ': Suche abgewiesen "', True),
+        ("a German assert message in a test", "tests/test_cookies.py", '"logout must overwrite the session cookie, not just empty the DB row"',
+         '"Die Sitzung wurde nicht beendet"', True),
+        ("a German test password", "tests/test_hardening.py", '"Attacker-Password-1x"', '"Angreifer-Passwort-1x"', True),
+        ("a German entry in the message catalog", "tinysesam/messages.py", '"login.signup": "Konto erstellen"',
+         '"login.signup": "Neues Konto anlegen und sofort loslegen"', False),
+        ("an old name added to the migration table", "tinysesam/_vocabulary.py", '"sperrhinweis": "lockout_notice"',
+         '"sperrhinweis": "lockout_notice", "zusatz_hinweis": "extra_notice"', False),
+        ("an old table name added to the schema migration", "tinysesam/store.py", '"fehlserie": "failure_series"',
+         '"fehlserie": "failure_series", "alte_tabelle": "old_table"', False)):
+    try:
+        found = mutated_string_findings(path, old, new)
+        ok_ = bool(found) == red
+    except AssertionError as error:
+        found, ok_ = [str(error)], False
+    r.check(f"mutation: {what} — the check turns {'red' if red else 'NOT red (German on purpose)'}", ok_, str(found[:2]))
+r.check("the string scan sees the tree: it reads tests, package, web, examples and scripts and finds the UI corpus",
+        len(_UI) > 400 and len(_OLD) > 100 and "tests/test_cookies.py" in source_files() and "web/flows.py" in source_files(),
+        f"{len(_UI)} UI texts, {len(_OLD)} old tokens")
+
 
 # ── outside Python: the guard sees the files, probes, mutations ────────────────────────────────────
 _seen = nonpython_files()

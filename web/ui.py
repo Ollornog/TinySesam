@@ -95,7 +95,7 @@ def lang_pill(hrefs: dict, lang: str) -> str:
     return f"<span class=pill2>{segs}</span>"
 
 
-def theme_pill(light: str = "Hell", dark: str = "Dunkel") -> str:
+def theme_pill(light: str = "Light", dark: str = "Dark") -> str:
     """Light/dark. `UI_JS` marks the active segment on load (it knows the system setting)."""
     segs = (_seg(icon("sun"), data=f'data-theme=light title="{light}"')
             + _seg(icon("moon"), data=f'data-theme=dark title="{dark}"'))

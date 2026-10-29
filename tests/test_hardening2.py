@@ -13,13 +13,13 @@ def ok(name):
 db = os.path.join(tempfile.mkdtemp(), "t.db")
 auth = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db, rp_name="Test", passkey_enabled=False, oidc_enabled=False,
                                  cookie_secure=False))
-auth.ensure_admin("admin", "geheim123-lang-genug")
+auth.ensure_admin("admin", "dummy123-long-enough")
 uid = auth.store.get_user_by_name("admin")["id"]
 app = FastAPI()
 app.include_router(auth.router())
 
 
-@app.get("/geheim")
+@app.get("/secret")
 def secret_text(u=Depends(auth.require_user)):
     return {"u": u["username"]}
 
@@ -28,11 +28,11 @@ def secret_text(u=Depends(auth.require_user)):
 c1 = TestClient(app)   # session A (changes the password)
 c2 = TestClient(app)   # session B (is supposed to get kicked out)
 for c in (c1, c2):
-    c.post("/auth/login", data={"username": "admin", "password": "geheim123-lang-genug", "next": "/"}, follow_redirects=False)
-assert c1.get("/geheim").status_code == 200 and c2.get("/geheim").status_code == 200
-c1.post("/auth/password", json={"current": "geheim123-lang-genug", "new": "neuespasswort-lang"})
-assert c1.get("/geheim").status_code == 200, "own session stays"
-assert c2.get("/geheim").status_code == 401, "other session ended"
+    c.post("/auth/login", data={"username": "admin", "password": "dummy123-long-enough", "next": "/"}, follow_redirects=False)
+assert c1.get("/secret").status_code == 200 and c2.get("/secret").status_code == 200
+c1.post("/auth/password", json={"current": "dummy123-long-enough", "new": "newpasswort-longxx"})
+assert c1.get("/secret").status_code == 200, "own session stays"
+assert c2.get("/secret").status_code == 401, "other session ended"
 ok("self-service password change: other sessions ended, current one stays")
 
 # ---------- auth.gc() removes expired items + returns counters ----------
@@ -49,7 +49,7 @@ ok(f"auth.gc() cleans up + counts: {res}")
 from tinysesam import TinySesamConfig as _C  # noqa
 def took(username):
     t = time.perf_counter()
-    auth._check_password(username, "irgendwas")
+    auth._check_password(username, "something")
     return time.perf_counter() - t
 t_known = took("admin")          # exists, wrong password -> real hash verify
 t_unknown = took("gibtsnicht")   # does not exist -> dummy verify
@@ -79,7 +79,7 @@ import sqlite3                                                                  
 db_s = os.path.join(tempfile.mkdtemp(), "t.db")
 auth_s = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db_s, passkey_enabled=False,
                                    oidc_enabled=False, cookie_secure=False))
-uid_s = auth_s.create_user("sven", "Sven-Passwort-2026")
+uid_s = auth_s.create_user("sven", "Sven-Password-2026")
 app_s = FastAPI()
 app_s.include_router(auth_s.router())
 auth_s.store.db.execute("PRAGMA busy_timeout=200")      # do not wait ten seconds per failure
@@ -91,7 +91,7 @@ def _write_probe():
 
 
 writer = {
-    "schreibprobe": _write_probe,
+    "write_probe": _write_probe,
     "_exec (audit_log)": lambda: auth_s.store.audit_log("probe", "sven", None, None),
     "record_attempt": lambda: auth_s.store.record_attempt("sven", "198.51.100.9", False, "password"),
     "add_recovery_codes": lambda: auth_s.store.add_recovery_codes(uid_s, ["a" * 64]),
@@ -116,7 +116,7 @@ finally:
     foreign.close()
 auth_s.store.db.execute(f"PRAGMA busy_timeout={auth_s.store.BUSY_TIMEOUT_MS}")
 codes = [TestClient(app_s, raise_server_exceptions=False).post(
-    "/auth/login", data={"username": "sven", "password": "Sven-Passwort-2026"},
+    "/auth/login", data={"username": "sven", "password": "Sven-Password-2026"},
     follow_redirects=False).status_code for _ in range(3)]
 assert codes == [303, 303, 303], f"sign-in after failed writes: {codes}"
 ok(f"failed writes roll back ({len(writer)} paths), sign-in stays intact")
@@ -277,7 +277,7 @@ _STORE_TREE = ast.parse(STORE_SOURCE)
 assert not _shadowed(_STORE_TREE), \
     f"store.py rebinds {_shadowed(_STORE_TREE)} — `except` there would mean something else"
 unprotected, without_rollback = _check_commits(_STORE_TREE)
-assert not unprotected, f"commit outside _schreibend() (no rollback on failure): {unprotected}"
+assert not unprotected, f"commit outside _writing() (no rollback on failure): {unprotected}"
 assert not without_rollback, f"runs the transaction itself but does not roll back on failure: {without_rollback}"
 
 # Self-test of the guard — on the syntax tree, without a text anchor: if it turns red, that is due to
@@ -316,7 +316,7 @@ def _replace_except(fn_name, type_name):
 for _fn_name in _only_try:
     for _type_name in ("KeyError", "OverflowError", "binascii.Error", "sqlite3.Error", "sqlite3.DatabaseError",
                  "sqlite3.OperationalError", "sqlite3.ProgrammingError", "OperationalError",
-                 "(KeyError, sqlite3.OperationalError)", "irgendwas.Exception", "irgendwas.BaseException",
+                 "(KeyError, sqlite3.OperationalError)", "something.Exception", "something.BaseException",
                  None):
         _, _mutated = _check_commits(_replace_except(_fn_name, _type_name))
         assert any(f.startswith(_fn_name + ":") for f in _mutated), \
@@ -334,10 +334,10 @@ for _commit in ('self.db.execute("END")', 'self.db.execute("commit;")', 'self.db
                 'self.db.executescript("DELETE FROM setting; COMMIT;")', 'self.db.execute("RELEASE sp")'):
     _m = copy.deepcopy(_STORE_TREE)
     _store_class(_m).body.append(ast.parse(
-        "def _probe_schreiber(self):\n    with self._lock:\n"
+        "def _probe_writer(self):\n    with self._lock:\n"
         f"        self.db.execute('DELETE FROM setting')\n        {_commit}\n").body[0])
     _without, _ = _check_commits(_m)
-    assert any(f.startswith("_probe_schreiber:") for f in _without), f"commit not recognised as a commit: {_commit}"
+    assert any(f.startswith("_probe_writer:") for f in _without), f"commit not recognised as a commit: {_commit}"
 for _rebind in ("Exception = KeyError\n", "from sqlite3 import OperationalError as BaseException\n",
                   "def f(Exception):\n    pass\n"):
     assert _shadowed(ast.parse(_rebind)), f"rebinding missed: {_rebind!r}"

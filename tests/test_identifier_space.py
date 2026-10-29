@@ -39,7 +39,7 @@ from tinysesam.store import Store, now  # noqa: E402
 from _kit.report import Report  # noqa: E402
 
 r = Report("Identifier space — name and address, enforced by the database")
-PW = "Kennung-Test-15"
+PW = "Identifier-Test-15"
 BASE = "http://testserver"
 GRANT = Store.IDENTIFIER_GRANT
 
@@ -54,7 +54,7 @@ def _rejected(fn) -> str:
         fn()
     except sqlite3.IntegrityError as e:
         return str(e)
-    return "durch"
+    return "by"
 
 
 def _raw(store, name, mail=None) -> int:
@@ -139,8 +139,8 @@ blocked["address = foreign name"] = _rejected(lambda: s.create_user("q2", email=
 s.create_user("u1", email="u@bücher.example")
 blocked["address in A-label form"] = _rejected(lambda: s.create_user("u2", email="u@xn--bcher-kva.example"))
 a_id, b_id = s.create_user("a1"), s.create_user("b1")
-s.set_email(a_id, "frei@example.com")
-blocked["set_email → foreign address"] = _rejected(lambda: s.set_email(b_id, "FREI@example.com"))
+s.set_email(a_id, "free@example.com")
+blocked["set_email → foreign address"] = _rejected(lambda: s.set_email(b_id, "FREE@example.com"))
 blocked["set_email → foreign name"] = _rejected(lambda: s.set_email(b_id, "q@example.com"))
 blocked["set_username → foreign address"] = _rejected(lambda: s.set_username(b_id, "x@example.com"))
 blocked["set_username → namesake"] = _rejected(lambda: s.set_username(b_id, "ALICE"))
@@ -149,18 +149,18 @@ r.check("A: the database rejects every new collision in the identifier space (In
 _b = s.get_user(b_id)
 r.check("A: … nothing changes in the process, and no transaction stays open",
         _b["username"] == "b1" and not _b["email"] and not s.db.in_transaction
-        and len(s._all("SELECT id FROM users")) == 8, f"{dict(_b)} offen={s.db.in_transaction}")
+        and len(s._all("SELECT id FROM users")) == 8, f"{dict(_b)} open={s.db.in_transaction}")
 through = {}
 through["name = own address (email mode)"] = _rejected(
     lambda: s.create_user("solo@example.com", email="solo@example.com"))
-through["set the same address again"] = _rejected(lambda: s.set_email(a_id, "frei@example.com", verified=True))
+through["set the same address again"] = _rejected(lambda: s.set_email(a_id, "free@example.com", verified=True))
 through["b1 → B1 (own bucket)"] = _rejected(lambda: s.set_username(b_id, "B1"))
 _e = s.create_user("em@example.com", email="em@example.com")
 through["mail mode: change address and name"] = _rejected(
     lambda: s.address_switch(_e, "em2@example.com", name_follows=True))
 through["the old address is free afterwards"] = _rejected(lambda: s.create_user("em@example.com"))
 r.check("A: … these pass: name = own address, the same address again, a name in the own bucket, "
-        "the change in mail mode", set(through.values()) == {"durch"}, str(through))
+        "the change in mail mode", set(through.values()) == {"by"}, str(through))
 _pots = tuple(s._one("SELECT folded_name, folded_mail FROM users WHERE id=?", (b_id,)))
 r.check("A: … “B1” keeps its bucket (the recalculation trigger otherwise sets it to NULL), “b1” stays taken",
         _pots == ("b1", "") and _rejected(lambda: s.create_user("b1")) == GRANT, str(_pots))
@@ -169,7 +169,7 @@ r.check("A: … “B1” keeps its bucket (the recalculation trigger otherwise s
 # account). (Mutation probe: remove `NEW.<column> IS NOT OLD.<column>` in the recalculation trigger → red.)
 s._exec("UPDATE users SET username=username, email=email WHERE id=?", (a_id,))
 r.check("A: … an UPDATE to the same value leaves the bucket standing",
-        tuple(s._one("SELECT folded_name, folded_mail FROM users WHERE id=?", (a_id,))) == ("a1", "frei@example.com"))
+        tuple(s._one("SELECT folded_name, folded_mail FROM users WHERE id=?", (a_id,))) == ("a1", "free@example.com"))
 # A trigger from schema 10 (the version of 0.20.1) is replaced by today's — with
 # `IF NOT EXISTS` alone it would stand there forever. (Mutation probe: leave every existing trigger standing
 # lassen → rot.)
@@ -205,10 +205,10 @@ except ConfigError as error:
     b1b = (error.field, error.owner_id)
 r.check("B1: … address against a simultaneously created name → field “email”",
         b1b == ("email", b.store.get_user_by_name("race2@example.com")["id"]), str(b1b))
-_between(a, "create_user", lambda: b.create_user("weg", password=PW),
-            afterwards=lambda: b.delete_user(b.store.get_user_by_name("weg")["id"]))
+_between(a, "create_user", lambda: b.create_user("path", password=PW),
+            afterwards=lambda: b.delete_user(b.store.get_user_by_name("path")["id"]))
 try:
-    a.create_user("WEG", password=PW)
+    a.create_user("PATH", password=PW)
     b1c = None
 except ConfigError as error:
     b1c = (error.field, error.owner_id, str(error))
@@ -221,9 +221,9 @@ a, b, app_a = _pair()
 post: list = []
 a.set_mailer(lambda to, subject, text, html=None: post.append((to, text)))
 carla = a.create_user("carla", password=PW, email="carla@example.com")
-a.request_email_change(carla, "neu@example.com", BASE)()
-_between(a, "address_switch", lambda: b.create_user("neu@example.com", password=PW))
-b2 = TestClient(app_a, raise_server_exceptions=False).post(_link(post, "neu@example.com"), follow_redirects=False)
+a.request_email_change(carla, "new@example.com", BASE)()
+_between(a, "address_switch", lambda: b.create_user("new@example.com", password=PW))
+b2 = TestClient(app_a, raise_server_exceptions=False).post(_link(post, "new@example.com"), follow_redirects=False)
 r.check("B2: confirm_email_change in a race → 409, the address stays, audit row with race=1",
         b2.status_code == 409 and a.get_user(carla)["email"] == "carla@example.com"
         and "race=1" in (_audit(a, "email_change_taken") or "") and a.store.bucket_collisions() == [],
@@ -271,7 +271,7 @@ def _oidc_login(app):
     return cl.get(f"/auth/oidc/callback?code=x&state={state}", follow_redirects=False)
 
 
-a, b, app_a = _pair(oidc_enabled=True, oidc_issuer=IDP, oidc_client_id="probe", oidc_client_secret="geheim")
+a, b, app_a = _pair(oidc_enabled=True, oidc_issuer=IDP, oidc_client_id="probe", oidc_client_secret="secret")
 a.oidc._meta = {"issuer": IDP, "authorization_endpoint": IDP + "/authorize", "token_endpoint": IDP + "/token",
                 "userinfo_endpoint": IDP + "/userinfo", "jwks_uri": IDP + "/jwks"}
 from tinysesam.oidc import OIDCClient  # noqa: E402
@@ -294,29 +294,29 @@ def _register(app, **data):
 
 
 a, b, app_a = _pair(allow_signup=True)
-_between(a, "create_user", lambda: b.create_user("Rennen", password=PW))
-b5a = _register(app_a, username="rennen", email="r1@example.com")
-_between(a, "create_user", lambda: b.create_user("zweiter", password=PW, email="r2@example.com"))
-b5b = _register(app_a, username="rennen2", email="r2@example.com")
+_between(a, "create_user", lambda: b.create_user("Race", password=PW))
+b5a = _register(app_a, username="race", email="r1@example.com")
+_between(a, "create_user", lambda: b.create_user("second", password=PW, email="r2@example.com"))
+b5b = _register(app_a, username="race2", email="r2@example.com")
 r.check("B5: registration in a race without confirmation → 409 (name taken / address taken)",
         b5a.status_code == 409 and html.escape(a.t("err.username_taken")) in b5a.text
         and b5b.status_code == 409 and html.escape(a.t("err.email_taken")) in b5b.text
-        and a.store.get_user_by_name("rennen2") is None,
+        and a.store.get_user_by_name("race2") is None,
         f"HTTP {b5a.status_code} / {b5b.status_code}")
 
 a, b, app_a = _pair(allow_signup=True, signup_verify_email=True)
 a.set_mailer(lambda *x, **k: True)
-_between(a, "create_user", lambda: b.create_user("dritter", password=PW, email="r3@example.com"))
-b5c = _register(app_a, username="rennen3", email="r3@example.com")
+_between(a, "create_user", lambda: b.create_user("third", password=PW, email="r3@example.com"))
+b5c = _register(app_a, username="race3", email="r3@example.com")
 r.check("B5: … with confirmation: an address taken in a race gets the neutral page (R4-03), "
         "Audit signup_taken race=1",
         b5c.status_code == 200 and html.escape(a.t("reg.verify")) in b5c.text
-        and a.store.get_user_by_name("rennen3") is None
+        and a.store.get_user_by_name("race3") is None
         and "race=1" in (_audit(a, "signup_taken") or ""),
         f"HTTP {b5c.status_code} {_audit(a, 'signup_taken')}")
-a.create_user("inhaber", password=PW, email="besetzt@example.com")
-_between(a, "create_user", lambda: b.create_user("platz", password=PW))
-b5d = _register(app_a, username="platz", email="besetzt@example.com")
+a.create_user("holder", password=PW, email="occupied@example.com")
+_between(a, "create_user", lambda: b.create_user("space", password=PW))
+b5d = _register(app_a, username="space", email="occupied@example.com")
 r.check("B5: … the placeholder for a taken address whose name is taken in a race → 409",
         b5d.status_code == 409 and html.escape(a.t("err.username_taken")) in b5d.text, f"HTTP {b5d.status_code}")
 
@@ -329,13 +329,13 @@ r.check("B5: … in mail mode (name = address): the neutral page, no “name tak
         b5e.status_code == 200 and html.escape(a.t("reg.verify")) in b5e.text, f"HTTP {b5e.status_code}")
 
 a, b, app_a = _pair()
-manager = a.create_user("chefin", password=PW, is_admin=True)
+manager = a.create_user("boss", password=PW, is_admin=True)
 adm = TestClient(app_a, raise_server_exceptions=False)
 adm.cookies.set(a.cfg.session_cookie, a.store.create_session(manager, 3600, True, "password"))
-_between(a, "create_user", lambda: b.create_user("svc-rennen", password=PW))
-b5f = adm.post("/auth/admin/api/users", json={"username": "svc-rennen", "is_service": True})
+_between(a, "create_user", lambda: b.create_user("svc-race", password=PW))
+b5f = adm.post("/auth/admin/api/users", json={"username": "svc-race", "is_service": True})
 _between(a, "create_user", lambda: b.create_user("x5", password=PW, email="adm@example.com"))
-b5g = adm.post("/auth/admin/api/users", json={"username": "neu-adm", "email": "adm@example.com"})
+b5g = adm.post("/auth/admin/api/users", json={"username": "new-adm", "email": "adm@example.com"})
 r.check("B5: admin API in a race → 409 “existiert schon” or “E-Mail vergeben”",
         b5f.status_code == 409 and b5f.json().get("detail") == a.t("api.user_exists")
         and b5g.status_code == 409 and b5g.json().get("detail") == a.t("api.email_taken"),
@@ -348,7 +348,7 @@ app_b = FastAPI()
 app_b.include_router(b.router())
 for _x in (a, b):
     _x.set_security("rate_limit_max", 1000)
-IDENTIFIER = "wett@example.com"
+IDENTIFIER = "bet@example.com"
 N = 40
 barrier = threading.Barrier(N)
 responses: list = []
@@ -416,14 +416,14 @@ if auth_d is not None:
             str(in_collision))
     resolve = {
         "own address again": _rejected(lambda: auth_d.store.set_email(boss, "chef@example.com", verified=True)),
-        "rename account with occupied address": _rejected(lambda: auth_d.store.set_username(ubu, "ubu-neu")),
-        "change_username to a free name": _rejected(lambda: auth_d.change_username(oe2, "oezlem-zwei")),
+        "rename account with occupied address": _rejected(lambda: auth_d.store.set_username(ubu, "ubu-new")),
+        "change_username to a free name": _rejected(lambda: auth_d.change_username(oe2, "oezlem-two")),
         "set_email to a free address": _rejected(lambda: auth_d.store.set_email(uxn, "u2@example.com")),
-        "rohes UPDATE des Betreibers": _rejected(
-            lambda: auth_d.store._exec("UPDATE users SET username='eve-umbenannt' WHERE id=?", (eve,))),
+        "raw UPDATE des Operators": _rejected(
+            lambda: auth_d.store._exec("UPDATE users SET username='eve-renamed' WHERE id=?", (eve,))),
     }
     r.check("D: … resolving works: rename, set the own address anew, a free address, the raw UPDATE",
-            set(resolve.values()) == {"durch"}, str(resolve))
+            set(resolve.values()) == {"by"}, str(resolve))
     _, text_d2 = _start(_db_d)
     r.check("D: … afterwards the start message is silent", "identifier collision(s)" not in text_d2
             and auth_d.store.bucket_collisions() == [], text_d2[:300])
@@ -443,14 +443,14 @@ post = []
 a.set_mailer(lambda to, subject, text, html=None: post.append((to, text)))
 ella = a.create_user("ella@example.com", password=PW, email="ella@example.com")
 a.request_email_change(ella, "ella2@example.com", BASE)()
-a.store.db.execute("CREATE TEMP TRIGGER t_probe_kaputt BEFORE UPDATE OF username ON users "
-                   "BEGIN SELECT RAISE(ABORT, 'probe: name scheitert'); END")
+a.store.db.execute("CREATE TEMP TRIGGER t_probe_broken BEFORE UPDATE OF username ON users "
+                   "BEGIN SELECT RAISE(ABORT, 'probe: name fails'); END")
 e1 = TestClient(app_a, raise_server_exceptions=False).post(_link(post, "ella2@example.com"), follow_redirects=False)
 _ella = a.get_user(ella)
 r.check("E: if the rename fails in mail mode, the address stays too — no 500, nothing half-done",
         e1.status_code == 409 and _ella["email"] == "ella@example.com" and _ella["username"] == "ella@example.com"
         and not a.store.db.in_transaction, f"HTTP {e1.status_code} {dict(_ella)}")
-a.store.db.execute("DROP TRIGGER temp.t_probe_kaputt")
+a.store.db.execute("DROP TRIGGER temp.t_probe_broken")
 post.clear()
 a.request_email_change(ella, "ella3@example.com", BASE)()
 e2 = TestClient(app_a).post(_link(post, "ella3@example.com"), follow_redirects=False)
@@ -500,14 +500,14 @@ def _steps(st, fn) -> int:
 def _measure(n: int) -> dict:
     st = Store(_file())
     st.db.executemany("INSERT INTO users(username, email, created_at) VALUES (?, ?, 1)",
-                      [(f"konto{i}", f"konto{i}@example.com") for i in range(n)])
+                      [(f"account{i}", f"account{i}@example.com") for i in range(n)])
     st.db.commit()
     st._backfill_pots()
     uid = st.create_user("probe")
-    return {"anlegen": _steps(st, lambda: st.create_user("neu", email="neu@example.org")),
-            "umbenennen": _steps(st, lambda: st.set_username(uid, "probe-neu")),
-            "Adresse": _steps(st, lambda: st.set_email(uid, "probe@example.org")),
-            "abgewiesen": _steps(st, lambda: _rejected(lambda: st.create_user("KONTO7")))}
+    return {"create": _steps(st, lambda: st.create_user("new", email="new@example.org")),
+            "umbenennen": _steps(st, lambda: st.set_username(uid, "probe-new")),
+            "Address": _steps(st, lambda: st.set_email(uid, "probe@example.org")),
+            "rejected": _steps(st, lambda: _rejected(lambda: st.create_user("ACCOUNT7")))}
 
 
 _small, _gross = _measure(100), _measure(3000)

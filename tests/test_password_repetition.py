@@ -30,8 +30,8 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from tinysesam import TinySesam, TinySesamConfig  # noqa: E402
 
-PW = "Richtiges-Pw-2026"
-OLD = "altes-passwort-2025"
+PW = "Correct-Pw-2026xx"
+OLD = "old-password-2025xx"
 IP_A = ("203.0.113.9", 50000)
 IP_B = ("198.51.100.4", 50000)
 
@@ -71,7 +71,7 @@ def _audit(auth, event):
     return repeat if event == "login_repeat" else [e for e in all_items if e not in repeat]
 
 
-print("Passwort-Wiederholung")
+print("Password-Repetitionxx")
 
 # (a) + (f)
 auth, app, log = _app()
@@ -104,7 +104,7 @@ ok("8-byte fingerprints are in memory, no password")
 # (b) Counter-check
 auth, app, log = _app()
 for i in range(6):
-    _login(app, f"falsch-{i}-xxxxxxxx")
+    _login(app, f"wrong-{i}-xxxxxxxx")
 r = _login(app, PW)
 assert not (r.status_code in (302, 303) and "set-cookie" in r.headers), r.status_code
 ok("six different wrong passwords lock as before")
@@ -130,12 +130,12 @@ ok("password_repeat_memory=0: every repetition counts, the lockout applies")
 auth, app, log = _app(password_repeat_memory=2, max_login_attempts=20)
 for _ in range(2):
     for i in range(3):
-        _login(app, f"kreis-{i}-xxxxxxxx")
+        _login(app, f"circle-{i}-xxxxxxxx")
 assert len(_audit(auth, "login_fail")) == 6 and not _audit(auth, "login_repeat"), (
     len(_audit(auth, "login_fail")), len(_audit(auth, "login_repeat")))
 ok("three passwords in a circle with memory 2: each counts")
 
-print("Passwort-Wiederholung OK")
+print("Password repetition OK")
 
 # (h) `login ok … unban=yes|no` (0.24.10): yes only without failed attempts against OTHER accounts from the same IP
 print("login ok: unban")
@@ -151,11 +151,11 @@ _login(app, PW)
 assert _unban(log) == "yes", _lines(log, "login ok")
 ok("without failed attempts: unban=yes")
 for i in range(3):
-    _login(app, f"vertippt-{i}-xxxxxxxx")
+    _login(app, f"mistyped-{i}-xxxxxxxx")
 _login(app, PW)
 assert _unban(log) == "yes"
 ok("own typos before: unban=yes")
-auth.create_user("bob", "Bobs-Passwort-2026")
+auth.create_user("bob", "Bobs-Password-2026")
 for i in range(3):
     TestClient(app, client=IP_A).post("/auth/login", data={"username": "bob", "password": f"rate-{i}-xxxxxx"})
 _login(app, PW)

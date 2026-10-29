@@ -33,8 +33,8 @@ from tinysesam import TinySesam, TinySesamConfig  # noqa: E402
 from tinysesam.templates import PREFIX_PLACEHOLDER  # noqa: E402
 from _kit.report import Report  # noqa: E402
 
-r = Report("Unterpfad (T-15) — eingebaute Seiten unter root_path")
-PW = "Unterpfad-Test-Passwort-1"
+r = Report("Subpath (T-15) — built-in pages under root_path")
+PW = "Unterpfad-Test-Password-1"
 HTML = {"accept": "text/html"}
 REFERENCE = re.compile(r"""(?:href|action)=['"](/[^'"]*)['"]|(?:fetch|J)\(\s*'(/[^']*)'""")
 
@@ -48,7 +48,7 @@ def _setup(prefix: str):
                           base_url=f"https://example.com{prefix}", lang="de")
     auth = TinySesam(cfg)
     auth.set_mailer(lambda to, subject, text, html=None: mails.append(text))
-    auth.ensure_admin("chefin", PW)
+    auth.ensure_admin("boss", PW)
     app = FastAPI()
     app.include_router(auth.router())
 
@@ -71,7 +71,7 @@ def _like_uvicorn(inner, root_path: str):
 def _check_page_html(was: str, response, prefix: str, error: list) -> None:
     text = response.text
     if PREFIX_PLACEHOLDER in text:
-        error.append(f"{was}: Platzhalter sickert durch")
+        error.append(f"{was}: placeholder leaks through")
     for a, b in REFERENCE.findall(text):
         destination = a or b
         if prefix and not destination.startswith(prefix + "/"):
@@ -107,25 +107,25 @@ def _walkthrough(name: str, client: TestClient, auth, mails: list, prefix: str, 
                   f"/auth/login?next={prefix}/app"):
         _check_page_html(page_html, get(f"{base}{page_html}", headers=HTML), prefix, error)
     # Sign in: back to the protected page (next), then account and panel.
-    post(f"{base}/auth/login", data={"username": "chefin", "password": PW, "next": f"{prefix}/app"})
+    post(f"{base}/auth/login", data={"username": "boss", "password": PW, "next": f"{prefix}/app"})
     r.check(f"{name}: after the login back to the protected page",
-            get(f"{base}/app").json() == {"u": "chefin"})
+            get(f"{base}/app").json() == {"u": "boss"})
     for page_html in ("/auth/account", "/auth/admin", "/auth/totp/setup"):
         response = get(f"{base}{page_html}", headers=HTML)
         _check_page_html(page_html, response, prefix, error)
     # An account with TOTP: after the password the factor step follows — in the prefix.
     import pyotp
-    uid_t = auth.create_user("zweifach", password=PW)
+    uid_t = auth.create_user("twofold", password=PW)
     secret_text = auth.totp_begin(uid_t)["secret"]
     import time as _t
     auth.totp_confirm(uid_t, pyotp.TOTP(secret_text).at(_t.time() - 30))
     step = TestClient(client.app).post(f"{base}/auth/login", follow_redirects=False,
-                                          data={"username": "zweifach", "password": PW, "next": f"{prefix}/app"})
+                                          data={"username": "twofold", "password": PW, "next": f"{prefix}/app"})
     r.check(f"{name}: the next factor step (TOTP) lies in the prefix",
             step.headers.get("location", "").startswith(f"{prefix}/auth/totp?next="),
             step.headers.get("location", ""))
     # Without next: the fallback login_redirect ("/") lies in the prefix.
-    without_next = post(f"{base}/auth/login", data={"username": "chefin", "password": PW})
+    without_next = post(f"{base}/auth/login", data={"username": "boss", "password": PW})
     r.check(f"{name}: without next the login leads to login_redirect in the prefix",
             without_next.headers.get("location", "") == f"{prefix}/", without_next.headers.get("location", ""))
     # Logout → logout_redirect in the prefix.
@@ -134,7 +134,7 @@ def _walkthrough(name: str, client: TestClient, auth, mails: list, prefix: str, 
             out.headers.get("location", "").startswith(f"{prefix}/auth/login"),
             out.headers.get("location", ""))
     # Sign-in link: confirmation page (form target) and redeeming.
-    tok = auth.create_magic_token("login", user_id=auth.store.get_user_by_name("chefin")["id"])
+    tok = auth.create_magic_token("login", user_id=auth.store.get_user_by_name("boss")["id"])
     _check_page_html("magic-confirm", get(f"{base}/auth/magic/{tok}", headers=HTML), prefix, error)
     redeemed = post(f"{base}/auth/magic/{tok}")
     r.check(f"{name}: sign-in link redeemed → target in the prefix",
@@ -144,8 +144,8 @@ def _walkthrough(name: str, client: TestClient, auth, mails: list, prefix: str, 
     # Reset: the mail link carries the prefix exactly once (base_url), the page its targets.
     mails.clear()
     post(f"{base}/auth/forgot", data={"email": ""}, headers=HTML)
-    auth.store.set_email(auth.store.get_user_by_name("chefin")["id"], "chefin@example.com", verified=True)
-    post(f"{base}/auth/forgot", data={"email": "chefin@example.com"}, headers=HTML)
+    auth.store.set_email(auth.store.get_user_by_name("boss")["id"], "boss@example.com", verified=True)
+    post(f"{base}/auth/forgot", data={"email": "boss@example.com"}, headers=HTML)
     links = [w for w in " ".join(mails).split() if w.startswith("http")]
     r.check(f"{name}: the reset link carries the prefix exactly once",
             len(links) == 1 and links[0].startswith(f"https://example.com{prefix}/auth/reset?")
@@ -155,8 +155,8 @@ def _walkthrough(name: str, client: TestClient, auth, mails: list, prefix: str, 
         path_reset = path_reset[len(prefix):] if prefix else path_reset
         _check_page_html("reset", get(f"{base}{path_reset}", headers=HTML), prefix, error)
     # Registration: after creation in the prefix.
-    reg = post(f"{base}/auth/register", data={"username": "neu", "password": PW + "x",
-                                                "email": "neu@example.com"})
+    reg = post(f"{base}/auth/register", data={"username": "new", "password": PW + "x",
+                                                "email": "new@example.com"})
     r.check(f"{name}: registration leads into the prefix",
             reg.headers.get("location", "").startswith(f"{prefix}/"), reg.headers.get("location", ""))
 
@@ -179,7 +179,7 @@ _walkthrough("uvicorn --root-path /sso", TestClient(_like_uvicorn(app_u, "/sso")
 
 # ── Root: nothing changed ─────────────────────────────────────────────────────────────────
 auth_w, app_w, mails_w = _setup("")
-_walkthrough("Wurzel", TestClient(app_w), auth_w, mails_w, "", "")
+_walkthrough("Root", TestClient(app_w), auth_w, mails_w, "", "")
 
 # ── A root_path in an unexpected form is not carried into pages ───────────────────────────
 # Without base_url (password only) the root_path of the request counts — here with markup in it.
@@ -209,7 +209,7 @@ app_f = FastAPI()
 app_f.include_router(auth_f.router())
 c_f = TestClient(Starlette(routes=[Mount("/sso", app=app_f)]))
 loc_f = c_f.get("/sso/auth/forward", headers={"x-forwarded-host": "example.com", "x-forwarded-proto": "https",
-                                              "x-forwarded-uri": "/wiki/seite"}).headers.get("x-tinysesam-location", "")
+                                              "x-forwarded-uri": "/wiki/page"}).headers.get("x-tinysesam-location", "")
 loc_f2 = c_f.get("/sso/auth/forward", headers={"x-forwarded-host": "app.example.com", "x-forwarded-proto": "https",
                                                "x-forwarded-uri": "/wiki"}).headers.get("x-tinysesam-location", "")
 r.check("G1: forward auth — login URL in the prefix, also on the co-trusted target host",
@@ -230,11 +230,11 @@ def _dash(user=Depends(auth_g.require_user)):
 c_g = TestClient(host)
 loc_g = c_g.get("/dashboard", headers=HTML, follow_redirects=False).headers.get("location", "")
 form_g = REFERENCE.findall(c_g.get("/sso/auth/login", headers=HTML).text)
-after_g = c_g.post("/sso/auth/login", data={"username": "chefin", "password": PW, "next": "/dashboard"},
+after_g = c_g.post("/sso/auth/login", data={"username": "boss", "password": PW, "next": "/dashboard"},
                   follow_redirects=False).headers.get("location", "")
 r.check("G2: guard of the host app → login in the prefix, next = path of the host app, back there",
         loc_g == "/sso/auth/login?next=/dashboard" and ("/sso/auth/login", "") in form_g
-        and after_g == "/dashboard" and c_g.get("/dashboard").json() == {"u": "chefin"},
+        and after_g == "/dashboard" and c_g.get("/dashboard").json() == {"u": "boss"},
         f"{loc_g} | {after_g}")
 
 # G3: a placeholder in data does not become a target; own templates stay byte-identical.
@@ -252,7 +252,7 @@ auth_e, app_e, _ = _setup("/sso")
 auth_e.install_error_pages(app_e)
 c_e = TestClient(Starlette(routes=[Mount("/sso", app=app_e)]))
 error_e: list = []
-_check_page_html("404", c_e.get("/sso/gibt-es-nicht", headers=HTML), "/sso", error_e)
+_check_page_html("404", c_e.get("/sso/does-not-exist", headers=HTML), "/sso", error_e)
 _check_page_html("logout-rückfrage", c_e.get("/sso/auth/logout", headers={**HTML, "sec-fetch-site": "cross-site"}),
               "/sso", error_e)
 from tinysesam.admin import render_panel  # noqa: E402

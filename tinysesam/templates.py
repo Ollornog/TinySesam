@@ -296,7 +296,7 @@ _DEMO_JS = """<script>
     });
   }
   if(document.readyState !== 'loading') init(); else document.addEventListener('DOMContentLoaded', init);
-  addEventListener('pageshow', function(e){ if(e.persisted) clear(); });   // Zurueck-Taste
+  addEventListener('pageshow', function(e){ if(e.persisted) clear(); });   // back button
 })();
 </script>"""
 
@@ -388,7 +388,9 @@ def _login(auth, ctx) -> str:
     if getattr(cfg, "password_reset_enabled", False) and cfg.magiclink_enabled:
         links.append(f"<a href='__TS_P__/auth/forgot'>{_e(t('login.forgot'))}</a>")
     signup = f"<div class=hint>{' · '.join(links)}</div>" if links else ""
-    js = (_csrf_js(auth) + _PASSKEY_LOGIN_JS.replace("__NEXT__", _next_q(next_))) if "passkey" in methods else ""
+    js = (_csrf_js(auth) + _PASSKEY_LOGIN_JS.replace("__NEXT__", _next_q(next_))
+          .replace("__PK_FAILED__", json.dumps(t("login.passkey_failed")))
+          .replace("__PK_ABORTED__", json.dumps(t("login.passkey_aborted")))) if "passkey" in methods else ""
     # In front of an application (forward_apps[host].name, T-21) the page says what you sign in for. With a brand
     # (gate_brand) the brand stands on top and the application as its own line below.
     brand = getattr(cfg, "gate_brand", "") or ""
@@ -822,7 +824,7 @@ def _revoke_js(auth, back: str) -> str:
 _ACCOUNT_RETURN_JS = """<script>
 if(new URLSearchParams(location.search).get('revoke_others')==='1'){
   history.replaceState(null,'',location.pathname);
-  if(confirm(__CONFIRM__))tsRevokeOthers().then(ok=>{if(ok)say('sess_msg','\u2713 beendet',true);loadsess()})}
+  if(confirm(__CONFIRM__))tsRevokeOthers().then(ok=>{if(ok)say('sess_msg',TXT.ended,true);loadsess()})}
 </script>"""
 
 
@@ -1046,8 +1048,8 @@ document.getElementById('pkbtn')?.addEventListener('click', async () => {
       clientDataJSON:enc(cred.response.clientDataJSON), authenticatorData:enc(cred.response.authenticatorData),
       signature:enc(cred.response.signature), userHandle:cred.response.userHandle?enc(cred.response.userHandle):null}};
     const r = await fetch('__TS_P__/auth/passkey/login/finish?next=__NEXT__', {method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':tsCsrf()},body:JSON.stringify(payload)});
-    if (r.ok) location.href = (await r.json()).redirect || '__TS_P__/'; else alert('Passkey-Login fehlgeschlagen');
-  } catch(e){ alert('Passkey abgebrochen: '+e); }
+    if (r.ok) location.href = (await r.json()).redirect || '__TS_P__/'; else alert(__PK_FAILED__);
+  } catch(e){ alert(__PK_ABORTED__+': '+e); }
 });
 </script>
 """

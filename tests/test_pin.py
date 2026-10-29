@@ -16,12 +16,12 @@ def ok(name):
 db = os.path.join(tempfile.mkdtemp(), "t.db")
 auth = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db, rp_name="Test", passkey_enabled=False, oidc_enabled=False,
                                  password_enabled=True, pin_enabled=True, pin_min_length=4, cookie_secure=False))
-auth.ensure_admin("admin", "geheim123")
+auth.ensure_admin("admin", "dummy123")
 app = FastAPI()
 app.include_router(auth.router())
 
 
-@app.get("/geheim")
+@app.get("/secret")
 def secret_text(u=Depends(auth.require_user)):
     return {"u": u["username"]}
 
@@ -44,13 +44,13 @@ auth.set_pin(uid, "2468")
 assert auth.has_pin(uid)
 
 # wrong PIN → 401
-assert c.post("/auth/pin", data={"username": "admin", "pin": "0000", "next": "/geheim"}).status_code == 401
+assert c.post("/auth/pin", data={"username": "admin", "pin": "0000", "next": "/secret"}).status_code == 401
 ok("wrong PIN → 401")
 
 # correct PIN → signed in
-r = c.post("/auth/pin", data={"username": "admin", "pin": "2468", "next": "/geheim"}, follow_redirects=False)
+r = c.post("/auth/pin", data={"username": "admin", "pin": "2468", "next": "/secret"}, follow_redirects=False)
 assert r.status_code == 303 and "set-cookie" in {k.lower() for k in r.headers}
-assert c.get("/geheim").json()["u"] == "admin"
+assert c.get("/secret").json()["u"] == "admin"
 ok("correct PIN → logged in (PIN is a full factor)")
 
 # self-service: change & remove PIN
@@ -74,11 +74,11 @@ auth.store.clear_fails(username="admin")
 secret = auth.totp_begin(uid)["secret"]
 auth.totp_confirm(uid, pyotp.TOTP(secret).at(time.time() - 30))
 c2 = TestClient(app)
-r = c2.post("/auth/pin", data={"username": "admin", "pin": "13579", "next": "/geheim"}, follow_redirects=False)
+r = c2.post("/auth/pin", data={"username": "admin", "pin": "13579", "next": "/secret"}, follow_redirects=False)
 assert r.status_code == 303 and "/auth/totp" in r.headers["location"]
-assert c2.get("/geheim").status_code == 401   # not full yet
-r = c2.post("/auth/totp", data={"code": pyotp.TOTP(secret).now(), "next": "/geheim"}, follow_redirects=False)
-assert r.status_code == 303 and c2.get("/geheim").json()["u"] == "admin"
+assert c2.get("/secret").status_code == 401   # not full yet
+r = c2.post("/auth/totp", data={"code": pyotp.TOTP(secret).now(), "next": "/secret"}, follow_redirects=False)
+assert r.status_code == 303 and c2.get("/secret").json()["u"] == "admin"
 ok("PIN + TOTP combinable (PIN → 2nd factor)")
 
 # remove

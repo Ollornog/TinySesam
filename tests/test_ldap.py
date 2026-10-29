@@ -36,7 +36,7 @@ def build(**cfgkw):
     app = FastAPI()
     app.include_router(auth.router())
 
-    @app.get("/geheim")
+    @app.get("/secret")
     def secret_text(u=Depends(auth.require_user)):
         return {"u": u["username"]}
 
@@ -50,9 +50,9 @@ db, auth, c = build()
 auth.ldap = FakeLDAP({"alice": {"password": "ldappw", "email": "alice@corp", "name": "Alice",
                                 "groups": ["cn=staff,ou=groups,dc=corp"]}})
 assert auth.store.get_user_by_name("alice") is None
-r = c.post("/auth/login", data={"username": "alice", "password": "ldappw", "next": "/geheim"}, follow_redirects=False)
+r = c.post("/auth/login", data={"username": "alice", "password": "ldappw", "next": "/secret"}, follow_redirects=False)
 assert r.status_code == 303, r.status_code
-assert c.get("/geheim", headers=JSON).json() == {"u": "alice"}
+assert c.get("/secret", headers=JSON).json() == {"u": "alice"}
 u = auth.store.get_user_by_name("alice")
 # Since the PO decision of 2026-09-25, LDAP is NOT trusted by default: The address only enters the account
 # after a confirmation (federation_email_confirm, not at all here without mailer/base_url).
@@ -61,7 +61,7 @@ ok("LDAP login creates a local user automatically (name taken over, unconfirmed 
 
 # wrong LDAP password → 401
 c.get("/auth/logout")
-assert c.post("/auth/login", data={"username": "alice", "password": "falsch"}).status_code == 401
+assert c.post("/auth/login", data={"username": "alice", "password": "wrong"}).status_code == 401
 ok("wrong LDAP password → 401")
 os.remove(db)
 
@@ -82,8 +82,8 @@ auth.ldap = FakeLDAP({
 assert c.post("/auth/login", data={"username": "eve", "password": "x"}).status_code == 401
 ok("Group gate: user without an allowed group → 401")
 c.get("/auth/logout")
-r = c.post("/auth/login", data={"username": "bob", "password": "x", "next": "/geheim"}, follow_redirects=False)
-assert r.status_code == 303 and c.get("/geheim", headers=JSON).json() == {"u": "bob"}
+r = c.post("/auth/login", data={"username": "bob", "password": "x", "next": "/secret"}, follow_redirects=False)
+assert r.status_code == 303 and c.get("/secret", headers=JSON).json() == {"u": "bob"}
 ok("Group gate: user with an allowed group → login")
 os.remove(db)
 
@@ -117,10 +117,10 @@ def make_without_admin(**cfgkw):
 # Since the PO decision of 2026-09-24, the guard hangs on `ldap_email_trusted=False` — the operator
 # thereby says that users maintain their `mail` attribute themselves. The default (trusted) is below.
 db, auth, c = make_without_admin(admin_identifiers=["boss@example.com"], ldap_email_trusted=False)
-auth.ldap = FakeLDAP({"angreifer": {"password": "x", "email": "boss@example.com", "groups": []}})
-r = c.post("/auth/login", data={"username": "angreifer", "password": "x"}, follow_redirects=False)
+auth.ldap = FakeLDAP({"attacker": {"password": "x", "email": "boss@example.com", "groups": []}})
+r = c.post("/auth/login", data={"username": "attacker", "password": "x"}, follow_redirects=False)
 assert r.status_code == 303, r.status_code          # the sign-in itself remains allowed
-u = auth.store.get_user_by_name("angreifer")
+u = auth.store.get_user_by_name("attacker")
 assert u is not None and not u["is_admin"], dict(u) if u else None
 assert not auth.admin_exists(), "the instance now has an admin — via a mail attribute"
 ok("F-14: an allowlist ADDRESS from an untrusted directory does not promote")
@@ -141,10 +141,10 @@ os.remove(db)
 # Counter-check, otherwise the check above would also be green if the bootstrap were completely broken:
 # An allowlist NAME still counts. It is only allowed without auto-create (otherwise the constructor
 # guard forbids it) — the operator then created the account themselves.
-db, auth, c = make_without_admin(admin_identifiers=["chefin"], ldap_auto_create=False)
-uid = auth.create_user("chefin", email="chefin@example.com")
-auth.ldap = FakeLDAP({"chefin": {"password": "x", "email": "chefin@example.com", "groups": []}})
-r = c.post("/auth/login", data={"username": "chefin", "password": "x"}, follow_redirects=False)
+db, auth, c = make_without_admin(admin_identifiers=["boss"], ldap_auto_create=False)
+uid = auth.create_user("boss", email="boss@example.com")
+auth.ldap = FakeLDAP({"boss": {"password": "x", "email": "boss@example.com", "groups": []}})
+r = c.post("/auth/login", data={"username": "boss", "password": "x"}, follow_redirects=False)
 assert r.status_code == 303, r.status_code
 assert auth.get_user(uid)["is_admin"], "the documented bootstrap path via the name is closed"
 ok("... the allowlist NAME of a previously created account still promotes")
@@ -178,8 +178,8 @@ os.remove(db)
 # PIN promotion would be green above too.
 db, auth, c = make_without_admin(admin_identifiers=["boss@example.com"], ldap_auto_create=False,
                               pin_enabled=True, pin_login=True)
-uid = auth.create_user("chefin", password="lokal12345", email="boss@example.com")
-assert c.post("/auth/login", data={"username": "chefin", "password": "lokal12345"},
+uid = auth.create_user("boss", password="local12345", email="boss@example.com")
+assert c.post("/auth/login", data={"username": "boss", "password": "local12345"},
               follow_redirects=False).status_code == 303
 assert auth.get_user(uid)["is_admin"], "the proven path is closed"
 ok("... the proven address of a locally created account still promotes")
@@ -193,10 +193,10 @@ os.remove(db)
 # it) and whose name the directory knows: Now everything hangs on (1).
 db, auth, c = make_without_admin(admin_identifiers=["boss@example.com"], ldap_auto_create=False,
                               ldap_email_trusted=False)
-uid = auth.create_user("chefin", email="boss@example.com")       # proof on the account: yes
+uid = auth.create_user("boss", email="boss@example.com")       # proof on the account: yes
 assert auth.store.get_user(uid)["email_verified"] == 1, "precondition: the account is proven"
-auth.ldap = FakeLDAP({"chefin": {"password": "x", "email": "boss@example.com", "groups": []}})
-assert c.post("/auth/login", data={"username": "chefin", "password": "x"},
+auth.ldap = FakeLDAP({"boss": {"password": "x", "email": "boss@example.com", "groups": []}})
+assert c.post("/auth/login", data={"username": "boss", "password": "x"},
               follow_redirects=False).status_code == 303        # login via the directory
 assert not auth.get_user(uid)["is_admin"], \
     "the login route no longer passes \"no proof\" through — LDAP promotes again"
@@ -216,14 +216,14 @@ os.remove(db)
 # `chef@example.com` belongs to one account locally, the directory entry led to another —
 # `ldap_identifier_rejected reason=identifier_of_two_accounts` instead of `ldap_ident_taken`. The result stays.
 for was, directory, identifier, event in (
-        ("deren Adresse lokal schon Kennung ist", {"password": "x", "email": "chef@example.com"}, "eve",
+        ("whose Address local already Identifier is", {"password": "x", "email": "chef@example.com"}, "eve",
          "ldap_ident_taken"),
-        ("deren Name lokal schon Adresse ist", {"password": "x", "email": "eve@example.com"}, "chef@example.com",
+        ("whose Name local already Address is", {"password": "x", "email": "eve@example.com"}, "chef@example.com",
          "ldap_identifier_rejected")):
     # With a trusted source: Only then does the address enter the account at all (default since 2026-09-25:
     # not trusted — then it occupies nothing anyway).
     db, auth, c = make_without_admin(ldap_email_trusted=True)
-    local = auth.create_user("chef", password="lokal12345", email="chef@example.com")
+    local = auth.create_user("chef", password="local12345", email="chef@example.com")
     auth.ldap = FakeLDAP({identifier: dict(directory, groups=[])})
     r = c.post("/auth/login", data={"username": identifier, "password": "x"}, follow_redirects=False)
     assert r.status_code == 401, f"HTTP {r.status_code} — 303 would be an occupied identifier, 500 a defect"
@@ -236,10 +236,10 @@ for was, directory, identifier, event in (
 
 # Counter-check: free identifiers still create the account.
 db, auth, c = make_without_admin()
-auth.create_user("chef", password="lokal12345", email="chef@example.com")
-auth.ldap = FakeLDAP({"neu": {"password": "x", "email": "neu@example.com", "groups": []}})
-r = c.post("/auth/login", data={"username": "neu", "password": "x"}, follow_redirects=False)
-assert r.status_code == 303 and auth.store.get_user_by_name("neu") is not None, r.status_code
+auth.create_user("chef", password="local12345", email="chef@example.com")
+auth.ldap = FakeLDAP({"new": {"password": "x", "email": "new@example.com", "groups": []}})
+r = c.post("/auth/login", data={"username": "new", "password": "x"}, follow_redirects=False)
+assert r.status_code == 303 and auth.store.get_user_by_name("new") is not None, r.status_code
 ok("... with free identifiers LDAP still creates the account")
 os.remove(db)
 
@@ -253,7 +253,7 @@ os.remove(db)
 import importlib.util, socket, sys, threading, time, types
 from tinysesam.ldap_ import LDAPClient
 
-SVC_DN, SVC_PW = "cn=svc,ou=services,dc=example,dc=com", "DIENST-GEHEIM-123"
+SVC_DN, SVC_PW = "cn=svc,ou=services,dc=example,dc=com", "SERVICE-SECRET-123"
 
 
 def tlv(tag, content):
@@ -321,7 +321,7 @@ def directory(sock, reference_uri, seen):
                 break
         conn.close()
     except Exception as e:
-        seen.append(f"fehler: {e!r}")
+        seen.append(f"error: {e!r}")
 
 
 def foreign_host(sock, bucket):
@@ -366,7 +366,7 @@ if HAS_LDAP3:
     _check = _logging2.StreamHandler(_buffer)
     _seclog2.addHandler(_check)
     try:
-        assert LDAPClient(cfg_svc).authenticate("alice", "egal") is None
+        assert LDAPClient(cfg_svc).authenticate("alice", "whatever") is None
     finally:
         _seclog2.removeHandler(_check)
     assert "REFERRAL" in _buffer.getvalue() and "Global Catalog" in _buffer.getvalue(), \
@@ -391,7 +391,7 @@ if HAS_LDAP3:
     _check_b = _logging2.StreamHandler(_buffer_b)
     _seclog2.addHandler(_check_b)
     try:
-        info = LDAPClient(cfg_usr).authenticate("alice", "USER-GEHEIM-456")
+        info = LDAPClient(cfg_usr).authenticate("alice", "USER-SECRET-456")
     finally:
         _seclog2.removeHandler(_check_b)
     # On this path too the referral must not stay silent: Without the attributes
@@ -400,7 +400,7 @@ if HAS_LDAP3:
         f"the referral on the attribute search stayed silent: {_buffer_b.getvalue()[:200]!r}"
     time.sleep(0.5)
     loot = bucket[0] if bucket else b""
-    assert b"USER-GEHEIM-456" not in loot, f"user password went to the referral host: {loot[:120]!r}"
+    assert b"USER-SECRET-456" not in loot, f"user password went to the referral host: {loot[:120]!r}"
     assert loot == b"", f"the referral host was contacted at all: {loot[:120]!r}"
     assert info and info["username"] == "alice"   # the bind confirmed the password
     for s in socks:
@@ -413,7 +413,7 @@ if HAS_LDAP3:
         db_path=":memory:", password_enabled=True, ldap_enabled=True,
         ldap_url=f"ldap://127.0.0.1:{pa}",
         ldap_user_dn_template="uid={username},ou=people,dc=example,dc=com")
-    info = LDAPClient(cfg_ok).authenticate("alice", "richtig")
+    info = LDAPClient(cfg_ok).authenticate("alice", "right")
     assert info and info["username"] == "alice" and info["name"] == "alice", info
     assert "0x60" in seen and "0x63" in seen, seen   # bind AND search really ran
     for s in socks:
@@ -493,11 +493,11 @@ try:
     LDAPClient(cfg_svc if HAS_LDAP3 else TinySesamConfig(
         db_path=":memory:", password_enabled=True, ldap_enabled=True, ldap_url="ldap://dummy", ldap_allow_plaintext=True,
         ldap_bind_dn=SVC_DN, ldap_bind_password=SVC_PW,
-        ldap_user_base="ou=people,dc=example,dc=com")).authenticate("alice", "egal")
+        ldap_user_base="ou=people,dc=example,dc=com")).authenticate("alice", "whatever")
     LDAPClient(TinySesamConfig(
         db_path=":memory:", password_enabled=True, ldap_enabled=True, ldap_url="ldap://dummy", ldap_allow_plaintext=True,
         ldap_user_dn_template="uid={username},ou=people,dc=example,dc=com",
-    )).authenticate("alice", "egal")
+    )).authenticate("alice", "whatever")
 finally:
     for name, mod in before.items():
         if mod is None:
@@ -523,8 +523,8 @@ from tinysesam.security import seclog as _seclog  # noqa: E402
 
 # The referral address comes from a THIRD PARTY: a line break in it would be an additional,
 # freely invented line in exactly the log that fail2ban reads (log injection).
-_REFERENCE = ("ldap://fremd.example.com/dc=example,dc=com\n"
-            "2026-09-22 00:00:00 WARNING failed login user=opfer ip=203.0.113.9 method=password")
+_REFERENCE = ("ldap://foreign.example.com/dc=example,dc=com\n"
+            "2026-09-22 00:00:00 WARNING failed login user=victim ip=203.0.113.9 method=password")
 
 
 def _with_seclog(fn):
@@ -547,11 +547,11 @@ _before = {name: sys.modules.get(name) for name in
 try:
     sys.modules.update(stub_ldap3([], empty=True,
                                   result={"result": 10, "referrals": [_REFERENCE]}))
-    _text = _with_seclog(lambda: LDAPClient(_cfg_reference).authenticate("alice", "egal"))
+    _text = _with_seclog(lambda: LDAPClient(_cfg_reference).authenticate("alice", "whatever"))
     # Counter-check: the same empty search WITHOUT referral is an ordinary "account does not exist"
     # and must not flood the log.
     sys.modules.update(stub_ldap3([], empty=True, result={"result": 0, "referrals": []}))
-    _still = _with_seclog(lambda: LDAPClient(_cfg_reference).authenticate("alice", "egal"))
+    _still = _with_seclog(lambda: LDAPClient(_cfg_reference).authenticate("alice", "whatever"))
 finally:
     for name, mod in _before.items():
         if mod is None:
@@ -564,7 +564,7 @@ assert "REFERRAL" in _text and "Global Catalog" in _text, f"no hint of the refer
 # would contain the name too, but would be a different host (CodeQL py/incomplete-url-substring-
 # sanitization — a test guarantee here, but the same trap).
 import re as _re_reference  # noqa: E402
-assert _re_reference.search(r"(?<![\w.-])fremd\.example\.com(?![\w.-])", _text), \
+assert _re_reference.search(r"(?<![\w.-])foreign\.example\.com(?![\w.-])", _text), \
     f"the referred host is missing: {_text[:200]!r}"
 assert "Global Catalog" in _text and "3268" in _text, f"no operations hint: {_text[:200]!r}"
 assert "user=alice" in _text, _text[:200]
@@ -614,9 +614,9 @@ try:
     _with12.clear()
     LDAPClient(TinySesamConfig(db_path=os.path.join(tempfile.mkdtemp(), "t.db"),
                                passkey_enabled=False, ldap_enabled=True,
-                               ldap_url="ldaps://dir.example.com", ldap_tls_ca_file="/etc/ssl/eigene.pem",
+                               ldap_url="ldaps://dir.example.com", ldap_tls_ca_file="/etc/ssl/own.pem",
                                ldap_user_dn_template="uid={username},dc=x")).authenticate("alice", "pw")
-    assert [kw for kind, kw in _with12 if kind == "Tls"][0]["ca_certs_file"] == "/etc/ssl/eigene.pem"
+    assert [kw for kind, kw in _with12 if kind == "Tls"][0]["ca_certs_file"] == "/etc/ssl/own.pem"
     ok("F-12: a custom CA file is passed through")
 
     # (c) Can be switched off — but then explicitly without verification, not secretly.
@@ -633,7 +633,7 @@ try:
     LDAPClient(TinySesamConfig(db_path=os.path.join(tempfile.mkdtemp(), "t.db"),
                                passkey_enabled=False, ldap_enabled=True,
                                ldap_url="ldap://dir.example.com", ldap_start_tls=True,
-                               ldap_bind_dn="cn=svc,dc=x", ldap_bind_password="geheim",
+                               ldap_bind_dn="cn=svc,dc=x", ldap_bind_password="secret",
                                ldap_user_base="dc=x")).authenticate("alice", "pw")
     _conns = [kw for kind, kw in _with12 if kind == "Connection"]
     assert _conns, _with12
@@ -646,7 +646,7 @@ try:
     LDAPClient(TinySesamConfig(db_path=os.path.join(tempfile.mkdtemp(), "t.db"),
                                passkey_enabled=False, ldap_enabled=True,
                                ldap_url="ldaps://dir.example.com",
-                               ldap_bind_dn="cn=svc,dc=x", ldap_bind_password="geheim",
+                               ldap_bind_dn="cn=svc,dc=x", ldap_bind_password="secret",
                                ldap_user_base="dc=x")).authenticate("alice", "pw")
     assert [kw for kind, kw in _with12 if kind == "Connection"][0].get("auto_bind") == "NO_TLS"
     ok("F-12: with ldaps:// the line is already encrypted — no additional upgrade")
@@ -670,7 +670,7 @@ assert len(_ldap_findings(ldap_url="ldap://dir.example.com", ldap_allow_plaintex
 assert _ldap_findings(ldap_url="ldap://dir.example.com", ldap_allow_plaintext=True, ldap_start_tls=True) == ([], [])
 assert _ldap_findings(ldap_url="ldaps://dir.example.com") == ([], [])
 assert len(_ldap_findings(ldap_url="ldaps://dir.example.com", ldap_tls_verify=False)[1]) == 1
-assert len(_ldap_findings(ldap_url="ldaps://dir.example.com", ldap_tls_ca_file="/gibt/es/nicht.pem")[0]) == 1
+assert len(_ldap_findings(ldap_url="ldaps://dir.example.com", ldap_tls_ca_file="/does/not/exist.pem")[0]) == 1
 ok("F-12: plaintext without explicit permission is a setup error, not an operational problem")
 
 # ---------- F-11: the mapping hangs on a stable identifier, not on the name ----------
@@ -687,42 +687,42 @@ assert auth11.store.get_federated_identifier("ldap", _uid_a) == "uuid-alice"
 ok("F-11: a newly created account is bound to the directory's identifier")
 
 # (2) Rename in the directory: same identifier, new name → same account.
-auth11.ldap = FakeLDAP({"alice.neu": {"password": "pw", "id": "uuid-alice"}})
-_u = auth11._check_ldap("alice.neu", "pw")
+auth11.ldap = FakeLDAP({"alice.new": {"password": "pw", "id": "uuid-alice"}})
+_u = auth11._check_ldap("alice.new", "pw")
 assert _u is not None and _u["id"] == _uid_a, f"renaming resulted in a different account: {_u}"
-assert auth11.store.get_user_by_name("alice.neu") is None, "a second account was created"
+assert auth11.store.get_user_by_name("alice.new") is None, "a second account was created"
 ok("F-11: a rename in the directory is not an account switch")
 
 # (3) THE ATTACK: new identifier under the old name → rejected.
-auth11.ldap = FakeLDAP({"alice": {"password": "pw", "id": "uuid-FREMD"}})
+auth11.ldap = FakeLDAP({"alice": {"password": "pw", "id": "uuid-FOREIGN"}})
 assert auth11._check_ldap("alice", "pw") is None, \
     "a new directory account under the same name took over the local account"
 assert any(e["event"] == "ldap_identifier_change" for e in auth11.store.recent_audit(limit=10))
 ok("F-11: a new directory account under the old name does NOT inherit the local account")
 
 # (4) Existing case: an account without a binding is re-bound at the next login (PO decision).
-_uid_b = auth11.create_user("bestand")
+_uid_b = auth11.create_user("existing")
 assert auth11.store.get_federated_identifier("ldap", _uid_b) is None
-auth11.ldap = FakeLDAP({"bestand": {"password": "pw", "id": "uuid-bestand"}})
-assert auth11._check_ldap("bestand", "pw") is not None
-assert auth11.store.get_federated_identifier("ldap", _uid_b) == "uuid-bestand"
+auth11.ldap = FakeLDAP({"existing": {"password": "pw", "id": "uuid-existing"}})
+assert auth11._check_ldap("existing", "pw") is not None
+assert auth11.store.get_federated_identifier("ldap", _uid_b) == "uuid-existing"
 assert any(e["event"] == "ldap_identifier_bound" for e in auth11.store.recent_audit(limit=10))
 ok("F-11: an existing account is re-bound at the next login — once, with an audit line")
 
 # …and afterwards the guard from (3) also applies to this account.
-auth11.ldap = FakeLDAP({"bestand": {"password": "pw", "id": "uuid-anders"}})
-assert auth11._check_ldap("bestand", "pw") is None
+auth11.ldap = FakeLDAP({"existing": {"password": "pw", "id": "uuid-different"}})
+assert auth11._check_ldap("existing", "pw") is None
 ok("F-11: …afterwards this account is protected against the name change too")
 
 # The operator can release the binding if the directory was really migrated.
 assert auth11.federation_unbind("ldap", _uid_b) == 1
-assert auth11._check_ldap("bestand", "pw") is not None
-assert auth11.store.get_federated_identifier("ldap", _uid_b) == "uuid-anders"
+assert auth11._check_ldap("existing", "pw") is not None
+assert auth11.store.get_federated_identifier("ldap", _uid_b) == "uuid-different"
 ok("F-11: the operator releases the binding — a deliberate step, not a side effect")
 
 # Without an identifier it stays with the name (legacy directories), but this is logged.
 db11b, auth11b, c11b = build(ldap_auto_create=True)
-auth11b.ldap = FakeLDAP({"ohne": {"password": "pw"}})     # no "id"
+auth11b.ldap = FakeLDAP({"without": {"password": "pw"}})     # no "id"
 import io as _io11, logging as _log11                                      # noqa: E402
 from tinysesam import security as _sec11                                   # noqa: E402
 _sec11.once_report_reset()
@@ -730,7 +730,7 @@ _buffer11 = _io11.StringIO()
 _check11 = _log11.StreamHandler(_buffer11)
 _sec11.seclog.addHandler(_check11)
 try:
-    assert auth11b._check_ldap("ohne", "pw") is not None
+    assert auth11b._check_ldap("without", "pw") is not None
 finally:
     _sec11.seclog.removeHandler(_check11)
 assert "no stable identifier" in _buffer11.getvalue(), _buffer11.getvalue()[:200]
@@ -738,8 +738,8 @@ ok("F-11: a directory without a stable identifier reports itself but locks nobod
 
 # …unless the operator demands one.
 db11c, auth11c, c11c = build(ldap_auto_create=True, federation_require_stable_id=True)
-auth11c.ldap = FakeLDAP({"ohne": {"password": "pw"}})
-assert auth11c._check_ldap("ohne", "pw") is None
+auth11c.ldap = FakeLDAP({"without": {"password": "pw"}})
+assert auth11c._check_ldap("without", "pw") is None
 ok("F-11: federation_require_stable_id=True rejects a sign-in without identifier")
 
 # A-4 (attack on H-4): Without a stable identifier nothing was ever bound — the LDAP account counted as local
@@ -781,29 +781,29 @@ for _d in (db11, db11b, db11c, db11d):
 # `cn=nicht-admin,…`, `staff` matched `cn=staffextern,…`. Whoever may name a group in the directory
 # (in many AD environments every department head) thereby got role and admin flag.
 db19, auth19, c19 = build(ldap_allowed_groups=["staff"],
-                          ldap_group_role_map={"admin": "__admin__", "cn=redaktion": "redaktion"})
+                          ldap_group_role_map={"admin": "__admin__", "cn=editors": "editors"})
 auth19.ldap = FakeLDAP({
     "eve": {"password": "x", "id": "e1",
-            "groups": ["cn=staffextern,ou=groups,dc=corp", "cn=nicht-admin,ou=groups,dc=corp"]},
+            "groups": ["cn=staffextern,ou=groups,dc=corp", "cn=not-admin,ou=groups,dc=corp"]},
     "bob": {"password": "x", "id": "b1",
             "groups": ["CN=Staff,OU=Groups,DC=corp", "cn=admin,ou=groups,dc=corp",
-                       "cn=redaktion,ou=groups,dc=corp"]},
+                       "cn=editors,ou=groups,dc=corp"]},
     "mia": {"password": "x", "id": "m1",
-            "groups": ["cn=staff,ou=groups,dc=corp", "cn=nicht-admin,ou=groups,dc=corp",
-                       "cn=redaktion-alt,ou=groups,dc=corp"]},
+            "groups": ["cn=staff,ou=groups,dc=corp", "cn=not-admin,ou=groups,dc=corp",
+                       "cn=editors-alt,ou=groups,dc=corp"]},
 })
 assert auth19._check_ldap("eve", "x") is None, "staff does not match cn=staffextern"
 assert any(z["event"] == "ldap_group_denied" and z["username"] == "eve"
            for z in auth19.store.recent_audit(20)), "the rejection at the group gate is silent"
 ok("F-19: ldap_allowed_groups=['staff'] does not let cn=staffextern through (and says so in the audit log)")
 _mia = auth19._check_ldap("mia", "x")
-assert _mia is not None and not _mia["is_admin"], "admin matches cn=nicht-admin"
+assert _mia is not None and not _mia["is_admin"], "admin matches cn=not-admin"
 assert auth19.store.get_roles(_mia["id"]) == [], auth19.store.get_roles(_mia["id"])
-ok("F-19: 'admin' and 'cn=redaktion' match neither cn=nicht-admin nor cn=redaktion-alt")
+ok("F-19: 'admin' and 'cn=editors' match neither cn=not-admin nor cn=editors-alt")
 _bob = auth19._check_ldap("bob", "x")
 assert _bob is not None and _bob["is_admin"], "the exact CN match must still apply"
-assert auth19.store.get_roles(_bob["id"]) == ["redaktion"], auth19.store.get_roles(_bob["id"])
-ok("F-19: the usual key ('staff', 'cn=redaktion') still applies — case does not matter")
+assert auth19.store.get_roles(_bob["id"]) == ["editors"], auth19.store.get_roles(_bob["id"])
+ok("F-19: the usual key ('staff', 'cn=editors') still applies — case does not matter")
 os.remove(db19)
 
 # The explicit return to the old comparison remains possible — now the switch takes effect.
@@ -831,7 +831,7 @@ assert not group_fits("ou=g", "cn=admins,ou=g,dc=example,dc=com", dn=True), "onl
 assert not group_fits("cn=admin,ou=g", "cn=admins,ou=g,dc=example,dc=com", dn=True)
 assert not group_fits("cn=admins,ou=g,dc=example,dc=com,dc=x", "cn=admins,ou=g,dc=example,dc=com", dn=True)
 db19c, auth19c, _ = build(ldap_allowed_groups=["cn=admins,ou=g"],
-                          ldap_group_role_map={"cn=admins,ou=g": "__admin__", "ou=g": "alle"})
+                          ldap_group_role_map={"cn=admins,ou=g": "__admin__", "ou=g": "all"})
 auth19c.ldap = FakeLDAP({"ada": {"password": "x", "id": "a1",
                                  "groups": ["cn=admins,ou=g,dc=example,dc=com"]}})
 from tinysesam import security as _sec19                    # noqa: E402
@@ -877,7 +877,7 @@ _buffer23 = _io23.StringIO()
 _check23 = _log23.StreamHandler(_buffer23)
 _seclog23.addHandler(_check23)
 try:
-    responses23 = [c23.post("/auth/login", data={"username": "alice", "password": "egal"})
+    responses23 = [c23.post("/auth/login", data={"username": "alice", "password": "whatever"})
                    for _ in range(auth23._sec("max_login_attempts") + 2)]
 finally:
     _seclog23.removeHandler(_check23)
@@ -891,9 +891,9 @@ assert any(z["event"] == "ldap_unavailable" for z in auth23.store.recent_audit(2
 ok("F-23: directory outage → 503, no failed attempt, no lockout, no 'failed login', own audit line")
 # Counter-check: the same route with a reachable directory and a wrong password counts —
 # as soon as the pause after the outage has expired and the login asks again.
-auth23.ldap = FakeLDAP({"alice": {"password": "richtig"}})
+auth23.ldap = FakeLDAP({"alice": {"password": "right"}})
 _clock23[0] += FAILURE_PAUSE_SEC + 1
-assert c23.post("/auth/login", data={"username": "alice", "password": "falsch"}).status_code == 401
+assert c23.post("/auth/login", data={"username": "alice", "password": "wrong"}).status_code == 401
 assert auth23.store.count_fails(0, username="alice") == 1
 ok("F-23: …a real wrong password remains a failed attempt")
 os.remove(db23)
@@ -909,7 +909,7 @@ _puffer23a = _io23.StringIO()
 _haken23a = _log23.StreamHandler(_puffer23a)
 _seclog23.addHandler(_haken23a)
 try:
-    _antw23a = [c23a.post("/auth/login", data={"username": "admin", "password": f"falsch{i}"}).status_code
+    _antw23a = [c23a.post("/auth/login", data={"username": "admin", "password": f"wrong{i}"}).status_code
                 for i in range(_max23a)]
 finally:
     _seclog23.removeHandler(_haken23a)
@@ -977,7 +977,7 @@ try:
     # (1) The first attempt discovers the outage. It hangs until the timeout — this one window
     # remains, because before that nobody knows that the directory is gone.
     _t0 = time.monotonic()
-    assert _sign_in24("kollege0") == 503
+    assert _sign_in24("colleague0") == 503
     assert time.monotonic() - _t0 >= HANGS24 * 0.9, "precondition: the first query did not hang"
     # (2) During the outage: the whole office behind the NAT address — as many as the
     # IP threshold, all within three fifths of the timeout —, then the local emergency admin
@@ -991,7 +991,7 @@ try:
     with _Pool24(max_workers=_count24) as _pool24:
         _running24 = []
         for i in range(1, _count24 + 1):
-            _running24.append(_pool24.submit(_sign_in24, f"kollege{i}"))
+            _running24.append(_pool24.submit(_sign_in24, f"colleague{i}"))
             time.sleep(_gap24)
         _pending24 = auth24.store.count_fails(0, ip=NAT24[0])
         _admin24 = _sign_in24("admin", "lokalpw")
@@ -1026,13 +1026,13 @@ _puffer24b = _io23.StringIO()
 _haken24b = _log23.StreamHandler(_puffer24b)
 _seclog23.addHandler(_haken24b)
 try:
-    assert _sign_in24("kollege0") == 503 and hangs24.questions == 1      # outage discovered
-    assert _sign_in24("kollege1") == 503 and hangs24.questions == 1      # pause: not asked
+    assert _sign_in24("colleague0") == 503 and hangs24.questions == 1      # outage discovered
+    assert _sign_in24("colleague1") == 503 and hangs24.questions == 1      # pause: not asked
     _clock24[0] += FAILURE_PAUSE_SEC + 1                                  # pause over
     with _Pool24(max_workers=2) as _pool24b:
-        _probe24 = _pool24b.submit(_sign_in24, "kollege2")             # the probe hangs
+        _probe24 = _pool24b.submit(_sign_in24, "colleague2")             # the probe hangs
         time.sleep(HANGS24 / 4)
-        _other24 = [_sign_in24(f"kollege{i}") for i in range(3, 13)]
+        _other24 = [_sign_in24(f"colleague{i}") for i in range(3, 13)]
         _admin24b = _sign_in24("admin", "lokalpw")
         _probe_status24 = _probe24.result(timeout=30)
     assert hangs24.questions == 2, \
@@ -1040,16 +1040,16 @@ try:
     assert _other24 == [503] * 10 and _probe_status24 == 503, (_other24, _probe_status24)
     assert _admin24b == 303, f"the local admin during the probe: {_admin24b}"
     # The directory is back: After the next pause the probe answers, afterwards everything runs normally.
-    auth24.ldap = FakeLDAP({"alice": {"password": "richtig"}})
+    auth24.ldap = FakeLDAP({"alice": {"password": "right"}})
     _clock24[0] += FAILURE_PAUSE_SEC + 1
-    assert _sign_in24("alice", "falsch") == 401, "the probe with a wrong password is a failed attempt"
-    assert _sign_in24("alice", "richtig") == 303, "after the directory's return it stays locked"
+    assert _sign_in24("alice", "wrong") == 401, "the probe with a wrong password is a failed attempt"
+    assert _sign_in24("alice", "right") == 303, "after the directory's return it stays locked"
 finally:
     _seclog23.removeHandler(_haken24b)
 _text24 = _puffer24b.getvalue()
 assert _text24.count("LDAP directory unreachable (") == 1, _text24
 assert _text24.count("LDAP directory reachable again") == 1, _text24
-assert "failed login user=kollege" not in _text24, _text24
+assert "failed login user=colleague" not in _text24, _text24
 assert auth24.store.count_fails(0, username="alice") == 0, "the full login clears the failed attempt"
 ok("…after the pause exactly one sign-in asks again; outage and return appear once each in the log")
 os.remove(db24)
@@ -1074,7 +1074,7 @@ except DirectoryNotReachable as _e_n:
     _second_probe = False
     assert "is asking right now" in str(_e_n), str(_e_n)
 assert not _second_probe, "a straggler released the slot of the running probe — two probes at once"
-_m_n.failed(DirectoryNotReachable("Test: Probe gescheitert"), was_probe=True)
+_m_n.failed(DirectoryNotReachable("Test: probe failed"), was_probe=True)
 _clock_n[0] += FAILURE_PAUSE_SEC + 1
 assert _m_n.access() is True, "after the end of the probe the next one asks again"
 ok("Outage flag: a straggler does not release the slot of the running probe")
@@ -1084,15 +1084,15 @@ ok("Outage flag: a straggler does not release the slot of the running probe")
 # returns 503 until restart, even with a healthy directory. (Mutation probe: in `check_ldap`
 # remove the branch `except BaseException: if probe: marker.release()` → red.)
 class _MoodyLDAP:
-    mode = "weg"
+    mode = "path"
 
     def authenticate(self, username, password):
-        if self.mode == "weg":
+        if self.mode == "path":
             raise DirectoryNotReachable("LDAP directory ldap://dummy unusable: timed out")
-        if self.mode == "kaputt":
+        if self.mode == "broken":
             raise RuntimeError("unexpected error in the client")
-        if self.mode == "abgebrochen":
-            raise _ldap_mod.RequestAborted("Test: Verbindung nach dem Bind vom Server beendet")
+        if self.mode == "aborted":
+            raise _ldap_mod.RequestAborted("Test: the server ended the connection after the bind")
         return {"username": username, "email": None, "name": username, "groups": [], "id": "l-1"}
 
 
@@ -1106,13 +1106,13 @@ try:
 except DirectoryNotReachable:
     pass   # the flag is armed afterwards — only that counts here
 _clock_p[0] += FAILURE_PAUSE_SEC + 1
-_moody.mode = "kaputt"
+_moody.mode = "broken"
 try:
     _auth_p._check_ldap("alice", "pw")
     raise AssertionError("precondition: the probe should have ended with RuntimeError")
 except RuntimeError:
     pass
-_moody.mode = "gesund"
+_moody.mode = "healthy"
 try:
     _info_p = _auth_p._check_ldap("alice", "pw")
 except DirectoryNotReachable as _e_p:
@@ -1122,19 +1122,19 @@ assert _info_p, _info_p
 # proof of an outage, but none of the return either — the next sign-in asks again.
 # (Mutation probe: in the branch `except RequestAborted` of `check_ldap` remove
 # `marker.release()` → red.)
-_moody.mode = "weg"
+_moody.mode = "path"
 try:
     _auth_p._check_ldap("alice", "pw")
 except DirectoryNotReachable:
     pass   # the flag is armed afterwards — only that counts here
 _clock_p[0] += FAILURE_PAUSE_SEC + 1
-_moody.mode = "abgebrochen"
+_moody.mode = "aborted"
 try:
     _auth_p._check_ldap("alice", "pw")
     raise AssertionError("precondition: the probe should have been aborted")
 except _ldap_mod.RequestAborted:
     pass
-_moody.mode = "gesund"
+_moody.mode = "healthy"
 try:
     _info_p = _auth_p._check_ldap("alice", "pw")
 except DirectoryNotReachable as _e_p:
@@ -1164,7 +1164,7 @@ class _RecordingLDAP(FakeLDAP):
 
 db_g, auth_g, c_g = build()
 auth_g.set_security("rate_limit_max", 1000)
-auth_g.ldap = _transcript_g = _RecordingLDAP({"alice": {"password": "richtig"}})
+auth_g.ldap = _transcript_g = _RecordingLDAP({"alice": {"password": "right"}})
 _buffer_g = _io23.StringIO()
 _check_g = _log23.StreamHandler(_buffer_g)
 _seclog23.addHandler(_check_g)
@@ -1180,7 +1180,7 @@ assert _gross == [401, 401], f"oversized inputs: {_gross} (expected: like a wron
 assert auth_g.store.count_fails(0, ip="203.0.113.66") == 2, "the oversized attempts do not count"
 assert _buffer_g.getvalue().count("failed login") == 2, "fail2ban does not see the oversized attempts"
 _r_g = TestClient(c_g.app, client=("192.0.2.10", 40000)).post(
-    "/auth/login", data={"username": "alice", "password": "richtig"}, follow_redirects=False)
+    "/auth/login", data={"username": "alice", "password": "right"}, follow_redirects=False)
 assert _r_g.status_code == 303, f"the correct sign-in afterwards: {_r_g.status_code}"
 os.remove(db_g)
 ok("oversized inputs do not go to the directory: 401, failed attempt, 'failed login' — LDAP stays open")
@@ -1204,7 +1204,7 @@ if HAS_LDAP3:
                                  ldap_bind_dn=SVC_DN, ldap_bind_password=SVC_PW,
                                  ldap_user_base="ou=people,dc=example,dc=com")):
         try:
-            LDAPClient(_cfg).authenticate("alice", "egal")
+            LDAPClient(_cfg).authenticate("alice", "whatever")
             _thrown = False
         except DirectoryNotReachable as _e_dead:
             _thrown = True
@@ -1246,7 +1246,7 @@ if HAS_LDAP3:
         db_path=":memory:", password_enabled=True, ldap_enabled=True,
         ldap_url=f"ldap://127.0.0.1:{_pa}", ldap_allow_plaintext=True,
         ldap_user_dn_template="uid={username},ou=people,dc=example,dc=com")).authenticate(
-        "alice", "falsch") is None
+        "alice", "wrong") is None
     _sa.close()
     ok("F-23: invalidCredentials from the real server stays None (failed attempt), no outage")
 
@@ -1275,7 +1275,7 @@ if HAS_LDAP3:
         """LDAP directory on loopback with real PDUs. `limit` like slapd's
         `sockbuf_max_incoming` (a larger PDU ends the connection without a response);
         `hangs=True`: accepts connections, reads along, never answers."""
-        USER = {b"uid=alice,ou=people,dc=example,dc=com": b"richtig"}
+        USER = {b"uid=alice,ou=people,dc=example,dc=com": b"right"}
 
         def __init__(self, limit=262143, hangs=False):
             self.limit, self.hangs = limit, hangs
@@ -1314,14 +1314,14 @@ if HAS_LDAP3:
                     else:
                         n, head = buffer[1], 2
                     if head + n > self.limit:
-                        self.log.append(f"zu gross {head + n}")
+                        self.log.append(f"too big {head + n}")
                         return                      # connection closed, no response — like slapd
                     while len(buffer) < head + n:
                         buffer = self._more(conn, buffer)
                     pdu, buffer = buffer[:head + n], buffer[head + n:]
                     mid, op = split(pdu)
                     if self.hangs:
-                        self.log.append(f"haengt {hex(op)}")
+                        self.log.append(f"hangs {hex(op)}")
                         continue
                     if op == 0x60:
                         _, content, _ = _read_tlv(pdu, 0)
@@ -1331,7 +1331,7 @@ if HAS_LDAP3:
                         _, name, k = _read_tlv(bind, k)
                         _, pw, _ = _read_tlv(bind, k)
                         good = self.USER.get(name) == pw
-                        self.log.append(f"bind {name.decode()} {'ok' if good else 'falsch'}")
+                        self.log.append(f"bind {name.decode()} {'ok' if good else 'wrong'}")
                         conn.sendall(response(mid, 0x61, tlv(0x0A, b"\x00" if good else b"\x31")
                                              + tlv(0x04, b"") + tlv(0x04, b"")))
                     elif op == 0x63:
@@ -1365,7 +1365,7 @@ if HAS_LDAP3:
     _v = _MiniDirectory(limit=900)
     _auth_v, _app_v, _db_v = _build_real(_v.port)
     try:
-        assert _real_sign_in(_app_v, "alice", "richtig", "192.0.2.10") == 303, "precondition: alice gets in"
+        assert _real_sign_in(_app_v, "alice", "right", "192.0.2.10") == 303, "precondition: alice gets in"
         _limit_v = __import__("tinysesam.ldap_", fromlist=["x"])
         _lang_v = "x" * 1000                  # below the input limit, above the directory's PDU limit
         assert len(_lang_v) <= getattr(_limit_v, "LDAP_PASSWORD_MAX", 10 ** 9), "precondition: input below the limit"
@@ -1380,10 +1380,10 @@ if HAS_LDAP3:
         # Distinguishable in the security log — even after the reason is truncated to 64 characters.
         assert "reason=LDAP: only this request aborted" in _buffer_v.getvalue(), _buffer_v.getvalue()
         assert "LDAP directory unreachable (" not in _buffer_v.getvalue(), "the flag reported"
-        assert any(z.startswith("zu gross") for z in _v.log), f"precondition: no abort in the directory: {_v.log}"
+        assert any(z.startswith("too big") for z in _v.log), f"precondition: no abort in the directory: {_v.log}"
         assert _abort_v == 503, f"the aborted request itself: {_abort_v}"
         _before_v = len(_v.log)
-        _afterwards_v = [_real_sign_in(_app_v, "alice", "richtig", f"192.0.2.{20 + i}") for i in range(3)]
+        _afterwards_v = [_real_sign_in(_app_v, "alice", "right", f"192.0.2.{20 + i}") for i in range(3)]
         assert _afterwards_v == [303] * 3, \
             f"ONE aborted request takes down the LDAP sign-in of everyone: {_afterwards_v} ({_v.log[_before_v:]})"
         assert _v.log[_before_v:].count("bind uid=alice,ou=people,dc=example,dc=com ok") == 3, _v.log[_before_v:]
@@ -1401,10 +1401,10 @@ if HAS_LDAP3:
         _cfg_v2 = TinySesamConfig(db_path=":memory:", password_enabled=True, ldap_enabled=True,
                                   ldap_url=f"ldap://127.0.0.1:{_v2.port}", ldap_allow_plaintext=True,
                                   ldap_user_dn_template="uid={username},ou=people,dc=example,dc=com")
-        assert LDAPClient(_cfg_v2).authenticate("alice", "richtig"), "precondition: the server answers"
+        assert LDAPClient(_cfg_v2).authenticate("alice", "right"), "precondition: the server answers"
         _before_v2 = _v2.connections
         assert LDAPClient(_cfg_v2).authenticate("alice", "x" * 270_000) is None
-        assert LDAPClient(_cfg_v2).authenticate("n" * 270_000, "richtig") is None
+        assert LDAPClient(_cfg_v2).authenticate("n" * 270_000, "right") is None
         time.sleep(0.2)
         assert _v2.connections == _before_v2, f"oversized inputs reached the directory: {_v2.log}"
     finally:
@@ -1457,12 +1457,12 @@ if HAS_LDAP3:
     _auth_h, _app_h, _db_h = _build_real(_h.port)
     try:
         _t_h = time.monotonic()
-        assert _real_sign_in(_app_h, "alice", "richtig", "192.0.2.10") == 503
+        assert _real_sign_in(_app_h, "alice", "right", "192.0.2.10") == 503
         assert time.monotonic() - _t_h >= 0.9, "precondition: the first query did not hang until the timeout"
-        assert any(z.startswith("haengt 0x60") for z in _h.log), f"precondition: the bind arrived: {_h.log}"
+        assert any(z.startswith("hangs 0x60") for z in _h.log), f"precondition: the bind arrived: {_h.log}"
         _n_h = _h.connections
         _t_h = time.monotonic()
-        assert _real_sign_in(_app_h, "alice", "richtig", "192.0.2.11") == 503
+        assert _real_sign_in(_app_h, "alice", "right", "192.0.2.11") == 503
         assert _h.connections == _n_h, "after a hang at the user bind the directory was asked again right away"
         assert time.monotonic() - _t_h < 0.9, "the second sign-in hung again"
     finally:
@@ -1481,13 +1481,13 @@ c29.post("/auth/login", data={"username": "ldapnutzer", "password": "lp"}, follo
 c29.get("/auth/logout")
 c29.post("/auth/login", data={"username": "admin", "password": "lokalpw"}, follow_redirects=False)
 c29.get("/auth/logout")
-c29.post("/auth/login", data={"username": "niemand", "password": "x"})
+c29.post("/auth/login", data={"username": "nobody", "password": "x"})
 _lines29 = auth29.store.recent_audit(50)
 _events = {(z["event"], z["username"]) for z in _lines29}
 assert ("login_ldap", "ldapnutzer") in _events, _events
 assert ("login_local", "admin") in _events, _events
 assert ("login_ldap", "admin") not in _events and ("login_local", "ldapnutzer") not in _events
-_fail29 = [z for z in _lines29 if z["event"] == "login_fail" and z["username"] == "niemand"]
+_fail29 = [z for z in _lines29 if z["event"] == "login_fail" and z["username"] == "nobody"]
 assert _fail29 and "source=local+ldap" in (_fail29[0]["detail"] or ""), _fail29
 ok("F-29: login_ldap / login_local separate, a failed attempt names source=local+ldap")
 os.remove(db29)
