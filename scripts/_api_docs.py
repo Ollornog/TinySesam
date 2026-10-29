@@ -54,7 +54,8 @@ STUFEN = {
           "extension points",
           "Stays. Removal or rework only after a `DeprecationWarning` has pointed to it for two "
           "minor versions. Weaker than A: A rework with advance notice "
-          "is allowed."),
+          "is allowed. A route cannot warn: a path in tier B is announced in the CHANGELOG under "
+          "“Deprecated” at least two minor versions before it is removed or renamed."),
     "C": ("internal",
           "Wiring of the built-in routes",
           "None. Since 0.22.0 the implementation carries a leading underscore; the old "
@@ -448,10 +449,14 @@ def bauen() -> str:
         "their parameters and the keys and values they return or accept — "
         "result dicts, the `details` passed to `on_security_event`, the context of your own pages "
         "(`ctx[\"prefix\"]`, `ctx[\"purpose\"]`), the JSON responses of the routes, the kinds of "
-        "API keys (`automation`, `human`). Audit and log lines stay as they were. The list "
-        "old → new is in the CHANGELOG for 0.22.0.\n\n"
+        "API keys (`automation`, `human`). Since the last breaking pass before the freeze (PO decision "
+        "2026-10-29) the same holds for what operators and proxies read — query and form parameters, header and "
+        "cookie names, logger names, the event words and keys of the security log, message ids — and audit "
+        "and log lines are English as well. The lists old → new are in the CHANGELOG (0.22.0, "
+        "[Unreleased]).\n\n"
         "**Beyond the Python names** (PO decision 2026-10-29): `auth.cfg` and `auth.on_security_event`, the "
-        "HTTP routes (the forward and gate contract that proxies use in tier A, the HTML pages in tier B) and "
+        "HTTP routes (the forward and gate contract that proxies use and the paths of the identity provider "
+        "and the health check in tier A, the HTML pages in tier B) and "
         "the logger names and security-log lines that fail2ban filters read (tier A) are measured and tiered "
         "like the names above — see the sections “Attributes of `TinySesam`”, “HTTP contract” and “Security log” "
         "below. For these entries the tier-A clock starts with the release that introduces them, not with "

@@ -95,8 +95,27 @@ The forward and gate endpoints are tier A as well: `GET /auth/forward` and its a
 the identity headers, `401` with `X-TinySesam-Location` and `WWW-Authenticate`, `403` with
 `X-TinySesam-Reason: role`), the `/.tinysesam/*` paths on the application's host (`start`, `callback`, `logout`,
 `after-logout`) and `/auth/gate/*` on the gateway, the `X-TinySesam-*` headers and the cookie names the gate
-sets. The exact list, with every observed status, is in [API.md](../API.md), section “HTTP contract”. The
-HTML pages are tier B: path and method stay, the HTML does not.
+sets. Tier A too, because other systems have registered or poll them by hand: the OIDC callback
+(`oidc_callback_path`), `POST /auth/saml/acs`, `GET /auth/saml/metadata` and `GET /healthz` (the image's health
+check) — moving one would cost you a reconfiguration at the provider or in the orchestrator.
+
+**What a proxy has to set or pass on (tier A):** `Host`, `Authorization`, `X-Api-Key`, `Cookie`, `X-Forwarded-For`,
+`X-Forwarded-Host`, `X-Forwarded-Proto`, `X-Forwarded-Uri` (or `X-Original-Uri` / `X-Original-Url`) and, if you
+require roles, `X-TinySesam-Roles`. The shipped templates under `deploy/forward-auth/` do exactly that. The headers
+a browser sends on its own (`Accept`, `Referer`, `Sec-Fetch-Mode`, `Sec-Fetch-Site`, `X-Csrf-Token`) are read as
+well, but they are **not** an operator contract (tier B): no proxy rule is needed for them, and no proxy rule may
+strip them.
+
+The exact list, with every observed status, is in [API.md](../API.md), section “HTTP contract”. The HTML pages are
+tier B: path and method stay, the HTML does not.
+
+**Removing or renaming a tier-B path** (a route cannot raise a `DeprecationWarning`): the CHANGELOG announces it
+under “Deprecated” at least **two minor versions** before the release that removes it. Tier A follows the 1.0
+rule — a break resets the clock.
+
+**The query parameter that marks a sign-out** is `signed_out=1` (`/.tinysesam/start`, `/auth/login`); up to this
+release it was `abgemeldet=1`. A bookmarked or in-flight link with the old name still works, but without the hint
+“You have been signed out”.
 
 ## Managing sessions
 
@@ -745,6 +764,12 @@ An older version needs no SQL to start. If you want it to read the audit log in 
 backup taken before the update. Setting the stamp back (`PRAGMA user_version = 14`) only silences the warning;
 the next start of the newer version then runs the rewrite again (idempotent). New rows written meanwhile carry the
 old words and are mapped by the newer version when it reads them.
+
+**The last breaking pass before the API freeze (2026-10-29) changes no stored data** and does not raise the schema
+version: it renames a query parameter (`abgemeldet` → `signed_out`), a message id (`err.locked_serie` →
+`err.locked_series`), the `--ja` option (→ `--yes`), the Caddy template variable (`TS_SHARE_PRAEFIX` →
+`TS_SHARE_PREFIX`) and a few log texts. Rolling back to the version before it needs no SQL; only your own
+configuration (the variable, the option, a custom message id) has to go back to the old name.
 
 ## Sign-in methods and their strength
 

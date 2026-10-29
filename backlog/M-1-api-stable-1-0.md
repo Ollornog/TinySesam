@@ -283,21 +283,42 @@ entry or tier changed):
 | Logger names, security-log lines for filters | **built** — tier A |
 | Two minor versions without breakage **in tier A** | existing names: clock since 0.22.0; the entries above: from the release that introduces them |
 
-**Open, found while measuring:**
+**Open, found while measuring** (all three decided the same day, see the next addendum):
 
-* The query parameter `abgemeldet` is German and sits in a tier-A route (`GET /.tinysesam/start`, written by
-  TinySesam's own redirects) and in a tier-B one (`GET /auth/login`). The guard for English names covers names, keys
-  and values of the Python surface, not the parameters of routes; renaming it is a behaviour change (in-flight
-  links, `tests/test_gate_link.py`) and is a decision for the PO.
-* Routes the decision did not name are tier B: the JSON routes (`/auth/me`, `/auth/apikeys`, `/auth/sessions`, the
-  admin API), the passkey routes and — worth a look — the paths other systems have registered by hand:
-  `<oidc_callback_path>` and `/auth/oidc/start` (the identity provider), `/auth/saml/acs`, `/auth/saml/metadata`,
-  `/healthz` (the image's health check) and the links in e-mails (`/auth/magic/{token}`, `/auth/verify/{token}`,
-  `/auth/invite/{token}`, `/auth/reset`). A move would cost an operator a reconfiguration; promotion to A is a
-  one-word change in `tests/api_surface.json`.
-* `X-Csrf-Token`, `Sec-Fetch-Site` and `Referer` are in the request headers because the gate paths read them; they
-  are tier A with the rest of `http.contract`. Say so if a narrower set is wanted.
+* ~~The query parameter `abgemeldet` is German and sits in a tier-A route (`GET /.tinysesam/start`) and in a tier-B one
+  (`GET /auth/login`).~~ **Renamed to `signed_out`.**
+* ~~Routes the decision did not name are tier B … `<oidc_callback_path>`, `/auth/saml/acs`, `/auth/saml/metadata`,
+  `/healthz` …~~ **The four provider and health-check paths are tier A now.**
+* ~~`X-Csrf-Token`, `Sec-Fetch-Site` and `Referer` are tier A with the rest of `http.contract`.~~ **Browser headers are
+  tier B.**
 * Still not measured: the shape of the JSON bodies of the routes, `Set-Cookie` attributes, `Location` targets beyond
   their path, the audit event names, the HTML.
+
+**Addendum 2026-10-29 (PO decision, later the same day): the last breaking pass before the freeze.** What the promise
+names is English and correctly tiered *now*; everything earlier counts as broken, **without alias or transition**
+(the new tier-A clock starts with the release that carries this). Result of the pass:
+
+* **Renamed** (table in the CHANGELOG, “Changed — the last breaking pass”): the query parameter `abgemeldet` →
+  `signed_out` (`/.tinysesam/start` tier A, `/auth/login` tier B); the message id `err.locked_serie` →
+  `err.locked_series`; the options `--ja` → `--yes` (`restore`, `delete`) and the Caddy template variable
+  `TS_SHARE_PRAEFIX` → `TS_SHARE_PREFIX` (both outside the measured promise, in a commit of their own); nine German
+  log texts (mail queue ×4, first-admin grant ×2, OIDC callback, SAML response, argon2 hash count); the internal
+  fields of the gate-link flow (`abgemeldet`, `bindung` → `signed_out`, `binding`, 2 to 10 minutes of life).
+* **No data migration, schema version unchanged (15).** The inventory found nothing German that is stored and
+  promised any more: the vocabulary migration of T-29 (schema 15) had already taken the audit event names, the
+  `key=value` keys and the tokens. What stays German on purpose: table, column and setting-key names, private
+  identifiers, the German interface texts (`lang="de"`).
+* **Re-tiered:** `<oidc_callback_path>`, `POST /auth/saml/acs`, `GET /auth/saml/metadata`, `GET /healthz` B → **A**;
+  `Accept`, `Referer`, `Sec-Fetch-Mode`, `Sec-Fetch-Site`, `X-Csrf-Token` A → **B**. Totals A 371, B 152, C 38. The guard
+  holds both directions (a provider path below A, a browser header in A: red).
+* **A rule for tier-B routes:** a path in B is announced in the CHANGELOG under “Deprecated” at least **two minor
+  versions** before it is removed or renamed (a route cannot raise a `DeprecationWarning`). Stated in this milestone,
+  both READMEs, the introduction of `API.md` and `docs/OPERATIONS.md`.
+* **`auth.cfg` is tier A for reading only; writing is expressly not promised** — checked in the READMEs, `API.md` and
+  here, the wording is the same everywhere.
+* **The guard** `tests/test_api_surface.py` has a new check (`pruefe_vertragsnamen`): route parameters, header and
+  cookie names, logger names, event words, keys and values of the security log, message ids and placeholders, the
+  variables the Caddy templates read, command-line options and the free text of every log call may carry no German
+  word; the stem `abgemeld` is new in the word list.
 
 <!-- What used to be here (closing with 1.0.0) is obsolete together with the milestone itself. -->

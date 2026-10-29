@@ -1348,7 +1348,7 @@ aufgeführt in [`API.md`](../API.md):
 | Stufe | Was | Zusage |
 |---|---|---|
 | **A — öffentlich, stabil ab 1.0** | was diese README zeigt, und was einbettende Apps nutzen | Kein Bruch über zwei Minor-Versionen — die Bedingung für 1.0. Gezählt wird ab 0.22.0. |
-| **B — für Fortgeschrittene** | Bausteine für eigene Konto- und Admin-Seiten (unten) | Bleibt. Entfernen oder umbauen erst nach einer `DeprecationWarning` über zwei Minor-Versionen. |
+| **B — für Fortgeschrittene** | Bausteine für eigene Konto- und Admin-Seiten (unten) | Bleibt. Entfernen oder umbauen erst nach einer `DeprecationWarning` über zwei Minor-Versionen. Eine Route kann nicht warnen: ein Pfad der Stufe B wird mindestens zwei Minor-Versionen vor dem Entfernen im CHANGELOG unter „Deprecated“ angekündigt. |
 | **C — intern** | die Verdrahtung der eingebauten Routen | Keine. Seit 0.22.0 trägt die Implementierung einen führenden Unterstrich; der alte Name bleibt bis 1.0 als Alias, der beim Aufruf warnt, dann fällt er weg. Nicht neu verwenden. |
 
 Ein neuer öffentlicher Name hat keine Stufe, bis jemand entscheidet; so lange ist der Wächter
@@ -1388,10 +1388,15 @@ Python-Name ist; gemessen in `tests/api_surface.json`, aufgeführt in [`API.md`]
   fehlschlagender Hook den Vorgang nicht abbricht, und die Schlüssel von `details` je Ereignis.
 - **Stufe A — der Forward- und Gate-Vertrag**, auf den sich Reverse-Proxys verlassen: `/auth/forward`,
   `/auth/verify`, `/.tinysesam/*`, `/auth/gate/*`, ihre Statuscodes, die `X-TinySesam-*`-Header und die Werte
-  von `X-TinySesam-Reason`, die Eingangs-Header und -Parameter, die sie lesen (`X-Forwarded-Uri`, `?roles=` …),
-  und die Namen der Cookies, die das Gate setzt.
+  von `X-TinySesam-Reason`, die Eingangs-Header, die ein Proxy setzen oder weiterreichen muss
+  (`X-Forwarded-Uri`, `X-Forwarded-Host`, `X-Forwarded-Proto`, `Cookie`, `Authorization` …), `?roles=` und
+  die Namen der Cookies, die das Gate setzt. Ebenfalls Stufe A, weil andere Systeme sie von Hand eingetragen
+  haben oder abfragen: der OIDC-Callback, die SAML-ACS- und Metadaten-Pfade und `/healthz`. Header, die ein
+  Browser von sich aus schickt (`X-Csrf-Token`, `Sec-Fetch-Site`, `Referer` …), sind Stufe B.
 - **Stufe B — Seiten und API-Routen:** die HTML-Seiten (Anmeldung, Registrierung, Konto, Admin-Panel …) und die
-  JSON-Routen — **Pfad und Methode** sind zugesagt, das HTML und das Aussehen nicht.
+  JSON-Routen — **Pfad und Methode** sind zugesagt, das HTML und das Aussehen nicht. Ein Pfad der Stufe B wird
+  mindestens zwei Minor-Versionen vor dem Entfernen oder Umbenennen im CHANGELOG unter „Deprecated“ angekündigt
+  (eine Route kann keine `DeprecationWarning` auslösen).
 - **Stufe A — das Sicherheitslog**, das fail2ban-Filter lesen: die Logger-Namen (`tinysesam.security`), das
   Format der Logdatei, die Ereigniswörter (`failed login`, `failed verification`, `deferred login`,
   `repeated login`, `login ok`) und ihre Schlüssel in der Reihenfolge (`user= ip= method= reason= unban=`).
@@ -1444,8 +1449,8 @@ Bausteine für Seiten, die du selbst baust — Signaturen und Beschreibungen in
   auf TinySesam-Seiten unter einem Montage-Präfix), `flow_cookie_name`, `t` (übersetzter Text in
   `config.lang`), `set_rate_limiter`, `apply_idp_groups`, `version` und
   `tinysesam.current_version()`, `PAGES` (die Seitennamen, die `set_template` annimmt),
-  `MFA_ENROLLMENT_MODES`, `TinySesamConfig.validate()` (Nachprüfung nach Änderungen an `auth.cfg`
-  zur Laufzeit), `TinySesamConfig.enabled_methods()`, `TinySesamConfig.pin_as_first_factor()`.
+  `MFA_ENROLLMENT_MODES`, `TinySesamConfig.validate()` (Nachprüfung, nachdem du ein Config-Objekt zur Laufzeit geändert hast;
+  das Schreiben von `auth.cfg` selbst ist nicht zugesagt), `TinySesamConfig.enabled_methods()`, `TinySesamConfig.pin_as_first_factor()`.
 - **`apply_factor`** hängt einen Faktor an die Sitzung, **ohne ihn zu prüfen**. Nur rufen, wenn du
   den Faktor selbst geprüft hast, und mit dem Konto aus `session_user()` — der mächtigste Baustein
   hier; ein Fehler davor ist ein Weg hinein. Für Passwort, PIN und TOTP nicht nötig: Die
