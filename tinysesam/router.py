@@ -1287,6 +1287,9 @@ def build_router(auth) -> APIRouter:
                 if h not in auth._gate_hosts():
                     raise HTTPException(400, auth.t("api.invalid", reason="host"))
                 proto = (request.headers.get("x-forwarded-proto") or request.url.scheme or "https").split(",")[0].strip()
+                # The host comes from the configured list, not from the request: the value that is put into
+                # the address is the list's own entry.
+                h = next(x for x in auth._gate_hosts() if x == h)
                 basis = f"{'http' if proto == 'http' else 'https'}://{h}"
                 if auth._forward_app(h)["login"] == "page":
                     return RedirectResponse(f"{basis}/.tinysesam/start?rd=%2F&signed_out=1", 303)
