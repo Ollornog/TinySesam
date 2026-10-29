@@ -76,12 +76,44 @@ Left as they are because the shared test kit (`repokit sync`) depends on the nam
 - `vault.load_key` returns its source as `environment` / `file` / `memory` / `beside_db` / `beside_db_new` (was
   `umgebung` / `datei` / `speicher` / `neben_db`); it only appears in `TinySesam._schluessel_herkunft` and in the CLI output.
 - `scripts/_api_docs.py` writes the English headings and no longer strips a German "stattdessen" prefix.
-- **Deliberately still German** (persisted or operator-facing vocabulary; renaming needs a migration and a decision):
-  the keys and tokens in audit details and security-log lines (`grund=`, `konto=`, `quelle=`, `durch=betreiber`,
-  `kein_konto`, `konto_gesperrt`, `falsches_geheimnis`, audit event names like `oidc_widerruf`), the substitute name
-  `gelöscht#<id>` in the audit log, the SQL trigger message `tinysesam: kennung vergeben`, German identifiers inside
-  the library (private functions, variables, `{grund}` message placeholders, the CSS variables `--ts-bild-*`), and the
-  German user interface itself (`lang="de"`, `i18n/`).
+- **Still German on purpose:** names of database tables, columns and setting keys (`namensbindung`, `fehlserie`,
+  `topf_*`, `name_quelle`, `idp_bestaetigt_at`, …), private identifiers inside the library, and the German user interface
+  itself (`lang="de"`, `i18n/`). The stored and logged vocabulary is English since schema 15 (next entry).
+
+### Changed — stored and logged vocabulary is English; schema 15 (T-29)
+
+**Operators: read this before updating.** Take a backup first (`tinysesam backup --db …`; a plain copy of the `.db` file
+misses the WAL). The first start with this version rewrites the stored values once (schema 14 → 15, idempotent — a
+second run changes nothing). An older version can still open the migrated file but shows the new English names as
+unknown (see "Rollback to 0.24.x (schema 15)" in `docs/OPERATIONS.md`).
+
+- **Audit event names** (`audit.event`): `oidc_widerruf` → `oidc_revoked`, `lockout_serie` → `lockout_series`,
+  `oidc_unbestaetigt` → `oidc_unconfirmed`, `api_keys_ruhen` → `api_keys_dormant`, `sperrhinweis` → `lockout_notice`,
+  `recovery_verwaist_geloescht` → `recovery_orphan_deleted`, `login_lokal` → `login_local`, and the per-source families
+  `<source>_kennung_{abgewiesen,gebunden,geloest,ungueltig,wechsel}` → `<source>_identifier_{rejected,bound,unbound,invalid,change}`,
+  `<source>_namensbindung_zu` → `<source>_name_binding_closed`, `<source>_ohne_kennung` → `<source>_without_identifier`
+  (source = `oidc`, `saml`, `ldap`). The complete tables are in `tinysesam/_vokabular.py`.
+- **Keys in audit details and in the security log**: `grund=` → `reason=`, `konto=` → `account=`, `quelle=` → `source=`,
+  `durch=` → `by=`, `akteur=` → `actor=`, `alt=`/`neu=` → `old=`/`new=`, `kennung=` → `identifier=`, `art=` → `kind=`,
+  `anzahl=` → `count=`, `fehlversuche=` → `failed_attempts=`, … and the values behind them (`kein_konto` → `no_account`,
+  `konto_gesperrt` → `account_locked`, `falsches_geheimnis` → `wrong_secret`, `betreiber` → `operator`,
+  `lokal` → `local`, `unban=ja|nein` → `unban=yes|no`, …). Existing rows are rewritten by the migration
+  (`Store._vokabular_englisch`); only whole `key=` tokens are touched, never free text. Code that reads audit rows
+  understands both forms, so rows written by an older version after a rollback are not lost.
+- **Substitute name** of a deleted account in the audit log: `gelöscht#<id>` → `deleted#<id>`. **Database trigger message**:
+  `tinysesam: kennung vergeben` → `tinysesam: identifier taken` (the triggers are replaced on start; both messages are
+  recognised when caught). **Series kind** `pin_folge` → `pin_chain` (`fehlserie.art`).
+- **HTTP header** of `/auth/forward`: `X-TinySesam-Reason: app-fehlt|app-veraltet|app-abgemeldet` →
+  `app-missing|app-stale|app-signed-out`. Proxy rules that match the old values must be updated.
+- **Message placeholders** `{grund}` → `{reason}` and `{rollen}` → `{roles}` in `messages.py`. A custom text added with
+  `add_messages` that still uses the old placeholders shows them unreplaced; rename them.
+- **CSS variables** `--ts-bild-grund|-decke|-decke-rand|-staerke|-hell` → `--ts-image-base|-overlay|-overlay-edge|-strength|-brightness`.
+  A `brand_css` that sets the old names has to be updated.
+- **fail2ban — update the filters together with the release.** Every log line a filter under `deploy/fail2ban/` matches now
+  states its cause as `reason=` (never `grund=`). The lines of the OIDC "account disabled" case and the passkey failures
+  (`failed verification … method=oidc|passkey`) used `grund=` before, so the filter `tinysesam-verify-filter.conf` did **not**
+  match them; it matches them now, which means such attempts count towards the ban. `tests/test_fail2ban_reason.py` checks
+  every call site against the filter expressions.
 
 ### Changed — Python 3.13–3.15 (test kit 0.37.0)
 
