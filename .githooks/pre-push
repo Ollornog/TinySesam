@@ -184,6 +184,18 @@ docker_ok() {
 
 if command -v ci-local >/dev/null 2>&1; then
     if docker_ok; then
+        # Grün-Marke (2026-10-29, Register „Rebase-Karussell“): lief GENAU dieser Baum (Tree-Hash)
+        # mit derselben ci-local-Fassung und demselben Abbild schon grün — von Hand oder durch
+        # einen früheren Push —, ist die Suite ein zweites Mal verschenkte Zeit (über eine Stunde
+        # je Rebase im FleetCommander). Ein Rebase ohne Inhaltsänderung lässt den Baum gleich;
+        # jede Inhaltsänderung, ein anderes ci-local oder ein neues Abbild macht ihn ungültig.
+        # Die Marke legt nur ein GRÜNER Standard-/--full-Lauf von ci-local an; ein ci-local ohne
+        # `--gruen-pruefen` (älter) scheitert hier und fährt die Suite wie bisher. Kein Ersatz für
+        # die CI auf GitHub, nur für den identischen zweiten lokalen Lauf.
+        if ( cd "$ROOT" && ci-local --gruen-pruefen ); then
+            echo "pre-push: Suite entfällt — genau dieser Stand war schon grün (Grün-Marke von ci-local)."
+            exit 0
+        fi
         echo "pre-push: Testsuite läuft im Container (ci-local) — das dauert, und das ist gut so."
         # Ein einfacher Lauf. Den Doppellauf (--full), der die Wiederholbarkeit beweist,
         # fährt die CI bzw. der Release — nicht die kurze Schleife vor jedem Push.
