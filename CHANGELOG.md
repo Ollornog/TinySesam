@@ -2,7 +2,12 @@
 
 All notable changes. Format loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [0.25.1] — 2026-10-30
+
+**Who needs it:** everyone running the gateway with WebSocket apps behind it — with a WebSocket library installed
+(e.g. `uvicorn[standard]`) their forward-auth check was answered 403 (B-5); the image was not affected, it only logged a
+warning pair per WebSocket connection, now gone. Own `uvicorn` invocation: add `--ws none`. No API break, no new
+schema; some free-text log and error messages and the passkey sign-in dialogs are now English (or follow `lang`).
 
 ### Fixed — gateway: forward auth of WebSocket apps with a WebSocket library installed (B-5)
 
