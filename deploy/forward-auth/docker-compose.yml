@@ -36,7 +36,7 @@ x-hardening: &hardening
 services:
   tinysesam:
     <<: *hardening
-    image: ghcr.io/ollornog/tinysesam:v0.25.0
+    image: ghcr.io/ollornog/tinysesam:v0.25.1
     # No `command:` needed — the entrypoint starts the gateway. It runs as non-root
     # (uid 1000) and ships a HEALTHCHECK on /healthz.
     environment:
