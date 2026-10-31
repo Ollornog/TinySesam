@@ -182,6 +182,19 @@ docker_ok() {
     sudo -n docker info >/dev/null 2>&1
 }
 
+# Text-Schnellweg VOR ci-local (Kit 0.40.0, 2026-10-31, Plan „Tempo“): check.sh fährt bei reinem Text nur die Hygiene —
+# aber nur, wenn es die Liste der Änderungen kennt. Im Container von ci-local fehlt die Historie, und ci-local reicht
+# CI_AENDERUNGEN nicht herein; ein Doku-Commit fuhr dort die volle Suite (FleetCommander: 8,5 min für eine Zeile).
+# Hier, auf dem Rechner, ist der Standardzweig bekannt: _nur_text.sh entscheidet, test_repo.py prüft. Nur bei sauberem
+# Arbeitsbaum — sonst prüfte die Hygiene einen anderen Stand als den gepushten, und es geht weiter wie bisher.
+if [[ -x "$ROOT/scripts/_nur_text.sh" && -f "$ROOT/tests/test_repo.py" ]] \
+    && ( cd "$ROOT" && git diff --quiet HEAD -- && [[ -z "$(git ls-files --others --exclude-standard)" ]] ) \
+    && grund="$(cd "$ROOT" && scripts/_nur_text.sh)"; then
+    echo "pre-push: $grund"
+    ( cd "$ROOT" && python3 tests/test_repo.py ) || { echo "pre-push: ABGEBROCHEN — Repo-Hygiene rot." >&2; exit 1; }
+    exit 0
+fi
+
 if command -v ci-local >/dev/null 2>&1; then
     if docker_ok; then
         # Grün-Marke (2026-10-29, Register „Rebase-Karussell“): lief GENAU dieser Baum (Tree-Hash)
