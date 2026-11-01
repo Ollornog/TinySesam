@@ -7,7 +7,7 @@ TinySesam does **not update itself**. Whoever installs the library determines th
 pinned Git tag or a release's wheel. See README,
 section "Installation and updates".
 """
-__version__ = "0.25.1"
+__version__ = "0.25.2"
 
 from .config import TinySesamConfig
 from .errors import ConfigError, MailNotConfigured, MissingExtra, StateError, TinySesamError
