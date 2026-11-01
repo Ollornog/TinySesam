@@ -2,7 +2,10 @@
 
 All notable changes. Format loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [0.25.2] — 2026-11-01
+
+**Who needs it:** everyone running the gateway image — it shipped joserfc 1.7.5 (CVE-2026-119284). Pull the new image.
+The library is unchanged (it does not pin joserfc; upgrade joserfc in your own environment). No API break, no new schema.
 
 ### Security — gateway image: joserfc 1.7.5 → 1.7.7 (CVE-2026-119284)
 
