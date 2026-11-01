@@ -2,6 +2,14 @@
 
 All notable changes. Format loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Security — gateway image: joserfc 1.7.5 → 1.7.7 (CVE-2026-119284)
+
+The hashed lock list of the gateway image pinned joserfc 1.7.5; `pip-audit` reports CVE-2026-119284, fixed in 1.7.6.
+Regenerated with `uv pip compile … --upgrade-package joserfc`; no other package changed. The library itself does not
+pin joserfc.
+
 ## [0.25.1] — 2026-10-30
 
 **Who needs it:** everyone running the gateway with WebSocket apps behind it — with a WebSocket library installed
