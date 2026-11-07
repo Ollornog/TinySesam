@@ -2934,6 +2934,16 @@ class Store:
             " roles=excluded.roles",
             (token_hash, client, now, now, json.dumps(list(roles or []))))
 
+    def confirm_oidc_grant(self, token_hash: str, client: str, now: int, roles=None) -> int:
+        """Confirm an EXISTING approval (B-6): a successful refresh exchange for this client is
+        the provider's yes for this application. Never creates one — an approval withdrawn by the
+        operator (`drop_oidc_grant`) or never granted stays absent. `roles=None` keeps the stored ones."""
+        if roles is None:
+            return self._exec("UPDATE oidc_grant SET checked_at=? WHERE token_hash=? AND client=?",
+                              (now, token_hash, client)).rowcount
+        return self._exec("UPDATE oidc_grant SET checked_at=?, roles=? WHERE token_hash=? AND client=?",
+                          (now, json.dumps(list(roles)), token_hash, client)).rowcount
+
     def get_oidc_grant(self, token_hash: str, client: str) -> Optional[dict]:
         r = self._one("SELECT * FROM oidc_grant WHERE token_hash=? AND client=?", (token_hash, client))
         if not r:

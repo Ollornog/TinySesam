@@ -62,9 +62,9 @@ und das komplette **Frontend austauschbar** (`auth.set_template(...)`).
 TinySesam liegt auf **PyPI** (seit 0.19.0). Pinne die Version:
 
 ```bash
-pip install "tinysesam==0.25.2"
+pip install "tinysesam==0.25.3"
 # Kern: Passwort + TOTP. Alles: [all] — + argon2, QR, OIDC, Passkey
-pip install "tinysesam[all]==0.25.2"
+pip install "tinysesam[all]==0.25.3"
 # gezielt: [argon2] [qr] [oidc] [saml] [ldap] [passkey] [redis] [gateway]
 ```
 
@@ -73,7 +73,7 @@ Datei trägt eine PEP-740-Beglaubigung des Commits, aus dem sie gebaut ist. Dies
 installiert sich auch direkt vom Tag:
 
 ```bash
-pip install "tinysesam[all] @ git+https://github.com/Ollornog/TinySesam.git@v0.25.2"
+pip install "tinysesam[all] @ git+https://github.com/Ollornog/TinySesam.git@v0.25.3"
 ```
 
 Ohne `@v…` kommt statt einer freigegebenen Fassung der bewegliche Hauptzweig — das gehört in ein
@@ -869,7 +869,7 @@ so einen Knopf nicht, und seit `v0.12.0` hat TinySesam ihn auch nicht mehr.
 Schreibe eine **feste Version** in die Abhängigkeiten deiner App — nie einen Branch:
 
 ```
-tinysesam[oidc]==0.25.2
+tinysesam[oidc]==0.25.3
 ```
 
 Eine veröffentlichte Version auf PyPI ändert sich nicht mehr: Dieselbe Zeile installiert morgen
@@ -880,14 +880,14 @@ Derselbe Pin über Git, wenn du so installierst — beachte, dass sich ein **Tag
 für echte Unveränderlichkeit pinne den Commit (`@a1b2c3d…`):
 
 ```
-tinysesam[oidc] @ git+https://github.com/Ollornog/TinySesam.git@v0.25.2
+tinysesam[oidc] @ git+https://github.com/Ollornog/TinySesam.git@v0.25.3
 ```
 
 Jedes Release hängt zusätzlich ein **Wheel** und ein **sdist** an, mit `SHA256SUMS`. Wer ohne Git
 und ohne Paketindex installieren will, nimmt die Datei direkt:
 
 ```
-pip install https://github.com/Ollornog/TinySesam/releases/download/v0.25.2/tinysesam-0.25.2-py3-none-any.whl
+pip install https://github.com/Ollornog/TinySesam/releases/download/v0.25.3/tinysesam-0.25.3-py3-none-any.whl
 ```
 
 ### Als Gateway (eigener Container)
@@ -895,7 +895,7 @@ pip install https://github.com/Ollornog/TinySesam/releases/download/v0.25.2/tiny
 Jedes Release baut ein Abbild für `linux/amd64` und `linux/arm64`:
 
 ```
-ghcr.io/ollornog/tinysesam:v0.25.2
+ghcr.io/ollornog/tinysesam:v0.25.3
 ```
 
 **Prüfen, woher es kommt.** Ein Digest belegt, dass sich ein Artefakt seit dem Bau nicht verändert
@@ -903,9 +903,9 @@ hat — nicht, wer es gebaut hat. Jedes Release trägt deshalb eine über Sigsto
 Herkunfts-Attestation und eine SBOM; beide liegen auch neben dem Abbild in der Registry:
 
 ```bash
-gh attestation verify oci://ghcr.io/ollornog/tinysesam:v0.25.2 --owner Ollornog
-gh attestation verify tinysesam-0.25.2-py3-none-any.whl --owner Ollornog   # auch Wheel und sdist
-gh attestation verify oci://ghcr.io/ollornog/tinysesam:v0.25.2 --owner Ollornog \
+gh attestation verify oci://ghcr.io/ollornog/tinysesam:v0.25.3 --owner Ollornog
+gh attestation verify tinysesam-0.25.3-py3-none-any.whl --owner Ollornog   # auch Wheel und sdist
+gh attestation verify oci://ghcr.io/ollornog/tinysesam:v0.25.3 --owner Ollornog \
     --predicate-type https://spdx.dev/Document                             # die SBOM
 ```
 
@@ -968,6 +968,13 @@ Anmeldemaske. Wurde die Gruppe inzwischen entzogen, sagt der Provider Nein — u
 Absage, denn dort wird die Freigabe gepflegt. Die Sitzung selbst bleibt: Die anderen Anwendungen
 laufen weiter. `0` schaltet die Nachprüfung ab, dann wirkt ein Entzug erst, wenn die Sitzung
 abläuft (in der Vorgabe nach sieben Tagen).
+
+Gibt der Provider Refresh-Tokens aus, fallen die meisten dieser Umwege weg: Jeder erfolgreiche
+Refresh-Tausch für eine Anwendung (`oidc_session_refresh_minutes`, Vorgabe 15) erneuert ihre
+Freigabe, denn dieser Tausch ist das Ja des Providers für genau diesen Client. Der Umweg bleibt für
+Anwendungen ohne Refresh-Token, einen unerreichbaren Provider und einen Client mit `allowed_groups`,
+dessen Refresh-Antwort den Gruppen-Claim nicht enthält. Das zählt, wenn die eigene Sitzung des
+Providers kürzer ist als die Freigabefrist — sonst endete der Umweg in dessen Anmeldemaske.
 
 Als Umgebungsvariablen (Gateway-Container):
 

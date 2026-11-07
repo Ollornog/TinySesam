@@ -259,6 +259,48 @@ assert c14.get("/auth/forward", headers=PROXY_B).status_code == 401
 assert c14.get("/auth/forward", headers=PROXY_A).status_code == 200
 ok("T-14: withdrawing an approval affects exactly one application")
 
+# B-6: a successful refresh exchange for a client renews the approval of its application. Before,
+# the approval went stale after `oidc_revalidate_minutes` although the provider had just said yes,
+# and the redirect hop showed a login form once the provider's own session had ended.
+# (Mutation probe: remove `confirm_oidc_grant` in `_oidc_swap` → "renews" red; drop the
+#  allowed-groups condition → "missing claim" red; make it an upsert → "withdrawn" red.)
+_answers = []
+auth4.oidc_clients["app-a.example.com"].refresh = lambda rt, sub: _answers.pop(0)
+auth4.store.set_oidc_session(_h, "app-a.example.com", "sub-a", "rt-a")
+
+
+def _stale_and_swap(answer):
+    """Approval and refresh row past their periods, then one request that triggers the exchange."""
+    _past = int(_when.time()) - 16 * 60
+    auth4.store._exec("UPDATE oidc_grant SET checked_at=? WHERE token_hash=?", (_past, _h))
+    auth4.store._exec("UPDATE oidc_session SET checked_at=? WHERE token_hash=?", (_past, _h))
+    _answers.append(answer)
+    c14.get("/auth/forward", headers=PROXY_A)
+    auth4._oidc_outcome.wait()
+    return c14.get("/auth/forward", headers=PROXY_A)
+
+
+r = _stale_and_swap(("ok", {"sub": "sub-a"}, {}))
+assert r.status_code == 200, (r.status_code, r.headers.get("X-TinySesam-Reason"))
+assert auth4.store.get_oidc_grant(_h, "app-b.example.com") is None, "B was withdrawn and must stay so"
+ok("B-6: the provider's yes on the refresh exchange renews the approval of exactly this application")
+
+auth4.cfg.oidc_clients["app-a.example.com"]["allowed_groups"] = ["a-team"]
+r = _stale_and_swap(("ok", {"sub": "sub-a"}, {}))              # no groups claim
+assert r.status_code == 401 and r.headers.get("X-TinySesam-Reason") == "app-stale", dict(r.headers)
+r = _stale_and_swap(("ok", {"sub": "sub-a", "groups": ["a-team"]}, {}))
+assert r.status_code == 200, (r.status_code, r.headers.get("X-TinySesam-Reason"))
+assert auth4.store.get_oidc_grant(_h, "app-a.example.com")["roles"] == ["a-team"]
+del auth4.cfg.oidc_clients["app-a.example.com"]["allowed_groups"]
+ok("B-6: with allowed_groups a missing claim renews nothing (the hop decides), a passing claim does")
+
+auth4.store.drop_oidc_grant(_h, "app-a.example.com")
+r = _stale_and_swap(("ok", {"sub": "sub-a"}, {}))
+assert r.status_code == 401 and r.headers.get("X-TinySesam-Reason") == "app-missing", dict(r.headers)
+auth4.store.discard_oidc_session(_h, "app-a.example.com")
+auth4._record_oidc_approval(_session, "app-a.example.com")
+ok("B-6: a withdrawn approval is not brought back by a refresh — confirm, never create")
+
 # The flow remembers WHICH application it runs for. The redirect URI is the same for all clients
 # (the provider holds one address), so the client cannot come from the return
 # address — it is in the flow record. Without it every sign-in would run via the default client
