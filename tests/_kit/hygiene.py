@@ -1622,6 +1622,118 @@ def pruefe_testdateien_gerufen(root: str, testverzeichnis: str = "tests",
     return treffer
 
 
+def _kit_aufrufe(quellen: dict[str, str]) -> tuple[set[tuple[str, str]], set[str], list[str]]:
+    """Welche Kit-Funktionen werden in diesen Quelltexten wirklich GERUFEN? (`ast`, seit 0.42.0)
+
+    Liefert `(getroffen, fremd, unlesbar)`:
+
+    - `getroffen`: Menge `(modul, funktion)` — Aufrufe, die ueber die IMPORTE der Datei auf ein
+      Modul im `_kit`-Paket aufloesen: `manifest.pruefe(...)` nach `from _kit import manifest`
+      (auch `as mf`), `pruefe(...)` nach `from _kit.manifest import pruefe` (auch `as p`),
+      `_kit.manifest.pruefe(...)` nach `import _kit`, `from _kit.hygiene import *`, einfache
+      Zuweisungs-Alias (`H = hygiene`).
+    - `fremd`: Kurznamen von Aufrufen, die NICHT ins Kit aufloesen (eigene `def pruefe`,
+      `config.pruefe(...)`, ungebundene Namen) — nur fuer die Meldung.
+    - `unlesbar`: Dateien, die `ast` nicht parsen kann (die Pruefung darf sie nicht still lesen).
+
+    WARUM (2026-10-29, Register T-29, TinySesam): Der Waechter suchte den Kurznamen `pruefe(` per Textsuche. Eine
+    repo-eigene Konfigurationspruefung hiess ebenfalls `pruefe` und zaehlte als Aufruf von
+    `manifest.pruefe` — die Kit-Pruefung (Dateien gegen Manifest) lief dort **nie**, und der
+    Waechter schwieg. Ein Kurzname ist kein Ausweis; ein Aufruf zaehlt erst, wenn er ueber den
+    Import im Kit landet. Dasselbe traf jeden Kommentar und jeden String mit `name(` darin.
+
+    Grenzen, benannt: Importe gelten dateiweit (kein Scope), `importlib`-Ladewege und
+    `getattr(...)` loest das nicht auf (dort wird nichts gezaehlt — im Zweifel rot und sichtbar,
+    nicht still gruen), ein blosser Verweis ohne Aufruf (`f = hygiene.pruefe_x`, nie gerufen) zaehlt
+    nicht. Ein Modul wird nur als Kit anerkannt, wenn `_kit` im Importpfad steht.
+    """
+    getroffen: set[tuple[str, str]] = set()
+    fremd: set[str] = set()
+    unlesbar: list[str] = []
+
+    def kette(knoten):
+        """`a.b.c` -> ('a', ['b', 'c']); alles andere (Aufruf, Index …) -> None."""
+        teile = []
+        while isinstance(knoten, ast.Attribute):
+            teile.append(knoten.attr)
+            knoten = knoten.value
+        if isinstance(knoten, ast.Name):
+            return knoten.id, teile[::-1]
+        return None
+
+    for rel, text in sorted(quellen.items()):
+        try:
+            baum = ast.parse(text)
+        except (SyntaxError, ValueError) as e:
+            # Ein Heredoc im Shellskript muss kein Python sein; nur echte Testdateien melden.
+            if "#heredoc" not in rel:
+                unlesbar.append(f"{rel}: {type(e).__name__}")
+            continue
+        bindung: dict[str, str] = {}
+        sterne: list[str] = []
+        lokal: set[str] = set()
+        for k in ast.walk(baum):
+            if isinstance(k, ast.Import):
+                for a in k.names:
+                    if a.asname:
+                        bindung[a.asname] = a.name
+                    else:
+                        wurzel = a.name.split(".")[0]
+                        bindung[wurzel] = wurzel
+            elif isinstance(k, ast.ImportFrom):
+                basis = "." * k.level + (k.module or "")
+                for a in k.names:
+                    if a.name == "*":
+                        sterne.append(basis)
+                    else:
+                        trenner = "" if basis.endswith(".") or not basis else "."
+                        bindung[a.asname or a.name] = f"{basis}{trenner}{a.name}"
+            elif isinstance(k, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                lokal.add(k.name)
+
+        def aufloesen(knoten) -> list[str]:
+            k = kette(knoten)
+            if k is None:
+                return []
+            wurzel, rest = k
+            if wurzel in bindung:
+                return [".".join([bindung[wurzel], *rest])]
+            if wurzel not in lokal:
+                return [".".join([s, wurzel, *rest]) for s in sterne]
+            return []
+
+        # Einfache Alias: `H = hygiene` / `pruefe = manifest.pruefe` (mehrere Durchgaenge,
+        # damit die Reihenfolge im Quelltext egal ist).
+        zuweisungen = [k for k in ast.walk(baum)
+                       if isinstance(k, ast.Assign) and len(k.targets) == 1
+                       and isinstance(k.targets[0], ast.Name)]
+        for _ in range(3):
+            for z in zuweisungen:
+                ziel = z.targets[0].id
+                if ziel in bindung:
+                    continue
+                gef = aufloesen(z.value)
+                if gef:
+                    bindung[ziel] = gef[0]
+
+        for k in ast.walk(baum):
+            if not isinstance(k, ast.Call):
+                continue
+            kurz = k.func.attr if isinstance(k.func, ast.Attribute) else (
+                k.func.id if isinstance(k.func, ast.Name) else None)
+            if kurz is None:
+                continue
+            im_kit = False
+            for pfad in aufloesen(k.func):
+                teile = pfad.split(".")
+                if len(teile) >= 3 and "_kit" in teile[:-2]:
+                    getroffen.add((teile[-2], teile[-1]))
+                    im_kit = True
+            if not im_kit:
+                fremd.add(kurz)
+    return getroffen, fremd, unlesbar
+
+
 def pruefe_kit_prueffunktionen_gerufen(root: str, ausgenommen: dict[str, str] | None = None,
                                        testverzeichnis: str = "tests") -> list[str]:
     """Wird jede `pruefe_*` des Kits im Repo auch AUFGERUFEN?
@@ -1706,7 +1818,7 @@ def pruefe_kit_prueffunktionen_gerufen(root: str, ausgenommen: dict[str, str] | 
         angeboten.discard(_funktion)
         angeboten.discard(f"{_modul}.{_funktion}")
 
-    quelle = []
+    quellen: dict[str, str] = {}
     wurzel = os.path.join(root, testverzeichnis)
     for pfad, verzeichnisse, dateien in os.walk(wurzel):
         verzeichnisse[:] = [v for v in verzeichnisse if v not in ("_kit", "__pycache__")]
@@ -1714,22 +1826,48 @@ def pruefe_kit_prueffunktionen_gerufen(root: str, ausgenommen: dict[str, str] | 
             if d.endswith(".py"):
                 try:
                     with open(os.path.join(pfad, d), encoding="utf-8") as fh:
-                        quelle.append(fh.read())
-                except OSError:
+                        quellen[os.path.relpath(os.path.join(pfad, d), root)] = fh.read()
+                except (OSError, UnicodeDecodeError):
                     continue
-    text = "\n".join(quelle)
+    # Python-Heredocs in `scripts/*.sh` zaehlen mit: `endpoint-check` ruft `manifest.pruefe(".")` seit
+    # jeher aus einem `"$PY" - <<'PYCHECK'`-Block in check.sh (README: „bei endpoint-check, das kein
+    # test_repo.py hat“). Ohne diesen Weg wuerde die ast-Fassung dort einen laufenden Aufruf als
+    # „nie gerufen“ melden — ein Fehlalarm, der den Waechter abschaltet. Nur Bloecke, deren
+    # Startzeile einen Python-Interpreter nennt.
+    skripte = os.path.join(root, "scripts")
+    if os.path.isdir(skripte):
+        for d in sorted(os.listdir(skripte)):
+            if not d.endswith(".sh"):
+                continue
+            try:
+                with open(os.path.join(skripte, d), encoding="utf-8") as fh:
+                    sh = fh.read()
+            except (OSError, UnicodeDecodeError):
+                continue
+            for n, m in enumerate(re.finditer(
+                    r"^([^\n]*)<<-?\s*(['\"]?)(\w+)\2[^\n]*\n(.*?)\n[ \t]*\3[ \t]*$",
+                    sh, re.M | re.S)):
+                if re.search(r"python|PY\b|\$PY", m.group(1)):
+                    quellen[f"scripts/{d}#heredoc{n}"] = m.group(4)
+    # Ein Aufruf zaehlt nur, wenn er ueber den Import wirklich im Kit landet (`ast`, 0.42.0) —
+    # nicht schon, weil ein Name gleich klingt (Register T-29: `pruefe` ist auch eine
+    # repo-eigene Funktion). Kommentare und Strings zaehlen nicht, wie zuvor.
+    getroffen, fremd, unlesbar = _kit_aufrufe(quellen)
+    for u in unlesbar:
+        treffer.append(f"{u} ist nicht als Python lesbar — ob sie Kit-Pruefungen ruft, ist "
+                       f"damit nicht belegbar (Syntaxfehler beheben)")
 
     zaehle_fall(len(angeboten))
     for name in sorted(angeboten):
         if name in ausgenommen:
             continue
-        # Der Aufruf, nicht die blosse Erwähnung in einem Kommentar.
-        # `modul.funktion` wird als `manifest.pruefe(` ODER `pruefe(` nach einem
-        # `from _kit import manifest` gerufen — beide Formen gelten.
-        kurz = name.split(".")[-1]
-        if not re.search(rf"(?:\b{re.escape(name)}|\b{re.escape(kurz)})\s*\(", text):
+        modul, _, funktion = name.rpartition(".")
+        if (modul or eigenes_modul, funktion) not in getroffen:
+            hinweis = (f" — ein Aufruf `{funktion}(...)` existiert, trifft aber NICHT das Kit "
+                       f"(eigene Funktion oder anderes Modul gleichen Namens)"
+                       if funktion in fremd else "")
             treffer.append(f"{name} liegt im Kit, wird aber nirgends aufgerufen "
-                           f"(rufen oder mit Grund in `ausgenommen` eintragen)")
+                           f"(rufen oder mit Grund in `ausgenommen` eintragen){hinweis}")
 
     unbekannt = set(ausgenommen) - angeboten
     for name in sorted(unbekannt):

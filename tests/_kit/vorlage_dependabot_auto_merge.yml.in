@@ -5,7 +5,7 @@
 #
 # DIE REGEL (PO 2026-10-11, alle Repos): Was die Pflicht-Checks abnehmen, mergt selbst — auch Majors.
 # Eine Meldung gibt es nur, wenn etwas bricht oder nichts abnimmt: Dann steht ein Kommentar am PR,
-# und der liegende PR erreicht den PO über ci-wache („liegt“). Die Wartezeit von drei Tagen
+# und ci-wache führt den liegenden PR als Befund („liegt“). Die Wartezeit von drei Tagen
 # (`cooldown` in dependabot.yml) bleibt, damit ein frisch kompromittiertes Release nicht durchläuft.
 # Von Hand bleiben:
 #   - fremde Commits im PR (nicht von Dependabot),
@@ -13,7 +13,10 @@
 #   - eine Action, die in keinem Pflicht-Workflow AUF DEM PR läuft (nur am Tag, nur auf main) — es sei
 #     denn, sie steht in `NACH_MERGE_ABGENOMMEN`: Dann nimmt sie der Nachlauf auf dem Standardzweig ab
 #     (ihr Fehlschlag lässt den alten Stand stehen, z. B. die Pages; ci-wache meldet den roten Lauf),
-#   - ein roter Pflicht-Workflow.
+#   - ein roter Pflicht-Workflow AUF AKTUELLER BASIS (seit 0.41.0: rot auf veralteter Basis wird erst
+#     nachgezogen, siehe unten),
+#   - ein verwaister PR: Sein Eintrag fehlt in dependabot.yml, oder Dependabot sagt selbst „please close“.
+#     Dependabot pflegt ihn nicht mehr; der Kommentar bittet ums Schließen.
 #
 # WARUM `workflow_run` und nicht `gh pr merge --auto`: Ein Merge mit dem Workflow-Token startet
 # KEINE Workflows („events triggered by the GITHUB_TOKEN … will not create a new workflow run“,
@@ -26,7 +29,20 @@
 # Wer zuletzt fertig wird, mergt; die anderen enden mit „wartet auf …“. Je Kopf läuft nur eine
 # Instanz (`concurrency`).
 #
-# Zwei Jobs: `entscheiden` liest nur (API, kein Checkout, kein PR-Code), `ausfuehren` hält die
+# GEPLANTER NACHLAUF (seit 0.41.0): Der Auslöser oben feuert nur am Ende eines PR-Laufs. Ändert sich danach
+# nur die Welt (main wird grün, ein Check meldet sich spät, die 10-min-Frist lief ab), prüfte niemand erneut —
+# zwei PRs eines PHP-Repos lagen rot auf einer Basis, die main längst repariert hatte. Deshalb stößt `sammeln` alle
+# sechs Stunden je offenem Dependabot-PR einen Lauf per `workflow_dispatch` an (der startet auch mit dem
+# Workflow-Token); `entscheiden` prüft dessen Kopf wie nach einem PR-Lauf.
+#
+# ROT AUF VERALTETER BASIS (seit 0.41.0): Bis 0.40 endete ein roter Pflicht-Workflow sofort im Kommentar —
+# die Prüfung „Zweig veraltet“ kam erst danach, also nie. Und `mergeStateStatus` BEHIND meldet GitHub nur mit
+# Branch-Schutz „Zweig muss aktuell sein“; private Repos ohne Schutz sind nie BEHIND. Gemessen wird deshalb
+# per compare-API (`behind_by`): Liegt der rote Kopf hinter der Basis, zieht der Lauf ihn nach (mit App) und
+# urteilt erst über das Ergebnis auf aktueller Basis.
+#
+# Drei Jobs: `sammeln` (nur im geplanten Lauf) liest die offenen PRs und stößt je Kopf einen Lauf an,
+# `entscheiden` liest nur (API, kein Checkout, kein PR-Code), `ausfuehren` hält die
 # Schreibrechte und ruft nur `gh pr merge`, `gh pr update-branch`, `gh workflow run` und `gh pr comment`.
 #
 # MIT GITHUB APP (seit 2026-10-11, PO): Liegt im Repo das Secret `AUTOMERGE_APP_KEY` und die Variable
@@ -41,21 +57,59 @@ on:  # zizmor: ignore[dangerous-triggers] — kein Checkout, kein PR-Code; Herku
   workflow_run:
     workflows: @@WORKFLOWS@@
     types: [completed]
+  # Geplanter Nachlauf: ein Intervall, keine Uhrzeit — die Zeitzone spielt keine Rolle.
+  schedule:
+    - cron: "41 */6 * * *"
+  # Ein Kopf zum erneuten Prüfen (von `sammeln` oder von Hand). Herkunft prüft `entscheiden` per API.
+  workflow_dispatch:
+    inputs:
+      head_sha:
+        description: "Kopf (SHA) eines offenen Dependabot-PR"
+        required: true
+        type: string
 
 permissions: {}
 
 concurrency:
-  group: dependabot-auto-merge-${{ github.event.workflow_run.head_sha }}
+  group: dependabot-auto-merge-${{ github.event.workflow_run.head_sha || inputs.head_sha || github.run_id }}
   cancel-in-progress: false
 
 jobs:
+  sammeln:
+    # Nur im geplanten Lauf: je offenem Dependabot-PR (eigenes Repo) einen Lauf mit seinem Kopf anstoßen.
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pull-requests: read
+      actions: write       # `gh workflow run` (workflow_dispatch startet auch mit dem Workflow-Token)
+    steps:
+      - name: Offene Dependabot-PRs erneut prüfen lassen
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          WORKFLOW_REF: ${{ github.workflow_ref }}
+        run: |
+          set -euo pipefail
+          DATEI="${WORKFLOW_REF%%@*}"; DATEI="${DATEI##*/}"
+          KOEPFE="$(gh api "repos/$REPO/pulls?state=open&per_page=100" --paginate \
+            -q '.[] | select(.user.login == "dependabot[bot]" and .head.repo.full_name == .base.repo.full_name) | .head.sha')"
+          [ -n "$KOEPFE" ] || { echo "kein offener Dependabot-PR"; exit 0; }
+          while IFS= read -r sha; do
+            [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || continue
+            echo "prüfe erneut: $sha"
+            gh workflow run "$DATEI" --repo "$REPO" --ref "$GITHUB_REF_NAME" -f head_sha="$sha"
+          done <<<"$KOEPFE"
+
   entscheiden:
-    # Nur Läufe aus einem PR im EIGENEN Repo auf einem Dependabot-Zweig. Branchname und
-    # Commit-Nachricht kann ein Fork-PR fälschen — deshalb unten alles noch einmal per API.
+    # Nur Läufe aus einem PR im EIGENEN Repo auf einem Dependabot-Zweig — oder ein angestoßener Kopf
+    # (workflow_dispatch). Branchname, Commit-Nachricht und Eingabe sind fälschbar — deshalb unten alles
+    # noch einmal per API.
     if: >
+      github.event_name == 'workflow_dispatch' || (
       github.event.workflow_run.event == 'pull_request' &&
       github.event.workflow_run.head_repository.full_name == github.repository &&
-      startsWith(github.event.workflow_run.head_branch, 'dependabot/')
+      startsWith(github.event.workflow_run.head_branch, 'dependabot/'))
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
@@ -69,22 +123,82 @@ jobs:
       aktion: ${{ steps.pruefung.outputs.aktion }}
       grund: ${{ steps.pruefung.outputs.grund }}
       pr: ${{ steps.pruefung.outputs.pr }}
+      sha: ${{ steps.pruefung.outputs.sha }}
     steps:
       - name: Herkunft, Abnahme und Pflicht-Workflows prüfen
         id: pruefung
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
-          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha || inputs.head_sha }}
           # --- je Repo: Anfang
 @@JE_REPO@@
           # --- je Repo: Ende
         run: |
           set -euo pipefail
           ausgabe() {
-            { echo "aktion=$1"; echo "grund=$2"; echo "pr=${PR:-}"; } >> "$GITHUB_OUTPUT"
+            { echo "aktion=$1"; echo "grund=$2"; echo "pr=${PR:-}"; echo "sha=$HEAD_SHA"; } >> "$GITHUB_OUTPUT"
             echo "$1${2:+: $2}"
           }
+          # >>> Entscheidungshilfen — reines bash ohne API, getestet in repokit tests/test_automerge.py
+          # Was tun mit einem roten Kopf? $1 = Commits hinter der Basis, $2 = MIT_APP.
+          rot_aktion() {
+            if [[ "$1" =~ ^[0-9]+$ ]] && [ "$1" -gt 0 ]; then
+              if [ "$2" = "true" ]; then echo nachziehen; else echo von_hand; fi
+            else
+              echo kommentieren
+            fi
+          }
+          # Ökosystem in dependabot.yml -> Name im Zweig (dependabot/<name>/…).
+          oeko_zweig() {
+            case "$1" in
+              npm) echo npm_and_yarn ;; github-actions) echo github_actions ;; gomod) echo go_modules ;;
+              docker-compose) echo docker_compose ;; *) echo "${1//-/_}" ;;
+            esac
+          }
+          # Ordner -> Teil des Zweignamens: ohne Schrägstrich vorn, „.github“ wird „dot-github“.
+          ordner_zweig() {
+            local d="${1#/}" aus="" teil
+            local -a teile
+            IFS=/ read -ra teile <<<"$d"
+            for teil in "${teile[@]}"; do
+              [ -n "$teil" ] || continue
+              [[ "$teil" == .* ]] && teil="dot-${teil#.}"
+              aus+="${aus:+/}$teil"
+            done
+            echo "$aus"
+          }
+          # Verwaist? $1 = Zweig, stdin = Einträge „<ökosystem> directory|directories <ordner>“ der Basis.
+          # Exit 0 nur, wenn KEIN Eintrag den Zweig erzeugt haben kann. Im Zweifel zuständig (Exit 1):
+          # unbekanntes Ökosystem, Muster im Ordner, oder Wurzel/mehrere Ordner bei Paketnamen mit „/“.
+          # Leere Eingabe heißt hier „kein Eintrag“ — der Aufrufer ruft nur mit gelesener dependabot.yml.
+          verwaist() {
+            local zweig="$1" rest oeko e art d n
+            rest="${zweig#dependabot/}"; oeko="${rest%%/*}"; rest="${rest#*/}"
+            case "$oeko" in
+              npm_and_yarn|github_actions|go_modules|docker_compose|pip|uv|composer|docker|cargo|bundler) ;;
+              *) return 1 ;;
+            esac
+            while read -r e art d; do
+              if [ -z "$e" ] || [ "$(oeko_zweig "$e")" != "$oeko" ]; then continue; fi
+              [[ "$d" == *[*?]* ]] && return 1
+              n="$(ordner_zweig "$d")"
+              if [ -z "$n" ] || [ "$art" = directories ]; then
+                # Wurzel oder Gruppe über mehrere Ordner: Der Zweig nennt dann keinen Ordner. Sicher
+                # erkennbar nur bei Paketnamen ohne Schrägstrich; sonst gilt der Eintrag als zuständig.
+                case "$oeko" in pip|uv|cargo|bundler) ;; *) return 1 ;; esac
+                [[ "$rest" == */* ]] || return 1
+              fi
+              [ -n "$n" ] && [[ "$rest" == "$n/"* ]] && return 1
+            done
+            return 0
+          }
+          # Sagt Dependabot selbst, dass es den PR aufgegeben hat? stdin = seine Kommentare.
+          dependabot_gibt_auf() {
+            grep -qiE 'entry that created this PR has been deleted|please close the PR|no longer needed'
+          }
+          # <<< Entscheidungshilfen
+          [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] || { ausgabe nichts "kein gültiger Kopf"; exit 0; }
           PR="$(gh api "repos/$REPO/commits/$HEAD_SHA/pulls" -q '.[0].number // ""')"
           [[ "$PR" =~ ^[0-9]+$ ]] || { ausgabe nichts "kein PR zu $HEAD_SHA"; exit 0; }
           # Herkunft per API, nie dem Ereignis glauben: Autor Dependabot, kein Fork, offen, Kopf unverändert.
@@ -101,10 +215,41 @@ jobs:
           kommentar() {
             if schon_gesagt "$1"; then ausgabe nichts "$1 (schon kommentiert)"; else ausgabe kommentieren "$1"; fi
           }
+          BASIS="$(jq -r '.base.ref' <<<"$J")"
+          # Rot: erst die Basis prüfen, dann urteilen (seit 0.41.0, siehe Kopf).
+          rot() {
+            local hinter
+            hinter="$(gh api "repos/$REPO/compare/$BASIS...$HEAD_SHA" -q .behind_by)"
+            case "$(rot_aktion "$hinter" "$MIT_APP")" in
+              nachziehen) ausgabe nachziehen "$1 auf veralteter Basis ($hinter Commits hinter $BASIS)" ;;
+              von_hand) kommentar "$1 auf veralteter Basis — ohne App zieht ihn niemand nach (@dependabot rebase)" ;;
+              *) kommentar "$1" ;;
+            esac
+          }
           # Ökosystem aus dem Branch (dependabot/<ökosystem>/…). Der Update-Typ entscheidet nichts
           # (auch Majors mergen, PO 2026-10-11); er steht nur im Protokoll.
           ZWEIG="$(jq -r '.head.ref' <<<"$J")"
           OEKO="${ZWEIG#dependabot/}"; OEKO="${OEKO%%/*}"
+          # Verwaist (seit 0.41.0): Dependabot pflegt den PR nicht mehr — nachziehen geht nicht, mergen hieße
+          # einen Stand übernehmen, den niemand mehr abgleicht. Zwei Zeichen: Dependabot sagt es selbst, oder
+          # kein Eintrag der dependabot.yml auf der Basis passt zum Zweig (eigener Trenner: keine Aussage).
+          # Erst lesen, dann suchen: `gh … | grep -q` unter pipefail ist ein Münzwurf (grep schließt früh, SIGPIPE).
+          DB_SAGT="$(gh api "repos/$REPO/issues/$PR/comments" --paginate \
+            -q '.[] | select(.user.login == "dependabot[bot]") | .body')"
+          if dependabot_gibt_auf <<<"$DB_SAGT"; then
+            kommentar "verwaist: Dependabot pflegt diesen PR nicht mehr (siehe seinen Kommentar) — bitte schließen; steht der Inhalt schon auf $BASIS?"
+            exit 0
+          fi
+          if DBY="$(gh api "repos/$REPO/contents/.github/dependabot.yml?ref=$BASIS" -q .content | base64 -d)" \
+             && [ -n "$DBY" ] && ! grep -q 'separator' <<<"$DBY"; then
+            EINTRAEGE="$(yq -o=json '.' <<<"$DBY" | jq -r '.updates[]? | ."package-ecosystem" as $e
+              | if has("directories") then (.directories[] | "\($e) directories \(.)")
+                else "\($e) directory \(.directory // "/")" end')"
+            if [ -n "$EINTRAEGE" ] && verwaist "$ZWEIG" <<<"$EINTRAEGE"; then
+              kommentar "verwaist: kein Eintrag in .github/dependabot.yml auf $BASIS erzeugt den Zweig $ZWEIG — Dependabot zieht ihn nie nach; bitte schließen; steht der Inhalt schon auf $BASIS?"
+              exit 0
+            fi
+          fi
           COMMITS="$(gh api "repos/$REPO/pulls/$PR/commits" --paginate)"
           NACHRICHTEN="$(jq -r '.[].commit.message' <<<"$COMMITS")"
           TYPEN="$(grep -oE 'update-type: version-update:semver-(major|minor|patch)' <<<"$NACHRICHTEN" | sort -u || true)"
@@ -149,7 +294,7 @@ jobs:
             [ -n "$L" ] || { ausgabe nichts "wartet auf $wf (noch kein Lauf)"; exit 0; }
             [ "$(jq -r '.status' <<<"$L")" = "completed" ] || { ausgabe nichts "wartet auf $wf"; exit 0; }
             ERG="$(jq -r '.conclusion' <<<"$L")"
-            [ "$ERG" = "success" ] || { kommentar "Pflicht-Workflow $wf ist rot ($ERG)"; exit 0; }
+            [ "$ERG" = "success" ] || { rot "Pflicht-Workflow $wf ist rot ($ERG)"; exit 0; }
           done
           # Alle grün. Jetzt noch die Checks, die NACH ihrem Workflow kommen (CodeQL-Ergebnis):
           # warten, bis GitHub den PR als mergebar meldet und kein Check mehr läuft — mit Frist.
@@ -158,7 +303,7 @@ jobs:
             [ "$(jq -r '.state' <<<"$P")" = "OPEN" ] || { ausgabe nichts "PR nicht mehr offen"; exit 0; }
             [ "$(jq -r '.headRefOid' <<<"$P")" = "$HEAD_SHA" ] || { ausgabe nichts "Kopf bewegt"; exit 0; }
             ROT="$(jq -r '[.statusCheckRollup[] | select(((.conclusion // .state // "") | test("FAILURE|ERROR|CANCELLED|TIMED_OUT|ACTION_REQUIRED|STARTUP_FAILURE")) ) | (.name // .context)] | unique | join(", ")' <<<"$P")"
-            [ -z "$ROT" ] || { kommentar "Check rot ($ROT)"; exit 0; }
+            [ -z "$ROT" ] || { rot "Check rot ($ROT)"; exit 0; }
             OFFEN="$(jq -r '[.statusCheckRollup[] | select((.status // "COMPLETED") != "COMPLETED" or (.state // "") == "PENDING")] | length' <<<"$P")"
             case "$(jq -r '.mergeStateStatus' <<<"$P")" in
               CLEAN) [ "$OFFEN" = "0" ] && { ausgabe mergen ""; exit 0; } ;;
@@ -169,7 +314,7 @@ jobs:
             esac
             sleep 20
           done
-          ausgabe nichts "nach 10 min noch nicht mergebar — der nächste fertige Pflicht-Workflow prüft erneut"
+          ausgabe nichts "nach 10 min noch nicht mergebar — der geplante Nachlauf (alle 6 h) prüft erneut"
 
   ausfuehren:
     timeout-minutes: 10
@@ -201,7 +346,7 @@ jobs:
           GH_TOKEN: ${{ steps.app.outputs.token }}
           REPO: ${{ github.repository }}
           PR: ${{ needs.entscheiden.outputs.pr }}
-          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          HEAD_SHA: ${{ needs.entscheiden.outputs.sha }}
         run: |
           gh pr merge "$PR" --repo "$REPO" --squash --delete-branch --match-head-commit "$HEAD_SHA"
 
@@ -225,7 +370,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
           PR: ${{ needs.entscheiden.outputs.pr }}
-          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          HEAD_SHA: ${{ needs.entscheiden.outputs.sha }}
           STANDARD: ${{ github.event.repository.default_branch }}
         run: |
           gh pr merge "$PR" --repo "$REPO" --squash --delete-branch --match-head-commit "$HEAD_SHA"
