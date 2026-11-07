@@ -67,9 +67,9 @@ and the whole **front end replaceable** (`auth.set_template(...)`).
 TinySesam is on **PyPI** (since 0.19.0). Pin the version:
 
 ```bash
-pip install "tinysesam==0.25.2"
+pip install "tinysesam==0.25.3"
 # core: password + TOTP. Everything: [all] — + argon2, QR, OIDC, passkey
-pip install "tinysesam[all]==0.25.2"
+pip install "tinysesam[all]==0.25.3"
 # selective: [argon2] [qr] [oidc] [saml] [ldap] [passkey] [redis] [gateway]
 ```
 
@@ -78,7 +78,7 @@ carries a PEP 740 attestation of the commit it was built from. The same version 
 straight from the tag:
 
 ```bash
-pip install "tinysesam[all] @ git+https://github.com/Ollornog/TinySesam.git@v0.25.2"
+pip install "tinysesam[all] @ git+https://github.com/Ollornog/TinySesam.git@v0.25.3"
 ```
 
 Drop the `@v…` when you want a **commit** rather than a released version — that pulls the moving
@@ -859,7 +859,7 @@ hole. Established auth projects don't ship such a button, and as of `v0.12.0` ne
 Put a **fixed version** in your app's dependencies — never a branch:
 
 ```
-tinysesam[oidc]==0.25.2
+tinysesam[oidc]==0.25.3
 ```
 
 A released version on PyPI never changes: the same line installs the same code tomorrow. Updating
@@ -869,14 +869,14 @@ The same pin via git, if you install that way — note that a **tag can be moved
 immutability pin the commit (`@a1b2c3d…`):
 
 ```
-tinysesam[oidc] @ git+https://github.com/Ollornog/TinySesam.git@v0.25.2
+tinysesam[oidc] @ git+https://github.com/Ollornog/TinySesam.git@v0.25.3
 ```
 
 Every release also attaches a **wheel** and an **sdist**, with `SHA256SUMS`. To install without
 git and without an index, take the file directly:
 
 ```
-pip install https://github.com/Ollornog/TinySesam/releases/download/v0.25.2/tinysesam-0.25.2-py3-none-any.whl
+pip install https://github.com/Ollornog/TinySesam/releases/download/v0.25.3/tinysesam-0.25.3-py3-none-any.whl
 ```
 
 ### As a gateway (its own container)
@@ -884,7 +884,7 @@ pip install https://github.com/Ollornog/TinySesam/releases/download/v0.25.2/tiny
 Every release builds an image for `linux/amd64` and `linux/arm64`:
 
 ```
-ghcr.io/ollornog/tinysesam:v0.25.2
+ghcr.io/ollornog/tinysesam:v0.25.3
 ```
 
 It runs as **non-root** (uid 1000), contains neither `pip` nor `git`, ships a `HEALTHCHECK` on
@@ -895,9 +895,9 @@ who built it. Every release therefore carries a Sigstore-signed provenance attes
 both also stored next to the image in the registry:
 
 ```bash
-gh attestation verify oci://ghcr.io/ollornog/tinysesam:v0.25.2 --owner Ollornog
-gh attestation verify tinysesam-0.25.2-py3-none-any.whl --owner Ollornog   # wheel and sdist too
-gh attestation verify oci://ghcr.io/ollornog/tinysesam:v0.25.2 --owner Ollornog \
+gh attestation verify oci://ghcr.io/ollornog/tinysesam:v0.25.3 --owner Ollornog
+gh attestation verify tinysesam-0.25.3-py3-none-any.whl --owner Ollornog   # wheel and sdist too
+gh attestation verify oci://ghcr.io/ollornog/tinysesam:v0.25.3 --owner Ollornog \
     --predicate-type https://spdx.dev/Document                             # the SBOM
 ```
 
@@ -954,6 +954,13 @@ group was taken away in the meantime, the provider says no — and shows **its o
 because that is where the release is maintained. The session itself stays: the other apps keep
 working. `0` turns the check off, and a withdrawal then only takes effect when the session
 expires (seven days by default).
+
+Where the provider issues refresh tokens, most of these trips never happen: every successful
+refresh exchange for an application (`oidc_session_refresh_minutes`, 15 by default) renews its
+release, because that exchange is the provider's yes for exactly this client. The trip is left for
+applications without a refresh token, an unreachable provider, and a client with `allowed_groups`
+whose refresh answer lacks the groups claim. This matters when the provider's own session is
+shorter than the release period — otherwise the trip would end on its login form.
 
 As environment variables (gateway container):
 

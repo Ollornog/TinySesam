@@ -5076,6 +5076,7 @@ class TinySesam:
         lives = self.store.oidc_session_checked(handle, client, now, tok.get("refresh_token"),
                                                 old_encrypted=z["refresh"], success=True)
         entry = self.oidc_clients.entry(client)
+        groups = None
         if self.cfg.oidc_group_claim in info:
             raw = info.get(self.cfg.oidc_group_claim) or []
             groups = raw if isinstance(raw, list) else [raw]
@@ -5090,6 +5091,13 @@ class TinySesam:
             # Only if the session is still there: a parallel no via another client
             # may have ended it in the meantime — then this yes confirms nothing any more.
             self.store.confirm_idp(s["user_id"], asked)
+            # B-6: the yes for THIS client is also the yes for its application — it renews the
+            # approval (`oidc_revalidate_minutes`). Otherwise the approval went stale after an hour
+            # although the provider had just confirmed it, and the redirect hop showed a login form
+            # as soon as the provider's own session had ended. With an allowed-groups rule only if the
+            # claim was there and passed — a missing claim proves nothing, then the hop decides.
+            if groups is not None or not entry["allowed_groups"]:
+                self.store.confirm_oidc_grant(handle, client, asked, groups)
 
     def current_user(self, request) -> Optional[dict]:
         """The signed-in account for this request — from the session OR an API key. None if nobody is signed in.

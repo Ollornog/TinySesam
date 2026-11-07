@@ -474,6 +474,8 @@ class TinySesamConfig:
     #: default seven days. The re-check is a hop via the provider; its session normally
     #: persists, so the human sees only a short redirect. If the provider refuses,
     #: the approval is gone **for this one application**, the session stays for the others.
+    #: A successful refresh exchange for the application's client (`oidc_session_refresh_minutes`)
+    #: renews the approval as well — the hop is then only needed without a refresh token (B-6).
     #: ``oidc_gateway()`` sets 60; whoever builds it by hand decides for themselves. Allowed are
     #: 0 to 43200 (30 days) — above that it is no longer a re-check. A period of one day
     #: or more written in seconds is therefore an error; above one day (1440) the

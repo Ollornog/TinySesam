@@ -8,7 +8,7 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 ## Meilensteine
 
 * ☐ **[M-1](M-1-api-stable-1-0.md)** 1.0 — API stable enough for PyPI — 14/14 erledigt
-* ☐ **[M-2](M-2-after-1-0.md)** After 1.0 — keeping the published package maintained — 11/13 erledigt
+* ☐ **[M-2](M-2-after-1-0.md)** After 1.0 — keeping the published package maintained — 12/15 erledigt
 * ☑ **[M-3](M-3-gate-in-front-of-third-party-apps.md)** Gate in front of third-party apps — fast, sign in once, sign out cleanly — 8/8 erledigt
 
 ## Aufgaben
@@ -43,6 +43,7 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 * ☐ **[T-28](T-28-go-variant-small-gate-client.md)** Examine a Go variant — a small gate client instead of a complete rewrite · M-2
 * ☑ **[T-29](T-29-translate-everything-to-english.md)** Translate everything to English (code texts, docs, messages) · M-2
 * ☐ **[T-30](T-30-launch-plan.md)** Launch plan — make TinySesam publicly known · M-2
+* ☐ **[T-31](T-31-maybe-recommend-a-provider-session-at-least-as-lon.md)** Maybe: recommend a provider session at least as long as the gateway session · M-2
 
 ## Fehler
 
@@ -51,6 +52,7 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 * ☑ **[B-3](B-3-gate-semicolon-redirect.md)** Gate: paths containing ; or %3B are redirected to /.tinysesam/start · M-2
 * ☑ **[B-4](B-4-login-next-not-percent-encoded.md)** Login page: next is HTML-escaped but not percent-encoded in its links · M-2
 * ☑ **[B-5](B-5-gateway-websocket-upgrade.md)** Gateway: forward auth of a WebSocket app answers 403 when a WebSocket library is installed · M-2
+* ☑ **[B-6](B-6-gate-refresh-exchange-does-not-renew-the-applicati.md)** Gate: refresh exchange does not renew the application approval — hourly login once the provider session has ended · M-2
 
 ## Entscheidungen (ADR)
 

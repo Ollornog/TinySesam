@@ -2,6 +2,22 @@
 
 All notable changes. Format loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.25.3] — 2026-11-07
+
+**Who needs it:** everyone running the gateway with several OIDC clients (`oidc_clients`) and a provider whose own
+session is shorter than `oidc_revalidate_minutes` (PocketID: one hour by default) — they had to sign in again every
+hour (B-6). No API break, no new schema, no new setting.
+
+### Fixed — gateway: a refresh exchange renews the application approval (B-6)
+
+Every `oidc_session_refresh_minutes` TinySesam exchanges the refresh token per client (4a), but a yes from the provider
+did not renew the approval of that client's application. After `oidc_revalidate_minutes` the approval went stale, forward
+auth sent the browser to the provider — and once the provider's session had ended, that was a login form every hour.
+Now a successful exchange confirms the existing approval of exactly this application (`store.confirm_oidc_grant`). It
+never creates one (a withdrawn approval stays withdrawn), and with `allowed_groups` it renews only if the groups claim
+was in the answer and passed. Revocation at the provider now takes effect within 15 minutes instead of 60; without a
+refresh token, with an unreachable provider or a missing groups claim the redirect hop decides as before.
+
 ## [0.25.2] — 2026-11-01
 
 **Who needs it:** everyone running the gateway image — it shipped joserfc 1.7.5 (CVE-2026-119284). Pull the new image.
