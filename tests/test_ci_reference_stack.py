@@ -18,7 +18,6 @@ import re
 import shutil
 import stat
 import subprocess
-import sys
 import tempfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -106,7 +105,10 @@ def run_step(tag, annotated, tag_at_head):
         with open(script, "w") as fh:
             fh.write(step_script())
         res = sh(["bash", "-e", script], work, env=env, check=False)
-        pulls = open(log).read().split() if os.path.exists(log) else []
+        pulls = []
+        if os.path.exists(log):
+            with open(log) as fh:
+                pulls = fh.read().split()
         return res.returncode, pulls, res.stdout
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
@@ -134,4 +136,4 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    main()
