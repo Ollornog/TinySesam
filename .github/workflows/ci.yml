@@ -145,11 +145,18 @@ jobs:
           [ -n "$images" ] || { echo "no images in $f"; exit 1; }
           # The own image at the package version does not exist before its tag: the release PR sets the version,
           # the tag builds the image. `image-probe` builds and starts exactly that image on every PR.
+          # It is also missing while the tag's release run is still building it: the tag is set right after the
+          # merge, the image follows minutes later (`image` job of release.yml), and the push run for the
+          # merge commit meets exactly that gap (main red after every release: 0.25.2, 0.25.3). So the own image
+          # is skipped while the tag is unset OR points at the commit under test; that release run is itself
+          # red when it cannot publish the image. Any later commit must find the image in the registry.
           version="$(python3 -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
           own="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/tinysesam:v$version"
+          # Last line = the peeled commit of an annotated tag (`^{}`), else the tag object itself.
+          tag_commit="$(git ls-remote --tags origin "refs/tags/v$version" "refs/tags/v$version^{}" | awk 'END { print $1 }')"
           while IFS= read -r b; do
-            if [ "$b" = "$own" ] && ! git ls-remote --exit-code --tags origin "refs/tags/v$version" >/dev/null; then
-              echo "skipped (built by the tag v$version, not yet set): $b"; continue
+            if [ "$b" = "$own" ] && { [ -z "$tag_commit" ] || [ "$tag_commit" = "$(git rev-parse HEAD)" ]; }; then
+              echo "skipped (built by the tag v$version, not yet set or still building): $b"; continue
             fi
             docker pull -q "$b"
           done <<<"$images"
