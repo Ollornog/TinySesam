@@ -323,4 +323,30 @@ for _file in ("deploy/forward-auth/Caddyfile", "deploy/forward-auth/Caddyfile.ga
 assert len(set(_locks.values())) == 1, f"the two templates block path tricks differently: {_locks}"
 ok("templates: share exception off by itself, checks the raw path, passes no identity through")
 
+# ---------- B-7: timestamps from the wall clock, not from the monotonic lead ----------
+# A VM boots with its clock ~1.3 s ahead, the service starts, then NTP steps the clock back.
+# `store.now()` keeps the lead for the whole process (on purpose, B6-9). The proxy checks iat/nbf/exp
+# against ITS clock — a token stamped with the lead had an `iat` in the future ("iat" not satisfied).
+from tinysesam import store as _store_mod
+_real_clock = _store_mod._CLOCK
+_base = float(int(time.time())) + 0.2       # x.2: a lead of 1.3 s crosses the next full second
+_w, _m = [_base + 1.3], [1000.0]
+_store_mod._CLOCK = _store_mod._Clock(wall=lambda: _w[0], mono=lambda: _m[0])
+try:
+    _store_mod.now()                         # the service is running and has read the clock …
+    _w[0] = _base                            # … then NTP steps the wall clock back by 1.3 s
+    assert _store_mod.now() > _w[0], "precondition: the internal clock keeps the lead"
+    r = sign_in(app).get("/auth/forward", headers=PROXY)
+    assert r.status_code == 200, r.status_code
+    _, tok = token_from(r)
+    _p = tok.split(".")[1]
+    content = json.loads(base64.urlsafe_b64decode(_p + "=" * (-len(_p) % 4)))
+    # caddy-jwt (jwx v3): `iat` fails if now < iat; `nbf` likewise. Checked at the very moment of issue.
+    assert content["iat"] <= _w[0] and content["nbf"] <= _w[0], (content["iat"], content["nbf"], _w[0])
+    assert content["exp"] - content["iat"] == 300
+    assert check_config(tok, now=int(_w[0])), "the token must pass a proxy whose clock is the wall clock"
+finally:
+    _store_mod._CLOCK = _real_clock
+ok("B-7: after a backward clock step the gate token carries no iat/nbf in the future")
+
 print("Gate-Token OK")
