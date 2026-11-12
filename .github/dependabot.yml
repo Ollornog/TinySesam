@@ -108,12 +108,21 @@ updates:
   # The base image is pinned by digest; without Dependabot it would stand still forever.
   # Plus the Caddy with caddy-jwt for the gate template (ADR-9). Its plugin version (a Go module,
   # ARG CADDY_JWT) is not seen by Dependabot — it is bumped by hand, the CI job gate-caddy checks it.
+  #
+  # DAILY, not monthly (2026-11-12): the cooldown of the docker ecosystem is measured against Docker Hub's
+  # `tag_last_pushed` of the candidate tag (dependabot-core docker/update_checker.rb, apply_cooldown). Official images
+  # re-push their floating tags (`3.15-slim`) every few days; a monthly run that lands within three days of such a push
+  # skips every candidate, reports "up to date" and keeps the old digest for another month. That is how the image stood
+  # on Python 3.14.7 from October to November while 3.14.10 was out (the 3.15 PR #202 was red, its recreate on 11-07
+  # fell into the cooldown and closed it). A daily run finds the first day on which the tag has been stable for three
+  # days — the cooldown stays, only the chance to miss it goes. Also: as long as a newer minor exists (3.15 while the pin
+  # says 3.14), Dependabot offers only the minor, never a digest refresh of the old one — stay on the newest line.
   - package-ecosystem: docker
     directories: ["/", "/deploy/forward-auth/caddy-gate"]
     # Waiting period before version updates (PO 2026-09-28), does not apply to security updates.
     cooldown:
       default-days: 3
     schedule:
-      interval: monthly
+      interval: daily
     commit-message:
       prefix: "ci"
