@@ -566,6 +566,18 @@ class _Clock:
             self._check_backlog(wall)
             return int(self._state)
 
+    def wall_now(self) -> int:
+        """The bare wall clock (Unix seconds), WITHOUT the monotonic lead of `now()`.
+
+        For timestamps that a foreign clock checks, not this database: the `iat`/`nbf`/`exp` of
+        the gate token are compared by the proxy against ITS system clock. After a backward step
+        (typical: the VM boots with a clock about a second ahead, NTP corrects it after the
+        service has started) `now()` stays ahead for the whole process lifetime — that is its
+        purpose. A token stamped with it carried an `iat` up to that lead in the future, and
+        caddy-jwt rejected it (`"iat" not satisfied`) until the second had passed. The proxy
+        never sees TinySesam's clock, so the protection of `now()` buys nothing there."""
+        return int(float(self.wall()))
+
     def at_least(self, ts) -> None:
         """Raise the clock to at least `ts` (most recent timestamp of the database when opening)."""
         if not ts:
@@ -597,6 +609,11 @@ _CLOCK = _Clock()
 def now() -> int:
     """Current time (Unix seconds) that never runs backwards — see `_Clock`."""
     return _CLOCK.now()
+
+
+def wall_now() -> int:
+    """The wall clock (Unix seconds) for timestamps that a foreign clock checks — see `_Clock.wall_now`."""
+    return _CLOCK.wall_now()
 
 
 #: Longest age after which `gc` deletes old login attempts (seconds): ten years like

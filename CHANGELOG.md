@@ -2,6 +2,21 @@
 
 All notable changes. Format loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.25.5] — 2026-11-12
+
+**Who needs it:** everyone running the gateway with gate tokens (`TINYSESAM_GATE=1`) on a host whose clock is
+corrected backwards after the gateway has started (typical: a VM after boot). No API break, no new schema, no new
+setting.
+
+### Fixed — gate token: no `iat` in the future after a backward clock step (B-7)
+
+The gate token was stamped with TinySesam's internal clock, which never runs backwards (B6-9). After NTP stepped the
+wall clock back by about a second (measured at every reboot of a production VM), that clock stayed ahead for the whole
+process lifetime, and the token's `iat`/`nbf` lay up to a second in the future. caddy-jwt checks against its own clock
+and rejected the fresh token (`"iat" not satisfied`) for the requests in the first second after it was issued — until
+the gateway restarted. The gate token now takes `iat`/`nbf`/`exp` from the wall clock; everything stored in the database
+keeps the monotonic clock. New helper `store.wall_now()`.
+
 ## [0.25.4] — 2026-11-12
 
 **Who needs it:** everyone running the gateway image — it shipped Python 3.14.7 (CVE-2026-19445, CVE-2026-115557, both

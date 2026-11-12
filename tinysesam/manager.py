@@ -34,7 +34,7 @@ from . import config_check
 from .errors import ConfigError, StateError
 from .config import TinySesamConfig
 from .store import (Store, key_kind_of, name_invalid, norm_email, norm_identifier, now as _now,
-                    read_payload, valid_email, attempt_deadline as _attempt_deadline)
+                    wall_now as _wall_now, read_payload, valid_email, attempt_deadline as _attempt_deadline)
 from .passwords import hash_password, verify_password, needs_rehash, dummy_verify
 from . import passwords as _passwords
 from . import passwords as _pw
@@ -6152,9 +6152,11 @@ class TinySesam:
         values = self._forward_values(user)
         claims = {slot: "".join(z for z in values[slot] if z >= " " and z != "\x7f") for slot in fields}
         ttl = int(self.cfg.gate_token_ttl_sec)
+        # The wall clock, not `_now()`: the proxy checks iat/nbf/exp against its own system clock,
+        # and after a backward NTP step `_now()` stays ahead for the process lifetime (B-7).
         token = _gate.issue(self._gate_key_name, iss=self.gate_issuer(),
                                  aud=_gate.audience(host, roles_groups), sub=str(user["id"]),
-                                 claims=claims, ttl=ttl, now=_now())
+                                 claims=claims, ttl=ttl, now=_wall_now())
         return _gate.set_cookie(self.cfg.gate_cookie_name, token, ttl)
 
     @staticmethod
