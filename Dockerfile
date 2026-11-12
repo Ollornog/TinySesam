@@ -15,10 +15,10 @@
 # not: the server was missing from the extra, not from the image.
 
 # ---------- Build ----------
-# Pinned by DIGEST, not by tag: `python:3.14-slim` points here today and elsewhere
+# Pinned by DIGEST, not by tag: `python:3.15-slim` points here today and elsewhere
 # tomorrow — two builds of the same commit would yield different images. To bump:
-#   docker manifest inspect python:3.14-slim   (or Dependabot, see dependabot.yml)
-FROM python:3.14-slim@sha256:51dafde81dbdb6ebde285137a295cf18a47ca95234fe388a343719cb97305b3d AS build
+#   docker manifest inspect python:3.15-slim   (or Dependabot, see dependabot.yml)
+FROM python:3.15-slim@sha256:65a65fc7b30b06cb6df4930fd4650697cb23f4c2698ab81fc87e4b031bc36928 AS build
 
 # Install from the build context, NOT from the network: the image should contain exactly the
 # state that lies next to it here — not whatever `main` happens to be right now.
@@ -51,7 +51,7 @@ RUN python -m venv /opt/venv \
     && /opt/venv/bin/pip uninstall --yes setuptools
 
 # ---------- Run ----------
-FROM python:3.14-slim@sha256:51dafde81dbdb6ebde285137a295cf18a47ca95234fe388a343719cb97305b3d
+FROM python:3.15-slim@sha256:65a65fc7b30b06cb6df4930fd4650697cb23f4c2698ab81fc87e4b031bc36928
 
 # `useradd` writes the date of the last password change to /etc/shadow — without this line
 # the day of the build, with it the day of the commit (shadow from 4.14 reads SOURCE_DATE_EPOCH).

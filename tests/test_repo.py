@@ -1177,7 +1177,15 @@ for rel in (f for f in FILES if os.path.basename(f) == "Dockerfile"):
     assert "/" + os.path.dirname(rel).rstrip("/") in {d.rstrip("/") or "/" for d in _dependabot_dirs("docker")} \
         or (os.path.dirname(rel) == "" and "/" in _dependabot_dirs("docker")), f"Dependabot does not see {rel}"
 assert _dependabot_dirs("github-actions"), "Dependabot does not bump the actions"
-print("  Dependabot: every lock list, every compose file, every Dockerfile, the actions — no dead pip entry")
+# The base-image digest: the docker cooldown counts from the tag's last push on Docker Hub, and official images re-push
+# `3.x-slim` every few days. A monthly run then regularly finds every candidate inside the cooldown and keeps the old
+# digest for another month (Python 3.14.7 until 2026-11-12). Only a daily run reliably hits a three-day quiet window.
+_docker_entry = next((e for e in re.split(r"\n  - ", _dep)[1:]
+                      if re.match(r"package-ecosystem:\s*docker\s*$", e.splitlines()[0])), "")
+assert re.search(r"interval:\s*daily\b", _docker_entry), \
+    "dependabot: the `docker` entry must run daily — monthly keeps missing the cooldown window of re-pushed base tags"
+print("  Dependabot: every lock list, every compose file, every Dockerfile, the actions — no dead pip entry; "
+      "base images daily")
 
 # B4-11 — The reference stack: every third-party image with a digest, the own one with the version tag, and
 # every service hardened. `caddy:2` moved with every Caddy version.

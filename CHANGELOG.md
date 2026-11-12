@@ -2,6 +2,27 @@
 
 All notable changes. Format loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.25.4] — 2026-11-12
+
+**Who needs it:** everyone running the gateway image — it shipped Python 3.14.7 (CVE-2026-19445, CVE-2026-115557, both
+critical in grype). Pull the new image. The library is unchanged. No API break, no new schema, no new setting.
+
+### Security — gateway image: Python 3.14.7 → 3.15.2
+
+- Base image `python:3.14-slim@51dafde…` (3.14.7) → `python:3.15-slim@65a65fc…` (3.15.2, newest stable line). Measured
+  with syft 1.54.0 and grype 0.120.0 over the SBOM: 2 critical and 18 high → 0 critical and 2 high (only `zlib1g` of the
+  Debian base, fixed in trixie-security, not yet in the base image).
+- Lock list regenerated for Python 3.15 (`--python-version 3.15`). pydantic 2.13.5 → 2.14.3 and pydantic-core 2.46.5 →
+  2.50.4: pydantic-core 2.46.5 has no wheel for CPython 3.15, the image build would compile it from source and fail
+  (that is why Dependabot's base-image PR #202 was red). No other package changed.
+- The probe of the lock list in `audit.yml` runs on 3.15, like the image.
+
+### Changed — Dependabot checks the base images daily
+
+The cooldown of the docker ecosystem is measured against the tag's last push on Docker Hub. Official images re-push
+`3.x-slim` every few days, so the monthly run regularly found every candidate inside the cooldown, reported "up to date"
+and kept the old digest for another month. The `docker` entry now runs daily; the three-day cooldown stays.
+
 ## [0.25.3] — 2026-11-07
 
 **Who needs it:** everyone running the gateway with several OIDC clients (`oidc_clients`) and a provider whose own
