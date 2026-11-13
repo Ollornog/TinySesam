@@ -1177,6 +1177,12 @@ for rel in (f for f in FILES if os.path.basename(f) == "Dockerfile"):
     assert "/" + os.path.dirname(rel).rstrip("/") in {d.rstrip("/") or "/" for d in _dependabot_dirs("docker")} \
         or (os.path.dirname(rel) == "" and "/" in _dependabot_dirs("docker")), f"Dependabot does not see {rel}"
 assert _dependabot_dirs("github-actions"), "Dependabot does not bump the actions"
+# Docker files never under .github/: Dependabot may not open a PR there. The pypiserver update of 2026-11-12 in
+# .github/rehearsal ended with "The request contains invalid or unauthorized changes" (dependency_file_not_supported),
+# no PR — the same as connect-suite's .github/grype on 2026-11-05. pip under .github/ (audit, packaging) is not affected.
+_in_github = sorted(d for e in ("docker", "docker-compose") for d in _dependabot_dirs(e)
+                    if d.strip("/").split("/")[0] == ".github")
+assert not _in_github, f"dependabot: docker files under .github/ cannot be updated (no PR): {_in_github} — move them out"
 # The base-image digest: the docker cooldown counts from the tag's last push on Docker Hub, and official images re-push
 # `3.x-slim` every few days. A monthly run then regularly finds every candidate inside the cooldown and keeps the old
 # digest for another month (Python 3.14.7 until 2026-11-12). Only a daily run reliably hits a three-day quiet window.

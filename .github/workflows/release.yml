@@ -67,7 +67,7 @@ name: release
 #
 # ── DRESS REHEARSAL (since 2026-10-11, PO: "automate everything without anything breaking") ───
 # The jobs `rehearsal*` run EXACTLY these actions on every PR — against throwaway targets on the
-# runner (.github/rehearsal): login and push to a local registry, SBOM from the image
+# runner (tools/rehearsal): login and push to a local registry, SBOM from the image
 # pushed there, upload of wheel and sdist to a local package server, attestation of a
 # sample file. Nothing is published: no ghcr, no PyPI, no attestation of an artifact.
 # The sample attestation holds `id-token`, but no checkout, no pip, and its subject is only
@@ -368,7 +368,7 @@ jobs:
           provenance: false
 
   # ── Dress rehearsal (see header) ───────────────────────────────────────────────────────────────
-  # The images of the throwaway targets come from .github/rehearsal/docker-compose.yml (Dependabot
+  # The images of the throwaway targets come from tools/rehearsal/docker-compose.yml (Dependabot
   # keeps them up to date) — a `services:` image directly in the workflow would be invisible to Dependabot.
   rehearsal-targets:
     if: github.ref_type != 'tag'
@@ -386,7 +386,7 @@ jobs:
         run: |
           set -euo pipefail
           for service in registry pypi; do
-            image="$(yq -r ".services.${service}.image" .github/rehearsal/docker-compose.yml)"
+            image="$(yq -r ".services.${service}.image" tools/rehearsal/docker-compose.yml)"
             [[ "$image" =~ @sha256:[0-9a-f]{64}$ ]] || { echo "$service: $image is not pinned by digest"; exit 1; }
             echo "${service}=${image}" >> "$GITHUB_OUTPUT"
           done
@@ -418,7 +418,7 @@ jobs:
           set -euo pipefail
           net="$(docker network ls -q --filter name=github_network_)"
           [ "$(wc -w <<<"$net")" = "1" ] || { echo "Job network not unique: '$net'"; exit 1; }
-          cmd="$(yq -r '.services.pypi.command | join(" ")' .github/rehearsal/docker-compose.yml)"
+          cmd="$(yq -r '.services.pypi.command | join(" ")' tools/rehearsal/docker-compose.yml)"
           # shellcheck disable=SC2086  # the arguments from the compose file, deliberately split
           docker run -d --name pypi --network "$net" --network-alias pypi -p 127.0.0.1:8080:8080 "$IMAGE" $cmd
           for _ in $(seq 1 30); do curl -fsS http://127.0.0.1:8080/simple/ >/dev/null && break; sleep 1; done
