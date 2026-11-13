@@ -150,12 +150,16 @@ jobs:
           # merge commit meets exactly that gap (main red after every release: 0.25.2, 0.25.3). So the own image
           # is skipped while the tag is unset OR points at the commit under test; that release run is itself
           # red when it cannot publish the image. Any later commit must find the image in the registry.
+          # A PULL REQUEST tests its merge commit, never the tagged one: a PR opened on the freshly tagged main (Dependabot
+          # right after release 0.25.4, #212/#213: "tinysesam:v0.25.4: not found") met the same gap. So on a PR the tag
+          # at the PR's base counts too (PR_BASE, from the event; empty on push).
           version="$(python3 -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
           own="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/tinysesam:v$version"
           # Last line = the peeled commit of an annotated tag (`^{}`), else the tag object itself.
           tag_commit="$(git ls-remote --tags origin "refs/tags/v$version" "refs/tags/v$version^{}" | awk 'END { print $1 }')"
           while IFS= read -r b; do
-            if [ "$b" = "$own" ] && { [ -z "$tag_commit" ] || [ "$tag_commit" = "$(git rev-parse HEAD)" ]; }; then
+            if [ "$b" = "$own" ] && { [ -z "$tag_commit" ] || [ "$tag_commit" = "$(git rev-parse HEAD)" ] \
+                 || { [ -n "${PR_BASE:-}" ] && [ "$tag_commit" = "$PR_BASE" ]; }; }; then
               echo "skipped (built by the tag v$version, not yet set or still building): $b"; continue
             fi
             docker pull -q "$b"
@@ -164,6 +168,8 @@ jobs:
           docker run --rm -e TS_AUTH_UPSTREAM=tinysesam:8000 -e TS_APP_UPSTREAM=app:9000 \
             -v "$PWD/deploy/forward-auth/Caddyfile:/etc/caddy/Caddyfile:ro" \
             "$caddy" caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+        env:
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
 
   # Repeatability: the same suite TWICE in the same working directory.
   # A test that turns red on the second run is broken — not the code.

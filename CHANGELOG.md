@@ -12,6 +12,14 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
   new place; `tests/test_repo.py` now fails when a `docker`/`docker-compose` entry in `dependabot.yml` points into
   `.github/`. Repo layout only — nothing in the package changes.
 
+### Fixed — CI: pull requests opened right after a release no longer fail on the missing own image
+
+- `gate-caddy`, step "Accept the reference stack": a pull request tests its merge commit, so the skip "tag at the commit
+  under test" (#208) never applied to it. Dependabot opened #212/#213 minutes after release 0.25.4, while the release
+  run was still building `ghcr.io/ollornog/tinysesam:v0.25.4`; both went red with "not found". On a pull request the tag
+  at the PR's base (`github.event.pull_request.base.sha`) now counts too. `tests/test_ci_reference_stack.py` gained both
+  PR cases; mutations (comparison removed; any PR skips) turn them red. CI only — nothing in the package changes.
+
 ## [0.25.5] — 2026-11-12
 
 **Who needs it:** everyone running the gateway with gate tokens (`TINYSESAM_GATE=1`) on a host whose clock is

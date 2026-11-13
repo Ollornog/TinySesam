@@ -9,9 +9,13 @@ a throwaway `origin`, a fake `docker` and `docker compose`):
      that is still building the image — main was red after every release, 0.25.2 and 0.25.3): skipped as well.
  (3) tag set at an OLDER commit (every later commit): the own image must be pullable, so it is pulled — a missing
      image then turns the step red. Lightweight and annotated tags behave the same.
+ (4) pull request on the freshly tagged main (since 2026-11-13): the PR tests its merge commit, the tag sits at the PR's
+     base (PR_BASE from the event) — skipped like (2). Dependabot opened #212/#213 minutes after release 0.25.4, both red
+     with "tinysesam:v0.25.4: not found".
+ (5) pull request whose base is NOT the tagged commit: pulled as in (3).
 
 Mutations (each turns a case red): comparison with HEAD removed -> (2); empty-tag test removed -> (1); peeled ref not read -> (2, annotated);
-always skipping -> (3); never skipping -> (1).
+always skipping -> (3); never skipping -> (1); PR_BASE comparison removed -> (4); PR_BASE compared without its value -> (5).
 """
 import os
 import re
@@ -51,8 +55,10 @@ def sh(args, cwd, env=None, check=True):
                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
 
 
-def run_step(tag, annotated, tag_at_head):
-    """Run the step in a fresh clone; return (exit code, list of `docker pull` arguments)."""
+def run_step(tag, annotated, tag_at_head, pr_base=None):
+    """Run the step in a fresh clone; return (exit code, list of `docker pull` arguments).
+
+    pr_base: None (push run), "tagged" (PR_BASE = the tagged commit) or "head" (PR_BASE = HEAD, i.e. not the tag)."""
     tmp = tempfile.mkdtemp(prefix="refstack-")
     try:
         origin = os.path.join(tmp, "origin.git")
@@ -101,6 +107,10 @@ def run_step(tag, annotated, tag_at_head):
         os.chmod(os.path.join(bin_dir, "docker"), os.stat(os.path.join(bin_dir, "docker")).st_mode | stat.S_IXUSR)
         env = dict(os.environ, PATH=bin_dir + os.pathsep + os.environ["PATH"], GITHUB_REPOSITORY_OWNER="Ollornog",
                    GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_SYSTEM=os.devnull)
+        env.pop("PR_BASE", None)
+        if pr_base is not None:
+            ref = "HEAD~1" if pr_base == "tagged" else "HEAD"
+            env["PR_BASE"] = sh(["git", "rev-parse", ref], work).stdout.strip()
         script = os.path.join(tmp, "step.sh")
         with open(script, "w") as fh:
             fh.write(step_script())
@@ -132,6 +142,14 @@ def main():
         rc, pulls, out = run_step("set", annotated, False)
         assert rc != 0 and OWN in pulls, (kind, rc, pulls, out)
         ok(f"{kind} tag at an older commit: own image is pulled, a missing image turns the step red")
+
+        rc, pulls, out = run_step("set", annotated, False, pr_base="tagged")
+        assert rc == 0 and OWN not in pulls and OTHER in pulls, (kind, rc, pulls, out)
+        ok(f"{kind} tag at the base of a pull request: own image skipped (release run still building)")
+
+        rc, pulls, out = run_step("set", annotated, False, pr_base="head")
+        assert rc != 0 and OWN in pulls, (kind, rc, pulls, out)
+        ok(f"{kind} tag older than the base of a pull request: own image is pulled")
     print("Reference stack step OK")
 
 
