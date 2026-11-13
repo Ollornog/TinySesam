@@ -3,12 +3,12 @@
 # keeps both equal. A separate input instead of `pyproject.toml --extra gateway`, because Dependabot's
 # uv ecosystem recompiles exactly ONE .in file (2026-10-10): the line-by-line pip update did not add new
 # transitive dependencies (fastapi 0.142 → opentelemetry-api, #126).
-fastapi>=0.162.0
+fastapi>=0.162.2
 cryptography>=50.0
 pyotp>=2.9
-python-multipart>=0.0.31
+python-multipart>=0.0.33
 httpx>=0.27
-authlib>=1.9.1
+authlib>=1.9.5
 uvicorn>=0.30
 # Build backend for `pip install --no-build-isolation .` in the image. Listed here and not in
 # pyproject: with build isolation pip fetched setuptools unchecked in the latest
