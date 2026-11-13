@@ -96,8 +96,11 @@ updates:
 
   # The throwaway targets of the dress rehearsal (release.yml on every PR). The rehearsal itself accepts their update:
   # if the registry or the package server does not start, `rehearsal` is red.
+  # NOT under .github/ (2026-11-13): there Dependabot may not open a PR for docker files — the job of 2026-11-12 ended
+  # with "The request contains invalid or unauthorized changes" (dependency_file_not_supported), as connect-suite's
+  # .github/grype did on 2026-11-05. tests/test_repo.py keeps every docker ecosystem out of .github/.
   - package-ecosystem: docker-compose
-    directory: /.github/rehearsal
+    directory: /tools/rehearsal
     cooldown:
       default-days: 3
     schedule:

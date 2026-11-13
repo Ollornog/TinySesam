@@ -2,6 +2,16 @@
 
 All notable changes. Format loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Fixed — Dependabot could not update the dress-rehearsal targets
+
+- `.github/rehearsal/` → `tools/rehearsal/`. Dependabot may not open a pull request for docker files under `.github/`:
+  the update of `pypiserver/pypiserver` v2.4.2 → v2.4.3 on 2026-11-12 ended with "The request contains invalid or
+  unauthorized changes" (`dependency_file_not_supported`), and no PR was opened. `release.yml` reads the images from the
+  new place; `tests/test_repo.py` now fails when a `docker`/`docker-compose` entry in `dependabot.yml` points into
+  `.github/`. Repo layout only — nothing in the package changes.
+
 ## [0.25.5] — 2026-11-12
 
 **Who needs it:** everyone running the gateway with gate tokens (`TINYSESAM_GATE=1`) on a host whose clock is
