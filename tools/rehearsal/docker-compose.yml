@@ -11,5 +11,5 @@ services:
   registry:
     image: registry:3.1.2@sha256:ddf754342cfc8acc51a56d5d0ab6af06826461864460636d8bd5c546dab2a7b8
   pypi:
-    image: pypiserver/pypiserver:v2.4.2@sha256:6c4874820281d5045c739f049dc1077d292177d8fd5c18d306b8239439c44925
+    image: pypiserver/pypiserver:v2.4.3@sha256:038126afe344248e83f938c1fd889a064c683322074373636821099a721f1fcf
     command: ["run", "-a", ".", "-P", ".", "-p", "8080", "/data/packages"]
