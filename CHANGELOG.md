@@ -4,6 +4,8 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+## [0.25.6] — 2026-11-14
+
 ### Security — gateway image: opentelemetry-api 1.45.2
 
 - `deploy/gateway/requirements.txt`: opentelemetry-api 1.45.1 → 1.45.2 (CVE-2026-126360, transitive via FastAPI); `audit`
