@@ -65,11 +65,18 @@ updates:
   # (dependabot-core: uv/lib/dependabot/uv/file_updater/compile_file_updater.rb). Pattern: DashMyBoard /app.
   - package-ecosystem: uv
     directory: /deploy/gateway
+    # Transitive packages too (2026-11-14): without `allow`, Dependabot bumps only what requirements.in names.
+    # opentelemetry-api (via fastapi) sat on 1.45.1 with CVE-2026-126360 although 1.45.2 had been out since 2026-10-29;
+    # the only PR came as a security update through the pip ecosystem (GitHub maps requirements.txt to pip), and
+    # pip-compile drops the uv output (markers, setuptools) — #223 was red. uv supports `dependency-type: all`.
+    allow:
+      - dependency-type: all
     # Waiting period before version updates (PO 2026-09-28), does not apply to security updates.
     cooldown:
       default-days: 3
+    # Weekly, not monthly (2026-11-14): a fix that is already out should not wait up to a month.
     schedule:
-      interval: monthly
+      interval: weekly
     groups:
       # As above: patch and minor bundled, majors singly.
       all:

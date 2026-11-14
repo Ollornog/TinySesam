@@ -4,6 +4,14 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+### Security — gateway image: opentelemetry-api 1.45.2
+
+- `deploy/gateway/requirements.txt`: opentelemetry-api 1.45.1 → 1.45.2 (CVE-2026-126360, transitive via FastAPI); `audit`
+  on `main` was red since 2026-11-14. Only that package was re-resolved. The library itself is unchanged.
+- Dependabot (`uv`, `/deploy/gateway`) now also bumps transitive packages (`allow: dependency-type: all`) and runs weekly.
+  Until now a fixed transitive package only arrived as a security update through the pip ecosystem, whose regenerated
+  lock drops the uv output (`setuptools`, markers) — #223 was red.
+
 ### Fixed — Dependabot could not update the dress-rehearsal targets
 
 - `.github/rehearsal/` → `tools/rehearsal/`. Dependabot may not open a pull request for docker files under `.github/`:
