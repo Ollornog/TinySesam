@@ -809,7 +809,11 @@ for _wf in WORKFLOWS:
         _on_main.add(os.path.basename(_wf))
         assert re.search(r"^  workflow_dispatch:", _head, re.M), \
             f"{_wf} runs on main but has no `workflow_dispatch` — the follow-up cannot trigger it"
-_triggered = {m.group(1) for k in _am_kmd for m in [re.match(r"gh workflow run (\S+)", k)] if m}
+# The release automation (kit 0.47.0) also dispatches release.yml after a merge, with `-f automatik=…` — that is not the
+# follow-up of a push to main (release.yml does not run on main), so it does not count here.
+_triggered = {m.group(1) for k in _am_kmd for m in [re.match(r"gh workflow run (\S+)", k)] if m and "-f automatik=" not in k}
+assert any(k.startswith("gh workflow run release.yml") and '-f automatik="$FOLGE"' in k for k in _am_kmd), \
+    "dependabot-auto-merge.yml: the release automation dispatch is missing"
 assert _triggered == _on_main, \
     f"dependabot-auto-merge.yml: follow-up {sorted(_triggered)} ≠ workflows on main {sorted(_on_main)}"
 print("  Dependabot auto-merge: logic without write permission, only own Dependabot PRs, exactly the checked head")
@@ -918,6 +922,7 @@ for _j in ("release", "pypi", "image-attest"):
 # `if:` to `== 'tag'` → each red.)
 _PROBE = "if: github.ref_type != 'tag'"
 _probe_certified = 0
+_automation_certified = 0
 for _j, _lines in _rel_jobs.items():
     _permissions = " ".join(z.strip() for z in _lines)
     _st = [z.strip() for z in _lines]
@@ -934,9 +939,25 @@ for _j, _lines in _rel_jobs.items():
             assert not re.search(r"\bcontents: write\b", _permissions), f"release.yml: `{_j}` holds contents: write"
             _probe_certified += 1
             continue
+        if _j == "automatik":
+            # Exception release automation (kit 0.47.1, PO 2026-11-15): dispatched by the auto-merge after a Dependabot
+            # merge that changes the image (prepare the release PR) and after that PR's merge (set the tag). It holds an
+            # app token for THIS repo (contents/pull-requests), never id-token, attestations, packages or an environment,
+            # runs only in that dispatch and only the stdlib kit script. (Mutation probes: drop the `if:`; add
+            # `id-token: write`; a second `run:` → each red.)
+            assert "if: github.event_name == 'workflow_dispatch' && inputs.automatik != ''" in _st, \
+                f"release.yml: `{_j}` does not run only in the dispatch of the release automation"
+            assert not re.search(r"\b(id-token|attestations|packages): write\b", _permissions) and \
+                not any(z.startswith("environment:") for z in _st), f"release.yml: `{_j}` holds more than the app token"
+            _runs = [z for z in _st if z.startswith("run:")]
+            assert _runs == ['run: scripts/_release_automatik.py "$STEP" --version "$VERSION"'], \
+                f"release.yml: `{_j}` runs more than the kit script: {_runs}"
+            _automation_certified += 1
+            continue
         assert _AM_TAG in [z.strip() for z in _lines], \
             f"release.yml: job `{_j}` holds an identity or write permission, but is not tied to the tag"
 assert _probe_certified == 1, "release.yml: the job `rehearsal-attest` is missing"
+assert _automation_certified == 1, "release.yml: the job `automatik` (release automation) is missing"
 # Every action that runs only on the tag also runs the dress rehearsal — with the same version. Otherwise
 # its update would be unchecked (the auto-merge would then leave it lying, but this says so earlier).
 _tag_actions, _probe_actions = set(), set()

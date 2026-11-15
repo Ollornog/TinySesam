@@ -47,7 +47,9 @@ Explicit and small exceptions (everything else is a finding):
 
 * files that the shared test kit manages (`repokit sync`, they change there, not here): `tests/_kit/**`,
   `tests/voraussetzung.py`, `scripts/_backlog.py`, `scripts/_nur_text.sh`, `scripts/_residue_check.sh`,
-  `.githooks/pre-push`, `backlog/README-KONVENTION.md`, `.github/workflows/dependabot-auto-merge.yml`, and the names the
+  `scripts/_release_automatik.py` (release automation, kit 0.47.0),
+  `.githooks/pre-push`, `backlog/README-KONVENTION.md`, `.github/workflows/dependabot-auto-merge.yml`,
+  `.github/release-automatik.json` (its keys are the kit script's interface), and the names the
   Python ones define or read (computed, not listed); what the repo takes from them stays quoted in `backticks`;
 * the migration code that has to name the OLD names: `Store._english_names` and the tables `Store.RENAMED_*`,
   `Store.KEY_KINDS_OLD` (SQL check only);
@@ -83,8 +85,11 @@ from _kit.report import Report                                 # noqa: E402
 r = Report("English code: identifiers, file names, SQL, comments, docstrings, string literals")
 
 DIRS = ("tinysesam", "web", "examples", "scripts", "tests")
-KIT_FILES = ("scripts/_backlog.py", "scripts/_nur_text.sh", "scripts/_residue_check.sh", "tests/voraussetzung.py",
-             ".githooks/pre-push", "backlog/README-KONVENTION.md", ".github/workflows/dependabot-auto-merge.yml")
+KIT_FILES = ("scripts/_backlog.py", "scripts/_nur_text.sh", "scripts/_residue_check.sh", "scripts/_release_automatik.py",
+             "tests/voraussetzung.py",
+             ".githooks/pre-push", "backlog/README-KONVENTION.md", ".github/workflows/dependabot-auto-merge.yml",
+             # the keys of this file are the interface of the kit script scripts/_release_automatik.py (kit 0.47.0)
+             ".github/release-automatik.json")
 KIT_DIRS = ("tests/_kit/",)
 #: Not German, although a word of the list looks like it (project name, technical terms) — spelled out, with the reason.
 NOT_GERMAN_TOKENS = frozenset({
@@ -307,12 +312,13 @@ GERMAN_DATA_TABLES = {("tinysesam/config_check.py", "_DE"), ("tinysesam/password
 #: prove it finds a German name are spread over its functions.
 GUARD_FILES = ("tests/test_english_code.py", "tests/_german_words.py", "tests/test_api_surface.py")
 #: Names that the shared test kit dictates and that stay as they are in a string: the worker-count variable, the
-#: workflow list of the auto-merge file, the kit scripts and their option, the backlog status value of the kit
+#: workflow list of the auto-merge file, the kit scripts and their options (`--seit`; `$FOLGE` of the auto-merge
+#: template), the backlog status value of the kit
 #: convention (`status: offen`), and the German OUTPUT of the kit's report
 #: (`FEHL <check>`, `<n> ok, <n> Fehler, <n> übersprungen` from `tests/_kit/report.py`, `uebersprungen: <reason>` from
 #: `tests/voraussetzung.py`), which `tests/run_all.py` reads and `tests/test_runner.py` imitates.
 KIT_NAMES = re.compile(r"CI_KERNE|PFLICHT_WORKFLOWS|[\w./-]*(?:_nur_text|_residue_check|nur-text-verengung)[\w./-]*"
-                        r"|--seit\b|\bstatus: offen\b|\bFEHL\b|\b\d+ ok, \d+ Fehler\b|, \d+ übersprungen\b|\buebersprungen:")
+                        r"|--seit\b|\$FOLGE\b|\bstatus: offen\b|\bFEHL\b|\b\d+ ok, \d+ Fehler\b|, \d+ übersprungen\b|\buebersprungen:")
 #: Tests whose INPUT is the old German data (audit lines, key kinds, table and column names of the old schema, free text of
 #: the old messages): whole files, because the fixtures are the subject — they are the tests that prove the migrations.
 OLD_DATA_TESTS = ("tests/test_vocabulary_migration.py", "tests/test_db_names_migration.py",
