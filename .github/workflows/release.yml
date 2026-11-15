@@ -614,9 +614,10 @@ jobs:
 
   # Pin PR in the fleet repo (vars.PIN_REPO): the new tag with digest in every compose file that pins the image. There the
   # start probe accepts it, the auto-merge merges, the converge rolls it out.
+  # Only on the tag, like every job here that holds an identity (tests/test_repo.py); the target comes from vars.PIN_REPO.
   fc-pin:
     needs: image
-    if: github.ref_type == 'tag' && vars.PIN_REPO != ''
+    if: github.ref_type == 'tag'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
