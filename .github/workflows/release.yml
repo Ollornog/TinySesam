@@ -608,9 +608,9 @@ jobs:
       - name: Release automation
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
-          SCHRITT: ${{ inputs.automatik }}
+          STEP: ${{ inputs.automatik }}
           VERSION: ${{ inputs.version }}
-        run: scripts/_release_automatik.py "$SCHRITT" --version "$VERSION"
+        run: scripts/_release_automatik.py "$STEP" --version "$VERSION"
 
   # Pin PR in the fleet repo (vars.PIN_REPO): the new tag with digest in every compose file that pins the image. There the
   # start probe accepts it, the auto-merge merges, the converge rolls it out.
@@ -645,5 +645,5 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
           TAG: ${{ github.ref_name }}
-          ZIEL: ${{ github.repository_owner }}/${{ vars.PIN_REPO }}
-        run: scripts/_release_automatik.py fc-pin --tag "$TAG" --ziel "$ZIEL"
+          TARGET: ${{ github.repository_owner }}/${{ vars.PIN_REPO }}
+        run: scripts/_release_automatik.py fc-pin --tag "$TAG" --target "$TARGET"

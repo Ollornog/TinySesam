@@ -404,7 +404,8 @@ def main(argv: list[str]) -> int:
     p.add_argument("schritt", choices=["vorbereiten", "taggen", "fc-pin", "naechste"])
     p.add_argument("--version", default="")
     p.add_argument("--tag", default="")
-    p.add_argument("--ziel", default="")
+    # --target: dieselbe Option englisch — Repos mit Englisch-Wächter über ihre Workflows (TinySesam) rufen sie so.
+    p.add_argument("--ziel", "--target", dest="ziel", default="")
     p.add_argument("--root", default=os.getcwd())
     p.add_argument("--basis", default="main")
     a = p.parse_args(argv)
