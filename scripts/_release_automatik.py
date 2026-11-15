@@ -423,8 +423,9 @@ def main(argv: list[str]) -> int:
         else:
             if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", a.ziel):
                 raise Fehler("--ziel OWNER/REPO fehlt oder ist unzulässig")
-            if not re.fullmatch(r"v[A-Za-z0-9._-]+", a.tag):
-                raise Fehler("--tag v… fehlt oder ist unzulässig")
+            # Ein Release-Tag (v…) oder der Tag eines Abbilds je Stand auf main (UnderDoc: main-<sha>, seit 0.47.2).
+            if not re.fullmatch(r"(v|main-)[A-Za-z0-9._-]+", a.tag):
+                raise Fehler("--tag v… oder main-… fehlt oder ist unzulässig")
             fc_pin(a.root, repo, a.tag, a.ziel)
     except Fehler as e:
         print(f"::error::{e}", file=sys.stderr)
