@@ -7,7 +7,7 @@
 # The plugin itself is a Go module and invisible to Dependabot: bump CADDY_JWT by hand —
 # releases: https://github.com/ggicci/caddy-jwt/releases. Afterwards the CI job `gate-caddy`
 # checks exactly this image against TinySesam (tests/test_gate_caddy.py).
-FROM caddy:2.11.8-builder-alpine@sha256:e42a64b3bc70aa3a1387bde85b930e507a378fecae5852d5bfde9dcd37d0b999 AS builder
+FROM caddy:2.11.9-builder-alpine@sha256:646fee578e680989ca5c7fd1ce6f1de574d19fd71ef2221810cc0510a9f40c86 AS builder
 ARG CADDY_JWT=v1.4.0
 RUN xcaddy build --with github.com/ggicci/caddy-jwt@${CADDY_JWT}
 
