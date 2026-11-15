@@ -4,6 +4,16 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+## [Unreleased]
+
+### Added — release automation (kit 0.47.0)
+
+- A merged Dependabot PR that changes the `Dockerfile` or the gateway lock (`deploy/gateway/requirements.*`) now cuts a
+  patch release by itself: the auto-merge dispatches `release.yml` (`automatik=vorbereiten`); the kit script
+  `scripts/_release_automatik.py` runs `scripts/_release.py <version>` (all version places), adds this changelog entry
+  and opens `release/v<version>` with the app token; after the merge it runs `scripts/_release.py --check` and sets the
+  tag; the tag run publishes the image and then opens the pin PR in the fleet repo (`fc-pin`, variable `PIN_REPO`).
+
 ## [0.25.6] — 2026-11-14
 
 ### Security — gateway image: opentelemetry-api 1.45.2

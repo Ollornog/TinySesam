@@ -52,6 +52,18 @@
 # „aktuell“) per Rebase nach — der Autor bleibt Dependabot, die CI läuft neu an, und ihr Ende löst den
 # nächsten Anlauf aus —, und (2) mergt er so, dass der Push auf den Standardzweig die Workflows normal
 # startet; der Nachlauf per `workflow_dispatch` entfällt dann. Ohne App bleibt alles wie vorher.
+#
+# RELEASE-AUTOMATIK EIGENER ABBILDER (seit 0.45.0, PO 2026-11-15 „ja, für alle“): Neben Dependabot mergt der Workflow
+# zwei Arten von PRs der App (Autor `ollornog-auto-merge[bot]`), wenn das Repo sie im Block je Repo einträgt (`APP_PR`):
+#   - `release` (App-Repos): Zweig `release/v<version>`, nur die Dateien aus `RELEASE_DATEIEN` (Versionsdateien,
+#     CHANGELOG). Nach dem Merge stößt er `release.yml` mit `automatik=taggen` an (Tag → Tag-Lauf baut das Abbild).
+#   - `pin` (Flotten-Repo ohne Branch-Schutz, `--auto` geht dort nicht): Zweig `pin/…`, nur `stacks/*/compose.yaml`, und
+#     jede geänderte Zeile ist eine Pin-Zeile `image: <PIN_PRAEFIX><name>:<tag>@sha256:<digest>` — dieselben Abbilder
+#     entfernt wie hinzugefügt. Die Startprobe der Pflicht-Checks nimmt den neuen Pin ab, danach der Converge.
+# Und: Berührt ein gemergter Dependabot-PR einen Pfad aus `ABBILD_PFADE` (Dockerfile, Sperrliste, go.mod …), stößt er
+# `release.yml` mit `automatik=vorbereiten` an — der schneidet das Patch-Release als PR (scripts/_release_automatik.py).
+# Für App-PRs gilt alles andere wie für Dependabot: jeder Pflicht-Workflow grün für genau diesen Kopf, alle Commits vom
+# Autor des PR, kein Fork. Ohne `APP_PR`/`ABBILD_PFADE` bleibt alles wie vorher.
 name: Dependabot Auto-Merge
 
 on:  # zizmor: ignore[dangerous-triggers] — kein Checkout, kein PR-Code; Herkunft per API geprüft
@@ -90,7 +102,7 @@ jobs:
       koepfe: ${{ steps.lesen.outputs.koepfe }}
       datei: ${{ steps.lesen.outputs.datei }}
     steps:
-      - name: Offene Dependabot-PRs lesen
+      - name: Offene Dependabot- und App-PRs lesen
         id: lesen
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -101,7 +113,8 @@ jobs:
           DATEI="${WORKFLOW_REF%%@*}"; DATEI="${DATEI##*/}"
           [[ "$DATEI" =~ ^[A-Za-z0-9._-]+\.ya?ml$ ]] || { echo "Workflow-Datei unlesbar: $DATEI" >&2; exit 1; }
           KOEPFE="$(gh api "repos/$REPO/pulls?state=open&per_page=100" --paginate \
-            -q '.[] | select(.user.login == "dependabot[bot]" and .head.repo.full_name == .base.repo.full_name) | .head.sha')"
+            -q '.[] | select(.head.repo.full_name == .base.repo.full_name and (.user.login == "dependabot[bot]"
+              or (.user.login == "ollornog-auto-merge[bot]" and (.head.ref | test("^(release|pin)/"))))) | .head.sha')"
           # Nur 40-stellige SHAs kommen in die Matrix — eine leere Liste lässt `anstossen` ausfallen.
           JSON="$(printf '%s\n' "$KOEPFE" | jq -Rnc '[inputs | select(test("^[0-9a-f]{40}$"))]')"
           echo "Köpfe: $JSON"
@@ -139,7 +152,9 @@ jobs:
       github.event_name == 'workflow_dispatch' || (
       github.event.workflow_run.event == 'pull_request' &&
       github.event.workflow_run.head_repository.full_name == github.repository &&
-      startsWith(github.event.workflow_run.head_branch, 'dependabot/'))
+      (startsWith(github.event.workflow_run.head_branch, 'dependabot/') ||
+      startsWith(github.event.workflow_run.head_branch, 'release/') ||
+      startsWith(github.event.workflow_run.head_branch, 'pin/')))
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
@@ -154,6 +169,8 @@ jobs:
       grund: ${{ steps.pruefung.outputs.grund }}
       pr: ${{ steps.pruefung.outputs.pr }}
       sha: ${{ steps.pruefung.outputs.sha }}
+      folge: ${{ steps.pruefung.outputs.folge }}
+      version: ${{ steps.pruefung.outputs.version }}
     steps:
       - name: Herkunft, Abnahme und Pflicht-Workflows prüfen
         id: pruefung
@@ -161,13 +178,15 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
           HEAD_SHA: ${{ github.event.workflow_run.head_sha || inputs.head_sha }}
+          APP_LOGIN: "ollornog-auto-merge[bot]"
           # --- je Repo: Anfang
 @@JE_REPO@@
           # --- je Repo: Ende
         run: |
           set -euo pipefail
           ausgabe() {
-            { echo "aktion=$1"; echo "grund=$2"; echo "pr=${PR:-}"; echo "sha=$HEAD_SHA"; } >> "$GITHUB_OUTPUT"
+            { echo "aktion=$1"; echo "grund=$2"; echo "pr=${PR:-}"; echo "sha=$HEAD_SHA"
+              echo "folge=${FOLGE:-}"; echo "version=${VERSION:-}"; } >> "$GITHUB_OUTPUT"
             echo "$1${2:+: $2}"
           }
           # >>> Entscheidungshilfen — reines bash ohne API, getestet in repokit tests/test_automerge.py
@@ -227,13 +246,67 @@ jobs:
           dependabot_gibt_auf() {
             grep -qiE 'entry that created this PR has been deleted|please close the PR|no longer needed'
           }
+          # Welche Art PR (seit 0.45.0)? $1 = Autor, $2 = Zweig, $3 = APP_PR des Repos.
+          # Ausgabe: dependabot | release | pin | nichts (dann kein Fall für diesen Workflow).
+          pr_art() {
+            if [ "$1" = "dependabot[bot]" ]; then echo dependabot; return 0; fi
+            [ "$1" = "$APP_LOGIN" ] || return 0
+            case "$3" in
+              release)
+                if [[ "$2" =~ ^release/v([0-9]+\.[0-9]+\.[0-9]+|20[0-9]{2}\.[01][0-9]\.[0-3][0-9](\.[0-9]+)?)$ ]]; then
+                  echo release
+                fi ;;
+              pin) if [[ "$2" =~ ^pin/[A-Za-z0-9._-]+$ ]]; then echo pin; fi ;;
+            esac
+            return 0
+          }
+          # Berührt ein PR das Abbild? stdin = geänderte Dateien, $@ = ABBILD_PFADE (Datei, Ordner mit „/“ am Ende,
+          # oder Muster wie „requirements*.txt“). Exit 0 = ja.
+          beruehrt_abbild() {
+            local f p
+            while IFS= read -r f; do
+              [ -n "$f" ] || continue
+              for p in "$@"; do
+                # shellcheck disable=SC2053  # rechts ein Muster, gewollt
+                if [[ "$f" == $p ]] || { [[ "$p" == */ ]] && [[ "$f" == "$p"* ]]; }; then return 0; fi
+              done
+            done
+            return 1
+          }
+          # Nur diese Dateien? stdin = geänderte Dateien, $@ = erlaubte (genau). Kein Eintrag heißt nein.
+          nur_dateien() {
+            local f n=0
+            while IFS= read -r f; do
+              [ -n "$f" ] || continue
+              n=$((n + 1))
+              case " $* " in *" $f "*) ;; *) return 1 ;; esac
+            done
+            [ "$n" -gt 0 ]
+          }
+          # Nur Pin-Zeilen? stdin = die Diffs (patch) aller Dateien, $1 = PIN_PRAEFIX. Jede geänderte Zeile ist
+          # `image: <präfix><name>:<tag>@sha256:<64 hex>`, und entfernt werden genau die Abbilder, die hinzukommen.
+          nur_pin_zeilen() {
+            local z minus="" plus="" n=0 p="${1//./\\.}"
+            local re="^[-+][[:space:]]+image:[[:space:]]+(${p}[a-z0-9._-]+):[A-Za-z0-9._-]+@sha256:[0-9a-f]{64}[[:space:]]*$"
+            [ -n "$1" ] || return 1
+            while IFS= read -r z; do
+              case "$z" in "@@"*|" "*|"\ No newline"*) continue ;; esac
+              [[ "$z" =~ $re ]] || return 1
+              n=$((n + 1))
+              if [ "${z:0:1}" = "-" ]; then minus+="${BASH_REMATCH[1]}"$'\n'; else plus+="${BASH_REMATCH[1]}"$'\n'; fi
+            done
+            [ "$n" -gt 0 ] && [ "$(sort <<<"$minus")" = "$(sort <<<"$plus")" ]
+          }
           # <<< Entscheidungshilfen
           [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] || { ausgabe nichts "kein gültiger Kopf"; exit 0; }
           PR="$(gh api "repos/$REPO/commits/$HEAD_SHA/pulls" -q '.[0].number // ""')"
           [[ "$PR" =~ ^[0-9]+$ ]] || { ausgabe nichts "kein PR zu $HEAD_SHA"; exit 0; }
-          # Herkunft per API, nie dem Ereignis glauben: Autor Dependabot, kein Fork, offen, Kopf unverändert.
+          # Herkunft per API, nie dem Ereignis glauben: Autor Dependabot (oder die App, siehe Kopf), kein Fork, offen,
+          # Kopf unverändert.
           J="$(gh api "repos/$REPO/pulls/$PR")"
-          [ "$(jq -r '.user.login' <<<"$J")" = "dependabot[bot]" ] || { ausgabe nichts "Autor ist nicht Dependabot"; exit 0; }
+          AUTOR="$(jq -r '.user.login' <<<"$J")"
+          ART="$(pr_art "$AUTOR" "$(jq -r '.head.ref' <<<"$J")" "${APP_PR:-}")"
+          [ -n "$ART" ] || { ausgabe nichts "Autor ist nicht Dependabot (und kein App-PR, den dieses Repo annimmt)"; exit 0; }
           [ "$(jq -r '.head.repo.full_name == .base.repo.full_name' <<<"$J")" = "true" ] || { echo "Fork — Abbruch"; exit 1; }
           [ "$(jq -r '.state' <<<"$J")" = "open" ] || { ausgabe nichts "PR nicht offen"; exit 0; }
           [ "$(jq -r '.head.sha' <<<"$J")" = "$HEAD_SHA" ] || { ausgabe nichts "Kopf seit dem Lauf bewegt"; exit 0; }
@@ -256,64 +329,94 @@ jobs:
               *) kommentar "$1" ;;
             esac
           }
-          # Ökosystem aus dem Branch (dependabot/<ökosystem>/…). Der Update-Typ entscheidet nichts
-          # (auch Majors mergen, PO 2026-10-11); er steht nur im Protokoll.
           ZWEIG="$(jq -r '.head.ref' <<<"$J")"
-          OEKO="${ZWEIG#dependabot/}"; OEKO="${OEKO%%/*}"
-          # Verwaist (seit 0.41.0): Dependabot pflegt den PR nicht mehr — nachziehen geht nicht, mergen hieße
-          # einen Stand übernehmen, den niemand mehr abgleicht. Zwei Zeichen: Dependabot sagt es selbst, oder
-          # kein Eintrag der dependabot.yml auf der Basis passt zum Zweig (eigener Trenner: keine Aussage).
-          # Erst lesen, dann suchen: `gh … | grep -q` unter pipefail ist ein Münzwurf (grep schließt früh, SIGPIPE).
-          DB_SAGT="$(gh api "repos/$REPO/issues/$PR/comments" --paginate \
-            -q '.[] | select(.user.login == "dependabot[bot]") | .body')"
-          if dependabot_gibt_auf <<<"$DB_SAGT"; then
-            kommentar "verwaist: Dependabot pflegt diesen PR nicht mehr (siehe seinen Kommentar) — bitte schließen; steht der Inhalt schon auf $BASIS?"
-            exit 0
-          fi
-          if DBY="$(gh api "repos/$REPO/contents/.github/dependabot.yml?ref=$BASIS" -q .content | base64 -d)" \
-             && [ -n "$DBY" ] && ! grep -q 'separator' <<<"$DBY"; then
-            EINTRAEGE="$(yq -o=json '.' <<<"$DBY" | jq -r '.updates[]? | ."package-ecosystem" as $e
-              | if has("directories") then (.directories[] | "\($e) directories \(.)")
-                else "\($e) directory \(.directory // "/")" end')"
-            if [ -n "$EINTRAEGE" ] && verwaist "$ZWEIG" <<<"$EINTRAEGE"; then
-              kommentar "verwaist: kein Eintrag in .github/dependabot.yml auf $BASIS erzeugt den Zweig $ZWEIG — Dependabot zieht ihn nie nach; bitte schließen; steht der Inhalt schon auf $BASIS?"
+          GRUND=""
+          FOLGE=""
+          VERSION=""
+          if [ "$ART" = dependabot ]; then
+            # Ökosystem aus dem Branch (dependabot/<ökosystem>/…). Der Update-Typ entscheidet nichts
+            # (auch Majors mergen, PO 2026-10-11); er steht nur im Protokoll.
+            OEKO="${ZWEIG#dependabot/}"; OEKO="${OEKO%%/*}"
+            # Verwaist (seit 0.41.0): Dependabot pflegt den PR nicht mehr — nachziehen geht nicht, mergen hieße
+            # einen Stand übernehmen, den niemand mehr abgleicht. Zwei Zeichen: Dependabot sagt es selbst, oder
+            # kein Eintrag der dependabot.yml auf der Basis passt zum Zweig (eigener Trenner: keine Aussage).
+            # Erst lesen, dann suchen: `gh … | grep -q` unter pipefail ist ein Münzwurf (grep schließt früh, SIGPIPE).
+            DB_SAGT="$(gh api "repos/$REPO/issues/$PR/comments" --paginate \
+              -q '.[] | select(.user.login == "dependabot[bot]") | .body')"
+            if dependabot_gibt_auf <<<"$DB_SAGT"; then
+              kommentar "verwaist: Dependabot pflegt diesen PR nicht mehr (siehe seinen Kommentar) — bitte schließen; steht der Inhalt schon auf $BASIS?"
               exit 0
             fi
-          fi
-          COMMITS="$(gh api "repos/$REPO/pulls/$PR/commits" --paginate)"
-          NACHRICHTEN="$(jq -r '.[].commit.message' <<<"$COMMITS")"
-          TYPEN="$(grep -oE 'update-type: version-update:semver-(major|minor|patch)' <<<"$NACHRICHTEN" | sort -u || true)"
-          echo "Ökosystem: $OEKO, Update-Typ: ${TYPEN:-nicht erkennbar}"
-          GRUND=""
-          [ "$(jq -r '[.[] | select(.author.login != "dependabot[bot]")] | length' <<<"$COMMITS")" = "0" ] \
-            || GRUND="Commits, die nicht von Dependabot stammen"
-          case " $AUTO_OEKO " in *" $OEKO "*) ;; *) GRUND="${GRUND:-kein Pflicht-Check nimmt \"$OEKO\" ab}" ;; esac
-          # Actions nur, wenn JEDE aktualisierte Action in einem Pflicht-Workflow AUF DEM PR läuft:
-          # Jobs und Schritte, die am Tag hängen, zählen nicht — ihr Bump bräche erst beim Release.
-          # Die Generalprobe (Schritt mit `ref_type != 'tag'` gegen ein Wegwerf-Ziel) zählt.
-          if [ -z "$GRUND" ] && [ "$OEKO" = "github_actions" ]; then
-            AM_TAG="ref_type *== *.tag.|startsWith\\(github\\.ref, *.refs/tags"
-            LAUFEN=""
-            for wf in $PFLICHT_WORKFLOWS; do
-              TEXT="$(gh api "repos/$REPO/contents/.github/workflows/$wf?ref=$HEAD_SHA" -q .content | base64 -d)"
-              LAUFEN+="$(AM_TAG="$AM_TAG" yq -r '.jobs[]
-                | select(((.if // "") | test(strenv(AM_TAG))) | not)
-                | .steps[]?
-                | select(((.if // "") | test(strenv(AM_TAG))) | not)
-                | .uses // ""' <<<"$TEXT" | sed 's/@.*//')"$'\n'
-            done
-            NAMEN="$(sed -n 's/^[- ]*dependency-name: *//p' <<<"$NACHRICHTEN" | sort -u)"
-            [ -n "$NAMEN" ] || GRUND="aktualisierte Actions nicht erkennbar"
-            while IFS= read -r n; do
-              [ -z "$n" ] && continue
-              grep -qxE "${n//./\\.}(/.*)?" <<<"$LAUFEN" && continue
-              # Abnahme nach dem Merge: nur, was das Repo ausdrücklich so einträgt (die Prüfung im Kit
-              # verlangt, dass die Action in einem Nachlauf-Workflow steht).
-              case " ${NACH_MERGE_ABGENOMMEN:-} " in
-                *" $n "*) echo "Action \"$n\": Abnahme nach dem Merge (Nachlauf)"; continue ;;
-              esac
-              GRUND="Action \"$n\" läuft in keinem Pflicht-Workflow auf dem PR"; break
-            done <<<"$NAMEN"
+            if DBY="$(gh api "repos/$REPO/contents/.github/dependabot.yml?ref=$BASIS" -q .content | base64 -d)" \
+               && [ -n "$DBY" ] && ! grep -q 'separator' <<<"$DBY"; then
+              EINTRAEGE="$(yq -o=json '.' <<<"$DBY" | jq -r '.updates[]? | ."package-ecosystem" as $e
+                | if has("directories") then (.directories[] | "\($e) directories \(.)")
+                  else "\($e) directory \(.directory // "/")" end')"
+              if [ -n "$EINTRAEGE" ] && verwaist "$ZWEIG" <<<"$EINTRAEGE"; then
+                kommentar "verwaist: kein Eintrag in .github/dependabot.yml auf $BASIS erzeugt den Zweig $ZWEIG — Dependabot zieht ihn nie nach; bitte schließen; steht der Inhalt schon auf $BASIS?"
+                exit 0
+              fi
+            fi
+            COMMITS="$(gh api "repos/$REPO/pulls/$PR/commits" --paginate)"
+            NACHRICHTEN="$(jq -r '.[].commit.message' <<<"$COMMITS")"
+            TYPEN="$(grep -oE 'update-type: version-update:semver-(major|minor|patch)' <<<"$NACHRICHTEN" | sort -u || true)"
+            echo "Ökosystem: $OEKO, Update-Typ: ${TYPEN:-nicht erkennbar}"
+            [ "$(jq -r '[.[] | select(.author.login != "dependabot[bot]")] | length' <<<"$COMMITS")" = "0" ] \
+              || GRUND="Commits, die nicht von Dependabot stammen"
+            case " $AUTO_OEKO " in *" $OEKO "*) ;; *) GRUND="${GRUND:-kein Pflicht-Check nimmt \"$OEKO\" ab}" ;; esac
+            # Actions nur, wenn JEDE aktualisierte Action in einem Pflicht-Workflow AUF DEM PR läuft:
+            # Jobs und Schritte, die am Tag hängen, zählen nicht — ihr Bump bräche erst beim Release.
+            # Die Generalprobe (Schritt mit `ref_type != 'tag'` gegen ein Wegwerf-Ziel) zählt.
+            if [ -z "$GRUND" ] && [ "$OEKO" = "github_actions" ]; then
+              AM_TAG="ref_type *== *.tag.|startsWith\\(github\\.ref, *.refs/tags"
+              LAUFEN=""
+              for wf in $PFLICHT_WORKFLOWS; do
+                TEXT="$(gh api "repos/$REPO/contents/.github/workflows/$wf?ref=$HEAD_SHA" -q .content | base64 -d)"
+                LAUFEN+="$(AM_TAG="$AM_TAG" yq -r '.jobs[]
+                  | select(((.if // "") | test(strenv(AM_TAG))) | not)
+                  | .steps[]?
+                  | select(((.if // "") | test(strenv(AM_TAG))) | not)
+                  | .uses // ""' <<<"$TEXT" | sed 's/@.*//')"$'\n'
+              done
+              NAMEN="$(sed -n 's/^[- ]*dependency-name: *//p' <<<"$NACHRICHTEN" | sort -u)"
+              [ -n "$NAMEN" ] || GRUND="aktualisierte Actions nicht erkennbar"
+              while IFS= read -r n; do
+                [ -z "$n" ] && continue
+                grep -qxE "${n//./\\.}(/.*)?" <<<"$LAUFEN" && continue
+                # Abnahme nach dem Merge: nur, was das Repo ausdrücklich so einträgt (die Prüfung im Kit
+                # verlangt, dass die Action in einem Nachlauf-Workflow steht).
+                case " ${NACH_MERGE_ABGENOMMEN:-} " in
+                  *" $n "*) echo "Action \"$n\": Abnahme nach dem Merge (Nachlauf)"; continue ;;
+                esac
+                GRUND="Action \"$n\" läuft in keinem Pflicht-Workflow auf dem PR"; break
+              done <<<"$NAMEN"
+            fi
+            # Berührt der PR das Abbild, schneidet release.yml nach dem Merge ein Patch-Release (seit 0.45.0).
+            if [ -z "$GRUND" ] && [ -n "${ABBILD_PFADE:-}" ]; then
+              DATEIEN="$(gh api "repos/$REPO/pulls/$PR/files" --paginate -q '.[].filename')"
+              # shellcheck disable=SC2086  # ABBILD_PFADE ist eine Liste von Mustern
+              if beruehrt_abbild $ABBILD_PFADE <<<"$DATEIEN"; then FOLGE=vorbereiten; fi
+            fi
+          else
+            # App-PR (release/pin): jeder Commit vom Autor des PR, und nur, was die Art erlaubt.
+            COMMITS="$(gh api "repos/$REPO/pulls/$PR/commits" --paginate)"
+            [ "$(jq -r --arg a "$AUTOR" '[.[] | select(.author.login != $a)] | length' <<<"$COMMITS")" = "0" ] \
+              || GRUND="Commits, die nicht von $AUTOR stammen"
+            DATEIEN="$(gh api "repos/$REPO/pulls/$PR/files" --paginate -q '.[].filename')"
+            if [ -z "$GRUND" ] && [ "$ART" = release ]; then
+              # shellcheck disable=SC2086  # RELEASE_DATEIEN ist eine Liste
+              nur_dateien ${RELEASE_DATEIEN:-} <<<"$DATEIEN" || GRUND="Release-PR ändert mehr als RELEASE_DATEIEN (${RELEASE_DATEIEN:-leer})"
+              FOLGE=taggen
+              VERSION="${ZWEIG#release/v}"
+            fi
+            if [ -z "$GRUND" ] && [ "$ART" = pin ]; then
+              if grep -vxE 'stacks/[A-Za-z0-9._-]+/compose\.yaml' <<<"$DATEIEN" >/dev/null; then
+                GRUND="Pin-PR ändert mehr als stacks/*/compose.yaml"
+              else
+                PATCHES="$(gh api "repos/$REPO/pulls/$PR/files" --paginate -q '.[] | .patch // "PATCH FEHLT"')"
+                nur_pin_zeilen "${PIN_PRAEFIX:-}" <<<"$PATCHES" || GRUND="Pin-PR ändert mehr als Pin-Zeilen von ${PIN_PRAEFIX:-(PIN_PRAEFIX fehlt)}"
+              fi
+            fi
           fi
           if [ -n "$GRUND" ]; then kommentar "$GRUND"; exit 0; fi
           # Jeder Pflicht-Workflow muss für genau diesen Kopf gelaufen und grün sein. Läuft einer
@@ -405,6 +508,19 @@ jobs:
         run: |
           gh pr merge "$PR" --repo "$REPO" --squash --delete-branch --match-head-commit "$HEAD_SHA"
 @@NACHLAUF@@
+      # Release-Automatik (seit 0.45.0): nach dem Merge release.yml anstoßen — `vorbereiten` (Dependabot hat das Abbild
+      # geändert: Patch-Release als PR) oder `taggen` (der Release-PR ist gemergt: Tag setzen, der Tag-Lauf baut).
+      - name: Release-Automatik anstoßen
+        if: needs.entscheiden.outputs.aktion == 'mergen' && needs.entscheiden.outputs.folge != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          STANDARD: ${{ github.event.repository.default_branch }}
+          FOLGE: ${{ needs.entscheiden.outputs.folge }}
+          VERSION: ${{ needs.entscheiden.outputs.version }}
+        run: |
+          gh workflow run release.yml --repo "$REPO" --ref "$STANDARD" -f automatik="$FOLGE" -f version="$VERSION"
+
       - name: Begründen, warum von Hand
         if: needs.entscheiden.outputs.aktion == 'kommentieren'
         env:

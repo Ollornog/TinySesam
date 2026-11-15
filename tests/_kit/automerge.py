@@ -268,6 +268,7 @@ def rendere(root: str, je_repo: str) -> tuple[str, list[str]]:
             probleme.append(f"{wf} läuft nicht auf `pull_request` — er nimmt keinen PR ab")
         elif re.search(r"\bpaths(-ignore)?\s*:", " ".join(pr)):
             probleme.append(f"{wf}: `pull_request` mit Pfadfilter — manche PRs bekämen nie einen Lauf")
+    probleme += release_automatik(root, je_repo, wfs)
     nach = nachlauf(root)
     # Abnahme nach dem Merge (seit 0.32.0): Jede so eingetragene Action muss in einem Workflow stehen,
     # den der Nachlauf auf dem Standardzweig startet — sonst nähme sie gar nichts ab, und ihr Update
@@ -296,6 +297,56 @@ def rendere(root: str, je_repo: str) -> tuple[str, list[str]]:
             .replace("@@JE_REPO@@\n", je_repo if je_repo.endswith("\n") else je_repo + "\n")
             .replace("@@NACHLAUF@@\n", nachlauf_zeilen))
     return text, probleme
+
+
+def _wert(je_repo: str, name: str) -> str | None:
+    m = re.search(rf'^\s*{name}:\s*"([^"]*)"', je_repo, re.M)
+    return m.group(1) if m else None
+
+
+def release_automatik(root: str, je_repo: str, wfs: dict[str, str]) -> list[str]:
+    """Bedingungen der Release-Automatik (seit 0.45.0), ohne die sie still nichts täte.
+
+    `APP_PR: "release"` und `ABBILD_PFADE` verlangen ein `release.yml`, das `automatik` und `version` als Eingaben von
+    `workflow_dispatch` kennt (sonst schlägt der Anstoß nach dem Merge fehl), die Konfiguration
+    `.github/release-automatik.json` und `scripts/_release_automatik.py`. `APP_PR: "pin"` verlangt `PIN_PRAEFIX`
+    (registry/owner/), sonst nähme die Diff-Prüfung jede Zeile an oder keine.
+    """
+    probleme: list[str] = []
+    art = _wert(je_repo, "APP_PR")
+    abbild = _wert(je_repo, "ABBILD_PFADE")
+    if art not in (None, "release", "pin"):
+        probleme.append(f'APP_PR "{art}": release oder pin')
+    if abbild is not None and art != "release":
+        probleme.append('ABBILD_PFADE ohne APP_PR: "release" — den Release-PR der Automatik nähme niemand an')
+    if abbild is not None and not abbild.split():
+        probleme.append("ABBILD_PFADE ist leer")
+    if art == "release":
+        if not (_wert(je_repo, "RELEASE_DATEIEN") or "").split():
+            probleme.append('APP_PR: "release" ohne RELEASE_DATEIEN — der Release-PR dürfte keine Datei ändern')
+        rel = wfs.get("release.yml")
+        if rel is None:
+            probleme.append('APP_PR: "release" ohne .github/workflows/release.yml')
+        else:
+            block = " ".join(ausloeser(rel).get("workflow_dispatch", []))
+            for eingabe in ("automatik", "version"):
+                if not re.search(rf"(^|\s){eingabe}:", block):
+                    probleme.append(f"release.yml: workflow_dispatch ohne Eingabe `{eingabe}` — der Anstoß der "
+                                    "Release-Automatik schlüge fehl")
+            # Dependabot hebt die App-Token-Action hier nicht (den Pin besitzt die Vorlage) — er muss ihr gleichen,
+            # sonst altert er still. Neuer Pin: `repokit sync`, dann hier nachziehen.
+            soll = pins().get("actions/create-github-app-token", "")
+            for m in re.finditer(r"uses:\s*(actions/create-github-app-token@[0-9a-f]{40}[^\n]*)", rel):
+                if soll and m.group(1).rstrip() != soll:
+                    probleme.append(f"release.yml: `{m.group(1).strip()}` weicht vom Pin der Vorlage ab (`{soll}`)")
+        for pfad in (".github/release-automatik.json", "scripts/_release_automatik.py"):
+            if not os.path.exists(os.path.join(root, pfad)):
+                probleme.append(f'APP_PR: "release" ohne {pfad}')
+    if art == "pin":
+        praefix = _wert(je_repo, "PIN_PRAEFIX") or ""
+        if not re.fullmatch(r"[a-z0-9.-]+/[a-z0-9._-]+/", praefix):
+            probleme.append(f'APP_PR: "pin" ohne gültiges PIN_PRAEFIX (registry/owner/, ist "{praefix}")')
+    return probleme
 
 
 def je_repo_block(text: str) -> str | None:
