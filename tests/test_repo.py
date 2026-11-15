@@ -809,7 +809,11 @@ for _wf in WORKFLOWS:
         _on_main.add(os.path.basename(_wf))
         assert re.search(r"^  workflow_dispatch:", _head, re.M), \
             f"{_wf} runs on main but has no `workflow_dispatch` — the follow-up cannot trigger it"
-_triggered = {m.group(1) for k in _am_kmd for m in [re.match(r"gh workflow run (\S+)", k)] if m}
+# The release automation (kit 0.47.0) also dispatches release.yml after a merge, with `-f automatik=…` — that is not the
+# follow-up of a push to main (release.yml does not run on main), so it does not count here.
+_triggered = {m.group(1) for k in _am_kmd for m in [re.match(r"gh workflow run (\S+)", k)] if m and "-f automatik=" not in k}
+assert any(k.startswith("gh workflow run release.yml") and '-f automatik="$FOLGE"' in k for k in _am_kmd), \
+    "dependabot-auto-merge.yml: the release automation dispatch is missing"
 assert _triggered == _on_main, \
     f"dependabot-auto-merge.yml: follow-up {sorted(_triggered)} ≠ workflows on main {sorted(_on_main)}"
 print("  Dependabot auto-merge: logic without write permission, only own Dependabot PRs, exactly the checked head")

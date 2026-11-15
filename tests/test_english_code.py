@@ -47,6 +47,7 @@ Explicit and small exceptions (everything else is a finding):
 
 * files that the shared test kit manages (`repokit sync`, they change there, not here): `tests/_kit/**`,
   `tests/voraussetzung.py`, `scripts/_backlog.py`, `scripts/_nur_text.sh`, `scripts/_residue_check.sh`,
+  `scripts/_release_automatik.py` (release automation, kit 0.47.0),
   `.githooks/pre-push`, `backlog/README-KONVENTION.md`, `.github/workflows/dependabot-auto-merge.yml`, and the names the
   Python ones define or read (computed, not listed); what the repo takes from them stays quoted in `backticks`;
 * the migration code that has to name the OLD names: `Store._english_names` and the tables `Store.RENAMED_*`,
@@ -83,7 +84,8 @@ from _kit.report import Report                                 # noqa: E402
 r = Report("English code: identifiers, file names, SQL, comments, docstrings, string literals")
 
 DIRS = ("tinysesam", "web", "examples", "scripts", "tests")
-KIT_FILES = ("scripts/_backlog.py", "scripts/_nur_text.sh", "scripts/_residue_check.sh", "tests/voraussetzung.py",
+KIT_FILES = ("scripts/_backlog.py", "scripts/_nur_text.sh", "scripts/_residue_check.sh", "scripts/_release_automatik.py",
+             "tests/voraussetzung.py",
              ".githooks/pre-push", "backlog/README-KONVENTION.md", ".github/workflows/dependabot-auto-merge.yml")
 KIT_DIRS = ("tests/_kit/",)
 #: Not German, although a word of the list looks like it (project name, technical terms) — spelled out, with the reason.
