@@ -60,6 +60,11 @@
 #   - `pin` (Flotten-Repo ohne Branch-Schutz, `--auto` geht dort nicht): Zweig `pin/…`, nur `stacks/*/compose.yaml`, und
 #     jede geänderte Zeile ist eine Pin-Zeile `image: <PIN_PRAEFIX><name>:<tag>@sha256:<digest>` — dieselben Abbilder
 #     entfernt wie hinzugefügt. Die Startprobe der Pflicht-Checks nimmt den neuen Pin ab, danach der Converge.
+#     Release-Anhänge (seit 0.48.0): Nennt `PIN_ANHAENGE` (Leerzeichen-getrennt `<owner/repo>=<ordner>:<datei|*>`) das
+#     Quell-Repo des Zweigs `pin/<repo>-<tag>`, darf der PR außerdem genau diese Dateien ändern (hinzufügen/ändern, nie
+#     löschen), und am Kopf muss JEDE genannte Datei den Hash aus der SHA256SUMS des Release <tag> tragen (`*` = alle
+#     Dateien der SHA256SUMS und sie selbst) — auch, wenn der PR sie nicht anfasst: Abbild und Anhänge aus demselben
+#     Release. Jede andere Datei außerhalb der Compose bleibt von Hand.
 # Und: Berührt ein gemergter Dependabot-PR einen Pfad aus `ABBILD_PFADE` (Dockerfile, Sperrliste, go.mod …), stößt er
 # `release.yml` mit `automatik=vorbereiten` an — der schneidet das Patch-Release als PR (scripts/_release_automatik.py).
 # Für App-PRs gilt alles andere wie für Dependabot: jeder Pflicht-Workflow grün für genau diesen Kopf, alle Commits vom
@@ -297,6 +302,79 @@ jobs:
             done
             [ "$n" -gt 0 ] && [ "$(sort <<<"$minus")" = "$(sort <<<"$plus")" ]
           }
+          # Release-Anhänge (seit 0.48.0): Quelle und Tag eines Pin-Zweigs. $1 = Zweig, weitere = PIN_ANHAENGE.
+          # Ausgabe „<owner/repo> <tag>“ des Eintrags, dessen Repo-Name (klein) den Zweig pin/<name>-<tag> erzeugt;
+          # nichts, wenn keiner passt; Exit 1, wenn zwei verschiedene Repos passen (keine Aussage).
+          anhang_quelle() {
+            local zweig="$1" e quell name tag aus=""
+            shift
+            for e in "$@"; do
+              quell="${e%%=*}"; name="${quell##*/}"; name="${name,,}"
+              [[ "$quell" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || return 1
+              [[ "$zweig" == "pin/$name-"* ]] || continue
+              tag="${zweig#"pin/$name-"}"
+              [[ "$tag" =~ ^v[A-Za-z0-9._-]+$ ]] || continue
+              if [ -n "$aus" ] && [ "$aus" != "$quell $tag" ]; then return 1; fi
+              aus="$quell $tag"
+            done
+            [ -z "$aus" ] || echo "$aus"
+          }
+          # Soll-Stand der Anhänge: „<pfad> <sha256>“ je Datei. $1 = SHA256SUMS des Release (Datei), $2 = Quell-Repo,
+          # weitere = PIN_ANHAENGE. `*` = jede Datei der SHA256SUMS und sie selbst. Exit 1: SHA256SUMS unlesbar, eine
+          # genannte Datei fehlt darin, oder ein Eintrag ist nicht <owner/repo>=<ordner>:<datei|*>.
+          anhang_soll() {
+            local summen="$1" quelle="$2" e ordner datei h n z selbst aus=""
+            local re_summe='^([0-9a-f]{64}) [ *]([A-Za-z0-9._-]+)$'
+            local re_eintrag='^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+=([A-Za-z0-9_-][A-Za-z0-9._-]*(/[A-Za-z0-9_-][A-Za-z0-9._-]*)*):([*]|[A-Za-z0-9._-]+)$'
+            local -A soll=()
+            shift 2
+            while IFS= read -r z; do
+              [ -n "$z" ] || continue
+              [[ "$z" =~ $re_summe ]] || return 1
+              n="${BASH_REMATCH[2]}"
+              [ "$n" != SHA256SUMS ] && [ -z "${soll[$n]:-}" ] || return 1
+              soll[$n]="${BASH_REMATCH[1]}"
+            done < "$summen"
+            [ "${#soll[@]}" -gt 0 ] || return 1
+            selbst="$(sha256sum < "$summen")"; selbst="${selbst%% *}"
+            for e in "$@"; do
+              [[ "$e" =~ $re_eintrag ]] || return 1
+              ordner="${BASH_REMATCH[1]}"; datei="${BASH_REMATCH[3]}"
+              [ "${e%%=*}" = "$quelle" ] || continue
+              if [ "$datei" = "*" ]; then
+                for n in "${!soll[@]}"; do aus+="$ordner/$n ${soll[$n]}"$'\n'; done
+                aus+="$ordner/SHA256SUMS $selbst"$'\n'
+              elif [ "$datei" = SHA256SUMS ]; then
+                aus+="$ordner/SHA256SUMS $selbst"$'\n'
+              else
+                h="${soll[$datei]:-}"
+                [ -n "$h" ] || return 1
+                aus+="$ordner/$datei $h"$'\n'
+              fi
+            done
+            printf '%s' "$aus" | sort -u
+          }
+          # Anhänge in Ordnung? stdin = „<status> <pfad>“ jeder geänderten Datei außerhalb der Compose, $1 = Soll
+          # („<pfad> <sha256>“), $2 = Ist am Kopf („<pfad> <sha256|->“). Exit 0 nur, wenn jede geänderte Datei im Soll
+          # steht und hinzugefügt/geändert ist, und jede Soll-Datei am Kopf ihren Hash trägt. Ausgabe: der erste Grund.
+          anhaenge_ok() {
+            local st p h ist n=0
+            local -A soll=() istv=()
+            while read -r p h; do if [ -n "$p" ]; then soll[$p]="$h"; fi; done < "$1"
+            while read -r p h; do if [ -n "$p" ]; then istv[$p]="$h"; fi; done < "$2"
+            [ "${#soll[@]}" -gt 0 ] || { echo "kein Soll-Stand der Anhänge"; return 1; }
+            while read -r st p; do
+              [ -n "$st" ] || continue
+              n=$((n + 1))
+              [ -n "${soll[$p]:-}" ] || { echo "$p ist kein Release-Anhang aus PIN_ANHAENGE"; return 1; }
+              case "$st" in added|modified) ;; *) echo "$p: $st (nur hinzufügen oder ändern)"; return 1 ;; esac
+            done
+            for p in $(printf '%s\n' "${!soll[@]}" | sort); do
+              ist="${istv[$p]:--}"
+              [ "$ist" = "${soll[$p]}" ] || { echo "$p passt nicht zur SHA256SUMS des Release"; return 1; }
+            done
+            echo "$n Anhänge geändert, ${#soll[@]} geprüft"
+          }
           # <<< Entscheidungshilfen
           [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] || { ausgabe nichts "kein gültiger Kopf"; exit 0; }
           PR="$(gh api "repos/$REPO/commits/$HEAD_SHA/pulls" -q '.[0].number // ""')"
@@ -328,6 +406,34 @@ jobs:
               von_hand) kommentar "$1 auf veralteter Basis — ohne App zieht ihn niemand nach (@dependabot rebase)" ;;
               *) kommentar "$1" ;;
             esac
+          }
+          # Release-Anhänge eines Pin-PR (seit 0.48.0, siehe Kopf): Soll aus der SHA256SUMS des Release, Ist am Kopf des PR.
+          # $1 = Quell-Repo, $2 = Tag. Ausgabe: Zusammenfassung (Exit 0) oder der Grund (Exit 1).
+          anhaenge_pruefen() {
+            local qrepo="$1" qtag="$2" aid p h ergebnis
+            local summen="$RUNNER_TEMP/anhang-summen" soll="$RUNNER_TEMP/anhang-soll" ist="$RUNNER_TEMP/anhang-ist"
+            local datei="$RUNNER_TEMP/anhang-datei" tag_re="${2//./\\.}"
+            grep -qE "^\+[[:space:]]+image:[[:space:]]+[^[:space:]]+:${tag_re}@sha256:" <<<"$PATCHES" \
+              || { echo "der PR hebt keinen Pin auf $qtag"; return 1; }
+            if ! aid="$(gh api "repos/$qrepo/releases/tags/$qtag" -q '.assets[] | select(.name == "SHA256SUMS") | .id')" \
+               || ! [[ "$aid" =~ ^[0-9]+$ ]]; then
+              echo "Release $qtag von $qrepo fehlt oder hat keine SHA256SUMS"; return 1
+            fi
+            gh api "repos/$qrepo/releases/assets/$aid" -H "Accept: application/octet-stream" > "$summen" \
+              || { echo "SHA256SUMS von $qrepo $qtag nicht ladbar"; return 1; }
+            # shellcheck disable=SC2086  # PIN_ANHAENGE ist eine Liste
+            anhang_soll "$summen" "$qrepo" ${PIN_ANHAENGE:-} > "$soll" \
+              || { echo "PIN_ANHAENGE oder SHA256SUMS von $qrepo $qtag unlesbar (oder eine genannte Datei fehlt darin)"; return 1; }
+            : > "$ist"
+            while read -r p _; do
+              if gh api "repos/$REPO/contents/$p?ref=$HEAD_SHA" -H "Accept: application/vnd.github.raw" > "$datei" < /dev/null; then
+                h="$(sha256sum < "$datei")"; echo "$p ${h%% *}" >> "$ist"
+              else
+                echo "$p -" >> "$ist"
+              fi
+            done < "$soll"
+            ergebnis="$(anhaenge_ok "$soll" "$ist" <<<"$ANDERE")" || { echo "$ergebnis"; return 1; }
+            echo "$qrepo $qtag: $ergebnis"
           }
           ZWEIG="$(jq -r '.head.ref' <<<"$J")"
           GRUND=""
@@ -410,11 +516,19 @@ jobs:
               VERSION="${ZWEIG#release/v}"
             fi
             if [ -z "$GRUND" ] && [ "$ART" = pin ]; then
-              if grep -vxE 'stacks/[A-Za-z0-9._-]+/compose\.yaml' <<<"$DATEIEN" >/dev/null; then
+              ANDERE="$(gh api "repos/$REPO/pulls/$PR/files" --paginate \
+                -q '.[] | select(.filename | test("^stacks/[A-Za-z0-9._-]+/compose\\.yaml$") | not) | "\(.status) \(.filename)"')"
+              PATCHES="$(gh api "repos/$REPO/pulls/$PR/files" --paginate \
+                -q '.[] | select(.filename | test("^stacks/[A-Za-z0-9._-]+/compose\\.yaml$")) | .patch // "PATCH FEHLT"')"
+              # shellcheck disable=SC2086  # PIN_ANHAENGE ist eine Liste
+              if ! QUELLE="$(anhang_quelle "$ZWEIG" ${PIN_ANHAENGE:-})"; then
+                GRUND="PIN_ANHAENGE: zwei Quell-Repos passen zum Zweig $ZWEIG"
+              elif [ -z "$QUELLE" ] && [ -n "$ANDERE" ]; then
                 GRUND="Pin-PR ändert mehr als stacks/*/compose.yaml"
-              else
-                PATCHES="$(gh api "repos/$REPO/pulls/$PR/files" --paginate -q '.[] | .patch // "PATCH FEHLT"')"
-                nur_pin_zeilen "${PIN_PRAEFIX:-}" <<<"$PATCHES" || GRUND="Pin-PR ändert mehr als Pin-Zeilen von ${PIN_PRAEFIX:-(PIN_PRAEFIX fehlt)}"
+              elif ! nur_pin_zeilen "${PIN_PRAEFIX:-}" <<<"$PATCHES"; then
+                GRUND="Pin-PR ändert mehr als Pin-Zeilen von ${PIN_PRAEFIX:-(PIN_PRAEFIX fehlt)}"
+              elif [ -n "$QUELLE" ] && ! ANHANG="$(anhaenge_pruefen "${QUELLE% *}" "${QUELLE#* }")"; then
+                GRUND="Release-Anhänge: $ANHANG"
               fi
             fi
           fi
