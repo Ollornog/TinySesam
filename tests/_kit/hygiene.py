@@ -333,6 +333,48 @@ def _wert_ist_ausdruck(zeile: str, treffer) -> bool:
     return zeile[ende:ende + 1] == "…" or treffer.group("wert").endswith("...")
 
 
+def dependabot_bloecke(text: str) -> list[dict]:
+    """Je `- package-ecosystem:`-Block einer dependabot.yml: Ökosystem, Verzeichnisse, Wartezeit, Gruppen.
+
+    Für die Sprach-Varianten des Kits (Rust 0.49.0, Node 0.49.0). stdlib-only, kein YAML-Parser: gelesen werden
+    `package-ecosystem`, `directory`, `directories` (Inline-Liste `["/a", "/b"]` und Blockliste), `default-days` und ob
+    der Block `groups:` hat. Ergebnis je Block: {"oeko", "verzeichnisse" (Liste, ohne Schrägstrich am Ende, Wurzel
+    "/"), "tage" (Text oder fehlt), "gruppen" (bool)}.
+    """
+    def norm(d: str) -> str:
+        d = d.strip().strip("\"'")
+        return d.rstrip("/") or "/"
+
+    bloecke: list[dict] = []
+    aktuell: dict | None = None
+    in_liste = False
+    for zeile in zeilen_wie_grep(text):
+        z = zeile.split("#", 1)[0].rstrip()
+        if m := re.match(r"\s*-\s*package-ecosystem:\s*[\"']?([\w-]+)", z):
+            aktuell = {"oeko": m.group(1), "verzeichnisse": [], "gruppen": False}
+            bloecke.append(aktuell)
+            in_liste = False
+            continue
+        if aktuell is None:
+            continue
+        if in_liste:
+            if m := re.match(r"\s+-\s*(\S+)\s*$", z):
+                aktuell["verzeichnisse"].append(norm(m.group(1)))
+                continue
+            in_liste = False
+        if m := re.match(r"\s+directory:\s*(\S+)", z):
+            aktuell["verzeichnisse"].append(norm(m.group(1)))
+        elif m := re.match(r"\s+directories:\s*\[(.*)\]\s*$", z):
+            aktuell["verzeichnisse"].extend(norm(d) for d in m.group(1).split(",") if d.strip())
+        elif re.match(r"\s+directories:\s*$", z):
+            in_liste = True
+        elif m := re.match(r"\s+default-days:\s*(\d+)", z):
+            aktuell["tage"] = m.group(1)
+        elif re.match(r"\s+groups:\s*$", z):
+            aktuell["gruppen"] = True
+    return bloecke
+
+
 def zeilen_wie_grep(inhalt: str) -> list[str]:
     """Zeilen so schneiden, wie Editor, `grep` und der Mensch sie zaehlen: nur an ``\n``.
 
@@ -2404,7 +2446,9 @@ def pruefe_belegstellen_eng(root: str, dateien: list[str],
 # Wer eine Pruefung hinzufuegt, traegt sie ein — und `pruefe_tabelle_vollstaendig` unten
 # vergleicht die Tabelle gegen das Modul, damit auch das nicht am Vorsatz haengt.
 # Kit-Module, die nur auf Wunsch ins Repo kommen — Modul -> womit. Fehlt so ein Modul, ist das kein Befund.
-OPTIONALE_MODULE: dict[str, str] = {"golang": "repokit sync --go (0.38.0)"}
+OPTIONALE_MODULE: dict[str, str] = {"golang": "repokit sync --go (0.38.0)",
+                                     "rust": "repokit sync --rust (0.49.0)",
+                                     "node": "repokit sync --node (0.49.0)"}
 
 AUSGELIEFERTE_PRUEFUNGEN: list[tuple[str, str]] = [
     ("manifest", "pruefe"),
@@ -2440,6 +2484,14 @@ AUSGELIEFERTE_PRUEFUNGEN: list[tuple[str, str]] = [
     ("golang", "pruefe_go_werkzeuge"),
     ("golang", "pruefe_dependabot_go"),
     ("golang", "pruefe_go_check_verdrahtet"),
+    # Rust- und Node-Variante (0.49.0, PO 2026-11-06): wie Go — gefordert nur, wo das Modul liegt.
+    ("rust", "pruefe_rust_toolchain"),
+    ("rust", "pruefe_rust_deny"),
+    ("rust", "pruefe_dependabot_rust"),
+    ("rust", "pruefe_rust_check_verdrahtet"),
+    ("node", "pruefe_node_paket"),
+    ("node", "pruefe_dependabot_node"),
+    ("node", "pruefe_node_check_verdrahtet"),
 ]
 
 # Angeboten, aber NICHT gefordert — und jedes mit dem Grund, warum nicht.

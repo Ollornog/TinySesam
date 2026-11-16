@@ -310,7 +310,8 @@ def release_automatik(root: str, je_repo: str, wfs: dict[str, str]) -> list[str]
     `APP_PR: "release"` und `ABBILD_PFADE` verlangen ein `release.yml`, das `automatik` und `version` als Eingaben von
     `workflow_dispatch` kennt (sonst schlägt der Anstoß nach dem Merge fehl), die Konfiguration
     `.github/release-automatik.json` und `scripts/_release_automatik.py`. `APP_PR: "pin"` verlangt `PIN_PRAEFIX`
-    (registry/owner/), sonst nähme die Diff-Prüfung jede Zeile an oder keine.
+    (registry/owner/), sonst nähme die Diff-Prüfung jede Zeile an oder keine. `PIN_ANHAENGE` (seit 0.48.0) nur mit
+    `APP_PR: "pin"` und in der Form `<owner/repo>=<ordner>:<datei|*>`.
     """
     probleme: list[str] = []
     art = _wert(je_repo, "APP_PR")
@@ -333,12 +334,6 @@ def release_automatik(root: str, je_repo: str, wfs: dict[str, str]) -> list[str]
                 if not re.search(rf"(^|\s){eingabe}:", block):
                     probleme.append(f"release.yml: workflow_dispatch ohne Eingabe `{eingabe}` — der Anstoß der "
                                     "Release-Automatik schlüge fehl")
-            # Dependabot hebt die App-Token-Action hier nicht (den Pin besitzt die Vorlage) — er muss ihr gleichen,
-            # sonst altert er still. Neuer Pin: `repokit sync`, dann hier nachziehen.
-            soll = pins().get("actions/create-github-app-token", "")
-            for m in re.finditer(r"uses:\s*(actions/create-github-app-token@[0-9a-f]{40}[^\n]*)", rel):
-                if soll and m.group(1).rstrip() != soll:
-                    probleme.append(f"release.yml: `{m.group(1).strip()}` weicht vom Pin der Vorlage ab (`{soll}`)")
         for pfad in (".github/release-automatik.json", "scripts/_release_automatik.py"):
             if not os.path.exists(os.path.join(root, pfad)):
                 probleme.append(f'APP_PR: "release" ohne {pfad}')
@@ -346,6 +341,48 @@ def release_automatik(root: str, je_repo: str, wfs: dict[str, str]) -> list[str]
         praefix = _wert(je_repo, "PIN_PRAEFIX") or ""
         if not re.fullmatch(r"[a-z0-9.-]+/[a-z0-9._-]+/", praefix):
             probleme.append(f'APP_PR: "pin" ohne gültiges PIN_PRAEFIX (registry/owner/, ist "{praefix}")')
+    anhaenge = _wert(je_repo, "PIN_ANHAENGE")
+    if anhaenge is not None:
+        # Release-Anhänge im Pin-PR (seit 0.48.0): nur mit APP_PR pin, jeder Eintrag <owner/repo>=<ordner>:<datei|*>.
+        if art != "pin":
+            probleme.append('PIN_ANHAENGE ohne APP_PR: "pin" — den Pin-PR nähme niemand an')
+        if not anhaenge.split():
+            probleme.append("PIN_ANHAENGE ist leer")
+        for e in anhaenge.split():
+            m = re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+=([A-Za-z0-9_-][A-Za-z0-9._-]*(?:/[A-Za-z0-9_-][A-Za-z0-9._-]*)*)"
+                             r":(\*|[A-Za-z0-9._-]+)", e)
+            if not m:
+                probleme.append(f"PIN_ANHAENGE: {e!r} nicht in der Form <owner/repo>=<ordner>:<datei|*>")
+    return probleme
+
+
+APP_TOKEN_ACTION = "actions/create-github-app-token"
+
+
+def app_token_pins(wfs: dict[str, str]) -> list[str]:
+    """Jeder Workflow mit der App-Token-Action pinnt sie per SHA mit Versionskommentar, gleich dem Pin der Vorlage (0.49.1).
+
+    Dependabot hebt diese Action im Ziel-Repo nicht (den Pin besitzt die Vorlage, `pruefe_dependabot`), also altert
+    ein abweichender Pin still — und ein Tag (`@v3`) oder ein Pin ohne Kommentar fiele sonst gar nicht auf. Geprüft
+    werden alle Workflows (release.yml, image.yml, …), nicht nur der Auto-Merge-Workflow, den `rendere` ohnehin
+    zeilengleich gegen die Vorlage hält.
+    """
+    probleme: list[str] = []
+    soll = pins().get(APP_TOKEN_ACTION, "")
+    for name, text in sorted(wfs.items()):
+        if name == os.path.basename(WORKFLOW):
+            continue
+        for z in _zeilen(text):
+            if z.lstrip().startswith("#"):
+                continue
+            m = re.match(r"^\s*(?:-\s+)?uses:\s*" + re.escape(APP_TOKEN_ACTION) + r"(@\S*)?(.*)$", z)
+            if not m:
+                continue
+            ist = f"{APP_TOKEN_ACTION}{m.group(1) or ''}{m.group(2)}".rstrip()
+            if not re.fullmatch(re.escape(APP_TOKEN_ACTION) + r"@[0-9a-f]{40}  # v\d\S*", ist):
+                probleme.append(f"{name}: `{ist}` ist kein SHA-Pin mit Versionskommentar (`@<40 Hex>  # vX.Y.Z`)")
+            elif soll and ist != soll:
+                probleme.append(f"{name}: `{ist}` weicht vom Pin der Vorlage ab (`{soll}`)")
     return probleme
 
 
@@ -363,15 +400,16 @@ def pruefe(root: str) -> list[str]:
     """
     text = _lies(os.path.join(root, WORKFLOW))
     dependabot = pruefe_dependabot(root)
+    app_pins = [f".github/workflows/{p}" for p in app_token_pins(_workflows(root))]
     if text is None:
         if os.path.exists(os.path.join(root, ".github", "dependabot.yml")):
-            return [f"{WORKFLOW} fehlt — Dependabot-PRs blieben liegen (`repokit automerge` baut ihn)"]
-        return []
+            return [f"{WORKFLOW} fehlt — Dependabot-PRs blieben liegen (`repokit automerge` baut ihn)"] + app_pins
+        return app_pins
     block = je_repo_block(text)
     if block is None:
-        return [f"{WORKFLOW}: Block „je Repo: Anfang/Ende“ fehlt — nicht aus der Vorlage gebaut"]
+        return [f"{WORKFLOW}: Block „je Repo: Anfang/Ende“ fehlt — nicht aus der Vorlage gebaut"] + app_pins
     soll, probleme = rendere(root, block)
-    fehler = [f"{WORKFLOW}: {p}" for p in probleme] + dependabot
+    fehler = [f"{WORKFLOW}: {p}" for p in probleme] + dependabot + app_pins
     if text != soll:
         ist_z, soll_z = _zeilen(text), _zeilen(soll)
         for nr, (a, b) in enumerate(zip(ist_z, soll_z), 1):
