@@ -112,6 +112,74 @@ if [[ -n "${1:-}" ]]; then
         standard_ref="refs/remotes/$1/main"
     fi
 fi
+# ---------------------------------------------------------------------------
+# Hat die CI diesen Commit wirklich grün gesehen? (Kit 0.50.0, Register „Tag-Push-Annahme“)
+#
+# „Vorfahr von origin/main“ heißt nur, der Commit liegt dort. Dass die CI dort lief, ist eine
+# Annahme: auf einem neuen Repo ohne Runner lief nie eine (connect-suite, 2026-11-05).
+# Darum fragt der Hook GitHub: Jeder Pflicht-Check des Zweigs muss am Commit als Check-Run
+# vorliegen und fertig und grün sein (success/neutral/skipped). Alles andere fährt die Suite:
+# kein `gh`, kein Netz, Remote nicht GitHub, ein Pflicht-Check fehlt, läuft noch oder ist rot, ein Fehler irgendwo.
+# Pflicht-Checks stehen im Branch-Schutz oder in Rulesets. Sind sie nicht lesbar oder keine gesetzt (privat ohne
+# Bezahlplan: 403), gilt wie in pr-gruen „alle Läufe am Commit“: mindestens einer, alle fertig und grün, einer `success`.
+# Es gibt kein „im Zweifel durch“. Der Grund geht auf stderr, damit man sieht, warum die Suite läuft.
+#   ci_gruen <commit> <github-url> <zweig>   -> 0 nur bei „alle Pflicht-Checks grün“
+# Nicht gelesen wird mit `--jq` (gh-eigen), nicht mit einer Pipe auf jq: ein Fehler von `gh`
+# soll als Fehler ankommen, nicht als leere Liste.
+# ---------------------------------------------------------------------------
+ci_gruen() {
+    local sha="$1" url="$2" zweig="$3" slug pflicht laeufe ctx
+    command -v gh >/dev/null 2>&1 || { echo "pre-push: kein gh — Suite statt CI-Abfrage." >&2; return 1; }
+    if [[ "$url" =~ github\.com[:/]([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)$ ]]; then
+        slug="${BASH_REMATCH[1]%.git}"
+    else
+        echo "pre-push: Gegenstelle ist kein GitHub-Repo — Suite statt CI-Abfrage." >&2; return 1
+    fi
+    # Pflicht-Checks: Branch-Schutz, sonst Rulesets (wie pr-gruen). Privat ohne Bezahlplan liefert beides 403;
+    # dann ist der Maßstab wie dort „alle Läufe am Commit“ (siehe unten), nicht „nichts“.
+    pflicht="$(timeout 20 gh api "repos/$slug/branches/$zweig/protection/required_status_checks" \
+        --jq '.contexts[]' 2>/dev/null)" || pflicht=""
+    if [[ -z "$pflicht" ]]; then
+        pflicht="$(timeout 20 gh api "repos/$slug/rules/branches/$zweig" \
+            --jq '.[] | select(.type == "required_status_checks") | .parameters.required_status_checks[].context' \
+            2>/dev/null)" || pflicht=""
+    fi
+    laeufe="$(timeout 30 gh api --paginate "repos/$slug/commits/$sha/check-runs?per_page=100" \
+        --jq '.check_runs[] | [.name, .status, (.conclusion // "-")] | @tsv' 2>/dev/null)" \
+        || { echo "pre-push: Check-Runs von ${sha:0:9} nicht abfragbar — Suite." >&2; return 1; }
+    if [[ -z "$pflicht" ]]; then
+        # Kein Pflicht-Check les- oder gesetzt: Maßstab sind ALLE Läufe am Commit — mindestens einer, jeder fertig
+        # und grün, mindestens einer echt `success` (nur übersprungene Läufe sind keine Abnahme).
+        local erfolg=0
+        while IFS=$'\t' read -r name status ergebnis; do
+            [[ -n "$name" ]] || continue
+            if [[ "$status" != "completed" || ! "$ergebnis" =~ ^(success|neutral|skipped)$ ]]; then
+                echo "pre-push: Check '$name' am Commit ${sha:0:9}: $status/$ergebnis — Suite." >&2; return 1
+            fi
+            [[ "$ergebnis" == "success" ]] && erfolg=$((erfolg + 1))
+        done <<< "$laeufe"
+        if [[ "$erfolg" -eq 0 ]]; then
+            echo "pre-push: keine grünen Check-Runs am Commit ${sha:0:9} (CI lief dort nie?) — Suite." >&2; return 1
+        fi
+        return 0
+    fi
+    while IFS= read -r ctx; do
+        [[ -n "$ctx" ]] || continue
+        local gesehen=0
+        while IFS=$'\t' read -r name status ergebnis; do
+            [[ "$name" == "$ctx" ]] || continue
+            gesehen=$((gesehen + 1))
+            if [[ "$status" != "completed" || ! "$ergebnis" =~ ^(success|neutral|skipped)$ ]]; then
+                echo "pre-push: Pflicht-Check '$ctx' am Commit ${sha:0:9}: $status/$ergebnis — Suite." >&2; return 1
+            fi
+        done <<< "$laeufe"
+        if [[ "$gesehen" -eq 0 ]]; then
+            echo "pre-push: Pflicht-Check '$ctx' fehlt am Commit ${sha:0:9} — Suite." >&2; return 1
+        fi
+    done <<< "$pflicht"
+    return 0
+}
+
 while read -r _local_ref local_sha remote_ref _remote_sha; do
     refs_gesehen=$((refs_gesehen + 1))
     [[ "$remote_ref" == "refs/heads/main" ]] && pushes_main=1
@@ -126,8 +194,11 @@ while read -r _local_ref local_sha remote_ref _remote_sha; do
     # prüfte hier denselben Inhalt ein zweites Mal (12 min je Release, TinySesam 2026-09-27).
     # `merge-base` schält annotierte Tags selbst; zeigt ein Tag auf etwas anderes als einen
     # Commit, scheitert es — dann wird geprüft.
+    # Seit 0.50.0 zusätzlich: die Pflicht-Checks des Commits sind bei GitHub grün (ci_gruen). Ohne das
+    # gilt der Commit als ungeprüft und die Suite läuft.
     if [[ "$remote_ref" == refs/tags/* && -n "$standard_ref" ]] \
-        && git merge-base --is-ancestor "$local_sha" "$standard_ref" 2>/dev/null; then
+        && git merge-base --is-ancestor "$local_sha" "$standard_ref" 2>/dev/null \
+        && ci_gruen "$(git rev-parse "$local_sha^{commit}")" "${2:-}" "${standard_ref##*/}"; then
         refs_tag_geprueft=$((refs_tag_geprueft + 1))
     fi
 done || true
@@ -149,7 +220,7 @@ fi
 # einen Commit abseits des Standardzweigs, ein veralteter Tracking-Ref oder ein gemischter
 # Push mit Zweig fahren die Suite wie bisher.
 if [[ "$refs_tag_geprueft" -gt 0 && "$refs_gesehen" -eq $((refs_tag_geprueft + refs_geloescht)) ]]; then
-    echo "pre-push: reiner Tag-Push ($refs_tag_geprueft Tag(s)) auf Commits aus ${standard_ref#refs/remotes/} — dort per CI geprüft, keine Suite."
+    echo "pre-push: reiner Tag-Push ($refs_tag_geprueft Tag(s)) auf Commits aus ${standard_ref#refs/remotes/} — dort laut GitHub grün (alle Pflicht-Checks), keine Suite."
     exit 0
 fi
 
