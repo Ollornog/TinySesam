@@ -216,7 +216,10 @@ def qr_state(dev, code, secret):
 
 
 dev, code, secret, match = qr_start()
-assert match not in re.sub(r"id=qrmatch>\d\d<", "", auth._qr_links(code)["approve_url"])
+# The link carries the short code and nothing else. (Up to here the check was `match not in url` — but the eight
+# random characters of the code contain a two-digit number now and then, and the suite went red by chance.)
+_approve = urlsplit(auth._qr_links(code)["approve_url"])
+assert _approve.path == "/auth/qr/approve" and parse_qs(_approve.query) == {"code": [code]}, _approve
 ok("T-44: the new device shows a two-digit number — it is not part of the approval link")
 
 # (a) default: an account without a second factor cannot approve

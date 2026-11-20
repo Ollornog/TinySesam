@@ -72,6 +72,9 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
   (recovery codes after the confirmation); it now waits for the dialog it answered.
 - The browser test reports where Chrome stands when it writes no DevTools port (process state, `wchan`, load,
   profile) and lets Chrome log its INFO lines.
+- `test_h2_hardening.py`: "the two-digit number is not part of the approval link" was checked as a substring of the
+  link — the eight random characters of the short code contained such a number now and then. The check now reads the
+  link: path `/auth/qr/approve`, the code as its only parameter.
 
 ### Security — key management (H3: T-48, T-53, T-54, ADR-12, from the security review of 2026-11-20)
 
@@ -191,6 +194,18 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
   only some (say `--ts-accent`) now gets TinySesam's light values for the rest in light mode.
 - **New built-in favicon:** a rounded tile with a keyhole, the same mark as the bar's logo (darker blue in light,
   lighter in dark mode). `brand_icon` overrides it as before.
+
+### Added — a guide for AI coding assistants (T-65)
+
+- **`skills/tinysesam/SKILL.md`** for assistants that build an app with TinySesam: recipes (FastAPI with mandatory
+  TOTP, step-up, admin-created accounts with a sign-in link, API keys, forward-auth gate with the quickstart stack, app
+  passwords for WebDAV/CalDAV/Git, OAuth for Claude Code, home
+  network, C22 look and top bar), the switches and the pitfalls, with pointers into the docs. The repository is a
+  Claude Code plugin marketplace: `/plugin marketplace add Ollornog/TinySesam`, `/plugin install tinysesam@tinysesam`.
+- **`AGENTS.md`** for assistants that change TinySesam (layout, tests, generated files, backlog, security rules);
+  `CLAUDE.md` imports it.
+- `tests/test_repo.py` runs every Python block of both files and checks every name they mention — config fields,
+  package names, environment variables, headers, routes and paths — against the code.
 
 ### Added — the top bar as a building block (T-64)
 

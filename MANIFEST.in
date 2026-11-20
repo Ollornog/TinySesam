@@ -26,6 +26,8 @@ recursive-exclude tests *.py[cod]
 # generator of the project site, a repo matter, not part of the library's source.
 graft examples
 graft deploy
+# The skill for app builders (README "For AI coding assistants") travels with the source package too.
+graft skills
 recursive-exclude examples __pycache__
 recursive-exclude deploy __pycache__
 

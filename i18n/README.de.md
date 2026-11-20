@@ -1975,6 +1975,23 @@ gh run watch --exit-status            # nach dem Push: CI-Ergebnis abholen, Exit
 Minimal-Lauf ohne Extras (sichert den stdlib-scrypt-Fallback) und einen Browser-Job, der
 zusätzlich die Website baut.
 
+## Für KI-Assistenten
+
+Zwei Einstiege, damit ein Assistent sich zurechtfindet, ohne das ganze README zu lesen:
+
+- **Eine App mit TinySesam bauen:** der Skill
+  [`skills/tinysesam/SKILL.md`](https://github.com/Ollornog/TinySesam/blob/main/skills/tinysesam/SKILL.md) (Englisch) —
+  Rezepte (FastAPI mit TOTP-Pflicht, Step-up, Konten vom Admin mit Anmeldelink, API-Schlüssel, Gate vor beliebigen
+  Apps, OAuth für Claude Code, Heimnetz, C22-Optik), die Schalter und die Fallen, mit Verweisen in diese Doku. In
+  Claude Code: `/plugin marketplace add Ollornog/TinySesam`, dann `/plugin install tinysesam@tinysesam` (ab Claude
+  Code 2.1.275 in einem Schritt: `/plugin install tinysesam --marketplace Ollornog/TinySesam`). Andere Agenten lesen
+  die Datei direkt; sie folgt dem verbreiteten `SKILL.md`-Format.
+- **An TinySesam selbst arbeiten:** [`AGENTS.md`](https://github.com/Ollornog/TinySesam/blob/main/AGENTS.md)
+  (Englisch) — Aufbau, Tests, generierte Dateien, Backlog, Sicherheitsregeln des Repos. `CLAUDE.md` bindet sie für
+  Claude Code ein.
+
+Jeder Python-Block beider Dateien läuft in der Testsuite, und jeder genannte Name wird gegen den Code geprüft.
+
 ## Status
 
 **96 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
