@@ -68,6 +68,8 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
   the store's connection while the suite closed it — a segmentation fault in `sqlite3`. In the test process
   (`tests/_starter.py`) closing a `sqlite3` connection now waits for the outbox. Production never closes the
   connection under a running job.
+- Browser test: `answer()` waited for “no dialog at all” and ran out when the page opened the next dialog at once
+  (recovery codes after the confirmation); it now waits for the dialog it answered.
 - The browser test reports where Chrome stands when it writes no DevTools port (process state, `wchan`, load,
   profile) and lets Chrome log its INFO lines.
 

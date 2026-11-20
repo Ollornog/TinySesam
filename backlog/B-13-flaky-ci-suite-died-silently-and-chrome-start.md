@@ -1,13 +1,13 @@
 ---
 id: B-13
 type: Bug
-title: 'CI flakes: a suite died from a segfault without a word, Chrome hung at startup'
+title: 'CI flakes: a suite died from a segfault without a word, a dialog wait raced, Chrome hung at startup'
 status: erledigt
 milestone: M-2
 tags: [ci, tests, flaky]
 created: '2026-11-20'
 ---
-# B-13 — CI flakes: a suite died from a segfault without a word, Chrome hung at startup
+# B-13 — CI flakes: a suite died from a segfault without a word, a dialog wait raced, Chrome hung at startup
 
 **Seen:** `test_values_english.py` red three times in CI (on `main` and in a PR, Python 3.13 and 3.15), locally
 green. Under `FAIL test_values_english.py` stood nothing of its own — only the warnings in its stderr. Separately,
@@ -37,14 +37,31 @@ Production never closes the connection under a running worker — only the tests
 `close()` first waits until every outbox has run its queued jobs (`Outbox.wait`). After it: 0 crashes in
 5 × 300 rounds (3.13) and 3 × 300 (3.15); the suite 100× green (12 in parallel, 3.13) and 60× (3.15).
 
+**Production is not affected — measured.** The library never closes the shared connection (`auth.store` is tier C,
+there is no close method); at the end of the process `concurrent.futures` joins the outbox workers before the
+interpreter tears anything down. 150 processes that queue five notices each and end right away: 0 crashes, all
+750 `access_notice` rows written. Only code that closes `auth.store.db` itself (the tests) can hit the race.
+A public, safe way to shut down is open as [T-67](T-67-orderly-shutdown-close.md).
+
+## Cause 3 — a dialog wait in the browser test raced
+Seen on this fix's own PR (job `repeat`): “the dialog did not close (at …/auth/account)”. `Page.answer()` clicked
+OK and then waited for “no `dialog.tsdlg` at all”. The recovery-code flow opens the next dialog (the codes) right
+after the confirmation; when the request was quick it was open before the first poll, and the wait ran out
+although everything worked.
+
+**Fix:** `answer()` waits until the dialog it answered has left the document. A new check in the dialog section
+answers a `tsConfirm` that opens a `tsAlert` in the same microtask — deterministic: with the old wait it is red
+with exactly the CI message, with the new one green.
+
 ## Chrome
 Measured locally: Chrome writes the DevTools port after 0.2 s, under full CPU load (16 busy loops, four Chromes
 at once) after at most 1.3 s. 30 s is therefore not a slow start but a hang — the timeout stays. A hanging
-session or system D-Bus was ruled out (Chrome writes the port after 0.1 s even then). The cause could not be
+session or system D-Bus was ruled out (Chrome writes the port after 0.1 s even then), and so was a second suite
+running beside it: the same hang hit PR #244 in the job `browser`, where the browser test runs alone. The cause could not be
 reproduced locally; the failure message now names where Chrome stands (time since start, load, free memory,
 profile content, state and `wchan` of every Chrome process and thread of the main process), and Chrome logs its
 own INFO lines (`--enable-logging=stderr`). The next occurrence will show the place.
 
-**Guards:** `tests/test_runner.py` section K (signal name, stdout before the crash, faulthandler stack, crash
+**Guards:** the dialog check above; `tests/test_runner.py` section K (signal name, stdout before the crash, faulthandler stack, crash
 excerpt, close waits for the outbox — and does not without the starter). Mutation probes: each of the five
 changes removed individually turns exactly its check red.
