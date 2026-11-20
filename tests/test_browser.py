@@ -650,13 +650,25 @@ async def account_setup(p, go):
     await go("/auth/account")
     await p.click("a.btnlink[href$='/auth/totp/setup']")
     await p.click("form[action$='/auth/totp/setup/start'] button")
+    # The page after the POST may still be loading on a cold runner — the submit handler must be there
+    # before the click, otherwise the browser sends the form natively and nothing is measured.
+    for _ in range(60):
+        if await p.js("document.readyState==='complete' && !!document.getElementById('tstotp')"):
+            break
+        await asyncio.sleep(0.25)
     secret = await p.js("document.querySelector('.mono').textContent")
     await p.js(f"document.querySelector('#tstotp [name=code]').value={pyotp.TOTP(secret).now()!r};"
                "document.querySelector('#tstotp button').click()")
-    await asyncio.sleep(1.5)
+    for _ in range(60):                                  # fetch + offer(): wait for the box, at most 15 s
+        await asyncio.sleep(0.25)
+        if await p.js("!!document.getElementById('rcbox') && !document.getElementById('rcbox').hidden"):
+            break
     assert await p.js("location.pathname") == "/auth/totp/setup/start", \
         f"left the page before the recovery codes could be noted: {await p.js('location.href')!r}"
-    assert await p.js("!document.getElementById('rcbox').hidden && document.getElementById('tstotp').hidden")
+    assert await p.js("!document.getElementById('rcbox').hidden && document.getElementById('tstotp').hidden"), \
+        (f"codes not shown: msg={await p.js('document.getElementById(`msg`).textContent')!r} "
+         f"totp={t33.store.has_confirmed_totp(nora)} codes={t33.recovery_codes_remaining(nora)} "
+         f"failed={p.failed[failed_before:][:3]} console={p.console[:2]}")
     shown = (await p.js("document.getElementById('rccodes').textContent")).split("\n")
     assert len(shown) == t33.cfg.recovery_code_count == t33.recovery_codes_remaining(nora), shown
     await p.click("#rcdone")
