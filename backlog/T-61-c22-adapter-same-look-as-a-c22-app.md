@@ -25,7 +25,7 @@ C22: no package dependency, no C22 JavaScript on the auth pages, strict CSP unch
 - New tokens `--ts-danger-ink`, `--ts-success-ink` (default `#fff`, so nothing changes without the adapter): C22's
   destructive colour is light in dark mode and needs dark text.
 - Test `tests/test_c22_adapter.py`: completeness, fallbacks equal the defaults, every C22 name in the pinned list
-  `tests/fixtures/c22_tokens.txt` (refresh: `tools/c22_tokens.py`), wiring, CSP, and in a browser: adapter without C22
-  computes every token exactly as without it.
+  `tests/fixtures/c22_tokens.txt` (refresh: `tools/c22_tokens.py`), wiring, CSP; `tests/test_browser.py` measures in
+  Chrome that the adapter without C22 computes every token exactly as without it, and that with C22 they follow.
 
 **Not mapped (no C22 counterpart):** the five `--ts-image-*` tokens of the background images keep TinySesam's values.

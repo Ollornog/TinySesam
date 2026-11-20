@@ -3,7 +3,7 @@
 Checked here:
 * complete — every --ts-* token of theme.TOKENS has exactly one entry, and none that TOKENS lacks;
 * fallback — each entry reads `var(<C22 token or helper>, <TinySesam default>)` with the default of TOKENS,
-  so without C22 on the page nothing changes (measured in a real browser, too);
+  so without C22 on the page nothing changes (measured in a real browser in tests/test_browser.py);
 * names — every C22 token the adapter reads is in the pinned list tests/fixtures/c22_tokens.txt
   (refreshed with tools/c22_tokens.py; nothing here reads the C22 repository);
 * wiring — `c22_stylesheet` puts the adapter between TOKENS and brand_css, the stylesheet and the
@@ -11,8 +11,6 @@ Checked here:
 """
 import os
 import re
-import shutil
-import subprocess
 import sys
 import tempfile
 
@@ -144,42 +142,7 @@ for bad in ("https://cdn.example.com/c22.css", "//cdn.example.com/c22.css", "c22
 ok("foreign addresses and attribute breakouts are refused")
 
 
-# --- in a real browser: without C22 nothing changes, with C22 the tokens follow --------------------
-CHROME = next((b for b in ("google-chrome", "chrome", "chromium", "chromium-browser") if shutil.which(b)), None)
-if CHROME is None:
-    print("  – browser part skipped: no Chrome (the CI has one)")
-else:
-    probe = ("<script>const s=getComputedStyle(document.documentElement);document.body.textContent="
-             f"JSON.stringify({sorted(tokens)}.map(n=>[n,s.getPropertyValue(n).trim()]))</script>")
-    fake_c22 = (":root{" + "".join(f"{n}:rgb(1,2,3);" for n in sorted(c22_names) if n not in
-                                  ("--radius", "--font-sans", "--font-mono"))
-                + "--radius:3px;--font-sans:Probe;--font-mono:ProbeMono}")
-
-    def computed(css):
-        d = tempfile.mkdtemp()
-        p = os.path.join(d, "p.html")
-        with open(p, "w", encoding="utf-8") as f:
-            f.write(f"<!doctype html><html><head><style>{css}</style></head><body>{probe}</body></html>")
-        # The flags of test_browser.py: --disable-dev-shm-usage, because a CI runner's tiny /dev/shm kills the
-        # renderer, and --dump-dom then waits for a page that never finishes (seen: 60 s timeout in CI).
-        out = subprocess.run([CHROME, "--headless=new", "--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage",
-                              "--no-first-run", f"--user-data-dir={d}/u",
-                              "--dump-dom", "file://" + p], capture_output=True, text=True, timeout=60).stdout
-        import html as _h
-        import json
-        return dict(json.loads(_h.unescape(re.search(r"<body>(.*)</body>", out, re.S).group(1))))
-
-    base = computed(TOKENS)
-    with_adapter = computed(TOKENS + C22_ADAPTER)
-    differ = {n: (base[n], with_adapter[n]) for n in base if base[n] != with_adapter[n]}
-    assert not differ, f"the adapter without C22 changes: {differ}"
-    assert all(base.values()), [n for n, v in base.items() if not v]
-    ok("browser: adapter without C22 on the page → every --ts-* computes exactly as without it")
-
-    themed = computed(fake_c22 + TOKENS + C22_ADAPTER)
-    unmoved = sorted(n for n in entries if split_var(entries[n]) and themed[n] == base[n])
-    assert not unmoved, f"these do not follow C22: {unmoved}"
-    assert themed["--ts-radius"] == "3px" and themed["--ts-bg"] == "rgb(1,2,3)", themed
-    ok("browser: with C22 tokens on the page every mapped --ts-* follows them")
+# The same two properties in a real browser (adapter without C22 changes nothing, with C22 every mapped
+# token follows): tests/test_browser.py, `c22_adapter`, over the browser test's DevTools connection.
 
 print("C22 adapter OK")
