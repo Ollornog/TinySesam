@@ -2,7 +2,15 @@
 
 All notable changes. Format loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [0.25.7] — 2026-11-20
+
+### Changed
+
+Patch release cut by the release automation after Dependabot merges:
+
+- ci: bump the all group in /deploy/gateway with 4 updates (#240)
+- ci: bump caddy in /deploy/forward-auth/caddy-gate (#231)
+- ci: bump caddy in /deploy/forward-auth/caddy-gate (#225)
 
 ### Changed — public API narrowed to the documented surface (M-1): no name had to go
 
