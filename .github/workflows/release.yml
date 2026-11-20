@@ -339,9 +339,8 @@ jobs:
           docker build --quiet --tag "$image" deploy/forward-auth/caddy-gate >/dev/null
           docker run --rm "$image" caddy version
           docker run --rm "$image" caddy list-modules | grep -qx 'http.authentication.providers.jwt'
-          # A syntactically valid placeholder key (32 zero bytes): the real one comes from `tinysesam gate-key`.
-          key="$(python3 -c 'import base64; print(base64.b64encode(bytes(32)).decode())')"
-          docker run --rm -e TS_GATE_PUBKEY="$key" -v "$PWD/deploy/forward-auth:/t:ro" "$image" \
+          # The gate template fetches its keys at runtime (`jwk_url`, H3) — validating needs neither key nor upstream.
+          docker run --rm -v "$PWD/deploy/forward-auth:/t:ro" "$image" \
             caddy validate --config /t/Caddyfile.gate --adapter caddyfile
           for mode in acme internal ip; do
             docker run --rm -e TS_TLS="$mode" -e TS_AUTH_HOST=auth.example.com -e TS_APP_HOST=app.example.com \
