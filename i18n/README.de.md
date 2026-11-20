@@ -541,6 +541,29 @@ eingebaute Seite — Login, PIN, TOTP, Konto, Admin-Panel und die Fehlerseiten. 
 `fn(auth) -> str`, wenn der Rumpf vom Request abhängt (Login-Status, Sprache). `auth.install_error_pages(app)` liefert Browsern gebrandete 403/404/500-Seiten,
 API-Clients weiterhin JSON. Mehr als Farben nötig? Ganze Seite per `auth.set_template(...)` ersetzen.
 
+**Dialoge.** Die eingebauten Seiten öffnen nie die Systemfenster des Browsers (`alert`/`confirm`/`prompt`). Fragen,
+Hinweise und einmalig gezeigte Geheimnisse (ein neuer API-Key, neue Recovery-Codes) erscheinen in einem eigenen
+Dialog — ein natives `<dialog>`, gestylt über dieselben Tokens, mit Tastatur bedienbar (Escape bricht ab, Enter
+bestätigt, Tab bleibt im Dialog, der Fokus kehrt zum auslösenden Knopf zurück) und bei Geheimnissen mit einem
+**Kopieren**-Knopf; fehlt die Clipboard-API (reines HTTP), ist der Text zum Kopieren mit Strg+C vorselektiert. Eine
+eigene Seite (`set_template`) bekommt denselben Baustein als `ctx["dialog"]` — einmal in die Seite setzen und aus dem
+eigenen Skript aufrufen:
+
+```python
+def my_account(auth, ctx):
+    return f"""<!doctype html><title>Konto</title>{ctx['dialog']}
+<button id=go>Key erzeugen</button>
+<script>document.getElementById('go').addEventListener('click', async () => {{
+  if (await tsConfirm('Neuen Key erzeugen?')) await tsSecret('Neuer API-Key', 'tsk_…', 'Nur einmal sichtbar.');
+}});</script>"""
+
+auth.set_template("account", my_account)
+```
+
+`tsAlert(text)`, `tsConfirm(text, {danger})` → `true`/`false`, `tsPrompt(text, value, {type})` → Text oder `null`,
+`tsSecret(title, value, note)` und `tsCopy(value, field)` liefern jeweils ein Promise; die Nonce der strikten CSP
+deckt den Block wie jeden anderen ([`tinysesam/dialog.py`](../tinysesam/dialog.py)).
+
 ## PIN und Step-up für sensible Routen
 
 Eine PIN muss kein Weg hinein sein. `pin_login=False` hält sie von der Login-Seite fern und lässt sie
@@ -1649,7 +1672,7 @@ zusätzlich die Website baut.
 
 ## Status
 
-**84 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
+**85 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
 (`tests/test_matrix.py`).
 
 Gebaut und getestet: Passwort/TOTP/Sitzungen/Rollen, Remember-me, Step-up und per-Route-MFA,

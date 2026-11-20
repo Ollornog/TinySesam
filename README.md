@@ -534,6 +534,28 @@ page — login, PIN, TOTP, account, admin panel and the error pages. Both take H
 when the shell depends on the request (sign-in state, language). `auth.install_error_pages(app)` gives browsers themed 403/404/500 pages while API
 clients keep getting JSON. Need more than colors? Replace a whole page with `auth.set_template(...)`.
 
+**Dialogs.** The built-in pages never open the browser's own `alert`/`confirm`/`prompt` boxes. Questions, notices
+and secrets shown once (a new API key, new recovery codes) appear in one dialog of their own — a native `<dialog>`,
+styled by the same tokens, keyboard-friendly (Escape cancels, Enter confirms, Tab stays inside, the focus returns to
+the button that asked) and, for secrets, with a **Copy** button; where the clipboard API is missing (plain HTTP) the
+text is pre-selected for Ctrl+C. A page of your own (`set_template`) gets the same building block as
+`ctx["dialog"]` — put it into the page once and call it from your script:
+
+```python
+def my_account(auth, ctx):
+    return f"""<!doctype html><title>Account</title>{ctx['dialog']}
+<button id=go>Create key</button>
+<script>document.getElementById('go').addEventListener('click', async () => {{
+  if (await tsConfirm('Create a new key?')) await tsSecret('New API key', 'tsk_…', 'Shown only once.');
+}});</script>"""
+
+auth.set_template("account", my_account)
+```
+
+`tsAlert(text)`, `tsConfirm(text, {danger})` → `true`/`false`, `tsPrompt(text, value, {type})` → text or `null`,
+`tsSecret(title, value, note)` and `tsCopy(value, field)` all return a Promise; the nonce of the strict CSP covers the
+block like every other one ([`tinysesam/dialog.py`](https://github.com/Ollornog/TinySesam/blob/main/tinysesam/dialog.py)).
+
 ## PIN, and step-up for sensitive routes
 
 A PIN does not have to be a way in. `pin_login=False` keeps the PIN off the login page and leaves it
@@ -1612,7 +1634,7 @@ without extras (guards the stdlib-scrypt fallback), and a browser job that also 
 
 ## Status
 
-**84 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
+**85 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
 
 Implemented and tested: password/TOTP/sessions/roles, remember-me, step-up and per-route MFA,
 factor chains, personal PIN, shared resource secrets, magic links + mailer hook, registration and

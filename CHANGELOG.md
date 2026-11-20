@@ -2,6 +2,32 @@
 
 All notable changes. Format loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Changed — own dialogs instead of the browser's system boxes, with a copy button (T-35)
+
+- **No more `alert`/`confirm`/`prompt`.** The built-in pages asked, told and showed secrets in the browser's own boxes
+  — unstyled, blocking the tab, a new API key in a plain text field. All 23 calls (account page, passkey sign-in,
+  the offer after a factor change, admin panel) now use one building block, `tinysesam/dialog.py`: a native
+  `<dialog>` opened with `showModal()`, styled only by the `--ts-*` tokens, without inline handlers, under the
+  page's CSP nonce. Escape cancels (never confirms), Enter confirms, Tab stays inside, the focus returns to the
+  button that asked; `role=alertdialog`, `aria-modal`, `aria-labelledby`. Texts en + de (`dlg.*` in `messages.py`).
+- **Copy button for every secret shown once:** a new API key (account page and panel) and new recovery codes
+  (account page) appear in a secret dialog with **Copy**; the TOTP setup page has a copy button below the codes,
+  the admin's sign-in link (T-33) one next to the link. `navigator.clipboard.writeText` with "Copied"; without the
+  clipboard API (plain HTTP) the text is pre-selected for Ctrl+C. The secret never goes into a URL, browser storage
+  or the console.
+- **Recovery codes on the account page** no longer stay printed below the 2FA section — they are shown in the
+  dialog, once.
+- **For own templates:** `ctx["dialog"]` holds the building block (`<style>` + `<script>`); `render_page` gives it
+  the nonce. `tsAlert`, `tsConfirm`, `tsPrompt`, `tsSecret` and `tsCopy` return Promises (README, Look & feel).
+- **Admin panel:** the wide user table scrolls inside its box instead of widening the page — on a phone a dialog
+  centred in the wider page sat beside the screen. Panel text `admin.key_once` reworded (it is now the dialog's
+  note), new `admin.key_new`.
+- **Guard:** `tests/test_dialogs.py` fails on any system dialog call in the package, the website or the examples
+  (with a scanner self-test), and checks building block, nonce, tokens and texts; `tests/test_browser.py` drives the
+  dialogs with real key presses, reads the clipboard back and checks the fallback selection.
+
 ## [0.25.7] — 2026-11-20
 
 ### Changed

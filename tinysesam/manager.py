@@ -40,6 +40,7 @@ from .passwords import hash_password, verify_password, needs_rehash, dummy_verif
 from . import passwords as _passwords
 from . import passwords as _pw
 from .templates import PREFIX_PLACEHOLDER as _PREFIX_PLACEHOLDER, Templates, inject_nonce as _inject_nonce
+from .dialog import assets as _dialog_assets
 from . import totp as _totp
 from . import security
 from .ldap_ import CONNECTION_TIMEOUT as _LDAP_TIMEOUT
@@ -6961,6 +6962,9 @@ class TinySesam:
         ctx.setdefault("nonce", nonce)
         # For own templates (set_template): the prefix that app paths need in the browser (T-15).
         ctx.setdefault("prefix", self._prefix(request))
+        # …and the dialog building block (T-35): `<style>` + `<script>` for tsAlert/tsConfirm/tsPrompt/tsSecret,
+        # which the nonce below covers like every other block of the page.
+        ctx.setdefault("dialog", _dialog_assets(self))
         built_in = not self.templates.overridden(template)
         out = self.templates.render(template, self, ctx)
         if isinstance(out, Response):
