@@ -59,6 +59,12 @@ app.example.com {
 		reverse_proxy {$TS_AUTH_UPSTREAM:127.0.0.1:8000}
 	}
 
+	# OAuth for MCP clients (T-36, optional) — see ./Caddyfile. A request with an access token carries no gate
+	# cookie, so it always takes the fallback path below, where TinySesam checks the token per request.
+	handle /.well-known/oauth-protected-resource* {
+		reverse_proxy {$TS_AUTH_UPSTREAM:127.0.0.1:8000}
+	}
+
 	# Public paths of the application (T-20), such as share links: without sign-in, without identity.
 	# TS_SHARE_PREFIX is a regular expression over the beginning of the path, e.g.
 	#   TS_SHARE_PREFIX='^/(s|public/share)/'
@@ -145,6 +151,15 @@ app.example.com {
 					# The new gate token goes to the browser with the application's response.
 					# Placeholder in Go-canonical form (H-16, see ./Caddyfile).
 					header +Set-Cookie {rp.header.X-Tinysesam-Gate-Cookie}
+				}
+				# OAuth resource (T-36): pass the 401 with its Bearer challenge through — before @denied.
+				@oauth {
+					status 401
+					header X-Tinysesam-Reason oauth
+				}
+				handle_response @oauth {
+					header WWW-Authenticate {rp.header.Www-Authenticate}
+					respond 401
 				}
 				@denied status 401
 				handle_response @denied {

@@ -816,6 +816,24 @@ added, then the old table is dropped, a doubled column is left alone with a warn
 way back.) Without a backup there is no way back; that is why the backup is the first step of the update.
 
 
+## OAuth for MCP clients: tables and rollback (schema 17)
+
+Schema 17 (T-36) only **adds** the tables `oauth_client`, `oauth_request`, `oauth_code`, `oauth_grant` and
+`oauth_token`; nothing existing changes. An older version opens the file with the "newer schema version" warning
+and simply has no OAuth routes — connected programs get 401 until the update is back, sessions and API keys keep
+working. No SQL is needed either way.
+
+- **Pepper:** the token digests are keyed with `TINYSESAM_OAUTH_PEPPER` / `oauth_pepper_file`, otherwise with a
+  subkey of the master key. Changing the pepper (or the master key without an own pepper) disconnects every program:
+  their tokens no longer match. Back it up next to the master key, apart from the database.
+- **Housekeeping:** `gc()` / `tinysesam gc` removes expired codes and tokens, connections without a live token,
+  revoked connections after a week and registrations that never led to a connection after a day (`oauth_*` in the
+  result).
+- **Audit events:** `oauth_client_registered`, `oauth_authorize`, `oauth_authorize_denied`, `oauth_consent`
+  (`decision=allow|deny`), `oauth_token`, `oauth_refresh`, `oauth_code_reuse`, `oauth_refresh_reuse`,
+  `oauth_revoked` (`reason=user|admin|client|account_disabled|code_reuse|refresh_reuse`), `oauth_devices_read` (panel),
+  and `forward_denied` with `reason=oauth_token_<why>` for a rejected token at the proxy.
+
 ## Sign-in methods and their strength
 
 **By default TinySesam is single-factor:** a password alone signs in completely. A second

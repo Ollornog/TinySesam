@@ -1132,6 +1132,67 @@ For **machine access** (scripts, other services, system daemons) — alongside t
   how many keys are still live (`api_keys_active`). Keys of a disabled account never
   authenticated in the first place.
 
+## OAuth for MCP clients
+
+TinySesam can be the **OAuth 2.1 authorization server** for tools a person runs on their own computer — first of
+all **Claude Code** as an MCP client (T-36, ADR-11). The application behind the proxy (an MCP server, any HTTP
+app) contains **no OAuth code**: forward auth accepts the access token and passes `Remote-*` on, exactly as for a
+session. The sign-in is TinySesam's own — chain, TOTP, passkey, setup pass — followed by a consent page that names
+the program, where the answer goes (`localhost:<port>`) and what it may do for how long.
+
+```python
+TinySesamConfig(
+    base_url="https://auth.example.com",            # the issuer — fixed, never from the request
+    forward_auth_enabled=True,
+    oauth_enabled=True,
+    oauth_resources=["https://app.example.com/mcp"],  # tokens are valid only here and below
+)
+```
+
+At the proxy, two additions on the application's host (both in `deploy/forward-auth/Caddyfile`):
+`/.well-known/oauth-protected-resource*` goes to TinySesam (RFC 9728 — the client learns where to sign in), and
+a 401 that TinySesam marks with `X-TinySesam-Reason: oauth` is passed through with its `WWW-Authenticate: Bearer
+resource_metadata=…` instead of being turned into a redirect to the login page. Then, on the computer with Claude
+Code:
+
+```bash
+claude mcp add --transport http myapp https://app.example.com/mcp
+claude mcp login myapp          # or /mcp inside Claude Code — the browser opens, sign in, allow
+```
+
+With a certificate from your own CA (home network, IP address — see `docs/HOME-NETWORK.md`) Claude Code needs the
+root: `export NODE_EXTRA_CA_CERTS=/path/to/root.crt` (or the same key under `env` in Claude Code's `settings.json`);
+an IP address must be in the certificate as a Subject Alternative Name.
+
+What happens and what protects it:
+
+- **Registration** (RFC 7591) is open, because Claude Code registers itself — and anew after every logout or port
+  collision. Only public clients (`token_endpoint_auth_method=none`) with a loopback redirect
+  (`http://localhost`, `127.0.0.1` or `[::1]`, any port); nothing the client names is fetched, its name is shown as
+  "not verified", 20 registrations per address and hour. Registrations that never led to a connection go in `gc()`.
+- **Authorization code with PKCE S256 only**, the code lives 60 s and works once — a second use revokes what the
+  first produced. The redirect URI is compared exactly, only a loopback port may differ (RFC 8252 §7.3). The answer
+  carries `iss` (RFC 9207). CIMD is not advertised: it needs the AS to fetch a document from the internet.
+- **Tokens are opaque** (`tsat_…` access, `tsrt_…` refresh; 256 random bits plus a checksum that secret scanners
+  know), the database holds only an HMAC digest keyed with a **pepper** — `TINYSESAM_OAUTH_PEPPER` or
+  `oauth_pepper_file`; without one it is derived from the master key (`config_check` says so).
+- **Access token 1 h** (`oauth_access_token_ttl_sec`), checked against the database on every request: disconnecting
+  a device, locking the account or removing a role takes effect at once. A token never carries the admin flag.
+- **Refresh tokens rotate on every use.** A used one that comes back means it was copied: the whole connection is
+  revoked, the audit log and `on_security_event` (`oauth_token_reuse`) say so. They expire after
+  `oauth_refresh_idle_days` (90) without use and at the latest after `oauth_refresh_max_days` (180) — then the
+  person signs in again. `0` switches the maximum off on purpose; `config_check` then points to ASVS 5.0 V10.4.8.
+  `oauth_refresh_grace_sec` (0) can let two processes of one client refresh at once; Claude Code serialises.
+- **Devices:** the account page lists the connected programs (name, client, connected, last used, address,
+  resource) with "Disconnect"; the admin panel has a tab with all of them. `claude mcp logout` revokes at the server
+  (RFC 7009, without a client secret).
+- **Limits:** the connectors of Claude Desktop and Claude on the web call from Anthropic's network and cannot reach a server that
+  is only in your LAN; Claude Code can. Claude Code has no DPoP — rotation is the protection for refresh tokens.
+  Services without a person (`client_credentials`) follow separately (T-60).
+
+The end-to-end check against the real Claude Code CLI is `tools/oauth-e2e/e2e.py` (manual: needs `claude`, Docker
+and Chrome).
+
 ## Admin panel
 
 Built-in panel at **`/auth/admin`** (`is_admin` only), embeddable with no extra setup:
@@ -1647,7 +1708,7 @@ without extras (guards the stdlib-scrypt fallback), and a browser job that also 
 
 ## Status
 
-**89 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
+**90 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
 
 Implemented and tested: password/TOTP/sessions/roles, remember-me, step-up and per-route MFA,
 factor chains, personal PIN, shared resource secrets, magic links + mailer hook, registration and

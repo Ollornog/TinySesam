@@ -155,6 +155,32 @@ class TinySesamConfig:
     # the parent domain and would reach every app below it. Requires gate_token_enabled and base_url,
     # does not combine with cookie_domain.
     gate_link_enabled: bool = False
+
+    # --- OAuth 2.1 for MCP clients and other human-operated tools (T-36, ADR-11) ---
+    # TinySesam becomes an authorization server: a tool such as Claude Code registers itself (dynamic
+    # registration, loopback redirect only), the person signs in here as always (chain, TOTP, passkey) and
+    # allows the access on a consent page. The protected application contains no OAuth code: forward auth
+    # accepts the access token and sets Remote-* as for a session. Needs forward_auth_enabled, base_url (the
+    # issuer) and at least one entry in oauth_resources. Recipe: README "OAuth for MCP clients".
+    oauth_enabled: bool = False
+    # The protected resources tokens are issued for — absolute URLs, e.g. ["https://app.example.com/mcp"].
+    # The token is valid only for this URL and the paths below it (audience, RFC 8707); the proxy routes
+    # /.well-known/oauth-protected-resource* of the application's host to TinySesam.
+    oauth_resources: list[str] = field(default_factory=list)
+    oauth_access_token_ttl_sec: int = 3600   # lifetime of an access token; checked against the database per request
+    # A refresh token expires after this many days without use (sliding: each use renews it).
+    oauth_refresh_idle_days: int = 90
+    # Absolute maximum of a connection in days, regardless of use — then the person signs in again
+    # (ASVS 5.0 V10.4.8). 0 = no maximum (only on purpose: config_check reports it).
+    oauth_refresh_max_days: int = 180
+    # Grace window in seconds: a refresh token used again within it returns the SAME successor instead of
+    # counting as reuse (two processes of one client refreshing at once). 0 = every second use revokes the
+    # connection; Claude Code serialises its refreshes, so 0 is enough there. 0–60.
+    oauth_refresh_grace_sec: int = 0
+    # File with the pepper of the token digests (Base64, at least 32 bytes). The environment variable
+    # TINYSESAM_OAUTH_PEPPER takes precedence; without both it is derived from the master key
+    # (secrets_key_file / TINYSESAM_SECRETS_KEY). Changing it disconnects every device.
+    oauth_pepper_file: str = ""
     https_mode: str = "warn"              # off | warn | force  — force = HTTP→HTTPS redirect;
                                           # warn = also runs WITHOUT a certificate (with a warning in the panel)
     # Strict-Transport-Security on every HTTPS response while https_mode='force' (ASVS 3.4.1). The default is

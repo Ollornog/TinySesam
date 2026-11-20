@@ -55,6 +55,31 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ### Added
 
+- **OAuth 2.1 for MCP clients (T-36, ADR-11):** TinySesam can be the authorization server for tools a person runs on
+  their own computer — first of all Claude Code as an MCP client. The application behind the proxy contains no OAuth
+  code: `/auth/forward` accepts the access token, checks account, grant and audience on every request and sets
+  `Remote-*` as for a session; at a configured resource a 401 carries `WWW-Authenticate: Bearer resource_metadata=…`
+  and `X-TinySesam-Reason: oauth`. New routes: RFC 8414 metadata (`/.well-known/oauth-authorization-server`, S256
+  only, `iss` supported, `offline_access`, no CIMD), RFC 9728 metadata for the configured resources
+  (`/.well-known/oauth-protected-resource/…`), open registration for public loopback clients
+  (`/auth/oauth/register`, rate-limited, capped), `/auth/oauth/authorize` → TinySesam's sign-in (chain, TOTP, setup
+  pass) → consent page (program marked "not verified", redirect host with a warning, resource, duration; CSRF,
+  `frame-ancestors 'none'`, bound to the browser that started it), `/auth/oauth/token` (code with PKCE, 60 s, single
+  use, a second use revokes; refresh rotation, a reused refresh token revokes the whole connection), and
+  `/auth/oauth/revoke` (RFC 7009 without a client secret, as `claude mcp logout` calls it). Tokens are opaque
+  (`tsat_`/`tsrt_`/`tsac_`, 256 bit + checksum), stored only as an HMAC digest with a pepper
+  (`TINYSESAM_OAUTH_PEPPER`, `oauth_pepper_file`, otherwise a subkey of the master key). Access tokens live 1 h,
+  refresh tokens 90 days without use and at most 180 days (absolute maximum on by default, ASVS 5.0 V10.4.8). The
+  account page lists the connected programs with "Disconnect", the admin panel has a tab with all of them; locking an
+  account disconnects its programs. New fields `oauth_enabled` (off), `oauth_resources`, `oauth_access_token_ttl_sec`,
+  `oauth_refresh_idle_days`, `oauth_refresh_max_days`, `oauth_refresh_grace_sec`, `oauth_pepper_file`; new
+  `on_security_event` events `oauth_device_connected`, `oauth_device_revoked`, `oauth_token_reuse`
+  (`SECURITY_EVENTS` grows — an extension, the guard lists a changed constant as a break); schema 17 adds five tables,
+  nothing existing changes. `deploy/forward-auth/Caddyfile` and `Caddyfile.gate` route the RFC 9728 path to
+  TinySesam and pass the OAuth 401 through. `gc()` and `tinysesam gc` clean up codes, tokens, connections and unused
+  registrations. Measured end to end with Claude Code 2.1.329 behind Caddy built from the template:
+  `tools/oauth-e2e/e2e.py`.
+
 - **Home network without a domain (T-37):** `docs/HOME-NETWORK.md` recommends a domain first — a publicly trusted
   certificate via DNS-01 works even for names that resolve only at home, and no device needs a CA — and describes the
   fallback: HTTPS on a bare IP address with Caddy's local CA (`tls internal`), how to export the root and trust it on

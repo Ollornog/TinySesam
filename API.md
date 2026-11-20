@@ -22,7 +22,7 @@ The tier is recorded per name in `tests/api_surface.json`. The guard `tests/test
 
 **Public is what the hand-written docs describe** (decided before 1.0): the READMEs, `CONFIGURATION.md`, `SECURITY.md` and `docs/OPERATIONS.md`. This page is generated and lists every name with its tier; being listed here alone is no promise. The guard checks that every tier-A/B Python name is named in those documents.
 
-The configuration fields are in [CONFIGURATION.md](CONFIGURATION.md): 176 of 178 in tier A, the others below at their tier.
+The configuration fields are in [CONFIGURATION.md](CONFIGURATION.md): 176 of 185 in tier A, the others below at their tier.
 
 **English, names as well as values** (since 0.22.0, without alias): The names of tiers A and B, their parameters and the keys and values they return or accept — result dicts, the `details` passed to `on_security_event`, the context of your own pages (`ctx["prefix"]`, `ctx["purpose"]`), the JSON responses of the routes, the kinds of API keys (`automation`, `human`). Since the last breaking pass before the freeze (PO decision 2026-10-29) the same holds for what operators and proxies read — query and form parameters, header and cookie names, logger names, the event words and keys of the security log, message ids — and audit and log lines are English as well. The lists old → new are in the CHANGELOG (0.22.0, [Unreleased]).
 
@@ -30,7 +30,7 @@ The configuration fields are in [CONFIGURATION.md](CONFIGURATION.md): 176 of 178
 
 **`auth.store` is internals** (tier C): the storage layer of the built-in routes, without tier, without promise and without transition period — its methods can change with every release. What an app needs is listed below as a method of `TinySesam` (e.g. `set_disabled` instead of `auth.store.set_disabled`).
 
-**Status:** A 376 · B 163 · C 38 names.
+**Status:** A 380 · B 183 · C 38 names.
 
 ## A · Methods of `TinySesam`
 
@@ -304,7 +304,7 @@ Value: `{'user': 'Remote-User', 'name': 'Remote-Name', 'email': 'Remote-Email', 
 
 The events for which `on_security_event` is called — everything that creates, changes, removes or consumes a sign-in factor of the account.
 
-Values: `password_changed`, `pin_set`, `pin_disabled`, `totp_enabled`, `totp_disabled`, `recovery_codes_generated`, `recovery_code_used`, `passkey_added`, `passkey_removed`, `api_key_created`, `api_key_revoked`, `api_keys_revoked`, `email_changed`, `username_changed`
+Values: `password_changed`, `pin_set`, `pin_disabled`, `totp_enabled`, `totp_disabled`, `recovery_codes_generated`, `recovery_code_used`, `passkey_added`, `passkey_removed`, `api_key_created`, `api_key_revoked`, `api_keys_revoked`, `email_changed`, `username_changed`, `oauth_device_connected`, `oauth_device_revoked`, `oauth_token_reuse`
 
 ## A · `TinySesamConfig`
 
@@ -670,7 +670,7 @@ Value: `{'login': '/auth/magic/{t}', 'verify_email': '/auth/verify/{t}', 'invite
 
 ## B · `TinySesamConfig`
 
-Fields of this tier (meaning in [CONFIGURATION.md](CONFIGURATION.md)): `hsts`, `totp_required`.
+Fields of this tier (meaning in [CONFIGURATION.md](CONFIGURATION.md)): `oauth_enabled`, `oauth_resources`, `oauth_access_token_ttl_sec`, `oauth_refresh_idle_days`, `oauth_refresh_max_days`, `oauth_refresh_grace_sec`, `oauth_pepper_file`, `hsts`, `totp_required`.
 
 ### `TinySesamConfig.enabled_methods() -> 'list[str]'`
 
@@ -716,6 +716,9 @@ The keys of the `details` dict per event, read from the call sites. A key that g
 | `api_key_revoked` | `key_id` |
 | `api_keys_revoked` | `count`, `reason` |
 | `email_changed` | `new`, `old` |
+| `oauth_device_connected` | `client_id`, `client_name`, `grant_id`, `resource` |
+| `oauth_device_revoked` | `client_id`, `grant_id`, `reason` |
+| `oauth_token_reuse` | `client_id`, `grant_id`, `kind` |
 | `passkey_added` | `name` |
 | `passkey_removed` | `passkey_id` |
 | `password_changed` | — |
@@ -786,7 +789,7 @@ Observed on probe instances; values are recorded where they are the contract (`X
 #### Headers, reasons, inputs, cookies
 
 - **`X-TinySesam-*` headers** (request or response, see the table above): `X-TinySesam-Gate-Cookie`, `X-TinySesam-Location`, `X-TinySesam-Reason`, `X-TinySesam-Roles`.
-- **Values of `X-TinySesam-Reason`:** `app-missing`, `app-signed-out`, `app-stale`, `role` (`app-…` only with several OIDC clients).
+- **Values of `X-TinySesam-Reason`:** `app-missing`, `app-signed-out`, `app-stale`, `oauth`, `role` (`app-…` only with several OIDC clients).
 - **Request headers the forward and gate paths read** — what a proxy sets or passes on: `Authorization`, `Host`, `X-Api-Key`, `X-Forwarded-For`, `X-Forwarded-Host`, `X-Forwarded-Proto`, `X-Forwarded-Uri`, `X-Original-Uri`, `X-Original-Url`, `X-TinySesam-Roles`. The `Cookie` header is passed on as the browser sent it. Headers a browser sends on its own (`Accept`, `Referer`, `Sec-Fetch-Mode`, `Sec-Fetch-Site`, `X-Csrf-Token`) are read as well but are tier B: no proxy has to set them.
 - **Request parameters:** `roles`.
 - **Cookies the gate sets itself** (host-only, fixed names): `__Host-tinysesam_link`, `__Host-tinysesam_linkflow`. The gate token cookie is named by the configuration field `gate_cookie_name`.
@@ -798,6 +801,10 @@ The HTML pages (sign-in, registration, account, admin panel, the pages behind e-
 | Method | Path | Query / form parameters |
 |---|---|---|
 | GET | `/` | — |
+| GET | `/.well-known/oauth-authorization-server` | — |
+| GET | `/.well-known/oauth-authorization-server/{rest:path}` | — |
+| GET | `/.well-known/oauth-protected-resource` | `query:rest` |
+| GET | `/.well-known/oauth-protected-resource/{rest:path}` | `query:rest` |
 | GET | `/auth/account` | — |
 | POST | `/auth/account/email` | — |
 | POST | `/auth/account/username` | — |
@@ -819,6 +826,13 @@ The HTML pages (sign-in, registration, account, admin panel, the pages behind e-
 | GET | `/auth/magic/{token}` | — |
 | POST | `/auth/magic/{token}` | `form:_csrf` |
 | GET | `/auth/me` | — |
+| GET | `/auth/oauth/authorize` | — |
+| GET | `/auth/oauth/consent` | `query:txn` |
+| POST | `/auth/oauth/consent` | — |
+| POST | `/auth/oauth/devices/{grant_id}/revoke` | — |
+| POST | `/auth/oauth/register` | — |
+| POST | `/auth/oauth/revoke` | — |
+| POST | `/auth/oauth/token` | — |
 | GET | `/auth/oidc/start` | `query:app`, `query:next` |
 | POST | `/auth/passkey/delete` | — |
 | GET | `/auth/passkey/list` | — |
@@ -864,6 +878,8 @@ The HTML pages (sign-in, registration, account, admin panel, the pages behind e-
 | GET | `<admin>/api/audit` | `query:limit` |
 | POST | `<admin>/api/invite` | — |
 | POST | `<admin>/api/keys/{kid}/revoke` | — |
+| GET | `<admin>/api/oauth/devices` | — |
+| POST | `<admin>/api/oauth/devices/{grant_id}/revoke` | — |
 | GET | `<admin>/api/resources` | — |
 | POST | `<admin>/api/resources` | — |
 | POST | `<admin>/api/resources/{name}/delete` | — |

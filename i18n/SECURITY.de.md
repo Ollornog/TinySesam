@@ -93,7 +93,13 @@ Rate-Limit, Open-Redirect-Schutz via `safe_next`). Trotzdem: vor produktivem Ein
   (`details={"old": …, "new": …}` — Selbstbedienung, 2026-09-25) und `api_keys_revoked`
   (`details={"count": n, "reason": …}`, `reason` eines von `password_reset`, `account_disabled`,
   `admin_password_reset`, `sessions_revoked` — gesammelt beim Reset, bei der Sperre, beim
-  Admin-Passwort und bei `sessions/revoke` mit `scope=all`). Die vollständige Liste der Ereignisnamen ist
+  Admin-Passwort und bei `sessions/revoke` mit `scope=all`). Verbundene Programme (OAuth, T-36):
+  `oauth_device_connected` (`details={"grant_id": n, "client_id": …, "client_name": …, "resource": …}` — ein
+  Programm hat nach der Zustimmung seine ersten Tokens bekommen), `oauth_device_revoked`
+  (`details={"grant_id": n, "client_id": …, "reason": …}`, `reason` eines von `user`, `admin`, `client`,
+  `account_disabled`) und `oauth_token_reuse` (`details={"grant_id": n, "client_id": …, "kind": "code"|"refresh"}`
+  — ein schon benutzter Code oder Refresh-Token kam zurück, die Verbindung wurde widerrufen: das Token
+  wurde vermutlich kopiert). Die vollständige Liste der Ereignisnamen ist
   `TinySesam.SECURITY_EVENTS`. Die Schlüssel in `details` und die
   Gründe sind seit 0.22.0 englisch (bis 0.21.x `verbleibend`, `alt`/`neu`, `anzahl`/`grund` mit
   deutschen Gründen). Das gilt auch für Änderungen, die ein Admin im Panel an

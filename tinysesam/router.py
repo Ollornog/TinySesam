@@ -1157,13 +1157,32 @@ def build_router(auth) -> APIRouter:
                 return auth._gate_link_url(host, orig, request)
             return auth._forward_login_url(orig, request, direct=direct)
 
+        def _bearer(request: Request) -> str:
+            h = request.headers.get("authorization", "")
+            return h[7:].strip() if h[:7].lower() == "bearer " else ""
+
         def _forward(request: Request):
             u = auth.current_user(request)   # session OR API key
             orig = auth._forwarded_url(request)
+            # OAuth access token (T-36): only here, at the resource — never at TinySesam's own routes. The
+            # account, the grant and the audience are checked on every request.
+            oauth_resource = auth._oauth.resource_for(orig) if (cfg.oauth_enabled and auth._oauth) else None
+            presented = _bearer(request)
+            if not u and cfg.oauth_enabled and auth._oauth and presented.startswith("tsat_"):
+                u, why = auth._oauth.user_for(presented, orig, auth.client_ip(request))
+                if not u:
+                    ip = auth.client_ip(request)
+                    if auth._once_per(("forward401", ip, "oauth_" + why), 300):
+                        auth.audit("forward_denied", None, ip,
+                                   f"reason=oauth_token_{why} url={security.url_for_log(orig)}")
+                    if oauth_resource:
+                        return Response(status_code=401, headers={
+                            "WWW-Authenticate": auth._oauth.challenge(oauth_resource, True),
+                            "X-TinySesam-Reason": "oauth"})
             _host = (urlsplit(orig).hostname or "").lower()
             # The session row on which approval, "sign out here only" and gate token depend: from the
             # own cookie, otherwise — central gateway, T-26 — from this host's connection.
-            s = auth._session_from_request(request) if u else None
+            s = auth._session_from_request(request) if u and u.get("_via") != "oauth" else None
             if not u and _link_mode(_host):
                 s = auth._gate_link_session(request, _host)
                 u = auth._account_of_session(s) if s else None
@@ -1217,6 +1236,13 @@ def build_router(auth) -> APIRouter:
                 if gate:
                     head["X-TinySesam-Gate-Cookie"] = gate
                 return Response(status_code=200, headers=head)
+            # An OAuth resource answers like one (RFC 9728 §5.1): the client learns where to get a token —
+            # no redirect to a login page it cannot show.
+            if oauth_resource:
+                _log_forward_rejection(request, orig)
+                return Response(status_code=401, headers={
+                    "WWW-Authenticate": auth._oauth.challenge(oauth_resource, bool(presented)),
+                    "X-TinySesam-Reason": "oauth"})
             # Login mode of the application (T-21): "direct" leads a page request straight to the
             # provider; background requests always go to the login page.
             direct = (auth._forward_app(orig)["login"] == "direct" and auth._is_page_view(request)
@@ -1581,6 +1607,9 @@ def build_router(auth) -> APIRouter:
                                     has_pin=(cfg.pin_enabled and auth.has_pin(u["id"])),
                                     is_admin=bool(u["is_admin"]), admin_path=cfg.admin_path,
                                     events=auth.own_events(u["id"]),
+                                    # Connected programs (OAuth, T-36) — None leaves the section out.
+                                    oauth_devices=(auth._oauth_server().devices(u["id"])
+                                                   if cfg.oauth_enabled else None),
                                     username_change=(cfg.self_service_username_change
                                                      and cfg.login_identifier != "email"
                                                      and not cfg.ldap_enabled),
@@ -1952,6 +1981,11 @@ def build_router(auth) -> APIRouter:
             u = _only_with_session(request)
             auth.revoke_api_key(key_id, u["id"])   # block, do not delete
             return {"ok": True}
+
+    # ---------- OAuth 2.1 for MCP clients (T-36, ADR-11) ----------
+    if cfg.oauth_enabled:
+        from . import oauth as _oauth_mod
+        _oauth_mod.add_routes(auth, r)
 
     # ---------- Admin panel — at config.admin_path; mountable elsewhere via auth.admin_router() ----------
     if cfg.admin_enabled:

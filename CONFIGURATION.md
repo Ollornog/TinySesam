@@ -12,7 +12,7 @@ reference answers the other question: *"There is a field — what does it do?"*
 Presets (`TinySesamConfig.local_accounts()`, `.oidc_gateway()`, …) set bundles of these fields;
 individual ones can be overridden via `**overrides`.
 
-**Tier:** Every field belongs to tier A — public, stable from 1.0 (see [API.md](API.md), “Three tiers”), except `hsts` (B), `totp_required` (B).
+**Tier:** Every field belongs to tier A — public, stable from 1.0 (see [API.md](API.md), “Three tiers”), except `hsts` (B), `oauth_access_token_ttl_sec` (B), `oauth_enabled` (B), `oauth_pepper_file` (B), `oauth_refresh_grace_sec` (B), `oauth_refresh_idle_days` (B), `oauth_refresh_max_days` (B), `oauth_resources` (B), `totp_required` (B).
 
 ## Store
 
@@ -83,6 +83,18 @@ individual ones can be overridden via `**overrides`.
 | `forward_apps` | `dict` | `dict` | Settings per protected application: {"app.example.com": {"name": "Wiki", "login": "direct", "logout": "ask"}}. name = display name on the login and sign-out pages; login/logout override forward_login/forward_logout for this host. |
 | `gate_cookie_name` | `str` | `"__Host-tinysesam_gate"` | form __Host-tinysesam_<name>: host-only, and the templates strip it before the app |
 | `gate_link_enabled` | `bool` | `False` | Central gateway, session stays on its host (T-26): An app host gets, via a code exchange (/.tinysesam/start → /auth/gate/authorize → /.tinysesam/callback), only a connection cookie of its own that is valid for it alone. Without this, the session cookie would have to sit on the parent domain and would reach every app below it. Requires gate_token_enabled and base_url, does not combine with cookie_domain. |
+
+## OAuth 2.1 for MCP clients and other human-operated tools (T-36, ADR-11)
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `oauth_enabled` | `bool` | `False` | **Tier B.** TinySesam becomes an authorization server: a tool such as Claude Code registers itself (dynamic registration, loopback redirect only), the person signs in here as always (chain, TOTP, passkey) and allows the access on a consent page. The protected application contains no OAuth code: forward auth accepts the access token and sets Remote-* as for a session. Needs forward_auth_enabled, base_url (the issuer) and at least one entry in oauth_resources. Recipe: README "OAuth for MCP clients". |
+| `oauth_resources` | `list[str]` | `list` | **Tier B.** The protected resources tokens are issued for — absolute URLs, e.g. ["https://app.example.com/mcp"]. The token is valid only for this URL and the paths below it (audience, RFC 8707); the proxy routes /.well-known/oauth-protected-resource* of the application's host to TinySesam. |
+| `oauth_access_token_ttl_sec` | `int` | `3600` | **Tier B.** lifetime of an access token; checked against the database per request |
+| `oauth_refresh_idle_days` | `int` | `90` | **Tier B.** A refresh token expires after this many days without use (sliding: each use renews it). |
+| `oauth_refresh_max_days` | `int` | `180` | **Tier B.** Absolute maximum of a connection in days, regardless of use — then the person signs in again (ASVS 5.0 V10.4.8). 0 = no maximum (only on purpose: config_check reports it). |
+| `oauth_refresh_grace_sec` | `int` | `0` | **Tier B.** Grace window in seconds: a refresh token used again within it returns the SAME successor instead of counting as reuse (two processes of one client refreshing at once). 0 = every second use revokes the connection; Claude Code serialises its refreshes, so 0 is enough there. 0–60. |
+| `oauth_pepper_file` | `str` | `""` | **Tier B.** File with the pepper of the token digests (Base64, at least 32 bytes). The environment variable TINYSESAM_OAUTH_PEPPER takes precedence; without both it is derived from the master key (secrets_key_file / TINYSESAM_SECRETS_KEY). Changing it disconnects every device. |
 | `https_mode` | `str` | `"warn"` | off \| warn \| force  — force = HTTP→HTTPS redirect; warn = also runs WITHOUT a certificate (with a warning in the panel) |
 | `hsts` | `str` | `"max-age=31536000"` | **Tier B.** Strict-Transport-Security on every HTTPS response while https_mode='force' (ASVS 3.4.1). The default is one year, the minimum ASVS asks for. Without includeSubDomains: TinySesam often runs inside an app on a domain that has other subdomains, and the flag binds EVERY one of them to HTTPS — a decision about the whole domain tree that belongs to its owner (ASVS L2 wants it: append "; includeSubDomains"). No preload as a default: the browsers' preload list is hard to leave again. "" = no header (e.g. the proxy in front sets it). |
 | `login_identifier` | `str` | `"both"` | What do people sign in with? "username" \| "email" \| "both" (both allowed in the same field) |
@@ -324,4 +336,4 @@ individual ones can be overridden via `**overrides`.
 
 ---
 
-178 fields, generated from `tinysesam/config.py`.
+185 fields, generated from `tinysesam/config.py`.

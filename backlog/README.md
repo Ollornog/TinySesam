@@ -8,7 +8,7 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 ## Meilensteine
 
 * ☐ **[M-1](M-1-api-stable-1-0.md)** 1.0 — API stable enough for PyPI — 14/14 erledigt
-* ☐ **[M-2](M-2-after-1-0.md)** After 1.0 — keeping the published package maintained — 27/47 erledigt
+* ☐ **[M-2](M-2-after-1-0.md)** After 1.0 — keeping the published package maintained — 28/49 erledigt
 * ☑ **[M-3](M-3-gate-in-front-of-third-party-apps.md)** Gate in front of third-party apps — fast, sign in once, sign out cleanly — 8/8 erledigt
 
 ## Aufgaben
@@ -48,6 +48,7 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 * ☑ **[T-33](T-33-sign-in-alternatives-qr-cross-device-login-admin-i.md)** Sign-in alternatives: QR/cross-device login, admin-issued link without mail, self-request switchable · M-2
 * ☑ **[T-34](T-34-admin-creates-accounts-link-sign-in-sets-up-the-chain.md)** Admin creates accounts, a link signs them in: setup pass and alternatives in the factor chain · M-2
 * ☑ **[T-35](T-35-own-dialogs-instead-of-browser-system-dialogs.md)** Own dialogs instead of the browser's system dialogs, with a copy button · M-2
+* ☑ **[T-36](T-36-oauth-authorization-server-for-mcp-clients.md)** OAuth 2.1 authorization server for MCP clients (Claude Code) — human-operated tools · M-2
 * ☑ **[T-37](T-37-home-network-ip-only-template.md)** Home network: template for IP only, with a clear recommendation for a domain · M-2
 * ☑ **[T-38](T-38-gateway-no-docs-redoc-openapi-json-without-sign-in.md)** Gateway: no /docs, /redoc, /openapi.json without sign-in · M-2
 * ☑ **[T-39](T-39-hsts-in-the-library-https-mode-force-and-in-every.md)** HSTS in the library (https_mode=force) and in every proxy template · M-2
@@ -70,6 +71,7 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 * ☐ **[T-56](T-56-webauthn-user-verification-at-registration-random.md)** WebAuthn: user verification at registration, random user handle · M-2
 * ☐ **[T-57](T-57-totp-accept-at-most-one-step-back-switch-totp-wind.md)** TOTP: accept at most one step back (switch totp_window) · M-2
 * ☐ **[T-58](T-58-caddy-templates-a-header-missing-from-the-auth-answer.md)** Caddy templates: a header missing from the auth answer reaches the app as placeholder text · M-2
+* ☐ **[T-60](T-60-oauth-for-services-client-credentials-private-key-jwt.md)** OAuth for services — client_credentials + private_key_jwt, pairing from T-32 · M-2
 
 ## Fehler
 
@@ -97,3 +99,4 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 * ☑ **[ADR-7](ADR-7-factors-not-from-the-idp.md)** TOTP secrets and PINs never come from the identity provider
 * ☑ **[ADR-8](ADR-8-pin-as-first-factor.md)** A PIN may be the first factor — deliberate, configurable, with its own limit
 * ☑ **[ADR-9](ADR-9-gate-token-at-the-proxy.md)** Gate in front of third-party apps — the proxy verifies a short-lived gate token itself, TinySesam only when issuing
+* ☑ **[ADR-11](ADR-11-oauth-authorization-server-in-tinysesam.md)** OAuth 2.1 authorization server for MCP clients — built into TinySesam with own thin handlers, not Ory Hydra as a sidecar

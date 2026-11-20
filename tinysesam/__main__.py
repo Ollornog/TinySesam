@@ -268,6 +268,9 @@ def _gc(argv) -> int:
         "resource_unlocks": store.gc_resource_unlocks(),
         "login_attempts": store.gc_attempts(int(_t.time()) - a.attempts_older_than),
     }
+    # OAuth (T-36): the same step as `TinySesam.gc()` — the systemd timer runs this command.
+    from . import oauth as _oauth
+    numbers.update(store.gc_oauth(int(_t.time()), _oauth.IDLE_CLIENT_SEC, _oauth.REVOKED_KEEP_SEC))
     if a.audit_days > 0:
         numbers["audit"] = store.gc_audit(int(_t.time()) - a.audit_days * 86400)
     print(" ".join(f"{k}={v}" for k, v in numbers.items()))

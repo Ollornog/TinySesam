@@ -153,6 +153,50 @@ for _ in range(100):
 else:
     raise RuntimeError("T-34 app does not start")
 
+# T-36: a fourth app with the OAuth authorization server — consent page and device list in a real browser.
+# The "program" is played by a small loopback listener that only records the callback.
+_t36_sock = _server_socket()
+# `localhost`, not 127.0.0.1: cookies do not tell ports apart, and a gateway keeps the cookie prefix `tinysesam_`
+# (forward auth) — on its own host name it shares no cookie with the other apps of this test.
+T36 = f"http://localhost:{_t36_sock.getsockname()[1]}"
+_t36_db = os.path.join(tempfile.mkdtemp(), "t36.db")
+t36 = _TinySesam(_TinySesamConfig(
+    db_path=_t36_db, cookie_secure=False, passkey_enabled=False, lang="en", base_url=T36,
+    forward_auth_enabled=True, oauth_enabled=True, oauth_resources=["http://127.0.0.1:9/mcp"]))
+t36.set_security("password_min_length_single_factor", 8)
+_t36_app = _FastAPI()
+_t36_app.include_router(t36.router())
+_t36_server = uvicorn.Server(uvicorn.Config(_t36_app, log_level="critical"))
+threading.Thread(target=lambda: _t36_server.run(sockets=[_t36_sock]), daemon=True).start()
+_t36_cb_seen: list = []
+
+
+class _T36Callback(__import__("http.server").server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        _t36_cb_seen.append(self.path)
+        body = b"<!doctype html><link rel=icon href='data:,'><title>cb</title><p id=cb>callback received</p>"
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *a):
+        pass
+
+
+_t36_cb = __import__("http.server").server.ThreadingHTTPServer(("127.0.0.1", 0), _T36Callback)
+T36_CB = f"http://127.0.0.1:{_t36_cb.server_address[1]}/callback"
+threading.Thread(target=_t36_cb.serve_forever, daemon=True).start()
+for _ in range(100):
+    try:
+        urllib.request.urlopen(f"{T36}/auth/login", timeout=1)
+        break
+    except Exception:
+        time.sleep(0.1)
+else:
+    raise RuntimeError("T-36 app does not start")
+
 _profile = tempfile.mkdtemp()
 
 # Do NOT send Chrome's output to DEVNULL: if it dies at startup, the error message used to
@@ -876,6 +920,97 @@ async def link_setup_pass(p):
     assert broken == [], f"broken requests: {broken[:3]}"
     print("  setup pass: link → password (typo caught) → TOTP + recovery codes → fully signed in (strict CSP)")
 
+    await oauth_consent(p)
+
+
+async def oauth_consent(p):
+    """T-36 in a real browser: the consent page (strict CSP with frame-ancestors 'none'; the form leads to the
+    program's loopback address, which Chrome checks against form-action after the POST) and the device list on
+    the account page, at 390 and 1280 px. `TINYSESAM_SCREENSHOTS=<dir>` keeps the screenshots."""
+    import base64
+    import hashlib
+    import secrets as _s
+    from urllib.parse import urlencode, urlsplit, parse_qs
+
+    failed_before = len(p.failed)
+    shots = os.environ.get("TINYSESAM_SCREENSHOTS", "")
+
+    async def go(url):
+        await p.cmd("Page.navigate", url=url)
+        for _ in range(80):
+            if await p.js("document.readyState") == "complete":
+                break
+            await asyncio.sleep(0.15)
+        await asyncio.sleep(0.3)
+
+    async def shot(name):
+        if not shots:
+            return
+        os.makedirs(shots, exist_ok=True)
+        data = (await p.cmd("Page.captureScreenshot", format="png", captureBeyondViewport=True))["data"]
+        with open(os.path.join(shots, name), "wb") as fh:
+            fh.write(base64.b64decode(data))
+
+    req = urllib.request.Request(f"{T36}/auth/oauth/register", method="POST",
+                                 headers={"Content-Type": "application/json"},
+                                 data=json.dumps({"client_name": "Claude Code", "redirect_uris": [T36_CB],
+                                                  "token_endpoint_auth_method": "none"}).encode())
+    cid = json.load(urllib.request.urlopen(req))["client_id"]
+    uid = t36.create_user("paula", password="paula-pw-1234")
+    tok, _ = t36.start_session(uid, "password")
+    await p.cmd("Network.setCookie", name=t36.session_cookie_name, value=tok, url=T36 + "/")
+    verifier = _s.token_urlsafe(48)
+    challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).decode().rstrip("=")
+    q = urlencode({"response_type": "code", "client_id": cid, "redirect_uri": T36_CB, "code_challenge": challenge,
+                   "code_challenge_method": "S256", "state": "st", "scope": "mcp offline_access",
+                   "resource": "http://127.0.0.1:9/mcp"})
+    for width in (390, 1280):
+        await p.cmd("Emulation.setDeviceMetricsOverride", width=width, height=900, deviceScaleFactor=1,
+                    mobile=width < 500)
+        await go(f"{T36}/auth/oauth/authorize?{q}")
+        assert await p.js("location.pathname") == "/auth/oauth/consent", await p.js("location.href")
+        assert (await p.js("document.getElementById('oaclient').textContent")).startswith("Claude Code")
+        assert "127.0.0.1" in await p.js("document.getElementById('oarhost').textContent")
+        over = await p.js("document.documentElement.scrollWidth - window.innerWidth")
+        assert over <= 0, f"consent page scrolls sideways at {width}px ({over}px)"
+        await shot(f"consent-{width}.png")
+    assert await p.js("window.top === window.self")
+    await p.click("#oaallow")
+    for _ in range(40):
+        if _t36_cb_seen:
+            break
+        await asyncio.sleep(0.2)
+    assert _t36_cb_seen, f"the browser did not reach the program's callback: {await p.js('location.href')}"
+    cbq = parse_qs(urlsplit(_t36_cb_seen[-1]).query)
+    assert cbq["state"] == ["st"] and cbq["iss"] == [T36] and cbq["code"][0].startswith("tsac_"), cbq
+    tok_req = urllib.request.Request(f"{T36}/auth/oauth/token", method="POST",
+                                     data=urlencode({"grant_type": "authorization_code", "code": cbq["code"][0],
+                                                     "redirect_uri": T36_CB, "code_verifier": verifier,
+                                                     "client_id": cid}).encode(),
+                                     headers={"Content-Type": "application/x-www-form-urlencoded"})
+    assert json.load(urllib.request.urlopen(tok_req))["access_token"].startswith("tsat_")
+    print("  OAuth consent: client, redirect host, strict CSP; allow leads to the loopback callback (form-action)")
+
+    for width in (390, 1280):
+        await p.cmd("Emulation.setDeviceMetricsOverride", width=width, height=900, deviceScaleFactor=1,
+                    mobile=width < 500)
+        await go(f"{T36}/auth/account")
+        assert await p.js("document.querySelectorAll('#devlist form.devrevoke').length") == 1
+        over = await p.js("document.documentElement.scrollWidth - window.innerWidth")
+        assert over <= 0, f"account page scrolls sideways at {width}px ({over}px)"
+        await p.js("document.getElementById('devlist').scrollIntoView();true")
+        await shot(f"devices-{width}.png")
+    await p.cmd("Emulation.clearDeviceMetricsOverride")
+    await p.click("#devlist form.devrevoke button")
+    await go(f"{T36}/auth/account")
+    assert await p.js("document.querySelectorAll('#devlist form.devrevoke').length") == 0
+    assert t36._oauth.devices(uid) == []
+    viol = await p.js("JSON.stringify(window.__csp===undefined?['(no Listener)']:window.__csp)")
+    assert viol == "[]", f"CSP violation: {viol}"
+    assert not p.console, f"console errors: {p.console[:2]}"
+    assert p.failed[failed_before:] == [], f"broken requests: {p.failed[failed_before:][:3]}"
+    print("  OAuth devices: listed on the account page (390/1280 px), „Disconnect“ ends it at once")
+
 
 async def own_dialogs(_first):
     """In a tab of its own — see `_own_dialogs`.
@@ -1118,6 +1253,8 @@ finally:
     _server.should_exit = True
     _t33_server.should_exit = True
     _t34_server.should_exit = True
+    _t36_server.should_exit = True
+    _t36_cb.shutdown()
     shutil.rmtree(_profile, ignore_errors=True)
     # Also clean up the Chrome log file — the test must leave nothing behind.
     try:
@@ -1132,3 +1269,4 @@ finally:
             pass  # file did not exist — not an error when cleaning up
     shutil.rmtree(os.path.dirname(_t33_db), ignore_errors=True)
     shutil.rmtree(os.path.dirname(_t34_db), ignore_errors=True)
+    shutil.rmtree(os.path.dirname(_t36_db), ignore_errors=True)
