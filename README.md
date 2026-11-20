@@ -1926,6 +1926,22 @@ gh run watch --exit-status            # after pushing: fetch the CI result, exit
 `scripts/check.sh` is for. CI runs the full matrix (Python 3.13–3.15 with `[all]`), a minimal run
 without extras (guards the stdlib-scrypt fallback), and a browser job that also builds the website.
 
+## For AI coding assistants
+
+Two entry points, so that an assistant finds its way without reading the whole README:
+
+- **Building an app with TinySesam:** the skill
+  [`skills/tinysesam/SKILL.md`](https://github.com/Ollornog/TinySesam/blob/main/skills/tinysesam/SKILL.md) —
+  recipes (FastAPI with mandatory TOTP, step-up, admin-created accounts with a sign-in link, API keys, a gate in
+  front of any app, OAuth for Claude Code, home network, C22 look), the switches and the pitfalls, with pointers into
+  these docs. In Claude Code: `/plugin marketplace add Ollornog/TinySesam`, then `/plugin install tinysesam@tinysesam`
+  (from Claude Code 2.1.275 in one step: `/plugin install tinysesam --marketplace Ollornog/TinySesam`). Other agents
+  read the file directly; it uses the common `SKILL.md` format.
+- **Working on TinySesam itself:** [`AGENTS.md`](https://github.com/Ollornog/TinySesam/blob/main/AGENTS.md) — layout,
+  tests, generated files, backlog, security rules of the repository. `CLAUDE.md` imports it for Claude Code.
+
+Every Python block in both files runs in the test suite, and every name they mention is checked against the code.
+
 ## Status
 
 **96 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).

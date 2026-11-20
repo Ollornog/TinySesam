@@ -1,0 +1,17 @@
+{
+  "name": "tinysesam",
+  "description": "TinySesam: sign-in, 2FA, forward auth and OAuth for MCP clients for your own apps.",
+  "owner": {
+    "name": "Ollornog",
+    "url": "https://github.com/Ollornog/TinySesam"
+  },
+  "plugins": [
+    {
+      "name": "tinysesam",
+      "source": "./",
+      "description": "Skill: protect a FastAPI app or any web app behind a proxy with TinySesam (recipes, switches, pitfalls).",
+      "license": "MIT",
+      "homepage": "https://github.com/Ollornog/TinySesam"
+    }
+  ]
+}

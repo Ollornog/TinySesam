@@ -157,7 +157,8 @@ def stale_doc_names(text: str, words: set) -> list:
 
 _package_words = package_words((f, read(f)) for f in LIB)
 _live_docs = ["README.md", "API.md", "SECURITY.md", "CONFIGURATION.md", "CONTRIBUTING.md", "TODO.md", "docs/OPERATIONS.md",
-              "docs/HOME-NETWORK.md", "deploy/systemd/README.md"] + sorted(f for f in FILES if f.startswith("i18n/") and f.endswith(".md"))
+              "docs/HOME-NETWORK.md", "deploy/systemd/README.md", "AGENTS.md", "CLAUDE.md",
+              "skills/tinysesam/SKILL.md"] + sorted(f for f in FILES if f.startswith("i18n/") and f.endswith(".md"))
 _stale = [f"{d}:{n}: {name} → {unknown}" for d in _live_docs for n, name, unknown in stale_doc_names(read(d), _package_words)]
 assert not _stale, "the docs name Python names that no longer exist:\n  " + "\n  ".join(_stale[:8])
 # Self-test and mutations: a renamed name is found; the same name inside history is not; a real doc with a stale name is red.
@@ -1694,16 +1695,23 @@ def _config_calls(text):
                     break
 
 
+# The guide for coding agents (`AGENTS.md`) and the skill for app builders (`skills/tinysesam/SKILL.md`) are read
+# by assistants that copy what they see — an example there that no longer runs is copied just the same. So their
+# blocks go through both stages too, and there EVERY Python block must be a complete program (no snippet that only
+# looks right): see the AI docs guard below.
+_AI_DOCS = ("AGENTS.md", "skills/tinysesam/SKILL.md")
+_example_docs = dict(_readmes, **{f: _read(f) for f in _AI_DOCS})
+
 _seclog = _log.getLogger("tinysesam.security")
 _before = _seclog.level
 _seclog.setLevel(_log.CRITICAL)          # the build warns about missing extras — only noise here
 _built = 0
 try:
-    for _file, _text in _readmes.items():
+    for _file, _text in _example_docs.items():
         for _nr, _block in enumerate(_py_blocks(_text), 1):
             for _source in _config_calls(_block):
                 try:
-                    _cfg = eval(_source, {"TinySesamConfig": TinySesamConfig})   # noqa: S307
+                    _cfg = eval(_source, {"TinySesamConfig": TinySesamConfig, "os": os, "tempfile": _tmp})   # noqa: S307
                 except Exception as _e:
                     raise AssertionError(
                         f"{_file}, Block {_nr}: `{_source.splitlines()[0]}…` cannot even be "
@@ -1725,9 +1733,13 @@ print(f"  READMEs: all {_built} config examples build (ConfigError-free)")
 
 # Stage 2 — actually run the complete blocks.
 _executed, _skipped = 0, []
-for _file, _text in _readmes.items():
+_executed_ai = 0
+for _file, _text in _example_docs.items():
     for _nr, _block in enumerate(_py_blocks(_text), 1):
         if "from tinysesam import" not in _block and "import tinysesam" not in _block:
+            assert _file not in _AI_DOCS, (
+                f"{_file}, block {_nr} is a snippet — every Python block there must be a complete program "
+                "(with `from tinysesam import …`), because the suite runs it")
             continue                      # a snippet, not a program
         _missing = [f"[{_x}] ({_m})" for _s, (_m, _x) in _EXTRA_MODULE.items()
                   if f"{_s}=True" in _block and _ilu.find_spec(_m) is None]
@@ -1745,13 +1757,130 @@ for _file, _text in _readmes.items():
             f"{_file}, block {_nr} does not run through (exit {_execution.returncode}):\n"
             + (_execution.stderr or _execution.stdout)[-900:])
         _executed += 1
+        _executed_ai += _file in _AI_DOCS
+assert _executed_ai >= 8, f"only {_executed_ai} blocks of {_AI_DOCS} ran — the guard sees too little"
 assert _executed + len(_skipped) >= 2, "the READMEs no longer contain two complete examples"
 if _skipped:
         # No silent waving through: Stage 1 built the same configs, only `auth.router()` is missing.
     print("  (block not run, extra missing: " + "; ".join(_skipped) + ")")
 else:
     assert _executed >= 2, f"only {_executed} complete examples — adjust pattern"
-print(f"  READMEs: {_executed} complete examples run through in the throwaway directory")
+print(f"  READMEs, AGENTS.md, skill: {_executed} complete examples run through in the throwaway directory "
+      f"({_executed_ai} of them from the AI docs)")
+
+# ---------- The AI docs: every name they mention exists (T-65) ----------
+# `AGENTS.md` (for agents that change this repo) and `skills/tinysesam/SKILL.md` (for agents that build an app with
+# TinySesam) are read by assistants that act on every word without checking it. A renamed config field, a moved
+# template or a dropped route would be passed on as an instruction. The dotted names (`auth.…`) are covered by the
+# docs guard above and the code blocks by the two stages; this guard takes the rest of what they name in backticks:
+#   * snake_case words outside quotes → a config field or a word the package defines,
+#   * `TINYSESAM_…` environment variables and `X-TinySesam-…` headers → spelled somewhere in the package,
+#   * repo paths (`deploy/forward-auth/Caddyfile`, `tinysesam/theme.py`) → exist,
+#   * routes (`/auth/…`, `/.tinysesam/…`, `/.well-known/…`) → a route of the measured HTTP surface.
+# Plus the wiring: the skill's front matter, `CLAUDE.md` importing `AGENTS.md`, the plugin marketplace pointing at the
+# skill, and both READMEs naming the install line.
+import dataclasses as _dc  # noqa: E402
+import json as _json  # noqa: E402
+
+_CONFIG_FIELDS = {f.name for f in _dc.fields(TinySesamConfig)}
+_LIB_TEXT = "\n".join(read(f) for f in LIB)
+_ROUTES = sorted({k.split(" ", 1)[1].replace("<admin>", TinySesamConfig.admin_path)
+                  for k in _json.loads(read("tests/api_surface.json"))["http.routes"]})
+_TOP = {f.split("/", 1)[0] for f in FILES}
+_SNAKE = re.compile(r"(?<![\w.$-])([a-z][a-z0-9]*(?:_[a-z0-9]+)+)(?![\w-])")
+_ENV = re.compile(r"\bTINYSESAM_[A-Z_]*[A-Z]\b")
+_HEADER = re.compile(r"\bX-TinySesam-[A-Za-z-]*[A-Za-z]\b")
+_ROUTE = re.compile(r"(?<![\w.])(/(?:auth|\.tinysesam|\.well-known)(?:/[\w.{},-]*)*)")
+_PATH = re.compile(r"^[\w.-]+(?:/[\w.-]+)+/?$")
+
+
+def _route_known(path, routes):
+    """A literal route, or a prefix of one (`/auth/*`, `…/oauth-protected-resource*`); `{x}` matches any segment."""
+    path = path.rstrip("/") or "/"
+    pattern = re.compile("^" + re.sub(r"\\\{[^/]*?\\\}", "[^/]+", re.escape(path)))
+    return any(pattern.match(re.sub(r"\{[^/}]*\}", "x", r)) or r.startswith(path) for r in routes)
+
+
+def ai_doc_findings(text, *, fields, words, lib_text, routes, exists, top):
+    """[(line, finding)] — names in backticks (outside code blocks) that the code does not know."""
+    out, fence = [], False
+    for n, line in enumerate(text.split("\n"), 1):
+        if line.lstrip().startswith("```"):
+            fence = not fence
+            continue
+        if fence:
+            continue
+        for span in re.findall(r"`([^`\n]+)`", line):
+            bare = re.sub(r"\"[^\"]*\"|'[^']*'", "", span)          # values in quotes are not names
+            for w in ([] if "/" in bare else _SNAKE.findall(bare)):   # a path is checked as a path below
+                if w not in fields and w not in words:
+                    out.append((n, f"unknown name `{w}`"))
+            for e in _ENV.findall(span) + _HEADER.findall(span):
+                if e not in lib_text:
+                    out.append((n, f"`{e}` is spelled nowhere in the package"))
+            for r in _ROUTE.findall(span.split("?", 1)[0].rstrip("*")):
+                if not _route_known(r, routes):
+                    out.append((n, f"unknown route `{r}`"))
+            token = span.strip().rstrip("*")
+            if _PATH.match(token) and token.split("/", 1)[0] in top and not exists(token):
+                out.append((n, f"path `{token}` does not exist"))
+    return out
+
+
+# Words of the repo's own tooling count too: the guide for contributors names suites (`test_csp`), the surface dump
+# (`api_surface`) and backlog keys (`superseded_by`).
+_tool_words = package_words((f, read(f)) for f in FILES
+                            if f.endswith(".py") and f.startswith(("scripts/", "tests/")))
+_tool_words |= {os.path.splitext(os.path.basename(f))[0] for f in FILES}
+# ... the directives of the shipped proxy templates (`reverse_proxy`, `handle_response` in the Caddyfile) and the
+# backlog's front-matter keys from its convention (`superseded_by`).
+_tool_words |= {w for f in FILES if (f.startswith("deploy/") and not f.endswith(".py"))
+                or f == "backlog/README-KONVENTION.md"
+                for w in re.findall(r"[a-z][a-z0-9]*(?:_[a-z0-9]+)+", read(f))}
+_ai_kw = dict(fields=_CONFIG_FIELDS, words=_package_words | _tool_words, lib_text=_LIB_TEXT, routes=_ROUTES,
+              exists=lambda p: os.path.exists(os.path.join(ROOT, p)), top=_TOP)
+_ai_findings = [f"{d}:{n}: {what}" for d in _AI_DOCS for n, what in ai_doc_findings(read(d), **_ai_kw)]
+assert not _ai_findings, "the AI docs name what the code does not know:\n  " + "\n  ".join(_ai_findings[:10])
+# Self-probes: each kind of stale name is found, the real ones and quoted values pass.
+_probe_ok = ("Use `login_chain=[\"password\", \"totp\"]`, `mfa_enrollment=\"first_login\"`, `TINYSESAM_BASE_URL`, "
+             "`X-TinySesam-Reauth`, `/auth/reauth`, `/auth/passkey/{register,login}/{begin,finish}`, "
+             "`/.well-known/oauth-protected-resource*`, `deploy/forward-auth/Caddyfile`, `tinysesam/theme.py`.\n")
+assert ai_doc_findings(_probe_ok, **_ai_kw) == [], ai_doc_findings(_probe_ok, **_ai_kw)
+for _bad, _kind in (("`login_chian=[]`", "unknown name"), ("`TINYSESAM_BASE_URI`", "spelled nowhere"),
+                    ("`X-TinySesam-Reauthenticate`", "spelled nowhere"), ("`/auth/re-auth`", "unknown route"),
+                    ("`deploy/forward-auth/Caddyfile.old`", "does not exist"),
+                    ("```bash\n`x`\n```\n`stepup_max_age_secs`", "unknown name")):
+    _hit = ai_doc_findings(_bad, **_ai_kw)
+    assert len(_hit) == 1 and _kind in _hit[0][1], f"probe {_bad!r} → {_hit}"
+for _doc, _real, _stale in (("skills/tinysesam/SKILL.md", "`admin_require_mfa=True`", "`admin_require_2fa=True`"),
+                            ("skills/tinysesam/SKILL.md", "`deploy/home-network/`", "`deploy/homenet/`"),
+                            ("AGENTS.md", "`tests/test_csp.py`", "`tests/test_csp_strict.py`")):
+    assert _real in read(_doc), f"mutation anchor {_real} not in {_doc}"
+    assert ai_doc_findings(read(_doc).replace(_real, _stale, 1), **_ai_kw), f"{_doc}: stale {_stale} goes unnoticed"
+
+# The wiring. Agent Skills format: `name` (lowercase, digits, hyphens, ≤ 64, = folder) and `description` (≤ 1024)
+# in the front matter; the description is what makes the skill fire, so it must name the trigger words.
+_skill = read("skills/tinysesam/SKILL.md")
+_front = re.match(r"---\n(.*?)\n---\n", _skill, re.S)
+assert _front, "SKILL.md without front matter"
+_name = re.search(r"^name:\s*(\S+)\s*$", _front.group(1), re.M)
+assert _name and _name.group(1) == "tinysesam" and re.fullmatch(r"[a-z0-9-]{1,64}", _name.group(1)), _front.group(1)
+_desc = re.search(r"^description:\s*>-\n((?:  .*\n?)+)", _front.group(1) + "\n", re.M)
+assert _desc, "SKILL.md: description missing (folded `>-` block expected)"
+_desc_text = " ".join(x.strip() for x in _desc.group(1).splitlines())
+assert 100 < len(_desc_text) <= 1024, f"description length {len(_desc_text)}"
+for _trigger in ("FastAPI", "forward auth", "OAuth", "TOTP", "proxy"):
+    assert _trigger in _desc_text, f"the skill description no longer names {_trigger!r} — it would not fire"
+assert re.search(r"^@AGENTS\.md$", read("CLAUDE.md"), re.M), "CLAUDE.md no longer imports AGENTS.md"
+_market = _json.loads(read(".claude-plugin/marketplace.json"))
+assert _market["name"] and _market["owner"]["name"], _market
+_entry = [p for p in _market["plugins"] if p["name"] == "tinysesam"]
+assert len(_entry) == 1 and _entry[0]["source"] == "./", _market["plugins"]
+assert os.path.isfile(os.path.join(ROOT, "skills", _entry[0]["name"], "SKILL.md")), "the plugin carries no skill"
+for _file, _text in _readmes.items():
+    assert f"/plugin install tinysesam@{_market['name']}" in _text, f"{_file}: install line of the skill missing"
+print(f"  AI docs: {len(_AI_DOCS)} files, every name in backticks known; skill front matter, CLAUDE.md import, "
+      "plugin marketplace and install line wired")
 
 # Kit 0.22.0 (M-1, stage 3): Has every check before it SEEN something? A check over an
 # empty set is always green. Must run LAST, it evaluates the case counts before it.

@@ -192,6 +192,17 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 - **New built-in favicon:** a rounded tile with a keyhole, the same mark as the bar's logo (darker blue in light,
   lighter in dark mode). `brand_icon` overrides it as before.
 
+### Added — a guide for AI coding assistants (T-65)
+
+- **`skills/tinysesam/SKILL.md`** for assistants that build an app with TinySesam: recipes (FastAPI with mandatory
+  TOTP, step-up, admin-created accounts with a sign-in link, API keys, forward-auth gate, OAuth for Claude Code, home
+  network, C22 look and top bar), the switches and the pitfalls, with pointers into the docs. The repository is a
+  Claude Code plugin marketplace: `/plugin marketplace add Ollornog/TinySesam`, `/plugin install tinysesam@tinysesam`.
+- **`AGENTS.md`** for assistants that change TinySesam (layout, tests, generated files, backlog, security rules);
+  `CLAUDE.md` imports it.
+- `tests/test_repo.py` runs every Python block of both files and checks every name they mention — config fields,
+  package names, environment variables, headers, routes and paths — against the code.
+
 ### Added — the top bar as a building block (T-64)
 
 - Config: `topbar_enabled` (default `True`) and `topbar_links` — `(title, target)` pairs; a target is a path on the
