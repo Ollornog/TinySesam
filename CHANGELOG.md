@@ -59,6 +59,20 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
   rotation needs the old pepper; a use moves it to the active one.
 - Schema 20: table `app_password` (additive — an older version leaves it in place and refuses Basic auth).
 
+### Fixed — test runner: a crashing suite is no longer silent; no segfault on closing the database (B-13)
+
+- `tests/run_all.py` names how a red suite ended (`exit 1`, `killed by signal SIGSEGV`), runs every suite unbuffered
+  with faulthandler, and shows stderr from the start of a crash report. Before, a suite killed by a signal showed only
+  `FAIL <suite>` — its buffered output was lost with it.
+- The cause of the CI flake in `test_values_english.py`: a notice job of the background outbox (since T-47) still used
+  the store's connection while the suite closed it — a segmentation fault in `sqlite3`. In the test process
+  (`tests/_starter.py`) closing a `sqlite3` connection now waits for the outbox. Production never closes the
+  connection under a running job.
+- Browser test: `answer()` waited for “no dialog at all” and ran out when the page opened the next dialog at once
+  (recovery codes after the confirmation); it now waits for the dialog it answered.
+- The browser test reports where Chrome stands when it writes no DevTools port (process state, `wchan`, load,
+  profile) and lets Chrome log its INFO lines.
+
 ### Security — key management (H3: T-48, T-53, T-54, ADR-12, from the security review of 2026-11-20)
 
 - **One key per purpose, the gate key no longer derived from the vault key (T-48, ASVS 11.1.1/11.1.2/13.3.4).** Up to

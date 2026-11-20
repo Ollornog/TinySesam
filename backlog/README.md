@@ -8,7 +8,7 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 ## Meilensteine
 
 * ☐ **[M-1](M-1-api-stable-1-0.md)** 1.0 — API stable enough for PyPI — 14/14 erledigt
-* ☐ **[M-2](M-2-after-1-0.md)** After 1.0 — keeping the published package maintained — 41/54 erledigt
+* ☐ **[M-2](M-2-after-1-0.md)** After 1.0 — keeping the published package maintained — 42/56 erledigt
 * ☑ **[M-3](M-3-gate-in-front-of-third-party-apps.md)** Gate in front of third-party apps — fast, sign in once, sign out cleanly — 8/8 erledigt
 
 ## Aufgaben
@@ -77,6 +77,7 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 * ☐ **[T-63](T-63-notify-the-holder-of-a-successful-sign-in-after-failed-attempts.md)** Notify the holder of a successful sign-in after failed attempts · M-2
 * ☑ **[T-64](T-64-top-bar-and-favicon-refresh.md)** Top bar and favicon refresh: logo, name, links, account menu, light/dark, phone · M-2
 * ☑ **[T-66](T-66-app-passwords-for-webdav-caldav-and-git-at-the-gate.md)** App passwords for WebDAV, CalDAV/CardDAV and Git at the gate · M-2
+* ☐ **[T-67](T-67-orderly-shutdown-close.md)** Orderly shutdown: a public close() that drains the outboxes and refuses new jobs · M-2
 
 ## Fehler
 
@@ -92,6 +93,7 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 * ☑ **[B-10](B-10-account-without-password-cannot-set-one.md)** An account without a password cannot set one — the account page demands the current password · M-2
 * ☑ **[B-11](B-11-a-saml-response-could-be-replayed-until-notonoraft.md)** A SAML response could be replayed until NotOnOrAfter · M-2
 * ☑ **[B-12](B-12-new-sign-in-factors-api-keys-and-qr-approval-witho.md)** New sign-in factors, API keys and QR approval without fresh confirmation · M-2
+* ☑ **[B-13](B-13-flaky-ci-suite-died-silently-and-chrome-start.md)** CI flakes: a suite died from a segfault without a word, a dialog wait raced, Chrome hung at startup · M-2
 
 ## Entscheidungen (ADR)
 

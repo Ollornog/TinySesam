@@ -1938,7 +1938,10 @@ Dateien, nicht in der, in der sie fertig werden — `CI_TEST_JOBS=1` ist der ser
 Sammellauf startet jede Suite über `tests/_starter.py`, der die Kosten des Passwort-Hashings **nur in
 diesem Testprozess** absenkt. Eine direkt gestartete Suite (`python tests/test_core.py`) und das
 Paket selbst hashen immer mit den Produktionswerten — dafür gibt es keine Einstellung und keine
-Umgebungsvariable.
+Umgebungsvariable. Im selben Prozess wartet das Schließen einer `sqlite3`-Verbindung erst die
+Hintergrund-Benachrichtigungen von TinySesam ab, die sie sonst noch benutzen könnten. Eine rote Suite
+steht mit ihrem Ende im Protokoll (`exit 1`, `killed by signal SIGSEGV`); die Suiten laufen ungepuffert
+und mit faulthandler, ein Absturz hinterlässt also seine Ausgabe und den Python-Stack im Protokoll.
 
 Die Suiten sind eigenständige assert-Skripte (kein pytest). Drei davon beantworten die Frage
 „ist etwas kaputt?", ohne dass du hinschauen musst:

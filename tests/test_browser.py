@@ -210,10 +210,13 @@ _profile = tempfile.mkdtemp()
 # be gone and the test only reported "Chrome does not respond" — without a reason.
 # Into a file (not PIPE): a full pipe buffer would block Chrome.
 _chrome_log = tempfile.NamedTemporaryFile(prefix="chrome-", suffix=".log", delete=False)
+_chrome_started = time.monotonic()
 _chrome = subprocess.Popen(
     # --disable-dev-shm-usage: CI containers have a tiny /dev/shm, otherwise the renderer dies.
+    # --enable-logging=stderr: Chrome's own INFO lines go into the log as well — once (2026-11-20)
+    # Chrome hung at startup in CI and its log was empty, so nothing said how far it had come.
     [CHROME, "--headless=new", "--disable-gpu", "--no-sandbox", "--disable-dev-shm-usage",
-     "--window-size=1280,900", f"--user-data-dir={_profile}",
+     "--enable-logging=stderr", "--window-size=1280,900", f"--user-data-dir={_profile}",
      "--remote-debugging-port=0", "about:blank"],
     stdout=_chrome_log, stderr=subprocess.STDOUT)
 
@@ -230,6 +233,59 @@ def _chrome_output():
             return fh.read().strip()[-2000:]
     except OSError:
         return "(no output)"
+
+
+def _chrome_state():
+    """Where a Chrome that does not answer is standing — for the error message, not for the check.
+
+    2026-11-20 in CI: “Chrome wrote no DevTools port (after 30s)”, the process alive, its log empty.
+    Measured locally, Chrome writes the port after 0.2 s, under full CPU load (16 busy loops, four
+    Chromes at once) after at most 1.3 s — 30 s is not a slow start, Chrome was stuck. Where, the
+    message did not say. Now it names: time since the start, load and free memory of the machine, the
+    content of the profile (how far the start got) and, for every Chrome process, its state and the
+    kernel function it waits in (`wchan`), for the main process per thread."""
+    lines = [f"since start: {time.monotonic() - _chrome_started:.1f}s"]
+    try:
+        lines.append("load: " + " ".join(f"{x:.2f}" for x in os.getloadavg()))
+        with open("/proc/meminfo", encoding="utf-8") as fh:
+            lines += [z.strip() for z in fh if z.startswith(("MemAvailable", "MemTotal"))]
+    except OSError:
+        lines.append("load/memory: not readable (no /proc)")
+    try:
+        lines.append("profile: " + (", ".join(sorted(os.listdir(_profile))) or "(empty)"))
+    except OSError as e:
+        lines.append(f"profile: {e}")
+
+    def read(path):
+        try:
+            with open(path, encoding="utf-8", errors="replace") as fh:
+                return fh.read().strip()
+        except OSError:
+            return "?"
+
+    def parent(pid):
+        stat = read(f"/proc/{pid}/stat")
+        return stat.rsplit(")", 1)[-1].split()[1] if ")" in stat else ""
+
+    family, pids = {str(_chrome.pid)}, []
+    try:
+        pids = sorted((z for z in os.listdir("/proc") if z.isdigit()), key=int)
+    except OSError:
+        lines.append("processes: /proc not readable — only the Chrome process itself")
+    for _ in range(4):                   # children, grandchildren … (zygote → renderer)
+        family |= {z for z in pids if parent(z) in family}
+    for pid in sorted(family, key=int):
+        stat = read(f"/proc/{pid}/stat")
+        state = stat.rsplit(")", 1)[-1].split()[0] if ")" in stat else "?"
+        lines.append(f"pid {pid} {read(f'/proc/{pid}/comm')} state={state} wchan={read(f'/proc/{pid}/wchan')}")
+    try:
+        tasks = sorted(os.listdir(f"/proc/{_chrome.pid}/task"), key=int)
+    except OSError:
+        tasks = []
+    for tid in tasks[:40]:
+        base = f"/proc/{_chrome.pid}/task/{tid}"
+        lines.append(f"  thread {tid} {read(base + '/comm')} wchan={read(base + '/wchan')}")
+    return "\n".join(lines)
 
 
 def _cdp_port():
@@ -256,6 +312,7 @@ def _cdp_port():
         time.sleep(0.1)
     raise RuntimeError(
         f"Chrome wrote no DevTools port (after {CHROME_START_TIMEOUT:.0f}s).\n"
+        f"--- Chrome state ---\n{_chrome_state()}\n"
         f"--- Chrome output ---\n{_chrome_output()}")
 
 
@@ -274,6 +331,7 @@ def _ws_url():
             time.sleep(0.1)
     raise RuntimeError(
         f"Chrome does not respond (after {CHROME_START_TIMEOUT:.0f}s on port {port}).\n"
+        f"--- Chrome state ---\n{_chrome_state()}\n"
         f"--- Chrome output ---\n{_chrome_output()}")
 
 
@@ -346,8 +404,13 @@ class Page:
         if value is not None:
             await self.js(f"document.querySelector('dialog.tsdlg[open] input').value={json.dumps(value)};true")
         button = ".tsdlg-ok" if ok else ".tsdlg-cancel"
-        await self.js(f"document.querySelector('dialog.tsdlg[open] {button}').click();true")
-        await self.until("!document.querySelector('dialog.tsdlg')", "the dialog did not close")
+        # Wait for THIS dialog to leave the document, not for “no dialog at all”: a page that opens the
+        # next one right after the answer (confirm → secret with the new recovery codes) did so before
+        # the first poll whenever the request was quick, and the wait ran out although everything
+        # worked — red in CI job `repeat` 2026-11-20 (“the dialog did not close”).
+        await self.js(f"{{const d=document.querySelector('dialog.tsdlg[open]');window.__tsAnswered=d;"
+                      f"d.querySelector('{button}').click()}}true")
+        await self.until("!window.__tsAnswered.isConnected", "the dialog did not close")
 
 
 async def until_py(cond, why, tries=80):
@@ -1299,6 +1362,16 @@ async def _own_dialogs(p):
     await as_user(carol)
     await go("/auth/account")
     assert await p.js("typeof tsConfirm==='function' && typeof tsSecret==='function'"), "no dialog building block"
+
+    # 0) `answer()` itself: a dialog that follows at once (in the same microtask) must not count as the
+    #    answered one still being open. (Mutation probe: wait for “no dialog at all” in `answer()` → red.)
+    await p.js("window.__r='pending';tsConfirm('first').then(()=>tsAlert('second'))"
+               ".then(()=>{window.__r='done'});true")
+    await p.answer()
+    assert await p.js("document.querySelector('dialog.tsdlg[open] .tsdlg-text').textContent==='second'"), \
+        "the follow-up dialog is not open"
+    await p.answer()
+    assert await result() == "done"
 
     # 1) Confirm: Escape cancels, Enter confirms, Cancel cancels — the focus is back on the button that asked.
     other, _ = t33.start_session(carol, "password")
