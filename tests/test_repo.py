@@ -1779,10 +1779,8 @@ print(f"  READMEs, AGENTS.md, skill: {_executed} complete examples run through i
 #   * routes (`/auth/…`, `/.tinysesam/…`, `/.well-known/…`) → a route of the measured HTTP surface.
 # Plus the wiring: the skill's front matter, `CLAUDE.md` importing `AGENTS.md`, the plugin marketplace pointing at the
 # skill, and both READMEs naming the install line.
-import dataclasses as _dc  # noqa: E402
-import json as _json  # noqa: E402
 
-_CONFIG_FIELDS = {f.name for f in _dc.fields(TinySesamConfig)}
+_CONFIG_FIELDS = {f.name for f in _dc_fields(TinySesamConfig)}
 _LIB_TEXT = "\n".join(read(f) for f in LIB)
 _ROUTES = sorted({k.split(" ", 1)[1].replace("<admin>", TinySesamConfig.admin_path)
                   for k in _json.loads(read("tests/api_surface.json"))["http.routes"]})
