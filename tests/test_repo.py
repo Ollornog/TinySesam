@@ -319,8 +319,9 @@ print("  CHANGELOG categories valid; i18n/README.de.md follows the structure of 
 # Otherwise the docs silently keep recommending an old version: The pin in the compose file and the
 # `pip install` lines in the README do not age along, because nobody runs them.
 PINS = (re.compile(r"TinySesam(?:\.git)?[@/](?:releases/download/)?v(\d+\.\d+\.\d+)"),  # Git tag, wheel
-        re.compile(r"tinysesam:v(\d+\.\d+\.\d+)"))                                     # image tag
-for f in ("README.md", "i18n/README.de.md", "deploy/forward-auth/docker-compose.yml"):
+        re.compile(r"tinysesam(?:-caddy-gate)?:v(\d+\.\d+\.\d+)"))                     # image tags (gateway, Caddy)
+for f in ("README.md", "i18n/README.de.md", "deploy/forward-auth/docker-compose.yml",
+          "deploy/quickstart/docker-compose.yml"):
     body = read(f)
     for pat in PINS:
         for found in pat.findall(body):
@@ -503,8 +504,14 @@ BARE_ADDRESSES_OK = [
     "ab.de",                   # tests/test_identifier.py: `assert not valid_email("ab.de")`
     "admin.app",               # tinysesam/messages.py: a translation key, not a host
 ]
-blank = hygiene.pruefe_blanke_adressen(ROOT, FILES, POLICY, zusaetzliche_hosts=PUBLIC_SERVICES,
-                                       grundstock=BARE_ADDRESSES_OK)
+# Go module manifests (deploy/forward-auth/caddy-gate, since 2026-11-20) are the exception by FILE, not by host: every
+# module path starts with its host (`golang.org/x/net`, `howett.net/plist`), the list is written by `go mod tidy` and
+# grows with every Dependabot bump — a host list here would turn each such PR red and teach to wave hosts through.
+# The files cannot carry a private host either: `go mod download` in the image build fetches every path publicly and
+# `go mod verify` holds it against go.sum. All other checks (private patterns, secrets) still read them.
+_GO_MANIFESTS = {f for f in FILES if os.path.basename(f) in ("go.mod", "go.sum")}
+blank = hygiene.pruefe_blanke_adressen(ROOT, [f for f in FILES if f not in _GO_MANIFESTS], POLICY,
+                                       zusaetzliche_hosts=PUBLIC_SERVICES, grundstock=BARE_ADDRESSES_OK)
 assert not blank, "bare host names outside the reviewed list:\n  " + "\n  ".join(blank)
 
 # Kit 0.17: three checks on the kit itself. `belegstellen` is empty — TinySesam keeps no
@@ -1028,9 +1035,25 @@ assert _suite_if in ([], ["if: github.event_name != 'pull_request'"]), \
 # The image tag is the git tag only on the tag. On a PR `github.ref_name` is `108/merge` —
 # invalid as an image tag, `image` broke on the first PR with this dry run because of it.
 # (Mutation probe: `tags:` back to `…:${{ github.ref_name }}` → red.)
-_image_tag = re.search(r"^\s+tags:\s*(.+?)\s*$", _image, re.M)
-assert _image_tag and "${{ github.ref_type == 'tag' && github.ref_name || '" in _image_tag.group(1), \
-    f"release.yml: the image tag takes the ref even without a tag (on PRs `N/merge`): {_image_tag and _image_tag.group(1)}"
+_image_tags = re.findall(r"^\s+tags:\s*(.+?)\s*$", _image, re.M)
+assert len(_image_tags) == 2, f"release.yml: `image` builds {len(_image_tags)} images, expected gateway and Caddy"
+for _tag in _image_tags:
+    assert "${{ github.ref_type == 'tag' && github.ref_name || '" in _tag, \
+        f"release.yml: the image tag takes the ref even without a tag (on PRs `N/merge`): {_tag}"
+# The Caddy image (since 2026-11-20) is treated like the gateway image: scanned before the push (image-probe), pushed
+# only for the tag (above), attested with provenance and SBOM. (Mutation probes: drop its Grype step; drop its SBOM
+# attestation → each red.)
+_probe_scans = re.findall(r"^\s+image:\s*(\S+)", "\n".join(_rel_jobs.get("image-probe", [])), re.M)
+assert set(_probe_scans) == {"tinysesam-probe:local", "tinysesam-caddy-gate-probe:local"}, \
+    f"release.yml: image-probe does not scan both images: {_probe_scans}"
+_attest = "\n".join(_rel_jobs.get("image-attest", []))
+for _name in ("tinysesam", "tinysesam-caddy-gate"):
+    _subjects = re.findall(rf"subject-name: ghcr\.io/\$\{{\{{ env\.OWNER_LC \}}\}}/{_name}\s*$", _attest, re.M)
+    assert len(_subjects) == 2, f"release.yml: image-attest attests {_name} {len(_subjects)}× (provenance + SBOM expected)"
+for _sbom in ("sbom.spdx.json", "sbom-caddy-gate.spdx.json"):
+    assert re.search(rf"^\s+output-file: {re.escape(_sbom)}\s*$", _attest, re.M) and \
+        re.search(rf"^\s+sbom-path: {re.escape(_sbom)}\s*$", _attest, re.M), \
+        f"release.yml: image-attest does not generate AND attest {_sbom}"
 print("  release.yml: the dry run runs on every PR; release and image depend on checksums and start probe")
 
 # B4-7 — The image installs what the lock list says, byte for byte. The digest pin in FROM
@@ -1211,6 +1234,10 @@ for _d in _uv:
 for rel in (f for f in FILES if re.search(r"(^|/)(docker-)?compose[^/]*\.ya?ml$", f)):
     assert "/" + os.path.dirname(rel) in _dependabot_dirs("docker-compose"), \
         f"Dependabot does not see {rel} (entry `docker-compose`)"
+# Go modules (since 2026-11-20: Caddy and caddy-jwt of tinysesam-caddy-gate) — before, the plugin was an xcaddy ARG
+# that no entry could see.
+for rel in (f for f in FILES if os.path.basename(f) == "go.mod"):
+    assert "/" + os.path.dirname(rel) in _dependabot_dirs("gomod"), f"Dependabot does not see {rel} (entry `gomod`)"
 for rel in (f for f in FILES if os.path.basename(f) == "Dockerfile"):
     assert "/" + os.path.dirname(rel).rstrip("/") in {d.rstrip("/") or "/" for d in _dependabot_dirs("docker")} \
         or (os.path.dirname(rel) == "" and "/" in _dependabot_dirs("docker")), f"Dependabot does not see {rel}"
@@ -1232,28 +1259,32 @@ assert re.search(r"interval:\s*daily\b", _docker_entry), \
 print("  Dependabot: every lock list, every compose file, every Dockerfile, the actions — no dead pip entry; "
       "base images daily")
 
-# B4-11 — The reference stack: every third-party image with a digest, the own one with the version tag, and
-# every service hardened. `caddy:2` moved with every Caddy version.
-_compose = read("deploy/forward-auth/docker-compose.yml")
-_cz = _code(_compose)
-_images = [z.split("image:", 1)[1].strip() for z in _cz if re.match(r"^\s+image:", z)]
-assert len(_images) >= 2, _images
-for image in _images:
-    assert image == f"ghcr.io/ollornog/tinysesam:v{pv}" or re.search(r":[\w.-]+@sha256:[0-9a-f]{64}$", image), \
-        f"compose: {image} is neither the own version image nor pinned by version+digest"
-_anchor = re.search(r"^x-hardening: &hardening\n((?:  .*\n)+)", "\n".join(_cz) + "\n", re.M)
-assert _anchor, "compose: the hardening anchor x-hardening is missing"
-for necessary in ("read_only: true", "cap_drop: [ALL]", 'security_opt: ["no-new-privileges:true"]'):
-    assert necessary in _anchor.group(1), f"compose: x-hardening without `{necessary}`"
-_services = re.search(r"^services:\n(.*?)^\S", "\n".join(_cz) + "\nEND", re.M | re.S).group(1)
-_names = re.findall(r"^  ([a-z0-9_-]+):\s*$", _services, re.M)
-_blocks = re.split(r"^  [a-z0-9_-]+:\s*$", _services, flags=re.M)[1:]
-assert len(_names) == len(_blocks) >= 2, _names
-for name, block in zip(_names, _blocks):
-    assert "<<: *hardening" in block, f"compose: service `{name}` without hardening (<<: *hardening)"
-    assert "cap_add" not in block or re.search(r"cap_add: \[NET_BIND_SERVICE\]", block), \
-        f"compose: service `{name}` takes back more than NET_BIND_SERVICE"
-print(f"  Reference stack: {len(_images)} images pinned, {len(_names)} services hardened")
+# B4-11 — The reference stack and the quickstart: every third-party image with a digest, the own ones with the version
+# tag, and every service hardened. `caddy:2` moved with every Caddy version.
+_OWN_IMAGES = {f"ghcr.io/ollornog/tinysesam:v{pv}", f"ghcr.io/ollornog/tinysesam-caddy-gate:v{pv}"}
+for _stack in ("deploy/forward-auth/docker-compose.yml", "deploy/quickstart/docker-compose.yml"):
+    _cz = _code(read(_stack))
+    _images = [z.split("image:", 1)[1].strip() for z in _cz if re.match(r"^\s+image:", z)]
+    assert len(_images) >= 2, _images
+    for image in _images:
+        assert image in _OWN_IMAGES or re.search(r":[\w.-]+@sha256:[0-9a-f]{64}$", image), \
+            f"{_stack}: {image} is neither an own version image nor pinned by version+digest"
+    _anchor = re.search(r"^x-hardening: &hardening\n((?:  .*\n)+)", "\n".join(_cz) + "\n", re.M)
+    assert _anchor, f"{_stack}: the hardening anchor x-hardening is missing"
+    for necessary in ("read_only: true", "cap_drop: [ALL]", 'security_opt: ["no-new-privileges:true"]'):
+        assert necessary in _anchor.group(1), f"{_stack}: x-hardening without `{necessary}`"
+    _services = re.search(r"^services:\n(.*?)^\S", "\n".join(_cz) + "\nEND", re.M | re.S).group(1)
+    _names = re.findall(r"^  ([a-z0-9_-]+):\s*$", _services, re.M)
+    _blocks = re.split(r"^  [a-z0-9_-]+:\s*$", _services, flags=re.M)[1:]
+    assert len(_names) == len(_blocks) >= 2, _names
+    for name, block in zip(_names, _blocks):
+        assert "<<: *hardening" in block, f"{_stack}: service `{name}` without hardening (<<: *hardening)"
+        assert "cap_add" not in block or re.search(r"cap_add: \[NET_BIND_SERVICE\]", block), \
+            f"{_stack}: service `{name}` takes back more than NET_BIND_SERVICE"
+    print(f"  {_stack}: {len(_images)} images pinned, {len(_names)} services hardened")
+# The quickstart runs the Caddy image of the same release — the one with caddy-jwt that release.yml publishes.
+assert f"ghcr.io/ollornog/tinysesam-caddy-gate:v{pv}" in read("deploy/quickstart/docker-compose.yml"), \
+    "quickstart: not on the release's Caddy image"
 
 # B4-10 — SECURITY.md names a path everyone can reach, and deadlines that can be measured.
 from web.site import OWNER as _OWNER  # noqa: E402

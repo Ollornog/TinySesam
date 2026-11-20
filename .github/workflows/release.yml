@@ -1,9 +1,17 @@
 name: release
 
-# A git tag `vX.Y.Z` produces three things:
+# A git tag `vX.Y.Z` produces four things:
 #   1. a GitHub release with wheel, sdist and checksums
 #   2. the publication of the same wheel and sdist on PyPI
 #   3. a container image `ghcr.io/ollornog/tinysesam:<version>` (for the gateway)
+#   4. a container image `ghcr.io/ollornog/tinysesam-caddy-gate:<version>` (Caddy with caddy-jwt, since 2026-11-20)
+#
+# The Caddy image carries the SAME version as the release, not one of its own: the proxy templates
+# (deploy/forward-auth, deploy/quickstart) belong to the release, and the CI job `gate-caddy` measured exactly this pair
+# — gateway and Caddy of one commit. A Caddy or caddy-jwt bump (Dependabot `gomod`/`docker`) therefore cuts a patch
+# release through the release automation (the image paths in dependabot-auto-merge.yml). Which Caddy is inside says
+# `caddy version` and the SBOM. Not baked into the gateway image: a proxy with its own release cadence, its own CVEs
+# and its own port 443 does not belong in the container of the auth service.
 #
 # These are the distribution channels: TinySesam does not update itself, it is installed —
 # via `pip install tinysesam==<version>`, via a pinned tag or via an image tag.
@@ -320,6 +328,33 @@ jobs:
           only-fixed: true
           output-format: table
           config: .grype.yaml
+      # The Caddy image (tinysesam-caddy-gate) goes through the same gate before `image` pushes it: built from this
+      # commit, the plugin inside, every shipped Caddyfile it is meant for accepted, then the same Grype scan — for a Go
+      # binary Grype reads the module list (Caddy, caddy-jwt and all below), so a vulnerable Go dependency turns red too.
+      # The behaviour behind the templates is measured in ci.yml, job `gate-caddy`.
+      - name: "Caddy image: build, plugin, templates"
+        run: |
+          set -euo pipefail
+          image=tinysesam-caddy-gate-probe:local
+          docker build --quiet --tag "$image" deploy/forward-auth/caddy-gate >/dev/null
+          docker run --rm "$image" caddy version
+          docker run --rm "$image" caddy list-modules | grep -qx 'http.authentication.providers.jwt'
+          # The gate template fetches its keys at runtime (`jwk_url`, H3) — validating needs neither key nor upstream.
+          docker run --rm -v "$PWD/deploy/forward-auth:/t:ro" "$image" \
+            caddy validate --config /t/Caddyfile.gate --adapter caddyfile
+          for mode in acme internal ip; do
+            docker run --rm -e TS_TLS="$mode" -e TS_AUTH_HOST=auth.example.com -e TS_APP_HOST=app.example.com \
+              -v "$PWD/deploy/quickstart:/t:ro" "$image" caddy validate --config /t/Caddyfile --adapter caddyfile
+          done
+      - name: "Caddy image: scan for known vulnerabilities (Grype)"
+        uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439  # v7.4.2
+        with:
+          image: tinysesam-caddy-gate-probe:local
+          fail-build: true
+          severity-cutoff: high
+          only-fixed: true
+          output-format: table
+          config: .grype.yaml
 
   image:
     timeout-minutes: 30
@@ -333,6 +368,7 @@ jobs:
       packages: write      # push the image to GHCR
     outputs:
       digest: ${{ steps.push.outputs.digest }}
+      caddy-gate-digest: ${{ steps.push-caddy-gate.outputs.digest }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
@@ -393,6 +429,20 @@ jobs:
           # (found on the first PR with this dry run). It is never pushed anyway.
           tags: ghcr.io/${{ env.OWNER_LC }}/tinysesam:${{ github.ref_type == 'tag' && github.ref_name || 'dry-run' }}
           outputs: type=image,push=${{ github.ref_type == 'tag' }},rewrite-timestamp=true
+          provenance: false
+
+      # The Caddy image, same rules: one tag equal to the git tag, no `latest`, pushed only for the tag, both platforms.
+      # Go compiles on the runner's platform for the target (no emulation); only the final stage runs under qemu.
+      # Not bit-reproducible (`apk upgrade`, see its Dockerfile) — hence no `rewrite-timestamp` promise here.
+      # The first push creates the package `tinysesam-caddy-gate` on GHCR as PRIVATE: set it public once in its settings.
+      - name: Build and push the Caddy image
+        id: push-caddy-gate
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc  # v7.4.0
+        with:
+          context: deploy/forward-auth/caddy-gate
+          platforms: linux/amd64,linux/arm64
+          tags: ghcr.io/${{ env.OWNER_LC }}/tinysesam-caddy-gate:${{ github.ref_type == 'tag' && github.ref_name || 'dry-run' }}
+          outputs: type=image,push=${{ github.ref_type == 'tag' }}
           provenance: false
 
   # ── Dress rehearsal (see header) ───────────────────────────────────────────────────────────────
@@ -479,6 +529,27 @@ jobs:
           output-file: sbom.spdx.json
           upload-artifact: false
 
+      # The Caddy image through the same push and SBOM: Syft must read the Go module list out of the binary — the SBOM
+      # is only worth attesting when it names caddy-jwt and its version.
+      - name: "Dress rehearsal: build and push the Caddy image"
+        id: push-caddy-gate
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc  # v7.4.0
+        with:
+          context: deploy/forward-auth/caddy-gate
+          push: true
+          tags: localhost:5000/tinysesam-caddy-gate:rehearsal
+          provenance: false
+
+      - name: "Dress rehearsal: SBOM from the pushed Caddy image"
+        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c  # v0.24.3
+        env:
+          SYFT_REGISTRY_INSECURE_USE_HTTP: "true"
+        with:
+          image: localhost:5000/tinysesam-caddy-gate@${{ steps.push-caddy-gate.outputs.digest }}
+          format: spdx-json
+          output-file: sbom-caddy-gate.spdx.json
+          upload-artifact: false
+
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
         with:
           name: pypi-dist
@@ -503,7 +574,11 @@ jobs:
           done
           jq -e '[.packages[].name] | index("tinysesam")' sbom.spdx.json >/dev/null \
             || { echo "SBOM does not know tinysesam"; exit 1; }
-          echo "Upload and SBOM match"
+          for module in github.com/ggicci/caddy-jwt github.com/caddyserver/caddy/v2; do
+            jq -e --arg m "$module" '[.packages[].name] | index($m)' sbom-caddy-gate.spdx.json >/dev/null \
+              || { echo "SBOM of the Caddy image does not know $module"; exit 1; }
+          done
+          echo "Upload and SBOMs match"
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
@@ -592,13 +667,41 @@ jobs:
           sbom-path: sbom.spdx.json
           push-to-registry: true
 
-      - name: Print the digest (for an immutable pin)
+      # The Caddy image, the same three steps. Its SBOM lists the Go modules of the binary — Caddy, caddy-jwt and
+      # every dependency with its version — plus the Alpine packages.
+      - name: Attest the provenance of the Caddy image
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8  # v4.2.2
+        with:
+          subject-name: ghcr.io/${{ env.OWNER_LC }}/tinysesam-caddy-gate
+          subject-digest: ${{ needs.image.outputs.caddy-gate-digest }}
+          push-to-registry: true
+
+      - name: Generate the SBOM from the pushed Caddy image
+        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c  # v0.24.3
+        with:
+          image: ghcr.io/${{ env.OWNER_LC }}/tinysesam-caddy-gate@${{ needs.image.outputs.caddy-gate-digest }}
+          format: spdx-json
+          output-file: sbom-caddy-gate.spdx.json
+          upload-artifact: false
+
+      - name: Attest the SBOM of the Caddy image
+        uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e  # v4.1.0
+        with:
+          subject-name: ghcr.io/${{ env.OWNER_LC }}/tinysesam-caddy-gate
+          subject-digest: ${{ needs.image.outputs.caddy-gate-digest }}
+          sbom-path: sbom-caddy-gate.spdx.json
+          push-to-registry: true
+
+      - name: Print the digests (for an immutable pin)
         env:
           DIGEST: ${{ needs.image.outputs.digest }}
+          CADDY_DIGEST: ${{ needs.image.outputs.caddy-gate-digest }}
         run: |
           echo "Image: ghcr.io/${OWNER_LC}/tinysesam:${GITHUB_REF_NAME}"
           echo "Digest: ${DIGEST}"
           echo "Pin immutably: ghcr.io/${OWNER_LC}/tinysesam@${DIGEST}"
+          echo "Caddy image: ghcr.io/${OWNER_LC}/tinysesam-caddy-gate:${GITHUB_REF_NAME}"
+          echo "Pin immutably: ghcr.io/${OWNER_LC}/tinysesam-caddy-gate@${CADDY_DIGEST}"
 
   # Release automation (kit 0.45.0): scripts/_release_automatik.py bumps the version or sets the tag, with the app token (this repo
   # only), so that the PR and the tag start workflows (the workflow token starts none).

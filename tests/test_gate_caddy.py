@@ -129,30 +129,45 @@ FORWARD["n"] = 0
 SHARE = "^/(s|public/share)/"
 
 
+#: The site lines of each template as they stand in the file. The quickstart (deploy/quickstart) names its sites from
+#: the environment and selects HSTS through `import tls-{$TS_TLS}` — measured here in mode `acme` (HSTS, no `tls`
+#: line), its TLS modes themselves in tests/test_quickstart.py.
+SITES = {"Caddyfile.gate": ("\nauth.example.com {", "\napp.example.com {"),
+         "Caddyfile": ("\nauth.example.com {", "\napp.example.com {"),
+         "../quickstart/Caddyfile": ("\nhttps://{$TS_AUTH_HOST} {", "\nhttps://{$TS_APP_HOST}:{$TS_APP_PORT:443} {")}
+
+
 def start_caddy(templates_file="Caddyfile.gate"):
     """Caddy needs a port that it binds itself — a bound socket cannot be
     passed on. So find a free one, release it and let Caddy bind; if that fails (another
     process was faster), try again with the next one."""
     template = (ROOT / "deploy/forward-auth" / templates_file).read_text(encoding="utf-8")
+    name = os.path.basename(os.path.dirname(templates_file) or "forward-auth") + "-" + os.path.basename(templates_file)
+    auth_site, app_site = SITES[templates_file]
     for _ in range(5):
         s = socket.socket()
         s.bind(("127.0.0.1", 0))
         port = s.getsockname()[1]
         s.close()
-        text = "{\n\tauto_https off\n\tadmin off\n}\n" + template
-        text = text.replace("\nauth.example.com {", f"\nhttp://auth.example.com:{port} {{", 1)
-        text = text.replace("\napp.example.com {", f"\nhttp://app.example.com:{port} {{", 1)
+        # A template with global options of its own gets the two lines there — a second global block is an error.
+        first = next(z for z in template.splitlines() if z.strip() and not z.startswith("#"))
+        if first == "{":
+            text = template.replace("\n{\n", "\n{\n\tauto_https off\n\tadmin off\n", 1)
+        else:
+            text = "{\n\tauto_https off\n\tadmin off\n}\n" + template
+        text = text.replace(auth_site, f"\nhttp://auth.example.com:{port} {{", 1)
+        text = text.replace(app_site, f"\nhttp://app.example.com:{port} {{", 1)
         assert text.count(f":{port} {{") == 2, "the site addresses of the template have shifted"
-        file = os.path.join(_tmp, templates_file)
+        file = os.path.join(_tmp, name)
         with open(file, "w", encoding="utf-8") as f:
             f.write(text)
         env = {**os.environ, "TS_GATE_PUBKEY": auth.gate_public_key(), "TS_GATE_ISSUER": ISS,
-               "TS_SHARE_PREFIX": SHARE,
+               "TS_SHARE_PREFIX": SHARE, "TS_TLS": "acme", "TS_AUTH_HOST": "auth.example.com",
                "TS_AUTH_UPSTREAM": TS, "TS_APP_UPSTREAM": APP, "XDG_DATA_HOME": _tmp,
                "XDG_CONFIG_HOME": _tmp}
         # Popen gives the child its own copy of the file descriptor — the parent process's one
         # may be closed right away.
-        with open(os.path.join(_tmp, templates_file + ".log"), "w") as log:
+        with open(os.path.join(_tmp, name + ".log"), "w") as log:
             p = subprocess.Popen([CADDY, "run", "--config", file, "--adapter", "caddyfile"],
                                  stdout=log, stderr=subprocess.STDOUT, env=env)
         for _ in range(100):
@@ -164,7 +179,7 @@ def start_caddy(templates_file="Caddyfile.gate"):
             except OSError:
                 time.sleep(0.1)
         p.kill()
-    with open(os.path.join(_tmp, templates_file + ".log"), encoding="utf-8", errors="replace") as log:
+    with open(os.path.join(_tmp, name + ".log"), encoding="utf-8", errors="replace") as log:
         raise RuntimeError("Caddy does not start: " + log.read()[-2000:])
 
 
@@ -172,6 +187,8 @@ _caddy, PORT = start_caddy()
 #: The plain template (forward_auth without gate token) carries the same share exception — it needs
 #: no plugin, but its own Caddy, and it is measured just the same (B-3).
 _caddy_plain, PORT_PLAIN = start_caddy("Caddyfile")
+#: The quickstart's Caddyfile (deploy/quickstart) — the plain forward auth in one file per stack, measured alike.
+_caddy_quick, PORT_QUICK = start_caddy("../quickstart/Caddyfile")
 
 
 class _WithoutRedirect(urllib.request.HTTPRedirectHandler):
@@ -247,7 +264,8 @@ try:
     # value with "" — closed. Pinned here for both the plain template and the gate template's way back.
     forged = {"Remote-User": "admin", "Remote-Groups": "admin", "Remote-Email": "chef@example.com",
               "Remote-Name": "Chef", "Remote-Id": "1"}
-    for port, was in ((PORT, "gate template, way back"), (PORT_PLAIN, "plain template")):
+    for port, was in ((PORT, "gate template, way back"), (PORT_PLAIN, "plain template"),
+                      (PORT_QUICK, "quickstart template")):
         st, h, a = request("/h1", session, forged, port=port)
         hd = a["header"] if a else {}
         assert st == 200 and hd.get("Remote-User") == "anna" and hd.get("Remote-Groups") == "editors", (was, st, hd)
@@ -258,7 +276,35 @@ try:
         st, h, _ = request("/h1", None, forged, port=port)
         assert st == 302 and h.get("Strict-Transport-Security") == "max-age=31536000; includeSubDomains", (was, st)
     ok("H1: Remote-* sent by the browser (also Remote-Email against an empty value) → TinySesam's values reach "
-       "the application — plain template and gate way back; HSTS on 200 and on the redirect")
+       "the application — plain, quickstart and gate way back; HSTS on 200 and on the redirect")
+
+    # ---------- T-58: a header MISSING from the answer reaches the application as nothing ----------
+    # Before 2026-11-20 the templates set every Remote-* from `{rp.header.…}` unconditionally; when TinySesam's answer
+    # did not carry one (forward_headers reduced or renamed), Caddy left the placeholder as literal text and the
+    # application received `{http.reverse_proxy.header.Remote-Email}` as the address. Now: strip up front, set each
+    # header only when the answer carries it.
+    auth.cfg.forward_headers = {"user": "Remote-User", "groups": "Remote-Groups"}
+    try:
+        for port, was in ((PORT, "gate template, way back"), (PORT_PLAIN, "plain template"),
+                          (PORT_QUICK, "quickstart template")):
+            st, h, a = request("/t58", session, forged, port=port)
+            hd = a["header"] if a else {}
+            assert st == 200 and hd.get("Remote-User") == "anna" and hd.get("Remote-Groups") == "editors", (was, st, hd)
+            leaked = {k: v for k, v in hd.items() if k in ("Remote-Email", "Remote-Name", "Remote-Id")}
+            assert not leaked, (was, leaked)
+    finally:
+        auth.cfg.forward_headers = {}
+    ok("T-58: forward_headers without email/name/id → the application gets no such header — neither placeholder text "
+       "nor the browser's forgery (plain, quickstart, gate way back)")
+
+    # ---------- OAuth (T-36): the resource metadata of the application's host go to TinySesam, past the gate ----------
+    # TinySesam here has no OAuth switched on, so it answers its own 404 — what is measured is the route: not the
+    # application (it would answer 200 with JSON of its own), not the sign-in (302), and no call to /auth/forward.
+    for port, was in ((PORT, "gate template"), (PORT_PLAIN, "plain template"), (PORT_QUICK, "quickstart template")):
+        before = FORWARD["n"]
+        st, h, a = request("/.well-known/oauth-protected-resource/mcp", None, port=port)
+        assert st == 404 and a is None and FORWARD["n"] == before, (was, st, a)
+    ok("/.well-known/oauth-protected-resource* reaches TinySesam without sign-in — plain, quickstart and gate template")
 
     # ---------- with gate cookie: TinySesam is not asked ----------
     with_gate = {**session, "__Host-tinysesam_gate": tok, "other": "1"}
@@ -491,7 +537,7 @@ try:
     auth.cfg.gate_token_enabled = True
     ok("gate_token_enabled=False → every request goes via /auth/forward (as without gate)")
 finally:
-    for _c in (_caddy, _caddy_plain):
+    for _c in (_caddy, _caddy_plain, _caddy_quick):
         _c.terminate()
         try:
             _c.wait(timeout=10)

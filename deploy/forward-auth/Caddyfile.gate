@@ -146,11 +146,17 @@ app.example.com {
 				# header_up X-TinySesam-Roles editors,admin   # then adjust audience_whitelist above
 				@ok status 200
 				handle_response @ok {
-					request_header Remote-User {rp.header.Remote-User}
-					request_header Remote-Name {rp.header.Remote-Name}
-					request_header Remote-Email {rp.header.Remote-Email}
-					request_header Remote-Groups {rp.header.Remote-Groups}
-					request_header Remote-Id {rp.header.Remote-Id}
+					# Each header only when the answer carries it (T-58, see ./Caddyfile).
+					@ts_user not vars {rp.header.Remote-User} ""
+					@ts_name not vars {rp.header.Remote-Name} ""
+					@ts_email not vars {rp.header.Remote-Email} ""
+					@ts_groups not vars {rp.header.Remote-Groups} ""
+					@ts_id not vars {rp.header.Remote-Id} ""
+					request_header @ts_user Remote-User {rp.header.Remote-User}
+					request_header @ts_name Remote-Name {rp.header.Remote-Name}
+					request_header @ts_email Remote-Email {rp.header.Remote-Email}
+					request_header @ts_groups Remote-Groups {rp.header.Remote-Groups}
+					request_header @ts_id Remote-Id {rp.header.Remote-Id}
 					# The new gate token goes to the browser with the application's response.
 					# Placeholder in Go-canonical form (H-16, see ./Caddyfile).
 					header +Set-Cookie {rp.header.X-Tinysesam-Gate-Cookie}

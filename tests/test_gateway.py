@@ -74,6 +74,20 @@ os.environ["TINYSESAM_GATE_BRAND"] = "  Company A  "
 assert gateway.config_from_env().gate_brand == "Company A"
 del os.environ["TINYSESAM_GATE_BRAND"]
 ok("TINYSESAM_GATE_BRAND: empty by default, set without margin")
+
+# OAuth for MCP clients (T-36) behind the gateway: one variable, off without it. Until 2026-11-20 the gateway had no
+# way to switch it on — the proxy templates routed /.well-known/oauth-protected-resource* to a gateway that always said 404.
+assert not envcfg.oauth_enabled and envcfg.oauth_resources == []
+os.environ["TINYSESAM_OAUTH_RESOURCES"] = " https://app.example.com/mcp , "
+_oauth_cfg = gateway.config_from_env()
+assert _oauth_cfg.oauth_enabled and _oauth_cfg.oauth_resources == ["https://app.example.com/mcp"], _oauth_cfg
+del os.environ["TINYSESAM_OAUTH_RESOURCES"]
+from fastapi.testclient import TestClient as _OAuthClient  # noqa: E402
+_meta = _OAuthClient(gateway.build_app(_oauth_cfg)).get(
+    "/.well-known/oauth-protected-resource/mcp", headers={"Host": "app.example.com", "X-Forwarded-Proto": "https"})
+assert _meta.status_code == 200 and _meta.json()["resource"] == "https://app.example.com/mcp", (_meta.status_code,
+                                                                                               _meta.text)
+ok("TINYSESAM_OAUTH_RESOURCES: off by default; set, the gateway answers the resource metadata of the application")
 assert gateway.config_from_env().brand_icon == ""
 for good in ("/favicon.svg", "data:image/png;base64,iVBORw0KGgo="):
     os.environ["TINYSESAM_BRAND_ICON"] = good

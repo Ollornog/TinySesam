@@ -629,9 +629,10 @@ r.check("with [argon2] startup stays quiet (control, provided the extra is prese
         not was_argon or not any("[argon2]" in z for z in trap2.lines), f"{trap2.lines}")
 
 
-# The home-network template (T-37) carries a shortened copy of the forward-auth block — measured the same way,
-# so that the copy cannot drift from the original unnoticed.
-CADDYFILES = ("deploy/forward-auth/Caddyfile", "deploy/forward-auth/Caddyfile.gate", "deploy/home-network/Caddyfile")
+# The home-network template (T-37) and the quickstart (deploy/quickstart) carry a copy of the forward-auth block —
+# measured the same way, so that a copy cannot drift from the original unnoticed.
+CADDYFILES = ("deploy/forward-auth/Caddyfile", "deploy/forward-auth/Caddyfile.gate", "deploy/home-network/Caddyfile",
+              "deploy/quickstart/Caddyfile")
 for file in ("deploy/forward-auth/nginx.conf", *CADDYFILES):
     missing = missing_header(file)
     r.check(f"{file} sets all remote headers", not missing, f"missing: {missing}")
@@ -774,7 +775,8 @@ def go_canonical(name: str) -> str:
     return "-".join(w[:1].upper() + w[1:].lower() for w in name.split("-"))
 
 
-for file, extra in ((CADDYFILES[0], set()), (CADDYFILES[1], {"X-TinySesam-Gate-Cookie"}), (CADDYFILES[2], set())):
+for file, extra in ((CADDYFILES[0], set()), (CADDYFILES[1], {"X-TinySesam-Gate-Cookie"}), (CADDYFILES[2], set()),
+                    (CADDYFILES[3], set())):
     _placeholder = re.findall(r"\{rp\.header\.([A-Za-z0-9-]+)\}", (ROOT / file).read_text(encoding="utf-8"))
     _skewed = [p for p in _placeholder if p != go_canonical(p)]
     r.check(f"{file}: every {{rp.header.…}} placeholder is in Go-canonical form (H-16)",

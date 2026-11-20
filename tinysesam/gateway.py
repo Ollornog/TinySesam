@@ -43,6 +43,10 @@ Configuration via environment variables:
                                                and NO TINYSESAM_COOKIE_DOMAIN. Default 0
     TINYSESAM_GATE_TTL_SEC                     lifetime of the gate token (default 300, 30–3600) —
                                                that long a revocation takes no effect at the proxy
+    TINYSESAM_OAUTH_RESOURCES                  comma list of protected resources (absolute https URLs, e.g.
+                                               https://app.example.com/mcp): switches on the OAuth 2.1
+                                               authorization server for MCP clients (T-36, README "OAuth for
+                                               MCP clients"). Empty = off (default)
     TINYSESAM_FORWARD_LOGIN                    direct (default: page request → provider → back) or
                                                page (first the login page with the name of the application)
     TINYSESAM_FORWARD_LOGOUT                   all (default: session and provider), app (only this
@@ -193,6 +197,8 @@ def config_from_env() -> TinySesamConfig:
         forward_logout=os.environ.get("TINYSESAM_FORWARD_LOGOUT", "").strip() or "all",
         forward_logged_out_sec=int(os.environ.get("TINYSESAM_FORWARD_LOGGED_OUT_SEC", "10") or 0),
         gate_token_ttl_sec=int(os.environ.get("TINYSESAM_GATE_TTL_SEC", "300") or 300),
+        oauth_enabled=bool(_split("TINYSESAM_OAUTH_RESOURCES")),
+        oauth_resources=_split("TINYSESAM_OAUTH_RESOURCES"),
     )
 
 

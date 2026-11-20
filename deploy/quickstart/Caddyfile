@@ -1,0 +1,128 @@
+# TinySesam quickstart — Caddy in front of the gateway and one protected application (docker-compose.yml here).
+#
+# Everything that differs between installations comes from the environment (`.env`, see example.env):
+#   TS_TLS        how Caddy gets its certificate — one of the snippets below:
+#                   acme      public domain: Let's Encrypt / ZeroSSL, ports 80+443 reachable from the internet
+#                   dns       domain that resolves only inside your network: ACME DNS-01 challenge — needs a Caddy
+#                             with your DNS provider's module (deploy/forward-auth/caddy-gate/Dockerfile,
+#                             CADDY_EXTRA_MODULES); the published image has none
+#                   internal  domain names with Caddy's own CA (a lab, or a domain you cannot validate)
+#                   ip        a bare IP address with Caddy's own CA — read docs/HOME-NETWORK.md first
+#   TS_AUTH_HOST  where TinySesam signs people in, e.g. auth.example.com (TS_TLS=ip: the IP address)
+#   TS_APP_HOST   the protected application, e.g. app.example.com (TS_TLS=ip: the same IP address)
+#   TS_APP_PORT   443; with TS_TLS=ip 8443 — a bare IP has no subdomains, the application gets its own port
+#
+# This is deploy/forward-auth/Caddyfile in one file per stack — the reasons for each line are there. Not in here:
+# public share paths (T-20, the `@share` block there) and the gate token (ADR-9, deploy/forward-auth/Caddyfile.gate —
+# this image already has caddy-jwt; swap the `route` below for that file's `route` and `handle_errors`).
+{
+	# A client sends no SNI for an IP address. Caddy then picks the certificate by the address the connection
+	# arrived at — inside a Docker bridge the CONTAINER's address — and the handshake fails (T-37). With a domain the
+	# browser always sends SNI; the line does nothing then.
+	default_sni {$TS_AUTH_HOST}
+	# Inside the container there is no trust store worth writing to (TS_TLS=internal/ip: distribute the root by hand).
+	skip_install_trust
+}
+
+# ---------- TLS modes: `import tls-{$TS_TLS}` picks exactly one ----------
+# HSTS (ASVS 3.4.1) wherever there is a domain: one year, also for subdomains OF THIS HOST — never for its siblings or
+# the parent domain. No `preload`: the browsers' preload list is hard to leave again.
+(tls-acme) {
+	header Strict-Transport-Security "max-age=31536000; includeSubDomains"
+}
+
+# Most DNS providers take one API token, e.g. TS_DNS_PROVIDER=cloudflare; others need a block of their own — see the
+# provider module's README. The token reaches Caddy as an environment variable, never written into this file.
+(tls-dns) {
+	tls {
+		dns {$TS_DNS_PROVIDER} {env.TS_DNS_API_TOKEN}
+	}
+	header Strict-Transport-Security "max-age=31536000; includeSubDomains"
+}
+
+(tls-internal) {
+	tls internal
+	header Strict-Transport-Security "max-age=31536000; includeSubDomains"
+}
+
+# No Strict-Transport-Security on an IP address: browsers ignore HSTS from one (RFC 6797, section 8.1.1), so the line
+# would only look like protection.
+(tls-ip) {
+	tls internal
+}
+
+# ---------- TinySesam: sign-in, sign-out, OAuth endpoints ----------
+https://{$TS_AUTH_HOST} {
+	import tls-{$TS_TLS:acme}
+	reverse_proxy {$TS_AUTH_UPSTREAM:tinysesam:8000}
+}
+
+# ---------- The protected application ----------
+https://{$TS_APP_HOST}:{$TS_APP_PORT:443} {
+	import tls-{$TS_TLS:acme}
+
+	# ONLY this proxy sets the identity: every Remote-* the browser sends goes first, on every path (H1, T-58).
+	request_header -Remote-User
+	request_header -Remote-Name
+	request_header -Remote-Email
+	request_header -Remote-Groups
+	request_header -Remote-Id
+
+	# Sign-out at the application (T-22), past the gate: https://<app>/.tinysesam/logout
+	handle /.tinysesam/* {
+		reverse_proxy {$TS_AUTH_UPSTREAM:tinysesam:8000}
+	}
+
+	# OAuth for MCP clients (T-36): TinySesam answers the resource metadata for this host (RFC 9728) once
+	# TS_OAUTH_RESOURCES names it (e.g. https://app.example.com/mcp); without it, 404.
+	handle /.well-known/oauth-protected-resource* {
+		reverse_proxy {$TS_AUTH_UPSTREAM:tinysesam:8000}
+	}
+
+	route {
+		reverse_proxy {$TS_AUTH_UPSTREAM:tinysesam:8000} {
+			method GET
+			rewrite /auth/forward
+			header_up X-Forwarded-Method {method}
+			header_up X-Forwarded-Uri {uri}
+			# header_up X-TinySesam-Roles editors,admin   # only passes with one of these roles
+			# Header form in `{rp.header.…}`: Go's canonical form (H-16). Each header only when the answer carries it
+			# (T-58) — a placeholder of a missing header would reach the application as literal text.
+			@ok status 200
+			handle_response @ok {
+				@ts_user not vars {rp.header.Remote-User} ""
+				@ts_groups not vars {rp.header.Remote-Groups} ""
+				@ts_email not vars {rp.header.Remote-Email} ""
+				@ts_name not vars {rp.header.Remote-Name} ""
+				@ts_id not vars {rp.header.Remote-Id} ""
+				request_header @ts_user Remote-User {rp.header.Remote-User}
+				request_header @ts_groups Remote-Groups {rp.header.Remote-Groups}
+				request_header @ts_email Remote-Email {rp.header.Remote-Email}
+				request_header @ts_name Remote-Name {rp.header.Remote-Name}
+				request_header @ts_id Remote-Id {rp.header.Remote-Id}
+			}
+			# An OAuth client gets TinySesam's 401 with its Bearer challenge, not a login page — before @denied.
+			@oauth {
+				status 401
+				header X-Tinysesam-Reason oauth
+			}
+			handle_response @oauth {
+				header WWW-Authenticate {rp.header.Www-Authenticate}
+				respond 401
+			}
+			@denied status 401
+			handle_response @denied {
+				redir {rp.header.X-Tinysesam-Location} 302
+			}
+			@norole status 403
+			handle_response @norole {
+				respond "Access denied: missing role." 403
+			}
+		}
+		# The application — without TinySesam's cookies (B-20).
+		reverse_proxy {$TS_APP_UPSTREAM:app:9000} {
+			header_up Cookie "(^|;)\s*(__Host-|__Secure-)?tinysesam_[^=;]*=[^;]*" ""
+			header_up Cookie "^[;\s]+" ""
+		}
+	}
+}

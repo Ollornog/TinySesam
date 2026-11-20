@@ -1120,7 +1120,9 @@ Signatur hängt an der Identität des Workflows.
 
 Es läuft als **Nicht-root** (uid 1000), enthält weder `pip` noch `git`, bringt einen
 `HEALTHCHECK` auf `/healthz` mit und startet direkt das Gateway — kein `command:` nötig.
-Ein vollständiges Beispiel mit Caddy liegt in `deploy/forward-auth/docker-compose.yml`.
+Der Proxy kommt mit: `ghcr.io/ollornog/tinysesam-caddy-gate:v0.25.7` ist Caddy mit dem Plugin caddy-jwt, gebaut,
+geprüft und attestiert vom selben Release (Prüfung wie oben). In fünf Minuten am Laufen: „Gateway und Caddy in
+5 Minuten“ weiter unten; der Referenz-Stack mit allen Optionen liegt in `deploy/forward-auth/docker-compose.yml`.
 
 **Heimnetz ohne Domain?** Außerhalb von `localhost` ist HTTPS Pflicht; eine nackte IP-Adresse braucht deshalb eine
 eigene CA auf jedem Gerät — und Passkeys funktionieren auf einer IP gar nicht. `docs/HOME-NETWORK.md`
@@ -1573,6 +1575,33 @@ keine Ein-Routen-App.
 Programmatisch: `TinySesamConfig.oidc_gateway(issuer=…, client_id=…, client_secret=…, base_url=…)`.
 Fertiges [`deploy/forward-auth/docker-compose.yml`](../deploy/forward-auth/) (Gateway + Caddy) liegt bei.
 
+### Gateway und Caddy in 5 Minuten
+
+[`deploy/quickstart/`](../deploy/quickstart/) ist ein Stack: das Gateway, Caddy mit caddy-jwt und eine
+Beispielanwendung hinter dem Tor — nichts zu bauen, jedes Abbild aus einem Release oder per Digest gepinnt.
+
+```bash
+git clone https://github.com/Ollornog/TinySesam && cd TinySesam
+cp deploy/quickstart/example.env deploy/quickstart/.env && chmod 600 deploy/quickstart/.env
+$EDITOR deploy/quickstart/.env        # OIDC-Anbieter, zwei Hostnamen, TLS-Modus
+docker compose -f deploy/quickstart/docker-compose.yml up -d
+```
+
+Beim Anbieter `https://<TS_AUTH_HOST>/auth/oidc/callback` als Weiterleitungs-URL eintragen, `https://<TS_APP_HOST>`
+öffnen: Nach der Anmeldung zeigt die Beispielanwendung die `Remote-*`-Header, die TinySesam gesetzt hat. Danach den
+eigenen Dienst an die Stelle von `app` setzen.
+
+- **TLS-Modus** `TS_TLS`: `acme` (öffentliche Domain, Let's Encrypt), `dns` (Domain, die nur zu Hause auflöst, DNS-01 —
+  braucht ein Caddy mit dem Modul des DNS-Anbieters: `docker build --build-arg
+  CADDY_EXTRA_MODULES=github.com/caddy-dns/<anbieter> deploy/forward-auth/caddy-gate`), `internal` (Domainnamen mit
+  Caddys eigener CA) oder `ip` (nackte IP-Adresse — vorher [`docs/HOME-NETWORK.md`](../docs/HOME-NETWORK.md) lesen,
+  Englisch).
+- **Enthalten:** Identitäts-Header aus dem Browser werden entfernt, HSTS überall, wo eine Domain ist, Abmelden an der
+  Anwendung, OAuth für MCP-Clients (`TS_OAUTH_RESOURCES`). **Nicht enthalten:** der fail2ban-Zulauf, mehrere
+  Anwendungen mit je eigenem Client, Freigabepfade, das Gate-Token — die kommen aus
+  [`deploy/forward-auth/`](../deploy/forward-auth/).
+- Jeder Pull-Request fährt diesen Stack in den Modi `ip` und `internal` (`tests/test_quickstart.py`).
+
 ### Gate-Token: der Proxy prüft selbst (ADR-9)
 
 Vor einer fremden Anwendung fragt der Proxy ohne Weiteres für **jede** Anfrage `/auth/forward` —
@@ -1583,8 +1612,9 @@ und prüft es danach **selbst**; TinySesam wird erst wieder gefragt, wenn es feh
 Der Rückweg ist die bestehende Forward-Auth, eine Anfrage samt Body geht also nicht verloren.
 
 - **Proxy:** Caddy mit dem Plugin [caddy-jwt](https://github.com/ggicci/caddy-jwt) — Vorlage
-  [`deploy/forward-auth/Caddyfile.gate`](../deploy/forward-auth/Caddyfile.gate), Bau
-  [`deploy/forward-auth/caddy-gate/Dockerfile`](../deploy/forward-auth/caddy-gate/Dockerfile).
+  [`deploy/forward-auth/Caddyfile.gate`](../deploy/forward-auth/Caddyfile.gate), Abbild
+  `ghcr.io/ollornog/tinysesam-caddy-gate:v0.25.7` (gebaut aus
+  [`deploy/forward-auth/caddy-gate/`](../deploy/forward-auth/caddy-gate/)).
 - **Schlüssel:** ein eigener, zufälliger Ed25519-Schlüssel (seit T-48, ADR-12 — bis 0.25.x aus dem
   Tresor-Schlüssel abgeleitet): `TINYSESAM_GATE_KEY`, `gate_key_file`, sonst mit dem Tresor-Schlüssel verschlüsselt
   in der Datenbank. Der Proxy holt die öffentlichen Schlüssel von `/auth/gate/jwks.json` (`jwk_url`, eine Rotation
@@ -1838,7 +1868,7 @@ zusätzlich die Website baut.
 
 ## Status
 
-**94 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
+**95 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
 (`tests/test_matrix.py`).
 
 Gebaut und getestet: Passwort/TOTP/Sitzungen/Rollen, Remember-me, Step-up und per-Route-MFA,
