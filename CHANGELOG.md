@@ -4,6 +4,11 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+### Changed — CodeQL: accepted false positives are recorded in the repository
+
+- `.github/codeql/accepted.md` lists every dismissed code-scanning alert (rule, location, reason, date); a repo check
+  keeps the table complete. Rule: fix in code, dismiss only real false positives, never switch a rule off globally.
+
 ### Added — Caddy ready-made: image `tinysesam-caddy-gate` and a quickstart stack (T-62)
 
 - **Every release publishes `ghcr.io/ollornog/tinysesam-caddy-gate:vX.Y.Z`** — Caddy with the caddy-jwt plugin (gate
