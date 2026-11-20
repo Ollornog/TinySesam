@@ -232,6 +232,20 @@ def pruefe_dependabot(root: str) -> list[str]:
     return fehler
 
 
+# `runs-on: self-hosted` oder `runs-on: [self-hosted, …]` (Block-Liste `- self-hosted` ebenso) — Kommentare zählen nicht.
+EIGENER_RUNNER = re.compile(r"^\s*runs-on:\s*(?:\[\s*)?[\"']?self-hosted(?![\w-])|^\s*runs-on:\s*\n\s*-\s*[\"']?self-hosted(?![\w-])", re.M)
+
+
+def runner(wfs: dict[str, str]) -> str:
+    """`runs-on` der Vorlage (seit 0.51.0): `self-hosted`, wenn ein anderer Workflow des Repos auf eigenen Runnern
+    läuft (dann ist es privat — öffentliche Repos laufen nie dort, ci-policy), sonst `ubuntu-latest`.
+
+    Abgeleitet statt eingetragen: Ein neuer Wert im Block je Repo käme nur mit Handarbeit in jedes Repo, und ein
+    vergessener Eintrag kostete still GitHub-Minuten.
+    """
+    return "self-hosted" if any(EIGENER_RUNNER.search(t) for t in wfs.values()) else "ubuntu-latest"
+
+
 def nachlauf(root: str) -> list[str]:
     return [n for n, t in _workflows(root).items() if laeuft_auf_standardzweig(t)]
 
@@ -295,7 +309,8 @@ def rendere(root: str, je_repo: str) -> tuple[str, list[str]]:
     vorlage = PIN_PLATZHALTER.sub(pin, vorlage)
     text = (vorlage.replace("@@WORKFLOWS@@", workflows)
             .replace("@@JE_REPO@@\n", je_repo if je_repo.endswith("\n") else je_repo + "\n")
-            .replace("@@NACHLAUF@@\n", nachlauf_zeilen))
+            .replace("@@NACHLAUF@@\n", nachlauf_zeilen)
+            .replace("@@RUNNER@@", runner(wfs)))
     return text, probleme
 
 
