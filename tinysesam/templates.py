@@ -737,8 +737,8 @@ async function mkap(){const hosts=[...document.querySelectorAll('input[name=ap_h
   if(!hosts.length){say('ap_msg',TXT.ap_pick,false);return}
   const r=await J('__TS_P__/auth/app-passwords',{name:ap_name.value,hosts,expires_days:parseInt(ap_days.value,10)});
   const j=await r.json().catch(()=>({}));loadap();
-  if(j.password){ap_name.value='';say('ap_msg','',true);
-    await tsSecret(TXT.ap_title,j.password,TXT.ap_note.replace('__USER__',document.getElementById('apsec').dataset.user))}
+  if(j.secret){ap_name.value='';say('ap_msg','',true);
+    await tsSecret(TXT.ap_title,j.secret,TXT.ap_note.replace('__USER__',document.getElementById('apsec').dataset.user))}
   else if(!(r.status===403&&r.headers.get('X-TinySesam-Reauth')))say('ap_msg',j.detail||TXT.error,false)}
 async function revap(id){if(!await tsConfirm(TXT.ap_confirm,{danger:true}))return;
   await J('__TS_P__/auth/app-passwords/'+id+'/revoke');loadap()}

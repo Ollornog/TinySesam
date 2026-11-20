@@ -1185,7 +1185,7 @@ class TinySesam:
 
     def create_app_password(self, user_id, name, hosts=None, expires_days=None) -> dict:
         """Create an app password (T-66) for HTTP clients that speak only Basic auth — WebDAV, CalDAV/CardDAV, Git
-        over HTTPS. The return value carries it in PLAIN TEXT under `password`, this once; only an HMAC digest
+        over HTTPS. The return value carries it in PLAIN TEXT under `secret`, this once; only an HMAC digest
         with the pepper keyring (ADR-12) is stored.
 
         `name` (required): the device or purpose ("Phone calendar"). `hosts`: the applications it is valid for,
@@ -1201,7 +1201,8 @@ class TinySesam:
 
         The route `POST /auth/app-passwords` asks for a fresh confirmation first (`_require_fresh`, B-12): an app
         password is lasting access to the account. Whoever calls this method from own code owns that check.
-        Returns `{"id", "password", "name", "hosts", "expires_at"}`."""
+        Returns `{"id", "secret", "name", "hosts", "expires_at"}` — `secret`, not `password`: it is a generated
+        token of 124 bits, not a person's password (a fast keyed digest is right for it, a slow KDF is not needed)."""
         apps = {a["host"] for a in self.app_password_hosts()}
         if not apps:
             raise ConfigError("No application accepts app passwords: set forward_apps[host]['app_passwords'] = True "
@@ -1247,7 +1248,7 @@ class TinySesam:
                    + (" expiry=unlimited" if expires_at is None else f" days={days}"))
         self._security_event("app_password_created", int(u["id"]), app_password_id=pid, name=label,
                              hosts=list(chosen))
-        return {"id": pid, "password": secret, "name": label, "hosts": chosen, "expires_at": expires_at}
+        return {"id": pid, "secret": secret, "name": label, "hosts": chosen, "expires_at": expires_at}
 
     def list_app_passwords(self, user_id=None) -> list:
         """The app passwords of an account (`user_id=None`: of all accounts) — never a secret or digest. One dict

@@ -31,7 +31,8 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 ### Added — app passwords for WebDAV, CalDAV/CardDAV and Git at the gate (T-66)
 
 - **App passwords:** clients without a browser speak only Basic auth. An account creates an app password on its
-  account page (or `create_app_password`) for chosen applications — shown once with a copy button, five groups of
+  account page (or `create_app_password`, the plain text once under `secret`) for chosen applications — shown once
+  with a copy button, five groups of
   five characters (≈ 124 bits, no `0 o 1 l i`, case and hyphens ignored), stored only as an HMAC digest with the
   pepper keyring (ADR-12). New fields `app_password_default_days` (365) and `app_password_allow_unlimited` (False);
   an application takes them with `forward_apps[host]["app_passwords"] = True` (default off). Creation needs a fresh

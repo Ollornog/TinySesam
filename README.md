@@ -1361,7 +1361,7 @@ What protects it:
   `app_password_revoke`, `app_passwords_revoked`.
 
 In code: `auth.create_app_password(user_id, name, hosts=[…], expires_days=…)` (the plain text once, under
-`password`), `auth.list_app_passwords(user_id)` (`None`: all accounts), `auth.revoke_app_password(id, user_id)`,
+`secret`), `auth.list_app_passwords(user_id)` (`None`: all accounts), `auth.revoke_app_password(id, user_id)`,
 `auth.app_password_hosts()` (the applications that take them). The end-to-end check with a real WebDAV client
 behind a real Caddy is `tests/e2e_app_passwords.py` (manual: needs Docker).
 

@@ -147,7 +147,7 @@ c = session_client(auth, app, alice)
 r = c.post("/auth/app-passwords", json={"name": "Phone calendar", "hosts": [DAV]})
 assert r.status_code == 200, r.text
 created = r.json()
-secret = created["password"]
+secret = created["secret"]
 assert created["hosts"] == [DAV] and created["expires_at"] > time.time() + 364 * 86400
 assert created["expires_at"] < time.time() + 366 * 86400, "default: a year (app_password_default_days)"
 ok("creation with a fresh session → the password once, valid for the chosen application, a year")
@@ -158,7 +158,7 @@ assert secret not in dump and AP.normalize(secret) not in dump, "plain text in t
 assert row["digest"] == AP.digest(auth._pepper_keyring.active.material, AP.normalize(secret))
 assert row["kid"] == auth._pepper_keyring.active.kid
 listed = c.get("/auth/app-passwords")
-assert all(not {"password", "digest", "kid"} & set(x) for x in listed.json()) and secret not in listed.text
+assert all(not {"secret", "password", "digest", "kid"} & set(x) for x in listed.json()) and secret not in listed.text
 ok("database holds an HMAC digest with the pepper keyring (ADR-12), never the password; the list neither")
 # (Mutation: store `AP.normalize(secret)` as digest → red.)
 
@@ -251,11 +251,11 @@ ok("a full session at the same application stays a session (admin as before)")
 
 # ---------- revoked, expired ----------
 second = auth.create_app_password(alice, "Laptop", hosts=[DAV, GIT])
-assert gate.get("/auth/forward", headers=proxy(GIT, basic("alice", second["password"]))).status_code == 200
+assert gate.get("/auth/forward", headers=proxy(GIT, basic("alice", second["secret"]))).status_code == 200
 before = fails(auth)
 r = c.post(f"/auth/app-passwords/{second['id']}/revoke", json={})
 assert r.status_code == 200
-assert gate.get("/auth/forward", headers=proxy(GIT, basic("alice", second["password"]))).status_code == 401
+assert gate.get("/auth/forward", headers=proxy(GIT, basic("alice", second["secret"]))).status_code == 401
 assert fails(auth) == before, "a known, revoked app password is no guess — not booked"
 assert auth.store.recent_audit(5, username="alice")[0]["event"] == "app_password_denied"
 assert any(e[0] == "app_password_revoked" for e in events)
@@ -266,7 +266,7 @@ ok("revoked → 401 at once (not booked, audited); only the holder revokes on th
 
 third = auth.create_app_password(alice, "Old", hosts=[DAV])
 auth.store._exec("UPDATE app_password SET expires_at=? WHERE id=?", (int(time.time()) - 1, third["id"]))
-assert gate.get("/auth/forward", headers=proxy(DAV, basic("alice", third["password"]))).status_code == 401
+assert gate.get("/auth/forward", headers=proxy(DAV, basic("alice", third["secret"]))).status_code == 401
 assert [p for p in auth.list_app_passwords(alice) if p["id"] == third["id"]][0]["expired"]
 ok("expired → 401")
 # (Mutation: drop the `expires_at` branch → 200, red.)
@@ -274,7 +274,7 @@ ok("expired → 401")
 # ---------- lockout: own bucket ----------
 auth2, app2 = build()
 uid2 = auth2.create_user("alice", "Alice-Password-2026")
-pw2 = auth2.create_app_password(uid2, "Phone", hosts=[DAV])["password"]
+pw2 = auth2.create_app_password(uid2, "Phone", hosts=[DAV])["secret"]
 g2 = TestClient(app2, client=("127.0.0.1", 1))
 limit = auth2._sec("max_login_attempts")
 for _ in range(limit):
@@ -309,7 +309,7 @@ def valid(pw, host=DAV):
         "/auth/forward", headers=proxy(host, basic("alice", pw))).status_code == 200
 
 
-p1 = auth3.create_app_password(a3, "one", hosts=[DAV])["password"]
+p1 = auth3.create_app_password(a3, "one", hosts=[DAV])["secret"]
 r = session_client(auth3, app3, a3).post("/auth/password", json={"current": "Alice-Password-2026",
                                                                   "new": "Alice-Password-2027"})
 assert r.status_code == 200 and r.json()["app_passwords_active"] == 1, r.text
@@ -323,14 +323,14 @@ assert r.status_code == 200 and not valid(p1)
 assert ("app_passwords_revoked", {"count": 1, "reason": "sessions_revoked"}) in ev3, ev3
 ok("\"sign out everywhere\" revokes them (event app_passwords_revoked)")
 
-p2 = auth3.create_app_password(a3, "two", hosts=[DAV])["password"]
+p2 = auth3.create_app_password(a3, "two", hosts=[DAV])["secret"]
 panel = session_client(auth3, app3, admin)
 r = panel.post(f"/auth/admin/api/users/{a3}/password", json={"password": "Fresh-Start-2026x"})
 assert r.status_code == 200, r.text
 assert not valid(p2)
 ok("password reset by an administrator revokes them")
 
-p3 = auth3.create_app_password(a3, "three", hosts=[DAV])["password"]
+p3 = auth3.create_app_password(a3, "three", hosts=[DAV])["secret"]
 r = panel.post(f"/auth/admin/api/users/{a3}/disable", json={"disabled": True})
 assert r.status_code == 200 and not valid(p3)
 panel.post(f"/auth/admin/api/users/{a3}/disable", json={"disabled": False})
@@ -342,10 +342,10 @@ ok("locking the account revokes them (and unlocking does not revive them)")
 p4 = auth3.create_app_password(a3, "four", hosts=[GIT])
 r = panel.get("/auth/admin/api/app-passwords")
 assert r.status_code == 200 and any(x["id"] == p4["id"] and x["username"] == "alice" for x in r.json())
-assert all(not {"password", "digest", "kid"} & set(x) for x in r.json())
-assert p4["password"] not in r.text and AP.normalize(p4["password"]) not in r.text
+assert all(not {"secret", "password", "digest", "kid"} & set(x) for x in r.json())
+assert p4["secret"] not in r.text and AP.normalize(p4["secret"]) not in r.text
 r = panel.post(f"/auth/admin/api/app-passwords/{p4['id']}/revoke", json={})
-assert r.status_code == 200 and r.json()["ok"] and not valid(p4["password"], GIT)
+assert r.status_code == 200 and r.json()["ok"] and not valid(p4["secret"], GIT)
 assert session_client(auth3, app3, a3).get("/auth/admin/api/app-passwords").status_code in (401, 403)
 ok("admin panel: all accounts' app passwords (no secret), revoke; not for a non-admin")
 
@@ -388,7 +388,7 @@ app5b = FastAPI()
 app5b.include_router(auth5b.router())
 assert auth5b._pepper_keyring.active.kid != old_kid
 assert auth5b.store.app_passwords_with_kid(old_kid, int(time.time())) == 1
-r = TestClient(app5b, client=("127.0.0.1", 1)).get("/auth/forward", headers=proxy(DAV, basic("alice", p5["password"])))
+r = TestClient(app5b, client=("127.0.0.1", 1)).get("/auth/forward", headers=proxy(DAV, basic("alice", p5["secret"])))
 assert r.status_code == 200, "found with the previous pepper"
 row = auth5b.store.app_password(p5["id"])
 assert row["kid"] == auth5b._pepper_keyring.active.kid

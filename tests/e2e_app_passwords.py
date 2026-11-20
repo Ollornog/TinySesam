@@ -166,7 +166,7 @@ try:
     for variant in ("recipe", "deploy/forward-auth/Caddyfile", "deploy/quickstart/Caddyfile"):
         print(f"  — {variant}")
         created = auth.create_app_password(alice, f"rclone ({variant})", hosts=[HOST])
-        APP_PW = created["password"]
+        APP_PW = created["secret"]
         port = free_port()
         cf = tmp / f"Caddyfile-{len(names)}"
         cf.write_text(caddyfile(variant, port), encoding="utf-8")

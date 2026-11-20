@@ -459,7 +459,7 @@ How many sessions of this account are running EXCEPT the current one? (B1-7)
 
 ### `create_app_password(user_id, name, hosts=None, expires_days=None) -> 'dict'`
 
-Create an app password (T-66) for HTTP clients that speak only Basic auth — WebDAV, CalDAV/CardDAV, Git over HTTPS. The return value carries it in PLAIN TEXT under `password`, this once; only an HMAC digest with the pepper keyring (ADR-12) is stored.
+Create an app password (T-66) for HTTP clients that speak only Basic auth — WebDAV, CalDAV/CardDAV, Git over HTTPS. The return value carries it in PLAIN TEXT under `secret`, this once; only an HMAC digest with the pepper keyring (ADR-12) is stored.
 
 ### `create_magic_token(purpose, user_id=None, email=None, ttl_min=None, payload=None) -> 'str'`
 
