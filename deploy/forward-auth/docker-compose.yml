@@ -94,7 +94,7 @@ services:
 
   caddy:
     <<: *hardening
-    image: caddy:2.11.8@sha256:4fcafa98afd1c2e642e353e3c5cf9ddbe892fcee14bc990e7ba2c5b78e51f9cf
+    image: caddy:2.11.9@sha256:4851e54a46b206517c574821bb5cc67f170d2156041e9fbc4c9193b45e84a75b
     # The only capability that comes back: binding ports below 1024 (80/443).
     cap_add: [NET_BIND_SERVICE]
     ports:
