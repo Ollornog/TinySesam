@@ -538,6 +538,9 @@ def _account(auth, ctx) -> str:
         f"<button class=warn data-act=revokeothers>{_e(t('acc.sessions_revoke'))}</button>"
         "<span id=sess_msg class=msg></span></div>")
 
+    # Connected programs (OAuth, T-36)
+    sections.append(_devices_section(auth, ctx))
+
     # Own events (H-7): whoever sees that a sign-in happened at 3 a.m. from a foreign address
     # speaks up — the log so far lay only with the operator. Rendered
     # server-side (no further endpoint), time as UTC, because the page does not know the
@@ -582,6 +585,7 @@ def _account(auth, ctx) -> str:
     .tsmain li{padding:4px 0;font-size:13px;border-bottom:1px solid var(--ts-line-soft)}
     .tsmain a{color:var(--ts-link)}
     .tsmain .rcleft{display:block;margin:12px 0 0;font-size:13px}
+    .tsmain form.devrevoke{margin:0}
     """
     # `static=True`: only show the page, fetch nothing (preview/screenshot).
     static = bool(ctx.get("static"))
@@ -1282,6 +1286,57 @@ def _account_setup(auth, ctx) -> str:
     return _page(auth, t("onboard.title"), body)
 
 
+def _oauth_consent(auth, ctx) -> str:
+    """ctx: user, txn, client_name, client_id, redirect_host, resource, resource_name, scope (list), offline,
+    access_minutes, idle_days, max_days (0 = no maximum). The consent of an OAuth client (T-36): which program
+    asks, where the answer goes, what it may do and for how long — before anything is allowed."""
+    t = auth.t
+    user = ctx.get("user") or {}
+    target = ctx.get("resource_name") or ctx.get("resource") or ""
+    if ctx.get("offline"):
+        duration = t("oauth.duration_refresh", days=ctx.get("idle_days", 0))
+        if ctx.get("max_days"):
+            duration += " " + t("oauth.duration_max", days=ctx.get("max_days"))
+    else:
+        duration = t("oauth.duration_access", minutes=ctx.get("access_minutes", 60))
+    body = (f"<h1>{_e(t('oauth.consent_title'))}</h1>"
+            f"<div class=hint>{_e(t('oauth.consent_hint', client=ctx.get('client_name', ''), resource=target, user=user.get('username', '')))}</div>"
+            f"<table class=qrinfo>"
+            f"<tr><th>{_e(t('oauth.client'))}</th><td id=oaclient>{_e(ctx.get('client_name', ''))}<br>"
+            f"<small>{_e(t('oauth.unverified'))} · <code>{_e(ctx.get('client_id', ''))}</code></small></td></tr>"
+            f"<tr><th>{_e(t('oauth.redirect'))}</th><td id=oarhost class=mono>{_e(ctx.get('redirect_host', ''))}</td></tr>"
+            f"<tr><th>{_e(t('oauth.resource'))}</th><td id=oaresource>{_e(target)}"
+            + (f"<br><small>{_e(ctx.get('resource', ''))}</small>" if ctx.get("resource_name") else "")
+            + f"</td></tr><tr><th>{_e(t('oauth.duration'))}</th><td>{_e(duration)}</td></tr></table>"
+            f"<div class=warnbar>{_e(t('oauth.local_warning', host=ctx.get('redirect_host', '')))}</div>"
+            f"<form method=post action='__TS_P__/auth/oauth/consent'>{_cf(ctx)}"
+            f"<input type=hidden name=txn value='{_e(ctx.get('txn', ''))}'>"
+            f"<button type=submit id=oaallow name=decision value=allow>{_e(t('oauth.allow'))}</button>"
+            f"<button type=submit id=oadeny class=btn2 name=decision value=deny>{_e(t('oauth.deny'))}</button></form>")
+    return _page(auth, t("oauth.consent_title"), body)
+
+
+def _devices_section(auth, ctx) -> str:
+    """Connected programs (OAuth grants, T-36) on the account page — server-rendered, one form per device."""
+    devices = ctx.get("oauth_devices")
+    if devices is None:
+        return ""
+    import datetime as _dt
+    t = auth.t
+
+    def when(ts):
+        return _dt.datetime.fromtimestamp(int(ts), _dt.timezone.utc).strftime("%Y-%m-%d %H:%M") + " UTC" if ts else "—"
+    lines = "".join(
+        f"<li><b>{_e(d['client_name'])}</b> <small><code>{_e(d['client_id'])}</code></small><br>"
+        f"<small class=msg>{_e(t('acc.device_created'))} {_e(when(d['created_at']))} · "
+        f"{_e(t('acc.device_last'))} {_e(when(d['last_used']))} · {_e(d['last_ip'] or '?')} · {_e(d['resource'])}</small>"
+        f"<form method=post class=devrevoke action='__TS_P__/auth/oauth/devices/{int(d['id'])}/revoke'>{_cf(ctx)}"
+        f"<button type=submit class=warn>{_e(t('acc.device_revoke'))}</button></form></li>"
+        for d in devices) or f"<li>{_e(t('acc.devices_none'))}</li>"
+    return (f"<div class=sec><h2>{_e(t('acc.devices'))}</h2>"
+            f"<p class='msg evhint'>{_e(t('acc.devices_hint'))}</p><ul id=devlist>{lines}</ul></div>")
+
+
 # Passkey login JS (WebAuthn) — only included when passkey is active.
 _PASSKEY_LOGIN_JS = """
 <script>
@@ -1325,4 +1380,5 @@ DEFAULTS = {
     "reset": _reset,
     "totp_setup": _totp_setup,
     "account_setup": _account_setup,
+    "oauth_consent": _oauth_consent,
 }

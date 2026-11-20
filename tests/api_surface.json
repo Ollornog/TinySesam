@@ -840,7 +840,7 @@
     },
     "SECURITY_EVENTS": {
       "tier": "A",
-      "value": "('password_changed', 'pin_set', 'pin_disabled', 'totp_enabled', 'totp_disabled', 'recovery_codes_generated', 'recovery_code_used', 'passkey_added', 'passkey_removed', 'api_key_created', 'api_key_revoked', 'api_keys_revoked', 'email_changed', 'username_changed')"
+      "value": "('password_changed', 'pin_set', 'pin_disabled', 'totp_enabled', 'totp_disabled', 'recovery_codes_generated', 'recovery_code_used', 'passkey_added', 'passkey_removed', 'api_key_created', 'api_key_revoked', 'api_keys_revoked', 'email_changed', 'username_changed', 'oauth_device_connected', 'oauth_device_revoked', 'oauth_token_reuse')"
     },
     "TOKEN_PATHS": {
       "tier": "B",
@@ -872,6 +872,31 @@
       "keys": [
         "new",
         "old"
+      ],
+      "tier": "A"
+    },
+    "oauth_device_connected": {
+      "keys": [
+        "client_id",
+        "client_name",
+        "grant_id",
+        "resource"
+      ],
+      "tier": "A"
+    },
+    "oauth_device_revoked": {
+      "keys": [
+        "client_id",
+        "grant_id",
+        "reason"
+      ],
+      "tier": "A"
+    },
+    "oauth_token_reuse": {
+      "keys": [
+        "client_id",
+        "grant_id",
+        "kind"
       ],
       "tier": "A"
     },
@@ -1320,6 +1345,34 @@
       "field": "bool = True",
       "tier": "A"
     },
+    "oauth_access_token_ttl_sec": {
+      "field": "int = 3600",
+      "tier": "B"
+    },
+    "oauth_enabled": {
+      "field": "bool = False",
+      "tier": "B"
+    },
+    "oauth_pepper_file": {
+      "field": "str = ''",
+      "tier": "B"
+    },
+    "oauth_refresh_grace_sec": {
+      "field": "int = 0",
+      "tier": "B"
+    },
+    "oauth_refresh_idle_days": {
+      "field": "int = 90",
+      "tier": "B"
+    },
+    "oauth_refresh_max_days": {
+      "field": "int = 180",
+      "tier": "B"
+    },
+    "oauth_resources": {
+      "field": "list[str] = []",
+      "tier": "B"
+    },
     "oidc_allowed_groups": {
       "field": "list[str] = []",
       "tier": "A"
@@ -1753,6 +1806,9 @@
     "reason:app-stale": {
       "tier": "A"
     },
+    "reason:oauth": {
+      "tier": "A"
+    },
     "reason:role": {
       "tier": "A"
     },
@@ -1920,6 +1976,26 @@
       ],
       "tier": "A"
     },
+    "GET /.well-known/oauth-authorization-server": {
+      "keys": [],
+      "tier": "B"
+    },
+    "GET /.well-known/oauth-authorization-server/{rest:path}": {
+      "keys": [],
+      "tier": "B"
+    },
+    "GET /.well-known/oauth-protected-resource": {
+      "keys": [
+        "query:rest"
+      ],
+      "tier": "B"
+    },
+    "GET /.well-known/oauth-protected-resource/{rest:path}": {
+      "keys": [
+        "query:rest"
+      ],
+      "tier": "B"
+    },
     "GET /auth/account": {
       "keys": [],
       "tier": "B"
@@ -1994,6 +2070,16 @@
     },
     "GET /auth/me": {
       "keys": [],
+      "tier": "B"
+    },
+    "GET /auth/oauth/authorize": {
+      "keys": [],
+      "tier": "B"
+    },
+    "GET /auth/oauth/consent": {
+      "keys": [
+        "query:txn"
+      ],
       "tier": "B"
     },
     "GET /auth/oidc/start": {
@@ -2100,6 +2186,10 @@
       "keys": [
         "query:limit"
       ],
+      "tier": "B"
+    },
+    "GET <admin>/api/oauth/devices": {
+      "keys": [],
       "tier": "B"
     },
     "GET <admin>/api/resources": {
@@ -2211,6 +2301,26 @@
       "keys": [
         "form:_csrf"
       ],
+      "tier": "B"
+    },
+    "POST /auth/oauth/consent": {
+      "keys": [],
+      "tier": "B"
+    },
+    "POST /auth/oauth/devices/{grant_id}/revoke": {
+      "keys": [],
+      "tier": "B"
+    },
+    "POST /auth/oauth/register": {
+      "keys": [],
+      "tier": "B"
+    },
+    "POST /auth/oauth/revoke": {
+      "keys": [],
+      "tier": "B"
+    },
+    "POST /auth/oauth/token": {
+      "keys": [],
       "tier": "B"
     },
     "POST /auth/passkey/delete": {
@@ -2390,6 +2500,10 @@
       "tier": "B"
     },
     "POST <admin>/api/keys/{kid}/revoke": {
+      "keys": [],
+      "tier": "B"
+    },
+    "POST <admin>/api/oauth/devices/{grant_id}/revoke": {
       "keys": [],
       "tier": "B"
     },

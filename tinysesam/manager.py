@@ -327,6 +327,13 @@ class TinySesam:
         # dictionary target against the typos of the real passwords.
         self._pw_repetition_key_name = hmac.new(_key_name, b"tinysesam/passwort-wiederholung/v1",
                                                     hashlib.sha256).digest()
+        # OAuth (T-36): the fallback pepper of the token digests, a subkey like the gate key. The server itself
+        # is built with the router (`_oauth_server`) — the switch may be set after construction.
+        from . import oauth as _oauth_mod
+        self._oauth_derived_pepper = _oauth_mod.derive_pepper(_key_name)
+        self._oauth: Any = None
+        if config.oauth_enabled:
+            self._oauth_server()
         self.store.extract_secrets()
         # B6-8: Without the [argon2] extra every sign-in against an argon2 hash fails — until
         # now without a word, the account just looked like "wrong password" to the user.
@@ -1239,6 +1246,7 @@ class TinySesam:
         "recovery_codes_generated", "recovery_code_used", "passkey_added", "passkey_removed",
         "api_key_created", "api_key_revoked", "api_keys_revoked",
         "email_changed", "username_changed",
+        "oauth_device_connected", "oauth_device_revoked", "oauth_token_reuse",
     )
 
     def _security_event(self, event: str, user_id, **details) -> None:
@@ -1362,6 +1370,9 @@ class TinySesam:
             # The same for open one-time tokens: a confirmation link from registration otherwise lifted the
             # lock again (H-18, "a disabled account via no path").
             self.store.revoke_user_magic_tokens(uid)
+            # Connected devices (OAuth, T-36) end too — forward auth refuses a locked account anyway, but on
+            # unlocking a device nobody remembers would otherwise come back.
+            self._oauth_revoke_user(uid, "account_disabled")
         # From a request with a signed-in account (panel, own admin route) `audit()` names the
         # actor as the account — the same line the panel itself wrote up to 0.21.x.
         request = _REQUEST.get() or {}
@@ -6552,6 +6563,10 @@ class TinySesam:
             "failure_series": self.store.gc_failure_series(
                 _now() - 90 * 86400, self._sec("account_max_consecutive_failures")),
         }
+        # OAuth (T-36): expired codes and tokens, old grants, registrations that never led to a grant. Also with
+        # the switch off — what an earlier run left behind should not stay forever.
+        from . import oauth as _oauth_mod
+        numbers.update(self.store.gc_oauth(_now(), _oauth_mod.IDLE_CLIENT_SEC, _oauth_mod.REVOKED_KEEP_SEC))
         days = int(self.cfg.audit_retention_days or 0)
         if days > 0:
             numbers["audit"] = self.store.gc_audit(_now() - days * 86400)
@@ -7566,6 +7581,21 @@ class TinySesam:
         if error:
             raise ConfigError("The configuration was changed after construction and does not "
                               "work like this:\n  - " + "\n  - ".join(error))
+
+    def _oauth_server(self):
+        """The OAuth server (T-36) — built on first need, with the pepper from the environment, the file or the
+        master key."""
+        if self._oauth is None:
+            from . import oauth as _oauth_mod
+            pepper, origin = _oauth_mod.load_pepper(self.cfg.oauth_pepper_file, self._oauth_derived_pepper)
+            self._oauth = _oauth_mod.OAuthServer(self, pepper, origin)
+        return self._oauth
+
+    def _oauth_revoke_user(self, user_id: int, reason: str) -> int:
+        """End every connected device of an account (OAuth grants) — also with the switch off, for what is left."""
+        if self._oauth is None and not self.store.oauth_user_grant_ids(user_id):
+            return 0
+        return self._oauth_server().revoke_user(user_id, reason)
 
     def router(self):
         """The FastAPI router with all enabled routes. Mount once, done.

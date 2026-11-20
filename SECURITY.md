@@ -89,7 +89,12 @@ rate limit, open-redirect protection via `safe_next`). Even so: review it yourse
   (`details={"old": …, "new": …}` — self-service, 2026-09-25) and `api_keys_revoked`
   (`details={"count": n, "reason": …}`, `reason` one of `password_reset`, `account_disabled`,
   `admin_password_reset`, `sessions_revoked` — in bulk on a reset, a block, an admin password reset
-  or `sessions/revoke` with `scope=all`). The full list of event names is `TinySesam.SECURITY_EVENTS`.
+  or `sessions/revoke` with `scope=all`). Connected programs (OAuth, T-36): `oauth_device_connected`
+  (`details={"grant_id": n, "client_id": …, "client_name": …, "resource": …}` — a program got its first
+  tokens after the consent), `oauth_device_revoked` (`details={"grant_id": n, "client_id": …, "reason": …}`,
+  `reason` one of `user`, `admin`, `client`, `account_disabled`) and `oauth_token_reuse`
+  (`details={"grant_id": n, "client_id": …, "kind": "code"|"refresh"}` — a used code or refresh token came
+  back, the connection was revoked: the token has probably been copied). The full list of event names is `TinySesam.SECURITY_EVENTS`.
   The `details` keys and the reasons are English since
   0.22.0 (up to 0.21.x `verbleibend`, `alt`/`neu`, `anzahl`/`grund` with German reasons). That includes changes an administrator makes to someone
   else's account in the panel (password reset, issuing an API key, revoking a passkey) — write the

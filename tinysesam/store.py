@@ -306,6 +306,63 @@ CREATE TABLE IF NOT EXISTS audit (           -- audit log (login/logout/admin ac
     ip       TEXT,
     detail   TEXT
 );
+-- OAuth 2.1 authorization server for human-operated tools (T-36, ADR-11). Tokens and codes are stored only
+-- as an HMAC digest keyed with the pepper, which is never in this file (`tinysesam/oauth.py`).
+CREATE TABLE IF NOT EXISTS oauth_client (    -- registered by the client itself (RFC 7591): public, no secret
+    client_id     TEXT PRIMARY KEY,
+    name          TEXT NOT NULL,
+    redirect_uris TEXT NOT NULL,             -- JSON list, loopback only
+    created_at    INTEGER NOT NULL,
+    created_ip    TEXT,
+    last_used     INTEGER                    -- last authorization or token exchange
+);
+CREATE TABLE IF NOT EXISTS oauth_request (   -- authorization request between /authorize and the consent
+    id_hash      TEXT PRIMARY KEY,
+    browser_hash TEXT NOT NULL,              -- digest of the flow cookie: only the browser that started it
+    client_id    TEXT NOT NULL REFERENCES oauth_client(client_id) ON DELETE CASCADE,
+    params       TEXT NOT NULL,              -- JSON: redirect_uri, state, code_challenge, scope, resource
+    expires_at   INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS oauth_code (      -- authorization code: single use, bound to everything it came from
+    code_hash      TEXT PRIMARY KEY,
+    client_id      TEXT NOT NULL,
+    user_id        INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    redirect_uri   TEXT NOT NULL,
+    code_challenge TEXT NOT NULL,
+    resource       TEXT NOT NULL,
+    scope          TEXT NOT NULL,
+    created_at     INTEGER NOT NULL,
+    expires_at     INTEGER NOT NULL,
+    consumed_at    INTEGER,                  -- set atomically on the first exchange
+    grant_id       INTEGER                   -- the grant it was exchanged for: a second use revokes it
+);
+CREATE TABLE IF NOT EXISTS oauth_grant (     -- one connected device: client registration + token family
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    client_id      TEXT NOT NULL REFERENCES oauth_client(client_id) ON DELETE CASCADE,
+    user_id        INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    resource       TEXT NOT NULL,            -- the audience of every token of the family (RFC 8707)
+    scope          TEXT NOT NULL,
+    created_at     INTEGER NOT NULL,
+    created_ip     TEXT,
+    last_used      INTEGER,
+    last_ip        TEXT,
+    expires_at     INTEGER,                  -- absolute maximum (oauth_refresh_max_days); NULL = none
+    revoked_at     INTEGER,
+    revoked_reason TEXT
+);
+CREATE TABLE IF NOT EXISTS oauth_token (
+    token_hash TEXT PRIMARY KEY,
+    grant_id   INTEGER NOT NULL REFERENCES oauth_grant(id) ON DELETE CASCADE,
+    kind       TEXT NOT NULL,                -- access | refresh
+    scope      TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    expires_at INTEGER NOT NULL,
+    used_at    INTEGER,                      -- refresh: exchanged once (rotation); a second use is reuse
+    successor  TEXT                          -- refresh, grace window only: the successor pair, encrypted (vault)
+);
+CREATE INDEX IF NOT EXISTS idx_oauth_grant_user ON oauth_grant(user_id);
+CREATE INDEX IF NOT EXISTS idx_oauth_grant_client ON oauth_grant(client_id);
+CREATE INDEX IF NOT EXISTS idx_oauth_token_grant ON oauth_token(grant_id);
 CREATE INDEX IF NOT EXISTS idx_session_user ON session(user_id);
 CREATE INDEX IF NOT EXISTS idx_webauthn_user ON webauthn_cred(user_id);
 -- Limit c (integration attack): `setup_limit` and `anonymize_audit` search by name and
@@ -836,7 +893,10 @@ class Store:
     #:      only if an old name is present; on every other start it reads `sqlite_master` and is done. An older
     #:      version opens the file with the "newer schema version" warning and then does not find its tables —
     #:      way back with SQL in docs/OPERATIONS.md.
-    SCHEMA_VERSION = 16
+    #: 17 — the OAuth 2.1 authorization server (T-36, ADR-11): tables `oauth_client`, `oauth_request`,
+    #:      `oauth_code`, `oauth_grant`, `oauth_token`. Additive; an older version leaves them in place and
+    #:      simply does not know the routes — connected devices stop working until the update is back.
+    SCHEMA_VERSION = 17
 
     #: Old table name → new table name (schema 16).
     RENAMED_TABLES = {"namensbindung": "name_binding", "oidc_sitzung": "oidc_session",
@@ -4244,3 +4304,168 @@ class Store:
             self._exec("UPDATE api_key SET revoked=1 WHERE id=? AND user_id=?", (key_id, user_id))
         else:
             self._exec("UPDATE api_key SET revoked=1 WHERE id=?", (key_id,))
+
+    # ---------- OAuth 2.1 authorization server (T-36, ADR-11) ----------
+    # Only digests reach these methods (`tinysesam/oauth.py` computes them with the pepper); the logic of what
+    # is allowed lives there, here only the reads and the writes that must happen in ONE transaction.
+
+    def oauth_add_client(self, client_id: str, name: str, redirect_uris: list, now: int, ip) -> None:
+        self._exec("INSERT INTO oauth_client(client_id, name, redirect_uris, created_at, created_ip) "
+                   "VALUES (?, ?, ?, ?, ?)", (client_id, name, json.dumps(list(redirect_uris)), now, ip))
+
+    def oauth_client(self, client_id) -> Optional[dict]:
+        r = self._one("SELECT * FROM oauth_client WHERE client_id=?", (str(client_id or ""),))
+        if r is None:
+            return None
+        d = dict(r)
+        d["redirect_uris"] = json.loads(d["redirect_uris"] or "[]")
+        return d
+
+    def oauth_count_idle_clients(self) -> int:
+        """Registrations that never led to a grant — the cap of open registration counts them."""
+        r = self._one("SELECT COUNT(*) AS n FROM oauth_client c WHERE NOT EXISTS "
+                      "(SELECT 1 FROM oauth_grant g WHERE g.client_id = c.client_id)")
+        return int(r["n"]) if r else 0
+
+    def oauth_touch_client(self, client_id: str, now: int) -> None:
+        self._exec("UPDATE oauth_client SET last_used=? WHERE client_id=?", (now, client_id))
+
+    def oauth_add_request(self, id_hash: str, browser_hash: str, client_id: str, params: dict,
+                          expires_at: int) -> None:
+        self._exec("INSERT INTO oauth_request(id_hash, browser_hash, client_id, params, expires_at) "
+                   "VALUES (?, ?, ?, ?, ?)", (id_hash, browser_hash, client_id, json.dumps(params), expires_at))
+
+    def oauth_request(self, id_hash: str, now: int) -> Optional[dict]:
+        r = self._one("SELECT * FROM oauth_request WHERE id_hash=? AND expires_at > ?", (id_hash, now))
+        if r is None:
+            return None
+        d = dict(r)
+        d["params"] = json.loads(d["params"] or "{}")
+        return d
+
+    def oauth_take_request(self, id_hash: str) -> bool:
+        """Delete the request — True for exactly one caller (a consent is answered once)."""
+        return self._exec("DELETE FROM oauth_request WHERE id_hash=?", (id_hash,)).rowcount == 1
+
+    def oauth_add_code(self, code_hash: str, client_id: str, user_id: int, redirect_uri: str,
+                       code_challenge: str, resource: str, scope: str, now: int, expires_at: int) -> None:
+        self._exec("INSERT INTO oauth_code(code_hash, client_id, user_id, redirect_uri, code_challenge, resource, "
+                   "scope, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                   (code_hash, client_id, user_id, redirect_uri, code_challenge, resource, scope, now, expires_at))
+
+    def oauth_code(self, code_hash: str) -> Optional[sqlite3.Row]:
+        return self._one("SELECT * FROM oauth_code WHERE code_hash=?", (code_hash,))
+
+    def oauth_consume_code(self, code_hash: str, now: int) -> bool:
+        """Mark the code used — atomically: True for exactly one caller, also across processes."""
+        return self._exec("UPDATE oauth_code SET consumed_at=? WHERE code_hash=? AND consumed_at IS NULL",
+                          (now, code_hash)).rowcount == 1
+
+    def _oauth_insert_tokens(self, grant_id: int, tokens, now: int) -> None:
+        """Insert `(digest, kind, scope, expires_at)` rows (without commit, under `_lock`)."""
+        self.db.executemany(
+            "INSERT INTO oauth_token(token_hash, grant_id, kind, scope, created_at, expires_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)", [(h, grant_id, kind, scope, now, exp) for h, kind, scope, exp in tokens])
+
+    def oauth_create_grant(self, code_hash: str, client_id: str, user_id: int, resource: str, scope: str,
+                           now: int, ip, expires_at, tokens) -> int:
+        """Grant + first tokens + the code's link to the grant, in ONE transaction. Returns the grant ID."""
+        with self._writing():
+            cur = self.db.execute(
+                "INSERT INTO oauth_grant(client_id, user_id, resource, scope, created_at, created_ip, last_used, "
+                "last_ip, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (client_id, user_id, resource, scope, now, ip, now, ip, expires_at))
+            grant_id = int(cur.lastrowid or 0)
+            self._oauth_insert_tokens(grant_id, tokens, now)
+            self.db.execute("UPDATE oauth_code SET grant_id=? WHERE code_hash=?", (grant_id, code_hash))
+            self.db.execute("UPDATE oauth_client SET last_used=? WHERE client_id=?", (now, client_id))
+            self.db.commit()
+            self._written = time.monotonic()
+            return grant_id
+
+    def oauth_token(self, token_hash: str) -> Optional[sqlite3.Row]:
+        """The token row joined with its grant (`g_*` columns) — or None."""
+        return self._one(
+            "SELECT t.*, g.client_id AS g_client_id, g.user_id AS g_user_id, g.resource AS g_resource, "
+            "g.scope AS g_scope, g.expires_at AS g_expires_at, g.revoked_at AS g_revoked_at "
+            "FROM oauth_token t JOIN oauth_grant g ON g.id = t.grant_id WHERE t.token_hash=?", (token_hash,))
+
+    def oauth_rotate(self, old_hash: str, grant_id: int, now: int, ip, tokens, successor) -> bool:
+        """Refresh rotation in ONE transaction: mark the old refresh token used (only if it was not yet — False
+        otherwise, and nothing is written), drop the family's previous access tokens, insert the new pair,
+        note use and address on the grant. `successor` (encrypted, grace window) or None."""
+        with self._writing():
+            cur = self.db.execute("UPDATE oauth_token SET used_at=?, successor=? WHERE token_hash=? "
+                                  "AND kind='refresh' AND used_at IS NULL", (now, successor, old_hash))
+            if cur.rowcount != 1:
+                self._discard()
+                return False
+            self.db.execute("DELETE FROM oauth_token WHERE grant_id=? AND kind='access'", (grant_id,))
+            self._oauth_insert_tokens(grant_id, tokens, now)
+            self.db.execute("UPDATE oauth_grant SET last_used=?, last_ip=? WHERE id=?", (now, ip, grant_id))
+            self.db.commit()
+            self._written = time.monotonic()
+            return True
+
+    def oauth_drop_successor(self, token_hash: str) -> None:
+        self._exec("UPDATE oauth_token SET successor=NULL WHERE token_hash=?", (token_hash,))
+
+    def oauth_touch_grant(self, grant_id: int, now: int, ip) -> None:
+        self._exec("UPDATE oauth_grant SET last_used=?, last_ip=? WHERE id=?", (now, ip, grant_id))
+
+    def oauth_revoke_grant(self, grant_id: int, reason: str, now: int) -> bool:
+        """Revoke a family: the grant is marked, its tokens are gone. True if it was live."""
+        with self._writing():
+            cur = self.db.execute("UPDATE oauth_grant SET revoked_at=?, revoked_reason=? WHERE id=? "
+                                  "AND revoked_at IS NULL", (now, reason, grant_id))
+            self.db.execute("DELETE FROM oauth_token WHERE grant_id=?", (grant_id,))
+            self.db.commit()
+            self._written = time.monotonic()
+            return cur.rowcount == 1
+
+    def oauth_grant(self, grant_id) -> Optional[sqlite3.Row]:
+        return self._one("SELECT g.*, c.name AS client_name FROM oauth_grant g "
+                         "LEFT JOIN oauth_client c ON c.client_id = g.client_id WHERE g.id=?", (grant_id,))
+
+    def oauth_grants(self, now: int, user_id=None, live_only: bool = True) -> list:
+        """The connected devices (grants) — of one account or all; live = not revoked and a token not expired."""
+        where, args = [], []
+        if user_id is not None:
+            where.append("g.user_id=?")
+            args.append(int(user_id))
+        if live_only:
+            where.append("g.revoked_at IS NULL AND EXISTS (SELECT 1 FROM oauth_token t WHERE t.grant_id = g.id "
+                         "AND t.expires_at > ? AND t.used_at IS NULL)")
+            args.append(now)
+        sql = ("SELECT g.*, c.name AS client_name, u.username FROM oauth_grant g "
+               "LEFT JOIN oauth_client c ON c.client_id = g.client_id LEFT JOIN users u ON u.id = g.user_id"
+               + (" WHERE " + " AND ".join(where) if where else "") + " ORDER BY g.created_at DESC, g.id DESC")
+        return self._all(sql, tuple(args))
+
+    def oauth_user_grant_ids(self, user_id: int) -> list:
+        return [int(r["id"]) for r in self._all("SELECT id FROM oauth_grant WHERE user_id=? AND revoked_at IS NULL",
+                                                (int(user_id),))]
+
+    def gc_oauth(self, now: int, idle_client_sec: int, revoked_keep_sec: int) -> dict:
+        """Expired requests, codes, tokens; grants without a live token or revoked long ago; registrations that
+        never led to a grant (or whose grants are all gone) — DCR is open, every logout or port collision of a
+        client registers anew."""
+        with self._writing():
+            n = {"oauth_requests": self.db.execute("DELETE FROM oauth_request WHERE expires_at <= ?",
+                                                   (now,)).rowcount,
+                 # A consumed code stays until its deadline plus an hour: a second exchange inside that window
+                 # still finds the grant to revoke (reuse).
+                 "oauth_codes": self.db.execute("DELETE FROM oauth_code WHERE expires_at <= ?",
+                                                (now - 3600,)).rowcount,
+                 "oauth_tokens": self.db.execute("DELETE FROM oauth_token WHERE expires_at <= ?", (now,)).rowcount}
+            n["oauth_grants"] = self.db.execute(
+                "DELETE FROM oauth_grant WHERE (revoked_at IS NOT NULL AND revoked_at <= ?) OR "
+                "(revoked_at IS NULL AND NOT EXISTS (SELECT 1 FROM oauth_token t WHERE t.grant_id = oauth_grant.id))",
+                (now - revoked_keep_sec,)).rowcount
+            n["oauth_clients"] = self.db.execute(
+                "DELETE FROM oauth_client WHERE created_at <= ? AND COALESCE(last_used, created_at) <= ? AND NOT EXISTS "
+                "(SELECT 1 FROM oauth_grant g WHERE g.client_id = oauth_client.client_id)",
+                (now - idle_client_sec, now - idle_client_sec)).rowcount
+            self.db.commit()
+            self._written = time.monotonic()
+            return n

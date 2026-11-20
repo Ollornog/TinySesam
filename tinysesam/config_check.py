@@ -828,6 +828,7 @@ def check_config(config) -> tuple[list[str], list[str]]:
     _groups_scope(config, warnings)
     _combinations(config, error, warnings)
     _gate(config, error, warnings)
+    _oauth(config, error, warnings)
     _forward_apps(config, error, warnings)
 
     has_mailer = bool(str(getattr(config, "smtp_host", "") or "").strip())
@@ -922,6 +923,11 @@ NUMBER_LIMITS = {
     # Lifetime of the gate token (ADR-9) = revocation delay at the proxy. Below 30 s the proxy asks almost
     # as often as without a token; above an hour a revocation comes too late to be one.
     "gate_token_ttl_sec": (30, 3600),
+    # OAuth (T-36): an access token is checked per request anyway; a day is the most that makes sense.
+    "oauth_access_token_ttl_sec": (60, 86400),
+    "oauth_refresh_idle_days": (1, 3650),
+    "oauth_refresh_max_days": (0, 3650),
+    "oauth_refresh_grace_sec": (0, 60),
     # Waiting time on the "Signed out" page before it leads back to the application. Above five minutes
     # nobody waits any more, for that there is 0 (leave standing).
     "forward_logged_out_sec": (0, 300),
@@ -1340,6 +1346,73 @@ def _gate(config, error: list, warnings: list) -> None:
             "none, and the proxy keeps asking on every request."))
 
 
+def _oauth(config, error: list, warnings: list) -> None:
+    """OAuth 2.1 authorization server (T-36, ADR-11): the resource side is forward auth, the issuer is base_url."""
+    if not _an(config, "oauth_enabled"):
+        return
+    from urllib.parse import urlsplit
+    from . import oauth as _oauth_mod
+    if not _an(config, "forward_auth_enabled"):
+        error.append(_t(
+            config,
+            "oauth_enabled=True without forward_auth_enabled=True: the access token is checked in "
+            "/auth/forward — without it no application accepts the tokens."))
+    base = security.normalize_base(str(getattr(config, "base_url", "") or "").strip())
+    if not base:
+        error.append(_t(
+            config,
+            "oauth_enabled=True without base_url: base_url is the issuer of the tokens (RFC 8414) and the "
+            "address of the sign-in — it must be fixed, never taken from a request."))
+    if not _an(config, "csrf_enabled"):
+        error.append(_t(
+            config,
+            "oauth_enabled=True with csrf_enabled=False: the consent page needs the CSRF protection — "
+            "otherwise a foreign page could allow a device in the name of the signed-in person."))
+    resources = list(getattr(config, "oauth_resources", None) or [])
+    if not resources:
+        error.append(_t(
+            config,
+            "oauth_enabled=True, but oauth_resources is empty: tokens are issued only for a known "
+            "resource (e.g. [\"https://app.example.com/mcp\"]) — without one every request is refused."))
+    own = _oauth_mod.normalize_resource(base) if base else None
+    own_origin = "/".join(own.split("/", 3)[:3]) if own else ""
+    for r in resources:
+        n = _oauth_mod.normalize_resource(r)
+        if n is None:
+            error.append(_t(
+                config,
+                "oauth_resources: {value!r} is no absolute http(s) URL without query and fragment.",
+                value=r))
+            continue
+        host = (urlsplit(n).hostname or "").lower()
+        if n.startswith("http://") and not _is_loopback(host):
+            error.append(_t(
+                config,
+                "oauth_resources: {value!r} uses http — tokens would travel in clear text. Use https "
+                "(a certificate with an IP SAN works without a domain).",
+                value=r))
+        if own_origin and "/".join(n.split("/", 3)[:3]) == own_origin:
+            error.append(_t(
+                config,
+                "oauth_resources: {value!r} lies on the address of TinySesam itself — a resource is an "
+                "application behind forward auth, not the authorization server.",
+                value=r))
+    max_days = _integer(config, "oauth_refresh_max_days", None)
+    if max_days == 0:
+        warnings.append(_t(
+            config,
+            "oauth_refresh_max_days=0: a connected device stays connected as long as it is used, without "
+            "an absolute maximum. ASVS 5.0 V10.4.8 (level 2) asks for one; the default is 180 days."))
+    has_pepper = bool(os.environ.get(_oauth_mod.PEPPER_ENV, "").strip()) or \
+        bool(str(getattr(config, "oauth_pepper_file", "") or "").strip())
+    if not has_pepper:
+        warnings.append(_t(
+            config,
+            "oauth_enabled=True without an own pepper (TINYSESAM_OAUTH_PEPPER or oauth_pepper_file): the "
+            "token digests are keyed with a value derived from the master key. That works; an own pepper "
+            "kept apart from the database and the master key is one secret more an attacker must have."))
+
+
 def _combinations(config, error: list, warnings: list) -> None:
     """Combinations that are allowed individually and together do not do what they say (B3-16)."""
     # E-mail confirmation without a mandatory address: whoever leaves the field empty gets an IMMEDIATELY
@@ -1423,6 +1496,42 @@ def _combinations(config, error: list, warnings: list) -> None:
 # REQUIRES_MAILER / REQUIRES_BASE_URL / BASE_URL_RECOMMENDED must be a key of `_DE`, and every
 # key must be used (`config_check._DE`).
 _DE: dict[str, str] = {
+    ("oauth_enabled=True without forward_auth_enabled=True: the access token is checked in "
+     "/auth/forward — without it no application accepts the tokens."):
+        ("oauth_enabled=True ohne forward_auth_enabled=True: Das Access-Token wird in /auth/forward "
+         "geprüft — ohne die Route nimmt keine Anwendung die Tokens an."),
+    ("oauth_enabled=True without base_url: base_url is the issuer of the tokens (RFC 8414) and the "
+     "address of the sign-in — it must be fixed, never taken from a request."):
+        ("oauth_enabled=True ohne base_url: base_url ist der Aussteller der Tokens (RFC 8414) und die "
+         "Adresse der Anmeldung — sie muss feststehen und darf nie aus einer Anfrage kommen."),
+    ("oauth_enabled=True with csrf_enabled=False: the consent page needs the CSRF protection — "
+     "otherwise a foreign page could allow a device in the name of the signed-in person."):
+        ("oauth_enabled=True mit csrf_enabled=False: Die Zustimmungsseite braucht den CSRF-Schutz — "
+         "sonst könnte eine fremde Seite im Namen der angemeldeten Person ein Gerät erlauben."),
+    ("oauth_enabled=True, but oauth_resources is empty: tokens are issued only for a known "
+     "resource (e.g. [\"https://app.example.com/mcp\"]) — without one every request is refused."):
+        ("oauth_enabled=True, aber oauth_resources ist leer: Tokens gibt es nur für eine bekannte "
+         "Ressource (z. B. [\"https://app.example.com/mcp\"]) — ohne sie wird jede Anfrage abgelehnt."),
+    ("oauth_resources: {value!r} is no absolute http(s) URL without query and fragment."):
+        ("oauth_resources: {value!r} ist keine absolute http(s)-Adresse ohne Query und Fragment."),
+    ("oauth_resources: {value!r} uses http — tokens would travel in clear text. Use https "
+     "(a certificate with an IP SAN works without a domain)."):
+        ("oauth_resources: {value!r} nutzt http — Tokens gingen im Klartext. https verwenden "
+         "(ein Zertifikat mit IP-SAN geht auch ohne Domain)."),
+    ("oauth_resources: {value!r} lies on the address of TinySesam itself — a resource is an "
+     "application behind forward auth, not the authorization server."):
+        ("oauth_resources: {value!r} liegt auf der Adresse von TinySesam selbst — eine Ressource ist eine "
+         "Anwendung hinter Forward-Auth, nicht der Autorisierungsserver."),
+    ("oauth_refresh_max_days=0: a connected device stays connected as long as it is used, without "
+     "an absolute maximum. ASVS 5.0 V10.4.8 (level 2) asks for one; the default is 180 days."):
+        ("oauth_refresh_max_days=0: Ein verbundenes Gerät bleibt verbunden, solange es genutzt wird, "
+         "ohne absolutes Höchstalter. ASVS 5.0 V10.4.8 (Stufe 2) verlangt eines; die Vorgabe ist 180 Tage."),
+    ("oauth_enabled=True without an own pepper (TINYSESAM_OAUTH_PEPPER or oauth_pepper_file): the "
+     "token digests are keyed with a value derived from the master key. That works; an own pepper "
+     "kept apart from the database and the master key is one secret more an attacker must have."):
+        ("oauth_enabled=True ohne eigenen Pepper (TINYSESAM_OAUTH_PEPPER oder oauth_pepper_file): Die "
+         "Token-Digests hängen an einem aus dem Hauptschlüssel abgeleiteten Wert. Das geht; ein eigener "
+         "Pepper getrennt von Datenbank und Hauptschlüssel ist ein Geheimnis mehr, das ein Angreifer braucht."),
     ("demo_mode=True together with {real}: the demo creates an admin account with a known "
      "password. Next to a real login path or in front of foreign applications that is a "
      "back door, not a demonstration."):

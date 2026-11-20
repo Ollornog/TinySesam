@@ -45,6 +45,14 @@ app.example.com {
 		reverse_proxy {$TS_AUTH_UPSTREAM:127.0.0.1:8000}
 	}
 
+	# OAuth for MCP clients (T-36, optional): with oauth_enabled and this application's URL in
+	# oauth_resources (e.g. https://app.example.com/mcp), an MCP client such as Claude Code finds the
+	# authorization server here (RFC 9728) — TinySesam answers for the resource, the application has no
+	# OAuth code. Harmless without OAuth: TinySesam answers 404.
+	handle /.well-known/oauth-protected-resource* {
+		reverse_proxy {$TS_AUTH_UPSTREAM:127.0.0.1:8000}
+	}
+
 	# Public paths of the application (T-20), such as share links: without sign-in, without identity.
 	# TS_SHARE_PREFIX is a regular expression over the beginning of the path, e.g.
 	#   TS_SHARE_PREFIX='^/(s|public/share)/'
@@ -123,6 +131,17 @@ app.example.com {
 			# Location header, the browser stood still instead of going to the login. On the
 			# wire the name is still case-insensitive — only this placeholder is
 			# not. nginx (lowercase) and Traefik are not affected.
+			# An OAuth resource (T-36): TinySesam answers 401 with `WWW-Authenticate: Bearer resource_metadata=…`
+			# and `X-TinySesam-Reason: oauth` — the MCP client needs exactly that 401, not a redirect to a login
+			# page it cannot show. BEFORE @denied: the first matching handle_response wins.
+			@oauth {
+				status 401
+				header X-Tinysesam-Reason oauth
+			}
+			handle_response @oauth {
+				header WWW-Authenticate {rp.header.Www-Authenticate}
+				respond 401
+			}
 			@denied status 401
 			handle_response @denied {
 				redir {rp.header.X-Tinysesam-Location} 302

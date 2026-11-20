@@ -397,6 +397,24 @@ def build_admin_router(auth) -> APIRouter:
         log(request, "session_revoke", f"user_id={b.get('user_id')}" if b.get("user_id") else "one session")
         return {"ok": True}
 
+    # ---------- Connected programs (OAuth grants, T-36) ----------
+    if cfg.oauth_enabled:
+        @ar.get("/api/oauth/devices")
+        def oauth_devices(request: Request):
+            guard(request)
+            log(request, "oauth_devices_read")
+            return auth._oauth_server().devices()
+
+        @ar.post("/api/oauth/devices/{grant_id}/revoke")
+        def oauth_device_revoke(request: Request, grant_id: int):
+            me = guard(request)
+            g = auth.store.oauth_grant(grant_id)
+            if g is None:
+                raise HTTPException(404, auth.t("api.not_found"))
+            owner_protection(me, int(g["user_id"]))   # an owner's devices are disconnected only by an owner
+            # The audit line (`oauth_revoked`, actor=) is written by `revoke_grant`.
+            return {"ok": auth._oauth_server().revoke_grant(int(grant_id), "admin", auth.client_ip(request))}
+
     # ---------- Invitations (magic invite) ----------
     if cfg.magiclink_enabled:
         @ar.post("/api/invite")
@@ -576,7 +594,8 @@ _KEYS = (
     "err.email err.generic confirm.disable confirm.enable confirm.revoke "
     "prompt.pw prompt.username pw_set roles_groups no_roles api_keys create_key last_used expires "
     "never_expires revoke key_once end_session hardening hardening_owner version installed update_note "
-    "btn.link signin_link link_once prompt.link_ttl key_new"
+    "btn.link signin_link link_once prompt.link_ttl key_new "
+    "tab.devices th.client th.resource th.last disconnect no_devices confirm.disconnect"
 ).split()
 
 
@@ -617,6 +636,7 @@ def render_panel(auth, base: str, warn: str = "", prefix: str = "") -> str:
                                               cfg.login_identifier == "email") else "false")
             .replace("__LINKS__", "true" if cfg.magiclink_enabled else "false")
             .replace("__LINKTTL__", str(int(cfg.magiclink_ttl_min)))
+            .replace("__OAUTH__", "true" if cfg.oauth_enabled else "false")
             .replace("__LANG__", cfg.lang)
             # `ensure_ascii=False`: the page is UTF-8, „Härtung" belongs in as „Härtung",
             # not as `Härtung`. Only `<` is masked — an own translation
@@ -695,9 +715,10 @@ const REQMAIL=__REQMAIL__;                             // config.signup_require_
 const L=__I18N__;                                      // texts in config.lang — see messages.py
 const LINKS=__LINKS__;                                 // config.magiclink_enabled: admin may issue sign-in links
 const LINKTTL=__LINKTTL__;                             // config.magiclink_ttl_min: default validity of a link
+const OAUTH=__OAUTH__;                                 // config.oauth_enabled: tab "connected programs" (T-36)
 document.getElementById("applink").textContent="← "+L.app;
 document.getElementById("outlink").textContent=L.logout;
-const TABS=[["users",L["tab.users"]],["sessions",L["tab.sessions"]],["security",L["tab.security"]],["audit",L["tab.audit"]]];
+const TABS=[["users",L["tab.users"]],["sessions",L["tab.sessions"]]].concat(OAUTH?[["devices",L["tab.devices"]]]:[]).concat([["security",L["tab.security"]],["audit",L["tab.audit"]]]);
 let cur="users";
 const g=(u)=>fetch(B+u).then(r=>r.json());
 function tsCsrf(){return (document.cookie.match(/(?:^|; )__CSRFCK__=([^;]+)/)||[])[1]||''}
@@ -722,7 +743,7 @@ const esc=s=>(s??"").toString().replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;","
 const on=(f,...a)=>`data-on="${f}" data-a="${esc(JSON.stringify(a))}"`;
 const dt=t=>t?new Date(t*1000).toLocaleString(L.locale):"—";
 function tabs(){document.getElementById("tabs").innerHTML=TABS.map(([k,l])=>`<div class="tab ${k==cur?'on':''}" ${on("go",k)}>${esc(l)}</div>`).join("")}
-function go(k){cur=k;tabs();({users:users,sessions:sessions,security:security,audit:audit})[k]()}
+function go(k){cur=k;tabs();({users:users,sessions:sessions,devices:devices,security:security,audit:audit})[k]()}
 const V=h=>document.getElementById("view").innerHTML=h;
 
 async function users(){
@@ -809,6 +830,13 @@ async function sessions(){const ss=await g("/api/sessions");
     ss.map(s=>`<tr><td><b>${esc(s.user)}</b></td><td>${esc(s.method)}</td><td>${esc(s.ip)}</td><td>${dt(s.created_at)}</td>
       <td>${s.mfa_ok?'✓':'—'}</td><td><button class=warn ${on("revs",s.full)}>${esc(L.end_session)}</button></td></tr>`).join("")+`</table>`)}
 async function revs(t){rejected(await p("/api/sessions/revoke",{token:t}));sessions()}
+async function devices(){const ds=await g("/api/oauth/devices");
+  V(ds.length?`<table><tr><th>${esc(L["th.user"])}</th><th>${esc(L["th.client"])}</th><th>${esc(L["th.resource"])}</th><th>${esc(L["th.since"])}</th><th>${esc(L["th.last"])}</th><th>${esc(L["th.ip"])}</th><th></th></tr>`+
+    ds.map(d=>`<tr><td><b>${esc(d.username)}</b></td><td>${esc(d.client_name)} <code>${esc(d.client_id)}</code></td><td>${esc(d.resource)}</td>
+      <td>${dt(d.created_at)}</td><td>${dt(d.last_used)}</td><td>${esc(d.last_ip)}</td>
+      <td><button class=warn ${on("revdev",d.id)}>${esc(L.disconnect)}</button></td></tr>`).join("")+`</table>`
+    :`<div class=muted>${esc(L.no_devices)}</div>`)}
+async function revdev(id){if(await tsConfirm(L["confirm.disconnect"],{danger:true})){rejected(await p(`/api/oauth/devices/${id}/revoke`));devices()}}
 function clr(id){document.getElementById("r"+id).innerHTML=""}
 
 async function security(){const s=await g("/api/security");const v=await g("/api/version");
@@ -827,7 +855,7 @@ async function audit(){const a=await g("/api/audit?limit=120");
 
 // One delegated listener for all buttons, including those loaded later via innerHTML. Only names
 // from ACT are callable — data-on selects an action, it does not name arbitrary code.
-const ACT={go,mkuser,own,dis,pw,ren,roles,saveroles,clr,keys,mkkey,revk,revs,savesec,pks,delpk,deluser,link,copylink};
+const ACT={go,mkuser,own,dis,pw,ren,roles,saveroles,clr,keys,mkkey,revk,revs,savesec,pks,delpk,deluser,link,revdev,copylink};
 document.addEventListener("click",e=>{const el=e.target.closest("[data-on]");
   if(!el||!ACT[el.dataset.on])return;ACT[el.dataset.on](...JSON.parse(el.dataset.a||"[]"))});
 tabs();users();
