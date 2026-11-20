@@ -150,7 +150,11 @@ updates:
     commit-message:
       prefix: "ci"
 
-  # The base image is pinned by digest; without Dependabot it would stand still forever.
+  # The base images are pinned by digest; without Dependabot they would stand still forever. The gateway Dockerfile has
+  # two since T-59: `python:3.x-slim` (build stage, the interpreter) and `gcr.io/distroless/base-debian13:nonroot`
+  # (runtime). The distroless tag is not a version, so Dependabot refreshes only its digest — and its cooldown has no
+  # release date outside Docker Hub (dependabot-core docker/update_checker.rb, `registry_tag_release_date`), so it
+  # fails open there: a moved digest comes the next day.
   # Plus the two images of tinysesam-caddy-gate (Go builder, Caddy base); Caddy and caddy-jwt themselves are in the
   # `gomod` entry above. The CI job gate-caddy checks the result.
   #

@@ -8,12 +8,17 @@ Until H1 both SECURITY.md said TOTP secrets were stored unencrypted — wrong si
       (fixable findings from "high", exceptions only via .grype.yaml, checked before the scan)
   (c) scripts/_grype_exceptions.py: a rule without an end, an expired one and one too far ahead are each refused;
       the shipped .grype.yaml is well-formed
+  (d) … --report, after both image scans: a rule that matches nothing in any report is refused (T-59)
 """
 from __future__ import annotations
 
+import contextlib
 import datetime as dt
+import io
+import json
 import re
 import sys
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -86,5 +91,40 @@ assert len(until) == n_rules, "a rule in .grype.yaml without 'until YYYY-MM-DD:'
 # Form only: the date itself is the CI's business (a suite that turns red by the calendar would block unrelated work).
 assert all(not ge.problems(shipped, d) for d in until), "a shipped exception is malformed or reaches too far"
 ok(f"_grype_exceptions: no end / expired / > 31 days each refused; .grype.yaml well-formed ({n_rules} rule(s))")
+
+# ---------- (d) no exception that matches nothing (T-59) ----------
+# After the scans: a rule that no ignored match in any report names has outlived its reason. The zlib rule for
+# python:3.15-slim would have stayed until its date after the image moved to distroless.
+def _report(*applied):
+    return {"matches": [], "ignoredMatches": [{"appliedIgnoreRules": list(applied)}]}
+
+
+_hit = {"vulnerability": "CVE-1", "package": {"name": "x"}}
+_ok_rule = rule.format(d="2026-12-07")
+assert ge.unmatched(_ok_rule, [_report(_hit)]) == []
+assert ge.unmatched(_ok_rule, [_report(), _report(_hit)]) == [], "a rule needs a match in ONE of the reports"
+assert "matches nothing" in ge.unmatched(_ok_rule, [_report({"namespace": "", "fix-state": "not-fixed"})])[0]
+assert ge.unmatched(_ok_rule, [_report({"vulnerability": "CVE-1", "package": {"name": "y"}})]), \
+    "the same CVE in a different package is not the excepted finding"
+assert ge.unmatched("ignore: []\n", [_report(_hit)]) == []
+with tempfile.TemporaryDirectory() as _d:
+    _p = Path(_d, "r.json")
+    _p.write_text(json.dumps(_report()), encoding="utf-8")
+    with contextlib.redirect_stdout(io.StringIO()) as _out:
+        assert ge.after_scans(_ok_rule, [str(_p)]) == 1
+        assert ge.after_scans(_ok_rule, [str(_p), ""]) == 1, "a missing report is not 'nothing unmatched'"
+        assert ge.after_scans("ignore: []\n", [str(_p)]) == 0
+    assert "no report from" in _out.getvalue()
+# Wired: after BOTH scans, also when one is red, with the JSON report of each.
+i_after = next(i for i, s in enumerate(steps) if "--report" in s)
+scans = [i for i, s in enumerate(steps) if "anchore/scan-action@" in s]
+assert len(scans) == 2 and i_after > max(scans), "the exception check does not run after both scans"
+assert "if: always()" in steps[i_after], "the exception check is skipped when a scan is red"
+for i in scans:
+    _id = re.search(r"^\s+id: (\S+)", steps[i], re.M)
+    assert _id and "output-format: json" in steps[i], f"scan step {i} without id or JSON report"
+    assert f"steps.{_id.group(1)}.outputs.json" in steps[i_after], f"the report of {_id.group(1)} is not checked"
+ok("_grype_exceptions --report: a rule without a match in any image is refused, a missing report too; "
+   "runs after both scans with always()")
 
 print("\nSECURITY DOC OK ✅")

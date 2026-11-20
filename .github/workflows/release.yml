@@ -314,19 +314,23 @@ jobs:
       - name: Build the image, start it, check HEALTHCHECK and /healthz
         run: scripts/_image_probe.sh
       # CVE scan of the image just built (H1, ASVS 15.2.1): pip-audit (audit.yml) sees the Python packages, not the
-      # OS packages of the python:*-slim base. Red on every finding of severity high or above that has a fix;
+      # OS packages of the base (distroless since T-59, plus the libraries the Dockerfile copies with their dpkg record).
+      # Red on every finding of severity high or above that has a fix;
       # exceptions only in .grype.yaml with an end date (SECURITY.md, "Vulnerable dependencies"), checked first.
       # Grype's version is a constant of the pinned action; its vulnerability database is fetched fresh on purpose.
+      # JSON instead of a table: the last step of the job prints the table from it AND checks that every exception still
+      # matches something (the action sets the report output also when it fails the build).
       - name: Exceptions of the image scan within their deadline
         run: python3 scripts/_grype_exceptions.py
       - name: Scan the image for known vulnerabilities (Grype)
+        id: scan-gateway
         uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439  # v7.4.2
         with:
           image: tinysesam-probe:local
           fail-build: true
           severity-cutoff: high
           only-fixed: true
-          output-format: table
+          output-format: json
           config: .grype.yaml
       # The Caddy image (tinysesam-caddy-gate) goes through the same gate before `image` pushes it: built from this
       # commit, the plugin inside, every shipped Caddyfile it is meant for accepted, then the same Grype scan — for a Go
@@ -347,14 +351,23 @@ jobs:
               -v "$PWD/deploy/quickstart:/t:ro" "$image" caddy validate --config /t/Caddyfile --adapter caddyfile
           done
       - name: "Caddy image: scan for known vulnerabilities (Grype)"
+        id: scan-caddy
         uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439  # v7.4.2
         with:
           image: tinysesam-caddy-gate-probe:local
           fail-build: true
           severity-cutoff: high
           only-fixed: true
-          output-format: table
+          output-format: json
           config: .grype.yaml
+      # Also after a red scan (`always()`): the findings as a table, and red for an exception that matched nothing in
+      # either image — it has outlived its reason (T-59: the zlib rule outlived the move away from python:*-slim).
+      - name: Findings of both scans; no exception that matches nothing
+        if: always()
+        env:
+          GATEWAY_REPORT: ${{ steps.scan-gateway.outputs.json }}
+          CADDY_REPORT: ${{ steps.scan-caddy.outputs.json }}
+        run: python3 scripts/_grype_exceptions.py --report "$GATEWAY_REPORT" --report "$CADDY_REPORT"
 
   image:
     timeout-minutes: 30
