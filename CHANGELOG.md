@@ -72,6 +72,9 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
   (recovery codes after the confirmation); it now waits for the dialog it answered.
 - The browser test reports where Chrome stands when it writes no DevTools port (process state, `wchan`, load,
   profile) and lets Chrome log its INFO lines.
+- `test_h2_hardening.py`: "the two-digit number is not part of the approval link" was checked as a substring of the
+  link — the eight random characters of the short code contained such a number now and then. The check now reads the
+  link: path `/auth/qr/approve`, the code as its only parameter.
 
 ### Security — key management (H3: T-48, T-53, T-54, ADR-12, from the security review of 2026-11-20)
 
