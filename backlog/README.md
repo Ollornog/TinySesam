@@ -92,6 +92,7 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 * ☑ **[B-10](B-10-account-without-password-cannot-set-one.md)** An account without a password cannot set one — the account page demands the current password · M-2
 * ☑ **[B-11](B-11-a-saml-response-could-be-replayed-until-notonoraft.md)** A SAML response could be replayed until NotOnOrAfter · M-2
 * ☑ **[B-12](B-12-new-sign-in-factors-api-keys-and-qr-approval-witho.md)** New sign-in factors, API keys and QR approval without fresh confirmation · M-2
+* ☑ **[B-13](B-13-flaky-ci-suite-died-silently-and-chrome-start.md)** CI flakes: a suite died from a segfault without a word, Chrome hung at startup · M-2
 
 ## Entscheidungen (ADR)
 

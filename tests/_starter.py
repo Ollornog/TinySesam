@@ -25,12 +25,28 @@ by memory.
 The lowering happens only when the suite itself imports `tinysesam.passwords` (import hook). An
 up-front import from here would change the import order of the suite — and some suites hide
 modules on purpose before the first import to simulate "without extra".
+
+SECOND JOB — closing a database waits for the background outbox (2026-11-20). TinySesam sends its
+notices (new access, lockout) from a worker thread (`tinysesam.mailer.Outbox`), and the job uses the
+store's connection: it reads the account and writes an `audit` row. Many suites close that
+connection themselves (`auth.store.db.close()`) to start the library again on the same file —
+right after an action that enqueued a notice. If the worker was still inside SQLite at that moment,
+`sqlite3` freed the connection under it: a segmentation fault, the suite died without a word
+(`test_values_english.py`, three times in CI; reproduced locally in 3 of 3 attempts of 200 rounds of
+create key → close). Production never closes the connection under a running worker; only the tests
+do. So here, in the test process, every `sqlite3` connection is created with `_DrainingConnection`,
+whose `close()` first waits until every outbox has finished its queued jobs. The guard
+`tests/test_runner.py` (K) checks it. A suite started directly (`python tests/test_x.py`) closes
+without waiting, as before.
 """
 from __future__ import annotations
 
 import os
 import runpy
+import sqlite3
 import sys
+import threading
+import weakref
 
 #: Suite → reason. These suites compute with the production values.
 PRODUCTION_VALUES = {
@@ -45,6 +61,8 @@ SCRYPT_TEST = {"n": 2 ** 4, "r": 8, "p": 1}
 ARGON2_TEST = {"time_cost": 1, "memory_cost": 8, "parallelism": 1}
 
 MODULE = "tinysesam.passwords"
+#: The module of the background outbox, see “SECOND JOB”.
+OUTBOX_MODULE = "tinysesam.mailer"
 
 
 def lower(passwords) -> None:
@@ -57,11 +75,54 @@ def lower(passwords) -> None:
     passwords._DUMMY = passwords.hash_password("tinysesam-timing-dummy")
 
 
+#: Every outbox of this process (weak: a dropped instance does not stay alive for this).
+_OUTBOXES: "weakref.WeakSet" = weakref.WeakSet()
+
+
+def track_outboxes(mailer) -> None:
+    """Note every `Outbox` that the freshly loaded `tinysesam.mailer` creates — in this process."""
+    original = mailer.Outbox.__init__
+
+    def __init__(self, *args, **kwargs):
+        original(self, *args, **kwargs)
+        _OUTBOXES.add(self)
+    mailer.Outbox.__init__ = __init__
+
+
+def drain_outboxes() -> None:
+    """Wait until every outbox has run what it was given (`Outbox.wait`, at most 10 s per job).
+
+    Not from a worker of an outbox itself: it would wait for its own job."""
+    if threading.current_thread().name.startswith("tinysesam-"):
+        return
+    for box in list(_OUTBOXES):
+        box.wait()
+
+
+class _DrainingConnection(sqlite3.Connection):
+    """A `sqlite3` connection whose `close()` first lets the background jobs finish."""
+
+    def close(self):
+        drain_outboxes()
+        super().close()
+
+
+def _connect(*args, **kwargs):
+    kwargs.setdefault("factory", _DrainingConnection)
+    return _CONNECT(*args, **kwargs)
+
+
+_CONNECT = sqlite3.connect
+
+
 class _AfterTheLoad:
-    """Import hook: loads `tinysesam.passwords` as usual and lowers the parameters afterwards."""
+    """Import hook: loads `module` as usual and calls `then(module)` afterwards."""
+
+    def __init__(self, module: str, then):
+        self.module, self.then = module, then
 
     def find_spec(self, name, path=None, destination=None):
-        if name != MODULE:
+        if name != self.module:
             return None
         sys.meta_path.remove(self)                 # once is enough; otherwise it would find itself
         for finder in sys.meta_path:
@@ -69,9 +130,9 @@ class _AfterTheLoad:
             if spec is not None and spec.loader is not None:
                 load = spec.loader.exec_module
 
-                def exec_module(module, _load=load):
+                def exec_module(module, _load=load, _then=self.then):
                     _load(module)
-                    lower(module)
+                    _then(module)
                 spec.loader.exec_module = exec_module
                 return spec
         return None
@@ -88,7 +149,9 @@ def main(argv: list[str]) -> None:
         if MODULE in sys.modules:                   # pragma: no cover — nobody imports it here
             lower(sys.modules[MODULE])
         else:
-            sys.meta_path.insert(0, _AfterTheLoad())
+            sys.meta_path.insert(0, _AfterTheLoad(MODULE, lower))
+    sys.meta_path.insert(0, _AfterTheLoad(OUTBOX_MODULE, track_outboxes))
+    sqlite3.connect = _connect
     runpy.run_path(suite, run_name="__main__")
 
 

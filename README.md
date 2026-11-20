@@ -1890,7 +1890,10 @@ throwaway directory, and the log lists the suites in file order, not in the orde
 `CI_TEST_JOBS=1` is the serial run. The runner starts every suite through `tests/_starter.py`,
 which lowers the password-hash cost **inside that test process only**. A suite started directly
 (`python tests/test_core.py`) and the package itself always hash with the production parameters —
-there is no setting and no environment variable for them.
+there is no setting and no environment variable for them. In the same process, closing a `sqlite3`
+connection first waits for TinySesam's background notice jobs, which otherwise could still be using it.
+A red suite is listed with how it ended (`exit 1`, `killed by signal SIGSEGV`); suites run unbuffered and
+with faulthandler, so a crash leaves its output and the Python stack in the log.
 
 The suites are standalone assert scripts (no pytest). Three of them answer the question
 "is anything broken?" without you having to look:

@@ -90,7 +90,7 @@ z1 = lines(execution1)
 r.check("A: a red suite makes the parallel run red (exit 1)", execution1.returncode == 1,
         f"Exit {execution1.returncode}\n{execution1.stdout[-600:]}{execution1.stderr[-400:]}")
 r.check("A: the first line names the number of jobs", z1[:1] == ["▸ Test-Jobs: 4"], f"{z1[:1]}")
-fail_line = next((i for i, z in enumerate(z1) if z == "  FAIL test_b_rot.py"), None)
+fail_line = next((i for i, z in enumerate(z1) if z == "  FAIL test_b_rot.py (exit 1)"), None)
 r.check("A: … it appears as FAIL in the log, below it its reason (stdout), its stderr on stderr",
         fail_line is not None and "Reason: deliberately red (probe 4711)" in z1[fail_line + 1]
         and "stderr of the red suite" in execution1.stderr, f"{z1}\nstderr: {execution1.stderr[-300:]}")
@@ -193,7 +193,7 @@ execution_e = collect_run([suite(e, "test_w_alt.py", """\
                                module="tinysesam.router")
     """), from_suites[3]], 2)
 r.check("E: a deprecated name, called from the package, makes the suite red — also in parallel",
-        execution_e.returncode == 1 and "  FAIL test_w_alt.py" in lines(execution_e)
+        execution_e.returncode == 1 and "  FAIL test_w_alt.py (exit 1)" in lines(execution_e)
         and "DeprecationWarning" in execution_e.stderr, f"Exit {execution_e.returncode}\n{execution_e.stdout[-300:]}")
 
 # ── F: the starter ───────────────────────────────────────────────────────────────────────────
@@ -460,5 +460,62 @@ if len(traces) == 2:
     r.check("J: every suite has a directory of its own", one["TMPDIR"] != two["TMPDIR"], f"{traces}")
     r.check("J: after the run both directories are gone",
             not os.path.exists(one["TMPDIR"]) and not os.path.exists(two["TMPDIR"]), f"{traces}")
+
+# ── K: a crashing suite leaves a trail; closing a database waits for the outbox ──────────────────
+# 2026-11-20: `test_values_english.py` went red three times in CI with nothing under `FAIL` but
+# foreign warnings — a segmentation fault: a notice job of the outbox still used the store's
+# connection while the suite closed it. The runner did not say that the suite died from a signal, and
+# its stdout (block-buffered in the pipe) died with it.
+# (Mutation probes: drop PYTHONUNBUFFERED → the line before the crash is missing; drop
+# PYTHONFAULTHANDLER → no stack; `_exit_text` returns "" → no signal name; `_DrainingConnection.close`
+# without `drain_outboxes()` → the job is still running when `close()` returns.)
+folder_k = Path(tempfile.mkdtemp(prefix="collect-k-"))
+crash = suite(folder_k, "test_crash.py", """\
+    import ctypes, threading
+    print("probe 4713: a line before the crash, not flushed")
+    def worker():
+        ctypes.string_at(0)
+    t = threading.Thread(target=worker, name="probe-worker")
+    t.start()
+    t.join()
+""")
+execution_k = collect_run([crash], 1)
+r.check("K: a suite killed by a signal says so under FAIL — with the signal's name",
+        execution_k.returncode == 1 and "  FAIL test_crash.py (killed by signal SIGSEGV)" in lines(execution_k),
+        f"{execution_k.stdout[-400:]}")
+r.check("K: … its stdout up to the crash is in the log (not lost in the pipe buffer)",
+        "probe 4713: a line before the crash, not flushed" in execution_k.stdout, execution_k.stdout[-400:])
+r.check("K: … and the Python stack of the crashing thread is in stderr (faulthandler)",
+        "Fatal Python error: Segmentation fault" in execution_k.stderr
+        and "in worker" in execution_k.stderr, execution_k.stderr[-600:])
+long_err = "x" * 50 + "\nFatal Python error: Segmentation fault\n" + "  File \"a.py\", line 1 in f\n" * 300
+r.check("K: a crash report that starts before the last 2000 characters is shown from its first line",
+        run_all._error_output(long_err).startswith("Fatal Python error: Segmentation fault")
+        and run_all._error_output("short") == "short", run_all._error_output(long_err)[:80])
+
+drain = suite(folder_k, "test_drain.py", """\
+    import os, sqlite3, sys, time
+    from tinysesam.mailer import Outbox
+    done = []
+    box = Outbox(worker=1)
+    con = sqlite3.connect(":memory:")
+    box.enqueue(lambda: (time.sleep(0.5), done.append(1)))
+    con.close()
+    with open(os.environ["COLLECT_TRACE_K"], "w") as fh:
+        fh.write(f"job done before close returned: {bool(done)}; connection: {type(con).__name__}")
+""")
+trace_k = folder_k / "drain.txt"
+execution_d = collect_run([drain], 1, COLLECT_TRACE_K=str(trace_k))
+seen_d = trace_k.read_text() if trace_k.exists() else ""
+direct_d = subprocess.run([sys.executable, drain], cwd=str(ROOT), timeout=60, capture_output=True, text=True,
+                          env={**os.environ, "PYTHONPATH": str(ROOT), "COLLECT_TRACE_K": str(trace_k)})
+seen_direct = trace_k.read_text() if trace_k.exists() else ""
+r.check("K: in the collective run `close()` waits until the outbox has finished its job",
+        execution_d.returncode == 0
+        and seen_d == "job done before close returned: True; connection: _DrainingConnection",
+        f"{seen_d!r} {execution_d.stdout[-300:]}{execution_d.stderr[-300:]}")
+r.check("K: … started directly the same suite does not wait (the starter is what makes the difference)",
+        direct_d.returncode == 0 and seen_direct == "job done before close returned: False; connection: Connection",
+        f"{seen_direct!r} {direct_d.stderr[-300:]}")
 
 sys.exit(r.done())

@@ -34,6 +34,7 @@ import sys
 import os
 import glob
 import shutil
+import signal
 import subprocess
 import tempfile
 from concurrent.futures import ThreadPoolExecutor
@@ -99,6 +100,39 @@ def _fail_output(from_: str) -> str:
             "  ── end of output ──\n") if before else ""
     return head + end
 
+#: A Python crash report or traceback in stderr starts with one of these lines.
+CRASH_MARKERS = ("Fatal Python error:", "Traceback (most recent call last):")
+#: Upper bound for the stderr excerpt when it starts at a crash marker (all threads of a faulthandler dump).
+CRASH_END = 8000
+
+
+def _exit_text(code: int) -> str:
+    """How a red suite ended: `exit 1`, or the signal that killed it (`killed by signal SIGSEGV`).
+
+    Until 2026-11-20 the log said only `FAIL <suite>`. A suite that died from a signal left nothing
+    else: its stdout went into a pipe, was block-buffered and lost with the process — seen three times
+    at `test_values_english.py` in CI, a segmentation fault that nobody could see as one."""
+    if code < 0:
+        try:
+            name = signal.Signals(-code).name
+        except ValueError:
+            name = str(-code)
+        return f"killed by signal {name}"
+    return f"exit {code}"
+
+
+def _error_output(err: str) -> str:
+    """What of a red suite's stderr goes into the log: the end (2000 characters) — or, if a crash
+    report or traceback starts before that, everything from the last one on (at most `CRASH_END`).
+
+    A faulthandler dump lists every thread; the thread that crashed comes first, so the plain end
+    would cut off exactly the line that matters."""
+    start = max(err.rfind(m) for m in CRASH_MARKERS)
+    if 0 <= start < len(err) - FAIL_END:
+        return err[start:][:CRASH_END]
+    return err[-FAIL_END:]
+
+
 def warning_filter() -> str:
     """`PYTHONWARNINGS`: a deprecated TinySesam name (stage C), called FROM the package itself, is
     an error — in every suite, not just in one (0.22.0, PO decision 2026-09-26).
@@ -136,6 +170,11 @@ def environment(sandbox: str) -> dict:
         "XDG_CONFIG_HOME": os.path.join(sandbox, ".config"),
         "XDG_DATA_HOME": os.path.join(sandbox, ".local", "share"),
         "PYTHONWARNINGS": ",".join(x for x in (before, warning_filter()) if x),
+        # A suite that dies from a signal (segfault, abort) leaves its trail: stdout is written at
+        # once instead of being lost in the pipe buffer, and faulthandler prints the Python stack of
+        # every thread. Without both a crash looked like a FAIL without any reason (2026-11-20).
+        "PYTHONUNBUFFERED": "1",
+        "PYTHONFAULTHANDLER": "1",
     }
 
 
@@ -239,10 +278,11 @@ def main(argv):
                 print(f"  skip {name}" + (f" ({reason[-1]})" if reason else ""), flush=True)
                 skipped.append(name)
             else:
-                print(f"  FAIL {name}", flush=True)
-                sys.stdout.write(_fail_output(r.stdout or ""))
+                print(f"  FAIL {name} ({_exit_text(r.returncode)})", flush=True)
+                sys.stdout.write(_fail_output(r.stdout or "")
+                                 or "  ── no output on stdout ──\n")
                 sys.stdout.flush()
-                sys.stderr.write((r.stderr or "")[-2000:])
+                sys.stderr.write(_error_output(r.stderr or ""))
                 sys.stderr.flush()
                 failed.append(name)
     finally:
