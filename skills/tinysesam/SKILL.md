@@ -295,6 +295,10 @@ never spell them out.
   counts.
 - **PocketID and similar providers** send `groups` only when asked: `oidc_scopes="openid profile email groups"`.
 - **Admins satisfy every role** unless `admin_implies_roles=False`.
+- **Back up the keys, apart from the database.** Secrets at rest (TOTP, …) are encrypted with the vault key
+  (`TINYSESAM_SECRETS_KEY`, `secrets_key_file`, else `<db>.key` next to the database); without it every TOTP
+  enrollment is lost. Keys per purpose (`vault`, `gate`, `oauth-pepper`) rotate without signing anyone out:
+  `python -m tinysesam keys list --db app.db`, `keys rotate --purpose vault`. `docs/OPERATIONS.md`, section *Keys*.
 - **Nothing from third parties**: logos, fonts and stylesheets come from your own origin (`brand_icon`,
   `c22_stylesheet` are paths or `data:` addresses).
 - **Read the start-up warnings.** The constructor checks the whole configuration at once: a contradiction is a
