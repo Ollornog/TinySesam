@@ -122,6 +122,37 @@ for _ in range(100):
 else:
     raise RuntimeError("T-33 app does not start")
 
+# T-34: a third app for the setup pass after a sign-in link — it needs a chain, which the other two do
+# not carry. Own cookie prefix for the same reason as above.
+_t34_sock = _server_socket()
+T34 = f"http://127.0.0.1:{_t34_sock.getsockname()[1]}"
+_t34_db = os.path.join(tempfile.mkdtemp(), "t34.db")
+t34 = _TinySesam(_TinySesamConfig(
+    db_path=_t34_db, cookie_secure=False, cookie_prefix="tst34_", passkey_enabled=False, lang="en",
+    magiclink_enabled=True, magiclink_self_request=False, magiclink_first_login_only=True, base_url=T34,
+    login_chain=["password", "totp"]))
+t34.set_security("password_min_length_single_factor", 8)
+_t34_app = _FastAPI()
+_t34_app.include_router(t34.router())
+
+
+@_t34_app.get("/", include_in_schema=False)
+def _t34_home():
+    from fastapi.responses import HTMLResponse
+    return HTMLResponse("<!doctype html><link rel=icon href=\"data:,\"><title>t34</title><p>home</p>")
+
+
+_t34_server = uvicorn.Server(uvicorn.Config(_t34_app, log_level="critical"))
+threading.Thread(target=lambda: _t34_server.run(sockets=[_t34_sock]), daemon=True).start()
+for _ in range(100):
+    try:
+        urllib.request.urlopen(f"{T34}/auth/login", timeout=1)
+        break
+    except Exception:
+        time.sleep(0.1)
+else:
+    raise RuntimeError("T-34 app does not start")
+
 _profile = tempfile.mkdtemp()
 
 # Do NOT send Chrome's output to DEVNULL: if it dies at startup, the error message used to
@@ -720,6 +751,79 @@ async def account_setup(p, go):
     assert p.failed[failed_before:] == [], f"broken requests: {p.failed[failed_before:][:3]}"
     print("  account page: an account without a password sets its first one (no current-password field)")
 
+    await link_setup_pass(p)
+
+
+async def link_setup_pass(p):
+    """T-34 in a real browser: the admin creates an account and hands out a link; the link leads into
+    the setup pass (password, then TOTP with recovery codes), and only then is the sign-in full —
+    strict CSP, real CSRF, waits on events, not on fixed pauses."""
+    import pyotp
+
+    failed_before = len(p.failed)
+
+    async def go(path):
+        await p.cmd("Page.navigate", url=T34 + path)
+        await until("document.readyState==='complete'", f"page {path} did not load")
+
+    async def until(expr, why, tries=80):
+        for _ in range(tries):
+            try:
+                if await p.js(expr):
+                    return
+            except AssertionError:
+                pass                                  # navigation in flight — the context is gone briefly
+            await asyncio.sleep(0.25)
+        raise AssertionError(f"{why} (at {await p.js('location.href')!r})")
+
+    async def me():
+        r = await p.cmd("Runtime.evaluate", awaitPromise=True, returnByValue=True, expression=(
+            "fetch('/auth/me',{headers:{Accept:'application/json'}})"
+            ".then(r=>r.ok?r.json():{}).then(j=>j.username||'')"))
+        return r.get("result", {}).get("value")
+
+    tess = t34.create_user("tess", email="tess@example.com")
+    url = t34.create_signin_link(tess, next="/")["url"]
+    await go(url[len(T34):])
+    await p.js("document.querySelector('form button').click()")
+    await until("location.pathname==='/auth/setup' && document.readyState==='complete'",
+                "the link did not lead into the setup pass")
+    assert await me() == "", "the link alone signed in fully"
+    assert await p.js("!!document.getElementById('ob_password') && !document.getElementById('ob_totp')"), \
+        "first step: the password, nothing else"
+
+    # A typo in the repetition is caught on the page, nothing is sent.
+    await p.js("document.getElementById('ob_pw1').value='tess-first-2468';"
+               "document.getElementById('ob_pw2').value='tess-first-2469';"
+               "document.querySelector('#ob_password button').click();true")
+    await until("!document.getElementById('obmsg').hidden", "no message for two different passwords")
+    assert not t34.store.get_password_hash(tess)
+    await p.js("document.getElementById('ob_pw2').value='tess-first-2468';"
+               "document.querySelector('#ob_password button').click();true")
+    await until("!!document.getElementById('ob_totp') && document.readyState==='complete'",
+                "after the password the page must offer the TOTP step")
+    assert t34.store.get_password_hash(tess) and await me() == "", "half way, the session must stay half"
+
+    await p.js("document.querySelector('#ob_totp a').click();true")
+    await until("!!document.querySelector(\"form[action$='/auth/totp/setup/start'] button\")", "no TOTP start page")
+    await p.js("document.querySelector(\"form[action$='/auth/totp/setup/start'] button\").click();true")
+    await until("document.readyState==='complete' && !!document.getElementById('tstotp')", "no TOTP form")
+    secret = await p.js("document.querySelector('.mono').textContent")
+    await p.js(f"document.querySelector('#tstotp [name=code]').value={pyotp.TOTP(secret).now()!r};"
+               "document.querySelector('#tstotp button').click();true")
+    await until("!!document.getElementById('rcbox') && !document.getElementById('rcbox').hidden",
+                "no recovery codes after the TOTP step")
+    await p.js("document.getElementById('rcdone').click();true")
+    await until("location.pathname==='/' && document.readyState==='complete'", "did not land on the target")
+    assert await me() == "tess", f"not fully signed in after the pass: {await me()!r}"
+    viol = await p.js("JSON.stringify(window.__csp===undefined?['(no Listener)']:window.__csp)")
+    assert viol == "[]", f"CSP violation in the setup pass: {viol}"
+    assert not p.console, f"console errors: {p.console[:2]}"
+    # The two probes of /auth/me while the session is half answer 401 — that is the point of them.
+    broken = [f for f in p.failed[failed_before:] if not (f[0] == 401 and f[1].endswith("/auth/me"))]
+    assert broken == [], f"broken requests: {broken[:3]}"
+    print("  setup pass: link → password (typo caught) → TOTP + recovery codes → fully signed in (strict CSP)")
+
 
 try:
     asyncio.run(run())
@@ -728,6 +832,7 @@ finally:
     _chrome.terminate()
     _server.should_exit = True
     _t33_server.should_exit = True
+    _t34_server.should_exit = True
     shutil.rmtree(_profile, ignore_errors=True)
     # Also clean up the Chrome log file — the test must leave nothing behind.
     try:
@@ -741,3 +846,4 @@ finally:
         except OSError:
             pass  # file did not exist — not an error when cleaning up
     shutil.rmtree(os.path.dirname(_t33_db), ignore_errors=True)
+    shutil.rmtree(os.path.dirname(_t34_db), ignore_errors=True)

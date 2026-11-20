@@ -1024,7 +1024,8 @@ def _magic_invalid(auth, ctx) -> str:
     t = auth.t
     body = (f"<h1>{_e(t('magic.invalid_title'))}</h1>"
             f"<a class=btn2 href='__TS_P__/auth/login'>{_e(t('magic.to_login'))}</a>")
-    return _page(auth, t("magic.invalid_title"), body, below=_messages([("error", t("magic.invalid"))]))
+    return _page(auth, t("magic.invalid_title"), body,
+                 below=_messages([("error", ctx.get("message") or t("magic.invalid"))]))
 
 
 def _resource_unlock(auth, ctx) -> str:
@@ -1168,6 +1169,99 @@ def _totp_setup(auth, ctx) -> str:
     return _page(auth, t("setup.title"), body)
 
 
+def _account_setup(auth, ctx) -> str:
+    """The setup pass after a sign-in link (T-34). ctx: options (factor names to choose from),
+    left (steps still missing, this one included), next, pin_min (minimum PIN length).
+
+    One card per pass step: a single option is shown on its own, several as a choice. Password and
+    PIN post JSON to their setup routes, the passkey registers through WebAuthn, TOTP leads to its
+    own setup page. Every answer carries `next` — the following step or the target."""
+    t = auth.t
+    options = list(ctx.get("options") or [])
+    nxt = ctx.get("next") or "/"
+    blocks = []
+    for f in options:
+        if f == "password":
+            blocks.append(
+                f"<form class=obopt id=ob_password><h2>{_e(t('onboard.password'))}</h2>"
+                f"<div class=obhint>{_e(t('onboard.password_hint'))}</div>"
+                f"<label for=ob_pw1>{_e(t('onboard.password_new'))}</label>"
+                f"<input id=ob_pw1 type=password autocomplete=new-password required>"
+                f"<label for=ob_pw2>{_e(t('onboard.password_repeat'))}</label>"
+                f"<input id=ob_pw2 type=password autocomplete=new-password required>"
+                f"<button type=submit>{_e(t('onboard.password_set'))}</button></form>")
+        elif f == "pin":
+            blocks.append(
+                f"<form class=obopt id=ob_pin><h2>{_e(t('onboard.pin'))}</h2>"
+                f"<div class=obhint>{_e(t('onboard.pin_hint', n=ctx.get('pin_min', 4)))}</div>"
+                f"<label for=ob_pin1>{_e(t('onboard.pin_new'))}</label>"
+                f"<input id=ob_pin1 type=password inputmode=numeric autocomplete=off required>"
+                f"<button type=submit>{_e(t('onboard.pin_set'))}</button></form>")
+        elif f == "totp":
+            blocks.append(
+                f"<div class=obopt id=ob_totp><h2>{_e(t('onboard.totp'))}</h2>"
+                f"<div class=obhint>{_e(t('onboard.totp_hint'))}</div>"
+                f"<a class=btn2 href='__TS_P__/auth/totp/setup?next={_next_q(nxt)}'>{_e(t('onboard.totp_go'))}</a></div>")
+        elif f == "passkey":
+            blocks.append(
+                f"<div class=obopt id=ob_passkey><h2>{_e(t('onboard.passkey'))}</h2>"
+                f"<div class=obhint>{_e(t('onboard.passkey_hint'))}</div>"
+                f"<button type=button id=ob_pkbtn>{_e(t('onboard.passkey_go'))}</button></div>")
+    left = int(ctx.get("left") or 1)
+    choose = f"<div class=obchoose>{_e(t('onboard.choose'))}</div>" if len(options) > 1 else ""
+    css = ("<style>.tsmain .obopt{border-top:1px solid var(--ts-line-soft);margin-top:16px;padding-top:12px}"
+           ".tsmain .obopt h2{font-size:15px;margin:0 0 4px}"
+           ".tsmain .obhint,.tsmain .obchoose,.tsmain .obleft{color:var(--ts-muted);font-size:13px;margin:4px 0 8px}"
+           ".tsmain .obmsg{color:var(--ts-err-ink);font-size:13px;margin-top:12px}</style>")
+    texts = json.dumps({"mismatch": t("onboard.mismatch"), "failed": t("onboard.failed")})
+    script = ("<script>"
+              "function tsCsrf(){return (document.cookie.match(/(?:^|; )" + _e(auth.csrf_cookie_name)
+              + "=([^;]+)/)||[])[1]||''}"
+              "const OB=" + texts + ",NEXT=document.getElementById('obroot').dataset.next;"
+              "function obsay(m){const e=document.getElementById('obmsg');e.textContent=m;e.hidden=!m}"
+              "async function obpost(u,b){const r=await fetch(u,{method:'POST',headers:{'Content-Type':"
+              "'application/json','X-CSRF-Token':tsCsrf()},body:JSON.stringify(b)});"
+              "let j={};try{j=await r.json()}catch(e){}return [r,j]}"
+              "function obdone(r,j){if(r.ok&&j.next){location.href=j.next;return}"
+              "obsay(OB.failed+(j.detail?': '+j.detail:''))}"
+              "const pw=document.getElementById('ob_password');"
+              "if(pw)pw.addEventListener('submit',async e=>{e.preventDefault();"
+              "const a=document.getElementById('ob_pw1').value,b=document.getElementById('ob_pw2').value;"
+              "if(a!==b){obsay(OB.mismatch);return}"
+              "const [r,j]=await obpost('__TS_P__/auth/password/set',{new:a,next:NEXT});obdone(r,j)});"
+              "const pn=document.getElementById('ob_pin');"
+              "if(pn)pn.addEventListener('submit',async e=>{e.preventDefault();"
+              "const [r,j]=await obpost('__TS_P__/auth/pin/set',{pin:document.getElementById('ob_pin1').value,next:NEXT});"
+              "obdone(r,j)});"
+              "const pk=document.getElementById('ob_pkbtn');"
+              "const b64=s=>Uint8Array.from(atob(s.replace(/-/g,'+').replace(/_/g,'/')),c=>c.charCodeAt(0));"
+              "const enc=a=>btoa(String.fromCharCode(...new Uint8Array(a))).replace(/\\+/g,'-')"
+              ".replace(/\\//g,'_').replace(/=+$/,'');"
+              "if(pk)pk.addEventListener('click',async()=>{try{"
+              "const o=await (await fetch('__TS_P__/auth/passkey/register/begin',{method:'POST',"
+              "headers:{'X-CSRF-Token':tsCsrf()}})).json();"
+              "o.challenge=b64(o.challenge);o.user.id=b64(o.user.id);"
+              "(o.excludeCredentials||[]).forEach(c=>c.id=b64(c.id));"
+              "const c=await navigator.credentials.create({publicKey:o});"
+              "const body={id:c.id,rawId:enc(c.rawId),type:c.type,response:{clientDataJSON:"
+              "enc(c.response.clientDataJSON),attestationObject:enc(c.response.attestationObject),"
+              "transports:(c.response.getTransports&&c.response.getTransports())||[]}};"
+              "const r=await fetch('__TS_P__/auth/passkey/register/finish?next='+encodeURIComponent(NEXT),"
+              "{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':tsCsrf()},"
+              "body:JSON.stringify(body)});let j={};try{j=await r.json()}catch(e){}obdone(r,j)"
+              "}catch(e){obsay(OB.failed+': '+e)}});"
+              "</script>")
+    body = (f"{css}<div id=obroot data-next='{_e(nxt)}'>"
+            f"<h1>{_e(t('onboard.title'))}</h1>"
+            f"<div class=obhint>{_e(t('onboard.hint'))}</div>"
+            f"<div class=obleft>{_e(t('onboard.left', n=left))}</div>"
+            f"{choose}{''.join(blocks)}"
+            f"<div id=obmsg class=obmsg role=alert hidden></div>"
+            f"<div class=hint><a href='__TS_P__/auth/logout'>{_e(t('cancel'))}</a></div></div>"
+            + ("" if ctx.get("static") else script))
+    return _page(auth, t("onboard.title"), body)
+
+
 # Passkey login JS (WebAuthn) — only included when passkey is active.
 _PASSKEY_LOGIN_JS = """
 <script>
@@ -1210,4 +1304,5 @@ DEFAULTS = {
     "forgot": _forgot,
     "reset": _reset,
     "totp_setup": _totp_setup,
+    "account_setup": _account_setup,
 }

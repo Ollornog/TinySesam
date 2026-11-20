@@ -20,7 +20,7 @@ source code.
 
 The tier is recorded per name in `tests/api_surface.json`. The guard `tests/test_api_surface.py` demands an explicit one for every public name: A new name comes in without a tier and keeps it red until someone decides — nothing is promised by accident.
 
-The configuration fields are in [CONFIGURATION.md](CONFIGURATION.md): 175 of 176 in tier A, the others below at their tier.
+The configuration fields are in [CONFIGURATION.md](CONFIGURATION.md): 176 of 177 in tier A, the others below at their tier.
 
 **English, names as well as values** (since 0.22.0, without alias): The names of tiers A and B, their parameters and the keys and values they return or accept — result dicts, the `details` passed to `on_security_event`, the context of your own pages (`ctx["prefix"]`, `ctx["purpose"]`), the JSON responses of the routes, the kinds of API keys (`automation`, `human`). Since the last breaking pass before the freeze (PO decision 2026-10-29) the same holds for what operators and proxies read — query and form parameters, header and cookie names, logger names, the event words and keys of the security log, message ids — and audit and log lines are English as well. The lists old → new are in the CHANGELOG (0.22.0, [Unreleased]).
 
@@ -28,7 +28,7 @@ The configuration fields are in [CONFIGURATION.md](CONFIGURATION.md): 175 of 176
 
 **`auth.store` is internals** (tier C): the storage layer of the built-in routes, without tier, without promise and without transition period — its methods can change with every release. What an app needs is listed below as a method of `TinySesam` (e.g. `set_disabled` instead of `auth.store.set_disabled`).
 
-**Status:** A 375 · B 161 · C 38 names.
+**Status:** A 376 · B 162 · C 38 names.
 
 ## A · Methods of `TinySesam`
 
@@ -658,7 +658,7 @@ Value: `150`
 
 The pages that can be replaced — the same list that `render_page()` serves.
 
-Values: `account`, `error`, `forgot`, `gate_logged_out`, `gate_logout`, `gateway_home`, `login`, `logout`, `magic_confirm`, `magic_invalid`, `magic_request`, `pin`, `qr_approve`, `qr_login`, `reauth`, `register`, `reset`, `resource_unlock`, `totp`, `totp_setup`
+Values: `account`, `account_setup`, `error`, `forgot`, `gate_logged_out`, `gate_logout`, `gateway_home`, `login`, `logout`, `magic_confirm`, `magic_invalid`, `magic_request`, `pin`, `qr_approve`, `qr_login`, `reauth`, `register`, `reset`, `resource_unlock`, `totp`, `totp_setup`
 
 ### `TOKEN_PATHS` — Constant
 
@@ -823,7 +823,7 @@ The HTML pages (sign-in, registration, account, admin panel, the pages behind e-
 | POST | `/auth/passkey/login/begin` | — |
 | POST | `/auth/passkey/login/finish` | `query:next` |
 | POST | `/auth/passkey/register/begin` | — |
-| POST | `/auth/passkey/register/finish` | `query:name` |
+| POST | `/auth/passkey/register/finish` | `query:name`, `query:next` |
 | POST | `/auth/password` | — |
 | POST | `/auth/password/set` | — |
 | GET | `/auth/pin` | `query:error`, `query:next` |
@@ -848,6 +848,7 @@ The HTML pages (sign-in, registration, account, admin panel, the pages behind e-
 | GET | `/auth/sessions` | — |
 | POST | `/auth/sessions/revoke` | — |
 | POST | `/auth/sessions/revoke-after-login` | — |
+| GET | `/auth/setup` | `query:next` |
 | GET | `/auth/totp` | `query:error`, `query:next` |
 | POST | `/auth/totp` | `form:_csrf`, `form:code`, `form:next` |
 | POST | `/auth/totp/disable` | — |

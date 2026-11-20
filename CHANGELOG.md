@@ -4,6 +4,40 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+### Added — "the admin creates accounts, a link signs them in": setup pass and chain alternatives (T-34)
+
+- **Alternatives per chain step:** `login_chain=["password|passkey", "totp|passkey"]` — any one factor of a step
+  satisfies it, and **one factor never satisfies two steps** (a passkey alone is not both). The type stays `list[str]`;
+  a chain without `|` behaves exactly as before (strict order, next step = first factor not provided). With an
+  alternative open, the next page is the one the account has set up (`X-TinySesam-Factor` names that factor).
+  `config_check` refuses empty steps or alternatives (`"password|"`), unknown names in an alternative and chains that
+  cannot be satisfied with each factor used once (`["password", "password"]`).
+- **Setup pass after a sign-in link** (`GET /auth/setup`, page `account_setup`, replaceable): a link sign-in (mail,
+  admin, app code, cross-device) of an account that cannot satisfy the `login_chain` with its factors leads into a
+  setup pass — set up what the chain demands and the account lacks (password, TOTP with recovery codes, passkey, PIN;
+  a choice where the step has alternatives), and only then is the sign-in full (under a new session token). The setup
+  routes `POST /auth/password/set`, `POST /auth/pin/set`, `POST /auth/passkey/register/{begin,finish}` (new
+  `?next=`) and the TOTP setup accept the half session for exactly the factor the pass offers now and answer with
+  `next`. Rules: only with a `login_chain`; only where self-setup is allowed (`mfa_enrollment`, operator window); the
+  half session reaches nothing else (no protected route, account page, admin, API key); it expires with
+  `stepup_max_age_sec`; disabling the account or a password reset ends it; factors the account has are provided
+  first (the link replaces none of them) and an existing TOTP/passkey comes before any setup (unless the operator
+  opened a window); a factor is never replaced. Audit `setup_pass_start`, `setup_pass_done`, `password_set` /
+  `pin_set` with `setup_pass=1`. Without a `login_chain` nothing changes.
+- **`magiclink_first_login_only`** (default `False` = unchanged): a link signs in only an account that has never been
+  fully signed in, or one that lacks a factor of the chain and may set it up itself. Otherwise the link is refused
+  (403, "only for the first sign-in", audit `magic_first_login_only`), `create_signin_link` raises `ValueError` (panel
+  400) and a requested mail is not sent. Not for the cross-device sign-in. `config_check` warns without
+  `magiclink_enabled`.
+- README (en/de): recipe "the admin creates accounts, a link signs them in".
+
+### Fixed — the first complete sign-in after the TOTP step (T-34)
+
+- **The first complete sign-in was not noted when the chain ended with the TOTP step** (`complete_totp`: mandatory
+  TOTP setup under `login_chain`, or the TOTP code as the last step). The account stayed "never signed in", so
+  `mfa_enrollment="first_login"` kept its self-setup window open and an operator window (`mfa_enroll_until`) was not
+  closed. Now noted there as on every other path.
+
 ### Added — sign-in alternatives: cross-device (QR code), admin-issued link, self-request switch (T-33)
 
 - **Cross-device sign-in** (`qr_login_enabled`, `qr_login_ttl_sec`, default 120 s): the login page offers "Sign in with
@@ -27,8 +61,8 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ### Changed
 
-- `TinySesam.PAGES` gains `qr_approve` and `qr_login`. The surface guard reports the changed tuple as a changed
-  constant; nothing was removed.
+- `TinySesam.PAGES` gains `qr_approve` and `qr_login` (T-33) and `account_setup` (T-34). The surface guard reports the
+  changed tuple as a changed constant; nothing was removed.
 
 ### Fixed — account setup after the first sign-in (B-8, B-9, B-10)
 

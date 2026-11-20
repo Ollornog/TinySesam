@@ -29,6 +29,7 @@ from fastapi import Request, HTTPException
 from fastapi.responses import HTMLResponse
 from starlette.responses import Response
 
+from . import _chain
 from . import _vocabulary
 from . import config_check
 from .errors import ConfigError, StateError
@@ -1174,7 +1175,7 @@ class TinySesam:
         alone. Limit: a window opened by the operator (`grant_mfa_enrollment`) — that is
         their deliberate decision for exactly one account."""
         chain = list(self.cfg.login_chain or ())
-        if not chain or not (set(chain) - {"password"}):
+        if not chain or _chain.satisfied(chain, ["password"], False):
             return True
         return self.cfg.mfa_enrollment != "strict"
 
@@ -3372,16 +3373,54 @@ class TinySesam:
         return (list(self.cfg.login_chain), self.cfg.login_chain_strict) if self.cfg.login_chain else (None, True)
 
     def _chain_satisfied(self, required, strict, done) -> bool:
-        if strict:
-            pos = [done.index(f) for f in required if f in done]
-            return len(pos) == len(required) and pos == sorted(pos)   # all present AND in order
-        return all(f in done for f in required)
+        """Every step by a factor of its own — and in order if `strict`. A step may name
+        alternatives (`"password|passkey"`, T-34); one factor never satisfies two steps."""
+        return _chain.satisfied(required, done, strict)
 
-    def _next_factor(self, required, strict, done):
-        for f in required:
-            if f not in done:
-                return f
-        return None
+    def _next_factor(self, required, strict, done, user_id=None):
+        """The next factor to ask for, or None. With alternatives in the open step: the first
+        one the account has set up (`user_id`), otherwise the first one named."""
+        options = _chain.next_options(required, done)
+        if not options:
+            return None
+        if user_id is not None:
+            have = self._account_factors(user_id)
+            for f in options:
+                if f in have:
+                    return f
+        return options[0]
+
+    #: Factors that the setup pass (T-34) can create for an account.
+    _SETTABLE = ("password", "totp", "passkey", "pin")
+
+    def _account_factors(self, user_id) -> set:
+        """What this account can provide today. Federated factors and the sign-in link are not set
+        up here and count as available (the provider or the mailbox decides)."""
+        cfg = self.cfg
+        have = {"oidc", "saml", "magic"}
+        if cfg.password_enabled and (cfg.ldap_enabled or self.store.get_password_hash(user_id)):
+            have.add("password")
+        if self.store.has_confirmed_totp(user_id):
+            have.add("totp")
+        if self.store.list_webauthn(user_id):
+            have.add("passkey")
+        if self.store.has_pin(user_id):
+            have.add("pin")
+        return have
+
+    def _settable_factors(self) -> set:
+        """The factors a setup page exists for in this configuration."""
+        cfg = self.cfg
+        out = set()
+        if cfg.password_enabled and not cfg.ldap_enabled:
+            out.add("password")     # with a directory the password lives there (B-10)
+        if cfg.totp_enabled:
+            out.add("totp")
+        if cfg.passkey_enabled and getattr(self, "webauthn", None):
+            out.add("passkey")
+        if cfg.pin_enabled:
+            out.add("pin")
+        return out
 
     def _default_satisfied(self, user_id, done) -> bool:
         """Classic policy (no login_chain): one identification factor + TOTP, if set up."""
@@ -3393,24 +3432,235 @@ class TinySesam:
             return False
         return True
 
-    def _session_ok(self, user_id, done) -> bool:
-        """Does the factor list satisfy the ACTIVE global policy (chain or classic)?"""
+    def _session_ok(self, user_id, done, setup: bool = False) -> bool:
+        """Does the factor list satisfy the ACTIVE global policy (chain or classic)?
+
+        `setup=True`: the session is in the setup pass after a sign-in link (T-34,
+        `_setup_session`) — then the pass's own rule counts as well (`_setup_ok`)."""
         req, strict = self._global_chain()
         if req is not None:
-            ok = self._chain_satisfied(req, strict, done)
+            ok = self._chain_satisfied(req, strict, done) or (setup and self._setup_ok(user_id, done))
         else:
             ok = self._default_satisfied(user_id, done)
         return ok and self._link_requires(user_id, done) is None
 
-    def _next_login_step(self, user_id, done):
-        """Next open factor up to the full (global) sign-in, or None when done."""
+    def _next_login_step(self, user_id, done, setup: bool = False):
+        """Next open factor up to the full (global) sign-in, or None when done. In the setup pass
+        (`setup=True`, T-34) the step can also be `"setup"` — the page `/auth/setup`."""
         req, strict = self._global_chain()
         if req is not None:
+            if setup:
+                return self._setup_step(user_id, done)
             if not self._chain_satisfied(req, strict, done):
-                return self._next_factor(req, strict, done)
+                return self._next_factor(req, strict, done, user_id)
         elif not self._default_satisfied(user_id, done):
             return "totp"
         return self._link_requires(user_id, done)
+
+    # ---------- Setup pass after a sign-in link (T-34) ----------
+    # "The admin creates the account and hands out a link": registration is off, the account has no
+    # factor yet, and the chain demands e.g. password + TOTP. The link signs the account in only
+    # halfway; the pass then asks to set up exactly what the chain needs and the account lacks —
+    # and only then is the sign-in full. The rules:
+    #
+    # * The pass begins only at a link sign-in (`magic`: mailed, admin-issued, app-issued, QR) of an
+    #   account that cannot satisfy the chain with what it has (`_setup_missing`), only with a global
+    #   chain, and only if self-setup is allowed (`mfa_enrollment`, `mfa_enroll_until`).
+    # * It is bound to that very session (a `flow` row keyed by its handle) and expires with the
+    #   step-up window (`stepup_max_age_sec`, measured from the link sign-in): a pass does not wait
+    #   for days. Disabling the account or a password reset ends all sessions, and the pass with them.
+    # * A half session in the pass can do nothing but set up the factors offered (the setup routes
+    #   accept it, nothing else does: `current_user()`/`session_user()` stay None).
+    # * The link identifies the account and opens the door to setting up. It replaces no factor
+    #   the account HAS: every step the account can already satisfy is provided first, as at a
+    #   regular sign-in — before anything is set up. A factor set up in the pass counts as provided.
+    #   So the session is full once the chain is satisfied by provided plus freshly set-up factors.
+    #   Order is not enforced inside the pass — the server dictates the steps.
+    # * If the account already has TOTP or a passkey, that comes first as well, even if the chain
+    #   does not name it: a mailbox never sets up factors past an existing authenticator (as
+    #   `totp_enrollment_user`, ASVS 6.3.6).
+    # * A factor the account has is never replaced: the pass offers only missing ones.
+    _SETUP_FLOW = "setup:"
+
+    def _setup_missing(self, user_id) -> list:
+        """`[(step index, [factors to choose from])]` for every step of the global chain that the
+        account cannot cover with what it has (each factor counts once). `[]` without a chain."""
+        req, _ = self._global_chain()
+        if req is None:
+            return []
+        have = self._account_factors(user_id)
+        settable = self._settable_factors()
+        st = _chain.steps(req)
+        return [(i, [f for f in st[i] if f in settable and f not in have])
+                for i in _chain.uncovered(req, have)]
+
+    def _setup_blocker(self, user_id, done) -> Optional[str]:
+        """An existing second factor that has to be shown before anything is set up, or None.
+
+        A setup window opened by the operator (`grant_mfa_enrollment`) lifts it — the lost-device
+        case, decided by the operator for exactly this account (as in `totp_enrollment_user`)."""
+        if "totp" in done or "passkey" in done:
+            return None
+        u = self.store.get_user(user_id)
+        window = u["mfa_enroll_until"] if u else None
+        if window and int(window) > _now():
+            return None
+        if self.store.has_confirmed_totp(user_id):
+            return "totp"
+        if self.store.list_webauthn(user_id):
+            return "passkey"
+        return None
+
+    def _setup_ok(self, user_id, done) -> bool:
+        """Is the pass complete: the existing second factor shown and the chain satisfied by what was
+        provided and set up (order aside)? Every factor in `done` is one the account has (or a link /
+        federated one), so a satisfied chain also means nothing is missing for the next sign-in."""
+        req, _ = self._global_chain()
+        if req is None or "magic" not in done:
+            return False
+        return self._setup_blocker(user_id, done) is None and _chain.satisfied(req, done, False)
+
+    def _setup_owed(self, user_id, done) -> Optional[str]:
+        """A factor the account HAS for a step of the chain but has not provided in this session —
+        it comes before any setup (the link replaces no existing factor). None if nothing is owed."""
+        req, _ = self._global_chain()
+        if req is None:
+            return None
+        st = _chain.steps(req)
+        have = self._account_factors(user_id)
+        covered = _chain.covered(req, have)
+        part = ["|".join(o for o in st[i] if o in have) for i in covered]
+        if not part or _chain.satisfied(part, done, False):
+            return None
+        return self._next_factor(part, False, done, user_id)
+
+    def _setup_step(self, user_id, done) -> Optional[str]:
+        """The next step inside the pass: an existing second factor, a factor the account has and
+        owes, `"setup"`, or the second factor after the link (`_link_requires`)."""
+        first = self._setup_blocker(user_id, done) or self._setup_owed(user_id, done)
+        if first:
+            return first
+        if self._setup_missing(user_id):
+            return "setup"
+        return self._link_requires(user_id, done)
+
+    def _setup_window(self) -> int:
+        """How long a pass stays open: the step-up window, or the session lifetime when that is 0."""
+        sec = int(self.cfg.stepup_max_age_sec or 0)
+        return sec if sec > 0 else self._ttl(True)
+
+    def _begin_setup(self, token, user_id) -> bool:
+        """Open the pass for the half session behind `token` — right after a link sign-in. False (and
+        nothing opened) when there is nothing to set up or self-setup is not allowed."""
+        req, _ = self._global_chain()
+        s = self.store.get_session(token) if token else None
+        if req is None or not s or s["mfa_ok"] or int(s["user_id"]) != int(user_id):
+            return False
+        missing = self._setup_missing(user_id)
+        if not missing or any(not options for _, options in missing):
+            return False                  # nothing to do — or a step nobody can set up here
+        name = self._account_name(user_id)
+        if not self.mfa_enrollment_allowed(user_id):
+            self.audit("mfa_enrollment_denied", name, s["ip"],
+                       f"kind={self.cfg.mfa_enrollment} via=link")
+            return False
+        self.store.put_flow(self._SETUP_FLOW + s["token_hash"], {"user_id": int(user_id)},
+                            ttl=self._setup_window())
+        self.audit("setup_pass_start", name, s["ip"],
+                   "missing=" + ",".join("|".join(options) for _, options in missing))
+        return True
+
+    def _setup_session(self, s) -> bool:
+        """Is this session row a half session inside an open setup pass?"""
+        if not s or s["mfa_ok"] or self._global_chain()[0] is None:
+            return False
+        flow = self.store.peek_flow(self._SETUP_FLOW + s["token_hash"])
+        if not flow or int(flow.get("user_id", -1)) != int(s["user_id"]):
+            return False
+        window = int(self.cfg.stepup_max_age_sec or 0)
+        if window > 0 and (_now() - int(s["created_at"] or 0)) > window:
+            return False
+        u = self.store.get_user(s["user_id"])
+        if not u or u["disabled"]:
+            return False
+        return self.mfa_enrollment_allowed(int(s["user_id"]))
+
+    def _setup_offer(self, request) -> Optional[tuple]:
+        """`(account, [factors], step number, steps missing)` for the page `/auth/setup` — or None
+        when this request is not in a pass or the pass has nothing to set up right now."""
+        s = self._session_from_request(request)
+        if not self._setup_session(s):
+            return None
+        done = json.loads(s["factors_done"] or "[]")
+        if self._setup_blocker(s["user_id"], done) or self._setup_owed(s["user_id"], done):
+            return None                   # first what the account has — then the setup
+        missing = self._setup_missing(s["user_id"])
+        if not missing:
+            return None
+        u = self._as_dict(self.store.get_user(s["user_id"]))
+        self._remember_request(request, u)
+        return u, list(missing[0][1]), int(missing[0][0]), len(missing)
+
+    def _setup_user(self, request, factor: str) -> Optional[dict]:
+        """The account of a half session in the pass if `factor` is what the pass offers now —
+        otherwise None. The one door through which a setup route accepts a half session."""
+        offer = self._setup_offer(request)
+        if offer is None or factor not in offer[1]:
+            return None
+        return offer[0]
+
+    def _setup_record(self, request, factor: str) -> Optional[str]:
+        """Note a factor set up in the pass on the session. If the sign-in is complete with it, the
+        session becomes full under a NEW token (privilege change, as in `complete_totp`), which is
+        returned for the cookie; otherwise None."""
+        s = self._session_from_request(request)
+        if not self._setup_session(s):
+            return None
+        done = json.loads(s["factors_done"] or "[]")
+        if factor not in done:
+            done.append(factor)
+        ok = self._session_ok(s["user_id"], done, setup=True)
+        self.store.set_session_factors(s["token_hash"], done, mfa_ok=ok)
+        if not ok:
+            return None
+        return self._setup_complete(s, done, factor)
+
+    def _setup_complete(self, s, done, factor) -> str:
+        """The half session of a finished pass becomes a full one under a new token."""
+        uid = s["user_id"]
+        self._sign_in_complete(uid, s["ip"], factor)
+        self._note_first_login(uid)
+        self.lift_lockout(uid)
+        new_token = self._create_session(uid, self._ttl(bool(s["remember"])), True, s["method"],
+                                         s["ip"], s["user_agent"], bool(s["remember"]), factors=done)
+        self._successor(s, new_token)
+        self._setup_finished(s, done)
+        self.store.delete_session_by_handle(s["token_hash"])
+        self._other_after_completion(s, new_token)
+        return new_token
+
+    def _setup_finished(self, s, done) -> None:
+        """The pass of this (half) session is over: drop its state, note it in the audit log."""
+        self.store.pop_flow(self._SETUP_FLOW + s["token_hash"])
+        self.audit("setup_pass_done", self._account_name(s["user_id"]), s["ip"], "factors=" + ",".join(done))
+
+    def _link_allowed(self, user_id) -> bool:
+        """`magiclink_first_login_only` (T-34): may a sign-in link sign this account in?
+
+        Always without the switch. With it: an account that has never been fully signed in, or one
+        that lacks a factor of the chain and may set it up itself (the pass would open). An account
+        that is complete gets no link sign-in — not even from the admin: a forgotten factor is
+        removed by the operator, who opens a setup window (`grant_mfa_enrollment`) and then hands out
+        a link."""
+        if not self.cfg.magiclink_first_login_only:
+            return True
+        u = self.store.get_user(user_id) if user_id is not None else None
+        if not u:
+            return False
+        if u["first_login_at"] is None:
+            return True
+        missing = self._setup_missing(user_id)
+        return bool(missing) and all(o for _, o in missing) and self.mfa_enrollment_allowed(user_id)
 
     def _link_requires(self, user_id, done) -> Optional[str]:
         """Which second factor is still missing because the sign-in went through the sign-in link?
@@ -3437,7 +3687,7 @@ class TinySesam:
         """The address of the input page for a factor step, with `next` attached."""
         from urllib.parse import quote
         base = {"password": self.cfg.login_path, "pin": "/auth/pin", "oidc": "/auth/oidc/start",
-                "passkey": self.cfg.login_path, "totp": "/auth/totp",
+                "passkey": self.cfg.login_path, "totp": "/auth/totp", "setup": "/auth/setup",
                 "magic": "/auth/magic/request", "saml": "/auth/saml/login"}.get(step, self.cfg.login_path)
         return f"{base}?next={quote(nxt or '/', safe='/')}"
 
@@ -4193,6 +4443,11 @@ class TinySesam:
         u = self.store.get_user_by_email(email)
         if not u or u["disabled"] or u["is_service"]:
             return False
+        if not self._link_allowed(u["id"]):
+            # `magiclink_first_login_only` (T-34): the link would be refused at the door — no mail
+            # that leads nowhere. Outwardly the same answer as always (no enumeration).
+            self.audit("magic_first_login_only", str(u["username"]), detail="mail not sent")
+            return False
         destination = u["email"]
         if not self._mail_destination_ok(destination, "login"):
             return False
@@ -4225,7 +4480,12 @@ class TinySesam:
         Audit `signin_link_issue` under the account, with `actor=` when an admin issues it.
 
         Raises `ConfigError` without `magiclink_enabled` (no route would redeem the link) or without
-        `base_url`; `ValueError` for an unknown, disabled or service account or an invalid `ttl_min`."""
+        `base_url`; `ValueError` for an unknown, disabled or service account, an invalid `ttl_min`, or
+        — with `magiclink_first_login_only` — an account that is set up already (T-34).
+
+        With a `login_chain`, an account that lacks factors for it is led through the setup pass
+        (`/auth/setup`) after the link: it sets up what the chain demands before it is fully signed
+        in (T-34)."""
         if not self.cfg.magiclink_enabled:
             raise ConfigError("magiclink_enabled=False — a sign-in link would have no route that redeems it")
         if not str(self.cfg.base_url or "").strip():
@@ -4249,6 +4509,11 @@ class TinySesam:
             raise ValueError(self.t("api.account_disabled"))
         if u["is_service"]:
             raise ValueError(self.t("api.signin_link_service"))
+        # `magiclink_first_login_only` (T-34): say it now instead of handing over a link that the
+        # door refuses. Also for the admin — a forgotten factor is removed and a setup window opened
+        # (`grant_mfa_enrollment`) first; then the link opens the setup pass.
+        if not self._link_allowed(int(u["id"])):
+            raise ValueError(self.t("api.signin_link_first_only"))
         raw = self.create_magic_token("login", user_id=int(u["id"]), ttl_min=ttl,
                                       payload={"next": str(next or "/"), "issued": "operator"})
         url = self.magic_url(raw, base)
@@ -4446,9 +4711,10 @@ class TinySesam:
             # An identity switch (another user) falls through → new session.
             done = json.loads(s["factors_done"] or "[]")
             was_ok = bool(s["mfa_ok"])
+            in_setup = self._setup_session(s)
             if factor not in done:
                 done.append(factor)
-            ok = self._session_ok(user_id, done)
+            ok = self._session_ok(user_id, done, setup=in_setup)
             self.store.set_session_factors(s["token_hash"], done, mfa_ok=ok)
             self._maybe_promote_admin(self.store.get_user(user_id), email_verified,
                                       factor=factor)
@@ -4466,6 +4732,8 @@ class TinySesam:
                     user_id, self._ttl(bool(s["remember"])), True, s["method"],
                     s["ip"], s["user_agent"], bool(s["remember"]), factors=done)
                 self._successor(s, new_token)
+                if in_setup:
+                    self._setup_finished(s, done)
                 self.store.delete_session_by_handle(s["token_hash"])
                 self._other_after_completion(s, new_token)
                 return new_token, ok, True      # is_new → the caller sets the cookie anew
@@ -4531,7 +4799,7 @@ class TinySesam:
                 if destination:
                     self.store.gate_resume(s["token_hash"], destination)
             return nxt, None, True
-        step = self._next_login_step(user_id, done)
+        step = self._next_login_step(user_id, done, setup=self._setup_session(s))
         return (self.browser_path(request, self._factor_entry(step, nxt)) if step else nxt), step, False
 
     def complete_totp(self, token) -> Optional[str]:
@@ -4559,14 +4827,20 @@ class TinySesam:
             self.store.delete_session_by_handle(s["token_hash"])
             return None
         was_ok = bool(s["mfa_ok"])
+        in_setup = self._setup_session(s)
         done = json.loads(s["factors_done"] or "[]")
         if "totp" not in done:
             done.append("totp")
-        ok = self._session_ok(s["user_id"], done)
+        ok = self._session_ok(s["user_id"], done, setup=in_setup)
         self.store.set_session_factors(s["token_hash"], done, mfa_ok=ok)
         if ok:
             self._sign_in_complete(s["user_id"], s["ip"], "totp")
         if ok and not was_ok:
+            # The first complete sign-in closes the self-setup window (R3-1) — on this path, too.
+            # Up to T-34 only `start_session` and `apply_factor` noted it: an account whose chain
+            # ended with the TOTP step (mandatory setup, or the setup pass) stayed "never signed in",
+            # and `mfa_enrollment="first_login"` and `magiclink_first_login_only` kept treating it so.
+            self._note_first_login(s["user_id"])
             self.lift_lockout(s["user_id"])
             # Privilege change → new token (OWASP Session Management). Returns it so that the
             # caller can set the cookie — the old token belongs to a deleted row.
@@ -4574,6 +4848,8 @@ class TinySesam:
                 s["user_id"], self._ttl(bool(s["remember"])), True, s["method"],
                 s["ip"], s["user_agent"], bool(s["remember"]), factors=done)
             self._successor(s, new_token)
+            if in_setup:
+                self._setup_finished(s, done)
             self.store.delete_session_by_handle(s["token_hash"])
             self._other_after_completion(s, new_token)
             return new_token
@@ -5136,16 +5412,46 @@ class TinySesam:
                 return no("stepup", 403, "api.stepup")
         elif not self.login_fresh(request, u):
             return no("relogin", 403, "api.stepup_relogin")
+        return self._first_password(request, u, new)
+
+    def _first_password(self, request: Request, u: dict, new: str, *, detail: str = "") -> PasswordChangeResult:
+        """The part of setting a first password that both doors share — the account page
+        (`set_initial_password`) and the setup pass (`_setup_password`): throttle, rule, set, audit."""
         ip = self.client_ip(request)
         if not self._rate_ok(ip, login=False):
-            return no("ratelimit", 429, "api.too_many")
+            return PasswordChangeResult(ok=False, reason="ratelimit", status=429, message=self.t("api.too_many"))
         defect = self.password_policy_error(new or "", username=u["username"], email=u.get("email"), api=True)
         if defect:
             return PasswordChangeResult(ok=False, reason="policy", status=400, message=defect)
         self.set_password(u["id"], new)
         active = self.store.count_active_api_keys(u["id"])
-        self.audit("password_set", u["username"], ip, f"api_keys_active={active}" if active else None)
+        parts = [p for p in (f"api_keys_active={active}" if active else "", detail) if p]
+        self.audit("password_set", u["username"], ip, " ".join(parts) or None)
         return PasswordChangeResult(ok=True, reason="ok", status=200, api_keys_active=active)
+
+    def _setup_password(self, request: Request, new: str, *,
+                        csrf: Optional[str] = None) -> tuple[PasswordChangeResult, Optional[str]]:
+        """The first password inside the setup pass after a sign-in link (T-34) — `POST
+        /auth/password/set` with a half session. Returns the result and, if the sign-in is complete
+        with it, the new session token for the cookie.
+
+        The half session is allowed only while the pass offers exactly `password` (`_setup_user`).
+        The pass offers only factors the account does not have (`_setup_missing`), so nothing is
+        replaced — that is the one guard, proven by mutation in `tests/test_link_onboarding.py`. The
+        pass is fresh from the link (its window is the step-up window). Everything else as
+        `set_initial_password`."""
+        self.require_csrf(request, self._csrf_sent_along(request, csrf))
+        if not self.cfg.password_enabled:
+            return PasswordChangeResult(ok=False, reason="method_disabled", status=404,
+                                        message=self.t("api.password_off")), None
+        u = self._setup_user(request, "password")
+        if u is None:
+            return PasswordChangeResult(ok=False, reason="no_session", status=401,
+                                        message=self.t("api.not_signed_in")), None
+        result = self._first_password(request, u, new, detail="setup_pass=1")
+        if not result:
+            return result, None
+        return result, self._setup_record(request, "password")
 
     def _session_from_request(self, request):
         """The session row for this request, or None. `row["token_hash"]` is its handle.
@@ -5412,11 +5718,11 @@ class TinySesam:
         further sign-in in the same browser stuck to it until sign-out (p2 F1)."""
         u = self.pending_user(request)
         req, strict = self._global_chain()
-        if not u or not req or "pin" not in req:
+        if not u or not req or "pin" not in _chain.factors(req):
             return None
         s = self._session_from_request(request)
         done = json.loads(s["factors_done"] or "[]") if s else []
-        if "pin" in done or (strict and self._next_factor(req, strict, done) != "pin"):
+        if "pin" in done or (strict and "pin" not in _chain.next_options(req, done)):
             return None
         return u
 
@@ -5439,11 +5745,22 @@ class TinySesam:
         `POST /auth/totp/setup` completes the TOTP step with it (A-1), because the code is
         consumed and at `/auth/totp` only a failed attempt.
         """
+        # The setup pass after a sign-in link (T-34) decides on its own: TOTP only when the pass
+        # offers it — not before the factors the account has are provided.
+        s = self._session_from_request(request)
+        if self._setup_session(s):
+            offered = self._setup_user(request, "totp")
+            if offered is None:
+                done = json.loads(s["factors_done"] or "[]")
+                if self._setup_blocker(s["user_id"], done):
+                    self.audit("mfa_enrollment_denied", self._account_name(s["user_id"]),
+                               detail="account has a second factor that is missing in this session")
+            return offered
         u = self.pending_user(request)
         if not u or self.store.has_confirmed_totp(u["id"]):
             return None
         req, _ = self._global_chain()
-        if not (req and "totp" in req):
+        if not (req and "totp" in _chain.factors(req)):
             return None
         if self.store.list_webauthn(u["id"]):
             # If the account already has a strong second factor (passkey), it sets up a
@@ -6591,7 +6908,7 @@ class TinySesam:
     #: The docstring used to name 'magic_sent' and 'resource_pin', neither of which ever existed, and
     #: left out seven real ones. A typo thereby remained silently without consequence: the own page
     #: was registered and never called.
-    PAGES = ("account", "error", "forgot", "gate_logged_out", "gate_logout", "gateway_home", "login", "logout",
+    PAGES = ("account", "account_setup", "error", "forgot", "gate_logged_out", "gate_logout", "gateway_home", "login", "logout",
              "magic_confirm", "magic_invalid",
               "magic_request", "pin", "qr_approve", "qr_login", "reauth", "register", "reset",
               "resource_unlock", "totp", "totp_setup")
@@ -7370,9 +7687,10 @@ class TinySesam:
         if not s["mfa_ok"]:
             # The global sign-in is still open: first its next step. `None` (nothing
             # open any more, but not full either — e.g. a factor removed in the meantime) → login.
-            self._redirect_factor(request, self._next_login_step(usr["id"], done))
+            self._redirect_factor(request, self._next_login_step(usr["id"], done,
+                                                                 setup=self._setup_session(s)))
         if not self._chain_satisfied(factors, strict, done):
-            self._redirect_factor(request, self._next_factor(factors, strict, done))
+            self._redirect_factor(request, self._next_factor(factors, strict, done, usr["id"]))
         # The same rule as for the global policy (G10): if the sign-in went through the link and
         # the account has a second factor, a route chain like `["magic"]` demands it too — otherwise
         # the mailbox alone would open the route of an account that protected itself with TOTP/passkey.
@@ -7408,7 +7726,8 @@ class TinySesam:
                 if not usr or usr["disabled"]:
                     self._deny(request)   # no identity → login (first factor)
                 done = json.loads(s["factors_done"] or "[]")
-                self._redirect_factor(request, self._next_login_step(usr["id"], done))
+                self._redirect_factor(request, self._next_login_step(usr["id"], done,
+                                                                     setup=self._setup_session(s)))
         if admin and not self.is_admin(u):
             raise HTTPException(403, self.t("api.admin"))
         if role:

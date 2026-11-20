@@ -23,6 +23,7 @@ from __future__ import annotations
 import os
 import re
 
+from . import _chain
 from . import security
 
 #: Method → which config field switches it on. The same list serves the chain check.
@@ -319,7 +320,20 @@ def check_config(config) -> tuple[list[str], list[str]]:
     # none (it writes the factor `password`), neither is `apikey` — both were in the
     # whitelist anyway, and `login_chain=["ldap","totp"]` is the most obvious spelling for an
     # LDAP operator. It led into exactly the loop this module warns about.
-    chain = list(getattr(config, "login_chain", None) or [])
+    raw_chain = list(getattr(config, "login_chain", None) or [])
+    # Alternatives per step (T-34): "password|passkey". Every name is checked on its own; an empty
+    # alternative ("password|", "|totp", "") is a typo, not a wildcard.
+    hollow = [entry for entry in raw_chain
+              if not isinstance(entry, str) or any(not part.strip() for part in entry.split("|"))]
+    if hollow:
+        error.append(_t(
+            config,
+            "login_chain has empty steps or alternatives: {steps}. A step names one factor or "
+            "several separated by '|', e.g. 'password|passkey'.",
+            steps=hollow))
+    # Every factor named, alternatives included, in the order of the chain.
+    chain = list(dict.fromkeys(f for step in _chain.steps(e for e in raw_chain if isinstance(e, str))
+                               for f in step))
     unknown = [s for s in chain if s not in CHAIN_STEPS]
     if unknown:
         notice = ""
@@ -346,7 +360,13 @@ def check_config(config) -> tuple[list[str], list[str]]:
     # with the password. Then anyone guesses the PIN without the password, and a self-service reset
     # clears these wrong guesses from the series (R2-2) — the configuration says "follow-up factor", the
     # behaviour "first factor" (G7). In a strict chain TinySesam closes the guest path itself.
-    if ("pin" in chain and chain[0] != "pin" and _an(config, "pin_enabled")
+    if not hollow and raw_chain and not _chain.assignable(raw_chain):
+        error.append(_t(
+            config,
+            "login_chain={chain} cannot be satisfied: one factor satisfies at most one step, and "
+            "the steps name too few different factors.",
+            chain=raw_chain))
+    if ("pin" in chain and "pin" not in _chain.first_step(raw_chain) and _an(config, "pin_enabled")
             and _an(config, "pin_login") and not getattr(config, "login_chain_strict", True)):
         warnings.append(_t(
             config,
@@ -356,7 +376,7 @@ def check_config(config) -> tuple[list[str], list[str]]:
             "clears these failed attempts from the series (account_max_consecutive_failures). "
             "If the PIN is meant to be only a follow-up factor: pin_login=False — the PIN step "
             "after the first factor stays reachable.",
-            chain=chain))
+            chain=raw_chain))
 
     # Here once stood "resource_locks_enabled needs pin_enabled". That was wrong and
     # a suite of its own refuted it immediately: a locked resource is released with its OWN
@@ -377,12 +397,19 @@ def check_config(config) -> tuple[list[str], list[str]]:
     # `/auth/magic/request` — the route that this switch removes. The step can then only be
     # satisfied with a link the admin hands out.
     if (_an(config, "magiclink_enabled") and not getattr(config, "magiclink_self_request", True)
-            and "magic" in list(getattr(config, "login_chain", None) or [])):
+            and "magic" in chain):
         warnings.append(_t(
             config,
             "login_chain contains 'magic', but magiclink_self_request=False: the chain step "
             "leads to /auth/magic/request, which does not exist then (404). The step can only "
             "be satisfied with a link issued by the admin or by app code."))
+    # "Link only for the first sign-in" (T-34) is a rule about redeeming links — without links it
+    # guards nothing, and the operator may believe a protection is in place that is not.
+    if getattr(config, "magiclink_first_login_only", False) and not _an(config, "magiclink_enabled"):
+        warnings.append(_t(
+            config,
+            "magiclink_first_login_only=True, but magiclink_enabled=False: there are no sign-in "
+            "links whose use the switch could limit."))
     if _an(config, "password_reset_enabled") and not _an(config, "magiclink_enabled"):
         warnings.append(_t(
             config,
@@ -1845,6 +1872,18 @@ _DE: dict[str, str] = {
      "gets past this step."):
         ("login_chain verlangt {steps}, aber {switches} — die Kette ist unerfüllbar, niemand "
          "kommt über diesen Schritt hinaus."),
+    ("login_chain has empty steps or alternatives: {steps}. A step names one factor or several "
+     "separated by '|', e.g. 'password|passkey'."):
+        ("login_chain hat leere Schritte oder Alternativen: {steps}. Ein Schritt nennt einen Faktor "
+         "oder mehrere, getrennt durch '|', z. B. 'password|passkey'."),
+    ("login_chain={chain} cannot be satisfied: one factor satisfies at most one step, and the steps "
+     "name too few different factors."):
+        ("login_chain={chain} ist unerfüllbar: Ein Faktor erfüllt höchstens einen Schritt, und die "
+         "Schritte nennen zu wenige verschiedene Faktoren."),
+    ("magiclink_first_login_only=True, but magiclink_enabled=False: there are no sign-in links "
+     "whose use the switch could limit."):
+        ("magiclink_first_login_only=True, aber magiclink_enabled=False: Es gibt keine "
+         "Anmeldelinks, deren Gebrauch der Schalter begrenzen könnte."),
     "login_chain names steps that are not a factor: {steps}{hint}. Allowed are {allowed}.":
         ("login_chain nennt Schritte, die kein Faktor sind: {steps}{hint}. Erlaubt sind "
          "{allowed}."),

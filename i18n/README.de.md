@@ -222,6 +222,7 @@ wo der Browser es erlaubt — auslesen, nicht ausschreiben.
 | `GET/POST /auth/magic/request` | Anmelde-Link per E-Mail anfordern *(Magic-Link aktiv und `magiclink_self_request`)* |
 | `POST /auth/qr/start` · `/auth/qr/status` · `/auth/qr/finish` | neues Gerät: geräteübergreifende Anmeldung öffnen, abfragen, abholen *(`qr_login_enabled`)* |
 | `GET/POST /auth/qr/approve` · `POST /auth/qr/deny` | angemeldetes Gerät: bestätigen oder ablehnen *(`qr_login_enabled`)* |
+| `GET /auth/setup` | Einrichtungsdurchgang nach einem Anmeldelink: einrichten, was die `login_chain` verlangt *(`magiclink_enabled` oder `qr_login_enabled`)* |
 | `GET /auth/verify/{token}` · `GET /auth/invite/{token}` | Adresse bestätigen · Einladung annehmen |
 | `GET /auth/logout` · `GET /auth/me` | Abmelden · aktueller User (JSON) |
 
@@ -290,6 +291,57 @@ Pflicht**: Ein Konto mit TOTP oder Passkey muss ihn nach dem Link noch bestehen
   nie angezeigt wird). Der QR-Code braucht `base_url` und das Extra `[qr]`; ohne beides erscheint
   nur der Kurzcode. Kein Mailer nötig.
 
+### Rezept: Der Admin legt Konten an, ein Link meldet an
+
+Registrierung aus, der Admin legt das Konto an (ohne Passwort), gibt einen Anmeldelink heraus, und bei
+der ersten Anmeldung richtet die Person genau das ein, was deine Kette verlangt — erst dann ist sie voll
+angemeldet. Danach meldet sie sich über die Kette an, der Link war nur die Tür.
+
+```python
+auth = TinySesam(TinySesamConfig(
+    base_url="https://auth.example.com",
+    allow_signup=False,                          # niemand registriert sich selbst
+    magiclink_enabled=True,
+    magiclink_self_request=False,                # Links nur vom Admin (oder deinem Code), kein Mailer
+    magiclink_first_login_only=True,             # ein Link meldet nur zur ersten Anmeldung an
+    login_chain=["password", "totp"],            # was jede Anmeldung braucht — und was eingerichtet wird
+))
+uid = auth.create_user("dana", email="dana@example.com")     # ohne Passwort
+link = auth.create_signin_link(uid)["url"]                    # oder der Panel-Knopf „Anmeldelink“
+```
+
+Dana öffnet den Link → `/auth/setup`: Passwort festlegen → Authenticator-App einrichten
+(Recovery-Codes einmal angezeigt) → angemeldet. Später: Passwort + TOTP, wie die Kette sagt.
+
+**Alternativen je Kettenglied** mit `|`: `login_chain=["password|passkey"]` lässt den
+Einrichtungsdurchgang Passwort *oder* Passkey anbieten; `["password|passkey", "totp|passkey"]` verlangt
+zwei verschiedene Faktoren (ein Passkey zählt nie für zwei Glieder). Faktornamen: `password`, `pin`,
+`passkey`, `totp`, `oidc`, `saml`, `magic`.
+
+Die Regeln des Einrichtungsdurchgangs:
+
+- Er öffnet sich nur bei einer Link-Anmeldung (Mail, Admin, App-Code, geräteübergreifend) eines Kontos,
+  das die Kette mit seinen Faktoren nicht erfüllen kann, nur mit `login_chain` und nur, wo
+  Selbsteinrichtung erlaubt ist (`mfa_enrollment`; bei `"strict"` öffnet der Betreiber ein Fenster mit
+  `grant_mfa_enrollment`).
+- Die halbe Sitzung kann nichts außer dem Faktor einrichten, den die Seite gerade anbietet — keine
+  geschützte Route, keine Kontoseite, kein Admin, kein API-Key. Sie verfällt mit `stepup_max_age_sec`
+  (gemessen ab dem Link); Sperren des Kontos oder ein Passwort-Reset beenden sie.
+- Der Link ersetzt keinen Faktor, den das Konto **hat**: Ein vorhandenes Passwort (oder PIN, Passkey,
+  TOTP) wird zuerst eingegeben wie bei jeder Anmeldung; der Durchgang bietet nur fehlende Faktoren an
+  und ersetzt nie einen.
+- Ein Konto mit TOTP oder Passkey zeigt ihn vor jeder Einrichtung (dieselbe Regel wie
+  `magiclink_require_second_factor`), außer der Betreiber hat ein Einrichtungsfenster geöffnet.
+- `magiclink_first_login_only=True`: Ein Link meldet nur ein Konto an, das noch nie voll angemeldet
+  war, oder eines, dem ein Faktor fehlt und das ihn selbst einrichten darf. Ein fertiges Konto bekommt
+  „nur für die erste Anmeldung“ — auch vom Admin. Faktor verloren? Im Panel entfernen, ein
+  Einrichtungsfenster öffnen (`grant_mfa_enrollment`), dann einen Link herausgeben: Die Person gibt
+  ein, was sie noch hat, und richtet den Rest ein. Die geräteübergreifende Anmeldung betrifft das
+  nicht (ihre Bestätigung kommt aus einer vollen Sitzung).
+- Innerhalb des Durchgangs gilt die Reihenfolge der Kette nicht (der Server gibt die Schritte vor);
+  die reguläre Anmeldung danach behält `login_chain_strict`. Ohne `login_chain` ändert sich nichts:
+  Der Link meldet an wie bisher.
+
 ## Konfiguration (`TinySesamConfig`, Auszug)
 
 | Feld | Default | |
@@ -297,7 +349,7 @@ Pflicht**: Ein Konto mit TOTP oder Passkey muss ihn nach dem Link noch bestehen
 | `db_path` | `tinysesam.db` | SQLite-Store |
 | `password_enabled` / `passkey_enabled` / `oidc_enabled` | `True/False/False` | aktive Methoden (Passkey ab Werk aus: `webauthn` steckt im Extra `[passkey]`) |
 | `totp_enabled` | `True` | 2FA erlauben (verlangt, sobald ein Nutzer es eingerichtet hat) |
-| `login_chain` · `stepup_strict` | `[]` · `False` | `["password","totp"]` **erzwingt** 2FA über die Faktor-Kette. Leer = klassisch: ein Erstfaktor, dazu TOTP, wo eingerichtet |
+| `login_chain` · `stepup_strict` | `[]` · `False` | `["password","totp"]` **erzwingt** 2FA über die Faktor-Kette; Alternativen je Glied mit `\|` (`["password\|passkey"]`). Leer = klassisch: ein Erstfaktor, dazu TOTP, wo eingerichtet |
 | `session_ttl_hours` · `cookie_secure` · `cookie_samesite` | `168` · `True` · `lax` | Sessions/Cookie |
 | `rp_id` · `origin` | `localhost` · … | WebAuthn (echte Domain nötig, HTTPS) |
 | `oidc_issuer/_client_id/_client_secret/_scopes` | – | OIDC-Provider |
@@ -307,6 +359,7 @@ Pflicht**: Ein Konto mit TOTP oder Passkey muss ihn nach dem Link noch bestehen
 | `security_log` | `""` | Datei für den fail2ban-Logger (leer = nur an den Logger) |
 | `forward_auth_enabled` · `forward_headers` | `False` · `{}` | Forward-Auth-Endpunkt · welche Header er setzt (leer = `Remote-*`) |
 | `magiclink_enabled` · `magiclink_self_request` · `magiclink_ttl_min` | `False` · `True` · `15` | Anmelde-Links lösen ein · jeder darf einen per E-Mail anfordern (braucht einen Mailer; `False` = Links nur vom Admin oder App-Code) · Gültigkeit |
+| `magiclink_first_login_only` | `False` | ein Link meldet nur zur ersten Anmeldung an (oder um einen fehlenden Faktor einzurichten) |
 | `qr_login_enabled` · `qr_login_ttl_sec` | `False` · `120` | geräteübergreifende Anmeldung (QR-Code braucht `base_url` und das Extra `[qr]`) · Gültigkeit einer Anfrage |
 
 `TinySesamConfig` ist eine Dataclass, und das gehört zur Zusage: `dataclasses.fields(TinySesamConfig)`
@@ -1580,7 +1633,7 @@ zusätzlich die Website baut.
 
 ## Status
 
-**83 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
+**84 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
 (`tests/test_matrix.py`).
 
 Gebaut und getestet: Passwort/TOTP/Sitzungen/Rollen, Remember-me, Step-up und per-Route-MFA,

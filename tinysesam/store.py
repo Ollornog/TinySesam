@@ -3278,6 +3278,17 @@ class Store:
         except Exception:
             return None
 
+    def peek_flow(self, key) -> Optional[dict]:
+        """Read flow state WITHOUT consuming it — for state that lasts several requests (the
+        setup pass after a sign-in link, T-34). Expired rows count as absent."""
+        r = self._one("SELECT data, expires_at FROM flow WHERE key=?", (key,))
+        if not r or r["expires_at"] < _now():
+            return None
+        try:
+            return json.loads(r["data"])
+        except Exception:
+            return None
+
     def count_argon2_hashes(self) -> int:
         """How many stored password/PIN/scope hashes are argon2? (B6-8)"""
         n = 0
