@@ -119,6 +119,8 @@ class Client:
 
     def __init__(self, cafile, name, port, host_header):
         self.ctx = ssl.create_default_context(cafile=cafile)
+        # Explicit floor (CodeQL py/insecure-protocol): Caddy speaks TLS 1.3, nothing older is measured here.
+        self.ctx.minimum_version = ssl.TLSVersion.TLSv1_3
         self.name, self.port, self.host = name, port, host_header
 
     def get(self, path, head=None):
