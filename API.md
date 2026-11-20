@@ -20,6 +20,8 @@ source code.
 
 The tier is recorded per name in `tests/api_surface.json`. The guard `tests/test_api_surface.py` demands an explicit one for every public name: A new name comes in without a tier and keeps it red until someone decides — nothing is promised by accident.
 
+**Public is what the hand-written docs describe** (decided before 1.0): the READMEs, `CONFIGURATION.md`, `SECURITY.md` and `docs/OPERATIONS.md`. This page is generated and lists every name with its tier; being listed here alone is no promise. The guard checks that every tier-A/B Python name is named in those documents.
+
 The configuration fields are in [CONFIGURATION.md](CONFIGURATION.md): 176 of 177 in tier A, the others below at their tier.
 
 **English, names as well as values** (since 0.22.0, without alias): The names of tiers A and B, their parameters and the keys and values they return or accept — result dicts, the `details` passed to `on_security_event`, the context of your own pages (`ctx["prefix"]`, `ctx["purpose"]`), the JSON responses of the routes, the kinds of API keys (`automation`, `human`). Since the last breaking pass before the freeze (PO decision 2026-10-29) the same holds for what operators and proxies read — query and form parameters, header and cookie names, logger names, the event words and keys of the security log, message ids — and audit and log lines are English as well. The lists old → new are in the CHANGELOG (0.22.0, [Unreleased]).

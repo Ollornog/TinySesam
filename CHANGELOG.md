@@ -4,6 +4,30 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+### Changed — public API narrowed to the documented surface (M-1): no name had to go
+
+- **The rule (decided before 1.0):** a Python name stays public only if the hand-written docs describe it — the
+  READMEs, `CONFIGURATION.md`, `SECURITY.md`, `docs/`. `API.md` does not count: it is generated from the surface and
+  lists everything. Whatever the docs do not name would have become internal once, before 1.0 — `_name`, the old
+  name a `DeprecationWarning` alias until 1.0. Configuration fields and the HTTP/log contract stay as they are: they
+  are the configuration and the protocol.
+- **Measured:** 161 Python names in tiers A and B (methods, constants, properties, presets, exports, the fields of
+  `LoginResult` and `PasswordChangeResult`; tier C — 38 aliases — is internal already). 157 were named in the docs:
+  the tier-B building blocks have been listed in the READMEs (“For advanced use”) since 0.22.0, which already closed
+  most of the gap the milestone recorded in 2026-09 (68 undocumented names of 105 at the time).
+- **Renamed: none, so no new alias and nothing breaks.** Each of the four names the docs did not describe belongs
+  to a documented use — an extension point, a building block the docs already send you to, or the examples — so
+  they stay public (tier A) and are documented now instead:
+  `auth.render_page(…)` (renders a page — your `set_template` replacement or the built-in one — from your own route;
+  used by `examples/showcase.py` and the website demo), `auth.set_cookie(response, token, remember=None)` (puts the
+  token from `start_session` / `complete_totp` into the session cookie), `TinySesam.FORWARD_HEADERS_DEFAULT` (the
+  default `forward_headers` mapping, to change one header and keep the rest) and `TinySesam.SECURITY_EVENTS` (the
+  event names of `on_security_event`). `set_cookie` had been named only in passing (and as `result.set_cookie` of
+  the result types).
+- **The guard keeps the rule:** `tests/test_api_surface.py` (`check_documented`) fails when a tier-A/B Python name is
+  named in none of these documents (in code, not in prose); `API.md` and the READMEs say where the public surface
+  is described.
+
 ### Added — "the admin creates accounts, a link signs them in": setup pass and chain alternatives (T-34)
 
 - **Alternatives per chain step:** `login_chain=["password|passkey", "totp|passkey"]` — any one factor of a step

@@ -16,7 +16,48 @@ runs through without manual steps.
 Only then is PyPI justifiable — see [ADR-1](ADR-1-pypi-deferred.md). Until then, the pinned
 Git tag is the more honest artifact.
 
-## Open: the surface is measured, not selected (2026-09-21)
+## Decided: the surface is measured, not selected (2026-09-21, decided 2026-11-20)
+
+**Decision 2026-11-20 (PO): public is what is documented.** A Python name stays public only if the hand-written
+docs describe it — the READMEs, `CONFIGURATION.md`, `SECURITY.md`, `docs/`; not the generated `API.md`, which lists
+everything. The rest becomes internal once, before 1.0 (`_name`, the old name a `DeprecationWarning` alias until
+1.0, CHANGELOG with the removal version). Configuration fields and the HTTP/log contract are out of scope: they are
+the configuration and the protocol. Borderline names (examples, template overrides, extension points, result
+types) stay public and get documented rather than hidden. The PO asked for the step to be recorded in the
+CHANGELOG — it is, under “Changed — public API narrowed to the documented surface (M-1)”.
+
+**Measured** (Python names of tiers A and B; tier C — 38 aliases — is internal already):
+
+| Area | A | B | not named in the docs before | after |
+|---|---|---|---|---|
+| `TinySesam` (methods) | 60 | 56 | 2 — `render_page`, `set_cookie` | 0 |
+| `TinySesam.constants` | 2 | 6 | 2 — `FORWARD_HEADERS_DEFAULT`, `SECURITY_EVENTS` | 0 |
+| `TinySesam.properties` | 3 | 0 | 0 | 0 |
+| `TinySesamConfig` presets/methods | 4 | 3 | 0 | 0 |
+| exports | 9 | 1 | 0 | 0 |
+| `LoginResult` | 11 | 0 | 0 | 0 |
+| `PasswordChangeResult` | 6 | 0 | 0 | 0 |
+| **total** | **95** | **66** | **4** | **0** |
+
+The gap of 2026-09-21 (68 of 105 undocumented) had mostly closed with the tiers of 0.22.0: every tier-B
+building block is listed in the READMEs (“For advanced use”), every tier-A name has its section. The four left
+over are borderline names and stay public, documented now:
+
+| Name | Why it stays public |
+|---|---|
+| `render_page` | renders a page (your `set_template` replacement or the built-in one) with nonce, CSRF and prefix; used by `examples/showcase.py` and the website demo — the companion of the template override |
+| `set_cookie` | puts the token of `start_session` / `complete_totp` (both tier A, documented) into the cookie; the docs already sent you to it by name |
+| `FORWARD_HEADERS_DEFAULT` | the default of `forward_headers`, which is the *complete* list: changing one header and keeping the rest needs it |
+| `SECURITY_EVENTS` | the event names of `on_security_event` (tier A extension point) |
+
+**Before → after:** 161 public Python names in A/B before, 161 after; **renamed 0**, new aliases 0, newly
+documented 4; tier totals of the whole baseline unchanged (A 376, B 162, C 38). The guard keeps the rule:
+`check_documented` in `tests/test_api_surface.py` fails when a tier-A/B Python name is named in none of the docs
+(in code spans or blocks, not in prose); measured against the docs before this change it reports exactly
+`render_page`, `FORWARD_HEADERS_DEFAULT` and `SECURITY_EVENTS` (`set_cookie` matched there through
+`result.set_cookie` — the check proves “named”, not “described correctly”).
+
+*The record of 2026-09-21 follows unchanged.*
 
 `tests/api_surface.json` freezes **everything that has no leading underscore** — 105
 methods. 68 of them appeared in no documentation; they are frozen because they look that way, not
@@ -27,10 +68,10 @@ Since 0.18.0 the situation is at least visible: each of these methods has a docs
 return types and the **default values** of the config fields — without that,
 `session_ttl_hours` could be silently set from 168 to 1.
 
-**What remains open and must be decided before 1.0:** which of these 105 names should be public
+~~**What remains open and must be decided before 1.0:** which of these 105 names should be public
 for good? Freezing everything is the safe but expensive answer — every internal
 rename then becomes a breakage. The decision is one of substance (what does TinySesam promise?)
-and does not belong in a repair run.
+and does not belong in a repair run.~~ **Decided 2026-11-20**, see above: public is what is documented.
 
 ## Status: open again (2026-09-21, after the maturity review)
 

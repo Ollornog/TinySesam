@@ -40,6 +40,10 @@ or accepts, the payload of `on_security_event`, the context of custom pages, the
 and the stored values — on a probe instance, on the constants and in the source, against the
 word list and against every name up to 0.21.x (`OLD_VALUES`). It does not measure audit and log lines:
 they stay as they are.
+
+**Public is what is documented** (PO decision 2026-11-20, `check_documented()`): every Python name of
+tiers A and B is named in the hand-written docs (READMEs, CONFIGURATION.md, SECURITY.md, docs/) —
+not only in the generated API.md. An undocumented name is documented or becomes tier C.
 """
 import ast
 import dataclasses
@@ -2109,6 +2113,105 @@ def self_check_contract_names() -> None:
        "placeholder, environment variable, option, log text; minimum count and wiring")
 
 
+# ---------- Public is what is documented (PO decision 2026-11-20, M-1) ----------
+# Until then the tiers said how firm a promise is, but not WHAT it rests on: a name could sit in tier A
+# without a line in the docs and be frozen only because it had no underscore. The rule before 1.0: a
+# Python name of tier A or B is named in the hand-written documentation; otherwise it is documented or
+# becomes internal (tier C). `API.md` does not count — it is generated from this very surface and lists
+# everything, so it would prove nothing.
+
+#: The hand-written documentation (files, or folders whose `*.md` count). Not `API.md`, not `CHANGELOG.md`.
+DOC_FILES = ("README.md", "i18n/README.de.md", "CONFIGURATION.md", "SECURITY.md", "i18n/SECURITY.de.md", "docs")
+#: The areas of Python names the rule covers. The configuration fields are documented by
+#: `CONFIGURATION.md` (generated from the field comments), the contract areas are the HTTP and log
+#: protocol and documented in `docs/OPERATIONS.md`; neither is a Python name to look up.
+DOCUMENTED_AREAS = ("TinySesam", "TinySesam.constants", "TinySesam.properties", "TinySesamConfig.methods",
+                    "exports", "LoginResult", "PasswordChangeResult")
+_FENCE = re.compile(r"^[ \t]*```.*?^[ \t]*```", re.S | re.M)
+
+
+def doc_code(text: str) -> str:
+    """The code of a Markdown text: fenced blocks and inline spans (also across a line break).
+
+    Only code counts as naming a name: in prose, `audit`, `version` or `status` are ordinary words. The
+    match is by word, not by class — `set_cookie` in `result.set_cookie(response)` also counts for
+    `TinySesam.set_cookie`. The check proves "named", not "described correctly"; that stays a review."""
+    return "\n".join(_FENCE.findall(text) + re.findall(r"`([^`]+)`", _FENCE.sub("", text)))
+
+
+def read_docs(root: str = ROOT) -> dict:
+    """{relative path: text} of `DOC_FILES`; a file that is missing is a finding, not a silent gap."""
+    docs = {}
+    for entry in DOC_FILES:
+        path = os.path.join(root, entry)
+        paths = ([os.path.join(path, f) for f in sorted(os.listdir(path)) if f.endswith(".md")]
+                 if os.path.isdir(path) else [path])
+        for p in paths:
+            rel = os.path.relpath(p, root)
+            docs[rel] = None
+            if os.path.isfile(p):
+                with open(p, encoding="utf-8") as fh:
+                    docs[rel] = fh.read()
+    return docs
+
+
+def check_documented(file: dict, docs: "dict | None" = None, at_least: int = 150) -> tuple:
+    """(findings, count) — every tier-A/B Python name is named in the code of the hand-written docs."""
+    docs = read_docs() if docs is None else docs
+    findings = [f"{p}: missing — the docs the rule reads (DOC_FILES)" for p, t in docs.items() if t is None]
+    code = "\n".join(doc_code(t) for t in docs.values() if t)
+    number = 0
+    for area in DOCUMENTED_AREAS:
+        entries = file.get(area)
+        if not isinstance(entries, dict):
+            findings.append(f"{area}: area missing in the baseline — measurement broken?")
+            continue
+        for name, e in sorted(entries.items()):
+            tier = e.get("tier") if isinstance(e, dict) else None
+            if tier not in ("A", "B"):
+                continue
+            number += 1
+            if not re.search(r"(?<!\w)" + re.escape(name) + r"(?!\w)", code):
+                findings.append(f"{area}.{name}: tier {tier}, but named in none of the docs — document it "
+                                f"(README, CONFIGURATION.md, SECURITY.md, docs/) or make it internal (tier C: "
+                                f"`_{name}` and a `Deprecated` alias until {UNTIL})")
+    if number < at_least:
+        findings.append(f"too little measured: {number} names of tiers A/B (expected at least {at_least})")
+    return findings, number
+
+
+def self_check_documented() -> None:
+    """Does the documentation check find an undocumented name — and only that? On a probe."""
+    text = ("Prose names undoc_prose and `auth.inline_name(x)` and `a span\nacross lines with wrapped_name`.\n\n"
+            "- list\n\n  ```python\n  auth.fenced_name()\n  ```\n")
+    code = doc_code(text)
+    for name in ("inline_name", "wrapped_name", "fenced_name"):
+        assert re.search(rf"(?<!\w){name}(?!\w)", code), (name, code)
+    assert "undoc_prose" not in code, code
+    entry = {"tier": "A"}
+    probe = {area: {} for area in DOCUMENTED_AREAS}
+    probe["TinySesam"] = {"inline_name": entry, "fenced_name": {"tier": "B"}, "undoc_prose": entry,
+                          "inline": entry, "old_name": {"tier": "C"}, "missing": entry}
+    probe["TinySesamConfig.fields"] = {"field_without_docs": entry}
+    findings, number = check_documented(probe, {"README.md": text}, at_least=5)
+    named = sorted(f.split(":")[0] for f in findings)
+    # `inline` is a prefix of `inline_name` — a word match, not a substring match, must report it.
+    assert named == ["TinySesam.inline", "TinySesam.missing", "TinySesam.undoc_prose"], findings
+    assert number == 5, number
+    findings, _ = check_documented(probe, {"README.md": text}, at_least=6)
+    assert any("too little measured" in f for f in findings), findings
+    findings, _ = check_documented({}, {"README.md": None}, at_least=0)
+    assert any("README.md: missing" in f for f in findings) and any("area missing" in f for f in findings), findings
+    # The generated reference is no evidence: it lists every name by construction.
+    assert not any(e.rstrip("/").endswith(("API.md", "CHANGELOG.md")) for e in DOC_FILES), DOC_FILES
+    assert not any(p.endswith("API.md") for p in read_docs()), "API.md read as documentation"
+    called = {k.func.id for k in ast.walk(ast.parse(inspect.getsource(main)))
+              if isinstance(k, ast.Call) and isinstance(k.func, ast.Name)}
+    assert "check_documented" in called, "main() does not call check_documented"
+    ok("Documentation check triggers: a name only in prose, a missing name, a prefix of a documented one, too few "
+       "measured, a missing doc file; inline, wrapped and fenced code count; API.md does not; wiring")
+
+
 def tiers_full(now: dict) -> dict:
     """A synthetic baseline for the self-check: every entry tiered as the decision of 2026-10-29 puts it."""
     file = with_tiers(now, {})
@@ -2148,6 +2251,7 @@ def main(argv):
     self_check_values()
     self_check_contract_names()
     self_check_contract(now)
+    self_check_documented()
 
     earlier_file = {}
     if os.path.exists(STORAGE):
@@ -2208,6 +2312,19 @@ def main(argv):
     else:
         ok(f"Tiers A and B English: {n_number} names, parameters, fields and attributes, no "
            "German word")
+
+    # Public is what is documented (PO decision 2026-11-20): every tier-A/B Python name is in the docs.
+    d_error, d_number = check_documented(earlier_file)
+    if d_error:
+        red = True
+        print(f"\n  {len(d_error)} names of tiers A/B the hand-written docs do not name:\n")
+        for line in d_error:
+            print(f"    UNDOCUMENTED {line}")
+        print("\n  The public surface is what README, CONFIGURATION.md, SECURITY.md and docs/ describe (API.md is")
+        print("  generated and does not count). Document the name, or make it internal: tier C, `_name` + alias.\n")
+    else:
+        ok(f"Public = documented: {d_number} Python names of tiers A/B, each named in the hand-written docs "
+           f"({len(read_docs())} files, API.md not among them)")
 
     # The keys and values of tiers A and B are English (PO decision 2026-09-27).
     w_error, w_number = check_values(earlier_file)

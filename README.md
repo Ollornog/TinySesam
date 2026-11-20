@@ -439,10 +439,11 @@ comes next. All three are synchronous (a password hash, maybe the directory): ca
 > 1.0; replace them with `login_password`, `login_pin` and `login_totp`.
 
 `start_session` stays, for tests and for a factor you verified yourself — it checks nothing
-([Accounts in code](#accounts-in-code)). It returns `(token, session_ok)`: unpack it — passing
-the tuple straight into `set_cookie` writes the string `"('abc…', True)"` into the cookie, and
-nothing raises. The token returned by `complete_totp` replaces the old one, also on step-up — put
-it into the cookie, or the cookie holds a dead session. The `login_*` building blocks do both
+([Accounts in code](#accounts-in-code)). It returns `(token, session_ok)`: unpack it and put the
+token into the session cookie with `auth.set_cookie(response, token, remember=None)` (`remember=None`
+follows the session's own “stay signed in” choice) — passing the tuple straight into `set_cookie`
+writes the string `"('abc…', True)"` into the cookie, and nothing raises. The token returned by
+`complete_totp` replaces the old one, also on step-up — put it into the cookie, or the cookie holds a dead session. The `login_*` building blocks do both
 for you.
 
 The same pattern exists for a step-up of your own ([Own step-up page](#own-step-up-page),
@@ -1152,6 +1153,10 @@ All optional (on/off by config), usable individually and combined, front end rep
   its own `Response`. All 13 names: `login`, `pin`, `totp`, `totp_setup`, `reauth`, `account`,
   `register`, `forgot`, `reset`, `magic_request`, `magic_invalid`, `resource_unlock`, `error`.
   Built-in renderers are the fallback; `tinysesam.templates.DEFAULTS` holds the current list.
+  To show one of these pages from a route of your own, `auth.render_page(name, status=200, request=request,
+  **ctx)` renders it — your replacement if one is set, otherwise the built-in page — with the CSP nonce, the CSRF
+  token and the mount prefix in `ctx`, and returns the `Response`. Pass `request`: without it a new CSRF token
+  is issued, and other forms the user has open expire.
 - **Stay signed in:** `remember_me_enabled` — checkbox → persistent cookie; unchecked = pure
   session cookie + short `session_ttl_transient_hours`.
 - **Step-up / per-route MFA:** `Depends(auth.require(mfa=True))` (sudo freshness `stepup_max_age_sec`,
@@ -1207,7 +1212,9 @@ All optional (on/off by config), usable individually and combined, front end rep
   another account, which then carries it into the app. Your proxy must set every one of these
   headers itself (the examples in `deploy/forward-auth/` do), or it passes a forged one through. Give it a mapping to rename or drop them: `{"user": "X-WEBAUTH-USER"}` sends that one
   header and nothing else (Grafana style), a list sends the same value under several names. The mapping
-  is the complete list, so leaving `email` out is how you stop handing the address to the app. Rename
+  is the complete list, so leaving `email` out is how you stop handing the address to the app. The default
+  mapping is `TinySesam.FORWARD_HEADERS_DEFAULT`; to change one header and keep the rest, start from a copy:
+  `forward_headers={**TinySesam.FORWARD_HEADERS_DEFAULT, "user": ["Remote-User", "X-WEBAUTH-USER"]}`. Rename
   something? Pull the new name through in your proxy config too.
 - **Open-redirect protection:** every `?next=` runs through `safe_next` (relative paths only, or
   `trusted_redirect_hosts`; the host of your own `base_url` always counts and needs no repeating).
@@ -1442,6 +1449,12 @@ Not everything without a leading underscore is a promise. Since 0.22.0 every pub
 | **B — for advanced use** | building blocks for your own account and admin pages (below) | Stays. Removed or reshaped only after a `DeprecationWarning` across two minor releases. A route has no warning: a path in tier B is announced in the CHANGELOG under “Deprecated” at least two minor releases before it goes. |
 | **C — internal** | the wiring of the built-in routes | None. Since 0.22.0 the implementation carries a leading underscore; the old name stays until 1.0 as an alias that warns when called, then goes. Don't start using them. |
 
+**Public is what the hand-written docs describe** (decided before 1.0): this README,
+`CONFIGURATION.md`, `SECURITY.md` and `docs/OPERATIONS.md`. `API.md` is generated from the code and
+lists every name with its tier; being listed there alone is no promise. The guard fails when a
+tier-A or tier-B Python name (method, constant, property, preset, export, field of a result type) is
+named in none of these documents.
+
 A new public name has no tier until someone decides; the guard `tests/test_api_surface.py` stays
 red until then, so nothing becomes a promise by accident. The config fields are tier A (except
 one tombstone, marked in `CONFIGURATION.md`), and so are the error types (`TinySesamError`,
@@ -1475,7 +1488,8 @@ measured in `tests/api_surface.json` and listed in [`API.md`](https://github.com
   **Writing it is not promised:** it is a plain, mutable dataclass, and which field is read once and which
   per request is not part of the promise. And `auth.on_security_event` — the attribute, the call
   `hook(event, account, details)`, that it runs synchronously after the change is written, that a failing
-  hook does not abort the operation, and the keys of `details` per event.
+  hook does not abort the operation, and the keys of `details` per event. The event names are
+  `TinySesam.SECURITY_EVENTS` (the list with the keys of `details` is in `SECURITY.md`).
 - **Tier A — the forward and gate contract** that reverse proxies depend on: `/auth/forward`, `/auth/verify`,
   `/.tinysesam/*`, `/auth/gate/*`, their status codes, the `X-TinySesam-*` headers and the values of
   `X-TinySesam-Reason`, the request headers a proxy sets or passes on (`X-Forwarded-Uri`, `X-Forwarded-Host`,
