@@ -775,8 +775,9 @@ TinySesamConfig(admin_identifiers=["me@example.com"])   # allowlist, any sign-in
   once an admin exists the route answers 404. The value is deliberately kept out of the security
   log — that file is what fail2ban reads and logrotate keeps. **Where stderr is not a console**
   (container, journal, a pipe — stderr *is* the log there), TinySesam writes the token to
-  `<db_path>.claim` with mode `0600` instead and logs only that path (`docker exec … cat
-  /data/app.db.claim`); the file is removed once the token is redeemed. Without a database file
+  `<db_path>.claim` with mode `0600` instead and logs only that path (`docker exec … python -c
+  "print(open('/data/app.db.claim').read())"` — the gateway image has no `cat`); the file is removed once the token is
+  redeemed. Without a database file
   (`:memory:`) only stderr is left, and the log line says so. `admin_claim_token_file` picks the
   file yourself (it takes precedence, also at a console).
   **Known limit:** the token is redeemed through a URL (`?token=…`, mirrored into the login
@@ -1085,8 +1086,12 @@ Every release builds an image for `linux/amd64` and `linux/arm64`:
 ghcr.io/ollornog/tinysesam:v0.25.7
 ```
 
-It runs as **non-root** (uid 1000), contains neither `pip` nor `git`, ships a `HEALTHCHECK` on
-`/healthz` and starts the gateway directly — no `command:` needed.
+It runs as **non-root** (uid 1000), ships a `HEALTHCHECK` on `/healthz` and starts the gateway directly — no
+`command:` needed. The runtime base is **distroless** (`gcr.io/distroless/base-debian13`, pinned by digest) with the
+Python interpreter of the `python:3.x-slim` build stage on top: no shell, no package manager, no `pip`, no `git` —
+whoever gets code execution inside finds no tool to fetch more. The operator commands work as before
+(`docker exec <c> tinysesam backup …`); for looking around there is `docker exec -it <c> python` or a side-car with a
+shell in the container's namespaces — both in `docs/OPERATIONS.md`, "The gateway image: no shell inside".
 
 **Check where it came from.** A digest proves an artifact hasn't changed since it was built — not
 who built it. Every release therefore carries a Sigstore-signed provenance attestation and an SBOM,

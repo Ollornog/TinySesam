@@ -785,7 +785,8 @@ TinySesamConfig(admin_identifiers=["ich@example.com"])   # Allowlist, jede Login
   bewusst aus dem Security-Log heraus — das liest fail2ban, und logrotate hebt es auf. **Ist stderr
   keine Konsole** (Container, journal, Pipe — dort *ist* stderr das Log), schreibt TinySesam das
   Token stattdessen nach `<db_path>.claim` mit `0600` und nennt im Log nur den Pfad
-  (`docker exec … cat /data/app.db.claim`); nach dem Einlösen verschwindet die Datei. Ohne
+  (`docker exec … python -c "print(open('/data/app.db.claim').read())"` — das Gateway-Abbild hat kein `cat`); nach
+  dem Einlösen verschwindet die Datei. Ohne
   Datenbank-Datei (`:memory:`) bleibt nur stderr, und die Log-Zeile sagt das. Mit
   `admin_claim_token_file` wählt man die Datei selbst (sie geht vor, auch an einer Konsole).
   **Bekannte Grenze:** Eingelöst wird der Token über eine URL (`?token=…`, bei nicht angemeldetem
@@ -1118,8 +1119,13 @@ Geht das durch, heisst das: gebaut vom Release-Workflow dieses Repos, aus dem Co
 Attestation nennt. Kein Schlüssel, den man herausgeben — und keiner, den man verlieren kann: Die
 Signatur hängt an der Identität des Workflows.
 
-Es läuft als **Nicht-root** (uid 1000), enthält weder `pip` noch `git`, bringt einen
-`HEALTHCHECK` auf `/healthz` mit und startet direkt das Gateway — kein `command:` nötig.
+Es läuft als **Nicht-root** (uid 1000), bringt einen `HEALTHCHECK` auf `/healthz` mit und startet direkt das
+Gateway — kein `command:` nötig. Die Laufzeit-Basis ist **distroless** (`gcr.io/distroless/base-debian13`, per Digest
+gepinnt) mit dem Python-Interpreter der Build-Stufe `python:3.x-slim` darauf: keine Shell, kein Paketmanager, kein
+`pip`, kein `git` — wer im Container Code ausführen kann, findet kein Werkzeug, um mehr nachzuladen. Die
+Betriebsbefehle gehen wie bisher (`docker exec <c> tinysesam backup …`); zum Umsehen gibt es `docker exec -it <c> python`
+oder einen Beiwagen-Container mit Shell in den Namespaces des Containers — beides in `docs/OPERATIONS.md`, „The gateway
+image: no shell inside“.
 Der Proxy kommt mit: `ghcr.io/ollornog/tinysesam-caddy-gate:v0.25.7` ist Caddy mit dem Plugin caddy-jwt, gebaut,
 geprüft und attestiert vom selben Release (Prüfung wie oben). In fünf Minuten am Laufen: „Gateway und Caddy in
 5 Minuten“ weiter unten; der Referenz-Stack mit allen Optionen liegt in `deploy/forward-auth/docker-compose.yml`.

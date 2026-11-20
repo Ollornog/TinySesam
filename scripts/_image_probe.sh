@@ -12,8 +12,10 @@
 #   2. until Docker's own HEALTHCHECK from the Dockerfile reports "healthy" (the one every
 #      operator sees as well), at most WAIT_S seconds;
 #   3. `/healthz` must return 200 and name the version from pyproject.toml — otherwise the
-#      image holds a different package than this commit.
-# A failure prints the container logs. The container is removed in any case.
+#      image holds a different package than this commit;
+#   4. the running container has no shell (T-59, distroless runtime stage): `docker exec … sh -c true` must fail.
+#      The build checks the files (deploy/gateway/image_setup.py); this checks what an attacker would actually reach.
+# A failure prints the container logs. The container and its anonymous /data volume are removed in any case.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -28,7 +30,8 @@ echo "▸ Build image: $IMAGE (version $version)"
 SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"
 docker build --quiet --build-arg SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH" --tag "$IMAGE" . >/dev/null
 
-cleanup() { docker rm --force "$NAME" >/dev/null 2>&1 || true; }
+# `--volumes`: the image declares VOLUME /data, every run left an anonymous volume behind (local runs piled them up).
+cleanup() { docker rm --force --volumes "$NAME" >/dev/null 2>&1 || true; }
 trap cleanup EXIT
 
 fail() {
@@ -70,4 +73,7 @@ case "$reply" in
     "200 "*"\"version\":\"$version\""*) ;;
     *) fail "/healthz replied unexpectedly: $reply (expected 200 with version $version)" ;;
 esac
-echo "✓ image starts, HEALTHCHECK healthy, /healthz 200 with version $version"
+if docker exec "$NAME" sh -c true >/dev/null 2>&1; then
+    fail "the running image has a shell (sh) — the runtime stage must stay without one (T-59)"
+fi
+echo "✓ image starts, HEALTHCHECK healthy, /healthz 200 with version $version, no shell in the container"

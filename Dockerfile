@@ -50,29 +50,60 @@ RUN python -m venv /opt/venv \
     && /opt/venv/bin/python -c "import tinysesam.gateway" \
     && /opt/venv/bin/pip uninstall --yes setuptools
 
+# What the runtime stage gets from here, collected under /rootfs (T-59). The runtime base has no Python, no shell and
+# no package manager, so the interpreter of this stage moves over — and with it exactly the Debian libraries its
+# modules need that the runtime base does not already have. Which ones was MEASURED, not read: an import trace of the
+# running gateway (sign-in page, OIDC round trip against a stand-in provider, forward-auth, gate JWKS, OAuth metadata,
+# logout) and of the operator commands (`backup`, `unlock`, `keys list`, `audit`, `gc`) mapped these shared objects
+# beyond glibc, OpenSSL, zlib and zstd (which the base brings): libsqlite3 (sqlite3 — the database), libmpdec (decimal,
+# via pydantic), libbz2 and liblzma (bz2/lzma, imported by shutil and zipfile), libgcc_s (the Rust part of
+# `cryptography`).
+#   * Each library comes WITH its dpkg record (status.d/<package> plus .md5sums, the layout of the base): the SBOM and
+#     the Grype scan see every Debian package that is in the image, at its real version. Copying the .so alone would
+#     hide them from the scan — fewer findings by looking away, not by having less.
+#   * libuuid (util-linux) is left out on purpose: `uuid` has a built-in fallback when `_uuid` cannot load, and the
+#     package carries util-linux's findings. Equally the stdlib modules whose library is not shipped — ctypes (libffi;
+#     the gateway never imports it, cffi brings its own), curses, readline, dbm, tkinter — go with their .so, so that
+#     nothing in the image points at a library that is not there. The runtime stage checks that every native module
+#     left still loads (deploy/gateway/image_setup.py).
+#   * pip goes, the system one, the bundled wheel (ensurepip) and the venv's own one: whoever can load code here has
+#     won — that is why TinySesam has no self-update (CHANGELOG 0.12.0). Paths by pattern, not by series (#74: after
+#     3.12 → 3.14 a fixed `python3.12` path no longer applied and pip was back).
+# The libraries come from THIS digest-pinned stage, not from the network: same commit, same bytes.
+RUN set -eu; \
+    R=/rootfs; arch="$(dpkg --print-architecture)"; \
+    mkdir -p "$R/usr/local/bin" "$R/usr/local/lib" "$R/var/lib/dpkg/status.d"; \
+    cp -a /usr/local/bin/python /usr/local/bin/python3 /usr/local/bin/python3.* "$R/usr/local/bin/"; \
+    rm -f "$R"/usr/local/bin/python3.*-config; \
+    cp -a /usr/local/lib/libpython3*.so* /usr/local/lib/python3.* "$R/usr/local/lib/"; \
+    cd "$R"/usr/local/lib/python3.*; \
+    rm -rf site-packages/pip site-packages/pip-*.dist-info ensurepip idlelib tkinter turtledemo turtle.py config-3.*; \
+    rm -f lib-dynload/_ctypes.* lib-dynload/_curses.* lib-dynload/_curses_panel.* lib-dynload/_dbm.* \
+          lib-dynload/_gdbm.* lib-dynload/_tkinter.* lib-dynload/readline.* lib-dynload/_uuid.*; \
+    cd /; \
+    for p in libsqlite3-0 libmpdec4 libbz2-1.0 liblzma5 libgcc-s1; do \
+        dpkg-query --status "$p" | grep -v '^Status:' > "$R/var/lib/dpkg/status.d/$p"; \
+        : > "$R/var/lib/dpkg/status.d/$p.md5sums"; \
+        for f in $(dpkg -L "$p" | grep -v '^/usr/share/'); do \
+            if [ -f "$f" ] || [ -L "$f" ]; then \
+                cp -a --parents "$f" "$R/"; \
+                grep " ${f#/}\$" "/var/lib/dpkg/info/$p:$arch.md5sums" >> "$R/var/lib/dpkg/status.d/$p.md5sums" || :; \
+            fi; \
+        done; \
+    done; \
+    rm -rf /opt/venv/bin/pip /opt/venv/bin/pip3 /opt/venv/bin/pip3.* /opt/venv/bin/activate* /opt/venv/bin/Activate.ps1 \
+           /opt/venv/lib/python3.*/site-packages/pip /opt/venv/lib/python3.*/site-packages/pip-*.dist-info
+
 # ---------- Run ----------
-FROM python:3.15-slim@sha256:65a65fc7b30b06cb6df4930fd4650697cb23f4c2698ab81fc87e4b031bc36928
+# Distroless (Google, Debian 13): glibc, OpenSSL, zlib, zstd, CA certificates, tzdata — no shell, no package manager,
+# no coreutils (T-59). Rebuilt by its maintainers whenever Debian ships a fix; the python:*-slim tag above is rebuilt
+# only with a Python release, so a fixed zlib waited there for weeks (CVE-2026-85091). The project publishes floating
+# tags only (`nonroot`, `latest`, `debug…`); the digest pins one state of `nonroot`, and Dependabot moves the digest
+# when the tag moves (dependabot.yml, `docker`).
+FROM gcr.io/distroless/base-debian13:nonroot@sha256:a08d9054afbaf1af9b90fd02cdc7b32236319b5376d374505a41548d42b0c5db
 
-# `useradd` writes the date of the last password change to /etc/shadow — without this line
-# the day of the build, with it the day of the commit (shadow from 4.14 reads SOURCE_DATE_EPOCH).
-ARG SOURCE_DATE_EPOCH
-RUN useradd --uid 1000 --create-home --shell /usr/sbin/nologin tinysesam \
-    && mkdir -p /data && chown tinysesam:tinysesam /data
-
+COPY --from=build /rootfs/ /
 COPY --from=build /opt/venv /opt/venv
-
-# No git, no pip in the final image: whoever can load code here has won. That is exactly why
-# TinySesam no longer has a self-update (see CHANGELOG 0.12.0).
-# The venv brings its OWN pip — deleting the system pip is not enough. A test found
-# this after the image was already called "without pip".
-# The paths by pattern instead of a fixed Python series: until 2026-09-23 this had `python3.12` —
-# after the jump to 3.14 (#74) none of it applied any more, pip was back in the venv.
-RUN rm -rf /usr/local/lib/python3.*/site-packages/pip \
-           /usr/local/lib/python3.*/site-packages/pip-*.dist-info \
-           /usr/local/bin/pip /usr/local/bin/pip3 /usr/local/bin/pip3.* \
-           /opt/venv/bin/pip /opt/venv/bin/pip3 /opt/venv/bin/pip3.* \
-           /opt/venv/lib/python3.*/site-packages/pip \
-           /opt/venv/lib/python3.*/site-packages/pip-*.dist-info
 
 ENV PATH="/opt/venv/bin:$PATH" \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -80,6 +111,14 @@ ENV PATH="/opt/venv/bin:$PATH" \
     TINYSESAM_DB=/data/gateway.db \
     TINYSESAM_HOST=0.0.0.0 \
     TINYSESAM_PORT=8000
+
+# No shell here, so every RUN is in exec form. As root (the base's default user is `nonroot`): the account
+# `tinysesam` with uid/gid 1000 as before — existing /data volumes belong to 1000 — and /data; then the checks that
+# the image is complete and has no shell, package manager or pip. The script is bind-mounted, not copied: it leaves no
+# layer behind.
+USER 0
+RUN --mount=type=bind,source=deploy/gateway/image_setup.py,target=/run/image_setup.py \
+    ["/opt/venv/bin/python", "-I", "-B", "/run/image_setup.py"]
 
 USER tinysesam
 WORKDIR /data

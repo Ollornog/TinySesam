@@ -4,6 +4,31 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+### Changed — gateway image on a distroless base, without a shell (T-59)
+
+- **The runtime stage of `ghcr.io/ollornog/tinysesam` is now `gcr.io/distroless/base-debian13`** (pinned by digest,
+  Dependabot moves it) instead of `python:3.15-slim`. The interpreter (still Python 3.15) comes from the slim build
+  stage, together with exactly the Debian libraries an import trace of the running gateway and of the operator commands
+  loaded beyond the base (SQLite, mpdecimal, bzip2, xz, libgcc) — each with its dpkg record, so SBOM and scan still see
+  every package. Measured on the same day with the same scanner: **114 → 41 packages** (Debian 88 → 15), **266 → 148 MB**,
+  **Grype 236 → 67 findings** (high 81 → 15, medium 85 → 32, low 20 → 9, negligible 50 → 11), fixable high 1 → 0.
+- **No shell, no package manager, no coreutils in the image.** Operator commands are unchanged
+  (`docker exec <c> tinysesam backup|unlock|audit|keys …`, `docker compose run --entrypoint tinysesam …`); what used
+  `sh` or `cat` inside the container needs `python` instead — `docs/OPERATIONS.md`, "The gateway image: no shell
+  inside", has the table and a side-car for debugging. uid/gid 1000, `/data`, the `HEALTHCHECK`, the entrypoint and
+  the security-log path stay as they were; existing volumes keep working.
+- `ctypes`, `curses`, `readline`, `dbm` and `tkinter` are no longer in the image's Python (their libraries are not
+  shipped; the gateway imports none of them). `uuid` uses its built-in fallback (libuuid would bring util-linux's
+  findings).
+- The build checks the result (`deploy/gateway/image_setup.py`): every native module loads, the default TLS context
+  has CA certificates, no shell/package manager/pip on disk; `image-probe` checks that the running container cannot
+  start `sh`. The extras are unchanged: the image already installs only `[gateway]`, and the trace imports 23 of its 25
+  distributions — the other two (`joserfc` via authlib, `pycparser` via cffi) are declared requirements, removing
+  them would break `pip check` and drop no finding.
+- `.grype.yaml`: the zlib exception (CVE-2026-85091, python:3.15-slim) is gone — the distroless base carries the fixed
+  zlib. New: after both image scans, `scripts/_grype_exceptions.py --report …` prints the findings and fails on an
+  exception that matches nothing in either image, so an outdated rule goes instead of waiting for its date.
+- `scripts/_image_probe.sh` removes the container's anonymous `/data` volume (local runs left one behind each time).
 ### Changed — CodeQL: accepted false positives are recorded in the repository
 
 - `.github/codeql/accepted.md` lists every dismissed code-scanning alert (rule, location, reason, date); a repo check

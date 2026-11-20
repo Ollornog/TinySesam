@@ -496,6 +496,7 @@ assert not gaps, "the checked file list is incomplete:\n  " + "\n  ".join(gaps)
 # that waves the next real finding through as well.
 BARE_ADDRESSES_OK = [
     "ghcr.io",                 # the registry the own image comes from (Dockerfile, compose)
+    "gcr.io",                  # the public registry of the runtime base (gcr.io/distroless, Dockerfile, T-59)
     "pypi.org",                # the package index test_packaging checks against
     "python.org",              # source reference in the kit file python_matrix.json
     "devguide.python.org",     # ditto — the release calendar the matrix follows from
@@ -592,11 +593,33 @@ for line in rel.splitlines():
 # The image must not contain any way to download code — otherwise the self-update would come back
 # through the back door. And it does not run as root.
 dockerfile = read("Dockerfile")
-assert "USER tinysesam" in dockerfile, "image runs as root"
-assert "HEALTHCHECK" in dockerfile, "image without health check"
-for away in ("/opt/venv/bin/pip", "/usr/local/bin/pip"):
-    assert away in dockerfile, f"{away} is not removed — the venv brings its own pip"
-print("  check.sh + pre-push present; CI runs browser, hygiene and website tests; release signs checksums")
+# Since T-59 the runtime stage is distroless: no shell, no package manager, and only what the build stage hands over.
+# Measured on the LAST stage — a `USER tinysesam` or an exec-form RUN in the build stage proves nothing about the image.
+_final = dockerfile[dockerfile.rindex("\nFROM "):]
+_final_code = re.sub(r"\\\n\s*", " ", "\n".join(z for z in _final.splitlines() if not z.lstrip().startswith("#")))
+assert re.search(r"^FROM gcr\.io/distroless/[a-z0-9-]+:nonroot@sha256:[0-9a-f]{64}\s*$", _final_code, re.M), \
+    "Dockerfile: the runtime stage is not on a digest-pinned distroless base (T-59)"
+assert re.search(r"^USER tinysesam\s*$", _final_code, re.M), "image runs as root"
+assert re.search(r"^HEALTHCHECK .*CMD \[", _final_code, re.M), "image without health check (exec form — no shell)"
+# Every RUN of the runtime stage in exec form: the base has no /bin/sh, a shell-form RUN would need one — and a base
+# that HAS one again would turn it green silently.
+_runs = [z for z in _final_code.splitlines() if z.startswith("RUN ")]
+_shell_form = [z for z in _runs if not re.match(r"^RUN\s+(--[a-z]+=\S+\s+)*\[", z)]
+assert not _shell_form, f"Dockerfile: RUN in shell form in the runtime stage (it has no shell): {_shell_form}"
+assert any("deploy/gateway/image_setup.py" in z for z in _runs), \
+    "Dockerfile: the runtime stage does not run deploy/gateway/image_setup.py (account, completeness, no shell)"
+# pip leaves on all three ways in: the venv's own, the system one, the wheel bundled for ensurepip.
+_df_code = "\n".join(z for z in dockerfile.splitlines() if not z.lstrip().startswith("#"))
+for away in ("/opt/venv/bin/pip", "site-packages/pip", "ensurepip"):
+    assert away in _df_code, f"Dockerfile: {away} is not removed — pip would be in the image"
+_setup = read("deploy/gateway/image_setup.py")
+_forbidden = re.search(r"^FORBIDDEN = \((.*?)\)$", _setup, re.M | re.S)
+assert _forbidden and {"sh", "bash", "busybox", "apt", "dpkg", "apk", "pip"} <= set(re.findall(r'"([^"]+)"',
+                                                                                         _forbidden.group(1))), \
+    "image_setup.py: FORBIDDEN no longer names shells, package managers and pip"
+assert "sh -c true" in read("scripts/_image_probe.sh"), "image-probe no longer checks the RUNNING image for a shell"
+print("  check.sh + pre-push present; CI runs browser, hygiene and website tests; release signs checksums; "
+      "runtime stage distroless, exec-form only, no pip")
 
 # ---------- Supply chain: what T-13 (B4-*) tightened stays tight ----------
 # Every check here measures a commitment from the supply-chain round of T-13. YAML is read as

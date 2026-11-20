@@ -252,6 +252,40 @@ identifier belongs to two accounts.
   `DROP TRIGGER trg_users_identifier_insert; DROP TRIGGER trg_users_identifier_update;` — a newer
   version recreates them at the next start.
 
+## The gateway image: no shell inside
+
+Since T-59 the runtime stage of `ghcr.io/ollornog/tinysesam` is **distroless** (`gcr.io/distroless/base-debian13`,
+pinned by digest): glibc, OpenSSL, zlib, zstd, CA certificates and tzdata from the base, the Python interpreter of the
+`python:3.x-slim` build stage, the five Debian libraries its modules need (SQLite, mpdecimal, bzip2, xz, libgcc — each
+with its dpkg record, so SBOM and scan see them) and the venv. **No shell, no package manager, no coreutils, no pip.**
+Whoever gets code execution in the container finds no tool to fetch more. Unchanged: uid/gid 1000 (`tinysesam`, existing
+`/data` volumes keep working), `/data` as the volume, the `HEALTHCHECK` (exec form, Python), the entrypoint
+`python -m tinysesam.gateway`, the security log path for fail2ban (`TINYSESAM_SECURITY_LOG`, a bind mount like in
+`deploy/forward-auth/docker-compose.yml`).
+
+What changes for the operator:
+
+| Task | Before (python:3.x-slim) | Now |
+|---|---|---|
+| Operator commands (`backup`, `unlock`, `audit`, `keys …`, `gc`, `owner`, `delete`) | `docker exec <c> tinysesam …` | the same — `tinysesam` is a program, not a shell feature |
+| Commands without a running container (backup before an update) | `docker compose run --rm --no-deps --entrypoint tinysesam tinysesam …` | the same |
+| Read a file in the container (the claim token) | `docker exec <c> cat /data/app.db.claim` | `docker exec <c> python -c "print(open('/data/app.db.claim').read())"` |
+| Look around inside | `docker exec -it <c> sh` | `docker exec -it <c> python` (a Python prompt as `tinysesam`: `os.listdir`, `open`, `sqlite3`), or a side-car below |
+| Anything with `sh -c '…'` (your own healthcheck, a cron wrapper) | worked | fails with `exec: "sh": executable file not found` — call `python` or `tinysesam` directly, in exec form |
+
+**Debugging with tools (side-car).** Start a throwaway container with a shell in the namespaces of the running one;
+nothing is installed into the gateway image, and nothing stays behind:
+
+```bash
+docker run --rm -it --pid container:<c> --network container:<c> --volumes-from <c> busybox:<version> sh
+# inside: ps (the gateway is PID 1), ls -la /data, wget -qO- http://127.0.0.1:8000/healthz, netstat -tln
+```
+
+`--volumes-from` brings `/data` (and the security log mount), `--network` the gateway's loopback, `--pid` its
+processes. Pin the side-car image like any other; for a compose service, `<c>` is the container name from
+`docker compose ps`. The image itself proves on every build that it has no shell or package manager
+(`deploy/gateway/image_setup.py`) and on every PR that the running container cannot start `sh` (`image-probe`).
+
 ## First-admin one-time token
 
 If there is no admin (fresh instance, or the identity provider withdrew the last one),
@@ -265,7 +299,8 @@ such a withdrawal. Where it goes is decided by who reads along ([T-17](../backlo
 | stderr is not a console (container, journal, pipe) | `<db_path>.claim`, `0600` | the path |
 | … without database file (`:memory:`) or file cannot be created | stderr (fallback) | honestly: stderr is not a console, so the value stands in the service's log |
 
-In a container therefore: `docker exec <container> cat /data/app.db.claim` (path from the log), sign in,
+In a container therefore: `docker exec <container> python -c "print(open('/data/app.db.claim').read())"` (path from
+the log; the gateway image has no `cat`, see [the image](#the-gateway-image-no-shell-inside)), sign in,
 open the URL. After redemption TinySesam deletes `<db_path>.claim`; if there is an admin at start,
 it clears a leftover. If the token expires, the file content is invalid,
 and the next start writes a new one. A self-chosen `admin_claim_token_file` stays
