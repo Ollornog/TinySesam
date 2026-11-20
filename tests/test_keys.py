@@ -20,7 +20,6 @@ import base64
 import json
 import os
 import secrets
-import sqlite3
 import subprocess
 import sys
 import tempfile
