@@ -192,6 +192,13 @@ def build_router(auth) -> APIRouter:
         # the guard here only delivers the readable answer instead of a server error.
         if auth.store.has_confirmed_totp(u["id"]):
             raise HTTPException(409, auth.t("api.totp_active"))
+        # B-12: a new factor from a FULL session wants a fresh confirmation — the page sends a stale
+        # one to the reauth page first and comes back here (path and query). The mandatory setup in a
+        # chain (half session, `totp_enrollment_user`) is fresh from the sign-in and not asked.
+        if u.get("_via") == "session":
+            target = auth._reauth_target(request, str(request.url.path) + (f"?{request.url.query}" if request.url.query else ""))
+            if target:
+                return RedirectResponse(target, 303)
         # This GET writes NOTHING any more. Until the follow-up it called `totp_begin()` unconditionally:
         # for an account without confirmed TOTP every call thereby created a new secret
         # and replaced an attempt in progress — a foreign link invalidated the
@@ -212,6 +219,8 @@ def build_router(auth) -> APIRouter:
         # TOTP secret in plain text. An API key must not get to see it — via the
         # self-registered factor it would otherwise obtain a fresh session.
         auth.require_session(request, u)
+        if u.get("_via") == "session":
+            auth._require_fresh(request, u)          # B-12: the secret only for a fresh confirmation
         if auth.store.has_confirmed_totp(u["id"]):
             raise HTTPException(409, auth.t("api.totp_active"))
         return auth.render_page("totp_setup", request=request, data=auth.totp_begin(u["id"]),
@@ -231,6 +240,8 @@ def build_router(auth) -> APIRouter:
         # only a call with `Accept: text/html` is redirected to sign-in — the form
         # of the page sends via `fetch`, so without).
         u = auth.require_session(request, full or enrollment)
+        if full is not None:
+            auth._require_fresh(request, full)       # B-12: the same bolt as at /start
         # Like GET and /start (A-4): an active TOTP is not "confirmed once more" here.
         # Otherwise this place would report `totp_enabled` for nothing and incidentally check codes of the
         # active factor with its own attempt bucket.
@@ -378,6 +389,7 @@ def build_router(auth) -> APIRouter:
             # factor of its owner): the bolt therefore stands BEFORE the case distinction
             # and delivers the clear message instead of the freshness excuse.
             u = auth.require_session(request)
+            # B-12: the one freshness rule for new access (`_require_fresh`) — the rule below in words.
             # The rule, exactly: `require_mfa()` applies to replacing AND to creating,
             # as soon as the account has anything at all with which it can confirm — even if that
             # is only its password. Because with `pin_login` a PIN is a full
@@ -387,16 +399,13 @@ def build_router(auth) -> APIRouter:
             # `X-TinySesam-Reauth`. Only an account that has nothing at all
             # (purely federated) depends on the age of the sign-in — otherwise setup
             # would be a dead end for it.
-            if auth.has_pin(u["id"]) or auth.stepup_options(u):
-                u = auth.require_mfa(request)
-            elif not auth.login_fresh(request, u):
-                # The FIRST PIN of an account that has nothing with which it could confirm
-                # (no password, no PIN, no TOTP — purely federated): `require_mfa()`
-                # would be a dead end here, `stepup_options()` is empty and the reauth page
-                # would have no field. Creating therefore depends on the age of the sign-in. No
-                # `X-TinySesam-Reauth`: the reauth page cannot help this account, a
-                # new login can.
-                raise HTTPException(403, auth.t("api.stepup_relogin"))
+            # The FIRST PIN of an account that has nothing with which it could confirm
+            # (no password, no PIN, no TOTP — purely federated): `require_mfa()`
+            # would be a dead end here, `stepup_options()` is empty and the reauth page
+            # would have no field. Creating therefore depends on the age of the sign-in. No
+            # `X-TinySesam-Reauth`: the reauth page cannot help this account, a
+            # new login can. (An account WITH a PIN always has `stepup_options()`.)
+            u = auth._require_fresh(request, u)
             b = await auth.json_body(request)
             try:
                 auth.set_pin(u["id"], b.get("pin"))
@@ -551,7 +560,7 @@ def build_router(auth) -> APIRouter:
             return auth.render_page("qr_login", request=request, status=status, error=error,
                                     code=data["code"], secret=data["secret"],
                                     expires_at=data["expires_at"], approve_url=data.get("approve_url") or "",
-                                    qr=data.get("qr"), next=data.get("next") or "/")
+                                    qr=data.get("qr"), next=data.get("next") or "/", match=data.get("match") or "")
 
         @r.post("/auth/qr/start", response_class=HTMLResponse)
         def qr_start(request: Request, next: str = Form(""), csrf_tok: str = Form("", alias="_csrf")):
@@ -570,6 +579,13 @@ def build_router(auth) -> APIRouter:
             """Poll of the new device: `pending`, `approved` or `invalid` (expired, used, denied, or
             not this device's request). Read-only; the secret goes in the body, never in the URL."""
             auth.require_csrf(request, request.headers.get("x-csrf-token"))
+            # T-44 (RFC 10027 §6.1.11): polling has its own bucket — the page asks every two seconds,
+            # the sign-in limit (`_rate_ok`) would trip after a minute. Generous for several devices
+            # behind one address, tight enough that nobody hammers the table.
+            ip = auth.client_ip(request)
+            if not auth.rl.allow(f"qr_status:{ip or '?'}", _QR_STATUS_PER_MINUTE, 60):
+                auth._rejected(None, ip, "qr_status_ratelimit", login=False)
+                return JSONResponse({"state": "pending", "detail": auth.t("api.too_many")}, status_code=429)
             info = auth._qr_own(code, secret)
             if info is None:
                 return JSONResponse({"state": "invalid"})
@@ -587,13 +603,16 @@ def build_router(auth) -> APIRouter:
             if own is not None and own["user_id"] is None:
                 # Not approved yet: the same page again, with the same request.
                 again = {"code": own["code"], "secret": secret, "expires_at": own["expires_at"],
-                         "next": own["next"], **auth._qr_links(own["code"])}
+                         "next": own["next"], "match": own.get("match") or "", **auth._qr_links(own["code"])}
                 return _qr_page(request, again, status=409, error=auth.t("qr.not_yet"))
             data = auth._qr_redeem(code, secret)
             if not data:
                 auth._token_rejected("qr_login", request)
                 return auth.render_page("magic_invalid", request=request, status=400)
             auth.audit("qr_login", auth._account_name(data["user_id"]), ip, f"approved_from_device_ip={data['ip']}")
+            # T-47: the holder learns that a device came in through an approval — hook, mail, activity.
+            auth._security_event("device_signed_in", data["user_id"], method="qr_login", ip=ip,
+                                 agent=str(data.get("agent") or "")[:200])
             return _login_after_token(auth, request, data["user_id"], auth.safe_next(data["next"], request),
                                      link=True)
 
@@ -612,9 +631,19 @@ def build_router(auth) -> APIRouter:
             if not info or info["user_id"] is not None:
                 auth._token_rejected("qr_login", request)
                 return auth.render_page("magic_invalid", request=request, status=400)
+            if not auth._qr_may_approve(u):
+                return auth.render_page("qr_approve", request=request, status=403, user=u, request_info=None,
+                                        code="", error=auth.t("qr.needs_second_factor"))
+            if auth._fresh_enough(request, u) == "relogin":
+                return auth.render_page("qr_approve", request=request, status=403, user=u, request_info=None,
+                                        code="", error=auth.t("api.stepup_relogin"))
+            # B-12: approving signs in a device — a fresh confirmation first, then back to this page.
+            target = auth._reauth_target(request, auth.browser_path(request, "/auth/qr/approve") + f"?code={_q(info['code'])}")
+            if target:
+                return RedirectResponse(target, 303)
             return auth.render_page("qr_approve", request=request, user=u, request_info=info, code=info["code"])
 
-        def _qr_decide(request, code, csrf_tok, approve: bool):
+        def _qr_decide(request, code, csrf_tok, approve: bool, match: str = ""):
             auth.require_csrf(request, csrf_tok)
             # Only a FULL interactive session approves: no API key, no half session (chain step
             # open) — `session_user` yields None for both. A foreign session cannot approve for
@@ -625,7 +654,19 @@ def build_router(auth) -> APIRouter:
                 raise HTTPException(401, auth.t("api.qr_needs_session"))
             if not auth._rate_ok(auth.client_ip(request), login=False):
                 return auth.render_page("magic_invalid", request=request, status=429)
-            done = auth._qr_approve(code, u) if approve else auth._qr_deny(code, u)
+            if approve:
+                # T-44: only an account with a second factor (switch), only with a fresh confirmation
+                # (B-12), only with the number from the other screen. Refusing needs none of it.
+                if not auth._qr_may_approve(u):
+                    raise HTTPException(403, auth.t("qr.needs_second_factor"))
+                auth._require_fresh(request, u)
+                outcome = auth._qr_approve(code, u, match)
+                if outcome == "mismatch":
+                    return auth.render_page("qr_approve", request=request, status=400, user=u, request_info=None,
+                                            code="", error=auth.t("qr.mismatch"))
+                done = outcome == "ok"
+            else:
+                done = auth._qr_deny(code, u)
             if not done:
                 auth._token_rejected("qr_login", request)
                 return auth.render_page("magic_invalid", request=request, status=400)
@@ -633,8 +674,9 @@ def build_router(auth) -> APIRouter:
                                     decided="approved" if approve else "denied")
 
         @r.post("/auth/qr/approve", response_class=HTMLResponse)
-        def qr_approve(request: Request, code: str = Form(""), csrf_tok: str = Form("", alias="_csrf")):
-            return _qr_decide(request, code, csrf_tok, True)
+        def qr_approve(request: Request, code: str = Form(""), match: str = Form(""),
+                       csrf_tok: str = Form("", alias="_csrf")):
+            return _qr_decide(request, code, csrf_tok, True, match)
 
         @r.post("/auth/qr/deny", response_class=HTMLResponse)
         def qr_deny(request: Request, code: str = Form(""), csrf_tok: str = Form("", alias="_csrf")):
@@ -645,13 +687,18 @@ def build_router(auth) -> APIRouter:
     # with them. It shows what the chain still needs and the account lacks; the setup routes it
     # posts to (`/auth/password/set`, `/auth/pin/set`, `/auth/passkey/register/*`,
     # `/auth/totp/setup`) accept the half session for exactly the offered factor.
-    if cfg.magiclink_enabled or cfg.qr_login_enabled:
+    # T-46: the same page asks a half session for an own password when it signed in with a start
+    # secret from the administrator — so it exists wherever passwords do.
+    if cfg.magiclink_enabled or cfg.qr_login_enabled or cfg.password_enabled:
         @r.get("/auth/setup", response_class=HTMLResponse)
         def account_setup(request: Request, next: str = ""):
             nxt = auth.safe_next(next, request)
             if auth.session_user(request):
                 return RedirectResponse(nxt, 303)            # already fully signed in
             s = auth._session_from_request(request)
+            if auth._renew_session(s):
+                return auth.render_page("account_setup", request=request, options=["password"], left=1,
+                                        next=nxt, pin_min=cfg.pin_min_length, renew=True)
             if not auth._setup_session(s):
                 # No pass (none opened, expired, account locked): the regular sign-in.
                 return RedirectResponse(f"{auth.browser_path(request, cfg.login_path)}?next={_q(nxt)}", 303)
@@ -771,8 +818,12 @@ def build_router(auth) -> APIRouter:
         # An empty list means `stepup_strict=True` and nothing suitable set up. Without a message of its own
         # there would be a page without a single input field here — the user would not see what
         # is expected of them.
+        # Two empty cases (T-45): `stepup_strict` wants a method the account has not set up — then it
+        # sets it up; or the account has nothing to confirm with at all (purely federated, passkey
+        # only) — then only a new sign-in makes the session fresh, and the page says so.
+        none_text = "err.stepup_none" if (cfg.stepup_strict and cfg.stepup_methods) else "err.stepup_relogin"
         return auth.render_page("reauth", request=request, next=auth.safe_next(next, request),
-                                error=error or ("" if methods else auth.t("err.stepup_none")),
+                                error=error or ("" if methods else auth.t(none_text)),
                                 username=u["username"], methods=methods)
 
     @r.post("/auth/reauth")
@@ -1564,6 +1615,14 @@ def build_router(auth) -> APIRouter:
         # One source like above: `set_initial_password` checks CSRF, session, freshness instead of the
         # old password, throttle and rule, and writes the audit line.
         b = await auth.json_body(request)
+        renew = auth._renew_user(request) if auth.session_user(request) is None else None
+        if renew is not None:
+            # T-46: the half session after a sign-in with the administrator's start secret.
+            erg, token = await run_in_threadpool(auth._renew_password, request, b.get("new") or "",
+                                                 csrf=request.headers.get("x-csrf-token") or b.get("_csrf") or "")
+            if not erg:
+                raise HTTPException(erg.status, erg.message)
+            return _setup_answer(request, renew["id"], token, str(b.get("next") or ""))
         setup = auth._setup_user(request, "password") if auth.session_user(request) is None else None
         if setup is not None:
             # T-34: the setup pass after a sign-in link — a half session that may set exactly this.
@@ -1621,12 +1680,7 @@ def build_router(auth) -> APIRouter:
         with a stolen session cookie the name or the address could otherwise be bent over,
         and the reset link would then go to the thief. An account without any factor (purely federated)
         depends on the age of the sign-in. No API key (`require_session`)."""
-        u = auth.require_session(request)
-        if auth.stepup_options(u):
-            return auth.require_mfa(request)
-        if not auth.login_fresh(request, u):
-            raise HTTPException(403, auth.t("api.stepup_relogin"))
-        return u
+        return auth._require_fresh(request)
 
     if cfg.self_service_username_change:
         @r.post("/auth/account/username")
@@ -1961,6 +2015,9 @@ def build_router(auth) -> APIRouter:
         @r.post("/auth/apikeys")
         async def apikeys_create(request: Request):
             u = _only_with_session(request)
+            # B-12: a key is a second way in that carries the account's roles for months — only from a
+            # fresh confirmation, so a stolen cookie cannot mint one (revoking needs no freshness).
+            u = auth._require_fresh(request, u)
             b = await auth.json_body(request)
             # `kind` decides what the key can do (R6-5): "automation" works alone, but
             # never carries the admin flag; "human" is valid only together with a session of the same
@@ -1992,6 +2049,11 @@ def build_router(auth) -> APIRouter:
         r.include_router(auth.admin_router(), prefix=cfg.admin_path)
 
     return r
+
+
+#: Polls of `/auth/qr/status` per address and minute (T-44). The page polls every two seconds — 30 a
+#: minute per device; four devices behind one address still fit.
+_QR_STATUS_PER_MINUTE = 120
 
 
 def _mail_base(auth, request) -> str:

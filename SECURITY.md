@@ -94,13 +94,22 @@ rate limit, open-redirect protection via `safe_next`). Even so: review it yourse
   tokens after the consent), `oauth_device_revoked` (`details={"grant_id": n, "client_id": …, "reason": …}`,
   `reason` one of `user`, `admin`, `client`, `account_disabled`) and `oauth_token_reuse`
   (`details={"grant_id": n, "client_id": …, "kind": "code"|"refresh"}` — a used code or refresh token came
-  back, the connection was revoked: the token has probably been copied). The full list of event names is `TinySesam.SECURITY_EVENTS`.
+  back, the connection was revoked: the token has probably been copied). New ways in that are no factor
+  of their own (H2, T-47): `signin_link_issued` (`details={"ttl_min": n, "by_operator": bool}` — a
+  sign-in link was issued for the account) and `device_signed_in` (`details={"method": "qr_login",
+  "ip": …, "agent": …}` — a device signed in through a cross-device approval); `password_changed`
+  carries `details={"by_operator": bool}` (`True`: an administrator set it). The full list of event names is `TinySesam.SECURITY_EVENTS`.
   The `details` keys and the reasons are English since
   0.22.0 (up to 0.21.x `verbleibend`, `alt`/`neu`, `anzahl`/`grund` with German reasons). That includes changes an administrator makes to someone
   else's account in the panel (password reset, issuing an API key, revoking a passkey) — write the
-  mail so it does not assume the holder did it. Apart from the hook, TinySesam sends one mail itself
-  when a mailer is configured: a notice to the (verified) address of an account that got locked by
-  failed sign-in attempts (ASVS 6.3.5; opt-out `notify_login_failures=False`). Send your mails from
+  mail so it does not assume the holder did it. Apart from the hook, TinySesam sends two kinds of
+  mail itself when a mailer is configured, both only to a verified address and without a link: a
+  notice to an account that got locked by failed sign-in attempts (ASVS 6.3.5; opt-out
+  `notify_login_failures=False`), and since H2 a notice about **new access** (T-47, NIST SP 800-63B-4
+  §4.1.2.1; opt-out `notify_new_access=False`) for `passkey_added`, `totp_enabled`, `pin_set`,
+  `api_key_created`, `device_signed_in`, `signin_link_issued`, `password_changed` by an administrator,
+  `oauth_device_connected` and `oauth_token_reuse` — at most one per account and event a minute. The
+  same events appear on the account page under "Recent activity". Send your other mails from
   the hook (ideally via a queue — it runs synchronously in the request). An exception in the hook
   never undoes the change, but lands in the security log.
 - **A TOTP code is valid exactly once — including the setup code.** The code that confirms the

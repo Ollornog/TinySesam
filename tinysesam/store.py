@@ -69,6 +69,10 @@ CREATE TABLE IF NOT EXISTS users (
     mail_attempt_from INTEGER,
     name_audit_from   INTEGER,
     mail_audit_from   INTEGER,
+    -- 1 = the password was set by an administrator (panel: new account or reset) and is a start
+    -- secret only (T-46, ASVS 6.4.1): the next password sign-in stays half until the holder chose an
+    -- own one. Any password the holder sets clears it (`TinySesam.set_password`).
+    password_must_change INTEGER NOT NULL DEFAULT 0,
     -- From which federated source does the name originate ('oidc', 'saml', 'ldap')? Set when the
     -- source creates the account; NULL = assigned by the operator, chosen by the person or data from before
     -- this column. A name from one source says nothing about who is called that in ANOTHER:
@@ -896,7 +900,10 @@ class Store:
     #: 17 — the OAuth 2.1 authorization server (T-36, ADR-11): tables `oauth_client`, `oauth_request`,
     #:      `oauth_code`, `oauth_grant`, `oauth_token`. Additive; an older version leaves them in place and
     #:      simply does not know the routes — connected devices stop working until the update is back.
-    SCHEMA_VERSION = 17
+    #: 18 — `users.password_must_change` (T-46): a password set by an administrator is a start secret.
+    #:      Additive; an older version ignores the column — the admin's password then simply stays
+    #:      valid as before (the marker is enforced again after the update is back).
+    SCHEMA_VERSION = 18
 
     #: Old table name → new table name (schema 16).
     RENAMED_TABLES = {"namensbindung": "name_binding", "oidc_sitzung": "oidc_session",
@@ -1090,7 +1097,9 @@ class Store:
                       ("name_self_chosen", "INTEGER NOT NULL DEFAULT 0"),
                       # NULL for existing data; where the origin is proven, backfilled once below
                       # (`NAME_SOURCE_BACKFILLED`, attack round 2026-09-26).
-                      ("name_source", "TEXT")],
+                      ("name_source", "TEXT"),
+                      # 0 for existing data: no password counts as a start secret after the update (T-46).
+                      ("password_must_change", "INTEGER NOT NULL DEFAULT 0")],
             # NULL: never logged in under a different name yet (G5); arises at the next login.
             "federated_identity": [("directory_name_folded", "TEXT")],
             # 0 for existing data: every present row is a completed attempt (G9).
@@ -2750,6 +2759,15 @@ class Store:
         would otherwise both read, both write, and the time would be the later one."""
         return self._exec("UPDATE users SET first_login_at=? WHERE id=? AND first_login_at IS NULL",
                           (now, user_id)).rowcount > 0
+
+    def set_password_must_change(self, user_id: int, value: bool) -> None:
+        """Mark the password as a start secret set by an administrator (T-46) — or clear the mark."""
+        self._exec("UPDATE users SET password_must_change=? WHERE id=?", (1 if value else 0, user_id))
+
+    def password_must_change(self, user_id) -> bool:
+        """Is the account's password a start secret that has to be replaced at the next sign-in?"""
+        row = self._one("SELECT password_must_change FROM users WHERE id=?", (user_id,))
+        return bool(row and row["password_must_change"])
 
     def set_mfa_enroll_until(self, user_id: int, until: Optional[int]) -> None:
         """Open the enrollment window (timestamp) or close it (None)."""

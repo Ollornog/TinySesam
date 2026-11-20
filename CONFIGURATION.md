@@ -144,6 +144,7 @@ individual ones can be overridden via `**overrides`.
 |---|---|---|---|
 | `qr_login_enabled` | `bool` | `False` | A device without a session shows a QR code and a short code on the login page; a device on which the user is already signed in scans it (or types the code), sees which device and IP ask, and approves. The new device then gets its own session. Counts as factor `magic`: the second-factor rule of the sign-in link applies (`magiclink_require_second_factor`). No mailer needed. The QR code needs `base_url` (absolute address) and the extra `[qr]`; without either, only the short code is shown. |
 | `qr_login_ttl_sec` | `int` | `120` | validity of a cross-device request (single use) |
+| `qr_login_require_second_factor` | `bool` | `True` | Hardening against consent phishing (T-44, RFC 10027 §6.1): the approval of a cross-device request is allowed only for an account that has a second factor (TOTP or passkey) — then the new device has to present it as well (`magiclink_require_second_factor`), and an approval that was talked out of the account holder gives a half sign-in at most. An account without one would be taken over completely by one approved request. `False` = accounts without a second factor may approve as well (number matching and a fresh confirmation still apply). |
 
 ## Self-service: address and username (PO decision 2026-09-25)
 
@@ -168,6 +169,7 @@ individual ones can be overridden via `**overrides`.
 | `smtp_ca_file` | `str` | `""` | own CA (PEM) for the relay; empty = system CAs. Verification always happens |
 | `mail_subject_prefix` | `str` | `""` | optional subject prefix, e.g. "[MyApp] " |
 | `notify_login_failures` | `bool` | `True` | Notify the owner when their account is locked because of failed attempts (ASVS 6.3.5, B1-12). Only works with delivery configured and only to an ASSIGNED address; at most one notice per account and lock window. Opt-out: False. |
+| `notify_new_access` | `bool` | `True` | Notify the owner by mail about NEW access to their account (T-47, NIST SP 800-63B-4 §4.1.2.1): a new factor (passkey, TOTP, PIN), a new API key, a device signed in by QR approval, a sign-in link issued for the account, a password set by an administrator, a connected OAuth program and a refresh token caught being reused. Only with delivery configured and only to a verified address; at most one mail per account and event a minute. The same events always reach `on_security_event` and the account page's "Recent activity". Opt-out: False. |
 
 ## TOTP (2FA on top of password/OIDC; passkeys are already phishing-resistant)
 
@@ -198,7 +200,8 @@ individual ones can be overridden via `**overrides`.
 | Field | Type | Default | Meaning |
 |---|---|---|---|
 | `stepup_max_age_sec` | `int` | `900` | 15 min; also limits creating the FIRST factor (measured from login there) |
-| `admin_require_mfa` | `bool` | `False` | admin panel + require_admin additionally demand step-up MFA |
+| `admin_require_mfa` | `bool` | `True` | The admin panel and `require_admin` additionally demand a fresh confirmation (T-45, ASVS 7.5.3/8.4.2): an old admin session cannot set passwords, issue sign-in links or grant rights without confirming again. Default `True` since H2 (before: `False`). An admin without a second factor confirms with the password; an account that has nothing to confirm with (purely federated) signs in again. `False` = the old behaviour (`config_check` warns). |
+| `admin_password_must_change` | `bool` | `True` | A password set by an administrator (panel: new account or reset) is a start secret, not the account's password (T-46, ASVS 6.4.1): the next password sign-in stays half until the holder has chosen an own one (the page `/auth/setup`). `False` = the admin's password stays. |
 
 ## Sessions (server-side, revocable)
 
@@ -336,4 +339,4 @@ individual ones can be overridden via `**overrides`.
 
 ---
 
-185 fields, generated from `tinysesam/config.py`.
+188 fields, generated from `tinysesam/config.py`.

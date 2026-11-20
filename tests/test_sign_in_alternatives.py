@@ -215,7 +215,10 @@ assert eve.post(f"{P}/{bob}/signin-link", json={}).status_code == 200
 ok("an owner's link only from an owner; another admin may issue for normal accounts")
 
 # Not for a plain user, not for a guest.
-bobc = signed_in(app, "bob", "a-new-long-pw-123")
+# (bob's password above came from the admin — a start secret since T-46, his sign-in stays half until he
+# chooses his own; a plain account with its own password is the case here.)
+auth.create_user("plain", password="plainpw-12345")
+bobc = signed_in(app, "plain", "plainpw-12345")
 assert bobc.post(f"{P}/{bob}/signin-link", json={}).status_code == 403
 assert TestClient(app).post(f"{P}/{bob}/signin-link", json={}).status_code in (401, 403)
 ok("only admins issue links")
@@ -262,7 +265,11 @@ ok("panel button and route only with magiclink_enabled")
 # =====================================================================================
 # 3) Cross-device sign-in (QR code)
 # =====================================================================================
-auth, app = build(magiclink_enabled=False, qr_login_enabled=True, apikey_enabled=True)
+# The mechanics of the request with bob, an account without a second factor: that needs the switch
+# `qr_login_require_second_factor=False` since H2 (T-44) — the default refusal and the number
+# matching are measured in tests/test_h2_hardening.py.
+auth, app = build(magiclink_enabled=False, qr_login_enabled=True, apikey_enabled=True,
+                  qr_login_require_second_factor=False)
 auth.ensure_admin("admin", "adminpw12345")
 auth.create_user("bob", password="bobpw12345")
 auth.create_user("tina", password="tinapw12345")
@@ -281,7 +288,12 @@ def start(client):
     assert r.status_code == 200, r.text[:300]
     code = re.search(r"name=code value='([A-Z0-9]{8})'", r.text).group(1)
     secret = re.search(r"name=secret value='([\w\-]+)'", r.text).group(1)
+    # T-44: the number the approving device has to type stands only on this screen.
+    MATCH[code] = re.search(r"id=qrmatch>(\d\d)<", r.text).group(1)
     return code, secret, r.text
+
+
+MATCH: dict = {}
 
 
 def state(client, code, secret):
@@ -302,14 +314,14 @@ ok("before the approval: status pending, finishing gives no session")
 # The approving side needs a FULL interactive session.
 r = TestClient(app).get(f"/auth/qr/approve?code={code}", follow_redirects=False)
 assert r.status_code == 303 and r.headers["location"].startswith("/auth/login?next="), r.headers.get("location")
-assert TestClient(app).post("/auth/qr/approve", data={"code": code}).status_code == 401
+assert TestClient(app).post("/auth/qr/approve", data={"code": code, "match": MATCH.get(code, "")}).status_code == 401
 key = auth.create_api_key(bob, name="ci")["key"]
-r = TestClient(app).post("/auth/qr/approve", data={"code": code}, headers={"Authorization": f"Bearer {key}"})
+r = TestClient(app).post("/auth/qr/approve", data={"code": code, "match": MATCH.get(code, "")}, headers={"Authorization": f"Bearer {key}"})
 assert r.status_code == 401, r.status_code
 half = TestClient(app)
 r = half.post("/auth/login", data={"username": "tina", "password": "tinapw12345"}, follow_redirects=False)
 assert r.headers["location"].startswith("/auth/totp"), r.headers.get("location")
-assert half.post("/auth/qr/approve", data={"code": code}).status_code == 401
+assert half.post("/auth/qr/approve", data={"code": code, "match": MATCH.get(code, "")}).status_code == 401
 assert state(new, code, secret) == "pending"
 ok("approval refused without session, with an API key and from a half session")
 
@@ -323,9 +335,9 @@ assert state(thief, code, "x" * 43) == "invalid"
 r = thief.post("/auth/qr/finish", data={"code": code, "secret": "x" * 43}, follow_redirects=False)
 assert r.status_code == 400 and who(thief) is None
 
-r = phone.post("/auth/qr/approve", data={"code": code})
+r = phone.post("/auth/qr/approve", data={"code": code, "match": MATCH.get(code, "")})
 assert r.status_code == 200 and "approved" in r.text.lower(), r.text[:300]
-assert phone.post("/auth/qr/approve", data={"code": code}).status_code == 400
+assert phone.post("/auth/qr/approve", data={"code": code, "match": MATCH.get(code, "")}).status_code == 400
 assert state(new, code, secret) == "approved"
 ok("approval works once; a second approval is refused")
 
@@ -383,7 +395,7 @@ ok("expired request: invalid on both sides")
 # Approved, then the account is disabled before the new device collects: nothing.
 dev = TestClient(app)
 code5, secret5, _ = start(dev)
-assert phone.post("/auth/qr/approve", data={"code": code5}).status_code == 200
+assert phone.post("/auth/qr/approve", data={"code": code5, "match": MATCH.get(code5, "")}).status_code == 200
 auth.set_disabled(bob, True)
 r = dev.post("/auth/qr/finish", data={"code": code5, "secret": secret5}, follow_redirects=False)
 assert r.status_code == 400 and who(dev) is None
@@ -400,7 +412,7 @@ tphone.cookies.set(auth.session_cookie_name, full)
 assert who(tphone) == "tina"
 dev = TestClient(app)
 code6, secret6, _ = start(dev)
-assert tphone.post("/auth/qr/approve", data={"code": code6}).status_code == 200
+assert tphone.post("/auth/qr/approve", data={"code": code6, "match": MATCH.get(code6, "")}).status_code == 200
 r = dev.post("/auth/qr/finish", data={"code": code6, "secret": secret6}, follow_redirects=False)
 assert r.status_code == 303 and r.headers["location"].startswith("/auth/totp"), r.headers.get("location")
 assert who(dev) is None

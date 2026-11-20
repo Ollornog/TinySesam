@@ -157,6 +157,10 @@ def build_admin_router(auth) -> APIRouter:
             # reply as there, instead of a 500.
             raise HTTPException(409, auth.t("api.email_taken" if getattr(e, "field", None) == "email"
                                             else "api.user_exists"))
+        if b.get("password") and not b.get("is_service") and cfg.admin_password_must_change:
+            # T-46 (ASVS 6.4.1): the admin chose this password, so it is a start secret — the first
+            # password sign-in asks for an own one.
+            auth.store.set_password_must_change(uid, True)
         log(request, "user_create", f"{username} service={bool(b.get('is_service'))}")
         return {"id": uid}
 
@@ -189,7 +193,12 @@ def build_admin_router(auth) -> APIRouter:
                                       email=destination["email"] if destination else None, api=True)
         if defect:
             raise HTTPException(400, defect)   # B2-13: the admin reset obeys the rule as well
-        auth.set_password(uid, b["password"])
+        # `by_operator`: a start secret (T-46) — the next password sign-in asks for an own password —
+        # and the holder learns of it (T-47: event, mail, and the line below on the account page).
+        auth.set_password(uid, b["password"], by_operator=True)
+        if destination is not None:
+            auth.audit("password_set_by_admin", destination["username"],
+                       detail=f"must_change={int(bool(cfg.admin_password_must_change))}")
         auth.store.delete_user_sessions(uid)   # admin reset → end all sessions (force re-login)
         # Newly bound: failed password attempts and the series block (B2-6) end here — the series
         # COMPLETELY, unlike the self-service reset: here the operator decides, not whoever
@@ -720,7 +729,11 @@ document.getElementById("applink").textContent="← "+L.app;
 document.getElementById("outlink").textContent=L.logout;
 const TABS=[["users",L["tab.users"]],["sessions",L["tab.sessions"]]].concat(OAUTH?[["devices",L["tab.devices"]]]:[]).concat([["security",L["tab.security"]],["audit",L["tab.audit"]]]);
 let cur="users";
-const g=(u)=>fetch(B+u).then(r=>r.json());
+// H2 (T-45): the panel demands a fresh confirmation (`admin_require_mfa`). A tab left open past the
+// window gets 403 + X-TinySesam-Reauth — go to the reauth page and come back here instead of failing.
+const reauth=r=>{const re=r.headers&&r.headers.get("X-TinySesam-Reauth");
+  if(r.status===403&&re){location.href=re+"?next="+encodeURIComponent(location.pathname);return true}return false};
+const g=(u)=>fetch(B+u).then(r=>reauth(r)?new Promise(()=>{}):r.json());
 function tsCsrf(){return (document.cookie.match(/(?:^|; )__CSRFCK__=([^;]+)/)||[])[1]||''}
 // A rejection (4xx/5xx) ALWAYS comes back as {detail:"<text>"}, even without a JSON body. Before,
 // p() only saw the body: savesec reported "saved" although the server said 400, pw "password
@@ -728,6 +741,7 @@ function tsCsrf(){return (document.cookie.match(/(?:^|; )__CSRFCK__=([^;]+)/)||[
 const p=(u,b)=>fetch(B+u,{method:"POST",headers:{"Content-Type":"application/json","X-CSRF-Token":tsCsrf()},body:JSON.stringify(b||{})})
   .then(async r=>{let j=null;try{j=await r.json()}catch(e){}
     if(r.ok)return j||{};
+    if(reauth(r))return new Promise(()=>{});  // the page is leaving — no "done", no error
     return {detail:(j&&typeof j.detail==="string"&&j.detail)||L["err.generic"]}});
 // Show the reason for a rejection — true if there was one. Every action that calls p() goes through
 // here (a test pins that), so the next new action does not fail silently again.

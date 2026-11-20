@@ -565,18 +565,22 @@ SIGN_IN_FLOW = {"/auth/login", "/auth/totp", "/auth/pin", "/auth/magic/request",
 #: Demand fresh confirmation (require_mfa): expired session → 403 + X-TinySesam-Reauth.
 STEPUP = {"/auth/totp/disable", "/auth/totp/recovery", "/auth/pin/set", "/auth/pin/disable",
           "/auth/passkey/delete", "/auth/sessions/revoke",   # sessions/revoke: F-09
-          "/auth/account/username", "/auth/account/email"}   # self-service (2026-09-25)
+          "/auth/account/username", "/auth/account/email",   # self-service (2026-09-25)
+          # B-12 (H2): a new API key is new, lasting access — fresh confirmation like a new factor.
+          "/auth/apikeys"}
 #: The old password is the confirmation (throttled, locked, logged — R4-10).
 PASSWORD = {"/auth/password"}
-#: Setting up a factor: only with an interactive session, never with an API key (R3-1/R3-3).
+#: Setting up a factor: only with an interactive session, never with an API key (R3-1/R3-3) — and
+#: since B-12 (H2) a FULL session only with a fresh confirmation (the setup pass and the mandatory
+#: setup in a chain are half sessions, fresh from the sign-in, and measured in their own suites).
 ONLY_SESSION = {"/auth/totp/setup/start", "/auth/totp/setup", "/auth/passkey/register/begin",
                "/auth/passkey/register/finish"}
 #: The FIRST password (B-10): fresh step-up if the account has a factor, otherwise the age of the sign-in
 #: (`set_initial_password`); never an API key, never over an existing password (that is /auth/password).
 FIRST_PASSWORD = {"/auth/password/set"}
 #: Known open — with justification. If one of them gets bound, it belongs in STEPUP.
-OPEN = {"/auth/apikeys": "key issuance without step-up (reported as H-18)",
-         "/auth/apikeys/{key_id}/revoke": "key revocation without step-up (reported as H-18)"}
+OPEN = {"/auth/apikeys/{key_id}/revoke": "key revocation without step-up (reported as H-18): "
+                                         "taking access away needs no confirmation"}
 
 # From the router itself, not from `app6.routes`: newer FastAPI versions store included
 # routers there as an object without a path — the list would be empty and the check silently green.
@@ -616,6 +620,10 @@ for path in sorted(STEPUP & _post6):
 for path in sorted(ONLY_SESSION & _post6):
     r = TestClient(app6).post(path, headers={**JSON, "X-API-Key": key6}, **_payload.get(path, {}))
     assert r.status_code in (401, 403), f"{path}: API key sets up a factor ({r.status_code})"
+    # B-12: a stolen, old session cookie does not become a factor either.
+    r = _stale_client().post(path, headers=JSON, **_payload.get(path, {}))
+    assert r.status_code == 403 and r.headers.get("X-TinySesam-Reauth"), \
+        f"{path}: an expired confirmation sets up a factor ({r.status_code}) — B-12 step-up missing"
 for path in sorted(FIRST_PASSWORD & _post6):
     r = TestClient(app6).post(path, headers={**JSON, "X-API-Key": key6}, json={"new": "New1234567890!"})
     assert r.status_code == 403, f"{path}: API key sets a password ({r.status_code})"

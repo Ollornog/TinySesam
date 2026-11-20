@@ -4,6 +4,57 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+### Security — hardening, part 2 (H2, from the security review of 2026-11-20)
+
+- **New access only from a fresh confirmation (B-12, ASVS 7.5.1, NIST SP 800-63B-4 §4.1.2.1).** With only a session
+  cookie, registering a passkey, setting up TOTP, creating an API key (`POST /auth/apikeys`), approving a
+  cross-device sign-in and allowing an OAuth program went through — a stolen cookie became a passkey that outlives
+  sign-out and password change, a 90-day key with the account's roles, or a TOTP that locks the holder out. All of
+  them now go through one bolt (`_require_fresh`): an interactive session (never an API key) whose last confirmation
+  is younger than `stepup_max_age_sec` — or, for an account with nothing to confirm with (purely federated, passkey
+  only), whose sign-in is. A fresh sign-in counts as fresh, so right after signing in nothing more is asked. Refusal:
+  403 with `X-TinySesam-Reauth` (the account page, the panel and the TOTP, approval and consent pages go to the
+  reauth page and come back), or `api.stepup_relogin`. **Not asked again:** the setup pass after a sign-in link
+  (T-34) and the mandatory TOTP setup in a chain — their half session is fresh from the sign-in and can set up only
+  what is offered. A guard in `tests/test_h2_hardening.py` pins that every route creating new access calls the bolt.
+- **Cross-device sign-in hardened against consent phishing (T-44, RFC 10027 §6.1).** *Number matching:* the new
+  device shows a two-digit number, the approving device has to type it — whoever was sent only the approval link
+  does not see it; a wrong number voids the request at once (one guess). The approval page carries a warning ("only
+  approve if YOU stand in front of the other device"), wants a fresh confirmation (B-12) and, by default, an account
+  with a second factor (new switch `qr_login_require_second_factor`, see "Changed"). `/auth/qr/status` has its own
+  throttle (120 polls per address and minute). The holder learns of the signed-in device (T-47).
+- **Admin-set password is a start secret (T-46, ASVS 6.4.1).** A password the administrator sets in the panel (new
+  account or reset) signs in only halfway: the half session lands on `/auth/setup` and asks for an own password
+  (rule as everywhere, not the admin's one); only then is the sign-in complete. New field
+  `admin_password_must_change` (default `True`); schema 18 adds `users.password_must_change` (additive — an older
+  version ignores it, the admin's password then simply stays valid). `TinySesam.set_password(…, by_operator=True)`
+  is the panel's path; every other call is the holder's own password and clears the mark.
+- **The holder learns of new access (T-47, NIST SP 800-63B-4 §4.1.2.1).** New events for `on_security_event`:
+  `signin_link_issued` (`ttl_min`, `by_operator`) and `device_signed_in` (`method`, `ip`, `agent`);
+  `password_changed` carries `by_operator`. With a mailer TinySesam itself mails the verified address about new
+  access — new passkey, TOTP, PIN, API key, QR-signed-in device, issued sign-in link, password set by an
+  administrator, connected OAuth program, refresh-token reuse — at most one mail per account and event a minute, no
+  link in it (new field `notify_new_access`, default `True`). The account page's "Recent activity" shows the
+  admin's password reset (`password_set_by_admin`, "by an administrator") next to the link and QR sign-in lines.
+
+### Changed — H2 defaults (behaviour of existing installations)
+
+- **`admin_require_mfa` is now `True` (T-45, ASVS 7.5.3/8.4.2).** The admin panel and `require_admin` want a fresh
+  confirmation: an admin session older than `stepup_max_age_sec` (15 min) goes to the reauth page first (password,
+  TOTP or PIN) — an old session can no longer set passwords, issue sign-in links for any account or grant admin
+  rights unasked. An admin with nothing to confirm with (purely federated) is not locked out: a fresh sign-in counts,
+  and the reauth page now says "sign out and sign in again" instead of "set up a method". The panel follows the
+  reauth hint by itself. **Way back:** `admin_require_mfa=False` (then `config_check` warns).
+- **`qr_login_require_second_factor=True`:** only an account with TOTP or a passkey may approve a cross-device
+  sign-in — the new device then has to present that factor too (`magiclink_require_second_factor`), so an approval
+  talked out of the holder gives a half sign-in at most. **Way back:** `qr_login_require_second_factor=False`
+  (number matching and freshness still apply).
+- **`admin_password_must_change=True`** (above) and **`notify_new_access=True`** (above; without a mailer nothing
+  changes). Way back: set them to `False`.
+- `POST /auth/qr/approve` wants the form field `match`; an own approval page must send it.
+  `LoginResult.next_factor` can be `"password_change"` (the half session owes an own password; `next_url` points
+  to `/auth/setup`, which is now mounted wherever passwords are on).
+
 ### Security — hardening, part 1 (H1, from the security review of 2026-11-20)
 
 - **SAML: a response can no longer be replayed (ASVS 6.8.3, B-11).** The AuthnRequest ID lived only in the browser's

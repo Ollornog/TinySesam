@@ -668,7 +668,7 @@
       "tier": "A"
     },
     "set_password": {
-      "sig": "(user_id, password)",
+      "sig": "(user_id, password, *, by_operator: 'bool' = False)",
       "tier": "A"
     },
     "set_pin": {
@@ -840,7 +840,7 @@
     },
     "SECURITY_EVENTS": {
       "tier": "A",
-      "value": "('password_changed', 'pin_set', 'pin_disabled', 'totp_enabled', 'totp_disabled', 'recovery_codes_generated', 'recovery_code_used', 'passkey_added', 'passkey_removed', 'api_key_created', 'api_key_revoked', 'api_keys_revoked', 'email_changed', 'username_changed', 'oauth_device_connected', 'oauth_device_revoked', 'oauth_token_reuse')"
+      "value": "('password_changed', 'pin_set', 'pin_disabled', 'totp_enabled', 'totp_disabled', 'recovery_codes_generated', 'recovery_code_used', 'passkey_added', 'passkey_removed', 'api_key_created', 'api_key_revoked', 'api_keys_revoked', 'email_changed', 'username_changed', 'oauth_device_connected', 'oauth_device_revoked', 'oauth_token_reuse', 'signin_link_issued', 'device_signed_in')"
     },
     "TOKEN_PATHS": {
       "tier": "B",
@@ -865,6 +865,14 @@
       "keys": [
         "count",
         "reason"
+      ],
+      "tier": "A"
+    },
+    "device_signed_in": {
+      "keys": [
+        "agent",
+        "ip",
+        "method"
       ],
       "tier": "A"
     },
@@ -913,7 +921,9 @@
       "tier": "A"
     },
     "password_changed": {
-      "keys": [],
+      "keys": [
+        "by_operator"
+      ],
       "tier": "A"
     },
     "pin_disabled": {
@@ -933,6 +943,13 @@
     "recovery_codes_generated": {
       "keys": [
         "count"
+      ],
+      "tier": "A"
+    },
+    "signin_link_issued": {
+      "keys": [
+        "by_operator",
+        "ttl_min"
       ],
       "tier": "A"
     },
@@ -993,12 +1010,16 @@
       "field": "bool = True",
       "tier": "A"
     },
+    "admin_password_must_change": {
+      "field": "bool = True",
+      "tier": "A"
+    },
     "admin_path": {
       "field": "str = '/auth/admin'",
       "tier": "A"
     },
     "admin_require_mfa": {
-      "field": "bool = False",
+      "field": "bool = True",
       "tier": "A"
     },
     "admin_ui_enabled": {
@@ -1345,6 +1366,10 @@
       "field": "bool = True",
       "tier": "A"
     },
+    "notify_new_access": {
+      "field": "bool = True",
+      "tier": "A"
+    },
     "oauth_access_token_ttl_sec": {
       "field": "int = 3600",
       "tier": "B"
@@ -1483,6 +1508,10 @@
     },
     "qr_login_enabled": {
       "field": "bool = False",
+      "tier": "A"
+    },
+    "qr_login_require_second_factor": {
+      "field": "bool = True",
       "tier": "A"
     },
     "qr_login_ttl_sec": {
@@ -2377,7 +2406,8 @@
     "POST /auth/qr/approve": {
       "keys": [
         "form:_csrf",
-        "form:code"
+        "form:code",
+        "form:match"
       ],
       "tier": "B"
     },

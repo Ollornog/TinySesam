@@ -8,7 +8,7 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 ## Meilensteine
 
 * ☐ **[M-1](M-1-api-stable-1-0.md)** 1.0 — API stable enough for PyPI — 14/14 erledigt
-* ☐ **[M-2](M-2-after-1-0.md)** After 1.0 — keeping the published package maintained — 28/49 erledigt
+* ☐ **[M-2](M-2-after-1-0.md)** After 1.0 — keeping the published package maintained — 33/50 erledigt
 * ☑ **[M-3](M-3-gate-in-front-of-third-party-apps.md)** Gate in front of third-party apps — fast, sign in once, sign out cleanly — 8/8 erledigt
 
 ## Aufgaben
@@ -56,10 +56,10 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 * ☑ **[T-41](T-41-security-md-en-de-against-the-code-totp-secrets-ar.md)** SECURITY.md (en/de) against the code: TOTP secrets are encrypted since 0.21.0 · M-2
 * ☑ **[T-42](T-42-supply-chain-image-cve-scan-openssf-scorecard-zizm.md)** Supply chain: image CVE scan, OpenSSF Scorecard, zizmor as a gate, CVE deadlines · M-2
 * ☑ **[T-43](T-43-home-network-and-plain-caddy-template-client-remot.md)** Home-network and plain Caddy template: client Remote-* headers measured · M-2
-* ☐ **[T-44](T-44-qr-cross-device-sign-in-harden-against-consent-phi.md)** QR / cross-device sign-in: harden against consent phishing · M-2
-* ☐ **[T-45](T-45-admin-panel-step-up-by-default-admin-require-mfa.md)** Admin panel: step-up by default (admin_require_mfa) · M-2
-* ☐ **[T-46](T-46-admin-set-password-must-not-become-the-permanent-p.md)** Admin-set password must not become the permanent password · M-2
-* ☐ **[T-47](T-47-notify-the-account-holder-about-new-access-link-is.md)** Notify the account holder about new access (link issued, new device, success after failures) · M-2
+* ☑ **[T-44](T-44-qr-cross-device-sign-in-harden-against-consent-phi.md)** QR / cross-device sign-in: harden against consent phishing · M-2
+* ☑ **[T-45](T-45-admin-panel-step-up-by-default-admin-require-mfa.md)** Admin panel: step-up by default (admin_require_mfa) · M-2
+* ☑ **[T-46](T-46-admin-set-password-must-not-become-the-permanent-p.md)** Admin-set password must not become the permanent password · M-2
+* ☑ **[T-47](T-47-notify-the-account-holder-about-new-access-link-is.md)** Notify the account holder about new access (link issued, new device, success after failures) · M-2
 * ☐ **[T-48](T-48-key-rotation-for-secrets-key-and-a-gate-signing-ke.md)** Key rotation for secrets_key, and a gate signing key of its own · M-2
 * ☐ **[T-49](T-49-oidc-max-age-auth-time-for-re-authentication.md)** OIDC: max_age / auth_time for re-authentication · M-2
 * ☐ **[T-50](T-50-session-lifetime-justify-against-nist-sp-800-63b-4.md)** Session lifetime: justify against NIST SP 800-63B-4, document parallel sessions · M-2
@@ -72,6 +72,7 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 * ☐ **[T-57](T-57-totp-accept-at-most-one-step-back-switch-totp-wind.md)** TOTP: accept at most one step back (switch totp_window) · M-2
 * ☐ **[T-58](T-58-caddy-templates-a-header-missing-from-the-auth-answer.md)** Caddy templates: a header missing from the auth answer reaches the app as placeholder text · M-2
 * ☐ **[T-60](T-60-oauth-for-services-client-credentials-private-key-jwt.md)** OAuth for services — client_credentials + private_key_jwt, pairing from T-32 · M-2
+* ☐ **[T-63](T-63-notify-the-holder-of-a-successful-sign-in-after-failed-attempts.md)** Notify the holder of a successful sign-in after failed attempts · M-2
 
 ## Fehler
 
@@ -86,7 +87,7 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 * ☑ **[B-9](B-9-no-recovery-codes-after-totp-setup-warning-wraps.md)** No recovery codes after the TOTP setup, and the warning on the account page wraps into the buttons · M-2
 * ☑ **[B-10](B-10-account-without-password-cannot-set-one.md)** An account without a password cannot set one — the account page demands the current password · M-2
 * ☑ **[B-11](B-11-a-saml-response-could-be-replayed-until-notonoraft.md)** A SAML response could be replayed until NotOnOrAfter · M-2
-* ☐ **[B-12](B-12-new-sign-in-factors-api-keys-and-qr-approval-witho.md)** New sign-in factors, API keys and QR approval without fresh confirmation · M-2
+* ☑ **[B-12](B-12-new-sign-in-factors-api-keys-and-qr-approval-witho.md)** New sign-in factors, API keys and QR approval without fresh confirmation · M-2
 
 ## Entscheidungen (ADR)
 
