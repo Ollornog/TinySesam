@@ -60,7 +60,8 @@ auth = TinySesam(demo_config(
 auth.set_resource_secret("gaeste", "2468", kind="pin", label="Guest area")
 
 
-app = FastAPI()
+# No /docs, /redoc, /openapi.json: FastAPI serves them without sign-in, and Swagger loads from a CDN.
+app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 app.include_router(auth.router())
 auth.install_error_pages(app)
 

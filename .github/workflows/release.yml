@@ -305,6 +305,21 @@ jobs:
           persist-credentials: false
       - name: Build the image, start it, check HEALTHCHECK and /healthz
         run: scripts/_image_probe.sh
+      # CVE scan of the image just built (H1, ASVS 15.2.1): pip-audit (audit.yml) sees the Python packages, not the
+      # OS packages of the python:*-slim base. Red on every finding of severity high or above that has a fix;
+      # exceptions only in .grype.yaml with an end date (SECURITY.md, "Vulnerable dependencies"), checked first.
+      # Grype's version is a constant of the pinned action; its vulnerability database is fetched fresh on purpose.
+      - name: Exceptions of the image scan within their deadline
+        run: python3 scripts/_grype_exceptions.py
+      - name: Scan the image for known vulnerabilities (Grype)
+        uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439  # v7.4.2
+        with:
+          image: tinysesam-probe:local
+          fail-build: true
+          severity-cutoff: high
+          only-fixed: true
+          output-format: table
+          config: .grype.yaml
 
   image:
     timeout-minutes: 30
@@ -414,7 +429,8 @@ jobs:
     runs-on: ubuntu-latest
     services:
       registry:
-        image: ${{ needs.rehearsal-targets.outputs.registry }}
+        # The value is checked for `@sha256:<64 hex>` in `rehearsal-targets`; zizmor cannot see that through the output.
+        image: ${{ needs.rehearsal-targets.outputs.registry }}  # zizmor: ignore[unpinned-images]
         ports:
           - "127.0.0.1:5000:5000"
     steps:

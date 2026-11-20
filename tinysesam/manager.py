@@ -102,6 +102,33 @@ class _DictHeaderLines:
         self.d[self._key_name(name) or name] = value
 
 
+#: The `hsts` values a browser understands (RFC 6797 §6.1): max-age, then optionally the two flags.
+_HSTS_RE = re.compile(r"max-age=\d{1,10}([ \t]*;[ \t]*includeSubDomains)?([ \t]*;[ \t]*preload)?", re.I)
+
+
+class _HSTSMiddleware:
+    """Adds `Strict-Transport-Security` to every HTTPS response (`install_https`, `https_mode='force'`).
+
+    Pure ASGI instead of `BaseHTTPMiddleware`: it only touches the start message, streaming
+    responses pass through unchanged. The scheme is the one the server determined — behind a TLS
+    proxy that is the forwarded one, as for the HTTPS redirect next to it."""
+
+    def __init__(self, app, value: str):
+        self.app, self.value = app, value
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") != "http" or scope.get("scheme") != "https":
+            return await self.app(scope, receive, send)
+
+        async def send_with_hsts(message):
+            if message.get("type") == "http.response.start":
+                from starlette.datastructures import MutableHeaders
+                MutableHeaders(scope=message).setdefault("Strict-Transport-Security", self.value)
+            await send(message)
+
+        return await self.app(scope, receive, send_with_hsts)
+
+
 def _dn_parts(value: str) -> list[str]:
     """Split a DN at the UNescaped commas (`cn=a\\,b,ou=x` has two parts, not three)."""
     parts, current, masked = [], [], False
@@ -403,7 +430,7 @@ class TinySesam:
         if config.saml_enabled and config.saml_idp_sso_url and config.saml_idp_x509cert:
             _demand("onelogin", "saml_enabled", "saml")
             from .saml_ import SAMLClient
-            self.saml = SAMLClient(config)
+            self.saml = SAMLClient(config, store=self.store)   # store: replay protection (H1)
         if config.oidc_enabled and config.oidc_issuer and config.oidc_client_id:
             _demand("authlib", "oidc_enabled", "oidc")
             from .oidc import OIDCClients, DEFAULT_CLIENT
@@ -7409,6 +7436,11 @@ class TinySesam:
             raise ConfigError("https_mode must be 'off', 'warn' or 'force' — anything else "
                              "counts as 'no redirect', so a typo silently switches the "
                              "HTTPS enforcement off")
+        # Browsers ignore an HSTS header they cannot parse — without a word. A typo would be a
+        # switch that looks set and protects nothing.
+        if not isinstance(config.hsts, str) or (config.hsts and not _HSTS_RE.fullmatch(config.hsts)):
+            raise ConfigError(f"hsts={config.hsts!r}: expected '' or 'max-age=<seconds>' with optional "
+                              "'; includeSubDomains' and '; preload'")
         # cookie_secure=False is right for local setups without a certificate and remains
         # allowed. Together with https_mode='force' it contradicts itself, though: the app then redirects
         # every request to HTTPS and still hands out the session cookie without the
@@ -7604,7 +7636,18 @@ class TinySesam:
         if self.cfg.https_mode == "force":
             from starlette.middleware.httpsredirect import HTTPSRedirectMiddleware
             app.add_middleware(HTTPSRedirectMiddleware)
+            self._install_hsts(app)
         return self.cfg.https_mode
+
+    def _install_hsts(self, app) -> None:
+        """`Strict-Transport-Security` (`config.hsts`) on every HTTPS response of the app — the
+        host app's own routes included, not only TinySesam's (ASVS 3.4.1). Part of
+        `install_https` with `https_mode='force'`.
+
+        Only on HTTPS: RFC 6797 §7.2 forbids the header over plain HTTP, and the redirect to HTTPS
+        carries none. `setdefault`, so that an app that sets its own value wins."""
+        if self.cfg.hsts:
+            app.add_middleware(_HSTSMiddleware, value=self.cfg.hsts)
 
     def _deny(self, request: Request) -> NoReturn:
         # HTML browser → redirect to login; otherwise (API/JSON) → 401

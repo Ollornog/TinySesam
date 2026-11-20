@@ -8,7 +8,7 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 ## Meilensteine
 
 * ☐ **[M-1](M-1-api-stable-1-0.md)** 1.0 — API stable enough for PyPI — 14/14 erledigt
-* ☐ **[M-2](M-2-after-1-0.md)** After 1.0 — keeping the published package maintained — 20/24 erledigt
+* ☐ **[M-2](M-2-after-1-0.md)** After 1.0 — keeping the published package maintained — 27/47 erledigt
 * ☑ **[M-3](M-3-gate-in-front-of-third-party-apps.md)** Gate in front of third-party apps — fast, sign in once, sign out cleanly — 8/8 erledigt
 
 ## Aufgaben
@@ -49,6 +49,27 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 * ☑ **[T-34](T-34-admin-creates-accounts-link-sign-in-sets-up-the-chain.md)** Admin creates accounts, a link signs them in: setup pass and alternatives in the factor chain · M-2
 * ☑ **[T-35](T-35-own-dialogs-instead-of-browser-system-dialogs.md)** Own dialogs instead of the browser's system dialogs, with a copy button · M-2
 * ☑ **[T-37](T-37-home-network-ip-only-template.md)** Home network: template for IP only, with a clear recommendation for a domain · M-2
+* ☑ **[T-38](T-38-gateway-no-docs-redoc-openapi-json-without-sign-in.md)** Gateway: no /docs, /redoc, /openapi.json without sign-in · M-2
+* ☑ **[T-39](T-39-hsts-in-the-library-https-mode-force-and-in-every.md)** HSTS in the library (https_mode=force) and in every proxy template · M-2
+* ☑ **[T-40](T-40-password-blocklist-the-10-000-most-common-password.md)** Password blocklist: the 10,000 most common passwords shipped (ASVS 6.2.4) · M-2
+* ☑ **[T-41](T-41-security-md-en-de-against-the-code-totp-secrets-ar.md)** SECURITY.md (en/de) against the code: TOTP secrets are encrypted since 0.21.0 · M-2
+* ☑ **[T-42](T-42-supply-chain-image-cve-scan-openssf-scorecard-zizm.md)** Supply chain: image CVE scan, OpenSSF Scorecard, zizmor as a gate, CVE deadlines · M-2
+* ☑ **[T-43](T-43-home-network-and-plain-caddy-template-client-remot.md)** Home-network and plain Caddy template: client Remote-* headers measured · M-2
+* ☐ **[T-44](T-44-qr-cross-device-sign-in-harden-against-consent-phi.md)** QR / cross-device sign-in: harden against consent phishing · M-2
+* ☐ **[T-45](T-45-admin-panel-step-up-by-default-admin-require-mfa.md)** Admin panel: step-up by default (admin_require_mfa) · M-2
+* ☐ **[T-46](T-46-admin-set-password-must-not-become-the-permanent-p.md)** Admin-set password must not become the permanent password · M-2
+* ☐ **[T-47](T-47-notify-the-account-holder-about-new-access-link-is.md)** Notify the account holder about new access (link issued, new device, success after failures) · M-2
+* ☐ **[T-48](T-48-key-rotation-for-secrets-key-and-a-gate-signing-ke.md)** Key rotation for secrets_key, and a gate signing key of its own · M-2
+* ☐ **[T-49](T-49-oidc-max-age-auth-time-for-re-authentication.md)** OIDC: max_age / auth_time for re-authentication · M-2
+* ☐ **[T-50](T-50-session-lifetime-justify-against-nist-sp-800-63b-4.md)** Session lifetime: justify against NIST SP 800-63B-4, document parallel sessions · M-2
+* ☐ **[T-51](T-51-sign-in-link-lifetimes-magic-link-10-min-admin-lin.md)** Sign-in link lifetimes: magic link 10 min, admin link at most 24–72 h · M-2
+* ☐ **[T-52](T-52-response-hardening-for-l3-coop-csp-reporting-clear.md)** Response hardening for L3: COOP, CSP reporting, Clear-Site-Data, textContent, /healthz version · M-2
+* ☐ **[T-53](T-53-gate-token-explicit-type-and-separate-key-before-t.md)** Gate token: explicit type and separate key before the OAuth AS signs JWTs · M-2
+* ☐ **[T-54](T-54-vault-bind-ciphertexts-to-their-row-aad-with-user.md)** Vault: bind ciphertexts to their row (AAD with user_id and column) · M-2
+* ☐ **[T-55](T-55-slsa-build-l3-and-an-sbom-for-wheel-and-sdist.md)** SLSA Build L3 and an SBOM for wheel and sdist · M-2
+* ☐ **[T-56](T-56-webauthn-user-verification-at-registration-random.md)** WebAuthn: user verification at registration, random user handle · M-2
+* ☐ **[T-57](T-57-totp-accept-at-most-one-step-back-switch-totp-wind.md)** TOTP: accept at most one step back (switch totp_window) · M-2
+* ☐ **[T-58](T-58-caddy-templates-a-header-missing-from-the-auth-answer.md)** Caddy templates: a header missing from the auth answer reaches the app as placeholder text · M-2
 
 ## Fehler
 
@@ -62,6 +83,8 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 * ☑ **[B-8](B-8-voluntary-totp-setup-does-not-lead-on.md)** Voluntary TOTP setup does not lead on — the page stays on "2FA active" · M-2
 * ☑ **[B-9](B-9-no-recovery-codes-after-totp-setup-warning-wraps.md)** No recovery codes after the TOTP setup, and the warning on the account page wraps into the buttons · M-2
 * ☑ **[B-10](B-10-account-without-password-cannot-set-one.md)** An account without a password cannot set one — the account page demands the current password · M-2
+* ☑ **[B-11](B-11-a-saml-response-could-be-replayed-until-notonoraft.md)** A SAML response could be replayed until NotOnOrAfter · M-2
+* ☐ **[B-12](B-12-new-sign-in-factors-api-keys-and-qr-approval-witho.md)** New sign-in factors, API keys and QR approval without fresh confirmation · M-2
 
 ## Entscheidungen (ADR)
 

@@ -53,8 +53,8 @@ class TinySesamConfig:
     password_enabled: bool = True     # offer password login at all (off = SSO/passkey/PIN only)
     # Own blocklist for new passwords: path to a text file, one password per line
     # (UTF-8, lines in another encoding count as Latin-1; `#` at the start of a line = comment).
-    # Complements the small built-in list — if you want to check against the common leak lists (e.g. the
-    # 100,000 most frequent), put them here. Offline: TinySesam asks no third-party
+    # Complements the built-in list (the 10,000 most frequent passwords of 8+ characters, since H1) — for a
+    # bigger leak list (e.g. the 100,000 most frequent), put it here. Offline: TinySesam asks no third-party
     # service. Empty = built-in list only. `tinysesam passwd` reads it with `--blocklist-file`.
     password_blocklist_file: str = ""
     # Default OFF, because `webauthn` is not part of the core but of the extra [passkey].
@@ -157,6 +157,13 @@ class TinySesamConfig:
     gate_link_enabled: bool = False
     https_mode: str = "warn"              # off | warn | force  — force = HTTP→HTTPS redirect;
                                           # warn = also runs WITHOUT a certificate (with a warning in the panel)
+    # Strict-Transport-Security on every HTTPS response while https_mode='force' (ASVS 3.4.1). The default is
+    # one year, the minimum ASVS asks for. Without includeSubDomains: TinySesam often runs inside an app on a
+    # domain that has other subdomains, and the flag binds EVERY one of them to HTTPS — a decision about
+    # the whole domain tree that belongs to its owner (ASVS L2 wants it: append "; includeSubDomains").
+    # No preload as a default: the browsers' preload list is hard to leave again.
+    # "" = no header (e.g. the proxy in front sets it).
+    hsts: str = "max-age=31536000"
     # What do people sign in with? "username" | "email" | "both" (both allowed in the same field)
     login_identifier: str = "both"
     # --- First admin (bootstrap) — deliberately NOT "the first registered user becomes admin" ---

@@ -31,11 +31,16 @@
 
 # Central auth service (TinySesam) — its own subdomain
 auth.example.com {
+	# HSTS (ASVS 3.4.1): one year, also for subdomains OF THIS HOST — never for its siblings or the parent
+	# domain. No `preload`: the browsers' preload list is hard to leave again. Caddy does not set it itself.
+	header Strict-Transport-Security "max-age=31536000; includeSubDomains"
 	reverse_proxy {$TS_AUTH_UPSTREAM:127.0.0.1:8000}
 }
 
 # Protected application
 app.example.com {
+	header Strict-Transport-Security "max-age=31536000; includeSubDomains"   # HSTS, see above
+
 	# ONLY this proxy sets the identity. A Remote-User sent along by the browser would
 	# otherwise be passed through on every path where nobody overwrites it.
 	request_header -Remote-User

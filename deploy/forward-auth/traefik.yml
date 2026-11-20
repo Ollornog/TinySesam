@@ -51,6 +51,14 @@ http:
           - "Remote-Name"
           - "Remote-Id"
 
+    # HSTS (ASVS 3.4.1) on both routers: one year, also for subdomains OF THE HOST — never for its siblings or
+    # the parent domain. No preload: the browsers' preload list is hard to leave again. Traefik sets no HSTS
+    # by itself.
+    tinysesam-hsts:
+      headers:
+        stsSeconds: 31536000
+        stsIncludeSubdomains: true
+
     # Deletes the whole Cookie header on the way to the app (empty value = remove). Only for apps
     # without cookies of their own — see B-20 above.
     tinysesam-strip-cookies:
@@ -62,12 +70,15 @@ http:
     app:
       rule: "Host(`app.example.com`)"
       middlewares:
+        - tinysesam-hsts
         - tinysesam-auth
         # - tinysesam-strip-cookies   # only for apps without cookies of their own (B-20), always AFTER the check
       service: app-svc
 
     auth:
       rule: "Host(`auth.example.com`)"
+      middlewares:
+        - tinysesam-hsts
       service: tinysesam-svc
 
   services:

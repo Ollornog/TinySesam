@@ -21,7 +21,9 @@ auth = TinySesam(TinySesamConfig(
 ))
 auth.ensure_admin("admin", "secret123")   # only on first start
 
-app = FastAPI()
+# No /docs, /redoc, /openapi.json: FastAPI serves them without sign-in — including TinySesam's
+# routes — and Swagger loads its script from a third-party CDN. Switch them on for development only.
+app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 app.include_router(auth.router())
 
 

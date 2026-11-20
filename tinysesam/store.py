@@ -3278,6 +3278,18 @@ class Store:
         except Exception:
             return None
 
+    def claim_flow(self, key, ttl: int) -> bool:
+        """Mark `key` as used for `ttl` seconds — `True` only for the FIRST caller (H1: SAML assertion IDs,
+        ASVS 6.8.3). One `INSERT OR IGNORE` under the write lock decides, like the `DELETE` in `pop_flow`:
+        two workers with the same assertion cannot both win. An expired row of the same key no longer counts;
+        `gc_flow` removes the rest."""
+        with self._writing():
+            self.db.execute("DELETE FROM flow WHERE key=? AND expires_at < ?", (key, _now()))
+            won = self.db.execute("INSERT OR IGNORE INTO flow(key, data, expires_at) VALUES (?, '{}', ?)",
+                                  (key, _now() + max(int(ttl), 1))).rowcount
+            self.db.commit()
+        return won == 1
+
     def peek_flow(self, key) -> Optional[dict]:
         """Read flow state WITHOUT consuming it — for state that lasts several requests (the
         setup pass after a sign-in link, T-34). Expired rows count as absent."""

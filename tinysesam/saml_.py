@@ -60,9 +60,20 @@ def request_context(base: str, path: str, form=None, query=None) -> dict:
             "post_data": {k: v for k, v in (form or {}).items()}}
 
 
+#: Keys in the store's flow table (H1, ASVS 6.8.3). The request ID of every AuthnRequest this server sent, until
+#: the response redeems it; and the ID of every accepted assertion, until it has expired for good.
+REQUEST_FLOW = "samlreq:"
+ASSERTION_FLOW = "samlassert:"
+#: How long a sent AuthnRequest may be answered — the same 10 minutes as the flow cookie in router.py.
+REQUEST_TTL_SEC = 600
+
+
 class SAMLClient:
-    def __init__(self, cfg):
+    def __init__(self, cfg, store=None):
+        """`store`: where request and assertion IDs are remembered (H1). Without one (a bare client in a test)
+        only the flow cookie binds the response — the replay protection needs the store."""
         self.cfg = cfg
+        self.store = store
 
     def settings(self, base_url: str) -> dict:
         cfg = self.cfg
@@ -114,7 +125,10 @@ class SAMLClient:
         """
         auth = self._auth(req, base_url)
         url = auth.login(return_to=return_to)
-        return url, auth.get_last_request_id()
+        request_id = auth.get_last_request_id()
+        if self.store is not None and request_id:
+            self.store.put_flow(REQUEST_FLOW + request_id, {}, ttl=REQUEST_TTL_SEC)
+        return url, request_id
 
     def process(self, req: dict, base_url: str, request_id: str = ""):
         """Check the ACS response. Returns {nameid, attrs} or None (invalid/not authenticated).
@@ -151,7 +165,46 @@ class SAMLClient:
                 "the browser does not send it on the IdP's cross-site POST.",
                 irt, "no ID supplied" if not request_id else "different ID")
             return None
+        if self.store is not None and not self._redeem_once(auth, str(request_id)):
+            return None
         return {"nameid": auth.get_nameid(), "attrs": auth.get_attributes() or {}}
+
+    def _redeem_once(self, auth, request_id: str) -> bool:
+        """Each AuthnRequest is answered once, each assertion is accepted once (H1, ASVS 6.8.3).
+
+        Until H1 the request ID lived only in the browser's flow cookie. Whoever got hold of a `SAMLResponse`
+        (proxy log, the device, malware) set that cookie themselves — its value is the `InResponseTo` in the
+        response — and signed in again, as often as they liked, until `NotOnOrAfter`. Now:
+
+        1. The request ID must be one THIS server sent and nobody has redeemed yet (`pop_flow`, atomic like
+           the OIDC `state` and the WebAuthn challenge).
+        2. The assertion ID is remembered until its `NotOnOrAfter` plus the clock drift python3-saml allows;
+           a second assertion with the same ID is refused even under a fresh request (an IdP that reuses IDs,
+           or two responses raced in at once).
+        """
+        import time as _time
+
+        from . import security
+        if self.store.pop_flow(REQUEST_FLOW + request_id) is None:
+            security.seclog.warning(
+                "SAML response rejected: the AuthnRequest %r was not sent by this server, has expired or has "
+                "already been answered (replay)", request_id)
+            return False
+        assertion_id = str(auth.get_last_assertion_id() or "")
+        if not assertion_id:
+            security.seclog.warning("SAML response rejected: assertion without an ID")
+            return False
+        try:
+            from onelogin.saml2.constants import OneLogin_Saml2_Constants
+            drift = int(OneLogin_Saml2_Constants.ALLOWED_CLOCK_DRIFT)
+        except (ImportError, AttributeError, TypeError, ValueError):
+            drift = 300
+        not_after = auth.get_last_assertion_not_on_or_after()
+        ttl = (int(not_after) - int(_time.time()) if not_after else REQUEST_TTL_SEC) + drift
+        if not self.store.claim_flow(ASSERTION_FLOW + assertion_id, ttl):
+            security.seclog.warning("SAML response rejected: assertion %r was already used (replay)", assertion_id)
+            return False
+        return True
 
     def metadata(self, base_url: str) -> str:
         try:

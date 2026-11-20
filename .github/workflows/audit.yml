@@ -84,6 +84,15 @@ jobs:
             echo "::endgroup::"
           done
 
+      # The workflow linter (H1; T-11 was a single run, and a finding of a later change went unnoticed): zizmor over
+      # every workflow and .github/dependabot.yml, from the same hashed tool list. Settings: .github/zizmor.yml.
+      # The read-only token enables the online audits (known-vulnerable-actions, impostor commits, ref confusion).
+      # A suppressed finding needs `# zizmor: ignore[<audit>] — <reason>` on its line.
+      - name: zizmor
+        run: '"$RUNNER_TEMP/audit/bin/zizmor" --no-progress --config .github/zizmor.yml .'
+        env:
+          GH_TOKEN: ${{ github.token }}
+
       # Is the lock list of the image complete? (A-1 from the re-check of B4-7.) The
       # Dockerfile installs it with `--no-deps` — pip does not notice a missing transitive dependency
       # there. And Dependabot bumps only single lines in a hashed list: if a

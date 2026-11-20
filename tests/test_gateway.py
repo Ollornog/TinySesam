@@ -144,6 +144,26 @@ assert r.json()["status"] == "ok" and r.json()["version"][0].isdigit(), r.json()
 r2 = TestClient(happ, base_url="http://auth.example.com").get("/auth/login", follow_redirects=False)
 assert r2.status_code in (301, 307, 308), f"HTTPS enforcement no longer applies: {r2.status_code}"
 ok("/healthz: without auth, 200 also with https_mode=force; other paths are redirected")
+# HSTS (H1, ASVS 3.4.1): with force on every HTTPS response, never over HTTP (RFC 6797 §7.2) — the health
+# check over HTTP and the redirect to HTTPS carry none.
+assert "strict-transport-security" not in r.headers and "strict-transport-security" not in r2.headers
+r3 = TestClient(happ, base_url="https://auth.example.com").get("/auth/login", follow_redirects=False)
+assert r3.headers.get("strict-transport-security") == "max-age=31536000", dict(r3.headers)
+r3 = TestClient(happ, base_url="https://auth.example.com").get("/healthz")
+assert r3.headers.get("strict-transport-security") == "max-age=31536000", dict(r3.headers)
+r3 = TestClient(gateway.build_app(cfg), base_url="https://auth.example.com").get("/auth/login")
+assert "strict-transport-security" not in r3.headers, "HSTS without https_mode=force (gateway default: warn)"
+ok("gateway with force: HSTS on HTTPS responses (also /healthz over HTTPS), none over HTTP; none with warn")
+
+# ---------- H1: no API documentation without sign-in (ASVS 13.4.5) ----------
+# FastAPI serves /docs (Swagger from a third-party CDN, no CSP), /redoc and /openapi.json (every route
+# including the admin API) by default — measured 200 on b1d166c.
+for _path in ("/docs", "/redoc", "/openapi.json", "/docs/oauth2-redirect"):
+    _r = c.get(_path, headers={"Accept": "application/json"})
+    assert _r.status_code == 404, (_path, _r.status_code)
+    assert "cdn.jsdelivr" not in _r.text and "swagger" not in _r.text.lower(), _path
+assert app.openapi_url is None and app.docs_url is None and app.redoc_url is None
+ok("gateway: /docs, /redoc, /openapi.json → 404 (no Swagger from a CDN, no route map)")
 
 # ---------- /healthz sees a database that has become read-only (B6-4) ----------
 # Read-only mount, permissions after a restore: reading works, every sign-in fails at its

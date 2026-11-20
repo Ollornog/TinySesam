@@ -181,12 +181,13 @@ class _WithoutRedirect(urllib.request.HTTPRedirectHandler):
 _opener = urllib.request.build_opener(_WithoutRedirect)
 
 
-def request(path, cookies=None, head=None, method="GET", body=None):
+def request(path, cookies=None, head=None, method="GET", body=None, port=None):
     """A request to Caddy, host app.example.com. Returns (status, headers, JSON of the dummy)."""
-    h = {"Host": f"app.example.com:{PORT}", **(head or {})}
+    port = port or PORT
+    h = {"Host": f"app.example.com:{port}", **(head or {})}
     if cookies:
         h["Cookie"] = "; ".join(f"{k}={v}" for k, v in cookies.items())
-    req = urllib.request.Request(f"http://127.0.0.1:{PORT}{path}", headers=h, method=method,
+    req = urllib.request.Request(f"http://127.0.0.1:{port}{path}", headers=h, method=method,
                                  data=body.encode() if body is not None else None)
     try:
         r = _opener.open(req, timeout=10)
@@ -237,6 +238,26 @@ try:
     assert "tinysesam" not in (a["header"].get("Cookie") or ""), a["header"].get("Cookie")
     ok("session without gate cookie → way back: 200, POST including body, new gate cookie, "
        "Remote-User from the browser overwritten, TinySesam cookies removed")
+
+    # ---------- H1: identity headers of the browser never reach the application ----------
+    # Measured 2026-11-20 with Caddy 2.11.9 (suspicion from the security review: the plain and the home-network
+    # template do not strip Remote-* up front like the gate template, they rely on `request_header` in
+    # handle_response). Result: an EMPTY value from TinySesam (Anna has no address) overwrites the browser's
+    # value with "" — closed. Pinned here for both the plain template and the gate template's way back.
+    forged = {"Remote-User": "admin", "Remote-Groups": "admin", "Remote-Email": "chef@example.com",
+              "Remote-Name": "Chef", "Remote-Id": "1"}
+    for port, was in ((PORT, "gate template, way back"), (PORT_PLAIN, "plain template")):
+        st, h, a = request("/h1", session, forged, port=port)
+        hd = a["header"] if a else {}
+        assert st == 200 and hd.get("Remote-User") == "anna" and hd.get("Remote-Groups") == "editors", (was, st, hd)
+        assert hd.get("Remote-Email", "") == "" and hd.get("Remote-Id") == str(uid), (was, hd)
+        assert utf8(hd.get("Remote-Name")) == "Anna Ärger", (was, hd.get("Remote-Name"))
+        # HSTS (H1): the application's responses and the redirect to the sign-in carry it.
+        assert h.get("Strict-Transport-Security") == "max-age=31536000; includeSubDomains", (was, dict(h))
+        st, h, _ = request("/h1", None, forged, port=port)
+        assert st == 302 and h.get("Strict-Transport-Security") == "max-age=31536000; includeSubDomains", (was, st)
+    ok("H1: Remote-* sent by the browser (also Remote-Email against an empty value) → TinySesam's values reach "
+       "the application — plain template and gate way back; HSTS on 200 and on the redirect")
 
     # ---------- with gate cookie: TinySesam is not asked ----------
     with_gate = {**session, "__Host-tinysesam_gate": tok, "other": "1"}
@@ -405,7 +426,7 @@ try:
     a = subprocess.run(["bash", str(script)], env=env_a, capture_output=True, text=True, timeout=120)
     assert a.returncode == 0 and "passed" in a.stdout and "FAIL" not in a.stdout, a.stdout + a.stderr
     lines = [z for z in a.stdout.splitlines() if z.startswith("  ok")]
-    assert len(lines) >= 15, a.stdout
+    assert len(lines) >= 16 and any("HSTS" in z for z in lines), a.stdout
     ok(f"acceptance.sh against this setup: {len(lines)} checks passed")
     # Counter-check: the script must turn red when an expectation is wrong — here a path that is
     # closed but is given as a share. Otherwise “passed” would also be the answer of a script that

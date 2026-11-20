@@ -162,12 +162,14 @@ def needs_rehash(stored: str) -> bool:
 #: completely into the hash; an upper limit is the usual, verifiable commitment.
 PASSWORD_MAX_LENGTH = 256
 
-#: Built-in blocklist — the passwords that top every published leak analysis,
-#: plus the German-language classics. Deliberately **offline**: a request to
-#: a foreign service (such as HIBP's k-anonymity API) would phone outward on every registration;
-#: that is for the operator to decide, not the library (finding B2-5,
-#: recommendation H-17). The list is small because it interplays with the minimum length —
-#: it grows via `password_blocklist_file`. Comparison is lowercase.
+#: Built-in blocklist, part one — hand-picked: the passwords that top every published leak analysis,
+#: plus the German-language classics. Part two is `common_passwords.txt` next to this module: the
+#: 10,000 most frequent passwords of at least 8 characters from a public leak corpus (ASVS 6.2.4 asks for
+#: at least the top 3000 that the password policy would allow; source, selection and license are in its
+#: header, `scripts/_blocklist.py` regenerates it). Until H1 there were only the 128 entries below.
+#: Deliberately **offline**: a request to a foreign service (such as HIBP's k-anonymity API) would
+#: phone outward on every registration; that is for the operator to decide, not the library
+#: (finding B2-5, recommendation H-17). More via `password_blocklist_file`. Comparison is lowercase.
 BLOCKLIST = frozenset("""
 password password1 password12 password123 password1234 passw0rd p@ssw0rd p@ssword
 passwort passwort1 passwort12 passwort123 passwort1234 kennwort kennwort1 kennwort123
@@ -321,4 +323,8 @@ def password_defect(pw: str, min_length: int, *, context=(), blocklist=()) -> "O
     return None
 
 
-_BLOCK = with_cores(BLOCKLIST)
+#: The shipped list of common passwords (see `BLOCKLIST`). Missing would be a broken package, not an
+#: empty list: an installation without it would silently check against 128 entries again.
+COMMON_PASSWORDS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "common_passwords.txt")
+
+_BLOCK = with_cores(BLOCKLIST) | read_blocklist(COMMON_PASSWORDS_FILE)

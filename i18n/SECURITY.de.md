@@ -50,14 +50,20 @@ Rate-Limit, Open-Redirect-Schutz via `safe_next`). Trotzdem: vor produktivem Ein
   eingesammelt wird `admin_claim_token_file` (Rechte `0600`) nehmen, sofort einlösen, und wo gar
   kein Token in einer URL stehen soll, den ersten Admin über `auth.ensure_admin(...)` oder
   `admin_identifiers` setzen.
-- **Bekannte Grenze — TOTP-Geheimnisse liegen unverschlüsselt in der Datenbank.** Passwörter,
-  PINs, Recovery-Codes und API-Keys stehen dort nur als Hash; das TOTP-Geheimnis kann das nicht,
-  denn der Server muss daraus jeden Code nachrechnen. Wer die SQLite-Datei (oder eine Sicherung
-  davon) lesen kann, erzeugt damit für jedes Konto gültige Codes — der zweite Faktor hängt dann
-  nur noch am Passwort. Eine Verschlüsselung mit einem Schlüssel ausserhalb der Datenbank ist
-  geplant (T-13, H-14/H-15). Bis dahin: Datenbank und Sicherungen wie ein Geheimnis behandeln
-  (Rechte `0600`, verschlüsselte Backups), und wer den zweiten Faktor auch gegen einen
-  Datenbankabfluss braucht, setzt auf Passkeys — dort liegt nur ein öffentlicher Schlüssel.
+- **Umkehrbare Geheimnisse liegen verschlüsselt — zu hüten ist der Schlüssel.** Passwörter, PINs,
+  Recovery-Codes und API-Keys stehen nur als Hash in der Datenbank. Was der Server zurücklesen
+  muss — TOTP-Geheimnisse, OIDC-Refresh- und ID-Tokens —, ist mit AES-256-GCM verschlüsselt
+  (Pflicht seit 0.21.0; ein Wert von vorher wird beim Start verschlüsselt). Der Schlüssel kommt
+  aus `TINYSESAM_SECRETS_KEY`, sonst aus `secrets_key_file`, sonst aus einer Datei `<db>.key`
+  (Rechte `0600`), die neben der Datenbank entsteht. Diese Vorgabe schützt vor einer
+  Datenbankdatei, die allein abfließt, **nicht** vor einer Kopie des ganzen Verzeichnisses — und
+  aus demselben Schlüssel entsteht der Signaturschlüssel der Gate-Tokens (ADR-9): Wer `<db>.key`
+  lesen kann, prägt damit auch Gate-Tokens für jedes Konto und jede geschützte Anwendung. Im
+  Betrieb, und für das Gateway mit Gate-Tokens immer, gehört der Schlüssel außerhalb des
+  Datenverzeichnisses (`TINYSESAM_SECRETS_KEY` als Container-Secret oder `secrets_key_file`) und
+  getrennt von der Datenbank gesichert: Ohne ihn sind alle TOTP-Einrichtungen verloren. Einen
+  Schlüsselwechsel (Rotation) gibt es noch nicht. Passkeys bleiben der Faktor, der einen
+  Datenbankabfluss übersteht — dort liegt nur ein öffentlicher Schlüssel.
 - **Bekannte Grenze — ohne `__Host-`-Präfix am Sitzungs-Cookie gilt jeder Host unter der
   übergeordneten Domain als vertrauenswürdig.** Das Sitzungs-Cookie trägt `__Host-` nur mit
   `cookie_secure=True`, leerem `cookie_domain`, `cookie_path="/"` und `cookie_host_prefix=True` —
@@ -113,6 +119,26 @@ Rate-Limit, Open-Redirect-Schutz via `safe_next`). Trotzdem: vor produktivem Ein
   der Server antwortet — ohne Zeile für fail2ban. Ein API-Key zählt bei diesen
   Bausteinen nie: Er bestätigt keinen Menschen und ändert kein Passwort (`POST /auth/password`
   weist ihn seit 0.22.0 mit 403 ab).
+
+## Verwundbare Abhängigkeiten
+
+Fristen, in denen eine bekannte Schwachstelle in einer Abhängigkeit des Pakets oder des
+Gateway-Abbilds behoben wird (ASVS 15.1.1), gezählt ab dem Tag, an dem eine behobene Version
+verfügbar ist:
+
+| Schwere (CVSS) | Frist |
+| --- | --- |
+| Kritisch | **7 Tage** |
+| Hoch | **30 Tage** |
+| Mittel / niedrig | mit dem nächsten regulären Release |
+
+Wie sie gehalten werden: `pip-audit` prüft jede Auflösung des Pakets und die Sperrliste des
+Abbilds bei jedem Pull-Request und nächtlich, ein Fund lässt den Lauf scheitern; das gebaute
+Gateway-Abbild durchsucht Grype bei jedem Pull-Request, und ein behebbarer Fund ab Schwere
+*hoch* lässt ihn scheitern; Dependabot schlägt die Updates vor. Ein Fund, der sich nicht
+fristgerecht beheben lässt (etwa weil das behobene Betriebssystempaket noch nicht im gepinnten
+Basisabbild steckt), darf nur in `.grype.yaml` ausgenommen werden, mit Begründung und einem
+`until`-Datum innerhalb dieser Fristen — nach diesem Datum scheitert der Scan wieder.
 
 ## Unterstützte Versionen
 
