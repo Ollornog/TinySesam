@@ -1033,6 +1033,11 @@ A pass means: built by this repository's release workflow, from the commit the a
 No key to hand out and none to lose — the signature is tied to the workflow's own identity. A full example with Caddy
 lives in `deploy/forward-auth/docker-compose.yml`.
 
+**Home network without a domain?** HTTPS is required outside `localhost`, so a bare IP address needs a CA of your own
+on every device — and passkeys do not work on an IP at all. `docs/HOME-NETWORK.md` recommends
+a domain (DNS-01 works even for names that resolve only at home) and describes the IP fallback with the template in
+`deploy/home-network/`.
+
 Update: bump the tag, `docker compose pull && docker compose up -d` — if the release migrates
 the database, take the backup in between (see "Restoring a backup"; from 0.17.x or older with
 the new image). Rollback: put the old tag back, after a migration together with that backup.
@@ -1634,7 +1639,7 @@ without extras (guards the stdlib-scrypt fallback), and a browser job that also 
 
 ## Status
 
-**85 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
+**86 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
 
 Implemented and tested: password/TOTP/sessions/roles, remember-me, step-up and per-route MFA,
 factor chains, personal PIN, shared resource secrets, magic links + mailer hook, registration and

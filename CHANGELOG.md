@@ -28,6 +28,22 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
   (with a scanner self-test), and checks building block, nonce, tokens and texts; `tests/test_browser.py` drives the
   dialogs with real key presses, reads the clipboard back and checks the fallback selection.
 
+### Added
+
+- **Home network without a domain (T-37):** `docs/HOME-NETWORK.md` recommends a domain first — a publicly trusted
+  certificate via DNS-01 works even for names that resolve only at home, and no device needs a CA — and describes the
+  fallback: HTTPS on a bare IP address with Caddy's local CA (`tls internal`), how to export the root and trust it on
+  Windows, macOS, Linux, Firefox, Android, iOS and in Claude Code (`NODE_EXTRA_CA_CERTS`), and the limits.
+  `deploy/home-network/` is the template: a Caddyfile and an override for the reference stack (Caddy 2.11.9, pinned by
+  version and digest, Dependabot entry). Measured against Caddy 2.11.9: `tls internal` issues a certificate with the
+  IP as Subject Alternative Name (root 10 years, intermediate 7 days, leaf 12 hours), but behind a Docker bridge a
+  client without SNI — every client of an IP address — fails the handshake unless `default_sni` names the address.
+  A CI step checks exactly that handshake with the override's Caddy.
+- **Configuration check:** a warning when `base_url` is an IP address (IPv4 or IPv6, with or without port), pointing
+  to `docs/HOME-NETWORK.md` and recommending a domain. Passkeys do not work on an IP address at all — WebAuthn allows
+  only domain names as the origin's host. Loopback (`127.0.0.0/8`, `::1`) and `localhost` stay silent: browsers
+  treat them as a secure context over plain HTTP, and local development needs no CA.
+
 ## [0.25.7] — 2026-11-20
 
 ### Changed

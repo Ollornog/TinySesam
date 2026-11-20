@@ -8,7 +8,7 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 ## Meilensteine
 
 * ☐ **[M-1](M-1-api-stable-1-0.md)** 1.0 — API stable enough for PyPI — 14/14 erledigt
-* ☐ **[M-2](M-2-after-1-0.md)** After 1.0 — keeping the published package maintained — 19/23 erledigt
+* ☐ **[M-2](M-2-after-1-0.md)** After 1.0 — keeping the published package maintained — 20/24 erledigt
 * ☑ **[M-3](M-3-gate-in-front-of-third-party-apps.md)** Gate in front of third-party apps — fast, sign in once, sign out cleanly — 8/8 erledigt
 
 ## Aufgaben
@@ -48,6 +48,7 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 * ☑ **[T-33](T-33-sign-in-alternatives-qr-cross-device-login-admin-i.md)** Sign-in alternatives: QR/cross-device login, admin-issued link without mail, self-request switchable · M-2
 * ☑ **[T-34](T-34-admin-creates-accounts-link-sign-in-sets-up-the-chain.md)** Admin creates accounts, a link signs them in: setup pass and alternatives in the factor chain · M-2
 * ☑ **[T-35](T-35-own-dialogs-instead-of-browser-system-dialogs.md)** Own dialogs instead of the browser's system dialogs, with a copy button · M-2
+* ☑ **[T-37](T-37-home-network-ip-only-template.md)** Home network: template for IP only, with a clear recommendation for a domain · M-2
 
 ## Fehler
 
