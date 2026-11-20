@@ -2148,7 +2148,10 @@ def read_docs(root: str = ROOT) -> dict:
                  if os.path.isdir(path) else [path])
         for p in paths:
             rel = os.path.relpath(p, root)
-            docs[rel] = open(p, encoding="utf-8").read() if os.path.isfile(p) else None
+            docs[rel] = None
+            if os.path.isfile(p):
+                with open(p, encoding="utf-8") as fh:
+                    docs[rel] = fh.read()
     return docs
 
 
