@@ -540,6 +540,20 @@ TinySesamConfig(brand_css=":root{--ts-bg:#f6f1ec;--ts-surface:#fbf8f4;--ts-ink:#
 Die Tokens (und ihre Defaults) stehen in [`tinysesam/theme.py`](../tinysesam/theme.py); `brand_head` hängt
 zusätzliches `<head>`-Markup ein, `brand_icon` setzt das Favicon auf jeder eingebauten Seite.
 
+**Gleicher Look wie deine App (C22).** Ist deine App mit dem Designsystem [C22](https://github.com/Ollornog/C22)
+gebaut, zeig TinySesam das C22-Stylesheet, das deine App ohnehin ausliefert — Login, Kontoseite, Admin-Panel und
+Fehlerseiten leiten ihre Tokens dann aus C22 ab und folgen dessen Pack und Hell/Dunkel-Umschaltung:
+
+```python
+TinySesamConfig(c22_stylesheet="/static/css/c22-vega.css")   # ein Pfad auf dem eigenen Ursprung, nichts von Dritten
+```
+
+Auf den Auth-Seiten läuft kein C22-Code, und TinySesam hängt nicht von C22 ab: Die Zuordnung ist eine optionale
+CSS-Datei ([`tinysesam/c22.css`](../tinysesam/c22.css)), jeder Eintrag fällt auf TinySesams eigenen Standard zurück,
+und die strenge CSP bleibt, wie sie ist (das Stylesheet trägt die Nonce der Antwort). Hell/Dunkel folgt C22s eigener
+Mechanik: Klasse `dark` am `<html>`, aus `localStorage.themeMode`, sonst die Systemeinstellung. C22 anders
+eingebunden? Die Datei in `brand_css` übernehmen (`tinysesam.theme.C22_ADAPTER`).
+
 **Eigene Navigation und Fußzeile drumherum?** `brand_header` und `brand_footer` umschließen *jede*
 eingebaute Seite — Login, PIN, TOTP, Konto, Admin-Panel und die Fehlerseiten. Beide nehmen HTML oder
 `fn(auth) -> str`, wenn der Rumpf vom Request abhängt (Login-Status, Sprache). `auth.install_error_pages(app)` liefert Browsern gebrandete 403/404/500-Seiten,
@@ -1763,7 +1777,7 @@ zusätzlich die Website baut.
 
 ## Status
 
-**91 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
+**92 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
 (`tests/test_matrix.py`).
 
 Gebaut und getestet: Passwort/TOTP/Sitzungen/Rollen, Remember-me, Step-up und per-Route-MFA,

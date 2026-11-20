@@ -12,7 +12,7 @@ reference answers the other question: *"There is a field — what does it do?"*
 Presets (`TinySesamConfig.local_accounts()`, `.oidc_gateway()`, …) set bundles of these fields;
 individual ones can be overridden via `**overrides`.
 
-**Tier:** Every field belongs to tier A — public, stable from 1.0 (see [API.md](API.md), “Three tiers”), except `hsts` (B), `oauth_access_token_ttl_sec` (B), `oauth_enabled` (B), `oauth_pepper_file` (B), `oauth_refresh_grace_sec` (B), `oauth_refresh_idle_days` (B), `oauth_refresh_max_days` (B), `oauth_resources` (B), `totp_required` (B).
+**Tier:** Every field belongs to tier A — public, stable from 1.0 (see [API.md](API.md), “Three tiers”), except `c22_stylesheet` (B), `hsts` (B), `oauth_access_token_ttl_sec` (B), `oauth_enabled` (B), `oauth_pepper_file` (B), `oauth_refresh_grace_sec` (B), `oauth_refresh_idle_days` (B), `oauth_refresh_max_days` (B), `oauth_resources` (B), `totp_required` (B).
 
 ## Store
 
@@ -32,6 +32,7 @@ individual ones can be overridden via `**overrides`.
 |---|---|---|---|
 | `brand_css` | `str` | `""` | additional CSS (after the default → overrides it) |
 | `brand_head` | `str` | `""` | additional <head> HTML (e.g. logo font, meta) |
+| `c22_stylesheet` | `str` | `""` | **Tier B.** Same look as an app built on the C22 design system: the address PATH of the app's compiled C22 stylesheet (e.g. "/static/c22-vega.css", same origin only). Set → every built-in page loads it and derives its --ts-* tokens from C22 (tinysesam/c22.css, own defaults as fallback); light/dark follows C22. No C22 code runs on the pages. Empty (default) = TinySesam's own look. |
 | `brand_icon` | `str` | `""` | favicon URL for ALL built-in pages (empty = built-in default icon, "none" = none; since 0.24.8 — before, empty meant "none") |
 | `brand_backgrounds` | `list` | `list` | Background images of all built-in pages (since 0.24.8): paths, data: or https addresses. Several fade slowly into one another, with a very dark overlay on top; with "reduce motion" the first one stays still. An https address opens the strict CSP for exactly that origin (img-src). Loading images from third parties means: every visitor's browser contacts them — only on purpose and with a suitable licence. |
 | `brand_background_seconds` | `int` | `12` | how long each image stays before the cross-fade |
@@ -339,4 +340,4 @@ individual ones can be overridden via `**overrides`.
 
 ---
 
-188 fields, generated from `tinysesam/config.py`.
+189 fields, generated from `tinysesam/config.py`.

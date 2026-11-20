@@ -92,4 +92,4 @@ include = ["tinysesam*"]
 # otherwise it is missing from the wheel and only the user notices. `tests/test_packaging.py` checks
 # against the versioned files, so the list does not fall behind the package.
 [tool.setuptools.package-data]
-tinysesam = ["py.typed", "common_passwords.txt"]
+tinysesam = ["py.typed", "common_passwords.txt", "c22.css"]

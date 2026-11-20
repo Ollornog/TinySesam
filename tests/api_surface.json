@@ -1094,6 +1094,10 @@
       "field": "str = ''",
       "tier": "A"
     },
+    "c22_stylesheet": {
+      "field": "str = ''",
+      "tier": "B"
+    },
     "cookie_domain": {
       "field": "str = ''",
       "tier": "A"

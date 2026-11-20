@@ -16,6 +16,11 @@ class TinySesamConfig:
     # --- Branding/theme: set once → re-skins ALL built-in pages (+ error pages) ---
     brand_css: str = ""                   # additional CSS (after the default → overrides it)
     brand_head: str = ""                  # additional <head> HTML (e.g. logo font, meta)
+    #: Same look as an app built on the C22 design system: the address PATH of the app's compiled C22
+    #: stylesheet (e.g. "/static/c22-vega.css", same origin only). Set → every built-in page loads it and
+    #: derives its --ts-* tokens from C22 (tinysesam/c22.css, own defaults as fallback); light/dark follows
+    #: C22. No C22 code runs on the pages. Empty (default) = TinySesam's own look.
+    c22_stylesheet: str = ""
     brand_icon: str = ""                  # favicon URL for ALL built-in pages (empty = built-in default
                                           # icon, "none" = none; since 0.24.8 — before, empty meant "none")
     #: Background images of all built-in pages (since 0.24.8): paths, data: or https addresses. Several fade

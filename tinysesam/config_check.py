@@ -228,6 +228,16 @@ def check_config(config) -> tuple[list[str], list[str]]:
                 config,
                 "brand_backgrounds: {b!r} — allowed are /path, data:image/… and https://…",
                 b=b))
+    # C22 adapter: the app's stylesheet from its own origin — a path, never a foreign address (nothing from
+    # third parties), and nothing that could leave the href attribute.
+    _sheet = getattr(config, "c22_stylesheet", "") or ""
+    if _sheet and (not isinstance(_sheet, str) or not _sheet.startswith("/") or _sheet.startswith("//")
+                   or any(z in _sheet for z in "'\"<>\\ \t\n")):
+        error.append(_t(
+            config,
+            "c22_stylesheet: {s!r} — a path on the app's own origin (\"/static/c22.css\"), "
+            "without quotation marks, angle brackets, backslash and spaces",
+            s=_sheet))
     _destination = getattr(config, "brand_background_credit_url", "")
     if _destination and not str(_destination).startswith(("https://", "http://")):
         error.append(_t(
@@ -2094,6 +2104,10 @@ _DE: dict[str, str] = {
      "letter or a digit (e.g. \"myapp_\")"):
         ("cookie_prefix={p!r}: 1–32 Zeichen aus Buchstaben, Ziffern, _ und -, am Anfang ein "
          "Buchstabe oder eine Ziffer (z. B. \"meineapp_\")"),
+    ("c22_stylesheet: {s!r} — a path on the app's own origin (\"/static/c22.css\"), "
+     "without quotation marks, angle brackets, backslash and spaces"):
+        ("c22_stylesheet: {s!r} — ein Pfad auf dem eigenen Ursprung der App (\"/static/c22.css\"), "
+         "ohne Anführungszeichen, spitze Klammern, Backslash und Leerzeichen"),
     "brand_background_credit_url: only http(s) addresses":
         "brand_background_credit_url: nur http(s)-Adressen",
     "brand_backgrounds: {b!r} — allowed are /path, data:image/… and https://…":

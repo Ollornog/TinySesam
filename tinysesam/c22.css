@@ -1,0 +1,67 @@
+/* TinySesam → C22 adapter: derives every --ts-* token from the tokens of the C22 design system.
+ *
+ * Optional and pure CSS. TinySesam inlines it when `c22_stylesheet` is set (see CONFIGURATION.md);
+ * you can also paste it into `brand_css` yourself. Each line reads a C22 token and falls back to
+ * TinySesam's own default — without C22 on the page, every --ts-* keeps its built-in value.
+ *
+ * Light/dark follows C22: its tokens switch with the class `dark` on <html>; this file only reads them.
+ *
+ * Derived values (tinted message boxes, link colour) go through a --ts-c22-* helper. A helper
+ * references C22 tokens WITHOUT a fallback on purpose: without C22 it becomes invalid, and the
+ * `var(--ts-c22-…, <default>)` that reads it falls back to TinySesam's default.
+ *
+ * C22 token names: tests/fixtures/c22_tokens.txt (pinned list, refreshed with tools/c22_tokens.py).
+ * Completeness and fallbacks are checked by tests/test_c22_adapter.py.
+ */
+:root{
+  --ts-c22-line-soft:color-mix(in oklab,var(--border) 60%,transparent);
+  --ts-c22-link:color-mix(in oklab,var(--info) 65%,var(--foreground));
+  --ts-c22-err-bg:color-mix(in oklab,var(--destructive) 14%,var(--card));
+  --ts-c22-err-ink:color-mix(in oklab,var(--destructive) 75%,var(--foreground));
+  --ts-c22-ok-bg:color-mix(in oklab,var(--success) 14%,var(--card));
+  --ts-c22-ok-ink:color-mix(in oklab,var(--success) 60%,var(--foreground));
+  --ts-c22-warn-bg:color-mix(in oklab,var(--warning) 16%,var(--card));
+  --ts-c22-warn-ink:color-mix(in oklab,var(--warning) 50%,var(--foreground));
+  --ts-c22-warn-line:color-mix(in oklab,var(--warning) 40%,var(--card));
+  --ts-c22-info-bg:color-mix(in oklab,var(--info) 14%,var(--card));
+  --ts-c22-info-ink:color-mix(in oklab,var(--info) 65%,var(--foreground));
+
+  --ts-bg:var(--background,#0f1115);
+  --ts-surface:var(--card,#161a22);
+  --ts-surface-2:var(--accent,#1b2130);
+  --ts-ink:var(--foreground,#e6e6e6);
+  --ts-muted:var(--muted-foreground,#9aa4b2);
+  --ts-line:var(--border,#262b36);
+  --ts-line-soft:var(--ts-c22-line-soft,#20252f);
+  --ts-link:var(--ts-c22-link,#7dd3fc);
+  --ts-field-bg:var(--background,#0f1115);
+  --ts-field-line:var(--input,#303643);
+  --ts-accent:var(--primary,#2563eb);
+  --ts-accent-ink:var(--primary-foreground,#fff);
+  --ts-neutral:var(--secondary,#374151);
+  --ts-neutral-ink:var(--secondary-foreground,#fff);
+  --ts-danger:var(--destructive,#b91c1c);
+  --ts-danger-ink:var(--destructive-foreground,#fff);
+  --ts-success:var(--success,#15803d);
+  --ts-success-ink:var(--success-foreground,#fff);
+  --ts-chip:var(--muted,#22262e);
+  --ts-err-bg:var(--ts-c22-err-bg,#3a1520);
+  --ts-err-ink:var(--ts-c22-err-ink,#f87171);
+  --ts-ok-bg:var(--ts-c22-ok-bg,#12331f);
+  --ts-ok-ink:var(--ts-c22-ok-ink,#4ade80);
+  --ts-warn-bg:var(--ts-c22-warn-bg,#442006);
+  --ts-warn-ink:var(--ts-c22-warn-ink,#fdba74);
+  --ts-warn-line:var(--ts-c22-warn-line,#7c2d12);
+  --ts-info-bg:var(--ts-c22-info-bg,#12283a);
+  --ts-info-ink:var(--ts-c22-info-ink,#60a5fa);
+  --ts-radius:var(--radius,12px);
+  --ts-font:var(--font-sans,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif);
+  --ts-mono:var(--font-mono,ui-monospace,Menlo,Consolas,monospace);
+
+  /* No C22 counterpart: the background images (brand_backgrounds) keep TinySesam's values. */
+  --ts-image-base:#050608;
+  --ts-image-overlay:rgba(5,6,8,.45);
+  --ts-image-overlay-edge:rgba(5,6,8,.75);
+  --ts-image-strength:.6;
+  --ts-image-brightness:.8;
+}

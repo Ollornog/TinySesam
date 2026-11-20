@@ -533,6 +533,20 @@ TinySesamConfig(brand_css=":root{--ts-bg:#f6f1ec;--ts-surface:#fbf8f4;--ts-ink:#
 The tokens (and their defaults) live in [`tinysesam/theme.py`](https://github.com/Ollornog/TinySesam/blob/main/tinysesam/theme.py); `brand_head` injects
 extra `<head>` markup and `brand_icon` sets the favicon on every built-in page.
 
+**Same look as your app (C22).** If your app is built on the [C22](https://github.com/Ollornog/C22) design system,
+point TinySesam at the C22 stylesheet your app already serves — login, account page, admin panel and error pages
+then derive their tokens from C22, follow its pack and its light/dark switch:
+
+```python
+TinySesamConfig(c22_stylesheet="/static/css/c22-vega.css")   # a path on your own origin, nothing from third parties
+```
+
+No C22 code runs on the auth pages and TinySesam does not depend on C22: the mapping is one optional CSS file
+([`tinysesam/c22.css`](https://github.com/Ollornog/TinySesam/blob/main/tinysesam/c22.css)), every entry falls back to
+TinySesam's own default, and the strict CSP stays as it is (the stylesheet carries the response nonce). Light/dark
+follows C22's own mechanism: the class `dark` on `<html>`, taken from `localStorage.themeMode`, else the system setting.
+Loading C22 another way? Paste the file into `brand_css` (`tinysesam.theme.C22_ADAPTER`).
+
 **Want your own nav and footer around them?** `brand_header` and `brand_footer` wrap *every* built-in
 page — login, PIN, TOTP, account, admin panel and the error pages. Both take HTML or `fn(auth) -> str`
 when the shell depends on the request (sign-in state, language). `auth.install_error_pages(app)` gives browsers themed 403/404/500 pages while API
@@ -1720,7 +1734,7 @@ without extras (guards the stdlib-scrypt fallback), and a browser job that also 
 
 ## Status
 
-**91 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
+**92 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
 
 Implemented and tested: password/TOTP/sessions/roles, remember-me, step-up and per-route MFA,
 factor chains, personal PIN, shared resource secrets, magic links + mailer hook, registration and

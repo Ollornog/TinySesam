@@ -664,6 +664,7 @@ async def run():
         await t33_alternatives(p)
         await h2_stepup_qr(p)
         await own_dialogs(p)
+        await c22_adapter(p)
 
 
 async def t33_alternatives(p):
@@ -1365,6 +1366,40 @@ async def _own_dialogs(p):
     assert not p.console, f"console errors: {p.console[:2]}"
     assert p.failed[failed_before:] == [], f"broken requests: {p.failed[failed_before:][:3]}"
     await p.cmd("Emulation.setFocusEmulationEnabled", enabled=False)
+
+
+async def c22_adapter(p):
+    """C22 adapter (tinysesam/c22.css, T-61) where CSS is actually computed. Its helpers rely on a CSS rule
+    no string check can prove: a custom property that reads an undefined var() without a fallback is
+    invalid, and the `var(--ts-c22-…, <default>)` reading it falls back. Measured on a blank page in
+    iframes — no CSP, no app styles in between."""
+    import re as _re
+    from tinysesam.theme import C22_ADAPTER, TOKENS
+    names = sorted(set(_re.findall(r"(--ts-[a-z0-9-]+)\s*:", TOKENS)))
+    with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "c22_tokens.txt"),
+              encoding="utf-8") as f:
+        c22 = [line.strip() for line in f if line.strip() and not line.startswith("#")]
+    fake = (":root{" + "".join(f"{n}:rgb(1,2,3);" for n in c22 if n not in ("--radius", "--font-sans", "--font-mono"))
+            + "--radius:3px;--font-sans:Probe;--font-mono:ProbeMono}")
+    await p.cmd("Page.navigate", url="about:blank")
+    await p.until("document.readyState==='complete'", "about:blank did not load")
+    measured = await p.js(
+        "(function(sheets,names){return sheets.map(function(css){var f=document.createElement('iframe');"
+        "document.body.appendChild(f);var d=f.contentDocument;d.open();"
+        "d.write('<!doctype html><html><head><style>'+css+'</style></head><body></body></html>');d.close();"
+        "var s=f.contentWindow.getComputedStyle(d.documentElement),o={};"
+        "names.forEach(function(n){o[n]=s.getPropertyValue(n).trim()});f.remove();return o})})"
+        f"({json.dumps([TOKENS, TOKENS + C22_ADAPTER, fake + TOKENS + C22_ADAPTER])},{json.dumps(names)})")
+    base, with_adapter, themed = measured
+    assert all(base.values()), [n for n, v in base.items() if not v]
+    differ = {n: (base[n], with_adapter[n]) for n in names if base[n] != with_adapter[n]}
+    assert not differ, f"the C22 adapter without C22 changes: {differ}"
+    literal = {n for n in names if not _re.search(rf"{_re.escape(n)}:var\(", C22_ADAPTER)}
+    unmoved = sorted(n for n in names if n not in literal and themed[n] == base[n])
+    assert not unmoved, f"these do not follow C22: {unmoved}"
+    assert themed["--ts-radius"] == "3px" and themed["--ts-bg"] == "rgb(1,2,3)", themed
+    print(f"  C22 adapter: without C22 all {len(names)} tokens unchanged, with C22 "
+          f"{len(names) - len(literal)} follow ({len(literal)} without counterpart)")
 
 
 try:
