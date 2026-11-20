@@ -68,9 +68,9 @@ and the whole **front end replaceable** (`auth.set_template(...)`).
 TinySesam is on **PyPI** (since 0.19.0). Pin the version:
 
 ```bash
-pip install "tinysesam==0.25.7"
+pip install "tinysesam==0.25.8"
 # core: password + TOTP. Everything: [all] — + argon2, QR, OIDC, passkey
-pip install "tinysesam[all]==0.25.7"
+pip install "tinysesam[all]==0.25.8"
 # selective: [argon2] [qr] [oidc] [saml] [ldap] [passkey] [redis] [gateway]
 ```
 
@@ -79,7 +79,7 @@ carries a PEP 740 attestation of the commit it was built from. The same version 
 straight from the tag:
 
 ```bash
-pip install "tinysesam[all] @ git+https://github.com/Ollornog/TinySesam.git@v0.25.7"
+pip install "tinysesam[all] @ git+https://github.com/Ollornog/TinySesam.git@v0.25.8"
 ```
 
 Drop the `@v…` when you want a **commit** rather than a released version — that pulls the moving
@@ -1057,7 +1057,7 @@ hole. Established auth projects don't ship such a button, and as of `v0.12.0` ne
 Put a **fixed version** in your app's dependencies — never a branch:
 
 ```
-tinysesam[oidc]==0.25.7
+tinysesam[oidc]==0.25.8
 ```
 
 A released version on PyPI never changes: the same line installs the same code tomorrow. Updating
@@ -1067,14 +1067,14 @@ The same pin via git, if you install that way — note that a **tag can be moved
 immutability pin the commit (`@a1b2c3d…`):
 
 ```
-tinysesam[oidc] @ git+https://github.com/Ollornog/TinySesam.git@v0.25.7
+tinysesam[oidc] @ git+https://github.com/Ollornog/TinySesam.git@v0.25.8
 ```
 
 Every release also attaches a **wheel** and an **sdist**, with `SHA256SUMS`. To install without
 git and without an index, take the file directly:
 
 ```
-pip install https://github.com/Ollornog/TinySesam/releases/download/v0.25.7/tinysesam-0.25.7-py3-none-any.whl
+pip install https://github.com/Ollornog/TinySesam/releases/download/v0.25.8/tinysesam-0.25.8-py3-none-any.whl
 ```
 
 ### As a gateway (its own container)
@@ -1082,7 +1082,7 @@ pip install https://github.com/Ollornog/TinySesam/releases/download/v0.25.7/tiny
 Every release builds an image for `linux/amd64` and `linux/arm64`:
 
 ```
-ghcr.io/ollornog/tinysesam:v0.25.7
+ghcr.io/ollornog/tinysesam:v0.25.8
 ```
 
 It runs as **non-root** (uid 1000), contains neither `pip` nor `git`, ships a `HEALTHCHECK` on
@@ -1093,15 +1093,15 @@ who built it. Every release therefore carries a Sigstore-signed provenance attes
 both also stored next to the image in the registry:
 
 ```bash
-gh attestation verify oci://ghcr.io/ollornog/tinysesam:v0.25.7 --owner Ollornog
-gh attestation verify tinysesam-0.25.7-py3-none-any.whl --owner Ollornog   # wheel and sdist too
-gh attestation verify oci://ghcr.io/ollornog/tinysesam:v0.25.7 --owner Ollornog \
+gh attestation verify oci://ghcr.io/ollornog/tinysesam:v0.25.8 --owner Ollornog
+gh attestation verify tinysesam-0.25.8-py3-none-any.whl --owner Ollornog   # wheel and sdist too
+gh attestation verify oci://ghcr.io/ollornog/tinysesam:v0.25.8 --owner Ollornog \
     --predicate-type https://spdx.dev/Document                             # the SBOM
 ```
 
 A pass means: built by this repository's release workflow, from the commit the attestation names.
 No key to hand out and none to lose — the signature is tied to the workflow's own identity. The proxy comes along:
-`ghcr.io/ollornog/tinysesam-caddy-gate:v0.25.7` is Caddy with the caddy-jwt plugin, built, scanned and attested by the
+`ghcr.io/ollornog/tinysesam-caddy-gate:v0.25.8` is Caddy with the caddy-jwt plugin, built, scanned and attested by the
 same release (verify it the same way). Running in five minutes: "Gateway and Caddy in 5 minutes" below; the reference
 stack with every option lives in `deploy/forward-auth/docker-compose.yml`.
 
@@ -1679,7 +1679,7 @@ existing forward auth, so a request and its body are not lost.
 
 - **Proxy:** Caddy with the [caddy-jwt](https://github.com/ggicci/caddy-jwt) plugin — template
   [`deploy/forward-auth/Caddyfile.gate`](https://github.com/Ollornog/TinySesam/blob/main/deploy/forward-auth/Caddyfile.gate),
-  image `ghcr.io/ollornog/tinysesam-caddy-gate:v0.25.7` (built from
+  image `ghcr.io/ollornog/tinysesam-caddy-gate:v0.25.8` (built from
   [`deploy/forward-auth/caddy-gate/`](https://github.com/Ollornog/TinySesam/tree/main/deploy/forward-auth/caddy-gate/)).
 - **Key:** a random Ed25519 key of its own (since T-48, ADR-12 — up to 0.25.x it was derived from the vault key):
   `TINYSESAM_GATE_KEY`, `gate_key_file`, otherwise kept in the database encrypted with the vault key. The proxy

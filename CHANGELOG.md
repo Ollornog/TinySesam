@@ -2,7 +2,15 @@
 
 All notable changes. Format loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [0.25.8] — 2026-11-20
+
+### Changed
+
+Patch release cut by the release automation after Dependabot merges:
+
+- deploy: bump go.opentelemetry.io/otel/sdk/log (#260)
+- ci: bump registry from 3.1.2 to 3.1.2 in /tools/rehearsal (#245)
+- ci: bump the all group across 1 directory with 3 updates (#246)
 
 ### Added — Caddy ready-made: image `tinysesam-caddy-gate` and a quickstart stack (T-62)
 
