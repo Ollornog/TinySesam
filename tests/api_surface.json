@@ -711,6 +711,14 @@
       "sig": "(key, **fmt) -> 'str'",
       "tier": "B"
     },
+    "topbar": {
+      "sig": "(request: 'Request', *, nonce: 'str' = '', current: 'str' = '') -> 'str'",
+      "tier": "B"
+    },
+    "topbar_head": {
+      "sig": "(*, nonce: 'str' = '') -> 'str'",
+      "tier": "B"
+    },
     "totp_begin": {
       "sig": "(user_id)",
       "tier": "B"
@@ -1725,6 +1733,14 @@
     "stepup_strict": {
       "field": "bool = False",
       "tier": "A"
+    },
+    "topbar_enabled": {
+      "field": "bool = True",
+      "tier": "B"
+    },
+    "topbar_links": {
+      "field": "list = []",
+      "tier": "B"
     },
     "totp_enabled": {
       "field": "bool = True",

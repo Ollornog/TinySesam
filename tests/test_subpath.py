@@ -258,7 +258,8 @@ _check_page_html("logout-rückfrage", c_e.get("/sso/auth/logout", headers={**HTM
 from tinysesam.admin import render_panel  # noqa: E402
 r.check("G4: error page and sign-out confirmation in the prefix; render_panel without placeholder",
         not error_e and PREFIX_PLACEHOLDER not in render_panel(auth_e, "/auth/admin")
-        and 'href="/sso/auth/logout"' in render_panel(auth_e, "/sso/auth/admin", prefix="/sso"),
+        and "action='/sso/auth/logout'" in render_panel(auth_e, "/sso/auth/admin", prefix="/sso",
+                                                     viewer={"username": "boss", "display_name": "", "is_admin": 1}),
         "; ".join(error_e))
 
 # G5: whoever still carries the prefix by hand in login_path gets a warning (otherwise /sso/sso/…).

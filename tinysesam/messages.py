@@ -337,6 +337,15 @@ MESSAGES = {
         "acc.admin": "Admin panel",
         "acc.none": "none",
         "acc.this": "(this one)",
+        # --- top bar (T-64) ---
+        "bar.links": "Links",
+        "bar.menu": "Account menu of {name}",
+        "bar.signed_in_as": "Signed in as",
+        "bar.account": "Account",
+        "bar.theme": "Appearance",
+        "bar.light": "Light",
+        "bar.dark": "Dark",
+        "bar.system": "System",
         # --- admin panel ---
         # `admin.locale` drives `toLocaleString()` in the panel — not text, a BCP-47 tag.
         "admin.locale": "en-GB",
@@ -824,6 +833,15 @@ MESSAGES = {
         "acc.admin": "Admin-Panel",
         "acc.none": "keine",
         "acc.this": "(diese)",
+        # --- top bar (T-64) ---
+        "bar.links": "Links",
+        "bar.menu": "Kontomenü von {name}",
+        "bar.signed_in_as": "Angemeldet als",
+        "bar.account": "Konto",
+        "bar.theme": "Darstellung",
+        "bar.light": "Hell",
+        "bar.dark": "Dunkel",
+        "bar.system": "System",
         # --- Admin panel ---
         "admin.locale": "de-DE",
         "admin.app": "App",

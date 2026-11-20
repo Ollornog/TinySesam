@@ -36,6 +36,15 @@ class TinySesamConfig:
     # content depends on the request (login state, language) — then evaluated on every call.
     brand_header: object = ""
     brand_footer: object = ""         # footer below every built-in page; HTML string or `fn(auth) -> str`
+    #: Top bar of the built-in pages (T-64): logo (`brand_icon`, else a built-in mark), name, `topbar_links` and,
+    #: on the account, setup, reauth and consent pages, the account menu (account, admin panel, light/dark/system,
+    #: sign out). Sign-in and error pages show logo and name only. False = no bar (the account page then carries
+    #: its admin and sign-out links itself) — e.g. when `brand_header` already frames the pages with an own navigation.
+    topbar_enabled: bool = True
+    #: Links in the top bar, as (title, target) pairs: `[("Wiki", "/wiki"), ("Files", "https://files.example.com/")]`.
+    #: A target is a path on the own origin (`/…`, as the browser sees it) or an https address on a host that a
+    #: `next=` may reach too (`base_url`, `trusted_redirect_hosts`). Shown next to the name, on a phone in the menu.
+    topbar_links: list = field(default_factory=list)
 
     # --- Roles/groups ---
     # Does an admin satisfy EVERY require_role(...) check? Default True (classic behaviour).

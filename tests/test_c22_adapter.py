@@ -108,8 +108,10 @@ def auth_with(**kw):
 
 plain = auth_with(brand_css=":root{--ts-accent:#123456}")
 page = plain.render_page("login", next="/").body.decode()
-assert "--ts-c22-" not in page and "rel=stylesheet" not in page and "themeMode" not in page
-ok("without c22_stylesheet: no adapter, no stylesheet, no script for it")
+assert "--ts-c22-" not in page and "rel=stylesheet" not in page
+# The light/dark restore is the same switch with and without C22 (T-64): on every page, first in <head>.
+assert page.index("localStorage.getItem('themeMode')") < page.index("<style"), "restore missing or after the styles"
+ok("without c22_stylesheet: no adapter, no stylesheet; the light/dark restore is there all the same")
 
 c22 = auth_with(c22_stylesheet="/static/c22-vega.css", brand_css=":root{--ts-accent:#123456}")
 resp = c22.render_page("login", next="/")

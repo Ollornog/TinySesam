@@ -98,6 +98,7 @@ _t33_db = os.path.join(tempfile.mkdtemp(), "t33.db")
 t33 = _TinySesam(_TinySesamConfig(
     db_path=_t33_db, cookie_secure=False, cookie_prefix="tst33_", passkey_enabled=False, lang="en",
     magiclink_enabled=True, magiclink_self_request=False, qr_login_enabled=True, base_url=T33,
+    topbar_links=[("Home", "/"), ("Docs", "/docs")],
     # The accounts here have no second factor; the default refusal for them (T-44) is measured in
     # tests/test_h2_hardening.py — the browser measures the page, the number and the step-up.
     qr_login_require_second_factor=False))
@@ -665,6 +666,7 @@ async def run():
         await h2_stepup_qr(p)
         await own_dialogs(p)
         await c22_adapter(p)
+        await top_bar(p)
 
 
 async def t33_alternatives(p):
@@ -1372,7 +1374,8 @@ async def c22_adapter(p):
     """C22 adapter (tinysesam/c22.css, T-61) where CSS is actually computed. Its helpers rely on a CSS rule
     no string check can prove: a custom property that reads an undefined var() without a fallback is
     invalid, and the `var(--ts-c22-…, <default>)` reading it falls back. Measured on a blank page in
-    iframes — no CSP, no app styles in between."""
+    iframes — no CSP, no app styles in between — in dark mode (`html.dark`): the adapter's fallbacks are the
+    standard (dark) set; TinySesam's light values apply only without the adapter (T-64)."""
     import re as _re
     from tinysesam.theme import C22_ADAPTER, TOKENS
     names = sorted(set(_re.findall(r"(--ts-[a-z0-9-]+)\s*:", TOKENS)))
@@ -1386,7 +1389,7 @@ async def c22_adapter(p):
     measured = await p.js(
         "(function(sheets,names){return sheets.map(function(css){var f=document.createElement('iframe');"
         "document.body.appendChild(f);var d=f.contentDocument;d.open();"
-        "d.write('<!doctype html><html><head><style>'+css+'</style></head><body></body></html>');d.close();"
+        "d.write('<!doctype html><html class=dark><head><style>'+css+'</style></head><body></body></html>');d.close();"
         "var s=f.contentWindow.getComputedStyle(d.documentElement),o={};"
         "names.forEach(function(n){o[n]=s.getPropertyValue(n).trim()});f.remove();return o})})"
         f"({json.dumps([TOKENS, TOKENS + C22_ADAPTER, fake + TOKENS + C22_ADAPTER])},{json.dumps(names)})")
@@ -1400,6 +1403,154 @@ async def c22_adapter(p):
     assert themed["--ts-radius"] == "3px" and themed["--ts-bg"] == "rgb(1,2,3)", themed
     print(f"  C22 adapter: without C22 all {len(names)} tokens unchanged, with C22 "
           f"{len(names) - len(literal)} follow ({len(literal)} without counterpart)")
+
+
+async def top_bar(_first):
+    """T-64 in a real browser on the T-33 app (strict CSP, real CSRF), in a tab of its own (real key presses, see
+    `own_dialogs`): the account menu opens and closes by click, outside click and Escape (focus back on the button),
+    the admin entry only for admins, Light/Dark/System switch the class `dark` before the first paint and survive a
+    reload, sign-out works, and at phone width the links sit in the menu without sideways scrolling."""
+    port = _cdp_port()
+    tab = json.load(urllib.request.urlopen(urllib.request.Request(
+        f"http://127.0.0.1:{port}/json/new?about:blank", method="PUT")))
+    async with websockets.connect(tab["webSocketDebuggerUrl"], max_size=30_000_000) as ws:
+        p = Page(ws)
+        for domain in ("Page", "Runtime", "Network"):
+            await p.cmd(f"{domain}.enable")
+        # CSP listener, and the state of <html> at the moment <body> is parsed — before the first paint. Is the class
+        # already right there, nothing flashes.
+        await p.cmd("Page.addScriptToEvaluateOnNewDocument", source=(
+            "window.__csp=[];addEventListener('securitypolicyviolation',function(e){"
+            "window.__csp.push(e.effectiveDirective+' blocked '+(e.blockedURI||'inline'))});"
+            "new MutationObserver(function(m,o){if(document.body){window.__darkAtBody="
+            "document.documentElement.classList.contains('dark');o.disconnect()}})"
+            ".observe(document,{childList:true,subtree:true})"))
+        await _top_bar(p)
+
+
+async def _top_bar(p):
+    failed_before = len(p.failed)
+
+    async def go(path):
+        await p.js("window.__old=true")
+        await p.cmd("Page.navigate", url=T33 + path)
+        await p.until("window.__old===undefined && document.readyState==='complete'", f"page {path} did not load")
+
+    async def as_user(name):
+        await p.cmd("Network.clearBrowserCookies")
+        token, _ = t33.start_session(t33.store.get_user_by_name(name)["id"], "password")
+        await p.cmd("Network.setCookie", name=t33.session_cookie_name, value=token, url=T33)
+
+    async def is_open():
+        return await p.js("document.querySelector('.tsbar-btn').getAttribute('aria-expanded')==='true'"
+                          " && !document.querySelector('.tsbar-pop').hidden")
+
+    async def no_csp(where):
+        viol = await p.js("JSON.stringify(window.__csp===undefined?['(no Listener)']:window.__csp)")
+        assert viol == "[]", f"CSP violation on {where}: {viol}"
+
+    await p.cmd("Emulation.setDeviceMetricsOverride", width=1280, height=820, deviceScaleFactor=1, mobile=False)
+    await p.cmd("Emulation.setEmulatedMedia", features=[{"name": "prefers-color-scheme", "value": "light"}])
+
+    # 1) Sign-in page: logo and name, no menu.
+    await p.cmd("Network.clearBrowserCookies")
+    await go("/auth/login")
+    assert await p.js("document.querySelectorAll('header.tsbar').length") == 1, "no top bar on the sign-in page"
+    assert await p.js("!document.querySelector('.tsbar-btn') && !document.querySelector('.tsbar-links')"), \
+        "the sign-in page must show logo and name only"
+    await no_csp("the sign-in page")
+
+    # 2) Menu: click, outside click, Escape — for a non-admin without the admin entry.
+    await as_user("carol")
+    await go("/auth/account")
+    await no_csp("the account page")
+    assert not await is_open(), "menu open on load"
+    assert await p.js("[...document.querySelectorAll('.tsbar-links a')].map(a=>a.textContent).join()") == "Home,Docs"
+    await p.js("document.querySelector('.tsbar-btn').click();true")
+    assert await is_open(), "click does not open the menu"
+    assert not await p.js("!!document.querySelector('.tsbar-pop a[href$=\"/auth/admin\"]')"), \
+        "admin entry shown to a non-admin"
+    await p.js("document.querySelector('.tsmain h1').click();true")
+    assert not await is_open(), "a click outside does not close the menu"
+    await p.js("document.querySelector('.tsbar-btn').focus();document.querySelector('.tsbar-btn').click();"
+               "document.querySelector('.tsbar-pop a').focus();true")
+    await p.key("Escape")
+    assert not await is_open(), "Escape does not close the menu"
+    assert await p.js("document.activeElement===document.querySelector('.tsbar-btn')"), \
+        "Escape does not put the focus back on the menu button"
+    print("  top bar: menu opens by click, closes by outside click and Escape (focus back), no admin entry for a user")
+
+    # 3) Light/dark/system: the C22 switch, before the first paint, kept over a reload.
+    async def pick(mode):
+        if not await is_open():
+            await p.js("document.querySelector('.tsbar-btn').click();true")
+        await p.js(f"document.querySelector('[data-theme-mode={mode}]').click();true")
+
+    async def dark():
+        return await p.js("document.documentElement.classList.contains('dark')")
+    await pick("dark")
+    assert await dark() and await p.js("localStorage.getItem('themeMode')") == "dark", "Dark does not switch"
+    assert await p.js("document.querySelector('[data-theme-mode=dark]').getAttribute('aria-pressed')") == "true"
+    await go("/auth/account")
+    assert await dark(), "Dark is not kept over a reload"
+    assert await p.js("window.__darkAtBody") is True, "the class `dark` comes only after the first paint (flash)"
+    assert await p.js("getComputedStyle(document.body).backgroundColor") == "rgb(15, 17, 21)", "dark tokens not applied"
+    await pick("light")
+    assert not await dark() and await p.js("localStorage.getItem('themeMode')") == "light"
+    await go("/auth/account")
+    assert await p.js("window.__darkAtBody") is False and not await dark(), "Light is not kept over a reload"
+    assert await p.js("getComputedStyle(document.body).backgroundColor") == "rgb(246, 247, 249)", \
+        "light tokens not applied"
+    await pick("system")
+    assert await p.js("localStorage.getItem('themeMode')") is None, "System must remove the stored choice"
+    await p.cmd("Emulation.setEmulatedMedia", features=[{"name": "prefers-color-scheme", "value": "dark"}])
+    await p.until("document.documentElement.classList.contains('dark')", "System does not follow a dark system setting")
+    await p.cmd("Emulation.setEmulatedMedia", features=[{"name": "prefers-color-scheme", "value": "light"}])
+    await p.until("!document.documentElement.classList.contains('dark')", "System does not follow back to light")
+    print("  top bar: Light/Dark/System switch `dark` on <html>, set before the first paint, kept over a reload")
+
+    # 4) Admin: the entry is there and leads to the panel, whose bar marks it.
+    await as_user("boss")
+    await go("/auth/account")
+    assert await p.js("!!document.querySelector('.tsbar-pop a[href$=\"/auth/admin\"]')"), "no admin entry for an admin"
+    await go("/auth/admin")
+    assert await p.js("document.querySelector('.tsbar-pop a[href$=\"/auth/admin\"]').getAttribute('aria-current')") \
+        == "page", "the panel does not mark its own entry"
+    await no_csp("the admin panel")
+
+    # 5) Phone width: links in the menu, tap targets ≥ 44 px, no sideways scrolling (account page and panel).
+    await p.cmd("Emulation.setDeviceMetricsOverride", width=390, height=844, deviceScaleFactor=1, mobile=True)
+    for path in ("/auth/account", "/auth/admin"):
+        await go(path)
+        await p.js("new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))")
+        assert await p.js("document.documentElement.scrollWidth<=innerWidth"), f"sideways scrolling on {path}"
+        assert await p.js("getComputedStyle(document.querySelector('.tsbar-links')).display") == "none", path
+        await p.js("document.querySelector('.tsbar-btn').click();true")
+        assert await p.js("[...document.querySelectorAll('.tsbar-mlinks a')].filter(a=>a.offsetHeight).length") == 2, \
+            f"the links are not in the menu on {path}"
+        small = await p.js("[...document.querySelectorAll('.tsbar-btn,.tsbar-brand,.tsbar-item,.tsbar-theme button')]"
+                           ".filter(e=>e.offsetHeight&&e.getBoundingClientRect().height<44).map(e=>e.className||e.tagName)")
+        assert not small, f"tap targets under 44 px on {path}: {small}"
+        pop = await p.js("JSON.stringify(document.querySelector('.tsbar-pop').getBoundingClientRect())")
+        box = json.loads(pop)
+        assert box["left"] >= 0 and box["right"] <= 390, f"the menu leaves the screen on {path}: {box}"
+    print("  top bar at 390 px: links in the menu, tap targets ≥ 44 px, menu on screen, no sideways scrolling")
+    await p.cmd("Emulation.setDeviceMetricsOverride", width=1280, height=820, deviceScaleFactor=1, mobile=False)
+
+    # 6) Sign out through the menu: a POST with the CSRF field, the session is gone.
+    await go("/auth/account")
+    await p.js("window.__old=true;document.querySelector('.tsbar-btn').click();"
+               "document.querySelector('.tsbar-pop form button[type=submit]').click();true")
+    await p.until("window.__old===undefined && document.readyState==='complete'", "sign-out did not navigate")
+    r = await p.cmd("Runtime.evaluate", awaitPromise=True, returnByValue=True, expression=(
+        "fetch('/auth/me',{headers:{Accept:'application/json'}}).then(r=>r.status)"))
+    assert r["result"]["value"] == 401, f"still signed in after the menu's sign-out: {r}"
+    await p.js("localStorage.removeItem('themeMode');true")
+    await p.cmd("Emulation.setEmulatedMedia", features=[])
+    assert not p.console, f"console errors: {p.console[:2]}"
+    broken = [f for f in p.failed[failed_before:] if f != (401, T33 + "/auth/me")]   # the probe above answers 401
+    assert not broken, f"broken requests: {broken[:3]}"
+    print("  top bar: sign-out from the menu ends the session (POST with CSRF)")
 
 
 try:

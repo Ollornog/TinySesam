@@ -55,6 +55,38 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
   `LoginResult.next_factor` can be `"password_change"` (the half session owes an own password; `next_url` points
   to `/auth/setup`, which is now mounted wherever passwords are on).
 
+### Changed — a new top bar, light and dark, a new favicon (T-64)
+
+- **One top bar instead of the old page headers.** The account page, the admin panel and the setup, reauth, consent,
+  QR-approval and gateway pages carry one bar: on the left the application logo (`brand_icon`, else a built-in mark),
+  the name (`gate_brand` or `rp_name`) and configurable links; on the right an account menu with the account name,
+  *Account*, *Admin panel* (admins only), *Light / Dark / System* and *Sign out* — now a POST with the CSRF field
+  instead of a `GET /auth/logout` link. Sign-in and error pages show logo and name only. Below 640 px the links move
+  into the menu, tap targets are at least 44 px, the menu follows the keyboard (`aria-expanded`, Escape closes and
+  returns the focus, a click or the focus outside closes). The account page's own admin/sign-out links and the
+  panel's "🧠 … · Admin" header with "← App"/"Logout" are gone (with `topbar_enabled=False` the account page keeps
+  its links). Only a session gets the menu, never an API key.
+- **Light and dark on every page, not only with C22.** Until now the built-in pages were dark only. The tokens now
+  come in a dark and a light set, switched by the class `dark` on `<html>` — C22's switch (`localStorage.themeMode`,
+  none = the system setting), set in `<head>` before the first paint. **Visible for existing installations:** with
+  a light system setting the pages are now light. The defaults sit in the cascade layer `tinysesam`, so `brand_css`
+  still wins whatever its selector: a `brand_css` that sets every token keeps its look in both modes; one that sets
+  only some (say `--ts-accent`) now gets TinySesam's light values for the rest in light mode.
+- **New built-in favicon:** a rounded tile with a keyhole, the same mark as the bar's logo (darker blue in light,
+  lighter in dark mode). `brand_icon` overrides it as before.
+
+### Added — the top bar as a building block (T-64)
+
+- Config: `topbar_enabled` (default `True`) and `topbar_links` — `(title, target)` pairs; a target is a path on the
+  own origin or an https address on a host a `next=` may reach (`base_url`, `trusted_redirect_hosts`), anything else
+  is a `ConfigError` (de + en).
+- `auth.topbar_head(nonce=…)` and `auth.topbar(request, nonce=…, current=…)` give an app's own pages the same bar
+  (tokens, bar CSS and the light/dark restore for `<head>`; the bar with the mount prefix and the session's menu).
+  `ctx["viewer"]` names the signed-in account on the pages with the menu (`topbar.MENU_PAGES`).
+- `render_panel(…, viewer=…, csrf=…)` for the panel's menu. Tests: `tests/test_topbar.py`, `top_bar` in
+  `tests/test_browser.py` (menu by click and keyboard, admin entry, theme before the first paint and after a reload,
+  sign-out, 390 px without sideways scrolling, CSP).
+
 ### Added — same look as an app built on C22 (T-61)
 
 - **`c22_stylesheet`:** the path of the C22 stylesheet an app already serves (same origin only, checked at start).
