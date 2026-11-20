@@ -6,10 +6,8 @@ red is listed in the PR. A happy path alone would prove nothing here — most of
 """
 import base64
 import hashlib
-import json
 import os
 import re
-import sqlite3
 import sys
 import tempfile
 from urllib.parse import parse_qs, urlsplit
@@ -383,8 +381,11 @@ at, rt = tok["access_token"], tok["refresh_token"]
 assert tok["token_type"] == "Bearer" and tok["expires_in"] == 3600 and set(tok["scope"].split()) == {"mcp", "offline_access"}
 assert O.shape_ok(at, "tsat_") and O.shape_ok(rt, "tsrt_") and len(at) == 54
 assert not O.shape_ok(at[:-1] + ("A" if at[-1] != "A" else "B"), "tsat_"), "checksum must catch a typo"
-raw = open(auth.cfg.db_path, "rb").read() + (open(auth.cfg.db_path + "-wal", "rb").read()
-                                             if os.path.exists(auth.cfg.db_path + "-wal") else b"")
+raw = b""
+for _part in (auth.cfg.db_path, auth.cfg.db_path + "-wal"):
+    if os.path.exists(_part):
+        with open(_part, "rb") as _fh:
+            raw += _fh.read()
 assert at.encode() not in raw and rt.encode() not in raw
 assert hashlib.sha256(at.encode()).hexdigest().encode() not in raw, "digest must be keyed (HMAC with pepper)"
 assert auth.store.oauth_token(auth._oauth.digest(at)) is not None

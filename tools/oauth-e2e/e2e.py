@@ -57,6 +57,11 @@ TOOL = f"mcp__{SERVER}__whoami"
 USER, PASSWORD = "alice", "alice-pw-12345"
 
 
+def read(path: str) -> str:
+    with open(path, encoding="utf-8") as fh:
+        return fh.read()
+
+
 def as_alice(text: str) -> bool:
     """The model stand-in quoted a tool result that names alice as Remote-User."""
     return "TOOL_RESULT" in text and "remote_user" in text and "alice" in text
@@ -94,13 +99,11 @@ def make_certs(d):
         "-out", f"{d}/leaf.csr")
     run("openssl", "x509", "-req", "-in", f"{d}/leaf.csr", "-CA", f"{d}/ca.pem", "-CAkey", f"{d}/ca.key",
         "-CAcreateserial", "-days", "2", "-extfile", f"{d}/ext.cnf", "-out", f"{d}/leaf.pem")
-    for f in ("leaf.key", "leaf.pem", "ca.pem"):
-        os.chmod(f"{d}/{f}", 0o644)        # read by the Caddy container's user
 
 
 def caddyfile(auth_port, app_port, ts_up, app_up) -> str:
     """The repo template with this test's addresses: two sites, own certificate, bound to 127.0.0.1."""
-    text = open(os.path.join(ROOT, "deploy", "forward-auth", "Caddyfile"), encoding="utf-8").read()
+    text = read(os.path.join(ROOT, "deploy", "forward-auth", "Caddyfile"))
     tls = "\n\tbind 127.0.0.1\n\ttls /certs/leaf.pem /certs/leaf.key"
     assert text.count("auth.example.com {") == 1 and text.count("app.example.com {") == 1
     text = text.replace("auth.example.com {", f"https://localhost:{auth_port} {{{tls}", 1)
@@ -247,10 +250,10 @@ class Browser:
         try:
             port_file = os.path.join(profile, "DevToolsActivePort")
             for _ in range(300):
-                if os.path.exists(port_file) and open(port_file).read().strip():
+                if os.path.exists(port_file) and read(port_file).strip():
                     break
                 time.sleep(0.1)
-            port = open(port_file).read().split()[0]
+            port = read(port_file).split()[0]
             tabs = json.load(urllib.request.urlopen(f"http://127.0.0.1:{port}/json"))
             ws_url = [t for t in tabs if t["type"] == "page"][0]["webSocketDebuggerUrl"]
             async with websockets.connect(ws_url, max_size=30_000_000) as ws:
@@ -358,7 +361,7 @@ class CLI:
 
     def credentials(self):
         try:
-            data = json.load(open(f"{self.env['CLAUDE_CONFIG_DIR']}/.credentials.json"))
+            data = json.loads(read(f"{self.env['CLAUDE_CONFIG_DIR']}/.credentials.json"))
         except OSError:
             return {}
         return next(iter(data.get("mcpOAuth", {}).values()), {})
