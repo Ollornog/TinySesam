@@ -118,9 +118,12 @@ class Client:
     """HTTPS to Caddy on 127.0.0.1, while TLS (SNI, certificate check) and Host speak of the real name."""
 
     def __init__(self, cafile, name, port, host_header):
-        self.ctx = ssl.create_default_context(cafile=cafile)
-        # Explicit floor (CodeQL py/insecure-protocol): Caddy speaks TLS 1.3, nothing older is measured here.
-        self.ctx.minimum_version = ssl.TLSVersion.TLSv1_3
+        # Client context with an explicit floor (CodeQL py/insecure-protocol): Caddy speaks TLS 1.3, nothing older is
+        # measured here. PROTOCOL_TLS_CLIENT checks the certificate and the host name by default.
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        ctx.minimum_version = ssl.TLSVersion.TLSv1_3
+        ctx.load_verify_locations(cafile=cafile)
+        self.ctx = ctx
         self.name, self.port, self.host = name, port, host_header
 
     def get(self, path, head=None):
