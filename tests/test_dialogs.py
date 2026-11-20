@@ -64,7 +64,10 @@ ok(f"no alert/confirm/prompt call in {len(_sources)} sources (scanner self-test:
 # ---------- 2) The pages that ask carry the building block ----------
 db = os.path.join(tempfile.mkdtemp(), "t.db")
 auth = TinySesam(TinySesamConfig(db_path=db, csrf_enabled=False, cookie_secure=False, apikey_enabled=True,
-                                 passkey_enabled=True, totp_enabled=True, lang="en"))
+                                 passkey_enabled=False, totp_enabled=True, lang="en"))
+# The passkey button (and its script) only needs the switch to render — not the `[passkey]` extra, which the narrow
+# CI run (core only) lacks. Switched on after construction, which would import `webauthn`.
+auth.cfg.passkey_enabled = True
 _MARK = "window.tsSecret="
 
 
