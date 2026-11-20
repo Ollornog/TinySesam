@@ -1882,6 +1882,20 @@ for _file, _text in _readmes.items():
 print(f"  AI docs: {len(_AI_DOCS)} files, every name in backticks known; skill front matter, CLAUDE.md import, "
       "plugin marketplace and install line wired")
 
+# ---------- Accepted CodeQL findings are recorded in the repository ----------
+# A dismissed alert is a click in the GitHub UI, invisible and not reviewable; `.github/codeql/accepted.md` is its
+# trace in the repository. Offline check of the table only: every row complete, alert numbers unique.
+_accepted = read(".github/codeql/accepted.md")
+_rows = [[c.strip() for c in ln.strip().strip("|").split("|")] for ln in _accepted.splitlines()
+         if re.match(r"\|\s*\d+\s*\|", ln)]
+assert _rows, ".github/codeql/accepted.md: no table rows"
+for _r in _rows:
+    assert len(_r) == 6 and all(_r), f"accepted.md: incomplete row {_r[:2]}"
+    assert re.fullmatch(r"py/[a-z-]+", _r[1].strip("`")) and re.fullmatch(r"\d{4}-\d\d-\d\d", _r[4]), _r[:5]
+_nums = [_r[0] for _r in _rows]
+assert len(set(_nums)) == len(_nums), "accepted.md: alert number twice"
+print(f"  CodeQL: {len(_rows)} accepted findings recorded, rows complete, numbers unique")
+
 # Kit 0.22.0 (M-1, stage 3): Has every check before it SEEN something? A check over an
 # empty set is always green. Must run LAST, it evaluates the case counts before it.
 unseen = hygiene.pruefe_etwas_gesehen()

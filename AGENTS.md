@@ -111,6 +111,8 @@ already hold one.
   and `backlog/README-KONVENTION.md` come from a shared kit: do not edit them here.
 - A change only to Markdown in the root, `docs/` or `backlog/` takes the text fast path of `scripts/check.sh`: only
   the hygiene test runs (it still executes the Python blocks of this file and checks the names in it).
+- CodeQL findings are fixed in code. A real false positive may be dismissed via the API (reason plus comment) and
+  must be recorded in `.github/codeql/accepted.md`; never switch a rule off globally (`query-filters`).
 - Config fields are read at request time; `TinySesamConfig.validate()` re-checks one changed after construction.
 - Schema changes need a migration in `tinysesam/store.py`, a rollback note in `docs/OPERATIONS.md` and a test with
   an old database (`tests/fixtures/`).
