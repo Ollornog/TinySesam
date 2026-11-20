@@ -120,6 +120,15 @@ class TinySesamConfig:
     #: a deliberate decision of the operator and is logged on creation — there are
     #: cases for it (a device nobody can touch), they are just rare.
     apikey_allow_unlimited: bool = False
+    #: Lifetime of an app password in days if the holder names none (T-66). App passwords are switched on per
+    #: application with `forward_apps[host]["app_passwords"] = True`; they are for HTTP clients that speak only
+    #: Basic auth (WebDAV, CalDAV/CardDAV, Git over HTTPS) and are valid only at the gate (`/auth/forward`) of
+    #: the applications chosen at creation. A year, not 90 days: an app password is typed into a phone by hand,
+    #: and breaking the calendar sync every quarter teaches people to work around it. 1–3650.
+    app_password_default_days: int = 365
+    #: May an app password be created without expiry? Default no — the same reasoning as for API keys: a secret
+    #: without an end outlives the device it was typed into.
+    app_password_allow_unlimited: bool = False
     admin_enabled: bool = True            # mount the admin panel automatically at admin_path
     admin_path: str = "/auth/admin"       # default mount point; auth.admin_router() also lets you mount it elsewhere
     admin_ui_enabled: bool = True         # built-in HTML UI; False = JSON API only (for embedding in your own panel)
@@ -164,8 +173,9 @@ class TinySesamConfig:
     # (the provider is already signed out with oidc_rp_logout). 0 = leave it up, button only. 0–300.
     forward_logged_out_sec: int = 10
     # Settings per protected application: {"app.example.com": {"name": "Wiki", "login": "direct",
-    # "logout": "ask"}}. name = display name on the login and sign-out pages; login/logout override
-    # forward_login/forward_logout for this host.
+    # "logout": "ask", "app_passwords": True}}. name = display name on the login and sign-out pages; login/logout
+    # override forward_login/forward_logout for this host; app_passwords = this host accepts app passwords by
+    # Basic auth (T-66, default off — WebDAV, CalDAV/CardDAV, Git over HTTPS; never the account's own password).
     forward_apps: dict = field(default_factory=dict)
     gate_cookie_name: str = "__Host-tinysesam_gate"  # form __Host-tinysesam_<name>: host-only, and the templates strip it before the app
     # Central gateway, session stays on its host (T-26): An app host gets, via a
@@ -797,6 +807,13 @@ class TinySesamConfig:
             oidc_rp_logout=True,
         )
         base.update(overrides)
+        # App passwords (T-66) are created on the account page: an application that takes them switches the page
+        # on, unless the caller decided about it explicitly. (The page shows nothing else a gateway would hide —
+        # sessions, recent activity, connected programs.)
+        apps = base.get("forward_apps")
+        if "account_enabled" not in overrides and isinstance(apps, dict) and any(
+                isinstance(e, dict) and e.get("app_passwords") is True for e in apps.values()):
+            base["account_enabled"] = True
         # `base` is a dict of mixed values; the dataclass checks the field types at runtime.
         return cls(**base)   # type: ignore[arg-type]
 

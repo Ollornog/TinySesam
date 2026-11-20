@@ -305,7 +305,7 @@ single base key encrypted the secrets AND was, by HKDF, the gate signing key and
 |---|---|---|---|---|---|
 | `vault` | TOTP secrets, OIDC refresh and ID tokens, an OAuth successor pair in its grace window, the two keys below when kept in the database | AES-256-GCM, 96-bit random nonce, AAD = key ID + table/column/row | 32 random bytes | `TINYSESAM_SECRETS_KEY` (+ `TINYSESAM_SECRETS_KEY_PREVIOUS`), `secrets_key_file`, `<db_path>.key` (created at the first start, 0600) | as long as the row |
 | `gate` | signature of the gate tokens (ADR-9) | Ed25519 (`EdDSA`), header `typ: tinysesam-gate+jwt`, `kid` | 32-byte random seed — **never derived** from the vault key | `TINYSESAM_GATE_KEY` (+ `_PREVIOUS`), `gate_key_file`, otherwise the table `key_material`, encrypted with the vault key | `gate_token_ttl_sec`, at most 3600 s |
-| `oauth-pepper` | HMAC-SHA-256 of the stored OAuth codes and tokens (ADR-11) | HMAC-SHA-256 | ≥ 32 random bytes | `TINYSESAM_OAUTH_PEPPER` (+ `_PREVIOUS`), `oauth_pepper_file`, otherwise `key_material` | refresh tokens: `oauth_refresh_idle_days` |
+| `oauth-pepper` | HMAC-SHA-256 of the stored OAuth codes and tokens (ADR-11) and of the app passwords (T-66) | HMAC-SHA-256 | ≥ 32 random bytes | `TINYSESAM_OAUTH_PEPPER` (+ `_PREVIOUS`), `oauth_pepper_file`, otherwise `key_material` | refresh tokens: `oauth_refresh_idle_days`; app passwords: until their next use, at most `app_password_default_days` or what the holder chose |
 | (per process) | the in-memory fingerprints of repeated wrong passwords | PBKDF2-HMAC-SHA-256 | 32 random bytes per start | never stored | `password_repeat_window_sec` |
 
 Each purpose is a **keyring**: the first key is active (encrypts, signs, digests), the others are *previous* (decrypt,
@@ -365,7 +365,10 @@ log (`key_rotated`, `key_retired`).
 - **OAuth pepper:** `tinysesam keys rotate --purpose oauth-pepper` → restart. Codes and tokens are looked up with the
   active pepper and then with the previous ones, so every connected program stays connected; its next refresh issues
   tokens under the new pepper. `tinysesam keys retire --purpose oauth-pepper` refuses while a code or token from before
-  the rotation is still valid (`--force`: those programs must connect again).
+  the rotation is still valid (`--force`: those programs must connect again). The same pepper keys the digests of the
+  **app passwords** (T-66, with a label of its own): an app password is found with the previous pepper and moves to
+  the active one on its next use; `retire` also refuses while an app password not used since the rotation still
+  needs the old one (`--force`: it stops working and must be created anew).
 
 ## Gate token in front of third-party applications (ADR-9)
 

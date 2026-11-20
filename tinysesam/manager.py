@@ -31,6 +31,7 @@ from starlette.responses import Response
 
 from . import _chain
 from . import _vocabulary
+from . import app_passwords as _ap
 from . import config_check
 from .errors import ConfigError, StateError
 from .config import TinySesamConfig
@@ -1161,7 +1162,242 @@ class TinySesam:
         n = self.store.revoke_user_api_keys(user_id)
         if n:
             self._security_event("api_keys_revoked", user_id, count=n, reason=reason)
+        # The app passwords (T-66) go the same way: they are a second way in as much as a key is.
+        self._app_passwords_revoked(user_id, reason)
         return n
+
+    # ---------- App passwords (T-66) ----------
+    def app_password_hosts(self) -> list:
+        """The applications that accept app passwords: `[{"host": …, "name": …}]` — the `forward_apps` entries with
+        `"app_passwords": True`. Empty without `forward_auth_enabled` (only the gate reads app passwords): then the
+        account page shows no such section and the routes do not exist."""
+        if not self.cfg.forward_auth_enabled:
+            return []
+        out, seen = [], set()
+        for h, e in (self.cfg.forward_apps or {}).items():
+            if not isinstance(e, dict) or e.get("app_passwords") is not True:
+                continue
+            host = str(h).strip().lower().rstrip(".")
+            if host and host not in seen:
+                seen.add(host)
+                out.append({"host": host, "name": str(e.get("name") or host)})
+        return out
+
+    def create_app_password(self, user_id, name, hosts=None, expires_days=None) -> dict:
+        """Create an app password (T-66) for HTTP clients that speak only Basic auth — WebDAV, CalDAV/CardDAV, Git
+        over HTTPS. The return value carries it in PLAIN TEXT under `secret`, this once; only an HMAC digest
+        with the pepper keyring (ADR-12) is stored.
+
+        `name` (required): the device or purpose ("Phone calendar"). `hosts`: the applications it is valid for,
+        from `app_password_hosts()`; None is allowed only when exactly one application accepts app passwords —
+        otherwise the caller chooses (one is the default in the account page: an app password is bound as
+        narrowly as its use). `expires_days`: None → `app_password_default_days`; 0 → no expiry, only with
+        `app_password_allow_unlimited`.
+
+        It works ONLY at the gate (`/auth/forward`) of the chosen hosts, carries the account's roles but never its
+        admin flag, and is revoked with the API keys when the account is locked, its password is reset or "sign
+        out everywhere" is pressed. Raises `ConfigError` for an unusable request (no name, unknown host, expiry
+        not allowed, account unknown or locked) — nothing is created then.
+
+        The route `POST /auth/app-passwords` asks for a fresh confirmation first (`_require_fresh`, B-12): an app
+        password is lasting access to the account. Whoever calls this method from own code owns that check.
+        Returns `{"id", "secret", "name", "hosts", "expires_at"}` — `secret`, not `password`: it is a generated
+        token of 124 bits, not a person's password (a fast keyed digest is right for it, a slow KDF is not needed)."""
+        apps = {a["host"] for a in self.app_password_hosts()}
+        if not apps:
+            raise ConfigError("No application accepts app passwords: set forward_apps[host]['app_passwords'] = True "
+                              "(with forward_auth_enabled).")
+        label = "".join(c for c in str(name or "") if c >= " " and c != "\x7f").strip()
+        if not label:
+            raise ConfigError("An app password needs a name — the device or purpose it is for.")
+        if len(label) > _ap.MAX_NAME:
+            raise ConfigError(f"The name of an app password has at most {_ap.MAX_NAME} characters.")
+        if hosts is None:
+            if len(apps) != 1:
+                raise ConfigError("Choose the applications this app password is for: "
+                                  + ", ".join(sorted(apps)) + ".")
+            chosen = sorted(apps)
+        else:
+            if isinstance(hosts, str):
+                hosts = [hosts]
+            chosen = sorted({str(h).strip().lower().rstrip(".") for h in hosts})
+            if not chosen or any(h not in apps for h in chosen):
+                raise ConfigError("An app password is valid only for applications that accept app passwords: "
+                                  + ", ".join(sorted(apps)) + ".")
+        u = self.store.get_user(user_id)
+        if not u or u["disabled"]:
+            raise ConfigError("No such account, or it is locked.")
+        days = int(self.cfg.app_password_default_days if expires_days is None else expires_days)
+        if days == 0:
+            if not self.cfg.app_password_allow_unlimited:
+                raise ConfigError("An app password without expiry outlives the device it was typed into — choose "
+                                  f"a lifetime (at most {_ap.MAX_DAYS} days) or ask the operator for "
+                                  "app_password_allow_unlimited=True.")
+            expires_at = None
+        elif 0 < days <= _ap.MAX_DAYS:
+            expires_at = _now() + days * 86400
+        else:
+            raise ConfigError(f"The lifetime of an app password is 1 to {_ap.MAX_DAYS} days.")
+        secret = _ap.generate()
+        key = self._pepper_keyring.active
+        digest = _ap.digest(key.material, cast(str, _ap.normalize(secret)))
+        pid = self.store.app_password_add(int(u["id"]), label, digest, key.kid, chosen, expires_at,
+                                          self._request_ip())
+        self.audit("app_password_create", str(u["username"]),
+                   detail=f"id={pid} hosts={','.join(chosen)}"
+                   + (" expiry=unlimited" if expires_at is None else f" days={days}"))
+        self._security_event("app_password_created", int(u["id"]), app_password_id=pid, name=label,
+                             hosts=list(chosen))
+        return {"id": pid, "secret": secret, "name": label, "hosts": chosen, "expires_at": expires_at}
+
+    def list_app_passwords(self, user_id=None) -> list:
+        """The app passwords of an account (`user_id=None`: of all accounts) — never a secret or digest. One dict
+        each: `id`, `username`, `name`, `hosts`, `created_at`, `expires_at`, `last_used`, `last_ip`, `revoked`,
+        `revoked_reason`, `expired`. Revoked and expired ones stay in the list: the holder should see them."""
+        now = _now()
+        out = []
+        for r in self.store.app_passwords(user_id):
+            try:
+                hosts = [str(h) for h in json.loads(r["hosts"] or "[]")]
+            except ValueError:
+                hosts = []
+            out.append({"id": r["id"], "username": r["username"], "name": r["name"], "hosts": hosts,
+                        "created_at": r["created_at"], "expires_at": r["expires_at"], "last_used": r["last_used"],
+                        "last_ip": r["last_ip"], "revoked": r["revoked_at"] is not None,
+                        "revoked_reason": r["revoked_reason"] or "",
+                        "expired": bool(r["expires_at"] and r["expires_at"] <= now)})
+        return out
+
+    def revoke_app_password(self, pw_id, user_id=None, by_operator: bool = False) -> bool:
+        """Revoke one app password — of `user_id` only, if given (the account page). True if it was valid until
+        now. It stays in the list as revoked. Audit `app_password_revoke`, event `app_password_revoked`."""
+        row = self.store.app_password(int(pw_id))
+        if row is None or (user_id is not None and int(row["user_id"]) != int(user_id)):
+            return False
+        if not self.store.app_password_revoke(int(pw_id), "admin" if by_operator else "holder", user_id):
+            return False
+        self.audit("app_password_revoke", self._account_name(row["user_id"]), detail=f"id={int(pw_id)}")
+        self._security_event("app_password_revoked", int(row["user_id"]), app_password_id=int(pw_id))
+        return True
+
+    def _app_passwords_revoked(self, user_id, reason: str) -> int:
+        """Revoke every valid app password of an account — with the API keys (`_keys_revoked`), same reasons."""
+        n = self.store.app_passwords_revoke_all(int(user_id), reason)
+        if n:
+            self.audit("app_passwords_revoked", self._account_name(user_id), detail=f"count={n} reason={reason}")
+            self._security_event("app_passwords_revoked", int(user_id), count=n, reason=reason)
+        return n
+
+    #: How long the same app-password use or refusal (row, IP, outcome) is not written to the audit log again —
+    #: a WebDAV client sends the password with every request (like `_APIKEY_AUDIT_WINDOW`).
+    _APP_PASSWORD_AUDIT_WINDOW = 3600
+    #: How often `last_used` is written at most per app password: a sync of a thousand files is not a thousand
+    #: writes.
+    _APP_PASSWORD_TOUCH_SEC = 60
+
+    def _app_password_user(self, request, url: str) -> tuple:
+        """The account behind `Authorization: Basic` at the gate for `url` (T-66) — `(account | None, outcome)`.
+
+        `outcome` is `""` when there is no usable Basic header (the caller carries on as without credentials),
+        `"ok"`, or the reason of a refusal. Called only for a host whose `forward_apps` entry allows app passwords.
+
+        * The password must have the shape of an app password (`app_passwords.normalize`); the account's own
+          password never has to be compared with anything — it cannot pass, and TOTP cannot be bypassed by it.
+        * The digest is looked up with every pepper of the keyring; the row must belong to the named account
+          (name or address, as at sign-in), name this host, be neither revoked nor expired, and the account must
+          be active (and backed by its identity provider, like an API key, `_key_rests`).
+        * A guess (wrong secret, the account's own password, an app password of another account or for another
+          application) is a failed sign-in: booked in its own bucket (`security.SIGN_IN_OWN_LOCK`), `failed login`
+          in the security log (fail2ban). A known app password that was revoked or has expired is no guess — the
+          device still has it: refused and audited, but not booked, so an old phone cannot lock its owner out.
+        * Success: the account with `is_admin` cleared (an app password never carries admin rights, like an
+          automation key), `_via = "app_password"`."""
+        from urllib.parse import urlsplit
+        creds = _ap.parse_basic(request.headers.get("authorization", ""))
+        if creds is None:
+            return None, ""
+        username, secret = creds
+        ip = self.client_ip(request)
+        host = (urlsplit(url or "").hostname or "").lower().rstrip(".")
+        normalized = _ap.normalize(secret)
+        row, used_key = None, None
+        if normalized is not None:
+            for key in self._pepper_keyring.keys:
+                row = self.store.app_password_by_digest(_ap.digest(key.material, normalized))
+                if row is not None:
+                    used_key = key
+                    break
+        account = self.find_user(username)
+        if row is not None and account is not None and int(account["id"]) == int(row["user_id"]):
+            stale = None
+            if row["revoked_at"] is not None:
+                stale = "revoked"
+            elif row["expires_at"] and int(row["expires_at"]) <= _now():
+                stale = "expired"
+            elif account["disabled"]:
+                stale = "account_locked"
+            else:
+                stale = self._key_rests(self.store.get_user(int(account["id"])))
+            if stale:
+                self._app_password_log(row, account, ip, stale, host)
+                return None, stale
+            try:
+                hosts = {str(h) for h in json.loads(row["hosts"] or "[]")}
+            except ValueError:
+                hosts = set()
+            if host in hosts:
+                if self._is_app_password_locked(username, ip):
+                    return None, "locked"
+                now = _now()
+                active = self._pepper_keyring.active
+                moved = used_key is not None and used_key.kid != active.kid
+                if moved or not row["last_used"] or now - int(row["last_used"]) >= self._APP_PASSWORD_TOUCH_SEC \
+                        or row["last_ip"] != ip:
+                    self.store.app_password_used(
+                        int(row["id"]), ip, now,
+                        digest=_ap.digest(active.material, cast(str, normalized)) if moved else None,
+                        kid=active.kid if moved else None)
+                self._app_password_log(row, account, ip, None, host)
+                d: dict = dict(self._as_dict(self.store.get_user(int(account["id"]))) or {})
+                d["is_admin"] = 0
+                d["_via"] = "app_password"
+                d["_app_password_id"] = int(row["id"])
+                return d, "ok"
+            reason = "wrong_app"
+        elif normalized is None:
+            reason = "not_app_password"
+        else:
+            reason = "unknown"
+        # A guess: book it — atomically, in the bucket of its own — and say so.
+        attempt = self._begin_attempt(username, ip, "app_password")
+        if attempt is None:
+            return None, "locked"
+        self._record_login(username, ip, False, "app_password", attempt=attempt)
+        self._app_password_log(row if reason == "wrong_app" else None, account, ip, reason, host)
+        return None, reason
+
+    def _is_app_password_locked(self, username, ip) -> bool:
+        """The bucket of the app passwords (T-66, `security.SIGN_IN_OWN_LOCK`): pair, account and address, counted
+        only over `app_password` — separate from the login lockout and the streak. Read-only; a refusal is
+        reported as `failed login … reason=lockout_app_password…` (`_rejected`)."""
+        for reason, limit, filt in _valid_rules(self._rules(username, ip, "app_password")):
+            if self.store.count_fails(**filt, only_confirmed=True) >= limit:
+                self._rejected(username, ip, reason, login=True)
+                return True
+        return False
+
+    def _app_password_log(self, row, account, ip, reason: Optional[str], host: str) -> None:
+        """Audit an app-password use (`reason=None`) or refusal — throttled per row (or account), IP and outcome."""
+        pid = int(row["id"]) if row is not None else None
+        owner = str(account["username"]) if account is not None else None
+        if not self._once_per(("app_password", pid, owner, ip, reason), self._APP_PASSWORD_AUDIT_WINDOW):
+            return
+        where = f" host={host}" if host else ""
+        if reason is None:
+            self.store.audit_log("app_password_use", owner, ip, f"id={pid}{where}")
+            return
+        self.store.audit_log("app_password_denied", owner, ip,
+                             (f"id={pid} " if pid is not None else "") + f"reason={reason}{where}")
 
     def set_password(self, user_id, password, *, by_operator: bool = False):
         """Set an account's password (without checking the old one — that is the caller's business).
@@ -1272,6 +1508,9 @@ class TinySesam:
     #: factor of its own: `signin_link_issued` (`ttl_min`, `by_operator`) — a sign-in link was issued
     #: for the account; `device_signed_in` (`method`, `ip`, `agent`) — a device signed in through a
     #: cross-device approval; and `password_changed` carries `by_operator` (an administrator set it).
+    #: Since T-66 the app passwords: `app_password_created` (`app_password_id`, `name`, `hosts`),
+    #: `app_password_revoked` (`app_password_id`), `app_passwords_revoked` (`count`, `reason` — the same reasons as
+    #: `api_keys_revoked`).
     SECURITY_EVENTS = (
         "password_changed", "pin_set", "pin_disabled", "totp_enabled", "totp_disabled",
         "recovery_codes_generated", "recovery_code_used", "passkey_added", "passkey_removed",
@@ -1279,6 +1518,7 @@ class TinySesam:
         "email_changed", "username_changed",
         "oauth_device_connected", "oauth_device_revoked", "oauth_token_reuse",
         "signin_link_issued", "device_signed_in",
+        "app_password_created", "app_password_revoked", "app_passwords_revoked",
     )
 
     #: The events that mean NEW access to the account — they go to the owner by mail as well
@@ -1286,7 +1526,7 @@ class TinySesam:
     #: administrator made it (`by_operator`): the holder's own change is no news to the holder.
     _ACCESS_MAIL_EVENTS = ("passkey_added", "totp_enabled", "pin_set", "api_key_created",
                            "device_signed_in", "signin_link_issued", "password_changed",
-                           "oauth_device_connected", "oauth_token_reuse")
+                           "oauth_device_connected", "oauth_token_reuse", "app_password_created")
 
     def _security_event(self, event: str, user_id, **details) -> None:
         """Call `on_security_event` for an event from `SECURITY_EVENTS`, if set.
@@ -2995,7 +3235,7 @@ class TinySesam:
         `is_*_locked()` checks them, `_begin_attempt()` checks them AND books atomically — both read
         the same list so that the two paths are never of different strictness.
 
-        **Sign-in** (everything except `security.NOT_LOGIN_METHODS`, R7-6/H-8): the first
+        **Sign-in** (everything except `security.OWN_BUCKET_METHODS`, R7-6/H-8): the first
         threshold counts per **pair of account and address** (`max_login_attempts`). Until T-13 it counted
         per account alone — then any stranger could lock out any account whose name they knew
         for a window with five requests, including the owner with the correct password. Per
@@ -3017,7 +3257,19 @@ class TinySesam:
             return [("lockout_resource_ip", limit, dict(since=since, ip=ip, method=method)),
                     ("lockout_resource", limit * self._sec("account_attempt_factor"),
                      dict(since=since, username=username, method=method))]
-        without = security.NOT_LOGIN_METHODS
+        if method in security.SIGN_IN_OWN_LOCK:
+            # A sign-in with a bucket of its own (T-66, app password): the same three thresholds as the
+            # login — pair, account, address —, counted only over its own method.
+            limit = self._sec("max_login_attempts")
+            own = []
+            if username and ip:
+                own.append((f"lockout_{method}", limit, dict(since=since, username=username, ip=ip, method=method)))
+            return own + [
+                (f"lockout_{method}_account", limit * self._sec("account_attempt_factor"),
+                 dict(since=since, username=username, method=method)),
+                (f"lockout_{method}_ip", limit * self._sec("ip_attempt_factor"),
+                 dict(since=since, ip=ip, method=method))]
+        without = security.OWN_BUCKET_METHODS
         limit = self._sec("max_login_attempts")
         rules = []
         if username and ip:
@@ -3121,7 +3373,7 @@ class TinySesam:
         # in `reserve_attempt`. Before, it was read ahead of it and counted only after the check — a
         # parallel burst at the limit could then guess for one attempt per request.
         series = None
-        if method not in security.NOT_LOGIN_METHODS:
+        if method not in security.OWN_BUCKET_METHODS:
             series = (norm_identifier(username), series_kind or method, self._sec("account_max_consecutive_failures"))
 
         def book():
@@ -5532,9 +5784,14 @@ class TinySesam:
         # and a routine change should not shut those down wholesale (one account = often one
         # key = several integrations). It is still not concealed — whoever changes the password after a
         # break-in must know that a door is still open.
+        # The app passwords (T-66) likewise: a phone calendar should not break with a routine change — counted, named.
         active = self.store.count_active_api_keys(u["id"])
-        self.audit("password_change", u["username"], ip, f"api_keys_active={active}" if active else None)
-        return PasswordChangeResult(ok=True, reason="ok", status=200, api_keys_active=active)
+        app_pw = self.store.app_passwords_active(u["id"])
+        parts = [p for p in (f"api_keys_active={active}" if active else "",
+                             f"app_passwords_active={app_pw}" if app_pw else "") if p]
+        self.audit("password_change", u["username"], ip, " ".join(parts) or None)
+        return PasswordChangeResult(ok=True, reason="ok", status=200, api_keys_active=active,
+                                    app_passwords_active=app_pw)
 
     def set_initial_password(self, request: Request, new: str, *,
                              csrf: Optional[str] = None) -> PasswordChangeResult:
@@ -5593,9 +5850,12 @@ class TinySesam:
             return PasswordChangeResult(ok=False, reason="policy", status=400, message=defect)
         self.set_password(u["id"], new)
         active = self.store.count_active_api_keys(u["id"])
-        parts = [p for p in (f"api_keys_active={active}" if active else "", detail) if p]
+        app_pw = self.store.app_passwords_active(u["id"])
+        parts = [p for p in (f"api_keys_active={active}" if active else "",
+                             f"app_passwords_active={app_pw}" if app_pw else "", detail) if p]
         self.audit("password_set", u["username"], ip, " ".join(parts) or None)
-        return PasswordChangeResult(ok=True, reason="ok", status=200, api_keys_active=active)
+        return PasswordChangeResult(ok=True, reason="ok", status=200, api_keys_active=active,
+                                    app_passwords_active=app_pw)
 
     def _setup_password(self, request: Request, new: str, *,
                         csrf: Optional[str] = None) -> tuple[PasswordChangeResult, Optional[str]]:
@@ -6469,7 +6729,7 @@ class TinySesam:
         `ip_attempt_factor` times that (NAT). Without `ip` only the account threshold applies.
 
         Everything in `login_attempt` that was a **sign-in attempt** is counted; the methods from
-        `security.NOT_LOGIN_METHODS` stay out. Otherwise a wrong guess that was not
+        `security.OWN_BUCKET_METHODS` (the non-sign-ins and the app password, T-66) stay out. Otherwise a wrong guess that was not
         a sign-in at all would lock the sign-in too. The counter of these methods is not lost,
         it just has its own bucket (e.g. `_is_password_change_locked`).
 
@@ -6545,7 +6805,7 @@ class TinySesam:
             # `security.log_event`).
             security.seclog.warning("%s user=%s ip=%s method=%s", security.log_event(method),
                                     security.for_log(username), security.for_log(ip), method)
-            if method not in security.NOT_LOGIN_METHODS:
+            if method not in security.OWN_BUCKET_METHODS:
                 # The streak counts per folded identifier, like the account bucket (`_bucket`). Pre-booked
                 # by `_begin_attempt`; only a route without pre-booking counts here. Exactly at the
                 # crossing of the limit one line: from there the sign-in is permanently closed, and
@@ -6619,8 +6879,8 @@ class TinySesam:
         only its own method. Whoever signed in by PIN after three mistyped TOTP codes
         carried the three along, and the account was never "fresh" again. A complete
         sign-in has passed every required factor; afterwards there is nothing left against which
-        the old failed attempts protect. The own buckets (`NOT_LOGIN_METHODS`) remain:
-        they belong to processes AFTER the sign-in.
+        the old failed attempts protect. The own buckets (`OWN_BUCKET_METHODS`) remain:
+        they belong to processes AFTER the sign-in, or beside it (the app password at the gate, T-66).
 
         With `methods`: only these. The self-service reset (R4-13) clears `("password",)`:
         it proves access to the mailbox and replaces the password — about PIN and TOTP it says
@@ -6664,7 +6924,7 @@ class TinySesam:
             limit = {"since": since} if from_id is None else {"from_id": from_id}
             start_from = since if from_id is None else 0
             if methods is None:
-                without = security.NOT_LOGIN_METHODS
+                without = security.OWN_BUCKET_METHODS
                 away += self.store.count_fails(start_from, username=identifier, exclude_methods=without, from_id=from_id)
                 self.store.clear_fails(username=identifier, exclude_methods=without, **limit)
             else:
@@ -6691,6 +6951,9 @@ class TinySesam:
             return "no_account"
         if u["disabled"]:
             return "account_locked"
+        if method == "app_password":
+            # The account's own password plays no part here (T-66) — `no_password_set` would mislead.
+            return "wrong_app_password"
         if not self.store.get_password_hash(u["id"]) and not self.store.has_pin(u["id"]):
             return "no_password_set"
         return "wrong_secret"
@@ -6978,8 +7241,8 @@ class TinySesam:
         return h.get("referer") or "/"
 
     def _forward_app(self, url_or_host: str) -> dict:
-        """The gate's settings for an application (T-21): `name` and `login`, from
-        `forward_apps[host]` with `forward_login` as fallback. The host without port, lowercase."""
+        """The gate's settings for an application (T-21): `name`, `login`, `logout` and `app_passwords` (T-66), from
+        `forward_apps[host]` with `forward_login`/`forward_logout` as fallback. The host without port, lowercase."""
         from urllib.parse import urlsplit
         raw = str(url_or_host or "")
         host = ((urlsplit(raw).hostname if "://" in raw else raw.split(":", 1)[0]) or "").lower().rstrip(".")
@@ -6989,7 +7252,9 @@ class TinySesam:
                 e = dict(values or {})
                 break
         return {"name": str(e.get("name") or ""), "login": str(e.get("login") or self.cfg.forward_login),
-                "logout": str(e.get("logout") or self.cfg.forward_logout)}
+                "logout": str(e.get("logout") or self.cfg.forward_logout),
+                # T-66: only the literal True switches Basic auth on (config_check refuses anything else).
+                "app_passwords": e.get("app_passwords") is True}
 
     def _gate_host(self, request) -> str:
         """The protected host to which this request went (via the proxy: X-Forwarded-Host, otherwise

@@ -248,10 +248,10 @@ def _record_login_methods(path: Path) -> set:
 used = set().union(*(_record_login_methods(q) for q in SOURCES))
 assert "password" in used and "reauth" in used and "resource" in used, \
     f"the collector no longer finds the known call sites: {sorted(used)}"
-unknown = used - REAL_SIGN_IN - set(_sec.NOT_LOGIN_METHODS)
+unknown = used - REAL_SIGN_IN - set(_sec.OWN_BUCKET_METHODS)
 assert not unknown, (f"new record_login method(s) {sorted(unknown)}: either a real "
-                       "sign-in attempt (then add to REAL_SIGN_IN above) or none "
-                       "(then to security.OWN_LOCK — with an own bucket)")
+                       "sign-in attempt (then add to REAL_SIGN_IN above), one with a bucket of its own "
+                       "(security.SIGN_IN_OWN_LOCK) or none (then to security.OWN_LOCK — with an own bucket)")
 print(f"  ✓ every record_login method is classified ({len(used)} found, AST over tinysesam/)")
 
 # No entry without a brake: taking a method out of the login lockout without giving it an
@@ -259,24 +259,25 @@ print(f"  ✓ every record_login method is classified ({len(used)} found, AST ov
 db3 = os.path.join(tempfile.mkdtemp(), "t.db")
 auth3 = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db3, cookie_secure=False,
                                   passkey_enabled=False, oidc_enabled=False))
-for _m in _sec.NOT_LOGIN_METHODS:
-    bolt = getattr(auth3, _sec.OWN_LOCK[_m], None)
-    assert callable(bolt), f"{_m} is in NOT_LOGIN_METHODS but has no bucket of its own"
+_LATCH = {**_sec.OWN_LOCK, **_sec.SIGN_IN_OWN_LOCK}     # T-66: the app password is a sign-in with its own bucket
+for _m in _sec.OWN_BUCKET_METHODS:
+    bolt = getattr(auth3, _LATCH[_m], None)
+    assert callable(bolt), f"{_m} is in OWN_BUCKET_METHODS but has no bucket of its own"
     name = f"probant-{_m}"
     for _ in range(20):
         auth3._record_login(name, "198.51.100.4", False, _m)
     assert not auth3._is_locked(name, "198.51.100.4"), \
         f"failed attempts with method={_m} lock the sign-in (neither sign-in nor exception?)"
     assert bolt(name, "198.51.100.4"), \
-        f"method={_m} is taken out of the login lockout, but {_sec.OWN_LOCK[_m]} does not brake"
-print(f"  ✓ every non-login method has a brake of its own ({', '.join(_sec.NOT_LOGIN_METHODS)})")
+        f"method={_m} is taken out of the login lockout, but {_LATCH[_m]} does not brake"
+print(f"  ✓ every method with an own bucket has a brake of its own ({', '.join(_sec.OWN_BUCKET_METHODS)})")
 
 # And the buckets are separate: one does not fill the other.
-for _m in _sec.NOT_LOGIN_METHODS:
-    for _other in _sec.NOT_LOGIN_METHODS:
+for _m in _sec.OWN_BUCKET_METHODS:
+    for _other in _sec.OWN_BUCKET_METHODS:
         if _other == _m:
             continue
-        assert not getattr(auth3, _sec.OWN_LOCK[_other])(f"probant-{_m}", None), \
+        assert not getattr(auth3, _LATCH[_other])(f"probant-{_m}", None), \
             f"failed attempts with method={_m} lock {_other} too"
 print("  ✓ the buckets are sealed against each other (a misstep of one method does not lock the other)")
 os.remove(db3)

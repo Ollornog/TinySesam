@@ -109,7 +109,10 @@ Rate-Limit, Open-Redirect-Schutz via `safe_next`). Trotzdem: vor produktivem Ein
   (`details={"ttl_min": n, "by_operator": bool}` — für das Konto wurde ein Anmeldelink ausgestellt) und
   `device_signed_in` (`details={"method": "qr_login", "ip": …, "agent": …}` — ein Gerät hat sich über eine
   geräteübergreifende Bestätigung angemeldet); `password_changed` trägt `details={"by_operator": bool}`
-  (`True`: ein Administrator hat es gesetzt). Die vollständige Liste der Ereignisnamen ist
+  (`True`: ein Administrator hat es gesetzt). App-Passwörter (T-66): `app_password_created`
+  (`details={"app_password_id": n, "name": …, "hosts": [...]}`), `app_password_revoked`
+  (`details={"app_password_id": n}`) und `app_passwords_revoked` (`details={"count": n, "reason": …}`, dieselben
+  Gründe wie `api_keys_revoked`). Die vollständige Liste der Ereignisnamen ist
   `TinySesam.SECURITY_EVENTS`. Die Schlüssel in `details` und die
   Gründe sind seit 0.22.0 englisch (bis 0.21.x `verbleibend`, `alt`/`neu`, `anzahl`/`grund` mit
   deutschen Gründen). Das gilt auch für Änderungen, die ein Admin im Panel an
@@ -120,11 +123,26 @@ Rate-Limit, Open-Redirect-Schutz via `safe_next`). Trotzdem: vor produktivem Ein
   abschaltbar mit `notify_login_failures=False`), und seit H2 einen Hinweis auf **neue Zugänge** (T-47,
   NIST SP 800-63B-4 §4.1.2.1; abschaltbar mit `notify_new_access=False`) bei `passkey_added`,
   `totp_enabled`, `pin_set`, `api_key_created`, `device_signed_in`, `signin_link_issued`,
-  `password_changed` durch einen Administrator, `oauth_device_connected` und `oauth_token_reuse` —
+  `password_changed` durch einen Administrator, `oauth_device_connected`, `oauth_token_reuse` und
+  `app_password_created` —
   höchstens einer je Konto und Ereignis pro Minute. Dieselben Ereignisse stehen auf der Kontoseite unter
   „Letzte Ereignisse“. Weitere eigene Mails gehen aus dem Hook (am besten über eine
   Warteschlange — er läuft synchron im Request). Ein Fehler im Hook macht die Änderung
   nie rückgängig, landet aber im Sicherheits-Log.
+- **Bekannte Grenze — Basic-Auth hat keinen zweiten Faktor; deshalb nimmt sie nur App-Passwörter an (T-66).**
+  WebDAV-, CalDAV/CardDAV- und Git-Clients schicken Benutzername und Passwort mit jeder Anfrage und können weder eine
+  TOTP-Abfrage beantworten noch einen Passkey halten. Mit `forward_apps[host]["app_passwords"] = True` nimmt das Gate
+  für diesen Host `Authorization: Basic` an — aber **nur** mit einem App-Passwort: ein erzeugtes Geheimnis mit
+  ≈ 124 Bit (NIST SP 800-63B §5.1.2.1 verlangt 112 für ein Nachschlage-Geheimnis ohne Drossel), gespeichert als
+  HMAC-Digest mit dem Pepper-Schlüsselbund, gebunden an sein Konto und die beim Anlegen gewählten Anwendungen, ohne
+  Admin-Rechte, angelegt nur nach frischer Bestätigung und widerrufen mit den API-Keys bei Sperre, Admin-Passwort und
+  „überall abmelden“. Das eigene Passwort des Kontos wird dort nie verglichen (es hat nicht einmal das Format), der
+  zweite Faktor lässt sich per Basic-Auth also nicht umgehen. Was bleibt: Ein App-Passwort ist ein Inhaber-Geheimnis —
+  wer es vom Gerät kopiert (oder ohne HTTPS mitliest), kann es an seinen Anwendungen nutzen, bis es abläuft oder
+  widerrufen wird; es geht mit jeder Anfrage mit, der Proxy davor darf `Authorization` also nicht protokollieren, und
+  vor der Anwendung gehört der Header entfernt (`header_up -Authorization`). Fehlversuche sind `failed login …
+  method=app_password` im Sicherheits-Log (fail2ban) und zählen in einem eigenen Topf, Raten am Gate sperrt also nicht
+  die Anmeldung im Browser. Samba und andere Protokolle ohne HTTP sind nicht Teil davon.
 - **Ein TOTP-Code gilt genau einmal — auch der Einrichtungscode.** Der Code, der die Einrichtung
   bestätigt, ist danach verbraucht. Unter `login_chain=["password","totp"]` schliesst diese
   Bestätigung den TOTP-Schritt der Anmeldung gleich mit ab; überall sonst braucht die Anmeldung den

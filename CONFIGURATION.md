@@ -12,7 +12,7 @@ reference answers the other question: *"There is a field — what does it do?"*
 Presets (`TinySesamConfig.local_accounts()`, `.oidc_gateway()`, …) set bundles of these fields;
 individual ones can be overridden via `**overrides`.
 
-**Tier:** Every field belongs to tier A — public, stable from 1.0 (see [API.md](API.md), “Three tiers”), except `c22_stylesheet` (B), `gate_key_file` (B), `hsts` (B), `oauth_access_token_ttl_sec` (B), `oauth_enabled` (B), `oauth_pepper_file` (B), `oauth_refresh_grace_sec` (B), `oauth_refresh_idle_days` (B), `oauth_refresh_max_days` (B), `oauth_resources` (B), `topbar_enabled` (B), `topbar_links` (B), `totp_required` (B).
+**Tier:** Every field belongs to tier A — public, stable from 1.0 (see [API.md](API.md), “Three tiers”), except `app_password_allow_unlimited` (B), `app_password_default_days` (B), `c22_stylesheet` (B), `gate_key_file` (B), `hsts` (B), `oauth_access_token_ttl_sec` (B), `oauth_enabled` (B), `oauth_pepper_file` (B), `oauth_refresh_grace_sec` (B), `oauth_refresh_idle_days` (B), `oauth_refresh_max_days` (B), `oauth_resources` (B), `topbar_enabled` (B), `topbar_links` (B), `totp_required` (B).
 
 ## Store
 
@@ -72,6 +72,8 @@ individual ones can be overridden via `**overrides`.
 | `apikey_enabled` | `bool` | `True` | access via API key (machines/daemons, bound to a user/service account) |
 | `apikey_default_days` | `int` | `90` | Lifetime of an automation key in days if the caller names none. A key without expiry is a secret nobody takes back: it outlives the person who issued it, the project it was meant for, and the machine it sits on. |
 | `apikey_allow_unlimited` | `bool` | `False` | May an automation key be created without expiry (`expires_days=0`)? Default no. True is a deliberate decision of the operator and is logged on creation — there are cases for it (a device nobody can touch), they are just rare. |
+| `app_password_default_days` | `int` | `365` | **Tier B.** Lifetime of an app password in days if the holder names none (T-66). App passwords are switched on per application with `forward_apps[host]["app_passwords"] = True`; they are for HTTP clients that speak only Basic auth (WebDAV, CalDAV/CardDAV, Git over HTTPS) and are valid only at the gate (`/auth/forward`) of the applications chosen at creation. A year, not 90 days: an app password is typed into a phone by hand, and breaking the calendar sync every quarter teaches people to work around it. 1–3650. |
+| `app_password_allow_unlimited` | `bool` | `False` | **Tier B.** May an app password be created without expiry? Default no — the same reasoning as for API keys: a secret without an end outlives the device it was typed into. |
 | `admin_enabled` | `bool` | `True` | mount the admin panel automatically at admin_path |
 | `admin_path` | `str` | `"/auth/admin"` | default mount point; auth.admin_router() also lets you mount it elsewhere |
 | `admin_ui_enabled` | `bool` | `True` | built-in HTML UI; False = JSON API only (for embedding in your own panel) |
@@ -84,7 +86,7 @@ individual ones can be overridden via `**overrides`.
 | `forward_login` | `str` | `"page"` | How the gate signs in someone who is not signed in (T-21): "page" = TinySesam's login page (with the application's name from forward_apps), "direct" = on page load straight to the identity provider and back to the requested address. "direct" only if OIDC is the only sign-in method; background requests (XHR, assets) go to the login page even then — otherwise each of them would start a flow of its own. oidc_gateway() sets "direct". |
 | `forward_logout` | `str` | `"all"` | What "sign out" means at the application (T-22), path: https://<app>/.tinysesam/logout. "all" = end this session (applies to all applications behind the same sign-in) and, with oidc_rp_logout, at the provider too; "app" = this application only: the session stays, the host lets it through again only after "Continue as …" on the login page; "ask" = ask. |
 | `forward_logged_out_sec` | `int` | `10` | "Signed out" page in "direct" mode (PO 2026-10-10): leave it up for this many seconds, then go back to the application on its own — the gate forwards to the provider, where a NEW sign-in begins (the provider is already signed out with oidc_rp_logout). 0 = leave it up, button only. 0–300. |
-| `forward_apps` | `dict` | `dict` | Settings per protected application: {"app.example.com": {"name": "Wiki", "login": "direct", "logout": "ask"}}. name = display name on the login and sign-out pages; login/logout override forward_login/forward_logout for this host. |
+| `forward_apps` | `dict` | `dict` | Settings per protected application: {"app.example.com": {"name": "Wiki", "login": "direct", "logout": "ask", "app_passwords": True}}. name = display name on the login and sign-out pages; login/logout override forward_login/forward_logout for this host; app_passwords = this host accepts app passwords by Basic auth (T-66, default off — WebDAV, CalDAV/CardDAV, Git over HTTPS; never the account's own password). |
 | `gate_cookie_name` | `str` | `"__Host-tinysesam_gate"` | form __Host-tinysesam_<name>: host-only, and the templates strip it before the app |
 | `gate_link_enabled` | `bool` | `False` | Central gateway, session stays on its host (T-26): An app host gets, via a code exchange (/.tinysesam/start → /auth/gate/authorize → /.tinysesam/callback), only a connection cookie of its own that is valid for it alone. Without this, the session cookie would have to sit on the parent domain and would reach every app below it. Requires gate_token_enabled and base_url, does not combine with cookie_domain. |
 
@@ -343,4 +345,4 @@ individual ones can be overridden via `**overrides`.
 
 ---
 
-192 fields, generated from `tinysesam/config.py`.
+194 fields, generated from `tinysesam/config.py`.

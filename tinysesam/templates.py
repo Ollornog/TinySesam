@@ -546,6 +546,9 @@ def _account(auth, ctx) -> str:
             f"<input id=key_name placeholder='{_e(t('acc.key_name'))}'>"
             f"<button data-act=mkkey>{_e(t('acc.key_create'))}</button><span id=key_msg class=msg></span></div>")
 
+    # App passwords (T-66): for clients without a browser at the gate — only when an application takes them.
+    sections.append(_app_passwords_section(auth, ctx, u))
+
     # Active sessions (always)
     sections.append(
         f"<div class=sec><h2>{_e(t('acc.sessions'))}</h2><ul id=sesslist></ul>"
@@ -600,6 +603,13 @@ def _account(auth, ctx) -> str:
     .tsmain a{color:var(--ts-link)}
     .tsmain .rcleft{display:block;margin:12px 0 0;font-size:13px}
     .tsmain form.devrevoke{margin:0}
+    .tsmain fieldset.apapps{border:0;padding:0;margin:8px 0}
+    .tsmain fieldset.apapps legend{font-size:12px;color:var(--ts-muted);padding:0;margin-bottom:2px}
+    .tsmain label.apapp{display:flex;gap:8px;align-items:center;min-height:36px;font-size:14px}
+    .tsmain label.apapp input{width:auto;margin:0}
+    .tsmain label.apdays{display:flex;gap:8px;align-items:center;font-size:13px;margin:4px 0}
+    .tsmain label.apdays select{width:auto;min-height:44px;background:var(--ts-field-bg);color:var(--ts-ink);
+         border:1px solid var(--ts-field-line);border-radius:8px;padding:8px 10px;font-size:14px}
     """
     # `static=True`: only show the page, fetch nothing (preview/screenshot).
     static = bool(ctx.get("static"))
@@ -631,6 +641,11 @@ _ACCOUNT_TEXT = {
         "revoked": "(revoked)", "revoke": "revoke", "none": "none", "delete": "delete", "this": "(this one)",
         "key_title": "New API key", "key_note": "Copy it now — it is not shown again.", "confirm_end_others": "End all other sessions?",
         "ended": "✓ ended", "added": "✓ added", "failed": "failed", "aborted": "aborted: ",
+        "ap_title": "New app password", "ap_note": "Copy it now — it is not shown again. Sign in with the user name "
+        "“__USER__” and this password; it works only for the applications you chose.",
+        "ap_created": "created", "ap_last": "last used", "ap_unused": "not used yet", "ap_expires": "expires",
+        "ap_no_expiry": "no expiry", "ap_expired": "(expired)", "ap_confirm": "Revoke this app password? Devices "
+        "that use it are signed out at once.", "ap_pick": "Choose at least one application.",
     },
     "de": {
         "locale": "de-DE", "error": "Fehler", "mail_sent": "Link verschickt — bitte in der neuen Adresse bestätigen",
@@ -642,6 +657,12 @@ _ACCOUNT_TEXT = {
         "revoked": "(widerrufen)", "revoke": "widerrufen", "none": "keine", "delete": "löschen", "this": "(diese)",
         "key_title": "Neuer API-Key", "key_note": "Jetzt kopieren — er wird nicht erneut angezeigt.", "confirm_end_others": "Alle anderen Sitzungen beenden?",
         "ended": "✓ beendet", "added": "✓ hinzugefügt", "failed": "fehlgeschlagen", "aborted": "abgebrochen: ",
+        "ap_title": "Neues App-Passwort", "ap_note": "Jetzt kopieren — es wird nicht erneut angezeigt. Anmelden mit "
+        "dem Benutzernamen „__USER__“ und diesem Passwort; es gilt nur für die gewählten Anwendungen.",
+        "ap_created": "erstellt", "ap_last": "zuletzt genutzt", "ap_unused": "noch nicht genutzt",
+        "ap_expires": "läuft ab", "ap_no_expiry": "ohne Ablauf", "ap_expired": "(abgelaufen)",
+        "ap_confirm": "Dieses App-Passwort widerrufen? Geräte, die es nutzen, werden sofort abgemeldet.",
+        "ap_pick": "Mindestens eine Anwendung wählen.",
     },
 }
 
@@ -706,6 +727,21 @@ async function mkkey(){const r=await (await J('__TS_P__/auth/apikeys',{name:key_
   if(r.key){key_name.value='';await tsSecret(TXT.key_title,r.key,TXT.key_note)}
   else say('key_msg',r.detail||TXT.error,false)}
 async function revk(id){await J('__TS_P__/auth/apikeys/'+id+'/revoke');loadkeys()}
+// App passwords (T-66): created once, shown once in the dialog with its copy button, then only by name.
+const dt0=t=>new Date(t*1000).toLocaleString(TXT.locale);
+async function loadap(){const el=document.getElementById('aplist');if(!el)return;
+  const ps=await (await fetch('__TS_P__/auth/app-passwords')).json().catch(()=>[]);
+  if(!Array.isArray(ps)){el.innerHTML='<li>—</li>';return}
+  el.innerHTML=ps.map(p=>`<li><b>${esc0(p.name)}</b> · ${esc0((p.hosts||[]).join(', '))}<br><small class=msg>${TXT.ap_created} ${dt0(p.created_at)} · ${p.last_used?TXT.ap_last+' '+dt0(p.last_used)+' · '+esc0(p.last_ip||'?'):TXT.ap_unused} · ${p.expires_at?TXT.ap_expires+' '+dt0(p.expires_at):TXT.ap_no_expiry}</small> ${p.revoked?'<span class=bad>'+TXT.revoked+'</span>':(p.expired?'<span class=bad>'+TXT.ap_expired+'</span>':`<button class=warn data-act=revap data-id="${esc0(p.id)}">${TXT.revoke}</button>`)}</li>`).join('')||'<li>'+TXT.none+'</li>'}
+async function mkap(){const hosts=[...document.querySelectorAll('input[name=ap_host]:checked')].map(c=>c.value);
+  if(!hosts.length){say('ap_msg',TXT.ap_pick,false);return}
+  const r=await J('__TS_P__/auth/app-passwords',{name:ap_name.value,hosts,expires_days:parseInt(ap_days.value,10)});
+  const j=await r.json().catch(()=>({}));loadap();
+  if(j.secret){ap_name.value='';say('ap_msg','',true);
+    await tsSecret(TXT.ap_title,j.secret,TXT.ap_note.replace('__USER__',document.getElementById('apsec').dataset.user))}
+  else if(!(r.status===403&&r.headers.get('X-TinySesam-Reauth')))say('ap_msg',j.detail||TXT.error,false)}
+async function revap(id){if(!await tsConfirm(TXT.ap_confirm,{danger:true}))return;
+  await J('__TS_P__/auth/app-passwords/'+id+'/revoke');loadap()}
 async function loadpk(){const el=document.getElementById('pklist');if(!el)return;
   const ps=await (await fetch('__TS_P__/auth/passkey/list')).json();
   el.innerHTML=ps.map(p=>`<li>${esc0(p.name||'Passkey')} <button class=warn data-act=delpk data-id="${esc0(p.id)}">${TXT.delete}</button></li>`).join('')||'<li>'+TXT.none+'</li>'}
@@ -724,7 +760,7 @@ async function revokeothers(){if(!await tsConfirm(TXT.confirm_end_others,{danger
 // blocks the buttons. The buttons loaded later via JS (data-act=revk/delpk) are reached as well.
 document.addEventListener('click',function(e){var b=e.target.closest('[data-act]');if(!b)return;
   var f=window[b.dataset.act];if(typeof f==='function'){e.preventDefault();f(b.dataset.id)}});
-loadkeys();loadpk();loadsess();
+loadkeys();loadap();loadpk();loadsess();
 </script>
 """
 
@@ -1346,6 +1382,37 @@ def _oauth_consent(auth, ctx) -> str:
             f"<button type=submit id=oaallow name=decision value=allow>{_e(t('oauth.allow'))}</button>"
             f"<button type=submit id=oadeny class=btn2 name=decision value=deny>{_e(t('oauth.deny'))}</button></form>")
     return _page(auth, t("oauth.consent_title"), body, ctx=ctx)
+
+
+def _app_passwords_section(auth, ctx, u) -> str:
+    """App passwords (T-66) on the account page: list (loaded by script), name, applications, lifetime, create.
+
+    The applications are checkboxes and the first one is ticked: an app password is bound as narrowly as its
+    use — one device, one application — unless the holder ticks more. The lifetime offers a month, a quarter, a
+    year and the operator's default; "no expiry" only with `app_password_allow_unlimited`."""
+    ap = ctx.get("app_passwords")
+    if not ap or not ap.get("apps"):
+        return ""
+    t = auth.t
+    apps = ""
+    for i, app in enumerate(ap["apps"]):
+        host = _e(app["host"])
+        label = _e(app["name"]) + ("" if app["name"] == app["host"] else f" <small>({host})</small>")
+        apps += (f"<label class=apapp><input type=checkbox name=ap_host value='{host}'"
+                 f"{' checked' if i == 0 else ''}> {label}</label>")
+    default = int(ap.get("default_days") or 365)
+    choices = sorted({30, 90, 365, default})
+    options = "".join(
+        f"<option value={d}{' selected' if d == default else ''}>"
+        f"{_e(t('acc.ap_year') if d == 365 else t('acc.ap_days', n=d))}</option>" for d in choices)
+    if ap.get("allow_unlimited"):
+        options += f"<option value=0>{_e(t('acc.ap_never_expires'))}</option>"
+    return (f"<div class=sec id=apsec data-user='{_e(u['username'])}'><h2>{_e(t('acc.app_passwords'))}</h2>"
+            f"<p class='msg evhint'>{_e(t('acc.app_passwords_hint'))}</p><ul id=aplist></ul>"
+            f"<input id=ap_name maxlength=80 autocomplete=off placeholder='{_e(t('acc.ap_name'))}'>"
+            f"<fieldset class=apapps><legend>{_e(t('acc.ap_for'))}</legend>{apps}</fieldset>"
+            f"<label class=apdays>{_e(t('acc.ap_expires'))} <select id=ap_days>{options}</select></label>"
+            f"<button data-act=mkap>{_e(t('acc.ap_create'))}</button><span id=ap_msg class=msg></span></div>")
 
 
 def _devices_section(auth, ctx) -> str:

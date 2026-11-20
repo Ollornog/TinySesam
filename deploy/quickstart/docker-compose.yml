@@ -41,6 +41,8 @@ services:
       # Who may pass: without groups every account at the provider gets in (the start warns, B3-9).
       TINYSESAM_ALLOWED_GROUPS: ${TS_ALLOWED_GROUPS:-}
       TINYSESAM_OAUTH_RESOURCES: ${TS_OAUTH_RESOURCES:-}
+      # Per application, e.g. app passwords for WebDAV (T-66): {"dav.example.com": {"name": "Files", "app_passwords": true}}
+      TINYSESAM_FORWARD_APPS: ${TS_FORWARD_APPS:-}
       # The network below — the real client address behind Caddy (see deploy/forward-auth/docker-compose.yml).
       TINYSESAM_TRUSTED_PROXIES: "172.29.0.0/16"
       TINYSESAM_HTTPS_MODE: "warn"                     # TLS is terminated by Caddy in front
@@ -86,6 +88,21 @@ services:
     networks: [quickstart]
     restart: unless-stopped
 
+  # Optional (T-66): a WebDAV server as the protected application — `COMPOSE_PROFILES=webdav` and
+  # `TS_APP_UPSTREAM=webdav:9000` in .env (example.env, "WebDAV behind the gate"). It has no sign-in of its own:
+  # the gate in front decides, a WebDAV client signs in there with an app password.
+  webdav:
+    <<: *hardening
+    image: rclone/rclone:1.76.0@sha256:7cbeec24a44f206067597c0368be4de90ae19a64d5113c7d1938bd737a81e466
+    profiles: [webdav]
+    command: ["serve", "webdav", "/data", "--addr", ":9000"]
+    environment:
+      RCLONE_CONFIG: /tmp/rclone.conf
+    volumes:
+      - webdav-data:/data
+    networks: [quickstart]
+    restart: unless-stopped
+
 networks:
   quickstart:
     ipam:
@@ -96,3 +113,4 @@ volumes:
   tinysesam-data:
   caddy-data:
   caddy-config:
+  webdav-data:

@@ -110,6 +110,18 @@ https://{$TS_APP_HOST}:{$TS_APP_PORT:443} {
 				header WWW-Authenticate {rp.header.Www-Authenticate}
 				respond 401
 			}
+			# App passwords (T-66): a client without a browser (WebDAV, CalDAV/CardDAV, Git) gets TinySesam's 401 with
+			# `WWW-Authenticate: Basic`, not a login page — only at a host with forward_apps[host]["app_passwords"]; TinySesam
+			# sends this reason nowhere else. For such a host add `header_up -Authorization` to the application's
+			# reverse_proxy below: it trusts Remote-User and does not need the app password.
+			@basic {
+				status 401
+				header X-Tinysesam-Reason basic
+			}
+			handle_response @basic {
+				header WWW-Authenticate {rp.header.Www-Authenticate}
+				respond 401
+			}
 			@denied status 401
 			handle_response @denied {
 				redir {rp.header.X-Tinysesam-Location} 302
