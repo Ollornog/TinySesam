@@ -562,6 +562,13 @@ async def t33_alternatives(p):
         return r.get("result", {}).get("value")
 
     failed_before = len(p.failed)
+    # The QR image needs the extra `[qr]`; the browser job installs the core only. Then the page
+    # must show the short code (and the panel the link) without an image — measured either way.
+    try:
+        import qrcode  # noqa: F401
+        has_qr = True
+    except ImportError:
+        has_qr = False
     boss = t33.store.get_user_by_name("boss")
 
     # 1) The browser is the NEW device: start, the script polls; the other device approves.
@@ -573,7 +580,8 @@ async def t33_alternatives(p):
     await asyncio.sleep(0.6)
     code = await p.js("document.querySelector('#tsqr [name=code]').value")
     assert re.fullmatch(r"[A-Z0-9]{8}", code or ""), code
-    assert await p.js("!!document.querySelector('img.qr')"), "no QR code although base_url and [qr] are there"
+    assert await p.js("!!document.querySelector('img.qr')") == has_qr, \
+        f"QR image {'missing although [qr] is installed' if has_qr else 'without the extra [qr]'}"
     shown = await p.js("document.querySelector('.qrcode').textContent")
     assert shown == f"{code[:4]}-{code[4:]}", shown
     assert await p.js("document.body.innerText.indexOf(document.querySelector('#tsqr [name=secret]').value)") == -1, \
@@ -587,7 +595,8 @@ async def t33_alternatives(p):
     assert await me() == "boss", f"new device not signed in: {await me()!r} at {await p.js('location.href')!r}"
     viol = await p.js("JSON.stringify(window.__csp===undefined?['(no Listener)']:window.__csp)")
     assert viol == "[]", f"CSP violation on the cross-device page: {viol}"
-    print("  cross-device: QR page, the poll script signs the new device in by itself, strict CSP")
+    print(f"  cross-device: {'QR' if has_qr else 'short-code'} page, the poll script signs the new device in by "
+          "itself, strict CSP")
 
     # 2) The browser is the APPROVING device: a second device opens a request, the page names it.
     other = TestClient(_t33_app)
@@ -611,13 +620,14 @@ async def t33_alternatives(p):
     await p.click(f'[data-on=link][data-a^="[{carol},"]')
     url = await p.js(f"(document.getElementById('lk{carol}')||{{}}).value||''")
     assert url.startswith(T33 + "/auth/magic/"), f"no link shown: {url!r} {await p.js('window.__alert')!r}"
-    assert await p.js("!!document.querySelector('#view img.qr')"), "no QR code next to the link"
+    assert await p.js("!!document.querySelector('#view img.qr')") == has_qr, \
+        f"panel QR image {'missing although [qr] is installed' if has_qr else 'without the extra [qr]'}"
     assert t33.store.open_token(carol, "login"), "no open sign-in token for the account"
     viol = await p.js("JSON.stringify(window.__csp===undefined?['(no Listener)']:window.__csp)")
     assert viol == "[]", f"CSP violation in the admin panel: {viol}"
     assert not p.console, f"console errors: {p.console[:2]}"
     assert p.failed[failed_before:] == [], f"broken requests: {p.failed[failed_before:][:3]}"
-    print("  admin panel: sign-in link button shows link + QR code once (strict CSP)")
+    print(f"  admin panel: sign-in link button shows the link{' + QR code' if has_qr else ''} once (strict CSP)")
 
 
 try:
