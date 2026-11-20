@@ -468,7 +468,7 @@
       "until": "1.0"
     },
     "next_login_step": {
-      "sig": "(user_id, done)",
+      "sig": "(user_id, done, setup: 'bool' = False)",
       "since": "0.22.0",
       "target": "_next_login_step",
       "tier": "C",
@@ -829,7 +829,7 @@
     },
     "PAGES": {
       "tier": "B",
-      "value": "('account', 'error', 'forgot', 'gate_logged_out', 'gate_logout', 'gateway_home', 'login', 'logout', 'magic_confirm', 'magic_invalid', 'magic_request', 'pin', 'qr_approve', 'qr_login', 'reauth', 'register', 'reset', 'resource_unlock', 'totp', 'totp_setup')"
+      "value": "('account', 'account_setup', 'error', 'forgot', 'gate_logged_out', 'gate_logout', 'gateway_home', 'login', 'logout', 'magic_confirm', 'magic_invalid', 'magic_request', 'pin', 'qr_approve', 'qr_login', 'reauth', 'register', 'reset', 'resource_unlock', 'totp', 'totp_setup')"
     },
     "RECOVERY_BYTES": {
       "since": "0.22.0",
@@ -1281,6 +1281,10 @@
       "tier": "A"
     },
     "magiclink_enabled": {
+      "field": "bool = False",
+      "tier": "A"
+    },
+    "magiclink_first_login_only": {
       "field": "bool = False",
       "tier": "A"
     },
@@ -2053,6 +2057,12 @@
       "keys": [],
       "tier": "B"
     },
+    "GET /auth/setup": {
+      "keys": [
+        "query:next"
+      ],
+      "tier": "B"
+    },
     "GET /auth/totp": {
       "keys": [
         "query:error",
@@ -2219,7 +2229,8 @@
     },
     "POST /auth/passkey/register/finish": {
       "keys": [
-        "query:name"
+        "query:name",
+        "query:next"
       ],
       "tier": "B"
     },

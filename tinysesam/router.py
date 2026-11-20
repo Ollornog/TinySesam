@@ -19,6 +19,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.routing import APIRoute
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 
+from . import _chain
 from .errors import ConfigError
 from . import security
 from .store import replacement_name, key_kind_of, name_invalid, norm_email, valid_email
@@ -355,6 +356,22 @@ def build_router(auth) -> APIRouter:
 
         @r.post("/auth/pin/set")
         async def pin_set(request: Request):
+            if auth.session_user(request) is None:
+                setup = auth._setup_user(request, "pin")
+                if setup is not None:
+                    # T-34: the setup pass after a sign-in link. The account has no PIN (the pass
+                    # offers only missing factors), the session is fresh from the link — the same
+                    # reasoning as `login_fresh()` for the first factor.
+                    b = await auth.json_body(request)
+                    if not auth._rate_ok(auth.client_ip(request), login=False):
+                        raise HTTPException(429, auth.t("api.too_many"))
+                    try:
+                        auth.set_pin(setup["id"], b.get("pin"))
+                    except ValueError as e:
+                        raise HTTPException(400, str(e))
+                    auth.audit("pin_set", setup["username"], auth.client_ip(request), "setup_pass=1")
+                    token = auth._setup_record(request, "pin")
+                    return _setup_answer(request, setup["id"], token, str(b.get("next") or ""))
             # R3-3: REPLACING a PIN means exchanging a sign-in factor — only an
             # interactive session with fresh confirmation may do that. An API key gets through here in
             # no case, not even when creating (otherwise the key holder would set the
@@ -517,8 +534,16 @@ def build_router(auth) -> APIRouter:
             if not data or not data.get("user_id"):
                 auth._token_rejected("login", request)
                 return auth.render_page("magic_invalid", request=request, status=400)
+            # T-34: "a link only for the first sign-in". Checked at redemption — the account may have
+            # changed since the link was issued. The token is spent either way (single use).
+            if not auth._link_allowed(data["user_id"]):
+                auth.audit("magic_first_login_only", auth._account_name(data["user_id"]),
+                           auth.client_ip(request))
+                return auth.render_page("magic_invalid", request=request, status=403,
+                                        message=auth.t("magic.first_only"))
             return _login_after_token(auth, request, data["user_id"],
-                                     auth.safe_next((data.get("payload") or {}).get("next") or "", request))
+                                     auth.safe_next((data.get("payload") or {}).get("next") or "", request),
+                                     link=True)
 
     # ---------- Cross-device sign-in (QR code, T-33) ----------
     if cfg.qr_login_enabled:
@@ -569,7 +594,8 @@ def build_router(auth) -> APIRouter:
                 auth._token_rejected("qr_login", request)
                 return auth.render_page("magic_invalid", request=request, status=400)
             auth.audit("qr_login", auth._account_name(data["user_id"]), ip, f"approved_from_device_ip={data['ip']}")
-            return _login_after_token(auth, request, data["user_id"], auth.safe_next(data["next"], request))
+            return _login_after_token(auth, request, data["user_id"], auth.safe_next(data["next"], request),
+                                     link=True)
 
         @r.get("/auth/qr/approve", response_class=HTMLResponse)
         def qr_approve_page(request: Request, code: str = ""):
@@ -613,6 +639,33 @@ def build_router(auth) -> APIRouter:
         @r.post("/auth/qr/deny", response_class=HTMLResponse)
         def qr_deny(request: Request, code: str = Form(""), csrf_tok: str = Form("", alias="_csrf")):
             return _qr_decide(request, code, csrf_tok, False)
+
+    # ---------- Setup pass after a sign-in link (T-34) ----------
+    # Only links open it (mailed, admin-issued, app-issued, cross-device), so the page exists only
+    # with them. It shows what the chain still needs and the account lacks; the setup routes it
+    # posts to (`/auth/password/set`, `/auth/pin/set`, `/auth/passkey/register/*`,
+    # `/auth/totp/setup`) accept the half session for exactly the offered factor.
+    if cfg.magiclink_enabled or cfg.qr_login_enabled:
+        @r.get("/auth/setup", response_class=HTMLResponse)
+        def account_setup(request: Request, next: str = ""):
+            nxt = auth.safe_next(next, request)
+            if auth.session_user(request):
+                return RedirectResponse(nxt, 303)            # already fully signed in
+            s = auth._session_from_request(request)
+            if not auth._setup_session(s):
+                # No pass (none opened, expired, account locked): the regular sign-in.
+                return RedirectResponse(f"{auth.browser_path(request, cfg.login_path)}?next={_q(nxt)}", 303)
+            offer = auth._setup_offer(request)
+            if offer is None:
+                # Nothing to set up right now: an existing factor first, or a step to provide.
+                done = __import__("json").loads(s["factors_done"] or "[]")
+                step = auth._next_login_step(s["user_id"], done, setup=True)
+                target = auth._factor_entry(step, nxt) if step and step != "setup" else \
+                    f"{cfg.login_path}?next={_q(nxt)}"
+                return RedirectResponse(auth.browser_path(request, target), 303)
+            _u, options, _index, left = offer
+            return auth.render_page("account_setup", request=request, options=options, left=left,
+                                    next=nxt, pin_min=cfg.pin_min_length)
 
     # ---------- E-mail confirmation (own endpoint, independent of the magic link) ----------
     if cfg.signup_verify_email:
@@ -1469,12 +1522,30 @@ def build_router(auth) -> APIRouter:
             raise HTTPException(erg.status, erg.message)
         return {"ok": True, "api_keys_active": erg.api_keys_active}
 
+    def _setup_answer(request: Request, uid: int, token, nxt: str) -> JSONResponse:
+        """The answer of a setup route inside the setup pass (T-34): where to go next — the following
+        step or, once the sign-in is complete, the target — and the new cookie if it is complete."""
+        current = token or request.cookies.get(auth.session_cookie_name)
+        response = JSONResponse({"ok": True, "next": auth._login_redirect_after(
+            request, current, uid, auth.safe_next(nxt, request)), "other_sessions": 0})
+        if token:
+            auth.set_cookie(response, token)
+        return response
+
     @r.post("/auth/password/set")
     async def set_own_first_password(request: Request):
         # B-10: an account without a password (sign-in link, OIDC, passkey) gets its first one here.
         # One source like above: `set_initial_password` checks CSRF, session, freshness instead of the
         # old password, throttle and rule, and writes the audit line.
         b = await auth.json_body(request)
+        setup = auth._setup_user(request, "password") if auth.session_user(request) is None else None
+        if setup is not None:
+            # T-34: the setup pass after a sign-in link — a half session that may set exactly this.
+            erg, token = await run_in_threadpool(auth._setup_password, request, b.get("new") or "",
+                                                 csrf=request.headers.get("x-csrf-token") or b.get("_csrf") or "")
+            if not erg:
+                raise HTTPException(erg.status, erg.message)
+            return _setup_answer(request, setup["id"], token, str(b.get("next") or ""))
         erg = await run_in_threadpool(auth.set_initial_password, request, b.get("new") or "",
                                       csrf=request.headers.get("x-csrf-token") or b.get("_csrf") or "")
         if not erg:
@@ -1497,7 +1568,8 @@ def build_router(auth) -> APIRouter:
             # starts with: a PIN that a strict chain permits only as a follow-up factor (G7) needs
             # its section anyway, as does one that the chain demands (with `pin_login=False`).
             methods = cfg.enabled_methods()
-            if cfg.pin_enabled and (cfg.pin_login or "pin" in (cfg.login_chain or [])) and "pin" not in methods:
+            if (cfg.pin_enabled and (cfg.pin_login or "pin" in _chain.factors(cfg.login_chain))
+                    and "pin" not in methods):
                 methods.append("pin")
             return auth.render_page("account", request=request, user=u, methods=methods,
                                     # B-10: without a password the page offers to set one, without the
@@ -1920,17 +1992,22 @@ def key_view(k) -> dict:
             "kind": _key_kind(k)}
 
 
-def _login_after_token(auth, request, uid, nxt):
+def _login_after_token(auth, request, uid, nxt, link: bool = False):
     """After a redeemed e-mail token, sign in (factor `magic`) and redirect.
 
     Common to sign-in link and e-mail confirmation: both prove the same — the recipient
     has access to the mailbox. A global factor chain can still demand a further step;
     that is why the path goes via `apply_factor`/`_login_redirect_after` instead of straight into
     a session.
+
+    `link=True` (sign-in link and cross-device sign-in, T-34): if the account lacks factors for the
+    chain, the setup pass opens — the redirect then leads to `/auth/setup`.
     """
     from fastapi.responses import RedirectResponse
     token, ok, is_new = auth.apply_factor(request, uid, "magic",
                                           auth.client_ip(request), request.headers.get("user-agent"))
+    if link and not ok:
+        auth._begin_setup(token, uid)
     resp = RedirectResponse(auth._login_redirect_after(request, token, uid, nxt), 303)
     if is_new:
         auth.set_cookie(resp, token)

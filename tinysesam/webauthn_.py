@@ -74,7 +74,9 @@ def register_passkey_routes(router, auth):
         # the key got a fresh interactive session and suddenly stood in front of exactly the
         # `require_mfa()` routes that have locked it out since R3-3. The creation was the
         # lever by which the bolt against the silently degrading key was bypassed.
-        u = auth.require_session(request)
+        # T-34: the setup pass after a sign-in link may register the passkey it offers — a half
+        # session, never a key (`_setup_user` reads only the session cookie).
+        u = auth.session_user(request) or auth._setup_user(request, "passkey") or auth.require_session(request)
         existing = auth.store.list_webauthn(u["id"])
         opts = generate_registration_options(
             rp_id=cfg.rp_id, rp_name=cfg.rp_name,
@@ -93,9 +95,10 @@ def register_passkey_routes(router, auth):
         return resp
 
     @router.post("/auth/passkey/register/finish")
-    async def reg_finish(request: Request, name: str = ""):
+    async def reg_finish(request: Request, name: str = "", next: str = ""):
         auth.require_csrf(request, request.headers.get("x-csrf-token"))
-        u = auth.require_session(request)   # same bolt as at begin
+        setup = None if auth.session_user(request) else auth._setup_user(request, "passkey")
+        u = setup or auth.require_session(request)   # same bolt as at begin
         fk = request.cookies.get(auth.flow_cookie_name(_WAFLOW))
         flow = auth.store.pop_flow("wareg:" + fk) if fk else None
         if not flow:
@@ -121,6 +124,16 @@ def register_passkey_routes(router, auth):
         auth.audit("passkey_create", u["username"], auth.client_ip(request),
                    f"name={name or 'Passkey'}")
         auth._security_event("passkey_added", u["id"], name=name or "Passkey")
+        if setup is not None:
+            # T-34: a step of the setup pass — where next, and the full session once it is complete.
+            token = auth._setup_record(request, "passkey")
+            current = token or request.cookies.get(auth.session_cookie_name)
+            resp = JSONResponse({"ok": True, "other_sessions": 0, "next": auth._login_redirect_after(
+                request, current, u["id"], auth.safe_next(next, request))})
+            if token:
+                auth.set_cookie(resp, token)
+            auth._delete_flow_cookie(resp, _WAFLOW)
+            return resp
         resp = JSONResponse({"ok": True, "other_sessions": auth.count_other_sessions(request, u)})  # B1-7
         # The flow is consumed (pop_flow) — the cookie for it binds nothing any more and would only
         # keep going along to every app (B-20). OIDC and SAML delete theirs on the way back as well.

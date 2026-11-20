@@ -227,6 +227,7 @@ wherever the browser allows it — read them, don't spell the names out.
 | `GET/POST /auth/magic/request` | request a sign-in link by email *(magic links on and `magiclink_self_request`)* |
 | `POST /auth/qr/start` · `/auth/qr/status` · `/auth/qr/finish` | new device: open, poll and collect a cross-device sign-in *(`qr_login_enabled`)* |
 | `GET/POST /auth/qr/approve` · `POST /auth/qr/deny` | signed-in device: approve or refuse it *(`qr_login_enabled`)* |
+| `GET /auth/setup` | setup pass after a sign-in link: set up what the `login_chain` demands *(`magiclink_enabled` or `qr_login_enabled`)* |
 | `GET /auth/verify/{token}` · `GET /auth/invite/{token}` | confirm an address · accept an invitation |
 | `GET /auth/logout` · `GET /auth/me` | log out · current user (JSON) |
 
@@ -292,6 +293,54 @@ link (`magiclink_require_second_factor`, default on). Sign-in by link counts as 
   request (it holds a secret that is never displayed). The QR code needs `base_url` and the extra
   `[qr]`; without them only the short code is shown. No mailer needed.
 
+### Recipe: the admin creates accounts, a link signs them in
+
+Registration off, the admin creates the account (no password), hands out a sign-in link, and on the
+first sign-in the person sets up exactly what your chain demands — only then are they fully signed
+in. Afterwards they sign in through the chain, the link was only the door.
+
+```python
+auth = TinySesam(TinySesamConfig(
+    base_url="https://auth.example.com",
+    allow_signup=False,                          # nobody registers themselves
+    magiclink_enabled=True,
+    magiclink_self_request=False,                # links only from the admin (or your code), no mailer
+    magiclink_first_login_only=True,             # a link signs in only for the first sign-in
+    login_chain=["password", "totp"],            # what every sign-in needs — and what gets set up
+))
+uid = auth.create_user("dana", email="dana@example.com")     # no password
+link = auth.create_signin_link(uid)["url"]                    # or the panel button "Sign-in link"
+```
+
+Dana opens the link → `/auth/setup`: set a password → set up the authenticator app (recovery codes
+shown once) → signed in. Later: password + TOTP, as the chain says.
+
+**Alternatives per chain step** with `|`: `login_chain=["password|passkey"]` lets the setup pass offer
+a password *or* a passkey; `["password|passkey", "totp|passkey"]` asks for two different factors (one
+passkey never counts for two steps). Factor names: `password`, `pin`, `passkey`, `totp`, `oidc`,
+`saml`, `magic`.
+
+The rules of the setup pass:
+
+- It opens only at a link sign-in (mail, admin, app code, cross-device) of an account that cannot
+  satisfy the chain with what it has, only with a `login_chain`, and only where self-setup is allowed
+  (`mfa_enrollment`; `"strict"` → the operator opens a window with `grant_mfa_enrollment`).
+- The half session can do nothing but set up the factor the page offers right now — no protected
+  route, no account page, no admin, no API key. It expires with `stepup_max_age_sec` (measured from
+  the link); disabling the account or a password reset ends it.
+- The link replaces no factor the account **has**: an existing password (or PIN, passkey, TOTP)
+  is provided first, as at any sign-in; the pass offers only missing factors and never replaces one.
+- An account with TOTP or a passkey shows it before anything is set up (the same rule as
+  `magiclink_require_second_factor`), unless the operator opened a setup window.
+- `magiclink_first_login_only=True`: a link signs in only an account that has never been fully signed
+  in, or one that lacks a factor and may set it up. A complete account gets "only for the first
+  sign-in" — also from the admin. Lost a factor? Remove it in the panel, open a setup window
+  (`grant_mfa_enrollment`), then hand out a link: the person provides what they still have and sets up
+  the rest. Cross-device sign-in is not affected (its approval comes from a full session).
+- Inside the pass the order of the chain is not enforced (the server dictates the steps); the regular
+  sign-in afterwards keeps `login_chain_strict`. Without a `login_chain` nothing changes: the link
+  signs in as before.
+
 ## Configuration (`TinySesamConfig`, excerpt)
 
 | Field | Default | |
@@ -299,7 +348,7 @@ link (`magiclink_require_second_factor`, default on). Sign-in by link counts as 
 | `db_path` | `tinysesam.db` | SQLite store |
 | `password_enabled` / `passkey_enabled` / `oidc_enabled` | `True/False/False` | active methods (passkey is off by default: `webauthn` lives in the extra `[passkey]`) |
 | `totp_enabled` | `True` | allow 2FA (required as soon as a user has set it up) |
-| `login_chain` · `stepup_strict` | `[]` · `False` | `["password","totp"]` **enforces** an ordered factor chain — this is how you make 2FA mandatory. Empty = classic: one first factor, plus TOTP where set up |
+| `login_chain` · `stepup_strict` | `[]` · `False` | `["password","totp"]` **enforces** an ordered factor chain — this is how you make 2FA mandatory; alternatives per step with `\|` (`["password\|passkey"]`). Empty = classic: one first factor, plus TOTP where set up |
 | `session_ttl_hours` · `cookie_secure` · `cookie_samesite` | `168` · `True` · `lax` | sessions/cookie |
 | `rp_id` · `origin` | `localhost` · … | WebAuthn (real domain required, HTTPS) |
 | `oidc_issuer/_client_id/_client_secret/_scopes` | – | OIDC provider |
@@ -309,6 +358,7 @@ link (`magiclink_require_second_factor`, default on). Sign-in by link counts as 
 | `security_log` | `""` | file for the fail2ban logger (empty = logger only) |
 | `forward_auth_enabled` · `forward_headers` | `False` · `{}` | forward-auth endpoint · which headers it sets (empty = `Remote-*`) |
 | `magiclink_enabled` · `magiclink_self_request` · `magiclink_ttl_min` | `False` · `True` · `15` | sign-in links redeem · anyone may request one by email (needs a mailer; `False` = links only from the admin or app code) · validity |
+| `magiclink_first_login_only` | `False` | a link signs in only for the first sign-in (or to set up a missing factor) |
 | `qr_login_enabled` · `qr_login_ttl_sec` | `False` · `120` | cross-device sign-in (QR code needs `base_url` and the extra `[qr]`) · validity of a request |
 
 `TinySesamConfig` is a dataclass, and that is part of the promise: `dataclasses.fields(TinySesamConfig)`
@@ -1548,7 +1598,7 @@ without extras (guards the stdlib-scrypt fallback), and a browser job that also 
 
 ## Status
 
-**83 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
+**84 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
 
 Implemented and tested: password/TOTP/sessions/roles, remember-me, step-up and per-route MFA,
 factor chains, personal PIN, shared resource secrets, magic links + mailer hook, registration and

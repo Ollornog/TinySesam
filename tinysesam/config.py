@@ -2,6 +2,8 @@
 from __future__ import annotations
 from dataclasses import dataclass, field
 
+from . import _chain
+
 
 @dataclass
 class TinySesamConfig:
@@ -206,6 +208,14 @@ class TinySesamConfig:
     #: Applies to the global chain and every route chain (`require(factors=["magic"])`, G10).
     #: `False` = the link always suffices (behaviour up to 0.20.x in chains like `["magic"]`).
     magiclink_require_second_factor: bool = True
+    #: A sign-in link only for the FIRST sign-in (T-34), not as a regular way in: it signs in an
+    #: account that has never been fully signed in, or one that lacks a factor of `login_chain` and
+    #: may set it up itself (the setup pass opens). Any other account gets "this link is only for
+    #: the first sign-in" — whoever issued it, the admin included. Use it with "the admin creates
+    #: accounts and hands out a link": afterwards the account signs in through the chain only.
+    #: Not for the cross-device sign-in (QR): its approval comes from a full session of the same
+    #: account. `False` (default) = links sign in as before.
+    magiclink_first_login_only: bool = False
 
     # --- Cross-device sign-in (QR code, T-33) ---
     #: A device without a session shows a QR code and a short code on the login page; a device on
@@ -268,7 +278,11 @@ class TinySesamConfig:
     # ["oidc", "password"] or ["password", "totp"]. Empty = classic (one first factor + TOTP if
     # set up). Can be tightened per route: Depends(auth.require(factors=[...], strict=...)) —
     # in addition, never instead of this chain (since 2026-09-27). Factor names: password, pin, oidc, passkey,
-    # totp, magic. The first factor identifies the user.
+    # totp, magic, saml. The first factor identifies the user.
+    # Alternatives per step with "|" (T-34): ["password|passkey", "totp|passkey"] — any one of
+    # them satisfies the step, and one factor never satisfies two steps (a passkey alone is not
+    # both). After a sign-in link, an account that lacks factors for the chain sets them up in a
+    # setup pass (`/auth/setup`) before it is fully signed in — see `magiclink_first_login_only`.
     login_chain: list[str] = field(default_factory=list)
     #: Who may set up a second factor demanded by the chain **themselves**? (R3-1)
     #:
@@ -818,4 +832,5 @@ class TinySesamConfig:
         if not (self.pin_enabled and self.pin_login):
             return False
         chain = list(self.login_chain or [])
-        return not (self.login_chain_strict and "pin" in chain and chain[0] != "pin")
+        return not (self.login_chain_strict and "pin" in _chain.factors(chain)
+                    and "pin" not in _chain.first_step(chain))
