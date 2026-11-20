@@ -28,7 +28,7 @@ with their front door: keep the surface small, every feature optional, and prove
 | `tests/` | standalone assert scripts, no pytest; `tests/run_all.py` runs them in parallel |
 | `examples/showcase.py` | reference front end; the browser test drives it |
 | `web/` | the project website (built by `python -m web.build`) |
-| `deploy/` | proxy templates (Caddy, nginx, Traefik), fail2ban filters, systemd timer, home-network stack |
+| `deploy/` | quickstart stack, proxy templates (Caddy, nginx, Traefik), fail2ban filters, systemd timer, home-network stack |
 | `backlog/` | the backlog: one Markdown file per task, bug, decision (ADR) or milestone |
 | `scripts/` | generators and release helpers (`_api_docs.py`, `_config_docs.py`, `_backlog.py`, `_release.py`) |
 

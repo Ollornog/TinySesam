@@ -1782,7 +1782,9 @@ print(f"  READMEs, AGENTS.md, skill: {_executed} complete examples run through i
 
 _CONFIG_FIELDS = {f.name for f in _dc_fields(TinySesamConfig)}
 _LIB_TEXT = "\n".join(read(f) for f in LIB)
-_ROUTES = sorted({k.split(" ", 1)[1].replace("<admin>", TinySesamConfig.admin_path)
+# A configurable path is recorded as a placeholder (`<admin>`, `<oidc_callback_path>`): the docs name its default.
+_PLACEHOLDER_DEFAULT = {"admin": TinySesamConfig.admin_path, "oidc_callback_path": TinySesamConfig.oidc_callback_path}
+_ROUTES = sorted({re.sub(r"<(\w+)>", lambda m: _PLACEHOLDER_DEFAULT.get(m.group(1), m.group(0)), k.split(" ", 1)[1])
                   for k in _json.loads(read("tests/api_surface.json"))["http.routes"]})
 _TOP = {f.split("/", 1)[0] for f in FILES}
 _SNAKE = re.compile(r"(?<![\w.$-])([a-z][a-z0-9]*(?:_[a-z0-9]+)+)(?![\w-])")

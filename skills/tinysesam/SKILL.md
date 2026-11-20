@@ -24,14 +24,15 @@ truth. Every Python block below is executed by the repo's test suite, every name
 | Concepts, recipes, security notes | `README.md` (section names below) |
 | Failure behaviour, proxy contract, rollbacks | `docs/OPERATIONS.md` |
 | Home network, bare IP, own CA | `docs/HOME-NETWORK.md` |
-| Proxy templates | `deploy/forward-auth/` (Caddy, nginx, Traefik), `deploy/home-network/` |
+| Proxy templates | `deploy/quickstart/` (ready-made stack), `deploy/forward-auth/` (Caddy, nginx, Traefik), `deploy/home-network/` |
 
 ## Choose the shape first
 
 1. **Your own FastAPI app** → library mode: `TinySesam(TinySesamConfig(...))`, `app.include_router(auth.router())`,
    guards as dependencies. Recipes 1–5.
 2. **Someone else's app** (wiki, dashboard, static site, any language) → gateway mode: TinySesam answers the proxy's
-   sub-request `GET /auth/forward`, the app sees `Remote-User`/`Remote-Groups`/`Remote-Email` headers. Recipe 6.
+   sub-request `GET /auth/forward`, the app sees `Remote-User`/`Remote-Groups`/`Remote-Email` headers. Recipe 6;
+   clients without a browser (WebDAV, CalDAV, Git) get app passwords, recipe 6a.
 3. **A tool on a person's computer** (Claude Code as MCP client) → OAuth authorization server on top of forward auth.
    Recipe 7.
 
@@ -187,19 +188,70 @@ TinySesam runs as its own service; the proxy asks `GET /auth/forward` for every 
 `200` plus `Remote-User`, `Remote-Groups`, `Remote-Email`, `Remote-Name`, `Remote-Id` → pass; `401` plus
 `X-TinySesam-Location` → redirect to sign-in; `403` with `X-TinySesam-Reason: role` → wrong role.
 
-- Pure OIDC gateway, no code: `pip install "tinysesam[gateway]==<version>"`, set `TINYSESAM_OIDC_ISSUER`,
+**Fastest way: the quickstart stack** `deploy/quickstart/` — gateway, Caddy with caddy-jwt (image
+`ghcr.io/ollornog/tinysesam-caddy-gate:v<version>`) and an example app behind the gate, nothing to build:
+
+```bash
+cp deploy/quickstart/example.env deploy/quickstart/.env && chmod 600 deploy/quickstart/.env
+$EDITOR deploy/quickstart/.env        # OIDC provider, TS_AUTH_HOST, TS_APP_HOST, TS_TLS (acme | dns | internal | ip)
+docker compose -f deploy/quickstart/docker-compose.yml up -d
+```
+
+Register `https://<TS_AUTH_HOST>/auth/oidc/callback` at the provider, open `https://<TS_APP_HOST>`: the example app
+shows the `Remote-*` headers; then put your service in place of `app` (`TS_APP_UPSTREAM`). Included: identity headers
+from the browser stripped, HSTS, sign-out at the app, OAuth for MCP clients (`TS_OAUTH_RESOURCES`). Not included
+(take them from `deploy/forward-auth/`): fail2ban feed, one OIDC client per app, share paths, gate token.
+README: *Gateway and Caddy in 5 minutes*.
+
+- Without Docker: `pip install "tinysesam[gateway]==<version>"`, set `TINYSESAM_OIDC_ISSUER`,
   `TINYSESAM_OIDC_CLIENT_ID`, `TINYSESAM_OIDC_CLIENT_SECRET`, `TINYSESAM_BASE_URL`, `TINYSESAM_COOKIE_DOMAIN`,
-  `TINYSESAM_PROTECTED_HOSTS`, then `python -m tinysesam.gateway`. Or the image `ghcr.io/ollornog/tinysesam:v<version>`.
+  `TINYSESAM_PROTECTED_HOSTS`, then `python -m tinysesam.gateway` (image `ghcr.io/ollornog/tinysesam:v<version>`).
   In Python: `TinySesamConfig.oidc_gateway(issuer=..., client_id=..., client_secret=..., base_url=...)`.
-- Proxy templates: `deploy/forward-auth/Caddyfile` (expanded `reverse_proxy` with `handle_response` — Caddy's
-  `forward_auth` shortcut does not redirect), `deploy/forward-auth/nginx.conf`, `deploy/forward-auth/traefik.yml`,
-  stack `deploy/forward-auth/docker-compose.yml`. Roles per app: header `X-TinySesam-Roles: editors,admin`
-  in the sub-request.
+- Hand-written proxy config: `deploy/forward-auth/Caddyfile` (expanded `reverse_proxy` with `handle_response` —
+  Caddy's `forward_auth` shortcut does not redirect), `deploy/forward-auth/nginx.conf`,
+  `deploy/forward-auth/traefik.yml`. Roles per app: header `X-TinySesam-Roles: editors,admin` in the sub-request.
 - Library mode can be a gate too: `forward_auth_enabled=True`, `cookie_domain=".example.com"`,
   `trusted_redirect_hosts=["app.example.com"]`, `trusted_proxies=["<proxy address>/32"]`.
-- Fewer sub-requests: gate token (`gate_token_enabled=True`, `deploy/forward-auth/Caddyfile.gate`); one gateway
-  for many apps without a shared cookie: `gate_link_enabled=True`; one OIDC client per app: `oidc_clients`.
-  README: *As a pure OIDC gateway (preset)*, *Several apps, one TinySesam*; `docs/OPERATIONS.md`.
+- Fewer sub-requests: gate token (`gate_token_enabled=True`, `deploy/forward-auth/Caddyfile.gate`, the proxy fetches
+  the keys from `/auth/gate/jwks.json`); one gateway for many apps without a shared cookie: `gate_link_enabled=True`;
+  one OIDC client per app: `oidc_clients`. README: *As a pure OIDC gateway (preset)*, *Several apps, one TinySesam*;
+  `docs/OPERATIONS.md`.
+
+## Recipe 6a — app passwords for WebDAV, CalDAV/CardDAV, Git
+
+Clients that cannot open a sign-in page speak Basic auth. Per protected app, an account then creates an **app
+password** on its account page (fresh confirmation, shown once, bound to the chosen apps, never the admin flag, valid
+only at `/auth/forward`). The account's own password never works there. Default off:
+
+```python
+from tinysesam import TinySesam, TinySesamConfig
+
+auth = TinySesam(TinySesamConfig(
+    db_path="gateway.db",
+    base_url="https://auth.example.com",
+    forward_auth_enabled=True,
+    cookie_domain=".example.com",              # one sign-in for the browser across the subdomains
+    trusted_redirect_hosts=["dav.example.com"],
+    forward_apps={"dav.example.com": {"name": "Files", "app_passwords": True}},
+    app_password_default_days=365,             # typed into a phone by hand: a year, not a quarter
+))
+assert [a["host"] for a in auth.app_password_hosts()] == ["dav.example.com"]
+
+uid = auth.create_user("alice", email="alice@example.com")
+pw = auth.create_app_password(uid, "Phone calendar", hosts=["dav.example.com"])   # what the account page does
+assert pw["hosts"] == ["dav.example.com"] and pw["secret"]                          # `secret`: shown this once
+```
+
+- Gateway: `TINYSESAM_FORWARD_APPS='{"dav.example.com": {"name": "Files", "app_passwords": true}}'`; the quickstart
+  has the full example (`COMPOSE_PROFILES=webdav`, see `deploy/quickstart/example.env`).
+- **At the proxy** the forward-auth block needs the `@basic` branch **before** `@denied`: a `401` with
+  `X-TinySesam-Reason: basic` is passed through with its `WWW-Authenticate: Basic …` (a redirect would break the
+  sync), and `header_up -Authorization` towards the app. The templates in `deploy/` carry it.
+- On the device: the sign-in user name plus the app password, e.g. `git clone https://alice@git.example.com/repo.git`.
+  A browser on the same host still gets the sign-in page.
+- In code (tier B): `auth.create_app_password(...)` as above, `auth.list_app_passwords(uid)`, `auth.revoke_app_password(pw_id)`. Never unlimited unless
+  `app_password_allow_unlimited=True`. Samba and other non-HTTP protocols are not covered. README: *App passwords:
+  WebDAV, CalDAV, Git behind TinySesam*.
 
 ## Recipe 7 — OAuth for MCP clients (Claude Code)
 

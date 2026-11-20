@@ -21,7 +21,7 @@ repo? Yes, for two readers.
   `CLAUDE.md` in the directory or above it, and the import makes it independent of that.
 - **App builders** (an agent protects an app with TinySesam): `skills/tinysesam/SKILL.md` in the common Agent Skills
   format (front matter `name`, `description` with the trigger words). A signpost with recipes — FastAPI with mandatory
-  TOTP, step-up, admin-created accounts with a sign-in link (T-34/T-33), API keys, forward-auth gate, OAuth for MCP
+  TOTP, step-up, admin-created accounts with a sign-in link (T-34/T-33), API keys, forward-auth gate and the quickstart (T-62), app passwords (T-66), OAuth for MCP
   clients (T-36, ADR-11), home network (T-37/T-43), C22 look and the top bar (T-61, T-64) — and pitfalls; details
   stay in README, `CONFIGURATION.md`, `API.md` and `docs/`.
 - **Where:** `skills/<name>/SKILL.md` is the plugin layout Claude Code loads by default, and the repo root is a plugin
@@ -33,5 +33,5 @@ repo? Yes, for two readers.
   `X-TinySesam-*` headers, routes against the measured HTTP surface, repo paths — plus front matter, the
   `CLAUDE.md` import, the marketplace entry and the install line. Self-probes and mutation anchors in the guard.
 
-**Left open:** the Caddy quick start (T-62) and the key management (ADR-12) are still in review; the skill points at
-`deploy/forward-auth/` and gets their recipes once they are merged.
+**Rebased onto** the Caddy quick start (T-62: recipe 6 starts with `deploy/quickstart/`), app passwords (T-66:
+recipe 6a) and the key management (ADR-12: key backup and rotation in the pitfalls).
