@@ -8,7 +8,7 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 ## Meilensteine
 
 * ☐ **[M-1](M-1-api-stable-1-0.md)** 1.0 — API stable enough for PyPI — 14/14 erledigt
-* ☐ **[M-2](M-2-after-1-0.md)** After 1.0 — keeping the published package maintained — 13/16 erledigt
+* ☐ **[M-2](M-2-after-1-0.md)** After 1.0 — keeping the published package maintained — 13/17 erledigt
 * ☑ **[M-3](M-3-gate-in-front-of-third-party-apps.md)** Gate in front of third-party apps — fast, sign in once, sign out cleanly — 8/8 erledigt
 
 ## Aufgaben
@@ -44,6 +44,7 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 * ☑ **[T-29](T-29-translate-everything-to-english.md)** Translate everything to English (code texts, docs, messages) · M-2
 * ☐ **[T-30](T-30-launch-plan.md)** Launch plan — make TinySesam publicly known · M-2
 * ☐ **[T-31](T-31-maybe-recommend-a-provider-session-at-least-as-lon.md)** Maybe: recommend a provider session at least as long as the gateway session · M-2
+* ☐ **[T-32](T-32-api-key-pairing-negotiate-a-key-on-first-contact-o.md)** API key pairing: negotiate a key on first contact, optional renew and rotate on login · M-2
 
 ## Fehler
 
