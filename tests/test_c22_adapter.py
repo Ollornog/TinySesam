@@ -160,7 +160,10 @@ else:
         p = os.path.join(d, "p.html")
         with open(p, "w", encoding="utf-8") as f:
             f.write(f"<!doctype html><html><head><style>{css}</style></head><body>{probe}</body></html>")
-        out = subprocess.run([CHROME, "--headless", "--no-sandbox", "--disable-gpu", f"--user-data-dir={d}/u",
+        # The flags of test_browser.py: --disable-dev-shm-usage, because a CI runner's tiny /dev/shm kills the
+        # renderer, and --dump-dom then waits for a page that never finishes (seen: 60 s timeout in CI).
+        out = subprocess.run([CHROME, "--headless=new", "--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage",
+                              "--no-first-run", f"--user-data-dir={d}/u",
                               "--dump-dom", "file://" + p], capture_output=True, text=True, timeout=60).stdout
         import html as _h
         import json
