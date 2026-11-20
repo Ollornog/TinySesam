@@ -2704,6 +2704,10 @@ _MEASURED |= {"_lockout_notice", "_send"}
 # Likewise the notice to the OLD address after a change (`confirm_email_change` with the inner
 # `notice`, ASVS 6.3.7) — without a link; tests/test_self_service.py checks that (no "://").
 _MEASURED |= {"confirm_email_change", "notice", "_change_request_notice"}
+# The notice about new access (T-47, `_access_notice` with the inner `_send`) carries no link on
+# purpose (a security mail that asks to click looks like phishing); tests/test_h2_hardening.py checks
+# that (no "://" in any of its texts, de and en).
+_MEASURED |= {"_access_notice"}
 # The admin-issued sign-in link (T-33, `create_signin_link`) takes NO base at all — only
 # `cfg.base_url`. It does not fit `_paths` (which hands every sender a base); measured here: with
 # base_url the link carries it (subpath exactly once), without it `ConfigError` and no token.

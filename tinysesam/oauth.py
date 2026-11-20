@@ -880,6 +880,13 @@ def add_routes(auth, r) -> None:
             nxt = auth.browser_path(request, "/auth/oauth/consent") + "?txn=" + txn
             from urllib.parse import quote
             return RedirectResponse(f"{auth.browser_path(request, cfg.login_path)}?next={quote(nxt, safe='')}", 303)
+        # B-12: allowing a program is a new, lasting way in (a refresh token lives for days) — the same
+        # freshness as a new passkey or API key. A stale session confirms first and comes back here.
+        target = auth._reauth_target(request, auth.browser_path(request, "/auth/oauth/consent") + "?txn=" + txn)
+        if target:
+            return RedirectResponse(target, 303)
+        if auth._fresh_enough(request, user) == "relogin":
+            return page_error(request, 403, auth.t("api.stepup_relogin"))
         p = req["params"]
         host, port, _ = loopback_uri(p["redirect_uri"]) or ("?", None, "")
         access_ttl, idle, max_age = srv._lifetimes()
@@ -908,6 +915,13 @@ def add_routes(auth, r) -> None:
         decision = str(form.get("decision") or "")
         if decision not in ("allow", "deny"):
             return page_error(request, 400, auth.t("oauth.invalid_request", reason="decision"))
+        if decision == "allow" and auth._fresh_enough(request, user) is not None:
+            # B-12: the page was fresh, the answer came too late. The request stays open (nothing was
+            # decided): confirm, then the consent page again.
+            target = auth._reauth_target(request, auth.browser_path(request, "/auth/oauth/consent") + "?txn=" + txn)
+            if target:
+                return RedirectResponse(target, 303)
+            return page_error(request, 403, auth.t("api.stepup_relogin"))
         try:
             url = srv.decide(txn, req, user, decision == "allow", auth.client_ip(request))
         except OAuthError:

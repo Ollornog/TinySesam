@@ -97,7 +97,10 @@ T33 = f"http://127.0.0.1:{_t33_sock.getsockname()[1]}"
 _t33_db = os.path.join(tempfile.mkdtemp(), "t33.db")
 t33 = _TinySesam(_TinySesamConfig(
     db_path=_t33_db, cookie_secure=False, cookie_prefix="tst33_", passkey_enabled=False, lang="en",
-    magiclink_enabled=True, magiclink_self_request=False, qr_login_enabled=True, base_url=T33))
+    magiclink_enabled=True, magiclink_self_request=False, qr_login_enabled=True, base_url=T33,
+    # The accounts here have no second factor; the default refusal for them (T-44) is measured in
+    # tests/test_h2_hardening.py — the browser measures the page, the number and the step-up.
+    qr_login_require_second_factor=False))
 t33.set_security("password_min_length_single_factor", 8)
 t33.ensure_admin("boss", "boss-pw-12345")
 t33.create_user("carol", password="carol-pw-12345")
@@ -659,6 +662,7 @@ async def run():
         assert not unexpected, f"broken requests: {unexpected[:3]}"
 
         await t33_alternatives(p)
+        await h2_stepup_qr(p)
         await own_dialogs(p)
 
 
@@ -707,7 +711,10 @@ async def t33_alternatives(p):
     assert shown == f"{code[:4]}-{code[4:]}", shown
     assert await p.js("document.body.innerText.indexOf(document.querySelector('#tsqr [name=secret]').value)") == -1, \
         "the device secret must never be visible"
-    assert t33._qr_approve(code, boss), "approval (other device) failed"
+    # T-44: the number on this screen is what the other device has to type.
+    match = await p.js("(document.getElementById('qrmatch')||{}).textContent||''")
+    assert re.fullmatch(r"\d\d", match or ""), f"no number shown on the new device: {match!r}"
+    assert t33._qr_approve(code, boss, match) == "ok", "approval (other device) failed"
     for _ in range(30):                      # the script polls every 2 s and then submits by itself
         await asyncio.sleep(0.5)
         if await p.js("location.pathname") != "/auth/qr/start":
@@ -728,6 +735,8 @@ async def t33_alternatives(p):
     await go(f"/auth/qr/approve?code={code2}")
     assert "T33-Probe/2.0" in await p.js("document.querySelector('table.qrinfo').innerText"), \
         "the approval page must name the asking device"
+    match2 = re.search(r"id=qrmatch>(\d\d)<", r.text).group(1)
+    await p.js(f"document.getElementById('qrmatchin').value={match2!r};true")
     await p.click("form[action$='/auth/qr/approve'] button")
     assert t33._qr_peek(code2)["user_id"] == boss["id"], "approve button without effect"
     viol = await p.js("JSON.stringify(window.__csp===undefined?['(no Listener)']:window.__csp)")
@@ -752,6 +761,119 @@ async def t33_alternatives(p):
     print(f"  admin panel: sign-in link button shows the link{' + QR code' if has_qr else ''} once (strict CSP)")
 
     await account_setup(p, go)
+
+
+async def h2_stepup_qr(p):
+    """H2 in a real browser on the T-33 app (strict CSP, real CSRF): a stale session that wants new access
+    (B-12) goes through the reauth page and comes back to where it was — the account page's API key, and the
+    approval page with its code; the approval wants the number from the other screen (T-44).
+    `TINYSESAM_SCREENSHOTS=<dir>` keeps screenshots at 390 and 1280 px."""
+    import base64
+    import re
+    from fastapi.testclient import TestClient
+
+    failed_before = len(p.failed)
+    shots = os.environ.get("TINYSESAM_SCREENSHOTS", "")
+
+    async def go(path):
+        await p.cmd("Page.navigate", url=T33 + path)
+        await asyncio.sleep(0.4)
+        await p.until("document.readyState==='complete'", f"{path} did not load")
+
+    async def shot(name):
+        if not shots:
+            return
+        os.makedirs(shots, exist_ok=True)
+        data = (await p.cmd("Page.captureScreenshot", format="png", captureBeyondViewport=True))["data"]
+        with open(os.path.join(shots, name), "wb") as fh:
+            fh.write(base64.b64decode(data))
+
+    async def both_widths(name, check=""):
+        for width in (390, 1280):
+            await p.cmd("Emulation.setDeviceMetricsOverride", width=width, height=900, deviceScaleFactor=1,
+                        mobile=width < 500)
+            await p.cmd("Page.reload")
+            await p.until("document.readyState==='complete'" + (f" && {check}" if check else ""), f"{name}: no reload")
+            over = await p.js("document.documentElement.scrollWidth - window.innerWidth")
+            assert over <= 0, f"{name} scrolls sideways at {width}px ({over}px)"
+            await shot(f"{name}-{width}.png")
+        await p.cmd("Emulation.clearDeviceMetricsOverride")
+
+    uid = t33.create_user("hanna", password="hanna-pw-12345")
+    token, _ = t33.start_session(uid, "password")
+    await p.cmd("Network.setCookie", name=t33.session_cookie_name, value=token, url=T33)
+
+    def age():
+        old = int(time.time()) - 100000
+        t33.store._exec("UPDATE session SET mfa_at=?, created_at=? WHERE user_id=?", (old, old, uid))
+
+    async def reauth(back):
+        await p.until("location.pathname==='/auth/reauth'", "no detour over the reauth page")
+        await p.js("document.querySelector(\"form[action$='/auth/reauth'] [name=password]\").value='hanna-pw-12345';true")
+        await p.click("form[action$='/auth/reauth'] button")
+        await p.until(f"location.pathname==={json.dumps(back)} && document.readyState==='complete'",
+                      f"the reauth page did not lead back to {back}")
+
+    # 1) B-12 on the account page: „create API key“ with a stale session → reauth → back → the key dialog.
+    age()
+    await go("/auth/account")
+    await p.js("document.getElementById('key_name').value='h2';true")
+    await p.click("[data-act=mkkey]")
+    await p.until("location.pathname==='/auth/reauth'", "a stale session did not go to the reauth page")
+    assert not t33.list_api_keys(uid), "a stale session created an API key"
+    await both_widths("h2-reauth", "!!document.querySelector('[name=password]')")
+    await reauth("/auth/account")
+    await p.js("document.getElementById('key_name').value='h2';true")
+    await p.click("[data-act=mkkey]")
+    await p.until("!!document.querySelector('dialog.tsdlg[open] textarea')", "no API key dialog after the reauth")
+    assert len(t33.list_api_keys(uid)) == 1
+    await p.js("document.querySelector('dialog.tsdlg[open] .tsdlg-ok').click();true")
+    await p.until("!document.querySelector('dialog.tsdlg')", "the key dialog did not close")
+    print("  B-12: API key from a stale session → reauth page → back to the account page → key dialog")
+
+    # 2) T-44 + B-12 on the approval page: stale → reauth → back WITH the code → the number decides.
+    other = TestClient(_t33_app)
+    tok = re.search(r"name=_csrf value='([^']+)'", other.get("/auth/login").text).group(1)
+    r = other.post("/auth/qr/start", data={"_csrf": tok, "next": "/"}, headers={"User-Agent": "H2-Probe/1.0"})
+    code = re.search(r"name=code value='([A-Z0-9]{8})'", r.text).group(1)
+    match = re.search(r"id=qrmatch>(\d\d)<", r.text).group(1)
+    age()
+    await go(f"/auth/qr/approve?code={code}")
+    await reauth("/auth/qr/approve")
+    assert await p.js("location.search") == f"?code={code}", await p.js("location.href")
+    assert "H2-Probe/1.0" in await p.js("document.querySelector('table.qrinfo').innerText")
+    assert await p.js("!!document.getElementById('qrwarn') && document.activeElement.id==='qrmatchin'"), \
+        "warning or focus on the number field missing"
+    await both_widths("h2-qr-approve", "!!document.getElementById('qrmatchin')")
+    # The browser's own check: an empty field does not even send the form.
+    await p.click("#qrapprove button")
+    assert await p.js("location.pathname") == "/auth/qr/approve" and t33._qr_peek(code)["user_id"] is None
+    await p.js(f"document.getElementById('qrmatchin').value={match!r};true")
+    await p.click("#qrapprove button")
+    await p.until("document.readyState==='complete' && !document.getElementById('qrmatchin')", "no answer page")
+    assert t33._qr_peek(code)["user_id"] == uid, "the right number did not approve"
+    viol = await p.js("JSON.stringify(window.__csp===undefined?['(no Listener)']:window.__csp)")
+    assert viol == "[]", f"CSP violation: {viol}"
+    print("  T-44: approval page after the reauth keeps the code, warns, wants the number — the right one approves")
+
+    # 3) The new device's page with its number (guest).
+    await p.cmd("Network.deleteCookies", name=t33.session_cookie_name, url=T33)
+    await go("/auth/login")
+    await p.click("form.qrstart button")
+    await p.until("!!document.getElementById('qrmatch')", "no number on the new device")
+    for width in (390, 1280):
+        await p.cmd("Emulation.setDeviceMetricsOverride", width=width, height=900, deviceScaleFactor=1,
+                    mobile=width < 500)
+        over = await p.js("document.documentElement.scrollWidth - window.innerWidth")
+        assert over <= 0, f"QR page scrolls sideways at {width}px ({over}px)"
+        await shot(f"h2-qr-new-device-{width}.png")
+    await p.cmd("Emulation.clearDeviceMetricsOverride")
+    assert not p.console, f"console errors: {p.console[:2]}"
+    # The one expected failure: the stale POST /auth/apikeys (403 + X-TinySesam-Reauth) that led to the reauth page.
+    unexpected = [f for f in p.failed[failed_before:] if not (f[0] == 403 and f[1].endswith("/auth/apikeys"))]
+    assert not unexpected, f"broken requests: {unexpected[:3]}"
+    del p.failed[failed_before:]
+    print("  T-44: the new device shows its number (390/1280 px, no sideways scroll)")
 
 
 async def account_setup(p, go):

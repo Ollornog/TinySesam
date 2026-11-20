@@ -834,6 +834,21 @@ working. No SQL is needed either way.
   `oauth_revoked` (`reason=user|admin|client|account_disabled|code_reuse|refresh_reuse`), `oauth_devices_read` (panel),
   and `forward_denied` with `reason=oauth_token_<why>` for a rejected token at the proxy.
 
+## Start secret from the admin: column and rollback (schema 18)
+
+Schema 18 (H2, T-46) only **adds** the column `users.password_must_change` (`0` for every existing account). It is
+set when an administrator sets a password in the panel (new account, reset) and `admin_password_must_change` is on;
+the next password sign-in then stays half until the holder has chosen an own password on `/auth/setup` (audit
+`password_renewed`). An older version opens the file with the "newer schema version" warning and ignores the column
+— the admin's password then simply signs in fully, as before; after the update is back the mark applies again. No
+SQL is needed either way. To clear the mark of one account by hand: `UPDATE users SET password_must_change=0 WHERE
+id=?` (or set the password again with `auth.set_password(uid, …)`, which clears it).
+
+H2 also changes defaults without touching the schema — the way back is a configuration field each:
+`admin_require_mfa=False` (panel without a fresh confirmation; `config_check` warns),
+`qr_login_require_second_factor=False` (single-factor accounts may approve a cross-device sign-in again),
+`admin_password_must_change=False`, `notify_new_access=False` (no mail about new access; the hook stays).
+
 ## Sign-in methods and their strength
 
 **By default TinySesam is single-factor:** a password alone signs in completely. A second

@@ -227,7 +227,7 @@ wherever the browser allows it — read them, don't spell the names out.
 | `GET/POST /auth/magic/request` | request a sign-in link by email *(magic links on and `magiclink_self_request`)* |
 | `POST /auth/qr/start` · `/auth/qr/status` · `/auth/qr/finish` | new device: open, poll and collect a cross-device sign-in *(`qr_login_enabled`)* |
 | `GET/POST /auth/qr/approve` · `POST /auth/qr/deny` | signed-in device: approve or refuse it *(`qr_login_enabled`)* |
-| `GET /auth/setup` | setup pass after a sign-in link: set up what the `login_chain` demands *(`magiclink_enabled` or `qr_login_enabled`)* |
+| `GET /auth/setup` | setup pass after a sign-in link: set up what the `login_chain` demands; also asks for an own password after a sign-in with a password the admin set (T-46) *(`magiclink_enabled`, `qr_login_enabled` or `password_enabled`)* |
 | `GET /auth/verify/{token}` · `GET /auth/invite/{token}` | confirm an address · accept an invitation |
 | `GET /auth/logout` · `GET /auth/me` | log out · current user (JSON) |
 
@@ -292,6 +292,10 @@ link (`magiclink_require_second_factor`, default on). Sign-in by link counts as 
   sees the code on the screen gets nothing: the session goes to the device that opened the
   request (it holds a secret that is never displayed). The QR code needs `base_url` and the extra
   `[qr]`; without them only the short code is shown. No mailer needed.
+  **Against consent phishing (H2, T-44):** the new device also shows a two-digit number that the
+  approving device has to type (a wrong one voids the request); the approval page warns, wants a fresh
+  confirmation and — with `qr_login_require_second_factor=True` (default) — an account with TOTP or a
+  passkey, which the new device then has to present as well. `/auth/qr/status` is throttled.
 
 ### Recipe: the admin creates accounts, a link signs them in
 
@@ -1256,7 +1260,15 @@ All optional (on/off by config), usable individually and combined, front end rep
 - **Stay signed in:** `remember_me_enabled` — checkbox → persistent cookie; unchecked = pure
   session cookie + short `session_ttl_transient_hours`.
 - **Step-up / per-route MFA:** `Depends(auth.require(mfa=True))` (sudo freshness `stepup_max_age_sec`,
-  → `/auth/reauth`). `admin_require_mfa=True` additionally protects the panel with a fresh confirmation.
+  → `/auth/reauth`). `admin_require_mfa=True` (the default since H2) additionally protects the panel with a fresh
+  confirmation. **New access always wants a fresh confirmation (H2, B-12):** registering a passkey, setting up
+  TOTP or a PIN, creating an API key, approving a cross-device sign-in and allowing an OAuth program — a fresh
+  sign-in counts, an older session goes over `/auth/reauth`; the setup pass after a link is not asked again.
+- **Start secret from the admin (H2, T-46):** a password the admin sets in the panel (new account, reset) is
+  valid for one sign-in only — `/auth/setup` then asks for an own one (`admin_password_must_change`).
+- **The holder hears of new access (H2, T-47):** `on_security_event` plus, with a mailer, a mail without a link
+  (`notify_new_access`) for a new factor, API key, QR-signed-in device, issued sign-in link, admin-set password,
+  connected program and token reuse; the account page lists them under "Recent activity".
 - **Factor chains (ordered):** `login_chain=["oidc","password"]` + `login_chain_strict`; per route
   `require(factors=[...], strict=...)` on top of the global rule. Factors: `password, pin, oidc,
   passkey, totp, magic`.
@@ -1708,7 +1720,7 @@ without extras (guards the stdlib-scrypt fallback), and a browser job that also 
 
 ## Status
 
-**90 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
+**91 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
 
 Implemented and tested: password/TOTP/sessions/roles, remember-me, step-up and per-route MFA,
 factor chains, personal PIN, shared resource secrets, magic links + mailer hook, registration and

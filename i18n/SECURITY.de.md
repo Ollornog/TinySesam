@@ -99,15 +99,24 @@ Rate-Limit, Open-Redirect-Schutz via `safe_next`). Trotzdem: vor produktivem Ein
   (`details={"grant_id": n, "client_id": …, "reason": …}`, `reason` eines von `user`, `admin`, `client`,
   `account_disabled`) und `oauth_token_reuse` (`details={"grant_id": n, "client_id": …, "kind": "code"|"refresh"}`
   — ein schon benutzter Code oder Refresh-Token kam zurück, die Verbindung wurde widerrufen: das Token
-  wurde vermutlich kopiert). Die vollständige Liste der Ereignisnamen ist
+  wurde vermutlich kopiert). Neue Zugänge, die kein eigener Faktor sind (H2, T-47): `signin_link_issued`
+  (`details={"ttl_min": n, "by_operator": bool}` — für das Konto wurde ein Anmeldelink ausgestellt) und
+  `device_signed_in` (`details={"method": "qr_login", "ip": …, "agent": …}` — ein Gerät hat sich über eine
+  geräteübergreifende Bestätigung angemeldet); `password_changed` trägt `details={"by_operator": bool}`
+  (`True`: ein Administrator hat es gesetzt). Die vollständige Liste der Ereignisnamen ist
   `TinySesam.SECURITY_EVENTS`. Die Schlüssel in `details` und die
   Gründe sind seit 0.22.0 englisch (bis 0.21.x `verbleibend`, `alt`/`neu`, `anzahl`/`grund` mit
   deutschen Gründen). Das gilt auch für Änderungen, die ein Admin im Panel an
   einem fremden Konto vornimmt (Passwort zurücksetzen, API-Key ausstellen, Passkey widerrufen) — die
   Mail also so schreiben, dass sie nicht unterstellt, der Inhaber sei es gewesen. Ausser dem Hook
-  verschickt TinySesam mit konfiguriertem Versand genau eine Mail selbst: den Hinweis an die
-  (belegte) Adresse eines Kontos, das wegen Fehlversuchen gesperrt wurde (ASVS 6.3.5; abschaltbar mit
-  `notify_login_failures=False`). Eigene Mails gehen aus dem Hook (am besten über eine
+  verschickt TinySesam mit konfiguriertem Versand zwei Arten Mail selbst, beide nur an eine belegte
+  Adresse und ohne Link: den Hinweis an ein Konto, das wegen Fehlversuchen gesperrt wurde (ASVS 6.3.5;
+  abschaltbar mit `notify_login_failures=False`), und seit H2 einen Hinweis auf **neue Zugänge** (T-47,
+  NIST SP 800-63B-4 §4.1.2.1; abschaltbar mit `notify_new_access=False`) bei `passkey_added`,
+  `totp_enabled`, `pin_set`, `api_key_created`, `device_signed_in`, `signin_link_issued`,
+  `password_changed` durch einen Administrator, `oauth_device_connected` und `oauth_token_reuse` —
+  höchstens einer je Konto und Ereignis pro Minute. Dieselben Ereignisse stehen auf der Kontoseite unter
+  „Letzte Ereignisse“. Weitere eigene Mails gehen aus dem Hook (am besten über eine
   Warteschlange — er läuft synchron im Request). Ein Fehler im Hook macht die Änderung
   nie rückgängig, landet aber im Sicherheits-Log.
 - **Ein TOTP-Code gilt genau einmal — auch der Einrichtungscode.** Der Code, der die Einrichtung

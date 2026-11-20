@@ -76,7 +76,14 @@ def register_passkey_routes(router, auth):
         # lever by which the bolt against the silently degrading key was bypassed.
         # T-34: the setup pass after a sign-in link may register the passkey it offers — a half
         # session, never a key (`_setup_user` reads only the session cookie).
-        u = auth.session_user(request) or auth._setup_user(request, "passkey") or auth.require_session(request)
+        full = auth.session_user(request)
+        u = full or auth._setup_user(request, "passkey") or auth.require_session(request)
+        # B-12: from a FULL session a new passkey wants a fresh confirmation — a passkey signs in
+        # alone and outlives sign-out, password change and session expiry, so a stolen cookie must
+        # not be able to turn itself into one. The setup pass (half session, fresh from the link) is
+        # not asked again.
+        if full is not None:
+            auth._require_fresh(request, full)
         existing = auth.store.list_webauthn(u["id"])
         opts = generate_registration_options(
             rp_id=cfg.rp_id, rp_name=cfg.rp_name,
@@ -97,8 +104,11 @@ def register_passkey_routes(router, auth):
     @router.post("/auth/passkey/register/finish")
     async def reg_finish(request: Request, name: str = "", next: str = ""):
         auth.require_csrf(request, request.headers.get("x-csrf-token"))
-        setup = None if auth.session_user(request) else auth._setup_user(request, "passkey")
+        full = auth.session_user(request)
+        setup = None if full else auth._setup_user(request, "passkey")
         u = setup or auth.require_session(request)   # same bolt as at begin
+        if full is not None:
+            auth._require_fresh(request, full)       # B-12, as at begin
         fk = request.cookies.get(auth.flow_cookie_name(_WAFLOW))
         flow = auth.store.pop_flow("wareg:" + fk) if fk else None
         if not flow:

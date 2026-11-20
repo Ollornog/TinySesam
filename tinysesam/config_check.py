@@ -1073,6 +1073,16 @@ def _stepup(config, error: list, warnings: list) -> None:
             "— without stepup_strict the confirmation silently falls back to another method, "
             "with stepup_strict the area stays closed.",
             names=from_, switches=", ".join(f"{STEPUP_PROCEDURE[m]}=False" for m in from_)))
+    # T-45 (ASVS 7.5.3/8.4.2): the panel can set passwords, issue sign-in links for any account and
+    # grant admin rights. Since H2 it asks for a fresh confirmation by default; whoever turns that off
+    # should know what an old admin session can then do.
+    if _an(config, "admin_enabled") and getattr(config, "admin_require_mfa", True) is False:
+        warnings.append(_t(
+            config,
+            "admin_require_mfa=False: the admin panel (and require_admin) work from any old admin "
+            "session without a fresh confirmation — such a session sets passwords, issues sign-in "
+            "links for any account and grants admin rights. Leave it on (the default) unless another "
+            "layer asks again."))
     if _an(config, "stepup_strict") and not wished:
         warnings.append(_t(
             config,
@@ -2120,6 +2130,14 @@ _DE: dict[str, str] = {
         ("qr_login_enabled=True, aber base_url ist leer. Der QR-Code braucht die öffentliche "
          "Adresse und wird nie aus dem Host-Header gebaut — die Login-Seite zeigt dann nur den "
          "Kurzcode, den man auf dem angemeldeten Gerät eintippt. Für den QR-Code base_url setzen."),
+    ("admin_require_mfa=False: the admin panel (and require_admin) work from any old admin "
+     "session without a fresh confirmation — such a session sets passwords, issues sign-in "
+     "links for any account and grants admin rights. Leave it on (the default) unless another "
+     "layer asks again."):
+        ("admin_require_mfa=False: Das Admin-Panel (und require_admin) arbeiten aus jeder alten "
+         "Admin-Sitzung ohne frische Bestätigung — eine solche Sitzung setzt Passwörter, stellt "
+         "Anmeldelinks für jedes Konto aus und vergibt Admin-Rechte. Eingeschaltet lassen (Vorgabe), "
+         "außer eine andere Schicht fragt erneut."),
     ("login_chain contains 'magic', but magiclink_self_request=False: the chain step leads to "
      "/auth/magic/request, which does not exist then (404). The step can only be satisfied with "
      "a link issued by the admin or by app code."):

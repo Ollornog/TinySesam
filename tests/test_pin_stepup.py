@@ -298,7 +298,7 @@ assert not auth.has_pin(uid), "without a fresh sign-in no PIN may be set"
 page_html = c.get("/auth/reauth")
 fields = re.findall(r"<input[^>]*name=[\"\']?(\w+)", page_html.text)
 assert fields == [], fields
-assert auth.t("err.stepup_none") in page_html.text, page_html.text[:300]
+assert auth.t("err.stepup_relogin") in page_html.text, page_html.text[:300]   # T-45: says "sign in again"
 response = c.post("/auth/reauth", data={"password": "guessed", "next": "/"})
 assert response.status_code == 403, response.status_code
 assert auth.store.count_fails(0, username="sso-user") == 0, "no failed attempt in the lockout bucket"

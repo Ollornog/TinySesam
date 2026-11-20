@@ -1143,15 +1143,22 @@ class TinySesam:
             self._security_event("api_keys_revoked", user_id, count=n, reason=reason)
         return n
 
-    def set_password(self, user_id, password):
+    def set_password(self, user_id, password, *, by_operator: bool = False):
         """Set an account's password (without checking the old one — that is the caller's business).
 
         The password rule (`password_policy_error`) does **not** check here — the setters do
         (registration, reset, account page, admin panel, CLI), because only they can give a
         readable answer. Whoever calls this method from their own code first asks `password_policy_error()`.
-        Notification always happens (`password_changed`), whichever way it is reached."""
+        Notification always happens (`password_changed`), whichever way it is reached.
+
+        `by_operator=True`: an administrator sets the password of SOMEONE ELSE (panel: new account,
+        reset). Then it is a start secret (T-46, ASVS 6.4.1): with `admin_password_must_change` the
+        next password sign-in stays half until the holder has chosen an own one, and the event says
+        `by_operator` (the owner gets a mail with `notify_new_access`). Every other call is the
+        holder's own password and clears that mark."""
         self.store.set_password_hash(user_id, hash_password(password))
-        self._security_event("password_changed", user_id)
+        self.store.set_password_must_change(user_id, bool(by_operator and self.cfg.admin_password_must_change))
+        self._security_event("password_changed", user_id, by_operator=bool(by_operator))
 
     @staticmethod
     def _load_blocklist(path) -> frozenset:
@@ -1241,13 +1248,25 @@ class TinySesam:
     #: `recovery_codes_deleted`; `recovery_codes_generated` `count`; `recovery_code_used`
     #: `remaining`; `passkey_added` `name`; `passkey_removed` `passkey_id`; `username_changed`
     #: and `email_changed` `old`, `new`; the rest none.
+    #: Since H2 (T-47, NIST SP 800-63B-4 §4.1.2.1) also the NEW ways into the account that are not a
+    #: factor of its own: `signin_link_issued` (`ttl_min`, `by_operator`) — a sign-in link was issued
+    #: for the account; `device_signed_in` (`method`, `ip`, `agent`) — a device signed in through a
+    #: cross-device approval; and `password_changed` carries `by_operator` (an administrator set it).
     SECURITY_EVENTS = (
         "password_changed", "pin_set", "pin_disabled", "totp_enabled", "totp_disabled",
         "recovery_codes_generated", "recovery_code_used", "passkey_added", "passkey_removed",
         "api_key_created", "api_key_revoked", "api_keys_revoked",
         "email_changed", "username_changed",
         "oauth_device_connected", "oauth_device_revoked", "oauth_token_reuse",
+        "signin_link_issued", "device_signed_in",
     )
+
+    #: The events that mean NEW access to the account — they go to the owner by mail as well
+    #: (`notify_new_access`, T-47), if delivery is configured. A password change counts only when an
+    #: administrator made it (`by_operator`): the holder's own change is no news to the holder.
+    _ACCESS_MAIL_EVENTS = ("passkey_added", "totp_enabled", "pin_set", "api_key_created",
+                           "device_signed_in", "signin_link_issued", "password_changed",
+                           "oauth_device_connected", "oauth_token_reuse")
 
     def _security_event(self, event: str, user_id, **details) -> None:
         """Call `on_security_event` for an event from `SECURITY_EVENTS`, if set.
@@ -1257,6 +1276,7 @@ class TinySesam:
         fail. It does land in the security log, though: a notification that silently
         fails to appear is worse than none that nobody relies on. The hook runs
         synchronously in the request; whoever sends mail does better to put it in a queue."""
+        self._access_notice(event, user_id, details)
         hook = self.on_security_event
         if hook is None:
             return
@@ -1270,6 +1290,45 @@ class TinySesam:
         except Exception as e:
             security.seclog.warning("on_security_event failed event=%s user_id=%s: %s",
                                     event, line["id"], security.for_log(repr(e)))
+
+    def _access_notice(self, event: str, user_id, details: dict) -> None:
+        """Tell the owner by mail about new access to the account (T-47, `notify_new_access`).
+
+        Only for `_ACCESS_MAIL_EVENTS`, only with delivery configured, only to a verified address of an
+        interactive account — and at most one mail per account and event a minute (a flood of
+        API keys must not become a flood of mails). Sending happens in the background outbox of
+        the lockout notices: the request does not wait for the mail server, and a failure there does
+        not undo the change. The text names what happened, when and from which address — never a
+        secret, never a link (a mail that asks to click is what phishing looks like)."""
+        if event not in self._ACCESS_MAIL_EVENTS or not self.cfg.notify_new_access:
+            return
+        if event == "password_changed" and not details.get("by_operator"):
+            return
+        if not self.mail_configured():
+            return
+        if not self.rl.allow(f"access_notice:{user_id}:{event}", 1, 60):
+            return
+        ip = self._request_ip()
+        when = _now()
+
+        def _send():
+            u = self.store.get_user(user_id)
+            if not u or u["is_service"] or not u["email"] or not _proof_on_account(u):
+                return
+            what = self.t("notice." + event)
+            text = self.t("mail.access.text", name=u["username"], what=what,
+                          time=time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime(when)),
+                          ip=security.for_log(ip) or self.t("mail.unknown"))
+            self.send_mail(u["email"], self.t("mail.access.subject", what=what), text)
+            self.store.audit_log("access_notice", u["username"], ip, f"event={event}")
+
+        self._notice_outcome.enqueue(_send)
+
+    @staticmethod
+    def _request_ip():
+        """The IP of the running request, as `audit()` records it — or None outside a request."""
+        a = _REQUEST.get()
+        return a.get("ip") if a else None
 
     def ensure_admin(self, username, password) -> bool:
         """Bootstrap: creates an admin IF no user exists yet. True on creation."""
@@ -3481,11 +3540,29 @@ class TinySesam:
             ok = self._chain_satisfied(req, strict, done) or (setup and self._setup_ok(user_id, done))
         else:
             ok = self._default_satisfied(user_id, done)
-        return ok and self._link_requires(user_id, done) is None
+        return (ok and self._link_requires(user_id, done) is None
+                and not self._password_change_owed(user_id, done))
+
+    def _password_change_owed(self, user_id, done) -> bool:
+        """Did this session sign in with a password that an administrator set (T-46)? Then the
+        sign-in is not complete before the holder has chosen an own one (`/auth/setup`).
+
+        Only when the password was really used in this session: a sign-in by passkey, OIDC or link
+        does not make the start secret any better or worse — it waits for its first use. Not with a
+        directory (`ldap_enabled`): there the password lives in the directory."""
+        if "password" not in done or not self.cfg.password_enabled or self.cfg.ldap_enabled:
+            return False
+        return self.store.password_must_change(user_id)
 
     def _next_login_step(self, user_id, done, setup: bool = False):
         """Next open factor up to the full (global) sign-in, or None when done. In the setup pass
         (`setup=True`, T-34) the step can also be `"setup"` — the page `/auth/setup`."""
+        step = self._next_login_step_factors(user_id, done, setup)
+        if step is None and self._password_change_owed(user_id, done):
+            return "password_change"          # T-46: the start secret is replaced last
+        return step
+
+    def _next_login_step_factors(self, user_id, done, setup: bool = False):
         req, strict = self._global_chain()
         if req is not None:
             if setup:
@@ -3727,6 +3804,7 @@ class TinySesam:
         from urllib.parse import quote
         base = {"password": self.cfg.login_path, "pin": "/auth/pin", "oidc": "/auth/oidc/start",
                 "passkey": self.cfg.login_path, "totp": "/auth/totp", "setup": "/auth/setup",
+                "password_change": "/auth/setup",
                 "magic": "/auth/magic/request", "saml": "/auth/saml/login"}.get(step, self.cfg.login_path)
         return f"{base}?next={quote(nxt or '/', safe='/')}"
 
@@ -4557,6 +4635,11 @@ class TinySesam:
                                       payload={"next": str(next or "/"), "issued": "operator"})
         url = self.magic_url(raw, base)
         self.audit("signin_link_issue", str(u["username"]), detail=f"ttl_min={ttl}")
+        # T-47: a link is a way into the account for whoever holds it — the holder learns of it
+        # (hook, mail with `notify_new_access`, "Recent activity"). `by_operator`: someone else issued it.
+        a = _REQUEST.get() or {}
+        by_operator = bool(a.get("actor")) and str(a.get("actor")).lower() != str(u["username"]).lower()
+        self._security_event("signin_link_issued", int(u["id"]), ttl_min=ttl, by_operator=by_operator)
         return {"url": url, "expires_at": _now() + ttl * 60, "qr": _totp.qr_data_uri(url)}
 
     # ---------- Cross-device sign-in (QR code, T-33) ----------
@@ -4586,7 +4669,12 @@ class TinySesam:
         agent = str(request.headers.get("user-agent") or "")[:200]
         secret = secrets.token_urlsafe(32)
         expires = _now() + int(self.cfg.qr_login_ttl_sec)
-        payload = {"device": self._token_hash(secret), "ip": ip, "agent": agent, "next": str(nxt or "/")}
+        # Number matching (T-44, RFC 10027 §6.1): the new device shows a two-digit number that the
+        # approving device has to type. Whoever got the approval link sent (consent phishing) does not
+        # see the number — it stands only on the screen of the device that asks.
+        match = f"{secrets.randbelow(90) + 10}"
+        payload = {"device": self._token_hash(secret), "ip": ip, "agent": agent, "next": str(nxt or "/"),
+                   "match": match}
         for _ in range(5):
             code = "".join(secrets.choice(self._QR_ALPHABET) for _ in range(self._QR_LENGTH))
             try:
@@ -4596,7 +4684,7 @@ class TinySesam:
                 continue
         else:
             raise HTTPException(503, self.t("err.retry"))
-        return {"code": code, "secret": secret, "expires_at": expires, **self._qr_links(code)}
+        return {"code": code, "secret": secret, "expires_at": expires, "match": match, **self._qr_links(code)}
 
     def _qr_links(self, code) -> dict:
         """{approve_url, qr} for a short code. The address comes only from `base_url` — never from
@@ -4614,7 +4702,7 @@ class TinySesam:
             return None
         p = read_payload("qr_login", row["payload"]) or {}
         return {"code": c, "user_id": row["user_id"], "ip": p.get("ip"), "agent": p.get("agent"),
-                "next": p.get("next") or "/", "device": p.get("device") or "",
+                "next": p.get("next") or "/", "device": p.get("device") or "", "match": str(p.get("match") or ""),
                 "created_at": row["created_at"], "expires_at": row["expires_at"]}
 
     def _qr_own(self, code, secret) -> Optional[dict]:
@@ -4624,15 +4712,36 @@ class TinySesam:
             return None
         return info
 
-    def _qr_approve(self, code, user) -> bool:
-        """Bind an open request to the approving account — once; a second approval fails."""
+    def _qr_may_approve(self, user) -> bool:
+        """May this account approve a cross-device sign-in at all? (T-44, `qr_login_require_second_factor`)
+
+        Only an account with a second factor (TOTP or passkey) by default: the new device then has to
+        present it too (`magiclink_require_second_factor`), so an approval talked out of the holder
+        gives a half sign-in at most. For an account without one the approval is the whole sign-in."""
+        if not self.cfg.qr_login_require_second_factor:
+            return True
+        uid = int(user["id"])
+        return bool(self.store.has_confirmed_totp(uid) or self.store.list_webauthn(uid))
+
+    def _qr_approve(self, code, user, match=None) -> str:
+        """Bind an open request to the approving account — once; a second approval fails.
+
+        Returns `"ok"`, `"invalid"` (no open request, already decided) or `"mismatch"`: the typed
+        number is not the one the new device shows (T-44). A mismatch voids the request at once —
+        a guess gets exactly one try, and the new device has to start over."""
         info = self._qr_peek(code)
         if not info or info["user_id"] is not None:
-            return False
+            return "invalid"
+        expected = info.get("match") or ""
+        typed = re.sub(r"\s", "", str(match or ""))
+        if not expected or not hmac.compare_digest(typed.encode(), expected.encode()):
+            self.store.expire_magic_token(self._qr_hash(info["code"]))
+            self.audit("qr_login_mismatch", str(user["username"]), detail=f"device_ip={info['ip']}")
+            return "mismatch"
         if not self.store.approve_qr_token(self._qr_hash(info["code"]), int(user["id"])):
-            return False
+            return "invalid"
         self.audit("qr_login_approve", str(user["username"]), detail=f"device_ip={info['ip']}")
-        return True
+        return "ok"
 
     def _qr_deny(self, code, user) -> bool:
         """Refuse an open request: it expires at once, the new device gets nothing."""
@@ -5491,6 +5600,71 @@ class TinySesam:
         if not result:
             return result, None
         return result, self._setup_record(request, "password")
+
+    # ---------- Start secret from the administrator (T-46, ASVS 6.4.1) ----------
+    # A password the admin set (panel: new account, reset) signs in only halfway: after every other
+    # step of the sign-in the half session lands on `/auth/setup`, which asks for an own password.
+    # The same half-session pattern as the setup pass after a sign-in link (T-34): nothing but that
+    # page and `POST /auth/password/set` accept it, and it expires with the step-up window.
+    def _renew_session(self, s) -> bool:
+        """Is this session row a half session that owes only the replacement of the start secret?"""
+        if not s or s["mfa_ok"]:
+            return False
+        done = json.loads(s["factors_done"] or "[]")
+        if self._next_login_step(s["user_id"], done, setup=self._setup_session(s)) != "password_change":
+            return False
+        window = int(self.cfg.stepup_max_age_sec or 0)
+        if window > 0 and (_now() - int(s["created_at"] or 0)) > window:
+            return False
+        u = self.store.get_user(s["user_id"])
+        return bool(u and not u["disabled"])
+
+    def _renew_user(self, request) -> Optional[dict]:
+        """The account of a half session that has to replace its start secret — otherwise None."""
+        s = self._session_from_request(request)
+        if not self._renew_session(s):
+            return None
+        u = self._as_dict(self.store.get_user(s["user_id"]))
+        self._remember_request(request, u)
+        return u
+
+    def _renew_password(self, request: Request, new: str, *,
+                        csrf: Optional[str] = None) -> tuple[PasswordChangeResult, Optional[str]]:
+        """Replace the start secret with an own password — `POST /auth/password/set` from the half
+        session (T-46). The new one has to follow the rule and must not be the admin's. On success the
+        sign-in completes under a NEW token (privilege change), which is returned for the cookie."""
+        self.require_csrf(request, self._csrf_sent_along(request, csrf))
+        u = self._renew_user(request)
+        if u is None:
+            return PasswordChangeResult(ok=False, reason="no_session", status=401,
+                                        message=self.t("api.not_signed_in")), None
+        ip = self.client_ip(request)
+        if not self._rate_ok(ip, login=False):
+            return PasswordChangeResult(ok=False, reason="ratelimit", status=429, message=self.t("api.too_many")), None
+        defect = self.password_policy_error(new or "", username=u["username"], email=u.get("email"), api=True)
+        if defect:
+            return PasswordChangeResult(ok=False, reason="policy", status=400, message=defect), None
+        current = self.store.get_password_hash(u["id"])
+        if current and verify_password(str(new or ""), current):
+            return PasswordChangeResult(ok=False, reason="policy", status=400,
+                                        message=self.t("api.password_same")), None
+        self.set_password(u["id"], new)              # clears the mark, event `password_changed`
+        self.audit("password_renewed", u["username"], ip, "start_secret_replaced=1")
+        s = self._session_from_request(request)
+        done = json.loads(s["factors_done"] or "[]")
+        if not self._session_ok(u["id"], done, setup=self._setup_session(s)):
+            return PasswordChangeResult(ok=True, reason="ok", status=200), None
+        self._sign_in_complete(u["id"], s["ip"], "password")
+        self._note_first_login(u["id"])
+        self.lift_lockout(u["id"])
+        new_token = self._create_session(u["id"], self._ttl(bool(s["remember"])), True, s["method"],
+                                         s["ip"], s["user_agent"], bool(s["remember"]), factors=done)
+        self._successor(s, new_token)
+        if self._setup_session(s):
+            self._setup_finished(s, done)
+        self.store.delete_session_by_handle(s["token_hash"])
+        self._other_after_completion(s, new_token)
+        return PasswordChangeResult(ok=True, reason="ok", status=200), new_token
 
     def _session_from_request(self, request):
         """The session row for this request, or None. `row["token_hash"]` is its handle.
@@ -7909,6 +8083,57 @@ class TinySesam:
         if u.get("_via") == "apikey":
             raise HTTPException(403, self.t("api.needs_session"))
         return u
+
+    def _fresh_enough(self, request: Request, user: dict) -> Optional[str]:
+        """The freshness rule for NEW access — None if this session may, otherwise the reason.
+
+        `"stepup"`: the account has something it can confirm with (`stepup_options()`), and the last
+        confirmation is older than `stepup_max_age_sec`. `"relogin"`: it has nothing (purely federated
+        or passkey only) and the sign-in itself is that old — only a new sign-in helps. A fresh sign-in
+        counts as a confirmation (`mfa_at` is set at sign-in), so right after signing in nothing more
+        is asked."""
+        if self.stepup_options(user):
+            return None if self.stepup_fresh(request, user) else "stepup"
+        return None if self.login_fresh(request, user) else "relogin"
+
+    def _require_fresh(self, request: Request, user: Optional[dict] = None) -> dict:
+        """The bolt in front of every route that creates NEW, lasting access to the account (B-12,
+        ASVS 7.5.1, NIST SP 800-63B-4 §4.1.2.1): register a passkey, set up TOTP, set a PIN, create an
+        API key, approve a cross-device sign-in, allow an OAuth program — and change name or address.
+
+        Without it a stolen session cookie became a permanent way in: a passkey signs in alone and
+        outlives sign-out, password change and session expiry; a TOTP locks the holder out under a
+        chain; an API key carries the account's roles for 90 days. Now such a route wants an
+        interactive session (never an API key, `require_session`) whose confirmation is fresh — the
+        same freshness as `require_mfa()`: a confirmed factor within `stepup_max_age_sec`, or, for an
+        account without anything to confirm with, a sign-in within that span (`login_fresh`).
+
+        Refusal: `stepup` → 403 with `X-TinySesam-Reauth` (a browser page request goes to the reauth
+        page), `relogin` → 403 `api.stepup_relogin` (the reauth page has no field for such an account).
+        The setup pass after a sign-in link (T-34) and the mandatory TOTP setup in a chain do not come
+        through here: their half session is fresh from the sign-in by construction and can set up only
+        what is offered — the routes take that path before this one."""
+        u = self.require_session(request, user)
+        if u.get("_via") != "session":
+            # A half session never reaches here through `current_user()`; a caller that passes one
+            # in is mistaken — fail-closed.
+            self._deny(request)
+        why = self._fresh_enough(request, u)
+        if why == "stepup":
+            self._deny_stepup(request)
+        if why == "relogin":
+            raise HTTPException(403, self.t("api.stepup_relogin"))
+        return u
+
+    def _reauth_target(self, request: Request, nxt: str) -> Optional[str]:
+        """Where a PAGE (GET) that leads to new access sends a session that is not fresh — the reauth
+        page with `next` (path AND query, unlike `_deny_stepup`) — or None if fresh. An account without
+        anything to confirm with gets None as well: its page shows the refusal itself (`api.stepup_relogin`)."""
+        u = self.session_user(request)
+        if u is None or self._fresh_enough(request, u) != "stepup":
+            return None
+        from urllib.parse import quote
+        return f"{self.browser_path(request, '/auth/reauth')}?next={quote(nxt, safe='')}"
 
     # ---------- Shared resource secrets (PIN or passphrase, without a user account) ----------
     def set_resource_secret(self, name, secret, kind="pin", label=None):

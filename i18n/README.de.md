@@ -222,7 +222,7 @@ wo der Browser es erlaubt — auslesen, nicht ausschreiben.
 | `GET/POST /auth/magic/request` | Anmelde-Link per E-Mail anfordern *(Magic-Link aktiv und `magiclink_self_request`)* |
 | `POST /auth/qr/start` · `/auth/qr/status` · `/auth/qr/finish` | neues Gerät: geräteübergreifende Anmeldung öffnen, abfragen, abholen *(`qr_login_enabled`)* |
 | `GET/POST /auth/qr/approve` · `POST /auth/qr/deny` | angemeldetes Gerät: bestätigen oder ablehnen *(`qr_login_enabled`)* |
-| `GET /auth/setup` | Einrichtungsdurchgang nach einem Anmeldelink: einrichten, was die `login_chain` verlangt *(`magiclink_enabled` oder `qr_login_enabled`)* |
+| `GET /auth/setup` | Einrichtungsdurchgang nach einem Anmeldelink: einrichten, was die `login_chain` verlangt; fragt auch nach einem eigenen Passwort, wenn mit einem vom Admin gesetzten angemeldet wurde (T-46) *(`magiclink_enabled`, `qr_login_enabled` oder `password_enabled`)* |
 | `GET /auth/verify/{token}` · `GET /auth/invite/{token}` | Adresse bestätigen · Einladung annehmen |
 | `GET /auth/logout` · `GET /auth/me` | Abmelden · aktueller User (JSON) |
 
@@ -290,6 +290,10 @@ Pflicht**: Ein Konto mit TOTP oder Passkey muss ihn nach dem Link noch bestehen
   nichts: Die Sitzung geht an das Gerät, das die Anfrage geöffnet hat (es hält ein Geheimnis, das
   nie angezeigt wird). Der QR-Code braucht `base_url` und das Extra `[qr]`; ohne beides erscheint
   nur der Kurzcode. Kein Mailer nötig.
+  **Gegen Consent-Phishing (H2, T-44):** Das neue Gerät zeigt zusätzlich eine zweistellige Zahl, die das
+  bestätigende Gerät eintippen muss (eine falsche macht die Anfrage ungültig); die Bestätigungsseite warnt,
+  verlangt eine frische Bestätigung und — mit `qr_login_require_second_factor=True` (Vorgabe) — ein Konto mit
+  TOTP oder Passkey, den das neue Gerät dann ebenfalls vorlegen muss. `/auth/qr/status` ist gedrosselt.
 
 ### Rezept: Der Admin legt Konten an, ein Link meldet an
 
@@ -1282,7 +1286,17 @@ Alles optional (per Config an/aus), einzeln und kombiniert nutzbar, Frontend üb
 - **Angemeldet bleiben:** `remember_me_enabled` — Checkbox → persistentes Cookie; ohne Haken reines
   Session-Cookie + kurze `session_ttl_transient_hours`.
 - **Step-up / per-Route-MFA:** `Depends(auth.require(mfa=True))` (Sudo-Frische `stepup_max_age_sec`,
-  → `/auth/reauth`). `admin_require_mfa=True` schützt das Panel zusätzlich mit frischer Bestätigung.
+  → `/auth/reauth`). `admin_require_mfa=True` (seit H2 die Vorgabe) schützt das Panel zusätzlich mit frischer
+  Bestätigung. **Neue Zugänge verlangen immer eine frische Bestätigung (H2, B-12):** Passkey anlegen, TOTP oder PIN
+  einrichten, API-Key erstellen, geräteübergreifende Anmeldung bestätigen und ein OAuth-Programm zulassen — eine
+  frische Anmeldung zählt, eine ältere Sitzung geht über `/auth/reauth`; der Einrichtungsdurchgang nach einem Link
+  fragt nicht doppelt.
+- **Startgeheimnis vom Admin (H2, T-46):** Ein Passwort, das der Admin im Panel setzt (neues Konto, Reset), gilt
+  für eine Anmeldung — danach fragt `/auth/setup` nach einem eigenen (`admin_password_must_change`).
+- **Der Inhaber erfährt von neuen Zugängen (H2, T-47):** `on_security_event` und, mit Mailer, eine Mail ohne Link
+  (`notify_new_access`) bei neuem Faktor, API-Key, per QR angemeldetem Gerät, ausgestelltem Anmeldelink, vom Admin
+  gesetztem Passwort, verbundenem Programm und Token-Wiederverwendung; die Kontoseite zeigt sie unter „Letzte
+  Ereignisse“.
 - **Faktor-Ketten (geordnet):** `login_chain=["oidc","password"]` + `login_chain_strict`; pro Route
   `require(factors=[...], strict=...)`. Faktoren: `password, pin, oidc, passkey, totp, magic`.
 - **PIN pro User:** `pin_enabled` — Benutzer+PIN, eigener strenger Lockout, mit TOTP kombinierbar.
@@ -1749,7 +1763,7 @@ zusätzlich die Website baut.
 
 ## Status
 
-**90 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
+**91 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
 (`tests/test_matrix.py`).
 
 Gebaut und getestet: Passwort/TOTP/Sitzungen/Rollen, Remember-me, Step-up und per-Route-MFA,

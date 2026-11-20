@@ -715,7 +715,9 @@ _PASSKEY_REGISTER_JS = """
 <script>
 async function addpk(){
   try{
-    const o=await (await fetch('__TS_P__/auth/passkey/register/begin',{method:'POST',headers:{'X-CSRF-Token':tsCsrf()}})).json();
+    // B-12: a new passkey wants a fresh confirmation — J() follows X-TinySesam-Reauth to the reauth page.
+    const rb=await J('__TS_P__/auth/passkey/register/begin');if(!rb.ok){say('pk_msg',(await rb.json().catch(()=>({}))).detail||TXT.failed,false);return}
+    const o=await rb.json();
     o.challenge=Uint8Array.from(atob(o.challenge.replace(/-/g,'+').replace(/_/g,'/')),c=>c.charCodeAt(0));
     o.user.id=Uint8Array.from(atob(o.user.id.replace(/-/g,'+').replace(/_/g,'/')),c=>c.charCodeAt(0));
     (o.excludeCredentials||[]).forEach(c=>c.id=Uint8Array.from(atob(c.id.replace(/-/g,'+').replace(/_/g,'/')),x=>x.charCodeAt(0)));
@@ -793,7 +795,7 @@ def _qr_code_shown(code) -> str:
 
 
 def _qr_login(auth, ctx) -> str:
-    """ctx: code, secret, approve_url (may be empty), qr (data URI or None), expires_at, next, error.
+    """ctx: code, secret, approve_url (may be empty), qr (data URI or None), expires_at, next, error, match.
 
     The page of the NEW device (T-33): QR code and short code for the signed-in device, the
     secret only as a hidden field — whoever reads the screen gets the code, not the session.
@@ -809,7 +811,11 @@ def _qr_login(auth, ctx) -> str:
             f"{qr}"
             f"<div class=hint>{_e(t('qr.code_hint'))} <b>{_e(where)}</b></div>"
             f"<div class='mono qrcode'>{_e(_qr_code_shown(code))}</div>"
-            f"<form method=post action='__TS_P__/auth/qr/finish' id=tsqr>{_cf(ctx)}"
+            # T-44 number matching: the approving device has to type this number — whoever got only
+            # the approval link (phishing) does not see it.
+            + (f"<div class=hint>{_e(t('qr.match_hint'))}</div>"
+               f"<div class='mono qrcode qrmatch' id=qrmatch>{_e(ctx.get('match'))}</div>" if ctx.get("match") else "")
+            + f"<form method=post action='__TS_P__/auth/qr/finish' id=tsqr>{_cf(ctx)}"
             f"<input type=hidden name=code value='{_e(code)}'>"
             f"<input type=hidden name=secret value='{_e(ctx.get('secret', ''))}'>"
             f"<button type=submit>{_e(t('qr.continue'))}</button></form>"
@@ -830,7 +836,8 @@ def _qr_login(auth, ctx) -> str:
 
 
 def _qr_approve(auth, ctx) -> str:
-    """ctx: user, code, request_info (None or {ip, agent, created_at, …}), decided ('approved'|'denied'|None).
+    """ctx: user, code, request_info (None or {ip, agent, created_at, …}), decided ('approved'|'denied'|None),
+    error (a refusal shown above the page).
 
     The page of the SIGNED-IN device (T-33). Before anything is approved it names the device that
     asks — against a code someone else put on the screen (phishing). Without a code: a field for it."""
@@ -844,6 +851,7 @@ def _qr_approve(auth, ctx) -> str:
                 f"<a class=btn2 href='__TS_P__/'>{_e(t('error.home'))}</a>")
         return _page(auth, t("qr." + decided + "_title"), body)
     info = ctx.get("request_info")
+    below = _messages([("error", ctx.get("error"))])
     if not info:
         body = (f"<h1>{_e(t('qr.approve_title'))}</h1>"
                 f"<div class=hint>{_e(t('qr.enter_code'))}</div>"
@@ -851,7 +859,7 @@ def _qr_approve(auth, ctx) -> str:
                 f"<label>{_e(t('qr.code'))}</label>"
                 f"<input name=code class=code autocomplete=off autocapitalize=characters spellcheck=false autofocus>"
                 f"<button type=submit>{_e(t('qr.check'))}</button></form>")
-        return _page(auth, t("qr.approve_title"), body)
+        return _page(auth, t("qr.approve_title"), body, below=below)
     age = max(0, int(_time.time()) - int(info.get("created_at") or 0))
     code = ctx.get("code", "")
     body = (f"<h1>{_e(t('qr.approve_title'))}</h1>"
@@ -861,13 +869,18 @@ def _qr_approve(auth, ctx) -> str:
             f"<tr><th>{_e(t('qr.ip'))}</th><td>{_e(info.get('ip') or '—')}</td></tr>"
             f"<tr><th>{_e(t('qr.device'))}</th><td>{_e(info.get('agent') or '—')}</td></tr>"
             f"<tr><th>{_e(t('qr.asked'))}</th><td>{_e(t('qr.asked_ago', sec=age))}</td></tr></table>"
-            f"<form method=post action='__TS_P__/auth/qr/approve'>{_cf(ctx)}"
+            # T-44: the warning against consent phishing, and the number from the other screen.
+            f"<div class=warnbar id=qrwarn>{_e(t('qr.warning'))}</div>"
+            f"<form method=post action='__TS_P__/auth/qr/approve' id=qrapprove>{_cf(ctx)}"
             f"<input type=hidden name=code value='{_e(code)}'>"
+            f"<label for=qrmatchin>{_e(t('qr.match'))}</label>"
+            f"<input id=qrmatchin name=match class=code inputmode=numeric pattern='[0-9]{{2}}' maxlength=2 "
+            f"autocomplete=off required autofocus>"
             f"<button type=submit>{_e(t('qr.approve'))}</button></form>"
             f"<form method=post action='__TS_P__/auth/qr/deny'>{_cf(ctx)}"
             f"<input type=hidden name=code value='{_e(code)}'>"
             f"<button type=submit class=btn2>{_e(t('qr.deny'))}</button></form>")
-    return _page(auth, t("qr.approve_title"), body)
+    return _page(auth, t("qr.approve_title"), body, below=below)
 
 
 def _forgot(auth, ctx) -> str:
@@ -1203,12 +1216,14 @@ def _account_setup(auth, ctx) -> str:
     t = auth.t
     options = list(ctx.get("options") or [])
     nxt = ctx.get("next") or "/"
+    # T-46: the same page replaces the administrator's start secret (`renew`) — one password card.
+    renew = bool(ctx.get("renew"))
     blocks = []
     for f in options:
         if f == "password":
             blocks.append(
                 f"<form class=obopt id=ob_password><h2>{_e(t('onboard.password'))}</h2>"
-                f"<div class=obhint>{_e(t('onboard.password_hint'))}</div>"
+                f"<div class=obhint>{_e(t('onboard.renew_hint' if renew else 'onboard.password_hint'))}</div>"
                 f"<label for=ob_pw1>{_e(t('onboard.password_new'))}</label>"
                 f"<input id=ob_pw1 type=password autocomplete=new-password required>"
                 f"<label for=ob_pw2>{_e(t('onboard.password_repeat'))}</label>"
@@ -1276,14 +1291,14 @@ def _account_setup(auth, ctx) -> str:
               "}catch(e){obsay(OB.failed+': '+e)}});"
               "</script>")
     body = (f"{css}<div id=obroot data-next='{_e(nxt)}'>"
-            f"<h1>{_e(t('onboard.title'))}</h1>"
-            f"<div class=obhint>{_e(t('onboard.hint'))}</div>"
-            f"<div class=obleft>{_e(t('onboard.left', n=left))}</div>"
-            f"{choose}{''.join(blocks)}"
+            f"<h1>{_e(t('onboard.renew_title' if renew else 'onboard.title'))}</h1>"
+            + ("" if renew else f"<div class=obhint>{_e(t('onboard.hint'))}</div>"
+                                f"<div class=obleft>{_e(t('onboard.left', n=left))}</div>")
+            + f"{choose}{''.join(blocks)}"
             f"<div id=obmsg class=obmsg role=alert hidden></div>"
             f"<div class=hint><a href='__TS_P__/auth/logout'>{_e(t('cancel'))}</a></div></div>"
             + ("" if ctx.get("static") else script))
-    return _page(auth, t("onboard.title"), body)
+    return _page(auth, t("onboard.renew_title" if renew else "onboard.title"), body)
 
 
 def _oauth_consent(auth, ctx) -> str:

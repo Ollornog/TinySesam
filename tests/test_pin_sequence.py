@@ -463,7 +463,9 @@ def _series_way_out(kind):
                 _pin(cx, f"000{i}")
         page_html = _password(TestClient(app_x), name)
         auth_x._notice_outcome.wait()
-    return page_html, (post_x[0][2] if post_x else ""), (log_x.locked() or [""])[0], _kinds(auth_x, name)
+    # The lockout notice — not the notice about the PIN set up for the account (T-47, `notify_new_access`).
+    lockout = [m for m in post_x if m[1] == auth_x.t("mail.lockout.subject")]
+    return page_html, (lockout[0][2] if lockout else ""), (log_x.locked() or [""])[0], _kinds(auth_x, name)
 
 
 _out = {kind: _series_way_out(kind) for kind in ("password", "totp", SEQUENCE)}
