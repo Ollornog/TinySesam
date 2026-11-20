@@ -234,6 +234,11 @@ keinen abbauen. Auch `/auth/reauth` selbst antwortet einem Key mit 403 (`api.ste
 hat dort nichts zu bestätigen, und Key plus Passwort dürfen nicht den zweiten Faktor einer halb
 fertigen Anmeldung ersetzen (behoben in 0.20.1).
 
+**Das Einrichten von TOTP gibt die Recovery-Codes aus.** Die Bestätigung (`POST /auth/totp/setup`)
+erzeugt `recovery_code_count` Codes und gibt sie einmal zurück (`recovery_codes`), zusammen mit dem
+Ziel (`next` — das übergebene, sonst die Kontoseite); die eingebaute Seite zeigt sie und leitet erst
+nach *Notiert — weiter* weiter. `/auth/totp/recovery` ersetzt sie später (mit Step-up).
+
 **Wer einen Faktor ANLEGT, braucht eine interaktive Sitzung.** `GET/POST /auth/totp/setup` und
 `POST /auth/passkey/register/{begin,finish}` verlangen ebenfalls eine Sitzung — ein API-Key
 bekommt 403 (der Wächter ist `auth.require_session()`). Sonst richtet ein abgeflossener CI-Key
@@ -609,6 +614,19 @@ Das Ergebnis ist ein `tinysesam.PasswordChangeResult`: `ok` (auch sein Wahrheits
 eine volle Sitzung — ein API-Key zählt nicht (`no_session`, 403): Ein Maschinen-Zugang ändert nicht
 das Passwort eines Menschen. Ein leeres altes Passwort ist `missing` (400) und zählt nicht als
 Fehlversuch. Synchron, wie `login_*`.
+
+**Ein Konto ohne Passwort** (per Anmelde-Link, OIDC oder Passkey angelegt) hat kein aktuelles, das es
+eintippen könnte. Die Kontoseite bietet dann *Passwort setzen* ohne dieses Feld an; die Route ist
+`POST /auth/password/set` (JSON mit `new`), der Baustein `auth.set_initial_password(request, new,
+csrf=…)`. Statt des alten Passworts verlangt er Frische — dieselbe Regel wie beim Anlegen jedes
+anderen Faktors: einen frischen Step-up, wenn das Konto schon etwas zum Bestätigen hat (TOTP, PIN;
+sonst `stepup`, 403 mit `X-TinySesam-Reauth`), das Alter der Anmeldung, wenn es nichts hat
+(`stepup_max_age_sec`; sonst `relogin`, 403 — neu anmelden). Dazu CSRF, die Drossel je IP, die
+Passwortregel und die Audit-Zeile `password_set`. Er lehnt ab, wenn das Konto schon ein Passwort hat
+(`has_password`, 409 — dafür ist `change_password` da), wenn der Passwort-Login aus ist
+(`method_disabled`, 404) und bei `ldap_enabled` (`directory`, 409: ein lokales Passwort neben dem
+des Verzeichnisses gälte weiter, nachdem das Verzeichnis das Konto gesperrt hat). Andere Sitzungen
+enden nicht — die Antwort trägt `other_sessions`, die Seite bietet es an, wie nach einem neuen Faktor.
 
 ## Den ersten Admin bestimmen
 
@@ -1562,7 +1580,7 @@ zusätzlich die Website baut.
 
 ## Status
 
-**82 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
+**83 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
 (`tests/test_matrix.py`).
 
 Gebaut und getestet: Passwort/TOTP/Sitzungen/Rollen, Remember-me, Step-up und per-Route-MFA,

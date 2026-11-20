@@ -1,4 +1,5 @@
-"""The result of a password change: `change_password` (0.22.0).
+"""The result of a password change: `change_password` (0.22.0) — and of setting the first one,
+`set_initial_password` (B-10).
 
 PO decision 2026-09-27: after the login building block (`login_*` → `LoginResult`) the
 password change also gets a building block for custom pages. Until then there was only the route
@@ -37,7 +38,8 @@ class PasswordChangeResult:
     ok: bool
     #: Why (not): one of the values in `REASONS`. For programs — the text is in `message`.
     reason: str
-    #: The HTTP status of `POST /auth/password`: 200 on success, otherwise 400, 401, 403 or 429.
+    #: The HTTP status of `POST /auth/password` (or `/auth/password/set`): 200 on success, otherwise
+    #: 400, 401, 403, 404, 409 or 429.
     status: int
     #: The translated text for the user (language from `config.lang`); empty on success.
     message: str = ""
@@ -50,8 +52,13 @@ class PasswordChangeResult:
     #: `password_change_max_attempts` failed attempts, 429); `ratelimit` (throttle per IP, 429);
     #: `policy` (the new password violates the password policy, 400 — the reason is in `message`);
     #: `no_session` (no full session, 401; 403 if the request shows an
-    #: API key instead of a session).
-    REASONS: ClassVar[tuple] = ("ok", "missing", "invalid", "locked", "ratelimit", "policy", "no_session")
+    #: API key instead of a session). Only from `set_initial_password` (B-10): `has_password` (the
+    #: account already has one — that is `change_password`, 409); `directory` (`ldap_enabled`, 409);
+    #: `method_disabled` (password sign-in off, 404); `stepup` (the account has a factor, but no fresh
+    #: confirmation, 403 — the reauth page helps); `relogin` (the account has no factor and the sign-in
+    #: is older than `stepup_max_age_sec`, 403 — only a new sign-in helps).
+    REASONS: ClassVar[tuple] = ("ok", "missing", "invalid", "locked", "ratelimit", "policy", "no_session",
+                                "has_password", "directory", "method_disabled", "stepup", "relogin")
 
     def __post_init__(self) -> None:
         if self.reason not in self.REASONS:

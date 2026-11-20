@@ -5092,6 +5092,61 @@ class TinySesam:
         self.audit("password_change", u["username"], ip, f"api_keys_active={active}" if active else None)
         return PasswordChangeResult(ok=True, reason="ok", status=200, api_keys_active=active)
 
+    def set_initial_password(self, request: Request, new: str, *,
+                             csrf: Optional[str] = None) -> PasswordChangeResult:
+        """Give the own account its FIRST password — for an account that has none yet; `POST /auth/password/set` calls exactly this method.
+
+        For accounts created by sign-in link, OIDC or passkey (B-10): `change_password` asks for
+        the current password, which such an account does not have, so it could never get one.
+        Here the old password is replaced by the freshness of the session, the same rule as for
+        creating any other factor (`POST /auth/pin/set`): if the account already has something it
+        can confirm with (`stepup_options()`, e.g. a TOTP or a PIN), a fresh step-up
+        (`stepup_fresh()`, reason `stepup`); if it has nothing, the age of the sign-in
+        (`login_fresh()`, both bounded by `stepup_max_age_sec`, reason `relogin`). A stolen,
+        old session cookie therefore cannot plant a password that outlives the theft.
+
+        Checks the CSRF token (`csrf`, otherwise header `X-CSRF-Token`), requires a full session
+        (`no_session`, an API key never counts), throttles per IP (`ratelimit`), checks the
+        password rule (`policy`). Refused when the account already has a password (`has_password`,
+        409 — that is `change_password`), when password sign-in is off (`method_disabled`, 404) and
+        when a directory is configured (`directory`, 409 — with `ldap_enabled` a local password
+        would sit next to the directory one and keep working after the directory disables the
+        account). On success: the password is set, the audit line `password_set` and the security
+        event `password_changed` are written. Other sessions are NOT ended — like after a new factor
+        the caller offers that (`count_other_sessions`). Synchronous: call from a `def` route, in
+        an `async def` route via `run_in_threadpool`."""
+        self.require_csrf(request, self._csrf_sent_along(request, csrf))
+
+        def no(reason, status, text, **values) -> PasswordChangeResult:
+            return PasswordChangeResult(ok=False, reason=reason, status=status,
+                                        message=self.t(text, **values) if text else "")
+
+        if not self.cfg.password_enabled:
+            return no("method_disabled", 404, "api.password_off")
+        u, without = self._only_with_session(request, "password_change")
+        if u is None:
+            return no("no_session", *without)
+        if self.store.get_password_hash(u["id"]):
+            return no("has_password", 409, "api.password_exists")
+        if self.cfg.ldap_enabled:
+            return no("directory", 409, "api.password_directory")
+        # The freshness replaces the old password — the same split as `POST /auth/pin/set`.
+        if self.stepup_options(u):
+            if not self.stepup_fresh(request, u):
+                return no("stepup", 403, "api.stepup")
+        elif not self.login_fresh(request, u):
+            return no("relogin", 403, "api.stepup_relogin")
+        ip = self.client_ip(request)
+        if not self._rate_ok(ip, login=False):
+            return no("ratelimit", 429, "api.too_many")
+        defect = self.password_policy_error(new or "", username=u["username"], email=u.get("email"), api=True)
+        if defect:
+            return PasswordChangeResult(ok=False, reason="policy", status=400, message=defect)
+        self.set_password(u["id"], new)
+        active = self.store.count_active_api_keys(u["id"])
+        self.audit("password_set", u["username"], ip, f"api_keys_active={active}" if active else None)
+        return PasswordChangeResult(ok=True, reason="ok", status=200, api_keys_active=active)
+
     def _session_from_request(self, request):
         """The session row for this request, or None. `row["token_hash"]` is its handle.
 

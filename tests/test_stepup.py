@@ -465,7 +465,10 @@ secret_text = re.search(r"<div class=mono>([A-Z2-7]+)</div>", page_html.text)
 assert secret_text, page_html.text[:200]
 r = c7.post("/auth/totp/setup", data={"code": pyotp.TOTP(secret_text.group(1)).now()},
             headers={"X-CSRF-Token": c7.cookies.get("tinysesam_csrf") or "", "Accept": "application/json"})
-assert r.status_code == 200 and r.json() == {"ok": True, "other_sessions": 0}, r.text[:120]
+# Since B-8/B-9a the answer also carries the target and the recovery codes created with the factor.
+_setup = r.json() if r.status_code == 200 else {}
+assert r.status_code == 200 and _setup.get("ok") is True and _setup.get("other_sessions") == 0, r.text[:120]
+assert len(_setup.get("recovery_codes") or []) == auth4.cfg.recovery_code_count and _setup.get("next"), _setup
 assert auth4.store.has_confirmed_totp(uid4), "setup from the session must go through"
 ok("session of the same account: setting up TOTP works unchanged (secret, confirmation)")
 
@@ -568,6 +571,9 @@ PASSWORD = {"/auth/password"}
 #: Setting up a factor: only with an interactive session, never with an API key (R3-1/R3-3).
 ONLY_SESSION = {"/auth/totp/setup/start", "/auth/totp/setup", "/auth/passkey/register/begin",
                "/auth/passkey/register/finish"}
+#: The FIRST password (B-10): fresh step-up if the account has a factor, otherwise the age of the sign-in
+#: (`set_initial_password`); never an API key, never over an existing password (that is /auth/password).
+FIRST_PASSWORD = {"/auth/password/set"}
 #: Known open — with justification. If one of them gets bound, it belongs in STEPUP.
 OPEN = {"/auth/apikeys": "key issuance without step-up (reported as H-18)",
          "/auth/apikeys/{key_id}/revoke": "key revocation without step-up (reported as H-18)"}
@@ -577,7 +583,7 @@ OPEN = {"/auth/apikeys": "key issuance without step-up (reported as H-18)",
 _post6 = {rt.path for rt in router6.routes
           if "POST" in (getattr(rt, "methods", None) or ())
           and not str(getattr(rt, "path", "")).startswith(auth6.cfg.admin_path)}
-_classes = [SIGN_IN_FLOW, STEPUP, PASSWORD, ONLY_SESSION, set(OPEN)]
+_classes = [SIGN_IN_FLOW, STEPUP, PASSWORD, ONLY_SESSION, FIRST_PASSWORD, set(OPEN)]
 _unclassified = sorted(p for p in _post6 if not any(p in k for k in _classes))
 assert not _unclassified, f"self-service route without classification: {_unclassified}"
 _double = [p for p in _post6 if sum(p in k for k in _classes) > 1]
@@ -610,6 +616,12 @@ for path in sorted(STEPUP & _post6):
 for path in sorted(ONLY_SESSION & _post6):
     r = TestClient(app6).post(path, headers={**JSON, "X-API-Key": key6}, **_payload.get(path, {}))
     assert r.status_code in (401, 403), f"{path}: API key sets up a factor ({r.status_code})"
+for path in sorted(FIRST_PASSWORD & _post6):
+    r = TestClient(app6).post(path, headers={**JSON, "X-API-Key": key6}, json={"new": "New1234567890!"})
+    assert r.status_code == 403, f"{path}: API key sets a password ({r.status_code})"
+    r = _stale_client().post(path, headers=JSON, json={"new": "New1234567890!"})
+    assert r.status_code == 409 and auth6._check_password("self", "Secret12345!"), \
+        f"{path}: replaced an existing password without the old one ({r.status_code})"
 r = _stale_client().post("/auth/password", headers=JSON, **_payload["/auth/password"])
 assert r.status_code == 403 and auth6._check_password("self", "Secret12345!"), \
     f"/auth/password without the old password: {r.status_code}"

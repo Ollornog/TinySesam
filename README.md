@@ -238,6 +238,11 @@ interactive factor, so it cannot take one away either. `/auth/reauth` itself ans
 403 as well (`api.stepup_session`): there is nothing for it to confirm, and a key plus a password
 must not stand in for the second factor of a half-finished sign-in (fixed in 0.20.1).
 
+**Setting up TOTP hands out the recovery codes.** The confirmation (`POST /auth/totp/setup`) creates
+`recovery_code_count` codes and returns them once (`recovery_codes`) together with the target
+(`next` — the given one, otherwise the account page); the built-in page shows them and leads on only
+after *I have written them down*. `/auth/totp/recovery` replaces them later (with step-up).
+
 **Setting a factor up needs an interactive session.** `GET/POST /auth/totp/setup` and
 `POST /auth/passkey/register/{begin,finish}` require a session as well — an API key gets a 403
 (`auth.require_session()` is the guard). Otherwise a leaked CI key would enrol a factor **it**
@@ -607,6 +612,20 @@ The result is a `tinysesam.PasswordChangeResult`: `ok` (also its truth value), `
 session — an API key does not count (`no_session`, 403): a machine credential does not change a
 person's password. An empty current password is `missing` (400) and does not count as a failure.
 Synchronous, like `login_*`.
+
+**An account without a password** (created by sign-in link, OIDC or passkey) has no current one to
+type. The account page then offers *Set password* without that field; the route is
+`POST /auth/password/set` (JSON with `new`), the building block `auth.set_initial_password(request,
+new, csrf=…)`. Instead of the old password it asks for freshness — the same rule as for creating any
+other factor: a fresh step-up if the account already has something to confirm with (TOTP, PIN;
+otherwise `stepup`, 403 with `X-TinySesam-Reauth`), the age of the sign-in if it has nothing
+(`stepup_max_age_sec`; otherwise `relogin`, 403 — sign in again). Plus CSRF, the per-IP rate limit,
+the password rule and the audit line `password_set`. It refuses an account that already has a
+password (`has_password`, 409 — that is `change_password`), a disabled password sign-in
+(`method_disabled`, 404) and installations with `ldap_enabled` (`directory`, 409: a local password
+next to the directory one would keep working after the directory disables the account). Other
+sessions are not ended — the response carries `other_sessions`, the page offers it, as after a new
+factor.
 
 ## Bootstrapping the first admin
 
@@ -1529,7 +1548,7 @@ without extras (guards the stdlib-scrypt fallback), and a browser job that also 
 
 ## Status
 
-**82 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
+**83 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
 
 Implemented and tested: password/TOTP/sessions/roles, remember-me, step-up and per-route MFA,
 factor chains, personal PIN, shared resource secrets, magic links + mailer hook, registration and
