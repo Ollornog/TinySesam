@@ -87,11 +87,12 @@ for lang, want, nope in (("en", "Hardening", "Härtung"), ("de", "Härtung", "Ha
 
 # Own translations also take effect in the panel — and `</script>` must not break it.
 auth.cfg.lang = "en"
-# Since T-35 the panel has two blocks: the dialog building block (with texts of its own) and the panel script.
+# Since T-35 the panel has the dialog building block (with texts of its own) and the panel script; since T-64 also the
+# light/dark restore in <head> and the top bar's script.
 auth.add_messages("en", {"admin.tab.users": "Accounts", "admin.save": "</script>x", "dlg.copy": "</script>y"})
 html = render_panel(auth, "/auth/admin")
 assert "Accounts" in html
-assert html.count("<script") == 2, "panel script and dialog script expected"
+assert html.count("<script") == 4, "light/dark restore, top bar, dialog and panel script expected"
 assert html.count("</script>") == html.count("<script"), "own translation must not end a script block"
 assert "\\u003c/script>x" in html and "\\u003c/script>y" in html
 ok("Admin-Panel: de/en, Locale, add_messages, `<` escaped")

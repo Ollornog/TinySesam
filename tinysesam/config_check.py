@@ -238,6 +238,38 @@ def check_config(config) -> tuple[list[str], list[str]]:
             "c22_stylesheet: {s!r} — a path on the app's own origin (\"/static/c22.css\"), "
             "without quotation marks, angle brackets, backslash and spaces",
             s=_sheet))
+    # Top bar links (T-64): a link of the operator's own pages — a path on the own origin, or an https address on a
+    # host a `next=` may reach (base_url, trusted_redirect_hosts). Never an arbitrary foreign origin, nothing that
+    # could leave the href attribute, no javascript:/data: target.
+    _links = getattr(config, "topbar_links", None) or []
+    if not isinstance(_links, (list, tuple)):
+        _links = [_links]
+    _hosts = {str(h).lower() for h in (getattr(config, "trusted_redirect_hosts", None) or [])}
+    if getattr(config, "base_url", ""):
+        _hosts.add(_urlsplit_host(config.base_url))
+    for _link in _links:
+        if (not isinstance(_link, (list, tuple)) or len(_link) != 2 or not isinstance(_link[0], str)
+                or not 1 <= len(_link[0].strip()) <= 60 or not isinstance(_link[1], str)):
+            error.append(_t(
+                config,
+                "topbar_links: {v!r} — each entry is a (title, target) pair with a title of 1–60 characters",
+                v=_link))
+            continue
+        _href = _link[1]
+        _bad = not _href or any(z in _href for z in "'\"<>\\ \t\n")
+        if _href.startswith("/") and not _href.startswith("//"):
+            _ok = not _bad
+        elif _href.startswith("https://") and not _bad:
+            _ok = _urlsplit_host(_href) in _hosts
+        else:
+            _ok = False
+        if not _ok:
+            error.append(_t(
+                config,
+                "topbar_links: {h!r} — a target is a path on the own origin (\"/wiki\") or an https address on "
+                "the host of base_url or of trusted_redirect_hosts, without quotation marks, angle brackets, "
+                "backslash and spaces",
+                h=_href))
     _destination = getattr(config, "brand_background_credit_url", "")
     if _destination and not str(_destination).startswith(("https://", "http://")):
         error.append(_t(
@@ -2108,6 +2140,13 @@ _DE: dict[str, str] = {
      "without quotation marks, angle brackets, backslash and spaces"):
         ("c22_stylesheet: {s!r} — ein Pfad auf dem eigenen Ursprung der App (\"/static/c22.css\"), "
          "ohne Anführungszeichen, spitze Klammern, Backslash und Leerzeichen"),
+    "topbar_links: {v!r} — each entry is a (title, target) pair with a title of 1–60 characters":
+        "topbar_links: {v!r} — jeder Eintrag ist ein Paar (Titel, Ziel) mit einem Titel aus 1–60 Zeichen",
+    ("topbar_links: {h!r} — a target is a path on the own origin (\"/wiki\") or an https address on the host of "
+     "base_url or of trusted_redirect_hosts, without quotation marks, angle brackets, backslash and spaces"):
+        ("topbar_links: {h!r} — ein Ziel ist ein Pfad auf dem eigenen Ursprung (\"/wiki\") oder eine "
+         "https-Adresse auf dem Host von base_url oder von trusted_redirect_hosts, ohne Anführungszeichen, "
+         "spitze Klammern, Backslash und Leerzeichen"),
     "brand_background_credit_url: only http(s) addresses":
         "brand_background_credit_url: nur http(s)-Adressen",
     "brand_backgrounds: {b!r} — allowed are /path, data:image/… and https://…":

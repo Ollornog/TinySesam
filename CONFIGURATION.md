@@ -12,7 +12,7 @@ reference answers the other question: *"There is a field — what does it do?"*
 Presets (`TinySesamConfig.local_accounts()`, `.oidc_gateway()`, …) set bundles of these fields;
 individual ones can be overridden via `**overrides`.
 
-**Tier:** Every field belongs to tier A — public, stable from 1.0 (see [API.md](API.md), “Three tiers”), except `c22_stylesheet` (B), `hsts` (B), `oauth_access_token_ttl_sec` (B), `oauth_enabled` (B), `oauth_pepper_file` (B), `oauth_refresh_grace_sec` (B), `oauth_refresh_idle_days` (B), `oauth_refresh_max_days` (B), `oauth_resources` (B), `totp_required` (B).
+**Tier:** Every field belongs to tier A — public, stable from 1.0 (see [API.md](API.md), “Three tiers”), except `c22_stylesheet` (B), `hsts` (B), `oauth_access_token_ttl_sec` (B), `oauth_enabled` (B), `oauth_pepper_file` (B), `oauth_refresh_grace_sec` (B), `oauth_refresh_idle_days` (B), `oauth_refresh_max_days` (B), `oauth_resources` (B), `topbar_enabled` (B), `topbar_links` (B), `totp_required` (B).
 
 ## Store
 
@@ -40,6 +40,8 @@ individual ones can be overridden via `**overrides`.
 | `brand_background_credit_url` | `str` | `""` | target of the note (http/https only) |
 | `brand_header` | `object` | `""` | Shell of the host app around EVERY built-in page (login/PIN/TOTP/account/admin/error): your own navigation on top, footer at the bottom. Either an HTML string or `fn(auth) -> str` if the content depends on the request (login state, language) — then evaluated on every call. |
 | `brand_footer` | `object` | `""` | footer below every built-in page; HTML string or `fn(auth) -> str` |
+| `topbar_enabled` | `bool` | `True` | **Tier B.** Top bar of the built-in pages (T-64): logo (`brand_icon`, else a built-in mark), name, `topbar_links` and, on the account, setup, reauth and consent pages, the account menu (account, admin panel, light/dark/system, sign out). Sign-in and error pages show logo and name only. False = no bar (the account page then carries its admin and sign-out links itself) — e.g. when `brand_header` already frames the pages with an own navigation. |
+| `topbar_links` | `list` | `list` | **Tier B.** Links in the top bar, as (title, target) pairs: `[("Wiki", "/wiki"), ("Files", "https://files.example.com/")]`. A target is a path on the own origin (`/…`, as the browser sees it) or an https address on a host that a `next=` may reach too (`base_url`, `trusted_redirect_hosts`). Shown next to the name, on a phone in the menu. |
 
 ## Roles/groups
 
@@ -340,4 +342,4 @@ individual ones can be overridden via `**overrides`.
 
 ---
 
-189 fields, generated from `tinysesam/config.py`.
+191 fields, generated from `tinysesam/config.py`.

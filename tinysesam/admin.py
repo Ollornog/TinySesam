@@ -23,8 +23,9 @@ from . import security
 from ._vocabulary import audit_line_new
 from .store import name_invalid, norm_email, valid_email
 from . import dialog as _dialog
+from . import topbar as _topbar
 from .templates import brand, favicon_link, inject_nonce as _inject_nonce
-from .theme import TOKENS, c22_css, c22_head
+from .theme import TOKENS, c22_css, c22_head, theme_head
 
 
 def build_admin_router(auth) -> APIRouter:
@@ -549,7 +550,7 @@ def build_admin_router(auth) -> APIRouter:
     if cfg.admin_ui_enabled:
         @ar.get("", response_class=HTMLResponse)
         def admin_page(request: Request):
-            guard(request)
+            me = guard(request)
             warn = ""
             if cfg.https_mode == "warn" and not auth._is_secure(request):
                 warn = f"<div class=warnbar>{_WARN_HTTP.get(cfg.lang) or _WARN_HTTP['en']}</div>"
@@ -560,7 +561,9 @@ def build_admin_router(auth) -> APIRouter:
             nonce = secrets.token_urlsafe(16)
             # `__TS_P__` in the header (app, logout) becomes the mount prefix (T-15); the API base `B`
             # comes from the request path and already carries it.
-            page_html = render_panel(auth, request.url.path.rstrip("/"), warn=warn, prefix=auth._prefix(request))
+            # The top bar's sign-out form needs the CSRF token now; `ensure_csrf` below sets the same one (T-64).
+            page_html = render_panel(auth, request.url.path.rstrip("/"), warn=warn, prefix=auth._prefix(request),
+                                     viewer=me, csrf=auth.csrf_token(request) if cfg.csrf_enabled else "")
             resp = HTMLResponse(_inject_nonce(page_html, nonce))
             policy = auth._csp_header(nonce)
             if policy:
@@ -620,16 +623,25 @@ def panel_texts(auth) -> dict:
     return texts
 
 
-def render_panel(auth, base: str, warn: str = "", prefix: str = "") -> str:
+def render_panel(auth, base: str, warn: str = "", prefix: str = "", viewer=None, csrf: str = "") -> str:
     """Panel HTML for a given API base. The only place where `_PAGE` is filled —
     so that e.g. a demo/preview embedding shows the same UI as the real panel.
+
+    `viewer` (the signed-in admin) and `csrf` feed the top bar's account menu (T-64); without a viewer the bar
+    shows logo and name only.
 
     The language comes from `cfg.lang`, as with every other built-in page. Whoever switches it per
     request (`?lang=`) gets the panel delivered translated.
     """
     cfg = auth.cfg
+    bar = ""
+    if getattr(cfg, "topbar_enabled", True):
+        bar = (_topbar.render(auth, viewer=viewer, csrf=csrf, current="admin").replace("__TS_P__", prefix)
+               + _topbar.assets())
     # `__TS_P__` first and only in the scaffold — mark, warning and header/footer come after (T-15).
     return (_PAGE.replace("__TS_P__", prefix).replace("__TOKENS__", TOKENS)
+            .replace("__THEMEHEAD__", theme_head())
+            .replace("__TITLE__", html.escape(auth.t("acc.admin")))
             .replace("__BRANDHEAD__", c22_head(cfg) + (getattr(cfg, "brand_head", "") or ""))
             .replace("__HEADER__", brand(getattr(cfg, "brand_header", ""), auth))
             .replace("__FOOTER__", brand(getattr(cfg, "brand_footer", ""), auth))
@@ -653,12 +665,14 @@ def render_panel(auth, base: str, warn: str = "", prefix: str = "") -> str:
             .replace("__I18N__",
                      json.dumps(panel_texts(auth), ensure_ascii=False).replace("<", "\\u003c"))
             .replace("__BRANDCSS__", c22_css(cfg) + (getattr(cfg, "brand_css", "") or ""))
-            # Last: the dialog building block (T-35) carries texts of its own; no later replace may touch them.
+            # Last: the top bar (account name) and the dialog building block (T-35) carry texts of their own; no
+            # later replace may touch them.
+            .replace("__BAR__", bar)
             .replace("__DIALOG__", _dialog.assets(auth)))
 
 
 _PAGE = r"""<!doctype html><html lang=__LANG__><head><meta charset=utf-8>
-<meta name=viewport content="width=device-width,initial-scale=1">__ICON__<title>__RP__ — Admin</title>
+<meta name=viewport content="width=device-width,initial-scale=1">__THEMEHEAD____ICON__<title>__RP__ — Admin</title>
 <style>
 __TOKENS__
 /* Everything is scoped to .tsadmin — otherwise it bleeds onto brand_header/brand_footer. */
@@ -668,11 +682,9 @@ body{font-family:var(--ts-font);margin:0;background:var(--ts-bg);color:var(--ts-
 .tsadmin{flex:1}
 .tsadmin .warnbar{background:var(--ts-warn-bg);color:var(--ts-warn-ink);padding:8px 20px;font-size:13px;
   border-bottom:1px solid var(--ts-warn-line)}
-.tsadmin header{padding:14px 20px;background:var(--ts-surface);border-bottom:1px solid var(--ts-line);
-  display:flex;gap:14px;align-items:center}
-.tsadmin header h1{font-size:17px;margin:0}
+.tsadmin .tstitle{max-width:1000px;margin:0 auto;padding:20px 20px 4px;font-size:20px;font-weight:600}
 .tsadmin a{color:var(--ts-link);text-decoration:none}
-.tsadmin .tabs{display:flex;gap:6px;padding:12px 20px 0;flex-wrap:wrap}
+.tsadmin .tabs{display:flex;gap:6px;max-width:1000px;margin:0 auto;padding:12px 20px 0;flex-wrap:wrap}
 .tsadmin .tab{padding:7px 13px;border-radius:8px 8px 0 0;background:var(--ts-surface);cursor:pointer;
   font-size:14px;border:1px solid transparent;border-bottom:none}
 .tsadmin .tab.on{background:var(--ts-surface-2);border-color:var(--ts-line);color:var(--ts-link)}
@@ -711,9 +723,10 @@ body{font-family:var(--ts-font);margin:0;background:var(--ts-bg);color:var(--ts-
 __BRANDCSS__
 </style>__BRANDHEAD__</head><body>
 __HEADER__
+__BAR__
 <div class=tsadmin>
 __WARN__
-<header><h1>🧠 __RP__ · Admin</h1><a href="__TS_P__/" id=applink>← App</a><a href="__TS_P__/auth/logout" id=outlink>Logout</a></header>
+<h1 class=tstitle>__TITLE__</h1>
 <div class=tabs id=tabs></div>
 <div class=wrap id=view></div>
 __DIALOG__
@@ -725,8 +738,6 @@ const L=__I18N__;                                      // texts in config.lang �
 const LINKS=__LINKS__;                                 // config.magiclink_enabled: admin may issue sign-in links
 const LINKTTL=__LINKTTL__;                             // config.magiclink_ttl_min: default validity of a link
 const OAUTH=__OAUTH__;                                 // config.oauth_enabled: tab "connected programs" (T-36)
-document.getElementById("applink").textContent="← "+L.app;
-document.getElementById("outlink").textContent=L.logout;
 const TABS=[["users",L["tab.users"]],["sessions",L["tab.sessions"]]].concat(OAUTH?[["devices",L["tab.devices"]]]:[]).concat([["security",L["tab.security"]],["audit",L["tab.audit"]]]);
 let cur="users";
 // H2 (T-45): the panel demands a fresh confirmation (`admin_require_mfa`). A tab left open past the

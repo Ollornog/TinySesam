@@ -531,7 +531,44 @@ TinySesamConfig(brand_css=":root{--ts-bg:#f6f1ec;--ts-surface:#fbf8f4;--ts-ink:#
 ```
 
 The tokens (and their defaults) live in [`tinysesam/theme.py`](https://github.com/Ollornog/TinySesam/blob/main/tinysesam/theme.py); `brand_head` injects
-extra `<head>` markup and `brand_icon` sets the favicon on every built-in page.
+extra `<head>` markup and `brand_icon` sets the favicon (and the logo of the top bar) on every built-in page.
+
+**Light and dark.** The pages come in a light and a dark set and switch with the class `dark` on `<html>` — the same
+switch C22 uses: the choice is kept in `localStorage.themeMode` (`light`/`dark`; none = the system setting) and set in
+`<head>` before the first paint, so nothing flashes. The defaults sit in the cascade layer `tinysesam`, so your
+`brand_css` always wins: a plain `:root{…}` holds in both modes, `html.dark{…}` / `html:not(.dark){…}` give your brand
+its own light and dark values.
+
+**Top bar.** The account page, the admin panel and the setup, reauth and consent pages carry one bar: on the left the
+application logo (`brand_icon` when it is a path on your origin or a `data:image/…` address, otherwise a built-in
+mark in `--ts-accent`), the name (`gate_brand` or `rp_name`) and your links; on the right the account menu — account
+name, *Account*, *Admin panel* (admins only), *Light / Dark / System* and *Sign out* (a POST with the CSRF field).
+Sign-in and error pages show logo and name only. On a phone (below 640 px) the links move into the menu; every tap
+target is at least 44 px high; the menu answers the keyboard (Escape closes and returns the focus, `aria-expanded`).
+
+```python
+TinySesamConfig(topbar_links=[("Wiki", "/wiki"), ("Files", "https://files.example.com/")],
+                trusted_redirect_hosts=["files.example.com"])
+```
+
+A link is a path on your own origin or an https address on a host a `next=` may reach too (`base_url`,
+`trusted_redirect_hosts`) — anything else is a `ConfigError`. `topbar_enabled=False` removes the bar (the account
+page then carries its admin and sign-out links itself), e.g. when `brand_header` already frames the pages with your
+navigation. Your own pages get the same bar from two calls:
+
+```python
+@app.get("/dashboard", response_class=HTMLResponse)
+def dashboard(request: Request, response: Response):
+    nonce = secrets.token_urlsafe(16)          # the nonce of your page's CSP, if you use one
+    auth.ensure_csrf(request, response)        # the menu's sign-out form needs the CSRF cookie
+    return (f"<!doctype html><html><head>{auth.topbar_head(nonce=nonce)}</head><body>"
+            f"{auth.topbar(request, nonce=nonce, current='/dashboard')}<main>…</main></body></html>")
+```
+
+`auth.topbar_head()` brings the light/dark restore, the `--ts-*` tokens (with `c22_stylesheet` also the C22 adapter
+and stylesheet) and the bar's CSS — all scoped to `.tsbar`, nothing touches the rest of your page; `brand_css` is left
+out, set your `--ts-*` values in your own stylesheet. `auth.topbar(request)` renders the bar for the session of this
+request, with the mount prefix in every TinySesam path; `current` marks the entry of the page shown.
 
 **Same look as your app (C22).** If your app is built on the [C22](https://github.com/Ollornog/C22) design system,
 point TinySesam at the C22 stylesheet your app already serves — login, account page, admin panel and error pages
@@ -1678,6 +1715,8 @@ Building blocks for pages you build yourself — signatures and descriptions in
   `tinysesam.current_version()`, `PAGES` (the page names `set_template` accepts),
   `MFA_ENROLLMENT_MODES`, `TinySesamConfig.validate()` (re-check after you changed a config object at
   runtime; writing `auth.cfg` itself is not promised), `TinySesamConfig.enabled_methods()`, `TinySesamConfig.pin_as_first_factor()`.
+- **The top bar on your own pages:** `topbar_head` (tokens, bar CSS and the light/dark restore for `<head>`) and
+  `topbar` (the bar with the account menu for this request's session) — see [Look & feel](#look--feel).
 - **`apply_factor`** attaches a factor to the session **without checking it**. Call it only after
   you verified that factor yourself, with the account from `session_user()` — it is the most
   powerful block here, and a mistake in front of it is a way in. Not needed for password, PIN and
@@ -1734,7 +1773,7 @@ without extras (guards the stdlib-scrypt fallback), and a browser job that also 
 
 ## Status
 
-**92 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
+**93 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
 
 Implemented and tested: password/TOTP/sessions/roles, remember-me, step-up and per-route MFA,
 factor chains, personal PIN, shared resource secrets, magic links + mailer hook, registration and

@@ -14,7 +14,8 @@ import re
 from urllib.parse import quote as _quote
 
 from . import dialog as _dialog
-from .theme import TOKENS, c22_css, c22_head
+from . import topbar as _topbar
+from .theme import FAVICON_SVG, TOKENS, c22_css, c22_head, theme_head
 
 # `<link rel=stylesheet>` too (c22_stylesheet, brand_head): under 'strict' a same-origin stylesheet loads only with the nonce.
 _NONCE_TAG = re.compile(r'<(script|style|link(?=[^>]*\brel=["\']?stylesheet\b))(?![^>]*\bnonce=)(?=[\s>])')
@@ -137,12 +138,11 @@ body{font-family:var(--ts-font);margin:0;min-height:100vh;display:flex;flex-dire
 """
 
 
-#: Built-in favicon (since 0.24.8): a plain key, switching light/dark — as a data: URI, so without
-#: a fetch. Without a favicon the browser requests /favicon.ico; behind a gate that is a protected path.
-STANDARD_FAVICON = "data:image/svg+xml;base64," + __import__("base64").b64encode(
-    b"<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><style>path,circle{stroke:#111}"
-    b"@media(prefers-color-scheme:dark){path,circle{stroke:#eee}}</style><g fill='none' stroke-width='3' "
-    b"stroke-linecap='round'><circle cx='11' cy='16' r='6'/><path d='M17 16h12M24 16v5M28 16v4'/></g></svg>").decode()
+#: Built-in favicon (since 0.24.8, new mark in T-64): a rounded tile with a keyhole ("open sesame") — the same
+#: shape as the top bar's logo (`topbar._MARK`), colours in `theme.FAVICON_SVG` (the one place for colours). As a
+#: data: URI, so without a fetch. Without a favicon the browser requests /favicon.ico; behind a gate that is a
+#: protected path.
+STANDARD_FAVICON = "data:image/svg+xml;base64," + __import__("base64").b64encode(FAVICON_SVG.encode()).decode()
 
 
 def favicon_link(icon: str) -> str:
@@ -203,31 +203,43 @@ def brand(value, auth):
 
 
 def _doc(title, body, lang="en", brand_css="", brand_head="", card=True, brand_icon="", top="",
-         header="", footer="", below="", hg=("", ""), head=""):
+         header="", footer="", below="", hg=("", ""), head="", bar=""):
     """`top` sits outside the card (e.g. the demo notice) — directly above it, same width; `below` directly
     below it (the messages). `header`/`footer` enclose the page so the host app can put its navigation
-    around it. `head` lands in `<head>` before the branding (e.g. a meta refresh)."""
+    around it; `bar` (the top bar, T-64) sits inside that frame, above the content. `head` lands in `<head>`
+    before the branding (e.g. a meta refresh). The light/dark restore comes first, before any style."""
     inner = (f"<div class=card>{body}</div>" if card else body) + (below or "")
     return (f"<!doctype html><html lang={html.escape(lang)}><head><meta charset=utf-8>"
-            f"<meta name=viewport content='width=device-width,initial-scale=1'>"
+            f"<meta name=viewport content='width=device-width,initial-scale=1'>{theme_head()}"
             f"{favicon_link(brand_icon)}{head}"
             f"<title>{html.escape(title)}</title><style>{_CSS}{hg[0]}{brand_css or ''}</style>{brand_head or ''}</head>"
-            f"<body>{hg[1]}{header}<div class=tsmain>{top}{inner}</div>{footer}</body></html>")
+            f"<body>{hg[1]}{header}{bar}<div class=tsmain>{top}{inner}</div>{footer}</body></html>")
 
 
 def _shell(title, body, lang="en"):
     return _doc(title, body)
 
 
-def _page(auth, title, body, card=True, top="", below="", head=""):
+def _bar(auth, ctx, current="") -> str:
+    """The top bar (T-64) with its CSS/JS — with the account menu when the page's ctx names a signed-in `viewer`
+    (`render_page` looks it up for the pages of `topbar.MENU_PAGES`), otherwise logo and name only.
+    Empty with `topbar_enabled=False`."""
+    if not getattr(auth.cfg, "topbar_enabled", True):
+        return ""
+    ctx = ctx or {}
+    return _topbar.render(auth, viewer=ctx.get("viewer"), csrf=ctx.get("csrf", ""), current=current) + _topbar.assets()
+
+
+def _page(auth, title, body, card=True, top="", below="", head="", ctx=None, current=""):
     """Like _shell, but with branding from the config (brand_css/brand_head/brand_icon/brand_header/
-    brand_footer) — re-skins and frames all pages centrally. `top` lands above the card, `below` below it."""
+    brand_footer) — re-skins and frames all pages centrally. `top` lands above the card, `below` below it.
+    `ctx` feeds the top bar (viewer, csrf); `current` marks the menu entry of this page."""
     cfg = auth.cfg
     return _doc(title, body, cfg.lang, c22_css(cfg) + (getattr(cfg, "brand_css", "") or ""),
                 c22_head(cfg) + (getattr(cfg, "brand_head", "") or ""),
                 card, getattr(cfg, "brand_icon", ""), top,
                 brand(getattr(cfg, "brand_header", ""), auth), brand(getattr(cfg, "brand_footer", ""), auth), below,
-                background(cfg), head)
+                background(cfg), head, _bar(auth, ctx, current))
 
 
 #: Message icons — inline SVG in currentColor (nothing is fetched), 24 grid, strokes only.
@@ -431,7 +443,7 @@ def _login(auth, ctx) -> str:
                   + (_or if (pw or pin or others) else ""))
     body = f"<h1>{_e(title)}</h1>{app_line}{further}{pw}{pin}{sep}{others}{signup}{js}"
     page_title = t("login.brand_title", name=brand) if brand else t("login.submit")
-    return _page(auth, page_title, body, top=_demobar(auth, ctx=ctx), below=messages)
+    return _page(auth, page_title, body, top=_demobar(auth, ctx=ctx), below=messages, ctx=ctx)
 
 
 def _totp(auth, ctx) -> str:
@@ -445,7 +457,7 @@ def _totp(auth, ctx) -> str:
             f"<input name=code class=code inputmode=numeric autocomplete=one-time-code autofocus maxlength=6>"
             f"<button type=submit>{_e(t('totp.submit'))}</button></form>"
             f"<div class=hint><a href='__TS_P__/auth/logout'>{_e(t('cancel'))}</a></div>")
-    return _page(auth, t("totp.title"), body, below=messages)
+    return _page(auth, t("totp.title"), body, below=messages, ctx=ctx)
 
 
 def _account(auth, ctx) -> str:
@@ -592,15 +604,18 @@ def _account(auth, ctx) -> str:
     # `static=True`: only show the page, fetch nothing (preview/screenshot).
     static = bool(ctx.get("static"))
     pkjs = "" if static else (_PASSKEY_REGISTER_JS if "passkey" in methods else "")
-    body = (f"<header><h1>{_e(t('acc.title'))} · {name}</h1>"
-            f"<div>{admin_link} <a href='__TS_P__/auth/logout'>{_e(t('logout'))}</a></div></header>"
+    # Admin panel and sign-out live in the top bar's account menu (T-64); only without the bar
+    # (`topbar_enabled=False`) the page carries the two links itself.
+    own_links = ("" if getattr(auth.cfg, "topbar_enabled", True) else
+                 f"<div>{admin_link} <a href='__TS_P__/auth/logout'>{_e(t('logout'))}</a></div>")
+    body = (f"<header><h1>{_e(t('acc.title'))} · {name}</h1>{own_links}</header>"
             + "".join(sections)
             + ("" if static else _dialog.assets(auth) + _ACCOUNT_JS.replace("__CSRFCK__", _e(auth.csrf_cookie_name)).replace("__TXT__", _account_texts(auth))
                + _revoke_js(auth, "location.pathname+'?revoke_others=1'") + _ACCOUNT_RETURN_JS
                .replace("__CONFIRM__", json.dumps(t("acc.sessions_confirm"))))
             + pkjs)
     # Account uses full width (no card) + account CSS + branding
-    return _page(auth, t("acc.title"), f"<style>{css}</style>{body}", card=False)
+    return _page(auth, t("acc.title"), f"<style>{css}</style>{body}", card=False, ctx=ctx, current="account")
 
 
 #: Texts of the account page's JavaScript (no keys in `messages.py` yet — they are chosen by
@@ -743,7 +758,7 @@ def _register(auth, ctx) -> str:
         body = (f"<h1>{_e(t('reg.verify_title'))}</h1>"
                 f"<div class=hint>{_e(t('reg.verify_hint'))}</div>"
                 f"<a class=btn2 href='__TS_P__/auth/login'>{_e(t('magic.to_login'))}</a>")
-        return _page(auth, t("reg.verify_title"), body, below=_messages([("ok", t("reg.verify"))]))
+        return _page(auth, t("reg.verify_title"), body, below=_messages([("ok", t("reg.verify"))]), ctx=ctx)
     cfg = auth.cfg
     messages = _messages([("error", ctx.get("error"))])
     emailro = " readonly" if ctx.get("invite") and ctx.get("email") else ""
@@ -767,7 +782,7 @@ def _register(auth, ctx) -> str:
             f"<label>{_e(t('reg.password'))}</label><input name=password required type=password autocomplete=new-password>"
             f"<button type=submit>{_e(t('reg.submit'))}</button></form>"
             f"<div class=hint><a href='__TS_P__/auth/login'>{_e(t('reg.have'))}</a></div>")
-    return _page(auth, t("reg.title"), body, below=messages)
+    return _page(auth, t("reg.title"), body, below=messages, ctx=ctx)
 
 
 def _magic_request(auth, ctx) -> str:
@@ -777,7 +792,7 @@ def _magic_request(auth, ctx) -> str:
         body = (f"<h1>{_e(t('magic.sent_title'))}</h1>"
                 f"<div class=hint>{_e(t('magic.sent_hint'))}</div>"
                 f"<a class=btn2 href='__TS_P__/auth/login'>{_e(t('magic.back_login'))}</a>")
-        return _page(auth, t("magic.sent_title"), body, below=_messages([("ok", t("magic.sent"))]))
+        return _page(auth, t("magic.sent_title"), body, below=_messages([("ok", t("magic.sent"))]), ctx=ctx)
     messages = _messages([("error", ctx.get("error"))])
     body = (f"<h1>{_e(t('magic.title'))}</h1>"
             f"<div class=hint>{_e(t('magic.hint'))}</div>"
@@ -787,7 +802,7 @@ def _magic_request(auth, ctx) -> str:
             f"<input name=email type=email autocomplete=email autofocus>"
             f"<button type=submit>{_e(t('magic.send'))}</button></form>"
             f"<div class=hint><a href='__TS_P__/auth/login'>{_e(t('back'))}</a></div>")
-    return _page(auth, t("magic.title"), body, below=messages)
+    return _page(auth, t("magic.title"), body, below=messages, ctx=ctx)
 
 
 def _qr_code_shown(code) -> str:
@@ -834,7 +849,7 @@ def _qr_login(auth, ctx) -> str:
             "if(j.state==='approved'){stop=true;f.submit();return}"
             f"if(j.state==='invalid'){{stop=true;document.getElementById('qrstate').textContent={json.dumps(t('qr.expired'))};return}}"
             "}catch(e){}setTimeout(poll,2000)}setTimeout(poll,2000)})()</script>")
-    return _page(auth, t("qr.title"), body, below=_messages([("error", ctx.get("error"))]))
+    return _page(auth, t("qr.title"), body, below=_messages([("error", ctx.get("error"))]), ctx=ctx)
 
 
 def _qr_approve(auth, ctx) -> str:
@@ -851,7 +866,7 @@ def _qr_approve(auth, ctx) -> str:
         body = (f"<h1>{_e(t('qr.' + decided + '_title'))}</h1>"
                 f"<div class=hint>{_e(t('qr.' + decided + '_hint'))}</div>"
                 f"<a class=btn2 href='__TS_P__/'>{_e(t('error.home'))}</a>")
-        return _page(auth, t("qr." + decided + "_title"), body)
+        return _page(auth, t("qr." + decided + "_title"), body, ctx=ctx)
     info = ctx.get("request_info")
     below = _messages([("error", ctx.get("error"))])
     if not info:
@@ -861,7 +876,7 @@ def _qr_approve(auth, ctx) -> str:
                 f"<label>{_e(t('qr.code'))}</label>"
                 f"<input name=code class=code autocomplete=off autocapitalize=characters spellcheck=false autofocus>"
                 f"<button type=submit>{_e(t('qr.check'))}</button></form>")
-        return _page(auth, t("qr.approve_title"), body, below=below)
+        return _page(auth, t("qr.approve_title"), body, below=below, ctx=ctx)
     age = max(0, int(_time.time()) - int(info.get("created_at") or 0))
     code = ctx.get("code", "")
     body = (f"<h1>{_e(t('qr.approve_title'))}</h1>"
@@ -882,7 +897,7 @@ def _qr_approve(auth, ctx) -> str:
             f"<form method=post action='__TS_P__/auth/qr/deny'>{_cf(ctx)}"
             f"<input type=hidden name=code value='{_e(code)}'>"
             f"<button type=submit class=btn2>{_e(t('qr.deny'))}</button></form>")
-    return _page(auth, t("qr.approve_title"), body, below=below)
+    return _page(auth, t("qr.approve_title"), body, below=below, ctx=ctx)
 
 
 def _forgot(auth, ctx) -> str:
@@ -892,7 +907,7 @@ def _forgot(auth, ctx) -> str:
         return _page(auth, t("magic.sent_title"),
                       f"<h1>{_e(t('magic.sent_title'))}</h1>"
                       f"<a class=btn2 href='__TS_P__/auth/login'>{_e(t('magic.to_login'))}</a>",
-                      below=_messages([("ok", t("magic.sent"))]))
+                      below=_messages([("ok", t("magic.sent"))]), ctx=ctx)
     messages = _messages([("error", ctx.get("error"))])
     body = (f"<h1>{_e(t('forgot.title'))}</h1>"
             f"<div class=hint>{_e(t('forgot.hint'))}</div>"
@@ -900,7 +915,7 @@ def _forgot(auth, ctx) -> str:
             f"<label>{_e(t('magic.email'))}</label><input name=email type=email autocomplete=email autofocus>"
             f"<button type=submit>{_e(t('forgot.send'))}</button></form>"
             f"<div class=hint><a href='__TS_P__/auth/login'>{_e(t('back'))}</a></div>")
-    return _page(auth, t("forgot.title"), body, below=messages)
+    return _page(auth, t("forgot.title"), body, below=messages, ctx=ctx)
 
 
 def _reset(auth, ctx) -> str:
@@ -913,7 +928,7 @@ def _reset(auth, ctx) -> str:
             f"<label>{_e(t('reset.new'))}</label>"
             f"<input name=password type=password autocomplete=new-password autofocus>"
             f"<button type=submit>{_e(t('reset.submit'))}</button></form>")
-    return _page(auth, t("reset.title"), body, below=messages)
+    return _page(auth, t("reset.title"), body, below=messages, ctx=ctx)
 
 
 def _error(auth, ctx) -> str:
@@ -924,7 +939,7 @@ def _error(auth, ctx) -> str:
     body = (f"<h1 class=errcode>{_e(code)}</h1>"
             f"<div class='hint errhint'>{_e(msg)}</div>"
             f"<a class=btn2 href='__TS_P__/'>{_e(t('error.home'))}</a>")
-    return _page(auth, str(code), body)
+    return _page(auth, str(code), body, ctx=ctx)
 
 
 def _magic_confirm(auth, ctx) -> str:
@@ -940,7 +955,7 @@ def _magic_confirm(auth, ctx) -> str:
             f"<div class=hint>{_e(t('magic.confirm_hint'))}</div>"
             f"<form method=post action='{_e(ctx.get('action', ''))}'>{_cf(ctx)}"
             f"<button type=submit autofocus>{_e(button)}</button></form>")
-    return _page(auth, t("magic.confirm_title"), body)
+    return _page(auth, t("magic.confirm_title"), body, ctx=ctx)
 
 
 def _revoke_js(auth, back: str) -> str:
@@ -990,7 +1005,7 @@ def _logout(auth, ctx) -> str:
             f"<form method=post action='__TS_P__/auth/logout'>{_cf(ctx)}"
             f"<button type=submit>{_e(t('logout'))}</button></form>"
             f"<div class=hint><a href='__TS_P__/'>{_e(t('cancel'))}</a></div>")
-    return _page(auth, t("logout"), body)
+    return _page(auth, t("logout"), body, ctx=ctx)
 
 
 def _gate_logout(auth, ctx) -> str:
@@ -1013,7 +1028,7 @@ def _gate_logout(auth, ctx) -> str:
         buttons = button("app", t("gate.only_app", name=name)) + button("all", t("gate.everywhere"))
     body = (f"<h1>{_e(t('logout'))}</h1><div class=hint>{_e(question)}</div>{buttons}"
             f"<div class=hint><a href='/'>{_e(t('cancel'))}</a></div>")
-    return _page(auth, t("logout"), body)
+    return _page(auth, t("logout"), body, ctx=ctx)
 
 
 def _gate_logged_out(auth, ctx) -> str:
@@ -1035,7 +1050,7 @@ def _gate_logged_out(auth, ctx) -> str:
                   f"<div class=tsweiter aria-hidden=true><i></i></div>")
     body = (f"<h1>{_e(t('gate.logged_out_title'))}</h1><div class=hint>{_e(t('gate.logged_out'))}</div>{further}"
             f"<a class=btn2 href='{_e(destination)}'>{_e(t('gate.login_now') if sec else t('gate.login_again'))}</a>")
-    return _page(auth, t("gate.logged_out_title"), body, head=head)
+    return _page(auth, t("gate.logged_out_title"), body, head=head, ctx=ctx)
 
 
 def _gateway_home(auth, ctx) -> str:
@@ -1047,7 +1062,7 @@ def _gateway_home(auth, ctx) -> str:
             f"<div class=hint>{_e(t('gw.hint'))}</div>"
             f"<form method=post action='__TS_P__/auth/logout'>{_cf(ctx)}"
             f"<button type=submit>{_e(t('logout'))}</button></form>")
-    return _page(auth, t("gw.title"), body)
+    return _page(auth, t("gw.title"), body, ctx=ctx)
 
 
 def _magic_invalid(auth, ctx) -> str:
@@ -1055,7 +1070,7 @@ def _magic_invalid(auth, ctx) -> str:
     body = (f"<h1>{_e(t('magic.invalid_title'))}</h1>"
             f"<a class=btn2 href='__TS_P__/auth/login'>{_e(t('magic.to_login'))}</a>")
     return _page(auth, t("magic.invalid_title"), body,
-                 below=_messages([("error", ctx.get("message") or t("magic.invalid"))]))
+                 below=_messages([("error", ctx.get("message") or t("magic.invalid"))]), ctx=ctx)
 
 
 def _resource_unlock(auth, ctx) -> str:
@@ -1074,7 +1089,7 @@ def _resource_unlock(auth, ctx) -> str:
             f"<input type=hidden name=next value='{_e(ctx.get('next', '/'))}'>{_cf(ctx)}"
             f"<label>{_e(lbl)}</label>{field}"
             f"<button type=submit>{_e(t('res.submit'))}</button></form>")
-    return _page(auth, str(ctx.get("label") or lbl), body, below=messages)
+    return _page(auth, str(ctx.get("label") or lbl), body, below=messages, ctx=ctx)
 
 
 def _stepup_field(auth, method, first) -> str:
@@ -1111,7 +1126,7 @@ def _reauth(auth, ctx) -> str:
             f"<div class=hint>{_e(t('reauth.hint', user=ctx.get('username')))}</div>")
     fuss = f"<div class=hint><a href='__TS_P__/auth/logout'>{_e(t('logout'))}</a></div>"
     if not methods:
-        return _page(auth, t("reauth.title"), head + fuss, below=messages)
+        return _page(auth, t("reauth.title"), head + fuss, below=messages, ctx=ctx)
     fields = f"<div class=or>{_e(t('or'))}</div>".join(
         _stepup_field(auth, m, i == 0) for i, m in enumerate(methods))
     body = (head
@@ -1119,7 +1134,7 @@ def _reauth(auth, ctx) -> str:
             f"<input type=hidden name=next value='{_e(ctx.get('next', '/'))}'>{_cf(ctx)}"
             f"{fields}<button type=submit>{_e(t('reauth.submit'))}</button></form>"
             + fuss)
-    return _page(auth, t("reauth.title"), body, below=messages)
+    return _page(auth, t("reauth.title"), body, below=messages, ctx=ctx)
 
 
 def _pin(auth, ctx) -> str:
@@ -1140,7 +1155,7 @@ def _pin(auth, ctx) -> str:
             f"{' autofocus' if known else ''}>"
             f"<button type=submit>{_e(t('login.pin_submit'))}</button></form>"
             f"<div class=hint><a href='__TS_P__{_e(auth.cfg.login_path)}'>{_e(t('back'))}</a></div>")
-    return _page(auth, t("pin.title"), body, top=_demobar(auth, pin=True, ctx=ctx), below=messages)
+    return _page(auth, t("pin.title"), body, top=_demobar(auth, pin=True, ctx=ctx), below=messages, ctx=ctx)
 
 
 def _totp_setup(auth, ctx) -> str:
@@ -1158,7 +1173,7 @@ def _totp_setup(auth, ctx) -> str:
                 f"<form method=post action='__TS_P__/auth/totp/setup/start'>{_cf(ctx)}"
                 f"<input type=hidden name=next value='{_e(ctx.get('next') or '/')}'>"
                 f"<button type=submit>{_e(t('setup.start'))}</button></form>")
-        return _page(auth, t("setup.title"), body)
+        return _page(auth, t("setup.title"), body, ctx=ctx)
     qr = f"<img class=qr src='{data['qr']}'>" if data.get("qr") else ""
     ok_msg = _e(t("setup.ok")).replace("'", "\\'")
     bad_msg = _e(t("err.code")).replace("'", "\\'")
@@ -1205,7 +1220,7 @@ def _totp_setup(auth, ctx) -> str:
             "st.className='rcstate'+(ok?'':' manual')})</script>"
             + _revoke_js(auth, "'__TS_P__/auth/account?revoke_others=1'"
                          if getattr(auth.cfg, "account_enabled", False) else ""))
-    return _page(auth, t("setup.title"), body)
+    return _page(auth, t("setup.title"), body, ctx=ctx)
 
 
 def _account_setup(auth, ctx) -> str:
@@ -1300,7 +1315,7 @@ def _account_setup(auth, ctx) -> str:
             f"<div id=obmsg class=obmsg role=alert hidden></div>"
             f"<div class=hint><a href='__TS_P__/auth/logout'>{_e(t('cancel'))}</a></div></div>"
             + ("" if ctx.get("static") else script))
-    return _page(auth, t("onboard.renew_title" if renew else "onboard.title"), body)
+    return _page(auth, t("onboard.renew_title" if renew else "onboard.title"), body, ctx=ctx)
 
 
 def _oauth_consent(auth, ctx) -> str:
@@ -1330,7 +1345,7 @@ def _oauth_consent(auth, ctx) -> str:
             f"<input type=hidden name=txn value='{_e(ctx.get('txn', ''))}'>"
             f"<button type=submit id=oaallow name=decision value=allow>{_e(t('oauth.allow'))}</button>"
             f"<button type=submit id=oadeny class=btn2 name=decision value=deny>{_e(t('oauth.deny'))}</button></form>")
-    return _page(auth, t("oauth.consent_title"), body)
+    return _page(auth, t("oauth.consent_title"), body, ctx=ctx)
 
 
 def _devices_section(auth, ctx) -> str:

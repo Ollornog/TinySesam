@@ -41,6 +41,7 @@ from . import passwords as _passwords
 from . import passwords as _pw
 from .templates import PREFIX_PLACEHOLDER as _PREFIX_PLACEHOLDER, Templates, inject_nonce as _inject_nonce
 from .dialog import assets as _dialog_assets
+from . import topbar as _topbar
 from . import totp as _totp
 from . import security
 from .ldap_ import CONNECTION_TIMEOUT as _LDAP_TIMEOUT
@@ -7181,6 +7182,10 @@ class TinySesam:
         # …and the dialog building block (T-35): `<style>` + `<script>` for tsAlert/tsConfirm/tsPrompt/tsSecret,
         # which the nonce below covers like every other block of the page.
         ctx.setdefault("dialog", _dialog_assets(self))
+        # …and who is signed in, for the account menu of the top bar (T-64) — only on the pages that show it,
+        # and only a full session (never an API key: the menu signs out a cookie).
+        if template in _topbar.MENU_PAGES and "viewer" not in ctx and getattr(self.cfg, "topbar_enabled", True):
+            ctx["viewer"] = self.session_user(request) if request is not None else None
         built_in = not self.templates.overridden(template)
         out = self.templates.render(template, self, ctx)
         if isinstance(out, Response):
@@ -7201,6 +7206,25 @@ class TinySesam:
         # Here too, not only in the route: error pages from `install_error_pages` pass
         # by no TinySesam route and otherwise carry not a single hardening header.
         return self._header_lines(resp)
+
+    def topbar_head(self, *, nonce: str = "") -> str:
+        """`<head>` part of the top bar for an own page of the app (T-64): the light/dark restore (before the
+        first paint), the `--ts-*` tokens (with `c22_stylesheet` also the C22 adapter and stylesheet) and the
+        bar's CSS. `nonce`: the page's CSP nonce for every `<style>`/`<script>`/stylesheet; empty = none."""
+        out = _topbar.head_for_app(self.cfg)
+        return _inject_nonce(out, nonce) if nonce else out
+
+    def topbar(self, request: Request, *, nonce: str = "", current: str = "") -> str:
+        """The top bar of the built-in pages for an own page of the app (T-64) — first thing in `<body>`, with
+        `topbar_head()` in `<head>`. Logo, name, `topbar_links` and, for a signed-in session, the account menu
+        (account, admin panel for admins, light/dark/system, sign out as a POST with the CSRF field).
+        `nonce`: the page's CSP nonce for its `<script>`; empty = none. `current`: "account", "admin" or a link path of
+        `topbar_links` — that entry gets `aria-current=page`. The CSRF cookie: `ensure_csrf(request, response)`
+        on the response, as for every own form."""
+        viewer = self.session_user(request)
+        out = (_topbar.render(self, viewer=viewer, csrf=self.csrf_token(request), current=current)
+               .replace(_PREFIX_PLACEHOLDER, self._prefix(request)) + f"<script>{_topbar.JS}</script>")
+        return _inject_nonce(out, nonce) if nonce else out
 
     def _header_lines(self, resp: Response) -> Response:
         """The hardening headers of every TinySesam response (R8-1, R8-5, R4-08, R5-2).

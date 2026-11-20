@@ -538,7 +538,47 @@ TinySesamConfig(brand_css=":root{--ts-bg:#f6f1ec;--ts-surface:#fbf8f4;--ts-ink:#
 ```
 
 Die Tokens (und ihre Defaults) stehen in [`tinysesam/theme.py`](../tinysesam/theme.py); `brand_head` hängt
-zusätzliches `<head>`-Markup ein, `brand_icon` setzt das Favicon auf jeder eingebauten Seite.
+zusätzliches `<head>`-Markup ein, `brand_icon` setzt das Favicon (und das Logo der Kopfleiste) auf jeder eingebauten
+Seite.
+
+**Hell und Dunkel.** Die Seiten haben einen hellen und einen dunklen Satz und schalten über die Klasse `dark` am
+`<html>` um — derselbe Schalter wie in C22: Die Wahl steht in `localStorage.themeMode` (`light`/`dark`; keine = die
+Systemeinstellung) und wird im `<head>` vor dem ersten Zeichnen gesetzt, nichts blitzt auf. Die Defaults liegen in
+der Kaskadenebene `tinysesam`, dein `brand_css` gewinnt also immer: ein schlichtes `:root{…}` gilt in beiden Modi,
+`html.dark{…}` / `html:not(.dark){…}` geben deiner Marke eigene helle und dunkle Werte.
+
+**Kopfleiste.** Kontoseite, Admin-Panel sowie Einrichtungs-, Reauth- und Zustimmungsseiten tragen eine Leiste: links
+das Anwendungslogo (`brand_icon`, wenn es ein Pfad auf dem eigenen Ursprung oder eine `data:image/…`-Adresse ist,
+sonst ein eingebautes Zeichen in `--ts-accent`), der Name (`gate_brand` oder `rp_name`) und deine Links; rechts das
+Kontomenü — Kontoname, *Konto*, *Admin-Panel* (nur für Admins), *Hell / Dunkel / System* und *Abmelden* (ein POST mit
+CSRF-Feld). Anmelde- und Fehlerseiten zeigen nur Logo und Name. Auf dem Handy (unter 640 px) wandern die Links ins
+Menü; jede Tippfläche ist mindestens 44 px hoch; das Menü folgt der Tastatur (Escape schließt und gibt den Fokus
+zurück, `aria-expanded`).
+
+```python
+TinySesamConfig(topbar_links=[("Wiki", "/wiki"), ("Dateien", "https://files.example.com/")],
+                trusted_redirect_hosts=["files.example.com"])
+```
+
+Ein Link ist ein Pfad auf dem eigenen Ursprung oder eine https-Adresse auf einem Host, den auch ein `next=` erreichen
+darf (`base_url`, `trusted_redirect_hosts`) — alles andere ist ein `ConfigError`. `topbar_enabled=False` nimmt die
+Leiste weg (die Kontoseite trägt ihre Admin- und Abmelde-Links dann selbst), etwa wenn `brand_header` die Seiten schon
+mit deiner Navigation umrahmt. Eigene Seiten bekommen dieselbe Leiste mit zwei Aufrufen:
+
+```python
+@app.get("/dashboard", response_class=HTMLResponse)
+def dashboard(request: Request, response: Response):
+    nonce = secrets.token_urlsafe(16)          # die Nonce der CSP deiner Seite, falls du eine nutzt
+    auth.ensure_csrf(request, response)        # das Abmeldeformular im Menü braucht das CSRF-Cookie
+    return (f"<!doctype html><html><head>{auth.topbar_head(nonce=nonce)}</head><body>"
+            f"{auth.topbar(request, nonce=nonce, current='/dashboard')}<main>…</main></body></html>")
+```
+
+`auth.topbar_head()` bringt die Hell/Dunkel-Wiederherstellung, die `--ts-*`-Tokens (mit `c22_stylesheet` auch Adapter
+und C22-Stylesheet) und das CSS der Leiste — alles auf `.tsbar` begrenzt, der Rest deiner Seite bleibt unberührt;
+`brand_css` bleibt draußen, deine `--ts-*`-Werte setzt du im eigenen Stylesheet. `auth.topbar(request)` zeichnet die
+Leiste für die Sitzung dieses Requests, mit dem Mount-Präfix in jedem TinySesam-Pfad; `current` markiert den Eintrag
+der gezeigten Seite.
 
 **Gleicher Look wie deine App (C22).** Ist deine App mit dem Designsystem [C22](https://github.com/Ollornog/C22)
 gebaut, zeig TinySesam das C22-Stylesheet, das deine App ohnehin ausliefert — Login, Kontoseite, Admin-Panel und
@@ -1718,6 +1758,9 @@ Bausteine für Seiten, die du selbst baust — Signaturen und Beschreibungen in
   `tinysesam.current_version()`, `PAGES` (die Seitennamen, die `set_template` annimmt),
   `MFA_ENROLLMENT_MODES`, `TinySesamConfig.validate()` (Nachprüfung, nachdem du ein Config-Objekt zur Laufzeit geändert hast;
   das Schreiben von `auth.cfg` selbst ist nicht zugesagt), `TinySesamConfig.enabled_methods()`, `TinySesamConfig.pin_as_first_factor()`.
+- **Die Kopfleiste auf eigenen Seiten:** `topbar_head` (Tokens, CSS der Leiste und die Hell/Dunkel-Wiederherstellung
+  für den `<head>`) und `topbar` (die Leiste mit dem Kontomenü für die Sitzung dieses Requests) — siehe
+  [Look & Feel](#look--feel).
 - **`apply_factor`** hängt einen Faktor an die Sitzung, **ohne ihn zu prüfen**. Nur rufen, wenn du
   den Faktor selbst geprüft hast, und mit dem Konto aus `session_user()` — der mächtigste Baustein
   hier; ein Fehler davor ist ein Weg hinein. Für Passwort, PIN und TOTP nicht nötig: Die
@@ -1777,7 +1820,7 @@ zusätzlich die Website baut.
 
 ## Status
 
-**92 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
+**93 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
 (`tests/test_matrix.py`).
 
 Gebaut und getestet: Passwort/TOTP/Sitzungen/Rollen, Remember-me, Step-up und per-Route-MFA,

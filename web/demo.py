@@ -95,6 +95,9 @@ def demo_config(*, db_path: str, brand: str, icon: str, lang: str = "en", **over
         resource_locks_enabled=True,
         available_roles=["editor", "viewer"],
         cookie_secure=False,
+        # The showcase frames the built-in pages with the website's own shell (`brand_header`: navigation,
+        # account dropdown, its own light/dark pill) — TinySesam's top bar would be a second one.
+        topbar_enabled=False,
     )
     opts.update(over)
     return TinySesamConfig.local_accounts(**opts)

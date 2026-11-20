@@ -22,7 +22,7 @@ The tier is recorded per name in `tests/api_surface.json`. The guard `tests/test
 
 **Public is what the hand-written docs describe** (decided before 1.0): the READMEs, `CONFIGURATION.md`, `SECURITY.md` and `docs/OPERATIONS.md`. This page is generated and lists every name with its tier; being listed here alone is no promise. The guard checks that every tier-A/B Python name is named in those documents.
 
-The configuration fields are in [CONFIGURATION.md](CONFIGURATION.md): 179 of 189 in tier A, the others below at their tier.
+The configuration fields are in [CONFIGURATION.md](CONFIGURATION.md): 179 of 191 in tier A, the others below at their tier.
 
 **English, names as well as values** (since 0.22.0, without alias): The names of tiers A and B, their parameters and the keys and values they return or accept — result dicts, the `details` passed to `on_security_event`, the context of your own pages (`ctx["prefix"]`, `ctx["purpose"]`), the JSON responses of the routes, the kinds of API keys (`automation`, `human`). Since the last breaking pass before the freeze (PO decision 2026-10-29) the same holds for what operators and proxies read — query and form parameters, header and cookie names, logger names, the event words and keys of the security log, message ids — and audit and log lines are English as well. The lists old → new are in the CHANGELOG (0.22.0, [Unreleased]).
 
@@ -30,7 +30,7 @@ The configuration fields are in [CONFIGURATION.md](CONFIGURATION.md): 179 of 189
 
 **`auth.store` is internals** (tier C): the storage layer of the built-in routes, without tier, without promise and without transition period — its methods can change with every release. What an app needs is listed below as a method of `TinySesam` (e.g. `set_disabled` instead of `auth.store.set_disabled`).
 
-**Status:** A 385 · B 184 · C 38 names.
+**Status:** A 385 · B 188 · C 38 names.
 
 ## A · Methods of `TinySesam`
 
@@ -604,6 +604,14 @@ True if the current session has freshly confirmed a factor (sudo freshness).
 
 Translated text for key in config.lang (fallback en → key). Placeholders via {name}.
 
+### `topbar(request: 'Request', *, nonce: 'str' = '', current: 'str' = '') -> 'str'`
+
+The top bar of the built-in pages for an own page of the app (T-64) — first thing in `<body>`, with `topbar_head()` in `<head>`. Logo, name, `topbar_links` and, for a signed-in session, the account menu (account, admin panel for admins, light/dark/system, sign out as a POST with the CSRF field). `nonce`: the page's CSP nonce for its `<script>`; empty = none. `current`: "account", "admin" or a link path of `topbar_links` — that entry gets `aria-current=page`. The CSRF cookie: `ensure_csrf(request, response)` on the response, as for every own form.
+
+### `topbar_head(*, nonce: 'str' = '') -> 'str'`
+
+`<head>` part of the top bar for an own page of the app (T-64): the light/dark restore (before the first paint), the `--ts-*` tokens (with `c22_stylesheet` also the C22 adapter and stylesheet) and the bar's CSS. `nonce`: the page's CSP nonce for every `<style>`/`<script>`/stylesheet; empty = none.
+
 ### `totp_begin(user_id)`
 
 Start the setup: returns the secret and the `otpauth://` address for the authenticator — and newly raises `StateError` (not `ConfigError`, no silent success) if the account already has a confirmed TOTP.
@@ -670,7 +678,7 @@ Value: `{'login': '/auth/magic/{t}', 'verify_email': '/auth/verify/{t}', 'invite
 
 ## B · `TinySesamConfig`
 
-Fields of this tier (meaning in [CONFIGURATION.md](CONFIGURATION.md)): `c22_stylesheet`, `oauth_enabled`, `oauth_resources`, `oauth_access_token_ttl_sec`, `oauth_refresh_idle_days`, `oauth_refresh_max_days`, `oauth_refresh_grace_sec`, `oauth_pepper_file`, `hsts`, `totp_required`.
+Fields of this tier (meaning in [CONFIGURATION.md](CONFIGURATION.md)): `c22_stylesheet`, `topbar_enabled`, `topbar_links`, `oauth_enabled`, `oauth_resources`, `oauth_access_token_ttl_sec`, `oauth_refresh_idle_days`, `oauth_refresh_max_days`, `oauth_refresh_grace_sec`, `oauth_pepper_file`, `hsts`, `totp_required`.
 
 ### `TinySesamConfig.enabled_methods() -> 'list[str]'`
 
@@ -974,4 +982,4 @@ These names are not part of the promise. Since 0.22.0 the implementation is call
 
 ---
 
-151 methods, 3 properties, 11 constants, 7 methods of `TinySesamConfig`, 10 exports, of which 5 error types, 17 names on the result types `LoginResult`, `PasswordChangeResult` — generated from the docstrings and `tests/api_surface.json`.
+153 methods, 3 properties, 11 constants, 7 methods of `TinySesamConfig`, 10 exports, of which 5 error types, 17 names on the result types `LoginResult`, `PasswordChangeResult` — generated from the docstrings and `tests/api_surface.json`.

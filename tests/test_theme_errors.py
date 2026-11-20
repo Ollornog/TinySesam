@@ -161,6 +161,8 @@ _db = _os.path.join(_tf.mkdtemp(), "t.db")
 _a = TinySesam(TinySesamConfig(db_path=_db, csrf_enabled=False, lang="de", passkey_enabled=False))
 _app = FastAPI(); _app.include_router(_a.router())
 _t = TestClient(_app).get("/auth/login").text
-assert "<body><div class=tsmain>" in _t
+assert "<body><header class=tsbar>" in _t, "the top bar (T-64) opens the body"
+_a.cfg.topbar_enabled = False
+assert "<body><div class=tsmain>" in TestClient(_app).get("/auth/login").text, "topbar_enabled=False: no bar"
 os.unlink(_db)
 print("OK brand_header/brand_footer: body around login, account, admin and error pages")

@@ -7,14 +7,21 @@ selector having to be rebuilt anywhere:
 
     TinySesamConfig(brand_css=":root{--ts-bg:#f6f1ec;--ts-accent:#b0566f;…}")
 
-The defaults here are the dark standard theme.
+Light and dark (T-64): the class `dark` on `<html>` switches between the two sets below — the same switch the
+C22 design system uses (`THEME_JS` sets it before the first paint from `localStorage.themeMode`, without a stored
+choice from the system setting; the account menu of the top bar changes it). The defaults sit in the cascade
+layer `tinysesam`, so every `brand_css` rule wins over them whatever its selector: a plain `:root{…}` there
+holds in both modes, `html.dark{…}` / `html:not(.dark){…}` give a brand its own light and dark values.
 """
 import html
 from importlib import resources
 
+#: The first `:root{…}` block is the dark standard set (the reference the C22 adapter falls back to), the second
+#: the light values that differ from it. Image tokens stay the same in both: the background images are dark.
 TOKENS = """
+@layer tinysesam{
 :root{
-  color-scheme:light dark;
+  color-scheme:dark;
   --ts-bg:#0f1115;            /* page background */
   --ts-surface:#161a22;       /* cards, header, sections */
   --ts-surface-2:#1b2130;     /* active tab */
@@ -46,8 +53,36 @@ TOKENS = """
   --ts-font:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
   --ts-mono:ui-monospace,Menlo,Consolas,monospace;
 }
+:root:not(.dark){
+  color-scheme:light;
+  --ts-bg:#f6f7f9;
+  --ts-surface:#ffffff;
+  --ts-surface-2:#eef1f5;
+  --ts-ink:#1b1f27;
+  --ts-muted:#5a6372;
+  --ts-line:#dde1e8;
+  --ts-line-soft:#eceff3;
+  --ts-link:#1d4ed8;
+  --ts-field-bg:#ffffff;
+  --ts-field-line:#c9d0da;
+  --ts-neutral:#e6e9ef;
+  --ts-neutral-ink:#1b1f27;
+  --ts-chip:#eef1f5;
+  --ts-err-bg:#fdecec;   --ts-err-ink:#b42318;
+  --ts-ok-bg:#e7f5ec;    --ts-ok-ink:#166534;
+  --ts-warn-bg:#fff3e2;  --ts-warn-ink:#9a3412;  --ts-warn-line:#f1c48f;
+  --ts-info-bg:#e8effd;  --ts-info-ink:#1e40af;
+}
+}
 """
 
+
+#: The built-in favicon (T-64): a rounded tile with a keyhole, the shape of the top bar's logo. A favicon cannot read the
+#: page's tokens, so its two colours live here: the light accent on a light tab, a lighter blue on a dark one.
+FAVICON_SVG = ("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><style>rect{fill:#2563eb}"
+               "@media(prefers-color-scheme:dark){rect{fill:#60a5fa}g{fill:#0f1115}}</style>"
+               "<rect width='32' height='32' rx='8'/><g fill='#fff'><circle cx='16' cy='13' r='4.5'/>"
+               "<path d='M14 15.5h4l1.4 8.5h-6.8z'/></g></svg>")
 
 #: Optional adapter: derives every --ts-* token from the C22 design system's tokens, falling back to
 #: the defaults above (tinysesam/c22.css). Inlined when `c22_stylesheet` is set; paste it into
@@ -55,29 +90,33 @@ TOKENS = """
 C22_ADAPTER = (resources.files(__package__) / "c22.css").read_text("utf-8")
 
 # C22's own light/dark mechanism (Basecoat theme API): the class `dark` on <html>, the choice kept in
-# localStorage `themeMode`, without one the system setting. C22 leaves restoring it on page load to
-# the app's head script — TinySesam's pages do the same here. No C22 code runs on them.
-_C22_THEME_JS = ("(function(){var m=null;try{m=localStorage.getItem('themeMode')}catch(e){}"
-                 "document.documentElement.classList.toggle('dark',m?m==='dark':"
-                 "matchMedia('(prefers-color-scheme: dark)').matches)})()")
+# localStorage `themeMode` ("light" | "dark"; no entry = the system setting). C22 leaves restoring it on page load
+# to the app's head script — TinySesam's pages do the same, with or without C22 (T-64). No C22 code runs on them.
+#: The light/dark restore for `<head>`: runs before the first paint, so nothing flashes.
+THEME_JS = ("(function(){var m=null;try{m=localStorage.getItem('themeMode')}catch(e){}"
+            "document.documentElement.classList.toggle('dark',m?m==='dark':"
+            "matchMedia('(prefers-color-scheme: dark)').matches)})()")
+
+
+def theme_head() -> str:
+    """`<script>` with `THEME_JS` — first thing in every built-in page's `<head>` (the nonce comes centrally)."""
+    return f"<script>{THEME_JS}</script>"
 
 
 def c22_css(cfg) -> str:
     """The adapter CSS for `brand_css` position (after TOKENS, before the app's own brand_css)."""
     if not getattr(cfg, "c22_stylesheet", ""):
         return ""
-    # Native controls (scrollbars, date pickers) follow the C22 mode, not the dark default.
     # The C22 stylesheet is a whole component library: two of its global class rules share a name with
     # TinySesam's (`.card`, `.tabs` set flex columns), and its reset takes the underline off links — which
     # would leave a link recognisable by colour alone. Put back what TinySesam's pages rely on.
-    return (C22_ADAPTER + "html:not(.dark){color-scheme:light}html.dark{color-scheme:dark}"
-            ".tsmain .card{display:block}.tsadmin .tabs{flex-direction:row}.tsmain a{text-decoration:underline}")
+    return (C22_ADAPTER + ".tsmain .card{display:block}.tsadmin .tabs{flex-direction:row}.tsmain a{text-decoration:underline}")
 
 
 def c22_head(cfg) -> str:
-    """`<head>` additions for `c22_stylesheet`: the app's C22 stylesheet (same origin, nonce like every
-    own tag) and the light/dark restore. Empty without the setting."""
+    """`<head>` addition for `c22_stylesheet`: the app's C22 stylesheet (same origin, nonce like every own tag).
+    Empty without the setting. The light/dark restore is on every page anyway (`theme_head`)."""
     sheet = getattr(cfg, "c22_stylesheet", "") or ""
     if not sheet:
         return ""
-    return f'<script>{_C22_THEME_JS}</script><link rel=stylesheet href="{html.escape(sheet)}">'
+    return f'<link rel=stylesheet href="{html.escape(sheet)}">'

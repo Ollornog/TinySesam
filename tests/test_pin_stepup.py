@@ -296,7 +296,9 @@ assert not auth.has_pin(uid), "without a fresh sign-in no PIN may be set"
 # The reauth page tells the account the truth, instead of offering a password field that it does
 # not have (every attempt would be hopeless — and would count in the same lockout bucket).
 page_html = c.get("/auth/reauth")
-fields = re.findall(r"<input[^>]*name=[\"\']?(\w+)", page_html.text)
+# The top bar's sign-out form (T-64, its `_csrf` field) is no sign-in field — only the page content counts.
+_content = re.sub(r"<header class=tsbar>.*?</header>", "", page_html.text, flags=re.S)
+fields = re.findall(r"<input[^>]*name=[\"\']?(\w+)", _content)
 assert fields == [], fields
 assert auth.t("err.stepup_relogin") in page_html.text, page_html.text[:300]   # T-45: says "sign in again"
 response = c.post("/auth/reauth", data={"password": "guessed", "next": "/"})
