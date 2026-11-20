@@ -588,7 +588,10 @@ def nonpython_text_findings(path: str, text: str) -> list:
     `requirements.txt` lists: only the comment lines (package names are not ours to translate).
     """
     out = []
-    only_comments = path.endswith("requirements.txt")
+    # go.mod/go.sum (deploy/forward-auth/caddy-gate, since 2026-11-20): module paths and hashes written by `go mod tidy`
+    # — `code.pfad.fr/check` or a hash containing `zu` is not ours to translate, like a package line. They carry no
+    # `#` comment, so nothing of theirs is read.
+    only_comments = path.endswith(("requirements.txt", "go.mod", "go.sum"))
     for n, line in enumerate(text.split("\n"), 1):
         code, comment = split_comment(_URLS_AND_HASHES.sub(" ", line))
         found = set(german_in_text(comment)) if comment else set()
@@ -894,12 +897,13 @@ NP_GOOD = {
     "a # that is no comment": ("probe.sh", 'n=${#arr[@]}; echo "$#"\n'),
     "homograph as an identifier": ("probe.sh", "art=1\n"),
     "package line of a hashed list": ("requirements.txt", "gunicorn==1.0 \\\n    --hash=sha256:0123456789abcdef0123456789abcdef\n"),
+    "module line of go.sum": ("go.sum", "code.pfad.fr/check v1.1.0 h1:GWvjdzhSEgHvEHe2uJujDcpmZoySKuHQNrZMfzfO0=\n"),
 }
 bad_np = {k: bool(nonpython_text_findings(*v)) for k, v in NP_BAD.items()}
 good_np = {k: bool(nonpython_text_findings(*v)) for k, v in NP_GOOD.items()}
 r.check("self-test non-Python: a German shell variable, function, output text, job id, step name, compose anchor, Caddy "
         "response, comment and umlaut are found; English code, quoted old values, URLs/hashes/IDs, the kit's names, "
-        "a `#` that is no comment, a homograph and a package line are not",
+        "a `#` that is no comment, a homograph, a package line and a go.sum line are not",
         all(bad_np.values()) and not any(good_np.values()), f"{bad_np} {good_np}")
 r.check("self-test paths: a German directory (`.github/bau/`) and a German file name are found, English ones are not",
         bool(path_findings([".github/bau/tools.in"])) and bool(path_findings(["scripts/pruefe_alles.sh"]))

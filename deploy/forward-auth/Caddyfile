@@ -35,6 +35,14 @@ auth.example.com {
 app.example.com {
 	header Strict-Transport-Security "max-age=31536000; includeSubDomains"   # HSTS, see above
 
+	# ONLY this proxy sets the identity: every Remote-* the browser sends goes first, on every path. Below, each
+	# header is set again only when TinySesam's answer carries it (T-58).
+	request_header -Remote-User
+	request_header -Remote-Name
+	request_header -Remote-Email
+	request_header -Remote-Groups
+	request_header -Remote-Id
+
 	# Sign-out at the application (T-22): /.tinysesam/logout and /.tinysesam/after-logout belong to
 	# TinySesam, not to the application — and bypass the gate: signing out must also work with an
 	# expired sign-in. On this host, because only here can the gate cookie be deleted.
@@ -114,13 +122,24 @@ app.example.com {
 			# (`Remote-User`, `X-Tinysesam-Location`). Any other spelling yields an
 			# EMPTY value, without error and without a log line. tests/test_legacy_data.py checks every
 			# placeholder in this file against exactly this form.
+			#
+			# Each header only when the answer carries it (T-58), the way Caddy's own `forward_auth … copy_headers`
+			# does it: a placeholder of a header that is MISSING from the answer stays as literal text, and the
+			# application received `{http.reverse_proxy.header.Remote-Email}` as the address (measured with 2.11.9,
+			# e.g. after `forward_headers` was reduced). Together with the strip above the application gets
+			# TinySesam's value or no header at all.
 			@ok status 200
 			handle_response @ok {
-				request_header Remote-User {rp.header.Remote-User}
-				request_header Remote-Groups {rp.header.Remote-Groups}
-				request_header Remote-Email {rp.header.Remote-Email}
-				request_header Remote-Name {rp.header.Remote-Name}
-				request_header Remote-Id {rp.header.Remote-Id}
+				@ts_user not vars {rp.header.Remote-User} ""
+				@ts_groups not vars {rp.header.Remote-Groups} ""
+				@ts_email not vars {rp.header.Remote-Email} ""
+				@ts_name not vars {rp.header.Remote-Name} ""
+				@ts_id not vars {rp.header.Remote-Id} ""
+				request_header @ts_user Remote-User {rp.header.Remote-User}
+				request_header @ts_groups Remote-Groups {rp.header.Remote-Groups}
+				request_header @ts_email Remote-Email {rp.header.Remote-Email}
+				request_header @ts_name Remote-Name {rp.header.Remote-Name}
+				request_header @ts_id Remote-Id {rp.header.Remote-Id}
 			}
 			# not signed in → redirect to the login URL from the header
 			#

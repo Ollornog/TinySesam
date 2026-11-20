@@ -4,6 +4,30 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+### Added — Caddy ready-made: image `tinysesam-caddy-gate` and a quickstart stack (T-62)
+
+- **Every release publishes `ghcr.io/ollornog/tinysesam-caddy-gate:vX.Y.Z`** — Caddy with the caddy-jwt plugin (gate
+  token, ADR-9), same version as the release, `linux/amd64` and `linux/arm64`, Grype-scanned on every pull request,
+  provenance and SBOM attested like the gateway image (`gh attestation verify oci://…/tinysesam-caddy-gate:vX.Y.Z
+  --owner Ollornog`). Nobody has to build Caddy any more; the gateway image stays without a proxy. Only a DNS-01 setup
+  needs a build of its own: `--build-arg CADDY_EXTRA_MODULES=github.com/caddy-dns/<provider>`.
+- **`deploy/quickstart/`: gateway, Caddy and an example application in one stack**, configured through one `.env`
+  (`example.env`). TLS mode `TS_TLS`: `acme` (public domain), `dns` (DNS-01), `internal` (Caddy's CA with domain names),
+  `ip` (bare IP address, see `docs/HOME-NETWORK.md`). HSTS only where there is a domain; identity headers from the
+  browser stripped; OAuth for MCP clients included. README: "Gateway and Caddy in 5 minutes".
+- **Gateway: `TINYSESAM_OAUTH_RESOURCES`** switches on the OAuth authorization server (T-36) — the gateway had no way to.
+- Caddy and caddy-jwt are now Go dependencies in `deploy/forward-auth/caddy-gate/go.mod` (built without xcaddy, hashes in
+  `go.sum`) — **Dependabot bumps both**; before, the plugin version was a build argument nobody watched. The image
+  takes Alpine's security fixes at build time (`apk upgrade`): the official Caddy image carried fixable OpenSSL and
+  zlib findings.
+
+### Fixed — Caddy templates: a header missing from TinySesam's answer (T-58)
+
+- When the forward-auth answer did not carry a `Remote-*` header (e.g. `forward_headers` reduced), the application
+  received the literal text `{http.reverse_proxy.header.Remote-Email}` as its value. All Caddy templates now strip
+  `Remote-*` first and set each header only when the answer carries it. `deploy/home-network/Caddyfile` also got the
+  OAuth routes of T-36.
+
 ### Security — key management (H3: T-48, T-53, T-54, ADR-12, from the security review of 2026-11-20)
 
 - **One key per purpose, the gate key no longer derived from the vault key (T-48, ASVS 11.1.1/11.1.2/13.3.4).** Up to

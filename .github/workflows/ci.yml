@@ -108,11 +108,13 @@ jobs:
         run: python tests/test_site.py
 
   # Gate token through a REAL Caddy with caddy-jwt (ADR-9). Exactly the image from
-  # deploy/forward-auth/caddy-gate/Dockerfile is built — the same pins an operator builds. With
+  # deploy/forward-auth/caddy-gate/Dockerfile is built — the one release.yml publishes as tinysesam-caddy-gate. With
   # TINYSESAM_GATE_CADDY set the test is mandatory: a missing or wrong Caddy is
   # red, not a skip. In the other jobs the variable is absent, there the suite reports "skipped".
+  # Since 2026-11-20 the same image also runs the quickstart stack (deploy/quickstart) together with the gateway image
+  # of this commit — tests/test_quickstart.py, mandatory here with TINYSESAM_QUICKSTART_IMAGES.
   gate-caddy:
-    timeout-minutes: 20
+    timeout-minutes: 30
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -125,13 +127,20 @@ jobs:
         run: pip install -e . uvicorn httpx setuptools wheel
       - name: Build Caddy with caddy-jwt (deploy/forward-auth/caddy-gate)
         run: |
-          docker build -t caddy-gate deploy/forward-auth/caddy-gate
-          id="$(docker create caddy-gate)"
+          docker build -t tinysesam-caddy-gate:ci deploy/forward-auth/caddy-gate
+          id="$(docker create tinysesam-caddy-gate:ci)"
           docker cp "$id:/usr/bin/caddy" "$RUNNER_TEMP/caddy-gate"
           docker rm "$id"
           "$RUNNER_TEMP/caddy-gate" version
       - name: Gate token through Caddy
         run: TINYSESAM_GATE_CADDY="$RUNNER_TEMP/caddy-gate" python tests/test_gate_caddy.py
+      # The quickstart stack with both images of THIS commit (the published ones exist only after the release): TLS modes
+      # `ip` and `internal`, Remote-* and the strip, HSTS only with a domain, OAuth metadata, acceptance.sh — and the
+      # pinned example application, pulled as a Dependabot PR of the docker-compose entry /deploy/quickstart changes it.
+      - name: Quickstart stack (deploy/quickstart)
+        run: |
+          docker build -t tinysesam-gateway:ci .
+          TINYSESAM_QUICKSTART_IMAGES="tinysesam-gateway:ci tinysesam-caddy-gate:ci" python tests/test_quickstart.py
       # Acceptance of the reference stack deploy/forward-auth/docker-compose.yml (since 2026-10-11): This way a
       # required check also covers the Dependabot PRs of the docker-compose entry, and they merge themselves. The file must
       # resolve, every image in it must be pullable by tag and digest, and the Caddy FROM THE

@@ -1,0 +1,98 @@
+# TinySesam quickstart: the gateway, Caddy with caddy-jwt and an example application behind the gate — one stack,
+# nothing to build. From the repository root:
+#
+#   cp deploy/quickstart/example.env deploy/quickstart/.env      # then fill it in (provider, host names, TLS mode)
+#   docker compose -f deploy/quickstart/docker-compose.yml up -d
+#
+# Open https://<TS_APP_HOST>: you land at your provider's sign-in, then on the example application, which shows the
+# Remote-* headers TinySesam set. Replace the `app` service with your own application (it reads who is signed in from
+# Remote-User/-Name/-Email/-Groups/-Id) and set TS_APP_UPSTREAM if it does not listen on app:9000.
+#
+# What this stack leaves out, compared with the reference stack in deploy/forward-auth/: the fail2ban feed (a host
+# folder you create first), several applications with a client each, share paths. Take them from there.
+#
+# Images: both own images carry the version of this release (ghcr.io/ollornog/tinysesam and …/tinysesam-caddy-gate,
+# built, scanned and attested together by .github/workflows/release.yml); their digest only exists after the release,
+# the release log prints it — pin `image@sha256:…` for an immutable stack. The example application is pinned by
+# version AND digest; Dependabot bumps it (entry `docker-compose`, /deploy/quickstart).
+#
+# Every service runs hardened (`x-hardening`): read-only filesystem, no capabilities, no privilege gain — writing
+# happens only into the volumes and a tmpfs. tests/test_repo.py demands this for every service in this file.
+
+x-hardening: &hardening
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  tmpfs: [/tmp]
+
+services:
+  tinysesam:
+    <<: *hardening
+    image: ghcr.io/ollornog/tinysesam:v0.25.7
+    environment:
+      # `:?` ends `docker compose up` with this message instead of starting a gateway that cannot sign anyone in.
+      TINYSESAM_OIDC_ISSUER: ${TS_OIDC_ISSUER:?set TS_OIDC_ISSUER in deploy/quickstart/.env}
+      TINYSESAM_OIDC_CLIENT_ID: ${TS_OIDC_CLIENT_ID:?set TS_OIDC_CLIENT_ID in deploy/quickstart/.env}
+      TINYSESAM_OIDC_CLIENT_SECRET: ${TS_OIDC_CLIENT_SECRET:?set TS_OIDC_CLIENT_SECRET in deploy/quickstart/.env}
+      TINYSESAM_OIDC_SCOPES: ${TS_OIDC_SCOPES:-openid profile email}
+      TINYSESAM_BASE_URL: https://${TS_AUTH_HOST:?set TS_AUTH_HOST in deploy/quickstart/.env}
+      TINYSESAM_COOKIE_DOMAIN: ${TS_COOKIE_DOMAIN:-}
+      TINYSESAM_PROTECTED_HOSTS: ${TS_APP_HOST:?set TS_APP_HOST in deploy/quickstart/.env}
+      # Who may pass: without groups every account at the provider gets in (the start warns, B3-9).
+      TINYSESAM_ALLOWED_GROUPS: ${TS_ALLOWED_GROUPS:-}
+      TINYSESAM_OAUTH_RESOURCES: ${TS_OAUTH_RESOURCES:-}
+      # The network below — the real client address behind Caddy (see deploy/forward-auth/docker-compose.yml).
+      TINYSESAM_TRUSTED_PROXIES: "172.29.0.0/16"
+      TINYSESAM_HTTPS_MODE: "warn"                     # TLS is terminated by Caddy in front
+      TINYSESAM_DB: "/data/gateway.db"
+      TINYSESAM_PORT: "8000"
+    volumes:
+      - tinysesam-data:/data
+    networks: [quickstart]
+    restart: unless-stopped
+
+  caddy:
+    <<: *hardening
+    image: ghcr.io/ollornog/tinysesam-caddy-gate:v0.25.7
+    # The only capability that comes back: binding ports below 1024 (80/443).
+    cap_add: [NET_BIND_SERVICE]
+    ports:
+      - "80:80"
+      - "443:443"
+      - "8443:8443"        # only used with TS_TLS=ip (the application's port on a bare IP address)
+    environment:
+      TS_TLS: ${TS_TLS:-acme}
+      TS_AUTH_HOST: ${TS_AUTH_HOST}
+      TS_APP_HOST: ${TS_APP_HOST}
+      TS_APP_PORT: ${TS_APP_PORT:-443}
+      TS_APP_UPSTREAM: ${TS_APP_UPSTREAM:-app:9000}
+      TS_DNS_PROVIDER: ${TS_DNS_PROVIDER:-}
+      TS_DNS_API_TOKEN: ${TS_DNS_API_TOKEN:-}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # Certificates and, with TS_TLS=internal/ip, the root of Caddy's own CA — a new volume means a new root.
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - tinysesam
+    networks: [quickstart]
+    restart: unless-stopped
+
+  # Example application: answers with the request it received, headers included — so you SEE what TinySesam passes on.
+  app:
+    <<: *hardening
+    image: traefik/whoami:v1.12.0@sha256:c4717a8d1f0134a7444e24f881160e033991f23027c6c5a9a3f8fd22e70d1d44
+    command: ["--port", "9000"]
+    networks: [quickstart]
+    restart: unless-stopped
+
+networks:
+  quickstart:
+    ipam:
+      config:
+        - subnet: 172.29.0.0/16
+
+volumes:
+  tinysesam-data:
+  caddy-data:
+  caddy-config:

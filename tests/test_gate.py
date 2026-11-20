@@ -295,7 +295,11 @@ site = code[code.index("app.example.com {"):]
 for header_name in TinySesam.FORWARD_HEADERS_DEFAULT.values():
     assert re.search(rf"^\trequest_header -{header_name}\s*$", site, re.M), f"template does not remove {header_name}"
     assert re.search(rf"header_up {header_name} \{{http\.auth\.user\.ts_", site), f"fast path does not set {header_name}"
-    assert f"request_header {header_name} {{rp.header.{header_name}}}" in site, f"rollback path does not set {header_name}"
+    # T-58: set only when TinySesam's answer carries the header — a matcher on the placeholder, never unconditionally.
+    _set = re.search(rf"request_header (@\w+) {header_name} \{{rp\.header\.{header_name}\}}", site)
+    assert _set, f"rollback path does not set {header_name}"
+    assert re.search(rf"^\s*{_set.group(1)} not vars \{{rp\.header\.{header_name}\}} \"\"\s*$", site, re.M), \
+        f"rollback path sets {header_name} also when the answer does not carry it (T-58)"
 assert site.index("request_header -Remote-User") < site.index("route {"), "removal only after forwarding"
 assert re.search(r"^\t\t\tsign_alg EdDSA\s*$", site, re.M), "jwtauth without fixed algorithm"
 assert "from_cookies __Host-tinysesam_gate" in site

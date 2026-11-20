@@ -196,10 +196,14 @@ jobs:
           #                    Tags (Anmeldung, Push, SBOM, PyPI, Beglaubigung) fährt die Generalprobe
           #   pip            — .github/bau (Job `bauen`), .github/audit (`audit`)
           #   uv             — deploy/gateway (`abbild-probe`, `image`, `audit`), seit 2026-10-10 statt pip
-          #   docker         — das Basis-Abbild im Dockerfile (`abbild-probe`, `image`)
-          #   docker_compose — deploy/forward-auth (`gate-caddy`, Referenz-Stack) und .github/generalprobe
-          #                    (`generalprobe`: Registry und Paket-Server starten)
-          AUTO_OEKO: "github_actions pip uv docker docker_compose"
+          #   docker         — das Basis-Abbild im Dockerfile (`abbild-probe`, `image`), die Abbilder von caddy-gate
+          #                    (`gate-caddy`, `image-probe` mit Grype, `image`)
+          #   docker_compose — deploy/forward-auth (`gate-caddy`, Referenz-Stack), deploy/quickstart (`gate-caddy`,
+          #                    tests/test_quickstart.py) und .github/generalprobe (`generalprobe`: Registry und
+          #                    Paket-Server starten)
+          #   go_modules     — deploy/forward-auth/caddy-gate: Caddy und caddy-jwt (`gate-caddy` baut das Abbild und fährt
+          #                    tests/test_gate_caddy.py + tests/test_quickstart.py, `image-probe` scannt es)
+          AUTO_OEKO: "github_actions pip uv docker docker_compose go_modules"
           # Die Workflows, deren Jobs die Abnahme sind. Jeder läuft auf `pull_request` ohne Pfadfilter.
           PFLICHT_WORKFLOWS: "ci.yml release.yml audit.yml codeql.yml"
           # Abnahme nach dem Merge (PO 2026-10-11): Die Pages-Actions laufen nur auf main (deploy-pages hat keine
@@ -209,9 +213,11 @@ jobs:
           # Release automation (kit 0.47.0, PO 2026-11-15): a merged Dependabot PR that changes one of these paths changes
           # the gateway image (base image, gateway lock) — release.yml then cuts a patch release as a PR with
           # scripts/_release.py (all version places); the auto-merge accepts it when it changes only these files.
-          ABBILD_PFADE: "Dockerfile deploy/gateway/requirements.txt deploy/gateway/requirements.in"
+          # Since 2026-11-20 also deploy/forward-auth/caddy-gate/ — the image tinysesam-caddy-gate is published with every
+          # release, so a Caddy or caddy-jwt bump reaches users only through the next one.
+          ABBILD_PFADE: "Dockerfile deploy/gateway/requirements.txt deploy/gateway/requirements.in deploy/forward-auth/caddy-gate/"
           APP_PR: "release"
-          RELEASE_DATEIEN: "pyproject.toml tinysesam/__init__.py README.md i18n/README.de.md deploy/forward-auth/docker-compose.yml CHANGELOG.md"
+          RELEASE_DATEIEN: "pyproject.toml tinysesam/__init__.py README.md i18n/README.de.md deploy/forward-auth/docker-compose.yml deploy/quickstart/docker-compose.yml CHANGELOG.md"
           # --- je Repo: Ende
         run: |
           set -euo pipefail

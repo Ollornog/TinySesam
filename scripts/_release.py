@@ -4,7 +4,7 @@
     python3 scripts/_release.py 0.17.0          set the version, close the CHANGELOG
     python3 scripts/_release.py --check       check only, change nothing
 
-The version appears in six places (package, module, two READMEs several times, compose example) and
+The version appears in seven places (package, module, two READMEs several times, two compose files) and
 in the CHANGELOG. By hand this has worked so far because a test enforces it — but "works because
 a test complains" is not a procedure, it is a loop of error and correction. Milestone 1.0
 explicitly requires that a release runs through without manual steps
@@ -24,7 +24,7 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 # Everywhere a version appears. The READMEs name it several times (git ref, wheel URL, image tag,
 # verification commands) — so we replace, rather than patch a fixed line number.
 FILES = ["pyproject.toml", "tinysesam/__init__.py", "README.md", "i18n/README.de.md",
-           "deploy/forward-auth/docker-compose.yml"]
+           "deploy/forward-auth/docker-compose.yml", "deploy/quickstart/docker-compose.yml"]
 CHANGELOG = ROOT / "CHANGELOG.md"
 SEMVER = re.compile(r"^\d+\.\d+\.\d+$")
 
@@ -47,7 +47,8 @@ def check() -> int:
         text = (ROOT / name).read_text(encoding="utf-8")
         # An older version in an example is not a cosmetic flaw: it sends users to a state
         # that this release is just replacing.
-        old = {v for v in re.findall(r"tinysesam[:@/-]v?(\d+\.\d+\.\d+)", text)} - {version}
+        # `tinysesam-caddy-gate:v…` too: the quickstart pins both own images (since 2026-11-20).
+        old = {v for v in re.findall(r"tinysesam(?:-caddy-gate)?[:@/-]v?(\d+\.\d+\.\d+)", text)} - {version}
         if old:
             error.append(f"{name} still refers to {', '.join(sorted(old))}")
 
@@ -58,7 +59,7 @@ def check() -> int:
     for f in error:
         print(f"  ✗ {f}")
     if not error:
-        print(f"  ✓ everything on {version}: package, module, both READMEs, compose example, CHANGELOG")
+        print(f"  ✓ everything on {version}: package, module, both READMEs, both compose files, CHANGELOG")
     return len(error)
 
 

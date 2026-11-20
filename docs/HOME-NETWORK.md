@@ -21,9 +21,11 @@ has to reach your server.
 2. Point the names at your server **inside** your network: a local DNS entry in the router, Pi-hole/AdGuard,
    or a public A record with the private address. Some routers block answers with private addresses (DNS rebinding
    protection) — allow the domain there.
-3. Use a Caddy build with the module of your DNS provider ([caddy-dns](https://github.com/caddy-dns), built in with
-   `xcaddy` the same way as [`deploy/forward-auth/caddy-gate/Dockerfile`](../deploy/forward-auth/caddy-gate/Dockerfile)
-   does it) and give it an API token of the provider, scoped to that one zone:
+3. Use a Caddy build with the module of your DNS provider ([caddy-dns](https://github.com/caddy-dns)) — one build
+   argument to [`deploy/forward-auth/caddy-gate/Dockerfile`](../deploy/forward-auth/caddy-gate/Dockerfile):
+   `docker build --build-arg CADDY_EXTRA_MODULES=github.com/caddy-dns/<provider> -t caddy-gate-dns
+   deploy/forward-auth/caddy-gate` — and give it an API token of the provider, scoped to that one zone. The quickstart
+   stack ([`deploy/quickstart/`](../deploy/quickstart/)) does this with `TS_TLS=dns`; by hand it looks like this:
 
    ```caddyfile
    auth.home.example.com {
@@ -58,6 +60,11 @@ repository root:
 ```bash
 docker compose -f deploy/forward-auth/docker-compose.yml -f deploy/home-network/docker-compose.yml up -d
 ```
+
+Shorter: the quickstart stack ([`deploy/quickstart/`](../deploy/quickstart/)) does the same with `TS_TLS=ip` in its
+`.env` — the IP as `TS_AUTH_HOST` and `TS_APP_HOST`, `TS_APP_PORT=8443`, `TS_COOKIE_DOMAIN` empty — including an example
+application behind the gate. The steps below (exporting and trusting the root) apply to both; with the quickstart the
+service is called `caddy` in `deploy/quickstart/docker-compose.yml`.
 
 The sign-in runs at `https://192.0.2.10`, the protected application at `https://192.0.2.10:8443`. A bare IP has no
 subdomains, so applications are separated by port; cookies are not separated by port (RFC 6265, section 8.5), so one

@@ -111,6 +111,31 @@ updates:
     commit-message:
       prefix: "deploy"
 
+  # The quickstart stack (deploy/quickstart): its example application (traefik/whoami) is pinned by version and digest.
+  # The two own images carry the release version and move with the release, not with Dependabot.
+  - package-ecosystem: docker-compose
+    directory: /deploy/quickstart
+    cooldown:
+      default-days: 3
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: "deploy"
+
+  # Caddy and caddy-jwt in the image tinysesam-caddy-gate (deploy/forward-auth/caddy-gate): ordinary Go dependencies in
+  # go.mod, hashes in go.sum, built without xcaddy (main.go). Until 2026-11-20 the plugin version was an ARG for xcaddy that
+  # no Dependabot entry could see — bumped by hand, i.e. forgotten. Direct dependencies only (Caddy, caddy-jwt); indirect
+  # ones with a known vulnerability come as security updates (repo switch). The CI job `gate-caddy` builds the image from
+  # the PR and runs tests/test_gate_caddy.py + tests/test_quickstart.py, `image-probe` scans it (release.yml).
+  - package-ecosystem: gomod
+    directory: /deploy/forward-auth/caddy-gate
+    cooldown:
+      default-days: 3
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "deploy"
+
   # The throwaway targets of the dress rehearsal (release.yml on every PR). The rehearsal itself accepts their update:
   # if the registry or the package server does not start, `rehearsal` is red.
   # NOT under .github/ (2026-11-13): there Dependabot may not open a PR for docker files — the job of 2026-11-12 ended
@@ -126,8 +151,8 @@ updates:
       prefix: "ci"
 
   # The base image is pinned by digest; without Dependabot it would stand still forever.
-  # Plus the Caddy with caddy-jwt for the gate template (ADR-9). Its plugin version (a Go module,
-  # ARG CADDY_JWT) is not seen by Dependabot — it is bumped by hand, the CI job gate-caddy checks it.
+  # Plus the two images of tinysesam-caddy-gate (Go builder, Caddy base); Caddy and caddy-jwt themselves are in the
+  # `gomod` entry above. The CI job gate-caddy checks the result.
   #
   # DAILY, not monthly (2026-11-12): the cooldown of the docker ecosystem is measured against Docker Hub's
   # `tag_last_pushed` of the candidate tag (dependabot-core docker/update_checker.rb, apply_cooldown). Official images

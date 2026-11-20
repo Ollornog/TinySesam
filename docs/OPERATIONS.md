@@ -373,9 +373,10 @@ With `gate_token_enabled=True` (gateway: `TINYSESAM_GATE=1`) the proxy checks a 
 cookie itself and asks `/auth/forward` only when it is missing or expires. Template:
 `deploy/forward-auth/Caddyfile.gate`.
 
-- **Caddy needs the plugin caddy-jwt.** The official image does not have it; it is built from
-  `deploy/forward-auth/caddy-gate/Dockerfile` (Caddy version and plugin pinned). A Caddy without
-  the plugin does not start at all with the template (`unrecognized directive: jwtauth`).
+- **Caddy needs the plugin caddy-jwt.** The official image does not have it; every release publishes
+  `ghcr.io/ollornog/tinysesam-caddy-gate:<version>` with it (built from `deploy/forward-auth/caddy-gate/`, Caddy and
+  plugin pinned in its go.mod, Dependabot bumps both). A Caddy without the plugin does not start at all with the
+  template (`unrecognized directive: jwtauth`).
 - **Public keys for the proxy:** `/auth/gate/jwks.json` — the active gate key and the previous ones within their
   overlap, as a JSON Web Key Set (caddy-jwt `jwk_url`; public, cached five minutes). A rotation then needs nothing at
   the proxy. Or one fixed key: `tinysesam gate-key --db <file>` (`--jwks`: the set) — with the same environment as the

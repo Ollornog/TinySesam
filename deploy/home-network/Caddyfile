@@ -50,8 +50,20 @@ https://{$TS_HOME_IP:192.0.2.10} {
 https://{$TS_HOME_IP:192.0.2.10}:8443 {
 	tls internal
 
+	# ONLY this proxy sets the identity: every Remote-* the browser sends goes first (H1, T-58).
+	request_header -Remote-User
+	request_header -Remote-Name
+	request_header -Remote-Email
+	request_header -Remote-Groups
+	request_header -Remote-Id
+
 	# Sign-out at the application (T-22), past the gate.
 	handle /.tinysesam/* {
+		reverse_proxy {$TS_AUTH_UPSTREAM:127.0.0.1:8000}
+	}
+
+	# OAuth for MCP clients (T-36, optional): the resource metadata of this address come from TinySesam.
+	handle /.well-known/oauth-protected-resource* {
 		reverse_proxy {$TS_AUTH_UPSTREAM:127.0.0.1:8000}
 	}
 
@@ -62,13 +74,28 @@ https://{$TS_HOME_IP:192.0.2.10}:8443 {
 			header_up X-Forwarded-Method {method}
 			header_up X-Forwarded-Uri {uri}
 			# header_up X-TinySesam-Roles editors,admin   # only passes with one of these roles
+			# Each header only when the answer carries it (T-58).
 			@ok status 200
 			handle_response @ok {
-				request_header Remote-User {rp.header.Remote-User}
-				request_header Remote-Groups {rp.header.Remote-Groups}
-				request_header Remote-Email {rp.header.Remote-Email}
-				request_header Remote-Name {rp.header.Remote-Name}
-				request_header Remote-Id {rp.header.Remote-Id}
+				@ts_user not vars {rp.header.Remote-User} ""
+				@ts_groups not vars {rp.header.Remote-Groups} ""
+				@ts_email not vars {rp.header.Remote-Email} ""
+				@ts_name not vars {rp.header.Remote-Name} ""
+				@ts_id not vars {rp.header.Remote-Id} ""
+				request_header @ts_user Remote-User {rp.header.Remote-User}
+				request_header @ts_groups Remote-Groups {rp.header.Remote-Groups}
+				request_header @ts_email Remote-Email {rp.header.Remote-Email}
+				request_header @ts_name Remote-Name {rp.header.Remote-Name}
+				request_header @ts_id Remote-Id {rp.header.Remote-Id}
+			}
+			# An OAuth client gets TinySesam's 401 with its Bearer challenge, not a login page — before @denied.
+			@oauth {
+				status 401
+				header X-Tinysesam-Reason oauth
+			}
+			handle_response @oauth {
+				header WWW-Authenticate {rp.header.Www-Authenticate}
+				respond 401
 			}
 			@denied status 401
 			handle_response @denied {

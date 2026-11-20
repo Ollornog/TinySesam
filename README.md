@@ -1100,8 +1100,10 @@ gh attestation verify oci://ghcr.io/ollornog/tinysesam:v0.25.7 --owner Ollornog 
 ```
 
 A pass means: built by this repository's release workflow, from the commit the attestation names.
-No key to hand out and none to lose — the signature is tied to the workflow's own identity. A full example with Caddy
-lives in `deploy/forward-auth/docker-compose.yml`.
+No key to hand out and none to lose — the signature is tied to the workflow's own identity. The proxy comes along:
+`ghcr.io/ollornog/tinysesam-caddy-gate:v0.25.7` is Caddy with the caddy-jwt plugin, built, scanned and attested by the
+same release (verify it the same way). Running in five minutes: "Gateway and Caddy in 5 minutes" below; the reference
+stack with every option lives in `deploy/forward-auth/docker-compose.yml`.
 
 **Home network without a domain?** HTTPS is required outside `localhost`, so a bare IP address needs a CA of your own
 on every device — and passkeys do not work on an IP at all. `docs/HOME-NETWORK.md` recommends
@@ -1536,6 +1538,34 @@ single-route app.
 Programmatically: `TinySesamConfig.oidc_gateway(issuer=…, client_id=…, client_secret=…, base_url=…)`.
 A ready-made [`deploy/forward-auth/docker-compose.yml`](https://github.com/Ollornog/TinySesam/tree/main/deploy/forward-auth/) (gateway + Caddy) ships with it.
 
+### Gateway and Caddy in 5 minutes
+
+[`deploy/quickstart/`](https://github.com/Ollornog/TinySesam/tree/main/deploy/quickstart/) is one stack: the gateway,
+Caddy with caddy-jwt and an example application behind the gate — nothing to build, every image from a release or pinned
+by digest.
+
+```bash
+git clone https://github.com/Ollornog/TinySesam && cd TinySesam
+cp deploy/quickstart/example.env deploy/quickstart/.env && chmod 600 deploy/quickstart/.env
+$EDITOR deploy/quickstart/.env        # your OIDC provider, two host names, the TLS mode
+docker compose -f deploy/quickstart/docker-compose.yml up -d
+```
+
+Register `https://<TS_AUTH_HOST>/auth/oidc/callback` as redirect URL at the provider, open `https://<TS_APP_HOST>`: after
+the sign-in the example application shows the `Remote-*` headers TinySesam set. Then put your own service in place of
+`app`.
+
+- **TLS mode** `TS_TLS`: `acme` (public domain, Let's Encrypt), `dns` (a domain that resolves only at home, DNS-01 —
+  needs a Caddy with your DNS provider's module: `docker build --build-arg
+  CADDY_EXTRA_MODULES=github.com/caddy-dns/<provider> deploy/forward-auth/caddy-gate`), `internal` (domain names with
+  Caddy's own CA) or `ip` (a bare IP address — read
+  [`docs/HOME-NETWORK.md`](https://github.com/Ollornog/TinySesam/blob/main/docs/HOME-NETWORK.md) first).
+- **Included:** identity headers from the browser are stripped, HSTS wherever there is a domain, sign-out at the
+  application, OAuth for MCP clients (`TS_OAUTH_RESOURCES`). **Not included:** the fail2ban feed, several applications
+  with a client each, share paths, the gate token — take them from
+  [`deploy/forward-auth/`](https://github.com/Ollornog/TinySesam/tree/main/deploy/forward-auth/).
+- Every pull request runs this stack in the modes `ip` and `internal` (`tests/test_quickstart.py`).
+
 ### Gate token: the proxy checks for itself (ADR-9)
 
 In front of a third-party app the proxy otherwise asks `/auth/forward` for **every** request —
@@ -1547,7 +1577,8 @@ existing forward auth, so a request and its body are not lost.
 
 - **Proxy:** Caddy with the [caddy-jwt](https://github.com/ggicci/caddy-jwt) plugin — template
   [`deploy/forward-auth/Caddyfile.gate`](https://github.com/Ollornog/TinySesam/blob/main/deploy/forward-auth/Caddyfile.gate),
-  build [`deploy/forward-auth/caddy-gate/Dockerfile`](https://github.com/Ollornog/TinySesam/blob/main/deploy/forward-auth/caddy-gate/Dockerfile).
+  image `ghcr.io/ollornog/tinysesam-caddy-gate:v0.25.7` (built from
+  [`deploy/forward-auth/caddy-gate/`](https://github.com/Ollornog/TinySesam/tree/main/deploy/forward-auth/caddy-gate/)).
 - **Key:** a random Ed25519 key of its own (since T-48, ADR-12 — up to 0.25.x it was derived from the vault key):
   `TINYSESAM_GATE_KEY`, `gate_key_file`, otherwise kept in the database encrypted with the vault key. The proxy
   fetches the public keys from `/auth/gate/jwks.json` (`jwk_url`, a rotation needs nothing at the proxy) or takes
@@ -1791,7 +1822,7 @@ without extras (guards the stdlib-scrypt fallback), and a browser job that also 
 
 ## Status
 
-**94 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
+**95 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
 
 Implemented and tested: password/TOTP/sessions/roles, remember-me, step-up and per-route MFA,
 factor chains, personal PIN, shared resource secrets, magic links + mailer hook, registration and
