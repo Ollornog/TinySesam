@@ -2704,6 +2704,30 @@ _MEASURED |= {"_lockout_notice", "_send"}
 # Likewise the notice to the OLD address after a change (`confirm_email_change` with the inner
 # `notice`, ASVS 6.3.7) — without a link; tests/test_self_service.py checks that (no "://").
 _MEASURED |= {"confirm_email_change", "notice", "_change_request_notice"}
+# The admin-issued sign-in link (T-33, `create_signin_link`) takes NO base at all — only
+# `cfg.base_url`. It does not fit `_paths` (which hands every sender a base); measured here: with
+# base_url the link carries it (subpath exactly once), without it `ConfigError` and no token.
+_a_link, _ = _app(magiclink_enabled=True, magiclink_self_request=False, passkey_enabled=False,
+                  base_url=_UNDER, trusted_redirect_hosts=["portal.example.com", EVIL])
+_a_link.create_user("victim", password="Secret12345!abc")
+_link_uid = _a_link.store.get_user_by_name("victim")["id"]
+_link_url = _a_link.create_signin_link(_link_uid)["url"]
+r.check("create_signin_link: the link is base_url, subpath exactly once",
+        _link_url.startswith(_UNDER + "/auth/magic/") and urlsplit(_link_url).path.count("/portal") == 1,
+        _link_url[:120])
+_a_link.cfg.base_url = ""
+_tokens_before = _token_lines(_a_link)
+try:
+    _a_link.create_signin_link(_link_uid)
+    _link_refused = False
+except ConfigError:
+    _link_refused = True
+finally:
+    _a_link.cfg.base_url = _UNDER
+r.check("create_signin_link without base_url: ConfigError, no token (no derived base, no Host header)",
+        _link_refused and _token_lines(_a_link) == _tokens_before,
+        f"refused={_link_refused}, tokens {_tokens_before}->{_token_lines(_a_link)}")
+_MEASURED |= {"create_signin_link"}
 _sender = set()
 for _file in sorted((ROOT / "tinysesam").glob("*.py")):
     _tree = _ast.parse(_file.read_text(encoding="utf-8"))

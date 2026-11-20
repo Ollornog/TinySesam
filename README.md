@@ -36,7 +36,8 @@ Hang one class in front of your app, done: login page, sessions and route guards
 - 🌐 **OIDC** (generic IdProvider: PocketID, Keycloak, Entra/Azure AD, …)
 - 🪪 **SAML 2.0** (SP login against ADFS, Okta, Keycloak, …)
 - 🗂️ **LDAP / Active Directory** (password against a directory bind)
-- ✉️ **Magic-link** (one-time login by email)
+- ✉️ **Magic-link** (one-time login by email — or handed out by the admin, without a mailer)
+- 📱 **Cross-device sign-in** (QR code or short code, approved on a device that is already signed in)
 - 📱 **TOTP** as a 2nd factor *on top* (+ **recovery codes**; passkeys already count as full-strength)
 
 **Combinable in order:**
@@ -223,6 +224,9 @@ wherever the browser allows it — read them, don't spell the names out.
 | `POST /auth/passkey/{register,login}/{begin,finish}` | WebAuthn *(when enabled)* |
 | `GET /auth/passkey/list` · `POST /auth/passkey/delete` | manage passkeys |
 | `GET /auth/magic/{token}` | redeem a sign-in link *(when magic links are on)* |
+| `GET/POST /auth/magic/request` | request a sign-in link by email *(magic links on and `magiclink_self_request`)* |
+| `POST /auth/qr/start` · `/auth/qr/status` · `/auth/qr/finish` | new device: open, poll and collect a cross-device sign-in *(`qr_login_enabled`)* |
+| `GET/POST /auth/qr/approve` · `POST /auth/qr/deny` | signed-in device: approve or refuse it *(`qr_login_enabled`)* |
 | `GET /auth/verify/{token}` · `GET /auth/invite/{token}` | confirm an address · accept an invitation |
 | `GET /auth/logout` · `GET /auth/me` | log out · current user (JSON) |
 
@@ -253,6 +257,36 @@ or turned TOTP off with its own key gets a 403 with a translated reason
 do it in-process through the Python API (`auth.set_pin(uid, …)`, `auth.totp_disable(uid)`), which
 is the same code path the routes use, minus the HTTP surface.
 
+## Sign-in by link and from another device
+
+Three ways in without typing a password, all built on the same one-time sign-in token
+(`magic_token`, purpose `login`) — so the same rules everywhere: single use, short validity, and
+**the second factor is still demanded**: an account with TOTP or a passkey must pass it after the
+link (`magiclink_require_second_factor`, default on). Sign-in by link counts as factor `magic`.
+
+- **Link by email** (`magiclink_enabled=True`, `magiclink_self_request=True`, a mailer): the login
+  page offers "email me a sign-in link". Unchanged.
+- **Link from the admin, without mail** (`magiclink_enabled=True`): the admin panel has a
+  *Sign-in link* button per user (JSON: `POST <admin>/api/users/{id}/signin-link`, body
+  `{"ttl_min": 60}`, 1 minute to 7 days, default `magiclink_ttl_min`). The link is shown **once**,
+  as a link and as a QR code (extra `[qr]`), to hand over by any channel; it works without a mailer.
+  It is discarded with the account's other open links when the account is disabled or its password
+  is reset. Audit `signin_link_issue` with the admin as `actor=`. In code:
+  `auth.create_signin_link(user_id, ttl_min=None, next="/")` → `{url, expires_at, qr}`.
+  The address comes **only** from `base_url`, never from the request's `Host` header.
+- **Links only from the admin:** `magiclink_self_request=False`. Then `/auth/magic/request` answers
+  404 and the login page has no "send me a link" button — links the admin or your code issued still
+  redeem. No mailer needed (`config_check` asks for one only with the self-request).
+- **Cross-device (QR code)** (`qr_login_enabled=True`): the new device shows a QR code and a short
+  code (*Sign in with another device*). On a device where you are signed in, scan it or open
+  `/auth/qr/approve` and type the code: the page names the asking device (user agent, IP, age)
+  before you approve. The new device then gets **its own** session. Valid `qr_login_ttl_sec`
+  (default 120 s), single use, rate-limited, audited (`qr_login_approve`, `qr_login_deny`,
+  `qr_login`). Only a full interactive session approves — no API key, no half sign-in. Whoever only
+  sees the code on the screen gets nothing: the session goes to the device that opened the
+  request (it holds a secret that is never displayed). The QR code needs `base_url` and the extra
+  `[qr]`; without them only the short code is shown. No mailer needed.
+
 ## Configuration (`TinySesamConfig`, excerpt)
 
 | Field | Default | |
@@ -269,6 +303,8 @@ is the same code path the routes use, minus the HTTP surface.
 | `cookie_domain` · `trusted_redirect_hosts` | `""` · `[]` | SSO across subdomains · allowed absolute `?next=` targets |
 | `security_log` | `""` | file for the fail2ban logger (empty = logger only) |
 | `forward_auth_enabled` · `forward_headers` | `False` · `{}` | forward-auth endpoint · which headers it sets (empty = `Remote-*`) |
+| `magiclink_enabled` · `magiclink_self_request` · `magiclink_ttl_min` | `False` · `True` · `15` | sign-in links redeem · anyone may request one by email (needs a mailer; `False` = links only from the admin or app code) · validity |
+| `qr_login_enabled` · `qr_login_ttl_sec` | `False` · `120` | cross-device sign-in (QR code needs `base_url` and the extra `[qr]`) · validity of a request |
 
 `TinySesamConfig` is a dataclass, and that is part of the promise: `dataclasses.fields(TinySesamConfig)`
 lists every field — handy for passing on only the keys it knows from your own settings. Every
@@ -1005,6 +1041,8 @@ Built-in panel at **`/auth/admin`** (`is_admin` only), embeddable with no extra 
 
 - **Users & service accounts:** create, **explicitly disable/enable** (`disabled` — account stays, login blocked, sessions end immediately; self-lockout protection; in code: `auth.set_disabled`), password reset, set roles/admin.
 - **API keys** per user: generate (shown once) / revoke.
+- **Sign-in link** per user (with `magiclink_enabled`): one-time link plus QR code, shown once,
+  works without a mailer — see [Sign-in by link and from another device](#sign-in-by-link-and-from-another-device).
 - **Sessions:** view active ones + end them.
 - **Hardening:** tune the thresholds (attempts/lockout time/rate limit) live.
 - **Version:** the running version plus a note on how updates work — there is **no “update
@@ -1424,7 +1462,8 @@ Building blocks for pages you build yourself — signatures and descriptions in
   `resource_unlocked`, `all_security`, `admin_exists`, `admin_claim_token`, `audit`,
   `FEDERATED_SOURCES`, `NAME_BINDING_REFUSALS`.
 - **Mail and token flows:** `mail_configured`, `send_mail`, `create_magic_token` → `magic_url` →
-  `peek_magic` / `redeem_magic`, `TOKEN_PATHS`, `require_public_base`.
+  `peek_magic` / `redeem_magic`, `TOKEN_PATHS`, `require_public_base`, `create_signin_link` (one-time
+  sign-in link without mail, address from `base_url`).
 - **Proxy configuration for the gate token:** `gate_public_key` (`sign_key` for caddy-jwt, same as
   `tinysesam gate-key`), `gate_issuer` (`issuer_whitelist`).
 - **Your own routes and extension points:** `client_ip` (the real client address behind
@@ -1490,7 +1529,7 @@ without extras (guards the stdlib-scrypt fallback), and a browser job that also 
 
 ## Status
 
-**81 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
+**82 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
 
 Implemented and tested: password/TOTP/sessions/roles, remember-me, step-up and per-route MFA,
 factor chains, personal PIN, shared resource secrets, magic links + mailer hook, registration and

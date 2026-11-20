@@ -190,7 +190,14 @@ class TinySesamConfig:
     resource_cookie: str = "tinysesam_runlock" # cookie name for unlocked resources
 
     # --- Magic link (one-time login/access by email) ---
-    magiclink_enabled: bool = False   # sign-in by one-time link — needs a mailer
+    #: Sign-in links redeem (`/auth/magic/{token}`) — sent by mail on request, issued by an admin
+    #: in the panel, or created by app code (`create_signin_link`). Whether anyone may request one by
+    #: mail on the login page is the separate switch `magiclink_self_request` (T-33).
+    magiclink_enabled: bool = False   # sign-in by one-time link (mailed, admin-issued or app-issued)
+    #: With `magiclink_enabled`: the login page offers "email me a sign-in link" and
+    #: `/auth/magic/request` exists — this part needs a mailer. `False` = links only from the admin
+    #: panel or app code: the request route is gone (404), the button too, issued links still redeem.
+    magiclink_self_request: bool = True
     magiclink_ttl_min: int = 15           # validity of a one-time link
     #: ASVS 6.3.6 (PO decision 2026-09-24): If an account has a second factor (TOTP or
     #: passkey), the sign-in link alone does not sign in fully — the factor is demanded afterwards.
@@ -199,6 +206,16 @@ class TinySesamConfig:
     #: Applies to the global chain and every route chain (`require(factors=["magic"])`, G10).
     #: `False` = the link always suffices (behaviour up to 0.20.x in chains like `["magic"]`).
     magiclink_require_second_factor: bool = True
+
+    # --- Cross-device sign-in (QR code, T-33) ---
+    #: A device without a session shows a QR code and a short code on the login page; a device on
+    #: which the user is already signed in scans it (or types the code), sees which device and IP ask,
+    #: and approves. The new device then gets its own session. Counts as factor `magic`: the
+    #: second-factor rule of the sign-in link applies (`magiclink_require_second_factor`). No mailer
+    #: needed. The QR code needs `base_url` (absolute address) and the extra `[qr]`; without
+    #: either, only the short code is shown.
+    qr_login_enabled: bool = False
+    qr_login_ttl_sec: int = 120           # validity of a cross-device request (single use)
 
     # --- Self-service: address and username (PO decision 2026-09-25) ---
     #: Everyone changes their own email address (account page, fresh step-up). The new one counts only

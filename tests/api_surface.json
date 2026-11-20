@@ -217,6 +217,10 @@
       "sig": "(username, roles=None, display_name=None) -> 'int'",
       "tier": "A"
     },
+    "create_signin_link": {
+      "sig": "(user_id, ttl_min=None, next='/') -> 'dict'",
+      "tier": "B"
+    },
     "create_user": {
       "sig": "(username, password=None, is_admin=False, roles=None, display_name=None, email=None, is_service=False, email_verified: 'bool' = True, *, self_chosen_name: 'bool' = False) -> 'int'",
       "tier": "A"
@@ -821,7 +825,7 @@
     },
     "PAGES": {
       "tier": "B",
-      "value": "('account', 'error', 'forgot', 'gate_logged_out', 'gate_logout', 'gateway_home', 'login', 'logout', 'magic_confirm', 'magic_invalid', 'magic_request', 'pin', 'reauth', 'register', 'reset', 'resource_unlock', 'totp', 'totp_setup')"
+      "value": "('account', 'error', 'forgot', 'gate_logged_out', 'gate_logout', 'gateway_home', 'login', 'logout', 'magic_confirm', 'magic_invalid', 'magic_request', 'pin', 'qr_approve', 'qr_login', 'reauth', 'register', 'reset', 'resource_unlock', 'totp', 'totp_setup')"
     },
     "RECOVERY_BYTES": {
       "since": "0.22.0",
@@ -1280,6 +1284,10 @@
       "field": "bool = True",
       "tier": "A"
     },
+    "magiclink_self_request": {
+      "field": "bool = True",
+      "tier": "A"
+    },
     "magiclink_ttl_min": {
       "field": "int = 15",
       "tier": "A"
@@ -1406,6 +1414,14 @@
     },
     "pin_min_length": {
       "field": "int = 4",
+      "tier": "A"
+    },
+    "qr_login_enabled": {
+      "field": "bool = False",
+      "tier": "A"
+    },
+    "qr_login_ttl_sec": {
+      "field": "int = 120",
       "tier": "A"
     },
     "recovery_code_count": {
@@ -1986,6 +2002,12 @@
       ],
       "tier": "B"
     },
+    "GET /auth/qr/approve": {
+      "keys": [
+        "query:code"
+      ],
+      "tier": "B"
+    },
     "GET /auth/reauth": {
       "keys": [
         "query:error",
@@ -2219,6 +2241,42 @@
       "keys": [],
       "tier": "B"
     },
+    "POST /auth/qr/approve": {
+      "keys": [
+        "form:_csrf",
+        "form:code"
+      ],
+      "tier": "B"
+    },
+    "POST /auth/qr/deny": {
+      "keys": [
+        "form:_csrf",
+        "form:code"
+      ],
+      "tier": "B"
+    },
+    "POST /auth/qr/finish": {
+      "keys": [
+        "form:_csrf",
+        "form:code",
+        "form:secret"
+      ],
+      "tier": "B"
+    },
+    "POST /auth/qr/start": {
+      "keys": [
+        "form:_csrf",
+        "form:next"
+      ],
+      "tier": "B"
+    },
+    "POST /auth/qr/status": {
+      "keys": [
+        "form:code",
+        "form:secret"
+      ],
+      "tier": "B"
+    },
     "POST /auth/reauth": {
       "keys": [
         "form:_csrf",
@@ -2357,6 +2415,10 @@
       "tier": "B"
     },
     "POST <admin>/api/users/{uid}/roles": {
+      "keys": [],
+      "tier": "B"
+    },
+    "POST <admin>/api/users/{uid}/signin-link": {
       "keys": [],
       "tier": "B"
     },

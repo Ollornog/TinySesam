@@ -85,6 +85,43 @@ for _ in range(100):
 else:
     raise RuntimeError("Showcase does not start")
 
+# T-33: a second, small app for the sign-in alternatives — cross-device sign-in and the admin's
+# sign-in link need switches the showcase (and the website built from the same config) does not
+# carry. Real CSRF, strict CSP, its own cookie prefix: both servers live on 127.0.0.1, and cookies
+# do not tell ports apart — without the prefix this app's sign-in would replace the showcase's.
+from fastapi import FastAPI as _FastAPI          # noqa: E402
+from tinysesam import TinySesam as _TinySesam, TinySesamConfig as _TinySesamConfig   # noqa: E402
+
+_t33_sock = _server_socket()
+T33 = f"http://127.0.0.1:{_t33_sock.getsockname()[1]}"
+_t33_db = os.path.join(tempfile.mkdtemp(), "t33.db")
+t33 = _TinySesam(_TinySesamConfig(
+    db_path=_t33_db, cookie_secure=False, cookie_prefix="tst33_", passkey_enabled=False, lang="en",
+    magiclink_enabled=True, magiclink_self_request=False, qr_login_enabled=True, base_url=T33))
+t33.set_security("password_min_length_single_factor", 8)
+t33.ensure_admin("boss", "boss-pw-12345")
+t33.create_user("carol", password="carol-pw-12345")
+_t33_app = _FastAPI()
+_t33_app.include_router(t33.router())
+
+
+@_t33_app.get("/", include_in_schema=False)
+def _t33_home():
+    from fastapi.responses import HTMLResponse
+    return HTMLResponse("<!doctype html><link rel=icon href=\"data:,\"><title>t33</title><p>home</p>")
+
+
+_t33_server = uvicorn.Server(uvicorn.Config(_t33_app, log_level="critical"))
+threading.Thread(target=lambda: _t33_server.run(sockets=[_t33_sock]), daemon=True).start()
+for _ in range(100):
+    try:
+        urllib.request.urlopen(f"{T33}/auth/login", timeout=1)
+        break
+    except Exception:
+        time.sleep(0.1)
+else:
+    raise RuntimeError("T-33 app does not start")
+
 _profile = tempfile.mkdtemp()
 
 # Do NOT send Chrome's output to DEVNULL: if it dies at startup, the error message used to
@@ -501,6 +538,97 @@ async def run():
                       and not (f[0] == 403 and f[1].endswith("/auth/sessions/revoke"))]
         assert not unexpected, f"broken requests: {unexpected[:3]}"
 
+        await t33_alternatives(p)
+
+
+async def t33_alternatives(p):
+    """T-33 in a real browser: the polling script of the new device, the approval page and the
+    admin's sign-in link — each under the strict nonce CSP, with real CSRF."""
+    import re
+    from fastapi.testclient import TestClient
+
+    async def go(path, wait=1.4):
+        await p.cmd("Page.navigate", url=T33 + path)
+        await asyncio.sleep(wait)
+        for _ in range(60):
+            if await p.js("document.readyState") == "complete":
+                break
+            await asyncio.sleep(0.25)
+
+    async def me():
+        r = await p.cmd("Runtime.evaluate", awaitPromise=True, returnByValue=True, expression=(
+            "fetch('/auth/me',{headers:{Accept:'application/json'}})"
+            ".then(r=>r.ok?r.json():{}).then(j=>j.username||'')"))
+        return r.get("result", {}).get("value")
+
+    failed_before = len(p.failed)
+    # The QR image needs the extra `[qr]`; the browser job installs the core only. Then the page
+    # must show the short code (and the panel the link) without an image — measured either way.
+    try:
+        import qrcode  # noqa: F401
+        has_qr = True
+    except ImportError:
+        has_qr = False
+    boss = t33.store.get_user_by_name("boss")
+
+    # 1) The browser is the NEW device: start, the script polls; the other device approves.
+    await go("/auth/login")
+    assert await p.js("!!document.querySelector('form.qrstart button')"), "no cross-device button"
+    assert not await p.js("!!document.querySelector('a[href*=\"/auth/magic/request\"]')"), \
+        "self-request is off — the link button must be gone"
+    await p.click("form.qrstart button")
+    await asyncio.sleep(0.6)
+    code = await p.js("document.querySelector('#tsqr [name=code]').value")
+    assert re.fullmatch(r"[A-Z0-9]{8}", code or ""), code
+    assert await p.js("!!document.querySelector('img.qr')") == has_qr, \
+        f"QR image {'missing although [qr] is installed' if has_qr else 'without the extra [qr]'}"
+    shown = await p.js("document.querySelector('.qrcode').textContent")
+    assert shown == f"{code[:4]}-{code[4:]}", shown
+    assert await p.js("document.body.innerText.indexOf(document.querySelector('#tsqr [name=secret]').value)") == -1, \
+        "the device secret must never be visible"
+    assert t33._qr_approve(code, boss), "approval (other device) failed"
+    for _ in range(30):                      # the script polls every 2 s and then submits by itself
+        await asyncio.sleep(0.5)
+        if await p.js("location.pathname") != "/auth/qr/start":
+            break
+    await asyncio.sleep(0.8)
+    assert await me() == "boss", f"new device not signed in: {await me()!r} at {await p.js('location.href')!r}"
+    viol = await p.js("JSON.stringify(window.__csp===undefined?['(no Listener)']:window.__csp)")
+    assert viol == "[]", f"CSP violation on the cross-device page: {viol}"
+    print(f"  cross-device: {'QR' if has_qr else 'short-code'} page, the poll script signs the new device in by "
+          "itself, strict CSP")
+
+    # 2) The browser is the APPROVING device: a second device opens a request, the page names it.
+    other = TestClient(_t33_app)
+    page = other.get("/auth/login").text
+    tok = re.search(r"name=_csrf value='([^']+)'", page).group(1)
+    r = other.post("/auth/qr/start", data={"_csrf": tok, "next": "/"}, headers={"User-Agent": "T33-Probe/2.0"})
+    code2 = re.search(r"name=code value='([A-Z0-9]{8})'", r.text).group(1)
+    await go(f"/auth/qr/approve?code={code2}")
+    assert "T33-Probe/2.0" in await p.js("document.querySelector('table.qrinfo').innerText"), \
+        "the approval page must name the asking device"
+    await p.click("form[action$='/auth/qr/approve'] button")
+    assert t33._qr_peek(code2)["user_id"] == boss["id"], "approve button without effect"
+    viol = await p.js("JSON.stringify(window.__csp===undefined?['(no Listener)']:window.__csp)")
+    assert viol == "[]", f"CSP violation on the approval page: {viol}"
+    print("  cross-device: the approval page names the device, the button approves (CSRF, CSP)")
+
+    # 3) Admin panel: the sign-in link button shows link and QR code once.
+    carol = t33.store.get_user_by_name("carol")["id"]
+    await go("/auth/admin", wait=1.5)
+    await p.js("window.prompt=()=>'30';window.alert=m=>{window.__alert=m};true")
+    await p.click(f'[data-on=link][data-a^="[{carol},"]')
+    url = await p.js(f"(document.getElementById('lk{carol}')||{{}}).value||''")
+    assert url.startswith(T33 + "/auth/magic/"), f"no link shown: {url!r} {await p.js('window.__alert')!r}"
+    assert await p.js("!!document.querySelector('#view img.qr')") == has_qr, \
+        f"panel QR image {'missing although [qr] is installed' if has_qr else 'without the extra [qr]'}"
+    assert t33.store.open_token(carol, "login"), "no open sign-in token for the account"
+    viol = await p.js("JSON.stringify(window.__csp===undefined?['(no Listener)']:window.__csp)")
+    assert viol == "[]", f"CSP violation in the admin panel: {viol}"
+    assert not p.console, f"console errors: {p.console[:2]}"
+    assert p.failed[failed_before:] == [], f"broken requests: {p.failed[failed_before:][:3]}"
+    print(f"  admin panel: sign-in link button shows the link{' + QR code' if has_qr else ''} once (strict CSP)")
+
 
 try:
     asyncio.run(run())
@@ -508,6 +636,7 @@ try:
 finally:
     _chrome.terminate()
     _server.should_exit = True
+    _t33_server.should_exit = True
     shutil.rmtree(_profile, ignore_errors=True)
     # Also clean up the Chrome log file — the test must leave nothing behind.
     try:
@@ -520,3 +649,4 @@ finally:
             os.unlink(_db + suffix)
         except OSError:
             pass  # file did not exist — not an error when cleaning up
+    shutil.rmtree(os.path.dirname(_t33_db), ignore_errors=True)

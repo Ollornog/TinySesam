@@ -412,6 +412,31 @@ def build_admin_router(auth) -> APIRouter:
                                      is_admin=bool(b.get("is_admin")), ttl_min=b.get("ttl_min"))
             return {"url": res["url"], "emailed": bool(email and auth.mail_configured())}
 
+    # ---------- Sign-in link without mail (T-33) ----------
+    # The admin hands an account a one-time link by any channel — no mailer needed. Same token as
+    # the mailed link (purpose `login`), so the same rules: single use, second factor
+    # (`magiclink_require_second_factor`), discarded on disable and on password reset.
+    if cfg.magiclink_enabled:
+        @ar.post("/api/users/{uid}/signin-link")
+        async def user_signin_link(request: Request, uid: int):
+            person = guard(request)
+            owner_protection(person, uid)      # an owner's link is issued only by an owner
+            # A sign-in link is a credential, like an API key: issued by a human in a session,
+            # never by a key (same rule as key creation above, R6-6).
+            if person.get("_via") != "session":
+                raise HTTPException(403, auth.t("api.link_needs_session"))
+            b = await auth.json_body(request)
+            if auth.store.get_user(uid) is None:
+                raise HTTPException(404, auth.t("api.not_found"))
+            # The audit line (`signin_link_issue`, admin as actor=) is written by `create_signin_link`.
+            try:
+                return auth.create_signin_link(uid, ttl_min=b.get("ttl_min"))
+            except ConfigError:
+                # Only `base_url` builds the address (R4-01) — missing it is the setup, not the input.
+                raise HTTPException(503, auth.t("api.base_missing"))
+            except ValueError as e:
+                raise HTTPException(400, str(e))
+
     # ---------- Shared resource secrets ----------
     if cfg.resource_locks_enabled:
         @ar.get("/api/resources")
@@ -549,7 +574,8 @@ _KEYS = (
     "passkeys no_passkeys confirm.delete confirm.pk_delete confirm.owner_on confirm.owner_off "
     "err.email err.generic confirm.disable confirm.enable confirm.revoke "
     "prompt.pw prompt.username pw_set roles_groups no_roles api_keys create_key last_used expires "
-    "never_expires revoke key_once end_session hardening hardening_owner version installed update_note"
+    "never_expires revoke key_once end_session hardening hardening_owner version installed update_note "
+    "btn.link signin_link link_once prompt.link_ttl"
 ).split()
 
 
@@ -585,6 +611,8 @@ def render_panel(auth, base: str, warn: str = "", prefix: str = "") -> str:
             .replace("__ROLES__", json.dumps(list(cfg.available_roles)))
             .replace("__REQMAIL__", "true" if (cfg.signup_require_email or
                                               cfg.login_identifier == "email") else "false")
+            .replace("__LINKS__", "true" if cfg.magiclink_enabled else "false")
+            .replace("__LINKTTL__", str(int(cfg.magiclink_ttl_min)))
             .replace("__LANG__", cfg.lang)
             # `ensure_ascii=False`: the page is UTF-8, „Härtung" belongs in as „Härtung",
             # not as `Härtung`. Only `<` is masked — an own translation
@@ -637,6 +665,7 @@ body{font-family:var(--ts-font);margin:0;background:var(--ts-bg);color:var(--ts-
 .tsadmin .w120{width:120px}.tsadmin .w150{width:150px}.tsadmin .w200{width:200px}
 .tsadmin .w230{width:230px}.tsadmin .w280{width:280px}.tsadmin .mr12{margin-right:12px}
 .tsadmin .small{font-size:12px}
+.tsadmin img.qr{display:block;margin:10px 0;width:180px;height:180px;background:#fff;padding:6px;border-radius:6px}
 .tsadmin code{background:var(--ts-field-bg);border:1px solid var(--ts-field-line);border-radius:5px;
   padding:2px 6px;font-size:12px}
 __BRANDCSS__
@@ -652,6 +681,8 @@ const B="__BASE__";                                    // mount point (freely ch
 const ROLES=__ROLES__;                                 // known roles/groups (config.available_roles)
 const REQMAIL=__REQMAIL__;                             // config.signup_require_email (e-mail required)
 const L=__I18N__;                                      // texts in config.lang — see messages.py
+const LINKS=__LINKS__;                                 // config.magiclink_enabled: admin may issue sign-in links
+const LINKTTL=__LINKTTL__;                             // config.magiclink_ttl_min: default validity of a link
 document.getElementById("applink").textContent="← "+L.app;
 document.getElementById("outlink").textContent=L.logout;
 const TABS=[["users",L["tab.users"]],["sessions",L["tab.sessions"]],["security",L["tab.security"]],["audit",L["tab.audit"]]];
@@ -702,6 +733,7 @@ async function users(){
         <button class=sec ${on("roles",u.id,(u.roles||[]).join(','),u.is_admin?1:0)}>${esc(L["btn.roles"])}</button>
         <button class=sec ${on("keys",u.id,u.username)}>${esc(L["btn.keys"])}</button>
         <button class=sec ${on("pks",u.id,u.username)}>${esc(L["btn.passkeys"])}</button>
+        ${LINKS&&!u.is_service&&!u.disabled?`<button class=sec ${on("link",u.id,u.username)}>${esc(L["btn.link"])}</button>`:''}
         <button class=sec ${on("own",u.id,!u.is_owner)}>${esc(u.is_owner?L["btn.owner_off"]:L["btn.owner_on"])}</button>
         <button class=warn ${on("deluser",u.id)}>${esc(L["btn.delete"])}</button>
       </td></tr><tr id=r${u.id}></tr><tr id=k${u.id}></tr>`).join("")+`</table>`);
@@ -743,6 +775,14 @@ async function pks(id,name){const ps=await g(`/api/users/${id}/passkeys`);
   document.getElementById("k"+id).innerHTML=`<td colspan=5><div class=card><h2>${esc(L.passkeys)} · ${esc(name)}</h2>
     <table>`+(ps.length?ps.map(c=>`<tr><td>${esc(c.name||'')}</td><td>${dt(c.created_at)}</td><td>${esc(L.last_used)} ${dt(c.last_used)}</td>
       <td><button class=warn ${on("delpk",id,c.id,name)}>${esc(L.revoke)}</button></td></tr>`).join(""):`<tr><td class=muted>${esc(L.no_passkeys)}</td></tr>`)+`</table></div></td>`}
+// Sign-in link without mail (T-33): shown ONCE — the server keeps only the hash.
+async function link(id,name){const v=prompt(L["prompt.link_ttl"],String(LINKTTL));if(v===null)return;
+  const r=await p(`/api/users/${id}/signin-link`,{ttl_min:v.trim()?parseInt(v,10):null});if(rejected(r))return;
+  document.getElementById("k"+id).innerHTML=`<td colspan=5><div class=card><h2>${esc(L.signin_link)} · ${esc(name)}</h2>
+    <div class="muted small">${esc(L.link_once)}</div>
+    <div class=row><input id=lk${id} readonly class=w280 value="${esc(r.url)}"></div>
+    ${r.qr?`<img class=qr alt="" src="${esc(r.qr)}">`:""}
+    <div class="muted small">${esc(L.expires)} ${dt(r.expires_at)}</div></div></td>`}
 async function delpk(uid,cid,name){if(confirm(L["confirm.pk_delete"])){rejected(await p(`/api/users/${uid}/passkeys/${cid}/delete`));pks(uid,name)}}
 async function deluser(id){if(!confirm(L["confirm.delete"]))return;if(!rejected(await p(`/api/users/${id}/delete`)))users()}
 async function revk(kid,uid,name){if(confirm(L["confirm.revoke"])){rejected(await p(`/api/keys/${kid}/revoke`));keys(uid,name)}}
@@ -770,7 +810,7 @@ async function audit(){const a=await g("/api/audit?limit=120");
 
 // One delegated listener for all buttons, including those loaded later via innerHTML. Only names
 // from ACT are callable — data-on selects an action, it does not name arbitrary code.
-const ACT={go,mkuser,own,dis,pw,ren,roles,saveroles,clr,keys,mkkey,revk,revs,savesec,pks,delpk,deluser};
+const ACT={go,mkuser,own,dis,pw,ren,roles,saveroles,clr,keys,mkkey,revk,revs,savesec,pks,delpk,deluser,link};
 document.addEventListener("click",e=>{const el=e.target.closest("[data-on]");
   if(!el||!ACT[el.dataset.on])return;ACT[el.dataset.on](...JSON.parse(el.dataset.a||"[]"))});
 tabs();users();
