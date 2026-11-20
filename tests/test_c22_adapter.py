@@ -59,9 +59,9 @@ adapter = declarations(C22_ADAPTER)
 helpers = {n: v for n, v in adapter.items() if n.startswith("--ts-c22-")}
 entries = {n: v for n, v in adapter.items() if not n.startswith("--ts-c22-")}
 with open(os.path.join(HERE, "fixtures", "c22_tokens.txt"), encoding="utf-8") as f:
-    c22_names = {line.strip() for line in f if line.strip() and not line.startswith("#")}
-assert re.search(r"^# C22 commit: [0-9a-f]{40}$", open(os.path.join(HERE, "fixtures", "c22_tokens.txt"),
-                                                       encoding="utf-8").read(), re.M), "fixture names no C22 commit"
+    fixture = f.read()
+c22_names = {line.strip() for line in fixture.splitlines() if line.strip() and not line.startswith("#")}
+assert re.search(r"^# C22 commit: [0-9a-f]{40}$", fixture, re.M), "fixture names no C22 commit"
 
 # --- complete -------------------------------------------------------------------------------------
 missing = sorted(set(tokens) - set(entries))
