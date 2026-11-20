@@ -1188,7 +1188,7 @@ What happens and what protects it:
   (RFC 7009, without a client secret).
 - **Limits:** the connectors of Claude Desktop and Claude on the web call from Anthropic's network and cannot reach a server that
   is only in your LAN; Claude Code can. Claude Code has no DPoP — rotation is the protection for refresh tokens.
-  Services without a person (`client_credentials`) follow separately (T-59).
+  Services without a person (`client_credentials`) follow separately (T-60).
 
 The end-to-end check against the real Claude Code CLI is `tools/oauth-e2e/e2e.py` (manual: needs `claude`, Docker
 and Chrome).

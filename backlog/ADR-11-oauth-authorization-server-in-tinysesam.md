@@ -117,5 +117,5 @@ stand-in so that the CLI itself executes `tools/call`):
 - Registrations accumulate (every logout or port collision registers anew) → `gc()` and `tinysesam gc`.
 - The connectors of Claude Desktop and Claude on the web cannot reach a LAN-only server (Anthropic's network); Claude Code can.
 - Services without a person (`client_credentials` + `private_key_jwt`, pairing from T-32) follow in
-  [T-59](T-59-oauth-for-services-client-credentials-private-key-jwt.md). Revisit H if certification, CIMD with
+  [T-60](T-60-oauth-for-services-client-credentials-private-key-jwt.md). Revisit H if certification, CIMD with
   internet access or a multi-tenant AS become requirements.

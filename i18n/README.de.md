@@ -1212,7 +1212,7 @@ Was passiert und was es schützt:
   (RFC 7009, ohne Client-Geheimnis).
 - **Grenzen:** Die Connectors von Claude Desktop und Claude im Web rufen aus Anthropics Netz an und erreichen keinen
   Server, der nur in deinem LAN steht; Claude Code schon. Claude Code kann kein DPoP — Rotation ist der Schutz der
-  Refresh-Tokens. Dienste ohne Mensch (`client_credentials`) folgen getrennt (T-59).
+  Refresh-Tokens. Dienste ohne Mensch (`client_credentials`) folgen getrennt (T-60).
 
 Die Ende-zu-Ende-Prüfung gegen das echte Claude-Code-CLI ist `tools/oauth-e2e/e2e.py` (von Hand: braucht `claude`,
 Docker und Chrome).

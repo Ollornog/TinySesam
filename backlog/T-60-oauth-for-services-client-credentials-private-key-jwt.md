@@ -1,5 +1,5 @@
 ---
-id: T-59
+id: T-60
 type: Task
 title: OAuth for services — client_credentials + private_key_jwt, pairing from T-32
 status: offen
@@ -9,7 +9,7 @@ tags: [oauth, m2m, api-keys, pairing]
 created: 2026-11-20
 ---
 
-# T-59 — OAuth for services (client_credentials + private_key_jwt)
+# T-60 — OAuth for services (client_credentials + private_key_jwt)
 
 Second client kind of the connection concept (after [T-36](T-36-oauth-authorization-server-for-mcp-clients.md),
 decision [ADR-11](ADR-11-oauth-authorization-server-in-tinysesam.md)): a service or daemon without a person gets

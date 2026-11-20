@@ -33,5 +33,5 @@ real Claude Code CLI; README (de+en), CHANGELOG, CONFIGURATION.md, SECURITY.md a
   Chrome — sign-in with password + TOTP, silent refresh after a restart, disconnect on the account page, refresh
   token reuse, account lock, `claude mcp logout`: all six green.
 
-Follow-up: [T-59](T-59-oauth-for-services-client-credentials-private-key-jwt.md) (services). Not built here: device
+Follow-up: [T-60](T-60-oauth-for-services-client-credentials-private-key-jwt.md) (services). Not built here: device
 flow (RFC 8628), CIMD, DPoP, https redirect URIs for hosted clients.
