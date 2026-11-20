@@ -24,7 +24,7 @@ from ._vocabulary import audit_line_new
 from .store import name_invalid, norm_email, valid_email
 from . import dialog as _dialog
 from .templates import brand, favicon_link, inject_nonce as _inject_nonce
-from .theme import TOKENS
+from .theme import TOKENS, c22_css, c22_head
 
 
 def build_admin_router(auth) -> APIRouter:
@@ -630,7 +630,7 @@ def render_panel(auth, base: str, warn: str = "", prefix: str = "") -> str:
     cfg = auth.cfg
     # `__TS_P__` first and only in the scaffold — mark, warning and header/footer come after (T-15).
     return (_PAGE.replace("__TS_P__", prefix).replace("__TOKENS__", TOKENS)
-            .replace("__BRANDHEAD__", getattr(cfg, "brand_head", "") or "")
+            .replace("__BRANDHEAD__", c22_head(cfg) + (getattr(cfg, "brand_head", "") or ""))
             .replace("__HEADER__", brand(getattr(cfg, "brand_header", ""), auth))
             .replace("__FOOTER__", brand(getattr(cfg, "brand_footer", ""), auth))
             # `rp_name` is text, not markup (R8-3) — the other pages have long escaped it.
@@ -652,7 +652,7 @@ def render_panel(auth, base: str, warn: str = "", prefix: str = "") -> str:
             # (`add_messages`) with "</script>" would otherwise end the script block.
             .replace("__I18N__",
                      json.dumps(panel_texts(auth), ensure_ascii=False).replace("<", "\\u003c"))
-            .replace("__BRANDCSS__", getattr(cfg, "brand_css", "") or "")
+            .replace("__BRANDCSS__", c22_css(cfg) + (getattr(cfg, "brand_css", "") or ""))
             # Last: the dialog building block (T-35) carries texts of its own; no later replace may touch them.
             .replace("__DIALOG__", _dialog.assets(auth)))
 
@@ -685,8 +685,8 @@ body{font-family:var(--ts-font);margin:0;background:var(--ts-bg);color:var(--ts-
 .tsadmin button{cursor:pointer;background:var(--ts-accent);color:var(--ts-accent-ink);border:0;
   border-radius:6px;padding:6px 11px;font-size:13px}
 .tsadmin button.sec{background:var(--ts-neutral);color:var(--ts-neutral-ink)}
-.tsadmin button.warn{background:var(--ts-danger);color:#fff}
-.tsadmin button.ok{background:var(--ts-success);color:#fff}
+.tsadmin button.warn{background:var(--ts-danger);color:var(--ts-danger-ink)}
+.tsadmin button.ok{background:var(--ts-success);color:var(--ts-success-ink)}
 .tsadmin input,.tsadmin select{background:var(--ts-field-bg);color:var(--ts-ink);
   border:1px solid var(--ts-field-line);border-radius:6px;padding:6px 9px;font-size:13px}
 .tsadmin .badge{padding:1px 7px;border-radius:20px;font-size:11px;font-weight:600;

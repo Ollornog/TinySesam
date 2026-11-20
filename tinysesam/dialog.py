@@ -47,7 +47,7 @@ dialog.tsdlg .tsdlg-status.tsdlg-manual{color:var(--ts-warn-ink)}
 dialog.tsdlg button{width:auto;margin:0;padding:9px 16px;border:0;border-radius:8px;font:inherit;cursor:pointer;
   background:var(--ts-accent);color:var(--ts-accent-ink)}
 dialog.tsdlg button.tsdlg-sec{background:var(--ts-neutral);color:var(--ts-neutral-ink)}
-dialog.tsdlg button.tsdlg-danger{background:var(--ts-danger);color:var(--ts-accent-ink)}
+dialog.tsdlg button.tsdlg-danger{background:var(--ts-danger);color:var(--ts-danger-ink)}
 dialog.tsdlg button:focus-visible,dialog.tsdlg .tsdlg-field:focus-visible{outline:2px solid var(--ts-link);
   outline-offset:2px}
 """

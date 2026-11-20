@@ -14,13 +14,14 @@ import re
 from urllib.parse import quote as _quote
 
 from . import dialog as _dialog
-from .theme import TOKENS
+from .theme import TOKENS, c22_css, c22_head
 
-_NONCE_TAG = re.compile(r'<(script|style)(?![^>]*\bnonce=)(?=[\s>])')
+# `<link rel=stylesheet>` too (c22_stylesheet, brand_head): under 'strict' a same-origin stylesheet loads only with the nonce.
+_NONCE_TAG = re.compile(r'<(script|style|link(?=[^>]*\brel=["\']?stylesheet\b))(?![^>]*\bnonce=)(?=[\s>])')
 
 
 def inject_nonce(html_str: str, nonce: str) -> str:
-    """Give every `<script>`/`<style>` without its own nonce the response's nonce (CSP 'strict').
+    """Give every `<script>`/`<style>`/`<link rel=stylesheet>` without its own nonce the response's nonce (CSP 'strict').
 
     Here and not in the manager: the admin panel needs the same function, and an import from the
     manager would make `admin` ↔ `manager` an import cycle."""
@@ -222,7 +223,8 @@ def _page(auth, title, body, card=True, top="", below="", head=""):
     """Like _shell, but with branding from the config (brand_css/brand_head/brand_icon/brand_header/
     brand_footer) — re-skins and frames all pages centrally. `top` lands above the card, `below` below it."""
     cfg = auth.cfg
-    return _doc(title, body, cfg.lang, getattr(cfg, "brand_css", ""), getattr(cfg, "brand_head", ""),
+    return _doc(title, body, cfg.lang, c22_css(cfg) + (getattr(cfg, "brand_css", "") or ""),
+                c22_head(cfg) + (getattr(cfg, "brand_head", "") or ""),
                 card, getattr(cfg, "brand_icon", ""), top,
                 brand(getattr(cfg, "brand_header", ""), auth), brand(getattr(cfg, "brand_footer", ""), auth), below,
                 background(cfg), head)
@@ -574,7 +576,7 @@ def _account(auth, ctx) -> str:
     .tsmain .sec small{text-transform:none;letter-spacing:0}
     .tsmain .sec input{margin:4px 0}
     .tsmain .sec button,.tsmain .btnlink{width:auto;display:inline-block;margin:8px 6px 0 0;padding:9px 14px}
-    .tsmain button.warn{background:var(--ts-danger)}
+    .tsmain button.warn{background:var(--ts-danger);color:var(--ts-danger-ink)}
     .tsmain .btnlink{background:var(--ts-neutral);color:var(--ts-neutral-ink);border-radius:8px;
          text-decoration:none;padding:9px 14px}
     .tsmain .msg{margin-left:8px;font-size:12px;color:var(--ts-muted)}

@@ -55,6 +55,20 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
   `LoginResult.next_factor` can be `"password_change"` (the half session owes an own password; `next_url` points
   to `/auth/setup`, which is now mounted wherever passwords are on).
 
+### Added — same look as an app built on C22 (T-61)
+
+- **`c22_stylesheet`:** the path of the C22 stylesheet an app already serves (same origin only, checked at start).
+  Set, every built-in page loads it and derives its `--ts-*` tokens from C22 through the new optional adapter
+  `tinysesam/c22.css` — each entry falls back to TinySesam's own default, so without C22 nothing changes. Light/dark
+  follows C22 (`html.dark` from `localStorage.themeMode`, else the system setting). No C22 JavaScript, no package
+  dependency, CSP unchanged.
+- **Tokens `--ts-danger-ink` and `--ts-success-ink`** (default `#fff`, as before): the text on destructive and
+  success buttons, which used a fixed white.
+- **`<link rel=stylesheet>` gets the response nonce** like `<script>` and `<style>`: under `csp="strict"` a
+  same-origin stylesheet in `brand_head` was blocked before.
+- `tests/fixtures/c22_tokens.txt` pins the C22 token names the adapter may read (C22 commit in its header,
+  refresh with `tools/c22_tokens.py`); `tests/test_c22_adapter.py` checks completeness, fallbacks and wiring.
+
 ### Security — hardening, part 1 (H1, from the security review of 2026-11-20)
 
 - **SAML: a response can no longer be replayed (ASVS 6.8.3, B-11).** The AuthnRequest ID lived only in the browser's
