@@ -364,6 +364,25 @@ def check_config(config) -> tuple[list[str], list[str]]:
     # false alarm costs the same trust as an overlooked finding — hence the note stands
     # here instead of the check.
 
+    # Cross-device sign-in (T-33): the QR code carries the approval address to the second device.
+    # It is built only from `base_url`, never from the Host header (R4-01) — without it the page
+    # shows the short code alone. Works, but the operator should know why there is no QR code.
+    if _an(config, "qr_login_enabled") and not str(getattr(config, "base_url", "") or "").strip():
+        warnings.append(_t(
+            config,
+            "qr_login_enabled=True, but base_url is empty. The QR code needs the public address "
+            "and is never built from the Host header — the login page then shows only the short "
+            "code, which the user types on the signed-in device. Set base_url for the QR code."))
+    # Links without the mail self-request (T-33): a chain step `magic` sends the user to
+    # `/auth/magic/request` — the route that this switch removes. The step can then only be
+    # satisfied with a link the admin hands out.
+    if (_an(config, "magiclink_enabled") and not getattr(config, "magiclink_self_request", True)
+            and "magic" in list(getattr(config, "login_chain", None) or [])):
+        warnings.append(_t(
+            config,
+            "login_chain contains 'magic', but magiclink_self_request=False: the chain step "
+            "leads to /auth/magic/request, which does not exist then (404). The step can only "
+            "be satisfied with a link issued by the admin or by app code."))
     if _an(config, "password_reset_enabled") and not _an(config, "magiclink_enabled"):
         warnings.append(_t(
             config,
@@ -773,6 +792,10 @@ def check_config(config) -> tuple[list[str], list[str]]:
             "issued for (with a CA of your own additionally smtp_ca_file).",
             host=_smtp_host))
     for slot, for_what in REQUIRES_MAILER.items():
+        # Links on without the mail self-request (T-33): sign-in links come only from the admin
+        # panel or app code — nothing goes out by mail, so nothing is missing without a mailer.
+        if slot == "magiclink_enabled" and not getattr(config, "magiclink_self_request", True):
+            continue
         if _an(config, slot) and not has_mailer:
             warnings.append(_t(
                 config,
@@ -804,6 +827,9 @@ NUMBER_LIMITS = {
     "admin_claim_ttl_min": (0, 7 * 24 * 60),
     "resource_unlock_ttl_hours": (1, 24 * 30),
     "magiclink_ttl_min": (1, 24 * 60),
+    # A cross-device request is approved within moments; longer than a quarter of an hour is a
+    # code lying around on a screen, not a hand-over.
+    "qr_login_ttl_sec": (30, 15 * 60),
     "smtp_port": (1, 65535),
     "smtp_timeout": (1, 300),
     "recovery_code_count": (1, 100),
@@ -1896,6 +1922,18 @@ _DE: dict[str, str] = {
         "SAML (Entity-ID und ACS-URL)",
     "Forward auth (redirect of the proxy to the login page)":
         "Forward-Auth (Umleitung des Proxys auf die Login-Seite)",
+    ("qr_login_enabled=True, but base_url is empty. The QR code needs the public address and "
+     "is never built from the Host header — the login page then shows only the short code, which "
+     "the user types on the signed-in device. Set base_url for the QR code."):
+        ("qr_login_enabled=True, aber base_url ist leer. Der QR-Code braucht die öffentliche "
+         "Adresse und wird nie aus dem Host-Header gebaut — die Login-Seite zeigt dann nur den "
+         "Kurzcode, den man auf dem angemeldeten Gerät eintippt. Für den QR-Code base_url setzen."),
+    ("login_chain contains 'magic', but magiclink_self_request=False: the chain step leads to "
+     "/auth/magic/request, which does not exist then (404). The step can only be satisfied with "
+     "a link issued by the admin or by app code."):
+        ("login_chain enthält 'magic', aber magiclink_self_request=False: Der Kettenschritt führt "
+         "zu /auth/magic/request, das es dann nicht gibt (404). Erfüllen lässt er sich nur mit "
+         "einem Link, den der Admin oder App-Code ausstellt."),
     ("csp={value!r} — probably {intended!r} (lower case) is meant. As written it would be a "
      "custom policy without a directive, and the browser would run without any CSP."):
         ("csp={value!r} — gemeint ist wohl {intended!r} (klein geschrieben). So wäre es eine "

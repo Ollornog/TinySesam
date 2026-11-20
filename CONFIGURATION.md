@@ -119,9 +119,17 @@ individual ones can be overridden via `**overrides`.
 
 | Field | Type | Default | Meaning |
 |---|---|---|---|
-| `magiclink_enabled` | `bool` | `False` | sign-in by one-time link — needs a mailer |
+| `magiclink_enabled` | `bool` | `False` | sign-in by one-time link (mailed, admin-issued or app-issued) |
+| `magiclink_self_request` | `bool` | `True` | With `magiclink_enabled`: the login page offers "email me a sign-in link" and `/auth/magic/request` exists — this part needs a mailer. `False` = links only from the admin panel or app code: the request route is gone (404), the button too, issued links still redeem. |
 | `magiclink_ttl_min` | `int` | `15` | validity of a one-time link |
 | `magiclink_require_second_factor` | `bool` | `True` | ASVS 6.3.6 (PO decision 2026-09-24): If an account has a second factor (TOTP or passkey), the sign-in link alone does not sign in fully — the factor is demanded afterwards. Otherwise the mailbox would be the only key, even for an account that protected itself with an authenticator. Accounts without a second factor are still signed in by the link alone. Applies to the global chain and every route chain (`require(factors=["magic"])`, G10). `False` = the link always suffices (behaviour up to 0.20.x in chains like `["magic"]`). |
+
+## Cross-device sign-in (QR code, T-33)
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `qr_login_enabled` | `bool` | `False` | A device without a session shows a QR code and a short code on the login page; a device on which the user is already signed in scans it (or types the code), sees which device and IP ask, and approves. The new device then gets its own session. Counts as factor `magic`: the second-factor rule of the sign-in link applies (`magiclink_require_second_factor`). No mailer needed. The QR code needs `base_url` (absolute address) and the extra `[qr]`; without either, only the short code is shown. |
+| `qr_login_ttl_sec` | `int` | `120` | validity of a cross-device request (single use) |
 
 ## Self-service: address and username (PO decision 2026-09-25)
 
@@ -314,4 +322,4 @@ individual ones can be overridden via `**overrides`.
 
 ---
 
-173 fields, generated from `tinysesam/config.py`.
+176 fields, generated from `tinysesam/config.py`.

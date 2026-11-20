@@ -3677,6 +3677,19 @@ class Store:
             self.db.commit()
             return cur.rowcount == 1
 
+    def approve_qr_token(self, token_hash, user_id) -> bool:
+        """Bind an open cross-device request (`purpose='qr_login'`, T-33) to the approving account —
+        atomically and once: True only for the FIRST approval of a valid, unused request. From then
+        on the row carries the account, so disabling it or a password reset discards it with the
+        account's other open links (`revoke_user_magic_tokens`)."""
+        with self._writing():
+            cur = self.db.execute(
+                "UPDATE magic_token SET user_id=? WHERE token_hash=? AND purpose='qr_login' "
+                "AND user_id IS NULL AND used_at IS NULL AND expires_at>=?",
+                (int(user_id), token_hash, _now()))
+            self.db.commit()
+            return cur.rowcount == 1
+
     def expire_magic_token(self, token_hash) -> bool:
         """Let a still unused token expire immediately (sending failed, B6-12).
 

@@ -4,7 +4,31 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
-## [Unreleased]
+### Added — sign-in alternatives: cross-device (QR code), admin-issued link, self-request switch (T-33)
+
+- **Cross-device sign-in** (`qr_login_enabled`, `qr_login_ttl_sec`, default 120 s): the login page offers "Sign in with
+  another device"; the new device shows a QR code and a short code, a signed-in device approves at `/auth/qr/approve`
+  after seeing the asking device (user agent, IP, age), and the new device gets its own session. Single use,
+  rate-limited, audited (`qr_login_approve`, `qr_login_deny`, `qr_login`), counts as factor `magic` (so
+  `magiclink_require_second_factor` applies). Only a full interactive session approves (no API key, no half sign-in);
+  the session goes only to the device that opened the request (secret in the page, never on screen). Routes
+  `POST /auth/qr/{start,status,finish,approve,deny}`, `GET /auth/qr/approve`; pages `qr_login`, `qr_approve`
+  (replaceable, `TinySesam.PAGES`). Stored in `magic_token` (purpose `qr_login`) — no second token system. The QR code
+  needs `base_url` and the extra `[qr]`; without `base_url` only the short code is shown and `config_check` warns.
+- **Admin-issued sign-in link without mail**: panel button *Sign-in link* and `POST <admin>/api/users/{uid}/signin-link`
+  (`{"ttl_min": …}`, 1 minute to 7 days), shown once as link and QR code; in code `auth.create_signin_link(user_id,
+  ttl_min=None, next="/")` (tier B). Same token as the mailed link: single use, second-factor rule, discarded on disable
+  and password reset. Address only from `base_url` (never the Host header), otherwise 503 / `ConfigError`. Audit
+  `signin_link_issue` with the admin as `actor=`. Only from a session (not with an API key), not for service or
+  disabled accounts; an owner's link only by an owner.
+- **`magiclink_self_request`** (default `True` = unchanged): `False` removes `/auth/magic/request` (404) and the
+  "email me a link" button, while issued links still redeem. `config_check` asks for a mailer only with the
+  self-request, and warns when `login_chain` contains `magic` without it.
+
+### Changed
+
+- `TinySesam.PAGES` gains `qr_approve` and `qr_login`. The surface guard reports the changed tuple as a changed
+  constant; nothing was removed.
 
 ### Added — release automation (kit 0.47.0)
 

@@ -421,7 +421,10 @@ def build_router(auth) -> APIRouter:
             return resp
 
     # ---------- Magic link (one-time login by e-mail) ----------
-    if cfg.magiclink_enabled:
+    # Two switches since T-33: `magiclink_enabled` mounts the redemption (links from mail, from the
+    # admin panel, from app code), `magiclink_self_request` the request by mail. Without the
+    # latter `/auth/magic/request` does not exist (404) — an issued link still redeems.
+    if cfg.magiclink_enabled and cfg.magiclink_self_request:
         @r.get("/auth/magic/request", response_class=HTMLResponse)
         def magic_request_page(request: Request, next: str = ""):
             return auth.render_page("magic_request", request=request, next=auth.safe_next(next, request), sent=False, error="")
@@ -461,6 +464,15 @@ def build_router(auth) -> APIRouter:
             return auth.after_response(
                 auth.render_page("magic_request", request=request, next=nxt, sent=True, error=""), _dispatch)
 
+    if cfg.magiclink_enabled:
+        def _no_request_route(token):
+            # Without the self-request `/auth/magic/request` must be what it is: absent (404). The
+            # pattern below would otherwise catch it as the token "request" and answer "link
+            # invalid" (400) — plus a `token_invalid` line for a plain page visit. A real token
+            # (43 characters from `token_urlsafe(32)`) is never this word.
+            if token == "request":
+                raise HTTPException(404)
+
         # R4-02: the link from the mail leads to a confirmation page, only its POST redeems.
         # Mail scanners (safe links, virus checkers, preview bots) open every link via GET —
         # so far this very fetch consumed the token, and the user landed on "link
@@ -470,6 +482,7 @@ def build_router(auth) -> APIRouter:
         def magic_confirm(request: Request, token: str):
             """Only the sign-in link now. E-mail confirmation and invitation have had their own
             endpoints since 0.16 — otherwise disabling the magic link took both along."""
+            _no_request_route(token)
             if not auth.peek_magic(token, purpose="login"):
                 auth._token_rejected("login", request)
                 return auth.render_page("magic_invalid", request=request, status=400)
@@ -478,6 +491,7 @@ def build_router(auth) -> APIRouter:
 
         @r.post("/auth/magic/{token}")
         def magic_redeem(request: Request, token: str, csrf_tok: str = Form("", alias="_csrf")):
+            _no_request_route(token)
             auth.require_csrf(request, csrf_tok)
             data = auth.redeem_magic(token, purpose="login")
             if not data or not data.get("user_id"):
@@ -485,6 +499,100 @@ def build_router(auth) -> APIRouter:
                 return auth.render_page("magic_invalid", request=request, status=400)
             return _login_after_token(auth, request, data["user_id"],
                                      auth.safe_next((data.get("payload") or {}).get("next") or "", request))
+
+    # ---------- Cross-device sign-in (QR code, T-33) ----------
+    if cfg.qr_login_enabled:
+        def _qr_page(request, data, status=200, error=""):
+            return auth.render_page("qr_login", request=request, status=status, error=error,
+                                    code=data["code"], secret=data["secret"],
+                                    expires_at=data["expires_at"], approve_url=data.get("approve_url") or "",
+                                    qr=data.get("qr"), next=data.get("next") or "/")
+
+        @r.post("/auth/qr/start", response_class=HTMLResponse)
+        def qr_start(request: Request, next: str = Form(""), csrf_tok: str = Form("", alias="_csrf")):
+            """The new device opens a request — a POST, so that no foreign page and no prefetch writes
+            rows (as with `/auth/totp/setup/start`, B2-1)."""
+            auth.require_csrf(request, csrf_tok)
+            nxt = auth.safe_next(next, request)
+            if not auth._rate_ok(auth.client_ip(request), login=False):
+                return auth.render_page("login", request=request, status=429, next=nxt, error=auth.t("err.rate"))
+            data = auth._qr_start(request, nxt)
+            data["next"] = nxt
+            return _qr_page(request, data)
+
+        @r.post("/auth/qr/status")
+        def qr_status(request: Request, code: str = Form(""), secret: str = Form("")):
+            """Poll of the new device: `pending`, `approved` or `invalid` (expired, used, denied, or
+            not this device's request). Read-only; the secret goes in the body, never in the URL."""
+            auth.require_csrf(request, request.headers.get("x-csrf-token"))
+            info = auth._qr_own(code, secret)
+            if info is None:
+                return JSONResponse({"state": "invalid"})
+            return JSONResponse({"state": "approved" if info["user_id"] is not None else "pending"})
+
+        @r.post("/auth/qr/finish")
+        def qr_finish(request: Request, code: str = Form(""), secret: str = Form(""),
+                      csrf_tok: str = Form("", alias="_csrf")):
+            """The new device collects its session — only with the secret of ITS request."""
+            auth.require_csrf(request, csrf_tok)
+            ip = auth.client_ip(request)
+            if not auth._rate_ok(ip, login=False):
+                return auth.render_page("magic_invalid", request=request, status=429)
+            own = auth._qr_own(code, secret)
+            if own is not None and own["user_id"] is None:
+                # Not approved yet: the same page again, with the same request.
+                again = {"code": own["code"], "secret": secret, "expires_at": own["expires_at"],
+                         "next": own["next"], **auth._qr_links(own["code"])}
+                return _qr_page(request, again, status=409, error=auth.t("qr.not_yet"))
+            data = auth._qr_redeem(code, secret)
+            if not data:
+                auth._token_rejected("qr_login", request)
+                return auth.render_page("magic_invalid", request=request, status=400)
+            auth.audit("qr_login", auth._account_name(data["user_id"]), ip, f"approved_from_device_ip={data['ip']}")
+            return _login_after_token(auth, request, data["user_id"], auth.safe_next(data["next"], request))
+
+        @r.get("/auth/qr/approve", response_class=HTMLResponse)
+        def qr_approve_page(request: Request, code: str = ""):
+            """The signed-in device: shows WHO asks (device, IP, time) before anything is approved."""
+            u = auth.session_user(request)
+            if not u:
+                back = auth.browser_path(request, "/auth/qr/approve") + (f"?code={_q(code)}" if code else "")
+                return RedirectResponse(f"{auth.browser_path(request, cfg.login_path)}?next={_q(back)}", 303)
+            if not code:
+                return auth.render_page("qr_approve", request=request, user=u, request_info=None, code="")
+            if not auth._rate_ok(auth.client_ip(request), login=False):
+                return auth.render_page("magic_invalid", request=request, status=429)
+            info = auth._qr_peek(code)
+            if not info or info["user_id"] is not None:
+                auth._token_rejected("qr_login", request)
+                return auth.render_page("magic_invalid", request=request, status=400)
+            return auth.render_page("qr_approve", request=request, user=u, request_info=info, code=info["code"])
+
+        def _qr_decide(request, code, csrf_tok, approve: bool):
+            auth.require_csrf(request, csrf_tok)
+            # Only a FULL interactive session approves: no API key, no half session (chain step
+            # open) — `session_user` yields None for both. A foreign session cannot approve for
+            # this account, and the approval of an attacker's code by the victim needs the
+            # victim's click on a page that names the asking device.
+            u = auth.session_user(request)
+            if not u:
+                raise HTTPException(401, auth.t("api.qr_needs_session"))
+            if not auth._rate_ok(auth.client_ip(request), login=False):
+                return auth.render_page("magic_invalid", request=request, status=429)
+            done = auth._qr_approve(code, u) if approve else auth._qr_deny(code, u)
+            if not done:
+                auth._token_rejected("qr_login", request)
+                return auth.render_page("magic_invalid", request=request, status=400)
+            return auth.render_page("qr_approve", request=request, user=u, request_info=None, code="",
+                                    decided="approved" if approve else "denied")
+
+        @r.post("/auth/qr/approve", response_class=HTMLResponse)
+        def qr_approve(request: Request, code: str = Form(""), csrf_tok: str = Form("", alias="_csrf")):
+            return _qr_decide(request, code, csrf_tok, True)
+
+        @r.post("/auth/qr/deny", response_class=HTMLResponse)
+        def qr_deny(request: Request, code: str = Form(""), csrf_tok: str = Form("", alias="_csrf")):
+            return _qr_decide(request, code, csrf_tok, False)
 
     # ---------- E-mail confirmation (own endpoint, independent of the magic link) ----------
     if cfg.signup_verify_email:

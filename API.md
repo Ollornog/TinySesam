@@ -20,7 +20,7 @@ source code.
 
 The tier is recorded per name in `tests/api_surface.json`. The guard `tests/test_api_surface.py` demands an explicit one for every public name: A new name comes in without a tier and keeps it red until someone decides — nothing is promised by accident.
 
-The configuration fields are in [CONFIGURATION.md](CONFIGURATION.md): 172 of 173 in tier A, the others below at their tier.
+The configuration fields are in [CONFIGURATION.md](CONFIGURATION.md): 175 of 176 in tier A, the others below at their tier.
 
 **English, names as well as values** (since 0.22.0, without alias): The names of tiers A and B, their parameters and the keys and values they return or accept — result dicts, the `details` passed to `on_security_event`, the context of your own pages (`ctx["prefix"]`, `ctx["purpose"]`), the JSON responses of the routes, the kinds of API keys (`automation`, `human`). Since the last breaking pass before the freeze (PO decision 2026-10-29) the same holds for what operators and proxies read — query and form parameters, header and cookie names, logger names, the event words and keys of the security log, message ids — and audit and log lines are English as well. The lists old → new are in the CHANGELOG (0.22.0, [Unreleased]).
 
@@ -28,7 +28,7 @@ The configuration fields are in [CONFIGURATION.md](CONFIGURATION.md): 172 of 173
 
 **`auth.store` is internals** (tier C): the storage layer of the built-in routes, without tier, without promise and without transition period — its methods can change with every release. What an app needs is listed below as a method of `TinySesam` (e.g. `set_disabled` instead of `auth.store.set_disabled`).
 
-**Status:** A 371 · B 152 · C 38 names.
+**Status:** A 374 · B 160 · C 38 names.
 
 ## A · Methods of `TinySesam`
 
@@ -450,6 +450,10 @@ How many sessions of this account are running EXCEPT the current one? (B1-7)
 
 Create a one-time token (plaintext return). Only the sha256 hash is in the DB.
 
+### `create_signin_link(user_id, ttl_min=None, next='/') -> 'dict'`
+
+Issue a one-time sign-in link for an account — without mail, to hand over by any channel.
+
 ### `delete_user(user_id: 'int') -> 'bool'`
 
 Delete an account with all its credentials (B5-08) — and take it out of the audit log (H-13).
@@ -650,7 +654,7 @@ Value: `150`
 
 The pages that can be replaced — the same list that `render_page()` serves.
 
-Values: `account`, `error`, `forgot`, `gate_logged_out`, `gate_logout`, `gateway_home`, `login`, `logout`, `magic_confirm`, `magic_invalid`, `magic_request`, `pin`, `reauth`, `register`, `reset`, `resource_unlock`, `totp`, `totp_setup`
+Values: `account`, `error`, `forgot`, `gate_logged_out`, `gate_logout`, `gateway_home`, `login`, `logout`, `magic_confirm`, `magic_invalid`, `magic_request`, `pin`, `qr_approve`, `qr_login`, `reauth`, `register`, `reset`, `resource_unlock`, `totp`, `totp_setup`
 
 ### `TOKEN_PATHS` — Constant
 
@@ -821,6 +825,12 @@ The HTML pages (sign-in, registration, account, admin panel, the pages behind e-
 | POST | `/auth/pin` | `form:_csrf`, `form:next`, `form:pin`, `form:remember`, `form:username` |
 | POST | `/auth/pin/disable` | — |
 | POST | `/auth/pin/set` | — |
+| GET | `/auth/qr/approve` | `query:code` |
+| POST | `/auth/qr/approve` | `form:_csrf`, `form:code` |
+| POST | `/auth/qr/deny` | `form:_csrf`, `form:code` |
+| POST | `/auth/qr/finish` | `form:_csrf`, `form:code`, `form:secret` |
+| POST | `/auth/qr/start` | `form:_csrf`, `form:next` |
+| POST | `/auth/qr/status` | `form:code`, `form:secret` |
 | GET | `/auth/reauth` | `query:error`, `query:next` |
 | POST | `/auth/reauth` | `form:_csrf`, `form:code`, `form:next`, `form:password`, `form:pin` |
 | GET | `/auth/register` | `query:invite`, `query:next` |
@@ -864,6 +874,7 @@ The HTML pages (sign-in, registration, account, admin panel, the pages behind e-
 | POST | `<admin>/api/users/{uid}/passkeys/{cid}/delete` | — |
 | POST | `<admin>/api/users/{uid}/password` | — |
 | POST | `<admin>/api/users/{uid}/roles` | — |
+| POST | `<admin>/api/users/{uid}/signin-link` | — |
 | POST | `<admin>/api/users/{uid}/username` | — |
 | GET | `<admin>/api/version` | — |
 
@@ -937,4 +948,4 @@ These names are not part of the promise. Since 0.22.0 the implementation is call
 
 ---
 
-149 methods, 3 properties, 11 constants, 7 methods of `TinySesamConfig`, 10 exports, of which 5 error types, 17 names on the result types `LoginResult`, `PasswordChangeResult` — generated from the docstrings and `tests/api_surface.json`.
+150 methods, 3 properties, 11 constants, 7 methods of `TinySesamConfig`, 10 exports, of which 5 error types, 17 names on the result types `LoginResult`, `PasswordChangeResult` — generated from the docstrings and `tests/api_surface.json`.

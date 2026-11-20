@@ -4204,6 +4204,150 @@ class TinySesam:
                          html=self.t("mail.login_link.html", mins=mins, url=url))
         return True
 
+    # ---------- Sign-in link without mail (T-33) ----------
+    #: Upper bound for an issued link: a week. Longer is no hand-over but a second password.
+    _SIGNIN_LINK_MAX_TTL_MIN = 7 * 24 * 60
+
+    def create_signin_link(self, user_id, ttl_min=None, next="/") -> dict:
+        """Issue a one-time sign-in link for an account — without mail, to hand over by any channel.
+
+        The same token as the mailed sign-in link (purpose `login`, redeemed at
+        `/auth/magic/{token}` with the confirmation page of R4-02), so the same rules apply: single
+        use, `magiclink_require_second_factor`, and it is discarded with the account's other open
+        links when the account is disabled or its password is reset. Works without a mailer.
+
+        The address comes **only** from `base_url` — never from a request's Host header (R4-01):
+        whoever hands the link on would otherwise hand on an address the requester chose.
+
+        `ttl_min` defaults to `magiclink_ttl_min`; allowed are 1 minute to 7 days. Returns
+        `{"url", "expires_at", "qr"}` — `qr` is a PNG data URI of the link, or None without the
+        extra `[qr]`. The plaintext exists only in this return value; the database holds the hash.
+        Audit `signin_link_issue` under the account, with `actor=` when an admin issues it.
+
+        Raises `ConfigError` without `magiclink_enabled` (no route would redeem the link) or without
+        `base_url`; `ValueError` for an unknown, disabled or service account or an invalid `ttl_min`."""
+        if not self.cfg.magiclink_enabled:
+            raise ConfigError("magiclink_enabled=False — a sign-in link would have no route that redeems it")
+        if not str(self.cfg.base_url or "").strip():
+            raise ConfigError("base_url is empty — a sign-in link is built only from base_url, "
+                              "never from the Host header")
+        base = self._checked_base(self.cfg.base_url)
+        if ttl_min is None:
+            ttl = int(self.cfg.magiclink_ttl_min)
+        elif isinstance(ttl_min, bool) or not isinstance(ttl_min, int):
+            raise ValueError(self.t("api.invalid", reason="ttl_min"))
+        else:
+            ttl = ttl_min
+        if not 1 <= ttl <= self._SIGNIN_LINK_MAX_TTL_MIN:
+            raise ValueError(self.t("api.invalid", reason="ttl_min"))
+        u = self.store.get_user(user_id) if user_id is not None else None
+        if not u:
+            raise ValueError(self.t("api.not_found"))
+        # A link for a disabled account would never sign in (`apply_factor` refuses it) — say so
+        # now instead of handing over a dead link. A service account has no interactive sign-in.
+        if u["disabled"]:
+            raise ValueError(self.t("api.account_disabled"))
+        if u["is_service"]:
+            raise ValueError(self.t("api.signin_link_service"))
+        raw = self.create_magic_token("login", user_id=int(u["id"]), ttl_min=ttl,
+                                      payload={"next": str(next or "/"), "issued": "operator"})
+        url = self.magic_url(raw, base)
+        self.audit("signin_link_issue", str(u["username"]), detail=f"ttl_min={ttl}")
+        return {"url": url, "expires_at": _now() + ttl * 60, "qr": _totp.qr_data_uri(url)}
+
+    # ---------- Cross-device sign-in (QR code, T-33) ----------
+    # One row in `magic_token` per request (purpose `qr_login`), no token system of its own. The key
+    # is the hash of the SHORT code — the approving device knows only that. The new device
+    # additionally holds a long secret (in its page, never on screen); only its hash is in the
+    # payload. Whoever sees the code on the screen can approve it for their own account at most,
+    # never take over the session that the approval creates.
+    _QR_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"   # no I/L/O/0/1 — read off a screen
+    _QR_LENGTH = 8
+
+    @classmethod
+    def _qr_code_norm(cls, code) -> str:
+        """The short code in its stored form (upper case, without separators) — or ""."""
+        c = re.sub(r"[^A-Z0-9]", "", str(code or "").upper())
+        return c if len(c) == cls._QR_LENGTH and all(ch in cls._QR_ALPHABET for ch in c) else ""
+
+    def _qr_hash(self, code) -> str:
+        # Prefixed: a short code must never meet a token of another purpose.
+        return self._token_hash("qr:" + code)
+
+    def _qr_start(self, request, nxt="/") -> dict:
+        """Open a cross-device request for the device of this request.
+        Returns {code, secret, expires_at, approve_url, qr}; `approve_url`/`qr` are empty
+        without `base_url` (never from the Host header), `qr` also without the extra `[qr]`."""
+        ip = self.client_ip(request)
+        agent = str(request.headers.get("user-agent") or "")[:200]
+        secret = secrets.token_urlsafe(32)
+        expires = _now() + int(self.cfg.qr_login_ttl_sec)
+        payload = {"device": self._token_hash(secret), "ip": ip, "agent": agent, "next": str(nxt or "/")}
+        for _ in range(5):
+            code = "".join(secrets.choice(self._QR_ALPHABET) for _ in range(self._QR_LENGTH))
+            try:
+                self.store.add_magic_token(self._qr_hash(code), "qr_login", expires, None, None, payload)
+                break
+            except sqlite3.IntegrityError:      # the same code is still open — draw again
+                continue
+        else:
+            raise HTTPException(503, self.t("err.retry"))
+        return {"code": code, "secret": secret, "expires_at": expires, **self._qr_links(code)}
+
+    def _qr_links(self, code) -> dict:
+        """{approve_url, qr} for a short code. The address comes only from `base_url` — never from
+        the Host header (R4-01); without it both stay empty and the page shows the code alone."""
+        if not str(self.cfg.base_url or "").strip():
+            return {"approve_url": "", "qr": None}
+        url = f"{self._checked_base(self.cfg.base_url)}/auth/qr/approve?code={code}"
+        return {"approve_url": url, "qr": _totp.qr_data_uri(url)}
+
+    def _qr_peek(self, code) -> Optional[dict]:
+        """An open (unused, unexpired) cross-device request — or None."""
+        c = self._qr_code_norm(code)
+        row = self.store.get_magic_token(self._qr_hash(c)) if c else None
+        if not row or row["purpose"] != "qr_login" or row["used_at"] or row["expires_at"] < _now():
+            return None
+        p = read_payload("qr_login", row["payload"]) or {}
+        return {"code": c, "user_id": row["user_id"], "ip": p.get("ip"), "agent": p.get("agent"),
+                "next": p.get("next") or "/", "device": p.get("device") or "",
+                "created_at": row["created_at"], "expires_at": row["expires_at"]}
+
+    def _qr_own(self, code, secret) -> Optional[dict]:
+        """The request, if `secret` is the one of the device that opened it — otherwise None."""
+        info = self._qr_peek(code)
+        if not info or not secret or not hmac.compare_digest(info["device"], self._token_hash(secret)):
+            return None
+        return info
+
+    def _qr_approve(self, code, user) -> bool:
+        """Bind an open request to the approving account — once; a second approval fails."""
+        info = self._qr_peek(code)
+        if not info or info["user_id"] is not None:
+            return False
+        if not self.store.approve_qr_token(self._qr_hash(info["code"]), int(user["id"])):
+            return False
+        self.audit("qr_login_approve", str(user["username"]), detail=f"device_ip={info['ip']}")
+        return True
+
+    def _qr_deny(self, code, user) -> bool:
+        """Refuse an open request: it expires at once, the new device gets nothing."""
+        info = self._qr_peek(code)
+        if not info or info["user_id"] is not None:
+            return False
+        self.store.expire_magic_token(self._qr_hash(info["code"]))
+        self.audit("qr_login_deny", str(user["username"]), detail=f"device_ip={info['ip']}")
+        return True
+
+    def _qr_redeem(self, code, secret) -> Optional[dict]:
+        """Consume an APPROVED request for the device that opened it — single use."""
+        info = self._qr_own(code, secret)
+        if not info or info["user_id"] is None:
+            return None
+        if not self.store.use_magic_token(self._qr_hash(info["code"])):
+            return None
+        return info
+
     # ---------- Sessions ----------
     def _ttl(self, remember: bool = True) -> int:
         """Server session lifetime. remember=False → short transient TTL (session cookie)."""
@@ -6394,8 +6538,8 @@ class TinySesam:
     #: was registered and never called.
     PAGES = ("account", "error", "forgot", "gate_logged_out", "gate_logout", "gateway_home", "login", "logout",
              "magic_confirm", "magic_invalid",
-              "magic_request", "pin", "reauth", "register", "reset", "resource_unlock", "totp",
-              "totp_setup")
+              "magic_request", "pin", "qr_approve", "qr_login", "reauth", "register", "reset",
+              "resource_unlock", "totp", "totp_setup")
 
     def set_template(self, name, fn):
         """Replace a built-in page with an own renderer: fn(auth, ctx) -> str | Response.

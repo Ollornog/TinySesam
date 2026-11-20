@@ -93,6 +93,12 @@ body{font-family:var(--ts-font);margin:0;min-height:100vh;display:flex;flex-dire
 .tsmain .mono{font-family:var(--ts-mono);background:var(--ts-field-bg);
      border:1px solid var(--ts-field-line);border-radius:6px;padding:6px 8px;font-size:13px;
      text-align:center;word-break:break-all}
+.tsmain .mono.qrcode{font-size:22px;letter-spacing:.15em;margin:8px 0}
+.tsmain table.qrinfo{width:100%;border-collapse:collapse;font-size:13px;margin:12px 0 0}
+.tsmain table.qrinfo th{text-align:left;color:var(--ts-muted);font-weight:600;padding:4px 10px 4px 0;
+     vertical-align:top;white-space:nowrap}
+.tsmain table.qrinfo td{padding:4px 0;word-break:break-word}
+.tsmain form.qrstart{margin:0}
 .tsmain .warnbar{background:var(--ts-warn-bg);color:var(--ts-warn-ink);padding:9px 12px;
      border-radius:8px;font-size:12px;margin-bottom:10px}
 /* Messages (PO 2026-10-08): a box of their own BELOW the card, one icon per message. Notice, warning and
@@ -370,7 +376,9 @@ def _login(auth, ctx) -> str:
                f"{remember}"
                f"<button type=submit>{_e(t('login.pin_submit'))}</button></form>")
     magic = ""
-    if "magic" in methods:
+    # Only with the self-request (T-33): with `magiclink_self_request=False` the route is gone and
+    # links come from the admin — a button to a 404 would be a dead end.
+    if "magic" in methods and getattr(cfg, "magiclink_self_request", True):
         magic = f"<a class=btn2 href='__TS_P__/auth/magic/request?next={_next_q(next_)}'>{_e(t('login.magic'))}</a>"
     # `app` (T-14) travels along: without it the button would start the round with the default client,
     # and the approval for THIS application would never come about (B-2).
@@ -380,7 +388,12 @@ def _login(auth, ctx) -> str:
     saml = (f"<a class=btn2 href='__TS_P__/auth/saml/login?next={_next_q(next_)}'>{_e(cfg.saml_name)}</a>"
             if "saml" in methods else "")
     passkey = f"<button class=btn2 type=button id=pkbtn>{_e(t('login.passkey'))}</button>" if "passkey" in methods else ""
-    others = oidc + saml + passkey + magic
+    # Cross-device sign-in (T-33): a POST, the request comes into being only with this click.
+    qr = (f"<form method=post action='__TS_P__/auth/qr/start' class=qrstart>"
+          f"<input type=hidden name=next value='{_e(next_)}'>{_cf(ctx)}"
+          f"<button type=submit class=btn2>{_e(t('login.qr'))}</button></form>"
+          if getattr(cfg, "qr_login_enabled", False) else "")
+    others = oidc + saml + passkey + magic + qr
     sep = _or if others and (pw or pin) else ""
     links = []
     if cfg.allow_signup:
@@ -732,6 +745,90 @@ def _magic_request(auth, ctx) -> str:
     return _page(auth, t("magic.title"), body, below=messages)
 
 
+def _qr_code_shown(code) -> str:
+    """The short code as it is read off the screen: two groups of four."""
+    c = str(code or "")
+    return f"{c[:4]}-{c[4:]}" if len(c) == 8 else c
+
+
+def _qr_login(auth, ctx) -> str:
+    """ctx: code, secret, approve_url (may be empty), qr (data URI or None), expires_at, next, error.
+
+    The page of the NEW device (T-33): QR code and short code for the signed-in device, the
+    secret only as a hidden field — whoever reads the screen gets the code, not the session.
+    The script polls `/auth/qr/status` and submits the form as soon as the request is approved;
+    without script the button does the same."""
+    t = auth.t
+    code = ctx.get("code", "")
+    approve_url = ctx.get("approve_url") or ""
+    where = approve_url.split("?", 1)[0] if approve_url else "__TS_P__/auth/qr/approve"
+    qr = f"<img class=qr alt='' src='{_e(ctx['qr'])}'>" if ctx.get("qr") else ""
+    body = (f"<h1>{_e(t('qr.title'))}</h1>"
+            f"<div class=hint>{_e(t('qr.hint' if qr else 'qr.hint_code'))}</div>"
+            f"{qr}"
+            f"<div class=hint>{_e(t('qr.code_hint'))} <b>{_e(where)}</b></div>"
+            f"<div class='mono qrcode'>{_e(_qr_code_shown(code))}</div>"
+            f"<form method=post action='__TS_P__/auth/qr/finish' id=tsqr>{_cf(ctx)}"
+            f"<input type=hidden name=code value='{_e(code)}'>"
+            f"<input type=hidden name=secret value='{_e(ctx.get('secret', ''))}'>"
+            f"<button type=submit>{_e(t('qr.continue'))}</button></form>"
+            f"<div class=hint id=qrstate role=status>{_e(t('qr.waiting'))}</div>"
+            f"<div class=hint><a href='__TS_P__{_e(auth.cfg.login_path)}?next={_next_q(ctx.get('next') or '/')}'>"
+            f"{_e(t('back'))}</a></div>"
+            + _csrf_js(auth) +
+            "<script>(function(){const f=document.getElementById('tsqr');let stop=false;"
+            "async function poll(){if(stop)return;try{"
+            "const r=await fetch('__TS_P__/auth/qr/status',{method:'POST',headers:{"
+            "'Content-Type':'application/x-www-form-urlencoded','X-CSRF-Token':tsCsrf()},"
+            "body:'code='+encodeURIComponent(f.code.value)+'&secret='+encodeURIComponent(f.secret.value)});"
+            "const j=await r.json();"
+            "if(j.state==='approved'){stop=true;f.submit();return}"
+            f"if(j.state==='invalid'){{stop=true;document.getElementById('qrstate').textContent={json.dumps(t('qr.expired'))};return}}"
+            "}catch(e){}setTimeout(poll,2000)}setTimeout(poll,2000)})()</script>")
+    return _page(auth, t("qr.title"), body, below=_messages([("error", ctx.get("error"))]))
+
+
+def _qr_approve(auth, ctx) -> str:
+    """ctx: user, code, request_info (None or {ip, agent, created_at, …}), decided ('approved'|'denied'|None).
+
+    The page of the SIGNED-IN device (T-33). Before anything is approved it names the device that
+    asks — against a code someone else put on the screen (phishing). Without a code: a field for it."""
+    import time as _time
+    t = auth.t
+    user = ctx.get("user") or {}
+    decided = ctx.get("decided")
+    if decided in ("approved", "denied"):
+        body = (f"<h1>{_e(t('qr.' + decided + '_title'))}</h1>"
+                f"<div class=hint>{_e(t('qr.' + decided + '_hint'))}</div>"
+                f"<a class=btn2 href='__TS_P__/'>{_e(t('error.home'))}</a>")
+        return _page(auth, t("qr." + decided + "_title"), body)
+    info = ctx.get("request_info")
+    if not info:
+        body = (f"<h1>{_e(t('qr.approve_title'))}</h1>"
+                f"<div class=hint>{_e(t('qr.enter_code'))}</div>"
+                f"<form method=get action='__TS_P__/auth/qr/approve'>"
+                f"<label>{_e(t('qr.code'))}</label>"
+                f"<input name=code class=code autocomplete=off autocapitalize=characters spellcheck=false autofocus>"
+                f"<button type=submit>{_e(t('qr.check'))}</button></form>")
+        return _page(auth, t("qr.approve_title"), body)
+    age = max(0, int(_time.time()) - int(info.get("created_at") or 0))
+    code = ctx.get("code", "")
+    body = (f"<h1>{_e(t('qr.approve_title'))}</h1>"
+            f"<div class=hint>{_e(t('qr.approve_hint', user=user.get('username', '')))}</div>"
+            f"<table class=qrinfo>"
+            f"<tr><th>{_e(t('qr.code'))}</th><td class=mono>{_e(_qr_code_shown(code))}</td></tr>"
+            f"<tr><th>{_e(t('qr.ip'))}</th><td>{_e(info.get('ip') or '—')}</td></tr>"
+            f"<tr><th>{_e(t('qr.device'))}</th><td>{_e(info.get('agent') or '—')}</td></tr>"
+            f"<tr><th>{_e(t('qr.asked'))}</th><td>{_e(t('qr.asked_ago', sec=age))}</td></tr></table>"
+            f"<form method=post action='__TS_P__/auth/qr/approve'>{_cf(ctx)}"
+            f"<input type=hidden name=code value='{_e(code)}'>"
+            f"<button type=submit>{_e(t('qr.approve'))}</button></form>"
+            f"<form method=post action='__TS_P__/auth/qr/deny'>{_cf(ctx)}"
+            f"<input type=hidden name=code value='{_e(code)}'>"
+            f"<button type=submit class=btn2>{_e(t('qr.deny'))}</button></form>")
+    return _page(auth, t("qr.approve_title"), body)
+
+
 def _forgot(auth, ctx) -> str:
     """ctx: sent (bool), error. E-mail for the reset link."""
     t = auth.t
@@ -1070,6 +1167,8 @@ DEFAULTS = {
     "magic_request": _magic_request,
     "magic_invalid": _magic_invalid,
     "magic_confirm": _magic_confirm,
+    "qr_login": _qr_login,
+    "qr_approve": _qr_approve,
     "error": _error,
     "forgot": _forgot,
     "reset": _reset,

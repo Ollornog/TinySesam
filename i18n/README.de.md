@@ -32,7 +32,8 @@ Eine Klasse davorhängen, fertig: Login-Seite, Sessions und Route-Guards inklusi
 - 🌐 **OIDC** (generischer IdProvider: PocketID, Keycloak, Entra/Azure AD, …)
 - 🪪 **SAML 2.0** (SP-Login gegen ADFS, Okta, Keycloak, …)
 - 🗂️ **LDAP / Active Directory** (Passwort gegen Verzeichnis-Bind)
-- ✉️ **Magic-Link** (Einmal-Login per E-Mail)
+- ✉️ **Magic-Link** (Einmal-Login per E-Mail — oder vom Admin ausgegeben, ohne Mailer)
+- 📱 **Geräteübergreifende Anmeldung** (QR-Code oder Kurzcode, bestätigt auf einem schon angemeldeten Gerät)
 - 📱 **TOTP** als 2. Faktor *on-top* (+ **Recovery-Codes**; Passkeys gelten schon als vollwertig)
 
 **Kombinierbar in Reihenfolge:**
@@ -218,6 +219,9 @@ wo der Browser es erlaubt — auslesen, nicht ausschreiben.
 | `POST /auth/passkey/{register,login}/{begin,finish}` | WebAuthn *(wenn aktiviert)* |
 | `GET /auth/passkey/list` · `POST /auth/passkey/delete` | Passkeys verwalten |
 | `GET /auth/magic/{token}` | Anmelde-Link einlösen *(wenn Magic-Link aktiv)* |
+| `GET/POST /auth/magic/request` | Anmelde-Link per E-Mail anfordern *(Magic-Link aktiv und `magiclink_self_request`)* |
+| `POST /auth/qr/start` · `/auth/qr/status` · `/auth/qr/finish` | neues Gerät: geräteübergreifende Anmeldung öffnen, abfragen, abholen *(`qr_login_enabled`)* |
+| `GET/POST /auth/qr/approve` · `POST /auth/qr/deny` | angemeldetes Gerät: bestätigen oder ablehnen *(`qr_login_enabled`)* |
 | `GET /auth/verify/{token}` · `GET /auth/invite/{token}` | Adresse bestätigen · Einladung annehmen |
 | `GET /auth/logout` · `GET /auth/me` | Abmelden · aktueller User (JSON) |
 
@@ -249,6 +253,38 @@ Schlüssel eine PIN rotiert oder TOTP abschaltet, bekommt 403 mit übersetzter B
 CLI-Kommando: im eigenen Dienst über die Python-API tun (`auth.set_pin(uid, …)`,
 `auth.totp_disable(uid)`) — derselbe Code-Pfad wie in den Routen, nur ohne HTTP-Fläche.
 
+## Anmeldung per Link und per QR-Code
+
+Drei Wege hinein ohne Passworteingabe, alle auf demselben Einmal-Token (`magic_token`, Zweck
+`login`) — also überall dieselben Regeln: einmalig, kurz gültig, und **der zweite Faktor bleibt
+Pflicht**: Ein Konto mit TOTP oder Passkey muss ihn nach dem Link noch bestehen
+(`magiclink_require_second_factor`, Vorgabe an). Die Anmeldung per Link zählt als Faktor `magic`.
+
+- **Link per E-Mail** (`magiclink_enabled=True`, `magiclink_self_request=True`, ein Mailer): Die
+  Login-Seite bietet „Login-Link per E-Mail“ an. Unverändert.
+- **Link vom Admin, ohne Mail** (`magiclink_enabled=True`): Das Admin-Panel hat je Benutzer einen
+  Knopf *Anmeldelink* (JSON: `POST <admin>/api/users/{id}/signin-link`, Body `{"ttl_min": 60}`,
+  1 Minute bis 7 Tage, Vorgabe `magiclink_ttl_min`). Der Link wird **einmal** angezeigt, als Link
+  und als QR-Code (Extra `[qr]`), zur Übergabe auf beliebigem Weg; er braucht keinen Mailer. Er
+  verfällt mit den anderen offenen Links des Kontos, wenn es gesperrt oder sein Passwort
+  zurückgesetzt wird. Audit `signin_link_issue` mit dem Admin als `actor=`. Im Code:
+  `auth.create_signin_link(user_id, ttl_min=None, next="/")` → `{url, expires_at, qr}`.
+  Die Adresse kommt **nur** aus `base_url`, nie aus dem `Host`-Header der Anfrage.
+- **Links nur vom Admin:** `magiclink_self_request=False`. Dann antwortet `/auth/magic/request`
+  mit 404, und die Login-Seite hat keinen Knopf „Link senden“ — Links, die der Admin oder dein Code
+  ausgestellt hat, lösen weiter ein. Kein Mailer nötig (`config_check` verlangt ihn nur mit der
+  Selbstanforderung).
+- **Geräteübergreifend (QR-Code)** (`qr_login_enabled=True`): Das neue Gerät zeigt einen QR-Code
+  und einen Kurzcode (*Mit anderem Gerät anmelden*). Auf einem Gerät, auf dem man angemeldet ist,
+  scannen oder `/auth/qr/approve` öffnen und den Code eintippen: Die Seite nennt das anfragende
+  Gerät (User-Agent, IP, Alter), bevor man bestätigt. Das neue Gerät bekommt dann **eine eigene**
+  Sitzung. Gültig `qr_login_ttl_sec` (Vorgabe 120 s), einmalig, gedrosselt, im Audit
+  (`qr_login_approve`, `qr_login_deny`, `qr_login`). Bestätigen kann nur eine volle interaktive
+  Sitzung — kein API-Key, keine halbe Anmeldung. Wer nur den Code auf dem Bildschirm sieht, bekommt
+  nichts: Die Sitzung geht an das Gerät, das die Anfrage geöffnet hat (es hält ein Geheimnis, das
+  nie angezeigt wird). Der QR-Code braucht `base_url` und das Extra `[qr]`; ohne beides erscheint
+  nur der Kurzcode. Kein Mailer nötig.
+
 ## Konfiguration (`TinySesamConfig`, Auszug)
 
 | Feld | Default | |
@@ -265,6 +301,8 @@ CLI-Kommando: im eigenen Dienst über die Python-API tun (`auth.set_pin(uid, …
 | `cookie_domain` · `trusted_redirect_hosts` | `""` · `[]` | SSO über Subdomains · erlaubte absolute `?next=`-Ziele |
 | `security_log` | `""` | Datei für den fail2ban-Logger (leer = nur an den Logger) |
 | `forward_auth_enabled` · `forward_headers` | `False` · `{}` | Forward-Auth-Endpunkt · welche Header er setzt (leer = `Remote-*`) |
+| `magiclink_enabled` · `magiclink_self_request` · `magiclink_ttl_min` | `False` · `True` · `15` | Anmelde-Links lösen ein · jeder darf einen per E-Mail anfordern (braucht einen Mailer; `False` = Links nur vom Admin oder App-Code) · Gültigkeit |
+| `qr_login_enabled` · `qr_login_ttl_sec` | `False` · `120` | geräteübergreifende Anmeldung (QR-Code braucht `base_url` und das Extra `[qr]`) · Gültigkeit einer Anfrage |
 
 `TinySesamConfig` ist eine Dataclass, und das gehört zur Zusage: `dataclasses.fields(TinySesamConfig)`
 zählt jedes Feld auf — praktisch, um aus eigenen Einstellungen nur die bekannten Schlüssel
@@ -1021,6 +1059,8 @@ Eingebautes Panel unter **`/auth/admin`** (nur `is_admin`), einbindbar ohne Extr
 
 - **Benutzer & Service-Accounts:** anlegen, **explizit sperren/entsperren** (`disabled` — Konto bleibt, Login blockiert, Sitzungen enden sofort; Selbst-Sperr-Schutz; im Code: `auth.set_disabled`), Passwort-Reset, Rollen/Admin setzen.
 - **API-Keys** je User: erzeugen (einmalige Anzeige) / widerrufen.
+- **Anmeldelink** je User (mit `magiclink_enabled`): Einmal-Link plus QR-Code, einmal angezeigt,
+  ohne Mailer — siehe [Anmeldung per Link und per QR-Code](#anmeldung-per-link-und-per-qr-code).
 - **Sitzungen:** aktive einsehen + beenden.
 - **Härtung:** Schwellen (Versuche/Sperrzeit/Rate-Limit) live einstellen.
 - **Version:** die laufende Version plus ein Hinweis, wie Updates laufen — es gibt **keinen
@@ -1452,7 +1492,8 @@ Bausteine für Seiten, die du selbst baust — Signaturen und Beschreibungen in
   `remove_resource_secret`, `resource_unlocked`, `all_security`, `admin_exists`,
   `admin_claim_token`, `audit`, `FEDERATED_SOURCES`, `NAME_BINDING_REFUSALS`.
 - **Mail- und Token-Abläufe:** `mail_configured`, `send_mail`, `create_magic_token` → `magic_url`
-  → `peek_magic` / `redeem_magic`, `TOKEN_PATHS`, `require_public_base`.
+  → `peek_magic` / `redeem_magic`, `TOKEN_PATHS`, `require_public_base`, `create_signin_link`
+  (Einmal-Anmeldelink ohne Mail, Adresse aus `base_url`).
 - **Proxy-Konfiguration für das Gate-Token:** `gate_public_key` (`sign_key` für caddy-jwt, wie
   `tinysesam gate-key`), `gate_issuer` (`issuer_whitelist`).
 - **Eigene Routen und Erweiterungspunkte:** `client_ip` (die echte Client-Adresse hinter
@@ -1521,7 +1562,7 @@ zusätzlich die Website baut.
 
 ## Status
 
-**81 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
+**82 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
 (`tests/test_matrix.py`).
 
 Gebaut und getestet: Passwort/TOTP/Sitzungen/Rollen, Remember-me, Step-up und per-Route-MFA,
