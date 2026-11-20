@@ -69,6 +69,12 @@
 # `release.yml` mit `automatik=vorbereiten` an — der schneidet das Patch-Release als PR (scripts/_release_automatik.py).
 # Für App-PRs gilt alles andere wie für Dependabot: jeder Pflicht-Workflow grün für genau diesen Kopf, alle Commits vom
 # Autor des PR, kein Fork. Ohne `APP_PR`/`ABBILD_PFADE` bleibt alles wie vorher.
+#
+# RUNNER (seit 0.51.0, PO 2026-11-20: GitHub-Minuten privater Repos fast aufgebraucht): `runs-on` leitet `repokit sync`
+# aus den übrigen Workflows des Repos ab. Läuft einer davon auf `self-hosted`, ist das Repo privat (öffentliche Repos
+# laufen nie auf eigenen Runnern) — dann laufen auch diese vier Jobs dort, auf Einmal-Runnern mit `gh` im Abbild. Sonst
+# `ubuntu-latest` (öffentlich: kostenlos). Kein Checkout, kein PR-Code: Auf dem eigenen Runner läuft nur dieser Text vom
+# Standardzweig.
 name: Dependabot Auto-Merge
 
 on:  # zizmor: ignore[dangerous-triggers] — kein Checkout, kein PR-Code; Herkunft per API geprüft
@@ -99,7 +105,7 @@ jobs:
     # (seit 0.44.0; bis 0.43 beides in einem Job mit `actions: write`, das verletzte die Befehls-Erlaubnisliste
     # für Jobs mit Recht in TinySesam).
     if: github.event_name == 'schedule'
-    runs-on: ubuntu-latest
+    runs-on: @@RUNNER@@
     timeout-minutes: 5
     permissions:
       pull-requests: read
@@ -131,7 +137,7 @@ jobs:
     # nie in den Skripttext eingesetzt.
     needs: sammeln
     if: needs.sammeln.outputs.koepfe != '' && needs.sammeln.outputs.koepfe != '[]'
-    runs-on: ubuntu-latest
+    runs-on: @@RUNNER@@
     timeout-minutes: 5
     permissions:
       actions: write
@@ -160,7 +166,7 @@ jobs:
       (startsWith(github.event.workflow_run.head_branch, 'dependabot/') ||
       startsWith(github.event.workflow_run.head_branch, 'release/') ||
       startsWith(github.event.workflow_run.head_branch, 'pin/')))
-    runs-on: ubuntu-latest
+    runs-on: @@RUNNER@@
     timeout-minutes: 15
     env:
       MIT_APP: ${{ secrets.AUTOMERGE_APP_KEY != '' && vars.AUTOMERGE_APP_CLIENT_ID != '' }}
@@ -567,7 +573,7 @@ jobs:
     timeout-minutes: 10
     needs: entscheiden
     if: contains(fromJSON('["mergen", "kommentieren", "nachziehen"]'), needs.entscheiden.outputs.aktion)
-    runs-on: ubuntu-latest
+    runs-on: @@RUNNER@@
     env:
       MIT_APP: ${{ secrets.AUTOMERGE_APP_KEY != '' && vars.AUTOMERGE_APP_CLIENT_ID != '' }}
     permissions:
