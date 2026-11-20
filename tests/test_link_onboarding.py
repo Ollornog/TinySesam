@@ -114,11 +114,6 @@ def setup_totp(c, a, next_="/who"):
     return r, secret
 
 
-def loc(r):
-    """Where a response redirects to — or why it does not (a clear failure instead of a KeyError)."""
-    return r.headers.get("location") or f"<no redirect: HTTP {r.status_code}>"
-
-
 def events(a, name):
     return [e for e in a.store.recent_audit(300) if e["event"] == name]
 
