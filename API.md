@@ -22,7 +22,7 @@ The tier is recorded per name in `tests/api_surface.json`. The guard `tests/test
 
 **Public is what the hand-written docs describe** (decided before 1.0): the READMEs, `CONFIGURATION.md`, `SECURITY.md` and `docs/OPERATIONS.md`. This page is generated and lists every name with its tier; being listed here alone is no promise. The guard checks that every tier-A/B Python name is named in those documents.
 
-The configuration fields are in [CONFIGURATION.md](CONFIGURATION.md): 176 of 177 in tier A, the others below at their tier.
+The configuration fields are in [CONFIGURATION.md](CONFIGURATION.md): 179 of 180 in tier A, the others below at their tier.
 
 **English, names as well as values** (since 0.22.0, without alias): The names of tiers A and B, their parameters and the keys and values they return or accept — result dicts, the `details` passed to `on_security_event`, the context of your own pages (`ctx["prefix"]`, `ctx["purpose"]`), the JSON responses of the routes, the kinds of API keys (`automation`, `human`). Since the last breaking pass before the freeze (PO decision 2026-10-29) the same holds for what operators and proxies read — query and form parameters, header and cookie names, logger names, the event words and keys of the security log, message ids — and audit and log lines are English as well. The lists old → new are in the CHANGELOG (0.22.0, [Unreleased]).
 
@@ -30,7 +30,7 @@ The configuration fields are in [CONFIGURATION.md](CONFIGURATION.md): 176 of 177
 
 **`auth.store` is internals** (tier C): the storage layer of the built-in routes, without tier, without promise and without transition period — its methods can change with every release. What an app needs is listed below as a method of `TinySesam` (e.g. `set_disabled` instead of `auth.store.set_disabled`).
 
-**Status:** A 376 · B 162 · C 38 names.
+**Status:** A 383 · B 168 · C 38 names.
 
 ## A · Methods of `TinySesam`
 
@@ -66,13 +66,17 @@ Freshly confirm the session with the PIN of the own account (step-up) — like `
 
 Freshly confirm the session with a TOTP code of the own account (step-up) — like `confirm_password`, throttled and locked like `POST /auth/reauth`.
 
-### `create_api_key(user_id, name=None, expires_days=None, roles=None, kind: 'str' = 'automation') -> 'dict'`
+### `create_api_key(user_id, name=None, expires_days=None, roles=None, kind: 'str' = 'automation', renew_on_login: 'bool' = False) -> 'dict'`
 
 Create a new API key. The return value contains 'key' in PLAINTEXT — only ONCE (afterwards only the hash).
 
 ### `create_invite(email, base_url, roles=None, is_admin=False, ttl_min=None) -> 'dict'`
 
 Create an invitation (+ optionally send it). Return {url, token}. The token carries the intended roles/admin rights; it is redeemed only at registration. `base_url` is checked (`ConfigError` for a foreign host, see `magic_url`).
+
+### `create_pairing_code(user_id, name=None, expires_days=None, roles=None, kind: 'str' = 'automation', renew_on_login: 'bool' = False, rotate_on_login: 'bool' = False) -> 'dict'`
+
+Issue a one-time pairing code for a paired API key (ADR-10, T-32). The code is shown ONCE.
 
 ### `create_service(username, roles=None, display_name=None) -> 'int'`
 
@@ -108,7 +112,7 @@ Release an account's binding to a foreign identity (operator path) — and open 
 
 ### `gc(attempts_older_than_sec: 'int' = 86400) -> 'dict'`
 
-Clean up: expired sessions/flows/magic tokens/realm unlocks + old login attempts. Call regularly (cron/startup/scheduler) — otherwise the tables grow. The audit log only if `audit_retention_days` sets a deadline (B5-11) — then the number appears under `audit`. Returns the number of deleted rows per area: `unverified_accounts`, `sessions`, `flow`, `magic_tokens`, `resource_unlocks`, `login_attempts`, `failure_series` (until 0.21.x `failure_seriesn`), possibly `audit`. `attempts_older_than_sec` lies between 0 (all failed attempts) and ten years in seconds, otherwise `ValueError`, before anything is deleted.
+Clean up: expired sessions/flows/magic tokens/realm unlocks + old login attempts. Call regularly (cron/startup/scheduler) — otherwise the tables grow. The audit log only if `audit_retention_days` sets a deadline (B5-11) — then the number appears under `audit`. Returns the number of deleted rows per area: `unverified_accounts`, `sessions`, `flow`, `magic_tokens`, `signature_nonces`, `resource_unlocks`, `login_attempts`, `failure_series` (until 0.21.x `failure_seriesn`), possibly `audit`. `attempts_older_than_sec` lies between 0 (all failed attempts) and ten years in seconds, otherwise `ValueError`, before anything is deleted.
 
 ### `grant_mfa_enrollment(user_id: 'int', minutes: 'int' = 60) -> 'int'`
 
@@ -125,6 +129,10 @@ Register themed error pages (opt-in). Browsers get the 'error' page (in the bran
 ### `install_https(app)`
 
 HTTPS according to config.https_mode: 'force' → HTTP→HTTPS redirect middleware; 'warn'/'off' → also runs WITHOUT a certificate (with 'warn' a panel notice). Returns the mode.
+
+### `install_signatures(app) -> 'None'`
+
+Install the layer that verifies signed requests of paired API keys (ADR-10) — once, on the app.
 
 ### `is_admin(user) -> 'bool'`
 
@@ -221,6 +229,10 @@ Send a reset link to an email address IF a matching user exists. Outwardly alway
 ### `send_verify_email(user_id, email, base_url) -> 'bool'`
 
 Send the confirmation link for an address. False if there is no mailer. `base_url` is checked (`ConfigError` for a foreign host, see `magic_url`). If sending fails, the token is invalidated (B6-12) and the error is passed on. The link unlocks an account whose confirmation is pending (registration), never one that the operator has locked (admin panel, `set_disabled(user_id, True)`) — even if the link comes into being only after this lock, e.g. because the call waits via `after_response` (H-18). When redeemed it sets the evidence for the address (`email_verified`), as long as it is still the account's.
+
+### `set_api_key_options(key_id, user_id=None, renew_on_login: 'Optional[bool]' = None, rotate_on_login: 'Optional[bool]' = None) -> 'dict'`
+
+Switch the login options of a key (T-32). `None` leaves an option as it is.
 
 ### `set_cookie(response, token, remember: 'Optional[bool]' = None)`
 
@@ -712,7 +724,7 @@ The keys of the `details` dict per event, read from the call sites. A key that g
 
 | Event | Keys in `details` |
 |---|---|
-| `api_key_created` | `key_id`, `name` |
+| `api_key_created` | `key_id`, `name`, `paired` |
 | `api_key_revoked` | `key_id` |
 | `api_keys_revoked` | `count`, `reason` |
 | `email_changed` | `new`, `old` |
@@ -803,6 +815,10 @@ The HTML pages (sign-in, registration, account, admin panel, the pages behind e-
 | POST | `/auth/account/username` | — |
 | GET | `/auth/apikeys` | — |
 | POST | `/auth/apikeys` | — |
+| POST | `/auth/apikeys/pair` | — |
+| POST | `/auth/apikeys/pairing` | — |
+| POST | `/auth/apikeys/rotate` | — |
+| POST | `/auth/apikeys/{key_id}/options` | — |
 | POST | `/auth/apikeys/{key_id}/revoke` | — |
 | GET | `/auth/claim-admin` | `query:token` |
 | GET | `/auth/email/{token}` | — |
@@ -863,6 +879,7 @@ The HTML pages (sign-in, registration, account, admin panel, the pages behind e-
 | GET | `<admin>` | — |
 | GET | `<admin>/api/audit` | `query:limit` |
 | POST | `<admin>/api/invite` | — |
+| POST | `<admin>/api/keys/{kid}/options` | — |
 | POST | `<admin>/api/keys/{kid}/revoke` | — |
 | GET | `<admin>/api/resources` | — |
 | POST | `<admin>/api/resources` | — |
@@ -877,6 +894,7 @@ The HTML pages (sign-in, registration, account, admin panel, the pages behind e-
 | POST | `<admin>/api/users/{uid}/disable` | — |
 | GET | `<admin>/api/users/{uid}/keys` | — |
 | POST | `<admin>/api/users/{uid}/keys` | — |
+| POST | `<admin>/api/users/{uid}/keys/pairing` | — |
 | POST | `<admin>/api/users/{uid}/owner` | — |
 | GET | `<admin>/api/users/{uid}/passkeys` | — |
 | POST | `<admin>/api/users/{uid}/passkeys/{cid}/delete` | — |
@@ -892,7 +910,7 @@ Hints to the account page's script, tier B: `X-TinySesam-Factor`, `X-TinySesam-R
 
 What a filter matches. **Promised:** the logger names, the format of the log file, the event word at the start of a line, the key names in their order, and the literal values below. **Not promised:** anything after the keys (free text), the values of `user=`, `ip=` and of a `reason=` that is not listed, and every line that does not start with one of these event words.
 
-- **Loggers:** `tinysesam`, `tinysesam.mail`, `tinysesam.security` (`tinysesam.security` is the one the filters read; `security_log` in the configuration writes it to a file).
+- **Loggers:** `tinysesam`, `tinysesam.client`, `tinysesam.mail`, `tinysesam.security` (`tinysesam.security` is the one the filters read; `security_log` in the configuration writes it to a file).
 - **Format of the log file:** `%(asctime)s %(levelname)s %(message)s`
 - **Lines** (level, event word, `|`, keys in order; `event` words: `deferred login`, `deferred verification`, `failed login`, `failed verification`, `login ok`, `repeated login`):
   - `INFO login ok | user ip method unban`
@@ -956,4 +974,4 @@ These names are not part of the promise. Since 0.22.0 the implementation is call
 
 ---
 
-151 methods, 3 properties, 11 constants, 7 methods of `TinySesamConfig`, 10 exports, of which 5 error types, 17 names on the result types `LoginResult`, `PasswordChangeResult` — generated from the docstrings and `tests/api_surface.json`.
+154 methods, 3 properties, 11 constants, 7 methods of `TinySesamConfig`, 10 exports, of which 5 error types, 17 names on the result types `LoginResult`, `PasswordChangeResult` — generated from the docstrings and `tests/api_surface.json`.

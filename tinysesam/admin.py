@@ -18,7 +18,7 @@ from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import HTMLResponse
 
 from .errors import ConfigError, StateError
-from .router import _key_kind, _mail_base, hardened_route
+from .router import _mail_base, _option, hardened_route, key_view
 from . import security
 from ._vocabulary import audit_line_new
 from .store import name_invalid, norm_email, valid_email
@@ -98,9 +98,8 @@ def build_admin_router(auth) -> APIRouter:
                 "created_at": u["created_at"]}
 
     def kview(k):
-        return {"id": k["id"], "name": k["name"], "prefix": k["prefix"], "created_at": k["created_at"],
-                "last_used": k["last_used"], "expires_at": k["expires_at"], "revoked": bool(k["revoked"]),
-                "kind": _key_kind(k)}
+        # The same view as the account page (`key_view`), paired keys and login options included (T-32).
+        return key_view(k)
 
     # ---------- Users / service accounts ----------
     @ar.get("/api/users")
@@ -350,7 +349,43 @@ def build_admin_router(auth) -> APIRouter:
         # that was an HTTP 500 (R6-8) — the admin saw "internal server error" instead of the reason.
         try:
             return auth.create_api_key(uid, name=b.get("name"), expires_days=b.get("expires_days"),
-                                       roles=b.get("roles"))
+                                       roles=b.get("roles"), renew_on_login=bool(b.get("renew_on_login")))
+        except (ConfigError, ValueError, TypeError) as e:
+            raise HTTPException(400, auth.t("api.invalid", reason=str(e)))
+
+    @ar.post("/api/users/{uid}/keys/pairing")
+    async def user_key_pairing(request: Request, uid: int):
+        """A one-time pairing code for a paired key of this account (ADR-10) — the same rules as creating a
+        key here: an admin session, never a key, and an owner's account only by an owner."""
+        person = guard(request)
+        owner_protection(person, uid)
+        if person.get("_via") != "session":
+            raise HTTPException(403, auth.t("api.key_needs_session"))
+        if not auth._pairing_active():
+            raise HTTPException(404, auth.t("api.not_found"))
+        b = await auth.json_body(request)
+        try:
+            return auth.create_pairing_code(uid, name=b.get("name"), expires_days=b.get("expires_days"),
+                                            roles=b.get("roles"), kind=str(b.get("kind") or "automation"),
+                                            renew_on_login=bool(b.get("renew_on_login")),
+                                            rotate_on_login=bool(b.get("rotate_on_login")))
+        except (ConfigError, ValueError, TypeError) as e:
+            raise HTTPException(400, auth.t("api.invalid", reason=str(e)))
+
+    @ar.post("/api/keys/{kid}/options")
+    async def key_options(request: Request, kid: int):
+        """Switch `renew_on_login`/`rotate_on_login` of a key (T-32). From a session only: renewing is
+        lengthening a credential's life, the same class of act as issuing one."""
+        me = guard(request)
+        owner = auth.store.api_key_owner(kid)
+        if owner is not None:
+            owner_protection(me, owner)
+        if me.get("_via") != "session":
+            raise HTTPException(403, auth.t("api.key_needs_session"))
+        b = await auth.json_body(request)
+        try:
+            return auth.set_api_key_options(kid, renew_on_login=_option(b, "renew_on_login"),
+                                            rotate_on_login=_option(b, "rotate_on_login"))
         except (ConfigError, ValueError, TypeError) as e:
             raise HTTPException(400, auth.t("api.invalid", reason=str(e)))
 
@@ -575,7 +610,8 @@ _KEYS = (
     "err.email err.generic confirm.disable confirm.enable confirm.revoke "
     "prompt.pw prompt.username pw_set roles_groups no_roles api_keys create_key last_used expires "
     "never_expires revoke key_once end_session hardening hardening_owner version installed update_note "
-    "btn.link signin_link link_once prompt.link_ttl"
+    "btn.link signin_link link_once prompt.link_ttl "
+    "pairing_code pair_once renew_on_login rotate_on_login paired on off"
 ).split()
 
 
@@ -612,6 +648,7 @@ def render_panel(auth, base: str, warn: str = "", prefix: str = "") -> str:
             .replace("__REQMAIL__", "true" if (cfg.signup_require_email or
                                               cfg.login_identifier == "email") else "false")
             .replace("__LINKS__", "true" if cfg.magiclink_enabled else "false")
+            .replace("__PAIRING__", "true" if cfg.apikey_enabled and cfg.apikey_pairing_enabled else "false")
             .replace("__LINKTTL__", str(int(cfg.magiclink_ttl_min)))
             .replace("__LANG__", cfg.lang)
             # `ensure_ascii=False`: the page is UTF-8, „Härtung" belongs in as „Härtung",
@@ -682,6 +719,7 @@ const ROLES=__ROLES__;                                 // known roles/groups (co
 const REQMAIL=__REQMAIL__;                             // config.signup_require_email (e-mail required)
 const L=__I18N__;                                      // texts in config.lang — see messages.py
 const LINKS=__LINKS__;                                 // config.magiclink_enabled: admin may issue sign-in links
+const PAIRING=__PAIRING__;                             // config.apikey_pairing_enabled: pairing codes (ADR-10)
 const LINKTTL=__LINKTTL__;                             // config.magiclink_ttl_min: default validity of a link
 document.getElementById("applink").textContent="← "+L.app;
 document.getElementById("outlink").textContent=L.logout;
@@ -762,15 +800,33 @@ async function saveroles(id){
     : (document.getElementById("rf"+id).value||"").split(",").map(s=>s.trim()).filter(Boolean);
   rejected(await p(`/api/users/${id}/roles`,{roles,is_admin:document.getElementById("ra"+id).checked}));users();
 }
-async function keys(id,name){const ks=await g(`/api/users/${id}/keys`);
+// Keys per account. Login options per key (T-32): renew on the owner's sign-in (any key with an expiry),
+// rotate on the owner's sign-in (paired keys only). A pairing code (ADR-10) is shown ONCE.
+let KS={};
+async function keys(id,name){const ks=await g(`/api/users/${id}/keys`);KS={};ks.forEach(x=>{KS[x.id]=x});
+  const flag=(k,o)=>`${esc(L[o])}: ${esc(k[o]?L.on:L.off)}`;
   document.getElementById("k"+id).innerHTML=`<td colspan=5><div class=card><h2>${esc(L.api_keys)} · ${esc(name)}</h2>
     <div class=row><input id=kn placeholder="${esc(L["f.key_name"])}"><input id=ke type=number placeholder="${esc(L["f.key_expires"])}" class=w150>
-    <button ${on("mkkey",id)}>${esc(L.create_key)}</button></div>
-    <table>`+ks.map(k=>`<tr><td><code>${esc(k.prefix)}</code> ${esc(k.name||'')}</td><td>${k.revoked?`<span class="badge red">${esc(L.revoked)}</span>`:`<span class="badge grn">${esc(L.active)}</span>`}</td>
+    <label><input type=checkbox id=kr> ${esc(L.renew_on_login)}</label>
+    ${PAIRING?`<label><input type=checkbox id=kt> ${esc(L.rotate_on_login)}</label>`:""}
+    <button ${on("mkkey",id)}>${esc(L.create_key)}</button>
+    ${PAIRING?`<button class=sec ${on("mkpair",id,name)}>${esc(L.pairing_code)}</button>`:""}</div>
+    <div id=kpair></div>
+    <table>`+ks.map(k=>`<tr><td><code>${esc(k.prefix)}</code> ${esc(k.name||'')}${k.paired?` <span class=badge>${esc(L.paired)}</span>`:""}</td><td>${k.revoked?`<span class="badge red">${esc(L.revoked)}</span>`:`<span class="badge grn">${esc(L.active)}</span>`}</td>
       <td>${esc(L.last_used)} ${dt(k.last_used)}</td><td>${k.expires_at?esc(L.expires)+' '+dt(k.expires_at):esc(L.never_expires)}</td>
-      <td>${k.revoked?'':`<button class=warn ${on("revk",k.id,id,name)}>${esc(L.revoke)}</button>`}</td></tr>`).join("")+`</table></div></td>`}
-async function mkkey(id){const r=await p(`/api/users/${id}/keys`,{name:kn.value,expires_days:ke.value?parseInt(ke.value):null});
+      <td>${k.revoked?'':`<button class=warn ${on("revk",k.id,id,name)}>${esc(L.revoke)}</button>
+        ${k.expires_at?`<button class=sec ${on("kopt",k.id,"renew_on_login",id,name)}>${flag(k,"renew_on_login")}</button>`:""}
+        ${k.paired?`<button class=sec ${on("kopt",k.id,"rotate_on_login",id,name)}>${flag(k,"rotate_on_login")}</button>`:""}`}</td></tr>`).join("")+`</table></div></td>`}
+async function mkkey(id){const r=await p(`/api/users/${id}/keys`,{name:kn.value,expires_days:ke.value?parseInt(ke.value):null,
+    renew_on_login:!!(document.getElementById("kr")||{}).checked});
   if(!rejected(r)&&r.key)prompt(L.key_once,r.key);keys(id,"")}
+async function mkpair(id,name){const r=await p(`/api/users/${id}/keys/pairing`,{name:kn.value,expires_days:ke.value?parseInt(ke.value):null,
+    renew_on_login:!!(document.getElementById("kr")||{}).checked,rotate_on_login:!!(document.getElementById("kt")||{}).checked});
+  if(rejected(r))return;
+  document.getElementById("kpair").innerHTML=`<div class="muted small">${esc(L.pair_once)}</div>
+    <div class=row><input readonly class=w280 value="${esc(r.code)}"></div><div class="muted small">${esc(L.expires)} ${dt(r.expires_at)}</div>`}
+async function kopt(kid,opt,uid,name){const k=KS[kid]||{};
+  rejected(await p(`/api/keys/${kid}/options`,{[opt]:!k[opt]}));keys(uid,name)}
 async function pks(id,name){const ps=await g(`/api/users/${id}/passkeys`);
   document.getElementById("k"+id).innerHTML=`<td colspan=5><div class=card><h2>${esc(L.passkeys)} · ${esc(name)}</h2>
     <table>`+(ps.length?ps.map(c=>`<tr><td>${esc(c.name||'')}</td><td>${dt(c.created_at)}</td><td>${esc(L.last_used)} ${dt(c.last_used)}</td>
@@ -810,7 +866,7 @@ async function audit(){const a=await g("/api/audit?limit=120");
 
 // One delegated listener for all buttons, including those loaded later via innerHTML. Only names
 // from ACT are callable — data-on selects an action, it does not name arbitrary code.
-const ACT={go,mkuser,own,dis,pw,ren,roles,saveroles,clr,keys,mkkey,revk,revs,savesec,pks,delpk,deluser,link};
+const ACT={go,mkuser,own,dis,pw,ren,roles,saveroles,clr,keys,mkkey,mkpair,kopt,revk,revs,savesec,pks,delpk,deluser,link};
 document.addEventListener("click",e=>{const el=e.target.closest("[data-on]");
   if(!el||!ACT[el.dataset.on])return;ACT[el.dataset.on](...JSON.parse(el.dataset.a||"[]"))});
 tabs();users();

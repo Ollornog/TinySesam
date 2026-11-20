@@ -42,6 +42,7 @@ from . import passwords as _pw
 from .templates import PREFIX_PLACEHOLDER as _PREFIX_PLACEHOLDER, Templates, inject_nonce as _inject_nonce
 from . import totp as _totp
 from . import security
+from . import _signatures as _sig
 from .ldap_ import CONNECTION_TIMEOUT as _LDAP_TIMEOUT
 from ._deprecated import Deprecated
 from .login_result import LoginResult
@@ -61,6 +62,14 @@ _REQUEST: contextvars.ContextVar = contextvars.ContextVar("tinysesam_request", d
 # Sets nonce="…" in every <script>/<style> that has none yet. Central, instead of threading the
 # nonce through every template function. Safe, because none of the built-in pages emits the
 # string "<script"/"<style" INSIDE a JS string (checked) — only real tags.
+
+
+def _column(row, name, default=None):
+    """A column of a row that may predate it (a file before the migration) — `default` then."""
+    try:
+        return row[name]
+    except (IndexError, KeyError):
+        return default
 
 
 def _host_from(value: str) -> str:
@@ -411,6 +420,8 @@ class TinySesam:
             # host → client; without `cfg.oidc_clients` it contains exactly this one (T-14).
             self.oidc_clients = OIDCClients(config)
             self.oidc = self.oidc_clients[DEFAULT_CLIENT]
+        if config.apikey_enabled and config.apikey_pairing_enabled:
+            _demand("http_message_signatures", "apikey_pairing_enabled", "pairing")
         if config.passkey_enabled:
             # Passkey has no incomplete configuration: whoever flips the switch means it.
             _demand("webauthn", "passkey_enabled", "passkey")
@@ -810,7 +821,7 @@ class TinySesam:
         return self.create_user(username, is_service=True, roles=roles, display_name=display_name or username)
 
     def create_api_key(self, user_id, name=None, expires_days=None, roles=None,
-                       kind: str = "automation") -> dict:
+                       kind: str = "automation", renew_on_login: bool = False) -> dict:
         """Create a new API key. The return value contains 'key' in PLAINTEXT — only ONCE (afterwards only the hash).
 
         **Two kinds** (R6-5), because a key can be two quite different things:
@@ -840,7 +851,12 @@ class TinySesam:
         key** — a typo in `roles` therefore yields an exception, not a key. Why not an
         empty scope: the reason is stated at the code below; it would reverse the effect.
 
-        Returns `{"id", "key", "prefix", "expires_at", "roles", "dropped_roles", "kind"}`.
+        `renew_on_login=True` (T-32): every completed interactive sign-in of the owner pushes the expiry
+        out to "now + the lifetime this key was created with" — never shorter, never for an expired or
+        revoked key, never by using the key. Needs a key with an expiry. Switchable later with
+        `set_api_key_options`.
+
+        Returns `{"id", "key", "prefix", "expires_at", "roles", "dropped_roles", "kind", "renew_on_login"}`.
         `key` is the plaintext and is visible only this once; `dropped_roles` names what the
         trim removed (the same information is in the audit entry, there as
         `dropped_roles=`; up to 0.24.x the audit line said `verworfene_rollen=`, and up to 0.21.x the key
@@ -851,6 +867,35 @@ class TinySesam:
         database stayed role-less. In forward-auth operation the invented role went on as Remote-Group
         to the downstream app.
         """
+        expires_at, roles, truncated, lifetime = self._key_terms(user_id, expires_days, roles, kind,
+                                                               renew_on_login)
+        raw = "tsk_" + secrets.token_urlsafe(32)
+        key_hash = hashlib.sha256(raw.encode()).hexdigest()
+        prefix = raw[:12] + "…"
+        kid = self.store.add_api_key(user_id, name, prefix, key_hash, roles, expires_at, kind=kind,
+                                     renew_on_login=renew_on_login, lifetime_days=lifetime)
+        detail = f"user={user_id} key={kid} name={name} kind={kind}"
+        if expires_at is None:
+            # Explicitly into the log: an unlimited key is a decision, not a
+            # setting — whoever later asks "since when has this thing been lying around" finds something here.
+            detail += " expiry=unlimited"
+        if truncated:
+            # Into the audit entry, not just discarded: whoever tries this should be visible.
+            detail += f" dropped_roles={','.join(truncated)}"
+        if renew_on_login:
+            detail += " renew_on_login=1"
+        self.audit("apikey_create", self._account_name(user_id), detail=detail)
+        self._security_event("api_key_created", user_id, key_id=kid, name=name or "")
+        return {"id": kid, "key": raw, "prefix": prefix, "expires_at": expires_at,
+                "roles": roles, "dropped_roles": truncated, "kind": kind,
+                "renew_on_login": bool(renew_on_login)}
+
+    def _key_terms(self, user_id, expires_days, roles, kind, renew_on_login=False) -> tuple:
+        """The checks every new key goes through — bearer key and pairing code alike (ADR-10).
+
+        Returns `(expires_at, roles, dropped_roles, lifetime_days)`; raises `ConfigError` for an unknown
+        kind, "unlimited" without permission, a scope with no role of the account, and `renew_on_login`
+        on a key without an expiry (there is nothing to renew)."""
         if kind not in self._KEY_KINDS:
             new_name = Store.KEY_KINDS_OLD.get(str(kind))
             raise ConfigError(
@@ -858,9 +903,6 @@ class TinySesam:
                  f"There is no API key kind {kind!r}. ")
                 + "'automation' works on its own (without admin rights), 'human' only counts "
                   "together with a session of the same account.")
-        raw = "tsk_" + secrets.token_urlsafe(32)
-        key_hash = hashlib.sha256(raw.encode()).hexdigest()
-        prefix = raw[:12] + "…"
         # Expiry: 0 explicitly means "unlimited" and needs permission; None means
         # "not specified" and gets the default. Telling the two apart is the point —
         # before, `None` was silently unlimited, and that was the most common case.
@@ -907,19 +949,10 @@ class TinySesam:
                     "'inherits everything' in the database. Either name an existing role or leave out `roles` "
                     "(then the key inherits the account's roles).")
 
-        kid = self.store.add_api_key(user_id, name, prefix, key_hash, roles, expires_at, kind=kind)
-        detail = f"user={user_id} key={kid} name={name} kind={kind}"
-        if expires_at is None:
-            # Explicitly into the log: an unlimited key is a decision, not a
-            # setting — whoever later asks "since when has this thing been lying around" finds something here.
-            detail += " expiry=unlimited"
-        if truncated:
-            # Into the audit entry, not just discarded: whoever tries this should be visible.
-            detail += f" dropped_roles={','.join(truncated)}"
-        self.audit("apikey_create", self._account_name(user_id), detail=detail)
-        self._security_event("api_key_created", user_id, key_id=kid, name=name or "")
-        return {"id": kid, "key": raw, "prefix": prefix, "expires_at": expires_at,
-                "roles": roles, "dropped_roles": truncated, "kind": kind}
+        if renew_on_login and expires_at is None:
+            raise ConfigError("renew_on_login needs a key with an expiry — an unlimited key has nothing to renew.")
+        lifetime = expires_days if expires_at is not None and expires_days > 0 else None
+        return expires_at, roles, truncated, lifetime
 
     #: The kinds of an API key (R6-5), English since 0.22.0: `automation` works alone and
     #: never carries the admin flag, `human` applies only together with a session of the same account.
@@ -946,9 +979,18 @@ class TinySesam:
         if not key or not key.startswith("tsk_"):
             return None, None
         row = self.store.get_api_key_by_hash(hashlib.sha256(key.encode()).hexdigest())
-        if not row:
+        if not row or _column(row, "public_key"):
+            # A paired key (ADR-10) has no bearer string at all; its row is never a bearer key, whatever
+            # string a caller sends (its `key_hash` is `ed25519:…`, so this is a second bolt).
             self._key_log(None, "unknown")
             return None, None
+        return self._accept_key_row(row)
+
+    def _accept_key_row(self, row):
+        """The checks every key row passes — bearer string or signature (ADR-10): revoked, expired, account
+        disabled, keys dormant at the provider. `(user, key_roles|None)` or `(None, None)`; logs the use or the
+        refusal (throttled) and leaves the kind in `self._last_key_kind`."""
+        self._last_key_kind = "automation"
         if row["revoked"]:
             self._key_log(row, "revoked")
             return None, None
@@ -1095,6 +1137,233 @@ class TinySesam:
     _KEYS_REVOKED_REASONS = ("account_disabled", "admin_password_reset", "password_reset",
                                 "sessions_revoked")
 
+    # ---------- Paired keys: pairing, signatures, rotation, login options (ADR-10, T-32) ----------
+    def _pairing_active(self) -> bool:
+        return bool(self.cfg.apikey_enabled and self.cfg.apikey_pairing_enabled)
+
+    def install_signatures(self, app) -> None:
+        """Install the layer that verifies signed requests of paired API keys (ADR-10) — once, on the app.
+
+        A pure-ASGI layer: requests without `Signature-Input` pass through untouched. A signed request is
+        verified once (signature, `Content-Digest` against the body, nonce, age), its outcome goes to
+        `current_user()`, and a key whose owner asked for rotation gets the response header
+        `TinySesam-Key-Rotate`. Without this call a signed request authenticates nobody, and the pairing
+        route refuses with a hint. Bearer keys do not need it."""
+        app.add_middleware(_sig.SignatureLayer, auth=self)
+
+    def create_pairing_code(self, user_id, name=None, expires_days=None, roles=None, kind: str = "automation",
+                            renew_on_login: bool = False, rotate_on_login: bool = False) -> dict:
+        """Issue a one-time pairing code for a paired API key (ADR-10, T-32). The code is shown ONCE.
+
+        The client presents the code once together with the public half of a key pair it generated
+        itself (`POST /auth/apikeys/pair`, signed with that key); from then on it signs every request
+        (RFC 9421). The server never sees a secret. The key's terms are fixed here, with the same checks
+        as `create_api_key` (kind, expiry, role scope trimmed to the account's roles), and checked again
+        on pairing. `rotate_on_login=True`: every completed sign-in of the owner asks the client to rotate
+        its key pair. The code lives `apikey_pairing_minutes`, is stored only as a hash and is discarded
+        with the account's other open links (lockout, admin password reset, "end all sessions").
+
+        Returns `{"code", "expires_at", "name", "kind", "roles", "dropped_roles", "renew_on_login",
+        "rotate_on_login"}`. Raises `ConfigError` when pairing is off or a term is invalid, `MissingExtra`
+        without the extra `[pairing]`."""
+        if not self._pairing_active():
+            raise ConfigError("Paired API keys are off — set apikey_pairing_enabled=True (with apikey_enabled).")
+        _sig._lib()
+        owner = self.store.get_user(user_id)
+        if not owner or owner["disabled"]:
+            raise ConfigError("No pairing code for a missing or disabled account.")
+        days = int(self.cfg.apikey_default_days or 0) if expires_days is None else int(expires_days)
+        _, trimmed, truncated, _ = self._key_terms(user_id, days, roles, kind, renew_on_login)
+        code = _sig.new_pairing_code()
+        expires_at = _now() + int(self.cfg.apikey_pairing_minutes) * 60
+        terms = {"name": name, "kind": kind, "roles": trimmed if roles is not None else None,
+                 "expires_days": days, "renew_on_login": bool(renew_on_login),
+                 "rotate_on_login": bool(rotate_on_login)}
+        self.store.add_magic_token(_sig.code_hash(code), _sig.PAIRING_PURPOSE, expires_at, user_id=user_id,
+                                   payload=terms)
+        detail = (f"user={user_id} name={name} kind={kind} renew_on_login={int(bool(renew_on_login))} "
+                  f"rotate_on_login={int(bool(rotate_on_login))}")
+        if truncated:
+            detail += f" dropped_roles={','.join(truncated)}"
+        self.audit("apikey_pairing_issue", self._account_name(user_id), detail=detail)
+        return {"code": code, "expires_at": expires_at, "name": name, "kind": kind,
+                "roles": terms["roles"], "dropped_roles": truncated,
+                "renew_on_login": bool(renew_on_login), "rotate_on_login": bool(rotate_on_login)}
+
+    def _pair_denied(self, reason: str, ip, owner=None) -> tuple:
+        self.audit("apikey_pair_denied", owner, ip, f"reason={reason}")
+        self._rejected(None, ip, f"pairing_{reason}", login=False)
+        return None, reason
+
+    def _pair_api_key(self, code, public_raw: bytes, ip=None) -> tuple:
+        """Redeem a pairing code for a public key whose possession the route has verified.
+        `(key dict, None)` or `(None, reason)`; every refusal is in the audit and security log."""
+        h = _sig.code_hash(code)
+        tok = self.store.get_magic_token(h)
+        if not tok or tok["purpose"] != _sig.PAIRING_PURPOSE or not tok["user_id"]:
+            return self._pair_denied("unknown", ip)
+        owner = self._account_name(tok["user_id"])
+        if tok["used_at"]:
+            return self._pair_denied("used", ip, owner)
+        if tok["expires_at"] < _now():
+            return self._pair_denied("expired", ip, owner)
+        u = self.store.get_user(tok["user_id"])
+        if not u or u["disabled"]:
+            return self._pair_denied("account_locked", ip, owner)
+        try:
+            terms = json.loads(tok["payload"] or "{}")
+            expires_at, roles, _, lifetime = self._key_terms(
+                u["id"], terms.get("expires_days"), terms.get("roles"), terms.get("kind") or "automation",
+                bool(terms.get("renew_on_login")))
+        except (ConfigError, ValueError, TypeError):
+            return self._pair_denied("terms", ip, owner)
+        keyid = _sig.thumbprint(public_raw)
+        if self.store.get_api_key_by_signing_hash(_sig.key_hash(keyid)):
+            return self._pair_denied("key_in_use", ip, owner)
+        if not self.store.use_magic_token(h):      # single use, decided atomically in the database
+            return self._pair_denied("used", ip, owner)
+        name, kind = terms.get("name"), terms.get("kind") or "automation"
+        try:
+            kid = self.store.add_paired_api_key(
+                u["id"], name, keyid[:12] + "…", _sig.key_hash(keyid), _sig.b64u(public_raw), roles, expires_at,
+                kind=kind, renew_on_login=bool(terms.get("renew_on_login")),
+                rotate_on_login=bool(terms.get("rotate_on_login")), lifetime_days=lifetime)
+        except sqlite3.IntegrityError:
+            return self._pair_denied("key_in_use", ip, owner)
+        self.audit("apikey_pair", owner, ip,
+                   f"user={u['id']} key={kid} name={name} kind={kind} keyid={keyid}"
+                   + (" expiry=unlimited" if expires_at is None else ""))
+        self._security_event("api_key_created", u["id"], key_id=kid, name=name or "", paired=True)
+        return {"id": kid, "keyid": keyid, "prefix": keyid[:12] + "…", "expires_at": expires_at,
+                "roles": roles, "kind": kind, "renew_on_login": bool(terms.get("renew_on_login")),
+                "rotate_on_login": bool(terms.get("rotate_on_login")),
+                "rotate_path": self.browser_path(None, "/auth/apikeys/rotate")}, None
+
+    async def _signature_check(self, scope, receive) -> tuple:
+        """Verify a signed request once (the layer calls this). Returns `(outcome, receive)`.
+
+        Order: header signature first (no body is read for a stranger), then the body against the
+        signed `Content-Digest`, then the predecessor rule after a rotation, then the nonce. The first use
+        of a rotated key's successor retires the predecessor."""
+        cfg = self.cfg
+        message = _sig._Message(scope.get("method") or "GET", _sig.target_uri(scope, cfg.base_url or ""),
+                                scope.get("headers") or [])
+        found: dict = {}
+
+        def lookup(keyid):
+            kh = _sig.key_hash(str(keyid))
+            row = self.store.get_api_key_by_signing_hash(kh)
+            if row is None:
+                return None
+            which = "current" if row["key_hash"] == kh else "prev"
+            found.update(row=row, which=which)
+            return _sig.ed25519_public(_sig.unb64u(row["public_key"] if which == "current"
+                                                   else row["prev_public_key"]))
+
+        max_age = int(cfg.apikey_signature_max_age)
+        try:
+            verifier, results, params = _sig.verify_headers(message, lookup, max_age)
+        except Exception as e:
+            if isinstance(e, _sig.errors.MissingExtra):
+                security.seclog.error("%s", e)
+            # The library checks the age before it resolves the key: find the row by the keyid ourselves,
+            # so that the audit line names the key and says WHY (an expired signature is not an unknown key).
+            row = found.get("row") or self.store.get_api_key_by_signing_hash(
+                _sig.key_hash(_sig.keyid_of(message)))
+            text = str(e)
+            reason = ("expired" if any(w in text for w in ("maximum allowable age", "in the future", "in the past"))
+                      else "signature") if row else "unknown"
+            return {"ok": False, "reason": reason, "key_id": row["id"] if row else None}, receive
+        row, which = found["row"], found["which"]
+        body, other = await _sig.read_body(receive)
+        receive = _sig.replay(body, other, receive)
+        try:
+            verifier.verify_body(message, results, body)
+        except Exception:
+            return {"ok": False, "reason": "body", "key_id": row["id"]}, receive
+        created = int(params["created"])
+        if which == "prev" and row["prev_until"] is not None and created > int(row["prev_until"]):
+            return {"ok": False, "reason": "rotated", "key_id": row["id"]}, receive
+        if not self.store.use_signature_nonce(row["id"], params["nonce"], created + max_age + _sig.CLOCK_SKEW):
+            return {"ok": False, "reason": "replay", "key_id": row["id"]}, receive
+        if which == "current" and row["prev_key_hash"] and row["prev_until"] is None:
+            self.store.retire_prev_api_key(row["id"], _now())
+        return {"ok": True, "key_id": row["id"], "which": which, "keyid": str(params["keyid"]),
+                "rotate": which == "current" and bool(row["rotate_pending"]) and not row["revoked"],
+                "rotate_path": self.browser_path(None, "/auth/apikeys/rotate")}, receive
+
+    def _signed_key(self, outcome) -> tuple:
+        """`(user, key_roles|None)` for the layer's outcome — the same row checks as a bearer key."""
+        self._last_key_kind = "automation"
+        row = self.store.get_api_key(outcome["key_id"]) if outcome.get("key_id") else None
+        if not outcome.get("ok") or row is None:
+            self._key_log(row, outcome.get("reason") or "unknown")
+            return None, None
+        return self._accept_key_row(row)
+
+    def _key_presented(self, request) -> bool:
+        """Did the request bring an API key — a bearer string or a signature (ADR-10)?"""
+        return bool(self._extract_api_key(request)) or _sig.signature_presented(request)
+
+    def _rotate_api_key(self, outcome, new_public_raw: bytes) -> dict:
+        """Complete a rotation (ADR-10): the request is signed with the key being rotated; `new_public_raw`
+        becomes the current key, the present one its predecessor. Raises `StateError` with a reason."""
+        row = self.store.get_api_key(outcome["key_id"])
+        new_keyid = _sig.thumbprint(new_public_raw)
+        new_hash = _sig.key_hash(new_keyid)
+        if row is None:
+            raise StateError("unknown")
+        if outcome["which"] == "prev":
+            # The answer to an earlier rotation got lost: the same successor again is a success.
+            if row["key_hash"] == new_hash:
+                return {"ok": True, "keyid": new_keyid, "repeated": True}
+            raise StateError("rotated")
+        if row["key_hash"] == new_hash or self.store.get_api_key_by_signing_hash(new_hash):
+            raise StateError("key_in_use")
+        if not self.store.rotate_api_key_public(row["id"], row["key_hash"], _sig.b64u(new_public_raw), new_hash):
+            raise StateError("rotated")
+        self.audit("apikey_rotate", self._account_name(row["user_id"]),
+                   detail=f"key={row['id']} keyid={new_keyid} "
+                          f"requested={'login' if row['rotate_pending'] else 'client'}")
+        return {"ok": True, "keyid": new_keyid, "repeated": False}
+
+    def set_api_key_options(self, key_id, user_id=None, renew_on_login: Optional[bool] = None,
+                            rotate_on_login: Optional[bool] = None) -> dict:
+        """Switch the login options of a key (T-32). `None` leaves an option as it is.
+
+        `renew_on_login`: every completed interactive sign-in of the owner pushes the expiry out by the
+        key's lifetime (needs an expiry). `rotate_on_login`: every completed sign-in of the owner asks the
+        client to rotate its key pair — paired keys only. With `user_id`, only a key of that account
+        (self-service). Raises `ConfigError` for an unknown, foreign or revoked key and for an option the
+        key cannot have. Returns `{"id", "renew_on_login", "rotate_on_login"}`."""
+        row = self.store.get_api_key(key_id)
+        if row is None or (user_id is not None and row["user_id"] != user_id):
+            raise ConfigError("unknown API key")
+        if row["revoked"]:
+            raise ConfigError("the API key is revoked")
+        if rotate_on_login and not _column(row, "public_key"):
+            raise ConfigError("rotate_on_login needs a paired key — a bearer string cannot be rotated on both sides.")
+        if renew_on_login and row["expires_at"] is None:
+            raise ConfigError("renew_on_login needs a key with an expiry — an unlimited key has nothing to renew.")
+        lifetime = _column(row, "lifetime_days")
+        if renew_on_login and not lifetime:
+            # A key from before schema 17 knows only its two dates: its lifetime is their distance.
+            lifetime = max(1, round((int(row["expires_at"]) - int(row["created_at"])) / 86400))
+        self.store.set_api_key_options(key_id, renew_on_login, rotate_on_login, lifetime_days=lifetime)
+        row = self.store.get_api_key(key_id)
+        self.audit("apikey_options", self._account_name(row["user_id"]),
+                   detail=f"key={key_id} renew_on_login={row['renew_on_login']} rotate_on_login={row['rotate_on_login']}")
+        return {"id": key_id, "renew_on_login": bool(row["renew_on_login"]),
+                "rotate_on_login": bool(row["rotate_on_login"])}
+
+    def _keys_on_login(self, user_id, name, ip) -> None:
+        """A completed interactive sign-in of the owner: renew and mark for rotation (T-32)."""
+        if not self.cfg.apikey_enabled:
+            return
+        renewed, marked = self.store.api_keys_on_login(user_id, _now())
+        if renewed or marked:
+            self.store.audit_log("apikeys_login", name, ip, f"renewed={renewed} rotate={marked}")
+
     def _keys_revoked(self, user_id, reason: str) -> int:
         """Revoke all valid keys of an account — and notify the owner (limit e).
 
@@ -1200,7 +1469,8 @@ class TinySesam:
     #: until T-13 they learned of none (finding B2-2): an attacker with a
     #: session could switch off TOTP, add a passkey or change the password, and the
     #: owner saw it only at the next login — if at all. The details (third argument
-    #: of the hook), with English keys since 0.22.0: `api_key_created` `key_id`, `name`;
+    #: of the hook), with English keys since 0.22.0: `api_key_created` `key_id`, `name` (and `paired=True` for a
+    #: paired key, T-32);
     #: `api_key_revoked` `key_id`; `api_keys_revoked` `count`, `reason` (`account_disabled`,
     #: `admin_password_reset`, `password_reset`, `sessions_revoked`); `totp_disabled`
     #: `recovery_codes_deleted`; `recovery_codes_generated` `count`; `recovery_code_used`
@@ -3126,6 +3396,7 @@ class TinySesam:
         u = self.store.get_user(user_id)
         name = u["username"] if u else None
         self.store.audit_log("login", name, ip, method)
+        self._keys_on_login(user_id, name, ip)
         foreign = (self.store.count_fails(self._window_start(), ip=ip, except_username=norm_identifier(name),
                                         exclude_methods=security.NOT_LOGIN_METHODS)
                  if ip and name else 1)
@@ -3848,7 +4119,9 @@ class TinySesam:
         if not self.cfg.apikey_enabled:
             return False
         key = self._extract_api_key(request)
-        if not key:
+        # A signature (ADR-10) is a custom header like `X-API-Key` — a foreign page cannot set it.
+        signed = _sig.result_of(request) if self._pairing_active() else None
+        if not key and signed is None:
             return False
         if self.store.get_session(request.cookies.get(self.session_cookie_name) or ""):
             return False        # cookie in play → CSRF applies, whatever the header says
@@ -3857,7 +4130,7 @@ class TinySesam:
         # revoked key at a POST route stood in the log without an address, and a valid one twice —
         # once without, once with IP, because the IP is part of the throttle key.
         self._remember_request(request)
-        return self.verify_api_key(key)[0] is not None
+        return (self._signed_key(signed) if signed is not None else self.verify_api_key(key))[0] is not None
 
     def require_csrf(self, request: Request, submitted):
         """For form POSTs: raises 403 if the CSRF token is missing/does not match.
@@ -5186,7 +5459,7 @@ class TinySesam:
         u = self.session_user(request)
         if u is not None:
             return u, None
-        if self.cfg.apikey_enabled and self._extract_api_key(request):
+        if self.cfg.apikey_enabled and self._key_presented(request):
             return None, (403, self._WITHOUT_SESSION_KEY[purpose])
         return None, (401, "api.not_signed_in")
 
@@ -5659,8 +5932,14 @@ class TinySesam:
         # 2) API key (machine / daemon) — the key IS the factor, no MFA
         if self.cfg.apikey_enabled:
             key = self._extract_api_key(request)
-            if key:
-                u, key_roles = self.verify_api_key(key)
+            signed = _sig.result_of(request) if self._pairing_active() else None
+            if signed is None and _sig.signature_presented(request) and self._pairing_active() \
+                    and not _sig.layer_installed(request) and self._once_per(("signatures_missing",), 3600):
+                security.seclog.warning("A signed request arrived, but install_signatures(app) was not called — "
+                                        "paired API keys authenticate nobody without it (ADR-10).")
+            if key or signed is not None:
+                # A signature wins over a bearer string sent along: it is the stronger proof.
+                u, key_roles = self._signed_key(signed) if signed is not None else self.verify_api_key(key)
                 kind = getattr(self, "_last_key_kind", "automation")
                 if u and kind == "human":
                     # A human key counts ONLY together with a session of the same account
@@ -6501,7 +6780,7 @@ class TinySesam:
         login attempts. Call regularly (cron/startup/scheduler) — otherwise the tables grow.
         The audit log only if `audit_retention_days` sets a deadline (B5-11) — then the number
         appears under `audit`. Returns the number of deleted rows per area: `unverified_accounts`,
-        `sessions`, `flow`, `magic_tokens`, `resource_unlocks`, `login_attempts`,
+        `sessions`, `flow`, `magic_tokens`, `signature_nonces`, `resource_unlocks`, `login_attempts`,
         `failure_series` (until 0.21.x `failure_seriesn`), possibly `audit`.
         `attempts_older_than_sec` lies between 0 (all failed attempts) and ten years in
         seconds, otherwise `ValueError`, before anything is deleted."""
@@ -6518,6 +6797,7 @@ class TinySesam:
             "sessions": self.store.gc_sessions(),
             "flow": self.store.gc_flow(),
             "magic_tokens": self.store.gc_magic_tokens(),
+            "signature_nonces": self.store.gc_signature_nonces(),
             "resource_unlocks": self.store.gc_resource_unlocks(),
             "login_attempts": self.store.gc_attempts(older),
             # Streaks not triggered after 90 days of rest; triggered ones remain (B2-6).

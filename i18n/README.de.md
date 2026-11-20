@@ -66,7 +66,7 @@ TinySesam liegt auf **PyPI** (seit 0.19.0). Pinne die Version:
 pip install "tinysesam==0.25.6"
 # Kern: Passwort + TOTP. Alles: [all] — + argon2, QR, OIDC, Passkey
 pip install "tinysesam[all]==0.25.6"
-# gezielt: [argon2] [qr] [oidc] [saml] [ldap] [passkey] [redis] [gateway]
+# gezielt: [argon2] [qr] [oidc] [saml] [ldap] [passkey] [redis] [gateway] [pairing]
 ```
 
 Jedes Release geht aus seinem Git-Tag nach PyPI, per Trusted Publishing (ohne Token), und jede
@@ -1124,13 +1124,73 @@ Für **maschinellen Zugang** (Skripte, andere Dienste, System-Daemons) — paral
   ein Routine-Wechsel soll die Automatiken nicht reihenweise stilllegen —, nennt aber in der
   Antwort und im Protokoll, wie viele Keys weiter gelten (`api_keys_active`). Keys eines
   deaktivierten Kontos haben ohnehin nie angemeldet.
+- **Bei Anmeldung verlängern (`renew_on_login`, je Key, Vorgabe aus).** Jede *abgeschlossene
+  interaktive Anmeldung* des Besitzers (jede Methode, nach der ganzen Faktorkette) schiebt den Ablauf
+  auf „jetzt + die Laufzeit, mit der der Key erzeugt wurde" — nie kürzer, nie für einen abgelaufenen
+  oder widerrufenen Key und nie durch *Benutzen* des Keys. Der Ablauf bleibt Pflicht: Meldet sich der
+  Besitzer nicht mehr an, stirbt der Key trotzdem. `auth.create_api_key(uid, expires_days=30,
+  renew_on_login=True)` oder später `auth.set_api_key_options(key_id, renew_on_login=True)`. Das
+  Audit-Protokoll zählt mit (`apikeys_login`).
+
+### Gekoppelte Keys: Kopplungscode, signierte Anfragen, Wechsel (ADR-10)
+
+Ein Bearer-Key ist ein kopierbarer String: Wer ihn einmal liest — Proxy-Log, Shell-Historie, Backup
+einer Konfigurationsdatei —, kann ihn bis zum Ablauf benutzen. **Gekoppelte Keys** schließen diese Lücke
+([ADR-10](https://github.com/Ollornog/TinySesam/blob/main/backlog/ADR-10-paired-api-keys-http-message-signatures.md)):
+Der Client erzeugt selbst ein **Ed25519-Schlüsselpaar** und signiert **jede Anfrage** mit
+**HTTP Message Signatures (RFC 9421)** — Methode, Ziel-URI, den Body über `Content-Digest` (RFC 9530),
+Erstellzeit und eine einmalige Nonce. TinySesam speichert nur den **öffentlichen** Schlüssel: Datenbank,
+Logs und eine mitgeschnittene Anfrage enthalten nichts, womit man signieren könnte. (Verschlüsselt wird
+weiter per TLS; neu sind die Bindung jeder Anfrage an einen Schlüssel, der den Client nie verlässt,
+Schutz vor Wiedereinspielen und kein Geheimnis auf dem Server.)
+
+- **Einschalten:** `pip install 'tinysesam[pairing]'`, `apikey_pairing_enabled=True` und einmal an der
+  App `auth.install_signatures(app)` (eine kleine ASGI-Schicht, die nur Anfragen mit
+  `Signature-Input` anfasst). Bearer-Keys funktionieren unverändert weiter; ein gekoppelter Key ist eine
+  weitere Zeile in derselben Tabelle — gleiche Arten, Scope, Ablauf, Widerruf.
+- **Koppeln:** Aus einer angemeldeten Sitzung stellen die Kontoseite (Knopf *Kopplungscode*), das
+  Admin-Panel (je Nutzer) oder `auth.create_pairing_code(uid, name=…, expires_days=…, roles=…, kind=…,
+  renew_on_login=…, rotate_on_login=…)` einen Einmalcode wie `ABCD-EFGH-JKLM-NPQR` aus
+  (`apikey_pairing_minutes`, Vorgabe 10; einmal gültig; gehasht gespeichert; verfällt mit den anderen
+  offenen Links des Kontos bei Sperre, Admin-Passwort-Reset und „alle Sitzungen beenden"). Der Client
+  schickt ihn einmal mit seinem öffentlichen Schlüssel an `POST /auth/apikeys/pair`, signiert mit dem
+  neuen Schlüssel (Besitznachweis). Die Route ist gedrosselt, jeder Versuch steht im Audit-Protokoll
+  (`apikey_pairing_issue`, `apikey_pair`, `apikey_pair_denied`).
+- **Jede Anfrage** trägt `Signature-Input`/`Signature` mit `tag="tinysesam"`, `created` (höchstens
+  `apikey_signature_max_age` Sekunden alt, Vorgabe 60), einer `nonce` (einmalig), der `keyid`
+  (RFC-7638-Fingerabdruck des öffentlichen Schlüssels) und deckt `@method`, `@target-uri` und — mit Body —
+  `content-digest` ab. Alles andere ist 401. `base_url` setzen: Die Ziel-URI wird daraus gebildet und passt
+  so auch hinter einem Proxy.
+- **Bei Anmeldung wechseln (`rotate_on_login`, gekoppelte Keys, Vorgabe aus):** Jede abgeschlossene
+  Anmeldung des Besitzers markiert den Key. Die nächste signierte Antwort trägt
+  `TinySesam-Key-Rotate: <Pfad>`; der Client erzeugt ein neues Schlüsselpaar, speichert es als
+  ausstehend und meldet es mit `POST /auth/apikeys/rotate` an (signiert mit dem aktuellen Schlüssel).
+  Der alte Schlüssel gilt weiter, bis der neue zum ersten Mal benutzt wird — Anfragen im Flug scheitern
+  nicht —, danach nur noch für Signaturen von vor diesem Moment und nach Ablauf des Signaturalters gar
+  nicht mehr. Eine verlorene Wechsel-Antwort heilt mit der nächsten Anfrage. Umschalten je Key:
+  `auth.set_api_key_options(key_id, rotate_on_login=True)`, `POST /auth/apikeys/{id}/options`
+  (Self-Service) oder das Panel.
+- **Referenz-Client** (`tinysesam.client`, HTTP aus der Standardbibliothek):
+
+  ```python
+  from tinysesam.client import PairedClient
+  client = PairedClient.pair("https://app.example.com", "ABCD-EFGH-JKLM-NPQR", "/etc/myd/key.json")
+  client = PairedClient("/etc/myd/key.json")          # später: die Schlüsseldatei (0600) enthält alles
+  r = client.request("POST", "/api/things", json={"name": "x"})
+  ```
+
+  oder auf der Kommandozeile `python -m tinysesam.client pair <base_url> <code> <key_file>`. Er signiert,
+  schließt Wechsel selbst ab und schickt den privaten Schlüssel nirgendwohin. Andere Sprachen
+  implementieren dasselbe RFC-9421-Profil.
 
 ## Admin-Panel
 
 Eingebautes Panel unter **`/auth/admin`** (nur `is_admin`), einbindbar ohne Extra-Setup:
 
 - **Benutzer & Service-Accounts:** anlegen, **explizit sperren/entsperren** (`disabled` — Konto bleibt, Login blockiert, Sitzungen enden sofort; Selbst-Sperr-Schutz; im Code: `auth.set_disabled`), Passwort-Reset, Rollen/Admin setzen.
-- **API-Keys** je User: erzeugen (einmalige Anzeige) / widerrufen.
+- **API-Keys** je User: erzeugen (einmalige Anzeige) / widerrufen, *bei Anmeldung verlängern* /
+  *bei Anmeldung wechseln* umschalten und — mit `apikey_pairing_enabled` — einen Kopplungscode für einen
+  gekoppelten Key ausstellen (einmalige Anzeige).
 - **Anmeldelink** je User (mit `magiclink_enabled`): Einmal-Link plus QR-Code, einmal angezeigt,
   ohne Mailer — siehe [Anmeldung per Link und per QR-Code](#anmeldung-per-link-und-per-qr-code).
 - **Sitzungen:** aktive einsehen + beenden.
@@ -1172,9 +1232,11 @@ JSON-API unter `<mount>/api/*` (dieselben Aktionen — für eigene UIs / Automat
 Alles optional (per Config an/aus), einzeln und kombiniert nutzbar, Frontend überall ersetzbar.
 
 - **Frontend austauschbar:** `auth.set_template(name, fn)` — `fn(auth, ctx)` gibt HTML-String **oder**
-  eine eigene `Response` zurück. Alle 13 Namen: `login`, `pin`, `totp`, `totp_setup`, `reauth`,
-  `account`, `register`, `forgot`, `reset`, `magic_request`, `magic_invalid`, `resource_unlock`,
-  `error`. Eingebaute Renderer sind Fallback; `tinysesam.templates.DEFAULTS` führt die aktuelle Liste.
+  eine eigene `Response` zurück. Die Namen (`TinySesam.PAGES`): `account`, `account_setup`, `error`,
+  `forgot`, `gate_logged_out`, `gate_logout`, `gateway_home`, `login`, `logout`, `magic_confirm`,
+  `magic_invalid`, `magic_request`, `pin`, `qr_approve`, `qr_login`, `reauth`, `register`, `reset`,
+  `resource_unlock`, `totp`, `totp_setup`. Eingebaute Renderer sind Fallback;
+  `tinysesam.templates.DEFAULTS` führt die aktuelle Liste.
   Eine dieser Seiten aus einer eigenen Route zeigen: `auth.render_page(name, status=200, request=request,
   **ctx)` rendert sie — deinen Ersatz, wenn einer gesetzt ist, sonst die eingebaute Seite — mit CSP-Nonce,
   CSRF-Token und Mount-Präfix im `ctx` und gibt die `Response` zurück. `request` mitgeben: ohne entsteht ein
@@ -1649,7 +1711,7 @@ zusätzlich die Website baut.
 
 ## Status
 
-**84 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
+**85 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
 (`tests/test_matrix.py`).
 
 Gebaut und getestet: Passwort/TOTP/Sitzungen/Rollen, Remember-me, Step-up und per-Route-MFA,

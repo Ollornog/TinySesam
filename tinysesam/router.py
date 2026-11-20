@@ -10,6 +10,7 @@ The method routes depend not on the switch but on the finished, **built** method
 (`auth.oidc`, `auth.webauthn`, `auth.saml`): a switch that is set but whose extra or mandatory field
 is missing makes construction fail in the constructor already — it never gets here."""
 from __future__ import annotations
+import json as _json
 import secrets
 from urllib.parse import urlsplit
 from fastapi import APIRouter, Request, Form, HTTPException
@@ -20,7 +21,8 @@ from fastapi.routing import APIRoute
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 
 from . import _chain
-from .errors import ConfigError
+from .errors import ConfigError, StateError
+from . import _signatures as _sig
 from . import security
 from .store import replacement_name, key_kind_of, name_invalid, norm_email, valid_email
 from . import security
@@ -758,7 +760,7 @@ def build_router(auth) -> APIRouter:
         and the same rule stands there (`TinySesam._only_with_session`).
         """
         u = auth.session_user(request)
-        if u is None and cfg.apikey_enabled and auth._extract_api_key(request):
+        if u is None and cfg.apikey_enabled and auth._key_presented(request):
             raise HTTPException(403, auth.t("api.stepup_session"))
         return u
 
@@ -1135,7 +1137,7 @@ def build_router(auth) -> APIRouter:
             """
             if request.cookies.get(auth.session_cookie_name):
                 reason = "mfa_open" if auth.pending_user(request) else "session_invalid"
-            elif cfg.apikey_enabled and auth._extract_api_key(request):
+            elif cfg.apikey_enabled and auth._key_presented(request):
                 reason = "api_key_invalid"
             else:
                 return
@@ -1953,6 +1955,84 @@ def build_router(auth) -> APIRouter:
             auth.revoke_api_key(key_id, u["id"])   # block, do not delete
             return {"ok": True}
 
+        @r.post("/auth/apikeys/{key_id}/options")
+        async def apikeys_options(request: Request, key_id: int):
+            """Switch `renew_on_login`/`rotate_on_login` of an own key (T-32) — from a session, like issuing."""
+            u = _only_with_session(request)
+            b = await auth.json_body(request)
+            try:
+                return auth.set_api_key_options(key_id, u["id"], renew_on_login=_option(b, "renew_on_login"),
+                                                rotate_on_login=_option(b, "rotate_on_login"))
+            except (ConfigError, ValueError, TypeError) as e:
+                raise HTTPException(400, auth.t("api.invalid", reason=str(e)))
+
+        if cfg.apikey_pairing_enabled:
+            @r.post("/auth/apikeys/pairing")
+            async def apikeys_pairing(request: Request):
+                """Issue a one-time pairing code for the own account (ADR-10) — from a session, never by a key."""
+                u = _only_with_session(request)
+                b = await auth.json_body(request)
+                try:
+                    return auth.create_pairing_code(
+                        u["id"], name=b.get("name"), expires_days=b.get("expires_days"), roles=b.get("roles"),
+                        kind=str(b.get("kind") or "automation"), renew_on_login=bool(b.get("renew_on_login")),
+                        rotate_on_login=bool(b.get("rotate_on_login")))
+                except (ConfigError, ValueError, TypeError) as e:
+                    raise HTTPException(400, auth.t("api.invalid", reason=str(e)))
+
+            @r.post("/auth/apikeys/pair")
+            async def apikeys_pair(request: Request):
+                """Redeem a pairing code: `{"code", "public_key"}` (base64url Ed25519), signed with that very key.
+
+                Public, rate-limited, every refusal in the audit and security log. The same answer for an
+                unknown, used, expired code and a locked account — no oracle for guessing codes."""
+                ip = auth.client_ip(request)
+                if not _sig.layer_installed(request):
+                    raise HTTPException(503, auth.t("api.signatures_missing"))
+                if not auth._rate_ok(ip, login=False):
+                    raise HTTPException(429, auth.t("api.too_many"))
+                body = await request.body()
+                try:
+                    data = _json.loads(body or b"{}")
+                    raw = _sig.public_key_raw(data.get("public_key"))
+                    code = str(data.get("code") or "")
+                except Exception:
+                    raise HTTPException(400, auth.t("api.pairing_invalid"))
+                keyid = _sig.thumbprint(raw)
+                message = _sig._Message(request.method, _sig.target_uri(request.scope, cfg.base_url or ""),
+                                        request.scope.get("headers") or [])
+                try:
+                    verifier, results, params = _sig.verify_headers(
+                        message, lambda k: _sig.ed25519_public(raw) if k == keyid else None,
+                        int(cfg.apikey_signature_max_age))
+                    verifier.verify_body(message, results, body)
+                except Exception:
+                    # Proof of possession failed: the request is not signed with the key it registers.
+                    auth._pair_denied("signature", ip)
+                    raise HTTPException(401, auth.t("api.pairing_invalid"))
+                result, reason = auth._pair_api_key(code, raw, ip)
+                if result is None:
+                    raise HTTPException(409 if reason == "key_in_use" else 400, auth.t("api.pairing_invalid"))
+                return result
+
+            @r.post("/auth/apikeys/rotate")
+            async def apikeys_rotate(request: Request):
+                """Complete a rotation (ADR-10): `{"public_key"}` of the new key, signed with the current one."""
+                outcome = _sig.result_of(request)
+                if outcome is None:
+                    raise HTTPException(401, auth.t("api.signature_required"))
+                u, _ = auth._signed_key(outcome)
+                if not u:
+                    raise HTTPException(401, auth.t("api.not_signed_in"))
+                try:
+                    raw = _sig.public_key_raw((await request.json()).get("public_key"))
+                except Exception:
+                    raise HTTPException(400, auth.t("api.json_invalid"))
+                try:
+                    return auth._rotate_api_key(outcome, raw)
+                except StateError as e:
+                    raise HTTPException(409, auth.t("api.rotation_failed", reason=str(e)))
+
     # ---------- Admin panel — at config.admin_path; mountable elsewhere via auth.admin_router() ----------
     if cfg.admin_enabled:
         r.include_router(auth.admin_router(), prefix=cfg.admin_path)
@@ -1987,9 +2067,29 @@ def _key_kind(k) -> str:
 
 
 def key_view(k) -> dict:
+    """A key as the account page and the panel show it — without any secret. `paired` (ADR-10): the client
+    signs with its own key pair; `keyid` is the thumbprint of its public key (public, not a secret)."""
+    def col(name, default=None):
+        try:
+            return k[name]
+        except (IndexError, KeyError):
+            return default
+    kh = col("key_hash") or ""
     return {"id": k["id"], "name": k["name"], "prefix": k["prefix"], "created_at": k["created_at"],
             "last_used": k["last_used"], "expires_at": k["expires_at"], "revoked": bool(k["revoked"]),
-            "kind": _key_kind(k)}
+            "kind": _key_kind(k), "paired": bool(col("public_key")),
+            "keyid": kh[len(_sig.HASH_PREFIX):] if kh.startswith(_sig.HASH_PREFIX) else None,
+            "renew_on_login": bool(col("renew_on_login", 0)), "rotate_on_login": bool(col("rotate_on_login", 0)),
+            "rotate_pending": bool(col("rotate_pending", 0))}
+
+
+def _option(body: dict, name: str):
+    """An on/off option from a JSON body: absent → None (leave as it is), otherwise a strict bool."""
+    if name not in body or body[name] is None:
+        return None
+    if not isinstance(body[name], bool):
+        raise ValueError(f"{name} must be true or false")
+    return body[name]
 
 
 def _login_after_token(auth, request, uid, nxt, link: bool = False):

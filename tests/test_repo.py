@@ -204,8 +204,8 @@ for f in LIB:
 print("  Colour values: only in tinysesam/theme.py (app) or docs/theme.css (website)")
 
 # ---------- No forgotten debug output in the library ----------
-# __main__.py is the CLI — there print is the output, not a leftover. In gateway.py the same
-# holds, but ONLY for `main()`: The rest of the file is library and must not print anything.
+# __main__.py is the CLI — there print is the output, not a leftover. In gateway.py and client.py (the
+# reference client of paired keys, `python -m tinysesam.client`) the same holds, but ONLY for `main()`: The rest of the file is library and must not print anything.
 # (The boundary stands here because an exception for the whole file would let through exactly
 # what the check is looking for.)
 #
@@ -220,7 +220,7 @@ for f in LIB:
         continue
     tree = _ast.parse(read(f))
     permitted = set()
-    if f == "tinysesam/gateway.py":
+    if f in ("tinysesam/gateway.py", "tinysesam/client.py"):     # client.py: `main()` is its command line
         for node in _ast.walk(tree):
             if isinstance(node, _ast.FunctionDef) and node.name == "main":
                 permitted = set(range(node.lineno, (node.end_lineno or node.lineno) + 1))

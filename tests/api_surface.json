@@ -202,7 +202,7 @@
       "tier": "B"
     },
     "create_api_key": {
-      "sig": "(user_id, name=None, expires_days=None, roles=None, kind: 'str' = 'automation') -> 'dict'",
+      "sig": "(user_id, name=None, expires_days=None, roles=None, kind: 'str' = 'automation', renew_on_login: 'bool' = False) -> 'dict'",
       "tier": "A"
     },
     "create_invite": {
@@ -212,6 +212,10 @@
     "create_magic_token": {
       "sig": "(purpose, user_id=None, email=None, ttl_min=None, payload=None) -> 'str'",
       "tier": "B"
+    },
+    "create_pairing_code": {
+      "sig": "(user_id, name=None, expires_days=None, roles=None, kind: 'str' = 'automation', renew_on_login: 'bool' = False, rotate_on_login: 'bool' = False) -> 'dict'",
+      "tier": "A"
     },
     "create_service": {
       "sig": "(username, roles=None, display_name=None) -> 'int'",
@@ -339,6 +343,10 @@
     },
     "install_https": {
       "sig": "(app)",
+      "tier": "A"
+    },
+    "install_signatures": {
+      "sig": "(app) -> 'None'",
       "tier": "A"
     },
     "is_admin": {
@@ -647,6 +655,10 @@
       "sig": "(request) -> 'Optional[dict]'",
       "tier": "B"
     },
+    "set_api_key_options": {
+      "sig": "(key_id, user_id=None, renew_on_login: 'Optional[bool]' = None, rotate_on_login: 'Optional[bool]' = None) -> 'dict'",
+      "tier": "A"
+    },
     "set_cookie": {
       "sig": "(response, token, remember: 'Optional[bool]' = None)",
       "tier": "A"
@@ -851,7 +863,8 @@
     "api_key_created": {
       "keys": [
         "key_id",
-        "name"
+        "name",
+        "paired"
       ],
       "tier": "A"
     },
@@ -994,6 +1007,18 @@
     },
     "apikey_enabled": {
       "field": "bool = True",
+      "tier": "A"
+    },
+    "apikey_pairing_enabled": {
+      "field": "bool = False",
+      "tier": "A"
+    },
+    "apikey_pairing_minutes": {
+      "field": "int = 10",
+      "tier": "A"
+    },
+    "apikey_signature_max_age": {
+      "field": "int = 60",
       "tier": "A"
     },
     "audit_ip_pseudonymize": {
@@ -2154,6 +2179,22 @@
       "keys": [],
       "tier": "B"
     },
+    "POST /auth/apikeys/pair": {
+      "keys": [],
+      "tier": "B"
+    },
+    "POST /auth/apikeys/pairing": {
+      "keys": [],
+      "tier": "B"
+    },
+    "POST /auth/apikeys/rotate": {
+      "keys": [],
+      "tier": "B"
+    },
+    "POST /auth/apikeys/{key_id}/options": {
+      "keys": [],
+      "tier": "B"
+    },
     "POST /auth/apikeys/{key_id}/revoke": {
       "keys": [],
       "tier": "B"
@@ -2385,6 +2426,10 @@
       "keys": [],
       "tier": "B"
     },
+    "POST <admin>/api/keys/{kid}/options": {
+      "keys": [],
+      "tier": "B"
+    },
     "POST <admin>/api/keys/{kid}/revoke": {
       "keys": [],
       "tier": "B"
@@ -2418,6 +2463,10 @@
       "tier": "B"
     },
     "POST <admin>/api/users/{uid}/keys": {
+      "keys": [],
+      "tier": "B"
+    },
+    "POST <admin>/api/users/{uid}/keys/pairing": {
       "keys": [],
       "tier": "B"
     },
@@ -2537,6 +2586,9 @@
   },
   "log.loggers": {
     "tinysesam": {
+      "tier": "A"
+    },
+    "tinysesam.client": {
       "tier": "A"
     },
     "tinysesam.mail": {

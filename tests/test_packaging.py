@@ -239,6 +239,9 @@ try:
         # 1.6.12: GHSA-5357-c2jx-v7qh et al. (algorithm confusion). 1.9.1: CVE-2026-96760,
         # CVE-2026-114614 to -114618 and -114620 (fixes in 1.8.0, 1.9.0 and 1.9.1).
         "authlib": (1, 9, 1),
+        # 3.0.0 (2026-10-26): the API paired keys are written against (`require_components`, `verify_body`);
+        # no advisory on OSV.dev for any version as of 2026-11-20.
+        "http-message-signatures": (3, 0, 0),
     }
 
     def _numbers(text: str) -> tuple:

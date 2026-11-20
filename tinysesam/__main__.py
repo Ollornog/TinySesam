@@ -265,6 +265,7 @@ def _gc(argv) -> int:
         "sessions": store.gc_sessions(),
         "flow": store.gc_flow(),
         "magic_tokens": store.gc_magic_tokens(),
+        "signature_nonces": store.gc_signature_nonces(),
         "resource_unlocks": store.gc_resource_unlocks(),
         "login_attempts": store.gc_attempts(int(_t.time()) - a.attempts_older_than),
     }

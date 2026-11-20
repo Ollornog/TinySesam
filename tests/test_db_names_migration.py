@@ -190,7 +190,7 @@ def _start(path: str):
 # ── the checks of the fixture migration, as a function: the same ones run again under a mutation ──────
 def migration_problems(path: str, log: str) -> list:
     problem = []
-    if _stamp(path) != Store.SCHEMA_VERSION == 16:
+    if _stamp(path) != Store.SCHEMA_VERSION or Store.SCHEMA_VERSION < 16:
         problem.append(f"stamp {_stamp(path)}")
     tables = _names(path, "table")
     if not EXPECTED_TABLES <= tables or tables & OLD_TABLES:

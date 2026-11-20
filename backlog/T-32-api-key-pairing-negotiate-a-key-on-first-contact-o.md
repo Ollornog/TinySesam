@@ -1,7 +1,7 @@
 ---
 type: Task
 title: 'API key pairing: negotiate a key on first contact, optional renew and rotate on login'
-status: offen
+status: erledigt
 id: T-32
 milestone: M-2
 tags: [api-keys, crypto, pairing]
@@ -24,3 +24,13 @@ Open design questions (decide in an ADR before building):
 - Client side: a small reference client (Python, maybe the Go gate client from T-28) that stores the key and does pairing/rotation by itself, otherwise nobody can use it.
 
 Done when: the ADR is written; pairing, `renew_on_login` and `rotate_on_login` work per key, are settable in the admin panel and the self-service routes, appear in the audit log, are documented in the README section "API keys", and are covered by tests including rotation with a request in flight and the revocation paths.
+
+## Done (2026-11-20)
+
+Decided in [ADR-10](ADR-10-paired-api-keys-http-message-signatures.md): RFC 9421 HTTP Message Signatures with an
+Ed25519 key pair held by the client (extra `[pairing]`, `http-message-signatures`), only the public key on the server.
+Built: pairing code (self-service, admin panel, `create_pairing_code`), `install_signatures(app)`, `renew_on_login`
+(any key with an expiry), `rotate_on_login` (paired keys) with overlap and self-healing, options in the panel and the
+self-service routes, audit events, README section "API keys", reference client `tinysesam.client`. Tests:
+`tests/test_pairing.py` (pairing, signature attacks, renew/rotate incl. a request in flight, revocation paths, end to
+end with uvicorn).

@@ -70,8 +70,12 @@ saml = ["python3-saml>=1.15"]       # needs system libxmlsec1
 # NOT enough — `python -m tinysesam.gateway` ended with a ModuleNotFoundError for uvicorn,
 # and that was exactly the start command in the README.
 gateway = ["httpx>=0.27", "authlib>=1.9.1", "uvicorn>=0.30"]
+# Paired API keys (ADR-10, T-32): RFC 9421 HTTP Message Signatures (+ RFC 9530 Content-Digest), server side
+# and the reference client `tinysesam.client`. Apache-2.0; builds on `cryptography` (core) and `http-sf` (MIT).
+# 3.0.0 is the floor: `verify(require_components=…)` and `verify_body()` arrived with it.
+pairing = ["http-message-signatures>=3.0.0"]
 all = ["argon2-cffi>=23", "qrcode[pil]>=7", "httpx>=0.27", "authlib>=1.9.1", "webauthn>=2.0",
-       "ldap3>=2.9", "redis>=5", "python3-saml>=1.15", "uvicorn>=0.30"]
+       "ldap3>=2.9", "redis>=5", "python3-saml>=1.15", "uvicorn>=0.30", "http-message-signatures>=3.0.0"]
 
 # The sidebar next to the project page in the index. Whoever lands there usually looks for one of
 # five targets — if one is missing, they search for it on GitHub and may find a different project.

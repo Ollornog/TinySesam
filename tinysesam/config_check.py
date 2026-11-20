@@ -851,6 +851,10 @@ NUMBER_LIMITS = {
     "brand_background_seconds": (4, 600),   # dwell time per background image (0.24.8)
     "pin_min_length": (4, 64),
     "apikey_default_days": (0, 3650),
+    # A pairing code is typed over from one screen to another; a day is the utmost that is still "one-time".
+    "apikey_pairing_minutes": (1, 24 * 60),
+    # Below 5 s an ordinary network delay fails; above an hour the replay window is no longer one.
+    "apikey_signature_max_age": (5, 3600),
     "admin_claim_ttl_min": (0, 7 * 24 * 60),
     "resource_unlock_ttl_hours": (1, 24 * 30),
     "magiclink_ttl_min": (1, 24 * 60),

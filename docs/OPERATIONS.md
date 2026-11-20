@@ -61,8 +61,9 @@ went without `email_changed` (added later from OIDC/LDAP), and the name in the d
 Since the PO decision of 2026-10-29 (M-1) the security log is part of the stability promise, tier A. What a
 filter or a log shipper may rely on:
 
-- **The logger** `tinysesam.security` (and its parent `tinysesam`; `tinysesam.mail` for mail). `security_log`
-  writes the first to a file.
+- **The logger** `tinysesam.security` (and its parent `tinysesam`; `tinysesam.mail` for mail;
+  `tinysesam.client` in the reference client of paired keys, on the client side). `security_log` writes the first
+  to a file.
 - **The format of that file:** `%(asctime)s %(levelname)s %(message)s` — so a line starts with the date, then
   the level, then the message. The shipped filters strip the date and anchor on the level (`^\s*WARNING …`).
 - **The event word** at the start of the message and **the keys behind it, in this order:**
@@ -815,6 +816,24 @@ old names on the way. (The newer version merges those tables correctly at its ne
 added, then the old table is dropped, a doubled column is left alone with a warning in the log — but that is repair, not a
 way back.) Without a backup there is no way back; that is why the backup is the first step of the update.
 
+
+## Paired API keys (schema 17, ADR-10)
+
+- **Schema 17** is additive: `api_key` gains `public_key`, `prev_public_key`, `prev_key_hash`, `prev_until`,
+  `rotate_pending`, `renew_on_login`, `rotate_on_login`, `lifetime_days`; new table `signature_nonce` (single-use nonces,
+  cleared by `gc()`/`tinysesam gc` as `signature_nonces`). An older version opens the file with the "newer schema
+  version" warning and leaves the columns alone; it cannot verify a paired key, so paired keys simply do not
+  authenticate there, and the login options do nothing. Bearer keys keep working in both directions.
+- **Setup:** extra `[pairing]`, `apikey_pairing_enabled=True`, `auth.install_signatures(app)` once on the app, and
+  `base_url` set (the signed target URI is built from it, so it matches behind the proxy). The proxy must pass the
+  headers `Signature-Input`, `Signature` and `Content-Digest` through unchanged and must not rewrite the body.
+- **Clock:** a signature older than `apikey_signature_max_age` (60 s) plus 5 s skew is refused — keep client clocks in
+  sync (NTP).
+- **Audit events:** `apikey_pairing_issue`, `apikey_pair`, `apikey_pair_denied` (`reason=unknown|used|expired|
+  account_locked|terms|key_in_use|signature`), `apikey_rotate` (`requested=login|client`), `apikeys_login`
+  (`renewed=`, `rotate=`), `apikey_options`; refused signed requests as `apikey_denied` with `reason=signature|expired|
+  body|replay|rotated|unknown`. Failed pairing attempts also write `failed verification … reason=pairing_<reason>` to
+  the security log.
 
 ## Sign-in methods and their strength
 

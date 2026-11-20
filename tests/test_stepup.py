@@ -576,7 +576,10 @@ ONLY_SESSION = {"/auth/totp/setup/start", "/auth/totp/setup", "/auth/passkey/reg
 FIRST_PASSWORD = {"/auth/password/set"}
 #: Known open — with justification. If one of them gets bound, it belongs in STEPUP.
 OPEN = {"/auth/apikeys": "key issuance without step-up (reported as H-18)",
-         "/auth/apikeys/{key_id}/revoke": "key revocation without step-up (reported as H-18)"}
+         "/auth/apikeys/{key_id}/revoke": "key revocation without step-up (reported as H-18)",
+         # T-32: the login options and a pairing code are key management like issuance — a session, no key.
+         "/auth/apikeys/{key_id}/options": "key options without step-up, like issuance (H-18)",
+         "/auth/apikeys/pairing": "pairing code without step-up, like issuance (H-18)"}
 
 # From the router itself, not from `app6.routes`: newer FastAPI versions store included
 # routers there as an object without a path — the list would be empty and the check silently green.
@@ -607,6 +610,8 @@ _payload = {"/auth/pin/set": {"json": {"pin": "999999"}}, "/auth/totp/setup": {"
              "/auth/password": {"json": {"current": "wrong-wrong", "new": "New1234567890!"}},
              "/auth/sessions/revoke": {"json": {"scope": "others"}},
              "/auth/apikeys": {"json": {"name": "new"}},
+             "/auth/apikeys/{key_id}/options": {"json": {"renew_on_login": False}},
+             "/auth/apikeys/pairing": {"json": {"name": "new"}},
              "/auth/account/username": {"json": {"username": "different"}},
              "/auth/account/email": {"json": {"email": "different@example.com"}}}
 for path in sorted(STEPUP & _post6):

@@ -106,6 +106,15 @@ class TinySesamConfig:
     #: a deliberate decision of the operator and is logged on creation — there are
     #: cases for it (a device nobody can touch), they are just rare.
     apikey_allow_unlimited: bool = False
+    #: Paired API keys (ADR-10, T-32): a client pairs once with a one-time code and then signs every request
+    #: (HTTP Message Signatures, RFC 9421, Ed25519 key held by the client; the server stores only the public
+    #: key). Needs the extra `[pairing]` and `auth.install_signatures(app)`. Bearer keys are unaffected.
+    apikey_pairing_enabled: bool = False
+    #: Lifetime of a pairing code in minutes — single use, shown once, stored only as a hash.
+    apikey_pairing_minutes: int = 10
+    #: Maximum age of a request signature in seconds (plus 5 s clock skew). Also how long a nonce is
+    #: remembered. A client whose clock is off by more gets 401.
+    apikey_signature_max_age: int = 60
     admin_enabled: bool = True            # mount the admin panel automatically at admin_path
     admin_path: str = "/auth/admin"       # default mount point; auth.admin_router() also lets you mount it elsewhere
     admin_ui_enabled: bool = True         # built-in HTML UI; False = JSON API only (for embedding in your own panel)

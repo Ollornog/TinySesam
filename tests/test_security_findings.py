@@ -848,6 +848,17 @@ absent = sorted(rendered - set(auth_tpl.PAGES))
 r.check("every rendered page is in TinySesam.PAGES", not absent,
         f"not replaceable although it exists: {absent}")
 
+# The READMEs list the replaceable names. Until T-32 they said "All 13 names" while PAGES had grown to 21 —
+# a reader building a theme missed eight pages. The list must be exactly `TinySesam.PAGES`, in both languages.
+for readme, lead in (("README.md", "The names (`TinySesam.PAGES`):"),
+                     ("i18n/README.de.md", "Die Namen (`TinySesam.PAGES`):")):
+    text = (root / readme).read_text(encoding="utf-8")
+    start = text.find(lead)
+    listed = set(re.findall(r"`([a-z_]+)`", text[start + len(lead):text.find(".", start + len(lead))])) \
+        if start >= 0 else set()
+    r.check(f"{readme}: the template names are exactly TinySesam.PAGES", listed == set(auth_tpl.PAGES),
+            f"missing {sorted(set(auth_tpl.PAGES) - listed)}, extra {sorted(listed - set(auth_tpl.PAGES))}")
+
 
 # ── German error texts with lang="en" ──────────────────────────────────────────
 # 32 HTTP responses carried fixed German text — even in an installation set to English. The UI

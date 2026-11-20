@@ -521,10 +521,16 @@ def _account(auth, ctx) -> str:
 
     # API keys
     if auth.cfg.apikey_enabled:
+        pairing = bool(getattr(auth.cfg, "apikey_pairing_enabled", False))
         sections.append(
             f"<div class=sec><h2>{_e(t('acc.keys'))}</h2><ul id=keylist></ul>"
             f"<input id=key_name placeholder='{_e(t('acc.key_name'))}'>"
-            f"<button data-act=mkkey>{_e(t('acc.key_create'))}</button><span id=key_msg class=msg></span></div>")
+            # Login options for the next key (T-32): renew on every sign-in; rotate only for a paired key.
+            f"<label><input type=checkbox id=key_renew> {_e(t('acc.key_renew'))}</label>"
+            + (f"<label><input type=checkbox id=key_rotate> {_e(t('acc.key_rotate'))}</label>" if pairing else "")
+            + f"<button data-act=mkkey>{_e(t('acc.key_create'))}</button>"
+            + (f"<button data-act=mkpair>{_e(t('acc.key_pair'))}</button>" if pairing else "")
+            + "<pre id=pair_out></pre><span id=key_msg class=msg></span></div>")
 
     # Active sessions (always)
     sections.append(
@@ -603,6 +609,8 @@ _ACCOUNT_TEXT = {
         "recovery_note": "Write these down safely now (visible only once):",
         "revoked": "(revoked)", "revoke": "revoke", "none": "none", "delete": "delete", "this": "(this one)",
         "key_copy": "API key — copy it NOW:", "confirm_end_others": "End all other sessions?",
+        "pair_copy": "Pairing code — give it to the client NOW (single use, valid until):", "paired": "paired",
+        "renew_on_login": "renew on sign-in", "rotate_on_login": "rotate on sign-in", "on": "on", "off": "off",
         "ended": "✓ ended", "added": "✓ added", "failed": "failed", "aborted": "aborted: ",
     },
     "de": {
@@ -613,6 +621,8 @@ _ACCOUNT_TEXT = {
         "recovery_note": "Jetzt sicher notieren (einmalig sichtbar):",
         "revoked": "(widerrufen)", "revoke": "widerrufen", "none": "keine", "delete": "löschen", "this": "(diese)",
         "key_copy": "API-Key — JETZT kopieren:", "confirm_end_others": "Alle anderen Sitzungen beenden?",
+        "pair_copy": "Kopplungscode — JETZT dem Client geben (einmal gültig, bis):", "paired": "gekoppelt",
+        "renew_on_login": "bei Anmeldung verlängern", "rotate_on_login": "bei Anmeldung wechseln", "on": "an", "off": "aus",
         "ended": "✓ beendet", "added": "✓ hinzugefügt", "failed": "fehlgeschlagen", "aborted": "abgebrochen: ",
     },
 }
@@ -670,9 +680,22 @@ async function recovery(){if(!confirm(TXT.confirm_recovery))return;
 async function loadkeys(){const el=document.getElementById('keylist');if(!el)return;
   const ks=await (await fetch('__TS_P__/auth/apikeys')).json().catch(()=>[]);
   if(!Array.isArray(ks)){el.innerHTML='<li>—</li>';return}
-  el.innerHTML=ks.map(k=>`<li>${esc0(k.prefix)} ${esc0(k.name)} ${k.revoked?'<span class=bad>'+TXT.revoked+'</span>':`<button class=warn data-act=revk data-id="${esc0(k.id)}">${TXT.revoke}</button>`}</li>`).join('')||'<li>'+TXT.none+'</li>'}
-async function mkkey(){const r=await (await J('__TS_P__/auth/apikeys',{name:key_name.value})).json();
-  if(r.key)prompt(TXT.key_copy,r.key);loadkeys()}
+  KS={};ks.forEach(x=>{KS[x.id]=x});
+  const flag=(k,o)=>`<button class=sec data-act=${o==='renew_on_login'?'optrenew':'optrotate'} data-id="${esc0(k.id)}">${TXT[o]}: ${k[o]?TXT.on:TXT.off}</button>`;
+  el.innerHTML=ks.map(k=>`<li>${esc0(k.prefix)} ${esc0(k.name)} ${k.paired?'<small>'+TXT.paired+'</small> ':''}${k.revoked?'<span class=bad>'+TXT.revoked+'</span>':`<button class=warn data-act=revk data-id="${esc0(k.id)}">${TXT.revoke}</button> ${k.expires_at?flag(k,'renew_on_login'):''} ${k.paired?flag(k,'rotate_on_login'):''}`}</li>`).join('')||'<li>'+TXT.none+'</li>'}
+let KS={};
+const checked=id=>!!(document.getElementById(id)||{}).checked;
+async function mkkey(){const r=await (await J('__TS_P__/auth/apikeys',{name:key_name.value,renew_on_login:checked('key_renew')})).json();
+  if(r.key)prompt(TXT.key_copy,r.key);else if(r.detail)say('key_msg',r.detail,false);loadkeys()}
+// Pairing code for a paired key (ADR-10): shown once; the client redeems it with its own key pair.
+async function mkpair(){const r=await (await J('__TS_P__/auth/apikeys/pairing',{name:key_name.value,
+    renew_on_login:checked('key_renew'),rotate_on_login:checked('key_rotate')})).json();
+  if(r.code)document.getElementById('pair_out').textContent=TXT.pair_copy+' '+new Date(r.expires_at*1000).toLocaleString(TXT.locale)+'\\n'+r.code;
+  else say('key_msg',r.detail||TXT.error,false)}
+async function opt(id,o){const k=KS[id]||{};const r=await J('__TS_P__/auth/apikeys/'+id+'/options',{[o]:!k[o]});
+  if(!r.ok)say('key_msg',(await r.json().catch(()=>({}))).detail||TXT.error,false);loadkeys()}
+async function optrenew(id){await opt(id,'renew_on_login')}
+async function optrotate(id){await opt(id,'rotate_on_login')}
 async function revk(id){await J('__TS_P__/auth/apikeys/'+id+'/revoke');loadkeys()}
 async function loadpk(){const el=document.getElementById('pklist');if(!el)return;
   const ps=await (await fetch('__TS_P__/auth/passkey/list')).json();

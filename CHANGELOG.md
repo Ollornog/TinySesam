@@ -4,6 +4,44 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+### Added — paired API keys: pairing code, signed requests, renew and rotate on sign-in (T-32, ADR-10)
+
+- **Paired keys** ([ADR-10](backlog/ADR-10-paired-api-keys-http-message-signatures.md)): the client generates an
+  Ed25519 key pair, pairs once with a one-time code and then signs every request with **HTTP Message Signatures
+  (RFC 9421)** over method, target URI and — with a body — `Content-Digest` (RFC 9530), with `created`, a single-use
+  `nonce` and the RFC 7638 thumbprint as `keyid`. The server stores only the public key. A paired key is a row in the
+  existing `api_key` table (kinds, scope, expiry, revocation as before); bearer keys are unchanged.
+- **New optional extra `[pairing]`** (`http-message-signatures>=3.0.0`, Apache-2.0; also in `[all]`). The core install
+  does not change. New config `apikey_pairing_enabled` (default `False`), `apikey_pairing_minutes` (10),
+  `apikey_signature_max_age` (60 s). Apps call `auth.install_signatures(app)` once — a pure-ASGI layer that only acts
+  on requests with `Signature-Input`; without it a signed request authenticates nobody and the pairing route answers
+  503 with a hint.
+- **Pairing:** `auth.create_pairing_code(uid, …)`, `POST /auth/apikeys/pairing` (self-service, session only),
+  `POST <admin>/api/users/{uid}/keys/pairing` (panel); `POST /auth/apikeys/pair` redeems it with proof of possession,
+  rate-limited. Codes are single use, expire, are stored hashed and are discarded with the account's other open
+  links on lockout, admin password reset and "end all sessions". Audit events `apikey_pairing_issue`, `apikey_pair`,
+  `apikey_pair_denied`; the security log line `failed verification … reason=pairing_<reason>` (fail2ban reads it).
+- **`renew_on_login`** (per key, any key with an expiry, default off): a completed interactive sign-in of the owner
+  pushes the expiry to "now + lifetime" — never by using the key, never an expired key.
+  `auth.create_api_key(…, renew_on_login=True)` (new keyword, appended with a default).
+- **`rotate_on_login`** (paired keys, default off): the owner's sign-in marks the key, the next signed response
+  carries `TinySesam-Key-Rotate`, the client registers a new key pair via `POST /auth/apikeys/rotate` (signed with the
+  current key). The old key stays valid until the new one is first used, then only for signatures created before
+  that moment. Audit events `apikey_rotate`, `apikeys_login`, `apikey_options`.
+- **Options per key:** `auth.set_api_key_options(key_id, …)`, `POST /auth/apikeys/{id}/options`,
+  `POST <admin>/api/keys/{kid}/options`; the account page and the admin panel show and switch them. The key list
+  (`GET /auth/apikeys`, panel) gains `paired`, `keyid`, `renew_on_login`, `rotate_on_login`, `rotate_pending`.
+- **`on_security_event`:** `api_key_created` carries the new detail `paired=True` for a paired key. No new event.
+- **Reference client** `tinysesam.client` (`PairedClient.pair(…)`, `client.request(…)`, `python -m tinysesam.client`):
+  pairing, signing and rotation by itself, key file with mode 0600.
+- **Schema 17** (additive): columns on `api_key`, table `signature_nonce`. An older version leaves them in place; paired
+  keys do not authenticate there (fail-closed). `gc()`/`tinysesam gc` also clear expired nonces (`signature_nonces`).
+
+### Fixed — READMEs: the list of replaceable pages was stale
+
+- "All 13 names" for `set_template` had not followed `TinySesam.PAGES` (21 pages). The READMEs now list exactly
+  `TinySesam.PAGES`, and `tests/test_security_findings.py` checks the list in both languages.
+
 ### Changed — public API narrowed to the documented surface (M-1): no name had to go
 
 - **The rule (decided before 1.0):** a Python name stays public only if the hand-written docs describe it — the

@@ -105,7 +105,30 @@ CREATE TABLE IF NOT EXISTS api_key (
     created_at INTEGER NOT NULL,
     last_used  INTEGER,
     expires_at INTEGER,                          -- NULL = no expiry
-    revoked    INTEGER NOT NULL DEFAULT 0
+    revoked    INTEGER NOT NULL DEFAULT 0,
+    -- Paired keys (schema 17, ADR-10/T-32): the client holds an Ed25519 key pair and signs every
+    -- request (RFC 9421); only the PUBLIC key is stored here (base64url, 32 bytes). NULL = a bearer
+    -- key (`tsk_…`). For a paired key `key_hash` is `ed25519:<RFC 7638 thumbprint>` — never a
+    -- SHA-256 hex, so it can never match a bearer string.
+    public_key      TEXT,
+    -- The predecessor after a rotation: valid until the new key is first used (`prev_until` is
+    -- then set to that moment), afterwards only for signatures created before it.
+    prev_public_key TEXT,
+    prev_key_hash   TEXT,
+    prev_until      INTEGER,
+    rotate_pending  INTEGER NOT NULL DEFAULT 0,  -- the owner signed in, the client should rotate
+    renew_on_login  INTEGER NOT NULL DEFAULT 0,  -- a completed sign-in of the owner renews the expiry
+    rotate_on_login INTEGER NOT NULL DEFAULT 0,  -- a completed sign-in of the owner asks for rotation
+    lifetime_days   INTEGER                      -- the lifetime a renewal extends by (NULL = none)
+);
+-- Nonces of signed requests (schema 17, ADR-10): a nonce is accepted once per key while a
+-- signature carrying it could still be accepted (`expires_at`). The primary key makes the second
+-- use fail in the database — across every worker process.
+CREATE TABLE IF NOT EXISTS signature_nonce (
+    key_id     INTEGER NOT NULL,
+    nonce      TEXT NOT NULL,
+    expires_at INTEGER NOT NULL,
+    PRIMARY KEY (key_id, nonce)
 );
 CREATE TABLE IF NOT EXISTS password_cred (
     user_id  INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
@@ -836,7 +859,12 @@ class Store:
     #:      only if an old name is present; on every other start it reads `sqlite_master` and is done. An older
     #:      version opens the file with the "newer schema version" warning and then does not find its tables —
     #:      way back with SQL in docs/OPERATIONS.md.
-    SCHEMA_VERSION = 16
+    #: 17 — paired API keys (ADR-10, T-32): columns `api_key.public_key`, `prev_public_key`, `prev_key_hash`,
+    #:      `prev_until`, `rotate_pending`, `renew_on_login`, `rotate_on_login`, `lifetime_days`, the table
+    #:      `signature_nonce` and the index `idx_apikey_prev`. Additive; an older version leaves them in place
+    #:      and cannot verify a paired key (it looks keys up by the hash of a bearer string) — such keys
+    #:      just do not authenticate there, and their login options do nothing.
+    SCHEMA_VERSION = 17
 
     #: Old table name → new table name (schema 16).
     RENAMED_TABLES = {"namensbindung": "name_binding", "oidc_sitzung": "oidc_session",
@@ -1005,7 +1033,13 @@ class Store:
             # Existing keys count as automation keys: the narrower interpretation. A key
             # that could previously serve admin routes loses that — exactly that is
             # the point of R6-5, and a rejected call leaves a row.
-            "api_key": [("kind", "TEXT NOT NULL DEFAULT 'automation'")],
+            "api_key": [("kind", "TEXT NOT NULL DEFAULT 'automation'"),
+                        # Schema 17 (ADR-10): paired keys and the login options. NULL/0 for
+                        # existing rows — every existing key stays a bearer key with no option set.
+                        ("public_key", "TEXT"), ("prev_public_key", "TEXT"), ("prev_key_hash", "TEXT"),
+                        ("prev_until", "INTEGER"), ("rotate_pending", "INTEGER NOT NULL DEFAULT 0"),
+                        ("renew_on_login", "INTEGER NOT NULL DEFAULT 0"),
+                        ("rotate_on_login", "INTEGER NOT NULL DEFAULT 0"), ("lifetime_days", "INTEGER")],
             # `DEFAULT 1` fills every existing row: addresses that were created before this column
             # keep exactly their previous effect. An address only gets 0 if
             # a caller explicitly enters it without proof (OIDC without `email_verified`).
@@ -1055,6 +1089,8 @@ class Store:
                 for name, decl in cols:
                     if name not in have:
                         self.db.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
+            # After the columns, not in SCHEMA: on an existing file the script runs before the ALTER.
+            self.db.execute("CREATE INDEX IF NOT EXISTS idx_apikey_prev ON api_key(prev_key_hash)")
 
             # Session tokens were stored in plaintext in the file up to 0.18.0. The hash can be computed from
             # the plaintext — existing logins thus survive the switch, the
@@ -4146,15 +4182,87 @@ class Store:
 
     # ---------- API keys ----------
     def add_api_key(self, user_id, name, prefix, key_hash, roles=None, expires_at=None,
-                    kind: str = "automation") -> int:
+                    kind: str = "automation", renew_on_login: bool = False, lifetime_days=None) -> int:
         cur = self._exec(
-            "INSERT INTO api_key(user_id, name, prefix, key_hash, roles, kind, created_at, expires_at)"
-            " VALUES (?,?,?,?,?,?,?,?)",
-            (user_id, name, prefix, key_hash, json.dumps(list(roles or [])), kind, _now(), expires_at))
+            "INSERT INTO api_key(user_id, name, prefix, key_hash, roles, kind, created_at, expires_at,"
+            " renew_on_login, lifetime_days) VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (user_id, name, prefix, key_hash, json.dumps(list(roles or [])), kind, _now(), expires_at,
+             int(bool(renew_on_login)), lifetime_days))
         return cur.lastrowid
 
     def get_api_key_by_hash(self, key_hash):
         return self._one("SELECT * FROM api_key WHERE key_hash=?", (key_hash,))
+
+    def get_api_key(self, key_id):
+        return self._one("SELECT * FROM api_key WHERE id=?", (key_id,))
+
+    # ---------- Paired keys (ADR-10, T-32) ----------
+    def add_paired_api_key(self, user_id, name, prefix, key_hash, public_key, roles=None, expires_at=None,
+                           kind: str = "automation", renew_on_login: bool = False,
+                           rotate_on_login: bool = False, lifetime_days=None) -> int:
+        cur = self._exec(
+            "INSERT INTO api_key(user_id, name, prefix, key_hash, roles, kind, created_at, expires_at, public_key,"
+            " renew_on_login, rotate_on_login, lifetime_days) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            (user_id, name, prefix, key_hash, json.dumps(list(roles or [])), kind, _now(), expires_at,
+             public_key, int(bool(renew_on_login)), int(bool(rotate_on_login)), lifetime_days))
+        return cur.lastrowid
+
+    def get_api_key_by_signing_hash(self, key_hash):
+        """The row whose current OR previous public key has this `ed25519:<thumbprint>`."""
+        return self._one("SELECT * FROM api_key WHERE key_hash=? OR prev_key_hash=? LIMIT 1", (key_hash, key_hash))
+
+    def rotate_api_key_public(self, key_id, old_hash, new_public_key, new_hash) -> bool:
+        """Make `new_public_key` the current key and the present one its predecessor — only if the
+        present one is still `old_hash` (a concurrent rotation loses instead of overwriting). The
+        predecessor stays valid until the new key is first used (`prev_until` NULL)."""
+        return self._exec(
+            "UPDATE api_key SET prev_public_key=public_key, prev_key_hash=key_hash, prev_until=NULL, "
+            "public_key=?, key_hash=?, rotate_pending=0 WHERE id=? AND key_hash=? AND public_key IS NOT NULL",
+            (new_public_key, new_hash, key_id, old_hash)).rowcount == 1
+
+    def retire_prev_api_key(self, key_id, at) -> bool:
+        """The new key was used for the first time: from `at` on the predecessor only counts for
+        signatures created before it. True only for the first call."""
+        return self._exec("UPDATE api_key SET prev_until=? WHERE id=? AND prev_key_hash IS NOT NULL "
+                          "AND prev_until IS NULL", (int(at), key_id)).rowcount == 1
+
+    def use_signature_nonce(self, key_id, nonce, expires_at) -> bool:
+        """Book a nonce for a key. False if it was used before (replay) — decided by the primary key,
+        so two workers cannot both accept it. Expired nonces of the key are cleared on the way."""
+        with self._writing():
+            self.db.execute("DELETE FROM signature_nonce WHERE key_id=? AND expires_at < ?", (key_id, _now()))
+            fresh = self.db.execute("INSERT OR IGNORE INTO signature_nonce(key_id, nonce, expires_at) "
+                                    "VALUES (?,?,?)", (key_id, nonce, int(expires_at))).rowcount == 1
+            self.db.commit()
+            return fresh
+
+    def gc_signature_nonces(self) -> int:
+        return self._exec("DELETE FROM signature_nonce WHERE expires_at < ?", (_now(),)).rowcount
+
+    def set_api_key_options(self, key_id, renew_on_login=None, rotate_on_login=None, lifetime_days=None) -> None:
+        if lifetime_days:
+            self._exec("UPDATE api_key SET lifetime_days=? WHERE id=?", (int(lifetime_days), key_id))
+        if renew_on_login is not None:
+            self._exec("UPDATE api_key SET renew_on_login=? WHERE id=?", (int(bool(renew_on_login)), key_id))
+        if rotate_on_login is not None:
+            self._exec("UPDATE api_key SET rotate_on_login=?, rotate_pending=CASE WHEN ? THEN rotate_pending "
+                       "ELSE 0 END WHERE id=?", (int(bool(rotate_on_login)), int(bool(rotate_on_login)), key_id))
+
+    def api_keys_on_login(self, user_id, now) -> tuple:
+        """A completed sign-in of the owner: renew the keys with `renew_on_login` (to `now + lifetime`,
+        never shorter, never an expired or revoked key) and mark the paired ones with `rotate_on_login`.
+        Returns `(renewed, marked)` — the counts for the audit line."""
+        with self._writing():
+            renewed = self.db.execute(
+                "UPDATE api_key SET expires_at=MAX(expires_at, ? + lifetime_days * 86400) WHERE user_id=? "
+                "AND revoked=0 AND renew_on_login=1 AND lifetime_days IS NOT NULL AND lifetime_days > 0 "
+                "AND expires_at IS NOT NULL AND expires_at >= ?", (int(now), user_id, int(now))).rowcount
+            marked = self.db.execute(
+                "UPDATE api_key SET rotate_pending=1 WHERE user_id=? AND revoked=0 AND rotate_on_login=1 "
+                "AND public_key IS NOT NULL AND (expires_at IS NULL OR expires_at >= ?)",
+                (user_id, int(now))).rowcount
+            self.db.commit()
+        return renewed, marked
 
     def list_api_keys(self, user_id):
         return self._all("SELECT * FROM api_key WHERE user_id=? ORDER BY created_at DESC", (user_id,))

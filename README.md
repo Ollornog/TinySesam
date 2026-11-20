@@ -71,7 +71,7 @@ TinySesam is on **PyPI** (since 0.19.0). Pin the version:
 pip install "tinysesam==0.25.6"
 # core: password + TOTP. Everything: [all] — + argon2, QR, OIDC, passkey
 pip install "tinysesam[all]==0.25.6"
-# selective: [argon2] [qr] [oidc] [saml] [ldap] [passkey] [redis] [gateway]
+# selective: [argon2] [qr] [oidc] [saml] [ldap] [passkey] [redis] [gateway] [pairing]
 ```
 
 Every release goes to PyPI from its git tag, via trusted publishing (no token), and each file
@@ -1104,13 +1104,70 @@ For **machine access** (scripts, other services, system daemons) — alongside t
   change shouldn't silently kill their integrations — but the response and the audit entry say
   how many keys are still live (`api_keys_active`). Keys of a disabled account never
   authenticated in the first place.
+- **Renew on sign-in (`renew_on_login`, per key, default off).** Every *completed interactive
+  sign-in* of the owner (any method, after the whole factor chain) pushes the key's expiry out to
+  "now + the lifetime it was created with" — never shorter, never for an expired or revoked key, and
+  never by *using* the key. The expiry stays mandatory: a key whose owner stops signing in still
+  dies. `auth.create_api_key(uid, expires_days=30, renew_on_login=True)`, or later
+  `auth.set_api_key_options(key_id, renew_on_login=True)`. The audit log counts it (`apikeys_login`).
+
+### Paired keys: pairing code, signed requests, rotation (ADR-10)
+
+A bearer key is a copyable string: whoever reads it once — a proxy log, a shell history, a backup of a
+config file — can use it until it expires. **Paired keys** close that gap
+([ADR-10](https://github.com/Ollornog/TinySesam/blob/main/backlog/ADR-10-paired-api-keys-http-message-signatures.md)):
+the client generates an **Ed25519 key pair** itself and signs **every request** with
+**HTTP Message Signatures (RFC 9421)** — method, target URI, the body via `Content-Digest` (RFC 9530),
+a creation time and a single-use nonce. TinySesam stores only the **public** key: the database, the
+logs and a recorded request contain nothing that could sign. (TLS still does the encryption; what this
+adds is a request bound to a key that never leaves the client, replay protection, and no secret on the
+server.)
+
+- **Turn it on:** `pip install 'tinysesam[pairing]'`, `apikey_pairing_enabled=True`, and once on the
+  app `auth.install_signatures(app)` (a small ASGI layer that only touches requests carrying
+  `Signature-Input`). Bearer keys keep working unchanged; a paired key is one more row in the same
+  table — same kinds, scope, expiry, revocation.
+- **Pairing:** from a signed-in session, the account page (button *Pairing code*), the admin panel
+  (per user) or `auth.create_pairing_code(uid, name=…, expires_days=…, roles=…, kind=…,
+  renew_on_login=…, rotate_on_login=…)` issue a one-time code like `ABCD-EFGH-JKLM-NPQR`
+  (`apikey_pairing_minutes`, default 10; single use; stored hashed; discarded with the account's other
+  open links on lockout, admin password reset and "end all sessions"). The client sends it once with
+  its public key to `POST /auth/apikeys/pair`, signed with the new key (proof of possession). The route
+  is rate-limited, and every attempt lands in the audit log (`apikey_pairing_issue`, `apikey_pair`,
+  `apikey_pair_denied`).
+- **Every request** carries `Signature-Input`/`Signature` with `tag="tinysesam"`, `created` (at most
+  `apikey_signature_max_age` seconds old, default 60), a `nonce` (single use), the `keyid` (RFC 7638
+  thumbprint of the public key) and covers `@method`, `@target-uri` and — with a body —
+  `content-digest`. Anything else is 401. Set `base_url`: the target URI is built from it, so it
+  matches behind a proxy too.
+- **Rotate on sign-in (`rotate_on_login`, paired keys, default off):** every completed sign-in of the
+  owner marks the key. The next signed response carries `TinySesam-Key-Rotate: <path>`; the client
+  generates a new key pair, stores it as pending, and registers it with `POST /auth/apikeys/rotate`
+  (signed with the current key). The old key keeps working until the new one is used for the first
+  time — requests already in flight do not fail —, then only for signatures created before that
+  moment, and is dead after the signature age limit. A lost rotation answer heals on the next request.
+  Switch it per key: `auth.set_api_key_options(key_id, rotate_on_login=True)`,
+  `POST /auth/apikeys/{id}/options` (self-service) or the panel.
+- **Reference client** (`tinysesam.client`, standard-library HTTP):
+
+  ```python
+  from tinysesam.client import PairedClient
+  client = PairedClient.pair("https://app.example.com", "ABCD-EFGH-JKLM-NPQR", "/etc/myd/key.json")
+  client = PairedClient("/etc/myd/key.json")          # later: the key file (0600) holds everything
+  r = client.request("POST", "/api/things", json={"name": "x"})
+  ```
+
+  or on the command line `python -m tinysesam.client pair <base_url> <code> <key_file>`. It signs,
+  completes rotations by itself and never sends the private key anywhere. Other languages implement
+  the same RFC 9421 profile.
 
 ## Admin panel
 
 Built-in panel at **`/auth/admin`** (`is_admin` only), embeddable with no extra setup:
 
 - **Users & service accounts:** create, **explicitly disable/enable** (`disabled` — account stays, login blocked, sessions end immediately; self-lockout protection; in code: `auth.set_disabled`), password reset, set roles/admin.
-- **API keys** per user: generate (shown once) / revoke.
+- **API keys** per user: generate (shown once) / revoke, switch *renew on sign-in* / *rotate on sign-in*,
+  and — with `apikey_pairing_enabled` — issue a pairing code for a paired key (shown once).
 - **Sign-in link** per user (with `magiclink_enabled`): one-time link plus QR code, shown once,
   works without a mailer — see [Sign-in by link and from another device](#sign-in-by-link-and-from-another-device).
 - **Sessions:** view active ones + end them.
@@ -1150,8 +1207,10 @@ JSON API at `<mount>/api/*` (the same actions — for your own UIs / automation)
 All optional (on/off by config), usable individually and combined, front end replaceable everywhere.
 
 - **Replaceable front end:** `auth.set_template(name, fn)` — `fn(auth, ctx)` returns an HTML string **or**
-  its own `Response`. All 13 names: `login`, `pin`, `totp`, `totp_setup`, `reauth`, `account`,
-  `register`, `forgot`, `reset`, `magic_request`, `magic_invalid`, `resource_unlock`, `error`.
+  its own `Response`. The names (`TinySesam.PAGES`): `account`, `account_setup`, `error`, `forgot`,
+  `gate_logged_out`, `gate_logout`, `gateway_home`, `login`, `logout`, `magic_confirm`, `magic_invalid`,
+  `magic_request`, `pin`, `qr_approve`, `qr_login`, `reauth`, `register`, `reset`, `resource_unlock`,
+  `totp`, `totp_setup`.
   Built-in renderers are the fallback; `tinysesam.templates.DEFAULTS` holds the current list.
   To show one of these pages from a route of your own, `auth.render_page(name, status=200, request=request,
   **ctx)` renders it — your replacement if one is set, otherwise the built-in page — with the CSP nonce, the CSRF
@@ -1612,7 +1671,7 @@ without extras (guards the stdlib-scrypt fallback), and a browser job that also 
 
 ## Status
 
-**84 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
+**85 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
 
 Implemented and tested: password/TOTP/sessions/roles, remember-me, step-up and per-route MFA,
 factor chains, personal PIN, shared resource secrets, magic links + mailer hook, registration and
