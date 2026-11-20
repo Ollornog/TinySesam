@@ -49,6 +49,10 @@ Fastmail, GitHub fine-grained tokens). Samba is explicitly out of scope (no HTTP
   many (`PasswordChangeResult.app_passwords_active`, the JSON of `POST /auth/password` and `/auth/sessions/revoke`).
 - **Admin panel:** tab "App passwords" (every account's, revoke; owner protection). No creation for someone else — an
   app password is the holder's own.
+- **Templates:** `@basic` branch in `deploy/forward-auth/Caddyfile`, `Caddyfile.gate`, `deploy/quickstart/Caddyfile`
+  and `deploy/home-network/Caddyfile` (inert without app passwords); quickstart: `TS_FORWARD_APPS` and an optional
+  WebDAV server (`COMPOSE_PROFILES=webdav`, rclone). `oidc_gateway()` switches the account page on when an
+  application takes app passwords.
 - Schema 20: table `app_password` (additive).
 - Tests: `tests/test_app_passwords.py` (every protection rule with its mutation); end to end
   `tests/e2e_app_passwords.py` — rclone 1.76.0 as WebDAV client against `rclone serve webdav` behind Caddy 2.11.9 with
@@ -56,8 +60,8 @@ Fastmail, GitHub fine-grained tokens). Samba is explicitly out of scope (no HTTP
 
 **Left open:**
 
-- The `basic` branch in the templates of `deploy/` (Caddyfile, Caddyfile.gate, the quickstart stack) — after T-62
-  (PR #253) is merged, into its structure; until then the recipe in the README.
+- `tests/test_quickstart.py` (CI job with the built images) does not start the `webdav` profile yet; the `@basic`
+  branch of the template is measured by `tests/e2e_app_passwords.py` (plain Caddy, the template word for word).
 - nginx `auth_request` cannot pass a `WWW-Authenticate` from the auth sub-request through (it answers 401 with its
   own headers); a recipe with `auth_request_set` + `add_header` is to be measured. Traefik's `forwardAuth` passes the
   401 with its headers through as is.

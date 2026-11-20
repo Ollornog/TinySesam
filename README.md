@@ -1286,7 +1286,10 @@ TinySesamConfig(
 )
 ```
 
-Gateway: the same key in `TINYSESAM_FORWARD_APPS='{"dav.example.com": {"name": "Files", "app_passwords": true}}'`.
+Gateway: the same key in `TINYSESAM_FORWARD_APPS='{"dav.example.com": {"name": "Files", "app_passwords": true}}'`;
+`oidc_gateway()` then switches the account page on (otherwise off in a gateway), where the app passwords are made.
+The quickstart stack has the whole example: `COMPOSE_PROFILES=webdav` adds a WebDAV server as the application
+(`deploy/quickstart/example.env`, "WebDAV behind the gate").
 
 **At the proxy** one branch more in the forward-auth block of the application (Caddy, as in
 `deploy/forward-auth/Caddyfile`), **before** `@denied`: TinySesam answers a client without a browser with `401`,
@@ -1331,8 +1334,8 @@ Then, on the device: user name as at sign-in, the app password as password — e
 `rclone lsf :webdav: --webdav-url https://dav.example.com/ --webdav-user alice --webdav-pass "$(rclone obscure …)"`,
 `git clone https://alice@git.example.com/repo.git`, or the account settings of the phone's calendar. A browser that
 opens the same application is still sent to the sign-in page (requests with `Sec-Fetch-*` or `Accept: text/html` get
-no Basic challenge — it would pop up the browser's own password box). The template files in `deploy/` get the branch
-with the ready-made Caddy stack (follow-up of T-62).
+no Basic challenge — it would pop up the browser's own password box). The templates in `deploy/` (`forward-auth`,
+`quickstart`, `home-network`) carry the `@basic` branch; it does nothing at a host without app passwords.
 
 What protects it:
 
@@ -1922,7 +1925,7 @@ without extras (guards the stdlib-scrypt fallback), and a browser job that also 
 
 ## Status
 
-**95 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
+**96 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
 
 Implemented and tested: password/TOTP/sessions/roles, remember-me, step-up and per-route MFA,
 factor chains, personal PIN, shared resource secrets, magic links + mailer hook, registration and

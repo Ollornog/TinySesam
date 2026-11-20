@@ -2,7 +2,8 @@
 
 Not a CI suite and deliberately **not** `test_*.py` (`run_all.py` collects by glob): it starts throwaway containers
 and needs Docker. What it proves is what only the real pieces can prove — that Caddy passes the Basic header to
-`/auth/forward`, hands the Basic challenge back to the client (the `basic` branch of the recipe in the README),
+`/auth/forward`, hands the Basic challenge back to the client (the `@basic` branch — of the recipe in the README and
+of the shipped templates deploy/forward-auth/Caddyfile and deploy/quickstart/Caddyfile, word for word),
 forwards the body of a PUT intact behind the sub-request, and that a WebDAV client (rclone) works with an app
 password and fails with the account's own password and after a revocation.
 
@@ -82,62 +83,73 @@ auth = TinySesam(TinySesamConfig(
     lang="en", db_path=str(tmp / "t.db"), passkey_enabled=False, oidc_enabled=False, cookie_secure=False,
     forward_auth_enabled=True, base_url="https://auth.example.com", trusted_redirect_hosts=[HOST],
     trusted_proxies=["127.0.0.1/32"], forward_apps={HOST: {"name": "Files", "app_passwords": True}}))
-alice = auth.create_user("alice", "Alice-Main-Password-2026", roles=["editors"])
-created = auth.create_app_password(alice, "rclone on the laptop", hosts=[HOST])
-APP_PW = created["password"]
+MAIN_PW = "Alice-Main-Password-2026"   # the account's own password — it must never pass by Basic auth
+alice = auth.create_user("alice", MAIN_PW, roles=["editors"])
 ts_app = FastAPI()
 ts_app.include_router(auth.router())
-TS_PORT, CADDY_PORT, DAV_PORT = free_port(), free_port(), free_port()
+TS_PORT, DAV_PORT = free_port(), free_port()
 server = uvicorn.Server(uvicorn.Config(ts_app, host="127.0.0.1", port=TS_PORT, log_level="warning"))
 threading.Thread(target=server.run, daemon=True).start()
+ROOT = pathlib.Path(__file__).resolve().parent.parent
 
-# ---------- Caddy: the recipe from the README, with the `basic` branch ----------
-(tmp / "Caddyfile").write_text(f"""{{
+# ---------- Caddy: the recipe from the README, and the shipped templates word for word ----------
+RECIPE = """{
 	auto_https off
 	admin off
-}}
+}
 
-http://{HOST}:{CADDY_PORT} {{
-	bind 127.0.0.1
-	route {{
-		reverse_proxy 127.0.0.1:{TS_PORT} {{
+app.example.com {
+	route {
+		reverse_proxy {$TS_AUTH_UPSTREAM} {
 			method GET
 			rewrite /auth/forward
-			header_up X-Forwarded-Method {{method}}
-			header_up X-Forwarded-Uri {{uri}}
+			header_up X-Forwarded-Method {method}
+			header_up X-Forwarded-Uri {uri}
 			@ok status 200
-			handle_response @ok {{
-				request_header Remote-User {{rp.header.Remote-User}}
-				request_header Remote-Groups {{rp.header.Remote-Groups}}
-				request_header Remote-Email {{rp.header.Remote-Email}}
-				request_header Remote-Name {{rp.header.Remote-Name}}
-				request_header Remote-Id {{rp.header.Remote-Id}}
-			}}
-			@basic {{
+			handle_response @ok {
+				request_header Remote-User {rp.header.Remote-User}
+				request_header Remote-Groups {rp.header.Remote-Groups}
+			}
+			@basic {
 				status 401
 				header X-Tinysesam-Reason basic
-			}}
-			handle_response @basic {{
-				header WWW-Authenticate {{rp.header.Www-Authenticate}}
+			}
+			handle_response @basic {
+				header WWW-Authenticate {rp.header.Www-Authenticate}
 				respond 401
-			}}
+			}
 			@denied status 401
-			handle_response @denied {{
-				redir {{rp.header.X-Tinysesam-Location}} 302
-			}}
-			@norole status 403
-			handle_response @norole {{
-				respond "Access denied: missing role." 403
-			}}
-		}}
-		reverse_proxy 127.0.0.1:{DAV_PORT} {{
+			handle_response @denied {
+				redir {rp.header.X-Tinysesam-Location} 302
+			}
+		}
+		reverse_proxy {$TS_APP_UPSTREAM} {
 			header_up -Authorization
-		}}
-	}}
-}}
-""", encoding="utf-8")
+		}
+	}
+}
+"""
 
-names = [f"{TAG}-dav", f"{TAG}-caddy"]
+
+def caddyfile(name: str, port: int) -> str:
+    """The Caddyfile of variant `name`, only the site addresses moved to plain HTTP on 127.0.0.1:`port` (as
+    tests/test_gate_caddy.py does with the same templates)."""
+    if name == "recipe":
+        text, app_site = RECIPE, "\napp.example.com {"
+    elif name == "deploy/quickstart/Caddyfile":
+        text = (ROOT / name).read_text(encoding="utf-8")
+        text = text.replace("\n{\n", "\n{\n\tauto_https off\n\tadmin off\n", 1)
+        app_site = "\nhttps://{$TS_APP_HOST}:{$TS_APP_PORT:443} {"
+        text = text.replace("\nhttps://{$TS_AUTH_HOST} {", f"\nhttp://auth.example.com:{free_port()} {{\n\tbind 127.0.0.1", 1)
+    else:
+        text = "{\n\tauto_https off\n\tadmin off\n}\n" + (ROOT / name).read_text(encoding="utf-8")
+        app_site = "\napp.example.com {"
+        text = text.replace("\nauth.example.com {", f"\nhttp://auth.example.com:{free_port()} {{\n\tbind 127.0.0.1", 1)
+    assert app_site in text, (name, app_site)
+    return text.replace(app_site, f"\nhttp://{HOST}:{port} {{\n\tbind 127.0.0.1", 1)
+
+
+names = [f"{TAG}-dav"]
 try:
     for _ in range(100):
         try:
@@ -149,66 +161,84 @@ try:
     docker("run", "-d", "--name", names[0], "--label", LABEL, "--network", "host", "--user", uid,
            "-v", f"{tmp / 'dav'}:/data", RCLONE_IMAGE,
            "serve", "webdav", "/data", "--addr", f"127.0.0.1:{DAV_PORT}")
-    docker("run", "-d", "--name", names[1], "--label", LABEL, "--network", "host",
-           "-v", f"{tmp / 'Caddyfile'}:/etc/caddy/Caddyfile:ro", CADDY_IMAGE)
-    url = f"http://{HOST}:{CADDY_PORT}"
-    resolve = ["--resolve", f"{HOST}:{CADDY_PORT}:127.0.0.1"]
-    for _ in range(100):
-        if subprocess.run(["curl", "-s", "-o", "/dev/null", *resolve, url + "/"]).returncode == 0:
-            break
-        time.sleep(0.2)
     print(f"  Caddy {CADDY_IMAGE.split('@')[0]}, rclone {RCLONE_IMAGE.split('@')[0]}, on 127.0.0.1 only")
 
-    def curl(*args):
-        r = subprocess.run(["curl", "-s", "-i", *resolve, *args], capture_output=True, text=True, timeout=30)
-        head = r.stdout.split("\r\n\r\n", 1)[0]
-        status = int(head.split(" ", 2)[1]) if head.startswith("HTTP/") else 0
-        return status, head
+    for variant in ("recipe", "deploy/forward-auth/Caddyfile", "deploy/quickstart/Caddyfile"):
+        print(f"  — {variant}")
+        created = auth.create_app_password(alice, f"rclone ({variant})", hosts=[HOST])
+        APP_PW = created["password"]
+        port = free_port()
+        cf = tmp / f"Caddyfile-{len(names)}"
+        cf.write_text(caddyfile(variant, port), encoding="utf-8")
+        name = f"{TAG}-caddy-{len(names)}"
+        names.append(name)
+        docker("run", "-d", "--name", name, "--label", LABEL, "--network", "host",
+               "-e", f"TS_AUTH_UPSTREAM=127.0.0.1:{TS_PORT}", "-e", f"TS_APP_UPSTREAM=127.0.0.1:{DAV_PORT}",
+               "-e", "TS_TLS=acme", "-e", "TS_AUTH_HOST=auth.example.com",
+               "-v", f"{cf}:/etc/caddy/Caddyfile:ro", CADDY_IMAGE)
+        url = f"http://{HOST}:{port}"
+        resolve = ["--resolve", f"{HOST}:{port}:127.0.0.1"]
+        for _ in range(100):
+            if subprocess.run(["curl", "-s", "-o", "/dev/null", *resolve, url + "/"]).returncode == 0:
+                break
+            time.sleep(0.2)
 
-    def rclone(*args, password=APP_PW):
-        obscured = docker("run", "--rm", "--label", LABEL, RCLONE_IMAGE, "obscure", password).stdout.strip()
-        return docker("run", "--rm", "--label", LABEL, "--network", "host", "--user", uid,
-                      "--add-host", f"{HOST}:127.0.0.1", "-v", f"{tmp / 'in'}:/in",
-                      "-e", "RCLONE_CONFIG=/dev/null", RCLONE_IMAGE, *args,
-                      "--webdav-url", url + "/", "--webdav-vendor", "other", "--webdav-user", "alice",
-                      "--webdav-pass", obscured, "--retries", "1", "--low-level-retries", "1",
-                      check_rc=False)
+        def curl(*args):
+            r = subprocess.run(["curl", "-s", "-i", *resolve, *args], capture_output=True, text=True, timeout=30)
+            head = r.stdout.split("\r\n\r\n", 1)[0]
+            status = int(head.split(" ", 2)[1]) if head.startswith("HTTP/") else 0
+            return status, head
 
-    status, head = curl("-X", "PROPFIND", "-H", "Depth: 0", url + "/")
-    check("without credentials: 401 with a Basic challenge from the proxy",
-          status == 401 and 'www-authenticate: basic realm="files"' in head.lower(), head)
+        def rclone(*args, password=APP_PW, url=url):
+            obscured = docker("run", "--rm", "--label", LABEL, RCLONE_IMAGE, "obscure", password).stdout.strip()
+            return docker("run", "--rm", "--label", LABEL, "--network", "host", "--user", uid,
+                          "--add-host", f"{HOST}:127.0.0.1", "-v", f"{tmp / 'in'}:/in",
+                          "-e", "RCLONE_CONFIG=/dev/null", RCLONE_IMAGE, *args,
+                          "--webdav-url", url + "/", "--webdav-vendor", "other", "--webdav-user", "alice",
+                          "--webdav-pass", obscured, "--retries", "1", "--low-level-retries", "1",
+                          check_rc=False)
 
-    payload = "hello from an app password " + APP_PW[:5] + "\n"
-    (tmp / "in" / "hello.txt").write_text(payload, encoding="utf-8")
-    r = rclone("copyto", "/in/hello.txt", ":webdav:docs/hello.txt")
-    check("rclone uploads through Caddy with the app password (PUT, MKCOL)", r.returncode == 0, r.stderr[-400:])
-    stored = tmp / "dav" / "docs" / "hello.txt"
-    check("the file arrived intact at the WebDAV server behind the sub-request",
-          stored.exists() and stored.read_text(encoding="utf-8") == payload,
-          stored.read_text(encoding="utf-8") if stored.exists() else "missing")
-    r = rclone("lsf", "-R", ":webdav:")
-    check("rclone lists (PROPFIND Depth 1)", r.returncode == 0 and "docs/hello.txt" in r.stdout, r.stderr[-400:])
-    r = rclone("cat", ":webdav:docs/hello.txt")
-    check("rclone reads it back (GET)", r.returncode == 0 and r.stdout == payload, r.stdout + r.stderr[-300:])
+        status, head = curl("-X", "PROPFIND", "-H", "Depth: 0", url + "/")
+        check("without credentials: 401 with a Basic challenge from the proxy",
+              status == 401 and 'www-authenticate: basic realm="files"' in head.lower(), head)
+        status, head = curl("-H", "Sec-Fetch-Mode: navigate", "-H", "Accept: text/html", url + "/")
+        check("a browser is still sent to the sign-in page (302)", status == 302 and "location:" in head.lower(), head)
 
-    status, head = curl("-u", f"alice:{APP_PW}", "-X", "PROPFIND", "-H", "Depth: 0", url + "/")
-    check("curl with the app password: 207 Multi-Status", status == 207, head)
-    status, head = curl("-u", "alice:Alice-Main-Password-2026", "-X", "PROPFIND", "-H", "Depth: 0", url + "/")
-    check("the account's own password by Basic: 401 Basic", status == 401 and "basic realm" in head.lower(), head)
-    r = rclone("lsf", ":webdav:", password="Alice-Main-Password-2026")
-    check("rclone with the account's own password fails", r.returncode != 0, r.stdout)
+        payload = f"hello from an app password via {variant}\n"
+        (tmp / "in" / "hello.txt").write_text(payload, encoding="utf-8")
+        target = f"docs/{len(names)}/hello.txt"
+        r = rclone("copyto", "/in/hello.txt", f":webdav:{target}")
+        check("rclone uploads through Caddy with the app password (PUT, MKCOL)", r.returncode == 0, r.stderr[-400:])
+        stored = tmp / "dav" / target
+        check("the file arrived intact at the WebDAV server behind the sub-request",
+              stored.exists() and stored.read_text(encoding="utf-8") == payload,
+              stored.read_text(encoding="utf-8") if stored.exists() else "missing")
+        r = rclone("lsf", "-R", ":webdav:")
+        check("rclone lists (PROPFIND Depth 1)", r.returncode == 0 and target in r.stdout, r.stderr[-400:])
+        r = rclone("cat", f":webdav:{target}")
+        check("rclone reads it back (GET)", r.returncode == 0 and r.stdout == payload, r.stdout + r.stderr[-300:])
 
-    uses = [a for a in auth.store.recent_audit(200) if a["event"] == "app_password_use"]
-    check("TinySesam audited the use (app_password_use, host)", any(f"host={HOST}" in (a["detail"] or "")
-                                                                    for a in uses), uses)
-    row = auth.list_app_passwords(alice)[0]
-    check("last used and address recorded", bool(row["last_used"]) and row["last_ip"] == "127.0.0.1", row)
+        status, head = curl("-u", f"alice:{APP_PW}", "-X", "PROPFIND", "-H", "Depth: 0", url + "/")
+        check("curl with the app password: 207 Multi-Status", status == 207, head)
+        status, head = curl("-u", f"alice:{MAIN_PW}", "-X", "PROPFIND", "-H", "Depth: 0", url + "/")
+        check("the account's own password by Basic: 401 Basic", status == 401 and "basic realm" in head.lower(), head)
+        r = rclone("lsf", ":webdav:", password=MAIN_PW)
+        check("rclone with the account's own password fails", r.returncode != 0, r.stdout)
 
-    auth.revoke_app_password(created["id"], alice)
-    r = rclone("lsf", ":webdav:")
-    check("after the revocation rclone fails at once", r.returncode != 0, r.stdout)
-    status, head = curl("-u", f"alice:{APP_PW}", "-X", "PROPFIND", "-H", "Depth: 0", url + "/")
-    check("… and curl gets 401", status == 401, head)
+        uses = [a for a in auth.store.recent_audit(500) if a["event"] == "app_password_use"
+                and f"id={created['id']} " in (a["detail"] or "") + " "]
+        check("TinySesam audited the use (app_password_use, host)",
+              any(f"host={HOST}" in (a["detail"] or "") for a in uses), uses)
+        row = [x for x in auth.list_app_passwords(alice) if x["id"] == created["id"]][0]
+        check("last used and address recorded", bool(row["last_used"]) and row["last_ip"] == "127.0.0.1", row)
+
+        auth.revoke_app_password(created["id"], alice)
+        r = rclone("lsf", ":webdav:")
+        check("after the revocation rclone fails at once", r.returncode != 0, r.stdout)
+        status, head = curl("-u", f"alice:{APP_PW}", "-X", "PROPFIND", "-H", "Depth: 0", url + "/")
+        check("… and curl gets 401", status == 401, head)
+        # Three wrong guesses per variant stay below the pair threshold of the next one.
+        auth.store.clear_fails(username="alice")
 finally:
     for n in names:
         if FAILED:

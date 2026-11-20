@@ -40,8 +40,9 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
   account for that host, never with the account's own password, never with admin rights, without a gate token.
   A refusal, or a client without a browser and without credentials, gets `401` with `WWW-Authenticate: Basic
   realm="<app>", charset="UTF-8"` and `X-TinySesam-Reason: basic`; browsers keep the redirect to the sign-in page.
-  Proxy recipe (Caddy `@basic` branch, `header_up -Authorization`) in the README; the `deploy/` templates follow
-  with the Caddy quickstart (T-62).
+  The Caddy templates in `deploy/` (forward-auth, gate, quickstart, home network) pass it through with a new `@basic`
+  branch (inert without app passwords); the quickstart stack gets an optional WebDAV server (`COMPOSE_PROFILES=webdav`)
+  and `TS_FORWARD_APPS`. `oidc_gateway()` switches the account page on when an application takes app passwords.
 - **Own bucket, fail2ban line:** a wrong app password is `failed login … method=app_password` and counts in a bucket of
   its own (`security.SIGN_IN_OWN_LOCK`, `OWN_BUCKET_METHODS`) — the browser sign-in and the streak stay untouched.
   A revoked or expired one is refused without counting. Audit `app_password_create`, `app_password_use`,

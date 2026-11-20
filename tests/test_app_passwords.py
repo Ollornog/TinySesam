@@ -285,8 +285,8 @@ assert r.status_code == 401, "locked: even the right app password waits for the 
 assert any("reason=lockout_app_password" in z and JAIL.search(z) for z in m.lines()), m.lines()
 assert not auth2._is_locked("alice", IP), "the browser sign-in of the account stays open"
 assert auth2.store.failure_series("alice") == 0, "no streak (B2-6) from app-password guesses"
-login = TestClient(app2, client=(IP, 1)).post("/auth/login", data={"username": "alice",
-                                                                  "password": "Alice-Password-2026"},
+ALICE_PW = "Alice-Password-2026"
+login = TestClient(app2, client=(IP, 1)).post("/auth/login", data={"username": "alice", "password": ALICE_PW},
                                               follow_redirects=False)
 assert login.status_code == 303, login.status_code
 r = g2.get("/auth/forward", headers={**proxy(DAV, basic("alice", pw2)), "X-Forwarded-For": "198.51.100.99"})
@@ -398,6 +398,16 @@ assert out.returncode == 0 and old_kid in out.stdout, (out.returncode, out.stdou
 ok("pepper rotation: an app password stays valid, moves to the active pepper on its next use; `keys retire` "
    "refuses until then")
 # (Mutation: drop the app-password refusal in `keys retire` → exit 0 before the use, red.)
+
+# ---------- the gateway preset ----------
+_gw = dict(issuer="https://id.example.com", client_id="c", client_secret="s", base_url="https://auth.example.com",
+           trusted_redirect_hosts=[DAV])
+assert TinySesamConfig.oidc_gateway(**_gw).account_enabled is False
+assert TinySesamConfig.oidc_gateway(**_gw, forward_apps={DAV: {"app_passwords": True}}).account_enabled is True
+assert TinySesamConfig.oidc_gateway(**_gw, forward_apps={DAV: {"app_passwords": True}},
+                                    account_enabled=False).account_enabled is False
+ok("gateway preset: an application with app passwords switches the account page on (unless set explicitly)")
+# (Mutation: drop the `base["account_enabled"] = True` line → red.)
 
 # ---------- configuration ----------
 errors, _ = config_check.check_config(TinySesamConfig(forward_auth_enabled=True,

@@ -807,6 +807,13 @@ class TinySesamConfig:
             oidc_rp_logout=True,
         )
         base.update(overrides)
+        # App passwords (T-66) are created on the account page: an application that takes them switches the page
+        # on, unless the caller decided about it explicitly. (The page shows nothing else a gateway would hide —
+        # sessions, recent activity, connected programs.)
+        apps = base.get("forward_apps")
+        if "account_enabled" not in overrides and isinstance(apps, dict) and any(
+                isinstance(e, dict) and e.get("app_passwords") is True for e in apps.values()):
+            base["account_enabled"] = True
         # `base` is a dict of mixed values; the dataclass checks the field types at runtime.
         return cls(**base)   # type: ignore[arg-type]
 

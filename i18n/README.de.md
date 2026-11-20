@@ -1312,7 +1312,10 @@ TinySesamConfig(
 )
 ```
 
-Gateway: derselbe Schlüssel in `TINYSESAM_FORWARD_APPS='{"dav.example.com": {"name": "Dateien", "app_passwords": true}}'`.
+Gateway: derselbe Schlüssel in `TINYSESAM_FORWARD_APPS='{"dav.example.com": {"name": "Dateien", "app_passwords": true}}'`;
+`oidc_gateway()` schaltet dann die Kontoseite ein (im Gateway sonst aus), auf der die App-Passwörter entstehen. Der
+Schnellstart-Stack hat das ganze Beispiel: `COMPOSE_PROFILES=webdav` fügt einen WebDAV-Server als Anwendung hinzu
+(`deploy/quickstart/example.env`, „WebDAV behind the gate“).
 
 **Am Proxy** ein Zweig mehr im Forward-Auth-Block der Anwendung (Caddy, wie in `deploy/forward-auth/Caddyfile`),
 **vor** `@denied`: TinySesam antwortet einem Client ohne Browser mit `401`, `WWW-Authenticate: Basic
@@ -1358,7 +1361,8 @@ Dann auf dem Gerät: Benutzername wie bei der Anmeldung, das App-Passwort als Pa
 `git clone https://alice@git.example.com/repo.git` oder die Kontoeinstellungen des Handy-Kalenders. Ein Browser,
 der dieselbe Anwendung öffnet, geht weiter zur Anmeldeseite (Anfragen mit `Sec-Fetch-*` oder `Accept: text/html`
 bekommen keine Basic-Aufforderung — sie öffnete das browsereigene Passwortfenster). Die Vorlagen in `deploy/`
-bekommen den Zweig mit dem fertigen Caddy-Stack (Folge von T-62).
+(`forward-auth`, `quickstart`, `home-network`) tragen den Zweig `@basic`; an einem Host ohne App-Passwörter tut er
+nichts.
 
 Was es schützt:
 
@@ -1970,7 +1974,7 @@ zusätzlich die Website baut.
 
 ## Status
 
-**95 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
+**96 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
 (`tests/test_matrix.py`).
 
 Gebaut und getestet: Passwort/TOTP/Sitzungen/Rollen, Remember-me, Step-up und per-Route-MFA,
