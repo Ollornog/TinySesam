@@ -1,0 +1,85 @@
+# TinySesam in a home network WITHOUT a domain — HTTPS on a bare IP address (T-37).
+#
+# Prefer a domain. With one, Caddy gets a publicly trusted certificate (also for names that resolve
+# only inside your network, via the DNS-01 challenge) and no device needs anything installed.
+# docs/HOME-NETWORK.md explains both ways; this file is the fallback for "IP only".
+#
+# Why HTTPS at all on a LAN: the session cookies are `Secure`/`__Host-`, and OAuth clients refuse a token
+# endpoint over plain HTTP unless it is localhost. Passkeys do not work on an IP address at all — not even
+# with this certificate (WebAuthn accepts only domain names); that alone is a reason for a domain.
+#
+# How: `tls internal` — Caddy's own local CA issues and renews the certificate for the IP address
+# (Subject Alternative Name = IP). Every device that opens these pages must trust that CA's root
+# ONCE; export it with
+#   docker compose -f deploy/forward-auth/docker-compose.yml -f deploy/home-network/docker-compose.yml \
+#     cp caddy:/data/caddy/pki/authorities/local/root.crt ./tinysesam-home-root.crt
+# Validity (Caddy defaults): root 10 years, intermediate 7 days, leaf 12 hours — the short ones renew
+# themselves, only the root is distributed. Keep the volume `caddy-data`: a new volume means a new root,
+# and every device would have to trust it again.
+#
+# The address: TS_HOME_IP (compose sets it), otherwise the documentation address 192.0.2.10 (RFC 5737)
+# applies — that one exists nowhere, replace it with the LAN address of this host.
+#
+# TinySesam configuration that belongs to it (docker-compose.yml in this folder sets it for the gateway):
+#   base_url="https://192.0.2.10"              # the IP, no port — 443 is the login page
+#   cookie_domain=""                           # host-only cookie; a Domain attribute cannot name an IP
+#   trusted_redirect_hosts=["192.0.2.10"]      # the app on :8443 is the same host (ports do not count)
+{
+	# A client sends no SNI for an IP address. Caddy then looks up the certificate by the address the
+	# connection arrived at — inside a Docker bridge network that is the CONTAINER address, not the
+	# LAN address, and the handshake fails ("tlsv1 alert internal error", measured with 2.11.9).
+	# default_sni names the certificate to use in that case.
+	default_sni {$TS_HOME_IP:192.0.2.10}
+	# Inside the container there is no trust store worth writing to; the root is distributed by hand.
+	skip_install_trust
+}
+
+# TinySesam itself — the gateway, or your own app with TinySesam inside.
+https://{$TS_HOME_IP:192.0.2.10} {
+	tls internal
+	reverse_proxy {$TS_AUTH_UPSTREAM:127.0.0.1:8000}
+}
+
+# An application protected by forward auth, on another PORT of the same address (a bare IP has no
+# subdomains). Cookies are not separated by port (RFC 6265, section 8.5), so the sign-in at :443 holds here too.
+# This is the forward-auth part of deploy/forward-auth/Caddyfile, shortened — the reasons for each line
+# are there. Public share paths (T-20): take the `@share` block from there as well.
+https://{$TS_HOME_IP:192.0.2.10}:8443 {
+	tls internal
+
+	# Sign-out at the application (T-22), past the gate.
+	handle /.tinysesam/* {
+		reverse_proxy {$TS_AUTH_UPSTREAM:127.0.0.1:8000}
+	}
+
+	route {
+		reverse_proxy {$TS_AUTH_UPSTREAM:127.0.0.1:8000} {
+			method GET
+			rewrite /auth/forward
+			header_up X-Forwarded-Method {method}
+			header_up X-Forwarded-Uri {uri}
+			# header_up X-TinySesam-Roles editors,admin   # only passes with one of these roles
+			@ok status 200
+			handle_response @ok {
+				request_header Remote-User {rp.header.Remote-User}
+				request_header Remote-Groups {rp.header.Remote-Groups}
+				request_header Remote-Email {rp.header.Remote-Email}
+				request_header Remote-Name {rp.header.Remote-Name}
+				request_header Remote-Id {rp.header.Remote-Id}
+			}
+			@denied status 401
+			handle_response @denied {
+				redir {rp.header.X-Tinysesam-Location} 302
+			}
+			@norole status 403
+			handle_response @norole {
+				respond "Access denied: missing role." 403
+			}
+		}
+		# The application — without TinySesam's cookies (B-20).
+		reverse_proxy {$TS_APP_UPSTREAM:127.0.0.1:9000} {
+			header_up Cookie "(^|;)\s*(__Host-|__Secure-)?tinysesam_[^=;]*=[^;]*" ""
+			header_up Cookie "^[;\s]+" ""
+		}
+	}
+}

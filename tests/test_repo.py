@@ -69,13 +69,15 @@ assert not absent, f"Required files missing: {absent}"
 print("  License, SECURITY, CHANGELOG, both READMEs, py.typed, all workflows present")
 
 # ---------- docs/ now contains only attachments; the pages are built by the action ----------
-# Exception: OPERATIONS.md, the operator docs (failure behaviour, sessions, sign-in paths). It is
+# Exceptions: OPERATIONS.md, the operator docs (failure behaviour, sessions, sign-in paths), and HOME-NETWORK.md
+# (domain or bare IP in a home network, T-37). They are
 # source text like API.md, not a built page — the Pages action does not publish docs/.
 docs = [f for f in FILES if f.startswith("docs/")]
-assert sorted(docs) == ["docs/.nojekyll", "docs/OPERATIONS.md", "docs/theme.css", "docs/wizard.png"], docs
+assert sorted(docs) == ["docs/.nojekyll", "docs/HOME-NETWORK.md", "docs/OPERATIONS.md", "docs/theme.css",
+                        "docs/wizard.png"], docs
 assert not any(f.endswith(".html") for f in FILES), "generated HTML does not belong in the repo"
 assert "_site/" in read(".gitignore")
-print("  docs/: only OPERATIONS.md, theme.css, wizard.png, .nojekyll — no generated HTML in the repo")
+print("  docs/: only OPERATIONS.md, HOME-NETWORK.md, theme.css, wizard.png, .nojekyll — no generated HTML in the repo")
 
 # ---------- docs/OPERATIONS.md says what the code does ----------
 # Operator docs whose numbers drift away from the code are worse than none: People plan
@@ -155,7 +157,7 @@ def stale_doc_names(text: str, words: set) -> list:
 
 _package_words = package_words((f, read(f)) for f in LIB)
 _live_docs = ["README.md", "API.md", "SECURITY.md", "CONFIGURATION.md", "CONTRIBUTING.md", "TODO.md", "docs/OPERATIONS.md",
-              "deploy/systemd/README.md"] + sorted(f for f in FILES if f.startswith("i18n/") and f.endswith(".md"))
+              "docs/HOME-NETWORK.md", "deploy/systemd/README.md"] + sorted(f for f in FILES if f.startswith("i18n/") and f.endswith(".md"))
 _stale = [f"{d}:{n}: {name} → {unknown}" for d in _live_docs for n, name, unknown in stale_doc_names(read(d), _package_words)]
 assert not _stale, "the docs name Python names that no longer exist:\n  " + "\n  ".join(_stale[:8])
 # Self-test and mutations: a renamed name is found; the same name inside history is not; a real doc with a stale name is red.

@@ -1,0 +1,36 @@
+# Home network without a domain (T-37): an OVERRIDE for the reference stack in deploy/forward-auth/.
+# Run from the repository root:
+#
+#   docker compose -f deploy/forward-auth/docker-compose.yml -f deploy/home-network/docker-compose.yml up -d
+#
+# It keeps everything of the reference stack (hardening, pins, fail2ban feed) and changes only what an
+# IP address needs: the Caddyfile with `tls internal`, the addresses, and port 8443 for the application.
+# Before that, read docs/HOME-NETWORK.md — a domain spares every device the CA installation.
+#
+# Paths in this file resolve against the FIRST file's folder (deploy/forward-auth/), hence `../home-network/`.
+# 192.0.2.10 is a documentation address (RFC 5737): replace it everywhere with the LAN address of this host.
+
+services:
+  tinysesam:
+    environment:
+      TINYSESAM_BASE_URL: "https://192.0.2.10"
+      # No Domain attribute: browsers reject one that names an IP address. Host-only covers every
+      # port of this address, the app on :8443 included.
+      TINYSESAM_COOKIE_DOMAIN: ""
+      TINYSESAM_PROTECTED_HOSTS: "192.0.2.10"
+      # The reference stack names two clients for app/wiki hosts; with one address there is one client
+      # (the one from TINYSESAM_OIDC_CLIENT_ID). Restrict who may pass with TINYSESAM_ALLOWED_GROUPS.
+      TINYSESAM_OIDC_CLIENTS: ""
+      # Your provider. One with a public domain needs nothing more. One behind THIS Caddy (own CA)
+      # must be trusted by the gateway — see docs/HOME-NETWORK.md, "The provider on the same CA".
+      TINYSESAM_OIDC_ISSUER: "https://id.example.com"
+
+  caddy:
+    # Newest stable Caddy, version AND digest; Dependabot bumps it (entry `docker-compose`, /deploy/home-network).
+    image: caddy:2.11.9@sha256:4851e54a46b206517c574821bb5cc67f170d2156041e9fbc4c9193b45e84a75b
+    ports:
+      - "8443:8443"
+    environment:
+      TS_HOME_IP: "192.0.2.10"
+    volumes:
+      - ../home-network/Caddyfile:/etc/caddy/Caddyfile:ro
