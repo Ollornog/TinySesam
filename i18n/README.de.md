@@ -1027,6 +1027,11 @@ Es läuft als **Nicht-root** (uid 1000), enthält weder `pip` noch `git`, bringt
 `HEALTHCHECK` auf `/healthz` mit und startet direkt das Gateway — kein `command:` nötig.
 Ein vollständiges Beispiel mit Caddy liegt in `deploy/forward-auth/docker-compose.yml`.
 
+**Heimnetz ohne Domain?** Außerhalb von `localhost` ist HTTPS Pflicht; eine nackte IP-Adresse braucht deshalb eine
+eigene CA auf jedem Gerät — und Passkeys funktionieren auf einer IP gar nicht. `docs/HOME-NETWORK.md`
+(Englisch) empfiehlt eine Domain (DNS-01 klappt auch für Namen, die nur zu Hause auflösen) und beschreibt den
+IP-Notweg mit der Vorlage in `deploy/home-network/`.
+
 Update: Tag hochziehen, `docker compose pull && docker compose up -d` — migriert die Fassung die
 Datenbank, dazwischen sichern (siehe „Eine Sicherung zurückspielen"; von 0.17.x oder älter mit
 dem neuen Abbild). Rollback: alten Tag zurückschreiben, nach einer Migration zusammen mit dieser
@@ -1649,7 +1654,7 @@ zusätzlich die Website baut.
 
 ## Status
 
-**84 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
+**85 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
 (`tests/test_matrix.py`).
 
 Gebaut und getestet: Passwort/TOTP/Sitzungen/Rollen, Remember-me, Step-up und per-Route-MFA,

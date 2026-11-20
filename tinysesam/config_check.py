@@ -92,6 +92,20 @@ def _is_ip(value: str) -> bool:
         return False
 
 
+def _is_loopback(value: str) -> bool:
+    import ipaddress
+    try:
+        return ipaddress.ip_address(value).is_loopback
+    except ValueError:
+        return False
+
+
+def _urlsplit_host(url: str) -> str:
+    """The host of an address, without port and without the brackets of an IPv6 literal."""
+    from urllib.parse import urlsplit
+    return (urlsplit(url).hostname or "").lower()
+
+
 def _t(config, template: str, **values) -> str:
     """Finding text in the language of `config.lang`: English (default) or German.
 
@@ -511,6 +525,25 @@ def check_config(config) -> tuple[list[str], list[str]]:
                 "app and login page live under the same host. For SSO across several hosts set "
                 "base_url (and cookie_domain).",
                 functions="; ".join(soft)))
+    # A bare IP address as base_url (T-37): it works, but only with a CA of your own that every
+    # device has to trust — the cookies are `Secure`, OAuth clients refuse a token endpoint over
+    # plain HTTP — and WebAuthn refuses passkeys outright when the origin's host is an IP address
+    # (Web Authentication Level 3, §5.1.3: "Only the domain format of host is allowed here").
+    # A domain gets a publicly trusted certificate instead (DNS-01 also for names that resolve
+    # only at home). Loopback stays silent: browsers treat
+    # `http://127.0.0.1`/`[::1]` as a secure context and OAuth clients accept it (RFC 8252) —
+    # that is local development, not a home network, and needs no CA at all.
+    _base_host = _urlsplit_host(_canonical) if _canonical else ""
+    if _base_host and _is_ip(_base_host) and not _is_loopback(_base_host):
+        warnings.append(_t(
+            config,
+            "base_url={base!r} is an IP address. HTTPS on it needs a CA of your own that every "
+            "device trusts once (Secure cookies and OAuth clients require HTTPS), and passkeys do "
+            "not work on an IP address at all (WebAuthn accepts only domain names). Recommended: "
+            "a domain — a publicly trusted certificate via DNS-01 works even for names that "
+            "resolve only inside your network. "
+            "If it has to be the IP: docs/HOME-NETWORK.md.",
+            base=_base))
     # First-admin token: the value must not land where strangers can read it. That was exactly
     # B5-03 — it stood in the file that the fail2ban jail reads and logrotate archives.
     token_file = str(getattr(config, "admin_claim_token_file", "") or "").strip()
@@ -1611,6 +1644,17 @@ _DE: dict[str, str] = {
          "Hostnamen geprüft; trägt es die IP nicht als Subject Alternative Name, scheitert "
          "jeder Versand. Abhilfe: den Namen eintragen, auf den das Zertifikat ausgestellt ist "
          "(bei eigener CA zusätzlich smtp_ca_file)."),
+    ("base_url={base!r} is an IP address. HTTPS on it needs a CA of your own that every "
+     "device trusts once (Secure cookies and OAuth clients require HTTPS), and passkeys do "
+     "not work on an IP address at all (WebAuthn accepts only domain names). Recommended: "
+     "a domain — a publicly trusted certificate via DNS-01 works even for names that "
+     "resolve only inside your network. "
+     "If it has to be the IP: docs/HOME-NETWORK.md."):
+        ("base_url={base!r} ist eine IP-Adresse. HTTPS darauf braucht eine eigene CA, der jedes "
+         "Gerät einmal vertraut (Secure-Cookies und OAuth-Clients verlangen HTTPS), und Passkeys "
+         "funktionieren auf einer IP-Adresse gar nicht (WebAuthn nimmt nur Domainnamen). "
+         "Empfohlen: eine Domain — ein öffentlich vertrauenswürdiges Zertifikat per DNS-01 klappt "
+         "auch für Namen, die nur im eigenen Netz auflösen. Muss es die IP sein: docs/HOME-NETWORK.md."),
     ("smtp_ca_file={ca!r} does not exist. The TLS check of the mail server then fails on "
      "every mail — sign-in links, resets and confirmations would never go out, and only in "
      "operation."):

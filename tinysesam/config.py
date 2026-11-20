@@ -607,6 +607,9 @@ class TinySesamConfig:
     # If base_url is set, it ALWAYS wins — even against a base passed in from outside on a
     # second own host from trusted_redirect_hosts (otherwise the Host header chooses which
     # of our own names ends up in the reset link).
+    # An IP address other than loopback gives a startup warning (T-37): HTTPS on it needs a
+    # CA of your own on every device, and passkeys do not work on an IP — see
+    # docs/HOME-NETWORK.md.
     base_url: str = ""
     login_path: str = "/auth/login"       # login page
     login_redirect: str = "/"             # target after a successful login

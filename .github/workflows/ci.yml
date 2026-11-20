@@ -170,6 +170,31 @@ jobs:
             "$caddy" caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
         env:
           PR_BASE: ${{ github.event.pull_request.base.sha }}
+      # Acceptance of the home-network override (T-37) — also for the Dependabot PRs of its Caddy pin: the Caddy from
+      # the override serves the documentation address over HTTPS with `tls internal`, a client WITHOUT SNI (as for every
+      # IP address) completes the handshake, and the certificate chains to the exported root. Behind a Docker bridge that
+      # needs `default_sni` — remove it from the Caddyfile and this step fails ("tlsv1 alert internal error").
+      - name: Accept the home-network template (tls internal on an IP address)
+        run: |
+          set -euo pipefail
+          caddy="$(docker compose -f deploy/forward-auth/docker-compose.yml -f deploy/home-network/docker-compose.yml \
+            config --images | grep -m1 '^caddy:')" || { echo "no caddy image in the override"; exit 1; }
+          docker run --rm -v "$PWD/deploy/home-network/Caddyfile:/etc/caddy/Caddyfile:ro" \
+            "$caddy" caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+          docker run -d --name home-network-probe -p 127.0.0.1:18443:443 -p 127.0.0.1:18444:8443 \
+            -v "$PWD/deploy/home-network/Caddyfile:/etc/caddy/Caddyfile:ro" "$caddy"
+          for _ in $(seq 1 30); do
+            docker exec home-network-probe test -s /data/caddy/certificates/local/192.0.2.10/192.0.2.10.crt && break
+            sleep 1
+          done
+          docker exec home-network-probe cat /data/caddy/pki/authorities/local/root.crt > "$RUNNER_TEMP/home-root.crt"
+          for pair in 443:18443 8443:18444; do
+            # 502 = TLS done, no upstream behind it (none is running here) — the certificate is what is measured.
+            code="$(curl -sS -o /dev/null -w '%{http_code}' --cacert "$RUNNER_TEMP/home-root.crt" \
+              --connect-to "192.0.2.10:${pair%%:*}:127.0.0.1:${pair##*:}" "https://192.0.2.10:${pair%%:*}/")"
+            [ "$code" = 502 ] || { docker logs home-network-probe; echo "port ${pair%%:*}: $code instead of 502"; exit 1; }
+          done
+          docker rm -f home-network-probe
 
   # Repeatability: the same suite TWICE in the same working directory.
   # A test that turns red on the second run is broken — not the code.

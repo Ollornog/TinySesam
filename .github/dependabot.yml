@@ -101,6 +101,16 @@ updates:
     commit-message:
       prefix: "deploy"
 
+  # The home-network override (T-37) pins its own Caddy — the one with `tls internal` for a bare IP address.
+  - package-ecosystem: docker-compose
+    directory: /deploy/home-network
+    cooldown:
+      default-days: 3
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: "deploy"
+
   # The throwaway targets of the dress rehearsal (release.yml on every PR). The rehearsal itself accepts their update:
   # if the registry or the package server does not start, `rehearsal` is red.
   # NOT under .github/ (2026-11-13): there Dependabot may not open a PR for docker files — the job of 2026-11-12 ended
