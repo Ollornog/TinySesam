@@ -13,6 +13,7 @@ import json
 import re
 from urllib.parse import quote as _quote
 
+from . import dialog as _dialog
 from .theme import TOKENS
 
 _NONCE_TAG = re.compile(r'<(script|style)(?![^>]*\bnonce=)(?=[\s>])')
@@ -94,6 +95,11 @@ body{font-family:var(--ts-font);margin:0;min-height:100vh;display:flex;flex-dire
      border:1px solid var(--ts-field-line);border-radius:6px;padding:6px 8px;font-size:13px;
      text-align:center;word-break:break-all}
 .tsmain .mono.qrcode{font-size:22px;letter-spacing:.15em;margin:8px 0}
+.tsmain .mono.rccodes{white-space:pre;margin:8px 0}
+.tsmain .rccopyrow{display:flex;align-items:center;gap:10px}
+.tsmain .rccopyrow .btn2{width:auto;margin-top:0;padding:8px 16px}
+.tsmain .rcstate{font-size:12px;color:var(--ts-ok-ink)}
+.tsmain .rcstate.manual{color:var(--ts-warn-ink)}
 .tsmain table.qrinfo{width:100%;border-collapse:collapse;font-size:13px;margin:12px 0 0}
 .tsmain table.qrinfo th{text-align:left;color:var(--ts-muted);font-weight:600;padding:4px 10px 4px 0;
      vertical-align:top;white-space:nowrap}
@@ -401,7 +407,7 @@ def _login(auth, ctx) -> str:
     if getattr(cfg, "password_reset_enabled", False) and cfg.magiclink_enabled:
         links.append(f"<a href='__TS_P__/auth/forgot'>{_e(t('login.forgot'))}</a>")
     signup = f"<div class=hint>{' · '.join(links)}</div>" if links else ""
-    js = (_csrf_js(auth) + _PASSKEY_LOGIN_JS.replace("__NEXT__", _next_q(next_))
+    js = (_csrf_js(auth) + _dialog.assets(auth) + _PASSKEY_LOGIN_JS.replace("__NEXT__", _next_q(next_))
           .replace("__PK_FAILED__", json.dumps(t("login.passkey_failed")))
           .replace("__PK_ABORTED__", json.dumps(t("login.passkey_aborted")))) if "passkey" in methods else ""
     # In front of an application (forward_apps[host].name, T-21) the page says what you sign in for. With a brand
@@ -511,7 +517,7 @@ def _account(auth, ctx) -> str:
             notice = ""
             totp = f"<a class=btnlink href='__TS_P__/auth/totp/setup'>{_e(t('acc.totp_setup'))}</a>"
         sections.append(f"<div class=sec><h2>{_e(t('acc.totp'))}</h2>{totp}<span id=totp_msg class=msg></span>"
-                        f"{notice}<pre id=rc_out class=rcout></pre></div>")
+                        f"{notice}</div>")
 
     # Passkeys
     if "passkey" in methods:
@@ -575,7 +581,6 @@ def _account(auth, ctx) -> str:
     .tsmain ul{list-style:none;padding:0;margin:0 0 8px}
     .tsmain li{padding:4px 0;font-size:13px;border-bottom:1px solid var(--ts-line-soft)}
     .tsmain a{color:var(--ts-link)}
-    .tsmain .rcout{white-space:pre-wrap;margin-top:10px}
     .tsmain .rcleft{display:block;margin:12px 0 0;font-size:13px}
     """
     # `static=True`: only show the page, fetch nothing (preview/screenshot).
@@ -584,7 +589,7 @@ def _account(auth, ctx) -> str:
     body = (f"<header><h1>{_e(t('acc.title'))} · {name}</h1>"
             f"<div>{admin_link} <a href='__TS_P__/auth/logout'>{_e(t('logout'))}</a></div></header>"
             + "".join(sections)
-            + ("" if static else _ACCOUNT_JS.replace("__CSRFCK__", _e(auth.csrf_cookie_name)).replace("__TXT__", _account_texts(auth))
+            + ("" if static else _dialog.assets(auth) + _ACCOUNT_JS.replace("__CSRFCK__", _e(auth.csrf_cookie_name)).replace("__TXT__", _account_texts(auth))
                + _revoke_js(auth, "location.pathname+'?revoke_others=1'") + _ACCOUNT_RETURN_JS
                .replace("__CONFIRM__", json.dumps(t("acc.sessions_confirm"))))
             + pkjs)
@@ -600,9 +605,10 @@ _ACCOUNT_TEXT = {
         "changed": "✓ changed", "set": "✓ set", "removed": "✓ removed",
         "confirm_2fa_off": "Really disable 2FA?",
         "confirm_recovery": "Generate new recovery codes? The old ones become invalid.",
-        "recovery_note": "Write these down safely now (visible only once):",
+        "recovery_title": "New recovery codes",
+        "recovery_note": "Write these down safely now — they are shown only once.",
         "revoked": "(revoked)", "revoke": "revoke", "none": "none", "delete": "delete", "this": "(this one)",
-        "key_copy": "API key — copy it NOW:", "confirm_end_others": "End all other sessions?",
+        "key_title": "New API key", "key_note": "Copy it now — it is not shown again.", "confirm_end_others": "End all other sessions?",
         "ended": "✓ ended", "added": "✓ added", "failed": "failed", "aborted": "aborted: ",
     },
     "de": {
@@ -610,9 +616,10 @@ _ACCOUNT_TEXT = {
         "changed": "✓ geändert", "set": "✓ gesetzt", "removed": "✓ entfernt",
         "confirm_2fa_off": "2FA wirklich deaktivieren?",
         "confirm_recovery": "Neue Recovery-Codes erzeugen? Alte werden ungültig.",
-        "recovery_note": "Jetzt sicher notieren (einmalig sichtbar):",
+        "recovery_title": "Neue Recovery-Codes",
+        "recovery_note": "Jetzt sicher notieren — sie werden nur einmal angezeigt.",
         "revoked": "(widerrufen)", "revoke": "widerrufen", "none": "keine", "delete": "löschen", "this": "(diese)",
-        "key_copy": "API-Key — JETZT kopieren:", "confirm_end_others": "Alle anderen Sitzungen beenden?",
+        "key_title": "Neuer API-Key", "key_note": "Jetzt kopieren — er wird nicht erneut angezeigt.", "confirm_end_others": "Alle anderen Sitzungen beenden?",
         "ended": "✓ beendet", "added": "✓ hinzugefügt", "failed": "fehlgeschlagen", "aborted": "abgebrochen: ",
     },
 }
@@ -657,22 +664,26 @@ async function setpin(){const r=await J('__TS_P__/auth/pin/set',{pin:pin_new.val
 async function delpin(){const r=await J('__TS_P__/auth/pin/disable');await offer(r);
   say('pin_msg',r.ok?TXT.removed:(await r.json().catch(()=>({}))).detail||TXT.error,r.ok);
   if(r.ok)setTimeout(()=>location.reload(),600)}
-async function deltotp(){if(!confirm(TXT.confirm_2fa_off))return;
+async function deltotp(){if(!await tsConfirm(TXT.confirm_2fa_off,{danger:true}))return;
   const r=await J('__TS_P__/auth/totp/disable');await offer(r);
   if(r.ok)location.reload();else say('totp_msg',(await r.json().catch(()=>({}))).detail||TXT.error,false)}
-async function recovery(){if(!confirm(TXT.confirm_recovery))return;
+async function recovery(){if(!await tsConfirm(TXT.confirm_recovery))return;
   const r=await (await J('__TS_P__/auth/totp/recovery')).json();
-  if(r.codes){document.getElementById('rc_out').textContent=TXT.recovery_note+'\\n'+r.codes.join('\\n');
+  if(r.codes){
     // B-9b: the remainder line still said the old number.
     const b=document.getElementById('rc_left'),n=r.codes.length,low=n<=TXT.rc_warn;
-    if(b){b.textContent=(low?TXT.rc_low:TXT.rc_left).replace('__N__',n);b.className='rcleft '+(low?'err':'ok')}}
+    if(b){b.textContent=(low?TXT.rc_low:TXT.rc_left).replace('__N__',n);b.className='rcleft '+(low?'err':'ok')}
+    // Shown once, in the dialog with its copy button (T-35) — not left standing on the page.
+    await tsSecret(TXT.recovery_title,r.codes.join('\\n'),TXT.recovery_note)}
   else say('totp_msg',r.detail||TXT.error,false)}
 async function loadkeys(){const el=document.getElementById('keylist');if(!el)return;
   const ks=await (await fetch('__TS_P__/auth/apikeys')).json().catch(()=>[]);
   if(!Array.isArray(ks)){el.innerHTML='<li>—</li>';return}
   el.innerHTML=ks.map(k=>`<li>${esc0(k.prefix)} ${esc0(k.name)} ${k.revoked?'<span class=bad>'+TXT.revoked+'</span>':`<button class=warn data-act=revk data-id="${esc0(k.id)}">${TXT.revoke}</button>`}</li>`).join('')||'<li>'+TXT.none+'</li>'}
-async function mkkey(){const r=await (await J('__TS_P__/auth/apikeys',{name:key_name.value})).json();
-  if(r.key)prompt(TXT.key_copy,r.key);loadkeys()}
+async function mkkey(){const r=await (await J('__TS_P__/auth/apikeys',{name:key_name.value})).json().catch(()=>({}));
+  loadkeys();
+  if(r.key){key_name.value='';await tsSecret(TXT.key_title,r.key,TXT.key_note)}
+  else say('key_msg',r.detail||TXT.error,false)}
 async function revk(id){await J('__TS_P__/auth/apikeys/'+id+'/revoke');loadkeys()}
 async function loadpk(){const el=document.getElementById('pklist');if(!el)return;
   const ps=await (await fetch('__TS_P__/auth/passkey/list')).json();
@@ -686,7 +697,7 @@ async function loadsess(){const el=document.getElementById('sesslist');if(!el)re
 // passkey names are set by the user, and up to 0.19.0 they stood raw in the markup — a name
 // like <img src=x onerror=…> ran as code. All five characters, because values also appear in attributes.
 function esc0(s){return (s??'').toString().replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
-async function revokeothers(){if(!confirm(TXT.confirm_end_others))return;
+async function revokeothers(){if(!await tsConfirm(TXT.confirm_end_others,{danger:true}))return;
   if(await tsRevokeOthers())say('sess_msg',TXT.ended,true);loadsess()}
 // One delegated listener instead of inline click handlers — otherwise the strict CSP
 // blocks the buttons. The buttons loaded later via JS (data-act=revk/delpk) are reached as well.
@@ -926,7 +937,7 @@ def _revoke_js(auth, back: str) -> str:
     would otherwise abort the navigation."""
     t = auth.t
     destination = (f"location.href=re+'?next='+encodeURIComponent({back});return new Promise(()=>{{}})"
-            if back else f"alert({json.dumps(t('api.stepup'))});return false")
+            if back else f"await tsAlert({json.dumps(t('api.stepup'))});return false")
     return ("<script>"
             "async function tsRevokeOthers(){const r=await fetch('__TS_P__/auth/sessions/revoke',{method:'POST',"
             "headers:{'Content-Type':'application/json','X-CSRF-Token':tsCsrf()},"
@@ -934,10 +945,10 @@ def _revoke_js(auth, back: str) -> str:
             "const re=r.headers.get('X-TinySesam-Reauth');"
             f"if(r.status===403&&re){{{destination}}}return r.ok}}"
             "async function offer(r){let j={};try{j=await r.clone().json()}catch(e){}"
-            f"if(r.ok&&j.other_sessions>0&&confirm({json.dumps(t('acc.sessions_offer'))}))"
+            f"if(r.ok&&j.other_sessions>0&&await tsConfirm({json.dumps(t('acc.sessions_offer'))}))"
             "await tsRevokeOthers();"
             # Boundary d: in the middle of the chain — note it, redeemed at the end.
-            f"if(r.ok&&j.other_sessions_after>0&&confirm({json.dumps(t('acc.sessions_offer'))}))"
+            f"if(r.ok&&j.other_sessions_after>0&&await tsConfirm({json.dumps(t('acc.sessions_offer'))}))"
             "await fetch('__TS_P__/auth/sessions/revoke-after-login',{method:'POST',"
             "headers:{'Content-Type':'application/json','X-CSRF-Token':tsCsrf()},body:'{}'})}</script>")
 
@@ -947,7 +958,7 @@ def _revoke_js(auth, back: str) -> str:
 _ACCOUNT_RETURN_JS = """<script>
 if(new URLSearchParams(location.search).get('revoke_others')==='1'){
   history.replaceState(null,'',location.pathname);
-  if(confirm(__CONFIRM__))tsRevokeOthers().then(ok=>{if(ok)say('sess_msg',TXT.ended,true);loadsess()})}
+  tsConfirm(__CONFIRM__,{danger:true}).then(yes=>{if(yes)tsRevokeOthers().then(ok=>{if(ok)say('sess_msg',TXT.ended,true);loadsess()})})}
 </script>"""
 
 
@@ -1143,8 +1154,12 @@ def _totp_setup(auth, ctx) -> str:
             f"<div class=hint id=msg></div>"
             # B-9a: the recovery codes, once, right after activation — hidden until then.
             f"<div id=rcbox hidden><div class=hint>{_e(t('setup.recovery_note'))}</div>"
-            f"<pre id=rccodes class=mono></pre>"
+            f"<pre id=rccodes class='mono rccodes'></pre>"
+            # T-35: a copy button; without the clipboard API it selects the codes for Ctrl+C.
+            f"<div class=rccopyrow><button type=button id=rccopy class=btn2>{_e(t('dlg.copy'))}</button>"
+            f"<span id=rcstate class=rcstate role=status aria-live=polite></span></div>"
             f"<button type=button id=rcdone>{_e(t('setup.recovery_done'))}</button></div>"
+            + _dialog.assets(auth) +
             "<script>function tsCsrf(){return (document.cookie.match(/(?:^|; )" + _e(auth.csrf_cookie_name) + "=([^;]+)/)||[])[1]||''}"
             "async function conf(e){e.preventDefault();const f=e.target,c=f.code.value;"
             "const r=await fetch('__TS_P__/auth/totp/setup',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','X-CSRF-Token':tsCsrf()},"
@@ -1163,7 +1178,12 @@ def _totp_setup(auth, ctx) -> str:
             "const box=document.getElementById('rcbox');box.hidden=false;"
             "document.getElementById('rcdone').addEventListener('click',go);"
             "document.getElementById('rcdone').focus();return false}"
-            "document.getElementById('tstotp').addEventListener('submit',conf)</script>"
+            "document.getElementById('tstotp').addEventListener('submit',conf);"
+            "document.getElementById('rccopy').addEventListener('click',async()=>{"
+            "const ok=await tsCopy(document.getElementById('rccodes').textContent,document.getElementById('rccodes'));"
+            "const st=document.getElementById('rcstate');"
+            f"st.textContent=ok?{json.dumps(t('dlg.copied'))}:{json.dumps(t('dlg.copy_manual'))};"
+            "st.className='rcstate'+(ok?'':' manual')})</script>"
             + _revoke_js(auth, "'__TS_P__/auth/account?revoke_others=1'"
                          if getattr(auth.cfg, "account_enabled", False) else ""))
     return _page(auth, t("setup.title"), body)
@@ -1276,8 +1296,8 @@ document.getElementById('pkbtn')?.addEventListener('click', async () => {
       clientDataJSON:enc(cred.response.clientDataJSON), authenticatorData:enc(cred.response.authenticatorData),
       signature:enc(cred.response.signature), userHandle:cred.response.userHandle?enc(cred.response.userHandle):null}};
     const r = await fetch('__TS_P__/auth/passkey/login/finish?next=__NEXT__', {method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':tsCsrf()},body:JSON.stringify(payload)});
-    if (r.ok) location.href = (await r.json()).redirect || '__TS_P__/'; else alert(__PK_FAILED__);
-  } catch(e){ alert(__PK_ABORTED__+': '+e); }
+    if (r.ok) location.href = (await r.json()).redirect || '__TS_P__/'; else await tsAlert(__PK_FAILED__);
+  } catch(e){ await tsAlert(__PK_ABORTED__+': '+e); }
 });
 </script>
 """

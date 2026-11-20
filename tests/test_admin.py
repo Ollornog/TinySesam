@@ -289,7 +289,7 @@ print("  ✓ Finding 8: roles without text → 400 before any write; legacy data
 # Since R6-1/R6-4/B2-13 the server rejects (last admin, hardening value outside the limits,
 # weak password) — the panel JS only saw the body: `savesec` reported "saved", `pw`
 # "password set", `saveroles` silently reloaded. The admin person believed it had happened.
-# (Mutation probes: in `savesec` `await p(…);alert(L.saved)` again → red; remove the look at
+# (Mutation probes: in `savesec` `await p(…);await tsAlert(L.saved)` again → red; remove the look at
 #  `r.ok` in `p` → red — with node in the runtime probe, without node in the structure check of
 #  `p()` below. Before, the runtime probe silently dropped out without node, and the ci-local image
 #  had no node until 2026-09-24: exactly this mutation stayed green there. Final round: in `p`
@@ -568,7 +568,9 @@ if _node:
     _probe = ("const A=[];let REPLY=null;const E={};\n"
               "const document={cookie:'',addEventListener(){},querySelectorAll:()=>[],"
               "getElementById:i=>E[i]||(E[i]={value:'0',checked:false,textContent:'',innerHTML:''})};\n"
-              "const alert=m=>A.push(String(m));const confirm=()=>true;const prompt=()=>'new-und-long';\n"
+              # The panel's own dialogs (T-35) — what they show is what the person reads.
+              "const tsAlert=async m=>{A.push(String(m))};const tsConfirm=async()=>true;"
+              "const tsPrompt=async()=>'new-und-long';const tsSecret=async()=>{};\n"
               # The panel reads input fields by their ID as global names (browser behaviour).
               "const kn={value:'k'},ke={value:''};\n"
               "const fetch=async()=>({ok:REPLY[0]<400,status:REPLY[0],"

@@ -22,6 +22,7 @@ from .router import _key_kind, _mail_base, hardened_route
 from . import security
 from ._vocabulary import audit_line_new
 from .store import name_invalid, norm_email, valid_email
+from . import dialog as _dialog
 from .templates import brand, favicon_link, inject_nonce as _inject_nonce
 from .theme import TOKENS
 
@@ -575,7 +576,7 @@ _KEYS = (
     "err.email err.generic confirm.disable confirm.enable confirm.revoke "
     "prompt.pw prompt.username pw_set roles_groups no_roles api_keys create_key last_used expires "
     "never_expires revoke key_once end_session hardening hardening_owner version installed update_note "
-    "btn.link signin_link link_once prompt.link_ttl"
+    "btn.link signin_link link_once prompt.link_ttl key_new"
 ).split()
 
 
@@ -585,6 +586,9 @@ def panel_texts(auth) -> dict:
     texts = {k: auth.t(f"admin.{k}") for k in _KEYS}
     texts["cancel"] = auth.t("cancel")
     texts["logout"] = auth.t("logout")
+    # The copy button next to the sign-in link (T-35) speaks like the one in the dialogs.
+    for k in ("copy", "copied", "copy_manual"):
+        texts[k] = auth.t(f"dlg.{k}")
     return texts
 
 
@@ -619,7 +623,9 @@ def render_panel(auth, base: str, warn: str = "", prefix: str = "") -> str:
             # (`add_messages`) with "</script>" would otherwise end the script block.
             .replace("__I18N__",
                      json.dumps(panel_texts(auth), ensure_ascii=False).replace("<", "\\u003c"))
-            .replace("__BRANDCSS__", getattr(cfg, "brand_css", "") or ""))
+            .replace("__BRANDCSS__", getattr(cfg, "brand_css", "") or "")
+            # Last: the dialog building block (T-35) carries texts of its own; no later replace may touch them.
+            .replace("__DIALOG__", _dialog.assets(auth)))
 
 
 _PAGE = r"""<!doctype html><html lang=__LANG__><head><meta charset=utf-8>
@@ -641,7 +647,9 @@ body{font-family:var(--ts-font);margin:0;background:var(--ts-bg);color:var(--ts-
 .tsadmin .tab{padding:7px 13px;border-radius:8px 8px 0 0;background:var(--ts-surface);cursor:pointer;
   font-size:14px;border:1px solid transparent;border-bottom:none}
 .tsadmin .tab.on{background:var(--ts-surface-2);border-color:var(--ts-line);color:var(--ts-link)}
-.tsadmin .wrap{max-width:1000px;margin:0 auto;padding:18px 20px}
+.tsadmin .wrap{max-width:1000px;margin:0 auto;padding:18px 20px;overflow-x:auto}
+/* overflow-x (T-35): the wide user table scrolls inside .wrap instead of widening the page — on a phone the wider
+   page widened the layout viewport, and the dialog centred in it sat beside the screen. */
 .tsadmin table{width:100%;border-collapse:collapse;font-size:13px}
 .tsadmin th{text-align:left;color:var(--ts-muted);font-weight:600}
 .tsadmin td,.tsadmin th{padding:7px 8px;border-bottom:1px solid var(--ts-line-soft);white-space:nowrap}
@@ -668,6 +676,9 @@ body{font-family:var(--ts-font);margin:0;background:var(--ts-bg);color:var(--ts-
 .tsadmin img.qr{display:block;margin:10px 0;width:180px;height:180px;background:#fff;padding:6px;border-radius:6px}
 .tsadmin code{background:var(--ts-field-bg);border:1px solid var(--ts-field-line);border-radius:5px;
   padding:2px 6px;font-size:12px}
+.tsadmin .lkcopy{display:flex;gap:8px;align-items:center}
+.tsadmin .lkstate{font-size:12px;color:var(--ts-ok-ink)}
+.tsadmin .lkstate.manual{color:var(--ts-warn-ink)}
 __BRANDCSS__
 </style>__BRANDHEAD__</head><body>
 __HEADER__
@@ -676,6 +687,7 @@ __WARN__
 <header><h1>🧠 __RP__ · Admin</h1><a href="__TS_P__/" id=applink>← App</a><a href="__TS_P__/auth/logout" id=outlink>Logout</a></header>
 <div class=tabs id=tabs></div>
 <div class=wrap id=view></div>
+__DIALOG__
 <script>
 const B="__BASE__";                                    // mount point (freely chosen) → relative API calls
 const ROLES=__ROLES__;                                 // known roles/groups (config.available_roles)
@@ -698,13 +710,14 @@ const p=(u,b)=>fetch(B+u,{method:"POST",headers:{"Content-Type":"application/jso
     return {detail:(j&&typeof j.detail==="string"&&j.detail)||L["err.generic"]}});
 // Show the reason for a rejection — true if there was one. Every action that calls p() goes through
 // here (a test pins that), so the next new action does not fail silently again.
-const rejected=r=>{if(r&&r.detail){alert(r.detail);return true}return false};
+// Own dialog (T-35), not the browser's: shown without waiting — the caller only needs the verdict.
+const rejected=r=>{if(r&&r.detail){tsAlert(r.detail);return true}return false};
 const esc=s=>(s??"").toString().replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 // A button gets its action as data-on (name) and data-a (arguments as JSON), never as
 // onclick. Two reasons: the panel's CSP allows script only via nonce, so an inline handler
 // would not run at all (R8-1). And data in an onclick is code — the browser decodes the
 // attribute and runs the JS parser over it; &#39; became an apostrophe again, and
-// a username like  bob');alert(document.cookie);//  ran in the administrator's browser.
+// a username like  bob');steal(document.cookie);//  ran in the administrator's browser.
 // data-a, by contrast, is only read with JSON.parse: whatever is in there stays a value.
 const on=(f,...a)=>`data-on="${f}" data-a="${esc(JSON.stringify(a))}"`;
 const dt=t=>t?new Date(t*1000).toLocaleString(L.locale):"—";
@@ -739,12 +752,12 @@ async function users(){
       </td></tr><tr id=r${u.id}></tr><tr id=k${u.id}></tr>`).join("")+`</table>`);
 }
 async function mkuser(){const b={username:nu.value,email:ne.value,password:np.value,roles:nr.value.split(",").map(s=>s.trim()).filter(Boolean),is_admin:na.checked,is_service:ns.checked};
-  if(REQMAIL&&!ns.checked&&!ne.value.trim())return alert(L["err.email"]);
+  if(REQMAIL&&!ns.checked&&!ne.value.trim()){tsAlert(L["err.email"]);return}
   const r=await p("/api/users",b);if(!rejected(r))users()}
-async function own(id,o){if(!confirm(o?L["confirm.owner_on"]:L["confirm.owner_off"]))return;rejected(await p(`/api/users/${id}/owner`,{owner:o}));users()}
-async function dis(id,d){if(!confirm(d?L["confirm.disable"]:L["confirm.enable"]))return;rejected(await p(`/api/users/${id}/disable`,{disabled:d}));users()}
-async function pw(id){const v=prompt(L["prompt.pw"]);if(v&&!rejected(await p(`/api/users/${id}/password`,{password:v})))alert(L.pw_set)}
-async function ren(id,alt){const v=prompt(L["prompt.username"],alt);if(v&&v!==alt&&!rejected(await p(`/api/users/${id}/username`,{username:v})))users()}
+async function own(id,o){if(!await tsConfirm(o?L["confirm.owner_on"]:L["confirm.owner_off"]))return;rejected(await p(`/api/users/${id}/owner`,{owner:o}));users()}
+async function dis(id,d){if(!await tsConfirm(d?L["confirm.disable"]:L["confirm.enable"],{danger:d}))return;rejected(await p(`/api/users/${id}/disable`,{disabled:d}));users()}
+async function pw(id){const v=await tsPrompt(L["prompt.pw"],"",{type:"password"});if(v&&!rejected(await p(`/api/users/${id}/password`,{password:v})))await tsAlert(L.pw_set)}
+async function ren(id,alt){const v=await tsPrompt(L["prompt.username"],alt);if(v&&v!==alt&&!rejected(await p(`/api/users/${id}/username`,{username:v})))users()}
 async function roles(id,cur,isadmin){
   const have=new Set((cur||"").split(",").map(s=>s.trim()).filter(Boolean));
   const inner = ROLES.length
@@ -770,22 +783,26 @@ async function keys(id,name){const ks=await g(`/api/users/${id}/keys`);
       <td>${esc(L.last_used)} ${dt(k.last_used)}</td><td>${k.expires_at?esc(L.expires)+' '+dt(k.expires_at):esc(L.never_expires)}</td>
       <td>${k.revoked?'':`<button class=warn ${on("revk",k.id,id,name)}>${esc(L.revoke)}</button>`}</td></tr>`).join("")+`</table></div></td>`}
 async function mkkey(id){const r=await p(`/api/users/${id}/keys`,{name:kn.value,expires_days:ke.value?parseInt(ke.value):null});
-  if(!rejected(r)&&r.key)prompt(L.key_once,r.key);keys(id,"")}
+  keys(id,"");if(!rejected(r)&&r.key)await tsSecret(L.key_new,r.key,L.key_once)}
 async function pks(id,name){const ps=await g(`/api/users/${id}/passkeys`);
   document.getElementById("k"+id).innerHTML=`<td colspan=5><div class=card><h2>${esc(L.passkeys)} · ${esc(name)}</h2>
     <table>`+(ps.length?ps.map(c=>`<tr><td>${esc(c.name||'')}</td><td>${dt(c.created_at)}</td><td>${esc(L.last_used)} ${dt(c.last_used)}</td>
       <td><button class=warn ${on("delpk",id,c.id,name)}>${esc(L.revoke)}</button></td></tr>`).join(""):`<tr><td class=muted>${esc(L.no_passkeys)}</td></tr>`)+`</table></div></td>`}
 // Sign-in link without mail (T-33): shown ONCE — the server keeps only the hash.
-async function link(id,name){const v=prompt(L["prompt.link_ttl"],String(LINKTTL));if(v===null)return;
+async function link(id,name){const v=await tsPrompt(L["prompt.link_ttl"],String(LINKTTL),{type:"number"});if(v===null)return;
   const r=await p(`/api/users/${id}/signin-link`,{ttl_min:v.trim()?parseInt(v,10):null});if(rejected(r))return;
   document.getElementById("k"+id).innerHTML=`<td colspan=5><div class=card><h2>${esc(L.signin_link)} · ${esc(name)}</h2>
     <div class="muted small">${esc(L.link_once)}</div>
-    <div class=row><input id=lk${id} readonly class=w280 value="${esc(r.url)}"></div>
+    <div class="row lkcopy"><input id=lk${id} readonly class=w280 value="${esc(r.url)}">
+      <button class=sec ${on("copylink",id)}>${esc(L.copy)}</button><span id=lks${id} class=lkstate role=status aria-live=polite></span></div>
     ${r.qr?`<img class=qr alt="" src="${esc(r.qr)}">`:""}
     <div class="muted small">${esc(L.expires)} ${dt(r.expires_at)}</div></div></td>`}
-async function delpk(uid,cid,name){if(confirm(L["confirm.pk_delete"])){rejected(await p(`/api/users/${uid}/passkeys/${cid}/delete`));pks(uid,name)}}
-async function deluser(id){if(!confirm(L["confirm.delete"]))return;if(!rejected(await p(`/api/users/${id}/delete`)))users()}
-async function revk(kid,uid,name){if(confirm(L["confirm.revoke"])){rejected(await p(`/api/keys/${kid}/revoke`));keys(uid,name)}}
+// T-35: copy the link once shown; without the clipboard API the field is selected for Ctrl+C.
+async function copylink(id){const f=document.getElementById("lk"+id),s=document.getElementById("lks"+id);
+  const ok=await tsCopy(f.value,f);s.textContent=ok?L.copied:L.copy_manual;s.className="lkstate"+(ok?"":" manual")}
+async function delpk(uid,cid,name){if(await tsConfirm(L["confirm.pk_delete"],{danger:true})){rejected(await p(`/api/users/${uid}/passkeys/${cid}/delete`));pks(uid,name)}}
+async function deluser(id){if(!await tsConfirm(L["confirm.delete"],{danger:true}))return;if(!rejected(await p(`/api/users/${id}/delete`)))users()}
+async function revk(kid,uid,name){if(await tsConfirm(L["confirm.revoke"],{danger:true})){rejected(await p(`/api/keys/${kid}/revoke`));keys(uid,name)}}
 
 async function sessions(){const ss=await g("/api/sessions");
   V(`<table><tr><th>${esc(L["th.user"])}</th><th>${esc(L["th.method"])}</th><th>${esc(L["th.ip"])}</th><th>${esc(L["th.since"])}</th><th>${esc(L["th.mfa"])}</th><th></th></tr>`+
@@ -801,7 +818,7 @@ async function security(){const s=await g("/api/security");const v=await g("/api
     `<div class=row><button ${on("savesec",Object.keys(s))}>${esc(L.save)}</button></div></div>`+
     `<div class=card><h2>${esc(L.version)}</h2><div class=row>${esc(L.installed)} <code>${esc(v.version)}</code></div>
      <div class="muted small">${esc(L.update_note)}</div></div>`)}
-async function savesec(keys){const b={};keys.forEach(k=>b[k]=parseInt(document.getElementById("s_"+k).value));if(!rejected(await p("/api/security",b)))alert(L.saved)}
+async function savesec(keys){const b={};keys.forEach(k=>b[k]=parseInt(document.getElementById("s_"+k).value));if(!rejected(await p("/api/security",b)))await tsAlert(L.saved)}
 
 
 async function audit(){const a=await g("/api/audit?limit=120");
@@ -810,7 +827,7 @@ async function audit(){const a=await g("/api/audit?limit=120");
 
 // One delegated listener for all buttons, including those loaded later via innerHTML. Only names
 // from ACT are callable — data-on selects an action, it does not name arbitrary code.
-const ACT={go,mkuser,own,dis,pw,ren,roles,saveroles,clr,keys,mkkey,revk,revs,savesec,pks,delpk,deluser,link};
+const ACT={go,mkuser,own,dis,pw,ren,roles,saveroles,clr,keys,mkkey,revk,revs,savesec,pks,delpk,deluser,link,copylink};
 document.addEventListener("click",e=>{const el=e.target.closest("[data-on]");
   if(!el||!ACT[el.dataset.on])return;ACT[el.dataset.on](...JSON.parse(el.dataset.a||"[]"))});
 tabs();users();
