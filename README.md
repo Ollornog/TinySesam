@@ -708,8 +708,8 @@ sign-in, so the same three apply: the per-IP rate limit, the attempt booked up f
 security log. It is checked against the account of the session, never against a name that might
 resolve to someone else; then the new one against the password rule (`password_policy_error`). On
 success the other sessions of the account end (yours stays), open address-change links are
-dropped, and API keys stay valid on purpose — `result.api_keys_active` says how many, so your page
-can say so too.
+dropped, and API keys and app passwords stay valid on purpose — `result.api_keys_active` and
+`result.app_passwords_active` say how many, so your page can say so too.
 
 ```python
 from html import escape
@@ -736,7 +736,7 @@ def password(request: Request, current: str = Form(""), new: str = Form(""),
 The result is a `tinysesam.PasswordChangeResult`: `ok` (also its truth value), `reason` (one of
 `PasswordChangeResult.REASONS`: `ok`, `missing`, `invalid`, `locked`, `ratelimit`, `policy`,
 `no_session`), `status` (what `POST /auth/password` answers: 200, 400, 401, 403, 429), `message`
-(the translated text; for `policy` the rule that failed) and `api_keys_active`. It needs a full
+(the translated text; for `policy` the rule that failed), `api_keys_active` and `app_passwords_active`. It needs a full
 session — an API key does not count (`no_session`, 403): a machine credential does not change a
 person's password. An empty current password is `missing` (400) and does not count as a failure.
 Synchronous, like `login_*`.
@@ -1265,6 +1265,103 @@ What happens and what protects it:
 The end-to-end check against the real Claude Code CLI is `tools/oauth-e2e/e2e.py` (manual: needs `claude`, Docker
 and Chrome).
 
+## App passwords: WebDAV, CalDAV, Git behind TinySesam
+
+Some clients cannot open a sign-in page: a file sync over **WebDAV**, the calendar and contacts of a phone
+(**CalDAV/CardDAV**), **Git over HTTPS**, a backup script. They speak only Basic auth — a user name and a password in
+every request. For them an account creates an **app password** on its account page (T-66): generated, shown once
+with a copy button, valid only for the applications chosen, revocable on its own. The account's own password never
+works this way, so the second factor cannot be skipped. (Samba and other non-HTTP protocols are not covered — they
+never pass the proxy.)
+
+Switch it on per application — default off:
+
+```python
+TinySesamConfig(
+    forward_auth_enabled=True,
+    base_url="https://auth.example.com",
+    trusted_redirect_hosts=["dav.example.com"],
+    forward_apps={"dav.example.com": {"name": "Files", "app_passwords": True}},
+    # app_password_default_days=365, app_password_allow_unlimited=False
+)
+```
+
+Gateway: the same key in `TINYSESAM_FORWARD_APPS='{"dav.example.com": {"name": "Files", "app_passwords": true}}'`.
+
+**At the proxy** one branch more in the forward-auth block of the application (Caddy, as in
+`deploy/forward-auth/Caddyfile`), **before** `@denied`: TinySesam answers a client without a browser with `401`,
+`WWW-Authenticate: Basic realm="Files"` and `X-TinySesam-Reason: basic`, and the client needs exactly that 401 — a
+redirect to the sign-in page would end its sync. And the application should not see the password:
+
+```caddyfile
+dav.example.com {
+	route {
+		reverse_proxy {$TS_AUTH_UPSTREAM:127.0.0.1:8000} {
+			method GET
+			rewrite /auth/forward
+			header_up X-Forwarded-Method {method}
+			header_up X-Forwarded-Uri {uri}
+			@ok status 200
+			handle_response @ok {
+				request_header Remote-User {rp.header.Remote-User}
+				request_header Remote-Groups {rp.header.Remote-Groups}
+			}
+			@basic {
+				status 401
+				header X-Tinysesam-Reason basic
+			}
+			handle_response @basic {
+				header WWW-Authenticate {rp.header.Www-Authenticate}
+				respond 401
+			}
+			@denied status 401
+			handle_response @denied {
+				redir {rp.header.X-Tinysesam-Location} 302
+			}
+		}
+		# The application trusts Remote-User — it does not need the password.
+		reverse_proxy {$TS_APP_UPSTREAM:127.0.0.1:9000} {
+			header_up -Authorization
+		}
+	}
+}
+```
+
+Then, on the device: user name as at sign-in, the app password as password — e.g.
+`rclone lsf :webdav: --webdav-url https://dav.example.com/ --webdav-user alice --webdav-pass "$(rclone obscure …)"`,
+`git clone https://alice@git.example.com/repo.git`, or the account settings of the phone's calendar. A browser that
+opens the same application is still sent to the sign-in page (requests with `Sec-Fetch-*` or `Accept: text/html` get
+no Basic challenge — it would pop up the browser's own password box). The template files in `deploy/` get the branch
+with the ready-made Caddy stack (follow-up of T-62).
+
+What protects it:
+
+- **Format:** five groups of five lowercase letters and digits without `0 o 1 l i` (`k7qm3-x9tfa-…`), ≈ 124 bits —
+  easy to type on a phone, case and hyphens are ignored. Stored is only an HMAC digest keyed with the pepper keyring
+  (ADR-12, `tinysesam keys rotate --purpose oauth-pepper` keeps them valid).
+- **Bound:** to its account (the user name must match), to the applications chosen (default: one), and only at
+  `/auth/forward` — never at TinySesam's own routes. It carries the account's roles but **never the admin flag**,
+  like an automation key; no gate cookie is issued, so a revocation takes effect on the next request. An account
+  from an identity provider keeps them only while the provider still confirms it (`oidc_apikey_confirm_days`, as
+  for API keys).
+- **Lifetime:** `app_password_default_days` (365 — typed into a phone by hand, it should not break every quarter);
+  the holder chooses 30, 90 or 365 days, "never" only with `app_password_allow_unlimited=True`.
+- **Created only with a fresh confirmation** (like a passkey or an API key); the holder gets the event
+  `app_password_created` and, with a mailer, a notice. Revoked with the API keys when the account is locked, an
+  administrator resets its password, or the holder signs out everywhere; the own password change keeps them and says
+  how many (`app_passwords_active`).
+- **Guessing:** a wrong one is a failed sign-in in a bucket of its own (pair, account, address — it does not lock the
+  browser sign-in) and a `failed login … method=app_password` line for fail2ban. A known app password that was
+  revoked or has expired is refused without counting — an old phone does not lock its owner out.
+- **Visible:** the account page lists name, applications, created, last used and address; the admin panel has a tab
+  with all of them. Audit `app_password_create`, `app_password_use` (once an hour per address), `app_password_denied`,
+  `app_password_revoke`, `app_passwords_revoked`.
+
+In code: `auth.create_app_password(user_id, name, hosts=[…], expires_days=…)` (the plain text once, under
+`password`), `auth.list_app_passwords(user_id)` (`None`: all accounts), `auth.revoke_app_password(id, user_id)`,
+`auth.app_password_hosts()` (the applications that take them). The end-to-end check with a real WebDAV client
+behind a real Caddy is `tests/e2e_app_passwords.py` (manual: needs Docker).
+
 ## Admin panel
 
 Built-in panel at **`/auth/admin`** (`is_admin` only), embeddable with no extra setup:
@@ -1274,6 +1371,8 @@ Built-in panel at **`/auth/admin`** (`is_admin` only), embeddable with no extra 
 - **Sign-in link** per user (with `magiclink_enabled`): one-time link plus QR code, shown once,
   works without a mailer — see [Sign-in by link and from another device](#sign-in-by-link-and-from-another-device).
 - **Sessions:** view active ones + end them.
+- **App passwords** (when an application takes them): every account's, with applications, last use and address;
+  revoke — see [App passwords](#app-passwords-webdav-caldav-git-behind-tinysesam).
 - **Hardening:** tune the thresholds (attempts/lockout time/rate limit) live.
 - **Version:** the running version plus a note on how updates work — there is **no “update
   now” button**, and deliberately so ([ADR-2](https://github.com/Ollornog/TinySesam/blob/main/backlog/ADR-2-no-self-update.md)):
@@ -1748,7 +1847,8 @@ Building blocks for pages you build yourself — signatures and descriptions in
   tier A), `pending_user`, `session_user`.
 - **Your own admin panel or operator tools:** `get_user`, `find_user`, `user_roles`, `set_roles`,
   `delete_user`, `lift_lockout` (like `tinysesam unlock`), `list_api_keys`, `api_key_kind`,
-  `verify_api_key`, `revoke_mfa_enrollment`, `list_resource_secrets`, `remove_resource_secret`,
+  `verify_api_key`, `create_app_password`, `list_app_passwords`, `revoke_app_password`, `app_password_hosts`
+  ([App passwords](#app-passwords-webdav-caldav-git-behind-tinysesam)), `revoke_mfa_enrollment`, `list_resource_secrets`, `remove_resource_secret`,
   `resource_unlocked`, `all_security`, `admin_exists`, `admin_claim_token`, `audit`,
   `FEDERATED_SOURCES`, `NAME_BINDING_REFUSALS`.
 - **Mail and token flows:** `mail_configured`, `send_mail`, `create_magic_token` → `magic_url` →

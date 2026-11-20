@@ -378,6 +378,25 @@ CREATE TABLE IF NOT EXISTS key_material (
     PRIMARY KEY (purpose, kid)
 );
 CREATE UNIQUE INDEX IF NOT EXISTS ux_key_material_active ON key_material(purpose) WHERE since IS NULL;
+-- App passwords (T-66): a password per device for Basic auth at the gate, valid only for the hosts it names.
+-- Only the digest is stored (HMAC with the pepper keyring, `app_passwords.digest`); `kid` names the pepper that made
+-- it — a use with a previous pepper rewrites it with the active one. Revoked rows stay (the holder sees them).
+CREATE TABLE IF NOT EXISTS app_password (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id        INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name           TEXT NOT NULL,
+    digest         TEXT UNIQUE NOT NULL,
+    kid            TEXT NOT NULL,
+    hosts          TEXT NOT NULL,            -- JSON list of the hosts it is valid for (forward_apps)
+    created_at     INTEGER NOT NULL,
+    created_ip     TEXT,
+    expires_at     INTEGER,                  -- NULL = no expiry (app_password_allow_unlimited)
+    last_used      INTEGER,
+    last_ip        TEXT,
+    revoked_at     INTEGER,
+    revoked_reason TEXT                      -- holder | admin | account_disabled | admin_password_reset | …
+);
+CREATE INDEX IF NOT EXISTS idx_app_password_user ON app_password(user_id);
 CREATE INDEX IF NOT EXISTS idx_oauth_grant_user ON oauth_grant(user_id);
 CREATE INDEX IF NOT EXISTS idx_oauth_grant_client ON oauth_grant(client_id);
 CREATE INDEX IF NOT EXISTS idx_oauth_token_grant ON oauth_token(grant_id);
@@ -921,7 +940,10 @@ class Store:
     #:      with the vault; and the vault format `v2:<kid>:` with associated data (T-54) — the start rewrites every
     #:      `v1:` value. The table is additive; the VALUES are not: an older version takes a `v2:` value for plain
     #:      text. The way back is `tinysesam keys reencrypt --to v1` first (docs/OPERATIONS.md).
-    SCHEMA_VERSION = 19
+    #: 20 — `app_password` (T-66): app passwords for Basic auth at the gate. Additive; an older version leaves the
+    #:      table in place and does not know Basic auth — the devices that use one are refused until the update is
+    #:      back.
+    SCHEMA_VERSION = 20
 
     #: Old table name → new table name (schema 16).
     RENAMED_TABLES = {"namensbindung": "name_binding", "oidc_sitzung": "oidc_session",
@@ -2490,7 +2512,7 @@ class Store:
         the name stays in the audit log, and the sign-in attempts stay in place. A test ensures
         that there is no other caller."""
         with self._writing():
-            for table in ("api_key", "password_cred", "pin_cred", "totp_cred", "recovery_code",
+            for table in ("api_key", "app_password", "password_cred", "pin_cred", "totp_cred", "recovery_code",
                           "webauthn_cred", "oidc_identity", "federated_identity", "name_binding",
                           "session", "magic_token"):
                 self.db.execute(f"DELETE FROM {table} WHERE user_id=?", (user_id,))
@@ -4490,6 +4512,65 @@ class Store:
             self._exec("UPDATE api_key SET revoked=1 WHERE id=? AND user_id=?", (key_id, user_id))
         else:
             self._exec("UPDATE api_key SET revoked=1 WHERE id=?", (key_id,))
+
+    # ---------- App passwords (T-66) ----------
+    # Only digests reach these methods (`TinySesam` computes them with the pepper); what is allowed is decided there.
+
+    def app_password_add(self, user_id: int, name: str, digest: str, kid: str, hosts: list,
+                         expires_at: Optional[int], ip) -> int:
+        return self._exec("INSERT INTO app_password(user_id, name, digest, kid, hosts, created_at, created_ip, "
+                          "expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                          (user_id, name, digest, kid, json.dumps(list(hosts)), _now(), ip, expires_at)).lastrowid
+
+    def app_password_by_digest(self, digest: str) -> Optional[sqlite3.Row]:
+        return self._one("SELECT * FROM app_password WHERE digest=?", (digest,))
+
+    def app_password(self, pw_id: int) -> Optional[sqlite3.Row]:
+        return self._one("SELECT * FROM app_password WHERE id=?", (int(pw_id),))
+
+    def app_passwords(self, user_id: Optional[int] = None) -> list:
+        """The app passwords of an account — or of all accounts (`user_id=None`, admin panel), each with the name of
+        its account. Newest first; revoked ones included."""
+        q = ("SELECT p.*, u.username AS username FROM app_password p JOIN users u ON u.id = p.user_id")
+        if user_id is None:
+            return self._all(q + " ORDER BY p.created_at DESC, p.id DESC")
+        return self._all(q + " WHERE p.user_id=? ORDER BY p.created_at DESC, p.id DESC", (int(user_id),))
+
+    def app_password_used(self, pw_id: int, ip, now: int, digest: Optional[str] = None,
+                          kid: Optional[str] = None) -> None:
+        """Remember the last use — and, after a pepper rotation, the digest made with the active pepper."""
+        if digest and kid:
+            self._exec("UPDATE app_password SET last_used=?, last_ip=?, digest=?, kid=? WHERE id=?",
+                       (now, ip, digest, kid, int(pw_id)))
+        else:
+            self._exec("UPDATE app_password SET last_used=?, last_ip=? WHERE id=?", (now, ip, int(pw_id)))
+
+    def app_password_revoke(self, pw_id: int, reason: str, user_id: Optional[int] = None) -> bool:
+        """Revoke one app password (of `user_id`, if given). True if it was valid until now."""
+        q = "UPDATE app_password SET revoked_at=?, revoked_reason=? WHERE id=? AND revoked_at IS NULL"
+        args: tuple = (_now(), reason, int(pw_id))
+        if user_id is not None:
+            q += " AND user_id=?"
+            args += (int(user_id),)
+        return self._exec(q, args).rowcount == 1
+
+    def app_passwords_revoke_all(self, user_id: int, reason: str) -> int:
+        """Revoke every still valid app password of an account; returns how many."""
+        return self._exec("UPDATE app_password SET revoked_at=?, revoked_reason=? WHERE user_id=? "
+                          "AND revoked_at IS NULL", (_now(), reason, int(user_id))).rowcount
+
+    def app_passwords_active(self, user_id: int, now: Optional[int] = None) -> int:
+        """How many app passwords of an account are valid (not revoked, not expired)."""
+        now = _now() if now is None else now
+        r = self._one("SELECT COUNT(*) AS n FROM app_password WHERE user_id=? AND revoked_at IS NULL "
+                      "AND (expires_at IS NULL OR expires_at > ?)", (int(user_id), now))
+        return int(r["n"]) if r else 0
+
+    def app_passwords_with_kid(self, kid: str, now: int) -> int:
+        """Valid app passwords whose digest was made with pepper `kid` — what retiring that pepper would cut."""
+        r = self._one("SELECT COUNT(*) AS n FROM app_password WHERE kid=? AND revoked_at IS NULL "
+                      "AND (expires_at IS NULL OR expires_at > ?)", (kid, now))
+        return int(r["n"]) if r else 0
 
     # ---------- OAuth 2.1 authorization server (T-36, ADR-11) ----------
     # Only digests reach these methods (`tinysesam/oauth.py` computes them with the pepper); the logic of what

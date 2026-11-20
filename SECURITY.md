@@ -103,7 +103,10 @@ rate limit, open-redirect protection via `safe_next`). Even so: review it yourse
   of their own (H2, T-47): `signin_link_issued` (`details={"ttl_min": n, "by_operator": bool}` — a
   sign-in link was issued for the account) and `device_signed_in` (`details={"method": "qr_login",
   "ip": …, "agent": …}` — a device signed in through a cross-device approval); `password_changed`
-  carries `details={"by_operator": bool}` (`True`: an administrator set it). The full list of event names is `TinySesam.SECURITY_EVENTS`.
+  carries `details={"by_operator": bool}` (`True`: an administrator set it). App passwords (T-66):
+  `app_password_created` (`details={"app_password_id": n, "name": …, "hosts": [...]}`), `app_password_revoked`
+  (`details={"app_password_id": n}`) and `app_passwords_revoked` (`details={"count": n, "reason": …}`, the same
+  reasons as `api_keys_revoked`). The full list of event names is `TinySesam.SECURITY_EVENTS`.
   The `details` keys and the reasons are English since
   0.22.0 (up to 0.21.x `verbleibend`, `alt`/`neu`, `anzahl`/`grund` with German reasons). That includes changes an administrator makes to someone
   else's account in the panel (password reset, issuing an API key, revoking a passkey) — write the
@@ -113,10 +116,25 @@ rate limit, open-redirect protection via `safe_next`). Even so: review it yourse
   `notify_login_failures=False`), and since H2 a notice about **new access** (T-47, NIST SP 800-63B-4
   §4.1.2.1; opt-out `notify_new_access=False`) for `passkey_added`, `totp_enabled`, `pin_set`,
   `api_key_created`, `device_signed_in`, `signin_link_issued`, `password_changed` by an administrator,
-  `oauth_device_connected` and `oauth_token_reuse` — at most one per account and event a minute. The
+  `oauth_device_connected`, `oauth_token_reuse` and `app_password_created` — at most one per account and event a
+  minute. The
   same events appear on the account page under "Recent activity". Send your other mails from
   the hook (ideally via a queue — it runs synchronously in the request). An exception in the hook
   never undoes the change, but lands in the security log.
+- **Known limit — Basic auth has no second factor; that is why only app passwords take it (T-66).** WebDAV,
+  CalDAV/CardDAV and Git clients send a user name and a password with every request and cannot answer a TOTP prompt
+  or hold a passkey. With `forward_apps[host]["app_passwords"] = True` the gate accepts `Authorization: Basic` for that
+  host — but **only** with an app password: a generated secret of ≈ 124 bits (NIST SP 800-63B §5.1.2.1 asks 112 for
+  a look-up secret that is not rate-limited), stored as an HMAC digest with the pepper keyring, bound to its account
+  and to the applications chosen at creation, without admin rights, created only after a fresh confirmation, and
+  revoked with the API keys on lock, admin password reset and "sign out everywhere". The account's own password is
+  never compared there (it does not even have the format), so the second factor cannot be skipped by Basic auth. What
+  remains: an app password is a bearer secret — whoever copies it from the device (or reads it in transit without
+  HTTPS) can use it at its applications until it expires or is revoked; it is sent with every request, so the proxy
+  in front must not log `Authorization`, and the template strips the header before the application
+  (`header_up -Authorization`). Misses are `failed login … method=app_password` in the security log (fail2ban) and
+  count in a bucket of their own, so guessing at the gate does not lock the browser sign-in. Samba and other
+  non-HTTP protocols are out of scope.
 - **A TOTP code is valid exactly once — including the setup code.** The code that confirms the
   setup is consumed. Under `login_chain=["password","totp"]` that confirmation completes the TOTP
   step of the sign-in; everywhere else the *next* code is needed to sign in. Integration tests that

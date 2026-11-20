@@ -20,6 +20,7 @@ from fastapi.routing import APIRoute
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 
 from . import _chain
+from . import app_passwords as _ap
 from .errors import ConfigError
 from . import security
 from .store import replacement_name, key_kind_of, name_invalid, norm_email, valid_email
@@ -1212,6 +1213,18 @@ def build_router(auth) -> APIRouter:
             h = request.headers.get("authorization", "")
             return h[7:].strip() if h[:7].lower() == "bearer " else ""
 
+        # The applications that take app passwords (T-66) — fixed with the configuration, like the routes.
+        app_password_hosts = auth.app_password_hosts()
+
+        def _from_browser(request: Request) -> bool:
+            """Does the proxied request come from a browser? Browsers send `Sec-Fetch-*` with every request
+            (also with scripts and images); WebDAV, CalDAV and Git clients send none. Older browsers: `Accept`
+            with text/html for a page."""
+            h = request.headers
+            if any(k.startswith("sec-fetch-") for k in h.keys()):
+                return True
+            return "text/html" in (h.get("accept") or "").lower()
+
         def _forward(request: Request):
             u = auth.current_user(request)   # session OR API key
             orig = auth._forwarded_url(request)
@@ -1231,9 +1244,16 @@ def build_router(auth) -> APIRouter:
                             "WWW-Authenticate": auth._oauth.challenge(oauth_resource, True),
                             "X-TinySesam-Reason": "oauth"})
             _host = (urlsplit(orig).hostname or "").lower()
+            # App password by Basic auth (T-66): only for an application that allows it, and only when nothing
+            # else signed the request in. A refused one answers with a Basic challenge further down.
+            app_pw = bool(app_password_hosts) and auth._forward_app(orig)["app_passwords"]
+            basic_refused = ""
+            if not u and app_pw:
+                u, outcome = auth._app_password_user(request, orig)
+                basic_refused = "" if u else outcome
             # The session row on which approval, "sign out here only" and gate token depend: from the
             # own cookie, otherwise — central gateway, T-26 — from this host's connection.
-            s = auth._session_from_request(request) if u and u.get("_via") != "oauth" else None
+            s = auth._session_from_request(request) if u and u.get("_via") not in ("oauth", "app_password") else None
             if not u and _link_mode(_host):
                 s = auth._gate_link_session(request, _host)
                 u = auth._account_of_session(s) if s else None
@@ -1287,6 +1307,18 @@ def build_router(auth) -> APIRouter:
                 if gate:
                     head["X-TinySesam-Gate-Cookie"] = gate
                 return Response(status_code=200, headers=head)
+            # An application that takes app passwords (T-66) asks a client without a browser for Basic auth
+            # (RFC 7617) — a WebDAV or CalDAV client cannot follow a redirect to a sign-in page. A browser
+            # (`Sec-Fetch-*`, or `Accept: text/html`) still goes to the sign-in page: a Basic challenge there would
+            # pop up the browser's own password dialog. `X-TinySesam-Location` stays for a proxy template
+            # without the `basic` branch. Under an OAuth resource (T-36) a client without credentials gets the
+            # Bearer challenge below — an MCP client must learn where to sign in, not be asked for a password.
+            if app_pw and (basic_refused or (not oauth_resource and not _from_browser(request))):
+                _log_forward_rejection(request, orig)
+                return Response(status_code=401, headers={
+                    "WWW-Authenticate": auth._header_value(_ap.challenge(auth._forward_app(orig)["name"] or _host)),
+                    "X-TinySesam-Reason": "basic",
+                    "X-TinySesam-Location": _sign_in_url(orig, request)})
             # An OAuth resource answers like one (RFC 9728 §5.1): the client learns where to get a token —
             # no redirect to a login page it cannot show.
             if oauth_resource:
@@ -1604,7 +1636,8 @@ def build_router(auth) -> APIRouter:
                                       csrf=request.headers.get("x-csrf-token") or b.get("_csrf") or "")
         if not erg:
             raise HTTPException(erg.status, erg.message)
-        return {"ok": True, "api_keys_active": erg.api_keys_active}
+        return {"ok": True, "api_keys_active": erg.api_keys_active,
+                "app_passwords_active": erg.app_passwords_active}
 
     def _setup_answer(request: Request, uid: int, token, nxt: str) -> JSONResponse:
         """The answer of a setup route inside the setup pass (T-34): where to go next — the following
@@ -1648,6 +1681,7 @@ def build_router(auth) -> APIRouter:
         # A new credential, like a new factor (B1-7): offer to end the other sessions.
         u = auth.session_user(request)
         return {"ok": True, "api_keys_active": erg.api_keys_active,
+                "app_passwords_active": erg.app_passwords_active,
                 "other_sessions": auth.count_other_sessions(request, u) if u else 0}
 
     if cfg.account_enabled:
@@ -1676,6 +1710,11 @@ def build_router(auth) -> APIRouter:
                                     # Connected programs (OAuth, T-36) — None leaves the section out.
                                     oauth_devices=(auth._oauth_server().devices(u["id"])
                                                    if cfg.oauth_enabled else None),
+                                    # App passwords (T-66) — None leaves the section out.
+                                    app_passwords=({"apps": auth.app_password_hosts(),
+                                                    "default_days": int(cfg.app_password_default_days),
+                                                    "allow_unlimited": bool(cfg.app_password_allow_unlimited)}
+                                                   if auth.app_password_hosts() else None),
                                     username_change=(cfg.self_service_username_change
                                                      and cfg.login_identifier != "email"
                                                      and not cfg.ldap_enabled),
@@ -1805,8 +1844,10 @@ def build_router(auth) -> APIRouter:
             auth.store.revoke_user_magic_tokens(u["id"], purposes=("email_change",))
         auth.audit("sessions_revoke", u["username"], auth.client_ip(request),
                    scope + (f" api_keys_revoked={keys_revoked}" if keys_revoked else ""))
+        # App passwords (T-66) follow the keys: revoked with "end all" (`_keys_revoked`), counted with "end others".
         return {"ok": True, "api_keys_revoked": keys_revoked,
-                "api_keys_active": auth.store.count_active_api_keys(u["id"])}
+                "api_keys_active": auth.store.count_active_api_keys(u["id"]),
+                "app_passwords_active": auth.store.app_passwords_active(u["id"])}
 
     # ---------- Logout / me ----------
     def _provider_logout_url(s, back: str):
@@ -2044,6 +2085,41 @@ def build_router(auth) -> APIRouter:
             auth.require_csrf(request, request.headers.get("x-csrf-token"))
             u = _only_with_session(request)
             auth.revoke_api_key(key_id, u["id"])   # block, do not delete
+            return {"ok": True}
+
+    # ---------- App passwords (T-66): self-service for the signed-in user ----------
+    # Only when an application takes them (`forward_apps[host]["app_passwords"]`). Managed from an interactive
+    # session only — never with an API key, an OAuth token or an app password itself.
+    if auth.app_password_hosts():
+        def _app_password_holder(request: Request) -> dict:
+            u = auth.session_user(request)
+            if not u:
+                raise HTTPException(401)
+            return u
+
+        @r.get("/auth/app-passwords")
+        def app_passwords_list(request: Request):
+            u = _app_password_holder(request)
+            return [{k: v for k, v in p.items() if k != "username"} for p in auth.list_app_passwords(u["id"])]
+
+        @r.post("/auth/app-passwords")
+        async def app_passwords_create(request: Request):
+            # B-12: lasting access to the account — only from a fresh confirmation, so a stolen cookie cannot
+            # mint one (revoking needs no freshness).
+            u = auth._require_fresh(request, _app_password_holder(request))
+            b = await auth.json_body(request)
+            try:
+                return auth.create_app_password(u["id"], b.get("name"), hosts=b.get("hosts"),
+                                                expires_days=b.get("expires_days"))
+            except (ConfigError, ValueError, TypeError) as e:
+                raise HTTPException(400, auth.t("api.invalid", reason=str(e)))
+
+        @r.post("/auth/app-passwords/{pw_id}/revoke")
+        async def app_passwords_revoke(request: Request, pw_id: int):
+            await auth.json_body(request)                     # CSRF like every write route
+            u = _app_password_holder(request)
+            if not auth.revoke_app_password(pw_id, u["id"]):
+                raise HTTPException(404, auth.t("api.not_found"))
             return {"ok": True}
 
     # ---------- OAuth 2.1 for MCP clients (T-36, ADR-11) ----------

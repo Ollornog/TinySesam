@@ -928,6 +928,7 @@ NUMBER_LIMITS = {
     "brand_background_seconds": (4, 600),   # dwell time per background image (0.24.8)
     "pin_min_length": (4, 64),
     "apikey_default_days": (0, 3650),
+    "app_password_default_days": (1, 3650),   # T-66; "no expiry" is a choice at creation, not a default
     "admin_claim_ttl_min": (0, 7 * 24 * 60),
     "resource_unlock_ttl_hours": (1, 24 * 30),
     "magiclink_ttl_min": (1, 24 * 60),
@@ -1243,7 +1244,7 @@ def _groups_scope(config, warnings: list) -> None:
             affected="; ".join(affected)))
 
 
-FORWARD_APP_KEY_NAME = ("name", "login", "logout")
+FORWARD_APP_KEY_NAME = ("name", "login", "logout", "app_passwords")
 FORWARD_LOGIN = ("page", "direct")
 FORWARD_LOGOUT = ("all", "app", "ask")
 
@@ -1297,6 +1298,13 @@ def _forward_apps(config, error: list, warnings: list) -> None:
                 config,
                 "{where}['logout']={value!r}: allowed are {allowed}.",
                 where=where, value=e['logout'], allowed=', '.join(FORWARD_LOGOUT)))
+        if "app_passwords" in e and not isinstance(e["app_passwords"], bool):
+            # `"yes"` or `1` read as "on" would be a guess; `"false"` read as on would open Basic auth on an
+            # application whose operator meant the opposite (T-66).
+            error.append(_t(
+                config,
+                "{where}['app_passwords']={value!r}: expected True or False.",
+                where=where, value=e['app_passwords']))
         if e.get("login") == "direct":
             direct.append((where, "direct"))
         if trusted and str(host).strip().lower() not in trusted:
@@ -1743,6 +1751,8 @@ _DE: dict[str, str] = {
         "{where}['logout']={value!r}: erlaubt sind {allowed}.",
     "{where}['login']={value!r}: allowed are {allowed}.":
         "{where}['login']={value!r}: erlaubt sind {allowed}.",
+    "{where}['app_passwords']={value!r}: expected True or False.":
+        "{where}['app_passwords']={value!r}: erwartet True oder False.",
     "{where} does not know {keys} (allowed: {allowed}).":
         "{where} kennt {keys} nicht (erlaubt: {allowed}).",
     "{where} must be a dict.":

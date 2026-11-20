@@ -425,6 +425,24 @@ def build_admin_router(auth) -> APIRouter:
             # The audit line (`oauth_revoked`, actor=) is written by `revoke_grant`.
             return {"ok": auth._oauth_server().revoke_grant(int(grant_id), "admin", auth.client_ip(request))}
 
+    # ---------- App passwords of all accounts (T-66) ----------
+    if auth.app_password_hosts():
+        @ar.get("/api/app-passwords")
+        def app_passwords(request: Request):
+            guard(request)
+            log(request, "app_passwords_read")
+            return auth.list_app_passwords()
+
+        @ar.post("/api/app-passwords/{pw_id}/revoke")
+        def app_password_revoke(request: Request, pw_id: int):
+            me = guard(request)
+            row = auth.store.app_password(pw_id)
+            if row is None:
+                raise HTTPException(404, auth.t("api.not_found"))
+            owner_protection(me, int(row["user_id"]))   # an owner's app passwords are revoked only by an owner
+            # The audit line (`app_password_revoke`, actor=) is written by `revoke_app_password`.
+            return {"ok": auth.revoke_app_password(pw_id, by_operator=True)}
+
     # ---------- Invitations (magic invite) ----------
     if cfg.magiclink_enabled:
         @ar.post("/api/invite")
@@ -607,7 +625,8 @@ _KEYS = (
     "prompt.pw prompt.username pw_set roles_groups no_roles api_keys create_key last_used expires "
     "never_expires revoke key_once end_session hardening hardening_owner version installed update_note "
     "btn.link signin_link link_once prompt.link_ttl key_new "
-    "tab.devices th.client th.resource th.last disconnect no_devices confirm.disconnect"
+    "tab.devices th.client th.resource th.last disconnect no_devices confirm.disconnect "
+    "tab.app_passwords no_app_passwords th.name th.apps expired confirm.revoke_app_password"
 ).split()
 
 
@@ -658,6 +677,7 @@ def render_panel(auth, base: str, warn: str = "", prefix: str = "", viewer=None,
             .replace("__LINKS__", "true" if cfg.magiclink_enabled else "false")
             .replace("__LINKTTL__", str(int(cfg.magiclink_ttl_min)))
             .replace("__OAUTH__", "true" if cfg.oauth_enabled else "false")
+            .replace("__APPPW__", "true" if auth.app_password_hosts() else "false")
             .replace("__LANG__", cfg.lang)
             # `ensure_ascii=False`: the page is UTF-8, „Härtung" belongs in as „Härtung",
             # not as `Härtung`. Only `<` is masked — an own translation
@@ -738,7 +758,8 @@ const L=__I18N__;                                      // texts in config.lang �
 const LINKS=__LINKS__;                                 // config.magiclink_enabled: admin may issue sign-in links
 const LINKTTL=__LINKTTL__;                             // config.magiclink_ttl_min: default validity of a link
 const OAUTH=__OAUTH__;                                 // config.oauth_enabled: tab "connected programs" (T-36)
-const TABS=[["users",L["tab.users"]],["sessions",L["tab.sessions"]]].concat(OAUTH?[["devices",L["tab.devices"]]]:[]).concat([["security",L["tab.security"]],["audit",L["tab.audit"]]]);
+const APPPW=__APPPW__;                                 // an application takes app passwords: tab "app passwords" (T-66)
+const TABS=[["users",L["tab.users"]],["sessions",L["tab.sessions"]]].concat(OAUTH?[["devices",L["tab.devices"]]]:[]).concat(APPPW?[["apppw",L["tab.app_passwords"]]]:[]).concat([["security",L["tab.security"]],["audit",L["tab.audit"]]]);
 let cur="users";
 // H2 (T-45): the panel demands a fresh confirmation (`admin_require_mfa`). A tab left open past the
 // window gets 403 + X-TinySesam-Reauth — go to the reauth page and come back here instead of failing.
@@ -768,7 +789,7 @@ const esc=s=>(s??"").toString().replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;","
 const on=(f,...a)=>`data-on="${f}" data-a="${esc(JSON.stringify(a))}"`;
 const dt=t=>t?new Date(t*1000).toLocaleString(L.locale):"—";
 function tabs(){document.getElementById("tabs").innerHTML=TABS.map(([k,l])=>`<div class="tab ${k==cur?'on':''}" ${on("go",k)}>${esc(l)}</div>`).join("")}
-function go(k){cur=k;tabs();({users:users,sessions:sessions,devices:devices,security:security,audit:audit})[k]()}
+function go(k){cur=k;tabs();({users:users,sessions:sessions,devices:devices,apppw:apppw,security:security,audit:audit})[k]()}
 const V=h=>document.getElementById("view").innerHTML=h;
 
 async function users(){
@@ -862,6 +883,13 @@ async function devices(){const ds=await g("/api/oauth/devices");
       <td><button class=warn ${on("revdev",d.id)}>${esc(L.disconnect)}</button></td></tr>`).join("")+`</table>`
     :`<div class=muted>${esc(L.no_devices)}</div>`)}
 async function revdev(id){if(await tsConfirm(L["confirm.disconnect"],{danger:true})){rejected(await p(`/api/oauth/devices/${id}/revoke`));devices()}}
+async function apppw(){const ps=await g("/api/app-passwords");
+  V(ps.length?`<table><tr><th>${esc(L["th.user"])}</th><th>${esc(L["th.name"])}</th><th>${esc(L["th.apps"])}</th><th>${esc(L["th.since"])}</th><th>${esc(L["th.last"])}</th><th>${esc(L["th.ip"])}</th><th>${esc(L.expires)}</th><th></th></tr>`+
+    ps.map(a=>`<tr><td><b>${esc(a.username)}</b></td><td>${esc(a.name)}</td><td>${esc((a.hosts||[]).join(", "))}</td>
+      <td>${dt(a.created_at)}</td><td>${dt(a.last_used)}</td><td>${esc(a.last_ip)||'—'}</td><td>${a.expires_at?dt(a.expires_at):esc(L.never_expires)}</td>
+      <td>${a.revoked?`<span class="badge red">${esc(L.revoked)}</span>`:a.expired?`<span class="badge red">${esc(L.expired)}</span>`:`<button class=warn ${on("revap",a.id)}>${esc(L.revoke)}</button>`}</td></tr>`).join("")+`</table>`
+    :`<div class=muted>${esc(L.no_app_passwords)}</div>`)}
+async function revap(id){if(await tsConfirm(L["confirm.revoke_app_password"],{danger:true})){rejected(await p(`/api/app-passwords/${id}/revoke`));apppw()}}
 function clr(id){document.getElementById("r"+id).innerHTML=""}
 
 async function security(){const s=await g("/api/security");const v=await g("/api/version");
@@ -880,7 +908,7 @@ async function audit(){const a=await g("/api/audit?limit=120");
 
 // One delegated listener for all buttons, including those loaded later via innerHTML. Only names
 // from ACT are callable — data-on selects an action, it does not name arbitrary code.
-const ACT={go,mkuser,own,dis,pw,ren,roles,saveroles,clr,keys,mkkey,revk,revs,savesec,pks,delpk,deluser,link,revdev,copylink};
+const ACT={go,mkuser,own,dis,pw,ren,roles,saveroles,clr,keys,mkkey,revk,revs,savesec,pks,delpk,deluser,link,revdev,revap,copylink};
 document.addEventListener("click",e=>{const el=e.target.closest("[data-on]");
   if(!el||!ACT[el.dataset.on])return;ACT[el.dataset.on](...JSON.parse(el.dataset.a||"[]"))});
 tabs();users();

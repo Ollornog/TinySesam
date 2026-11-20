@@ -413,6 +413,17 @@ OWN_LOCK = {
 
 NOT_LOGIN_METHODS = tuple(OWN_LOCK)
 
+# Sign-in attempts WITH a bucket of their own (T-66): an app password presented by Basic auth at the gate is
+# a sign-in attempt from someone without a session — its misses are `failed login` and reach the shipped
+# fail2ban jail. But it counts in its own bucket, not in the login lockout and not in the streak (B2-6):
+# a phone that still holds an old app password, or a stranger who sends Basic headers under a known name,
+# must not lock the browser sign-in of that account. Same rule as above: no entry without its latch.
+SIGN_IN_OWN_LOCK = {"app_password": "_is_app_password_locked"}
+
+#: Every method with a bucket of its own — kept out of the login lockout, the streak and the clean-up of a
+#: complete sign-in. `NOT_LOGIN_METHODS` stays the list for the event word (`log_event`).
+OWN_BUCKET_METHODS = NOT_LOGIN_METHODS + tuple(SIGN_IN_OWN_LOCK)
+
 #: The event word of the line in the security log. **Only `failed login` hits the shipped
 #: fail2ban failregex** (`deploy/fail2ban/tinysesam-filter.conf`) — and that is the point: a
 #: miss from `NOT_LOGIN_METHODS` comes from someone who is already signed in (account page,

@@ -54,6 +54,10 @@
       "sig": "int = 0",
       "tier": "A"
     },
+    "app_passwords_active": {
+      "sig": "int = 0",
+      "tier": "A"
+    },
     "message": {
       "sig": "str = ''",
       "tier": "A"
@@ -98,6 +102,10 @@
     },
     "api_key_kind": {
       "sig": "(key) -> 'str'",
+      "tier": "B"
+    },
+    "app_password_hosts": {
+      "sig": "() -> 'list'",
       "tier": "B"
     },
     "apply_factor": {
@@ -204,6 +212,10 @@
     "create_api_key": {
       "sig": "(user_id, name=None, expires_days=None, roles=None, kind: 'str' = 'automation') -> 'dict'",
       "tier": "A"
+    },
+    "create_app_password": {
+      "sig": "(user_id, name, hosts=None, expires_days=None) -> 'dict'",
+      "tier": "B"
     },
     "create_invite": {
       "sig": "(email, base_url, roles=None, is_admin=False, ttl_min=None) -> 'dict'",
@@ -414,6 +426,10 @@
       "sig": "(user_id) -> 'list'",
       "tier": "B"
     },
+    "list_app_passwords": {
+      "sig": "(user_id=None) -> 'list'",
+      "tier": "B"
+    },
     "list_resource_secrets": {
       "sig": "()",
       "tier": "B"
@@ -586,6 +602,10 @@
     "revoke_api_key": {
       "sig": "(key_id, user_id=None)",
       "tier": "A"
+    },
+    "revoke_app_password": {
+      "sig": "(pw_id, user_id=None, by_operator: 'bool' = False) -> 'bool'",
+      "tier": "B"
     },
     "revoke_mfa_enrollment": {
       "sig": "(user_id: 'int') -> 'None'",
@@ -852,7 +872,7 @@
     },
     "SECURITY_EVENTS": {
       "tier": "A",
-      "value": "('password_changed', 'pin_set', 'pin_disabled', 'totp_enabled', 'totp_disabled', 'recovery_codes_generated', 'recovery_code_used', 'passkey_added', 'passkey_removed', 'api_key_created', 'api_key_revoked', 'api_keys_revoked', 'email_changed', 'username_changed', 'oauth_device_connected', 'oauth_device_revoked', 'oauth_token_reuse', 'signin_link_issued', 'device_signed_in')"
+      "value": "('password_changed', 'pin_set', 'pin_disabled', 'totp_enabled', 'totp_disabled', 'recovery_codes_generated', 'recovery_code_used', 'passkey_added', 'passkey_removed', 'api_key_created', 'api_key_revoked', 'api_keys_revoked', 'email_changed', 'username_changed', 'oauth_device_connected', 'oauth_device_revoked', 'oauth_token_reuse', 'signin_link_issued', 'device_signed_in', 'app_password_created', 'app_password_revoked', 'app_passwords_revoked')"
     },
     "TOKEN_PATHS": {
       "tier": "B",
@@ -874,6 +894,27 @@
       "tier": "A"
     },
     "api_keys_revoked": {
+      "keys": [
+        "count",
+        "reason"
+      ],
+      "tier": "A"
+    },
+    "app_password_created": {
+      "keys": [
+        "app_password_id",
+        "hosts",
+        "name"
+      ],
+      "tier": "A"
+    },
+    "app_password_revoked": {
+      "keys": [
+        "app_password_id"
+      ],
+      "tier": "A"
+    },
+    "app_passwords_revoked": {
       "keys": [
         "count",
         "reason"
@@ -1053,6 +1094,14 @@
     "apikey_enabled": {
       "field": "bool = True",
       "tier": "A"
+    },
+    "app_password_allow_unlimited": {
+      "field": "bool = False",
+      "tier": "B"
+    },
+    "app_password_default_days": {
+      "field": "int = 365",
+      "tier": "B"
     },
     "audit_ip_pseudonymize": {
       "field": "bool = False",
@@ -1863,6 +1912,9 @@
     "reason:app-stale": {
       "tier": "A"
     },
+    "reason:basic": {
+      "tier": "A"
+    },
     "reason:oauth": {
       "tier": "A"
     },
@@ -2061,6 +2113,10 @@
       "keys": [],
       "tier": "B"
     },
+    "GET /auth/app-passwords": {
+      "keys": [],
+      "tier": "B"
+    },
     "GET /auth/claim-admin": {
       "keys": [
         "query:token"
@@ -2243,6 +2299,10 @@
       "keys": [],
       "tier": "B"
     },
+    "GET <admin>/api/app-passwords": {
+      "keys": [],
+      "tier": "B"
+    },
     "GET <admin>/api/audit": {
       "keys": [
         "query:limit"
@@ -2310,6 +2370,14 @@
       "tier": "B"
     },
     "POST /auth/apikeys/{key_id}/revoke": {
+      "keys": [],
+      "tier": "B"
+    },
+    "POST /auth/app-passwords": {
+      "keys": [],
+      "tier": "B"
+    },
+    "POST /auth/app-passwords/{pw_id}/revoke": {
       "keys": [],
       "tier": "B"
     },
@@ -2555,6 +2623,10 @@
       "keys": [
         "form:_csrf"
       ],
+      "tier": "B"
+    },
+    "POST <admin>/api/app-passwords/{pw_id}/revoke": {
+      "keys": [],
       "tier": "B"
     },
     "POST <admin>/api/invite": {

@@ -30,8 +30,8 @@ class PasswordChangeResult:
 
     `if not result:` asks for success (`ok`). On success the new password applies, the account's
     other sessions are ended (the own one continues, its cookie stays valid), and
-    `api_keys_active` says how many API keys remain valid. On a failure nothing has
-    changed; `status`/`message` are what `POST /auth/password` would answer.
+    `api_keys_active` / `app_passwords_active` say how many API keys and app passwords remain valid. On a failure
+    nothing has changed; `status`/`message` are what `POST /auth/password` would answer.
     """
 
     #: Is the new password set? Exactly when `reason == "ok"`; `bool(result)` is the same value.
@@ -46,6 +46,9 @@ class PasswordChangeResult:
     #: How many of the account's API keys remain valid — they survive the change on purpose (they
     #: belong to automations), it is not concealed. Only on success, otherwise 0.
     api_keys_active: int = 0
+    #: How many of the account's app passwords (T-66) remain valid — they survive the own change like the API
+    #: keys (a device should not stop syncing with a routine change), and are named likewise. Only on success.
+    app_passwords_active: int = 0
 
     #: Every value `reason` can take: `ok`; `missing` (old password empty, 400, does not count
     #: as a failed attempt); `invalid` (old password wrong, 403); `locked` (lockout after

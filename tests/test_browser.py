@@ -166,7 +166,10 @@ T36 = f"http://localhost:{_t36_sock.getsockname()[1]}"
 _t36_db = os.path.join(tempfile.mkdtemp(), "t36.db")
 t36 = _TinySesam(_TinySesamConfig(
     db_path=_t36_db, cookie_secure=False, passkey_enabled=False, lang="en", base_url=T36,
-    forward_auth_enabled=True, oauth_enabled=True, oauth_resources=["http://127.0.0.1:9/mcp"]))
+    forward_auth_enabled=True, oauth_enabled=True, oauth_resources=["http://127.0.0.1:9/mcp"],
+    # T-66: two applications that take app passwords — the account page offers the section.
+    forward_apps={"files.example.com": {"name": "Files", "app_passwords": True},
+                  "git.example.com": {"name": "Git", "app_passwords": True}}))
 t36.set_security("password_min_length_single_factor", 8)
 _t36_app = _FastAPI()
 _t36_app.include_router(t36.router())
@@ -1046,6 +1049,7 @@ async def link_setup_pass(p):
     print("  setup pass: link → password (typo caught) → TOTP + recovery codes → fully signed in (strict CSP)")
 
     await oauth_consent(p)
+    await app_passwords_page(p)
 
 
 async def oauth_consent(p):
@@ -1135,6 +1139,83 @@ async def oauth_consent(p):
     assert not p.console, f"console errors: {p.console[:2]}"
     assert p.failed[failed_before:] == [], f"broken requests: {p.failed[failed_before:][:3]}"
     print("  OAuth devices: listed on the account page (390/1280 px), „Disconnect“ ends it at once")
+
+
+async def app_passwords_page(p):
+    """T-66 in a real browser on the T-36 app (strict CSP): the account page creates an app password — the dialog
+    shows it once with its copy button —, lists it, and revokes it after the own confirmation dialog; the gate takes
+    it by Basic auth before and refuses it after. `TINYSESAM_SCREENSHOTS=<dir>` keeps screenshots at 390 and 1280 px."""
+    import base64
+    import re
+
+    failed_before = len(p.failed)
+    shots = os.environ.get("TINYSESAM_SCREENSHOTS", "")
+
+    async def shot(name):
+        if not shots:
+            return
+        os.makedirs(shots, exist_ok=True)
+        data = (await p.cmd("Page.captureScreenshot", format="png", captureBeyondViewport=False))["data"]
+        with open(os.path.join(shots, name), "wb") as fh:
+            fh.write(base64.b64decode(data))
+
+    def gate(pw):
+        h = {"X-Forwarded-Proto": "https", "X-Forwarded-Host": "files.example.com", "X-Forwarded-Uri": "/",
+             "Authorization": "Basic " + base64.b64encode(f"ida:{pw}".encode()).decode()}
+        try:
+            return urllib.request.urlopen(urllib.request.Request(f"{T36}/auth/forward", headers=h)).status
+        except urllib.error.HTTPError as e:
+            return e.code
+
+    uid = t36.create_user("ida", password="ida-pw-123456")
+    tok, _ = t36.start_session(uid, "password")
+    await p.cmd("Network.setCookie", name=t36.session_cookie_name, value=tok, url=T36 + "/")
+    secrets_seen = []
+    for width in (390, 1280):
+        await p.cmd("Emulation.setDeviceMetricsOverride", width=width, height=900, deviceScaleFactor=1,
+                    mobile=width < 500)
+        await p.cmd("Page.navigate", url=f"{T36}/auth/account")
+        await p.until("document.readyState==='complete' && !!document.getElementById('apsec')", "no app password section")
+        assert await p.js("document.querySelectorAll('input[name=ap_host]:checked').length") == 1, "one app ticked"
+        over = await p.js("document.documentElement.scrollWidth - window.innerWidth")
+        assert over <= 0, f"account page scrolls sideways at {width}px ({over}px)"
+        await p.js(f"document.getElementById('ap_name').value='Phone {width}';"
+                   "window.scrollTo(0, document.getElementById('apsec').getBoundingClientRect().top + scrollY - 70);"
+                   "true")
+        await shot(f"app-passwords-form-{width}.png")
+        await p.click("[data-act=mkap]")
+        await p.until("!!document.querySelector('dialog.tsdlg[open] textarea')", "no dialog with the app password")
+        value = await p.js("document.querySelector('dialog.tsdlg[open] textarea').value")
+        assert re.fullmatch(r"([2-9a-hj-km-np-z]{5}-){4}[2-9a-hj-km-np-z]{5}", value), value
+        note = await p.js("document.querySelector('dialog.tsdlg[open]').innerText")
+        assert "“ida”" in note, note
+        assert await p.js("!!document.querySelector('dialog.tsdlg[open] .tsdlg-copy')"), "no copy button"
+        await shot(f"app-passwords-dialog-{width}.png")
+        secrets_seen.append(value)
+        await p.js("document.querySelector('dialog.tsdlg[open] .tsdlg-ok').click();true")
+        await p.until("!document.querySelector('dialog.tsdlg')", "the dialog did not close")
+        await p.until(f"document.getElementById('aplist').innerText.includes('Phone {width}')", "not in the list")
+        await p.js("window.scrollTo(0, document.getElementById('apsec').getBoundingClientRect().top + scrollY - 70);true")
+        await shot(f"app-passwords-list-{width}.png")
+    await p.cmd("Emulation.clearDeviceMetricsOverride")
+    assert len(t36.list_app_passwords(uid)) == 2 and gate(secrets_seen[-1]) == 200
+    print("  app passwords: create → dialog with copy button (once) → list, 390/1280 px; the gate takes it")
+
+    await p.js("document.querySelector('#aplist [data-act=revap]').click();true")
+    await p.until("!!document.querySelector('dialog.tsdlg[open]')", "no confirmation before revoking")
+    await p.js("document.querySelector('dialog.tsdlg[open] .tsdlg-ok').click();true")
+    await p.until("document.querySelectorAll('#aplist [data-act=revap]').length===1", "not revoked in the list")
+    await p.until("document.getElementById('aplist').innerText.includes('(revoked)')", "no „(revoked)“")
+    revoked = [x for x in t36.list_app_passwords(uid) if x["revoked"]]
+    assert len(revoked) == 1 and revoked[0]["name"] == "Phone 1280", revoked
+    assert gate(secrets_seen[-1]) == 401 and gate(secrets_seen[0]) == 200
+    await p.js("window.scrollTo(0, document.getElementById('apsec').getBoundingClientRect().top + scrollY - 70);true")
+    await shot("app-passwords-revoked-1280.png")
+    viol = await p.js("JSON.stringify(window.__csp===undefined?['(no Listener)']:window.__csp)")
+    assert viol == "[]", f"CSP violation: {viol}"
+    assert not p.console, f"console errors: {p.console[:2]}"
+    assert p.failed[failed_before:] == [], f"broken requests: {p.failed[failed_before:][:3]}"
+    print("  app passwords: revoke after the confirmation dialog — the list says so, the gate refuses it at once")
 
 
 async def own_dialogs(_first):

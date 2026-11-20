@@ -22,7 +22,7 @@ The tier is recorded per name in `tests/api_surface.json`. The guard `tests/test
 
 **Public is what the hand-written docs describe** (decided before 1.0): the READMEs, `CONFIGURATION.md`, `SECURITY.md` and `docs/OPERATIONS.md`. This page is generated and lists every name with its tier; being listed here alone is no promise. The guard checks that every tier-A/B Python name is named in those documents.
 
-The configuration fields are in [CONFIGURATION.md](CONFIGURATION.md): 179 of 192 in tier A, the others below at their tier.
+The configuration fields are in [CONFIGURATION.md](CONFIGURATION.md): 179 of 194 in tier A, the others below at their tier.
 
 **English, names as well as values** (since 0.22.0, without alias): The names of tiers A and B, their parameters and the keys and values they return or accept — result dicts, the `details` passed to `on_security_event`, the context of your own pages (`ctx["prefix"]`, `ctx["purpose"]`), the JSON responses of the routes, the kinds of API keys (`automation`, `human`). Since the last breaking pass before the freeze (PO decision 2026-10-29) the same holds for what operators and proxies read — query and form parameters, header and cookie names, logger names, the event words and keys of the security log, message ids — and audit and log lines are English as well. The lists old → new are in the CHANGELOG (0.22.0, [Unreleased]).
 
@@ -30,7 +30,7 @@ The configuration fields are in [CONFIGURATION.md](CONFIGURATION.md): 179 of 192
 
 **`auth.store` is internals** (tier C): the storage layer of the built-in routes, without tier, without promise and without transition period — its methods can change with every release. What an app needs is listed below as a method of `TinySesam` (e.g. `set_disabled` instead of `auth.store.set_disabled`).
 
-**Status:** A 386 · B 190 · C 38 names.
+**Status:** A 391 · B 201 · C 38 names.
 
 ## A · Methods of `TinySesam`
 
@@ -304,7 +304,7 @@ Value: `{'user': 'Remote-User', 'name': 'Remote-Name', 'email': 'Remote-Email', 
 
 The events for which `on_security_event` is called — everything that creates, changes, removes or consumes a sign-in factor of the account.
 
-Values: `password_changed`, `pin_set`, `pin_disabled`, `totp_enabled`, `totp_disabled`, `recovery_codes_generated`, `recovery_code_used`, `passkey_added`, `passkey_removed`, `api_key_created`, `api_key_revoked`, `api_keys_revoked`, `email_changed`, `username_changed`, `oauth_device_connected`, `oauth_device_revoked`, `oauth_token_reuse`, `signin_link_issued`, `device_signed_in`
+Values: `password_changed`, `pin_set`, `pin_disabled`, `totp_enabled`, `totp_disabled`, `recovery_codes_generated`, `recovery_code_used`, `passkey_added`, `passkey_removed`, `api_key_created`, `api_key_revoked`, `api_keys_revoked`, `email_changed`, `username_changed`, `oauth_device_connected`, `oauth_device_revoked`, `oauth_token_reuse`, `signin_link_issued`, `device_signed_in`, `app_password_created`, `app_password_revoked`, `app_passwords_revoked`
 
 ## A · `TinySesamConfig`
 
@@ -390,6 +390,7 @@ What a password change resulted in: success or the reason against it, with HTTP 
 | `status` | `int` | The HTTP status of `POST /auth/password` (or `/auth/password/set`): 200 on success, otherwise 400, 401, 403, 404, 409 or 429. |
 | `message` | `str` | The translated text for the user (language from `config.lang`); empty on success. |
 | `api_keys_active` | `int` | How many of the account's API keys remain valid — they survive the change on purpose (they belong to automations), it is not concealed. Only on success, otherwise 0. |
+| `app_passwords_active` | `int` | How many of the account's app passwords (T-66) remain valid — they survive the own change like the API keys (a device should not stop syncing with a routine change), and are named likewise. Only on success. |
 
 ### `PasswordChangeResult.REASONS` — Constant
 
@@ -424,6 +425,10 @@ All hardening thresholds as a dict (defaults, overridden by what is set in the p
 
 The kind of a key (`"automation"`/`"human"`, up to 0.21.x `"automaton"`/`"human"`) — without using it. `""` for an unknown key.
 
+### `app_password_hosts() -> 'list'`
+
+The applications that accept app passwords: `[{"host": …, "name": …}]` — the `forward_apps` entries with `"app_passwords": True`. Empty without `forward_auth_enabled` (only the gate reads app passwords): then the account page shows no such section and the routes do not exist.
+
 ### `apply_factor(request, user_id, factor, ip=None, ua=None, remember=True, email_verified: 'Optional[bool]' = None) -> 'tuple[str, bool, bool]'`
 
 Apply a confirmed factor: attach to the running session of the same user (chain step) OR start a new session (first factor/identity switch). Returns (token, session_ok, is_new). With is_new the caller must call set_cookie(resp, token).
@@ -451,6 +456,10 @@ Redeem the confirmation link. Return: "ok", "taken" (meanwhile the identifier of
 ### `count_other_sessions(request, user, token: 'Optional[str]' = None) -> 'int'`
 
 How many sessions of this account are running EXCEPT the current one? (B1-7)
+
+### `create_app_password(user_id, name, hosts=None, expires_days=None) -> 'dict'`
+
+Create an app password (T-66) for HTTP clients that speak only Basic auth — WebDAV, CalDAV/CardDAV, Git over HTTPS. The return value carries it in PLAIN TEXT under `password`, this once; only an HMAC digest with the pepper keyring (ADR-12) is stored.
 
 ### `create_magic_token(purpose, user_id=None, email=None, ttl_min=None, payload=None) -> 'str'`
 
@@ -520,6 +529,10 @@ Clear the sign-in failed attempts of an account; returns how many there were.
 
 The API keys of an account — without the secrets themselves, which exist only once at issuance. One dict per key (columns of `api_key`), `kind` with its English name (schema 12; up to 0.21.x the database row with the stored value).
 
+### `list_app_passwords(user_id=None) -> 'list'`
+
+The app passwords of an account (`user_id=None`: of all accounts) — never a secret or digest. One dict each: `id`, `username`, `name`, `hosts`, `created_at`, `expires_at`, `last_used`, `last_ip`, `revoked`, `revoked_reason`, `expired`. Revoked and expired ones stay in the list: the holder should see them.
+
 ### `list_resource_secrets()`
 
 All locked resources (names and descriptions, no secrets).
@@ -579,6 +592,10 @@ Like `public_base()`, only without a way back: no checked base → `ConfigError`
 ### `resource_unlocked(request: 'Request', name) -> 'bool'`
 
 Is this resource currently unlocked for this browser?
+
+### `revoke_app_password(pw_id, user_id=None, by_operator: 'bool' = False) -> 'bool'`
+
+Revoke one app password — of `user_id` only, if given (the account page). True if it was valid until now. It stays in the list as revoked. Audit `app_password_revoke`, event `app_password_revoked`.
 
 ### `revoke_mfa_enrollment(user_id: 'int') -> 'None'`
 
@@ -682,7 +699,7 @@ Value: `{'login': '/auth/magic/{t}', 'verify_email': '/auth/verify/{t}', 'invite
 
 ## B · `TinySesamConfig`
 
-Fields of this tier (meaning in [CONFIGURATION.md](CONFIGURATION.md)): `c22_stylesheet`, `topbar_enabled`, `topbar_links`, `gate_key_file`, `oauth_enabled`, `oauth_resources`, `oauth_access_token_ttl_sec`, `oauth_refresh_idle_days`, `oauth_refresh_max_days`, `oauth_refresh_grace_sec`, `oauth_pepper_file`, `hsts`, `totp_required`.
+Fields of this tier (meaning in [CONFIGURATION.md](CONFIGURATION.md)): `c22_stylesheet`, `topbar_enabled`, `topbar_links`, `app_password_default_days`, `app_password_allow_unlimited`, `gate_key_file`, `oauth_enabled`, `oauth_resources`, `oauth_access_token_ttl_sec`, `oauth_refresh_idle_days`, `oauth_refresh_max_days`, `oauth_refresh_grace_sec`, `oauth_pepper_file`, `hsts`, `totp_required`.
 
 ### `TinySesamConfig.enabled_methods() -> 'list[str]'`
 
@@ -727,6 +744,9 @@ The keys of the `details` dict per event, read from the call sites. A key that g
 | `api_key_created` | `key_id`, `name` |
 | `api_key_revoked` | `key_id` |
 | `api_keys_revoked` | `count`, `reason` |
+| `app_password_created` | `app_password_id`, `hosts`, `name` |
+| `app_password_revoked` | `app_password_id` |
+| `app_passwords_revoked` | `count`, `reason` |
 | `device_signed_in` | `agent`, `ip`, `method` |
 | `email_changed` | `new`, `old` |
 | `oauth_device_connected` | `client_id`, `client_name`, `grant_id`, `resource` |
@@ -804,7 +824,7 @@ Observed on probe instances; values are recorded where they are the contract (`X
 #### Headers, reasons, inputs, cookies
 
 - **`X-TinySesam-*` headers** (request or response, see the table above): `X-TinySesam-Gate-Cookie`, `X-TinySesam-Location`, `X-TinySesam-Reason`, `X-TinySesam-Roles`.
-- **Values of `X-TinySesam-Reason`:** `app-missing`, `app-signed-out`, `app-stale`, `oauth`, `role` (`app-…` only with several OIDC clients).
+- **Values of `X-TinySesam-Reason`:** `app-missing`, `app-signed-out`, `app-stale`, `basic`, `oauth`, `role` (`app-…` only with several OIDC clients).
 - **Request headers the forward and gate paths read** — what a proxy sets or passes on: `Authorization`, `Host`, `X-Api-Key`, `X-Forwarded-For`, `X-Forwarded-Host`, `X-Forwarded-Proto`, `X-Forwarded-Uri`, `X-Original-Uri`, `X-Original-Url`, `X-TinySesam-Roles`. The `Cookie` header is passed on as the browser sent it. Headers a browser sends on its own (`Accept`, `Referer`, `Sec-Fetch-Mode`, `Sec-Fetch-Site`, `X-Csrf-Token`) are read as well but are tier B: no proxy has to set them.
 - **Request parameters:** `roles`.
 - **Cookies the gate sets itself** (host-only, fixed names): `__Host-tinysesam_link`, `__Host-tinysesam_linkflow`. The gate token cookie is named by the configuration field `gate_cookie_name`.
@@ -826,6 +846,9 @@ The HTML pages (sign-in, registration, account, admin panel, the pages behind e-
 | GET | `/auth/apikeys` | — |
 | POST | `/auth/apikeys` | — |
 | POST | `/auth/apikeys/{key_id}/revoke` | — |
+| GET | `/auth/app-passwords` | — |
+| POST | `/auth/app-passwords` | — |
+| POST | `/auth/app-passwords/{pw_id}/revoke` | — |
 | GET | `/auth/claim-admin` | `query:token` |
 | GET | `/auth/email/{token}` | — |
 | POST | `/auth/email/{token}` | `form:_csrf` |
@@ -890,6 +913,8 @@ The HTML pages (sign-in, registration, account, admin panel, the pages behind e-
 | GET | `/auth/verify/{token}` | — |
 | POST | `/auth/verify/{token}` | `form:_csrf` |
 | GET | `<admin>` | — |
+| GET | `<admin>/api/app-passwords` | — |
+| POST | `<admin>/api/app-passwords/{pw_id}/revoke` | — |
 | GET | `<admin>/api/audit` | `query:limit` |
 | POST | `<admin>/api/invite` | — |
 | POST | `<admin>/api/keys/{kid}/revoke` | — |
@@ -987,4 +1012,4 @@ These names are not part of the promise. Since 0.22.0 the implementation is call
 
 ---
 
-154 methods, 3 properties, 11 constants, 7 methods of `TinySesamConfig`, 10 exports, of which 5 error types, 17 names on the result types `LoginResult`, `PasswordChangeResult` — generated from the docstrings and `tests/api_surface.json`.
+158 methods, 3 properties, 11 constants, 7 methods of `TinySesamConfig`, 10 exports, of which 5 error types, 18 names on the result types `LoginResult`, `PasswordChangeResult` — generated from the docstrings and `tests/api_surface.json`.

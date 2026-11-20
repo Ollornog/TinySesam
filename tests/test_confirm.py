@@ -525,9 +525,9 @@ for kw in ({"ok": False, "reason": "invented", "status": 400}, {"ok": True, "rea
         _wrong_built.append(kw)
     except ValueError:
         pass  # expected: the constructor rejects the combination
-r.check("(f) PasswordChangeResult: fields ok/reason/status/message/api_keys_active, bool = ok, frozen, "
-        "a reason outside REASONS or an ok contradicting the reason raises",
-        _fields == {"ok", "reason", "status", "message", "api_keys_active"} and bool(_pc)
+r.check("(f) PasswordChangeResult: fields ok/reason/status/message/api_keys_active/app_passwords_active (T-66), "
+        "bool = ok, frozen, a reason outside REASONS or an ok contradicting the reason raises",
+        _fields == {"ok", "reason", "status", "message", "api_keys_active", "app_passwords_active"} and bool(_pc)
         and not PasswordChangeResult(ok=False, reason="invalid", status=403) and _frozen and not _wrong_built,
         f"{_fields} {_frozen} {_wrong_built}")
 # The last five come only from `set_initial_password` (B-10) and are measured in `test_account_setup.py`.

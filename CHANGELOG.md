@@ -28,6 +28,35 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
   `Remote-*` first and set each header only when the answer carries it. `deploy/home-network/Caddyfile` also got the
   OAuth routes of T-36.
 
+### Added — app passwords for WebDAV, CalDAV/CardDAV and Git at the gate (T-66)
+
+- **App passwords:** clients without a browser speak only Basic auth. An account creates an app password on its
+  account page (or `create_app_password`) for chosen applications — shown once with a copy button, five groups of
+  five characters (≈ 124 bits, no `0 o 1 l i`, case and hyphens ignored), stored only as an HMAC digest with the
+  pepper keyring (ADR-12). New fields `app_password_default_days` (365) and `app_password_allow_unlimited` (False);
+  an application takes them with `forward_apps[host]["app_passwords"] = True` (default off). Creation needs a fresh
+  confirmation; the holder gets `app_password_created` (and, with a mailer, a notice).
+- **`/auth/forward` accepts `Authorization: Basic`** at such an application — only with an app password of that
+  account for that host, never with the account's own password, never with admin rights, without a gate token.
+  A refusal, or a client without a browser and without credentials, gets `401` with `WWW-Authenticate: Basic
+  realm="<app>", charset="UTF-8"` and `X-TinySesam-Reason: basic`; browsers keep the redirect to the sign-in page.
+  Proxy recipe (Caddy `@basic` branch, `header_up -Authorization`) in the README; the `deploy/` templates follow
+  with the Caddy quickstart (T-62).
+- **Own bucket, fail2ban line:** a wrong app password is `failed login … method=app_password` and counts in a bucket of
+  its own (`security.SIGN_IN_OWN_LOCK`, `OWN_BUCKET_METHODS`) — the browser sign-in and the streak stay untouched.
+  A revoked or expired one is refused without counting. Audit `app_password_create`, `app_password_use`,
+  `app_password_denied`, `app_password_revoke`, `app_passwords_revoked`.
+- **Revoked with the API keys** on lock, password reset (administrator or "forgot") and "sign out everywhere"
+  (events `app_password_revoked`, `app_passwords_revoked`). The own password change keeps them:
+  `PasswordChangeResult.app_passwords_active`, and `app_passwords_active` in the answers of `POST /auth/password`,
+  `/auth/password/set` and `/auth/sessions/revoke`.
+- **Routes** `GET/POST /auth/app-passwords`, `POST /auth/app-passwords/{id}/revoke`; admin panel tab "App passwords"
+  (`GET <admin>/api/app-passwords`, `POST <admin>/api/app-passwords/{id}/revoke`). Methods `create_app_password`,
+  `list_app_passwords`, `revoke_app_password`, `app_password_hosts` (tier B).
+- **Keys:** `tinysesam keys retire --purpose oauth-pepper` also refuses while an app password not used since the
+  rotation needs the old pepper; a use moves it to the active one.
+- Schema 20: table `app_password` (additive — an older version leaves it in place and refuses Basic auth).
+
 ### Security — key management (H3: T-48, T-53, T-54, ADR-12, from the security review of 2026-11-20)
 
 - **One key per purpose, the gate key no longer derived from the vault key (T-48, ASVS 11.1.1/11.1.2/13.3.4).** Up to
