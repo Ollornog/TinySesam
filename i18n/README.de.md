@@ -945,6 +945,19 @@ Terminal verweigert es; ein unbekanntes Konto endet mit Exit 1. `#<id>` statt de
 `rename`. Ein rohes `DELETE` in der Datenbank ist der falsche Weg — es lässt den Namen in jeder
 Audit-Zeile stehen.
 
+### Schlüssel: auflisten, rotieren, neu verschlüsseln, ausmustern (T-48)
+
+```bash
+python -m tinysesam keys list      --db auth.db                    # jeder Schlüssel: Zweck, ID, Stand — nie der Schlüssel
+python -m tinysesam keys rotate    --db auth.db --purpose vault    # oder gate, oauth-pepper
+python -m tinysesam keys reencrypt --db auth.db                    # gespeicherte Geheimnisse auf den aktiven Tresor-Schlüssel
+python -m tinysesam keys retire    --db auth.db --purpose vault    # verweigert, solange etwas den alten noch braucht
+```
+
+Drei Zwecke, je ein Schlüsselbund (aktiver Schlüssel + ältere, die noch entschlüsseln oder prüfen): `vault` (die
+ruhenden Geheimnisse), `gate` (die Signatur des Gate-Tokens) und `oauth-pepper` (die Digests der OAuth-Tokens). Eine
+Rotation verliert nichts und meldet niemanden ab; die Schritte, die Quellen (Umgebung, Datei, Datenbank) und der
+Rückweg zu einer älteren Version stehen in `docs/OPERATIONS.md`, „Keys".
 ## Demo-Modus
 
 `demo_mode=True` legt die Konten `demo` und `demoadmin` an, zeigt ihre Zugangsdaten auf der
@@ -972,7 +985,8 @@ Nach dem Vorbild von Authelia/Fail2Ban — die Schwellen sind **im Admin-Panel /
   die sich nicht löschen, sperren oder entmachten lassen (mindestens einer, weitergebbar, Notweg
   `tinysesam owner`); Sitzungen ohne „Angemeldet bleiben" enden nach 8 h Inaktivität
   (`session_idle_minutes`); TOTP-Geheimnisse liegen AES-256-GCM-verschlüsselt — **den Schlüssel
-  getrennt sichern** (`TINYSESAM_SECRETS_KEY`, `secrets_key_file` oder `<db>.key`); eine
+  getrennt sichern** (`TINYSESAM_SECRETS_KEY`, `secrets_key_file` oder `<db>.key`), rotieren mit
+  `tinysesam keys rotate` (unten); eine
   OIDC-Sitzung prüft ihr Refresh-Token alle `oidc_session_refresh_minutes` nach und endet, wenn der
   Provider Nein sagt. Einzelheiten: `docs/OPERATIONS.md`.
 - **Sperr-Hinweis** (ASVS 6.3.5): Mit konfiguriertem Versand bekommt die belegte Adresse eines
@@ -1571,8 +1585,11 @@ Der Rückweg ist die bestehende Forward-Auth, eine Anfrage samt Body geht also n
 - **Proxy:** Caddy mit dem Plugin [caddy-jwt](https://github.com/ggicci/caddy-jwt) — Vorlage
   [`deploy/forward-auth/Caddyfile.gate`](../deploy/forward-auth/Caddyfile.gate), Bau
   [`deploy/forward-auth/caddy-gate/Dockerfile`](../deploy/forward-auth/caddy-gate/Dockerfile).
-- **Schlüssel:** abgeleitet aus dem Grundschlüssel der Installation (`TINYSESAM_SECRETS_KEY`) —
-  kein zweites Geheimnis. Den öffentlichen Teil für den Proxy gibt `tinysesam gate-key --db …` aus.
+- **Schlüssel:** ein eigener, zufälliger Ed25519-Schlüssel (seit T-48, ADR-12 — bis 0.25.x aus dem
+  Tresor-Schlüssel abgeleitet): `TINYSESAM_GATE_KEY`, `gate_key_file`, sonst mit dem Tresor-Schlüssel verschlüsselt
+  in der Datenbank. Der Proxy holt die öffentlichen Schlüssel von `/auth/gate/jwks.json` (`jwk_url`, eine Rotation
+  braucht am Proxy nichts) oder nimmt `tinysesam gate-key --db …` als `sign_key`. Jedes Token trägt
+  `typ: tinysesam-gate+jwt` und seine `kid`.
 - **Rollen:** Verlangt der Proxy Rollen (`X-TinySesam-Roles`), stehen sie in der Zielgruppe des
   Tokens (`app.example.com|roles=admin`); ein Token ohne Rollenangabe gilt dort nicht.
 - **Preis:** Abmelden, Sperren oder eine entzogene Freigabe greifen am Proxy erst, wenn das Token
@@ -1750,7 +1767,8 @@ Bausteine für Seiten, die du selbst baust — Signaturen und Beschreibungen in
   → `peek_magic` / `redeem_magic`, `TOKEN_PATHS`, `require_public_base`, `create_signin_link`
   (Einmal-Anmeldelink ohne Mail, Adresse aus `base_url`).
 - **Proxy-Konfiguration für das Gate-Token:** `gate_public_key` (`sign_key` für caddy-jwt, wie
-  `tinysesam gate-key`), `gate_issuer` (`issuer_whitelist`).
+  `tinysesam gate-key`), `gate_jwks` (die Schlüsselmenge hinter `/auth/gate/jwks.json` für `jwk_url`),
+  `gate_issuer` (`issuer_whitelist`).
 - **Eigene Routen und Erweiterungspunkte:** `client_ip` (die echte Client-Adresse hinter
   `trusted_proxies`), `json_body` (JSON-Body mit CSRF-Prüfung für Cookie-Clients), `browser_path` (Links
   auf TinySesam-Seiten unter einem Montage-Präfix), `flow_cookie_name`, `t` (übersetzter Text in
@@ -1820,7 +1838,7 @@ zusätzlich die Website baut.
 
 ## Status
 
-**93 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
+**94 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
 (`tests/test_matrix.py`).
 
 Gebaut und getestet: Passwort/TOTP/Sitzungen/Rollen, Remember-me, Step-up und per-Route-MFA,

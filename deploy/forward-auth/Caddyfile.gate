@@ -21,9 +21,10 @@
 #   * TinySesamConfig: forward_auth_enabled=True, gate_token_enabled=True, base_url, cookie_domain
 #     and trusted_redirect_hosts as in ./Caddyfile (central sign-in on auth.example.com).
 #     In the gateway image: TINYSESAM_GATE=1.
-#   * TS_GATE_PUBKEY: the public key, `tinysesam gate-key` prints it. It follows the
-#     installation's base key (TINYSESAM_SECRETS_KEY) — if that is changed, enter it
-#     here again. Public, not a secret.
+#   * The public keys come from TinySesam itself: jwk_url below fetches /auth/gate/jwks.json over the upstream
+#     (T-48, ADR-12) — the active gate key and, for one token lifetime after a rotation, the previous one. A
+#     rotation (`tinysesam keys rotate --purpose gate`) then needs nothing here. Instead of jwk_url one fixed key
+#     is possible: `sign_key {$TS_GATE_PUBKEY}` with the value of `tinysesam gate-key` — anew after every rotation.
 #   * TS_GATE_ISSUER: base_url of TinySesam, without a trailing slash.
 #
 # What it costs: a revocation (sign-out, lockout, withdrawn approval) takes effect here only when the
@@ -103,7 +104,9 @@ app.example.com {
 
 	route {
 		jwtauth {
-			sign_key {$TS_GATE_PUBKEY}
+			# The key set of TinySesam (public, no secret); the token's `kid` picks the key. caddy-jwt fetches it
+			# again when a token names a `kid` it does not know yet (after a rotation).
+			jwk_url http://{$TS_AUTH_UPSTREAM:127.0.0.1:8000}/auth/gate/jwks.json
 			# Fixed to EdDSA: with sign_alg EdDSA caddy-jwt ignores the `alg` in the token's header.
 			# A token with `alg: none` or `HS256` is thus not checked any differently.
 			sign_alg EdDSA

@@ -56,14 +56,20 @@ Rate-Limit, Open-Redirect-Schutz via `safe_next`). Trotzdem: vor produktivem Ein
   (Pflicht seit 0.21.0; ein Wert von vorher wird beim Start verschlüsselt). Der Schlüssel kommt
   aus `TINYSESAM_SECRETS_KEY`, sonst aus `secrets_key_file`, sonst aus einer Datei `<db>.key`
   (Rechte `0600`), die neben der Datenbank entsteht. Diese Vorgabe schützt vor einer
-  Datenbankdatei, die allein abfließt, **nicht** vor einer Kopie des ganzen Verzeichnisses — und
-  aus demselben Schlüssel entsteht der Signaturschlüssel der Gate-Tokens (ADR-9): Wer `<db>.key`
-  lesen kann, prägt damit auch Gate-Tokens für jedes Konto und jede geschützte Anwendung. Im
-  Betrieb, und für das Gateway mit Gate-Tokens immer, gehört der Schlüssel außerhalb des
-  Datenverzeichnisses (`TINYSESAM_SECRETS_KEY` als Container-Secret oder `secrets_key_file`) und
-  getrennt von der Datenbank gesichert: Ohne ihn sind alle TOTP-Einrichtungen verloren. Einen
-  Schlüsselwechsel (Rotation) gibt es noch nicht. Passkeys bleiben der Faktor, der einen
-  Datenbankabfluss übersteht — dort liegt nur ein öffentlicher Schlüssel.
+  Datenbankdatei, die allein abfließt, **nicht** vor einer Kopie des ganzen Verzeichnisses. Seit
+  T-48 (ADR-12) hat jeder Schlüssel einen Zweck und eigenes Material: Der Signaturschlüssel der
+  Gate-Tokens (ADR-9) und der OAuth-Pepper sind zufällige Schlüssel, **nie abgeleitet** aus dem
+  Tresor-Schlüssel — der Tresor-Schlüssel allein (eine abgeflossene Umgebung, eine
+  Schlüsselsicherung) prägt kein Gate-Token. Ohne eigene Quelle (`TINYSESAM_GATE_KEY`,
+  `gate_key_file`) liegt der Gate-Schlüssel mit dem Tresor-Schlüssel verschlüsselt in der Datenbank;
+  `<db>.key` neben der Datenbank gibt also beides her, wer das ganze Verzeichnis liest —
+  `config_check` sagt das bei eingeschaltetem Gate. Im Betrieb, und für das Gateway mit Gate-Tokens
+  immer, gehört der Tresor-Schlüssel außerhalb des Datenverzeichnisses (`TINYSESAM_SECRETS_KEY` als
+  Container-Secret oder `secrets_key_file`) und getrennt von der Datenbank gesichert: Ohne ihn sind
+  alle TOTP-Einrichtungen verloren. Jeder Wert trägt seine Schlüssel-ID und ist an seine Zeile
+  gebunden (AES-GCM mit zugeordneten Daten, T-54), und jeder Schlüssel lässt sich ohne Verlust
+  rotieren (`tinysesam keys rotate|reencrypt|retire`, docs/OPERATIONS.md „Keys"). Passkeys bleiben
+  der Faktor, der einen Datenbankabfluss übersteht — dort liegt nur ein öffentlicher Schlüssel.
 - **Bekannte Grenze — ohne `__Host-`-Präfix am Sitzungs-Cookie gilt jeder Host unter der
   übergeordneten Domain als vertrauenswürdig.** Das Sitzungs-Cookie trägt `__Host-` nur mit
   `cookie_secure=True`, leerem `cookie_domain`, `cookie_path="/"` und `cookie_host_prefix=True` —

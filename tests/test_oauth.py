@@ -583,8 +583,12 @@ for ev in ("oauth_client_registered", "oauth_authorize", "oauth_consent", "oauth
 ok("audit: register, authorize, consent, token, refresh, reuse, revoke")
 
 # ---------------------------------------------------------------- pepper
-auth._oauth._pepper = b"another-pepper-of-32-bytes-or-so!"
+from tinysesam import keys as _K  # noqa: E402
+_kept = auth._oauth.peppers
+_other = b"another-pepper-of-32-bytes-or-so!"
+auth._oauth.peppers = _K.Keyring(_K.PEPPER, [_K.Key(_K.fingerprint(_K.PEPPER, _other), _other)], "memory")
 assert forward(tv["access_token"]).status_code == 401
+auth._oauth.peppers = _kept
 ok("another pepper → the stored digests no longer match (the pepper keys them)")
 
 # ---------------------------------------------------------------- gc
@@ -612,7 +616,7 @@ for over, word in ((dict(base_url=""), "base_url"), (dict(oauth_resources=[]), "
 from tinysesam import config_check as CC
 _e, _w = CC.check_config(TinySesamConfig(base_url=BASE, forward_auth_enabled=True, oauth_enabled=True,
                                          oauth_resources=[RESOURCE], oauth_refresh_max_days=0))
-assert not _e and any("V10.4.8" in x for x in _w) and any("pepper" in x for x in _w), (_e, _w)
+assert not _e and any("V10.4.8" in x for x in _w) and not any("pepper" in x for x in _w), (_e, _w)
 os.environ[O.PEPPER_ENV] = base64.b64encode(os.urandom(32)).decode()
 _e, _w = CC.check_config(TinySesamConfig(base_url=BASE, forward_auth_enabled=True, oauth_enabled=True,
                                          oauth_resources=[RESOURCE]))
@@ -627,7 +631,8 @@ else:
 del os.environ[O.PEPPER_ENV]
 assert TinySesamConfig().oauth_refresh_max_days == 180 and TinySesamConfig().oauth_enabled is False
 ok("config_check: base_url, resources (https, not the own host), forward auth, CSRF required; "
-   "max 0 and missing pepper are warnings; default max 180 days; short pepper refused")
+   "max 0 is a warning, a missing pepper no longer (a key of its own since ADR-12); default max 180 days; short "
+   "pepper refused")
 
 d5 = tempfile.mkdtemp()
 plain = TinySesam(TinySesamConfig(db_path=os.path.join(d5, "p.db"), cookie_secure=False, passkey_enabled=False))

@@ -7,10 +7,11 @@ What happens with a read-only, full or locked database and with a jump of the sy
 is described for operators in `docs/OPERATIONS.md` (failure behaviour).
 """
 from __future__ import annotations
-import contextlib, sqlite3, threading, time, secrets, json, logging, hashlib, os, re, stat, unicodedata
+import base64, contextlib, sqlite3, threading, time, secrets, json, logging, hashlib, os, re, stat, unicodedata
 from typing import Any, Optional
 
 from . import _vocabulary
+from .keys import KID_LEN as _KID_LEN
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
@@ -364,6 +365,19 @@ CREATE TABLE IF NOT EXISTS oauth_token (
     used_at    INTEGER,                      -- refresh: exchanged once (rotation); a second use is reuse
     successor  TEXT                          -- refresh, grace window only: the successor pair, encrypted (vault)
 );
+-- Keys of their own purpose (T-48, ADR-12): the gate signing key and the OAuth pepper, when no environment variable
+-- or file provides them. Encrypted with the vault (AAD: purpose and kid) — the database alone does not give them,
+-- the vault key alone does not either. One active key per purpose (`since IS NULL`), the others are previous.
+CREATE TABLE IF NOT EXISTS key_material (
+    purpose    TEXT NOT NULL,                -- gate | oauth-pepper
+    kid        TEXT NOT NULL,
+    material   TEXT NOT NULL,                -- vault ciphertext
+    created_at INTEGER NOT NULL,
+    since      INTEGER,                      -- NULL = active; otherwise no longer active since
+    note       TEXT,                         -- derived-v1 = taken over from the single base key (≤ 0.25.x)
+    PRIMARY KEY (purpose, kid)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_key_material_active ON key_material(purpose) WHERE since IS NULL;
 CREATE INDEX IF NOT EXISTS idx_oauth_grant_user ON oauth_grant(user_id);
 CREATE INDEX IF NOT EXISTS idx_oauth_grant_client ON oauth_grant(client_id);
 CREATE INDEX IF NOT EXISTS idx_oauth_token_grant ON oauth_token(grant_id);
@@ -903,7 +917,11 @@ class Store:
     #: 18 — `users.password_must_change` (T-46): a password set by an administrator is a start secret.
     #:      Additive; an older version ignores the column — the admin's password then simply stays
     #:      valid as before (the marker is enforced again after the update is back).
-    SCHEMA_VERSION = 18
+    #: 19 — `key_material` (T-48, ADR-12): the gate key and the OAuth pepper as random keys of their own, encrypted
+    #:      with the vault; and the vault format `v2:<kid>:` with associated data (T-54) — the start rewrites every
+    #:      `v1:` value. The table is additive; the VALUES are not: an older version takes a `v2:` value for plain
+    #:      text. The way back is `tinysesam keys reencrypt --to v1` first (docs/OPERATIONS.md).
+    SCHEMA_VERSION = 19
 
     #: Old table name → new table name (schema 16).
     RENAMED_TABLES = {"namensbindung": "name_binding", "oidc_sitzung": "oidc_session",
@@ -2650,7 +2668,7 @@ class Store:
         self._exec("INSERT INTO totp_cred(user_id, secret, confirmed, created_at) VALUES (?,?,?,?) "
                    "ON CONFLICT(user_id) DO UPDATE SET secret=excluded.secret, "
                    "confirmed=excluded.confirmed, last_step=NULL",
-                   (user_id, self.vault.encrypt(secret), 1 if confirmed else 0, _now()))
+                   (user_id, self._seal(secret, "totp_cred.secret", user_id), 1 if confirmed else 0, _now()))
 
     def confirm_totp(self, user_id):
         self._exec("UPDATE totp_cred SET confirmed=1 WHERE user_id=?", (user_id,))
@@ -2662,38 +2680,175 @@ class Store:
             return None
         d = dict(line)
         if self.vault is not None:
-            d["secret"] = self.vault.decrypt(d["secret"])
+            d["secret"] = self._open(d["secret"], "totp_cred.secret", user_id)
         return d
 
     def extract_secrets(self) -> int:
-        """Encrypt plaintext secrets from the time before encryption (silent upgrade)
-        — and first check that the key matches the already encrypted ones. If it does not,
-        `ConfigError`: a start with the wrong key would otherwise let every TOTP sign-in fail
-        silently. Returns how many were upgraded."""
+        """At startup: check that the vault keyring fits the stored secrets, encrypt plain text from the time
+        before encryption, and rewrite `v1:` values (one key, no context) as `v2:` with their context (T-54).
+
+        A key that does not fit is a `ConfigError`: a start with the wrong key would otherwise let every TOTP
+        sign-in fail silently. Returns how many plain-text secrets were encrypted."""
         from .errors import ConfigError
         if self.vault is None:
             return 0
-        # Both tables with encrypted data: if there are only refresh tokens (OIDC instance without TOTP),
-        # a wrong key would otherwise start — and every request with an old cookie ended in a 500.
-        probe = self._one("SELECT secret AS value FROM totp_cred WHERE secret LIKE 'v1:%' "
-                          "UNION ALL SELECT refresh FROM oidc_session WHERE refresh LIKE 'v1:%' LIMIT 1")
-        if probe is not None:
-            try:
-                self.vault.decrypt(probe["value"])
-            except Exception:
-                raise ConfigError(
-                    "The key does not match the stored secrets (TOTP/OIDC; wrong "
-                    "TINYSESAM_SECRETS_KEY/secrets_key_file, or the key file next to the "
-                    "database is missing or a different one). Use the right key — without it "
-                    "all accounts have to set up TOTP again.") from None
-        clear = self._all("SELECT user_id, secret FROM totp_cred WHERE secret NOT LIKE 'v1:%'")
+        # Every key a stored value names must be in the keyring; for `v1:` values one probe per column decides.
+        # All encrypted columns: if there are only refresh tokens (OIDC instance without TOTP), a wrong key would
+        # otherwise start — and every request with an old cookie ended in a 500.
+        wrong = ("The key does not match the stored secrets (TOTP, OIDC tokens, the gate key or OAuth pepper kept "
+                 "in the database; wrong TINYSESAM_SECRETS_KEY/secrets_key_file, or the key file next to the "
+                 "database is missing or a different one). Use the right key — without it all accounts have to set "
+                 "up TOTP again (docs/OPERATIONS.md \"Keys\": key lost).")
+        for spec in self.ENCRYPTED:
+            table, column = spec[0].split(".")
+            for (kid,) in self._all(f"SELECT DISTINCT substr({column}, 4, {_KID_LEN}) FROM {table} "
+                                    f"WHERE {column} LIKE 'v2:%'"):
+                if self.vault.keyring.find(kid) is None:
+                    raise ConfigError(f"{wrong} (Key {kid} is not in the keyring — retired too early?)")
+            probe = self._one(f"SELECT {column} AS value FROM {table} WHERE {column} LIKE 'v1:%' LIMIT 1")
+            if probe is not None:
+                try:
+                    self.vault._decrypt_v1(probe["value"])
+                except Exception:
+                    raise ConfigError(wrong) from None
+        clear = self._all("SELECT user_id, secret FROM totp_cred WHERE secret NOT LIKE 'v1:%' "
+                          "AND secret NOT LIKE 'v2:%'")
         for z in clear:
             self._exec("UPDATE totp_cred SET secret=? WHERE user_id=? AND secret=?",
-                       (self.vault.encrypt(z["secret"]), z["user_id"], z["secret"]))
+                       (self._seal(z["secret"], "totp_cred.secret", z["user_id"]), z["user_id"], z["secret"]))
         if clear:
             logging.getLogger("tinysesam").info(
                 "%d TOTP secret(s) encrypted (previously plaintext in the database).", len(clear))
+        try:
+            upgraded = sum(self.reencrypt(only_v1=True).values())
+        except sqlite3.OperationalError as e:
+            upgraded = 0
+            logging.getLogger("tinysesam").warning(
+                "Secrets in the format up to 0.25.x not rewritten (%s): the database is not writable. They are "
+                "still read; without their binding to the row (T-54) until a start with write access.", e)
+        if upgraded:
+            logging.getLogger("tinysesam").info(
+                "%d stored secret(s) rewritten in the format v2 (key ID and binding to their row).", upgraded)
         return len(clear)
+
+    # ---------- the vault: context, re-encryption (T-48, T-54) ----------
+    def _seal(self, plaintext: str, column: str, *parts) -> str:
+        from .vault import context
+        return self.vault.encrypt(plaintext, context(column, *parts))
+
+    def _open(self, value, column: str, *parts):
+        from .vault import context
+        return self.vault.decrypt(value, context(column, *parts))
+
+    #: Every encrypted column: (table.column, SELECT of rowid, value and the context parts, extra WHERE).
+    #: The context names the row by what does NOT change in its life — not the session handle, which rotates.
+    ENCRYPTED = (
+        ("totp_cred.secret", "SELECT rowid AS rid, secret AS value, user_id FROM totp_cred"),
+        ("oidc_session.refresh", "SELECT rowid AS rid, refresh AS value, client, sub FROM oidc_session"),
+        ("oidc_id_token.id_token", "SELECT t.rowid AS rid, t.id_token AS value, t.client, s.user_id "
+                                   "FROM oidc_id_token t JOIN session s ON s.token_hash = t.token_hash"),
+        ("oauth_token.successor", "SELECT rowid AS rid, successor AS value, token_hash FROM oauth_token "
+                                  "WHERE successor IS NOT NULL"),
+        ("key_material.material", "SELECT rowid AS rid, material AS value, purpose, kid FROM key_material"),
+    )
+
+    def reencrypt(self, *, only_v1: bool = False, to_v1: bool = False, limit: int = 0,
+                  progress=None) -> dict:
+        """Rewrite stored secrets with the ACTIVE key and their context — after `keys rotate`, or (`only_v1`) the
+        values of the format up to 0.25.x. Compare-and-swap per row: a value the service changed meanwhile stays.
+        `to_v1`: the old format, for the way back to an older version. `progress(column, done, total)`.
+        Returns {column: rewritten}."""
+        out = {}
+        for column, select in self.ENCRYPTED:
+            if to_v1 and column == "key_material.material":
+                continue          # an older version does not know the table — and the keys in it stay readable
+            table, col = column.split(".")
+            rows = [r for r in self._all(select)
+                    if r["value"] is not None and str(r["value"]).startswith(("v1:", "v2:"))
+                    and (str(r["value"]).startswith("v2:") if to_v1 else
+                         str(r["value"]).startswith("v1:") if only_v1 else self.vault.needs_rewrite(r["value"]))]
+            if limit:
+                rows = rows[:limit]
+            done = 0
+            for r in rows:
+                parts = [r[k] for k in r.keys() if k not in ("rid", "value")]
+                plain = self._open(r["value"], column, *parts)
+                new = self.vault.encrypt_v1(plain) if to_v1 else self._seal(plain, column, *parts)
+                done += self._exec(f"UPDATE {table} SET {col}=? WHERE rowid=? AND {col}=?",
+                                   (new, r["rid"], r["value"])).rowcount
+                if progress is not None:
+                    progress(column, done, len(rows))
+            out[column] = done
+        return out
+
+    def ciphertext_counts(self) -> dict:
+        """{kid or 'v1': number of stored values} over every encrypted column — what still needs which key."""
+        out: dict = {}
+        for column, _select in self.ENCRYPTED:
+            table, col = column.split(".")
+            for kid, n in self._all(f"SELECT CASE WHEN {col} LIKE 'v1:%' THEN 'v1' "
+                                    f"ELSE substr({col}, 4, {_KID_LEN}) END, COUNT(*) FROM {table} "
+                                    f"WHERE {col} LIKE 'v1:%' OR {col} LIKE 'v2:%' GROUP BY 1"):
+                out[kid] = out.get(kid, 0) + int(n)
+        return out
+
+    # ---------- keys of their own purpose in the database (T-48, ADR-12) ----------
+    def key_ring_rows(self, purpose: str) -> list:
+        """The keys of `purpose` from `key_material`, decrypted — the active one first, then the newest previous."""
+        from . import keys as _keys
+        out = []
+        for r in self._all("SELECT kid, material, since, note FROM key_material WHERE purpose=? "
+                           "ORDER BY since IS NOT NULL, since DESC, created_at DESC", (purpose,)):
+            raw = base64.b64decode(self._open(r["material"], "key_material.material", purpose, r["kid"]))
+            if _keys.kid_for(purpose, raw) != r["kid"]:
+                raise ValueError(f"key_material: the {purpose} key {r['kid']} does not match its ID")
+            out.append(_keys.Key(r["kid"], raw, r["since"], r["note"] or ""))
+        if out and out[0].since is not None:
+            raise ValueError(f"key_material: no active {purpose} key")
+        return out
+
+    def _key_insert(self, purpose: str, material: bytes, since, note: str = "") -> str:
+        from . import keys as _keys
+        kid = _keys.kid_for(purpose, material)
+        self.db.execute("INSERT INTO key_material(purpose, kid, material, created_at, since, note) "
+                        "VALUES (?,?,?,?,?,?)",
+                        (purpose, kid, self._seal(base64.b64encode(material).decode("ascii"),
+                                                  "key_material.material", purpose, kid), _now(), since, note))
+        return kid
+
+    def key_ring_create(self, purpose: str, material: bytes, legacy: Optional[bytes] = None) -> bool:
+        """The first keyring of `purpose` — only if there is none yet (several workers starting at once: one
+        creates it, the others read it). `legacy` becomes a previous key with note `derived-v1`."""
+        from . import keys as _keys
+        if self.vault is None:
+            raise RuntimeError("Keys are only stored encrypted (vault.Vault).")
+        with self._writing():
+            self._begin_immediate()
+            if self.db.execute("SELECT 1 FROM key_material WHERE purpose=? LIMIT 1", (purpose,)).fetchone():
+                self.db.rollback()
+                return False
+            self._key_insert(purpose, material, None)
+            if legacy is not None and _keys.kid_for(purpose, legacy) != _keys.kid_for(purpose, material):
+                self._key_insert(purpose, legacy, _now(), _keys.DERIVED_V1)
+            self.db.commit()
+        return True
+
+    def key_ring_rotate(self, purpose: str, material: bytes) -> str:
+        """A new active key; the active one becomes previous (since now). Returns the new key ID."""
+        with self._writing():
+            self._begin_immediate()
+            self.db.execute("UPDATE key_material SET since=? WHERE purpose=? AND since IS NULL", (_now(), purpose))
+            kid = self._key_insert(purpose, material, None)
+            self.db.commit()
+        return kid
+
+    def key_ring_retire(self, purpose: str, kids) -> int:
+        """Remove previous keys — never the active one."""
+        kids = list(kids)
+        if not kids:
+            return 0
+        return self._exec(f"DELETE FROM key_material WHERE purpose=? AND since IS NOT NULL "
+                          f"AND kid IN ({','.join('?' * len(kids))})", (purpose, *kids)).rowcount
 
     def delete_totp(self, user_id):
         self._exec("DELETE FROM totp_cred WHERE user_id=?", (user_id,))
@@ -2924,8 +3079,8 @@ class Store:
                    "VALUES (?,?,?,?,?,?,?) ON CONFLICT(token_hash, client) DO UPDATE SET sub=excluded.sub, "
                    "refresh=excluded.refresh, checked_at=excluded.checked_at, client_id=excluded.client_id, "
                    "success_at=excluded.success_at",
-                   (self._handle(handle), client, sub, self.vault.encrypt(refresh), _now(), client_id,
-                    _now()))
+                   (self._handle(handle), client, sub, self._seal(refresh, "oidc_session.refresh", client, sub),
+                    _now(), client_id, _now()))
 
     def get_oidc_sessions(self, handle) -> list:
         """The OIDC rows of a session — the refresh token ENCRYPTED (it is decrypted
@@ -2940,8 +3095,12 @@ class Store:
             return None
         d = dict(z)
         if self.vault is not None:
-            d["refresh"] = self.vault.decrypt(d["refresh"])
+            d["refresh"] = self.oidc_refresh_plain(d)
         return d
+
+    def oidc_refresh_plain(self, row) -> Optional[str]:
+        """The refresh token of an `oidc_session` row, decrypted — bound to the row's client and subject."""
+        return self._open(row["refresh"], "oidc_session.refresh", row["client"], row["sub"])
 
     def claim_oidc_session(self, handle, client, old: int, now: int) -> bool:
         """Claim the due exchange for EXACTLY one request: `checked_at` from `old` to
@@ -2968,9 +3127,12 @@ class Store:
         extra = ", success_at=?" if success else ""
         success_value = (int(when),) if success else ()
         if new_refresh and self.vault is not None:
+            row = self._one(f"SELECT sub FROM oidc_session WHERE {where} AND client=?", (value, client))
+            if row is None:
+                return False
             return self._exec(f"UPDATE oidc_session SET checked_at=?, refresh=?{extra} WHERE {where} AND client=?",
-                              (int(when), self.vault.encrypt(new_refresh), *success_value, value,
-                               client)).rowcount > 0
+                              (int(when), self._seal(new_refresh, "oidc_session.refresh", client, row["sub"]),
+                               *success_value, value, client)).rowcount > 0
         return self._exec(f"UPDATE oidc_session SET checked_at=?{extra} WHERE {where} AND client=?",
                           (int(when), *success_value, value, client)).rowcount > 0
 
@@ -3010,15 +3172,21 @@ class Store:
     def set_oidc_id_token(self, handle, client: str, id_token: str) -> None:
         if self.vault is None:
             raise RuntimeError("ID tokens are only stored encrypted (vault.Vault).")
+        h = self._handle(handle)
+        owner = self._one("SELECT user_id FROM session WHERE token_hash=?", (h,))
+        if owner is None:
+            return          # the session is gone — the row would hang on nothing (foreign key)
         self._exec("INSERT OR REPLACE INTO oidc_id_token(token_hash, client, id_token) VALUES (?,?,?)",
-                   (self._handle(handle), client, self.vault.encrypt(id_token)))
+                   (h, client, self._seal(id_token, "oidc_id_token.id_token", client, owner["user_id"])))
 
     def get_oidc_id_token(self, handle) -> Optional[tuple]:
-        """(client, id_token) of this session's sign-in, decrypted — or None."""
-        r = self._one("SELECT client, id_token FROM oidc_id_token WHERE token_hash=?", (self._handle(handle),))
+        """(client, id_token) of this session's sign-in, decrypted — or None. Bound to client and account (the
+        session handle rotates, the account stays)."""
+        r = self._one("SELECT t.client, t.id_token, s.user_id FROM oidc_id_token t "
+                      "JOIN session s ON s.token_hash = t.token_hash WHERE t.token_hash=?", (self._handle(handle),))
         if not r or self.vault is None:
             return None
-        return r["client"], self.vault.decrypt(r["id_token"])
+        return r["client"], self._open(r["id_token"], "oidc_id_token.id_token", r["client"], r["user_id"])
 
     def put_oidc_grant(self, token_hash: str, client: str, now: int, roles=None) -> None:
         """Enter or confirm an approval. `granted_at` stays on a confirmation —
@@ -4371,6 +4539,21 @@ class Store:
                    "scope, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                    (code_hash, client_id, user_id, redirect_uri, code_challenge, resource, scope, now, expires_at))
 
+    def has_sessions(self) -> bool:
+        """Is there any session? A first start after an update has some, a new installation none."""
+        return self._one("SELECT 1 FROM session LIMIT 1") is not None
+
+    def oauth_has_grants(self) -> bool:
+        """Has this installation ever connected a program (OAuth)? Decides whether the old pepper is kept."""
+        return self._one("SELECT 1 FROM oauth_grant LIMIT 1") is not None
+
+    def oauth_live_tokens_before(self, when: int, now: int) -> int:
+        """Codes and tokens created up to `when` that are still valid — what a pepper retired at `when` would cut."""
+        return int(self._one("SELECT (SELECT COUNT(*) FROM oauth_token t JOIN oauth_grant g ON g.id = t.grant_id "
+                             "WHERE t.created_at <= ? AND t.expires_at > ? AND t.used_at IS NULL "
+                             "AND g.revoked_at IS NULL) + (SELECT COUNT(*) FROM oauth_code WHERE created_at <= ? "
+                             "AND expires_at > ? AND consumed_at IS NULL) AS n", (when, now, when, now))["n"])
+
     def oauth_code(self, code_hash: str) -> Optional[sqlite3.Row]:
         return self._one("SELECT * FROM oauth_code WHERE code_hash=?", (code_hash,))
 
@@ -4427,6 +4610,13 @@ class Store:
 
     def oauth_drop_successor(self, token_hash: str) -> None:
         self._exec("UPDATE oauth_token SET successor=NULL WHERE token_hash=?", (token_hash,))
+
+    def seal_oauth_successor(self, token_hash: str, text: str) -> str:
+        """The successor pair of a refresh token (grace window), encrypted and bound to that token's row."""
+        return self._seal(text, "oauth_token.successor", token_hash)
+
+    def open_oauth_successor(self, row) -> Optional[str]:
+        return self._open(row["successor"], "oauth_token.successor", row["token_hash"])
 
     def oauth_touch_grant(self, grant_id: int, now: int, ip) -> None:
         self._exec("UPDATE oauth_grant SET last_used=?, last_ip=? WHERE id=?", (now, ip, grant_id))

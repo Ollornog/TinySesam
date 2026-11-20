@@ -4,6 +4,54 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+### Security — key management (H3: T-48, T-53, T-54, ADR-12, from the security review of 2026-11-20)
+
+- **One key per purpose, the gate key no longer derived from the vault key (T-48, ASVS 11.1.1/11.1.2/13.3.4).** Up to
+  0.25.x the base key that encrypts the secrets at rest was, by HKDF, also the gate signing key and the OAuth pepper:
+  whoever read `<db>.key` could mint a gate token for any account. Now `vault`, `gate` and `oauth-pepper` each have
+  their own random material and a key ID. The gate key comes from `TINYSESAM_GATE_KEY` or the new field
+  `gate_key_file`, otherwise it is kept in the new table `key_material`, encrypted with the vault key — the vault key
+  alone gives no gate key. The pepper likewise (`TINYSESAM_OAUTH_PEPPER`, `oauth_pepper_file`, else `key_material`).
+- **Rotation without loss:** every purpose is a keyring (active key + previous ones that still decrypt, verify or look
+  up; `<NAME>_PREVIOUS` for the environment, further lines in a key file). New CLI `tinysesam keys list|rotate|
+  reencrypt|retire`: `reencrypt` moves every stored secret onto the active vault key with progress (compare-and-swap
+  per row), `retire` refuses while anything still needs a key (stored values, a gate token's lifetime, live OAuth
+  tokens). A running service re-reads its vault key file when it meets an unknown key ID. TOTP, OIDC sessions, OAuth
+  connections and gate tokens survive every rotation (`tests/test_keys.py`). Audit `key_rotated`, `key_retired`.
+- **Ciphertexts bound to their row (T-54).** Vault format `v2:<kid>:…`; the AES-GCM associated data carries key ID,
+  table, column and the row's lasting identity. A value copied into another account's row or another column no longer
+  decrypts. `v1:` values are read with every key and rewritten at the start.
+- **Gate token with an explicit type (T-53, RFC 8725 §3.11):** header `typ: tinysesam-gate+jwt` and `kid`;
+  `gate.check` refuses any other type. caddy-jwt cannot check `typ` (measured with 1.4.0) — at the proxy the dedicated
+  key and the host-shaped `aud` keep other JWTs out.
+- **`/auth/gate/jwks.json`** (new route) and `TinySesam.gate_jwks()`: the active gate key and the previous ones for
+  3600 s after a rotation, for caddy-jwt `jwk_url` — a rotation then needs nothing at the proxy. `tinysesam gate-key
+  --jwks` prints the set. `deploy/forward-auth/Caddyfile.gate` now takes the set (`jwk_url` over `TS_AUTH_UPSTREAM`)
+  instead of `sign_key {$TS_GATE_PUBKEY}`; measured with Caddy 2.11.9 + caddy-jwt 1.4.0 in `tests/test_gate_caddy.py`
+  (after a rotation the first request or two take the way back, then the new key passes; the old key's tokens keep
+  passing).
+- **Configuration check:** a warning for a key file readable or writable by group or others, for a configured key file
+  in the database's directory, and for the gate switched on while the vault key lies beside the database and the gate
+  key in it. The start warns while the gate key derived from the vault key is still in the keyring. The warning
+  "oauth_enabled without an own pepper" is gone — the pepper is no longer derived.
+- The fingerprints of repeated wrong passwords use a per-process random key instead of one derived from the vault key.
+
+### Changed — H3 (behaviour of existing installations)
+
+- **Gate users with `sign_key` in Caddy must give the proxy the new key** after the update: the first start creates a
+  random gate key (the derived one stays published for its tokens' lifetime). Either `TS_GATE_PUBKEY` =
+  `tinysesam gate-key --db …`, or switch to `jwk_url`. Until then every request takes the fallback path through
+  `/auth/forward` — slower, nobody is signed out — and whoever holds the vault key can still mint tokens the old
+  `sign_key` accepts; afterwards `tinysesam keys retire --purpose gate`.
+- `tinysesam gate-key` reads the gate key from the database (or `TINYSESAM_GATE_KEY`/`--gate-key-file`); before the
+  first start of this version there is none, and it says so.
+- Schema 19: the table `key_material`; every stored secret is rewritten as `v2:` on the first start. **An older version
+  cannot read `v2:`** — the way back is `tinysesam keys reencrypt --to v1` with this version first (docs/OPERATIONS.md,
+  "Keys and the vault format: rollback"). A wrong or incomplete vault key now also fails the start when only the keys in
+  `key_material` are encrypted (before, an instance without TOTP and OIDC started with any key).
+- `vault.Vault.encrypt/decrypt` take the context of the value (internal module; `vault.load_key` still returns the
+  active key).
+
 ### Security — hardening, part 2 (H2, from the security review of 2026-11-20)
 
 - **New access only from a fresh confirmation (B-12, ASVS 7.5.1, NIST SP 800-63B-4 §4.1.2.1).** With only a session

@@ -449,7 +449,10 @@ PUBLIC_SERVICES = ["pypi.org", "raw.githubusercontent.com", "img.shields.io", "s
                                                 # H1: where the author of the password corpus behind
                                                 # tinysesam/common_passwords.txt released it to the public domain —
                                                 # cited as the license evidence.
-                        "medium.com"]
+                        "medium.com",
+                                                # ADR-12: the documentation of the keyring patterns it takes over
+                                                # (Django, Rails, Tink) — cited as sources.
+                        "docs.djangoproject.com", "guides.rubyonrails.org", "developers.google.com"]
 addresses = hygiene.pruefe_adressen(ROOT, FILES, POLICY, zusaetzliche_hosts=PUBLIC_SERVICES)
 assert not addresses, "addresses outside RFC 2606 and the service list:\n  " + "\n  ".join(addresses)
 not_executable = hygiene.pruefe_ausfuehrbar(

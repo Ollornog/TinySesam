@@ -1308,6 +1308,13 @@ def build_router(auth) -> APIRouter:
         def forward_auth(request: Request):
             return _forward(request)
 
+        @r.get("/auth/gate/jwks.json")
+        def gate_jwks():
+            """The public gate keys (T-48) for caddy-jwt's `jwk_url`: active + previous within their overlap. Public
+            like any JWKS — it carries no secret. Five minutes in a cache: a rotation reaches the proxy anyway,
+            because an unknown `kid` makes caddy-jwt fetch the set again."""
+            return JSONResponse(auth.gate_jwks(), headers={"Cache-Control": "public, max-age=300"})
+
         @r.get("/auth/verify")
         def verify_auth(request: Request):
             return _forward(request)

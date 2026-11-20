@@ -301,6 +301,10 @@
       "sig": "() -> 'str'",
       "tier": "B"
     },
+    "gate_jwks": {
+      "sig": "() -> 'dict'",
+      "tier": "B"
+    },
     "gate_public_key": {
       "sig": "() -> 'str'",
       "tier": "B"
@@ -1210,6 +1214,10 @@
       "field": "str = '__Host-tinysesam_gate'",
       "tier": "A"
     },
+    "gate_key_file": {
+      "field": "str = ''",
+      "tier": "B"
+    },
     "gate_link_enabled": {
       "field": "bool = False",
       "tier": "A"
@@ -2075,6 +2083,10 @@
       "keys": [
         "query:flow"
       ],
+      "tier": "A"
+    },
+    "GET /auth/gate/jwks.json": {
+      "keys": [],
       "tier": "A"
     },
     "GET /auth/gate/logged-out": {

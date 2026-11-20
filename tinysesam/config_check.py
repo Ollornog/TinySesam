@@ -871,6 +871,7 @@ def check_config(config) -> tuple[list[str], list[str]]:
     _combinations(config, error, warnings)
     _gate(config, error, warnings)
     _oauth(config, error, warnings)
+    _keys(config, warnings)
     _forward_apps(config, error, warnings)
 
     has_mailer = bool(str(getattr(config, "smtp_host", "") or "").strip())
@@ -1455,14 +1456,60 @@ def _oauth(config, error: list, warnings: list) -> None:
             config,
             "oauth_refresh_max_days=0: a connected device stays connected as long as it is used, without "
             "an absolute maximum. ASVS 5.0 V10.4.8 (level 2) asks for one; the default is 180 days."))
-    has_pepper = bool(os.environ.get(_oauth_mod.PEPPER_ENV, "").strip()) or \
-        bool(str(getattr(config, "oauth_pepper_file", "") or "").strip())
-    if not has_pepper:
+
+
+#: Where container and service managers put secrets — mode and directory are theirs, not the operator's choice
+#: (Docker/Podman `secrets:`, systemd `LoadCredential=`).
+_SECRET_MOUNTS = ("/run/secrets/", "/run/credentials/")
+
+
+def _keys(config, warnings: list) -> None:
+    """Key files (T-48, ADR-12): not readable by others, not beside the database, and no gate key that the data
+    directory alone gives away. Only what the configuration and the file system show — the keyring in the
+    database (a key still derived from the vault key) is reported by the start itself."""
+    from . import keys as _keys_mod
+    db = str(getattr(config, "db_path", "") or "")
+    db_dir = os.path.dirname(os.path.abspath(db)) if db and db != ":memory:" else ""
+    in_use = []
+    for purpose, field in _keys_mod.FILE_FIELD.items():
+        if os.environ.get(_keys_mod.ENV[purpose], "").strip():
+            continue
+        path = str(getattr(config, field, "") or "").strip()
+        if path:
+            in_use.append((field, path, True))
+        elif purpose == _keys_mod.VAULT and db_dir:
+            in_use.append(("vault key", db + ".key", False))
+    for field, path, configured in in_use:
+        absolute = os.path.abspath(path)
+        if absolute.startswith(_SECRET_MOUNTS):
+            continue
+        try:
+            mode = os.stat(path).st_mode & 0o777
+        except OSError:
+            mode = None          # missing: the start says so (a configured one), or creates it (beside the db)
+        if mode is not None and mode & 0o077:
+            warnings.append(_t(
+                config,
+                "{field}={path!r} is readable or writable by group or others (mode {mode}). It holds key material: "
+                "chmod 600, owned by the service's user.",
+                field=field, path=path, mode=f"{mode:04o}"))
+        if configured and db_dir and os.path.dirname(absolute) == db_dir:
+            warnings.append(_t(
+                config,
+                "{field}={path!r} lies in the database's directory — a backup or copy of that directory carries the "
+                "key together with the data it protects. Keep it elsewhere (docs/OPERATIONS.md \"Keys\").",
+                field=field, path=path))
+    vault_beside = any(not configured for _f, _p, configured in in_use)
+    gate_own = bool(os.environ.get(_keys_mod.ENV[_keys_mod.GATE], "").strip()
+                    or str(getattr(config, "gate_key_file", "") or "").strip())
+    if _an(config, "gate_token_enabled") and vault_beside and not gate_own:
         warnings.append(_t(
             config,
-            "oauth_enabled=True without an own pepper (TINYSESAM_OAUTH_PEPPER or oauth_pepper_file): the "
-            "token digests are keyed with a value derived from the master key. That works; an own pepper "
-            "kept apart from the database and the master key is one secret more an attacker must have."))
+            "gate_token_enabled=True, the vault key is {path!r} next to the database, and the gate key is kept in the "
+            "database encrypted with it: whoever can read the data directory can mint gate tokens for every account. "
+            "Put TINYSESAM_SECRETS_KEY or secrets_key_file elsewhere, or give the gate key a place of its own "
+            "(TINYSESAM_GATE_KEY, gate_key_file).",
+            path=db + ".key"))
 
 
 def _combinations(config, error: list, warnings: list) -> None:
@@ -1578,12 +1625,22 @@ _DE: dict[str, str] = {
      "an absolute maximum. ASVS 5.0 V10.4.8 (level 2) asks for one; the default is 180 days."):
         ("oauth_refresh_max_days=0: Ein verbundenes Gerät bleibt verbunden, solange es genutzt wird, "
          "ohne absolutes Höchstalter. ASVS 5.0 V10.4.8 (Stufe 2) verlangt eines; die Vorgabe ist 180 Tage."),
-    ("oauth_enabled=True without an own pepper (TINYSESAM_OAUTH_PEPPER or oauth_pepper_file): the "
-     "token digests are keyed with a value derived from the master key. That works; an own pepper "
-     "kept apart from the database and the master key is one secret more an attacker must have."):
-        ("oauth_enabled=True ohne eigenen Pepper (TINYSESAM_OAUTH_PEPPER oder oauth_pepper_file): Die "
-         "Token-Digests hängen an einem aus dem Hauptschlüssel abgeleiteten Wert. Das geht; ein eigener "
-         "Pepper getrennt von Datenbank und Hauptschlüssel ist ein Geheimnis mehr, das ein Angreifer braucht."),
+    ("{field}={path!r} is readable or writable by group or others (mode {mode}). It holds key material: "
+     "chmod 600, owned by the service's user."):
+        ("{field}={path!r} ist für Gruppe oder andere lesbar oder schreibbar (Modus {mode}). Darin liegt "
+         "Schlüsselmaterial: chmod 600, Eigentümer der Benutzer des Dienstes."),
+    ("{field}={path!r} lies in the database's directory — a backup or copy of that directory carries the key "
+     "together with the data it protects. Keep it elsewhere (docs/OPERATIONS.md \"Keys\")."):
+        ("{field}={path!r} liegt im Verzeichnis der Datenbank — eine Sicherung oder Kopie dieses Verzeichnisses "
+         "trägt den Schlüssel mit den Daten, die er schützt. Woanders ablegen (docs/OPERATIONS.md \"Keys\")."),
+    ("gate_token_enabled=True, the vault key is {path!r} next to the database, and the gate key is kept in the "
+     "database encrypted with it: whoever can read the data directory can mint gate tokens for every account. "
+     "Put TINYSESAM_SECRETS_KEY or secrets_key_file elsewhere, or give the gate key a place of its own "
+     "(TINYSESAM_GATE_KEY, gate_key_file)."):
+        ("gate_token_enabled=True, der Tresor-Schlüssel ist {path!r} neben der Datenbank, und der Gate-Schlüssel "
+         "liegt damit verschlüsselt in der Datenbank: Wer das Datenverzeichnis lesen kann, kann für jedes Konto "
+         "Gate-Tokens prägen. TINYSESAM_SECRETS_KEY oder secrets_key_file woanders ablegen, oder dem "
+         "Gate-Schlüssel einen eigenen Ort geben (TINYSESAM_GATE_KEY, gate_key_file)."),
     ("demo_mode=True together with {real}: the demo creates an admin account with a known "
      "password. Next to a real login path or in front of foreign applications that is a "
      "back door, not a demonstration."):

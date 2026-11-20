@@ -11,7 +11,9 @@
     owner --db auth.db <user>        make an account an owner (emergency route)
     rename --db auth.db <old> <new>  rename an account (resolve an identifier collision)
     delete --db auth.db <user>       delete an account (asks; --yes for scripts; not an owner)
-    gate-key --db auth.db            public key of the gate tokens (for the proxy, ADR-9)
+    gate-key --db auth.db            public key of the gate tokens (for the proxy, ADR-9); --jwks: the key set
+    keys list|rotate|reencrypt|retire --db auth.db [--purpose vault|gate|oauth-pepper]
+                                     the installation's keys (T-48, ADR-12): rotation without data loss
 
 Deliberately lean. TinySesam does not install itself — an auth module that reloads
 code at runtime is a back door with an instruction manual. Updating is done from outside:
@@ -545,30 +547,230 @@ def _delete(argv) -> int:
     return 0
 
 
+def _key_args(ap) -> None:
+    ap.add_argument("--db", required=True, help="path to the TinySesam database (config.db_path)")
+    ap.add_argument("--secrets-key-file", default="", help="like config.secrets_key_file")
+    ap.add_argument("--gate-key-file", default="", help="like config.gate_key_file")
+    ap.add_argument("--oauth-pepper-file", default="", help="like config.oauth_pepper_file")
+
+
+def _open_keys(a):
+    """(store, {purpose: keyring}) with the same sources as the service — never creating a key: a maintenance
+    command that made up a vault key would hand out one the service (with its environment) does not use."""
+    import os
+    from . import keys as K, vault as V
+    from .store import Store
+    if not os.path.exists(a.db):
+        raise V.ConfigError(f"No database at {a.db}.")
+    if not (os.environ.get(K.ENV[K.VAULT], "").strip() or a.secrets_key_file or os.path.exists(a.db + ".key")):
+        raise V.ConfigError(f"No vault key: neither {K.ENV[K.VAULT]} nor --secrets-key-file nor {a.db}.key. "
+                            f"Call it with the same environment as the service.")
+    rings: dict = {K.VAULT: K.load_vault(a.db, a.secrets_key_file)}
+    store = Store(a.db)
+    store.vault = V.Vault(rings[K.VAULT])
+    for purpose, path in ((K.GATE, a.gate_key_file), (K.PEPPER, a.oauth_pepper_file)):
+        ring = K.from_override(purpose, path)
+        if ring is None:
+            rows = store.key_ring_rows(purpose)
+            ring = K.Keyring(purpose, rows, "database") if rows else None
+        rings[purpose] = ring
+    return store, rings
+
+
+def _when(t) -> str:
+    import datetime
+    if t is None:
+        return "unknown"
+    return datetime.datetime.fromtimestamp(int(t), datetime.timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+
+
+def _keys(argv) -> int:
+    ap = argparse.ArgumentParser(
+        prog="tinysesam keys",
+        description="The installation's keys (T-48, ADR-12): list them, rotate one, re-encrypt the stored secrets "
+                    "with the active key, retire keys nothing needs any more. Never prints key material.")
+    sub = ap.add_subparsers(dest="action", required=True)
+    for name, text in (("list", "every key with its ID, state and what still needs it"),
+                       ("rotate", "a new active key for --purpose; the old one stays previous"),
+                       ("reencrypt", "rewrite every stored secret with the active vault key (with progress)"),
+                       ("retire", "remove previous keys of --purpose — refuses while anything needs them")):
+        p = sub.add_parser(name, help=text, description=text)
+        _key_args(p)
+        if name in ("rotate", "retire"):
+            p.add_argument("--purpose", required=True, choices=("vault", "gate", "oauth-pepper"))
+        if name == "retire":
+            p.add_argument("--kid", action="append", default=[], help="only this previous key (repeatable)")
+            p.add_argument("--force", action="store_true",
+                           help="gate/oauth-pepper only: retire before the overlap has passed (tokens signed or "
+                                "digested with it stop working — gate: one fallback request, OAuth: reconnect)")
+        if name == "reencrypt":
+            p.add_argument("--to", choices=("v2", "v1"), default="v2",
+                           help="v1 = the format up to 0.25.x, only for going back to an older version")
+    a = ap.parse_args(argv)
+    import time
+    from . import keys as K, vault as V
+    try:
+        store, rings = _open_keys(a)
+    except V.ConfigError as e:
+        print(str(e), file=sys.stderr)
+        return 1
+    now = int(time.time())
+
+    if a.action == "list":
+        counts = store.ciphertext_counts()
+        for purpose in K.PURPOSES:
+            ring = rings[purpose]
+            if ring is None:
+                print(f"{purpose:<13} — none yet (TinySesam creates it on its next start)")
+                continue
+            for i, k in enumerate(ring.keys):
+                state = "active  " if i == 0 else f"previous since {_when(k.since)}"
+                extra = f"  values: {counts.get(k.kid, 0)}" if purpose == K.VAULT else ""
+                if purpose == K.GATE and i and k.since is not None:
+                    extra = ("  published" if now - k.since <= K.GATE_OVERLAP_SEC else "  no longer published")
+                note = f"  note: {k.note}" if k.note else ""
+                print(f"{purpose:<13} {k.kid}  {state}  [{ring.origin}]{extra}{note}")
+        if counts.get("v1"):
+            print(f"vault         {counts['v1']} value(s) in the format up to 0.25.x — `tinysesam keys reencrypt`")
+        return 0
+
+    if a.action == "reencrypt":
+        def show(column, done, total):
+            if done == total or done % 100 == 0:
+                print(f"  {column}: {done}/{total}", flush=True)
+        try:
+            if a.to == "v2":
+                store.extract_secrets()
+            result = store.reencrypt(to_v1=a.to == "v1", progress=show)
+        except V.ConfigError as e:
+            print(str(e), file=sys.stderr)
+            return 1
+        print(f"Re-encrypted {sum(result.values())} value(s) with key {store.vault.active_kid}"
+              f"{' in the format v1' if a.to == 'v1' else ''}.")
+        left = {k: n for k, n in store.ciphertext_counts().items() if k != store.vault.active_kid}
+        if a.to == "v2" and left:
+            print(f"Still with other keys (written meanwhile by a service that was not restarted?): {left} — "
+                  f"restart TinySesam and run this again.", file=sys.stderr)
+            return 1
+        if a.to == "v1":
+            print("Way back: start the older version ONLY with this one key (a keyring with several lines is "
+                  "refused by it). Gate tokens: the older version derives its key from the vault key again — "
+                  "the proxy needs `tinysesam gate-key` of that version. docs/OPERATIONS.md \"Keys\".")
+        return 0
+
+    purpose = a.purpose
+    ring = rings[purpose]
+    if ring is None:
+        print(f"No {purpose} key yet — start TinySesam (this version) once, it creates it.", file=sys.stderr)
+        return 1
+    env = K.ENV[purpose]
+    if ring.origin == "environment":
+        print(f"The {purpose} key comes from {env}: change it there. Rotate: the new key into {env}, the old one "
+              f"into {env}_PREVIOUS, restart{'; then `tinysesam keys reencrypt`' if purpose == K.VAULT else ''}. "
+              f"Retire: drop it from {env}_PREVIOUS. A new key: python -c \"import os,base64;"
+              f"print(base64.b64encode(os.urandom(32)).decode())\"", file=sys.stderr)
+        return 1
+
+    if a.action == "rotate":
+        material = K.new_material(purpose)
+        if ring.origin == "database":
+            kid = store.key_ring_rotate(purpose, material)
+        else:
+            kid = K.kid_for(purpose, material)
+            keys = [K.Key(kid, material)] + [K.Key(k.kid, k.material, now if i == 0 else k.since, k.note)
+                                              for i, k in enumerate(ring.keys)]
+            try:
+                K.write_file(purpose, ring.path, keys)
+            except (OSError, V.ConfigError) as e:
+                print(f"{ring.path}: {e}", file=sys.stderr)
+                return 1
+        store.audit_log("key_rotated", None, None, f"purpose={purpose} kid={kid} source=cli")
+        print(f"New active {purpose} key: {kid} (the previous one {ring.active.kid} stays until `keys retire`).")
+        print("Restart TinySesam (all workers) so it uses the new key.")
+        if purpose == K.VAULT:
+            print("Then: tinysesam keys reencrypt --db … ; once `keys list` shows no values for the old key: "
+                  "tinysesam keys retire --purpose vault. Back up the key file again — apart from the database.")
+        elif purpose == K.GATE:
+            from . import gate as G
+            print(f"Proxy with jwk_url (/auth/gate/jwks.json): nothing to do. With sign_key: "
+                  f"{G.public_b64(K.gate_private(material))}")
+            print(f"After {K.GATE_OVERLAP_SEC // 60} minutes: tinysesam keys retire --purpose gate")
+        else:
+            print("Connected programs stay connected (looked up with the previous pepper; their next refresh "
+                  "moves them to the new one). tinysesam keys retire --purpose oauth-pepper once `keys retire` "
+                  "no longer refuses.")
+        return 0
+
+    # retire
+    chosen = [k for k in ring.previous if not a.kid or k.kid in a.kid]
+    unknown = set(a.kid) - {k.kid for k in ring.previous}
+    if unknown:
+        print(f"Not a previous {purpose} key: {', '.join(sorted(unknown))} (the active key is never retired).",
+              file=sys.stderr)
+        return 1
+    if not chosen:
+        print(f"No previous {purpose} key — nothing to retire.")
+        return 0
+    refusals = []
+    counts = store.ciphertext_counts() if purpose == K.VAULT else {}
+    for k in chosen:
+        if purpose == K.VAULT:
+            if counts.get(k.kid):
+                refusals.append(f"{k.kid}: {counts[k.kid]} stored value(s) still need it — `tinysesam keys reencrypt`")
+            elif counts.get("v1"):
+                refusals.append(f"{k.kid}: {counts['v1']} value(s) in the format up to 0.25.x may need it — "
+                                f"`tinysesam keys reencrypt`")
+        elif a.force:
+            continue
+        elif k.since is None:
+            refusals.append(f"{k.kid}: unknown since when it is previous — --force if the overlap has passed")
+        elif purpose == K.GATE and now - k.since <= K.GATE_OVERLAP_SEC:
+            refusals.append(f"{k.kid}: gate tokens signed with it may still be valid until "
+                            f"{_when(k.since + K.GATE_OVERLAP_SEC)} (--force: they take the fallback path once)")
+        elif purpose == K.PEPPER and (n := store.oauth_live_tokens_before(k.since, now)):
+            refusals.append(f"{k.kid}: {n} OAuth code(s)/token(s) from before the rotation are still valid "
+                            f"(--force: those programs must connect again)")
+    if refusals:
+        print("Not retired:\n  " + "\n  ".join(refusals), file=sys.stderr)
+        return 1
+    gone = [k.kid for k in chosen]
+    if ring.origin == "database":
+        store.key_ring_retire(purpose, gone)
+    else:
+        try:
+            K.write_file(purpose, ring.path, [k for k in ring.keys if k.kid not in gone])
+        except (OSError, V.ConfigError) as e:
+            print(f"{ring.path}: {e}", file=sys.stderr)
+            return 1
+    store.audit_log("key_retired", None, None, f"purpose={purpose} kid={','.join(gone)} source=cli")
+    print(f"Retired {purpose} key(s): {', '.join(gone)}.")
+    return 0
+
+
 def _gate_key(argv) -> int:
     ap = argparse.ArgumentParser(
         prog="tinysesam gate-key",
         description="Print the public key of the gate tokens (sign_key for caddy-jwt, "
-                    "sign_alg EdDSA). Public, not a secret.")
-    ap.add_argument("--db", required=True, help="path to the TinySesam database (config.db_path)")
-    ap.add_argument("--secrets-key-file", default="", help="like config.secrets_key_file")
+                    "sign_alg EdDSA) — or with --jwks the key set of /auth/gate/jwks.json. Public, not a secret.")
+    _key_args(ap)
+    ap.add_argument("--jwks", action="store_true", help="the JSON Web Key Set (active + previous within the overlap)")
     a = ap.parse_args(argv)
-    import os
-    from . import gate, vault
-    # The key is derived from the base key. If that does not exist yet, `load_key`
-    # creates it — a read command must not do that: the proxy would get a key
-    # that the service (with its environment) does not use at all.
-    if not (os.environ.get(vault.ENV_VAR, "").strip() or a.secrets_key_file
-            or os.path.exists(a.db + ".key")):
-        print(f"No base key: neither {vault.ENV_VAR} nor --secrets-key-file nor "
-              f"{a.db}.key. Call it with the same environment as the service.", file=sys.stderr)
-        return 1
+    import json
+    import time
+    from . import gate, keys as K, vault as V
     try:
-        key_name, _origin = vault.load_key(a.db, a.secrets_key_file)
-    except vault.ConfigError as e:
+        _store, rings = _open_keys(a)
+    except V.ConfigError as e:
         print(str(e), file=sys.stderr)
         return 1
-    print(gate.public_b64(gate.derive_key_name(key_name)))
+    ring = rings[K.GATE]
+    if ring is None:
+        print("No gate key yet — start TinySesam (this version) once, it creates it.", file=sys.stderr)
+        return 1
+    if a.jwks:
+        print(json.dumps(K.jwks(ring, int(time.time())), indent=2))
+    else:
+        print(gate.public_b64(K.gate_private(ring.active.material)))
     return 0
 
 
@@ -597,6 +799,8 @@ def main(argv=None):
         sys.exit(_delete(argv[1:]))
     elif cmd == "gate-key":
         sys.exit(_gate_key(argv[1:]))
+    elif cmd == "keys":
+        sys.exit(_keys(argv[1:]))
     else:
         # `--help` is a question, not an error: it belongs on stdout and ends with 0. A
         # typo, on the other hand, goes to stderr and ends with 2, otherwise no script notices the difference.
@@ -611,7 +815,8 @@ def main(argv=None):
               "       python -m tinysesam owner  --db <file> <user>\n"
               "       python -m tinysesam rename --db <file> <user> <new-name>\n"
               "       python -m tinysesam delete --db <file> <user> [--yes]\n"
-              "       python -m tinysesam gate-key --db <file>",
+              "       python -m tinysesam gate-key --db <file> [--jwks]\n"
+              "       python -m tinysesam keys list|rotate|reencrypt|retire --db <file> [--purpose P]",
               file=sys.stdout if help_text else sys.stderr)
         sys.exit(0 if help_text else 2)
 

@@ -143,6 +143,11 @@ class TinySesamConfig:
     # trusted_redirect_hosts or oidc_clients. Template: deploy/forward-auth/Caddyfile.gate.
     gate_token_enabled: bool = False
     gate_token_ttl_sec: int = 300          # lifetime = revocation delay at the proxy; 30–3600
+    # Keyring file of the gate signing key (T-48, ADR-12): Base64 of a 32-byte Ed25519 seed, further lines are
+    # older keys the proxy still accepts. The environment variable TINYSESAM_GATE_KEY (+ `_PREVIOUS`) takes
+    # precedence; without both the key is random and kept in the database, encrypted with the vault key. Never
+    # derived from the vault key. The proxy learns it from /auth/gate/jwks.json (`jwk_url`) or `tinysesam gate-key`.
+    gate_key_file: str = ""
     # How the gate signs in someone who is not signed in (T-21): "page" = TinySesam's login page
     # (with the application's name from forward_apps), "direct" = on page load straight to the
     # identity provider and back to the requested address. "direct" only if OIDC is the only
@@ -191,9 +196,10 @@ class TinySesamConfig:
     # counting as reuse (two processes of one client refreshing at once). 0 = every second use revokes the
     # connection; Claude Code serialises its refreshes, so 0 is enough there. 0–60.
     oauth_refresh_grace_sec: int = 0
-    # File with the pepper of the token digests (Base64, at least 32 bytes). The environment variable
-    # TINYSESAM_OAUTH_PEPPER takes precedence; without both it is derived from the master key
-    # (secrets_key_file / TINYSESAM_SECRETS_KEY). Changing it disconnects every device.
+    # Keyring file with the pepper of the token digests (Base64, at least 32 bytes; further lines: older peppers,
+    # docs/OPERATIONS.md "Keys"). The environment variable TINYSESAM_OAUTH_PEPPER takes precedence; without both
+    # the pepper is a random key of its own, stored in the database encrypted with the vault key (ADR-12).
+    # Rotation: `tinysesam keys rotate --purpose oauth-pepper` — connected devices stay connected.
     oauth_pepper_file: str = ""
     https_mode: str = "warn"              # off | warn | force  — force = HTTP→HTTPS redirect;
                                           # warn = also runs WITHOUT a certificate (with a warning in the panel)
@@ -318,10 +324,11 @@ class TinySesamConfig:
 
     # --- TOTP (2FA on top of password/OIDC; passkeys are already phishing-resistant) ---
     totp_enabled: bool = True             # users may set up TOTP
-    #: Key file for encrypting the TOTP secrets (H-14/H-15; 32 bytes, Base64).
-    #: The environment variable TINYSESAM_SECRETS_KEY takes precedence; with neither, TinySesam creates
-    #: `<db_path>.key` (0600). Without the key all TOTP setups are lost — back it up separately
-    #: from the database (docs/OPERATIONS.md).
+    #: Keyring file of the vault (H-14/H-15, T-48): it encrypts the TOTP secrets, OIDC refresh/ID tokens and the
+    #: keys kept in the database (32 bytes, Base64; the first line is active, further lines are older keys that
+    #: only decrypt). The environment variable TINYSESAM_SECRETS_KEY (+ `_PREVIOUS`) takes precedence; with
+    #: neither, TinySesam creates `<db_path>.key` (0600). Without the key all TOTP setups are lost — back it
+    #: up separately from the database (docs/OPERATIONS.md "Keys"). Rotation: `tinysesam keys rotate`.
     secrets_key_file: str = ""
     # CAUTION: ineffective and therefore REJECTED since 0.18.0 — the switch was never
     # read. Making TOTP mandatory works through the factor chain:

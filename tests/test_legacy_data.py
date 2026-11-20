@@ -185,8 +185,10 @@ os.close(os.open(_s10_db, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600))
 _s10_raw = sqlite3.connect(_s10_db)
 _s10_raw.executescript(_s10_schema9)
 _s10_raw.execute("ATTACH DATABASE ? AS source", (_s10_cfg["db_path"],))
+# `key_material` (schema 19) is encrypted with the source's vault key, which the copy at another path does not have —
+# and a file of schema 9 had no such table: it stays empty, the start creates the keys anew.
 for (_tab,) in _s10_raw.execute("SELECT name FROM main.sqlite_master WHERE type='table' "
-                                "AND name NOT LIKE 'sqlite_%'").fetchall():
+                                "AND name NOT LIKE 'sqlite_%' AND name <> 'key_material'").fetchall():
     _sp = ", ".join(z[1] for z in _s10_raw.execute(f"PRAGMA main.table_info({_tab})"))
     _s10_raw.execute(f"INSERT INTO main.{_tab}({_sp}) SELECT {_sp} FROM source.{_tab}")
 _s10_raw.commit()

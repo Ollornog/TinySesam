@@ -293,26 +293,79 @@ an admin would set the owner's password and be one themselves.
 
 An owner is always an admin "by hand" (`is_admin=1`): no identity provider takes the right from them (H-5).
 
-## Keys for the TOTP secrets
+## Keys
 
-TOTP secrets are stored AES-256-GCM-encrypted in the database (H-14/H-15, mandatory). The
-key (32 bytes, Base64) comes from `TINYSESAM_SECRETS_KEY`, otherwise from `secrets_key_file`, otherwise
-from `<db_path>.key` (created at the first start, 0600, with a warning in the log; atomic, even if
-several workers start for the first time simultaneously).
+Since T-48 ([ADR-12](../backlog/ADR-12-key-purposes-keyrings-and-rotation.md)) every key has one purpose. Up to 0.25.x a
+single base key encrypted the secrets AND was, by HKDF, the gate signing key and the OAuth pepper — whoever could read
+`<db>.key` could mint a gate token for any account, and the key could not be changed.
 
-- **Back it up separately.** Without the key all TOTP setups are lost; the database
-  alone is of no use for that — and that is exactly the point. `tinysesam backup` reminds you of this.
-- **Next to the database** it protects against a database file that leaks on its own, not against
-  a backup of the whole directory. For real separation use the environment or a file in
-  another place (Docker secret).
-- **Wrong key** → the start aborts (`ConfigError`) instead of letting every TOTP sign-in fail
-  silently — checked against TOTP secrets and refresh tokens, so also on an
-  instance without TOTP. SQLite overwrites deleted data (`secure_delete`), so that a replaced
-  plaintext does not remain in free pages of the file. A key change (rotation) does not exist yet.
-- Also with this key: the refresh tokens of the OIDC sessions (below).
-- **Derived** from it (HKDF, own context): the signing key of the gate tokens (below). Whoever
-  changes the base key also changes that one — the proxy then needs the new public
-  key.
+### Inventory (ASVS 11.1.1, 11.1.2)
+
+| Purpose | Protects | Algorithm | Material | Source, in this order | Lifetime of what it made |
+|---|---|---|---|---|---|
+| `vault` | TOTP secrets, OIDC refresh and ID tokens, an OAuth successor pair in its grace window, the two keys below when kept in the database | AES-256-GCM, 96-bit random nonce, AAD = key ID + table/column/row | 32 random bytes | `TINYSESAM_SECRETS_KEY` (+ `TINYSESAM_SECRETS_KEY_PREVIOUS`), `secrets_key_file`, `<db_path>.key` (created at the first start, 0600) | as long as the row |
+| `gate` | signature of the gate tokens (ADR-9) | Ed25519 (`EdDSA`), header `typ: tinysesam-gate+jwt`, `kid` | 32-byte random seed — **never derived** from the vault key | `TINYSESAM_GATE_KEY` (+ `_PREVIOUS`), `gate_key_file`, otherwise the table `key_material`, encrypted with the vault key | `gate_token_ttl_sec`, at most 3600 s |
+| `oauth-pepper` | HMAC-SHA-256 of the stored OAuth codes and tokens (ADR-11) | HMAC-SHA-256 | ≥ 32 random bytes | `TINYSESAM_OAUTH_PEPPER` (+ `_PREVIOUS`), `oauth_pepper_file`, otherwise `key_material` | refresh tokens: `oauth_refresh_idle_days` |
+| (per process) | the in-memory fingerprints of repeated wrong passwords | PBKDF2-HMAC-SHA-256 | 32 random bytes per start | never stored | `password_repeat_window_sec` |
+
+Each purpose is a **keyring**: the first key is active (encrypts, signs, digests), the others are *previous* (decrypt,
+verify, look up) until they are retired. A key file holds one Base64 key per line, the active one first; older lines
+may carry `since=<unix time>` and `note=<word>`; comments start with `#`. A file of 0.25.x (one line) is a keyring with
+one key — nothing to convert. `tinysesam keys list --db <file>` shows every key with purpose, ID (`kid`) and state, and
+for the vault how many stored values still need it — never key material.
+
+- **Where it lives.** The vault key is NOT in the database. The gate key and the pepper, without an own source, are in
+  the database, encrypted with the vault key: the database alone gives neither, the vault key alone (a leaked
+  environment, a key backup) gives no gate key either. The default `<db>.key` beside the database gives both to whoever
+  can read the directory — `config_check` says so when the gate is on. For real separation: the vault key from the
+  environment or a file in another place (Docker secret), and if the proxy's trust matters most, the gate key from its
+  own source (`TINYSESAM_GATE_KEY`, `gate_key_file`).
+- **Back up the keys separately from the database.** Without the vault key all TOTP setups are lost, the OIDC sessions
+  must sign in again and the gate key and pepper kept in the database are gone (new ones are made only after their rows
+  are removed: `DELETE FROM key_material`, then the start creates them; connected OAuth programs must reconnect).
+  `tinysesam backup` reminds you of this.
+- **Wrong or incomplete key** → the start aborts (`ConfigError`) instead of letting every TOTP sign-in fail silently:
+  every key ID a stored value names must be in the vault keyring, and one value per column in the format up to 0.25.x
+  is probed. SQLite overwrites deleted data (`secure_delete`).
+- **`config_check` warns** when a key file is readable or writable by group or others (not for `/run/secrets/` and
+  `/run/credentials/`, where Docker and systemd put them), when a configured key file lies in the database's directory,
+  and when the gate is on while the vault key sits beside the database and the gate key in it. The start warns as long
+  as the gate keyring still holds the key derived from the vault key (`note: derived-v1`, below).
+
+### The vault format (T-54)
+
+`v2:<kid>:<Base64url(nonce ‖ ciphertext ‖ tag)>`. The associated data binds a value to its place: the key ID, the
+table and column, and what identifies the row for its whole life — the account for a TOTP secret, client and subject
+for a refresh token, client and account for an ID token (the session handle rotates), the token row for an OAuth
+successor, purpose and key ID for a key. A value copied into another account's row or into another column, or with an
+edited key ID, does not decrypt. Values of 0.25.x (`v1:`, no binding) are read with every key of the keyring and
+rewritten as `v2:` at the start (the log says how many); until the original key is retired, such a value restored from
+an old backup into another row would still decrypt — rotate and retire once after the update to close that.
+
+### Rotation — nothing is lost, nobody is signed out
+
+Run the commands as the service's user with the same environment and options as the service (`--secrets-key-file`,
+`--gate-key-file`, `--oauth-pepper-file`). They write the keyring file atomically and keep its owner and mode; a key
+from an environment variable is changed there (the command says how). Every rotation and retirement is in the audit
+log (`key_rotated`, `key_retired`).
+
+- **Vault:** `tinysesam keys rotate --purpose vault` → restart the service (all workers) → `tinysesam keys reencrypt`
+  (re-encrypts every stored value with the active key, prints its progress per column, compares and swaps per row so a
+  value the service changed meanwhile is not overwritten; a running service that meets a value of a key it has not
+  loaded re-reads its key file) → `tinysesam keys retire --purpose vault`, which refuses while any stored value still
+  names the old key. Then back up the key file again. From the environment: the new key into
+  `TINYSESAM_SECRETS_KEY`, the old one into `TINYSESAM_SECRETS_KEY_PREVIOUS`, restart, `reencrypt`, then drop it.
+- **Gate:** `tinysesam keys rotate --purpose gate` → restart. A proxy with `jwk_url` fetches `/auth/gate/jwks.json`
+  again when it meets the new `kid` (measured with caddy-jwt 1.4.0: the first one or two requests take the fallback path,
+  then the new key is used); the previous key stays published for 3600 s (the longest a token lives), so tokens signed
+  before the rotation run out instead of being cut. A proxy with `sign_key` needs the printed value (`tinysesam
+  gate-key`); until it has it, every request takes the fallback path — slower, nobody is signed out. After the
+  overlap: `tinysesam keys retire --purpose gate` (refuses earlier; `--force` cuts tokens that may still live — they
+  take the fallback path once).
+- **OAuth pepper:** `tinysesam keys rotate --purpose oauth-pepper` → restart. Codes and tokens are looked up with the
+  active pepper and then with the previous ones, so every connected program stays connected; its next refresh issues
+  tokens under the new pepper. `tinysesam keys retire --purpose oauth-pepper` refuses while a code or token from before
+  the rotation is still valid (`--force`: those programs must connect again).
 
 ## Gate token in front of third-party applications (ADR-9)
 
@@ -323,9 +376,18 @@ cookie itself and asks `/auth/forward` only when it is missing or expires. Templ
 - **Caddy needs the plugin caddy-jwt.** The official image does not have it; it is built from
   `deploy/forward-auth/caddy-gate/Dockerfile` (Caddy version and plugin pinned). A Caddy without
   the plugin does not start at all with the template (`unrecognized directive: jwtauth`).
-- **Public key for the proxy:** `tinysesam gate-key --db <file>` — with the same
-  environment as the service (`TINYSESAM_SECRETS_KEY` or `--secrets-key-file`). Without a base key
-  the command aborts instead of creating a new one. In the Caddyfile as `TS_GATE_PUBKEY`.
+- **Public keys for the proxy:** `/auth/gate/jwks.json` — the active gate key and the previous ones within their
+  overlap, as a JSON Web Key Set (caddy-jwt `jwk_url`; public, cached five minutes). A rotation then needs nothing at
+  the proxy. Or one fixed key: `tinysesam gate-key --db <file>` (`--jwks`: the set) — with the same environment as the
+  service; it never creates a key. In the Caddyfile as `TS_GATE_PUBKEY` for `sign_key`; after every gate rotation
+  anew. **After updating from 0.25.x** the gate key is new (it was derived from the vault key, ADR-12): give the proxy
+  the new one (`jwk_url`, or `TS_GATE_PUBKEY` = `tinysesam gate-key`), then `tinysesam keys retire --purpose gate` —
+  as long as a proxy keeps the old `sign_key`, whoever holds the vault key can still mint tokens it accepts, and every
+  new token takes the fallback path.
+- **Type:** every token carries `typ: tinysesam-gate+jwt` (RFC 8725 §3.11, T-53). caddy-jwt does not check `typ`
+  (measured with 1.4.0: `JWT` and `at+jwt` pass alike); at the proxy the separation rests on the key, which signs
+  nothing but gate tokens, and on `aud`, which is a bare host (`app.example.com|roles=…`) where an RFC 8707 audience is
+  a URL. `gate.check` (TinySesam's reference check) refuses any other type.
 - **Issuer:** `base_url` without a trailing slash (`TS_GATE_ISSUER`); without `base_url`
   `tinysesam`.
 - **Audience:** the application's host, with required roles including their specification:
@@ -824,8 +886,9 @@ and simply has no OAuth routes — connected programs get 401 until the update i
 working. No SQL is needed either way.
 
 - **Pepper:** the token digests are keyed with `TINYSESAM_OAUTH_PEPPER` / `oauth_pepper_file`, otherwise with a
-  subkey of the master key. Changing the pepper (or the master key without an own pepper) disconnects every program:
-  their tokens no longer match. Back it up next to the master key, apart from the database.
+  random pepper of its own kept in the database (encrypted with the vault key; up to T-48 a subkey of the vault key —
+  an installation that already had connections keeps that one as a previous pepper). Rotation keeps every program
+  connected ("Keys" above). Back an own pepper up next to the vault key, apart from the database.
 - **Housekeeping:** `gc()` / `tinysesam gc` removes expired codes and tokens, connections without a live token,
   revoked connections after a week and registrations that never led to a connection after a day (`oauth_*` in the
   result).
@@ -848,6 +911,20 @@ H2 also changes defaults without touching the schema — the way back is a confi
 `admin_require_mfa=False` (panel without a fresh confirmation; `config_check` warns),
 `qr_login_require_second_factor=False` (single-factor accounts may approve a cross-device sign-in again),
 `admin_password_must_change=False`, `notify_new_access=False` (no mail about new access; the hook stays).
+
+## Keys and the vault format: rollback (schema 19)
+
+Schema 19 (T-48, T-54) **adds** the table `key_material`. The stored values change, though: the first start rewrites
+every `v1:` value as `v2:<kid>:` with its binding. An older version takes a `v2:` value for plain text — it cannot use
+those TOTP secrets and refresh tokens, and its own start wraps the TOTP values once more (the newer version unwraps that
+at its next start, nothing is lost, but sign-ins with TOTP fail meanwhile).
+
+**The way back:** with the NEWER version, `tinysesam keys reencrypt --to v1 --db <file>` (the active vault key writes
+the format of 0.25.x; the table `key_material` stays and is ignored), then start the older version with only that one
+key (it refuses a key file with several lines — put the active line alone into the file or the environment). The older
+version derives the gate key from the vault key again: the proxy needs its `tinysesam gate-key` (it has no
+`/auth/gate/jwks.json`; a proxy with `jwk_url` would send every request the fallback path). OAuth did not exist before
+schema 17. Coming forward again needs nothing — the next start rewrites `v2:` and finds its keys in `key_material`.
 
 ## Sign-in methods and their strength
 

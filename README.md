@@ -931,6 +931,20 @@ identity links), never a secret. Without `--yes` it asks, and without a terminal
 unknown account ends with exit 1. `#<id>` instead of the name works as in `rename`. A raw `DELETE`
 in the database is the wrong way — it leaves the name in every audit row.
 
+### Keys: list, rotate, re-encrypt, retire (T-48)
+
+```bash
+python -m tinysesam keys list      --db auth.db                    # every key: purpose, ID, state — never the key
+python -m tinysesam keys rotate    --db auth.db --purpose vault    # or gate, oauth-pepper
+python -m tinysesam keys reencrypt --db auth.db                    # stored secrets onto the active vault key
+python -m tinysesam keys retire    --db auth.db --purpose vault    # refuses while anything still needs the old key
+```
+
+Three purposes, each a keyring (active key + older ones that still decrypt or verify): `vault` (the secrets at
+rest), `gate` (the gate token's signature) and `oauth-pepper` (the OAuth token digests). Nothing is lost and nobody
+is signed out by a rotation; the steps, the sources (environment, file, database) and the way back to an older
+version are in `docs/OPERATIONS.md`, "Keys".
+
 ## Demo mode
 
 `demo_mode=True` creates the accounts `demo` and `demoadmin`, shows their credentials on the sign-in
@@ -957,7 +971,8 @@ Modeled on Authelia/Fail2Ban — the thresholds are changeable **in the admin pa
   deleted, disabled or demoted (at least one, hand-overable, `tinysesam owner` as the emergency
   path); sessions without "stay signed in" end after 8 h of inactivity (`session_idle_minutes`); TOTP
   secrets are stored AES-256-GCM-encrypted — **back up the key** (`TINYSESAM_SECRETS_KEY`,
-  `secrets_key_file` or `<db>.key`) separately; an OIDC session re-checks its refresh token every
+  `secrets_key_file` or `<db>.key`) separately, rotate it with `tinysesam keys rotate` (below); an OIDC session
+  re-checks its refresh token every
   `oidc_session_refresh_minutes` and ends when the provider says no. Details: `docs/OPERATIONS.md`.
 - **Lockout notice** (ASVS 6.3.5): with a mailer configured, the verified address of a locked-out
   account gets one notice per lockout window (opt-out `notify_login_failures=False`).
@@ -1533,8 +1548,10 @@ existing forward auth, so a request and its body are not lost.
 - **Proxy:** Caddy with the [caddy-jwt](https://github.com/ggicci/caddy-jwt) plugin — template
   [`deploy/forward-auth/Caddyfile.gate`](https://github.com/Ollornog/TinySesam/blob/main/deploy/forward-auth/Caddyfile.gate),
   build [`deploy/forward-auth/caddy-gate/Dockerfile`](https://github.com/Ollornog/TinySesam/blob/main/deploy/forward-auth/caddy-gate/Dockerfile).
-- **Key:** derived from the installation's base key (`TINYSESAM_SECRETS_KEY`) — no second secret.
-  `tinysesam gate-key --db …` prints the public half for the proxy.
+- **Key:** a random Ed25519 key of its own (since T-48, ADR-12 — up to 0.25.x it was derived from the vault key):
+  `TINYSESAM_GATE_KEY`, `gate_key_file`, otherwise kept in the database encrypted with the vault key. The proxy
+  fetches the public keys from `/auth/gate/jwks.json` (`jwk_url`, a rotation needs nothing at the proxy) or takes
+  `tinysesam gate-key --db …` as `sign_key`. Each token carries `typ: tinysesam-gate+jwt` and its `kid`.
 - **Roles:** if the proxy requires roles (`X-TinySesam-Roles`), they are part of the token's
   audience (`app.example.com|roles=admin`); a token issued without roles does not count there.
 - **Cost:** signing out, locking an account or a withdrawn grant only takes effect at the proxy
@@ -1707,7 +1724,8 @@ Building blocks for pages you build yourself — signatures and descriptions in
   `peek_magic` / `redeem_magic`, `TOKEN_PATHS`, `require_public_base`, `create_signin_link` (one-time
   sign-in link without mail, address from `base_url`).
 - **Proxy configuration for the gate token:** `gate_public_key` (`sign_key` for caddy-jwt, same as
-  `tinysesam gate-key`), `gate_issuer` (`issuer_whitelist`).
+  `tinysesam gate-key`), `gate_jwks` (the key set behind `/auth/gate/jwks.json` for `jwk_url`), `gate_issuer`
+  (`issuer_whitelist`).
 - **Your own routes and extension points:** `client_ip` (the real client address behind
   `trusted_proxies`), `json_body` (JSON body with the CSRF check for cookie clients), `browser_path`
   (links to TinySesam pages under a mount prefix), `flow_cookie_name`, `t` (translated text in
@@ -1773,7 +1791,7 @@ without extras (guards the stdlib-scrypt fallback), and a browser job that also 
 
 ## Status
 
-**93 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
+**94 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
 
 Implemented and tested: password/TOTP/sessions/roles, remember-me, step-up and per-route MFA,
 factor chains, personal PIN, shared resource secrets, magic links + mailer hook, registration and

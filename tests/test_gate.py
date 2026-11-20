@@ -134,7 +134,7 @@ now = int(time.time())
 
 
 def new_signed(content_new, head_new=None, key_name=None):
-    kk = gate._b64u(json.dumps(head_new or {"alg": "EdDSA", "typ": "JWT"}).encode())
+    kk = gate._b64u(json.dumps(head_new or {"alg": "EdDSA", "typ": gate.TOKEN_TYPE}).encode())
     ii = gate._b64u(json.dumps(content_new).encode())
     sig = (key_name or auth._gate_key_name).sign(f"{kk}.{ii}".encode())
     return f"{kk}.{ii}.{gate._b64u(sig)}"
@@ -151,7 +151,11 @@ cases = {
     "alg HS256": f"{gate._b64u(json.dumps({'alg': 'HS256'}).encode())}.{i}.{s}",
     # Validly signed, but the header names another algorithm: only the comparison with
     # `EdDSA` catches that — the signature itself is correct.
-    "alg HS256, validly signed": new_signed(base, head_new={"alg": "HS256", "typ": "JWT"}),
+    "alg HS256, validly signed": new_signed(base, head_new={"alg": "HS256", "typ": gate.TOKEN_TYPE}),
+    # T-53 (RFC 8725 §3.11): validly signed by the gate key, but not declared a gate token — another JWT type.
+    "typ JWT, validly signed": new_signed(base, head_new={"alg": "EdDSA", "typ": "JWT"}),
+    "typ at+jwt, validly signed": new_signed(base, head_new={"alg": "EdDSA", "typ": "at+jwt"}),
+    "no typ, validly signed": new_signed(base, head_new={"alg": "EdDSA"}),
     "foreign key": new_signed(base, key_name=foreign),
     "expired": new_signed({**base, "exp": now - 1}),
     "not yet valid": new_signed({**base, "nbf": now + 60}),
@@ -218,32 +222,26 @@ assert r.status_code == 200 and token_from(r) == (None, None)
 auth.cfg.gate_token_enabled = True
 ok("gate_token_enabled=False → /auth/forward as before, without gate token")
 
-# ---------- Keys ----------
-# The same base key → the same signing key (all workers, every restart); a different one
-# → a different one. The proxy key therefore changes exactly when the base key changes.
+# ---------- Keys (T-48: a key of its own) ----------
+# The header names the type and the key; the same database keeps the same key across restarts (and workers);
+# the key is NOT derived from the vault key: two installations with the same vault key sign differently.
+head = json.loads(gate._read_b64u(tok.split(".")[0]))
+assert head == {"alg": "EdDSA", "typ": "tinysesam-gate+jwt", "kid": auth._gate_keyring.active.kid}, head
+again = TinySesam(auth.cfg)
+assert again.gate_public_key() == auth.gate_public_key()
 old = os.environ.get("TINYSESAM_SECRETS_KEY")
 try:
     os.environ["TINYSESAM_SECRETS_KEY"] = base64.b64encode(b"\x07" * 32).decode()
     a1, _ = instance()
     a2, _ = instance()
-    os.environ["TINYSESAM_SECRETS_KEY"] = base64.b64encode(b"\x08" * 32).decode()
-    a3, _ = instance()
 finally:
     if old is None:
         os.environ.pop("TINYSESAM_SECRETS_KEY", None)
     else:
         os.environ["TINYSESAM_SECRETS_KEY"] = old
-assert a1.gate_public_key() == a2.gate_public_key() != a3.gate_public_key()
-ok("signing key follows the base key: same for the same, different for a different one")
-
-# The signing key is derived, not the base key itself: whoever knows it (say from
-# a memory dump of the signing) does not thereby know the key of the TOTP secrets.
-g = b"\x07" * 32
-from cryptography.hazmat.primitives import serialization  # noqa: E402
-seed = gate.derive_key_name(g).private_bytes(serialization.Encoding.Raw, serialization.PrivateFormat.Raw,
-                                                 serialization.NoEncryption())
-assert seed != g and len(seed) == 32
-ok("signing key is derived (HKDF with its own context), not the base key")
+assert a1.gate_public_key() != a2.gate_public_key()
+assert gate.public_b64(gate.derive_key_name(b"\x07" * 32)) not in (a1.gate_public_key(), a2.gate_public_key())
+ok("header typ tinysesam-gate+jwt + kid; same database → same key; same vault key → NOT the same gate key")
 
 # ---------- CLI: tinysesam gate-key ----------
 db = auth.cfg.db_path

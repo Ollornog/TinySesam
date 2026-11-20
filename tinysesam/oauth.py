@@ -24,7 +24,6 @@ import base64
 import hashlib
 import hmac
 import json
-import os
 import re
 import secrets
 import zlib
@@ -33,11 +32,10 @@ from urllib.parse import urlencode, urlsplit
 
 from fastapi import Request
 
-from .errors import ConfigError
 from .store import now as _now
 
-#: Environment variable with the pepper (Base64 of at least 32 random bytes). Takes precedence over
-#: `oauth_pepper_file`. Without both the pepper is derived from the installation's master key.
+#: Environment variable with the pepper (Base64 of at least 32 random bytes; `_PREVIOUS`: older ones). Takes
+#: precedence over `oauth_pepper_file`. Without both the pepper is a random key of its own in the database (ADR-12).
 PEPPER_ENV = "TINYSESAM_OAUTH_PEPPER"
 
 ACCESS_PREFIX = "tsat_"
@@ -209,34 +207,10 @@ def metadata_path(resource: str) -> str:
 
 # ---------- pepper ----------
 
-def _read_pepper(text: str, origin: str) -> bytes:
-    try:
-        raw = base64.b64decode(text.strip(), validate=True)
-    except (ValueError, TypeError):
-        raise ConfigError(f"{origin}: the OAuth pepper is not valid Base64.") from None
-    if len(raw) < 32:
-        raise ConfigError(f"{origin}: the OAuth pepper must be at least 32 bytes (Base64 of 32 random bytes), "
-                          f"it has {len(raw)}.")
-    return raw
-
-
 def derive_pepper(master_key: bytes) -> bytes:
-    """The fallback pepper: a subkey of the installation's master key (like the gate key, ADR-9)."""
+    """The pepper up to 0.25.x: a subkey of the base key. Kept only so that an installation's existing connections
+    stay valid after the update (a previous key of the pepper keyring, `keys.DERIVED_V1`)."""
     return hmac.new(master_key, b"tinysesam/oauth-token-pepper/v1", hashlib.sha256).digest()
-
-
-def load_pepper(pepper_file: str, derived: bytes) -> tuple[bytes, str]:
-    """(pepper, origin): `TINYSESAM_OAUTH_PEPPER`, then `oauth_pepper_file`, otherwise `derived`."""
-    value = os.environ.get(PEPPER_ENV, "")
-    if value.strip():
-        return _read_pepper(value, PEPPER_ENV), "environment"
-    if pepper_file:
-        try:
-            with open(pepper_file, encoding="ascii") as f:
-                return _read_pepper(f.read(), f"oauth_pepper_file {pepper_file!r}"), "file"
-        except OSError as e:
-            raise ConfigError(f"oauth_pepper_file {pepper_file!r} cannot be read: {e}") from e
-    return derived, "derived"
 
 
 # ---------- the server ----------
@@ -244,15 +218,34 @@ def load_pepper(pepper_file: str, derived: bytes) -> tuple[bytes, str]:
 class OAuthServer:
     """The protocol logic. One instance per `TinySesam` (`auth._oauth`), built when `oauth_enabled` is on."""
 
-    def __init__(self, auth, pepper: bytes, pepper_origin: str):
+    def __init__(self, auth, peppers):
         self.auth = auth
         self.store = auth.store
-        self._pepper = pepper
-        self.pepper_origin = pepper_origin
+        #: The pepper keyring (`keys.Keyring`): the active pepper digests new tokens, the previous ones still
+        #: find what they digested — until `tinysesam keys retire --purpose oauth-pepper`.
+        self.peppers = peppers
+
+    @property
+    def pepper_origin(self) -> str:
+        return self.peppers.origin
 
     # --- helpers ---
     def digest(self, token: str) -> str:
-        return hmac.new(self._pepper, token.encode("utf-8"), hashlib.sha256).hexdigest()
+        return self._digest(self.peppers.active.material, token)
+
+    @staticmethod
+    def _digest(pepper: bytes, token: str) -> str:
+        return hmac.new(pepper, token.encode("utf-8"), hashlib.sha256).hexdigest()
+
+    def _find(self, token: str, lookup):
+        """(digest, row) of a stored code or token — with the active pepper first, then the previous ones. A token
+        issued before a pepper rotation is found by its old digest; the next refresh issues it anew."""
+        for key in self.peppers.keys:
+            h = self._digest(key.material, token)
+            row = lookup(h)
+            if row is not None:
+                return h, row
+        return self.digest(token), None
 
     @property
     def cfg(self):
@@ -503,8 +496,7 @@ class OAuthServer:
         code = form.get("code") or ""
         if not shape_ok(code, CODE_PREFIX):
             raise OAuthError("invalid_grant", "invalid authorization code")
-        h = self.digest(code)
-        row = self.store.oauth_code(h)
+        h, row = self._find(code, self.store.oauth_code)
         if row is None:
             raise OAuthError("invalid_grant", "invalid authorization code")
         # Reuse first, before any other field (RFC 6749 §4.1.2, RFC 9700 §4.2.4): a code that comes back was
@@ -558,8 +550,7 @@ class OAuthServer:
         token = form.get("refresh_token") or ""
         if not shape_ok(token, REFRESH_PREFIX):
             raise OAuthError("invalid_grant", "invalid refresh token")
-        h = self.digest(token)
-        row = self.store.oauth_token(h)
+        h, row = self._find(token, self.store.oauth_token)
         if row is None or row["kind"] != "refresh":
             raise OAuthError("invalid_grant", "invalid refresh token")
         if row["g_client_id"] != client["client_id"]:
@@ -594,7 +585,7 @@ class OAuthServer:
         rows[0] = (rows[0][0], "access", " ".join(access_scope), rows[0][3])
         answer = self._answer(at, rt, " ".join(access_scope))
         grace = int(self.cfg.oauth_refresh_grace_sec or 0)
-        successor = self.store.vault.encrypt(json.dumps(answer)) if grace > 0 else None
+        successor = self.store.seal_oauth_successor(h, json.dumps(answer)) if grace > 0 else None
         if not self.store.oauth_rotate(h, grant_id, now, ip, rows, successor):
             # Another request rotated the same token in between — that one is the use, this one is a reuse.
             again = self.store.oauth_token(h)
@@ -614,10 +605,10 @@ class OAuthServer:
         if grace <= 0 or not row["successor"] or row["used_at"] is None or now - int(row["used_at"]) > grace:
             return None
         try:
-            answer = json.loads(self.store.vault.decrypt(row["successor"]) or "{}")
+            answer = json.loads(self.store.open_oauth_successor(row) or "{}")
         except Exception:
             return None
-        nxt = self.store.oauth_token(self.digest(str(answer.get("refresh_token") or "")))
+        _, nxt = self._find(str(answer.get("refresh_token") or ""), self.store.oauth_token)
         if nxt is None or nxt["used_at"] is not None or nxt["g_revoked_at"] is not None:
             return None
         return answer
@@ -639,7 +630,7 @@ class OAuthServer:
         token = form.get("token") or ""
         if not (shape_ok(token, ACCESS_PREFIX) or shape_ok(token, REFRESH_PREFIX)):
             return
-        row = self.store.oauth_token(self.digest(token))
+        _, row = self._find(token, self.store.oauth_token)
         if row is None or row["g_client_id"] != client["client_id"]:
             return
         self.revoke_grant(int(row["grant_id"]), "client", ip)
@@ -663,7 +654,7 @@ class OAuthServer:
         a lock, a revoked grant or a removed resource takes effect at once."""
         if not shape_ok(token, ACCESS_PREFIX):
             return None, "malformed"
-        row = self.store.oauth_token(self.digest(token))
+        _, row = self._find(token, self.store.oauth_token)
         now = _now()
         if row is None or row["kind"] != "access":
             return None, "unknown"
