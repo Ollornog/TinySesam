@@ -8,7 +8,7 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 ## Meilensteine
 
 * ☐ **[M-1](M-1-api-stable-1-0.md)** 1.0 — API stable enough for PyPI — 14/14 erledigt
-* ☐ **[M-2](M-2-after-1-0.md)** After 1.0 — keeping the published package maintained — 35/52 erledigt
+* ☐ **[M-2](M-2-after-1-0.md)** After 1.0 — keeping the published package maintained — 38/52 erledigt
 * ☑ **[M-3](M-3-gate-in-front-of-third-party-apps.md)** Gate in front of third-party apps — fast, sign in once, sign out cleanly — 8/8 erledigt
 
 ## Aufgaben
@@ -60,13 +60,13 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 * ☑ **[T-45](T-45-admin-panel-step-up-by-default-admin-require-mfa.md)** Admin panel: step-up by default (admin_require_mfa) · M-2
 * ☑ **[T-46](T-46-admin-set-password-must-not-become-the-permanent-p.md)** Admin-set password must not become the permanent password · M-2
 * ☑ **[T-47](T-47-notify-the-account-holder-about-new-access-link-is.md)** Notify the account holder about new access (link issued, new device, success after failures) · M-2
-* ☐ **[T-48](T-48-key-rotation-for-secrets-key-and-a-gate-signing-ke.md)** Key rotation for secrets_key, and a gate signing key of its own · M-2
+* ☑ **[T-48](T-48-key-rotation-for-secrets-key-and-a-gate-signing-ke.md)** Key rotation for secrets_key, and a gate signing key of its own · M-2
 * ☐ **[T-49](T-49-oidc-max-age-auth-time-for-re-authentication.md)** OIDC: max_age / auth_time for re-authentication · M-2
 * ☐ **[T-50](T-50-session-lifetime-justify-against-nist-sp-800-63b-4.md)** Session lifetime: justify against NIST SP 800-63B-4, document parallel sessions · M-2
 * ☐ **[T-51](T-51-sign-in-link-lifetimes-magic-link-10-min-admin-lin.md)** Sign-in link lifetimes: magic link 10 min, admin link at most 24–72 h · M-2
 * ☐ **[T-52](T-52-response-hardening-for-l3-coop-csp-reporting-clear.md)** Response hardening for L3: COOP, CSP reporting, Clear-Site-Data, textContent, /healthz version · M-2
-* ☐ **[T-53](T-53-gate-token-explicit-type-and-separate-key-before-t.md)** Gate token: explicit type and separate key before the OAuth AS signs JWTs · M-2
-* ☐ **[T-54](T-54-vault-bind-ciphertexts-to-their-row-aad-with-user.md)** Vault: bind ciphertexts to their row (AAD with user_id and column) · M-2
+* ☑ **[T-53](T-53-gate-token-explicit-type-and-separate-key-before-t.md)** Gate token: explicit type and separate key before the OAuth AS signs JWTs · M-2
+* ☑ **[T-54](T-54-vault-bind-ciphertexts-to-their-row-aad-with-user.md)** Vault: bind ciphertexts to their row (AAD with user_id and column) · M-2
 * ☐ **[T-55](T-55-slsa-build-l3-and-an-sbom-for-wheel-and-sdist.md)** SLSA Build L3 and an SBOM for wheel and sdist · M-2
 * ☐ **[T-56](T-56-webauthn-user-verification-at-registration-random.md)** WebAuthn: user verification at registration, random user handle · M-2
 * ☐ **[T-57](T-57-totp-accept-at-most-one-step-back-switch-totp-wind.md)** TOTP: accept at most one step back (switch totp_window) · M-2
@@ -103,3 +103,4 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 * ☑ **[ADR-8](ADR-8-pin-as-first-factor.md)** A PIN may be the first factor — deliberate, configurable, with its own limit
 * ☑ **[ADR-9](ADR-9-gate-token-at-the-proxy.md)** Gate in front of third-party apps — the proxy verifies a short-lived gate token itself, TinySesam only when issuing
 * ☑ **[ADR-11](ADR-11-oauth-authorization-server-in-tinysesam.md)** OAuth 2.1 authorization server for MCP clients — built into TinySesam with own thin handlers, not Ory Hydra as a sidecar
+* ☑ **[ADR-12](ADR-12-key-purposes-keyrings-and-rotation.md)** One key per purpose, each a keyring with key IDs — vault, gate signature, OAuth pepper; rotation without loss

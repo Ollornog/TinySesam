@@ -55,13 +55,18 @@ rate limit, open-redirect protection via `safe_next`). Even so: review it yourse
   value from before is encrypted at startup). The key comes from `TINYSESAM_SECRETS_KEY`, else
   `secrets_key_file`, else a file `<db>.key` (mode `0600`) created next to the database. That
   default protects against a database file that leaks on its own, **not** against a copy of the
-  whole directory — and the same key derives the signing key of the gate tokens (ADR-9), so whoever
-  reads `<db>.key` can also mint gate tokens for every account and every protected application.
-  In production, and always for the gateway with gate tokens, keep the key outside the data
-  directory (`TINYSESAM_SECRETS_KEY` as a container secret, or `secrets_key_file`) and back it up
-  separately from the database: without it every TOTP setup is lost. A key change (rotation) does
-  not exist yet. Passkeys remain the factor that survives a database leak — only a public key is
-  stored for them.
+  whole directory. Since T-48 (ADR-12) every key has one purpose and its own material: the signing
+  key of the gate tokens (ADR-9) and the OAuth pepper are random keys, **never derived** from the
+  vault key — the vault key alone (a leaked environment, a key backup) mints no gate token. Without an
+  own source (`TINYSESAM_GATE_KEY`, `gate_key_file`) the gate key is kept in the database, encrypted
+  with the vault key, so `<db>.key` beside the database still gives both to whoever reads the whole
+  directory; `config_check` says so when the gate is on. In production, and always for the gateway
+  with gate tokens, keep the vault key outside the data directory (`TINYSESAM_SECRETS_KEY` as a
+  container secret, or `secrets_key_file`) and back it up separately from the database: without it
+  every TOTP setup is lost. Each value carries its key ID and is bound to its row (AES-GCM associated
+  data, T-54), and every key can be rotated without loss (`tinysesam keys rotate|reencrypt|retire`,
+  docs/OPERATIONS.md "Keys"). Passkeys remain the factor that survives a database leak — only a
+  public key is stored for them.
 - **Known limit — without the `__Host-` prefix on the session cookie, every host under the
   parent domain is trusted.** The session cookie carries `__Host-` only with `cookie_secure=True`,
   an empty `cookie_domain`, `cookie_path="/"` and `cookie_host_prefix=True` — the defaults. SSO

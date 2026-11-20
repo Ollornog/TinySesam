@@ -2,7 +2,7 @@
 id: T-54
 type: Task
 title: 'Vault: bind ciphertexts to their row (AAD with user_id and column)'
-status: offen
+status: erledigt
 milestone: M-2
 tags: [security, crypto]
 created: '2026-11-20'
@@ -15,3 +15,9 @@ Source: Security review 2026-11-20 (ASVS 5.0.0, NIST SP 800-63B-4; state main b1
 encrypted TOTP secret of one account can be copied to another.
 
 **Proposal:** `user_id` and column into the AAD — together with T-48 under `v2:`. Effort S.
+
+## Done (2026-11-20, ADR-12)
+
+Format `v2:<kid>:…`, AAD = key ID + table/column + the row's lasting identity (account; client and subject; client and
+account; token row; purpose and kid). `v1:` values are read with every key and rewritten at the start. A value moved to
+another row or column, or with an edited key ID, no longer decrypts (`tests/test_keys.py`).

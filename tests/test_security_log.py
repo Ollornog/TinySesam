@@ -284,9 +284,10 @@ _command_list = set(re.findall(r'cmd == "([a-z]+)"', _inspect.getsource(_cli_mai
 # creates no account but does change an identifier — which is why the startup messages on
 # identifier collisions and control characters now name it (tests/test_security_findings.py checks that
 # the named route exists); the first-admin warning here stays as it is. `delete` (T-27) removes an
-# account — it creates none and changes no identifier (it frees them), so this warning stays too.
+# account — it creates none and changes no identifier (it frees them), so this warning stays too. `keys` (T-48)
+# rotates and retires the installation's keys — no account, no identifier.
 assert _command_list == {"version", "passwd", "backup", "restore", "gc", "audit", "unlock", "owner",
-                      "rename", "delete"}, \
+                      "rename", "delete", "keys"}, \
     (f"CLI commands changed: {sorted(_command_list)} — if one of them can now create accounts "
      "or change identifiers, the operator messages must be changed along")
 ok("first-admin warning names ensure_admin instead of the CLI (which creates no accounts)")

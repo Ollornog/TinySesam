@@ -312,30 +312,47 @@ class TinySesam:
         self.store = Store(config.db_path)
         self.store.idle_sec = (max(0, int(config.session_idle_minutes or 0)) * 60,
                                    max(0, int(config.session_idle_minutes_remember or 0)) * 60)
-        # TOTP secrets only encrypted (H-14/H-15, mandatory). Key from the environment, the
-        # configuration or next to the database; a wrong one aborts startup.
+        # Secrets at rest only encrypted (H-14/H-15, mandatory). The vault keyring comes from the environment, the
+        # configuration or next to the database; a wrong one aborts startup (`extract_secrets`, BEFORE anything else
+        # reads or writes an encrypted value).
+        from . import keys as _keys
         from . import vault as _vault
-        _key_name, self._key_name_origin = _vault.load_key(
-            config.db_path, config.secrets_key_file)
-        self.store.vault = _vault.Vault(_key_name)
-        # Gate token (ADR-9, T-19): the signing key is derived from the same base key
-        # — no second secret to back up and distribute. Always derived, even
-        # when the gate is off: `tinysesam gate-key` should be able to prepare the proxy before
-        # the switch is flipped.
+        self._vault_keyring = _keys.load_vault(config.db_path, config.secrets_key_file)
+        self._key_name_origin = self._vault_keyring.origin
+        self.store.vault = _vault.Vault(self._vault_keyring,
+                                        reload=_keys.reloader(config.db_path, config.secrets_key_file))
+        self.store.extract_secrets()
+        legacy_base = self._vault_keyring.active.material
+        # Gate token (ADR-9, T-19) — since T-48 a random key of its own, never derived from the vault key: whoever
+        # reads the vault key alone mints no gate token. Always loaded, even when the gate is off: `tinysesam
+        # gate-key` should be able to prepare the proxy before the switch is flipped. On the first start after
+        # 0.25.x the key derived from the base key stays a PREVIOUS key (published for `GATE_OVERLAP_SEC`), so the
+        # tokens it signed run out instead of being cut.
         from . import gate as _gate
-        self._gate_key_name = _gate.derive_key_name(_key_name)
-        # Separate subkey for the password fingerprints: without it a leaked memory dump would be a
-        # dictionary target against the typos of the real passwords.
-        self._pw_repetition_key_name = hmac.new(_key_name, b"tinysesam/passwort-wiederholung/v1",
-                                                    hashlib.sha256).digest()
-        # OAuth (T-36): the fallback pepper of the token digests, a subkey like the gate key. The server itself
-        # is built with the router (`_oauth_server`) — the switch may be set after construction.
+        derived_gate = None
+        # Only for a database that already has sessions — a new installation has no token signed with it.
+        if config.gate_token_enabled and self.store.has_sessions():
+            from cryptography.hazmat.primitives import serialization as _ser
+            derived_gate = _gate.derive_key_name(legacy_base).private_bytes(
+                _ser.Encoding.Raw, _ser.PrivateFormat.Raw, _ser.NoEncryption())
+        self._gate_keyring = _keys.load_stored(_keys.GATE, self.store, str(config.gate_key_file or ""),
+                                               legacy=derived_gate)
+        self._gate_key_name = _keys.gate_private(self._gate_keyring.active.material)
+        self._gate_legacy_warning()
+        # Key for the password fingerprints, per process and only in memory: a leaked memory dump is no
+        # dictionary target against the typos of the real passwords without it — and it never touches the vault.
+        self._pw_repetition_key_name = secrets.token_bytes(32)
+        # OAuth (T-36): the pepper of the token digests, a key of its own like the gate key (ADR-12). Before
+        # 0.26 it was a subkey of the base key; an installation that already has connections keeps that one as a
+        # previous pepper, so they stay connected. The server itself is built with the router (`_oauth_server`) —
+        # the switch may be set after construction.
         from . import oauth as _oauth_mod
-        self._oauth_derived_pepper = _oauth_mod.derive_pepper(_key_name)
+        legacy_pepper = _oauth_mod.derive_pepper(legacy_base) if self.store.oauth_has_grants() else None
+        self._pepper_keyring = _keys.load_stored(_keys.PEPPER, self.store, str(config.oauth_pepper_file or ""),
+                                                 legacy=legacy_pepper)
         self._oauth: Any = None
         if config.oauth_enabled:
             self._oauth_server()
-        self.store.extract_secrets()
         # B6-8: Without the [argon2] extra every sign-in against an argon2 hash fails — until
         # now without a word, the account just looked like "wrong password" to the user.
         # At startup, count and say how many it affects; startup itself stays possible
@@ -5768,7 +5785,7 @@ class TinySesam:
                                     security.for_log(client), security.for_log(name))
             return
         try:
-            refresh = self.store.vault.decrypt(z["refresh"])
+            refresh = self.store.oidc_refresh_plain(z) or ""
         except Exception:   # noqa: BLE001 — wrong key: the start checks that; do not burn anything here
             self.store.oidc_session_checked(handle, client, _now() - deadline + 60,
                                              old_encrypted=z["refresh"])
@@ -6797,13 +6814,36 @@ class TinySesam:
         }
 
     def gate_public_key(self) -> str:
-        """The public key of the gate tokens (ADR-9): 32 raw bytes, Base64 — the value for
+        """The public key of the ACTIVE gate key (ADR-9): 32 raw bytes, Base64 — the value for
         `sign_key` in Caddy's `jwtauth` (with `sign_alg EdDSA`). Public, no secret.
 
-        It follows the installation's master key (`TINYSESAM_SECRETS_KEY`, `secrets_key_file`
-        resp. `<db>.key`). If that is changed, the proxy needs this value anew."""
+        Since T-48 the gate key is a key of its own (`TINYSESAM_GATE_KEY`, `gate_key_file`, otherwise kept in the
+        database); `tinysesam keys rotate --purpose gate` changes it. A proxy with `jwk_url` follows by itself
+        (`gate_jwks`); one with `sign_key` needs this value anew after a rotation."""
         from . import gate as _gate
         return _gate.public_b64(self._gate_key_name)
+
+    def gate_jwks(self) -> dict:
+        """The public gate keys as a JSON Web Key Set (RFC 7517/8037) — the active key and the previous ones
+        within their overlap (`keys.GATE_OVERLAP_SEC`, the longest a token lives). Served at
+        `/auth/gate/jwks.json` for caddy-jwt's `jwk_url`: a rotation then needs no change at the proxy, and tokens
+        signed before it stay valid until they expire. Public, no secret."""
+        from . import keys as _keys
+        return _keys.jwks(self._gate_keyring, _wall_now())
+
+    def _gate_legacy_warning(self) -> None:
+        """Say so while the gate key derived from the vault key (≤ 0.25.x) is still in the keyring: a proxy that still
+        has ITS public key as `sign_key` accepts tokens anyone with the vault key can mint."""
+        from . import keys as _keys
+        old = [k for k in self._gate_keyring.previous if k.note == _keys.DERIVED_V1]
+        if not old:
+            return
+        security.seclog.warning(
+            "gate: the gate key is now a key of its own (T-48, kid %s). The proxy must learn it — `jwk_url` "
+            "(deploy/forward-auth/Caddyfile.gate) or `sign_key` = `tinysesam gate-key`; until then it sends every "
+            "request the fallback way. The old key derived from the vault key (kid %s) is still in the keyring: as long "
+            "as a proxy has it as `sign_key`, whoever holds the vault key can mint gate tokens. Then: `tinysesam keys "
+            "retire --purpose gate`.", self._gate_keyring.active.kid, old[0].kid)
 
     def gate_issuer(self) -> str:
         """`iss` of the gate tokens: `base_url` without a trailing slash, without it `"tinysesam"`.
@@ -7781,12 +7821,10 @@ class TinySesam:
                               "work like this:\n  - " + "\n  - ".join(error))
 
     def _oauth_server(self):
-        """The OAuth server (T-36) — built on first need, with the pepper from the environment, the file or the
-        master key."""
+        """The OAuth server (T-36) — built on first need, with the pepper keyring (ADR-12)."""
         if self._oauth is None:
             from . import oauth as _oauth_mod
-            pepper, origin = _oauth_mod.load_pepper(self.cfg.oauth_pepper_file, self._oauth_derived_pepper)
-            self._oauth = _oauth_mod.OAuthServer(self, pepper, origin)
+            self._oauth = _oauth_mod.OAuthServer(self, self._pepper_keyring)
         return self._oauth
 
     def _oauth_revoke_user(self, user_id: int, reason: str) -> int:

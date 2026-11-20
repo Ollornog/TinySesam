@@ -22,7 +22,7 @@ The tier is recorded per name in `tests/api_surface.json`. The guard `tests/test
 
 **Public is what the hand-written docs describe** (decided before 1.0): the READMEs, `CONFIGURATION.md`, `SECURITY.md` and `docs/OPERATIONS.md`. This page is generated and lists every name with its tier; being listed here alone is no promise. The guard checks that every tier-A/B Python name is named in those documents.
 
-The configuration fields are in [CONFIGURATION.md](CONFIGURATION.md): 179 of 191 in tier A, the others below at their tier.
+The configuration fields are in [CONFIGURATION.md](CONFIGURATION.md): 179 of 192 in tier A, the others below at their tier.
 
 **English, names as well as values** (since 0.22.0, without alias): The names of tiers A and B, their parameters and the keys and values they return or accept — result dicts, the `details` passed to `on_security_event`, the context of your own pages (`ctx["prefix"]`, `ctx["purpose"]`), the JSON responses of the routes, the kinds of API keys (`automation`, `human`). Since the last breaking pass before the freeze (PO decision 2026-10-29) the same holds for what operators and proxies read — query and form parameters, header and cookie names, logger names, the event words and keys of the security log, message ids — and audit and log lines are English as well. The lists old → new are in the CHANGELOG (0.22.0, [Unreleased]).
 
@@ -30,7 +30,7 @@ The configuration fields are in [CONFIGURATION.md](CONFIGURATION.md): 179 of 191
 
 **`auth.store` is internals** (tier C): the storage layer of the built-in routes, without tier, without promise and without transition period — its methods can change with every release. What an app needs is listed below as a method of `TinySesam` (e.g. `set_disabled` instead of `auth.store.set_disabled`).
 
-**Status:** A 385 · B 188 · C 38 names.
+**Status:** A 386 · B 190 · C 38 names.
 
 ## A · Methods of `TinySesam`
 
@@ -484,9 +484,13 @@ Name of a flow cookie (OIDC, SAML, passkey) — with `__Host-` where possible (A
 
 `iss` of the gate tokens: `base_url` without a trailing slash, without it `"tinysesam"`. Fixed rather than derived from the request — the proxy compares it with its configuration.
 
+### `gate_jwks() -> 'dict'`
+
+The public gate keys as a JSON Web Key Set (RFC 7517/8037) — the active key and the previous ones within their overlap (`keys.GATE_OVERLAP_SEC`, the longest a token lives). Served at `/auth/gate/jwks.json` for caddy-jwt's `jwk_url`: a rotation then needs no change at the proxy, and tokens signed before it stay valid until they expire. Public, no secret.
+
 ### `gate_public_key() -> 'str'`
 
-The public key of the gate tokens (ADR-9): 32 raw bytes, Base64 — the value for `sign_key` in Caddy's `jwtauth` (with `sign_alg EdDSA`). Public, no secret.
+The public key of the ACTIVE gate key (ADR-9): 32 raw bytes, Base64 — the value for `sign_key` in Caddy's `jwtauth` (with `sign_alg EdDSA`). Public, no secret.
 
 ### `generate_recovery_codes(user_id, n=None) -> 'list'`
 
@@ -678,7 +682,7 @@ Value: `{'login': '/auth/magic/{t}', 'verify_email': '/auth/verify/{t}', 'invite
 
 ## B · `TinySesamConfig`
 
-Fields of this tier (meaning in [CONFIGURATION.md](CONFIGURATION.md)): `c22_stylesheet`, `topbar_enabled`, `topbar_links`, `oauth_enabled`, `oauth_resources`, `oauth_access_token_ttl_sec`, `oauth_refresh_idle_days`, `oauth_refresh_max_days`, `oauth_refresh_grace_sec`, `oauth_pepper_file`, `hsts`, `totp_required`.
+Fields of this tier (meaning in [CONFIGURATION.md](CONFIGURATION.md)): `c22_stylesheet`, `topbar_enabled`, `topbar_links`, `gate_key_file`, `oauth_enabled`, `oauth_resources`, `oauth_access_token_ttl_sec`, `oauth_refresh_idle_days`, `oauth_refresh_max_days`, `oauth_refresh_grace_sec`, `oauth_pepper_file`, `hsts`, `totp_required`.
 
 ### `TinySesamConfig.enabled_methods() -> 'list[str]'`
 
@@ -759,6 +763,7 @@ What a proxy (Caddy `forward_auth`, nginx `auth_request`, Traefik) and the appli
 | GET | `/.tinysesam/start` | `query:rd`, `query:signed_out` |
 | GET | `/auth/forward` | — |
 | GET | `/auth/gate/authorize` | `query:flow` |
+| GET | `/auth/gate/jwks.json` | — |
 | GET | `/auth/gate/logged-out` | `query:host` |
 | GET | `/auth/gate/logout` | `query:host` |
 | POST | `/auth/gate/resume` | `form:_csrf`, `form:gate_host`, `form:next` |
@@ -982,4 +987,4 @@ These names are not part of the promise. Since 0.22.0 the implementation is call
 
 ---
 
-153 methods, 3 properties, 11 constants, 7 methods of `TinySesamConfig`, 10 exports, of which 5 error types, 17 names on the result types `LoginResult`, `PasswordChangeResult` — generated from the docstrings and `tests/api_surface.json`.
+154 methods, 3 properties, 11 constants, 7 methods of `TinySesamConfig`, 10 exports, of which 5 error types, 17 names on the result types `LoginResult`, `PasswordChangeResult` — generated from the docstrings and `tests/api_surface.json`.

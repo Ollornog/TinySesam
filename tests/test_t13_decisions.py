@@ -1203,7 +1203,7 @@ u14 = a14.create_user("totpnutzer", password=PW)
 secret_text14 = a14.totp_begin(u14)["secret"]
 raw14 = a14.store._one("SELECT secret FROM totp_cred WHERE user_id=?", (u14,))["secret"]
 r.check("H-14/15: in the database the TOTP secret is stored encrypted, not in plaintext",
-        raw14.startswith("v1:") and secret_text14 not in raw14, raw14[:20])
+        raw14.startswith("v2:") and secret_text14 not in raw14, raw14[:20])
 r.check("… and signing in with it works (setup with a real code)",
         a14.totp_confirm(u14, pyotp.TOTP(secret_text14).now()))
 _key_file = a14.cfg.db_path + ".key"
@@ -1217,7 +1217,7 @@ a14.store.db.close()
 a14b, _ = _app(db_path=_path14)
 roh14b = a14b.store._one("SELECT secret FROM totp_cred WHERE user_id=?", (u14,))["secret"]
 r.check("H-14/15: a plaintext secret from before is encrypted at startup",
-        roh14b.startswith("v1:") and a14b.store.get_totp(u14)["secret"] == secret_text14)
+        roh14b.startswith("v2:") and a14b.store.get_totp(u14)["secret"] == secret_text14)
 a14b.store.db.close()
 
 # Wrong key → startup aborts instead of silently letting every TOTP sign-in fail.
@@ -1281,7 +1281,7 @@ _st = parse_qs(urlparse(_start.headers["location"]).query)["state"][0]
 c4a.get(f"/auth/oidc/callback?code=x&state={_st}", follow_redirects=False)
 _roh4a = a4a.store._one("SELECT refresh FROM oidc_session")
 r.check("4a: the refresh token is stored with the session, encrypted",
-        _roh4a is not None and _roh4a["refresh"].startswith("v1:") and "rt-1" not in _roh4a["refresh"])
+        _roh4a is not None and _roh4a["refresh"].startswith("v2:") and "rt-1" not in _roh4a["refresh"])
 r.check("… within the period TinySesam does not ask the provider",
         c4a.get("/auth/me").status_code == 200 and _called == [])
 
@@ -2060,9 +2060,9 @@ a_i5.store._exec("PRAGMA foreign_keys=OFF")
 a_i5.store._exec("UPDATE oidc_session SET checked_at = checked_at - 16 * 60")
 a_i5._oidc_recheck(a_i5.store._one("SELECT * FROM session"))
 a_i5._oidc_outcome.wait()
-_z_i5 = a_i5.store._one("SELECT refresh FROM oidc_session WHERE token_hash='new-i5'")
+_z_i5 = a_i5.store._one("SELECT refresh, client, sub FROM oidc_session WHERE token_hash='new-i5'")
 r.check("Counter-check R3/I5: rotation during the exchange — the new refresh token lands on the row",
-        _z_i5 is not None and a_i5.store.vault.decrypt(_z_i5["refresh"]) == "rt-rotated")
+        _z_i5 is not None and a_i5.store.oidc_refresh_plain(_z_i5) == "rt-rotated")
 # (Mutation probes: LDAP back on "@" instead of the mail value → V1 red, V2 red; forward latch back to
 #  name_invalid → V3 red; start finding removed → V3b red; trim the identifier → V4 red; client_id comparison
 #  removed → I2 red; "not magic" instead of "passkey" → I3 red; window check removed → I4 red;

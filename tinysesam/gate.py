@@ -13,11 +13,15 @@ The building blocks, deliberately small and without a dependency of their own (`
   shared HMAC secret anyone who reads the proxy configuration could issue tokens for any
   account. `caddy-jwt` enforces the algorithm when `sign_alg EdDSA` is set — a
   token with `alg: none` or `HS256` in its header is therefore not checked any differently.
-* **The key is derived**, not managed separately: HKDF-SHA256 from the key that
-  already protects the TOTP secrets (`vault.load_key`). So there is no second
-  secret that can be backed up, distributed and forgotten, and all workers of the same
-  installation sign with the same key. Whoever changes the base key changes
-  this one too — the proxy then needs the new public key (`tinysesam gate-key`).
+* **The key is a key of its own** (T-48, ADR-12): random, never derived from the key that protects the secrets
+  at rest. Up to 0.25.x it was derived by HKDF from that base key — whoever read `<db>.key` could mint a token
+  for any account. It comes from `TINYSESAM_GATE_KEY`, `gate_key_file` or the database (encrypted with the
+  vault), is a keyring with an active and previous keys (`keys.py`), and the proxy learns it from
+  `/auth/gate/jwks.json` (`jwk_url`) or as `sign_key` (`tinysesam gate-key`). `derive_key_name` remains only for
+  the migration: the derived key stays a previous key for one token lifetime.
+* **`typ: tinysesam-gate+jwt`** (RFC 8725 §3.11, T-53): a token says what it is, and `check` refuses any other
+  type — no other JWT passes as a gate token. caddy-jwt cannot check `typ` (v1.4.0 has no such option); at the
+  proxy the separation rests on the key that signs nothing else, and on `aud`.
 * **`aud` carries the host AND the required roles.** A token issued for a check without
   role specification must not be valid on a path that requires `?roles=admin` —
   the proxy sees no roles, only the audience. That is why the role specification is in
@@ -31,9 +35,11 @@ import json
 import secrets
 from typing import Optional
 
-#: Fixed context of the derivation. A new version would get a new value — and thus a
-#: new key, without the base key having to change.
+#: Fixed context of the derivation up to 0.25.x (only for the migration, see `derive_key_name`).
 _HKDF_INFO = b"tinysesam gate-token v1"
+
+#: The explicit type of a gate token (RFC 8725 §3.11; RFC 7515 §4.1.9 allows leaving out `application/`).
+TOKEN_TYPE = "tinysesam-gate+jwt"
 
 #: The limits of the lifetime. Below, the proxy asks almost as often as without a token; above,
 #: "revocation takes effect after expiry" becomes a revocation that comes too late (ADR-9, consequences).
@@ -53,7 +59,8 @@ def _read_b64u(text: str) -> bytes:
 
 
 def derive_key_name(base_key: bytes):
-    """Derive the Ed25519 signing key from the installation's base key."""
+    """The Ed25519 signing key as versions up to 0.25.x derived it from the base key — only for the migration
+    (it stays a previous key for one token lifetime, `keys.DERIVED_V1`). Never the active key."""
     from cryptography.hazmat.primitives import hashes
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
     from cryptography.hazmat.primitives.kdf.hkdf import HKDF
@@ -97,7 +104,7 @@ def audience(host: str, roles_groups=()) -> str:
 def issue(private, *, iss: str, aud: str, sub: str, claims: dict, ttl: int, now: int) -> str:
     """A signed token (JWS Compact, `EdDSA`). `claims` are TinySesam's own fields
     without prefix; they end up as `ts_<name>`."""
-    head = {"alg": "EdDSA", "typ": "JWT", "kid": key_name_id(public_raw(private))}
+    head = {"alg": "EdDSA", "typ": TOKEN_TYPE, "kid": key_name_id(public_raw(private))}
     content = {"iss": iss, "aud": aud, "sub": str(sub), "iat": int(now), "nbf": int(now),
               "exp": int(now) + int(ttl), "jti": secrets.token_urlsafe(12)}
     for name, value in claims.items():
@@ -110,14 +117,14 @@ def issue(private, *, iss: str, aud: str, sub: str, claims: dict, ttl: int, now:
 def check(public: bytes, token: str, *, aud: str, iss: str, now: int) -> Optional[dict]:
     """Check a token the way the proxy does — for tests and diagnostics. None on any error.
 
-    Fail-closed: algorithm fixed to `EdDSA` (the header is not consulted, only compared), signature,
-    `iss`, `aud`, `nbf`, `exp`. Without clock tolerance — the proxy gives that, if at all."""
+    Fail-closed: algorithm fixed to `EdDSA` (the header is not consulted, only compared), type `TOKEN_TYPE` (T-53),
+    signature, `iss`, `aud`, `nbf`, `exp`. Without clock tolerance — the proxy gives that, if at all."""
     from cryptography.exceptions import InvalidSignature
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
     try:
         k, i, s = str(token or "").split(".")
         head = json.loads(_read_b64u(k))
-        if head.get("alg") != "EdDSA":
+        if not isinstance(head, dict) or head.get("alg") != "EdDSA" or str(head.get("typ") or "").lower() != TOKEN_TYPE:
             return None
         Ed25519PublicKey.from_public_bytes(public).verify(_read_b64u(s), f"{k}.{i}".encode("ascii"))
         content = json.loads(_read_b64u(i).decode("utf-8"))

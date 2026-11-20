@@ -2,8 +2,8 @@
 
 Until H1 both SECURITY.md said TOTP secrets were stored unencrypted — wrong since 0.21.0, and nothing noticed. Checked:
 
-  (a) en + de describe the vault as built: AES-256-GCM, the key variable and file of `vault.py`, the gate key derived
-      from it; neither claims the secrets are unencrypted
+  (a) en + de describe the vault as built: AES-256-GCM, the key variable and file of `vault.py`, the gate key as a key
+      of its own (ADR-12, no longer derived from it); neither claims the secrets are unencrypted or unrotatable
   (b) the deadlines for vulnerable dependencies are named, and the image scan in release.yml enforces what they say
       (fixable findings from "high", exceptions only via .grype.yaml, checked before the scan)
   (c) scripts/_grype_exceptions.py: a rule without an end, an expired one and one too far ahead are each refused;
@@ -35,12 +35,16 @@ assert vault.PREFIX == "v1:" and vault.ENV_VAR == "TINYSESAM_SECRETS_KEY"
 vault_src = (ROOT / "tinysesam" / "vault.py").read_text(encoding="utf-8")
 assert "AES-256-GCM" in vault_src and "AESGCM" in vault_src
 for name, text in (("SECURITY.md", EN), ("SECURITY.de.md", DE)):
-    for must in ("AES-256-GCM", vault.ENV_VAR, "secrets_key_file", "<db>.key", "0.21.0", "ADR-9"):
+    for must in ("AES-256-GCM", vault.ENV_VAR, "secrets_key_file", "<db>.key", "0.21.0", "ADR-9", "ADR-12",
+                 "TINYSESAM_GATE_KEY", "tinysesam keys rotate"):
         assert must in text, f"{name}: {must!r} missing"
     flat = " ".join(text.split()).lower()
-    for wrong in ("stored unencrypted", "liegen unverschlüsselt", "is planned (t-13", "ist geplant (t-13"):
+    for wrong in ("stored unencrypted", "liegen unverschlüsselt", "is planned (t-13", "ist geplant (t-13",
+                  "same key derives the signing key", "aus demselben schlüssel entsteht", "rotation) does not exist",
+                  "rotation) gibt es noch nicht"):
         assert wrong not in flat, f"{name} still says {wrong!r}"
-ok("SECURITY.md en/de: vault as built (AES-256-GCM, TINYSESAM_SECRETS_KEY, <db>.key, gate key), no 'unencrypted'")
+ok("SECURITY.md en/de: vault as built (AES-256-GCM, TINYSESAM_SECRETS_KEY, <db>.key, own gate key, rotation), "
+   "no 'unencrypted', no 'derived', no 'no rotation'")
 
 # ---------- (b) deadlines ↔ the image scan ----------
 assert re.search(r"\| Critical \| \*\*7 days\*\* \|", EN) and re.search(r"\| High \| \*\*30 days\*\* \|", EN)
