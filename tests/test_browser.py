@@ -250,7 +250,7 @@ def _chrome_state():
         with open("/proc/meminfo", encoding="utf-8") as fh:
             lines += [z.strip() for z in fh if z.startswith(("MemAvailable", "MemTotal"))]
     except OSError:
-        pass
+        lines.append("load/memory: not readable (no /proc)")
     try:
         lines.append("profile: " + (", ".join(sorted(os.listdir(_profile))) or "(empty)"))
     except OSError as e:
@@ -271,7 +271,7 @@ def _chrome_state():
     try:
         pids = sorted((z for z in os.listdir("/proc") if z.isdigit()), key=int)
     except OSError:
-        pass
+        lines.append("processes: /proc not readable — only the Chrome process itself")
     for _ in range(4):                   # children, grandchildren … (zygote → renderer)
         family |= {z for z in pids if parent(z) in family}
     for pid in sorted(family, key=int):
