@@ -444,9 +444,10 @@ vielleicht das Verzeichnis): aus einer `def`-Route rufen, in einer `async def`-R
 > `login_totp`.
 
 `start_session` bleibt, für Tests und für einen Faktor, den du selbst geprüft hast — es prüft
-nichts ([Konten im Code](#konten-im-code)). Es gibt `(token, session_ok)` zurück: auspacken —
-wer das Tupel direkt in `set_cookie` reicht, schreibt den String `"('abc…', True)"` ins Cookie,
-und es fliegt keine Ausnahme. Das von `complete_totp` zurückgegebene Token ersetzt das alte, auch
+nichts ([Konten im Code](#konten-im-code)). Es gibt `(token, session_ok)` zurück: auspacken und das
+Token mit `auth.set_cookie(response, token, remember=None)` ins Session-Cookie legen (`remember=None`
+folgt der Wahl „angemeldet bleiben“ der Sitzung selbst) — wer das Tupel direkt in `set_cookie` reicht,
+schreibt den String `"('abc…', True)"` ins Cookie, und es fliegt keine Ausnahme. Das von `complete_totp` zurückgegebene Token ersetzt das alte, auch
 beim Step-up — es gehört ins Cookie, sonst hält das Cookie eine tote Sitzung. Die Bausteine
 `login_*` erledigen beides.
 
@@ -1174,6 +1175,10 @@ Alles optional (per Config an/aus), einzeln und kombiniert nutzbar, Frontend üb
   eine eigene `Response` zurück. Alle 13 Namen: `login`, `pin`, `totp`, `totp_setup`, `reauth`,
   `account`, `register`, `forgot`, `reset`, `magic_request`, `magic_invalid`, `resource_unlock`,
   `error`. Eingebaute Renderer sind Fallback; `tinysesam.templates.DEFAULTS` führt die aktuelle Liste.
+  Eine dieser Seiten aus einer eigenen Route zeigen: `auth.render_page(name, status=200, request=request,
+  **ctx)` rendert sie — deinen Ersatz, wenn einer gesetzt ist, sonst die eingebaute Seite — mit CSP-Nonce,
+  CSRF-Token und Mount-Präfix im `ctx` und gibt die `Response` zurück. `request` mitgeben: ohne entsteht ein
+  neues CSRF-Token, und andere offene Formulare des Nutzers laufen ab.
 - **Angemeldet bleiben:** `remember_me_enabled` — Checkbox → persistentes Cookie; ohne Haken reines
   Session-Cookie + kurze `session_ttl_transient_hours`.
 - **Step-up / per-Route-MFA:** `Depends(auth.require(mfa=True))` (Sudo-Frische `stepup_max_age_sec`,
@@ -1233,7 +1238,10 @@ Alles optional (per Config an/aus), einzeln und kombiniert nutzbar, Frontend üb
   Beispiele unter `deploy/forward-auth/` tun das), sonst reicht er einen gefälschten durch. Eine Zuordnung benennt sie um oder lässt sie weg: `{"user": "X-WEBAUTH-USER"}`
   verschickt genau diesen einen Header (Grafana-Stil), eine Liste denselben Wert unter mehreren Namen.
   Die Zuordnung ist die **vollständige** Liste — `email` wegzulassen ist der Weg, der App die Adresse
-  nicht mehr zu geben. Beim Umbenennen den neuen Namen in der Proxy-Konfiguration mitziehen.
+  nicht mehr zu geben. Die Vorgabe-Zuordnung ist `TinySesam.FORWARD_HEADERS_DEFAULT`; wer einen Header
+  ändern und die übrigen behalten will, geht von einer Kopie aus:
+  `forward_headers={**TinySesam.FORWARD_HEADERS_DEFAULT, "user": ["Remote-User", "X-WEBAUTH-USER"]}`.
+  Beim Umbenennen den neuen Namen in der Proxy-Konfiguration mitziehen.
 - **Open-Redirect-Schutz:** alle `?next=` laufen über `safe_next` (nur relative Pfade bzw.
   `trusted_redirect_hosts`; der Host der eigenen `base_url` zählt immer mit und muss dort nicht
   wiederholt werden). **`cookie_domain` für SSO über Subdomains** — und ohne das Feld gilt: Das
@@ -1473,6 +1481,12 @@ aufgeführt in [`API.md`](../API.md):
 | **B — für Fortgeschrittene** | Bausteine für eigene Konto- und Admin-Seiten (unten) | Bleibt. Entfernen oder umbauen erst nach einer `DeprecationWarning` über zwei Minor-Versionen. Eine Route kann nicht warnen: ein Pfad der Stufe B wird mindestens zwei Minor-Versionen vor dem Entfernen im CHANGELOG unter „Deprecated“ angekündigt. |
 | **C — intern** | die Verdrahtung der eingebauten Routen | Keine. Seit 0.22.0 trägt die Implementierung einen führenden Unterstrich; der alte Name bleibt bis 1.0 als Alias, der beim Aufruf warnt, dann fällt er weg. Nicht neu verwenden. |
 
+**Öffentlich ist, was die von Hand geschriebene Doku beschreibt** (entschieden vor 1.0): diese README,
+`CONFIGURATION.md`, `SECURITY.md` und `docs/OPERATIONS.md`. `API.md` wird aus dem Code erzeugt und führt
+jeden Namen mit seiner Stufe; dort aufgeführt zu sein, ist allein keine Zusage. Der Wächter schlägt an,
+wenn ein Python-Name der Stufe A oder B (Methode, Konstante, Property, Preset, Export, Feld eines
+Ergebnistyps) in keinem dieser Dokumente genannt ist.
+
 Ein neuer öffentlicher Name hat keine Stufe, bis jemand entscheidet; so lange ist der Wächter
 `tests/test_api_surface.py` rot — nichts wird aus Versehen zur Zusage. Die Konfigurationsfelder
 sind Stufe A (bis auf einen Grabstein, markiert in `CONFIGURATION.md`), ebenso die Fehlertypen
@@ -1507,7 +1521,9 @@ Python-Name ist; gemessen in `tests/api_surface.json`, aufgeführt in [`API.md`]
   **Das Schreiben ist nicht zugesagt:** es ist eine einfache, veränderliche Dataclass, und welches Feld einmal
   und welches je Anfrage gelesen wird, gehört nicht zur Zusage. Und `auth.on_security_event` — das Attribut,
   der Aufruf `hook(event, account, details)`, dass er synchron nach dem Schreiben der Änderung läuft, dass ein
-  fehlschlagender Hook den Vorgang nicht abbricht, und die Schlüssel von `details` je Ereignis.
+  fehlschlagender Hook den Vorgang nicht abbricht, und die Schlüssel von `details` je Ereignis. Die
+  Ereignisnamen stehen in `TinySesam.SECURITY_EVENTS` (die Liste mit den Schlüsseln von `details` in
+  `SECURITY.md`).
 - **Stufe A — der Forward- und Gate-Vertrag**, auf den sich Reverse-Proxys verlassen: `/auth/forward`,
   `/auth/verify`, `/.tinysesam/*`, `/auth/gate/*`, ihre Statuscodes, die `X-TinySesam-*`-Header und die Werte
   von `X-TinySesam-Reason`, die Eingangs-Header, die ein Proxy setzen oder weiterreichen muss

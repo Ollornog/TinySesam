@@ -87,7 +87,8 @@ Rate-Limit, Open-Redirect-Schutz via `safe_next`). Trotzdem: vor produktivem Ein
   (`details={"old": …, "new": …}` — Selbstbedienung, 2026-09-25) und `api_keys_revoked`
   (`details={"count": n, "reason": …}`, `reason` eines von `password_reset`, `account_disabled`,
   `admin_password_reset`, `sessions_revoked` — gesammelt beim Reset, bei der Sperre, beim
-  Admin-Passwort und bei `sessions/revoke` mit `scope=all`). Die Schlüssel in `details` und die
+  Admin-Passwort und bei `sessions/revoke` mit `scope=all`). Die vollständige Liste der Ereignisnamen ist
+  `TinySesam.SECURITY_EVENTS`. Die Schlüssel in `details` und die
   Gründe sind seit 0.22.0 englisch (bis 0.21.x `verbleibend`, `alt`/`neu`, `anzahl`/`grund` mit
   deutschen Gründen). Das gilt auch für Änderungen, die ein Admin im Panel an
   einem fremden Konto vornimmt (Passwort zurücksetzen, API-Key ausstellen, Passkey widerrufen) — die

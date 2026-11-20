@@ -83,7 +83,8 @@ rate limit, open-redirect protection via `safe_next`). Even so: review it yourse
   (`details={"old": …, "new": …}` — self-service, 2026-09-25) and `api_keys_revoked`
   (`details={"count": n, "reason": …}`, `reason` one of `password_reset`, `account_disabled`,
   `admin_password_reset`, `sessions_revoked` — in bulk on a reset, a block, an admin password reset
-  or `sessions/revoke` with `scope=all`). The `details` keys and the reasons are English since
+  or `sessions/revoke` with `scope=all`). The full list of event names is `TinySesam.SECURITY_EVENTS`.
+  The `details` keys and the reasons are English since
   0.22.0 (up to 0.21.x `verbleibend`, `alt`/`neu`, `anzahl`/`grund` with German reasons). That includes changes an administrator makes to someone
   else's account in the panel (password reset, issuing an API key, revoking a passkey) — write the
   mail so it does not assume the holder did it. Apart from the hook, TinySesam sends one mail itself
