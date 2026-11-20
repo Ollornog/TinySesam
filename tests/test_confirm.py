@@ -530,9 +530,11 @@ r.check("(f) PasswordChangeResult: fields ok/reason/status/message/api_keys_acti
         _fields == {"ok", "reason", "status", "message", "api_keys_active"} and bool(_pc)
         and not PasswordChangeResult(ok=False, reason="invalid", status=403) and _frozen and not _wrong_built,
         f"{_fields} {_frozen} {_wrong_built}")
-r.check("(f) every reason the block returns is in REASONS (the ones measured above)",
+# The last five come only from `set_initial_password` (B-10) and are measured in `test_account_setup.py`.
+r.check("(f) every reason the block returns is in REASONS (the ones measured above and in test_account_setup)",
         set(PasswordChangeResult.REASONS) == {"ok", "missing", "invalid", "locked", "ratelimit", "policy",
-                                                "no_session"}, str(PasswordChangeResult.REASONS))
+                                                "no_session", "has_password", "directory", "method_disabled",
+                                                "stepup", "relogin"}, str(PasswordChangeResult.REASONS))
 r.check("(f) the step-up blocks return a `LoginResult` (the same form as the sign-in), "
         "`change_password` a `PasswordChangeResult`",
         all(inspect.signature(getattr(TinySesam, n)).return_annotation in (LoginResult, "LoginResult")
@@ -829,7 +831,7 @@ _tier = [f"{b}.{n}: {(_storage.get(b, {}).get(n) or {}).get('tier')!r}"
 assert german_in("gesperrt") and not german_in("api_keys_active"), "word list measures nothing"
 r.check(f"(j) the tier-A surface is English: {len(_names)} names ({', '.join(_deliver)}, confirm_*, "
         "`PasswordChangeResult` with fields and reasons), no German word; every name in tier A",
-        _deliver == ["change_password"] and len(_names) >= 25 and not _german and not _tier,
+        _deliver == ["change_password", "set_initial_password"] and len(_names) >= 25 and not _german and not _tier,
         "; ".join(_german + _tier) or f"too little measured: {_deliver} {len(_names)}")
 
 

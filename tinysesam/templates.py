@@ -441,7 +441,7 @@ def _totp(auth, ctx) -> str:
 
 
 def _account(auth, ctx) -> str:
-    """ctx: user, methods, has_totp, has_pin, is_admin, admin_path, events. Self-service + logout.
+    """ctx: user, methods, has_totp, has_pin, password_initial, is_admin, admin_path, events. Self-service + logout.
     Fully replaceable via auth.set_template('account', fn)."""
     u = ctx["user"]
     t = auth.t
@@ -464,8 +464,16 @@ def _account(auth, ctx) -> str:
             + f"<input id=mail_new type=email autocomplete=email placeholder='{_e(t('acc.email_new'))}'>"
             f"<button data-act=setmail>{_e(t('acc.email_change'))}</button><span id=mail_msg class=msg></span></div>")
 
+    # Set password (B-10): an account without one has no current password to type — the
+    # server asks for a fresh sign-in or step-up instead (`set_initial_password`).
+    if "password" in methods and ctx.get("password_initial"):
+        sections.append(
+            f"<div class=sec><h2>{_e(t('acc.password'))}</h2>"
+            f"<p class='msg evhint'>{_e(t('acc.pw_none'))}</p>"
+            f"<input id=pw_new type=password autocomplete=new-password placeholder='{_e(t('acc.pw_new'))}'>"
+            f"<button data-act=setpw>{_e(t('acc.pw_set'))}</button><span id=pw_msg class=msg></span></div>")
     # Change password
-    if "password" in methods:
+    elif "password" in methods:
         sections.append(
             f"<div class=sec><h2>{_e(t('acc.password'))}</h2>"
             f"<input id=pw_cur type=password placeholder='{_e(t('acc.pw_cur'))}'>"
@@ -487,19 +495,23 @@ def _account(auth, ctx) -> str:
             # How many one-time codes remain, the page says on its own (B2-7): a
             # used code was not tracked anywhere until T-13, and whoever used up the last one
             # only learned of it when they needed it.
+            # B-9b: its own line below the buttons — inline it wrapped across two lines at 1280 px
+            # and ran into the button row. "None" is told apart from "only n left" (B-9a).
             rest = ctx.get("recovery_left")
             notice = ""
             if rest is not None:
                 tight = rest <= ctx.get("recovery_warn", 3)
-                notice = (f" <small class={'err' if tight else 'ok'} id=rc_left>"
-                           f"{_e(t('acc.recovery_low' if tight else 'acc.recovery_left', n=rest))}</small>")
+                key = "acc.recovery_none" if rest == 0 else ("acc.recovery_low" if tight else "acc.recovery_left")
+                notice = (f"<div id=rc_left class='rcleft {'err' if tight else 'ok'}'>"
+                          f"{_e(t(key, n=rest))}</div>")
             totp = (f"<span class=ok>{_e(t('acc.totp_active'))}</span> "
                     f"<button class=warn data-act=deltotp>{_e(t('acc.totp_off'))}</button> "
-                    f"<button data-act=recovery>{_e(t('acc.recovery'))}</button>{notice}")
+                    f"<button data-act=recovery>{_e(t('acc.recovery'))}</button>")
         else:
+            notice = ""
             totp = f"<a class=btnlink href='__TS_P__/auth/totp/setup'>{_e(t('acc.totp_setup'))}</a>"
         sections.append(f"<div class=sec><h2>{_e(t('acc.totp'))}</h2>{totp}<span id=totp_msg class=msg></span>"
-                        "<pre id=rc_out class=rcout></pre></div>")
+                        f"{notice}<pre id=rc_out class=rcout></pre></div>")
 
     # Passkeys
     if "passkey" in methods:
@@ -564,6 +576,7 @@ def _account(auth, ctx) -> str:
     .tsmain li{padding:4px 0;font-size:13px;border-bottom:1px solid var(--ts-line-soft)}
     .tsmain a{color:var(--ts-link)}
     .tsmain .rcout{white-space:pre-wrap;margin-top:10px}
+    .tsmain .rcleft{display:block;margin:12px 0 0;font-size:13px}
     """
     # `static=True`: only show the page, fetch nothing (preview/screenshot).
     static = bool(ctx.get("static"))
@@ -607,7 +620,12 @@ _ACCOUNT_TEXT = {
 
 def _account_texts(auth) -> str:
     """The account page's JS texts as a JSON literal (ASCII-escaped, so it is safe inside `<script>`)."""
-    return json.dumps(_ACCOUNT_TEXT.get(auth.cfg.lang) or _ACCOUNT_TEXT["en"])
+    texts: dict = dict(_ACCOUNT_TEXT.get(auth.cfg.lang) or _ACCOUNT_TEXT["en"])
+    # The remainder after "generate" (B-9b): the same wording as the server-rendered line; `__N__`
+    # is replaced in the browser.
+    texts.update(rc_left=auth.t("acc.recovery_left", n="__N__"), rc_low=auth.t("acc.recovery_low", n="__N__"),
+                 rc_warn=getattr(auth, "_RECOVERY_WARN_THRESHOLD", 3))
+    return json.dumps(texts)
 
 
 _ACCOUNT_JS = """
@@ -627,6 +645,10 @@ async function setmail(){const r=await J('__TS_P__/auth/account/email',{email:ma
   const j=await r.json().catch(()=>({}));say('mail_msg',r.ok?'✓ '+TXT.mail_sent:(j.detail||TXT.error),r.ok);if(r.ok)mail_new.value=''}
 async function changepw(){const r=await J('__TS_P__/auth/password',{current:pw_cur.value,new:pw_new.value});
   say('pw_msg',r.ok?TXT.changed:(await r.json()).detail||TXT.error,r.ok);if(r.ok){pw_cur.value='';pw_new.value=''}}
+// B-10: the first password — no current one; the reload then shows the regular change form.
+async function setpw(){const r=await J('__TS_P__/auth/password/set',{new:pw_new.value});await offer(r);
+  say('pw_msg',r.ok?TXT.set:(await r.json().catch(()=>({}))).detail||TXT.error,r.ok);
+  if(r.ok){pw_new.value='';setTimeout(()=>location.reload(),600)}}
 async function setpin(){const r=await J('__TS_P__/auth/pin/set',{pin:pin_new.value});await offer(r);
   say('pin_msg',r.ok?TXT.set:(await r.json()).detail||TXT.error,r.ok);if(r.ok)setTimeout(()=>location.reload(),600)}
 // Check first, then report: both buttons used to say "done" UNCONDITIONALLY and reload —
@@ -640,7 +662,11 @@ async function deltotp(){if(!confirm(TXT.confirm_2fa_off))return;
   if(r.ok)location.reload();else say('totp_msg',(await r.json().catch(()=>({}))).detail||TXT.error,false)}
 async function recovery(){if(!confirm(TXT.confirm_recovery))return;
   const r=await (await J('__TS_P__/auth/totp/recovery')).json();
-  if(r.codes){document.getElementById('rc_out').textContent=TXT.recovery_note+'\\n'+r.codes.join('\\n')}else say('totp_msg',r.detail||TXT.error,false)}
+  if(r.codes){document.getElementById('rc_out').textContent=TXT.recovery_note+'\\n'+r.codes.join('\\n');
+    // B-9b: the remainder line still said the old number.
+    const b=document.getElementById('rc_left'),n=r.codes.length,low=n<=TXT.rc_warn;
+    if(b){b.textContent=(low?TXT.rc_low:TXT.rc_left).replace('__N__',n);b.className='rcleft '+(low?'err':'ok')}}
+  else say('totp_msg',r.detail||TXT.error,false)}
 async function loadkeys(){const el=document.getElementById('keylist');if(!el)return;
   const ks=await (await fetch('__TS_P__/auth/apikeys')).json().catch(()=>[]);
   if(!Array.isArray(ks)){el.innerHTML='<li>—</li>';return}
@@ -1114,17 +1140,28 @@ def _totp_setup(auth, ctx) -> str:
             f"<input name=code class=code inputmode=numeric maxlength=6 autofocus>"
             f"<button type=submit>{_e(t('setup.activate'))}</button></form>"
             f"<div class=hint id=msg></div>"
+            # B-9a: the recovery codes, once, right after activation — hidden until then.
+            f"<div id=rcbox hidden><div class=hint>{_e(t('setup.recovery_note'))}</div>"
+            f"<pre id=rccodes class=mono></pre>"
+            f"<button type=button id=rcdone>{_e(t('setup.recovery_done'))}</button></div>"
             "<script>function tsCsrf(){return (document.cookie.match(/(?:^|; )" + _e(auth.csrf_cookie_name) + "=([^;]+)/)||[])[1]||''}"
-            "async function conf(e){e.preventDefault();const c=e.target.code.value;"
+            "async function conf(e){e.preventDefault();const f=e.target,c=f.code.value;"
             "const r=await fetch('__TS_P__/auth/totp/setup',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','X-CSRF-Token':tsCsrf()},"
-            "body:'code='+encodeURIComponent(c)+'&next='+encodeURIComponent(e.target.dataset.next||'/')});"
+            "body:'code='+encodeURIComponent(c)+'&next='+encodeURIComponent(f.dataset.next||'/')});"
             "const j=await r.clone().json();"
             f"document.getElementById('msg').textContent=j.ok?'{ok_msg}':'{bad_msg}';"
             # B1-7 on this page too (A-5): it is the path on which TOTP comes into being.
             "await offer(r);"
-            # Under the mandatory chain the sign-in is complete with the confirmation (A-1) —
-            # on to the target instead of a page that invites typing the code again.
-            "if(j.ok&&j.next){location.href=j.next}return false}"
+            "if(!j.ok)return false;"
+            # On to the target (B-8; under the mandatory chain the sign-in is complete with the
+            # confirmation, A-1) — but only once the codes are noted, otherwise they are gone for good.
+            "const go=()=>{location.href=j.next||f.dataset.next||'/'};"
+            "const codes=j.recovery_codes||[];"
+            "if(!codes.length){go();return false}"
+            "f.hidden=true;document.getElementById('rccodes').textContent=codes.join('\\n');"
+            "const box=document.getElementById('rcbox');box.hidden=false;"
+            "document.getElementById('rcdone').addEventListener('click',go);"
+            "document.getElementById('rcdone').focus();return false}"
             "document.getElementById('tstotp').addEventListener('submit',conf)</script>"
             + _revoke_js(auth, "'__TS_P__/auth/account?revoke_others=1'"
                          if getattr(auth.cfg, "account_enabled", False) else ""))

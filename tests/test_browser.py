@@ -629,6 +629,85 @@ async def t33_alternatives(p):
     assert p.failed[failed_before:] == [], f"broken requests: {p.failed[failed_before:][:3]}"
     print(f"  admin panel: sign-in link button shows the link{' + QR code' if has_qr else ''} once (strict CSP)")
 
+    await account_setup(p, go)
+
+
+async def account_setup(p, go):
+    """B-8/B-9/B-10 in a real browser on the T-33 app: the TOTP setup shows the recovery codes and
+    then leads on, the remainder line on the account page sits below the buttons and follows
+    „generate“, and an account without a password sets its first one."""
+    import pyotp
+
+    failed_before = len(p.failed)
+
+    async def as_user(uid):
+        token, _ = t33.start_session(uid, "magic")
+        await p.cmd("Network.setCookie", name=t33.session_cookie_name, value=token, url=T33)
+
+    # 1) Voluntary setup from the account page: codes shown once, „written down“ leads back (B-8, B-9a).
+    nora = t33.create_user("nora", password="nora-pw-123456")
+    await as_user(nora)
+    await go("/auth/account")
+    await p.click("a.btnlink[href$='/auth/totp/setup']")
+    await p.click("form[action$='/auth/totp/setup/start'] button")
+    secret = await p.js("document.querySelector('.mono').textContent")
+    await p.js(f"document.querySelector('#tstotp [name=code]').value={pyotp.TOTP(secret).now()!r};"
+               "document.querySelector('#tstotp button').click()")
+    await asyncio.sleep(1.5)
+    assert await p.js("location.pathname") == "/auth/totp/setup/start", \
+        f"left the page before the recovery codes could be noted: {await p.js('location.href')!r}"
+    assert await p.js("!document.getElementById('rcbox').hidden && document.getElementById('tstotp').hidden")
+    shown = (await p.js("document.getElementById('rccodes').textContent")).split("\n")
+    assert len(shown) == t33.cfg.recovery_code_count == t33.recovery_codes_remaining(nora), shown
+    await p.click("#rcdone")
+    assert await p.js("location.pathname") == "/auth/account", \
+        f"B-8: stayed on {await p.js('location.pathname')!r} after the setup"
+    print(f"  TOTP setup: {len(shown)} recovery codes shown once, „written down“ leads to the account page")
+
+    # 2) The remainder line: own block below the buttons, one line wide, follows „generate“ (B-9b).
+    t33.store.delete_recovery_codes(nora)
+    geometry = """JSON.stringify((()=>{const b=document.getElementById('rc_left'),r=b.getBoundingClientRect(),
+        k=[...document.querySelectorAll('.sec button')].filter(x=>x.closest('.sec')===b.closest('.sec'))
+          .map(x=>x.getBoundingClientRect());
+        return {text:b.textContent.trim(),top:r.top,h:r.height,
+                lh:parseFloat(getComputedStyle(b).lineHeight)||(parseFloat(getComputedStyle(b).fontSize)*1.4),
+                pad:parseFloat(getComputedStyle(b).paddingTop)+parseFloat(getComputedStyle(b).paddingBottom),
+                below:Math.max(...k.map(x=>x.bottom))}})())"""
+    for width in (1280, 390):
+        await p.cmd("Emulation.setDeviceMetricsOverride", width=width, height=900, deviceScaleFactor=1,
+                    mobile=width < 500)
+        await go("/auth/account")
+        g = json.loads(await p.js(geometry))
+        assert g["text"] == t33.t("acc.recovery_none"), g
+        assert g["top"] >= g["below"], f"B-9b at {width}px: the line overlaps the button row {g}"
+        assert g["h"] - g["pad"] < 2 * g["lh"], f"B-9b at {width}px: the line wraps {g}"
+    await p.cmd("Emulation.clearDeviceMetricsOverride")
+    await go("/auth/account")
+    await p.js("window.confirm=()=>true;true")
+    await p.click("[data-act=recovery]")
+    left = await p.js("document.getElementById('rc_left').textContent")
+    assert left == t33.t("acc.recovery_left", n=t33.cfg.recovery_code_count), \
+        f"B-9b: the line still says {left!r} after „generate“"
+    print("  account page: recovery line below the buttons on one line (1280/390 px), updated after „generate“")
+
+    # 3) An account without a password sets its first one (B-10).
+    olga = t33.create_user("olga")
+    await as_user(olga)
+    await go("/auth/account")
+    assert await p.js("!!document.querySelector('[data-act=setpw]') && !document.getElementById('pw_cur')"), \
+        "B-10: no „set password“ form without the current-password field"
+    await p.js("document.getElementById('pw_new').value='olga-first-2468';true")
+    await p.click("[data-act=setpw]")
+    await asyncio.sleep(1.0)
+    assert t33.store.get_password_hash(olga), \
+        f"B-10: password not set: {await p.js('document.getElementById(`pw_msg`)?.textContent')!r}"
+    assert await p.js("!!document.getElementById('pw_cur')"), "after setting, the regular change form is missing"
+    viol = await p.js("JSON.stringify(window.__csp===undefined?['(no Listener)']:window.__csp)")
+    assert viol == "[]", f"CSP violation on the account page: {viol}"
+    assert not p.console, f"console errors: {p.console[:2]}"
+    assert p.failed[failed_before:] == [], f"broken requests: {p.failed[failed_before:][:3]}"
+    print("  account page: an account without a password sets its first one (no current-password field)")
+
 
 try:
     asyncio.run(run())

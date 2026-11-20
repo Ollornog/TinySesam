@@ -167,6 +167,14 @@ def build_router(auth) -> APIRouter:
         return erg.redirect()
 
     # ---------- Set up TOTP (signed-in user) ----------
+    def _setup_next(request: Request, next_: str) -> str:
+        """Where the setup page leads once TOTP is active (B-8): the given target — without one,
+        a voluntary setup (full session) goes back to the account page, if it is on. The mandatory
+        setup under the chain keeps the usual fallback (`login_redirect`)."""
+        if not next_ and cfg.account_enabled and auth.session_user(request):
+            return auth.browser_path(request, "/auth/account")
+        return auth.safe_next(next_, request)
+
     @r.get("/auth/totp/setup", response_class=HTMLResponse)
     def totp_setup(request: Request, next: str = ""):
         u = auth.current_user(request) or auth.totp_enrollment_user(request)
@@ -190,7 +198,7 @@ def build_router(auth) -> APIRouter:
         # demanded both: refuse with confirmed TOTP AND begin only on explicit
         # request (POST with CSRF token). The secret therefore comes into being only in
         # `POST /auth/totp/setup/start`; this page merely shows the button for it.
-        return auth.render_page("totp_setup", request=request, data=None, next=auth.safe_next(next, request))
+        return auth.render_page("totp_setup", request=request, data=None, next=_setup_next(request, next))
 
     @r.post("/auth/totp/setup/start", response_class=HTMLResponse)
     def totp_setup_start(request: Request, next: str = Form(""), csrf_tok: str = Form("", alias="_csrf")):
@@ -206,7 +214,7 @@ def build_router(auth) -> APIRouter:
         if auth.store.has_confirmed_totp(u["id"]):
             raise HTTPException(409, auth.t("api.totp_active"))
         return auth.render_page("totp_setup", request=request, data=auth.totp_begin(u["id"]),
-                                next=auth.safe_next(next, request))
+                                next=_setup_next(request, next))
 
     @r.post("/auth/totp/setup")
     def totp_setup_confirm(request: Request, code: str = Form(...), next: str = Form("")):
@@ -239,10 +247,22 @@ def build_router(auth) -> APIRouter:
             raise HTTPException(429, auth.t("api.too_many"))
         ok = auth.totp_confirm(u["id"], code)
         auth._record_login(u["username"], ip, ok, "totp_setup", attempt=attempt)
-        if not (ok and enrollment):
+        if not ok:
+            return JSONResponse({"ok": False, "other_sessions": 0})
+        # B-9a: the recovery codes come with the factor, shown once on this page. Until now the setup
+        # created none, and the account page greeted the fresh 2FA with "only 0 recovery codes left".
+        # Nothing in the history asked for that — the codes simply came only from the button.
+        # No step-up as at `/auth/totp/recovery` (R3-3): there the codes REPLACE a factor someone
+        # else may hold; here the session has just proven the new factor itself (the code was
+        # consumed), and whoever holds the secret needs no codes to get in. `totp_begin` already
+        # cleared orphaned ones, an API key never gets this far (`require_session`).
+        codes = auth.generate_recovery_codes(u["id"])
+        if not enrollment:
             # B1-7: after a new factor offer to end the other sessions — the number
             # tells the UI whether there is anything to offer.
-            return JSONResponse({"ok": ok, "other_sessions": auth.count_other_sessions(request, u) if ok else 0})
+            # B-8: and where to go afterwards. Without `next` the page stayed on "2FA active".
+            return JSONResponse({"ok": True, "next": _setup_next(request, next), "recovery_codes": codes,
+                                 "other_sessions": auth.count_other_sessions(request, u)})
         # Mandatory setup under the chain (A-1): the confirmation code IS the TOTP step.
         # It is now consumed; had the user typed it once more at /auth/totp, that would have
         # been a failed attempt — five times, and the login lockout including fail2ban lines
@@ -259,7 +279,7 @@ def build_router(auth) -> APIRouter:
         # would fail with 401 — the page would have asked, the user agreed, and the lost
         # device would stay signed in. Better no offer then; the account page lists the sessions.
         response = JSONResponse({"ok": True, "next": auth._login_redirect_after(
-            request, further, u["id"], auth.safe_next(next, request)),
+            request, further, u["id"], auth.safe_next(next, request)), "recovery_codes": codes,
             "other_sessions": auth.count_other_sessions(request, u, token=renewed) if renewed else 0,
             # Boundary d: if the session stays half, the page asks anyway — redeemed at the
             # end of the chain (`/auth/sessions/revoke-after-login`).
@@ -1449,6 +1469,24 @@ def build_router(auth) -> APIRouter:
             raise HTTPException(erg.status, erg.message)
         return {"ok": True, "api_keys_active": erg.api_keys_active}
 
+    @r.post("/auth/password/set")
+    async def set_own_first_password(request: Request):
+        # B-10: an account without a password (sign-in link, OIDC, passkey) gets its first one here.
+        # One source like above: `set_initial_password` checks CSRF, session, freshness instead of the
+        # old password, throttle and rule, and writes the audit line.
+        b = await auth.json_body(request)
+        erg = await run_in_threadpool(auth.set_initial_password, request, b.get("new") or "",
+                                      csrf=request.headers.get("x-csrf-token") or b.get("_csrf") or "")
+        if not erg:
+            # Like every factor route: a stale step-up sends the account page to the reauth page.
+            headers = ({"X-TinySesam-Reauth": auth.browser_path(request, "/auth/reauth")}
+                       if erg.reason == "stepup" else None)
+            raise HTTPException(erg.status, erg.message, headers=headers)
+        # A new credential, like a new factor (B1-7): offer to end the other sessions.
+        u = auth.session_user(request)
+        return {"ok": True, "api_keys_active": erg.api_keys_active,
+                "other_sessions": auth.count_other_sessions(request, u) if u else 0}
+
     if cfg.account_enabled:
         @r.get("/auth/account", response_class=HTMLResponse)
         def account_page(request: Request):
@@ -1462,6 +1500,9 @@ def build_router(auth) -> APIRouter:
             if cfg.pin_enabled and (cfg.pin_login or "pin" in (cfg.login_chain or [])) and "pin" not in methods:
                 methods.append("pin")
             return auth.render_page("account", request=request, user=u, methods=methods,
+                                    # B-10: without a password the page offers to set one, without the
+                                    # field for the current one (not with a directory: `set_initial_password`).
+                                    password_initial=not (auth.store.get_password_hash(u["id"]) or cfg.ldap_enabled),
                                     has_totp=auth.store.has_confirmed_totp(u["id"]),
                                     recovery_left=auth.recovery_codes_remaining(u["id"]),
                                     recovery_warn=auth._RECOVERY_WARN_THRESHOLD,

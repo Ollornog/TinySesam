@@ -47,7 +47,7 @@
   },
   "PasswordChangeResult": {
     "REASONS": {
-      "sig": "('ok', 'missing', 'invalid', 'locked', 'ratelimit', 'policy', 'no_session')",
+      "sig": "('ok', 'missing', 'invalid', 'locked', 'ratelimit', 'policy', 'no_session', 'has_password', 'directory', 'method_disabled', 'stepup', 'relogin')",
       "tier": "A"
     },
     "api_keys_active": {
@@ -653,6 +653,10 @@
     },
     "set_disabled": {
       "sig": "(user_id: 'int', disabled: 'bool') -> 'bool'",
+      "tier": "A"
+    },
+    "set_initial_password": {
+      "sig": "(request: 'Request', new: 'str', *, csrf: 'Optional[str]' = None) -> 'PasswordChangeResult'",
       "tier": "A"
     },
     "set_mailer": {
@@ -2220,6 +2224,10 @@
       "tier": "B"
     },
     "POST /auth/password": {
+      "keys": [],
+      "tier": "B"
+    },
+    "POST /auth/password/set": {
       "keys": [],
       "tier": "B"
     },

@@ -174,9 +174,12 @@ _check_e = _logging_e.StreamHandler(_buffer_e)
 _sec_e.seclog.addHandler(_check_e)
 try:
     _ant = c_e.post("/auth/totp/setup", data={"code": _code, "next": "/target"})
-    assert _ant.status_code == 200 and _ant.json() == {"ok": True, "next": "/target",
-                                                       "other_sessions": 0,
-                                                       "other_sessions_after": 0}, _ant.text
+    # B-9a: the answer also carries the recovery codes created with the factor — shown once.
+    _answer = {k: v for k, v in _ant.json().items() if k != "recovery_codes"} if _ant.status_code == 200 else {}
+    assert _ant.status_code == 200 and _answer == {"ok": True, "next": "/target",
+                                                   "other_sessions": 0,
+                                                   "other_sessions_after": 0}, _ant.text
+    assert len(_ant.json()["recovery_codes"]) == auth_e.cfg.recovery_code_count, _ant.text
     _s = auth_e.store.get_session(c_e.cookies.get(auth_e.cfg.session_cookie))
     assert _s and _s["mfa_ok"], "after the mandatory setup the session is still stuck in the MFA step"
     # The old way — the same code at /auth/totp once more — is thereby superfluous: the setup
@@ -186,7 +189,8 @@ try:
 finally:
     _sec_e.seclog.removeHandler(_check_e)
 assert "failed login" not in _buffer_e.getvalue(), _buffer_e.getvalue()
-assert _event_e == ["totp_enabled"], _event_e
+# B-9a: the recovery codes come with the factor — one event each, nothing else.
+assert _event_e == ["totp_enabled", "recovery_codes_generated"], _event_e
 ok("A-1: mandatory setup under the chain signs in with the confirmation (no failed attempt afterwards)")
 
 # A-4: An already active TOTP is not "confirmed once more" — neither via the route (409 like
@@ -197,7 +201,7 @@ _sequence = pyotp.TOTP(_secret_text).at(_when.time() + 30)
 _ant = c_e.post("/auth/totp/setup", data={"code": _sequence})
 assert _ant.status_code == 409, (_ant.status_code, _ant.text)
 assert not auth_e.totp_confirm(uid_e, _sequence), "totp_confirm confirms an active TOTP again"
-assert _event_e == ["totp_enabled"], _event_e
+assert _event_e == ["totp_enabled", "recovery_codes_generated"], _event_e
 assert sum(z["event"] == "totp_enable" for z in auth_e.store.recent_audit(50)) == 1
 assert auth_e._verify_totp(uid_e, _sequence), "the follow-up code must stay free for sign-in"
 ok("A-4: confirmed TOTP -> 409 at /auth/totp/setup, no second totp_enabled")
@@ -217,7 +221,8 @@ _page_html_b = c_b.post("/auth/totp/setup/start", data={"next": "/target"}).text
 _secret_text_b = _re.search(r"class=mono>([A-Z2-7]+)<", _page_html_b).group(1)
 _ant_b = c_b.post("/auth/totp/setup", data={"code": pyotp.TOTP(_secret_text_b).now(), "next": "/target"})
 assert _ant_b.status_code == 200, _ant_b.text
-assert _ant_b.json() == {"ok": True, "next": "/target", "other_sessions": 1, "other_sessions_after": 0}, _ant_b.json()
+assert {k: v for k, v in _ant_b.json().items() if k != "recovery_codes"} == \
+    {"ok": True, "next": "/target", "other_sessions": 1, "other_sessions_after": 0}, _ant_b.json()
 assert c_e.get("/auth/account", follow_redirects=False).status_code == 200, "device A is still in"
 assert c_b.post("/auth/sessions/revoke", json={"scope": "others"}).status_code == 200
 assert c_e.get("/auth/account", follow_redirects=False).status_code != 200, "device A stayed signed in"
@@ -258,7 +263,8 @@ _s_k = auth_k.store.get_session(c_kb.cookies.get(auth_k.cfg.session_cookie))
 assert _s_k and not _s_k["mfa_ok"], "the session is already full after the TOTP step"
 # No offer to redeem IMMEDIATELY (`other_sessions` 0, the half session cannot end anything) —
 # but since limit d (2026-09-24) one for the completion: `other_sessions_after` counts device A.
-assert _ant_k.json() == {"ok": True, "next": "/auth/pin?next=/target", "other_sessions": 0,
+assert {k: v for k, v in _ant_k.json().items() if k != "recovery_codes"} == \
+    {"ok": True, "next": "/auth/pin?next=/target", "other_sessions": 0,
                          "other_sessions_after": 1}, \
     f"offer the half session cannot redeem: {_ant_k.json()}"
 assert c_kb.post("/auth/sessions/revoke", json={"scope": "others"}).status_code == 401

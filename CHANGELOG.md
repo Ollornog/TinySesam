@@ -30,6 +30,30 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 - `TinySesam.PAGES` gains `qr_approve` and `qr_login`. The surface guard reports the changed tuple as a changed
   constant; nothing was removed.
 
+### Fixed — account setup after the first sign-in (B-8, B-9, B-10)
+
+- **B-8: the voluntary TOTP setup led nowhere.** `POST /auth/totp/setup` answered a fully signed-in user with
+  `{"ok": true}` and no `next`, so the page stayed on "2FA active". It now returns `next` (the given target through
+  `safe_next`; without one the account page when `account_enabled`, otherwise `login_redirect`).
+- **B-9a: no recovery codes after setting up TOTP.** The setup created none; the account page then greeted the fresh
+  2FA with "Only 0 recovery codes left". Confirming TOTP now creates `recovery_code_count` codes and returns them once
+  (`recovery_codes`) — on the voluntary and on the mandatory (`login_chain`) path. The setup page shows them and leads
+  on only after "I have written them down". Nothing in the history argued against it; the codes simply came only from
+  the button. No step-up there (unlike `/auth/totp/recovery`): the session has just proven the new factor itself. The
+  account page now tells "No recovery codes" apart from "Only n left". Audit `recovery_generate` and the event
+  `recovery_codes_generated` now also appear at setup.
+- **B-9b: the recovery warning wrapped into the button row.** The remainder line is a block of its own below the
+  buttons (it ran over two lines at 1280 px and overlapped them) and follows "Generate recovery codes" (it kept the old
+  number).
+- **B-10: an account without a password could never get one.** The account page asked for the current password and
+  `change_password` refused the empty one. Such an account (sign-in link, OIDC, passkey) now sees "Set password" without
+  that field: new route `POST /auth/password/set` and tier-A building block `set_initial_password(request, new,
+  csrf=…)`. Instead of the old password it requires freshness — a fresh step-up if the account has a factor, otherwise
+  the age of the sign-in (`stepup_max_age_sec`) — plus CSRF, rate limit, password rule and the audit line
+  `password_set`. Refused with an existing password (409, `change_password` stays the way), with password sign-in off
+  (404) and with `ldap_enabled` (409). `PasswordChangeResult.REASONS` gains `has_password`, `directory`,
+  `method_disabled`, `stepup`, `relogin`; the surface guard reports the changed tuple; nothing was removed.
+
 ### Added — release automation (kit 0.47.0)
 
 - A merged Dependabot PR that changes the `Dockerfile` or the gateway lock (`deploy/gateway/requirements.*`) now cuts a

@@ -8,7 +8,7 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 ## Meilensteine
 
 * ☐ **[M-1](M-1-api-stable-1-0.md)** 1.0 — API stable enough for PyPI — 14/14 erledigt
-* ☐ **[M-2](M-2-after-1-0.md)** After 1.0 — keeping the published package maintained — 14/18 erledigt
+* ☐ **[M-2](M-2-after-1-0.md)** After 1.0 — keeping the published package maintained — 17/21 erledigt
 * ☑ **[M-3](M-3-gate-in-front-of-third-party-apps.md)** Gate in front of third-party apps — fast, sign in once, sign out cleanly — 8/8 erledigt
 
 ## Aufgaben
@@ -56,6 +56,9 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 * ☑ **[B-5](B-5-gateway-websocket-upgrade.md)** Gateway: forward auth of a WebSocket app answers 403 when a WebSocket library is installed · M-2
 * ☑ **[B-6](B-6-gate-refresh-exchange-does-not-renew-the-applicati.md)** Gate: refresh exchange does not renew the application approval — hourly login once the provider session has ended · M-2
 * ☑ **[B-7](B-7-gate-token-iat-in-the-future-after-a-clock-step.md)** Gate token: iat in the future after a backward clock step — caddy-jwt rejects fresh tokens · M-2
+* ☑ **[B-8](B-8-voluntary-totp-setup-does-not-lead-on.md)** Voluntary TOTP setup does not lead on — the page stays on "2FA active" · M-2
+* ☑ **[B-9](B-9-no-recovery-codes-after-totp-setup-warning-wraps.md)** No recovery codes after the TOTP setup, and the warning on the account page wraps into the buttons · M-2
+* ☑ **[B-10](B-10-account-without-password-cannot-set-one.md)** An account without a password cannot set one — the account page demands the current password · M-2
 
 ## Entscheidungen (ADR)
 

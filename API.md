@@ -28,7 +28,7 @@ The configuration fields are in [CONFIGURATION.md](CONFIGURATION.md): 175 of 176
 
 **`auth.store` is internals** (tier C): the storage layer of the built-in routes, without tier, without promise and without transition period — its methods can change with every release. What an app needs is listed below as a method of `TinySesam` (e.g. `set_disabled` instead of `auth.store.set_disabled`).
 
-**Status:** A 374 · B 160 · C 38 names.
+**Status:** A 375 · B 161 · C 38 names.
 
 ## A · Methods of `TinySesam`
 
@@ -228,6 +228,10 @@ Set the session cookie. remember=True → persistent cookie (max_age = long TTL)
 
 Lock or unlock an account as operator — with the same effect as the panel (`POST <admin_path>/api/users/{id}/disable`, which calls exactly this method).
 
+### `set_initial_password(request: 'Request', new: 'str', *, csrf: 'Optional[str]' = None) -> 'PasswordChangeResult'`
+
+Give the own account its FIRST password — for an account that has none yet; `POST /auth/password/set` calls exactly this method.
+
 ### `set_mailer(fn)`
 
 Attach a custom mail sender: fn(to, subject, text, html=None). Overrides SMTP.
@@ -375,13 +379,13 @@ Set the session cookie in `response` if the step produced a new token.
 
 ## A · Result of the password change: `tinysesam.PasswordChangeResult`
 
-What a password change resulted in: success or the reason against it, with HTTP status and text. Returned by `change_password`. A frozen dataclass; `bool(result)` is `result.ok`.
+What a password change resulted in: success or the reason against it, with HTTP status and text. Returned by `change_password`, `set_initial_password`. A frozen dataclass; `bool(result)` is `result.ok`.
 
 | Field | Type | Meaning |
 |---|---|---|
 | `ok` | `bool` | Is the new password set? Exactly when `reason == "ok"`; `bool(result)` is the same value. |
 | `reason` | `str` | Why (not): one of the values in `REASONS`. For programs — the text is in `message`. |
-| `status` | `int` | The HTTP status of `POST /auth/password`: 200 on success, otherwise 400, 401, 403 or 429. |
+| `status` | `int` | The HTTP status of `POST /auth/password` (or `/auth/password/set`): 200 on success, otherwise 400, 401, 403, 404, 409 or 429. |
 | `message` | `str` | The translated text for the user (language from `config.lang`); empty on success. |
 | `api_keys_active` | `int` | How many of the account's API keys remain valid — they survive the change on purpose (they belong to automations), it is not concealed. Only on success, otherwise 0. |
 
@@ -389,7 +393,7 @@ What a password change resulted in: success or the reason against it, with HTTP 
 
 Every value `reason` can take: `ok`; `missing` (old password empty, 400, does not count as a failed attempt); `invalid` (old password wrong, 403); `locked` (lockout after `password_change_max_attempts` failed attempts, 429); `ratelimit` (throttle per IP, 429); `policy` (the new password violates the password policy, 400 — the reason is in `message`); `no_session` (no full session, 401; 403 if the request shows an API key instead of a session).
 
-Value: `('ok', 'missing', 'invalid', 'locked', 'ratelimit', 'policy', 'no_session')`
+Value: `('ok', 'missing', 'invalid', 'locked', 'ratelimit', 'policy', 'no_session', 'has_password', 'directory', 'method_disabled', 'stepup', 'relogin')`
 
 ## A · Further exports of `tinysesam`
 
@@ -821,6 +825,7 @@ The HTML pages (sign-in, registration, account, admin panel, the pages behind e-
 | POST | `/auth/passkey/register/begin` | — |
 | POST | `/auth/passkey/register/finish` | `query:name` |
 | POST | `/auth/password` | — |
+| POST | `/auth/password/set` | — |
 | GET | `/auth/pin` | `query:error`, `query:next` |
 | POST | `/auth/pin` | `form:_csrf`, `form:next`, `form:pin`, `form:remember`, `form:username` |
 | POST | `/auth/pin/disable` | — |
@@ -948,4 +953,4 @@ These names are not part of the promise. Since 0.22.0 the implementation is call
 
 ---
 
-150 methods, 3 properties, 11 constants, 7 methods of `TinySesamConfig`, 10 exports, of which 5 error types, 17 names on the result types `LoginResult`, `PasswordChangeResult` — generated from the docstrings and `tests/api_surface.json`.
+151 methods, 3 properties, 11 constants, 7 methods of `TinySesamConfig`, 10 exports, of which 5 error types, 17 names on the result types `LoginResult`, `PasswordChangeResult` — generated from the docstrings and `tests/api_surface.json`.
