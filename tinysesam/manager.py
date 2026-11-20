@@ -322,7 +322,9 @@ class TinySesam:
         self.store.vault = _vault.Vault(self._vault_keyring,
                                         reload=_keys.reloader(config.db_path, config.secrets_key_file))
         self.store.extract_secrets()
-        legacy_base = self._vault_keyring.active.material
+        # What 0.25.x derived the gate key and pepper from: the base key — the OLDEST key of the keyring (the only one
+        # unless `keys rotate` ran before this version's first start).
+        legacy_base = self._vault_keyring.keys[-1].material
         # Gate token (ADR-9, T-19) — since T-48 a random key of its own, never derived from the vault key: whoever
         # reads the vault key alone mints no gate token. Always loaded, even when the gate is off: `tinysesam
         # gate-key` should be able to prepare the proxy before the switch is flipped. On the first start after

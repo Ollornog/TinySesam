@@ -26,7 +26,10 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
   key and the host-shaped `aud` keep other JWTs out.
 - **`/auth/gate/jwks.json`** (new route) and `TinySesam.gate_jwks()`: the active gate key and the previous ones for
   3600 s after a rotation, for caddy-jwt `jwk_url` — a rotation then needs nothing at the proxy. `tinysesam gate-key
-  --jwks` prints the set.
+  --jwks` prints the set. `deploy/forward-auth/Caddyfile.gate` now takes the set (`jwk_url` over `TS_AUTH_UPSTREAM`)
+  instead of `sign_key {$TS_GATE_PUBKEY}`; measured with Caddy 2.11.9 + caddy-jwt 1.4.0 in `tests/test_gate_caddy.py`
+  (after a rotation the first request or two take the way back, then the new key passes; the old key's tokens keep
+  passing).
 - **Configuration check:** a warning for a key file readable or writable by group or others, for a configured key file
   in the database's directory, and for the gate switched on while the vault key lies beside the database and the gate
   key in it. The start warns while the gate key derived from the vault key is still in the keyring. The warning

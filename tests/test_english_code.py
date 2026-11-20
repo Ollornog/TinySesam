@@ -94,6 +94,7 @@ KIT_DIRS = ("tests/_kit/",)
 #: Not German, although a word of the list looks like it (project name, technical terms) — spelled out, with the reason.
 NOT_GERMAN_TOKENS = frozenset({
     "sesam",        # TinySesam, the project name
+    "typ",          # the JOSE header parameter `typ` (RFC 7515 §4.1.9) — a protocol name, not the German "Typ"
 })
 #: Beyond the Python directories: where non-Python text lives, what is read at the root, and the English docs.
 TEXT_ROOTS = (".github", "deploy", "scripts")

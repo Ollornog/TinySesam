@@ -16,6 +16,7 @@ import http.server
 import json
 import os
 import pathlib
+import re
 import socket
 import subprocess
 import sys
@@ -42,7 +43,7 @@ import uvicorn  # noqa: E402
 from fastapi import FastAPI, Request  # noqa: E402
 
 from tinysesam import TinySesam, TinySesamConfig  # noqa: E402
-from tinysesam import gate  # noqa: E402
+from tinysesam import gate, keys  # noqa: E402
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 ISS = "https://auth.example.com"
@@ -344,6 +345,40 @@ try:
     st, h, _ = request("/x", {**session, "__Host-tinysesam_gate": cases["expired"]})
     assert st == 200 and gate_cookie(h) and gate_cookie(h) != cases["expired"]
     ok("expired token + session → 200 and a new gate cookie")
+
+    # ---------- T-48/T-53: keys from /auth/gate/jwks.json (jwk_url), rotation, typ ----------
+    template = (ROOT / "deploy/forward-auth/Caddyfile.gate").read_text(encoding="utf-8")
+    assert "jwk_url http://{$TS_AUTH_UPSTREAM:127.0.0.1:8000}/auth/gate/jwks.json" in template
+    assert not re.search(r"^\s*sign_key ", template, re.M), "the template should take the key set, not one key"
+    head_jwt = base64.urlsafe_b64encode(b'{"alg":"EdDSA","typ":"JWT","kid":"' + auth._gate_keyring.active.kid.encode()
+                                        + b'"}').rstrip(b"=").decode()
+    body = signed().split(".")[1]
+    typ_jwt = f"{head_jwt}.{body}." + gate._b64u(auth._gate_key_name.sign(f"{head_jwt}.{body}".encode()))
+    before = FORWARD["n"]
+    assert request("/x", {"__Host-tinysesam_gate": typ_jwt})[0] == 200 and FORWARD["n"] == before
+    assert gate.check(base64.b64decode(auth.gate_public_key()), typ_jwt, aud="app.example.com", iss=ISS,
+                      now=int(time.time())) is None
+    ok("typ: caddy-jwt lets a gate-key-signed `typ: JWT` through (it has no typ check, ADR-12) — gate.check refuses it; "
+       "at the proxy the dedicated key and aud separate")
+    # Rotation as a restart after `tinysesam keys rotate --purpose gate` leaves it: a new active key, the old one
+    # previous. A token of the old key keeps passing; one of the new key passes once Caddy has fetched the set again.
+    old_token = signed()
+    auth.store.key_ring_rotate("gate", os.urandom(32))
+    auth._gate_keyring = keys.Keyring("gate", auth.store.key_ring_rows("gate"), "database")
+    auth._gate_key_name = keys.gate_private(auth._gate_keyring.active.material)
+    new_token = signed()
+    results = []
+    for _ in range(20):
+        before = FORWARD["n"]
+        results.append(request("/x", {"__Host-tinysesam_gate": new_token})[0] == 200 and FORWARD["n"] == before)
+        if results[-1]:
+            break
+        time.sleep(0.25)
+    assert results[-1], f"the new key never reached Caddy: {results}"
+    before = FORWARD["n"]
+    assert request("/x", {"__Host-tinysesam_gate": old_token})[0] == 200 and FORWARD["n"] == before
+    ok(f"rotation: the new key's token passes Caddy without TinySesam after {len(results)} request(s) (the misses "
+       "take the way back), the old key's token still passes (previous key in the set)")
 
     # ---------- Signing out at the application (T-22): /.tinysesam/* bypasses the gate ----------
     before = FORWARD["n"]
