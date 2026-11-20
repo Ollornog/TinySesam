@@ -186,8 +186,12 @@ jobs:
       - name: Accept the home-network template (tls internal on an IP address)
         run: |
           set -euo pipefail
-          caddy="$(docker compose -f deploy/forward-auth/docker-compose.yml -f deploy/home-network/docker-compose.yml \
-            config --images | grep -m1 '^caddy:')" || { echo "no caddy image in the override"; exit 1; }
+          # First the whole list, then the search — not `config --images | grep -m1`: under pipefail, grep ending at the
+          # first match while compose still writes gives compose a SIGPIPE, and the step reported "no caddy image" for
+          # an override that has one (red once in the C22 PR, 2026-11-20). Same form as the reference-stack step above.
+          images="$(docker compose -f deploy/forward-auth/docker-compose.yml -f deploy/home-network/docker-compose.yml \
+            config --images)"
+          caddy="$(grep -m1 '^caddy:' <<<"$images")" || { echo "no caddy image in the override"; exit 1; }
           docker run --rm -v "$PWD/deploy/home-network/Caddyfile:/etc/caddy/Caddyfile:ro" \
             "$caddy" caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
           docker run -d --name home-network-probe -p 127.0.0.1:18443:443 -p 127.0.0.1:18444:8443 \
