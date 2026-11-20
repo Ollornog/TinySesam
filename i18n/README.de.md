@@ -1777,7 +1777,7 @@ zusätzlich die Website baut.
 
 ## Status
 
-**91 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
+**92 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
 (`tests/test_matrix.py`).
 
 Gebaut und getestet: Passwort/TOTP/Sitzungen/Rollen, Remember-me, Step-up und per-Route-MFA,
