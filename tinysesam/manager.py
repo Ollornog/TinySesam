@@ -459,6 +459,10 @@ class TinySesam:
             _demand("onelogin", "saml_enabled", "saml")
             from .saml_ import SAMLClient
             self.saml = SAMLClient(config, store=self.store)   # store: replay protection (H1)
+        if config.oauth_enabled and config.oauth_service_clients:
+            # Services (T-60): every token request is a signed assertion — without the library nothing can be
+            # checked, and pairing and token requests answer `server_error` (fail-closed). Warned like every extra.
+            _demand("joserfc", "oauth_service_clients", "services")
         if config.oidc_enabled and config.oidc_issuer and config.oidc_client_id:
             _demand("authlib", "oidc_enabled", "oidc")
             from .oidc import OIDCClients, DEFAULT_CLIENT
@@ -1164,7 +1168,57 @@ class TinySesam:
             self._security_event("api_keys_revoked", user_id, count=n, reason=reason)
         # The app passwords (T-66) go the same way: they are a second way in as much as a key is.
         self._app_passwords_revoked(user_id, reason)
+        # And the services (T-60): a service paired to the account is the machine version of a key.
+        self._services_revoked(user_id, reason)
         return n
+
+    def _services_revoked(self, user_id, reason: str) -> int:
+        """Revoke every service (T-60) of an account — also with the switch off, for what is left."""
+        if not self.store.oauth_service_ids(int(user_id)):
+            return 0
+        from .oauth_services import ServiceClients
+        srv = self._oauth_server()
+        return (srv.services or ServiceClients(srv)).revoke_user(int(user_id), reason)
+
+    # ---------- Services: OAuth client_credentials + private_key_jwt (T-60, ADR-13) ----------
+    def _services(self):
+        if not (self.cfg.oauth_enabled and self.cfg.oauth_service_clients):
+            raise ConfigError("Services need oauth_enabled=True and oauth_service_clients=True.")
+        return self._oauth_server().services
+
+    def create_service_pairing(self, user_id, name=None, resources=None, roles=None) -> dict:
+        """A one-time pairing code for a service that will act as `user_id` (a service account or a person's own
+        account — never with the admin flag). The service redeems it with `tinysesam-client pair <base_url> <code>`.
+
+        `resources`: the resources (from `oauth_resources`) it may get tokens for — may be left out when exactly
+        one is configured. `roles`: a scope, trimmed to the account's roles like an API key's; nothing left raises
+        `ConfigError`. Lives `oauth_pairing_minutes`, single use, only its digest is stored, and it goes with the
+        account's other open links on a lock or password reset.
+
+        Returns `{"code", "expires_at", "resources", "roles", "dropped_roles", "pair_url", "issuer"}` — `code` only
+        this once. Who may call it is the caller's decision: the built-in routes allow it for the own account
+        from a freshly confirmed session and for any account in the admin panel."""
+        request = _REQUEST.get() or {}
+        return self._services().issue_pairing(int(user_id), name=name, resources=resources, roles=roles,
+                                              actor=request.get("actor"), ip=request.get("ip"))
+
+    def list_service_clients(self, user_id=None) -> list:
+        """The live services — of one account or all: client ID, name, account, roles, resources, created, last
+        token request and address, and the keys (`kid`, created, expiry, end of the rotation overlap, last use)."""
+        return self._services().listing(user_id)
+
+    def revoke_service_client(self, client_id, user_id=None) -> bool:
+        """Revoke a service at once: its keys are deleted, its tokens stop working with the next request. With
+        `user_id` only a service of that account. True if one was live."""
+        svc = self.store.oauth_service(client_id)
+        if svc is None or (user_id is not None and int(svc["user_id"]) != int(user_id)):
+            return False
+        from .oauth_services import ServiceClients
+        srv = self._oauth_server()
+        request = _REQUEST.get() or {}
+        # With `user_id` the holder revokes their own; without it an operator (panel, own code) does.
+        return (srv.services or ServiceClients(srv)).revoke(str(client_id), "user" if user_id is not None else
+                                                            "admin", request.get("ip"))
 
     # ---------- App passwords (T-66) ----------
     def app_password_hosts(self) -> list:
@@ -1511,6 +1565,8 @@ class TinySesam:
     #: Since T-66 the app passwords: `app_password_created` (`app_password_id`, `name`, `hosts`),
     #: `app_password_revoked` (`app_password_id`), `app_passwords_revoked` (`count`, `reason` — the same reasons as
     #: `api_keys_revoked`).
+    #: Since T-60 the services: `oauth_service_paired` (`client_id`, `client_name`, `resources`) — a service was paired
+    #: to act as the account; `oauth_service_revoked` (`client_id`, `client_name`, `reason`).
     SECURITY_EVENTS = (
         "password_changed", "pin_set", "pin_disabled", "totp_enabled", "totp_disabled",
         "recovery_codes_generated", "recovery_code_used", "passkey_added", "passkey_removed",
@@ -1519,6 +1575,7 @@ class TinySesam:
         "oauth_device_connected", "oauth_device_revoked", "oauth_token_reuse",
         "signin_link_issued", "device_signed_in",
         "app_password_created", "app_password_revoked", "app_passwords_revoked",
+        "oauth_service_paired", "oauth_service_revoked",
     )
 
     #: The events that mean NEW access to the account — they go to the owner by mail as well
@@ -1526,7 +1583,8 @@ class TinySesam:
     #: administrator made it (`by_operator`): the holder's own change is no news to the holder.
     _ACCESS_MAIL_EVENTS = ("passkey_added", "totp_enabled", "pin_set", "api_key_created",
                            "device_signed_in", "signin_link_issued", "password_changed",
-                           "oauth_device_connected", "oauth_token_reuse", "app_password_created")
+                           "oauth_device_connected", "oauth_token_reuse", "app_password_created",
+                           "oauth_service_paired")
 
     def _security_event(self, event: str, user_id, **details) -> None:
         """Call `on_security_event` for an event from `SECURITY_EVENTS`, if set.
@@ -8092,6 +8150,9 @@ class TinySesam:
         if self._oauth is None:
             from . import oauth as _oauth_mod
             self._oauth = _oauth_mod.OAuthServer(self, self._pepper_keyring)
+            if self.cfg.oauth_service_clients:
+                from .oauth_services import ServiceClients
+                self._oauth.services = ServiceClients(self._oauth)
         return self._oauth
 
     def _oauth_revoke_user(self, user_id: int, reason: str) -> int:

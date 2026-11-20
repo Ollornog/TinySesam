@@ -229,6 +229,10 @@
       "sig": "(username, roles=None, display_name=None) -> 'int'",
       "tier": "A"
     },
+    "create_service_pairing": {
+      "sig": "(user_id, name=None, resources=None, roles=None) -> 'dict'",
+      "tier": "B"
+    },
     "create_signin_link": {
       "sig": "(user_id, ttl_min=None, next='/') -> 'dict'",
       "tier": "B"
@@ -434,6 +438,10 @@
       "sig": "()",
       "tier": "B"
     },
+    "list_service_clients": {
+      "sig": "(user_id=None) -> 'list'",
+      "tier": "B"
+    },
     "login_fresh": {
       "sig": "(request: 'Request', user: 'Optional[dict]' = None) -> 'bool'",
       "tier": "A"
@@ -609,6 +617,10 @@
     },
     "revoke_mfa_enrollment": {
       "sig": "(user_id: 'int') -> 'None'",
+      "tier": "B"
+    },
+    "revoke_service_client": {
+      "sig": "(client_id, user_id=None) -> 'bool'",
       "tier": "B"
     },
     "rotate_session": {
@@ -872,7 +884,7 @@
     },
     "SECURITY_EVENTS": {
       "tier": "A",
-      "value": "('password_changed', 'pin_set', 'pin_disabled', 'totp_enabled', 'totp_disabled', 'recovery_codes_generated', 'recovery_code_used', 'passkey_added', 'passkey_removed', 'api_key_created', 'api_key_revoked', 'api_keys_revoked', 'email_changed', 'username_changed', 'oauth_device_connected', 'oauth_device_revoked', 'oauth_token_reuse', 'signin_link_issued', 'device_signed_in', 'app_password_created', 'app_password_revoked', 'app_passwords_revoked')"
+      "value": "('password_changed', 'pin_set', 'pin_disabled', 'totp_enabled', 'totp_disabled', 'recovery_codes_generated', 'recovery_code_used', 'passkey_added', 'passkey_removed', 'api_key_created', 'api_key_revoked', 'api_keys_revoked', 'email_changed', 'username_changed', 'oauth_device_connected', 'oauth_device_revoked', 'oauth_token_reuse', 'signin_link_issued', 'device_signed_in', 'app_password_created', 'app_password_revoked', 'app_passwords_revoked', 'oauth_service_paired', 'oauth_service_revoked')"
     },
     "TOKEN_PATHS": {
       "tier": "B",
@@ -949,6 +961,22 @@
       "keys": [
         "client_id",
         "grant_id",
+        "reason"
+      ],
+      "tier": "A"
+    },
+    "oauth_service_paired": {
+      "keys": [
+        "client_id",
+        "client_name",
+        "resources"
+      ],
+      "tier": "A"
+    },
+    "oauth_service_revoked": {
+      "keys": [
+        "client_id",
+        "client_name",
         "reason"
       ],
       "tier": "A"
@@ -1447,6 +1475,10 @@
       "field": "bool = False",
       "tier": "B"
     },
+    "oauth_pairing_minutes": {
+      "field": "int = 10",
+      "tier": "B"
+    },
     "oauth_pepper_file": {
       "field": "str = ''",
       "tier": "B"
@@ -1465,6 +1497,18 @@
     },
     "oauth_resources": {
       "field": "list[str] = []",
+      "tier": "B"
+    },
+    "oauth_service_clients": {
+      "field": "bool = False",
+      "tier": "B"
+    },
+    "oauth_service_key_days": {
+      "field": "int = 90",
+      "tier": "B"
+    },
+    "oauth_service_token_ttl_sec": {
+      "field": "int = 900",
       "tier": "B"
     },
     "oidc_allowed_groups": {
@@ -2199,6 +2243,10 @@
       ],
       "tier": "B"
     },
+    "GET /auth/oauth/services": {
+      "keys": [],
+      "tier": "B"
+    },
     "GET /auth/oidc/start": {
       "keys": [
         "query:app",
@@ -2310,6 +2358,10 @@
       "tier": "B"
     },
     "GET <admin>/api/oauth/devices": {
+      "keys": [],
+      "tier": "B"
+    },
+    "GET <admin>/api/oauth/services": {
       "keys": [],
       "tier": "B"
     },
@@ -2440,11 +2492,27 @@
       "keys": [],
       "tier": "B"
     },
+    "POST /auth/oauth/pair": {
+      "keys": [],
+      "tier": "B"
+    },
     "POST /auth/oauth/register": {
       "keys": [],
       "tier": "B"
     },
     "POST /auth/oauth/revoke": {
+      "keys": [],
+      "tier": "B"
+    },
+    "POST /auth/oauth/service/keys": {
+      "keys": [],
+      "tier": "B"
+    },
+    "POST /auth/oauth/services/pairing": {
+      "keys": [],
+      "tier": "B"
+    },
+    "POST /auth/oauth/services/{client_id}/revoke": {
       "keys": [],
       "tier": "B"
     },
@@ -2641,6 +2709,10 @@
       "keys": [],
       "tier": "B"
     },
+    "POST <admin>/api/oauth/services/{client_id}/revoke": {
+      "keys": [],
+      "tier": "B"
+    },
     "POST <admin>/api/resources": {
       "keys": [],
       "tier": "B"
@@ -2686,6 +2758,10 @@
       "tier": "B"
     },
     "POST <admin>/api/users/{uid}/roles": {
+      "keys": [],
+      "tier": "B"
+    },
+    "POST <admin>/api/users/{uid}/service-pairing": {
       "keys": [],
       "tier": "B"
     },
@@ -2789,6 +2865,9 @@
   },
   "log.loggers": {
     "tinysesam": {
+      "tier": "A"
+    },
+    "tinysesam.client": {
       "tier": "A"
     },
     "tinysesam.mail": {

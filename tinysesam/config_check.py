@@ -871,6 +871,7 @@ def check_config(config) -> tuple[list[str], list[str]]:
     _combinations(config, error, warnings)
     _gate(config, error, warnings)
     _oauth(config, error, warnings)
+    _oauth_services_without_oauth(config, error)
     _keys(config, warnings)
     _forward_apps(config, error, warnings)
 
@@ -972,6 +973,11 @@ NUMBER_LIMITS = {
     "oauth_refresh_idle_days": (1, 3650),
     "oauth_refresh_max_days": (0, 3650),
     "oauth_refresh_grace_sec": (0, 60),
+    # Services (T-60): they ask again for a token at no cost, so an hour is the most; a pairing code is typed
+    # in right after issuing it.
+    "oauth_service_token_ttl_sec": (60, 3600),
+    "oauth_service_key_days": (0, 3650),
+    "oauth_pairing_minutes": (1, 60),
     # Waiting time on the "Signed out" page before it leads back to the application. Above five minutes
     # nobody waits any more, for that there is 0 (leave standing).
     "forward_logged_out_sec": (0, 300),
@@ -1464,6 +1470,20 @@ def _oauth(config, error: list, warnings: list) -> None:
             config,
             "oauth_refresh_max_days=0: a connected device stays connected as long as it is used, without "
             "an absolute maximum. ASVS 5.0 V10.4.8 (level 2) asks for one; the default is 180 days."))
+    if _an(config, "oauth_service_clients") and _integer(config, "oauth_service_key_days", None) == 0:
+        warnings.append(_t(
+            config,
+            "oauth_service_key_days=0: a service key never expires — a copied key file stays usable until someone "
+            "revokes the service. With a lifetime the reference client rotates the key on its own."))
+
+
+def _oauth_services_without_oauth(config, error: list) -> None:
+    """Services (T-60) are a grant type of the OAuth server — without it there is no token endpoint."""
+    if _an(config, "oauth_service_clients") and not _an(config, "oauth_enabled"):
+        error.append(_t(
+            config,
+            "oauth_service_clients=True without oauth_enabled=True: services get their tokens from the OAuth "
+            "server — switch it on (with base_url, forward_auth_enabled and oauth_resources)."))
 
 
 #: Where container and service managers put secrets — mode and directory are theirs, not the operator's choice
@@ -1603,6 +1623,14 @@ def _combinations(config, error: list, warnings: list) -> None:
 # REQUIRES_MAILER / REQUIRES_BASE_URL / BASE_URL_RECOMMENDED must be a key of `_DE`, and every
 # key must be used (`config_check._DE`).
 _DE: dict[str, str] = {
+    ("oauth_service_key_days=0: a service key never expires — a copied key file stays usable until someone "
+     "revokes the service. With a lifetime the reference client rotates the key on its own."):
+        ("oauth_service_key_days=0: Ein Dienst-Schlüssel läuft nie ab — eine kopierte Schlüsseldatei bleibt "
+         "nutzbar, bis jemand den Dienst widerruft. Mit Laufzeit wechselt der Referenz-Client den Schlüssel selbst."),
+    ("oauth_service_clients=True without oauth_enabled=True: services get their tokens from the OAuth "
+     "server — switch it on (with base_url, forward_auth_enabled and oauth_resources)."):
+        ("oauth_service_clients=True ohne oauth_enabled=True: Dienste bekommen ihre Tokens vom OAuth-Server — "
+         "ihn einschalten (mit base_url, forward_auth_enabled und oauth_resources)."),
     ("oauth_enabled=True without forward_auth_enabled=True: the access token is checked in "
      "/auth/forward — without it no application accepts the tokens."):
         ("oauth_enabled=True ohne forward_auth_enabled=True: Das Access-Token wird in /auth/forward "

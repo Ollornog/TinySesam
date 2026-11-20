@@ -1710,6 +1710,11 @@ def build_router(auth) -> APIRouter:
                                     # Connected programs (OAuth, T-36) — None leaves the section out.
                                     oauth_devices=(auth._oauth_server().devices(u["id"])
                                                    if cfg.oauth_enabled else None),
+                                    # Services (T-60) — the resources a pairing code may name; None leaves the
+                                    # section out.
+                                    service_resources=(auth._oauth_server().resources()
+                                                       if cfg.oauth_enabled and cfg.oauth_service_clients
+                                                       else None),
                                     # App passwords (T-66) — None leaves the section out.
                                     app_passwords=({"apps": auth.app_password_hosts(),
                                                     "default_days": int(cfg.app_password_default_days),

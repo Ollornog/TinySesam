@@ -211,6 +211,17 @@ class TinySesamConfig:
     # the pepper is a random key of its own, stored in the database encrypted with the vault key (ADR-12).
     # Rotation: `tinysesam keys rotate --purpose oauth-pepper` — connected devices stay connected.
     oauth_pepper_file: str = ""
+    # Services: client_credentials + private_key_jwt (T-60, ADR-13).
+    # A service or daemon without a person gets short-lived access tokens from the same server. It is paired once
+    # with a one-time code from the account page or the admin panel, creates its key pair itself and proves
+    # every token request with a signed assertion (RFC 7523) — TinySesam keeps only the public key. Needs
+    # oauth_enabled and the extra [services] (joserfc). Recipe: README "A service calls a protected app".
+    oauth_service_clients: bool = False
+    oauth_service_token_ttl_sec: int = 900   # lifetime of a service's access token; no refresh token, it asks anew
+    # Lifetime of a service key in days: the reference client rotates it on its own at half of it; 0 = no
+    # expiry (only on purpose: config_check reports it).
+    oauth_service_key_days: int = 90
+    oauth_pairing_minutes: int = 10          # how long a pairing code can be redeemed
     https_mode: str = "warn"              # off | warn | force  — force = HTTP→HTTPS redirect;
                                           # warn = also runs WITHOUT a certificate (with a warning in the panel)
     # Strict-Transport-Security on every HTTPS response while https_mode='force' (ASVS 3.4.1). The default is

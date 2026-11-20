@@ -22,3 +22,23 @@ directory, so your own Claude Code configuration is never read or written; no An
 model stand-in (`ANTHROPIC_BASE_URL`) answers with a `tool_use`, and the CLI itself executes the MCP `tools/call`.
 Each step prints ✅/❌; the evidence (CLI output, audit lines, callback URLs without the code) is in
 `<work>/report.jsonl`.
+
+## Services: the reference client against the real server (T-60)
+
+`services_e2e.py` checks [T-60](../../backlog/T-60-oauth-for-services-client-credentials-private-key-jwt.md) end to
+end: TinySesam with `oauth_service_clients` under uvicorn, Caddy (the same generated Caddyfile) in front of a small
+application that echoes the `Remote-*` headers, and `tinysesam-client` as a separate process. It needs Docker and
+OpenSSL, not the `claude` CLI or Chrome.
+
+1. pairing with a one-time code → key file 0600, only the public key at the server
+2. a request through Caddy → `Remote-User` of the service account with its roles, never the admin flag
+3. no token → 401 (Bearer); the token outside its resource → not let through
+4. the same client assertion twice → the second refused (replay), reason in the audit log
+5. `tinysesam-client rotate` → new key; a token from before and the old key keep working (overlap)
+6. `httpx` with `ServiceClient.httpx_auth()` → 200
+7. the service account locked → the held token refused at once, no new one
+
+```bash
+pip install -e ".[all]" uvicorn httpx
+python tools/oauth-e2e/services_e2e.py   # --work DIR --keep to look at it afterwards
+```

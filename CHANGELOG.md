@@ -4,6 +4,36 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+### Added — OAuth for services: `client_credentials` + `private_key_jwt`, paired by a code (T-60, ADR-13)
+
+- **A service without a person gets short-lived access tokens** from the OAuth server of T-36: `grant_type=
+  client_credentials` with `private_key_jwt` (RFC 7523). The service holds its own key pair (Ed25519 or P-256);
+  TinySesam stores only the public key. Forward auth takes the token like a person's: `Remote-*` with the service's
+  account and roles, never the admin flag, checked on every request. New switch `oauth_service_clients` (off),
+  fields `oauth_service_token_ttl_sec` (900), `oauth_service_key_days` (90), `oauth_pairing_minutes` (10); new extra
+  `[services]` (`joserfc>=1.7.6`, the floor without a known advisory) — the core install does not change.
+- **Pairing by a one-time code** from the admin panel (service accounts) or the account page section "Services" (a
+  script acting as yourself; fresh confirmation), or `create_service_pairing`. Redeemed at `POST /auth/oauth/pair`
+  with the public key and a proof of possession; single use, only a digest stored, 20 attempts per address and hour,
+  every refusal in the audit log.
+- **Assertion rules:** `aud` = the issuer as its only value (RFC 10070 — the token endpoint URL is refused), `exp` at
+  most 5 min ahead, `jti` single use (replay store until `exp`), `typ` `client-authentication+jwt`/`JWT`/none,
+  algorithms `Ed25519`, `ES256`, `EdDSA` bound to the stored key's type, never `none`/HMAC or a key from the header.
+- **Key rotation without an outage** at `POST /auth/oauth/service/keys` (signed with the old key, proven with the
+  new one); the old key stays valid for an hour. Keys expire after `oauth_service_key_days`.
+- **Revocation:** `revoke_service_client`, the account page and the panel (tab "Connected programs", with last token
+  request, address and key expiry; `list_service_clients`). Locking the account, an admin password reset, a
+  password reset and "end all sessions" revoke an account's services like its API keys. Events
+  `oauth_service_paired` (also mailed with `notify_new_access`) and `oauth_service_revoked`.
+- **Reference client `tinysesam-client`** (`tinysesam.client.ServiceClient`): `pair`, `token`, `request`, `rotate`,
+  `info`; key file 0600 (`--key-file`, `TINYSESAM_CLIENT_KEY_FILE`, default `$XDG_CONFIG_HOME/tinysesam/client.json`), token
+  cache, rotation by itself at half the key lifetime (the new key on disk before the server learns it), auth classes
+  for `httpx` and `requests`. README recipe "A service calls a protected app".
+- **Schema 21** (additive): `oauth_service_client`, `oauth_client_key`, `oauth_assertion`.
+- Replaces the RFC 9421 per-request signatures of the T-32 draft (PR #242, never merged); its pairing code, client key
+  pair and reference client were taken over. DPoP for service tokens is open (T-68).
+
+
 ### Changed — gateway image on a distroless base, without a shell (T-59)
 
 - **The runtime stage of `ghcr.io/ollornog/tinysesam` is now `gcr.io/distroless/base-debian13`** (pinned by digest,

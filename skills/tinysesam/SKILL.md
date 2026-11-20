@@ -4,7 +4,7 @@ description: >-
   Protect a Python/FastAPI app or any web app behind a reverse proxy with TinySesam — sign-in (password,
   TOTP, passkey, PIN, OIDC, SAML, LDAP, sign-in links), guards and roles, step-up, admin-created accounts,
   API keys, forward auth in front of third-party apps (Caddy, nginx, Traefik), OAuth for MCP clients such as
-  Claude Code, home network without a domain, same look as a C22 app. Use when adding login or 2FA to a
+  Claude Code, services with client_credentials and private_key_jwt, home network without a domain, same look as a C22 app. Use when adding login or 2FA to a
   FastAPI app, putting an app behind a sign-in gate, wiring `TinySesamConfig`, `auth.require_user`,
   `/auth/forward`, or answering "how do I do X with TinySesam".
 ---
@@ -35,9 +35,11 @@ truth. Every Python block below is executed by the repo's test suite, every name
    clients without a browser (WebDAV, CalDAV, Git) get app passwords, recipe 6a.
 3. **A tool on a person's computer** (Claude Code as MCP client) → OAuth authorization server on top of forward auth.
    Recipe 7.
+4. **A service without a person** (daemon, backup job, script on a server) → the same OAuth server with
+   client credentials, paired once by a code. Recipe 7a.
 
 Install pinned (`pip install "tinysesam[all]==<version>"`, extras: `[argon2] [qr] [oidc] [saml] [ldap] [passkey]
-[redis] [gateway]`). Never install unpinned; the README's *Installation* section names the current version.
+[redis] [gateway] [services]`). Never install unpinned; the README's *Installation* section names the current version.
 
 ## Recipe 1 — FastAPI app, password plus mandatory TOTP
 
@@ -277,6 +279,36 @@ NODE_EXTRA_CA_CERTS=/path/to/root.crt` for Claude Code; an IP must be a Subject 
 Tokens: `oauth_access_token_ttl_sec`, `oauth_refresh_idle_days`, `oauth_refresh_max_days`; pepper via
 `TINYSESAM_OAUTH_PEPPER` or `oauth_pepper_file`. Claude Desktop and Claude on the web call from Anthropic's
 network and cannot reach a LAN-only server. README: *OAuth for MCP clients*.
+
+## Recipe 7a — a service calls a protected app (no person)
+
+A daemon or script gets short-lived tokens from the same OAuth server with client credentials with a private-key JWT (RFC 7523):
+it holds its own key pair, TinySesam stores only the public key. Prefer this over an API key for anything that runs
+unattended on another machine — nothing copyable travels with the requests.
+
+```python
+from tinysesam import TinySesam, TinySesamConfig
+
+auth = TinySesam(TinySesamConfig(
+    db_path="gateway.db",
+    base_url="https://auth.example.com",
+    forward_auth_enabled=True,
+    oauth_enabled=True,
+    oauth_resources=["https://app.example.com/api"],
+    oauth_service_clients=True,                       # needs the extra [services] (joserfc)
+))
+svc = auth.create_service("backup", roles=["backup"])
+pairing = auth.create_service_pairing(svc, name="nightly", resources=["https://app.example.com/api"])
+assert len(pairing["code"]) == 19                     # one-time code, shown once, valid oauth_pairing_minutes
+```
+
+On the service's machine: `tinysesam-client pair https://auth.example.com <code>` (writes a key file with mode 0600),
+then `curl -H "Authorization: Bearer $(tinysesam-client token)" …`, or in Python `ServiceClient(key_file).httpx_auth()`
+/ `.requests_auth()` from `tinysesam.client`. The admin panel ("Pair a service") and the account page ("Services")
+issue codes too. The proxy needs nothing new: forward auth passes `Remote-User` (the service account) and its roles,
+never admin. Keys expire after `oauth_service_key_days` and the client rotates them itself; revoke with
+`auth.revoke_service_client(client_id)`, list with `auth.list_service_clients()`. README: *A service calls a protected
+app*.
 
 ## Recipe 8 — home network without a domain
 

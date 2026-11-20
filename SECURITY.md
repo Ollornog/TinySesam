@@ -106,7 +106,10 @@ rate limit, open-redirect protection via `safe_next`). Even so: review it yourse
   carries `details={"by_operator": bool}` (`True`: an administrator set it). App passwords (T-66):
   `app_password_created` (`details={"app_password_id": n, "name": …, "hosts": [...]}`), `app_password_revoked`
   (`details={"app_password_id": n}`) and `app_passwords_revoked` (`details={"count": n, "reason": …}`, the same
-  reasons as `api_keys_revoked`). The full list of event names is `TinySesam.SECURITY_EVENTS`.
+  reasons as `api_keys_revoked`). Services (T-60): `oauth_service_paired` (`details={"client_id": …, "client_name":
+  …, "resources": [...]}` — a service was paired to act as the account) and `oauth_service_revoked`
+  (`details={"client_id": …, "client_name": …, "reason": …}`, `reason` one of `user`, `admin`, and the reasons of
+  `api_keys_revoked`). The full list of event names is `TinySesam.SECURITY_EVENTS`.
   The `details` keys and the reasons are English since
   0.22.0 (up to 0.21.x `verbleibend`, `alt`/`neu`, `anzahl`/`grund` with German reasons). That includes changes an administrator makes to someone
   else's account in the panel (password reset, issuing an API key, revoking a passkey) — write the
@@ -116,8 +119,8 @@ rate limit, open-redirect protection via `safe_next`). Even so: review it yourse
   `notify_login_failures=False`), and since H2 a notice about **new access** (T-47, NIST SP 800-63B-4
   §4.1.2.1; opt-out `notify_new_access=False`) for `passkey_added`, `totp_enabled`, `pin_set`,
   `api_key_created`, `device_signed_in`, `signin_link_issued`, `password_changed` by an administrator,
-  `oauth_device_connected`, `oauth_token_reuse` and `app_password_created` — at most one per account and event a
-  minute. The
+  `oauth_device_connected`, `oauth_token_reuse`, `app_password_created` and `oauth_service_paired` — at most one per
+  account and event a minute. The
   same events appear on the account page under "Recent activity". Send your other mails from
   the hook (ideally via a queue — it runs synchronously in the request). An exception in the hook
   never undoes the change, but lands in the security log.
@@ -135,6 +138,19 @@ rate limit, open-redirect protection via `safe_next`). Even so: review it yourse
   (`header_up -Authorization`). Misses are `failed login … method=app_password` in the security log (fail2ban) and
   count in a bucket of their own, so guessing at the gate does not lock the browser sign-in. Samba and other
   non-HTTP protocols are out of scope.
+- **Services authenticate with their own key, not with a secret (T-60, ADR-13).** With `oauth_service_clients` a
+  service gets short-lived access tokens by `client_credentials` with `private_key_jwt` (RFC 7523): TinySesam stores
+  only its public key, so a copied database, a proxy log or a backup yields nothing that gets a token. The assertion
+  is checked by joserfc (extra `[services]`) with an algorithm list (`Ed25519`, `ES256`, `EdDSA` for an Ed25519 key)
+  bound to the stored key's type — no `none`, no HMAC, no key taken from the JWT header; `aud` must be the issuer
+  as its only value (RFC 10070 — the token endpoint URL is refused against audience injection), `exp` at most 5
+  minutes ahead, `jti` single use until then. A refusal answers a generic `invalid_client`; the reason is in the audit
+  log (`oauth_client_auth_failed`). Pairing needs a one-time code from a freshly confirmed session or the admin
+  panel and a proof that the service holds the private key. The token never carries the admin flag; a lock, a
+  revocation or a removed role takes effect at the next request. What remains: **the key file is the service** —
+  whoever copies it (mode 0600 by default) can get tokens until the key is rotated (`oauth_service_key_days`, the
+  client rotates at half of it) or the service is revoked. An access token itself is a bearer token for its
+  lifetime (15 min) at its resource; binding it to the key (DPoP, RFC 9449) is open as T-68.
 - **A TOTP code is valid exactly once — including the setup code.** The code that confirms the
   setup is consumed. Under `login_chain=["password","totp"]` that confirmation completes the TOTP
   step of the sign-in; everywhere else the *next* code is needed to sign in. Integration tests that

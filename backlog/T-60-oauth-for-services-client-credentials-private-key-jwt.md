@@ -2,7 +2,7 @@
 id: T-60
 type: Task
 title: OAuth for services — client_credentials + private_key_jwt, pairing from T-32
-status: offen
+status: erledigt
 milestone: M-2
 blocked_by: [T-36]
 tags: [oauth, m2m, api-keys, pairing]
@@ -28,3 +28,15 @@ short-lived access tokens from the same authorization server.
 
 Done when: an ADR amends ADR-11 for this client kind; pairing, token, key rotation and revocation work and are pinned
 by negative tests with mutations; README recipe, CHANGELOG, CONFIGURATION.md.
+
+## Done (2026-11-20)
+
+- Decision: [ADR-13](ADR-13-oauth-for-services-private-key-jwt.md) — `aud` = issuer as the sole value (RFC 10070),
+  algorithms `Ed25519`/`ES256`/`EdDSA` bound to the key type, joserfc as the extra `[services]`, token 15 min without
+  refresh, key lifetime 90 days with client-driven rotation and one hour of overlap.
+- Built: `tinysesam/oauth_services.py` (pairing, assertion, token, rotation, revocation), routes `/auth/oauth/pair`,
+  `/auth/oauth/service/keys`, `/auth/oauth/services*`, admin panel and account page, `tinysesam/client.py` with the
+  CLI `tinysesam-client`, schema 21.
+- Tests: `tests/test_oauth_services.py` (one negative test per rule, each proven by a mutation), end to end with
+  `tools/oauth-e2e/services_e2e.py` (uvicorn + Caddy from `deploy/quickstart/`).
+- DPoP stays open: [T-68](T-68-dpop-for-service-tokens.md).

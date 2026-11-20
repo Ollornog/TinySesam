@@ -169,7 +169,9 @@ t36 = _TinySesam(_TinySesamConfig(
     forward_auth_enabled=True, oauth_enabled=True, oauth_resources=["http://127.0.0.1:9/mcp"],
     # T-66: two applications that take app passwords — the account page offers the section.
     forward_apps={"files.example.com": {"name": "Files", "app_passwords": True},
-                  "git.example.com": {"name": "Git", "app_passwords": True}}))
+                  "git.example.com": {"name": "Git", "app_passwords": True}},
+    # T-60: services — the account page offers a pairing code (needs the extra [services], part of [all]).
+    oauth_service_clients=True))
 t36.set_security("password_min_length_single_factor", 8)
 _t36_app = _FastAPI()
 _t36_app.include_router(t36.router())
@@ -1113,6 +1115,7 @@ async def link_setup_pass(p):
 
     await oauth_consent(p)
     await app_passwords_page(p)
+    await services_page(p)
 
 
 async def oauth_consent(p):
@@ -1279,6 +1282,49 @@ async def app_passwords_page(p):
     assert not p.console, f"console errors: {p.console[:2]}"
     assert p.failed[failed_before:] == [], f"broken requests: {p.failed[failed_before:][:3]}"
     print("  app passwords: revoke after the confirmation dialog — the list says so, the gate refuses it at once")
+
+
+async def services_page(p):
+    """T-60 in a real browser on the T-36 app (strict CSP): the account page creates a pairing code — the dialog shows
+    it once with the command —, the reference client redeems it over real HTTP, the list shows the service, and
+    revoking it after the own confirmation dialog ends its access at once."""
+    import re
+    from tinysesam import client as SC
+
+    failed_before = len(p.failed)
+    uid = t36.create_user("sven", password="sven-pw-123456")
+    tok, _ = t36.start_session(uid, "password")
+    await p.cmd("Network.setCookie", name=t36.session_cookie_name, value=tok, url=T36 + "/")
+    await p.cmd("Page.navigate", url=f"{T36}/auth/account")
+    await p.until("document.readyState==='complete' && !!document.getElementById('svsec')", "no services section")
+    assert await p.js("document.querySelectorAll('input[name=sv_res]:checked').length") == 1, "one resource ticked"
+    await p.js("document.getElementById('sv_name').value='nightly backup';true")
+    await p.click("[data-act=mksv]")
+    await p.until("!!document.querySelector('dialog.tsdlg[open] textarea')", "no dialog with the pairing code")
+    code = await p.js("document.querySelector('dialog.tsdlg[open] textarea').value")
+    assert re.fullmatch(r"([A-HJ-NP-Z2-9]{4}-){3}[A-HJ-NP-Z2-9]{4}", code), code
+    note = await p.js("document.querySelector('dialog.tsdlg[open]').innerText")
+    assert f"tinysesam-client pair {T36} {code}" in note, note
+    await p.js("document.querySelector('dialog.tsdlg[open] .tsdlg-ok').click();true")
+    await p.until("!document.querySelector('dialog.tsdlg')", "the dialog did not close")
+    keyfile = os.path.join(tempfile.mkdtemp(), "svc.json")
+    sc = SC.ServiceClient.pair(T36, code, keyfile)              # real HTTP, the standard library transport
+    token = sc.token()
+    assert token.startswith("tsat_")
+    await p.cmd("Page.navigate", url=f"{T36}/auth/account")
+    await p.until("document.getElementById('svlist').innerText.includes('nightly backup')", "not in the list")
+    await p.js("document.querySelector('#svlist [data-act=revsv]').click();true")
+    await p.until("!!document.querySelector('dialog.tsdlg[open]')", "no confirmation before revoking")
+    await p.js("document.querySelector('dialog.tsdlg[open] .tsdlg-ok').click();true")
+    await p.until("!document.querySelector('#svlist [data-act=revsv]')", "not revoked in the list")
+    assert t36.list_service_clients(uid) == []
+    u, why = t36._oauth.user_for(token, "http://127.0.0.1:9/mcp", "127.0.0.1")
+    assert u is None and why in ("revoked", "unknown"), why      # revoking deletes its tokens
+    viol = await p.js("JSON.stringify(window.__csp===undefined?['(no Listener)']:window.__csp)")
+    assert viol == "[]", f"CSP violation: {viol}"
+    assert not p.console, f"console errors: {p.console[:2]}"
+    assert p.failed[failed_before:] == [], f"broken requests: {p.failed[failed_before:][:3]}"
+    print("  services: pairing code in the dialog (once, with the command) → the client pairs → list → revoke")
 
 
 async def own_dialogs(_first):
