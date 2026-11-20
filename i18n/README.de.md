@@ -1187,6 +1187,14 @@ JSON-API unter `<mount>/api/*` (dieselben Aktionen — für eigene UIs / Automat
   ohne `Secure`-Flag herausgibt, widerspricht sich — ein einziger HTTP-Aufruf reicht, damit es im
   Klartext mitgeht. `cookie_secure=False` bleibt für lokale Aufbauten ohne Zertifikat richtig
   (`https_mode="warn"`).
+- **HSTS** (`config.hsts`, ASVS 3.4.1): Mit `https_mode="force"` setzt `install_https` zusätzlich
+  `Strict-Transport-Security: max-age=31536000` auf jede HTTPS-Antwort der App, auch auf die eigenen Routen —
+  nie über reines HTTP. Ab Werk ohne `includeSubDomains`: Auf einer Elterndomain bände es jede Subdomain an
+  HTTPS; `; includeSubDomains` anhängen, sobald alle HTTPS sprechen (ASVS L2). `""` = kein Header (der Proxy
+  setzt ihn; die Vorlagen unter `deploy/` tun das).
+- **Keine API-Doku im Betrieb:** FastAPI liefert `/docs`, `/redoc` und `/openapi.json` ohne Anmeldung aus — das
+  Schema nennt auch die Routen von TinySesam, und Swagger lädt von einem fremden CDN. Das Gateway schaltet sie
+  ab; in der eigenen App `FastAPI(docs_url=None, redoc_url=None, openapi_url=None)` (ASVS 13.4.5).
 - **Content-Security-Policy** (`config.csp`): Die eingebauten Seiten (Login, Konto, TOTP-Einrichtung,
   Fehlerseiten) tragen eine **strikte, nonce-basierte CSP** — ohne `unsafe-inline`. Je Antwort
   entsteht ein frischer Nonce und wandert in jedes `<script>`/`<style>` und in den Header; die Seiten
@@ -1677,7 +1685,7 @@ zusätzlich die Website baut.
 
 ## Status
 
-**86 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
+**89 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
 (`tests/test_matrix.py`).
 
 Gebaut und getestet: Passwort/TOTP/Sitzungen/Rollen, Remember-me, Step-up und per-Route-MFA,

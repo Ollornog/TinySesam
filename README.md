@@ -1165,6 +1165,14 @@ JSON API at `<mount>/api/*` (the same actions — for your own UIs / automation)
   is refused at construction: an app that redirects every request to HTTPS but hands out its session
   cookie without the `Secure` flag contradicts itself — one plain HTTP call is enough to leak it.
   `cookie_secure=False` stays valid for local setups without a certificate (`https_mode="warn"`).
+- **HSTS** (`config.hsts`, ASVS 3.4.1): with `https_mode="force"`, `install_https` also sets
+  `Strict-Transport-Security: max-age=31536000` on every HTTPS response of the app, your own routes included —
+  never over plain HTTP. Without `includeSubDomains` by default: on a parent domain it would bind every subdomain
+  to HTTPS; append `; includeSubDomains` once they all serve HTTPS (ASVS L2). `""` = no header (the proxy sets it;
+  the templates under `deploy/` do).
+- **No API docs in production:** FastAPI serves `/docs`, `/redoc` and `/openapi.json` without sign-in — the
+  schema lists TinySesam's routes too, and Swagger loads from a third-party CDN. The gateway switches them off;
+  in your own app use `FastAPI(docs_url=None, redoc_url=None, openapi_url=None)` (ASVS 13.4.5).
 - **Content-Security-Policy** (`config.csp`): the built-in pages (login, account, TOTP setup, error)
   ship a **strict, nonce-based CSP** — no `unsafe-inline`. A fresh nonce per response goes into every
   `<script>`/`<style>` and the header; the pages are built inline-free (no `onclick`/`onsubmit`, no
@@ -1639,7 +1647,7 @@ without extras (guards the stdlib-scrypt fallback), and a browser job that also 
 
 ## Status
 
-**86 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
+**89 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
 
 Implemented and tested: password/TOTP/sessions/roles, remember-me, step-up and per-route MFA,
 factor chains, personal PIN, shared resource secrets, magic links + mailer hook, registration and

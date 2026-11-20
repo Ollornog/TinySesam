@@ -4,6 +4,31 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+### Security — hardening, part 1 (H1, from the security review of 2026-11-20)
+
+- **SAML: a response can no longer be replayed (ASVS 6.8.3, B-11).** The AuthnRequest ID lived only in the browser's
+  flow cookie, and its value is the `InResponseTo` of the response — whoever had a `SAMLResponse` set the cookie
+  themselves and signed in again until `NotOnOrAfter`. Now every sent request ID is stored server-side and consumed
+  once, and every accepted assertion ID is remembered until `NotOnOrAfter` plus the clock drift (flow table, no
+  schema change; `gc` removes them). New: `Store.claim_flow`; `SAMLClient(cfg, store=…)`.
+- **Gateway: no `/docs`, `/redoc`, `/openapi.json` (ASVS 13.4.5, T-38).** They answered without sign-in — the schema
+  mapped every route including the admin API, Swagger loaded from a third-party CDN. The examples switch them off too.
+- **HSTS (ASVS 3.4.1, T-39):** new field `hsts` (default `max-age=31536000`, without `includeSubDomains`, no
+  `preload`); with `https_mode="force"`, `install_https` sets it on every HTTPS response of the app, never over HTTP.
+  Unparseable values are a `ConfigError`. All proxy templates under `deploy/forward-auth/` set it (the home-network
+  template deliberately not: browsers ignore HSTS from an IP address); `acceptance.sh` checks it.
+- **Password blocklist: the 10,000 most common passwords (ASVS 6.2.4, T-40)** of 8 characters or more, shipped offline
+  (`tinysesam/common_passwords.txt`, SecLists, MIT; data public domain) — before, 128 entries. Passwords on it are
+  refused when set; existing ones stay valid.
+- **Supply chain (T-42):** the gateway image is scanned with Grype on every pull request (red on fixable findings
+  ≥ high; exceptions only in `.grype.yaml` with an end date); OpenSSF Scorecard runs weekly; zizmor checks the
+  workflows on every pull request and nightly. SECURITY.md names the deadlines for vulnerable dependencies
+  (critical 7 days, high 30 days).
+- **SECURITY.md (en/de, T-41)** no longer claims TOTP secrets are unencrypted (they are, since 0.21.0) and warns that
+  the default key file beside the database also derives the gate-token key.
+- Measured, no change needed (T-43): the plain and home-network Caddy templates do not let a `Remote-*` header sent by
+  the browser through to the application — now pinned in `tests/test_gate_caddy.py`.
+
 ### Changed — own dialogs instead of the browser's system boxes, with a copy button (T-35)
 
 - **No more `alert`/`confirm`/`prompt`.** The built-in pages asked, told and showed secrets in the browser's own boxes

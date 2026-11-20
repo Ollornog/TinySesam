@@ -1168,6 +1168,10 @@
       "field": "str = 'exact'",
       "tier": "A"
     },
+    "hsts": {
+      "field": "str = 'max-age=31536000'",
+      "tier": "B"
+    },
     "https_mode": {
       "field": "str = 'warn'",
       "tier": "A"

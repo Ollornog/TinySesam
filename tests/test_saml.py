@@ -483,7 +483,7 @@ if _ilu21.find_spec("cryptography") and _ilu21.find_spec("lxml"):
     _BASE, _IDP = "https://app.example.com", "https://idp.example.com/sso"
     _ACS, _SP = _BASE + "/auth/saml/acs", _BASE + "/auth/saml/metadata"
 
-    def _signed_response(sig, dig, rid="_req-21"):
+    def _signed_response(sig, dig, rid="_req-21", aid="_a21"):
         prior = (_now - _dt.timedelta(minutes=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
         after = (_now + _dt.timedelta(minutes=5)).strftime("%Y-%m-%dT%H:%M:%SZ")
         xml = (
@@ -492,7 +492,7 @@ if _ilu21.find_spec("cryptography") and _ilu21.find_spec("lxml"):
             f'IssueInstant="{prior}" Destination="{_ACS}" InResponseTo="{rid}">'
             f'<saml:Issuer>{_IDP}</saml:Issuer><samlp:Status><samlp:StatusCode '
             'Value="urn:oasis:names:tc:SAML:2.0:status:Success"/></samlp:Status>'
-            f'<saml:Assertion ID="_a21" Version="2.0" IssueInstant="{prior}"><saml:Issuer>{_IDP}</saml:Issuer>'
+            f'<saml:Assertion ID="{aid}" Version="2.0" IssueInstant="{prior}"><saml:Issuer>{_IDP}</saml:Issuer>'
             '<saml:Subject><saml:NameID>alice</saml:NameID><saml:SubjectConfirmation '
             'Method="urn:oasis:names:tc:SAML:2.0:cm:bearer"><saml:SubjectConfirmationData '
             f'NotOnOrAfter="{after}" Recipient="{_ACS}" InResponseTo="{rid}"/></saml:SubjectConfirmation>'
@@ -525,6 +525,57 @@ if _ilu21.find_spec("cryptography") and _ilu21.find_spec("lxml"):
     assert _check21(_K.RSA_SHA1, _K.SHA256) is None, "rsa-sha1 as signature method was accepted"
     assert _check21(_K.RSA_SHA256, _K.SHA1) is None, "sha1 as digest was accepted"
     ok("F-21: really signed assertion — SHA-256 passes, SHA-1 in signature OR digest does not")
+
+    # ---------- H1: a response is redeemed once, an assertion accepted once (ASVS 6.8.3) ----------
+    # Until H1 the request ID lived only in the flow cookie — and its value is the `InResponseTo` of the
+    # response. Whoever had a `SAMLResponse` set the cookie themselves and signed in again until NotOnOrAfter.
+    _db_r = os.path.join(tempfile.mkdtemp(), "replay.db")
+    _auth_r = TinySesam(TinySesamConfig(
+        db_path=_db_r, rp_name="Test", passkey_enabled=False, oidc_enabled=False, cookie_secure=False,
+        csrf_enabled=False, base_url=_BASE, saml_enabled=True, saml_idp_sso_url=_IDP,
+        saml_idp_x509cert="".join(_cert_pem.strip().splitlines()[1:-1])))
+    _app_r = FastAPI()
+    _app_r.include_router(_auth_r.router())
+    assert _auth_r.saml.store is _auth_r.store, "the library's SAML client is built without the store"
+
+    def _acs(client, response, cookie):
+        client.cookies.set("tinysesam_saml_flow", cookie)
+        return client.post("/auth/saml/acs", data={"SAMLResponse": response, "RelayState": "/"},
+                           follow_redirects=False)
+
+    _c = TestClient(_app_r, base_url=_BASE)
+    _rid = _c.get("/auth/saml/login?next=/", follow_redirects=False).cookies.get("tinysesam_saml_flow")
+    assert _rid and _auth_r.store.peek_flow("samlreq:" + _rid) == {}, "the AuthnRequest is not remembered"
+    _resp = _signed_response(_K.RSA_SHA256, _K.SHA256, rid=_rid, aid="_a-h1-1")
+    assert _acs(_c, _resp, _rid).status_code == 303, "precondition: the first, requested response signs in"
+    _c2 = TestClient(_app_r, base_url=_BASE)         # the attacker: own browser, cookie set from InResponseTo
+    assert _acs(_c2, _resp, _rid).status_code == 400, "the same SAMLResponse signed in a second time"
+    assert _c2.get("/auth/me").status_code == 401
+    ok("H1: the same signed SAMLResponse with the cookie set from its InResponseTo → 400 (was a second sign-in)")
+
+    # Never requested by this server: the cookie alone no longer makes a request ID.
+    _forged = _signed_response(_K.RSA_SHA256, _K.SHA256, rid="_never-sent", aid="_a-h1-2")
+    assert _acs(TestClient(_app_r, base_url=_BASE), _forged, "_never-sent").status_code == 400
+    ok("H1: an InResponseTo this server never sent → 400, even with a matching cookie")
+
+    # The assertion ID counts on its own: the same assertion ID under a new, genuinely sent request.
+    _c3 = TestClient(_app_r, base_url=_BASE)
+    _rid3 = _c3.get("/auth/saml/login?next=/", follow_redirects=False).cookies.get("tinysesam_saml_flow")
+    assert _acs(_c3, _signed_response(_K.RSA_SHA256, _K.SHA256, rid=_rid3, aid="_a-h1-1"), _rid3).status_code == 400
+    _rid4 = _c3.get("/auth/saml/login?next=/", follow_redirects=False).cookies.get("tinysesam_saml_flow")
+    assert _acs(_c3, _signed_response(_K.RSA_SHA256, _K.SHA256, rid=_rid4, aid="_a-h1-4"), _rid4).status_code == 303
+    ok("H1: a used assertion ID is refused under a fresh request; a new ID passes (control)")
+
+    # Kept until NotOnOrAfter (+5 min) plus python3-saml's clock drift, then gc removes it.
+    _row = _auth_r.store._one("SELECT expires_at FROM flow WHERE key=?", ("samlassert:_a-h1-1",))
+    _left = _row["expires_at"] - int(_dt.datetime.now(_dt.timezone.utc).timestamp())
+    assert 5 * 60 + 300 - 30 <= _left <= 5 * 60 + 300 + 30, _left
+    _auth_r.store._exec("UPDATE flow SET expires_at=1 WHERE key LIKE 'saml%'")
+    assert _auth_r.store.gc_flow() >= 2          # the two accepted assertions
+    assert _auth_r.store._one("SELECT COUNT(*) AS n FROM flow WHERE key LIKE 'saml%'")["n"] == 0
+    assert _auth_r.store.claim_flow("samlassert:x", 60) and not _auth_r.store.claim_flow("samlassert:x", 60)
+    ok("H1: the assertion ID is kept until NotOnOrAfter + clock drift, gc removes expired entries; claim_flow is one-shot")
+    os.remove(_db_r)
 else:                                                    # pragma: no cover
     print("  – F-21 not run against a really signed assertion (cryptography/lxml missing); "
           "only the settings switch is measured above")

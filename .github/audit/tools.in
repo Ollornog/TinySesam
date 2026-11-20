@@ -5,3 +5,5 @@
 # pip-compile output and regenerate it with pip-compile instead of bumping the lines with their hashes.
 pip-audit
 uv
+# The workflow linter (H1, T-11): zizmor over the workflows and dependabot.yml, on every PR and nightly.
+zizmor

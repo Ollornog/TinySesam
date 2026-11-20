@@ -445,7 +445,11 @@ PUBLIC_SERVICES = ["pypi.org", "raw.githubusercontent.com", "img.shields.io", "s
                         "www.flaticon.com", "ollornog.github.io", "github.com",
                                                 # Entra ID endpoint of the bundled preset — a real, fixed
                                                 # address of Microsoft, not an example address and nothing of our own.
-                        "login.microsoftonline.com"]
+                        "login.microsoftonline.com",
+                                                # H1: where the author of the password corpus behind
+                                                # tinysesam/common_passwords.txt released it to the public domain —
+                                                # cited as the license evidence.
+                        "medium.com"]
 addresses = hygiene.pruefe_adressen(ROOT, FILES, POLICY, zusaetzliche_hosts=PUBLIC_SERVICES)
 assert not addresses, "addresses outside RFC 2606 and the service list:\n  " + "\n  ".join(addresses)
 not_executable = hygiene.pruefe_ausfuehrbar(
@@ -722,6 +726,9 @@ CHECKOUT_WITH_RIGHT = {
     (".github/workflows/release.yml", "image"): ({"packages"},
                                                  "build context for the image; pip runs in the BuildKit "
                                                  "container, which does not see the token"),
+    (".github/workflows/scorecard.yml", "analysis"): ({"security-events", "id-token"},
+                                                      "Scorecard reads the checkout; no `run:` (a condition of "
+                                                      "publish_results), id-token only for publishing (H1)"),
 }
 
 _checked_identity, _exceptions_seen = 0, set()
@@ -858,7 +865,12 @@ TOOL_REQUIRED = {
 # Checked and fixed without a statement: the tool version is a constant in the pinned commit.
 TOOL_IN_SHA = {"anchore/sbom-action": "syft as a constant in src/SyftVersion.ts",
                    "github/codeql-action": "the CodeQL bundle belongs to the action version",
-                   "pypa/gh-action-pypi-publish": "image ghcr.io/pypa/…:<sha> or a Dockerfile with constraints"}
+                   "pypa/gh-action-pypi-publish": "image ghcr.io/pypa/…:<sha> or a Dockerfile with constraints",
+                   # H1: grype as a constant in GrypeVersion.js; its vulnerability database is fetched fresh on purpose.
+                   "anchore/scan-action": "grype as a constant in GrypeVersion.js",
+                   # H1: action.yaml names ghcr.io/ossf/scorecard-action:<version> — a TAG in the pinned commit, not a
+                   # digest (limit); the job holds only security-events and id-token, no `run:`.
+                   "ossf/scorecard-action": "image tag ghcr.io/ossf/scorecard-action:<version> in action.yaml"}
 # Deliberately floating: the browser test is meant to run against the current stable Chrome. The job has only
 # read permission and ships nothing.
 TOOL_WANDERING_OK = {"browser-actions/setup-chrome": "ci.yml, read permission only, ships nothing"}
@@ -1202,7 +1214,8 @@ for rel in (f for f in FILES if os.path.basename(f) == "Dockerfile"):
 assert _dependabot_dirs("github-actions"), "Dependabot does not bump the actions"
 # Docker files never under .github/: Dependabot may not open a PR there. The pypiserver update of 2026-11-12 in
 # .github/rehearsal ended with "The request contains invalid or unauthorized changes" (dependency_file_not_supported),
-# no PR — the same as connect-suite's .github/grype on 2026-11-05. pip under .github/ (audit, packaging) is not affected.
+# no PR — the same as a docker file under .github/ in another repository on 2026-11-05. pip under .github/ (audit,
+# packaging) is not affected.
 _in_github = sorted(d for e in ("docker", "docker-compose") for d in _dependabot_dirs(e)
                     if d.strip("/").split("/")[0] == ".github")
 assert not _in_github, f"dependabot: docker files under .github/ cannot be updated (no PR): {_in_github} — move them out"

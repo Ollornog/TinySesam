@@ -34,6 +34,9 @@
 	skip_install_trust
 }
 
+# No Strict-Transport-Security here, unlike deploy/forward-auth/: browsers ignore HSTS from an IP address
+# (RFC 6797, section 8.1.1), so the line would only look like protection. With a domain, take it over from there.
+
 # TinySesam itself — the gateway, or your own app with TinySesam inside.
 https://{$TS_HOME_IP:192.0.2.10} {
 	tls internal

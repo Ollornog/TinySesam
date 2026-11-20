@@ -49,13 +49,19 @@ rate limit, open-redirect protection via `safe_next`). Even so: review it yourse
   accordingly: keep `admin_claim_ttl_min` small, prefer `admin_claim_token_file` (mode `0600`) over
   stderr where stderr is collected, redeem it right away, and take the first admin over
   `auth.ensure_admin(...)` or `admin_identifiers` where you do not want a token in a URL at all.
-- **Known limit — TOTP secrets are stored unencrypted in the database.** Passwords, PINs, recovery
-  codes and API keys are stored only as hashes; a TOTP secret cannot be, because the server has to
-  compute every code from it. Anyone who can read the SQLite file (or a backup of it) can generate
-  valid codes for every account — the second factor then rests on the password alone. Encrypting
-  it with a key kept outside the database is planned (T-13, H-14/H-15). Until then, treat the
-  database and its backups as a secret (mode `0600`, encrypted backups), and if you need the second
-  factor to survive a database leak, use passkeys — only a public key is stored for them.
+- **Reversible secrets are encrypted at rest — the key is the thing to guard.** Passwords, PINs,
+  recovery codes and API keys are stored only as hashes. What the server must read back — TOTP
+  secrets, OIDC refresh and ID tokens — is encrypted with AES-256-GCM (mandatory since 0.21.0; a
+  value from before is encrypted at startup). The key comes from `TINYSESAM_SECRETS_KEY`, else
+  `secrets_key_file`, else a file `<db>.key` (mode `0600`) created next to the database. That
+  default protects against a database file that leaks on its own, **not** against a copy of the
+  whole directory — and the same key derives the signing key of the gate tokens (ADR-9), so whoever
+  reads `<db>.key` can also mint gate tokens for every account and every protected application.
+  In production, and always for the gateway with gate tokens, keep the key outside the data
+  directory (`TINYSESAM_SECRETS_KEY` as a container secret, or `secrets_key_file`) and back it up
+  separately from the database: without it every TOTP setup is lost. A key change (rotation) does
+  not exist yet. Passkeys remain the factor that survives a database leak — only a public key is
+  stored for them.
 - **Known limit — without the `__Host-` prefix on the session cookie, every host under the
   parent domain is trusted.** The session cookie carries `__Host-` only with `cookie_secure=True`,
   an empty `cookie_domain`, `cookie_path="/"` and `cookie_host_prefix=True` — the defaults. SSO
@@ -106,6 +112,24 @@ rate limit, open-redirect protection via `safe_next`). Even so: review it yourse
   answers, with no line for fail2ban. An API key never counts for these building
   blocks — it confirms no person and changes no password (`POST /auth/password` refuses it with a
   403 since 0.22.0).
+
+## Vulnerable dependencies
+
+Deadlines for fixing a known vulnerability in a dependency of the package or the gateway image
+(ASVS 15.1.1), counted from the day a fixed version is available:
+
+| Severity (CVSS) | Deadline |
+| --- | --- |
+| Critical | **7 days** |
+| High | **30 days** |
+| Medium / low | with the next regular release |
+
+How they are kept: `pip-audit` checks every resolution of the package and the image's lock list on
+every pull request and nightly, and a finding fails the run; the built gateway image is scanned
+with Grype on every pull request, and a fixable finding of severity *high* or above fails it;
+Dependabot proposes the updates. A finding that cannot be fixed in time (for example, the fixed
+OS package is not yet in the pinned base image) may be excepted only in `.grype.yaml`, with a
+reason and an `until` date within these deadlines — the scan fails again once that date has passed.
 
 ## Supported versions
 

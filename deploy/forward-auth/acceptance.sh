@@ -41,6 +41,15 @@ echo "Acceptance: $APP"
 # --- without sign-in ---
 fetch /
 to_sign_in; check "without sign-in: / leads to the sign-in ($code)" $?
+# HSTS (ASVS 3.4.1), set by the proxy templates. Browsers ignore it from an IP address (RFC 6797, section 8.1.1) —
+# the home-network template therefore has none, and the check is skipped there.
+host="${APP#*://}"; host="${host%%/*}"; host="${host%:*}"
+if [[ "$host" =~ ^[0-9.]+$ || "$host" == \[* ]]; then
+    echo "  –    HSTS not checked: $host is an IP address"
+else
+    hsts="$(printf '%s' "$head" | tr -d '\r' | sed -n 's/^[Ss]trict-[Tt]ransport-[Ss]ecurity: *max-age=\([0-9]*\).*/\1/p' | head -1)"
+    [ "${hsts:-0}" -ge 31536000 ]; check "HSTS on the sign-in redirect, max-age at least one year (${hsts:-none})" $?
+fi
 fetch / -H "Remote-User: admin" -H "Remote-Groups: admin"
 to_sign_in; check "a self-sent Remote-User opens nothing ($code)" $?
 fetch /.tinysesam/after-logout

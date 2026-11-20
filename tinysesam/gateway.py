@@ -246,6 +246,7 @@ def _install_https_except_health(auth, app):
             return await super().__call__(scope, receive, send)
 
     app.add_middleware(_ExceptHealth)
+    auth._install_hsts(app)
     return "force"
 
 
@@ -284,7 +285,11 @@ def build_app(cfg: Optional[TinySesamConfig] = None):
     from fastapi import FastAPI
     from fastapi.responses import RedirectResponse
     auth = TinySesam(cfg or config_from_env())
-    app = FastAPI(title="TinySesam OIDC-Gateway")
+    # No `/docs`, `/redoc` or `/openapi.json` (ASVS 13.4.5). FastAPI serves all three by default and without
+    # sign-in: the schema maps every route including the admin API, and the Swagger page loads its
+    # script and stylesheet from a third-party CDN without a CSP. Nobody operates the gateway through
+    # them; whoever wants the schema reads it in Python (`build_app(cfg).openapi()`).
+    app = FastAPI(title="TinySesam OIDC-Gateway", docs_url=None, redoc_url=None, openapi_url=None)
     app.include_router(auth.router())
     # Browsers get the error page in the branding instead of `{"detail": "Not Found"}`; API clients
     # still get JSON (Accept decides, `install_error_pages`).

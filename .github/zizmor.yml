@@ -1,0 +1,7 @@
+# Settings of the workflow linter (audit.yml, job `audit`, step `zizmor`; H1, T-11).
+rules:
+  # Dependabot waits 3 days before it proposes a new version — the maintainer's decision for every ecosystem
+  # (.github/dependabot.yml). zizmor's own default is 7 days.
+  dependabot-cooldown:
+    config:
+      days: 3

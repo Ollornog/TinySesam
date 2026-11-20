@@ -12,7 +12,7 @@ reference answers the other question: *"There is a field — what does it do?"*
 Presets (`TinySesamConfig.local_accounts()`, `.oidc_gateway()`, …) set bundles of these fields;
 individual ones can be overridden via `**overrides`.
 
-**Tier:** Every field belongs to tier A — public, stable from 1.0 (see [API.md](API.md), “Three tiers”), except `totp_required` (B).
+**Tier:** Every field belongs to tier A — public, stable from 1.0 (see [API.md](API.md), “Three tiers”), except `hsts` (B), `totp_required` (B).
 
 ## Store
 
@@ -56,7 +56,7 @@ individual ones can be overridden via `**overrides`.
 | Field | Type | Default | Meaning |
 |---|---|---|---|
 | `password_enabled` | `bool` | `True` | offer password login at all (off = SSO/passkey/PIN only) |
-| `password_blocklist_file` | `str` | `""` | Own blocklist for new passwords: path to a text file, one password per line (UTF-8, lines in another encoding count as Latin-1; `#` at the start of a line = comment). Complements the small built-in list — if you want to check against the common leak lists (e.g. the 100,000 most frequent), put them here. Offline: TinySesam asks no third-party service. Empty = built-in list only. `tinysesam passwd` reads it with `--blocklist-file`. |
+| `password_blocklist_file` | `str` | `""` | Own blocklist for new passwords: path to a text file, one password per line (UTF-8, lines in another encoding count as Latin-1; `#` at the start of a line = comment). Complements the built-in list (the 10,000 most frequent passwords of 8+ characters, since H1) — for a bigger leak list (e.g. the 100,000 most frequent), put it here. Offline: TinySesam asks no third-party service. Empty = built-in list only. `tinysesam passwd` reads it with `--blocklist-file`. |
 | `passkey_enabled` | `bool` | `False` | WebAuthn / passkeys (passwordless) — needs [passkey] |
 | `passkey_user_verification` | `str` | `"required"` | Must the authenticator verify the human (PIN, fingerprint, face) before it signs? `"required"` (default) demands it, `"preferred"` asks for it and also accepts a no (B2-10). Why it matters: A passkey signs in **on its own** in TinySesam — it is not a second factor but a complete login. Without user verification it only proves **possession** of the key: the unlocked computer, the plugged-in stick, the phone briefly put down are enough then. With it, it proves possession **and** something only the person can do. Up to 0.18.x this was "preferred" and the answer was not even checked — an authenticator could say no and still count. `"preferred"` is a deliberate decision for a stock of old authenticators and announces itself at startup. Whoever starts fresh leaves it at `"required"`. |
 | `pin_enabled` | `bool` | `False` | personal PIN per user (username + PIN) |
@@ -84,6 +84,7 @@ individual ones can be overridden via `**overrides`.
 | `gate_cookie_name` | `str` | `"__Host-tinysesam_gate"` | form __Host-tinysesam_<name>: host-only, and the templates strip it before the app |
 | `gate_link_enabled` | `bool` | `False` | Central gateway, session stays on its host (T-26): An app host gets, via a code exchange (/.tinysesam/start → /auth/gate/authorize → /.tinysesam/callback), only a connection cookie of its own that is valid for it alone. Without this, the session cookie would have to sit on the parent domain and would reach every app below it. Requires gate_token_enabled and base_url, does not combine with cookie_domain. |
 | `https_mode` | `str` | `"warn"` | off \| warn \| force  — force = HTTP→HTTPS redirect; warn = also runs WITHOUT a certificate (with a warning in the panel) |
+| `hsts` | `str` | `"max-age=31536000"` | **Tier B.** Strict-Transport-Security on every HTTPS response while https_mode='force' (ASVS 3.4.1). The default is one year, the minimum ASVS asks for. Without includeSubDomains: TinySesam often runs inside an app on a domain that has other subdomains, and the flag binds EVERY one of them to HTTPS — a decision about the whole domain tree that belongs to its owner (ASVS L2 wants it: append "; includeSubDomains"). No preload as a default: the browsers' preload list is hard to leave again. "" = no header (e.g. the proxy in front sets it). |
 | `login_identifier` | `str` | `"both"` | What do people sign in with? "username" \| "email" \| "both" (both allowed in the same field) |
 
 ## First admin (bootstrap) — deliberately NOT "the first registered user becomes admin"
@@ -323,4 +324,4 @@ individual ones can be overridden via `**overrides`.
 
 ---
 
-177 fields, generated from `tinysesam/config.py`.
+178 fields, generated from `tinysesam/config.py`.

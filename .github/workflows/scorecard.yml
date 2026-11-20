@@ -1,0 +1,43 @@
+# OpenSSF Scorecard (H1). tests/test_repo.py rebuilds the criteria it can check offline (B4-14); Branch-Protection,
+# Code-Review, Maintained and Signed-Releases need the GitHub API, and only the official action publishes a result
+# others can look up (the public Scorecard API, the badge). Results also land in the Security tab (SARIF).
+#
+# Not on pull requests: Scorecard rates the repository, not a change. Weekly, after a change of the branch
+# protection, and by hand. `publish_results` only works on the default branch; the job runs no `run:` step and
+# only the allowed actions — the conditions under which Scorecard accepts a published result.
+name: scorecard
+
+on:
+  branch_protection_rule:
+  schedule:
+    # GitHub cron only knows UTC: Tuesdays 03:33 UTC = 05:33 Europe/Berlin (CEST) or 04:33 (CET).
+    - cron: "33 3 * * 2"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  analysis:
+    name: Scorecard
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      security-events: write      # upload the SARIF to the Security tab
+      id-token: write             # publish_results: proves to the Scorecard API that this workflow produced it
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: ossf/scorecard-action@fa7117db83c52d787ae5a89f350999701505d78e  # v2.5.0
+        with:
+          results_file: results.sarif
+          results_format: sarif
+          publish_results: true
+
+      - uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066  # v4.39.3
+        with:
+          sarif_file: results.sarif
+          category: scorecard
