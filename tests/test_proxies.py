@@ -13,8 +13,9 @@ proxy, so they are measured with the proxy:
 * `/.tinysesam/*` (top bar JSON, sign-out of the application, T-22) reaches TinySesam on the application's host.
 
 The templates are used word for word; only the listen address, the upstream addresses and (nginx-path.conf) the
-FastCGI socket point to this run. PHP is a FastCGI stand-in that answers with the parameters nginx sent it — exactly
-what PHP would see as `$_SERVER`.
+site root and the FastCGI address (TCP instead of the socket) point to this run. PHP is a FastCGI stand-in that answers
+with the parameters nginx sent it — exactly what PHP would see as `$_SERVER`. The configuration is copied into the
+containers (`docker cp`), not bind-mounted: no host file needs permissions for the proxy's worker user.
 
 Images: the FROM lines of tests/proxies/Dockerfile (digest-pinned, Dependabot keeps them current). The suite runs when
 TINYSESAM_PROXY_TESTS=1 — the CI job `gate-caddy` sets it, and then a missing Docker is an error. Without the variable
@@ -47,7 +48,7 @@ braucht_modul("uvicorn")
 assert shutil.which("docker"), "TINYSESAM_PROXY_TESTS=1 but no docker"
 
 import uvicorn  # noqa: E402
-from fastapi import FastAPI, Request  # noqa: E402
+from fastapi import FastAPI  # noqa: E402
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -151,8 +152,7 @@ class FastCGI(socketserver.StreamRequestHandler):
     of a parameter is kept: a header nginx passed twice would show up as two values."""
 
     def handle(self):
-        params, raw = b"", {}
-        request_id = 1
+        params = b""
         while True:
             head = self.rfile.read(8)
             if len(head) < 8:
@@ -171,15 +171,15 @@ class FastCGI(socketserver.StreamRequestHandler):
                          + _fcgi_record(3, request_id, struct.pack("!IB3x", 0, 0)))
 
 
-class _UnixServer(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
+class _TCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
     daemon_threads = True
+    allow_reuse_address = True
 
 
-_php_dir = os.path.join(_tmp, "php")
-os.makedirs(_php_dir)
-os.chmod(_php_dir, 0o755)
-_php = _UnixServer(os.path.join(_php_dir, "php-fpm.sock"), FastCGI)
-os.chmod(os.path.join(_php_dir, "php-fpm.sock"), 0o666)      # the nginx worker runs as another user
+# Over TCP on 127.0.0.1 instead of the template's unix socket: a socket shared with the container would have to be
+# writable for nginx's worker user.
+_php = _TCPServer(("127.0.0.1", 0), FastCGI)
+PHP = f"127.0.0.1:{_php.server_address[1]}"
 threading.Thread(target=_php.serve_forever, daemon=True).start()
 
 for _ in range(100):
@@ -197,13 +197,15 @@ else:
 CONTAINERS = []
 
 
-def start(name: str, image: str, mounts: list, port: int, command=()) -> str:
+def start(name: str, image: str, copies: list, port: int, command=()) -> str:
+    """Create the container, copy the configuration in (owned by root there — no bind mount whose host permissions
+    the proxy's worker user would need), start it and wait for its port."""
     cname = f"tsproxy-{name}-{os.getpid()}"
-    args = ["run", "-d", "--rm", "--network", "host", "--label", LABEL, "--name", cname]
-    for src, dst in mounts:
-        args += ["-v", f"{src}:{dst}:ro"]
-    docker(*args, image, *command)
+    docker("create", "--rm", "--network", "host", "--label", LABEL, "--name", cname, image, *command)
     CONTAINERS.append(cname)
+    for src, dst in copies:
+        docker("cp", src, f"{cname}:{dst}")
+    docker("start", cname)
     for _ in range(150):
         try:
             socket.create_connection(("127.0.0.1", port), timeout=0.2).close()
@@ -226,7 +228,12 @@ def nginx_config(template: str, port: int) -> str:
     assert text.count("listen 443 ssl;") == 1, "the listen line of the template has shifted"
     text = text.replace("listen 443 ssl;", f"listen 127.0.0.1:{port};")
     assert "127.0.0.1:8000" in text, "the TinySesam upstream of the template has shifted"
-    return text.replace("127.0.0.1:8000", TS).replace("127.0.0.1:9000", APP)
+    text = text.replace("127.0.0.1:8000", TS).replace("127.0.0.1:9000", APP)
+    return text.replace("unix:/run/php/php-fpm.sock", PHP).replace("root /var/www/example;", f"root {SITE};")
+
+
+#: Where nginx-path.conf's site lies in the container (the template's /var/www has no parent in the image).
+SITE = "/usr/share/nginx/example"
 
 
 #: Debian's snippet (`snippets/fastcgi-php.conf`, which nginx-path.conf includes) — the official image has none.
@@ -243,7 +250,6 @@ def write(path: str, text: str) -> str:
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         f.write(text)
-    os.chmod(path, 0o644)
     return path
 
 
@@ -254,15 +260,14 @@ def start_nginx(template: str, name: str):
     site = os.path.join(_tmp, name, "www")
     for page in ("intern/page.php", "open.php"):
         write(os.path.join(site, page), "<?php // the FastCGI stand-in answers, not this file\n")
-    for d in (os.path.join(_tmp, name), os.path.dirname(snippet), site, os.path.join(site, "intern")):
-        os.chmod(d, 0o755)
-    mounts = [(conf, "/etc/nginx/conf.d/default.conf"), (snippet, "/etc/nginx/snippets/fastcgi-php.conf"),
-              (site, "/var/www/example"), (_php_dir, "/run/php")]
-    return start(name, IMAGES["nginx"], mounts, port), port
+    copies = [(conf, "/etc/nginx/conf.d/default.conf"), (os.path.dirname(snippet), "/etc/nginx/snippets"),
+              (site, SITE)]
+    return start(name, IMAGES["nginx"], copies, port), port
 
 
 def traefik_dynamic(template_text: str) -> str:
-    text = template_text.replace("http://tinysesam:8000", f"http://{TS}").replace("http://127.0.0.1:9000", f"http://{APP}")
+    text = template_text.replace("http://tinysesam:8000", f"http://{TS}")
+    text = text.replace("http://127.0.0.1:9000", f"http://{APP}")
     assert f"http://{TS}/auth/forward" in text and f"http://{APP}" in text, "the addresses of the template have shifted"
     return text
 
@@ -274,15 +279,14 @@ def start_traefik(name="traefik", dynamic_text=None):
     static = write(os.path.join(_tmp, name, "traefik.yml"), (
         "entryPoints:\n"
         f"  web:\n    address: \"127.0.0.1:{port}\"\n"
-        "providers:\n  file:\n    filename: /etc/traefik/dynamic.yml\n"
+        "providers:\n  file:\n    filename: /tsconf/dynamic.yml\n"
         "accessLog: {}\n"
         # The static setting the template's header asks for: a header whose name aliases another (`Remote_User`,
         # `Remote.User`) is deleted at the entry point, otherwise a CGI/WSGI/PHP backend reads it as `Remote-User`.
         "global:\n  aliasHeadersStrategy: delete\n"
         "log:\n  level: INFO\n"))
-    os.chmod(os.path.join(_tmp, name), 0o755)
-    return start(name, IMAGES["traefik"], [(static, "/etc/traefik/traefik.yml"), (dynamic, "/etc/traefik/dynamic.yml")],
-                 port), port
+    return start(name, IMAGES["traefik"], [(os.path.dirname(static), "/tsconf")], port,
+                 command=("--configFile=/tsconf/traefik.yml",)), port
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
