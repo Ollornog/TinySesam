@@ -103,6 +103,7 @@ ok("positive control: the password on the sign-in form still refreshes a full se
 auth.cfg.stepup_methods = ["totp"]
 stale(c)
 r = c.post("/auth/login", data={"username": "carol", "password": PASSWORD, "next": "/"}, follow_redirects=False)
+assert r.status_code == 303, r.status_code          # the password itself is right — it just refreshes nothing
 assert c.post("/auth/apikeys", json={"name": "x"}).status_code == 403, (
     "the password on the sign-in form got round stepup_methods=['totp']")
 r = c.post("/auth/totp", data={"code": pyotp.TOTP(auth.store.get_totp(uid)["secret"]).now(), "next": "/"},
@@ -118,6 +119,7 @@ auth.cfg.stepup_methods = ["pin"]
 stale(c)
 r = c.post("/auth/totp", data={"code": pyotp.TOTP(auth.store.get_totp(uid)["secret"]).at(time.time() + 30),
                                "next": "/"}, follow_redirects=False)
+assert r.status_code == 303, r.status_code          # the code is right — it just refreshes nothing
 assert c.post("/auth/apikeys", json={"name": "x"}).status_code == 403, (
     "a TOTP code on the sign-in page got round stepup_methods=['pin']")
 ok("stepup_methods=['pin']: a TOTP code on the sign-in page of the factor is no step-up either")
