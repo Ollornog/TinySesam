@@ -2,6 +2,46 @@
 
 All notable changes. Format loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added — gateway: services, top bar links, a pairing code from the command line
+
+- `TINYSESAM_OAUTH_SERVICE_CLIENTS=1` switches on services with `client_credentials` and `private_key_jwt` (T-60) in
+  the ready-made gateway, `TINYSESAM_TOPBAR_LINKS` (JSON list of `[title, target]` pairs) fills the top bar of its pages
+  (T-64); the quickstart passes both on (`TS_OAUTH_SERVICE_CLIENTS`, `TS_TOPBAR_LINKS`). A broken value ends the start.
+- `python -m tinysesam.gateway pair <account> [--create-service] [--resource URL] [--name] [--roles]` prints a one-time
+  pairing code: the gateway has neither account page nor admin panel, so a service could not be paired at all. It runs
+  with the service's environment (`docker exec … python -m tinysesam.gateway pair …`) through the same building block
+  as the panel (`create_service_pairing`: resources, role scope, audit).
+
+### Fixed — uvicorn proxy headers, ports are not hosts, invitation mail, directory accounts
+
+- **uvicorn applies proxy headers by default.** The docs said "start uvicorn without `--proxy-headers`", but uvicorn's
+  default is `proxy_headers=True` (trusting `forwarded_allow_ips`): it rewrote the client address before TinySesam
+  could judge `X-Forwarded-For` against `trusted_proxies`. The right switch is `--no-proxy-headers`
+  (`proxy_headers=False`) — README, configuration reference and skill corrected; `python -m tinysesam.gateway` starts
+  uvicorn that way itself. When an address arrives already rewritten (the peer stands in its own `X-Forwarded-For`),
+  the security log says so and names the switch.
+- **Ports are not hosts.** The warning "Forward auth without cookie_domain … each of these hosts demands its own
+  sign-in" compared `trusted_redirect_hosts` raw with the host of `base_url`, so `auth.example.com:8443` counted as a
+  foreign host — cookies do not separate by port (RFC 6265, 8.5). It now compares host names (IPv6 brackets included)
+  and names only real foreign hosts. The runtime does the same: a `next=` to a protected host written with a port in
+  `trusted_redirect_hosts` was silently dropped, and `config_check` compares `oidc_clients` hosts by name.
+- The invitation mail names how long its link is valid (`invite_ttl_min`, 24 hours by default — "valid for 24 hours",
+  "gilt 24 Stunden").
+- An account whose password lives in the directory (LDAP, no local password) no longer sees "change password": the
+  account page says where the password is managed, and `POST /auth/password` / `change_password` answer `directory`
+  (409) before anything is counted. Before, every try was a "wrong password" that locked the form after five.
+- A configuration warning said `oidc_allowed_groups leer` (German) instead of `empty`; the English-code guard now
+  catches the word.
+
+### Changed — docs: an own origin for the OAuth server, backlog T-73
+
+- OAuth for MCP clients: TinySesam needs an origin of its own (host or port) next to the application — issuer and
+  metadata (RFC 8414/9207), its own CSP, and routes that forward auth must not guard; cookies still do not separate by
+  port.
+- Backlog T-73 (proposal, no decision yet): tenants by hostname, each with its own sign-in choice.
+
 ## [0.26.1] — 2026-11-21
 
 ### Changed
@@ -62,44 +102,6 @@ Patch release cut by the release automation after Dependabot merges:
   first release, and after a release it would race the release pull request.
 - `tools/oauth-e2e/e2e.py` finds Chrome through the shared `find_chrome()` (`CHROME` first) and reads it before the
   start, like the browser suites (B-13); `tests/test_chrome_choice.py` refuses a Chrome started by a fixed name.
-### Added — gateway: services, top bar links, a pairing code from the command line
-
-- `TINYSESAM_OAUTH_SERVICE_CLIENTS=1` switches on services with `client_credentials` and `private_key_jwt` (T-60) in
-  the ready-made gateway, `TINYSESAM_TOPBAR_LINKS` (JSON list of `[title, target]` pairs) fills the top bar of its pages
-  (T-64); the quickstart passes both on (`TS_OAUTH_SERVICE_CLIENTS`, `TS_TOPBAR_LINKS`). A broken value ends the start.
-- `python -m tinysesam.gateway pair <account> [--create-service] [--resource URL] [--name] [--roles]` prints a one-time
-  pairing code: the gateway has neither account page nor admin panel, so a service could not be paired at all. It runs
-  with the service's environment (`docker exec … python -m tinysesam.gateway pair …`) through the same building block
-  as the panel (`create_service_pairing`: resources, role scope, audit).
-
-### Fixed — uvicorn proxy headers, ports are not hosts, invitation mail, directory accounts
-
-- **uvicorn applies proxy headers by default.** The docs said "start uvicorn without `--proxy-headers`", but uvicorn's
-  default is `proxy_headers=True` (trusting `forwarded_allow_ips`): it rewrote the client address before TinySesam
-  could judge `X-Forwarded-For` against `trusted_proxies`. The right switch is `--no-proxy-headers`
-  (`proxy_headers=False`) — README, configuration reference and skill corrected; `python -m tinysesam.gateway` starts
-  uvicorn that way itself. When an address arrives already rewritten (the peer stands in its own `X-Forwarded-For`),
-  the security log says so and names the switch.
-- **Ports are not hosts.** The warning "Forward auth without cookie_domain … each of these hosts demands its own
-  sign-in" compared `trusted_redirect_hosts` raw with the host of `base_url`, so `auth.example.com:8443` counted as a
-  foreign host — cookies do not separate by port (RFC 6265, 8.5). It now compares host names (IPv6 brackets included)
-  and names only real foreign hosts. The runtime does the same: a `next=` to a protected host written with a port in
-  `trusted_redirect_hosts` was silently dropped, and `config_check` compares `oidc_clients` hosts by name.
-- The invitation mail names how long its link is valid (`invite_ttl_min`, 24 hours by default — "valid for 24 hours",
-  "gilt 24 Stunden").
-- An account whose password lives in the directory (LDAP, no local password) no longer sees "change password": the
-  account page says where the password is managed, and `POST /auth/password` / `change_password` answer `directory`
-  (409) before anything is counted. Before, every try was a "wrong password" that locked the form after five.
-- A configuration warning said `oidc_allowed_groups leer` (German) instead of `empty`; the English-code guard now
-  catches the word.
-
-### Changed — docs: an own origin for the OAuth server, backlog T-73
-
-- OAuth for MCP clients: TinySesam needs an origin of its own (host or port) next to the application — issuer and
-  metadata (RFC 8414/9207), its own CSP, and routes that forward auth must not guard; cookies still do not separate by
-  port.
-- Backlog T-73 (proposal, no decision yet): tenants by hostname, each with its own sign-in choice.
-
 ### Fixed — browser tests: Chrome start on a cold CI runner (B-13)
 
 - Cause of the rare "Chrome wrote no DevTools port (after 30s)": the browser suites looked up the runner image's
