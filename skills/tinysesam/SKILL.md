@@ -248,7 +248,11 @@ assert pw["hosts"] == ["dav.example.com"] and pw["secret"]                      
   has the full example (`COMPOSE_PROFILES=webdav`, see `deploy/quickstart/example.env`).
 - **At the proxy** the forward-auth block needs the `@basic` branch **before** `@denied`: a `401` with
   `X-TinySesam-Reason: basic` is passed through with its `WWW-Authenticate: Basic …` (a redirect would break the
-  sync), and `header_up -Authorization` towards the app. The templates in `deploy/` carry it.
+  sync). The templates in `deploy/` carry it.
+- **Credentials never reach the app** behind any template: every app upstream drops `Authorization` and `X-Api-Key`
+  after forward auth decided (Caddy `header_up -Authorization` + `header_up -X-Api-Key`, nginx `proxy_set_header … ""`,
+  Traefik `tinysesam-strip-credentials` after `tinysesam-auth`). Your app reads `Remote-*`, never the secret. Only an
+  app that checks `Authorization` itself gets those lines removed — for that host, deliberately (SECURITY.md).
 - On the device: the sign-in user name plus the app password, e.g. `git clone https://alice@git.example.com/repo.git`.
   A browser on the same host still gets the sign-in page.
 - In code (tier B): `auth.create_app_password(...)` as above, `auth.list_app_passwords(uid)`, `auth.revoke_app_password(pw_id)`. Never unlimited unless

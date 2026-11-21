@@ -471,11 +471,16 @@ class ServiceClients:
 
     # --- key rotation ---
     def rotate_key(self, form: dict, ip) -> dict:
-        """`POST /auth/oauth/service/keys`: authenticated with an assertion of a current key; `jwk` = the new public
+        """`POST /auth/oauth/service/keys`: authenticated with an assertion of THE current key; `jwk` = the new public
         key, `proof` = a JWS of the new key (`typ` `tinysesam-key+jwt`, `aud` issuer, `sub` client ID). The new key
-        becomes current at once; every other key is accepted only `KEY_OVERLAP_SEC` longer. Sending the same new
-        key again (an answer got lost) is answered as a success."""
-        svc, _ = self.authenticate(form, ip)
+        becomes current at once; every other key is accepted only `KEY_OVERLAP_SEC` longer — at the token endpoint,
+        not here. Sending the same new key again (an answer got lost, the client crashed before it saved the
+        rotation) is answered as a success, also when the assertion comes from the key it replaced: the proof shows
+        possession of the current key, so nothing changes hands.
+
+        A key within its overlap may not rotate (attack round 2026-11-21, A-2): with a copy of the old key a stranger
+        would rotate in a key of their own, and the rightful new key would run out after the overlap instead."""
+        svc, used = self.authenticate(form, ip)
         jwk, kid = public_jwk(form.get("jwk"))
         now = _now()
         try:
@@ -491,6 +496,10 @@ class ServiceClients:
             if same[0]["retire_at"] is None:
                 return self._key_answer(svc, same[0], keys)
             raise OAuthError("invalid_request", "this key was already replaced — create a new one")
+        if used["retire_at"] is not None:
+            self._audit("oauth_service_key_rotate_refused", svc["username"], ip,
+                        f"client={svc['client_id']} kid={used['kid']} reason=key_in_overlap")
+            raise OAuthError("invalid_client", "only the current key may rotate — this key was already replaced", 401)
         live = [k for k in keys if k["retire_at"] is None or k["retire_at"] > now]
         if len(live) >= MAX_KEYS:
             raise OAuthError("invalid_request", f"at most {MAX_KEYS} keys at once — wait for the overlap to end")

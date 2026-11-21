@@ -38,5 +38,5 @@ by negative tests with mutations; README recipe, CHANGELOG, CONFIGURATION.md.
   `/auth/oauth/service/keys`, `/auth/oauth/services*`, admin panel and account page, `tinysesam/client.py` with the
   CLI `tinysesam-client`, schema 21.
 - Tests: `tests/test_oauth_services.py` (one negative test per rule, each proven by a mutation), end to end with
-  `tools/oauth-e2e/services_e2e.py` (uvicorn + Caddy from `deploy/quickstart/`).
+  `tools/oauth-e2e/services_e2e.py` (uvicorn + Caddy with a Caddyfile generated from `deploy/forward-auth/Caddyfile`).
 - DPoP stays open: [T-68](T-68-dpop-for-service-tokens.md).

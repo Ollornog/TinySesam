@@ -59,6 +59,18 @@ http:
         stsSeconds: 31536000
         stsIncludeSubdomains: true
 
+    # The client's credentials end here (attack round 2026-11-21, A-3): TinySesam has decided, the app trusts
+    # Remote-*. An app password, an OAuth access token or an API key (`tsk_…`, valid at every host and at
+    # TinySesam's own API) must not reach a debug page, an error report or a header log of the app. Always AFTER
+    # `tinysesam-auth` in the chain — the check itself needs them. Your app checks Authorization ITSELF (its own
+    # Basic auth behind the gate)? Then leave this middleware out for that router — deliberately (SECURITY.md,
+    # "Credentials at the application").
+    tinysesam-strip-credentials:
+      headers:
+        customRequestHeaders:
+          Authorization: ""
+          X-Api-Key: ""
+
     # Deletes the whole Cookie header on the way to the app (empty value = remove). Only for apps
     # without cookies of their own — see B-20 above.
     tinysesam-strip-cookies:
@@ -72,6 +84,7 @@ http:
       middlewares:
         - tinysesam-hsts
         - tinysesam-auth
+        - tinysesam-strip-credentials   # AFTER the check (A-3)
         # - tinysesam-strip-cookies   # only for apps without cookies of their own (B-20), always AFTER the check
       service: app-svc
 

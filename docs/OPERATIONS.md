@@ -101,7 +101,9 @@ check) — moving one would cost you a reconfiguration at the provider or in the
 
 **What a proxy has to set or pass on (tier A):** `Host`, `Authorization`, `X-Api-Key`, `Cookie`, `X-Forwarded-For`,
 `X-Forwarded-Host`, `X-Forwarded-Proto`, `X-Forwarded-Uri` (or `X-Original-Uri` / `X-Original-Url`) and, if you
-require roles, `X-TinySesam-Roles`. The shipped templates under `deploy/forward-auth/` do exactly that. The headers
+require roles, `X-TinySesam-Roles` — to TinySesam (the forward-auth sub-request). The shipped templates under
+`deploy/forward-auth/` do exactly that, and towards the application they drop `Authorization` and `X-Api-Key` again
+(SECURITY.md, "Credentials at the application"). The headers
 a browser sends on its own (`Accept`, `Referer`, `Sec-Fetch-Mode`, `Sec-Fetch-Site`, `X-Csrf-Token`) are read as
 well, but they are **not** an operator contract (tier B): no proxy rule is needed for them, and no proxy rule may
 strip them.
@@ -376,6 +378,13 @@ successor, purpose and key ID for a key. A value copied into another account's r
 edited key ID, does not decrypt. Values of 0.25.x (`v1:`, no binding) are read with every key of the keyring and
 rewritten as `v2:` at the start (the log says how many); until the original key is retired, such a value restored from
 an old backup into another row would still decrypt — rotate and retire once after the update to close that.
+
+Since 0.26 only the migration reads `v1:` and plain text; the service reads `v2:` only. If the start cannot rewrite
+them (a read-only database), it stops with *"… stored secret(s) are still in a format before 0.26 …"*: start once
+with write access, or run `tinysesam keys reencrypt --db <file>` as the service's user with its environment, then
+start again. A start that finds anything but `v2:` in `key_material` stops too (*"key_material holds … value(s) that
+are not vault ciphertext"*): TinySesam has only ever written that table encrypted, so the database was written by
+someone without the vault key, or is damaged — restore it from a backup; the rows are never used.
 
 ### Rotation — nothing is lost, nobody is signed out
 

@@ -102,8 +102,9 @@ Rate-Limit, Open-Redirect-Schutz via `safe_next`). Trotzdem: vor produktivem Ein
   Admin-Passwort und bei `sessions/revoke` mit `scope=all`). Verbundene Programme (OAuth, T-36):
   `oauth_device_connected` (`details={"grant_id": n, "client_id": …, "client_name": …, "resource": …}` — ein
   Programm hat nach der Zustimmung seine ersten Tokens bekommen), `oauth_device_revoked`
-  (`details={"grant_id": n, "client_id": …, "reason": …}`, `reason` eines von `user`, `admin`, `client`,
-  `account_disabled`) und `oauth_token_reuse` (`details={"grant_id": n, "client_id": …, "kind": "code"|"refresh"}`
+  (`details={"grant_id": n, "client_id": …, "reason": …}`, `reason` eines von `user`, `admin`, `client`
+  und den Gründen von `api_keys_revoked` — seit der Angriffsrunde vom 2026-11-21 (A-1) trennen auch ein Reset, ein
+  Admin-Passwort-Reset und „überall abmelden“ die verbundenen Programme, nicht nur eine Sperre) und `oauth_token_reuse` (`details={"grant_id": n, "client_id": …, "kind": "code"|"refresh"}`
   — ein schon benutzter Code oder Refresh-Token kam zurück, die Verbindung wurde widerrufen: das Token
   wurde vermutlich kopiert). Neue Zugänge, die kein eigener Faktor sind (H2, T-47): `signin_link_issued`
   (`details={"ttl_min": n, "by_operator": bool}` — für das Konto wurde ein Anmeldelink ausgestellt) und
@@ -158,9 +159,23 @@ Rate-Limit, Open-Redirect-Schutz via `safe_next`). Trotzdem: vor produktivem Ein
   zweite Faktor lässt sich per Basic-Auth also nicht umgehen. Was bleibt: Ein App-Passwort ist ein Inhaber-Geheimnis —
   wer es vom Gerät kopiert (oder ohne HTTPS mitliest), kann es an seinen Anwendungen nutzen, bis es abläuft oder
   widerrufen wird; es geht mit jeder Anfrage mit, der Proxy davor darf `Authorization` also nicht protokollieren, und
-  vor der Anwendung gehört der Header entfernt (`header_up -Authorization`). Fehlversuche sind `failed login …
+  die Vorlagen entfernen den Header vor der Anwendung (nächster Punkt). Fehlversuche sind `failed login …
   method=app_password` im Sicherheits-Log (fail2ban) und zählen in einem eigenen Topf, Raten am Gate sperrt also nicht
   die Anmeldung im Browser. Samba und andere Protokolle ohne HTTP sind nicht Teil davon.
+- **Zugangsdaten an der Anwendung — die Vorlagen entfernen sie.** Jede Proxy-Vorlage in `deploy/` (Caddy, nginx,
+  Traefik) entfernt `Authorization` und `X-Api-Key` auf dem Weg zur Anwendung, NACHDEM Forward-Auth entschieden hat:
+  Caddy `header_up -Authorization` / `header_up -X-Api-Key` in jedem `reverse_proxy` zur Anwendung, nginx
+  `proxy_set_header Authorization ""` (FastCGI `fastcgi_param HTTP_AUTHORIZATION ""`, damit bleiben auch
+  `PHP_AUTH_USER`/`PHP_AUTH_PW` leer), Traefik die Middleware `tinysesam-strip-credentials` nach `tinysesam-auth`.
+  Wer angemeldet ist, erfährt die Anwendung aus `Remote-*`; das Geheimnis braucht sie nie. Bis zur Angriffsrunde vom
+  2026-11-21 (A-3) stand das in den Vorlagen nur als Kommentar, und Header-Log, Debug-Seite oder Fehlerbericht einer
+  Anwendung bekamen App-Passwörter, OAuth-Access-Tokens und — am schlimmsten — API-Keys (`tsk_…`, gültig an jedem
+  Host und an TinySesams eigener API, mit Rollen, bis zu 90 Tage). **Deine Anwendung prüft `Authorization` selbst**
+  (eigene Basic-Auth oder Token-Prüfung hinter dem Gate)? Dann lösch diese Zeilen für genau diesen Host oder diese
+  Location, bewusst — und nimm in Kauf, dass dann in dem, was sie protokolliert, das Geheimnis steht. Das
+  `webdav`-Profil des Schnellstarts braucht das nicht (der WebDAV-Server dort hat keine eigene Anmeldung).
+  `tests/test_attack_round_a.py` prüft jede Vorlage unter `deploy/` darauf, auch eine neue; `tests/test_gate_caddy.py`
+  misst es durch ein echtes Caddy.
 - **Ein TOTP-Code gilt genau einmal — auch der Einrichtungscode.** Der Code, der die Einrichtung
   bestätigt, ist danach verbraucht. Unter `login_chain=["password","totp"]` schliesst diese
   Bestätigung den TOTP-Schritt der Anmeldung gleich mit ab; überall sonst braucht die Anmeldung den

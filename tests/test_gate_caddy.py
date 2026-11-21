@@ -278,6 +278,30 @@ try:
     ok("H1: Remote-* sent by the browser (also Remote-Email against an empty value) → TinySesam's values reach "
        "the application — plain, quickstart and gate way back; HSTS on 200 and on the redirect")
 
+    # ---------- A-3: the client's credentials never reach the application ----------
+    # Attack round 2026-11-21: every template passed `Authorization` on, and an API key (valid at every host and at
+    # TinySesam's API), an app password or an OAuth token landed in whatever the application logs. Measured with a
+    # session plus both headers, and with a real API key ALONE (forward auth accepts it — the check needs the
+    # header, the application must not get it), on the way back, the plain, the quickstart template and the share
+    # path. The fast path (gate cookie) follows below.
+    api_key = auth.create_api_key(uid, name="a3", expires_days=1)["key"]
+    creds = {"Authorization": "Basic not-for-the-app", "X-Api-Key": "tsk_not-for-the-app"}
+    for port, was in ((PORT, "gate template, way back"), (PORT_PLAIN, "plain template"),
+                      (PORT_QUICK, "quickstart template")):
+        for path, cookies, head in (("/a3", session, creds), ("/a3-key", None, {"Authorization": f"Bearer {api_key}"}),
+                                    ("/a3-key2", None, {"X-Api-Key": api_key}),
+                                    ("/s/a3-share", None, creds)):
+            if path.startswith("/s/") and port == PORT_QUICK:
+                continue                                    # the quickstart has no share exception
+            st, h, a = request(path, cookies, head, port=port)
+            hd = {k.lower(): v for k, v in (a["header"] if a else {}).items()}
+            assert st == 200, (was, path, st)
+            assert "authorization" not in hd and "x-api-key" not in hd, (was, path, hd)
+            if path.startswith("/a3-key"):
+                assert hd.get("remote-user") == "anna", (was, path, hd)      # the key DID sign in at the check
+    ok("A-3: Authorization and X-Api-Key never reach the application — session, an API key alone (it still signs in "
+       "at the check), share path; plain, quickstart and gate way back")
+
     # ---------- T-58: a header MISSING from the answer reaches the application as nothing ----------
     # Before 2026-11-20 the templates set every Remote-* from `{rp.header.…}` unconditionally; when TinySesam's answer
     # did not carry one (forward_headers reduced or renamed), Caddy left the placeholder as literal text and the
@@ -323,6 +347,8 @@ try:
     assert hd.get("Remote-Email", "") == "", hd.get("Remote-Email")
     assert hd.get("Cookie") == "other=1", hd.get("Cookie")
     assert gate_cookie(h) is None, "no new token is issued on the fast path"
+    st, h, a = request("/a3-fast", with_gate, creds)
+    assert st == 200 and not {"authorization", "x-api-key"} & {k.lower() for k in a["header"]}, a["header"]
     ok("valid gate cookie → 10 requests at the application, 0 at TinySesam; identity from the "
        "token (UTF-8 as with /auth/forward), Remote-* from the browser overwritten, gate cookie removed")
 

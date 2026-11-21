@@ -2780,21 +2780,49 @@ class Store:
         except sqlite3.OperationalError as e:
             upgraded = 0
             logging.getLogger("tinysesam").warning(
-                "Secrets in the format up to 0.25.x not rewritten (%s): the database is not writable. They are "
-                "still read; without their binding to the row (T-54) until a start with write access.", e)
+                "Secrets in the format up to 0.25.x not rewritten (%s): the database is not writable. Since "
+                "0.26 they are no longer read (A-5) — see the error that follows.", e)
         if upgraded:
             logging.getLogger("tinysesam").info(
                 "%d stored secret(s) rewritten in the format v2 (key ID and binding to their row).", upgraded)
+        self._check_v2_only()
         return len(clear)
+
+    def _check_v2_only(self) -> None:
+        """After the migration every encrypted column holds `v2:` only — the runtime reads nothing else (A-5).
+
+        `key_material` was encrypted from its first row: anything else there was planted or damaged, and is never
+        "migrated" (encrypting it now would turn a planted gate seed into a real one). Elsewhere a `v1:` value is
+        left when the start could not write (read-only database): it would no longer be read, so the start stops
+        and names the way out instead of failing every TOTP sign-in with a 500."""
+        from .errors import ConfigError
+        planted = self._one("SELECT COUNT(*) AS n FROM key_material WHERE material IS NULL "
+                            "OR material NOT LIKE 'v2:%'")["n"]
+        if planted:
+            raise ConfigError(f"key_material holds {planted} value(s) that are not vault ciphertext. TinySesam has "
+                              "only ever written that table encrypted, so the database was written without the vault "
+                              "key or is damaged — restore it from a backup (docs/OPERATIONS.md \"Keys\"). The rows "
+                              "are not used.")
+        left = 0
+        for column, _select in self.ENCRYPTED:
+            table, col = column.split(".")
+            left += self._one(f"SELECT COUNT(*) AS n FROM {table} WHERE {col} IS NOT NULL "
+                              f"AND {col} NOT LIKE 'v2:%'")["n"]
+        if left:
+            raise ConfigError(f"{left} stored secret(s) are still in a format before 0.26 (v1: or plain text) and "
+                              "could not be rewritten — the database is not writable at startup. Since 0.26 only the "
+                              "format v2 is read. Start once with write access, or rewrite them offline: "
+                              "`tinysesam keys reencrypt --db <path>` (docs/OPERATIONS.md \"Keys\").")
 
     # ---------- the vault: context, re-encryption (T-48, T-54) ----------
     def _seal(self, plaintext: str, column: str, *parts) -> str:
         from .vault import context
         return self.vault.encrypt(plaintext, context(column, *parts))
 
-    def _open(self, value, column: str, *parts):
+    def _open(self, value, column: str, *parts, legacy: bool = False):
+        """Decrypt a stored value — `v2:` only; `legacy=True` (the migration in `reencrypt`) also `v1:` (A-5)."""
         from .vault import context
-        return self.vault.decrypt(value, context(column, *parts))
+        return self.vault.decrypt(value, context(column, *parts), legacy=legacy)
 
     #: Every encrypted column: (table.column, SELECT of rowid, value and the context parts, extra WHERE).
     #: The context names the row by what does NOT change in its life — not the session handle, which rotates.
@@ -2828,7 +2856,7 @@ class Store:
             done = 0
             for r in rows:
                 parts = [r[k] for k in r.keys() if k not in ("rid", "value")]
-                plain = self._open(r["value"], column, *parts)
+                plain = self._open(r["value"], column, *parts, legacy=True)
                 new = self.vault.encrypt_v1(plain) if to_v1 else self._seal(plain, column, *parts)
                 done += self._exec(f"UPDATE {table} SET {col}=? WHERE rowid=? AND {col}=?",
                                    (new, r["rid"], r["value"])).rowcount
@@ -4630,6 +4658,15 @@ class Store:
                       "(SELECT 1 FROM oauth_service_client s WHERE s.client_id = c.client_id)")
         return int(r["n"]) if r else 0
 
+    def oauth_evict_idle_client(self, created_before: int) -> bool:
+        """Delete the longest-unused registration without a grant (and not a service) that came into being before
+        `created_before` — the cap of open registration makes room (A-4). True if one went."""
+        return self._exec(
+            "DELETE FROM oauth_client WHERE client_id = (SELECT c.client_id FROM oauth_client c WHERE c.created_at < ? "
+            "AND NOT EXISTS (SELECT 1 FROM oauth_grant g WHERE g.client_id = c.client_id) AND NOT EXISTS "
+            "(SELECT 1 FROM oauth_service_client s WHERE s.client_id = c.client_id) "
+            "ORDER BY COALESCE(c.last_used, c.created_at), c.created_at LIMIT 1)", (int(created_before),)).rowcount == 1
+
     def oauth_touch_client(self, client_id: str, now: int) -> None:
         self._exec("UPDATE oauth_client SET last_used=? WHERE client_id=?", (now, client_id))
 
@@ -4685,10 +4722,29 @@ class Store:
             "INSERT INTO oauth_token(token_hash, grant_id, kind, scope, created_at, expires_at) "
             "VALUES (?, ?, ?, ?, ?, ?)", [(h, grant_id, kind, scope, now, exp) for h, kind, scope, exp in tokens])
 
-    def oauth_create_grant(self, code_hash: str, client_id: str, user_id: int, resource: str, scope: str,
-                           now: int, ip, expires_at, tokens) -> int:
-        """Grant + first tokens + the code's link to the grant, in ONE transaction. Returns the grant ID."""
+    def oauth_mark_code_reused(self, code_hash: str) -> Optional[int]:
+        """A consumed code came back: the grant it produced (to revoke it) — or 0 if its first exchange has not written
+        the grant yet. The 0 stays in `grant_id` as the reuse mark that `oauth_create_grant` reads in the same
+        transaction as it writes the grant (A-6). None for an unknown code."""
         with self._writing():
+            self._begin_immediate()
+            self.db.execute("UPDATE oauth_code SET grant_id=0 WHERE code_hash=? AND grant_id IS NULL", (code_hash,))
+            row = self.db.execute("SELECT grant_id FROM oauth_code WHERE code_hash=?", (code_hash,)).fetchone()
+            self.db.commit()
+            self._written = time.monotonic()
+            return None if row is None else int(row[0])
+
+    def oauth_create_grant(self, code_hash: str, client_id: str, user_id: int, resource: str, scope: str,
+                           now: int, ip, expires_at, tokens) -> Optional[int]:
+        """Grant + first tokens + the code's link to the grant, in ONE transaction. Returns the grant ID — or None,
+        and nothing is written, if the code came back while its first exchange ran (`oauth_mark_code_reused`; until
+        attack round 2026-11-21, A-6, that second exchange found no grant to revoke and the first one's lived on)."""
+        with self._writing():
+            self._begin_immediate()
+            mark = self.db.execute("SELECT grant_id FROM oauth_code WHERE code_hash=?", (code_hash,)).fetchone()
+            if mark is not None and mark[0] is not None:
+                self.db.rollback()
+                return None
             cur = self.db.execute(
                 "INSERT INTO oauth_grant(client_id, user_id, resource, scope, created_at, created_ip, last_used, "
                 "last_ip, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -4943,3 +4999,15 @@ class Store:
             self.db.commit()
             self._written = time.monotonic()
             return cur.rowcount == 1
+
+    def revoke_user_access(self, user_id: int, reason: str) -> dict:
+        """Revoke every standing credential of an account at the store level — for the offline CLI (`tinysesam
+        passwd`), which has no `TinySesam` and therefore no hook. The online paths go through
+        `TinySesam._keys_revoked`, which does the same per kind and notifies the owner. Returns the counts."""
+        uid, now = int(user_id), _now()
+        services = sum(1 for cid in self.oauth_service_ids(uid) if self.oauth_revoke_service(cid, reason, now))
+        return {"api_keys": self.revoke_user_api_keys(uid),
+                "app_passwords": self.app_passwords_revoke_all(uid, reason),
+                "services": services,
+                "oauth_devices": sum(1 for gid in self.oauth_user_grant_ids(uid)
+                                     if self.oauth_revoke_grant(gid, reason, now))}

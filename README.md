@@ -832,7 +832,8 @@ back runs over the database file, which you own anyway:
 python -m tinysesam passwd --db auth.db admin     # asks twice, then sets it
 ```
 
-It ends that account's open sessions (`--keep-sessions` keeps them) and writes an audit entry.
+It ends that account's open sessions and revokes its API keys, app passwords, services and connected programs, like
+an admin reset in the panel (`--keep-sessions` keeps all of that), and writes an audit entry with the counts.
 `--stdin` reads the password from standard input for scripted use. Same thing from Python:
 
 ```python
@@ -1246,7 +1247,9 @@ What happens and what protects it:
 - **Registration** (RFC 7591) is open, because Claude Code registers itself — and anew after every logout or port
   collision. Only public clients (`token_endpoint_auth_method=none`) with a loopback redirect
   (`http://localhost`, `127.0.0.1` or `[::1]`, any port); nothing the client names is fetched, its name is shown as
-  "not verified", 20 registrations per address and hour. Registrations that never led to a connection go in `gc()`.
+  "not verified", 20 registrations per address and hour (an IPv6 address counts as its /64), 100 per IPv6 /48.
+  Registrations that never led to a connection go in `gc()`; at the cap of 1000 such registrations the longest-unused
+  one older than ten minutes gives way, so a flood cannot lock everyone out of connecting until then.
 - **Authorization code with PKCE S256 only**, the code lives 60 s and works once — a second use revokes what the
   first produced. The redirect URI is compared exactly, only a loopback port may differ (RFC 8252 §7.3). The answer
   carries `iss` (RFC 9207). CIMD is not advertised: it needs the AS to fetch a document from the internet.
@@ -1262,7 +1265,8 @@ What happens and what protects it:
   `oauth_refresh_grace_sec` (0) can let two processes of one client refresh at once; Claude Code serialises.
 - **Devices:** the account page lists the connected programs (name, client, connected, last used, address,
   resource) with "Disconnect"; the admin panel has a tab with all of them. `claude mcp logout` revokes at the server
-  (RFC 7009, without a client secret).
+  (RFC 7009, without a client secret). Locking the account, a password reset (self-service, by an administrator or
+  `tinysesam passwd`) and "end all sessions" disconnect every program of the account, like its API keys.
 - **Limits:** the connectors of Claude Desktop and Claude on the web call from Anthropic's network and cannot reach a server that
   is only in your LAN; Claude Code can. Claude Code has no DPoP — rotation is the protection for refresh tokens.
   Services without a person (`client_credentials`): next section.
@@ -1334,7 +1338,8 @@ What happens and what protects it:
   as a digest, works once, 20 attempts per address and hour, and every refusal lands in the audit log.
 - **Keys expire** after `oauth_service_key_days` (90); the client **rotates by itself** at half the lifetime:
   it writes the new key as *pending* first, registers it (signed with the old key, proven with the new one), then
-  switches. The old key stays valid for an hour — tokens in flight and other processes keep working.
+  switches. The old key stays valid for an hour at the token endpoint — tokens in flight and other processes keep
+  working — but it can never rotate again: only the current key may (a copied old key cannot take the service over).
   `tinysesam-client rotate` does it now.
 - **Revocation:** the account page and the admin panel (tab "Connected programs") list every service with its last
   token request, address and key expiry, with "Revoke"; `auth.list_service_clients()`,
@@ -1404,9 +1409,10 @@ dav.example.com {
 				redir {rp.header.X-Tinysesam-Location} 302
 			}
 		}
-		# The application trusts Remote-User — it does not need the password.
+		# The application trusts Remote-User — it does not need the password (nor any other credential).
 		reverse_proxy {$TS_APP_UPSTREAM:127.0.0.1:9000} {
 			header_up -Authorization
+			header_up -X-Api-Key
 		}
 	}
 }
@@ -2027,7 +2033,7 @@ Every Python block in both files runs in the test suite, and every name they men
 
 ## Status
 
-**97 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
+**98 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
 
 Implemented and tested: password/TOTP/sessions/roles, remember-me, step-up and per-route MFA,
 factor chains, personal PIN, shared resource secrets, magic links + mailer hook, registration and

@@ -4,6 +4,65 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+### Security — attack round A against OAuth, services, app passwords and keys (2026-11-21, T-69)
+
+- **A-1 (medium) — the panic button disconnects OAuth devices too.** "End all sessions", the password reset (self-service
+  and by an administrator) left a person's connected programs (OAuth grants: refresh tokens for up to 180 days, access
+  tokens) alive; only a block ended them. `_keys_revoked` is now the one revocation point for every standing
+  credential — API keys, app passwords, services and OAuth grants — and every path that revokes calls it. Each grant
+  writes `oauth_revoked` to the audit log and `oauth_device_revoked` with the path's reason (`password_reset`,
+  `admin_password_reset`, `sessions_revoked`, `account_disabled`) to `on_security_event`. The offline reset
+  `tinysesam passwd` now revokes the same (it ended only the sessions); `--keep-sessions` keeps all of it, the audit
+  line names the counts.
+- **A-2 (medium) — only the current service key may rotate.** `POST /auth/oauth/service/keys` accepted an assertion of
+  any key still in its one-hour overlap: with a copied old key a stranger rotated in a key of their own, and the
+  service's rightful new key ran out instead. The overlap now counts at the token endpoint only; a rotation with an
+  overlap key is refused (401, audit `oauth_service_key_rotate_refused`). Resending the already-current key stays a
+  success with the replaced key's assertion, so a client that crashed after the server took its new key recovers
+  (`tinysesam-client` needs no change). ADR-13 says so.
+- **A-3 (medium) — the proxy templates drop `Authorization` and `X-Api-Key` before the application.** Every template
+  in `deploy/` passed them on, contrary to SECURITY.md: an application's header log, debug page or error report got
+  app passwords, OAuth access tokens and API keys (`tsk_…`, valid at every host and at TinySesam's API). Now Caddy
+  (`forward-auth/Caddyfile`, `Caddyfile.gate`, `quickstart/Caddyfile`, `home-network/Caddyfile`: every application
+  `reverse_proxy`, share path included), nginx (`nginx.conf`; `nginx-path.conf` for the protected PHP location —
+  `HTTP_AUTHORIZATION`/`PHP_AUTH_*` stay empty) and Traefik (middleware `tinysesam-strip-credentials` after
+  `tinysesam-auth`) remove both after forward auth has decided. An application that checks `Authorization` itself
+  gets the lines removed deliberately (SECURITY.md, "Credentials at the application"); the quickstart's `webdav`
+  profile does not need that. A test checks every proxy template under `deploy/`, new ones included; a real Caddy
+  measures it (`tests/test_gate_caddy.py`).
+- **A-4 (low) — open client registration per IPv6 /64, and a full cap gives way.** The limit counted per full address:
+  one /64 filled the global cap of 1000 registrations without a grant, and nobody could connect a new MCP client for a
+  day. Now 20 per hour per address (IPv6 as its /64) plus 100 per hour per IPv6 /48; at the cap the longest-unused
+  registration older than ten minutes (an authorization request's lifetime) is removed instead of refusing, so a flow
+  in progress never breaks. New helper `security.ip_bucket`.
+- **A-5 (low) — the vault reads `v2:` only.** `Vault.decrypt` handed back any value without a prefix as plain text and
+  read `v1:` without the binding to its row: whoever could write the database without the vault key planted a
+  plain-text gate seed in `key_material` and had it published at `/auth/gate/jwks.json`. Now only the migration
+  (`Store.reencrypt`: the start and `tinysesam keys reencrypt`) reads `v1:`/plain text; everything else raises
+  `vault.LegacyValueError`. ADR-12 says honestly what the vault protects against (a reader of the database file, not a
+  writer).
+- **A-6 (low) — a code reused during its first exchange voids it.** A second exchange that landed between consuming
+  the code and writing the grant found nothing to revoke, and the first exchange's grant lived on (RFC 9700 §4.2.4).
+  The reuse now leaves a mark on the code that the grant's transaction reads: the first exchange then issues nothing
+  (`invalid_grant`, audit `oauth_code_reuse … during_exchange=1`).
+
+### Changed — upgrading with attack round A (behaviour of existing installations)
+
+- **Proxy templates:** copy the new lines into your proxy configuration (Caddy two `header_up` lines per application
+  `reverse_proxy`, nginx two `proxy_set_header`/`fastcgi_param` lines, Traefik the middleware in the router chain).
+  Behind the gate nothing changes for an application that trusts `Remote-*`; one that reads `Authorization` itself
+  must keep the header on purpose.
+- **Start with old secrets:** a database whose `v1:`/plain-text secrets cannot be rewritten at startup (read-only)
+  no longer starts — the message names `tinysesam keys reencrypt --db <file>`. A start that finds anything but
+  ciphertext in `key_material` refuses (restore from a backup). Normal upgrades rewrite everything on the first start
+  as before.
+- **"End all sessions", password resets and `tinysesam passwd`** now also disconnect the account's OAuth programs (and
+  `passwd` its API keys, app passwords and services): an MCP client signs in again afterwards.
+- **Service key rotation** with a key in its overlap is refused; a client that rotates from its current key (the
+  reference client always does) is not affected.
+- **Open client registration** is counted per IPv6 /64 and /48; many clients behind one IPv6 prefix share 20/100
+  registrations an hour.
+
 ### Added — OAuth for services: `client_credentials` + `private_key_jwt`, paired by a code (T-60, ADR-13)
 
 - **A service without a person gets short-lived access tokens** from the OAuth server of T-36: `grant_type=
@@ -20,7 +79,8 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
   most 5 min ahead, `jti` single use (replay store until `exp`), `typ` `client-authentication+jwt`/`JWT`/none,
   algorithms `Ed25519`, `ES256`, `EdDSA` bound to the stored key's type, never `none`/HMAC or a key from the header.
 - **Key rotation without an outage** at `POST /auth/oauth/service/keys` (signed with the old key, proven with the
-  new one); the old key stays valid for an hour. Keys expire after `oauth_service_key_days`.
+  new one); the old key stays valid for an hour at the token endpoint, never for a further rotation. Keys expire after
+  `oauth_service_key_days`.
 - **Revocation:** `revoke_service_client`, the account page and the panel (tab "Connected programs", with last token
   request, address and key expiry; `list_service_clients`). Locking the account, an admin password reset, a
   password reset and "end all sessions" revoke an account's services like its API keys. Events

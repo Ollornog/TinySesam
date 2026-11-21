@@ -99,8 +99,8 @@ https://{$TS_HOME_IP:192.0.2.10}:8443 {
 			}
 			# App passwords (T-66): a client without a browser (WebDAV, CalDAV/CardDAV, Git) gets TinySesam's 401 with
 			# `WWW-Authenticate: Basic`, not a login page — only at a host with forward_apps[host]["app_passwords"]; TinySesam
-			# sends this reason nowhere else. For such a host add `header_up -Authorization` to the application's
-			# reverse_proxy below: it trusts Remote-User and does not need the app password.
+			# sends this reason nowhere else. The application's reverse_proxy below drops Authorization (A-3): it
+			# trusts Remote-User and does not need the app password.
 			@basic {
 				status 401
 				header X-Tinysesam-Reason basic
@@ -120,6 +120,13 @@ https://{$TS_HOME_IP:192.0.2.10}:8443 {
 		}
 		# The application — without TinySesam's cookies (B-20).
 		reverse_proxy {$TS_APP_UPSTREAM:127.0.0.1:9000} {
+			# The client's credentials end here (attack round 2026-11-21, A-3): TinySesam has decided, the application
+			# trusts Remote-*. An app password, an OAuth access token or an API key (`tsk_…`, valid at every host and at
+			# TinySesam's own API) must not reach a debug page, an error report or a header log of the application.
+			# Your application checks Authorization ITSELF (its own Basic auth behind the gate)? Then delete these two
+			# lines for that host — deliberately, and only there (SECURITY.md, "Credentials at the application").
+			header_up -Authorization
+			header_up -X-Api-Key
 			header_up Cookie "(^|;)\s*(__Host-|__Secure-)?tinysesam_[^=;]*=[^;]*" ""
 			header_up Cookie "^[;\s]+" ""
 		}
