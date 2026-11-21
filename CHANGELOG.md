@@ -72,7 +72,7 @@ Patch release cut by the release automation after Dependabot merges:
   with the service's environment (`docker exec … python -m tinysesam.gateway pair …`) through the same building block
   as the panel (`create_service_pairing`: resources, role scope, audit).
 
-### Fixed
+### Fixed — uvicorn proxy headers, ports are not hosts, invitation mail, directory accounts
 
 - **uvicorn applies proxy headers by default.** The docs said "start uvicorn without `--proxy-headers`", but uvicorn's
   default is `proxy_headers=True` (trusting `forwarded_allow_ips`): it rewrote the client address before TinySesam
