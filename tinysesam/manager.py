@@ -7849,6 +7849,25 @@ class TinySesam:
                .replace(_PREFIX_PLACEHOLDER, self._prefix(request)) + f"<script>{_topbar.JS}</script>")
         return _inject_nonce(out, nonce) if nonce else out
 
+    def topbar_data(self, user=None, *, base: Optional[str] = None) -> dict:
+        """The top bar as data (T-76) for an account — the same answer `GET /auth/topbar.json` gives its session: the
+        links of `topbar_links` this account may see (`{"title", "href"}`), its display name, whether *Account* and
+        *Admin panel* appear and where they lead, the sign-out address.
+
+        For an application that uses TinySesam as a library but draws its UI elsewhere (a single-page app, a
+        template engine of another language): hand it this dict, e.g. for the account behind `Remote-Id` or
+        `session_user(request)`. `user`: an account dict (`get_user`, `session_user`) or None; a locked or unknown
+        account counts as none (no links, no menu). `base` goes in front of TinySesam's own paths; default: `base_url`
+        (empty without one — then the paths are relative to the root, put the mount prefix here)."""
+        if base is None:
+            base = (security.normalize_base(str(self.cfg.base_url or "").strip()) or "").rstrip("/")
+        if user is not None:
+            uid = user.get("id") if isinstance(user, dict) else _topbar._field(user, "id")
+            row = self.store.get_user(uid) if uid is not None else None
+            if row is None or row["disabled"]:
+                user = None
+        return _topbar.data(self, user, base=base)
+
     def _header_lines(self, resp: Response) -> Response:
         """The hardening headers of every TinySesam response (R8-1, R8-5, R4-08, R5-2).
 

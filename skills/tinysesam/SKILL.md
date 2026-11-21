@@ -181,6 +181,11 @@ def dashboard(request: Request, response: Response):
             f"{auth.topbar(request, nonce=nonce, current='/dashboard')}<main>…</main></body></html>")
 ```
 
+A third element limits a link: `("Admin", "/admin", {"admin": True})`, `("Team", "/team", {"role": "teamadmin"})`.
+An interface not drawn in Python takes the bar as data: `auth.topbar_data(account)` in the host app, or
+`GET /auth/topbar.json` (on an app host behind the gate `/.tinysesam/topbar.json`). Linking the app's own admin from
+TinySesam and back: README *Recipe: link your app's admin*, runnable as `examples/app_admin.py`.
+
 Replace a whole built-in page with `auth.set_template(name, fn)`; `fn(auth, ctx)` gets `ctx["nonce"]` and
 `ctx["dialog"]` (TinySesam's own dialog instead of `alert`/`confirm`/`prompt`). README: *Look & feel*.
 

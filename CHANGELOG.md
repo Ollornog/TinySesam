@@ -2,6 +2,23 @@
 
 All notable changes. Format loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added — recipe "link your app's admin from TinySesam and back"; `auth.topbar_data`
+
+- `auth.topbar_data(account, base=None)` (tier B): the top bar as data for an account — the same answer as
+  `/auth/topbar.json` — for applications that use TinySesam as a library but draw their interface elsewhere. A locked
+  or unknown account gets no menu; TinySesam's paths are absolute on `base_url`.
+- README recipe and `examples/app_admin.py`: a top bar link to the application's administration for administrators (or
+  one role), a link back to the panel, the bar data for a frontend not drawn in Python (an internal app on 127.0.0.1
+  for the account behind `Remote-Id`, or `/.tinysesam/topbar.json` in the browser). Extra panel tabs (T-77) are
+  rejected in favour of it.
+- Docs: `caddy reload` under systemd resolves `{$TS_GATE_PUBKEY}` in the calling process — `EnvironmentFile=` at unit
+  level and `CREDENTIALS_DIRECTORY` in `ExecReload=` (README, gate template). Testing a commit between releases needs
+  `pip install --force-reinstall --no-deps …@<sha>` (README, CONTRIBUTING).
+- Backlog: T-28 rewritten (gate client specification with language-neutral test vectors plus a Go client), T-79
+  (diagnostics report and bug form instead of telemetry).
+
 ## [0.26.3] — 2026-11-21
 
 ### Changed

@@ -38,6 +38,19 @@ git config core.hooksPath .githooks    # einmal pro Klon; fährt die Suite vor j
 ./scripts/check.sh
 ```
 
+## Einen Commit vor dem Release testen
+
+Ein Commit zwischen zwei Releases trägt die Version des letzten Releases. `pip install "tinysesam @ git+…@<sha>"` über
+einem installierten Release meldet „already satisfied“ und installiert nichts — der Dienst läuft mit dem alten Code
+weiter (oder nach einem Neustart dazwischen mit einem halb ersetzten). Nur das Paket selbst neu installieren, seine
+Abhängigkeiten nicht anfassen:
+
+```bash
+pip install --force-reinstall --no-deps "tinysesam[all] @ git+https://github.com/Ollornog/TinySesam.git@<sha>"
+```
+
+Danach den Dienst neu starten; `pip freeze | grep -i tinysesam` nennt den installierten Commit.
+
 ## Stil
 
 Schreib wie der Code drumherum: gleiche Benennung, gleiche Kommentardichte. Ein Kommentar nennt eine

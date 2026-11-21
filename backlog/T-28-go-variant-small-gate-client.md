@@ -1,14 +1,25 @@
 ---
 id: T-28
 type: Task
-title: Examine a Go variant — a small gate client instead of a complete rewrite
+title: 'Gate client specification with language-neutral test vectors, plus a Go client'
 status: offen
 milestone: M-2
-tags: [go, gate, gateway]
+tags: [go, gate, gateway, spec]
 created: 2026-10-28
 ---
 
-# T-28 — Examine a Go variant: a small gate client instead of a complete rewrite
+# T-28 — gate client specification with language-neutral test vectors, plus a Go client
+
+**Scope (rewritten 2026-11-21, product owner):** a gate client specification with language-neutral test vectors —
+the token (format, claims, `typ`, `kid`), the checking rules (algorithm fixed, `iss`, `aud` with roles, `nbf`/`exp`,
+no clock tolerance), the `Remote-*` headers (including `Remote-Auth`) and the error cases (forged, expired, wrong
+audience, wrong key, `alg: none`) — plus a Go client that passes them. Rust, JS or PHP clients only when an
+application asks for one. No parallel full rewrite: the server stays Python.
+
+The vectors are files (tokens, keys, expected verdicts and headers) that the Python suites check against `gate.check`
+and `_forward_values` too, so the specification cannot drift from the server.
+
+## History
 
 A complete rewrite in Go is not worth it: about 26k lines of code, about 40k lines of tests and grown hardening;
 TinySesam is a mountable FastAPI module, and Go has no counterpart for that. What does make sense, if there is demand:

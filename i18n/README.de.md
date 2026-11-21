@@ -80,6 +80,13 @@ pip install "tinysesam[all] @ git+https://github.com/Ollornog/TinySesam.git@v0.2
 Ohne `@v…` kommt statt einer freigegebenen Fassung der bewegliche Hauptzweig — das gehört in ein
 Experiment, nicht in einen Betrieb.
 
+**Einen Commit zwischen zwei Releases testen** (`@<sha>`): Er trägt die Version des letzten Releases, pip meldet also
+„already satisfied“ und behält den installierten Code. Erzwingen:
+
+```bash
+pip install --force-reinstall --no-deps "tinysesam[all] @ git+https://github.com/Ollornog/TinySesam.git@<sha>"
+```
+
 ## Quickstart
 
 ```python
@@ -627,6 +634,37 @@ Daten deshalb vom eigenen Host, `GET /.tinysesam/topbar.json` (jede Proxy-Vorlag
 Cookies des Browsers an TinySesam) — aus dem Skript der Seite,
 gleicher Ursprung. Das fertige Gateway liest die Sichtbarkeit auch
 aus `TINYSESAM_TOPBAR_LINKS`: `[["Doku", "/"], ["Admin", "/admin", {"admin": true}]]`.
+
+Eine Anwendung, die TinySesam als Bibliothek nutzt, ihre Oberfläche aber anderswo zeichnet (eine Single-Page-App, eine
+Template-Engine einer anderen Sprache), bekommt dasselbe Dict von `auth.topbar_data(account)` — für
+`session_user(request)` oder das Konto hinter `Remote-Id`; ein gesperrtes oder unbekanntes Konto bekommt kein Menü.
+TinySesams Pfade darin sind absolut auf `base_url`; `base=` setzt ein anderes Präfix davor.
+
+**Rezept: den Admin deiner App aus TinySesam verlinken — und zurück.** TinySesams Admin-Panel bekommt keine Reiter der
+Anwendung (T-77 wurde dafür verworfen); die beiden Verwaltungen verlinken einander.
+[`examples/app_admin.py`](https://github.com/Ollornog/TinySesam/blob/main/examples/app_admin.py) ist das ganze Rezept
+als lauffähige App:
+
+```python
+TinySesamConfig(topbar_links=[("Start", "/"),
+                              ("App-Admin", "/app-admin", {"admin": True}),          # hin: nur für Admins
+                              ("Team", "/team", {"role": "teamadmin"})],             # oder die Leitung eines Teams
+                available_roles=["teamadmin"])
+```
+
+1. **Hin:** Die Kopfleiste von Admin-Panel, Kontoseite und den eigenen Seiten der Anwendung (`auth.topbar(request)`)
+   zeigt *App-Admin* nur Admins.
+2. **Zurück:** Die Admin-Seite der Anwendung verlinkt das Panel mit der Adresse aus den Leistendaten —
+   `auth.topbar_data(user)["admin_panel"]["href"]`, absolut auf `base_url`, also auch von einem anderen Host aus.
+3. **Nicht in Python gezeichnet:**
+   - *Serverseitig:* Die Host-Anwendung gibt `auth.topbar_data(auth.get_user(remote_id))` über einen internen Endpunkt
+     an ihr Frontend — eine eigene App auf 127.0.0.1, die der Proxy nie weiterleitet (`internal` im Beispiel). Eine
+     Prüfung der Client-Adresse reicht nicht: Hinter einem Proxy auf demselben Host kommt jede Anfrage von 127.0.0.1.
+   - *Im Browser:* Eine Anwendung, die nur hinter dem Gate sitzt (kein TinySesam im Prozess), lässt ihre Seite
+     `/.tinysesam/topbar.json` vom eigenen Host holen.
+
+Die Ziele prüfen den Zugang selbst (`require(admin=True)`, `require(role=…)`): Ein versteckter Link ist Komfort, kein
+Schloss.
 
 **Gleicher Look wie deine App (C22).** Ist deine App mit dem Designsystem [C22](https://github.com/Ollornog/C22)
 gebaut, zeig TinySesam das C22-Stylesheet, das deine App ohnehin ausliefert — Login, Kontoseite, Admin-Panel und
@@ -1921,6 +1959,12 @@ Der Rückweg ist die bestehende Forward-Auth, eine Anfrage samt Body geht also n
   Gate-Rotation neu, bis dahin gehen die neuen Tokens den Rückweg). **Nicht `jwk_url`** mit caddy-jwt 1.4.0, obwohl
   TinySesam `/auth/gate/jwks.json` veröffentlicht: Ein einziger gescheiterter erster Abruf lässt danach jede Anfrage
   mit Gate-Token hängen. Jedes Token trägt `typ: tinysesam-gate+jwt` und seine `kid`.
+- **`caddy reload` unter systemd:** Der Reload liest das Caddyfile im *aufrufenden* Prozess, `{$TS_GATE_PUBKEY}` und
+  jeder andere `{$…}`-Platzhalter (auch `{$CREDENTIALS_DIRECTORY}`) wird also dort aufgelöst. Ein `ExecReload=` ohne
+  die Umgebung lässt sie leer; der Reload scheitert (z. B. `open /tls.crt`), und Caddy läuft still mit der alten
+  Konfiguration weiter. Die Variablen gehören in `EnvironmentFile=` auf Unit-Ebene — das gilt auch für `ExecReload=` —,
+  und `CREDENTIALS_DIRECTORY=/run/credentials/<unit>` steht in `ExecReload=` ausdrücklich. Mit Docker
+  (`docker compose exec caddy caddy reload`) erbt der Reload die Umgebung des Containers; dort ist nichts zu tun.
 - **Rollen:** Verlangt der Proxy Rollen (`X-TinySesam-Roles`), stehen sie in der Zielgruppe des
   Tokens (`app.example.com|roles=admin`); ein Token ohne Rollenangabe gilt dort nicht.
 - **Preis:** Abmelden, Sperren oder eine entzogene Freigabe greifen am Proxy erst, wenn das Token
@@ -2112,7 +2156,8 @@ Bausteine für Seiten, die du selbst baust — Signaturen und Beschreibungen in
   `MFA_ENROLLMENT_MODES`, `TinySesamConfig.validate()` (Nachprüfung, nachdem du ein Config-Objekt zur Laufzeit geändert hast;
   das Schreiben von `auth.cfg` selbst ist nicht zugesagt), `TinySesamConfig.enabled_methods()`, `TinySesamConfig.pin_as_first_factor()`.
 - **Die Kopfleiste auf eigenen Seiten:** `topbar_head` (Tokens, CSS der Leiste und die Hell/Dunkel-Wiederherstellung
-  für den `<head>`) und `topbar` (die Leiste mit dem Kontomenü für die Sitzung dieses Requests) — siehe
+  für den `<head>`) und `topbar` (die Leiste mit dem Kontomenü für die Sitzung dieses Requests); `topbar_data`
+  (dieselbe Leiste als Daten für ein Konto, für eine Oberfläche, die nicht in Python gezeichnet wird) — siehe
   [Look & Feel](#look--feel).
 - **`apply_factor`** hängt einen Faktor an die Sitzung, **ohne ihn zu prüfen**. Nur rufen, wenn du
   den Faktor selbst geprüft hast, und mit dem Konto aus `session_user()` — der mächtigste Baustein
@@ -2193,7 +2238,7 @@ Jeder Python-Block beider Dateien läuft in der Testsuite, und jeder genannte Na
 
 ## Status
 
-**112 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
+**113 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
 (`tests/test_matrix.py`).
 
 Gebaut und getestet: Passwort/TOTP/Sitzungen/Rollen, Remember-me, Step-up und per-Route-MFA,
