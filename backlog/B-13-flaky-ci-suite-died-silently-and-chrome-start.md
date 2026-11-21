@@ -65,3 +65,15 @@ own INFO lines (`--enable-logging=stderr`). The next occurrence will show the pl
 **Guards:** the dialog check above; `tests/test_runner.py` section K (signal name, stdout before the crash, faulthandler stack, crash
 excerpt, close waits for the outbox — and does not without the starter). Mutation probes: each of the five
 changes removed individually turns exactly its check red.
+
+## Chrome — cause found (2026-11-21)
+A cold disk, not D-Bus. The suites looked up the runner image's **preinstalled** `google-chrome` before the `chrome`
+that `setup-chrome` unpacked; on a fresh runner nothing had read its ~400 MB, and Chrome faulted its binary in page by
+page. The state dump from #273 showed it: main process `state=D wchan=folio_wait_bit_common`. Reproduced in
+DashMyBoard (page cache dropped, disk throttled to 30 read IOPS): no port within 30 s; after reading the files first
+the same start passes.
+
+**Fix:** CI sets `CHROME=<setup-chrome's chrome-path>` for the browser suites; `find_chrome()` (`tests/voraussetzung.py`)
+honours it first and stops on a wrong path; `prewarm_chrome()` reads Chrome's files once before the timed start. The
+30 s limit stays. **Guards:** `tests/test_chrome_choice.py` (`CHROME` goes first; the read covers the executed binary
+and not only the wrapper) and a check in `tests/test_repo.py` that CI passes `CHROME`; each mutated red.

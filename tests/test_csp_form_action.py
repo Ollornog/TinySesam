@@ -15,7 +15,6 @@ import asyncio
 import http.server
 import json
 import os
-import shutil
 import socket
 import subprocess
 import sys
@@ -27,7 +26,7 @@ import urllib.request
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.join(ROOT, "tests"))
-from voraussetzung import braucht, braucht_modul  # noqa: E402
+from voraussetzung import braucht, braucht_modul, find_chrome, prewarm_chrome  # noqa: E402
 
 braucht_modul("websockets")
 braucht_modul("uvicorn")
@@ -37,7 +36,7 @@ from fastapi import FastAPI  # noqa: E402
 
 from tinysesam import TinySesam, TinySesamConfig  # noqa: E402
 
-CHROME = next((b for b in ("google-chrome", "chrome", "chromium", "chromium-browser") if shutil.which(b)), None)
+CHROME = find_chrome()    # `CHROME` wins over the name lookup (B-13)
 braucht(CHROME, "no Chrome found")
 
 
@@ -109,6 +108,7 @@ assert fa and fa[0].split()[1] == "'self'" and "localhost:*" in fa[0].split() an
 ok(f"Header: {fa[0]}")
 
 _profile = tempfile.mkdtemp()
+prewarm_chrome(CHROME)      # B-13: cold Chrome files are read before the timed start, not inside its 30 s
 _log = tempfile.NamedTemporaryFile(prefix="chrome-", suffix=".log", delete=False)
 _chrome = subprocess.Popen([CHROME, "--headless=new", "--disable-gpu", "--no-sandbox", "--disable-dev-shm-usage",
                             f"--user-data-dir={_profile}", "--remote-debugging-port=0", "about:blank"],

@@ -32,6 +32,9 @@ import tempfile
 import time
 import urllib.request
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from voraussetzung import find_chrome, prewarm_chrome  # noqa: E402
+
 #: The German texts of the pages the browser drives (button labels of the identity providers, TinySesam's own German
 #: messages): matched next to the English ones, because a stage runs in the language of its users.
 _DE_CONFIRM = "anmelden|autorisieren|zustimmen|erlauben|weiter|akzeptieren"
@@ -39,8 +42,7 @@ _DE_REFUSE = "abbrechen|ablehnen"
 _DE_RATE = ("zu viele", "gesperrt")
 
 BASE = (os.environ.get("STAGE_BASE_URL") or "").rstrip("/")
-CHROME = next((b for b in ("google-chrome", "chrome", "chromium", "chromium-browser")
-               if shutil.which(b)), None)
+CHROME = find_chrome()      # `CHROME` wins over the name lookup (B-13)
 
 
 def ok(name):
@@ -56,6 +58,7 @@ class Browser:
 
     def __init__(self):
         self.profile = tempfile.mkdtemp()
+        prewarm_chrome(CHROME)      # B-13: read cold Chrome files before the timed start
         self.proc = subprocess.Popen(
             [CHROME, "--headless=new", "--disable-gpu", "--no-sandbox", "--disable-dev-shm-usage",
              "--window-size=1280,900", f"--user-data-dir={self.profile}",

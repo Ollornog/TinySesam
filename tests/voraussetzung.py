@@ -19,8 +19,12 @@ If the prerequisite is there, nothing happens.
 """
 import importlib.util
 import os
+import re
 import shutil
+import subprocess
 import sys
+import time
+from pathlib import Path
 
 SKIP_EXIT = 77
 
@@ -71,3 +75,61 @@ def pflicht_werkzeug(name, zweck):
         return None
     raise AssertionError(f"`{name}` fehlt — ohne es prüft „{zweck}“ nichts und wäre stumm grün. "
                          f"Installieren, oder bewusst {schalter}=1 setzen (dann steht es als ungeprüft da).")
+
+
+def find_chrome():
+    """The Chrome the browser suites run, or None if there is none.
+
+    `CHROME` (a path or a name on PATH) wins. CI sets it to the Chrome that `setup-chrome` just unpacked
+    (`steps.<id>.outputs.chrome-path`): by name lookup the runner image's preinstalled `google-chrome` came first, whose
+    ~400 MB nobody had read yet on that machine; Chrome then faulted its binary in page by page from the cold image
+    disk and wrote no DevTools port within 30 s (B-13, main process in state D, `wchan=folio_wait_bit_common`). A wrong
+    `CHROME` stops the suite instead of falling back silently to that cold Chrome."""
+    env = os.environ.get("CHROME", "").strip()
+    if env:
+        found = shutil.which(env)
+        if not found:
+            raise SystemExit(f"CHROME={env!r} is not an executable")
+        return found
+    # `setup-chrome` installs the binary as `chrome`, Debian as `chromium`.
+    return next((found for name in ("google-chrome", "chrome", "chromium", "chromium-browser")
+                 if (found := shutil.which(name))), None)
+
+
+def chrome_files(chrome):
+    """The files a Chrome start reads first: the real binary, its siblings (paks, ICU data, V8 snapshot, bundled
+    libraries; not the subdirectories) and the shared libraries it links.
+
+    Siblings only for the `chrome` layout of Google Chrome and Chrome for Testing: a distribution `chromium` is often a
+    shell wrapper in /usr/bin, and its directory is not Chrome's."""
+    real = Path(chrome).resolve()
+    binary = real.parent / "chrome" if (real.parent / "chrome").is_file() else real
+    files = [binary]                        # first: callers name it
+    if binary.name == "chrome":
+        files += sorted(p for p in binary.parent.iterdir() if p.is_file() and p != binary)
+    try:
+        out = subprocess.run(["ldd", str(binary)], capture_output=True, text=True, timeout=60).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        out = ""
+    libs = {Path(m).resolve() for m in re.findall(r"=> (/\S+)", out)}
+    return files + sorted(p for p in libs if p.is_file() and p not in files)
+
+
+def prewarm_chrome(chrome):
+    """Read Chrome's files once, untimed, before the timed start. Returns (binary, files, bytes, seconds).
+
+    On a fresh CI runner the first reads of Chrome's ~400 MB from the image disk are slow. Reading them here, outside the
+    start timeout, shows the disk's own time instead of hiding it in the 30 s that stay the measure for a hung Chrome."""
+    files = chrome_files(chrome)
+    start = time.monotonic()
+    count = total = 0
+    buf = bytearray(1 << 20)
+    for path in files:
+        try:
+            with path.open("rb", buffering=0) as fh:
+                while n := fh.readinto(buf):
+                    total += n
+            count += 1
+        except OSError:
+            pass
+    return files[0], count, total, time.monotonic() - start
