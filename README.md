@@ -2027,7 +2027,7 @@ Every Python block in both files runs in the test suite, and every name they men
 
 ## Status
 
-**97 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
+**98 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
 
 Implemented and tested: password/TOTP/sessions/roles, remember-me, step-up and per-route MFA,
 factor chains, personal PIN, shared resource secrets, magic links + mailer hook, registration and
