@@ -823,9 +823,13 @@ def build_router(auth) -> APIRouter:
         # sets it up; or the account has nothing to confirm with at all (purely federated, passkey
         # only) — then only a new sign-in makes the session fresh, and the page says so.
         none_text = "err.stepup_none" if (cfg.stepup_strict and cfg.stepup_methods) else "err.stepup_relogin"
+        # T-49: an account linked to the provider can confirm there; then the page no longer says "sign out and in".
+        via_provider = auth._confirms_at_provider(u)
+        if not methods and via_provider and none_text == "err.stepup_relogin":
+            none_text = "err.stepup_provider"
         return auth.render_page("reauth", request=request, next=auth.safe_next(next, request),
                                 error=error or ("" if methods else auth.t(none_text)),
-                                username=u["username"], methods=methods)
+                                username=u["username"], methods=methods, reauth_oidc=via_provider)
 
     @r.post("/auth/reauth")
     def reauth_submit(request: Request, code: str = Form(""), password: str = Form(""), pin: str = Form(""),
@@ -851,7 +855,8 @@ def build_router(auth) -> APIRouter:
             u = auth.session_user(request)
             return auth.render_page("reauth", request=request, status=erg.status, next=erg.next_url,
                                     username=u["username"] if u else "",
-                                    methods=auth.stepup_options(u) if u else [], error=erg.message)
+                                    methods=auth.stepup_options(u) if u else [], error=erg.message,
+                                    reauth_oidc=bool(u and auth._confirms_at_provider(u)))
         return erg.redirect()               # to next, with the renewed session cookie
 
     # ---------- Forgot / reset password (needs a mailer, NOT the magic link) ----------

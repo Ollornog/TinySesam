@@ -237,14 +237,20 @@ class OIDCClient:
     #: well below any sensible token lifetime.
     CLOCK_TOLERANCE = 60
 
-    def auth_url(self, redirect_uri, state, nonce, code_challenge: str = ""):
+    def auth_url(self, redirect_uri, state, nonce, code_challenge: str = "", reauth: bool = False):
         """The address of the authorization request. With `code_challenge` (from `pkce_pair()`)
         it requires PKCE with S256; the caller must then pass the same verifier to
-        `exchange()`."""
+        `exchange()`.
+
+        `reauth` (T-49) asks the provider for an ACTIVE sign-in instead of its running session: `prompt=login`
+        and `max_age=0` (OIDC Core §3.1.2.1 — with `max_age` the ID token MUST carry `auth_time`, which the
+        callback then checks)."""
         fields = {"response_type": "code", "client_id": self.client_id, "redirect_uri": redirect_uri,
                   "scope": self.scopes, "state": state, "nonce": nonce}
         if code_challenge:
             fields.update(code_challenge=code_challenge, code_challenge_method="S256")
+        if reauth:
+            fields.update(prompt="login", max_age="0")
         return self.meta()["authorization_endpoint"] + "?" + urlencode(fields)
 
     def exchange(self, code, redirect_uri, nonce, t=None, code_verifier: str = ""):
@@ -550,6 +556,18 @@ class OIDCClients:
         return [k for k in self._clients if k != DEFAULT_CLIENT]
 
 
+def _auth_time(claims) -> "int | None":
+    """`auth_time` of an ID token as whole seconds, at most now — or None if it is missing or no number (T-49).
+
+    OIDC Core §2: "Time when the End-User authentication occurred", a JSON number of seconds. A value from the
+    future (clock skew at the provider) counts as now, never later: it must not make a sign-in look younger
+    than the request that asked for it."""
+    value = claims.get("auth_time") if claims else None
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return min(int(value), now())
+
+
 def register_oidc_routes(router, auth):
     cfg = auth.cfg
     oidc: OIDCClient = auth.oidc
@@ -585,7 +603,7 @@ def register_oidc_routes(router, auth):
         auth._set_flow_cookie(resp, _OIDCFLOW, value, max_age=600)
 
     @router.get("/auth/oidc/start")
-    def oidc_start(request: Request, next: str = "", app: str = ""):
+    def oidc_start(request: Request, next: str = "", app: str = "", reauth: str = ""):
         # Every call leaves a `flow` row (600 s), which is deleted only on the
         # successful return path or by `gc`. In gateway operation this is exactly the entry point
         # to which the proxy sends every non-signed-in visitor — every abort, every
@@ -613,12 +631,16 @@ def register_oidc_routes(router, auth):
         # PKCE (F-20): the verifier stays in the flow record on the server, only the challenge goes
         # into the address bar. An intercepted code is worthless without it.
         verifier, challenge = pkce_pair()
+        # T-49: `reauth=1` (the confirmation page's provider button) asks the provider for an active sign-in.
+        # `asked` is the moment of the request: an `auth_time` before it means the provider answered from a
+        # session it already had — the callback measures freshness against it.
+        again = bool(reauth) and bool(cfg.oidc_reauth_check)
         auth.store.put_flow("oidc:" + state,
                             {"nonce": nonce, "next": next, "fk": _hash(flow_key), "app": destination,
-                             "pkce": verifier},
+                             "pkce": verifier, "reauth": again, "asked": now()},
                             ttl=600)
         resp = RedirectResponse(client.auth_url(_redirect_uri(request), state, nonce,
-                                                code_challenge=challenge), 303)
+                                                code_challenge=challenge, reauth=again), 303)
         _set_flow_cookie(resp, flow_key)
         return resp
 
@@ -814,8 +836,41 @@ def register_oidc_routes(router, auth):
 
         # client_ip instead of the raw peer IP — behind a proxy the peer is the proxy.
         ip, ua = auth.client_ip(request), request.headers.get("user-agent")
-        token, ok, is_new = auth.apply_factor(request, uid, "oidc", ip, ua,
-                                              email_verified=mail_confirmed)
+        # T-49 (ASVS 5.0 6.8.4, OIDC Core §2 `auth_time`): when did the person really authenticate at the provider?
+        # A round through a provider session that was already running is silent — no password, no factor — and
+        # until 0.25.x it counted as a fresh confirmation: on a full session it was a step-up (`apply_factor`), a new
+        # session counted as signed in "now". With `oidc_reauth_check` the provider's `auth_time` decides.
+        authenticated = _auth_time(claims) if cfg.oidc_reauth_check else None
+        asked = int(flow.get("asked") or _asked)
+        provider_fresh = authenticated is not None and authenticated >= asked - client.CLOCK_TOLERANCE
+        before = auth._session_from_request(request)
+        stepping_up = bool(before and before["user_id"] == uid and before["mfa_ok"])
+        if cfg.oidc_reauth_check and stepping_up and not provider_fresh:
+            account_name = str(_account["username"]) if _account else "?"
+            if flow.get("reauth"):
+                # The confirmation page asked for a sign-in and the provider did not do one (it ignores
+                # `prompt=login`, or sends no `auth_time`): no step-up — the page says so instead of a silent success.
+                auth.audit("oidc_reauth_stale", account_name, ip,
+                           f"app={destination} auth_time={'missing' if authenticated is None else asked - authenticated}")
+                me = auth.session_user(request)
+                resp = auth.render_page("reauth", status=401, request=request,
+                                        next=auth.safe_next(flow.get("next") or "", request),
+                                        username=me["username"] if me else "",
+                                        methods=auth.stepup_options(me) if me else [],
+                                        reauth_oidc=False, error=auth.t("err.oidc_reauth_stale"))
+                auth._delete_flow_cookie(resp, _OIDCFLOW)
+                return resp
+            # Any other round on a full session (the approval for another application, T-14): it runs on, but it
+            # does not refresh the confirmation — the same rule as a sign-in link on a full session.
+            auth.audit("stepup_not_counted", account_name, ip, "factor=oidc reason=no_fresh_auth_time")
+            token, ok, is_new = request.cookies.get(auth.session_cookie_name), True, False
+        else:
+            token, ok, is_new = auth.apply_factor(request, uid, "oidc", ip, ua,
+                                                  email_verified=mail_confirmed)
+            if is_new and authenticated is not None and not (before and before["user_id"] == uid):
+                # A NEW session: its confirmation dates from the provider's sign-in, not from this round — a
+                # silent sign-in an hour after the last password is an hour old (`stepup_fresh`, `login_fresh`).
+                auth.store.backdate_confirmation(token, authenticated)
         # 4a: remember the refresh token — with it TinySesam regularly asks the provider whether the
         # person is still allowed (`oidc_session_refresh_minutes`). Without a refresh token this does not work.
         if tok.get("refresh_token"):

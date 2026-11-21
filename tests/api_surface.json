@@ -892,7 +892,7 @@
     },
     "SECURITY_EVENTS": {
       "tier": "A",
-      "value": "('password_changed', 'pin_set', 'pin_disabled', 'totp_enabled', 'totp_disabled', 'recovery_codes_generated', 'recovery_code_used', 'passkey_added', 'passkey_removed', 'api_key_created', 'api_key_revoked', 'api_keys_revoked', 'email_changed', 'username_changed', 'oauth_device_connected', 'oauth_device_revoked', 'oauth_token_reuse', 'signin_link_issued', 'device_signed_in', 'app_password_created', 'app_password_revoked', 'app_passwords_revoked', 'oauth_service_paired', 'oauth_service_revoked')"
+      "value": "('password_changed', 'pin_set', 'pin_disabled', 'totp_enabled', 'totp_disabled', 'recovery_codes_generated', 'recovery_code_used', 'passkey_added', 'passkey_removed', 'api_key_created', 'api_key_revoked', 'api_keys_revoked', 'email_changed', 'username_changed', 'oauth_device_connected', 'oauth_device_revoked', 'oauth_token_reuse', 'signin_link_issued', 'device_signed_in', 'app_password_created', 'app_password_revoked', 'app_passwords_revoked', 'oauth_service_paired', 'oauth_service_revoked', 'signed_in_after_failures')"
     },
     "TOKEN_PATHS": {
       "tier": "B",
@@ -1032,6 +1032,13 @@
     "recovery_codes_generated": {
       "keys": [
         "count"
+      ],
+      "tier": "A"
+    },
+    "signed_in_after_failures": {
+      "keys": [
+        "failures",
+        "ip"
       ],
       "tier": "A"
     },
@@ -1456,7 +1463,7 @@
       "tier": "A"
     },
     "magiclink_ttl_min": {
-      "field": "int = 15",
+      "field": "int = 10",
       "tier": "A"
     },
     "mail_subject_prefix": {
@@ -1573,6 +1580,10 @@
     },
     "oidc_name": {
       "field": "str = 'SSO'",
+      "tier": "A"
+    },
+    "oidc_reauth_check": {
+      "field": "bool = True",
       "tier": "A"
     },
     "oidc_revalidate_minutes": {
@@ -1783,6 +1794,10 @@
       "field": "int = 12",
       "tier": "A"
     },
+    "signin_link_max_ttl_min": {
+      "field": "int = 1440",
+      "tier": "A"
+    },
     "signup_default_roles": {
       "field": "list[str] = []",
       "tier": "A"
@@ -1862,6 +1877,10 @@
     "totp_required": {
       "field": "bool = False",
       "tier": "B"
+    },
+    "totp_window": {
+      "field": "str = 'previous'",
+      "tier": "A"
     },
     "trusted_proxies": {
       "field": "list[str] = ['127.0.0.1/32', '::1/128']",
@@ -2265,7 +2284,8 @@
     "GET /auth/oidc/start": {
       "keys": [
         "query:app",
-        "query:next"
+        "query:next",
+        "query:reauth"
       ],
       "tier": "B"
     },

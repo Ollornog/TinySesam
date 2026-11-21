@@ -822,6 +822,28 @@ def check_config(config) -> tuple[list[str], list[str]]:
             "or a plugged-in stick is enough. That is a deliberate decision for a stock of old "
             "authenticators; for a new one the value belongs at 'required'."))
 
+    # --- Sign-in link bound (T-51) ---
+    _link_max = _integer(config, "signin_link_max_ttl_min", 24 * 60)
+    _link_default = _integer(config, "magiclink_ttl_min", 10)
+    if (_an(config, "magiclink_enabled") and _link_max is not None and _link_default is not None
+            and _link_max < _link_default):
+        error.append(_t(
+            config,
+            "signin_link_max_ttl_min={most} is below magiclink_ttl_min={default}: a sign-in link issued without "
+            "its own validity takes magiclink_ttl_min and would always be refused. Raise the bound or lower "
+            "magiclink_ttl_min.",
+            most=_link_max, default=_link_default))
+
+    # --- TOTP time window (T-57) ---
+    _window = str(getattr(config, "totp_window", "previous"))
+    if _window not in ("current", "previous", "previous_and_next"):
+        error.append(_t(
+            config,
+            "totp_window={window!r} does not exist. Allowed are 'previous' (default: the current and the "
+            "previous 30-second step), 'current' (only the running step) and 'previous_and_next' (also the "
+            "next step, the behaviour up to 0.25.x).",
+            window=_window))
+
     # --- LDAP transport (F-12) ---
     if _an(config, "ldap_enabled"):
         _url = str(getattr(config, "ldap_url", "") or "").strip().lower()
@@ -933,6 +955,8 @@ NUMBER_LIMITS = {
     "admin_claim_ttl_min": (0, 7 * 24 * 60),
     "resource_unlock_ttl_hours": (1, 24 * 30),
     "magiclink_ttl_min": (1, 24 * 60),
+    # T-51: a week is the most a hand-over link may live; longer is no hand-over but a second password.
+    "signin_link_max_ttl_min": (1, 7 * 24 * 60),
     # A cross-device request is approved within moments; longer than a quarter of an hour is a
     # code lying around on a screen, not a hand-over.
     "qr_login_ttl_sec": (30, 15 * 60),
@@ -1953,6 +1977,18 @@ _DE: dict[str, str] = {
          "an und belegt dann nur den Besitz des Schlüssels — ein entsperrter Rechner oder ein "
          "eingesteckter Stick genügt. Das ist eine bewusste Entscheidung für einen Bestand "
          "alter Authentikatoren; für einen neuen gehört der Wert auf 'required'."),
+    ("signin_link_max_ttl_min={most} is below magiclink_ttl_min={default}: a sign-in link issued without "
+     "its own validity takes magiclink_ttl_min and would always be refused. Raise the bound or lower "
+     "magiclink_ttl_min."):
+        ("signin_link_max_ttl_min={most} liegt unter magiclink_ttl_min={default}: Ein Anmeldelink ohne eigene "
+         "Gültigkeit bekommt magiclink_ttl_min und würde immer abgewiesen. Die Grenze anheben oder "
+         "magiclink_ttl_min senken."),
+    ("totp_window={window!r} does not exist. Allowed are 'previous' (default: the current and the "
+     "previous 30-second step), 'current' (only the running step) and 'previous_and_next' (also the "
+     "next step, the behaviour up to 0.25.x)."):
+        ("totp_window={window!r} gibt es nicht. Erlaubt sind 'previous' (Vorgabe: der laufende und der "
+         "vorige 30-Sekunden-Schritt), 'current' (nur der laufende Schritt) und 'previous_and_next' "
+         "(auch der nächste Schritt, das Verhalten bis 0.25.x)."),
     ("passkey_user_verification={uv!r} does not exist. Allowed are 'required' (default: the "
      "authenticator must verify the person) and 'preferred' (it is asked to). A passkey "
      "signs in on its own — without verification it only proves possession of the key."):

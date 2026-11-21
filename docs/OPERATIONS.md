@@ -175,6 +175,48 @@ What it does **not** end — named deliberately, because one expects it:
 - **Step-up** is a deadline on the session (`stepup_max_age_sec`, default 15 min), not a session
   of its own: it lapses, the session stays.
 
+### Lifetimes against NIST SP 800-63B-4, parallel sessions (T-50)
+
+ASVS 5.0 7.1.1 asks for the inactivity timeout and the absolute lifetime to be documented with a reason for every
+deviation from the re-authentication rules of NIST SP 800-63B-4 §2.1.3/§2.2.3/§2.3.3 ("Reauthentication"). Their limits: **AAL1** overall timeout SHOULD be no more than 30 days,
+an inactivity timeout MAY apply; **AAL2** overall SHOULD be no more than 24 hours, inactivity SHOULD be no more than
+1 hour; **AAL3** overall SHALL be no more than 12 hours, inactivity SHOULD be no more than 15 minutes.
+
+| Setting | Default | AAL1 | AAL2 |
+|---|---|---|---|
+| `session_ttl_transient_hours` (without "Stay signed in") | 12 h | ✅ | ✅ |
+| `session_idle_minutes` (without "Stay signed in") | 8 h | ✅ (MAY) | ❌ deviation (SHOULD ≤ 1 h) |
+| `session_ttl_hours` (with "Stay signed in") | 7 days | ✅ | ❌ deviation (SHOULD ≤ 24 h) |
+| `session_idle_minutes_remember` (with "Stay signed in") | off | ✅ (MAY) | ❌ deviation (SHOULD ≤ 1 h) |
+
+A sign-in with only a password or a PIN is AAL1 — the defaults meet it (a provider round counts with the provider's
+strength). With a second factor
+(`login_chain=["password", "totp|passkey"]`, a passkey with user verification) a session is AAL2, and the defaults
+deviate in three places. The reasons, in this order:
+
+1. **A session alone opens no new way in.** Everything that creates lasting access (passkey, TOTP, PIN, API key,
+   app password, service pairing, cross-device approval, OAuth consent), removes a factor or changes the name or
+   address wants a confirmation within `stepup_max_age_sec` (15 min, `_require_fresh`, `require_mfa`) — tighter
+   than the AAL2 inactivity limit. The admin panel asks for the same (`admin_require_mfa`).
+2. **"Stay signed in" is the person's choice per sign-in**, not a default: unticked, 12 h and 8 h inactivity
+   apply; `remember_me_enabled=False` removes the box and the long session with it.
+3. **Sessions are server-side and end on demand:** the person sees them and ends the others or all of them
+   (table above), every own password change ends the others, a reset or a block ends all, an OIDC session follows
+   the provider every 15 minutes (`oidc_session_refresh_minutes`). New access and a sign-in after failed attempts
+   reach the holder (`notify_new_access`, `notify_login_failures`, T-47/T-63).
+
+**AAL2 to the letter:** `session_ttl_hours=24`, `session_idle_minutes=60`, `session_idle_minutes_remember=60` (with
+the chain above). AAL3 additionally wants `session_ttl_hours=12`, `session_ttl_transient_hours=12`, both
+inactivity values at 15 and hardware-bound authenticators only — TinySesam claims no AAL3.
+
+**Parallel sessions (ASVS 7.1.2).** An account may hold any number of sessions at once — one per browser or
+device; there is no limit and therefore no "oldest one is pushed out". Reason: a limit would let whoever signs in
+(also with a stolen password) silently end the holder's session, or keep the holder from signing in on a new
+device. Instead every session is visible to the holder (`GET /auth/sessions`, account page) and to the operator
+(panel), and ends as described above. A cross-device sign-in (QR) and a sign-in link are reported to the holder
+(`device_signed_in`, `signin_link_issued`). A per-account limit (`session_max_per_account`) is not built; it is a
+backlog item for whoever needs it.
+
 ## Changing username and address (self-service)
 
 Since 2026-09-25 everyone changes both on the account page, with a fresh step-up — the

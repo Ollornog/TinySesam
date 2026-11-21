@@ -1577,6 +1577,8 @@ class TinySesam:
     #: `api_keys_revoked`).
     #: Since T-60 the services: `oauth_service_paired` (`client_id`, `client_name`, `resources`) — a service was paired
     #: to act as the account; `oauth_service_revoked` (`client_id`, `client_name`, `reason`).
+    #: Since T-63 `signed_in_after_failures` (`failures`, `ip`): a complete sign-in ended a streak of at least
+    #: `_AFTER_FAILURES_MIN` consecutive failed attempts (ASVS 5.0 6.3.5) — by mail with `notify_login_failures`.
     SECURITY_EVENTS = (
         "password_changed", "pin_set", "pin_disabled", "totp_enabled", "totp_disabled",
         "recovery_codes_generated", "recovery_code_used", "passkey_added", "passkey_removed",
@@ -1586,6 +1588,7 @@ class TinySesam:
         "signin_link_issued", "device_signed_in",
         "app_password_created", "app_password_revoked", "app_passwords_revoked",
         "oauth_service_paired", "oauth_service_revoked",
+        "signed_in_after_failures",
     )
 
     #: The events that mean NEW access to the account — they go to the owner by mail as well
@@ -1595,6 +1598,9 @@ class TinySesam:
                            "device_signed_in", "signin_link_issued", "password_changed",
                            "oauth_device_connected", "oauth_token_reuse", "app_password_created",
                            "oauth_service_paired")
+
+    #: Events mailed under `notify_login_failures` instead of `notify_new_access` (T-63).
+    _FAILURE_MAIL_EVENTS = ("signed_in_after_failures",)
 
     def _security_event(self, event: str, user_id, **details) -> None:
         """Call `on_security_event` for an event from `SECURITY_EVENTS`, if set.
@@ -1628,7 +1634,12 @@ class TinySesam:
         the lockout notices: the request does not wait for the mail server, and a failure there does
         not undo the change. The text names what happened, when and from which address — never a
         secret, never a link (a mail that asks to click is what phishing looks like)."""
-        if event not in self._ACCESS_MAIL_EVENTS or not self.cfg.notify_new_access:
+        if event in self._FAILURE_MAIL_EVENTS:
+            # T-63: a sign-in after failed attempts belongs to the failed attempts, not to new access — the same
+            # switch as the lockout notice.
+            if not self.cfg.notify_login_failures:
+                return
+        elif event not in self._ACCESS_MAIL_EVENTS or not self.cfg.notify_new_access:
             return
         if event == "password_changed" and not details.get("by_operator"):
             return
@@ -1643,7 +1654,7 @@ class TinySesam:
             u = self.store.get_user(user_id)
             if not u or u["is_service"] or not u["email"] or not _proof_on_account(u):
                 return
-            what = self.t("notice." + event)
+            what = self.t("notice." + event, failures=details.get("failures", ""))
             text = self.t("mail.access.text", name=u["username"], what=what,
                           time=time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime(when)),
                           ip=security.for_log(ip) or self.t("mail.unknown"))
@@ -3077,6 +3088,20 @@ class TinySesam:
             send.discard()
 
     # ---------- Manage passkeys ----------
+    def _webauthn_user_handle(self, user_id: int) -> bytes:
+        """The WebAuthn user handle of an account for a NEW passkey: 64 bytes that look random (T-56).
+
+        Up to 0.25.x the handle was the account ID as text (`b"7"`). An authenticator keeps the handle and hands it
+        to every site that asks for a discoverable credential's account — a sequential number tells how many
+        accounts an instance has and is the same on every instance that numbers alike. WebAuthn Level 3 §14.6.1
+        recommends 64 random bytes. Kept here as HMAC-SHA-512 over the account ID with a random salt of this
+        instance (setting `webauthn_handle_salt`, `Store.webauthn_handle_salt`): the same handle for every passkey of an
+        account (an authenticator replaces a credential under the same handle instead of piling them up), no
+        column, nothing to migrate. TinySesam never looks an account up by its handle — the sign-in finds the
+        passkey by its credential ID —, so passkeys registered with the old handle keep working unchanged."""
+        return hmac.new(self.store.webauthn_handle_salt(), b"webauthn-user-handle:%d" % int(user_id),
+                        hashlib.sha512).digest()
+
     def remove_passkey(self, user_id: int, passkey_id: int, ip: Optional[str] = None) -> bool:
         """Remove an account's passkey — deletion, audit line and `passkey_removed` in one.
 
@@ -3598,6 +3623,15 @@ class TinySesam:
         this method."""
         return self.store.has_confirmed_totp(user_id)
 
+    def _totp_step(self, secret, code):
+        """The time step a code matches inside the window `totp_window` allows (T-57) — or None.
+
+        RFC 6238 §5.2 recommends at most one step back for the transmission delay; ASVS 5.0 6.5.5 wants a TOTP
+        to live no longer than needed. Up to 0.25.x a step ahead counted as well — a code that a fast clock
+        showed 30 seconds early, and in sum a code that worked for 90 seconds."""
+        back, ahead = _totp.WINDOWS.get(str(self.cfg.totp_window), _totp.WINDOWS["previous"])
+        return _totp.matching_step(secret, code, back, ahead)
+
     def _verify_totp(self, user_id, code) -> bool:
         """Check a TOTP code — and consume it in the process.
 
@@ -3605,11 +3639,13 @@ class TinySesam:
         (`valid_window=1` = previous + current + next step), and two separate
         clients could sign in fully with the same code. NIST SP 800-63B is unambiguous on this point:
         "Verifiers SHALL accept a given OTP only once while it is valid."
+
+        Which steps count is `totp_window` (T-57): by default the current and the previous one, no longer the next.
         """
         t = self.store.get_totp(user_id)
         if not t or not t["confirmed"]:
             return False
-        step = _totp.matching_step(t["secret"], code)
+        step = self._totp_step(t["secret"], code)
         if step is None:
             return False
         # Book before the factor counts: whoever no longer gets the step was the second one.
@@ -3675,7 +3711,7 @@ class TinySesam:
         t = self.store.get_totp(user_id)
         if not t or not code or t["confirmed"]:
             return False
-        step = _totp.matching_step(t["secret"], code)
+        step = self._totp_step(t["secret"], code)
         if step is None or not self.store.consume_totp_step(user_id, step):
             return False
         self.store.confirm_totp(user_id)
@@ -4085,7 +4121,7 @@ class TinySesam:
         uid = s["user_id"]
         self._sign_in_complete(uid, s["ip"], factor)
         self._note_first_login(uid)
-        self.lift_lockout(uid)
+        self._lift_after_sign_in(uid, s["ip"])
         new_token = self._create_session(uid, self._ttl(bool(s["remember"])), True, s["method"],
                                          s["ip"], s["user_agent"], bool(s["remember"]), factors=done)
         self._successor(s, new_token)
@@ -4916,8 +4952,8 @@ class TinySesam:
         return True
 
     # ---------- Sign-in link without mail (T-33) ----------
-    #: Upper bound for an issued link: a week. Longer is no hand-over but a second password.
-    _SIGNIN_LINK_MAX_TTL_MIN = 7 * 24 * 60
+    # The upper bound for an issued link is `signin_link_max_ttl_min` (T-51, default 24 h); up to 0.25.x it was a
+    # fixed week (`_SIGNIN_LINK_MAX_TTL_MIN`), which `config_check` keeps as the largest value allowed.
 
     def create_signin_link(self, user_id, ttl_min=None, next="/") -> dict:
         """Issue a one-time sign-in link for an account — without mail, to hand over by any channel.
@@ -4930,7 +4966,8 @@ class TinySesam:
         The address comes **only** from `base_url` — never from a request's Host header (R4-01):
         whoever hands the link on would otherwise hand on an address the requester chose.
 
-        `ttl_min` defaults to `magiclink_ttl_min`; allowed are 1 minute to 7 days. Returns
+        `ttl_min` defaults to `magiclink_ttl_min`; allowed are 1 minute to `signin_link_max_ttl_min` (default 24 h,
+        T-51 — NIST SP 800-63B-4 §4.2.2). Returns
         `{"url", "expires_at", "qr"}` — `qr` is a PNG data URI of the link, or None without the
         extra `[qr]`. The plaintext exists only in this return value; the database holds the hash.
         Audit `signin_link_issue` under the account, with `actor=` when an admin issues it.
@@ -4954,8 +4991,8 @@ class TinySesam:
             raise ValueError(self.t("api.invalid", reason="ttl_min"))
         else:
             ttl = ttl_min
-        if not 1 <= ttl <= self._SIGNIN_LINK_MAX_TTL_MIN:
-            raise ValueError(self.t("api.invalid", reason="ttl_min"))
+        if not 1 <= ttl <= int(self.cfg.signin_link_max_ttl_min):
+            raise ValueError(self.t("api.signin_link_ttl", max=int(self.cfg.signin_link_max_ttl_min)))
         u = self.store.get_user(user_id) if user_id is not None else None
         if not u:
             raise ValueError(self.t("api.not_found"))
@@ -5115,7 +5152,7 @@ class TinySesam:
         if mfa_ok:   # full login completed → audit
             self._sign_in_complete(user_id, ip, method)
             self._note_first_login(user_id)
-            self.lift_lockout(user_id)
+            self._lift_after_sign_in(user_id, ip)
         return token, mfa_ok
 
     def _create_session(self, user_id, ttl, mfa_ok, method, ip=None, ua=None, remember=True,
@@ -5216,7 +5253,7 @@ class TinySesam:
             if ok and not was_ok:
                 self._sign_in_complete(user_id, s["ip"], factor)
                 self._note_first_login(user_id)
-                self.lift_lockout(user_id)
+                self._lift_after_sign_in(user_id, s["ip"])
                 # **New token on privilege change.** Here the session turns from a half login
                 # into a fully valid one — OWASP Session Management Cheat Sheet: "The session ID must
                 # be renewed or regenerated by the web application after any privilege level
@@ -5357,7 +5394,7 @@ class TinySesam:
             # ended with the TOTP step (mandatory setup, or the setup pass) stayed "never signed in",
             # and `mfa_enrollment="first_login"` and `magiclink_first_login_only` kept treating it so.
             self._note_first_login(s["user_id"])
-            self.lift_lockout(s["user_id"])
+            self._lift_after_sign_in(s["user_id"], s["ip"])
             # Privilege change → new token (OWASP Session Management). Returns it so that the
             # caller can set the cookie — the old token belongs to a deleted row.
             new_token = self._create_session(
@@ -6032,7 +6069,7 @@ class TinySesam:
             return PasswordChangeResult(ok=True, reason="ok", status=200), None
         self._sign_in_complete(u["id"], s["ip"], "password")
         self._note_first_login(u["id"])
-        self.lift_lockout(u["id"])
+        self._lift_after_sign_in(u["id"], s["ip"])
         new_token = self._create_session(u["id"], self._ttl(bool(s["remember"])), True, s["method"],
                                          s["ip"], s["user_agent"], bool(s["remember"]), factors=done)
         self._successor(s, new_token)
@@ -7049,6 +7086,26 @@ class TinySesam:
                     away += self.store.count_fails(start_from, username=identifier, method=m, from_id=from_id)
                     self.store.clear_fails(username=identifier, method=m, **limit)
         return away
+
+    #: From how many consecutive failed attempts a complete sign-in is reported to the holder (T-63, ASVS 5.0 6.3.5:
+    #: "a successful authentication after several unsuccessful attempts"). One or two typos are the holder's own.
+    _AFTER_FAILURES_MIN = 3
+
+    def _lift_after_sign_in(self, user_id, ip=None) -> int:
+        """`lift_lockout()` after a COMPLETE sign-in — and tell the holder if failed attempts came before it (T-63).
+
+        The count is the streak (B2-6) the sign-in ends: the consecutive failed sign-in attempts under every
+        identifier of the account, across methods (a guessed TOTP code counts as much as a wrong password). It is
+        read BEFORE `lift_lockout` clears it; the window in `login_attempt` would not do — `_record_login` has
+        already cleared the attempts of the method that just succeeded. From `_AFTER_FAILURES_MIN` on: audit
+        `login_after_failures` (`failures=`; shown on the account page under "Recent activity") and the event
+        `signed_in_after_failures` (`failures`, `ip`) — by mail with `notify_login_failures`. Returns the count."""
+        failures = sum(self.store.failure_series_confirmed(k) for k in self.store.count_identifiers(user_id))
+        self.lift_lockout(user_id)
+        if failures >= self._AFTER_FAILURES_MIN:
+            self.audit("login_after_failures", self._account_name(user_id), ip, f"failures={failures}")
+            self._security_event("signed_in_after_failures", user_id, failures=failures, ip=ip)
+        return failures
 
     def _end_series(self, user_id) -> int:
         """End the streak of an account entirely (B2-6) — the operator's way (panel reset).
@@ -8531,8 +8588,9 @@ class TinySesam:
     def login_fresh(self, request: Request, user: Optional[dict] = None) -> bool:
         """True if the **sign-in** is at most `stepup_max_age_sec` ago.
 
-        The weaker sister of `stepup_fresh()`: what is measured is not the last
-        factor confirmation but the age of the session (`created_at`, i.e. the login).
+        The weaker sister of `stepup_fresh()`: what is measured is the last sign-in of the account on this
+        session — the session's start, or a later sign-in at the provider (`mfa_at`, T-49); a sign-in through a
+        provider counts from the provider's `auth_time`, not from the round that brought it.
 
         Intended for exactly one situation — an account that has **no** factor with which it could
         confirm (`stepup_options()` empty, purely federated account without password, PIN
@@ -8548,7 +8606,12 @@ class TinySesam:
         if not s:
             return False
         if self.cfg.stepup_max_age_sec > 0:
-            if (_now() - (s["created_at"] or 0)) > self.cfg.stepup_max_age_sec:
+            # T-49: the later of sign-in and last confirmation, but never later than the confirmation itself. A new
+            # session starts with `mfa_at` = sign-in, a sign-in through a provider with its `auth_time`
+            # (`Store.backdate_confirmation`), and a fresh sign-in at the provider on this session (the confirmation
+            # page's provider button) moves `mfa_at` forward — what this account can confirm with at all.
+            since = s["mfa_at"] if s["mfa_at"] is not None else (s["created_at"] or 0)
+            if (_now() - since) > self.cfg.stepup_max_age_sec:
                 return False
         return True
 
@@ -8738,7 +8801,16 @@ class TinySesam:
         is asked."""
         if self.stepup_options(user):
             return None if self.stepup_fresh(request, user) else "stepup"
-        return None if self.login_fresh(request, user) else "relogin"
+        if self.login_fresh(request, user):
+            return None
+        # T-49: an account linked to the provider confirms there (the confirmation page's provider button) — so it
+        # is sent to that page like any other, instead of being told to sign out.
+        return "stepup" if self._confirms_at_provider(user) else "relogin"
+
+    def _confirms_at_provider(self, user) -> bool:
+        """Can this account confirm on the confirmation page through the OIDC provider (T-49)?"""
+        return bool(self.cfg.oidc_enabled and self.cfg.oidc_reauth_check and user
+                    and self.store.is_oidc_account(user["id"]))
 
     def _require_fresh(self, request: Request, user: Optional[dict] = None) -> dict:
         """The bolt in front of every route that creates NEW, lasting access to the account (B-12,

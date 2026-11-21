@@ -276,7 +276,15 @@ class TinySesamConfig:
     #: `/auth/magic/request` exists — this part needs a mailer. `False` = links only from the admin
     #: panel or app code: the request route is gone (404), the button too, issued links still redeem.
     magiclink_self_request: bool = True
-    magiclink_ttl_min: int = 15           # validity of a one-time link
+    #: Validity of a one-time link in minutes — the mailed sign-in link, the reset link and an invitation without an
+    #: own `ttl_min` (T-51). Default 10 (up to 0.25.x: 15): ASVS 5.0 6.5.5 limits out-of-band requests to 10 minutes,
+    #: and a link that waits in a mailbox is a key lying about. 1–1440.
+    magiclink_ttl_min: int = 10
+    #: Upper bound in minutes for a sign-in link an administrator or app code issues (`create_signin_link`, the panel's
+    #: "Sign-in link"), T-51. Default 24 h: NIST SP 800-63B-4 §4.2.2 lets a recovery code sent by mail live at most
+    #: 24 hours, and a hand-over link is the same kind of key. Up to 0.25.x the bound was 7 days (10080) — set that
+    #: value to keep it. 1–10080.
+    signin_link_max_ttl_min: int = 24 * 60
     #: ASVS 6.3.6 (PO decision 2026-09-24): If an account has a second factor (TOTP or
     #: passkey), the sign-in link alone does not sign in fully — the factor is demanded afterwards.
     #: Otherwise the mailbox would be the only key, even for an account that protected itself with an
@@ -347,6 +355,11 @@ class TinySesamConfig:
 
     # --- TOTP (2FA on top of password/OIDC; passkeys are already phishing-resistant) ---
     totp_enabled: bool = True             # users may set up TOTP
+    #: Which time steps a TOTP code may come from (T-57, RFC 6238 §5.2, ASVS 5.0 6.5.5): "previous" (default) =
+    #: the current 30-second step and the one before it, for a code typed just before the change; "current" =
+    #: only the running step; "previous_and_next" = also the next step (behaviour up to 0.25.x, for authenticators
+    #: whose clock runs fast). Every code still counts only once.
+    totp_window: str = "previous"
     #: Keyring file of the vault (H-14/H-15, T-48): it encrypts the TOTP secrets, OIDC refresh/ID tokens and the
     #: keys kept in the database (32 bytes, Base64; the first line is active, further lines are older keys that
     #: only decrypt). The environment variable TINYSESAM_SECRETS_KEY (+ `_PREVIOUS`) takes precedence; with
@@ -622,6 +635,14 @@ class TinySesamConfig:
     #: check warns and asks for the unit (3600 for an hour). Shorter periods in seconds
     #: (300 instead of 5) go unnoticed — the unit is in the field name.
     oidc_revalidate_minutes: int = 0
+    #: Re-authentication at the provider is checked (T-49, ASVS 5.0 6.8.4, OIDC Core §3.1.2.1): the confirmation
+    #: page offers "Confirm with <provider>" to an account linked to it, which asks the provider for an active
+    #: sign-in (`prompt=login`, `max_age=0`) and counts only with an `auth_time` from after the request; a round
+    #: through a provider session that was already running no longer refreshes a full session (approval for
+    #: another application), and a new session counts as confirmed from the provider's `auth_time`, not from
+    #: the round. Without `auth_time` in the ID token a new session counts from TinySesam's own sign-in (the
+    #: documented fallback), and the provider button does not confirm. `False` = the behaviour up to 0.25.x.
+    oidc_reauth_check: bool = True
     #: Revocation follows the provider (4a): Every so many minutes, on the next request, TinySesam
     #: exchanges the refresh token of the OIDC session. If the provider refuses (blocked, deleted, revoked
     #: for the application), the session ends; groups and the admin flag granted by the provider

@@ -197,6 +197,8 @@ ok("A-1: mandatory setup under the chain signs in with the confirmation (no fail
 # GET and /start) nor via the method. Before: 200 {"ok": true}, a wrong `totp_enabled` event
 # and a second code verifier for the active factor.
 # (Mutation probe: remove `or t["confirmed"]` in totp_confirm OR the 409 guard -> red.)
+# T-57: the default window no longer takes the NEXT step; this test signs in with it a second time in one step.
+auth_e.cfg.totp_window = "previous_and_next"
 _sequence = pyotp.TOTP(_secret_text).at(_when.time() + 30)
 _ant = c_e.post("/auth/totp/setup", data={"code": _sequence})
 assert _ant.status_code == 409, (_ant.status_code, _ant.text)

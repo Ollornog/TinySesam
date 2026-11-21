@@ -743,6 +743,7 @@ async def run():
 
         await t33_alternatives(p)
         await h2_stepup_qr(p)
+        await h4_activity(p)
         await own_dialogs(p)
         await c22_adapter(p)
         await top_bar(p)
@@ -966,6 +967,42 @@ async def h2_stepup_qr(p):
     assert not unexpected, f"broken requests: {unexpected[:3]}"
     del p.failed[failed_before:]
     print("  T-44: the new device shows its number (390/1280 px, no sideways scroll)")
+
+
+async def h4_activity(p):
+    """H4 (T-63) in a real browser on the T-33 app (strict CSP): a sign-in after three failed attempts stands on the
+    account page under "Recent activity" — at 390 and 1280 px, without sideways scrolling or console errors."""
+    import re
+    from fastapi.testclient import TestClient
+
+    t33.create_user("henrik", password="henrik-pw-12345")
+    c = TestClient(_t33_app)
+
+    def sign_in(password):
+        tok = re.search(r"name=_csrf value='([^']+)'", c.get("/auth/login").text).group(1)
+        return c.post("/auth/login", data={"_csrf": tok, "username": "henrik", "password": password},
+                      follow_redirects=False)
+
+    for i in range(3):          # three DIFFERENT wrong passwords — a repeated one counts once
+        assert sign_in(f"wrong-{i}-password").status_code == 401
+    assert sign_in("henrik-pw-12345").status_code == 303
+    await p.cmd("Network.setCookie", name=t33.session_cookie_name, value=c.cookies.get(t33.session_cookie_name),
+                url=T33)
+    await p.cmd("Page.navigate", url=T33 + "/auth/account")
+    await p.until("document.readyState==='complete' && !!document.getElementById('eventlist')", "no account page")
+    lines = await p.js("document.getElementById('eventlist').innerText")
+    assert "login_after_failures" in lines and "login_fail" in lines, lines[:400]
+    for width in (390, 1280):
+        await p.cmd("Emulation.setDeviceMetricsOverride", width=width, height=900, deviceScaleFactor=1,
+                    mobile=width < 500)
+        over = await p.js("document.documentElement.scrollWidth - window.innerWidth")
+        assert over <= 0, f"account page scrolls sideways at {width}px ({over}px)"
+    await p.cmd("Emulation.clearDeviceMetricsOverride")
+    viol = await p.js("JSON.stringify(window.__csp===undefined?['(no Listener)']:window.__csp)")
+    assert viol == "[]", f"CSP violation: {viol}"
+    assert not p.console, f"console errors: {p.console[:2]}"
+    await p.cmd("Network.deleteCookies", name=t33.session_cookie_name, url=T33)
+    print("  T-63: sign-in after three failed attempts → 'login_after_failures' under Recent activity")
 
 
 async def account_setup(p, go):

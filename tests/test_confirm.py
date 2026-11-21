@@ -374,6 +374,8 @@ r.check("(d) one-time code instead of TOTP: 401 `invalid` — the step-up takes 
         _d_rc.status_code == 401 and _reason(_d_rc) == "invalid" and [v[2] for v in _d_attempts] == [0]
         and auth.recovery_codes_remaining(uid) == len(codes),
         f"{_d_rc.status_code} {_d_attempts} {auth.recovery_codes_remaining(uid)}")
+# T-57: the default window no longer takes the NEXT step; this test signs in with it a second time in one step.
+auth.cfg.totp_window = "previous_and_next"
 _d_ok = _post(c, "/own/confirm/totp", code=pyotp.TOTP(secret_text).at(time.time() + 30))
 r.check("(d) … a TOTP code confirms: 303, fresh", _d_ok.status_code == 303 and _fresh(c),
         f"{_d_ok.status_code} {_d_ok.text[:120]}")
@@ -591,6 +593,8 @@ def _sign_in_with_totp(app, name, secret_text):
 
 def _setup_stepup():
     auth, app = _app(pin_enabled=True, hardening={"reauth_max_attempts": 4})
+    # T-57: the default window no longer takes the NEXT step; this test signs in with it a second time in one step.
+    auth.cfg.totp_window = "previous_and_next"
     uid = auth.create_user("otto", password=PW)
     auth.set_pin(uid, PIN)
     _secrets[id(auth)] = _totp_set_up(auth, uid)
@@ -618,6 +622,8 @@ r.check("(g) … step-up sequence: 401, 400, 401, 401, 303, 303, 401×4, 429",
 
 def _setup_only_totp():
     auth, app = _app(stepup_methods=["totp"])
+    # T-57: the default window no longer takes the NEXT step; this test signs in with it a second time in one step.
+    auth.cfg.totp_window = "previous_and_next"
     uid = auth.create_user("paula", password=PW)
     _secrets[id(auth)] = _totp_set_up(auth, uid)
     return auth, app, _sign_in_with_totp(app, "paula", _secrets[id(auth)])

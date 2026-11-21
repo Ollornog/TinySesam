@@ -87,7 +87,8 @@ def register_passkey_routes(router, auth):
         existing = auth.store.list_webauthn(u["id"])
         opts = generate_registration_options(
             rp_id=cfg.rp_id, rp_name=cfg.rp_name,
-            user_id=str(u["id"]).encode(), user_name=u["username"],
+            # T-56: 64 bytes that reveal nothing (WebAuthn L3 §14.6.1), no longer the sequential account ID.
+            user_id=auth._webauthn_user_handle(u["id"]), user_name=u["username"],
             user_display_name=u["display_name"] or u["username"],
             authenticator_selection=AuthenticatorSelectionCriteria(
                 resident_key=ResidentKeyRequirement.PREFERRED,
@@ -119,9 +120,22 @@ def register_passkey_routes(router, auth):
         if flow["user_id"] != u["id"]:
             raise HTTPException(400, auth.t("api.passkey_reg_expired"))
         body = await request.body()
-        v = verify_registration_response(credential=body.decode(),
-                                         expected_challenge=base64url_to_bytes(flow["challenge"]),
-                                         expected_rp_id=cfg.rp_id, expected_origin=cfg.origin)
+        # T-56 (WebAuthn L3 §7.1, step "verify that the UV bit … is set" when user verification is required): the
+        # registration demands the same verification as the sign-in. Up to 0.25.x it only requested it — an
+        # authenticator that answered without verifying registered a passkey that `required` then refused at every
+        # sign-in; and the request alone binds nobody, the response is what counts.
+        try:
+            v = verify_registration_response(credential=body.decode(),
+                                             expected_challenge=base64url_to_bytes(flow["challenge"]),
+                                             expected_rp_id=cfg.rp_id, expected_origin=cfg.origin,
+                                             require_user_verification=(
+                                                 str(cfg.passkey_user_verification) == "required"))
+        except Exception as e:
+            # A refused answer is the browser's or the authenticator's, not a server fault: 400 instead of a 500
+            # with a stack trace. The exception type goes to the audit line, never its text (it can carry the request).
+            auth.audit("passkey_create_failed", u["username"], auth.client_ip(request),
+                       f"reason={type(e).__name__}")
+            raise HTTPException(400, auth.t("api.passkey_reg_failed"))
         try:
             transports = _json.loads(body).get("response", {}).get("transports")
         except Exception:

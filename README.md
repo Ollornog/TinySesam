@@ -281,7 +281,8 @@ link (`magiclink_require_second_factor`, default on). Sign-in by link counts as 
   page offers "email me a sign-in link". Unchanged.
 - **Link from the admin, without mail** (`magiclink_enabled=True`): the admin panel has a
   *Sign-in link* button per user (JSON: `POST <admin>/api/users/{id}/signin-link`, body
-  `{"ttl_min": 60}`, 1 minute to 7 days, default `magiclink_ttl_min`). The link is shown **once**,
+  `{"ttl_min": 60}`, 1 minute to `signin_link_max_ttl_min` — default 24 h, NIST SP 800-63B-4 §4.2.2; a week at
+  most, set on purpose —, default `magiclink_ttl_min`). The link is shown **once**,
   as a link and as a QR code (extra `[qr]`), to hand over by any channel; it works without a mailer.
   It is discarded with the account's other open links when the account is disabled or its password
   is reset. Audit `signin_link_issue` with the admin as `actor=`. In code:
@@ -359,6 +360,7 @@ The rules of the setup pass:
 | `db_path` | `tinysesam.db` | SQLite store |
 | `password_enabled` / `passkey_enabled` / `oidc_enabled` | `True/False/False` | active methods (passkey is off by default: `webauthn` lives in the extra `[passkey]`) |
 | `totp_enabled` | `True` | allow 2FA (required as soon as a user has set it up) |
+| `totp_window` | `"previous"` | which 30-second steps a code may come from: current + previous (RFC 6238 §5.2); `"current"`; `"previous_and_next"` = up to 0.25.x |
 | `login_chain` · `stepup_strict` | `[]` · `False` | `["password","totp"]` **enforces** an ordered factor chain — this is how you make 2FA mandatory; alternatives per step with `\|` (`["password\|passkey"]`). Empty = classic: one first factor, plus TOTP where set up |
 | `session_ttl_hours` · `cookie_secure` · `cookie_samesite` | `168` · `True` · `lax` | sessions/cookie |
 | `rp_id` · `origin` | `localhost` · … | WebAuthn (real domain required, HTTPS) |
@@ -368,7 +370,8 @@ The rules of the setup pass:
 | `cookie_domain` · `trusted_redirect_hosts` | `""` · `[]` | SSO across subdomains · allowed absolute `?next=` targets |
 | `security_log` | `""` | file for the fail2ban logger (empty = logger only) |
 | `forward_auth_enabled` · `forward_headers` | `False` · `{}` | forward-auth endpoint · which headers it sets (empty = `Remote-*`) |
-| `magiclink_enabled` · `magiclink_self_request` · `magiclink_ttl_min` | `False` · `True` · `15` | sign-in links redeem · anyone may request one by email (needs a mailer; `False` = links only from the admin or app code) · validity |
+| `magiclink_enabled` · `magiclink_self_request` · `magiclink_ttl_min` | `False` · `True` · `10` | sign-in links redeem · anyone may request one by email (needs a mailer; `False` = links only from the admin or app code) · validity in minutes (also reset links and invitations; up to 0.25.x `15`) |
+| `signin_link_max_ttl_min` | `1440` | upper bound for a sign-in link the admin or app code issues (up to 0.25.x a week, `10080`) |
 | `magiclink_first_login_only` | `False` | a link signs in only for the first sign-in (or to set up a missing factor) |
 | `qr_login_enabled` · `qr_login_ttl_sec` | `False` · `120` | cross-device sign-in (QR code needs `base_url` and the extra `[qr]`) · validity of a request |
 
@@ -2069,7 +2072,7 @@ Every Python block in both files runs in the test suite, and every name they men
 
 ## Status
 
-**104 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
+**105 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
 
 Implemented and tested: password/TOTP/sessions/roles, remember-me, step-up and per-route MFA,
 factor chains, personal PIN, shared resource secrets, magic links + mailer hook, registration and

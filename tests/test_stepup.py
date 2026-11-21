@@ -263,6 +263,8 @@ assert r.status_code == 307 and "/auth/reauth" in r.headers["location"], r.heade
 # Reauth now demands TOTP (not password)
 assert "Authenticator" in c3.get("/auth/reauth").text
 # Fresh time step: the code from login is used up (a TOTP code is valid exactly once).
+# T-57: the default window no longer takes the NEXT step; this test signs in with it a second time in one step.
+auth.cfg.totp_window = "previous_and_next"
 r = c3.post("/auth/reauth", data={"code": pyotp.TOTP(secret).at(int(time.time()) + 30),
                                   "next": "/auth/admin"}, follow_redirects=False)
 assert r.status_code == 303
@@ -347,6 +349,8 @@ assert factors(auth2, uid2) == before2, "no factor may change from a stale sessi
 ok(f"stale session: all {len(MANAGEMENT)} factor routes → 403 + reauth hint, nothing changed")
 
 # Fresh time step: the code from login is used up (a TOTP code is valid exactly once).
+# T-57: the default window no longer takes the NEXT step; this test signs in with it a second time in one step.
+auth2.cfg.totp_window = "previous_and_next"
 r = c4.post("/auth/reauth", data={"code": pyotp.TOTP(sec2).at(int(time.time()) + 30), "next": "/"},
             follow_redirects=False)
 assert r.status_code == 303, r.status_code
@@ -785,6 +789,8 @@ assert r.status_code == 303 and c7.get("/auth/me", headers=JSON).status_code == 
 auth7.store._exec("UPDATE session SET mfa_at=? WHERE token_hash=?",
                   (int(time.time()) - 100000, auth7.store.session_hash(c7.cookies.get("tinysesam_session"))))
 assert c7.get("/auth/reauth", headers={"Accept": "text/html"}).status_code == 200
+# T-57: the default window no longer takes the NEXT step; this test signs in with it a second time in one step.
+auth7.cfg.totp_window = "previous_and_next"
 r = c7.post("/auth/reauth", data={"code": _totp7.at(int(time.time()) + 30), "next": "/",
                                   "_csrf": c7.cookies.get("tinysesam_csrf") or ""},
             follow_redirects=False)
