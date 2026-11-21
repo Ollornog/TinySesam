@@ -17,6 +17,7 @@ import json
 import os
 import pathlib
 import re
+import secrets
 import socket
 import subprocess
 import sys
@@ -381,6 +382,38 @@ try:
     assert st == 200 and not {"authorization", "x-api-key"} & {k.lower() for k in a["header"]}, a["header"]
     ok("valid gate cookie → 10 requests at the application, 0 at TinySesam; identity from the "
        "token (UTF-8 as with /auth/forward), Remote-* from the browser overwritten, gate cookie removed")
+
+    # ---------- caddy-jwt never sees a credential from Authorization ----------
+    # caddy-jwt (v1.4.0, jwt.go `Authenticate`) adds the `Authorization` header to its token candidates ALWAYS, even
+    # with only `from_cookies`, and logs a candidate that is no JWT at level error with a third of its beginning and
+    # end (`token_string`, `desensitizedTokenString`): an API key, an OAuth token or an app password of every MCP or
+    # API call stood half in the proxy log (PO, Caddy 2.11.9 from caddy-gate v0.26.0; against A-3: credentials end at
+    # the proxy). The template now sends a request with Authorization, or without the gate cookie, straight to the
+    # way back; jwtauth only ever sees the cookie. (Mutation probe: drop the two `error` lines → red.)
+    gate_log = os.path.join(_tmp, "forward-auth-Caddyfile.gate.log")
+    bearer = "tsk_" + secrets.token_urlsafe(24)
+    basic = base64.b64encode(f"anna:{app_pw}".encode()).decode()
+    for head, cookies, want in (({"Authorization": f"Bearer {bearer}"}, None, 302),
+                                ({"Authorization": f"Basic {basic}"}, None, 302),
+                                ({"Authorization": f"Bearer {bearer}"}, with_gate, 200)):
+        before = FORWARD["n"]
+        st, h, a = request("/no-token-log", cookies, head)
+        assert st == want and FORWARD["n"] == before + 1, (head, st, FORWARD["n"] - before)
+        assert not a or not {"authorization", "x-api-key"} & {k.lower() for k in a["header"]}, a
+    before = FORWARD["n"]
+    assert request("/gate-only", with_gate)[0] == 200 and FORWARD["n"] == before, "counter-check: cookie alone"
+    time.sleep(0.5)                               # Caddy writes its log lines asynchronously
+    logged = pathlib.Path(gate_log).read_text(encoding="utf-8", errors="replace")
+    pieces = [bearer, bearer[4:10], bearer[-6:], basic, basic[:8], basic[-6:], app_pw, api_key, api_key[4:10],
+              api_key[-6:]]
+    # What caddy-jwt still logs is the gate cookie it checked (a JWT, `eyJ…`, shortened — at info on every fast-path
+    # request): never a value from Authorization.
+    foreign = [z for z in re.findall(r'"token_string":"([^"]*)"', logged) if not z.startswith("eyJ")]
+    assert not foreign, foreign[:3]
+    assert not [z for z in pieces if z in logged], [z for z in pieces if z in logged]
+    ok("Authorization (Bearer tsk_…, Basic app password, also next to a valid gate cookie) → straight to the way back; "
+       "the Caddy log names only gate cookies and holds no piece of any credential; the gate cookie alone still takes "
+       "the fast path")
 
     # ---------- B-3: `;` and `%3B` in the path ----------
     def raw_a(path, cookies=None):

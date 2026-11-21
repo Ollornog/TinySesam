@@ -110,6 +110,15 @@ app.example.com {
 	}
 
 	route {
+		# jwtauth only ever sees the gate cookie. caddy-jwt (v1.4.0) also takes `Authorization` as a token candidate,
+		# whatever `from_cookies` says, and logs a candidate that is no JWT with a third of its beginning and end — an
+		# API key, an OAuth token or an app password of every API and MCP call would land in the proxy log. A request
+		# that carries Authorization, or no gate cookie at all, goes straight to the way back below (handle_errors 401,
+		# /auth/forward), where TinySesam checks it. Renamed the gate cookie (gate_cookie_name)? Rename it here too.
+		@no_gate_cookie not header_regexp Cookie (^|;\s*)__Host-tinysesam_gate=
+		@has_authorization header Authorization *
+		error @no_gate_cookie 401
+		error @has_authorization 401
 		jwtauth {
 			# The key set of TinySesam (public, no secret); the token's `kid` picks the key. caddy-jwt fetches it
 			# again when a token names a `kid` it does not know yet (after a rotation).
