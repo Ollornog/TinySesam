@@ -260,6 +260,22 @@ def _switch(name: str) -> bool:
 
 HEALTH_PATH = "/healthz"
 
+#: How often the gateway runs `auth.gc()` (seconds): expired sessions, flows, one-time tokens and old sign-in attempts.
+#: A library installation calls it from a timer (deploy/systemd/tinysesam-gc.*); the image has no cron, so the gateway
+#: does it itself — at start and then every hour.
+GC_INTERVAL_SEC = 3600
+
+
+async def _housekeeping(auth) -> None:
+    """`auth.gc()` now and every `GC_INTERVAL_SEC`, in a worker thread. A failure is logged, the loop goes on."""
+    import asyncio
+    while True:
+        try:
+            await asyncio.to_thread(auth.gc)
+        except Exception as e:   # noqa: BLE001 — a full volume must not end the service; the next round retries
+            security.seclog.error("Housekeeping (gc) failed: %s: %s", type(e).__name__, e)
+        await asyncio.sleep(GC_INTERVAL_SEC)
+
 
 def _install_https_except_health(auth, app):
     """Like `auth.install_https`, but `/healthz` stays reachable over HTTP.
@@ -324,8 +340,21 @@ def build_app(cfg: Optional[TinySesamConfig] = None):
     # script and stylesheet from a third-party CDN without a CSP. Nobody operates the gateway through
     # them; whoever wants the schema reads it in Python (`build_app(cfg).openapi()`).
     # `lifespan`: at shutdown the background jobs finish before the database closes (T-67).
+    import contextlib
+
+    @contextlib.asynccontextmanager
+    async def lifespan(app_):
+        # Housekeeping for as long as the app runs (the image has no cron), then the ordered shutdown (T-67).
+        import asyncio
+        task = asyncio.create_task(_housekeeping(auth))
+        try:
+            async with auth.lifespan(app_):
+                yield
+        finally:
+            task.cancel()
+
     app = FastAPI(title="TinySesam OIDC-Gateway", docs_url=None, redoc_url=None, openapi_url=None,
-                  lifespan=auth.lifespan)
+                  lifespan=lifespan)
     app.include_router(auth.router())
     # Browsers get the error page in the branding instead of `{"detail": "Not Found"}`; API clients
     # still get JSON (Accept decides, `install_error_pages`).
