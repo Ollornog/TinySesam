@@ -405,7 +405,7 @@ _fa = TinySesam(TinySesamConfig.oidc_gateway(issuer="https://id.example.com", cl
                                              base_url="https://auth.example.com", db_path=_fdb))
 for _i in range(500):
     _fa.store.put_flow(f"stale-{_i}", {"x": _i}, ttl=-60)            # already expired
-_fa.store._flow_gc_at = 0.0                                          # "the last clearing was long ago"
+_fa.store._flow_gc_at = None                                         # "not cleared yet in this process"
 _fa.store.put_flow("fresh", {"x": 1})
 _left = _fa.store._one("SELECT COUNT(*) AS n FROM flow")["n"]
 assert _left == 1, f"{_left} rows left: expired flows are only removed by an explicit gc()"

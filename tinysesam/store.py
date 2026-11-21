@@ -3682,12 +3682,14 @@ class Store:
     #: and WebAuthn challenges of every sign-in start — also of a scanner that follows the redirect and never returns —
     #: and only `TinySesam.gc()` removed expired rows; a gateway without a cron job held 159 285 of them.
     FLOW_GC_SEC = 300
-    _flow_gc_at = 0.0
+    #: Monotonic time of the last clearing; None = not yet in this process (so the first write clears — a monotonic
+    #: clock starts near zero on a freshly booted machine, and "0.0" would read as "just now" there).
+    _flow_gc_at: Optional[float] = None
 
     def put_flow(self, key, data: dict, ttl=600):
         self._exec("INSERT OR REPLACE INTO flow(key, data, expires_at) VALUES (?,?,?)",
                    (key, json.dumps(data), _now() + ttl))
-        if time.monotonic() - self._flow_gc_at >= self.FLOW_GC_SEC:
+        if self._flow_gc_at is None or time.monotonic() - self._flow_gc_at >= self.FLOW_GC_SEC:
             self._flow_gc_at = time.monotonic()
             self.gc_flow()
 
