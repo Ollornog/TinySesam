@@ -65,6 +65,12 @@ Requests sind englisch. Deutsch gibt es nur als Übersetzung der Oberfläche (`l
 `tests/test_english_code.py` erzwingt das: ein deutsches Wort in einem Bezeichner, Dateinamen, SQL oder
 Kommentar macht die Suite rot.
 
+## Einen Fehler melden
+
+Führe `python -m tinysesam diagnose` aus (Gateway-Abbild: `python -m tinysesam.gateway diagnose`) und öffne den Link,
+den der Befehl ausgibt: Er füllt das Fehlerformular mit einem geschwärzten Bericht — keine Netzwerkanfrage, nichts
+wird gesendet, bevor du abschickst. Siehe README, [„Einen Fehler melden“](README.de.md#einen-fehler-melden).
+
 ## Eine Schwachstelle melden
 
 Für Sicherheitsprobleme **kein** öffentliches Issue öffnen. Nutze GitHubs privates

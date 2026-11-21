@@ -14,6 +14,8 @@
     gate-key --db auth.db            public key of the gate tokens (for the proxy, ADR-9); --jwks: the key set
     keys list|rotate|reencrypt|retire --db auth.db [--purpose vault|gate|oauth-pepper]
                                      the installation's keys (T-48, ADR-12): rotation without data loss
+    diagnose [--config mod:attr] [--log F]  a redacted report and a prefilled bug-form link (T-79):
+                                     no network request, nothing written, nothing sent — you check and submit
 
 Deliberately lean. TinySesam does not install itself — an auth module that reloads
 code at runtime is a back door with an instruction manual. Updating is done from outside:
@@ -821,6 +823,9 @@ def main(argv=None):
         sys.exit(_gate_key(argv[1:]))
     elif cmd == "keys":
         sys.exit(_keys(argv[1:]))
+    elif cmd == "diagnose":
+        from ._diagnose import run
+        sys.exit(run(argv[1:], mode="library", prog="tinysesam diagnose"))
     else:
         # `--help` is a question, not an error: it belongs on stdout and ends with 0. A
         # typo, on the other hand, goes to stderr and ends with 2, otherwise no script notices the difference.
@@ -836,7 +841,8 @@ def main(argv=None):
               "       python -m tinysesam rename --db <file> <user> <new-name>\n"
               "       python -m tinysesam delete --db <file> <user> [--yes]\n"
               "       python -m tinysesam gate-key --db <file> [--jwks]\n"
-              "       python -m tinysesam keys list|rotate|reencrypt|retire --db <file> [--purpose P]",
+              "       python -m tinysesam keys list|rotate|reencrypt|retire --db <file> [--purpose P]\n"
+              "       python -m tinysesam diagnose [--config module:attr] [--db <file>] [--log <file>]",
               file=sys.stdout if help_text else sys.stderr)
         sys.exit(0 if help_text else 2)
 

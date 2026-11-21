@@ -1035,6 +1035,33 @@ rest), `gate` (the gate token's signature) and `oauth-pepper` (the OAuth token d
 is signed out by a rotation; the steps, the sources (environment, file, database) and the way back to an older
 version are in `docs/OPERATIONS.md`, "Keys".
 
+## Reporting a bug
+
+TinySesam sends nothing home — no telemetry, not even as an opt-in: an authentication component that talks to the
+outside on its own would lose the trust it lives on. Instead, a command writes a report that you read, check and send
+yourself:
+
+```bash
+python -m tinysesam diagnose --config yourapp.settings:config --log /var/log/tinysesam/security.log   # library
+docker exec <container> python -m tinysesam.gateway diagnose                                          # gateway image
+```
+
+- **What it holds:** version, Python, operating system family, mode, installed extras; the *shape* of the
+  configuration (which fields differ from the default — switches and numbers as they are, everything else as a
+  placeholder like `<url-1>` or `<host-2>`, secrets only as `<set>`); the built-in checks (`config_check` errors and
+  warnings, proxy headers and uvicorn's `--no-proxy-headers`, the clock, the database schema, whether the vault key
+  lies beside the database, gate token and JWKS); the latest warnings and errors of the security log, redacted.
+- **What it does not do:** no network request, no write (the database is opened read-only, no key is created), no
+  `TinySesam` instance. `--config` takes `module:attr` or `file.py:attr` — a `TinySesamConfig`, a `TinySesam` or a
+  function returning one — and imports your module for it. `--db` and `--log` default to `db_path` and
+  `security_log`; `--no-link` leaves the link out.
+- **At the end** a link opens the [bug form](https://github.com/Ollornog/TinySesam/issues/new?template=bug.yml)
+  prefilled. You check it and submit it. A report too long for a link leaves sections out and names them; paste them
+  from the terminal.
+- Host names, addresses, URLs, user names, paths and secrets are replaced, but you know your setup best: read the
+  report before you share it. A **vulnerability** never goes into a public issue — see
+  [`SECURITY.md`](https://github.com/Ollornog/TinySesam/blob/main/SECURITY.md).
+
 ## Demo mode
 
 `demo_mode=True` creates the accounts `demo` and `demoadmin`, shows their credentials on the sign-in
@@ -1676,7 +1703,9 @@ cfg = TinySesamConfig(
   page offer them "Admin panel". `require_admin` and your own admin routes do not change: a delegate is no admin.
 - **Only a browser session:** an API key, an OAuth token or an app password neither opens the panel nor carries a
   delegate role (not in `Remote-Groups` either) — like the admin flag. The session keeps it, so an application can
-  show its own team page (`topbar_links` with `{"role": "team-a-admin"}`).
+  show its own team page (`topbar_links` with `{"role": "team-a-admin"}`). An app that keeps profiles from
+  `Remote-Groups` refreshes them only when `Remote-Auth` is `session` (empty counts as a token): a token request
+  lacks `admin` and the delegate roles on purpose and must not downgrade the profile.
 - **Step-up and audit:** the same confirmation as administrators (`admin_require_mfa`); creating, inviting and a
   sign-in link always ask for a fresh one. The audit log names the acting account (`actor=`), the panel's own lines
   also `as=<delegate role>`. Delegates have no audit view: the lines carry other people's addresses.
@@ -1767,7 +1796,10 @@ All optional (on/off by config), usable individually and combined, front end rep
   themselves, so an app should key users by `Remote-Id`. `Remote-Auth` says how the request signed in —
   `session`, `oauth`, `apikey` or `app-password`; a request through a valid gate token is a `session` (the token
   carries it as a signed claim). It explains why `Remote-Groups` differ: a token, a key or an app password never
-  carries `admin`. **Never tie rights to `Remote-User` or
+  carries `admin`. **The groups of a token request are incomplete on purpose:** whenever `Remote-Auth` is not
+  `session`, `admin` and every delegate role are missing. An app that keeps a profile from `Remote-Groups` updates it
+  only from a `session` request and never downgrades it on a token request — otherwise the account flips between
+  admin and not with every API call. An empty or missing `Remote-Auth` counts as a token. **Never tie rights to `Remote-User` or
   `Remote-Email`:** a name or address that becomes free (account deleted or renamed) can be taken by
   another account, which then carries it into the app. Your proxy must set every one of these
   headers itself (the examples in `deploy/forward-auth/` do), or it passes a forged one through. Give it a mapping to rename or drop them: `{"user": "X-WEBAUTH-USER"}` sends that one
@@ -2236,14 +2268,14 @@ Every Python block in both files runs in the test suite, and every name they men
 
 ## Status
 
-**114 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
+**115 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
 
 Implemented and tested: password/TOTP/sessions/roles, remember-me, step-up and per-route MFA,
 factor chains, personal PIN, shared resource secrets, magic links + mailer hook, registration and
 invitation, the account page, forgot-password and TOTP recovery codes, session management,
 API keys and service accounts, the admin panel (or just its JSON API), forward-auth plus the
 OIDC gateway, a nonce-based CSP, and the command line (`backup`, `restore`, `gc`, `audit`,
-`unlock`).
+`unlock`, `diagnose`).
 
 External identity providers — OIDC, SAML 2.0, LDAP/AD — and passkeys are implemented and tested
 against a real provider on a staging host (`tests/e2e_stage.py`); the tests that ship with the

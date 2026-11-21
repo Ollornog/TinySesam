@@ -24,7 +24,7 @@ with their front door: keep the surface small, every feature optional, and prove
 | `tinysesam/gate.py`, `gateway.py` | gate token (ADR-9) and the ready-to-run OIDC gateway |
 | `tinysesam/vault.py` | encryption of reversible secrets at rest |
 | `tinysesam/messages.py` | UI texts, English plus German translation |
-| `tinysesam/__main__.py` | CLI `python -m tinysesam` (`passwd`, `backup`, `restore`, `owner`, `unlock`, `keys`, `gate-key`, …) |
+| `tinysesam/__main__.py`, `_diagnose.py` | CLI `python -m tinysesam` (`passwd`, `backup`, `restore`, `owner`, `unlock`, `keys`, `gate-key`, `diagnose`, …) |
 | `tests/` | standalone assert scripts, no pytest; `tests/run_all.py` runs them in parallel |
 | `examples/showcase.py` | reference front end; the browser test drives it |
 | `web/` | the project website (built by `python -m web.build`) |

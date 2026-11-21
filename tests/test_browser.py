@@ -604,7 +604,7 @@ async def run():
         print(f"  empty form: {err!r} instead of JSON")
 
         # ---------- 8) Login works — even when the browser fills in a password ----------
-        await p.cmd("Page.addScriptToEvaluateOnNewDocument", source="""
+        autofill = await p.cmd("Page.addScriptToEvaluateOnNewDocument", source="""
             (function(){var n=0,iv=setInterval(function(){var f=document.querySelector('[name=password]');
               if(f){f.value='wrongOldPasswort';clearInterval(iv);} if(++n>40)clearInterval(iv);},5);})();""")
         await p.go("/auth/login", wait=2.0)
@@ -618,6 +618,10 @@ async def run():
         await p.go("/app")
         assert "demoadmin" in await p.js("document.querySelector('h1').textContent")
         print("  login: autofill discarded, button fills, signed in, /app reachable")
+        # The fake autofill runs on EVERY new document of this page until removed. Left in place, it reached the reauth
+        # page of `h2_stepup_qr` much later: under load its first timer tick came after the test had typed the right
+        # password and overwrote it ("field held 'wrongOldPasswort' at the click", B-14 "not reproduced").
+        await p.cmd("Page.removeScriptToEvaluateOnNewDocument", identifier=autofill["identifier"])
 
         # ---------- 8b) Admin panel under strict CSP: the buttons work anyway ----------
         # R8-1: The panel only got the CSP once its inline handlers were gone. Whether the

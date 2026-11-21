@@ -1049,6 +1049,34 @@ Drei Zwecke, je ein Schlüsselbund (aktiver Schlüssel + ältere, die noch entsc
 ruhenden Geheimnisse), `gate` (die Signatur des Gate-Tokens) und `oauth-pepper` (die Digests der OAuth-Tokens). Eine
 Rotation verliert nichts und meldet niemanden ab; die Schritte, die Quellen (Umgebung, Datei, Datenbank) und der
 Rückweg zu einer älteren Version stehen in `docs/OPERATIONS.md`, „Keys".
+## Einen Fehler melden
+
+TinySesam schickt nichts nach Hause — keine Telemetrie, auch nicht als Opt-in: Eine Anmeldekomponente, die von sich
+aus nach draußen spricht, verlöre das Vertrauen, von dem sie lebt. Stattdessen schreibt ein Befehl einen Bericht, den
+du liest, prüfst und selbst abschickst:
+
+```bash
+python -m tinysesam diagnose --config yourapp.settings:config --log /var/log/tinysesam/security.log   # Bibliothek
+docker exec <container> python -m tinysesam.gateway diagnose                                          # Gateway-Abbild
+```
+
+- **Was drinsteht:** Version, Python, Betriebssystem-Familie, Modus, installierte Extras; die *Form* der
+  Konfiguration (welche Felder von der Vorgabe abweichen — Schalter und Zahlen wie sie sind, alles andere als
+  Platzhalter wie `<url-1>` oder `<host-2>`, Geheimnisse nur als `<set>`); die eingebauten Prüfungen (Fehler und
+  Warnungen von `config_check`, Proxy-Header und uvicorns `--no-proxy-headers`, die Uhr, das Datenbankschema, ob der
+  Tresor-Schlüssel neben der Datenbank liegt, Gate-Token und JWKS); die letzten Warnungen und Fehler des
+  Security-Logs, geschwärzt.
+- **Was er nicht tut:** keine Netzwerkanfrage, kein Schreiben (die Datenbank wird nur lesend geöffnet, kein Schlüssel
+  entsteht), keine `TinySesam`-Instanz. `--config` nimmt `modul:attr` oder `datei.py:attr` — eine `TinySesamConfig`,
+  ein `TinySesam` oder eine Funktion, die eines davon liefert — und importiert dafür dein Modul. `--db` und `--log`
+  fallen auf `db_path` und `security_log` zurück; `--no-link` lässt den Link weg.
+- **Am Ende** öffnet ein Link das [Fehlerformular](https://github.com/Ollornog/TinySesam/issues/new?template=bug.yml)
+  vorausgefüllt. Du prüfst und schickst es selbst ab. Ein Bericht, der für einen Link zu lang ist, lässt Abschnitte
+  weg und nennt sie; die fügst du aus dem Terminal ein.
+- Hostnamen, Adressen, URLs, Benutzernamen, Pfade und Geheimnisse werden ersetzt, aber du kennst dein Setup am
+  besten: Lies den Bericht, bevor du ihn teilst. Eine **Sicherheitslücke** gehört nie in ein öffentliches Issue —
+  siehe [`SECURITY.md`](https://github.com/Ollornog/TinySesam/blob/main/i18n/SECURITY.de.md).
+
 ## Demo-Modus
 
 `demo_mode=True` legt die Konten `demo` und `demoadmin` an, zeigt ihre Zugangsdaten auf der
@@ -1716,7 +1744,10 @@ cfg = TinySesamConfig(
   ist kein Admin.
 - **Nur eine Browser-Sitzung:** Ein API-Key, ein OAuth-Token oder ein App-Passwort öffnet weder das Panel noch trägt
   es eine Delegiertenrolle (auch nicht in `Remote-Groups`) — wie das Admin-Flag. Die Sitzung behält sie, eine
-  Anwendung kann also eine eigene Teamseite zeigen (`topbar_links` mit `{"role": "team-a-admin"}`).
+  Anwendung kann also eine eigene Teamseite zeigen (`topbar_links` mit `{"role": "team-a-admin"}`). Eine App, die
+  Profile aus `Remote-Groups` pflegt, frischt sie nur auf, wenn `Remote-Auth` `session` ist (leer gilt wie ein
+  Token): Einer Token-Anfrage fehlen `admin` und die Delegiertenrollen absichtlich, sie darf das Profil nicht
+  herabstufen.
 - **Step-up und Audit:** dieselbe Bestätigung wie für Administratoren (`admin_require_mfa`); Anlegen, Einladen und ein
   Anmeldelink verlangen immer eine frische. Das Audit-Log nennt das handelnde Konto (`actor=`), die eigenen Zeilen des
   Panels auch `as=<Delegiertenrolle>`. Delegierte haben keine Audit-Ansicht: Die Zeilen tragen Adressen anderer.
@@ -1812,7 +1843,11 @@ Alles optional (per Config an/aus), einzeln und kombiniert nutzbar, Frontend üb
   eine App ordnet deshalb über `Remote-Id` zu. `Remote-Auth` sagt, wie sich die Anfrage angemeldet hat —
   `session`, `oauth`, `apikey` oder `app-password`; eine Anfrage mit gültigem Gate-Token ist eine `session` (das
   Token trägt den Wert als signierten Claim). Daran sieht die App, warum `Remote-Groups` abweichen: Token, Schlüssel
-  und App-Passwort tragen nie `admin`. **Rechte nie an `Remote-User` oder `Remote-Email`
+  und App-Passwort tragen nie `admin`. **Die Gruppen einer Token-Anfrage sind absichtlich unvollständig:** Sobald
+  `Remote-Auth` nicht `session` ist, fehlen `admin` und alle Delegiertenrollen. Eine App, die ein Profil aus
+  `Remote-Groups` pflegt, aktualisiert es nur bei einer `session`-Anfrage und stuft es bei einer Token-Anfrage nie
+  herab — sonst kippt das Konto mit jedem API-Aufruf zwischen Admin und Nicht-Admin. Ein leeres oder fehlendes
+  `Remote-Auth` gilt wie ein Token. **Rechte nie an `Remote-User` oder `Remote-Email`
   binden:** Ein Name oder eine Adresse, die frei wird (Konto gelöscht oder umbenannt), kann ein
   anderes Konto übernehmen und trägt sie dann in die App. Der Proxy muss jeden dieser Header selbst setzen (die
   Beispiele unter `deploy/forward-auth/` tun das), sonst reicht er einen gefälschten durch. Eine Zuordnung benennt sie um oder lässt sie weg: `{"user": "X-WEBAUTH-USER"}`
@@ -2296,7 +2331,7 @@ Jeder Python-Block beider Dateien läuft in der Testsuite, und jeder genannte Na
 
 ## Status
 
-**114 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
+**115 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
 (`tests/test_matrix.py`).
 
 Gebaut und getestet: Passwort/TOTP/Sitzungen/Rollen, Remember-me, Step-up und per-Route-MFA,
@@ -2304,7 +2339,7 @@ Faktor-Ketten, persönliche PIN, geteilte Ressourcen-Geheimnisse, Magic-Links + 
 Registrierung und Einladung, Konto-Seite, Passwort-vergessen und TOTP-Recovery-Codes,
 Sitzungsverwaltung, API-Keys und Service-Konten, Admin-Panel (oder nur dessen JSON-API),
 Forward-Auth samt OIDC-Gateway, eine nonce-basierte CSP und die Kommandozeile (`backup`,
-`restore`, `gc`, `audit`, `unlock`).
+`restore`, `gc`, `audit`, `unlock`, `diagnose`).
 
 Externe Identitätsanbieter — OIDC, SAML 2.0, LDAP/AD — und Passkeys sind gebaut und gegen einen
 echten Provider auf einer Bühne geprüft (`tests/e2e_stage.py`); die mitgelieferten Tests decken
