@@ -1,6 +1,7 @@
 """OIDC-Forward-Auth-Gateway-Preset: TinySesamConfig.oidc_gateway + tinysesam.gateway."""
 import os
 import re
+import time
 import tempfile, os
 from fastapi.testclient import TestClient
 from urllib.parse import parse_qs, urlparse
@@ -392,6 +393,35 @@ except ImportError:
 else:
     _b5_real_uvicorn(_uvicorn)
     ok("B-5: forward auth with Upgrade: websocket answers like without (401, no 403), upgrade warnings dropped")
+
+# ---------- expired flows do not pile up ----------
+# A gateway in production held 159 285 rows in `flow`: every OIDC start writes `state`/`nonce` there (also for a
+# scanner that follows the redirect and never comes back), and only `auth.gc()` removed expired rows — called by a cron
+# job that the image does not have. Two layers now: writing a flow clears expired ones at most every
+# `Store.FLOW_GC_SEC`, and the gateway runs `auth.gc()` at start and every `gateway.GC_INTERVAL_SEC`.
+# (Mutation probes: drop the clearing in `put_flow` → the first line falls; drop the housekeeping task → the second.)
+_fdb = os.path.join(tempfile.mkdtemp(), "flows.db")
+_fa = TinySesam(TinySesamConfig.oidc_gateway(issuer="https://id.example.com", client_id="c", client_secret="s",
+                                             base_url="https://auth.example.com", db_path=_fdb))
+for _i in range(500):
+    _fa.store.put_flow(f"stale-{_i}", {"x": _i}, ttl=-60)            # already expired
+_fa.store._flow_gc_at = None                                         # "not cleared yet in this process"
+_fa.store.put_flow("fresh", {"x": 1})
+_left = _fa.store._one("SELECT COUNT(*) AS n FROM flow")["n"]
+assert _left == 1, f"{_left} rows left: expired flows are only removed by an explicit gc()"
+ok("put_flow clears expired flows (at most every FLOW_GC_SEC): 500 stale rows → 1")
+for _i in range(50):
+    _fa.store.put_flow(f"stale2-{_i}", {"x": _i}, ttl=-60)
+_sess_db = _fa.store._one("SELECT COUNT(*) AS n FROM flow")["n"]
+_fa.close()
+_gcfg = TinySesamConfig.oidc_gateway(issuer="https://id.example.com", client_id="c", client_secret="s",
+                                     base_url="https://auth.example.com", db_path=_fdb)
+with TestClient(gateway.build_app(_gcfg)) as _gc_client:               # the context runs the lifespan
+    _deadline = time.monotonic() + 10
+    while _gc_client.app.state.auth.store._one("SELECT COUNT(*) AS n FROM flow")["n"] > 1:
+        assert time.monotonic() < _deadline, "the gateway does not run gc() on its own"
+        time.sleep(0.05)
+ok(f"the gateway runs gc() at start and every GC_INTERVAL_SEC ({gateway.GC_INTERVAL_SEC} s): {_sess_db} rows → 1")
 
 os.remove(db)
 print("\nOIDC-GATEWAY OK ✅")

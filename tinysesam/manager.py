@@ -535,6 +535,16 @@ class TinySesam:
                     "is built there). For shared SSO across subdomains set cookie_domain, "
                     "e.g. '.%s'.", own or "?", ", ".join(foreign),
                     ".".join(own.split(".")[-2:]) if own.count(".") >= 1 else "example.com")
+        # Roles in accounts, but no list of known roles: the admin panel offers a free-text field for roles, and a
+        # typo there silently creates a role nothing checks. The group maps are reported by config_check; this is the
+        # database side.
+        if config.admin_enabled and not config.available_roles:
+            stored = self.store.roles_in_use()
+            if stored:
+                security.seclog.warning(
+                    "Accounts carry the roles %s, but available_roles is empty: the admin panel offers a free-text "
+                    "field instead of checkboxes. List the roles in available_roles.",
+                    security.for_log(", ".join(stored)))
         # Collisions in the identifier space from existing data: the database has prevented new ones
         # since 2026-09-26 (trigger over the counting buckets, `Store._trigger_sql`), but one from an
         # older version, from a raw UPDATE or from a row of a foreign writer

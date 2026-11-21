@@ -943,6 +943,8 @@ def check_config(config) -> tuple[list[str], list[str]]:
                 "auth.set_mailer(...) at runtime — then this message is moot.",
                 field=slot, what=_t(config, for_what)))
 
+    _roles_without_list(config, warnings)
+
     # `audit_retention_days` is checked by NUMBER_LIMITS (below): a negative period would be in `gc()` a
     # point in time in the future — the whole audit log would vanish on the next run. The own
     # check that stood here knew only `< 0` and let `True`, seconds instead of days and
@@ -1175,6 +1177,32 @@ def _stepup(config, error: list, warnings: list) -> None:
             config,
             "stepup_strict=True without stepup_methods has no effect: the barrier applies only "
             "to named methods. Probably e.g. stepup_methods=['totp'] was meant."))
+
+
+def _mapped_roles(config) -> list:
+    """The roles the group maps assign (`oidc_/saml_/ldap_group_role_map`, the maps per OIDC client) — without the
+    admin target `__admin__`, which is a flag, not a role."""
+    maps = [getattr(config, "oidc_group_role_map", None) or {}, getattr(config, "saml_group_role_map", None) or {},
+            getattr(config, "ldap_group_role_map", None) or {}]
+    maps += [dict(e or {}).get("group_role_map") or {} for e in (getattr(config, "oidc_clients", None) or {}).values()
+             if isinstance(e, dict)]
+    return sorted({str(r) for m in maps if isinstance(m, dict) for r in m.values() if r and r != "__admin__"})
+
+
+def _roles_without_list(config, warnings: list) -> None:
+    """Roles are in use, but `available_roles` is empty: the admin panel then offers a free-text field for roles
+    instead of checkboxes (`admin.py`, `ROLES`), and a typo there silently creates a role nothing checks. The group
+    maps show it in the configuration; roles already stored in accounts are reported at start (`TinySesam`)."""
+    if not _an(config, "admin_enabled") or getattr(config, "available_roles", None):
+        return
+    roles = _mapped_roles(config)
+    if roles:
+        warnings.append(_t(
+            config,
+            "The group maps assign the roles {roles}, but available_roles is empty: the admin panel then "
+            "offers a free-text field instead of checkboxes, and a typo there creates a role nothing checks. "
+            "List the roles in available_roles.",
+            roles=", ".join(roles)))
 
 
 def _open_gates(config, warnings: list) -> None:
@@ -2333,6 +2361,12 @@ _DE: dict[str, str] = {
         ("qr_login_enabled=True, aber base_url ist leer. Der QR-Code braucht die öffentliche "
          "Adresse und wird nie aus dem Host-Header gebaut — die Login-Seite zeigt dann nur den "
          "Kurzcode, den man auf dem angemeldeten Gerät eintippt. Für den QR-Code base_url setzen."),
+    ("The group maps assign the roles {roles}, but available_roles is empty: the admin panel then "
+     "offers a free-text field instead of checkboxes, and a typo there creates a role nothing checks. "
+     "List the roles in available_roles."):
+        ("Die Gruppenzuordnungen vergeben die Rollen {roles}, aber available_roles ist leer: Das Admin-Panel "
+         "bietet dann ein Freitextfeld statt Ankreuzfeldern, und ein Tippfehler dort legt eine Rolle an, die "
+         "nichts prüft. Die Rollen in available_roles eintragen."),
     ("admin_require_mfa=False: the admin panel (and require_admin) work from any old admin "
      "session without a fresh confirmation — such a session sets passwords, issues sign-in "
      "links for any account and grants admin rights. Leave it on (the default) unless another "

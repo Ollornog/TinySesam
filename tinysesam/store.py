@@ -3678,9 +3678,20 @@ class Store:
         return self._all("SELECT * FROM session WHERE successor IS NULL ORDER BY created_at DESC")
 
     # ---------- Flow state (OIDC / WebAuthn, short-lived, one-shot) ----------
+    #: How often writing a flow also clears the expired ones (seconds, per process). `flow` holds the OIDC `state`/`nonce`
+    #: and WebAuthn challenges of every sign-in start — also of a scanner that follows the redirect and never returns —
+    #: and only `TinySesam.gc()` removed expired rows; a gateway without a cron job held 159 285 of them.
+    FLOW_GC_SEC = 300
+    #: Monotonic time of the last clearing; None = not yet in this process (so the first write clears — a monotonic
+    #: clock starts near zero on a freshly booted machine, and "0.0" would read as "just now" there).
+    _flow_gc_at: Optional[float] = None
+
     def put_flow(self, key, data: dict, ttl=600):
         self._exec("INSERT OR REPLACE INTO flow(key, data, expires_at) VALUES (?,?,?)",
                    (key, json.dumps(data), _now() + ttl))
+        if self._flow_gc_at is None or time.monotonic() - self._flow_gc_at >= self.FLOW_GC_SEC:
+            self._flow_gc_at = time.monotonic()
+            self.gc_flow()
 
     def pop_flow(self, key) -> Optional[dict]:
         """Hand out flow state exactly ONCE (WebAuthn challenge, OIDC `state`/`nonce`).
@@ -4798,6 +4809,16 @@ class Store:
         self._exec("INSERT INTO oauth_code(code_hash, client_id, user_id, redirect_uri, code_challenge, resource, "
                    "scope, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                    (code_hash, client_id, user_id, redirect_uri, code_challenge, resource, scope, now, expires_at))
+
+    def roles_in_use(self) -> list:
+        """Every role some account carries, sorted (for the start check against `available_roles`)."""
+        out: set = set()
+        for z in self._all("SELECT roles FROM users WHERE roles IS NOT NULL AND roles NOT IN ('', '[]')"):
+            try:
+                out |= {str(r) for r in json.loads(z["roles"]) if r}
+            except (ValueError, TypeError):
+                continue
+        return sorted(out)
 
     def has_sessions(self) -> bool:
         """Is there any session? A first start after an update has some, a new installation none."""

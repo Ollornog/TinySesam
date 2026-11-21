@@ -40,6 +40,25 @@ def has(warn, part):
     return any(part in w for w in warn)
 
 
+# Roles in use but available_roles empty: the admin panel then offers a free-text field instead of checkboxes, and a
+# typo there creates a new role silently. The configuration shows the roles of the group maps; the database is checked
+# at start (tests/test_admin.py). (Mutation probe: drop `_roles_without_list` from check_config → red.)
+_mapped = lib(oidc_enabled=True, oidc_issuer="https://id.example.com", oidc_client_id="c", oidc_client_secret="s",
+              base_url="https://app.example.com", oidc_group_role_map={"staff": "editors", "ops": "__admin__"})
+assert has(warnings(_mapped), "available_roles is empty") and has(warnings(_mapped), "editors")
+assert not has(warnings(_mapped), "__admin__ ") and not any("'__admin__'" in w for w in warnings(_mapped))
+_listed = lib(oidc_enabled=True, oidc_issuer="https://id.example.com", oidc_client_id="c", oidc_client_secret="s",
+              base_url="https://app.example.com", oidc_group_role_map={"staff": "editors"}, available_roles=["editors"])
+assert not has(warnings(_listed), "available_roles is empty")
+_only_admin = lib(oidc_enabled=True, oidc_issuer="https://id.example.com", oidc_client_id="c", oidc_client_secret="s",
+                  base_url="https://app.example.com", oidc_group_role_map={"ops": "__admin__"})
+assert not has(warnings(_only_admin), "available_roles is empty"), "the admin target is no role"
+assert not has(warnings(lib(oidc_enabled=True, oidc_issuer="https://id.example.com", oidc_client_id="c",
+                            oidc_client_secret="s", base_url="https://app.example.com", admin_enabled=False,
+                            oidc_group_role_map={"staff": "editors"})), "available_roles is empty"), "no panel"
+ok("group maps assign roles, available_roles empty → warning naming the roles (not with the list, not for __admin__ "
+   "only, not without panel)")
+
 # Lifetime of the gate token: above 15 minutes a deliberate revocation delay.
 base = dict(forward_auth_enabled=True, gate_token_enabled=True, trusted_redirect_hosts=["app.example.com"])
 assert has(warnings(lib(**base, gate_token_ttl_sec=901)), "gate_token_ttl_sec=901")

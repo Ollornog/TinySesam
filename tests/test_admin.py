@@ -601,5 +601,27 @@ if _node:
 print("  ✓ Finding 10 (structure): every panel action that writes routes the result through rejected(),"
       " and p() reads r.ok and passes on the server's reason")
 
+# Roles stored in accounts while available_roles is empty: the panel offers free text for roles — said at start, once,
+# with the roles. (Mutation probe: drop the start check in `TinySesam.__init__` → red.)
+import logging  # noqa: E402
+from tinysesam import security as _sec  # noqa: E402
+_rdb = os.path.join(tempfile.mkdtemp(), "roles.db")
+_ra = TinySesam(TinySesamConfig(db_path=_rdb, cookie_secure=False))
+_ra.create_user("rolf", password="a long probe password 4711", roles=["editors", "viewers"])
+_ra.close()
+_lines = []
+_hd = logging.Handler()
+_hd.emit = lambda rec: _lines.append(rec.getMessage())
+_sec.seclog.addHandler(_hd)
+try:
+    TinySesam(TinySesamConfig(db_path=_rdb, cookie_secure=False)).close()
+    assert any("available_roles is empty" in z and "editors, viewers" in z for z in _lines), _lines
+    _lines.clear()
+    TinySesam(TinySesamConfig(db_path=_rdb, cookie_secure=False, available_roles=["editors", "viewers"])).close()
+    assert not any("available_roles is empty" in z for z in _lines), _lines
+finally:
+    _sec.seclog.removeHandler(_hd)
+print("  ✓ roles stored in accounts, available_roles empty → one warning at start naming them; none with the list")
+
 os.remove(db)
 print("\nADMIN-PANEL OK ✅")

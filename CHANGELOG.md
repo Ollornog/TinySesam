@@ -16,6 +16,21 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
   value; until then tokens of the new key take the way back (slower, nobody is signed out).
 - `tests/test_gate_caddy.py` starts Caddy while TinySesam refuses connections: a request with a gate token passes at
   once, and once TinySesam listens the way back works; with `jwk_url` back in the template the request hangs.
+### Fixed — expired flows pile up; roles without a list
+
+- A gateway held 159 285 rows in `flow`: every OIDC start writes `state`/`nonce` there (also for a scanner that follows
+  the redirect and never returns), and only `auth.gc()` removed expired rows — called by a timer the image does not
+  have. Writing a flow now also clears expired ones (at most every `Store.FLOW_GC_SEC`, 300 s), and the gateway runs
+  `auth.gc()` at start and every hour (`gateway.GC_INTERVAL_SEC`): expired sessions, flows, one-time tokens, old
+  sign-in attempts. A library installation keeps its timer (`deploy/systemd/tinysesam-gc.*`).
+- Roles in use but `available_roles` empty: the admin panel then offers a free-text field instead of checkboxes, and a
+  typo creates a role nothing checks. `config_check` warns when the group maps assign roles, and the start warns when
+  accounts carry roles.
+
+### Changed — backlog proposals T-74 to T-77
+
+- Delegated admins (T-74), the sign-in kind in forward auth (`Remote-Auth`, T-75), visibility per top bar link (T-76),
+  extra tabs in the admin panel (T-77) — proposals, the maintainer sets the priority.
 
 ### Added — gateway: services, top bar links, a pairing code from the command line
 
