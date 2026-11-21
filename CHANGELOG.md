@@ -2,7 +2,11 @@
 
 All notable changes. Format loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [0.26.2] — 2026-11-21
+
+Who needs this release: everyone running the forward-auth gate template with `jwk_url` (recommended by the 0.26.0
+upgrade notes — go back to `sign_key`), every ready-made gateway (expired flows piled up, uvicorn rewrote client
+addresses), and every installation behind a proxy that followed the old "without `--proxy-headers`" advice.
 
 ### Security — the gate template takes a fixed key again: `jwk_url` can hang every request
 
@@ -16,6 +20,7 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
   value; until then tokens of the new key take the way back (slower, nobody is signed out).
 - `tests/test_gate_caddy.py` starts Caddy while TinySesam refuses connections: a request with a gate token passes at
   once, and once TinySesam listens the way back works; with `jwk_url` back in the template the request hangs.
+
 ### Fixed — expired flows pile up; roles without a list
 
 - A gateway held 159 285 rows in `flow`: every OIDC start writes `state`/`nonce` there (also for a scanner that follows
