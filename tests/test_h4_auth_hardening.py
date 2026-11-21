@@ -29,7 +29,6 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pyotp  # noqa: E402
 import _totp_clock  # noqa: E402
-from _totp_clock import next_code, previous_code  # noqa: E402
 from fastapi import FastAPI  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
@@ -97,8 +96,8 @@ _a2, _ = build()
 _u2 = _a2.create_user("tom", password=PW)
 _s2 = _a2.totp_begin(_u2)["secret"]
 mid_step()
-assert not _a2.totp_confirm(_u2, next_code(_s2)), "setup: the next step is refused"
-assert _a2.totp_confirm(_u2, previous_code(_s2)), "setup: the previous step counts"
+assert not _a2.totp_confirm(_u2, _totp_clock.next_code(_s2)), "setup: the next step is refused"
+assert _a2.totp_confirm(_u2, _totp_clock.previous_code(_s2)), "setup: the previous step counts"
 assert any("totp_window" in e for e in errors_of(totp_window="both")), "unknown window: config error"
 assert not any("totp_window" in e for e in errors_of(totp_window="current"))
 mid_step()
