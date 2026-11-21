@@ -19,6 +19,12 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 - Backlog: T-28 rewritten (gate client specification with language-neutral test vectors plus a Go client), T-79
   (diagnostics report and bug form instead of telemetry).
 
+### Changed — docs: testing a commit between releases installs the dependencies too
+
+- README and CONTRIBUTING showed `pip install --force-reinstall --no-deps "tinysesam[…] @ git+…@<sha>"`; a tester who
+  switched to `[all]` that way was left with missing packages. The recipe now reinstalls with the dependencies, safe
+  when extras or dependencies change; `--no-deps` stays as the quick variant when nothing about them changes.
+
 ### Added — delegated admins: team leads manage their team in the panel (T-74)
 
 - `admin_delegates={"team-a-admin": {"roles": ["A", "A-read"]}}`: holders of a delegate role create accounts and

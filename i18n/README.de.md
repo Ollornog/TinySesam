@@ -81,11 +81,14 @@ Ohne `@v…` kommt statt einer freigegebenen Fassung der bewegliche Hauptzweig �
 Experiment, nicht in einen Betrieb.
 
 **Einen Commit zwischen zwei Releases testen** (`@<sha>`): Er trägt die Version des letzten Releases, pip meldet also
-„already satisfied“ und behält den installierten Code. Erzwingen:
+„already satisfied“ und behält den installierten Code. Erzwingen — mit den Abhängigkeiten, damit ein Commit, der ein
+Extra oder eine Abhängigkeit hinzufügt oder ändert (oder ein Wechsel auf `[all]`), mitbringt, was er braucht:
 
 ```bash
-pip install --force-reinstall --no-deps "tinysesam[all] @ git+https://github.com/Ollornog/TinySesam.git@<sha>"
+pip install --force-reinstall "tinysesam[all] @ git+https://github.com/Ollornog/TinySesam.git@<sha>"
 ```
+
+Schneller, wenn sich weder Extras noch Abhängigkeiten ändern: `--no-deps` anhängen (nur das Paket wird ersetzt).
 
 ## Quickstart
 

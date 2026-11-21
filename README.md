@@ -86,11 +86,14 @@ Drop the `@v…` when you want a **commit** rather than a released version — t
 default branch, so it belongs in an experiment, not in a deployment.
 
 **Testing a commit between releases** (`@<sha>`): it carries the version of the last release, so pip reports
-"already satisfied" and keeps the installed code. Force it:
+"already satisfied" and keeps the installed code. Force it — with the dependencies, so a commit that adds or
+changes an extra or a dependency (or a switch to `[all]`) brings what it needs:
 
 ```bash
-pip install --force-reinstall --no-deps "tinysesam[all] @ git+https://github.com/Ollornog/TinySesam.git@<sha>"
+pip install --force-reinstall "tinysesam[all] @ git+https://github.com/Ollornog/TinySesam.git@<sha>"
 ```
+
+Quicker, when neither the extras nor the dependencies change: add `--no-deps` (only the package is replaced).
 
 ## Quickstart
 
