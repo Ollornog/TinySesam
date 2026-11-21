@@ -1182,7 +1182,8 @@ def _stepup(config, error: list, warnings: list) -> None:
 def _mapped_roles(config) -> list:
     """The roles the group maps assign (`oidc_/saml_/ldap_group_role_map`, the maps per OIDC client) — without the
     admin target `__admin__`, which is a flag, not a role."""
-    maps = [getattr(config, f"{s}_group_role_map", None) or {} for s in ("oidc", "saml", "ldap")]
+    maps = [getattr(config, "oidc_group_role_map", None) or {}, getattr(config, "saml_group_role_map", None) or {},
+            getattr(config, "ldap_group_role_map", None) or {}]
     maps += [dict(e or {}).get("group_role_map") or {} for e in (getattr(config, "oidc_clients", None) or {}).values()
              if isinstance(e, dict)]
     return sorted({str(r) for m in maps if isinstance(m, dict) for r in m.values() if r and r != "__admin__"})
