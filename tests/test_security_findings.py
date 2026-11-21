@@ -380,11 +380,15 @@ victim_id = auth_t.store.get_user_by_name("victim")["id"]
 cookie_value = auth_t.store.create_session(victim_id, 3600, True, "password")
 
 stored = [z["token_hash"] for z in auth_t.store._all("SELECT token_hash FROM session")]
-# Compute the sha256 ourselves: a test that asks `store.session_hash()` measures against the same
-# function it is checking — and would stay green if that mutated to the identity.
-expected = hashlib.sha256(cookie_value.encode()).hexdigest()
+# Compute the digest ourselves: a test that asks `store.session_hash()` measures against the same
+# function it is checking — and would stay green if that mutated to the identity. Since T-71 it is an HMAC with the
+# pepper over the sha256 of the cookie.
+import hmac as _hmac  # noqa: E402
+expected = _hmac.new(auth_t._pepper_keyring.active.material,
+                     b"tinysesam/session-handle/v1\x00" + hashlib.sha256(cookie_value.encode()).hexdigest().encode(),
+                     hashlib.sha256).hexdigest()
 r.check("no plain-text token is in the database", stored == [expected],
-        f"stored: {stored[:1]} — the sha256 of the cookie was expected")
+        f"stored: {stored[:1]} — the peppered digest of the cookie was expected")
 r.check("the cookie is NOT the stored value",
         bool(cookie_value) and cookie_value not in stored,
         "whoever reads the file has the sign-in token")
@@ -438,6 +442,7 @@ auth_old.close()
 raw = _sq.connect(old_path)
 raw.execute("ALTER TABLE session RENAME COLUMN token_hash TO token")
 raw.execute("UPDATE session SET token=?", (old_token,))
+raw.execute("DELETE FROM setting WHERE key='session_handles'")   # a file that old knows no pepper (T-71)
 raw.commit()
 raw.close()
 
@@ -446,12 +451,16 @@ columns = {z[1] for z in new_store.db.execute("PRAGMA table_info(session)")}
 r.check("the old column `token` is migrated to `token_hash`",
         "token_hash" in columns and "token" not in columns,
         f"columns: {sorted(columns)}")
-r.check("existing sign-ins survive the switchover",
-        new_store.get_session(old_token) is not None,
-        "the old cookie is no longer valid — an update would have logged out all users")
 r.check("and the plain text is gone from the file afterwards",
         [z["token_hash"] for z in new_store._all("SELECT token_hash FROM session")] == [old_handle],
         "the plain text is still in the database")
+new_store.close()
+# The full start then peppers the sha256 handle (T-71) — the old cookie still signs in.
+auth_new, _ = _app(db_path=old_path)
+r.check("existing sign-ins survive the switchover",
+        auth_new.store.get_session(old_token) is not None,
+        "the old cookie is no longer valid — an update would have logged out all users")
+new_store = auth_new.store
 
 
 # ── The auth database was open (0644) ─────────────────────────────────────────
@@ -2234,6 +2243,7 @@ _clock_h = logging.StreamHandler(_clock_log)
 logging.getLogger("tinysesam").addHandler(_clock_h)
 try:
     st_n = _store_mod.Store(auth_n.cfg.db_path)
+    st_n.session_peppers = auth_n.store.session_peppers      # what `TinySesam` sets at startup (T-71)
     r.check("after a restart with the clock set back, the session stays expired",
             st_n.get_session(tok_n) is None, "the restart forgot the deadline")
     r.check("…and the lag of the system clock appears in the log",
@@ -2266,7 +2276,9 @@ def _restart_after_2h(secure):
     secure(a.store)
     a.close()
     _store_mod._CLOCK = _store_mod._Clock(wall=lambda: _T - 365 * 86400)
+    peppers = a.store.session_peppers
     a.store = _store_mod.Store(a.cfg.db_path)
+    a.store.session_peppers = peppers                    # what `TinySesam` sets at startup (T-71)
     applies = (a.peek_magic(raw, purpose="login") is not None, a.store.get_session(tok) is not None)
     # A writer whose clock is NOT raised (a second process on the same file, started before
     # the backup) must not overwrite the saved state downwards.

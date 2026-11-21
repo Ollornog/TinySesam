@@ -584,7 +584,7 @@ def build_router(auth) -> APIRouter:
             # the sign-in limit (`_rate_ok`) would trip after a minute. Generous for several devices
             # behind one address, tight enough that nobody hammers the table.
             ip = auth.client_ip(request)
-            if not auth.rl.allow(f"qr_status:{ip or '?'}", _QR_STATUS_PER_MINUTE, 60):
+            if not auth.rl.allow(f"qr_status:{security.ip_bucket(ip)}", _QR_STATUS_PER_MINUTE, 60):
                 auth._rejected(None, ip, "qr_status_ratelimit", login=False)
                 return JSONResponse({"state": "pending", "detail": auth.t("api.too_many")}, status_code=429)
             info = auth._qr_own(code, secret)

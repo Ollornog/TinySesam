@@ -7,7 +7,7 @@ What happens with a read-only, full or locked database and with a jump of the sy
 is described for operators in `docs/OPERATIONS.md` (failure behaviour).
 """
 from __future__ import annotations
-import base64, contextlib, sqlite3, threading, time, secrets, json, logging, hashlib, os, re, stat, unicodedata
+import base64, contextlib, hashlib, hmac, json, logging, os, re, secrets, sqlite3, stat, threading, time, unicodedata
 from typing import Any, Optional
 
 from . import _vocabulary
@@ -3336,12 +3336,92 @@ class Store:
             " (SELECT token_hash FROM session WHERE user_id=?)", (client, user_id)).rowcount
 
     # ---------- Sessions ----------
-    # What is stored is the sha256 of the token, never the token itself. Everything that comes from a
+    # What is stored is a keyed digest of the token, never the token itself. Everything that comes from a
     # session row (`row["token_hash"]`) is therefore a handle: it names a session
     # and is no good for signing in. The plaintext lives between `create_session()` and the cookie.
+    #
+    # The digest is an HMAC with the pepper keyring (T-71, ADR-12), active key first — set by `TinySesam` right after
+    # it loaded the keyring. Up to 0.26.0 it was a plain sha256: whoever could WRITE the file inserted the sha256 of a
+    # token of their own choosing and held a session of any account, without any key. The pepper lives in the
+    # environment, a key file or `key_material` encrypted with the vault key — never readable from this file alone.
+    # The same digest serves the other tokens of a browser that are stored here: the app host's link
+    # (`gate_link.link_hash`) and the area unlock (`resource_unlock.token`).
+    session_peppers: tuple = ()
+
+    #: Every column that holds a session handle or a digest made by `session_hash` (`pepper_session_handles`).
+    SESSION_HANDLE_COLUMNS = ("session.token_hash", "session.successor", "oidc_grant.token_hash",
+                              "oidc_session.token_hash", "gate_signed_out.token_hash", "oidc_id_token.token_hash",
+                              "gate_link.token_hash", "gate_link.link_hash", "resource_unlock.token")
+
     @staticmethod
-    def session_hash(token: str) -> str:
-        return hashlib.sha256((token or "").encode()).hexdigest()
+    def _session_digest(pepper: bytes, plain_sha256: str) -> str:
+        """HMAC over the sha256 that 0.26.0 stored — so the migration can rewrite an old handle without its token."""
+        return hmac.new(pepper, b"tinysesam/session-handle/v1\x00" + plain_sha256.encode("ascii"),
+                        hashlib.sha256).hexdigest()
+
+    def session_hash(self, token: str) -> str:
+        """The stored digest of a browser token (session, app-host link, area unlock).
+
+        With one pepper it is the HMAC with it. After `tinysesam keys rotate --purpose oauth-pepper` a digest made
+        with a previous pepper keeps naming its row until that row ends: the lookup takes the candidate that exists,
+        a new row gets the active pepper. Without a pepper the store refuses — a plain digest is exactly what T-71
+        closed, and a silent fallback to it would reopen it."""
+        if not self.session_peppers:
+            raise RuntimeError("Store.session_peppers is not set: session digests need the pepper keyring "
+                               "(TinySesam sets it at startup).")
+        plain = hashlib.sha256((token or "").encode()).hexdigest()
+        candidates = [self._session_digest(p, plain) for p in self.session_peppers]
+        if len(candidates) == 1:
+            return candidates[0]
+        marks = ",".join("?" * len(candidates))
+        for table, column in (("session", "token_hash"), ("gate_link", "link_hash"), ("resource_unlock", "token")):
+            r = self._one(f"SELECT {column} AS h FROM {table} WHERE {column} IN ({marks}) LIMIT 1", candidates)
+            if r is not None:
+                return str(r["h"])
+        return candidates[0]
+
+    def pepper_session_handles(self) -> int:
+        """Rewrite the plain sha256 handles of 0.26.0 and older with the active pepper — once, in one transaction.
+
+        No one is signed out: the new digest is an HMAC over the old one, so every row is rewritten without its
+        token (`_session_digest`). The marker `setting.session_handles = hmac-v1` is written in the same transaction; a second worker that
+        starts at the same moment waits for the write lock and then finds it. Returns how many rows were rewritten.
+
+        A transition: the step runs again whenever the marker is missing. Whoever can write the file could delete
+        the marker, plant a plain sha256 row and wait for a restart — the reach of the digests that are still
+        unpeppered (API keys, sign-in links, T-72). The step is removed together with them."""
+        if not self.session_peppers:
+            raise RuntimeError("Store.session_peppers is not set.")
+        if self.get_setting("session_handles") == "hmac-v1":
+            return 0
+        pepper = self.session_peppers[0]
+        self.db.create_function("tinysesam_session_pepper", 1,
+                                lambda v: None if v is None else self._session_digest(pepper, str(v)),
+                                deterministic=True)
+        done = 0
+        with self._writing():
+            self._begin_immediate()
+            r = self.db.execute("SELECT value FROM setting WHERE key='session_handles'").fetchone()
+            if r is not None and r[0] == "hmac-v1":
+                self.db.rollback()
+                return 0
+            # The handle is the parent key of five tables: checked at the commit, when every column carries the new
+            # digest, instead of at the first UPDATE.
+            self.db.execute("PRAGMA defer_foreign_keys=ON")
+            for spec in self.SESSION_HANDLE_COLUMNS:
+                table, column = spec.split(".")
+                done += self.db.execute(f"UPDATE {table} SET {column}=tinysesam_session_pepper({column}) "
+                                        f"WHERE {column} IS NOT NULL").rowcount
+            self.db.execute("INSERT OR REPLACE INTO setting(key, value) VALUES ('session_handles', 'hmac-v1')")
+            self.db.commit()
+        return done
+
+    def sessions_live_before(self, when: int, now: int) -> int:
+        """Sessions and app-host links created up to `when` that still run — what a pepper retired at `when` would
+        end (their digest was made with it, T-71)."""
+        return int(self._one("SELECT (SELECT COUNT(*) FROM session WHERE created_at <= ? AND expires_at > ?) + "
+                             "(SELECT COUNT(*) FROM gate_link l JOIN session s ON s.token_hash = l.token_hash "
+                             "WHERE l.created_at <= ? AND s.expires_at > ?) AS n", (when, now, when, now))["n"])
 
     def create_session(self, user_id, ttl_seconds, mfa_ok, method, ip=None, ua=None, remember=True,
                        factors=None) -> str:

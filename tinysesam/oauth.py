@@ -57,7 +57,7 @@ IDLE_CLIENTS_MAX = 1000
 #: A registration that never led to a grant goes after a day (`gc()`); a revoked grant stays a week.
 IDLE_CLIENT_SEC = 86400
 REVOKED_KEEP_SEC = 7 * 86400
-#: Token, revocation and authorization requests per address and minute.
+#: Token, revocation and authorization requests per address (IPv6: per /64) and minute.
 REQUESTS_PER_IP_MINUTE = 60
 #: Upper bounds for what a client registers itself (RFC 7591 §5: everything there is the client's claim).
 MAX_REDIRECT_URIS = 5
@@ -822,7 +822,8 @@ def add_routes(auth, r) -> None:
 
     def limited(request: Request, bucket: str) -> Optional[str]:
         ip = auth.client_ip(request)
-        if not auth.rl.allow((bucket, ip or "?"), REQUESTS_PER_IP_MINUTE, 60):
+        from .security import ip_bucket
+        if not auth.rl.allow((bucket, ip_bucket(ip)), REQUESTS_PER_IP_MINUTE, 60):   # IPv6 per /64, like `_rate_ok`
             auth._rejected(None, ip, bucket + "_ratelimit", login=False)
             return None
         return ip or ""

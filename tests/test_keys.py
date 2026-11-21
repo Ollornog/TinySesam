@@ -17,6 +17,7 @@ What must hold, each checked against the real code paths:
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import os
 import secrets
@@ -228,6 +229,11 @@ r.check("retire the old pepper while tokens from before are still valid: refused
 a.store._exec("UPDATE oauth_token SET expires_at = 1 WHERE created_at <= (SELECT since FROM key_material "
               "WHERE purpose='oauth-pepper' AND since IS NOT NULL)")
 out = cli("retire", "--purpose", "oauth-pepper", "--db", db, "--secrets-key-file", str(kfile))
+r.check("… then still refused while a session from before the rotation runs (its handle needs the old pepper, T-71)",
+        out.returncode == 1 and "session(s)" in out.stderr, out.stdout + out.stderr)
+a.store._exec("UPDATE session SET expires_at = 1 WHERE created_at <= (SELECT since FROM key_material "
+              "WHERE purpose='oauth-pepper' AND since IS NOT NULL)")
+out = cli("retire", "--purpose", "oauth-pepper", "--db", db, "--secrets-key-file", str(kfile))
 a.close()
 a = TinySesam(config(db, secrets_key_file=str(kfile)))
 r.check("retire after those ran out: done; the connection itself lives on with the new pepper (after a restart)",
@@ -316,7 +322,11 @@ st = Store(old_db)
 ouid = st.create_user("olga")
 OSECRET = totp.new_secret()
 st._exec("INSERT INTO totp_cred(user_id, secret, confirmed, created_at) VALUES (?,?,1,1)", (ouid, v1(OSECRET)))
-ohandle = st.session_hash(st.create_session(ouid, 3600, True, "oidc"))
+# 0.26.0 and older stored the plain sha256 of the cookie as the handle (the pepper came with T-71).
+otok = secrets.token_urlsafe(32)
+ohandle = hashlib.sha256(otok.encode()).hexdigest()
+st._exec("INSERT INTO session(token_hash, user_id, created_at, expires_at, mfa_ok, method) "
+         "VALUES (?, ?, ?, ?, 1, 'oidc')", (ohandle, ouid, int(time.time()), int(time.time()) + 3600))
 st._exec("INSERT INTO oidc_session(token_hash, client, sub, refresh, checked_at, client_id, success_at) "
          "VALUES (?, '*', 'sub-olga', ?, ?, 'client-1', ?)", (ohandle, v1("rt-olga"), int(time.time()),
                                                                int(time.time())))
@@ -366,7 +376,10 @@ r.check("(d) migration: starts without handwork; the base key is version 1 of th
 r.check("(d) every v1 value rewritten as v2 with the base key; TOTP, refresh and ID token readable",
         "v1" not in counts and counts.get(m._vault_keyring.active.kid) and m.store.get_totp(ouid)["secret"] == OSECRET
         and m.store.oidc_refresh_plain(m.store._one("SELECT * FROM oidc_session")) == "rt-olga"
-        and m.store.get_oidc_id_token(ohandle) == ("*", "id-olga"), str(counts))
+        and m.store.get_oidc_id_token(m.store.session_hash(otok)) == ("*", "id-olga"), str(counts))
+r.check("(d) T-71: the sha256 handle and its rows (refresh, ID token) are rewritten with the pepper — olga stays "
+        "signed in", m.store.get_session(otok) is not None
+        and m.store._one("SELECT 1 FROM session WHERE token_hash=?", (ohandle,)) is None)
 r.check("(d)/(e) gate: a NEW random key is active, the derived one is previous (note derived-v1) and still published",
         seed != derived_seed and m._gate_keyring.previous[0].material == derived_seed
         and m._gate_keyring.previous[0].note == keys.DERIVED_V1

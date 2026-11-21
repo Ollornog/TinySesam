@@ -4,6 +4,26 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+### Security — session handles keyed with the pepper (T-71)
+
+- A session row stored the plain sha256 of the cookie: whoever could write the database file inserted the sha256 of a
+  token of their own choosing and held a session of any account, without any key. The handle is now an HMAC with the
+  pepper keyring (`oauth-pepper`, ADR-12), which is never readable from the file alone; the same digest covers the
+  app-host links and the area unlocks.
+- **Nobody is signed out:** the first start rewrites the stored handles once (the HMAC runs over the old sha256) and
+  logs how many. Going back to 0.26.0 signs everyone in again once (docs/OPERATIONS.md, "Session handles with the
+  pepper: rollback").
+- After `tinysesam keys rotate --purpose oauth-pepper` running sessions stay valid; `keys retire` now also refuses while
+  a session from before the rotation runs (`--force`: those people sign in again).
+- API keys and sign-in links still store a plain sha256 — next step T-72.
+
+### Security — the sign-in throttle counts IPv6 per /64
+
+- `rate_limit_max` counted per address: one subscriber with an IPv6 /64 had 2^64 buckets and walked past every limit.
+  An IPv6 address now counts as its /64, and a /48 shares five times the limit (`security.RATE_NET48_FACTOR`), as the
+  open OAuth registration does since 0.26.0. IPv4 stays per address. The OAuth token/revocation limit, the pairing
+  limit and the QR polling limit count per /64 as well.
+
 ### Fixed — browser tests: Chrome start on a cold CI runner (B-13)
 
 - Cause of the rare "Chrome wrote no DevTools port (after 30s)": the browser suites looked up the runner image's
