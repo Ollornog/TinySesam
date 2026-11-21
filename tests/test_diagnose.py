@@ -216,7 +216,14 @@ assert code == 0, out
 assert "Mode: gateway" in out and "Source: environment of the gateway" in out and "mode=gateway" in out, out
 assert "`oidc_client_secret` = <set>" in out, out
 assert leaks(out) == [], f"canaries in the gateway output: {leaks(out)}"
-ok("gateway: diagnose from the environment, no canary")
+# Without its variables `config_from_env` ends with SystemExit — the report still comes, naming the cause.
+_bare = {k: os.environ.pop(k) for k in list(os.environ) if k.startswith("TINYSESAM_")}
+try:
+    code, out = run(gateway.main, ["diagnose", "--no-link"])
+finally:
+    os.environ.update(_bare)
+assert code == 0 and "Could not be loaded: SystemExit" in out and "### Checks" in out, out
+ok("gateway: diagnose from the environment, no canary; without the environment the report names the cause")
 
 
 # --- 3. no network -----------------------------------------------------------------------------------------------------

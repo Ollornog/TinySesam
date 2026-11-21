@@ -327,7 +327,7 @@ def _kind(value: str, field_kind: str) -> str:
         ipaddress.ip_network(value, strict=False)
         return "ip"
     except ValueError:
-        pass
+        pass    # not an address or network: the shapes below decide
     if value.startswith("/") or os.sep in value:
         return "path"
     if _HOST.fullmatch(value.strip("*.")):
@@ -388,7 +388,9 @@ class Redactor:
                 if parts.path and len(parts.path) > 1:
                     self._put(parts.path, "path")
             except ValueError:
-                pass
+                # A malformed URL (unbalanced IPv6 brackets) has no parts to take apart; the whole value is registered
+                # above and the patterns of `text` still catch what looks like a host.
+                return
         elif kind == "email":
             local, _, domain = value.rpartition("@")
             self._put(local, "user")
@@ -801,8 +803,8 @@ TITLES = {"environment": "Environment", "configuration": "Configuration (shape o
 
 def render(report: dict[str, str]) -> str:
     out = ["## TinySesam diagnostics report", "",
-           "Nothing has been sent. Read this report before you share it: host names, addresses, URLs, user names, "
-           "paths and secrets are replaced by placeholders, but you know your setup best.", ""]
+           ("Nothing has been sent. Read this report before you share it: host names, addresses, URLs, user names, "
+            "paths and secrets are replaced by placeholders, but you know your setup best."), ""]
     for key in SECTIONS:
         out += [f"### {TITLES[key]}", "", report[key], ""]
     return "\n".join(out)
@@ -879,7 +881,7 @@ def run(argv: list[str], *, mode: str, prog: str, config_loader: Optional[Callab
         source = "environment of the gateway"
         try:
             cfg = config_loader()
-        except BaseException as e:      # a missing variable ends config_from_env with SystemExit
+        except (Exception, SystemExit) as e:      # a missing variable ends config_from_env with SystemExit
             load_error = type(e).__name__ + (f": {e}" if str(e) else "")
     elif a.config:
         source = "a Python object (--config)"

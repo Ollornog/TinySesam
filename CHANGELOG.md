@@ -24,9 +24,12 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
   field without a class turns it red; canary values in every string, list and mapping field, in the gateway's
   environment and in security log lines never appear in the report or the link (raw or decoded) — the first run caught
   a configured header key `user` that hid a `user=` in a log line; with every socket call forbidden both entry points
-  run through; the database directory stays byte-for-byte the same. Mutation probes: redaction off → the canary
+  run through; the database directory stays byte-for-byte the same; a gateway without its environment still gets
+  its report, naming the cause. Mutation probes: redaction off → the canary
   checks red; the `key=value` redaction of log lines removed → the log canary red; one field removed from the
-  classification → the guard red.
+  classification → the guard red; catching only `Exception` around the gateway's configuration → the
+  missing-environment check red. CodeQL findings of the first push (implicit string concatenation, empty `except`,
+  `BaseException`) fixed in code.
 
 ### Fixed — an unused variable in the `oidc_clients` check; a browser test flake (B-14)
 
