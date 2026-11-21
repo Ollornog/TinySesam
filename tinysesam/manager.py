@@ -7339,8 +7339,8 @@ class TinySesam:
         if not old:
             return
         security.seclog.warning(
-            "gate: the gate key is now a key of its own (T-48, kid %s). The proxy must learn it — `jwk_url` "
-            "(deploy/forward-auth/Caddyfile.gate) or `sign_key` = `tinysesam gate-key`; until then it sends every "
+            "gate: the gate key is now a key of its own (T-48, kid %s). The proxy must learn it — `sign_key` = "
+            "`tinysesam gate-key` (deploy/forward-auth/Caddyfile.gate, TS_GATE_PUBKEY); until then it sends every "
             "request the fallback way. The old key derived from the vault key (kid %s) is still in the keyring: as long "
             "as a proxy has it as `sign_key`, whoever holds the vault key can mint gate tokens. Then: `tinysesam keys "
             "retire --purpose gate`.", self._gate_keyring.active.kid, old[0].kid)

@@ -1828,8 +1828,10 @@ existing forward auth, so a request and its body are not lost.
   [`deploy/forward-auth/caddy-gate/`](https://github.com/Ollornog/TinySesam/tree/main/deploy/forward-auth/caddy-gate/)).
 - **Key:** a random Ed25519 key of its own (since T-48, ADR-12 — up to 0.25.x it was derived from the vault key):
   `TINYSESAM_GATE_KEY`, `gate_key_file`, otherwise kept in the database encrypted with the vault key. The proxy
-  fetches the public keys from `/auth/gate/jwks.json` (`jwk_url`, a rotation needs nothing at the proxy) or takes
-  `tinysesam gate-key --db …` as `sign_key`. Each token carries `typ: tinysesam-gate+jwt` and its `kid`.
+  takes `tinysesam gate-key --db …` as `sign_key` (`TS_GATE_PUBKEY`; anew after a gate rotation, until then the new
+  tokens take the way back). **Not `jwk_url`** with caddy-jwt 1.4.0, although TinySesam publishes
+  `/auth/gate/jwks.json`: one failed first fetch makes every later request with a gate token hang. Each token carries
+  `typ: tinysesam-gate+jwt` and its `kid`.
 - **Roles:** if the proxy requires roles (`X-TinySesam-Roles`), they are part of the token's
   audience (`app.example.com|roles=admin`); a token issued without roles does not count there.
 - **Cost:** signing out, locking an account or a withdrawn grant only takes effect at the proxy

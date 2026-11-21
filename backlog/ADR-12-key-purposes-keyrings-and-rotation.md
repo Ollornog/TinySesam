@@ -107,6 +107,12 @@ path (caddy-jwt refreshes the set asynchronously on an unknown `kid`), then the 
 previous key still passes. `sign_key` remains possible (then the proxy needs the new value after every rotation; until
 then every request takes the fallback path — slower, nobody signed out).
 
+**Amended 2026-11-21: the template is back on `sign_key`.** In a rollout, `jwk_url` hung: when the first fetch fails
+(TinySesam not up yet when the first token arrives), caddy-jwt 1.4.0 waits for the set without a deadline under its
+write lock (`Cache.Register(context.Background(), …)`, jwx/httprc `WaitReady`) and every request with a gate token hangs.
+`tests/test_gate_caddy.py` reproduces it. The key set stays published for proxies that fetch keys safely; the template
+takes the fixed key, at the price of a manual step after a gate rotation.
+
 **Retirement refuses what would lose something.** `tinysesam keys retire`: vault — while any stored value names the
 key (or a `v1:` value exists); gate — within the 3600 s overlap; pepper — while a code or token created before the
 rotation is still valid. `--force` exists for gate and pepper only (what it cuts is re-issued or reconnected); never for
