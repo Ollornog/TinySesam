@@ -7285,8 +7285,15 @@ class TinySesam:
     #: `Remote-Id` is the account ID — the only value that survives a rename and an email
     #: change (PO decision 2026-09-25: "hang everything on the ID"). An app that assigns users by it
     #: confuses nobody after a change.
+    #: `Remote-Auth` (T-75) says HOW the request signed in — an application whose `Remote-Groups` differ between a
+    #: browser session and a token (a token never carries `admin`) can tell why.
     FORWARD_HEADERS_DEFAULT = {"user": "Remote-User", "name": "Remote-Name",
-                               "email": "Remote-Email", "groups": "Remote-Groups", "id": "Remote-Id"}
+                               "email": "Remote-Email", "groups": "Remote-Groups", "id": "Remote-Id",
+                               "auth": "Remote-Auth"}
+    #: The value of `Remote-Auth` per way in (`_via` of the account dict). A gate token is issued only for a session
+    #: and carries `session` as a signed claim. An unknown way gives an empty value, never a guessed kind (the templates
+    #: set nothing for an empty value, T-58).
+    _FORWARD_AUTH_KINDS = {"session": "session", "oauth": "oauth", "apikey": "apikey", "app_password": "app-password"}
 
     def _forward_response_headers(self, user) -> dict:
         """The headers the proxy passes on to the app on a successful check.
@@ -7321,6 +7328,7 @@ class TinySesam:
             "name": str(user["display_name"] or user["username"] or ""),
             "email": str(user["email"] or ""),
             "groups": ",".join(self.user_roles(user) + (["admin"] if user["is_admin"] else [])),
+            "auth": self._FORWARD_AUTH_KINDS.get(str(user.get("_via") or ""), "") if isinstance(user, dict) else "",
         }
 
     def gate_public_key(self) -> str:
@@ -7434,6 +7442,9 @@ class TinySesam:
             return None
         fields = self.cfg.forward_headers or self.FORWARD_HEADERS_DEFAULT
         values = self._forward_values(user)
+        # The token stands for the session row checked above, whatever way the account dict came in (T-75): signed,
+        # so the fast path at the proxy says `Remote-Auth: session` exactly like the way back through /auth/forward.
+        values["auth"] = self._FORWARD_AUTH_KINDS["session"]
         claims = {slot: "".join(z for z in values[slot] if z >= " " and z != "\x7f") for slot in fields}
         ttl = int(self.cfg.gate_token_ttl_sec)
         # The wall clock, not `_now()`: the proxy checks iat/nbf/exp against its own system clock,

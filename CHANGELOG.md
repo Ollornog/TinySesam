@@ -4,6 +4,24 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+### Added — `Remote-Auth`: how the request signed in (T-75)
+
+- `/auth/forward` answers `Remote-Auth: session | oauth | apikey | app-password`. An application can now tell why
+  `Remote-Groups` differ between a browser session and a token: an OAuth token, an API key and an app password never
+  carry `admin`.
+- The gate token carries `ts_auth = "session"` as a signed claim (it is issued only for sessions), and
+  `deploy/forward-auth/Caddyfile.gate` maps it like the other claims — the fast path says the same as the way back.
+- `forward_headers` has the new slot `auth`: rename it (`{"auth": "X-Auth-Kind"}`) or leave it out like any other.
+  A mapping of your own sends it only when you add `auth`.
+- **Upgrading with templates of your own:** strip a client's `Remote-Auth` and set TinySesam's, as for the other
+  `Remote-*` headers (Caddy `request_header -Remote-Auth` plus the `@ts_auth` line on the way back and `ts_auth` in
+  `meta_claims`; nginx `auth_request_set` + `proxy_set_header`; Traefik `authResponseHeaders`). Without it an
+  application that reads `Remote-Auth` sees whatever the browser sends. A gate token issued before the upgrade has no
+  claim: the fast path sends an empty value until it expires.
+- `deploy/forward-auth/nginx-path.conf` passed `Remote-Id` to PHP neither set nor emptied: a client's own `Remote-Id`
+  arrived as `$_SERVER['HTTP_REMOTE_ID']`. It now sets and empties every header of `FORWARD_HEADERS_DEFAULT`, and
+  `tests/test_remote_auth.py` checks all templates against that list.
+
 ### Fixed — tests: TOTP codes no longer flip at a step boundary (B-15)
 
 - About forty places in the suites computed the previous TOTP code as `at(time.time() - 30)`; a 30-second boundary

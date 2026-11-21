@@ -306,7 +306,7 @@ Class attributes, read as `TinySesam.NAME` or `auth.NAME`. The value is part of 
 
 Default: the set that Authelia/Traefik setups expect.
 
-Value: `{'user': 'Remote-User', 'name': 'Remote-Name', 'email': 'Remote-Email', 'groups': 'Remote-Groups', 'id': 'Remote-Id'}`
+Value: `{'user': 'Remote-User', 'name': 'Remote-Name', 'email': 'Remote-Email', 'groups': 'Remote-Groups', 'id': 'Remote-Id', 'auth': 'Remote-Auth'}`
 
 ### `SECURITY_EVENTS` — Constant
 
@@ -822,12 +822,12 @@ Observed on probe instances; values are recorded where they are the contract (`X
 
 | Case | Response |
 |---|---|
-| forward: API key | 200 \| headers: Remote-Email, Remote-Groups, Remote-Id, Remote-Name, Remote-User |
+| forward: API key | 200 \| headers: Remote-Auth, Remote-Email, Remote-Groups, Remote-Id, Remote-Name, Remote-User |
 | forward: not signed in | 401 \| WWW-Authenticate: FormBased realm="TinySesam" \| X-TinySesam-Location -> /auth/login |
 | forward: role missing (?roles=) | 403 \| X-TinySesam-Reason: role |
 | forward: role missing (X-TinySesam-Roles) | 403 \| X-TinySesam-Reason: role |
-| forward: role present (?roles=) | 200 \| headers: Remote-Email, Remote-Groups, Remote-Id, Remote-Name, Remote-User, X-TinySesam-Gate-Cookie |
-| forward: signed in | 200 \| headers: Remote-Email, Remote-Groups, Remote-Id, Remote-Name, Remote-User, X-TinySesam-Gate-Cookie |
+| forward: role present (?roles=) | 200 \| headers: Remote-Auth, Remote-Email, Remote-Groups, Remote-Id, Remote-Name, Remote-User, X-TinySesam-Gate-Cookie |
+| forward: signed in | 200 \| headers: Remote-Auth, Remote-Email, Remote-Groups, Remote-Id, Remote-Name, Remote-User, X-TinySesam-Gate-Cookie |
 | forward: signed out of this application | 401 \| WWW-Authenticate: FormBased realm="TinySesam" \| X-TinySesam-Location -> /auth/login \| X-TinySesam-Reason: app-signed-out |
 | gate logout: host not protected | 404 |
 | gate logout: sign out everywhere | 303 \| Location -> /.tinysesam/after-logout \| cookies: __Host-tinysesam_gate (cleared), tinysesam_session (cleared) |
@@ -837,12 +837,12 @@ Observed on probe instances; values are recorded where they are the contract (`X
 | gateway callback: unknown code | 400 |
 | gateway callback: valid code | 303 \| Location -> /page \| cookies: __Host-tinysesam_link, __Host-tinysesam_linkflow (cleared) |
 | gateway forward: not signed in | 401 \| WWW-Authenticate: FormBased realm="TinySesam" \| X-TinySesam-Location -> /.tinysesam/start |
-| gateway forward: signed in via the connection | 200 \| headers: Remote-Email, Remote-Groups, Remote-Id, Remote-Name, Remote-User, X-TinySesam-Gate-Cookie |
+| gateway forward: signed in via the connection | 200 \| headers: Remote-Auth, Remote-Email, Remote-Groups, Remote-Id, Remote-Name, Remote-User, X-TinySesam-Gate-Cookie |
 | gateway logged-out page: host not protected | 400 |
 | gateway logout: host not protected | 400 |
 | gateway start | 303 \| Location -> /auth/gate/authorize \| cookies: __Host-tinysesam_linkflow |
 | gateway start: host not protected | 404 |
-| verify alias: signed in | 200 \| headers: Remote-Email, Remote-Groups, Remote-Id, Remote-Name, Remote-User, X-TinySesam-Gate-Cookie |
+| verify alias: signed in | 200 \| headers: Remote-Auth, Remote-Email, Remote-Groups, Remote-Id, Remote-Name, Remote-User, X-TinySesam-Gate-Cookie |
 
 #### Headers, reasons, inputs, cookies
 

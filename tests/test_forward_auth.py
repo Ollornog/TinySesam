@@ -162,9 +162,10 @@ default = auth._forward_response_headers(auth.store.get_user_by_name("admin"))
 # Since 2026-09-25 `Remote-Id` (the account ID) is part of it — not silently: CHANGELOG and the
 # proxy examples under deploy/ name it, and the examples set it themselves (otherwise the
 # proxy would pass on one forged by the browser).
-assert sorted(default) == ["Remote-Email", "Remote-Groups", "Remote-Id", "Remote-Name", "Remote-User"]
+# Since T-75 `Remote-Auth` (how the request signed in) as well — the same way: CHANGELOG, templates.
+assert sorted(default) == ["Remote-Auth", "Remote-Email", "Remote-Groups", "Remote-Id", "Remote-Name", "Remote-User"]
 assert default["Remote-Id"] == str(auth.store.get_user_by_name("admin")["id"])
-ok("default: Remote-User/-Name/-Email/-Groups and Remote-Id (the account ID)")
+ok("default: Remote-User/-Name/-Email/-Groups, Remote-Id (the account ID) and Remote-Auth")
 
 # A typo in the field name would silently omit the header — hence abort at startup.
 # A header name with a line break would be header injection.

@@ -137,9 +137,10 @@ class TinySesamConfig:
     account_enabled: bool = True          # built-in self-service page /auth/account (overridable)
     forward_auth_enabled: bool = False    # /auth/forward + /auth/verify for reverse proxy (Caddy/nginx/Traefik)
     # Which headers the forward-auth response sets. Empty = the Authelia-style set
-    # Remote-User/-Name/-Email/-Groups and Remote-Id (the account ID — stable across renames and
-    # mail changes, since 2026-09-25). Otherwise **field → header name** (or list of names); what is not
-    # listed here is NOT set. Fields: user · name · email · groups · id.
+    # Remote-User/-Name/-Email/-Groups, Remote-Id (the account ID — stable across renames and
+    # mail changes, since 2026-09-25) and Remote-Auth (how the request signed in: `session`, `oauth`, `apikey`
+    # or `app-password`; a valid gate token counts as `session` — T-75). Otherwise **field → header name** (or list
+    # of names); what is not listed here is NOT set. Fields: user · name · email · groups · id · auth.
     # The proxy must set EVERY configured header itself (overwrite) — otherwise it passes on one
     # of the same name sent by the browser (deploy/forward-auth/*).
     #   {"user": "X-WEBAUTH-USER"}                     → Grafana style, and nothing else
