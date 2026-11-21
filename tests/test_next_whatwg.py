@@ -55,6 +55,15 @@ for target in ("/\t/evil.example/", "/\n/evil.example/", "/\r/evil.example/",
         f"safe_next({target!r}) kept {kept!r} — a browser follows that to {browser_host(kept)!r}")
 ok("safe_next does not keep a target that a browser resolves to a foreign host")
 
+# The fix's own rules: control characters and backslashes anywhere, a user part in an absolute target, a port that is
+# no number — each falls back. Ordinary targets stay.
+for target in ("/a\x01b", "/a\x7fb", "/a\\b", "https://app.example.com/a\tb", "https://x@app.example.com/",
+               "https://app.example.com:x/"):
+    assert security.safe_next(target, "/fallback", HOSTS) == "/fallback", target
+for target in ("/account?x=1#y", "https://app.example.com/a?b=c", "https://app.example.com:8443/", " /padded "):
+    assert security.safe_next(target, "/fallback", HOSTS) == target.strip(), target
+ok("control characters, backslashes, a user part and a broken port fall back; ordinary targets stay")
+
 # End to end: the TOTP setup page follows `next` from its JSON answer with `location.href`.
 auth = TinySesam(TinySesamConfig(
     csrf_enabled=False, lang="en", db_path=os.path.join(tempfile.mkdtemp(), "t.db"), passkey_enabled=False,

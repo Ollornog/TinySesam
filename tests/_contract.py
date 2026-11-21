@@ -45,7 +45,7 @@ FRAMEWORK_TYPES = {"Request", "Response", "BackgroundTasks", "HTTPConnection"}
 
 #: Functions whose reads of request headers and query parameters are the INPUT of the forward/gate contract.
 #: (file, function) — and the whole `if cfg.forward_auth_enabled:` block of `router.py`.
-INPUT_READERS = (("manager.py", "_forwarded_url"), ("manager.py", "_gate_host"),
+INPUT_READERS = (("manager.py", "_forwarded_url"), ("manager.py", "_forwarded_conflict"), ("manager.py", "_gate_host"),
                  ("manager.py", "_is_page_view"), ("manager.py", "_extract_api_key"),
                  ("security.py", "client_ip"), ("router.py", "_required_roles"))
 

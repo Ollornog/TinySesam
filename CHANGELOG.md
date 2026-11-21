@@ -4,6 +4,68 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+### Security — attack round B (2026-11-21): forward-auth target, TOTP setup, step-up, redirects
+
+- **Forward auth: a client-supplied `X-Original-URL` no longer chooses the application (high).** `/auth/forward`
+  preferred an absolute `X-Original-URL` to `X-Forwarded-Host`. Caddy and Traefik pass that header from the browser
+  through unchanged, so a credential limited to one application worked at another: an app password bound to
+  `dav.example.com` opened `web.example.com` (measured with Caddy 2.11.7 and the quickstart template), and the same
+  lever moved the OAuth audience (T-36), the approval per application (T-14), "signed out of this application
+  only" (T-22) and the gate token's audience. Now `X-Forwarded-Host`/`-Proto`/`-Uri` win; `X-Original-URL` counts
+  only where no `X-Forwarded-Host` is present (an nginx configuration that sets nothing else). Where both are present
+  and name different targets (host with port, scheme, path), the request is refused: `401`, `X-TinySesam-Reason:
+  forwarded-conflict`, the sign-in address for the `X-Forwarded-*` target, a security-log line and the audit event
+  `forward_denied reason=forwarded_conflict`. `trusted_proxies` cannot tell the two apart — the peer of
+  `/auth/forward` is always the proxy — so the rule does not depend on it.
+- **Proxy templates name the target themselves.** All Caddy templates (`deploy/forward-auth/Caddyfile`,
+  `Caddyfile.gate`, `deploy/quickstart`, `deploy/home-network`, the README recipe) remove `X-Original-URL` and
+  `X-Original-URI` before the sub-request (Caddy sets `X-Forwarded-For/-Proto/-Host` itself, the templates set
+  `-Method`/`-Uri`). Traefik: `trustForwardHeader: false` and an `authRequestHeaders` list (`Accept`,
+  `Authorization`, `Cookie`, `Sec-Fetch-*`, `User-Agent`, `X-Api-Key`). The nginx templates already set all four
+  headers from the same request. Measured through a real Caddy in `tests/test_gate_caddy.py`; a static check over
+  every template in `tests/test_forward_original_url.py`.
+- **Mandatory TOTP setup in a chain only for a step the account cannot cover (medium).** With alternatives,
+  `login_chain=["password", "totp|pin"]`, the half session after the password could set up a TOTP although the
+  account had a PIN for that step; the confirmation code completed the chain without the PIN, and whoever knew only
+  the password (or held only the mailbox) kept an own second factor with recovery codes. `totp_enrollment_user` now
+  allows the setup only when a step of the chain stays uncovered by the factors the account has and TOTP is an
+  option for it — the rule of the setup pass (`_setup_missing`). A setup window opened by the operator
+  (`grant_mfa_enrollment`) still lifts it. Refusals are audited as `mfa_enrollment_denied`.
+- **A sign-in link is no step-up (medium).** Redeemed in a browser with a full but stale session (a stolen cookie),
+  a mailed or admin-issued sign-in link, or a cross-device (QR) approval, made the session fresh, and `_require_fresh`
+  then let a new passkey, API key, app password or service pairing through. On a full session only a factor that the
+  step-up accepts refreshes it: what `stepup_options()` offers the account (so `stepup_methods` now binds the sign-in
+  pages too — a password typed into the sign-in form no longer gets round `stepup_methods=["totp"]`, nor a TOTP code
+  round `["pin"]`), plus passkey, OIDC and SAML, which sign the account in on their own. Anything else leaves the
+  session full but not fresh (audit event `stepup_not_counted`).
+- **`safe_next` reads a target like a browser (low).** A backslash or an ASCII control character anywhere (tab, CR,
+  LF included) and a user part in an absolute target (`https://x@app.example.com/`) now fall back to the default:
+  `/\t/evil.example` (a browser drops the tab → `//evil.example`) and `https://evil.example\@app.example.com/`
+  (`urlsplit` sees `app.example.com`, a browser `evil.example`) passed and reached pages that follow the target from
+  a JSON answer with `location.href` (passkey sign-in, TOTP setup, setup pass, onboarding).
+- **Admin routes that create access want a fresh confirmation even with `admin_require_mfa=False`:** password reset,
+  API key for an account, sign-in link and invitation call `_require_fresh` themselves, like the service pairing
+  already did (B-12). With the default `admin_require_mfa=True` nothing changes.
+
+### Changed — attack round B (behaviour of existing installations)
+
+- **Proxy configuration: update your copy of the template, but nothing breaks if you do not.** The library fix closes
+  F1 on its own. A proxy that sets only `X-Forwarded-*` (Caddy, Traefik) or only `X-Original-URL` (old nginx
+  configurations) keeps working; the templates' new lines are a second layer. A request that carries both headers
+  with different targets gets the sign-in page instead of the application — only a client that forges one of them,
+  or a proxy chain that rewrites the host between the two (then let the inner proxy set both).
+- **Traefik with the new template:** only the listed headers reach `/auth/forward`. A renamed API-key header or an
+  own header your setup relies on there must be added to `authRequestHeaders`.
+- **Step-up on full sessions:** with `stepup_methods` set, the sign-in pages no longer refresh a session with a
+  factor outside that list; the reauth page (`/auth/reauth`, `confirm_*`) behaves as before. A sign-in link or QR
+  approval in a browser that is already signed in leaves the session as it is (no new cookie).
+- **`admin_require_mfa=False`:** password reset, API key, sign-in link and invitation in the panel answer `403`
+  (step-up) to a session whose last confirmation is older than `stepup_max_age_sec`.
+- **`safe_next`:** targets with a backslash, a control character or a user part go to `login_redirect` instead.
+- **Apps behind forward auth:** `Remote-Groups: admin` is sent for any valid session, however old —
+  `admin_require_mfa` covers the admin panel, not the applications. Sensitive admin actions of an application should
+  not rest on that header alone (README, "Several apps, one TinySesam").
+
 ### Security — attack round A against OAuth, services, app passwords and keys (2026-11-21, T-69)
 
 - **A-1 (medium) — the panic button disconnects OAuth devices too.** "End all sessions", the password reset (self-service

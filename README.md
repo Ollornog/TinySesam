@@ -1182,6 +1182,20 @@ TINYSESAM_OIDC_REVALIDATE_MINUTES=60
 
 A config with a single client behaves exactly as before — no host mapping, no release to expire.
 
+**Which application a request is for comes from the proxy alone.** `/auth/forward` reads the target from
+`X-Forwarded-Host`/`-Proto`/`-Uri` (Caddy, Traefik) and from `X-Original-URL` only when no `X-Forwarded-Host` is there
+(nginx). A request that carries both with different targets gets the sign-in page (`X-TinySesam-Reason:
+forwarded-conflict`): one of the two came from the browser. Every per-application decision hangs on that target —
+approval per client, app passwords, OAuth audience, "signed out here only" — so take the proxy templates in
+`deploy/` as they are: they remove `X-Original-URL` (Caddy), set all four headers (nginx) or neither trust nor copy the
+browser's forwarding headers (Traefik).
+
+**`Remote-Groups: admin` is no fresh confirmation.** Forward auth answers for every valid session, however long ago
+it was confirmed; `admin_require_mfa` and `stepup_max_age_sec` guard TinySesam's own admin panel and the routes that
+create access, not the applications behind the proxy. An application that derives admin rights from the header should
+not rest a sensitive action (delete everything, change who may enter) on it alone — ask for its own confirmation
+there.
+
 ## API keys & service/daemon accounts
 
 For **machine access** (scripts, other services, system daemons) — alongside the interactive login:
@@ -1391,6 +1405,8 @@ dav.example.com {
 			rewrite /auth/forward
 			header_up X-Forwarded-Method {method}
 			header_up X-Forwarded-Uri {uri}
+			header_up -X-Original-URL
+			header_up -X-Original-URI
 			@ok status 200
 			handle_response @ok {
 				request_header Remote-User {rp.header.Remote-User}

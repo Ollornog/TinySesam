@@ -1226,8 +1226,23 @@ def build_router(auth) -> APIRouter:
             return "text/html" in (h.get("accept") or "").lower()
 
         def _forward(request: Request):
-            u = auth.current_user(request)   # session OR API key
             orig = auth._forwarded_url(request)
+            if auth._forwarded_conflict(request):
+                # X-Original-URL and X-Forwarded-* name different targets (attack round B, F1): one of them is
+                # the browser's own. No credential is looked at — whichever host was chosen, it could be the
+                # wrong one. The sign-in page for the X-Forwarded-* target, as for anyone not signed in.
+                ip = auth.client_ip(request)
+                if auth._once_per(("forward401", ip, "forwarded_conflict"), 300):
+                    security.seclog.warning(
+                        "forward auth refused from %s: X-Original-URL and X-Forwarded-Host/-Proto/-Uri name "
+                        "different targets — the proxy passes one of them through from the client; let the "
+                        "proxy set or remove both (see deploy/forward-auth)", security.for_log(ip))
+                    auth.audit("forward_denied", None, ip,
+                               f"reason=forwarded_conflict url={security.url_for_log(orig)}")
+                return Response(status_code=401, headers={"X-TinySesam-Location": _sign_in_url(orig, request),
+                                                          "X-TinySesam-Reason": "forwarded-conflict",
+                                                          "WWW-Authenticate": 'FormBased realm="TinySesam"'})
+            u = auth.current_user(request)   # session OR API key
             # OAuth access token (T-36): only here, at the resource — never at TinySesam's own routes. The
             # account, the grant and the audience are checked on every request.
             oauth_resource = auth._oauth.resource_for(orig) if (cfg.oauth_enabled and auth._oauth) else None

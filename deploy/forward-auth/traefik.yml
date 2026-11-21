@@ -28,7 +28,22 @@ http:
     tinysesam-auth:
       forwardAuth:
         address: "http://tinysesam:8000/auth/forward"
-        trustForwardHeader: true
+        # Only the proxy names the target (attack round B, F1). `trustForwardHeader: false` makes Traefik write
+        # X-Forwarded-Host/-Proto/-Uri/-Method itself instead of keeping a browser's, and `authRequestHeaders` passes
+        # on only what TinySesam needs to decide — without the list Traefik copies EVERY header of the browser,
+        # X-Original-URL included, which up to 0.25 moved the check to another host. A renamed API-key or
+        # session header must be added here.
+        trustForwardHeader: false
+        authRequestHeaders:
+          - "Accept"
+          - "Authorization"
+          - "Cookie"
+          - "Sec-Fetch-Dest"
+          - "Sec-Fetch-Mode"
+          - "Sec-Fetch-Site"
+          - "Sec-Fetch-User"
+          - "User-Agent"
+          - "X-Api-Key"
         authResponseHeaders:
           - "Remote-User"
           - "Remote-Groups"
@@ -43,7 +58,9 @@ http:
     tinysesam-auth-editors:
       forwardAuth:
         address: "http://tinysesam:8000/auth/forward?roles=editors,admin"
-        trustForwardHeader: true
+        trustForwardHeader: false          # F1, see tinysesam-auth
+        authRequestHeaders: ["Accept", "Authorization", "Cookie", "Sec-Fetch-Dest", "Sec-Fetch-Mode",
+                             "Sec-Fetch-Site", "Sec-Fetch-User", "User-Agent", "X-Api-Key"]
         authResponseHeaders:
           - "Remote-User"
           - "Remote-Groups"

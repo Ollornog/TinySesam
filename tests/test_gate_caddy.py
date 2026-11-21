@@ -66,7 +66,10 @@ _tmp = tempfile.mkdtemp()
 auth = TinySesam(TinySesamConfig(
     csrf_enabled=False, lang="de", db_path=os.path.join(_tmp, "t.db"), rp_name="Test",
     passkey_enabled=False, oidc_enabled=False, cookie_secure=False, forward_auth_enabled=True,
-    base_url=ISS, trusted_redirect_hosts=["app.example.com"], gate_token_enabled=True))
+    base_url=ISS, trusted_redirect_hosts=["app.example.com", "dav.example.com"], gate_token_enabled=True,
+    # A second application that takes app passwords (T-66) — the F1 section below uses one of its passwords at
+    # app.example.com.
+    forward_apps={"dav.example.com": {"name": "Files", "app_passwords": True}}))
 auth.ensure_admin("admin", "dummy123")
 uid = auth.create_user("anna", "dummy123", roles=["editors"])
 auth.store._exec("UPDATE users SET display_name=? WHERE id=?", ("Anna Ärger", uid))
@@ -320,6 +323,33 @@ try:
         auth.cfg.forward_headers = {}
     ok("T-58: forward_headers without email/name/id → the application gets no such header — neither placeholder text "
        "nor the browser's forgery (plain, quickstart, gate way back)")
+
+    # ---------- Attack round B, F1: an X-Original-URL from the browser does not move the check to another host ----------
+    # Caddy passes every header of the browser on to /auth/forward. Up to 0.25 TinySesam preferred an absolute
+    # X-Original-URL to Caddy's own X-Forwarded-Host: an app password bound to dav.example.com opened app.example.com
+    # (measured with Caddy 2.11.7 and the quickstart template), and "signed out of this application only" (T-22) was
+    # skipped. Two layers now, each enough on its own: the templates remove X-Original-URL/-URI before the
+    # sub-request, and TinySesam refuses a request whose X-Original-URL disagrees with X-Forwarded-Host.
+    app_pw = auth.create_app_password(uid, "Phone", hosts=["dav.example.com"])["secret"]
+    spoof = {"X-Original-URL": "https://dav.example.com/", "X-Original-URI": "/",
+             "Authorization": "Basic " + base64.b64encode(f"anna:{app_pw}".encode()).decode()}
+    handle = auth.store.session_hash(session[auth.session_cookie_name])
+    for port, was in ((PORT, "gate template, way back"), (PORT_PLAIN, "plain template"),
+                      (PORT_QUICK, "quickstart template")):
+        before = FORWARD["n"]
+        st, h, a = request("/f1-app-password", None, spoof, port=port)
+        assert st != 200 and a is None and FORWARD["n"] == before + 1, (
+            f"{was}: the app password of dav.example.com opened app.example.com via X-Original-URL",
+            st, a and a["header"].get("Remote-User"))
+        auth.store.gate_sign_out(handle, "app.example.com")
+        try:
+            st, h, a = request("/f1-signed-out", session, {"X-Original-URL": "https://dav.example.com/"}, port=port)
+            assert st == 302 and a is None, (f"{was}: X-Original-URL skipped the sign-out of app.example.com", st)
+        finally:
+            auth.store.gate_resume(handle, "app.example.com")
+        assert request("/f1-back", session, port=port)[0] == 200, was
+    ok("F1: X-Original-URL from the browser → the app password of dav.example.com does not open app.example.com, "
+       "and “signed out here only” holds — plain, quickstart and gate way back")
 
     # ---------- OAuth (T-36): the resource metadata of the application's host go to TinySesam, past the gate ----------
     # TinySesam here has no OAuth switched on, so it answers its own 404 — what is measured is the route: not the

@@ -1959,6 +1959,9 @@
     "reason:basic": {
       "tier": "A"
     },
+    "reason:forwarded-conflict": {
+      "tier": "A"
+    },
     "reason:oauth": {
       "tier": "A"
     },

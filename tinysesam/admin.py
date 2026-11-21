@@ -185,7 +185,11 @@ def build_admin_router(auth) -> APIRouter:
 
     @ar.post("/api/users/{uid}/password")
     async def user_password(request: Request, uid: int):
-        owner_protection(guard(request), uid)
+        person = guard(request)
+        owner_protection(person, uid)
+        # A password the admin knows is a way into that account (B-12): only from a fresh confirmation — also with
+        # `admin_require_mfa=False`, where the guard above does not ask for one (attack round B).
+        auth._require_fresh(request, person)
         b = await auth.json_body(request)
         if not b.get("password"):
             raise HTTPException(400, auth.t("api.password_req"))
@@ -354,6 +358,7 @@ def build_admin_router(auth) -> APIRouter:
         # is only valid alongside the session); this line does not depend on that staying so.
         if person.get("_via") != "session":
             raise HTTPException(403, auth.t("api.key_needs_session"))
+        auth._require_fresh(request, person)       # a new lasting way in (B-12), whatever admin_require_mfa says
         b = await auth.json_body(request)
         # The audit line is written by `create_api_key` — with owner, IP and actor= (B5-04/R6-3).
         # `create_api_key` raises `ConfigError` for a scope without a valid role and for
@@ -482,7 +487,9 @@ def build_admin_router(auth) -> APIRouter:
     if cfg.magiclink_enabled:
         @ar.post("/api/invite")
         async def invite(request: Request):
-            guard(request)
+            # An invitation creates an account — possibly an admin — for whoever holds the link: new access
+            # (B-12), so a fresh confirmation also with `admin_require_mfa=False` (attack round B).
+            auth._require_fresh(request, guard(request))
             b = await auth.json_body(request)
             email = (b.get("email") or "").strip()
             # The invitation link goes by mail to a third party and carries a valid
@@ -507,6 +514,7 @@ def build_admin_router(auth) -> APIRouter:
             # never by a key (same rule as key creation above, R6-6).
             if person.get("_via") != "session":
                 raise HTTPException(403, auth.t("api.link_needs_session"))
+            auth._require_fresh(request, person)   # a credential for that account (B-12), even without admin MFA
             b = await auth.json_body(request)
             if auth.store.get_user(uid) is None:
                 raise HTTPException(404, auth.t("api.not_found"))
