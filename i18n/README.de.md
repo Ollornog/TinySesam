@@ -371,8 +371,9 @@ Die Regeln des Einrichtungsdurchgangs:
 | `cookie_domain` · `trusted_redirect_hosts` | `""` · `[]` | SSO über Subdomains · erlaubte absolute `?next=`-Ziele |
 | `security_log` | `""` | Datei für den fail2ban-Logger (leer = nur an den Logger) |
 | `forward_auth_enabled` · `forward_headers` | `False` · `{}` | Forward-Auth-Endpunkt · welche Header er setzt (leer = `Remote-*`) |
-| `magiclink_enabled` · `magiclink_self_request` · `magiclink_ttl_min` | `False` · `True` · `10` | Anmelde-Links lösen ein · jeder darf einen per E-Mail anfordern (braucht einen Mailer; `False` = Links nur vom Admin oder App-Code) · Gültigkeit in Minuten (auch Reset-Links und Einladungen; bis 0.25.x `15`) |
-| `signin_link_max_ttl_min` | `1440` | Obergrenze für einen Anmeldelink, den der Admin oder App-Code ausstellt (bis 0.25.x eine Woche, `10080`) |
+| `magiclink_enabled` · `magiclink_self_request` · `magiclink_ttl_min` | `False` · `True` · `10` | Anmelde-Links lösen ein · jeder darf einen per E-Mail anfordern (braucht einen Mailer; `False` = Links nur vom Admin oder App-Code) · Gültigkeit in Minuten (auch Reset-Links; bis 0.25.x `15`) |
+| `signin_link_max_ttl_min` | `1440` | Obergrenze für einen Anmeldelink oder eine Einladung, die der Admin oder App-Code ausstellt (bis 0.25.x eine Woche, `10080`) |
+| `invite_ttl_min` | `1440` | Gültigkeit einer Einladung ohne eigenes `ttl_min` (bis 0.25.x `magiclink_ttl_min`) |
 | `magiclink_first_login_only` | `False` | ein Link meldet nur zur ersten Anmeldung an (oder um einen fehlenden Faktor einzurichten) |
 | `qr_login_enabled` · `qr_login_ttl_sec` | `False` · `120` | geräteübergreifende Anmeldung (QR-Code braucht `base_url` und das Extra `[qr]`) · Gültigkeit einer Anfrage |
 
@@ -2128,7 +2129,7 @@ Jeder Python-Block beider Dateien läuft in der Testsuite, und jeder genannte Na
 
 ## Status
 
-**105 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
+**106 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
 (`tests/test_matrix.py`).
 
 Gebaut und getestet: Passwort/TOTP/Sitzungen/Rollen, Remember-me, Step-up und per-Route-MFA,

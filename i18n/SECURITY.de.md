@@ -202,7 +202,8 @@ Rate-Limit, Open-Redirect-Schutz via `safe_next`). Trotzdem: vor produktivem Ein
   zugetraut, mindestens mit seinem schwächsten Verfahren angemeldet zu haben; der Anbieter-Knopf bestätigt dann
   nie, das Konto bestätigt mit eigenen Faktoren oder durch eine neue Anmeldung. Anbieter, die `prompt=login`
   ignorieren, fallen genauso auf. `oidc_reauth_check=False` stellt das Verhalten bis 0.25.x wieder her. SAML hat
-  diese Prüfung noch nicht (`ForceAuthn` wird nicht gesendet).
+  diese Prüfung noch nicht (`ForceAuthn` wird nicht gesendet, `AuthnInstant` nicht gelesen; Backlog T-70): eine
+  SAML-Runde über die laufende Sitzung des Anbieters zählt weiter als frische Bestätigung.
 - **Eigene Login-, Step-up- oder Passwortwechsel-Seite: auf den Bausteinen bauen.**
   `login_password`, `login_pin`, `login_totp`, `confirm_password`, `confirm_pin`, `confirm_totp`
   und `change_password` (Stufe A, seit 0.22.0) drosseln, zählen, sperren und protokollieren genau

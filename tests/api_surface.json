@@ -1338,6 +1338,10 @@
       "field": "str = 'warn'",
       "tier": "A"
     },
+    "invite_ttl_min": {
+      "field": "int = 1440",
+      "tier": "A"
+    },
     "lang": {
       "field": "str = 'en'",
       "tier": "A"

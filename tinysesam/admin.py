@@ -112,8 +112,13 @@ def build_admin_router(auth) -> APIRouter:
 
     @ar.post("/api/users")
     async def user_create(request: Request):
-        guard(request)
+        person = guard(request)
         b = await auth.json_body(request)
+        # An account with a password the admin chose, or with admin rights, is a way in for whoever holds the stale
+        # admin session (B-12) — so a fresh confirmation also with `admin_require_mfa=False`, like the password
+        # reset and the invitation. An account without either (SSO, passkey, service) gives nobody access yet.
+        if b.get("is_admin") or (b.get("password") and not b.get("is_service")):
+            auth._require_fresh(request, person)
         username = (b.get("username") or "").strip()
         email = norm_email(b.get("email"))
         if email and not valid_email(email):
@@ -240,6 +245,11 @@ def build_admin_router(auth) -> APIRouter:
             # are not left half set.
             if not new and destination["is_admin"] and not other_active_admins(uid):
                 raise HTTPException(400, auth.t("api.last_admin"))
+            # Making an account admin hands the panel to whoever holds that account — from a stale admin session
+            # an account of the attacker's own (self-registered, invited) would keep the panel after the session
+            # ends. New access (B-12): a fresh confirmation, also with `admin_require_mfa=False`.
+            if new and not destination["is_admin"]:
+                auth._require_fresh(request, me)
         # Before/after in the log (R6-7): "uid=5" said THAT rights changed, not
         # which. Whether someone became admin is exactly the question after an incident.
         # `str` per role: legacy data from before the check (or from own code) must not
@@ -497,8 +507,14 @@ def build_admin_router(auth) -> APIRouter:
             base = _mail_base(auth, request)
             # Same check as on creation: the roles only land in the account on redemption —
             # a broken role would then fall at the invitee's feet, not the admin's.
-            res = auth.create_invite(email or None, base, roles=roles_from(b),
-                                     is_admin=bool(b.get("is_admin")), ttl_min=b.get("ttl_min"))
+            try:
+                res = auth.create_invite(email or None, base, roles=roles_from(b),
+                                         is_admin=bool(b.get("is_admin")), ttl_min=b.get("ttl_min"))
+            except ConfigError:
+                raise                     # a setup error (base address) stays what it was, not an input error
+            except ValueError as e:
+                # `ttl_min` outside 1…`signin_link_max_ttl_min` or not a number: the admin's input, not a 500.
+                raise HTTPException(400, str(e))
             return {"url": res["url"], "emailed": bool(email and auth.mail_configured())}
 
     # ---------- Sign-in link without mail (T-33) ----------
