@@ -60,7 +60,9 @@
     "Repos, und der Name ist selbst einer der geschuetzten. Der Zaun hat genau das gefangen.)",
     "2026-11-06: Name eines Arbeitgebers aufgenommen. Gegenprobe in einem neuen oeffentlichen Repo:",
     "die Pruefung schwieg, der Name war nie eingetragen. Abnehmer mit diesem Namen als Projektname",
-    "tragen ihn als eigener_name_sha256."
+    "tragen ihn als eigener_name_sha256.",
+    "2026-11-20: Name eines internen Projekts aufgenommen (stand im Kommentar des pre-push-Hooks, der Zaun",
+    "schwieg). Zusammensetzungen prueft hygiene.py seit 2026-09-23 ohnehin ueber ihre Bestandteile."
   ],
   "private_namen_sha256_16": [
     "061429fadd2701e3",
@@ -73,6 +75,7 @@
     "a5b367bcd6d2c02e",
     "a81a73017f17239a",
     "a994ffcab684f9e2",
+    "bad57c8bd34d614b",
     "cb034381b0eee532",
     "d0ff9830f233311d",
     "e177ac5b0aa46203",

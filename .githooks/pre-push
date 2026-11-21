@@ -116,7 +116,7 @@ fi
 # Hat die CI diesen Commit wirklich grün gesehen? (Kit 0.50.0, Register „Tag-Push-Annahme“)
 #
 # „Vorfahr von origin/main“ heißt nur, der Commit liegt dort. Dass die CI dort lief, ist eine
-# Annahme: auf einem neuen Repo ohne Runner lief nie eine (connect-suite, 2026-11-05).
+# Annahme: auf einem neuen Repo ohne Runner lief nie eine (gefunden bei einem neuen Repo, 2026-11-05).
 # Darum fragt der Hook GitHub: Jeder Pflicht-Check des Zweigs muss am Commit als Check-Run
 # vorliegen und fertig und grün sein (success/neutral/skipped). Alles andere fährt die Suite:
 # kein `gh`, kein Netz, Remote nicht GitHub, ein Pflicht-Check fehlt, läuft noch oder ist rot, ein Fehler irgendwo.
