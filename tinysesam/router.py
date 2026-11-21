@@ -1923,6 +1923,32 @@ def build_router(auth) -> APIRouter:
         auth.require_csrf(request, csrf_tok or request.headers.get("x-csrf-token"))
         return _sign_out(request)
 
+    @r.post("/auth/csp-report")
+    async def csp_report(request: Request):
+        """CSP violation reports of the browser (`csp_report`, T-52, ASVS 3.4.7) — into the security log.
+
+        Without sign-in and without CSRF token: the browser sends reports on its own, without cookies. 404 while
+        the switch is off; per IP `_CSP_REPORT_PER_IP` reports a minute; a body beyond `_CSP_REPORT_MAX_BYTES`
+        is not read to its end (413)."""
+        from fastapi.responses import Response as _Resp
+        from starlette.concurrency import run_in_threadpool
+        if not auth._csp_reporting():
+            raise HTTPException(404)
+        ip = auth.client_ip(request)
+        # The limiter may be Redis (a network call): off the event loop, like the log write below.
+        if not await run_in_threadpool(auth.rl.allow, f"csp_report:{ip or '?'}", auth._CSP_REPORT_PER_IP, 60):
+            return _Resp(status_code=429)
+        kind = (request.headers.get("content-type") or "").split(";", 1)[0].strip().lower()
+        if kind not in ("application/reports+json", "application/csp-report", "application/json"):
+            return _Resp(status_code=415)
+        raw = b""
+        async for chunk in request.stream():
+            raw += chunk
+            if len(raw) > auth._CSP_REPORT_MAX_BYTES:
+                return _Resp(status_code=413)
+        await run_in_threadpool(auth._csp_report_line, raw, ip)
+        return _Resp(status_code=204)
+
     @r.get("/auth/me")
     def me(request: Request):
         u = auth.current_user(request)

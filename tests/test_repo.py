@@ -423,6 +423,10 @@ for _wf in sorted(pathlib.Path(ROOT, ".github", "workflows").glob("*.yml")):
         if not _m:
             continue
         _jobs_seen += 1
+        # A job that calls a reusable workflow (`uses:` at job level, T-55) may not carry a limit itself — GitHub
+        # rejects `timeout-minutes` there; every job of the called workflow carries its own (checked in its file).
+        if re.search(r"\n    uses: (\.|\$)/\.github/workflows/[\w.-]+\.yml(?:  #[^\n]*)?\n", _block):
+            continue
         if not re.search(r"\n    timeout-minutes: [1-9][0-9]*\n", _block):
             _without_limit.append(f"{_wf.name}: {_m.group(1)}")
 assert _jobs_seen >= 20, f"only {_jobs_seen} jobs recognised — check no longer reads the workflows"
@@ -766,6 +770,14 @@ CHECKOUT_WITH_RIGHT = {
                                                       "publish_results), id-token only for publishing (H1)"),
 }
 
+# A job that only CALLS a reusable workflow of this repo (T-55): it runs no step itself, its permissions are the
+# ceiling the called workflow's jobs may narrow — and those jobs go through this loop in their own file. Exactly
+# these calls, with exactly these permissions; everything else with a local `uses:` stays red.
+REUSABLE_WITH_RIGHT = {
+    (".github/workflows/release.yml", "provenance"): ("./.github/workflows/build-provenance.yml",
+                                                      {"id-token", "attestations"}),
+}
+
 _checked_identity, _exceptions_seen = 0, set()
 for wf in WORKFLOWS:
     text = read(wf)
@@ -780,6 +792,14 @@ for wf in WORKFLOWS:
             continue
         _checked_identity += 1
         block = "\n".join(lines)
+        call = REUSABLE_WITH_RIGHT.get((wf, job))
+        if call:
+            _exceptions_seen.add((wf, job))
+            assert permissions == call[1], f"{wf} job `{job}`: permissions {sorted(permissions)} instead of {sorted(call[1])}"
+            assert re.search(r"^    uses: " + re.escape(call[0]) + r"$", block, re.M), \
+                f"{wf} job `{job}` calls something other than {call[0]}"
+            assert not re.search(r"^    (steps|runs-on):", block, re.M), f"{wf} job `{job}` runs steps of its own"
+            continue
         exception = CHECKOUT_WITH_RIGHT.get((wf, job))
         if exception:
             _exceptions_seen.add((wf, job))
@@ -790,7 +810,7 @@ for wf in WORKFLOWS:
                 f"{wf} job `{job}` holds {sorted(permissions)} AND checks out the repo — build and "
                 "attestation belong in separate jobs")
                 # Local actions and Docker actions bring code that no SHA pin holds fast.
-        assert not re.search(r"^\s+(?:- )?uses:\s*['\"]?(\./|docker://)", block, re.M), \
+        assert not re.search(r"^\s+(?:- )?uses:\s*['\"]?(\./|\$/|docker://)", block, re.M), \
             f"{wf} job `{job}` holds {sorted(permissions)} and uses a local/Docker action"
         assert not re.search(r"^\s+(?:- )?shell:", block, re.M), \
             f"{wf} job `{job}` holds {sorted(permissions)} and sets its own `shell:`"
@@ -798,8 +818,8 @@ for wf in WORKFLOWS:
             for command in _commands(k):
                 assert _permitted(command), (f"{wf} job `{job}` holds {sorted(permissions)} and runs "
                                           f"`{command}`: {k}")
-assert _exceptions_seen == set(CHECKOUT_WITH_RIGHT), \
-    f"exceptions without job: {set(CHECKOUT_WITH_RIGHT) - _exceptions_seen} — tidy up the list"
+assert _exceptions_seen == set(CHECKOUT_WITH_RIGHT) | set(REUSABLE_WITH_RIGHT), \
+    f"exceptions without job: {set(CHECKOUT_WITH_RIGHT) | set(REUSABLE_WITH_RIGHT) - _exceptions_seen} — tidy up the list"
 assert _checked_identity >= 6, f"only {_checked_identity} jobs with write permission found — check the parser"
 print(f"  {_checked_identity} jobs with identity/write permission (every spelling): only "
       f"{'/'.join(sorted(PERMITTED_WITH_RIGHT))}, checkout only with a justified exception")
@@ -929,12 +949,21 @@ print(f"  actions that download: tool with version and digest ({', '.join(TOOL_R
 
 # B4-6/B4-8 — pip in the build and check path only against a hashed list. Exempt is what the
 # suite checks (there the resolution IS the subject under test) — i.e. every job that runs `run_all.py`.
-for wf in (".github/workflows/release.yml", ".github/workflows/audit.yml"):
+# The SBOM step of build-provenance.yml (T-55) installs the built wheel WITH its dependencies as pip resolves them —
+# that resolution is what the SBOM records. Allowed exactly so: wheels only (no package code runs at install), into
+# a directory of its own, the built wheel as the only requirement, in a job without identity (loop above).
+_SBOM_INSTALL = ('python -m pip install --disable-pip-version-check --only-binary :all: '
+                 '--target "$RUNNER_TEMP/sbom-site" dist/*.whl')
+_sbom_install_seen = 0
+for wf in (".github/workflows/release.yml", ".github/workflows/audit.yml", ".github/workflows/build-provenance.yml"):
     for job, lines in _jobs(read(wf)).items():
         block = "\n".join(lines)
         if "tests/run_all.py" in block:
             continue
         for z in _command_list(lines):
+            if wf.endswith("build-provenance.yml") and job == "rebuild" and z.strip() == _SBOM_INSTALL:
+                _sbom_install_seen += 1
+                continue
                         # Every spelling of pip: `pip3`, `pip3.14`, `"$venv/pip"`, `python -m pip`. Until the
                         # re-check (A-6) `\bpip\b` did not hit `pip3` — `pip3 install build` slipped through.
             if re.search(r"(\bpip[0-9.]*|\bpython[0-9.]*\s+-m\s+pip)[\"']?\s+install\b", z):
@@ -952,6 +981,31 @@ for wf in (".github/workflows/release.yml", ".github/workflows/audit.yml"):
 _build_job = _jobs(read(".github/workflows/release.yml")).get("build", [])
 assert any(re.search(r"-m\s+build\b", k) for k in _command_list(_build_job)), \
     "release.yml: job `build` no longer builds with `-m build` — adjust guard"
+assert _sbom_install_seen == 1, "build-provenance.yml: the SBOM install step is missing or changed — adjust guard"
+# The isolated builder must build EXACTLY like `build`: its bytes are compared with `build`'s checksums, and a recipe
+# that drifted apart would turn every release red — or, worse, be adjusted until it matches. (Mutation probe: change a
+# line in one of the two `Build the packages` blocks → red.)
+
+
+def _build_block(text):
+    m = re.search(r"- name: Build the packages\n\s+run: \|\n((?:\s{10}.*\n)+)", text)
+    assert m, "`Build the packages` block not found — adjust guard"
+    return [z.strip() for z in m.group(1).splitlines()]
+
+
+assert _build_block(read(".github/workflows/release.yml")) == \
+    _build_block(read(".github/workflows/build-provenance.yml")), \
+    "build-provenance.yml builds differently from release.yml `build`"
+_bp = read(".github/workflows/build-provenance.yml")
+assert "sha256sum -c ../shipped/SHA256SUMS" in _bp, "build-provenance.yml: no comparison with the shipped checksums"
+_bp_jobs = _jobs(_bp)
+_bp_attest = [z.strip() for z in _bp_jobs.get("attest", [])]
+assert "if: inputs.attest" in _bp_attest, "build-provenance.yml: `attest` does not hang on the input"
+assert [z for z in _bp_attest if z.startswith("subject-path:")] == ['subject-path: "dist/*.whl, dist/*.tar.gz"'] * 2, \
+    "build-provenance.yml: `attest` attests something other than wheel and sdist"
+assert re.search(r"^  workflow_call:", "\n".join(_code(_bp.split("\njobs:", 1)[0])), re.M) and \
+    not re.search(r"^  (push|pull_request|workflow_dispatch|schedule)", _bp, re.M), \
+    "build-provenance.yml: must be callable only (workflow_call)"
 print("  Build and check tools in release/audit only from hashed lists, build without isolation")
 
 # The button (`workflow_dispatch`) is a dry run: Every job that publishes or holds an
@@ -987,6 +1041,12 @@ for _j, _lines in _rel_jobs.items():
                 f"release.yml: `{_j}` attests more than the probe file: {_object}"
             assert not re.search(r"\bcontents: write\b", _permissions), f"release.yml: `{_j}` holds contents: write"
             _probe_certified += 1
+            continue
+        if _j == "provenance":
+            # The isolated builder (T-55): holds the ceiling for build-provenance.yml on every run, but hands the
+            # identity on only for a tag (`attest`), where that workflow's `attest` job hangs on it (checked above).
+            # (Mutation probe: `attest: true` → red.)
+            assert "attest: ${{ github.ref_type == 'tag' }}" in _st, f"release.yml: `{_j}` attests without a tag"
             continue
         if _j == "automatik":
             # Exception release automation (kit 0.47.1, PO 2026-11-15): dispatched by the auto-merge after a Dependabot

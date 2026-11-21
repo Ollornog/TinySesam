@@ -1213,12 +1213,12 @@ r.check("… without a setting the key lies next to the database, readable only 
 # Existing data: a plaintext secret is encrypted at startup (silent lift).
 _path14 = a14.cfg.db_path
 a14.store._exec("UPDATE totp_cred SET secret=? WHERE user_id=?", (secret_text14, u14))   # as before 0.21
-a14.store.db.close()
+a14.close()
 a14b, _ = _app(db_path=_path14)
 roh14b = a14b.store._one("SELECT secret FROM totp_cred WHERE user_id=?", (u14,))["secret"]
 r.check("H-14/15: a plaintext secret from before is encrypted at startup",
         roh14b.startswith("v2:") and a14b.store.get_totp(u14)["secret"] == secret_text14)
-a14b.store.db.close()
+a14b.close()
 
 # Wrong key → startup aborts instead of silently letting every TOTP sign-in fail.
 _os.environ["TINYSESAM_SECRETS_KEY"] = _b64.b64encode(_os.urandom(32)).decode()
@@ -1397,7 +1397,7 @@ r.check("Finding 13: nothing is exchanged for a locked account (F-17)", _t13 == 
 
 # Finding 4: a wrong key aborts startup even when there are only refresh tokens.
 _path4 = a5r.cfg.db_path
-a5r.store.db.close()
+a5r.close()
 _os.environ["TINYSESAM_SECRETS_KEY"] = _b64.b64encode(_os.urandom(32)).decode()
 try:
     _oidc({"sub": "x"}, db_path=_path4)
@@ -1535,14 +1535,14 @@ _old8.link_oidc("https://idp.example", "sub-b", 1)
 _old8.db.execute("ALTER TABLE users DROP COLUMN idp_confirmed_at")
 _old8.db.execute("DELETE FROM setting WHERE key='idp_inventory_set'")   # a 0.20 file does not know it
 _old8.db.commit()
-_old8.db.close()
+_old8.close()
 _new8 = Store(_path8)
 _state8 = _new8.get_user(1)["idp_confirmed_at"]
 # Afterwards without state (an account bound by a route without confirmation): a restart
 # must NOT grant it a fresh period.
 _new8.db.execute("UPDATE users SET idp_confirmed_at = NULL WHERE id=1")
 _new8.db.commit()
-_new8.db.close()
+_new8.close()
 r.check("Finding 8, existing data: the period of an OIDC account starts with the update — and only once",
         _state8 is not None and abs(_state8 - int(_when.time())) < 60
         and Store(_path8).get_user(1)["idp_confirmed_at"] is None, f"{_state8}")
@@ -1554,7 +1554,7 @@ _from8.create_user("abort-oidc", None, None, False, [], False)
 _from8.link_oidc("https://idp.example", "sub-c", 1)
 _from8.db.execute("DELETE FROM setting WHERE key='idp_inventory_set'")
 _from8.db.commit()
-_from8.db.close()
+_from8.close()
 r.check("Finding 8, existing data: after an abort (column present, marker not) the next start sets the state",
         Store(_pfad8c).get_user(1)["idp_confirmed_at"] is not None)
 # (Mutation probes: remove `_key_rests` in `verify_api_key` → "rests" red; remove `confirm_idp` in the
@@ -2099,7 +2099,7 @@ r.check("… oidc_session_max_unverified_hours=0 switches the limit off", c_ob0.
 
 # ── Schema 11, intermediate state: `failure_series` without column `art` is recreated (R2-3) ────────
 _path_z = str(Path(tempfile.mkdtemp()) / "between.db")
-Store(_path_z).db.close()
+Store(_path_z).close()
 _raw = sqlite3.connect(_path_z)
 _raw.execute("DROP TABLE failure_series")
 _raw.execute("CREATE TABLE failure_series (folded TEXT PRIMARY KEY, count INTEGER NOT NULL, "
@@ -2110,11 +2110,11 @@ _z = Store(_path_z)
 _columns = {z["name"] for z in _z._all("PRAGMA table_info(failure_series)")}
 r.check("Intermediate state: a `failure_series` without `art` is recreated instead of breaking every sign-in",
         "kind" in _columns and _z.increase_failure_series("x", "password") == 1, str(_columns))
-_z.db.close()
+_z.close()
 
 # ── Schema 11: a file from 0.20.x gets the table at startup ───────────────────────────────
 _path = str(Path(tempfile.mkdtemp()) / "alt.db")
-Store(_path).db.close()
+Store(_path).close()
 _raw = sqlite3.connect(_path)
 _raw.execute("DROP TABLE failure_series")
 _raw.execute("PRAGMA user_version = 10")
@@ -2125,7 +2125,7 @@ _tables = {z["name"] for z in _new._all("SELECT name FROM sqlite_master WHERE ty
 r.check("Schema 10 → today: `failure_series` is created at startup, the stamp follows",
         "failure_series" in _tables
         and int(_new.db.execute("PRAGMA user_version").fetchone()[0]) == Store.SCHEMA_VERSION >= 11)
-_new.db.close()
+_new.close()
 os.remove(_path)
 
 sys.exit(r.done())

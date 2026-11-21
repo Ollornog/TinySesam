@@ -345,7 +345,7 @@ def fixture_problems(path: str) -> list:
     """Migrate the fixture at `path` (a fresh schema-14 file) and list what is wrong afterwards (empty = right)."""
     before = _audit(path)
     store, log = _start(path)
-    store.db.close()
+    store.close()
     problem = []
     afterwards = _audit(path)
     if _stamp(path) != Store.SCHEMA_VERSION:
@@ -386,7 +386,7 @@ r.check("precondition: the old-vocabulary detector (independent of `_vocabulary.
         sum(1 for f in old_check if f) >= 80, str(sum(1 for f in old_check if f)))
 
 store_a, log_a = _start(path_a)
-store_a.db.close()
+store_a.close()
 afterwards_a = _audit(path_a)
 r.check("(A) the start migrates: the current stamp and a log line that says something was rewritten",
         _stamp(path_a) == Store.SCHEMA_VERSION and MESSAGE in log_a, f"{_stamp(path_a)} {log_a[-300:]!r}")
@@ -548,7 +548,7 @@ def collision(path: str):
         res = ("no error", "")
     except ConfigError as e:
         res = (type(e).__name__, str(e.__cause__))
-    app.store.db.close()
+    app.close()
     return res
 
 
@@ -562,15 +562,15 @@ def idempotence_problems(path: str) -> list:
     """Migrate a fresh fixture, then run it again in three ways; list what the second run changed (empty = idempotent)."""
     problem = []
     st, _ = _start(path)
-    st.db.close()
+    st.close()
     s1 = _tables(path)
     st, log2 = _start(path)                                  # (1) an ordinary second start (current stamp)
-    st.db.close()
+    st.close()
     if _tables(path) != s1 or MESSAGE in log2:
         problem.append("second start changed something")
     _raw(path, "PRAGMA user_version = 14;")                 # (2) the step runs again over migrated data
     st, log3 = _start(path)
-    st.db.close()
+    st.close()
     if _tables(path) != s1 or MESSAGE in log3 or _stamp(path) != Store.SCHEMA_VERSION:
         problem.append(f"forced second run changed something ({log3[-120:]!r})")
     st = Store(path)                                         # (3) the step itself: 0 rows, 0 changes on the connection
@@ -579,7 +579,7 @@ def idempotence_problems(path: str) -> list:
         lines = st._vocabulary_english()
     st.db.rollback()
     delta = st.db.total_changes - prior
-    st.db.close()
+    st.close()
     if lines != 0 or delta != 0 or _tables(path) != s1:
         problem.append(f"direct second call: {lines} rows, {delta} changes")
     return problem
@@ -595,11 +595,11 @@ path_b2 = _new_path("b2.db")
 st_b2, log_b2 = _start(path_b2)
 st_b2.audit_log("oidc_revoked", "x", None, "client=wiki reason=group actor=deleted#7")
 st_b2.audit_log("login_fail", "deleted#3", None, "password reason=no_account")
-st_b2.db.close()
+st_b2.close()
 new_b2 = _tables(path_b2)
 _raw(path_b2, "PRAGMA user_version = 14;")
 st_b2, log_b2 = _start(path_b2)
-st_b2.db.close()
+st_b2.close()
 r.check("(B) a file that never held old values: the step run over it (stamp forced back to 14) rewrites nothing",
         _tables(path_b2) == new_b2 and MESSAGE not in log_b2 and len(new_b2[0]) == 2, log_b2[-200:])
 
@@ -628,7 +628,7 @@ def free_text_problems(path: str) -> list:
     """Migrate a fresh fixture with the free-text rows appended; list the rows that were wrongly changed (empty = right)."""
     _load_fixture(path, FREE + [COMPANION])
     st, _ = _start(path)
-    st.db.close()
+    st.close()
     lines = _audit(path)
     new = [(z[2], z[3], z[5]) for z in lines[len(PAIRS):]]
     problem = [f"changed: {old} -> {after}" for old, after in zip(FREE, new[:-1]) if old != after]
@@ -762,13 +762,13 @@ text_api = " ".join(f"{z['event']} {z['username']} {z['detail']}" for z in lines
 r.check("(D) the panel API (`/api/audit`) shows the new spelling for old rows and does not mix: no old event, key or name",
         response.status_code == 200 and len(lines_api) > 20 and not STAYS_OLD.search(text_api)
         and "oidc_revoked" in text_api and "reason=group actor=deleted#7" in text_api, f"{response.status_code} {text_api[-300:]}")
-st_d.db.close()
+st_d.close()
 
 # The address-change conflict on confirmation is the `own_events` check above (`on_confirmation=1` / `beim_bestaetigen=1`).
 # The trigger of a file that was rolled back keeps the OLD message; the caller must not depend on the text.
 path_t = _new_path("t.db")
 t0 = _setup(path_t)
-t0.store.db.close()
+t0.close()
 for name_, sql_ in _read(path_t, "SELECT name, sql FROM sqlite_master WHERE type='trigger' AND name LIKE 'trg_users_identifier_%'"):
     _raw(path_t, f"DROP TRIGGER {name_};", sql_.replace("tinysesam: identifier taken", "tinysesam: kennung vergeben"))
 def replace_not(self):                                                   # a start that cannot rewrite the trigger
@@ -788,7 +788,7 @@ r.check("(D) a trigger that still carries the OLD message (`kennung vergeben`) a
 path_e = _new_path("e.db")
 e0 = _setup(path_e)
 e0.create_user("anna", password=PW)
-e0.store.db.close()
+e0.close()
 _raw(path_e, ("INSERT INTO audit(ts, event, username, ip, detail) VALUES (?,?,?,?,?)",
               (int(time.time()), "oidc_widerruf", "anna", None, "client=wiki grund=gruppe akteur=gelöscht#7")))
 _raw(path_e, ("INSERT INTO failure_series(folded, kind, count, since, last_seen) VALUES ('anna', 'pin_folge', 2, 1, 2)"))
@@ -818,7 +818,7 @@ if start_e == "ok":
     r.check("(E) … and the old rows are read in the new spelling: `own_events`, the display mapping",
             [x["event"] for x in e1.own_events(1, 10)] == ["oidc_revoked"]
             and V.audit_line_new(lines_e[0])["detail"] == "client=wiki reason=group actor=deleted#7")
-    e1.store.db.close()
+    e1.close()
 
 # ═══ (F) New code writes only the new spelling ═════════════════════════════════════════════════════════
 path_f = _new_path("f.db")
@@ -859,7 +859,7 @@ r.check("(F) the series kind and the method of a failed PIN step are written as 
         "in the tables)",
         not _read(path_f, "SELECT 1 FROM failure_series WHERE kind='pin_folge' UNION ALL "
                            "SELECT 1 FROM login_attempt WHERE method='pin_folge'"))
-f.store.db.close()
+f.close()
 
 # ═══ (G) Mutations: every guard turns the suite red when it is broken ═══════════════════════════════
 # Each one breaks a COPY of a table or one function for the length of the block (never the source) and runs the same
@@ -903,7 +903,7 @@ mutated("`pin_folge` removed from KINDS_OLD (the series kinds stay old)", withou
 def trigger_problems() -> list:
     p = fresh_fixture()
     st, _ = _start(p)
-    st.db.close()
+    st.close()
     problem = []
     texts = trigger_texts(p)
     if len(texts) != 2 or not all("tinysesam: identifier taken" in t and "kennung vergeben" not in t for t in texts):
@@ -1022,7 +1022,7 @@ def read_path_problems() -> list:
         problems.append("own_events shows the rejection")
     if not stx.source_mail_since(u, 0):
         problems.append("source_mail_since misses the old row")
-    stx.db.close()
+    stx.close()
     return problems
 
 

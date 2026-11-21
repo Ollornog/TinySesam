@@ -101,14 +101,14 @@ auth0.store.add_resource_unlock("plaintext-token", "file-7", 4102444800)
 auth0.store.db.execute("PRAGMA user_version = 0")            # state of a 0.17.0 file
 auth0.store.db.execute("UPDATE resource_unlock SET token='plaintext-token'")
 auth0.store.db.commit()
-auth0.store.db.close()
+auth0.close()
 
 raw = sqlite3.connect(old_db)
 before = raw.execute("SELECT count(*) FROM resource_unlock").fetchone()[0]
 raw.close()
 r.check("precondition: the old file carries a plain-text entry", before == 1, f"{before}")
 
-Store(old_db).db.close()                                      # = upgrade to 0.18.0
+Store(old_db).close()                                      # = upgrade to 0.18.0
 raw = sqlite3.connect(old_db)
 afterwards = raw.execute("SELECT count(*) FROM resource_unlock").fetchone()[0]
 stamp = raw.execute("PRAGMA user_version").fetchone()[0]
@@ -121,12 +121,12 @@ r.check("… and the file then carries the schema stamp", stamp == Store.SCHEMA_
 # A hashed unlock must NOT be hit by the cleanup (otherwise every start clears it out).
 auth1, db1 = fresh(resource_locks_enabled=True)
 auth1.store.add_resource_unlock("fresh-token", "file-8", 4102444800)
-auth1.store.db.close()
+auth1.close()
 s2 = Store(db1)
 r.check("hashed unlock survives a restart",
         s2.is_resource_unlocked("fresh-token", "file-8"),
         "the cleanup reaches too far")
-s2.db.close()
+s2.close()
 
 # ---------------------------------------------------------------- Schema 9 → 10
 # What the migration to schema 10 does with existing data — on a file in the state of schema 9
@@ -163,7 +163,7 @@ _s10_old.store.audit_log("user_disable", "boss", None, f"uid={_s10_ids['altsperr
 _s10_old.store.audit_log("user_disable", "boss", None, f"uid={_s10_ids['again']}")
 _s10_old.store.audit_log("user_enable", "boss", None, f"uid={_s10_ids['again']}")
 _s10_emile = _s10_old.store.create_user("Émile", None, "Emile@Bücher.example")
-_s10_old.store.db.close()
+_s10_old.close()
 # The file in the state of schema 9: the schema without the bucket columns (indexes and triggers are only
 # created by `_migrate`), the data via ATTACH from the file just filled. Not via `ALTER TABLE …
 # DROP COLUMN`: when removing the last column SQLite searches backwards in the text for the comma before it
@@ -246,7 +246,7 @@ r.check("S-1 (b): every existing row gets its counting bucket, indexes and trigg
              "trg_users_folded_name", "trg_users_folded_mail"} <= _s10_objects
         and (_s10.store.account_by_bucket("émile") or {"id": None})["id"] == _s10_emile,
         f"without bucket {_s10_without}, Émile {(_s10_e['folded_name'], _s10_e['folded_mail'])}, objects {_s10_objects}")
-_s10.store.db.close()
+_s10.close()
 # Whoever changes the folding in `norm_identifier` raises the schema — then startup recomputes ALL buckets
 # (`Store.BUCKET_SCHEMA`), not just the missing ones. Simulated with an outdated bucket in a
 # file whose stamp is below `BUCKET_SCHEMA`.
@@ -260,13 +260,13 @@ _s10_new = Store(_s10_db)
 r.check("S-1 (b): … a stamp below BUCKET_SCHEMA also recomputes existing buckets",
         _s10_new.get_user(_s10_emile)["folded_name"] == "émile",
         f"{_s10_new.get_user(_s10_emile)['folded_name']}")
-_s10_new.db.close()
+_s10_new.close()
 _s10_second = Store(_s10_db)
 r.check("… a second start changes nothing more (stamp current, no further lock, no mark)",
         int(_s10_second.db.execute("PRAGMA user_version").fetchone()[0]) == Store.SCHEMA_VERSION
         and _s10_second.get_user(_s10_ids["again"])["disabled"] == 1
         and _s10_second.get_user(_s10_ids["pending"])["email_verified"] == 1)
-_s10_second.db.close()
+_s10_second.close()
 
 # ---------------------------------------------------------------- downgrade window
 # An older version opens a schema-10 file, warns and keeps writing; it leaves the stamp
@@ -287,7 +287,7 @@ for _name in ("before", "hin"):                              # open signups from
     _rs_today.store.set_disabled(_uid, True)
     _rs_ids[_name] = _uid
     _rs_links[_name] = _rs_today.create_magic_token("verify_email", user_id=_uid, email=f"{_name}@example.org")
-_rs_today.store.db.close()
+_rs_today.close()
 
 _rs_raw = sqlite3.connect(_rs_cfg["db_path"])                # from here on: the older version
 _rs_now = int(time.time())
@@ -358,7 +358,7 @@ r.check("downgrade: … the address of an open signup of the older version carri
 r.check("downgrade: … the high-water mark is at the latest audit row after startup",
         _rs_until is not None and _rs_max is not None and int(_rs_until) == int(_rs_max),
         f"watermark {_rs_until}, latest row {_rs_max}")
-_rs.store.db.close()
+_rs.close()
 # Edge case: the high-water mark is above the audit log's counter (table emptied by hand and the
 # counter reset, setting set by hand). Then startup reads everything instead of skipping every new row
 # up to the old height.
@@ -378,7 +378,7 @@ r.check("downgrade: … a high-water mark above the audit log counter skips no l
         _rs_up.get_user(_rs_late)["disabled"] == 2
         and int(_rs_up.get_setting(getattr(Store, "PANEL_WATERLINE", "panel_lock_until"))) < 1000000000,
         f"{dict(_rs_up.get_user(_rs_late))}")
-_rs_up.db.close()
+_rs_up.close()
 
 # ---------------------------------------------------------------- effort of the migration steps
 # The first version searched the whole audit log for the latest row of EVERY account with `disabled=1`
@@ -436,7 +436,7 @@ for _a, _g in ((20000, 10), (20000, 200), (2000, 10)):
     _rs_mess[(_a, _g, "Upgrade")] = _rs_steps(_st)
     _rs_mess[(_a, _g, "Panel")] = _st._one("SELECT COUNT(*) AS n FROM users WHERE disabled=2")["n"]
     _rs_mess[(_a, _g, "Restart")] = _rs_steps(_st)
-    _st.db.close()
+    _st.close()
 # Per additional locked account (190 more panel locks and 190 more open signups) the
 # upgrade may cost at most a small, fixed amount more — not a pass through the audit log
 # or through the one-time tokens (20,000 rows each). Measured with the previous version: about 1,500
@@ -600,7 +600,7 @@ was_argon = passwords._ARGON
 auth_a, db_a = fresh()
 uid_a = auth_a.create_user("altkonto", password="whatever12345")
 auth_a.store.set_password_hash(uid_a, ARGON_HASH)
-auth_a.store.db.close()
+auth_a.close()
 passwords._ARGON = False
 passwords._ARGON2_REPORTED["ja"] = False
 try:

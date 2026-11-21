@@ -178,7 +178,7 @@ _old = Store(_old_db)
 _old._exec("DROP TRIGGER trg_users_folded_name")
 _old._exec("CREATE TRIGGER trg_users_folded_name AFTER UPDATE OF username ON users WHEN NEW.folded_name "
            "IS OLD.folded_name BEGIN UPDATE users SET folded_name = NULL WHERE id = NEW.id; END")
-_old.db.close()
+_old.close()
 _new = Store(_old_db)
 _sql = _new._one("SELECT sql FROM sqlite_master WHERE name='trg_users_folded_name'")["sql"]
 r.check("A: a trigger from an older version is replaced at start",
@@ -387,7 +387,7 @@ _st = Store(_db_d)
 oe1, oe2 = _raw(_st, "Özlem"), _raw(_st, "özlem")
 boss, eve = _raw(_st, "chef", "chef@example.com"), _raw(_st, "chef@example.com")
 ubu, uxn = _raw(_st, "ubu", "u@bücher.example"), _raw(_st, "uxn", "u@xn--bcher-kva.example")
-_st.db.close()
+_st.close()
 
 
 def _start(path):

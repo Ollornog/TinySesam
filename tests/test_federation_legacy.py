@@ -224,7 +224,7 @@ path = _db()
 m1 = _ldap(path)
 _alternate(m1, days=40)
 before = m1.store.get_setting("federation_since:ldap")
-m1.store.db.close()
+m1.close()
 m2 = _ldap(path)
 r.check("Marker once only: a second start does not set it anew (otherwise every restart would grant a grace period)",
         m2.store.get_setting("federation_since:ldap") == before, f"{before} → {m2.store.get_setting('federation_since:ldap')}")
@@ -707,7 +707,7 @@ sm.create_service("svc1")
 b1, p1 = sm.create_user("b1"), sm.create_user("p1")
 sm.store.link_federated("ldap", "u-b1", b1, now())
 sm.store.link_federated("ldap", f"{Store.WITHOUT_IDENTIFIER}{p1}", p1, now())
-sm.store.db.close()
+sm.close()
 with Recording() as log:
     sm = _ldap(path)
 line = log.lines("without a binding to an identifier")
@@ -718,14 +718,14 @@ r.check("Startup message: 3 accounts without identifier (service account and bou
 sm.ldap = Directory({"a1": {"id": "u-a1"}, "p1": {"id": "u-p1"}})
 sm.federation_bind_existing("ldap", apply=True)
 sm.store._exec("DELETE FROM users WHERE id=?", (a2,))
-sm.store.db.close()
+sm.close()
 with Recording() as log:
     sm = _ldap(path)
 r.check("… after the existing-account binding: no line any more", not log.lines("without a binding to an identifier"),
         str(log.lines("without a binding")))
 sm.create_user("late")
 _alternate(sm, days=31)
-sm.store.db.close()
+sm.close()
 with Recording() as log:
     sm = _ldap(path)
 r.check("… after the grace period it is silent (the door is closed, every rejection reports itself)",
@@ -733,7 +733,7 @@ r.check("… after the grace period it is silent (the door is closed, every reje
 path = _db()
 ss = _saml(path)
 ss.create_user("s1")
-ss.store.db.close()
+ss.close()
 with Recording() as log:
     _saml(path)
 r.check("SAML startup message names the mapping",
@@ -777,7 +777,7 @@ r.check("Existing accounts: registered and self-renamed ones carry the marker, a
 u = _sign_in(new, "sig", {"id": "u-sig"})
 r.check("… and the back-filled account does not bind via the name", u is None)
 new.store._exec("INSERT INTO audit(ts, event, username) VALUES (?,?,?)", (now(), "username_changed", "op"))
-new.store.db.close()
+new.close()
 again = _ldap(path)
 r.check("Second start: idempotent, the back-fill does not run again",
         again.store._one("SELECT name_self_chosen AS f FROM users WHERE username='op'")["f"] == 0
@@ -831,7 +831,7 @@ r.check("… the back-filled OIDC account does not bind via the name over LDAP",
 u = _sign_in(bq, "nb", {"id": "u-nb"})
 r.check("… a bound account keeps signing in (situation 1)", u is not None and u["id"] == _bq["nb"])
 bq.store._exec("UPDATE users SET name_source = NULL WHERE username = 'ld'")
-bq.store.db.close()
+bq.close()
 bq2 = _ldap(path)
 r.check("Second start: the back-fill does not run again (marker set)",
         bq2.store._one("SELECT name_source AS q FROM users WHERE username='ld'")["q"] is None

@@ -102,7 +102,7 @@ auth = TinySesam(TinySesamConfig(
 ))
 auth.ensure_admin("admin", "startpasswort")   # legt Admin an, NUR wenn der Store leer ist
 
-app = FastAPI()
+app = FastAPI(lifespan=auth.lifespan)           # geordnetes Herunterfahren, siehe unten
 app.include_router(auth.router())              # /auth/* + Login-UI
 
 @app.get("/")
@@ -111,6 +111,13 @@ def home(user = Depends(auth.require_user)):    # geschützt: eingeloggt (inkl. 
 ```
 
 Nicht-eingeloggte Browser werden auf `/auth/login` umgeleitet; API-Clients (Accept ≠ HTML) bekommen `401`.
+
+**Herunterfahren.** TinySesam verschickt Mails und Hinweise aus Hintergrund-Workern, die in seine Datenbank schreiben.
+`auth.close()` nimmt keine neuen Hintergrundjobs mehr an, lässt die wartenden zu Ende laufen (Frist `timeout`, 10 s)
+und schließt dann die Datenbank — idempotent, `False`, wenn bei Fristende noch ein Job lief (die Datenbank bleibt dann
+offen). `auth.lifespan` ruft es beim Herunterfahren von FastAPI auf; mit eigenem Lifespan verschachteln
+(`async with auth.lifespan(app): yield`); in einem Skript oder Test `with TinySesam(cfg) as auth:`. Nie
+`auth.store.db` selbst schließen: Ein Worker, der gerade in SQLite steckt, bringt den Prozess zum Absturz.
 
 ## Login-Kennung
 
@@ -1051,6 +1058,11 @@ Nach dem Vorbild von Authelia/Fail2Ban — die Schwellen sind **im Admin-Panel /
   (`group_match="exact"`). Teilstring-Vergleich (nötig für LDAP-`memberOf`-DNs, dort automatisch)
   würde den Schlüssel `admin` auch auf eine Gruppe `nicht-admin` passen lassen.
 - **Audit-Log:** Login / Logout / Fehlversuche in der DB (`store.recent_audit()`), fürs Admin-Panel.
+- **Antwort-Header:** Jede eingebaute Seite läuft unter einer strengen Nonce-CSP (`csp="strict"`) mit
+  `X-Frame-Options: SAMEORIGIN` und `Cross-Origin-Opener-Policy: same-origin`; jede Antwort trägt `nosniff`,
+  `Referrer-Policy: same-origin` und `no-store`; die Abmeldung schickt `Clear-Site-Data: "cache"`. Mit
+  `csp_report=True` melden Browser Verstöße an `/auth/csp-report`, je eine gedrosselte Zeile im Sicherheitslog —
+  an Dritte geht nichts.
 - **CSRF:** Double-Submit-Token (`csrf_enabled`, Default an) auf allen state-ändernden POSTs — die
   eingebauten Formulare/JS erledigen das automatisch (`_csrf`-Feld bzw. `X-CSRF-Token`-Header);
   API-Key-Requests sind ausgenommen (kein Cookie-Risiko). Zusätzlich zu `SameSite=Lax`.
@@ -1111,13 +1123,22 @@ Herkunfts-Attestation und eine SBOM; beide liegen auch neben dem Abbild in der R
 
 ```bash
 gh attestation verify oci://ghcr.io/ollornog/tinysesam:v0.25.7 --owner Ollornog
-gh attestation verify tinysesam-0.25.7-py3-none-any.whl --owner Ollornog   # auch Wheel und sdist
 gh attestation verify oci://ghcr.io/ollornog/tinysesam:v0.25.7 --owner Ollornog \
     --predicate-type https://spdx.dev/Document                             # die SBOM
+# Wheel und sdist (von PyPI oder der Release-Seite): der isolierte Builder, der Tag und ihre SBOM
+gh attestation verify tinysesam-0.25.7-py3-none-any.whl --owner Ollornog \
+    --signer-workflow Ollornog/TinySesam/.github/workflows/build-provenance.yml --source-ref refs/tags/v0.25.7
+gh attestation verify tinysesam-0.25.7.tar.gz --owner Ollornog \
+    --signer-workflow Ollornog/TinySesam/.github/workflows/build-provenance.yml \
+    --predicate-type https://spdx.dev/Document
 ```
 
 Geht das durch, heisst das: gebaut vom Release-Workflow dieses Repos, aus dem Commit, den die
-Attestation nennt. Kein Schlüssel, den man herausgeben — und keiner, den man verlieren kann: Die
+Attestation nennt. Wheel und sdist kommen aus einem eigenen Builder (SLSA Build L3, ab dem Release nach 0.25.7): Der
+wiederverwendbare Workflow `build-provenance.yml` baut den Tag neu, hält seine Bytes gegen die, die das Release
+ausliefert, und signiert unter eigenem Namen — `--signer-workflow` nagelt ihn fest. Ihre SBOM (auch als
+`tinysesam-sbom.spdx.json` am GitHub-Release) nennt TinySesam und die Abhängigkeiten, die pip am Release-Tag dafür
+aufgelöst hat (Linux, Python 3.13, ohne Extras). Kein Schlüssel, den man herausgeben — und keiner, den man verlieren kann: Die
 Signatur hängt an der Identität des Workflows.
 
 Es läuft als **Nicht-root** (uid 1000), bringt einen `HEALTHCHECK` auf `/healthz` mit und startet direkt das
@@ -2104,7 +2125,7 @@ Jeder Python-Block beider Dateien läuft in der Testsuite, und jeder genannte Na
 
 ## Status
 
-**102 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
+**104 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
 (`tests/test_matrix.py`).
 
 Gebaut und getestet: Passwort/TOTP/Sitzungen/Rollen, Remember-me, Step-up und per-Route-MFA,

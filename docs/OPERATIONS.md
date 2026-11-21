@@ -29,7 +29,13 @@ exceptions are listed explicitly below (Redis, security log): there a *throttle*
 
 **Healthcheck.** The gateway (`python -m tinysesam.gateway`) ships `/healthz`: reachable without
 sign-in, also over HTTP with `https_mode="force"`, answer 200 `{"status": "ok"}` or 503
-`{"status": "degraded"}` — the error text stays in the log, not on the network. If you embed
+`{"status": "degraded"}` — the error text stays in the log, not on the network, and so does the version (since
+T-52, ASVS 13.4.6; `TINYSESAM_HEALTH_VERSION=1` adds `"version"` for monitoring that reads it).
+
+**Shutdown.** The gateway closes in order: at the end of the process its lifespan calls `auth.close()` — background
+jobs (mails, notices, the OIDC re-check) finish within 10 s, then the database closes. An embedding app does the same
+with `FastAPI(lifespan=auth.lifespan)`; never close `auth.store.db` directly (a worker inside SQLite crashes the
+process, T-67). If you embed
 TinySesam as a library, build the same check with `auth.store.write_probe()` (internals, tier C —
 without commitment, like everything under `auth.store`): it raises the sqlite3 exception if no commit
 goes through. A `SELECT 1` is not enough — it also succeeds on a read-only file.

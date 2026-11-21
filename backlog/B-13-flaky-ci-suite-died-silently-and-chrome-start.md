@@ -41,7 +41,7 @@ Production never closes the connection under a running worker — only the tests
 there is no close method); at the end of the process `concurrent.futures` joins the outbox workers before the
 interpreter tears anything down. 150 processes that queue five notices each and end right away: 0 crashes, all
 750 `access_notice` rows written. Only code that closes `auth.store.db` itself (the tests) can hit the race.
-A public, safe way to shut down is open as [T-67](T-67-orderly-shutdown-close.md).
+A public, safe way to shut down came with [T-67](T-67-orderly-shutdown-close.md) (`TinySesam.close()`, 2026-11-21).
 
 ## Cause 3 — a dialog wait in the browser test raced
 Seen on this fix's own PR (job `repeat`): “the dialog did not close (at …/auth/account)”. `Page.answer()` clicked

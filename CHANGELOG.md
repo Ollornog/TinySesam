@@ -15,6 +15,49 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
   page used to make it run out under load, 4 of 40 runs), and a wait that runs out names the error its condition
   threw.
 
+### Added — orderly shutdown, response hardening for L3, isolated builder with SBOM (T-67, T-52, T-55)
+
+- **`TinySesam.close()` and `auth.lifespan` (T-67, from B-13).** The background outboxes (mails, notices, the OIDC
+  re-check) write to the store's one `sqlite3` connection from worker threads; closing it under a running job crashed
+  the process with a segmentation fault (`auth.store.db.close()`, measured in `tests/test_close.py`). `close(timeout=10)`
+  refuses new background jobs (logged, never raised — a request in flight still gets its answer), waits for the queued
+  ones within the deadline, then closes the database under the store lock (`Store.close()`). Idempotent; `False`
+  when a job was still running at the deadline — the database then stays open. `FastAPI(lifespan=auth.lifespan)`
+  calls it at shutdown (in a worker thread, so the event loop keeps serving the background tasks it waits for);
+  `with TinySesam(cfg) as auth:` in scripts. The gateway uses the lifespan. The suites call `close()` instead of
+  closing the connection by hand; the drain in `tests/_starter.py` stays as a safety net.
+- **`Cross-Origin-Opener-Policy: same-origin` (T-52, ASVS 3.4.8)** on every HTML response while `csp='strict'`, like
+  `X-Frame-Options`: another origin that opened the sign-in in a window, or was opened by it, gets no handle on it.
+  No built-in flow uses a popup (OIDC, SAML and the gate redirect in the same tab; WebAuthn does not need the opener).
+  An own policy or `csp='off'` leaves it to the proxy or the app.
+- **CSP reports to TinySesam itself: `csp_report` (T-52, ASVS 3.4.7), off by default.** With `csp='strict'` the policy
+  gains `report-uri`/`report-to` for `<prefix>/auth/csp-report`, pages carry `Reporting-Endpoints`, and the endpoint
+  writes one `CSP violation directive=… page=… blocked=… disposition=… ip=…` line per report to the
+  `tinysesam.security` log — the page path without its query (sign-in and reset links carry tokens there), only the
+  origin or keyword of the blocked resource, every field filtered so a report cannot forge a line. At most 10 reports
+  a minute per IP (429), 60 log lines a minute in total, 8 KiB per body (413), JSON report types only (415). Nothing
+  goes to a third party; the policy is not loosened. With an own policy the switch does nothing.
+- **`Clear-Site-Data: "cache"` on every sign-out (T-52, ASVS 14.3.1)**, from `auth.logout()` and so from every route
+  that uses it: the browser drops cached pages of the origin that a shared computer could show again. Deliberately
+  not `"storage"` (it would wipe the app's own data and the light/dark choice; TinySesam keeps nothing there) and not
+  `"cookies"` (it would sign out every app under the registrable domain).
+- **Isolated builder for wheel and sdist: SLSA Build L3 and an SBOM (T-55).** The reusable workflow
+  `.github/workflows/build-provenance.yml` rebuilds the commit independently, checks its bytes against the checksums of
+  the shipped build (the build is bit-reproducible, B4-8), generates an SPDX SBOM with Syft (the same tool and format
+  as for the images) and — only for a tag — attests provenance and SBOM in a job that runs no code of the repo. The
+  certificate names that workflow as the signer: verify with `gh attestation verify <file> --owner Ollornog
+  --signer-workflow Ollornog/TinySesam/.github/workflows/build-provenance.yml`. The SBOM is also attached to the
+  GitHub release (`tinysesam-sbom.spdx.json`). On every pull request it runs as part of the dry run, without attesting.
+
+### Changed
+
+- **Gateway: `/healthz` no longer names the version (T-52, ASVS 13.4.6).** Answer `{"status": "ok"}` /
+  `{"status": "degraded"}`; `TINYSESAM_HEALTH_VERSION=1` brings the version back for monitoring that reads it. The
+  image probe reads the version from the package inside the image instead.
+- **Release: wheel and sdist are attested by `build-provenance.yml`, no longer by `release.yml`.** A verification
+  that pinned the old signer (`--signer-workflow …/release.yml`) has to name the new one from the next release on;
+  the image attestations are unchanged.
+
 ### Security — attack round B (2026-11-21): forward-auth target, TOTP setup, step-up, redirects
 
 - **Forward auth: a client-supplied `X-Original-URL` no longer chooses the application (high).** `/auth/forward`

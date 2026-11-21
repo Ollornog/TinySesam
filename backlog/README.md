@@ -8,7 +8,7 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 ## Meilensteine
 
 * ☐ **[M-1](M-1-api-stable-1-0.md)** 1.0 — API stable enough for PyPI — 14/14 erledigt
-* ☐ **[M-2](M-2-after-1-0.md)** After 1.0 — keeping the published package maintained — 48/61 erledigt
+* ☐ **[M-2](M-2-after-1-0.md)** After 1.0 — keeping the published package maintained — 51/61 erledigt
 * ☑ **[M-3](M-3-gate-in-front-of-third-party-apps.md)** Gate in front of third-party apps — fast, sign in once, sign out cleanly — 8/8 erledigt
 
 ## Aufgaben
@@ -64,10 +64,10 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 * ☐ **[T-49](T-49-oidc-max-age-auth-time-for-re-authentication.md)** OIDC: max_age / auth_time for re-authentication · M-2
 * ☐ **[T-50](T-50-session-lifetime-justify-against-nist-sp-800-63b-4.md)** Session lifetime: justify against NIST SP 800-63B-4, document parallel sessions · M-2
 * ☐ **[T-51](T-51-sign-in-link-lifetimes-magic-link-10-min-admin-lin.md)** Sign-in link lifetimes: magic link 10 min, admin link at most 24–72 h · M-2
-* ☐ **[T-52](T-52-response-hardening-for-l3-coop-csp-reporting-clear.md)** Response hardening for L3: COOP, CSP reporting, Clear-Site-Data, textContent, /healthz version · M-2
+* ☑ **[T-52](T-52-response-hardening-for-l3-coop-csp-reporting-clear.md)** Response hardening for L3: COOP, CSP reporting, Clear-Site-Data, textContent, /healthz version · M-2
 * ☑ **[T-53](T-53-gate-token-explicit-type-and-separate-key-before-t.md)** Gate token: explicit type and separate key before the OAuth AS signs JWTs · M-2
 * ☑ **[T-54](T-54-vault-bind-ciphertexts-to-their-row-aad-with-user.md)** Vault: bind ciphertexts to their row (AAD with user_id and column) · M-2
-* ☐ **[T-55](T-55-slsa-build-l3-and-an-sbom-for-wheel-and-sdist.md)** SLSA Build L3 and an SBOM for wheel and sdist · M-2
+* ☑ **[T-55](T-55-slsa-build-l3-and-an-sbom-for-wheel-and-sdist.md)** SLSA Build L3 and an SBOM for wheel and sdist · M-2
 * ☐ **[T-56](T-56-webauthn-user-verification-at-registration-random.md)** WebAuthn: user verification at registration, random user handle · M-2
 * ☐ **[T-57](T-57-totp-accept-at-most-one-step-back-switch-totp-wind.md)** TOTP: accept at most one step back (switch totp_window) · M-2
 * ☑ **[T-58](T-58-caddy-templates-a-header-missing-from-the-auth-answer.md)** Caddy templates: a header missing from the auth answer reaches the app as placeholder text · M-2
@@ -79,7 +79,7 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 * ☑ **[T-64](T-64-top-bar-and-favicon-refresh.md)** Top bar and favicon refresh: logo, name, links, account menu, light/dark, phone · M-2
 * ☑ **[T-65](T-65-ai-guide-agents-md-and-a-skill-for-app-builders.md)** AI guide: AGENTS.md for contributors and a skill for app builders · M-2
 * ☑ **[T-66](T-66-app-passwords-for-webdav-caldav-and-git-at-the-gate.md)** App passwords for WebDAV, CalDAV/CardDAV and Git at the gate · M-2
-* ☐ **[T-67](T-67-orderly-shutdown-close.md)** Orderly shutdown: a public close() that drains the outboxes and refuses new jobs · M-2
+* ☑ **[T-67](T-67-orderly-shutdown-close.md)** Orderly shutdown: a public close() that drains the outboxes and refuses new jobs · M-2
 * ☐ **[T-68](T-68-dpop-for-service-tokens.md)** DPoP for service tokens — bind a service's access token to its key (RFC 9449) · M-2
 * ☑ **[T-69](T-69-attack-round-a-oauth-services-app-passwords-keys.md)** Attack round A (2026-11-21) — OAuth, services, app passwords, keys · M-2
 

@@ -183,7 +183,7 @@ def _dump(path: str) -> list:
 def _start(path: str):
     """Open the file with `Store` (that runs the migration) — (store, log text); the connection is closed."""
     store, log = _record(lambda: Store(path))
-    store.db.close()
+    store.close()
     return log
 
 

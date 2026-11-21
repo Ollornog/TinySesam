@@ -131,7 +131,7 @@ assert not auth_s.store.db.in_transaction
 assert auth_s.store.get_setting("probe_liegengeblieben") is None, \
     "the leftovers of a failed writer were committed along instead of discarded"
 ok("reserve_attempt discards a leftover transaction instead of failing on it")
-auth_s.store.db.close()
+auth_s.close()
 os.remove(db_s)
 
 # Guard over the list above: it names today's write paths. A new writer with

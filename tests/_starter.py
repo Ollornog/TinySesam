@@ -38,6 +38,9 @@ do. So here, in the test process, every `sqlite3` connection is created with `_D
 whose `close()` first waits until every outbox has finished its queued jobs. The guard
 `tests/test_runner.py` (K) checks it. A suite started directly (`python tests/test_x.py`) closes
 without waiting, as before.
+Since T-67 the library has its own orderly shutdown (`TinySesam.close()`: refuse new jobs, drain, close the store
+under its lock) and the suites call it instead of `auth.store.db.close()`; `tests/test_close.py` proves it without
+this file. The drain here stays as a safety net for a suite that closes a connection by hand.
 """
 from __future__ import annotations
 

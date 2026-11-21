@@ -432,7 +432,7 @@ auth_old.create_user("existing", password="dummy12345")
 old_token = auth_old.store.create_session(
     auth_old.store.get_user_by_name("existing")["id"], 3600, True, "password")
 old_handle = hashlib.sha256(old_token.encode()).hexdigest()
-auth_old.store.db.close()
+auth_old.close()
 
 # back to the format before 0.18.0: the column is called `token` and holds the plain text
 raw = _sq.connect(old_path)
@@ -481,7 +481,7 @@ r.check("the check saw a WAL file at all",
 
 # An existing, too open database is NOT rewritten (a deliberate group share is the
 # operator's decision) — but it is named loudly.
-auth_d.store.db.close()
+auth_d.close()
 _os.chmod(path, 0o644)
 buffer = io.StringIO()
 check = logging.StreamHandler(buffer)
@@ -1030,7 +1030,7 @@ stamped = int(st.db.execute("PRAGMA user_version").fetchone()[0] or 0)
 r.check("a fresh database carries the schema version",
         stamped == Store.SCHEMA_VERSION and stamped > 0,
         f"user_version={stamped}, expected {Store.SCHEMA_VERSION}")
-st.db.close()
+st.close()
 
 # A file from the future must speak up.
 raw_st = _sq.connect(stamp_path)
@@ -2226,7 +2226,7 @@ tok_n = auth_n.store.create_session(uid_n, 3600, True, "password")
 now_n = _store_mod.now()
 auth_n.store._exec("UPDATE session SET expires_at=? WHERE token_hash=?",
                    (now_n - 60, auth_n.store.session_hash(tok_n)))
-auth_n.store.db.close()
+auth_n.close()
 _old_clock = _store_mod._CLOCK
 _store_mod._CLOCK = _store_mod._Clock(wall=lambda: _real() - 3600)
 _clock_log = io.StringIO()
@@ -2238,7 +2238,7 @@ try:
             st_n.get_session(tok_n) is None, "the restart forgot the deadline")
     r.check("…and the lag of the system clock appears in the log",
             "system clock" in _clock_log.getvalue(), _clock_log.getvalue()[:200])
-    st_n.db.close()
+    st_n.close()
 finally:
     _store_mod._CLOCK = _old_clock
     logging.getLogger("tinysesam").removeHandler(_clock_h)
@@ -2264,7 +2264,7 @@ def _restart_after_2h(secure):
     tok = a.store.create_session(uid, 1800, False, "password")
     _wall_n[0] = _T + 7200
     secure(a.store)
-    a.store.db.close()
+    a.close()
     _store_mod._CLOCK = _store_mod._Clock(wall=lambda: _T - 365 * 86400)
     a.store = _store_mod.Store(a.cfg.db_path)
     applies = (a.peek_magic(raw, purpose="login") is not None, a.store.get_session(tok) is not None)
@@ -2274,7 +2274,7 @@ def _restart_after_2h(secure):
     a.store.CLOCK_SECURE_SEC = 0
     a.create_user("after-dem-boot")
     state = int(a.store.get_setting(a.store.CLOCK_STATE) or 0)
-    a.store.db.close()
+    a.close()
     return applies + (state,)
 
 
@@ -2393,7 +2393,7 @@ _st23.set_setting("x", "1")
 r.check("…and an ordinary write access saves clock_state along again",
         int(_st23.get_setting(_st23.CLOCK_STATE)) > _old23,
         f"clock_state stayed {int(_st23.get_setting(_st23.CLOCK_STATE)) - _store_mod.now()} s behind")
-_st23.db.close()
+_st23.close()
 # (Mutation probe: remove the condition `0 <=` in `Store._fresh` → both red.)
 
 
@@ -2434,7 +2434,7 @@ r.check("…and the first then no longer — exactly one wins",
 st_a.put_flow("oidc:simple", {"x": 1})
 r.check("without a race the flow comes out exactly once",
         st_a.pop_flow("oidc:simple") == {"x": 1} and st_a.pop_flow("oidc:simple") is None)
-st_b.db.close()
+st_b.close()
 
 
 # ── SQLite waited according to an unconscious default (B6-11) ─────────────────────

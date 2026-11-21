@@ -476,9 +476,18 @@ class TinySesamConfig:
     #                        known ones ('scirpt-src', 'require-sri-for') gives a warning
     # Applies to the pages rendered by TinySesam and the admin panel, not to your own
     # response overrides (they set their CSP themselves). With 'strict', X-Frame-Options:
-    # SAMEORIGIN is added; nosniff, Referrer-Policy, no-store and Vary: Cookie are carried by all
+    # SAMEORIGIN and Cross-Origin-Opener-Policy: same-origin are added to HTML responses; nosniff, Referrer-Policy, no-store and Vary: Cookie are carried by all
     # TinySesam responses regardless of this switch.
     csp: str = "strict"
+    # Report CSP violations to TinySesam itself (ASVS 3.4.7). Off by default. With csp='strict' the policy gets
+    # `report-uri` and `report-to` pointing to <prefix>/auth/csp-report, the pages a `Reporting-Endpoints`
+    # header, and the endpoint (POST, without sign-in — browsers send reports without cookies) writes one
+    # `CSP violation directive=… page=… blocked=… ip=…` line per report to the `tinysesam.security` log. Only the
+    # directive, the path of the page (never its query: sign-in and reset links carry tokens there) and the
+    # origin of the blocked resource; at most 10 reports per minute and IP, 60 log lines per minute in total,
+    # 8 KiB per body. No third party receives anything, and the policy itself stays as strict as without it.
+    # Without csp='strict' (own policy, 'off') the switch does nothing: name your own report target there.
+    csp_report: bool = False
 
     # --- CSRF (double-submit cookie; in addition to SameSite=Lax) ---
     csrf_enabled: bool = True             # state-changing POSTs demand a token (form field _csrf / header X-CSRF-Token)

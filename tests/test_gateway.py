@@ -153,11 +153,22 @@ happ = gateway.build_app(TinySesamConfig.oidc_gateway(
     base_url="https://auth.example.com", db_path=hdb, https_mode="force"))
 r = TestClient(happ, base_url="http://auth.example.com").get("/healthz", follow_redirects=False)
 assert r.status_code == 200, f"/healthz → {r.status_code} (redirect instead of response?)"
-assert r.json()["status"] == "ok" and r.json()["version"][0].isdigit(), r.json()
+assert r.json() == {"status": "ok"}, r.json()
+# T-52 (ASVS 13.4.6): the version only with the switch — and then exactly the package's.
+from tinysesam import current_version
+os.environ["TINYSESAM_HEALTH_VERSION"] = "1"
+try:
+    vapp = gateway.build_app(TinySesamConfig.oidc_gateway(
+        issuer="https://id.example.invalid", client_id="cid", client_secret="sec",
+        base_url="https://auth.example.com", db_path=os.path.join(tempfile.mkdtemp(), "v.db")))
+finally:
+    del os.environ["TINYSESAM_HEALTH_VERSION"]
+assert TestClient(vapp).get("/healthz").json() == {"status": "ok", "version": current_version()}
 # Counter-check: every other path is indeed redirected to HTTPS with force.
 r2 = TestClient(happ, base_url="http://auth.example.com").get("/auth/login", follow_redirects=False)
 assert r2.status_code in (301, 307, 308), f"HTTPS enforcement no longer applies: {r2.status_code}"
-ok("/healthz: without auth, 200 also with https_mode=force; other paths are redirected")
+ok("/healthz: without auth, 200 also with https_mode=force; other paths are redirected; version only with "
+   "TINYSESAM_HEALTH_VERSION=1")
 # HSTS (H1, ASVS 3.4.1): with force on every HTTPS response, never over HTTP (RFC 6797 §7.2) — the health
 # check over HTTP and the redirect to HTTPS carry none.
 assert "strict-transport-security" not in r.headers and "strict-transport-security" not in r2.headers
