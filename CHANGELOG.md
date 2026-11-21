@@ -2,6 +2,15 @@
 
 All notable changes. Format loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Changed — docs: the groups of a token request are incomplete on purpose
+
+- README (`Remote-Auth`, delegated administration): whenever `Remote-Auth` is not `session`, `Remote-Groups` lacks
+  `admin` and every delegate role. An app that keeps profiles from `Remote-Groups` updates them only from a `session`
+  request and never downgrades them on a token request; an empty `Remote-Auth` counts as a token. A tester's app
+  flipped accounts between admin and not with every API call.
+
 ## [0.27.0] — 2026-11-21
 
 Who needs this release: installations that want team leads to manage their own team in the admin panel (delegated

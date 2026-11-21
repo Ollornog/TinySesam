@@ -1716,7 +1716,10 @@ cfg = TinySesamConfig(
   ist kein Admin.
 - **Nur eine Browser-Sitzung:** Ein API-Key, ein OAuth-Token oder ein App-Passwort öffnet weder das Panel noch trägt
   es eine Delegiertenrolle (auch nicht in `Remote-Groups`) — wie das Admin-Flag. Die Sitzung behält sie, eine
-  Anwendung kann also eine eigene Teamseite zeigen (`topbar_links` mit `{"role": "team-a-admin"}`).
+  Anwendung kann also eine eigene Teamseite zeigen (`topbar_links` mit `{"role": "team-a-admin"}`). Eine App, die
+  Profile aus `Remote-Groups` pflegt, frischt sie nur auf, wenn `Remote-Auth` `session` ist (leer gilt wie ein
+  Token): Einer Token-Anfrage fehlen `admin` und die Delegiertenrollen absichtlich, sie darf das Profil nicht
+  herabstufen.
 - **Step-up und Audit:** dieselbe Bestätigung wie für Administratoren (`admin_require_mfa`); Anlegen, Einladen und ein
   Anmeldelink verlangen immer eine frische. Das Audit-Log nennt das handelnde Konto (`actor=`), die eigenen Zeilen des
   Panels auch `as=<Delegiertenrolle>`. Delegierte haben keine Audit-Ansicht: Die Zeilen tragen Adressen anderer.
@@ -1812,7 +1815,11 @@ Alles optional (per Config an/aus), einzeln und kombiniert nutzbar, Frontend üb
   eine App ordnet deshalb über `Remote-Id` zu. `Remote-Auth` sagt, wie sich die Anfrage angemeldet hat —
   `session`, `oauth`, `apikey` oder `app-password`; eine Anfrage mit gültigem Gate-Token ist eine `session` (das
   Token trägt den Wert als signierten Claim). Daran sieht die App, warum `Remote-Groups` abweichen: Token, Schlüssel
-  und App-Passwort tragen nie `admin`. **Rechte nie an `Remote-User` oder `Remote-Email`
+  und App-Passwort tragen nie `admin`. **Die Gruppen einer Token-Anfrage sind absichtlich unvollständig:** Sobald
+  `Remote-Auth` nicht `session` ist, fehlen `admin` und alle Delegiertenrollen. Eine App, die ein Profil aus
+  `Remote-Groups` pflegt, aktualisiert es nur bei einer `session`-Anfrage und stuft es bei einer Token-Anfrage nie
+  herab — sonst kippt das Konto mit jedem API-Aufruf zwischen Admin und Nicht-Admin. Ein leeres oder fehlendes
+  `Remote-Auth` gilt wie ein Token. **Rechte nie an `Remote-User` oder `Remote-Email`
   binden:** Ein Name oder eine Adresse, die frei wird (Konto gelöscht oder umbenannt), kann ein
   anderes Konto übernehmen und trägt sie dann in die App. Der Proxy muss jeden dieser Header selbst setzen (die
   Beispiele unter `deploy/forward-auth/` tun das), sonst reicht er einen gefälschten durch. Eine Zuordnung benennt sie um oder lässt sie weg: `{"user": "X-WEBAUTH-USER"}`

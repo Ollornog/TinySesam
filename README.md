@@ -1676,7 +1676,9 @@ cfg = TinySesamConfig(
   page offer them "Admin panel". `require_admin` and your own admin routes do not change: a delegate is no admin.
 - **Only a browser session:** an API key, an OAuth token or an app password neither opens the panel nor carries a
   delegate role (not in `Remote-Groups` either) — like the admin flag. The session keeps it, so an application can
-  show its own team page (`topbar_links` with `{"role": "team-a-admin"}`).
+  show its own team page (`topbar_links` with `{"role": "team-a-admin"}`). An app that keeps profiles from
+  `Remote-Groups` refreshes them only when `Remote-Auth` is `session` (empty counts as a token): a token request
+  lacks `admin` and the delegate roles on purpose and must not downgrade the profile.
 - **Step-up and audit:** the same confirmation as administrators (`admin_require_mfa`); creating, inviting and a
   sign-in link always ask for a fresh one. The audit log names the acting account (`actor=`), the panel's own lines
   also `as=<delegate role>`. Delegates have no audit view: the lines carry other people's addresses.
@@ -1767,7 +1769,10 @@ All optional (on/off by config), usable individually and combined, front end rep
   themselves, so an app should key users by `Remote-Id`. `Remote-Auth` says how the request signed in —
   `session`, `oauth`, `apikey` or `app-password`; a request through a valid gate token is a `session` (the token
   carries it as a signed claim). It explains why `Remote-Groups` differ: a token, a key or an app password never
-  carries `admin`. **Never tie rights to `Remote-User` or
+  carries `admin`. **The groups of a token request are incomplete on purpose:** whenever `Remote-Auth` is not
+  `session`, `admin` and every delegate role are missing. An app that keeps a profile from `Remote-Groups` updates it
+  only from a `session` request and never downgrades it on a token request — otherwise the account flips between
+  admin and not with every API call. An empty or missing `Remote-Auth` counts as a token. **Never tie rights to `Remote-User` or
   `Remote-Email`:** a name or address that becomes free (account deleted or renamed) can be taken by
   another account, which then carries it into the app. Your proxy must set every one of these
   headers itself (the examples in `deploy/forward-auth/` do), or it passes a forged one through. Give it a mapping to rename or drop them: `{"user": "X-WEBAUTH-USER"}` sends that one
