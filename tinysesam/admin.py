@@ -890,33 +890,40 @@ async function saveroles(id){
     : (document.getElementById("rf"+id).value||"").split(",").map(s=>s.trim()).filter(Boolean);
   rejected(await p(`/api/users/${id}/roles`,{roles,is_admin:document.getElementById("ra"+id).checked}));users();
 }
-async function keys(id,name){const ks=await g(`/api/users/${id}/keys`);
-  document.getElementById("k"+id).innerHTML=`<td colspan=5><div class=card><h2>${esc(L.api_keys)} · ${esc(name)}</h2>
+// The detail row under an account shows one thing at a time: its keys, its passkeys or a sign-in link. Each view
+// claims the row before it waits for the server and writes only while its claim is the newest — otherwise a reply
+// that arrives late overwrites what came after it: `mkkey` refreshes the key list without waiting, and when that
+// refresh landed after a sign-in link issued in the meantime, the link (shown once, never again) was gone.
+const rowClaims={};
+function claimRow(id){const n=(rowClaims[id]||0)+1;rowClaims[id]=n;
+  return h=>{if(rowClaims[id]===n)document.getElementById("k"+id).innerHTML=h}}
+async function keys(id,name){const put=claimRow(id);const ks=await g(`/api/users/${id}/keys`);
+  put(`<td colspan=5><div class=card><h2>${esc(L.api_keys)} · ${esc(name)}</h2>
     <div class=row><input id=kn placeholder="${esc(L["f.key_name"])}"><input id=ke type=number placeholder="${esc(L["f.key_expires"])}" class=w150>
     <button ${on("mkkey",id)}>${esc(L.create_key)}</button></div>
     ${SVC?`<div class=row><input id=sn placeholder="${esc(L["f.service_name"])}"><select id=sr>${RESOURCES.map(r=>`<option value="${esc(r)}">${esc(r)}</option>`).join("")}</select>
     <button ${on("mksvc",id)}>${esc(L.pair_service)}</button></div>`:""}
     <table>`+ks.map(k=>`<tr><td><code>${esc(k.prefix)}</code> ${esc(k.name||'')}</td><td>${k.revoked?`<span class="badge red">${esc(L.revoked)}</span>`:`<span class="badge grn">${esc(L.active)}</span>`}</td>
       <td>${esc(L.last_used)} ${dt(k.last_used)}</td><td>${k.expires_at?esc(L.expires)+' '+dt(k.expires_at):esc(L.never_expires)}</td>
-      <td>${k.revoked?'':`<button class=warn ${on("revk",k.id,id,name)}>${esc(L.revoke)}</button>`}</td></tr>`).join("")+`</table></div></td>`}
+      <td>${k.revoked?'':`<button class=warn ${on("revk",k.id,id,name)}>${esc(L.revoke)}</button>`}</td></tr>`).join("")+`</table></div></td>`)}
 // A pairing code (T-60) is shown ONCE — the service redeems it with `tinysesam-client pair <url> <code>`.
 async function mksvc(id){const r=await p(`/api/users/${id}/service-pairing`,{name:sn.value,resources:[sr.value]});
   if(!rejected(r)&&r.code)await tsSecret(L.pairing_code,r.code,L.pairing_once+"\ntinysesam-client pair "+r.issuer+" "+r.code)}
 async function mkkey(id){const r=await p(`/api/users/${id}/keys`,{name:kn.value,expires_days:ke.value?parseInt(ke.value):null});
   keys(id,"");if(!rejected(r)&&r.key)await tsSecret(L.key_new,r.key,L.key_once)}
-async function pks(id,name){const ps=await g(`/api/users/${id}/passkeys`);
-  document.getElementById("k"+id).innerHTML=`<td colspan=5><div class=card><h2>${esc(L.passkeys)} · ${esc(name)}</h2>
+async function pks(id,name){const put=claimRow(id);const ps=await g(`/api/users/${id}/passkeys`);
+  put(`<td colspan=5><div class=card><h2>${esc(L.passkeys)} · ${esc(name)}</h2>
     <table>`+(ps.length?ps.map(c=>`<tr><td>${esc(c.name||'')}</td><td>${dt(c.created_at)}</td><td>${esc(L.last_used)} ${dt(c.last_used)}</td>
-      <td><button class=warn ${on("delpk",id,c.id,name)}>${esc(L.revoke)}</button></td></tr>`).join(""):`<tr><td class=muted>${esc(L.no_passkeys)}</td></tr>`)+`</table></div></td>`}
+      <td><button class=warn ${on("delpk",id,c.id,name)}>${esc(L.revoke)}</button></td></tr>`).join(""):`<tr><td class=muted>${esc(L.no_passkeys)}</td></tr>`)+`</table></div></td>`)}
 // Sign-in link without mail (T-33): shown ONCE — the server keeps only the hash.
 async function link(id,name){const v=await tsPrompt(L["prompt.link_ttl"],String(LINKTTL),{type:"number"});if(v===null)return;
-  const r=await p(`/api/users/${id}/signin-link`,{ttl_min:v.trim()?parseInt(v,10):null});if(rejected(r))return;
-  document.getElementById("k"+id).innerHTML=`<td colspan=5><div class=card><h2>${esc(L.signin_link)} · ${esc(name)}</h2>
+  const put=claimRow(id);const r=await p(`/api/users/${id}/signin-link`,{ttl_min:v.trim()?parseInt(v,10):null});if(rejected(r))return;
+  put(`<td colspan=5><div class=card><h2>${esc(L.signin_link)} · ${esc(name)}</h2>
     <div class="muted small">${esc(L.link_once)}</div>
     <div class="row lkcopy"><input id=lk${id} readonly class=w280 value="${esc(r.url)}">
       <button class=sec ${on("copylink",id)}>${esc(L.copy)}</button><span id=lks${id} class=lkstate role=status aria-live=polite></span></div>
     ${r.qr?`<img class=qr alt="" src="${esc(r.qr)}">`:""}
-    <div class="muted small">${esc(L.expires)} ${dt(r.expires_at)}</div></div></td>`}
+    <div class="muted small">${esc(L.expires)} ${dt(r.expires_at)}</div></div></td>`)}
 // T-35: copy the link once shown; without the clipboard API the field is selected for Ctrl+C.
 async function copylink(id){const f=document.getElementById("lk"+id),s=document.getElementById("lks"+id);
   const ok=await tsCopy(f.value,f);s.textContent=ok?L.copied:L.copy_manual;s.className="lkstate"+(ok?"":" manual")}

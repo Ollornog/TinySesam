@@ -4,6 +4,17 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+### Fixed — admin panel: a late key list no longer overwrites a sign-in link shown once
+
+- After **Create key** the panel refreshed the account's key list without waiting for it. When that reply came back
+  after a sign-in link issued in the meantime (a loaded server), the list replaced the link card, and the link —
+  shown only once — was gone. Every view of an account's detail row (keys, passkeys, sign-in link) now claims the
+  row before it asks the server and writes only while its claim is the newest. The browser test holds the
+  refresh back until the link is on screen and checks that the link stays.
+- Browser test: `answer()` treats a page that navigated away as a closed dialog (a 403 that leads to the reauth
+  page used to make it run out under load, 4 of 40 runs), and a wait that runs out names the error its condition
+  threw.
+
 ### Security — attack round B (2026-11-21): forward-auth target, TOTP setup, step-up, redirects
 
 - **Forward auth: a client-supplied `X-Original-URL` no longer chooses the application (high).** `/auth/forward`

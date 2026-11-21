@@ -381,15 +381,22 @@ class Page:
         await asyncio.sleep(1.2)
 
     async def until(self, expr, why, tries=80):
-        """Wait for a condition in the page (every 0.25 s, at most `tries` times) — instead of a fixed pause."""
+        """Wait for a condition in the page (every 0.25 s, at most `tries` times) — instead of a fixed pause.
+
+        A JS error while waiting is tolerated (a navigation in flight takes the context away briefly), but the
+        last one goes into the message: a condition that throws on every poll never becomes true, and without
+        the error the message only said what was awaited, not why it never came (2026-11-21, `answer()`)."""
+        error = ""
         for _ in range(tries):
             try:
                 if await self.js(expr):
                     return
-            except AssertionError:
-                pass                                  # navigation in flight — the context is gone briefly
+                error = ""
+            except AssertionError as e:
+                error = str(e)
             await asyncio.sleep(0.25)
-        raise AssertionError(f"{why} (at {await self.js('location.href')!r})")
+        raise AssertionError(f"{why} (at {await self.js('location.href')!r})"
+                             + (f" — the condition threw: {error}" if error else ""))
 
     async def key(self, name, shift=False):
         """A real key press (trusted event) — Escape, Enter or Tab."""
@@ -410,9 +417,13 @@ class Page:
         # next one right after the answer (confirm → secret with the new recovery codes) did so before
         # the first poll whenever the request was quick, and the wait ran out although everything
         # worked — red in CI job `repeat` 2026-11-20 (“the dialog did not close”).
+        # And a new document counts as “closed”: when the answer makes the page navigate (a 403 that sends it to
+        # the reauth page), the next document has no `__tsAnswered`. The old condition threw there on every poll
+        # and ran out — whenever the navigation was quicker than the first poll, which under load it was (CI job
+        # `repeat` 2026-11-21; locally 4 of 40 runs under load: “the dialog did not close (at …/auth/reauth…)”).
         await self.js(f"{{const d=document.querySelector('dialog.tsdlg[open]');window.__tsAnswered=d;"
                       f"d.querySelector('{button}').click()}}true")
-        await self.until("!window.__tsAnswered.isConnected", "the dialog did not close")
+        await self.until("!(window.__tsAnswered && window.__tsAnswered.isConnected)", "the dialog did not close")
 
 
 async def until_py(cond, why, tries=80):
@@ -1554,6 +1565,17 @@ async def _own_dialogs(p):
     await p.until(f"!!document.querySelector('[data-on=keys][data-a^=\"[{carol},\"]')", "user list empty")
     await p.js(f"document.querySelector('[data-on=keys][data-a^=\"[{carol},\"]').click();true")
     await p.until("!!document.getElementById('kn')", "keys button without effect")
+    # `mkkey` refreshes the key list without waiting for it. Under load that refresh came back after the sign-in
+    # link issued next and overwrote it — the link, shown once, was gone (2026-11-21, “panel: no sign-in link”
+    # with two suites at once). Here the order is forced instead of hoped for: the page's own `fetch` holds the
+    # refresh back until the link is on screen and only then hands it over; `__keysRefreshed` turns true once the
+    # panel has done with it (a task after the reply's microtasks).
+    await p.js("""{const f=window.fetch;window.__keysRefreshed=false;window.__fetch=f;
+      window.fetch=function(u,o){const r=f.apply(this,arguments);
+        if(!/\\/api\\/users\\/\\d+\\/keys$/.test(String(u))||(o&&o.method&&o.method!=='GET'))return r;
+        return r.then(x=>new Promise(ok=>{const t=setInterval(()=>{if(!document.querySelector('[id^=lk]'))return;
+          clearInterval(t);const j=x.json.bind(x);
+          x.json=()=>j().then(v=>{setTimeout(()=>{window.__keysRefreshed=true},0);return v});ok(x)},20)}))}}true""")
     await p.js("document.getElementById('kn').value='panel';document.querySelector('[data-on=mkkey]').click();true")
     await p.until("!!document.querySelector('dialog.tsdlg[open] textarea')", "panel: no API key dialog")
     key = await p.js("document.querySelector('dialog.tsdlg[open] textarea').value")
@@ -1567,6 +1589,10 @@ async def _own_dialogs(p):
     await p.js(f"document.querySelector('[data-on=link][data-a^=\"[{carol},\"]').click();true")
     await p.answer(value="30")
     await p.until(f"!!document.getElementById('lk{carol}')", "panel: no sign-in link")
+    await p.until("window.__keysRefreshed===true", "panel: the held key list refresh never came back")
+    await p.js("window.fetch=window.__fetch;true")
+    assert await p.js(f"!!document.getElementById('lk{carol}')"), \
+        "panel: the key list refresh that came back late overwrote the sign-in link (shown only once)"
     await p.js(f"document.querySelector('[data-on=copylink]').click();true")
     await p.until(f"document.getElementById('lks{carol}').textContent==={json.dumps(t33.t('dlg.copied'))}",
                   "panel: the link's copy button says nothing")
