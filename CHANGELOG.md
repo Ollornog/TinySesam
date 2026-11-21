@@ -2,7 +2,12 @@
 
 All notable changes. Format loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [0.27.0] — 2026-11-21
+
+Who needs this release: installations that want team leads to manage their own team in the admin panel (delegated
+admins with an optional hierarchy, `admin_delegates`), and applications that use TinySesam as a library but render
+their interface elsewhere (`auth.topbar_data`). Nothing changes for an installation that sets neither; no schema
+change.
 
 ### Added — recipe "link your app's admin from TinySesam and back"; `auth.topbar_data`
 
