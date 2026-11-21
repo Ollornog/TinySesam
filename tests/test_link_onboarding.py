@@ -23,6 +23,7 @@ import tempfile
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pyotp  # noqa: E402
+from _totp_clock import next_code  # noqa: E402
 from fastapi import Depends, FastAPI  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
@@ -227,11 +228,10 @@ c2.get("/auth/login")
 r = c2.post("/auth/login", data={"username": "dave", "password": "dave-first-2468", "next": "/who",
                                  "_csrf": csrf(c2, auth)}, follow_redirects=False)
 assert r.status_code == 303 and r.headers.get("location", "<no redirect>").startswith("/auth/totp"), r.headers.get("location")
-import time  # noqa: E402
 step = pyotp.TOTP(secret)
 # T-57: the default window no longer takes the NEXT step; this test signs in with it a second time in one step.
 auth.cfg.totp_window = "previous_and_next"
-code = step.at(time.time() + 30)        # the setup consumed the current step
+code = next_code(step)        # the setup consumed the current step
 r = c2.post("/auth/totp", data={"code": code, "next": "/who", "_csrf": csrf(c2, auth)}, follow_redirects=False)
 assert who(c2) == "dave", (r.status_code, r.headers.get("location"))
 ok("afterwards: password + TOTP as usual")
@@ -363,7 +363,7 @@ r = post_json(c, auth, "/auth/password/set", {"new": "jack-first-2468"})
 assert r.status_code == 401 and not auth.store.get_password_hash(jack), "password set past the TOTP"
 # T-57: the default window no longer takes the NEXT step; this test signs in with it a second time in one step.
 auth.cfg.totp_window = "previous_and_next"
-r = c.post("/auth/totp", data={"code": pyotp.TOTP(sec).at(time.time() + 30), "next": "/who",
+r = c.post("/auth/totp", data={"code": next_code(sec), "next": "/who",
                                "_csrf": csrf(c, auth)}, follow_redirects=False)
 assert r.status_code == 303 and r.headers.get("location", "<no redirect>").startswith("/auth/setup"), r.headers.get("location")
 r = post_json(c, auth, "/auth/password/set", {"new": "jack-first-2468", "next": "/who"})

@@ -114,11 +114,10 @@ def _walkthrough(name: str, client: TestClient, auth, mails: list, prefix: str, 
         response = get(f"{base}{page_html}", headers=HTML)
         _check_page_html(page_html, response, prefix, error)
     # An account with TOTP: after the password the factor step follows — in the prefix.
-    import pyotp
+    from _totp_clock import previous_code
     uid_t = auth.create_user("twofold", password=PW)
     secret_text = auth.totp_begin(uid_t)["secret"]
-    import time as _t
-    auth.totp_confirm(uid_t, pyotp.TOTP(secret_text).at(_t.time() - 30))
+    auth.totp_confirm(uid_t, previous_code(secret_text))
     step = TestClient(client.app).post(f"{base}/auth/login", follow_redirects=False,
                                           data={"username": "twofold", "password": PW, "next": f"{prefix}/app"})
     r.check(f"{name}: the next factor step (TOTP) lies in the prefix",

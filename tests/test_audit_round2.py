@@ -27,6 +27,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "tests"))
 
 import pyotp  # noqa: E402
+from _totp_clock import previous_code  # noqa: E402
 from fastapi import FastAPI  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
@@ -575,7 +576,7 @@ auth_t.store.set_totp(uid_t, secret_text, confirmed=True)
 import time as _t  # noqa: E402
 
 # T-57: the code of the PREVIOUS step first, then the current one — the window takes no next step any more.
-code = pyotp.TOTP(secret_text).at(int(_t.time()) - 30)
+code = previous_code(secret_text)
 r.check("a TOTP code is valid the first time", auth_t._verify_totp(uid_t, code))
 r.check("the same code is not valid a second time", not auth_t._verify_totp(uid_t, code),
         "NIST SP 800-63B: „SHALL accept a given OTP only once while it is valid\"")

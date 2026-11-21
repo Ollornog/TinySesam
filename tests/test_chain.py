@@ -4,7 +4,7 @@ import tempfile, os
 from fastapi import FastAPI, Depends
 from fastapi.testclient import TestClient
 import pyotp
-import time
+from _totp_clock import next_code, previous_code  # noqa: E402
 from tinysesam import TinySesam, TinySesamConfig
 
 
@@ -80,7 +80,7 @@ os.remove(db)
 # ---------- Global chain ["password","totp"] with real TOTP ----------
 db, auth, uid, app = fresh(chain=["password", "totp"], strict=True)
 secret = auth.totp_begin(uid)["secret"]
-auth.totp_confirm(uid, pyotp.TOTP(secret).at(time.time() - 30))
+auth.totp_confirm(uid, previous_code(secret))
 c = TestClient(app)
 r = c.post("/auth/login", data={"username": "admin", "password": "dummy123", "next": "/secret"}, follow_redirects=False)
 assert r.status_code == 303 and r.headers["location"].startswith("/auth/totp")
@@ -199,7 +199,7 @@ ok("A-1: mandatory setup under the chain signs in with the confirmation (no fail
 # (Mutation probe: remove `or t["confirmed"]` in totp_confirm OR the 409 guard -> red.)
 # T-57: the default window no longer takes the NEXT step; this test signs in with it a second time in one step.
 auth_e.cfg.totp_window = "previous_and_next"
-_sequence = pyotp.TOTP(_secret_text).at(_when.time() + 30)
+_sequence = next_code(_secret_text)
 _ant = c_e.post("/auth/totp/setup", data={"code": _sequence})
 assert _ant.status_code == 409, (_ant.status_code, _ant.text)
 assert not auth_e.totp_confirm(uid_e, _sequence), "totp_confirm confirms an active TOTP again"

@@ -17,12 +17,11 @@ import os
 import re
 import sys
 import tempfile
-import time
 from urllib.parse import urljoin, urlsplit
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import pyotp
+from _totp_clock import previous_code  # noqa: E402
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -79,7 +78,7 @@ evil = "/\t/evil.example/session-expired"
 r = c.post("/auth/totp/setup/start", data={"next": evil})
 assert r.status_code == 200, r.status_code
 secret = re.search(r"\b([A-Z2-7]{32})\b", r.text).group(1)
-r = c.post("/auth/totp/setup", data={"code": pyotp.TOTP(secret).at(time.time() - 30), "next": evil})
+r = c.post("/auth/totp/setup", data={"code": previous_code(secret), "next": evil})
 assert r.status_code == 200 and r.json()["ok"], r.text
 nxt = r.json()["next"]
 assert browser_host(nxt) in HOSTS, (

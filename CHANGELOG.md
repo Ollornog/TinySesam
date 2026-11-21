@@ -2,6 +2,15 @@
 
 All notable changes. Format loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Fixed — tests: TOTP codes no longer flip at a step boundary (B-15)
+
+- About forty places in the suites computed the previous TOTP code as `at(time.time() - 30)`; a 30-second boundary
+  between computing and checking made it two steps old and refused (a next-step code expected to be refused passed).
+  `tests/_totp_clock.py` derives every code from one moment with at least five seconds left in its step, and
+  `tests/test_totp_clock.py` replays the race with a fake clock and keeps every suite on the helper. No product change.
+
 ## [0.26.2] — 2026-11-21
 
 Who needs this release: everyone running the forward-auth gate template with `jwk_url` (recommended by the 0.26.0

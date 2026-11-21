@@ -4,7 +4,7 @@ import tempfile, os
 from fastapi import FastAPI, Depends
 from fastapi.testclient import TestClient
 import pyotp
-import time
+from _totp_clock import previous_code  # noqa: E402
 from tinysesam import TinySesam, TinySesamConfig
 
 db = os.path.join(tempfile.mkdtemp(), "t.db")
@@ -57,7 +57,7 @@ ok("/auth/me authenticated")
 # 6) set up TOTP
 uid = auth.store.get_user_by_name("admin")["id"]
 secret = auth.totp_begin(uid)["secret"]
-assert auth.totp_confirm(uid, pyotp.TOTP(secret).at(time.time() - 30)) and auth.store.has_confirmed_totp(uid)
+assert auth.totp_confirm(uid, previous_code(secret)) and auth.store.has_confirmed_totp(uid)
 ok("TOTP set up")
 
 # 7) logout → login is now MFA-required

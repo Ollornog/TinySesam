@@ -37,7 +37,6 @@ import logging
 import re
 import sys
 import tempfile
-import time
 import warnings
 from pathlib import Path
 from unittest import mock
@@ -47,6 +46,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "tests"))
 
 import pyotp  # noqa: E402
+from _totp_clock import previous_code  # noqa: E402
 from fastapi import Depends, FastAPI, Form, HTTPException, Request  # noqa: E402
 from fastapi.responses import JSONResponse  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
@@ -494,7 +494,7 @@ r.check("(d) without pin_enabled: `method_disabled` (404) — as guest and on a 
 auth, app = _app(hardening={"max_login_attempts": 3})
 uid = auth.create_user("karl", password=PW)
 secret_text = auth.totp_begin(uid)["secret"]
-auth.totp_confirm(uid, pyotp.TOTP(secret_text).at(time.time() - 30))
+auth.totp_confirm(uid, previous_code(secret_text))
 codes = auth.generate_recovery_codes(uid)
 c = _client(app)
 _t1 = _post(c, "/own/login", username="karl", password=PW)
@@ -546,7 +546,7 @@ def _setup_totp_with():
     auth, app = _app(hardening={"max_login_attempts": 3})
     uid = auth.create_user("lotte", password=PW)
     g = auth.totp_begin(uid)["secret"]
-    auth.totp_confirm(uid, pyotp.TOTP(g).at(time.time() - 30))
+    auth.totp_confirm(uid, previous_code(g))
     _secrets[id(auth)] = g
     return auth, app
 
@@ -661,7 +661,7 @@ for kind in ("totp", "pin"):
     uid = auth.create_user("otto", password=PW)
     if kind == "totp":
         g = auth.totp_begin(uid)["secret"]
-        auth.totp_confirm(uid, pyotp.TOTP(g).at(time.time() - 30))
+        auth.totp_confirm(uid, previous_code(g))
     else:
         auth.set_pin(uid, PIN)
     c = TestClient(app, client=IP, raise_server_exceptions=False)

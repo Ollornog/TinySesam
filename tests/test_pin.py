@@ -3,9 +3,9 @@ import os
 import tempfile, os
 from fastapi import FastAPI, Depends
 from fastapi.testclient import TestClient
-import time
 
 import pyotp
+from _totp_clock import next_code, previous_code  # noqa: E402
 from tinysesam import TinySesam, TinySesamConfig
 
 
@@ -72,7 +72,7 @@ auth.store.clear_fails(username="admin")
 
 # PIN + TOTP combined: PIN login leads to the TOTP step
 secret = auth.totp_begin(uid)["secret"]
-auth.totp_confirm(uid, pyotp.TOTP(secret).at(time.time() - 30))
+auth.totp_confirm(uid, previous_code(secret))
 c2 = TestClient(app)
 r = c2.post("/auth/pin", data={"username": "admin", "pin": "13579", "next": "/secret"}, follow_redirects=False)
 assert r.status_code == 303 and "/auth/totp" in r.headers["location"]
@@ -88,7 +88,7 @@ c3.post("/auth/pin", data={"username": "admin", "pin": "13579"}, follow_redirect
 # so here the next time step (lies within the permitted window).
 # T-57: the default window no longer takes the NEXT step; this test signs in with it a second time in one step.
 auth.cfg.totp_window = "previous_and_next"
-c3.post("/auth/totp", data={"code": pyotp.TOTP(secret).at(int(time.time()) + 30)},
+c3.post("/auth/totp", data={"code": next_code(secret)},
         follow_redirects=False)
 assert c3.post("/auth/pin/disable").json()["ok"] is True
 assert not auth.has_pin(uid)
