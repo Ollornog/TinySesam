@@ -4,6 +4,18 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+### Security — the gate template no longer logs credentials from `Authorization`
+
+- caddy-jwt (v1.4.0, the plugin of `tinysesam-caddy-gate`) takes the `Authorization` header as a token candidate
+  whatever `from_cookies` says, and logs a candidate that is no JWT at level error with a third of its beginning and
+  end (`token_string`). With `deploy/forward-auth/Caddyfile.gate` half of an API key (`tsk_…`), OAuth token or app
+  password of every API and MCP call stood in Caddy's log — against A-3 (credentials end at the proxy).
+- The template now sends a request that carries `Authorization`, or no gate cookie at all, straight to the way back
+  (`error … 401` → `handle_errors 401` → `/auth/forward`, unchanged); jwtauth only ever sees the gate cookie. A
+  renamed `gate_cookie_name` must be renamed in the matcher too. Operators with a copy of the template: add the four
+  lines in front of `jwtauth` (see the template). `tests/test_gate_caddy.py` measures it through a real Caddy: Bearer
+  and Basic take the way back, and the log holds no piece of either.
+
 ### Security — session handles keyed with the pepper (T-71)
 
 - A session row stored the plain sha256 of the cookie: whoever could write the database file inserted the sha256 of a

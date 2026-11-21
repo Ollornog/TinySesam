@@ -179,6 +179,12 @@ Rate-Limit, Open-Redirect-Schutz via `safe_next`). Trotzdem: vor produktivem Ein
   `webdav`-Profil des Schnellstarts braucht das nicht (der WebDAV-Server dort hat keine eigene Anmeldung).
   `tests/test_attack_round_a.py` prüft jede Vorlage unter `deploy/` darauf, auch eine neue; `tests/test_gate_caddy.py`
   misst es durch ein echtes Caddy.
+- **Zugangsdaten landen auch nicht im Proxy-Log.** Das Gate-Plugin caddy-jwt (v1.4.0) nimmt `Authorization` als
+  Token-Kandidaten, egal was konfiguriert ist, und protokolliert einen Kandidaten, der kein JWT ist, auf Level error mit
+  einem Drittel von Anfang und Ende. Bis 0.26.0 schrieb `deploy/forward-auth/Caddyfile.gate` so einen halben API-Key,
+  ein halbes OAuth-Token oder App-Passwort jedes API- und MCP-Aufrufs ins Caddy-Log. Seit 0.26.1 geht eine Anfrage mit
+  `Authorization` oder ohne Gate-Cookie direkt an `/auth/forward`; jwtauth sieht nur das Gate-Cookie. Das protokolliert
+  Caddy weiterhin gekürzt (ein JWT von höchstens `gate_token_ttl_sec`) bei jeder Anfrage, die es durchlässt.
 - **Ein TOTP-Code gilt genau einmal — auch der Einrichtungscode.** Der Code, der die Einrichtung
   bestätigt, ist danach verbraucht. Unter `login_chain=["password","totp"]` schliesst diese
   Bestätigung den TOTP-Schritt der Anmeldung gleich mit ab; überall sonst braucht die Anmeldung den
