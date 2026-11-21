@@ -359,8 +359,9 @@ jobs:
           docker build --quiet --tag "$image" deploy/forward-auth/caddy-gate >/dev/null
           docker run --rm "$image" caddy version
           docker run --rm "$image" caddy list-modules | grep -qx 'http.authentication.providers.jwt'
-          # The gate template fetches its keys at runtime (`jwk_url`, H3) — validating needs neither key nor upstream.
-          docker run --rm -v "$PWD/deploy/forward-auth:/t:ro" "$image" \
+          # The gate template takes the fixed key from TS_GATE_PUBKEY (sign_key) and refuses to start without it — any valid
+          # Ed25519 public key will do for validating (here 32 zero bytes).
+          docker run --rm -e TS_GATE_PUBKEY=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA= -v "$PWD/deploy/forward-auth:/t:ro" "$image" \
             caddy validate --config /t/Caddyfile.gate --adapter caddyfile
           for mode in acme internal ip; do
             docker run --rm -e TS_TLS="$mode" -e TS_AUTH_HOST=auth.example.com -e TS_APP_HOST=app.example.com \

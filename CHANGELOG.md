@@ -4,6 +4,19 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+### Security — the gate template takes a fixed key again: `jwk_url` can hang every request
+
+- With caddy-jwt 1.4.0, `jwk_url` hangs when its first fetch fails — TinySesam not up yet when the first gate token
+  arrives (a shared start), or a 404: the plugin registers the URL with `Cache.Register(context.Background(), …)` under
+  its write lock, jwx/httprc waits for the first successful fetch without a deadline and retries only after its
+  interval. Every later request with a gate token hung (measured in a rollout: 4 × 40 s, no second fetch, no fallback).
+- `deploy/forward-auth/Caddyfile.gate` takes `sign_key {$TS_GATE_PUBKEY}` again (the value of `tinysesam gate-key`), and
+  Caddy refuses to start without it. **This corrects the 0.26.0 upgrade notes, which recommended switching to
+  `jwk_url`: stay on, or go back to, `sign_key`.** After `tinysesam keys rotate --purpose gate` the proxy needs the new
+  value; until then tokens of the new key take the way back (slower, nobody is signed out).
+- `tests/test_gate_caddy.py` starts Caddy while TinySesam refuses connections: a request with a gate token passes at
+  once, and once TinySesam listens the way back works; with `jwk_url` back in the template the request hangs.
+
 ### Added — gateway: services, top bar links, a pairing code from the command line
 
 - `TINYSESAM_OAUTH_SERVICE_CLIENTS=1` switches on services with `client_credentials` and `private_key_jwt` (T-60) in

@@ -141,12 +141,13 @@ SITES = {"Caddyfile.gate": ("\nauth.example.com {", "\napp.example.com {"),
          "../quickstart/Caddyfile": ("\nhttps://{$TS_AUTH_HOST} {", "\nhttps://{$TS_APP_HOST}:{$TS_APP_PORT:443} {")}
 
 
-def start_caddy(templates_file="Caddyfile.gate"):
+def start_caddy(templates_file="Caddyfile.gate", upstream=None, suffix=""):
     """Caddy needs a port that it binds itself — a bound socket cannot be
     passed on. So find a free one, release it and let Caddy bind; if that fails (another
     process was faster), try again with the next one."""
     template = (ROOT / "deploy/forward-auth" / templates_file).read_text(encoding="utf-8")
-    name = os.path.basename(os.path.dirname(templates_file) or "forward-auth") + "-" + os.path.basename(templates_file)
+    name = (os.path.basename(os.path.dirname(templates_file) or "forward-auth") + "-" + os.path.basename(templates_file)
+            + suffix)
     auth_site, app_site = SITES[templates_file]
     for _ in range(5):
         s = socket.socket()
@@ -167,7 +168,7 @@ def start_caddy(templates_file="Caddyfile.gate"):
             f.write(text)
         env = {**os.environ, "TS_GATE_PUBKEY": auth.gate_public_key(), "TS_GATE_ISSUER": ISS,
                "TS_SHARE_PREFIX": SHARE, "TS_TLS": "acme", "TS_AUTH_HOST": "auth.example.com",
-               "TS_AUTH_UPSTREAM": TS, "TS_APP_UPSTREAM": APP, "XDG_DATA_HOME": _tmp,
+               "TS_AUTH_UPSTREAM": upstream or TS, "TS_APP_UPSTREAM": APP, "XDG_DATA_HOME": _tmp,
                "XDG_CONFIG_HOME": _tmp}
         # Popen gives the child its own copy of the file descriptor — the parent process's one
         # may be closed right away.
@@ -481,10 +482,12 @@ try:
     assert st == 200 and gate_cookie(h) and gate_cookie(h) != cases["expired"]
     ok("expired token + session → 200 and a new gate cookie")
 
-    # ---------- T-48/T-53: keys from /auth/gate/jwks.json (jwk_url), rotation, typ ----------
+    # ---------- T-48/T-53: the fixed gate key (sign_key), rotation, typ ----------
+    # The template takes one key, not the key set: caddy-jwt 1.4.0 hangs on `jwk_url` after one failed first fetch
+    # (section "jwk_url hang" below).
     template = (ROOT / "deploy/forward-auth/Caddyfile.gate").read_text(encoding="utf-8")
-    assert "jwk_url http://{$TS_AUTH_UPSTREAM:127.0.0.1:8000}/auth/gate/jwks.json" in template
-    assert not re.search(r"^\s*sign_key ", template, re.M), "the template should take the key set, not one key"
+    assert re.search(r"^\s*sign_key \{\$TS_GATE_PUBKEY\}$", template, re.M), "the template should take the fixed key"
+    assert not re.search(r"^\s*jwk_url ", template, re.M), "jwk_url hangs with caddy-jwt 1.4.0"
     head_jwt = base64.urlsafe_b64encode(b'{"alg":"EdDSA","typ":"JWT","kid":"' + auth._gate_keyring.active.kid.encode()
                                         + b'"}').rstrip(b"=").decode()
     body = signed().split(".")[1]
@@ -496,24 +499,76 @@ try:
     ok("typ: caddy-jwt lets a gate-key-signed `typ: JWT` through (it has no typ check, ADR-12) — gate.check refuses it; "
        "at the proxy the dedicated key and aud separate")
     # Rotation as a restart after `tinysesam keys rotate --purpose gate` leaves it: a new active key, the old one
-    # previous. A token of the old key keeps passing; one of the new key passes once Caddy has fetched the set again.
+    # previous. Caddy still holds the old key: the old key's token passes, the new key's token takes the way back —
+    # slower, nobody is signed out — until the operator gives Caddy the new `tinysesam gate-key`.
+    old_pub = auth.gate_public_key()
     old_token = signed()
     auth.store.key_ring_rotate("gate", os.urandom(32))
     auth._gate_keyring = keys.Keyring("gate", auth.store.key_ring_rows("gate"), "database")
     auth._gate_key_name = keys.gate_private(auth._gate_keyring.active.material)
     new_token = signed()
-    results = []
-    for _ in range(20):
-        before = FORWARD["n"]
-        results.append(request("/x", {"__Host-tinysesam_gate": new_token})[0] == 200 and FORWARD["n"] == before)
-        if results[-1]:
-            break
-        time.sleep(0.25)
-    assert results[-1], f"the new key never reached Caddy: {results}"
+    assert auth.gate_public_key() != old_pub
     before = FORWARD["n"]
     assert request("/x", {"__Host-tinysesam_gate": old_token})[0] == 200 and FORWARD["n"] == before
-    ok(f"rotation: the new key's token passes Caddy without TinySesam after {len(results)} request(s) (the misses "
-       "take the way back), the old key's token still passes (previous key in the set)")
+    before = FORWARD["n"]
+    st, h, _ = request("/x", {**session, "__Host-tinysesam_gate": new_token})
+    assert st == 200 and FORWARD["n"] == before + 1, (st, FORWARD["n"] - before)
+    # The operator's step after a rotation: Caddy restarted with the new `tinysesam gate-key`.
+    _caddy.terminate()
+    _caddy.wait(timeout=10)
+    _caddy, PORT = start_caddy()
+    before = FORWARD["n"]
+    assert request("/x", {"__Host-tinysesam_gate": new_token})[0] == 200 and FORWARD["n"] == before
+    ok("rotation with sign_key: the old key's token keeps the fast path, the new key's token takes the way back "
+       "(200 with a session) until Caddy gets the new key — then the new one passes without TinySesam")
+
+    # ---------- jwk_url hang: TinySesam unreachable when Caddy starts, reachable afterwards ----------
+    # caddy-jwt 1.4.0 (`getOrCreateJWKCache`): the first request with a token registers the JWKS URL with jwx's
+    # `Cache.Register(context.Background(), url)` under the plugin's write lock; httprc waits for the first successful
+    # fetch (`WaitReady`, no deadline) and retries only after its interval. One failed first fetch — TinySesam not up
+    # yet — and every request with a gate token hung (measured in a rollout: 4 × 40 s, no second fetch). The template
+    # checks a fixed key instead. Here: Caddy starts while its TinySesam upstream refuses connections; a request with a
+    # valid gate token must pass at once, and once TinySesam listens the way back works too.
+    # (Mutation probe: `jwk_url http://{$TS_AUTH_UPSTREAM…}/auth/gate/jwks.json` back instead of `sign_key` → the first
+    # request with a token hangs → red.)
+    _late_sock = listening_socket()
+    _late_port = _late_sock.getsockname()[1]
+    _late_sock.close()                                          # nothing listens there yet
+    _caddy_late, PORT_LATE = start_caddy(upstream=f"127.0.0.1:{_late_port}", suffix="-late")
+    try:
+        fresh = signed(now_=int(time.time()))
+        t0 = time.monotonic()
+        try:
+            st, h, a = request("/late-1", {"__Host-tinysesam_gate": fresh}, port=PORT_LATE)
+        except OSError as e:          # a timeout of the request: Caddy hangs
+            raise AssertionError(f"a request with a gate token hangs while TinySesam is unreachable: {e!r}")
+        assert st == 200 and a and a["path"] == "/late-1", (st, a)
+        assert time.monotonic() - t0 < 5, f"took {time.monotonic() - t0:.1f}s"
+        # TinySesam comes up on that port: the way back works, and the gate token still passes at once.
+        _late = socket.socket()
+        _late.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        _late.bind(("127.0.0.1", _late_port))
+        _late.listen(128)
+        _late_server = uvicorn.Server(uvicorn.Config(ts_app, log_level="critical"))
+        threading.Thread(target=lambda: _late_server.run(sockets=[_late]), daemon=True).start()
+        for _ in range(100):
+            if _late_server.started:
+                break
+            time.sleep(0.05)
+        st, h, _ = request("/late-2", session, port=PORT_LATE)
+        assert st == 200 and gate_cookie(h), (st, dict(h))
+        t0 = time.monotonic()
+        assert request("/late-3", {"__Host-tinysesam_gate": fresh}, port=PORT_LATE)[0] == 200
+        assert time.monotonic() - t0 < 5
+        _late_server.should_exit = True
+    finally:
+        _caddy_late.terminate()
+        try:
+            _caddy_late.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            _caddy_late.kill()
+    ok("TinySesam unreachable when Caddy starts: a gate token passes at once (no hang); once TinySesam listens, "
+       "the way back issues a new token and the gate token still passes")
 
     # ---------- Signing out at the application (T-22): /.tinysesam/* bypasses the gate ----------
     before = FORWARD["n"]
@@ -610,7 +665,7 @@ try:
     # ---------- the price: revocation only takes effect on expiry ----------
     auth.store.delete_user_sessions(uid)
     assert request("/x", session)[0] == 302
-    assert request("/x", {"__Host-tinysesam_gate": tok})[0] == 200
+    assert request("/x", {"__Host-tinysesam_gate": new_token})[0] == 200      # a token of the key Caddy holds
     ok("after signing out: session alone → 302, the gate token applies until its expiry (ADR-9)")
 
     # ---------- Counter-check: without gate the proxy asks every time again ----------

@@ -21,10 +21,13 @@
 #   * TinySesamConfig: forward_auth_enabled=True, gate_token_enabled=True, base_url, cookie_domain
 #     and trusted_redirect_hosts as in ./Caddyfile (central sign-in on auth.example.com).
 #     In the gateway image: TINYSESAM_GATE=1.
-#   * The public keys come from TinySesam itself: jwk_url below fetches /auth/gate/jwks.json over the upstream
-#     (T-48, ADR-12) — the active gate key and, for one token lifetime after a rotation, the previous one. A
-#     rotation (`tinysesam keys rotate --purpose gate`) then needs nothing here. Instead of jwk_url one fixed key
-#     is possible: `sign_key {$TS_GATE_PUBKEY}` with the value of `tinysesam gate-key` — anew after every rotation.
+#   * TS_GATE_PUBKEY: the public gate key, the output of `tinysesam gate-key --db …` (in the gateway container:
+#     `python -m tinysesam gate-key --db /data/gateway.db`). After `tinysesam keys rotate --purpose gate` give Caddy
+#     the new value; until then the tokens of the new key take the way back (slower, nobody is signed out).
+#     NOT `jwk_url` (/auth/gate/jwks.json), although TinySesam publishes the set: with caddy-jwt 1.4.0 a single
+#     failed first fetch (TinySesam not up yet when the first token arrives, a 404) makes every later request with a
+#     gate token hang — the plugin waits for the key set without a deadline while holding a lock (`Cache.Register`,
+#     jwx/httprc `WaitReady`), retries only after its long interval and never falls back. A fixed key cannot hang.
 #   * TS_GATE_ISSUER: base_url of TinySesam, without a trailing slash.
 #
 # What it costs: a revocation (sign-out, lockout, withdrawn approval) takes effect here only when the
@@ -120,9 +123,8 @@ app.example.com {
 		error @no_gate_cookie 401
 		error @has_authorization 401
 		jwtauth {
-			# The key set of TinySesam (public, no secret); the token's `kid` picks the key. caddy-jwt fetches it
-			# again when a token names a `kid` it does not know yet (after a rotation).
-			jwk_url http://{$TS_AUTH_UPSTREAM:127.0.0.1:8000}/auth/gate/jwks.json
+			# The public gate key (no secret), checked locally — no fetch that could hang (see the header).
+			sign_key {$TS_GATE_PUBKEY}
 			# Fixed to EdDSA: with sign_alg EdDSA caddy-jwt ignores the `alg` in the token's header.
 			# A token with `alg: none` or `HS256` is thus not checked any differently.
 			sign_alg EdDSA

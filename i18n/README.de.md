@@ -1872,9 +1872,10 @@ Der Rückweg ist die bestehende Forward-Auth, eine Anfrage samt Body geht also n
   [`deploy/forward-auth/caddy-gate/`](../deploy/forward-auth/caddy-gate/)).
 - **Schlüssel:** ein eigener, zufälliger Ed25519-Schlüssel (seit T-48, ADR-12 — bis 0.25.x aus dem
   Tresor-Schlüssel abgeleitet): `TINYSESAM_GATE_KEY`, `gate_key_file`, sonst mit dem Tresor-Schlüssel verschlüsselt
-  in der Datenbank. Der Proxy holt die öffentlichen Schlüssel von `/auth/gate/jwks.json` (`jwk_url`, eine Rotation
-  braucht am Proxy nichts) oder nimmt `tinysesam gate-key --db …` als `sign_key`. Jedes Token trägt
-  `typ: tinysesam-gate+jwt` und seine `kid`.
+  in der Datenbank. Der Proxy nimmt `tinysesam gate-key --db …` als `sign_key` (`TS_GATE_PUBKEY`; nach einer
+  Gate-Rotation neu, bis dahin gehen die neuen Tokens den Rückweg). **Nicht `jwk_url`** mit caddy-jwt 1.4.0, obwohl
+  TinySesam `/auth/gate/jwks.json` veröffentlicht: Ein einziger gescheiterter erster Abruf lässt danach jede Anfrage
+  mit Gate-Token hängen. Jedes Token trägt `typ: tinysesam-gate+jwt` und seine `kid`.
 - **Rollen:** Verlangt der Proxy Rollen (`X-TinySesam-Roles`), stehen sie in der Zielgruppe des
   Tokens (`app.example.com|roles=admin`); ein Token ohne Rollenangabe gilt dort nicht.
 - **Preis:** Abmelden, Sperren oder eine entzogene Freigabe greifen am Proxy erst, wenn das Token
