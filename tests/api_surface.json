@@ -759,6 +759,10 @@
       "sig": "(request: 'Request', *, nonce: 'str' = '', current: 'str' = '') -> 'str'",
       "tier": "B"
     },
+    "topbar_data": {
+      "sig": "(user=None, *, base: 'Optional[str]' = None) -> 'dict'",
+      "tier": "B"
+    },
     "topbar_head": {
       "sig": "(*, nonce: 'str' = '') -> 'str'",
       "tier": "B"

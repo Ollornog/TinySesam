@@ -36,6 +36,18 @@ git config core.hooksPath .githooks    # once per clone; runs the suite before e
 ./scripts/check.sh
 ```
 
+## Testing a commit before a release
+
+A commit between two releases carries the version of the last release. `pip install "tinysesam @ git+…@<sha>"` over an
+installed release reports "already satisfied" and installs nothing — the service keeps running the old code (or, on a
+restart in between, a half-replaced one). Reinstall the package itself, leave its dependencies alone:
+
+```bash
+pip install --force-reinstall --no-deps "tinysesam[all] @ git+https://github.com/Ollornog/TinySesam.git@<sha>"
+```
+
+Restart the service afterwards; `pip freeze | grep -i tinysesam` names the commit that is installed.
+
 ## Style
 
 Match the surrounding code: same naming, same comment density. A comment states a constraint the

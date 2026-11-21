@@ -1995,9 +1995,8 @@ def build_router(auth) -> APIRouter:
         `no-store` + `Vary: Cookie` (the answer depends on the session) and no CORS header: another origin's page
         cannot read it; an application fetches it server-side with the request's cookie or same-origin through
         the proxy (`/.tinysesam/topbar.json`)."""
-        from . import topbar as _tb
         base = (security.normalize_base(str(cfg.base_url or "").strip()) or "").rstrip("/") or auth._prefix(request)
-        return JSONResponse(_tb.data(auth, viewer, base=base),
+        return JSONResponse(auth.topbar_data(viewer, base=base),
                             headers={"Cache-Control": "no-store", "Vary": "Cookie"})
 
     @r.get("/auth/topbar.json")

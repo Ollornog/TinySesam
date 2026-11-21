@@ -227,3 +227,23 @@ finally:
     os.environ.clear()
     os.environ.update(_saved)
 ok("TINYSESAM_TOPBAR_LINKS takes [title, target, {visibility}]; a visibility that is no object ends the start")
+
+# ══ auth.topbar_data — the same answer for a library app that renders elsewhere ═════════════════════════════════
+_lead_row = auth.get_user(lead)
+assert auth.topbar_data(_lead_row) == c_lead.get("/auth/topbar.json").json(), "topbar_data and the JSON route differ"
+assert auth.topbar_data(auth.get_user(admin)) == c_admin.get("/auth/topbar.json").json()
+assert auth.topbar_data(None) == anon.get("/auth/topbar.json").json()
+assert auth.topbar_data(_lead_row)["account"]["href"] == f"{BASE}/auth/account", "base defaults to base_url"
+assert auth.topbar_data(_lead_row, base="/sso")["account"]["href"] == "/sso/auth/account"
+assert auth_nb.topbar_data(auth_nb.get_user(u_nb))["account"]["href"] == "/auth/account", "without base_url: relative"
+# A locked account is none: no links, no menu — also when a stale dict is handed in.
+auth.store._exec("UPDATE users SET disabled=1 WHERE id=?", (lead,))
+assert auth.topbar_data(_lead_row)["signed_in"] is False and auth.topbar_data(_lead_row)["links"] == []
+auth.store._exec("UPDATE users SET disabled=0 WHERE id=?", (lead,))
+assert auth.topbar_data({"id": 99999, "username": "ghost", "is_admin": 1})["signed_in"] is False, "unknown account"
+# The caller's dict decides the flags: an API key's dict carries no admin flag, so no admin link and no panel.
+_key_view = {**dict(auth.get_user(admin)), "is_admin": 0}
+assert [x["title"] for x in auth.topbar_data(_key_view)["links"]] == ["Docs"], auth.topbar_data(_key_view)
+assert auth.topbar_data(_key_view)["admin_panel"]["shown"] is False
+ok("auth.topbar_data(user): the JSON route's answer for an account dict — base from base_url or given, a locked or "
+   "unknown account gets no menu, the caller's flags count")

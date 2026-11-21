@@ -24,15 +24,6 @@ Patch release cut by the release automation after Dependabot merges:
   configuration can close it: **set `aliasHeadersStrategy: delete`** on the entry point (or `global`); the header of
   `deploy/forward-auth/traefik.yml` says how. nginx drops such headers by default.
 
-### Added — nginx and Traefik measured through the real proxies; `/.tinysesam/*` in their templates (T-78)
-
-- `tests/test_proxies.py` runs `nginx.conf`, `nginx-path.conf` (PHP over FastCGI) and `traefik.yml` word for word in the
-  official images (digest-pinned in `tests/proxies/Dockerfile`), required in the CI job `gate-caddy`. Anonymous, a
-  session, an API key, forged `Remote-*` (also where TinySesam sends no value), forged target headers, credentials in
-  the proxy log. Caddy stays the recommended proxy; with nginx and Traefik every request goes through `/auth/forward`.
-- nginx and Traefik pass `/.tinysesam/*` to TinySesam like the Caddy templates: the sign-out at the application
-  (T-22) and the top bar JSON (T-76) work there too.
-
 ### Security — `nginx-path.conf` let a client's own `Remote-Id` through to PHP
 
 - The template for one host with protected paths (static files + PHP-FPM) set `Remote-Id` neither behind the gate nor
@@ -42,6 +33,30 @@ Patch release cut by the release automation after Dependabot merges:
   `fastcgi_param HTTP_REMOTE_ID` in both PHP locations** (and `HTTP_REMOTE_AUTH`, below). The other templates were not
   affected. `tests/test_remote_auth.py` now checks every template against `FORWARD_HEADERS_DEFAULT` — set behind the
   gate, emptied in the open part.
+
+### Added — recipe "link your app's admin from TinySesam and back"; `auth.topbar_data`
+
+- `auth.topbar_data(account, base=None)` (tier B): the top bar as data for an account — the same answer as
+  `/auth/topbar.json` — for applications that use TinySesam as a library but draw their interface elsewhere. A locked
+  or unknown account gets no menu; TinySesam's paths are absolute on `base_url`.
+- README recipe and `examples/app_admin.py`: a top bar link to the application's administration for administrators (or
+  one role), a link back to the panel, the bar data for a frontend not drawn in Python (an internal app on 127.0.0.1
+  for the account behind `Remote-Id`, or `/.tinysesam/topbar.json` in the browser). Extra panel tabs (T-77) are
+  rejected in favour of it.
+- Docs: `caddy reload` under systemd resolves `{$TS_GATE_PUBKEY}` in the calling process — `EnvironmentFile=` at unit
+  level and `CREDENTIALS_DIRECTORY` in `ExecReload=` (README, gate template). Testing a commit between releases needs
+  `pip install --force-reinstall --no-deps …@<sha>` (README, CONTRIBUTING).
+- Backlog: T-28 rewritten (gate client specification with language-neutral test vectors plus a Go client), T-79
+  (diagnostics report and bug form instead of telemetry).
+
+### Added — nginx and Traefik measured through the real proxies; `/.tinysesam/*` in their templates (T-78)
+
+- `tests/test_proxies.py` runs `nginx.conf`, `nginx-path.conf` (PHP over FastCGI) and `traefik.yml` word for word in the
+  official images (digest-pinned in `tests/proxies/Dockerfile`), required in the CI job `gate-caddy`. Anonymous, a
+  session, an API key, forged `Remote-*` (also where TinySesam sends no value), forged target headers, credentials in
+  the proxy log. Caddy stays the recommended proxy; with nginx and Traefik every request goes through `/auth/forward`.
+- nginx and Traefik pass `/.tinysesam/*` to TinySesam like the Caddy templates: the sign-out at the application
+  (T-22) and the top bar JSON (T-76) work there too.
 
 ### Added — top bar: visibility per link, and the bar as JSON (T-76)
 

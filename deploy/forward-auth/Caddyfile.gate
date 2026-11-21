@@ -130,6 +130,8 @@ app.example.com {
 		error @has_authorization 401
 		jwtauth {
 			# The public gate key (no secret), checked locally — no fetch that could hang (see the header).
+			# `caddy reload` resolves {$…} in the CALLING process: under systemd put TS_GATE_PUBKEY in EnvironmentFile=
+			# (unit level, applies to ExecReload= too), else the reload fails and the old configuration stays (README).
 			sign_key {$TS_GATE_PUBKEY}
 			# Fixed to EdDSA: with sign_alg EdDSA caddy-jwt ignores the `alg` in the token's header.
 			# A token with `alg: none` or `HS256` is thus not checked any differently.
