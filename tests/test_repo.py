@@ -1078,10 +1078,25 @@ for _j, _lines in _rel_jobs.items():
     for _m in re.finditer(r"uses:\s*(\S+@\S+)", "\n".join(_lines)):
         (_probe_actions if _j.startswith("rehearsal") else _tag_actions).add(_m.group(1))
 for _a in ("docker/login-action", "docker/build-push-action", "anchore/sbom-action",
-           "pypa/gh-action-pypi-publish", "actions/attest-build-provenance", "actions/attest-sbom"):
+           "pypa/gh-action-pypi-publish", "actions/attest-build-provenance", "actions/attest"):
     _t = {x for x in _tag_actions if x.startswith(_a + "@")}
     _p = {x for x in _probe_actions if x.startswith(_a + "@")}
     assert _t and _t == _p, f"release.yml: {_a} — tag {sorted(_t)} ≠ dress rehearsal {sorted(_p)}"
+# The attest job of the isolated builder (build-provenance.yml) runs only on the tag as well: its attest actions must be
+# the ones the dress rehearsal runs, at the same commit (since 0.26.1 `actions/attest` instead of the deprecated
+# `actions/attest-sbom`).
+_bp_actions = set(re.findall(r"uses:\s*(actions/attest[\w-]*@\S+)", "\n".join(_jobs(read(
+    ".github/workflows/build-provenance.yml")).get("attest", []))))
+assert _bp_actions and _bp_actions <= _probe_actions, \
+    f"build-provenance.yml: attest actions {sorted(_bp_actions - _probe_actions)} are not in the dress rehearsal"
+assert not any("attest-sbom@" in x for x in _tag_actions | _probe_actions | _bp_actions), \
+    "actions/attest-sbom is deprecated — use actions/attest (same inputs)"
+# The dress rehearsal verifies what it attested, the way a user does after a release — provenance and SBOM, signer
+# pinned. (Mutation probe: drop the SBOM line of that step → red.)
+_verify = [z.strip() for z in _rel_jobs.get("rehearsal-attest", []) if "gh attestation verify" in z]
+assert len(_verify) == 2 and all('--signer-workflow "$SIGNER"' in z for z in _verify) \
+    and sum("--predicate-type https://spdx.dev/Document" in z for z in _verify) == 1, \
+    f"release.yml: `rehearsal-attest` does not verify provenance and SBOM: {_verify}"
 _image = "\n".join(_rel_jobs.get("image", []))
 assert "push=${{ github.ref_type == 'tag' }}" in _image and "push=true" not in _image, \
     "release.yml: the image is also pushed without a tag"
@@ -1323,6 +1338,24 @@ for _d in _uv:
 for rel in (f for f in FILES if re.search(r"(^|/)(docker-)?compose[^/]*\.ya?ml$", f)):
     assert "/" + os.path.dirname(rel) in _dependabot_dirs("docker-compose"), \
         f"Dependabot does not see {rel} (entry `docker-compose`)"
+# The own images in a compose file carry the release version and move with `scripts/_release.py`, never with
+# Dependabot: its quickstart job of 2026-11-20 died on `ghcr.io/ollornog/tinysesam-caddy-gate`, which the registry did
+# not have before its first release (DockerRegistry2::NotFound) — and once it exists, a Dependabot PR would race the
+# release PR. Every docker-compose entry whose folder pins an own image ignores it by name — and the check must find
+# the two images of the quickstart, or it measures nothing.
+# (Mutation probe: drop the `ignore` of the quickstart entry → red.)
+for _entry in re.split(r"\n  - ", _dep)[1:]:
+    if not re.match(r"package-ecosystem:\s*docker-compose\s*$", _entry.splitlines()[0]):
+        continue
+    _dir = re.search(r"directory:\s*(\S+)", _entry).group(1).strip("\"'").lstrip("/")
+    _own = set()
+    for rel in (f for f in FILES if os.path.dirname(f) == _dir and re.search(r"(docker-)?compose[^/]*\.ya?ml$", f)):
+        # Dependabot names a ghcr.io image without the registry (its log: "Error processing ollornog/…").
+        _own |= set(re.findall(r"^\s*image:\s*ghcr\.io/(ollornog/[\w.-]+)[:@]", read(rel), re.M))
+    _ignored = set(re.findall(r'dependency-name:\s*"?([^"\s]+)"?', _entry))
+    assert _own <= _ignored, f"dependabot: docker-compose /{_dir} does not ignore the own image(s) {sorted(_own - _ignored)}"
+    if _dir == "deploy/quickstart":
+        assert _own == {"ollornog/tinysesam", "ollornog/tinysesam-caddy-gate"}, f"own images of the quickstart: {_own}"
 # Go modules (since 2026-11-20: Caddy and caddy-jwt of tinysesam-caddy-gate) — before, the plugin was an xcaddy ARG
 # that no entry could see.
 for rel in (f for f in FILES if os.path.basename(f) == "go.mod"):
@@ -1455,7 +1488,19 @@ _probe = ("x@v0.19.0\ntinysesam:v0.19.0\n/v0.19.0/tinysesam-0.19.0-py3\n==0.19.0
           'version = "0.19.0"\n__version__ = "0.19.0"\nUntil 0.19.0 applied\n0.19.0 took it\nv0.19.01')
 _new, _n = _release.replace_pins(_probe, "0.19.0", "0.20.0")
 assert _n == 7 and "Until 0.19.0 applied" in _new and "0.19.0 took it" in _new and "v0.19.01" in _new, (_n, _new)
-print("  Release script replaces only pins (7 forms), narrative text stays")
+# The sdist pin and the forward reference of an unreleased feature (0.26.0 release: both by hand). The sdist name ends
+# in `.tar.gz`, and the lookahead that keeps `v0.19.01` whole refused the dot after the version. "From the release
+# after X" turns into "since <new>" once that release exists; a plain "since X" is history and stays.
+# (Mutation probes: lookahead `(?![\d.])` again → the sdist line falls; drop `replace_forward` → the "after" lines fall.)
+_probe2 = ("gh attestation verify tinysesam-0.19.0.tar.gz --owner x\n"
+           "SLSA Build L3, from the release after 0.19.0): the\n"
+           "SLSA Build L3, ab dem Release nach 0.19.0): Der\nsince 0.18.0 and seit 0.19.0 stay\n")
+_new2, _ = _release.replace_pins(_probe2, "0.19.0", "0.20.0")
+_new2, _n2 = _release.replace_forward(_new2, "0.19.0", "0.20.0")
+assert "tinysesam-0.20.0.tar.gz" in _new2, _new2
+assert "SLSA Build L3, since 0.20.0): the" in _new2 and "SLSA Build L3, seit 0.20.0): Der" in _new2 and _n2 == 2, _new2
+assert "since 0.18.0 and seit 0.19.0 stay" in _new2, _new2
+print("  Release script: sdist pin and \"from the release after X\" (en/de) follow the new version")
 
 # ---------- Docs travel along: the changelog knows the current state ----------
 changelog = read("CHANGELOG.md")

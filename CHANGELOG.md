@@ -35,6 +35,27 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
   An IPv6 address now counts as its /64, and a /48 shares five times the limit (`security.RATE_NET48_FACTOR`), as the
   open OAuth registration does since 0.26.0. IPv4 stays per address. The OAuth token/revocation limit, the pairing
   limit and the QR polling limit count per /64 as well.
+### Changed — SBOM attestations through `actions/attest`
+
+- `actions/attest-sbom` is deprecated in favour of `actions/attest` (same inputs; attest-sbom 4.1.0 was itself a
+  wrapper around `actions/attest` 4.1.0). Release and the isolated builder (`build-provenance.yml`) now call
+  `actions/attest` 4.2.2, pinned by commit. Nothing changes for verifying: `gh attestation verify … --predicate-type
+  https://spdx.dev/Document` as before.
+- The dress rehearsal on every pull request now also **verifies** what it attested — provenance and SBOM of its probe
+  file with the signer workflow pinned — so an update of the attest actions is checked against `gh attestation verify`
+  before a tag depends on it. `tests/test_repo.py` keeps the builder's attest actions equal to the rehearsal's and
+  refuses `attest-sbom`.
+
+### Fixed — release helper, Dependabot, manual OAuth end-to-end tool
+
+- `scripts/_release.py` now also moves the sdist name in the verification commands (`tinysesam-X.Y.Z.tar.gz`: the dot
+  after the version stopped the pin match) and turns "from the release after X" / "ab dem Release nach X" into
+  "since <new>" / "seit <new>"; both were done by hand for 0.26.0. A plain "since X" stays history.
+- Dependabot ignores the own images in the compose files of `deploy/quickstart` and `deploy/forward-auth`: they move
+  with the release. The quickstart job failed on `tinysesam-caddy-gate`, which the registry did not have before its
+  first release, and after a release it would race the release pull request.
+- `tools/oauth-e2e/e2e.py` finds Chrome through the shared `find_chrome()` (`CHROME` first) and reads it before the
+  start, like the browser suites (B-13); `tests/test_chrome_choice.py` refuses a Chrome started by a fixed name.
 
 ### Fixed — browser tests: Chrome start on a cold CI runner (B-13)
 
