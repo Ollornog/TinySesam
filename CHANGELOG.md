@@ -2,7 +2,14 @@
 
 All notable changes. Format loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [0.26.3] — 2026-11-21
+
+### Changed
+
+Patch release cut by the release automation after Dependabot merges:
+
+- chore(deps): bump fastapi in /deploy/gateway in the all group (#295)
+- ci: bump nginx from 1.30.7-alpine to 1.31.8-alpine in /tests/proxies (#294)
 
 ### Security — the proxy templates passed a client's target headers on; Traefik needs `aliasHeadersStrategy`
 
