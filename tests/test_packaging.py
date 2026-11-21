@@ -239,6 +239,9 @@ try:
         # 1.6.12: GHSA-5357-c2jx-v7qh et al. (algorithm confusion). 1.9.1: CVE-2026-96760,
         # CVE-2026-114614 to -114618 and -114620 (fixes in 1.8.0, 1.9.0 and 1.9.1).
         "authlib": (1, 9, 1),
+        # T-60 (2026-11-20): 1.7.6 fixes the last advisory (GHSA-9pg5-8c7x-5hfx, compact JWS size guard; before it
+        # GHSA-gg9x-qcx2-xmrh empty HMAC key 1.6.8, GHSA-jpxq-7h8p-2q76 JWE recipients 1.7.5).
+        "joserfc": (1, 7, 6),
     }
 
     def _numbers(text: str) -> tuple:

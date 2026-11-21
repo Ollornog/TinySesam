@@ -12,7 +12,7 @@ reference answers the other question: *"There is a field — what does it do?"*
 Presets (`TinySesamConfig.local_accounts()`, `.oidc_gateway()`, …) set bundles of these fields;
 individual ones can be overridden via `**overrides`.
 
-**Tier:** Every field belongs to tier A — public, stable from 1.0 (see [API.md](API.md), “Three tiers”), except `app_password_allow_unlimited` (B), `app_password_default_days` (B), `c22_stylesheet` (B), `gate_key_file` (B), `hsts` (B), `oauth_access_token_ttl_sec` (B), `oauth_enabled` (B), `oauth_pepper_file` (B), `oauth_refresh_grace_sec` (B), `oauth_refresh_idle_days` (B), `oauth_refresh_max_days` (B), `oauth_resources` (B), `topbar_enabled` (B), `topbar_links` (B), `totp_required` (B).
+**Tier:** Every field belongs to tier A — public, stable from 1.0 (see [API.md](API.md), “Three tiers”), except `app_password_allow_unlimited` (B), `app_password_default_days` (B), `c22_stylesheet` (B), `gate_key_file` (B), `hsts` (B), `oauth_access_token_ttl_sec` (B), `oauth_enabled` (B), `oauth_pairing_minutes` (B), `oauth_pepper_file` (B), `oauth_refresh_grace_sec` (B), `oauth_refresh_idle_days` (B), `oauth_refresh_max_days` (B), `oauth_resources` (B), `oauth_service_clients` (B), `oauth_service_key_days` (B), `oauth_service_token_ttl_sec` (B), `topbar_enabled` (B), `topbar_links` (B), `totp_required` (B).
 
 ## Store
 
@@ -65,7 +65,7 @@ individual ones can be overridden via `**overrides`.
 | `pin_enabled` | `bool` | `False` | personal PIN per user (username + PIN) |
 | `pin_login` | `bool` | `True` | offer the PIN as first factor on the login page. False = the PIN exists but serves ONLY as an additional factor (chain step, route chain) or as step-up for sensitive areas. If a strict login_chain demands the PIN behind another factor, it is never a first factor there. |
 | `pin_min_length` | `int` | `4` | minimum length when setting a PIN |
-| `stepup_methods` | `list[str]` | `list` | What confirms a step-up (require(mfa=True))? Empty = everything the user has set up (order totp → pin → password). E.g. ["pin"] = PIN for sensitive areas. If the user has none of the listed methods, their best available method applies. |
+| `stepup_methods` | `list[str]` | `list` | What confirms a step-up (require(mfa=True))? Empty = everything the user has set up (order totp → pin → password). E.g. ["pin"] = PIN for sensitive areas. If the user has none of the listed methods, their best available method applies. The same list decides which factor on the sign-in pages refreshes a session that is already signed in (passkey, OIDC and SAML always do; a sign-in link or QR approval never does). |
 | `stepup_strict` | `bool` | `False` | Turn the wish into a barrier: True = whoever has none of the listed methods set up does NOT get in (instead of confirming with the password they just signed in with — that is no step-up). Default False, because otherwise the area would be locked for existing accounts overnight; whoever sets `stepup_methods` to enforce something usually wants True as well. |
 | `oidc_enabled` | `bool` | `False` | external IdProvider (PocketID …) |
 | `oidc_callback_path` | `str` | `"/auth/oidc/callback"` | Path of the callback. Must be registered with the IdP as redirect URI (base_url + this path). At startup TinySesam logs the expected URI — otherwise typos only show up after the login. |
@@ -101,6 +101,10 @@ individual ones can be overridden via `**overrides`.
 | `oauth_refresh_max_days` | `int` | `180` | **Tier B.** Absolute maximum of a connection in days, regardless of use — then the person signs in again (ASVS 5.0 V10.4.8). 0 = no maximum (only on purpose: config_check reports it). |
 | `oauth_refresh_grace_sec` | `int` | `0` | **Tier B.** Grace window in seconds: a refresh token used again within it returns the SAME successor instead of counting as reuse (two processes of one client refreshing at once). 0 = every second use revokes the connection; Claude Code serialises its refreshes, so 0 is enough there. 0–60. |
 | `oauth_pepper_file` | `str` | `""` | **Tier B.** Keyring file with the pepper of the token digests (Base64, at least 32 bytes; further lines: older peppers, docs/OPERATIONS.md "Keys"). The environment variable TINYSESAM_OAUTH_PEPPER takes precedence; without both the pepper is a random key of its own, stored in the database encrypted with the vault key (ADR-12). Rotation: `tinysesam keys rotate --purpose oauth-pepper` — connected devices stay connected. |
+| `oauth_service_clients` | `bool` | `False` | **Tier B.** Services: client_credentials + private_key_jwt (T-60, ADR-13). A service or daemon without a person gets short-lived access tokens from the same server. It is paired once with a one-time code from the account page or the admin panel, creates its key pair itself and proves every token request with a signed assertion (RFC 7523) — TinySesam keeps only the public key. Needs oauth_enabled and the extra [services] (joserfc). Recipe: README "A service calls a protected app". |
+| `oauth_service_token_ttl_sec` | `int` | `900` | **Tier B.** lifetime of a service's access token; no refresh token, it asks anew |
+| `oauth_service_key_days` | `int` | `90` | **Tier B.** Lifetime of a service key in days: the reference client rotates it on its own at half of it; 0 = no expiry (only on purpose: config_check reports it). |
+| `oauth_pairing_minutes` | `int` | `10` | **Tier B.** how long a pairing code can be redeemed |
 | `https_mode` | `str` | `"warn"` | off \| warn \| force  — force = HTTP→HTTPS redirect; warn = also runs WITHOUT a certificate (with a warning in the panel) |
 | `hsts` | `str` | `"max-age=31536000"` | **Tier B.** Strict-Transport-Security on every HTTPS response while https_mode='force' (ASVS 3.4.1). The default is one year, the minimum ASVS asks for. Without includeSubDomains: TinySesam often runs inside an app on a domain that has other subdomains, and the flag binds EVERY one of them to HTTPS — a decision about the whole domain tree that belongs to its owner (ASVS L2 wants it: append "; includeSubDomains"). No preload as a default: the browsers' preload list is hard to leave again. "" = no header (e.g. the proxy in front sets it). |
 | `login_identifier` | `str` | `"both"` | What do people sign in with? "username" \| "email" \| "both" (both allowed in the same field) |
@@ -345,4 +349,4 @@ individual ones can be overridden via `**overrides`.
 
 ---
 
-194 fields, generated from `tinysesam/config.py`.
+198 fields, generated from `tinysesam/config.py`.

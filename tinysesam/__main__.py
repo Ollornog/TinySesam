@@ -39,7 +39,8 @@ def _passwd(argv) -> int:
     ap.add_argument("--stdin", action="store_true",
                     help="read the password from standard input instead of prompting")
     ap.add_argument("--keep-sessions", action="store_true",
-                    help="do NOT end the account's open sessions (default: end them)")
+                    help="do NOT end the account's open sessions and standing credentials (API keys, app passwords, "
+                         "services, connected OAuth devices; default: end and revoke them)")
     # The CLI reads no config — what stands there for the password rule, it gets here.
     # Without these two switches a weaker rule applied offline than on the web (A-7).
     ap.add_argument("--blocklist-file", default="",
@@ -109,10 +110,15 @@ def _passwd(argv) -> int:
         store.delete_failure_series(identifier)
     note = ""
     if not a.keep_sessions:
-        # Standard after every credential change: open sessions no longer count.
+        # Standard after every credential change: open sessions no longer count. And the standing credentials go
+        # with them like with the admin reset in the panel (`TinySesam._keys_revoked`): whoever resets offline does so
+        # for a lost or taken-over account, and a key, app password or connected device would keep the door open
+        # (attack round 2026-11-21, A-1). Offline there is no hook — the audit line names the counts.
         store.delete_user_sessions(user["id"])
-        note = " (open sessions ended)"
-    store.audit_log("password_reset_cli", a.username, None, "offline")
+        revoked = store.revoke_user_access(user["id"], "admin_password_reset")
+        note = " (open sessions ended" + "".join(f", {n} {what} revoked" for what, n in revoked.items() if n) + ")"
+    store.audit_log("password_reset_cli", a.username, None,
+                    "offline" + ("" if a.keep_sessions else "".join(f" {what}_revoked={n}" for what, n in revoked.items())))
     print(f"Password for '{a.username}' set{note}.")
     return 0
 
@@ -571,7 +577,10 @@ def _open_keys(a):
     for purpose, path in ((K.GATE, a.gate_key_file), (K.PEPPER, a.oauth_pepper_file)):
         ring = K.from_override(purpose, path)
         if ring is None:
-            rows = store.key_ring_rows(purpose)
+            try:
+                rows = store.key_ring_rows(purpose)
+            except ValueError as e:      # a row that is not vault ciphertext or does not match its ID (A-5)
+                raise V.ConfigError(f"key_material ({purpose}): {e}") from None
             ring = K.Keyring(purpose, rows, "database") if rows else None
         rings[purpose] = ring
     return store, rings

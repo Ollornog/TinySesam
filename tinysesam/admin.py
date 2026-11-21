@@ -185,7 +185,11 @@ def build_admin_router(auth) -> APIRouter:
 
     @ar.post("/api/users/{uid}/password")
     async def user_password(request: Request, uid: int):
-        owner_protection(guard(request), uid)
+        person = guard(request)
+        owner_protection(person, uid)
+        # A password the admin knows is a way into that account (B-12): only from a fresh confirmation — also with
+        # `admin_require_mfa=False`, where the guard above does not ask for one (attack round B).
+        auth._require_fresh(request, person)
         b = await auth.json_body(request)
         if not b.get("password"):
             raise HTTPException(400, auth.t("api.password_req"))
@@ -354,6 +358,7 @@ def build_admin_router(auth) -> APIRouter:
         # is only valid alongside the session); this line does not depend on that staying so.
         if person.get("_via") != "session":
             raise HTTPException(403, auth.t("api.key_needs_session"))
+        auth._require_fresh(request, person)       # a new lasting way in (B-12), whatever admin_require_mfa says
         b = await auth.json_body(request)
         # The audit line is written by `create_api_key` — with owner, IP and actor= (B5-04/R6-3).
         # `create_api_key` raises `ConfigError` for a scope without a valid role and for
@@ -425,6 +430,41 @@ def build_admin_router(auth) -> APIRouter:
             # The audit line (`oauth_revoked`, actor=) is written by `revoke_grant`.
             return {"ok": auth._oauth_server().revoke_grant(int(grant_id), "admin", auth.client_ip(request))}
 
+    # ---------- Services: client_credentials + private_key_jwt (T-60, ADR-13) ----------
+    if cfg.oauth_enabled and cfg.oauth_service_clients:
+        @ar.get("/api/oauth/services")
+        def oauth_services(request: Request):
+            guard(request)
+            log(request, "oauth_services_read")
+            return auth.list_service_clients()
+
+        @ar.post("/api/users/{uid}/service-pairing")
+        async def service_pairing(request: Request, uid: int):
+            person = guard(request)
+            owner_protection(person, uid)     # a service acting as an owner is paired only by an owner
+            # Same rule as for an API key: issued by a person, never by a key — and, being a new lasting way in
+            # (B-12), only from a fresh confirmation.
+            if person.get("_via") != "session":
+                raise HTTPException(403, auth.t("api.key_needs_session"))
+            auth._require_fresh(request, person)
+            b = await auth.json_body(request)
+            # The audit line (`oauth_pairing_issued`, actor=) is written by `create_service_pairing`.
+            try:
+                return auth.create_service_pairing(uid, name=b.get("name"), resources=b.get("resources"),
+                                                   roles=b.get("roles"))
+            except (ConfigError, ValueError, TypeError) as e:
+                raise HTTPException(400, auth.t("api.invalid", reason=str(e)))
+
+        @ar.post("/api/oauth/services/{client_id}/revoke")
+        def oauth_service_revoke(request: Request, client_id: str):
+            me = guard(request)
+            svc = auth.store.oauth_service(client_id)
+            if svc is None:
+                raise HTTPException(404, auth.t("api.not_found"))
+            owner_protection(me, int(svc["user_id"]))
+            # The audit line (`oauth_service_revoked`, actor=) is written by `revoke`.
+            return {"ok": auth.revoke_service_client(client_id)}
+
     # ---------- App passwords of all accounts (T-66) ----------
     if auth.app_password_hosts():
         @ar.get("/api/app-passwords")
@@ -447,7 +487,9 @@ def build_admin_router(auth) -> APIRouter:
     if cfg.magiclink_enabled:
         @ar.post("/api/invite")
         async def invite(request: Request):
-            guard(request)
+            # An invitation creates an account — possibly an admin — for whoever holds the link: new access
+            # (B-12), so a fresh confirmation also with `admin_require_mfa=False` (attack round B).
+            auth._require_fresh(request, guard(request))
             b = await auth.json_body(request)
             email = (b.get("email") or "").strip()
             # The invitation link goes by mail to a third party and carries a valid
@@ -472,6 +514,7 @@ def build_admin_router(auth) -> APIRouter:
             # never by a key (same rule as key creation above, R6-6).
             if person.get("_via") != "session":
                 raise HTTPException(403, auth.t("api.link_needs_session"))
+            auth._require_fresh(request, person)   # a credential for that account (B-12), even without admin MFA
             b = await auth.json_body(request)
             if auth.store.get_user(uid) is None:
                 raise HTTPException(404, auth.t("api.not_found"))
@@ -626,7 +669,8 @@ _KEYS = (
     "never_expires revoke key_once end_session hardening hardening_owner version installed update_note "
     "btn.link signin_link link_once prompt.link_ttl key_new "
     "tab.devices th.client th.resource th.last disconnect no_devices confirm.disconnect "
-    "tab.app_passwords no_app_passwords th.name th.apps expired confirm.revoke_app_password"
+    "tab.app_passwords no_app_passwords th.name th.apps expired confirm.revoke_app_password "
+    "services no_services pair_service f.service_name pairing_code pairing_once th.key confirm.revoke_service"
 ).split()
 
 
@@ -678,6 +722,8 @@ def render_panel(auth, base: str, warn: str = "", prefix: str = "", viewer=None,
             .replace("__LINKTTL__", str(int(cfg.magiclink_ttl_min)))
             .replace("__OAUTH__", "true" if cfg.oauth_enabled else "false")
             .replace("__APPPW__", "true" if auth.app_password_hosts() else "false")
+            .replace("__SVC__", "true" if (cfg.oauth_enabled and cfg.oauth_service_clients) else "false")
+            .replace("__RESOURCES__", json.dumps([r for r in (cfg.oauth_resources or [])]).replace("<", "\\u003c"))
             .replace("__LANG__", cfg.lang)
             # `ensure_ascii=False`: the page is UTF-8, „Härtung" belongs in as „Härtung",
             # not as `Härtung`. Only `<` is masked — an own translation
@@ -759,6 +805,8 @@ const LINKS=__LINKS__;                                 // config.magiclink_enabl
 const LINKTTL=__LINKTTL__;                             // config.magiclink_ttl_min: default validity of a link
 const OAUTH=__OAUTH__;                                 // config.oauth_enabled: tab "connected programs" (T-36)
 const APPPW=__APPPW__;                                 // an application takes app passwords: tab "app passwords" (T-66)
+const SVC=__SVC__;                                     // config.oauth_service_clients: pair services (T-60)
+const RESOURCES=__RESOURCES__;                         // config.oauth_resources: what a service may be paired for
 const TABS=[["users",L["tab.users"]],["sessions",L["tab.sessions"]]].concat(OAUTH?[["devices",L["tab.devices"]]]:[]).concat(APPPW?[["apppw",L["tab.app_passwords"]]]:[]).concat([["security",L["tab.security"]],["audit",L["tab.audit"]]]);
 let cur="users";
 // H2 (T-45): the panel demands a fresh confirmation (`admin_require_mfa`). A tab left open past the
@@ -842,28 +890,40 @@ async function saveroles(id){
     : (document.getElementById("rf"+id).value||"").split(",").map(s=>s.trim()).filter(Boolean);
   rejected(await p(`/api/users/${id}/roles`,{roles,is_admin:document.getElementById("ra"+id).checked}));users();
 }
-async function keys(id,name){const ks=await g(`/api/users/${id}/keys`);
-  document.getElementById("k"+id).innerHTML=`<td colspan=5><div class=card><h2>${esc(L.api_keys)} · ${esc(name)}</h2>
+// The detail row under an account shows one thing at a time: its keys, its passkeys or a sign-in link. Each view
+// claims the row before it waits for the server and writes only while its claim is the newest — otherwise a reply
+// that arrives late overwrites what came after it: `mkkey` refreshes the key list without waiting, and when that
+// refresh landed after a sign-in link issued in the meantime, the link (shown once, never again) was gone.
+const rowClaims={};
+function claimRow(id){const n=(rowClaims[id]||0)+1;rowClaims[id]=n;
+  return h=>{if(rowClaims[id]===n)document.getElementById("k"+id).innerHTML=h}}
+async function keys(id,name){const put=claimRow(id);const ks=await g(`/api/users/${id}/keys`);
+  put(`<td colspan=5><div class=card><h2>${esc(L.api_keys)} · ${esc(name)}</h2>
     <div class=row><input id=kn placeholder="${esc(L["f.key_name"])}"><input id=ke type=number placeholder="${esc(L["f.key_expires"])}" class=w150>
     <button ${on("mkkey",id)}>${esc(L.create_key)}</button></div>
+    ${SVC?`<div class=row><input id=sn placeholder="${esc(L["f.service_name"])}"><select id=sr>${RESOURCES.map(r=>`<option value="${esc(r)}">${esc(r)}</option>`).join("")}</select>
+    <button ${on("mksvc",id)}>${esc(L.pair_service)}</button></div>`:""}
     <table>`+ks.map(k=>`<tr><td><code>${esc(k.prefix)}</code> ${esc(k.name||'')}</td><td>${k.revoked?`<span class="badge red">${esc(L.revoked)}</span>`:`<span class="badge grn">${esc(L.active)}</span>`}</td>
       <td>${esc(L.last_used)} ${dt(k.last_used)}</td><td>${k.expires_at?esc(L.expires)+' '+dt(k.expires_at):esc(L.never_expires)}</td>
-      <td>${k.revoked?'':`<button class=warn ${on("revk",k.id,id,name)}>${esc(L.revoke)}</button>`}</td></tr>`).join("")+`</table></div></td>`}
+      <td>${k.revoked?'':`<button class=warn ${on("revk",k.id,id,name)}>${esc(L.revoke)}</button>`}</td></tr>`).join("")+`</table></div></td>`)}
+// A pairing code (T-60) is shown ONCE — the service redeems it with `tinysesam-client pair <url> <code>`.
+async function mksvc(id){const r=await p(`/api/users/${id}/service-pairing`,{name:sn.value,resources:[sr.value]});
+  if(!rejected(r)&&r.code)await tsSecret(L.pairing_code,r.code,L.pairing_once+"\ntinysesam-client pair "+r.issuer+" "+r.code)}
 async function mkkey(id){const r=await p(`/api/users/${id}/keys`,{name:kn.value,expires_days:ke.value?parseInt(ke.value):null});
   keys(id,"");if(!rejected(r)&&r.key)await tsSecret(L.key_new,r.key,L.key_once)}
-async function pks(id,name){const ps=await g(`/api/users/${id}/passkeys`);
-  document.getElementById("k"+id).innerHTML=`<td colspan=5><div class=card><h2>${esc(L.passkeys)} · ${esc(name)}</h2>
+async function pks(id,name){const put=claimRow(id);const ps=await g(`/api/users/${id}/passkeys`);
+  put(`<td colspan=5><div class=card><h2>${esc(L.passkeys)} · ${esc(name)}</h2>
     <table>`+(ps.length?ps.map(c=>`<tr><td>${esc(c.name||'')}</td><td>${dt(c.created_at)}</td><td>${esc(L.last_used)} ${dt(c.last_used)}</td>
-      <td><button class=warn ${on("delpk",id,c.id,name)}>${esc(L.revoke)}</button></td></tr>`).join(""):`<tr><td class=muted>${esc(L.no_passkeys)}</td></tr>`)+`</table></div></td>`}
+      <td><button class=warn ${on("delpk",id,c.id,name)}>${esc(L.revoke)}</button></td></tr>`).join(""):`<tr><td class=muted>${esc(L.no_passkeys)}</td></tr>`)+`</table></div></td>`)}
 // Sign-in link without mail (T-33): shown ONCE — the server keeps only the hash.
 async function link(id,name){const v=await tsPrompt(L["prompt.link_ttl"],String(LINKTTL),{type:"number"});if(v===null)return;
-  const r=await p(`/api/users/${id}/signin-link`,{ttl_min:v.trim()?parseInt(v,10):null});if(rejected(r))return;
-  document.getElementById("k"+id).innerHTML=`<td colspan=5><div class=card><h2>${esc(L.signin_link)} · ${esc(name)}</h2>
+  const put=claimRow(id);const r=await p(`/api/users/${id}/signin-link`,{ttl_min:v.trim()?parseInt(v,10):null});if(rejected(r))return;
+  put(`<td colspan=5><div class=card><h2>${esc(L.signin_link)} · ${esc(name)}</h2>
     <div class="muted small">${esc(L.link_once)}</div>
     <div class="row lkcopy"><input id=lk${id} readonly class=w280 value="${esc(r.url)}">
       <button class=sec ${on("copylink",id)}>${esc(L.copy)}</button><span id=lks${id} class=lkstate role=status aria-live=polite></span></div>
     ${r.qr?`<img class=qr alt="" src="${esc(r.qr)}">`:""}
-    <div class="muted small">${esc(L.expires)} ${dt(r.expires_at)}</div></div></td>`}
+    <div class="muted small">${esc(L.expires)} ${dt(r.expires_at)}</div></div></td>`)}
 // T-35: copy the link once shown; without the clipboard API the field is selected for Ctrl+C.
 async function copylink(id){const f=document.getElementById("lk"+id),s=document.getElementById("lks"+id);
   const ok=await tsCopy(f.value,f);s.textContent=ok?L.copied:L.copy_manual;s.className="lkstate"+(ok?"":" manual")}
@@ -881,7 +941,15 @@ async function devices(){const ds=await g("/api/oauth/devices");
     ds.map(d=>`<tr><td><b>${esc(d.username)}</b></td><td>${esc(d.client_name)} <code>${esc(d.client_id)}</code></td><td>${esc(d.resource)}</td>
       <td>${dt(d.created_at)}</td><td>${dt(d.last_used)}</td><td>${esc(d.last_ip)}</td>
       <td><button class=warn ${on("revdev",d.id)}>${esc(L.disconnect)}</button></td></tr>`).join("")+`</table>`
-    :`<div class=muted>${esc(L.no_devices)}</div>`)}
+    :`<div class=muted>${esc(L.no_devices)}</div>`);
+  if(!SVC)return;const ss=await g("/api/oauth/services");
+  document.getElementById("view").insertAdjacentHTML("beforeend",`<h2>${esc(L.services)}</h2>`+(ss.length?`<table><tr><th>${esc(L["th.user"])}</th><th>${esc(L["th.client"])}</th><th>${esc(L["th.resource"])}</th><th>${esc(L["th.since"])}</th><th>${esc(L["th.last"])}</th><th>${esc(L["th.ip"])}</th><th>${esc(L["th.key"])}</th><th></th></tr>`+
+    ss.map(s=>`<tr><td><b>${esc(s.username)}</b></td><td>${esc(s.name)} <code>${esc(s.client_id)}</code></td><td>${esc((s.resources||[]).join(", "))}</td>
+      <td>${dt(s.created_at)}</td><td>${dt(s.last_used)}</td><td>${esc(s.last_ip)||'—'}</td>
+      <td>${(s.keys||[]).filter(k=>k.valid).map(k=>`<code>${esc(k.kid.slice(0,8))}</code> ${k.expires_at?esc(L.expires)+' '+dt(k.expires_at):esc(L.never_expires)}`).join("<br>")||`<span class="badge red">${esc(L.expired)}</span>`}</td>
+      <td><button class=warn ${on("revsvc",s.client_id)}>${esc(L.revoke)}</button></td></tr>`).join("")+`</table>`
+    :`<div class=muted>${esc(L.no_services)}</div>`))}
+async function revsvc(id){if(await tsConfirm(L["confirm.revoke_service"],{danger:true})){rejected(await p(`/api/oauth/services/${encodeURIComponent(id)}/revoke`));devices()}}
 async function revdev(id){if(await tsConfirm(L["confirm.disconnect"],{danger:true})){rejected(await p(`/api/oauth/devices/${id}/revoke`));devices()}}
 async function apppw(){const ps=await g("/api/app-passwords");
   V(ps.length?`<table><tr><th>${esc(L["th.user"])}</th><th>${esc(L["th.name"])}</th><th>${esc(L["th.apps"])}</th><th>${esc(L["th.since"])}</th><th>${esc(L["th.last"])}</th><th>${esc(L["th.ip"])}</th><th>${esc(L.expires)}</th><th></th></tr>`+
@@ -908,7 +976,7 @@ async function audit(){const a=await g("/api/audit?limit=120");
 
 // One delegated listener for all buttons, including those loaded later via innerHTML. Only names
 // from ACT are callable — data-on selects an action, it does not name arbitrary code.
-const ACT={go,mkuser,own,dis,pw,ren,roles,saveroles,clr,keys,mkkey,revk,revs,savesec,pks,delpk,deluser,link,revdev,revap,copylink};
+const ACT={go,mkuser,own,dis,pw,ren,roles,saveroles,clr,keys,mkkey,mksvc,revk,revs,savesec,pks,delpk,deluser,link,revdev,revsvc,revap,copylink};
 document.addEventListener("click",e=>{const el=e.target.closest("[data-on]");
   if(!el||!ACT[el.dataset.on])return;ACT[el.dataset.on](...JSON.parse(el.dataset.a||"[]"))});
 tabs();users();

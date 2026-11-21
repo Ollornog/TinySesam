@@ -27,7 +27,7 @@ import json
 import re
 import secrets
 import zlib
-from typing import Optional
+from typing import Any, Optional
 from urllib.parse import urlencode, urlsplit
 
 from fastapi import Request
@@ -48,8 +48,11 @@ DEFAULT_SCOPE = "mcp"
 
 CODE_TTL_SEC = 60
 REQUEST_TTL_SEC = 600
-#: Open registration: per address and hour, and how many registrations without a grant may exist at all.
+#: Open registration: per address and hour (an IPv6 address counts as its /64, A-4), per IPv6 /48 and hour, and how
+#: many registrations without a grant may exist at all. At the cap the oldest registration without a grant gives way
+#: — but only one older than an authorization request lives (`REQUEST_TTL_SEC`), so no flow in progress breaks.
 REGISTER_PER_IP_HOUR = 20
+REGISTER_PER_NET48_HOUR = 100
 IDLE_CLIENTS_MAX = 1000
 #: A registration that never led to a grant goes after a day (`gc()`); a revoked grant stays a week.
 IDLE_CLIENT_SEC = 86400
@@ -224,6 +227,9 @@ class OAuthServer:
         #: The pepper keyring (`keys.Keyring`): the active pepper digests new tokens, the previous ones still
         #: find what they digested — until `tinysesam keys retire --purpose oauth-pepper`.
         self.peppers = peppers
+        #: Services with `client_credentials` + `private_key_jwt` (T-60, ADR-13) — a `ServiceClients`, set by
+        #: `TinySesam._oauth_server()` only with the switch on (this module does not import that one: no cycle).
+        self.services: Any = None
 
     @property
     def pepper_origin(self) -> str:
@@ -271,7 +277,7 @@ class OAuthServer:
 
     def metadata(self) -> dict:
         """RFC 8414. Only what is built; no CIMD (`client_id_metadata_document_supported`) — it needs internet."""
-        return {
+        doc: dict = {
             "issuer": self.issuer(),
             "authorization_endpoint": self.endpoint("/auth/oauth/authorize"),
             "token_endpoint": self.endpoint("/auth/oauth/token"),
@@ -286,6 +292,11 @@ class OAuthServer:
             "scopes_supported": list(SCOPES),
             "authorization_response_iss_parameter_supported": True,
         }
+        if self.services is not None:
+            doc["grant_types_supported"] = ["authorization_code", "refresh_token", "client_credentials"]
+            doc["token_endpoint_auth_methods_supported"] = ["none", "private_key_jwt"]
+            doc["token_endpoint_auth_signing_alg_values_supported"] = list(self.services.ALGORITHMS)
+        return doc
 
     def resource_metadata(self, resource: str) -> dict:
         """RFC 9728 for one configured resource."""
@@ -349,12 +360,21 @@ class OAuthServer:
             raise OAuthError("invalid_client_metadata", "client_name must be a string")
         name = "".join(z for z in (name or "") if z >= " " and z != "\x7f" and not 0x202a <= ord(z) <= 0x202e
                        and not 0x2066 <= ord(z) <= 0x2069).strip()[:MAX_NAME_LEN] or "unnamed client"
-        if not self.auth.rl.allow(("oauth_register", ip or "?"), REGISTER_PER_IP_HOUR, 3600):
+        from .security import ip_bucket
+        # Counted per /64 (one subscriber) and per /48 (one site or VPS): per /128 a single home line had 2^64
+        # buckets and filled the global cap from one prefix (attack round 2026-11-21, A-4).
+        if not (self.auth.rl.allow(("oauth_register", ip_bucket(ip)), REGISTER_PER_IP_HOUR, 3600)
+                and self.auth.rl.allow(("oauth_register48", ip_bucket(ip, 48)), REGISTER_PER_NET48_HOUR, 3600)):
             raise OAuthError("temporarily_unavailable", "too many registrations from this address", 429)
-        if self.store.oauth_count_idle_clients() >= IDLE_CLIENTS_MAX:
+        now = _now()
+        # At the cap the oldest unused registration gives way instead of refusing every newcomer for a day: a full
+        # cap otherwise locked every person out of connecting a new MCP client until `gc()` — and filled up again.
+        # Only registrations older than an authorization request may go, so a flow in progress never breaks; when
+        # all of them are younger, the cap still refuses (that takes 1000 registrations within ten minutes).
+        if (self.store.oauth_count_idle_clients() >= IDLE_CLIENTS_MAX
+                and not self.store.oauth_evict_idle_client(now - REQUEST_TTL_SEC)):
             raise OAuthError("temporarily_unavailable", "too many open registrations", 429)
         client_id = "tsc_" + secrets.token_urlsafe(18)
-        now = _now()
         self.store.oauth_add_client(client_id, name, uris, now, ip)
         self._audit("oauth_client_registered", None, ip, f"client={client_id} name={_detail(name)}")
         # Only fields with a value: Claude Code (MCP TypeScript SDK) rejects null or "" where a URL or list is
@@ -370,7 +390,8 @@ class OAuthServer:
         Raises `OAuthError` with `redirect=False` while client and redirect URI are not established — then the
         error must NOT go to the redirect URI (RFC 6749 §4.1.2.1) — and with `redirect=True` afterwards."""
         client = self.store.oauth_client(q.get("client_id"))
-        if client is None:
+        if client is None or self.store.oauth_service(client["client_id"]) is not None:
+            # A service (T-60) has no person and no redirect URI: it never starts an authorization.
             err = OAuthError("invalid_client", "unknown client_id")
             err.redirect = False   # type: ignore[attr-defined]
             raise err
@@ -457,14 +478,17 @@ class OAuthServer:
         if form.get("client_secret") or form.get("client_assertion"):
             raise OAuthError("invalid_client", "public clients only — no client secret", 401)
         client = self.store.oauth_client(form.get("client_id"))
-        if client is None:
+        if client is None or self.store.oauth_service(client["client_id"]) is not None:
             raise OAuthError("invalid_client", "unknown client_id", 401)
         return client
 
     def token(self, form: dict, ip) -> dict:
         grant_type = form.get("grant_type")
+        if grant_type == "client_credentials" and self.services is not None:
+            return self.services.token(form, ip)
         if grant_type not in ("authorization_code", "refresh_token"):
-            raise OAuthError("unsupported_grant_type", "authorization_code or refresh_token")
+            raise OAuthError("unsupported_grant_type", "authorization_code or refresh_token"
+                             + (" or client_credentials" if self.services is not None else ""))
         client = self._client_of_request(form)
         if grant_type == "authorization_code":
             return self._exchange_code(client, form, ip)
@@ -531,6 +555,11 @@ class OAuthServer:
         _, _, max_age = self._lifetimes()
         grant_id = self.store.oauth_create_grant(h, client["client_id"], int(row["user_id"]), row["resource"],
                                                  scope, now, ip, now + max_age if max_age else None, rows)
+        if grant_id is None:
+            # The code came back while this exchange ran (A-6): someone else holds it too. Nothing was issued — the
+            # second exchange is refused as a reuse, and this one as well (RFC 9700 §4.2.4).
+            self._audit("oauth_code_reuse", u["username"], ip, f"client={client['client_id']} grant=- during_exchange=1")
+            raise OAuthError("invalid_grant", "authorization code already used")
         self._audit("oauth_token", u["username"], ip,
                     f"client={client['client_id']} grant={grant_id} refresh={'yes' if rt else 'no'}")
         self.auth._security_event("oauth_device_connected", u["id"], grant_id=grant_id, client_id=client["client_id"],
@@ -539,7 +568,9 @@ class OAuthServer:
 
     def _code_reused(self, row, ip) -> None:
         name = self.auth._account_name(row["user_id"])
-        grant_id = row["grant_id"]
+        # Read and marked in one transaction: if the first exchange has not written its grant yet, the mark makes it
+        # refuse to (A-6) — the row read before the consume may already be stale.
+        grant_id = self.store.oauth_mark_code_reused(row["code_hash"]) or None
         self._audit("oauth_code_reuse", name, ip, f"client={row['client_id']} grant={grant_id or '-'}")
         if grant_id and self.store.oauth_revoke_grant(int(grant_id), "code_reuse", _now()):
             self._audit("oauth_revoked", name, ip, f"grant={grant_id} reason=code_reuse")
@@ -646,7 +677,10 @@ class OAuthServer:
         return True
 
     def revoke_user(self, user_id: int, reason: str) -> int:
-        return sum(1 for gid in self.store.oauth_user_grant_ids(user_id) if self.revoke_grant(gid, reason))
+        """Every connected device and, with the switch on, every service (T-60) of the account (with the switch off
+        `TinySesam._services_revoked` takes what is left)."""
+        n = self.services.revoke_user(user_id, reason) if self.services is not None else 0
+        return n + sum(1 for gid in self.store.oauth_user_grant_ids(user_id) if self.revoke_grant(gid, reason))
 
     # --- resource side ---
     def user_for(self, token: str, url: str, ip) -> tuple[Optional[dict], str]:
@@ -658,14 +692,20 @@ class OAuthServer:
         now = _now()
         if row is None or row["kind"] != "access":
             return None, "unknown"
-        if row["g_revoked_at"] is not None:
+        service = row["s_client_id"] is not None
+        if row["g_revoked_at"] is not None or (service and row["s_revoked_at"] is not None):
             return None, "revoked"
+        if service and self.services is None:
+            return None, "revoked"          # the switch is off: no service token counts any more
         if row["expires_at"] <= now or (row["g_expires_at"] and row["g_expires_at"] <= now):
             return None, "expired"
         if row["g_resource"] not in self.resources() or not resource_covers(row["g_resource"], url):
             return None, "audience"
+        if service and row["g_resource"] not in json.loads(row["s_resources"] or "[]"):
+            return None, "audience"
         u = self.store.get_user(row["g_user_id"])
-        if u is None or u["disabled"] or u["is_service"]:
+        # A service account has no person and never consents — only a service (T-60) acts as one.
+        if u is None or u["disabled"] or (u["is_service"] and not service):
             return None, "account_locked"
         if "mcp" not in row["scope"].split():
             return None, "scope"
@@ -679,6 +719,11 @@ class OAuthServer:
         d["_oauth_grant"] = int(row["grant_id"])
         # Like an automation key (R6-5): a token acts for the account at one resource — never as its admin.
         d["is_admin"] = 0
+        if service:
+            d["_oauth_service"] = True
+            if row["s_roles"]:
+                # The scope narrows, never widens — read against the account's roles on every request.
+                d["roles"] = json.dumps(sorted(set(json.loads(row["s_roles"])) & set(self.auth.user_roles(u))))
         return d, ""
 
     # --- devices ---
@@ -758,8 +803,10 @@ async def _form(request) -> dict:
 
 def add_routes(auth, r) -> None:
     """The OAuth routes on TinySesam's router (only with `oauth_enabled`)."""
+    from fastapi import HTTPException
     from fastapi.responses import JSONResponse, RedirectResponse, Response
     from . import security
+    from .errors import ConfigError
 
     cfg = auth.cfg
     srv = auth._oauth_server()
@@ -948,6 +995,75 @@ def add_routes(auth, r) -> None:
         except OAuthError as e:
             return error_json(e)
         return Response(status_code=200)
+
+
+    # --- services (T-60, ADR-13) ---
+    if srv.services is not None:
+        services = srv.services
+
+        @r.post("/auth/oauth/pair")
+        async def service_pair(request: Request):
+            ip = auth.client_ip(request)
+            try:
+                ctype = (request.headers.get("content-type") or "").split(";")[0].strip().lower()
+                if ctype != "application/json":
+                    raise OAuthError("invalid_request", "the body must be application/json")
+                try:
+                    body = json.loads((await _read_body(request)).decode("utf-8"))
+                except (UnicodeDecodeError, ValueError):
+                    raise OAuthError("invalid_request", "the body is no JSON") from None
+                out = services.pair(body, ip)
+            except OAuthError as e:
+                return error_json(e)
+            return JSONResponse(out, status_code=201, headers={"Pragma": "no-cache", "Cache-Control": "no-store"})
+
+
+        @r.post("/auth/oauth/service/keys")
+        async def service_key(request: Request):
+            ip = limited(request, "oauth_token")
+            if ip is None:
+                return error_json(OAuthError("temporarily_unavailable", "too many requests", 429))
+            try:
+                if request.headers.get("authorization"):
+                    raise OAuthError("invalid_client", "private_key_jwt only — no Authorization header", 401)
+                out = services.rotate_key(await _form(request), ip)
+            except OAuthError as e:
+                security.seclog.info("oauth service key refused ip=%s error=%s", security.for_log(ip), e.error)
+                return error_json(e)
+            return JSONResponse(out, headers={"Pragma": "no-cache", "Cache-Control": "no-store"})
+
+
+        # Self-service: the services that act as the signed-in person. Managed from an interactive session only —
+        # never with an API key, an access token or an app password (`session_user`).
+        @r.get("/auth/oauth/services")
+        def own_services(request: Request):
+            user = auth.session_user(request)
+            if user is None:
+                raise HTTPException(401)
+            return auth.list_service_clients(int(user["id"]))
+
+
+        @r.post("/auth/oauth/services/pairing")
+        async def own_service_pairing(request: Request):
+            # B-12: a service is a new, lasting way in — only from a fresh confirmation, like an API key.
+            user = auth._require_fresh(request)
+            b = await auth.json_body(request)
+            try:
+                return auth.create_service_pairing(int(user["id"]), name=b.get("name"),
+                                                   resources=b.get("resources"), roles=b.get("roles"))
+            except ConfigError as e:
+                raise HTTPException(400, auth.t("api.invalid", reason=str(e)))
+
+
+        @r.post("/auth/oauth/services/{client_id}/revoke")
+        async def own_service_revoke(request: Request, client_id: str):
+            auth.require_csrf(request, request.headers.get("x-csrf-token"))
+            user = auth.session_user(request)
+            if user is None:
+                raise HTTPException(401)
+            if not auth.revoke_service_client(client_id, user_id=int(user["id"])):
+                raise HTTPException(404, auth.t("api.not_found"))
+            return {"ok": True}
 
 
     # --- own devices (account page) ---

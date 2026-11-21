@@ -216,7 +216,10 @@ def qr_state(dev, code, secret):
 
 
 dev, code, secret, match = qr_start()
-assert match not in re.sub(r"id=qrmatch>\d\d<", "", auth._qr_links(code)["approve_url"])
+# The link carries the short code and nothing else. (Up to here the check was `match not in url` — but the eight
+# random characters of the code contain a two-digit number now and then, and the suite went red by chance.)
+_approve = urlsplit(auth._qr_links(code)["approve_url"])
+assert _approve.path == "/auth/qr/approve" and parse_qs(_approve.query) == {"code": [code]}, _approve
 ok("T-44: the new device shows a two-digit number — it is not part of the approval link")
 
 # (a) default: an account without a second factor cannot approve
@@ -482,6 +485,31 @@ assert auth.t("acc.events_by_admin") in listing
 ok("T-47: the account page's 'Recent activity' lists the admin's password and link (by an administrator) and the QR sign-in")
 
 # =====================================================================================
+# Attack round B — the admin routes that create access want a fresh confirmation even with admin_require_mfa=False
+# =====================================================================================
+auth, app = build(admin_require_mfa=False, magiclink_enabled=True)
+auth.ensure_admin("root", "root-pw-12345")
+root = auth.store.get_user_by_name("root")["id"]
+victim = auth.create_user("vic", password="vic-pw-123456")
+ADMIN = "/auth/admin/api"
+calls = {"password reset": (f"{ADMIN}/users/{victim}/password", {"password": "a fresh long password 4711"}),
+         "API key": (f"{ADMIN}/users/{victim}/keys", {"name": "k"}),
+         "sign-in link": (f"{ADMIN}/users/{victim}/signin-link", {}),
+         "invitation": (f"{ADMIN}/invite", {"email": "", "is_admin": True})}
+old_admin = session_client(auth, app, root, age=STALE)
+assert old_admin.get(f"{ADMIN}/users", headers=JSON).status_code == 200, "the panel itself stays open (no admin MFA)"
+for what, (path, body) in calls.items():
+    r = old_admin.post(path, json=body, headers=JSON)
+    assert r.status_code == 403, (what, r.status_code, r.text[:200])
+assert auth.store.get_user(victim) and not auth.list_api_keys(victim)
+ok(f"admin_require_mfa=False: {len(calls)} admin routes that create access refuse a stale session (403 step-up)")
+fresh_admin = session_client(auth, app, root, age=5)
+for what, (path, body) in calls.items():
+    r = fresh_admin.post(path, json=body, headers=JSON)
+    assert r.status_code == 200, (what, r.status_code, r.text[:200])
+ok("… and a fresh one gets through")
+
+# =====================================================================================
 # Guard — every route that creates new access goes through the one bolt
 # =====================================================================================
 #: Route handler (file, function) → why it creates new access. Each must call `_require_fresh`
@@ -499,6 +527,11 @@ NEW_ACCESS = {
     ("webauthn_.py", "reg_finish"): "passkey",
     ("oauth.py", "consent_page"): "OAuth consent page",
     ("oauth.py", "consent_answer"): "OAuth consent",
+    ("admin.py", "user_password"): "password set by an admin",
+    ("admin.py", "user_key_create"): "API key by an admin",
+    ("admin.py", "service_pairing"): "service pairing",
+    ("admin.py", "invite"): "invitation",
+    ("admin.py", "user_signin_link"): "sign-in link by an admin",
 }
 _BOLTS = {"_require_fresh", "_reauth_target", "_fresh_enough"}
 missing = []

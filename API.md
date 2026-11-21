@@ -22,7 +22,7 @@ The tier is recorded per name in `tests/api_surface.json`. The guard `tests/test
 
 **Public is what the hand-written docs describe** (decided before 1.0): the READMEs, `CONFIGURATION.md`, `SECURITY.md` and `docs/OPERATIONS.md`. This page is generated and lists every name with its tier; being listed here alone is no promise. The guard checks that every tier-A/B Python name is named in those documents.
 
-The configuration fields are in [CONFIGURATION.md](CONFIGURATION.md): 179 of 194 in tier A, the others below at their tier.
+The configuration fields are in [CONFIGURATION.md](CONFIGURATION.md): 179 of 198 in tier A, the others below at their tier.
 
 **English, names as well as values** (since 0.22.0, without alias): The names of tiers A and B, their parameters and the keys and values they return or accept — result dicts, the `details` passed to `on_security_event`, the context of your own pages (`ctx["prefix"]`, `ctx["purpose"]`), the JSON responses of the routes, the kinds of API keys (`automation`, `human`). Since the last breaking pass before the freeze (PO decision 2026-10-29) the same holds for what operators and proxies read — query and form parameters, header and cookie names, logger names, the event words and keys of the security log, message ids — and audit and log lines are English as well. The lists old → new are in the CHANGELOG (0.22.0, [Unreleased]).
 
@@ -30,7 +30,7 @@ The configuration fields are in [CONFIGURATION.md](CONFIGURATION.md): 179 of 194
 
 **`auth.store` is internals** (tier C): the storage layer of the built-in routes, without tier, without promise and without transition period — its methods can change with every release. What an app needs is listed below as a method of `TinySesam` (e.g. `set_disabled` instead of `auth.store.set_disabled`).
 
-**Status:** A 391 · B 201 · C 38 names.
+**Status:** A 395 · B 216 · C 38 names.
 
 ## A · Methods of `TinySesam`
 
@@ -304,7 +304,7 @@ Value: `{'user': 'Remote-User', 'name': 'Remote-Name', 'email': 'Remote-Email', 
 
 The events for which `on_security_event` is called — everything that creates, changes, removes or consumes a sign-in factor of the account.
 
-Values: `password_changed`, `pin_set`, `pin_disabled`, `totp_enabled`, `totp_disabled`, `recovery_codes_generated`, `recovery_code_used`, `passkey_added`, `passkey_removed`, `api_key_created`, `api_key_revoked`, `api_keys_revoked`, `email_changed`, `username_changed`, `oauth_device_connected`, `oauth_device_revoked`, `oauth_token_reuse`, `signin_link_issued`, `device_signed_in`, `app_password_created`, `app_password_revoked`, `app_passwords_revoked`
+Values: `password_changed`, `pin_set`, `pin_disabled`, `totp_enabled`, `totp_disabled`, `recovery_codes_generated`, `recovery_code_used`, `passkey_added`, `passkey_removed`, `api_key_created`, `api_key_revoked`, `api_keys_revoked`, `email_changed`, `username_changed`, `oauth_device_connected`, `oauth_device_revoked`, `oauth_token_reuse`, `signin_link_issued`, `device_signed_in`, `app_password_created`, `app_password_revoked`, `app_passwords_revoked`, `oauth_service_paired`, `oauth_service_revoked`
 
 ## A · `TinySesamConfig`
 
@@ -465,6 +465,10 @@ Create an app password (T-66) for HTTP clients that speak only Basic auth — We
 
 Create a one-time token (plaintext return). Only the sha256 hash is in the DB.
 
+### `create_service_pairing(user_id, name=None, resources=None, roles=None) -> 'dict'`
+
+A one-time pairing code for a service that will act as `user_id` (a service account or a person's own account — never with the admin flag). The service redeems it with `tinysesam-client pair <base_url> <code>`.
+
 ### `create_signin_link(user_id, ttl_min=None, next='/') -> 'dict'`
 
 Issue a one-time sign-in link for an account — without mail, to hand over by any channel.
@@ -537,6 +541,10 @@ The app passwords of an account (`user_id=None`: of all accounts) — never a se
 
 All locked resources (names and descriptions, no secrets).
 
+### `list_service_clients(user_id=None) -> 'list'`
+
+The live services — of one account or all: client ID, name, account, roles, resources, created, last token request and address, and the keys (`kid`, created, expiry, end of the rotation overlap, last use).
+
 ### `magic_url(raw, base_url, purpose='login') -> 'str'`
 
 The link the recipient clicks — path depending on purpose (`TOKEN_PATHS`). `base_url` is checked: a foreign host raises `ConfigError` — in a route `public_base(request)` supplies the checked base.
@@ -600,6 +608,10 @@ Revoke one app password — of `user_id` only, if given (the account page). True
 ### `revoke_mfa_enrollment(user_id: 'int') -> 'None'`
 
 Close an open enrollment window immediately.
+
+### `revoke_service_client(client_id, user_id=None) -> 'bool'`
+
+Revoke a service at once: its keys are deleted, its tokens stop working with the next request. With `user_id` only a service of that account. True if one was live.
 
 ### `send_mail(to, subject, text, html=None)`
 
@@ -699,7 +711,7 @@ Value: `{'login': '/auth/magic/{t}', 'verify_email': '/auth/verify/{t}', 'invite
 
 ## B · `TinySesamConfig`
 
-Fields of this tier (meaning in [CONFIGURATION.md](CONFIGURATION.md)): `c22_stylesheet`, `topbar_enabled`, `topbar_links`, `app_password_default_days`, `app_password_allow_unlimited`, `gate_key_file`, `oauth_enabled`, `oauth_resources`, `oauth_access_token_ttl_sec`, `oauth_refresh_idle_days`, `oauth_refresh_max_days`, `oauth_refresh_grace_sec`, `oauth_pepper_file`, `hsts`, `totp_required`.
+Fields of this tier (meaning in [CONFIGURATION.md](CONFIGURATION.md)): `c22_stylesheet`, `topbar_enabled`, `topbar_links`, `app_password_default_days`, `app_password_allow_unlimited`, `gate_key_file`, `oauth_enabled`, `oauth_resources`, `oauth_access_token_ttl_sec`, `oauth_refresh_idle_days`, `oauth_refresh_max_days`, `oauth_refresh_grace_sec`, `oauth_pepper_file`, `oauth_service_clients`, `oauth_service_token_ttl_sec`, `oauth_service_key_days`, `oauth_pairing_minutes`, `hsts`, `totp_required`.
 
 ### `TinySesamConfig.enabled_methods() -> 'list[str]'`
 
@@ -751,6 +763,8 @@ The keys of the `details` dict per event, read from the call sites. A key that g
 | `email_changed` | `new`, `old` |
 | `oauth_device_connected` | `client_id`, `client_name`, `grant_id`, `resource` |
 | `oauth_device_revoked` | `client_id`, `grant_id`, `reason` |
+| `oauth_service_paired` | `client_id`, `client_name`, `resources` |
+| `oauth_service_revoked` | `client_id`, `client_name`, `reason` |
 | `oauth_token_reuse` | `client_id`, `grant_id`, `kind` |
 | `passkey_added` | `name` |
 | `passkey_removed` | `passkey_id` |
@@ -824,7 +838,7 @@ Observed on probe instances; values are recorded where they are the contract (`X
 #### Headers, reasons, inputs, cookies
 
 - **`X-TinySesam-*` headers** (request or response, see the table above): `X-TinySesam-Gate-Cookie`, `X-TinySesam-Location`, `X-TinySesam-Reason`, `X-TinySesam-Roles`.
-- **Values of `X-TinySesam-Reason`:** `app-missing`, `app-signed-out`, `app-stale`, `basic`, `oauth`, `role` (`app-…` only with several OIDC clients).
+- **Values of `X-TinySesam-Reason`:** `app-missing`, `app-signed-out`, `app-stale`, `basic`, `forwarded-conflict`, `oauth`, `role` (`app-…` only with several OIDC clients).
 - **Request headers the forward and gate paths read** — what a proxy sets or passes on: `Authorization`, `Host`, `X-Api-Key`, `X-Forwarded-For`, `X-Forwarded-Host`, `X-Forwarded-Proto`, `X-Forwarded-Uri`, `X-Original-Uri`, `X-Original-Url`, `X-TinySesam-Roles`. The `Cookie` header is passed on as the browser sent it. Headers a browser sends on its own (`Accept`, `Referer`, `Sec-Fetch-Mode`, `Sec-Fetch-Site`, `X-Csrf-Token`) are read as well but are tier B: no proxy has to set them.
 - **Request parameters:** `roles`.
 - **Cookies the gate sets itself** (host-only, fixed names): `__Host-tinysesam_link`, `__Host-tinysesam_linkflow`. The gate token cookie is named by the configuration field `gate_cookie_name`.
@@ -868,8 +882,13 @@ The HTML pages (sign-in, registration, account, admin panel, the pages behind e-
 | GET | `/auth/oauth/consent` | `query:txn` |
 | POST | `/auth/oauth/consent` | — |
 | POST | `/auth/oauth/devices/{grant_id}/revoke` | — |
+| POST | `/auth/oauth/pair` | — |
 | POST | `/auth/oauth/register` | — |
 | POST | `/auth/oauth/revoke` | — |
+| POST | `/auth/oauth/service/keys` | — |
+| GET | `/auth/oauth/services` | — |
+| POST | `/auth/oauth/services/pairing` | — |
+| POST | `/auth/oauth/services/{client_id}/revoke` | — |
 | POST | `/auth/oauth/token` | — |
 | GET | `/auth/oidc/start` | `query:app`, `query:next` |
 | POST | `/auth/passkey/delete` | — |
@@ -920,6 +939,8 @@ The HTML pages (sign-in, registration, account, admin panel, the pages behind e-
 | POST | `<admin>/api/keys/{kid}/revoke` | — |
 | GET | `<admin>/api/oauth/devices` | — |
 | POST | `<admin>/api/oauth/devices/{grant_id}/revoke` | — |
+| GET | `<admin>/api/oauth/services` | — |
+| POST | `<admin>/api/oauth/services/{client_id}/revoke` | — |
 | GET | `<admin>/api/resources` | — |
 | POST | `<admin>/api/resources` | — |
 | POST | `<admin>/api/resources/{name}/delete` | — |
@@ -938,6 +959,7 @@ The HTML pages (sign-in, registration, account, admin panel, the pages behind e-
 | POST | `<admin>/api/users/{uid}/passkeys/{cid}/delete` | — |
 | POST | `<admin>/api/users/{uid}/password` | — |
 | POST | `<admin>/api/users/{uid}/roles` | — |
+| POST | `<admin>/api/users/{uid}/service-pairing` | — |
 | POST | `<admin>/api/users/{uid}/signin-link` | — |
 | POST | `<admin>/api/users/{uid}/username` | — |
 | GET | `<admin>/api/version` | — |
@@ -948,7 +970,7 @@ Hints to the account page's script, tier B: `X-TinySesam-Factor`, `X-TinySesam-R
 
 What a filter matches. **Promised:** the logger names, the format of the log file, the event word at the start of a line, the key names in their order, and the literal values below. **Not promised:** anything after the keys (free text), the values of `user=`, `ip=` and of a `reason=` that is not listed, and every line that does not start with one of these event words.
 
-- **Loggers:** `tinysesam`, `tinysesam.mail`, `tinysesam.security` (`tinysesam.security` is the one the filters read; `security_log` in the configuration writes it to a file).
+- **Loggers:** `tinysesam`, `tinysesam.client`, `tinysesam.mail`, `tinysesam.security` (`tinysesam.security` is the one the filters read; `security_log` in the configuration writes it to a file).
 - **Format of the log file:** `%(asctime)s %(levelname)s %(message)s`
 - **Lines** (level, event word, `|`, keys in order; `event` words: `deferred login`, `deferred verification`, `failed login`, `failed verification`, `login ok`, `repeated login`):
   - `INFO login ok | user ip method unban`
@@ -1012,4 +1034,4 @@ These names are not part of the promise. Since 0.22.0 the implementation is call
 
 ---
 
-158 methods, 3 properties, 11 constants, 7 methods of `TinySesamConfig`, 10 exports, of which 5 error types, 18 names on the result types `LoginResult`, `PasswordChangeResult` — generated from the docstrings and `tests/api_surface.json`.
+161 methods, 3 properties, 11 constants, 7 methods of `TinySesamConfig`, 10 exports, of which 5 error types, 18 names on the result types `LoginResult`, `PasswordChangeResult` — generated from the docstrings and `tests/api_surface.json`.

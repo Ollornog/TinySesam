@@ -8,7 +8,7 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 ## Meilensteine
 
 * ☐ **[M-1](M-1-api-stable-1-0.md)** 1.0 — API stable enough for PyPI — 14/14 erledigt
-* ☐ **[M-2](M-2-after-1-0.md)** After 1.0 — keeping the published package maintained — 42/57 erledigt
+* ☐ **[M-2](M-2-after-1-0.md)** After 1.0 — keeping the published package maintained — 48/61 erledigt
 * ☑ **[M-3](M-3-gate-in-front-of-third-party-apps.md)** Gate in front of third-party apps — fast, sign in once, sign out cleanly — 8/8 erledigt
 
 ## Aufgaben
@@ -44,7 +44,7 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 * ☑ **[T-29](T-29-translate-everything-to-english.md)** Translate everything to English (code texts, docs, messages) · M-2
 * ☐ **[T-30](T-30-launch-plan.md)** Launch plan — make TinySesam publicly known · M-2
 * ☐ **[T-31](T-31-maybe-recommend-a-provider-session-at-least-as-lon.md)** Maybe: recommend a provider session at least as long as the gateway session · M-2
-* ☐ **[T-32](T-32-api-key-pairing-negotiate-a-key-on-first-contact-o.md)** API key pairing: negotiate a key on first contact, optional renew and rotate on login · M-2
+* ☑ **[T-32](T-32-api-key-pairing-negotiate-a-key-on-first-contact-o.md)** API key pairing: negotiate a key on first contact, optional renew and rotate on login · M-2
 * ☑ **[T-33](T-33-sign-in-alternatives-qr-cross-device-login-admin-i.md)** Sign-in alternatives: QR/cross-device login, admin-issued link without mail, self-request switchable · M-2
 * ☑ **[T-34](T-34-admin-creates-accounts-link-sign-in-sets-up-the-chain.md)** Admin creates accounts, a link signs them in: setup pass and alternatives in the factor chain · M-2
 * ☑ **[T-35](T-35-own-dialogs-instead-of-browser-system-dialogs.md)** Own dialogs instead of the browser's system dialogs, with a copy button · M-2
@@ -71,14 +71,17 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 * ☐ **[T-56](T-56-webauthn-user-verification-at-registration-random.md)** WebAuthn: user verification at registration, random user handle · M-2
 * ☐ **[T-57](T-57-totp-accept-at-most-one-step-back-switch-totp-wind.md)** TOTP: accept at most one step back (switch totp_window) · M-2
 * ☑ **[T-58](T-58-caddy-templates-a-header-missing-from-the-auth-answer.md)** Caddy templates: a header missing from the auth answer reaches the app as placeholder text · M-2
-* ☐ **[T-59](T-59-gateway-image-on-a-slimmer-or-distroless-base.md)** Gateway image on a slimmer or distroless base, with only the dependencies it needs · M-2
-* ☐ **[T-60](T-60-oauth-for-services-client-credentials-private-key-jwt.md)** OAuth for services — client_credentials + private_key_jwt, pairing from T-32 · M-2
+* ☑ **[T-59](T-59-gateway-image-on-a-slimmer-or-distroless-base.md)** Gateway image on a slimmer or distroless base, with only the dependencies it needs · M-2
+* ☑ **[T-60](T-60-oauth-for-services-client-credentials-private-key-jwt.md)** OAuth for services — client_credentials + private_key_jwt, pairing from T-32 · M-2
 * ☑ **[T-61](T-61-c22-adapter-same-look-as-a-c22-app.md)** C22 adapter: the built-in pages in the look of an app built on C22 · M-2
 * ☑ **[T-62](T-62-caddy-shipped-ready-made-image-and-quickstart-stack.md)** Caddy shipped ready-made: image tinysesam-caddy-gate and a quickstart stack · M-2
 * ☐ **[T-63](T-63-notify-the-holder-of-a-successful-sign-in-after-failed-attempts.md)** Notify the holder of a successful sign-in after failed attempts · M-2
 * ☑ **[T-64](T-64-top-bar-and-favicon-refresh.md)** Top bar and favicon refresh: logo, name, links, account menu, light/dark, phone · M-2
+* ☑ **[T-65](T-65-ai-guide-agents-md-and-a-skill-for-app-builders.md)** AI guide: AGENTS.md for contributors and a skill for app builders · M-2
 * ☑ **[T-66](T-66-app-passwords-for-webdav-caldav-and-git-at-the-gate.md)** App passwords for WebDAV, CalDAV/CardDAV and Git at the gate · M-2
 * ☐ **[T-67](T-67-orderly-shutdown-close.md)** Orderly shutdown: a public close() that drains the outboxes and refuses new jobs · M-2
+* ☐ **[T-68](T-68-dpop-for-service-tokens.md)** DPoP for service tokens — bind a service's access token to its key (RFC 9449) · M-2
+* ☑ **[T-69](T-69-attack-round-a-oauth-services-app-passwords-keys.md)** Attack round A (2026-11-21) — OAuth, services, app passwords, keys · M-2
 
 ## Fehler
 
@@ -95,6 +98,7 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 * ☑ **[B-11](B-11-a-saml-response-could-be-replayed-until-notonoraft.md)** A SAML response could be replayed until NotOnOrAfter · M-2
 * ☑ **[B-12](B-12-new-sign-in-factors-api-keys-and-qr-approval-witho.md)** New sign-in factors, API keys and QR approval without fresh confirmation · M-2
 * ☑ **[B-13](B-13-flaky-ci-suite-died-silently-and-chrome-start.md)** CI flakes: a suite died from a segfault without a word, a dialog wait raced, Chrome hung at startup · M-2
+* ☑ **[B-14](B-14-late-key-list-overwrites-the-sign-in-link-browser-test-reauth-flakes.md)** Admin panel: a late key list overwrote the sign-in link; browser test ran out after a dialog that navigates · M-2
 
 ## Entscheidungen (ADR)
 
@@ -109,3 +113,4 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 * ☑ **[ADR-9](ADR-9-gate-token-at-the-proxy.md)** Gate in front of third-party apps — the proxy verifies a short-lived gate token itself, TinySesam only when issuing
 * ☑ **[ADR-11](ADR-11-oauth-authorization-server-in-tinysesam.md)** OAuth 2.1 authorization server for MCP clients — built into TinySesam with own thin handlers, not Ory Hydra as a sidecar
 * ☑ **[ADR-12](ADR-12-key-purposes-keyrings-and-rotation.md)** One key per purpose, each a keyring with key IDs — vault, gate signature, OAuth pepper; rotation without loss
+* ☑ **[ADR-13](ADR-13-oauth-for-services-private-key-jwt.md)** Services get tokens with client_credentials and private_key_jwt, paired by a one-time code — amends ADR-11

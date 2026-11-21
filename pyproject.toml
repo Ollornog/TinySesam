@@ -70,8 +70,11 @@ saml = ["python3-saml>=1.15"]       # needs system libxmlsec1
 # NOT enough — `python -m tinysesam.gateway` ended with a ModuleNotFoundError for uvicorn,
 # and that was exactly the start command in the README.
 gateway = ["httpx>=0.27", "authlib>=1.9.1", "uvicorn>=0.30"]
+# Services with client_credentials + private_key_jwt (T-60, ADR-13): the server checks the signed client assertions,
+# the reference client `tinysesam-client` creates them. joserfc builds only on `cryptography` — no own cryptography.
+services = ["joserfc>=1.7.6"]
 all = ["argon2-cffi>=23", "qrcode[pil]>=7", "httpx>=0.27", "authlib>=1.9.1", "webauthn>=2.0",
-       "ldap3>=2.9", "redis>=5", "python3-saml>=1.15", "uvicorn>=0.30"]
+       "ldap3>=2.9", "redis>=5", "python3-saml>=1.15", "uvicorn>=0.30", "joserfc>=1.7.6"]
 
 # The sidebar next to the project page in the index. Whoever lands there usually looks for one of
 # five targets — if one is missing, they search for it on GitHub and may find a different project.
@@ -84,6 +87,8 @@ Issues = "https://github.com/Ollornog/TinySesam/issues"
 
 [project.scripts]
 tinysesam = "tinysesam.__main__:main"
+# The reference client for services (T-60): pair, fetch a token, rotate the key. Needs the extra [services].
+tinysesam-client = "tinysesam.client:main"
 
 [tool.setuptools.packages.find]
 include = ["tinysesam*"]

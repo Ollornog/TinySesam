@@ -97,7 +97,9 @@ rate limit, open-redirect protection via `safe_next`). Even so: review it yourse
   or `sessions/revoke` with `scope=all`). Connected programs (OAuth, T-36): `oauth_device_connected`
   (`details={"grant_id": n, "client_id": …, "client_name": …, "resource": …}` — a program got its first
   tokens after the consent), `oauth_device_revoked` (`details={"grant_id": n, "client_id": …, "reason": …}`,
-  `reason` one of `user`, `admin`, `client`, `account_disabled`) and `oauth_token_reuse`
+  `reason` one of `user`, `admin`, `client` and the reasons of `api_keys_revoked` — since the attack round of
+  2026-11-21 (A-1) a reset, an admin password reset and "sign out everywhere" end the connected programs too, not
+  only a block) and `oauth_token_reuse`
   (`details={"grant_id": n, "client_id": …, "kind": "code"|"refresh"}` — a used code or refresh token came
   back, the connection was revoked: the token has probably been copied). New ways in that are no factor
   of their own (H2, T-47): `signin_link_issued` (`details={"ttl_min": n, "by_operator": bool}` — a
@@ -106,7 +108,10 @@ rate limit, open-redirect protection via `safe_next`). Even so: review it yourse
   carries `details={"by_operator": bool}` (`True`: an administrator set it). App passwords (T-66):
   `app_password_created` (`details={"app_password_id": n, "name": …, "hosts": [...]}`), `app_password_revoked`
   (`details={"app_password_id": n}`) and `app_passwords_revoked` (`details={"count": n, "reason": …}`, the same
-  reasons as `api_keys_revoked`). The full list of event names is `TinySesam.SECURITY_EVENTS`.
+  reasons as `api_keys_revoked`). Services (T-60): `oauth_service_paired` (`details={"client_id": …, "client_name":
+  …, "resources": [...]}` — a service was paired to act as the account) and `oauth_service_revoked`
+  (`details={"client_id": …, "client_name": …, "reason": …}`, `reason` one of `user`, `admin`, and the reasons of
+  `api_keys_revoked`). The full list of event names is `TinySesam.SECURITY_EVENTS`.
   The `details` keys and the reasons are English since
   0.22.0 (up to 0.21.x `verbleibend`, `alt`/`neu`, `anzahl`/`grund` with German reasons). That includes changes an administrator makes to someone
   else's account in the panel (password reset, issuing an API key, revoking a passkey) — write the
@@ -116,8 +121,8 @@ rate limit, open-redirect protection via `safe_next`). Even so: review it yourse
   `notify_login_failures=False`), and since H2 a notice about **new access** (T-47, NIST SP 800-63B-4
   §4.1.2.1; opt-out `notify_new_access=False`) for `passkey_added`, `totp_enabled`, `pin_set`,
   `api_key_created`, `device_signed_in`, `signin_link_issued`, `password_changed` by an administrator,
-  `oauth_device_connected`, `oauth_token_reuse` and `app_password_created` — at most one per account and event a
-  minute. The
+  `oauth_device_connected`, `oauth_token_reuse`, `app_password_created` and `oauth_service_paired` — at most one per
+  account and event a minute. The
   same events appear on the account page under "Recent activity". Send your other mails from
   the hook (ideally via a queue — it runs synchronously in the request). An exception in the hook
   never undoes the change, but lands in the security log.
@@ -131,10 +136,36 @@ rate limit, open-redirect protection via `safe_next`). Even so: review it yourse
   never compared there (it does not even have the format), so the second factor cannot be skipped by Basic auth. What
   remains: an app password is a bearer secret — whoever copies it from the device (or reads it in transit without
   HTTPS) can use it at its applications until it expires or is revoked; it is sent with every request, so the proxy
-  in front must not log `Authorization`, and the template strips the header before the application
-  (`header_up -Authorization`). Misses are `failed login … method=app_password` in the security log (fail2ban) and
+  in front must not log `Authorization`, and the templates drop the header before the application (next point).
+  Misses are `failed login … method=app_password` in the security log (fail2ban) and
   count in a bucket of their own, so guessing at the gate does not lock the browser sign-in. Samba and other
   non-HTTP protocols are out of scope.
+- **Credentials at the application — the templates drop them.** Every proxy template in `deploy/` (Caddy, nginx,
+  Traefik) removes `Authorization` and `X-Api-Key` on the way to the application, AFTER forward auth has decided:
+  Caddy `header_up -Authorization` / `header_up -X-Api-Key` in every application `reverse_proxy`, nginx
+  `proxy_set_header Authorization ""` (FastCGI `fastcgi_param HTTP_AUTHORIZATION ""`, which also keeps
+  `PHP_AUTH_USER`/`PHP_AUTH_PW` empty), Traefik the middleware `tinysesam-strip-credentials` after `tinysesam-auth`.
+  The application learns who is signed in from `Remote-*`; it never needs the secret. Up to the attack round of
+  2026-11-21 (A-3) the templates only mentioned this in a comment, and an application's header log, debug page or
+  error report received app passwords, OAuth access tokens and — worst — API keys (`tsk_…`, valid at every host and
+  at TinySesam's own API, with roles, up to 90 days). **Your application checks `Authorization` itself** (its own
+  Basic auth or token check behind the gate)? Then delete those lines for that one host or location, deliberately —
+  and accept that whatever it logs then holds the credential. The quickstart's `webdav` profile does not need it
+  (the WebDAV server there has no sign-in of its own). `tests/test_attack_round_a.py` checks every template under
+  `deploy/` for this, a new one included; `tests/test_gate_caddy.py` measures it through a real Caddy.
+- **Services authenticate with their own key, not with a secret (T-60, ADR-13).** With `oauth_service_clients` a
+  service gets short-lived access tokens by `client_credentials` with `private_key_jwt` (RFC 7523): TinySesam stores
+  only its public key, so a copied database, a proxy log or a backup yields nothing that gets a token. The assertion
+  is checked by joserfc (extra `[services]`) with an algorithm list (`Ed25519`, `ES256`, `EdDSA` for an Ed25519 key)
+  bound to the stored key's type — no `none`, no HMAC, no key taken from the JWT header; `aud` must be the issuer
+  as its only value (RFC 10070 — the token endpoint URL is refused against audience injection), `exp` at most 5
+  minutes ahead, `jti` single use until then. A refusal answers a generic `invalid_client`; the reason is in the audit
+  log (`oauth_client_auth_failed`). Pairing needs a one-time code from a freshly confirmed session or the admin
+  panel and a proof that the service holds the private key. The token never carries the admin flag; a lock, a
+  revocation or a removed role takes effect at the next request. What remains: **the key file is the service** —
+  whoever copies it (mode 0600 by default) can get tokens until the key is rotated (`oauth_service_key_days`, the
+  client rotates at half of it) or the service is revoked. An access token itself is a bearer token for its
+  lifetime (15 min) at its resource; binding it to the key (DPoP, RFC 9449) is open as T-68.
 - **A TOTP code is valid exactly once — including the setup code.** The code that confirms the
   setup is consumed. Under `login_chain=["password","totp"]` that confirmation completes the TOTP
   step of the sign-in; everywhere else the *next* code is needed to sign in. Integration tests that

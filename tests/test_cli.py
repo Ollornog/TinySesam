@@ -8,6 +8,7 @@ import io
 import os
 import sys
 import tempfile
+import time
 import contextlib
 
 from tinysesam import TinySesam, TinySesamConfig
@@ -60,6 +61,32 @@ cli("passwd", "--db", db, "--stdin", "--keep-sessions", "admin", stdin="and-stil
 assert auth.store.get_session(tok) is not None
 ok("--keep-sessions keeps them")
 
+
+# The standing credentials go with the sessions, like with the admin reset in the panel (attack round 2026-11-21,
+# A-1): an API key and a connected OAuth device (grant + token) of the account. `--keep-sessions` keeps them.
+def standing():
+    key = auth.create_api_key(uid, name="job")["key"]
+    now, cid, code = int(time.time()), "cli-test-" + os.urandom(4).hex(), "c" + os.urandom(8).hex()
+    auth.store.oauth_add_client(cid, "tool", ["http://localhost:1/cb"], now, None)
+    auth.store.oauth_add_code(code, cid, uid, "http://localhost:1/cb", "x" * 43, "https://app.example.com/mcp",
+                              "mcp", now, now + 60)
+    gid = auth.store.oauth_create_grant(code, cid, uid, "https://app.example.com/mcp", "mcp", now, None, None,
+                                        [("t" + os.urandom(8).hex(), "access", "mcp", now + 3600)])
+    return key, gid
+
+
+key, gid = standing()
+cli("passwd", "--db", db, "--stdin", "--keep-sessions", "admin", stdin="and-still-one-longer\n")
+assert auth.verify_api_key(key)[0] is not None and auth.store.oauth_grant(gid)["revoked_at"] is None
+ok("--keep-sessions keeps the standing credentials too")
+code, out = cli("passwd", "--db", db, "--stdin", "admin", stdin="and-still-one-longest\n")
+assert code == 0 and "1 api_keys revoked" in out and "1 oauth_devices revoked" in out, out
+assert auth.verify_api_key(key)[0] is None, "an API key survived the offline reset"
+assert auth.store.oauth_grant(gid)["revoked_at"] is not None, "a connected OAuth device survived the offline reset"
+assert any("api_keys_revoked=1" in (a["detail"] or "") and "oauth_devices_revoked=1" in (a["detail"] or "")
+           for a in auth.store.recent_audit(50) if a["event"] == "password_reset_cli")
+ok("passwd revokes API keys and connected OAuth devices (A-1), the audit line names the counts")
+
 assert any(a["event"] == "password_reset_cli" for a in auth.store.recent_audit(50))
 ok("the intervention is in the audit log")
 
@@ -74,7 +101,7 @@ ok("wrong DB path -> clear message, no empty database as a side effect")
 
 code, from_ = cli("passwd", "--db", db, "--stdin", "admin", stdin="short\n")
 assert code == 1 and "too short" in from_
-assert auth._check_password("admin", "and-still-one-long")
+assert auth._check_password("admin", "and-still-one-longest")
 ok("password_min_length applies here too")
 
 # Without configuration the CLI does not know whether a chain enforces a second factor — it takes
@@ -93,7 +120,7 @@ for _weak, _text in (("Password2026!", "too easy to guess"), ("admin-admin", "to
                         ("y" * 257, "too long")):
     code, from_ = cli("passwd", "--db", db, "--stdin", "admin", stdin=_weak + "\n")
     assert code == 1 and _text in from_, (_weak[:20], from_)
-assert auth._check_password("admin", "and-still-one-long")
+assert auth._check_password("admin", "and-still-one-longest")
 ok("passwd: blocklist, account word and maximum length apply offline too")
 
 # A-7: The operator blocklist and the service name did not apply offline — a password from the

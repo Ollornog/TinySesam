@@ -150,6 +150,22 @@ def ip_normalized(value) -> str | None:
     return str(addr)
 
 
+def ip_bucket(ip, v6_prefix: int = 64) -> str:
+    """The rate-limit key of an address: IPv4 as it is, IPv6 shortened to its network (default /64). One home line or
+    one VPS gets a whole /64 (often a /56 or /48) and picks any address in it — counted per /128, a single subscriber
+    has 2^64 buckets (attack round 2026-11-21, A-4). An IPv4-mapped address counts as IPv4. Not an address → the
+    value unchanged (`"?"` for none)."""
+    norm = ip_normalized(ip) if ip else None
+    if norm is None:
+        return str(ip or "?")
+    addr = ipaddress.ip_address(norm)
+    if isinstance(addr, ipaddress.IPv6Address) and addr.ipv4_mapped:
+        return str(addr.ipv4_mapped)
+    if addr.version == 4:
+        return str(addr)
+    return str(ipaddress.ip_network(f"{addr}/{int(v6_prefix)}", strict=False))
+
+
 def ip_pseudonym(ip: str) -> str:
     """Shorten an IP to its network: IPv4 to /24, IPv6 to /48 (`audit_ip_pseudonymize`).
 
@@ -453,22 +469,35 @@ def safe_next(next_: str, default: str = "/", allowed_hosts=None) -> str:
     """Open-redirect protection for ?next= targets.
 
     Allows only *relative* paths on the same host (starting with exactly one '/', no
-    protocol-relative '//', no scheme, no backslash). Absolute URLs are only allowed
-    if their host is in allowed_hosts (for the forward-auth/SSO case). Everything else → default.
+    protocol-relative '//', no scheme). Absolute URLs are only allowed
+    if their host is in allowed_hosts (for the forward-auth/SSO case) and they carry no user part.
+    A backslash or an ASCII control character anywhere (tab, CR, LF included) → default as well.
+    Everything else → default.
     """
     if not next_:
         return default
-    n = next_.strip()
-    # relative path: exactly one leading slash, no scheme/backslash/protocol-relative
-    if n.startswith("/") and not n.startswith("//") and "\\" not in n and "://" not in n:
+    n = str(next_).strip()
+    # Read the target the way a browser does (WHATWG URL), not only the way `urlsplit` does (attack round B, F4).
+    # A browser drops every ASCII tab and newline inside a URL and reads `\\` as `/` in http(s): `/\t/evil.example`
+    # becomes `//evil.example`, and `https://evil.example\\@app.example.com/` goes to evil.example while `urlsplit`
+    # sees app.example.com. In a `Location` header Starlette percent-encodes both, but several pages follow the
+    # target from a JSON answer with `location.href`. So: no control character and no backslash anywhere.
+    if "\\" in n or any(ord(z) < 0x20 or ord(z) == 0x7f for z in n):
+        return default
+    # relative path: exactly one leading slash, no scheme/protocol-relative
+    if n.startswith("/") and not n.startswith("//") and "://" not in n:
         return n
     if allowed_hosts:
         try:
             parts = urlsplit(n)
+            host = parts.hostname or ""
+            port_ok = parts.port is None or parts.port > 0      # `.port` raises on a port that is no number
         except Exception:
             return default
-        host = parts.hostname or ""
-        if parts.scheme in ("http", "https") and host and host in allowed_hosts:
+        # A user part (`https://x@app.example.com/`) is never a target of ours: it is the one place where the two
+        # readers of a URL disagree most (`@` in the user part, encoded slashes), and no redirect needs it.
+        if (parts.scheme in ("http", "https") and host and host in allowed_hosts and port_ok
+                and "@" not in parts.netloc):
             return n
     return default
 

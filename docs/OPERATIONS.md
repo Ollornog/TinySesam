@@ -61,8 +61,8 @@ went without `email_changed` (added later from OIDC/LDAP), and the name in the d
 Since the PO decision of 2026-10-29 (M-1) the security log is part of the stability promise, tier A. What a
 filter or a log shipper may rely on:
 
-- **The logger** `tinysesam.security` (and its parent `tinysesam`; `tinysesam.mail` for mail). `security_log`
-  writes the first to a file.
+- **The logger** `tinysesam.security` (and its parent `tinysesam`; `tinysesam.mail` for mail; `tinysesam.client`
+  for the reference client of services on the service's machine, T-60). `security_log` writes the first to a file.
 - **The format of that file:** `%(asctime)s %(levelname)s %(message)s` — so a line starts with the date, then
   the level, then the message. The shipped filters strip the date and anchor on the level (`^\s*WARNING …`).
 - **The event word** at the start of the message and **the keys behind it, in this order:**
@@ -101,7 +101,9 @@ check) — moving one would cost you a reconfiguration at the provider or in the
 
 **What a proxy has to set or pass on (tier A):** `Host`, `Authorization`, `X-Api-Key`, `Cookie`, `X-Forwarded-For`,
 `X-Forwarded-Host`, `X-Forwarded-Proto`, `X-Forwarded-Uri` (or `X-Original-Uri` / `X-Original-Url`) and, if you
-require roles, `X-TinySesam-Roles`. The shipped templates under `deploy/forward-auth/` do exactly that. The headers
+require roles, `X-TinySesam-Roles` — to TinySesam (the forward-auth sub-request). The shipped templates under
+`deploy/forward-auth/` do exactly that, and towards the application they drop `Authorization` and `X-Api-Key` again
+(SECURITY.md, "Credentials at the application"). The headers
 a browser sends on its own (`Accept`, `Referer`, `Sec-Fetch-Mode`, `Sec-Fetch-Site`, `X-Csrf-Token`) are read as
 well, but they are **not** an operator contract (tier B): no proxy rule is needed for them, and no proxy rule may
 strip them.
@@ -252,6 +254,40 @@ identifier belongs to two accounts.
   `DROP TRIGGER trg_users_identifier_insert; DROP TRIGGER trg_users_identifier_update;` — a newer
   version recreates them at the next start.
 
+## The gateway image: no shell inside
+
+Since T-59 the runtime stage of `ghcr.io/ollornog/tinysesam` is **distroless** (`gcr.io/distroless/base-debian13`,
+pinned by digest): glibc, OpenSSL, zlib, zstd, CA certificates and tzdata from the base, the Python interpreter of the
+`python:3.x-slim` build stage, the five Debian libraries its modules need (SQLite, mpdecimal, bzip2, xz, libgcc — each
+with its dpkg record, so SBOM and scan see them) and the venv. **No shell, no package manager, no coreutils, no pip.**
+Whoever gets code execution in the container finds no tool to fetch more. Unchanged: uid/gid 1000 (`tinysesam`, existing
+`/data` volumes keep working), `/data` as the volume, the `HEALTHCHECK` (exec form, Python), the entrypoint
+`python -m tinysesam.gateway`, the security log path for fail2ban (`TINYSESAM_SECURITY_LOG`, a bind mount like in
+`deploy/forward-auth/docker-compose.yml`).
+
+What changes for the operator:
+
+| Task | Before (python:3.x-slim) | Now |
+|---|---|---|
+| Operator commands (`backup`, `unlock`, `audit`, `keys …`, `gc`, `owner`, `delete`) | `docker exec <c> tinysesam …` | the same — `tinysesam` is a program, not a shell feature |
+| Commands without a running container (backup before an update) | `docker compose run --rm --no-deps --entrypoint tinysesam tinysesam …` | the same |
+| Read a file in the container (the claim token) | `docker exec <c> cat /data/app.db.claim` | `docker exec <c> python -c "print(open('/data/app.db.claim').read())"` |
+| Look around inside | `docker exec -it <c> sh` | `docker exec -it <c> python` (a Python prompt as `tinysesam`: `os.listdir`, `open`, `sqlite3`), or a side-car below |
+| Anything with `sh -c '…'` (your own healthcheck, a cron wrapper) | worked | fails with `exec: "sh": executable file not found` — call `python` or `tinysesam` directly, in exec form |
+
+**Debugging with tools (side-car).** Start a throwaway container with a shell in the namespaces of the running one;
+nothing is installed into the gateway image, and nothing stays behind:
+
+```bash
+docker run --rm -it --pid container:<c> --network container:<c> --volumes-from <c> busybox:<version> sh
+# inside: ps (the gateway is PID 1), ls -la /data, wget -qO- http://127.0.0.1:8000/healthz, netstat -tln
+```
+
+`--volumes-from` brings `/data` (and the security log mount), `--network` the gateway's loopback, `--pid` its
+processes. Pin the side-car image like any other; for a compose service, `<c>` is the container name from
+`docker compose ps`. The image itself proves on every build that it has no shell or package manager
+(`deploy/gateway/image_setup.py`) and on every PR that the running container cannot start `sh` (`image-probe`).
+
 ## First-admin one-time token
 
 If there is no admin (fresh instance, or the identity provider withdrew the last one),
@@ -265,7 +301,8 @@ such a withdrawal. Where it goes is decided by who reads along ([T-17](../backlo
 | stderr is not a console (container, journal, pipe) | `<db_path>.claim`, `0600` | the path |
 | … without database file (`:memory:`) or file cannot be created | stderr (fallback) | honestly: stderr is not a console, so the value stands in the service's log |
 
-In a container therefore: `docker exec <container> cat /data/app.db.claim` (path from the log), sign in,
+In a container therefore: `docker exec <container> python -c "print(open('/data/app.db.claim').read())"` (path from
+the log; the gateway image has no `cat`, see [the image](#the-gateway-image-no-shell-inside)), sign in,
 open the URL. After redemption TinySesam deletes `<db_path>.claim`; if there is an admin at start,
 it clears a leftover. If the token expires, the file content is invalid,
 and the next start writes a new one. A self-chosen `admin_claim_token_file` stays
@@ -341,6 +378,13 @@ successor, purpose and key ID for a key. A value copied into another account's r
 edited key ID, does not decrypt. Values of 0.25.x (`v1:`, no binding) are read with every key of the keyring and
 rewritten as `v2:` at the start (the log says how many); until the original key is retired, such a value restored from
 an old backup into another row would still decrypt — rotate and retire once after the update to close that.
+
+Since 0.26 only the migration reads `v1:` and plain text; the service reads `v2:` only. If the start cannot rewrite
+them (a read-only database), it stops with *"… stored secret(s) are still in a format before 0.26 …"*: start once
+with write access, or run `tinysesam keys reencrypt --db <file>` as the service's user with its environment, then
+start again. A start that finds anything but `v2:` in `key_material` stops too (*"key_material holds … value(s) that
+are not vault ciphertext"*): TinySesam has only ever written that table encrypted, so the database was written by
+someone without the vault key, or is damaged — restore it from a backup; the rows are never used.
 
 ### Rotation — nothing is lost, nobody is signed out
 

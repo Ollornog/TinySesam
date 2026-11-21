@@ -1,7 +1,7 @@
 ---
 type: Task
 title: 'API key pairing: negotiate a key on first contact, optional renew and rotate on login'
-status: offen
+status: erledigt
 id: T-32
 milestone: M-2
 tags: [api-keys, crypto, pairing]
@@ -23,4 +23,24 @@ Open design questions (decide in an ADR before building):
 - How the pairing code is bound: short-lived, single use, rate-limited, shows up in the audit log; which key kind it produces.
 - Client side: a small reference client (Python, maybe the Go gate client from T-28) that stores the key and does pairing/rotation by itself, otherwise nobody can use it.
 
-Done when: the ADR is written; pairing, `renew_on_login` and `rotate_on_login` work per key, are settable in the admin panel and the self-service routes, appear in the audit log, are documented in the README section "API keys", and are covered by tests including rotation with a request in flight and the revocation paths.
+## Closed by T-60 (2026-11-20)
+
+The wish is fulfilled for services by [T-60](T-60-oauth-for-services-client-credentials-private-key-jwt.md),
+decision [ADR-13](ADR-13-oauth-for-services-private-key-jwt.md), in a standard way instead of the draft's own
+protocol (PR #242 with ADR-10 — closed unmerged, the number ADR-10 stays unused):
+
+1. **Pairing instead of copy-paste** — built: a one-time code from the account page or the admin panel, the client
+   creates its key pair, TinySesam keeps only the public key (the draft's code and key pair taken over). "Every
+   request protected by the key" became `private_key_jwt` per token request plus a 15-minute token bound to one
+   resource, instead of an RFC 9421 signature per request (one check path for people and services, no proxy
+   normalisation, no own replay logic per request).
+2. **Expiry mandatory, renewal optional** — a service key expires (`oauth_service_key_days`, 90); renewal is the
+   rotation below, so `renew_on_login` was not built. For bearer API keys nothing changed.
+3. **Rotation** — client-driven: the reference client rotates at half the key lifetime by itself, with an overlap.
+   `rotate_on_login` was not built: a service account has no login, and the owner's login cannot reach the client.
+4. **Reference client** — `tinysesam-client` (pair, token, request, rotate, info).
+
+Not built, on purpose: `renew_on_login`/`rotate_on_login` for the existing bearer API keys. Whoever needs that should
+move the integration to a service (T-60); a new wish gets a new entry.
+
+Done when (original): the ADR is written; pairing, `renew_on_login` and `rotate_on_login` work per key, are settable in the admin panel and the self-service routes, appear in the audit log, are documented in the README section "API keys", and are covered by tests including rotation with a request in flight and the revocation paths.

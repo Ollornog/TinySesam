@@ -66,7 +66,10 @@ _tmp = tempfile.mkdtemp()
 auth = TinySesam(TinySesamConfig(
     csrf_enabled=False, lang="de", db_path=os.path.join(_tmp, "t.db"), rp_name="Test",
     passkey_enabled=False, oidc_enabled=False, cookie_secure=False, forward_auth_enabled=True,
-    base_url=ISS, trusted_redirect_hosts=["app.example.com"], gate_token_enabled=True))
+    base_url=ISS, trusted_redirect_hosts=["app.example.com", "dav.example.com"], gate_token_enabled=True,
+    # A second application that takes app passwords (T-66) — the F1 section below uses one of its passwords at
+    # app.example.com.
+    forward_apps={"dav.example.com": {"name": "Files", "app_passwords": True}}))
 auth.ensure_admin("admin", "dummy123")
 uid = auth.create_user("anna", "dummy123", roles=["editors"])
 auth.store._exec("UPDATE users SET display_name=? WHERE id=?", ("Anna Ärger", uid))
@@ -278,6 +281,30 @@ try:
     ok("H1: Remote-* sent by the browser (also Remote-Email against an empty value) → TinySesam's values reach "
        "the application — plain, quickstart and gate way back; HSTS on 200 and on the redirect")
 
+    # ---------- A-3: the client's credentials never reach the application ----------
+    # Attack round 2026-11-21: every template passed `Authorization` on, and an API key (valid at every host and at
+    # TinySesam's API), an app password or an OAuth token landed in whatever the application logs. Measured with a
+    # session plus both headers, and with a real API key ALONE (forward auth accepts it — the check needs the
+    # header, the application must not get it), on the way back, the plain, the quickstart template and the share
+    # path. The fast path (gate cookie) follows below.
+    api_key = auth.create_api_key(uid, name="a3", expires_days=1)["key"]
+    creds = {"Authorization": "Basic not-for-the-app", "X-Api-Key": "tsk_not-for-the-app"}
+    for port, was in ((PORT, "gate template, way back"), (PORT_PLAIN, "plain template"),
+                      (PORT_QUICK, "quickstart template")):
+        for path, cookies, head in (("/a3", session, creds), ("/a3-key", None, {"Authorization": f"Bearer {api_key}"}),
+                                    ("/a3-key2", None, {"X-Api-Key": api_key}),
+                                    ("/s/a3-share", None, creds)):
+            if path.startswith("/s/") and port == PORT_QUICK:
+                continue                                    # the quickstart has no share exception
+            st, h, a = request(path, cookies, head, port=port)
+            hd = {k.lower(): v for k, v in (a["header"] if a else {}).items()}
+            assert st == 200, (was, path, st)
+            assert "authorization" not in hd and "x-api-key" not in hd, (was, path, hd)
+            if path.startswith("/a3-key"):
+                assert hd.get("remote-user") == "anna", (was, path, hd)      # the key DID sign in at the check
+    ok("A-3: Authorization and X-Api-Key never reach the application — session, an API key alone (it still signs in "
+       "at the check), share path; plain, quickstart and gate way back")
+
     # ---------- T-58: a header MISSING from the answer reaches the application as nothing ----------
     # Before 2026-11-20 the templates set every Remote-* from `{rp.header.…}` unconditionally; when TinySesam's answer
     # did not carry one (forward_headers reduced or renamed), Caddy left the placeholder as literal text and the
@@ -296,6 +323,33 @@ try:
         auth.cfg.forward_headers = {}
     ok("T-58: forward_headers without email/name/id → the application gets no such header — neither placeholder text "
        "nor the browser's forgery (plain, quickstart, gate way back)")
+
+    # ---------- Attack round B, F1: an X-Original-URL from the browser does not move the check to another host ----------
+    # Caddy passes every header of the browser on to /auth/forward. Up to 0.25 TinySesam preferred an absolute
+    # X-Original-URL to Caddy's own X-Forwarded-Host: an app password bound to dav.example.com opened app.example.com
+    # (measured with Caddy 2.11.7 and the quickstart template), and "signed out of this application only" (T-22) was
+    # skipped. Two layers now, each enough on its own: the templates remove X-Original-URL/-URI before the
+    # sub-request, and TinySesam refuses a request whose X-Original-URL disagrees with X-Forwarded-Host.
+    app_pw = auth.create_app_password(uid, "Phone", hosts=["dav.example.com"])["secret"]
+    spoof = {"X-Original-URL": "https://dav.example.com/", "X-Original-URI": "/",
+             "Authorization": "Basic " + base64.b64encode(f"anna:{app_pw}".encode()).decode()}
+    handle = auth.store.session_hash(session[auth.session_cookie_name])
+    for port, was in ((PORT, "gate template, way back"), (PORT_PLAIN, "plain template"),
+                      (PORT_QUICK, "quickstart template")):
+        before = FORWARD["n"]
+        st, h, a = request("/f1-app-password", None, spoof, port=port)
+        assert st != 200 and a is None and FORWARD["n"] == before + 1, (
+            f"{was}: the app password of dav.example.com opened app.example.com via X-Original-URL",
+            st, a and a["header"].get("Remote-User"))
+        auth.store.gate_sign_out(handle, "app.example.com")
+        try:
+            st, h, a = request("/f1-signed-out", session, {"X-Original-URL": "https://dav.example.com/"}, port=port)
+            assert st == 302 and a is None, (f"{was}: X-Original-URL skipped the sign-out of app.example.com", st)
+        finally:
+            auth.store.gate_resume(handle, "app.example.com")
+        assert request("/f1-back", session, port=port)[0] == 200, was
+    ok("F1: X-Original-URL from the browser → the app password of dav.example.com does not open app.example.com, "
+       "and “signed out here only” holds — plain, quickstart and gate way back")
 
     # ---------- OAuth (T-36): the resource metadata of the application's host go to TinySesam, past the gate ----------
     # TinySesam here has no OAuth switched on, so it answers its own 404 — what is measured is the route: not the
@@ -323,6 +377,8 @@ try:
     assert hd.get("Remote-Email", "") == "", hd.get("Remote-Email")
     assert hd.get("Cookie") == "other=1", hd.get("Cookie")
     assert gate_cookie(h) is None, "no new token is issued on the fast path"
+    st, h, a = request("/a3-fast", with_gate, creds)
+    assert st == 200 and not {"authorization", "x-api-key"} & {k.lower() for k in a["header"]}, a["header"]
     ok("valid gate cookie → 10 requests at the application, 0 at TinySesam; identity from the "
        "token (UTF-8 as with /auth/forward), Remote-* from the browser overwritten, gate cookie removed")
 

@@ -100,6 +100,8 @@ class TinySesamConfig:
     # What confirms a step-up (require(mfa=True))? Empty = everything the user has set up
     # (order totp → pin → password). E.g. ["pin"] = PIN for sensitive areas.
     # If the user has none of the listed methods, their best available method applies.
+    # The same list decides which factor on the sign-in pages refreshes a session that is already
+    # signed in (passkey, OIDC and SAML always do; a sign-in link or QR approval never does).
     stepup_methods: list[str] = field(default_factory=list)
     # Turn the wish into a barrier: True = whoever has none of the listed methods set up
     # does NOT get in (instead of confirming with the password they just signed in
@@ -211,6 +213,17 @@ class TinySesamConfig:
     # the pepper is a random key of its own, stored in the database encrypted with the vault key (ADR-12).
     # Rotation: `tinysesam keys rotate --purpose oauth-pepper` — connected devices stay connected.
     oauth_pepper_file: str = ""
+    # Services: client_credentials + private_key_jwt (T-60, ADR-13).
+    # A service or daemon without a person gets short-lived access tokens from the same server. It is paired once
+    # with a one-time code from the account page or the admin panel, creates its key pair itself and proves
+    # every token request with a signed assertion (RFC 7523) — TinySesam keeps only the public key. Needs
+    # oauth_enabled and the extra [services] (joserfc). Recipe: README "A service calls a protected app".
+    oauth_service_clients: bool = False
+    oauth_service_token_ttl_sec: int = 900   # lifetime of a service's access token; no refresh token, it asks anew
+    # Lifetime of a service key in days: the reference client rotates it on its own at half of it; 0 = no
+    # expiry (only on purpose: config_check reports it).
+    oauth_service_key_days: int = 90
+    oauth_pairing_minutes: int = 10          # how long a pairing code can be redeemed
     https_mode: str = "warn"              # off | warn | force  — force = HTTP→HTTPS redirect;
                                           # warn = also runs WITHOUT a certificate (with a warning in the panel)
     # Strict-Transport-Security on every HTTPS response while https_mode='force' (ASVS 3.4.1). The default is

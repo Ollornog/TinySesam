@@ -555,8 +555,9 @@ def _account(auth, ctx) -> str:
         f"<button class=warn data-act=revokeothers>{_e(t('acc.sessions_revoke'))}</button>"
         "<span id=sess_msg class=msg></span></div>")
 
-    # Connected programs (OAuth, T-36)
+    # Connected programs (OAuth, T-36) and services (T-60)
     sections.append(_devices_section(auth, ctx))
+    sections.append(_services_section(auth, ctx))
 
     # Own events (H-7): whoever sees that a sign-in happened at 3 a.m. from a foreign address
     # speaks up — the log so far lay only with the operator. Rendered
@@ -646,6 +647,10 @@ _ACCOUNT_TEXT = {
         "ap_created": "created", "ap_last": "last used", "ap_unused": "not used yet", "ap_expires": "expires",
         "ap_no_expiry": "no expiry", "ap_expired": "(expired)", "ap_confirm": "Revoke this app password? Devices "
         "that use it are signed out at once.", "ap_pick": "Choose at least one application.",
+        "sv_title": "Pairing code", "sv_note": "Shown only now, valid for a few minutes and only once. On the service:",
+        "sv_last": "last token", "sv_unused": "no token yet", "sv_key_expires": "key expires",
+        "sv_key_expired": "(key expired)", "sv_confirm": "Revoke this service? Its key is deleted, its access ends "
+        "at once.", "sv_pick": "Choose at least one application.",
     },
     "de": {
         "locale": "de-DE", "error": "Fehler", "mail_sent": "Link verschickt — bitte in der neuen Adresse bestätigen",
@@ -663,6 +668,10 @@ _ACCOUNT_TEXT = {
         "ap_expires": "läuft ab", "ap_no_expiry": "ohne Ablauf", "ap_expired": "(abgelaufen)",
         "ap_confirm": "Dieses App-Passwort widerrufen? Geräte, die es nutzen, werden sofort abgemeldet.",
         "ap_pick": "Mindestens eine Anwendung wählen.",
+        "sv_title": "Kopplungscode", "sv_note": "Wird nur jetzt angezeigt, gilt wenige Minuten und nur einmal. Auf dem "
+        "Dienst:", "sv_last": "letztes Token", "sv_unused": "noch kein Token", "sv_key_expires": "Schlüssel läuft ab",
+        "sv_key_expired": "(Schlüssel abgelaufen)", "sv_confirm": "Diesen Dienst widerrufen? Sein Schlüssel wird "
+        "gelöscht, sein Zugriff endet sofort.", "sv_pick": "Mindestens eine Anwendung wählen.",
     },
 }
 
@@ -742,6 +751,19 @@ async function mkap(){const hosts=[...document.querySelectorAll('input[name=ap_h
   else if(!(r.status===403&&r.headers.get('X-TinySesam-Reauth')))say('ap_msg',j.detail||TXT.error,false)}
 async function revap(id){if(!await tsConfirm(TXT.ap_confirm,{danger:true}))return;
   await J('__TS_P__/auth/app-passwords/'+id+'/revoke');loadap()}
+// Services (T-60): a pairing code is shown once; the service redeems it and keeps its key itself.
+async function loadsv(){const el=document.getElementById('svlist');if(!el)return;
+  const ss=await (await fetch('__TS_P__/auth/oauth/services')).json().catch(()=>[]);
+  if(!Array.isArray(ss)){el.innerHTML='<li>—</li>';return}
+  el.innerHTML=ss.map(s=>{const k=(s.keys||[]).find(x=>x.valid);return `<li><b>${esc0(s.name)}</b> <small><code>${esc0(s.client_id)}</code></small> · ${esc0((s.resources||[]).join(', '))}<br><small class=msg>${TXT.ap_created} ${dt0(s.created_at)} · ${s.last_used?TXT.sv_last+' '+dt0(s.last_used)+' · '+esc0(s.last_ip||'?'):TXT.sv_unused} · ${k?(k.expires_at?TXT.sv_key_expires+' '+dt0(k.expires_at):TXT.ap_no_expiry):TXT.sv_key_expired}</small> <button class=warn data-act=revsv data-id="${esc0(s.client_id)}">${TXT.revoke}</button></li>`}).join('')||'<li>'+TXT.none+'</li>'}
+async function mksv(){const resources=[...document.querySelectorAll('input[name=sv_res]:checked')].map(c=>c.value);
+  if(!resources.length){say('sv_msg',TXT.sv_pick,false);return}
+  const r=await J('__TS_P__/auth/oauth/services/pairing',{name:sv_name.value,resources});
+  const j=await r.json().catch(()=>({}));
+  if(j.code){sv_name.value='';say('sv_msg','',true);await tsSecret(TXT.sv_title,j.code,TXT.sv_note+'\\ntinysesam-client pair '+j.issuer+' '+j.code);loadsv()}
+  else if(!(r.status===403&&r.headers.get('X-TinySesam-Reauth')))say('sv_msg',j.detail||TXT.error,false)}
+async function revsv(id){if(!await tsConfirm(TXT.sv_confirm,{danger:true}))return;
+  await J('__TS_P__/auth/oauth/services/'+encodeURIComponent(id)+'/revoke');loadsv()}
 async function loadpk(){const el=document.getElementById('pklist');if(!el)return;
   const ps=await (await fetch('__TS_P__/auth/passkey/list')).json();
   el.innerHTML=ps.map(p=>`<li>${esc0(p.name||'Passkey')} <button class=warn data-act=delpk data-id="${esc0(p.id)}">${TXT.delete}</button></li>`).join('')||'<li>'+TXT.none+'</li>'}
@@ -760,7 +782,7 @@ async function revokeothers(){if(!await tsConfirm(TXT.confirm_end_others,{danger
 // blocks the buttons. The buttons loaded later via JS (data-act=revk/delpk) are reached as well.
 document.addEventListener('click',function(e){var b=e.target.closest('[data-act]');if(!b)return;
   var f=window[b.dataset.act];if(typeof f==='function'){e.preventDefault();f(b.dataset.id)}});
-loadkeys();loadap();loadpk();loadsess();
+loadkeys();loadap();loadsv();loadpk();loadsess();
 </script>
 """
 
@@ -1434,6 +1456,22 @@ def _devices_section(auth, ctx) -> str:
         for d in devices) or f"<li>{_e(t('acc.devices_none'))}</li>"
     return (f"<div class=sec><h2>{_e(t('acc.devices'))}</h2>"
             f"<p class='msg evhint'>{_e(t('acc.devices_hint'))}</p><ul id=devlist>{lines}</ul></div>")
+
+
+def _services_section(auth, ctx) -> str:
+    """Services (T-60) on the account page: the list (loaded by script) and a pairing code for a new one. The
+    applications are checkboxes, the first one ticked — a service is bound as narrowly as its use."""
+    resources = ctx.get("service_resources")
+    if not resources:
+        return ""
+    t = auth.t
+    boxes = "".join(f"<label class=apapp><input type=checkbox name=sv_res value='{_e(r)}'"
+                    f"{' checked' if i == 0 else ''}> {_e(r)}</label>" for i, r in enumerate(resources))
+    return (f"<div class=sec id=svsec><h2>{_e(t('acc.services'))}</h2>"
+            f"<p class='msg evhint'>{_e(t('acc.services_hint'))}</p><ul id=svlist></ul>"
+            f"<input id=sv_name maxlength=80 autocomplete=off placeholder='{_e(t('acc.service_name'))}'>"
+            f"<fieldset class=apapps><legend>{_e(t('acc.service_for'))}</legend>{boxes}</fieldset>"
+            f"<button data-act=mksv>{_e(t('acc.service_pair'))}</button><span id=sv_msg class=msg></span></div>")
 
 
 # Passkey login JS (WebAuthn) — only included when passkey is active.

@@ -169,7 +169,9 @@ t36 = _TinySesam(_TinySesamConfig(
     forward_auth_enabled=True, oauth_enabled=True, oauth_resources=["http://127.0.0.1:9/mcp"],
     # T-66: two applications that take app passwords — the account page offers the section.
     forward_apps={"files.example.com": {"name": "Files", "app_passwords": True},
-                  "git.example.com": {"name": "Git", "app_passwords": True}}))
+                  "git.example.com": {"name": "Git", "app_passwords": True}},
+    # T-60: services — the account page offers a pairing code (needs the extra [services], part of [all]).
+    oauth_service_clients=True))
 t36.set_security("password_min_length_single_factor", 8)
 _t36_app = _FastAPI()
 _t36_app.include_router(t36.router())
@@ -379,15 +381,22 @@ class Page:
         await asyncio.sleep(1.2)
 
     async def until(self, expr, why, tries=80):
-        """Wait for a condition in the page (every 0.25 s, at most `tries` times) — instead of a fixed pause."""
+        """Wait for a condition in the page (every 0.25 s, at most `tries` times) — instead of a fixed pause.
+
+        A JS error while waiting is tolerated (a navigation in flight takes the context away briefly), but the
+        last one goes into the message: a condition that throws on every poll never becomes true, and without
+        the error the message only said what was awaited, not why it never came (2026-11-21, `answer()`)."""
+        error = ""
         for _ in range(tries):
             try:
                 if await self.js(expr):
                     return
-            except AssertionError:
-                pass                                  # navigation in flight — the context is gone briefly
+                error = ""
+            except AssertionError as e:
+                error = str(e)
             await asyncio.sleep(0.25)
-        raise AssertionError(f"{why} (at {await self.js('location.href')!r})")
+        raise AssertionError(f"{why} (at {await self.js('location.href')!r})"
+                             + (f" — the condition threw: {error}" if error else ""))
 
     async def key(self, name, shift=False):
         """A real key press (trusted event) — Escape, Enter or Tab."""
@@ -408,9 +417,13 @@ class Page:
         # next one right after the answer (confirm → secret with the new recovery codes) did so before
         # the first poll whenever the request was quick, and the wait ran out although everything
         # worked — red in CI job `repeat` 2026-11-20 (“the dialog did not close”).
+        # And a new document counts as “closed”: when the answer makes the page navigate (a 403 that sends it to
+        # the reauth page), the next document has no `__tsAnswered`. The old condition threw there on every poll
+        # and ran out — whenever the navigation was quicker than the first poll, which under load it was (CI job
+        # `repeat` 2026-11-21; locally 4 of 40 runs under load: “the dialog did not close (at …/auth/reauth…)”).
         await self.js(f"{{const d=document.querySelector('dialog.tsdlg[open]');window.__tsAnswered=d;"
                       f"d.querySelector('{button}').click()}}true")
-        await self.until("!window.__tsAnswered.isConnected", "the dialog did not close")
+        await self.until("!(window.__tsAnswered && window.__tsAnswered.isConnected)", "the dialog did not close")
 
 
 async def until_py(cond, why, tries=80):
@@ -877,11 +890,21 @@ async def h2_stepup_qr(p):
         t33.store._exec("UPDATE session SET mfa_at=?, created_at=? WHERE user_id=?", (old, old, uid))
 
     async def reauth(back):
-        await p.until("location.pathname==='/auth/reauth'", "no detour over the reauth page")
-        await p.js("document.querySelector(\"form[action$='/auth/reauth'] [name=password]\").value='hanna-pw-12345';true")
+        await p.until("location.pathname==='/auth/reauth' && document.readyState==='complete' && "
+                      "!!document.querySelector(\"form[action$='/auth/reauth'] [name=password]\")",
+                      "no detour over the reauth page")
+        field = "document.querySelector(\"form[action$='/auth/reauth'] [name=password]\")"
+        await p.js(f"{field}.value='hanna-pw-12345';true")
+        # Seen once under full-suite load (2026-11-21): the server logged a wrong password here. Say what the
+        # field held at the click and what the page answered, so the next occurrence names its cause.
+        held = await p.js(f"{field}.value")
         await p.click("form[action$='/auth/reauth'] button")
-        await p.until(f"location.pathname==={json.dumps(back)} && document.readyState==='complete'",
-                      f"the reauth page did not lead back to {back}")
+        try:
+            await p.until(f"location.pathname==={json.dumps(back)} && document.readyState==='complete'",
+                          f"the reauth page did not lead back to {back}")
+        except AssertionError as e:
+            shown = await p.js("(document.querySelector('main')||document.body).innerText.slice(0,300)")
+            raise AssertionError(f"{e} — field held {held!r} at the click; the page says: {shown!r}") from None
 
     # 1) B-12 on the account page: „create API key“ with a stale session → reauth → back → the key dialog.
     age()
@@ -1113,6 +1136,7 @@ async def link_setup_pass(p):
 
     await oauth_consent(p)
     await app_passwords_page(p)
+    await services_page(p)
 
 
 async def oauth_consent(p):
@@ -1279,6 +1303,49 @@ async def app_passwords_page(p):
     assert not p.console, f"console errors: {p.console[:2]}"
     assert p.failed[failed_before:] == [], f"broken requests: {p.failed[failed_before:][:3]}"
     print("  app passwords: revoke after the confirmation dialog — the list says so, the gate refuses it at once")
+
+
+async def services_page(p):
+    """T-60 in a real browser on the T-36 app (strict CSP): the account page creates a pairing code — the dialog shows
+    it once with the command —, the reference client redeems it over real HTTP, the list shows the service, and
+    revoking it after the own confirmation dialog ends its access at once."""
+    import re
+    from tinysesam import client as SC
+
+    failed_before = len(p.failed)
+    uid = t36.create_user("sven", password="sven-pw-123456")
+    tok, _ = t36.start_session(uid, "password")
+    await p.cmd("Network.setCookie", name=t36.session_cookie_name, value=tok, url=T36 + "/")
+    await p.cmd("Page.navigate", url=f"{T36}/auth/account")
+    await p.until("document.readyState==='complete' && !!document.getElementById('svsec')", "no services section")
+    assert await p.js("document.querySelectorAll('input[name=sv_res]:checked').length") == 1, "one resource ticked"
+    await p.js("document.getElementById('sv_name').value='nightly backup';true")
+    await p.click("[data-act=mksv]")
+    await p.until("!!document.querySelector('dialog.tsdlg[open] textarea')", "no dialog with the pairing code")
+    code = await p.js("document.querySelector('dialog.tsdlg[open] textarea').value")
+    assert re.fullmatch(r"([A-HJ-NP-Z2-9]{4}-){3}[A-HJ-NP-Z2-9]{4}", code), code
+    note = await p.js("document.querySelector('dialog.tsdlg[open]').innerText")
+    assert f"tinysesam-client pair {T36} {code}" in note, note
+    await p.js("document.querySelector('dialog.tsdlg[open] .tsdlg-ok').click();true")
+    await p.until("!document.querySelector('dialog.tsdlg')", "the dialog did not close")
+    keyfile = os.path.join(tempfile.mkdtemp(), "svc.json")
+    sc = SC.ServiceClient.pair(T36, code, keyfile)              # real HTTP, the standard library transport
+    token = sc.token()
+    assert token.startswith("tsat_")
+    await p.cmd("Page.navigate", url=f"{T36}/auth/account")
+    await p.until("document.getElementById('svlist').innerText.includes('nightly backup')", "not in the list")
+    await p.js("document.querySelector('#svlist [data-act=revsv]').click();true")
+    await p.until("!!document.querySelector('dialog.tsdlg[open]')", "no confirmation before revoking")
+    await p.js("document.querySelector('dialog.tsdlg[open] .tsdlg-ok').click();true")
+    await p.until("!document.querySelector('#svlist [data-act=revsv]')", "not revoked in the list")
+    assert t36.list_service_clients(uid) == []
+    u, why = t36._oauth.user_for(token, "http://127.0.0.1:9/mcp", "127.0.0.1")
+    assert u is None and why in ("revoked", "unknown"), why      # revoking deletes its tokens
+    viol = await p.js("JSON.stringify(window.__csp===undefined?['(no Listener)']:window.__csp)")
+    assert viol == "[]", f"CSP violation: {viol}"
+    assert not p.console, f"console errors: {p.console[:2]}"
+    assert p.failed[failed_before:] == [], f"broken requests: {p.failed[failed_before:][:3]}"
+    print("  services: pairing code in the dialog (once, with the command) → the client pairs → list → revoke")
 
 
 async def own_dialogs(_first):
@@ -1498,6 +1565,17 @@ async def _own_dialogs(p):
     await p.until(f"!!document.querySelector('[data-on=keys][data-a^=\"[{carol},\"]')", "user list empty")
     await p.js(f"document.querySelector('[data-on=keys][data-a^=\"[{carol},\"]').click();true")
     await p.until("!!document.getElementById('kn')", "keys button without effect")
+    # `mkkey` refreshes the key list without waiting for it. Under load that refresh came back after the sign-in
+    # link issued next and overwrote it — the link, shown once, was gone (2026-11-21, “panel: no sign-in link”
+    # with two suites at once). Here the order is forced instead of hoped for: the page's own `fetch` holds the
+    # refresh back until the link is on screen and only then hands it over; `__keysRefreshed` turns true once the
+    # panel has done with it (a task after the reply's microtasks).
+    await p.js("""{const f=window.fetch;window.__keysRefreshed=false;window.__fetch=f;
+      window.fetch=function(u,o){const r=f.apply(this,arguments);
+        if(!/\\/api\\/users\\/\\d+\\/keys$/.test(String(u))||(o&&o.method&&o.method!=='GET'))return r;
+        return r.then(x=>new Promise(ok=>{const t=setInterval(()=>{if(!document.querySelector('[id^=lk]'))return;
+          clearInterval(t);const j=x.json.bind(x);
+          x.json=()=>j().then(v=>{setTimeout(()=>{window.__keysRefreshed=true},0);return v});ok(x)},20)}))}}true""")
     await p.js("document.getElementById('kn').value='panel';document.querySelector('[data-on=mkkey]').click();true")
     await p.until("!!document.querySelector('dialog.tsdlg[open] textarea')", "panel: no API key dialog")
     key = await p.js("document.querySelector('dialog.tsdlg[open] textarea').value")
@@ -1511,6 +1589,10 @@ async def _own_dialogs(p):
     await p.js(f"document.querySelector('[data-on=link][data-a^=\"[{carol},\"]').click();true")
     await p.answer(value="30")
     await p.until(f"!!document.getElementById('lk{carol}')", "panel: no sign-in link")
+    await p.until("window.__keysRefreshed===true", "panel: the held key list refresh never came back")
+    await p.js("window.fetch=window.__fetch;true")
+    assert await p.js(f"!!document.getElementById('lk{carol}')"), \
+        "panel: the key list refresh that came back late overwrote the sign-in link (shown only once)"
     await p.js(f"document.querySelector('[data-on=copylink]').click();true")
     await p.until(f"document.getElementById('lks{carol}').textContent==={json.dumps(t33.t('dlg.copied'))}",
                   "panel: the link's copy button says nothing")

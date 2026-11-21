@@ -21,10 +21,11 @@ with their own key. The associated data (AAD) binds the value to its place: `kid
 the row's identity (account, client, subject …, `Store._seal`). A value copied into another row or column, or one
 whose `kid` was swapped, no longer decrypts (`InvalidTag`).
 
-`v1:` + Base64url(nonce ‖ ciphertext ‖ tag) is the format up to 0.25.x — one key, no context. It is still READ (with
-every key of the keyring), the start rewrites it as `v2:` (`Store.extract_secrets`), and `tinysesam keys reencrypt
---to v1` writes it again for the way back to an older version. A value without prefix is plain text from before
-0.21 and is encrypted at startup.
+`v1:` + Base64url(nonce ‖ ciphertext ‖ tag) is the format up to 0.25.x — one key, no context. Only the migration
+reads it (with every key of the keyring): the start rewrites it as `v2:` (`Store.extract_secrets`), `tinysesam keys
+reencrypt` does the same offline, and `tinysesam keys reencrypt --to v1` writes it again for the way back to an older
+version. A TOTP secret without prefix is plain text from before 0.21 and is encrypted at startup. Every other read
+takes `v2:` only (attack round 2026-11-21, A-5); a start that cannot rewrite what is left stops with a message.
 """
 from __future__ import annotations
 
@@ -69,6 +70,10 @@ def kid_of(value) -> Optional[str]:
     if not v.startswith(PREFIX_V2) or v[3 + _keys.KID_LEN:4 + _keys.KID_LEN] != ":":
         return None
     return v[3:3 + _keys.KID_LEN]
+
+
+class LegacyValueError(ValueError):
+    """A stored secret is plain text or `v1:` where only `v2:` is read (A-5) — see `Vault.decrypt`."""
 
 
 class Vault:
@@ -120,10 +125,16 @@ class Vault:
                               f"the wrong {ENV_VAR}/secrets_key_file).")
         return aead
 
-    def decrypt(self, value: Optional[str], ctx: str) -> Optional[str]:
-        """`None` stays `None`; a value without prefix is plain text from the time before
-        encryption and comes back unchanged (until `extract_secrets` encrypts it).
-        A wrong key, a wrong context or an altered value raises `cryptography.exceptions.InvalidTag`."""
+    def decrypt(self, value: Optional[str], ctx: str, legacy: bool = False) -> Optional[str]:
+        """`None` stays `None`; a `v2:` value comes back decrypted. A wrong key, a wrong context or an altered value
+        raises `cryptography.exceptions.InvalidTag`.
+
+        Everything else — plain text from before 0.21 and `v1:` (no context) up to 0.25.x — raises
+        `LegacyValueError` unless `legacy=True`. Only the migration reads those (`Store.reencrypt`, called by the
+        start through `extract_secrets` and by `tinysesam keys reencrypt`). Up to the attack round of 2026-11-21 (A-5)
+        every read accepted them: whoever could write the database without the vault key planted a plain-text gate
+        seed in `key_material` and had it published as a gate key, or a `v1:`/plain TOTP secret that the binding to
+        its row (AAD) never saw."""
         if value is None:
             return None
         v = str(value)
@@ -133,6 +144,9 @@ class Vault:
                 raise ValueError("malformed v2 value")
             raw = base64.urlsafe_b64decode(v[4 + _keys.KID_LEN:].encode("ascii"))
             return self._key(kid).decrypt(raw[:12], raw[12:], self._aad(kid, ctx)).decode("utf-8")
+        if not legacy:
+            raise LegacyValueError("a stored secret is not in the current format (v2) — `tinysesam keys reencrypt` "
+                                   "rewrites values of older versions; a value that never was one was planted")
         if not v.startswith(PREFIX):
             return value
         plain = self._decrypt_v1(v)

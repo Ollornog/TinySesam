@@ -459,6 +459,10 @@ class TinySesam:
             _demand("onelogin", "saml_enabled", "saml")
             from .saml_ import SAMLClient
             self.saml = SAMLClient(config, store=self.store)   # store: replay protection (H1)
+        if config.oauth_enabled and config.oauth_service_clients:
+            # Services (T-60): every token request is a signed assertion — without the library nothing can be
+            # checked, and pairing and token requests answer `server_error` (fail-closed). Warned like every extra.
+            _demand("joserfc", "oauth_service_clients", "services")
         if config.oidc_enabled and config.oidc_issuer and config.oidc_client_id:
             _demand("authlib", "oidc_enabled", "oidc")
             from .oidc import OIDCClients, DEFAULT_CLIENT
@@ -1152,11 +1156,15 @@ class TinySesam:
                                 "sessions_revoked")
 
     def _keys_revoked(self, user_id, reason: str) -> int:
-        """Revoke all valid keys of an account — and notify the owner (limit e).
+        """Revoke every standing credential of an account — and notify the owner (limit e).
 
-        The one path for reset, lockout, admin password and `sessions/revoke`: before, the
-        revocation was only in the audit log there, the owner learned nothing. `reason` is one of
-        `_KEYS_REVOKED_REASONS`."""
+        THE one revocation point for reset, lockout, admin password and `sessions/revoke` (`reason` is one of
+        `_KEYS_REVOKED_REASONS`): API keys, app passwords (T-66), services (T-60) and connected devices (OAuth
+        grants with their refresh and access tokens, T-36). Sessions and open links stay with the callers — "end
+        others" keeps the current session, a lockout keeps nothing. A new kind of credential is revoked HERE, not at
+        each caller: until the attack round of 2026-11-21 (A-1) only the lockout ended the OAuth grants, and a
+        password reset or "end all sessions" left an MCP client connected for up to the refresh lifetime.
+        Returns the number of API keys (the callers' audit lines and JSON answers name that count)."""
         if reason not in self._KEYS_REVOKED_REASONS:
             raise ValueError(f"unknown reason {reason!r} — allowed: {self._KEYS_REVOKED_REASONS}")
         n = self.store.revoke_user_api_keys(user_id)
@@ -1164,7 +1172,60 @@ class TinySesam:
             self._security_event("api_keys_revoked", user_id, count=n, reason=reason)
         # The app passwords (T-66) go the same way: they are a second way in as much as a key is.
         self._app_passwords_revoked(user_id, reason)
+        # And the services (T-60): a service paired to the account is the machine version of a key.
+        self._services_revoked(user_id, reason)
+        # And the connected devices (OAuth, T-36): a refresh token is a key with a longer life (A-1). Each grant
+        # writes `oauth_revoked` to the audit log and `oauth_device_revoked` (with this `reason`) to the hook.
+        self._oauth_revoke_user(int(user_id), reason)
         return n
+
+    def _services_revoked(self, user_id, reason: str) -> int:
+        """Revoke every service (T-60) of an account — also with the switch off, for what is left."""
+        if not self.store.oauth_service_ids(int(user_id)):
+            return 0
+        from .oauth_services import ServiceClients
+        srv = self._oauth_server()
+        return (srv.services or ServiceClients(srv)).revoke_user(int(user_id), reason)
+
+    # ---------- Services: OAuth client_credentials + private_key_jwt (T-60, ADR-13) ----------
+    def _services(self):
+        if not (self.cfg.oauth_enabled and self.cfg.oauth_service_clients):
+            raise ConfigError("Services need oauth_enabled=True and oauth_service_clients=True.")
+        return self._oauth_server().services
+
+    def create_service_pairing(self, user_id, name=None, resources=None, roles=None) -> dict:
+        """A one-time pairing code for a service that will act as `user_id` (a service account or a person's own
+        account — never with the admin flag). The service redeems it with `tinysesam-client pair <base_url> <code>`.
+
+        `resources`: the resources (from `oauth_resources`) it may get tokens for — may be left out when exactly
+        one is configured. `roles`: a scope, trimmed to the account's roles like an API key's; nothing left raises
+        `ConfigError`. Lives `oauth_pairing_minutes`, single use, only its digest is stored, and it goes with the
+        account's other open links on a lock or password reset.
+
+        Returns `{"code", "expires_at", "resources", "roles", "dropped_roles", "pair_url", "issuer"}` — `code` only
+        this once. Who may call it is the caller's decision: the built-in routes allow it for the own account
+        from a freshly confirmed session and for any account in the admin panel."""
+        request = _REQUEST.get() or {}
+        return self._services().issue_pairing(int(user_id), name=name, resources=resources, roles=roles,
+                                              actor=request.get("actor"), ip=request.get("ip"))
+
+    def list_service_clients(self, user_id=None) -> list:
+        """The live services — of one account or all: client ID, name, account, roles, resources, created, last
+        token request and address, and the keys (`kid`, created, expiry, end of the rotation overlap, last use)."""
+        return self._services().listing(user_id)
+
+    def revoke_service_client(self, client_id, user_id=None) -> bool:
+        """Revoke a service at once: its keys are deleted, its tokens stop working with the next request. With
+        `user_id` only a service of that account. True if one was live."""
+        svc = self.store.oauth_service(client_id)
+        if svc is None or (user_id is not None and int(svc["user_id"]) != int(user_id)):
+            return False
+        from .oauth_services import ServiceClients
+        srv = self._oauth_server()
+        request = _REQUEST.get() or {}
+        # With `user_id` the holder revokes their own; without it an operator (panel, own code) does.
+        return (srv.services or ServiceClients(srv)).revoke(str(client_id), "user" if user_id is not None else
+                                                            "admin", request.get("ip"))
 
     # ---------- App passwords (T-66) ----------
     def app_password_hosts(self) -> list:
@@ -1511,6 +1572,8 @@ class TinySesam:
     #: Since T-66 the app passwords: `app_password_created` (`app_password_id`, `name`, `hosts`),
     #: `app_password_revoked` (`app_password_id`), `app_passwords_revoked` (`count`, `reason` — the same reasons as
     #: `api_keys_revoked`).
+    #: Since T-60 the services: `oauth_service_paired` (`client_id`, `client_name`, `resources`) — a service was paired
+    #: to act as the account; `oauth_service_revoked` (`client_id`, `client_name`, `reason`).
     SECURITY_EVENTS = (
         "password_changed", "pin_set", "pin_disabled", "totp_enabled", "totp_disabled",
         "recovery_codes_generated", "recovery_code_used", "passkey_added", "passkey_removed",
@@ -1519,6 +1582,7 @@ class TinySesam:
         "oauth_device_connected", "oauth_device_revoked", "oauth_token_reuse",
         "signin_link_issued", "device_signed_in",
         "app_password_created", "app_password_revoked", "app_passwords_revoked",
+        "oauth_service_paired", "oauth_service_revoked",
     )
 
     #: The events that mean NEW access to the account — they go to the owner by mail as well
@@ -1526,7 +1590,8 @@ class TinySesam:
     #: administrator made it (`by_operator`): the holder's own change is no news to the holder.
     _ACCESS_MAIL_EVENTS = ("passkey_added", "totp_enabled", "pin_set", "api_key_created",
                            "device_signed_in", "signin_link_issued", "password_changed",
-                           "oauth_device_connected", "oauth_token_reuse", "app_password_created")
+                           "oauth_device_connected", "oauth_token_reuse", "app_password_created",
+                           "oauth_service_paired")
 
     def _security_event(self, event: str, user_id, **details) -> None:
         """Call `on_security_event` for an event from `SECURITY_EVENTS`, if set.
@@ -1685,13 +1750,12 @@ class TinySesam:
             # `verify_api_key` already rejects keys of locked accounts. Revoke anyway: if
             # the account is released again later, a key nobody knows about any more would
             # otherwise come back to life.
+            # Connected devices (OAuth, T-36), app passwords and services end with them — forward auth refuses a
+            # locked account anyway, but on unlocking a device nobody remembers would otherwise come back.
             keys = self._keys_revoked(uid, "account_disabled")
             # The same for open one-time tokens: a confirmation link from registration otherwise lifted the
             # lock again (H-18, "a disabled account via no path").
             self.store.revoke_user_magic_tokens(uid)
-            # Connected devices (OAuth, T-36) end too — forward auth refuses a locked account anyway, but on
-            # unlocking a device nobody remembers would otherwise come back.
-            self._oauth_revoke_user(uid, "account_disabled")
         # From a request with a signed-in account (panel, own admin route) `audit()` names the
         # actor as the account — the same line the panel itself wrote up to 0.21.x.
         request = _REQUEST.get() or {}
@@ -5131,6 +5195,14 @@ class TinySesam:
             # An identity switch (another user) falls through → new session.
             done = json.loads(s["factors_done"] or "[]")
             was_ok = bool(s["mfa_ok"])
+            if was_ok and not self._counts_as_stepup(account, factor):
+                # Attack round B, F3: a full session is refreshed only by a factor that the step-up itself accepts.
+                # A sign-in link (mailed, admin-issued, cross-device approval) proves the mailbox or another
+                # device, not the account's own confirmation — redeemed in a browser with a stale (stolen)
+                # session cookie it made that session fresh, and `_require_fresh` let a new passkey or API key
+                # through. The session stays as it is: full, but not fresh.
+                self.audit("stepup_not_counted", str(account["username"]), ip, f"factor={factor}")
+                return request.cookies.get(self.session_cookie_name), True, False
             in_setup = self._setup_session(s)
             if factor not in done:
                 done.append(factor)
@@ -5170,6 +5242,23 @@ class TinySesam:
         token, ok = self.start_session(user_id, factor, ip, ua, remember)
         self._maybe_promote_admin(self.store.get_user(user_id), email_verified, factor=factor)
         return token, ok, True
+
+    #: Factors that confirm a full session although `stepup_options()` does not name them: each signs the account in
+    #: on its own (a passkey with user verification, a sign-in at the provider) — what the reauth page cannot offer.
+    _STEPUP_SIGN_INS = ("passkey", "oidc", "saml")
+
+    def _counts_as_stepup(self, account, factor: str) -> bool:
+        """Does `factor`, provided on a session that is already full, count as a fresh confirmation (step-up)?
+
+        Yes for what `stepup_options()` offers this account (password, PIN, TOTP — narrowed by `stepup_methods`,
+        so a password typed into the sign-in form does not get round `stepup_methods=["totp"]` either) and for the
+        factors that sign the account in on their own (`_STEPUP_SIGN_INS`). Never for `magic`: a sign-in link does
+        not even sign in an account with a second factor."""
+        if factor == "magic":
+            return False
+        if factor in self._STEPUP_SIGN_INS:
+            return True
+        return factor in self.stepup_options(dict(account))
 
     def _successor(self, old_line, new_token) -> None:
         """What hangs on the half session passes to the full one that replaces it — BEFORE
@@ -5247,6 +5336,10 @@ class TinySesam:
             self.store.delete_session_by_handle(s["token_hash"])
             return None
         was_ok = bool(s["mfa_ok"])
+        if was_ok and not self._counts_as_stepup(account, "totp"):
+            # The same rule as in `apply_factor` (F3): a full session is refreshed only by what the step-up accepts
+            # — here when `stepup_methods`/`stepup_strict` leave TOTP out.
+            return None
         in_setup = self._setup_session(s)
         done = json.loads(s["factors_done"] or "[]")
         if "totp" not in done:
@@ -6223,7 +6316,9 @@ class TinySesam:
         """Who may set up TOTP **without** already being fully signed in? Otherwise None.
 
         Exactly one situation: the global `login_chain` requires `totp`, the user has provided their
-        first factor (the session is stuck in the MFA step) and has no confirmed TOTP yet.
+        first factor (the session is stuck in the MFA step), has no confirmed TOTP yet, and the chain has a
+        step that only TOTP can still cover for this account — not one it covers with a PIN or passkey it
+        has (attack round B, F2).
 
         Without this path, `login_chain=["password","totp"]` is a **dead end** for every account without a set-up
         TOTP: the correct password leads to `/auth/totp`, which for lack of a
@@ -6254,6 +6349,20 @@ class TinySesam:
             return None
         req, _ = self._global_chain()
         if not (req and "totp" in _chain.factors(req)):
+            return None
+        # Only for a step the account cannot cover with what it HAS (attack round B, F2) — the rule of the setup
+        # pass (`_setup_missing`). With alternatives (`["password", "totp|pin"]`) the password alone otherwise set
+        # up a TOTP for the step the account covers with its PIN, and the confirmation code completed the chain:
+        # the PIN was never asked, and whoever knew the password kept an own second factor. A TOTP that fills an
+        # uncovered step replaces nothing — every factor satisfies one step, so the ones the account has are still
+        # asked (`password → totp → pin` keeps asking for the PIN after the setup). A setup window opened by the
+        # operator lifts it, as for the passkey below.
+        account = self.store.get_user(u["id"])
+        window = account["mfa_enroll_until"] if account else None
+        needed = any("totp" in options for _, options in self._setup_missing(u["id"]))
+        if not needed and not (window and int(window) > _now()):
+            self.audit("mfa_enrollment_denied", str(account["username"]) if account else None,
+                       detail="the account covers every step of the chain with the factors it has")
             return None
         if self.store.list_webauthn(u["id"]):
             # If the account already has a strong second factor (passkey), it sets up a
@@ -7228,17 +7337,79 @@ class TinySesam:
 
     def _forwarded_url(self, request: Request) -> str:
         """Reconstruct the original URL requested by the proxy (Caddy/Traefik: X-Forwarded-*,
-        nginx: X-Original-URL). Fallback: Referer resp. '/'."""
+        nginx: X-Original-URL). Fallback: Referer resp. '/'.
+
+        **`X-Forwarded-Host` wins over `X-Original-URL`** (attack round B, F1). Caddy and Traefik set the
+        `X-Forwarded-*` headers themselves and pass every other header of the browser through unchanged —
+        `X-Original-URL` included. Until 0.25 an absolute `X-Original-URL` came first, so a browser that
+        sent `X-Original-URL: https://dav.example.com/` to `web.example.com` had every per-application
+        decision (app passwords, OAuth audience, approval per application, "signed out here only") taken
+        for the wrong host. `X-Original-URL` now counts only where no `X-Forwarded-Host` is present
+        (an nginx configuration that sets nothing else); where both are present and disagree,
+        `_forwarded_conflict` refuses the request — either may be the forged one (an older nginx
+        configuration passes the browser's `X-Forwarded-Host` through). `trusted_proxies` cannot tell the
+        two apart: the peer of `/auth/forward` is always the proxy, and it forwards the browser's headers
+        verbatim."""
         h = request.headers
-        orig = h.get("x-original-url")           # nginx auth_request
-        if orig and "://" in orig:
+        orig = (h.get("x-original-url") or "").strip()     # nginx auth_request
+        absolute = "://" in orig
+        host = (h.get("x-forwarded-host") or "").split(",")[0].strip()
+        if absolute and not host:
             return orig
         proto = (h.get("x-forwarded-proto") or "https").split(",")[0].strip()
-        host = (h.get("x-forwarded-host") or h.get("host") or "").split(",")[0].strip()
-        uri = h.get("x-forwarded-uri") or orig or h.get("x-original-uri") or "/"
+        host = host or (h.get("host") or "").split(",")[0].strip()
+        # The path of an absolute X-Original-URL only when X-Forwarded-Uri is missing — and only after
+        # `_forwarded_conflict` has found its host equal to X-Forwarded-Host.
+        uri = (h.get("x-forwarded-uri") or (self._url_rest(orig) if absolute else orig)
+               or h.get("x-original-uri") or "/")
         if host:
             return f"{proto}://{host}{uri}"
         return h.get("referer") or "/"
+
+    @staticmethod
+    def _url_rest(url: str) -> str:
+        """Path and query of an absolute URL exactly as written (no fragment), "" when there is none."""
+        from urllib.parse import urlsplit
+        try:
+            parts = urlsplit(url)
+        except ValueError:
+            return ""
+        rest = url.split("://", 1)[1][len(parts.netloc):].split("#", 1)[0]
+        return rest if rest.startswith(("/", "?")) else ""
+
+    def _forwarded_conflict(self, request: Request) -> bool:
+        """Do the proxy headers name two different targets? Then one of them came from the browser.
+
+        True when an absolute `X-Original-URL` and `X-Forwarded-Host` are both present and differ in the host
+        (port included, default ports dropped), in the scheme (if `X-Forwarded-Proto` is present) or in path
+        and query (if `X-Forwarded-Uri` is present). The nginx templates set all four to the same request;
+        Caddy and Traefik set no `X-Original-URL`, so there it can only be the browser's own. A malformed
+        value counts as a conflict (fail closed)."""
+        from urllib.parse import urlsplit
+        h = request.headers
+        orig = (h.get("x-original-url") or "").strip()
+        fhost = (h.get("x-forwarded-host") or "").split(",")[0].strip()
+        if "://" not in orig or not fhost:
+            return False
+        try:
+            o = urlsplit(orig)
+            f = urlsplit("//" + fhost)
+            o_port, f_port = o.port, f.port
+        except ValueError:
+            return True
+        scheme = (o.scheme or "").lower()
+        proto = (h.get("x-forwarded-proto") or "").split(",")[0].strip().lower()
+        if proto and proto != scheme:
+            return True
+        default = {"http": 80, "https": 443}.get(scheme)
+
+        def name(parts, port):
+            return ((parts.hostname or "").rstrip("."), None if port == default else port)
+
+        if not o.hostname or name(o, o_port) != name(f, f_port):
+            return True
+        uri = h.get("x-forwarded-uri")
+        return bool(uri) and uri != (self._url_rest(orig) or "/")
 
     def _forward_app(self, url_or_host: str) -> dict:
         """The gate's settings for an application (T-21): `name`, `login`, `logout` and `app_passwords` (T-66), from
@@ -8092,6 +8263,9 @@ class TinySesam:
         if self._oauth is None:
             from . import oauth as _oauth_mod
             self._oauth = _oauth_mod.OAuthServer(self, self._pepper_keyring)
+            if self.cfg.oauth_service_clients:
+                from .oauth_services import ServiceClients
+                self._oauth.services = ServiceClients(self._oauth)
         return self._oauth
 
     def _oauth_revoke_user(self, user_id: int, reason: str) -> int:

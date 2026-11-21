@@ -785,7 +785,8 @@ TinySesamConfig(admin_identifiers=["ich@example.com"])   # Allowlist, jede Login
   bewusst aus dem Security-Log heraus — das liest fail2ban, und logrotate hebt es auf. **Ist stderr
   keine Konsole** (Container, journal, Pipe — dort *ist* stderr das Log), schreibt TinySesam das
   Token stattdessen nach `<db_path>.claim` mit `0600` und nennt im Log nur den Pfad
-  (`docker exec … cat /data/app.db.claim`); nach dem Einlösen verschwindet die Datei. Ohne
+  (`docker exec … python -c "print(open('/data/app.db.claim').read())"` — das Gateway-Abbild hat kein `cat`); nach
+  dem Einlösen verschwindet die Datei. Ohne
   Datenbank-Datei (`:memory:`) bleibt nur stderr, und die Log-Zeile sagt das. Mit
   `admin_claim_token_file` wählt man die Datei selbst (sie geht vor, auch an einer Konsole).
   **Bekannte Grenze:** Eingelöst wird der Token über eine URL (`?token=…`, bei nicht angemeldetem
@@ -841,8 +842,9 @@ ist das eine Sackgasse. Der Weg zurück führt über die Datenbankdatei, die dir
 python -m tinysesam passwd --db auth.db admin     # fragt zweimal, dann ist es gesetzt
 ```
 
-Das Kommando beendet die offenen Sitzungen des Kontos (`--keep-sessions` lässt sie stehen) und
-schreibt einen Audit-Eintrag. `--stdin` liest das Passwort von der Standardeingabe, für Skripte.
+Das Kommando beendet die offenen Sitzungen des Kontos und widerruft seine API-Keys, App-Passwörter, Dienste und
+verbundenen Programme, wie ein Admin-Reset im Panel (`--keep-sessions` lässt all das stehen), und schreibt einen
+Audit-Eintrag mit den Zahlen. `--stdin` liest das Passwort von der Standardeingabe, für Skripte.
 Dasselbe aus Python:
 
 ```python
@@ -1118,8 +1120,13 @@ Geht das durch, heisst das: gebaut vom Release-Workflow dieses Repos, aus dem Co
 Attestation nennt. Kein Schlüssel, den man herausgeben — und keiner, den man verlieren kann: Die
 Signatur hängt an der Identität des Workflows.
 
-Es läuft als **Nicht-root** (uid 1000), enthält weder `pip` noch `git`, bringt einen
-`HEALTHCHECK` auf `/healthz` mit und startet direkt das Gateway — kein `command:` nötig.
+Es läuft als **Nicht-root** (uid 1000), bringt einen `HEALTHCHECK` auf `/healthz` mit und startet direkt das
+Gateway — kein `command:` nötig. Die Laufzeit-Basis ist **distroless** (`gcr.io/distroless/base-debian13`, per Digest
+gepinnt) mit dem Python-Interpreter der Build-Stufe `python:3.x-slim` darauf: keine Shell, kein Paketmanager, kein
+`pip`, kein `git` — wer im Container Code ausführen kann, findet kein Werkzeug, um mehr nachzuladen. Die
+Betriebsbefehle gehen wie bisher (`docker exec <c> tinysesam backup …`); zum Umsehen gibt es `docker exec -it <c> python`
+oder einen Beiwagen-Container mit Shell in den Namespaces des Containers — beides in `docs/OPERATIONS.md`, „The gateway
+image: no shell inside“.
 Der Proxy kommt mit: `ghcr.io/ollornog/tinysesam-caddy-gate:v0.25.7` ist Caddy mit dem Plugin caddy-jwt, gebaut,
 geprüft und attestiert vom selben Release (Prüfung wie oben). In fünf Minuten am Laufen: „Gateway und Caddy in
 5 Minuten“ weiter unten; der Referenz-Stack mit allen Optionen liegt in `deploy/forward-auth/docker-compose.yml`.
@@ -1198,6 +1205,20 @@ TINYSESAM_OIDC_REVALIDATE_MINUTES=60
 Eine Konfiguration mit einem einzigen Client verhält sich unverändert — keine Zuordnung, keine
 Freigabe, die ablaufen könnte.
 
+**Für welche Anwendung eine Anfrage ist, sagt allein der Proxy.** `/auth/forward` liest das Ziel aus
+`X-Forwarded-Host`/`-Proto`/`-Uri` (Caddy, Traefik) und aus `X-Original-URL` nur, wenn kein `X-Forwarded-Host` da ist
+(nginx). Eine Anfrage, die beide mit verschiedenen Zielen trägt, bekommt die Anmeldeseite (`X-TinySesam-Reason:
+forwarded-conflict`): Eins der beiden kam vom Browser. An diesem Ziel hängt jede Entscheidung je Anwendung — Freigabe
+je Client, App-Passwörter, OAuth-Audience, „nur hier abmelden“ —, also die Proxy-Vorlagen in `deploy/` so übernehmen,
+wie sie sind: Sie streichen `X-Original-URL` (Caddy), setzen alle vier Header (nginx) oder vertrauen den
+Weiterleitungs-Headern des Browsers weder noch kopieren sie sie (Traefik).
+
+**`Remote-Groups: admin` ist keine frische Bestätigung.** Forward-Auth antwortet für jede gültige Sitzung, egal wie
+lange ihre letzte Bestätigung her ist; `admin_require_mfa` und `stepup_max_age_sec` schützen TinySesams eigenes
+Admin-Panel und die Routen, die Zugang anlegen, nicht die Anwendungen hinter dem Proxy. Eine Anwendung, die
+Admin-Rechte aus dem Header ableitet, sollte eine heikle Aktion (alles löschen, ändern, wer hinein darf) nicht allein
+darauf stützen, sondern dort selbst nachfragen.
+
 ## API-Keys & Service-/Daemon-Accounts
 
 Für **maschinellen Zugang** (Skripte, andere Dienste, System-Daemons) — parallel zum interaktiven Login:
@@ -1265,8 +1286,10 @@ Was passiert und was es schützt:
 - **Registrierung** (RFC 7591) ist offen, weil Claude Code sich selbst registriert — und nach jedem Abmelden oder
   Port-Konflikt neu. Nur öffentliche Clients (`token_endpoint_auth_method=none`) mit Loopback-Rückleitung
   (`http://localhost`, `127.0.0.1` oder `[::1]`, beliebiger Port); nichts, was der Client nennt, wird abgerufen, sein
-  Name steht als „nicht geprüft“ da, 20 Registrierungen je Adresse und Stunde. Registrierungen, aus denen nie eine
-  Verbindung wurde, räumt `gc()` ab.
+  Name steht als „nicht geprüft“ da, 20 Registrierungen je Adresse und Stunde (eine IPv6-Adresse zählt als ihr /64),
+  100 je IPv6-/48. Registrierungen, aus denen nie eine Verbindung wurde, räumt `gc()` ab; an der Obergrenze von 1000
+  solcher Registrierungen weicht die am längsten unbenutzte, die älter als zehn Minuten ist — eine Flut sperrt also
+  nicht bis dahin alle aus.
 - **Autorisierungscode nur mit PKCE S256**, der Code lebt 60 s und gilt einmal — eine zweite Verwendung widerruft,
   was die erste erzeugt hat. Die Rückleitungsadresse wird exakt verglichen, nur ein Loopback-Port darf abweichen
   (RFC 8252 §7.3). Die Antwort trägt `iss` (RFC 9207). CIMD wird nicht beworben: Dafür müsste der Server ein
@@ -1283,13 +1306,95 @@ Was passiert und was es schützt:
   `oauth_refresh_grace_sec` (0) erlaubt zwei Prozessen eines Clients gleichzeitiges Erneuern; Claude Code serialisiert.
 - **Geräte:** Die Kontoseite listet die verbundenen Programme (Name, Client, verbunden, zuletzt genutzt, Adresse,
   Ressource) mit „Trennen“; das Admin-Panel hat einen Reiter mit allen. `claude mcp logout` widerruft am Server
-  (RFC 7009, ohne Client-Geheimnis).
+  (RFC 7009, ohne Client-Geheimnis). Konto sperren, ein Passwort-Reset (selbst, durch einen Admin oder
+  `tinysesam passwd`) und „alle Sitzungen beenden“ trennen jedes Programm des Kontos, wie seine API-Keys.
 - **Grenzen:** Die Connectors von Claude Desktop und Claude im Web rufen aus Anthropics Netz an und erreichen keinen
   Server, der nur in deinem LAN steht; Claude Code schon. Claude Code kann kein DPoP — Rotation ist der Schutz der
-  Refresh-Tokens. Dienste ohne Mensch (`client_credentials`) folgen getrennt (T-60).
+  Refresh-Tokens. Dienste ohne Mensch (`client_credentials`): nächster Abschnitt.
 
 Die Ende-zu-Ende-Prüfung gegen das echte Claude-Code-CLI ist `tools/oauth-e2e/e2e.py` (von Hand: braucht `claude`,
 Docker und Chrome).
+
+## Ein Dienst ruft eine geschützte App auf
+
+Ein Daemon, ein Backup-Job oder ein Skript auf einem Server — ein **Dienst ohne Mensch** — erreicht eine Anwendung
+hinter TinySesam mit einem kurzlebigen Access-Token vom selben Server (T-60, ADR-13). Er weist sich mit **seinem
+eigenen Schlüsselpaar** aus: Der private Schlüssel verlässt den Dienst nie, TinySesam behält nur die öffentliche
+Hälfte. Nichts in der Datenbank, im Proxy-Log oder in einer Sicherung verschafft jemand anderem ein Token — anders als
+ein API-Key, der eine kopierbare Zeichenkette ist. Gebaut wird nichts: Der Referenz-Client `tinysesam-client`
+erledigt Kopplung, Tokens und Schlüsselwechsel.
+
+```python
+TinySesamConfig(
+    base_url="https://auth.example.com",
+    forward_auth_enabled=True,
+    oauth_enabled=True,
+    oauth_resources=["https://app.example.com/api"],
+    oauth_service_clients=True,              # braucht: pip install 'tinysesam[services]'
+)
+```
+
+**1. Einmal koppeln.** Im Admin-Panel bei den Schlüsseln eines Dienstkontos „Dienst koppeln“ (z. B. eines mit
+`auth.create_service("backup", roles=["backup"])` angelegten), oder — für ein Skript, das als du selbst handelt — im
+Abschnitt „Dienste“ der Kontoseite. Es gibt einen einmaligen **Kopplungscode** (`ABCD-EFGH-JKMN-PQRS`, gültig
+`oauth_pairing_minutes`, 10 min). Aus eigenem Code: `auth.create_service_pairing(uid, name="backup",
+resources=["https://app.example.com/api"], roles=["backup"])`. Auf dem Rechner des Dienstes:
+
+```bash
+pip install "tinysesam[services]==0.25.7"
+tinysesam-client pair https://auth.example.com ABCD-EFGH-JKMN-PQRS
+#   erzeugt ein Ed25519-Schlüsselpaar, schickt den öffentlichen Schlüssel mit einem Besitznachweis,
+#   schreibt $XDG_CONFIG_HOME/tinysesam/client.json (Modus 0600; wählbar mit --key-file oder TINYSESAM_CLIENT_KEY_FILE)
+```
+
+**2. Die App aufrufen.** Aus der Shell oder aus Python mit `httpx` oder `requests`:
+
+```bash
+curl -H "Authorization: Bearer $(tinysesam-client token)" https://app.example.com/api/things
+tinysesam-client request GET https://app.example.com/api/things
+```
+
+```python
+from tinysesam.client import ServiceClient
+sc = ServiceClient("/etc/backup/tinysesam.json")
+httpx.get("https://app.example.com/api/things", auth=sc.httpx_auth())
+requests.get("https://app.example.com/api/things", auth=sc.requests_auth())
+```
+
+Am Proxy ändert sich nichts: Forward-Auth nimmt das Token an und gibt `Remote-User` (das Dienstkonto) und
+`Remote-Groups` (seine Rollen) weiter — die Anwendung sieht ein gewöhnliches angemeldetes Konto.
+
+Was passiert und was es schützt:
+
+- **Token-Anfrage** `grant_type=client_credentials` mit `private_key_jwt` (RFC 7523): ein JWT, signiert mit dem
+  Schlüssel des Dienstes, `iss` = `sub` = Client-ID, **`aud` = der Aussteller** (`base_url`, als einziger Wert —
+  RFC 10070; die Adresse des Token-Endpunkts wird abgelehnt), `exp` höchstens 5 min voraus, eine `jti`, die einmal
+  gilt. Algorithmen `Ed25519`, `ES256` (und `EdDSA` für einen Ed25519-Schlüssel); nie `none` oder HMAC und nie ein
+  Schlüssel, den das JWT mitbringt (`jwk`/`jku`/`x5u`). Jede OAuth-Client-Bibliothek mit `private_key_jwt` geht nach
+  der Kopplung genauso.
+- **Access-Token** opak, `oauth_service_token_ttl_sec` (15 min), **kein Refresh-Token** — der Dienst fragt einfach
+  neu (der Client hält es vor und erneuert es). Gültig nur für die gekoppelte(n) Ressource(n) (sonst
+  `invalid_target`), bei jeder Anfrage gegen die Datenbank geprüft.
+- **Nie Admin.** Der Dienst handelt als sein Konto ohne Admin-Merkmal, mit optionalem Rollenumfang (auf die Rollen
+  des Kontos gekürzt). Ein gesperrtes Konto, ein widerrufener Dienst oder eine entzogene Rolle wirkt bei der nächsten
+  Anfrage.
+- **Koppeln** geht nur aus einer interaktiven, frisch bestätigten Sitzung (nie mit einem API-Key); der Code liegt nur
+  als Digest vor, gilt einmal, 20 Versuche je Adresse und Stunde, und jede Ablehnung steht im Audit-Log.
+- **Schlüssel laufen ab** nach `oauth_service_key_days` (90); der Client **wechselt selbst** zur halben Laufzeit:
+  Er schreibt den neuen Schlüssel zuerst als *pending*, meldet ihn an (signiert mit dem alten, belegt mit dem neuen)
+  und schaltet dann um. Der alte gilt am Token-Endpunkt noch eine Stunde — Tokens unterwegs und andere Prozesse
+  laufen weiter —, wechseln darf er aber nie mehr: das darf nur der aktuelle (ein kopierter alter Schlüssel übernimmt
+  den Dienst nicht). `tinysesam-client rotate` wechselt sofort.
+- **Widerruf:** Kontoseite und Admin-Panel (Reiter „Verbundene Programme“) listen jeden Dienst mit letzter
+  Token-Anfrage, Adresse und Schlüsselablauf, mit „Widerrufen“; `auth.list_service_clients()`,
+  `auth.revoke_service_client(client_id)`. Konto sperren, Admin-Passwort-Reset und „alle Sitzungen beenden“
+  widerrufen seine Dienste wie seine API-Keys. Ereignisse: `oauth_service_paired`, `oauth_service_revoked`.
+
+Andere Sprache? Koppeln ist eine JSON-Anfrage — `POST /auth/oauth/pair` mit `{"code", "jwk", "proof"}`, wobei
+`proof` ein JWS des neuen Schlüssels ist mit `typ: tinysesam-pairing+jwt`, `aud` = Aussteller, `nonce` =
+Base64url(SHA-256(Code ohne Bindestriche)) — und die Antwort (`client_id`, `token_endpoint`) ist alles, was ein
+gewöhnlicher `private_key_jwt`-Client braucht. Schlüsselwechsel: `POST /auth/oauth/service/keys` (Formular: eine
+Client-Assertion, `jwk`, `proof` mit `typ: tinysesam-key+jwt` und `sub` = Client-ID).
 
 ## App-Passwörter: WebDAV, CalDAV, Git hinter TinySesam
 
@@ -1330,6 +1435,8 @@ dav.example.com {
 			rewrite /auth/forward
 			header_up X-Forwarded-Method {method}
 			header_up X-Forwarded-Uri {uri}
+			header_up -X-Original-URL
+			header_up -X-Original-URI
 			@ok status 200
 			handle_response @ok {
 				request_header Remote-User {rp.header.Remote-User}
@@ -1348,9 +1455,10 @@ dav.example.com {
 				redir {rp.header.X-Tinysesam-Location} 302
 			}
 		}
-		# Die Anwendung vertraut Remote-User — das Passwort braucht sie nicht.
+		# Die Anwendung vertraut Remote-User — das Passwort braucht sie nicht (und keine andere Zugangsangabe).
 		reverse_proxy {$TS_APP_UPSTREAM:127.0.0.1:9000} {
 			header_up -Authorization
+			header_up -X-Api-Key
 		}
 	}
 }
@@ -1896,6 +2004,8 @@ Bausteine für Seiten, die du selbst baust — Signaturen und Beschreibungen in
   `set_roles`, `delete_user`, `lift_lockout` (wie `tinysesam unlock`), `list_api_keys`,
   `api_key_kind`, `verify_api_key`, `create_app_password`, `list_app_passwords`, `revoke_app_password`,
   `app_password_hosts` ([App-Passwörter](#app-passwörter-webdav-caldav-git-hinter-tinysesam)),
+  `create_service_pairing`, `list_service_clients`, `revoke_service_client`
+  ([Dienste](#ein-dienst-ruft-eine-geschützte-app-auf)),
   `revoke_mfa_enrollment`, `list_resource_secrets`,
   `remove_resource_secret`, `resource_unlocked`, `all_security`, `admin_exists`,
   `admin_claim_token`, `audit`, `FEDERATED_SOURCES`, `NAME_BINDING_REFUSALS`.
@@ -1975,9 +2085,26 @@ gh run watch --exit-status            # nach dem Push: CI-Ergebnis abholen, Exit
 Minimal-Lauf ohne Extras (sichert den stdlib-scrypt-Fallback) und einen Browser-Job, der
 zusätzlich die Website baut.
 
+## Für KI-Assistenten
+
+Zwei Einstiege, damit ein Assistent sich zurechtfindet, ohne das ganze README zu lesen:
+
+- **Eine App mit TinySesam bauen:** der Skill
+  [`skills/tinysesam/SKILL.md`](https://github.com/Ollornog/TinySesam/blob/main/skills/tinysesam/SKILL.md) (Englisch) —
+  Rezepte (FastAPI mit TOTP-Pflicht, Step-up, Konten vom Admin mit Anmeldelink, API-Schlüssel, Gate vor beliebigen
+  Apps, OAuth für Claude Code, Heimnetz, C22-Optik), die Schalter und die Fallen, mit Verweisen in diese Doku. In
+  Claude Code: `/plugin marketplace add Ollornog/TinySesam`, dann `/plugin install tinysesam@tinysesam` (ab Claude
+  Code 2.1.275 in einem Schritt: `/plugin install tinysesam --marketplace Ollornog/TinySesam`). Andere Agenten lesen
+  die Datei direkt; sie folgt dem verbreiteten `SKILL.md`-Format.
+- **An TinySesam selbst arbeiten:** [`AGENTS.md`](https://github.com/Ollornog/TinySesam/blob/main/AGENTS.md)
+  (Englisch) — Aufbau, Tests, generierte Dateien, Backlog, Sicherheitsregeln des Repos. `CLAUDE.md` bindet sie für
+  Claude Code ein.
+
+Jeder Python-Block beider Dateien läuft in der Testsuite, und jeder genannte Name wird gegen den Code geprüft.
+
 ## Status
 
-**96 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
+**102 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
 (`tests/test_matrix.py`).
 
 Gebaut und getestet: Passwort/TOTP/Sitzungen/Rollen, Remember-me, Step-up und per-Route-MFA,

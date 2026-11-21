@@ -102,8 +102,9 @@ Rate-Limit, Open-Redirect-Schutz via `safe_next`). Trotzdem: vor produktivem Ein
   Admin-Passwort und bei `sessions/revoke` mit `scope=all`). Verbundene Programme (OAuth, T-36):
   `oauth_device_connected` (`details={"grant_id": n, "client_id": …, "client_name": …, "resource": …}` — ein
   Programm hat nach der Zustimmung seine ersten Tokens bekommen), `oauth_device_revoked`
-  (`details={"grant_id": n, "client_id": …, "reason": …}`, `reason` eines von `user`, `admin`, `client`,
-  `account_disabled`) und `oauth_token_reuse` (`details={"grant_id": n, "client_id": …, "kind": "code"|"refresh"}`
+  (`details={"grant_id": n, "client_id": …, "reason": …}`, `reason` eines von `user`, `admin`, `client`
+  und den Gründen von `api_keys_revoked` — seit der Angriffsrunde vom 2026-11-21 (A-1) trennen auch ein Reset, ein
+  Admin-Passwort-Reset und „überall abmelden“ die verbundenen Programme, nicht nur eine Sperre) und `oauth_token_reuse` (`details={"grant_id": n, "client_id": …, "kind": "code"|"refresh"}`
   — ein schon benutzter Code oder Refresh-Token kam zurück, die Verbindung wurde widerrufen: das Token
   wurde vermutlich kopiert). Neue Zugänge, die kein eigener Faktor sind (H2, T-47): `signin_link_issued`
   (`details={"ttl_min": n, "by_operator": bool}` — für das Konto wurde ein Anmeldelink ausgestellt) und
@@ -112,7 +113,10 @@ Rate-Limit, Open-Redirect-Schutz via `safe_next`). Trotzdem: vor produktivem Ein
   (`True`: ein Administrator hat es gesetzt). App-Passwörter (T-66): `app_password_created`
   (`details={"app_password_id": n, "name": …, "hosts": [...]}`), `app_password_revoked`
   (`details={"app_password_id": n}`) und `app_passwords_revoked` (`details={"count": n, "reason": …}`, dieselben
-  Gründe wie `api_keys_revoked`). Die vollständige Liste der Ereignisnamen ist
+  Gründe wie `api_keys_revoked`). Dienste (T-60): `oauth_service_paired` (`details={"client_id": …, "client_name":
+  …, "resources": [...]}` — ein Dienst wurde gekoppelt und handelt als das Konto) und `oauth_service_revoked`
+  (`details={"client_id": …, "client_name": …, "reason": …}`, `reason` eines von `user`, `admin` und den Gründen von
+  `api_keys_revoked`). Die vollständige Liste der Ereignisnamen ist
   `TinySesam.SECURITY_EVENTS`. Die Schlüssel in `details` und die
   Gründe sind seit 0.22.0 englisch (bis 0.21.x `verbleibend`, `alt`/`neu`, `anzahl`/`grund` mit
   deutschen Gründen). Das gilt auch für Änderungen, die ein Admin im Panel an
@@ -123,12 +127,27 @@ Rate-Limit, Open-Redirect-Schutz via `safe_next`). Trotzdem: vor produktivem Ein
   abschaltbar mit `notify_login_failures=False`), und seit H2 einen Hinweis auf **neue Zugänge** (T-47,
   NIST SP 800-63B-4 §4.1.2.1; abschaltbar mit `notify_new_access=False`) bei `passkey_added`,
   `totp_enabled`, `pin_set`, `api_key_created`, `device_signed_in`, `signin_link_issued`,
-  `password_changed` durch einen Administrator, `oauth_device_connected`, `oauth_token_reuse` und
-  `app_password_created` —
+  `password_changed` durch einen Administrator, `oauth_device_connected`, `oauth_token_reuse`,
+  `app_password_created` und `oauth_service_paired` —
   höchstens einer je Konto und Ereignis pro Minute. Dieselben Ereignisse stehen auf der Kontoseite unter
   „Letzte Ereignisse“. Weitere eigene Mails gehen aus dem Hook (am besten über eine
   Warteschlange — er läuft synchron im Request). Ein Fehler im Hook macht die Änderung
   nie rückgängig, landet aber im Sicherheits-Log.
+- **Dienste weisen sich mit ihrem eigenen Schlüssel aus, nicht mit einem Geheimnis (T-60, ADR-13).** Mit
+  `oauth_service_clients` bekommt ein Dienst kurzlebige Access-Tokens per `client_credentials` mit `private_key_jwt`
+  (RFC 7523): TinySesam speichert nur seinen öffentlichen Schlüssel, eine kopierte Datenbank, ein Proxy-Log oder eine
+  Sicherung bringt also nichts, womit man ein Token bekommt. Die Assertion prüft joserfc (Extra `[services]`) mit
+  einer Algorithmenliste (`Ed25519`, `ES256`, `EdDSA` für einen Ed25519-Schlüssel), gebunden an den Typ des
+  gespeicherten Schlüssels — kein `none`, kein HMAC, kein Schlüssel aus dem JWT-Kopf; `aud` muss der Aussteller als
+  einziger Wert sein (RFC 10070 — die Adresse des Token-Endpunkts wird gegen Audience-Injection abgelehnt), `exp`
+  höchstens 5 Minuten voraus, `jti` bis dahin nur einmal. Eine Ablehnung antwortet allgemein `invalid_client`; der
+  Grund steht im Audit-Log (`oauth_client_auth_failed`). Koppeln braucht einen Einmalcode aus einer frisch bestätigten
+  Sitzung oder dem Admin-Panel und einen Nachweis, dass der Dienst den privaten Schlüssel hält. Das Token trägt nie
+  das Admin-Merkmal; Sperre, Widerruf oder entzogene Rolle wirken bei der nächsten Anfrage. Was bleibt: **Die
+  Schlüsseldatei ist der Dienst** — wer sie kopiert (Vorgabe Modus 0600), bekommt Tokens, bis der Schlüssel
+  gewechselt (`oauth_service_key_days`, der Client wechselt zur halben Laufzeit) oder der Dienst widerrufen ist. Ein
+  Access-Token selbst ist für seine Laufzeit (15 min) an seiner Ressource ein Bearer-Token; die Bindung an den
+  Schlüssel (DPoP, RFC 9449) ist als T-68 offen.
 - **Bekannte Grenze — Basic-Auth hat keinen zweiten Faktor; deshalb nimmt sie nur App-Passwörter an (T-66).**
   WebDAV-, CalDAV/CardDAV- und Git-Clients schicken Benutzername und Passwort mit jeder Anfrage und können weder eine
   TOTP-Abfrage beantworten noch einen Passkey halten. Mit `forward_apps[host]["app_passwords"] = True` nimmt das Gate
@@ -140,9 +159,23 @@ Rate-Limit, Open-Redirect-Schutz via `safe_next`). Trotzdem: vor produktivem Ein
   zweite Faktor lässt sich per Basic-Auth also nicht umgehen. Was bleibt: Ein App-Passwort ist ein Inhaber-Geheimnis —
   wer es vom Gerät kopiert (oder ohne HTTPS mitliest), kann es an seinen Anwendungen nutzen, bis es abläuft oder
   widerrufen wird; es geht mit jeder Anfrage mit, der Proxy davor darf `Authorization` also nicht protokollieren, und
-  vor der Anwendung gehört der Header entfernt (`header_up -Authorization`). Fehlversuche sind `failed login …
+  die Vorlagen entfernen den Header vor der Anwendung (nächster Punkt). Fehlversuche sind `failed login …
   method=app_password` im Sicherheits-Log (fail2ban) und zählen in einem eigenen Topf, Raten am Gate sperrt also nicht
   die Anmeldung im Browser. Samba und andere Protokolle ohne HTTP sind nicht Teil davon.
+- **Zugangsdaten an der Anwendung — die Vorlagen entfernen sie.** Jede Proxy-Vorlage in `deploy/` (Caddy, nginx,
+  Traefik) entfernt `Authorization` und `X-Api-Key` auf dem Weg zur Anwendung, NACHDEM Forward-Auth entschieden hat:
+  Caddy `header_up -Authorization` / `header_up -X-Api-Key` in jedem `reverse_proxy` zur Anwendung, nginx
+  `proxy_set_header Authorization ""` (FastCGI `fastcgi_param HTTP_AUTHORIZATION ""`, damit bleiben auch
+  `PHP_AUTH_USER`/`PHP_AUTH_PW` leer), Traefik die Middleware `tinysesam-strip-credentials` nach `tinysesam-auth`.
+  Wer angemeldet ist, erfährt die Anwendung aus `Remote-*`; das Geheimnis braucht sie nie. Bis zur Angriffsrunde vom
+  2026-11-21 (A-3) stand das in den Vorlagen nur als Kommentar, und Header-Log, Debug-Seite oder Fehlerbericht einer
+  Anwendung bekamen App-Passwörter, OAuth-Access-Tokens und — am schlimmsten — API-Keys (`tsk_…`, gültig an jedem
+  Host und an TinySesams eigener API, mit Rollen, bis zu 90 Tage). **Deine Anwendung prüft `Authorization` selbst**
+  (eigene Basic-Auth oder Token-Prüfung hinter dem Gate)? Dann lösch diese Zeilen für genau diesen Host oder diese
+  Location, bewusst — und nimm in Kauf, dass dann in dem, was sie protokolliert, das Geheimnis steht. Das
+  `webdav`-Profil des Schnellstarts braucht das nicht (der WebDAV-Server dort hat keine eigene Anmeldung).
+  `tests/test_attack_round_a.py` prüft jede Vorlage unter `deploy/` darauf, auch eine neue; `tests/test_gate_caddy.py`
+  misst es durch ein echtes Caddy.
 - **Ein TOTP-Code gilt genau einmal — auch der Einrichtungscode.** Der Code, der die Einrichtung
   bestätigt, ist danach verbraucht. Unter `login_chain=["password","totp"]` schliesst diese
   Bestätigung den TOTP-Schritt der Anmeldung gleich mit ab; überall sonst braucht die Anmeldung den

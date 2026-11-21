@@ -4,6 +4,199 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+### Fixed — admin panel: a late key list no longer overwrites a sign-in link shown once
+
+- After **Create key** the panel refreshed the account's key list without waiting for it. When that reply came back
+  after a sign-in link issued in the meantime (a loaded server), the list replaced the link card, and the link —
+  shown only once — was gone. Every view of an account's detail row (keys, passkeys, sign-in link) now claims the
+  row before it asks the server and writes only while its claim is the newest. The browser test holds the
+  refresh back until the link is on screen and checks that the link stays.
+- Browser test: `answer()` treats a page that navigated away as a closed dialog (a 403 that leads to the reauth
+  page used to make it run out under load, 4 of 40 runs), and a wait that runs out names the error its condition
+  threw.
+
+### Security — attack round B (2026-11-21): forward-auth target, TOTP setup, step-up, redirects
+
+- **Forward auth: a client-supplied `X-Original-URL` no longer chooses the application (high).** `/auth/forward`
+  preferred an absolute `X-Original-URL` to `X-Forwarded-Host`. Caddy and Traefik pass that header from the browser
+  through unchanged, so a credential limited to one application worked at another: an app password bound to
+  `dav.example.com` opened `web.example.com` (measured with Caddy 2.11.7 and the quickstart template), and the same
+  lever moved the OAuth audience (T-36), the approval per application (T-14), "signed out of this application
+  only" (T-22) and the gate token's audience. Now `X-Forwarded-Host`/`-Proto`/`-Uri` win; `X-Original-URL` counts
+  only where no `X-Forwarded-Host` is present (an nginx configuration that sets nothing else). Where both are present
+  and name different targets (host with port, scheme, path), the request is refused: `401`, `X-TinySesam-Reason:
+  forwarded-conflict`, the sign-in address for the `X-Forwarded-*` target, a security-log line and the audit event
+  `forward_denied reason=forwarded_conflict`. `trusted_proxies` cannot tell the two apart — the peer of
+  `/auth/forward` is always the proxy — so the rule does not depend on it.
+- **Proxy templates name the target themselves.** All Caddy templates (`deploy/forward-auth/Caddyfile`,
+  `Caddyfile.gate`, `deploy/quickstart`, `deploy/home-network`, the README recipe) remove `X-Original-URL` and
+  `X-Original-URI` before the sub-request (Caddy sets `X-Forwarded-For/-Proto/-Host` itself, the templates set
+  `-Method`/`-Uri`). Traefik: `trustForwardHeader: false` and an `authRequestHeaders` list (`Accept`,
+  `Authorization`, `Cookie`, `Sec-Fetch-*`, `User-Agent`, `X-Api-Key`). The nginx templates already set all four
+  headers from the same request. Measured through a real Caddy in `tests/test_gate_caddy.py`; a static check over
+  every template in `tests/test_forward_original_url.py`.
+- **Mandatory TOTP setup in a chain only for a step the account cannot cover (medium).** With alternatives,
+  `login_chain=["password", "totp|pin"]`, the half session after the password could set up a TOTP although the
+  account had a PIN for that step; the confirmation code completed the chain without the PIN, and whoever knew only
+  the password (or held only the mailbox) kept an own second factor with recovery codes. `totp_enrollment_user` now
+  allows the setup only when a step of the chain stays uncovered by the factors the account has and TOTP is an
+  option for it — the rule of the setup pass (`_setup_missing`). A setup window opened by the operator
+  (`grant_mfa_enrollment`) still lifts it. Refusals are audited as `mfa_enrollment_denied`.
+- **A sign-in link is no step-up (medium).** Redeemed in a browser with a full but stale session (a stolen cookie),
+  a mailed or admin-issued sign-in link, or a cross-device (QR) approval, made the session fresh, and `_require_fresh`
+  then let a new passkey, API key, app password or service pairing through. On a full session only a factor that the
+  step-up accepts refreshes it: what `stepup_options()` offers the account (so `stepup_methods` now binds the sign-in
+  pages too — a password typed into the sign-in form no longer gets round `stepup_methods=["totp"]`, nor a TOTP code
+  round `["pin"]`), plus passkey, OIDC and SAML, which sign the account in on their own. Anything else leaves the
+  session full but not fresh (audit event `stepup_not_counted`).
+- **`safe_next` reads a target like a browser (low).** A backslash or an ASCII control character anywhere (tab, CR,
+  LF included) and a user part in an absolute target (`https://x@app.example.com/`) now fall back to the default:
+  `/\t/evil.example` (a browser drops the tab → `//evil.example`) and `https://evil.example\@app.example.com/`
+  (`urlsplit` sees `app.example.com`, a browser `evil.example`) passed and reached pages that follow the target from
+  a JSON answer with `location.href` (passkey sign-in, TOTP setup, setup pass, onboarding).
+- **Admin routes that create access want a fresh confirmation even with `admin_require_mfa=False`:** password reset,
+  API key for an account, sign-in link and invitation call `_require_fresh` themselves, like the service pairing
+  already did (B-12). With the default `admin_require_mfa=True` nothing changes.
+
+### Changed — attack round B (behaviour of existing installations)
+
+- **Proxy configuration: update your copy of the template, but nothing breaks if you do not.** The library fix closes
+  F1 on its own. A proxy that sets only `X-Forwarded-*` (Caddy, Traefik) or only `X-Original-URL` (old nginx
+  configurations) keeps working; the templates' new lines are a second layer. A request that carries both headers
+  with different targets gets the sign-in page instead of the application — only a client that forges one of them,
+  or a proxy chain that rewrites the host between the two (then let the inner proxy set both).
+- **Traefik with the new template:** only the listed headers reach `/auth/forward`. A renamed API-key header or an
+  own header your setup relies on there must be added to `authRequestHeaders`.
+- **Step-up on full sessions:** with `stepup_methods` set, the sign-in pages no longer refresh a session with a
+  factor outside that list; the reauth page (`/auth/reauth`, `confirm_*`) behaves as before. A sign-in link or QR
+  approval in a browser that is already signed in leaves the session as it is (no new cookie).
+- **`admin_require_mfa=False`:** password reset, API key, sign-in link and invitation in the panel answer `403`
+  (step-up) to a session whose last confirmation is older than `stepup_max_age_sec`.
+- **`safe_next`:** targets with a backslash, a control character or a user part go to `login_redirect` instead.
+- **Apps behind forward auth:** `Remote-Groups: admin` is sent for any valid session, however old —
+  `admin_require_mfa` covers the admin panel, not the applications. Sensitive admin actions of an application should
+  not rest on that header alone (README, "Several apps, one TinySesam").
+
+### Security — attack round A against OAuth, services, app passwords and keys (2026-11-21, T-69)
+
+- **A-1 (medium) — the panic button disconnects OAuth devices too.** "End all sessions", the password reset (self-service
+  and by an administrator) left a person's connected programs (OAuth grants: refresh tokens for up to 180 days, access
+  tokens) alive; only a block ended them. `_keys_revoked` is now the one revocation point for every standing
+  credential — API keys, app passwords, services and OAuth grants — and every path that revokes calls it. Each grant
+  writes `oauth_revoked` to the audit log and `oauth_device_revoked` with the path's reason (`password_reset`,
+  `admin_password_reset`, `sessions_revoked`, `account_disabled`) to `on_security_event`. The offline reset
+  `tinysesam passwd` now revokes the same (it ended only the sessions); `--keep-sessions` keeps all of it, the audit
+  line names the counts.
+- **A-2 (medium) — only the current service key may rotate.** `POST /auth/oauth/service/keys` accepted an assertion of
+  any key still in its one-hour overlap: with a copied old key a stranger rotated in a key of their own, and the
+  service's rightful new key ran out instead. The overlap now counts at the token endpoint only; a rotation with an
+  overlap key is refused (401, audit `oauth_service_key_rotate_refused`). Resending the already-current key stays a
+  success with the replaced key's assertion, so a client that crashed after the server took its new key recovers
+  (`tinysesam-client` needs no change). ADR-13 says so.
+- **A-3 (medium) — the proxy templates drop `Authorization` and `X-Api-Key` before the application.** Every template
+  in `deploy/` passed them on, contrary to SECURITY.md: an application's header log, debug page or error report got
+  app passwords, OAuth access tokens and API keys (`tsk_…`, valid at every host and at TinySesam's API). Now Caddy
+  (`forward-auth/Caddyfile`, `Caddyfile.gate`, `quickstart/Caddyfile`, `home-network/Caddyfile`: every application
+  `reverse_proxy`, share path included), nginx (`nginx.conf`; `nginx-path.conf` for the protected PHP location —
+  `HTTP_AUTHORIZATION`/`PHP_AUTH_*` stay empty) and Traefik (middleware `tinysesam-strip-credentials` after
+  `tinysesam-auth`) remove both after forward auth has decided. An application that checks `Authorization` itself
+  gets the lines removed deliberately (SECURITY.md, "Credentials at the application"); the quickstart's `webdav`
+  profile does not need that. A test checks every proxy template under `deploy/`, new ones included; a real Caddy
+  measures it (`tests/test_gate_caddy.py`).
+- **A-4 (low) — open client registration per IPv6 /64, and a full cap gives way.** The limit counted per full address:
+  one /64 filled the global cap of 1000 registrations without a grant, and nobody could connect a new MCP client for a
+  day. Now 20 per hour per address (IPv6 as its /64) plus 100 per hour per IPv6 /48; at the cap the longest-unused
+  registration older than ten minutes (an authorization request's lifetime) is removed instead of refusing, so a flow
+  in progress never breaks. New helper `security.ip_bucket`.
+- **A-5 (low) — the vault reads `v2:` only.** `Vault.decrypt` handed back any value without a prefix as plain text and
+  read `v1:` without the binding to its row: whoever could write the database without the vault key planted a
+  plain-text gate seed in `key_material` and had it published at `/auth/gate/jwks.json`. Now only the migration
+  (`Store.reencrypt`: the start and `tinysesam keys reencrypt`) reads `v1:`/plain text; everything else raises
+  `vault.LegacyValueError`. ADR-12 says honestly what the vault protects against (a reader of the database file, not a
+  writer).
+- **A-6 (low) — a code reused during its first exchange voids it.** A second exchange that landed between consuming
+  the code and writing the grant found nothing to revoke, and the first exchange's grant lived on (RFC 9700 §4.2.4).
+  The reuse now leaves a mark on the code that the grant's transaction reads: the first exchange then issues nothing
+  (`invalid_grant`, audit `oauth_code_reuse … during_exchange=1`).
+
+### Changed — upgrading with attack round A (behaviour of existing installations)
+
+- **Proxy templates:** copy the new lines into your proxy configuration (Caddy two `header_up` lines per application
+  `reverse_proxy`, nginx two `proxy_set_header`/`fastcgi_param` lines, Traefik the middleware in the router chain).
+  Behind the gate nothing changes for an application that trusts `Remote-*`; one that reads `Authorization` itself
+  must keep the header on purpose.
+- **Start with old secrets:** a database whose `v1:`/plain-text secrets cannot be rewritten at startup (read-only)
+  no longer starts — the message names `tinysesam keys reencrypt --db <file>`. A start that finds anything but
+  ciphertext in `key_material` refuses (restore from a backup). Normal upgrades rewrite everything on the first start
+  as before.
+- **"End all sessions", password resets and `tinysesam passwd`** now also disconnect the account's OAuth programs (and
+  `passwd` its API keys, app passwords and services): an MCP client signs in again afterwards.
+- **Service key rotation** with a key in its overlap is refused; a client that rotates from its current key (the
+  reference client always does) is not affected.
+- **Open client registration** is counted per IPv6 /64 and /48; many clients behind one IPv6 prefix share 20/100
+  registrations an hour.
+
+### Added — OAuth for services: `client_credentials` + `private_key_jwt`, paired by a code (T-60, ADR-13)
+
+- **A service without a person gets short-lived access tokens** from the OAuth server of T-36: `grant_type=
+  client_credentials` with `private_key_jwt` (RFC 7523). The service holds its own key pair (Ed25519 or P-256);
+  TinySesam stores only the public key. Forward auth takes the token like a person's: `Remote-*` with the service's
+  account and roles, never the admin flag, checked on every request. New switch `oauth_service_clients` (off),
+  fields `oauth_service_token_ttl_sec` (900), `oauth_service_key_days` (90), `oauth_pairing_minutes` (10); new extra
+  `[services]` (`joserfc>=1.7.6`, the floor without a known advisory) — the core install does not change.
+- **Pairing by a one-time code** from the admin panel (service accounts) or the account page section "Services" (a
+  script acting as yourself; fresh confirmation), or `create_service_pairing`. Redeemed at `POST /auth/oauth/pair`
+  with the public key and a proof of possession; single use, only a digest stored, 20 attempts per address and hour,
+  every refusal in the audit log.
+- **Assertion rules:** `aud` = the issuer as its only value (RFC 10070 — the token endpoint URL is refused), `exp` at
+  most 5 min ahead, `jti` single use (replay store until `exp`), `typ` `client-authentication+jwt`/`JWT`/none,
+  algorithms `Ed25519`, `ES256`, `EdDSA` bound to the stored key's type, never `none`/HMAC or a key from the header.
+- **Key rotation without an outage** at `POST /auth/oauth/service/keys` (signed with the old key, proven with the
+  new one); the old key stays valid for an hour at the token endpoint, never for a further rotation. Keys expire after
+  `oauth_service_key_days`.
+- **Revocation:** `revoke_service_client`, the account page and the panel (tab "Connected programs", with last token
+  request, address and key expiry; `list_service_clients`). Locking the account, an admin password reset, a
+  password reset and "end all sessions" revoke an account's services like its API keys. Events
+  `oauth_service_paired` (also mailed with `notify_new_access`) and `oauth_service_revoked`.
+- **Reference client `tinysesam-client`** (`tinysesam.client.ServiceClient`): `pair`, `token`, `request`, `rotate`,
+  `info`; key file 0600 (`--key-file`, `TINYSESAM_CLIENT_KEY_FILE`, default `$XDG_CONFIG_HOME/tinysesam/client.json`), token
+  cache, rotation by itself at half the key lifetime (the new key on disk before the server learns it), auth classes
+  for `httpx` and `requests`. README recipe "A service calls a protected app".
+- **Schema 21** (additive): `oauth_service_client`, `oauth_client_key`, `oauth_assertion`.
+- Replaces the RFC 9421 per-request signatures of the T-32 draft (PR #242, never merged); its pairing code, client key
+  pair and reference client were taken over. DPoP for service tokens is open (T-68).
+
+
+### Changed — gateway image on a distroless base, without a shell (T-59)
+
+- **The runtime stage of `ghcr.io/ollornog/tinysesam` is now `gcr.io/distroless/base-debian13`** (pinned by digest,
+  Dependabot moves it) instead of `python:3.15-slim`. The interpreter (still Python 3.15) comes from the slim build
+  stage, together with exactly the Debian libraries an import trace of the running gateway and of the operator commands
+  loaded beyond the base (SQLite, mpdecimal, bzip2, xz, libgcc) — each with its dpkg record, so SBOM and scan still see
+  every package. Measured on the same day with the same scanner: **114 → 41 packages** (Debian 88 → 15), **266 → 148 MB**,
+  **Grype 236 → 67 findings** (high 81 → 15, medium 85 → 32, low 20 → 9, negligible 50 → 11), fixable high 1 → 0.
+- **No shell, no package manager, no coreutils in the image.** Operator commands are unchanged
+  (`docker exec <c> tinysesam backup|unlock|audit|keys …`, `docker compose run --entrypoint tinysesam …`); what used
+  `sh` or `cat` inside the container needs `python` instead — `docs/OPERATIONS.md`, "The gateway image: no shell
+  inside", has the table and a side-car for debugging. uid/gid 1000, `/data`, the `HEALTHCHECK`, the entrypoint and
+  the security-log path stay as they were; existing volumes keep working.
+- `ctypes`, `curses`, `readline`, `dbm` and `tkinter` are no longer in the image's Python (their libraries are not
+  shipped; the gateway imports none of them). `uuid` uses its built-in fallback (libuuid would bring util-linux's
+  findings).
+- The build checks the result (`deploy/gateway/image_setup.py`): every native module loads, the default TLS context
+  has CA certificates, no shell/package manager/pip on disk; `image-probe` checks that the running container cannot
+  start `sh`. The extras are unchanged: the image already installs only `[gateway]`, and the trace imports 23 of its 25
+  distributions — the other two (`joserfc` via authlib, `pycparser` via cffi) are declared requirements, removing
+  them would break `pip check` and drop no finding.
+- `.grype.yaml`: the zlib exception (CVE-2026-85091, python:3.15-slim) is gone — the distroless base carries the fixed
+  zlib. New: after both image scans, `scripts/_grype_exceptions.py --report …` prints the findings and fails on an
+  exception that matches nothing in either image, so an outdated rule goes instead of waiting for its date.
+- `scripts/_image_probe.sh` removes the container's anonymous `/data` volume (local runs left one behind each time).
+### Changed — CodeQL: accepted false positives are recorded in the repository
+
+- `.github/codeql/accepted.md` lists every dismissed code-scanning alert (rule, location, reason, date); a repo check
+  keeps the table complete. Rule: fix in code, dismiss only real false positives, never switch a rule off globally.
+
 ### Added — Caddy ready-made: image `tinysesam-caddy-gate` and a quickstart stack (T-62)
 
 - **Every release publishes `ghcr.io/ollornog/tinysesam-caddy-gate:vX.Y.Z`** — Caddy with the caddy-jwt plugin (gate
@@ -72,6 +265,9 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
   (recovery codes after the confirmation); it now waits for the dialog it answered.
 - The browser test reports where Chrome stands when it writes no DevTools port (process state, `wchan`, load,
   profile) and lets Chrome log its INFO lines.
+- `test_h2_hardening.py`: "the two-digit number is not part of the approval link" was checked as a substring of the
+  link — the eight random characters of the short code contained such a number now and then. The check now reads the
+  link: path `/auth/qr/approve`, the code as its only parameter.
 
 ### Security — key management (H3: T-48, T-53, T-54, ADR-12, from the security review of 2026-11-20)
 
@@ -191,6 +387,18 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
   only some (say `--ts-accent`) now gets TinySesam's light values for the rest in light mode.
 - **New built-in favicon:** a rounded tile with a keyhole, the same mark as the bar's logo (darker blue in light,
   lighter in dark mode). `brand_icon` overrides it as before.
+
+### Added — a guide for AI coding assistants (T-65)
+
+- **`skills/tinysesam/SKILL.md`** for assistants that build an app with TinySesam: recipes (FastAPI with mandatory
+  TOTP, step-up, admin-created accounts with a sign-in link, API keys, forward-auth gate with the quickstart stack, app
+  passwords for WebDAV/CalDAV/Git, OAuth for Claude Code, home
+  network, C22 look and top bar), the switches and the pitfalls, with pointers into the docs. The repository is a
+  Claude Code plugin marketplace: `/plugin marketplace add Ollornog/TinySesam`, `/plugin install tinysesam@tinysesam`.
+- **`AGENTS.md`** for assistants that change TinySesam (layout, tests, generated files, backlog, security rules);
+  `CLAUDE.md` imports it.
+- `tests/test_repo.py` runs every Python block of both files and checks every name they mention — config fields,
+  package names, environment variables, headers, routes and paths — against the code.
 
 ### Added — the top bar as a building block (T-64)
 

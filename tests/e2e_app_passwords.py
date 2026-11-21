@@ -105,6 +105,8 @@ app.example.com {
 			rewrite /auth/forward
 			header_up X-Forwarded-Method {method}
 			header_up X-Forwarded-Uri {uri}
+			header_up -X-Original-URL
+			header_up -X-Original-URI
 			@ok status 200
 			handle_response @ok {
 				request_header Remote-User {rp.header.Remote-User}

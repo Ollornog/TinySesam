@@ -5,4 +5,5 @@
 !README.md
 !tinysesam/
 !deploy/gateway/requirements.txt
+!deploy/gateway/image_setup.py
 tinysesam/**/__pycache__/

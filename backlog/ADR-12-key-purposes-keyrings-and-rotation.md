@@ -50,7 +50,7 @@ by HKDF/HMAC it *was* the Ed25519 gate signing key ([ADR-9](ADR-9-gate-token-at-
 
 **The gate key is never derived from the vault key.** Without its own source it is stored in `key_material`, encrypted
 with the vault key — so the vault key alone (a leaked environment variable, a stolen key backup) gives no gate key, and
-the database alone gives none either. Both together do; that is the case of `<db>.key` beside the database, which
+a copy of the database alone gives none either. Both together do; that is the case of `<db>.key` beside the database, which
 `config_check` reports when the gate is on, and which `TINYSESAM_GATE_KEY`/`gate_key_file` (or a vault key elsewhere)
 closes. The pepper follows the same rule: it guards stored 256-bit token digests, so its loss is less severe, but it
 must not change when the vault key is rotated — with a derivation it would have disconnected every program.
@@ -78,8 +78,18 @@ break its sign-ins).
 `tinysesam/vault/v2 ‖ kid ‖ context`, the context naming table, column and what identifies the row for its whole
 life (account for TOTP; client and subject for the refresh token; client and account for the ID token, because the
 session handle rotates; the token row for an OAuth successor; purpose and kid for a stored key). JSON-encoded, so no
-part can shift into another. `v1:` (0.21–0.25.x) is still read, with every key of the keyring, and rewritten at the
-start.
+part can shift into another. `v1:` (0.21–0.25.x) is read only by the migration, with every key of the keyring, and
+rewritten at the start (or by `tinysesam keys reencrypt`); every other read takes `v2:` only, and a start that cannot
+rewrite what is left stops with that command in its message (amended 2026-11-21 after attack round A, A-5: until then
+every read accepted `v1:` and plain text, so whoever could WRITE the database without the vault key planted a
+plain-text gate seed in `key_material` and had it published). `key_material` never holds anything but `v2:`; a start
+that finds something else refuses instead of encrypting it.
+
+**What the database alone gives — honestly.** A COPY of the database without the vault key gives no reversible secret
+and no gate key. WRITE access to the database is not covered by this decision: whoever writes it can add a session row
+(its handle is stored as a plain SHA-256), a role or an account and is anyone, without any key; and a plain-text TOTP
+secret written there before the next start is encrypted by that start (the migration path from before 0.21, which
+cannot tell an old value from a planted one). The vault keeps secrets from a reader of the file, not from a writer.
 
 **Gate token type (T-53).** Header `typ: tinysesam-gate+jwt` (RFC 8725 §3.11; RFC 7515 §4.1.9 lets the
 `application/` prefix go) and `kid`; `gate.check` refuses another type. **caddy-jwt cannot check `typ`** — v1.4.0 has
