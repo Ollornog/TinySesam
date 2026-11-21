@@ -74,11 +74,11 @@ for name, value in (("get_user", auth.get_user(uid)),
                    ("find_user", auth.find_user("wer")),
                    ("_check_password", auth._check_password("wer", "dummy12345")),
                    ("current_user", None),
-                   ("redeem_magic (leer)", auth.redeem_magic("gibtsnicht")),
-                   ("find_user (leer)", auth.find_user("nobody"))):
+                   ("redeem_magic (empty)", auth.redeem_magic("does-not-exist")),
+                   ("find_user (empty)", auth.find_user("nobody"))):
     if name == "current_user":
         continue
-    expected_empty = "leer" in name
+    expected_empty = "(empty)" in name
     if expected_empty:
         r.check(f"{name} returns None, not something wrong", value is None, f"{type(value).__name__}")
     else:

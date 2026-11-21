@@ -41,6 +41,10 @@ services:
       # Who may pass: without groups every account at the provider gets in (the start warns, B3-9).
       TINYSESAM_ALLOWED_GROUPS: ${TS_ALLOWED_GROUPS:-}
       TINYSESAM_OAUTH_RESOURCES: ${TS_OAUTH_RESOURCES:-}
+      # Services with their own key pair (T-60); pair one: docker compose exec tinysesam python -m tinysesam.gateway pair …
+      TINYSESAM_OAUTH_SERVICE_CLIENTS: ${TS_OAUTH_SERVICE_CLIENTS:-0}
+      # Links in the top bar of the gateway's pages: [["Wiki", "/wiki"]] (T-64).
+      TINYSESAM_TOPBAR_LINKS: ${TS_TOPBAR_LINKS:-}
       # Per application, e.g. app passwords for WebDAV (T-66): {"dav.example.com": {"name": "Files", "app_passwords": true}}
       TINYSESAM_FORWARD_APPS: ${TS_FORWARD_APPS:-}
       # The network below — the real client address behind Caddy (see deploy/forward-auth/docker-compose.yml).

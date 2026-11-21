@@ -56,7 +56,8 @@ class PasswordChangeResult:
     #: `policy` (the new password violates the password policy, 400 — the reason is in `message`);
     #: `no_session` (no full session, 401; 403 if the request shows an
     #: API key instead of a session). Only from `set_initial_password` (B-10): `has_password` (the
-    #: account already has one — that is `change_password`, 409); `directory` (`ldap_enabled`, 409);
+    #: account already has one — that is `change_password`, 409); `directory` (`ldap_enabled`, 409 — also from
+    #: `change_password` for an account without a local password, whose password lives in the directory);
     #: `method_disabled` (password sign-in off, 404); `stepup` (the account has a factor, but no fresh
     #: confirmation, 403 — the reauth page helps); `relogin` (the account has no factor and the sign-in
     #: is older than `stepup_max_age_sec`, 403 — only a new sign-in helps).

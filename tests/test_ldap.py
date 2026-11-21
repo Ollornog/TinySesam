@@ -59,10 +59,32 @@ u = auth.store.get_user_by_name("alice")
 assert u and not u["email"] and u["display_name"] == "Alice", dict(u)
 ok("LDAP login creates a local user automatically (name taken over, unconfirmed address not)")
 
+# ---------- an account whose password lives in the directory has nothing to change here ----------
+# Up to 0.26.0 the account page offered "change password" (old + new) to alice, who has no local password: every try
+# was "wrong password", counted as a failed attempt and locked the form after five. The page now says where the
+# password lives, and the route refuses before anything is counted. (Mutation probes: the template branch back to the
+# change form → the page line falls; the check in `change_password` removed → the route lines fall.)
+page = c.get("/auth/account").text
+assert "<button data-act=changepw>" not in page and "<input id=pw_cur" not in page, \
+    "the change form is offered to a directory account"
+assert "Dein Passwort verwaltet das Verzeichnis deiner Organisation" in page, "the page does not say where it lives"
+before = auth.store._one("SELECT COUNT(*) AS n FROM login_attempt")["n"]
+r = c.post("/auth/password", json={"current": "ldappw", "new": "a brand new local password 4711"})
+assert r.status_code == 409 and "Passwörter dieser Installation verwaltet das Verzeichnis" in r.json().get("detail", ""), \
+    (r.status_code, r.text)
+assert auth.store.get_password_hash(u["id"]) is None, "a local password was set beside the directory"
+assert auth.store._one("SELECT COUNT(*) AS n FROM login_attempt")["n"] == before, "the refusal counted an attempt"
+ok("directory account: no change form, the page names the directory; POST /auth/password → 409 directory, "
+   "nothing counted, no local password")
+
 # wrong LDAP password → 401
 c.get("/auth/logout")
 assert c.post("/auth/login", data={"username": "alice", "password": "wrong"}).status_code == 401
 ok("wrong LDAP password → 401")
+# A local account next to the directory keeps its change form (counter-check).
+c.post("/auth/login", data={"username": "admin", "password": "lokalpw", "next": "/"})
+assert "<button data-act=changepw>" in c.get("/auth/account").text, "the local account lost its change form"
+ok("local account beside LDAP: change form still there")
 os.remove(db)
 
 # ---------- local password keeps working alongside LDAP ----------

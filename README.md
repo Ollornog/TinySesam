@@ -1037,9 +1037,12 @@ Modeled on Authelia/Fail2Ban — the thresholds are changeable **in the admin pa
   the group of the TinySesam process and the shipper loses read access, not at update time but at
   the next rotation.
 - **Real client IP behind a proxy:** `X-Forwarded-For` is only trusted when the direct peer is listed
-  in `trusted_proxies` — otherwise the IP is forgeable. **Start uvicorn without `--proxy-headers`.**
-  With that flag uvicorn already rewrites `request.client.host` to the forwarded IP, so TinySesam's
-  check has nothing left to verify and rate limiting, lockout and fail2ban can be bypassed.
+  in `trusted_proxies` — otherwise the IP is forgeable. **Start uvicorn with `--no-proxy-headers`**
+  (`uvicorn.run(..., proxy_headers=False)`): uvicorn applies `X-Forwarded-For` **by default** and rewrites
+  `request.client.host` to the forwarded IP, so TinySesam's check has nothing left to verify and rate limiting,
+  lockout and fail2ban rest on uvicorn's `forwarded_allow_ips` instead of `trusted_proxies`. The gateway
+  (`python -m tinysesam.gateway`) starts uvicorn that way itself; when the address arrives already rewritten,
+  the security log says so and names the switch.
 - **Roles and admins:** by default an admin satisfies every `require_role(...)`. If an app derives its
   permissions purely from an IdP group, that is a silent privilege escalation — set
   `admin_implies_roles=False` (or `require_role(..., admin_implies=False)`).
@@ -1266,6 +1269,16 @@ TinySesamConfig(
 )
 ```
 
+**TinySesam needs an origin of its own** — its own host (`auth.example.com`), or, when everything lives on one host,
+at least its own port (`https://app.example.com:8443` next to the application on `:443`), never a path inside the
+application. Three reasons: the issuer is the origin of `base_url`, and the client finds the server's metadata at
+`/.well-known/oauth-authorization-server` on exactly that origin (RFC 8414) and checks `iss` against it (RFC 9207);
+the sign-in and consent pages carry a strict CSP of their own, which on a shared origin would govern the application's
+pages or be loosened by them; and forward auth guards the application's origin, while TinySesam's own routes (`/auth/*`,
+the metadata) must answer without it. A port is enough for the issuer and the CSP — browsers treat it as another origin
+— but **cookies do not separate by port** (RFC 6265, 8.5): the forward-auth templates strip every `tinysesam_*` cookie
+before the application, and an application with its own cookies should not reuse those names.
+
 At the proxy, two additions on the application's host (both in `deploy/forward-auth/Caddyfile`):
 `/.well-known/oauth-protected-resource*` goes to TinySesam (RFC 9728 — the client learns where to sign in), and
 a 401 that TinySesam marks with `X-TinySesam-Reason: oauth` is passed through with its `WWW-Authenticate: Bearer
@@ -1335,7 +1348,10 @@ TinySesamConfig(
 `auth.create_service("backup", roles=["backup"])`), or — for a script that acts as yourself — the section
 "Services" on your account page. You get a one-time **pairing code** (`ABCD-EFGH-JKMN-PQRS`, valid
 `oauth_pairing_minutes`, 10 min). From your own code: `auth.create_service_pairing(uid, name="backup",
-resources=["https://app.example.com/api"], roles=["backup"])`. On the service's machine:
+resources=["https://app.example.com/api"], roles=["backup"])`. The ready-made gateway has neither panel nor account
+page: there `TINYSESAM_OAUTH_SERVICE_CLIENTS=1` switches services on, and the code comes from the command line, with
+the service's environment — `docker exec <gateway> python -m tinysesam.gateway pair backup --create-service`
+(`--resource`, `--roles`, `--name` as above). On the service's machine:
 
 ```bash
 pip install "tinysesam[services]==0.26.1"
@@ -1755,7 +1771,7 @@ export TINYSESAM_OIDC_ISSUER=https://id.example.com \
        TINYSESAM_BASE_URL=https://auth.example.com \
        TINYSESAM_COOKIE_DOMAIN=.example.com \
        TINYSESAM_PROTECTED_HOSTS=app.example.com,wiki.example.com
-python -m tinysesam.gateway          # or: uvicorn tinysesam.gateway:app --ws none
+python -m tinysesam.gateway          # or: uvicorn tinysesam.gateway:app --ws none --no-proxy-headers
 ```
 
 With your own `uvicorn` invocation pass `--ws none`: if a WebSocket library is installed, uvicorn otherwise

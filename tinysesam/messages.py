@@ -317,6 +317,7 @@ MESSAGES = {
         "acc.pw_new": "New password",
         "acc.pw_change": "Change password",
         "acc.pw_none": "This account has no password yet.",
+        "acc.pw_directory": "Your password is managed by the directory of your organisation — change it there.",
         "acc.pw_set": "Set password",
         "acc.pin": "PIN",
         "acc.pin_set_state": "set",
@@ -480,8 +481,12 @@ MESSAGES = {
         "mail.reset.html": '<p>Reset your password (valid {mins} minutes):</p>'
                            '<p><a href="{url}">Set a new password</a></p>',
         "mail.invite.subject": "Your invitation",
-        "mail.invite.text": "You have been invited to create an account:\n\n{url}\n",
-        "mail.invite.html": '<p>You have been invited to create an account:</p>'
+        "mail.minute": "1 minute",
+        "mail.minutes": "{n} minutes",
+        "mail.hour": "1 hour",
+        "mail.hours": "{n} hours",
+        "mail.invite.text": "You have been invited to create an account (the link is valid for {valid}):\n\n{url}\n",
+        "mail.invite.html": '<p>You have been invited to create an account (the link is valid for {valid}):</p>'
                             '<p><a href="{url}">Create account</a></p>',
         "mail.verify.subject": "Confirm your email address",
         "mail.verify.text": "Please confirm your email address:\n\n{url}\n",
@@ -851,6 +856,7 @@ MESSAGES = {
         "acc.pw_new": "Neues Passwort",
         "acc.pw_change": "Passwort ändern",
         "acc.pw_none": "Dieses Konto hat noch kein Passwort.",
+        "acc.pw_directory": "Dein Passwort verwaltet das Verzeichnis deiner Organisation — ändere es dort.",
         "acc.pw_set": "Passwort setzen",
         "acc.pin": "PIN",
         "acc.pin_set_state": "gesetzt",
@@ -1011,8 +1017,12 @@ MESSAGES = {
         "mail.reset.html": '<p>Passwort zurücksetzen (gültig {mins} Minuten):</p>'
                            '<p><a href="{url}">Neues Passwort setzen</a></p>',
         "mail.invite.subject": "Deine Einladung",
-        "mail.invite.text": "Du wurdest eingeladen, ein Konto anzulegen:\n\n{url}\n",
-        "mail.invite.html": '<p>Du wurdest eingeladen, ein Konto anzulegen:</p>'
+        "mail.minute": "1 Minute",
+        "mail.minutes": "{n} Minuten",
+        "mail.hour": "1 Stunde",
+        "mail.hours": "{n} Stunden",
+        "mail.invite.text": "Du wurdest eingeladen, ein Konto anzulegen (der Link gilt {valid}):\n\n{url}\n",
+        "mail.invite.html": '<p>Du wurdest eingeladen, ein Konto anzulegen (der Link gilt {valid}):</p>'
                             '<p><a href="{url}">Konto erstellen</a></p>',
         "mail.verify.subject": "E-Mail bestätigen",
         "mail.verify.text": "Bitte bestätige deine E-Mail-Adresse:\n\n{url}\n",

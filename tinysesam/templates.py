@@ -461,7 +461,7 @@ def _totp(auth, ctx) -> str:
 
 
 def _account(auth, ctx) -> str:
-    """ctx: user, methods, has_totp, has_pin, password_initial, is_admin, admin_path, events. Self-service + logout.
+    """ctx: user, methods, has_totp, has_pin, password_initial, password_directory, is_admin, admin_path, events. Self-service + logout.
     Fully replaceable via auth.set_template('account', fn)."""
     u = ctx["user"]
     t = auth.t
@@ -492,6 +492,11 @@ def _account(auth, ctx) -> str:
             f"<p class='msg evhint'>{_e(t('acc.pw_none'))}</p>"
             f"<input id=pw_new type=password autocomplete=new-password placeholder='{_e(t('acc.pw_new'))}'>"
             f"<button data-act=setpw>{_e(t('acc.pw_set'))}</button><span id=pw_msg class=msg></span></div>")
+    # The password lives in the directory (LDAP account without a local one): nothing to change here.
+    elif "password" in methods and ctx.get("password_directory"):
+        sections.append(
+            f"<div class=sec><h2>{_e(t('acc.password'))}</h2>"
+            f"<p class='msg evhint'>{_e(t('acc.pw_directory'))}</p></div>")
     # Change password
     elif "password" in methods:
         sections.append(

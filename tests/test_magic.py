@@ -340,4 +340,25 @@ assert "Open this link to sign in" in _language_mails["en"][0][1] and "Zum Anmel
 assert "Zum Anmelden" in _language_mails["de"][0][1] and "Open this link" not in _language_mails["de"][0][1]
 ok("mail wording follows lang: sign-in link and email-change confirmation in English (en) and German (de)")
 
+# ---------- the invitation mail names how long the link is valid ----------
+# Up to 0.26.0 it said nothing: an invitation waits in a mailbox for 24 hours (`invite_ttl_min`), and the person did
+# not know whether it still worked — unlike the reset mail, which names its minutes. (Mutation probe: drop `valid=` from
+# the invite mail → red.)
+sent.clear()
+auth.set_mailer(lambda to, subject, text, html=None: sent.append({"to": to, "subject": subject, "text": text}))
+auth.create_invite("guest1@example.com", auth.cfg.base_url)
+auth.create_invite("guest3@example.com", auth.cfg.base_url, ttl_min=60)
+_inv = {m["to"]: m["text"] for m in sent}
+assert "24 Stunden" in _inv["guest1@example.com"], _inv["guest1@example.com"]
+assert "1 Stunde" in _inv["guest3@example.com"], _inv
+_en = TinySesam(TinySesamConfig(db_path=os.path.join(tempfile.mkdtemp(), "en.db"), base_url="https://auth.example.com",
+                                passkey_enabled=False, invite_ttl_min=2))
+_en_sent = []
+_en.set_mailer(lambda to, subject, text, html=None: _en_sent.append((text, html)))
+_en.create_invite("guest@example.com", _en.cfg.base_url)
+_en.create_invite("guest2@example.com", _en.cfg.base_url, ttl_min=90)
+assert "valid for 2 minutes" in _en_sent[0][0] and "valid for 2 minutes" in _en_sent[0][1], _en_sent
+assert "valid for 90 minutes" in _en_sent[1][0], _en_sent
+ok("invitation mail names its lifetime (de: 24 Stunden, 1 Stunde; en: 2 minutes, 90 minutes) in text and HTML")
+
 print("\nMAGIC-LINK OK ✅")

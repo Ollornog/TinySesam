@@ -524,9 +524,10 @@ class TinySesam:
         # connection, not their own sign-in — the warning would be a false alarm there.
         if (config.forward_auth_enabled and config.base_url and not config.cookie_domain
                 and not getattr(config, "gate_link_enabled", False)):
-            from urllib.parse import urlsplit
-            own = urlsplit(config.base_url).hostname or ""
-            foreign = [h for h in (config.trusted_redirect_hosts or []) if h and h != own]
+            # By host name, not the raw entry: a cookie does not separate by port (RFC 6265, 8.5), so
+            # `auth.example.com:8443` shares the host-only cookie of `https://auth.example.com`.
+            own = security.host_name(config.base_url)
+            foreign = sorted({security.host_name(h) for h in (config.trusted_redirect_hosts or [])} - {own, ""})
             if foreign:
                 security.seclog.warning(
                     "Forward auth without cookie_domain: the session cookie is host-only on %s, "
@@ -4647,11 +4648,22 @@ class TinySesam:
                                       payload={"roles": list(roles or []), "is_admin": bool(is_admin)})
         url = self.magic_url(raw, base_url, "invite")
         if email and self.mail_configured():
+            # The mail names the lifetime: an invitation waits in a mailbox, and without it the person cannot tell
+            # whether a link from yesterday still works (the reset mail names its minutes too).
+            valid = self._duration(ttl)
             self._token_mail(raw, email, self.t("mail.invite.subject"),
-                             self.t("mail.invite.text", url=url),
-                             html=self.t("mail.invite.html", url=url))
+                             self.t("mail.invite.text", url=url, valid=valid),
+                             html=self.t("mail.invite.html", url=url, valid=valid))
         self.audit("invite_create", detail=email)
         return {"url": url, "token": raw}
+
+    def _duration(self, minutes: int) -> str:
+        """A lifetime for a mail in the configured language: whole hours as hours, everything else as minutes."""
+        minutes = int(minutes)
+        if minutes >= 60 and minutes % 60 == 0:
+            hours = minutes // 60
+            return self.t("mail.hour") if hours == 1 else self.t("mail.hours", n=hours)
+        return self.t("mail.minute") if minutes == 1 else self.t("mail.minutes", n=minutes)
 
     def send_verify_email(self, user_id, email, base_url) -> bool:
         """Send the confirmation link for an address. False if there is no mailer.
@@ -5908,6 +5920,11 @@ class TinySesam:
         u, without = self._only_with_session(request, "password_change")
         if u is None:
             return no("no_session", *without)
+        # An account without a local password on an instance with a directory signs in against the directory: there is
+        # no old password here to check, and a new one would be a second password beside the directory's. Refused
+        # before anything is counted — every try used to be a "wrong password" that locked the form.
+        if self.cfg.ldap_enabled and not self.store.get_password_hash(u["id"]):
+            return no("directory", 409, "api.password_directory")
         if not current:
             return no("missing", 400, "err.required")
         ip = self.client_ip(request)
@@ -7610,7 +7627,7 @@ class TinySesam:
             o = urlsplit(orig_url or "")
             if (o.scheme in ("http", "https") and o.hostname
                     and o.hostname != (urlsplit(base).hostname or "")
-                    and o.hostname in (self.cfg.trusted_redirect_hosts or [])):
+                    and o.hostname in {security.host_name(h) for h in (self.cfg.trusted_redirect_hosts or [])}):
                 # Through the same form check as every other base (R5-1): `o.netloc` is raw and
                 # carried a user part (`https://foreign.example@app.example.com`) unchanged
                 # into the login URL; the scheme came unchecked from X-Forwarded-Proto/X-Original-URL.
@@ -8269,10 +8286,11 @@ class TinySesam:
         `trusted_redirect_hosts` — if one forgets, the absolute `next=` is
         silently discarded and one lands on `login_redirect` after the login.
         """
-        hosts = list(self.cfg.trusted_redirect_hosts or [])
+        # By host name: `safe_next` compares the name, any port is allowed (as the CSP's `name:*`). An entry written
+        # with a port (`app.example.com:8443`) never matched before and silently dropped every `next=` to it.
+        hosts = [n for n in (security.host_name(h) for h in (self.cfg.trusted_redirect_hosts or [])) if n]
         if self.cfg.base_url:
-            from urllib.parse import urlsplit
-            own = urlsplit(self.cfg.base_url).hostname or ""
+            own = security.host_name(self.cfg.base_url)
             if own and own not in hosts:
                 hosts.append(own)
         fallback = self.browser_path(request, self.cfg.login_redirect)

@@ -1053,9 +1053,12 @@ Nach dem Vorbild von Authelia/Fail2Ban — die Schwellen sind **im Admin-Panel /
   entsteht die Datei bei der nächsten Rotation wieder mit der Gruppe des TinySesam-Prozesses, und der
   Versand verliert den Lesezugriff. Nicht beim Update, sondern erst bei der Rotation.
 - **Echte Client-IP hinter Proxy:** `X-Forwarded-For` gilt nur, wenn der direkte Peer in
-  `trusted_proxies` steht — sonst ist die IP fälschbar. **uvicorn ohne `--proxy-headers` starten.**
-  Mit dem Flag ersetzt uvicorn `request.client.host` bereits durch die geforwardete IP; TinySesams
-  Prüfung läuft ins Leere und Rate-Limit, Lockout und fail2ban lassen sich umgehen.
+  `trusted_proxies` steht — sonst ist die IP fälschbar. **uvicorn mit `--no-proxy-headers` starten**
+  (`uvicorn.run(..., proxy_headers=False)`): uvicorn wertet `X-Forwarded-For` **standardmäßig** aus und ersetzt
+  `request.client.host` durch die geforwardete IP; TinySesams Prüfung läuft dann ins Leere, und Rate-Limit,
+  Lockout und fail2ban hängen an uvicorns `forwarded_allow_ips` statt an `trusted_proxies`. Das Gateway
+  (`python -m tinysesam.gateway`) startet uvicorn selbst so; kommt die Adresse schon umgeschrieben an, sagt es
+  das Sicherheitsprotokoll und nennt den Schalter.
 - **Rollen und Admins:** standardmäßig erfüllt ein Admin **jede** `require_role(...)`-Prüfung. Hängen
   die Rechte einer App allein an einer IdP-Gruppe, ist das eine stille Rechteausweitung — dann
   `admin_implies_roles=False` setzen (oder je Guard `require_role(..., admin_implies=False)`).
@@ -1292,6 +1295,17 @@ TinySesamConfig(
 )
 ```
 
+**TinySesam braucht einen eigenen Ursprung** — einen eigenen Host (`auth.example.com`) oder, wenn alles auf einem Host
+liegt, wenigstens einen eigenen Port (`https://app.example.com:8443` neben der Anwendung auf `:443`), nie einen Pfad in
+der Anwendung. Drei Gründe: Der Aussteller ist der Ursprung von `base_url`; der Client findet die Metadaten des Servers
+unter `/.well-known/oauth-authorization-server` auf genau diesem Ursprung (RFC 8414) und prüft `iss` dagegen
+(RFC 9207); Anmelde- und Zustimmungsseite tragen eine eigene strenge CSP, die auf einem geteilten Ursprung die Seiten der
+Anwendung bestimmen oder von ihnen aufgeweicht würde; und die Forward-Auth bewacht den Ursprung der Anwendung, während
+TinySesams eigene Routen (`/auth/*`, die Metadaten) ohne sie antworten müssen. Für Aussteller und CSP reicht ein Port —
+Browser sehen darin einen anderen Ursprung —, aber **Cookies trennen nicht nach Port** (RFC 6265, 8.5): Die
+Forward-Auth-Vorlagen streichen jedes `tinysesam_*`-Cookie vor der Anwendung, und eine Anwendung mit eigenen Cookies
+sollte diese Namen nicht verwenden.
+
 Am Proxy zwei Ergänzungen auf dem Host der Anwendung (beide in `deploy/forward-auth/Caddyfile`):
 `/.well-known/oauth-protected-resource*` geht an TinySesam (RFC 9728 — der Client erfährt, wo er sich anmeldet), und
 ein 401, das TinySesam mit `X-TinySesam-Reason: oauth` kennzeichnet, wird mit seinem `WWW-Authenticate: Bearer
@@ -1364,7 +1378,10 @@ TinySesamConfig(
 `auth.create_service("backup", roles=["backup"])` angelegten), oder — für ein Skript, das als du selbst handelt — im
 Abschnitt „Dienste“ der Kontoseite. Es gibt einen einmaligen **Kopplungscode** (`ABCD-EFGH-JKMN-PQRS`, gültig
 `oauth_pairing_minutes`, 10 min). Aus eigenem Code: `auth.create_service_pairing(uid, name="backup",
-resources=["https://app.example.com/api"], roles=["backup"])`. Auf dem Rechner des Dienstes:
+resources=["https://app.example.com/api"], roles=["backup"])`. Das fertige Gateway hat weder Panel noch Kontoseite:
+Dort schaltet `TINYSESAM_OAUTH_SERVICE_CLIENTS=1` die Dienste ein, und der Code kommt von der Kommandozeile, mit der
+Umgebung des Dienstes — `docker exec <gateway> python -m tinysesam.gateway pair backup --create-service`
+(`--resource`, `--roles`, `--name` wie oben). Auf dem Rechner des Dienstes:
 
 ```bash
 pip install "tinysesam[services]==0.26.1"
@@ -1799,7 +1816,7 @@ export TINYSESAM_OIDC_ISSUER=https://id.example.com \
        TINYSESAM_BASE_URL=https://auth.example.com \
        TINYSESAM_COOKIE_DOMAIN=.example.com \
        TINYSESAM_PROTECTED_HOSTS=app.example.com,wiki.example.com
-python -m tinysesam.gateway          # oder: uvicorn tinysesam.gateway:app --ws none
+python -m tinysesam.gateway          # oder: uvicorn tinysesam.gateway:app --ws none --no-proxy-headers
 ```
 
 Mit eigenem `uvicorn`-Aufruf `--ws none` mitgeben: Ist eine WebSocket-Bibliothek installiert, beantwortet uvicorn

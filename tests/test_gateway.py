@@ -1,5 +1,6 @@
 """OIDC-Forward-Auth-Gateway-Preset: TinySesamConfig.oidc_gateway + tinysesam.gateway."""
 import os
+import re
 import tempfile, os
 from fastapi.testclient import TestClient
 from urllib.parse import parse_qs, urlparse
@@ -88,6 +89,51 @@ _meta = _OAuthClient(gateway.build_app(_oauth_cfg)).get(
 assert _meta.status_code == 200 and _meta.json()["resource"] == "https://app.example.com/mcp", (_meta.status_code,
                                                                                                _meta.text)
 ok("TINYSESAM_OAUTH_RESOURCES: off by default; set, the gateway answers the resource metadata of the application")
+
+# Services (T-60) and the top bar's links (T-64) behind the gateway: both had no variable, so the gateway image could
+# switch neither on. (Mutation probe: leave either out of `config_from_env` → red.)
+assert envcfg.oauth_service_clients is False and envcfg.topbar_links == []
+os.environ["TINYSESAM_OAUTH_RESOURCES"] = "https://app.example.com/mcp"
+os.environ["TINYSESAM_OAUTH_SERVICE_CLIENTS"] = "1"
+os.environ["TINYSESAM_TOPBAR_LINKS"] = '[["Wiki", "/wiki"], ["Files", "https://app.example.com/files/"]]'
+_svc_cfg = gateway.config_from_env()
+assert _svc_cfg.oauth_service_clients is True, _svc_cfg.oauth_service_clients
+assert _svc_cfg.topbar_links == [("Wiki", "/wiki"), ("Files", "https://app.example.com/files/")], _svc_cfg.topbar_links
+for broken in ('{"Wiki": "/wiki"}', '[["Wiki"]]', '[["Wiki", 3]]', "[not json"):
+    os.environ["TINYSESAM_TOPBAR_LINKS"] = broken
+    try:
+        gateway.config_from_env(); assert False, f"broken TINYSESAM_TOPBAR_LINKS accepted: {broken}"
+    except SystemExit as e:
+        assert "TINYSESAM_TOPBAR_LINKS" in str(e), e
+del os.environ["TINYSESAM_TOPBAR_LINKS"]
+ok("TINYSESAM_OAUTH_SERVICE_CLIENTS and TINYSESAM_TOPBAR_LINKS: off/empty by default, set they reach the config, "
+   "broken JSON ends the start")
+
+# A pairing code from the command line (T-60 follow-up): the gateway has neither account page nor admin panel, so a
+# service could not be paired at all. `python -m tinysesam.gateway pair` issues it through the same building block
+# (`create_service_pairing`: resources, roles, audit). (Mutation probe: drop the `pair` branch of `main` → red.)
+import contextlib as _ctx  # noqa: E402
+import io as _io  # noqa: E402
+os.environ["TINYSESAM_DB"] = os.path.join(tempfile.mkdtemp(), "pair.db")
+_out, _err = _io.StringIO(), _io.StringIO()
+with _ctx.redirect_stdout(_out), _ctx.redirect_stderr(_err):
+    _rc = gateway.main(["pair", "backup-job", "--create-service", "--name", "nightly backup"])
+assert _rc == 0, (_rc, _err.getvalue())
+_m = re.search(r"\b([A-Z0-9]{4}(?:-[A-Z0-9]{4}){3,})\b", _out.getvalue())
+assert _m and "tinysesam-client pair https://auth.example.com" in _out.getvalue(), _out.getvalue()
+_pa = TinySesam(gateway.config_from_env())
+_svc = _pa.store.get_user_by_name("backup-job")
+assert _svc is not None and _svc["is_service"], "the service account was not created"
+from tinysesam import oauth_services as _os_mod  # noqa: E402
+_tok = _pa.store._one("SELECT * FROM magic_token WHERE token_hash=? AND purpose='oauth_pairing'",
+                      (_os_mod.code_digest(_os_mod.normalize_code(_m.group(1))),))
+assert _tok is not None and int(_tok["user_id"]) == int(_svc["id"]), "the printed code is not the stored one"
+assert any(z["event"] == "oauth_pairing_issued" for z in _pa.store.recent_audit(20)), "no audit line"
+_pa.close()
+with _ctx.redirect_stdout(_io.StringIO()), _ctx.redirect_stderr(_io.StringIO()) as _e2:
+    assert gateway.main(["pair", "nobody"]) == 1 and "nobody" in _e2.getvalue()
+del os.environ["TINYSESAM_OAUTH_SERVICE_CLIENTS"], os.environ["TINYSESAM_OAUTH_RESOURCES"], os.environ["TINYSESAM_DB"]
+ok("python -m tinysesam.gateway pair: code for a (new) service account, stored as digest, audited; unknown account → 1")
 assert gateway.config_from_env().brand_icon == ""
 for good in ("/favicon.svg", "data:image/png;base64,iVBORw0KGgo="):
     os.environ["TINYSESAM_BRAND_ICON"] = good
@@ -114,9 +160,66 @@ try:
                                   gate_link_enabled=link))
         warns = any("without cookie_domain" in m for m in _caught)
         assert warns is (not link), (link, _caught)
+    # Cookies do not separate by port (RFC 6265, 8.5): the gateway on :8443 shares its host-only cookie with :443.
+    # Up to 0.26.0 the entries were compared raw with the hostname of base_url, so `auth.example.com:8443` counted as a
+    # foreign host. (Mutation probe: compare the raw entry again → the port lines fall.)
+    for hosts, base, foreign in ((["auth.example.com:8443"], "https://auth.example.com", False),
+                                 (["AUTH.example.com"], "https://auth.example.com:8443", False),
+                                 (["[2001:db8::1]:8443"], "https://[2001:db8::1]", False),
+                                 (["auth.example.com:8443", "app.example.com:8443"], "https://auth.example.com", True)):
+        _caught.clear()
+        TinySesam(TinySesamConfig(db_path=":memory:", forward_auth_enabled=True, base_url=base,
+                                  trusted_redirect_hosts=hosts))
+        lines = [m for m in _caught if "without cookie_domain" in m]
+        assert bool(lines) is foreign, (hosts, base, lines)
+        # The named hosts, read out of the line (not a substring test on it).
+        named = re.search(r"not on (.*?)\. Each of", lines[0]).group(1).split(", ") if foreign else []
+        assert named == ([] if not foreign else ["app.example.com"]), (named, lines)
 finally:
     security.seclog.removeHandler(_h)
 ok("warning “without cookie_domain” yes without code exchange, not with it (no false alarm)")
+ok("… and a port on the own host (also IPv6 in brackets) is no foreign host; only real foreign hosts are named")
+# The runtime compares by host name too: a `next=` to a host written with a port in trusted_redirect_hosts was dropped
+# (the entry never matched `hostname`). (Mutation probe: raw entries in `TinySesam.safe_next` again → red.)
+_pn = TinySesam(TinySesamConfig(db_path=":memory:", base_url="https://auth.example.com",
+                                trusted_redirect_hosts=["wiki.example.com:8443"]))
+assert _pn.safe_next("https://wiki.example.com:8443/page") == "https://wiki.example.com:8443/page"
+assert _pn.safe_next("https://evil.example.com:8443/page") == _pn.cfg.login_redirect
+ok("safe_next: a trusted host written with a port is matched by name; a foreign host stays refused")
+
+# The gateway starts uvicorn without proxy headers: uvicorn applies X-Forwarded-For by default (`proxy_headers=True`,
+# trusting `forwarded_allow_ips`), and TinySesam then judged an address that uvicorn had already replaced —
+# `trusted_proxies` came to nothing. (Mutation probe: drop `proxy_headers=False` in `_server_config` → red.)
+try:
+    import uvicorn as _uv_probe  # noqa: F401
+except ImportError:
+    print("  - proxy headers skipped: uvicorn (extra `gateway`) not installed")
+else:
+    assert gateway._server_config(gateway.build_app(cfg), "127.0.0.1", 0).proxy_headers is False
+    ok("python -m tinysesam.gateway: uvicorn with proxy_headers=False — TinySesam alone reads X-Forwarded-For")
+
+# When the server has already applied X-Forwarded-For, the address it hands on stands in that very header — a direct
+# peer never names itself there. The warning then names the switch that helps: `--no-proxy-headers`.
+# (Mutation probe: drop the branch → the line names no switch.)
+class _Peer:
+    def __init__(self, peer, xff):
+        self.client = type("C", (), {"host": peer})()
+        self.headers = {"x-forwarded-for": xff}
+
+
+security.once_report_reset()
+security._REPORTED_PEERS.clear()
+_caught.clear()
+security.seclog.addHandler(_h)
+try:
+    assert security.client_ip(_Peer("203.0.113.40", "203.0.113.40"), ["127.0.0.1/32"]) == "203.0.113.40"
+    assert any("--no-proxy-headers" in m and "proxy_headers=False" in m for m in _caught), _caught
+    _caught.clear()
+    assert security.client_ip(_Peer("198.51.100.3", "203.0.113.41"), ["127.0.0.1/32"]) == "198.51.100.3"
+    assert _caught and not any("--no-proxy-headers" in m for m in _caught), _caught
+finally:
+    security.seclog.removeHandler(_h)
+ok("X-Forwarded-For already applied by the server: the warning names --no-proxy-headers; an untrusted proxy does not")
 
 del os.environ["TINYSESAM_OIDC_ISSUER"]
 try:

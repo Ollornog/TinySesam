@@ -2,7 +2,7 @@
 
 Ways to start:
     python -m tinysesam.gateway                 # uses uvicorn (configured from env)
-    uvicorn tinysesam.gateway:app               # app is built from env on access
+    uvicorn tinysesam.gateway:app --ws none --no-proxy-headers   # app is built from env on access
 
 Configuration via environment variables:
     TINYSESAM_OIDC_ISSUER          (required)  e.g. https://id.example.com
@@ -47,6 +47,13 @@ Configuration via environment variables:
                                                https://app.example.com/mcp): switches on the OAuth 2.1
                                                authorization server for MCP clients (T-36, README "OAuth for
                                                MCP clients"). Empty = off (default)
+    TINYSESAM_OAUTH_SERVICE_CLIENTS            1 = services with client_credentials and private_key_jwt (T-60,
+                                               README "A service calls a protected app"); needs
+                                               TINYSESAM_OAUTH_RESOURCES. Pair one with
+                                               `python -m tinysesam.gateway pair <account>`. Default 0
+    TINYSESAM_TOPBAR_LINKS                     JSON list of [title, target] pairs for the top bar of the
+                                               gateway's pages: [["Wiki", "/wiki"]] — a path on the gateway's
+                                               origin or an https address on a protected host
     TINYSESAM_FORWARD_LOGIN                    direct (default: page request → provider → back) or
                                                page (first the login page with the name of the application)
     TINYSESAM_FORWARD_LOGOUT                   all (default: session and provider), app (only this
@@ -199,7 +206,28 @@ def config_from_env() -> TinySesamConfig:
         gate_token_ttl_sec=int(os.environ.get("TINYSESAM_GATE_TTL_SEC", "300") or 300),
         oauth_enabled=bool(_split("TINYSESAM_OAUTH_RESOURCES")),
         oauth_resources=_split("TINYSESAM_OAUTH_RESOURCES"),
+        oauth_service_clients=_switch("TINYSESAM_OAUTH_SERVICE_CLIENTS"),
+        topbar_links=_topbar_links(),
     )
+
+
+def _topbar_links() -> list:
+    """TINYSESAM_TOPBAR_LINKS: links in the top bar of the gateway's pages, a JSON list of [title, target] pairs —
+    `[["Wiki", "/wiki"], ["Files", "https://files.example.com/"]]`. What a target may be is checked by
+    `config_check` (own origin, `base_url` or a protected host); the shape is checked here, so a broken value ends the
+    start instead of leaving the bar silently empty."""
+    import json
+    raw = os.environ.get("TINYSESAM_TOPBAR_LINKS", "").strip()
+    if not raw:
+        return []
+    try:
+        value = json.loads(raw)
+    except ValueError as e:
+        raise SystemExit(f"TINYSESAM_TOPBAR_LINKS is not valid JSON: {e}")
+    if not isinstance(value, list) or not all(isinstance(z, list) and len(z) == 2
+                                              and all(isinstance(x, str) for x in z) for z in value):
+        raise SystemExit('TINYSESAM_TOPBAR_LINKS must be a list of [title, target] pairs: [["Wiki", "/wiki"]]')
+    return [(title, target) for title, target in value]
 
 
 def _json_object(name: str) -> dict:
@@ -384,9 +412,13 @@ def _server_config(app, host: str, port: int):
     `uvicorn[standard]`), uvicorn takes a forward-auth check that carries `Upgrade: websocket` for a
     WebSocket handshake and answers 403 — every WebSocket app behind the gateway would be locked out.
     The gateway image had no such library, a pip install could. Created BEFORE the filter: the
-    configuration sets up uvicorn's logging."""
+    configuration sets up uvicorn's logging.
+
+    `proxy_headers=False`: uvicorn applies X-Forwarded-For and -Proto by default (trusting `forwarded_allow_ips`,
+    127.0.0.1 unless set). TinySesam reads them itself against `trusted_proxies` (`security.client_ip`); with
+    uvicorn first, it judged an address uvicorn had already replaced, and `trusted_proxies` came to nothing."""
     import uvicorn
-    config = uvicorn.Config(app, host=host, port=port, ws="none")
+    config = uvicorn.Config(app, host=host, port=port, ws="none", proxy_headers=False)
     _quiet_upgrade_warnings()
     return config
 
@@ -394,7 +426,8 @@ def _server_config(app, host: str, port: int):
 def __getattr__(name):
     # Lazy `app`, so that `uvicorn tinysesam.gateway:app` works without import-time env,
     # but a plain `import tinysesam.gateway` (e.g. in tests) does NOT demand env right away.
-    # Your own uvicorn invocation has configured its logging by now; it needs `--ws none` itself (B-5).
+    # Your own uvicorn invocation has configured its logging by now; it needs `--ws none` (B-5) and
+    # `--no-proxy-headers` itself.
     if name == "app":
         _quiet_upgrade_warnings()
         return build_app()
@@ -404,9 +437,15 @@ def __getattr__(name):
 HELP = """tinysesam.gateway — TinySesam as an OIDC forward-auth gateway
 
   python -m tinysesam.gateway          starts the service
-  uvicorn tinysesam.gateway:app --ws none
+  python -m tinysesam.gateway pair <account> [--create-service] [--resource URL]… [--name LABEL] [--roles a,b]
+                                       a one-time pairing code for a service (T-60) — the gateway has no
+                                       account page or admin panel to issue one; run it with the service's
+                                       environment (docker exec <container> python -m tinysesam.gateway pair …)
+  uvicorn tinysesam.gateway:app --ws none --no-proxy-headers
                                        the same via your own server invocation
-                                       (--ws none: forward-auth checks of WebSocket apps)
+                                       (--ws none: forward-auth checks of WebSocket apps;
+                                       --no-proxy-headers: TinySesam reads X-Forwarded-For
+                                       itself, against TINYSESAM_TRUSTED_PROXIES)
 
 Installation:  pip install 'tinysesam[gateway]'   (not [oidc] — that is the library
                                                    without a server)
@@ -429,6 +468,47 @@ Example setup with Caddy: deploy/forward-auth/
 """
 
 
+def _pair(argv) -> int:
+    """`python -m tinysesam.gateway pair`: a pairing code through `create_service_pairing`, with the configuration of
+    the running service (its environment) — resources, roles and audit as in the panel. Talks to no running process;
+    the code is stored in the shared database and redeemed at the service's `/auth/oauth/pair`."""
+    import argparse
+    import datetime
+    from .errors import ConfigError
+    ap = argparse.ArgumentParser(prog="python -m tinysesam.gateway pair",
+                                 description="Issue a one-time pairing code for a service (OAuth client_credentials).")
+    ap.add_argument("account", help="the account the service acts as (usually a service account)")
+    ap.add_argument("--create-service", action="store_true",
+                    help="create a service account of that name if it does not exist")
+    ap.add_argument("--resource", action="append", default=None,
+                    help="a resource from TINYSESAM_OAUTH_RESOURCES (repeat; may be left out when there is one)")
+    ap.add_argument("--name", default=None, help="label of the service, shown in the audit log and listings")
+    ap.add_argument("--roles", default=None, help="comma list: a role scope within the account's roles")
+    a = ap.parse_args(argv)
+    with TinySesam(config_from_env()) as auth:
+        user = auth.store.get_user_by_name(a.account)
+        if user is None and a.create_service:
+            auth.create_service(a.account)
+            user = auth.store.get_user_by_name(a.account)
+        if user is None:
+            print(f"No account {a.account!r} (--create-service creates a service account).", file=sys.stderr)
+            return 1
+        roles = [r.strip() for r in a.roles.split(",") if r.strip()] if a.roles is not None else None
+        try:
+            issued = auth.create_service_pairing(int(user["id"]), name=a.name, resources=a.resource, roles=roles)
+        except ConfigError as e:
+            print(str(e), file=sys.stderr)
+            return 1
+    until = datetime.datetime.fromtimestamp(issued["expires_at"]).astimezone().strftime("%Y-%m-%d %H:%M %Z")
+    print(f"Pairing code for {a.account}: {issued['code']}  (once, until {until})")
+    print(f"Resources: {', '.join(issued['resources'])}"
+          + (f"  roles: {', '.join(issued['roles'])}" if issued["roles"] is not None else ""))
+    if issued["dropped_roles"]:
+        print(f"Not roles of the account, left out: {', '.join(issued['dropped_roles'])}")
+    print(f"On the service:  tinysesam-client pair {issued['issuer']} {issued['code']}")
+    return 0
+
+
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
     # `--help` BEFORE anything else: before, the question landed in the uvicorn import and then in
@@ -436,6 +516,8 @@ def main(argv=None):
     if argv and argv[0] in ("--help", "-h", "help"):
         print(HELP)
         return 0
+    if argv and argv[0] == "pair":
+        return _pair(argv[1:])
     if argv:
         print(f"Unknown argument: {argv[0]}\n", file=sys.stderr)
         print(HELP, file=sys.stderr)
@@ -448,7 +530,8 @@ def main(argv=None):
         # that look like a defect instead of a missing line in the install command.
         print("An ASGI server is missing to start.\n"
               "  pip install 'tinysesam[gateway]'\n"
-              "Or bring your own:  uvicorn tinysesam.gateway:app --host 0.0.0.0 --port 8000",
+              "Or bring your own:  uvicorn tinysesam.gateway:app --host 0.0.0.0 --port 8000 --ws none "
+              "--no-proxy-headers",
               file=sys.stderr)
         return 1
     host = os.environ.get("TINYSESAM_HOST", "0.0.0.0")
