@@ -43,6 +43,10 @@ app.example.com {
 	request_header -Remote-Groups
 	request_header -Remote-Id
 	request_header -Remote-Auth
+	# Nor a target the browser made up (F1): an X-Original-URL/-URI of its own reached the application, which
+	# builds addresses or decides from it (measured in tests/test_gate_caddy.py).
+	request_header -X-Original-URL
+	request_header -X-Original-URI
 
 	# Sign-out at the application (T-22): /.tinysesam/logout and /.tinysesam/after-logout belong to
 	# TinySesam, not to the application — and bypass the gate: signing out must also work with an

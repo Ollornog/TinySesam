@@ -68,6 +68,10 @@ https://{$TS_APP_HOST}:{$TS_APP_PORT:443} {
 	request_header -Remote-Groups
 	request_header -Remote-Id
 	request_header -Remote-Auth
+	# Nor a target the browser made up (F1): an X-Original-URL/-URI of its own reached the application, which
+	# builds addresses or decides from it (measured in tests/test_gate_caddy.py).
+	request_header -X-Original-URL
+	request_header -X-Original-URI
 
 	# Sign-out at the application (T-22), past the gate: https://<app>/.tinysesam/logout
 	handle /.tinysesam/* {

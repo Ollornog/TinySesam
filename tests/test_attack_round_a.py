@@ -291,8 +291,8 @@ def a3_scan_can_fail():
     gaps, auth = traefik_gaps(t)
     assert auth and not gaps, (auth, gaps)
     assert traefik_gaps(t.replace("        - tinysesam-strip-credentials", "        # -", 1))[0], "Traefik rule blind"
-    order = t.replace("        - tinysesam-hsts\n        - tinysesam-auth\n        - tinysesam-strip-credentials",
-                      "        - tinysesam-hsts\n        - tinysesam-strip-credentials\n        - tinysesam-auth", 1)
+    # Swap the check and the credential strip in the chain (whatever stands before them, e.g. tinysesam-strip-client).
+    order = re.sub(r"(?m)^(\s+- tinysesam-auth\b.*\n)(\s+- tinysesam-strip-credentials\b.*\n)", r"\2\1", t, count=1)
     assert order != t and traefik_gaps(order)[0], "Traefik rule does not see a strip BEFORE the check"
 
 

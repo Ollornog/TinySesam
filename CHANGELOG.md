@@ -4,6 +4,28 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+### Security — the proxy templates passed a client's target headers on; Traefik needs `aliasHeadersStrategy`
+
+- Measured with the real proxies (T-78): every template passed an `X-Original-URL`/`-URI` the browser made up on to the
+  application, nginx (`nginx.conf`, `nginx-path.conf`) also its `X-Forwarded-Host`. An application that builds
+  addresses or decides from them (password-reset links, a rewrite module) followed the browser. The Caddy templates
+  now strip both at the site, nginx sets `X-Forwarded-Host`/`-Proto`/`-For` itself and empties `X-Original-*`, Traefik
+  strips them in the new middleware `tinysesam-strip-client` (first in the chain). **Using a template: take over these
+  lines.**
+- Traefik: a header whose name aliases another (`Remote_User`, `Remote.User`) gets past `authResponseHeaders`, and a
+  CGI/WSGI/PHP backend reads it as `HTTP_REMOTE_USER` — next to or instead of TinySesam's value. Only the static
+  configuration can close it: **set `aliasHeadersStrategy: delete`** on the entry point (or `global`); the header of
+  `deploy/forward-auth/traefik.yml` says how. nginx drops such headers by default.
+
+### Added — nginx and Traefik measured through the real proxies; `/.tinysesam/*` in their templates (T-78)
+
+- `tests/test_proxies.py` runs `nginx.conf`, `nginx-path.conf` (PHP over FastCGI) and `traefik.yml` word for word in the
+  official images (digest-pinned in `tests/proxies/Dockerfile`), required in the CI job `gate-caddy`. Anonymous, a
+  session, an API key, forged `Remote-*` (also where TinySesam sends no value), forged target headers, credentials in
+  the proxy log. Caddy stays the recommended proxy; with nginx and Traefik every request goes through `/auth/forward`.
+- nginx and Traefik pass `/.tinysesam/*` to TinySesam like the Caddy templates: the sign-out at the application
+  (T-22) and the top bar JSON (T-76) work there too.
+
 ### Security — `nginx-path.conf` let a client's own `Remote-Id` through to PHP
 
 - The template for one host with protected paths (static files + PHP-FPM) set `Remote-Id` neither behind the gate nor

@@ -165,7 +165,8 @@ updates:
   # release date outside Docker Hub (dependabot-core docker/update_checker.rb, `registry_tag_release_date`), so it
   # fails open there: a moved digest comes the next day.
   # Plus the two images of tinysesam-caddy-gate (Go builder, Caddy base); Caddy and caddy-jwt themselves are in the
-  # `gomod` entry above. The CI job gate-caddy checks the result.
+  # `gomod` entry above. The CI job gate-caddy checks the result. And nginx and Traefik of tests/proxies (the real
+  # proxies tests/test_proxies.py runs the templates with, in the same job).
   #
   # DAILY, not monthly (2026-11-12): the cooldown of the docker ecosystem is measured against Docker Hub's
   # `tag_last_pushed` of the candidate tag (dependabot-core docker/update_checker.rb, apply_cooldown). Official images
@@ -176,7 +177,7 @@ updates:
   # days — the cooldown stays, only the chance to miss it goes. Also: as long as a newer minor exists (3.15 while the pin
   # says 3.14), Dependabot offers only the minor, never a digest refresh of the old one — stay on the newest line.
   - package-ecosystem: docker
-    directories: ["/", "/deploy/forward-auth/caddy-gate"]
+    directories: ["/", "/deploy/forward-auth/caddy-gate", "/tests/proxies"]
     # Waiting period before version updates (PO 2026-09-28), does not apply to security updates.
     cooldown:
       default-days: 3
