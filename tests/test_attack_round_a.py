@@ -1,14 +1,15 @@
 """Attack round A (2026-11-21): OAuth AS, OAuth for services, app passwords, key management.
 
-Every check here reproduces a finding of the round and FAILS while the gap is open — it is not a skip and not a
-"known issue" marker: the suite is meant to be red until the fix lands. Each block names the rule it breaks and the
-attacker it assumes; the evaluation (severity, fix) is in the round's report, not here.
+Each block reproduced a finding of the round and failed while the gap was open; since the fixes they guard them.
+Each block names the rule it pins and the attacker it assumes; the evaluation (severity, fix) is in the round's
+report (backlog T-69). Further checks of the same fixes live with their surface: tests/test_cli.py (offline reset
+revokes, A-1), tests/test_oauth_services.py (A-2 and the crash during a rotation), tests/test_gate_caddy.py (A-3
+through a real Caddy), tests/test_oauth.py (cap and /48, A-4), tests/test_keys.py ((g), A-5).
 
     python tests/run_all.py test_attack_round_a.py
 """
 import base64
 import hashlib
-import json
 import os
 import re
 import sys
@@ -157,71 +158,36 @@ r.run("A-1c admin password reset disconnects the account's OAuth devices", a1_ad
 
 
 # ---------------------------------------------------------------- A-2 rotation with a key in its overlap
-# Attacker: copied the service's key file (backup, image layer, a leaked CI cache). The service rotates — ADR-13:
-# "Rotation limits how long a copy works", the old key is accepted one more hour for assertions in flight. But the
-# key endpoint accepts an assertion of ANY key that is still within its overlap: with the copied old key the
-# attacker rotates in a key of their own; it becomes current, and the rightful service's NEW key is put on the
-# one-hour clock instead. After an hour the attacker owns the service, the operator's rotation achieved the opposite.
-def a2_rotation_with_retiring_key():
-    try:
-        import joserfc  # noqa: F401
-    except ImportError:
-        raise AssertionError("joserfc missing — install the extra [services] to run this check")
-    from tinysesam import client as SC
-    from tinysesam import oauth_services as OS
-    auth, app = make(oauth_service_clients=True, oauth_resources=["https://app.example.com/api"],
-                     available_roles=["backup"])
-    c = TestClient(app, base_url="http://testserver", follow_redirects=False)
-
-    def transport(method, url, headers, body):
-        u = urlsplit(url)
-        resp = c.request(method, u.path + (("?" + u.query) if u.query else ""), headers=headers, content=body or None)
-        return SC.Response(resp.status_code, {k.lower(): v for k, v in resp.headers.items()}, resp.content)
-
-    svc = auth.create_service("backup", roles=["backup"])
-    code = auth.create_service_pairing(svc, name="job", resources=["https://app.example.com/api"])["code"]
-    sc = SC.ServiceClient.pair(BASE, code, os.path.join(tempfile.mkdtemp(), "k", "client.json"), transport=transport)
-    cid = sc.client_id
-    stolen = dict(sc._state["key"])          # the copy the attacker took
-    sc.rotate_key()                          # the operator rotates — the copy should now run out
-    current = sc.kid
-
-    def claims(**over):
-        now = int(time.time())
-        d = {"iss": cid, "sub": cid, "aud": BASE, "iat": now, "exp": now + 60, "jti": os.urandom(12).hex()}
-        d.update(over)
-        return {k: v for k, v in d.items() if v is not None}
-
-    mine = SC.new_key()
-    form = {"client_assertion_type": OS.ASSERTION_TYPE,
-            "client_assertion": SC.sign(stolen, OS.ASSERTION_TYP, claims()),
-            "jwk": json.dumps(SC.public_jwk(mine)), "proof": SC.sign(mine, OS.KEY_TYP, claims(iss=None))}
-    resp = c.post("/auth/oauth/service/keys", data=form)
-    keys = {k["kid"]: k for k in auth.store.oauth_client_keys(cid)}
-    assert keys[current]["retire_at"] is None, "the rightful current key was put on the overlap clock by the old key"
-    assert mine["kid"] not in keys, "a key in its overlap rotated in a key of its own"
-    assert resp.status_code in (400, 401), (resp.status_code, resp.text[:200])
-
-
-r.run("A-2 only the CURRENT service key may rotate (a key within its overlap may not)", a2_rotation_with_retiring_key)
+# Lives in tests/test_oauth_services.py ("A-2"): it needs the extra [services], and that suite skips cleanly without
+# it — here it would have failed the minimal install.
 
 
 # ---------------------------------------------------------------- A-3 templates hand bearer secrets to the app
 # Attacker: reads what the application sees — its access log with headers, a debug page, an error report, or the
-# application itself is the weaker party. SECURITY.md promises "the template strips the header before the
-# application (`header_up -Authorization`)", but the shipped templates only mention it in a comment. Measured with
-# Caddy 2.11.9 and the templates word for word: the app receives `Authorization: Basic <user:app password>`; the same
-# path carries `Bearer tsat_…` (OAuth) and `Bearer tsk_…` (an API key — valid at every host and at TinySesam's API).
-def _caddy_app_blocks(text):
-    """The bodies of every `reverse_proxy {$TS_APP_UPSTREAM…}` block (the application upstream)."""
-    lines = text.splitlines()
+# application itself is the weaker party. SECURITY.md promised "the template strips the header before the
+# application (`header_up -Authorization`)", but the shipped templates only mentioned it in a comment. Measured with
+# Caddy 2.11.9 and the templates word for word: the app received `Authorization: Basic <user:app password>`; the same
+# path carries `Bearer tsat_…` (OAuth) and `Bearer tsk_…` / `X-Api-Key: tsk_…` (an API key — valid at every host and
+# at TinySesam's API). Live through a real Caddy: tests/test_gate_caddy.py ("A-3").
+#
+# EVERY proxy template under deploy/ is found by its content, not by a list: a new template falls under the rule
+# without anyone remembering this test. The named ones must be among the found (the scan cannot silently miss them).
+#   Caddy   every `reverse_proxy` that is not TinySesam (`TS_AUTH_UPSTREAM`) drops both headers;
+#   nginx   every location behind `auth_request` (itself or an enclosing one) that passes to an upstream empties
+#           both (`proxy_set_header … ""`, for FastCGI `fastcgi_param HTTP_… ""`);
+#   Traefik every router with a forwardAuth middleware has, AFTER it, a headers middleware emptying both.
+CRED = ("Authorization", "X-Api-Key")
+
+
+def _blocks(text, opener):
+    """(line number, opening line, body incl. nested blocks) of every block whose opening line matches `opener`."""
+    lines = [z.split("#", 1)[0] if not z.lstrip().startswith("#") else "" for z in text.splitlines()]
     out = []
     for i, line in enumerate(lines):
-        s = line.strip()
-        if not s.startswith("reverse_proxy {$TS_APP_UPSTREAM"):
+        if not re.match(opener, line.strip()):
             continue
-        if not s.endswith("{") or s.count("{") == s.count("}"):
-            out.append((i + 1, ""))          # no block at all → nothing is stripped
+        if "{" not in line:
+            out.append((i + 1, line.strip(), ""))
             continue
         depth, body = 0, []
         for z in lines[i:]:
@@ -229,48 +195,110 @@ def _caddy_app_blocks(text):
             body.append(z)
             if depth <= 0:
                 break
-        out.append((i + 1, "\n".join(body)))
+        out.append((i + 1, line.strip(), "\n".join(body)))
     return out
 
 
-def a3_caddy(name):
-    def check():
-        text = (ROOT / name).read_text(encoding="utf-8")
-        blocks = _caddy_app_blocks(text)
-        assert blocks, f"{name}: no application upstream found"
-        missing = [ln for ln, body in blocks if not re.search(r"^\s*header_up\s+-Authorization\s*$", body, re.M)]
-        assert not missing, f"{name}: application upstream at line(s) {missing} passes Authorization through"
-    return check
+def caddy_gaps(text):
+    gaps = []
+    for ln, head, body in _blocks(text, r"reverse_proxy\s"):
+        if "TS_AUTH_UPSTREAM" in head:
+            continue                       # TinySesam itself: the check NEEDS the credentials
+        for h in CRED:
+            if not re.search(rf"^\s*header_up\s+-{h}\s*$", body, re.M):
+                gaps.append(f"line {ln}: {h}")
+    return gaps
 
 
-for name in ("deploy/forward-auth/Caddyfile", "deploy/forward-auth/Caddyfile.gate", "deploy/quickstart/Caddyfile",
-             "deploy/home-network/Caddyfile"):
-    r.run(f"A-3 {name}: Authorization never reaches the application", a3_caddy(name))
+def nginx_gaps(text):
+    gaps = []
+    locs = _blocks(text, r"location\s")
+    for ln, head, body in locs:
+        passes = re.search(r"^\s*(proxy_pass|fastcgi_pass)\s", body, re.M)
+        if not passes:
+            continue
+        # behind the gate: this location or one that encloses it asks auth_request
+        gated = any(re.search(r"^\s*auth_request\s", b, re.M) and body in b for _, _, b in locs)
+        if not gated or re.search(r"location\s[^{]*\{", body.split("\n", 1)[-1]):
+            continue                       # not gated, or a parent whose nested locations are checked themselves
+        for h in CRED:
+            fcgi = "HTTP_" + h.upper().replace("-", "_")
+            if not (re.search(rf'^\s*proxy_set_header\s+{h}\s+""\s*;', body, re.M | re.I)
+                    or re.search(rf'^\s*fastcgi_param\s+{fcgi}\s+""\s*;', body, re.M)):
+                gaps.append(f"line {ln} ({head}): {h}")
+    return gaps
 
 
-def a3_nginx():
-    text = (ROOT / "deploy/forward-auth/nginx.conf").read_text(encoding="utf-8")
-    app_loc = text[text.index("location / {"):text.index("location @tinysesam_login")]
-    assert re.search(r'proxy_set_header\s+Authorization\s+""', app_loc), \
-        "nginx.conf: `location /` (the app) passes Authorization through"
+def traefik_gaps(text):
+    text = "\n".join(z for z in text.splitlines() if not z.lstrip().startswith("#"))
+    mw = {}
+    for m in re.finditer(r"^    ([\w-]+):\n((?:      .*\n?|\s*\n)*)", text, re.M):
+        mw[m.group(1)] = m.group(2)
+    auth = {n for n, b in mw.items() if "forwardAuth:" in b}
+    strip = {n for n, b in mw.items() if all(re.search(rf'^\s+{h}:\s*""\s*$', b, re.M) for h in CRED)}
+    gaps = []
+    for m in re.finditer(r"^    ([\w-]+):\n\s+rule:.*\n\s+middlewares:\n((?:\s+- .*\n)+)", text, re.M):
+        chain = [z.strip()[2:].split("#")[0].strip() for z in m.group(2).splitlines()]
+        firsts = [i for i, n in enumerate(chain) if n in auth]
+        if firsts and not any(n in strip for n in chain[firsts[0] + 1:]):
+            gaps.append(f"router {m.group(1)}")
+    return gaps, auth
 
 
-def a3_nginx_php():
-    text = (ROOT / "deploy/forward-auth/nginx-path.conf").read_text(encoding="utf-8")
-    protected = text[text.index("location ^~ /intern/"):text.index("# ── Open remainder")]
-    assert re.search(r'fastcgi_param\s+HTTP_AUTHORIZATION\s+""', protected), \
-        "nginx-path.conf: the protected PHP location passes Authorization (PHP_AUTH_USER/PW) through"
+def proxy_templates():
+    """{path: kind} of every proxy template under deploy/, recognised by its content."""
+    found = {}
+    for f in sorted((ROOT / "deploy").rglob("*")):
+        if not f.is_file() or f.suffix in (".py", ".go", ".sum", ".mod", ".sh", ".txt", ".in", ".md"):
+            continue
+        t = f.read_text(encoding="utf-8", errors="replace")
+        rel = str(f.relative_to(ROOT))
+        if re.search(r"^\s*reverse_proxy\s", t, re.M):
+            found[rel] = "caddy"
+        elif re.search(r"^\s*(proxy_pass|fastcgi_pass)\s", t, re.M):
+            found[rel] = "nginx"
+        elif "forwardAuth:" in t:
+            found[rel] = "traefik"
+    return found
 
 
-def a3_traefik():
-    text = (ROOT / "deploy/forward-auth/traefik.yml").read_text(encoding="utf-8")
-    assert re.search(r'customRequestHeaders:\s*\n(\s+\S+:.*\n)*?\s+Authorization:\s*""', text), \
-        "traefik.yml: no middleware removes Authorization before the app"
+def a3_every_template():
+    found = proxy_templates()
+    named = {"deploy/forward-auth/Caddyfile", "deploy/forward-auth/Caddyfile.gate", "deploy/quickstart/Caddyfile",
+             "deploy/home-network/Caddyfile", "deploy/forward-auth/nginx.conf", "deploy/forward-auth/nginx-path.conf",
+             "deploy/forward-auth/traefik.yml"}
+    assert named <= set(found), f"the scan misses templates: {sorted(named - set(found))}"
+    gaps = {}
+    for rel, kind in found.items():
+        text = (ROOT / rel).read_text(encoding="utf-8")
+        g = caddy_gaps(text) if kind == "caddy" else nginx_gaps(text) if kind == "nginx" else traefik_gaps(text)[0]
+        if g:
+            gaps[rel] = g
+    assert not gaps, f"credentials reach the application: {gaps}"
 
 
-r.run("A-3 deploy/forward-auth/nginx.conf: Authorization never reaches the application", a3_nginx)
-r.run("A-3 deploy/forward-auth/nginx-path.conf: Authorization never reaches PHP", a3_nginx_php)
-r.run("A-3 deploy/forward-auth/traefik.yml: Authorization never reaches the application", a3_traefik)
+def a3_scan_can_fail():
+    """Self-probe: the rules see a gap where there is one (a check that cannot fail proves nothing)."""
+    c = (ROOT / "deploy/forward-auth/Caddyfile").read_text(encoding="utf-8")
+    assert caddy_gaps(c.replace("header_up -X-Api-Key\n", "", 1)), "Caddy rule blind"
+    n = (ROOT / "deploy/forward-auth/nginx.conf").read_text(encoding="utf-8")
+    assert nginx_gaps(n.replace('proxy_set_header Authorization "";', "", 1)), "nginx rule blind"
+    p = (ROOT / "deploy/forward-auth/nginx-path.conf").read_text(encoding="utf-8")
+    assert nginx_gaps(p.replace('fastcgi_param HTTP_AUTHORIZATION "";', "", 1)), "nginx/FastCGI rule blind"
+    # … and the open remainder of nginx-path.conf (not behind the gate, its own Authorization) is no gap.
+    assert not nginx_gaps(p), nginx_gaps(p)
+    t = (ROOT / "deploy/forward-auth/traefik.yml").read_text(encoding="utf-8")
+    gaps, auth = traefik_gaps(t)
+    assert auth and not gaps, (auth, gaps)
+    assert traefik_gaps(t.replace("        - tinysesam-strip-credentials", "        # -", 1))[0], "Traefik rule blind"
+    order = t.replace("        - tinysesam-hsts\n        - tinysesam-auth\n        - tinysesam-strip-credentials",
+                      "        - tinysesam-hsts\n        - tinysesam-strip-credentials\n        - tinysesam-auth", 1)
+    assert order != t and traefik_gaps(order)[0], "Traefik rule does not see a strip BEFORE the check"
+
+
+r.run("A-3 every proxy template under deploy/: Authorization and X-Api-Key never reach the application",
+      a3_every_template)
+r.run("A-3 self-probe: the template rules see a gap where there is one", a3_scan_can_fail)
 
 
 # ---------------------------------------------------------------- A-4 open registration: one /64 fills the cap
@@ -347,9 +375,16 @@ def a6_code_reuse_race():
     finally:
         auth.store.oauth_create_grant = original
     assert second.get("status") == 400, second
-    assert first.status_code == 200, first.text
-    assert forward_status(app, first.json()["access_token"]) == 401, \
+    # Stricter than "the grant is revoked": the first exchange issues nothing at all once the code came back during
+    # it — no token answer, no live grant of the account (RFC 9700 §4.2.4: everything the code produced is void).
+    assert first.status_code == 400 and "access_token" not in first.text, first.text
+    assert not auth.store.oauth_user_grant_ids(uid), \
         "a reused code (second exchange during the first) left the grant of the first exchange alive"
+    # Counter-check: the plain flow still connects (the reuse mark does not refuse every exchange).
+    v2, ch2 = pkce()
+    code2 = code_for(auth, c, cid, ch2)
+    ok = TestClient(app).post("/auth/oauth/token", data=dict(form, code=code2, code_verifier=v2))
+    assert ok.status_code == 200 and forward_status(app, ok.json()["access_token"]) == 200, ok.text
 
 
 r.run("A-6 a code reused while the first exchange runs still revokes what it produced", a6_code_reuse_race)

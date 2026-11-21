@@ -90,12 +90,16 @@ connections cleanly, without users having to build anything themselves".
 - **Who may pair**: from an interactive session only — never an API key, an access token or an app password; the own
   account from a freshly confirmed session (`_require_fresh`, B-12); any account from the admin panel (also fresh,
   owner protection).
-- **Key rotation**: `POST /auth/oauth/service/keys`, authenticated with an assertion of a current key; the new public
-  key comes with a proof of possession (`typ` `tinysesam-key+jwt`, `sub` = client ID). It becomes current at once;
-  every other key stays valid for one hour (`KEY_OVERLAP_SEC`: tokens and assertions in flight, other processes that
-  share the key file), then it is refused and deleted by `gc()`. At most three keys at once. The same new key sent
-  again is a success (lost answer). The client writes the new key to its file as *pending* before the server learns
-  it, so a crash in between loses nothing.
+- **Key rotation**: `POST /auth/oauth/service/keys`, authenticated with an assertion of **the** current key (the one
+  without `retire_at`); the new public key comes with a proof of possession (`typ` `tinysesam-key+jwt`, `sub` = client
+  ID). It becomes current at once; every other key stays valid for one hour (`KEY_OVERLAP_SEC`: tokens and assertions
+  in flight, other processes that share the key file), then it is refused and deleted by `gc()`. The overlap counts
+  at the token endpoint only — a key within its overlap may not rotate (amended 2026-11-21 after attack round A,
+  A-2: with a copied old key a stranger rotated in a key of their own, and the rightful new key ran out after the
+  hour instead). At most three keys at once. The same new key sent again is a success (lost answer), also with an
+  assertion of the key it replaced, since the proof shows possession of the now current key. The client writes the
+  new key to its file as *pending* before the server learns it, so a crash in between loses nothing: on restart it
+  sends the pending key again with the old key's assertion and gets the success answer.
 - **Revocation**: one service (account page, panel, `revoke_service_client`) or all of an account — on lock, admin
   password reset, password reset and "end all sessions", the same path as API keys and app passwords. Keys are
   deleted, tokens stop at once. Events `oauth_service_paired` (also mailed with `notify_new_access`) and
@@ -118,8 +122,8 @@ effort", and a 15-minute token bound to one resource already limits a copy. Left
 - Schema 21 (additive): `oauth_service_client`, `oauth_client_key`, `oauth_assertion`. A service is also an
   `oauth_client` row (no redirect URI) so that grants, tokens and forward auth are ADR-11's.
 - A token request costs one signature verification and one insert (replay entry); forward auth stays a lookup.
-- Copying the key file is copying the service — like any credential. Rotation limits how long a copy works; the
-  device list (account page, panel) shows each service with its last token request, address and key expiry.
+- Copying the key file is copying the service — like any credential. Rotation limits how long a copy works (at most
+  `KEY_OVERLAP_SEC` at the token endpoint, never for a further rotation); the device list (account page, panel) shows each service with its last token request, address and key expiry.
 - Other languages need no TinySesam code: any OAuth client with `private_key_jwt` works once paired; the pairing
   request is one JSON POST (documented in the README).
 - What this does not do: binding the access token to the client (DPoP, T-68), mTLS, service-to-service delegation

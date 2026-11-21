@@ -48,8 +48,11 @@ DEFAULT_SCOPE = "mcp"
 
 CODE_TTL_SEC = 60
 REQUEST_TTL_SEC = 600
-#: Open registration: per address and hour, and how many registrations without a grant may exist at all.
+#: Open registration: per address and hour (an IPv6 address counts as its /64, A-4), per IPv6 /48 and hour, and how
+#: many registrations without a grant may exist at all. At the cap the oldest registration without a grant gives way
+#: — but only one older than an authorization request lives (`REQUEST_TTL_SEC`), so no flow in progress breaks.
 REGISTER_PER_IP_HOUR = 20
+REGISTER_PER_NET48_HOUR = 100
 IDLE_CLIENTS_MAX = 1000
 #: A registration that never led to a grant goes after a day (`gc()`); a revoked grant stays a week.
 IDLE_CLIENT_SEC = 86400
@@ -357,12 +360,21 @@ class OAuthServer:
             raise OAuthError("invalid_client_metadata", "client_name must be a string")
         name = "".join(z for z in (name or "") if z >= " " and z != "\x7f" and not 0x202a <= ord(z) <= 0x202e
                        and not 0x2066 <= ord(z) <= 0x2069).strip()[:MAX_NAME_LEN] or "unnamed client"
-        if not self.auth.rl.allow(("oauth_register", ip or "?"), REGISTER_PER_IP_HOUR, 3600):
+        from .security import ip_bucket
+        # Counted per /64 (one subscriber) and per /48 (one site or VPS): per /128 a single home line had 2^64
+        # buckets and filled the global cap from one prefix (attack round 2026-11-21, A-4).
+        if not (self.auth.rl.allow(("oauth_register", ip_bucket(ip)), REGISTER_PER_IP_HOUR, 3600)
+                and self.auth.rl.allow(("oauth_register48", ip_bucket(ip, 48)), REGISTER_PER_NET48_HOUR, 3600)):
             raise OAuthError("temporarily_unavailable", "too many registrations from this address", 429)
-        if self.store.oauth_count_idle_clients() >= IDLE_CLIENTS_MAX:
+        now = _now()
+        # At the cap the oldest unused registration gives way instead of refusing every newcomer for a day: a full
+        # cap otherwise locked every person out of connecting a new MCP client until `gc()` — and filled up again.
+        # Only registrations older than an authorization request may go, so a flow in progress never breaks; when
+        # all of them are younger, the cap still refuses (that takes 1000 registrations within ten minutes).
+        if (self.store.oauth_count_idle_clients() >= IDLE_CLIENTS_MAX
+                and not self.store.oauth_evict_idle_client(now - REQUEST_TTL_SEC)):
             raise OAuthError("temporarily_unavailable", "too many open registrations", 429)
         client_id = "tsc_" + secrets.token_urlsafe(18)
-        now = _now()
         self.store.oauth_add_client(client_id, name, uris, now, ip)
         self._audit("oauth_client_registered", None, ip, f"client={client_id} name={_detail(name)}")
         # Only fields with a value: Claude Code (MCP TypeScript SDK) rejects null or "" where a URL or list is
@@ -543,6 +555,11 @@ class OAuthServer:
         _, _, max_age = self._lifetimes()
         grant_id = self.store.oauth_create_grant(h, client["client_id"], int(row["user_id"]), row["resource"],
                                                  scope, now, ip, now + max_age if max_age else None, rows)
+        if grant_id is None:
+            # The code came back while this exchange ran (A-6): someone else holds it too. Nothing was issued — the
+            # second exchange is refused as a reuse, and this one as well (RFC 9700 §4.2.4).
+            self._audit("oauth_code_reuse", u["username"], ip, f"client={client['client_id']} grant=- during_exchange=1")
+            raise OAuthError("invalid_grant", "authorization code already used")
         self._audit("oauth_token", u["username"], ip,
                     f"client={client['client_id']} grant={grant_id} refresh={'yes' if rt else 'no'}")
         self.auth._security_event("oauth_device_connected", u["id"], grant_id=grant_id, client_id=client["client_id"],
@@ -551,7 +568,9 @@ class OAuthServer:
 
     def _code_reused(self, row, ip) -> None:
         name = self.auth._account_name(row["user_id"])
-        grant_id = row["grant_id"]
+        # Read and marked in one transaction: if the first exchange has not written its grant yet, the mark makes it
+        # refuse to (A-6) — the row read before the consume may already be stale.
+        grant_id = self.store.oauth_mark_code_reused(row["code_hash"]) or None
         self._audit("oauth_code_reuse", name, ip, f"client={row['client_id']} grant={grant_id or '-'}")
         if grant_id and self.store.oauth_revoke_grant(int(grant_id), "code_reuse", _now()):
             self._audit("oauth_revoked", name, ip, f"grant={grant_id} reason=code_reuse")

@@ -8,7 +8,7 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 ## Meilensteine
 
 * ☐ **[M-1](M-1-api-stable-1-0.md)** 1.0 — API stable enough for PyPI — 14/14 erledigt
-* ☐ **[M-2](M-2-after-1-0.md)** After 1.0 — keeping the published package maintained — 46/59 erledigt
+* ☐ **[M-2](M-2-after-1-0.md)** After 1.0 — keeping the published package maintained — 47/60 erledigt
 * ☑ **[M-3](M-3-gate-in-front-of-third-party-apps.md)** Gate in front of third-party apps — fast, sign in once, sign out cleanly — 8/8 erledigt
 
 ## Aufgaben
@@ -81,6 +81,7 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 * ☑ **[T-66](T-66-app-passwords-for-webdav-caldav-and-git-at-the-gate.md)** App passwords for WebDAV, CalDAV/CardDAV and Git at the gate · M-2
 * ☐ **[T-67](T-67-orderly-shutdown-close.md)** Orderly shutdown: a public close() that drains the outboxes and refuses new jobs · M-2
 * ☐ **[T-68](T-68-dpop-for-service-tokens.md)** DPoP for service tokens — bind a service's access token to its key (RFC 9449) · M-2
+* ☑ **[T-69](T-69-attack-round-a-oauth-services-app-passwords-keys.md)** Attack round A (2026-11-21) — OAuth, services, app passwords, keys · M-2
 
 ## Fehler
 

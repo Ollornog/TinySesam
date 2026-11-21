@@ -150,6 +150,22 @@ def ip_normalized(value) -> str | None:
     return str(addr)
 
 
+def ip_bucket(ip, v6_prefix: int = 64) -> str:
+    """The rate-limit key of an address: IPv4 as it is, IPv6 shortened to its network (default /64). One home line or
+    one VPS gets a whole /64 (often a /56 or /48) and picks any address in it — counted per /128, a single subscriber
+    has 2^64 buckets (attack round 2026-11-21, A-4). An IPv4-mapped address counts as IPv4. Not an address → the
+    value unchanged (`"?"` for none)."""
+    norm = ip_normalized(ip) if ip else None
+    if norm is None:
+        return str(ip or "?")
+    addr = ipaddress.ip_address(norm)
+    if isinstance(addr, ipaddress.IPv6Address) and addr.ipv4_mapped:
+        return str(addr.ipv4_mapped)
+    if addr.version == 4:
+        return str(addr)
+    return str(ipaddress.ip_network(f"{addr}/{int(v6_prefix)}", strict=False))
+
+
 def ip_pseudonym(ip: str) -> str:
     """Shorten an IP to its network: IPv4 to /24, IPv6 to /48 (`audit_ip_pseudonymize`).
 

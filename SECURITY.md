@@ -97,7 +97,9 @@ rate limit, open-redirect protection via `safe_next`). Even so: review it yourse
   or `sessions/revoke` with `scope=all`). Connected programs (OAuth, T-36): `oauth_device_connected`
   (`details={"grant_id": n, "client_id": …, "client_name": …, "resource": …}` — a program got its first
   tokens after the consent), `oauth_device_revoked` (`details={"grant_id": n, "client_id": …, "reason": …}`,
-  `reason` one of `user`, `admin`, `client`, `account_disabled`) and `oauth_token_reuse`
+  `reason` one of `user`, `admin`, `client` and the reasons of `api_keys_revoked` — since the attack round of
+  2026-11-21 (A-1) a reset, an admin password reset and "sign out everywhere" end the connected programs too, not
+  only a block) and `oauth_token_reuse`
   (`details={"grant_id": n, "client_id": …, "kind": "code"|"refresh"}` — a used code or refresh token came
   back, the connection was revoked: the token has probably been copied). New ways in that are no factor
   of their own (H2, T-47): `signin_link_issued` (`details={"ttl_min": n, "by_operator": bool}` — a
@@ -134,10 +136,23 @@ rate limit, open-redirect protection via `safe_next`). Even so: review it yourse
   never compared there (it does not even have the format), so the second factor cannot be skipped by Basic auth. What
   remains: an app password is a bearer secret — whoever copies it from the device (or reads it in transit without
   HTTPS) can use it at its applications until it expires or is revoked; it is sent with every request, so the proxy
-  in front must not log `Authorization`, and the template strips the header before the application
-  (`header_up -Authorization`). Misses are `failed login … method=app_password` in the security log (fail2ban) and
+  in front must not log `Authorization`, and the templates drop the header before the application (next point).
+  Misses are `failed login … method=app_password` in the security log (fail2ban) and
   count in a bucket of their own, so guessing at the gate does not lock the browser sign-in. Samba and other
   non-HTTP protocols are out of scope.
+- **Credentials at the application — the templates drop them.** Every proxy template in `deploy/` (Caddy, nginx,
+  Traefik) removes `Authorization` and `X-Api-Key` on the way to the application, AFTER forward auth has decided:
+  Caddy `header_up -Authorization` / `header_up -X-Api-Key` in every application `reverse_proxy`, nginx
+  `proxy_set_header Authorization ""` (FastCGI `fastcgi_param HTTP_AUTHORIZATION ""`, which also keeps
+  `PHP_AUTH_USER`/`PHP_AUTH_PW` empty), Traefik the middleware `tinysesam-strip-credentials` after `tinysesam-auth`.
+  The application learns who is signed in from `Remote-*`; it never needs the secret. Up to the attack round of
+  2026-11-21 (A-3) the templates only mentioned this in a comment, and an application's header log, debug page or
+  error report received app passwords, OAuth access tokens and — worst — API keys (`tsk_…`, valid at every host and
+  at TinySesam's own API, with roles, up to 90 days). **Your application checks `Authorization` itself** (its own
+  Basic auth or token check behind the gate)? Then delete those lines for that one host or location, deliberately —
+  and accept that whatever it logs then holds the credential. The quickstart's `webdav` profile does not need it
+  (the WebDAV server there has no sign-in of its own). `tests/test_attack_round_a.py` checks every template under
+  `deploy/` for this, a new one included; `tests/test_gate_caddy.py` measures it through a real Caddy.
 - **Services authenticate with their own key, not with a secret (T-60, ADR-13).** With `oauth_service_clients` a
   service gets short-lived access tokens by `client_credentials` with `private_key_jwt` (RFC 7523): TinySesam stores
   only its public key, so a copied database, a proxy log or a backup yields nothing that gets a token. The assertion

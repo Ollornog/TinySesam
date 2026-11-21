@@ -397,6 +397,54 @@ m = TinySesam(config(old_db))
 r.check("(d) after the way back the newer version starts again and rewrites v2; a value an older start wrapped "
         "into v1 is unwrapped (secret intact)",
         m.store.get_totp(ouid)["secret"] == OSECRET and "v1" not in m.store.ciphertext_counts())
+
+# (g) After the migration only v2 is read (attack round 2026-11-21, A-5): a `v1:` or plain-text value written behind
+# the service's back (database write access, no vault key) is refused at runtime — it carries no binding to its row.
+from tinysesam.errors import ConfigError  # noqa: E402
+from tinysesam.vault import LegacyValueError  # noqa: E402
+m.store._exec("UPDATE totp_cred SET secret=?", (v1(totp.new_secret()),))
+r.check("(g) a v1 TOTP secret planted after the migration is not read at runtime",
+        raises(lambda: m.store.get_totp(ouid), LegacyValueError))
+m.store._exec("UPDATE totp_cred SET secret=?", (totp.new_secret(),))
+r.check("(g) … nor a plain-text one", raises(lambda: m.store.get_totp(ouid), LegacyValueError))
+# What a start that could not write leaves behind (read-only database): the start stops and names the way out …
+m.store._exec("UPDATE totp_cred SET secret=?", (v1(OSECRET),))
+try:
+    m.store._check_v2_only()
+    left_msg = ""
+except ConfigError as e:
+    left_msg = str(e)
+r.check("(g) v1 values left after the start (not writable): the start refuses and names `tinysesam keys reencrypt`",
+        "tinysesam keys reencrypt" in left_msg and "1 stored secret" in left_msg, left_msg)
+m.store.db.close()
+# … and the way out works offline.
+out = subprocess.run([sys.executable, "-m", "tinysesam", "keys", "reencrypt", "--db", old_db],
+                     capture_output=True, text=True, env=ENV, timeout=120, cwd=str(ROOT))
+m = TinySesam(config(old_db))
+r.check("(g) `tinysesam keys reencrypt` rewrites them; the next start reads the secret",
+        out.returncode == 0 and m.store.get_totp(ouid)["secret"] == OSECRET, out.stdout + out.stderr)
+# key_material was encrypted from its first row: a plain-text gate seed there is planted, never migrated.
+_seed = secrets.token_bytes(32)
+_kid = keys.kid_for(keys.GATE, _seed)
+m.store._exec("INSERT INTO key_material(purpose, kid, material, created_at, since, note) VALUES (?,?,?,?,?,?)",
+              (keys.GATE, _kid, base64.b64encode(_seed).decode(), now, now + 10 * 365 * 86400, ""))
+r.check("(g) a plain-text gate seed planted in key_material is not loaded at runtime",
+        raises(lambda: m.store.key_ring_rows(keys.GATE), LegacyValueError))
+m.store.db.close()
+r.check("(g) … and the next start refuses (database written without the vault key) instead of encrypting it",
+        raises(lambda: TinySesam(config(old_db)), ConfigError)
+        and Store(old_db)._one("SELECT material FROM key_material WHERE kid=?", (_kid,))[0]
+        == base64.b64encode(_seed).decode())
+out = subprocess.run([sys.executable, "-m", "tinysesam", "keys", "list", "--db", old_db],
+                     capture_output=True, text=True, env=ENV, timeout=120, cwd=str(ROOT))
+r.check("(g) … `keys list` says so in one line, no traceback",
+        out.returncode == 1 and "key_material" in out.stderr and "Traceback" not in out.stderr, out.stderr)
+_st = Store(old_db)
+_st._exec("DELETE FROM key_material WHERE kid=?", (_kid,))
+_st.db.close()
+m = TinySesam(config(old_db))
+r.check("(g) counter-check: without the planted row the start and the TOTP secret are fine",
+        m.store.get_totp(ouid)["secret"] == OSECRET)
 m.store.db.close()
 
 # ======================================================================== env and file sources

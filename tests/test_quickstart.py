@@ -192,9 +192,12 @@ def accept(mode, auth_host, app_host, app_port):
 
         session = stack.compose("exec", "-T", "tinysesam", "python", "-c", SESSION_SCRIPT).stdout.strip().splitlines()[-1]
         assert re.match(r"^(__Host-|__Secure-)?tinysesam_session=\S+$", session), session
+        # With a client credential along (A-3, attack round 2026-11-21): the session signs in, and neither
+        # `Authorization` nor `X-Api-Key` reaches the application.
         st, h, body = app.get("/x", {"Cookie": f"other=1; {session}",
                                      "Remote-User": "admin", "Remote-Groups": "admin",
-                                     "Remote-Email": "chef@example.com", "Remote-Name": "Chef"})
+                                     "Remote-Email": "chef@example.com", "Remote-Name": "Chef",
+                                     "Authorization": "Basic not-for-the-app", "X-Api-Key": "tsk_not-for-the-app"})
         seen = whoami_headers(body)
         assert st == 200, (mode, st, body[:500])
         assert seen.get("Remote-User") == ["anna"] and seen.get("Remote-Groups") == ["editors"], (mode, seen)
@@ -202,9 +205,10 @@ def accept(mode, auth_host, app_host, app_port):
         # Anna has no address: TinySesam's answer carries none, the browser's goes, and no placeholder text comes (T-58).
         assert "Remote-Email" not in seen, (mode, seen.get("Remote-Email"))
         assert seen.get("Cookie") == ["other=1"], (mode, seen.get("Cookie"))
+        assert not {"Authorization", "X-Api-Key"} & set(seen), (mode, seen)
         assert h.get("Strict-Transport-Security") == (hsts if domain else None), mode
         ok(f"{mode}: with a session the application sees TinySesam's Remote-* — not the client's forgery, no "
-           "placeholder for the missing address, no TinySesam cookie")
+           "placeholder for the missing address, no TinySesam cookie, no Authorization/X-Api-Key")
 
         st, h, body = app.get("/.well-known/oauth-protected-resource/mcp")
         assert st == 200 and json.loads(body)["resource"] == resource, (mode, st, body[:300])

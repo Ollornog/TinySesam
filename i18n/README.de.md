@@ -842,8 +842,9 @@ ist das eine Sackgasse. Der Weg zurück führt über die Datenbankdatei, die dir
 python -m tinysesam passwd --db auth.db admin     # fragt zweimal, dann ist es gesetzt
 ```
 
-Das Kommando beendet die offenen Sitzungen des Kontos (`--keep-sessions` lässt sie stehen) und
-schreibt einen Audit-Eintrag. `--stdin` liest das Passwort von der Standardeingabe, für Skripte.
+Das Kommando beendet die offenen Sitzungen des Kontos und widerruft seine API-Keys, App-Passwörter, Dienste und
+verbundenen Programme, wie ein Admin-Reset im Panel (`--keep-sessions` lässt all das stehen), und schreibt einen
+Audit-Eintrag mit den Zahlen. `--stdin` liest das Passwort von der Standardeingabe, für Skripte.
 Dasselbe aus Python:
 
 ```python
@@ -1271,8 +1272,10 @@ Was passiert und was es schützt:
 - **Registrierung** (RFC 7591) ist offen, weil Claude Code sich selbst registriert — und nach jedem Abmelden oder
   Port-Konflikt neu. Nur öffentliche Clients (`token_endpoint_auth_method=none`) mit Loopback-Rückleitung
   (`http://localhost`, `127.0.0.1` oder `[::1]`, beliebiger Port); nichts, was der Client nennt, wird abgerufen, sein
-  Name steht als „nicht geprüft“ da, 20 Registrierungen je Adresse und Stunde. Registrierungen, aus denen nie eine
-  Verbindung wurde, räumt `gc()` ab.
+  Name steht als „nicht geprüft“ da, 20 Registrierungen je Adresse und Stunde (eine IPv6-Adresse zählt als ihr /64),
+  100 je IPv6-/48. Registrierungen, aus denen nie eine Verbindung wurde, räumt `gc()` ab; an der Obergrenze von 1000
+  solcher Registrierungen weicht die am längsten unbenutzte, die älter als zehn Minuten ist — eine Flut sperrt also
+  nicht bis dahin alle aus.
 - **Autorisierungscode nur mit PKCE S256**, der Code lebt 60 s und gilt einmal — eine zweite Verwendung widerruft,
   was die erste erzeugt hat. Die Rückleitungsadresse wird exakt verglichen, nur ein Loopback-Port darf abweichen
   (RFC 8252 §7.3). Die Antwort trägt `iss` (RFC 9207). CIMD wird nicht beworben: Dafür müsste der Server ein
@@ -1289,7 +1292,8 @@ Was passiert und was es schützt:
   `oauth_refresh_grace_sec` (0) erlaubt zwei Prozessen eines Clients gleichzeitiges Erneuern; Claude Code serialisiert.
 - **Geräte:** Die Kontoseite listet die verbundenen Programme (Name, Client, verbunden, zuletzt genutzt, Adresse,
   Ressource) mit „Trennen“; das Admin-Panel hat einen Reiter mit allen. `claude mcp logout` widerruft am Server
-  (RFC 7009, ohne Client-Geheimnis).
+  (RFC 7009, ohne Client-Geheimnis). Konto sperren, ein Passwort-Reset (selbst, durch einen Admin oder
+  `tinysesam passwd`) und „alle Sitzungen beenden“ trennen jedes Programm des Kontos, wie seine API-Keys.
 - **Grenzen:** Die Connectors von Claude Desktop und Claude im Web rufen aus Anthropics Netz an und erreichen keinen
   Server, der nur in deinem LAN steht; Claude Code schon. Claude Code kann kein DPoP — Rotation ist der Schutz der
   Refresh-Tokens. Dienste ohne Mensch (`client_credentials`): nächster Abschnitt.
@@ -1364,8 +1368,9 @@ Was passiert und was es schützt:
   als Digest vor, gilt einmal, 20 Versuche je Adresse und Stunde, und jede Ablehnung steht im Audit-Log.
 - **Schlüssel laufen ab** nach `oauth_service_key_days` (90); der Client **wechselt selbst** zur halben Laufzeit:
   Er schreibt den neuen Schlüssel zuerst als *pending*, meldet ihn an (signiert mit dem alten, belegt mit dem neuen)
-  und schaltet dann um. Der alte gilt noch eine Stunde — Tokens unterwegs und andere Prozesse laufen weiter.
-  `tinysesam-client rotate` wechselt sofort.
+  und schaltet dann um. Der alte gilt am Token-Endpunkt noch eine Stunde — Tokens unterwegs und andere Prozesse
+  laufen weiter —, wechseln darf er aber nie mehr: das darf nur der aktuelle (ein kopierter alter Schlüssel übernimmt
+  den Dienst nicht). `tinysesam-client rotate` wechselt sofort.
 - **Widerruf:** Kontoseite und Admin-Panel (Reiter „Verbundene Programme“) listen jeden Dienst mit letzter
   Token-Anfrage, Adresse und Schlüsselablauf, mit „Widerrufen“; `auth.list_service_clients()`,
   `auth.revoke_service_client(client_id)`. Konto sperren, Admin-Passwort-Reset und „alle Sitzungen beenden“
@@ -1434,9 +1439,10 @@ dav.example.com {
 				redir {rp.header.X-Tinysesam-Location} 302
 			}
 		}
-		# Die Anwendung vertraut Remote-User — das Passwort braucht sie nicht.
+		# Die Anwendung vertraut Remote-User — das Passwort braucht sie nicht (und keine andere Zugangsangabe).
 		reverse_proxy {$TS_APP_UPSTREAM:127.0.0.1:9000} {
 			header_up -Authorization
+			header_up -X-Api-Key
 		}
 	}
 }

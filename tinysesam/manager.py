@@ -1156,11 +1156,15 @@ class TinySesam:
                                 "sessions_revoked")
 
     def _keys_revoked(self, user_id, reason: str) -> int:
-        """Revoke all valid keys of an account — and notify the owner (limit e).
+        """Revoke every standing credential of an account — and notify the owner (limit e).
 
-        The one path for reset, lockout, admin password and `sessions/revoke`: before, the
-        revocation was only in the audit log there, the owner learned nothing. `reason` is one of
-        `_KEYS_REVOKED_REASONS`."""
+        THE one revocation point for reset, lockout, admin password and `sessions/revoke` (`reason` is one of
+        `_KEYS_REVOKED_REASONS`): API keys, app passwords (T-66), services (T-60) and connected devices (OAuth
+        grants with their refresh and access tokens, T-36). Sessions and open links stay with the callers — "end
+        others" keeps the current session, a lockout keeps nothing. A new kind of credential is revoked HERE, not at
+        each caller: until the attack round of 2026-11-21 (A-1) only the lockout ended the OAuth grants, and a
+        password reset or "end all sessions" left an MCP client connected for up to the refresh lifetime.
+        Returns the number of API keys (the callers' audit lines and JSON answers name that count)."""
         if reason not in self._KEYS_REVOKED_REASONS:
             raise ValueError(f"unknown reason {reason!r} — allowed: {self._KEYS_REVOKED_REASONS}")
         n = self.store.revoke_user_api_keys(user_id)
@@ -1170,6 +1174,9 @@ class TinySesam:
         self._app_passwords_revoked(user_id, reason)
         # And the services (T-60): a service paired to the account is the machine version of a key.
         self._services_revoked(user_id, reason)
+        # And the connected devices (OAuth, T-36): a refresh token is a key with a longer life (A-1). Each grant
+        # writes `oauth_revoked` to the audit log and `oauth_device_revoked` (with this `reason`) to the hook.
+        self._oauth_revoke_user(int(user_id), reason)
         return n
 
     def _services_revoked(self, user_id, reason: str) -> int:
@@ -1743,13 +1750,12 @@ class TinySesam:
             # `verify_api_key` already rejects keys of locked accounts. Revoke anyway: if
             # the account is released again later, a key nobody knows about any more would
             # otherwise come back to life.
+            # Connected devices (OAuth, T-36), app passwords and services end with them — forward auth refuses a
+            # locked account anyway, but on unlocking a device nobody remembers would otherwise come back.
             keys = self._keys_revoked(uid, "account_disabled")
             # The same for open one-time tokens: a confirmation link from registration otherwise lifted the
             # lock again (H-18, "a disabled account via no path").
             self.store.revoke_user_magic_tokens(uid)
-            # Connected devices (OAuth, T-36) end too — forward auth refuses a locked account anyway, but on
-            # unlocking a device nobody remembers would otherwise come back.
-            self._oauth_revoke_user(uid, "account_disabled")
         # From a request with a signed-in account (panel, own admin route) `audit()` names the
         # actor as the account — the same line the panel itself wrote up to 0.21.x.
         request = _REQUEST.get() or {}

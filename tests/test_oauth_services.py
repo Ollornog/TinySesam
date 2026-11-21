@@ -454,6 +454,48 @@ pending_on_disk = read_json(keyfile("a"))["pending"]
 assert sc2.kid == st["pending"]["kid"] and pending_on_disk is None
 ok("rotation survives a crash: the pending key is completed with the next request")
 
+# The other crash: the server took the new key, the client died before it saved that. On disk the old key is still
+# "current" (on the server it is in its overlap) — the retry with its assertion must still succeed, although a key in
+# its overlap may not rotate (A-2): the proof shows possession of the key that is current on the server.
+auth.store._exec("UPDATE oauth_client_key SET retire_at=? WHERE client_id=? AND retire_at IS NOT NULL",
+                 (int(time.time()) - 1, cid))           # the earlier rotations' overlaps are over (at most 3 keys)
+st = read_json(keyfile("a"))
+st["pending"] = SC.new_key()
+form = {"client_assertion_type": OS.ASSERTION_TYPE, "client_assertion": SC.sign(st["key"], OS.ASSERTION_TYP,
+                                                                               claims_for(cid)),
+        "jwk": json.dumps(SC.public_jwk(st["pending"])),
+        "proof": SC.sign(st["pending"], OS.KEY_TYP, claims_for(cid, iss=None))}
+r = c.post("/auth/oauth/service/keys", data=form)
+assert r.status_code == 200, r.text      # the server knows it, the disk not
+SC._write_private(keyfile("a"), st)
+sc3 = SC.ServiceClient(keyfile("a"), transport=T)
+sc3.token()
+assert sc3.kid == st["pending"]["kid"] and read_json(keyfile("a"))["pending"] is None
+assert auth.store.oauth_client_keys(cid)[0]["kid"] == st["pending"]["kid"]
+ok("rotation survives a crash after the server took the key: the retry with the replaced key's assertion succeeds")
+
+# A-2 (attack round 2026-11-21): only the CURRENT key may rotate. With a copy of the key file (backup, image layer, CI
+# cache) taken before the operator rotated, a stranger signed the rotation with the old key — still within its hour
+# of overlap — rotated in a key of their own, and the rightful new key was put on the overlap clock instead.
+auth.store._exec("UPDATE oauth_client_key SET retire_at=? WHERE client_id=? AND retire_at IS NOT NULL",
+                 (int(time.time()) - 1, cid))
+stolen = dict(read_json(keyfile("a"))["key"])           # the copy the attacker took
+sc3.rotate_key()                                        # the operator rotates — the copy should now run out
+current = sc3.kid
+mine = SC.new_key()
+form = {"client_assertion_type": OS.ASSERTION_TYPE,
+        "client_assertion": SC.sign(stolen, OS.ASSERTION_TYP, claims_for(cid)),
+        "jwk": json.dumps(SC.public_jwk(mine)), "proof": SC.sign(mine, OS.KEY_TYP, claims_for(cid, iss=None))}
+r = c.post("/auth/oauth/service/keys", data=form)
+keys = {k["kid"]: k for k in auth.store.oauth_client_keys(cid)}
+assert keys[current]["retire_at"] is None, "the rightful current key was put on the overlap clock by the old key"
+assert mine["kid"] not in keys, "a key in its overlap rotated in a key of its own"
+assert r.status_code == 401, (r.status_code, r.text)
+assert any(a["event"] == "oauth_service_key_rotate_refused" for a in auth.store.recent_audit(20))
+# … while the old key still gets tokens during its overlap (that is what the overlap is for).
+assert token_form(SC.sign(stolen, OS.ASSERTION_TYP, claims_for(cid))).status_code == 200
+ok("A-2: a key within its overlap may not rotate (refused, audited); it still gets tokens until the overlap ends")
+
 # ---------------------------------------------------------------- revocation
 # Forward auth reads account and service on every request — also when only the row says so (a write by another
 # process or an older version that did not delete the tokens).

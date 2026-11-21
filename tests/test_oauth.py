@@ -191,8 +191,27 @@ _old_cap = O.IDLE_CLIENTS_MAX
 O.IDLE_CLIENTS_MAX = 3
 auth_cap, c_cap = make(db_path=os.path.join(d2, "cap.db"))
 caps = [register(c_cap).status_code for _ in range(4)]
+assert caps == [201, 201, 201, 429], caps          # all three are younger than an authorization request: refused
+# A full cap no longer locks everyone out for a day (attack round 2026-11-21, A-4): the longest-unused registration
+# older than an authorization request gives way; one with a grant never does.
+_ids = [r_["client_id"] for r_ in auth_cap.store._all("SELECT client_id FROM oauth_client ORDER BY rowid")]
+for _age, _cid in zip((3000, 2000, 1000), _ids):
+    auth_cap.store._exec("UPDATE oauth_client SET created_at=created_at-? WHERE client_id=?", (_age, _cid))
+_c4 = TestClient(c_cap.app, base_url="http://testserver", follow_redirects=False, client=("192.0.2.77", 50000))
+_r4 = register(_c4)
+assert _r4.status_code == 201, _r4.text
+_left = {r_["client_id"] for r_ in auth_cap.store._all("SELECT client_id FROM oauth_client")}
+assert _ids[0] not in _left and {_ids[1], _ids[2], _r4.json()["client_id"]} <= _left, _left
 O.IDLE_CLIENTS_MAX = _old_cap
-assert caps == [201, 201, 201, 429], caps
+# IPv6: one /64 is one bucket (a home line picks any of 2^64 addresses), and a /48 has a bucket of its own.
+from tinysesam.security import ip_bucket  # noqa: E402
+assert ip_bucket("2001:db8:1:2::1") == ip_bucket("2001:db8:1:2:ffff::9") == "2001:db8:1:2::/64"
+assert ip_bucket("2001:db8:1:2::1", 48) == "2001:db8:1::/48" and ip_bucket("::ffff:192.0.2.1") == "192.0.2.1"
+assert ip_bucket("192.0.2.1") == "192.0.2.1" and ip_bucket(None) == "?"
+auth_v6, c_v6 = make(db_path=os.path.join(d2, "v6.db"), trusted_proxies=[])
+_v6 = [register(TestClient(c_v6.app, base_url="http://testserver", client=(f"2001:db8:7:{i:x}::1", 50000))).status_code
+       for i in range(O.REGISTER_PER_NET48_HOUR + 1)]
+assert _v6.count(201) == O.REGISTER_PER_NET48_HOUR and _v6[-1] == 429, _v6[-3:]
 tok_codes = [c_rl.post("/auth/oauth/token", data={"grant_type": "refresh_token", "refresh_token": "x",
                                                   "client_id": "tsc_x"}).status_code
              for _ in range(O.REQUESTS_PER_IP_MINUTE + 1)]
