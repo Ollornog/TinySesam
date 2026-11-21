@@ -1,0 +1,56 @@
+{
+  "format": 1,
+  "kind": "keys",
+  "spec": "spec/gate-client.md",
+  "generated_by": "scripts/_gate_vectors.py — do not edit by hand",
+  "defaults": {
+    "issuer": "https://auth.example.com",
+    "audience": "app.example.com",
+    "now": 1767225600
+  },
+  "_test_material": "TEST KEYS ONLY. The private seeds are derived from a public label and printed here so that client authors can mint further test tokens. Never use them anywhere else.",
+  "keys": {
+    "A": {
+      "role": "active gate key of the probe installation",
+      "seed_label": "tinysesam gate-client test vector key A",
+      "d": "2xkqD-MfK5NQTd7ZeCskNxD0aFo_Gq10R13-LUdCjGI",
+      "public_jwk": {
+        "kty": "OKP",
+        "crv": "Ed25519",
+        "x": "ecc3yanysDDBsjOxE03UuR3bhBJmVjsRPkXuVsCwVCY",
+        "kid": "a033507ca61ad979",
+        "alg": "EdDSA",
+        "use": "sig"
+      },
+      "sign_key_base64": "ecc3yanysDDBsjOxE03UuR3bhBJmVjsRPkXuVsCwVCY="
+    },
+    "B": {
+      "role": "previous key after a rotation",
+      "seed_label": "tinysesam gate-client test vector key B",
+      "d": "aAaFbgk9wFh2Yk8SnQ4n9idiwYHakLuaRcCtCvKhu7M",
+      "public_jwk": {
+        "kty": "OKP",
+        "crv": "Ed25519",
+        "x": "hTRqJPFZl52gIri4LXR1T3l8uxcZXNN9VGZ68dfykis",
+        "kid": "6ccee68f2fc14294",
+        "alg": "EdDSA",
+        "use": "sig"
+      },
+      "sign_key_base64": "hTRqJPFZl52gIri4LXR1T3l8uxcZXNN9VGZ68dfykis="
+    },
+    "X": {
+      "role": "the attacker's key, in no key set",
+      "seed_label": "tinysesam gate-client test vector key X",
+      "d": "jtWMpS4tD36qudGXYGYW0Z-pp30f39Y8jnGpC_QVXwI",
+      "public_jwk": {
+        "kty": "OKP",
+        "crv": "Ed25519",
+        "x": "yVi9yEdbkawIMwTr34pyUXju3G4xHgbTbFWJj-Rpdig",
+        "kid": "1d544b4121d085f8",
+        "alg": "EdDSA",
+        "use": "sig"
+      },
+      "sign_key_base64": "yVi9yEdbkawIMwTr34pyUXju3G4xHgbTbFWJj+Rpdig="
+    }
+  }
+}

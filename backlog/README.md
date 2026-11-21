@@ -8,7 +8,7 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 ## Meilensteine
 
 * ☐ **[M-1](M-1-api-stable-1-0.md)** 1.0 — API stable enough for PyPI — 14/14 erledigt
-* ☐ **[M-2](M-2-after-1-0.md)** After 1.0 — keeping the published package maintained — 64/72 erledigt
+* ☐ **[M-2](M-2-after-1-0.md)** After 1.0 — keeping the published package maintained — 65/79 erledigt
 * ☑ **[M-3](M-3-gate-in-front-of-third-party-apps.md)** Gate in front of third-party apps — fast, sign in once, sign out cleanly — 8/8 erledigt
 
 ## Aufgaben
@@ -40,7 +40,7 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 * ☑ **[T-25](T-25-oidc-on-the-stage.md)** E2E stage — the OIDC ceremony fails at the identity provider · M-2
 * ☑ **[T-26](T-26-gate-link-code-exchange.md)** Central gateway with code exchange — session stays on the gateway, app hosts only get a connection of their own · M-3
 * ☑ **[T-27](T-27-cli-delete-account.md)** CLI command to delete an account (maintenance without the admin panel) · M-2
-* ☐ **[T-28](T-28-go-variant-small-gate-client.md)** Gate client specification with language-neutral test vectors, plus a Go client · M-2
+* ☑ **[T-28](T-28-go-variant-small-gate-client.md)** Gate client specification with language-neutral test and attack vectors · M-2
 * ☑ **[T-29](T-29-translate-everything-to-english.md)** Translate everything to English (code texts, docs, messages) · M-2
 * ☐ **[T-30](T-30-launch-plan.md)** Launch plan — make TinySesam publicly known · M-2
 * ☐ **[T-31](T-31-maybe-recommend-a-provider-session-at-least-as-lon.md)** Maybe: recommend a provider session at least as long as the gateway session · M-2
@@ -92,6 +92,13 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 * ✗ **[T-77](T-77-admin-panel-extra-tabs.md)** Admin panel: extra tabs that link to the application''s own administration · M-2
 * ☑ **[T-78](T-78-nginx-and-traefik-templates-through-the-real-proxies.md)** nginx and Traefik templates measured through the real proxies in the CI · M-2
 * ☑ **[T-79](T-79-diagnostics-report-and-bug-form-instead-of-telemetry.md)** Diagnostics report and bug form instead of telemetry · M-2
+* ☐ **[T-80](T-80-gate-client-in-go.md)** Gate client in Go · M-2
+* ☐ **[T-81](T-81-gate-client-in-rust.md)** Gate client in Rust · M-2
+* ☐ **[T-82](T-82-gate-client-in-javascript-and-typescript.md)** Gate client in JavaScript and TypeScript · M-2
+* ☐ **[T-83](T-83-gate-client-in-php.md)** Gate client in PHP · M-2
+* ☐ **[T-84](T-84-token-mode-delivery-to-the-application.md)** Token mode: deliver the gate token to the application · M-2
+* ☐ **[T-85](T-85-role-names-without-comma.md)** Role names without comma and control characters · M-2
+* ☐ **[T-86](T-86-python-gate-client.md)** Python gate client · M-2
 
 ## Fehler
 

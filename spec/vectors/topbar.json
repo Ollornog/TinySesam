@@ -1,0 +1,273 @@
+{
+  "format": 1,
+  "kind": "topbar",
+  "spec": "spec/gate-client.md",
+  "generated_by": "scripts/_gate_vectors.py — do not edit by hand",
+  "defaults": {
+    "issuer": "https://auth.example.com",
+    "audience": "app.example.com",
+    "now": 1767225600
+  },
+  "vectors": [
+    {
+      "id": "signed-in",
+      "attack": null,
+      "reason": "GET /auth/topbar.json for a signed-in account.",
+      "input": {
+        "topbar": {
+          "brand": "Example",
+          "signed_in": true,
+          "name": "Anna Berg",
+          "links": [
+            {
+              "title": "Wiki",
+              "href": "https://app.example.com/wiki"
+            },
+            {
+              "title": "Files",
+              "href": "/files/"
+            }
+          ],
+          "account": {
+            "shown": true,
+            "href": "https://auth.example.com/auth/account"
+          },
+          "admin_panel": {
+            "shown": false,
+            "href": null
+          },
+          "logout": {
+            "href": "https://auth.example.com/auth/logout"
+          }
+        }
+      },
+      "expected": {
+        "ok": true,
+        "topbar": {
+          "brand": "Example",
+          "signed_in": true,
+          "name": "Anna Berg",
+          "links": [
+            {
+              "title": "Wiki",
+              "href": "https://app.example.com/wiki"
+            },
+            {
+              "title": "Files",
+              "href": "/files/"
+            }
+          ],
+          "account": "https://auth.example.com/auth/account",
+          "admin_panel": null,
+          "logout": "https://auth.example.com/auth/logout"
+        }
+      }
+    },
+    {
+      "id": "admin",
+      "attack": null,
+      "reason": "The admin panel link is shown to an admin.",
+      "input": {
+        "topbar": {
+          "brand": "Example",
+          "signed_in": true,
+          "name": "Admin",
+          "links": [
+            {
+              "title": "Wiki",
+              "href": "https://app.example.com/wiki"
+            },
+            {
+              "title": "Files",
+              "href": "/files/"
+            }
+          ],
+          "account": {
+            "shown": true,
+            "href": "https://auth.example.com/auth/account"
+          },
+          "admin_panel": {
+            "shown": true,
+            "href": "https://auth.example.com/auth/admin"
+          },
+          "logout": {
+            "href": "https://auth.example.com/auth/logout"
+          }
+        }
+      },
+      "expected": {
+        "ok": true,
+        "topbar": {
+          "brand": "Example",
+          "signed_in": true,
+          "name": "Admin",
+          "links": [
+            {
+              "title": "Wiki",
+              "href": "https://app.example.com/wiki"
+            },
+            {
+              "title": "Files",
+              "href": "/files/"
+            }
+          ],
+          "account": "https://auth.example.com/auth/account",
+          "admin_panel": "https://auth.example.com/auth/admin",
+          "logout": "https://auth.example.com/auth/logout"
+        }
+      }
+    },
+    {
+      "id": "signed-out",
+      "attack": null,
+      "reason": "No session: the brand only, no links.",
+      "input": {
+        "topbar": {
+          "brand": "Example",
+          "signed_in": false,
+          "name": null,
+          "links": [],
+          "account": {
+            "shown": false,
+            "href": null
+          },
+          "admin_panel": {
+            "shown": false,
+            "href": null
+          },
+          "logout": null
+        }
+      },
+      "expected": {
+        "ok": true,
+        "topbar": {
+          "brand": "Example",
+          "signed_in": false,
+          "name": null,
+          "links": [],
+          "account": null,
+          "admin_panel": null,
+          "logout": null
+        }
+      }
+    },
+    {
+      "id": "unsafe-hrefs",
+      "attack": "topbar-href",
+      "reason": "Only http(s) URLs and paths starting with a single `/` are rendered; everything else is dropped.",
+      "input": {
+        "topbar": {
+          "brand": "Example",
+          "signed_in": true,
+          "name": "Anna Berg",
+          "links": [
+            {
+              "title": "x",
+              "href": "javascript:alert(1)"
+            },
+            {
+              "title": "y",
+              "href": "//evil.example.com/"
+            },
+            {
+              "title": "z",
+              "href": "data:text/html,<script>"
+            },
+            {
+              "title": "w",
+              "href": "/\\evil.example.com"
+            },
+            {
+              "title": "v",
+              "href": "https://ok.example.com/a b"
+            },
+            {
+              "title": 5,
+              "href": "/a"
+            },
+            {
+              "title": "ok",
+              "href": "/ok"
+            }
+          ],
+          "account": {
+            "shown": true,
+            "href": "JavaScript:alert(1)"
+          },
+          "admin_panel": {
+            "shown": false,
+            "href": null
+          },
+          "logout": {
+            "href": "https://auth.example.com/auth/logout"
+          }
+        }
+      },
+      "expected": {
+        "ok": true,
+        "topbar": {
+          "brand": "Example",
+          "signed_in": true,
+          "name": "Anna Berg",
+          "links": [
+            {
+              "title": "ok",
+              "href": "/ok"
+            }
+          ],
+          "account": null,
+          "admin_panel": null,
+          "logout": "https://auth.example.com/auth/logout"
+        }
+      }
+    },
+    {
+      "id": "wrong-types",
+      "attack": "topbar-types",
+      "reason": "signed_in as a string is no `true`: shown as signed out.",
+      "input": {
+        "topbar": {
+          "brand": "Example",
+          "signed_in": "true",
+          "name": "anna",
+          "links": [],
+          "account": null
+        }
+      },
+      "expected": {
+        "ok": true,
+        "topbar": {
+          "brand": "Example",
+          "signed_in": false,
+          "name": null,
+          "links": [],
+          "account": null,
+          "admin_panel": null,
+          "logout": null
+        }
+      }
+    },
+    {
+      "id": "not-object",
+      "attack": "topbar-types",
+      "reason": "An answer that is no object: signed out without brand.",
+      "input": {
+        "topbar": [
+          "x"
+        ]
+      },
+      "expected": {
+        "ok": true,
+        "topbar": {
+          "brand": "",
+          "signed_in": false,
+          "name": null,
+          "links": [],
+          "account": null,
+          "admin_panel": null,
+          "logout": null
+        }
+      }
+    }
+  ]
+}

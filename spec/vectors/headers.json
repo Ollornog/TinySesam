@@ -1,0 +1,791 @@
+{
+  "format": 1,
+  "kind": "headers",
+  "spec": "spec/gate-client.md",
+  "generated_by": "scripts/_gate_vectors.py — do not edit by hand",
+  "defaults": {
+    "issuer": "https://auth.example.com",
+    "audience": "app.example.com",
+    "now": 1767225600
+  },
+  "vectors": [
+    {
+      "id": "valid-session",
+      "attack": null,
+      "reason": "The headers /auth/forward sends for a browser session.",
+      "input": {
+        "headers": {
+          "Remote-User": "anna",
+          "Remote-Name": "Anna Berg",
+          "Remote-Email": "anna@example.com",
+          "Remote-Groups": "editors",
+          "Remote-Id": "1",
+          "Remote-Auth": "session"
+        }
+      },
+      "expected": {
+        "ok": true,
+        "identity": {
+          "user": "anna",
+          "name": "Anna Berg",
+          "email": "anna@example.com",
+          "groups": [
+            "editors"
+          ],
+          "id": "1",
+          "auth": "session",
+          "kind": "session"
+        },
+        "has_role": {
+          "editors": true,
+          "admin": false
+        }
+      }
+    },
+    {
+      "id": "valid-admin",
+      "attack": null,
+      "reason": "The admin flag is the group `admin`.",
+      "input": {
+        "headers": {
+          "Remote-User": "admin",
+          "Remote-Name": "Admin",
+          "Remote-Email": "admin@example.com",
+          "Remote-Groups": "admin",
+          "Remote-Id": "2",
+          "Remote-Auth": "session"
+        }
+      },
+      "expected": {
+        "ok": true,
+        "identity": {
+          "user": "admin",
+          "name": "Admin",
+          "email": "admin@example.com",
+          "groups": [
+            "admin"
+          ],
+          "id": "2",
+          "auth": "session",
+          "kind": "session"
+        },
+        "has_role": {
+          "admin": true
+        }
+      }
+    },
+    {
+      "id": "valid-utf8",
+      "attack": null,
+      "reason": "Header values are UTF-8 bytes on the wire (HTTP carries octets; shown here one code point per octet). The client decodes them as UTF-8.",
+      "input": {
+        "headers": {
+          "Remote-User": "juergen",
+          "Remote-Name": "JÃ¼rgen MÃ¼ller",
+          "Remote-Email": "juergen@example.com",
+          "Remote-Groups": "editors,reviewers",
+          "Remote-Id": "3",
+          "Remote-Auth": "session"
+        }
+      },
+      "expected": {
+        "ok": true,
+        "identity": {
+          "user": "juergen",
+          "name": "Jürgen Müller",
+          "email": "juergen@example.com",
+          "groups": [
+            "editors",
+            "reviewers"
+          ],
+          "id": "3",
+          "auth": "session",
+          "kind": "session"
+        }
+      }
+    },
+    {
+      "id": "valid-cyrillic",
+      "attack": null,
+      "reason": "A Cyrillic account name, UTF-8 on the wire.",
+      "input": {
+        "headers": {
+          "Remote-User": "Ð¸Ð²Ð°Ð½",
+          "Remote-Name": "ÐÐ²Ð°Ð½ ÐÐµÑÑÐ¾Ð²",
+          "Remote-Email": "",
+          "Remote-Groups": "readers",
+          "Remote-Id": "4",
+          "Remote-Auth": "session"
+        }
+      },
+      "expected": {
+        "ok": true,
+        "identity": {
+          "user": "иван",
+          "name": "Иван Петров",
+          "email": "",
+          "groups": [
+            "readers"
+          ],
+          "id": "4",
+          "auth": "session",
+          "kind": "session"
+        }
+      }
+    },
+    {
+      "id": "valid-homoglyph",
+      "attack": "unicode-homoglyph",
+      "reason": "A homoglyph of `admin` is another account and another group.",
+      "input": {
+        "headers": {
+          "Remote-User": "Ð°dmin",
+          "Remote-Name": "Not The Admin",
+          "Remote-Email": "",
+          "Remote-Groups": "Ð°dmin",
+          "Remote-Id": "5",
+          "Remote-Auth": "session"
+        }
+      },
+      "expected": {
+        "ok": true,
+        "identity": {
+          "user": "аdmin",
+          "name": "Not The Admin",
+          "email": "",
+          "groups": [
+            "аdmin"
+          ],
+          "id": "5",
+          "auth": "session",
+          "kind": "session"
+        },
+        "has_role": {
+          "admin": false
+        }
+      }
+    },
+    {
+      "id": "valid-auth-oauth",
+      "attack": "remote-auth",
+      "reason": "Remote-Auth `oauth`: a token, not a session. Its groups may be incomplete on purpose (a token never carries admin).",
+      "input": {
+        "headers": {
+          "Remote-User": "anna",
+          "Remote-Name": "Anna Berg",
+          "Remote-Email": "anna@example.com",
+          "Remote-Groups": "editors",
+          "Remote-Id": "1",
+          "Remote-Auth": "oauth"
+        }
+      },
+      "expected": {
+        "ok": true,
+        "identity": {
+          "user": "anna",
+          "name": "Anna Berg",
+          "email": "anna@example.com",
+          "groups": [
+            "editors"
+          ],
+          "id": "1",
+          "auth": "oauth",
+          "kind": "token"
+        }
+      }
+    },
+    {
+      "id": "valid-auth-apikey",
+      "attack": "remote-auth",
+      "reason": "Remote-Auth `apikey`: a token, not a session. Its groups may be incomplete on purpose (a token never carries admin).",
+      "input": {
+        "headers": {
+          "Remote-User": "anna",
+          "Remote-Name": "Anna Berg",
+          "Remote-Email": "anna@example.com",
+          "Remote-Groups": "editors",
+          "Remote-Id": "1",
+          "Remote-Auth": "apikey"
+        }
+      },
+      "expected": {
+        "ok": true,
+        "identity": {
+          "user": "anna",
+          "name": "Anna Berg",
+          "email": "anna@example.com",
+          "groups": [
+            "editors"
+          ],
+          "id": "1",
+          "auth": "apikey",
+          "kind": "token"
+        }
+      }
+    },
+    {
+      "id": "valid-auth-app-password",
+      "attack": "remote-auth",
+      "reason": "Remote-Auth `app-password`: a token, not a session. Its groups may be incomplete on purpose (a token never carries admin).",
+      "input": {
+        "headers": {
+          "Remote-User": "anna",
+          "Remote-Name": "Anna Berg",
+          "Remote-Email": "anna@example.com",
+          "Remote-Groups": "editors",
+          "Remote-Id": "1",
+          "Remote-Auth": "app-password"
+        }
+      },
+      "expected": {
+        "ok": true,
+        "identity": {
+          "user": "anna",
+          "name": "Anna Berg",
+          "email": "anna@example.com",
+          "groups": [
+            "editors"
+          ],
+          "id": "1",
+          "auth": "app-password",
+          "kind": "token"
+        }
+      }
+    },
+    {
+      "id": "auth-missing",
+      "attack": "remote-auth",
+      "reason": "No Remote-Auth (an older TinySesam or a renamed set): counts as a token, never as a session.",
+      "input": {
+        "headers": {
+          "Remote-User": "anna",
+          "Remote-Groups": "editors"
+        }
+      },
+      "expected": {
+        "ok": true,
+        "identity": {
+          "user": "anna",
+          "name": "",
+          "email": "",
+          "groups": [
+            "editors"
+          ],
+          "id": "",
+          "auth": "",
+          "kind": "token"
+        }
+      }
+    },
+    {
+      "id": "auth-empty",
+      "attack": "remote-auth",
+      "reason": "An empty Remote-Auth (TinySesam could not name the way in): counts as a token.",
+      "input": {
+        "headers": {
+          "Remote-User": "anna",
+          "Remote-Groups": "editors",
+          "Remote-Auth": ""
+        }
+      },
+      "expected": {
+        "ok": true,
+        "identity": {
+          "user": "anna",
+          "name": "",
+          "email": "",
+          "groups": [
+            "editors"
+          ],
+          "id": "",
+          "auth": "",
+          "kind": "token"
+        }
+      }
+    },
+    {
+      "id": "auth-unknown",
+      "attack": "remote-auth",
+      "reason": "An unknown Remote-Auth value: kind token, auth reported empty.",
+      "input": {
+        "headers": {
+          "Remote-User": "anna",
+          "Remote-Groups": "editors",
+          "Remote-Auth": "superuser"
+        }
+      },
+      "expected": {
+        "ok": true,
+        "identity": {
+          "user": "anna",
+          "name": "",
+          "email": "",
+          "groups": [
+            "editors"
+          ],
+          "id": "",
+          "auth": "",
+          "kind": "token"
+        }
+      }
+    },
+    {
+      "id": "auth-case",
+      "attack": "remote-auth",
+      "reason": "`Session` is not `session`.",
+      "input": {
+        "headers": {
+          "Remote-User": "anna",
+          "Remote-Groups": "editors",
+          "Remote-Auth": "Session"
+        }
+      },
+      "expected": {
+        "ok": true,
+        "identity": {
+          "user": "anna",
+          "name": "",
+          "email": "",
+          "groups": [
+            "editors"
+          ],
+          "id": "",
+          "auth": "",
+          "kind": "token"
+        }
+      }
+    },
+    {
+      "id": "groups-two",
+      "attack": "groups-parsing",
+      "reason": "Remote-Groups: two groups.",
+      "input": {
+        "headers": {
+          "Remote-User": "anna",
+          "Remote-Groups": "editors,admin"
+        }
+      },
+      "expected": {
+        "ok": true,
+        "identity": {
+          "user": "anna",
+          "name": "",
+          "email": "",
+          "groups": [
+            "editors",
+            "admin"
+          ],
+          "id": "",
+          "auth": "",
+          "kind": "token"
+        },
+        "has_role": {
+          "admin": true
+        }
+      }
+    },
+    {
+      "id": "groups-spaces",
+      "attack": "groups-parsing",
+      "reason": "Remote-Groups: space after the comma is trimmed.",
+      "input": {
+        "headers": {
+          "Remote-User": "anna",
+          "Remote-Groups": "editors, admin"
+        }
+      },
+      "expected": {
+        "ok": true,
+        "identity": {
+          "user": "anna",
+          "name": "",
+          "email": "",
+          "groups": [
+            "editors",
+            "admin"
+          ],
+          "id": "",
+          "auth": "",
+          "kind": "token"
+        },
+        "has_role": {
+          "admin": true
+        }
+      }
+    },
+    {
+      "id": "groups-empty-entries",
+      "attack": "groups-parsing",
+      "reason": "Remote-Groups: empty entries are dropped.",
+      "input": {
+        "headers": {
+          "Remote-User": "anna",
+          "Remote-Groups": ",,editors,,"
+        }
+      },
+      "expected": {
+        "ok": true,
+        "identity": {
+          "user": "anna",
+          "name": "",
+          "email": "",
+          "groups": [
+            "editors"
+          ],
+          "id": "",
+          "auth": "",
+          "kind": "token"
+        },
+        "has_role": {
+          "admin": false
+        }
+      }
+    },
+    {
+      "id": "groups-repeat",
+      "attack": "groups-parsing",
+      "reason": "Remote-Groups: a repeated group counts once.",
+      "input": {
+        "headers": {
+          "Remote-User": "anna",
+          "Remote-Groups": "editors,editors"
+        }
+      },
+      "expected": {
+        "ok": true,
+        "identity": {
+          "user": "anna",
+          "name": "",
+          "email": "",
+          "groups": [
+            "editors"
+          ],
+          "id": "",
+          "auth": "",
+          "kind": "token"
+        },
+        "has_role": {
+          "admin": false
+        }
+      }
+    },
+    {
+      "id": "groups-empty",
+      "attack": "groups-parsing",
+      "reason": "Remote-Groups: an empty header means no groups.",
+      "input": {
+        "headers": {
+          "Remote-User": "anna",
+          "Remote-Groups": ""
+        }
+      },
+      "expected": {
+        "ok": true,
+        "identity": {
+          "user": "anna",
+          "name": "",
+          "email": "",
+          "groups": [],
+          "id": "",
+          "auth": "",
+          "kind": "token"
+        },
+        "has_role": {
+          "admin": false
+        }
+      }
+    },
+    {
+      "id": "groups-case",
+      "attack": "groups-parsing",
+      "reason": "Remote-Groups: groups are compared case-sensitively.",
+      "input": {
+        "headers": {
+          "Remote-User": "anna",
+          "Remote-Groups": "Admin"
+        }
+      },
+      "expected": {
+        "ok": true,
+        "identity": {
+          "user": "anna",
+          "name": "",
+          "email": "",
+          "groups": [
+            "Admin"
+          ],
+          "id": "",
+          "auth": "",
+          "kind": "token"
+        },
+        "has_role": {
+          "admin": false
+        }
+      }
+    },
+    {
+      "id": "groups-inner-space",
+      "attack": "groups-parsing",
+      "reason": "Remote-Groups: a space inside a group stays.",
+      "input": {
+        "headers": {
+          "Remote-User": "anna",
+          "Remote-Groups": "team a"
+        }
+      },
+      "expected": {
+        "ok": true,
+        "identity": {
+          "user": "anna",
+          "name": "",
+          "email": "",
+          "groups": [
+            "team a"
+          ],
+          "id": "",
+          "auth": "",
+          "kind": "token"
+        },
+        "has_role": {
+          "admin": false
+        }
+      }
+    },
+    {
+      "id": "groups-no-escape",
+      "attack": "groups-parsing",
+      "reason": "Remote-Groups: there is no escape mechanism: a backslash is an ordinary character.",
+      "input": {
+        "headers": {
+          "Remote-User": "anna",
+          "Remote-Groups": "a\\,b"
+        }
+      },
+      "expected": {
+        "ok": true,
+        "identity": {
+          "user": "anna",
+          "name": "",
+          "email": "",
+          "groups": [
+            "a\\",
+            "b"
+          ],
+          "id": "",
+          "auth": "",
+          "kind": "token"
+        },
+        "has_role": {
+          "admin": false
+        }
+      }
+    },
+    {
+      "id": "groups-missing",
+      "attack": "groups-parsing",
+      "reason": "No Remote-Groups at all: no groups.",
+      "input": {
+        "headers": {
+          "Remote-User": "anna"
+        }
+      },
+      "expected": {
+        "ok": true,
+        "identity": {
+          "user": "anna",
+          "name": "",
+          "email": "",
+          "groups": [],
+          "id": "",
+          "auth": "",
+          "kind": "token"
+        },
+        "has_role": {
+          "admin": false
+        }
+      }
+    },
+    {
+      "id": "user-missing",
+      "attack": "header-missing-user",
+      "reason": "No Remote-User: not signed in.",
+      "input": {
+        "headers": {
+          "Remote-Groups": "admin"
+        }
+      },
+      "expected": {
+        "ok": false,
+        "error": "unauthenticated"
+      }
+    },
+    {
+      "id": "user-empty",
+      "attack": "header-missing-user",
+      "reason": "An empty Remote-User: not signed in.",
+      "input": {
+        "headers": {
+          "Remote-User": "",
+          "Remote-Groups": "admin"
+        }
+      },
+      "expected": {
+        "ok": false,
+        "error": "unauthenticated"
+      }
+    },
+    {
+      "id": "user-twice",
+      "attack": "header-duplicate",
+      "reason": "Remote-User twice (a proxy that appends instead of replacing).",
+      "input": {
+        "headers": {
+          "Remote-User": [
+            "anna",
+            "admin"
+          ]
+        }
+      },
+      "expected": {
+        "ok": false,
+        "error": "header"
+      }
+    },
+    {
+      "id": "groups-twice",
+      "attack": "header-duplicate",
+      "reason": "Remote-Groups twice in one request.",
+      "input": {
+        "headers": {
+          "Remote-User": "anna",
+          "Remote-Groups": [
+            "editors",
+            "admin"
+          ]
+        }
+      },
+      "expected": {
+        "ok": false,
+        "error": "header"
+      }
+    },
+    {
+      "id": "user-twice-case",
+      "attack": "header-duplicate",
+      "reason": "The same field twice under different spellings.",
+      "input": {
+        "headers": {
+          "Remote-User": "anna",
+          "remote-user": "admin"
+        }
+      },
+      "expected": {
+        "ok": false,
+        "error": "header"
+      }
+    },
+    {
+      "id": "control-user",
+      "attack": "header-injection",
+      "reason": "A control character in Remote-User: refused, not stripped (`boss\\x01` must not become `boss`).",
+      "input": {
+        "headers": {
+          "Remote-User": "boss\u0001"
+        }
+      },
+      "expected": {
+        "ok": false,
+        "error": "header"
+      }
+    },
+    {
+      "id": "control-name-tab",
+      "attack": "header-injection",
+      "reason": "A tab inside Remote-Name.",
+      "input": {
+        "headers": {
+          "Remote-User": "anna",
+          "Remote-Name": "Anna\tBerg"
+        }
+      },
+      "expected": {
+        "ok": false,
+        "error": "header"
+      }
+    },
+    {
+      "id": "groups-tab",
+      "attack": "header-injection",
+      "reason": "A tab is a control character, also next to a comma: refused, not trimmed.",
+      "input": {
+        "headers": {
+          "Remote-User": "anna",
+          "Remote-Groups": "editors\t,admin"
+        }
+      },
+      "expected": {
+        "ok": false,
+        "error": "header"
+      }
+    },
+    {
+      "id": "invalid-utf8",
+      "attack": "header-encoding",
+      "reason": "Remote-Name bytes that are no UTF-8.",
+      "input": {
+        "headers": {
+          "Remote-User": "anna",
+          "Remote-Name": "Anna ÿ"
+        }
+      },
+      "expected": {
+        "ok": false,
+        "error": "header"
+      }
+    },
+    {
+      "id": "overlong-utf8",
+      "attack": "header-encoding",
+      "reason": "An overlong UTF-8 encoding of `/`.",
+      "input": {
+        "headers": {
+          "Remote-User": "aÀ¯b"
+        }
+      },
+      "expected": {
+        "ok": false,
+        "error": "header"
+      }
+    },
+    {
+      "id": "id-not-digits",
+      "attack": "id-format",
+      "reason": "Remote-Id is the decimal account ID.",
+      "input": {
+        "headers": {
+          "Remote-User": "anna",
+          "Remote-Id": "1 OR 1=1"
+        }
+      },
+      "expected": {
+        "ok": false,
+        "error": "header"
+      }
+    },
+    {
+      "id": "id-arabic-digits",
+      "attack": "id-format",
+      "reason": "Arabic-Indic digits are no ASCII digits.",
+      "input": {
+        "headers": {
+          "Remote-User": "anna",
+          "Remote-Id": "Ù¡"
+        }
+      },
+      "expected": {
+        "ok": false,
+        "error": "header"
+      }
+    }
+  ]
+}

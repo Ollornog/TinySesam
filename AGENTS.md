@@ -31,6 +31,8 @@ with their front door: keep the surface small, every feature optional, and prove
 | `deploy/` | quickstart stack, proxy templates (Caddy, nginx, Traefik), fail2ban filters, systemd timer, home-network stack |
 | `backlog/` | the backlog: one Markdown file per task, bug, decision (ADR) or milestone |
 | `scripts/` | generators and release helpers (`_api_docs.py`, `_config_docs.py`, `_backlog.py`, `_release.py`) |
+| `spec/` | the gate client specification (`gate-client.md`) and its generated language-neutral vectors (`vectors/`) |
+| `clients/` | gate clients in other languages (Go, Rust, JS/TS, PHP), conventions in `clients/README.md` |
 
 ## Test
 
@@ -59,6 +61,7 @@ python tests/run_all.py test_core.py     # one suite while you work
 | `CONFIGURATION.md` | comments in `tinysesam/config.py` | `python scripts/_config_docs.py` |
 | `tests/api_surface.json` | measured public surface | `python tests/test_api_surface.py --update`, then set the tier |
 | `backlog/README.md` | the backlog files | `python scripts/_backlog.py index` |
+| `spec/vectors/*.json` | TinySesam's issuing path + attacks in the generator | `python scripts/_gate_vectors.py` |
 
 A new public name has **no tier** until someone decides (A stable, B advanced, C internal with a warning alias in
 `tinysesam/_deprecated.py`); the surface test stays red until then. Tier A and B names must be described in the

@@ -2062,6 +2062,12 @@ Der Rückweg ist die bestehende Forward-Auth, eine Anfrage samt Body geht also n
   Tokens (`app.example.com|roles=admin`); ein Token ohne Rollenangabe gilt dort nicht.
 - **Preis:** Abmelden, Sperren oder eine entzogene Freigabe greifen am Proxy erst, wenn das Token
   abläuft — `gate_token_ttl_sec`, Vorgabe 300 Sekunden.
+- **Gate-Clients in anderen Sprachen:** Eine Anwendung hinter dem Gate, die die `Remote-*`-Header liest oder das
+  Gate-Token selbst prüft, folgt der [Gate-Client-Spezifikation](../spec/gate-client.md) (englisch: Token-Format,
+  Prüfreihenfolge, Gruppen, JWKS-Regeln, die nie hängen). Ihre sprachneutralen Test- und Angriffsvektoren in
+  [`spec/vectors/`](../spec/vectors/) werden aus TinySesams eigenem Code erzeugt; Clients für Go, Rust, JS/TS und PHP
+  sind unter [`clients/`](../clients/) geplant, ein schlanker Python-Client (WSGI/ASGI, ohne FastAPI) als
+  Teil des Pakets (Backlog T-86).
 
 ### Anmelden vor dem Gate: unsichtbar oder mit Seite (T-21)
 
@@ -2331,7 +2337,7 @@ Jeder Python-Block beider Dateien läuft in der Testsuite, und jeder genannte Na
 
 ## Status
 
-**115 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
+**116 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
 (`tests/test_matrix.py`).
 
 Gebaut und getestet: Passwort/TOTP/Sitzungen/Rollen, Remember-me, Step-up und per-Route-MFA,

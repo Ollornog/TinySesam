@@ -2011,6 +2011,14 @@ existing forward auth, so a request and its body are not lost.
   audience (`app.example.com|roles=admin`); a token issued without roles does not count there.
 - **Cost:** signing out, locking an account or a withdrawn grant only takes effect at the proxy
   once the token expires — `gate_token_ttl_sec`, default 300 seconds.
+- **Gate clients in other languages:** an application behind the gate that reads the `Remote-*` headers or checks the
+  gate token itself follows the
+  [gate client specification](https://github.com/Ollornog/TinySesam/blob/main/spec/gate-client.md) (token format,
+  checking order, groups, JWKS rules that never hang). Its language-neutral test and attack vectors in
+  [`spec/vectors/`](https://github.com/Ollornog/TinySesam/tree/main/spec/vectors) are generated from TinySesam's own
+  code; clients for Go, Rust, JS/TS and PHP are planned under
+  [`clients/`](https://github.com/Ollornog/TinySesam/tree/main/clients), a slim Python client (WSGI/ASGI, no FastAPI)
+  in the package itself (backlog T-86).
 
 ### Signing in at the gate: invisible or with a page (T-21)
 
@@ -2268,7 +2276,7 @@ Every Python block in both files runs in the test suite, and every name they men
 
 ## Status
 
-**115 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
+**116 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
 
 Implemented and tested: password/TOTP/sessions/roles, remember-me, step-up and per-route MFA,
 factor chains, personal PIN, shared resource secrets, magic links + mailer hook, registration and
