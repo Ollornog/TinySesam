@@ -30,7 +30,7 @@ The configuration fields are in [CONFIGURATION.md](CONFIGURATION.md): 179 of 198
 
 **`auth.store` is internals** (tier C): the storage layer of the built-in routes, without tier, without promise and without transition period — its methods can change with every release. What an app needs is listed below as a method of `TinySesam` (e.g. `set_disabled` instead of `auth.store.set_disabled`).
 
-**Status:** A 394 · B 216 · C 38 names.
+**Status:** A 395 · B 216 · C 38 names.
 
 ## A · Methods of `TinySesam`
 
@@ -838,7 +838,7 @@ Observed on probe instances; values are recorded where they are the contract (`X
 #### Headers, reasons, inputs, cookies
 
 - **`X-TinySesam-*` headers** (request or response, see the table above): `X-TinySesam-Gate-Cookie`, `X-TinySesam-Location`, `X-TinySesam-Reason`, `X-TinySesam-Roles`.
-- **Values of `X-TinySesam-Reason`:** `app-missing`, `app-signed-out`, `app-stale`, `basic`, `oauth`, `role` (`app-…` only with several OIDC clients).
+- **Values of `X-TinySesam-Reason`:** `app-missing`, `app-signed-out`, `app-stale`, `basic`, `forwarded-conflict`, `oauth`, `role` (`app-…` only with several OIDC clients).
 - **Request headers the forward and gate paths read** — what a proxy sets or passes on: `Authorization`, `Host`, `X-Api-Key`, `X-Forwarded-For`, `X-Forwarded-Host`, `X-Forwarded-Proto`, `X-Forwarded-Uri`, `X-Original-Uri`, `X-Original-Url`, `X-TinySesam-Roles`. The `Cookie` header is passed on as the browser sent it. Headers a browser sends on its own (`Accept`, `Referer`, `Sec-Fetch-Mode`, `Sec-Fetch-Site`, `X-Csrf-Token`) are read as well but are tier B: no proxy has to set them.
 - **Request parameters:** `roles`.
 - **Cookies the gate sets itself** (host-only, fixed names): `__Host-tinysesam_link`, `__Host-tinysesam_linkflow`. The gate token cookie is named by the configuration field `gate_cookie_name`.

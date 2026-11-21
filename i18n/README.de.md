@@ -1205,6 +1205,20 @@ TINYSESAM_OIDC_REVALIDATE_MINUTES=60
 Eine Konfiguration mit einem einzigen Client verhält sich unverändert — keine Zuordnung, keine
 Freigabe, die ablaufen könnte.
 
+**Für welche Anwendung eine Anfrage ist, sagt allein der Proxy.** `/auth/forward` liest das Ziel aus
+`X-Forwarded-Host`/`-Proto`/`-Uri` (Caddy, Traefik) und aus `X-Original-URL` nur, wenn kein `X-Forwarded-Host` da ist
+(nginx). Eine Anfrage, die beide mit verschiedenen Zielen trägt, bekommt die Anmeldeseite (`X-TinySesam-Reason:
+forwarded-conflict`): Eins der beiden kam vom Browser. An diesem Ziel hängt jede Entscheidung je Anwendung — Freigabe
+je Client, App-Passwörter, OAuth-Audience, „nur hier abmelden“ —, also die Proxy-Vorlagen in `deploy/` so übernehmen,
+wie sie sind: Sie streichen `X-Original-URL` (Caddy), setzen alle vier Header (nginx) oder vertrauen den
+Weiterleitungs-Headern des Browsers weder noch kopieren sie sie (Traefik).
+
+**`Remote-Groups: admin` ist keine frische Bestätigung.** Forward-Auth antwortet für jede gültige Sitzung, egal wie
+lange ihre letzte Bestätigung her ist; `admin_require_mfa` und `stepup_max_age_sec` schützen TinySesams eigenes
+Admin-Panel und die Routen, die Zugang anlegen, nicht die Anwendungen hinter dem Proxy. Eine Anwendung, die
+Admin-Rechte aus dem Header ableitet, sollte eine heikle Aktion (alles löschen, ändern, wer hinein darf) nicht allein
+darauf stützen, sondern dort selbst nachfragen.
+
 ## API-Keys & Service-/Daemon-Accounts
 
 Für **maschinellen Zugang** (Skripte, andere Dienste, System-Daemons) — parallel zum interaktiven Login:
@@ -1421,6 +1435,8 @@ dav.example.com {
 			rewrite /auth/forward
 			header_up X-Forwarded-Method {method}
 			header_up X-Forwarded-Uri {uri}
+			header_up -X-Original-URL
+			header_up -X-Original-URI
 			@ok status 200
 			handle_response @ok {
 				request_header Remote-User {rp.header.Remote-User}
@@ -2088,7 +2104,7 @@ Jeder Python-Block beider Dateien läuft in der Testsuite, und jeder genannte Na
 
 ## Status
 
-**98 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
+**102 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
 (`tests/test_matrix.py`).
 
 Gebaut und getestet: Passwort/TOTP/Sitzungen/Rollen, Remember-me, Step-up und per-Route-MFA,

@@ -119,6 +119,10 @@ app.example.com {
 			# and `caddy validate` flags the duplication as unnecessary.
 			header_up X-Forwarded-Method {method}
 			header_up X-Forwarded-Uri {uri}
+			# Only the proxy names the target (attack round B, F1): Caddy passes every other header of the
+			# browser on, and an X-Original-URL of its own moved the check to another host up to 0.25.
+			header_up -X-Original-URL
+			header_up -X-Original-URI
 			# header_up X-TinySesam-Roles editors,admin   # only passes with one of these roles
 			# take over only the auth response headers
 			# Other names (e.g. X-WEBAUTH-USER for Grafana): set TinySesamConfig(forward_headers={...})

@@ -100,6 +100,8 @@ class TinySesamConfig:
     # What confirms a step-up (require(mfa=True))? Empty = everything the user has set up
     # (order totp → pin → password). E.g. ["pin"] = PIN for sensitive areas.
     # If the user has none of the listed methods, their best available method applies.
+    # The same list decides which factor on the sign-in pages refreshes a session that is already
+    # signed in (passkey, OIDC and SAML always do; a sign-in link or QR approval never does).
     stepup_methods: list[str] = field(default_factory=list)
     # Turn the wish into a barrier: True = whoever has none of the listed methods set up
     # does NOT get in (instead of confirming with the password they just signed in

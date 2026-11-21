@@ -675,9 +675,15 @@ for remember in ("", "on"):
     raw = auth6.create_magic_token("login", user_id=uid6, email="x@example.com", ttl_min=15,
                                    payload={"next": "/"})
     r = c6.post(f"/auth/magic/{raw}", follow_redirects=False)   # R4-02: only the POST redeems
+    # Attack round B (F3): a sign-in link on a full session is no step-up — no rotation, no new cookie.
+    assert c6.cookies.get("tinysesam_session") == before and not any(
+        z.startswith("tinysesam_session=") for z in r.headers.get_list("set-cookie")), "a link is no step-up (F3)"
+    # The password on the sign-in form IS one (stepup_options offers it): it rotates and keeps the kind.
+    r = c6.post("/auth/login", data={"username": "admin", "password": "dummy123", "next": "/",
+                                     "remember": "" if remember else "on"}, follow_redirects=False)
     assert c6.cookies.get("tinysesam_session") != before, "step-up must rotate (F-06)"
     assert ("max-age" in _session_cookie(r)) == bool(remember), \
-        f"magic step-up (remember={remember!r}) changes the cookie kind: {_session_cookie(r)}"
+        f"password step-up (remember={remember!r}) changes the cookie kind: {_session_cookie(r)}"
     # PIN with the OPPOSITE in the form — the session got its kind at the first factor.
     r = c6.post("/auth/pin", data={"username": "admin", "pin": "24680", "next": "/",
                                    "remember": "" if remember else "on"}, follow_redirects=False)

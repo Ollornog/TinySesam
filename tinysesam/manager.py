@@ -5195,6 +5195,14 @@ class TinySesam:
             # An identity switch (another user) falls through → new session.
             done = json.loads(s["factors_done"] or "[]")
             was_ok = bool(s["mfa_ok"])
+            if was_ok and not self._counts_as_stepup(account, factor):
+                # Attack round B, F3: a full session is refreshed only by a factor that the step-up itself accepts.
+                # A sign-in link (mailed, admin-issued, cross-device approval) proves the mailbox or another
+                # device, not the account's own confirmation — redeemed in a browser with a stale (stolen)
+                # session cookie it made that session fresh, and `_require_fresh` let a new passkey or API key
+                # through. The session stays as it is: full, but not fresh.
+                self.audit("stepup_not_counted", str(account["username"]), ip, f"factor={factor}")
+                return request.cookies.get(self.session_cookie_name), True, False
             in_setup = self._setup_session(s)
             if factor not in done:
                 done.append(factor)
@@ -5234,6 +5242,23 @@ class TinySesam:
         token, ok = self.start_session(user_id, factor, ip, ua, remember)
         self._maybe_promote_admin(self.store.get_user(user_id), email_verified, factor=factor)
         return token, ok, True
+
+    #: Factors that confirm a full session although `stepup_options()` does not name them: each signs the account in
+    #: on its own (a passkey with user verification, a sign-in at the provider) — what the reauth page cannot offer.
+    _STEPUP_SIGN_INS = ("passkey", "oidc", "saml")
+
+    def _counts_as_stepup(self, account, factor: str) -> bool:
+        """Does `factor`, provided on a session that is already full, count as a fresh confirmation (step-up)?
+
+        Yes for what `stepup_options()` offers this account (password, PIN, TOTP — narrowed by `stepup_methods`,
+        so a password typed into the sign-in form does not get round `stepup_methods=["totp"]` either) and for the
+        factors that sign the account in on their own (`_STEPUP_SIGN_INS`). Never for `magic`: a sign-in link does
+        not even sign in an account with a second factor."""
+        if factor == "magic":
+            return False
+        if factor in self._STEPUP_SIGN_INS:
+            return True
+        return factor in self.stepup_options(dict(account))
 
     def _successor(self, old_line, new_token) -> None:
         """What hangs on the half session passes to the full one that replaces it — BEFORE
@@ -5311,6 +5336,10 @@ class TinySesam:
             self.store.delete_session_by_handle(s["token_hash"])
             return None
         was_ok = bool(s["mfa_ok"])
+        if was_ok and not self._counts_as_stepup(account, "totp"):
+            # The same rule as in `apply_factor` (F3): a full session is refreshed only by what the step-up accepts
+            # — here when `stepup_methods`/`stepup_strict` leave TOTP out.
+            return None
         in_setup = self._setup_session(s)
         done = json.loads(s["factors_done"] or "[]")
         if "totp" not in done:
@@ -6287,7 +6316,9 @@ class TinySesam:
         """Who may set up TOTP **without** already being fully signed in? Otherwise None.
 
         Exactly one situation: the global `login_chain` requires `totp`, the user has provided their
-        first factor (the session is stuck in the MFA step) and has no confirmed TOTP yet.
+        first factor (the session is stuck in the MFA step), has no confirmed TOTP yet, and the chain has a
+        step that only TOTP can still cover for this account — not one it covers with a PIN or passkey it
+        has (attack round B, F2).
 
         Without this path, `login_chain=["password","totp"]` is a **dead end** for every account without a set-up
         TOTP: the correct password leads to `/auth/totp`, which for lack of a
@@ -6318,6 +6349,20 @@ class TinySesam:
             return None
         req, _ = self._global_chain()
         if not (req and "totp" in _chain.factors(req)):
+            return None
+        # Only for a step the account cannot cover with what it HAS (attack round B, F2) — the rule of the setup
+        # pass (`_setup_missing`). With alternatives (`["password", "totp|pin"]`) the password alone otherwise set
+        # up a TOTP for the step the account covers with its PIN, and the confirmation code completed the chain:
+        # the PIN was never asked, and whoever knew the password kept an own second factor. A TOTP that fills an
+        # uncovered step replaces nothing — every factor satisfies one step, so the ones the account has are still
+        # asked (`password → totp → pin` keeps asking for the PIN after the setup). A setup window opened by the
+        # operator lifts it, as for the passkey below.
+        account = self.store.get_user(u["id"])
+        window = account["mfa_enroll_until"] if account else None
+        needed = any("totp" in options for _, options in self._setup_missing(u["id"]))
+        if not needed and not (window and int(window) > _now()):
+            self.audit("mfa_enrollment_denied", str(account["username"]) if account else None,
+                       detail="the account covers every step of the chain with the factors it has")
             return None
         if self.store.list_webauthn(u["id"]):
             # If the account already has a strong second factor (passkey), it sets up a
@@ -7292,17 +7337,79 @@ class TinySesam:
 
     def _forwarded_url(self, request: Request) -> str:
         """Reconstruct the original URL requested by the proxy (Caddy/Traefik: X-Forwarded-*,
-        nginx: X-Original-URL). Fallback: Referer resp. '/'."""
+        nginx: X-Original-URL). Fallback: Referer resp. '/'.
+
+        **`X-Forwarded-Host` wins over `X-Original-URL`** (attack round B, F1). Caddy and Traefik set the
+        `X-Forwarded-*` headers themselves and pass every other header of the browser through unchanged —
+        `X-Original-URL` included. Until 0.25 an absolute `X-Original-URL` came first, so a browser that
+        sent `X-Original-URL: https://dav.example.com/` to `web.example.com` had every per-application
+        decision (app passwords, OAuth audience, approval per application, "signed out here only") taken
+        for the wrong host. `X-Original-URL` now counts only where no `X-Forwarded-Host` is present
+        (an nginx configuration that sets nothing else); where both are present and disagree,
+        `_forwarded_conflict` refuses the request — either may be the forged one (an older nginx
+        configuration passes the browser's `X-Forwarded-Host` through). `trusted_proxies` cannot tell the
+        two apart: the peer of `/auth/forward` is always the proxy, and it forwards the browser's headers
+        verbatim."""
         h = request.headers
-        orig = h.get("x-original-url")           # nginx auth_request
-        if orig and "://" in orig:
+        orig = (h.get("x-original-url") or "").strip()     # nginx auth_request
+        absolute = "://" in orig
+        host = (h.get("x-forwarded-host") or "").split(",")[0].strip()
+        if absolute and not host:
             return orig
         proto = (h.get("x-forwarded-proto") or "https").split(",")[0].strip()
-        host = (h.get("x-forwarded-host") or h.get("host") or "").split(",")[0].strip()
-        uri = h.get("x-forwarded-uri") or orig or h.get("x-original-uri") or "/"
+        host = host or (h.get("host") or "").split(",")[0].strip()
+        # The path of an absolute X-Original-URL only when X-Forwarded-Uri is missing — and only after
+        # `_forwarded_conflict` has found its host equal to X-Forwarded-Host.
+        uri = (h.get("x-forwarded-uri") or (self._url_rest(orig) if absolute else orig)
+               or h.get("x-original-uri") or "/")
         if host:
             return f"{proto}://{host}{uri}"
         return h.get("referer") or "/"
+
+    @staticmethod
+    def _url_rest(url: str) -> str:
+        """Path and query of an absolute URL exactly as written (no fragment), "" when there is none."""
+        from urllib.parse import urlsplit
+        try:
+            parts = urlsplit(url)
+        except ValueError:
+            return ""
+        rest = url.split("://", 1)[1][len(parts.netloc):].split("#", 1)[0]
+        return rest if rest.startswith(("/", "?")) else ""
+
+    def _forwarded_conflict(self, request: Request) -> bool:
+        """Do the proxy headers name two different targets? Then one of them came from the browser.
+
+        True when an absolute `X-Original-URL` and `X-Forwarded-Host` are both present and differ in the host
+        (port included, default ports dropped), in the scheme (if `X-Forwarded-Proto` is present) or in path
+        and query (if `X-Forwarded-Uri` is present). The nginx templates set all four to the same request;
+        Caddy and Traefik set no `X-Original-URL`, so there it can only be the browser's own. A malformed
+        value counts as a conflict (fail closed)."""
+        from urllib.parse import urlsplit
+        h = request.headers
+        orig = (h.get("x-original-url") or "").strip()
+        fhost = (h.get("x-forwarded-host") or "").split(",")[0].strip()
+        if "://" not in orig or not fhost:
+            return False
+        try:
+            o = urlsplit(orig)
+            f = urlsplit("//" + fhost)
+            o_port, f_port = o.port, f.port
+        except ValueError:
+            return True
+        scheme = (o.scheme or "").lower()
+        proto = (h.get("x-forwarded-proto") or "").split(",")[0].strip().lower()
+        if proto and proto != scheme:
+            return True
+        default = {"http": 80, "https": 443}.get(scheme)
+
+        def name(parts, port):
+            return ((parts.hostname or "").rstrip("."), None if port == default else port)
+
+        if not o.hostname or name(o, o_port) != name(f, f_port):
+            return True
+        uri = h.get("x-forwarded-uri")
+        return bool(uri) and uri != (self._url_rest(orig) or "/")
 
     def _forward_app(self, url_or_host: str) -> dict:
         """The gate's settings for an application (T-21): `name`, `login`, `logout` and `app_passwords` (T-66), from

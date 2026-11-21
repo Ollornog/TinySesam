@@ -153,6 +153,9 @@ app.example.com {
 				rewrite /auth/forward
 				header_up X-Forwarded-Method {method}
 				header_up X-Forwarded-Uri {uri}
+				# Only the proxy names the target (F1): no X-Original-URL/-URI from the browser.
+				header_up -X-Original-URL
+				header_up -X-Original-URI
 				# header_up X-TinySesam-Roles editors,admin   # then adjust audience_whitelist above
 				@ok status 200
 				handle_response @ok {

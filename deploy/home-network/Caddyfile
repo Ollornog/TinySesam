@@ -73,6 +73,9 @@ https://{$TS_HOME_IP:192.0.2.10}:8443 {
 			rewrite /auth/forward
 			header_up X-Forwarded-Method {method}
 			header_up X-Forwarded-Uri {uri}
+			# Only the proxy names the target (F1): no X-Original-URL/-URI from the browser.
+			header_up -X-Original-URL
+			header_up -X-Original-URI
 			# header_up X-TinySesam-Roles editors,admin   # only passes with one of these roles
 			# Each header only when the answer carries it (T-58).
 			@ok status 200

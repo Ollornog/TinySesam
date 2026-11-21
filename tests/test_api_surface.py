@@ -1813,7 +1813,7 @@ def self_check_contract(now: dict) -> None:
     check("http.contract", atoms, bent("manager.py", '_GATE_LINK_COOKIE = "__Host-tinysesam_link"',
                                             '_GATE_LINK_COOKIE = "__Host-tinysesam_conn"'),
            "cookie:__Host-tinysesam_link", "cookie:__Host-tinysesam_conn")
-    check("http.contract", atoms, bent("manager.py", 'h.get("x-forwarded-uri")', 'h.get("x-fwd-uri")'),
+    check("http.contract", atoms, bent("manager.py", 'h.get("x-forwarded-uri")', 'h.get("x-fwd-uri")', -1),
            "request-header:X-Forwarded-Uri", "request-header:X-Fwd-Uri")
     check("http.contract", atoms, bent("router.py", 'getlist("roles")', 'getlist("role")'),
            "request-param:roles", "request-param:role")
