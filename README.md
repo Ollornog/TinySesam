@@ -1586,7 +1586,8 @@ behind a real Caddy is `tests/e2e_app_passwords.py` (manual: needs Docker).
 
 ## Admin panel
 
-Built-in panel at **`/auth/admin`** (`is_admin` only), embeddable with no extra setup:
+Built-in panel at **`/auth/admin`** (administrators; delegated admins see their part — see
+[Delegated administration](#delegated-administration)), embeddable with no extra setup:
 
 - **Users & service accounts:** create, **explicitly disable/enable** (`disabled` — account stays, login blocked, sessions end immediately; self-lockout protection; in code: `auth.set_disabled`), password reset, set roles/admin.
 - **API keys** per user: generate (shown once) / revoke.
@@ -1633,6 +1634,57 @@ JSON API at `<mount>/api/*` (the same actions — for your own UIs / automation)
   `style=`) so the nonce covers everything. `"strict"` (default), `"off"` (no header — e.g. a proxy
   sets the CSP), or your own policy string (a `{nonce}` in it is substituted per response). A template
   override returning a `Response` is left untouched and gets `ctx["nonce"]` to build its own.
+
+## Delegated administration
+
+Team leads manage the accounts of their team in the built-in panel without becoming administrators (T-74). The model
+is role-based rights with a scope — like organisational units in a directory or administrative units in Entra ID: a
+**delegate role** names the roles it manages, and its holders act only on accounts inside that scope. A delegate role
+can manage other delegate roles below it (`manages`), so a two-level hierarchy looks like this:
+
+```python
+from tinysesam import TinySesamConfig
+
+cfg = TinySesamConfig(
+    available_roles=["X", "A", "A-read", "B", "B-read", "area-admin", "team-a-admin", "team-b-admin"],
+    admin_delegates={
+        "area-admin":   {"roles": ["X"], "manages": ["team-a-admin", "team-b-admin"]},
+        "team-a-admin": {"roles": ["A", "A-read"]},
+        "team-b-admin": {"roles": ["B", "B-read"], "can": ["create", "disable", "roles"]},
+    },
+)
+```
+
+- **What a delegate does:** create accounts and invitations, issue a sign-in link, lock and unlock, set or remove the
+  managed roles — only on accounts whose roles **all** lie within the managed roles (at least one). Never an admin,
+  owner or service account, never their own. Strict on purpose: an account in two teams belongs to whoever is above
+  both.
+- **Managed roles:** a delegate role's own `roles`, the delegate roles below it (it appoints and removes them) and
+  their roles. Above, `area-admin` manages X, A, A-read, B and B-read and appoints `team-a-admin` and `team-b-admin`;
+  `team-a-admin` manages A and A-read. `manages` is a hierarchy without cycles; a role may have several parents.
+- **Never sideways or upwards:** a `team-a-admin` sees neither team B, nor other `team-a-admin` accounts, nor the
+  `area-admin`. A delegate never grants their own delegate role or one above it. An account with several delegate
+  roles may do what one of them allows, on that role's accounts.
+- **`can`** narrows the actions of one delegate role (`create`, `invite`, `disable`, `roles`, `signin_link`; without
+  it, all of them). It is not inherited up or down.
+- **The rest of the panel stays with administrators** — password reset, rename, delete, keys, passkeys, sessions,
+  connected programs, app passwords, hardening, audit. Every limit is enforced on the server, route by route; the
+  panel shows a delegate only their tab, their accounts, their roles and their buttons. The top bar and the account
+  page offer them "Admin panel". `require_admin` and your own admin routes do not change: a delegate is no admin.
+- **Only a browser session:** an API key, an OAuth token or an app password neither opens the panel nor carries a
+  delegate role (not in `Remote-Groups` either) — like the admin flag. The session keeps it, so an application can
+  show its own team page (`topbar_links` with `{"role": "team-a-admin"}`).
+- **Step-up and audit:** the same confirmation as administrators (`admin_require_mfa`); creating, inviting and a
+  sign-in link always ask for a fresh one. The audit log names the acting account (`actor=`), the panel's own lines
+  also `as=<delegate role>`. Delegates have no audit view: the lines carry other people's addresses.
+- **Checked at construction:** every role in `available_roles`, a delegate role never inside a `roles` list
+  (appointing goes only through `manages`), `manages` names delegate roles, no cycle, `can` only known actions, no
+  delegate role called `admin`.
+- **Roles from an identity provider** (`*_group_role_map`) are set again at the next sign-in — a delegate's change to
+  such a role does not last.
+
+What a delegate can take over (a sign-in link signs into the account) is in
+[`SECURITY.md`](https://github.com/Ollornog/TinySesam/blob/main/SECURITY.md#operating-notes-important).
 
 ## New in 0.5 — quick reference
 

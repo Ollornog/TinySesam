@@ -1752,6 +1752,8 @@ def build_router(auth) -> APIRouter:
                                     recovery_warn=auth._RECOVERY_WARN_THRESHOLD,
                                     has_pin=(cfg.pin_enabled and auth.has_pin(u["id"])),
                                     is_admin=bool(u["is_admin"]), admin_path=cfg.admin_path,
+                                    # The link to the panel: administrators and delegated admins (T-74).
+                                    admin_panel=auth._admin_panel_visible(u),
                                     events=auth.own_events(u["id"]),
                                     # Connected programs (OAuth, T-36) — None leaves the section out.
                                     oauth_devices=(auth._oauth_server().devices(u["id"])

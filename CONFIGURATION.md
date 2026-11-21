@@ -12,7 +12,7 @@ reference answers the other question: *"There is a field — what does it do?"*
 Presets (`TinySesamConfig.local_accounts()`, `.oidc_gateway()`, …) set bundles of these fields;
 individual ones can be overridden via `**overrides`.
 
-**Tier:** Every field belongs to tier A — public, stable from 1.0 (see [API.md](API.md), “Three tiers”), except `app_password_allow_unlimited` (B), `app_password_default_days` (B), `c22_stylesheet` (B), `gate_key_file` (B), `hsts` (B), `oauth_access_token_ttl_sec` (B), `oauth_enabled` (B), `oauth_pairing_minutes` (B), `oauth_pepper_file` (B), `oauth_refresh_grace_sec` (B), `oauth_refresh_idle_days` (B), `oauth_refresh_max_days` (B), `oauth_resources` (B), `oauth_service_clients` (B), `oauth_service_key_days` (B), `oauth_service_token_ttl_sec` (B), `topbar_enabled` (B), `topbar_links` (B), `totp_required` (B).
+**Tier:** Every field belongs to tier A — public, stable from 1.0 (see [API.md](API.md), “Three tiers”), except `admin_delegates` (B), `app_password_allow_unlimited` (B), `app_password_default_days` (B), `c22_stylesheet` (B), `gate_key_file` (B), `hsts` (B), `oauth_access_token_ttl_sec` (B), `oauth_enabled` (B), `oauth_pairing_minutes` (B), `oauth_pepper_file` (B), `oauth_refresh_grace_sec` (B), `oauth_refresh_idle_days` (B), `oauth_refresh_max_days` (B), `oauth_resources` (B), `oauth_service_clients` (B), `oauth_service_key_days` (B), `oauth_service_token_ttl_sec` (B), `topbar_enabled` (B), `topbar_links` (B), `totp_required` (B).
 
 ## Store
 
@@ -215,6 +215,7 @@ individual ones can be overridden via `**overrides`.
 | `stepup_max_age_sec` | `int` | `900` | 15 min; also limits creating the FIRST factor (measured from login there) |
 | `admin_require_mfa` | `bool` | `True` | The admin panel and `require_admin` additionally demand a fresh confirmation (T-45, ASVS 7.5.3/8.4.2): an old admin session cannot set passwords, issue sign-in links or grant rights without confirming again. Default `True` since H2 (before: `False`). An admin without a second factor confirms with the password; an account that has nothing to confirm with (purely federated) signs in again. `False` = the old behaviour (`config_check` warns). |
 | `admin_password_must_change` | `bool` | `True` | A password set by an administrator (panel: new account or reset) is a start secret, not the account's password (T-46, ASVS 6.4.1): the next password sign-in stays half until the holder has chosen an own one (the page `/auth/setup`). `False` = the admin's password stays. |
+| `admin_delegates` | `dict` | `dict` | **Tier B.** Delegated admins (T-74): a role whose holders manage the accounts of their team in the admin panel without being administrators — `{"teamadmin": {"roles": ["editors", "viewers"]}}`. A delegate creates accounts and invitations, issues sign-in links, locks and unlocks, and sets or removes the listed roles — only on accounts whose roles all stand in the list (no admin, owner or service account, never their own). Optional per role: `"manages": ["team-a-admin", …]` — delegate roles below it (a hierarchy without cycles; it appoints and removes them and manages their roles too), `"can": ["create", "invite", "disable", "roles", "signin_link"]` — a part of the actions (default all). The rest of the panel stays with administrators. Only a browser session counts: API keys, OAuth tokens and app passwords carry neither the panel nor the delegate role. The same step-up as administrators (`admin_require_mfa`). Every role must stand in `available_roles`; a delegate role stands in no `roles` list, only in `manages`. See README, "Delegated administration". |
 
 ## Sessions (server-side, revocable)
 
@@ -354,4 +355,4 @@ individual ones can be overridden via `**overrides`.
 
 ---
 
-203 fields, generated from `tinysesam/config.py`.
+204 fields, generated from `tinysesam/config.py`.

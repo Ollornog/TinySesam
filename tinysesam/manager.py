@@ -821,6 +821,65 @@ class TinySesam:
             return True
         return role in self.user_roles(user)
 
+    def _delegation(self) -> dict:
+        """`config_check.delegation_graph` of the running `admin_delegates` (T-74) — computed once per configuration
+        state and again when it changes at runtime (the fingerprint is the configuration itself, so a `manages`
+        taken out acts on the next request)."""
+        raw = getattr(self.cfg, "admin_delegates", None) or {}
+        if not raw:
+            return {}
+        try:
+            key = json.dumps(raw, sort_keys=True, default=repr)
+        except (TypeError, ValueError):
+            return {}
+        cached = getattr(self, "_delegation_cache", None)
+        if cached is None or cached[0] != key:
+            cached = (key, config_check.delegation_graph(raw))
+            self._delegation_cache = cached
+        return cached[1]
+
+    def _delegate_scopes(self, user) -> Optional[list]:
+        """What a delegated admin may do (T-74), one entry per delegate role the account holds — or None if `user`
+        is no delegate. The one place that decides it.
+
+        Each entry is `(role, roles, can)`: the roles it manages (`eff`, see `config_check.delegation_graph`) and
+        its actions (`config_check.delegate_scopes`, a pure function). An account with several delegate roles may do
+        what one of them allows — on that role's accounts, never a mix. Only a full browser session
+        (`_via == "session"`) counts: an API key, an OAuth token or an app password never opens the panel, as they
+        never carry the admin flag (R6-5). An administrator is no delegate (the admin scope is wider)."""
+        graph = self._delegation()
+        if not user or not graph:
+            return None
+        try:
+            via, admin = user["_via"], user["is_admin"]
+        except (KeyError, IndexError, TypeError):
+            return None
+        if via != "session" or admin:
+            return None
+        return config_check.delegate_scopes(graph, self.user_roles(user)) or None
+
+    def _admin_panel_visible(self, viewer) -> bool:
+        """Does the top bar and the account page offer `viewer` the admin panel? Administrators and delegated
+        admins (T-74). Only a convenience: the panel checks access itself on every request."""
+        if not viewer:
+            return False
+        try:
+            if viewer["is_admin"]:
+                return True
+        except (KeyError, IndexError, TypeError):
+            return False
+        return self._delegate_scopes(viewer) is not None
+
+    def _strip_delegate_roles(self, d: dict) -> dict:
+        """Take the delegate roles out of an account dict that a machine credential produced (T-74, E4) — an
+        automation key, an OAuth token, an app password: the same places that set `is_admin = 0` (R6-5)."""
+        delegates = getattr(self.cfg, "admin_delegates", None) or {}
+        if delegates and isinstance(delegates, dict):
+            roles = self.user_roles(d)
+            if any(r in delegates for r in roles):
+                d["roles"] = json.dumps([r for r in roles if r not in delegates])
+        return d
+
     def set_roles(self, user_id, roles):
         """Replace the roles of an account."""
         self.store.set_roles(user_id, roles)
@@ -1449,6 +1508,7 @@ class TinySesam:
                 self._app_password_log(row, account, ip, None, host)
                 d: dict = dict(self._as_dict(self.store.get_user(int(account["id"]))) or {})
                 d["is_admin"] = 0
+                self._strip_delegate_roles(d)       # nor a delegate role (T-74)
                 d["_via"] = "app_password"
                 d["_app_password_id"] = int(row["id"])
                 return d, "ok"
@@ -6382,6 +6442,9 @@ class TinySesam:
                         # to keys that were created before the fix or that sit directly in the database.
                         # `is_admin` is left untouched, that comes from the user row.
                         d["roles"] = json.dumps(sorted(set(key_roles) & set(self.user_roles(u))))
+                    if kind != "human":
+                        # Like the flag above: a machine key never carries a delegate role (T-74).
+                        self._strip_delegate_roles(d)
                     return d
         return None
 

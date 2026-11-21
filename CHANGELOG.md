@@ -49,6 +49,26 @@ Patch release cut by the release automation after Dependabot merges:
   the proxy log. Caddy stays the recommended proxy; with nginx and Traefik every request goes through `/auth/forward`.
 - nginx and Traefik pass `/.tinysesam/*` to TinySesam like the Caddy templates: the sign-out at the application
   (T-22) and the top bar JSON (T-76) work there too.
+### Added — delegated admins: team leads manage their team in the panel (T-74)
+
+- `admin_delegates={"team-a-admin": {"roles": ["A", "A-read"]}}`: holders of a delegate role create accounts and
+  invitations, issue sign-in links, lock and unlock, and set or remove the managed roles — only on accounts whose
+  roles all lie within them (no admin, owner or service account, never their own). The rest of the panel stays with
+  administrators; `require_admin` and own admin routes do not change.
+- A hierarchy: `"manages": ["team-a-admin", "team-b-admin"]` puts delegate roles below another — it appoints and
+  removes them and manages their roles too. Never sideways or upwards, never the own delegate role or one above it.
+  `"can": [...]` narrows one delegate role to a part of the actions (`create`, `invite`, `disable`, `roles`,
+  `signin_link`).
+- Every limit is enforced on the server, route by route: a route of the panel is admin-only unless it asks for the
+  delegate scope (`tests/test_delegates.py` walks every route). The panel shows a delegate one tab, their accounts,
+  their roles and their buttons; the top bar, `GET /auth/topbar.json` and the account page offer them the panel.
+- Only a browser session counts: an automation API key, an OAuth token and an app password neither open the panel nor
+  carry a delegate role — also not in `Remote-Groups` (like the admin flag). Step-up as for administrators; creating,
+  inviting and sign-in links always from a fresh confirmation. The audit log names the acting account, the panel's
+  lines also `as=<delegate role>`.
+- `config_check` refuses unknown roles, a delegate role inside a `roles` list, a `manages` target that is no delegate
+  role, a cycle, an unknown `can` value and a delegate role called `admin`; it warns when the panel is not mounted.
+- No schema change. `SECURITY.md` says what a delegate can take over.
 
 ### Security — `nginx-path.conf` let a client's own `Remote-Id` through to PHP
 

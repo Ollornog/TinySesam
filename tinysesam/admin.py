@@ -19,7 +19,7 @@ from fastapi.responses import HTMLResponse
 
 from .errors import ConfigError, StateError
 from .router import _key_kind, _mail_base, hardened_route
-from . import security
+from . import config_check, security
 from ._vocabulary import audit_line_new
 from .store import name_invalid, norm_email, valid_email
 from . import dialog as _dialog
@@ -32,17 +32,84 @@ def build_admin_router(auth) -> APIRouter:
     cfg = auth.cfg
     ar = APIRouter(tags=["admin"], route_class=hardened_route(auth))
 
-    def guard(request: Request):
-        # Admin + (optional) step-up MFA. Browser page request → redirect to login/reauth;
-        # JSON/fetch calls → 401/403 (the panel UI reloads after reauth).
-        #
-        # CSRF is checked HERE, not per route: two panel routes lacked the check
-        # (block key, delete resource) because they read no JSON body, so json_body never
-        # got to run. Closing a whole class is more reliable than patching it route by route
-        # — the next new route would be open again otherwise.
+    def actor_scope(request: Request, delegates: bool):
+        """Who acts, and how far (T-74): `(account, None)` for an administrator, `(account, scopes)` for a delegated
+        admin on a route open to delegates (`auth._delegate_scopes`) — otherwise 403. The ONE place every panel route
+        goes through.
+
+        Admin + (optional) step-up MFA. Browser page request → redirect to login/reauth;
+        JSON/fetch calls → 401/403 (the panel UI reloads after reauth). The scope is decided before the step-up,
+        so an account without panel rights gets its 403 and not a detour through the reauth page.
+
+        CSRF is checked HERE, not per route: two panel routes lacked the check
+        (block key, delete resource) because they read no JSON body, so json_body never
+        got to run. Closing a whole class is more reliable than patching it route by route
+        — the next new route would be open again otherwise. The same holds for the scope: a new route is
+        admin-only unless it asks for `team()` and checks its target with `target()`."""
         if request.method not in ("GET", "HEAD", "OPTIONS"):
             auth.require_csrf(request, request.headers.get("x-csrf-token"))
-        return auth._enforce(request, admin=True, mfa=cfg.admin_require_mfa)
+        u = auth._enforce(request)
+        scopes = None
+        if not auth.is_admin(u):
+            scopes = auth._delegate_scopes(u) if delegates else None
+            if scopes is None:
+                raise HTTPException(403, auth.t("api.admin"))
+        if cfg.admin_require_mfa and not auth.stepup_fresh(request, u):
+            if u.get("_via") == "apikey":
+                raise HTTPException(403, auth.t("api.stepup_session"))
+            auth._deny_stepup(request)
+        return u, scopes
+
+    def guard(request: Request):
+        """Administrators only — every route that is not open to delegated admins."""
+        return actor_scope(request, delegates=False)[0]
+
+    def team(request: Request):
+        """Administrators and delegated admins (T-74): `(account, None)` or `(account, scopes)`."""
+        return actor_scope(request, delegates=True)
+
+    def fits(destination, me, roles) -> bool:
+        """Is this account within one delegate scope (T-74)? `config_check.delegate_may_manage` decides."""
+        if destination is None:
+            return False
+        return config_check.delegate_may_manage(roles, me["id"], destination, auth.user_roles(destination))
+
+    def visible(destination, me, scopes) -> bool:
+        return any(fits(destination, me, roles) for _, roles, _ in scopes)
+
+    def allowed(scopes, action: str) -> list:
+        """The scopes whose delegate role may do `action` (`can`) — 403 if none."""
+        out = [s for s in scopes if action in s[2]]
+        if not out:
+            raise HTTPException(403, auth.t("api.delegate_action"))
+        return out
+
+    def target(me, scopes, uid: int, action: str):
+        """The account a route acts on. An administrator: the owner model as before. A delegate: the action must be
+        theirs (403), and the account in the scope of a delegate role that may do it — otherwise 404, the same answer
+        as for an account that does not exist (no oracle)."""
+        if scopes is None:
+            return owner_protection(me, uid)
+        mine = allowed(scopes, action)
+        destination = auth.store.get_user(uid)
+        if not visible(destination, me, mine):
+            raise HTTPException(404, auth.t("api.not_found"))
+        return destination
+
+    def refused_roles(mine) -> HTTPException:
+        return HTTPException(400, auth.t("api.delegate_roles",
+                                         roles=", ".join(sorted({r for _, roles, _ in mine for r in roles}))))
+
+    def delegate_roles_in(b: dict, scopes, action: str) -> list:
+        """A delegate's `roles` from the body (create, invite): at least one, all from ONE delegate role that may do
+        the action, no admin flag, no service account — checked BEFORE anything is written."""
+        mine = allowed(scopes, action)
+        if b.get("is_admin") or b.get("is_service"):
+            raise HTTPException(403, auth.t("api.admin"))
+        wanted = roles_from(b)
+        if not wanted or not any(set(wanted) <= roles for _, roles, _ in mine):
+            raise refused_roles(mine)
+        return wanted
 
     def owner_protection(me, uid: int):
         """Only an owner may change an owner account (owner model). Otherwise an admin would set a
@@ -62,6 +129,11 @@ def build_admin_router(auth) -> APIRouter:
         lives in one place and not in every route — the next new route inherits it.
         """
         person = auth.current_user(request)
+        # A delegated admin (T-74) says in which role they acted — `actor=` alone would not tell an administrator
+        # from a team lead afterwards.
+        held = [role for role, _, _ in auth._delegate_scopes(person) or []] if person else []
+        if held:
+            detail = f"{detail} as={','.join(sorted(held))}" if detail else f"as={','.join(sorted(held))}"
         auth.audit(event, person["username"] if person else None, auth.client_ip(request), detail)
 
     def other_active_admins(uid: int) -> int:
@@ -107,13 +179,19 @@ def build_admin_router(auth) -> APIRouter:
     # ---------- Users / service accounts ----------
     @ar.get("/api/users")
     def users(request: Request):
-        guard(request)
-        return [uview(u) for u in auth.store.list_users()]
+        me, scopes = team(request)
+        # A delegate sees only the accounts in scope — not the names and addresses of everyone else (T-74).
+        return [uview(u) for u in auth.store.list_users() if scopes is None or visible(u, me, scopes)]
 
     @ar.post("/api/users")
     async def user_create(request: Request):
-        person = guard(request)
+        person, scope = team(request)
         b = await auth.json_body(request)
+        if scope is not None:
+            # A delegate (T-74): only accounts within the listed roles, never an admin or a service — and always from
+            # a fresh confirmation: an account with the team's roles is a way into what those roles open.
+            delegate_roles_in(b, scope, "create")
+            auth._require_fresh(request, person)
         # An account with a password the admin chose, or with admin rights, is a way in for whoever holds the stale
         # admin session (B-12) — so a fresh confirmation also with `admin_require_mfa=False`, like the password
         # reset and the invitation. An account without either (SSO, passkey, service) gives nobody access yet.
@@ -172,12 +250,12 @@ def build_admin_router(auth) -> APIRouter:
 
     @ar.post("/api/users/{uid}/disable")
     async def user_disable(request: Request, uid: int):
-        me = guard(request)
+        me, scope = team(request)
         b = await auth.json_body(request)
         disabled = bool(b.get("disabled", True))
         if disabled and uid == me["id"]:
             raise HTTPException(400, auth.t("api.no_self_lock"))
-        destination = owner_protection(me, uid)
+        destination = target(me, scope, uid, "disable")
         if disabled and destination and destination["is_owner"]:
             raise HTTPException(400, auth.t("api.owner_protected"))
         # The effect lives in ONE place, `auth.set_disabled` (PO decision 2026-09-27):
@@ -226,12 +304,22 @@ def build_admin_router(auth) -> APIRouter:
 
     @ar.post("/api/users/{uid}/roles")
     async def user_roles(request: Request, uid: int):
-        me = guard(request)
+        me, scope = team(request)
         b = await auth.json_body(request)
-        destination = owner_protection(me, uid)
+        destination = target(me, scope, uid, "roles")
         if destination is None:
             raise HTTPException(404)
         roles = roles_from(b)          # checked BEFORE any write, like R6-1 below
+        if scope is not None:
+            # A delegate (T-74) never touches the admin flag — not even to send it unchanged — and sets only roles of
+            # ONE delegate role that may set roles and holds the account in its scope. The strict scope means the
+            # account holds nothing outside it, so the new list replaces the old one whole.
+            if "is_admin" in b:
+                raise HTTPException(403, auth.t("api.admin"))
+            mine = [s for s in allowed(scope, "roles") if fits(destination, me, s[1])]
+            if not any(set(roles) <= s[1] for s in mine):
+                raise refused_roles(mine)
+            roles = list(dict.fromkeys(roles))
         if "is_admin" in b:
             new = bool(b["is_admin"])
             if not new and destination["is_owner"]:
@@ -499,8 +587,11 @@ def build_admin_router(auth) -> APIRouter:
         async def invite(request: Request):
             # An invitation creates an account — possibly an admin — for whoever holds the link: new access
             # (B-12), so a fresh confirmation also with `admin_require_mfa=False` (attack round B).
-            auth._require_fresh(request, guard(request))
+            person, scope = team(request)
             b = await auth.json_body(request)
+            if scope is not None:
+                delegate_roles_in(b, scope, "invite")       # a delegate invites like they create (T-74)
+            auth._require_fresh(request, person)
             email = (b.get("email") or "").strip()
             # The invitation link goes by mail to a third party and carries a valid
             # token — it must never be built from the Host header (R4-01).
@@ -524,8 +615,10 @@ def build_admin_router(auth) -> APIRouter:
     if cfg.magiclink_enabled:
         @ar.post("/api/users/{uid}/signin-link")
         async def user_signin_link(request: Request, uid: int):
-            person = guard(request)
-            owner_protection(person, uid)      # an owner's link is issued only by an owner
+            person, scope = team(request)
+            # An owner's link is issued only by an owner; a delegate's only for an account in scope (T-74) — with it
+            # the delegate can take that account over, which is the point of the link, behind step-up and audit.
+            target(person, scope, uid, "signin_link")
             # A sign-in link is a credential, like an API key: issued by a human in a session,
             # never by a key (same rule as key creation above, R6-6).
             if person.get("_via") != "session":
@@ -627,7 +720,7 @@ def build_admin_router(auth) -> APIRouter:
     if cfg.admin_ui_enabled:
         @ar.get("", response_class=HTMLResponse)
         def admin_page(request: Request):
-            me = guard(request)
+            me, scope = team(request)
             warn = ""
             if cfg.https_mode == "warn" and not auth._is_secure(request):
                 warn = f"<div class=warnbar>{_WARN_HTTP.get(cfg.lang) or _WARN_HTTP['en']}</div>"
@@ -640,7 +733,8 @@ def build_admin_router(auth) -> APIRouter:
             # comes from the request path and already carries it.
             # The top bar's sign-out form needs the CSRF token now; `ensure_csrf` below sets the same one (T-64).
             page_html = render_panel(auth, request.url.path.rstrip("/"), warn=warn, prefix=auth._prefix(request),
-                                     viewer=me, csrf=auth.csrf_token(request) if cfg.csrf_enabled else "")
+                                     viewer=me, csrf=auth.csrf_token(request) if cfg.csrf_enabled else "",
+                                     scope=scope)
             resp = HTMLResponse(_inject_nonce(page_html, nonce))
             auth._set_csp(resp, nonce, auth._prefix(request))
             # Adopt an EXISTING cookie, do not overwrite — same treatment as
@@ -684,7 +778,8 @@ _KEYS = (
     "btn.link signin_link link_once prompt.link_ttl key_new "
     "tab.devices th.client th.resource th.last disconnect no_devices confirm.disconnect "
     "tab.app_passwords no_app_passwords th.name th.apps expired confirm.revoke_app_password "
-    "services no_services pair_service f.service_name pairing_code pairing_once th.key confirm.revoke_service"
+    "services no_services pair_service f.service_name pairing_code pairing_once th.key confirm.revoke_service "
+    "delegate_note"
 ).split()
 
 
@@ -700,17 +795,21 @@ def panel_texts(auth) -> dict:
     return texts
 
 
-def render_panel(auth, base: str, warn: str = "", prefix: str = "", viewer=None, csrf: str = "") -> str:
+def render_panel(auth, base: str, warn: str = "", prefix: str = "", viewer=None, csrf: str = "",
+                 scope=None) -> str:
     """Panel HTML for a given API base. The only place where `_PAGE` is filled —
     so that e.g. a demo/preview embedding shows the same UI as the real panel.
 
     `viewer` (the signed-in admin) and `csrf` feed the top bar's account menu (T-64); without a viewer the bar
-    shows logo and name only.
+    shows logo and name only. `scope`: the scopes of a delegated admin (T-74, `auth._delegate_scopes`) — the page
+    then shows only their roles and actions. Only a view: the routes enforce every limit themselves.
 
     The language comes from `cfg.lang`, as with every other built-in page. Whoever switches it per
     request (`?lang=`) gets the panel delivered translated.
     """
     cfg = auth.cfg
+    view = None if scope is None else {"roles": sorted({r for _, roles, _ in scope for r in roles}),
+                                       "can": sorted({a for _, _, can in scope for a in can})}
     bar = ""
     if getattr(cfg, "topbar_enabled", True):
         bar = (_topbar.render(auth, viewer=viewer, csrf=csrf, current="admin").replace("__TS_P__", prefix)
@@ -729,7 +828,9 @@ def render_panel(auth, base: str, warn: str = "", prefix: str = "", viewer=None,
             .replace('"__BASE__"', json.dumps(base).replace("<", "\\u003c"))
             .replace("__ICON__", favicon_link(getattr(cfg, "brand_icon", "")))
             .replace("__WARN__", warn).replace("__CSRFCK__", auth.csrf_cookie_name)
-            .replace("__ROLES__", json.dumps(list(cfg.available_roles)))
+            .replace("__ROLES__", json.dumps(list(cfg.available_roles) if view is None else view["roles"])
+                     .replace("<", "\\u003c"))
+            .replace("__SCOPE__", "null" if view is None else json.dumps(view).replace("<", "\\u003c"))
             .replace("__REQMAIL__", "true" if (cfg.signup_require_email or
                                               cfg.login_identifier == "email") else "false")
             .replace("__LINKS__", "true" if cfg.magiclink_enabled else "false")
@@ -812,7 +913,9 @@ __WARN__
 __DIALOG__
 <script>
 const B="__BASE__";                                    // mount point (freely chosen) → relative API calls
-const ROLES=__ROLES__;                                 // known roles/groups (config.available_roles)
+const ROLES=__ROLES__;                                 // known roles/groups (config.available_roles; a delegate: their list)
+const SCOPE=__SCOPE__;                                 // null = administrator; {roles,can} = delegated admin (T-74) — a view only, the server decides
+const CAN=a=>!SCOPE||SCOPE.can.includes(a);            // may the viewer do this action (`can` of their delegate roles)?
 const REQMAIL=__REQMAIL__;                             // config.signup_require_email (e-mail required)
 const L=__I18N__;                                      // texts in config.lang — see messages.py
 const LINKS=__LINKS__;                                 // config.magiclink_enabled: admin may issue sign-in links
@@ -821,7 +924,7 @@ const OAUTH=__OAUTH__;                                 // config.oauth_enabled: 
 const APPPW=__APPPW__;                                 // an application takes app passwords: tab "app passwords" (T-66)
 const SVC=__SVC__;                                     // config.oauth_service_clients: pair services (T-60)
 const RESOURCES=__RESOURCES__;                         // config.oauth_resources: what a service may be paired for
-const TABS=[["users",L["tab.users"]],["sessions",L["tab.sessions"]]].concat(OAUTH?[["devices",L["tab.devices"]]]:[]).concat(APPPW?[["apppw",L["tab.app_passwords"]]]:[]).concat([["security",L["tab.security"]],["audit",L["tab.audit"]]]);
+const TABS=SCOPE?[["users",L["tab.users"]]]:[["users",L["tab.users"]],["sessions",L["tab.sessions"]]].concat(OAUTH?[["devices",L["tab.devices"]]]:[]).concat(APPPW?[["apppw",L["tab.app_passwords"]]]:[]).concat([["security",L["tab.security"]],["audit",L["tab.audit"]]]);
 let cur="users";
 // H2 (T-45): the panel demands a fresh confirmation (`admin_require_mfa`). A tab left open past the
 // window gets 403 + X-TinySesam-Reauth — go to the reauth page and come back here instead of failing.
@@ -856,12 +959,12 @@ const V=h=>document.getElementById("view").innerHTML=h;
 
 async function users(){
   const us=await g("/api/users");
-  V(`<div class=card><h2>${esc(L.new_user)}</h2><div class=row>
+  V(`${SCOPE?`<div class="muted small">${esc(L.delegate_note)} ${esc(SCOPE.roles.join(", "))}</div>`:""}${CAN("create")?`<div class=card><h2>${esc(L.new_user)}</h2><div class=row>
     <input id=nu placeholder="${esc(L["f.username"])}"><input id=ne type=email placeholder="${esc(REQMAIL?L["f.email"]:L["f.email_optional"])}">
     <input id=np type=password placeholder="${esc(L["f.password"])}">
     <input id=nr placeholder="${esc(L["f.roles"])}" class=w200>
-    <label><input type=checkbox id=na> ${esc(L["f.admin"])}</label><label><input type=checkbox id=ns> ${esc(L["f.service"])}</label>
-    <button ${on("mkuser")}>${esc(L.create)}</button></div></div>
+    ${SCOPE?"":`<label><input type=checkbox id=na> ${esc(L["f.admin"])}</label><label><input type=checkbox id=ns> ${esc(L["f.service"])}</label>`}
+    <button ${on("mkuser")}>${esc(L.create)}</button></div></div>`:""}
     <table><tr><th>${esc(L["th.user"])}</th><th>${esc(L["th.email"])}</th><th>${esc(L["th.type"])}</th><th>${esc(L["th.roles"])}</th><th>${esc(L["th.status"])}</th><th>${esc(L["th.actions"])}</th></tr>`+
     us.map(u=>`<tr><td><b>${esc(u.username)}</b></td>
       <td>${esc(u.email)||'<span class=muted>—</span>'}</td>
@@ -869,19 +972,21 @@ async function users(){
       <td>${esc((u.roles||[]).join(", "))||'—'}</td>
       <td>${u.disabled?`<span class="badge red">${esc(u.disabled_by==="confirmation"?L.disabled_confirmation:L.disabled)}</span>`:`<span class="badge grn">${esc(L.active)}</span>`}</td>
       <td>
-        <button class="${u.disabled?'ok':'warn'}" ${on("dis",u.id,!u.disabled)}>${esc(u.disabled?L.enable:L.disable)}</button>
-        <button class=sec ${on("pw",u.id)}>${esc(L["btn.pw"])}</button>
-        <button class=sec ${on("ren",u.id,u.username)}>${esc(L["btn.rename"])}</button>
-        <button class=sec ${on("roles",u.id,(u.roles||[]).join(','),u.is_admin?1:0)}>${esc(L["btn.roles"])}</button>
-        <button class=sec ${on("keys",u.id,u.username)}>${esc(L["btn.keys"])}</button>
-        <button class=sec ${on("pks",u.id,u.username)}>${esc(L["btn.passkeys"])}</button>
-        ${LINKS&&!u.is_service&&!u.disabled?`<button class=sec ${on("link",u.id,u.username)}>${esc(L["btn.link"])}</button>`:''}
-        <button class=sec ${on("own",u.id,!u.is_owner)}>${esc(u.is_owner?L["btn.owner_off"]:L["btn.owner_on"])}</button>
-        <button class=warn ${on("deluser",u.id)}>${esc(L["btn.delete"])}</button>
+        ${CAN("disable")?`<button class="${u.disabled?'ok':'warn'}" ${on("dis",u.id,!u.disabled)}>${esc(u.disabled?L.enable:L.disable)}</button>`:""}
+        ${SCOPE?"":`<button class=sec ${on("pw",u.id)}>${esc(L["btn.pw"])}</button>
+        <button class=sec ${on("ren",u.id,u.username)}>${esc(L["btn.rename"])}</button>`}
+        ${CAN("roles")?`<button class=sec ${on("roles",u.id,(u.roles||[]).join(','),u.is_admin?1:0)}>${esc(L["btn.roles"])}</button>`:""}
+        ${SCOPE?"":`<button class=sec ${on("keys",u.id,u.username)}>${esc(L["btn.keys"])}</button>
+        <button class=sec ${on("pks",u.id,u.username)}>${esc(L["btn.passkeys"])}</button>`}
+        ${LINKS&&CAN("signin_link")&&!u.is_service&&!u.disabled?`<button class=sec ${on("link",u.id,u.username)}>${esc(L["btn.link"])}</button>`:''}
+        ${SCOPE?"":`<button class=sec ${on("own",u.id,!u.is_owner)}>${esc(u.is_owner?L["btn.owner_off"]:L["btn.owner_on"])}</button>
+        <button class=warn ${on("deluser",u.id)}>${esc(L["btn.delete"])}</button>`}
       </td></tr><tr id=r${u.id}></tr><tr id=k${u.id}></tr>`).join("")+`</table>`);
 }
-async function mkuser(){const b={username:nu.value,email:ne.value,password:np.value,roles:nr.value.split(",").map(s=>s.trim()).filter(Boolean),is_admin:na.checked,is_service:ns.checked};
-  if(REQMAIL&&!ns.checked&&!ne.value.trim()){tsAlert(L["err.email"]);return}
+async function mkuser(){const b={username:nu.value,email:ne.value,password:np.value,roles:nr.value.split(",").map(s=>s.trim()).filter(Boolean)};
+  // A delegate's form has no admin/service box (T-74); the fields stay out of the body altogether.
+  if(!SCOPE){b.is_admin=na.checked;b.is_service=ns.checked}
+  if(REQMAIL&&!b.is_service&&!ne.value.trim()){tsAlert(L["err.email"]);return}
   const r=await p("/api/users",b);if(!rejected(r))users()}
 async function own(id,o){if(!await tsConfirm(o?L["confirm.owner_on"]:L["confirm.owner_off"]))return;rejected(await p(`/api/users/${id}/owner`,{owner:o}));users()}
 async function dis(id,d){if(!await tsConfirm(d?L["confirm.disable"]:L["confirm.enable"],{danger:d}))return;rejected(await p(`/api/users/${id}/disable`,{disabled:d}));users()}
@@ -894,7 +999,7 @@ async function roles(id,cur,isadmin){
     : `<input id="rf${id}" value="${esc(cur)}" placeholder="${esc(L["f.roles"])}" class=w280>`;
   document.getElementById("r"+id).innerHTML=`<td colspan=5><div class=card><h2>${esc(L.roles_groups)}</h2>
     <div class=row>${inner||`<span class=muted>${esc(L.no_roles)}</span>`}</div>
-    <div class=row><label><input type=checkbox id="ra${id}" ${isadmin?"checked":""}> ${esc(L["f.admin"])}</label>
+    <div class=row>${SCOPE?"":`<label><input type=checkbox id="ra${id}" ${isadmin?"checked":""}> ${esc(L["f.admin"])}</label>`}
       <button ${on("saveroles",id)}>${esc(L.save)}</button>
       <button class=sec ${on("clr",id)}>${esc(L.cancel)}</button></div></div></td>`;
 }
@@ -902,7 +1007,8 @@ async function saveroles(id){
   const roles = ROLES.length
     ? [...document.querySelectorAll(".rc_"+id+":checked")].map(c=>c.value)
     : (document.getElementById("rf"+id).value||"").split(",").map(s=>s.trim()).filter(Boolean);
-  rejected(await p(`/api/users/${id}/roles`,{roles,is_admin:document.getElementById("ra"+id).checked}));users();
+  const b={roles};if(!SCOPE)b.is_admin=document.getElementById("ra"+id).checked;   // a delegate never sends the flag (T-74)
+  rejected(await p(`/api/users/${id}/roles`,b));users();
 }
 // The detail row under an account shows one thing at a time: its keys, its passkeys or a sign-in link. Each view
 // claims the row before it waits for the server and writes only while its claim is the newest — otherwise a reply

@@ -6,7 +6,7 @@ pages show only logo and name. An app builds its own pages with the same bar thr
 
 * **Left:** the application logo (`brand_icon` when it is a path or a `data:image/…` address, otherwise the
   built-in mark drawn in `--ts-accent`), the name (`gate_brand`, else `rp_name`) and the links of `topbar_links`.
-* **Right:** the account menu — account name, "Account", "Admin panel" (admins only), Light / Dark / System and
+* **Right:** the account menu — account name, "Account", "Admin panel" (admins and delegated admins, T-74), Light / Dark / System and
   "Sign out" (a POST with the CSRF field, like the sign-out confirmation page).
 * **Phone:** below 640 px the links move into the menu; every tap target is at least 44 px high.
 * **Keyboard:** the menu button carries `aria-expanded`; Escape closes and puts the focus back on the button, a click
@@ -220,7 +220,7 @@ def data(auth, viewer, *, base: str) -> dict:
     out["links"] = [{"title": title, "href": href} for title, href in visible_links(auth, viewer)]
     if getattr(cfg, "account_enabled", True):
         out["account"] = {"shown": True, "href": f"{base}/auth/account"}
-    if _field(viewer, "is_admin") and getattr(cfg, "admin_ui_enabled", True):
+    if auth._admin_panel_visible(viewer) and getattr(cfg, "admin_ui_enabled", True):
         out["admin_panel"] = {"shown": True, "href": f"{base}{cfg.admin_path}"}
     out["logout"] = {"href": f"{base}/auth/logout"}
     return out
@@ -255,7 +255,7 @@ def render(auth, *, viewer=None, menu: bool = True, csrf: str = "", current: str
     if getattr(cfg, "account_enabled", True):
         items.append(f"<a class=tsbar-item href='__TS_P__/auth/account'{cur('account')}>{_svg('user')}"
                      f"{_e(t('bar.account'))}</a>")
-    if _field(viewer, "is_admin") and getattr(cfg, "admin_ui_enabled", True):
+    if auth._admin_panel_visible(viewer) and getattr(cfg, "admin_ui_enabled", True):
         items.append(f"<a class=tsbar-item href='{_e('__TS_P__' + cfg.admin_path)}'{cur('admin')}>{_svg('admin')}"
                      f"{_e(t('acc.admin'))}</a>")
     if items:

@@ -441,6 +441,17 @@ class TinySesamConfig:
     #: account's password (T-46, ASVS 6.4.1): the next password sign-in stays half until the holder
     #: has chosen an own one (the page `/auth/setup`). `False` = the admin's password stays.
     admin_password_must_change: bool = True
+    #: Delegated admins (T-74): a role whose holders manage the accounts of their team in the admin panel without
+    #: being administrators — `{"teamadmin": {"roles": ["editors", "viewers"]}}`. A delegate creates accounts and
+    #: invitations, issues sign-in links, locks and unlocks, and sets or removes the listed roles — only on accounts
+    #: whose roles all stand in the list (no admin, owner or service account, never their own). Optional per role:
+    #: `"manages": ["team-a-admin", …]` — delegate roles below it (a hierarchy without cycles; it appoints and
+    #: removes them and manages their roles too), `"can": ["create", "invite", "disable", "roles", "signin_link"]` —
+    #: a part of the actions (default all). The rest of the panel stays with administrators. Only a browser session
+    #: counts: API keys, OAuth tokens and app passwords carry neither the panel nor the delegate role. The same
+    #: step-up as administrators (`admin_require_mfa`). Every role must stand in `available_roles`; a delegate role
+    #: stands in no `roles` list, only in `manages`. See README, "Delegated administration".
+    admin_delegates: dict = field(default_factory=dict)
 
     # --- Sessions (server-side, revocable) ---
     session_cookie: str = "tinysesam_session" # name of the session cookie (tell them apart when several apps share a domain)

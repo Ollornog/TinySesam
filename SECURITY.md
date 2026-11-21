@@ -129,6 +129,17 @@ rate limit, open-redirect protection via `safe_next`). Even so: review it yourse
   same events appear on the account page under "Recent activity". Send your other mails from
   the hook (ideally via a queue — it runs synchronously in the request). An exception in the hook
   never undoes the change, but lands in the security log.
+- **Delegated admins can take over the accounts in their scope — on purpose (T-74).** A delegate role
+  (`admin_delegates`) lets its holders issue a sign-in link for every account in their scope; whoever redeems it is
+  signed into that account. A delegate therefore holds, in effect, every managed role: they can also create an account
+  with those roles and sign into it. In a hierarchy this goes downwards: `area-admin` can take over every account of
+  the teams below it and every `team-*-admin` it manages, a `team-a-admin` only plain accounts of team A — never a
+  peer, an account above, another branch, an administrator, an owner or a service account, never by an API key, an
+  OAuth token or an app password. It sits behind the same step-up as an administrator, a sign-in link always behind a
+  fresh confirmation, and every action is in the audit log with the acting account. Grant a delegate role only to
+  someone you would trust with every account it manages; take `signin_link` (and `invite`, `create`) out of `can`
+  where that is too much. A delegate can also unlock an account an administrator locked (the lock does not record who
+  set it): to take an account out of a delegate's reach, take the managed roles from it.
 - **Known limit — Basic auth has no second factor; that is why only app passwords take it (T-66).** WebDAV,
   CalDAV/CardDAV and Git clients send a user name and a password with every request and cannot answer a TOTP prompt
   or hold a passkey. With `forward_apps[host]["app_passwords"] = True` the gate accepts `Authorization: Basic` for that

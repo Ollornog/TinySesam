@@ -1621,7 +1621,8 @@ WebDAV-Client hinter einem echten Caddy ist `tests/e2e_app_passwords.py` (von Ha
 
 ## Admin-Panel
 
-Eingebautes Panel unter **`/auth/admin`** (nur `is_admin`), einbindbar ohne Extra-Setup:
+Eingebautes Panel unter **`/auth/admin`** (Administratoren; Delegierte sehen ihren Teil — siehe
+[Delegierte Verwaltung](#delegierte-verwaltung)), einbindbar ohne Extra-Setup:
 
 - **Benutzer & Service-Accounts:** anlegen, **explizit sperren/entsperren** (`disabled` — Konto bleibt, Login blockiert, Sitzungen enden sofort; Selbst-Sperr-Schutz; im Code: `auth.set_disabled`), Passwort-Reset, Rollen/Admin setzen.
 - **API-Keys** je User: erzeugen (einmalige Anzeige) / widerrufen.
@@ -1670,6 +1671,60 @@ JSON-API unter `<mount>/api/*` (dieselben Aktionen — für eigene UIs / Automat
   ab. `"strict"` (Vorgabe), `"off"` (kein Header — z.B. weil ein Proxy die CSP setzt) oder eine
   eigene Policy (ein `{nonce}` darin wird je Antwort ersetzt). Ein Template-Override, das ein
   `Response` zurückgibt, bleibt unangetastet und bekommt `ctx["nonce"]` für seine eigene.
+
+## Delegierte Verwaltung
+
+Teamleitungen verwalten die Konten ihres Teams im eingebauten Panel, ohne Administratoren zu werden (T-74). Das Modell
+sind rollenbasierte Rechte mit Wirkungsbereich — wie Organisationseinheiten in einem Verzeichnis oder Administrative
+Units in Entra ID: Eine **Delegiertenrolle** nennt die Rollen, die sie verwaltet, und wer sie trägt, handelt nur an
+Konten in diesem Bereich. Eine Delegiertenrolle kann weitere Delegiertenrollen unter sich verwalten (`manages`); eine
+zweistufige Hierarchie sieht so aus:
+
+```python
+from tinysesam import TinySesamConfig
+
+cfg = TinySesamConfig(
+    available_roles=["X", "A", "A-read", "B", "B-read", "area-admin", "team-a-admin", "team-b-admin"],
+    admin_delegates={
+        "area-admin":   {"roles": ["X"], "manages": ["team-a-admin", "team-b-admin"]},
+        "team-a-admin": {"roles": ["A", "A-read"]},
+        "team-b-admin": {"roles": ["B", "B-read"], "can": ["create", "disable", "roles"]},
+    },
+)
+```
+
+- **Was ein Delegierter tut:** Konten und Einladungen anlegen, einen Anmeldelink ausstellen, sperren und entsperren,
+  verwaltete Rollen setzen oder entfernen — nur an Konten, deren Rollen **alle** in den verwalteten Rollen liegen
+  (mindestens eine). Nie an einem Admin-, Owner- oder Dienstkonto, nie am eigenen. Bewusst streng: Ein Konto in zwei
+  Teams gehört dem, der über beiden steht.
+- **Verwaltete Rollen:** die eigenen `roles` einer Delegiertenrolle, die Delegiertenrollen darunter (sie ernennt und
+  setzt sie ab) und deren Rollen. Oben verwaltet `area-admin` X, A, A-read, B und B-read und ernennt `team-a-admin`
+  und `team-b-admin`; `team-a-admin` verwaltet A und A-read. `manages` ist eine Hierarchie ohne Zyklen; eine Rolle
+  darf mehrere Eltern haben.
+- **Nie seitwärts oder nach oben:** Ein `team-a-admin` sieht weder Team B noch andere `team-a-admin`-Konten noch den
+  `area-admin`. Ein Delegierter vergibt nie die eigene Delegiertenrolle oder eine darüber. Ein Konto mit mehreren
+  Delegiertenrollen darf, was eine davon erlaubt, an den Konten dieser Rolle.
+- **`can`** schränkt die Aktionen einer Delegiertenrolle ein (`create`, `invite`, `disable`, `roles`, `signin_link`;
+  ohne Angabe alle). Es vererbt sich weder nach oben noch nach unten.
+- **Der Rest des Panels bleibt bei Administratoren** — Passwort-Reset, Umbenennen, Löschen, Keys, Passkeys, Sitzungen,
+  verbundene Programme, App-Passwörter, Härtung, Audit. Jede Grenze erzwingt der Server Route für Route; das Panel
+  zeigt einem Delegierten nur seinen Reiter, seine Konten, seine Rollen und seine Schaltflächen. Kopfleiste und
+  Kontoseite bieten ihm „Admin-Panel“ an. `require_admin` und eigene Admin-Routen ändern sich nicht: Ein Delegierter
+  ist kein Admin.
+- **Nur eine Browser-Sitzung:** Ein API-Key, ein OAuth-Token oder ein App-Passwort öffnet weder das Panel noch trägt
+  es eine Delegiertenrolle (auch nicht in `Remote-Groups`) — wie das Admin-Flag. Die Sitzung behält sie, eine
+  Anwendung kann also eine eigene Teamseite zeigen (`topbar_links` mit `{"role": "team-a-admin"}`).
+- **Step-up und Audit:** dieselbe Bestätigung wie für Administratoren (`admin_require_mfa`); Anlegen, Einladen und ein
+  Anmeldelink verlangen immer eine frische. Das Audit-Log nennt das handelnde Konto (`actor=`), die eigenen Zeilen des
+  Panels auch `as=<Delegiertenrolle>`. Delegierte haben keine Audit-Ansicht: Die Zeilen tragen Adressen anderer.
+- **Beim Start geprüft:** jede Rolle in `available_roles`, eine Delegiertenrolle nie in einer `roles`-Liste (ernannt
+  wird nur über `manages`), `manages` nennt Delegiertenrollen, kein Zyklus, `can` nur bekannte Aktionen, keine
+  Delegiertenrolle namens `admin`.
+- **Rollen vom Identitätsanbieter** (`*_group_role_map`) setzt die nächste Anmeldung neu — die Änderung eines
+  Delegierten an so einer Rolle hält nicht.
+
+Was ein Delegierter übernehmen kann (ein Anmeldelink meldet im Konto an), steht in
+[`SECURITY.de.md`](https://github.com/Ollornog/TinySesam/blob/main/i18n/SECURITY.de.md).
 
 ## Neu in 0.5 — Kurzreferenz
 

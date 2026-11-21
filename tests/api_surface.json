@@ -1098,6 +1098,10 @@
       "field": "int = 60",
       "tier": "A"
     },
+    "admin_delegates": {
+      "field": "dict = {}",
+      "tier": "B"
+    },
     "admin_enabled": {
       "field": "bool = True",
       "tier": "A"
