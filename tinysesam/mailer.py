@@ -16,6 +16,7 @@ import logging
 import smtplib
 import ssl
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from email.message import EmailMessage
 from typing import Optional
@@ -108,13 +109,65 @@ class Outbox:
         self._pool: Optional[ThreadPoolExecutor] = None
         self._unclosed = 0
         self._lock = threading.Lock()
+        # T-67: jobs handed to the pool and not finished yet, and whether `close()` was called. Counted in the
+        # worker itself (not by `_release`, which for `afterwards` runs on the event loop): `close()` may be
+        # called from the loop's thread and must not wait for the loop.
+        self._active = 0
+        self._idle = threading.Condition(self._lock)
+        self._closed = False
 
-    def _executor(self) -> ThreadPoolExecutor:
+    def _submit(self, job):
+        """Hand `job` to the pool, counted as active until it has run — or None after `close()`.
+
+        Check and count happen under one lock with `close()`: a job is either refused or counted before
+        `close()` looks at the counter, never neither."""
         with self._lock:
+            if self._closed:
+                return None
+            self._active += 1
             if self._pool is None:
                 self._pool = ThreadPoolExecutor(max_workers=self.worker,
                                                 thread_name_prefix="tinysesam-mail")
-            return self._pool
+            pool = self._pool
+
+        def _counted():
+            try:
+                return job()
+            finally:
+                with self._lock:
+                    self._active -= 1
+                    self._idle.notify_all()
+        return pool.submit(_counted)
+
+    @property
+    def closed(self) -> bool:
+        """True once `close()` was called: new jobs are refused."""
+        return self._closed
+
+    def close(self, timeout: float = 10.0) -> bool:
+        """Refuse new jobs, wait up to `timeout` seconds for the queued ones, then stop the workers (T-67).
+
+        True if every job has run; False if some were still running at the deadline — the workers are then
+        left to finish on their own (a thread cannot be stopped from outside), and whoever closes the
+        database afterwards would pull it from under them. Idempotent: a second call only waits again."""
+        end = time.monotonic() + max(0.0, timeout)
+        with self._lock:
+            self._closed = True
+            while self._active:
+                rest = end - time.monotonic()
+                if rest <= 0:
+                    break
+                self._idle.wait(rest)
+            running = self._active
+            pool = None
+            if not running:
+                pool, self._pool = self._pool, None
+        if running:
+            log.warning("Outbox closed with %d job(s) still running after %.1f s", running, timeout)
+            return False
+        if pool is not None:
+            pool.shutdown(wait=True)
+        return True
 
     def _reserve(self) -> bool:
         with self._lock:
@@ -129,8 +182,9 @@ class Outbox:
 
     def enqueue(self, job) -> bool:
         """Start `job()` in the own worker without waiting for it — for places without a
-        response object (the lockout in login, ASVS 6.3.5). False if the queue is full;
-        the job is dropped then."""
+        response object (the lockout in login, ASVS 6.3.5). False if the queue is full or the
+        outbox is closed (`close()`); the job is dropped then — logged, never raised: a request
+        in flight must not fail because of it."""
         if not self._reserve():
             log.warning("Notice queue full (%d) — send dropped", self.max_unclosed)
             return False
@@ -142,7 +196,11 @@ class Outbox:
                 log.exception("Notice job failed")
             finally:
                 self._release()
-        future = self._executor().submit(_execution)
+        future = self._submit(_execution)
+        if future is None:          # closed (`close()`): refused, the reservation goes back
+            self._release()
+            log.warning("Notice outbox closed (shutdown) — job refused")
+            return False
         with self._lock:
             self._running = [z for z in getattr(self, "_running", []) if not z.done()] + [future]
         return True
@@ -159,19 +217,26 @@ class Outbox:
 
         `job` catches its own errors (it knows what to clean up); whatever still
         gets through is logged here instead of silently swallowed. `at_overflow()` runs when
-        the queue is full — the job is dropped then.
+        the queue is full or the outbox is closed — the job is dropped then.
         """
+        def _drop(reason):
+            log.warning(reason)
+            if at_overflow:
+                try:
+                    at_overflow()
+                except Exception:   # noqa: BLE001 — cleanup must not bring the server down
+                    log.exception("Cleanup after a discarded send failed")
+
         async def _execution():
             if not self._reserve():
-                log.warning("Mail queue full (%d) — send dropped", self.max_unclosed)
-                if at_overflow:
-                    try:
-                        at_overflow()
-                    except Exception:   # noqa: BLE001 — cleanup must not bring the server down
-                        log.exception("Cleanup after a discarded send failed")
+                _drop(f"Mail queue full ({self.max_unclosed}) — send dropped")
                 return
             try:
-                await asyncio.wrap_future(self._executor().submit(job))
+                future = self._submit(job)
+                if future is None:
+                    _drop("Mail outbox closed (shutdown) — send dropped")
+                    return
+                await asyncio.wrap_future(future)
             except Exception:   # noqa: BLE001
                 log.exception("Mail job failed")
             finally:

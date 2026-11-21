@@ -171,6 +171,10 @@
       "sig": "(request: 'Request') -> 'str'",
       "tier": "B"
     },
+    "close": {
+      "sig": "(timeout: 'float' = 10.0) -> 'bool'",
+      "tier": "A"
+    },
     "complete_mfa": {
       "sig": "(token) -> 'Optional[str]'",
       "since": "0.22.0",
@@ -421,6 +425,10 @@
     "json_body": {
       "sig": "(request: 'Request') -> 'dict'",
       "tier": "B"
+    },
+    "lifespan": {
+      "sig": "(app=None)",
+      "tier": "A"
     },
     "lift_lockout": {
       "sig": "(user_id, methods=None) -> 'int'",
@@ -1213,6 +1221,10 @@
     },
     "csp": {
       "field": "str = 'strict'",
+      "tier": "A"
+    },
+    "csp_report": {
+      "field": "bool = False",
       "tier": "A"
     },
     "csrf_cookie": {
@@ -2433,6 +2445,10 @@
       "tier": "B"
     },
     "POST /auth/app-passwords/{pw_id}/revoke": {
+      "keys": [],
+      "tier": "B"
+    },
+    "POST /auth/csp-report": {
       "keys": [],
       "tier": "B"
     },

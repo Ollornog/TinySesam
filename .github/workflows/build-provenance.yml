@@ -1,0 +1,139 @@
+name: build-provenance
+
+# The isolated builder of wheel and sdist (T-55, SLSA v1.1 Build L3) — a REUSABLE workflow, called only by release.yml
+# (job `provenance`), never on its own.
+#
+# Why a workflow of its own: an attestation names the workflow that SIGNED it. Signed from release.yml, the
+# provenance said "release.yml built this" — and release.yml is the file a tag push, the release automation and
+# every pull request run through. Signed from here, the certificate carries this file as the build signer, and a
+# verifier pins exactly it:
+#
+#   gh attestation verify tinysesam-X.Y.Z-py3-none-any.whl --owner Ollornog \
+#     --signer-workflow Ollornog/TinySesam/.github/workflows/build-provenance.yml --source-ref refs/tags/vX.Y.Z
+#
+# That is GitHub's way to SLSA Build L3 with artifact attestations (reusable workflow builds AND attests; the caller
+# can neither change the steps nor reach the signing identity). Same rule as in release.yml (B4-4): the identity
+# lives in a job that runs no code of the repo and no package — `attest` only downloads and attests; `rebuild`
+# builds without any write permission.
+#
+# The build is bit-reproducible (B4-8). `rebuild` therefore builds the commit a SECOND time, independently of
+# release.yml's `build`, and holds its bytes against the checksums of that build: what goes to the GitHub release
+# and to PyPI (from `build`) is exactly what this builder produced and attests. A difference turns the release red
+# before anything is published. On every pull request this runs as part of the dry run (`attest: false`): rebuild,
+# comparison and SBOM — only the attestation waits for the tag.
+#
+# The SBOM (SPDX, like the images'): Syft reads wheel and sdist themselves badly — the wheel is a zip it does not
+# open, and the sdist carries the lock files of the image and the Caddy module list, which are not dependencies of
+# the library. So the wheel is installed into an empty directory together with its dependencies, as pip resolves
+# them on the runner (Linux x86_64, Python 3.13, no extras) at release time, and Syft describes that directory:
+# tinysesam itself plus every package `pip install tinysesam==X.Y.Z` brought along that day. A later install may
+# resolve newer versions within the ranges in pyproject.toml — the SBOM is the state of the release, not a lock.
+
+on:
+  workflow_call:
+    inputs:
+      attest:
+        description: "Attest provenance and SBOM — true only for a tag"
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  rebuild:
+    timeout-minutes: 15
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
+        with:
+          python-version: "3.13"
+
+      # The same recipe as release.yml, job `build` — tests/test_repo.py demands the two blocks word for word.
+      - name: Build the packages
+        run: |
+          python -m venv "$RUNNER_TEMP/build-tools"
+          "$RUNNER_TEMP/build-tools/bin/pip" install --require-hashes --no-deps -r .github/packaging/requirements.txt
+          SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"
+          export SOURCE_DATE_EPOCH
+          "$RUNNER_TEMP/build-tools/bin/python" -m build --no-isolation   # dist/*.whl and dist/*.tar.gz
+          python scripts/_normalize_artifacts.py dist/*.whl dist/*.tar.gz
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          name: checksums
+          path: shipped
+      - name: Bit for bit the bytes of the shipped build
+        run: |
+          cd dist
+          ls -1 ./*.whl ./*.tar.gz
+          sha256sum -c ../shipped/SHA256SUMS
+
+      # Wheels only (`--only-binary :all:`): installing a wheel runs no code of the package, building an sdist would.
+      # No identity in this job; what comes out is a description, nothing that runs later.
+      - name: Install the wheel with its dependencies (for the SBOM)
+        run: |
+          python -m pip install --disable-pip-version-check --only-binary :all: --target "$RUNNER_TEMP/sbom-site" dist/*.whl
+
+      - name: Generate the SBOM of wheel and sdist
+        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c  # v0.24.3
+        with:
+          path: ${{ runner.temp }}/sbom-site
+          format: spdx-json
+          output-file: tinysesam-sbom.spdx.json
+          upload-artifact: false
+
+      - name: The SBOM knows tinysesam in the built version
+        run: |
+          set -euo pipefail
+          version="$(basename dist/*.whl | cut -d- -f2)"
+          jq -e --arg v "$version" '[.packages[] | select(.name == "tinysesam" and .versionInfo == $v)] | length > 0' \
+            tinysesam-sbom.spdx.json >/dev/null || { echo "SBOM does not know tinysesam $version"; exit 1; }
+          jq -r '.packages[] | "\(.name) \(.versionInfo)"' tinysesam-sbom.spdx.json | sort -u
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: provenance-dist
+          path: |
+            dist/*.whl
+            dist/*.tar.gz
+          if-no-files-found: error
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: sbom-dist
+          path: tinysesam-sbom.spdx.json
+          if-no-files-found: error
+
+  # The signing job: no checkout, no pip, no build — it knows only the two files and the SBOM.
+  attest:
+    needs: rebuild
+    if: inputs.attest
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write      # Sigstore identity of THIS workflow for the attestations
+      attestations: write  # hand them to GitHub
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          name: provenance-dist
+          path: dist
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          name: sbom-dist
+          path: .
+      - name: Attest the provenance of wheel and sdist
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8  # v4.2.2
+        with:
+          subject-path: "dist/*.whl, dist/*.tar.gz"
+      - name: Attest the SBOM of wheel and sdist
+        uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e  # v4.1.0
+        with:
+          subject-path: "dist/*.whl, dist/*.tar.gz"
+          sbom-path: tinysesam-sbom.spdx.json

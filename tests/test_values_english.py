@@ -160,7 +160,7 @@ human_a = a.create_api_key(anna, name="cli", kind="human")["key"]
 automaton_a = a.create_api_key(anna, name="ci")["key"]
 a.request_email_change(anna, "anna.neu@example.com", BASE)()
 link_a = _link(post_a)
-a.store.db.close()
+a.close()
 # This is how the file lay under 0.21.x: old values, stamp 11.
 _raw(path_a, "UPDATE api_key SET kind='mensch' WHERE kind='human';"
              "UPDATE api_key SET kind='automat' WHERE kind='automation';"
@@ -184,13 +184,13 @@ r.check("(a) … `api_key_kind`, `list_api_keys` and the open link name the Engl
         a.api_key_kind(human_a) == "human" and a.api_key_kind(automaton_a) == "automation"
         and sorted(k["kind"] for k in a.list_api_keys(anna)) == ["automation", "human"]
         and a.peek_magic(link_a, purpose="email_change")["payload"] == {"old": "anna@example.com"})
-a.store.db.close()
+a.close()
 a, log_a2 = _record(lambda: _setup(path_a, post_a))
 r.check("(a) second start: nothing left to rewrite (idempotent), same file",
         _state(path_a) == afterwards_a and "rewritten to the English names" not in log_a2, log_a2[-300:])
 r.check("(a) … and the link from 0.21.x redeems like any other",
         a.confirm_email_change(link_a) == "ok" and a.get_user(anna)["email"] == "anna.neu@example.com")
-a.store.db.close()
+a.close()
 
 # ── (a') Audit and log lines stay as they were ────────────────────────────────────────────────
 # Operators' filters hang on them (PO decision 2026-09-27): the kind of a key still appears there
@@ -221,7 +221,7 @@ r.check("(a') audit: `apikey_create`/`apikey_use` name the kind with `kind=autom
             "SELECT detail FROM audit WHERE event IN ('apikey_create', 'apikey_use')")), str(_details))
 r.check("(a') security log: the human key without a session is named `'human'` in the (English) log text",
         "API key of kind 'human' presented without a matching session" in _sec.getvalue(), _sec.getvalue()[-300:])
-g.store.db.close()
+g.close()
 
 # ── (b) Rollback: 0.21.x wrote old values again on the file (stamp 12) ─────────────────────────
 # An older version does not lower the stamp. An old value is still read correctly, even
@@ -254,14 +254,14 @@ r.check("(b) mixed, without restart: `mensch` counts as `human` (only with a ses
         f"{w_b} {[(k['name'], k['kind']) for k in b.list_api_keys(anna_b)]}")
 r.check("(b) … the link from 0.21.x shows `old`, not `alt`",
         b.peek_magic(link_b, purpose="email_change")["payload"] == {"old": "anna@example.com"})
-b.store.db.close()
+b.close()
 b, log_b = _record(lambda: _setup(path_b))
 r.check("(b) the next start rewrites the keys (at every start), the link not (stamp already 12)",
         _state(path_b) == (Store.SCHEMA_VERSION, ["human", "human", "automation"], [{"alt": "anna@example.com"}])
         and "2 stored values rewritten to the English names" in log_b, f"{_state(path_b)} {log_b[-200:]!r}")
 r.check("(b) … and it remains valid, redeemed with `old` in the result",
         b.redeem_magic(link_b, purpose="email_change")["payload"] == {"old": "anna@example.com"})
-b.store.db.close()
+b.close()
 
 # ── (c) The way back from docs/OPERATIONS.md: exactly the block that is stated there ──────────────
 # (Mutation probe: remove the line for `human` in the SQL block of the docs → (c) red.)
@@ -291,14 +291,14 @@ if _sql:
     c.create_api_key(anna_c, name="cli", kind="human")
     c.create_api_key(anna_c, name="ci")
     c.request_email_change(anna_c, "anna.c@example.com", BASE)()
-    c.store.db.close()
+    c.close()
     _raw(path_c, _sql.group(1))
     r.check("(c) the SQL from the docs restores the values of 0.21.x and lowers the stamp to 11",
             _state(path_c) == (11, ["mensch", "automat"], [{"alt": "anna@example.com"}]), str(_state(path_c)))
     c = _setup(path_c, post_c)
     r.check("(c) … and a start of 0.22.0 afterwards migrates again (there and back without loss)",
             _state(path_c) == (Store.SCHEMA_VERSION, ["human", "automation"], [{"old": "anna@example.com"}]), str(_state(path_c)))
-    c.store.db.close()
+    c.close()
 
 # ── (d) Read-only ─────────────────────────────────────────────────────────────────────────────
 # Old values at stamp 12 (rollback) on a file without write permission: the start must not
@@ -320,7 +320,7 @@ def _only_readable(self, links=True):
 path_d = os.path.join(tempfile.mkdtemp(), "d.db")
 d = _setup(path_d)
 anna_d = d.create_user("anna", password=PW)
-d.store.db.close()
+d.close()
 human_d = _insert_key(path_d, anna_d, "mensch")
 Store._values_english = _only_readable
 try:
@@ -334,10 +334,10 @@ try:
             and d.api_key_kind(human_d) == "human" and _state(path_d)[1] == ["mensch"],
             f"{start_d} {log_d[-200:]!r}")
     if start_d == "ok":
-        d.store.db.close()
+        d.close()
     _raw(path_d, "PRAGMA user_version = 11;")
     try:
-        _setup(path_d).store.db.close()
+        _setup(path_d).store.close()
         upgrade_d = "ok"
     except sqlite3.OperationalError as error:
         upgrade_d = f"OperationalError: {error}"
@@ -368,7 +368,7 @@ r.check("(e) … via `POST /auth/apikeys` 400 with the same hint; without `kind`
         _response.status_code == 400 and "'human'" in _response.json()["detail"]
         and _standard.status_code == 200 and _standard.json()["kind"] == "automation"
         and "dropped_roles" in _standard.json(), f"{_response.text[:200]} {_standard.text[:200]}")
-e.store.db.close()
+e.close()
 
 # ── (f) auth.set_disabled: the operator's lockout with its full effect ─────────────────────────
 # (Mutation probes, each individually: remove the ending of sessions in `set_disabled` → red; the
@@ -443,7 +443,7 @@ r.check("(f) panel: 200, same effect, audit under the admin with his IP (as up t
         f"{_p.status_code} {_line and dict(_line)}")
 r.check("(f) panel: an unknown account → 404 instead of 200 (up to 0.21.x “ok” and an audit row)",
         ca.post("/auth/admin/api/users/9999/disable", json={"disabled": True}).status_code == 404)
-f.store.db.close()
+f.close()
 
 # One source: the panel route calls `auth.set_disabled` and none of the steps itself.
 _admin = ast.parse((ROOT / "tinysesam" / "admin.py").read_text(encoding="utf-8"))

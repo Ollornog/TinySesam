@@ -11,7 +11,8 @@
 #      the gateway loads the discovery only at the first sign-in;
 #   2. until Docker's own HEALTHCHECK from the Dockerfile reports "healthy" (the one every
 #      operator sees as well), at most WAIT_S seconds;
-#   3. `/healthz` must return 200 and name the version from pyproject.toml — otherwise the
+#   3. `/healthz` must return 200 without naming a version (T-52, ASVS 13.4.6: only with TINYSESAM_HEALTH_VERSION=1),
+#      and the package inside the image must carry the version from pyproject.toml — otherwise the
 #      image holds a different package than this commit;
 #   4. the running container has no shell (T-59, distroless runtime stage): `docker exec … sh -c true` must fail.
 #      The build checks the files (deploy/gateway/image_setup.py); this checks what an attacker would actually reach.
@@ -70,10 +71,13 @@ c.request("GET", "/healthz")
 r = c.getresponse()
 print(r.status, r.read().decode())')" || fail "/healthz cannot be fetched"
 case "$reply" in
-    "200 "*"\"version\":\"$version\""*) ;;
-    *) fail "/healthz replied unexpectedly: $reply (expected 200 with version $version)" ;;
+    '200 {"status":"ok"}') ;;
+    *) fail "/healthz replied unexpectedly: $reply (expected 200 {\"status\":\"ok\"}, without a version)" ;;
 esac
+inside="$(docker exec "$NAME" python -c 'import tinysesam; print(tinysesam.current_version())')" \
+    || fail "the package version cannot be read in the image"
+[ "$inside" = "$version" ] || fail "the image holds tinysesam $inside, this commit is $version"
 if docker exec "$NAME" sh -c true >/dev/null 2>&1; then
     fail "the running image has a shell (sh) — the runtime stage must stay without one (T-59)"
 fi
-echo "✓ image starts, HEALTHCHECK healthy, /healthz 200 with version $version, no shell in the container"
+echo "✓ image starts, HEALTHCHECK healthy, /healthz 200 without version, package $version inside, no shell in the container"

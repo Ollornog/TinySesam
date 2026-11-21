@@ -46,7 +46,12 @@ name: release
 # in it). Without keys of our own: signing uses the OIDC identity of this workflow.
 #
 #   gh attestation verify oci://ghcr.io/ollornog/tinysesam:vX.Y.Z --owner Ollornog
-#   gh attestation verify tinysesam-X.Y.Z-py3-none-any.whl        --owner Ollornog
+#   gh attestation verify tinysesam-X.Y.Z-py3-none-any.whl        --owner Ollornog \
+#     --signer-workflow Ollornog/TinySesam/.github/workflows/build-provenance.yml
+#
+# Wheel and sdist are attested by the reusable workflow build-provenance.yml (T-55, SLSA Build L3): it rebuilds the
+# commit on its own, holds the bytes against `build`'s checksums and signs provenance and SBOM under ITS name —
+# `--signer-workflow` pins that builder. The SBOM (SPDX) is also attached to the GitHub release.
 #
 # Beforehand the job checks that the tag matches the version in the package. A release with a
 # wrong version number is worse than none: it is inconspicuously wrong.
@@ -234,15 +239,27 @@ jobs:
           ls -1 ./*.whl ./*.tar.gz
           sha256sum -c SHA256SUMS
 
+  # The isolated builder (T-55): rebuilds wheel and sdist, compares them bit for bit with `build`, generates the SBOM
+  # and — only for a tag — attests both under its own name. On a PR it is part of the dry run (`attest: false`).
+  # The permissions are the ceiling the reusable workflow may use; its `rebuild` job narrows them to `contents: read`,
+  # only its `attest` job (no checkout, no pip) takes the identity, and only when `attest` is true.
+  provenance:
+    needs: [build, checksums]
+    permissions:
+      contents: read
+      id-token: write      # used only by build-provenance.yml's `attest`, only for a tag
+      attestations: write
+    uses: ./.github/workflows/build-provenance.yml  # zizmor: ignore[self-repository] — the shared kit's pin check (tests/_kit) does not know `$/` yet; for a reusable workflow `./` resolves at the running commit too
+    with:
+      attest: ${{ github.ref_type == 'tag' }}
+
   release:
     timeout-minutes: 10
-    needs: [build, checksums]
+    needs: [build, checksums, provenance]
     if: github.ref_type == 'tag'   # publishes — never from a dry run
     runs-on: ubuntu-latest
     permissions:
       contents: write      # create the release and attach files
-      id-token: write      # Sigstore identity for the attestation
-      attestations: write  # hand the attestation to GitHub
     steps:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
         with:
@@ -252,20 +269,19 @@ jobs:
         with:
           name: checksums
           path: dist
-
-      # Attest the provenance BEFORE publishing — over exactly the bytes from `build`.
-      - name: Attest the provenance of wheel and sdist
-        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8  # v4.2.2
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
         with:
-          subject-path: "dist/*.whl, dist/*.tar.gz"
+          name: sbom-dist
+          path: sbom
 
+      # Provenance and SBOM are attested by `provenance` BEFORE this job — over the same bytes (it compared them).
       # Deliberately `gh` instead of a third-party action: that would need `contents: write` on this repo,
       # and its tag could be moved. `gh` is preinstalled on the runners. Without a checkout
       # `gh` does not know the repo from `.git` — hence `--repo`.
       - name: Create the release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --generate-notes --verify-tag
+        run: gh release create "$GITHUB_REF_NAME" dist/* "sbom/tinysesam-sbom.spdx.json#SBOM in SPDX" --repo "$GITHUB_REPOSITORY" --generate-notes --verify-tag
 
   # The upload to PyPI. Deliberately a SEPARATE job: it does nothing but download the finished
   # artifact and upload it — no code from the repo runs here. Only this way is the

@@ -60,7 +60,7 @@ old.store._exec("UPDATE users SET is_admin=2 WHERE username='idp-admin'")      #
 old.create_user("hand-admin", password=PW, is_admin=True)
 old.create_user("second-admin", password=PW, is_admin=True)
 old.store._exec("UPDATE users SET is_owner=0")
-old.store.db.close()
+old.close()
 new, _ = _app(db_path=path)
 owner = [u["username"] for u in new.store.list_users() if u["is_owner"]]
 r.check("existing data without owner: the oldest hand-set admin becomes owner (not the IdP admin)",
@@ -153,13 +153,13 @@ path_i = str(Path(tempfile.mkdtemp()) / "idp.db")
 idp_a, _ = _app(db_path=path_i)
 idp_uid = idp_a.create_user("only-idp-admin", password=PW)
 idp_a.apply_idp_groups(idp_uid, ["admins"], {"admins": "__admin__"})
-idp_a.store.db.close()
+idp_a.close()
 idp_b, _ = _app(db_path=path_i)
 r.check("finding 1: an admin granted by the IdP does not become owner at restart (stays revocable)",
         idp_b.store.get_user(idp_uid)["is_owner"] == 0 and idp_b.store.get_user(idp_uid)["is_admin"] == 2)
 idp_b.apply_idp_groups(idp_uid, [], {"admins": "__admin__"})
 r.check("… and the provider still takes the right from him", not idp_b.store.get_user(idp_uid)["is_admin"])
-idp_b.store.db.close()
+idp_b.close()
 # Finding 2: a locked hand-made admin does not become owner, an active one does.
 path_g = str(Path(tempfile.mkdtemp()) / "locked.db")
 g_a, _ = _app(db_path=path_g)
@@ -167,11 +167,11 @@ old_admin = g_a.create_user("fired", password=PW, is_admin=True)
 active_admin = g_a.create_user("aktiv", password=PW, is_admin=True)
 g_a.store._exec("UPDATE users SET is_owner=0")
 g_a.store._exec("UPDATE users SET disabled=2 WHERE id=?", (old_admin,))
-g_a.store.db.close()
+g_a.close()
 g_b, _ = _app(db_path=path_g)
 r.check("finding 2: in existing data the oldest ACTIVE hand-made admin becomes owner, not a locked one",
         g_b.store.get_user(active_admin)["is_owner"] == 1 and g_b.store.get_user(old_admin)["is_owner"] == 0)
-g_b.store.db.close()
+g_b.close()
 # Finding 3: an admin without owner role revokes neither keys nor sessions of the owner.
 auth3, app3 = _app()
 auth3.ensure_admin("owner3", PW)

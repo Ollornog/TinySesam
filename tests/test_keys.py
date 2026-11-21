@@ -179,13 +179,13 @@ out = cli("retire", "--purpose", "vault", "--db", db, "--secrets-key-file", str(
 r.check("retire after reencrypt: the old vault key is gone from the file",
         out.returncode == 0 and [k.kid for k in keys.read_file(keys.VAULT, str(kfile), "t")] == [k_vault1],
         out.stdout + out.stderr)
-a.store.db.close()
+a.close()
 a = TinySesam(config(db, secrets_key_file=str(kfile)))
 everything_works(a, uid, SECRET, handle, at, gtok, "after vault rotation + reencrypt + retire + restart")
 
 # --- gate
 out = cli("rotate", "--purpose", "gate", "--db", db, "--secrets-key-file", str(kfile))
-a.store.db.close()
+a.close()
 a = TinySesam(config(db, secrets_key_file=str(kfile)))
 gtok2 = gate_token(a, uid)
 r.check("rotate gate: new active key signs (new kid), the sign_key value printed, the old key still published",
@@ -201,7 +201,7 @@ r.check("retire the old gate key within the overlap (a token signed with it may 
         out.returncode == 1 and "fallback" in out.stderr, out.stderr)
 a.store._exec("UPDATE key_material SET since = since - ? WHERE purpose='gate' AND since IS NOT NULL",
               (keys.GATE_OVERLAP_SEC + 5,))
-a.store.db.close()
+a.close()
 a = TinySesam(config(db, secrets_key_file=str(kfile)))
 r.check("(e) after the overlap the old gate key is no longer published (even before it is retired)",
         [k["kid"] for k in a.gate_jwks()["keys"]] == [a._gate_keyring.active.kid])
@@ -213,7 +213,7 @@ r.check("retire after the overlap: done", out.returncode == 0 and len(a.store.ke
 at_b, rt_b = oauth_pair(a, uid)          # a second program that does not refresh in between
 out = cli("rotate", "--purpose", "oauth-pepper", "--db", db, "--secrets-key-file", str(kfile))
 time.sleep(1.1)       # tokens issued after the rotation are younger than its second (`retire` compares by second)
-a.store.db.close()
+a.close()
 a = TinySesam(config(db, secrets_key_file=str(kfile)))
 r.check("rotate pepper: new active pepper, the access token from before still accepted (found with the old one)",
         out.returncode == 0 and a._pepper_keyring.active.kid != k_pepper0 and oauth_ok(a, at),
@@ -228,7 +228,7 @@ r.check("retire the old pepper while tokens from before are still valid: refused
 a.store._exec("UPDATE oauth_token SET expires_at = 1 WHERE created_at <= (SELECT since FROM key_material "
               "WHERE purpose='oauth-pepper' AND since IS NOT NULL)")
 out = cli("retire", "--purpose", "oauth-pepper", "--db", db, "--secrets-key-file", str(kfile))
-a.store.db.close()
+a.close()
 a = TinySesam(config(db, secrets_key_file=str(kfile)))
 r.check("retire after those ran out: done; the connection itself lives on with the new pepper (after a restart)",
         out.returncode == 0 and len(a._pepper_keyring.keys) == 1 and oauth_ok(a, answer["access_token"]),
@@ -243,7 +243,7 @@ r.check("keys list: one line per key, purpose, kid and state — and no key mate
 kfile2 = keydir / "other.key"
 kfile2.write_text(base64.b64encode(secrets.token_bytes(32)).decode() + "\n")
 kfile2.chmod(0o600)
-a.store.db.close()
+a.close()
 try:
     TinySesam(config(db, secrets_key_file=str(kfile2)))
     refused = ""
@@ -290,7 +290,7 @@ r.check("(c) the untouched value still decrypts in its own row (counter-check)",
 new_handle = a.store.session_hash(a.store.rotate_session(handle) or "")
 r.check("ID token survives the session rotation (bound to client and account, not to the rotating handle)",
         a.store.get_oidc_id_token(new_handle) == ("*", "id-token-sub-anna"))
-a.store.db.close()
+a.close()
 
 # ======================================================================== (d) migration from 0.25.x
 from tinysesam.store import Store  # noqa: E402
@@ -328,7 +328,7 @@ st.oauth_add_client("cid", "Probe", ["http://localhost/cb"], now, None)
 st.oauth_create_grant("no-code", "cid", ouid, RESOURCE, "mcp", now, None, None,
                       [(oauth.OAuthServer._digest(old_pepper, oat), "access", "mcp", now + 3600)])
 st._exec("PRAGMA user_version = 18")
-st.db.close()
+st.close()
 Path(old_db + ".key").write_text(base64.b64encode(OLD).decode() + "\n")
 os.chmod(old_db + ".key", 0o600)
 _derived = gate.derive_key_name(OLD)
@@ -376,7 +376,7 @@ r.check("(d) the gate token 0.25.x signed (typ JWT, derived key) stays valid at 
 r.check("(d) the OAuth token 0.25.x digested with the derived pepper is still accepted; new tokens use a new pepper",
         oauth_ok(m, oat) and m._pepper_keyring.active.material != old_pepper
         and m._pepper_keyring.previous[0].material == old_pepper)
-m.store.db.close()
+m.close()
 
 # The way back: `reencrypt --to v1` writes what 0.25.x reads (one key, AAD "v1:").
 out = subprocess.run([sys.executable, "-m", "tinysesam", "keys", "reencrypt", "--to", "v1", "--db", old_db],
@@ -388,11 +388,11 @@ r.check("(d) way back: `keys reencrypt --to v1` — every value readable as 0.25
         out.returncode == 0 and [v1_open(v) for v in vals] == [OSECRET, "rt-olga", "id-olga"], out.stdout + out.stderr)
 # An older version started WITHOUT the way back takes a v2 value for plain text and wraps it into v1 (its
 # `extract_secrets`). Simulated on the TOTP row: the newer start must unwrap it, not hand out "v2:…" as the secret.
-st.db.close()
+st.close()
 m = TinySesam(config(old_db))
 wrapped = v1(m.store._one("SELECT secret FROM totp_cred")["secret"])
 m.store._exec("UPDATE totp_cred SET secret=?", (wrapped,))
-m.store.db.close()
+m.close()
 m = TinySesam(config(old_db))
 r.check("(d) after the way back the newer version starts again and rewrites v2; a value an older start wrapped "
         "into v1 is unwrapped (secret intact)",
@@ -416,7 +416,7 @@ except ConfigError as e:
     left_msg = str(e)
 r.check("(g) v1 values left after the start (not writable): the start refuses and names `tinysesam keys reencrypt`",
         "tinysesam keys reencrypt" in left_msg and "1 stored secret" in left_msg, left_msg)
-m.store.db.close()
+m.close()
 # … and the way out works offline.
 out = subprocess.run([sys.executable, "-m", "tinysesam", "keys", "reencrypt", "--db", old_db],
                      capture_output=True, text=True, env=ENV, timeout=120, cwd=str(ROOT))
@@ -430,7 +430,7 @@ m.store._exec("INSERT INTO key_material(purpose, kid, material, created_at, sinc
               (keys.GATE, _kid, base64.b64encode(_seed).decode(), now, now + 10 * 365 * 86400, ""))
 r.check("(g) a plain-text gate seed planted in key_material is not loaded at runtime",
         raises(lambda: m.store.key_ring_rows(keys.GATE), LegacyValueError))
-m.store.db.close()
+m.close()
 r.check("(g) … and the next start refuses (database written without the vault key) instead of encrypting it",
         raises(lambda: TinySesam(config(old_db)), ConfigError)
         and Store(old_db)._one("SELECT material FROM key_material WHERE kid=?", (_kid,))[0]
@@ -441,11 +441,11 @@ r.check("(g) … `keys list` says so in one line, no traceback",
         out.returncode == 1 and "key_material" in out.stderr and "Traceback" not in out.stderr, out.stderr)
 _st = Store(old_db)
 _st._exec("DELETE FROM key_material WHERE kid=?", (_kid,))
-_st.db.close()
+_st.close()
 m = TinySesam(config(old_db))
 r.check("(g) counter-check: without the planted row the start and the TOTP secret are fine",
         m.store.get_totp(ouid)["secret"] == OSECRET)
-m.store.db.close()
+m.close()
 
 # ======================================================================== env and file sources
 gseed = secrets.token_bytes(32)

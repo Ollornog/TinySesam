@@ -295,7 +295,9 @@ def build_app(cfg: Optional[TinySesamConfig] = None):
     # sign-in: the schema maps every route including the admin API, and the Swagger page loads its
     # script and stylesheet from a third-party CDN without a CSP. Nobody operates the gateway through
     # them; whoever wants the schema reads it in Python (`build_app(cfg).openapi()`).
-    app = FastAPI(title="TinySesam OIDC-Gateway", docs_url=None, redoc_url=None, openapi_url=None)
+    # `lifespan`: at shutdown the background jobs finish before the database closes (T-67).
+    app = FastAPI(title="TinySesam OIDC-Gateway", docs_url=None, redoc_url=None, openapi_url=None,
+                  lifespan=auth.lifespan)
     app.include_router(auth.router())
     # Browsers get the error page in the branding instead of `{"detail": "Not Found"}`; API clients
     # still get JSON (Accept decides, `install_error_pages`).
@@ -309,6 +311,8 @@ def build_app(cfg: Optional[TinySesamConfig] = None):
         if not u:
             return RedirectResponse(auth.browser_path(request, auth.cfg.login_path), 303)
         return auth.render_page("gateway_home", request=request, user_name=u["display_name"] or u["username"])
+
+    show_version = _switch("TINYSESAM_HEALTH_VERSION")   # read at build time: a bad value ends the start
 
     @app.get(HEALTH_PATH, include_in_schema=False)
     def healthz():
@@ -328,19 +332,24 @@ def build_app(cfg: Optional[TinySesamConfig] = None):
         Dockerfile gives it more time for that.
 
         Nothing is revealed all the same: on a defect only `status: "degraded"` and 503, never
-        the error message (which would otherwise stand unauthenticated on the network).
+        the error message (which would otherwise stand unauthenticated on the network). Since T-52 not the
+        version either (ASVS 13.4.6): it told everyone on the network which known flaws apply. Monitoring that
+        wants it switches it on (`TINYSESAM_HEALTH_VERSION=1`); the image probe asks the package instead.
         """
         from fastapi.responses import JSONResponse
 
-        from . import current_version
+        def answer(status):
+            if not show_version:
+                return {"status": status}
+            from . import current_version
+            return {"status": status, "version": current_version()}
         try:
             auth.store.write_probe()
         except Exception as e:
             security.seclog.error("Healthcheck: database not writable (%s: %s)",
                                   type(e).__name__, e)
-            return JSONResponse({"status": "degraded", "version": current_version()},
-                                status_code=503)
-        return {"status": "ok", "version": current_version()}
+            return JSONResponse(answer("degraded"), status_code=503)
+        return answer("ok")
 
     _install_https_except_health(auth, app)
     app.state.auth = auth

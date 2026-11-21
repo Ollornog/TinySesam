@@ -92,7 +92,7 @@ auth = TinySesam(TinySesamConfig.local_accounts(   # username + password only, n
     stepup_methods=["pin"],                     # the step-up page asks for it
     stepup_max_age_sec=300,                     # a confirmation counts for five minutes
 ))
-app = FastAPI()
+app = FastAPI(lifespan=auth.lifespan)           # orderly shutdown: background jobs finish, then the database closes
 app.include_router(auth.router())
 
 

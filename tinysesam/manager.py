@@ -14,6 +14,7 @@ import os
 import re
 import sys
 import json
+import logging
 import hashlib
 import hmac
 from collections import OrderedDict
@@ -22,6 +23,7 @@ import secrets
 import sqlite3
 import time
 import warnings
+import contextlib
 import contextvars
 from typing import Any, Callable, Literal, NoReturn, Optional, cast
 
@@ -385,6 +387,7 @@ class TinySesam:
         # would otherwise hold every due request until the timeout — from `async` routes including the event loop
         # (attack on the second round, finding 6, same class as B6-6).
         self._oidc_outcome = Outbox(worker=2, max_unclosed=200)
+        self._closed = False          # `close()` (T-67)
         #: Opt-in notification for security events on one's own account (finding B2-2,
         #: recommendation H-6) — see `SECURITY_EVENTS`. Call `hook(event, account,
         #: details)`; `account` has `id`, `username`, `email`, `display_name`. TinySesam
@@ -6713,6 +6716,11 @@ class TinySesam:
         # Here too, not only in the route class: `logout()` is public and is called from
         # own routes of the app that the class does not cover.
         self._delete_old_names(request, response)
+        # T-52 (ASVS 14.3.1): the browser drops what it cached from this origin — pages of the app that a shared
+        # computer could otherwise show again with the back button. Only "cache": TinySesam keeps nothing in
+        # browser storage, "storage" would wipe the app's own data (and the light/dark choice), and "cookies"
+        # would sign out every app under the same registrable domain. The browser honours it over HTTPS only.
+        response.headers.setdefault("Clear-Site-Data", '"cache"')
 
     # ---------- Hardening (regulation / rate limit / audit) ----------
     def client_ip(self, request: Request) -> str:
@@ -7676,9 +7684,7 @@ class TinySesam:
             if built_in:
                 out = str(out).replace(_PREFIX_PLACEHOLDER, ctx["prefix"])
             resp = HTMLResponse(_inject_nonce(out, nonce), status_code=status)
-            policy = self._csp_header(nonce)
-            if policy:
-                resp.headers.setdefault("Content-Security-Policy", policy)
+            self._set_csp(resp, nonce, ctx["prefix"])
         if tok is not None and fresh:
             self._set_csrf_cookie(resp, tok)
         # Here too, not only in the route: error pages from `install_error_pages` pass
@@ -7722,6 +7728,10 @@ class TinySesam:
         * `X-Frame-Options: SAMEORIGIN` — only with `csp='strict'`, whose `frame-ancestors 'self'`
           it repeats for older browsers. An own policy or `off` (the proxy sets the
           CSP) itself decides who may embed; a fixed XFO would override that.
+        * `Cross-Origin-Opener-Policy: same-origin` (T-52, ASVS 3.4.8) — same condition, HTML only: a page of
+          another origin that opened the sign-in in a window (or was opened by it) gets no handle on it
+          (`window.opener`, tab-nabbing, cross-window leaks). No built-in flow uses a popup: OIDC, SAML and
+          the gate redirect in the same tab, and WebAuthn does not depend on the opener.
         """
         self._header_lines_in(resp.headers)
         return resp
@@ -7776,14 +7786,39 @@ class TinySesam:
         if ((self.cfg.csp or "").strip() == "strict"
                 and h.get("content-type", "").startswith("text/html")):
             h.setdefault("X-Frame-Options", "SAMEORIGIN")
+            h.setdefault("Cross-Origin-Opener-Policy", "same-origin")
 
-    def _csp_header(self, nonce: str) -> str:
+    #: Path of the own CSP report endpoint (`csp_report`, T-52) and the endpoint name in `Reporting-Endpoints`.
+    _CSP_REPORT_PATH = "/auth/csp-report"
+    _CSP_REPORT_GROUP = "tinysesam-csp"
+    #: Reports per IP and minute, reports in the log per minute in total, bytes per report body.
+    _CSP_REPORT_PER_IP = 10
+    _CSP_REPORT_LOG_PER_MINUTE = 60
+    _CSP_REPORT_MAX_BYTES = 8192
+
+    def _set_csp(self, resp: Response, nonce: str, prefix: str = "") -> None:
+        """CSP of a built-in page — and with `csp_report` the `Reporting-Endpoints` header it points to."""
+        policy = self._csp_header(nonce, prefix)
+        if not policy:
+            return
+        resp.headers.setdefault("Content-Security-Policy", policy)
+        if self._csp_reporting():
+            resp.headers.setdefault("Reporting-Endpoints",
+                                    f'{self._CSP_REPORT_GROUP}="{prefix}{self._CSP_REPORT_PATH}"')
+
+    def _csp_reporting(self) -> bool:
+        return bool(getattr(self.cfg, "csp_report", False)) and (self.cfg.csp or "").strip() == "strict"
+
+    def _csp_header(self, nonce: str, prefix: str = "") -> str:
         """The CSP for the own pages. 'strict' = everything same-origin, script/style only via
-        nonce (no 'unsafe-inline'); 'off' = no header; otherwise the own string with {nonce}."""
+        nonce (no 'unsafe-inline'); 'off' = no header; otherwise the own string with {nonce}.
+        With `csp_report` the strict policy names the own report endpoint (relative to the page, `prefix` = mount)."""
         csp = (self.cfg.csp or "").strip()
         if not csp or csp == "off":
             return ""
         if csp == "strict":
+            report = (f"; report-uri {prefix}{self._CSP_REPORT_PATH}; report-to {self._CSP_REPORT_GROUP}"
+                      if self._csp_reporting() else "")
             # Background images from https addresses (brand_backgrounds) — exactly their origin, nothing beyond.
             foreign = sorted({"https://" + b[len("https://"):].split("/", 1)[0].split("?", 1)[0]
                             for b in (getattr(self.cfg, "brand_backgrounds", None) or []) if b.startswith("https://")})
@@ -7791,8 +7826,68 @@ class TinySesam:
                     f"script-src 'nonce-{nonce}'; style-src 'nonce-{nonce}'; "
                     f"img-src 'self' data:{''.join(' ' + h for h in foreign)}; base-uri 'none'; "
                     f"form-action 'self'{''.join(' ' + h for h in self._form_destinations())}; "
-                    "frame-ancestors 'self'; object-src 'none'")
+                    f"frame-ancestors 'self'; object-src 'none'{report}")
         return csp.replace("{nonce}", nonce)
+
+    def _csp_report_line(self, raw: bytes, ip: str) -> int:
+        """Log the CSP violations in a report body (`csp_report`, T-52); returns how many were logged.
+
+        Two formats: the Reporting API (`application/reports+json`, a list of `{type: "csp-violation", body}`)
+        and the older `report-uri` (`application/csp-report`, `{"csp-report": {...}}`). From each report only
+        what says WHAT was blocked WHERE: the directive, the PATH of the page — its query is dropped, sign-in,
+        reset and invitation links carry their token there — and of the blocked resource only the origin or the
+        keyword (`inline`, `eval`). The values come from anyone who can reach the endpoint: every field is cut
+        and filtered, and the log takes at most `_CSP_REPORT_LOG_PER_MINUTE` lines per minute in total."""
+        from urllib.parse import urlsplit
+        try:
+            data = json.loads(raw.decode("utf-8"))
+        except (ValueError, UnicodeDecodeError):
+            return 0
+        bodies = []
+        if isinstance(data, dict) and isinstance(data.get("csp-report"), dict):
+            r = data["csp-report"]
+            bodies.append((r.get("effective-directive") or r.get("violated-directive"), r.get("document-uri"),
+                           r.get("blocked-uri"), r.get("disposition")))
+        elif isinstance(data, list):
+            for item in data[:10]:
+                if isinstance(item, dict) and item.get("type") == "csp-violation" and isinstance(item.get("body"), dict):
+                    b = item["body"]
+                    bodies.append((b.get("effectiveDirective"), b.get("documentURL"), b.get("blockedURL"),
+                                   b.get("disposition")))
+
+        def directive(v):
+            v = str(v or "").strip().split(" ", 1)[0].lower()
+            return v if re.fullmatch(r"[a-z-]{1,40}", v) else "?"
+
+        def page(v):
+            # `urlsplit` drops line breaks on its own (WHATWG) — "a\nCSP violation … ip=…" would come back as ONE
+            # path with spaces and `=`. Percent-encoding leaves nothing that looks like a field of the line.
+            from urllib.parse import quote
+            try:
+                path = urlsplit(str(v or "")).path
+            except ValueError:
+                return "?"
+            return quote(path[:200], safe="/._~-%") or "?"
+
+        def blocked(v):
+            v = str(v or "").strip()
+            try:
+                u = urlsplit(v)
+            except ValueError:
+                return "?"
+            if u.scheme in ("http", "https", "ws", "wss") and u.netloc:
+                return security.for_log(f"{u.scheme}://{u.netloc}"[:120])
+            return v.lower() if re.fullmatch(r"[a-z-]{1,20}", v.lower()) else (security.for_log(u.scheme[:20]) or "?")
+
+        logged = 0
+        for d, doc, blk, disp in bodies:
+            if not self.rl.allow("csp_report:log", self._CSP_REPORT_LOG_PER_MINUTE, 60):
+                break
+            security.seclog.warning("CSP violation directive=%s page=%s blocked=%s disposition=%s ip=%s",
+                                    directive(d), page(doc), blocked(blk),
+                                    "report" if str(disp or "") == "report" else "enforce", ip)
+            logged += 1
+        return logged
 
     def _form_destinations(self) -> list:
         """Where a form of the own pages may lead, beyond `'self'` (0.24.13, `form-action`).
@@ -8282,6 +8377,52 @@ class TinySesam:
         self._recheck()
         from .router import build_router
         return build_router(self)
+
+    def close(self, timeout: float = 10.0) -> bool:
+        """Shut down in order (T-67): refuse new background jobs, let the queued ones finish, close the database.
+
+        The background outboxes (mails, notices, the OIDC re-check) use the database connection from worker
+        threads. Closing it under a running job crashed the process (`sqlite3`, B-13); `auth.store.db.close()`
+        does exactly that. `close()` first stops all three outboxes from taking jobs (a request still in flight
+        that would enqueue one gets its response; the job is logged and dropped), waits up to `timeout` seconds in
+        total for the queued ones, and only then closes the connection under the store lock.
+
+        Returns True when everything is closed. If a job is still running at the deadline, the database stays
+        open (a crash later would be worse than a connection left to the process end) and the result is False;
+        calling again waits once more. Idempotent: after a successful close further calls return True at once.
+        For FastAPI use `lifespan`; in a script, `with TinySesam(cfg) as auth:`."""
+        if self._closed:
+            return True
+        end = time.monotonic() + max(0.0, timeout)
+        drained = True
+        for box in (self._outbox, self._notice_outcome, self._oidc_outcome):
+            drained = box.close(max(0.0, end - time.monotonic())) and drained
+        if not drained:
+            logging.getLogger("tinysesam").warning(
+                "close(): background jobs still running after %.1f s — the database stays open", timeout)
+            return False
+        self.store.close()
+        self._closed = True
+        return True
+
+    @contextlib.asynccontextmanager
+    async def lifespan(self, app=None):
+        """FastAPI lifespan that calls `close()` at shutdown: `FastAPI(lifespan=auth.lifespan)` (T-67).
+
+        `close()` waits for background jobs; it runs in a worker thread so that the event loop keeps serving
+        the background tasks it waits for. With a lifespan of your own, nest it:
+        `async with auth.lifespan(app): yield`."""
+        try:
+            yield
+        finally:
+            import asyncio
+            await asyncio.to_thread(self.close)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self.close()
 
     def admin_router(self):
         """Standalone admin router (relative paths) — mountable at any prefix / sub-app / port,

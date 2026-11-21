@@ -487,7 +487,7 @@ for order in ("floating first", "fixed first"):
 # (Mutation probe: delete `before < max_series <= afterwards` → "pending first" 0 rows → red.)
 r.check("p2 F3: pending and immediately settled booking at the limit — exactly one row in both orders",
         all(ok_ and n == 1 for _, ok_, n in _mixed), str(_mixed))
-auth_i3.store.db.close()
+auth_i3.close()
 os.remove(db_i3)
 
 # ── (j) p2 V1: an overall deadline for the question to the directory ───────────────────────────
@@ -656,7 +656,7 @@ app_o.include_router(auth_o.router())
 _sign_in(app_o, "bert", "wrong")
 r.check("without LDAP: the failed attempt is confirmed immediately (open=0)",
         [z["pending"] for z in auth_o.store._all("SELECT pending FROM login_attempt")] == [0])
-auth_o.store.db.close()
+auth_o.close()
 raw = sqlite3.connect(db_o)
 raw.execute("ALTER TABLE login_attempt DROP COLUMN pending")
 stamp = raw.execute("PRAGMA user_version").fetchone()[0]
@@ -666,7 +666,7 @@ columns = {z["name"] for z in auth_o.store._all("PRAGMA table_info(login_attempt
 r.check("a file from schema 11 without the column gets it at start (idempotent)",
         stamp == Store.SCHEMA_VERSION >= 11 and "pending" in columns
         and auth_o.store.count_fails(0, username="bert", only_confirmed=True) == 1, f"{stamp} {columns}")
-auth_o.store.db.close()
+auth_o.close()
 os.remove(db_o)
 
 sys.exit(r.done())

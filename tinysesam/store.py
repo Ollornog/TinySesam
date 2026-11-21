@@ -844,6 +844,16 @@ class Store:
         self._check_file_permissions(db_path, new)
         _CLOCK.at_least(self._youngest_timestamp())
 
+    def close(self) -> None:
+        """Close the connection under the store lock (T-67) — idempotent.
+
+        `self.db.close()` from outside does not wait for a thread that is inside SQLite right now; `sqlite3` then
+        frees the connection under it (segmentation fault, B-13). The store's reads and writes hold `_lock`, so
+        closing under it waits for a running statement. Afterwards every access raises
+        `sqlite3.ProgrammingError`. `TinySesam.close()` calls this after the background jobs are done."""
+        with self._lock:
+            self.db.close()
+
     #: How long a request waits for a locked database before giving up (ms).
     #: Twice Python's default: a checkpoint or a backup on slow
     #: storage (SD card, network drive) takes longer than 5 s, and an aborted login

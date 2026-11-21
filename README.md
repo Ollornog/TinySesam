@@ -107,7 +107,7 @@ auth = TinySesam(TinySesamConfig(
 ))
 auth.ensure_admin("admin", "initial-password")   # creates an admin, ONLY if the store is empty
 
-app = FastAPI()
+app = FastAPI(lifespan=auth.lifespan)           # orderly shutdown, see below
 app.include_router(auth.router())              # /auth/* + login UI
 
 @app.get("/")
@@ -116,6 +116,13 @@ def home(user = Depends(auth.require_user)):    # protected: logged in (incl. 2F
 ```
 
 Non-logged-in browsers are redirected to `/auth/login`; API clients (Accept ≠ HTML) get a `401`.
+
+**Shutdown.** TinySesam sends mails and notices from background workers that write to its database. `auth.close()`
+refuses new background jobs, lets the queued ones finish (deadline `timeout`, 10 s) and then closes the database —
+idempotent, `False` if a job was still running at the deadline (the database then stays open). `auth.lifespan` calls
+it at FastAPI's shutdown; with a lifespan of your own, nest it (`async with auth.lifespan(app): yield`); in a script
+or test, `with TinySesam(cfg) as auth:`. Never close `auth.store.db` yourself: a worker still inside SQLite crashes
+the process.
 
 ## Sign-in identifier
 
@@ -1035,6 +1042,10 @@ Modeled on Authelia/Fail2Ban — the thresholds are changeable **in the admin pa
   Substring matching (needed for LDAP `memberOf` DNs, and used there automatically) would let the key
   `admin` match a group called `not-admin`.
 - **Audit log:** login / logout / failed attempts in the DB (`store.recent_audit()`), for the admin panel.
+- **Response headers:** every built-in page runs under a strict nonce CSP (`csp="strict"`) with `X-Frame-Options:
+  SAMEORIGIN` and `Cross-Origin-Opener-Policy: same-origin`; every response carries `nosniff`, `Referrer-Policy:
+  same-origin` and `no-store`; sign-out sends `Clear-Site-Data: "cache"`. `csp_report=True` lets browsers report
+  violations to `/auth/csp-report`, one throttled line each in the security log — nothing goes to a third party.
 - **CSRF:** double-submit token (`csrf_enabled`, on by default) on all state-changing POSTs — the
   built-in forms/JS handle this automatically (`_csrf` field or `X-CSRF-Token` header);
   API-key requests are exempt (no cookie risk). In addition to `SameSite=Lax`.
@@ -1100,12 +1111,21 @@ both also stored next to the image in the registry:
 
 ```bash
 gh attestation verify oci://ghcr.io/ollornog/tinysesam:v0.25.7 --owner Ollornog
-gh attestation verify tinysesam-0.25.7-py3-none-any.whl --owner Ollornog   # wheel and sdist too
 gh attestation verify oci://ghcr.io/ollornog/tinysesam:v0.25.7 --owner Ollornog \
     --predicate-type https://spdx.dev/Document                             # the SBOM
+# wheel and sdist (from PyPI or the release page): the isolated builder, the tag, and its SBOM
+gh attestation verify tinysesam-0.25.7-py3-none-any.whl --owner Ollornog \
+    --signer-workflow Ollornog/TinySesam/.github/workflows/build-provenance.yml --source-ref refs/tags/v0.25.7
+gh attestation verify tinysesam-0.25.7.tar.gz --owner Ollornog \
+    --signer-workflow Ollornog/TinySesam/.github/workflows/build-provenance.yml \
+    --predicate-type https://spdx.dev/Document
 ```
 
-A pass means: built by this repository's release workflow, from the commit the attestation names.
+A pass means: built by this repository's release workflow, from the commit the attestation names. Wheel and sdist
+come from a builder of their own (SLSA Build L3, from the release after 0.25.7): the reusable workflow
+`build-provenance.yml` rebuilds the tag, checks its bytes against the ones the release ships and signs under its own
+name — `--signer-workflow` pins it. Their SBOM (also attached to the GitHub release as `tinysesam-sbom.spdx.json`) lists
+TinySesam and the dependencies pip resolved for it on the release day (Linux, Python 3.13, no extras).
 No key to hand out and none to lose — the signature is tied to the workflow's own identity. The proxy comes along:
 `ghcr.io/ollornog/tinysesam-caddy-gate:v0.25.7` is Caddy with the caddy-jwt plugin, built, scanned and attested by the
 same release (verify it the same way). Running in five minutes: "Gateway and Caddy in 5 minutes" below; the reference
@@ -2049,7 +2069,7 @@ Every Python block in both files runs in the test suite, and every name they men
 
 ## Status
 
-**102 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
+**104 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
 
 Implemented and tested: password/TOTP/sessions/roles, remember-me, step-up and per-route MFA,
 factor chains, personal PIN, shared resource secrets, magic links + mailer hook, registration and

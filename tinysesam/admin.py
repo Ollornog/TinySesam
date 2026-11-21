@@ -626,9 +626,7 @@ def build_admin_router(auth) -> APIRouter:
             page_html = render_panel(auth, request.url.path.rstrip("/"), warn=warn, prefix=auth._prefix(request),
                                      viewer=me, csrf=auth.csrf_token(request) if cfg.csrf_enabled else "")
             resp = HTMLResponse(_inject_nonce(page_html, nonce))
-            policy = auth._csp_header(nonce)
-            if policy:
-                resp.headers.setdefault("Content-Security-Policy", policy)
+            auth._set_csp(resp, nonce, auth._prefix(request))
             # Adopt an EXISTING cookie, do not overwrite — same treatment as
             # in `render_page`. This place was the third setter and the last that
             # re-rolled on every request: whoever opened the panel in a second tab thereby invalidated

@@ -682,7 +682,7 @@ for n in ("alt0", "alt1"):
     auth_s.create_user(n, password="dummy12345")
 subprocess.run([sys.executable, "-m", "tinysesam", "backup", "--db", str(destination),
                 str(folder2 / "backup.db")], cwd=ROOT, capture_output=True)
-auth_s.store.db.close()
+auth_s.close()
 # A real crash, not a clean close: the latter checkpoints the WAL and deletes it —
 # then the test does not measure the decisive case at all. So a subprocess that ends
 # with SIGKILL in the middle of operation.
@@ -742,7 +742,7 @@ r.check("a half-migrated file is healed at the next start",
 r.check("and the old cookie remains valid afterwards",
         st3.get_session("ALWAYS-STILL-PLAINTEXT") is not None,
         "the healing discarded the session")
-st3.db.close()
+st3.close()
 
 
 # ── The healthcheck that does not see database damage ──────────────────
@@ -755,7 +755,7 @@ script = (
     "from tinysesam.gateway import build_app\n"
     "app = build_app(); c = TestClient(app)\n"
     "print('healthy', c.get('/healthz').status_code)\n"
-    "app.state.auth.store.db.close()\n"
+    "app.state.auth.close()\n"
     "print('broken', c.get('/healthz').status_code)\n")
 execution3 = subprocess.run([sys.executable, "-c", script], cwd=ROOT, capture_output=True,
                        text=True, env=environment)
@@ -2011,7 +2011,7 @@ _s1_ro = Store(_s1_ro_db)
 _s1_ro.create_user("anna", None, "anna@example.com")
 _s1_ro.db.execute("INSERT INTO users(username, email, created_at) VALUES ('Özlem', NULL, 1)")
 _s1_ro.db.commit()
-_s1_ro.db.close()
+_s1_ro.close()
 _write_s1 = Store._write_pots
 
 
@@ -2024,7 +2024,7 @@ Store._write_pots = _s1_not_writable
 try:
     _s1_ro2 = Store(_s1_ro_db)
     _s1_start = [(_s1_ro2.account_by_bucket(k) or {"username": None})["username"] for k in ("özlem", "ANNA")]
-    _s1_ro2.db.close()
+    _s1_ro2.close()
 except Exception as _e:        # the start itself fails
     _s1_start = f"{type(_e).__name__}: {_e}"
 finally:
