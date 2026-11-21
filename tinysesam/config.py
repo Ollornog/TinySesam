@@ -276,10 +276,18 @@ class TinySesamConfig:
     #: `/auth/magic/request` exists — this part needs a mailer. `False` = links only from the admin
     #: panel or app code: the request route is gone (404), the button too, issued links still redeem.
     magiclink_self_request: bool = True
-    #: Validity of a one-time link in minutes — the mailed sign-in link, the reset link and an invitation without an
-    #: own `ttl_min` (T-51). Default 10 (up to 0.25.x: 15): ASVS 5.0 6.5.5 limits out-of-band requests to 10 minutes,
-    #: and a link that waits in a mailbox is a key lying about. 1–1440.
+    #: Validity of a one-time link in minutes — the mailed sign-in link and the reset link (T-51). Default 10 (up to
+    #: 0.25.x: 15): ASVS 5.0 6.5.5 limits out-of-band requests to 10 minutes, and a link that waits in a mailbox is a
+    #: key lying about. The person asked for the link a moment ago, so ten minutes suffice; the reset link stays at
+    #: this value on purpose (OWASP Forgot Password Cheat Sheet: short-lived). Invitations have their own
+    #: `invite_ttl_min`. 1–1440.
     magiclink_ttl_min: int = 10
+    #: Validity in minutes of an invitation without an own `ttl_min` (`create_invite`, the panel's invitation). Default
+    #: 24 h: unlike a sign-in or reset link nobody asked for it, and the invitee rarely opens the mail within minutes.
+    #: Bounded by `signin_link_max_ttl_min` like an issued sign-in link (an invitation is a hand-over link that may
+    #: even carry admin rights); `config_check` refuses a larger value with `allow_signup`. Up to 0.25.x an
+    #: invitation took `magiclink_ttl_min` (15) — set that value to keep it. 1–10080.
+    invite_ttl_min: int = 24 * 60
     #: Upper bound in minutes for a sign-in link an administrator or app code issues (`create_signin_link`, the panel's
     #: "Sign-in link"), T-51. Default 24 h: NIST SP 800-63B-4 §4.2.2 lets a recovery code sent by mail live at most
     #: 24 hours, and a hand-over link is the same kind of key. Up to 0.25.x the bound was 7 days (10080) — set that

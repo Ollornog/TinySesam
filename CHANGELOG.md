@@ -50,6 +50,51 @@ provider round no longer makes a session fresh: people confirm with their own fa
 <provider>". A provider that ignores `prompt=login` or sends no `auth_time` cannot confirm that way —
 `oidc_reauth_check=False` restores the old behaviour. (5) An authenticator that does not verify the user can no
 longer register under `passkey_user_verification="required"` (it could not sign in before either).
+
+### Security — follow-ups to attack round B and H4 (before 0.26.0)
+
+- **Invitations live 24 hours again by default: new `invite_ttl_min`.** An invitation without an own `ttl_min`
+  took `magiclink_ttl_min`, and with that lowered to 10 minutes (T-51) most invitations would have expired before
+  the invitee opened the mail — nobody asked for an invitation, unlike a sign-in or reset link. `invite_ttl_min`
+  (default `1440`, range 1–10080) is bounded by `signin_link_max_ttl_min` like an issued sign-in link: `config_check`
+  refuses a larger value with `allow_signup`, and `create_invite` (panel and API: `ttl_min` stays the override)
+  refuses a `ttl_min` outside 1…`signin_link_max_ttl_min` or not an integer with `ValueError` — in the panel a `400`
+  instead of a `500` or a silently accepted week. **The reset link stays at 10 minutes** on purpose: the person
+  asked for it a moment ago, it replaces the password (whoever holds it owns the account), and the OWASP Forgot
+  Password Cheat Sheet asks for a short-lived token — ASVS 5.0 6.5.5 names 10 minutes.
+- **A recovery code is no step-up (`login_totp`).** On a full session `POST /auth/totp` (and `login_totp`) took a
+  one-time recovery code and made the session fresh, while the confirmation page (`confirm_totp`) never did: a code
+  from the drawer next to a stolen, stale session cookie opened `_require_fresh`. Now both agree — on a full session
+  only a TOTP code confirms; a recovery code is refused like a wrong code (`401`, counted) and is not used up. On the
+  half session after the first factor it stays the way in when the authenticator is gone. Only if
+  `stepup_options()` named recovery codes would they count (it does not today).
+- **Admin panel: new accounts with a password or admin rights, and making an account admin, want a fresh
+  confirmation even with `admin_require_mfa=False`.** `POST <admin>/api/users` with `password` or `is_admin`, and
+  `POST <admin>/api/users/{id}/roles` that turns `is_admin` on, call `_require_fresh` (B-12), like the password
+  reset and the invitation already did: from a stale admin session an account of the attacker's own kept the panel
+  after the session ended. An account without a password (SSO, passkey, service), a change of roles only and taking
+  the flag away stay as they were. The freshness guard in `tests/test_h2_hardening.py` lists both routes.
+- **`/auth/claim-admin` only from a fresh interactive session.** The route took the account from `current_user()`,
+  which falls back to an API key: a machine key — a service account's, too — plus the one-time token made that
+  account admin and owner. A service account cannot sign in and its keys never carry the flag (R6-5), so the instance
+  had an admin nobody could be and the first-admin path was closed for good. Now an API key gets `403`
+  (`api.needs_session`), a stale session goes through the confirmation page and back (path and query), and an
+  account with nothing to confirm with must have signed in within `stepup_max_age_sec` (`403 api.stepup_relogin`).
+  Right after the sign-in the route asks for nothing more. Listed in the freshness guard as well.
+- **SAML still counts a silent provider round as fresh** (no `ForceAuthn`, `AuthnInstant` not read) — the same gap
+  T-49 closed for OIDC. Not small enough for this change; backlog **T-70** with the proposal (`saml_reauth_check`,
+  analogous to `oidc_reauth_check`). `SECURITY.md` says so.
+
+**Upgrade notes (follow-ups).** (1) Invitations without an own `ttl_min` live 24 h (`invite_ttl_min`; up to 0.25.x
+`magiclink_ttl_min`, i.e. 15 minutes) — set `invite_ttl_min=15` to keep the old value; with `allow_signup` a
+`signin_link_max_ttl_min` below `invite_ttl_min` is a configuration error. (2) `create_invite(…, ttl_min=…)` and
+`POST <admin>/api/invite` refuse a `ttl_min` above `signin_link_max_ttl_min` (default 24 h; up to 0.25.x unbounded)
+or one that is not an integer (`"60"` included) — raise `signin_link_max_ttl_min` (up to 10080) for longer
+invitations. (3) A step-up through `/auth/totp` or `login_totp` on a full session no longer accepts a recovery code
+— own pages or tests that confirmed that way use a TOTP code. (4) With `admin_require_mfa=False`, creating an account
+with a password or admin rights and granting admin rights in the panel ask for a fresh confirmation (`403` with
+`X-TinySesam-Reauth`; the panel leads to the confirmation page). (5) `/auth/claim-admin` no longer accepts an API
+key, and an old session confirms first.
 ### Fixed — admin panel: a late key list no longer overwrites a sign-in link shown once
 
 - After **Create key** the panel refreshed the account's key list without waiting for it. When that reply came back

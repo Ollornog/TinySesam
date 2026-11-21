@@ -772,11 +772,25 @@ def build_router(auth) -> APIRouter:
     # ---------- First admin via one-time token (only as long as there is no admin) ----------
     @r.get("/auth/claim-admin", response_class=HTMLResponse)
     def claim_admin(request: Request, token: str = ""):
-        u = auth.current_user(request)
+        # The account comes from the SESSION, never from an API key: `current_user()` fell back to a key, and a
+        # machine key — a service account's, too — plus the token made that account admin and owner. A service
+        # account cannot sign in and its keys never carry the flag (R6-5): the instance then had an admin nobody
+        # could be, and the first-admin path was closed for good.
+        u = auth.session_user(request)
         if not u:
+            if cfg.apikey_enabled and auth._extract_api_key(request):
+                raise HTTPException(403, auth.t("api.needs_session"))
             return RedirectResponse(f"{auth.browser_path(request, cfg.login_path)}?next={auth.browser_path(request, '/auth/claim-admin')}?token={_q(token)}", 303)
         if auth.admin_exists():
             raise HTTPException(404)          # no hint that the route once existed
+        # Admin and owner are the largest new access there is (B-12): only from a fresh confirmation. A stale
+        # session goes to the confirmation page and comes back here; one without anything to confirm with signs
+        # in again. Right after the sign-in the route asks for, the session is fresh — nothing more is asked.
+        target = auth._reauth_target(request, str(request.url.path) + (f"?{request.url.query}" if request.url.query else ""))
+        if target:
+            return RedirectResponse(target, 303)
+        if auth._fresh_enough(request, u):
+            raise HTTPException(403, auth.t("api.stepup_relogin"))
         # Throttled and logged (B5-16): until T-13 a signed-in account could guess here
         # as often as it liked, and no wrong guess left a trace. The token has 192 bits,
         # so guessing is hopeless — but whoever tries should be in the log, namely

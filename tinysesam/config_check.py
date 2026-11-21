@@ -833,6 +833,16 @@ def check_config(config) -> tuple[list[str], list[str]]:
             "its own validity takes magiclink_ttl_min and would always be refused. Raise the bound or lower "
             "magiclink_ttl_min.",
             most=_link_max, default=_link_default))
+    # An invitation is a hand-over link under the same bound; its own default (24 h) must fit under it.
+    _invite_default = _integer(config, "invite_ttl_min", 24 * 60)
+    if (_an(config, "allow_signup") and _link_max is not None and _invite_default is not None
+            and _link_max < _invite_default):
+        error.append(_t(
+            config,
+            "signin_link_max_ttl_min={most} is below invite_ttl_min={default}: an invitation issued without its "
+            "own validity takes invite_ttl_min and would always be refused. Raise the bound or lower "
+            "invite_ttl_min.",
+            most=_link_max, default=_invite_default))
 
     # --- TOTP time window (T-57) ---
     _window = str(getattr(config, "totp_window", "previous"))
@@ -957,6 +967,7 @@ NUMBER_LIMITS = {
     "magiclink_ttl_min": (1, 24 * 60),
     # T-51: a week is the most a hand-over link may live; longer is no hand-over but a second password.
     "signin_link_max_ttl_min": (1, 7 * 24 * 60),
+    "invite_ttl_min": (1, 7 * 24 * 60),      # bounded further by signin_link_max_ttl_min (check above)
     # A cross-device request is approved within moments; longer than a quarter of an hour is a
     # code lying around on a screen, not a hand-over.
     "qr_login_ttl_sec": (30, 15 * 60),
@@ -1983,6 +1994,12 @@ _DE: dict[str, str] = {
         ("signin_link_max_ttl_min={most} liegt unter magiclink_ttl_min={default}: Ein Anmeldelink ohne eigene "
          "Gültigkeit bekommt magiclink_ttl_min und würde immer abgewiesen. Die Grenze anheben oder "
          "magiclink_ttl_min senken."),
+    ("signin_link_max_ttl_min={most} is below invite_ttl_min={default}: an invitation issued without its "
+     "own validity takes invite_ttl_min and would always be refused. Raise the bound or lower "
+     "invite_ttl_min."):
+        ("signin_link_max_ttl_min={most} liegt unter invite_ttl_min={default}: Eine Einladung ohne eigene "
+         "Gültigkeit bekommt invite_ttl_min und würde immer abgewiesen. Die Grenze anheben oder "
+         "invite_ttl_min senken."),
     ("totp_window={window!r} does not exist. Allowed are 'previous' (default: the current and the "
      "previous 30-second step), 'current' (only the running step) and 'previous_and_next' (also the "
      "next step, the behaviour up to 0.25.x)."):

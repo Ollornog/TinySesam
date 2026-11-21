@@ -120,8 +120,12 @@ auth_t = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db_t, 
                                    oidc_enabled=False, cookie_secure=False, stepup_max_age_sec=900,
                                    session_rotation_grace_sec=0))
 uid_t = auth_t.create_user("eva", password="Eva-Secret-2026")
-assert auth_t.totp_confirm(uid_t, pyotp.TOTP(auth_t.totp_begin(uid_t)["secret"]).now())
-codes_t = auth_t.generate_recovery_codes(uid_t)   # two codes without waiting for the next TOTP window
+# Set up with the code of the PREVIOUS step (the default window takes it): the running step stays free for the
+# step-up below, without waiting for the next window. The sign-in takes a recovery code (the way in); the step-up
+# on a full session needs a real TOTP code — a recovery code is no step-up (pre-0.26 follow-up).
+gen_t = pyotp.TOTP(auth_t.totp_begin(uid_t)["secret"])
+assert auth_t.totp_confirm(uid_t, gen_t.at(time.time() - 30))
+codes_t = auth_t.generate_recovery_codes(uid_t)
 app_t = FastAPI()
 app_t.include_router(auth_t.router())
 
@@ -143,7 +147,7 @@ auth_t.store._exec("UPDATE session SET mfa_at=? WHERE token_hash=?",
 assert c_t.get("/sudo", headers=JSON).status_code == 403, "freshness must have expired"
 line_before = auth_t.store.get_session(before)
 count = len(auth_t.store.list_sessions(uid_t))
-r = c_t.post("/auth/totp", data={"code": codes_t[1], "next": "/sudo"}, follow_redirects=False)
+r = c_t.post("/auth/totp", data={"code": gen_t.now(), "next": "/sudo"}, follow_redirects=False)
 assert r.status_code == 303 and r.headers["location"] == "/sudo", (r.status_code, r.headers)
 assert any(z.startswith("tinysesam_session=") for z in r.headers.get_list("set-cookie")), \
     "step-up via /auth/totp sets no new session cookie"
@@ -199,7 +203,8 @@ auth_x = TinySesam(TinySesamConfig(lang="de", db_path=db_x, passkey_enabled=Fals
                                    cookie_secure=False, stepup_max_age_sec=900,
                                    session_rotation_grace_sec=0))
 uid_x = auth_x.create_user("eva", password="Eva-Secret-2026")
-assert auth_x.totp_confirm(uid_x, pyotp.TOTP(auth_x.totp_begin(uid_x)["secret"]).now())
+gen_x = pyotp.TOTP(auth_x.totp_begin(uid_x)["secret"])
+assert auth_x.totp_confirm(uid_x, gen_x.at(time.time() - 30))   # running step free for the step-up (see above)
 codes_x = auth_x.generate_recovery_codes(uid_x)
 app_x = FastAPI()
 app_x.include_router(auth_x.router())
@@ -227,7 +232,7 @@ tok_x = c_x.cookies.get("tinysesam_session")
 auth_x.store._exec("UPDATE session SET mfa_at=? WHERE token_hash=?",
                    (int(time.time()) - 100000, auth_x.store.session_hash(tok_x)))
 assert c_x.get("/sudo", headers=JSON).status_code == 403
-r = c_x.post("/auth/totp", data={"code": codes_x[1], "next": "/sudo", "_csrf": csrf_before},
+r = c_x.post("/auth/totp", data={"code": gen_x.now(), "next": "/sudo", "_csrf": csrf_before},
              follow_redirects=False)
 assert r.status_code == 303 and "tinysesam_session" in _assigned(r), (r.status_code, _assigned(r))
 assert "tinysesam_csrf" not in _assigned(r), "the step-up rotates the CSRF token (other tabs break)"

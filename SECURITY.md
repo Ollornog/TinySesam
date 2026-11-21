@@ -190,7 +190,9 @@ rate limit, open-redirect protection via `safe_next`). Even so: review it yourse
   counts from TinySesam's own sign-in, as before — the provider is trusted to have authenticated at least with
   its weakest method; the provider button then never confirms, the account confirms with its own factors or by
   signing in again. Providers that ignore `prompt=login` are caught the same way. `oidc_reauth_check=False`
-  restores the behaviour up to 0.25.x. SAML has no such check yet (`ForceAuthn` is not sent).
+  restores the behaviour up to 0.25.x. SAML has no such check yet (`ForceAuthn` is not sent, `AuthnInstant` is
+  not read; backlog T-70): a SAML round through the provider's running session still counts as a fresh
+  confirmation.
 - **Your own sign-in, step-up or password-change page: build it on the building blocks.**
   `login_password`, `login_pin`, `login_totp`, `confirm_password`, `confirm_pin`, `confirm_totp`
   and `change_password` (tier A, since 0.22.0) throttle, count, lock and log exactly like the

@@ -4615,9 +4615,21 @@ class TinySesam:
 
         The check happens before the token is issued, so that a rejected call leaves no
         invitation token behind. If sending fails, the token is invalidated (B6-12).
+
+        `ttl_min` defaults to `invite_ttl_min` (24 h) — an invitation waits in a mailbox for a person who did not ask
+        for it, unlike the 10 minutes of a sign-in or reset link (`magiclink_ttl_min`). Allowed are 1 minute to
+        `signin_link_max_ttl_min`, the bound of every hand-over link; anything else raises `ValueError`.
         """
         base_url = self._checked_base(base_url)
-        raw = self.create_magic_token("invite", email=email, ttl_min=ttl_min,
+        if ttl_min is None:
+            ttl = int(self.cfg.invite_ttl_min)
+        elif isinstance(ttl_min, bool) or not isinstance(ttl_min, int):
+            raise ValueError(self.t("api.invalid", reason="ttl_min"))
+        else:
+            ttl = ttl_min
+        if not 1 <= ttl <= int(self.cfg.signin_link_max_ttl_min):
+            raise ValueError(self.t("api.signin_link_ttl", max=int(self.cfg.signin_link_max_ttl_min)))
+        raw = self.create_magic_token("invite", email=email, ttl_min=ttl,
                                       payload={"roles": list(roles or []), "is_admin": bool(is_admin)})
         url = self.magic_url(raw, base_url, "invite")
         if email and self.mail_configured():
@@ -5667,7 +5679,9 @@ class TinySesam:
         """Provide the TOTP step — with a TOTP code or a one-time code, throttled and locked like `POST /auth/totp`, which calls exactly this method.
 
         For the half session after the first factor (`result.next_factor == "totp"`
-        of a previous `LoginResult`) and as a step-up of a full one. Both come from the cookie
+        of a previous `LoginResult`) and as a step-up of a full one — the step-up takes a TOTP code only, never a
+        one-time recovery code (the same rule as `confirm_totp`; a recovery code is the way in when the
+        authenticator is gone, not a confirmation). Both come from the cookie
         (`pending_user`/`session_user`, never from an API key); without a session the result is
         `reason="no_session"` with the login page as `next_url`. If the session thereby becomes full
         or freshly confirmed, it gets a new token — `redirect()`/`set_cookie()`
@@ -5694,9 +5708,17 @@ class TinySesam:
         if attempt is None:
             return self._sign_in_locked(pu["username"], nxt, unclosed, text="err.retry",
                                             reason="locked" if throttle_ok else "ratelimit")
+        # A one-time recovery code is the emergency way IN — for the half session whose authenticator is gone. On a
+        # session that is already full it would be a step-up, and the confirmation page (`confirm_totp`) never took
+        # one: a code from the drawer next to a stolen session cookie made that session fresh for new access. So on a
+        # full session only a TOTP code counts — unless `stepup_options()` names recovery codes on purpose. The code
+        # is then not even looked at, so it is not used up either.
+        full = bool(s["mfa_ok"])
+        recovery_ok = not full or "recovery" in self.stepup_options(pu)
         try:
-            # accept a TOTP code OR a one-time recovery code
-            correct = self._verify_totp(pu["id"], code) or self._verify_recovery_code(pu["id"], code)
+            # accept a TOTP code OR (see above) a one-time recovery code
+            correct = (self._verify_totp(pu["id"], code)
+                       or (recovery_ok and self._verify_recovery_code(pu["id"], code)))
         except BaseException:
             self._attempt_failed(attempt)       # the unexpected counts immediately (as with the password)
             raise

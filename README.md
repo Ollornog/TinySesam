@@ -370,8 +370,9 @@ The rules of the setup pass:
 | `cookie_domain` · `trusted_redirect_hosts` | `""` · `[]` | SSO across subdomains · allowed absolute `?next=` targets |
 | `security_log` | `""` | file for the fail2ban logger (empty = logger only) |
 | `forward_auth_enabled` · `forward_headers` | `False` · `{}` | forward-auth endpoint · which headers it sets (empty = `Remote-*`) |
-| `magiclink_enabled` · `magiclink_self_request` · `magiclink_ttl_min` | `False` · `True` · `10` | sign-in links redeem · anyone may request one by email (needs a mailer; `False` = links only from the admin or app code) · validity in minutes (also reset links and invitations; up to 0.25.x `15`) |
-| `signin_link_max_ttl_min` | `1440` | upper bound for a sign-in link the admin or app code issues (up to 0.25.x a week, `10080`) |
+| `magiclink_enabled` · `magiclink_self_request` · `magiclink_ttl_min` | `False` · `True` · `10` | sign-in links redeem · anyone may request one by email (needs a mailer; `False` = links only from the admin or app code) · validity in minutes (also reset links; up to 0.25.x `15`) |
+| `signin_link_max_ttl_min` | `1440` | upper bound for a sign-in link or an invitation the admin or app code issues (up to 0.25.x a week, `10080`) |
+| `invite_ttl_min` | `1440` | validity of an invitation without an own `ttl_min` (up to 0.25.x `magiclink_ttl_min`) |
 | `magiclink_first_login_only` | `False` | a link signs in only for the first sign-in (or to set up a missing factor) |
 | `qr_login_enabled` · `qr_login_ttl_sec` | `False` · `120` | cross-device sign-in (QR code needs `base_url` and the extra `[qr]`) · validity of a request |
 
@@ -2072,7 +2073,7 @@ Every Python block in both files runs in the test suite, and every name they men
 
 ## Status
 
-**105 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
+**106 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
 
 Implemented and tested: password/TOTP/sessions/roles, remember-me, step-up and per-route MFA,
 factor chains, personal PIN, shared resource secrets, magic links + mailer hook, registration and
