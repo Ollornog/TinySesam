@@ -365,6 +365,35 @@ CREATE TABLE IF NOT EXISTS oauth_token (
     used_at    INTEGER,                      -- refresh: exchanged once (rotation); a second use is reuse
     successor  TEXT                          -- refresh, grace window only: the successor pair, encrypted (vault)
 );
+-- OAuth for services (T-60, ADR-13): a service is an `oauth_client` row plus this one. It authenticates with
+-- `private_key_jwt` (RFC 7523), and only its PUBLIC keys are stored — nothing here lets anyone sign.
+CREATE TABLE IF NOT EXISTS oauth_service_client (
+    client_id      TEXT PRIMARY KEY REFERENCES oauth_client(client_id) ON DELETE CASCADE,
+    user_id        INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    roles          TEXT,                     -- JSON scope, NULL = the account roles
+    resources      TEXT NOT NULL,            -- JSON list: the resources it may get tokens for
+    created_by     TEXT,                     -- who issued the pairing code
+    last_ip        TEXT,
+    revoked_at     INTEGER,
+    revoked_reason TEXT
+);
+CREATE TABLE IF NOT EXISTS oauth_client_key (
+    client_id  TEXT NOT NULL REFERENCES oauth_client(client_id) ON DELETE CASCADE,
+    kid        TEXT NOT NULL,                -- RFC 7638 thumbprint of the public key
+    jwk        TEXT NOT NULL,                -- the public JWK (OKP Ed25519 or EC P-256), never a private part
+    created_at INTEGER NOT NULL,
+    created_ip TEXT,
+    expires_at INTEGER,                      -- oauth_service_key_days after creation, NULL = none
+    retire_at  INTEGER,                      -- NULL = current key, otherwise accepted until then (rotation overlap)
+    last_used  INTEGER,
+    PRIMARY KEY (client_id, kid)
+);
+CREATE TABLE IF NOT EXISTS oauth_assertion (   -- `jti` of every accepted client assertion until its `exp` (replay)
+    client_id  TEXT NOT NULL,
+    jti        TEXT NOT NULL,
+    expires_at INTEGER NOT NULL,
+    PRIMARY KEY (client_id, jti)
+);
 -- Keys of their own purpose (T-48, ADR-12): the gate signing key and the OAuth pepper, when no environment variable
 -- or file provides them. Encrypted with the vault (AAD: purpose and kid) — the database alone does not give them,
 -- the vault key alone does not either. One active key per purpose (`since IS NULL`), the others are previous.
@@ -943,7 +972,12 @@ class Store:
     #: 20 — `app_password` (T-66): app passwords for Basic auth at the gate. Additive; an older version leaves the
     #:      table in place and does not know Basic auth — the devices that use one are refused until the update is
     #:      back.
-    SCHEMA_VERSION = 20
+    #: 21 — `oauth_service_client`, `oauth_client_key`, `oauth_assertion` (T-60, ADR-13): services with
+    #:      `client_credentials` and `private_key_jwt`. Additive; an older version leaves the tables in place and does
+    #:      not know the grant type — the services are refused until the update is back. Their `oauth_client` rows
+    #:      have no redirect URI, so an older version cannot start an authorization with them either. Its cleanup
+    #:      (`gc_oauth`) does remove a service without a live token after a day — then it is paired again.
+    SCHEMA_VERSION = 21
 
     #: Old table name → new table name (schema 16).
     RENAMED_TABLES = {"namensbindung": "name_binding", "oidc_sitzung": "oidc_session",
@@ -4589,9 +4623,11 @@ class Store:
         return d
 
     def oauth_count_idle_clients(self) -> int:
-        """Registrations that never led to a grant — the cap of open registration counts them."""
+        """Registrations that never led to a grant — the cap of open registration counts them (services do not
+        register themselves and are not counted)."""
         r = self._one("SELECT COUNT(*) AS n FROM oauth_client c WHERE NOT EXISTS "
-                      "(SELECT 1 FROM oauth_grant g WHERE g.client_id = c.client_id)")
+                      "(SELECT 1 FROM oauth_grant g WHERE g.client_id = c.client_id) AND NOT EXISTS "
+                      "(SELECT 1 FROM oauth_service_client s WHERE s.client_id = c.client_id)")
         return int(r["n"]) if r else 0
 
     def oauth_touch_client(self, client_id: str, now: int) -> None:
@@ -4666,11 +4702,15 @@ class Store:
             return grant_id
 
     def oauth_token(self, token_hash: str) -> Optional[sqlite3.Row]:
-        """The token row joined with its grant (`g_*` columns) — or None."""
+        """The token row joined with its grant (`g_*` columns) and, for a service (T-60), its service row (`s_*`;
+        `s_client_id` is NULL for a person's tool) — or None."""
         return self._one(
             "SELECT t.*, g.client_id AS g_client_id, g.user_id AS g_user_id, g.resource AS g_resource, "
-            "g.scope AS g_scope, g.expires_at AS g_expires_at, g.revoked_at AS g_revoked_at "
-            "FROM oauth_token t JOIN oauth_grant g ON g.id = t.grant_id WHERE t.token_hash=?", (token_hash,))
+            "g.scope AS g_scope, g.expires_at AS g_expires_at, g.revoked_at AS g_revoked_at, "
+            "s.client_id AS s_client_id, s.user_id AS s_user_id, s.roles AS s_roles, s.resources AS s_resources, "
+            "s.revoked_at AS s_revoked_at "
+            "FROM oauth_token t JOIN oauth_grant g ON g.id = t.grant_id "
+            "LEFT JOIN oauth_service_client s ON s.client_id = g.client_id WHERE t.token_hash=?", (token_hash,))
 
     def oauth_rotate(self, old_hash: str, grant_id: int, now: int, ip, tokens, successor) -> bool:
         """Refresh rotation in ONE transaction: mark the old refresh token used (only if it was not yet — False
@@ -4717,8 +4757,10 @@ class Store:
                          "LEFT JOIN oauth_client c ON c.client_id = g.client_id WHERE g.id=?", (grant_id,))
 
     def oauth_grants(self, now: int, user_id=None, live_only: bool = True) -> list:
-        """The connected devices (grants) — of one account or all; live = not revoked and a token not expired."""
-        where, args = [], []
+        """The connected devices (grants) — of one account or all; live = not revoked and a token not expired.
+        Without the grants of services (T-60): those are listed per service (`oauth_service_clients`)."""
+        where = ["NOT EXISTS (SELECT 1 FROM oauth_service_client s WHERE s.client_id = g.client_id)"]
+        args: list = []
         if user_id is not None:
             where.append("g.user_id=?")
             args.append(int(user_id))
@@ -4753,8 +4795,151 @@ class Store:
                 (now - revoked_keep_sec,)).rowcount
             n["oauth_clients"] = self.db.execute(
                 "DELETE FROM oauth_client WHERE created_at <= ? AND COALESCE(last_used, created_at) <= ? AND NOT EXISTS "
-                "(SELECT 1 FROM oauth_grant g WHERE g.client_id = oauth_client.client_id)",
-                (now - idle_client_sec, now - idle_client_sec)).rowcount
+                "(SELECT 1 FROM oauth_grant g WHERE g.client_id = oauth_client.client_id) AND NOT EXISTS "
+                "(SELECT 1 FROM oauth_service_client s WHERE s.client_id = oauth_client.client_id "
+                "AND (s.revoked_at IS NULL OR s.revoked_at > ?))",
+                (now - idle_client_sec, now - idle_client_sec, now - revoked_keep_sec)).rowcount
+            # Services (T-60): replay entries past their deadline and keys past their rotation overlap. An expired
+            # key stays — the lists say "expired" instead of showing a service without a key.
+            n["oauth_assertions"] = self.db.execute("DELETE FROM oauth_assertion WHERE expires_at <= ?",
+                                                    (now,)).rowcount
+            n["oauth_client_keys"] = self.db.execute(
+                "DELETE FROM oauth_client_key WHERE retire_at IS NOT NULL AND retire_at <= ?", (now,)).rowcount
             self.db.commit()
             self._written = time.monotonic()
             return n
+
+    # ---------- OAuth for services (T-60, ADR-13) ----------
+    # The rules live in `tinysesam/oauth_services.py`; here the reads and the writes that must be ONE transaction.
+
+    def oauth_pair_service(self, code_hash: str, now: int, client_id: str, name: str, user_id: int, roles,
+                           resources: list, created_by, ip, key: dict) -> bool:
+        """Redeem a pairing code and create the service with its first key — in ONE transaction. False (nothing
+        written) if the code was not an unused, unexpired pairing code for `user_id` any more."""
+        with self._writing():
+            cur = self.db.execute(
+                "UPDATE magic_token SET used_at=? WHERE token_hash=? AND purpose='oauth_pairing' AND user_id=? "
+                "AND used_at IS NULL AND expires_at>=?", (now, code_hash, int(user_id), now))
+            if cur.rowcount != 1:
+                self._discard()
+                return False
+            self.db.execute("INSERT INTO oauth_client(client_id, name, redirect_uris, created_at, created_ip) "
+                            "VALUES (?, ?, '[]', ?, ?)", (client_id, name, now, ip))
+            self.db.execute("INSERT INTO oauth_service_client(client_id, user_id, roles, resources, created_by, "
+                            "last_ip) VALUES (?, ?, ?, ?, ?, ?)",
+                            (client_id, int(user_id), json.dumps(roles) if roles is not None else None,
+                             json.dumps(list(resources)), created_by, ip))
+            self._oauth_insert_key(client_id, key, now, ip)
+            self.db.commit()
+            self._written = time.monotonic()
+            return True
+
+    def _oauth_insert_key(self, client_id: str, key: dict, now: int, ip) -> None:
+        self.db.execute("INSERT INTO oauth_client_key(client_id, kid, jwk, created_at, created_ip, expires_at) "
+                        "VALUES (?, ?, ?, ?, ?, ?)",
+                        (client_id, key["kid"], json.dumps(key["jwk"], sort_keys=True), now, ip, key["expires_at"]))
+
+    def oauth_service(self, client_id) -> Optional[dict]:
+        """A service with its account name — or None (also for a person's tool)."""
+        r = self._one("SELECT s.*, c.name, c.created_at, c.created_ip, c.last_used, u.username "
+                      "FROM oauth_service_client s JOIN oauth_client c ON c.client_id = s.client_id "
+                      "LEFT JOIN users u ON u.id = s.user_id WHERE s.client_id=?", (str(client_id or ""),))
+        return self._service_dict(r) if r is not None else None
+
+    @staticmethod
+    def _service_dict(r) -> dict:
+        d = dict(r)
+        d["roles"] = json.loads(d["roles"]) if d.get("roles") else None
+        d["resources"] = json.loads(d.get("resources") or "[]")
+        return d
+
+    def oauth_services(self, user_id=None, include_revoked: bool = False) -> list:
+        where, args = [], []
+        if user_id is not None:
+            where.append("s.user_id=?")
+            args.append(int(user_id))
+        if not include_revoked:
+            where.append("s.revoked_at IS NULL")
+        rows = self._all("SELECT s.*, c.name, c.created_at, c.created_ip, c.last_used, u.username "
+                         "FROM oauth_service_client s JOIN oauth_client c ON c.client_id = s.client_id "
+                         "LEFT JOIN users u ON u.id = s.user_id" + (" WHERE " + " AND ".join(where) if where else "")
+                         + " ORDER BY c.created_at DESC, s.client_id", tuple(args))
+        return [self._service_dict(r) for r in rows]
+
+    def oauth_service_ids(self, user_id: int) -> list:
+        return [r["client_id"] for r in self._all("SELECT client_id FROM oauth_service_client WHERE user_id=? "
+                                                  "AND revoked_at IS NULL", (int(user_id),))]
+
+    def oauth_client_keys(self, client_id: str) -> list:
+        """All stored keys of a service, the current one first (`retire_at` NULL), then by age."""
+        rows = self._all("SELECT * FROM oauth_client_key WHERE client_id=? "
+                         "ORDER BY retire_at IS NOT NULL, created_at DESC, kid", (str(client_id),))
+        out = []
+        for r in rows:
+            d = dict(r)
+            d["jwk"] = json.loads(d["jwk"])
+            out.append(d)
+        return out
+
+    def oauth_note_assertion(self, client_id: str, jti: str, expires_at: int) -> bool:
+        """Remember a client assertion's `jti` until its deadline — True only the FIRST time (replay protection,
+        atomic across processes by the primary key)."""
+        return self._exec("INSERT OR IGNORE INTO oauth_assertion(client_id, jti, expires_at) VALUES (?, ?, ?)",
+                          (client_id, jti, int(expires_at))).rowcount == 1
+
+    def oauth_add_client_key(self, client_id: str, key: dict, now: int, ip, retire_at: int) -> bool:
+        """A new current key; every other key of the service is accepted only until `retire_at` from now on. False
+        if the service is revoked."""
+        with self._writing():
+            live = self.db.execute("SELECT 1 FROM oauth_service_client WHERE client_id=? AND revoked_at IS NULL",
+                                   (client_id,)).fetchone()
+            if live is None:
+                self._discard()
+                return False
+            self.db.execute("UPDATE oauth_client_key SET retire_at=? WHERE client_id=? "
+                            "AND (retire_at IS NULL OR retire_at > ?)", (retire_at, client_id, retire_at))
+            self._oauth_insert_key(client_id, key, now, ip)
+            self.db.commit()
+            self._written = time.monotonic()
+            return True
+
+    def oauth_service_token(self, client_id: str, user_id: int, resource: str, scope: str, now: int, ip,
+                            kid: str, token: tuple) -> int:
+        """Issue one access token to a service: the grant of (service, resource) is reused or created, the token
+        row inserted, use and address noted on grant, service and key — ONE transaction. Returns the grant ID."""
+        with self._writing():
+            r = self.db.execute("SELECT id FROM oauth_grant WHERE client_id=? AND user_id=? AND resource=? "
+                                "AND revoked_at IS NULL ORDER BY id DESC LIMIT 1",
+                                (client_id, int(user_id), resource)).fetchone()
+            if r is None:
+                cur = self.db.execute(
+                    "INSERT INTO oauth_grant(client_id, user_id, resource, scope, created_at, created_ip, last_used, "
+                    "last_ip) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    (client_id, int(user_id), resource, scope, now, ip, now, ip))
+                grant_id = int(cur.lastrowid or 0)
+            else:
+                grant_id = int(r["id"])
+                self.db.execute("UPDATE oauth_grant SET last_used=?, last_ip=? WHERE id=?", (now, ip, grant_id))
+            self._oauth_insert_tokens(grant_id, [token], now)
+            self.db.execute("UPDATE oauth_client SET last_used=? WHERE client_id=?", (now, client_id))
+            self.db.execute("UPDATE oauth_service_client SET last_ip=? WHERE client_id=?", (ip, client_id))
+            self.db.execute("UPDATE oauth_client_key SET last_used=? WHERE client_id=? AND kid=?",
+                            (now, client_id, kid))
+            self.db.commit()
+            self._written = time.monotonic()
+            return grant_id
+
+    def oauth_revoke_service(self, client_id: str, reason: str, now: int) -> bool:
+        """Revoke a service: marked, its keys gone, its grants revoked and their tokens deleted — at once. True if
+        it was live."""
+        with self._writing():
+            cur = self.db.execute("UPDATE oauth_service_client SET revoked_at=?, revoked_reason=? WHERE client_id=? "
+                                  "AND revoked_at IS NULL", (now, reason, client_id))
+            self.db.execute("DELETE FROM oauth_client_key WHERE client_id=?", (client_id,))
+            self.db.execute("UPDATE oauth_grant SET revoked_at=?, revoked_reason=? WHERE client_id=? "
+                            "AND revoked_at IS NULL", (now, reason, client_id))
+            self.db.execute("DELETE FROM oauth_token WHERE grant_id IN "
+                            "(SELECT id FROM oauth_grant WHERE client_id=?)", (client_id,))
+            self.db.commit()
+            self._written = time.monotonic()
+            return cur.rowcount == 1

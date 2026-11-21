@@ -1265,10 +1265,87 @@ What happens and what protects it:
   (RFC 7009, without a client secret).
 - **Limits:** the connectors of Claude Desktop and Claude on the web call from Anthropic's network and cannot reach a server that
   is only in your LAN; Claude Code can. Claude Code has no DPoP — rotation is the protection for refresh tokens.
-  Services without a person (`client_credentials`) follow separately (T-60).
+  Services without a person (`client_credentials`): next section.
 
 The end-to-end check against the real Claude Code CLI is `tools/oauth-e2e/e2e.py` (manual: needs `claude`, Docker
 and Chrome).
+
+## A service calls a protected app
+
+A daemon, a backup job or a script on a server — a **service without a person** — reaches an application behind
+TinySesam with a short-lived access token from the same server (T-60, ADR-13). It authenticates with **its own key
+pair**: the private key never leaves the service, TinySesam keeps only the public half. Nothing in the database,
+the proxy log or a backup lets anyone else get a token — unlike an API key, which is a copyable string. Nobody
+builds anything: the reference client `tinysesam-client` does pairing, tokens and key rotation.
+
+```python
+TinySesamConfig(
+    base_url="https://auth.example.com",
+    forward_auth_enabled=True,
+    oauth_enabled=True,
+    oauth_resources=["https://app.example.com/api"],
+    oauth_service_clients=True,              # needs: pip install 'tinysesam[services]'
+)
+```
+
+**1. Pair once.** In the admin panel, open a service account's keys ("Pair a service", e.g. one made with
+`auth.create_service("backup", roles=["backup"])`), or — for a script that acts as yourself — the section
+"Services" on your account page. You get a one-time **pairing code** (`ABCD-EFGH-JKMN-PQRS`, valid
+`oauth_pairing_minutes`, 10 min). From your own code: `auth.create_service_pairing(uid, name="backup",
+resources=["https://app.example.com/api"], roles=["backup"])`. On the service's machine:
+
+```bash
+pip install "tinysesam[services]==0.25.7"
+tinysesam-client pair https://auth.example.com ABCD-EFGH-JKMN-PQRS
+#   creates an Ed25519 key pair, sends the public key with a proof that it holds the private one,
+#   writes $XDG_CONFIG_HOME/tinysesam/client.json (mode 0600; --key-file or TINYSESAM_CLIENT_KEY_FILE to choose)
+```
+
+**2. Call the app.** From the shell, or from Python with `httpx` or `requests`:
+
+```bash
+curl -H "Authorization: Bearer $(tinysesam-client token)" https://app.example.com/api/things
+tinysesam-client request GET https://app.example.com/api/things
+```
+
+```python
+from tinysesam.client import ServiceClient
+sc = ServiceClient("/etc/backup/tinysesam.json")
+httpx.get("https://app.example.com/api/things", auth=sc.httpx_auth())
+requests.get("https://app.example.com/api/things", auth=sc.requests_auth())
+```
+
+The proxy needs nothing new: forward auth accepts the token and passes `Remote-User` (the service account),
+`Remote-Groups` (its roles) on — the application sees an ordinary signed-in account.
+
+What happens and what protects it:
+
+- **Token request** `grant_type=client_credentials` with `private_key_jwt` (RFC 7523): a JWT signed with the
+  service's key, `iss` = `sub` = the client ID, **`aud` = the issuer** (`base_url`, as its only value — RFC 10070;
+  the token endpoint URL is refused), `exp` at most 5 min ahead, a `jti` that works once. Algorithms `Ed25519`,
+  `ES256` (and `EdDSA` for an Ed25519 key); never `none` or HMAC, and never a key the JWT brings along
+  (`jwk`/`jku`/`x5u`). Any OAuth client library with `private_key_jwt` works the same way once paired.
+- **Access token** opaque, `oauth_service_token_ttl_sec` (15 min), **no refresh token** — the service simply asks
+  again (the client caches and renews it). Valid only for the resource(s) it was paired for (`invalid_target`
+  otherwise), checked against the database on every request.
+- **Never admin.** The service acts as its account without the admin flag, with an optional role scope (trimmed to
+  the account's roles). A locked account, a revoked service or a removed role takes effect at the next request.
+- **Pairing** happens only from an interactive, freshly confirmed session (never an API key); the code is stored
+  as a digest, works once, 20 attempts per address and hour, and every refusal lands in the audit log.
+- **Keys expire** after `oauth_service_key_days` (90); the client **rotates by itself** at half the lifetime:
+  it writes the new key as *pending* first, registers it (signed with the old key, proven with the new one), then
+  switches. The old key stays valid for an hour — tokens in flight and other processes keep working.
+  `tinysesam-client rotate` does it now.
+- **Revocation:** the account page and the admin panel (tab "Connected programs") list every service with its last
+  token request, address and key expiry, with "Revoke"; `auth.list_service_clients()`,
+  `auth.revoke_service_client(client_id)`. Locking the account, an admin password reset and "end all sessions"
+  revoke its services like its API keys. Events: `oauth_service_paired`, `oauth_service_revoked`.
+
+Another language? Pairing is one JSON request — `POST /auth/oauth/pair` with `{"code", "jwk", "proof"}`, where
+`proof` is a JWS of the new key with `typ: tinysesam-pairing+jwt`, `aud` = issuer, `nonce` = Base64url(SHA-256(the
+code without dashes)) — and the answer (`client_id`, `token_endpoint`) is everything a standard `private_key_jwt`
+client needs. Key rotation: `POST /auth/oauth/service/keys` (form: a client assertion, `jwk`, `proof` with
+`typ: tinysesam-key+jwt` and `sub` = client ID).
 
 ## App passwords: WebDAV, CalDAV, Git behind TinySesam
 
@@ -1856,7 +1933,8 @@ Building blocks for pages you build yourself — signatures and descriptions in
 - **Your own admin panel or operator tools:** `get_user`, `find_user`, `user_roles`, `set_roles`,
   `delete_user`, `lift_lockout` (like `tinysesam unlock`), `list_api_keys`, `api_key_kind`,
   `verify_api_key`, `create_app_password`, `list_app_passwords`, `revoke_app_password`, `app_password_hosts`
-  ([App passwords](#app-passwords-webdav-caldav-git-behind-tinysesam)), `revoke_mfa_enrollment`, `list_resource_secrets`, `remove_resource_secret`,
+  ([App passwords](#app-passwords-webdav-caldav-git-behind-tinysesam)), `create_service_pairing`,
+  `list_service_clients`, `revoke_service_client` ([services](#a-service-calls-a-protected-app)), `revoke_mfa_enrollment`, `list_resource_secrets`, `remove_resource_secret`,
   `resource_unlocked`, `all_security`, `admin_exists`, `admin_claim_token`, `audit`,
   `FEDERATED_SOURCES`, `NAME_BINDING_REFUSALS`.
 - **Mail and token flows:** `mail_configured`, `send_mail`, `create_magic_token` → `magic_url` →
@@ -1949,7 +2027,7 @@ Every Python block in both files runs in the test suite, and every name they men
 
 ## Status
 
-**96 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
+**97 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
 
 Implemented and tested: password/TOTP/sessions/roles, remember-me, step-up and per-route MFA,
 factor chains, personal PIN, shared resource secrets, magic links + mailer hook, registration and

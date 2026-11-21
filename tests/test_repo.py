@@ -223,7 +223,8 @@ for f in LIB:
         continue
     tree = _ast.parse(read(f))
     permitted = set()
-    if f == "tinysesam/gateway.py":
+    # The `main()` of a command line (the gateway, the reference client `tinysesam-client`, T-60) prints on purpose.
+    if f in ("tinysesam/gateway.py", "tinysesam/client.py"):
         for node in _ast.walk(tree):
             if isinstance(node, _ast.FunctionDef) and node.name == "main":
                 permitted = set(range(node.lineno, (node.end_lineno or node.lineno) + 1))

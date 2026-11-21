@@ -97,7 +97,7 @@ jobs:
       - name: Chrome present?
         run: which chrome || which google-chrome; chrome --version || google-chrome --version
       - name: Dependencies
-        run: pip install -e . uvicorn websockets httpx setuptools wheel
+        run: pip install -e ".[services]" uvicorn websockets httpx setuptools wheel   # [services]: T-60 section of the account page
       - name: Build the website (must succeed)
         run: python -m web.build _site
       - name: Browser test

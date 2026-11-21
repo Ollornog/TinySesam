@@ -1292,10 +1292,90 @@ Was passiert und was es schützt:
   (RFC 7009, ohne Client-Geheimnis).
 - **Grenzen:** Die Connectors von Claude Desktop und Claude im Web rufen aus Anthropics Netz an und erreichen keinen
   Server, der nur in deinem LAN steht; Claude Code schon. Claude Code kann kein DPoP — Rotation ist der Schutz der
-  Refresh-Tokens. Dienste ohne Mensch (`client_credentials`) folgen getrennt (T-60).
+  Refresh-Tokens. Dienste ohne Mensch (`client_credentials`): nächster Abschnitt.
 
 Die Ende-zu-Ende-Prüfung gegen das echte Claude-Code-CLI ist `tools/oauth-e2e/e2e.py` (von Hand: braucht `claude`,
 Docker und Chrome).
+
+## Ein Dienst ruft eine geschützte App auf
+
+Ein Daemon, ein Backup-Job oder ein Skript auf einem Server — ein **Dienst ohne Mensch** — erreicht eine Anwendung
+hinter TinySesam mit einem kurzlebigen Access-Token vom selben Server (T-60, ADR-13). Er weist sich mit **seinem
+eigenen Schlüsselpaar** aus: Der private Schlüssel verlässt den Dienst nie, TinySesam behält nur die öffentliche
+Hälfte. Nichts in der Datenbank, im Proxy-Log oder in einer Sicherung verschafft jemand anderem ein Token — anders als
+ein API-Key, der eine kopierbare Zeichenkette ist. Gebaut wird nichts: Der Referenz-Client `tinysesam-client`
+erledigt Kopplung, Tokens und Schlüsselwechsel.
+
+```python
+TinySesamConfig(
+    base_url="https://auth.example.com",
+    forward_auth_enabled=True,
+    oauth_enabled=True,
+    oauth_resources=["https://app.example.com/api"],
+    oauth_service_clients=True,              # braucht: pip install 'tinysesam[services]'
+)
+```
+
+**1. Einmal koppeln.** Im Admin-Panel bei den Schlüsseln eines Dienstkontos „Dienst koppeln“ (z. B. eines mit
+`auth.create_service("backup", roles=["backup"])` angelegten), oder — für ein Skript, das als du selbst handelt — im
+Abschnitt „Dienste“ der Kontoseite. Es gibt einen einmaligen **Kopplungscode** (`ABCD-EFGH-JKMN-PQRS`, gültig
+`oauth_pairing_minutes`, 10 min). Aus eigenem Code: `auth.create_service_pairing(uid, name="backup",
+resources=["https://app.example.com/api"], roles=["backup"])`. Auf dem Rechner des Dienstes:
+
+```bash
+pip install "tinysesam[services]==0.25.7"
+tinysesam-client pair https://auth.example.com ABCD-EFGH-JKMN-PQRS
+#   erzeugt ein Ed25519-Schlüsselpaar, schickt den öffentlichen Schlüssel mit einem Besitznachweis,
+#   schreibt $XDG_CONFIG_HOME/tinysesam/client.json (Modus 0600; wählbar mit --key-file oder TINYSESAM_CLIENT_KEY_FILE)
+```
+
+**2. Die App aufrufen.** Aus der Shell oder aus Python mit `httpx` oder `requests`:
+
+```bash
+curl -H "Authorization: Bearer $(tinysesam-client token)" https://app.example.com/api/things
+tinysesam-client request GET https://app.example.com/api/things
+```
+
+```python
+from tinysesam.client import ServiceClient
+sc = ServiceClient("/etc/backup/tinysesam.json")
+httpx.get("https://app.example.com/api/things", auth=sc.httpx_auth())
+requests.get("https://app.example.com/api/things", auth=sc.requests_auth())
+```
+
+Am Proxy ändert sich nichts: Forward-Auth nimmt das Token an und gibt `Remote-User` (das Dienstkonto) und
+`Remote-Groups` (seine Rollen) weiter — die Anwendung sieht ein gewöhnliches angemeldetes Konto.
+
+Was passiert und was es schützt:
+
+- **Token-Anfrage** `grant_type=client_credentials` mit `private_key_jwt` (RFC 7523): ein JWT, signiert mit dem
+  Schlüssel des Dienstes, `iss` = `sub` = Client-ID, **`aud` = der Aussteller** (`base_url`, als einziger Wert —
+  RFC 10070; die Adresse des Token-Endpunkts wird abgelehnt), `exp` höchstens 5 min voraus, eine `jti`, die einmal
+  gilt. Algorithmen `Ed25519`, `ES256` (und `EdDSA` für einen Ed25519-Schlüssel); nie `none` oder HMAC und nie ein
+  Schlüssel, den das JWT mitbringt (`jwk`/`jku`/`x5u`). Jede OAuth-Client-Bibliothek mit `private_key_jwt` geht nach
+  der Kopplung genauso.
+- **Access-Token** opak, `oauth_service_token_ttl_sec` (15 min), **kein Refresh-Token** — der Dienst fragt einfach
+  neu (der Client hält es vor und erneuert es). Gültig nur für die gekoppelte(n) Ressource(n) (sonst
+  `invalid_target`), bei jeder Anfrage gegen die Datenbank geprüft.
+- **Nie Admin.** Der Dienst handelt als sein Konto ohne Admin-Merkmal, mit optionalem Rollenumfang (auf die Rollen
+  des Kontos gekürzt). Ein gesperrtes Konto, ein widerrufener Dienst oder eine entzogene Rolle wirkt bei der nächsten
+  Anfrage.
+- **Koppeln** geht nur aus einer interaktiven, frisch bestätigten Sitzung (nie mit einem API-Key); der Code liegt nur
+  als Digest vor, gilt einmal, 20 Versuche je Adresse und Stunde, und jede Ablehnung steht im Audit-Log.
+- **Schlüssel laufen ab** nach `oauth_service_key_days` (90); der Client **wechselt selbst** zur halben Laufzeit:
+  Er schreibt den neuen Schlüssel zuerst als *pending*, meldet ihn an (signiert mit dem alten, belegt mit dem neuen)
+  und schaltet dann um. Der alte gilt noch eine Stunde — Tokens unterwegs und andere Prozesse laufen weiter.
+  `tinysesam-client rotate` wechselt sofort.
+- **Widerruf:** Kontoseite und Admin-Panel (Reiter „Verbundene Programme“) listen jeden Dienst mit letzter
+  Token-Anfrage, Adresse und Schlüsselablauf, mit „Widerrufen“; `auth.list_service_clients()`,
+  `auth.revoke_service_client(client_id)`. Konto sperren, Admin-Passwort-Reset und „alle Sitzungen beenden“
+  widerrufen seine Dienste wie seine API-Keys. Ereignisse: `oauth_service_paired`, `oauth_service_revoked`.
+
+Andere Sprache? Koppeln ist eine JSON-Anfrage — `POST /auth/oauth/pair` mit `{"code", "jwk", "proof"}`, wobei
+`proof` ein JWS des neuen Schlüssels ist mit `typ: tinysesam-pairing+jwt`, `aud` = Aussteller, `nonce` =
+Base64url(SHA-256(Code ohne Bindestriche)) — und die Antwort (`client_id`, `token_endpoint`) ist alles, was ein
+gewöhnlicher `private_key_jwt`-Client braucht. Schlüsselwechsel: `POST /auth/oauth/service/keys` (Formular: eine
+Client-Assertion, `jwk`, `proof` mit `typ: tinysesam-key+jwt` und `sub` = Client-ID).
 
 ## App-Passwörter: WebDAV, CalDAV, Git hinter TinySesam
 
@@ -1902,6 +1982,8 @@ Bausteine für Seiten, die du selbst baust — Signaturen und Beschreibungen in
   `set_roles`, `delete_user`, `lift_lockout` (wie `tinysesam unlock`), `list_api_keys`,
   `api_key_kind`, `verify_api_key`, `create_app_password`, `list_app_passwords`, `revoke_app_password`,
   `app_password_hosts` ([App-Passwörter](#app-passwörter-webdav-caldav-git-hinter-tinysesam)),
+  `create_service_pairing`, `list_service_clients`, `revoke_service_client`
+  ([Dienste](#ein-dienst-ruft-eine-geschützte-app-auf)),
   `revoke_mfa_enrollment`, `list_resource_secrets`,
   `remove_resource_secret`, `resource_unlocked`, `all_security`, `admin_exists`,
   `admin_claim_token`, `audit`, `FEDERATED_SOURCES`, `NAME_BINDING_REFUSALS`.
@@ -2000,7 +2082,7 @@ Jeder Python-Block beider Dateien läuft in der Testsuite, und jeder genannte Na
 
 ## Status
 
-**96 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
+**97 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
 (`tests/test_matrix.py`).
 
 Gebaut und getestet: Passwort/TOTP/Sitzungen/Rollen, Remember-me, Step-up und per-Route-MFA,

@@ -61,8 +61,8 @@ went without `email_changed` (added later from OIDC/LDAP), and the name in the d
 Since the PO decision of 2026-10-29 (M-1) the security log is part of the stability promise, tier A. What a
 filter or a log shipper may rely on:
 
-- **The logger** `tinysesam.security` (and its parent `tinysesam`; `tinysesam.mail` for mail). `security_log`
-  writes the first to a file.
+- **The logger** `tinysesam.security` (and its parent `tinysesam`; `tinysesam.mail` for mail; `tinysesam.client`
+  for the reference client of services on the service's machine, T-60). `security_log` writes the first to a file.
 - **The format of that file:** `%(asctime)s %(levelname)s %(message)s` — so a line starts with the date, then
   the level, then the message. The shipped filters strip the date and anchor on the level (`^\s*WARNING …`).
 - **The event word** at the start of the message and **the keys behind it, in this order:**
