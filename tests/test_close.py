@@ -51,7 +51,8 @@ def job():
         auth.audit("close_race", "probe", detail=str(i))
     done.append(True)
 
-assert auth._notice_outcome.enqueue(job)
+queued = auth._notice_outcome.enqueue(job)
+assert queued
 started.wait(5)
 time.sleep(0.01)                    # the job is inside its write loop now
 if sys.argv[1] == "raw":
@@ -74,7 +75,7 @@ assert not (code == 0 and out == "closed=True job_done=True"), (
     "self-probe: the raw db.close() under a running job went through cleanly — the scenario cannot fail")
 ok(f"self-probe: raw store.db.close() under a running job breaks it (exit {code}, {out or 'no output'})")
 
-for attempt in range(3):
+for _ in range(3):
     code, out, err = race("close")
     assert code == 0 and out == "closed=True job_done=True", (code, out, err[-2000:])
 ok("close() under a running job: no crash, the job finishes all its writes, then the database closes (3 runs)")
@@ -82,7 +83,8 @@ ok("close() under a running job: no crash, the job finishes all its writes, then
 
 # ---------- after close: refused, closed, idempotent ----------
 a = make()
-assert a.close() is True and a.close() is True
+first, second = a.close(), a.close()
+assert first is True and second is True
 for box in (a._outbox, a._notice_outcome, a._oidc_outcome):
     assert box.closed
 try:
@@ -93,7 +95,8 @@ except sqlite3.ProgrammingError:
 ok("close() closes the database (ProgrammingError afterwards) and is idempotent")
 
 ran, dropped = [], []
-assert a._notice_outcome.enqueue(lambda: ran.append(1)) is False
+taken = a._notice_outcome.enqueue(lambda: ran.append(1))
+assert taken is False
 asyncio.run(a._outbox.afterwards(lambda: ran.append(2), at_overflow=lambda: dropped.append(1))())
 assert ran == [] and dropped == [1], (ran, dropped)
 ok("after close(): enqueue refuses (False, no exception), afterwards drops and runs the cleanup")
@@ -110,7 +113,8 @@ def hanging():
     a.audit("late_write", "probe")      # still needs the connection after the deadline
 
 
-assert a._notice_outcome.enqueue(hanging)
+taken = a._notice_outcome.enqueue(hanging)
+assert taken
 inside.wait(5)
 logging.disable(logging.WARNING)
 t0 = time.monotonic()
@@ -118,11 +122,13 @@ result = a.close(timeout=0.2)
 logging.disable(logging.NOTSET)
 assert result is False and time.monotonic() - t0 < 2, result
 assert a.store.get_user(1) is None, "store closed although a job was still running"
-assert a._notice_outcome.enqueue(lambda: None) is False, "a new job was taken during the shutdown"
+taken = a._notice_outcome.enqueue(lambda: None)
+assert taken is False, "a new job was taken during the shutdown"
 release.set()
 a._notice_outcome.wait()
 assert any(r["event"] == "late_write" for r in a.store.recent_audit(5)), "the late job could not write"
-assert a.close() is True
+closed = a.close()
+assert closed is True
 ok("deadline passed with a running job: close() returns False, database stays open; the next close() finishes")
 
 
@@ -186,9 +192,11 @@ ok("gateway: the lifespan closes the database at shutdown (/healthz 503 afterwar
 # ---------- Outbox.close alone ----------
 box = Outbox(worker=1)
 seen = []
-assert box.enqueue(lambda: (time.sleep(0.05), seen.append(1)))
-assert box.close(5) is True and seen == [1]
-assert box.enqueue(lambda: seen.append(2)) is False and seen == [1]
+taken = box.enqueue(lambda: (time.sleep(0.05), seen.append(1)))
+closed = box.close(5)
+assert taken and closed is True and seen == [1]
+taken = box.enqueue(lambda: seen.append(2))
+assert taken is False and seen == [1]
 ok("Outbox.close(): waits for the queued job, then refuses")
 
 print("test_close: all checks passed")

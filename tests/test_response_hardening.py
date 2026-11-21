@@ -116,8 +116,8 @@ modern = [{"type": "csp-violation", "url": "https://testserver/auth/login",
 r = c.post("/auth/csp-report", content=json.dumps(modern), headers={"Content-Type": "application/reports+json"})
 assert r.status_code == 204
 assert caught.lines == [
-    "CSP violation directive=script-src-elem page=/auth/reset blocked=https://evil.example.net disposition=enforce "
-    "ip=testclient",
+    " ".join(["CSP violation directive=script-src-elem page=/auth/reset blocked=https://evil.example.net",
+              "disposition=enforce ip=testclient"]),
     "CSP violation directive=style-src-attr page=/auth/login blocked=inline disposition=report ip=testclient",
 ], caught.lines
 assert not any(TOKEN in line for line in caught.lines)
