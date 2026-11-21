@@ -32,7 +32,6 @@ from fastapi import FastAPI  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
 from tinysesam import TinySesam, TinySesamConfig, config_check, totp as _totp  # noqa: E402
-from tinysesam.errors import ConfigError  # noqa: E402
 
 BASE = "https://auth.example.com"
 PW = "a long probe password 4711"
