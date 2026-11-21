@@ -350,11 +350,11 @@ import ast  # noqa: E402
 import importlib.util  # noqa: E402
 import json as _json  # noqa: E402
 import pathlib  # noqa: E402
-import time as _time  # noqa: E402
 import types as _types  # noqa: E402
 from urllib.parse import parse_qs as _parse_qs, urlparse as _urlparse  # noqa: E402
 
 import pyotp  # noqa: E402
+from _totp_clock import next_code, previous_code  # noqa: E402
 from fastapi import Form, Request, Response  # noqa: E402
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse  # noqa: E402
 
@@ -690,7 +690,7 @@ _turns("Signin-Link", _c, lambda cl: cl.post(
 _a, _ap = _instance(login_chain=["password", "totp"])
 _uid = _a.store.get_user_by_name("erika")["id"]
 _secret_text = _a.totp_begin(_uid)["secret"]
-assert _a.totp_confirm(_uid, pyotp.TOTP(_secret_text).at(int(_time.time()) - 30))
+assert _a.totp_confirm(_uid, previous_code(_secret_text))
 _c = _client(_ap)
 _c.get("/auth/login")
 _stays("chain: first factor", _c, _password, "the half session is not yet a login")
@@ -700,7 +700,7 @@ _turns("chain password → TOTP", _c, lambda cl: cl.post(
 # T-57: the default window no longer takes the NEXT step; this test signs in with it a second time in one step.
 _a.cfg.totp_window = "previous_and_next"
 _stays("Step-up per TOTP", _c, lambda cl: cl.post(
-    "/auth/totp", data={"code": pyotp.TOTP(_secret_text).at(int(_time.time()) + 30), "next": "/",
+    "/auth/totp", data={"code": next_code(_secret_text), "next": "/",
                         "_csrf": cl.cookies.get(CK)}, follow_redirects=False))
 
 # Chain with mandatory setup: the confirmation code completes the sign-in (JSON response).

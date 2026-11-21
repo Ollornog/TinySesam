@@ -2052,12 +2052,12 @@ r.check("a database without cross collision stays silent",
 # password alone sufficed. CSRF protects nothing here: A GET carries no token, and `SameSite=Lax`
 # (default) sends the session cookie along with a top-level navigation.
 import pyotp  # noqa: E402
-import time
+from _totp_clock import previous_code  # noqa: E402
 
 auth_b21, app_b21 = _app()
 uid_b21 = auth_b21.create_user("nina", password="dummy12345", email="nina@example.com")
 secret_text_b21 = auth_b21.totp_begin(uid_b21)["secret"]
-auth_b21.totp_confirm(uid_b21, pyotp.TOTP(secret_text_b21).at(time.time() - 30))
+auth_b21.totp_confirm(uid_b21, previous_code(secret_text_b21))
 codes_b21 = auth_b21.generate_recovery_codes(uid_b21)
 c_b21 = TestClient(app_b21, base_url="https://app.example.com")
 c_b21.get("/auth/login")
@@ -2152,7 +2152,7 @@ r.check("...and a click on a foreign link just as little",
         across_b7.status_code == 200 and auth_b7.store.get_totp(uid_b7)["secret"] == before_b7,
         "the GET replaced the secret")
 r.check("...the confirmation with the code from THIS secret arms it",
-        auth_b7.totp_confirm(uid_b7, pyotp.TOTP(before_b7).at(time.time() - 30))
+        auth_b7.totp_confirm(uid_b7, previous_code(before_b7))
         and auth_b7.store.has_confirmed_totp(uid_b7),
         "the legitimate path is interrupted")
 
@@ -2169,7 +2169,7 @@ r.check("...and the start button sets up",
         and auth_ok.store.get_totp(uid_ok) is not None, "the setup is walled off")
 new_ok = auth_ok.store.get_totp(uid_ok)["secret"]
 r.check("...and the confirmation arms the factor",
-        auth_ok.totp_confirm(uid_ok, pyotp.TOTP(new_ok).at(time.time() - 30))
+        auth_ok.totp_confirm(uid_ok, previous_code(new_ok))
         and auth_ok.store.has_confirmed_totp(uid_ok))
 
 # … and set up again after the regular switch-off (otherwise the fix would be a dead end).
@@ -2183,7 +2183,7 @@ r.check("after the regular switch-off the setup is open again",
 auth_v, _ = _app()
 uid_v = auth_v.create_user("vera", password="dummy12345")
 secret_text_v = auth_v.totp_begin(uid_v)["secret"]
-auth_v.totp_confirm(uid_v, pyotp.TOTP(secret_text_v).at(time.time() - 30))
+auth_v.totp_confirm(uid_v, previous_code(secret_text_v))
 auth_v.generate_recovery_codes(uid_v)
 auth_v.store.delete_totp(uid_v)          # only the secret gone — the codes remain
 auth_v.totp_begin(uid_v)

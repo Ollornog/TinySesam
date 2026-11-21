@@ -7,6 +7,7 @@ import tempfile, os, time
 from fastapi import FastAPI, Depends
 from fastapi.testclient import TestClient
 import pyotp
+from _totp_clock import next_code, previous_code  # noqa: E402
 import importlib.util
 from tinysesam import TinySesam, TinySesamConfig
 
@@ -124,7 +125,7 @@ uid_t = auth_t.create_user("eva", password="Eva-Secret-2026")
 # step-up below, without waiting for the next window. The sign-in takes a recovery code (the way in); the step-up
 # on a full session needs a real TOTP code — a recovery code is no step-up (pre-0.26 follow-up).
 gen_t = pyotp.TOTP(auth_t.totp_begin(uid_t)["secret"])
-assert auth_t.totp_confirm(uid_t, gen_t.at(time.time() - 30))
+assert auth_t.totp_confirm(uid_t, previous_code(gen_t))
 codes_t = auth_t.generate_recovery_codes(uid_t)
 app_t = FastAPI()
 app_t.include_router(auth_t.router())
@@ -204,7 +205,7 @@ auth_x = TinySesam(TinySesamConfig(lang="de", db_path=db_x, passkey_enabled=Fals
                                    session_rotation_grace_sec=0))
 uid_x = auth_x.create_user("eva", password="Eva-Secret-2026")
 gen_x = pyotp.TOTP(auth_x.totp_begin(uid_x)["secret"])
-assert auth_x.totp_confirm(uid_x, gen_x.at(time.time() - 30))   # running step free for the step-up (see above)
+assert auth_x.totp_confirm(uid_x, previous_code(gen_x))   # running step free for the step-up (see above)
 codes_x = auth_x.generate_recovery_codes(uid_x)
 app_x = FastAPI()
 app_x.include_router(auth_x.router())
@@ -251,7 +252,7 @@ ok("API key: require_user ok, require(mfa=True) → 403 (no interactive factor)"
 
 # ---------- admin_require_mfa with TOTP user ----------
 secret = auth.totp_begin(uid)["secret"]
-auth.totp_confirm(uid, pyotp.TOTP(secret).at(time.time() - 30))
+auth.totp_confirm(uid, previous_code(secret))
 auth.cfg.admin_require_mfa = True
 c3 = TestClient(app)
 # Login → TOTP step → fully logged in (fresh)
@@ -270,7 +271,7 @@ assert "Authenticator" in c3.get("/auth/reauth").text
 # Fresh time step: the code from login is used up (a TOTP code is valid exactly once).
 # T-57: the default window no longer takes the NEXT step; this test signs in with it a second time in one step.
 auth.cfg.totp_window = "previous_and_next"
-r = c3.post("/auth/reauth", data={"code": pyotp.TOTP(secret).at(int(time.time()) + 30),
+r = c3.post("/auth/reauth", data={"code": next_code(secret),
                                   "next": "/auth/admin"}, follow_redirects=False)
 assert r.status_code == 303
 assert c3.get("/auth/admin", headers={"Accept": "text/html"}).status_code == 200
@@ -290,7 +291,7 @@ auth2 = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db2, rp
                                   stepup_max_age_sec=900))
 uid2 = auth2.create_user("victim", password="dummy123")
 sec2 = auth2.totp_begin(uid2)["secret"]
-assert auth2.totp_confirm(uid2, pyotp.TOTP(sec2).at(time.time() - 30))
+assert auth2.totp_confirm(uid2, previous_code(sec2))
 auth2.set_pin(uid2, "2468")
 auth2.store.add_webauthn(uid2, "credid-r3-3", "pubkey", 0, ["internal"], "Testschlüssel")
 pk2 = auth2.store.list_webauthn(uid2)[0]["id"]
@@ -356,7 +357,7 @@ ok(f"stale session: all {len(MANAGEMENT)} factor routes → 403 + reauth hint, n
 # Fresh time step: the code from login is used up (a TOTP code is valid exactly once).
 # T-57: the default window no longer takes the NEXT step; this test signs in with it a second time in one step.
 auth2.cfg.totp_window = "previous_and_next"
-r = c4.post("/auth/reauth", data={"code": pyotp.TOTP(sec2).at(int(time.time()) + 30), "next": "/"},
+r = c4.post("/auth/reauth", data={"code": next_code(sec2), "next": "/"},
             follow_redirects=False)
 assert r.status_code == 303, r.status_code
 if HAS_PASSKEY:
@@ -376,7 +377,7 @@ auth3 = TinySesam(TinySesamConfig(lang="de", db_path=db3, rp_name="Test", cookie
                                   passkey_enabled=HAS_PASSKEY))
 uid3 = auth3.create_user("victim", password="dummy123")
 sec3 = auth3.totp_begin(uid3)["secret"]
-assert auth3.totp_confirm(uid3, pyotp.TOTP(sec3).at(time.time() - 30))
+assert auth3.totp_confirm(uid3, previous_code(sec3))
 auth3.set_pin(uid3, "1357")
 auth3.store.add_webauthn(uid3, "credid-r3-3-api", "pubkey", 0, ["internal"], "Testschlüssel")
 pk3 = auth3.store.list_webauthn(uid3)[0]["id"]
@@ -732,7 +733,7 @@ uid7_perpetrator = auth7.create_user("culprit", password="Secret-Thief-12")
 _secret_text7 = {}
 for _u7 in (uid7_adm, uid7_victim):
     _secret_text7[_u7] = auth7.totp_begin(_u7)["secret"]
-    assert auth7.totp_confirm(_u7, pyotp.TOTP(_secret_text7[_u7]).at(time.time() - 30))
+    assert auth7.totp_confirm(_u7, previous_code(_secret_text7[_u7]))
 key7_perpetrator = auth7.create_api_key(uid7_perpetrator, name="ci")["key"]
 key7_adm = auth7.create_api_key(uid7_adm, name="ci")["key"]
 app7 = FastAPI()
@@ -796,7 +797,7 @@ auth7.store._exec("UPDATE session SET mfa_at=? WHERE token_hash=?",
 assert c7.get("/auth/reauth", headers={"Accept": "text/html"}).status_code == 200
 # T-57: the default window no longer takes the NEXT step; this test signs in with it a second time in one step.
 auth7.cfg.totp_window = "previous_and_next"
-r = c7.post("/auth/reauth", data={"code": _totp7.at(int(time.time()) + 30), "next": "/",
+r = c7.post("/auth/reauth", data={"code": next_code(_totp7), "next": "/",
                                   "_csrf": c7.cookies.get("tinysesam_csrf") or ""},
             follow_redirects=False)
 assert r.status_code == 303, (r.status_code, r.text[:120])
@@ -825,7 +826,7 @@ uid8 = auth8.store.get_user_by_name("chef")["id"]
 auth8.set_pin(uid8, "4711")
 uid8_victim = auth8.create_user("victim", password="Secret-Victim-8")
 _secret_text8 = auth8.totp_begin(uid8_victim)["secret"]
-assert auth8.totp_confirm(uid8_victim, pyotp.TOTP(_secret_text8).at(time.time() - 30))
+assert auth8.totp_confirm(uid8_victim, previous_code(_secret_text8))
 KEY8 = {"X-API-Key": auth8.create_api_key(uid8, name="ci", kind="automation")["key"]}
 app8 = FastAPI()
 app8.include_router(auth8.router())

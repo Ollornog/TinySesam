@@ -15,11 +15,10 @@ import os
 import re
 import sys
 import tempfile
-import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import pyotp
+from _totp_clock import previous_code  # noqa: E402
 from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
 
@@ -58,7 +57,7 @@ for mode in ("grace", "first_login"):
     r = c.post("/auth/totp/setup/start", data={"next": "/secret"})
     found = re.search(r"\b([A-Z2-7]{32})\b", r.text) if r.status_code == 200 else None
     if found:
-        code = pyotp.TOTP(found.group(1)).at(time.time() - 30)
+        code = previous_code(found.group(1))
         c.post("/auth/totp/setup", data={"code": code, "next": "/secret"})
     status = c.get("/secret", headers=JSON).status_code
     assert status == 401 and not auth.store.has_confirmed_totp(uid), (
@@ -84,7 +83,7 @@ assert r.status_code == 303 and not r.headers["location"].startswith("/auth/setu
 r = c.post("/auth/totp/setup/start", data={"next": "/"})
 found = re.search(r"\b([A-Z2-7]{32})\b", r.text) if r.status_code == 200 else None
 if found:
-    c.post("/auth/totp/setup", data={"code": pyotp.TOTP(found.group(1)).at(time.time() - 30), "next": "/"})
+    c.post("/auth/totp/setup", data={"code": previous_code(found.group(1)), "next": "/"})
 assert not auth.store.has_confirmed_totp(uid), (
     "a sign-in link alone (mailbox) bound an own TOTP to an account that has a PIN for that step")
 ok("a sign-in link alone cannot bind a TOTP past the account's PIN")

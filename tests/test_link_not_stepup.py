@@ -19,6 +19,7 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pyotp
+from _totp_clock import next_code, previous_code  # noqa: E402
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -34,7 +35,7 @@ auth = TinySesam(TinySesamConfig(
     oidc_enabled=False, cookie_secure=False, magiclink_enabled=True, apikey_enabled=True,
     base_url="https://auth.example.com", stepup_max_age_sec=900, qr_login_enabled=True))
 uid = auth.create_user("carol", password="a long probe password 4711", email="carol@example.com")
-auth.totp_confirm(uid, pyotp.TOTP(auth.totp_begin(uid)["secret"]).at(time.time() - 30))
+auth.totp_confirm(uid, previous_code(auth.totp_begin(uid)["secret"]))
 app = FastAPI()
 app.include_router(auth.router())
 
@@ -119,7 +120,7 @@ auth.cfg.stepup_methods = ["pin"]
 stale(c)
 # T-57: the default window no longer takes the NEXT step; this test signs in with it a second time in one step.
 auth.cfg.totp_window = "previous_and_next"
-r = c.post("/auth/totp", data={"code": pyotp.TOTP(auth.store.get_totp(uid)["secret"]).at(time.time() + 30),
+r = c.post("/auth/totp", data={"code": next_code(auth.store.get_totp(uid)["secret"]),
                                "next": "/"}, follow_redirects=False)
 assert r.status_code == 303, r.status_code          # the code is right — it just refreshes nothing
 assert c.post("/auth/apikeys", json={"name": "x"}).status_code == 403, (

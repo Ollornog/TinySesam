@@ -989,9 +989,9 @@ r.check("F-05: whoever is active stays in (50 + 50 min, but never 60 in one stre
 # The choice survives the completion of a chain: password (with checkbox) → TOTP creates a NEW full
 # session (privilege change, new token); `_successor` carries the choice over. Without it every
 # "Stay signed in" session with a second factor would silently fall back to the 8-h limit.
-import time as _clock_k  # noqa: E402
 
 import pyotp as _pyotp  # noqa: E402
+from _totp_clock import previous_code  # noqa: E402
 auth_k, app_k = _app(login_chain=["password", "totp"])
 
 
@@ -1002,7 +1002,7 @@ def _inside_k(user=Depends(auth_k.require())):
 
 uid_k = auth_k.create_user("twofold", password=PW)
 _secret_text_k = auth_k.totp_begin(uid_k)["secret"]
-auth_k.totp_confirm(uid_k, _pyotp.TOTP(_secret_text_k).at(_clock_k.time() - 30))
+auth_k.totp_confirm(uid_k, previous_code(_secret_text_k))
 ckk = TestClient(app_k)
 ckk.post("/auth/login", data={"username": "twofold", "password": PW, "remember": "1"}, follow_redirects=False)
 _half_k = auth_k.store._one("SELECT token_hash, stay_chosen FROM session")
@@ -1594,7 +1594,7 @@ r.check("3c: account with passkey — the link alone does not sign in fully (con
 a3k, ap3k = _link_app(login_chain=["magic"])
 u3k = a3k.create_user("totp-account", password=PW, email="tk@example.com")
 _g3k = a3k.totp_begin(u3k)["secret"]
-a3k.totp_confirm(u3k, pyotp.TOTP(_g3k).at(_when.time() - 30))
+a3k.totp_confirm(u3k, previous_code(_g3k))
 c3k, antw3k = _link_login(a3k, ap3k, "totp-account")
 r.check("3c: chain [\"magic\"], account with TOTP — the TOTP step follows the link",
         antw3k.status_code == 303 and antw3k.headers["location"].startswith("/auth/totp")
@@ -1612,7 +1612,7 @@ r.check("3c: an account without a second factor is still signed in by the link a
 a3a, ap3a = _link_app(login_chain=["magic"], magiclink_require_second_factor=False)
 u3a = a3a.create_user("totp-a", password=PW, email="ta@example.com")
 _g3a = a3a.totp_begin(u3a)["secret"]
-a3a.totp_confirm(u3a, pyotp.TOTP(_g3a).at(_when.time() - 30))
+a3a.totp_confirm(u3a, previous_code(_g3a))
 c3a, _ = _link_login(a3a, ap3a, "totp-a")
 r.check("3c configurable: magiclink_require_second_factor=False — the link suffices again (A)",
         c3a.get("/inside").json() == {"u": "totp-a"})
@@ -1650,7 +1650,7 @@ def _route_link(a, ap, name):
 def _with_totp(a, name):
     uid = a.create_user(name, password=PW, email=f"{name}@example.com")
     secret_text = a.totp_begin(uid)["secret"]
-    a.totp_confirm(uid, pyotp.TOTP(secret_text).at(_when.time() - 30))
+    a.totp_confirm(uid, previous_code(secret_text))
     return secret_text
 
 

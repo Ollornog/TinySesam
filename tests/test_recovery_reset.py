@@ -4,7 +4,7 @@ import tempfile, os, re
 from fastapi import FastAPI, Depends
 from fastapi.testclient import TestClient
 import pyotp
-import time
+from _totp_clock import previous_code  # noqa: E402
 from tinysesam import TinySesam, TinySesamConfig
 
 
@@ -37,7 +37,7 @@ JSON = {"Accept": "application/json"}
 
 # ---------- Recovery codes: redeemable in the TOTP step, one-shot ----------
 secret = auth.totp_begin(uid)["secret"]
-auth.totp_confirm(uid, pyotp.TOTP(secret).at(time.time() - 30))
+auth.totp_confirm(uid, previous_code(secret))
 codes = auth.generate_recovery_codes(uid)
 assert len(codes) == 6 and auth.recovery_codes_remaining(uid) == 6
 ok("generate_recovery_codes → 6 Codes")
@@ -197,7 +197,7 @@ event_r = []
 auth_r.on_security_event = lambda e, k, d: event_r.append((e, d))
 uid_r = auth_r.create_user("rita", "rita-secret-1-long", email="rita@example.com")
 secret_text_r = auth_r.totp_begin(uid_r)["secret"]
-auth_r.totp_confirm(uid_r, pyotp.TOTP(secret_text_r).at(time.time() - 30))
+auth_r.totp_confirm(uid_r, previous_code(secret_text_r))
 codes_r = auth_r.generate_recovery_codes(uid_r)
 app_r = FastAPI()
 app_r.include_router(auth_r.router())

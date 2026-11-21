@@ -304,15 +304,15 @@ r.check("(i) the configuration check warns exactly for a non-strict chain with P
 # Until 2026-09-27 any half session sufficed. In classic mode with pin_login=False that was an
 # oracle for anyone with the password (on 0.20.x: 404); in a strict chain password → totp → pin
 # the PIN stood in the session before the TOTP, which then never became full.
-import time as _when  # noqa: E402
 
 import pyotp as _pyotp  # noqa: E402
+from _totp_clock import previous_code  # noqa: E402
 
 
 def _with_totp(auth, name):
     uid = _account(auth, name)
     secret_text = auth.totp_begin(uid)["secret"]
-    auth.totp_confirm(uid, _pyotp.TOTP(secret_text).at(_when.time() - 30))
+    auth.totp_confirm(uid, previous_code(secret_text))
     return uid, secret_text
 
 
@@ -451,7 +451,7 @@ def _series_way_out(kind):
                 _password(TestClient(app_x), name, f"wrong-wrong-xx{next(_WRONG)}")
         elif kind == "totp":
             secret_text = auth_x.totp_begin(uid_x)["secret"]
-            auth_x.totp_confirm(uid_x, _pyotp.TOTP(secret_text).at(_when.time() - 30))
+            auth_x.totp_confirm(uid_x, previous_code(secret_text))
             cx = TestClient(app_x)
             _password(cx, name)
             for i in range(10):

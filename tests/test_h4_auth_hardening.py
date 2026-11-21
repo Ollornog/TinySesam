@@ -28,6 +28,8 @@ from urllib.parse import parse_qs, urlparse
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pyotp  # noqa: E402
+import _totp_clock  # noqa: E402
+from _totp_clock import next_code, previous_code  # noqa: E402
 from fastapi import FastAPI  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
@@ -69,16 +71,14 @@ def totp_account(window=None):
 
 
 def mid_step():
-    """Wait out the last seconds of a 30-second step: a code computed just before the change and checked just after
-    it would land one step further back than meant (a wobble under load, not a finding)."""
-    if time.time() % 30 > 27:
-        time.sleep(30 - time.time() % 30 + 0.5)
+    """Wait out the last seconds of a 30-second step (`tests/_totp_clock.py`): a code computed just before the change
+    and checked just after it would land one step off (a wobble under load, not a finding)."""
+    _totp_clock.safe_moment()
 
 
 def accepted(window, offset_steps):
     auth, uid, gen = totp_account(window)
-    mid_step()
-    return auth._verify_totp(uid, gen.at(time.time() + 30 * offset_steps))
+    return auth._verify_totp(uid, _totp_clock.code(gen, offset_steps))
 
 
 assert TinySesamConfig(db_path=os.path.join(tempfile.mkdtemp(), "d.db")).totp_window == "previous"
@@ -97,12 +97,13 @@ _a2, _ = build()
 _u2 = _a2.create_user("tom", password=PW)
 _s2 = _a2.totp_begin(_u2)["secret"]
 mid_step()
-assert not _a2.totp_confirm(_u2, pyotp.TOTP(_s2).at(time.time() + 30)), "setup: the next step is refused"
-assert _a2.totp_confirm(_u2, pyotp.TOTP(_s2).at(time.time() - 30)), "setup: the previous step counts"
+assert not _a2.totp_confirm(_u2, next_code(_s2)), "setup: the next step is refused"
+assert _a2.totp_confirm(_u2, previous_code(_s2)), "setup: the previous step counts"
 assert any("totp_window" in e for e in errors_of(totp_window="both")), "unknown window: config error"
 assert not any("totp_window" in e for e in errors_of(totp_window="current"))
 mid_step()
-assert _totp.verify(_s2, pyotp.TOTP(_s2).now()) and not _totp.verify(_s2, pyotp.TOTP(_s2).at(time.time() + 30))
+_now2 = _totp_clock.safe_moment()
+assert _totp.verify(_s2, pyotp.TOTP(_s2).at(_now2)) and not _totp.verify(_s2, pyotp.TOTP(_s2).at(_now2 + 30))
 ok("T-57: current + previous step by default, next step only with the switch, single use, setup alike")
 
 

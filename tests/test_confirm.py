@@ -41,6 +41,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "tests"))
 
 import pyotp  # noqa: E402
+from _totp_clock import next_code, previous_code  # noqa: E402
 from fastapi import Depends, FastAPI, Form, Request  # noqa: E402
 from fastapi.responses import JSONResponse  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
@@ -191,7 +192,7 @@ def _sessions(auth, uid):
 
 def _totp_set_up(auth, uid):
     g = auth.totp_begin(uid)["secret"]
-    auth.totp_confirm(uid, pyotp.TOTP(g).at(time.time() - 30))
+    auth.totp_confirm(uid, previous_code(g))
     return g
 
 
@@ -376,7 +377,7 @@ r.check("(d) one-time code instead of TOTP: 401 `invalid` — the step-up takes 
         f"{_d_rc.status_code} {_d_attempts} {auth.recovery_codes_remaining(uid)}")
 # T-57: the default window no longer takes the NEXT step; this test signs in with it a second time in one step.
 auth.cfg.totp_window = "previous_and_next"
-_d_ok = _post(c, "/own/confirm/totp", code=pyotp.TOTP(secret_text).at(time.time() + 30))
+_d_ok = _post(c, "/own/confirm/totp", code=next_code(secret_text))
 r.check("(d) … a TOTP code confirms: 303, fresh", _d_ok.status_code == 303 and _fresh(c),
         f"{_d_ok.status_code} {_d_ok.text[:120]}")
 
@@ -608,7 +609,7 @@ def _stepup_steps(auth):
     yield "pin", "0000"
     yield "totp", "000000"
     yield "password", PW                                   # correct: clears the `reauth` bucket
-    yield "totp", pyotp.TOTP(g).at(time.time() + 30)       # correct (the next code)
+    yield "totp", next_code(g)       # correct (the next code)
     for i in range(4):
         yield "pin", f"000{i}"
     yield "password", PW                                   # locked
@@ -632,7 +633,7 @@ def _setup_only_totp():
 def _only_totp_steps(auth):
     yield "password", PW                                   # not offered: 403, does not count
     yield "totp", "000000"
-    yield "totp", pyotp.TOTP(_secrets[id(auth)]).at(time.time() + 30)
+    yield "totp", next_code(_secrets[id(auth)])
 
 
 _g_nt = _comparison("stepup_methods=[\"totp\"] (password not offered, TOTP wrong, correct)",
