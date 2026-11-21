@@ -1735,6 +1735,9 @@ def build_router(auth) -> APIRouter:
                                     # B-10: without a password the page offers to set one, without the
                                     # field for the current one (not with a directory: `set_initial_password`).
                                     password_initial=not (auth.store.get_password_hash(u["id"]) or cfg.ldap_enabled),
+                                    # A directory account without a local password changes it in the directory.
+                                    password_directory=bool(cfg.ldap_enabled
+                                                            and not auth.store.get_password_hash(u["id"])),
                                     has_totp=auth.store.has_confirmed_totp(u["id"]),
                                     recovery_left=auth.recovery_codes_remaining(u["id"]),
                                     recovery_warn=auth._RECOVERY_WARN_THRESHOLD,

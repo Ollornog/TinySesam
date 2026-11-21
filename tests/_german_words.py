@@ -140,10 +140,12 @@ GERMAN_WORDS = frozenset("""
     tippfehler eingebaute sickert entscheidungen nirgends neuling persistentes
 """.split())
 
-#: The words of `GERMAN_WORDS` that are also English words — counted in identifiers, not in English prose.
+#: The words of `GERMAN_WORDS` that are also English words — counted in identifiers, not in English prose. Not `leer`:
+#: the English verb never stands in this repository, and as a homograph the German "empty" slipped through a config
+#: warning (`{groups} leer`, T-59 follow-up).
 ENGLISH_HOMOGRAPHS = frozenset("""
     ab aber alles als alt altes art aus basis baum bis chef das datum dem den der des elf eng ersatz fall fang
-    fest fort fund gilt gut hat hell hier hinter im intern interne jung kern klein knapp knopf lade laden leer
+    fest fort fund gilt gut hat hell hier hinter im intern interne jung kern klein knapp knopf lade laden
     lies locker los mit muss muster oder paar privater puffer quell rang rot salve seine sind spur stand stern
     tor tore tot toter und wand war wer
 """.split())

@@ -573,12 +573,12 @@ z = _saml()
 sara, tom, udo = z.create_user("sara"), z.create_user("tom"), z.create_user("udo")
 zb = z.create_user("zeno", self_chosen_name=True)
 z.store.link_federated("saml", "nid-udo", udo, now())
-empty = z.create_user("leer")
+empty = z.create_user("blank")
 zr = z.federation_bind_existing("saml", mapping={"sara": "nid-sara", "tom": "nid-udo", "nobody": "nid-x",
-                                                 "zeno": "nid-zeno", "leer": ""}, apply=True)
+                                                 "zeno": "nid-zeno", "blank": ""}, apply=True)
 r.check("SAML with mapping: binds, refuses the identifier of another account, reports the unknown",
         _bound(z).get(sara) == "nid-sara" and tom not in _bound(z) and empty not in _bound(z)
-        and [e["username"] for e in zr["conflict"]] == ["tom"] and _names(zr, "no_identifier") == ["leer"]
+        and [e["username"] for e in zr["conflict"]] == ["tom"] and _names(zr, "no_identifier") == ["blank"]
         and sorted((e["username"], e["reason"]) for e in zr["refused"])
         == [("nobody", "no_account"), ("zeno", "self_chosen_name")], str(zr))
 u = z._check_saml("nid-sara", {"uid": ["sara"]})

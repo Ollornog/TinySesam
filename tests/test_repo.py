@@ -223,11 +223,12 @@ for f in LIB:
         continue
     tree = _ast.parse(read(f))
     permitted = set()
-    # The `main()` of a command line (the gateway, the reference client `tinysesam-client`, T-60) prints on purpose.
-    if f in ("tinysesam/gateway.py", "tinysesam/client.py"):
-        for node in _ast.walk(tree):
-            if isinstance(node, _ast.FunctionDef) and node.name == "main":
-                permitted = set(range(node.lineno, (node.end_lineno or node.lineno) + 1))
+    # The `main()` of a command line (the gateway, the reference client `tinysesam-client`, T-60) prints on purpose,
+    # and so does the gateway's subcommand `pair` (its `_pair`, called only from `main`).
+    commands = {"tinysesam/gateway.py": ("main", "_pair"), "tinysesam/client.py": ("main",)}.get(f, ())
+    for node in _ast.walk(tree):
+        if isinstance(node, _ast.FunctionDef) and node.name in commands:
+            permitted |= set(range(node.lineno, (node.end_lineno or node.lineno) + 1))
     for node in _ast.walk(tree):
         if not isinstance(node, _ast.Call) or not isinstance(node.func, _ast.Name):
             continue

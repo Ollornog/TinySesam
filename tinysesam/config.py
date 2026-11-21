@@ -756,9 +756,9 @@ class TinySesamConfig:
     # --- Hardening ---
     # Reverse proxies whose X-Forwarded-For may be trusted (otherwise the real client IP can be forged).
     # X-Forwarded-For is believed only from these peers — otherwise the client IP can be forged
-    # (rate limit, lockout, fail2ban). IMPORTANT: start uvicorn **without** `--proxy-headers`. Otherwise
-    # uvicorn already replaces `request.client.host` with the forwarded IP and this check
-    # comes to nothing.
+    # (rate limit, lockout, fail2ban). IMPORTANT: start uvicorn with `--no-proxy-headers` (`proxy_headers=False`):
+    # uvicorn applies X-Forwarded-For by DEFAULT, replaces `request.client.host` with the forwarded IP, and this
+    # check comes to nothing. `python -m tinysesam.gateway` does so itself.
     trusted_proxies: list[str] = field(default_factory=lambda: ["127.0.0.1/32", "::1/128"])
     # Rate limit across processes via Redis (multi-worker); empty = in-memory per process. Extra [redis].
     redis_url: str = ""                   # e.g. redis://localhost:6379/0

@@ -369,8 +369,8 @@ never spell them out.
 - **HTTPS and `base_url` are mandatory** outside `localhost`: cookies are `Secure`, and every link (mail, OIDC
   redirect, sign-in link, QR code) is built from `base_url`, never from the `Host` header. OIDC, SAML and mail paths
   refuse to start without it (`ConfigError`).
-- **Behind a proxy**: list it in `trusted_proxies`; start uvicorn **without** `--proxy-headers`, otherwise
-  rate limit, lockout and fail2ban see a forgeable address.
+- **Behind a proxy**: list it in `trusted_proxies`; start uvicorn with `--no-proxy-headers` (`proxy_headers=False`)
+  — uvicorn applies the proxy headers by default, and then rate limit, lockout and fail2ban rest on its trust list.
 - **Passkeys** need a real domain: `rp_id="app.example.com"`, `origin="https://app.example.com"`, extra `[passkey]`.
 - **CSP**: built-in pages run under a strict nonce CSP (`csp="strict"`). Your own pages set their own CSP; no inline
   handlers (`onclick=`), no `style=` attributes, every `<script>`/`<style>` with the nonce.

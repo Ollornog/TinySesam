@@ -173,6 +173,21 @@ def ip_bucket(ip, v6_prefix: int = 64) -> str:
 RATE_NET48_FACTOR = 5
 
 
+def host_name(entry) -> str:
+    """The host name of a host entry — `trusted_redirect_hosts`, an `oidc_clients` key, a `base_url` — without port,
+    lower case, an IPv6 address without its brackets (as `urlsplit(...).hostname` gives it). Cookies do not separate
+    by port (RFC 6265, 8.5), so `auth.example.com:8443` is the same host as `auth.example.com` for everything a
+    session cookie decides. A full URL is accepted too. Not a host → ""."""
+    from urllib.parse import urlsplit
+    text = str(entry or "").strip()
+    if not text:
+        return ""
+    try:
+        return (urlsplit(text if "//" in text else "//" + text).hostname or "").rstrip(".")
+    except ValueError:
+        return ""
+
+
 def ip_pseudonym(ip: str) -> str:
     """Shorten an IP to its network: IPv4 to /24, IPv6 to /48 (`audit_ip_pseudonymize`).
 
@@ -751,7 +766,16 @@ def client_ip(request, trusted_nets) -> str:
                 return peer
     if xff and peer not in _REPORTED_PEERS:
         _REPORTED_PEERS.add(peer)
-        if not is_trusted(peer, trusted_nets):
+        if not is_trusted(peer, trusted_nets) and peer in [ip_normalized(p.strip()) for p in xff.split(",")]:
+            # The direct peer stands in the very header: a proxy never names itself there, so the server in front
+            # of TinySesam has already applied X-Forwarded-For and handed on the client it found. uvicorn does that
+            # by default (`proxy_headers=True`, trusting `forwarded_allow_ips`).
+            seclog.warning(
+                "X-Forwarded-For from %s was already applied by the server: the client address arrives as the peer. "
+                "uvicorn does that by default — start it with --no-proxy-headers (uvicorn.Config(..., "
+                "proxy_headers=False)) so that TinySesam reads the header itself against trusted_proxies (%s).",
+                peer, list(trusted_nets or []))
+        elif not is_trusted(peer, trusted_nets):
             seclog.warning(
                 "X-Forwarded-For from %s is ignored: the peer is not in trusted_proxies "
                 "(%s). All users now appear under this one IP — rate limit and "

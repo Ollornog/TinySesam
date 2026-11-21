@@ -730,9 +730,11 @@ def check_config(config) -> tuple[list[str], list[str]]:
             "The field counts minutes — was the period meant in seconds (one hour = 60, not "
             "3600)? If the long period is intended, it stays at this warning.",
             n=_revalidate, hours=format(_revalidate / 60, "g")))
-    _trusted = [str(h).strip().lower() for h in (getattr(config, "trusted_redirect_hosts", None) or [])]
+    # By host name, as the runtime compares them (a port in either entry is not a different host, RFC 6265 8.5).
+    _trusted = [security.host_name(h) for h in (getattr(config, "trusted_redirect_hosts", None) or [])]
     for host, entry in _clients.items():
         h = str(host).strip().lower()
+        _hn = security.host_name(host)
         e = dict(entry or {})
         where = f"oidc_clients[{host!r}]"
         if not str(e.get("client_id") or "").strip():
@@ -755,7 +757,7 @@ def check_config(config) -> tuple[list[str], list[str]]:
                 "not intended: discovery document, JWKS and the mapping issuer+sub→account "
                 "hang on the one oidc_issuer. A second provider needs a second instance.",
                 where=where))
-        if _trusted and h not in _trusted:
+        if _trusted and _hn not in _trusted:
             warnings.append(_t(
                 config,
                 "{where} is not in trusted_redirect_hosts. The login URL for this application is "
@@ -1201,7 +1203,7 @@ def _open_gates(config, warnings: list) -> None:
             # `/auth/forward` checks it per host. That is a closed gate — just one
             # whose key the provider manages.
             continue
-        unclosed.append(f"{name} ({create}=True, {groups} leer)")
+        unclosed.append(f"{name} ({create}=True, {groups} empty)")
     if unclosed:
         warnings.append(_t(
             config,
