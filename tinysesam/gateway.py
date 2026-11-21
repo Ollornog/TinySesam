@@ -213,9 +213,11 @@ def config_from_env() -> TinySesamConfig:
 
 def _topbar_links() -> list:
     """TINYSESAM_TOPBAR_LINKS: links in the top bar of the gateway's pages, a JSON list of [title, target] pairs —
-    `[["Wiki", "/wiki"], ["Files", "https://files.example.com/"]]`. What a target may be is checked by
-    `config_check` (own origin, `base_url` or a protected host); the shape is checked here, so a broken value ends the
-    start instead of leaving the bar silently empty."""
+    `[["Wiki", "/wiki"], ["Files", "https://files.example.com/"]]` —, each optionally with a visibility as third
+    element (T-76): `["Admin", "/admin", {"admin": true}]`, `["Team", "/team", {"role": "teamadmin"}]`. What a target
+    and a visibility may be is checked by `config_check` (own origin, `base_url` or a protected host; exactly one of
+    admin/role); the shape is checked here, so a broken value ends the start instead of leaving the bar silently
+    empty."""
     import json
     raw = os.environ.get("TINYSESAM_TOPBAR_LINKS", "").strip()
     if not raw:
@@ -224,10 +226,12 @@ def _topbar_links() -> list:
         value = json.loads(raw)
     except ValueError as e:
         raise SystemExit(f"TINYSESAM_TOPBAR_LINKS is not valid JSON: {e}")
-    if not isinstance(value, list) or not all(isinstance(z, list) and len(z) == 2
-                                              and all(isinstance(x, str) for x in z) for z in value):
-        raise SystemExit('TINYSESAM_TOPBAR_LINKS must be a list of [title, target] pairs: [["Wiki", "/wiki"]]')
-    return [(title, target) for title, target in value]
+    if not isinstance(value, list) or not all(isinstance(z, list) and len(z) in (2, 3)
+                                              and all(isinstance(x, str) for x in z[:2])
+                                              and (len(z) == 2 or isinstance(z[2], dict)) for z in value):
+        raise SystemExit('TINYSESAM_TOPBAR_LINKS must be a list of [title, target] pairs, each optionally with a '
+                         'visibility: [["Wiki", "/wiki"], ["Admin", "/admin", {"admin": true}]]')
+    return [tuple(z) for z in value]
 
 
 def _json_object(name: str) -> dict:

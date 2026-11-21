@@ -2167,6 +2167,10 @@
       ],
       "tier": "A"
     },
+    "GET /.tinysesam/topbar.json": {
+      "keys": [],
+      "tier": "A"
+    },
     "GET /.well-known/oauth-authorization-server": {
       "keys": [],
       "tier": "B"
@@ -2355,6 +2359,10 @@
       "keys": [
         "query:next"
       ],
+      "tier": "B"
+    },
+    "GET /auth/topbar.json": {
+      "keys": [],
       "tier": "B"
     },
     "GET /auth/totp": {

@@ -591,6 +591,43 @@ und C22-Stylesheet) und das CSS der Leiste — alles auf `.tsbar` begrenzt, der 
 Leiste für die Sitzung dieses Requests, mit dem Mount-Präfix in jedem TinySesam-Pfad; `current` markiert den Eintrag
 der gezeigten Seite.
 
+**Wer einen Link sieht.** Ein drittes Element beschränkt einen Link auf Admins oder eine Rolle:
+
+```python
+TinySesamConfig(topbar_links=[("Doku", "/"),
+                              ("Admin-App", "https://app.example.com/admin", {"admin": True}),
+                              ("Team", "/team", {"role": "teamadmin"})],
+                trusted_redirect_hosts=["app.example.com"], available_roles=["teamadmin", "editors"])
+```
+
+`{"admin": True}` zeigt den Link Konten mit Admin-Flag, `{"role": "…"}` Konten mit der Rolle — entschieden von
+`has_role`, mit `admin_implies_roles` (Vorgabe an) sieht ein Admin also auch Rollen-Links, genau wie ihn das
+`require(role=…)` des Ziels hineinlässt. Ein einfaches Paar sehen alle. Leiste, Handy-Menü und `auth.topbar(request)`
+filtern gleich; Seiten ohne Kontomenü (Anmeldung, Fehler) tragen gar keinen Link, auch nicht im HTML-Quelltext. Eine
+Rolle, die nicht in `available_roles` steht, ist beim Start eine Warnung (ein Tippfehler versteckte den Link vor
+allen), jedes andere dritte Element ein `ConfigError`. Sichtbarkeit ist Komfort, kein Schutz: Das Ziel prüft den
+Zugang selbst.
+
+**Die Leiste als Daten.** Eine Anwendung, die ihre Leiste selbst zeichnet (nicht Python oder eigenes Design), fragt
+`GET /auth/topbar.json` mit dem Sitzungs-Cookie der Anfrage und bekommt, was die Leiste diesem Konto zeigen würde:
+
+```json
+{"brand": "Example", "signed_in": true, "name": "Tara Lead",
+ "links": [{"title": "Doku", "href": "/"}, {"title": "Team", "href": "/team"}],
+ "account": {"shown": true, "href": "https://auth.example.com/auth/account"},
+ "admin_panel": {"shown": false, "href": null},
+ "logout": {"href": "https://auth.example.com/auth/logout"}}
+```
+
+TinySesams eigene Pfade sind absolut auf `base_url` (ohne sie relativ zum Mount-Präfix). Ohne Sitzung — auch mit
+einem API-Schlüssel, der kein Kontomenü bekommt — ist `signed_in` false und es gibt keine Links. Die Antwort trägt
+`Cache-Control: no-store` und `Vary: Cookie` und keinen CORS-Header: Die Seite eines anderen Ursprungs kann sie nicht
+lesen. Hinter dem Gate entfernen die Proxy-Vorlagen TinySesams Cookies vor der Anwendung; eine Anwendung dort holt die
+Daten deshalb vom eigenen Host, `GET /.tinysesam/topbar.json` (die Caddy-Vorlagen reichen `/.tinysesam/*` mit den
+Cookies des Browsers an TinySesam; bei nginx oder Traefik die Route selbst ergänzen) — aus dem Skript der Seite,
+gleicher Ursprung. Das fertige Gateway liest die Sichtbarkeit auch
+aus `TINYSESAM_TOPBAR_LINKS`: `[["Doku", "/"], ["Admin", "/admin", {"admin": true}]]`.
+
 **Gleicher Look wie deine App (C22).** Ist deine App mit dem Designsystem [C22](https://github.com/Ollornog/C22)
 gebaut, zeig TinySesam das C22-Stylesheet, das deine App ohnehin ausliefert — Login, Kontoseite, Admin-Panel und
 Fehlerseiten leiten ihre Tokens dann aus C22 ab und folgen dessen Pack und Hell/Dunkel-Umschaltung:
@@ -2151,7 +2188,7 @@ Jeder Python-Block beider Dateien läuft in der Testsuite, und jeder genannte Na
 
 ## Status
 
-**110 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
+**111 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
 (`tests/test_matrix.py`).
 
 Gebaut und getestet: Passwort/TOTP/Sitzungen/Rollen, Remember-me, Step-up und per-Route-MFA,

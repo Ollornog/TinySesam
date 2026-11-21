@@ -4,6 +4,31 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+### Security — `nginx-path.conf` let a client's own `Remote-Id` through to PHP
+
+- The template for one host with protected paths (static files + PHP-FPM) set `Remote-Id` neither behind the gate nor
+  emptied it in the open part. FastCGI hands every request header to PHP as `HTTP_*`, so a `Remote-Id: 1` sent by the
+  browser arrived as `$_SERVER['HTTP_REMOTE_ID']` — an application that keys users by `Remote-Id`, as the docs
+  recommend, took the browser's value. **Using `deploy/forward-auth/nginx-path.conf`: take over the `$ts_id` lines and
+  `fastcgi_param HTTP_REMOTE_ID` in both PHP locations** (and `HTTP_REMOTE_AUTH`, below). The other templates were not
+  affected. `tests/test_remote_auth.py` now checks every template against `FORWARD_HEADERS_DEFAULT` — set behind the
+  gate, emptied in the open part.
+
+### Added — top bar: visibility per link, and the bar as JSON (T-76)
+
+- `topbar_links` entries take an optional third element: `("Admin", "/admin", {"admin": True})` for accounts with the
+  admin flag, `("Team", "/team", {"role": "teamadmin"})` for accounts with the role. Role links follow `has_role`, so
+  with `admin_implies_roles` (default) an administrator sees them too. Pairs stay visible to everyone. Bar, phone menu
+  and `auth.topbar(request)` filter alike; sign-in and error pages carry no link at all.
+- `config_check` warns when a visibility role is not in `available_roles`; any other third element is a
+  `ConfigError`.
+- `GET /auth/topbar.json` returns what the bar shows the account of the request — links, display name, whether
+  *Account* and *Admin panel* appear and where they lead — for applications that draw their own bar. `no-store`,
+  `Vary: Cookie`, no CORS. Behind the gate the same answer comes from the application's own host,
+  `GET /.tinysesam/topbar.json` (the templates strip TinySesam's cookies before the application, but pass
+  `/.tinysesam/*` on with them).
+- The gateway's `TINYSESAM_TOPBAR_LINKS` takes the visibility too: `["Admin", "/admin", {"admin": true}]`.
+
 ### Added — `Remote-Auth`: how the request signed in (T-75)
 
 - `/auth/forward` answers `Remote-Auth: session | oauth | apikey | app-password`. An application can now tell why
@@ -18,9 +43,6 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
   `meta_claims`; nginx `auth_request_set` + `proxy_set_header`; Traefik `authResponseHeaders`). Without it an
   application that reads `Remote-Auth` sees whatever the browser sends. A gate token issued before the upgrade has no
   claim: the fast path sends an empty value until it expires.
-- `deploy/forward-auth/nginx-path.conf` passed `Remote-Id` to PHP neither set nor emptied: a client's own `Remote-Id`
-  arrived as `$_SERVER['HTTP_REMOTE_ID']`. It now sets and empties every header of `FORWARD_HEADERS_DEFAULT`, and
-  `tests/test_remote_auth.py` checks all templates against that list.
 
 ### Fixed — tests: TOTP codes no longer flip at a step boundary (B-15)
 

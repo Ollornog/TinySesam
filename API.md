@@ -30,7 +30,7 @@ The configuration fields are in [CONFIGURATION.md](CONFIGURATION.md): 184 of 203
 
 **`auth.store` is internals** (tier C): the storage layer of the built-in routes, without tier, without promise and without transition period — its methods can change with every release. What an app needs is listed below as a method of `TinySesam` (e.g. `set_disabled` instead of `auth.store.set_disabled`).
 
-**Status:** A 403 · B 217 · C 38 names.
+**Status:** A 404 · B 218 · C 38 names.
 
 ## A · Methods of `TinySesam`
 
@@ -804,6 +804,7 @@ What a proxy (Caddy `forward_auth`, nginx `auth_request`, Traefik) and the appli
 | GET | `/.tinysesam/logout` | `query:next`, `query:scope` |
 | POST | `/.tinysesam/logout` | `form:_csrf`, `form:next`, `form:scope` |
 | GET | `/.tinysesam/start` | `query:rd`, `query:signed_out` |
+| GET | `/.tinysesam/topbar.json` | — |
 | GET | `/auth/forward` | — |
 | GET | `/auth/gate/authorize` | `query:flow` |
 | GET | `/auth/gate/jwks.json` | — |
@@ -932,6 +933,7 @@ The HTML pages (sign-in, registration, account, admin panel, the pages behind e-
 | POST | `/auth/sessions/revoke` | — |
 | POST | `/auth/sessions/revoke-after-login` | — |
 | GET | `/auth/setup` | `query:next` |
+| GET | `/auth/topbar.json` | — |
 | GET | `/auth/totp` | `query:error`, `query:next` |
 | POST | `/auth/totp` | `form:_csrf`, `form:code`, `form:next` |
 | POST | `/auth/totp/disable` | — |
