@@ -879,11 +879,21 @@ async def h2_stepup_qr(p):
         t33.store._exec("UPDATE session SET mfa_at=?, created_at=? WHERE user_id=?", (old, old, uid))
 
     async def reauth(back):
-        await p.until("location.pathname==='/auth/reauth'", "no detour over the reauth page")
-        await p.js("document.querySelector(\"form[action$='/auth/reauth'] [name=password]\").value='hanna-pw-12345';true")
+        await p.until("location.pathname==='/auth/reauth' && document.readyState==='complete' && "
+                      "!!document.querySelector(\"form[action$='/auth/reauth'] [name=password]\")",
+                      "no detour over the reauth page")
+        field = "document.querySelector(\"form[action$='/auth/reauth'] [name=password]\")"
+        await p.js(f"{field}.value='hanna-pw-12345';true")
+        # Seen once under full-suite load (2026-11-21): the server logged a wrong password here. Say what the
+        # field held at the click and what the page answered, so the next occurrence names its cause.
+        held = await p.js(f"{field}.value")
         await p.click("form[action$='/auth/reauth'] button")
-        await p.until(f"location.pathname==={json.dumps(back)} && document.readyState==='complete'",
-                      f"the reauth page did not lead back to {back}")
+        try:
+            await p.until(f"location.pathname==={json.dumps(back)} && document.readyState==='complete'",
+                          f"the reauth page did not lead back to {back}")
+        except AssertionError as e:
+            shown = await p.js("(document.querySelector('main')||document.body).innerText.slice(0,300)")
+            raise AssertionError(f"{e} — field held {held!r} at the click; the page says: {shown!r}") from None
 
     # 1) B-12 on the account page: „create API key“ with a stale session → reauth → back → the key dialog.
     age()
