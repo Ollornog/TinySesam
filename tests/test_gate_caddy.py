@@ -269,6 +269,8 @@ try:
     # value with "" — closed. Pinned here for both the plain template and the gate template's way back.
     forged = {"Remote-User": "admin", "Remote-Groups": "admin", "Remote-Email": "chef@example.com",
               "Remote-Name": "Chef", "Remote-Id": "1", "Remote-Auth": "oauth"}
+    # F1 towards the application: a target the browser made up never reaches it (measured for every template below).
+    target_forged = {"X-Original-URL": "https://evil.example/", "X-Original-URI": "/evil"}
     for port, was in ((PORT, "gate template, way back"), (PORT_PLAIN, "plain template"),
                       (PORT_QUICK, "quickstart template")):
         st, h, a = request("/h1", session, forged, port=port)
@@ -277,6 +279,8 @@ try:
         assert hd.get("Remote-Email", "") == "" and hd.get("Remote-Id") == str(uid), (was, hd)
         assert utf8(hd.get("Remote-Name")) == "Anna Ärger", (was, hd.get("Remote-Name"))
         assert hd.get("Remote-Auth") == "session", (was, hd.get("Remote-Auth"))       # T-75, the browser said oauth
+        st, h, a = request("/h1-target", session, target_forged, port=port)
+        assert st == 200 and not {"x-original-url", "x-original-uri"} & {k.lower() for k in a["header"]}, (was, a)
         # HSTS (H1): the application's responses and the redirect to the sign-in carry it.
         assert h.get("Strict-Transport-Security") == "max-age=31536000; includeSubDomains", (was, dict(h))
         st, h, _ = request("/h1", None, forged, port=port)

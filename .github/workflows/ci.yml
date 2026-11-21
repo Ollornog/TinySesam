@@ -139,6 +139,10 @@ jobs:
           "$RUNNER_TEMP/caddy-gate" version
       - name: Gate token through Caddy
         run: TINYSESAM_GATE_CADDY="$RUNNER_TEMP/caddy-gate" python tests/test_gate_caddy.py
+      # nginx, nginx with PHP (FastCGI) and Traefik with the templates of deploy/forward-auth, from the digest-pinned
+      # images of tests/proxies/Dockerfile — required here, skipped without the variable elsewhere.
+      - name: nginx and Traefik templates through the real proxies
+        run: TINYSESAM_PROXY_TESTS=1 python tests/test_proxies.py
       # The quickstart stack with both images of THIS commit (the published ones exist only after the release): TLS modes
       # `ip` and `internal`, Remote-* and the strip, HSTS only with a domain, OAuth metadata, acceptance.sh — and the
       # pinned example application, pulled as a Dependabot PR of the docker-compose entry /deploy/quickstart changes it.

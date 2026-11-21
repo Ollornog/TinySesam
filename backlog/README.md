@@ -8,7 +8,7 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 ## Meilensteine
 
 * ☐ **[M-1](M-1-api-stable-1-0.md)** 1.0 — API stable enough for PyPI — 14/14 erledigt
-* ☐ **[M-2](M-2-after-1-0.md)** After 1.0 — keeping the published package maintained — 61/70 erledigt
+* ☐ **[M-2](M-2-after-1-0.md)** After 1.0 — keeping the published package maintained — 62/71 erledigt
 * ☑ **[M-3](M-3-gate-in-front-of-third-party-apps.md)** Gate in front of third-party apps — fast, sign in once, sign out cleanly — 8/8 erledigt
 
 ## Aufgaben
@@ -90,6 +90,7 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 * ☑ **[T-75](T-75-sign-in-kind-in-forward-auth.md)** Sign-in kind in forward auth: a Remote-Auth header · M-2
 * ☑ **[T-76](T-76-top-bar-link-visibility.md)** Top bar: visibility per link, and the bar as JSON · M-2
 * ☐ **[T-77](T-77-admin-panel-extra-tabs.md)** Admin panel: extra tabs that link to the application''s own administration · M-2
+* ☑ **[T-78](T-78-nginx-and-traefik-templates-through-the-real-proxies.md)** nginx and Traefik templates measured through the real proxies in the CI · M-2
 
 ## Fehler
 
