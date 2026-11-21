@@ -172,7 +172,9 @@ try:
                                   trusted_redirect_hosts=hosts))
         lines = [m for m in _caught if "without cookie_domain" in m]
         assert bool(lines) is foreign, (hosts, base, lines)
-        assert not foreign or ("app.example.com" in lines[0] and "auth.example.com:8443" not in lines[0]), lines
+        # The named hosts, read out of the line (not a substring test on it).
+        named = re.search(r"not on (.*?)\. Each of", lines[0]).group(1).split(", ") if foreign else []
+        assert named == ([] if not foreign else ["app.example.com"]), (named, lines)
 finally:
     security.seclog.removeHandler(_h)
 ok("warning “without cookie_domain” yes without code exchange, not with it (no false alarm)")

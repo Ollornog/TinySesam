@@ -485,8 +485,7 @@ def _pair(argv) -> int:
     ap.add_argument("--name", default=None, help="label of the service, shown in the audit log and listings")
     ap.add_argument("--roles", default=None, help="comma list: a role scope within the account's roles")
     a = ap.parse_args(argv)
-    auth = TinySesam(config_from_env())
-    try:
+    with TinySesam(config_from_env()) as auth:
         user = auth.store.get_user_by_name(a.account)
         if user is None and a.create_service:
             auth.create_service(a.account)
@@ -500,8 +499,6 @@ def _pair(argv) -> int:
         except ConfigError as e:
             print(str(e), file=sys.stderr)
             return 1
-    finally:
-        auth.close()
     until = datetime.datetime.fromtimestamp(issued["expires_at"]).astimezone().strftime("%Y-%m-%d %H:%M %Z")
     print(f"Pairing code for {a.account}: {issued['code']}  (once, until {until})")
     print(f"Resources: {', '.join(issued['resources'])}"
