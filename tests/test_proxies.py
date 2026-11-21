@@ -272,10 +272,10 @@ def traefik_dynamic(template_text: str) -> str:
     return text
 
 
-def start_traefik(name="traefik", dynamic_text=None):
+def start_traefik(name="traefik"):
     port = free_port()
-    dynamic = write(os.path.join(_tmp, name, "dynamic.yml"), traefik_dynamic(
-        dynamic_text if dynamic_text is not None else (ROOT / "deploy/forward-auth/traefik.yml").read_text("utf-8")))
+    write(os.path.join(_tmp, name, "dynamic.yml"),
+          traefik_dynamic((ROOT / "deploy/forward-auth/traefik.yml").read_text("utf-8")))
     static = write(os.path.join(_tmp, name, "traefik.yml"), (
         "entryPoints:\n"
         f"  web:\n    address: \"127.0.0.1:{port}\"\n"
