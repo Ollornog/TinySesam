@@ -40,11 +40,15 @@ git config core.hooksPath .githooks    # once per clone; runs the suite before e
 
 A commit between two releases carries the version of the last release. `pip install "tinysesam @ git+…@<sha>"` over an
 installed release reports "already satisfied" and installs nothing — the service keeps running the old code (or, on a
-restart in between, a half-replaced one). Reinstall the package itself, leave its dependencies alone:
+restart in between, a half-replaced one). Force the reinstall — with the dependencies, which is safe also when the
+commit adds or changes an extra or a dependency, or when you switch extras (say to `[all]`):
 
 ```bash
-pip install --force-reinstall --no-deps "tinysesam[all] @ git+https://github.com/Ollornog/TinySesam.git@<sha>"
+pip install --force-reinstall "tinysesam[all] @ git+https://github.com/Ollornog/TinySesam.git@<sha>"
 ```
+
+Quicker, when neither the extras nor the dependencies change: add `--no-deps` — only the package is replaced. With a
+changed extra that leaves packages missing.
 
 Restart the service afterwards; `pip freeze | grep -i tinysesam` names the commit that is installed.
 

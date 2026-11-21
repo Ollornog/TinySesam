@@ -129,6 +129,8 @@ assert link["url"].startswith("https://app.example.com/auth/magic/")
 The admin panel (`/auth/admin`) has the same as a *Sign-in link* button per user. `auth.set_disabled(uid, True)`
 locks an account (ends sessions, revokes keys, drops open links). Cross-device sign-in by QR code:
 `qr_login_enabled=True` (extra `[qr]`). README: *Recipe: the admin creates accounts, a link signs them in*.
+Team leads who manage their team in the panel without being admins: `admin_delegates={"team-lead": {"roles":
+["editors"]}}` (hierarchy with `manages`, actions with `can`) — README: *Delegated administration*.
 
 ## Recipe 4 — API keys for scripts and services
 

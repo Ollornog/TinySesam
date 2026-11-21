@@ -151,6 +151,18 @@ Rate-Limit, Open-Redirect-Schutz via `safe_next`). Trotzdem: vor produktivem Ein
   gewechselt (`oauth_service_key_days`, der Client wechselt zur halben Laufzeit) oder der Dienst widerrufen ist. Ein
   Access-Token selbst ist für seine Laufzeit (15 min) an seiner Ressource ein Bearer-Token; die Bindung an den
   Schlüssel (DPoP, RFC 9449) ist als T-68 offen.
+- **Delegierte können die Konten in ihrem Bereich übernehmen — gewollt (T-74).** Eine Delegiertenrolle
+  (`admin_delegates`) lässt ihre Träger für jedes Konto in ihrem Bereich einen Anmeldelink ausstellen; wer ihn
+  einlöst, ist in diesem Konto angemeldet. Ein Delegierter hält damit faktisch jede verwaltete Rolle: Er kann auch ein
+  Konto mit diesen Rollen anlegen und sich darin anmelden. In einer Hierarchie geht das nach unten: `area-admin` kann
+  jedes Konto der Teams darunter und jeden `team-*-admin` übernehmen, den er verwaltet, ein `team-a-admin` nur
+  einfache Konten von Team A — nie einen Gleichrangigen, ein Konto darüber, einen fremden Zweig, einen Administrator,
+  einen Owner oder ein Dienstkonto, nie über einen API-Key, ein OAuth-Token oder ein App-Passwort. Es steht hinter
+  demselben Step-up wie bei einem Administrator, ein Anmeldelink immer hinter einer frischen Bestätigung, und jede
+  Aktion steht mit dem handelnden Konto im Audit-Log. Eine Delegiertenrolle nur an jemanden vergeben, dem man jedes
+  verwaltete Konto anvertrauen würde; `signin_link` (und `invite`, `create`) aus `can` nehmen, wo das zu viel ist. Ein
+  Delegierter kann auch ein Konto entsperren, das ein Administrator gesperrt hat (die Sperre merkt sich nicht, wer sie
+  gesetzt hat): Um ein Konto der Reichweite eines Delegierten zu entziehen, ihm die verwalteten Rollen nehmen.
 - **Bekannte Grenze — Basic-Auth hat keinen zweiten Faktor; deshalb nimmt sie nur App-Passwörter an (T-66).**
   WebDAV-, CalDAV/CardDAV- und Git-Clients schicken Benutzername und Passwort mit jeder Anfrage und können weder eine
   TOTP-Abfrage beantworten noch einen Passkey halten. Mit `forward_apps[host]["app_passwords"] = True` nimmt das Gate

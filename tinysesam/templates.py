@@ -461,7 +461,7 @@ def _totp(auth, ctx) -> str:
 
 
 def _account(auth, ctx) -> str:
-    """ctx: user, methods, has_totp, has_pin, password_initial, password_directory, is_admin, admin_path, events. Self-service + logout.
+    """ctx: user, methods, has_totp, has_pin, password_initial, password_directory, is_admin, admin_panel, admin_path, events. Self-service + logout.
     Fully replaceable via auth.set_template('account', fn)."""
     u = ctx["user"]
     t = auth.t
@@ -584,7 +584,7 @@ def _account(auth, ctx) -> str:
             f"<ul id=eventlist>{lines}</ul></div>")
 
     admin_link = (f"<a href='{_e('__TS_P__' + ctx.get('admin_path', '/auth/admin'))}'>{_e(t('acc.admin'))}</a>"
-                  if ctx.get("is_admin") else "")
+                  if ctx.get("admin_panel", ctx.get("is_admin")) else "")
 
     css = """
     .tsmain{max-width:640px;margin:0 auto;padding:24px;display:block}

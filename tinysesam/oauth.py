@@ -724,6 +724,8 @@ class OAuthServer:
             if row["s_roles"]:
                 # The scope narrows, never widens — read against the account's roles on every request.
                 d["roles"] = json.dumps(sorted(set(json.loads(row["s_roles"])) & set(self.auth.user_roles(u))))
+        # Nor a delegate role (T-74) — after the scope, which reads the account's own roles again.
+        self.auth._strip_delegate_roles(d)
         return d, ""
 
     # --- devices ---

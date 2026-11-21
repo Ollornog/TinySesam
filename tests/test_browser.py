@@ -752,6 +752,7 @@ async def run():
         await own_dialogs(p)
         await c22_adapter(p)
         await top_bar(p)
+        await delegate_panel(p)
 
 
 async def t33_alternatives(p):
@@ -1681,6 +1682,75 @@ async def c22_adapter(p):
     assert themed["--ts-radius"] == "3px" and themed["--ts-bg"] == "rgb(1,2,3)", themed
     print(f"  C22 adapter: without C22 all {len(names)} tokens unchanged, with C22 "
           f"{len(names) - len(literal)} follow ({len(literal)} without counterpart)")
+
+
+async def delegate_panel(_first):
+    """T-74 in a real browser on the T-33 app (strict CSP, real CSRF), in a tab of its own: a delegated admin gets the
+    delegate view — one tab, only the accounts in scope, no admin/service box, no buttons beyond theirs, the role
+    checkboxes of their list — and the buttons work (roles, lock, create). The configuration is switched on for this
+    section only and put back afterwards."""
+    port = _cdp_port()
+    tab = json.load(urllib.request.urlopen(urllib.request.Request(
+        f"http://127.0.0.1:{port}/json/new?about:blank", method="PUT")))
+    async with websockets.connect(tab["webSocketDebuggerUrl"], max_size=30_000_000) as ws:
+        p = Page(ws)
+        for domain in ("Page", "Runtime", "Network"):
+            await p.cmd(f"{domain}.enable")
+        await p.cmd("Page.addScriptToEvaluateOnNewDocument", source=(
+            "window.__csp=[];addEventListener('securitypolicyviolation',function(e){"
+            "window.__csp.push(e.effectiveDirective+' blocked '+(e.blockedURI||'inline'))})"))
+        before = (t33.cfg.available_roles, t33.cfg.admin_delegates)
+        t33.cfg.available_roles = ["A", "B", "teamlead"]
+        t33.cfg.admin_delegates = {"teamlead": {"roles": ["A", "B"], "can": ["create", "disable", "roles"]}}
+        try:
+            await _delegate_panel(p)
+        finally:
+            t33.cfg.available_roles, t33.cfg.admin_delegates = before
+
+
+async def _delegate_panel(p):
+    failed_before = len(p.failed)
+    lead = t33.create_user("tl74", password="tl74-pw-123456", roles=["teamlead"])
+    member = t33.create_user("mem74", password="mem74-pw-12345", roles=["A"])
+    t33.create_user("out74", password="out74-pw-12345", roles=["teamlead", "A"])
+    token, _ = t33.start_session(lead, "password")
+    await p.cmd("Network.clearBrowserCookies")
+    await p.cmd("Network.setCookie", name=t33.session_cookie_name, value=token, url=T33)
+    await p.cmd("Page.navigate", url=T33 + "/auth/admin")
+    await p.until(f"!!document.querySelector('[data-on=roles][data-a^=\"[{member},\"]')", "delegate view not built")
+    assert await p.js("document.querySelectorAll('#tabs .tab').length") == 1, "a delegate sees more than one tab"
+    users = await p.js("[...document.querySelectorAll('#view td b')].map(b=>b.textContent).join(',')")
+    assert users == "mem74", f"a delegate sees {users!r}"
+    assert not await p.js("!!document.getElementById('na') || !!document.getElementById('ns')"), "admin/service box"
+    for action in ("pw", "ren", "keys", "pks", "own", "deluser", "link"):
+        assert not await p.js(f"!!document.querySelector('[data-on={action}]')"), f"button {action} for a delegate"
+    assert await p.js("!!document.querySelector('.tsbar-pop a[href$=\"/auth/admin\"]')"), "no panel entry in the bar"
+    # Roles: the checkboxes of the list, no admin box; save sets them on the server.
+    await p.js(f"document.querySelector('[data-on=roles][data-a^=\"[{member},\"]').click();true")
+    await p.until(f"!!document.querySelector('.rc_{member}')", "roles editor did not open")
+    boxes = await p.js(f"[...document.querySelectorAll('.rc_{member}')].map(c=>c.value).join(',')")
+    assert boxes == "A,B", boxes
+    assert not await p.js(f"!!document.getElementById('ra{member}')"), "admin box in a delegate's roles editor"
+    await p.js(f"document.querySelector('.rc_{member}[value=B]').checked=true;"
+               f"document.querySelector('[data-on=saveroles][data-a=\"[{member}]\"]').click();true")
+    await until_py(lambda: sorted(t33.user_roles(t33.store.get_user(member))) == ["A", "B"], "roles not saved")
+    # Lock through the own dialog.
+    await p.until(f"!!document.querySelector('[data-on=dis][data-a^=\"[{member},\"]')", "list not rebuilt")
+    await p.js(f"document.querySelector('[data-on=dis][data-a^=\"[{member},\"]').click();true")
+    await p.answer()
+    await until_py(lambda: bool(t33.store.get_user(member)["disabled"]), "lock without effect")
+    # Create an account with a role of the list.
+    await p.until("!!document.getElementById('nu')", "form gone")
+    await p.js("document.getElementById('nu').value='new74';document.getElementById('nr').value='A';"
+               "document.getElementById('ne').value='new74@example.com';"
+               "document.querySelector('[data-on=mkuser]').click();true")
+    await until_py(lambda: t33.store.get_user_by_name("new74") is not None, "account not created")
+    assert t33.user_roles(t33.store.get_user_by_name("new74")) == ["A"]
+    viol = await p.js("JSON.stringify(window.__csp===undefined?['(no Listener)']:window.__csp)")
+    assert viol == "[]", f"CSP violation in the delegate panel: {viol}"
+    assert not p.console, f"console errors: {p.console[:2]}"
+    assert p.failed[failed_before:] == [], f"broken requests: {p.failed[failed_before:][:3]}"
+    print("  delegate panel: one tab, only the team, no admin buttons; roles, lock and create work (strict CSP)")
 
 
 async def top_bar(_first):

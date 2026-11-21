@@ -964,6 +964,7 @@ def check_config(config) -> tuple[list[str], list[str]]:
                 field=slot, what=_t(config, for_what)))
 
     _roles_without_list(config, warnings)
+    _admin_delegates(config, error, warnings)
 
     # `audit_retention_days` is checked by NUMBER_LIMITS (below): a negative period would be in `gc()` a
     # point in time in the future — the whole audit log would vanish on the next run. The own
@@ -1223,6 +1224,161 @@ def _roles_without_list(config, warnings: list) -> None:
             "offers a free-text field instead of checkboxes, and a typo there creates a role nothing checks. "
             "List the roles in available_roles.",
             roles=", ".join(roles)))
+
+
+#: What a delegate role may do (T-74); `can` narrows it to a part.
+DELEGATE_ACTIONS = ("create", "invite", "disable", "roles", "signin_link")
+_DELEGATE_KEYS = {"roles", "manages", "can"}
+
+
+def _strings(entry: dict, name: str) -> list:
+    value = entry.get(name)
+    return [x for x in value if isinstance(x, str)] if isinstance(value, list) else []
+
+
+def delegation_graph(raw) -> dict:
+    """The delegated administration of `admin_delegates` (T-74) — computed once per configuration state.
+
+    `{role: {"eff": …, "desc": …, "anc": …, "can": …}}` (frozensets) for every usable delegate role:
+
+    * `desc` — every delegate role below it, transitively through `manages` (a DAG, several parents allowed);
+    * `eff` — the roles it manages: its own `roles`, the delegate roles in `desc` (it appoints and removes them)
+      and their `roles`: `eff(D) = roles(D) ∪ desc(D) ∪ ⋃ roles(K), K ∈ desc(D)`;
+    * `anc` — every delegate role above it;
+    * `can` — its actions (`DELEGATE_ACTIONS`, all without `can`), never inherited up or down.
+
+    Fail-closed for what `config_check` reports at construction (a configuration changed at runtime is not
+    re-checked): a malformed entry and a role on a cycle get no entry and so no rights, a `manages` target that is
+    no delegate role and a delegate role inside a `roles` list are ignored, an unknown `can` value counts for
+    nothing."""
+    if not isinstance(raw, dict):
+        return {}
+    delegates = {d for d in raw if isinstance(d, str) and d.strip()}
+    own, manages, can = {}, {}, {}
+    for d in delegates:
+        entry = raw[d]
+        if not isinstance(entry, dict):
+            continue
+        own[d] = frozenset(r for r in _strings(entry, "roles") if r not in delegates)
+        manages[d] = [k for k in _strings(entry, "manages") if k in delegates]
+        can[d] = (frozenset(DELEGATE_ACTIONS) if "can" not in entry
+                  else frozenset(a for a in _strings(entry, "can") if a in DELEGATE_ACTIONS))
+    below = {}
+    for d in own:
+        seen: set = set()
+        todo = list(manages[d])
+        while todo:
+            k = todo.pop()
+            if k not in seen:
+                seen.add(k)
+                todo.extend(manages.get(k, []))
+        below[d] = seen
+    usable = {d for d in own if d not in below[d]}            # a role on a cycle reaches itself
+    graph = {}
+    for d in usable:
+        desc = frozenset(k for k in below[d] if k in usable)
+        graph[d] = {"desc": desc, "can": can[d],
+                    "eff": frozenset(own[d] | desc | {r for k in desc for r in own[k]}),
+                    "anc": frozenset(e for e in usable if d in below[e])}
+    return graph
+
+
+def delegate_scopes(graph: dict, roles) -> list:
+    """The scopes of an account that holds `roles`, under a `delegation_graph` (T-74) — one `(role, managed, can)`
+    per delegate role it holds, sorted; empty if it holds none.
+
+    A pure function of the delegation and the account's roles (no configuration, no database), so it can be called
+    for any delegation — e.g. one per tenant later. The caller decides first whether the account counts at all
+    (a browser session, not an administrator). Never the own delegate role and none above it: an account holding
+    `area-admin` and `team-a-admin` treats other `team-a-admin` accounts as peers."""
+    held = sorted({r for r in roles or [] if isinstance(r, str) and r in graph})
+    barred = set(held) | {a for r in held for a in graph[r]["anc"]}
+    return [(r, frozenset(graph[r]["eff"] - barred), graph[r]["can"]) for r in held]
+
+
+def delegate_may_manage(managed, actor_id, target, target_roles) -> bool:
+    """May a delegate scope with the roles `managed` act on `target` (an account row or dict) whose roles are
+    `target_roles` (T-74)? Only when ALL its roles stand in `managed` (at least one) — never an admin, owner or service
+    account, never the actor's own. A delegate account is in scope only when its delegate role is below (`managed`
+    holds exactly the delegate roles below). Strict on purpose: locking or a sign-in link acts on the whole account,
+    also on the parts of another team. Pure, like `delegate_scopes`."""
+    if target is None or target["is_admin"] or target["is_owner"] or target["is_service"]:
+        return False
+    if target["id"] == actor_id:
+        return False
+    if not target_roles or not all(isinstance(r, str) for r in target_roles):
+        return False
+    return set(target_roles) <= managed
+
+
+def _admin_delegates(config, error: list, warnings: list) -> None:
+    """Delegated admins (T-74): the shape, every role known, no delegate role in a `roles` list, `manages` only to
+    delegate roles and without a cycle, `can` only known actions.
+
+    A delegate role in a `roles` list would let a delegate appoint delegates outside the hierarchy — appointing goes
+    only through `manages`, where the cycle check keeps a role from ending up above itself. The role `admin` would
+    read as the admin flag in `Remote-Groups`. A role outside `available_roles` is a typo nobody notices: the panel
+    offers only listed roles as checkboxes."""
+    raw = getattr(config, "admin_delegates", None)
+    if not raw:
+        return
+    if not isinstance(raw, dict):
+        error.append(_t(config, "admin_delegates: {v!r} — a mapping of delegate role → {{\"roles\": [role, …]}} "
+                                "with optional \"manages\" (delegate roles below it) and \"can\" (a part of the "
+                                "actions); at least one role or one managed delegate role", v=raw))
+        return
+    known = set(getattr(config, "available_roles", None) or [])
+    for role, entry in raw.items():
+        good = (isinstance(role, str) and bool(role.strip()) and isinstance(entry, dict) and "roles" in entry
+                and set(entry) <= _DELEGATE_KEYS)
+        if good:
+            for name in _DELEGATE_KEYS & set(entry):
+                value = entry[name]
+                good = good and isinstance(value, list) and all(isinstance(x, str) and x.strip() for x in value) \
+                    and (bool(value) or name == "roles")
+            good = good and bool(entry["roles"] or entry.get("manages"))
+        if not good:
+            error.append(_t(config, "admin_delegates: {v!r} — a mapping of delegate role → {{\"roles\": [role, …]}} "
+                                    "with optional \"manages\" (delegate roles below it) and \"can\" (a part of the "
+                                    "actions); at least one role or one managed delegate role", v={role: entry}))
+            continue
+        if role == "admin":
+            error.append(_t(config, "admin_delegates: {role!r} is not a delegate role — \"admin\" is how forward auth "
+                                    "names the admin flag in Remote-Groups", role=role))
+        for name in [role] + entry["roles"]:
+            if name not in known:
+                error.append(_t(config, "admin_delegates: the role {role!r} is not in available_roles — list every "
+                                        "delegate role and every role it manages there", role=name))
+        for name in entry["roles"]:
+            if name in raw:
+                error.append(_t(config, "admin_delegates: the delegate role {role!r} stands in the roles of {owner!r} "
+                                        "— a delegate role is appointed only through \"manages\"",
+                                role=name, owner=role))
+        for name in entry.get("manages") or []:
+            if name not in raw:
+                error.append(_t(config, "admin_delegates: {owner!r} manages {role!r}, which is not a delegate role — "
+                                        "\"manages\" names delegate roles (keys of admin_delegates)",
+                                role=name, owner=role))
+        for name in entry.get("can") or []:
+            if name not in DELEGATE_ACTIONS:
+                error.append(_t(config, "admin_delegates: {owner!r} can {action!r}, which is no action — allowed are "
+                                        "{actions}", owner=role, action=name, actions=", ".join(DELEGATE_ACTIONS)))
+    # A cycle (also a role managing itself, also over several steps) would put a delegate above themselves.
+    managed = {d: [k for k in _strings(e, "manages") if k in raw] for d, e in raw.items() if isinstance(e, dict)}
+    for role in managed:
+        seen: set = set()
+        todo = list(managed[role])
+        while todo:
+            k = todo.pop()
+            if k not in seen:
+                seen.add(k)
+                todo.extend(managed.get(k, []))
+        if role in seen:
+            error.append(_t(config, "admin_delegates: {role!r} manages itself through \"manages\" (a cycle) — "
+                                    "a delegate role is never above itself", role=role))
+    if not _an(config, "admin_enabled"):
+        warnings.append(_t(config, "admin_delegates is set, but admin_enabled=False: the panel is not mounted at "
+                                   "admin_path. Mount auth.admin_router() yourself, or delegates have no panel."))
 
 
 def _open_gates(config, warnings: list) -> None:
@@ -2435,4 +2591,38 @@ _DE: dict[str, str] = {
      "the Secure flag"):
         ("https_mode='force' mit cookie_secure=False — das Sitzungs-Cookie ginge ohne "
          "Secure-Flag hinaus"),
+    ("admin_delegates: {v!r} — a mapping of delegate role → {{\"roles\": [role, …]}} with optional "
+     "\"manages\" (delegate roles below it) and \"can\" (a part of the actions); at least one role or one "
+     "managed delegate role"):
+        ("admin_delegates: {v!r} — eine Zuordnung Delegiertenrolle → {{\"roles\": [Rolle, …]}} mit optionalem "
+         "\"manages\" (Delegiertenrollen darunter) und \"can\" (ein Teil der Aktionen); mindestens eine Rolle "
+         "oder eine verwaltete Delegiertenrolle"),
+    ("admin_delegates: {role!r} is not a delegate role — \"admin\" is how forward auth "
+     "names the admin flag in Remote-Groups"):
+        ("admin_delegates: {role!r} ist keine Delegiertenrolle — \"admin\" heißt bei Forward-Auth "
+         "das Admin-Flag in Remote-Groups"),
+    ("admin_delegates: the role {role!r} is not in available_roles — list every "
+     "delegate role and every role it manages there"):
+        ("admin_delegates: Die Rolle {role!r} steht nicht in available_roles — jede Delegiertenrolle "
+         "und jede Rolle, die sie verwaltet, dort eintragen"),
+    ("admin_delegates: the delegate role {role!r} stands in the roles of {owner!r} "
+     "— a delegate role is appointed only through \"manages\""):
+        ("admin_delegates: Die Delegiertenrolle {role!r} steht in den Rollen von {owner!r} "
+         "— eine Delegiertenrolle wird nur über \"manages\" ernannt"),
+    ("admin_delegates: {owner!r} manages {role!r}, which is not a delegate role — "
+     "\"manages\" names delegate roles (keys of admin_delegates)"):
+        ("admin_delegates: {owner!r} verwaltet {role!r}, das keine Delegiertenrolle ist — "
+         "\"manages\" nennt Delegiertenrollen (Schlüssel von admin_delegates)"),
+    ("admin_delegates: {owner!r} can {action!r}, which is no action — allowed are "
+     "{actions}"):
+        ("admin_delegates: {owner!r} darf {action!r}, das ist keine Aktion — erlaubt sind "
+         "{actions}"),
+    ("admin_delegates: {role!r} manages itself through \"manages\" (a cycle) — "
+     "a delegate role is never above itself"):
+        ("admin_delegates: {role!r} verwaltet sich über \"manages\" selbst (ein Zyklus) — "
+         "eine Delegiertenrolle steht nie über sich selbst"),
+    ("admin_delegates is set, but admin_enabled=False: the panel is not mounted at "
+     "admin_path. Mount auth.admin_router() yourself, or delegates have no panel."):
+        ("admin_delegates ist gesetzt, aber admin_enabled=False: Das Panel hängt nicht unter "
+         "admin_path. auth.admin_router() selbst einhängen, sonst haben Delegierte kein Panel."),
 }
