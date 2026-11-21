@@ -420,10 +420,14 @@ with Recording() as log_i, ThreadPoolExecutor(max_workers=2) as pool:
 auth._notice_outcome.wait()
 # (Mutation probe: in `record_login` restore `state = prebooked[2]` and `state == limit`, plus in
 #  `reserve_attempt` the sum instead of the settled state → one row → red.)
+# T-63: the owner's sign-in after nine failed attempts is reported to her (a security notice) — but no lockout
+# notice may go out: every mail here must be that notice.
+_notice_subject = auth.t("mail.access.subject", what=auth.t("notice.signed_in_after_failures", failures=9))
 r.check("p2 F3: owner and attacker are pending at limit−2, the owner ends the series — "
         "no `lockout_series` in the audit log, no “locked” in the security log",
         holder == 303 and attacker == 401 and auth.store.failure_series("alice") == 0
-        and _series_lines(auth) == 0 and not log_i.lines("locked") and post == [],
+        and _series_lines(auth) == 0 and not log_i.lines("locked")
+        and all(m[1] == _notice_subject for m in post),
         f"{holder}/{attacker}, series {auth.store.failure_series('alice')}, lines {_series_lines(auth)}, "
         f"{log_i.lines('locked')} {post}"[:400])
 os.remove(db)

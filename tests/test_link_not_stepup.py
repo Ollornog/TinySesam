@@ -117,6 +117,8 @@ auth.cfg.pin_enabled = True
 auth.set_pin(uid, "735194")
 auth.cfg.stepup_methods = ["pin"]
 stale(c)
+# T-57: the default window no longer takes the NEXT step; this test signs in with it a second time in one step.
+auth.cfg.totp_window = "previous_and_next"
 r = c.post("/auth/totp", data={"code": pyotp.TOTP(auth.store.get_totp(uid)["secret"]).at(time.time() + 30),
                                "next": "/"}, follow_redirects=False)
 assert r.status_code == 303, r.status_code          # the code is right — it just refreshes nothing

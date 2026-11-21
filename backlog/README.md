@@ -8,7 +8,7 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 ## Meilensteine
 
 * ☐ **[M-1](M-1-api-stable-1-0.md)** 1.0 — API stable enough for PyPI — 14/14 erledigt
-* ☐ **[M-2](M-2-after-1-0.md)** After 1.0 — keeping the published package maintained — 51/61 erledigt
+* ☐ **[M-2](M-2-after-1-0.md)** After 1.0 — keeping the published package maintained — 57/61 erledigt
 * ☑ **[M-3](M-3-gate-in-front-of-third-party-apps.md)** Gate in front of third-party apps — fast, sign in once, sign out cleanly — 8/8 erledigt
 
 ## Aufgaben
@@ -61,21 +61,21 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 * ☑ **[T-46](T-46-admin-set-password-must-not-become-the-permanent-p.md)** Admin-set password must not become the permanent password · M-2
 * ☑ **[T-47](T-47-notify-the-account-holder-about-new-access-link-is.md)** Notify the account holder about new access (link issued, new device, success after failures) · M-2
 * ☑ **[T-48](T-48-key-rotation-for-secrets-key-and-a-gate-signing-ke.md)** Key rotation for secrets_key, and a gate signing key of its own · M-2
-* ☐ **[T-49](T-49-oidc-max-age-auth-time-for-re-authentication.md)** OIDC: max_age / auth_time for re-authentication · M-2
-* ☐ **[T-50](T-50-session-lifetime-justify-against-nist-sp-800-63b-4.md)** Session lifetime: justify against NIST SP 800-63B-4, document parallel sessions · M-2
-* ☐ **[T-51](T-51-sign-in-link-lifetimes-magic-link-10-min-admin-lin.md)** Sign-in link lifetimes: magic link 10 min, admin link at most 24–72 h · M-2
+* ☑ **[T-49](T-49-oidc-max-age-auth-time-for-re-authentication.md)** OIDC: max_age / auth_time for re-authentication · M-2
+* ☑ **[T-50](T-50-session-lifetime-justify-against-nist-sp-800-63b-4.md)** Session lifetime: justify against NIST SP 800-63B-4, document parallel sessions · M-2
+* ☑ **[T-51](T-51-sign-in-link-lifetimes-magic-link-10-min-admin-lin.md)** Sign-in link lifetimes: magic link 10 min, admin link at most 24–72 h · M-2
 * ☑ **[T-52](T-52-response-hardening-for-l3-coop-csp-reporting-clear.md)** Response hardening for L3: COOP, CSP reporting, Clear-Site-Data, textContent, /healthz version · M-2
 * ☑ **[T-53](T-53-gate-token-explicit-type-and-separate-key-before-t.md)** Gate token: explicit type and separate key before the OAuth AS signs JWTs · M-2
 * ☑ **[T-54](T-54-vault-bind-ciphertexts-to-their-row-aad-with-user.md)** Vault: bind ciphertexts to their row (AAD with user_id and column) · M-2
 * ☑ **[T-55](T-55-slsa-build-l3-and-an-sbom-for-wheel-and-sdist.md)** SLSA Build L3 and an SBOM for wheel and sdist · M-2
-* ☐ **[T-56](T-56-webauthn-user-verification-at-registration-random.md)** WebAuthn: user verification at registration, random user handle · M-2
-* ☐ **[T-57](T-57-totp-accept-at-most-one-step-back-switch-totp-wind.md)** TOTP: accept at most one step back (switch totp_window) · M-2
+* ☑ **[T-56](T-56-webauthn-user-verification-at-registration-random.md)** WebAuthn: user verification at registration, random user handle · M-2
+* ☑ **[T-57](T-57-totp-accept-at-most-one-step-back-switch-totp-wind.md)** TOTP: accept at most one step back (switch totp_window) · M-2
 * ☑ **[T-58](T-58-caddy-templates-a-header-missing-from-the-auth-answer.md)** Caddy templates: a header missing from the auth answer reaches the app as placeholder text · M-2
 * ☑ **[T-59](T-59-gateway-image-on-a-slimmer-or-distroless-base.md)** Gateway image on a slimmer or distroless base, with only the dependencies it needs · M-2
 * ☑ **[T-60](T-60-oauth-for-services-client-credentials-private-key-jwt.md)** OAuth for services — client_credentials + private_key_jwt, pairing from T-32 · M-2
 * ☑ **[T-61](T-61-c22-adapter-same-look-as-a-c22-app.md)** C22 adapter: the built-in pages in the look of an app built on C22 · M-2
 * ☑ **[T-62](T-62-caddy-shipped-ready-made-image-and-quickstart-stack.md)** Caddy shipped ready-made: image tinysesam-caddy-gate and a quickstart stack · M-2
-* ☐ **[T-63](T-63-notify-the-holder-of-a-successful-sign-in-after-failed-attempts.md)** Notify the holder of a successful sign-in after failed attempts · M-2
+* ☑ **[T-63](T-63-notify-the-holder-of-a-successful-sign-in-after-failed-attempts.md)** Notify the holder of a successful sign-in after failed attempts · M-2
 * ☑ **[T-64](T-64-top-bar-and-favicon-refresh.md)** Top bar and favicon refresh: logo, name, links, account menu, light/dark, phone · M-2
 * ☑ **[T-65](T-65-ai-guide-agents-md-and-a-skill-for-app-builders.md)** AI guide: AGENTS.md for contributors and a skill for app builders · M-2
 * ☑ **[T-66](T-66-app-passwords-for-webdav-caldav-and-git-at-the-gate.md)** App passwords for WebDAV, CalDAV/CardDAV and Git at the gate · M-2

@@ -248,15 +248,19 @@ assert auth.stepup_options(auth.get_user(uid)) == [], "precondition: nothing to 
 tok, mfa_ok = auth.start_session(uid, "oidc", remember=True)
 assert mfa_ok, "the federated login alone makes the session fully valid"
 c.cookies.set(auth.cfg.session_cookie, tok)
-# The freshness has expired (the window is 15 minutes, the session lasts days) — exactly the
-# situation in which the dead end snapped shut. The sign-in itself is still young.
-auth.store._exec("UPDATE session SET mfa_at=? WHERE token_hash=?",
-                 (int(time.time()) - 100000, auth.store.session_hash(tok)))
+# The sign-in is young. (Up to T-49 this block aged only `mfa_at` and kept `created_at` young; since T-49
+# `login_fresh` measures `mfa_at` — the last sign-in on the session, which for an account without a factor IS its
+# sign-in, backdated to the provider's `auth_time` for an OIDC session — so that split state no longer exists.
+# The dead end itself — `require_mfa()` in front of creating — is caught by (b) below: it would answer with the
+# reauth hint instead of `api.stepup_relogin`.)
 assert c.get("/auth/me", headers=J).status_code == 200, "the session must stay valid"
 r = c.post("/auth/pin/set", json={"pin": "2468"}, headers=J)
 assert r.status_code == 200, (r.status_code, r.text[:120])       # (a)
 assert auth._verify_user_pin(uid, "2468"), "the first PIN must arrive"
 print("  (a) first PIN without any factor: fresh sign-in suffices ok")
+# The freshness expires (the window is 15 minutes, the session lasts days).
+auth.store._exec("UPDATE session SET mfa_at=? WHERE token_hash=?",
+                 (int(time.time()) - 100000, auth.store.session_hash(tok)))
 
 # Now the account HAS a factor → replacing requires a confirmation again, and that
 # can be provided via the PIN. The promise "changing a factor requires freshness" stays intact.

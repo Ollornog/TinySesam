@@ -697,6 +697,8 @@ _stays("chain: first factor", _c, _password, "the half session is not yet a logi
 _turns("chain password → TOTP", _c, lambda cl: cl.post(
     "/auth/totp", data={"code": pyotp.TOTP(_secret_text).now(), "next": "/",
                         "_csrf": _slot(cl.get("/auth/totp").text)}, follow_redirects=False))
+# T-57: the default window no longer takes the NEXT step; this test signs in with it a second time in one step.
+_a.cfg.totp_window = "previous_and_next"
 _stays("Step-up per TOTP", _c, lambda cl: cl.post(
     "/auth/totp", data={"code": pyotp.TOTP(_secret_text).at(int(_time.time()) + 30), "next": "/",
                         "_csrf": cl.cookies.get(CK)}, follow_redirects=False))

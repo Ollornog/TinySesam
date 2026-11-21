@@ -116,15 +116,18 @@ Rate-Limit, Open-Redirect-Schutz via `safe_next`). Trotzdem: vor produktivem Ein
   Gründe wie `api_keys_revoked`). Dienste (T-60): `oauth_service_paired` (`details={"client_id": …, "client_name":
   …, "resources": [...]}` — ein Dienst wurde gekoppelt und handelt als das Konto) und `oauth_service_revoked`
   (`details={"client_id": …, "client_name": …, "reason": …}`, `reason` eines von `user`, `admin` und den Gründen von
-  `api_keys_revoked`). Die vollständige Liste der Ereignisnamen ist
+  `api_keys_revoked`). Eine vollständige Anmeldung nach mindestens drei Fehlversuchen in Folge (T-63, ASVS 6.3.5):
+  `signed_in_after_failures` (`details={"failures": n, "ip": …}` — die Serie zählt jeden fehlgeschlagenen
+  Anmeldeversuch unter den Namen des Kontos seit der letzten vollständigen Anmeldung, über alle Verfahren; dazu das
+  Audit-Ereignis `login_after_failures`). Die vollständige Liste der Ereignisnamen ist
   `TinySesam.SECURITY_EVENTS`. Die Schlüssel in `details` und die
   Gründe sind seit 0.22.0 englisch (bis 0.21.x `verbleibend`, `alt`/`neu`, `anzahl`/`grund` mit
   deutschen Gründen). Das gilt auch für Änderungen, die ein Admin im Panel an
   einem fremden Konto vornimmt (Passwort zurücksetzen, API-Key ausstellen, Passkey widerrufen) — die
   Mail also so schreiben, dass sie nicht unterstellt, der Inhaber sei es gewesen. Ausser dem Hook
   verschickt TinySesam mit konfiguriertem Versand zwei Arten Mail selbst, beide nur an eine belegte
-  Adresse und ohne Link: den Hinweis an ein Konto, das wegen Fehlversuchen gesperrt wurde (ASVS 6.3.5;
-  abschaltbar mit `notify_login_failures=False`), und seit H2 einen Hinweis auf **neue Zugänge** (T-47,
+  Adresse und ohne Link: den Hinweis an ein Konto, das wegen Fehlversuchen gesperrt wurde, und seit T-63 einen über
+  eine Anmeldung nach Fehlversuchen (ASVS 6.3.5; beide abschaltbar mit `notify_login_failures=False`), und seit H2 einen Hinweis auf **neue Zugänge** (T-47,
   NIST SP 800-63B-4 §4.1.2.1; abschaltbar mit `notify_new_access=False`) bei `passkey_added`,
   `totp_enabled`, `pin_set`, `api_key_created`, `device_signed_in`, `signin_link_issued`,
   `password_changed` durch einen Administrator, `oauth_device_connected`, `oauth_token_reuse`,
@@ -181,7 +184,25 @@ Rate-Limit, Open-Redirect-Schutz via `safe_next`). Trotzdem: vor produktivem Ein
   Bestätigung den TOTP-Schritt der Anmeldung gleich mit ab; überall sonst braucht die Anmeldung den
   *nächsten* Code. Integrationstests, die `totp_confirm(uid, now())` rufen und sich danach mit
   demselben Code anmelden (`POST /auth/totp`), werden seit T-13 rot — dort mit dem Code des
-  vorigen Zeitschritts bestätigen.
+  vorigen Zeitschritts bestätigen. **Welche Schritte zählen**, sagt `totp_window` (T-57, RFC 6238 §5.2):
+  als Vorgabe der laufende und der vorige; bis 0.25.x zählte auch der nächste (`"previous_and_next"` behält das).
+  Ein Test, der sich mit dem Code des *nächsten* Schritts anmeldet, braucht jetzt diesen Schalter. `"current"`
+  nimmt nur den laufenden Schritt — die 30 Sekunden aus ASVS 6.5.5, um den Preis von Codes, die genau beim
+  Schrittwechsel getippt werden.
+- **Eine Neuanmeldung beim OIDC-Anbieter wird an `auth_time` gemessen (T-49, ASVS 6.8.4).** Eine Runde durch die
+  laufende Sitzung des Anbieters ist still — kein Passwort, kein Faktor. Mit `oidc_reauth_check` (Vorgabe an)
+  bietet die Bestätigungsseite einem mit ihm verknüpften Konto „Mit <Anbieter> bestätigen“ an; diese Runde
+  verlangt eine aktive Anmeldung (`prompt=login`, `max_age=0`, OIDC Core §3.1.2.1) und bestätigt nur mit einem
+  `auth_time` nach der Anfrage (60 s Uhrentoleranz) — sonst sagt die Seite das, und nichts ist bestätigt (Audit
+  `oidc_reauth_stale`). Jede andere Runde auf einer vollen Sitzung (die Freigabe für eine weitere Anwendung)
+  frischt die Bestätigung nicht mehr auf (`stepup_not_counted reason=no_fresh_auth_time`), und eine neue Sitzung
+  gilt ab dem `auth_time` des Anbieters als bestätigt, nicht ab der Runde: eine stille Anmeldung eine Stunde nach
+  dem letzten Passwort ist für `stepup_max_age_sec` eine Stunde alt. **Rückfall ohne `auth_time`** (der Anbieter
+  sendet den Claim nicht): eine neue Sitzung zählt wie bisher ab TinySesams eigener Anmeldung — dem Anbieter wird
+  zugetraut, mindestens mit seinem schwächsten Verfahren angemeldet zu haben; der Anbieter-Knopf bestätigt dann
+  nie, das Konto bestätigt mit eigenen Faktoren oder durch eine neue Anmeldung. Anbieter, die `prompt=login`
+  ignorieren, fallen genauso auf. `oidc_reauth_check=False` stellt das Verhalten bis 0.25.x wieder her. SAML hat
+  diese Prüfung noch nicht (`ForceAuthn` wird nicht gesendet).
 - **Eigene Login-, Step-up- oder Passwortwechsel-Seite: auf den Bausteinen bauen.**
   `login_password`, `login_pin`, `login_totp`, `confirm_password`, `confirm_pin`, `confirm_totp`
   und `change_password` (Stufe A, seit 0.22.0) drosseln, zählen, sperren und protokollieren genau

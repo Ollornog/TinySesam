@@ -22,7 +22,7 @@ The tier is recorded per name in `tests/api_surface.json`. The guard `tests/test
 
 **Public is what the hand-written docs describe** (decided before 1.0): the READMEs, `CONFIGURATION.md`, `SECURITY.md` and `docs/OPERATIONS.md`. This page is generated and lists every name with its tier; being listed here alone is no promise. The guard checks that every tier-A/B Python name is named in those documents.
 
-The configuration fields are in [CONFIGURATION.md](CONFIGURATION.md): 180 of 199 in tier A, the others below at their tier.
+The configuration fields are in [CONFIGURATION.md](CONFIGURATION.md): 183 of 202 in tier A, the others below at their tier.
 
 **English, names as well as values** (since 0.22.0, without alias): The names of tiers A and B, their parameters and the keys and values they return or accept — result dicts, the `details` passed to `on_security_event`, the context of your own pages (`ctx["prefix"]`, `ctx["purpose"]`), the JSON responses of the routes, the kinds of API keys (`automation`, `human`). Since the last breaking pass before the freeze (PO decision 2026-10-29) the same holds for what operators and proxies read — query and form parameters, header and cookie names, logger names, the event words and keys of the security log, message ids — and audit and log lines are English as well. The lists old → new are in the CHANGELOG (0.22.0, [Unreleased]).
 
@@ -30,7 +30,7 @@ The configuration fields are in [CONFIGURATION.md](CONFIGURATION.md): 180 of 199
 
 **`auth.store` is internals** (tier C): the storage layer of the built-in routes, without tier, without promise and without transition period — its methods can change with every release. What an app needs is listed below as a method of `TinySesam` (e.g. `set_disabled` instead of `auth.store.set_disabled`).
 
-**Status:** A 398 · B 217 · C 38 names.
+**Status:** A 402 · B 217 · C 38 names.
 
 ## A · Methods of `TinySesam`
 
@@ -312,7 +312,7 @@ Value: `{'user': 'Remote-User', 'name': 'Remote-Name', 'email': 'Remote-Email', 
 
 The events for which `on_security_event` is called — everything that creates, changes, removes or consumes a sign-in factor of the account.
 
-Values: `password_changed`, `pin_set`, `pin_disabled`, `totp_enabled`, `totp_disabled`, `recovery_codes_generated`, `recovery_code_used`, `passkey_added`, `passkey_removed`, `api_key_created`, `api_key_revoked`, `api_keys_revoked`, `email_changed`, `username_changed`, `oauth_device_connected`, `oauth_device_revoked`, `oauth_token_reuse`, `signin_link_issued`, `device_signed_in`, `app_password_created`, `app_password_revoked`, `app_passwords_revoked`, `oauth_service_paired`, `oauth_service_revoked`
+Values: `password_changed`, `pin_set`, `pin_disabled`, `totp_enabled`, `totp_disabled`, `recovery_codes_generated`, `recovery_code_used`, `passkey_added`, `passkey_removed`, `api_key_created`, `api_key_revoked`, `api_keys_revoked`, `email_changed`, `username_changed`, `oauth_device_connected`, `oauth_device_revoked`, `oauth_token_reuse`, `signin_link_issued`, `device_signed_in`, `app_password_created`, `app_password_revoked`, `app_passwords_revoked`, `oauth_service_paired`, `oauth_service_revoked`, `signed_in_after_failures`
 
 ## A · `TinySesamConfig`
 
@@ -781,6 +781,7 @@ The keys of the `details` dict per event, read from the call sites. A key that g
 | `pin_set` | — |
 | `recovery_code_used` | `remaining` |
 | `recovery_codes_generated` | `count` |
+| `signed_in_after_failures` | `failures`, `ip` |
 | `signin_link_issued` | `by_operator`, `ttl_min` |
 | `totp_disabled` | `recovery_codes_deleted` |
 | `totp_enabled` | — |
@@ -899,7 +900,7 @@ The HTML pages (sign-in, registration, account, admin panel, the pages behind e-
 | POST | `/auth/oauth/services/pairing` | — |
 | POST | `/auth/oauth/services/{client_id}/revoke` | — |
 | POST | `/auth/oauth/token` | — |
-| GET | `/auth/oidc/start` | `query:app`, `query:next` |
+| GET | `/auth/oidc/start` | `query:app`, `query:next`, `query:reauth` |
 | POST | `/auth/passkey/delete` | — |
 | GET | `/auth/passkey/list` | — |
 | POST | `/auth/passkey/login/begin` | — |

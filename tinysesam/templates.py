@@ -802,7 +802,8 @@ async function addpk(){
       clientDataJSON:enc(cred.response.clientDataJSON),attestationObject:enc(cred.response.attestationObject),
       transports:(cred.response.getTransports&&cred.response.getTransports())||[]}};
     const r=await fetch('__TS_P__/auth/passkey/register/finish',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':tsCsrf()},body:JSON.stringify(payload)});
-    say('pk_msg',r.ok?TXT.added:TXT.failed,r.ok);loadpk();await offer(r);loadsess();
+    // T-56: a refused registration (no user verification) says why instead of a bare "failed".
+    say('pk_msg',r.ok?TXT.added:((await r.clone().json().catch(()=>({}))).detail||TXT.failed),r.ok);loadpk();await offer(r);loadsess();
   }catch(e){say('pk_msg',TXT.aborted+e,false)}
 }
 </script>
@@ -1183,6 +1184,11 @@ def _reauth(auth, ctx) -> str:
     head = (f"<h1>{_e(t('reauth.title'))}</h1>"
             f"<div class=hint>{_e(t('reauth.hint', user=ctx.get('username')))}</div>")
     fuss = f"<div class=hint><a href='__TS_P__/auth/logout'>{_e(t('logout'))}</a></div>"
+    # T-49: an account linked to the provider confirms there — with an active sign-in (`prompt=login`), checked by
+    # its `auth_time`. For a purely federated account it is the only way that does not end the session.
+    if ctx.get("reauth_oidc"):
+        fuss = (f"<a class=btn2 id=reauthoidc href='__TS_P__/auth/oidc/start?reauth=1&amp;next="
+                f"{_next_q(ctx.get('next') or '/')}'>{_e(t('reauth.oidc', name=auth.cfg.oidc_name))}</a>" + fuss)
     if not methods:
         return _page(auth, t("reauth.title"), head + fuss, below=messages, ctx=ctx)
     fields = f"<div class=or>{_e(t('or'))}</div>".join(

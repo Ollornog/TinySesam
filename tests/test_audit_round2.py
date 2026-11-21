@@ -572,14 +572,15 @@ uid_t = auth_t.create_user("bob", password="dummy12345")
 auth_t.totp_begin(uid_t)
 secret_text = auth_t.store.get_totp(uid_t)["secret"]
 auth_t.store.set_totp(uid_t, secret_text, confirmed=True)
-code = pyotp.TOTP(secret_text).now()
+import time as _t  # noqa: E402
+
+# T-57: the code of the PREVIOUS step first, then the current one — the window takes no next step any more.
+code = pyotp.TOTP(secret_text).at(int(_t.time()) - 30)
 r.check("a TOTP code is valid the first time", auth_t._verify_totp(uid_t, code))
 r.check("the same code is not valid a second time", not auth_t._verify_totp(uid_t, code),
         "NIST SP 800-63B: „SHALL accept a given OTP only once while it is valid\"")
-import time as _t  # noqa: E402
-
-r.check("the next time step still works",
-        auth_t._verify_totp(uid_t, pyotp.TOTP(secret_text).at(int(_t.time()) + 30)),
+r.check("the following time step still works",
+        auth_t._verify_totp(uid_t, pyotp.TOTP(secret_text).now()),
         "the one-time booking locks too much")
 
 

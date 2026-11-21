@@ -86,6 +86,8 @@ c3 = TestClient(app)
 c3.post("/auth/pin", data={"username": "admin", "pin": "13579"}, follow_redirects=False)
 # A TOTP code has applied exactly ONCE since 0.18.0. The same code was already consumed above —
 # so here the next time step (lies within the permitted window).
+# T-57: the default window no longer takes the NEXT step; this test signs in with it a second time in one step.
+auth.cfg.totp_window = "previous_and_next"
 c3.post("/auth/totp", data={"code": pyotp.TOTP(secret).at(int(time.time()) + 30)},
         follow_redirects=False)
 assert c3.post("/auth/pin/disable").json()["ok"] is True

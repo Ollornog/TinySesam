@@ -187,12 +187,13 @@ assert TestClient(app).post(f"/auth/magic/{tok}", follow_redirects=False).status
 ok("admin link is revoked on password reset")
 
 # Input checks.
-for bad in (0, -5, 7 * 24 * 60 + 1, "30", True, 1.5):
+# T-51: the bound is `signin_link_max_ttl_min` (default 24 h; up to 0.25.x a fixed week).
+for bad in (0, -5, 24 * 60 + 1, 7 * 24 * 60, "30", True, 1.5):
     r = adm.post(f"{P}/{bob}/signin-link", json={"ttl_min": bad})
     assert r.status_code == 400, (bad, r.status_code, r.text)
-assert adm.post(f"{P}/{bob}/signin-link", json={"ttl_min": 7 * 24 * 60}).status_code == 200
+assert adm.post(f"{P}/{bob}/signin-link", json={"ttl_min": 24 * 60}).status_code == 200
 assert adm.post(f"{P}/{bob}/signin-link", json={"ttl_min": 1}).status_code == 200
-ok("TTL: 1 minute to 7 days, anything else 400")
+ok("TTL: 1 minute to 24 hours (signin_link_max_ttl_min), anything else 400")
 
 assert adm.post(f"{P}/99999/signin-link", json={}).status_code == 404
 svc = adm.post(P, json={"username": "svc1", "is_service": True}).json()["id"]

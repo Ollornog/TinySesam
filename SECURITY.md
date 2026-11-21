@@ -111,14 +111,17 @@ rate limit, open-redirect protection via `safe_next`). Even so: review it yourse
   reasons as `api_keys_revoked`). Services (T-60): `oauth_service_paired` (`details={"client_id": …, "client_name":
   …, "resources": [...]}` — a service was paired to act as the account) and `oauth_service_revoked`
   (`details={"client_id": …, "client_name": …, "reason": …}`, `reason` one of `user`, `admin`, and the reasons of
-  `api_keys_revoked`). The full list of event names is `TinySesam.SECURITY_EVENTS`.
+  `api_keys_revoked`). A complete sign-in after at least three consecutive failed attempts (T-63, ASVS 6.3.5):
+  `signed_in_after_failures` (`details={"failures": n, "ip": …}` — the streak counts every failed sign-in under
+  the account's names since the last complete sign-in, across methods; also the audit event `login_after_failures`).
+  The full list of event names is `TinySesam.SECURITY_EVENTS`.
   The `details` keys and the reasons are English since
   0.22.0 (up to 0.21.x `verbleibend`, `alt`/`neu`, `anzahl`/`grund` with German reasons). That includes changes an administrator makes to someone
   else's account in the panel (password reset, issuing an API key, revoking a passkey) — write the
   mail so it does not assume the holder did it. Apart from the hook, TinySesam sends two kinds of
   mail itself when a mailer is configured, both only to a verified address and without a link: a
-  notice to an account that got locked by failed sign-in attempts (ASVS 6.3.5; opt-out
-  `notify_login_failures=False`), and since H2 a notice about **new access** (T-47, NIST SP 800-63B-4
+  notice to an account that got locked by failed sign-in attempts and, since T-63, one about a sign-in after
+  failed attempts (ASVS 6.3.5; opt-out `notify_login_failures=False` for both), and since H2 a notice about **new access** (T-47, NIST SP 800-63B-4
   §4.1.2.1; opt-out `notify_new_access=False`) for `passkey_added`, `totp_enabled`, `pin_set`,
   `api_key_created`, `device_signed_in`, `signin_link_issued`, `password_changed` by an administrator,
   `oauth_device_connected`, `oauth_token_reuse`, `app_password_created` and `oauth_service_paired` — at most one per
@@ -170,7 +173,24 @@ rate limit, open-redirect protection via `safe_next`). Even so: review it yourse
   setup is consumed. Under `login_chain=["password","totp"]` that confirmation completes the TOTP
   step of the sign-in; everywhere else the *next* code is needed to sign in. Integration tests that
   call `totp_confirm(uid, now())` and then sign in (`POST /auth/totp`) with the same code fail
-  since T-13 — confirm with the previous time step's code instead.
+  since T-13 — confirm with the previous time step's code instead. **Which steps count** is `totp_window`
+  (T-57, RFC 6238 §5.2): by default the current and the previous one; up to 0.25.x the next one counted as well
+  (`"previous_and_next"` keeps that). A test that signs in with the *next* step's code needs that switch now.
+  `"current"` accepts only the running step — the 30 seconds ASVS 6.5.5 names, at the price of codes typed just
+  as the step changes.
+- **Re-authentication at an OIDC provider is checked by `auth_time` (T-49, ASVS 6.8.4).** A round through the
+  provider's running session is silent — no password, no factor. With `oidc_reauth_check` (default on) the
+  confirmation page offers "Confirm with <provider>" to an account linked to it; that round asks for an active
+  sign-in (`prompt=login`, `max_age=0`, OIDC Core §3.1.2.1) and confirms only with an `auth_time` from after the
+  request (60 s clock tolerance) — otherwise the page says so and nothing is confirmed (audit `oidc_reauth_stale`).
+  Any other round on a full session (the approval for another application) no longer refreshes the confirmation
+  (`stepup_not_counted reason=no_fresh_auth_time`), and a new session counts as confirmed from the provider's
+  `auth_time`, not from the round: a silent sign-in an hour after the last password is an hour old for
+  `stepup_max_age_sec`. **Fallback without `auth_time`** (the provider does not send the claim): a new session
+  counts from TinySesam's own sign-in, as before — the provider is trusted to have authenticated at least with
+  its weakest method; the provider button then never confirms, the account confirms with its own factors or by
+  signing in again. Providers that ignore `prompt=login` are caught the same way. `oidc_reauth_check=False`
+  restores the behaviour up to 0.25.x. SAML has no such check yet (`ForceAuthn` is not sent).
 - **Your own sign-in, step-up or password-change page: build it on the building blocks.**
   `login_password`, `login_pin`, `login_totp`, `confirm_password`, `confirm_pin`, `confirm_totp`
   and `change_password` (tier A, since 0.22.0) throttle, count, lock and log exactly like the

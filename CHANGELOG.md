@@ -4,6 +4,52 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+### Security — sign-in hardening H4 (T-49, T-50, T-51, T-56, T-57, T-63)
+
+- **OIDC: re-authentication is measured by the provider's `auth_time` (T-49, ASVS 6.8.4).** A round through the
+  provider's running session is silent, yet until now it counted as a fresh confirmation: on a full session as a
+  step-up, for a new session as "signed in now". New switch `oidc_reauth_check` (default on): the confirmation page
+  offers **"Confirm with <provider>"** to an account linked to the provider, which asks for an active sign-in
+  (`prompt=login`, `max_age=0`) and confirms only with an `auth_time` from after the request — otherwise the page
+  says so (audit `oidc_reauth_stale`). Any other round on a full session (the approval for another application)
+  no longer refreshes the confirmation (`stepup_not_counted reason=no_fresh_auth_time`), and a new session counts
+  as confirmed from the provider's `auth_time` (`Store.backdate_confirmation`). A purely federated account whose
+  sign-in is too old for new access is now sent to the confirmation page (`X-TinySesam-Reauth`) instead of being
+  told to sign out; `login_fresh` measures its last sign-in on the session (`mfa_at`). Without `auth_time` a new
+  session counts from TinySesam's own sign-in, as before (documented fallback in `SECURITY.md`).
+- **TOTP: at most one step back, none ahead (T-57, RFC 6238 §5.2).** New `totp_window`, default `"previous"`:
+  the current and the previous 30-second step. Up to now the next step counted as well (90 seconds in all);
+  `"previous_and_next"` keeps that, `"current"` accepts only the running step (ASVS 6.5.5's 30 seconds). Every code
+  still counts once. `tinysesam.totp.matching_step` takes the steps ahead as `ahead`.
+- **Passkeys: user verification at registration, random user handle (T-56, WebAuthn L3 §7.1, §14.6.1).** With
+  `passkey_user_verification="required"` (default) the registration now demands the UV flag like the sign-in did —
+  a passkey that could never sign in is no longer stored. A refused registration answer is a `400`
+  (`api.passkey_reg_failed`, audit `passkey_create_failed` with the exception type) instead of a `500`. New
+  passkeys carry a 64-byte user handle (HMAC-SHA-512 over the account ID with a random instance salt, setting
+  `webauthn_handle_salt`) instead of the sequential account ID, which told how many accounts an instance has;
+  passkeys registered before keep working — TinySesam finds a passkey by its credential ID, never by the handle.
+- **Link lifetimes (T-51, ASVS 6.5.5, NIST SP 800-63B-4 §4.2.2).** `magiclink_ttl_min` defaults to **10**
+  minutes (was 15) — the mailed sign-in link, the reset link and invitations without an own validity. New
+  `signin_link_max_ttl_min` bounds a sign-in link issued by an admin or app code, default **24 h** (was a fixed
+  week; up to 10080 on purpose). A longer `ttl_min` gets a `400`/`ValueError` naming the bound
+  (`api.signin_link_ttl`); `config_check` rejects a bound below `magiclink_ttl_min`.
+- **Sign-in after failed attempts reaches the holder (T-63, ASVS 6.3.5).** A complete sign-in that ends a streak
+  of at least three consecutive failed attempts (all names of the account, all methods) raises the event
+  `signed_in_after_failures` (`failures`, `ip`), writes the audit event `login_after_failures` (account page,
+  "Recent activity") and mails the holder under `notify_login_failures`. The count is read before the sign-in
+  clears the streak.
+- **Session lifetimes justified against NIST SP 800-63B-4 (T-50, ASVS 7.1.1/7.1.2).** `docs/OPERATIONS.md` has a
+  new section: the defaults meet AAL1; for AAL2 they deviate in three places, with the reasons and the settings
+  that meet AAL2 to the letter; parallel sessions are unlimited on purpose and visible to holder and operator.
+
+**Upgrade notes.** (1) TOTP codes from the *next* step are refused — an authenticator whose clock runs fast, or a
+test that signs in with `pyotp.TOTP(s).at(time.time() + 30)`, needs `totp_window="previous_and_next"`. (2) Mailed
+links expire after 10 minutes — set `magiclink_ttl_min=15` to keep the old value. (3) An issued sign-in link longer
+than 24 h is refused — set `signin_link_max_ttl_min=10080` to keep a week. (4) Behind an OIDC provider, a silent
+provider round no longer makes a session fresh: people confirm with their own factor or with "Confirm with
+<provider>". A provider that ignores `prompt=login` or sends no `auth_time` cannot confirm that way —
+`oidc_reauth_check=False` restores the old behaviour. (5) An authenticator that does not verify the user can no
+longer register under `passkey_user_verification="required"` (it could not sign in before either).
 ### Fixed — admin panel: a late key list no longer overwrites a sign-in link shown once
 
 - After **Create key** the panel refreshed the account's key list without waiting for it. When that reply came back

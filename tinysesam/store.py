@@ -3428,6 +3428,14 @@ class Store:
         self._exec("UPDATE session SET mfa_ok=?, mfa_at=? WHERE token_hash=?",
                    (1 if ok else 0, (_now() if ok else None), self._handle(handle)))
 
+    def backdate_confirmation(self, token, at: int) -> None:
+        """Move the confirmation time (`mfa_at`) of a session back to `at` — never forward (T-49).
+
+        For a sign-in through a provider whose own sign-in lies further back (`auth_time`): the session is new, the
+        confirmation is not."""
+        self._exec("UPDATE session SET mfa_at=MIN(COALESCE(mfa_at, ?), ?) WHERE token_hash=?",
+                   (int(at), int(at), self.session_hash(token)))
+
     def delete_session(self, token):
         """Plaintext token (from the cookie) — for logout."""
         self._exec("DELETE FROM session WHERE token_hash=?", (self.session_hash(token),))
@@ -3687,6 +3695,14 @@ class Store:
 
     def set_setting(self, key, value):
         self._exec("INSERT OR REPLACE INTO setting(key, value) VALUES (?,?)", (key, str(value)))
+
+    def webauthn_handle_salt(self) -> bytes:
+        """The instance's salt for passkey user handles (T-56) — created on first use, 32 random bytes.
+
+        `INSERT OR IGNORE`: two processes racing each other agree on the first one; afterwards it never changes."""
+        self._exec("INSERT OR IGNORE INTO setting(key, value) VALUES ('webauthn_handle_salt', ?)",
+                   (secrets.token_hex(32),))
+        return bytes.fromhex(str(self.get_setting("webauthn_handle_salt")))
 
     def all_settings(self) -> dict:
         return {r["key"]: r["value"] for r in self._all("SELECT key, value FROM setting")}

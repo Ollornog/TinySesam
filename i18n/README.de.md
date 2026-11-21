@@ -277,7 +277,8 @@ Pflicht**: Ein Konto mit TOTP oder Passkey muss ihn nach dem Link noch bestehen
   Login-Seite bietet „Login-Link per E-Mail“ an. Unverändert.
 - **Link vom Admin, ohne Mail** (`magiclink_enabled=True`): Das Admin-Panel hat je Benutzer einen
   Knopf *Anmeldelink* (JSON: `POST <admin>/api/users/{id}/signin-link`, Body `{"ttl_min": 60}`,
-  1 Minute bis 7 Tage, Vorgabe `magiclink_ttl_min`). Der Link wird **einmal** angezeigt, als Link
+  1 Minute bis `signin_link_max_ttl_min` — Vorgabe 24 h, NIST SP 800-63B-4 §4.2.2; höchstens eine Woche, bewusst
+  gesetzt —, Vorgabe `magiclink_ttl_min`). Der Link wird **einmal** angezeigt, als Link
   und als QR-Code (Extra `[qr]`), zur Übergabe auf beliebigem Weg; er braucht keinen Mailer. Er
   verfällt mit den anderen offenen Links des Kontos, wenn es gesperrt oder sein Passwort
   zurückgesetzt wird. Audit `signin_link_issue` mit dem Admin als `actor=`. Im Code:
@@ -360,6 +361,7 @@ Die Regeln des Einrichtungsdurchgangs:
 | `db_path` | `tinysesam.db` | SQLite-Store |
 | `password_enabled` / `passkey_enabled` / `oidc_enabled` | `True/False/False` | aktive Methoden (Passkey ab Werk aus: `webauthn` steckt im Extra `[passkey]`) |
 | `totp_enabled` | `True` | 2FA erlauben (verlangt, sobald ein Nutzer es eingerichtet hat) |
+| `totp_window` | `"previous"` | aus welchen 30-Sekunden-Schritten ein Code stammen darf: laufender + voriger (RFC 6238 §5.2); `"current"`; `"previous_and_next"` = bis 0.25.x |
 | `login_chain` · `stepup_strict` | `[]` · `False` | `["password","totp"]` **erzwingt** 2FA über die Faktor-Kette; Alternativen je Glied mit `\|` (`["password\|passkey"]`). Leer = klassisch: ein Erstfaktor, dazu TOTP, wo eingerichtet |
 | `session_ttl_hours` · `cookie_secure` · `cookie_samesite` | `168` · `True` · `lax` | Sessions/Cookie |
 | `rp_id` · `origin` | `localhost` · … | WebAuthn (echte Domain nötig, HTTPS) |
@@ -369,7 +371,8 @@ Die Regeln des Einrichtungsdurchgangs:
 | `cookie_domain` · `trusted_redirect_hosts` | `""` · `[]` | SSO über Subdomains · erlaubte absolute `?next=`-Ziele |
 | `security_log` | `""` | Datei für den fail2ban-Logger (leer = nur an den Logger) |
 | `forward_auth_enabled` · `forward_headers` | `False` · `{}` | Forward-Auth-Endpunkt · welche Header er setzt (leer = `Remote-*`) |
-| `magiclink_enabled` · `magiclink_self_request` · `magiclink_ttl_min` | `False` · `True` · `15` | Anmelde-Links lösen ein · jeder darf einen per E-Mail anfordern (braucht einen Mailer; `False` = Links nur vom Admin oder App-Code) · Gültigkeit |
+| `magiclink_enabled` · `magiclink_self_request` · `magiclink_ttl_min` | `False` · `True` · `10` | Anmelde-Links lösen ein · jeder darf einen per E-Mail anfordern (braucht einen Mailer; `False` = Links nur vom Admin oder App-Code) · Gültigkeit in Minuten (auch Reset-Links und Einladungen; bis 0.25.x `15`) |
+| `signin_link_max_ttl_min` | `1440` | Obergrenze für einen Anmeldelink, den der Admin oder App-Code ausstellt (bis 0.25.x eine Woche, `10080`) |
 | `magiclink_first_login_only` | `False` | ein Link meldet nur zur ersten Anmeldung an (oder um einen fehlenden Faktor einzurichten) |
 | `qr_login_enabled` · `qr_login_ttl_sec` | `False` · `120` | geräteübergreifende Anmeldung (QR-Code braucht `base_url` und das Extra `[qr]`) · Gültigkeit einer Anfrage |
 
@@ -2125,7 +2128,7 @@ Jeder Python-Block beider Dateien läuft in der Testsuite, und jeder genannte Na
 
 ## Status
 
-**104 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
+**105 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
 (`tests/test_matrix.py`).
 
 Gebaut und getestet: Passwort/TOTP/Sitzungen/Rollen, Remember-me, Step-up und per-Route-MFA,
