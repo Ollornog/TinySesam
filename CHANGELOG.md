@@ -31,7 +31,8 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
   `signin_link`).
 - Every limit is enforced on the server, route by route: a route of the panel is admin-only unless it asks for the
   delegate scope (`tests/test_delegates.py` walks every route). The panel shows a delegate one tab, their accounts,
-  their roles and their buttons; the top bar, `GET /auth/topbar.json` and the account page offer them the panel.
+  their roles and their buttons; the top bar, `GET /auth/topbar.json`, `auth.topbar_data` and the account page
+  offer them the panel.
 - Only a browser session counts: an automation API key, an OAuth token and an app password neither open the panel nor
   carry a delegate role — also not in `Remote-Groups` (like the admin flag). Step-up as for administrators; creating,
   inviting and sign-in links always from a fresh confirmation. The audit log names the acting account, the panel's

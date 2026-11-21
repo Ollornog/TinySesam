@@ -335,7 +335,8 @@ assert auth._delegate_scopes({**lead_row, "_via": "session"}) is not None
 for via in ("apikey", "oauth", "app_password", None):
     assert auth._delegate_scopes({**lead_row, "_via": via}) is None, via
 assert auth._delegate_scopes(lead_row) is None, "a row without `_via` (not from a session) is no delegate"
-assert not auth._admin_panel_visible({**lead_row, "_via": "apikey"})
+for via in ("apikey", "oauth", "app_password"):
+    assert not auth._admin_panel_visible({**lead_row, "_via": via}), via
 ok("only a full browser session makes a delegate — a key, a token, an app password or a bare row never")
 # (Mutation: drop the `via != "session"` check in _delegate_scopes → red.)
 
@@ -452,6 +453,9 @@ bar = c["m1"].get("/auth/topbar.json").json()
 assert bar["admin_panel"]["shown"] is False and bar["links"] == [], bar
 assert "Admin panel" in lead_c.get("/auth/account").text and "Admin panel" not in c["m1"].get("/auth/account").text
 assert f"href='{A}'" in lead_c.get("/auth/account").text
+assert auth.topbar_data(auth.get_user(U["lead"]))["admin_panel"]["shown"] is True
+assert auth.topbar_data(auth.get_user(U["m1"]))["admin_panel"]["shown"] is False
+assert auth._admin_panel_visible(dict(row(U["lead"]))), "an account row (topbar_data) shows the panel like is_admin"
 ok("top bar and account page: a delegate sees \"Admin panel\", a plain account not; an {admin: True} link stays "
    "admin-only")
 # (Mutation: `_admin_panel_visible` → only `is_admin` → red.)

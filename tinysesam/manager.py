@@ -859,8 +859,10 @@ class TinySesam:
         return config_check.delegate_scopes(graph, self.user_roles(user)) or None
 
     def _admin_panel_visible(self, viewer) -> bool:
-        """Does the top bar and the account page offer `viewer` the admin panel? Administrators and delegated
-        admins (T-74). Only a convenience: the panel checks access itself on every request."""
+        """Does the top bar (`/auth/topbar.json`, `topbar_data`) and the account page offer `viewer` the admin panel?
+        Administrators and delegated admins (T-74). Only a convenience: the panel checks access itself on every
+        request. Like the admin flag it reads the account row (`topbar_data` takes one from `get_user`); a dict a
+        machine credential produced (`_via` other than a session) never shows it."""
         if not viewer:
             return False
         try:
@@ -868,7 +870,13 @@ class TinySesam:
                 return True
         except (KeyError, IndexError, TypeError):
             return False
-        return self._delegate_scopes(viewer) is not None
+        try:
+            via = viewer["_via"]
+        except (KeyError, IndexError, TypeError):
+            via = None
+        if via not in (None, "session"):
+            return False
+        return bool(config_check.delegate_scopes(self._delegation(), self.user_roles(viewer)))
 
     def _strip_delegate_roles(self, d: dict) -> dict:
         """Take the delegate roles out of an account dict that a machine credential produced (T-74, E4) — an
