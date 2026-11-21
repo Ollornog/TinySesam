@@ -176,6 +176,56 @@ def logo(cfg) -> str:
     return _MARK
 
 
+def link_visible(auth, viewer, rule) -> bool:
+    """May `viewer` see a link with this visibility rule (T-76)? No rule = everyone who sees the bar's links.
+
+    `{"admin": True}` — accounts with the admin flag. `{"role": "editors"}` — accounts with the role, decided by
+    `auth.has_role`, so `admin_implies_roles` (default on) lets an admin see role links too — the same answer the
+    target's own `require(role=…)` gives. Visibility is a convenience, not a protection: the target checks access
+    itself. An unknown rule hides the link (fail-closed); `config_check` refuses one at the start."""
+    if not rule:
+        return True
+    if viewer is None or not isinstance(rule, dict):
+        return False
+    if set(rule) == {"admin"} and rule["admin"] is True:
+        return bool(_field(viewer, "is_admin"))
+    if set(rule) == {"role"} and isinstance(rule["role"], str) and rule["role"]:
+        return bool(auth.has_role(viewer, rule["role"]))
+    return False
+
+
+def visible_links(auth, viewer) -> list:
+    """The (title, target) pairs of `topbar_links` that `viewer` may see — one filter for the bar, the phone menu and
+    `/auth/topbar.json`. An entry is `(title, target)` (everyone) or `(title, target, rule)` (`link_visible`)."""
+    out = []
+    for entry in getattr(auth.cfg, "topbar_links", None) or []:
+        if not isinstance(entry, (list, tuple)) or len(entry) not in (2, 3):
+            continue
+        if link_visible(auth, viewer, entry[2] if len(entry) == 3 else None):
+            out.append((entry[0], entry[1]))
+    return out
+
+
+def data(auth, viewer, *, base: str) -> dict:
+    """The bar as data for an application that draws its own (T-76, `GET /auth/topbar.json`): what `render` would show
+    `viewer`. `base` is put in front of TinySesam's own paths (the origin of `base_url` plus the mount prefix), so a
+    page on another host links back correctly. Without a viewer: no links, no menu — like the bar."""
+    cfg = auth.cfg
+    out: dict = {"brand": getattr(cfg, "gate_brand", "") or cfg.rp_name, "signed_in": bool(viewer), "name": None,
+           "links": [], "account": {"shown": False, "href": None}, "admin_panel": {"shown": False, "href": None},
+           "logout": None}
+    if not viewer:
+        return out
+    out["name"] = str(_field(viewer, "display_name") or _field(viewer, "username") or "")
+    out["links"] = [{"title": title, "href": href} for title, href in visible_links(auth, viewer)]
+    if getattr(cfg, "account_enabled", True):
+        out["account"] = {"shown": True, "href": f"{base}/auth/account"}
+    if _field(viewer, "is_admin") and getattr(cfg, "admin_ui_enabled", True):
+        out["admin_panel"] = {"shown": True, "href": f"{base}{cfg.admin_path}"}
+    out["logout"] = {"href": f"{base}/auth/logout"}
+    return out
+
+
 def render(auth, *, viewer=None, menu: bool = True, csrf: str = "", current: str = "") -> str:
     """HTML of the bar (without CSS/JS — see `CSS`, `JS`). App paths carry `__TS_P__` (the mount prefix).
 
@@ -188,7 +238,7 @@ def render(auth, *, viewer=None, menu: bool = True, csrf: str = "", current: str
     brand = (f"<a class=tsbar-brand href='__TS_P__/'>{logo(cfg)}<span>{_e(name)}</span></a>")
     if not (menu and viewer):
         return f"<header class=tsbar><div class=tsbar-in>{brand}</div></header>"
-    links = list(getattr(cfg, "topbar_links", None) or [])
+    links = visible_links(auth, viewer)
 
     def cur(key):
         return " aria-current=page" if key and key == current else ""

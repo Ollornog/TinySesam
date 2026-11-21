@@ -1478,6 +1478,15 @@ def build_router(auth) -> APIRouter:
                 raise HTTPException(400, auth.t("api.invalid", reason="scope (app | all)"))
             return _gate_logout(request, host, scope, auth.safe_next(next or "/", request))
 
+        @r.get("/.tinysesam/topbar.json")
+        def gate_topbar_json(request: Request):
+            """The top bar as data on the APPLICATION'S host (T-76): the page of an application behind the gate fetches
+            it same-origin — the proxy passes /.tinysesam/* to TinySesam with the browser's cookies, which it strips
+            before the application. The session via the own cookie or this host's connection (T-26)."""
+            host = _gate_host_or_404(request)
+            s = auth._gate_session(request, host)
+            return _topbar_json(auth._account_of_session(s) if s else None, request)
+
         @r.get("/.tinysesam/after-logout", response_class=HTMLResponse)
         def gate_after_logout(request: Request):
             """Return path from the provider after signing out — triggered by TinySesam or by the
@@ -1979,6 +1988,21 @@ def build_router(auth) -> APIRouter:
         return {"authenticated": True, "id": u["id"], "username": u["username"],
                 "display_name": u["display_name"], "is_admin": bool(u["is_admin"]),
                 "roles": auth.user_roles(u)}
+
+    # ---------- The top bar as data (T-76) ----------
+    def _topbar_json(viewer, request: Request):
+        """What the top bar shows the account of this request — for an application that draws its own bar.
+        `no-store` + `Vary: Cookie` (the answer depends on the session) and no CORS header: another origin's page
+        cannot read it; an application fetches it server-side with the request's cookie or same-origin through
+        the proxy (`/.tinysesam/topbar.json`)."""
+        from . import topbar as _tb
+        base = (security.normalize_base(str(cfg.base_url or "").strip()) or "").rstrip("/") or auth._prefix(request)
+        return JSONResponse(_tb.data(auth, viewer, base=base),
+                            headers={"Cache-Control": "no-store", "Vary": "Cookie"})
+
+    @r.get("/auth/topbar.json")
+    def topbar_json(request: Request):
+        return _topbar_json(auth.session_user(request), request)
 
     # ---------- OIDC (only if enabled) ----------
     if auth.oidc:

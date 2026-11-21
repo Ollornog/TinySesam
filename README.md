@@ -581,6 +581,42 @@ and stylesheet) and the bar's CSS — all scoped to `.tsbar`, nothing touches th
 out, set your `--ts-*` values in your own stylesheet. `auth.topbar(request)` renders the bar for the session of this
 request, with the mount prefix in every TinySesam path; `current` marks the entry of the page shown.
 
+**Who sees a link.** A third element limits a link to administrators or to one role:
+
+```python
+TinySesamConfig(topbar_links=[("Docs", "/"),
+                              ("Admin app", "https://app.example.com/admin", {"admin": True}),
+                              ("Team", "/team", {"role": "teamadmin"})],
+                trusted_redirect_hosts=["app.example.com"], available_roles=["teamadmin", "editors"])
+```
+
+`{"admin": True}` shows the link to accounts with the admin flag, `{"role": "…"}` to accounts with the role — decided
+by `has_role`, so with `admin_implies_roles` (on by default) an administrator sees role links too, exactly as the
+target's own `require(role=…)` lets them in. A plain pair is shown to everyone. The bar, the phone menu and
+`auth.topbar(request)` apply the same filter; pages without the account menu (sign-in, errors) carry no link at all,
+not even in the HTML source. A role missing from `available_roles` is a warning at the start (a typo would hide the
+link from everyone), any other third element a `ConfigError`. Visibility is a convenience, not a protection: the
+target checks access itself.
+
+**The bar as data.** An application that draws its own bar (not Python, or its own design) asks
+`GET /auth/topbar.json` with the request's session cookie and gets what the bar would show that account:
+
+```json
+{"brand": "Example", "signed_in": true, "name": "Tara Lead",
+ "links": [{"title": "Docs", "href": "/"}, {"title": "Team", "href": "/team"}],
+ "account": {"shown": true, "href": "https://auth.example.com/auth/account"},
+ "admin_panel": {"shown": false, "href": null},
+ "logout": {"href": "https://auth.example.com/auth/logout"}}
+```
+
+TinySesam's own paths are absolute on `base_url` (relative to the mount prefix without it). Without a session —
+also with an API key, which gets no account menu — `signed_in` is false and there are no links. The answer carries
+`Cache-Control: no-store` and `Vary: Cookie` and no CORS header: another origin's page cannot read it. Behind the gate
+the proxy templates strip TinySesam's cookies before the application, so an application there fetches it from its
+own host, `GET /.tinysesam/topbar.json` (the Caddy templates pass `/.tinysesam/*` to TinySesam with the browser's
+cookies; with nginx or Traefik add that route yourself) — from the page's script, same origin. The ready-made gateway reads the visibility from `TINYSESAM_TOPBAR_LINKS` too:
+`[["Docs", "/"], ["Admin", "/admin", {"admin": true}]]`.
+
 **Same look as your app (C22).** If your app is built on the [C22](https://github.com/Ollornog/C22) design system,
 point TinySesam at the C22 stylesheet your app already serves — login, account page, admin panel and error pages
 then derive their tokens from C22, follow its pack and its light/dark switch:
@@ -2095,7 +2131,7 @@ Every Python block in both files runs in the test suite, and every name they men
 
 ## Status
 
-**110 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
+**111 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
 
 Implemented and tested: password/TOTP/sessions/roles, remember-me, step-up and per-route MFA,
 factor chains, personal PIN, shared resource secrets, magic links + mailer hook, registration and

@@ -366,6 +366,19 @@ try:
         assert st == 404 and a is None and FORWARD["n"] == before, (was, st, a)
     ok("/.well-known/oauth-protected-resource* reaches TinySesam without sign-in — plain, quickstart and gate template")
 
+    # ---------- T-76: the bar as data on the application's host, through the proxy ----------
+    # The templates strip TinySesam's cookies before the application, so its server cannot forward them; the page's
+    # script fetches /.tinysesam/topbar.json from its own origin instead — the proxy passes /.tinysesam/* on with them.
+    for port, was in ((PORT, "gate template"), (PORT_PLAIN, "plain template"), (PORT_QUICK, "quickstart template")):
+        st, h, a = request("/.tinysesam/topbar.json", session, port=port)
+        assert st == 200 and a and a.get("signed_in") is True and a.get("name") == "Anna Ärger", (was, st, a)
+        assert "path" not in a, (was, "the application answered, not TinySesam", a)
+        assert h.get("Cache-Control") == "no-store", (was, dict(h))
+        st, h, a = request("/.tinysesam/topbar.json", None, port=port)
+        assert st == 200 and a and a.get("signed_in") is False and a.get("links") == [], (was, st, a)
+    ok("T-76: /.tinysesam/topbar.json on the application's host reaches TinySesam with the browser's cookies — "
+       "plain, quickstart and gate template")
+
     # ---------- with gate cookie: TinySesam is not asked ----------
     with_gate = {**session, "__Host-tinysesam_gate": tok, "other": "1"}
     before = FORWARD["n"]

@@ -44,6 +44,11 @@ class TinySesamConfig:
     #: Links in the top bar, as (title, target) pairs: `[("Wiki", "/wiki"), ("Files", "https://files.example.com/")]`.
     #: A target is a path on the own origin (`/…`, as the browser sees it) or an https address on a host that a
     #: `next=` may reach too (`base_url`, `trusted_redirect_hosts`). Shown next to the name, on a phone in the menu.
+    #: An optional third element limits who sees the link (T-76): `("Admin", "/admin", {"admin": True})` for accounts
+    #: with the admin flag, `("Team", "/team", {"role": "teamadmin"})` for accounts with the role — decided by
+    #: `has_role`, so with `admin_implies_roles` (default) an admin sees role links too. A pair stays visible to
+    #: everyone. Visibility is a convenience, not a protection: the target checks access itself. Pages without the
+    #: account menu (sign-in, errors) show no links at all. The same filter answers `GET /auth/topbar.json`.
     topbar_links: list = field(default_factory=list)
 
     # --- Roles/groups ---

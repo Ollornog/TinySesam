@@ -247,14 +247,34 @@ def check_config(config) -> tuple[list[str], list[str]]:
     _hosts = {str(h).lower() for h in (getattr(config, "trusted_redirect_hosts", None) or [])}
     if getattr(config, "base_url", ""):
         _hosts.add(_urlsplit_host(config.base_url))
+    _roles_known = set(getattr(config, "available_roles", None) or [])
     for _link in _links:
-        if (not isinstance(_link, (list, tuple)) or len(_link) != 2 or not isinstance(_link[0], str)
+        if (not isinstance(_link, (list, tuple)) or len(_link) not in (2, 3) or not isinstance(_link[0], str)
                 or not 1 <= len(_link[0].strip()) <= 60 or not isinstance(_link[1], str)):
             error.append(_t(
                 config,
                 "topbar_links: {v!r} — each entry is a (title, target) pair with a title of 1–60 characters",
                 v=_link))
             continue
+        # Visibility (T-76): a third element {"admin": True} or {"role": "…"} — exactly one of them. Anything else
+        # would hide the link from everyone (topbar.link_visible is fail-closed) without saying why.
+        if len(_link) == 3:
+            _rule = _link[2]
+            _admin_rule = isinstance(_rule, dict) and set(_rule) == {"admin"} and _rule["admin"] is True
+            _role_rule = (isinstance(_rule, dict) and set(_rule) == {"role"} and isinstance(_rule["role"], str)
+                          and bool(_rule["role"].strip()))
+            if not (_admin_rule or _role_rule):
+                error.append(_t(
+                    config,
+                    "topbar_links: {v!r} — the visibility is {{\"admin\": True}} or {{\"role\": \"name\"}}",
+                    v=_link))
+                continue
+            if _role_rule and _rule["role"] not in _roles_known:
+                warnings.append(_t(
+                    config,
+                    "topbar_links: the link {title!r} is shown only to the role {role!r}, which is not in "
+                    "available_roles — a typo hides it from everyone. List the role in available_roles.",
+                    title=_link[0], role=_rule["role"]))
         _href = _link[1]
         _bad = not _href or any(z in _href for z in "'\"<>\\ \t\n")
         if _href.startswith("/") and not _href.startswith("//"):
@@ -2320,6 +2340,12 @@ _DE: dict[str, str] = {
          "ohne Anführungszeichen, spitze Klammern, Backslash und Leerzeichen"),
     "topbar_links: {v!r} — each entry is a (title, target) pair with a title of 1–60 characters":
         "topbar_links: {v!r} — jeder Eintrag ist ein Paar (Titel, Ziel) mit einem Titel aus 1–60 Zeichen",
+    "topbar_links: {v!r} — the visibility is {{\"admin\": True}} or {{\"role\": \"name\"}}":
+        "topbar_links: {v!r} — die Sichtbarkeit ist {{\"admin\": True}} oder {{\"role\": \"name\"}}",
+    ("topbar_links: the link {title!r} is shown only to the role {role!r}, which is not in "
+     "available_roles — a typo hides it from everyone. List the role in available_roles."):
+        ("topbar_links: Der Link {title!r} erscheint nur für die Rolle {role!r}, die nicht in available_roles "
+         "steht — ein Tippfehler versteckt ihn vor allen. Die Rolle in available_roles eintragen."),
     ("topbar_links: {h!r} — a target is a path on the own origin (\"/wiki\") or an https address on the host of "
      "base_url or of trusted_redirect_hosts, without quotation marks, angle brackets, backslash and spaces"):
         ("topbar_links: {h!r} — ein Ziel ist ein Pfad auf dem eigenen Ursprung (\"/wiki\") oder eine "
