@@ -2,7 +2,53 @@
 
 All notable changes. Format loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [0.26.0] — 2026-11-21
+
+**Everyone should take this release; read "upgrading from 0.25.x" first — it changes defaults and migrates the
+database (schema 18 and 19).** It closes a forward-auth issue present since 0.10.0: a client-sent `X-Original-URL`
+could pick the protected host, so access granted for one application could open another behind the same gateway.
+
+### Changed — upgrading from 0.25.x: read this first
+
+This release carries a large security sprint (two hardening rounds, key management, OAuth for MCP clients and
+services, an attack round against the new surface). Most of it needs nothing from you; the points below change the
+behaviour of existing installations. Details and ways back are in the sections further down.
+
+**Do before or right after the update**
+
+- **Back up the database first.** Schema 18 and 19 migrate on the first start, and every stored secret is rewritten
+  as `v2:`. An older version cannot read `v2:` — the way back is `tinysesam keys reencrypt --to v1` with this version
+  (docs/OPERATIONS.md, "Keys and the vault format: rollback").
+- **The vault key must be right.** A wrong or incomplete key now stops the start even on an instance without TOTP or
+  OIDC; a database with old secrets that cannot be rewritten (read-only) stops with a pointer to
+  `tinysesam keys reencrypt`.
+- **Gate with `sign_key` in Caddy:** the first start creates a random gate key. Give the proxy the new public key
+  (`tinysesam gate-key --db …`) or switch to `jwk_url` (`/auth/gate/jwks.json`); until then every request takes the
+  slower fallback through `/auth/forward`, nobody is signed out. Afterwards `tinysesam keys retire --purpose gate`.
+- **Proxy templates:** copy the new lines into your own proxy configuration — they strip `Authorization`/`X-Api-Key`
+  before the application and `X-Original-URL` before the auth request. Nothing breaks if you wait: the library closes
+  the forward-auth target issue on its own; the template lines are the second layer.
+
+**New defaults (each has a way back)**
+
+- `admin_require_mfa=True`: the admin panel wants a fresh confirmation (15 min); routes that create access for an
+  account (API key, sign-in link, password reset, invitation, new admin, admin rights) and `/auth/claim-admin` always
+  do, and `/auth/claim-admin` no longer takes an API key.
+- `admin_password_must_change=True`, `notify_new_access=True`, `qr_login_require_second_factor=True`.
+- TOTP accepts the current and the previous step only (`totp_window="previous"`; old: `"previous_and_next"`). A
+  step-up on a full session takes a TOTP code, not a recovery code.
+- Mail sign-in links live 10 minutes (`magiclink_ttl_min`), invitations 24 h (`invite_ttl_min`, until now 15 min),
+  issued sign-in links at most 24 h (`signin_link_max_ttl_min`).
+- Behind an OIDC provider a silent round no longer makes a session fresh (`oidc_reauth_check`); a sign-in link or QR
+  approval never counts as a step-up.
+- Passkey registration requires user verification under `required`.
+- Light and dark follow the system instead of always dark; a new top bar and favicon.
+- `/healthz` no longer names the version (`TINYSESAM_HEALTH_VERSION=1`).
+
+**Revocation is wider:** "end all sessions", password resets and `tinysesam passwd` also disconnect OAuth programs
+(MCP clients), and `passwd` revokes API keys, app passwords and services (`--keep-sessions` keeps everything).
+
+**Verifying the wheel:** provenance is now signed by `build-provenance.yml`; pin it with `--signer-workflow`.
 
 ### Security — sign-in hardening H4 (T-49, T-50, T-51, T-56, T-57, T-63)
 
