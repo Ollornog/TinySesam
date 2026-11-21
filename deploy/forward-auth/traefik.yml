@@ -11,7 +11,22 @@
 # either evaluate the X-TinySesam-Location header in the client or add a 401 error-page router.
 # The Remote-* headers are passed on to the app via authResponseHeaders. Traefik first deletes every listed header
 # from the request and then copies TinySesam's value — so a Remote-* the browser sends never reaches the app, as
-# long as its name is listed. List every header of TinySesam.FORWARD_HEADERS_DEFAULT (Remote-Auth since T-75).
+# long as its name is listed, also when TinySesam sends no value for it (measured with Traefik 3.7 in
+# tests/test_proxies.py). List every header of TinySesam.FORWARD_HEADERS_DEFAULT (Remote-Auth since T-75).
+#
+# REQUIRED in the STATIC configuration (traefik.yml / command line), not here: delete headers whose name ALIASES
+# another one. A browser sending `Remote_User: admin` or `Remote.User: admin` gets past authResponseHeaders (another
+# name), and a CGI/WSGI/PHP backend reads both as HTTP_REMOTE_USER — next to or instead of TinySesam's value:
+#
+#   entryPoints:
+#     websecure:
+#       http:
+#         aliasHeadersStrategy: delete     # or for every entry point: global.aliasHeadersStrategy: delete
+#
+# (Traefik ≥ 3.6 warns at start while it is unset. nginx drops such headers by default: underscores_in_headers off.)
+#
+# Caddy is the recommended proxy (the gate token spares TinySesam most requests); with Traefik every request goes
+# through /auth/forward.
 #
 # Cookies to the app (B-20) — a gap remains here that only the operator can close:
 # The browser sends the session cookie `tinysesam_session` (and `tinysesam_runlock`) to every
@@ -92,6 +107,15 @@ http:
           Authorization: ""
           X-Api-Key: ""
 
+    # Only the proxy names the target, also towards the app (F1, measured in tests/test_proxies.py): Traefik passes
+    # every header of the client on, so an X-Original-URL the browser made up reached the app — one that builds
+    # addresses or decides from it followed the browser. First in the chain.
+    tinysesam-strip-client:
+      headers:
+        customRequestHeaders:
+          X-Original-URL: ""
+          X-Original-URI: ""
+
     # Deletes the whole Cookie header on the way to the app (empty value = remove). Only for apps
     # without cookies of their own — see B-20 above.
     tinysesam-strip-cookies:
@@ -104,10 +128,22 @@ http:
       rule: "Host(`app.example.com`)"
       middlewares:
         - tinysesam-hsts
+        - tinysesam-strip-client        # BEFORE the check: the client's X-Original-URL never reaches the app
         - tinysesam-auth
         - tinysesam-strip-credentials   # AFTER the check (A-3)
         # - tinysesam-strip-cookies   # only for apps without cookies of their own (B-20), always AFTER the check
       service: app-svc
+
+    # TinySesam's paths on the app's host — the sign-out at the app (T-22: /.tinysesam/logout, /.tinysesam/after-logout)
+    # and the top bar as data for the app's page (T-76: /.tinysesam/topbar.json). Past the check (signing out must work
+    # with an expired sign-in too) and with the browser's cookies: they are the credential there. The longer rule wins
+    # over `app` by Traefik's default priority (rule length).
+    app-tinysesam:
+      rule: "Host(`app.example.com`) && PathPrefix(`/.tinysesam/`)"
+      middlewares:
+        - tinysesam-hsts
+        - tinysesam-strip-client
+      service: tinysesam-svc
 
     auth:
       rule: "Host(`auth.example.com`)"

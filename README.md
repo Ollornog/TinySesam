@@ -613,8 +613,8 @@ TinySesam's own paths are absolute on `base_url` (relative to the mount prefix w
 also with an API key, which gets no account menu — `signed_in` is false and there are no links. The answer carries
 `Cache-Control: no-store` and `Vary: Cookie` and no CORS header: another origin's page cannot read it. Behind the gate
 the proxy templates strip TinySesam's cookies before the application, so an application there fetches it from its
-own host, `GET /.tinysesam/topbar.json` (the Caddy templates pass `/.tinysesam/*` to TinySesam with the browser's
-cookies; with nginx or Traefik add that route yourself) — from the page's script, same origin. The ready-made gateway reads the visibility from `TINYSESAM_TOPBAR_LINKS` too:
+own host, `GET /.tinysesam/topbar.json` (every proxy template passes `/.tinysesam/*` to TinySesam with the
+browser's cookies) — from the page's script, same origin. The ready-made gateway reads the visibility from `TINYSESAM_TOPBAR_LINKS` too:
 `[["Docs", "/"], ["Admin", "/admin", {"admin": true}]]`.
 
 **Same look as your app (C22).** If your app is built on the [C22](https://github.com/Ollornog/C22) design system,
@@ -1659,6 +1659,11 @@ All optional (on/off by config), usable individually and combined, front end rep
 - **Forward-auth:** `forward_auth_enabled` → `GET /auth/forward` (200 + `Remote-User/Groups/Email` or
   401 + `X-TinySesam-Location`). Examples: [`deploy/forward-auth/`](https://github.com/Ollornog/TinySesam/tree/main/deploy/forward-auth/) (Caddy/nginx/Traefik;
   `nginx-path.conf` covers the other common shape — one host, individual paths protected, static files + PHP behind it).
+  **Which proxy:** Caddy is recommended — with the gate token (ADR-9) it checks most requests itself, without asking
+  TinySesam. nginx (also with PHP over FastCGI) and Traefik are supported and tested against the real proxies
+  (`tests/test_proxies.py`, like Caddy in `tests/test_gate_caddy.py`); with them every request goes through
+  `/auth/forward`. Traefik needs `aliasHeadersStrategy: delete` in its static configuration, or a `Remote_User` sent by
+  the browser reaches a CGI/WSGI/PHP backend as `HTTP_REMOTE_USER` (see the header of `traefik.yml`).
   **Roles at the proxy:** have the proxy ask for them — `GET /auth/forward?roles=editor,admin` or the header
   `X-TinySesam-Roles`. One of the listed roles is enough; signed in but missing the role answers **403**
   (not 401 — that would bounce the user to the login and straight back). Without the parameter the endpoint
@@ -2131,7 +2136,7 @@ Every Python block in both files runs in the test suite, and every name they men
 
 ## Status
 
-**111 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
+**112 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
 
 Implemented and tested: password/TOTP/sessions/roles, remember-me, step-up and per-route MFA,
 factor chains, personal PIN, shared resource secrets, magic links + mailer hook, registration and

@@ -623,8 +623,8 @@ TinySesams eigene Pfade sind absolut auf `base_url` (ohne sie relativ zum Mount-
 einem API-Schlüssel, der kein Kontomenü bekommt — ist `signed_in` false und es gibt keine Links. Die Antwort trägt
 `Cache-Control: no-store` und `Vary: Cookie` und keinen CORS-Header: Die Seite eines anderen Ursprungs kann sie nicht
 lesen. Hinter dem Gate entfernen die Proxy-Vorlagen TinySesams Cookies vor der Anwendung; eine Anwendung dort holt die
-Daten deshalb vom eigenen Host, `GET /.tinysesam/topbar.json` (die Caddy-Vorlagen reichen `/.tinysesam/*` mit den
-Cookies des Browsers an TinySesam; bei nginx oder Traefik die Route selbst ergänzen) — aus dem Skript der Seite,
+Daten deshalb vom eigenen Host, `GET /.tinysesam/topbar.json` (jede Proxy-Vorlage reicht `/.tinysesam/*` mit den
+Cookies des Browsers an TinySesam) — aus dem Skript der Seite,
 gleicher Ursprung. Das fertige Gateway liest die Sichtbarkeit auch
 aus `TINYSESAM_TOPBAR_LINKS`: `[["Doku", "/"], ["Admin", "/admin", {"admin": true}]]`.
 
@@ -1701,6 +1701,11 @@ Alles optional (per Config an/aus), einzeln und kombiniert nutzbar, Frontend üb
   401 + `X-TinySesam-Location`). Beispiele: [`deploy/forward-auth/`](../deploy/forward-auth/) (Caddy/nginx/Traefik;
   `nginx-path.conf` deckt den anderen häufigen Zuschnitt ab — ein Host, nur einzelne Pfade geschützt,
   dahinter statische Dateien und PHP).
+  **Welcher Proxy:** Empfohlen ist Caddy — mit dem Gate-Token (ADR-9) prüft er die meisten Anfragen selbst, ohne
+  TinySesam zu fragen. nginx (auch mit PHP über FastCGI) und Traefik werden unterstützt und gegen die echten Proxys
+  getestet (`tests/test_proxies.py`, wie Caddy in `tests/test_gate_caddy.py`); bei ihnen geht jede Anfrage über
+  `/auth/forward`. Traefik braucht `aliasHeadersStrategy: delete` in der statischen Konfiguration, sonst erreicht ein
+  vom Browser gesendetes `Remote_User` ein CGI-/WSGI-/PHP-Backend als `HTTP_REMOTE_USER` (siehe Kopf von `traefik.yml`).
   **Rollen am Proxy:** der Proxy sagt, was er verlangt — `GET /auth/forward?roles=redaktion,admin` oder
   Header `X-TinySesam-Roles`. Eine der genannten Rollen genügt; angemeldet, aber Rolle fehlt → **403**
   (kein 401, der schickte den Benutzer zum Login und von dort sofort zurück). Ohne die Angabe bleibt
@@ -2188,7 +2193,7 @@ Jeder Python-Block beider Dateien läuft in der Testsuite, und jeder genannte Na
 
 ## Status
 
-**111 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
+**112 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
 (`tests/test_matrix.py`).
 
 Gebaut und getestet: Passwort/TOTP/Sitzungen/Rollen, Remember-me, Step-up und per-Route-MFA,
