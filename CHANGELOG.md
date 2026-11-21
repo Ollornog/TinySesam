@@ -28,9 +28,12 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
   checks red; the `key=value` redaction of log lines removed → the log canary red; one field removed from the
   classification → the guard red.
 
-### Fixed — an unused variable in the `oidc_clients` check
+### Fixed — an unused variable in the `oidc_clients` check; a browser test flake (B-14)
 
 - `config_check`: a host name computed and never read in the `oidc_clients` loop is gone (CodeQL). No behaviour change.
+- `tests/test_browser.py`: the fake autofill of section 8 stayed registered for every later document and, under
+  load, overwrote the password on the reauth page of the step-up section ("field held 'wrongOldPasswort' at the
+  click"). It is removed after its step; forced (the script keeps writing there) the old test is red, the new green.
 
 ### Changed — docs: the groups of a token request are incomplete on purpose
 

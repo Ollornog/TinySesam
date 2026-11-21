@@ -45,3 +45,11 @@ reauth page, which makes `both_widths` measure the old document while the reload
 the page's answer) stay in place.
 
 **After the fix:** 0 of 40 runs red under the same load.
+
+## Cause 3 — found later: the fake autofill of section 8 reached the reauth page (2026-11-21)
+The "not reproduced" case came back in the pre-push run of T-79, now with its diagnostics: "field held
+'wrongOldPasswort' at the click". Section 8 registers a script on every new document of the page that writes
+`wrongOldPasswort` into the first password field, and never removed it. Under load its timer tick on the reauth page
+of `h2_stepup_qr` landed after the test had typed the right password. Forced (the script keeps writing on the reauth
+page for 3 s): the old test red with exactly that message, with the fix green. **Fix:** section 8 removes the script
+(`Page.removeScriptToEvaluateOnNewDocument`) once its login step is done.
