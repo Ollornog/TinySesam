@@ -50,6 +50,8 @@ import uuid
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, ROOT)
+sys.path.insert(0, os.path.join(ROOT, "tests"))
+from voraussetzung import find_chrome, prewarm_chrome  # noqa: E402  (`CHROME` wins over the name lookup, B-13)
 
 CADDY_IMAGE = "caddy:2.11.8@sha256:4fcafa98afd1c2e642e353e3c5cf9ddbe892fcee14bc990e7ba2c5b78e51f9cf"
 SERVER = "ts"
@@ -243,7 +245,11 @@ class Browser:
     async def _session(self, url, goal):
         import websockets
         profile = tempfile.mkdtemp(prefix="chrome-", dir=self.work)
-        chrome = subprocess.Popen(["google-chrome", "--headless=new", "--disable-gpu", "--no-sandbox",
+        binary = find_chrome()
+        if binary is None:
+            raise SystemExit("no Chrome found — install Google Chrome or set CHROME to its path")
+        prewarm_chrome(binary)          # read a cold Chrome before its start, as the browser suites do (B-13)
+        chrome = subprocess.Popen([binary, "--headless=new", "--disable-gpu", "--no-sandbox",
                                    "--disable-dev-shm-usage", "--ignore-certificate-errors",
                                    f"--user-data-dir={profile}", "--remote-debugging-port=0", "--no-first-run",
                                    "about:blank"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)

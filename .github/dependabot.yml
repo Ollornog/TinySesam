@@ -100,6 +100,9 @@ updates:
       interval: monthly
     commit-message:
       prefix: "deploy"
+    ignore:
+      # The own image carries the release version and moves with scripts/_release.py, not with Dependabot.
+      - dependency-name: "ollornog/tinysesam"
 
   # The home-network override (T-37) pins its own Caddy — the one with `tls internal` for a bare IP address.
   - package-ecosystem: docker-compose
@@ -112,7 +115,10 @@ updates:
       prefix: "deploy"
 
   # The quickstart stack (deploy/quickstart): its example application (traefik/whoami) is pinned by version and digest.
-  # The two own images carry the release version and move with the release, not with Dependabot.
+  # The two own images carry the release version and move with the release, not with Dependabot — so they are ignored
+  # by name (Dependabot names a ghcr.io image without the registry). Without that the job of 2026-11-20 died on
+  # `ollornog/tinysesam-caddy-gate`, which the registry did not have before its first release (DockerRegistry2::NotFound),
+  # and every run after a release would race the release PR with a bump of its own.
   - package-ecosystem: docker-compose
     directory: /deploy/quickstart
     cooldown:
@@ -121,6 +127,9 @@ updates:
       interval: monthly
     commit-message:
       prefix: "deploy"
+    ignore:
+      - dependency-name: "ollornog/tinysesam"
+      - dependency-name: "ollornog/tinysesam-caddy-gate"
 
   # Caddy and caddy-jwt in the image tinysesam-caddy-gate (deploy/forward-auth/caddy-gate): ordinary Go dependencies in
   # go.mod, hashes in go.sum, built without xcaddy (main.go). Until 2026-11-20 the plugin version was an ARG for xcaddy that

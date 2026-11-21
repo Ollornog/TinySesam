@@ -70,10 +70,28 @@ def replace_pins(text: str, old: str, new: str) -> tuple[str, int]:
     turned "0.19.0 upgraded the database to schema 8" into a false "0.20.0 upgraded …" and
     "up to 0.19.0 you ended up in the same account" into a statement about the new version. A pin
     is recognised by what precedes it: `@v`, `:v`, `/v` (git ref, image tag, release path),
-    `tinysesam-` (wheel), `==` (PyPI), and in `pyproject.toml`/`__init__.py` by the assignment."""
+    `tinysesam-` (wheel and sdist), `==` (PyPI), and in `pyproject.toml`/`__init__.py` by the assignment.
+
+    What follows the version decides too: no digit and no dot (`v0.19.01` stays whole), except the `.tar.gz` of the
+    sdist — up to 0.26.0 the dot after the version kept `tinysesam-X.Y.Z.tar.gz` from being replaced."""
     pattern = re.compile(r'(?:(?<=@v)|(?<=:v)|(?<=/v)|(?<=tinysesam-)|(?<===)|(?<=version = ")'
-                        r'|(?<=__version__ = "))' + re.escape(old) + r"(?![\d.])")
+                        r'|(?<=__version__ = "))' + re.escape(old) + r"(?!\d)(?!\.(?!tar\.gz\b))")
     return pattern.subn(new, text)
+
+
+#: How the docs name a feature that is merged but not yet released: "from the release after X". Once that release
+#: exists it is "since <new>". A plain "since X" is history and never changes.
+#: Per language of the READMEs (`README.md`, `i18n/README.de.md`).
+FORWARD = {"en": ("from the release after ", "since "), "de": ("ab dem Release nach ", "seit ")}
+
+
+def replace_forward(text: str, old: str, new: str) -> tuple[str, int]:
+    """Turn "from the release after <old>" (and the German "ab dem Release nach <old>") into "since <new>"."""
+    total = 0
+    for before, after in FORWARD.values():
+        text, count = re.subn(re.escape(before) + re.escape(old) + r"(?!\d)(?!\.\d)", after + new, text)
+        total += count
+    return text, total
 
 
 def set_value(new: str) -> int:
@@ -86,6 +104,8 @@ def set_value(new: str) -> int:
     for name in FILES:
         p = ROOT / name
         text, count = replace_pins(p.read_text(encoding="utf-8"), old, new)
+        text, forward = replace_forward(text, old, new)
+        count += forward
         if count:
             p.write_text(text, encoding="utf-8")
             print(f"    {name}: {count} occurrence(s)")

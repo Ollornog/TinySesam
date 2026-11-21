@@ -7,7 +7,10 @@ disk of a fresh runner. Two guards, each proven by a mutation:
   (a) `CHROME` wins over the name lookup, and a wrong path stops the suite instead of falling back silently
   (b) the untimed read covers the binary the start executes, not only a wrapper script in front of it
 
-Mutations: `find_chrome` without the `CHROME` branch -> (a) red; `chrome_files` returning the wrapper only -> (b) red.
+  (c) no other file starts Chrome by a fixed name (tools/oauth-e2e/e2e.py did until 0.26.1)
+
+Mutations: `find_chrome` without the `CHROME` branch -> (a) red; `chrome_files` returning the wrapper only -> (b) red;
+`"google-chrome"` back in the start command of tools/oauth-e2e/e2e.py -> (c) red.
 """
 import os
 import shutil
@@ -54,6 +57,17 @@ try:
     assert got == binary, f"read starts at {got}, the start executes {binary}"
     assert total >= binary.stat().st_size + data.stat().st_size, f"only {total} bytes read"
     ok("the read covers the executed binary and its siblings, not only the wrapper")
+    # (c) nobody looks Chrome up by name past `find_chrome`: `tools/oauth-e2e/e2e.py` started `google-chrome` fixed
+    # (manual tool, same cold-disk trap and no `CHROME`). A literal Chrome name in a start command anywhere in tests/
+    # or tools/ other than `voraussetzung.py` is a second lookup.
+    root = Path(__file__).resolve().parent.parent
+    own = Path(__file__).resolve()
+    starts = [f"{f.relative_to(root)}:{n}" for f in sorted((root / "tests").glob("*.py")) + sorted((root / "tools").rglob("*.py"))
+              if f.name != "voraussetzung.py" and f.resolve() != own
+              for n, line in enumerate(f.read_text(encoding="utf-8").splitlines(), 1)
+              if any(f'["{name}"' in line or f"['{name}'" in line for name in ("google-chrome", "chromium", "chrome"))]
+    assert not starts, f"Chrome started by a fixed name instead of find_chrome(): {starts}"
+    ok("no start command looks Chrome up by name past find_chrome()")
 finally:
     if saved is None:
         os.environ.pop("CHROME", None)
