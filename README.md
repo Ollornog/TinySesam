@@ -1035,6 +1035,33 @@ rest), `gate` (the gate token's signature) and `oauth-pepper` (the OAuth token d
 is signed out by a rotation; the steps, the sources (environment, file, database) and the way back to an older
 version are in `docs/OPERATIONS.md`, "Keys".
 
+## Reporting a bug
+
+TinySesam sends nothing home — no telemetry, not even as an opt-in: an authentication component that talks to the
+outside on its own would lose the trust it lives on. Instead, a command writes a report that you read, check and send
+yourself:
+
+```bash
+python -m tinysesam diagnose --config yourapp.settings:config --log /var/log/tinysesam/security.log   # library
+docker exec <container> python -m tinysesam.gateway diagnose                                          # gateway image
+```
+
+- **What it holds:** version, Python, operating system family, mode, installed extras; the *shape* of the
+  configuration (which fields differ from the default — switches and numbers as they are, everything else as a
+  placeholder like `<url-1>` or `<host-2>`, secrets only as `<set>`); the built-in checks (`config_check` errors and
+  warnings, proxy headers and uvicorn's `--no-proxy-headers`, the clock, the database schema, whether the vault key
+  lies beside the database, gate token and JWKS); the latest warnings and errors of the security log, redacted.
+- **What it does not do:** no network request, no write (the database is opened read-only, no key is created), no
+  `TinySesam` instance. `--config` takes `module:attr` or `file.py:attr` — a `TinySesamConfig`, a `TinySesam` or a
+  function returning one — and imports your module for it. `--db` and `--log` default to `db_path` and
+  `security_log`; `--no-link` leaves the link out.
+- **At the end** a link opens the [bug form](https://github.com/Ollornog/TinySesam/issues/new?template=bug.yml)
+  prefilled. You check it and submit it. A report too long for a link leaves sections out and names them; paste them
+  from the terminal.
+- Host names, addresses, URLs, user names, paths and secrets are replaced, but you know your setup best: read the
+  report before you share it. A **vulnerability** never goes into a public issue — see
+  [`SECURITY.md`](https://github.com/Ollornog/TinySesam/blob/main/SECURITY.md).
+
 ## Demo mode
 
 `demo_mode=True` creates the accounts `demo` and `demoadmin`, shows their credentials on the sign-in
@@ -2241,14 +2268,14 @@ Every Python block in both files runs in the test suite, and every name they men
 
 ## Status
 
-**114 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
+**115 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
 
 Implemented and tested: password/TOTP/sessions/roles, remember-me, step-up and per-route MFA,
 factor chains, personal PIN, shared resource secrets, magic links + mailer hook, registration and
 invitation, the account page, forgot-password and TOTP recovery codes, session management,
 API keys and service accounts, the admin panel (or just its JSON API), forward-auth plus the
 OIDC gateway, a nonce-based CSP, and the command line (`backup`, `restore`, `gc`, `audit`,
-`unlock`).
+`unlock`, `diagnose`).
 
 External identity providers — OIDC, SAML 2.0, LDAP/AD — and passkeys are implemented and tested
 against a real provider on a staging host (`tests/e2e_stage.py`); the tests that ship with the

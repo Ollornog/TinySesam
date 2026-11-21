@@ -2,7 +2,7 @@
 id: T-79
 type: Task
 title: 'Diagnostics report and bug form instead of telemetry'
-status: offen
+status: erledigt
 milestone: M-2
 tags: [cli, support, privacy]
 created: '2026-11-21'
@@ -41,3 +41,9 @@ The same fields as the report. Vulnerabilities keep the private reporting path (
 ## Usage: observe passively
 
 pypistats, ghcr pulls, repository traffic, dependents. No collection of our own.
+
+## Done
+
+`python -m tinysesam diagnose` and `python -m tinysesam.gateway diagnose` (`tinysesam/_diagnose.py`),
+`.github/ISSUE_TEMPLATE/bug.yml` + `config.yml`, README "Reporting a bug", `tests/test_diagnose.py` (field
+classification guard, canaries in every field and in log lines, no network, read-only).

@@ -61,6 +61,12 @@ names, comments, docstrings, documentation, commit messages and pull requests ar
 German exists only as a translation of the interface (`lang="de"`, `i18n/`). `tests/test_english_code.py`
 enforces this: a German word in an identifier, a file name, SQL or a comment makes the suite red.
 
+## Reporting a bug
+
+Run `python -m tinysesam diagnose` (gateway image: `python -m tinysesam.gateway diagnose`) and open the link it prints:
+it fills the bug form with a redacted report — no network request, nothing sent until you submit. See the README,
+["Reporting a bug"](README.md#reporting-a-bug).
+
 ## Reporting a vulnerability
 
 Do **not** open a public issue for security problems. Use GitHub's private vulnerability reporting

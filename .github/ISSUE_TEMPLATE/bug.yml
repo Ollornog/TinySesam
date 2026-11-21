@@ -1,0 +1,66 @@
+name: Bug report
+description: Something does not work as documented. Run `tinysesam diagnose` first — it fills most of this form.
+title: "Bug: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **A security vulnerability does not belong here.** Report it privately, as described in
+        [SECURITY.md](https://github.com/Ollornog/TinySesam/blob/main/SECURITY.md)
+        (Security tab → *Report a vulnerability*).
+
+        Most fields below come from the diagnostics report — it makes no network request and sends nothing:
+
+        - library: `python -m tinysesam diagnose --config yourapp.settings:config --log /path/to/security.log`
+        - gateway image: `docker exec <container> python -m tinysesam.gateway diagnose`
+
+        The command prints a link that opens this form prefilled. Check every field before you submit: host names,
+        addresses, URLs, user names, paths and secrets are replaced by placeholders, but you know your setup best.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: The shortest way to see the problem, ideally with a minimal configuration.
+      placeholder: |
+        1. …
+        2. …
+  - type: input
+    id: version
+    attributes:
+      label: TinySesam version
+      description: "`python -m tinysesam version` — the diagnostics link fills it in."
+    validations:
+      required: true
+  - type: input
+    id: mode
+    attributes:
+      label: Mode
+      description: "`library` (inside your own app) or `gateway` (the ready-made forward-auth service)."
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Python, operating system, installed extras and packages (section "Environment" of the report).
+  - type: textarea
+    id: configuration
+    attributes:
+      label: Configuration (shape only)
+      description: Which fields differ from the default, values redacted (section "Configuration" of the report).
+  - type: textarea
+    id: checks
+    attributes:
+      label: Checks
+      description: config_check, proxy headers, clock, database schema, vault key, gate token (section "Checks").
+  - type: textarea
+    id: log
+    attributes:
+      label: Security log
+      description: The latest warnings and errors, redacted (section "Security log" of the report).

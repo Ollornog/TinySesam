@@ -1049,6 +1049,34 @@ Drei Zwecke, je ein Schlüsselbund (aktiver Schlüssel + ältere, die noch entsc
 ruhenden Geheimnisse), `gate` (die Signatur des Gate-Tokens) und `oauth-pepper` (die Digests der OAuth-Tokens). Eine
 Rotation verliert nichts und meldet niemanden ab; die Schritte, die Quellen (Umgebung, Datei, Datenbank) und der
 Rückweg zu einer älteren Version stehen in `docs/OPERATIONS.md`, „Keys".
+## Einen Fehler melden
+
+TinySesam schickt nichts nach Hause — keine Telemetrie, auch nicht als Opt-in: Eine Anmeldekomponente, die von sich
+aus nach draußen spricht, verlöre das Vertrauen, von dem sie lebt. Stattdessen schreibt ein Befehl einen Bericht, den
+du liest, prüfst und selbst abschickst:
+
+```bash
+python -m tinysesam diagnose --config yourapp.settings:config --log /var/log/tinysesam/security.log   # Bibliothek
+docker exec <container> python -m tinysesam.gateway diagnose                                          # Gateway-Abbild
+```
+
+- **Was drinsteht:** Version, Python, Betriebssystem-Familie, Modus, installierte Extras; die *Form* der
+  Konfiguration (welche Felder von der Vorgabe abweichen — Schalter und Zahlen wie sie sind, alles andere als
+  Platzhalter wie `<url-1>` oder `<host-2>`, Geheimnisse nur als `<set>`); die eingebauten Prüfungen (Fehler und
+  Warnungen von `config_check`, Proxy-Header und uvicorns `--no-proxy-headers`, die Uhr, das Datenbankschema, ob der
+  Tresor-Schlüssel neben der Datenbank liegt, Gate-Token und JWKS); die letzten Warnungen und Fehler des
+  Security-Logs, geschwärzt.
+- **Was er nicht tut:** keine Netzwerkanfrage, kein Schreiben (die Datenbank wird nur lesend geöffnet, kein Schlüssel
+  entsteht), keine `TinySesam`-Instanz. `--config` nimmt `modul:attr` oder `datei.py:attr` — eine `TinySesamConfig`,
+  ein `TinySesam` oder eine Funktion, die eines davon liefert — und importiert dafür dein Modul. `--db` und `--log`
+  fallen auf `db_path` und `security_log` zurück; `--no-link` lässt den Link weg.
+- **Am Ende** öffnet ein Link das [Fehlerformular](https://github.com/Ollornog/TinySesam/issues/new?template=bug.yml)
+  vorausgefüllt. Du prüfst und schickst es selbst ab. Ein Bericht, der für einen Link zu lang ist, lässt Abschnitte
+  weg und nennt sie; die fügst du aus dem Terminal ein.
+- Hostnamen, Adressen, URLs, Benutzernamen, Pfade und Geheimnisse werden ersetzt, aber du kennst dein Setup am
+  besten: Lies den Bericht, bevor du ihn teilst. Eine **Sicherheitslücke** gehört nie in ein öffentliches Issue —
+  siehe [`SECURITY.md`](https://github.com/Ollornog/TinySesam/blob/main/i18n/SECURITY.de.md).
+
 ## Demo-Modus
 
 `demo_mode=True` legt die Konten `demo` und `demoadmin` an, zeigt ihre Zugangsdaten auf der
@@ -2303,7 +2331,7 @@ Jeder Python-Block beider Dateien läuft in der Testsuite, und jeder genannte Na
 
 ## Status
 
-**114 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
+**115 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
 (`tests/test_matrix.py`).
 
 Gebaut und getestet: Passwort/TOTP/Sitzungen/Rollen, Remember-me, Step-up und per-Route-MFA,
@@ -2311,7 +2339,7 @@ Faktor-Ketten, persönliche PIN, geteilte Ressourcen-Geheimnisse, Magic-Links + 
 Registrierung und Einladung, Konto-Seite, Passwort-vergessen und TOTP-Recovery-Codes,
 Sitzungsverwaltung, API-Keys und Service-Konten, Admin-Panel (oder nur dessen JSON-API),
 Forward-Auth samt OIDC-Gateway, eine nonce-basierte CSP und die Kommandozeile (`backup`,
-`restore`, `gc`, `audit`, `unlock`).
+`restore`, `gc`, `audit`, `unlock`, `diagnose`).
 
 Externe Identitätsanbieter — OIDC, SAML 2.0, LDAP/AD — und Passkeys sind gebaut und gegen einen
 echten Provider auf einer Bühne geprüft (`tests/e2e_stage.py`); die mitgelieferten Tests decken

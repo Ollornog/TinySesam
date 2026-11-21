@@ -753,7 +753,6 @@ def check_config(config) -> tuple[list[str], list[str]]:
     # By host name, as the runtime compares them (a port in either entry is not a different host, RFC 6265 8.5).
     _trusted = [security.host_name(h) for h in (getattr(config, "trusted_redirect_hosts", None) or [])]
     for host, entry in _clients.items():
-        h = str(host).strip().lower()
         _hn = security.host_name(host)
         e = dict(entry or {})
         where = f"oidc_clients[{host!r}]"

@@ -4,6 +4,34 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+### Added — `tinysesam diagnose` and a bug form instead of telemetry (T-79)
+
+- `python -m tinysesam diagnose [--config module:attr] [--db F] [--log F] [--lines N] [--no-link]` and, in the gateway
+  image, `python -m tinysesam.gateway diagnose`: a Markdown report the operator reads, checks and sends themselves —
+  version, Python, operating system family, mode, installed extras; the shape of the configuration (fields that
+  differ from the default; switches and numbers shown, a choice only when it is a known value, everything else a
+  placeholder like `<host-1>`, secrets only `<set>`); `config_check` errors and warnings, proxy headers and uvicorn,
+  the clock, the database schema, whether the vault key lies beside the database, gate token and JWKS; the latest
+  warnings and errors of the security log, redacted. At the end a prefilled, URL-encoded link to the bug form; a
+  report too long for it leaves sections out and names them. No network request, no write (the database is opened
+  read-only, no key is created), no `TinySesam` instance. TinySesam keeps sending nothing on its own — no telemetry,
+  not even as an opt-in.
+- `.github/ISSUE_TEMPLATE/bug.yml` with the same sections as the report, and `config.yml` pointing vulnerabilities to
+  private reporting (`SECURITY.md`). README (en/de) "Reporting a bug", CONTRIBUTING.
+- API: the command is surface like the other CLI commands; the implementation (`tinysesam/_diagnose.py`) is internal
+  and exports no public name.
+- `tests/test_diagnose.py`: every configuration field is classified (shown, redacted, secret, known choices) — a new
+  field without a class turns it red; canary values in every string, list and mapping field, in the gateway's
+  environment and in security log lines never appear in the report or the link (raw or decoded) — the first run caught
+  a configured header key `user` that hid a `user=` in a log line; with every socket call forbidden both entry points
+  run through; the database directory stays byte-for-byte the same. Mutation probes: redaction off → the canary
+  checks red; the `key=value` redaction of log lines removed → the log canary red; one field removed from the
+  classification → the guard red.
+
+### Fixed — an unused variable in the `oidc_clients` check
+
+- `config_check`: a host name computed and never read in the `oidc_clients` loop is gone (CodeQL). No behaviour change.
+
 ### Changed — docs: the groups of a token request are incomplete on purpose
 
 - README (`Remote-Auth`, delegated administration): whenever `Remote-Auth` is not `session`, `Remote-Groups` lacks

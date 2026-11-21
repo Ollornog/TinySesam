@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Report a security vulnerability (private)
+    url: https://github.com/Ollornog/TinySesam/security/advisories/new
+    about: Never in a public issue — private vulnerability reporting, see SECURITY.md.

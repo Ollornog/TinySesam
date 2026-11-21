@@ -474,6 +474,9 @@ HELP = """tinysesam.gateway — TinySesam as an OIDC forward-auth gateway
                                        a one-time pairing code for a service (T-60) — the gateway has no
                                        account page or admin panel to issue one; run it with the service's
                                        environment (docker exec <container> python -m tinysesam.gateway pair …)
+  python -m tinysesam.gateway diagnose [--log FILE]
+                                       a redacted report of this gateway and a prefilled bug-form link (T-79);
+                                       no network request, nothing written, nothing sent — you check and submit
   uvicorn tinysesam.gateway:app --ws none --no-proxy-headers
                                        the same via your own server invocation
                                        (--ws none: forward-auth checks of WebSocket apps;
@@ -551,6 +554,10 @@ def main(argv=None):
         return 0
     if argv and argv[0] == "pair":
         return _pair(argv[1:])
+    if argv and argv[0] == "diagnose":
+        from ._diagnose import run
+        return run(argv[1:], mode="gateway", prog="python -m tinysesam.gateway diagnose",
+                   config_loader=config_from_env)
     if argv:
         print(f"Unknown argument: {argv[0]}\n", file=sys.stderr)
         print(HELP, file=sys.stderr)
