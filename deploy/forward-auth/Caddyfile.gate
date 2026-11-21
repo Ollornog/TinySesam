@@ -52,6 +52,7 @@ app.example.com {
 	request_header -Remote-Email
 	request_header -Remote-Groups
 	request_header -Remote-Id
+	request_header -Remote-Auth
 
 	# Sign-out at the application (T-22): /.tinysesam/logout and /.tinysesam/after-logout belong to
 	# TinySesam, not to the application — and bypass the gate: signing out must also work with an
@@ -107,6 +108,7 @@ app.example.com {
 			header_up -Remote-Email
 			header_up -Remote-Groups
 			header_up -Remote-Id
+			header_up -Remote-Auth
 			header_up Cookie "(^|;)\s*(__Host-|__Secure-)?tinysesam_[^=;]*=[^;]*" ""
 			header_up Cookie "^[;\s]+" ""
 		}
@@ -136,7 +138,7 @@ app.example.com {
 			# every request falls back to the fallback path (safe, just slow).
 			audience_whitelist app.example.com
 			user_claims sub
-			meta_claims ts_user ts_name ts_email ts_groups ts_id
+			meta_claims ts_user ts_name ts_email ts_groups ts_id ts_auth
 		}
 		reverse_proxy {$TS_APP_UPSTREAM:127.0.0.1:9000} {
 			# The client's credentials end here (A-3, see the first application upstream above).
@@ -147,6 +149,9 @@ app.example.com {
 			header_up Remote-Email {http.auth.user.ts_email}
 			header_up Remote-Groups {http.auth.user.ts_groups}
 			header_up Remote-Id {http.auth.user.ts_id}
+			# `session` (T-75): a gate token is issued only for a session and carries the kind as a signed claim —
+			# the same value the way back through /auth/forward sets.
+			header_up Remote-Auth {http.auth.user.ts_auth}
 			# TinySesam's cookies do not reach the application — the gate cookie is also named
 			# tinysesam_* and falls under the same rule (B-20, see ./Caddyfile).
 			header_up Cookie "(^|;)\s*(__Host-|__Secure-)?tinysesam_[^=;]*=[^;]*" ""
@@ -176,11 +181,13 @@ app.example.com {
 					@ts_email not vars {rp.header.Remote-Email} ""
 					@ts_groups not vars {rp.header.Remote-Groups} ""
 					@ts_id not vars {rp.header.Remote-Id} ""
+					@ts_auth not vars {rp.header.Remote-Auth} ""
 					request_header @ts_user Remote-User {rp.header.Remote-User}
 					request_header @ts_name Remote-Name {rp.header.Remote-Name}
 					request_header @ts_email Remote-Email {rp.header.Remote-Email}
 					request_header @ts_groups Remote-Groups {rp.header.Remote-Groups}
 					request_header @ts_id Remote-Id {rp.header.Remote-Id}
+					request_header @ts_auth Remote-Auth {rp.header.Remote-Auth}
 					# The new gate token goes to the browser with the application's response.
 					# Placeholder in Go-canonical form (H-16, see ./Caddyfile).
 					header +Set-Cookie {rp.header.X-Tinysesam-Gate-Cookie}

@@ -268,7 +268,7 @@ try:
     # handle_response). Result: an EMPTY value from TinySesam (Anna has no address) overwrites the browser's
     # value with "" — closed. Pinned here for both the plain template and the gate template's way back.
     forged = {"Remote-User": "admin", "Remote-Groups": "admin", "Remote-Email": "chef@example.com",
-              "Remote-Name": "Chef", "Remote-Id": "1"}
+              "Remote-Name": "Chef", "Remote-Id": "1", "Remote-Auth": "oauth"}
     for port, was in ((PORT, "gate template, way back"), (PORT_PLAIN, "plain template"),
                       (PORT_QUICK, "quickstart template")):
         st, h, a = request("/h1", session, forged, port=port)
@@ -276,6 +276,7 @@ try:
         assert st == 200 and hd.get("Remote-User") == "anna" and hd.get("Remote-Groups") == "editors", (was, st, hd)
         assert hd.get("Remote-Email", "") == "" and hd.get("Remote-Id") == str(uid), (was, hd)
         assert utf8(hd.get("Remote-Name")) == "Anna Ärger", (was, hd.get("Remote-Name"))
+        assert hd.get("Remote-Auth") == "session", (was, hd.get("Remote-Auth"))       # T-75, the browser said oauth
         # HSTS (H1): the application's responses and the redirect to the sign-in carry it.
         assert h.get("Strict-Transport-Security") == "max-age=31536000; includeSubDomains", (was, dict(h))
         st, h, _ = request("/h1", None, forged, port=port)
@@ -293,8 +294,10 @@ try:
     creds = {"Authorization": "Basic not-for-the-app", "X-Api-Key": "tsk_not-for-the-app"}
     for port, was in ((PORT, "gate template, way back"), (PORT_PLAIN, "plain template"),
                       (PORT_QUICK, "quickstart template")):
-        for path, cookies, head in (("/a3", session, creds), ("/a3-key", None, {"Authorization": f"Bearer {api_key}"}),
-                                    ("/a3-key2", None, {"X-Api-Key": api_key}),
+        # T-75 (A6): the client also claims `Remote-Auth: session` — the application must see `apikey`.
+        for path, cookies, head in (("/a3", session, creds),
+                                    ("/a3-key", None, {"Authorization": f"Bearer {api_key}", "Remote-Auth": "session"}),
+                                    ("/a3-key2", None, {"X-Api-Key": api_key, "Remote-Auth": "session"}),
                                     ("/s/a3-share", None, creds)):
             if path.startswith("/s/") and port == PORT_QUICK:
                 continue                                    # the quickstart has no share exception
@@ -304,6 +307,7 @@ try:
             assert "authorization" not in hd and "x-api-key" not in hd, (was, path, hd)
             if path.startswith("/a3-key"):
                 assert hd.get("remote-user") == "anna", (was, path, hd)      # the key DID sign in at the check
+                assert hd.get("remote-auth") == "apikey", (was, path, hd.get("remote-auth"))
     ok("A-3: Authorization and X-Api-Key never reach the application — session, an API key alone (it still signs in "
        "at the check), share path; plain, quickstart and gate way back")
 
@@ -319,7 +323,7 @@ try:
             st, h, a = request("/t58", session, forged, port=port)
             hd = a["header"] if a else {}
             assert st == 200 and hd.get("Remote-User") == "anna" and hd.get("Remote-Groups") == "editors", (was, st, hd)
-            leaked = {k: v for k, v in hd.items() if k in ("Remote-Email", "Remote-Name", "Remote-Id")}
+            leaked = {k: v for k, v in hd.items() if k in ("Remote-Email", "Remote-Name", "Remote-Id", "Remote-Auth")}
             assert not leaked, (was, leaked)
     finally:
         auth.cfg.forward_headers = {}
@@ -367,13 +371,15 @@ try:
     before = FORWARD["n"]
     for i in range(10):
         st, h, a = request(f"/asset-{i}.js", with_gate, {"Remote-User": "admin", "Remote-Groups": "admin",
-                                                         "Remote-Email": "chef@example.com"})
+                                                         "Remote-Email": "chef@example.com", "Remote-Auth": "apikey"})
         assert st == 200 and a["path"] == f"/asset-{i}.js", (st, a)
     assert FORWARD["n"] == before, f"{FORWARD['n'] - before} calls to TinySesam despite a valid gate cookie"
     hd = a["header"]
     assert hd.get("Remote-User") == "anna" and hd.get("Remote-Groups") == "editors", hd
     assert utf8(hd.get("Remote-Name")) == "Anna Ärger", hd.get("Remote-Name")
     assert hd.get("Remote-Id") == str(uid), hd
+    # T-75 (A5): the signed claim ts_auth — the same value the way back set above, never the browser's `apikey`.
+    assert hd.get("Remote-Auth") == "session", hd.get("Remote-Auth")
     # Anna has no address — the claim is empty. The address from the browser must still not
     # get through: for that the template removes every Remote-* of the request before it sets it.
     assert hd.get("Remote-Email", "") == "", hd.get("Remote-Email")

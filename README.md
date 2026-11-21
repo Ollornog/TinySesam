@@ -1630,7 +1630,10 @@ All optional (on/off by config), usable individually and combined, front end rep
   only tighten the check, never loosen it.
   **Which headers go out** is `forward_headers` — default `Remote-User/-Name/-Email/-Groups` (the
   Authelia set) plus `Remote-Id`, the account ID: users can change their username and email
-  themselves, so an app should key users by `Remote-Id`. **Never tie rights to `Remote-User` or
+  themselves, so an app should key users by `Remote-Id`. `Remote-Auth` says how the request signed in —
+  `session`, `oauth`, `apikey` or `app-password`; a request through a valid gate token is a `session` (the token
+  carries it as a signed claim). It explains why `Remote-Groups` differ: a token, a key or an app password never
+  carries `admin`. **Never tie rights to `Remote-User` or
   `Remote-Email`:** a name or address that becomes free (account deleted or renamed) can be taken by
   another account, which then carries it into the app. Your proxy must set every one of these
   headers itself (the examples in `deploy/forward-auth/` do), or it passes a forged one through. Give it a mapping to rename or drop them: `{"user": "X-WEBAUTH-USER"}` sends that one
@@ -2092,7 +2095,7 @@ Every Python block in both files runs in the test suite, and every name they men
 
 ## Status
 
-**109 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
+**110 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
 
 Implemented and tested: password/TOTP/sessions/roles, remember-me, step-up and per-route MFA,
 factor chains, personal PIN, shared resource secrets, magic links + mailer hook, registration and

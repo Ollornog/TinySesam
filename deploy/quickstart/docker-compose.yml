@@ -6,7 +6,8 @@
 #
 # Open https://<TS_APP_HOST>: you land at your provider's sign-in, then on the example application, which shows the
 # Remote-* headers TinySesam set. Replace the `app` service with your own application (it reads who is signed in from
-# Remote-User/-Name/-Email/-Groups/-Id) and set TS_APP_UPSTREAM if it does not listen on app:9000.
+# Remote-User/-Name/-Email/-Groups/-Id, how it signed in from Remote-Auth) and set TS_APP_UPSTREAM if it does not listen
+# on app:9000.
 #
 # What this stack leaves out, compared with the reference stack in deploy/forward-auth/: the fail2ban feed (a host
 # folder you create first), several applications with a client each, share paths. Take them from there.

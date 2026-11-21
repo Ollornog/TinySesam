@@ -67,6 +67,7 @@ https://{$TS_APP_HOST}:{$TS_APP_PORT:443} {
 	request_header -Remote-Email
 	request_header -Remote-Groups
 	request_header -Remote-Id
+	request_header -Remote-Auth
 
 	# Sign-out at the application (T-22), past the gate: https://<app>/.tinysesam/logout
 	handle /.tinysesam/* {
@@ -98,11 +99,13 @@ https://{$TS_APP_HOST}:{$TS_APP_PORT:443} {
 				@ts_email not vars {rp.header.Remote-Email} ""
 				@ts_name not vars {rp.header.Remote-Name} ""
 				@ts_id not vars {rp.header.Remote-Id} ""
+				@ts_auth not vars {rp.header.Remote-Auth} ""
 				request_header @ts_user Remote-User {rp.header.Remote-User}
 				request_header @ts_groups Remote-Groups {rp.header.Remote-Groups}
 				request_header @ts_email Remote-Email {rp.header.Remote-Email}
 				request_header @ts_name Remote-Name {rp.header.Remote-Name}
 				request_header @ts_id Remote-Id {rp.header.Remote-Id}
+				request_header @ts_auth Remote-Auth {rp.header.Remote-Auth}
 			}
 			# An OAuth client gets TinySesam's 401 with its Bearer challenge, not a login page — before @denied.
 			@oauth {

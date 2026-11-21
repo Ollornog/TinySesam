@@ -9,7 +9,9 @@
 #
 # Note: Traefik does not follow the 401 automatically. For browsers to be redirected to the login,
 # either evaluate the X-TinySesam-Location header in the client or add a 401 error-page router.
-# The Remote-* headers are passed on to the app via authResponseHeaders.
+# The Remote-* headers are passed on to the app via authResponseHeaders. Traefik first deletes every listed header
+# from the request and then copies TinySesam's value — so a Remote-* the browser sends never reaches the app, as
+# long as its name is listed. List every header of TinySesam.FORWARD_HEADERS_DEFAULT (Remote-Auth since T-75).
 #
 # Cookies to the app (B-20) — a gap remains here that only the operator can close:
 # The browser sends the session cookie `tinysesam_session` (and `tinysesam_runlock`) to every
@@ -50,6 +52,7 @@ http:
           - "Remote-Email"
           - "Remote-Name"
           - "Remote-Id"
+          - "Remote-Auth"
 
     # The same check, but with a role requirement: a second middleware that carries the query
     # parameter (one of the listed roles is enough). TinySesam answers 403 instead of 200 if
@@ -67,6 +70,7 @@ http:
           - "Remote-Email"
           - "Remote-Name"
           - "Remote-Id"
+          - "Remote-Auth"
 
     # HSTS (ASVS 3.4.1) on both routers: one year, also for subdomains OF THE HOST — never for its siblings or
     # the parent domain. No preload: the browsers' preload list is hard to leave again. Traefik sets no HSTS

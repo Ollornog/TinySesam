@@ -1671,7 +1671,10 @@ Alles optional (per Config an/aus), einzeln und kombiniert nutzbar, Frontend üb
   anhängt, kann die Prüfung nur verschärfen, nie aufweichen.
   **Welche Header hinausgehen**, steuert `forward_headers` — Vorgabe `Remote-User/-Name/-Email/-Groups`
   (der Authelia-Satz) und `Remote-Id`, die Konto-ID: Nutzer ändern Benutzername und Adresse selbst,
-  eine App ordnet deshalb über `Remote-Id` zu. **Rechte nie an `Remote-User` oder `Remote-Email`
+  eine App ordnet deshalb über `Remote-Id` zu. `Remote-Auth` sagt, wie sich die Anfrage angemeldet hat —
+  `session`, `oauth`, `apikey` oder `app-password`; eine Anfrage mit gültigem Gate-Token ist eine `session` (das
+  Token trägt den Wert als signierten Claim). Daran sieht die App, warum `Remote-Groups` abweichen: Token, Schlüssel
+  und App-Passwort tragen nie `admin`. **Rechte nie an `Remote-User` oder `Remote-Email`
   binden:** Ein Name oder eine Adresse, die frei wird (Konto gelöscht oder umbenannt), kann ein
   anderes Konto übernehmen und trägt sie dann in die App. Der Proxy muss jeden dieser Header selbst setzen (die
   Beispiele unter `deploy/forward-auth/` tun das), sonst reicht er einen gefälschten durch. Eine Zuordnung benennt sie um oder lässt sie weg: `{"user": "X-WEBAUTH-USER"}`
@@ -2148,7 +2151,7 @@ Jeder Python-Block beider Dateien läuft in der Testsuite, und jeder genannte Na
 
 ## Status
 
-**109 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
+**110 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
 (`tests/test_matrix.py`).
 
 Gebaut und getestet: Passwort/TOTP/Sitzungen/Rollen, Remember-me, Step-up und per-Route-MFA,

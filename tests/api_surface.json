@@ -858,7 +858,7 @@
     },
     "FORWARD_HEADERS_DEFAULT": {
       "tier": "A",
-      "value": "{'user': 'Remote-User', 'name': 'Remote-Name', 'email': 'Remote-Email', 'groups': 'Remote-Groups', 'id': 'Remote-Id'}"
+      "value": "{'user': 'Remote-User', 'name': 'Remote-Name', 'email': 'Remote-Email', 'groups': 'Remote-Groups', 'id': 'Remote-Id', 'auth': 'Remote-Auth'}"
     },
     "IDENTIFYING": {
       "since": "0.22.0",
@@ -2054,7 +2054,7 @@
   },
   "http.forward": {
     "forward: API key": {
-      "response": "200 | headers: Remote-Email, Remote-Groups, Remote-Id, Remote-Name, Remote-User",
+      "response": "200 | headers: Remote-Auth, Remote-Email, Remote-Groups, Remote-Id, Remote-Name, Remote-User",
       "tier": "A"
     },
     "forward: not signed in": {
@@ -2070,11 +2070,11 @@
       "tier": "A"
     },
     "forward: role present (?roles=)": {
-      "response": "200 | headers: Remote-Email, Remote-Groups, Remote-Id, Remote-Name, Remote-User, X-TinySesam-Gate-Cookie",
+      "response": "200 | headers: Remote-Auth, Remote-Email, Remote-Groups, Remote-Id, Remote-Name, Remote-User, X-TinySesam-Gate-Cookie",
       "tier": "A"
     },
     "forward: signed in": {
-      "response": "200 | headers: Remote-Email, Remote-Groups, Remote-Id, Remote-Name, Remote-User, X-TinySesam-Gate-Cookie",
+      "response": "200 | headers: Remote-Auth, Remote-Email, Remote-Groups, Remote-Id, Remote-Name, Remote-User, X-TinySesam-Gate-Cookie",
       "tier": "A"
     },
     "forward: signed out of this application": {
@@ -2114,7 +2114,7 @@
       "tier": "A"
     },
     "gateway forward: signed in via the connection": {
-      "response": "200 | headers: Remote-Email, Remote-Groups, Remote-Id, Remote-Name, Remote-User, X-TinySesam-Gate-Cookie",
+      "response": "200 | headers: Remote-Auth, Remote-Email, Remote-Groups, Remote-Id, Remote-Name, Remote-User, X-TinySesam-Gate-Cookie",
       "tier": "A"
     },
     "gateway logged-out page: host not protected": {
@@ -2134,7 +2134,7 @@
       "tier": "A"
     },
     "verify alias: signed in": {
-      "response": "200 | headers: Remote-Email, Remote-Groups, Remote-Id, Remote-Name, Remote-User, X-TinySesam-Gate-Cookie",
+      "response": "200 | headers: Remote-Auth, Remote-Email, Remote-Groups, Remote-Id, Remote-Name, Remote-User, X-TinySesam-Gate-Cookie",
       "tier": "A"
     }
   },

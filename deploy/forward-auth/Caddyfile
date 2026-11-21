@@ -42,6 +42,7 @@ app.example.com {
 	request_header -Remote-Email
 	request_header -Remote-Groups
 	request_header -Remote-Id
+	request_header -Remote-Auth
 
 	# Sign-out at the application (T-22): /.tinysesam/logout and /.tinysesam/after-logout belong to
 	# TinySesam, not to the application — and bypass the gate: signing out must also work with an
@@ -99,6 +100,7 @@ app.example.com {
 			header_up -Remote-Email
 			header_up -Remote-Groups
 			header_up -Remote-Id
+			header_up -Remote-Auth
 			header_up Cookie "(^|;)\s*(__Host-|__Secure-)?tinysesam_[^=;]*=[^;]*" ""
 			header_up Cookie "^[;\s]+" ""
 		}
@@ -146,11 +148,13 @@ app.example.com {
 				@ts_email not vars {rp.header.Remote-Email} ""
 				@ts_name not vars {rp.header.Remote-Name} ""
 				@ts_id not vars {rp.header.Remote-Id} ""
+				@ts_auth not vars {rp.header.Remote-Auth} ""
 				request_header @ts_user Remote-User {rp.header.Remote-User}
 				request_header @ts_groups Remote-Groups {rp.header.Remote-Groups}
 				request_header @ts_email Remote-Email {rp.header.Remote-Email}
 				request_header @ts_name Remote-Name {rp.header.Remote-Name}
 				request_header @ts_id Remote-Id {rp.header.Remote-Id}
+				request_header @ts_auth Remote-Auth {rp.header.Remote-Auth}
 			}
 			# not signed in → redirect to the login URL from the header
 			#
