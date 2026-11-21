@@ -131,5 +131,5 @@ def prewarm_chrome(chrome):
                     total += n
             count += 1
         except OSError:
-            pass
+            continue   # vanished or unreadable: a warm-up only, Chrome reports a real problem itself
     return files[0], count, total, time.monotonic() - start
