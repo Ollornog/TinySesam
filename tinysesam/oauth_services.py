@@ -54,7 +54,7 @@ MAX_JWT_LEN = 4096
 KEY_OVERLAP_SEC = 3600
 #: Keys a service may hold at once (current + those within their overlap).
 MAX_KEYS = 3
-#: Pairing attempts per address and hour.
+#: Pairing attempts per address (an IPv6 address counts as its /64) and hour.
 PAIR_PER_IP_HOUR = 20
 CLIENT_PREFIX = "tss_"
 
@@ -320,7 +320,8 @@ class ServiceClients:
         """Redeem a pairing code (`POST /auth/oauth/pair`): `{"code", "jwk", "proof"}`. The proof is a JWS signed with
         the private half of `jwk` — `typ` `tinysesam-pairing+jwt`, `aud` the issuer, `nonce` bound to the code,
         short `exp`. Only then is the code consumed and the service created, in one transaction."""
-        if not self.auth.rl.allow(("oauth_pair", ip or "?"), PAIR_PER_IP_HOUR, 3600):
+        from .security import ip_bucket
+        if not self.auth.rl.allow(("oauth_pair", ip_bucket(ip)), PAIR_PER_IP_HOUR, 3600):   # IPv6 per /64
             raise OAuthError("temporarily_unavailable", "too many pairing attempts from this address", 429)
         if not isinstance(body, dict):
             raise OAuthError("invalid_request", "a JSON object is expected")

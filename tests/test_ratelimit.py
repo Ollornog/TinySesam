@@ -144,4 +144,24 @@ assert auth._rate_ok("ip") and auth._rate_ok("ip") and not auth._rate_ok("ip")
 ok("set_rate_limiter: own backend is used")
 os.remove(db)
 
+# ---------- `_rate_ok` counts an IPv6 address as its /64, and a /48 has a ceiling of its own ----------
+# Up to 0.26.0 the sign-in throttle used the address as it came: per /128, one subscriber with a /64 had 2^64
+# buckets and walked past every limit (follow-up of attack round A-4, where only the open registration got /64+/48).
+# (Mutation probes: key `ip` instead of `ip_bucket(ip)` → the /64 line falls; drop the /48 call → the /48 line falls.)
+db = os.path.join(tempfile.mkdtemp(), "t.db")
+auth = TinySesam(TinySesamConfig(csrf_enabled=False, db_path=db, cookie_secure=False))
+auth.set_security("rate_limit_max", 3)
+same64 = [auth._rate_ok(f"2001:db8:1:2::{i:x}") for i in range(1, 6)]
+assert same64 == [True, True, True, False, False], f"one /64 gets a bucket per address: {same64}"
+assert auth._rate_ok("::ffff:192.0.2.9") and auth._rate_ok("192.0.2.9") and auth._rate_ok("192.0.2.9")
+assert auth._rate_ok("192.0.2.9") is False, "an IPv4-mapped address is not the same bucket as its IPv4"
+assert auth._rate_ok("192.0.2.10") is True, "IPv4 stays per address"
+ok("_rate_ok: every address of one IPv6 /64 shares a bucket; IPv4 per address, mapped = IPv4")
+cap48 = 3 * security.RATE_NET48_FACTOR
+granted = sum(auth._rate_ok(f"2001:db8:7:{n:x}::1") for n in range(cap48 + 10))
+assert granted == cap48, f"one /48 walks past its ceiling with fresh /64s: {granted} granted, cap {cap48}"
+assert auth._rate_ok("2001:db8:8::1") is True, "the neighbouring /48 is throttled too"
+ok(f"_rate_ok: a /48 is capped at {security.RATE_NET48_FACTOR}× the limit across its /64s")
+os.remove(db)
+
 print("\nRATE-LIMIT OK ✅")

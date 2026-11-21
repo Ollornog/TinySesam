@@ -705,8 +705,9 @@ def _keys(argv) -> int:
                   f"{G.public_b64(K.gate_private(material))}")
             print(f"After {K.GATE_OVERLAP_SEC // 60} minutes: tinysesam keys retire --purpose gate")
         else:
-            print("Connected programs stay connected and app passwords stay valid (looked up with the previous "
-                  "pepper; a program's next refresh and an app password's next use move them to the new one). "
+            print("Connected programs stay connected, app passwords stay valid and nobody is signed out (looked up "
+                  "with the previous pepper; a program's next refresh and an app password's next use move them to "
+                  "the new one, a session keeps its pepper until it ends). "
                   "tinysesam keys retire --purpose oauth-pepper once `keys retire` no longer refuses.")
         return 0
 
@@ -739,6 +740,10 @@ def _keys(argv) -> int:
         elif purpose == K.PEPPER and (n := store.oauth_live_tokens_before(k.since, now)):
             refusals.append(f"{k.kid}: {n} OAuth code(s)/token(s) from before the rotation are still valid "
                             f"(--force: those programs must connect again)")
+        elif purpose == K.PEPPER and (n := store.sessions_live_before(k.since, now)):
+            # T-71: a session handle is an HMAC with the pepper of its creation and keeps it until the session ends.
+            refusals.append(f"{k.kid}: {n} session(s) or app-host link(s) from before the rotation are still valid "
+                            f"(--force: those people sign in again)")
         elif purpose == K.PEPPER and (n := store.app_passwords_with_kid(k.kid, now)):
             # T-66: an app password moves to the active pepper on its next use; one not used since the rotation
             # still carries the old digest.

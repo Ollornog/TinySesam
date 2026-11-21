@@ -1015,7 +1015,8 @@ Modeled on Authelia/Fail2Ban — the thresholds are changeable **in the admin pa
   step-up) deliberately count per account only, not per IP: guessing there requires a valid
   session for that very account. The area PIN keeps the IP threshold — there the guesser is
   anonymous.
-- **Rate limiting:** token bucket per IP on the login/2FA endpoints (`rate_limit_max` / `rate_limit_window_sec`).
+- **Rate limiting:** token bucket per IP on the login/2FA endpoints (`rate_limit_max` / `rate_limit_window_sec`); an
+  IPv6 address counts as its /64, and a /48 shares five times the limit (`security.RATE_NET48_FACTOR`).
 - **fail2ban:** every failed attempt is logged via the `tinysesam.security` logger with the real client IP
   (`failed login … ip=…`; the reason, if any, stands last as `reason=…` — since schema 15 on the OIDC and passkey
   lines too, so update the filter files from `deploy/fail2ban/` together with the release). Filter + jail in [`deploy/fail2ban/`](https://github.com/Ollornog/TinySesam/tree/main/deploy/fail2ban/) → IP ban at the firewall level.
@@ -2073,7 +2074,7 @@ Every Python block in both files runs in the test suite, and every name they men
 
 ## Status
 
-**107 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
+**108 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
 
 Implemented and tested: password/TOTP/sessions/roles, remember-me, step-up and per-route MFA,
 factor chains, personal PIN, shared resource secrets, magic links + mailer hook, registration and

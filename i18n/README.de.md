@@ -1030,7 +1030,8 @@ Nach dem Vorbild von Authelia/Fail2Ban — die Schwellen sind **im Admin-Panel /
   Die Töpfe der **angemeldeten** Wege (Passwortwechsel, Step-up) zählen bewusst nur pro Konto,
   nicht pro IP: Wer dort rät, braucht bereits eine Sitzung genau dieses Kontos. Die Bereichs-PIN
   behält die IP-Schwelle, denn dort rät ein Unangemeldeter.
-- **Rate-Limiting:** Token-Bucket pro IP auf Login-/2FA-Endpoints (`rate_limit_max` / `rate_limit_window_sec`).
+- **Rate-Limiting:** Token-Bucket pro IP auf Login-/2FA-Endpoints (`rate_limit_max` / `rate_limit_window_sec`); eine
+  IPv6-Adresse zählt als ihr /64, ein /48 teilt sich das Fünffache (`security.RATE_NET48_FACTOR`).
 - **fail2ban:** jeder Fehlversuch wird über den Logger `tinysesam.security` mit echter Client-IP geloggt
   (`failed login … ip=…`; der Grund, falls es einen gibt, steht zuletzt als `reason=…` — seit Schema 15
   auch in den OIDC- und Passkey-Zeilen, die Filterdateien aus `deploy/fail2ban/` also mit dem Release aktualisieren). Filter + Jail in [`deploy/fail2ban/`](../deploy/fail2ban/) → IP-Ban auf Firewall-Ebene.
@@ -2129,7 +2130,7 @@ Jeder Python-Block beider Dateien läuft in der Testsuite, und jeder genannte Na
 
 ## Status
 
-**107 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
+**108 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
 (`tests/test_matrix.py`).
 
 Gebaut und getestet: Passwort/TOTP/Sitzungen/Rollen, Remember-me, Step-up und per-Route-MFA,

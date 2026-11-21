@@ -127,8 +127,11 @@ release it was `abgemeldet=1`. A bookmarked or in-flight link with the old name 
 
 ## Managing sessions
 
-A session is a row in `session`; the cookie holds the token, the database only its sha256 (the
-**handle**). With a handle a session can be named and ended, but not taken over.
+A session is a row in `session`; the cookie holds the token, the database only an HMAC of it with the pepper
+(the **handle**, T-71; up to 0.26.0 its plain sha256). With a handle a session can be named and ended, but not taken
+over — and since the pepper is never readable from the file alone, write access to the database does not mint one
+either. The first start after 0.26.0 rewrites the stored handles once (log line *"… session handle(s) rewritten with
+the pepper"*); nobody is signed out.
 
 | Who | What | How |
 |---|---|---|
@@ -390,7 +393,7 @@ single base key encrypted the secrets AND was, by HKDF, the gate signing key and
 |---|---|---|---|---|---|
 | `vault` | TOTP secrets, OIDC refresh and ID tokens, an OAuth successor pair in its grace window, the two keys below when kept in the database | AES-256-GCM, 96-bit random nonce, AAD = key ID + table/column/row | 32 random bytes | `TINYSESAM_SECRETS_KEY` (+ `TINYSESAM_SECRETS_KEY_PREVIOUS`), `secrets_key_file`, `<db_path>.key` (created at the first start, 0600) | as long as the row |
 | `gate` | signature of the gate tokens (ADR-9) | Ed25519 (`EdDSA`), header `typ: tinysesam-gate+jwt`, `kid` | 32-byte random seed — **never derived** from the vault key | `TINYSESAM_GATE_KEY` (+ `_PREVIOUS`), `gate_key_file`, otherwise the table `key_material`, encrypted with the vault key | `gate_token_ttl_sec`, at most 3600 s |
-| `oauth-pepper` | HMAC-SHA-256 of the stored OAuth codes and tokens (ADR-11) and of the app passwords (T-66) | HMAC-SHA-256 | ≥ 32 random bytes | `TINYSESAM_OAUTH_PEPPER` (+ `_PREVIOUS`), `oauth_pepper_file`, otherwise `key_material` | refresh tokens: `oauth_refresh_idle_days`; app passwords: until their next use, at most `app_password_default_days` or what the holder chose |
+| `oauth-pepper` | HMAC-SHA-256 of the stored OAuth codes and tokens (ADR-11), of the app passwords (T-66) and of the session handles, app-host links and area unlocks (T-71) | HMAC-SHA-256 | ≥ 32 random bytes | `TINYSESAM_OAUTH_PEPPER` (+ `_PREVIOUS`), `oauth_pepper_file`, otherwise `key_material` | refresh tokens: `oauth_refresh_idle_days`; app passwords: until their next use, at most `app_password_default_days` or what the holder chose; sessions: `session_ttl_hours` |
 | (per process) | the in-memory fingerprints of repeated wrong passwords | PBKDF2-HMAC-SHA-256 | 32 random bytes per start | never stored | `password_repeat_window_sec` |
 
 Each purpose is a **keyring**: the first key is active (encrypts, signs, digests), the others are *previous* (decrypt,
@@ -460,7 +463,9 @@ log (`key_rotated`, `key_retired`).
   the rotation is still valid (`--force`: those programs must connect again). The same pepper keys the digests of the
   **app passwords** (T-66, with a label of its own): an app password is found with the previous pepper and moves to
   the active one on its next use; `retire` also refuses while an app password not used since the rotation still
-  needs the old one (`--force`: it stops working and must be created anew).
+  needs the old one (`--force`: it stops working and must be created anew). **Session handles** (T-71) keep the pepper
+  they were made with until the session ends (a new session takes the active one); `retire` refuses while a session
+  or an app-host link from before the rotation still runs (`--force`: those people sign in again).
 
 ## Gate token in front of third-party applications (ADR-9)
 
@@ -1021,6 +1026,15 @@ key (it refuses a key file with several lines — put the active line alone into
 version derives the gate key from the vault key again: the proxy needs its `tinysesam gate-key` (it has no
 `/auth/gate/jwks.json`; a proxy with `jwk_url` would send every request the fallback path). OAuth did not exist before
 schema 17. Coming forward again needs nothing — the next start rewrites `v2:` and finds its keys in `key_material`.
+
+## Session handles with the pepper: rollback (0.26.1, T-71)
+
+No table changes. The values do: the first start of 0.26.1 rewrites every session handle — and the app-host links,
+area unlocks and the rows hanging on a session — from the plain sha256 to an HMAC with the pepper, and marks that in
+`setting` (`session_handles = hmac-v1`). An older version then finds no session for any cookie: **going back signs
+everyone in again once**, nothing else breaks. Coming forward again does not rewrite a second time (the marker stays,
+on purpose: a rewrite that a missing marker could trigger again would turn a planted sha256 row into a valid session),
+so the sessions the older version created meanwhile end as well.
 
 ## Sign-in methods and their strength
 

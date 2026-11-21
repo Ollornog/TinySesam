@@ -740,6 +740,9 @@ values = [z["token_hash"] for z in st3._all("SELECT token_hash FROM session")]
 r.check("a half-migrated file is healed at the next start",
         all(len(w) == 64 for w in values),
         f"{values} — plaintext stays forever because the detection never applies again")
+# Since T-71 the handle is an HMAC with the pepper keyring; the start of `TinySesam` rewrites the sha256 handles once.
+st3.session_peppers = (b"p" * 32,)
+st3.pepper_session_handles()
 r.check("and the old cookie remains valid afterwards",
         st3.get_session("ALWAYS-STILL-PLAINTEXT") is not None,
         "the healing discarded the session")
@@ -1185,7 +1188,8 @@ r.check("A-1: changing IPv6 zones yield ONE client IP (without zone)",
 auth_z, _ = _app(trusted_proxies=["127.0.0.1/32"])
 _permitted = sum(auth_z._rate_ok(_sec.client_ip(_Request("127.0.0.1", f"2001:db8::3%q{i}"), _proxy))
                for i in range(60))
-_fixed = sum(auth_z._rate_ok("2001:db8::4") for _ in range(60))
+# In a /48 of its own: since 0.26.1 `_rate_ok` counts an IPv6 address as its /64 and caps its /48.
+_fixed = sum(auth_z._rate_ok("2001:db8:ffff:1::4") for _ in range(60))
 r.check("A-1: the rate limit applies with zone rotation just as with a fixed address",
         _permitted == _fixed < 60, f"Rotation {_permitted}/60, fest {_fixed}/60")
 auth_i.store.audit_log("probe_zone", "x", "fe80::1%a\nFAKE 2026-01-01 login admin")

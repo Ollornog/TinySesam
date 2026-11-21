@@ -123,6 +123,7 @@ auth1, db1 = fresh(resource_locks_enabled=True)
 auth1.store.add_resource_unlock("fresh-token", "file-8", 4102444800)
 auth1.close()
 s2 = Store(db1)
+s2.session_peppers = auth1.store.session_peppers      # what `TinySesam` sets at startup (T-71)
 r.check("hashed unlock survives a restart",
         s2.is_resource_unlocked("fresh-token", "file-8"),
         "the cleanup reaches too far")

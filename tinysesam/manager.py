@@ -355,6 +355,20 @@ class TinySesam:
         legacy_pepper = _oauth_mod.derive_pepper(legacy_base) if self.store.oauth_has_grants() else None
         self._pepper_keyring = _keys.load_stored(_keys.PEPPER, self.store, str(config.oauth_pepper_file or ""),
                                                  legacy=legacy_pepper)
+        # Session handles (T-71): an HMAC with the same keyring instead of a plain sha256, so that write access to
+        # the file alone no longer mints a session. The handles of 0.26.0 are rewritten once, nobody is signed out.
+        self.store.session_peppers = tuple(k.material for k in self._pepper_keyring.keys)
+        try:
+            peppered = self.store.pepper_session_handles()
+        except sqlite3.OperationalError as e:
+            if not _keys._read_only(e):
+                raise
+            peppered = 0
+            logging.getLogger("tinysesam").warning(
+                "TinySesam: the database is not writable — the session handles of 0.26.0 could not be rewritten with "
+                "the pepper; those sessions are not recognised until a start with write access.")
+        if peppered:
+            logging.getLogger("tinysesam").info("TinySesam: %d stored session handle(s) rewritten with the pepper (T-71).", peppered)
         self._oauth: Any = None
         if config.oauth_enabled:
             self._oauth_server()
@@ -6891,8 +6905,16 @@ class TinySesam:
         `login=False` for routes that are not a sign-in (password change, step-up, realm PIN):
         their line then carries `failed verification` instead of `failed login` — otherwise the
         bundled jail banned a signed-in user who keeps clicking on their own
-        account page (final attack C-1)."""
-        permitted = self.rl.allow(ip or "?", self._sec("rate_limit_max"), self._sec("rate_limit_window_sec"))
+        account page (final attack C-1).
+
+        An IPv6 address counts as its /64, and its /48 has a ceiling of `security.RATE_NET48_FACTOR` times the limit:
+        counted per /128, one subscriber had 2^64 buckets (follow-up of attack round A-4). IPv4 stays per address."""
+        limit, window = self._sec("rate_limit_max"), self._sec("rate_limit_window_sec")
+        bucket = security.ip_bucket(ip)
+        permitted = self.rl.allow(bucket, limit, window)
+        if permitted and bucket.endswith("/64"):
+            permitted = self.rl.allow("net48:" + security.ip_bucket(ip, 48), limit * security.RATE_NET48_FACTOR,
+                                      window)
         if not permitted:
             self._rejected(None, ip, "ratelimit", login=login)
         return permitted

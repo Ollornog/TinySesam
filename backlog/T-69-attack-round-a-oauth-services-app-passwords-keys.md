@@ -42,5 +42,7 @@ reads the account on every request.
 ## Not done here
 
 - Write access to the database stays outside the vault's promise (ADR-12, amended): a session row is stored as a plain
-  SHA-256 and gives any account without a key; a pepper for session handles would be its own task.
+  SHA-256 and gives any account without a key; a pepper for session handles would be its own task — done in
+  [T-71](T-71-session-handles-keyed-with-the-pepper.md), the remaining digests in
+  [T-72](T-72-pepper-for-the-remaining-token-digests.md).
 - nginx and Traefik were checked statically, not through a running proxy.

@@ -166,6 +166,13 @@ def ip_bucket(ip, v6_prefix: int = 64) -> str:
     return str(ipaddress.ip_network(f"{addr}/{int(v6_prefix)}", strict=False))
 
 
+#: The sign-in throttle (`TinySesam._rate_ok`) counts an IPv6 address as its /64 — one subscriber — and a whole /48
+#: (one site or VPS, which often holds 2^16 /64s) up to this many times `rate_limit_max` in the same window. Without
+#: the second bucket a /48 still had 65 536 buckets of the full limit each. The same split as the open OAuth
+#: registration (`oauth.REGISTER_PER_NET48_HOUR`).
+RATE_NET48_FACTOR = 5
+
+
 def ip_pseudonym(ip: str) -> str:
     """Shorten an IP to its network: IPv4 to /24, IPv6 to /48 (`audit_ip_pseudonymize`).
 
@@ -275,7 +282,7 @@ SECURITY_DEFAULTS = {
     "account_attempt_factor": 3,    # account threshold across all IPs = max_login_attempts * factor (distributed guessing)
     "account_max_consecutive_failures": 100,  # consecutive failed attempts per account, without window (B2-6, NIST)
     "pin_max_attempts": 5,          # own, method-scoped failed-attempt counter for PIN (short keyspace)
-    "rate_limit_max": 30,           # max requests per IP …
+    "rate_limit_max": 30,           # max requests per IP (an IPv6 address counts as its /64) …
     "rate_limit_window_sec": 60,    # … per window on auth endpoints
     "password_min_length": 8,       # minimum length when the password is part of a chain with a 2nd factor
     "password_min_length_single_factor": 15,  # … when it can sign in on its own (B2-4, NIST 800-63B)
