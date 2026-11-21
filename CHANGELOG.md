@@ -2,6 +2,21 @@
 
 All notable changes. Format loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Fixed — browser tests: Chrome start on a cold CI runner (B-13)
+
+- Cause of the rare "Chrome wrote no DevTools port (after 30s)": the browser suites looked up the runner image's
+  preinstalled `google-chrome` before the Chrome that `setup-chrome` had just unpacked, and on a fresh runner its
+  ~400 MB were still cold on the image disk. Chrome faulted them in page by page (main process in state `D`,
+  `wchan=folio_wait_bit_common`, seen in #273). The D-Bus "Could not parse server address" lines are written in every
+  start without a session bus and are not the cause.
+- CI passes `CHROME` (setup-chrome's `chrome-path`) to the browser suites. `find_chrome()` in `tests/voraussetzung.py`
+  honours it first and stops on a wrong path; `test_browser.py`, `test_csp_form_action.py` and `e2e_stage.py` share it.
+- `prewarm_chrome()` reads Chrome's binary, its siblings and linked libraries once before the timed start and prints
+  the time; the 30 s limit is unchanged. New `tests/test_chrome_choice.py`: `CHROME` goes first, and the read covers the
+  executed binary; each guard turns red when mutated.
+
 ## [0.26.0] — 2026-11-21
 
 **Everyone should take this release; read "upgrading from 0.25.x" first — it changes defaults and migrates the

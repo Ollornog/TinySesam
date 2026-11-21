@@ -22,7 +22,7 @@ import urllib.request
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pathlib  # noqa: E402
-from voraussetzung import braucht, braucht_modul  # noqa: E402
+from voraussetzung import braucht, braucht_modul, find_chrome, prewarm_chrome  # noqa: E402
 
 # Three prerequisites, all three declared by THIS suite — not a guessing game for the runner.
 # It used to piece this together from stderr and could not tell „the test is missing something" from
@@ -33,9 +33,8 @@ braucht_modul("uvicorn")
 import websockets            # noqa: E402
 import uvicorn               # noqa: E402
 
-# `browser-actions/setup-chrome` installs the binary as `chrome`, Debian as `chromium`.
-CHROME = next((b for b in ("google-chrome", "chrome", "chromium", "chromium-browser")
-               if shutil.which(b)), None)
+# `CHROME` (set by CI to setup-chrome's Chrome) wins over the name lookup, see `find_chrome` (B-13).
+CHROME = find_chrome()
 braucht(CHROME, "no Chrome found")
 # The showcase lives in the repo, not in the sdist — skip there instead of going red.
 braucht((pathlib.Path(__file__).resolve().parent.parent / "examples").is_dir(),
@@ -207,6 +206,12 @@ else:
     raise RuntimeError("T-36 app does not start")
 
 _profile = tempfile.mkdtemp()
+
+# B-13: read Chrome's files once BEFORE the timed start. On a fresh CI runner they are cold on the image disk, and Chrome
+# faulted them in page by page (state D, `folio_wait_bit_common`) while the 30 s ran. The limit below stays.
+_warm_binary, _warm_files, _warm_bytes, _warm_s = prewarm_chrome(CHROME)
+print(f"  info Chrome {CHROME} -> {_warm_binary}: {_warm_files} files, {_warm_bytes / 1e6:.0f} MB read before the start "
+      f"in {_warm_s:.1f} s (B-13)", flush=True)
 
 # Do NOT send Chrome's output to DEVNULL: if it dies at startup, the error message used to
 # be gone and the test only reported "Chrome does not respond" — without a reason.

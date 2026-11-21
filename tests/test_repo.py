@@ -411,6 +411,10 @@ ci = read(".github", "workflows", "ci.yml")
 for needed in ("tests/test_browser.py", "tests/test_repo.py", "tests/test_site.py",
                "python -m web.build", "setup-chrome"):
     assert needed in ci, f"CI does not run {needed}"
+# B-13: both jobs that start Chrome (`browser`, `repeat`) hand the browser suites setup-chrome's Chrome. Without `CHROME` the
+# name lookup finds the runner image's cold preinstalled google-chrome and the start misses its 30 s.
+assert ci.count("CHROME: ${{ steps.chrome.outputs.chrome-path }}") >= 3, "CI must pass CHROME to the browser suites"
+assert ci.count("id: chrome") >= 2, "setup-chrome needs `id: chrome` for its chrome-path output"
 
 # Every job carries a time limit (pipeline register 2026-10-07): Without it GitHub's default of 360 min applies, and
 # a hanging `apt-get` blocked PR #135 for as long as `pr-mergen` waited. The text is read — jobs

@@ -91,6 +91,7 @@ jobs:
         with:
           python-version: "3.13"
       - name: Install Chrome
+        id: chrome
         uses: browser-actions/setup-chrome@48ad923757ca74d66703209fe939badbdf80f2f4  # v2.2.0
         with:
           install-dependencies: true
@@ -100,8 +101,12 @@ jobs:
         run: pip install -e ".[services]" uvicorn websockets httpx setuptools wheel   # [services]: T-60 section of the account page
       - name: Build the website (must succeed)
         run: python -m web.build _site
+      # B-13: the tests run THIS Chrome (`CHROME`), not the runner image's preinstalled google-chrome, whose files are
+      # still cold on the image disk of a fresh runner.
       - name: Browser test
         run: python tests/test_browser.py
+        env:
+          CHROME: ${{ steps.chrome.outputs.chrome-path }}
       - name: Repo hygiene
         run: python tests/test_repo.py
       - name: Website test
@@ -225,6 +230,7 @@ jobs:
         with:
           python-version: "3.13"
       - name: Install Chrome
+        id: chrome
         uses: browser-actions/setup-chrome@48ad923757ca74d66703209fe939badbdf80f2f4  # v2.2.0
         with:
           install-dependencies: true
@@ -239,8 +245,12 @@ jobs:
         run: scripts/_residue_check.sh snapshot > "$RUNNER_TEMP/tree-before.txt"
       - name: First run
         run: scripts/check.sh
+        env:
+          CHROME: ${{ steps.chrome.outputs.chrome-path }}
       - name: Second run (must also be green)
         run: scripts/check.sh
+        env:
+          CHROME: ${{ steps.chrome.outputs.chrome-path }}
       # The same check that the pre-push hook runs. This used to be a raw
       # `git status --porcelain`, which did not know `.ci-allow-dirty` — the binding
       # gate thus contradicted the local safety net.
