@@ -10,6 +10,7 @@ ersten grünen; TinySesam ließ Majors durch, die anderen nicht. Jetzt gibt es e
 
     AUTO_OEKO          Ökosysteme, die ein Pflicht-Check wirklich abnimmt
     PFLICHT_WORKFLOWS  Workflows (Dateinamen), deren Jobs das Repo als Abnahme gelten lässt
+    DOKU_PR            optional "aus": keine Doku-Schnellspur (Zweige doku/…, backlog) in diesem Repo
 
 Alles andere leitet `rendere()` aus den Workflows des Repos ab: den Auslöser (`workflows:` =
 deren `name:`) und den Nachlauf (jeder Workflow, den ein Push auf den Standardzweig startet).
@@ -283,6 +284,11 @@ def rendere(root: str, je_repo: str) -> tuple[str, list[str]]:
         elif re.search(r"\bpaths(-ignore)?\s*:", " ".join(pr)):
             probleme.append(f"{wf}: `pull_request` mit Pfadfilter — manche PRs bekämen nie einen Lauf")
     probleme += release_automatik(root, je_repo, wfs)
+    # Doku-Schnellspur (seit 0.52.0): an ist der Normalfall, abschalten mit genau "aus" — jeder andere Wert wäre
+    # still „an“ (die Vorlage fragt nur `!= aus`), also kein Tippfehler, der still nichts tut.
+    doku = _wert(je_repo, "DOKU_PR")
+    if doku is not None and doku != "aus":
+        probleme.append(f'DOKU_PR "{doku}": nur "aus" (abschalten) — ohne den Eintrag ist die Doku-Schnellspur an')
     nach = nachlauf(root)
     # Abnahme nach dem Merge (seit 0.32.0): Jede so eingetragene Action muss in einem Workflow stehen,
     # den der Nachlauf auf dem Standardzweig startet — sonst nähme sie gar nichts ab, und ihr Update

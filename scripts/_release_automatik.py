@@ -421,13 +421,25 @@ def vorbereiten(root: str, repo: str, basis: str, trocken: bool = False) -> str:
 def taggen(root: str, repo: str, version: str) -> None:
     """Tag v<version> auf den Kopf von main — nur, wenn er der Merge genau dieses Release-PR der App ist."""
     k = lade_konfig(root)
+    kopf = _lauf(["git", "-C", root, "rev-parse", "HEAD"]).strip()
+    if not version:
+        # Von Hand ausgelöst (workflow_dispatch ohne Version): die Version steht im Zweig des Release-PR, dessen Merge der
+        # Kopf ist. Kein solcher PR → laut scheitern, nie raten.
+        prs = gh(f"repos/{repo}/commits/{kopf}/pulls")
+        zweige = sorted({p["head"]["ref"][len("release/v"):] for p in prs or []
+                         if p.get("merged_at") and p["head"]["ref"].startswith("release/v") and p["user"]["login"] == APP_LOGIN})
+        if not zweige:
+            print(f"Keine Version angegeben, und der Kopf {kopf[:12]} ist kein Merge eines Release-PR der App — nichts zu tun")
+            return
+        if len(zweige) != 1:
+            raise Fehler(f"Keine Version angegeben, und der Kopf {kopf[:12]} ist der Merge mehrerer Release-PR: {', '.join(zweige)}")
+        version = zweige[0]
     if not (SEMVER.match(version) if k["schema"] == "semver" else DATUM.match(version)):
         raise Fehler(f"Version {version!r} passt nicht zum Schema {k['schema']}")
     tag = f"v{version}"
     if tag in _tags(root):
         print(f"Tag {tag} gibt es schon — nichts zu tun")
         return
-    kopf = _lauf(["git", "-C", root, "rev-parse", "HEAD"]).strip()
     prs = gh(f"repos/{repo}/commits/{kopf}/pulls")
     passend = [p for p in prs or [] if p.get("merged_at") and p["head"]["ref"] == f"release/{tag}"
                and p["user"]["login"] == APP_LOGIN]

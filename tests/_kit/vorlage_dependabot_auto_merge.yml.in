@@ -70,6 +70,19 @@
 # Für App-PRs gilt alles andere wie für Dependabot: jeder Pflicht-Workflow grün für genau diesen Kopf, alle Commits vom
 # Autor des PR, kein Fork. Ohne `APP_PR`/`ABBILD_PFADE` bleibt alles wie vorher.
 #
+# DOKU-SCHNELLSPUR (seit 0.52.0, PO 2026-11-22 „Doku-Änderungen sollen quasi sofort landen“): Ein PR von einem Zweig
+# `doku/<thema>` oder vom Sammelzweig `backlog` (dokutool backlog), der NUR Doku ändert, mergt selbst, sobald jeder
+# Pflicht-Workflow für genau diesen Kopf grün ist. Doku heißt eng: `README*.md`/`CHANGELOG*.md` in der Wurzel
+# (auch die deutsche Übersetzung), `docs/**`, `backlog/**`, jeweils nur Markdown — eine Teilmenge der Text-Erlaubnisliste von
+# `scripts/_nur_text.sh`, die in den Pflicht-Jobs entscheidet, dass nur die Schnellprüfung läuft (Hygiene, Links und
+# Anker, Frontmatter). Jede andere Datei (auch beim Umbenennen der alte Name) heißt: Kommentar, von Hand mergen. Dazu:
+# Autor mit Schreibrecht (OWNER/MEMBER/COLLABORATOR), kein Fork, kein Entwurf (ein Entwurf ist der Weg, einen Doku-PR
+# bewusst liegen zu lassen), und die Sprachregel (Repos sind Englisch): Sind die hinzugefügten Zeilen einer Datei
+# überwiegend Deutsch, mergt nichts — außer in einer Übersetzung (Ordner `de/`, oder `.de` vor der Endung). Der Zweigname ist das
+# Signal, nicht die Dateiliste: So startet nicht jeder PR-Lauf einen Auto-Merge-Job auf den eigenen Runnern, und ein
+# Doku-PR, den jemand gelesen haben will, kommt von einem anderen Zweig. `DOKU_PR: "aus"` im Block je Repo schaltet ab.
+# Branch-Schutz bleibt, wie er ist: gemergt wird über die API wie bei Dependabot, nie per Direkt-Push.
+#
 # RUNNER (seit 0.51.0, PO 2026-11-20: GitHub-Minuten privater Repos fast aufgebraucht): `runs-on` leitet `repokit sync`
 # aus den übrigen Workflows des Repos ab. Läuft einer davon auf `self-hosted`, ist das Repo privat (öffentliche Repos
 # laufen nie auf eigenen Runnern) — dann laufen auch diese vier Jobs dort, auf Einmal-Runnern mit `gh` im Abbild. Sonst
@@ -113,7 +126,7 @@ jobs:
       koepfe: ${{ steps.lesen.outputs.koepfe }}
       datei: ${{ steps.lesen.outputs.datei }}
     steps:
-      - name: Offene Dependabot- und App-PRs lesen
+      - name: Offene Dependabot-, App- und Doku-PRs lesen
         id: lesen
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -125,7 +138,8 @@ jobs:
           [[ "$DATEI" =~ ^[A-Za-z0-9._-]+\.ya?ml$ ]] || { echo "Workflow-Datei unlesbar: $DATEI" >&2; exit 1; }
           KOEPFE="$(gh api "repos/$REPO/pulls?state=open&per_page=100" --paginate \
             -q '.[] | select(.head.repo.full_name == .base.repo.full_name and (.user.login == "dependabot[bot]"
-              or (.user.login == "ollornog-auto-merge[bot]" and (.head.ref | test("^(release|pin)/"))))) | .head.sha')"
+              or (.user.login == "ollornog-auto-merge[bot]" and (.head.ref | test("^(release|pin)/")))
+              or ((.head.ref | test("^(doku/.+|backlog)$")) and (.draft | not)))) | .head.sha')"
           # Nur 40-stellige SHAs kommen in die Matrix — eine leere Liste lässt `anstossen` ausfallen.
           JSON="$(printf '%s\n' "$KOEPFE" | jq -Rnc '[inputs | select(test("^[0-9a-f]{40}$"))]')"
           echo "Köpfe: $JSON"
@@ -156,7 +170,7 @@ jobs:
           gh workflow run "$DATEI" --repo "$REPO" --ref "$GITHUB_REF_NAME" -f head_sha="$SHA"
 
   entscheiden:
-    # Nur Läufe aus einem PR im EIGENEN Repo auf einem Dependabot-Zweig — oder ein angestoßener Kopf
+    # Nur Läufe aus einem PR im EIGENEN Repo auf einem Dependabot-, App- oder Doku-Zweig — oder ein angestoßener Kopf
     # (workflow_dispatch). Branchname, Commit-Nachricht und Eingabe sind fälschbar — deshalb unten alles
     # noch einmal per API.
     if: >
@@ -165,7 +179,9 @@ jobs:
       github.event.workflow_run.head_repository.full_name == github.repository &&
       (startsWith(github.event.workflow_run.head_branch, 'dependabot/') ||
       startsWith(github.event.workflow_run.head_branch, 'release/') ||
-      startsWith(github.event.workflow_run.head_branch, 'pin/')))
+      startsWith(github.event.workflow_run.head_branch, 'pin/') ||
+      startsWith(github.event.workflow_run.head_branch, 'doku/') ||
+      github.event.workflow_run.head_branch == 'backlog'))
     runs-on: @@RUNNER@@
     timeout-minutes: 15
     env:
@@ -257,10 +273,14 @@ jobs:
           dependabot_gibt_auf() {
             grep -qiE 'entry that created this PR has been deleted|please close the PR|no longer needed'
           }
-          # Welche Art PR (seit 0.45.0)? $1 = Autor, $2 = Zweig, $3 = APP_PR des Repos.
-          # Ausgabe: dependabot | release | pin | nichts (dann kein Fall für diesen Workflow).
+          # Welche Art PR (seit 0.45.0)? $1 = Autor, $2 = Zweig, $3 = APP_PR des Repos, $4 = DOKU_PR des Repos.
+          # Ausgabe: dependabot | release | pin | doku | nichts (dann kein Fall für diesen Workflow).
           pr_art() {
             if [ "$1" = "dependabot[bot]" ]; then echo dependabot; return 0; fi
+            # Doku-Schnellspur (seit 0.52.0): Zweig doku/<thema> oder backlog, nicht von Dependabot oder der App.
+            if [ "${4:-}" != aus ] && [ "$1" != "$APP_LOGIN" ] && [[ "$2" =~ ^(doku/[A-Za-z0-9._/-]+|backlog)$ ]]; then
+              echo doku; return 0
+            fi
             [ "$1" = "$APP_LOGIN" ] || return 0
             case "$3" in
               release)
@@ -381,6 +401,47 @@ jobs:
             done
             echo "$n Anhänge geändert, ${#soll[@]} geprüft"
           }
+          # Doku-Pfad (seit 0.52.0)? Eng: README*/CHANGELOG* in der Wurzel, docs/**.md, backlog/**.md — kein Leer- oder
+          # Steuerzeichen. Eine Teilmenge der Erlaubnisliste von scripts/_nur_text.sh.
+          doku_pfad() {
+            [[ "$1" =~ ^(README|CHANGELOG)(\.[a-z]{2})?\.md$ ]] || [[ "$1" =~ ^(docs|backlog)/[^[:space:][:cntrl:]]+\.md$ ]]
+          }
+          # Nur Doku? stdin = „<status>␟<datei>␟<alter name>“ je geänderter Datei (␟ = \x1f, der alte Name nur beim
+          # Umbenennen). Exit 0, wenn jede Datei und jeder alte Name ein Doku-Pfad ist; sonst Ausgabe der ersten anderen.
+          # Kein Eintrag heißt nein.
+          nur_doku() {
+            local st f alt n=0
+            while IFS=$'\x1f' read -r st f alt; do
+              [ -n "$f" ] || continue
+              n=$((n + 1))
+              doku_pfad "$f" || { echo "$f"; return 1; }
+              if [ -n "$alt" ] && ! doku_pfad "$alt"; then echo "$alt (umbenannt nach $f)"; return 1; fi
+            done
+            [ "$n" -gt 0 ] || { echo "keine geänderte Datei"; return 1; }
+          }
+          # Übersetzung (die deutsche Fassung darf Deutsch sein)? $1 = Datei.
+          uebersetzung() {
+            [[ "$1" =~ \.de\.md$ ]] || [[ "$1" =~ (^|/)de/ ]]
+          }
+          # Sprachregel (Repos sind Englisch): Sind die hinzugefügten Zeilen überwiegend Deutsch? stdin = Diff (patch)
+          # einer Datei. Gezählt werden häufige Funktionswörter beider Sprachen, Inline-Code und Linkziele nicht.
+          # Exit 0 = Deutsch (mindestens 5 deutsche Wörter und mehr als doppelt so viele wie englische).
+          deutsch() {
+            LC_ALL=C awk '
+              BEGIN {
+                n = split("der die das und ist nicht mit für ein eine einen auf den dem des wird werden sich auch oder wenn noch nur zum zur bei", a, " ")
+                for (i = 1; i <= n; i++) de[a[i]] = 1
+                n = split("the and is not with for of to it be this or if are that was will from by as can should", b, " ")
+                for (i = 1; i <= n; i++) en[b[i]] = 1
+              }
+              /^\+/ && !/^\+\+\+/ {
+                z = tolower(substr($0, 2))
+                gsub(/`[^`]*`/, " ", z); gsub(/\]\([^)]*\)/, "] ", z)
+                n = split(z, w, /[^a-z\200-\377]+/)
+                for (i = 1; i <= n; i++) { if (w[i] in de) d++; else if (w[i] in en) e++ }
+              }
+              END { exit !(d >= 5 && d > 2 * e) }'
+          }
           # <<< Entscheidungshilfen
           [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] || { ausgabe nichts "kein gültiger Kopf"; exit 0; }
           PR="$(gh api "repos/$REPO/commits/$HEAD_SHA/pulls" -q '.[0].number // ""')"
@@ -389,8 +450,8 @@ jobs:
           # Kopf unverändert.
           J="$(gh api "repos/$REPO/pulls/$PR")"
           AUTOR="$(jq -r '.user.login' <<<"$J")"
-          ART="$(pr_art "$AUTOR" "$(jq -r '.head.ref' <<<"$J")" "${APP_PR:-}")"
-          [ -n "$ART" ] || { ausgabe nichts "Autor ist nicht Dependabot (und kein App-PR, den dieses Repo annimmt)"; exit 0; }
+          ART="$(pr_art "$AUTOR" "$(jq -r '.head.ref' <<<"$J")" "${APP_PR:-}" "${DOKU_PR:-}")"
+          [ -n "$ART" ] || { ausgabe nichts "Autor ist nicht Dependabot (und kein App- oder Doku-PR, den dieses Repo annimmt)"; exit 0; }
           [ "$(jq -r '.head.repo.full_name == .base.repo.full_name' <<<"$J")" = "true" ] || { echo "Fork — Abbruch"; exit 1; }
           [ "$(jq -r '.state' <<<"$J")" = "open" ] || { ausgabe nichts "PR nicht offen"; exit 0; }
           [ "$(jq -r '.head.sha' <<<"$J")" = "$HEAD_SHA" ] || { ausgabe nichts "Kopf seit dem Lauf bewegt"; exit 0; }
@@ -509,6 +570,33 @@ jobs:
               # shellcheck disable=SC2086  # ABBILD_PFADE ist eine Liste von Mustern
               if beruehrt_abbild $ABBILD_PFADE <<<"$DATEIEN"; then FOLGE=vorbereiten; fi
             fi
+          elif [ "$ART" = doku ]; then
+            # Doku-PR (seit 0.52.0, siehe Kopf): kein Entwurf, Autor mit Schreibrecht, nur Doku, Sprachregel.
+            [ "$(jq -r '.draft' <<<"$J")" = "false" ] || { ausgabe nichts "Entwurf — kein Auto-Merge"; exit 0; }
+            case "$(jq -r '.author_association' <<<"$J")" in
+              OWNER|MEMBER|COLLABORATOR) ;;
+              *) GRUND="Autor ohne Schreibrecht im Repo ($(jq -r '.author_association' <<<"$J"))" ;;
+            esac
+            if [ -z "$GRUND" ]; then
+              DOKU="$(gh api "repos/$REPO/pulls/$PR/files" --paginate \
+                -q '.[] | "\(.status)\u001f\(.filename)\u001f\(.previous_filename // "")"')"
+              FREMD="$(nur_doku <<<"$DOKU")" || GRUND="Doku-Zweig $ZWEIG ändert mehr als Doku ($FREMD)"
+            fi
+            if [ -z "$GRUND" ]; then
+              # Erst lesen, dann schleifen: scheitert die API, bricht set -e hier ab — nie eine leere Schleife, die
+              # „kein Deutsch“ hieße.
+              SPRACHE="$(gh api "repos/$REPO/pulls/$PR/files" --paginate \
+                -q '.[] | select(.status != "removed") | "\(.filename)\u001f\(.patch // "" | @base64)"')"
+              while IFS=$'\x1f' read -r f diff64; do
+                [ -n "$f" ] || continue
+                uebersetzung "$f" && continue
+                [ -n "$diff64" ] || { GRUND="Diff von $f nicht lesbar — Sprachregel nicht prüfbar"; break; }
+                if base64 -d <<<"$diff64" | deutsch; then
+                  GRUND="Sprachregel: $f ist überwiegend Deutsch, die Repos sind Englisch (deutsche Fassung als Übersetzung: Ordner de/ oder .de vor der Endung)"
+                  break
+                fi
+              done <<<"$SPRACHE"
+            fi
           else
             # App-PR (release/pin): jeder Commit vom Autor des PR, und nur, was die Art erlaubt.
             COMMITS="$(gh api "repos/$REPO/pulls/$PR/commits" --paginate)"
@@ -563,7 +651,9 @@ jobs:
               BEHIND)
                 if [ "$MIT_APP" = "true" ]; then ausgabe nachziehen "Zweig veraltet"; else ausgabe nichts "Zweig veraltet — ohne App zieht ihn niemand nach (@dependabot rebase)"; fi
                 exit 0 ;;
-              DIRTY) ausgabe nichts "Konflikt — Dependabot zieht selbst nach"; exit 0 ;;
+              DIRTY)
+                if [ "$ART" = doku ]; then ausgabe nichts "Konflikt — den Zweig auf $BASIS nachziehen"; else ausgabe nichts "Konflikt — Dependabot zieht selbst nach"; fi
+                exit 0 ;;
             esac
             sleep 20
           done

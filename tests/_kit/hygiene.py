@@ -3225,6 +3225,66 @@ def _nur_text_block_faehrt_pruefung(code: list[str]) -> bool:
     return False
 
 
+NUR_TEXT_IF = re.compile(r"""^\s*if:\s*(\$\{\{\s*)?!cancelled\(\)\s*&&\s*needs\.[A-Za-z0-9_-]+\.outputs\.nur_text"""
+                         r"""\s*!=\s*'ja'\s*(?P<rest>.*?)\s*(?(1)\}\})\s*$""")
+
+
+def _nur_text_if_sicher(code: str) -> bool:
+    """Sichere Form, optional mit EINER weiteren Bedingung als geklammerte Gruppe: `… != 'ja' && (<alte Bedingung>)`.
+
+    Die Klammer muss die ganze Gruppe umschließen (ausgeglichen, erst am Ende geschlossen) — sonst hebelte
+    `… && (a) || (b)` das `&&` aus. Zeichenketten in Hochkomma zählen nicht mit.
+    """
+    m = NUR_TEXT_IF.match(code)
+    if not m:
+        return False
+    rest = m.group("rest")
+    if not rest:
+        return True
+    g = re.match(r"^&&\s*(\(.*\))$", rest)
+    if not g:
+        return False
+    gruppe, tiefe, in_str = g.group(1), 0, False
+    for i, c in enumerate(gruppe):
+        if c == "'":
+            in_str = not in_str
+        elif not in_str and c == "(":
+            tiefe += 1
+        elif not in_str and c == ")":
+            tiefe -= 1
+            if tiefe == 0 and i != len(gruppe) - 1:
+                return False
+    return tiefe == 0 and not in_str
+
+
+def _nur_text_in_workflows(root: str) -> list[str]:
+    """Liest ein `if:` in einem Workflow `outputs.nur_text`, muss es die sichere Form haben (siehe pruefe_nur_text)."""
+    treffer = []
+    verz = os.path.join(root, ".github", "workflows")
+    if not os.path.isdir(verz):
+        return treffer
+    for name in sorted(os.listdir(verz)):
+        if not name.endswith((".yml", ".yaml")):
+            continue
+        rel = f".github/workflows/{name}"
+        text = _lies(root, rel) or ""
+        zeilen = zeilen_wie_grep(text)
+        liest = False
+        for n, zeile in enumerate(zeilen, 1):
+            code = zeile.split(" #", 1)[0]
+            if "outputs.nur_text" not in code or not re.match(r"^\s*(?:-\s+)?if:", code):
+                continue
+            liest = True
+            if not _nur_text_if_sicher(code):
+                treffer.append(f"{rel}:{n}: `if:` liest outputs.nur_text, aber nicht in der sicheren Form "
+                               f"`${{{{ !cancelled() && needs.<job>.outputs.nur_text != 'ja' }}}}` — ein übersprungener "
+                               f"Job zählt als grüner Check, scheitert die Klassifizierung, liefe sonst nichts")
+        if liest and not any("scripts/_nur_text.sh" in z.split("#", 1)[0] for z in zeilen):
+            treffer.append(f"{rel}: liest outputs.nur_text, ruft aber scripts/_nur_text.sh nicht — die Entscheidung "
+                           f"lebt nur dort")
+    return treffer
+
+
 def pruefe_nur_text(root: str) -> list[str]:
     """Text-Schnellweg (seit 0.35.0): verdrahtet, und die Erlaubnisliste wird nur VERENGT.
 
@@ -3242,8 +3302,17 @@ def pruefe_nur_text(root: str) -> list[str]:
       steht nur auf dem Papier. Wer bewusst verzichtet (die Doku ist Teil des Produkts, die Suite dauert ohnehin nur
       Minuten), schreibt `aus alles  # Grund` in die Verengung.
     Was das Repo im Text-Modus fährt (Hygiene, Changelog-, Link-Prüfungen), entscheidet sein check.sh.
+    - Schwere Jobs ohne check.sh (seit 0.52.0, Doku-Schnellspur): Ein Workflow darf einen Job (Startprobe, Audit,
+      Build) im Text-Modus überspringen — über einen Klassifizier-Job, der `scripts/_nur_text.sh` ruft und
+      `nur_text=ja` ausgibt. Jedes `if:`, das `outputs.nur_text` liest, muss dann genau
+      `!cancelled() && needs.<job>.outputs.nur_text != 'ja'` lauten (eine alte Bedingung nur dahinter als
+      `&& (<bedingung>)`, ganz geklammert): Ein übersprungener Job zählt als grüner Check —
+      scheitert der Klassifizier-Job, wäre ein `== 'nein'` (oder ein `if` ohne `!cancelled()`, das bei einem roten
+      `needs` gar nicht ausgewertet wird) ein grüner Check ohne Prüfung. Leer oder kaputt heißt so: der Job läuft.
+      Und der Workflow muss `scripts/_nur_text.sh` selbst rufen.
     """
     treffer = []
+    treffer += _nur_text_in_workflows(root)
     if _lies(root, NUR_TEXT_SKRIPT) is None:
         treffer.append(f"{NUR_TEXT_SKRIPT} fehlt — `repokit sync`")
     verzicht = False
