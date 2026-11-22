@@ -595,28 +595,38 @@ assert gc.parse_topbar({"signed_in": True, "name": "A", "brand": 5}).brand == ""
 ok("top bar: fetched server-side with only TinySesam's cookies; an error status is signed out")
 
 # ---------- property test: mutated tokens ----------
-rng = random.Random(4711)
-client = token_client()
-alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_.=+/ \n\x00é"
-accepted_changes = 0
-for _attempt in range(3000):
-    chars = list(VALID)
+ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_.=+/ \n\x00é"
+
+
+def mutated_token(rng, token):
+    """`token` with one to three random replacements, insertions or deletions."""
+    chars = list(token)
     for _ in range(rng.randint(1, 3)):
         op = rng.random()
         pos = rng.randrange(len(chars) + 1)
         if op < 0.4 and chars:
-            chars[min(pos, len(chars) - 1)] = rng.choice(alphabet)
+            chars[min(pos, len(chars) - 1)] = rng.choice(ALPHABET)
         elif op < 0.7:
-            chars.insert(pos, rng.choice(alphabet))
+            chars.insert(pos, rng.choice(ALPHABET))
         elif chars:
             del chars[min(pos, len(chars) - 1)]
-    mutated = "".join(chars)
-    try:
-        client.verify(mutated, now=NOW)
-    except gc.GateError:
-        continue
-    assert mutated == VALID, f"a changed token was accepted: {mutated!r}"
-    accepted_changes += 1
+    return "".join(chars)
+
+
+def accepted_mutations(rounds):
+    """How many of `rounds` seeded mutations were accepted; each accepted one must be the token unchanged."""
+    rng, client, accepted = random.Random(4711), token_client(), 0
+    for mutated in (mutated_token(rng, VALID) for _ in range(rounds)):
+        try:
+            client.verify(mutated, now=NOW)
+        except gc.GateError:
+            continue
+        assert mutated == VALID, f"a changed token was accepted: {mutated!r}"
+        accepted += 1
+    return accepted
+
+
+accepted_changes = accepted_mutations(3000)
 ok(f"property: 3000 seeded random mutations of a valid token — every changed one refused with a GateError "
    f"({accepted_changes} mutations happened to restore it)")
 
