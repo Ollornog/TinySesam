@@ -95,8 +95,13 @@ jobs:
         if: steps.scope.outputs.run == 'true'
         run: go test -race -count=1 ./...
 
-      - name: Fuzz every target for 15 s
+      # A count, not a duration: with `-fuzztime=<duration>` the fuzz coordinator can report its own deadline as
+      # "--- FAIL: … context deadline exceeded" without any failing input (golang/go#75804; fixed in Go 1.26.12 and
+      # 1.27.5). With `-fuzztime=<n>x` there is no deadline context, and a real failing input still fails the step.
+      # 300000 runs take about 10 s per target on a hosted runner; the step has its own limit.
+      - name: Fuzz every target (300000 runs each)
         if: steps.scope.outputs.run == 'true'
+        timeout-minutes: 8
         run: |
           targets="$(go test -list '^Fuzz' . | grep '^Fuzz')"
           if [ -z "$targets" ]; then
@@ -104,5 +109,5 @@ jobs:
             exit 1
           fi
           for target in $targets; do
-            go test -run='^$' -fuzz="^${target}\$" -fuzztime=15s .
+            go test -run='^$' -fuzz="^${target}\$" -fuzztime=300000x .
           done

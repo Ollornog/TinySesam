@@ -14,6 +14,10 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
   triggers a key set fetch — with an empty, a fresh and a stale cache —, while a well-formed unknown `kid` does, at
   most every 10 s. With fixed keys both answer `kid`, so only the fetch tells a client that checks the form loosely
   (case-insensitive, by length) from one that checks it exactly; the token vectors could not.
+- `client-go` CI: the fuzz step runs each target 300000 times (`-fuzztime=300000x`) instead of 15 s. With a duration,
+  Go's fuzz coordinator can report its own deadline as `context deadline exceeded` without a failing input
+  (golang/go#75804, fixed in Go 1.26.12 and 1.27.5) — it turned this pull request red once on `oldstable`. A real
+  failing input still fails the step (a planted crash in `FuzzVerify` goes red within the count).
 - Two gaps found by hand mutations of the Python gate client (T-86): a new token vector `attack-claim-sub-empty` (an
   empty `sub` is `claims`; no vector had one), and `skip-x-short` now carries a `kid` computed over its 31 bytes, so
   only the length check refuses it (before, the `kid` mismatch did too).
