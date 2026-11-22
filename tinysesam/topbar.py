@@ -29,8 +29,8 @@ import html
 from .theme import TOKENS, c22_css, c22_head, theme_head
 
 #: The built-in pages that show the account menu (for a signed-in viewer); every other page shows logo and name.
-MENU_PAGES = frozenset({"account", "account_setup", "gateway_home", "oauth_consent", "qr_approve", "reauth",
-                        "totp_setup"})
+MENU_PAGES = frozenset({"account", "account_setup", "approval", "approvals", "gateway_home", "oauth_consent",
+                        "qr_approve", "reauth", "totp_setup"})
 
 #: Below this width the links move into the menu.
 NARROW_PX = 640
@@ -68,6 +68,8 @@ CSS = f"""
 .tsbar .tsbar-av{{display:grid;place-items:center;width:30px;height:30px;border-radius:50%;
   background:var(--ts-chip);color:var(--ts-ink);border:1px solid var(--ts-line);font-weight:600;font-size:13px;
   text-transform:uppercase}}
+.tsbar .tsbar-count{{display:inline-grid;place-items:center;min-width:22px;height:22px;padding:0 6px;
+  border-radius:999px;background:var(--ts-accent);color:var(--ts-accent-ink);font-size:12px;font-weight:700}}
 .tsbar .tsbar-name{{max-width:180px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}}
 .tsbar .tsbar-chev{{width:14px;height:14px;color:var(--ts-muted);transition:transform .15s}}
 .tsbar .tsbar-btn[aria-expanded=true] .tsbar-chev{{transform:rotate(180deg)}}
@@ -147,6 +149,7 @@ _ICON = {
     "system": "<rect x='3' y='4' width='18' height='12' rx='2'/><path d='M8 20h8M12 16v4'/>",
     "out": "<path d='M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3'/><path d='M10 17l-5-5 5-5M5 12h11'/>",
     "link": "<path d='M9 6l6 6-6 6'/>",
+    "approve": "<path d='M9 11l3 3 8-8'/><path d='M20 12v6a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h9'/>",
 }
 
 
@@ -235,6 +238,11 @@ def data(auth, viewer, *, base: str) -> dict:
     if auth._admin_panel_visible(viewer) and getattr(cfg, "admin_ui_enabled", True):
         out["admin_panel"] = {"shown": True, "href": f"{base}{cfg.admin_path}"}
     out["logout"] = {"href": f"{base}/auth/logout"}
+    pending = auth._approvals_pending(viewer)
+    if pending is not None:
+        # Only with `approvals_enabled` (spec §8: an optional member a client may pass on): the number and where to
+        # decide — an application with its own bar shows it in words, never as a coloured dot alone.
+        out["approvals"] = {"pending": pending, "href": f"{base}/auth/approvals"}
     return out
 
 
@@ -273,6 +281,12 @@ def render(auth, *, viewer=None, menu: bool = True, csrf: str = "", current: str
     if getattr(cfg, "account_enabled", True):
         items.append(f"<a class=tsbar-item href='__TS_P__/auth/account'{cur('account')}>{_svg('user')}"
                      f"{_e(t('bar.account'))}</a>")
+    pending = auth._approvals_pending(viewer)
+    if pending is not None:
+        # Approvals (stage A): number AND word, never a coloured dot alone.
+        word = t("bar.approvals_n", n=pending) if pending else t("bar.approvals")
+        items.append(f"<a class=tsbar-item href='__TS_P__/auth/approvals'{cur('approvals')}>{_svg('approve')}"
+                     f"{_e(word)}</a>")
     if auth._admin_panel_visible(viewer) and getattr(cfg, "admin_ui_enabled", True):
         items.append(f"<a class=tsbar-item href='{_e('__TS_P__' + cfg.admin_path)}'{cur('admin')}>{_svg('admin')}"
                      f"{_e(t('acc.admin'))}</a>")
@@ -287,11 +301,16 @@ def render(auth, *, viewer=None, menu: bool = True, csrf: str = "", current: str
     items.append(f"<form method=post action='__TS_P__/auth/logout'>"
                  f"<input type=hidden name=_csrf value='{_e(csrf)}'>"
                  f"<button type=submit class=tsbar-item>{_svg('out')}{_e(t('logout'))}</button></form>")
+    label = t("bar.menu", name=shown)
+    count = ""
+    if pending:
+        label = f"{label} — {t('bar.approvals_n', n=pending)}"
+        count = f"<span class=tsbar-count aria-hidden=true title='{_e(t('bar.approvals_n', n=pending))}'>{pending}</span>"
     menu_html = (f"<div class=tsbar-menu>"
                  f"<button type=button class=tsbar-btn aria-expanded=false aria-controls=tsbar-pop "
-                 f"aria-label='{_e(t('bar.menu', name=shown))}'>"
+                 f"aria-label='{_e(label)}'>"
                  f"<span class=tsbar-av aria-hidden=true>{_e(str(shown)[:1])}</span>"
-                 f"<span class=tsbar-name>{_e(shown)}</span>{_svg('chev', 'tsbar-chev')}</button>"
+                 f"<span class=tsbar-name>{_e(shown)}</span>{count}{_svg('chev', 'tsbar-chev')}</button>"
                  f"<div class=tsbar-pop id=tsbar-pop hidden>"
                  f"<div class=tsbar-who>{_e(t('bar.signed_in_as'))}<b>{_e(shown)}</b></div>"
                  + "".join(items) + "</div></div>")

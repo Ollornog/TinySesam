@@ -28,6 +28,196 @@ from .templates import brand, favicon_link, inject_nonce as _inject_nonce
 from .theme import TOKENS, c22_css, c22_head, theme_head
 
 
+class PanelActions:
+    """The rules and actions of the panel that more than one entrance uses: the panel routes and the approvals
+    (`tinysesam.approvals`, stage A), which execute a confirmed action with exactly this code, as the person whose
+    session confirmed it — one implementation, so the two entrances cannot drift apart. The routes decide WHO acts
+    (`actor_scope`: admin, delegate or 403, CSRF, step-up); these methods decide what that actor may do to the
+    target and do it."""
+
+    def __init__(self, auth):
+        self.auth = auth
+        self.cfg = auth.cfg
+
+    def fits(self, destination, me, roles) -> bool:
+        """Is this account within one delegate scope (T-74)? `config_check.delegate_may_manage` decides."""
+        if destination is None:
+            return False
+        return config_check.delegate_may_manage(roles, me["id"], destination, self.auth.user_roles(destination))
+
+    def visible(self, destination, me, scopes) -> bool:
+        return any(self.fits(destination, me, roles) for _, roles, _ in scopes)
+
+    def allowed(self, scopes, action: str) -> list:
+        """The scopes whose delegate role may do `action` (`can`) — 403 if none."""
+        out = [s for s in scopes if action in s[2]]
+        if not out:
+            raise HTTPException(403, self.auth.t("api.delegate_action"))
+        return out
+
+    def target(self, me, scopes, uid: int, action: str):
+        """The account a route acts on. An administrator: the owner model as before. A delegate: the action must be
+        theirs (403), and the account in the scope of a delegate role that may do it — otherwise 404, the same answer
+        as for an account that does not exist (no oracle)."""
+        if scopes is None:
+            return self.owner_protection(me, uid)
+        mine = self.allowed(scopes, action)
+        destination = self.auth.store.get_user(uid)
+        if not self.visible(destination, me, mine):
+            raise HTTPException(404, self.auth.t("api.not_found"))
+        return destination
+
+    def refused_roles(self, mine) -> HTTPException:
+        return HTTPException(400, self.auth.t("api.delegate_roles",
+                                              roles=", ".join(sorted({r for _, roles, _ in mine for r in roles}))))
+
+    def delegate_roles_in(self, b: dict, scopes, action: str) -> list:
+        """A delegate's `roles` from the body (create, invite): at least one, all from ONE delegate role that may do
+        the action, no admin flag, no service account — checked BEFORE anything is written."""
+        mine = self.allowed(scopes, action)
+        if b.get("is_admin") or b.get("is_service"):
+            raise HTTPException(403, self.auth.t("api.admin"))
+        wanted = self.roles_from(b)
+        if not wanted or not any(set(wanted) <= roles for _, roles, _ in mine):
+            raise self.refused_roles(mine)
+        return wanted
+
+    def owner_protection(self, me, uid: int):
+        """Only an owner may change an owner account (owner model). Otherwise an admin would set a
+        new password for the owner and become owner themselves — the protection against deletion
+        would then be a door with an open window next to it."""
+        destination = self.auth.store.get_user(uid)
+        if destination and destination["is_owner"] and not (me and me.get("is_owner")):
+            raise HTTPException(403, self.auth.t("api.owner_only"))
+        return destination
+
+    def log(self, request: Request, event: str, detail=None):
+        """Log an admin action — with actor and IP.
+
+        Without both, the audit log is worthless for the post-mortem: it recorded THAT an
+        account was blocked or a password reset, not by whom and from where. With
+        several admins that is exactly the question asked afterwards. As with CSRF, this
+        lives in one place and not in every route — the next new route inherits it.
+        """
+        person = self.auth.current_user(request)
+        # A delegated admin (T-74) says in which role they acted — `actor=` alone would not tell an administrator
+        # from a team lead afterwards.
+        held = [role for role, _, _ in self.auth._delegate_scopes(person) or []] if person else []
+        if held:
+            detail = f"{detail} as={','.join(sorted(held))}" if detail else f"as={','.join(sorted(held))}"
+        self.auth.audit(event, person["username"] if person else None, self.auth.client_ip(request), detail)
+
+    def other_active_admins(self, uid: int) -> int:
+        """How many active, interactive admins remain if `uid` stops being one?
+
+        Counted are those who can really sign in as admin: not blocked, no
+        service account (which has no session, and whose keys never carry the flag, R6-5)."""
+        return sum(1 for u in self.auth.store.list_users()
+                   if u["is_admin"] and not u["disabled"] and not u["is_service"]
+                   and int(u["id"]) != int(uid))
+
+    def roles_from(self, b: dict) -> list:
+        """`roles` from the body: a list of strings — otherwise 400, and BEFORE any write.
+
+        The database accepts any JSON; a role `1` or `null` was only noticed when logging
+        (`','.join`), AFTER roles and admin flag had been written: HTTP 500 without an
+        audit line (integration finding 8). A string like `"admin"` was silently split into
+        letters by `list()`. If the field is missing (or empty), it means "no roles"."""
+        raw = b.get("roles")
+        if not raw:
+            return []
+        if not isinstance(raw, list) or not all(isinstance(x, str) for x in raw):
+            raise HTTPException(400, self.auth.t("api.invalid", reason="roles"))
+        return list(raw)
+
+    def set_roles(self, request: Request, me, scope, uid: int, b: dict) -> dict:
+        """Set the roles (and, from the panel only, the admin flag) of an account — `POST <admin>/api/users/{id}/roles`
+        and the approval type `tinysesam.account.set_roles` (which never sends `is_admin`). `me`/`scope` come from
+        the caller's session: `(account, None)` for an administrator, `(account, scopes)` for a delegate."""
+        destination = self.target(me, scope, uid, "roles")
+        if destination is None:
+            raise HTTPException(404)
+        roles = self.roles_from(b)          # checked BEFORE any write, like R6-1 below
+        if scope is not None:
+            # A delegate (T-74) never touches the admin flag — not even to send it unchanged — and sets only roles of
+            # ONE delegate role that may set roles and holds the account in its scope. The strict scope means the
+            # account holds nothing outside it, so the new list replaces the old one whole.
+            if "is_admin" in b:
+                raise HTTPException(403, self.auth.t("api.admin"))
+            mine = [s for s in self.allowed(scope, "roles") if self.fits(destination, me, s[1])]
+            if not any(set(roles) <= s[1] for s in mine):
+                raise self.refused_roles(mine)
+            roles = list(dict.fromkeys(roles))
+        if "is_admin" in b:
+            new = bool(b["is_admin"])
+            if not new and destination["is_owner"]:
+                raise HTTPException(400, self.auth.t("api.owner_protected"))
+            if new and destination["is_service"]:
+                raise HTTPException(400, self.auth.t("api.service_admin"))      # R6-2, see user_create
+            # Do not strip the last admin (R6-1). Without an admin the first-admin
+            # path opens again: a new one-time token is created, and whoever reads it — in the log,
+            # in the console — becomes admin. The panel is then unreachable for anyone
+            # who could turn it back. Checked BEFORE any write, so the roles
+            # are not left half set.
+            if not new and destination["is_admin"] and not self.other_active_admins(uid):
+                raise HTTPException(400, self.auth.t("api.last_admin"))
+            # Making an account admin hands the panel to whoever holds that account — from a stale admin session
+            # an account of the attacker's own (self-registered, invited) would keep the panel after the session
+            # ends. New access (B-12): a fresh confirmation, also with `admin_require_mfa=False`.
+            if new and not destination["is_admin"]:
+                self.auth._require_fresh(request, me)
+        # Before/after in the log (R6-7): "uid=5" said THAT rights changed, not
+        # which. Whether someone became admin is exactly the question after an incident.
+        # `str` per role: legacy data from before the check (or from own code) must not
+        # blow up the line — it is written AFTER the write, and an error here meant
+        # "changed, but not logged" (integration finding 8).
+        before = destination
+        roles_before = sorted(map(str, self.auth.user_roles(before))) if before else []
+        admin_before = bool(before["is_admin"]) if before else False
+        self.auth.set_roles(uid, roles)
+        # Write only on a REAL change (H-5): the panel sends the tick with every
+        # save of the roles. `set_admin(True)` then wrote a 1 over the 2 of a flag granted by the
+        # identity provider — the revocable flag silently became a permanent
+        # admin right, and the next login without the admin group no longer removed it (attack on H-5).
+        if "is_admin" in b and bool(b["is_admin"]) != bool(destination["is_admin"]):
+            self.auth.store.set_admin(uid, bool(b["is_admin"]))
+        afterwards = self.auth.store.get_user(uid)
+        roles_afterwards = sorted(map(str, self.auth.user_roles(afterwards))) if afterwards else []
+        admin_afterwards = bool(afterwards["is_admin"]) if afterwards else False
+        detail = (f"uid={uid} roles={','.join(roles_before) or '-'}"
+                  f"->{','.join(roles_afterwards) or '-'}")
+        if admin_before != admin_afterwards:
+            detail += f" admin={int(admin_before)}->{int(admin_afterwards)}"
+        self.log(request, "user_roles", detail)
+        return {"ok": True}
+
+    def disable(self, me, scope, uid: int, disabled: bool) -> dict:
+        """Lock or unlock an account — `POST <admin>/api/users/{id}/disable` and the approval type
+        `tinysesam.account.disable` (locking only)."""
+        if disabled and uid == me["id"]:
+            raise HTTPException(400, self.auth.t("api.no_self_lock"))
+        destination = self.target(me, scope, uid, "disable")
+        if disabled and destination and destination["is_owner"]:
+            raise HTTPException(400, self.auth.t("api.owner_protected"))
+        # The effect lives in ONE place, `auth.set_disabled` (PO decision 2026-09-27):
+        # operator note (no confirmation link lifts the block, H-18), end sessions,
+        # revoke keys, discard open links, audit with the admin as actor. An own
+        # admin route of the app calls the same method. What depends on the caller stays here.
+        if not self.auth.set_disabled(uid, disabled):
+            raise HTTPException(404, self.auth.t("api.not_found"))
+        return {"ok": True}
+
+    def revoke_key(self, me, kid: int) -> dict:
+        """Revoke someone's API key as administrator — `POST <admin>/api/keys/{kid}/revoke` and the approval type
+        `tinysesam.apikey.revoke` for a key of another account (an own key the holder revokes without the panel)."""
+        owner = self.auth.store.api_key_owner(kid)
+        if owner is not None:
+            self.owner_protection(me, owner)     # an owner's keys are revoked only by an owner
+        # The audit line is written by `revoke_api_key` — with owner, IP and actor= (B5-04/R6-3).
+        self.auth.revoke_api_key(kid)
+        return {"ok": True}
+
+
 def build_admin_router(auth) -> APIRouter:
     cfg = auth.cfg
     ar = APIRouter(tags=["admin"], route_class=hardened_route(auth))
@@ -68,96 +258,11 @@ def build_admin_router(auth) -> APIRouter:
         """Administrators and delegated admins (T-74): `(account, None)` or `(account, scopes)`."""
         return actor_scope(request, delegates=True)
 
-    def fits(destination, me, roles) -> bool:
-        """Is this account within one delegate scope (T-74)? `config_check.delegate_may_manage` decides."""
-        if destination is None:
-            return False
-        return config_check.delegate_may_manage(roles, me["id"], destination, auth.user_roles(destination))
-
-    def visible(destination, me, scopes) -> bool:
-        return any(fits(destination, me, roles) for _, roles, _ in scopes)
-
-    def allowed(scopes, action: str) -> list:
-        """The scopes whose delegate role may do `action` (`can`) — 403 if none."""
-        out = [s for s in scopes if action in s[2]]
-        if not out:
-            raise HTTPException(403, auth.t("api.delegate_action"))
-        return out
-
-    def target(me, scopes, uid: int, action: str):
-        """The account a route acts on. An administrator: the owner model as before. A delegate: the action must be
-        theirs (403), and the account in the scope of a delegate role that may do it — otherwise 404, the same answer
-        as for an account that does not exist (no oracle)."""
-        if scopes is None:
-            return owner_protection(me, uid)
-        mine = allowed(scopes, action)
-        destination = auth.store.get_user(uid)
-        if not visible(destination, me, mine):
-            raise HTTPException(404, auth.t("api.not_found"))
-        return destination
-
-    def refused_roles(mine) -> HTTPException:
-        return HTTPException(400, auth.t("api.delegate_roles",
-                                         roles=", ".join(sorted({r for _, roles, _ in mine for r in roles}))))
-
-    def delegate_roles_in(b: dict, scopes, action: str) -> list:
-        """A delegate's `roles` from the body (create, invite): at least one, all from ONE delegate role that may do
-        the action, no admin flag, no service account — checked BEFORE anything is written."""
-        mine = allowed(scopes, action)
-        if b.get("is_admin") or b.get("is_service"):
-            raise HTTPException(403, auth.t("api.admin"))
-        wanted = roles_from(b)
-        if not wanted or not any(set(wanted) <= roles for _, roles, _ in mine):
-            raise refused_roles(mine)
-        return wanted
-
-    def owner_protection(me, uid: int):
-        """Only an owner may change an owner account (owner model). Otherwise an admin would set a
-        new password for the owner and become owner themselves — the protection against deletion
-        would then be a door with an open window next to it."""
-        destination = auth.store.get_user(uid)
-        if destination and destination["is_owner"] and not (me and me.get("is_owner")):
-            raise HTTPException(403, auth.t("api.owner_only"))
-        return destination
-
-    def log(request: Request, event: str, detail=None):
-        """Log an admin action — with actor and IP.
-
-        Without both, the audit log is worthless for the post-mortem: it recorded THAT an
-        account was blocked or a password reset, not by whom and from where. With
-        several admins that is exactly the question asked afterwards. As with CSRF, this
-        lives in one place and not in every route — the next new route inherits it.
-        """
-        person = auth.current_user(request)
-        # A delegated admin (T-74) says in which role they acted — `actor=` alone would not tell an administrator
-        # from a team lead afterwards.
-        held = [role for role, _, _ in auth._delegate_scopes(person) or []] if person else []
-        if held:
-            detail = f"{detail} as={','.join(sorted(held))}" if detail else f"as={','.join(sorted(held))}"
-        auth.audit(event, person["username"] if person else None, auth.client_ip(request), detail)
-
-    def other_active_admins(uid: int) -> int:
-        """How many active, interactive admins remain if `uid` stops being one?
-
-        Counted are those who can really sign in as admin: not blocked, no
-        service account (which has no session, and whose keys never carry the flag, R6-5)."""
-        return sum(1 for u in auth.store.list_users()
-                   if u["is_admin"] and not u["disabled"] and not u["is_service"]
-                   and int(u["id"]) != int(uid))
-
-    def roles_from(b: dict) -> list:
-        """`roles` from the body: a list of strings — otherwise 400, and BEFORE any write.
-
-        The database accepts any JSON; a role `1` or `null` was only noticed when logging
-        (`','.join`), AFTER roles and admin flag had been written: HTTP 500 without an
-        audit line (integration finding 8). A string like `"admin"` was silently split into
-        letters by `list()`. If the field is missing (or empty), it means "no roles"."""
-        raw = b.get("roles")
-        if not raw:
-            return []
-        if not isinstance(raw, list) or not all(isinstance(x, str) for x in raw):
-            raise HTTPException(400, auth.t("api.invalid", reason="roles"))
-        return list(raw)
+    pa = PanelActions(auth)
+    fits, visible, allowed, target = pa.fits, pa.visible, pa.allowed, pa.target
+    refused_roles, delegate_roles_in, owner_protection, log = (pa.refused_roles, pa.delegate_roles_in,
+                                                                pa.owner_protection, pa.log)
+    other_active_admins, roles_from = pa.other_active_admins, pa.roles_from
 
     def uview(u):
         return {"id": u["id"], "username": u["username"], "display_name": u["display_name"],
@@ -252,19 +357,7 @@ def build_admin_router(auth) -> APIRouter:
     async def user_disable(request: Request, uid: int):
         me, scope = team(request)
         b = await auth.json_body(request)
-        disabled = bool(b.get("disabled", True))
-        if disabled and uid == me["id"]:
-            raise HTTPException(400, auth.t("api.no_self_lock"))
-        destination = target(me, scope, uid, "disable")
-        if disabled and destination and destination["is_owner"]:
-            raise HTTPException(400, auth.t("api.owner_protected"))
-        # The effect lives in ONE place, `auth.set_disabled` (PO decision 2026-09-27):
-        # operator note (no confirmation link lifts the block, H-18), end sessions,
-        # revoke keys, discard open links, audit with the admin as actor. An own
-        # admin route of the app calls the same method. What depends on the caller stays here.
-        if not auth.set_disabled(uid, disabled):
-            raise HTTPException(404, auth.t("api.not_found"))
-        return {"ok": True}
+        return pa.disable(me, scope, uid, bool(b.get("disabled", True)))
 
     @ar.post("/api/users/{uid}/password")
     async def user_password(request: Request, uid: int):
@@ -306,62 +399,7 @@ def build_admin_router(auth) -> APIRouter:
     async def user_roles(request: Request, uid: int):
         me, scope = team(request)
         b = await auth.json_body(request)
-        destination = target(me, scope, uid, "roles")
-        if destination is None:
-            raise HTTPException(404)
-        roles = roles_from(b)          # checked BEFORE any write, like R6-1 below
-        if scope is not None:
-            # A delegate (T-74) never touches the admin flag — not even to send it unchanged — and sets only roles of
-            # ONE delegate role that may set roles and holds the account in its scope. The strict scope means the
-            # account holds nothing outside it, so the new list replaces the old one whole.
-            if "is_admin" in b:
-                raise HTTPException(403, auth.t("api.admin"))
-            mine = [s for s in allowed(scope, "roles") if fits(destination, me, s[1])]
-            if not any(set(roles) <= s[1] for s in mine):
-                raise refused_roles(mine)
-            roles = list(dict.fromkeys(roles))
-        if "is_admin" in b:
-            new = bool(b["is_admin"])
-            if not new and destination["is_owner"]:
-                raise HTTPException(400, auth.t("api.owner_protected"))
-            if new and destination["is_service"]:
-                raise HTTPException(400, auth.t("api.service_admin"))      # R6-2, see user_create
-            # Do not strip the last admin (R6-1). Without an admin the first-admin
-            # path opens again: a new one-time token is created, and whoever reads it — in the log,
-            # in the console — becomes admin. The panel is then unreachable for anyone
-            # who could turn it back. Checked BEFORE any write, so the roles
-            # are not left half set.
-            if not new and destination["is_admin"] and not other_active_admins(uid):
-                raise HTTPException(400, auth.t("api.last_admin"))
-            # Making an account admin hands the panel to whoever holds that account — from a stale admin session
-            # an account of the attacker's own (self-registered, invited) would keep the panel after the session
-            # ends. New access (B-12): a fresh confirmation, also with `admin_require_mfa=False`.
-            if new and not destination["is_admin"]:
-                auth._require_fresh(request, me)
-        # Before/after in the log (R6-7): "uid=5" said THAT rights changed, not
-        # which. Whether someone became admin is exactly the question after an incident.
-        # `str` per role: legacy data from before the check (or from own code) must not
-        # blow up the line — it is written AFTER the write, and an error here meant
-        # "changed, but not logged" (integration finding 8).
-        before = destination
-        roles_before = sorted(map(str, auth.user_roles(before))) if before else []
-        admin_before = bool(before["is_admin"]) if before else False
-        auth.set_roles(uid, roles)
-        # Write only on a REAL change (H-5): the panel sends the tick with every
-        # save of the roles. `set_admin(True)` then wrote a 1 over the 2 of a flag granted by the
-        # identity provider — the revocable flag silently became a permanent
-        # admin right, and the next login without the admin group no longer removed it (attack on H-5).
-        if "is_admin" in b and bool(b["is_admin"]) != bool(destination["is_admin"]):
-            auth.store.set_admin(uid, bool(b["is_admin"]))
-        afterwards = auth.store.get_user(uid)
-        roles_afterwards = sorted(map(str, auth.user_roles(afterwards))) if afterwards else []
-        admin_afterwards = bool(afterwards["is_admin"]) if afterwards else False
-        detail = (f"uid={uid} roles={','.join(roles_before) or '-'}"
-                  f"->{','.join(roles_afterwards) or '-'}")
-        if admin_before != admin_afterwards:
-            detail += f" admin={int(admin_before)}->{int(admin_afterwards)}"
-        log(request, "user_roles", detail)
-        return {"ok": True}
+        return pa.set_roles(request, me, scope, uid, b)
 
     # ---------- Passkeys of other accounts / delete account (B5-08) ----------
     # Previously only the holder could remove a passkey. If the device is stolen and the
@@ -470,13 +508,7 @@ def build_admin_router(auth) -> APIRouter:
 
     @ar.post("/api/keys/{kid}/revoke")
     def key_revoke(request: Request, kid: int):
-        me = guard(request)
-        owner = auth.store.api_key_owner(kid)
-        if owner is not None:
-            owner_protection(me, owner)     # an owner's keys are revoked only by an owner
-        # The audit line is written by `revoke_api_key` — with owner, IP and actor= (B5-04/R6-3).
-        auth.revoke_api_key(kid)
-        return {"ok": True}
+        return pa.revoke_key(guard(request), kid)
 
     # ---------- Sessions ----------
     @ar.get("/api/sessions")

@@ -12,7 +12,7 @@ reference answers the other question: *"There is a field — what does it do?"*
 Presets (`TinySesamConfig.local_accounts()`, `.oidc_gateway()`, …) set bundles of these fields;
 individual ones can be overridden via `**overrides`.
 
-**Tier:** Every field belongs to tier A — public, stable from 1.0 (see [API.md](API.md), “Three tiers”), except `admin_delegates` (B), `app_password_allow_unlimited` (B), `app_password_default_days` (B), `brand_icon_title` (B), `c22_stylesheet` (B), `gate_key_file` (B), `hsts` (B), `oauth_access_token_ttl_sec` (B), `oauth_enabled` (B), `oauth_pairing_minutes` (B), `oauth_pepper_file` (B), `oauth_refresh_grace_sec` (B), `oauth_refresh_idle_days` (B), `oauth_refresh_max_days` (B), `oauth_resources` (B), `oauth_service_clients` (B), `oauth_service_key_days` (B), `oauth_service_token_ttl_sec` (B), `role_levels` (B), `topbar_enabled` (B), `topbar_links` (B), `topbar_menu_links` (B), `totp_required` (B).
+**Tier:** Every field belongs to tier A — public, stable from 1.0 (see [API.md](API.md), “Three tiers”), except `admin_delegates` (B), `app_password_allow_unlimited` (B), `app_password_default_days` (B), `approval_open_per_account` (B), `approval_open_per_token` (B), `approval_pending_sec` (B), `approval_reject_limit` (B), `approval_requests_per_hour` (B), `approvals_enabled` (B), `brand_icon_title` (B), `c22_stylesheet` (B), `gate_key_file` (B), `hsts` (B), `oauth_access_token_ttl_sec` (B), `oauth_enabled` (B), `oauth_pairing_minutes` (B), `oauth_pepper_file` (B), `oauth_refresh_grace_sec` (B), `oauth_refresh_idle_days` (B), `oauth_refresh_max_days` (B), `oauth_resources` (B), `oauth_service_clients` (B), `oauth_service_key_days` (B), `oauth_service_token_ttl_sec` (B), `role_levels` (B), `topbar_enabled` (B), `topbar_links` (B), `topbar_menu_links` (B), `totp_required` (B).
 
 ## Store
 
@@ -220,6 +220,17 @@ individual ones can be overridden via `**overrides`.
 | `admin_password_must_change` | `bool` | `True` | A password set by an administrator (panel: new account or reset) is a start secret, not the account's password (T-46, ASVS 6.4.1): the next password sign-in stays half until the holder has chosen an own one (the page `/auth/setup`). `False` = the admin's password stays. |
 | `admin_delegates` | `dict` | `dict` | **Tier B.** Delegated admins (T-74): a role whose holders manage the accounts of their team in the admin panel without being administrators — `{"teamadmin": {"roles": ["editors", "viewers"]}}`. A delegate creates accounts and invitations, issues sign-in links, locks and unlocks, and sets or removes the listed roles — only on accounts whose roles all stand in the list (no admin, owner or service account, never their own). Optional per role: `"manages": ["team-a-admin", …]` — delegate roles below it (a hierarchy without cycles; it appoints and removes them and manages their roles too), `"can": ["create", "invite", "disable", "roles", "signin_link"]` — a part of the actions (default all). The rest of the panel stays with administrators. Only a browser session counts: API keys, OAuth tokens and app passwords carry neither the panel nor the delegate role. The same step-up as administrators (`admin_require_mfa`). Every role must stand in `available_roles`; a delegate role stands in no `roles` list, only in `manages`. See README, "Delegated administration". |
 
+## Approvals: confirm one sensitive action with a step-up (stage A: TinySesam actions)
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `approvals_enabled` | `bool` | `False` | **Tier B.** A token (an API key of the account) asks TinySesam for an action it may not do on its own — set the roles of an account, revoke an API key, disable an account. TinySesam stores the request and returns a link and a six-digit match code; the person opens the link in their browser session, confirms once more (password, PIN, TOTP, passkey or the provider, per approval — never a time window) and TinySesam executes the action with the same code as the admin panel, checking the rights the SESSION has at that moment. A token never gains a right: it only proposes. Off by default; without it nothing changes. See SECURITY.md "Approvals". |
+| `approval_pending_sec` | `int` | `600` | **Tier B.** How long a request waits for its decision, in seconds (120–1800); afterwards it is `expired`. |
+| `approval_open_per_account` | `int` | `5` | **Tier B.** Open (pending) requests at the same time per account (1–50); more give 429. |
+| `approval_open_per_token` | `int` | `3` | **Tier B.** Open (pending) requests at the same time per asking API key (1–50); more give 429. |
+| `approval_requests_per_hour` | `int` | `20` | **Tier B.** New requests per account and hour (1–500); more give 429. |
+| `approval_reject_limit` | `int` | `3` | **Tier B.** Rejections of the same type from the same token within an hour that block that token for that type for an hour (1–20). The answer to a token that keeps asking for something the person keeps refusing. |
+
 ## Sessions (server-side, revocable)
 
 | Field | Type | Default | Meaning |
@@ -358,4 +369,4 @@ individual ones can be overridden via `**overrides`.
 
 ---
 
-207 fields, generated from `tinysesam/config.py`.
+213 fields, generated from `tinysesam/config.py`.

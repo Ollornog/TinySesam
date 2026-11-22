@@ -1782,6 +1782,51 @@ cfg = TinySesamConfig(
 What a delegate can take over (a sign-in link signs into the account) is in
 [`SECURITY.md`](https://github.com/Ollornog/TinySesam/blob/main/SECURITY.md#operating-notes-important).
 
+## Approvals: a token asks, the person confirms
+
+An API key never carries the admin flag or a delegate role (R6-5, T-74) — so a script or Claude with a key cannot set
+roles, revoke someone's key or disable an account. With approvals it can **ask**, and the person confirms in their
+browser with a step-up for exactly that action:
+
+```python
+from tinysesam import TinySesamConfig
+
+cfg = TinySesamConfig(approvals_enabled=True, base_url="https://auth.example.com")
+```
+
+```http
+POST /auth/api/approvals
+X-Api-Key: tsk_…
+
+{"type": "tinysesam.account.set_roles", "fields": {"account": "17", "add": ["editors"], "remove": ["viewers"]}}
+```
+
+```json
+{"id": "apv_q4m7…", "state": "pending", "match_code": "418 207",
+ "approve_url": "https://auth.example.com/auth/approvals/apv_q4m7…", "expires_at": 1767226200}
+```
+
+- **Types (stage A):** `tinysesam.account.set_roles` (`account`, `add`, `remove` — roles only, never the admin flag),
+  `tinysesam.apikey.revoke` (`key`), `tinysesam.account.disable` (`account`). Ids are decimal strings. Unknown,
+  missing or wrongly typed fields are a `400`.
+- **Show the link and the code** to the person (Claude prints both; with MCP it is a URL elicitation). The page shows
+  the same code, what is asked (from TinySesam's own texts and the database, never free text of the requester), which
+  key asked and the time left. In the account menu the entry **Approvals (n)** leads to the open ones;
+  `topbar_data()` carries `"approvals": {"pending": n, "href": …}` for an application with its own bar.
+- **The person decides** in a browser session of the same account — never with a token — and confirms once more for
+  this approval: password, PIN or TOTP (as `stepup_methods` allows), a passkey bound to the approval, or a fresh
+  sign-in at the provider. TinySesam then runs the action with the admin panel's code and the rights the session has
+  at that moment: an administrator, a delegate within their scope, the holder for their own key.
+- **The token reads the outcome:** `GET /auth/api/approvals/{id}` (`?wait=25` waits up to 25 s) gives `state` —
+  `pending`, `consumed` with `result` (`ok`, `forbidden`, `not_found`, `invalid`, `conflict`), `rejected`, `expired`,
+  `withdrawn`. `DELETE` withdraws a pending request. Only the asking key sees its requests.
+- **Limits** (`approval_open_per_account`, `approval_open_per_token`, `approval_requests_per_hour`,
+  `approval_reject_limit`) answer `429`; a request waits `approval_pending_sec` (default 10 min). `tinysesam gc`
+  expires and later deletes the rows.
+
+Why this keeps "admin and delegate rights never through tokens": [`SECURITY.md`, "Approvals"](https://github.com/Ollornog/TinySesam/blob/main/SECURITY.md#approvals-stage-a-a-token-proposes-the-person-confirms).
+Approvals for an application's own actions (signed one-time confirmations) are stage B.
+
 ## New in 0.5 — quick reference
 
 All optional (on/off by config), usable individually and combined, front end replaceable everywhere.
@@ -2455,7 +2500,7 @@ Every Python block in both files runs in the test suite, and every name they men
 
 ## Status
 
-**120 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
+**121 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
 
 Implemented and tested: password/TOTP/sessions/roles, remember-me, step-up and per-route MFA,
 factor chains, personal PIN, shared resource secrets, magic links + mailer hook, registration and

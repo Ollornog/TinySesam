@@ -1826,6 +1826,53 @@ cfg = TinySesamConfig(
 Was ein Delegierter übernehmen kann (ein Anmeldelink meldet im Konto an), steht in
 [`SECURITY.de.md`](https://github.com/Ollornog/TinySesam/blob/main/i18n/SECURITY.de.md).
 
+## Freigaben: Ein Token fragt, der Mensch bestätigt
+
+Ein API-Key trägt nie die Admin-Flag oder eine Delegiertenrolle (R6-5, T-74) — ein Skript oder Claude mit Key kann also
+keine Rollen setzen, keinen fremden Key widerrufen und kein Konto sperren. Mit Freigaben kann es **anfragen**, und der
+Mensch bestätigt im Browser mit einem Step-up für genau diese Aktion:
+
+```python
+from tinysesam import TinySesamConfig
+
+cfg = TinySesamConfig(approvals_enabled=True, base_url="https://auth.example.com")
+```
+
+```http
+POST /auth/api/approvals
+X-Api-Key: tsk_…
+
+{"type": "tinysesam.account.set_roles", "fields": {"account": "17", "add": ["editors"], "remove": ["viewers"]}}
+```
+
+```json
+{"id": "apv_q4m7…", "state": "pending", "match_code": "418 207",
+ "approve_url": "https://auth.example.com/auth/approvals/apv_q4m7…", "expires_at": 1767226200}
+```
+
+- **Typen (Etappe A):** `tinysesam.account.set_roles` (`account`, `add`, `remove` — nur Rollen, nie die Admin-Flag),
+  `tinysesam.apikey.revoke` (`key`), `tinysesam.account.disable` (`account`). IDs sind Dezimal-Strings. Unbekannte,
+  fehlende oder falsch typisierte Felder geben `400`.
+- **Link und Code zeigen** (Claude gibt beides aus; bei MCP ist es eine URL-Elicitation). Die Seite zeigt denselben
+  Code, was angefragt ist (aus TinySesams eigenen Texten und der Datenbank, nie freier Text des Anfragers), welcher Key
+  gefragt hat und die Restzeit. Im Konto-Menü führt der Eintrag **Freigaben (n)** zu den offenen; `topbar_data()`
+  trägt `"approvals": {"pending": n, "href": …}` für eine Anwendung mit eigener Leiste.
+- **Der Mensch entscheidet** in einer Browser-Sitzung desselben Kontos — nie mit einem Token — und bestätigt für diese
+  Freigabe noch einmal: Passwort, PIN oder TOTP (soweit `stepup_methods` es zulässt), ein an die Freigabe gebundener
+  Passkey oder eine frische Anmeldung beim Anbieter. Dann führt TinySesam die Aktion mit dem Code des Admin-Panels und
+  den Rechten aus, die die Sitzung in diesem Moment hat: ein Admin, ein Delegierter in seinem Bereich, die Inhaberin
+  für ihren eigenen Key.
+- **Der Token liest das Ergebnis:** `GET /auth/api/approvals/{id}` (`?wait=25` wartet bis zu 25 s) liefert `state` —
+  `pending`, `consumed` mit `result` (`ok`, `forbidden`, `not_found`, `invalid`, `conflict`), `rejected`, `expired`,
+  `withdrawn`. `DELETE` zieht eine offene Anfrage zurück. Nur der anfragende Key sieht seine Anfragen.
+- **Limits** (`approval_open_per_account`, `approval_open_per_token`, `approval_requests_per_hour`,
+  `approval_reject_limit`) antworten mit `429`; eine Anfrage wartet `approval_pending_sec` (Standard 10 min).
+  `tinysesam gc` lässt die Zeilen ablaufen und löscht sie später.
+
+Warum das „Admin- und Delegiertenrechte nie über Tokens“ nicht aufweicht:
+[`SECURITY.de.md`, „Freigaben“](https://github.com/Ollornog/TinySesam/blob/main/i18n/SECURITY.de.md). Freigaben für eigene Aktionen einer Anwendung (signierte
+Einmal-Bestätigungen) kommen mit Etappe B.
+
 ## Neu in 0.5 — Kurzreferenz
 
 Alles optional (per Config an/aus), einzeln und kombiniert nutzbar, Frontend überall ersetzbar.
@@ -2520,7 +2567,7 @@ Jeder Python-Block beider Dateien läuft in der Testsuite, und jeder genannte Na
 
 ## Status
 
-**120 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
+**121 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
 (`tests/test_matrix.py`).
 
 Gebaut und getestet: Passwort/TOTP/Sitzungen/Rollen, Remember-me, Step-up und per-Route-MFA,

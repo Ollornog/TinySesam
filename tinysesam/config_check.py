@@ -957,6 +957,7 @@ def check_config(config) -> tuple[list[str], list[str]]:
     _gate(config, error, warnings)
     _oauth(config, error, warnings)
     _oauth_services_without_oauth(config, error)
+    _approvals(config, error)
     _keys(config, warnings)
     _forward_apps(config, error, warnings)
 
@@ -1070,6 +1071,13 @@ NUMBER_LIMITS = {
     "oauth_service_token_ttl_sec": (60, 3600),
     "oauth_service_key_days": (0, 3650),
     "oauth_pairing_minutes": (1, 60),
+    # Approvals (stage A): a request waits minutes, not hours — a link that stays valid for a day is one more link
+    # lying around; below two minutes nobody can open it, step up and decide.
+    "approval_pending_sec": (120, 1800),
+    "approval_open_per_account": (1, 50),
+    "approval_open_per_token": (1, 50),
+    "approval_requests_per_hour": (1, 500),
+    "approval_reject_limit": (1, 20),
     # Waiting time on the "Signed out" page before it leads back to the application. Above five minutes
     # nobody waits any more, for that there is 0 (leave standing).
     "forward_logged_out_sec": (0, 300),
@@ -1760,6 +1768,27 @@ def _gate(config, error: list, warnings: list) -> None:
             "none, and the proxy keeps asking on every request."))
 
 
+def _approvals(config, error: list) -> None:
+    """Approvals (stage A): a token asks, the person confirms in a browser session with a step-up."""
+    if not _an(config, "approvals_enabled"):
+        return
+    if not _an(config, "apikey_enabled"):
+        error.append(_t(
+            config,
+            "approvals_enabled=True with apikey_enabled=False: an approval is requested with an API key of the "
+            "account — without keys nobody can ask."))
+    if not _an(config, "csrf_enabled"):
+        error.append(_t(
+            config,
+            "approvals_enabled=True with csrf_enabled=False: the approval page needs the CSRF protection — "
+            "otherwise a foreign page could confirm an action in the name of the signed-in person."))
+    if not security.normalize_base(str(getattr(config, "base_url", "") or "").strip()):
+        error.append(_t(
+            config,
+            "approvals_enabled=True without base_url: the link handed to the requester is built from base_url "
+            "— never from the Host header of a request."))
+
+
 def _oauth(config, error: list, warnings: list) -> None:
     """OAuth 2.1 authorization server (T-36, ADR-11): the resource side is forward auth, the issuer is base_url."""
     if not _an(config, "oauth_enabled"):
@@ -1970,6 +1999,18 @@ def _combinations(config, error: list, warnings: list) -> None:
 # REQUIRES_MAILER / REQUIRES_BASE_URL / BASE_URL_RECOMMENDED must be a key of `_DE`, and every
 # key must be used (`config_check._DE`).
 _DE: dict[str, str] = {
+    ("approvals_enabled=True with apikey_enabled=False: an approval is requested with an API key of the "
+     "account — without keys nobody can ask."):
+        ("approvals_enabled=True mit apikey_enabled=False: Eine Freigabe wird mit einem API-Key des Kontos "
+         "angefragt — ohne Keys kann niemand anfragen."),
+    ("approvals_enabled=True with csrf_enabled=False: the approval page needs the CSRF protection — "
+     "otherwise a foreign page could confirm an action in the name of the signed-in person."):
+        ("approvals_enabled=True mit csrf_enabled=False: Die Freigabe-Seite braucht den CSRF-Schutz — sonst "
+         "könnte eine fremde Seite im Namen der angemeldeten Person eine Aktion bestätigen."),
+    ("approvals_enabled=True without base_url: the link handed to the requester is built from base_url "
+     "— never from the Host header of a request."):
+        ("approvals_enabled=True ohne base_url: Der Link für den Anfrager wird aus base_url gebaut — nie "
+         "aus dem Host-Header einer Anfrage."),
     ("oauth_service_key_days=0: a service key never expires — a copied key file stays usable until someone "
      "revokes the service. With a lifetime the reference client rotates the key on its own."):
         ("oauth_service_key_days=0: Ein Dienst-Schlüssel läuft nie ab — eine kopierte Schlüsseldatei bleibt "

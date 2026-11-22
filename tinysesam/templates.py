@@ -1417,6 +1417,154 @@ def _oauth_consent(auth, ctx) -> str:
     return _page(auth, t("oauth.consent_title"), body, ctx=ctx)
 
 
+_APPROVAL_CSS = """
+.tsmain .apvsum{font-size:15px;line-height:1.45;margin:0 0 6px}
+.tsmain .apvsum bdi{font-weight:600}
+.tsmain .apvcode{font-family:var(--ts-mono);font-size:26px;letter-spacing:.12em;text-align:center;margin:6px 0 2px;
+     padding:8px;border:1px dashed var(--ts-line);border-radius:8px}
+.tsmain .apvmeta{color:var(--ts-muted);font-size:12px;margin-top:10px}
+.tsmain .apvlist{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}
+.tsmain .apvlist a{display:block;padding:12px;border:1px solid var(--ts-line);border-radius:8px;color:var(--ts-ink);
+     text-decoration:none;min-height:44px}
+.tsmain .apvlist a:hover{background:var(--ts-surface-2)}
+.tsmain .apvlist small{display:block;color:var(--ts-muted);margin-top:4px}
+.tsmain .apvbtns{display:flex;gap:10px}
+.tsmain .apvbtns button{flex:1;min-height:44px;margin-top:18px}
+.tsmain .apvstate{font-weight:600}
+.tsmain #apvirrev{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600}
+.tsmain .apvwarn{flex:0 0 18px;width:18px;height:18px}
+.tsmain .apvsr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+"""
+
+#: Words for the state of a closed approval — a symbol of `_SYMBOL` and a word, never colour alone.
+_APV_STATE_KIND = {"consumed": "ok", "rejected": "info", "expired": "warn", "withdrawn": "info", "approved": "ok"}
+
+
+def _approval_rows(rows) -> str:
+    return "".join(f"<tr><th>{_e(k)}</th><td><bdi>{_e(v)}</bdi></td></tr>" for k, v in rows)
+
+
+def _approvals(auth, ctx) -> str:
+    """ctx: items (views from `Approvals.view`). The person's open approvals — one link per request, no bulk
+    confirmation (each request is decided on its own page with its own step-up)."""
+    t = auth.t
+    items = ctx.get("items") or []
+    if items:
+        lis = "".join(
+            f"<li><a href='__TS_P__/auth/approvals/{_e(a['id'])}' data-apv='{_e(a['id'])}'>"
+            f"<b>{_e(a['title'])}</b><small>{_e(t('apv.code'))} <span class=mono>{_e(a['match_code'])}</span> · "
+            f"{_e(t('apv.left', minutes=a['minutes_left']))}</small></a></li>" for a in items)
+        body = f"<ul class=apvlist>{lis}</ul>"
+    else:
+        body = f"<p class=hint id=apvnone>{_e(t('apv.none'))}</p>"
+    head = f"<style>{_APPROVAL_CSS}</style>"
+    return _page(auth, t("apv.list_title"), f"<h1>{_e(t('apv.list_title'))}</h1>{body}", ctx=ctx,
+                 current="approvals", head=head)
+
+
+def _approval_stepup(auth, ctx, a) -> str:
+    """The step-up of one approval: the fields of `stepup_options`, a passkey button, the provider button."""
+    t = auth.t
+    methods = list(ctx.get("methods") or [])
+    parts = []
+    secrets_ = [m for m in methods if m in ("totp", "pin", "password")]
+    if secrets_:
+        parts.append(f"<div class=or>{_e(t('or'))}</div>".join(
+            _stepup_field(auth, m, i == 0) for i, m in enumerate(secrets_)))
+    return "".join(parts)
+
+
+_APPROVAL_PASSKEY_JS = """
+<script>
+document.getElementById('apvpk')?.addEventListener('click', async (ev) => {
+  ev.preventDefault();
+  const form = document.getElementById('apvform');
+  try {
+    const o = await (await fetch(form.getAttribute('action') + '/passkey', {method:'POST',
+      headers:{'X-CSRF-Token':tsCsrf()}})).json();
+    const dec = s => Uint8Array.from(atob(s.replace(/-/g,'+').replace(/_/g,'/')), c=>c.charCodeAt(0));
+    o.challenge = dec(o.challenge);
+    (o.allowCredentials||[]).forEach(c => c.id = dec(c.id));
+    const cred = await navigator.credentials.get({publicKey:o});
+    const enc = a => btoa(String.fromCharCode(...new Uint8Array(a))).replace(/\\+/g,'-').replace(/\\//g,'_').replace(/=+$/,'');
+    document.getElementById('apvwa').value = JSON.stringify({id:cred.id, rawId:enc(cred.rawId), type:cred.type,
+      response:{clientDataJSON:enc(cred.response.clientDataJSON), authenticatorData:enc(cred.response.authenticatorData),
+      signature:enc(cred.response.signature), userHandle:cred.response.userHandle?enc(cred.response.userHandle):null}});
+    document.getElementById('apvdec').name = 'decision';
+    form.submit();
+  } catch(e){ await tsAlert(__PK_ABORTED__+': '+e); }
+});
+</script>
+"""
+
+
+def _approval(auth, ctx) -> str:
+    """ctx: outcome (open | done | rejected | closed | foreign), approval (view), methods, provider_ready, error.
+    The approval page: who asks for what (from the operator's fixed texts and the database, every value escaped and
+    bidi-isolated), the match code, the remaining time, the step-up of THIS approval, then Approve or Reject."""
+    t = auth.t
+    outcome = ctx.get("outcome") or "foreign"
+    head = f"<style>{_APPROVAL_CSS}</style>"
+    if outcome == "foreign":
+        body = (f"<h1>{_e(t('apv.foreign_title'))}</h1><p class=hint id=apvforeign>{_e(t('apv.foreign'))}</p>")
+        return _page(auth, t("apv.foreign_title"), body, ctx=ctx, head=head)
+    a = ctx.get("approval") or {}
+    table = f"<table class=qrinfo>{_approval_rows(a.get('rows') or [])}</table>"
+    # A symbol AND a word, never colour alone: the warning triangle (inline SVG, nothing fetched; a font without the
+    # ⚠ glyph would show a box) plus "Permanent", and the ⚠ character for screen readers and copy-paste.
+    warn = (f"<div class=warnbar id=apvirrev><svg class=apvwarn viewBox='0 0 24 24' fill='none' stroke='currentColor' "
+            f"stroke-width='2' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'>{_SYMBOL['warn']}</svg>"
+            f"<span class=apvwarntxt><span class=apvsr>⚠ </span>{_e(t('apv.irreversible'))}</span></div>"
+            if a.get("irreversible") else "")
+    summary = f"<p class=apvsum id=apvsum><bdi>{_e(a.get('summary'))}</bdi></p>"
+    title = f"<h1>{_e(a.get('title'))}</h1>"
+    if outcome != "open":
+        state = a.get("state") or ""
+        if outcome == "done":
+            kind, text = ("ok", t("apv.done_" + str(a.get("result") or "invalid")))
+        elif outcome == "rejected":
+            kind, text = ("info", t("apv.rejected"))
+        else:
+            kind, text = (_APV_STATE_KIND.get(state, "info"),
+                          t("apv.state_" + state) if state else t("apv.closed"))
+            if state == "consumed":
+                text = t("apv.done_" + str(a.get("result") or "invalid"))
+        msgs = _messages([("error", ctx.get("error")), (kind, text), ("info", t("apv.back"))])
+        body = (f"{title}{summary}{table}<p class=apvmeta id=apvstate data-state='{_e(state)}'>"
+                f"<span class=apvstate>{_e(t('apv.state'))}: {_e(t('apv.st.' + state) if state else '—')}</span></p>")
+        return _page(auth, str(a.get("title") or ""), body, ctx=ctx, head=head, below=msgs)
+    methods = list(ctx.get("methods") or [])
+    fields = _approval_stepup(auth, ctx, a)
+    extra = ""
+    if "passkey" in methods:
+        extra += (f"<button type=button class=btn2 id=apvpk>{_e(t('apv.passkey'))}</button>"
+                  + _csrf_js(auth) + ctx.get("dialog", "")
+                  + _APPROVAL_PASSKEY_JS.replace("__PK_ABORTED__", json.dumps(t("apv.passkey_aborted"))))
+    if "oidc" in methods:
+        if ctx.get("provider_ready"):
+            extra += f"<input type=hidden name=method value=oidc><p class=hint id=apvoidcok>✓ {_e(t('apv.oidc_ready'))}</p>"
+        else:
+            back = f"/auth/approvals/{a.get('id', '')}"
+            extra += (f"<a class=btn2 id=apvoidc href='__TS_P__/auth/oidc/start?approval={_e(a.get('id', ''))}"
+                      f"&amp;next={_next_q('__TS_P__' + back)}'>{_e(t('reauth.oidc', name=auth.cfg.oidc_name))}</a>")
+    nothing = "" if methods else f"<div class=warnbar id=apvnomethod>{_e(t('apv.no_method'))}</div>"
+    action = f"__TS_P__/auth/approvals/{_e(a.get('id', ''))}"
+    body = (f"{title}{summary}{warn}{table}"
+            f"<label>{_e(t('apv.code_question'))}</label><div class=apvcode id=apvcode>{_e(a.get('match_code'))}</div>"
+            f"<p class=apvmeta id=apvvia>{_e(a.get('via'))} · {_e(t('apv.left', minutes=a.get('minutes_left', 0)))}</p>"
+            f"<form method=post id=apvform action='{action}'>{_cf(ctx)}"
+            f"<input type=hidden name=payload_hash value='{_e(a.get('payload_hash'))}'>"
+            f"<input type=hidden name=webauthn id=apvwa value=''>"
+            f"<input type=hidden id=apvdec value=approve>"
+            f"<p class=hint>{_e(t('apv.stepup_hint'))}</p>{nothing}{fields}{extra}"
+            f"<div class=apvbtns>"
+            f"<button type=submit id=apvyes name=decision value=approve>{_e(t('apv.approve'))}</button>"
+            f"<button type=submit id=apvno class=btn2 name=decision value=reject>{_e(t('apv.reject'))}</button>"
+            f"</div></form>")
+    msgs = _messages([("error", ctx.get("error"))])
+    return _page(auth, str(a.get("title") or ""), body, ctx=ctx, head=head, below=msgs)
+
+
 def _app_passwords_section(auth, ctx, u) -> str:
     """App passwords (T-66) on the account page: list (loaded by script), name, applications, lifetime, create.
 
@@ -1529,4 +1677,6 @@ DEFAULTS = {
     "totp_setup": _totp_setup,
     "account_setup": _account_setup,
     "oauth_consent": _oauth_consent,
+    "approvals": _approvals,
+    "approval": _approval,
 }

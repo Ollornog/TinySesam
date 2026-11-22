@@ -474,6 +474,26 @@ class TinySesamConfig:
     #: stands in no `roles` list, only in `manages`. See README, "Delegated administration".
     admin_delegates: dict = field(default_factory=dict)
 
+    # --- Approvals: confirm one sensitive action with a step-up (stage A: TinySesam actions) ---
+    # A token (an API key of the account) asks TinySesam for an action it may not do on its own — set the roles of an
+    # account, revoke an API key, disable an account. TinySesam stores the request and returns a link and a six-digit
+    # match code; the person opens the link in their browser session, confirms once more (password, PIN, TOTP,
+    # passkey or the provider, per approval — never a time window) and TinySesam executes the action with the same
+    # code as the admin panel, checking the rights the SESSION has at that moment. A token never gains a right: it
+    # only proposes. Off by default; without it nothing changes. See SECURITY.md "Approvals".
+    approvals_enabled: bool = False
+    # How long a request waits for its decision, in seconds (120–1800); afterwards it is `expired`.
+    approval_pending_sec: int = 600
+    # Open (pending) requests at the same time per account (1–50); more give 429.
+    approval_open_per_account: int = 5
+    # Open (pending) requests at the same time per asking API key (1–50); more give 429.
+    approval_open_per_token: int = 3
+    # New requests per account and hour (1–500); more give 429.
+    approval_requests_per_hour: int = 20
+    # Rejections of the same type from the same token within an hour that block that token for that type for an hour
+    # (1–20). The answer to a token that keeps asking for something the person keeps refusing.
+    approval_reject_limit: int = 3
+
     # --- Sessions (server-side, revocable) ---
     session_cookie: str = "tinysesam_session" # name of the session cookie (tell them apart when several apps share a domain)
     session_ttl_hours: int = 24 * 7       # TTL with "stay signed in" (persistent cookie)

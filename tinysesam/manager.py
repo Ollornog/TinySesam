@@ -1672,6 +1672,8 @@ class TinySesam:
     #: to act as the account; `oauth_service_revoked` (`client_id`, `client_name`, `reason`).
     #: Since T-63 `signed_in_after_failures` (`failures`, `ip`): a complete sign-in ended a streak of at least
     #: `_AFTER_FAILURES_MIN` consecutive failed attempts (ASVS 5.0 6.3.5) — by mail with `notify_login_failures`.
+    #: Since the approvals (stage A) `approval_approved` (`approval_id`, `type`, `result`): the holder confirmed an
+    #: action a token had asked for, and TinySesam executed it — not mailed by TinySesam (the hook may).
     SECURITY_EVENTS = (
         "password_changed", "pin_set", "pin_disabled", "totp_enabled", "totp_disabled",
         "recovery_codes_generated", "recovery_code_used", "passkey_added", "passkey_removed",
@@ -1682,6 +1684,7 @@ class TinySesam:
         "app_password_created", "app_password_revoked", "app_passwords_revoked",
         "oauth_service_paired", "oauth_service_revoked",
         "signed_in_after_failures",
+        "approval_approved",
     )
 
     #: The events that mean NEW access to the account — they go to the owner by mail as well
@@ -5869,17 +5872,13 @@ class TinySesam:
             return None, (403, self._WITHOUT_SESSION_KEY[purpose])
         return None, (401, "api.not_signed_in")
 
-    def _confirm(self, request: Request, procedure: str, secret, next: str,
-                     csrf: Optional[str]) -> LoginResult:
-        """The one source of `confirm_password`, `confirm_pin` and `confirm_totp` — and thus of
-        `POST /auth/reauth`, which calls one of them depending on the field filled in."""
-        cfg = self.cfg
-        self.require_csrf(request, self._csrf_sent_along(request, csrf))
-        nxt = self.safe_next(next, request)
-        u, without = self._only_with_session(request, "reauth")
-        if u is None:
-            return self._sign_in_no("no_session", without[0], without[1],
-                                        self.browser_path(request, cfg.login_path))
+    def _stepup_secret(self, request: Request, u: dict, procedure: str, secret, nxt: str) -> Optional[LoginResult]:
+        """Check a step-up secret (password, PIN, TOTP) of the session's account `u` — offered methods only, throttled,
+        pre-booked in the own `reauth` bucket, logged for fail2ban. None when it is right, otherwise the refusal.
+
+        The one checker of `_confirm` (the reauth page, `confirm_*`) and of the approvals' per-approval step-up
+        (`tinysesam.approvals`): an approval confirms with exactly the same lock, counter and log lines as the reauth
+        page, but changes nothing about the session — its confirmation belongs to the one action."""
         methods = self.stepup_options(u)
         if not methods:
             # This account has no method with which it could confirm here
@@ -5915,6 +5914,22 @@ class TinySesam:
         self._record_login(u["username"], ip, correct, "reauth", attempt=attempt)
         if not correct:
             return self._sign_in_no("invalid", 401, "err.reauth", nxt)
+        return None
+
+    def _confirm(self, request: Request, procedure: str, secret, next: str,
+                     csrf: Optional[str]) -> LoginResult:
+        """The one source of `confirm_password`, `confirm_pin` and `confirm_totp` — and thus of
+        `POST /auth/reauth`, which calls one of them depending on the field filled in."""
+        cfg = self.cfg
+        self.require_csrf(request, self._csrf_sent_along(request, csrf))
+        nxt = self.safe_next(next, request)
+        u, without = self._only_with_session(request, "reauth")
+        if u is None:
+            return self._sign_in_no("no_session", without[0], without[1],
+                                        self.browser_path(request, cfg.login_path))
+        refused = self._stepup_secret(request, u, procedure, secret, nxt)
+        if refused is not None:
+            return refused
         s = self._session_from_request(request)
         new = None
         if s:
@@ -5923,7 +5938,7 @@ class TinySesam:
             # hold exactly the session that has just received sudo rights. The old one still applies for
             # `session_rotation_grace_sec`, without freshness (A-6). The CSRF token stays.
             new = self.store.rotate_session(s["token_hash"], self._mercy())
-        self.audit("stepup", u["username"], ip)
+        self.audit("stepup", u["username"], self.client_ip(request))
         return LoginResult._with_session(self, new, ok=True, reason="ok", status=303, next_url=nxt,
                                          done=True, user=self.get_user(u["id"]))
 
@@ -7340,10 +7355,35 @@ class TinySesam:
         # the switch off — what an earlier run left behind should not stay forever.
         from . import oauth as _oauth_mod
         numbers.update(self.store.gc_oauth(_now(), _oauth_mod.IDLE_CLIENT_SEC, _oauth_mod.REVOKED_KEEP_SEC))
+        # Approvals (stage A): expire what waited too long, delete closed rows after the audit deadline. Only with
+        # the switch on — without it nothing changes, not even the keys of this result.
+        if getattr(self.cfg, "approvals_enabled", False):
+            numbers.update(self._approvals().gc())
         days = int(self.cfg.audit_retention_days or 0)
         if days > 0:
             numbers["audit"] = self.store.gc_audit(_now() - days * 86400)
         return numbers
+
+    def _approvals(self):
+        """The approvals of this instance (`tinysesam.approvals.Approvals`), created on first use."""
+        svc = getattr(self, "_approval_service", None)
+        if svc is None:
+            from .approvals import Approvals
+            svc = self._approval_service = Approvals(self)
+        return svc
+
+    def _approvals_pending(self, viewer) -> Optional[int]:
+        """How many approvals wait for `viewer` — None when approvals are off or the viewer is no session account
+        (the top bar and `topbar_data` then show nothing of them)."""
+        if not getattr(self.cfg, "approvals_enabled", False) or not viewer:
+            return None
+        try:
+            via = viewer["_via"]
+        except (KeyError, IndexError, TypeError):
+            via = None
+        if via not in (None, "session"):
+            return None
+        return self._approvals().pending_count(viewer)
 
     def version(self) -> str:
         """The running version — for the panel. TinySesam does not update itself;

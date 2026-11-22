@@ -119,7 +119,9 @@ Rate-Limit, Open-Redirect-Schutz via `safe_next`). Trotzdem: vor produktivem Ein
   `api_keys_revoked`). Eine vollständige Anmeldung nach mindestens drei Fehlversuchen in Folge (T-63, ASVS 6.3.5):
   `signed_in_after_failures` (`details={"failures": n, "ip": …}` — die Serie zählt jeden fehlgeschlagenen
   Anmeldeversuch unter den Namen des Kontos seit der letzten vollständigen Anmeldung, über alle Verfahren; dazu das
-  Audit-Ereignis `login_after_failures`). Die vollständige Liste der Ereignisnamen ist
+  Audit-Ereignis `login_after_failures`). Freigaben (Etappe A): `approval_approved` (`details={"approval_id": …,
+  "type": …, "result": …}` — die Inhaberin hat eine Aktion bestätigt, die ein Token angefragt hatte, und TinySesam hat
+  sie ausgeführt; TinySesam selbst verschickt dazu keine Mail). Die vollständige Liste der Ereignisnamen ist
   `TinySesam.SECURITY_EVENTS`. Die Schlüssel in `details` und die
   Gründe sind seit 0.22.0 englisch (bis 0.21.x `verbleibend`, `alt`/`neu`, `anzahl`/`grund` mit
   deutschen Gründen). Das gilt auch für Änderungen, die ein Admin im Panel an
@@ -231,6 +233,56 @@ Rate-Limit, Open-Redirect-Schutz via `safe_next`). Trotzdem: vor produktivem Ein
   der Server antwortet — ohne Zeile für fail2ban. Ein API-Key zählt bei diesen
   Bausteinen nie: Er bestätigt keinen Menschen und ändert kein Passwort (`POST /auth/password`
   weist ihn seit 0.22.0 mit 403 ab).
+
+## Freigaben (Etappe A): Ein Token schlägt vor, der Mensch bestätigt
+
+Mit `approvals_enabled=True` kann ein API-Key eines Kontos eine von drei TinySesam-Aktionen **anfragen**, die er selbst
+nicht darf: `tinysesam.account.set_roles` (Rollen hinzufügen und entfernen), `tinysesam.apikey.revoke`,
+`tinysesam.account.disable`. TinySesam speichert die Anfrage und antwortet mit einem Link und einem sechsstelligen
+Prüfcode; der Mensch öffnet den Link in seiner Browser-Sitzung, bestätigt noch einmal und entscheidet. Dafür gelten
+diese Regeln:
+
+- **Der Token schlägt nur vor.** `POST /auth/api/approvals` schreibt eine Zeile, es gewährt nichts. Anfragen darf nur
+  ein API-Key (ein `human`-Key nur neben einer Sitzung seines Kontos, wie überall); eine Sitzung hat das Panel, ein
+  OAuth- oder MCP-Token wird abgewiesen, bis TinySesam selbst eine MCP-Ressource ist, ein App-Passwort nie. Der Key
+  eines Dienstkontos bekommt `no_approver`: Niemand könnte bestätigen.
+- **Entscheiden kann nur eine Browser-Sitzung desselben Kontos** (`POST /auth/approvals/{id}`). Eine Anfrage mit
+  `Authorization` oder `X-Api-Key` wird mit 403 abgewiesen, auch ein `human`-Key neben seiner Sitzung. Ein anderes
+  Konto sieht eine neutrale Seite („gibt es nicht oder gehört zu einem anderen Konto“), dieselbe Antwort wie für eine
+  unbekannte ID; die ID selbst hat 128 Bit Zufall.
+- **Step-up je Freigabe, nie ein Zeitfenster.** Passwort, PIN oder TOTP (was `stepup_options()` anbietet, also durch
+  `stepup_methods` eingeengt), ein Passkey, dessen WebAuthn-Challenge SHA-256(`"tinysesam-approval:"` ‖
+  Server-Zufallswert ‖ ID ‖ Nutzlast-Hash) ist — einmalig und an genau diese Aktion gebunden, sodass ein Agent im
+  Browser keine Geste wiederholen kann —, oder eine frische Anmeldung beim Anbieter (`prompt=login`, `max_age=0`),
+  deren `auth_time` nach der Anfrage liegen muss (ohne `auth_time`: keine Freigabe, fail-closed). Eine frische Sitzung
+  zählt nicht, und eine Freigabe macht die Sitzung nicht frisch. Die Geheimnis-Prüfungen laufen durch Sperre, Zähler
+  und fail2ban-Zeilen der Reauth-Seite.
+- **Es zählen die Rechte zur Bestätigungszeit (E4).** TinySesam führt mit dem Code des Admin-Panels aus
+  (`admin.PanelActions`), als die bestätigende Sitzung: ein Admin, ein Delegierter in seinem Bereich (T-74), die
+  Inhaberin für ihren eigenen Key. Endet eine Delegation dazwischen, steht `result=forbidden`. **Admin-Rechte gehen
+  nie über diesen Weg:** `set_roles` nimmt nur `add`/`remove` von Rollen, nie die Admin-Flag — ein Typ, der sie
+  vergibt, braucht eine eigene Entscheidung des Maintainers, nicht nur Code.
+- **Nichts Bleibendes.** Eine Aktion, einmal, für Minuten (`approval_pending_sec`, 120–1800 s). Jeder Zustandswechsel
+  ist ein `UPDATE … WHERE state = <alt>`: Bei doppeltem oder parallelem Bestätigen gibt es genau einen Gewinner, und
+  nur er führt aus. Ein GET entscheidet nie etwas; der POST trägt CSRF und den `payload_hash`, den die Seite gezeigt
+  hat — eine Anfrage, die sich dazwischen geändert hat, wird abgewiesen.
+- **Kein freier Text vom Anfrager.** Titel und Zusammenfassung sind TinySesams eigene Texte, gefüllt aus der
+  gespeicherten Nutzlast und dem DB-Stand beim Anzeigen; jeder Wert ist escaped und bidi-isoliert, Steuerzeichen und
+  Kommas in Rollennamen werden abgelehnt, nicht entfernt. Ein Zielkonto oder Key, das die Betrachterin gerade nicht
+  verwalten darf, erscheint nur mit seiner ID. Die Seite wird nie eingebettet: `frame-ancestors 'none'` und
+  `X-Frame-Options: DENY`, egal was `csp` sagt.
+- **Müdigkeit und Spam.** Keine Sammelbestätigung; offene Anfragen je Konto (`approval_open_per_account`, 5) und je
+  Key (`approval_open_per_token`, 3), neue je Konto und Stunde (`approval_requests_per_hour`, 20), und
+  `approval_reject_limit` (3) Ablehnungen eines Typs von einem Key binnen einer Stunde sperren diesen Key für diesen Typ
+  eine Stunde — jeweils `429`, im Audit als `approval_throttled`.
+- **Audit ohne Werte:** `approval_requested`, `approval_approved` (mit `amr`), `approval_rejected`,
+  `approval_withdrawn`, `approval_expired`, `approval_executed` (mit `result`), `approval_throttled`,
+  `approval_denied` (`reason=token|other_account|stepup|payload_changed|no_approver`) tragen ID, Typ, Key und
+  Nutzlast-Hash — die Werte bleiben in der Zeile. `approval_approved` erreicht `on_security_event`.
+
+Restrisiko: ein Mensch, der bestätigt, ohne zu lesen. Prüfcode, Step-up je Freigabe und die Limits erschweren das,
+verhindern es aber nicht — die Seite ist bewusst schlicht: wer fragt (Key-Name und Datum), was (ein Satz und die
+Werte), der Code, die Restzeit. Den anfragenden Key zu widerrufen beendet eine Flut von Anfragen.
 
 ## Verwundbare Abhängigkeiten
 
