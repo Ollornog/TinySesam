@@ -28,7 +28,17 @@
 #     origin/master — der erste, den es gibt), Unterschied zum ARBEITSBAUM (gestagt und ungestagt) plus neue ungetrackte
 #     Dateien. `--no-renames`: ein Umzug roles/x.md → docs/x.md zeigte sonst nur den neuen Namen.
 #     Kein Standardzweig, merge-base scheitert → volle Suite. Ein veralteter Standardzweig vergrößert die Liste nur.
+#   * GitHub Actions, event push to a branch (since kit 0.53.0, PO 2026-11-22: "main after a text-only commit runs
+#     only the fast check"): base is the `before` SHA of the event payload ($GITHUB_EVENT_PATH), compared with HEAD,
+#     which must be GITHUB_SHA. One commit: before = HEAD^ (a merge commit: its first parent). Several commits in one
+#     push: text only if all of them together are text only (before..HEAD). Full suite when before is missing or all
+#     zeros (first push, new branch), when the push was forced, when it pushes a tag, when the payload is unreadable
+#     (neither jq nor python3), or when before cannot be fetched.
+#   * Any other event in GitHub Actions (schedule, workflow_dispatch, release, merge_group …) → full suite, always.
 #   * Keine Änderung (Push auf den Standardzweig selbst) → volle Suite. Der Standardzweig wird immer voll geprüft.
+#     Since 0.53.0 that holds outside Actions; in Actions a push that changes only text runs the fast check (above).
+#     Named limit: the fast check on a push trusts that before was checked in full — a red main stays red only
+#     in the earlier run, the text push itself turns green.
 #
 # STANDARD-ERLAUBNISLISTE (eine für alle Repos, nur hier): Markdown, das kein Programm liest, rendert oder ausliefert —
 #     *.md in der Wurzel · docs/**.md · backlog/**.md · changelog.d/**.md
@@ -37,11 +47,13 @@
 #   Symlink, kein +x — ein ausführbares „.md“ ist ein Skript), und
 #   KEIN PROGRAMM DARF SIE BEIM NAMEN NENNEN: Steht ihr Dateiname (als Wort) in einer getrackten Datei, die selbst kein
 #   Text von der Liste ist, fährt die volle Suite — pyproject `readme = "README.md"`, ein Generator, der API.md schreibt,
-#   ein Release-Workflow, der CHANGELOG.md liest. Ausgenommen sind nur die Leser, die im Text-Modus ohnehin laufen:
+#   ein Release-Workflow, der CHANGELOG.md liest. Liegt die Datei in einem Unterordner (backlog/README.md), zählt der
+#   blosse Name nur aus ihrem Ordnerbaum oder aus einer Zeile, die auch einen Teil des Ordnerpfads als Wort nennt
+#   (den vollen Pfad oder `ROOT / "docs" / "API.md"`), seit Kit 0.52.2. Grenze: über Zeilen zusammengesetzte Pfade. Ausgenommen sind nur die Leser, die im Text-Modus ohnehin laufen:
 #   tests/test_repo.py und die Kit-Dateien, einzeln genannt (tests/_kit/, scripts/_nur_text.sh, _residue_check.sh,
 #   _backlog.py, .githooks/pre-push). Eine Markdown-Datei, die ihn nennt (auch außerhalb der Liste, etwa i18n/), ist
 #   kein Leser — außer das Repo führt Markdown aus (Signatur doctest-glob, doctest.testfile, mktestdocs …) und ein
-#   Programm nennt diese Markdown-Datei (zweite Stufe: voller Pfad, oder der Name aus ihrem eigenen Ordnerbaum). Ist die Datei über einen getrackten Symlink außerhalb der Liste erreichbar,
+#   Programm nennt diese Markdown-Datei (zweite Stufe, gleiche Ordnerregel). Ist die Datei über einen getrackten Symlink außerhalb der Liste erreichbar,
 #   fährt ebenfalls die volle Suite. Submodule zählen immer (`--ignore-submodules=none`).
 #   Grenze (benannt): Ein Programm, das Text per Glob liest (`docs/*.md`), nennt keinen Namen — das Repo verengt dann.
 #
@@ -123,6 +135,56 @@ if [[ "${GITHUB_ACTIONS:-}" == true && "${GITHUB_EVENT_NAME:-}" == pull_request 
     fi
     mapfile -d '' -t dateien < <(git diff -z --name-only --no-renames --ignore-submodules=none "$basis" HEAD 2>/dev/null)
     woher="PR, Basis ${basis:0:7}"
+elif [[ "${GITHUB_ACTIONS:-}" == true && "${GITHUB_EVENT_NAME:-}" == push ]]; then
+    # Push to a branch (since 0.53.0, see the header). Every doubt means the full suite.
+    if [[ "${GITHUB_REF:-}" != refs/heads/* ]]; then
+        echo "volle Suite: push of ${GITHUB_REF:-an unknown ref}, not a branch (tags are always checked in full)"
+        exit 1
+    fi
+    if [[ -z "${GITHUB_SHA:-}" || "$(git rev-parse -q --verify HEAD 2>/dev/null)" != "$GITHUB_SHA" ]]; then
+        echo "volle Suite: push, but HEAD is not GITHUB_SHA (the pushed commit)"
+        exit 1
+    fi
+    # A top-level field of the event payload, printed as JSON scalar text ("true", a SHA); nothing if unreadable.
+    # jq first (GitHub images and the self-hosted runners carry it), python3 as fallback.
+    ereignis_feld() {
+        local datei="${GITHUB_EVENT_PATH:-}"
+        [[ -n "$datei" && -r "$datei" ]] || return 1
+        if command -v jq >/dev/null 2>&1; then
+            jq -r --arg k "$1" 'if type == "object" and has($k) then .[$k] | tostring else empty end' "$datei" 2>/dev/null
+        elif command -v python3 >/dev/null 2>&1; then
+            python3 -I -c 'import json, sys
+d = json.load(open(sys.argv[1], encoding="utf-8"))
+v = d.get(sys.argv[2]) if isinstance(d, dict) else None
+print(v if isinstance(v, str) else json.dumps(v)) if v is not None else None' "$datei" "$1" 2>/dev/null
+        else
+            return 1
+        fi
+    }
+    basis="$(ereignis_feld before)"
+    if [[ ! "$basis" =~ ^[0-9a-f]{40}([0-9a-f]{24})?$ || "$basis" =~ ^0+$ ]]; then
+        echo "volle Suite: push without a usable before SHA (first push, new branch or unreadable event payload)"
+        exit 1
+    fi
+    if [[ "$(ereignis_feld forced)" != false ]]; then
+        echo "volle Suite: forced push (or the payload does not say it was not forced)"
+        exit 1
+    fi
+    if ! git cat-file -e "$basis^{commit}" 2>/dev/null \
+            && ! git fetch -q --no-tags --depth=1 origin "$basis" 2>/dev/null; then
+        echo "volle Suite: before ${basis:0:7} of the push cannot be fetched"
+        exit 1
+    fi
+    git diff --quiet --no-renames --ignore-submodules=none "$basis" HEAD 2>/dev/null; rc=$?
+    if [[ $rc -gt 1 ]]; then
+        echo "volle Suite: Unterschied zu ${basis:0:7} nicht lesbar"
+        exit 1
+    fi
+    mapfile -d '' -t dateien < <(git diff -z --name-only --no-renames --ignore-submodules=none "$basis" HEAD 2>/dev/null)
+    woher="push, before ${basis:0:7}"
+elif [[ "${GITHUB_ACTIONS:-}" == true ]]; then
+    echo "volle Suite: event ${GITHUB_EVENT_NAME:-unknown} is always checked in full (only pull_request and a push to a branch may take the text lane)"
+    exit 1
 elif [[ -n "${CI_AENDERUNGEN+x}" && "${GITHUB_ACTIONS:-}" != true && "${CI_LOCAL_INSIDE:-}" == 1 ]]; then
     mapfile -t dateien < <(printf '%s\n' "$CI_AENDERUNGEN" | sed '/^[[:space:]]*$/d')
     woher="Liste von ci-local, Basis ${CI_AENDERUNGEN_BASIS:-?}"
@@ -179,16 +241,33 @@ done < <(git ls-files -s -z 2>/dev/null)
 # Wer nennt den Namen? 0 = ein Programm (stdout: wer), 1 = niemand, 2 = Suche gescheitert. $2 = auch über Texte der
 # Liste weitersuchen (eine Stufe): Ein Text, der selbst ausgeführt wird (Doctest in der README), ist ein Leser, wenn
 # ihn ein Programm beim Namen nennt (Fund 4).
-genannt_von() {  # genannt_von <Name> <ja|nein> <eigener Pfad> [<Ordner>: nur Leser darin zählen den blossen Namen]
-    local name="$1" weiter="$2" selbst="$3" ordner="${4:-}" treffer voll l rc
+genannt_von() {  # genannt_von <Name> <ja|nein> <eigener Pfad> [<Ordner> der Datei, leer = Wurzel]
+    local name="$1" weiter="$2" selbst="$3" ordner="${4:-}" treffer l rc teil gefiltert=""
+    local -a teile=() muster=()
     treffer="$(git -c core.quotePath=false grep -l -F -w -e "$name" -- . "${text_leser[@]}" 2>/dev/null)"; rc=$?
     [[ $rc -gt 1 ]] && return 2
     if [[ -n "$ordner" ]]; then
-        # Zweite Stufe: der blosse Name nur aus dem eigenen Ordnerbaum (eine Rolle nennt ihre README relativ), sonst
-        # nur der volle Pfad — `readme = "README.md"` in pyproject meint die Wurzel, nicht backlog/README.md.
-        voll="$(git -c core.quotePath=false grep -l -F -w -e "$selbst" -- . "${text_leser[@]}" 2>/dev/null)"; rc=$?
-        [[ $rc -gt 1 ]] && return 2
-        treffer="$(printf '%s\n' "$voll"; while IFS= read -r l; do [[ "$l" == "$ordner"/* ]] && printf '%s\n' "$l"; done <<<"$treffer")"
+        # Datei in einem Unterordner (seit Kit 0.52.2 auch in der ersten Stufe): Der blosse Name zählt nur aus dem eigenen
+        # Ordnerbaum (eine Rolle nennt ihre README relativ) oder aus einer Zeile, die auch einen Teil des Ordnerpfads als
+        # Wort nennt — den vollen Pfad (`"backlog/README.md"`) oder zusammengesetzt (`ROOT / "docs" / "API.md"`). In
+        # derselben Zeile: Die Auto-Merge-Vorlage des Kits erwähnt den Zweig `backlog` im Kommentar, und eine
+        # Release-Liste nennt die Wurzel-README weiter unten (DashMyBoard) — das liest den Backlog-Index nicht.
+        # `readme = "README.md"` in pyproject meint die Wurzel, nicht backlog/README.md — und ein Go-Test mit einer
+        # Wiki-Seite "README.md" liest den Backlog-Index nicht (UnderDoc 2026-11-22: jeder `dokutool backlog`-Push fuhr
+        # deshalb die volle Suite, über 180 s). Gross-/Kleinschreibung zählt: Pfade auf Linux unterscheiden sie auch.
+        IFS=/ read -r -a teile <<<"$ordner"
+        for teil in "${teile[@]}"; do [[ -n "$teil" ]] && muster+=(-e "$teil"); done
+        while IFS= read -r l; do
+            [[ -z "$l" ]] && continue
+            if [[ "$l" != "$ordner"/* ]]; then
+                git -c core.quotePath=false grep -q -F -w -e "$name" --and \( "${muster[@]}" \) -- ":(literal)$l" \
+                    2>/dev/null; rc=$?
+                [[ $rc -gt 1 ]] && return 2
+                [[ $rc -eq 0 ]] || continue
+            fi
+            gefiltert+="$l"$'\n'
+        done <<<"$treffer"
+        treffer="$gefiltert"
     fi
     while IFS= read -r l; do
         [[ -z "$l" || "$l" == "$selbst" ]] && continue       # eine Datei, die ihren eigenen Namen nennt, liest sich nicht
@@ -249,7 +328,8 @@ for f in "${dateien[@]}"; do
             exit 1
         fi
     done
-    leser="$(genannt_von "${f##*/}" "$md_laeuft" "$f")"; rc=$?
+    o="${f%/*}"; [[ "$o" == "$f" ]] && o=""
+    leser="$(genannt_von "${f##*/}" "$md_laeuft" "$f" "$o")"; rc=$?
     if [[ $rc -eq 2 ]]; then
         echo "volle Suite: Suche nach Lesern von $f gescheitert (git grep)"
         exit 1
