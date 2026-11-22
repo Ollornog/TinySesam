@@ -21,6 +21,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from html.parser import HTMLParser
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -186,9 +187,31 @@ ok("server: stored roles = roles sent (no implication), delegate scope unchanged
 node = pflicht_werkzeug("node", "role levels: the panel JS (stateOf, picker, collect)")
 
 
+class _Scripts(HTMLParser):
+    """The text of every <script> of a page — the browser's own tokenizer rules, no tag regex."""
+
+    def __init__(self):
+        super().__init__(convert_charrefs=False)
+        self.found, self._open = [], False
+
+    def handle_starttag(self, tag, attrs):
+        if tag == "script":
+            self._open = True
+            self.found.append("")
+
+    def handle_endtag(self, tag):
+        if tag == "script":
+            self._open = False
+
+    def handle_data(self, data):
+        if self._open:
+            self.found[-1] += data
+
+
 def panel_js(viewer, scope):
-    html = render_panel(auth, "/auth/admin", viewer=viewer, scope=scope)
-    scripts = [s for s in re.findall(r"<script\b[^>]*>(.*?)</script\s*>", html, re.S | re.I) if "const ACT={" in s]
+    parser = _Scripts()
+    parser.feed(render_panel(auth, "/auth/admin", viewer=viewer, scope=scope))
+    scripts = [s for s in parser.found if "const ACT={" in s]
     assert len(scripts) == 1
     return scripts[0].replace("tabs();users();", "")
 
