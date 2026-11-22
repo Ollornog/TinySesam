@@ -2094,6 +2094,7 @@ async def approvals_page(_first):
             "window.__csp.push(e.effectiveDirective+' blocked '+(e.blockedURI||'inline'))})"))
         try:
             await _approvals_page(p)
+            await _reset_access_page(p)
         finally:
             await p.cmd("Emulation.clearDeviceMetricsOverride")
             await p.js("localStorage.removeItem('themeMode');true")
@@ -2156,6 +2157,69 @@ async def _approvals_page(p):
     assert p.failed[failed_before:] == [], f"broken requests: {p.failed[failed_before:][:3]}"
     print("  approvals: menu 'Approvals (1)' with the number on the button, list → page (code, ⚠, summary), "
           "frame-ancestors 'none', 375px light/dark without sideways scrolling, confirmed with the password (strict CSP)")
+
+
+async def _reset_access_page(p):
+    """The approval type `tinysesam.account.reset_access` on the T-33 app: an application (its service account) asks,
+    the team admin holding `approver_role` sees the summary in words ("Reset the access of … for Example: …"), the ⚠
+    warning with its own text and the sign-in methods, at 375 px in light and dark without sideways scrolling, and
+    confirms with the password; the application then picks up the new link exactly once."""
+    failed_before = len(p.failed)
+    before = (t33.cfg.available_roles, getattr(t33.cfg, "apps", None))
+    t33.cfg.available_roles = ["example-member", "example-approver"]
+    t33.cfg.apps = {"example": {"account": "svc-example", "name": {"en": "Example", "de": "Beispiel"},
+                                "provisioning": {"roles": ["example-member"], "scopes": ["users:reset"],
+                                                 "approver_role": "example-approver"}}}
+    try:
+        svc = t33.store.get_user_by_name("svc-example")
+        svc_id = svc["id"] if svc else t33.create_service("svc-example")
+        app_key = t33.create_api_key(svc_id, name="example")["key"]
+        lead = t33.create_user("lead90", password="lead90-pw-12345", roles=["example-approver"])
+        member = t33._create_account("mia90", roles=["example-member"], managed_by="example")
+        t33.set_password(member, "mia90-pw-123456")
+        t33.store.mark_login(member, int(time.time()) - 60)
+        created = urllib.request.urlopen(urllib.request.Request(
+            T33 + "/auth/api/approvals", method="POST",
+            headers={"X-Api-Key": app_key, "Content-Type": "application/json"},
+            data=json.dumps({"type": "tinysesam.account.reset_access", "subject": str(lead),
+                             "fields": {"account": str(member)}}).encode()))
+        approval = json.load(created)
+        assert created.status == 201 and approval["state"] == "pending", approval
+        token, _ = t33.start_session(lead, "password")
+        await p.cmd("Network.clearBrowserCookies")
+        await p.cmd("Network.setCookie", name=t33.session_cookie_name, value=token, url=T33)
+        await p.cmd("Emulation.setDeviceMetricsOverride", width=375, height=812, deviceScaleFactor=1, mobile=True)
+        for theme in ("light", "dark"):
+            await p.js(f"localStorage.setItem('themeMode','{theme}');true")
+            await p.cmd("Page.navigate", url=T33 + f"/auth/approvals/{approval['id']}")
+            await p.until("!!document.getElementById('apvform')", "reset page not built")
+            await p.js("new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))")
+            assert await p.js("document.documentElement.classList.contains('dark')") == (theme == "dark")
+            summary = await p.js("document.getElementById('apvsum').textContent")
+            assert summary.startswith(f"Reset the access of mia90 (#{member}) for Example"), summary
+            warn = await p.js("document.getElementById('apvirrev').textContent")
+            assert "⚠" in warn and "stop working at once" in warn, warn
+            assert "password" in await p.js("document.querySelector('table.qrinfo').textContent")
+            width = await p.js("document.documentElement.scrollWidth")
+            assert width <= 375, f"{theme}: {width}px wide at 375px"
+        await p.js("document.querySelector('input[name=password]').value='lead90-pw-12345';"
+                   "document.getElementById('apvyes').click();true")
+        await p.until("!!document.getElementById('apvstate')", "no result page after confirming")
+        await until_py(lambda: t33.store.get_password_hash(member) is None, "the password was not deleted")
+        out = json.load(urllib.request.urlopen(urllib.request.Request(
+            T33 + f"/auth/api/approvals/{approval['id']}", headers={"X-Api-Key": app_key})))
+        assert out["state"] == "consumed" and out["output"]["signin_url"].startswith(T33 + "/auth/magic/"), out
+        again = json.load(urllib.request.urlopen(urllib.request.Request(
+            T33 + f"/auth/api/approvals/{approval['id']}", headers={"X-Api-Key": app_key})))
+        assert "output" not in again, again
+        viol = await p.js("JSON.stringify(window.__csp===undefined?['(no Listener)']:window.__csp)")
+        assert viol == "[]", f"CSP violation on the reset page: {viol}"
+        assert not p.console, f"console errors: {p.console[:2]}"
+        assert p.failed[failed_before:] == [], f"broken requests: {p.failed[failed_before:][:3]}"
+    finally:
+        t33.cfg.available_roles, t33.cfg.apps = before
+    print("  reset access: summary in words, ⚠ with its own warning, methods; 375px light/dark without sideways "
+          "scrolling; confirmed with the password; the application picks up the link once (strict CSP)")
 
 
 try:

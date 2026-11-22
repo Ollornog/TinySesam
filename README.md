@@ -1890,7 +1890,44 @@ TinySesam-On-Behalf-Of: 17
   disabled_by_operator`, `429 limit` with `Retry-After`. Write routes may answer `202` later (approvals); treat it as
   "not done yet".
 - The first sign-in through the link leads an account without factors through the setup pass (`/auth/setup`). After
-  that the person helps themselves (sign-in link to their address, password reset) or the operator does.
+  that the person helps themselves (sign-in link to their address, password reset), the operator does — or the
+  application's team admin resets the access (below).
+
+### Resetting an account's access: new phone, forgotten password
+
+After the first sign-in a key alone never resets anything (that would be a takeover). The application asks instead,
+and a person confirms: its team admin, holding the role `approver_role` that only the operator (or a delegate allowed
+to) grants. Configuration — `approvals_enabled=True`, the scope `users:reset` and the role:
+
+```python
+from tinysesam import TinySesamConfig
+
+cfg = TinySesamConfig(
+    base_url="https://auth.example.com", magiclink_enabled=True, approvals_enabled=True,
+    available_roles=["example-member", "example-editor", "teamadmin"],
+    apps={"example": {"account": "svc-example", "name": "Example", "provisioning": {
+        "roles": ["example-member", "example-editor"],
+        "scopes": ["users:read", "users:invite", "users:reset"],
+        "approver_role": "teamadmin",               # never in any application's allowlist (config_check refuses it)
+    }}},
+)
+```
+
+```http
+POST /auth/api/approvals
+X-Api-Key: tsk_…  (an automation key of svc-example)
+
+{"type": "tinysesam.account.reset_access", "subject": "17", "fields": {"account": "42"}}
+```
+
+`subject` is the team admin's account id, `account` the account to reset (both as strings). The answer carries
+`approve_url` and a `match_code`; the team admin opens the link, compares the code and confirms with a step-up. Then
+password, PIN, TOTP and passkeys of account 42 are deleted, its sessions, keys and app passwords end — and the
+application picks up the new one-time link **once**: `GET /auth/api/approvals/{id}?wait=25` answers
+`{"state": "consumed", "result": "ok", "output": {"signin_url": …, "expires_at": …, "qr": …}}`, every later read
+without `output`. Who lacks the role when confirming gets `result: "forbidden"` and nothing changes. Details and error
+codes: [`spec/provisioning-api.md`](https://github.com/Ollornog/TinySesam/blob/main/spec/provisioning-api.md) §5; why the role never comes from the application:
+`SECURITY.md`.
 
 What a leaked application key can do at most, and what not:
 [`SECURITY.md`, "Account API"](https://github.com/Ollornog/TinySesam/blob/main/SECURITY.md#account-api-for-applications-stage-a).
@@ -2569,7 +2606,7 @@ Every Python block in both files runs in the test suite, and every name they men
 
 ## Status
 
-**122 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
+**123 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
 
 Implemented and tested: password/TOTP/sessions/roles, remember-me, step-up and per-route MFA,
 factor chains, personal PIN, shared resource secrets, magic links + mailer hook, registration and

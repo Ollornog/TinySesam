@@ -23,6 +23,15 @@ the requester (the key) and the person who confirmed. See SECURITY.md "Approvals
 
 Every state change is one `UPDATE … WHERE state = <old>` (`Store.approval_transition`): two confirmations race to
 exactly one winner, and only the winner executes.
+
+One type is asked for by an APPLICATION, not by the account itself: `tinysesam.account.reset_access`. The requester is
+the service account of an application in `apps` with `provisioning` (automation key, scope `users:reset`), `subject`
+names the person who must confirm (the application's team admin), the field `account` one of the application's own
+accounts. Confirming needs the role `apps[…].provisioning.approver_role` at THAT moment — a role no application can
+grant (`config_check`), so a leaked key cannot confirm through a straw account it created itself. The effect: every
+sign-in factor of the account deleted, sessions and standing credentials revoked; the row then waits in `approved`
+until the application picks up the new one-time link — exactly once (`approved` → `consumed`), only in that answer,
+never in the audit, a log or a URL.
 """
 from __future__ import annotations
 
@@ -46,11 +55,22 @@ TYPES: dict[str, dict[str, str]] = {
     "tinysesam.account.set_roles": {"account": "str_id", "add": "roles", "remove": "roles"},
     "tinysesam.apikey.revoke": {"key": "str_id"},
     "tinysesam.account.disable": {"account": "str_id"},
+    "tinysesam.account.reset_access": {"account": "str_id"},
 }
+#: The access reset of an application's account (draft "account API" §13): requested by the application's service
+#: account for a `subject`, confirmed by a holder of `provisioning.approver_role`.
+RESET_ACCESS = "tinysesam.account.reset_access"
+#: Types only an application (its service account, `apps[…].provisioning`) requests — with a `subject`.
+APP_TYPES = frozenset({RESET_ACCESS})
+#: Types whose output the requester picks up exactly once: confirmed and executed they wait in `approved`, the first
+#: status read moves them to `consumed` and carries the output (stage B hands out its confirmations the same way).
+PICKUP_TYPES = frozenset({RESET_ACCESS})
+#: The scope of `apps[…].provisioning.scopes` an application needs to ask for an access reset.
+RESET_SCOPE = "users:reset"
 #: Fields a type may leave out (an empty list then).
 OPTIONAL_FIELDS = {"tinysesam.account.set_roles": {"add", "remove"}}
 #: Types whose effect cannot be undone — the page says so with a symbol AND a word, never with colour alone.
-IRREVERSIBLE = frozenset({"tinysesam.apikey.revoke"})
+IRREVERSIBLE = frozenset({"tinysesam.apikey.revoke", RESET_ACCESS})
 
 STATES = ("pending", "approved", "consumed", "rejected", "expired", "withdrawn")
 #: Outcome of a class (a) action (`result`): what the panel code answered, in one word.
@@ -188,6 +208,32 @@ class Approvals:
         A session is not enough (it has the panel), an OAuth or MCP token not yet (until TinySesam is an MCP resource
         itself), an app password never. A `human` key counts only beside a session of the same account, as
         everywhere (R6-5). A service account never asks for itself: nobody could confirm (`no_approver`)."""
+        u, row, app = self.caller(request)
+        if app is not None:
+            self._no_approver(request, u, row)
+        return u, row
+
+    def caller(self, request: Request) -> tuple[dict, dict, Optional[dict]]:
+        """`requester`, but the service account of an application in `apps` with `provisioning` passes too — with an
+        automation key, resolved like the account API resolves it (`Provisioning.caller`). Returns (account, key
+        row, application or None); any other service account gets `no_approver`."""
+        u, row = self._key_holder(request)
+        if not u.get("is_service"):
+            return u, row, None
+        app = None
+        if self.auth._key_kind(row) == "automation" and u.get("is_service") == 1:
+            name = str(u.get("username") or "").lower()
+            app = next((a for a in self.auth._provisioning().apps().values() if a["account"].lower() == name), None)
+        if app is None:
+            self._no_approver(request, u, row)
+        return u, row, app
+
+    def _no_approver(self, request: Request, u: dict, row) -> None:
+        self.auth.audit("approval_denied", u["username"], self.auth.client_ip(request),
+                        f"reason=no_approver key={row['id']}")
+        raise ApprovalError("no_approver", 403, "a service account cannot confirm an approval")
+
+    def _key_holder(self, request: Request) -> tuple[dict, dict]:
         auth = self.auth
         key = auth._extract_api_key(request)
         if not key:
@@ -204,22 +250,19 @@ class Approvals:
             if not (s and s["mfa_ok"] and s["user_id"] == u["id"]):
                 raise ApprovalError("unauthorized", 401)
         auth._remember_request(request, u)
-        if u.get("is_service"):
-            auth.audit("approval_denied", u["username"], auth.client_ip(request), f"reason=no_approver key={row['id']}")
-            raise ApprovalError("no_approver", 403, "a service account cannot confirm an approval")
         return u, row
 
     # ---------- limits ----------
-    def _throttled(self, uid: int, ref: str, type_: str, now: int) -> Optional[str]:
+    def _throttled(self, uid: int, ref: str, type_: str, now: int, kind: str = "apikey") -> Optional[str]:
         cfg = self.cfg
         if self.store.count_approvals_pending(uid, now) >= int(cfg.approval_open_per_account):
             return "open_per_account"
-        if self.store.count_approvals_open_by("apikey", ref, now) >= int(cfg.approval_open_per_token):
+        if self.store.count_approvals_open_by(kind, ref, now) >= int(cfg.approval_open_per_token):
             return "open_per_token"
         if self.store.count_approvals_since(uid, now - 3600) >= int(cfg.approval_requests_per_hour):
             return "per_hour"
         limit = int(cfg.approval_reject_limit)
-        times = self.store.approval_rejections("apikey", ref, type_, now - 7200)
+        times = self.store.approval_rejections(kind, ref, type_, now - 7200)
         for i in range(limit - 1, len(times)):
             if times[i] - times[i - limit + 1] <= 3600 and times[i] > now - 3600:
                 return "rejections"
@@ -228,9 +271,11 @@ class Approvals:
     # ---------- create / read / withdraw ----------
     def create(self, request: Request, body: Any) -> dict:
         auth = self.auth
-        u, key = self.requester(request)
+        u, key, app = self.caller(request)
         if not isinstance(body, dict):
             raise ApprovalError("invalid_request", 400, "body")
+        if app is not None:
+            return self._create_for_app(request, u, app, body)
         if "subject" in body:
             # Class (a) always concerns the account of the token; naming another one is an application's request
             # (class b, stage B) — refused, not ignored.
@@ -239,6 +284,8 @@ class Approvals:
         if extra:
             raise ApprovalError("invalid_request", 400, f"unknown member {extra[0]}")
         payload = normalize(body.get("type"), body.get("fields"))
+        if payload["type"] in APP_TYPES:
+            raise ApprovalError("invalid_type", 400, "only an application's service account requests this type")
         now = _now()
         ref = str(key["id"])
         ip = auth.client_ip(request)
@@ -258,6 +305,61 @@ class Approvals:
         return {"id": row["id"], "state": "pending", "match_code": row["match_code"],
                 "approve_url": self.approve_url(row["id"]), "expires_at": row["expires_at"]}
 
+    def _create_for_app(self, request: Request, u: dict, app: dict, body: dict) -> dict:
+        """`POST /auth/api/approvals` by an application's service account: only `APP_TYPES`, with `subject` (the
+        person who confirms, a decimal id as a string like the fields). Checked here, in this order, before anything
+        is stored: scope `users:reset`; the payload; the subject an active person (an answer `invalid_subject`
+        counts against the application's `taken_per_hour`, it would otherwise tell which ids are persons); never the
+        account itself (`forbidden`); the account one the application sees and may act on as a whole
+        (`Provisioning.target` — 404 `not_found`, 409 `account_shared`); not disabled. Whether the subject holds
+        `approver_role` is NOT asked now — that is decided at confirmation time, and asking here would tell the key
+        who the approvers are."""
+        from .provisioning import ProvisioningError
+        auth = self.auth
+        prov = auth._provisioning()
+        extra = sorted(set(body) - {"type", "subject", "fields"})
+        if extra:
+            raise ApprovalError("invalid_request", 400, f"unknown member {extra[0]}")
+        try:
+            prov.claim(request, app, write=False)
+            if body.get("type") not in APP_TYPES:
+                raise ApprovalError("invalid_type", 400, "an application requests only: " + ", ".join(sorted(APP_TYPES)))
+            prov.need(app, RESET_SCOPE)
+            payload = normalize(body.get("type"), body.get("fields"))
+            subject = body.get("subject")
+            if not isinstance(subject, str) or not _STR_ID.match(subject):
+                raise ApprovalError("invalid_request", 400, "subject: the id of the person who confirms, as a string")
+            person = self.store.get_user(int(subject))
+            if person is None or person["disabled"] or person["is_service"]:
+                prov._spend_oracle(app)
+                raise ApprovalError("invalid_subject", 400, "subject: an active person's id")
+            if subject == payload["account"]:
+                auth.audit("provision_denied", None, None, f"app={app['id']} reason=own_account")
+                raise ApprovalError("forbidden", 403, "the person who confirms cannot reset their own access")
+            target = prov.target(app, payload["account"], whole=True)
+        except ProvisioningError as e:
+            raise ApprovalError(e.code, e.status, e.detail) from None
+        if target["disabled"]:
+            raise ApprovalError("account_disabled", 409, "the account is disabled")
+        now = _now()
+        ref = str(int(u["id"]))
+        ip = auth.client_ip(request)
+        why = self._throttled(int(person["id"]), ref, payload["type"], now, kind="app")
+        if why:
+            auth.audit("approval_throttled", person["username"], ip, f"type={payload['type']} reason={why}")
+            raise ApprovalError("too_many_requests", 429, why)
+        text = canonical(payload)
+        row = {"id": new_id(), "class": "tinysesam", "type": payload["type"], "app_id": app["id"],
+               "subject_id": int(person["id"]), "requester_kind": "app", "requester_ref": ref,
+               "payload": text, "payload_hash": payload_hash(text), "match_code": new_match_code(),
+               "return_url": None, "state": "pending", "created_at": now,
+               "expires_at": now + int(self.cfg.approval_pending_sec), "ip_request": ip}
+        self.store.add_approval(row)
+        auth.audit("approval_requested", person["username"], ip,
+                   f"id={row['id']} type={row['type']} account={payload['account']} hash={row['payload_hash']}")
+        return {"id": row["id"], "state": "pending", "match_code": row["match_code"],
+                "approve_url": self.approve_url(row["id"]), "expires_at": row["expires_at"]}
+
     def approve_url(self, approval_id: str) -> str:
         base = (security.normalize_base(str(self.cfg.base_url or "").strip()) or "").rstrip("/")
         return f"{base}/auth/approvals/{approval_id}"
@@ -274,10 +376,15 @@ class Approvals:
 
     def own(self, request: Request, approval_id: str):
         """The row of an approval this request's key asked for — otherwise 404 (no oracle: a foreign id and an
-        unknown one answer alike)."""
-        _u, key = self.requester(request)
+        unknown one answer alike). For an application: any automation key of its service account, for its app id."""
+        u, key, app = self.caller(request)
         row = self.store.get_approval(approval_id) if valid_id(approval_id) else None
-        if row is None or row["requester_kind"] != "apikey" or row["requester_ref"] != str(key["id"]):
+        if app is None:
+            mine = row is not None and row["requester_kind"] == "apikey" and row["requester_ref"] == str(key["id"])
+        else:
+            mine = (row is not None and row["requester_kind"] == "app" and row["requester_ref"] == str(int(u["id"]))
+                    and row["app_id"] == app["id"])
+        if not mine:
             raise ApprovalError("not_found", 404)
         return self._expire_if_due(row)
 
@@ -289,6 +396,79 @@ class Approvals:
         if row["decided_at"]:
             out["decided_at"] = row["decided_at"]
         return out
+
+    def pickup(self, row) -> dict:
+        """The status for the requester — and, for a confirmed `PICKUP_TYPES` row, its output exactly once: the one
+        atomic transition `approved` → `consumed` decides who gets it (two parallel reads: one output), and the
+        output is made only after that transition — so it exists nowhere but in this one answer. Every later read,
+        or one that lost the race, sees `consumed` without it."""
+        if row["state"] != "approved" or row["type"] not in PICKUP_TYPES or row["result"] != "ok":
+            return self.status(row)
+        if not self.store.approval_transition(row["id"], "approved", "consumed"):
+            return self.status(self.store.get_approval(row["id"]))
+        output, result = self._reset_link(row)
+        if result != "ok":
+            self.store.set_approval_fields(row["id"], "consumed", result=result)
+        out = self.status(self.store.get_approval(row["id"]))
+        if output:
+            out["output"] = output
+        return out
+
+    def _reset_link(self, row) -> tuple[Optional[dict], str]:
+        """The new one-time link of a confirmed access reset — (output, "ok") or (None, a word of `RESULTS`). Checked
+        again: the application still configured for resets, the account still its own as a whole and not disabled.
+        A setup window opens for the link's lifetime plus an hour, so the person may set up the factors the chain
+        demands although `first_login_at` stays (`mfa_enrollment`, `magiclink_first_login_only`)."""
+        from .errors import ConfigError
+        auth = self.auth
+        app, target, word = self._reset_scope(row, None)
+        if word != "ok" or app is None or target is None:
+            return None, word
+        uid = int(target["id"])
+        ttl = int(app["link_ttl_min"])
+        auth.store.set_mfa_enroll_until(uid, _now() + (ttl + 60) * 60)
+        try:
+            link = auth.create_signin_link(uid, ttl_min=ttl)
+        except (ValueError, ConfigError):
+            auth.store.set_mfa_enroll_until(uid, None)
+            return None, "conflict"
+        return {"account": str(uid), "signin_url": link["url"], "expires_at": link["expires_at"],
+                "qr": link["qr"]}, "ok"
+
+    def _reset_scope(self, row, me: Optional[dict]) -> tuple[Optional[dict], Any, str]:
+        """(application, target row, "ok") when an access reset may happen NOW — otherwise a word of `RESULTS`.
+
+        The application must still have `users:reset` and an `approver_role`, the requester must still be its service
+        account; with `me` (the confirming session) that account must hold the role at this moment and must not be
+        the target; the target must still be one of the application's own accounts that it may act on as a whole
+        (`app_visible`, `may_manage` — never an admin, owner, service account or delegate) and must not be disabled."""
+        from . import config_check
+        auth = self.auth
+        prov = auth._provisioning()
+        app = prov.apps().get(str(row["app_id"] or ""))
+        if app is None or RESET_SCOPE not in app["scopes"] or not app["approver_role"]:
+            return None, None, "forbidden"
+        requester = self.store.get_user(int(row["requester_ref"])) if _STR_ID.match(str(row["requester_ref"])) else None
+        if (requester is None or requester["is_service"] != 1
+                or str(requester["username"]).lower() != app["account"].lower()):
+            return None, None, "forbidden"
+        uid = int(json.loads(row["payload"])["account"])
+        if me is not None:
+            if me.get("is_service") or app["approver_role"] not in [str(r) for r in auth.user_roles(me)]:
+                return None, None, "forbidden"
+            if int(me["id"]) == uid:
+                return None, None, "forbidden"
+        target = self.store.get_user(uid)
+        roles = auth.user_roles(target) if target is not None else []
+        delegates = prov._delegate_roles()
+        if not config_check.app_visible(app["id"], target, roles, delegates):
+            return None, None, "not_found"
+        if not config_check.may_manage(frozenset(app["roles"]), None, target, roles, delegate_roles=delegates,
+                                       without_roles=True):
+            return None, None, "conflict"
+        if target["disabled"]:
+            return None, None, "conflict"
+        return app, target, "ok"
 
     def withdraw(self, request: Request, approval_id: str) -> dict:
         row = self.own(request, approval_id)
@@ -338,7 +518,28 @@ class Approvals:
 
         t = auth.t
         type_ = row["type"]
-        if type_ == "tinysesam.account.set_roles":
+        warning = None
+        app_name = None
+        if type_ == RESET_ACCESS:
+            # The approver is usually neither admin nor delegate: the account is named when the viewer holds the
+            # application's approver role right now and the account is one of the application's own.
+            app, target, word = self._reset_scope(row, viewer)
+            entry = (getattr(self.cfg, "apps", None) or {}).get(row["app_id"]) if isinstance(
+                getattr(self.cfg, "apps", None), dict) else None
+            app_name = self._app_name(entry, row["app_id"])
+            uid_text = json.loads(row["payload"])["account"]
+            label = f"{target['username']} (#{uid_text})" if word == "ok" else f"#{uid_text}"
+            summary = t("apv.sum.reset_access", account=label, app=app_name)
+            rows = [(t("apv.f.account"), label), (t("apv.f.app"), app_name)]
+            if word == "ok":
+                rows.append((t("apv.f.methods"), self._methods_text(int(target["id"]))))
+                rows.append((t("apv.f.ends"), self._ends_text(int(target["id"]))))
+            elif word == "forbidden":
+                rows.append((t("apv.f.right"), t("apv.no_right")))
+            else:
+                rows.append((t("apv.f.state"), t("apv.not_visible")))
+            warning = t("apv.warn.reset_access")
+        elif type_ == "tinysesam.account.set_roles":
             label, target, visible = account(payload["account"])
             current = sorted(map(str, auth.user_roles(target))) if visible else None
             after = (sorted((set(current) - set(payload["remove"])) | set(payload["add"]))
@@ -372,13 +573,53 @@ class Approvals:
                 rows = [(t("apv.f.key"), label), (t("apv.f.state"), t("apv.not_visible"))]
             summary = t("apv.sum.revoke", api_key=label)
         key = auth.store.get_api_key(int(row["requester_ref"])) if row["requester_kind"] == "apikey" else None
-        via = (t("apv.via_key", name=key["name"] or "—", prefix=key["prefix"],
-                 date=time.strftime("%Y-%m-%d", time.gmtime(key["created_at"] or 0)))
-               if key is not None else t("apv.via_gone"))
+        if row["requester_kind"] == "app":
+            via = t("apv.via_app", app=app_name or str(row["app_id"] or "—"))
+        else:
+            via = (t("apv.via_key", name=key["name"] or "—", prefix=key["prefix"],
+                     date=time.strftime("%Y-%m-%d", time.gmtime(key["created_at"] or 0)))
+                   if key is not None else t("apv.via_gone"))
         return {"id": row["id"], "type": type_, "title": t("apv.title." + type_), "summary": summary, "rows": rows,
-                "irreversible": type_ in IRREVERSIBLE, "match_code": row["match_code"], "via": via,
+                "irreversible": type_ in IRREVERSIBLE, "warning": warning, "match_code": row["match_code"], "via": via,
                 "state": row["state"], "result": row["result"], "payload_hash": row["payload_hash"],
                 "expires_at": row["expires_at"], "minutes_left": max(0, (row["expires_at"] - _now() + 59) // 60)}
+
+    def _app_name(self, entry, app_id) -> str:
+        """The operator's name of an application in the page's language (`apps[…].name`), else its id."""
+        name = entry.get("name") if isinstance(entry, dict) else None
+        if isinstance(name, dict):
+            lang = str(getattr(self.cfg, "lang", "en") or "en")
+            name = name.get(lang) or name.get("en") or next((v for v in name.values() if isinstance(v, str)), None)
+        return name.strip() if isinstance(name, str) and name.strip() else str(app_id or "—")
+
+    def _methods_text(self, uid: int) -> str:
+        """What the account signs in with now — the list the reset deletes, in words."""
+        auth = self.auth
+        t = auth.t
+        have = []
+        if auth.store.get_password_hash(uid):
+            have.append(t("apv.m.password"))
+        if auth.store.has_pin(uid):
+            have.append(t("apv.m.pin"))
+        if auth.store.has_confirmed_totp(uid):
+            have.append(t("apv.m.totp"))
+        n = len(auth.store.list_webauthn(uid))
+        if n:
+            have.append(t("apv.m.passkeys", n=n))
+        return ", ".join(have) or t("apv.m.none")
+
+    def _ends_text(self, uid: int) -> str:
+        """What the reset ends besides the factors — sessions, API keys, app passwords, services and connected
+        programs the account holds now, in words."""
+        store = self.store
+        t = self.auth.t
+        sessions = int(store._one("SELECT COUNT(*) AS n FROM session WHERE user_id=?", (uid,))["n"])
+        keys = sum(1 for k in store.list_api_keys(uid) if not k["revoked"])
+        parts = [(sessions, "apv.e.sessions"), (keys, "apv.e.api_keys"),
+                 (store.app_passwords_active(uid), "apv.e.app_passwords"),
+                 (len(store.oauth_service_ids(uid)), "apv.e.services"),
+                 (len(store.oauth_user_grant_ids(uid)), "apv.e.devices")]
+        return ", ".join(t(key, n=n) for n, key in parts if n) or t("apv.m.none")
 
     def _panel(self):
         from .admin import PanelActions
@@ -488,8 +729,13 @@ class Approvals:
         auth.audit("approval_approved", u["username"], ip,
                    f"id={row['id']} type={row['type']} key={row['requester_ref']} amr={','.join(amr)} "
                    f"hash={row['payload_hash']}")
-        result = self.execute(request, u, json.loads(row["payload"]))
-        self.store.approval_transition(row["id"], "approved", "consumed", result=result)
+        result = self.execute(request, u, json.loads(row["payload"]), row)
+        if result == "ok" and row["type"] in PICKUP_TYPES:
+            # Executed; the output waits for the requester (`pickup`), at most `approval_pending_sec` from now.
+            self.store.set_approval_fields(row["id"], "approved", result=result,
+                                           expires_at=now + int(self.cfg.approval_pending_sec))
+        else:
+            self.store.approval_transition(row["id"], "approved", "consumed", result=result)
         auth.audit("approval_executed", u["username"], ip, f"id={row['id']} type={row['type']} result={result}")
         auth._security_event("approval_approved", u["id"], approval_id=row["id"], type=row["type"], result=result)
         return 200, "done", self.view(self.store.get_approval(row["id"]), u)
@@ -516,11 +762,21 @@ class Approvals:
             return None, refused
         return (AMR[procedure], _now()), None
 
-    def execute(self, request: Request, me: dict, payload: dict) -> str:
+    def execute(self, request: Request, me: dict, payload: dict, row=None) -> str:
         """Run a confirmed class (a) action with the admin panel's code, as the confirming session — its rights at
         THIS moment decide (E4): an administrator, a delegate within their scope (T-74), or the holder for their own
-        key. Returns one word of `RESULTS`."""
+        key; for an access reset only a holder of the application's `approver_role` (`_reset_scope`) — not even an
+        administrator without it. Returns one word of `RESULTS`."""
         auth = self.auth
+        if payload["type"] == RESET_ACCESS:
+            if row is None:
+                return "forbidden"
+            app, target, word = self._reset_scope(row, me)
+            if word != "ok" or app is None or target is None:
+                return word
+            auth._reset_access(int(target["id"]), app_id=app["id"], approved_by=me,
+                               detail=f"approval={row['id']}")
+            return "ok"
         pa = self._panel()
         scopes = None if auth.is_admin(me) else auth._delegate_scopes(me)
         delegate = scopes is not None
@@ -623,7 +879,8 @@ def register_routes(r, auth) -> None:
                 if fresh is None:            # removed meanwhile (account deleted): the same answer as unknown
                     raise ApprovalError("not_found", 404)
                 row = svc._expire_if_due(fresh)
-            return ok_json(svc.status(row))
+            # `pickup`: a confirmed access reset hands out its one-time link here, exactly once.
+            return ok_json(svc.pickup(row))
         except ApprovalError as e:
             return error(e)
 

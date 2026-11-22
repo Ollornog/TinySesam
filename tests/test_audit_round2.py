@@ -2319,7 +2319,10 @@ def _not_manager(node, klass) -> bool:
 
 
 _N8_PERMITTED_SQL = {"users": {("Store", "delete_user")},
-                   "webauthn_cred": {("Store", "delete_user"), ("Store", "delete_webauthn")},
+                   # `clear_sign_in_factors`: the access reset (approval `tinysesam.account.reset_access`), called
+                   # only from `TinySesam._reset_access`, which reports `access_reset` with the passkey count
+                   "webauthn_cred": {("Store", "delete_user"), ("Store", "delete_webauthn"),
+                                     ("Store", "clear_sign_in_factors")},
                    # a table name from a variable: only the account deletion and the schema-16 migration, which merges
                    # and drops the OLD-named tables of non-account data (`name_binding`, `oidc_session`, ...)
                    "": {("Store", "delete_user"), ("Store", "_english_names")}}
@@ -2374,7 +2377,9 @@ r.check("S-4 (guard self-test): … deleting SQL on sessions, attempts and token
         f"{_sql_outside(_N8_PERMITTED_SQL, _s4_harmless)}, harmless: {sorted(_SQL_HARMLESS)}")
 _n8_hits = (_calls_outside("delete_user", _not_manager, {("Store", "remove_account")})
              + _calls_outside("delete_webauthn", lambda k, c: True, {("TinySesam", "remove_passkey")})
+             + _calls_outside("clear_sign_in_factors", lambda k, c: True, {("TinySesam", "_reset_access")})
              + _getattr_outside("delete_user", set()) + _getattr_outside("delete_webauthn", set())
+             + _getattr_outside("clear_sign_in_factors", set())
              + _sql_outside(_N8_PERMITTED_SQL))
 r.check("N-8 (guard): only the building blocks delete accounts and passkeys — not via alias or SQL either",
         not _n8_hits, f"{_n8_hits}")

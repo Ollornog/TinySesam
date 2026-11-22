@@ -1,4 +1,4 @@
-# Account API for applications — client specification (stage A)
+# Account API for applications — client specification (stage A, with the access reset)
 
 Language-neutral description of `/auth/api/users` for clients in any language. The server side, its configuration
 (`apps[…].provisioning`) and its security rules are in the README ("Accounts for applications") and `SECURITY.md`
@@ -26,7 +26,10 @@ Language-neutral description of `/auth/api/users` for clients in any language. T
 | `POST /auth/api/users/{id}/disable` | `users:disable` | `200` account |
 | `POST /auth/api/users/{id}/enable` | `users:disable` | `200` account |
 | `POST /auth/api/users/{id}/signin-link` | `users:invite` | `200` `{"id", "signin_url", "expires_at", "qr"}` |
-| `GET /auth/api/provisioning` | — | `200` `{"app", "name", "scopes", "roles", "link_ttl_min", "max_accounts", "accounts", "limits", "remaining"}` |
+| `GET /auth/api/provisioning` | — | `200` `{"app", "name", "scopes", "roles", "approver_role", "link_ttl_min", "max_accounts", "accounts", "limits", "remaining"}` |
+| `POST /auth/api/approvals` (type `tinysesam.account.reset_access`) | `users:reset` | `201` `{"id", "state", "match_code", "approve_url", "expires_at"}` — §5 |
+| `GET /auth/api/approvals/{id}?wait=` | — | `200` status; once, after the confirmation, with `output` — §5 |
+| `DELETE /auth/api/approvals/{id}` | — | `200` status (`withdrawn`) while still `pending` |
 
 - **Create:** `{"username", "display_name"?, "email"?, "roles"}`. `roles` holds at least one role, all from the
   allowlist. In the mode where the address is the sign-in name, `username` may be left out and follows `email`.
@@ -82,10 +85,73 @@ status.
 **Reserved:** a write route may answer `202` with `{"approval": {"id", "approve_url", "match_code"}}` once approvals
 for these actions exist. A client treats `202` as "not done yet" from the start.
 
-## 5. Recommended client behaviour
+## 5. Resetting the access of an account (approval `tinysesam.account.reset_access`)
+
+The common case after the first sign-in: a person has a new phone (the TOTP is gone) or forgot the password. The key
+alone cannot help — a link after the first sign-in would be a takeover. Instead the application asks for an
+**approval** that a person confirms in the browser: the application's team admin, who must hold the role
+`apps[…].provisioning.approver_role` at the moment of confirming. That role is granted only by the operator (or a
+delegate allowed to), never through this API.
+
+1. **Ask** (scope `users:reset`), with the same key, no actor header needed:
+
+   ```http
+   POST /auth/api/approvals
+   X-Api-Key: tsk_…(key of svc-example)
+
+   {"type": "tinysesam.account.reset_access", "subject": "17", "fields": {"account": "42"}}
+   ```
+
+   `subject` = the TinySesam account id of the team admin who confirms, `fields.account` = the account to reset — both
+   decimal ids **as strings**. Answer `201` `{"id": "apv_…", "state": "pending", "match_code": "418 207",
+   "approve_url": "https://auth.example.com/auth/approvals/apv_…", "expires_at": …}`. Show the team admin the match
+   code and send them to `approve_url`.
+2. **Confirm** (the team admin, in the browser): the page names the account, the application and what happens, the
+   person compares the code and confirms with a step-up of this approval (password, PIN, TOTP, passkey or the
+   provider). Then every sign-in factor of the account is deleted — password, PIN, TOTP with its recovery codes,
+   passkeys — its sessions end, its API keys, app passwords and connected programs are revoked, open links die.
+   `first_login_at` stays; the new link is the only way back in.
+3. **Pick up** the link — exactly once:
+
+   ```http
+   GET /auth/api/approvals/apv_…?wait=25
+   X-Api-Key: tsk_…
+   ```
+
+   Before the decision: `{"state": "pending", …}` (with `wait` the call returns as soon as it changes). The first read
+   after the confirmation answers `{"state": "consumed", "result": "ok", "output": {"account": "42", "signin_url": …,
+   "expires_at": …, "qr": …}}` — the link lives `link_ttl_min` minutes. Every later read answers `consumed` without
+   `output`; if the answer is lost, ask for a new reset. Not picked up within `approval_pending_sec` after the
+   confirmation → `expired` (the factors are deleted all the same; ask again).
+4. **Results** besides `ok` (state `consumed`, no `output`): `forbidden` — the person who confirmed does not hold
+   `approver_role` (any more), is the account itself, or the application lost `users:reset`; `not_found` — the account
+   is no longer the application's (deleted, became administrator, delegate or service account); `conflict` — it holds
+   a role outside the allowlist now, it is disabled, or no link could be issued. Other states: `rejected`,
+   `withdrawn`, `expired` — nothing changed.
+
+Errors of the request (`{"error", "error_description"}`):
+
+| Status | `error` | Meaning |
+|---|---|---|
+| 400 | `invalid_type` | another type (an application asks only for `tinysesam.account.reset_access`) |
+| 400 | `invalid_request` | malformed body, unknown member, an id that is not a decimal string |
+| 400 | `invalid_subject` | `subject` is no active person (counts against `taken_per_hour`) |
+| 403 | `scope_missing` | the application does not hold `users:reset` (or has no valid `approver_role`) |
+| 403 | `forbidden` | `subject` and `account` are the same account |
+| 403 | `no_approver` | the key belongs to a service account that is no application |
+| 404 | `not_found` | not the application's account — or an administrator, service account or delegate |
+| 409 | `account_shared` | the account holds roles outside the allowlist |
+| 409 | `account_disabled` | the account is disabled |
+| 429 | `too_many_requests` | `approval_open_per_token` open requests of this application, `approval_requests_per_hour` for the subject, or the rejection lock |
+
+Whether `subject` holds `approver_role` is not checked when asking (the key would learn who the approvers are); a
+subject without it sees the page with "your right: missing", and confirming ends in `forbidden`.
+
+## 6. Recommended client behaviour
 
 - Call `GET /auth/api/provisioning` at start and refuse to run when scopes or roles differ from what the application
   expects.
 - After a network error on create, look the account up in the list (`GET /auth/api/users`) and issue a new link with
   `POST …/signin-link` instead of creating again (that answers `409 username_taken`).
-- Never log `signin_url` or `qr`.
+- Never log `signin_url` or `qr` — also not the `output` of an approval.
+- Poll an access reset with `?wait=25` and keep the first answer that carries `output`; there is no second.

@@ -4,6 +4,27 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+### Added — an application's team admin resets the access of one of its accounts
+
+- Approval type `tinysesam.account.reset_access` (T-90, draft "account API" §13): the application's service account
+  asks with `POST /auth/api/approvals` (`{"type", "subject", "fields": {"account"}}`, scope `users:reset`), `subject`
+  — its team admin — confirms in the browser with a step-up of that approval. Only a person holding
+  `apps[…].provisioning.approver_role` at the moment of confirming carries it out (an administrator without it does
+  not); target and right are checked at the request and again at the confirmation (`not_found`, `account_shared`,
+  `account_disabled`, `forbidden` for the approver's own account).
+- The effect: password, PIN, TOTP with its recovery codes and passkeys deleted in one transaction, sessions ended, API
+  keys, app passwords, services and connected programs revoked (reason `access_reset`), open links discarded;
+  `first_login_at` stays. The application picks up the new one-time link exactly once — the first
+  `GET /auth/api/approvals/{id}` after the confirmation moves the row `approved` → `consumed` and carries
+  `output: {"signin_url", "expires_at", "qr"}`; never in the audit, a log or a URL. A setup window opens for the
+  link's lifetime plus an hour.
+- `config_check`: `approver_role` in the allowlist of any application → error (a leaked key could confirm through a
+  straw account); grantable by a delegate → warning; `users:reset` needs `approver_role`, `approvals_enabled`,
+  `magiclink_enabled`, `base_url` (and a `login_chain` with `magiclink_first_login_only`).
+- Audit `account_access_reset` (application, approver, counts, approval id); security event `access_reset`, mailed
+  with `notify_new_access`; `GET /auth/api/provisioning` names `approver_role`. The approval page says in words what
+  happens ("Reset the access of … for Example: …") with its own ⚠ warning and the sign-in methods the account has now.
+
 ### Added — account API for applications
 
 - `apps` (empty by default; without it nothing changes): a register of applications, each with its service account

@@ -39,9 +39,18 @@ application.
 - [ ] CLI `tinysesam accounts adopt|release|restore|list`.
 - [ ] Browser test of the panel marks.
 
+## Access reset (done in its own pull request)
+
+- [x] Approval type `tinysesam.account.reset_access` (draft section 13, released by the PO on 2026-11-22): asked by the
+      application's service account (scope `users:reset`) with `subject` = its team admin, confirmed with a step-up by
+      a holder of `provisioning.approver_role` at confirmation time; target and right checked at the request and the
+      confirmation; every factor deleted, sessions and standing credentials revoked, the new link picked up exactly
+      once (`approved` → `consumed`, `output`). `config_check`: the role never in any allowlist (error), grantable by a
+      delegate (warning). Tests `tests/test_reset_access.py` (six rows of the table with mutations, the straw-account
+      attack end to end), browser test of the page.
+
 ## Later
 
-- [ ] `tinysesam.account.reset_access` as an approval type with `approver_role` (draft section 13, PO freed it).
 - [ ] Gateway variable `TINYSESAM_APPS` — together with the switches the gateway preset turns off (API keys, sign-in
       link, a way to set up a factor); alone it could never pass `config_check`.
 - [ ] `require_approval` per action (stage C), joining existing accounts with their consent.

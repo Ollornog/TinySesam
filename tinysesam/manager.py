@@ -1252,7 +1252,7 @@ class TinySesam:
     #: (`on_security_event`). Up to 0.21.x German (`lock`, `admin_passwort`, `passwort_reset`,
     #: `sitzungen_beendet`), with the keys `anzahl`/`reason` instead of `count`/`reason`.
     _KEYS_REVOKED_REASONS = ("account_disabled", "admin_password_reset", "password_reset",
-                                "sessions_revoked")
+                                "sessions_revoked", "access_reset")
 
     def _keys_revoked(self, user_id, reason: str) -> int:
         """Revoke every standing credential of an account — and notify the owner (limit e).
@@ -1678,6 +1678,11 @@ class TinySesam:
     #: `_AFTER_FAILURES_MIN` consecutive failed attempts (ASVS 5.0 6.3.5) — by mail with `notify_login_failures`.
     #: Since the approvals (stage A) `approval_approved` (`approval_id`, `type`, `result`): the holder confirmed an
     #: action a token had asked for, and TinySesam executed it — not mailed by TinySesam (the hook may).
+    #: Since the approval type `tinysesam.account.reset_access` `access_reset` (`app`, `approved_by`, and the counts
+    #: `password`, `pin`, `totp`, `recovery_codes`, `passkeys`, `api_keys`): an application's approver reset the
+    #: account's access — every factor gone, sessions ended, a new one-time link handed to the application; mailed
+    #: with `notify_new_access` (a reset the holder did not ask for is how a misused approver right shows).
+    #: `api_keys_revoked` and the others then carry the reason `access_reset`.
     SECURITY_EVENTS = (
         "password_changed", "pin_set", "pin_disabled", "totp_enabled", "totp_disabled",
         "recovery_codes_generated", "recovery_code_used", "passkey_added", "passkey_removed",
@@ -1689,6 +1694,7 @@ class TinySesam:
         "oauth_service_paired", "oauth_service_revoked",
         "signed_in_after_failures",
         "approval_approved",
+        "access_reset",
     )
 
     #: The events that mean NEW access to the account — they go to the owner by mail as well
@@ -1697,7 +1703,7 @@ class TinySesam:
     _ACCESS_MAIL_EVENTS = ("passkey_added", "totp_enabled", "pin_set", "api_key_created",
                            "device_signed_in", "signin_link_issued", "password_changed",
                            "oauth_device_connected", "oauth_token_reuse", "app_password_created",
-                           "oauth_service_paired")
+                           "oauth_service_paired", "access_reset")
 
     #: Events mailed under `notify_login_failures` instead of `notify_new_access` (T-63).
     _FAILURE_MAIL_EVENTS = ("signed_in_after_failures",)
@@ -1861,6 +1867,29 @@ class TinySesam:
         keys = self._lock_effects(uid) if disabled else 0
         self._lock_audit(u, bool(disabled), keys)
         return True
+
+    def _reset_access(self, user_id: int, *, app_id: str, approved_by: dict, detail: str = "") -> dict:
+        """The effect of a confirmed `tinysesam.account.reset_access` (approvals): every sign-in factor TinySesam
+        keeps is deleted in one transaction (password, PIN, TOTP with recovery codes, passkeys), the sessions end, the
+        standing credentials are revoked (API keys, app passwords, services, connected devices — reason
+        `access_reset`) and open one-time links die. `first_login_at` stays: the new one-time link the application
+        picks up once is the only way back in. Audit `account_access_reset` under the account, with the application,
+        the approver and the counts — never a link. The caller has checked the rights; returns the counts."""
+        uid = int(user_id)
+        counts = self.store.clear_sign_in_factors(uid)
+        self.store.delete_user_sessions(uid)
+        counts["api_keys"] = self._keys_revoked(uid, "access_reset")
+        self.store.revoke_user_magic_tokens(uid)
+        self.store.set_mfa_enroll_until(uid, None)
+        who = f"{approved_by['username']}#{int(approved_by['id'])}"
+        numbers = " ".join(f"{k}={int(v)}" for k, v in counts.items())
+        self.audit("account_access_reset", self._account_name(uid),
+                   detail=f"app={app_id} approved_by={who} {numbers}" + (f" {detail}" if detail else ""))
+        self._security_event("access_reset", uid, app=app_id, approved_by=str(approved_by["username"]),
+                             password=counts["password"], pin=counts["pin"], totp=counts["totp"],
+                             recovery_codes=counts["recovery_codes"], passkeys=counts["passkeys"],
+                             api_keys=counts["api_keys"])
+        return counts
 
     def _lock_effects(self, uid: int) -> int:
         """What every lock does besides the marker — the operator's (`set_disabled`) and the application's (account

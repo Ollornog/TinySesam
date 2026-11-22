@@ -93,8 +93,8 @@ rate limit, open-redirect protection via `safe_next`). Even so: review it yourse
   `api_key_revoked` (`details={"key_id": n}`), `email_changed` and `username_changed`
   (`details={"old": …, "new": …}` — self-service, 2026-09-25) and `api_keys_revoked`
   (`details={"count": n, "reason": …}`, `reason` one of `password_reset`, `account_disabled`,
-  `admin_password_reset`, `sessions_revoked` — in bulk on a reset, a block, an admin password reset
-  or `sessions/revoke` with `scope=all`). Connected programs (OAuth, T-36): `oauth_device_connected`
+  `admin_password_reset`, `sessions_revoked`, `access_reset` — in bulk on a reset, a block, an admin password reset,
+  `sessions/revoke` with `scope=all` or an access reset by an application's approver). Connected programs (OAuth, T-36): `oauth_device_connected`
   (`details={"grant_id": n, "client_id": …, "client_name": …, "resource": …}` — a program got its first
   tokens after the consent), `oauth_device_revoked` (`details={"grant_id": n, "client_id": …, "reason": …}`,
   `reason` one of `user`, `admin`, `client` and the reasons of `api_keys_revoked` — since the attack round of
@@ -115,7 +115,10 @@ rate limit, open-redirect protection via `safe_next`). Even so: review it yourse
   `signed_in_after_failures` (`details={"failures": n, "ip": …}` — the streak counts every failed sign-in under
   the account's names since the last complete sign-in, across methods; also the audit event `login_after_failures`).
   Approvals (stage A): `approval_approved` (`details={"approval_id": …, "type": …, "result": …}` — the holder
-  confirmed an action a token had asked for and TinySesam carried it out; TinySesam itself mails nothing for it).
+  confirmed an action a token had asked for and TinySesam carried it out; TinySesam itself mails nothing for it) and
+  `access_reset` (`details={"app": …, "approved_by": …, "password": n, "pin": n, "totp": n, "recovery_codes": n,
+  "passkeys": n, "api_keys": n}` — an application's approver reset the account's access; mailed with
+  `notify_new_access`).
   The full list of event names is `TinySesam.SECURITY_EVENTS`.
   The `details` keys and the reasons are English since
   0.22.0 (up to 0.21.x `verbleibend`, `alt`/`neu`, `anzahl`/`grund` with German reasons). That includes changes an administrator makes to someone
@@ -333,6 +336,48 @@ create service accounts, lift a lock of the operator. The rules behind that:
 Remaining risk: whoever holds the key can create accounts with the application's roles until a limit stops them, and
 lock the application's accounts. Revoking the service account's key in the panel shuts the API at once; the audit
 (`provision_*`, `apikey_use`) shows what happened.
+
+### Resetting an account's access: an approval, never the key alone
+
+After the first sign-in the key cannot reset anything — that would be a takeover. With the scope `users:reset` and
+`provisioning.approver_role` the application may **ask** for the approval `tinysesam.account.reset_access`: `subject`
+is the TinySesam account of the application's team admin, the field `account` one of the application's own accounts.
+What it does once confirmed: every sign-in factor of the account is deleted in one transaction (password, PIN, TOTP
+with its recovery codes, passkeys), its sessions end, its API keys, app passwords, services and connected programs are
+revoked (reason `access_reset`), open links die, and the application picks up **one** new one-time link. Federated
+sign-ins (OIDC, SAML, LDAP) stay — they live at the provider. The approval page says all of this in words before the
+approver confirms: the summary names every kind that goes, the row "Signs in now with" lists the account's factors,
+the row "Also ends" counts its sessions, API keys, app passwords, services and connected programs — the API keys and
+app passwords a device of the holder still uses stop working too.
+
+- **The approver role is never the application's.** Confirming needs `approver_role` at the moment of confirming —
+  checked in the confirming session, not at the request; an administrator without it is no approver either. The role
+  may be any role (also an existing one such as `teamadmin`), but `config_check` refuses it when it stands in the
+  allowlist of **any** application with provisioning: otherwise a leaked key creates a straw account, gives it every
+  allowlist role, signs in with that account's one-time link, confirms its own request and takes over every account of
+  the application. At runtime such a role counts as none, and `users:reset` with it. Only the operator grants the role
+  — or a delegate whose `roles` hold it, which `config_check` names as a warning: then the delegates appoint the
+  approvers.
+- **The target is checked twice,** at the request and again at the confirmation: an account the application created
+  (`managed_by`), no administrator, owner, service account or delegate (`404 not_found`), all its roles in the
+  allowlist (`409 account_shared`), not disabled (`409 account_disabled`), and never the approver's own account
+  (`403 forbidden`). A change in between gives the result `not_found`, `conflict` or `forbidden` and changes nothing.
+- **Everything else is an approval of stage A:** only a browser session of `subject` decides, with a step-up of THIS
+  approval, the match code, one atomic transition, the limits (`approval_open_per_token` counts the application's open
+  requests, the rejection lock blocks the application for this type). Whether `subject` holds the role is not told to
+  the key; a person without it sees "your right: missing" on the page.
+- **The link exists exactly once.** Confirmed and executed, the row waits in `approved` (for `approval_pending_sec`);
+  the first status read moves it atomically to `consumed` and only then issues the link — two parallel reads get one
+  link. It is in that answer only: never in the audit (`account_access_reset` names the application, the approver,
+  the counts and the approval id), never in a log, never in a URL; the database holds its hash. A setup window opens
+  for the link's lifetime plus an hour, so the person can set up what the chain demands although `first_login_at`
+  stays.
+- **The holder learns of it:** the security event `access_reset` (`app`, `approved_by`, the counts) — mailed with
+  `notify_new_access`. A reset nobody asked for is how a misused approver right shows.
+
+Remaining risk: an approver who confirms for the wrong person, or a colluding approver together with the key. The
+approver is a person the operator chose, confirms each reset with a step-up, and is named in the audit; the holder is
+notified.
 
 ## Vulnerable dependencies
 
