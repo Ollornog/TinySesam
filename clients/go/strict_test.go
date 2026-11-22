@@ -2,9 +2,9 @@ package tinysesam
 
 import "testing"
 
-// Strict JSON cases the vectors do not isolate: the vector attack-payload-invalid-utf8 also repeats a member, so the
-// duplicate check alone refuses it. encoding/json accepts invalid UTF-8 inside strings (and replaces it), so the
-// UTF-8 check needs its own test.
+// Strict JSON cases beyond the vectors. encoding/json accepts invalid UTF-8 inside strings (and replaces it), so the
+// UTF-8 check also has its own test here (the vector attack-payload-invalid-utf8 carries that one defect since the
+// generator dropped its repeated member).
 func TestStrictJSON(t *testing.T) {
 	refused := []string{
 		"{\"a\":\"\xff\"}",

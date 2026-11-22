@@ -266,6 +266,78 @@ for relax in ref.RELAXATIONS:
 assert not silent, f"relaxations no vector catches: {silent}"
 ok(f"self-probes: each of the {len(ref.RELAXATIONS)} relaxations of the reference fails at least one vector")
 
+# ---------- 6. one defect per attack vector ----------
+# A vector with two defects of the same class passes a client that lacks the check it is named for: until 2026-11-22
+# `attack-payload-invalid-utf8` also repeated `ts_name`, so a client without a UTF-8 check still answered `malformed`
+# through its duplicate check. Rule: switching off exactly one check of the reference (one relaxation, or the key that
+# is missing from the set) turns every attack vector into an accepted one. Where no single repair exists because the
+# defect cannot occur alone, the vector is listed below with the reason; the list is measured both ways.
+TEST_KEYS = {label: k["public_jwk"] for label, k in load("keys.json")["keys"].items()}
+INHERENT = {
+    # A kid of the wrong form can never be in a key set (§4.3 ties a kid to its key): format check and lookup fail
+    # together. The cache scenario `invalid-kid-no-fetch` measures the format check on its own.
+    **{f"token/attack-kid-{s}": "kid" for s in ("missing", "path", "sql", "long", "number", "uppercase", "nul")},
+    # No single repair restores a token that is not three segments, or a header/payload that is no object.
+    **{f"token/attack-{s}": "structure" for s in ("two-segments", "four-segments", "trailing-dot",
+                                                   "five-segments-jwe", "empty-header", "jws-json-flattened",
+                                                   "jws-json-general", "header-array", "payload-array")},
+    # A missing claim has no value a repair could assume; a boolean or a huge exp turns into a wrong lifetime.
+    **{f"token/attack-claim-{s}": "claim" for s in ("nbf-missing", "iat-missing", "sub-missing", "iss-missing",
+                                                    "exp-bool", "exp-huge", "sub-number", "aud-number",
+                                                    "aud-empty-array")},
+    # exp before nbf: no instant at which the token is valid, the lifetime repaired leaves it expired.
+    "token/attack-lifetime-negative": "time",
+    # Without Remote-User there is nobody to repair.
+    "headers/user-missing": "nobody", "headers/user-empty": "nobody",
+}
+
+
+def repairs(kind, v) -> list:
+    """The single repairs under which an attack vector is accepted."""
+    found = []
+    if kind == "token":
+        for relax in ref.RELAXATIONS:
+            if run_token(v, frozenset({relax}))["ok"]:
+                found.append(relax)
+        widened = dict(v, input=dict(v["input"], jwks={"keys": list(TEST_KEYS.values())}))
+        if run_token(widened)["ok"]:
+            found.append("key in the set")
+        try:   # a repair of the configuration: issuer and audience as the token names them
+            c = json.loads(ref.b64u_decode(v["input"]["jws"].split(".")[1]))
+            aud = c["aud"] if isinstance(c["aud"], str) else c["aud"][-1]
+            for field, value in (("issuer", c["iss"]), ("audience", aud)):
+                if run_token(dict(v, input=dict(v["input"], **{field: value})))["ok"]:
+                    found.append(f"configured {field}")
+        except (ValueError, KeyError, IndexError, TypeError, ref.GateError):
+            pass
+    else:
+        found = [r for r in ref.RELAXATIONS if run_headers(v, frozenset({r}))["ok"]]
+    return found
+
+
+def unrepairable(vectors) -> list:
+    return [f"{kind}/{v['id']}" for kind, v in vectors if not repairs(kind, v)]
+
+
+attack_vectors = ([("token", v) for v in TOKEN["vectors"] if not v["expected"]["ok"]]
+                  + [("headers", v) for v in HEADERS["vectors"] if not v["expected"]["ok"]])
+lonely = unrepairable(attack_vectors)
+assert sorted(set(lonely) - set(INHERENT)) == [], f"attack vectors with more than one defect: {sorted(set(lonely) - set(INHERENT))}"
+assert sorted(set(INHERENT) - set(lonely)) == [], f"listed as inherent but repairable: {sorted(set(INHERENT) - set(lonely))}"
+# Self-probe: the old double defect (invalid UTF-8 plus a repeated claim) is found.
+_double = json.loads(json.dumps(next(v for v in TOKEN["vectors"] if v["id"] == "attack-payload-invalid-utf8")))
+_body = generator.enc(generator.claims_of(next(v for v in TOKEN["vectors"] if v["id"] == "valid-session")["input"]["jws"]))
+_double["input"]["jws"] = generator.signed(generator.head(), _body[:-1] + b',"ts_name":"\xff"}')
+assert unrepairable([("token", _double)]) == ["token/attack-payload-invalid-utf8"], "the one-defect guard is blind"
+_jwk_a = TEST_KEYS["A"]
+for v in JWKS["sets"]:
+    if v["attack"] == "jwks-entry" and v["id"] != "duplicate-kid":
+        e = v["input"]["jwks"]["keys"][0]
+        changed = {m for m in set(e) | set(_jwk_a) if e.get(m, None) != _jwk_a.get(m, None)}
+        assert len(changed) == 1, f"jwks/{v['id']}: the skipped entry differs from a usable one in {sorted(changed)}"
+ok(f"one defect: {len(attack_vectors) - len(INHERENT)} attack vectors accepted after one repair, {len(INHERENT)} "
+   "listed where the defect cannot occur alone; key-set entries differ from a usable one in one member")
+
 # The keys file says what it is: test material, and the public halves match the seeds.
 keys_doc = load("keys.json")
 assert "TEST KEYS ONLY" in keys_doc["_test_material"]

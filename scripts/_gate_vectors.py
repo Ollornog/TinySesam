@@ -330,11 +330,11 @@ def token_vectors(p: Probe) -> list:
         "the configuration.", signed(dict(head("X"), jwk=jwk("X")), base, "X"), error="header", attack="embedded-key")
     add("attack-embedded-jwk-known-kid", "An embedded `jwk` of the attacker under the kid of a trusted key.",
         signed(dict(head("A"), jwk=jwk("X")), base, "X"), error="header", attack="embedded-key")
-    add("attack-jku", "`jku` points to a key set of the attacker.",
-        signed(dict(head("X"), jku="https://evil.example.com/jwks.json"), base, "X"), error="header",
+    add("attack-jku", "`jku` points to a key set of the attacker, in an otherwise valid token: only refusing the member "
+        "stops it.", signed(dict(head(), jku="https://evil.example.com/jwks.json"), base), error="header",
         attack="embedded-key")
-    add("attack-x5u", "`x5u` points to a certificate of the attacker.",
-        signed(dict(head("X"), x5u="https://evil.example.com/cert.pem"), base, "X"), error="header",
+    add("attack-x5u", "`x5u` points to a certificate of the attacker, in an otherwise valid token.",
+        signed(dict(head(), x5u="https://evil.example.com/cert.pem"), base), error="header",
         attack="embedded-key")
     add("attack-x5c", "`x5c` embeds a certificate chain.", signed(dict(head(), x5c=["MIIB"]), base), error="header",
         attack="embedded-key")
@@ -430,8 +430,8 @@ def token_vectors(p: Probe) -> list:
         attack="json-encoding")
     add("attack-payload-array", "The payload is a JSON array.", signed(head(), b"[1,2]"), error="malformed",
         attack="json-encoding")
-    add("attack-payload-invalid-utf8", "Payload bytes that are no UTF-8.", signed(head(), body + b',"ts_name":"\xff"}'),
-        error="malformed", attack="json-encoding")
+    add("attack-payload-invalid-utf8", "Payload bytes that are no UTF-8 (in an unknown claim, so that the token has no "
+        "other defect).", signed(head(), body + b',"note":"\xff"}'), error="malformed", attack="json-encoding")
     add("attack-payload-bom", "A byte order mark before the payload JSON.", signed(head(), b"\xef\xbb\xbf" + enc(base)),
         error="malformed", attack="json-encoding")
     add("attack-payload-nan", "A NaN value in the payload is no JSON.", signed(head(), body + b',"x":NaN}'), error="malformed",

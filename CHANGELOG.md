@@ -4,6 +4,19 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+### Fixed — one defect per gate client vector
+
+- `spec/vectors/token.json`: `attack-payload-invalid-utf8` also repeated `ts_name`, so a client without a UTF-8 check
+  still answered `malformed` through its duplicate check; the invalid bytes now sit in an unknown claim. `attack-jku` and
+  `attack-x5u` were signed with the attacker's key under its own `kid`, so a client that ignores unknown header members
+  still refused them as `kid`; they are now otherwise valid tokens of the active key. Same ids and expected classes.
+- `tests/test_gate_vectors.py` guards the rule for every token and header attack vector: switching off exactly one check
+  of the reference (or adding the missing key, or configuring the issuer or audience the token names) must make it
+  accepted; the vectors whose defect cannot occur alone are listed with a reason, and the list is measured both ways.
+  Key-set entries that must be skipped differ from a usable entry in exactly one member. The reference gained the
+  relaxations this needs (`lenient_utf8`, `allow_bom`, `allow_nan`, `skip_signature`, `no_ts_id_check`,
+  `header_lenient_utf8`, `header_any_id`), each measured by the self-probes.
+
 ### Added — the gate client in Rust (T-81)
 
 - `clients/rust/`, crate `tinysesam-gate` 0.1.0 (edition 2024, `#![forbid(unsafe_code)]`), following

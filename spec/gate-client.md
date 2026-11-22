@@ -341,7 +341,11 @@ a vector, and that the Python reference client (`tests/_gate_reference.py`) pass
 | `jwks.json` | `sets`: a JWKS document → usable `kids` in order, or `error: jwks_invalid`; `scenarios`: steps with `now`, `jws` and a simulated `fetch` answer (`status`, `cache_control`, `body` or `body_text`, or `error`) → `expect` (`fetched`, `ok`, `error`). A client that fetches where no `fetch` is given fails the step |
 | `topbar.json` | §8: `input.topbar` → the normalized `expected.topbar` |
 
-Every vector has an `id`, a `reason` and an `attack` class (`null` for a plain valid case). Each file names its
+Every vector has an `id`, a `reason` and an `attack` class (`null` for a plain valid case). Every attack vector carries
+**one defect**: with that one check switched off it would be accepted, so a client that lacks the check fails the
+vector instead of refusing it with the same class for another reason. The suite measures this for every token and
+header vector; the few whose defect cannot occur alone (a malformed `kid` is never in a key set, a token that is not
+three segments, a missing claim) are listed there with the reason. Each file names its
 `defaults` (`issuer`, `audience`, `now`) — the cache scenarios use them for every step.
 
 ### Attack classes

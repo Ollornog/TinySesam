@@ -42,11 +42,15 @@ ERRORS = ("malformed", "header", "kid", "signature", "claims", "issuer", "audien
 HEADER_ERRORS = ("unauthenticated", "header")
 
 #: Every rule a self-probe may switch off.
+#: Each switches off one check (two only where they are one defect, such as the length and the verification of the
+#: signature); `tests/test_gate_vectors.py` also uses them to show that every attack vector carries one defect.
 RELAXATIONS = ("alg_from_header", "ignore_typ", "embedded_jwk", "unknown_header_members", "no_duplicate_check",
-               "lenient_base64", "no_size_limit", "no_exp", "no_nbf", "no_lifetime", "no_control_check",
+               "lenient_base64", "lenient_utf8", "allow_bom", "allow_nan", "no_size_limit", "skip_signature",
+               "no_exp", "no_nbf", "no_lifetime", "no_control_check", "no_ts_id_check",
                "aud_casefold", "iss_prefix", "kid_any_format", "claim_types_loose", "jwks_any_entry",
                "jwks_no_interval", "jwks_no_stale_limit", "header_strip_control", "header_first_value",
-               "remote_auth_empty_is_session", "groups_no_trim", "topbar_any_href")
+               "header_lenient_utf8", "header_any_id", "remote_auth_empty_is_session", "groups_no_trim",
+               "topbar_any_href")
 
 _KID = re.compile(r"[0-9a-f]{16}")
 _SEGMENT = re.compile(r"[A-Za-z0-9_-]*")
@@ -70,7 +74,8 @@ def b64u_decode(segment: str, relax=frozenset()) -> bytes:
     """Strict base64url: URL-safe alphabet, no padding, no whitespace, canonical (the unused bits are zero)."""
     if "lenient_base64" in relax:
         try:
-            return base64.urlsafe_b64decode(segment.replace("=", "") + "=" * (-len(segment.replace("=", "")) % 4))
+            bare = "".join(segment.split()).replace("=", "")
+            return base64.urlsafe_b64decode(bare + "=" * (-len(bare) % 4))
         except (ValueError, TypeError) as e:
             raise GateError("malformed", "base64") from e
     if not _SEGMENT.fullmatch(segment) or len(segment) % 4 == 1:
@@ -95,13 +100,16 @@ def json_object(raw: bytes, relax=frozenset()) -> dict:
             out[k] = v
         return out
     try:
-        text = raw.decode("utf-8")
+        text = raw.decode("utf-8", "replace" if "lenient_utf8" in relax else "strict")
     except UnicodeDecodeError as e:
         raise GateError("malformed", "not UTF-8") from e
-    if text.startswith("﻿"):
-        raise GateError("malformed", "byte order mark")
+    if text.startswith("\ufeff"):
+        if "allow_bom" not in relax:
+            raise GateError("malformed", "byte order mark")
+        text = text[1:]
     try:
-        value = json.loads(text, object_pairs_hook=pairs, parse_constant=_no_constant)
+        value = json.loads(text, object_pairs_hook=pairs,
+                           parse_constant=float if "allow_nan" in relax else _no_constant)
     except ValueError as e:
         raise GateError("malformed", "not JSON") from e
     if not isinstance(value, dict):
@@ -180,10 +188,7 @@ def parse(jws, relax=frozenset()):
     if extra and "unknown_header_members" not in relax and "embedded_jwk" not in relax:
         raise GateError("header", f"member(s) {sorted(extra)}")
     alg = head.get("alg")
-    if "alg_from_header" in relax:
-        if alg not in (ALGORITHM, "none", "HS256"):
-            raise GateError("header", "alg")
-    elif not (isinstance(alg, str) and alg == ALGORITHM):
+    if "alg_from_header" not in relax and not (isinstance(alg, str) and alg == ALGORITHM):
         raise GateError("header", "alg")
     typ = head.get("typ")
     if "ignore_typ" not in relax and not (isinstance(typ, str) and typ.isascii() and typ.lower() == TOKEN_TYPE):
@@ -191,10 +196,19 @@ def parse(jws, relax=frozenset()):
     kid = head.get("kid")
     if not isinstance(kid, str) or ("kid_any_format" not in relax and not _KID.fullmatch(kid)):
         raise GateError("kid", "missing or not 16 lowercase hex digits")
-    if alg == ALGORITHM and len(sig) != 64:
+    if _header_alg(head, relax) == ALGORITHM and len(sig) != 64 and "skip_signature" not in relax:
         raise GateError("signature", "not 64 bytes")
     return {"signing_input": f"{h_seg}.{p_seg}".encode("ascii"), "head": head, "payload": payload_raw,
             "sig": sig, "kid": kid}
+
+
+def _header_alg(head, relax) -> str:
+    """The algorithm to verify with: the constant, or — relaxed — what the header names (`none`, `HS256` in any
+    spelling; anything else counts as Ed25519)."""
+    alg = head.get("alg")
+    if "alg_from_header" in relax and isinstance(alg, str) and alg.lower() in ("none", "hs256"):
+        return alg.lower()
+    return ALGORITHM
 
 
 def _check_signature(parsed, public: bytes, relax) -> None:
@@ -203,9 +217,9 @@ def _check_signature(parsed, public: bytes, relax) -> None:
     head, sig, data = parsed["head"], parsed["sig"], parsed["signing_input"]
     if "embedded_jwk" in relax and isinstance(head.get("jwk"), dict):
         public = b64u_decode(str(head["jwk"].get("x")), frozenset({"lenient_base64"}))
-    if "alg_from_header" in relax and head.get("alg") == "none":
+    if "skip_signature" in relax or _header_alg(head, relax) == "none":
         return
-    if "alg_from_header" in relax and head.get("alg") == "HS256":
+    if _header_alg(head, relax) == "hs256":
         for secret in (public, base64.b64encode(public)):
             if hmac.compare_digest(hmac.new(secret, data, hashlib.sha256).digest(), sig):
                 return
@@ -249,7 +263,7 @@ def _check_claims(claims: dict, *, issuer, audience, now, leeway, relax) -> None
     sub = str(claims.get("sub"))
     if not sub or ("no_control_check" not in relax and has_control(sub)):
         raise GateError("claims", "sub")
-    if "ts_id" in claims and claims["ts_id"] != claims.get("sub"):
+    if "ts_id" in claims and claims["ts_id"] != claims.get("sub") and "no_ts_id_check" not in relax:
         raise GateError("claims", "ts_id differs from sub")
     if int(claims["iat"]) > int(claims["nbf"]) and not loose:
         raise GateError("claims", "iat later than nbf")
@@ -322,6 +336,8 @@ def identity_from_headers(headers: dict, relax=frozenset()) -> dict:
     for name, value in headers.items():
         key = name.lower()
         if key in seen:
+            if "header_first_value" in relax:
+                continue
             raise GateError("header", f"{name} more than once")
         seen[key] = value
     values = {}
@@ -334,7 +350,7 @@ def identity_from_headers(headers: dict, relax=frozenset()) -> dict:
                 raise GateError("header", f"{name} more than once")
             v = v[0]
         try:
-            text = v.encode("latin-1").decode("utf-8")
+            text = v.encode("latin-1").decode("utf-8", "replace" if "header_lenient_utf8" in relax else "strict")
         except UnicodeError as e:
             raise GateError("header", f"{name} is not UTF-8") from e
         if has_control(text):
@@ -346,7 +362,7 @@ def identity_from_headers(headers: dict, relax=frozenset()) -> dict:
     if not user:
         raise GateError("unauthenticated")
     rid = values.get("Remote-Id", "")
-    if rid and not _DIGITS.fullmatch(rid):
+    if rid and not _DIGITS.fullmatch(rid) and "header_any_id" not in relax:
         raise GateError("header", "Remote-Id")
     auth = values.get("Remote-Auth", "")
     session = auth == "session" or ("remote_auth_empty_is_session" in relax and not auth)
