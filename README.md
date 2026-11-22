@@ -2016,8 +2016,10 @@ existing forward auth, so a request and its body are not lost.
   [gate client specification](https://github.com/Ollornog/TinySesam/blob/main/spec/gate-client.md) (token format,
   checking order, groups, JWKS rules that never hang). Its language-neutral test and attack vectors in
   [`spec/vectors/`](https://github.com/Ollornog/TinySesam/tree/main/spec/vectors) are generated from TinySesam's own
-  code; clients for Go, Rust, JS/TS and PHP are planned under
-  [`clients/`](https://github.com/Ollornog/TinySesam/tree/main/clients), a slim Python client (WSGI/ASGI, no FastAPI)
+  code. The **Go client** is in
+  [`clients/go/`](https://github.com/Ollornog/TinySesam/tree/main/clients/go) (`net/http` middleware, header and
+  token mode, standard library only; not published yet, use it by commit); clients for Rust, JS/TS and PHP are planned
+  under [`clients/`](https://github.com/Ollornog/TinySesam/tree/main/clients), a slim Python client (WSGI/ASGI, no FastAPI)
   in the package itself (backlog T-86).
 
 ### Signing in at the gate: invisible or with a page (T-21)

@@ -45,3 +45,63 @@ jobs:
       - uses: github/codeql-action/analyze@33d7b85da1a04171e211befe2c739303b9a4c066  # v4.39.3
         with:
           category: "/language:python"
+
+  # The Go gate client (clients/go, T-80). A Go analysis needs a build, and a job with `security-events: write` runs no
+  # code (tests/test_repo.py, B4-4) — so the analysis runs without that permission and writes SARIF, and the job below
+  # only uploads it. Built by hand so that only that module is traced (autobuild would also compile the Caddy image of
+  # deploy/forward-auth/caddy-gate, which is not our code).
+  analyse-go:
+    name: CodeQL (go)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5  # v7.1.0
+        with:
+          go-version: stable
+          cache: false
+
+      - uses: github/codeql-action/init@33d7b85da1a04171e211befe2c739303b9a4c066  # v4.39.3
+        with:
+          languages: go
+          build-mode: manual
+          queries: security-and-quality
+
+      - name: Build the Go gate client
+        working-directory: clients/go
+        run: go build ./...
+
+      - uses: github/codeql-action/analyze@33d7b85da1a04171e211befe2c739303b9a4c066  # v4.39.3
+        with:
+          category: "/language:go"
+          upload: never
+          output: sarif-go
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: codeql-go-sarif
+          path: sarif-go
+          retention-days: 3
+          if-no-files-found: error
+
+  upload-go:
+    name: CodeQL (go) upload
+    needs: analyse-go
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      security-events: write      # only for this: write the findings to the Security tab
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          name: codeql-go-sarif
+          path: sarif-go
+
+      - uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066  # v4.39.3
+        with:
+          sarif_file: sarif-go
+          category: "/language:go"

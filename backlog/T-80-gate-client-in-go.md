@@ -2,7 +2,7 @@
 id: T-80
 type: Task
 title: 'Gate client in Go'
-status: offen
+status: erledigt
 milestone: M-2
 tags: [gate, clients, go]
 created: '2026-11-22'
@@ -27,3 +27,23 @@ The standard library carries Ed25519 (`crypto/ed25519`); duplicate members need 
 - A workflow `client-go.yml` on `ubuntu-latest` (actions pinned by SHA, `permissions: contents: read`, no path filter),
   the Dependabot entry `gomod` for `/clients/go`, a README in English.
 - No publication to the Go module proxy without a decision of the product owner.
+
+## Done (2026-11-22)
+
+- `clients/go/` — module `github.com/Ollornog/TinySesam/clients/go`, package `tinysesam`, Go 1.26+, **standard
+  library only** (`crypto/ed25519`, `encoding/json` behind a token walk that refuses repeated members, `encoding/base64`
+  behind the strict pre-checks). No JOSE library: none enforces the pre-checks of spec §4.4, and the algorithm is a
+  constant, so a library would add surface without taking work away.
+- Header mode (`TrustedProxies`, renamable headers) and token mode (fixed keys or JWKS with the §5 rules: 5 s
+  deadline, 64 KiB, cache, 10 s rate, stale limit, shared running fetch); `Gate.Middleware`, `RequireAuth`,
+  `RequireRole`, `RequireSession`; typed errors per class; `ParseTopbar`/`FetchTopbar` (§8).
+- The test suite reads `spec/vectors/*.json` from the repository and passes all of them (114 token, 33 header, 19 key
+  set, 10 cache scenarios with 38 steps, 6 top bar); plus a JWKS server that never answers, a body above 64 KiB, 32
+  concurrent requests sharing one fetch, a redirect to another host, configuration errors, guards; five fuzz targets.
+- Mutation proof: 57 hand mutations, one per checking step, 54 red. The three that stay green are guarded twice (the
+  base64 alphabet check by the canonical re-encoding, the BOM check by `json.Valid`, a second fetch in one request by
+  the 10 s rate). The vector `attack-payload-invalid-utf8` also repeats a member, so a client without a UTF-8 check
+  still passes it; the Go suite has a test of its own for that.
+- `.github/workflows/client-go.yml` (no path filter, ends early when a pull request touches neither `clients/go/` nor
+  `spec/`), Dependabot `gomod` for `/clients/go` and `/.github/audit` (the tools), CodeQL for Go, a step in `scripts/check.sh`.
+- Not published: no tag `clients/go/v…`, no announcement to the module proxy (decision of the product owner open).
