@@ -19,6 +19,16 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 - The roles outside a ladder are grouped by prefix (`app:`, `ops:` …) with a filter once there are many; the
   new-account form uses the same picker instead of the free-text field (which stays when `available_roles` is empty).
 
+### Fixed — `tests/test_prebooking_pending.py` red on a loaded machine
+
+- Section (a) assumed that all fifteen parallel sign-ins reach the hanging directory within its 1.5 s of wall clock.
+  On a slow node a sign-in reached it later, met the outage marker the first timeout had armed, and rightly never asked
+  — the test waited 20 s for an attempt the product does not make (ci-local: "15 attempts in the hanging directory";
+  reproduced by delaying the colleagues' pre-booking 2 s: 5 asked, marker armed). The hanging directory now holds its
+  questions until the test opens a gate, and the test waits on events (each question, each taken waiting slot) instead
+  of polling against a deadline; the same in sections (d), (e), (h) and (i). No product change: under load fewer
+  sign-ins reach a hanging directory, and none counts as a failed attempt.
+
 ### Fixed — saving roles in the panel dropped roles outside `available_roles`
 
 - The roles editor sent only the ticked roles of `available_roles`, so saving an account silently removed every role

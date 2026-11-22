@@ -12,7 +12,9 @@ Now the pre-booking is pending in the database (`login_attempt.pending`). Whoeve
 pre-bookings waits until they are decided — bounded in time and number. The
 burst (R7-2) stays throttled: it waits along and then gets the real lockout.
 
-The deadlines are shortened in the test (`_PENDING_DEADLINE_SEC`); the directory hangs for `HANGS` seconds.
+The deadlines are shortened in the test (`_PENDING_DEADLINE_SEC`); the directory hangs for `HANGS` seconds, or — where
+the test needs the first window open while it starts its sign-ins — until the test opens its gate. The test waits on
+events (each question to the directory, each taken waiting slot), never against a wall-clock deadline.
 """
 from __future__ import annotations
 
@@ -25,7 +27,8 @@ import sys
 import tempfile
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor
+from concurrent.futures import wait as futures_wait
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -48,20 +51,35 @@ PW = "Emergency-Pw-15!"
 NAT = ("198.51.100.7", 40000)
 
 
-class Directory:
-    """A moody directory: hangs until the "timeout", rejects quickly, or raises."""
+#: Only a guard against a test that never gets its state — the waits below end on an event, not on this.
+SAFETY_SEC = 300.0
 
-    def __init__(self, mode="hangs", duration=HANGS):
+
+class Directory:
+    """A moody directory: hangs until the "timeout", rejects quickly, or raises.
+
+    With `gate` (a `threading.Event`) a hanging question lasts until the test opens the gate instead of `duration`
+    seconds. The first window of an outage (G9) is the time until the first question fails; with a fixed
+    `duration` it closed after 1.5 s of wall clock, and a sign-in that the test had started but that only reached the
+    directory later (a loaded machine) met the armed `FailureMarker` and never asked — the test waited for an attempt
+    that the product rightly never made (ci-local, PR #307: 16 of 16 runs red on one core)."""
+
+    def __init__(self, mode="hangs", duration=HANGS, gate=None):
         self.mode = mode
         self.duration = duration
+        self.gate = gate
         self.questions = 0
-        self._counter = threading.Lock()
+        self.arrived = threading.Condition()
 
     def authenticate(self, username, password):
-        with self._counter:
+        with self.arrived:
             self.questions += 1
+            self.arrived.notify_all()
         if self.mode == "hangs":
-            time.sleep(self.duration)
+            if self.gate is not None:
+                self.gate.wait(SAFETY_SEC)
+            else:
+                time.sleep(self.duration)
             raise DirectoryNotReachable("LDAP directory ldap://dummy unusable: timed out")
         if self.mode == "path":
             raise DirectoryNotReachable("LDAP directory ldap://dummy unusable: test")
@@ -73,18 +91,35 @@ class Directory:
         return None                                    # „falsch“: password rejected
 
 
-def wait_until(condition, was, deadline=20.0):
-    """Wait until `condition()` is true — instead of a fixed time (T-18).
+def wait_for(cond: threading.Condition, condition, was, state=None):
+    """Wait on `cond` until `condition()` is true — woken by each event, not polled against a wall-clock deadline.
+    `state()` says what was there instead when it never happens."""
+    with cond:
+        if not cond.wait_for(condition, SAFETY_SEC):
+            raise AssertionError(f"never happened: {was}" + (f" ({state()})" if state else ""))
 
-    Until 2026-10-07 these places had `time.sleep(HANGS * 0.4)` in the hope that the
-    parallel sign-ins had arrived in the hanging directory by then. Under load that once was not
-    enough (CI job repeat, PR #108): the precondition was read before all were there. Now
-    it is read as soon as they are there; if the state does not come, that is a named error."""
-    end = time.monotonic() + deadline
-    while not condition():
-        if time.monotonic() > end:
-            raise AssertionError(f"Timeout ({deadline} s): {was}")
-        time.sleep(0.01)
+
+class Slots:
+    """A waiting-slot semaphore (`_pending_places`) that tells how many sign-ins are waiting right now."""
+
+    def __init__(self, n):
+        self._inner = threading.BoundedSemaphore(n)
+        self.waiting = 0
+        self.changed = threading.Condition()
+
+    def acquire(self, blocking=True, timeout=None):
+        got = self._inner.acquire(blocking, timeout) if timeout is not None else self._inner.acquire(blocking)
+        if got:
+            with self.changed:
+                self.waiting += 1
+                self.changed.notify_all()
+        return got
+
+    def release(self):
+        with self.changed:
+            self.waiting -= 1
+            self.changed.notify_all()
+        self._inner.release()
 
 
 def _setup(directory, **hardening):
@@ -148,27 +183,41 @@ def _old_unclosed(auth, name, ip, count):
 
 
 # ── (a) The first window: nobody gets locked out, the emergency admin gets in ─────────────────
-dir_a = Directory("hangs")
+# The directory hangs until the test opens the gate: the first window stays open for as long as the test needs to
+# start its sign-ins, however loaded the machine is. Waiting is on events (each question, each waiting slot).
+gate_a = threading.Event()
+dir_a = Directory("hangs", gate=gate_a)
 auth, app, post, db = _setup(dir_a)
+auth._PENDING_DEADLINE_SEC = SAFETY_SEC                 # the waiters end on the decision, not on a clock here
+slots_a = auth._pending_places = Slots(auth._PENDING_WAIT_SLOTS)
 pair = auth._sec("max_login_attempts")
 threshold_ip = pair * auth._sec("ip_attempt_factor")
 with Recording() as log_a, ThreadPoolExecutor(max_workers=threshold_ip + 4) as pool:
-    # Impatient Alice clicks five times, the office behind the same NAT address signs in.
-    running = [pool.submit(_sign_in, app, "alice") for _ in range(pair)]
-    running += [pool.submit(_sign_in, app, f"colleague{i}") for i in range(threshold_ip - pair)]
-    wait_until(lambda: dir_a.questions >= threshold_ip, f"{threshold_ip} attempts in the hanging directory")
-    pending = auth.store.count_fails(0, ip=NAT[0])
-    confirmed = auth.store.count_fails(0, ip=NAT[0], only_confirmed=True)
-    when_admin: list = []
-    alice6 = pool.submit(_sign_in, app, "alice")
-    admin = pool.submit(_sign_in, app, "admin", PW, NAT, when_admin)
-    alice6, admin = alice6.result(timeout=30), admin.result(timeout=30)
-    hanging = [f.result(timeout=30) for f in running]
+    try:
+        # Impatient Alice clicks five times, the office behind the same NAT address signs in.
+        running = [pool.submit(_sign_in, app, "alice") for _ in range(pair)]
+        running += [pool.submit(_sign_in, app, f"colleague{i}") for i in range(threshold_ip - pair)]
+        wait_for(dir_a.arrived, lambda: dir_a.questions >= threshold_ip,
+                 f"{threshold_ip} attempts in the hanging directory",
+                 lambda: f"{dir_a.questions} asked, outage marker armed: {auth._ldap_failure._disturbed}")
+        pending = auth.store.count_fails(0, ip=NAT[0])
+        confirmed = auth.store.count_fails(0, ip=NAT[0], only_confirmed=True)
+        alice6 = pool.submit(_sign_in, app, "alice")
+        admin = pool.submit(_sign_in, app, "admin", PW, NAT)
+        # Both would be locked out by the pending pre-bookings alone, so both wait for their outcome.
+        wait_for(slots_a.changed, lambda: slots_a.waiting >= 2, "Alice's sixth click and the admin waiting")
+        waited = slots_a.waiting
+        questions_before = dir_a.questions
+    finally:
+        gate_a.set()                                    # the directory times out: the outage becomes known
+    alice6, admin = alice6.result(timeout=SAFETY_SEC), admin.result(timeout=SAFETY_SEC)
+    hanging = [f.result(timeout=SAFETY_SEC) for f in running]
 auth._notice_outcome.wait()
 r.check("precondition: in the first window as many pre-bookings are pending as the IP threshold",
         pending == threshold_ip and confirmed == 0, f"{pending} counted, {confirmed} confirmed")
-r.check("precondition: the admin waited (the lockout would have applied)",
-        when_admin and when_admin[0] >= HANGS * 0.3, f"{when_admin}")
+r.check("precondition: the admin and Alice's sixth click waited for the pending pre-bookings (the lockout would have "
+        "applied) and asked nobody meanwhile", waited == 2 and questions_before == threshold_ip,
+        f"{waited} waiting, {questions_before} questions")
 r.check("the emergency admin gets in with the correct password (303, not 429)", admin == 303, f"{admin}")
 r.check("Alice's sixth click gets the outage (503), no lockout", alice6 == 503, f"{alice6}")
 r.check("the hanging attempts end with 503", set(hanging) == {503}, f"{sorted(set(hanging))}")
@@ -247,17 +296,25 @@ r.check("a rule that applies with confirmed rows takes precedence over the pendi
 os.remove(db)
 
 # ── (d) The series: a hanging pre-booking at the limit does not trigger a series lockout ──────
-dir_d = Directory("hangs")
+gate_d = threading.Event()
+dir_d = Directory("hangs", gate=gate_d)
 auth, app, post, db = _setup(dir_d, max_login_attempts=100)
+auth._PENDING_DEADLINE_SEC = SAFETY_SEC
+slots_d = auth._pending_places = Slots(auth._PENDING_WAIT_SLOTS)
 limit_s = auth._sec("account_max_consecutive_failures")
 for _ in range(limit_s - 1):
     auth.store.increase_failure_series("alice")
 with Recording() as log_d, ThreadPoolExecutor(max_workers=2) as pool:
-    hanging_d = pool.submit(_sign_in, app, "alice", "x", ("192.0.2.60", 40000))
-    wait_until(lambda: dir_d.questions >= 1, "the hanging attempt in the directory")
-    state_d = (auth.store.failure_series("alice"), auth.store.failure_series_confirmed("alice"))
-    parallel_d = pool.submit(_sign_in, app, "alice", "y", ("192.0.2.61", 40000)).result(timeout=30)
-    hanging_d = hanging_d.result(timeout=30)
+    try:
+        hanging_d = pool.submit(_sign_in, app, "alice", "x", ("192.0.2.60", 40000))
+        wait_for(dir_d.arrived, lambda: dir_d.questions >= 1, "the hanging attempt in the directory")
+        state_d = (auth.store.failure_series("alice"), auth.store.failure_series_confirmed("alice"))
+        parallel_d = pool.submit(_sign_in, app, "alice", "y", ("192.0.2.61", 40000))
+        wait_for(slots_d.changed, lambda: slots_d.waiting >= 1, "the parallel login waiting at the limit")
+    finally:
+        gate_d.set()
+    parallel_d = parallel_d.result(timeout=SAFETY_SEC)
+    hanging_d = hanging_d.result(timeout=SAFETY_SEC)
 auth._notice_outcome.wait()
 r.check("precondition: the series is at the limit with the hanging pre-booking",
         state_d == (limit_s, limit_s - 1), f"{state_d}")
@@ -271,19 +328,23 @@ os.remove(db)
 
 # Without a waiting slot at the same spot: the deferral does not show the text of the series lockout ("until you
 # reset your password"), and `is_locked` reports it as a deferral — without `lockout_series`, without mail.
-dir_d3 = Directory("hangs")
+gate_d3 = threading.Event()
+dir_d3 = Directory("hangs", gate=gate_d3)
 auth, app, post, db = _setup(dir_d3, max_login_attempts=100)
 auth._pending_places = threading.BoundedSemaphore(1)
 auth._pending_places.acquire()                          # all waiting slots taken
 for _ in range(limit_s - 1):
     auth.store.increase_failure_series("alice")
 with Recording() as log_d3, ThreadPoolExecutor(max_workers=1) as pool:
-    hanging_d3 = pool.submit(_sign_in, app, "alice", "x", ("192.0.2.60", 40000))
-    wait_until(lambda: dir_d3.questions >= 1, "the hanging attempt in the directory")
-    page_html_d3 = TestClient(app, client=("192.0.2.61", 40000)).post(
-        "/auth/login", data={"username": "alice", "password": "y"}, follow_redirects=False)
-    locked_d3 = auth._is_locked("alice", "192.0.2.62")
-    hanging_d3.result(timeout=30)
+    try:
+        hanging_d3 = pool.submit(_sign_in, app, "alice", "x", ("192.0.2.60", 40000))
+        wait_for(dir_d3.arrived, lambda: dir_d3.questions >= 1, "the hanging attempt in the directory")
+        page_html_d3 = TestClient(app, client=("192.0.2.61", 40000)).post(
+            "/auth/login", data={"username": "alice", "password": "y"}, follow_redirects=False)
+        locked_d3 = auth._is_locked("alice", "192.0.2.62")
+    finally:
+        gate_d3.set()
+    hanging_d3.result(timeout=SAFETY_SEC)
 auth._notice_outcome.wait()
 r.check("deferral at the series limit: 429 with the text of the window lockout, not of the series lockout",
         page_html_d3.status_code == 429 and auth.t("err.locked") in page_html_d3.text
@@ -321,21 +382,27 @@ r.check("…and the series is afterwards at 0", auth.store.failure_series("alice
 os.remove(db)
 
 # ── (e) Waiting slots: whoever gets none immediately gets the deferral — without a lockout ────
-dir_e = Directory("hangs")
+gate_e = threading.Event()
+dir_e = Directory("hangs", gate=gate_e)
 auth, app, post, db = _setup(dir_e, max_login_attempts=1)
-auth._pending_places = threading.BoundedSemaphore(1)
-times_e: list = []
+auth._PENDING_DEADLINE_SEC = SAFETY_SEC
+slots_e = auth._pending_places = Slots(1)
 with Recording() as log_e, ThreadPoolExecutor(max_workers=3) as pool:
-    hanging_e = pool.submit(_sign_in, app, "alice")
-    wait_until(lambda: dir_e.questions >= 1, "the hanging attempt holds the single waiting slot")
-    waiting = [pool.submit(_sign_in, app, "alice", "x", NAT, times_e) for _ in range(2)]
-    status_e = sorted(f.result(timeout=30) for f in waiting)
-    hanging_e.result(timeout=30)
+    try:
+        hanging_e = pool.submit(_sign_in, app, "alice")
+        wait_for(dir_e.arrived, lambda: dir_e.questions >= 1, "the hanging attempt in the directory")
+        waiting = [pool.submit(_sign_in, app, "alice", "x", NAT) for _ in range(2)]
+        # While the directory still hangs: one takes the single waiting slot, the other gets none and its answer.
+        done_e, _ = futures_wait(waiting, timeout=SAFETY_SEC, return_when=FIRST_COMPLETED)
+        wait_for(slots_e.changed, lambda: slots_e.waiting >= 1, "the other attempt in the single waiting slot")
+        before_e = sorted(f.result() for f in done_e)
+    finally:
+        gate_e.set()
+    status_e = sorted(f.result(timeout=SAFETY_SEC) for f in waiting)
+    hanging_e.result(timeout=SAFETY_SEC)
 auth._notice_outcome.wait()
-times_e.sort()
-r.check("without waiting slot: immediately 429, the other waits and gets the outage (503)",
-        status_e == [429, 503] and times_e[0] < HANGS * 0.4 <= times_e[1],
-        f"{status_e}, times {[round(z, 2) for z in times_e]}")
+r.check("without waiting slot: immediately 429 (while the directory still hangs), the other waits and gets the "
+        "outage (503)", before_e == [429] and status_e == [429, 503], f"{before_e} before, {status_e} after")
 deferred = log_e.lines("deferred login")
 r.check("without waiting slot: `deferred login … reason=pending` in the log, no `failed login`, no mail",
         len(deferred) == 1 and "user=alice" in deferred[0] and "reason=pending" in deferred[0]
@@ -358,13 +425,18 @@ r.check("counter-check: the same line as `failed login` would hit the jail",
 os.remove(db)
 
 # ── (h) is_locked: a deferral is True, but without a lockout mail and without `failed login` ──
-dir_h = Directory("hangs")
+gate_h = threading.Event()                              # same first window as in (a): open until the test has looked
+dir_h = Directory("hangs", gate=gate_h)
 auth, app, post, db = _setup(dir_h)
 with Recording() as log_h, ThreadPoolExecutor(max_workers=auth._sec("max_login_attempts")) as pool:
-    running = [pool.submit(_sign_in, app, "alice") for _ in range(auth._sec("max_login_attempts"))]
-    wait_until(lambda: dir_h.questions >= auth._sec("max_login_attempts"), "all attempts in the hanging directory")
-    locked_h = auth._is_locked("alice", NAT[0])
-    [f.result(timeout=30) for f in running]
+    try:
+        running = [pool.submit(_sign_in, app, "alice") for _ in range(auth._sec("max_login_attempts"))]
+        wait_for(dir_h.arrived, lambda: dir_h.questions >= auth._sec("max_login_attempts"),
+                 "all attempts in the hanging directory")
+        locked_h = auth._is_locked("alice", NAT[0])
+    finally:
+        gate_h.set()
+    [f.result(timeout=SAFETY_SEC) for f in running]
     free_h = not auth._is_locked("alice", NAT[0])
 auth._notice_outcome.wait()
 r.check("is_locked during pending pre-bookings: True, afterwards False", locked_h and free_h,
@@ -395,8 +467,9 @@ class Checking(Directory):
     """Accepts exactly one password, after `duration` seconds."""
 
     def authenticate(self, username, password):
-        with self._counter:
+        with self.arrived:
             self.questions += 1
+            self.arrived.notify_all()
         time.sleep(self.duration)
         if password == CORRECT_I:
             return {"username": username, "email": None, "name": username, "groups": [], "id": f"l-{username}"}
@@ -414,7 +487,7 @@ for _ in range(limit_i - 2):
     auth.store.increase_failure_series("alice")
 with Recording() as log_i, ThreadPoolExecutor(max_workers=2) as pool:
     holder = pool.submit(_sign_in, app, "alice", CORRECT_I, ("198.51.100.1", 40000))
-    wait_until(lambda: dir_i.questions >= 1, "the owner in the directory")
+    wait_for(dir_i.arrived, lambda: dir_i.questions >= 1, "the owner in the directory")
     attacker = pool.submit(_sign_in, app, "alice", "wrong", ("203.0.113.66", 40000))
     holder, attacker = holder.result(timeout=30), attacker.result(timeout=30)
 auth._notice_outcome.wait()
