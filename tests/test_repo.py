@@ -1713,8 +1713,9 @@ _storage = _json.loads(_read("tests/api_surface.json"))
 # their documentation is the generated API.md and docs/OPERATIONS.md, checked right below.
 _contract = ("TinySesam.attributes", "TinySesam.event_payload", "http.routes", "http.forward", "http.contract",
             "log.loggers", "log.lines")
+# The gate client (T-86) has a section of its own in both READMEs, checked right after this loop.
 _tier_b = sorted({n for _area, _entries in _storage.items()
-                   if _area != "TinySesamConfig.fields" and _area not in _contract
+                   if _area not in ("TinySesamConfig.fields", "gate_client") and _area not in _contract
                    for n, _e in _entries.items() if isinstance(_e, dict) and _e.get("tier") == "B"})
 assert len(_tier_b) >= 50, f"only {len(_tier_b)} B names in tests/api_surface.json — baseline broken?"
 for _file, _head in (("README.md", "### For advanced use (tier B)"),
@@ -1731,6 +1732,24 @@ for _file, _head in (("README.md", "### For advanced use (tier B)"),
         assert _name in _text, f"{_file} does not document {_name}"
 print(f"  READMEs: all {len(_tier_b)} B building blocks in the section for advanced users, "
       "the used A names documented")
+# Every name of `tinysesam.gate_client` in its own README section (a class member under its own name, as it is used:
+# `gate.identify(…)`), and the tier-B section points there.
+_gate_names = sorted(n for n, _e in _storage.get("gate_client", {}).items() if isinstance(_e, dict)
+                     and _e.get("tier") in ("A", "B"))
+assert len(_gate_names) >= 40, f"only {len(_gate_names)} gate client names in the baseline — measurement broken?"
+for _file, _head, _b_head in (
+        ("README.md", "### Gate client for Flask, Django and other Python apps (T-86)", "### For advanced use (tier B)"),
+        ("i18n/README.de.md", "### Gate-Client für Flask, Django und andere Python-Apps (T-86)",
+         "### Für Fortgeschrittene (Stufe B)")):
+    _text = _readmes[_file]
+    assert _head in _text, f"{_file}: section {_head!r} missing"
+    _section = _text.split(_head, 1)[1].split("\n### ", 1)[0]
+    _missing = [n for n in _gate_names
+                if not _re.search(rf"`[^`\n]*\b{_re.escape(n.rsplit('.', 1)[-1])}\b[^`\n]*`", _section)]
+    assert not _missing, f"{_file}: gate client names missing in section {_head!r}: {_missing}"
+    assert "`tinysesam.gate_client`" in _text.split(_b_head, 1)[1].split("\n## ", 1)[0], (
+        f"{_file}: the tier-B section does not point to the gate client")
+print(f"  READMEs: all {len(_gate_names)} gate client names in its own section, the tier-B section points there")
 
 # ---------- The contract beyond the Python names is documented (PO decision 2026-10-29) ----------
 # The measurement is tests/test_api_surface.py; here the documentation is held against it: API.md has the

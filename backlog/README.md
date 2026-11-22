@@ -98,7 +98,7 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 * ☐ **[T-83](T-83-gate-client-in-php.md)** Gate client in PHP · M-2
 * ☐ **[T-84](T-84-token-mode-delivery-to-the-application.md)** Token mode: deliver the gate token to the application · M-2
 * ☐ **[T-85](T-85-role-names-without-comma.md)** Role names without comma and control characters · M-2
-* ☐ **[T-86](T-86-python-gate-client.md)** Python gate client · M-2
+* ☑ **[T-86](T-86-python-gate-client.md)** Python gate client · M-2
 
 ## Fehler
 
