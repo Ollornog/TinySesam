@@ -30,7 +30,7 @@ The configuration fields are in [CONFIGURATION.md](CONFIGURATION.md): 184 of 205
 
 **`auth.store` is internals** (tier C): the storage layer of the built-in routes, without tier, without promise and without transition period — its methods can change with every release. What an app needs is listed below as a method of `TinySesam` (e.g. `set_disabled` instead of `auth.store.set_disabled`).
 
-**Status:** A 404 · B 221 · C 38 names.
+**Status:** A 405 · B 271 · C 38 names.
 
 ## A · Methods of `TinySesam`
 
@@ -743,6 +743,210 @@ Check the configuration again — for the case that it was changed after setup.
 
 Installed version — preferably the distribution metadata, which are also correct when TinySesam is a dependency inside a foreign app.
 
+## B · The gate client `tinysesam.gate_client`
+
+For Flask, Django and other WSGI/ASGI applications behind the gate (T-86); importable without FastAPI. Members of a class are listed as `Class.member`.
+
+### `ASGIMiddleware(app: 'Callable[..., Any]', gate: 'GateClient')` — class
+
+Identifies every HTTP and WebSocket request and stores the `Identity` (or `None`) in `scope["tinysesam.identity"]` and for `current_identity()`. Starlette: `app.add_middleware(ASGIMiddleware, gate=gate)`. With `jwks_url` the check runs in a worker thread, so a key fetch never blocks the event loop.
+
+### `AudienceError(detail: 'str' = '', *, kid: 'str' = '')` — class
+
+`aud` does not name the configured audience.
+
+### `AudienceError.kind` — Constant
+
+`'audience'`
+
+### `ClaimsError(detail: 'str' = '', *, kid: 'str' = '')` — class
+
+A claim of the wrong type, a control character, an inconsistency.
+
+### `ClaimsError.kind` — Constant
+
+`'claims'`
+
+### `DEFAULT_GATE_COOKIE` — Constant
+
+`'__Host-tinysesam_gate'`
+
+### `Expired(detail: 'str' = '', *, kid: 'str' = '')` — class
+
+At or after `exp + leeway`.
+
+### `Expired.kind` — Constant
+
+`'expired'`
+
+### `GateClient(*, mode: 'str', trusted_proxies: 'Optional[Iterable[str]]' = None, header_names: 'Optional[Mapping[str, str]]' = None, issuer: 'Optional[str]' = None, audience: 'Optional[str]' = None, gate_keys: 'Optional[Iterable[str]]' = None, jwks_url: 'Optional[str]' = None, leeway: 'int' = 0, cookie_name: 'Optional[str]' = None, token_header: 'Optional[str]' = None)` — class
+
+Identifies requests in one explicitly chosen mode. Configuration errors raise `ConfigError` at construction.
+
+### `GateClient.identify(headers: 'Any', *, peer: 'Optional[str]' = None, now: 'Optional[int]' = None) -> 'Identity'`
+
+The identity of one request, or a `GateError`.
+
+### `GateClient.verify(jws: 'str', *, now: 'Optional[int]' = None) -> 'tuple[Identity, dict[str, Any]]'`
+
+Token mode: check one gate token without a request; the identity and the claims, or a `GateError`.
+
+### `GateError(detail: 'str' = '', *, kid: 'str' = '')` — class
+
+A refused request. `kind` is the error class of the specification; every class means *not authenticated*.
+
+### `GateError.kind` — Constant
+
+`'internal'`
+
+### `HeaderError(detail: 'str' = '', *, kid: 'str' = '')` — class
+
+A malformed `Remote-*` header, or a forbidden member, `alg` or `typ` in the token's header.
+
+### `HeaderError.kind` — Constant
+
+`'header'`
+
+### `Identity(user: 'str', name: 'str', email: 'str', groups: 'tuple[str, ...]', id: 'str', auth: 'str', kind: 'str') -> None` — class
+
+Who the request is. Key your own records by `id`, the only value that survives a rename.
+
+### `Identity.has_role(role: 'str') -> 'bool'`
+
+Exactly `role in groups`: no case folding, no normalization, `admin` implies nothing else.
+
+### `Identity.is_session() -> 'bool'`
+
+True only when the request signed in with a browser session (`Remote-Auth`/`ts_auth` exactly `session`). A token request's groups are incomplete on purpose: never revoke a role because one lacks it.
+
+### `InternalError(detail: 'str' = '', *, kid: 'str' = '')` — class
+
+An unexpected failure inside the client — refused like every other error (fail closed).
+
+### `InternalError.kind` — Constant
+
+`'internal'`
+
+### `IssuerError(detail: 'str' = '', *, kid: 'str' = '')` — class
+
+`iss` is not the configured issuer.
+
+### `IssuerError.kind` — Constant
+
+`'issuer'`
+
+### `KeyUnavailable(detail: 'str' = '', *, kid: 'str' = '')` — class
+
+No key set could be obtained (JWKS).
+
+### `KeyUnavailable.kind` — Constant
+
+`'key_unavailable'`
+
+### `KidError(detail: 'str' = '', *, kid: 'str' = '')` — class
+
+`kid` missing, malformed, or not in the key set.
+
+### `KidError.kind` — Constant
+
+`'kid'`
+
+### `LifetimeError(detail: 'str' = '', *, kid: 'str' = '')` — class
+
+`exp - nbf` is not in (0, 3600].
+
+### `LifetimeError.kind` — Constant
+
+`'lifetime'`
+
+### `MalformedToken(detail: 'str' = '', *, kid: 'str' = '')` — class
+
+Size, structure, base64url, JSON, repeated members, more than one gate cookie.
+
+### `MalformedToken.kind` — Constant
+
+`'malformed'`
+
+### `NotYetValid(detail: 'str' = '', *, kid: 'str' = '')` — class
+
+Before `nbf - leeway`.
+
+### `NotYetValid.kind` — Constant
+
+`'not_yet_valid'`
+
+### `SignatureError(detail: 'str' = '', *, kid: 'str' = '')` — class
+
+The signature has the wrong length or does not verify.
+
+### `SignatureError.kind` — Constant
+
+`'signature'`
+
+### `TokenError(detail: 'str' = '', *, kid: 'str' = '')` — class
+
+Base of the token-mode classes below.
+
+### `Topbar(brand: 'str' = '', signed_in: 'bool' = False, name: 'Optional[str]' = None, links: 'tuple[TopbarLink, ...]' = (), account: 'Optional[str]' = None, admin_panel: 'Optional[str]' = None, logout: 'Optional[str]' = None) -> None` — class
+
+TinySesam's top bar data reduced to what an application may render. Do not cache it across sessions.
+
+### `Topbar.to_dict() -> 'dict[str, Any]'`
+
+The normalized form of spec §8 (`links` as a list of `{title, href}`).
+
+### `TopbarLink(title: 'str', href: 'str') -> None` — class
+
+One link of the top bar; render `title` as text, never as markup.
+
+### `Unauthenticated(detail: 'str' = '', *, kid: 'str' = '')` — class
+
+No or an empty `Remote-User` (header mode), no token (token mode).
+
+### `Unauthenticated.kind` — Constant
+
+`'unauthenticated'`
+
+### `UntrustedPeer(detail: 'str' = '', *, kid: 'str' = '')` — class
+
+Header mode with `trusted_proxies`: the request did not come from one of them.
+
+### `UntrustedPeer.kind` — Constant
+
+`'untrusted_peer'`
+
+### `WSGIMiddleware(app: 'Callable[..., Any]', gate: 'GateClient')` — class
+
+Identifies every request and stores the `Identity` (or `None`) in `environ["tinysesam.identity"]` and for `current_identity()`. Lets every request through; guard routes with `require_*` or `guard_status`.
+
+### `current_identity(source: 'Any' = None) -> 'Optional[Identity]'`
+
+The identity the middleware stored: from a WSGI environ or ASGI scope, from a request object that carries one (`.environ` in Flask, `.META` in Django, `.scope` in Starlette), or — without an argument — from the request being handled. `None` when nobody is signed in or no middleware ran.
+
+### `fetch_topbar(url: 'str', cookie_header: 'str' = '') -> 'Topbar'`
+
+Fetch the top bar server-side, forwarding only TinySesam's cookies of the request (`tinysesam_*`, `__Host-tinysesam_*`); 5-second deadline, 64 KiB. Signed out on any failure.
+
+### `guard_status(identity: 'Optional[Identity]', *, role: 'Optional[str]' = None, session: 'bool' = False) -> 'Optional[int]'`
+
+None when the request may pass, else the status to answer: 401 without an identity, 403 when the role or the session is missing. For view decorators in any framework.
+
+### `parse_topbar(data: 'Any') -> 'Topbar'`
+
+Normalize the answer of `/.tinysesam/topbar.json` (or `/auth/topbar.json`): signed out on any doubt, unsafe links (`javascript:`, `data:`, `//host`) dropped.
+
+### `require_auth(app: 'Callable[..., Any]') -> 'Callable[..., Any]'`
+
+Wrap a WSGI or ASGI application: 401 without an identity. Needs the middleware in front (else always 401).
+
+### `require_role(role: 'str') -> 'Callable[[Callable[..., Any]], Callable[..., Any]]'`
+
+`require_role("editors")(app)`: 401 without an identity, 403 without the role (compared exactly).
+
+### `require_session(app: 'Callable[..., Any]') -> 'Callable[..., Any]'`
+
+401 without an identity, 403 for a token request (API key, OAuth, app password): for actions a token must never perform.
+
 ## A · Attributes of `TinySesam`
 
 Instance attributes — measured on a probe instance, recorded in `tests/api_surface.json`.
@@ -986,7 +1190,7 @@ Hints to the account page's script, tier B: `X-TinySesam-Factor`, `X-TinySesam-R
 
 What a filter matches. **Promised:** the logger names, the format of the log file, the event word at the start of a line, the key names in their order, and the literal values below. **Not promised:** anything after the keys (free text), the values of `user=`, `ip=` and of a `reason=` that is not listed, and every line that does not start with one of these event words.
 
-- **Loggers:** `tinysesam`, `tinysesam.client`, `tinysesam.mail`, `tinysesam.security` (`tinysesam.security` is the one the filters read; `security_log` in the configuration writes it to a file).
+- **Loggers:** `tinysesam`, `tinysesam.client`, `tinysesam.gate_client`, `tinysesam.mail`, `tinysesam.security` (`tinysesam.security` is the one the filters read; `security_log` in the configuration writes it to a file).
 - **Format of the log file:** `%(asctime)s %(levelname)s %(message)s`
 - **Lines** (level, event word, `|`, keys in order; `event` words: `deferred login`, `deferred verification`, `failed login`, `failed verification`, `login ok`, `repeated login`):
   - `INFO login ok | user ip method unban`

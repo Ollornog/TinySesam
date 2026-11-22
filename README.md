@@ -2068,8 +2068,100 @@ existing forward auth, so a request and its body are not lost.
   [`clients/js/`](https://github.com/Ollornog/TinySesam/tree/main/clients/js) (TypeScript, ESM, no runtime dependency:
   WebCrypto `Ed25519` and `fetch`, so it runs on Node, Deno, Bun and edge runtimes; Node/Express middleware and a Fetch
   adapter for Hono and edge handlers; not published to npm, use it from the repository); a client for PHP is planned
-  under [`clients/`](https://github.com/Ollornog/TinySesam/tree/main/clients), a slim Python client (WSGI/ASGI, no
-  FastAPI) in the package itself (backlog T-86).
+  under [`clients/`](https://github.com/Ollornog/TinySesam/tree/main/clients). The **Python client** is part of the
+  package: `tinysesam.gate_client` (WSGI/ASGI, no FastAPI), next section.
+
+### Gate client for Flask, Django and other Python apps (T-86)
+
+An application behind the gate that is not built on FastAPI uses `tinysesam.gate_client`: the
+[gate client specification](https://github.com/Ollornog/TinySesam/blob/main/spec/gate-client.md) in Python, tested
+against every vector of `spec/vectors/`. It checks; it never signs anyone in or issues a token. Importing it pulls in
+neither FastAPI nor the rest of TinySesam — only the standard library and `cryptography`, which `pip install tinysesam`
+brings anyway.
+
+```python
+from tinysesam import gate_client
+
+gate = gate_client.GateClient(mode="header", trusted_proxies=["127.0.0.1"])
+who = gate.identify({"Remote-User": "anna", "Remote-Groups": "editors", "Remote-Auth": "session", "Remote-Id": "7"},
+                    peer="127.0.0.1")
+assert who.id == "7" and who.has_role("editors") and who.is_session()
+
+try:
+    gate.identify({"Remote-User": "anna"}, peer="192.0.2.10")        # not from the proxy
+except gate_client.UntrustedPeer:
+    pass
+```
+
+- **Header mode** (`GateClient(mode="header")`, the one the proxy templates support today) reads `Remote-User`, `-Name`, `-Email`,
+  `-Groups`, `-Id` and `-Auth` strictly: a repeated field, invalid UTF-8, a control character or a `Remote-Id` that is
+  not ASCII digits is refused, never cleaned. It is safe only when the proxy removes these headers from every client
+  request, on every path, and is the only way to the application (spec §2.1); `trusted_proxies` refuses requests from
+  any other peer. `header_names` follows a renamed `forward_headers`.
+- **Token mode** (`GateClient(mode="token", issuer=…, audience=…, gate_keys=[…])` or `jwks_url=…`) verifies the gate token itself
+  in the order of spec §4.4 and ignores every `Remote-*` header. The algorithm is fixed to EdDSA; `alg`, `jwk`, `jku`,
+  `x5u` and `x5c` in the token are never trusted. Keys: the output of `tinysesam gate-key`, or the JWKS URL — fetched
+  with the standard library's `urllib` (no extra dependency) within 5 s and 64 KiB, at most once per 10 s, cached for
+  `max-age` clamped to 60–3600 s, the last good set kept for an hour after a failure; requests share a running fetch
+  and none waits past the deadline. The token comes from the gate cookie (`DEFAULT_GATE_COOKIE`, or `cookie_name`) or
+  `token_header`. With today's
+  `Caddyfile.gate` the application never sees the token (T-84), so this mode waits for a delivery path.
+- `gate.verify(jws)` checks a token without a request and returns the identity and the claims.
+- **The identity**: `Identity` with `user`, `name`, `email`, `groups`, `id`, `auth`, `kind`. Key records by `id`.
+  `has_role` compares exactly (`admin` implies nothing). `is_session()` is true only for `Remote-Auth: session`; an
+  empty or unknown value is a token, whose groups are incomplete on purpose. Names may hold any character but
+  controls: escape them.
+- **Errors**: `gate.identify` raises a `GateError` whose `kind` is the class of the specification — `Unauthenticated`,
+  `UntrustedPeer`, `HeaderError`, `InternalError`, and under `TokenError`: `MalformedToken`, `KidError`,
+  `SignatureError`, `KeyUnavailable`, `ClaimsError`, `IssuerError`, `AudienceError`, `LifetimeError`, `NotYetValid`,
+  `Expired`. Every one means *not authenticated*. A wrong configuration raises `ConfigError` at construction.
+- **Middleware**: `WSGIMiddleware(app, gate)` (Flask: `app.wsgi_app = WSGIMiddleware(app.wsgi_app, gate)`; Django: wrap
+  the application in `wsgi.py`) and `ASGIMiddleware(app, gate=gate)` (Starlette: `app.add_middleware(ASGIMiddleware,
+  gate=gate)`) identify every request and let it through. The identity is in `environ["tinysesam.identity"]` /
+  `scope["tinysesam.identity"]` and `current_identity()` returns it — also from a request object
+  (`current_identity(request)` reads `.environ`, `.META` or `.scope`). A refusal is logged on `tinysesam.gate_client`
+  with its class and `kid`, never with the token or a header value. With `jwks_url` the ASGI middleware checks in a
+  worker thread, so a key fetch never blocks the event loop. WSGI servers join repeated header fields before the
+  application sees them; the ASGI middleware refuses them.
+- **Guards**: `require_auth(app)`, `require_role("editors")(app)` and `require_session(app)` wrap a WSGI or ASGI
+  application and answer 401/403 with `Cache-Control: no-store` and no reason. For view decorators in any framework,
+  `guard_status(identity, role=…, session=…)` returns `None`, 401 or 403.
+- **Top bar** (optional): `parse_topbar(data)` reduces TinySesam's `/.tinysesam/topbar.json` to what may be rendered
+  (`Topbar`, `TopbarLink`; unsafe links dropped, signed out on any doubt); `fetch_topbar(url, cookie_header)` fetches
+  it server-side with only TinySesam's cookies; `Topbar.to_dict()` gives the normalized form of spec §8.
+
+Flask, with a view decorator built on `guard_status`:
+
+```python
+import functools
+
+from flask import Flask, abort
+from tinysesam.gate_client import GateClient, WSGIMiddleware, current_identity, guard_status
+
+app = Flask(__name__)
+app.wsgi_app = WSGIMiddleware(app.wsgi_app, GateClient(mode="header", trusted_proxies=["127.0.0.1"]))
+
+
+def require(role=None, session=False):
+    def wrap(view):
+        @functools.wraps(view)
+        def guarded(*args, **kwargs):
+            status = guard_status(current_identity(), role=role, session=session)
+            if status:
+                abort(status)
+            return view(*args, **kwargs)
+        return guarded
+    return wrap
+
+
+@app.get("/reports")
+@require(role="editors")
+def reports():
+    return f"Hello {current_identity().name or current_identity().user}"
+```
+
+Complete programs for Flask and Django are in
+[`examples/gate_client/`](https://github.com/Ollornog/TinySesam/tree/main/examples/gate_client).
 
 ### Signing in at the gate: invisible or with a page (T-21)
 
@@ -2252,6 +2344,8 @@ Building blocks for pages you build yourself — signatures and descriptions in
 - **The top bar on your own pages:** `topbar_head` (tokens, bar CSS and the light/dark restore for `<head>`) and
   `topbar` (the bar with the account menu for this request's session); `topbar_data` (the same bar as data for an
   account, for an interface not drawn in Python) — see [Look & feel](#look--feel).
+- **The gate client for apps without FastAPI:** `tinysesam.gate_client` — every name in its own section,
+  [Gate client for Flask, Django and other Python apps](#gate-client-for-flask-django-and-other-python-apps-t-86).
 - **`apply_factor`** attaches a factor to the session **without checking it**. Call it only after
   you verified that factor yourself, with the account from `session_user()` — it is the most
   powerful block here, and a mistake in front of it is a way in. Not needed for password, PIN and
@@ -2327,7 +2421,7 @@ Every Python block in both files runs in the test suite, and every name they men
 
 ## Status
 
-**117 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
+**118 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
 
 Implemented and tested: password/TOTP/sessions/roles, remember-me, step-up and per-route MFA,
 factor chains, personal PIN, shared resource secrets, magic links + mailer hook, registration and

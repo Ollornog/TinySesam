@@ -2118,8 +2118,101 @@ Der Rückweg ist die bestehende Forward-Auth, eine Anfrage samt Body geht also n
   Git-Abhängigkeit), der **JS/TS-Client** in [`clients/js/`](../clients/js/) (TypeScript, ESM, ohne
   Laufzeit-Abhängigkeit: WebCrypto `Ed25519` und `fetch`, läuft daher unter Node, Deno, Bun und Edge-Runtimes;
   Node/Express-Middleware und ein Fetch-Adapter für Hono und Edge-Handler; nicht bei npm veröffentlicht, Nutzung aus dem
-  Repository); ein Client für PHP ist unter [`clients/`](../clients/) geplant, ein schlanker Python-Client (WSGI/ASGI,
-  ohne FastAPI) als Teil des Pakets (Backlog T-86).
+  Repository); ein Client für PHP ist unter [`clients/`](../clients/) geplant. Der
+  **Python-Client** gehört zum Paket: `tinysesam.gate_client` (WSGI/ASGI, ohne FastAPI), nächster Abschnitt.
+
+### Gate-Client für Flask, Django und andere Python-Apps (T-86)
+
+Eine Anwendung hinter dem Gate, die nicht auf FastAPI baut, nutzt `tinysesam.gate_client`: die
+[Gate-Client-Spezifikation](../spec/gate-client.md) in Python, geprüft gegen jeden Vektor in `spec/vectors/`. Er prüft
+nur; er meldet niemanden an und stellt kein Token aus. Der Import zieht weder FastAPI noch den Rest von TinySesam nach —
+nur die Standardbibliothek und `cryptography`, das `pip install tinysesam` ohnehin mitbringt.
+
+```python
+from tinysesam import gate_client
+
+gate = gate_client.GateClient(mode="header", trusted_proxies=["127.0.0.1"])
+who = gate.identify({"Remote-User": "anna", "Remote-Groups": "editors", "Remote-Auth": "session", "Remote-Id": "7"},
+                    peer="127.0.0.1")
+assert who.id == "7" and who.has_role("editors") and who.is_session()
+
+try:
+    gate.identify({"Remote-User": "anna"}, peer="192.0.2.10")        # nicht vom Proxy
+except gate_client.UntrustedPeer:
+    pass
+```
+
+- **Header-Modus** (`GateClient(mode="header")`, den die Proxy-Vorlagen heute tragen) liest `Remote-User`, `-Name`, `-Email`,
+  `-Groups`, `-Id` und `-Auth` streng: ein doppeltes Feld, ungültiges UTF-8, ein Steuerzeichen oder eine `Remote-Id`
+  aus anderem als ASCII-Ziffern wird abgewiesen, nie bereinigt. Sicher ist das nur, wenn der Proxy diese Header aus
+  jeder Client-Anfrage entfernt, auf jedem Pfad, und der einzige Weg zur Anwendung ist (Spezifikation §2.1);
+  `trusted_proxies` weist Anfragen von jeder anderen Gegenstelle ab. `header_names` folgt umbenannten
+  `forward_headers`.
+- **Token-Modus** (`GateClient(mode="token", issuer=…, audience=…, gate_keys=[…])` oder `jwks_url=…`) prüft das Gate-Token selbst
+  in der Reihenfolge von §4.4 und ignoriert jeden `Remote-*`-Header. Der Algorithmus ist fest EdDSA; `alg`, `jwk`,
+  `jku`, `x5u` und `x5c` im Token gelten nie. Schlüssel: die Ausgabe von `tinysesam gate-key` oder die JWKS-URL —
+  geholt mit `urllib` aus der Standardbibliothek (keine zusätzliche Abhängigkeit) binnen 5 s und 64 KiB, höchstens
+  einmal je 10 s, zwischengespeichert für `max-age` (begrenzt auf 60–3600 s), nach einem Fehler gilt der letzte gute
+  Satz noch eine Stunde; Anfragen teilen einen laufenden Abruf, keine wartet über die Frist. Das Token kommt aus dem
+  Gate-Cookie (`DEFAULT_GATE_COOKIE` oder `cookie_name`) oder `token_header`. Mit dem heutigen `Caddyfile.gate` sieht die Anwendung das Token nie (T-84); der
+  Modus wartet auf einen Zustellweg.
+- `gate.verify(jws)` prüft ein Token ohne Anfrage und liefert Identität und Claims.
+- **Die Identität**: `Identity` mit `user`, `name`, `email`, `groups`, `id`, `auth`, `kind`. Eigene Datensätze an `id`
+  hängen. `has_role` vergleicht exakt (`admin` schließt nichts ein). `is_session()` ist nur bei
+  `Remote-Auth: session` wahr; ein leerer oder unbekannter Wert ist ein Token, dessen Gruppen absichtlich unvollständig
+  sind. Namen dürfen jedes Zeichen außer Steuerzeichen enthalten: maskieren.
+- **Fehler**: `gate.identify` wirft einen `GateError`, dessen `kind` die Klasse der Spezifikation ist —
+  `Unauthenticated`, `UntrustedPeer`, `HeaderError`, `InternalError` und unter `TokenError`: `MalformedToken`,
+  `KidError`, `SignatureError`, `KeyUnavailable`, `ClaimsError`, `IssuerError`, `AudienceError`, `LifetimeError`,
+  `NotYetValid`, `Expired`. Jeder heißt *nicht angemeldet*. Eine falsche Konfiguration wirft beim Erzeugen
+  `ConfigError`.
+- **Middleware**: `WSGIMiddleware(app, gate)` (Flask: `app.wsgi_app = WSGIMiddleware(app.wsgi_app, gate)`; Django: die
+  Anwendung in `wsgi.py` einwickeln) und `ASGIMiddleware(app, gate=gate)` (Starlette:
+  `app.add_middleware(ASGIMiddleware, gate=gate)`) erkennen jede Anfrage und lassen sie durch. Die Identität steht in
+  `environ["tinysesam.identity"]` / `scope["tinysesam.identity"]`, `current_identity()` liefert sie — auch aus einem
+  Request-Objekt (`current_identity(request)` liest `.environ`, `.META` oder `.scope`). Eine Abweisung wird auf
+  `tinysesam.gate_client` mit Klasse und `kid` protokolliert, nie mit Token oder Header-Wert. Mit `jwks_url` prüft die
+  ASGI-Middleware in einem Worker-Thread, ein Schlüsselabruf blockiert die Ereignisschleife also nie. WSGI-Server
+  fügen doppelte Header-Felder zusammen, bevor die Anwendung sie sieht; die ASGI-Middleware weist sie ab.
+- **Wächter**: `require_auth(app)`, `require_role("editors")(app)` und `require_session(app)` umhüllen eine WSGI- oder
+  ASGI-Anwendung und antworten 401/403 mit `Cache-Control: no-store` und ohne Grund. Für View-Dekoratoren in jedem
+  Framework liefert `guard_status(identity, role=…, session=…)` `None`, 401 oder 403.
+- **Kopfleiste** (optional): `parse_topbar(data)` reduziert TinySesams `/.tinysesam/topbar.json` auf das, was
+  angezeigt werden darf (`Topbar`, `TopbarLink`; unsichere Links fallen weg, im Zweifel abgemeldet);
+  `fetch_topbar(url, cookie_header)` holt sie serverseitig nur mit TinySesams Cookies; `Topbar.to_dict()` liefert die
+  normalisierte Form aus §8.
+
+Flask, mit einem View-Dekorator auf `guard_status`:
+
+```python
+import functools
+
+from flask import Flask, abort
+from tinysesam.gate_client import GateClient, WSGIMiddleware, current_identity, guard_status
+
+app = Flask(__name__)
+app.wsgi_app = WSGIMiddleware(app.wsgi_app, GateClient(mode="header", trusted_proxies=["127.0.0.1"]))
+
+
+def require(role=None, session=False):
+    def wrap(view):
+        @functools.wraps(view)
+        def guarded(*args, **kwargs):
+            status = guard_status(current_identity(), role=role, session=session)
+            if status:
+                abort(status)
+            return view(*args, **kwargs)
+        return guarded
+    return wrap
+
+
+@app.get("/reports")
+@require(role="editors")
+def reports():
+    return f"Hello {current_identity().name or current_identity().user}"
+```
+
+Vollständige Programme für Flask und Django liegen in [`examples/gate_client/`](../examples/gate_client/).
 
 ### Anmelden vor dem Gate: unsichtbar oder mit Seite (T-21)
 
@@ -2310,6 +2403,8 @@ Bausteine für Seiten, die du selbst baust — Signaturen und Beschreibungen in
   für den `<head>`) und `topbar` (die Leiste mit dem Kontomenü für die Sitzung dieses Requests); `topbar_data`
   (dieselbe Leiste als Daten für ein Konto, für eine Oberfläche, die nicht in Python gezeichnet wird) — siehe
   [Look & Feel](#look--feel).
+- **Der Gate-Client für Apps ohne FastAPI:** `tinysesam.gate_client` — jeder Name im eigenen Abschnitt,
+  [Gate-Client für Flask, Django und andere Python-Apps](#gate-client-für-flask-django-und-andere-python-apps-t-86).
 - **`apply_factor`** hängt einen Faktor an die Sitzung, **ohne ihn zu prüfen**. Nur rufen, wenn du
   den Faktor selbst geprüft hast, und mit dem Konto aus `session_user()` — der mächtigste Baustein
   hier; ein Fehler davor ist ein Weg hinein. Für Passwort, PIN und TOTP nicht nötig: Die
@@ -2389,7 +2484,7 @@ Jeder Python-Block beider Dateien läuft in der Testsuite, und jeder genannte Na
 
 ## Status
 
-**117 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
+**118 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
 (`tests/test_matrix.py`).
 
 Gebaut und getestet: Passwort/TOTP/Sitzungen/Rollen, Remember-me, Step-up und per-Route-MFA,

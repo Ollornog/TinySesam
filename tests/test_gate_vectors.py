@@ -1,4 +1,4 @@
-"""T-28: the language-neutral gate client vectors (`spec/vectors/`) against the code and a reference client.
+"""T-28/T-86: the language-neutral gate client vectors (`spec/vectors/`) against the code and the Python gate client.
 
 `spec/gate-client.md` is the contract for gate clients in other languages (Go, Rust, JS/TS, PHP). Its vectors are
 generated from TinySesam's own issuing path by `scripts/_gate_vectors.py`. This suite holds both ends together:
@@ -7,13 +7,15 @@ generated from TinySesam's own issuing path by `scripts/_gate_vectors.py`. This 
    the claims or the `Remote-*` headers that does not reach the vectors turns red here.
 2. **Complete:** every vector has an id, a reason and an attack class from the list below; every class of that list
    occurs. A class removed from the vectors is a hole a client would never be tested for.
-3. **Passed:** the reference client (`tests/_gate_reference.py`, the executable reading of the specification) reaches
-   every expected verdict, error class and identity.
+3. **Passed:** the Python gate client `tinysesam.gate_client` reaches every expected verdict, error class and
+   identity, through its public `GateClient` (token mode with fixed keys, header mode) and its key set cache.
 4. **The server agrees:** `tinysesam.gate.check` (the proxy-side check) accepts every valid vector and rejects every
    vector whose class it checks too (signature, issuer, audience, time). Where it accepts an attack, the class must be
    one the client is deliberately stricter about.
-5. **Self-probes:** every relaxation of the reference (`alg` taken from the header, an embedded `jwk` trusted,
-   duplicates allowed, …) must fail at least one vector. A rule no vector can catch is not tested.
+5. **Self-probes:** every relaxation of the client (`tests/_gate_relax.py`: `alg` taken from the header, an embedded
+   `jwk` trusted, duplicates allowed, …) must fail at least one vector. A rule no vector can catch is not tested.
+6. **One defect:** every attack vector is accepted after exactly one repair (one relaxation, the missing key, the
+   issuer or audience it names), or is listed with the reason why its defect cannot occur alone.
 """
 import base64
 import importlib.util
@@ -35,8 +37,17 @@ braucht(os.path.isdir(VECTORS) or (pathlib.Path(ROOT) / ".git").exists(),
         "no spec/vectors (unpacked sdist) — the vectors live in the repository")
 assert os.path.isdir(VECTORS), "spec/vectors is missing"
 
-import _gate_reference as ref  # noqa: E402
+import dataclasses  # noqa: E402
+
+import _gate_relax as relax_mod  # noqa: E402
 from tinysesam import gate  # noqa: E402
+from tinysesam import gate_client as gc  # noqa: E402
+from tinysesam.errors import ConfigError  # noqa: E402
+
+ERRORS = ("malformed", "header", "kid", "signature", "claims", "issuer", "audience", "lifetime", "not_yet_valid",
+          "expired", "key_unavailable")
+HEADER_ERRORS = ("unauthenticated", "header")
+RELAXATIONS = tuple(relax_mod.RELAXATIONS)
 
 
 def ok(name):
@@ -96,86 +107,107 @@ missing = ATTACK_CLASSES - covered
 assert not missing, f"attack classes without a vector: {sorted(missing)}"
 for v in TOKEN["vectors"]:
     e = v["expected"]
-    assert e["ok"] or e["error"] in ref.ERRORS, (v["id"], e)
+    assert e["ok"] or e["error"] in ERRORS, (v["id"], e)
     assert v["id"].startswith("valid-") == e["ok"], f"{v['id']}: the name says the opposite of the verdict"
 spec_text = generator._read(os.path.join(ROOT, "spec", "gate-client.md"))
 undocumented = sorted(c for c in ATTACK_CLASSES if f"`{c}`" not in spec_text)
 assert not undocumented, f"attack classes missing from spec/gate-client.md: {undocumented}"
-unknown_errors = sorted(c for c in ref.ERRORS + ref.HEADER_ERRORS + ("jwks_invalid",) if f"`{c}`" not in spec_text)
+unknown_errors = sorted(c for c in ERRORS + HEADER_ERRORS + ("jwks_invalid",) if f"`{c}`" not in spec_text)
 assert not unknown_errors, f"error classes missing from spec/gate-client.md: {unknown_errors}"
 ok(f"{len(all_vectors)} vectors, each with id and reason; all {len(ATTACK_CLASSES)} attack classes covered and "
    "named in the spec")
 
 
-# ---------- 3. the reference client passes ----------
+# ---------- 3. the gate client passes ----------
 
-def keys_of(doc):
-    return ref.parse_jwks(doc)
+def gate_keys(doc):
+    """The fixed keys of a vector's key set, as `tinysesam gate-key` prints them."""
+    return [base64.b64encode(public).decode("ascii") for public in gc._parse_jwks(doc).values()]
+
+
+def identity_dict(identity):
+    d = dataclasses.asdict(identity)
+    d["groups"] = list(d["groups"])
+    return d
 
 
 def run_token(v, relax=frozenset()):
     i = v["input"]
-    try:
-        claims = ref.verify(i["jws"], keys=keys_of(i["jwks"]), issuer=i["issuer"], audience=i["audience"],
-                            now=i["now"], leeway=i["leeway"], relax=relax)
-    except ref.GateError as e:
-        return {"ok": False, "error": e.kind}
-    out = {"ok": True, "claims": claims, "identity": ref.identity_from_claims(claims, relax)}
+    with relax_mod.relaxed(*relax):
+        client = gc.GateClient(mode="token", issuer=i["issuer"], audience=i["audience"],
+                               gate_keys=gate_keys(i["jwks"]), leeway=i["leeway"])
+        try:
+            identity, claims = client.verify(i["jws"], now=i["now"])
+        except gc.GateError as e:
+            return {"ok": False, "error": e.kind}
+    out = {"ok": True, "claims": claims, "identity": identity_dict(identity)}
     if "has_role" in v["expected"]:
-        out["has_role"] = {r: ref.has_role(out["identity"], r) for r in v["expected"]["has_role"]}
+        out["has_role"] = {r: identity.has_role(r) for r in v["expected"]["has_role"]}
     return out
 
 
 def run_headers(v, relax=frozenset()):
-    try:
-        ident = ref.identity_from_headers(v["input"]["headers"], relax)
-    except ref.GateError as e:
-        return {"ok": False, "error": e.kind}
-    out = {"ok": True, "identity": ident}
+    with relax_mod.relaxed(*relax):
+        try:
+            identity = gc.GateClient(mode="header").identify(v["input"]["headers"])
+        except gc.GateError as e:
+            return {"ok": False, "error": e.kind}
+    out = {"ok": True, "identity": identity_dict(identity)}
     if "has_role" in v["expected"]:
-        out["has_role"] = {r: ref.has_role(ident, r) for r in v["expected"]["has_role"]}
+        out["has_role"] = {r: identity.has_role(r) for r in v["expected"]["has_role"]}
     return out
 
 
 def run_set(v, relax=frozenset()):
-    try:
-        return {"ok": True, "kids": list(ref.parse_jwks(v["input"]["jwks"], relax))}
-    except ref.GateError as e:
-        return {"ok": False, "error": e.kind}
+    with relax_mod.relaxed(*relax):
+        try:
+            return {"ok": True, "kids": list(gc._parse_jwks(v["input"]["jwks"]))}
+        except gc.GateError as e:
+            return {"ok": False, "error": e.kind}
+
+
+def fetch_result(answer):
+    """A simulated fetch answer of the vectors, as the client's fetcher returns it."""
+    if "error" in answer:
+        return gc._FetchResult(error=answer["error"])
+    body = (json.dumps(answer["body"]).encode("utf-8") if "body" in answer
+            else str(answer.get("body_text", "")).encode("utf-8"))
+    return gc._FetchResult(status=answer.get("status", 0), cache_control=answer.get("cache_control") or "", body=body)
 
 
 def run_scenario(v, relax=frozenset()):
-    """The verdict of every step, or the first step whose fetch behaviour differs."""
+    """The verdict of every step; a fetch where the step gives no answer fails the step."""
     d = TOKEN["defaults"]
     state = {}
 
-    def fetch(now):
+    def fetch():
         state["fetched"] = True
         if "fetch" not in state["step"]:
-            raise _UnexpectedFetch(now)
-        return state["step"]["fetch"]
+            state["unexpected"] = True
+            return gc._FetchResult(error="unexpected")
+        return fetch_result(state["step"]["fetch"])
 
-    cache = ref.JwksCache(fetch, relax)
     results = []
-    for step in v["steps"]:
-        state.update(step=step, fetched=False)
-        try:
-            cache.verify(step["jws"], issuer=d["issuer"], audience=d["audience"], now=step["now"])
-            got = {"fetched": state["fetched"], "ok": True}
-        except ref.GateError as e:
-            got = {"fetched": state["fetched"], "ok": False, "error": e.kind}
-        except _UnexpectedFetch:
-            got = {"fetched": True, "ok": None, "error": "unexpected fetch"}
-        results.append(got)
+    with relax_mod.relaxed(*relax):
+        client = gc.GateClient(mode="token", issuer=d["issuer"], audience=d["audience"],
+                               jwks_url="https://auth.example.com/auth/gate/jwks.json")
+        client._cache = gc._JWKSCache(fetch)
+        for step in v["steps"]:
+            state.update(step=step, fetched=False, unexpected=False)
+            try:
+                client.verify(step["jws"], now=step["now"])
+                got = {"fetched": state["fetched"], "ok": True}
+            except gc.GateError as e:
+                got = {"fetched": state["fetched"], "ok": False, "error": e.kind}
+            if state["unexpected"]:
+                got = {"fetched": True, "ok": None, "error": "unexpected fetch"}
+            results.append(got)
     return results
 
 
-class _UnexpectedFetch(Exception):
-    pass
-
-
 def run_topbar(v, relax=frozenset()):
-    return {"ok": True, "topbar": ref.topbar(v["input"]["topbar"], relax)}
+    with relax_mod.relaxed(*relax):
+        return {"ok": True, "topbar": gc.parse_topbar(v["input"]["topbar"]).to_dict()}
 
 
 def mismatches(relax=frozenset()) -> list:
@@ -206,17 +238,19 @@ if failed:
     for v in TOKEN["vectors"]:
         if "token/" + v["id"] in failed:
             detail.append((v["id"], run_token(v), v["expected"].get("error")))
-    raise AssertionError(f"the reference client misses {len(failed)} vectors: {failed[:10]} {detail[:5]}")
-ok(f"reference client: {len(TOKEN['vectors'])} token, {len(HEADERS['vectors'])} header, "
+    raise AssertionError(f"the gate client misses {len(failed)} vectors: {failed[:10]} {detail[:5]}")
+ok(f"gate client: {len(TOKEN['vectors'])} token, {len(HEADERS['vectors'])} header, "
    f"{len(JWKS['sets'])} key-set, {len(JWKS['scenarios'])} cache, {len(TOPBAR['vectors'])} top-bar vectors passed")
 
+_token_cfg = {"mode": "token", "issuer": "https://auth.example.com", "audience": "app.example.com",
+              "gate_keys": [load("keys.json")["keys"]["A"]["sign_key_base64"]]}
 for bad in (-1, 61, True, 1.5, "0"):
     try:
-        ref.check_leeway(bad)
-    except ValueError:
+        gc.GateClient(**_token_cfg, leeway=bad)
+    except ConfigError:
         continue
     raise AssertionError(f"a clock leeway of {bad!r} was accepted")
-assert ref.check_leeway(0) == 0 and ref.check_leeway(60) == 60
+assert gc.GateClient(**_token_cfg, leeway=0) and gc.GateClient(**_token_cfg, leeway=60)
 ok("clock leeway: 0–60 s accepted, anything else is a configuration error")
 
 # ---------- 4. the server's check agrees where it checks the same ----------
@@ -227,11 +261,11 @@ for v in TOKEN["vectors"]:
     i, e = v["input"], v["expected"]
     if i["leeway"]:
         continue
-    keys = keys_of(i["jwks"])
+    keys = gc._parse_jwks(i["jwks"])
     try:
-        head = json.loads(ref.b64u_decode(i["jws"].split(".")[0], frozenset({"lenient_base64"})))
+        head = json.loads(relax_mod._lenient_b64(i["jws"].split(".")[0]))
         public = keys.get(head.get("kid")) if isinstance(head, dict) and isinstance(head.get("kid"), str) else None
-    except (ValueError, ref.GateError, IndexError):
+    except (ValueError, gc.GateError, IndexError):
         public = None
     public = public or next(iter(keys.values()))
     got = gate.check(public, i["jws"], aud=i["audience"], iss=i["issuer"], now=i["now"])
@@ -249,27 +283,37 @@ probe = generator.Probe()
 try:
     for name in ("anna", "juergen", "ivan"):
         sent = probe.headers(name)
-        got = ref.identity_from_headers(sent)
+        got = gc.GateClient(mode="header").identify(sent)
         u = probe.auth.get_user(probe.users[name])
-        assert got["user"] == u["username"] and got["id"] == str(u["id"]) and got["kind"] == "session", got
-        assert got["groups"] == probe.auth.user_roles(u), (got, probe.auth.user_roles(u))
+        assert got.user == u["username"] and got.id == str(u["id"]) and got.is_session(), got
+        assert list(got.groups) == probe.auth.user_roles(u), (got, probe.auth.user_roles(u))
 finally:
     probe.close()
-ok("header mode: the reference reads back what _forward_response_headers sends (UTF-8, groups, id, kind)")
+ok("header mode: the client reads back what _forward_response_headers sends (UTF-8, groups, id, kind)")
 
 # ---------- 5. self-probes: every rule is measured by at least one vector ----------
+before = relax_mod.snapshot()
 silent = []
-for relax in ref.RELAXATIONS:
+for relax in RELAXATIONS:
     caught = mismatches(frozenset({relax}))
     if not caught:
         silent.append(relax)
 assert not silent, f"relaxations no vector catches: {silent}"
-ok(f"self-probes: each of the {len(ref.RELAXATIONS)} relaxations of the reference fails at least one vector")
+assert relax_mod.snapshot() == before, "a relaxation was not restored"
+# Every check function of the client has a relaxation: a check without one is a rule nobody measures.
+patched = {a for spec in relax_mod.RELAXATIONS.values() for a in spec}
+NOT_A_RULE = {"_check_claims", "_check_leeway", "_check_fetch_url",   # a sequence of checks, configuration checks
+              "_check_size"}                                          # relaxed through _MAX_TOKEN_BYTES
+checks = {n for n in vars(gc) if n.startswith("_check_") and callable(getattr(gc, n))}
+assert checks - patched - NOT_A_RULE == set(), f"checks without a relaxation: {sorted(checks - patched - NOT_A_RULE)}"
+assert NOT_A_RULE <= checks, sorted(NOT_A_RULE - checks)
+ok(f"self-probes: each of the {len(RELAXATIONS)} relaxations of the client fails at least one vector; every check "
+   f"function ({len(checks - NOT_A_RULE)}) has one; the module is restored afterwards")
 
 # ---------- 6. one defect per attack vector ----------
 # A vector with two defects of the same class passes a client that lacks the check it is named for: until 2026-11-22
 # `attack-payload-invalid-utf8` also repeated `ts_name`, so a client without a UTF-8 check still answered `malformed`
-# through its duplicate check. Rule: switching off exactly one check of the reference (one relaxation, or the key that
+# through its duplicate check. Rule: switching off exactly one check of the client (one relaxation, or the key that
 # is missing from the set) turns every attack vector into an accepted one. Where no single repair exists because the
 # defect cannot occur alone, the vector is listed below with the reason; the list is measured both ways.
 TEST_KEYS = {label: k["public_jwk"] for label, k in load("keys.json")["keys"].items()}
@@ -283,7 +327,7 @@ INHERENT = {
                                                    "jws-json-general", "header-array", "payload-array")},
     # A missing claim has no value a repair could assume; a boolean or a huge exp turns into a wrong lifetime.
     **{f"token/attack-claim-{s}": "claim" for s in ("nbf-missing", "iat-missing", "sub-missing", "iss-missing",
-                                                    "exp-bool", "exp-huge", "sub-number", "aud-number",
+                                                    "exp-bool", "exp-huge", "aud-number",
                                                     "aud-empty-array")},
     # exp before nbf: no instant at which the token is valid, the lifetime repaired leaves it expired.
     "token/attack-lifetime-negative": "time",
@@ -295,8 +339,8 @@ INHERENT = {
 def readable_claims(jws) -> dict:
     """The payload of a token as a JSON object, or {} when it cannot be read (no configuration repair then)."""
     try:
-        value = json.loads(ref.b64u_decode(jws.split(".")[1]))
-    except (ValueError, IndexError, ref.GateError):
+        value = json.loads(gc._b64u_decode(jws.split(".")[1]))
+    except (ValueError, IndexError, gc.GateError):
         return {}
     return value if isinstance(value, dict) else {}
 
@@ -305,8 +349,8 @@ def kid_follows_x(entry) -> bool:
     """True when an entry's kid is the kid rule over its own x — a kid recomputed for a changed x is not a second
     defect."""
     try:
-        return entry["kid"] == ref.key_id(ref.b64u_decode(entry["x"]))
-    except (ref.GateError, KeyError, TypeError):
+        return entry["kid"] == gc._key_id(gc._b64u_decode(entry["x"]))
+    except (gc.GateError, KeyError, TypeError):
         return False
 
 
@@ -314,7 +358,7 @@ def repairs(kind, v) -> list:
     """The single repairs under which an attack vector is accepted."""
     found = []
     if kind == "token":
-        for relax in ref.RELAXATIONS:
+        for relax in RELAXATIONS:
             if run_token(v, frozenset({relax}))["ok"]:
                 found.append(relax)
         widened = dict(v, input=dict(v["input"], jwks={"keys": list(TEST_KEYS.values())}))
@@ -329,7 +373,7 @@ def repairs(kind, v) -> list:
             if isinstance(value, str) and run_token(dict(v, input=dict(v["input"], **{field: value})))["ok"]:
                 found.append(f"configured {field}")
     else:
-        found = [r for r in ref.RELAXATIONS if run_headers(v, frozenset({r}))["ok"]]
+        found = [r for r in RELAXATIONS if run_headers(v, frozenset({r}))["ok"]]
     return found
 
 
@@ -365,6 +409,6 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey 
 for label, k in keys_doc["keys"].items():
     seed = base64.urlsafe_b64decode(k["d"] + "=" * (-len(k["d"]) % 4))
     assert seed == generator._seed(label)
-    assert ref.b64u_encode(gate.public_raw(Ed25519PrivateKey.from_private_bytes(seed))) == k["public_jwk"]["x"]
-    assert ref.jwk_entry(k["public_jwk"]) is not None, label
+    assert gc._b64u_encode(gate.public_raw(Ed25519PrivateKey.from_private_bytes(seed))) == k["public_jwk"]["x"]
+    assert gc._jwk_entry(k["public_jwk"]) is not None, label
 ok("keys.json: marked as test material, every public key matches its seed and is a usable JWK")

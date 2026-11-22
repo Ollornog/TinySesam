@@ -131,6 +131,26 @@ def signature(fn) -> str:
     return "(" + ", ".join(parts) + ")" + back
 
 
+def gate_client_entry(name: str) -> str:
+    """One name of `tinysesam.gate_client` (a module-level name or `Class.member`) with signature and first sentence."""
+    from tinysesam import gate_client as module
+    owner, _, member = name.partition(".")
+    obj = getattr(module, owner)
+    if member:
+        raw = inspect.getattr_static(obj, member)
+        if isinstance(raw, property):
+            return f"### `{name}` — Property\n\n{first_sentence(raw)}\n\n"
+        if callable(raw) or isinstance(raw, (staticmethod, classmethod)):
+            fn = getattr(obj, member)
+            return f"### `{name}{signature(fn)}`\n\n{first_sentence(fn)}\n\n"
+        return f"### `{name}` — Constant\n\n`{getattr(obj, member)!r}`\n\n"
+    if inspect.isclass(obj):
+        return f"### `{name}{signature(obj)}` — class\n\n{first_sentence(obj)}\n\n"
+    if callable(obj):
+        return f"### `{name}{signature(obj)}`\n\n{first_sentence(obj)}\n\n"
+    return f"### `{name}` — Constant\n\n`{obj!r}`\n\n"
+
+
 def base() -> dict:
     """The whole checked-in baseline (measured values and tiers), or {}."""
     return json.loads(STORAGE.read_text(encoding="utf-8")) if STORAGE.exists() else {}
@@ -424,6 +444,7 @@ def build() -> str:
             + result_type)
     file = base()
     all_items += [(b, n) for b in CONTRACT_AREAS for n in (file.get(b) or {})]
+    all_items += [("gate_client", n) for n in (file.get("gate_client") or {})]
     number = {s: sum(1 for b, n in all_items if from_(b, n) == s) for s in TIERS}
     without = [(b, n) for b, n in all_items if from_(b, n) not in TIERS]
 
@@ -528,6 +549,12 @@ def build() -> str:
             + [f"### `tinysesam.{n}{signature(getattr(package, n))}`\n\n"
                f"{first_sentence(getattr(package, n))}\n\n"
                for n in remaining if inspect.isfunction(getattr(package, n))]))
+
+        parts.append(_section(
+            f"{title}The gate client `tinysesam.gate_client`",
+            [gate_client_entry(n) for n in (file.get("gate_client") or {}) if from_("gate_client", n) == s],
+            "For Flask, Django and other WSGI/ASGI applications behind the gate (T-86); importable without FastAPI. "
+            "Members of a class are listed as `Class.member`.\n\n"))
 
     parts.append(contract_sections(file))
 

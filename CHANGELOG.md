@@ -26,6 +26,35 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
   "Not in the configuration" and are kept unless an administrator unticks them (`tests/test_role_levels.py`,
   `tests/test_browser.py`).
 
+### Added — the gate client for Python (T-86)
+
+- **Who needs it:** a Flask, Django, Starlette or any other WSGI/ASGI application behind TinySesam's gate that is not
+  built with TinySesam's FastAPI module. `tinysesam.gate_client` reads who the request is and whether they may do
+  something; it never signs anyone in or issues a token. Importing it pulls in neither FastAPI nor the rest of
+  TinySesam (the package's `__init__` now imports `TinySesam` on first use) — only the standard library and
+  `cryptography`.
+- `GateClient(mode="header" | "token", …)`: header mode reads the `Remote-*` headers strictly (repeats, invalid UTF-8,
+  control characters and a malformed `Remote-Id` refused, never cleaned; optional `trusted_proxies`, renamable
+  `header_names`); token mode verifies the gate token in the order of spec §4.4 with fixed keys (`tinysesam gate-key`)
+  or a JWKS URL fetched with `urllib` under the §5 rules (5 s deadline, 64 KiB, `max-age` clamped to 60–3600 s, one
+  attempt per 10 s, the last good set kept for an hour, a running fetch shared, same-host redirects only).
+  `identify()`, `verify()`; `Identity` (frozen, `has_role`, `is_session`); one exception per error class under
+  `GateError` (`TokenError` for the token classes); configuration errors raise `ConfigError` at construction.
+- `WSGIMiddleware`, `ASGIMiddleware` (with `jwks_url` the check runs in a worker thread), `current_identity()`, the
+  guards `require_auth`, `require_role`, `require_session` for WSGI/ASGI apps and `guard_status` for view decorators;
+  401/403 with `no-store` and no reason; refusals logged on `tinysesam.gate_client` with class and `kid` only.
+  `parse_topbar`, `fetch_topbar`, `Topbar`, `TopbarLink` (spec §8). Examples for Flask and Django in
+  `examples/gate_client/`. Tier B, documented in the README ("Gate client for Flask, Django and other Python apps").
+- Tests: `tests/test_gate_vectors.py` now runs every vector against this module through its public `GateClient` (the
+  reference client `tests/_gate_reference.py` is gone — one Python implementation); the relaxation self-probes moved to
+  `tests/_gate_relax.py`, which switches off one check function of the client at a time, and the suite requires a
+  relaxation for every check function. `tests/test_gate_client.py`: a JWKS server that accepts and never answers (the
+  request returns after the 5 s deadline), a body that drips in, 64 KiB + 1 and exactly 64 KiB, 32 concurrent requests
+  sharing one fetch, redirects, the middleware and guards for WSGI, ASGI and Starlette, failing closed, logs without
+  credential material, the configuration errors, the import without FastAPI, a seeded property test over 3000 mutated
+  tokens, and the two examples (driven when Flask or Django is installed). Mutation proof: 83 hand mutations, one per
+  checking step, 79 red; the four green ones are guarded twice.
+
 ### Fixed — one defect per gate client vector
 
 - `spec/vectors/token.json`: `attack-payload-invalid-utf8` also repeated `ts_name`, so a client without a UTF-8 check

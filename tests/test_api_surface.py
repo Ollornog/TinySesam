@@ -90,6 +90,7 @@ MEASURED_VALUE = {"TinySesam": "sig", "TinySesam.properties": "sig",
             "TinySesamConfig.methods": "sig", "TinySesam.constants": "value",
             "TinySesamConfig.fields": "field", "exports": None, "LoginResult": "sig",
             "PasswordChangeResult": "sig",
+            "gate_client": "sig",                   # tinysesam.gate_client (T-86): names, methods, class constants
             # The operator and proxy contract (PO decision 2026-10-29, `tests/_contract.py`):
             "TinySesam.attributes": "value",         # `auth.cfg`, `auth.on_security_event`
             "TinySesam.event_payload": "keys",      # event -> keys of the `details` dict (list)
@@ -208,7 +209,34 @@ def surface() -> dict:
             "TinySesamConfig.fields": fields,
             "TinySesamConfig.methods": presets, "exports": exports,
             **{name: result_type_surface(type_name) for name, type_name in RESULT_TYPES.items()},
+            "gate_client": gate_client_surface(),
             **contract_surface(sources)}
+
+
+def gate_client_surface() -> dict:
+    """The gate client (T-86), importable without FastAPI: every name of `tinysesam.gate_client.__all__` (functions
+    and classes with their signature, constants with their value) and, per class, the public methods, properties and
+    class constants it defines itself (`GateClient.identify`, `MalformedToken.kind`)."""
+    from tinysesam import gate_client as module
+    out = {}
+    for name in module.__all__:
+        obj = getattr(module, name)
+        if inspect.isclass(obj):
+            out[name] = "class " + signature(obj)
+            for member, value in vars(obj).items():
+                if member.startswith("_"):
+                    continue
+                if isinstance(value, property):
+                    out[f"{name}.{member}"] = "property " + signature(value.fget)
+                elif isinstance(value, (staticmethod, classmethod)) or inspect.isfunction(value):
+                    out[f"{name}.{member}"] = signature(getattr(obj, member))
+                elif isinstance(value, (str, int, float, bool, tuple, frozenset, type(None))):
+                    out[f"{name}.{member}"] = repr(value)
+        elif callable(obj):
+            out[name] = signature(obj)
+        else:
+            out[name] = repr(obj)
+    return out
 
 
 def contract_surface(sources: dict) -> dict:
@@ -1143,7 +1171,9 @@ def surface_names(file: dict, klass=TinySesam, config=TinySesamConfig,
     parameters and attributes from the live object — a new parameter needs no new
     entry to be seen."""
     names = []
-    objects = {"TinySesam": klass, "TinySesamConfig.methods": config, **RESULT_TYPES}
+    from tinysesam import gate_client as gate_client_module
+    objects = {"TinySesam": klass, "TinySesamConfig.methods": config, **RESULT_TYPES,
+               "gate_client": gate_client_module}
     own = {klass.__name__, config.__name__, *RESULT_TYPES}   # have their own areas
     for area in sorted(file):
         entries = file[area]
@@ -2126,7 +2156,7 @@ DOC_FILES = ("README.md", "i18n/README.de.md", "CONFIGURATION.md", "SECURITY.md"
 #: `CONFIGURATION.md` (generated from the field comments), the contract areas are the HTTP and log
 #: protocol and documented in `docs/OPERATIONS.md`; neither is a Python name to look up.
 DOCUMENTED_AREAS = ("TinySesam", "TinySesam.constants", "TinySesam.properties", "TinySesamConfig.methods",
-                    "exports", "LoginResult", "PasswordChangeResult")
+                    "exports", "LoginResult", "PasswordChangeResult", "gate_client")
 _FENCE = re.compile(r"^[ \t]*```.*?^[ \t]*```", re.S | re.M)
 
 
@@ -2171,7 +2201,10 @@ def check_documented(file: dict, docs: "dict | None" = None, at_least: int = 150
             if tier not in ("A", "B"):
                 continue
             number += 1
-            if not re.search(r"(?<!\w)" + re.escape(name) + r"(?!\w)", code):
+            # A member of a gate client class is documented under its own name (`gate.identify(…)` names
+            # `GateClient.identify`); the class itself under the full one.
+            needle = name.rsplit(".", 1)[-1] if area == "gate_client" else name
+            if not re.search(r"(?<!\w)" + re.escape(needle) + r"(?!\w)", code):
                 findings.append(f"{area}.{name}: tier {tier}, but named in none of the docs — document it "
                                 f"(README, CONFIGURATION.md, SECURITY.md, docs/) or make it internal (tier C: "
                                 f"`_{name}` and a `Deprecated` alias until {UNTIL})")
