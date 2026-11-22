@@ -105,3 +105,116 @@ jobs:
         with:
           sarif_file: sarif-go
           category: "/language:go"
+
+  # The JS/TS gate client (clients/js, T-82) and the Rust gate client (clients/rust, T-81), in the pattern of the Go
+  # jobs: the analysis job holds no write permission (it checks out and, for Rust, runs the toolchain step) and writes
+  # SARIF; the upload job holds `security-events: write` and runs no code. Both languages are analysed without a build
+  # (`build-mode: none`). Each analysis is limited to its client: the repository has no other JavaScript or Rust file
+  # (the built-in pages carry their scripts inside Python templates). Each language gets its own job pair, so a failing
+  # extractor of one language does not hide the findings of the other.
+  analyse-js:
+    name: CodeQL (javascript-typescript)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: github/codeql-action/init@33d7b85da1a04171e211befe2c739303b9a4c066  # v4.39.3
+        with:
+          languages: javascript-typescript
+          build-mode: none
+          queries: security-and-quality
+          config: |
+            paths:
+              - clients/js
+
+      - uses: github/codeql-action/analyze@33d7b85da1a04171e211befe2c739303b9a4c066  # v4.39.3
+        with:
+          category: "/language:javascript-typescript"
+          upload: never
+          output: sarif-js
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: codeql-js-sarif
+          path: sarif-js
+          retention-days: 3
+          if-no-files-found: error
+
+  upload-js:
+    name: CodeQL (javascript-typescript) upload
+    needs: analyse-js
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      security-events: write      # only for this: write the findings to the Security tab
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          name: codeql-js-sarif
+          path: sarif-js
+
+      - uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066  # v4.39.3
+        with:
+          sarif_file: sarif-js
+          category: "/language:javascript-typescript"
+
+  analyse-rust:
+    name: CodeQL (rust)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The extractor reads the crate through cargo metadata; the runner's rustup may lack a default toolchain.
+      - name: Toolchain
+        run: |
+          rustup toolchain install stable --profile minimal --no-self-update
+          rustup default stable
+          rustc --version
+
+      - uses: github/codeql-action/init@33d7b85da1a04171e211befe2c739303b9a4c066  # v4.39.3
+        with:
+          languages: rust
+          build-mode: none
+          queries: security-and-quality
+          config: |
+            paths:
+              - clients/rust
+
+      - uses: github/codeql-action/analyze@33d7b85da1a04171e211befe2c739303b9a4c066  # v4.39.3
+        with:
+          category: "/language:rust"
+          upload: never
+          output: sarif-rust
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: codeql-rust-sarif
+          path: sarif-rust
+          retention-days: 3
+          if-no-files-found: error
+
+  upload-rust:
+    name: CodeQL (rust) upload
+    needs: analyse-rust
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      security-events: write      # only for this: write the findings to the Security tab
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          name: codeql-rust-sarif
+          path: sarif-rust
+
+      - uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066  # v4.39.3
+        with:
+          sarif_file: sarif-rust
+          category: "/language:rust"
