@@ -117,9 +117,15 @@ else
     JS_SKIP=""
 fi
 if [[ -z "$JS_SKIP" ]]; then
-    step "JS/TS gate client (clients/js): Biome, tsc, tests"
+    # The built package too (test/dist-smoke.mjs, the same check as the CI workflow's last step), built into a throwaway
+    # directory: until 2026-11-22 that check stood inline in client-js.yml only, and a request without Remote-Kind
+    # reached the CI first.
+    step "JS/TS gate client (clients/js): Biome, tsc, tests, the built package"
     (cd clients/js && npm ci --ignore-scripts --no-audit --no-fund --prefer-offline --loglevel=error \
-        && npm run --silent lint && npm run --silent typecheck && npm test --silent) || fail "JS/TS gate client"
+        && npm run --silent lint && npm run --silent typecheck && npm test --silent \
+        && JS_DIST="$(mktemp -d)" && trap 'rm -rf "$JS_DIST"' EXIT \
+        && npx --no-install tsc -p tsconfig.build.json --outDir "$JS_DIST" \
+        && node test/dist-smoke.mjs "$JS_DIST") || fail "JS/TS gate client"
 else
     printf '\n\033[33m! JS/TS gate client not tested here (%s) — the CI job client-js runs it\033[0m\n' "$JS_SKIP"
 fi

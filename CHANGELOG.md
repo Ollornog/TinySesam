@@ -70,6 +70,9 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 - `tests/test_browser.py`: after the demo sign-in it waited a fixed 2 s and then read the page ("not signed in: ''"
   when the answer came later); it now waits for the signed-in page (`until`, up to 20 s). With 4 s network latency
   injected before the sign-in: the old version 3 of 3 red, the new one 0 of 3.
+- The JS/TS client's check of the built package (`clients/js/test/dist-smoke.mjs`) is a file now, run by the CI
+  workflow `client-js` and by `scripts/check.sh` (built into a throwaway directory). It stood inline in the workflow,
+  check.sh never ran it, and a request without `Remote-Kind` reached the CI first. A build of the v1 client fails it.
 - `tests/test_magic.py` (R4-05): it waited a fixed 0.2 s for the mail worker to start the first send; once in a local
   gate run the worker had not started yet. It now waits for an event set by the first send (up to 20 s). With a mail
   worker that starts 0.5 s late: the old version 3 of 3 red, the new one 0 of 3.
