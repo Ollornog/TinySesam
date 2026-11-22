@@ -2,6 +2,31 @@
 
 All notable changes. Format loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added — approvals (TinySesam actions)
+
+- `approvals_enabled` (off by default; without it nothing changes): an API key of an account can ask for one of three
+  actions it may not do on its own — `tinysesam.account.set_roles` (add and remove roles, never the admin flag),
+  `tinysesam.apikey.revoke`, `tinysesam.account.disable` — with `POST /auth/api/approvals`, and reads the outcome with
+  `GET /auth/api/approvals/{id}` (`?wait=` up to 25 s) or withdraws it with `DELETE`. The answer carries a link and a
+  six-digit match code (T-89, stage A).
+- The person decides on `/auth/approvals/{id}` in a browser session of the same account — never with a token (403) —
+  with a step-up of THAT approval: password, PIN or TOTP as `stepup_methods` allows, a passkey whose challenge is bound
+  to the approval's id and payload hash, or a fresh sign-in at the provider (`max_age=0`, `auth_time` after the
+  request). TinySesam executes with the admin panel's code (`admin.PanelActions`, shared with the panel routes) and the
+  rights the session has at that moment (E4): a delegate whose delegation ended in between gets `result=forbidden`.
+- One atomic transition per state change, a GET never decides, the page shows TinySesam's own texts filled from the
+  payload and the database (escaped, bidi-isolated; a target the viewer may not manage is named by id only) and is never
+  framed (`frame-ancestors 'none'`, `X-Frame-Options: DENY`, also with `csp="off"`).
+- Account menu entry **Approvals (n)** with number and word, `/auth/approvals` lists the open ones, `topbar_data()`
+  and `/auth/topbar.json` carry `"approvals": {"pending": n, "href": …}` (spec §8: an optional member; clients
+  normalize it in stage B).
+- Limits `approval_open_per_account`, `approval_open_per_token`, `approval_requests_per_hour`,
+  `approval_reject_limit` (`429`), deadline `approval_pending_sec`; audit events `approval_*` without field values;
+  security event `approval_approved`; `gc()` expires and deletes (`approvals_expired`, `approvals_deleted`).
+- Schema 22: table `approval` (additive; rollback note in `docs/OPERATIONS.md`).
+
 ## [0.27.1] — 2026-11-22
 
 ### Changed
@@ -35,29 +60,6 @@ Patch release cut by the release automation after Dependabot merges:
   neither it fails instead of skipping (inside ci-local's offline container it prints a `skip` line ci-local counts).
   Dependabot `composer` for `/clients/php` and `docker` for `/clients/php/ci`; the auto-merge counts `client-php.yml`
   among its mandatory workflows and accepts `composer`.
-
-### Added — approvals (TinySesam actions)
-
-- `approvals_enabled` (off by default; without it nothing changes): an API key of an account can ask for one of three
-  actions it may not do on its own — `tinysesam.account.set_roles` (add and remove roles, never the admin flag),
-  `tinysesam.apikey.revoke`, `tinysesam.account.disable` — with `POST /auth/api/approvals`, and reads the outcome with
-  `GET /auth/api/approvals/{id}` (`?wait=` up to 25 s) or withdraws it with `DELETE`. The answer carries a link and a
-  six-digit match code (T-89, stage A).
-- The person decides on `/auth/approvals/{id}` in a browser session of the same account — never with a token (403) —
-  with a step-up of THAT approval: password, PIN or TOTP as `stepup_methods` allows, a passkey whose challenge is bound
-  to the approval's id and payload hash, or a fresh sign-in at the provider (`max_age=0`, `auth_time` after the
-  request). TinySesam executes with the admin panel's code (`admin.PanelActions`, shared with the panel routes) and the
-  rights the session has at that moment (E4): a delegate whose delegation ended in between gets `result=forbidden`.
-- One atomic transition per state change, a GET never decides, the page shows TinySesam's own texts filled from the
-  payload and the database (escaped, bidi-isolated; a target the viewer may not manage is named by id only) and is never
-  framed (`frame-ancestors 'none'`, `X-Frame-Options: DENY`, also with `csp="off"`).
-- Account menu entry **Approvals (n)** with number and word, `/auth/approvals` lists the open ones, `topbar_data()`
-  and `/auth/topbar.json` carry `"approvals": {"pending": n, "href": …}` (spec §8: an optional member; clients
-  normalize it in stage B).
-- Limits `approval_open_per_account`, `approval_open_per_token`, `approval_requests_per_hour`,
-  `approval_reject_limit` (`429`), deadline `approval_pending_sec`; audit events `approval_*` without field values;
-  security event `approval_approved`; `gc()` expires and deletes (`approvals_expired`, `approvals_deleted`).
-- Schema 22: table `approval` (additive; rollback note in `docs/OPERATIONS.md`).
 
 ### Added — accounts page and role levels in the admin panel (T-87)
 
