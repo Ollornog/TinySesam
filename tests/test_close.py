@@ -43,24 +43,36 @@ import os, sys, tempfile, threading, time
 sys.path.insert(0, sys.argv[2])
 from tinysesam import TinySesam, TinySesamConfig
 auth = TinySesam(TinySesamConfig(passkey_enabled=False, db_path=os.path.join(tempfile.mkdtemp(), "r.db")))
-started, done = threading.Event(), []
+started, stop, done = threading.Event(), threading.Event(), []
 
+# The job writes on the shared connection until it is told to stop — not a fixed number of writes. Until 2026-11-22
+# it wrote 400 rows, and under load (two CPUs, a dozen suites) those took longer than close()'s 10 s deadline:
+# close() then correctly kept the database open (False), and the test read that as a failure. Now the job is inside
+# its write loop when close() is called (started + one write), and it ends right after close() has begun to wait.
 def job():
-    started.set()
-    for i in range(400):            # ~ a few hundred writes on the shared connection
+    i = 0
+    while not stop.is_set():
         auth.audit("close_race", "probe", detail=str(i))
-    done.append(True)
+        i += 1
+        started.set()
+    auth.audit("close_race", "probe", detail="last")
+    done.append(i)
 
 queued = auth._notice_outcome.enqueue(job)
 assert queued
-started.wait(5)
-time.sleep(0.01)                    # the job is inside its write loop now
+assert started.wait(60), "the job never wrote"
 if sys.argv[1] == "raw":
-    auth.store.db.close()           # what the suites did before T-67
+    auth.store.db.close()           # what the suites did before T-67 — under the running write loop
+    stop.set()
     closed = True
+    auth._notice_outcome.wait()
 else:
+    def release():                  # the moment close() refuses new jobs it is waiting for this one
+        while not auth._notice_outcome.closed:
+            time.sleep(0.001)
+        stop.set()
+    threading.Thread(target=release, daemon=True).start()
     closed = auth.close()
-auth._notice_outcome.wait() if sys.argv[1] == "raw" else None
 print(f"closed={closed} job_done={bool(done)}")
 """
 

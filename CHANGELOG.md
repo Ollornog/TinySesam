@@ -4,6 +4,17 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+### Fixed — two suites that read the clock instead of an event (red under load)
+
+- `tests/test_close.py`: the job in the shutdown race wrote 400 rows; under load (two CPUs, a dozen suites) that took
+  longer than `close()`'s 10 s deadline, and `close()` correctly kept the database open (`False`) — the test read that
+  as a failure (12 of 12 runs red under `taskset -c 0,1`). The job now writes until `close()` has begun to wait and
+  then ends: 0 of 12 red under the same load. No product gap: past its deadline `close()` leaves the database open and
+  the job finishes.
+- `tests/test_browser.py`: after the demo sign-in it waited a fixed 2 s and then read the page ("not signed in: ''"
+  when the answer came later); it now waits for the signed-in page (`until`, up to 20 s). With 4 s network latency
+  injected before the sign-in: the old version 3 of 3 red, the new one 0 of 3.
+
 ### Security — the image scan shows the findings of both images in every run
 
 - `release.yml`, job `image-probe`: the Caddy image (`tinysesam-caddy-gate`) is now built and scanned also when a step
